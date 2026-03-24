@@ -1,51 +1,40 @@
 #!/bin/sh
 
-# Get the script directory for relative paths
+# coder: Lightweight conversational client
+# Connects to the centralized coder-server (Intelligence Proxy)
+
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 . "$SCRIPT_DIR/etc/coder.conf"
 
-# Paths to the llama-cli and the Qwen 2.5 Coder model
-LLAMA_CLI="$CODER_ROOT/llama.cpp/build/bin/llama-cli"
-MODEL_PATH="${CODER_MODEL:-$MODEL_7B}"
+API_URL="http://${HOST}:${PORT}/v1/chat/completions"
 
-# System Prompt
-SYSTEM_PROMPT="You are my coding assistant, we are using FreeBSD as our OS."
-
-# Check if binaries exist
-if [ ! -f "$LLAMA_CLI" ]; then
-    echo "Error: llama-cli not found at $LLAMA_CLI"
-    echo "Make sure you have built llama.cpp."
-    exit 1
+# Check if server is running
+if ! curl -s -o /dev/null -w '%{http_code}' "http://${HOST}:${PORT}/health" 2>/dev/null | grep -E '200|404|503' > /dev/null; then
+    if ! curl -s -o /dev/null -w '%{http_code}' "${LLAMA_URL}/health" 2>/dev/null | grep -E '200|503' > /dev/null; then
+        echo "Auto-starting coder-server in the background..."
+        "$SCRIPT_DIR/coder-server" > "$SCRIPT_DIR/var/log/server.log" 2>&1 &
+        SERVER_PID=$!
+        
+        printf "Waiting for server to spin up"
+        for i in $(seq 1 120); do
+            # Wait for either proxy 404 (alive) or llama-server 200/503 (loading)
+            if curl -s -o /dev/null -w '%{http_code}' "http://${HOST}:${PORT}/health" 2>/dev/null | grep -E '200|404|503' > /dev/null; then
+                echo " ready!"
+                break
+            fi
+            printf "."
+            sleep 1
+            if [ $i -eq 120 ]; then
+                echo " timeout! Check var/log/server.log"
+                exit 1
+            fi
+        done
+    fi
 fi
 
-# Check if model exists, if not, offer to download it
-if [ ! -f "$MODEL_PATH" ]; then
-    echo "Error: Model not found at $MODEL_PATH"
-    echo "You can download it using:"
-    echo "curl -L -o \"$MODEL_PATH\" https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q4_k_m.gguf"
-    
-    # Optional: ask the user if they want to download it now
-    # For now, we'll just exit with a clear message.
-    exit 1
-fi
+SYSTEM_PROMPT="You are a brilliant, expert software engineer using FreeBSD. You provide concise, direct, and incredibly intelligent answers."
 
-# Execute llama-cli with dual-GPU Vulkan offloading
-# -sm layer: Split layers across GPUs for better performance on heterogeneous setups.
-# -ts 1.5,1: Prioritize Dedicated GPU (Vulkan0) over Integrated (Vulkan1).
-# -fitt 384: Target ~90% VRAM utilization (leave 384MB margin).
-# -c 32768: High-quality 32k context for coding tasks.
-# -ngl all: Fully offload model and KV to GPUs.
-"$LLAMA_CLI" \
-  -m "$MODEL_PATH" \
-  -dev Vulkan0,Vulkan1 \
-  -ngl all \
-  -sm layer \
-  -ts 1.45,1.05 \
-  -fitt 1024 \
-  -c 32768 \
-  -b 2048 \
-  -ub 512 \
-  -sys "$SYSTEM_PROMPT" \
-  -cnv \
-  "$@"
-
+# Pass execution to our simple Lua chat client
+export CODER_API_URL="$API_URL"
+export CODER_SYSTEM_PROMPT="$SYSTEM_PROMPT"
+exec luajit "$SCRIPT_DIR/lib/chat.lua" "$@"

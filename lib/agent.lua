@@ -1063,23 +1063,7 @@ local function agent_turn(user_msg)
   last_read_content = nil
   edit_fails_this_turn = {}
 
-  -- RAG: hybrid search — only inject compact, relevant results
-  rag_context = ""
-  local rag = search.query(user_msg, 3, true)  -- reduced from 5 to 3 to save tokens
-  if #rag > 0 then
-    local parts = { "\nRelevant files:" }
-    for i, r in ipairs(rag) do
-      parts[#parts+1] = string.format("[%d] %s (%.0f%%, %db)", i, r.path, r.score * 100, r.size or 0)
-      if r.snippet then
-        parts[#parts+1] = r.snippet:sub(1, 500)  -- reduced from 800
-      end
-    end
-    rag_context = table.concat(parts, "\n")
-    if #rag_context > 2500 then  -- reduced from 4000
-      rag_context = rag_context:sub(1, 2500) .. "\n...[truncated]"
-    end
-  end
-
+  -- RAG: now handled automatically by the Intelligence Proxy Server
   local msg = chat(user_msg)
   if not msg then return end
 

@@ -55,11 +55,12 @@ if [ "$MLOCK_LIMIT" = "unlimited" ] || [ "$MLOCK_LIMIT" -gt 2097152 ] 2>/dev/nul
     MLOCK_ARG="--mlock"
 fi
 
-exec "$LLAMA_SERVER" \
+$LLAMA_SERVER \
     -m "$MODEL_PATH" \
     -dev "$DEVICES" \
     -sm layer \
     -ts "$TENSOR_SPLIT" \
+    -fitt "$FIT_TARGET" \
     -ngl all \
     -c "$CTX_SIZE" \
     -b 2048 \
@@ -73,6 +74,24 @@ exec "$LLAMA_SERVER" \
     --spm-infill \
     --offline \
     --host "$HOST" \
-    --port "$PORT" \
+    --port "$LLAMA_PORT" \
     $DRAFT_ARGS \
-    "$@"
+    "$@" &
+LLAMA_PID=$!
+
+# Trap to clean up server on exit
+cleanup() {
+    if [ -n "$LLAMA_PID" ]; then
+        echo "Stopping llama-server (PID $LLAMA_PID)..."
+        kill "$LLAMA_PID" 2>/dev/null
+        wait "$LLAMA_PID" 2>/dev/null
+    fi
+}
+trap cleanup EXIT INT TERM
+
+echo "Starting Lua Intelligence Proxy on port $PORT..."
+export CODER_ROOT="$CODER_ROOT"
+export CODER_LLAMA_URL="http://${HOST}:${LLAMA_PORT}"
+export CODER_PROXY_PORT="$PORT"
+export CODER_PROXY_HOST="$HOST"
+exec luajit "$SCRIPT_DIR/lib/proxy.lua"

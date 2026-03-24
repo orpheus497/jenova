@@ -16,7 +16,7 @@ mkdir -p "$CODER_DIR"
 [ -n "$CACHE_DIR" ] && mkdir -p "$CACHE_DIR"
 
 # Check if server is already running
-if curl -s -o /dev/null -w '%{http_code}' "${API_URL}/health" 2>/dev/null | grep 200 > /dev/null; then
+if curl -s -o /dev/null -w '%{http_code}' "${API_URL}/health" 2>/dev/null | grep -E '200|404|503' > /dev/null; then
     echo "Server already running at ${API_URL}"
 else
     echo "Starting llama-server in background..."
@@ -27,7 +27,7 @@ else
     # Wait for server to be ready
     printf "Waiting for server"
     for i in $(seq 1 120); do
-        if curl -s -o /dev/null -w '%{http_code}' "${API_URL}/health" 2>/dev/null | grep 200 > /dev/null; then
+        if curl -s -o /dev/null -w '%{http_code}' "${API_URL}/health" 2>/dev/null | grep -E '200|404|503' > /dev/null; then
             echo " ready!"
             break
         fi
