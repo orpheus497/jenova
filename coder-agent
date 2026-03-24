@@ -4,17 +4,19 @@
 # Starts llama-server (if not already running), then connects the LuaJIT agent
 
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
-HOST="${CODER_HOST:-127.0.0.1}"
-PORT="${CODER_PORT:-8080}"
-API_URL="http://${HOST}:${PORT}"
-CODER_DIR="${SCRIPT_DIR}/.coder"
-SERVER_LOG="${CODER_DIR}/server.log"
+. "$SCRIPT_DIR/etc/coder.conf"
 
-# Ensure .coder directory exists
+API_URL="http://${HOST}:${PORT}"
+CODER_DIR="${CODER_STATE:-$SCRIPT_DIR/.coder}"
+SERVER_LOG="${LOG_DIR:-$CODER_DIR}/server.log"
+
+# Ensure directories exist
 mkdir -p "$CODER_DIR"
+[ -n "$LOG_DIR" ] && mkdir -p "$LOG_DIR"
+[ -n "$CACHE_DIR" ] && mkdir -p "$CACHE_DIR"
 
 # Check if server is already running
-if curl -s -o /dev/null -w '%{http_code}' "${API_URL}/health" 2>/dev/null | grep -q 200; then
+if curl -s -o /dev/null -w '%{http_code}' "${API_URL}/health" 2>/dev/null | grep 200 > /dev/null; then
     echo "Server already running at ${API_URL}"
 else
     echo "Starting llama-server in background..."
@@ -25,7 +27,7 @@ else
     # Wait for server to be ready
     printf "Waiting for server"
     for i in $(seq 1 120); do
-        if curl -s -o /dev/null -w '%{http_code}' "${API_URL}/health" 2>/dev/null | grep -q 200; then
+        if curl -s -o /dev/null -w '%{http_code}' "${API_URL}/health" 2>/dev/null | grep 200 > /dev/null; then
             echo " ready!"
             break
         fi

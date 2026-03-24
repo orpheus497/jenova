@@ -182,28 +182,34 @@ local function build_system_prompt()
 
 TOOLS (call ONE per response as JSON):
   shell(command)       — Run shell commands: compile, test, diagnose.
-  read_file(path)      — Read a file's contents. ALWAYS do this before editing.
-  edit_file(path, old, new) — Replace exact text. old must match file content exactly.
+  read_file(path)      — Read a file's contents with line numbers.
+  edit_file(path, start_line, end_line, new_content) — Replace lines.
   write_file(path, content) — Create/overwrite entire file. Use for NEW files only.
   list_dir(path)       — List directory contents.
   search_files(query, top_k) — Search project files by code identifiers/keywords.
   think(thought)       — Internal reasoning. Use ONLY for complex multi-step planning.
 
-RESPONSE FORMAT — respond ONLY with a JSON tool call:
-{"name": "tool_name", "arguments": {"arg": "value"}}
+RESPONSE FORMAT:
+You MUST think about your action first inside <think>...</think> tags.
+Immediately after the closing tag, output exactly ONE JSON tool call.
+
+Example:
+<think>
+I need to check if the header exists.
+</think>
+{"name": "shell", "arguments": {"command": "ls /usr/include/stdio.h"}}
 
 WORKFLOW: Direct Action
-1. READ before editing — identify what is real and what is not by reading headers/code.
-2. ACT decisively — use shell/read/edit to make progress every turn.
-3. THINK sparingly — only if the task requires deep architectural planning.
-4. VERIFY — check headers exist and code compiles. Do NOT install new packages.
-5. VALIDATE — compile/test after changes. If errors, fix immediately.
-6. REPORT — only after ALL work done, give 1-2 sentence summary.
+1. READ before editing — identify what is real and what is not.
+2. THINK natively — use the <think> block to reason through the step.
+3. ACT decisively — use tools to make progress every turn.
+4. VERIFY — check headers exist and code compiles.
+5. VALIDATE — compile/test after changes.
+6. REPORT — give 1-2 sentence summary when done.
 
 CRITICAL:
-- Respond ONLY with JSON tool calls. No pre-analysis text.
-- DO NOT perform system administration, sudo actions, or package installations (pkg install).
-- Focus on implementing logic using the libraries and headers already present on the system.
+- Respond with <think> followed by JSON.
+- Respond ONLY with JSON after </think>. No other text.
 - FreeBSD: use cc (not gcc), /usr/local/include for ports.
 - Fix root causes, not symptoms.]]
 
@@ -235,13 +241,14 @@ local TOOLS = {
       required = { "path" } } } },
   { type = "function", ["function"] = {
     name = "edit_file",
-    description = "Replace text in a file. Provide exact old text and new text. Creates backup.",
+    description = "Replace a range of lines in a file. start_line and end_line are inclusive.",
     parameters = { type = "object",
       properties = {
         path = { type = "string", description = "File path" },
-        old  = { type = "string", description = "Exact text to replace" },
-        new  = { type = "string", description = "Replacement text" } },
-      required = { "path", "old", "new" } } } },
+        start_line = { type = "number", description = "First line to replace" },
+        end_line = { type = "number", description = "Last line to replace" },
+        new_content = { type = "string", description = "Replacement text" } },
+      required = { "path", "start_line", "end_line", "new_content" } } } },
   { type = "function", ["function"] = {
     name = "write_file",
     description = "Create or overwrite a file with complete content. Creates backup. Prefer edit_file for changes.",
@@ -340,60 +347,49 @@ local function exec_read_file(args)
   local path = resolve_path(args.path)
   if not path or path == "" then return "error: no path", false end
 
-  if files_read_this_turn[path] and not files_written_this_turn[path] then
-    ui.status_info("already read "..path)
-    local content = files_read_this_turn[path]
-    if #content > 16000 then
-      content = content:sub(1,8000) .. "\n...[truncated "..#content.." bytes]...\n" .. content:sub(-4000)
-    end
-    return content .. "\n(already read this turn — proceed to edit)", true
-  end
-
   ui.file_read(path)
 
   local f = io.open(path, "r")
   if not f then
-    local bn = path:match("([^/]+)$")
-    if bn and CWD then
-      local p = io.popen(string.format("find %q -name %q -type f 2>/dev/null | head -1", CWD, bn))
-      local found = p:read("*l"); p:close()
-      if found and found ~= "" then
-        ui.status_warn("found "..found)
-        f = io.open(found, "r")
-        if f then path = found end
-      end
-    end
-    if not f then
-      memory.log_error("read_file", path, "not found")
-      ui.status_err("not found")
-      return "error: file not found: "..path..". Use list_dir or search_files.", false
-    end
+    return "error: file not found: "..path, false
   end
 
   local content = f:read("*a"); f:close()
   files_read_this_turn[path] = content
   last_read_path = path
   last_read_content = content
-  local bn = path:match("([^/]+)$")
-  if bn then files_read_this_turn[bn] = path end
+
+  -- Format with line numbers for the model
+  local formatted = {}
+  local lnum = 1
+  if content ~= "" then
+    local clean_content = content:sub(-1) == "\n" and content:sub(1, -2) or content
+    for line in (clean_content .. "\n"):gmatch("([^\n]*)\n") do
+      formatted[#formatted+1] = string.format("%4d | %s", lnum, line)
+      lnum = lnum + 1
+    end
+  end
+  local result = table.concat(formatted, "\n")
 
   local kb = string.format("%.1fkb", #content/1024)
   ui.file_read_done(kb)
 
-  if #content > 16000 then
-    content = content:sub(1,8000) .. "\n...[truncated "..#content.." bytes]...\n" .. content:sub(-4000)
+  if #result > 24000 then
+    result = result:sub(1,12000) .. "\n...[truncated]...\n" .. result:sub(-8000)
   end
   memory.log("read_file", { path = path, size = #content })
-  return content, true
+  return result, true
 end
 
 local function exec_edit_file(args)
   local path = resolve_path(args.path)
-  local old_text = args.old
-  local new_text = args.new
-  if not path or path == "" then return "error: no path", false end
-  if not old_text or old_text == "" then return "error: no 'old' text", false end
-  if new_text == nil then return "error: no 'new' text", false end
+  local start_line = tonumber(args.start_line)
+  local end_line = tonumber(args.end_line)
+  local new_text = args.new_content
+  
+  if not path or not start_line or not end_line or not new_text then
+    return "error: missing arguments for edit_file", false
+  end
 
   local content = files_read_this_turn[path]
   if not content then
@@ -402,53 +398,45 @@ local function exec_edit_file(args)
     content = f:read("*a"); f:close()
   end
 
-  local s, e = content:find(old_text, 1, true)
-  if not s then
-    local norm_old = old_text:gsub("%s+", " "):gsub("^%s+",""):gsub("%s+$","")
-    if #norm_old < 3 then
-      return "error: old text too short to match safely", false
-    end
-    local lines = {}
-    for line in (content.."\n"):gmatch("([^\n]*)\n") do lines[#lines+1] = line end
-    local norm_lines = {}
-    for i, l in ipairs(lines) do norm_lines[i] = l:gsub("%s+", " "):gsub("^%s+",""):gsub("%s+$","") end
-
-    local first_line_old = norm_old:match("^([^\n]*)")
-    if not first_line_old then first_line_old = norm_old end
-    first_line_old = first_line_old:gsub("%s+", " "):gsub("^%s+",""):gsub("%s+$","")
-
-    local found_start = nil
-    for i, nl in ipairs(norm_lines) do
-      if nl:find(first_line_old, 1, true) then
-        found_start = i
-        break
-      end
-    end
-
-    if not found_start then
-      return "error: text not found in "..path..". Use read_file to check current content.", false
-    end
-
-    local old_line_count = 1
-    for _ in old_text:gmatch("\n") do old_line_count = old_line_count + 1 end
-    local found_end = math.min(found_start + old_line_count - 1, #lines)
-
-    local actual_lines = {}
-    for i = found_start, found_end do actual_lines[#actual_lines+1] = lines[i] end
-    local actual_old = table.concat(actual_lines, "\n")
-
-    s, e = content:find(actual_old, 1, true)
-    if not s then
-      return "error: fuzzy match failed in "..path..". Provide more context around the change.", false
+  local lines = {}
+  if content ~= "" then
+    local clean_content = content:sub(-1) == "\n" and content:sub(1, -2) or content
+    for line in (clean_content .. "\n"):gmatch("([^\n]*)\n") do
+      lines[#lines+1] = line
     end
   end
 
-  local new_content = content:sub(1, s-1) .. new_text .. content:sub(e+1)
-  if new_content == content then
-    return "ok: no changes needed (content already matches)", true
+  if #lines == 0 then
+    if start_line ~= 1 or end_line ~= 1 then
+      return "error: file is empty, range must be 1-1", false
+    end
+  elseif start_line < 1 or start_line > #lines + 1 or end_line < start_line or end_line > #lines + 1 then
+    return string.format("error: invalid line range %d-%d (file has %d lines). To append, use %d-%d.", start_line, end_line, #lines, #lines + 1, #lines + 1), false
   end
 
-  -- Backup before writing
+  local new_lines = {}
+  for i = 1, start_line - 1 do
+    new_lines[#new_lines+1] = lines[i]
+  end
+  
+  if new_text ~= "" then
+    local clean_new = new_text:sub(-1) == "\n" and new_text:sub(1, -2) or new_text
+    for line in (clean_new .. "\n"):gmatch("([^\n]*)\n") do
+      new_lines[#new_lines+1] = line
+    end
+  end
+
+  for i = end_line + 1, #lines do
+    new_lines[#new_lines+1] = lines[i]
+  end
+
+  local new_content = table.concat(new_lines, "\n")
+  -- Preserve UNIX newline convention if original file had it, or if it's a new file
+  if #new_content > 0 and (content == "" or content:sub(-1) == "\n" or new_text:sub(-1) == "\n") then
+    new_content = new_content .. "\n"
+  end
+  
+  -- Backup
   local bk_dir = (CWD or ".") .. "/.coder/backups"
   os.execute(string.format("mkdir -p %q", bk_dir))
   local bn = path:match("([^/]+)$") or path
@@ -461,46 +449,22 @@ local function exec_edit_file(args)
     ui.file_backup(bk_path)
   end
 
-  ui.file_edit(path, #old_text, #new_text)
+  ui.file_edit(path, start_line, end_line)
 
-  local dir = path:match("^(.+)/[^/]+$")
-  if dir then os.execute(string.format("mkdir -p %q", dir)) end
   local wf = io.open(path, "w")
-  if not wf then
-    memory.log_error("edit_file", path, "cannot write")
-    return "error: cannot write "..path, false
-  end
+  if not wf then return "error: cannot write "..path, false end
   wf:write(new_content); wf:close()
 
   files_read_this_turn[path] = new_content
   files_written_this_turn[path] = true
   last_read_path = path
   last_read_content = new_content
-  memory.log("edit_file", { path = path, old_len = #old_text, new_len = #new_text })
+  memory.log("edit_file", { path = path, range = start_line.."-"..end_line })
   search.reindex_file(path)
   memory.invalidate_tree_cache()
 
   ui.status_ok("done")
-
-  local ext = path:match("%.([^.]+)$")
-  if ext == "c" or ext == "h" or ext == "cpp" or ext == "cc" or ext == "cxx" then
-    local compile_cmd = string.format("cd %q && cc -fsyntax-only -Wall %q 2>&1", CWD or ".", path)
-    ui.compile_check(path)
-    local tmpf = os.tmpname()
-    os.execute(compile_cmd .. " > " .. tmpf .. " 2>&1")
-    local cf = io.open(tmpf, "r")
-    local compile_out = cf and cf:read("*a") or ""
-    if cf then cf:close() end
-    os.remove(tmpf)
-    if compile_out ~= "" and #compile_out > 5 then
-      ui.status_warn("compile issues remain")
-      return "ok: edited "..path.."\n\nCompile check:\n"..compile_out:sub(1, 2000).."\nFix the remaining errors.", true
-    else
-      ui.status_ok("compiles clean")
-    end
-  end
-
-  return "ok: edited "..path, true
+  return "ok: updated lines "..start_line.." to "..end_line.." in "..path, true
 end
 
 local function exec_write_file(args)
@@ -693,7 +657,14 @@ local function parse_tool_calls_from_content(content)
   if not content or content == "" then return nil end
   local calls = {}
 
-  for block in content:gmatch("<tool_call>(.-)<%s*/tool_call>") do
+  -- If it has <think> block, only look for tools AFTER </think>
+  local actual_content = content
+  local think_end = content:find("</think>", 1, true)
+  if think_end then
+    actual_content = content:sub(think_end + 8)
+  end
+
+  for block in actual_content:gmatch("<tool_call>(.-)<%s*/tool_call>") do
     local ok, tc = pcall(json.decode, block)
     if ok and tc and tc.name and TOOL_HANDLERS[tc.name] then
       calls[#calls+1] = { id = "fb_"..#calls, ["function"] = { name = tc.name, arguments = tc.arguments or {} } }
@@ -707,7 +678,7 @@ local function parse_tool_calls_from_content(content)
     '%{%s*"arguments"%s*:%s*%b{}%s*,%s*"name"%s*:%s*"[^"]+"%s*%}',
   }
   for _, pat in ipairs(json_patterns) do
-    for block in content:gmatch(pat) do
+    for block in actual_content:gmatch(pat) do
       local ok, tc = pcall(json.decode, block)
       if ok and tc and tc.name and TOOL_HANDLERS[tc.name] then
         calls[#calls+1] = { id = "fb_"..#calls, ["function"] = { name = tc.name, arguments = tc.arguments or {} } }
@@ -717,7 +688,7 @@ local function parse_tool_calls_from_content(content)
     if #calls > 0 then dbg("fb", #calls.." bare JSON"); return calls end
   end
 
-  for block in content:gmatch("```json%s*(.-)%s*```") do
+  for block in actual_content:gmatch("```json%s*(.-)%s*```") do
     local ok, tc = pcall(json.decode, block)
     if ok and tc and tc.name and TOOL_HANDLERS[tc.name] then
       calls[#calls+1] = { id = "fb_"..#calls, ["function"] = { name = tc.name, arguments = tc.arguments or {} } }
@@ -766,6 +737,7 @@ end
 local function strip_tool_json(content)
   if not content or content == "" then return "" end
   local s = content
+  s = s:gsub("<think>.-</think>", "")
   s = s:gsub("<tool_call>.-<%s*/tool_call>", "")
   s = s:gsub("```json%s*%b{}%s*```", "")
   s = s:gsub('%{%s*"name"%s*:%s*"[^"]+"%s*,%s*"arguments"%s*:%s*%b{}%s*%}', "")
@@ -858,19 +830,47 @@ end
 local messages = {}
 
 local function trim_messages(max)
-  max = max or 30
+  max = max or 24
   if #messages <= max then return end
-  local trimmed = {}
-  if messages[1] then trimmed[1] = messages[1] end
-  local start = math.max(2, #messages - max + 2)
-  for i = start, #messages do
-    local m = messages[i]
-    if m.role == "tool" and m.content and #m.content > 1500 and i < #messages - 4 then
-      m = { role = m.role, content = m.content:sub(1, 800) .. "\n...[truncated]", tool_call_id = m.tool_call_id }
-    end
-    trimmed[#trimmed+1] = m
+
+  -- Identify the first message to keep (starting from system and early user)
+  local keep_from = #messages - max + 2
+  if keep_from < 2 then keep_from = 2 end
+
+  -- Symmetrical eviction: ensure we don't split an assistant tool call from its results
+  while keep_from < #messages and messages[keep_from].role == "tool" do
+    keep_from = keep_from + 1
   end
-  messages = trimmed
+
+  local evicted = {}
+  local new_messages = { messages[1] } -- Keep system prompt
+
+  -- Summarize what we're evicting
+  local summary_parts = {}
+  for i = 2, keep_from - 1 do
+    local m = messages[i]
+    if m.role == "assistant" and m.tool_calls then
+      for _, tc in ipairs(m.tool_calls) do
+        summary_parts[#summary_parts+1] = (tc["function"] and tc["function"].name or "tool")
+      end
+    end
+  end
+
+  if #summary_parts > 0 then
+    local summary = "[System: Previous actions summarized and evicted from context: " .. table.concat(summary_parts, ", ") .. "]"
+    new_messages[#new_messages+1] = { role = "system", content = summary }
+  end
+
+  for i = keep_from, #messages do
+    local m = messages[i]
+    -- Truncate old large tool results that we are still keeping
+    if m.role == "tool" and m.content and #m.content > 2000 and i < #messages - 4 then
+      m.content = m.content:sub(1, 1000) .. "\n...[truncated]"
+    end
+    new_messages[#new_messages+1] = m
+  end
+
+  messages = new_messages
 end
 
 local function estimate_token_count(msgs)
@@ -1165,7 +1165,8 @@ local function agent_turn(user_msg)
       if not msg then return end
 
     elseif msg.content then
-      local narrating, reason = is_narrating(msg.content)
+      local clean_content = strip_tool_json(msg.content)
+      local narrating, reason = is_narrating(clean_content)
 
       if narrating and nudge_count < 3 then
         nudge_count = nudge_count + 1

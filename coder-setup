@@ -35,7 +35,7 @@ MLOCK_SYSCTL=$(sysctl -n security.bsd.unprivileged_mlock 2>/dev/null || echo 0)
 if [ "$MLOCK_SYSCTL" -ne 1 ]; then
     echo "[fix] sysctl: security.bsd.unprivileged_mlock=1"
     sysctl security.bsd.unprivileged_mlock=1
-    if ! grep -q 'security.bsd.unprivileged_mlock' /etc/sysctl.conf 2>/dev/null; then
+    if ! grep 'security.bsd.unprivileged_mlock' /etc/sysctl.conf > /dev/null 2>&1; then
         echo 'security.bsd.unprivileged_mlock=1' >> /etc/sysctl.conf
     fi
     CHANGED=1

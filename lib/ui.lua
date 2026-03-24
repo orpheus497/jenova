@@ -455,10 +455,10 @@ function ui.file_read_done(size_str)
   ui.status_ok(size_str .. " read")
 end
 
-function ui.file_edit(path, old_len, new_len)
+function ui.file_edit(path, start_line, end_line)
   wflush(
     "  " .. fg(P.green) .. ICONS.edit .. " editing " .. RESET .. path
-    .. fg(P.dim) .. " (-" .. old_len .. "b +" .. new_len .. "b)" .. RESET .. "\n"
+    .. fg(P.dim) .. " (lines " .. start_line .. "-" .. end_line .. ")" .. RESET .. "\n"
   )
 end
 

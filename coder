@@ -2,10 +2,11 @@
 
 # Get the script directory for relative paths
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
+. "$SCRIPT_DIR/etc/coder.conf"
 
 # Paths to the llama-cli and the Qwen 2.5 Coder model
-LLAMA_CLI="$SCRIPT_DIR/llama.cpp/build/bin/llama-cli"
-MODEL_PATH="$SCRIPT_DIR/models/Qwen2.5-Coder-7B-Q5_K_M.gguf"
+LLAMA_CLI="$CODER_ROOT/llama.cpp/build/bin/llama-cli"
+MODEL_PATH="${CODER_MODEL:-$MODEL_7B}"
 
 # System Prompt
 SYSTEM_PROMPT="You are my coding assistant, we are using FreeBSD as our OS."

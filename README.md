@@ -24,7 +24,7 @@ The project is optimized for a dual-tier model hierarchy:
 
 ## ⚙️ Configuration
 Edit `etc/coder.conf` to adjust:
-- `MODEL_PATH`: Primary server model (Default: 14B).
+- `MODEL_PATH`: Primary server model (Default: 7B).
 - `MODEL_7B`: Agent model (Default: 7B).
 - `TENSOR_SPLIT`: Hardware allocation (Optimized for 1650 Ti + Iris Xe).
 - `CODER_DRAFT=1`: Enable speculative decoding (Requires 0.5B model).
@@ -36,12 +36,13 @@ Edit `etc/coder.conf` to adjust:
 
 ## 🖥 Usage
 ```bash
-# Start the backend server (Fast 7B by default, fallback to 14B)
-./bin/coder-server
+# Start the backend server (Fast 7B by default)
+./coder-server
 
 # Run the agent in another terminal
-./bin/coder-agent
+./coder-agent
 ```
 
 ## 📋 Neovim Integration
-Launch `llama-server-nvim.sh` for fast, 7B-powered completions via `llama.vim` or your preferred Neovim plugin.
+The `coder-server` supports multi-slot usage for both the agent and Neovim FIM (Fill-In-Middle) completions simultaneously.
+

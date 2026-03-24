@@ -53,8 +53,11 @@ end
 -------------------------------------------------------------------------------
 local function chunk_text(content)
   local lines = {}
-  for line in (content .. "\n"):gmatch("([^\n]*)\n") do
-    lines[#lines + 1] = line
+  if content ~= "" then
+    local clean_content = content:sub(-1) == "\n" and content:sub(1, -2) or content
+    for line in (clean_content .. "\n"):gmatch("([^\n]*)\n") do
+      lines[#lines + 1] = line
+    end
   end
 
   if #lines == 0 then return {} end
@@ -153,10 +156,13 @@ local function bm25_index_file(filepath)
 
   local lines = {}
   local count = 0
-  for line in content:gmatch("[^\n]+") do
-    count = count + 1
-    if count <= 200 then
-      lines[count] = line
+  if content ~= "" then
+    local clean_content = content:sub(-1) == "\n" and content:sub(1, -2) or content
+    for line in (clean_content .. "\n"):gmatch("([^\n]*)\n") do
+      count = count + 1
+      if count <= 200 then
+        lines[count] = line
+      end
     end
   end
 
@@ -521,7 +527,7 @@ local function extract_snippet(doc, query_terms, max_lines)
   local stop = math.min(#doc.lines, start + max_lines - 1)
   local snippet_lines = {}
   for i = start, stop do
-    snippet_lines[#snippet_lines + 1] = doc.lines[i]
+    snippet_lines[#snippet_lines + 1] = string.format("%4d | %s", i, doc.lines[i])
   end
   return table.concat(snippet_lines, "\n")
 end

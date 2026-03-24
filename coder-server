@@ -17,25 +17,18 @@
 #   - No draft model — 0.5B draft has poor acceptance rate against 14B
 
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
+. "$SCRIPT_DIR/etc/coder.conf"
 
-LLAMA_SERVER="$SCRIPT_DIR/llama.cpp/build/bin/llama-server"
-MODEL_PATH="${CODER_MODEL:-$SCRIPT_DIR/models/Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf}"
-DRAFT_PATH="$SCRIPT_DIR/models/Qwen2.5-Coder-0.5B-Q8_0.gguf"
-
-HOST="${CODER_HOST:-127.0.0.1}"
-PORT="${CODER_PORT:-8080}"
+LLAMA_SERVER="$CODER_ROOT/llama.cpp/build/bin/llama-server"
+MODEL_PATH="${CODER_MODEL:-$MODEL_7B}"
+DRAFT_PATH="${CODER_DRAFT_PATH:-$MODEL_DRAFT}"
 
 # Fix mlock: raise memory lock limit
-# If this still warns, run as root: sysctl security.bsd.unprivileged_mlock=1
 ulimit -l unlimited 2>/dev/null || ulimit -l 8388608 2>/dev/null || true
 
-# Context: 8192 with f16 KV cache — 14B model needs room for multi-turn tool calls
-# 14B Q4_K_M ~9GB model + f16 KV at 8K ~= 640MB = fits across NVIDIA+iGPU
-CTX_SIZE="${CODER_CTX:-8192}"
-
+# Check for model existence
 if [ ! -f "$LLAMA_SERVER" ]; then
     echo "Error: llama-server not found at $LLAMA_SERVER"
-    echo "Build llama.cpp with: cmake -B build -DGGML_VULKAN=ON && cmake --build build -j$(sysctl -n hw.ncpu)"
     exit 1
 fi
 
@@ -44,26 +37,17 @@ if [ ! -f "$MODEL_PATH" ]; then
     exit 1
 fi
 
-echo "Starting llama-server (optimized for GTX 1650 Ti 4GB + Iris Xe)..."
+echo "Starting llama-server (consolidated, optimized for GTX 1650 Ti + Iris Xe)..."
 echo "  Model:   $MODEL_PATH"
-echo "  Context: $CTX_SIZE tokens"
-echo "  Listen:  $HOST:$PORT"
-echo "  GPU:     Vulkan0 (NVIDIA GTX 1650 Ti) + Vulkan1 (Intel Iris Xe)"
-echo "  KV:      f16 (required for JSON accuracy)"
-echo "  Flash:   auto"
+echo "  Slots:   $NUM_SLOTS (supports Agent + Neovim FIM)"
+echo "  Tensor Split: $TENSOR_SPLIT"
+echo ""
 
 DRAFT_ARGS=""
 if [ -f "$DRAFT_PATH" ] && [ -n "$CODER_DRAFT" ]; then
     echo "  Draft:   $DRAFT_PATH (speculative decoding)"
     DRAFT_ARGS="-md $DRAFT_PATH -ngld all --draft-max 16 --draft-min 4 --draft-p-min 0.6"
-else
-    echo "  Draft:   disabled (set CODER_DRAFT=1 to enable)"
 fi
-echo ""
-
-# Tensor split: Intel-heavy for 14B model
-# NVIDIA 1650 Ti (4GB) gets ~35% of layers, Intel Iris Xe (~7GB) gets ~65%
-# This keeps NVIDIA under 4GB with room for KV cache + compute buffers
 
 MLOCK_ARG=""
 MLOCK_LIMIT=$(ulimit -l 2>/dev/null || echo 0)
@@ -73,19 +57,21 @@ fi
 
 exec "$LLAMA_SERVER" \
     -m "$MODEL_PATH" \
-    -dev Vulkan0,Vulkan1 \
+    -dev "$DEVICES" \
     -sm layer \
-    -ts 0.7,1.3 \
+    -ts "$TENSOR_SPLIT" \
     -ngl all \
     -c "$CTX_SIZE" \
     -b 2048 \
     -ub 256 \
-    -np 1 \
-    -t 4 \
-    -tb 6 \
+    -np "$NUM_SLOTS" \
+    -t "$THREADS" \
+    -tb "$THREADS_BATCH" \
     -fa auto \
     $MLOCK_ARG \
     -cb \
+    --spm-infill \
+    --offline \
     --host "$HOST" \
     --port "$PORT" \
     $DRAFT_ARGS \
