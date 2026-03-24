@@ -49,6 +49,10 @@ local SOL_SOCKET = 0xffff
 local SO_RCVTIMEO = 0x1006
 local SO_SNDTIMEO = 0x1005
 
+local EAGAIN      = 35
+local ETIMEDOUT   = 60
+local EINTR       = 4
+
 local http = {}
 
 local function parse_url(url)
@@ -109,6 +113,7 @@ function http.post(url, body, timeout)
   local chunks = {}
   local total_recv = 0
   local stall_count = 0
+  local recv_err = nil
   while true do
     local n = ffi.C.recv(fd, buf, 65536, 0)
     if n > 0 then
@@ -118,15 +123,24 @@ function http.post(url, body, timeout)
     elseif n == 0 then
       break
     else
-      stall_count = stall_count + 1
-      if stall_count >= 2 and total_recv > 0 then
-        break
-      elseif stall_count >= 2 then
+      local err = ffi.errno()
+      if err == EINTR then
+        -- Interrupted, retry immediately
+      elseif err == EAGAIN or err == ETIMEDOUT then
+        stall_count = stall_count + 1
+        if stall_count >= 3 or (stall_count >= 2 and total_recv > 0) then
+          break
+        end
+      else
+        -- Fatal error (e.g., ECONNRESET)
+        recv_err = "recv() fatal error: errno=" .. tostring(err)
         break
       end
     end
   end
   ffi.C.close(fd)
+
+  if recv_err then return 499, recv_err end
 
   local raw = table.concat(chunks)
   if raw == "" then return 0, "empty response (received 0 bytes after send)" end

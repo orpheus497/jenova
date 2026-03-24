@@ -39,6 +39,7 @@ local HOME      = os.getenv("HOME") or "/home/orpheus497"
 local CWD       = nil  -- set in main()
 local HTTP_TIMEOUT = tonumber(os.getenv("CODER_TIMEOUT")) or 600
 local MAX_ACTIONS  = 20
+local CONTEXT_WINDOW = tonumber(os.getenv("CODER_CTX")) or 8192
 
 -- Per-turn state
 local files_written_this_turn = {}
@@ -130,9 +131,51 @@ end
 local rag_context = ""
 local current_user_query = nil
 
+local function assess_complexity(user_input)
+  if not user_input then return "SIMPLE" end
+  local words = 0
+  for _ in user_input:gmatch("%S+") do words = words + 1 end
+
+  local indicators = {
+    "explain", "compare", "analyze", "describe in detail", "step by step",
+    "how does", "why does", "what are the", "difference between", "relationship between",
+    "implement", "refactor", "architect", "design", "rewrite", "port", "debug", "optimize"
+  }
+
+  local has_indicator = false
+  local lower_input = user_input:lower()
+  for _, ind in ipairs(indicators) do
+    if lower_input:find(ind, 1, true) then
+      has_indicator = true
+      break
+    end
+  end
+
+  local question_count = 0
+  for _ in user_input:gmatch("%?") do question_count = question_count + 1 end
+
+  if words > 40 and has_indicator and question_count > 1 then
+    return "VERY_COMPLEX"
+  elseif words > 20 and has_indicator then
+    return "COMPLEX"
+  elseif words > 10 or has_indicator then
+    return "MODERATE"
+  else
+    return "SIMPLE"
+  end
+end
+
 local function build_system_prompt()
   local parts = {}
   parts[#parts+1] = "You are coder, an expert autonomous coding agent on FreeBSD. CWD: " .. (CWD or ".")
+  
+  local complexity = assess_complexity(current_user_query)
+  if complexity == "VERY_COMPLEX" or complexity == "COMPLEX" then
+    parts[#parts+1] = "\nTASK COMPLEXITY: " .. complexity .. ". You should use the 'think' tool to create a multi-step plan before taking any action."
+  elseif complexity == "MODERATE" then
+    parts[#parts+1] = "\nTASK COMPLEXITY: MODERATE. Consider planning your approach before editing files."
+  end
+
   parts[#parts+1] = [[
 
 TOOLS (call ONE per response as JSON):
@@ -807,8 +850,15 @@ end
 
 local function estimate_token_count(msgs)
   local chars = 0
+  if TOOLS then
+    local ok, tools_json = pcall(json.encode, TOOLS)
+    if ok then chars = chars + #tools_json end
+  end
   for _, m in ipairs(msgs) do
+    chars = chars + #(m.role or "")
+    chars = chars + #(m.name or "")
     chars = chars + #(m.content or "")
+    chars = chars + 12 -- Structural overhead per message
   end
   return math.floor(chars / 3.5)
 end
@@ -824,9 +874,8 @@ local function chat(user_msg)
   for _, m in ipairs(messages) do send[#send+1] = m end
 
   local prompt_est = estimate_token_count(send)
-  local max_tok = 4096
-  if prompt_est > 4000 then max_tok = 6144 end
-  if prompt_est > 6000 then max_tok = 8192 end
+  local budget = CONTEXT_WINDOW - prompt_est
+  local max_tok = math.max(0, math.min(budget, 8192)) -- Cap at 8192 or budget
 
   local body = json.encode({
     model = MODEL,
@@ -1233,7 +1282,7 @@ local function main()
       local t0 = os.clock()
       local scode, sout = http.get(API_URL .. "/health", 5)
       local latency = math.floor((os.clock() - t0) * 1000)
-      ui.dimtext("  Server:     "..tostring(scode).." ("..latency.."ms latency)\n")
+      ui.dimtext("  Server:     "..tostring(scode).." ("..latency.."ms, "..(sout or ""):gsub("\n"," "):sub(1,40)..")\n")
       if scode ~= 200 then
         ui.status_err("Server not healthy — check coder-server log")
       end
@@ -1243,12 +1292,11 @@ local function main()
       ui.dimtext("  Max turns:  "..MAX_TURNS.."\n")
       ui.dimtext("  Context:    "..#messages.." messages in history\n")
       -- 3. Context size estimate
-      local sys_prompt = build_system_prompt()
-      local total_chars = #sys_prompt
-      for _, m in ipairs(messages) do total_chars = total_chars + #(m.content or "") end
-      local est_tokens = math.floor(total_chars / 3.5)
-      ui.dimtext("  Est tokens: ~"..est_tokens.." ("..total_chars.." chars)\n")
-      if est_tokens > 6000 then
+      local diag_send = {{ role = "system", content = build_system_prompt() }}
+      for _, m in ipairs(messages) do diag_send[#diag_send+1] = m end
+      local est_tokens = estimate_token_count(diag_send)
+      ui.dimtext("  Est tokens: ~"..est_tokens.." (limit "..CONTEXT_WINDOW..")\n")
+      if est_tokens > (CONTEXT_WINDOW * 0.75) then
         ui.status_warn("context is large — may cause slow/truncated responses. Consider /clear")
       end
       -- 4. Session errors
@@ -1278,7 +1326,7 @@ local function main()
       if gcode == 200 then
         local gok, gdata = pcall(json.decode, gresp)
         if gok and gdata and gdata.choices then
-          local gmsg = gdata.choices[1].message
+          local _ = gdata.choices[1].message
           local gtok = (gdata.usage or {}).completion_tokens or "?"
           ui.dimtext("OK ("..gtime.."ms, "..tostring(gtok).." tokens)\n")
         else
