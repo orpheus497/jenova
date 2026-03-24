@@ -179,7 +179,7 @@ local function build_system_prompt()
   parts[#parts+1] = [[
 
 TOOLS (call ONE per response as JSON):
-  shell(command)       — Run shell commands: compile, test, diagnose, install (pkg, not apt).
+  shell(command)       — Run shell commands: compile, test, diagnose.
   read_file(path)      — Read a file's contents. ALWAYS do this before editing.
   edit_file(path, old, new) — Replace exact text. old must match file content exactly.
   write_file(path, content) — Create/overwrite entire file. Use for NEW files only.
@@ -193,7 +193,7 @@ RESPONSE FORMAT — respond ONLY with a JSON tool call:
 WORKFLOW: Plan → Execute → Reflect
 1. THINK first — plan your approach. Identify what you need to learn/verify.
 2. READ before editing — never guess at file content.
-3. VERIFY — check headers exist, libraries installed, code compiles.
+3. VERIFY — check headers exist and code compiles. Do NOT install new packages.
 4. EDIT precisely — copy exact whitespace from read_file output.
 5. VALIDATE — compile/test after changes. If errors, fix immediately.
 6. REFLECT — if something failed, try a DIFFERENT approach. Do NOT repeat.
@@ -201,7 +201,9 @@ WORKFLOW: Plan → Execute → Reflect
 
 CRITICAL:
 - ONLY call tools. No narration, explanation, or code blocks.
-- FreeBSD: use pkg (not apt), cc (not gcc), /usr/local/include for ports.
+- DO NOT perform system administration, sudo actions, or package installations (pkg install).
+- Focus on implementing logic using the libraries and headers already present on the system.
+- FreeBSD: use cc (not gcc), /usr/local/include for ports.
 - If an action already failed (shown below), try something DIFFERENT.
 - Fix root causes, not symptoms.]]
 
@@ -811,12 +813,12 @@ local function http_post_retry(url, body, label, max_retries)
       if attempt < max_retries then
         ui.status_warn(label.." timeout, retry "..attempt.."/"..max_retries)
         memory.log("retry", { label = label, attempt = attempt, code = code })
-        os.execute("sleep 2")
+        ui.nonblocking_wait(2, "retrying ("..label..")")
       end
     elseif code >= 500 then
       if attempt < max_retries then
         ui.status_warn(label.." HTTP "..code..", retry "..attempt.."/"..max_retries)
-        os.execute("sleep 1")
+        ui.nonblocking_wait(1, "retrying ("..label..")")
       end
     else
       return code, resp
@@ -875,7 +877,7 @@ local function chat(user_msg)
 
   local prompt_est = estimate_token_count(send)
   local budget = CONTEXT_WINDOW - prompt_est
-  local max_tok = math.max(0, math.min(budget, 8192)) -- Cap at 8192 or budget
+  local max_tok = math.max(1, math.min(budget, 8192)) -- Cap at 8192 or budget, minimum 1
 
   local body = json.encode({
     model = MODEL,

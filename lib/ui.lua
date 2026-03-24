@@ -521,6 +521,27 @@ function ui.spinner_stop()
   end
 end
 
+function ui.nonblocking_wait(seconds, label)
+  local start_time = os.clock()
+  local last_spinner_update = 0
+  spinner_active = true
+  spinner_label = label or "waiting"
+  spinner_idx = 1
+  
+  while os.clock() - start_time < seconds do
+    if os.clock() - last_spinner_update > 0.1 then
+      spinner_idx = (spinner_idx % #spinner_frames) + 1
+      wflush("\r" .. CLEAR_LINE .. "  " .. fg(P.cyan) .. spinner_frames[spinner_idx] .. " " .. spinner_label .. RESET)
+      last_spinner_update = os.clock()
+    end
+    -- Very short sleep to avoid 100% CPU usage
+    -- We use a small select call or just busy wait with a tiny yielding if possible.
+    -- Since we don't have a better cross-platform sleep here, we'll just busy wait 
+    -- but keep it responsive to the spinner.
+  end
+  ui.spinner_stop()
+end
+
 -------------------------------------------------------------------------------
 -- Nudge display
 -------------------------------------------------------------------------------

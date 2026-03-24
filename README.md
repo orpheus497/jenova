@@ -1,7 +1,7 @@
 # coder — Autonomous Local Coding Agent
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
-[![Platform: FreeBSD](https://img.shields.io/badge/Platform-FreeBSD-red.svg)](#)
+[![Platform: FreeBSD](https://img.shields.io/badge/Platform-FreeBSD-red.svg)](#-quick-start-freebsd)
 
 **coder** is a high-performance, autonomous coding assistant designed to run entirely on your local machine. Built with a focus on privacy, reliability, and deep system integration, it leverages the power of **LuaJIT**, **Vulkan**, and **GGUF-based LLMs** to provide a seamless agentic experience without the need for cloud dependencies.
 
@@ -53,23 +53,29 @@ Following Jenova's focus on efficient context management:
 ## 🚀 Quick Start (FreeBSD)
 
 ### 1. Prerequisites
+
 Ensure you have the necessary system-level dependencies:
+
 ```sh
 # Install dependencies via pkg
 pkg install luajit-openresty vulkan-loader vulkan-headers nvidia-driver pkgconf
 ```
 
 ### 2. Configure System
+
 For userspace `mlock` (required by `llama.cpp` for performance):
+
 ```sh
 sysctl security.bsd.unprivileged_mlock=1
 # Add to /etc/sysctl.conf for persistence
 ```
 
 ### 3. Launch
+
 ```sh
 ./bin/coder-agent
 ```
+
 *This will start the local llama-server and enter the agent REPL.*
 
 ---
@@ -108,7 +114,7 @@ Optimized for mid-range hardware with a focus on heterogeneous compute:
 
 ## 📜 License
 
-This project is licensed under the **GNU Affero General Public License v3 (AGPL-3.0)**. 
+This project is licensed under the **GNU Affero General Public License v3 (AGPL-3.0)**.
 
 The AGPL is chosen to ensure that the spirit of local, open-source AI is preserved. If you modify this software and run it over a network, you must make your source code available to your users. See the [LICENSE](LICENSE) file for details.
 

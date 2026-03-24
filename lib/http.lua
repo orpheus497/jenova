@@ -41,6 +41,7 @@ ffi.cdef[[
   int setsockopt(int sockfd, int level, int optname, const void *optval, socklen_t optlen);
   in_addr_t inet_addr(const char *cp);
   uint16_t htons(uint16_t hostshort);
+  char *strerror(int errnum);
 ]]
 
 local AF_INET = 2
@@ -49,11 +50,21 @@ local SOL_SOCKET = 0xffff
 local SO_RCVTIMEO = 0x1006
 local SO_SNDTIMEO = 0x1005
 
+-- Platform-specific errnos (FreeBSD defaults, but we'll use ffi.errno where possible)
 local EAGAIN      = 35
 local ETIMEDOUT   = 60
 local EINTR       = 4
+local EWOULDBLOCK = EAGAIN
 
 local http = {}
+
+local function get_errno()
+  return ffi.errno()
+end
+
+local function get_errstr(err)
+  return ffi.string(ffi.C.strerror(err or ffi.errno()))
+end
 
 local function parse_url(url)
   local host, port, path = url:match("^https?://([^:/%s]+):(%d+)(.*)")
@@ -115,6 +126,7 @@ function http.post(url, body, timeout)
   local stall_count = 0
   local recv_err = nil
   while true do
+    ::retry_post::
     local n = ffi.C.recv(fd, buf, 65536, 0)
     if n > 0 then
       chunks[#chunks + 1] = ffi.string(buf, n)
@@ -123,17 +135,18 @@ function http.post(url, body, timeout)
     elseif n == 0 then
       break
     else
-      local err = ffi.errno()
+      local err = get_errno()
       if err == EINTR then
-        -- Interrupted, retry immediately
-      elseif err == EAGAIN or err == ETIMEDOUT then
+        goto retry_post
+      elseif err == EAGAIN or err == EWOULDBLOCK or err == ETIMEDOUT then
         stall_count = stall_count + 1
         if stall_count >= 3 or (stall_count >= 2 and total_recv > 0) then
           break
         end
+        os.execute("sleep 0.1")
       else
         -- Fatal error (e.g., ECONNRESET)
-        recv_err = "recv() fatal error: errno=" .. tostring(err)
+        recv_err = "recv() fatal error: " .. get_errstr(err) .. " (errno=" .. tostring(err) .. ")"
         break
       end
     end
@@ -215,14 +228,40 @@ function http.get(url, timeout)
 
   local buf = ffi.new("char[8192]")
   local chunks = {}
+  local total_recv = 0
+  local stall_count = 0
+  local recv_err = nil
   while true do
+    ::retry_get::
     local n = ffi.C.recv(fd, buf, 8192, 0)
-    if n <= 0 then break end
-    chunks[#chunks + 1] = ffi.string(buf, n)
+    if n > 0 then
+      chunks[#chunks + 1] = ffi.string(buf, n)
+      total_recv = total_recv + tonumber(n)
+      stall_count = 0
+    elseif n == 0 then
+      break
+    else
+      local err = get_errno()
+      if err == EINTR then
+        goto retry_get
+      elseif err == EAGAIN or err == EWOULDBLOCK or err == ETIMEDOUT then
+        stall_count = stall_count + 1
+        if stall_count >= 3 or (stall_count >= 2 and total_recv > 0) then
+          break
+        end
+        os.execute("sleep 0.1")
+      else
+        recv_err = "recv() fatal error: " .. get_errstr(err) .. " (errno=" .. tostring(err) .. ")"
+        break
+      end
+    end
   end
   ffi.C.close(fd)
 
+  if recv_err then return 499, recv_err end
+
   local raw = table.concat(chunks)
+  if raw == "" then return 0, "empty response" end
   local status_code = tonumber(raw:match("HTTP/%d%.%d%s+(%d+)")) or 0
   local header_end = raw:find("\r\n\r\n")
   local resp_body = header_end and raw:sub(header_end + 4) or ""
