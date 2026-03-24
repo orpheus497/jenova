@@ -62,7 +62,7 @@ Optimized for: **i5-1135G7 / GTX 1650 Ti 4GB / Intel Iris Xe ~7GB / 16GB RAM**
 
 ## REPL Commands
 
-`/clear` `/history` `/debug` `/context` `/reindex` `/files` `/search` `/errors` `/bench` `/stats` `/quit`
+`/clear` `/history` `/debug` `/context` `/reindex` `/files` `/search` `/errors` `/bench` `/stats` `/diag` `/quit`
 
 ## mlock
 

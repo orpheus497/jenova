@@ -758,8 +758,34 @@ local function http_post(url, body)
   return http.post(url, body, HTTP_TIMEOUT)
 end
 
+local function http_post_retry(url, body, label, max_retries)
+  max_retries = max_retries or 2
+  local code, resp
+  for attempt = 1, max_retries do
+    code, resp = http.post(url, body, HTTP_TIMEOUT)
+    if code == 200 then return code, resp end
+    if code == 0 then
+      if attempt < max_retries then
+        ui.status_warn(label.." timeout, retry "..attempt.."/"..max_retries)
+        memory.log("retry", { label = label, attempt = attempt, code = code })
+        os.execute("sleep 2")
+      end
+    elseif code >= 500 then
+      if attempt < max_retries then
+        ui.status_warn(label.." HTTP "..code..", retry "..attempt.."/"..max_retries)
+        os.execute("sleep 1")
+      end
+    else
+      return code, resp
+    end
+  end
+  return code, resp
+end
+
 -------------------------------------------------------------------------------
 -- Chat API — v2: rebuilds system prompt each turn with fresh session context
+-- v2.1: retry on timeout/5xx, higher max_tokens, truncation detection,
+--        response diagnostics on every failure path
 -------------------------------------------------------------------------------
 local messages = {}
 
@@ -779,6 +805,14 @@ local function trim_messages(max)
   messages = trimmed
 end
 
+local function estimate_token_count(msgs)
+  local chars = 0
+  for _, m in ipairs(msgs) do
+    chars = chars + #(m.content or "")
+  end
+  return math.floor(chars / 3.5)
+end
+
 local function chat(user_msg)
   if user_msg then
     messages[#messages+1] = { role = "user", content = user_msg }
@@ -789,42 +823,71 @@ local function chat(user_msg)
   local send = {{ role = "system", content = build_system_prompt() }}
   for _, m in ipairs(messages) do send[#send+1] = m end
 
+  local prompt_est = estimate_token_count(send)
+  local max_tok = 4096
+  if prompt_est > 4000 then max_tok = 6144 end
+  if prompt_est > 6000 then max_tok = 8192 end
+
   local body = json.encode({
     model = MODEL,
     messages = send,
     tools = TOOLS,
     tool_choice = "auto",
     temperature = 0.6,
-    max_tokens = 4096,
+    max_tokens = max_tok,
   })
-  dbg("req", body)
+  dbg("req", "prompt_est="..prompt_est.." max_tokens="..max_tok.." body_len="..#body)
 
   spinner_start("thinking")
-  local code, resp = http_post(ENDPOINT, body)
+  local code, resp = http_post_retry(ENDPOINT, body, "chat", 3)
   spinner_stop()
   dbg("resp-code", tostring(code))
   dbg("resp-body", resp)
 
   if code == 0 then
-    ui.status_err("timeout ("..HTTP_TIMEOUT.."s)")
+    local diag = string.format("timeout after %ds (prompt ~%d tok, max_tokens=%d, body=%db)",
+      HTTP_TIMEOUT, prompt_est, max_tok, #body)
+    ui.status_err(diag)
+    memory.log_error("chat", "timeout", diag)
+    ui.diagnostic("Tip: try /clear to reduce context, or check GPU utilization with /stats")
     return nil
   end
   if code ~= 200 then
-    ui.status_err("HTTP "..code)
-    dbg("http-err", resp:sub(1,500))
+    ui.status_err("HTTP "..code.." ("..#resp.."b)")
+    ui.diagnostic(resp:sub(1, 300))
+    memory.log_error("chat", "http_"..code, resp:sub(1, 200))
     return nil
   end
 
   local ok, data = pcall(json.decode, resp)
-  if not ok or not data or not data.choices or #data.choices == 0 then
-    ui.status_err("bad response")
+  if not ok or not data then
+    ui.status_err("JSON decode failed ("..#resp.."b response)")
+    ui.diagnostic("First 200 chars: "..resp:sub(1, 200))
+    ui.diagnostic("Last 200 chars: "..resp:sub(-200))
+    memory.log_error("chat", "json_fail", "len="..#resp.." start="..resp:sub(1,80))
+    return nil
+  end
+  if not data.choices or #data.choices == 0 then
+    ui.status_err("no choices in response")
     dbg("bad-resp", resp:sub(1, 500))
     return nil
   end
 
+  local finish_reason = data.choices[1].finish_reason or "unknown"
+  local usage = data.usage or {}
+  local pt = usage.prompt_tokens or "?"
+  local ct = usage.completion_tokens or "?"
+
+  if finish_reason == "length" then
+    ui.status_warn("response truncated (hit max_tokens="..max_tok..")")
+    ui.diagnostic("prompt="..tostring(pt).." completion="..tostring(ct).." — model ran out of generation space")
+    memory.log_error("chat", "truncated", "max_tokens="..max_tok.." pt="..tostring(pt).." ct="..tostring(ct))
+  end
+
   local msg = data.choices[1].message
   if not msg then
-    ui.status_err("no message")
+    ui.status_err("no message in response (finish="..finish_reason..")")
+    ui.diagnostic("prompt_tokens="..tostring(pt).." completion_tokens="..tostring(ct))
     return nil
   end
 
@@ -832,13 +895,9 @@ local function chat(user_msg)
   local has_tools = msg.tool_calls and #msg.tool_calls > 0
   if not has_content and not has_tools then
     ui.status_warn("empty response from model")
-    local fr = data.choices[1].finish_reason or "unknown"
-    local pt = (data.usage or {}).prompt_tokens or "?"
-    local ct = (data.usage or {}).completion_tokens or "?"
-    ui.diagnostic("finish_reason="..fr..", prompt_tokens="..tostring(pt)..", completion_tokens="..tostring(ct))
-    memory.log_error("chat", "empty_response", "finish="..fr.." pt="..tostring(pt).." ct="..tostring(ct))
+    ui.diagnostic("finish_reason="..finish_reason..", prompt_tokens="..tostring(pt)..", completion_tokens="..tostring(ct))
+    memory.log_error("chat", "empty_response", "finish="..finish_reason.." pt="..tostring(pt).." ct="..tostring(ct))
 
-    -- Single retry with a direct nudge
     local retry_msgs = {}
     for _, m in ipairs(send) do retry_msgs[#retry_msgs+1] = m end
     retry_msgs[#retry_msgs+1] = {
@@ -852,10 +911,10 @@ local function chat(user_msg)
       tools = TOOLS,
       tool_choice = "auto",
       temperature = 0.7,
-      max_tokens = 4096,
+      max_tokens = max_tok,
     })
     spinner_start("retrying")
-    local rcode, rresp = http_post(ENDPOINT, retry_body)
+    local rcode, rresp = http_post_retry(ENDPOINT, retry_body, "retry", 2)
     spinner_stop()
     if rcode == 200 then
       local rok, rdata = pcall(json.decode, rresp)
@@ -873,12 +932,19 @@ local function chat(user_msg)
     end
 
     ui.status_err("model unable to generate — try /clear and rephrase")
+    ui.diagnostic("Context may be too large ("..tostring(pt).." prompt tokens). Use /clear or simplify your request.")
     return nil
   end
 
   messages[#messages+1] = msg
-  memory.log("assistant", { content = (msg.content or ""):sub(1,200), has_tc = msg.tool_calls ~= nil })
-  return msg, data.choices[1].finish_reason
+  memory.log("assistant", {
+    content = (msg.content or ""):sub(1,200),
+    has_tc = msg.tool_calls ~= nil,
+    finish = finish_reason,
+    prompt_tok = pt,
+    comp_tok = ct,
+  })
+  return msg, finish_reason
 end
 
 -------------------------------------------------------------------------------
@@ -1078,7 +1144,7 @@ local function main()
   ui.separator("session")
   ui.draw_commands({
     "/clear", "/history", "/debug", "/context", "/reindex", "/files",
-    "/search", "/errors", "/learn", "/plan", "/prefs", "/bench", "/stats", "/quit",
+    "/search", "/errors", "/learn", "/plan", "/prefs", "/bench", "/stats", "/diag", "/quit",
   })
 
   while true do
@@ -1160,6 +1226,68 @@ local function main()
       local mp = io.popen("nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu --format=csv,noheader 2>/dev/null")
       local mout = mp:read("*a"); mp:close()
       if mout and mout ~= "" then ui.dimtext("  GPU: "..mout:gsub("\n","").."\n") end
+      goto continue
+    elseif line == "/diag" then
+      ui.boldtext("\n  === DIAGNOSTICS ===\n\n")
+      -- 1. Server health
+      local t0 = os.clock()
+      local scode, sout = http.get(API_URL .. "/health", 5)
+      local latency = math.floor((os.clock() - t0) * 1000)
+      ui.dimtext("  Server:     "..tostring(scode).." ("..latency.."ms latency)\n")
+      if scode ~= 200 then
+        ui.status_err("Server not healthy — check coder-server log")
+      end
+      -- 2. Config
+      ui.dimtext("  Endpoint:   "..ENDPOINT.."\n")
+      ui.dimtext("  Timeout:    "..HTTP_TIMEOUT.."s\n")
+      ui.dimtext("  Max turns:  "..MAX_TURNS.."\n")
+      ui.dimtext("  Context:    "..#messages.." messages in history\n")
+      -- 3. Context size estimate
+      local sys_prompt = build_system_prompt()
+      local total_chars = #sys_prompt
+      for _, m in ipairs(messages) do total_chars = total_chars + #(m.content or "") end
+      local est_tokens = math.floor(total_chars / 3.5)
+      ui.dimtext("  Est tokens: ~"..est_tokens.." ("..total_chars.." chars)\n")
+      if est_tokens > 6000 then
+        ui.status_warn("context is large — may cause slow/truncated responses. Consider /clear")
+      end
+      -- 4. Session errors
+      local errs = memory.get_errors(5)
+      ui.dimtext("  Errors:     "..#errs.." this session\n")
+      for _, e in ipairs(errs) do
+        ui.dimtext("    - ["..( e.tool or "?").."] "..(e.error or ""):sub(1,80).."\n")
+      end
+      -- 5. GPU
+      local mp2 = io.popen("nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu,temperature.gpu --format=csv,noheader 2>/dev/null")
+      local mout2 = mp2:read("*a"); mp2:close()
+      if mout2 and mout2 ~= "" then
+        ui.dimtext("  GPU(NV):    "..mout2:gsub("\n","").."\n")
+      end
+      -- 6. Quick generation test
+      ui.dimtext("  Gen test:   ")
+      io.flush()
+      local test_body = json.encode({
+        model = MODEL,
+        messages = {{ role = "user", content = "Reply with exactly: OK" }},
+        max_tokens = 8,
+        temperature = 0.0,
+      })
+      local gt0 = os.clock()
+      local gcode, gresp = http.post(ENDPOINT, test_body, 30)
+      local gtime = math.floor((os.clock() - gt0) * 1000)
+      if gcode == 200 then
+        local gok, gdata = pcall(json.decode, gresp)
+        if gok and gdata and gdata.choices then
+          local gmsg = gdata.choices[1].message
+          local gtok = (gdata.usage or {}).completion_tokens or "?"
+          ui.dimtext("OK ("..gtime.."ms, "..tostring(gtok).." tokens)\n")
+        else
+          ui.dimtext("FAIL — bad JSON ("..gtime.."ms)\n")
+        end
+      else
+        ui.dimtext("FAIL — HTTP "..gcode.." ("..gtime.."ms)\n")
+      end
+      ui.boldtext("\n  === END DIAGNOSTICS ===\n\n")
       goto continue
     end
 

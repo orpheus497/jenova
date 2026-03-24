@@ -107,15 +107,29 @@ function http.post(url, body, timeout)
 
   local buf = ffi.new("char[65536]")
   local chunks = {}
+  local total_recv = 0
+  local stall_count = 0
   while true do
     local n = ffi.C.recv(fd, buf, 65536, 0)
-    if n <= 0 then break end
-    chunks[#chunks + 1] = ffi.string(buf, n)
+    if n > 0 then
+      chunks[#chunks + 1] = ffi.string(buf, n)
+      total_recv = total_recv + tonumber(n)
+      stall_count = 0
+    elseif n == 0 then
+      break
+    else
+      stall_count = stall_count + 1
+      if stall_count >= 2 and total_recv > 0 then
+        break
+      elseif stall_count >= 2 then
+        break
+      end
+    end
   end
   ffi.C.close(fd)
 
   local raw = table.concat(chunks)
-  if raw == "" then return 0, "empty response" end
+  if raw == "" then return 0, "empty response (received 0 bytes after send)" end
 
   local status_code = tonumber(raw:match("HTTP/%d%.%d%s+(%d+)")) or 0
   local header_end = raw:find("\r\n\r\n")
