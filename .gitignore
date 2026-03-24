@@ -1,0 +1,10 @@
+models/
+llama.cpp/
+.coder/
+var/
+backups/
+*.gguf
+*.bin
+*.o
+*.so
+.env

@@ -1,0 +1,40 @@
+#!/bin/sh
+
+# llama-server-nvim: Launch llama-server for Neovim llama.vim FIM completions
+# Port 8012 (llama.vim default), separate from agent on 8080
+# Optimized for FreeBSD 15 with GTX 1650 Ti (Vulkan)
+
+SCRIPT_DIR=$(dirname "$(realpath "$0")")
+. "$SCRIPT_DIR/../etc/coder.conf"
+
+MODEL_PATH="${MODEL_PRIMARY}"
+
+if [ ! -f "$LLAMA_SERVER" ]; then
+    echo "Error: llama-server not found at $LLAMA_SERVER"
+    exit 1
+fi
+
+if [ ! -f "$MODEL_PATH" ]; then
+    echo "Error: Model not found at $MODEL_PATH"
+    exit 1
+fi
+
+exec "$LLAMA_SERVER" \
+    -m "$MODEL_PATH" \
+    -dev "$DEVICES" \
+    -ngl all \
+    -sm layer \
+    -ts "$TENSOR_SPLIT" \
+    --host 127.0.0.1 \
+    --port 8012 \
+    -c 8192 \
+    -b 512 \
+    -ub 256 \
+    -t "$THREADS" \
+    -tb "$THREADS_BATCH" \
+    -fa auto \
+    --mlock \
+    -cb \
+    --spm-infill \
+    --offline \
+    "$@"

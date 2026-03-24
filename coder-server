@@ -1,0 +1,92 @@
+#!/bin/sh
+
+# coder-server: Launch llama-server for local coding agent
+# Optimized for: FreeBSD 15 | i5-1135G7 (8 threads) | GTX 1650 Ti 4GB | Intel Xe ~7GB | 16GB RAM
+#
+# Key optimizations:
+#   - Multi-GPU (Vulkan0/NVIDIA + Vulkan1/Iris Xe) — split 14B across both GPUs
+#   - Tensor split: 0.7 (NVIDIA) : 1.3 (Intel Iris) — Intel-heavy for 14B model
+#   - Context 8192 — enough for multi-turn tool calling without truncation
+#   - KV cache f16 — q4_0 corrupts JSON generation, f16 is required
+#   - Flash attention enabled — faster attention, lower VRAM
+#   - mlock enabled — prevents OS swapping model pages
+#   - Threads tuned to physical cores (4) not logical (8)
+#   - Batch threads higher (6) for faster prompt processing
+#   - No server-level sampling overrides — agent controls per-request
+#   - Single slot (-np 1) — no parallel overhead on constrained VRAM
+#   - No draft model — 0.5B draft has poor acceptance rate against 14B
+
+SCRIPT_DIR=$(dirname "$(realpath "$0")")
+
+LLAMA_SERVER="$SCRIPT_DIR/llama.cpp/build/bin/llama-server"
+MODEL_PATH="${CODER_MODEL:-$SCRIPT_DIR/models/Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf}"
+DRAFT_PATH="$SCRIPT_DIR/models/Qwen2.5-Coder-0.5B-Q8_0.gguf"
+
+HOST="${CODER_HOST:-127.0.0.1}"
+PORT="${CODER_PORT:-8080}"
+
+# Fix mlock: raise memory lock limit
+# If this still warns, run as root: sysctl security.bsd.unprivileged_mlock=1
+ulimit -l unlimited 2>/dev/null || ulimit -l 8388608 2>/dev/null || true
+
+# Context: 8192 with f16 KV cache — 14B model needs room for multi-turn tool calls
+# 14B Q4_K_M ~9GB model + f16 KV at 8K ~= 640MB = fits across NVIDIA+iGPU
+CTX_SIZE="${CODER_CTX:-8192}"
+
+if [ ! -f "$LLAMA_SERVER" ]; then
+    echo "Error: llama-server not found at $LLAMA_SERVER"
+    echo "Build llama.cpp with: cmake -B build -DGGML_VULKAN=ON && cmake --build build -j$(sysctl -n hw.ncpu)"
+    exit 1
+fi
+
+if [ ! -f "$MODEL_PATH" ]; then
+    echo "Error: Model not found at $MODEL_PATH"
+    exit 1
+fi
+
+echo "Starting llama-server (optimized for GTX 1650 Ti 4GB + Iris Xe)..."
+echo "  Model:   $MODEL_PATH"
+echo "  Context: $CTX_SIZE tokens"
+echo "  Listen:  $HOST:$PORT"
+echo "  GPU:     Vulkan0 (NVIDIA GTX 1650 Ti) + Vulkan1 (Intel Iris Xe)"
+echo "  KV:      f16 (required for JSON accuracy)"
+echo "  Flash:   auto"
+
+DRAFT_ARGS=""
+if [ -f "$DRAFT_PATH" ] && [ -n "$CODER_DRAFT" ]; then
+    echo "  Draft:   $DRAFT_PATH (speculative decoding)"
+    DRAFT_ARGS="-md $DRAFT_PATH -ngld all --draft-max 16 --draft-min 4 --draft-p-min 0.6"
+else
+    echo "  Draft:   disabled (set CODER_DRAFT=1 to enable)"
+fi
+echo ""
+
+# Tensor split: Intel-heavy for 14B model
+# NVIDIA 1650 Ti (4GB) gets ~35% of layers, Intel Iris Xe (~7GB) gets ~65%
+# This keeps NVIDIA under 4GB with room for KV cache + compute buffers
+
+MLOCK_ARG=""
+MLOCK_LIMIT=$(ulimit -l 2>/dev/null || echo 0)
+if [ "$MLOCK_LIMIT" = "unlimited" ] || [ "$MLOCK_LIMIT" -gt 2097152 ] 2>/dev/null; then
+    MLOCK_ARG="--mlock"
+fi
+
+exec "$LLAMA_SERVER" \
+    -m "$MODEL_PATH" \
+    -dev Vulkan0,Vulkan1 \
+    -sm layer \
+    -ts 0.7,1.3 \
+    -ngl all \
+    -c "$CTX_SIZE" \
+    -b 2048 \
+    -ub 256 \
+    -np 1 \
+    -t 4 \
+    -tb 6 \
+    -fa auto \
+    $MLOCK_ARG \
+    -cb \
+    --host "$HOST" \
+    --port "$PORT" \
+    $DRAFT_ARGS \
+    "$@"
