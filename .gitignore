@@ -1,10 +1,42 @@
-models/
-llama.cpp/
-.coder/
-var/
-backups/
-*.gguf
-*.bin
+# --- IDE & System ---
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
+*.bak
+*.tmp
+
+# --- Build & Binaries ---
+/llama.cpp/build/
+/bin/
 *.o
 *.so
+*.a
+*.gguf
+/models/*
+!/models/.gitkeep
+
+# --- Coder Runtime (Private Data) ---
+/.coder/
+/.crush/
+/var/log/*
+/var/cache/*
+/backups/
+!/var/log/.gitkeep
+!/var/cache/.gitkeep
+
+# --- Secrets & Configs ---
 .env
+.env.*
+*.pem
+*.key
+id_rsa
+id_ed25519
+/etc/coder.conf.local
+
+# --- Python & Node ---
+__pycache__/
+node_modules/
+venv/
+.venv/

@@ -1,12 +1,6 @@
 #!/bin/sh
-
 # coder-server: Launch llama-server for the coder agent
-# Optimized for: FreeBSD 15 | i5-1135G7 | GTX 1650 Ti 4GB | Intel Xe ~7GB | 16GB RAM
-#
-# Usage:
-#   ./bin/coder-server                        # default: Q4_K_M, 8192 ctx
-#   CODER_MODEL=path/to/model ./bin/coder-server  # override model
-#   CODER_DRAFT=1 ./bin/coder-server          # enable speculative decoding
+# Optimized for: FreeBSD 15 | GTX 1650 Ti 4GB | Intel Iris Xe ~7GB
 
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 . "$SCRIPT_DIR/../etc/coder.conf"
@@ -25,7 +19,12 @@ fi
 
 if [ ! -f "$MODEL_PATH" ]; then
     echo "Error: Model not found at $MODEL_PATH"
-    exit 1
+    echo "Attempting to fall back to 14B..."
+    MODEL_PATH="$MODEL_14B"
+    if [ ! -f "$MODEL_PATH" ]; then
+        echo "Error: 14B model also missing."
+        exit 1
+    fi
 fi
 
 echo "Starting llama-server (GTX 1650 Ti 4GB + Iris Xe)..."
@@ -37,11 +36,12 @@ echo "  KV:      f16 (required for JSON accuracy)"
 echo "  Flash:   auto"
 
 DRAFT_ARGS=""
-if [ -f "$MODEL_DRAFT" ] && [ -n "$CODER_DRAFT" ]; then
-    echo "  Draft:   $MODEL_DRAFT (speculative decoding)"
+if [ -f "$MODEL_DRAFT" ]; then
+    echo "  Draft:   $MODEL_DRAFT (speculative decoding ENABLED)"
+    # Speculative decoding for extreme speed (15-30 tok/s on 7B)
     DRAFT_ARGS="-md $MODEL_DRAFT -ngld all --draft-max 16 --draft-min 4 --draft-p-min 0.6"
 else
-    echo "  Draft:   disabled (set CODER_DRAFT=1 to enable)"
+    echo "  Draft:   disabled (0.5B model missing at $MODEL_DRAFT)"
 fi
 echo ""
 

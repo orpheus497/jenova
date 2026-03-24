@@ -263,6 +263,13 @@ local TOOLS = {
         top_k = { type = "number", description = "Results (default: 5)" } },
       required = { "query" } } } },
   { type = "function", ["function"] = {
+    name = "grep_search", description = "Search for an exact string in the project using grep.",
+    parameters = { type = "object",
+      properties = {
+        pattern = { type = "string", description = "Exact string or regex to find" },
+        include = { type = "string", description = "Glob pattern for files to include (e.g. *.c)" } },
+      required = { "pattern" } } } },
+  { type = "function", ["function"] = {
     name = "think",
     description = "Reason about a problem before acting. Use when you need to plan. Output is NOT shown to user.",
     parameters = { type = "object",
@@ -432,25 +439,28 @@ local function exec_edit_file(args)
 
     s, e = content:find(actual_old, 1, true)
     if not s then
-      return "error: fuzzy match failed in "..path..". Use read_file to check content.", false
-    end
-  end
-
-  local bk_f = io.open(path, "r")
-  if bk_f then
-    local bk_data = bk_f:read("*a"); bk_f:close()
-    local bk_dir = (CWD or ".") .. "/.coder/backups"
-    os.execute(string.format("mkdir -p %q", bk_dir))
-    local bn = path:match("([^/]+)$") or path
-    local ts = os.date("%H%M%S")
-    local bk_path = bk_dir .. "/" .. bn .. "." .. ts
-    local bk_out = io.open(bk_path, "w")
-    if bk_out then bk_out:write(bk_data); bk_out:close()
-      ui.file_backup(bk_path)
+      return "error: fuzzy match failed in "..path..". Provide more context around the change.", false
     end
   end
 
   local new_content = content:sub(1, s-1) .. new_text .. content:sub(e+1)
+  if new_content == content then
+    return "ok: no changes needed (content already matches)", true
+  end
+
+  -- Backup before writing
+  local bk_dir = (CWD or ".") .. "/.coder/backups"
+  os.execute(string.format("mkdir -p %q", bk_dir))
+  local bn = path:match("([^/]+)$") or path
+  local ts = os.date("%Y%m%d_%H%M%S")
+  local bk_path = bk_dir .. "/" .. bn .. "." .. ts
+  local bk_out = io.open(bk_path, "w")
+  if bk_out then 
+    bk_out:write(content)
+    bk_out:close()
+    ui.file_backup(bk_path)
+  end
+
   ui.file_edit(path, #old_text, #new_text)
 
   local dir = path:match("^(.+)/[^/]+$")
@@ -572,6 +582,18 @@ local function exec_search_files(args)
   return search.format_results(results), true
 end
 
+local function exec_grep_search(args)
+  local pattern = args.pattern
+  if not pattern or pattern == "" then return "error: no pattern", false end
+  local include = args.include or "*"
+  ui.file_search("grep: " .. pattern)
+  local cmd = string.format("grep -rnE %q . --include=%q --exclude-dir={.git,.coder,.crush,node_modules,build,backups,llama.cpp} | head -20", pattern, include)
+  local out, ok = exec_shell({ command = cmd })
+  if not ok then return out, false end
+  if out == "" then return "No matches found for '" .. pattern .. "'", true end
+  return out, true
+end
+
 local function exec_think(args)
   local thought = args.thought or ""
   ui.think_status(#thought)
@@ -596,7 +618,7 @@ end
 TOOL_HANDLERS = {
   shell = exec_shell, read_file = exec_read_file, edit_file = exec_edit_file,
   write_file = exec_write_file, list_dir = exec_list_dir, search_files = exec_search_files,
-  think = exec_think,
+  grep_search = exec_grep_search, think = exec_think,
 }
 
 -------------------------------------------------------------------------------
@@ -861,9 +883,15 @@ local function estimate_token_count(msgs)
     chars = chars + #(m.role or "")
     chars = chars + #(m.name or "")
     chars = chars + #(m.content or "")
-    chars = chars + 12 -- Structural overhead per message
+    if m.tool_calls then
+      for _, tc in ipairs(m.tool_calls) do
+        chars = chars + #(tc["function"] and tc["function"].name or "")
+        chars = chars + #(tc["function"] and tc["function"].arguments or "")
+      end
+    end
+    chars = chars + 30 -- Structural overhead per message
   end
-  return math.floor(chars / 3.5)
+  return math.floor(chars / 2.8) + 100
 end
 
 local function chat(user_msg)
@@ -877,6 +905,24 @@ local function chat(user_msg)
   for _, m in ipairs(messages) do send[#send+1] = m end
 
   local prompt_est = estimate_token_count(send)
+  local min_budget = math.min(2048, math.floor(CONTEXT_WINDOW * 0.25))
+  
+  while prompt_est > (CONTEXT_WINDOW - min_budget) and #messages > 1 do
+    table.remove(messages, 1)
+    send = {{ role = "system", content = build_system_prompt() }}
+    for _, m in ipairs(messages) do send[#send+1] = m end
+    prompt_est = estimate_token_count(send)
+  end
+
+  if prompt_est > (CONTEXT_WINDOW - min_budget) and #messages == 1 then
+    local m = messages[1]
+    if m.content and type(m.content) == "string" and #m.content > 1000 then
+      m.content = m.content:sub(1, #m.content / 2) .. "\n...[force truncated to fit context]...\n"
+      send = {{ role = "system", content = build_system_prompt() }, m}
+      prompt_est = estimate_token_count(send)
+    end
+  end
+
   local budget = CONTEXT_WINDOW - prompt_est
   local max_tok = math.max(1, math.min(budget, 8192)) -- Cap at 8192 or budget, minimum 1
 
