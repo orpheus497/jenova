@@ -17,7 +17,7 @@ SERVER_LOG="$LOG_DIR/server.log"
 # Health check — uses luajit with the FFI HTTP module (zero dependencies)
 check_health() {
     luajit -e "
-        package.path='$SCRIPT_DIR/../lib/?.lua;'..package.path
+        package.path=[[$SCRIPT_DIR/../lib/?.lua;]]..package.path
         local http=require('http')
         local c=http.get('http://${HOST}:${PORT}/health',3)
         os.exit(c==200 and 0 or 1)

@@ -27,14 +27,7 @@ local search = require("search")
 local embed = require("embed")
 local ui = require("ui")
 local ffi = require("ffi")
-
-ffi.cdef[[
-  struct timeval {
-    long tv_sec;
-    long tv_usec;
-  };
-  int select(int nfds, void *readfds, void *writefds, void *exceptfds, struct timeval *timeout);
-]]
+local ffi_defs = require("ffi_defs")
 
 -------------------------------------------------------------------------------
 -- Config
@@ -306,7 +299,7 @@ local function exec_shell(args)
   ui.shell_cmd(cmd)
   local tmpfile = os.tmpname()
   local full = string.format("cd %q && %s; echo \"\\n[EXIT:$?]\"", CWD or ".", cmd)
-  os.execute(full .. " >" .. tmpfile .. " 2>&1")
+  os.execute(full .. " >" .. string.format("%q", tmpfile) .. " 2>&1")
   local f = io.open(tmpfile, "r")
   local output = f and f:read("*a") or ""
   if f then f:close() end
@@ -447,7 +440,7 @@ local function exec_edit_file(args)
   if bk_f then
     local bk_data = bk_f:read("*a"); bk_f:close()
     local bk_dir = (CWD or ".") .. "/.coder/backups"
-    os.execute("mkdir -p " .. bk_dir)
+    os.execute(string.format("mkdir -p %q", bk_dir))
     local bn = path:match("([^/]+)$") or path
     local ts = os.date("%H%M%S")
     local bk_path = bk_dir .. "/" .. bn .. "." .. ts
@@ -461,7 +454,7 @@ local function exec_edit_file(args)
   ui.file_edit(path, #old_text, #new_text)
 
   local dir = path:match("^(.+)/[^/]+$")
-  if dir then os.execute("mkdir -p "..dir) end
+  if dir then os.execute(string.format("mkdir -p %q", dir)) end
   local wf = io.open(path, "w")
   if not wf then
     memory.log_error("edit_file", path, "cannot write")
@@ -513,7 +506,7 @@ local function exec_write_file(args)
   if ef then
     local old_data = ef:read("*a"); ef:close()
     local bk_dir = (CWD or ".") .. "/.coder/backups"
-    os.execute("mkdir -p " .. bk_dir)
+    os.execute(string.format("mkdir -p %q", bk_dir))
     local bn = path:match("([^/]+)$") or path
     local ts = os.date("%H%M%S")
     local bk_path = bk_dir .. "/" .. bn .. "." .. ts
@@ -525,7 +518,7 @@ local function exec_write_file(args)
 
   ui.file_write(path, #content)
   local dir = path:match("^(.+)/[^/]+$")
-  if dir then os.execute("mkdir -p "..dir) end
+  if dir then os.execute(string.format("mkdir -p %q", dir)) end
   local f = io.open(path, "w")
   if not f then
     memory.log_error("write_file", path, "cannot write")
@@ -1292,9 +1285,9 @@ local function main()
     elseif line == "/diag" then
       ui.boldtext("\n  === DIAGNOSTICS ===\n\n")
       -- 1. Server health
-      local t0 = os.clock()
+      local t0 = ffi_defs.wall_time()
       local scode, sout = http.get(API_URL .. "/health", 5)
-      local latency = math.floor((os.clock() - t0) * 1000)
+      local latency = math.floor((ffi_defs.wall_time() - t0) * 1000)
       ui.dimtext("  Server:     "..tostring(scode).." ("..latency.."ms, "..(sout or ""):gsub("\n"," "):sub(1,40)..")\n")
       if scode ~= 200 then
         ui.status_err("Server not healthy — check coder-server log")
@@ -1333,9 +1326,10 @@ local function main()
         max_tokens = 8,
         temperature = 0.0,
       })
-      local gt0 = os.clock()
+      local gt0 = ffi_defs.wall_time()
       local gcode, gresp = http.post(ENDPOINT, test_body, 30)
-      local gtime = math.floor((os.clock() - gt0) * 1000)
+      local gtime = math.floor((ffi_defs.wall_time() - gt0) * 1000)
+
       if gcode == 200 then
         local gok, gdata = pcall(json.decode, gresp)
         if gok and gdata and gdata.choices then

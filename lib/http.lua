@@ -2,48 +2,7 @@
 -- Only implements POST with JSON body, which is all coder-agent needs.
 
 local ffi = require("ffi")
-
-ffi.cdef[[
-  typedef int ssize_t;
-  typedef unsigned int socklen_t;
-  typedef uint8_t sa_family_t;
-  typedef unsigned short in_port_t;
-  typedef unsigned int in_addr_t;
-
-  struct in_addr {
-    in_addr_t s_addr;
-  };
-
-  struct sockaddr_in {
-    uint8_t sin_len;
-    sa_family_t sin_family;
-    in_port_t sin_port;
-    struct in_addr sin_addr;
-    char sin_zero[8];
-  };
-
-  struct sockaddr {
-    uint8_t sa_len;
-    sa_family_t sa_family;
-    char sa_data[14];
-  };
-
-  struct timeval {
-    long tv_sec;
-    long tv_usec;
-  };
-
-  int socket(int domain, int type, int protocol);
-  int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
-  ssize_t send(int sockfd, const void *buf, size_t len, int flags);
-  ssize_t recv(int sockfd, void *buf, size_t len, int flags);
-  int close(int fd);
-  int setsockopt(int sockfd, int level, int optname, const void *optval, socklen_t optlen);
-  int select(int nfds, void *readfds, void *writefds, void *exceptfds, struct timeval *timeout);
-  in_addr_t inet_addr(const char *cp);
-  uint16_t htons(uint16_t hostshort);
-  char *strerror(int errnum);
-]]
+local ffi_defs = require("ffi_defs")
 
 local AF_INET = 2
 local SOCK_STREAM = 1

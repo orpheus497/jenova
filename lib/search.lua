@@ -125,7 +125,7 @@ end
 -- Get file mtime
 -------------------------------------------------------------------------------
 local function file_mtime(filepath)
-  local p = io.popen("stat -f '%m' " .. filepath .. " 2>/dev/null")
+  local p = io.popen(string.format("stat -f '%%m' %q 2>/dev/null", filepath))
   if not p then return 0 end
   local mtime = tonumber(p:read("*l")) or 0
   p:close()
@@ -192,11 +192,11 @@ end
 -- Vector: Embed chunks for a file (if embed module available)
 -- Returns true if new embeddings were computed
 -------------------------------------------------------------------------------
-local function vec_index_file(filepath, content)
+local function vec_index_file(filepath, content, mtime)
   if not embed or not embed.is_available() then return false end
   if not content then return false end
 
-  local mtime = file_mtime(filepath)
+  mtime = mtime or file_mtime(filepath)
 
   -- Skip if already indexed with same mtime
   if vec_index[filepath] and vec_index[filepath].mtime == mtime and mtime > 0 then
@@ -360,8 +360,9 @@ function search.index_dir(root_dir, extensions)
     ext_filter = "\\( " .. table.concat(parts, " -o ") .. " \\)"
   end
 
+  -- Use find -exec stat to get mtime and path in one go (FreeBSD compatible)
   local cmd = string.format(
-    "find %s -type f %s -not -path '*/.git/*' -not -path '*/.coder/*' -not -path '*/.crush/*' -not -path '*/node_modules/*' -not -path '*/__pycache__/*' -not -path '*/build/*' -not -path '*/backups/*' -not -path '*/llama.cpp/*' -not -name '*.gguf' -not -name '*.bin' -not -name '*.o' -not -name '*.so' -size -100k 2>/dev/null | head -500",
+    "find %q -type f %s -not -path '*/.git/*' -not -path '*/.coder/*' -not -path '*/.crush/*' -not -path '*/node_modules/*' -not -path '*/__pycache__/*' -not -path '*/build/*' -not -path '*/backups/*' -not -path '*/llama.cpp/*' -not -name '*.gguf' -not -name '*.bin' -not -name '*.o' -not -name '*.so' -size -100k -exec stat -f '%%m %%p' {} + 2>/dev/null | head -500",
     root_dir, ext_filter
   )
   local p = io.popen(cmd)
@@ -377,12 +378,15 @@ function search.index_dir(root_dir, extensions)
   -- Collect files that need vector re-indexing
   local files_to_embed = {}
 
-  for filepath in output:gmatch("[^\n]+") do
-    local content = bm25_index_file(filepath)
-    if content and embed and embed.is_available() then
-      local mtime = file_mtime(filepath)
-      if not vec_index[filepath] or vec_index[filepath].mtime ~= mtime or mtime == 0 then
-        files_to_embed[#files_to_embed + 1] = { path = filepath, content = content }
+  for line in output:gmatch("[^\n]+") do
+    local mtime_str, filepath = line:match("^(%d+)%s+(.+)$")
+    if mtime_str and filepath then
+      local mtime = tonumber(mtime_str) or 0
+      local content = bm25_index_file(filepath)
+      if content and embed and embed.is_available() then
+        if not vec_index[filepath] or vec_index[filepath].mtime ~= mtime or mtime == 0 then
+          files_to_embed[#files_to_embed + 1] = { path = filepath, content = content, mtime = mtime }
+        end
       end
     end
   end
@@ -402,7 +406,7 @@ function search.index_dir(root_dir, extensions)
     io.flush()
     local embedded = 0
     for i, entry in ipairs(files_to_embed) do
-      local ok, err = pcall(vec_index_file, entry.path, entry.content)
+      local ok, err = pcall(vec_index_file, entry.path, entry.content, entry.mtime)
       if ok then
         embedded = embedded + 1
       end

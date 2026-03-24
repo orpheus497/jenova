@@ -4,31 +4,7 @@
 --           styled input prompt, scrollback buffer, terminal resize handling.
 
 local ffi = require("ffi")
-
-ffi.cdef[[
-  int ioctl(int fd, unsigned long request, ...);
-  typedef unsigned short tcflag_t;
-  typedef unsigned char cc_t;
-  typedef unsigned int speed_t;
-  struct termios {
-    tcflag_t c_iflag;
-    tcflag_t c_oflag;
-    tcflag_t c_cflag;
-    tcflag_t c_lflag;
-    cc_t     c_cc[20];
-    speed_t  c_ispeed;
-    speed_t  c_ospeed;
-  };
-  int tcgetattr(int fd, struct termios *termios_p);
-  int tcsetattr(int fd, int optional_actions, const struct termios *termios_p);
-  int isatty(int fd);
-
-  struct timeval {
-    long tv_sec;
-    long tv_usec;
-  };
-  int select(int nfds, void *readfds, void *writefds, void *exceptfds, struct timeval *timeout);
-]]
+local ffi_defs = require("ffi_defs")
 
 local ui = {}
 
@@ -528,17 +504,17 @@ function ui.spinner_stop()
 end
 
 function ui.nonblocking_wait(seconds, label)
-  local start_time = os.clock()
+  local start_time = ffi_defs.wall_time()
   local last_spinner_update = 0
   spinner_active = true
   spinner_label = label or "waiting"
   spinner_idx = 1
 
-  while os.clock() - start_time < seconds do
-    if os.clock() - last_spinner_update > 0.1 then
+  while ffi_defs.wall_time() - start_time < seconds do
+    if ffi_defs.wall_time() - last_spinner_update > 0.1 then
       spinner_idx = (spinner_idx % #spinner_frames) + 1
       wflush("\r" .. CLEAR_LINE .. "  " .. fg(P.cyan) .. spinner_frames[spinner_idx] .. " " .. spinner_label .. RESET)
-      last_spinner_update = os.clock()
+      last_spinner_update = ffi_defs.wall_time()
     end
     -- Efficiently sleep for 0.1 seconds without busy-waiting
     local tv = ffi.new("struct timeval")

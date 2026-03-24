@@ -82,7 +82,7 @@ function embed.encode(text, task)
   f:close()
 
   local cmd = string.format(
-    '%s -m %s --embd-output-format json --pooling %s -c %d -f %s >%s 2>/dev/null',
+    '%q -m %q --embd-output-format json --pooling %s -c %d -f %q >%q 2>/dev/null',
     EMBED_BIN, MODEL_PATH, POOLING, CTX_SIZE, tmpfile_in, tmpfile_out
   )
 
@@ -139,7 +139,7 @@ function embed.batch_encode(texts, task)
   f:close()
 
   local cmd = string.format(
-    '%s -m %s --embd-output-format json --pooling %s -c %d -f %s --embd-separator "%s" >%s 2>/dev/null',
+    '%q -m %q --embd-output-format json --pooling %s -c %d -f %q --embd-separator %q >%q 2>/dev/null',
     EMBED_BIN, MODEL_PATH, POOLING, CTX_SIZE, tmpfile_in, separator, tmpfile_out
   )
 
