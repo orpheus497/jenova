@@ -1,6 +1,11 @@
 -- embed.lua: Embedding interface using llama-embedding CLI + nomic-embed-text-v1.5
 -- Pure LuaJIT, calls llama-embedding as subprocess, returns float vectors
 
+local _dir = debug.getinfo(1, "S").source:match("^@(.*/)") or "./"
+if not package.path:find(_dir, 1, true) then
+  package.path = _dir .. "?.lua;" .. package.path
+end
+
 local json = require("json")
 
 local embed = {}

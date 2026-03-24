@@ -2,6 +2,11 @@
 -- BM25 always available; vector search when embed module is initialized
 -- Vectors persisted to .coder/vectors.json for incremental updates
 
+local _dir = debug.getinfo(1, "S").source:match("^@(.*/)") or "./"
+if not package.path:find(_dir, 1, true) then
+  package.path = _dir .. "?.lua;" .. package.path
+end
+
 local json = require("json")
 
 local search = {}
@@ -227,7 +232,7 @@ local function vec_index_file(filepath, content)
     if vectors[i] then
       embed.normalize(vectors[i])
       indexed_chunks[#indexed_chunks + 1] = {
-        text = c.text:sub(1, 500), -- store snippet only for display
+        text = c.text:sub(1, 1000),
         vec = vectors[i],
         start_line = c.start_line,
       }
@@ -480,9 +485,8 @@ local function extract_snippet(doc, query_terms, max_lines)
   max_lines = max_lines or 8
   if not doc.lines or #doc.lines == 0 then return nil end
 
-  local best_start = 1
-  local best_score = 0
-
+  -- Score each line by how many query terms it contains
+  local line_scores = {}
   for i = 1, #doc.lines do
     local line_lower = doc.lines[i]:lower()
     local line_score = 0
@@ -491,13 +495,25 @@ local function extract_snippet(doc, query_terms, max_lines)
         line_score = line_score + 1
       end
     end
-    if line_score > best_score then
-      best_score = line_score
+    line_scores[i] = line_score
+  end
+
+  -- Find the best window of max_lines with highest total score
+  local best_start = 1
+  local best_score = 0
+  for i = 1, math.max(1, #doc.lines - max_lines + 1) do
+    local window_score = 0
+    for j = i, math.min(i + max_lines - 1, #doc.lines) do
+      window_score = window_score + line_scores[j]
+    end
+    if window_score > best_score then
+      best_score = window_score
       best_start = i
     end
   end
 
-  local start = math.max(1, best_start - 1)
+  -- Expand context slightly before the match
+  local start = math.max(1, best_start - 2)
   local stop = math.min(#doc.lines, start + max_lines - 1)
   local snippet_lines = {}
   for i = start, stop do

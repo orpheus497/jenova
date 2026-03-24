@@ -57,7 +57,7 @@ Optimized for: **i5-1135G7 / GTX 1650 Ti 4GB / Intel Iris Xe ~7GB / 16GB RAM**
 | `CODER_PORT` | 8080 | Server port |
 | `CODER_DRAFT` | (unset) | Set to 1 for speculative decoding |
 | `CODER_MAX_TURNS` | 25 | Max agent turns per query |
-| `CODER_TIMEOUT` | 300 | HTTP timeout (seconds) |
+| `CODER_TIMEOUT` | 600 | HTTP timeout (seconds) |
 | `CODER_DEBUG` | 0 | Set to 1 for debug output |
 
 ## REPL Commands

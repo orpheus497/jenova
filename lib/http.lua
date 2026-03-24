@@ -62,7 +62,7 @@ local function parse_url(url)
 end
 
 function http.post(url, body, timeout)
-  timeout = timeout or 300
+  timeout = timeout or 600
   local host, port, path = parse_url(url)
   if not host then return 0, "invalid url: " .. tostring(url) end
 
