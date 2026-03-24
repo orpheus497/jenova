@@ -39,6 +39,7 @@ ffi.cdef[[
   ssize_t recv(int sockfd, void *buf, size_t len, int flags);
   int close(int fd);
   int setsockopt(int sockfd, int level, int optname, const void *optval, socklen_t optlen);
+  int select(int nfds, void *readfds, void *writefds, void *exceptfds, struct timeval *timeout);
   in_addr_t inet_addr(const char *cp);
   uint16_t htons(uint16_t hostshort);
   char *strerror(int errnum);
@@ -143,7 +144,10 @@ function http.post(url, body, timeout)
         if stall_count >= 3 or (stall_count >= 2 and total_recv > 0) then
           break
         end
-        os.execute("sleep 0.1")
+        local tv_sleep = ffi.new("struct timeval")
+        tv_sleep.tv_sec = 0
+        tv_sleep.tv_usec = 100000 -- 100ms
+        ffi.C.select(0, nil, nil, nil, tv_sleep)
       else
         -- Fatal error (e.g., ECONNRESET)
         recv_err = "recv() fatal error: " .. get_errstr(err) .. " (errno=" .. tostring(err) .. ")"
@@ -249,7 +253,10 @@ function http.get(url, timeout)
         if stall_count >= 3 or (stall_count >= 2 and total_recv > 0) then
           break
         end
-        os.execute("sleep 0.1")
+        local tv_sleep = ffi.new("struct timeval")
+        tv_sleep.tv_sec = 0
+        tv_sleep.tv_usec = 100000 -- 100ms
+        ffi.C.select(0, nil, nil, nil, tv_sleep)
       else
         recv_err = "recv() fatal error: " .. get_errstr(err) .. " (errno=" .. tostring(err) .. ")"
         break

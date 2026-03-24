@@ -26,6 +26,15 @@ local memory = require("memory")
 local search = require("search")
 local embed = require("embed")
 local ui = require("ui")
+local ffi = require("ffi")
+
+ffi.cdef[[
+  struct timeval {
+    long tv_sec;
+    long tv_usec;
+  };
+  int select(int nfds, void *readfds, void *writefds, void *exceptfds, struct timeval *timeout);
+]]
 
 -------------------------------------------------------------------------------
 -- Config
@@ -171,9 +180,9 @@ local function build_system_prompt()
   
   local complexity = assess_complexity(current_user_query)
   if complexity == "VERY_COMPLEX" or complexity == "COMPLEX" then
-    parts[#parts+1] = "\nTASK COMPLEXITY: " .. complexity .. ". You should use the 'think' tool to create a multi-step plan before taking any action."
-  elseif complexity == "MODERATE" then
-    parts[#parts+1] = "\nTASK COMPLEXITY: MODERATE. Consider planning your approach before editing files."
+    parts[#parts+1] = "\nTASK COMPLEXITY: " .. complexity .. ". Plan carefully, but prioritize taking informative actions (read_file, list_dir) over excessive 'think' steps."
+  else
+    parts[#parts+1] = "\nTASK COMPLEXITY: " .. complexity .. ". Focus on direct actions (read, edit, test). Use 'think' only if you are truly stuck or need a complex plan."
   end
 
   parts[#parts+1] = [[
@@ -185,26 +194,24 @@ TOOLS (call ONE per response as JSON):
   write_file(path, content) — Create/overwrite entire file. Use for NEW files only.
   list_dir(path)       — List directory contents.
   search_files(query, top_k) — Search project files by code identifiers/keywords.
-  think(thought)       — Internal reasoning (hidden from user). Use to plan multi-step work.
+  think(thought)       — Internal reasoning. Use ONLY for complex multi-step planning.
 
 RESPONSE FORMAT — respond ONLY with a JSON tool call:
 {"name": "tool_name", "arguments": {"arg": "value"}}
 
-WORKFLOW: Plan → Execute → Reflect
-1. THINK first — plan your approach. Identify what you need to learn/verify.
-2. READ before editing — never guess at file content.
-3. VERIFY — check headers exist and code compiles. Do NOT install new packages.
-4. EDIT precisely — copy exact whitespace from read_file output.
+WORKFLOW: Direct Action
+1. READ before editing — identify what is real and what is not by reading headers/code.
+2. ACT decisively — use shell/read/edit to make progress every turn.
+3. THINK sparingly — only if the task requires deep architectural planning.
+4. VERIFY — check headers exist and code compiles. Do NOT install new packages.
 5. VALIDATE — compile/test after changes. If errors, fix immediately.
-6. REFLECT — if something failed, try a DIFFERENT approach. Do NOT repeat.
-7. REPORT — only after ALL work done, give 1-2 sentence summary.
+6. REPORT — only after ALL work done, give 1-2 sentence summary.
 
 CRITICAL:
-- ONLY call tools. No narration, explanation, or code blocks.
+- Respond ONLY with JSON tool calls. No pre-analysis text.
 - DO NOT perform system administration, sudo actions, or package installations (pkg install).
 - Focus on implementing logic using the libraries and headers already present on the system.
 - FreeBSD: use cc (not gcc), /usr/local/include for ports.
-- If an action already failed (shown below), try something DIFFERENT.
 - Fix root causes, not symptoms.]]
 
   -- Session-aware context (errors, actions, plan — only from THIS session)
@@ -818,6 +825,7 @@ local function http_post_retry(url, body, label, max_retries)
     elseif code >= 500 then
       if attempt < max_retries then
         ui.status_warn(label.." HTTP "..code..", retry "..attempt.."/"..max_retries)
+        memory.log("retry", { label = label, attempt = attempt, code = code })
         ui.nonblocking_wait(1, "retrying ("..label..")")
       end
     else
@@ -1155,7 +1163,10 @@ local function check_server()
   for _ = 1, 3 do
     local code = http.get(API_URL .. "/health", 5)
     if code == 200 then return true end
-    os.execute("sleep 0.5")
+    local tv_sleep = ffi.new("struct timeval")
+    tv_sleep.tv_sec = 0
+    tv_sleep.tv_usec = 500000 -- 500ms
+    ffi.C.select(0, nil, nil, nil, tv_sleep)
   end
   return false
 end

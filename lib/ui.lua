@@ -22,6 +22,12 @@ ffi.cdef[[
   int tcgetattr(int fd, struct termios *termios_p);
   int tcsetattr(int fd, int optional_actions, const struct termios *termios_p);
   int isatty(int fd);
+
+  struct timeval {
+    long tv_sec;
+    long tv_usec;
+  };
+  int select(int nfds, void *readfds, void *writefds, void *exceptfds, struct timeval *timeout);
 ]]
 
 local ui = {}
@@ -527,21 +533,21 @@ function ui.nonblocking_wait(seconds, label)
   spinner_active = true
   spinner_label = label or "waiting"
   spinner_idx = 1
-  
+
   while os.clock() - start_time < seconds do
     if os.clock() - last_spinner_update > 0.1 then
       spinner_idx = (spinner_idx % #spinner_frames) + 1
       wflush("\r" .. CLEAR_LINE .. "  " .. fg(P.cyan) .. spinner_frames[spinner_idx] .. " " .. spinner_label .. RESET)
       last_spinner_update = os.clock()
     end
-    -- Very short sleep to avoid 100% CPU usage
-    -- We use a small select call or just busy wait with a tiny yielding if possible.
-    -- Since we don't have a better cross-platform sleep here, we'll just busy wait 
-    -- but keep it responsive to the spinner.
+    -- Efficiently sleep for 0.1 seconds without busy-waiting
+    local tv = ffi.new("struct timeval")
+    tv.tv_sec = 0
+    tv.tv_usec = 100000 -- 100ms
+    ffi.C.select(0, nil, nil, nil, tv)
   end
   ui.spinner_stop()
 end
-
 -------------------------------------------------------------------------------
 -- Nudge display
 -------------------------------------------------------------------------------
