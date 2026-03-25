@@ -1,11 +1,11 @@
-# Jenova Cognitive Architecture (FreeBSD / NVIDIA Vulkan + Optane NVMe)
+# Jenova Cognitive Architecture (FreeBSD / Dual Vulkan GPU + Optane NVMe)
 
 Jenova is a high-performance, low-latency cognitive engine that turns a FreeBSD workstation into a persistent, systems-level AI environment. It implements a "Fluid Memory" architecture that treats high-speed NVMe (Optane) as an extended L4 cache for Large Language Models (LLMs), enabling large-context reasoning on modest hardware.
 
 ## Goals
 
 - Persistent intelligence with a daemonized cognitive backend
-- Low-latency, hardware-aware inference using NVIDIA Vulkan GPU offload and LuaJIT
+- Low-latency, hardware-aware inference using dual Vulkan GPU offload (NVIDIA + Intel Iris Xe) and LuaJIT
 - Optane-backed paging and cache strategies to enable large-context models on 16GB systems
 - Minimal memory footprint and high throughput for 7B / 14B model workflows
 
@@ -13,7 +13,7 @@ Jenova is a high-performance, low-latency cognitive engine that turns a FreeBSD 
 
 - Fluid Memory: Uses FreeBSD paging + Optane NVMe to extend effective model memory and support large context windows (up to 32k in practical configurations).
 - Persistent Embedding Daemon: CPU-only nomic-embed-text server eliminates subprocess and reinitialization bottlenecks for fast retrieval-augmented generation (RAG).
-- NVIDIA GPU Offload: Partial layer offload to GTX 1650 Ti (4GB) via Vulkan. Remaining layers stay on CPU, paged through Optane swap.
+- NVIDIA GPU Offload: Dual-GPU layer distribution across GTX 1650 Ti (4GB discrete) and Intel Iris Xe (~7 GiB UMA) via Vulkan. The `-fitt` auto-fitter distributes transformer layers across both devices with a configurable safety margin. Remaining layers stay on CPU, paged through Optane swap.
 - Hybrid Search: BM25 keyword search combined with semantic vector search.
 - FreeBSD-first: Tuned for FreeBSD 15, ZFS ARC management, and kernel-friendly operation.
 
@@ -21,7 +21,7 @@ Jenova is a high-performance, low-latency cognitive engine that turns a FreeBSD 
 
 Jenova runs three persistent daemon processes:
 
-1. **llama-server** (port 8081): Main inference engine with partial NVIDIA GPU offload.
+1. **llama-server** (port 8081): Main inference engine with dual Vulkan GPU auto-fit offload.
 2. **proxy.lua** (port 8080): Intelligence Proxy — non-blocking I/O with Lua coroutines, RAG injection, intent routing.
 3. **llama-server --embedding** (port 8082): CPU-only embedding server (nomic-embed-text-v1.5) for semantic search.
 
@@ -40,18 +40,19 @@ The system is partitioned into four conceptual streams:
 |---|---|
 | OS | FreeBSD 15 (STABLE/CURRENT) |
 | CPU | Intel i5-1135G7 (4P / 8T) |
-| GPU | GTX 1650 Ti 4GB (Vulkan0) — partial layer offload |
+| GPU 0 | GTX 1650 Ti 4GB (Vulkan0) — discrete VRAM |
+| GPU 1 | Intel Iris Xe TGL GT2 (Vulkan1) — UMA, ~7 GiB from system RAM |
 | Storage | Intel Optane NVMe (27GB+ swap partition) |
 | Memory | 16GB RAM (recommend capping ZFS ARC to 2GB) |
 
-**Note:** Intel Iris Xe (Vulkan1) is present but **not used**. Its UMA memory allocation steals system RAM that is better used by CPU mmap for model weights paged through Optane.
+**Dual-GPU strategy:** Both GPUs are used via Vulkan. Combined addressable GPU memory is ~11 GiB. The llama.cpp `-fitt` (fit target) flag auto-distributes transformer layers across both devices, reserving a configurable safety margin (default 768 MiB) so the KV cache fits without OOM. No explicit `-ngl` is needed — the fitter handles layer placement automatically.
 
-### GPU Layer Offload
+### GPU Layer Distribution (auto-tuned by `-fitt`)
 
-| Model | Total Layers | GPU Layers (NGL) | GPU VRAM | CPU Layers |
+| Model | Total Layers | Typical GPU Layers | GPU Memory | CPU Layers |
 |---|---|---|---|---|
-| 7B (default) | 28 | 22 | ~3.5 GiB | 6 via mmap |
-| 14B | 48 | 15 | ~3.5 GiB | 33 via mmap |
+| 7B | 28 | ~28 (all) | ~4.4 GiB across both | 0 |
+| 14B | 48 | ~33-38 | ~8-10 GiB across both | 10-15 via mmap/Optane |
 
 ## Installation
 
@@ -68,11 +69,11 @@ Build llama.cpp locally with Vulkan support. The built binary lives at `llama.cp
 Edit `etc/jenova.conf` to tune hardware settings. Key entries:
 
 ```sh
-DEVICES="Vulkan0"           # NVIDIA GPU only (no Iris Xe)
-NGL_7B=22                   # GPU layers for 7B model
-NGL_14B=15                  # GPU layers for 14B model
-CTX_SIZE="16384"            # Context window size
-JENOVA_DRAFT=1              # Enable speculative decoding (requires drafter model)
+DEVICES="Vulkan0,Vulkan1"     # Dual-GPU: NVIDIA + Intel Iris Xe
+TENSOR_SPLIT="2.0,1.0"        # Split ratio (NVIDIA gets 2 parts, Intel 1)
+FIT_TARGET=768                 # Safety margin in MiB for -fitt auto-tuning
+CTX_SIZE="8192"                # Context window (14B default; 7B uses 16384)
+JENOVA_DRAFT=1                 # Enable speculative decoding (requires drafter model)
 ```
 
 Notes:
@@ -123,7 +124,7 @@ All HTTP communication uses raw BSD sockets via LuaJIT FFI — no libcurl depend
 ## Troubleshooting & Notes
 
 - If running into OOMs with ZFS, lower ARC (`vfs.zfs.arc_max`) and confirm swap/Optane configuration.
-- The embedding server runs on CPU (ngl 0) to preserve all 4GB VRAM for main model inference.
+- The embedding server runs on CPU (`GGML_VULKAN_DISABLE=1`, ngl 0) to preserve all GPU memory for main model inference.
 - The codebase avoids subprocess reinitialization penalties by using persistent daemon processes.
 
 ## License & Credits

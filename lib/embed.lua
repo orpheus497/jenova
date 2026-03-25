@@ -53,7 +53,7 @@ function embed.init(opts)
       local args = { embed_bin, '-m', model_path, '--embedding', '--port', port, '--host', host,
                       '-ngl', '0', '-c', '2048', '--offline' }
 
-      local ok, pid_or_err = daemon.start_background(args, '.jenova/llama-embed.log', opts.script_dir or '.', '.jenova/llama-embed.pid')
+      local ok, pid_or_err = daemon.start_background(args, '.jenova/llama-embed.log', opts.script_dir or '.', '.jenova/llama-embed.pid', {GGML_VULKAN_DISABLE="1"})
       if not ok then
         io.write('[embed] WARNING: failed to start embedding binary: ' .. tostring(pid_or_err) .. '\n')
       else

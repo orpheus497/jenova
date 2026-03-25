@@ -305,7 +305,7 @@ end
 
 -- Main Select Loop
 local clients = {} -- fd -> {co = co, type = "read"|"write", watch_fd = fd, created = time}
-local COROUTINE_TIMEOUT = 120
+local COROUTINE_TIMEOUT = 600
 local read_fds = _ffi_defs.fd_set_new()
 local write_fds = _ffi_defs.fd_set_new()
 
@@ -316,7 +316,6 @@ end
 local shutdown_cb = ffi.cast("sighandler_t", shutdown_handler)
 ffi.C.signal(_ffi_defs.SIGTERM, shutdown_cb)
 ffi.C.signal(_ffi_defs.SIGINT, shutdown_cb)
-ffi.C.signal(_ffi_defs.SIGPIPE, ffi.cast("sighandler_t", function() end))
 
 while running do
     _ffi_defs.FD_ZERO(read_fds)
@@ -380,9 +379,9 @@ while running do
     local now = os.time()
     for fd, info in pairs(clients) do
         if now - (info.created or now) > COROUTINE_TIMEOUT then
-            ffi.C.close(fd)
+            pcall(ffi.C.close, fd)
             if info.watch_fd and info.watch_fd ~= fd then
-                ffi.C.close(info.watch_fd)
+                pcall(ffi.C.close, info.watch_fd)
             end
             clients[fd] = nil
         end

@@ -452,7 +452,7 @@ function search.index_dir(root_dir, extensions)
     
     local tmp_list = ".jenova/index_queue.json"
     local ok, err = pcall(function() os.execute("mkdir -p .jenova") end)
-  if not ok then io.write("[search] warning: failed to create .jenova: "..tostring(err).."\n") end
+    if not ok then io.write("[search] warning: failed to create .jenova: "..tostring(err).."\n") end
     local f = io.open(tmp_list, "w")
     if f then
       f:write(json.encode(files_to_embed))

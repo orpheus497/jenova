@@ -4,8 +4,6 @@
 # Run with: sudo ./jenova-setup
 #
 # Configures:
-#   - memorylocked limit (for mlock capability)
-#   - unprivileged mlock sysctl
 #   - Optane NVMe swap tuning for Iris Xe UMA GPU paging
 #
 # Hardware context:
@@ -37,30 +35,7 @@ sysctl_persist() {
     fi
 }
 
-# 1. Raise memorylocked limit in login.conf
-CURRENT=$(grep -c 'memorylocked=64K' /etc/login.conf 2>/dev/null || echo 0)
-if [ "$CURRENT" -gt 0 ]; then
-    echo "[fix] /etc/login.conf: memorylocked 64K -> unlimited"
-    sed -i '' 's/:memorylocked=64K:/:memorylocked=unlimited:/' /etc/login.conf
-    cap_mkdb /etc/login.conf
-    CHANGED=1
-else
-    MLOCK=$(grep 'memorylocked' /etc/login.conf | head -1)
-    echo "[ok]  /etc/login.conf: memorylocked already configured ($MLOCK)"
-fi
-
-# 2. Verify unprivileged mlock sysctl
-MLOCK_SYSCTL=$(sysctl -n security.bsd.unprivileged_mlock 2>/dev/null || echo 0)
-if [ "$MLOCK_SYSCTL" -ne 1 ]; then
-    echo "[fix] sysctl: security.bsd.unprivileged_mlock=1"
-    sysctl security.bsd.unprivileged_mlock=1
-    sysctl_persist "security.bsd.unprivileged_mlock=1"
-    CHANGED=1
-else
-    echo "[ok]  sysctl: security.bsd.unprivileged_mlock=1"
-fi
-
-# 3. Optane swap paging optimizations for Iris Xe UMA
+# 1. Optane swap paging optimizations for Iris Xe UMA
 # The Iris Xe's VRAM *is* system RAM. When llama.cpp allocates tensors on
 # Vulkan1, those pages live in the kernel's unified address space. With
 # vm.overcommit=0 (default) and aggressive pageout, the kernel can swap
@@ -118,8 +93,7 @@ done
 
 echo ""
 if [ "$CHANGED" -eq 1 ]; then
-    echo "Done. Log out and back in for login.conf limits to take effect."
-    echo "Verify with: ulimit -l  (should show 'unlimited')"
+    echo "Done. Sysctl changes applied and persisted."
     echo "Verify swap: swapinfo   (should show ~27 GiB on nda1p1)"
 else
     echo "Nothing to change. System already configured."

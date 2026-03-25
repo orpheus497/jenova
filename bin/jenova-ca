@@ -1,9 +1,9 @@
 #!/bin/sh
 
 # jenova-ca: Launch llama-server + Intelligence Proxy
-# FreeBSD 15 | GTX 1650 Ti 4GB | 16GB RAM | 27GB Optane NVMe swap
+# FreeBSD 15 | GTX 1650 Ti 4GB + Iris Xe UMA | 16GB RAM | 27GB Optane NVMe swap
 #
-# CPU-predominant inference with partial NVIDIA offload.
+# Dual-GPU inference: NVIDIA (discrete) + Intel Iris Xe (UMA) via Vulkan.
 # No mlock — mmap'd weights page through Optane swap.
 
 set -e
@@ -24,14 +24,16 @@ mkdir -p "$LOG_DIR"
 mkdir -p "$CACHE_DIR"
 
 # --- Model selection with NGL auto-tuning ---
-MODEL_PATH="${JENOVA_MODEL:-$MODEL_7B}"
-LLAMA_NGL="$NGL_7B"
+# Primary: 14B (dual-GPU, ~33 layers offloaded, 8k ctx, 1 slot)
+# Fallback: 7B (dual-GPU, all layers offloaded, 16k ctx, 2 slots)
+MODEL_PATH="${JENOVA_MODEL:-$MODEL_14B}"
+LLAMA_NGL="$NGL_14B"
 if [ ! -f "$MODEL_PATH" ]; then
-    echo "Primary model not found, falling back to 14B..."
-    MODEL_PATH="$MODEL_14B"
-    LLAMA_NGL="$NGL_14B"
-    CTX_SIZE="${JENOVA_CTX:-8192}"
-    NUM_SLOTS="${JENOVA_SLOTS:-1}"
+    echo "Primary 14B model not found, falling back to 7B..."
+    MODEL_PATH="$MODEL_7B"
+    LLAMA_NGL="$NGL_7B"
+    CTX_SIZE="${JENOVA_CTX:-16384}"
+    NUM_SLOTS="${JENOVA_SLOTS:-2}"
 fi
 
 case "$MODEL_PATH" in
@@ -42,6 +44,8 @@ case "$MODEL_PATH" in
         ;;
     *7B*|*7b*|*8B*|*8b*)
         LLAMA_NGL="${JENOVA_NGL:-$NGL_7B}"
+        CTX_SIZE="${JENOVA_CTX:-16384}"
+        NUM_SLOTS="${JENOVA_SLOTS:-2}"
         ;;
 esac
 
@@ -88,6 +92,12 @@ if [ -n "$DEVICES" ]; then
     DEV_ARGS="-dev $DEVICES"
 fi
 
+# --- Split mode + fit target (always on; tensor split only if dual-GPU) ---
+SPLIT_ARGS="-sm layer -fitt $FIT_TARGET"
+if [ -n "$TENSOR_SPLIT" ]; then
+    SPLIT_ARGS="$SPLIT_ARGS -ts $TENSOR_SPLIT"
+fi
+
 # --- Control verbs ---
 case "$1" in
     stop)
@@ -107,10 +117,13 @@ case "$1" in
                 fi
             done
             rm -f "$PID_FILE"
+            rm -f "$JENOVA_STATE/llama-embed.pid"
             echo "Stopped."
         else
             echo "No PID file found at $PID_FILE"
         fi
+        pkill -f "llama-server.*${LLAMA_EMBED_PORT}" 2>/dev/null || true
+        pkill -f "llama-server.*${LLAMA_PORT}" 2>/dev/null || true
         exit 0
         ;;
     status)
@@ -141,12 +154,11 @@ esac
 # --- Startup banner ---
 echo "Starting Jenova CA..."
 echo "  Model:     $MODEL_PATH"
-echo "  Embed:     $MODEL_EMBED (CPU-only, ngl 0)"
+echo "  Embed:     $MODEL_EMBED (CPU-only, Vulkan disabled)"
 echo "  Devices:   ${DEVICES:-CPU only}"
-echo "  GPU Layers: $LLAMA_NGL"
+echo "  GPU Layers: $LLAMA_NGL${TENSOR_SPLIT:+ (ts $TENSOR_SPLIT)}${FIT_TARGET:+ (fitt $FIT_TARGET)}"
 echo "  Context:   $CTX_SIZE"
 echo "  Slots:     $NUM_SLOTS"
-echo "  MLock:     off (Optane NVMe swap backing)"
 echo ""
 
 # =====================================================================
@@ -172,7 +184,7 @@ if [ "$1" = "--daemon" ]; then
     "$LLAMA_SERVER" \
         -m "$MODEL_PATH" \
         $DEV_ARGS \
-        -ngl "$LLAMA_NGL" \
+        $SPLIT_ARGS \
         -c "$CTX_SIZE" \
         -b 2048 \
         -ub 256 \
@@ -190,7 +202,7 @@ if [ "$1" = "--daemon" ]; then
     LLAMA_PID=$!
 
     if [ -f "$MODEL_EMBED" ]; then
-        "$LLAMA_SERVER" \
+        GGML_VULKAN_DISABLE=1 "$LLAMA_SERVER" \
             -m "$MODEL_EMBED" \
             --embedding \
             -ngl 0 \
@@ -211,7 +223,7 @@ if [ "$1" = "--daemon" ]; then
     luajit "$PROXY_SCRIPT" >> "$LOG_FILE" 2>&1 &
     PROXY_PID=$!
 
-    echo "$LLAMA_PID $PROXY_PID $EMBED_PID" > "$PID_FILE"
+    echo "$LLAMA_PID $PROXY_PID ${EMBED_PID:-0}" > "$PID_FILE"
     echo "Started: llama-server=$LLAMA_PID proxy=$PROXY_PID embed=${EMBED_PID:-none}"
     exit 0
 fi
@@ -224,7 +236,7 @@ while [ "$1" = "--daemon" ]; do shift; done
 "$LLAMA_SERVER" \
     -m "$MODEL_PATH" \
     $DEV_ARGS \
-    -ngl "$LLAMA_NGL" \
+    $SPLIT_ARGS \
     -c "$CTX_SIZE" \
     -b 2048 \
     -ub 256 \
@@ -244,7 +256,7 @@ LLAMA_PID=$!
 EMBED_PID=""
 if [ -f "$MODEL_EMBED" ]; then
     echo "Starting embedding server (CPU-only) on port $LLAMA_EMBED_PORT..."
-    "$LLAMA_SERVER" \
+    GGML_VULKAN_DISABLE=1 "$LLAMA_SERVER" \
         -m "$MODEL_EMBED" \
         --embedding \
         -ngl 0 \
@@ -260,18 +272,29 @@ else
 fi
 
 cleanup() {
+    echo "Cleaning up..."
+    kill -- -$$ 2>/dev/null || true
     for P in $LLAMA_PID $PROXY_PID $EMBED_PID; do
-        if [ -n "$P" ]; then
-            echo "Stopping PID $P..."
+        if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
             kill "$P" 2>/dev/null
-            wait "$P" 2>/dev/null
         fi
     done
+    sleep 1
+    for P in $LLAMA_PID $PROXY_PID $EMBED_PID; do
+        if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
+            kill -9 "$P" 2>/dev/null
+        fi
+    done
+    pkill -f "llama-server.*${LLAMA_EMBED_PORT}" 2>/dev/null || true
+    pkill -f "llama-server.*${LLAMA_PORT}" 2>/dev/null || true
+    rm -f "$PID_FILE"
 }
 trap cleanup EXIT INT TERM
 
 echo "Starting Jenova Intelligence Proxy on port $PORT..."
 luajit "$PROXY_SCRIPT" &
 PROXY_PID=$!
+
+echo "$LLAMA_PID $PROXY_PID ${EMBED_PID:-0}" > "$PID_FILE"
 
 wait $LLAMA_PID $PROXY_PID ${EMBED_PID:+$EMBED_PID}

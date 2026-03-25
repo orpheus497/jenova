@@ -133,50 +133,9 @@ end
 local rag_context = ""
 local current_user_query = nil
 
-local function assess_complexity(user_input)
-  if not user_input then return "SIMPLE" end
-  local words = 0
-  for _ in user_input:gmatch("%S+") do words = words + 1 end
-
-  local indicators = {
-    "explain", "compare", "analyze", "describe in detail", "step by step",
-    "how does", "why does", "what are the", "difference between", "relationship between",
-    "implement", "refactor", "architect", "design", "rewrite", "port", "debug", "optimize"
-  }
-
-  local has_indicator = false
-  local lower_input = user_input:lower()
-  for _, ind in ipairs(indicators) do
-    if lower_input:find(ind, 1, true) then
-      has_indicator = true
-      break
-    end
-  end
-
-  local question_count = 0
-  for _ in user_input:gmatch("%?") do question_count = question_count + 1 end
-
-  if words > 40 and has_indicator and question_count > 1 then
-    return "VERY_COMPLEX"
-  elseif words > 20 and has_indicator then
-    return "COMPLEX"
-  elseif words > 10 or has_indicator then
-    return "MODERATE"
-  else
-    return "SIMPLE"
-  end
-end
-
 local function build_system_prompt()
   local parts = {}
   parts[#parts+1] = "You are Jenova, an expert autonomous cognitive agent on FreeBSD. CWD: " .. (CWD or ".")
-  
-  local complexity = assess_complexity(current_user_query)
-  if complexity == "VERY_COMPLEX" or complexity == "COMPLEX" then
-    parts[#parts+1] = "\nTASK COMPLEXITY: " .. complexity .. ". Plan carefully, but prioritize taking informative actions (read_file, list_dir) over excessive 'think' steps."
-  else
-    parts[#parts+1] = "\nTASK COMPLEXITY: " .. complexity .. ". Focus on direct actions (read, edit, test). Use 'think' only if you are truly stuck or need a complex plan."
-  end
 
   parts[#parts+1] = [[
 
@@ -190,28 +149,11 @@ TOOLS (call ONE per response as JSON):
   think(thought)       — Internal reasoning. Use ONLY for complex multi-step planning.
 
 RESPONSE FORMAT:
-You MUST think about your action first inside <think>...</think> tags.
-Immediately after the closing tag, output exactly ONE JSON tool call.
+<think>reasoning</think>
+{"name": "tool_name", "arguments": {...}}
 
-Example:
-<think>
-I need to check if the header exists.
-</think>
-{"name": "shell", "arguments": {"command": "ls /usr/include/stdio.h"}}
-
-WORKFLOW: Direct Action
-1. READ before editing — identify what is real and what is not.
-2. THINK natively — use the <think> block to reason through the step.
-3. ACT decisively — use tools to make progress every turn.
-4. VERIFY — check headers exist and code compiles.
-5. VALIDATE — compile/test after changes.
-6. REPORT — give 1-2 sentence summary when done.
-
-CRITICAL:
-- Respond with <think> followed by JSON.
-- Respond ONLY with JSON after </think>. No other text.
-- FreeBSD: use cc (not gcc), /usr/local/include for ports.
-- Fix root causes, not symptoms.]]
+Respond ONLY with <think> block then ONE JSON tool call. No other text.
+Read before editing. Verify after changes. FreeBSD: use cc, /usr/local/include for ports.]]
 
   -- Session-aware context (errors, actions, plan — only from THIS session)
   local ctx = memory.build_context(current_user_query)
@@ -838,20 +780,32 @@ local function trim_messages(max)
   max = max or 24
   if #messages <= max then return end
 
-  -- Identify the first message to keep
-  local keep_from = #messages - max + 1
-  if keep_from < 1 then keep_from = 1 end
+  local keep_from = #messages - max + 2
+  if keep_from < 2 then keep_from = 2 end
 
-  -- Symmetrical eviction: ensure we don't split an assistant tool call from its results
-  -- If we land on a tool message, or an assistant message that has tool calls (which need responses), move back
-  while keep_from > 1 and (messages[keep_from].role == "tool" or (messages[keep_from-1] and messages[keep_from-1].role == "assistant" and messages[keep_from-1].tool_calls)) do
-    keep_from = keep_from - 1
+  while keep_from < #messages and messages[keep_from].role == "tool" do
+    keep_from = keep_from + 1
   end
 
-  local new_messages = {}
+  local new_messages = { messages[1] }
+
+  local summary_parts = {}
+  for i = 2, keep_from - 1 do
+    local m = messages[i]
+    if m.role == "assistant" and m.tool_calls then
+      for _, tc in ipairs(m.tool_calls) do
+        summary_parts[#summary_parts+1] = (tc["function"] and tc["function"].name or "tool")
+      end
+    end
+  end
+
+  if #summary_parts > 0 then
+    local summary = "[System: Previous actions summarized and evicted from context: " .. table.concat(summary_parts, ", ") .. "]"
+    new_messages[#new_messages+1] = { role = "system", content = summary }
+  end
+
   for i = keep_from, #messages do
     local m = messages[i]
-    -- Truncate old large tool results that we are still keeping
     if m.role == "tool" and m.content and #m.content > 2000 and i < #messages - 4 then
       m.content = m.content:sub(1, 1000) .. "\n...[truncated]"
     end

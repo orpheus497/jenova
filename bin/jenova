@@ -87,7 +87,7 @@ else
 fi
 
 export JENOVA_API_URL="$API_URL"
-export JENOVA_ROOT="${JENOVA_ROOT:-$CODER_ROOT}"
+export JENOVA_ROOT="${JENOVA_ROOT}"
 
 # Find agent.lua relative to script
 if [ -f "$SCRIPT_DIR/lib/agent.lua" ]; then
@@ -100,16 +100,21 @@ else
 fi
 
 # Run agent in foreground; on exit, stop the CA server we started
+cleanup_agent() {
+    if [ -f "$PID_FILE" ]; then
+        if [ -f "$SCRIPT_DIR/jenova-ca" ]; then
+            "$SCRIPT_DIR/jenova-ca" stop 2>/dev/null
+        elif [ -f "$SCRIPT_DIR/../jenova-ca" ]; then
+            "$SCRIPT_DIR/../jenova-ca" stop 2>/dev/null
+        fi
+    fi
+}
+trap cleanup_agent EXIT INT TERM
+
 luajit "$AGENT_PATH"
 AGENT_EXIT=$?
 
-# Cleanup: stop jenova-ca using its own stop verb (reads PID file, kills all children)
-if [ -f "$PID_FILE" ]; then
-    if [ -f "$SCRIPT_DIR/jenova-ca" ]; then
-        "$SCRIPT_DIR/jenova-ca" stop 2>/dev/null
-    elif [ -f "$SCRIPT_DIR/../jenova-ca" ]; then
-        "$SCRIPT_DIR/../jenova-ca" stop 2>/dev/null
-    fi
-fi
+trap - EXIT INT TERM
+cleanup_agent
 
 exit $AGENT_EXIT
