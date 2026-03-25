@@ -458,13 +458,10 @@ function search.index_dir(root_dir, extensions)
       f:close()
       
       -- Start background indexer
-      local indexer_cmd = string.format(
-        "luajit -e \"package.path='lib/?.lua;?.lua;'..package.path; local s=require('search'); local e=require('embed'); local j=require('json'); e.init(); s.init_embeddings(e); local f=io.open('%s','r'); local q=j.decode(f:read('*a')); f:close(); s.process_embedding_queue(q); os.remove('%s')\" &",
-        tmp_list, tmp_list
-      )
+      local indexer_cmd = string.format('luajit lib/indexer_runner.lua %q &', tmp_list, tmp_list)
       -- Use daemon.start_background() to reliably background indexer instead of os.execute one-liner
       local daemon = require('daemon')
-      local ok, pid_or_err = daemon.start_background({ 'luajit', '-e', "package.path='lib/?.lua;?.lua;'..package.path; local s=require('search'); local e=require('embed'); local j=require('json'); e.init(); s.init_embeddings(e); local f=io.open('"..tmp_list.."','r'); local q=j.decode(f:read('*a')); f:close(); s.process_embedding_queue(q); os.remove('"..tmp_list.."')" }, '.jenova/indexer.log', '.')
+      local ok, pid_or_err = daemon.start_background({ 'luajit', 'lib/indexer_runner.lua', tmp_list }, '.jenova/indexer.log', '.')
       if ok then
         io.write(string.format("  [Jenova] BM25 ready. Backgrounded %d embeddings (pid=%s)...\n", #files_to_embed, tostring(pid_or_err)))
       else
