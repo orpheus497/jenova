@@ -23,7 +23,7 @@ if [ ! -f "$MODEL_PATH" ]; then
     JENOVA_MODEL="$MODEL_14B"
     # Recompute TENSOR_SPLIT for 14B with Jenova Optane-paging strategy:
     # Intel Iris Xe (3.0) can utilize the 27GB Optane swap via system memory.
-    TENSOR_SPLIT="1.0,3.0"
+    TENSOR_SPLIT="1.5,2.5"
 fi
 DRAFT_PATH="${JENOVA_DRAFT_PATH:-$MODEL_DRAFT}"
 
@@ -77,6 +77,13 @@ export JENOVA_PROXY_PORT="$PORT"
 export JENOVA_PROXY_HOST="$HOST"
 export JENOVA_EMBED_DEVICES="$EMBED_DEVICES"
 
+# Control passing explicit tensor split. Leave FORCE_TENSOR_SPLIT unset to allow llama.cpp auto-fit.
+if [ -n "$FORCE_TENSOR_SPLIT" ] && [ -n "$TENSOR_SPLIT" ]; then
+    TS_ARG="-ts \"$TENSOR_SPLIT\""
+else
+    TS_ARG=""
+fi
+
 # Ensure local llama.cpp build libraries are on the runtime linker path (FreeBSD)
 # Some builds place shared libs in build/bin rather than build/lib
 LLAMA_LIB_DIR="$JENOVA_ROOT/llama.cpp/build/bin"
@@ -110,9 +117,8 @@ if [ "$1" = "--daemon" ]; then
             -m "$MODEL_PATH" \
             -dev "$DEVICES" \
             -sm layer \
-            -ts "$TENSOR_SPLIT" \
+            $TS_ARG \
             -fitt "$LLAMA_FITT" \
-            -ngl all \
             -c "$CTX_SIZE" \
             -b 2048 \
             -ub 256 \
@@ -152,9 +158,8 @@ fi
     -m "$MODEL_PATH" \
     -dev "$DEVICES" \
     -sm layer \
-    -ts "$TENSOR_SPLIT" \
+    $TS_ARG \
     -fitt "$LLAMA_FITT" \
-    -ngl all \
     -c "$CTX_SIZE" \
     -b 2048 \
     -ub 256 \
