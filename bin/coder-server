@@ -1,67 +1,122 @@
 #!/bin/sh
-# coder-server: Launch llama-server for the coder agent
-# Optimized for: FreeBSD 15 | GTX 1650 Ti 4GB | Intel Iris Xe ~7GB
+
+# coder-server: Launch llama-server + Intelligence Proxy
+# Optimized for: FreeBSD 15 | i5-1135G7 | GTX 1650 Ti 4GB | Intel Xe ~7GB | 16GB RAM
 
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
-. "$SCRIPT_DIR/../etc/coder.conf"
 
-# Ensure runtime directories exist
-mkdir -p "$LOG_DIR" "$CACHE_DIR"
+# Load configuration
+if [ -f "$SCRIPT_DIR/etc/coder.conf" ]; then
+    . "$SCRIPT_DIR/etc/coder.conf"
+elif [ -f "$SCRIPT_DIR/../etc/coder.conf" ]; then
+    . "$SCRIPT_DIR/../etc/coder.conf"
+else
+    echo "Error: etc/coder.conf not found."
+    exit 1
+fi
 
-# Raise mlock limit (FreeBSD: sysctl security.bsd.unprivileged_mlock=1 must be set)
+MODEL_PATH="${CODER_MODEL:-$MODEL_7B}"
+if [ ! -f "$MODEL_PATH" ]; then
+    echo "Attempting to fall back to 14B..."
+    MODEL_PATH="$MODEL_14B"
+    CODER_MODEL="$MODEL_14B"
+    # Recompute TENSOR_SPLIT for 14B: Intel Iris Xe has more VRAM (~7GB) than NVIDIA (4GB)
+    TENSOR_SPLIT="1.0,2.0"
+fi
+DRAFT_PATH="${CODER_DRAFT_PATH:-$MODEL_DRAFT}"
+
+# Fix mlock: raise memory lock limit
 ulimit -l unlimited 2>/dev/null || ulimit -l 8388608 2>/dev/null || true
 
+# Check for model existence
 if [ ! -f "$LLAMA_SERVER" ]; then
     echo "Error: llama-server not found at $LLAMA_SERVER"
-    echo "Build: cd llama.cpp && cmake -B build -DGGML_VULKAN=ON && cmake --build build -j\$(sysctl -n hw.ncpu)"
     exit 1
 fi
 
 if [ ! -f "$MODEL_PATH" ]; then
     echo "Error: Model not found at $MODEL_PATH"
-    echo "Attempting to fall back to 14B..."
-    CODER_MODEL="$MODEL_14B"
-    . "$SCRIPT_DIR/../etc/coder.conf"
-    MODEL_PATH="$MODEL_14B"
-    if [ ! -f "$MODEL_PATH" ]; then
-        echo "Error: 14B model also missing."
-        exit 1
-    fi
+    exit 1
 fi
 
-echo "Starting llama-server (GTX 1650 Ti 4GB + Iris Xe)..."
+echo "Starting llama-server (consolidated, optimized for GTX 1650 Ti + Iris Xe)..."
 echo "  Model:   $MODEL_PATH"
-echo "  Context: $CTX_SIZE tokens"
-echo "  Listen:  $HOST:$PORT"
-echo "  GPU:     $DEVICES (split $TENSOR_SPLIT)"
-echo "  KV:      f16 (required for JSON accuracy)"
-echo "  Flash:   auto"
-
-DRAFT_ARGS=""
-if [ -f "$MODEL_DRAFT" ]; then
-    echo "  Draft:   $MODEL_DRAFT (speculative decoding ENABLED)"
-    # Speculative decoding for extreme speed (15-30 tok/s on 7B)
-    DRAFT_ARGS="-md $MODEL_DRAFT -ngld all --draft-max 16 --draft-min 4 --draft-p-min 0.6"
-else
-    echo "  Draft:   disabled (0.5B model missing at $MODEL_DRAFT)"
-fi
+echo "  Slots:   $NUM_SLOTS"
+echo "  Tensor Split: $TENSOR_SPLIT"
 echo ""
 
-exec "$LLAMA_SERVER" \
+DRAFT_ARGS=""
+if [ -f "$DRAFT_PATH" ] && [ -n "$CODER_DRAFT" ]; then
+    echo "  Draft:   $DRAFT_PATH (speculative decoding)"
+    DRAFT_ARGS="-md $DRAFT_PATH -ngld all --draft-max 16 --draft-min 4 --draft-p-min 0.6"
+fi
+
+MLOCK_ARG=""
+MLOCK_LIMIT=$(ulimit -l 2>/dev/null || echo 0)
+if [ "$MLOCK_LIMIT" = "unlimited" ] || [ "$MLOCK_LIMIT" -gt 2097152 ] 2>/dev/null; then
+    MLOCK_ARG="--mlock"
+fi
+
+# Start llama-server in background
+"$LLAMA_SERVER" \
     -m "$MODEL_PATH" \
     -dev "$DEVICES" \
     -sm layer \
     -ts "$TENSOR_SPLIT" \
+    -fitt "$LLAMA_FITT" \
     -ngl all \
     -c "$CTX_SIZE" \
     -b 2048 \
     -ub 256 \
-    -np 1 \
+    -np "$NUM_SLOTS" \
     -t "$THREADS" \
     -tb "$THREADS_BATCH" \
     -fa auto \
+    $MLOCK_ARG \
     -cb \
+    --spm-infill \
+    --offline \
     --host "$HOST" \
-    --port "$PORT" \
+    --port "$LLAMA_PORT" \
     $DRAFT_ARGS \
-    "$@"
+    "$@" &
+LLAMA_PID=$!
+
+# Trap to clean up server on exit
+cleanup() {
+    if [ -n "$LLAMA_PID" ]; then
+        echo "Stopping llama-server (PID $LLAMA_PID)..."
+        kill "$LLAMA_PID" 2>/dev/null
+        wait "$LLAMA_PID" 2>/dev/null
+    fi
+    if [ -n "$PROXY_PID" ]; then
+        echo "Stopping Intelligence Proxy (PID $PROXY_PID)..."
+        kill "$PROXY_PID" 2>/dev/null
+        wait "$PROXY_PID" 2>/dev/null
+    fi
+}
+trap cleanup EXIT INT TERM
+
+echo "Starting Lua Intelligence Proxy on port $PORT..."
+# Find proxy.lua relative to script
+if [ -f "$SCRIPT_DIR/lib/proxy.lua" ]; then
+    PROXY_SCRIPT="$SCRIPT_DIR/lib/proxy.lua"
+    export CODER_ROOT="$(dirname "$SCRIPT_DIR")"
+elif [ -f "$SCRIPT_DIR/../lib/proxy.lua" ]; then
+    PROXY_SCRIPT="$SCRIPT_DIR/../lib/proxy.lua"
+    export CODER_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+else
+    # Fallback if we can't find it, assume standard structure
+    PROXY_SCRIPT="$SCRIPT_DIR/../lib/proxy.lua"
+fi
+
+export CODER_LLAMA_URL="http://${HOST}:${LLAMA_PORT}"
+export CODER_PROXY_PORT="$PORT"
+export CODER_PROXY_HOST="$HOST"
+export CODER_EMBED_DEVICES="$EMBED_DEVICES"
+
+luajit "$PROXY_SCRIPT" &
+PROXY_PID=$!
+
+# Wait for background processes
+wait "$LLAMA_PID" "$PROXY_PID"
