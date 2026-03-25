@@ -551,7 +551,8 @@ local function exec_grep_search(args)
   if not pattern or pattern == "" then return "error: no pattern", false end
   local include = args.include or "*"
   ui.file_search("grep: " .. pattern)
-  local cmd = string.format("grep -rnE %q . --include=%q --exclude-dir={.git,.coder,.crush,node_modules,build,backups,llama.cpp} | head -20", pattern, include)
+  -- Use multiple --exclude-dir for /bin/sh compatibility (no brace expansion)
+  local cmd = string.format("grep -rnE -e %q . --include=%q --exclude-dir=.git --exclude-dir=.coder --exclude-dir=.crush --exclude-dir=node_modules --exclude-dir=build --exclude-dir=backups --exclude-dir=llama.cpp | head -20", pattern, include)
   local out, ok = exec_shell({ command = cmd })
   if not ok then return out, false end
   if out == "" then return "No matches found for '" .. pattern .. "'", true end
@@ -833,33 +834,17 @@ local function trim_messages(max)
   max = max or 24
   if #messages <= max then return end
 
-  -- Identify the first message to keep (starting from system and early user)
-  local keep_from = #messages - max + 2
-  if keep_from < 2 then keep_from = 2 end
+  -- Identify the first message to keep
+  local keep_from = #messages - max + 1
+  if keep_from < 1 then keep_from = 1 end
 
   -- Symmetrical eviction: ensure we don't split an assistant tool call from its results
-  while keep_from < #messages and messages[keep_from].role == "tool" do
-    keep_from = keep_from + 1
+  -- If we land on a tool message, or an assistant message that has tool calls (which need responses), move back
+  while keep_from > 1 and (messages[keep_from].role == "tool" or (messages[keep_from-1] and messages[keep_from-1].role == "assistant" and messages[keep_from-1].tool_calls)) do
+    keep_from = keep_from - 1
   end
 
-  local new_messages = { messages[1] } -- Keep system prompt
-
-  -- Summarize what we're evicting
-  local summary_parts = {}
-  for i = 2, keep_from - 1 do
-    local m = messages[i]
-    if m.role == "assistant" and m.tool_calls then
-      for _, tc in ipairs(m.tool_calls) do
-        summary_parts[#summary_parts+1] = (tc["function"] and tc["function"].name or "tool")
-      end
-    end
-  end
-
-  if #summary_parts > 0 then
-    local summary = "[System: Previous actions summarized and evicted from context: " .. table.concat(summary_parts, ", ") .. "]"
-    new_messages[#new_messages+1] = { role = "system", content = summary }
-  end
-
+  local new_messages = {}
   for i = keep_from, #messages do
     local m = messages[i]
     -- Truncate old large tool results that we are still keeping

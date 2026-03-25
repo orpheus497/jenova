@@ -124,11 +124,15 @@ local function chunk_text(content)
   return chunks
 end
 
+local function shell_quote(s)
+  return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
+
 -------------------------------------------------------------------------------
 -- Get file mtime
 -------------------------------------------------------------------------------
 local function file_mtime(filepath)
-  local p = io.popen(string.format("stat -f '%%m' %q 2>/dev/null", filepath))
+  local p = io.popen(string.format("stat -f '%%m' %s 2>/dev/null", shell_quote(filepath)))
   if not p then return 0 end
   local mtime = tonumber(p:read("*l")) or 0
   p:close()

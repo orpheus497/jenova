@@ -2,7 +2,7 @@
 -- Only implements POST with JSON body, which is all coder-agent needs.
 
 local ffi = require("ffi")
-local ffi_defs = require("ffi_defs")
+require("ffi_defs")
 
 local AF_INET = 2
 local SOCK_STREAM = 1

@@ -6,6 +6,7 @@ local _ffi_defs = require("ffi_defs")
 local json = require("json")
 local search = require("search")
 local embed = require("embed")
+local prompts = require("prompts")
 
 local HOST = os.getenv("CODER_PROXY_HOST") or "127.0.0.1"
 local PORT = tonumber(os.getenv("CODER_PROXY_PORT")) or 8080
@@ -92,49 +93,98 @@ local function proxy_connection(client_fd)
     end
 
     local is_chat_completion = headers_raw:find("POST /v1/chat/completions")
+    local intent = headers_raw:match("[Xx]%-Intent:%s*(%w+)")
     local proxied_req = headers_raw .. body_raw
 
-    -- RAG INJECTION LOGIC
+    -- RAG INJECTION & PROMPT LOGIC
     if is_chat_completion and #body_raw > 0 then
         local ok, req_json = pcall(json.decode, body_raw)
         if ok and req_json and req_json.messages then
             local last_user_msg = ""
+            local last_user_idx = -1
             for i = #req_json.messages, 1, -1 do
                 if req_json.messages[i].role == "user" then
                     last_user_msg = req_json.messages[i].content or ""
+                    last_user_idx = i
                     break
                 end
             end
 
+            -- Prefix detection as fallback/override
+            if last_user_msg:match("^%s*Visual Rewrite:%s*") then
+                intent = "visual"
+                req_json.messages[last_user_idx].content = last_user_msg:gsub("^%s*Visual Rewrite:%s*", "")
+                last_user_msg = req_json.messages[last_user_idx].content
+            elseif last_user_msg:match("^%s*Chatbot:%s*") then
+                intent = "chat"
+                req_json.messages[last_user_idx].content = last_user_msg:gsub("^%s*Chatbot:%s*", "")
+                last_user_msg = req_json.messages[last_user_idx].content
+            end
+
             -- Automatically pull codebase context, bypassing if 'no_rag' is explicitly passed or already contains context
             if last_user_msg ~= "" and not last_user_msg:find("--- REPOSITORY CONTEXT ---") then
-                local rag = search.query(last_user_msg, 3, true)
+                local rag_limit = (intent == "visual") and 1 or 3
+                local rag = search.query(last_user_msg, rag_limit, true)
+                local rag_context = ""
+
                 if #rag > 0 then
                     local parts = { "\n--- REPOSITORY CONTEXT ---" }
                     for i, r in ipairs(rag) do
                         parts[#parts+1] = string.format("[%d] %s", i, r.path)
                         if r.snippet then parts[#parts+1] = r.snippet:sub(1, 500) end
                     end
-                    local rag_context = table.concat(parts, "\n")
-                    
+                    rag_context = table.concat(parts, "\n")
+                end
+
+                if intent then
+                    local system_p = prompts[intent] or prompts.chat
+                    if rag_context ~= "" then
+                        system_p = system_p .. "\n" .. rag_context
+                    end
+
+                    if intent == "visual" then
+                        -- Strictly enforce no tools for visual rewrites
+                        req_json.tools = nil
+                        req_json.tool_choice = "none"
+                    end
+
+                    -- For agentic chat (has tools), we PREPEND instructions to avoid breaking tool definitions
+                    if req_json.messages[1].role == "system" then
+                        if req_json.tools then
+                            req_json.messages[1].content = system_p .. "\n\n" .. req_json.messages[1].content
+                        else
+                            req_json.messages[1].content = system_p
+                        end
+                    else
+                        table.insert(req_json.messages, 1, {role = "system", content = system_p})
+                    end
+                elseif rag_context ~= "" then
+                    -- Default behavior: append RAG to system prompt
                     if req_json.messages[1].role == "system" then
                         req_json.messages[1].content = req_json.messages[1].content .. "\n" .. rag_context
                     else
                         table.insert(req_json.messages, 1, {role = "system", content = rag_context})
                     end
-
-                    local new_body = json.encode(req_json)
-                    -- Case-insensitive replacement of Content-Length
-                    local new_headers = headers_raw:gsub("([Cc][Oo][Nn][Tt][Ee][Nn][Tt]%-[Ll][Ee][Nn][Gg][Tt][Hh]:%s*)%d+", "%1" .. #new_body)
-                    proxied_req = new_headers .. new_body
-                    print("[proxy] Injected intelligence context (" .. #rag .. " files)")
                 end
+
+                local new_body = json.encode(req_json)
+                -- Case-insensitive replacement of Content-Length
+                local new_headers = headers_raw:gsub("([Cc][Oo][Nn][Tt][Ee][Nn][Tt]%-[Ll][Ee][Nn][Gg][Tt][Hh]:%s*)%d+", "%1" .. #new_body)
+                proxied_req = new_headers .. new_body
+                if intent then print("[proxy] Intent: " .. intent .. " | Injected intelligence (" .. #rag .. " files)") end
             end
         end
     end
 
     -- Connect to raw C++ backend
     local llama_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
+    if llama_fd < 0 then
+        local err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
+        ffi.C.send(client_fd, err_resp, #err_resp, 0)
+        ffi.C.close(client_fd)
+        return
+    end
+
     local l_addr = ffi.new("struct sockaddr_in")
     l_addr.sin_family = AF_INET
     l_addr.sin_port = ffi.C.htons(LLAMA_PORT)
@@ -144,6 +194,7 @@ local function proxy_connection(client_fd)
         print("[proxy] ERROR: C++ llama-server backend is down on port " .. LLAMA_PORT)
         local err_resp = "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"
         ffi.C.send(client_fd, err_resp, #err_resp, 0)
+        ffi.C.close(llama_fd) -- Fix FD leak
         ffi.C.close(client_fd)
         return
     end
