@@ -1302,7 +1302,7 @@ local function main()
       goto continue
     elseif line == "/bench" then
       ui.status_info("Running benchmark...")
-      local bench_cmd = coder_root.."/llama.cpp/build/bin/llama-bench -m "..coder_root.."/models/Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf -ngl 99 -fa 1 -pg 512,128 2>&1"
+      local bench_cmd = coder_root.."/llama.cpp/build/bin/llama-bench -m "..coder_root.."/models/Qwen2.5-Coder-7B-Q5_K_M.gguf -ngl 99 -fa 1 -pg 512,128 2>&1"
       local bp = io.popen(bench_cmd); local bout = bp:read("*a"); bp:close()
       ui.dimtext(bout.."\n"); goto continue
     elseif line == "/stats" then

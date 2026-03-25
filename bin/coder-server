@@ -19,12 +19,12 @@ fi
 
 if [ ! -f "$MODEL_PATH" ]; then
     echo "Error: Model not found at $MODEL_PATH"
-    echo "Attempting to fall back to 7B..."
-    CODER_MODEL="$MODEL_7B"
+    echo "Attempting to fall back to 14B..."
+    CODER_MODEL="$MODEL_14B"
     . "$SCRIPT_DIR/../etc/coder.conf"
-    MODEL_PATH="$MODEL_7B"
+    MODEL_PATH="$MODEL_14B"
     if [ ! -f "$MODEL_PATH" ]; then
-        echo "Error: 7B model also missing."
+        echo "Error: 14B model also missing."
         exit 1
     fi
 fi
