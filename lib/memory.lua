@@ -15,7 +15,7 @@ local json = require("json")
 
 local memory = {}
 
-local CODER_DIR = ".coder"
+local CODER_DIR = ".jenova"
 local SESSION_LOG = CODER_DIR .. "/session.jsonl"
 local ERROR_FILE = CODER_DIR .. "/errors.jsonl"
 local LEARN_FILE = CODER_DIR .. "/learned.jsonl"
@@ -517,7 +517,7 @@ function memory.get_project_tree(root, max_depth)
   root = root or "."
   max_depth = max_depth or 3
   local cmd = string.format(
-    "find %s -maxdepth %d -type f -not -path '*/.git/*' -not -path '*/.coder/*' -not -path '*/.crush/*' -not -path '*/node_modules/*' -not -path '*/__pycache__/*' -not -path '*/build/*' -not -path '*/backups/*' -not -path '*/llama.cpp/*' -not -name '*.gguf' -not -name '*.bin' -not -name '*.o' -not -name '*.so' 2>/dev/null | head -100 | sort",
+    "find %s -maxdepth %d -type f -not -path '*/.git/*' -not -path '*/.jenova/*' -not -path '*/.crush/*' -not -path '*/node_modules/*' -not -path '*/__pycache__/*' -not -path '*/build/*' -not -path '*/backups/*' -not -path '*/llama.cpp/*' -not -name '*.gguf' -not -name '*.bin' -not -name '*.o' -not -name '*.so' 2>/dev/null | head -100 | sort",
     shell_quote(root), max_depth
   )
   local p = io.popen(cmd)

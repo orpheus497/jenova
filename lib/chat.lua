@@ -16,7 +16,7 @@ local messages = {
     { role = "system", content = SYS_PROMPT }
 }
 
-print("\n\27[1;34m=== Coder Chat (Intelligence Proxy Connected) ===\27[0m")
+print("\n\27[1;34m=== Jenova Chat (Intelligence Proxy Connected) ===\27[0m")
 print("\27[90mType /quit or /clear to manage the session.\27[0m\n")
 
 while true do
@@ -48,7 +48,7 @@ while true do
 
     local body = json.encode(payload)
     
-    spinner_start("Thinking")
+    spinner_start("Cognizing")
     local status, resp = http.post(API_URL, body, 600)
     spinner_stop()
 
@@ -57,7 +57,7 @@ while true do
         if ok and data.choices and data.choices[1].message then
             local reply = data.choices[1].message.content or ""
             table.insert(messages, { role = "assistant", content = reply })
-            print("\n\27[36mcoder:\27[0m\n" .. reply .. "\n")
+            print("\n\27[36mjenova:\27[0m\n" .. reply .. "\n")
         else
             local safe_body = (resp or ""):gsub("\n", " "):gsub("[%c]", ""):sub(1, 200)
             if #(resp or "") > 200 then safe_body = safe_body .. "..." end

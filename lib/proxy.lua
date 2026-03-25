@@ -25,7 +25,7 @@ search.index_dir(".", {
   "html","css","Makefile","zig",
 })
 
-print("[proxy] Intelligence Proxy loaded on port " .. PORT .. ". Embeddings: " .. tostring(embed_ok))
+print("[proxy] Jenova Signal Proxy loaded on port " .. PORT .. ". Embeddings: " .. tostring(embed_ok))
 
 local AF_INET = 2
 local SOCK_STREAM = 1
@@ -33,44 +33,83 @@ local SOL_SOCKET = 0xffff
 local SO_REUSEADDR = 0x0004
 local SO_RCVTIMEO = 0x1006
 
-local server_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
-if server_fd < 0 then
-    print("[proxy] Failed to create socket")
-    os.exit(1)
+local EAGAIN = 35
+local EWOULDBLOCK = 35
+local EINPROGRESS = 36
+
+local function set_nonblocking(fd)
+    ffi.C.fcntl(fd, _ffi_defs.F_SETFL, _ffi_defs.O_NONBLOCK)
 end
 
-local opt = ffi.new("int[1]", 1)
-ffi.C.setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, opt, ffi.sizeof("int"))
-
-local addr = ffi.new("struct sockaddr_in")
-addr.sin_family = AF_INET
-addr.sin_port = ffi.C.htons(PORT)
-addr.sin_addr.s_addr = ffi.C.inet_addr(HOST)
-
-if ffi.C.bind(server_fd, ffi.cast("struct sockaddr *", addr), ffi.sizeof(addr)) < 0 then
-    print("[proxy] Failed to bind to " .. HOST .. ":" .. PORT)
-    os.exit(1)
+local function decode_chunked_body(after_headers)
+    local decoded = {}
+    local pos = 1
+    while pos <= #after_headers do
+        local chunk_end = after_headers:find("\r\n", pos)
+        if not chunk_end then break end
+        local size_str = after_headers:sub(pos, chunk_end - 1)
+        local chunk_size = tonumber(size_str, 16)
+        if not chunk_size then break end
+        if chunk_size == 0 then break end
+        local chunk_data = after_headers:sub(chunk_end + 2, chunk_end + 1 + chunk_size)
+        decoded[#decoded + 1] = chunk_data
+        pos = chunk_end + 2 + chunk_size + 2
+    end
+    return table.concat(decoded)
 end
 
-if ffi.C.listen(server_fd, 100) < 0 then
-    print("[proxy] Failed to listen")
-    os.exit(1)
+-- Async helper: yield until readable/writable
+local function async_recv(fd, buf, len)
+    while true do
+        local n = ffi.C.recv(fd, buf, len, 0)
+        if n >= 0 then return tonumber(n) end
+        local err = ffi.errno()
+        if err ~= EAGAIN and err ~= EWOULDBLOCK then return -1, err end
+        coroutine.yield("read", fd)
+    end
+end
+
+local function async_send(fd, data)
+    local sent = 0
+    while sent < #data do
+        local n = ffi.C.send(fd, data:sub(sent + 1), #data - sent, 0)
+        if n >= 0 then
+            sent = sent + tonumber(n)
+        else
+            local err = ffi.errno()
+            if err ~= EAGAIN and err ~= EWOULDBLOCK then return -1, err end
+            coroutine.yield("write", fd)
+        end
+    end
+    return sent
+end
+
+local function async_connect(fd, addr)
+    local ret = ffi.C.connect(fd, ffi.cast("struct sockaddr *", addr), ffi.sizeof(addr))
+    if ret == 0 then return true end
+    local err = ffi.errno()
+    if err ~= EINPROGRESS then return false, err end
+    coroutine.yield("write", fd)
+    -- After yield, check connection status
+    local opt = ffi.new("int[1]")
+    local len = ffi.new("socklen_t[1]", ffi.sizeof("int"))
+    ffi.C.setsockopt(fd, SOL_SOCKET, 0x1007, opt, len) -- SO_ERROR = 0x1007
+    if opt[0] == 0 then return true else return false, opt[0] end
 end
 
 local function proxy_connection(client_fd)
-    -- Set 5-second timeout for reading request headers
-    local tv = ffi.new("struct timeval", {tv_sec=5, tv_usec=0})
-    ffi.C.setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, tv, ffi.sizeof(tv))
-    
+    set_nonblocking(client_fd)
     local buf = ffi.new("char[8192]")
     local headers_raw = ""
     local body_raw = ""
     local content_length = 0
+    local is_chunked = false
     local is_get = false
 
+    -- Read headers
     while true do
-        local n = ffi.C.recv(client_fd, buf, 8192, 0)
-        if n <= 0 then break end
+        local n = async_recv(client_fd, buf, 8192)
+        if n <= 0 then ffi.C.close(client_fd); return end
         headers_raw = headers_raw .. ffi.string(buf, n)
         
         local header_end = headers_raw:find("\r\n\r\n")
@@ -79,16 +118,27 @@ local function proxy_connection(client_fd)
             headers_raw = headers_raw:sub(1, header_end + 3)
             local cl = headers_raw:lower():match("content%-length:%s*(%d+)")
             if cl then content_length = tonumber(cl) end
+            is_chunked = headers_raw:lower():find("transfer%-encoding:%s*chunked") ~= nil
             is_get = headers_raw:match("^GET ") ~= nil
             break
         end
     end
 
+    -- Read body
     if not is_get then
-        while #body_raw < content_length do
-            local n = ffi.C.recv(client_fd, buf, 8192, 0)
-            if n <= 0 then break end
-            body_raw = body_raw .. ffi.string(buf, n)
+        if is_chunked then
+            while not body_raw:find("0\r\n\r\n$") do
+                local n = async_recv(client_fd, buf, 8192)
+                if n <= 0 then break end
+                body_raw = body_raw .. ffi.string(buf, n)
+            end
+            body_raw = decode_chunked_body(body_raw)
+        else
+            while #body_raw < content_length do
+                local n = async_recv(client_fd, buf, 8192)
+                if n <= 0 then break end
+                body_raw = body_raw .. ffi.string(buf, n)
+            end
         end
     end
 
@@ -110,7 +160,6 @@ local function proxy_connection(client_fd)
                 end
             end
 
-            -- Prefix detection as fallback/override
             if last_user_msg:match("^%s*Visual Rewrite:%s*") then
                 intent = "visual"
                 req_json.messages[last_user_idx].content = last_user_msg:gsub("^%s*Visual Rewrite:%s*", "")
@@ -121,7 +170,6 @@ local function proxy_connection(client_fd)
                 last_user_msg = req_json.messages[last_user_idx].content
             end
 
-            -- Automatically pull codebase context, bypassing if 'no_rag' is explicitly passed or already contains context
             if last_user_msg ~= "" and not last_user_msg:find("--- REPOSITORY CONTEXT ---") then
                 local rag_limit = (intent == "visual") and 1 or 3
                 local rag = search.query(last_user_msg, rag_limit, true)
@@ -131,24 +179,18 @@ local function proxy_connection(client_fd)
                     local parts = { "\n--- REPOSITORY CONTEXT ---" }
                     for i, r in ipairs(rag) do
                         parts[#parts+1] = string.format("[%d] %s", i, r.path)
-                        if r.snippet then parts[#parts+1] = r.snippet:sub(1, 500) end
+                        if r.snippet then parts[#parts+1] = r.snippet:sub(1, 1000) end -- Increased snippet context
                     end
                     rag_context = table.concat(parts, "\n")
                 end
 
                 if intent then
                     local system_p = prompts[intent] or prompts.chat
-                    if rag_context ~= "" then
-                        system_p = system_p .. "\n" .. rag_context
-                    end
-
+                    if rag_context ~= "" then system_p = system_p .. "\n" .. rag_context end
                     if intent == "visual" then
-                        -- Strictly enforce no tools for visual rewrites
                         req_json.tools = nil
                         req_json.tool_choice = "none"
                     end
-
-                    -- For agentic chat (has tools), we PREPEND instructions to avoid breaking tool definitions
                     if req_json.messages[1].role == "system" then
                         if req_json.tools then
                             req_json.messages[1].content = system_p .. "\n\n" .. req_json.messages[1].content
@@ -159,7 +201,6 @@ local function proxy_connection(client_fd)
                         table.insert(req_json.messages, 1, {role = "system", content = system_p})
                     end
                 elseif rag_context ~= "" then
-                    -- Default behavior: append RAG to system prompt
                     if req_json.messages[1].role == "system" then
                         req_json.messages[1].content = req_json.messages[1].content .. "\n" .. rag_context
                     else
@@ -168,74 +209,140 @@ local function proxy_connection(client_fd)
                 end
 
                 local new_body = json.encode(req_json)
-                -- Case-insensitive replacement of Content-Length
                 local new_headers = headers_raw:gsub("([Cc][Oo][Nn][Tt][Ee][Nn][Tt]%-[Ll][Ee][Nn][Gg][Tt][Hh]:%s*)%d+", "%1" .. #new_body)
+                -- If it was chunked, we convert to content-length for the backend
+                new_headers = new_headers:gsub("[Tt][Rr][Aa][Nn][Ss][Ff][Ee][Rr]%-[Ee][Nn][Cc][Oo][Dd][Ii][Nn][Gg]:%s*[Cc][Hh][Uu][Nn][Kk][Ee][Dd]\r\n", "")
+                if not new_headers:find("[Cc][Oo][Nn][Tt][Ee][Nn][Tt]%-[Ll][Ee][Nn][Gg][Tt][Hh]:") then
+                    new_headers = new_headers:gsub("\r\n\r\n", "\r\nContent-Length: " .. #new_body .. "\r\n\r\n")
+                end
                 proxied_req = new_headers .. new_body
                 if intent then print("[proxy] Intent: " .. intent .. " | Injected intelligence (" .. #rag .. " files)") end
             end
         end
     end
 
-    -- Connect to raw C++ backend
+    -- Connect to llama-server
     local llama_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
     if llama_fd < 0 then
         local err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
-        ffi.C.send(client_fd, err_resp, #err_resp, 0)
+        async_send(client_fd, err_resp)
         ffi.C.close(client_fd)
         return
     end
+    set_nonblocking(llama_fd)
 
     local l_addr = ffi.new("struct sockaddr_in")
+    l_addr.sin_len = ffi.sizeof(l_addr)
     l_addr.sin_family = AF_INET
     l_addr.sin_port = ffi.C.htons(LLAMA_PORT)
     l_addr.sin_addr.s_addr = ffi.C.inet_addr(HOST)
 
-    if ffi.C.connect(llama_fd, ffi.cast("struct sockaddr *", l_addr), ffi.sizeof(l_addr)) < 0 then
-        print("[proxy] ERROR: C++ llama-server backend is down on port " .. LLAMA_PORT)
+    local connected, err = async_connect(llama_fd, l_addr)
+    if not connected then
+        print("[proxy] ERROR: C++ llama-server backend is down on port " .. LLAMA_PORT .. " (err: " .. tostring(err) .. ")")
         local err_resp = "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"
-        ffi.C.send(client_fd, err_resp, #err_resp, 0)
-        ffi.C.close(llama_fd) -- Fix FD leak
+        async_send(client_fd, err_resp)
+        ffi.C.close(llama_fd)
         ffi.C.close(client_fd)
         return
     end
 
-    -- Stream request forward
-    local sent = 0
-    while sent < #proxied_req do
-        local n = ffi.C.send(llama_fd, proxied_req:sub(sent + 1), #proxied_req - sent, 0)
-        if n <= 0 then break end
-        sent = sent + tonumber(n)
-    end
+    -- Forward request
+    async_send(llama_fd, proxied_req)
 
-    -- Disable timeout for the response stream (generations can take a while)
-    local tv_zero = ffi.new("struct timeval", {tv_sec=0, tv_usec=0})
-    ffi.C.setsockopt(llama_fd, SOL_SOCKET, SO_RCVTIMEO, tv_zero, ffi.sizeof(tv_zero))
-    
-    -- Stream response backward to client (Nvim / terminal)
+    -- Backward response
     while true do
-        local n = ffi.C.recv(llama_fd, buf, 8192, 0)
+        local n = async_recv(llama_fd, buf, 8192)
         if n <= 0 then break end
-        
-        local c_sent = 0
         local to_send = ffi.string(buf, n)
-        while c_sent < #to_send do
-            local sn = ffi.C.send(client_fd, to_send:sub(c_sent + 1), #to_send - c_sent, 0)
-            if sn <= 0 then break end
-            c_sent = c_sent + tonumber(sn)
-        end
+        if async_send(client_fd, to_send) < 0 then break end
     end
 
     ffi.C.close(llama_fd)
     ffi.C.close(client_fd)
 end
 
--- Accept loop
+-- Server Setup
+local server_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
+if server_fd < 0 then
+    print("[proxy] Failed to create socket")
+    os.exit(1)
+end
+
+local opt = ffi.new("int[1]", 1)
+ffi.C.setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, opt, ffi.sizeof("int"))
+set_nonblocking(server_fd)
+
+local addr = ffi.new("struct sockaddr_in")
+addr.sin_len = ffi.sizeof(addr)
+addr.sin_family = AF_INET
+addr.sin_port = ffi.C.htons(PORT)
+addr.sin_addr.s_addr = ffi.C.inet_addr(HOST)
+
+if ffi.C.bind(server_fd, ffi.cast("struct sockaddr *", addr), ffi.sizeof(addr)) < 0 then
+    print("[proxy] Failed to bind to " .. HOST .. ":" .. PORT)
+    os.exit(1)
+end
+
+if ffi.C.listen(server_fd, 100) < 0 then
+    print("[proxy] Failed to listen")
+    os.exit(1)
+end
+
+-- Main Select Loop
+local clients = {} -- fd -> {co = co, type = "read"|"write", watch_fd = fd}
+local read_fds = _ffi_defs.fd_set_new()
+local write_fds = _ffi_defs.fd_set_new()
+
 while true do
-    local client_addr = ffi.new("struct sockaddr_in")
-    local addrlen = ffi.new("socklen_t[1]", ffi.sizeof(client_addr))
-    local client_fd = ffi.C.accept(server_fd, ffi.cast("struct sockaddr *", client_addr), addrlen)
+    _ffi_defs.FD_ZERO(read_fds)
+    _ffi_defs.FD_ZERO(write_fds)
+    _ffi_defs.FD_SET(server_fd, read_fds)
     
-    if client_fd >= 0 then
-        proxy_connection(client_fd)
+    local max_fd = server_fd
+    for fd, info in pairs(clients) do
+        if info.type == "read" then
+            _ffi_defs.FD_SET(info.watch_fd, read_fds)
+        elseif info.type == "write" then
+            _ffi_defs.FD_SET(info.watch_fd, write_fds)
+        end
+        if info.watch_fd > max_fd then max_fd = info.watch_fd end
+    end
+
+    local tv = ffi.new("struct timeval", {tv_sec=1, tv_usec=0}) -- 1s timeout for safety
+    local n = ffi.C.select(max_fd + 1, read_fds, write_fds, nil, tv)
+
+    if n > 0 then
+        if _ffi_defs.FD_ISSET(server_fd, read_fds) then
+            local client_addr = ffi.new("struct sockaddr_in")
+            local addrlen = ffi.new("socklen_t[1]", ffi.sizeof(client_addr))
+            local client_fd = ffi.C.accept(server_fd, ffi.cast("struct sockaddr *", client_addr), addrlen)
+            if client_fd >= 0 then
+                local co = coroutine.create(function() proxy_connection(client_fd) end)
+                local status, type, watch_fd = coroutine.resume(co)
+                if coroutine.status(co) ~= "dead" then
+                    clients[client_fd] = {co = co, type = type, watch_fd = watch_fd}
+                end
+            end
+        end
+
+        for fd, info in pairs(clients) do
+            local ready = false
+            if info.type == "read" and _ffi_defs.FD_ISSET(info.watch_fd, read_fds) then
+                ready = true
+            elseif info.type == "write" and _ffi_defs.FD_ISSET(info.watch_fd, write_fds) then
+                ready = true
+            end
+
+            if ready then
+                local status, type, watch_fd = coroutine.resume(info.co)
+                if coroutine.status(info.co) == "dead" then
+                    clients[fd] = nil
+                else
+                    info.type = type
+                    info.watch_fd = watch_fd
+                end
+            end
+        end
     end
 end

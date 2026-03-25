@@ -1,11 +1,6 @@
--- search.lua: Hybrid BM25 + semantic vector search for jenova-agent
+-- search.lua: Hybrid BM25 + semantic vector search for coder-agent
 -- BM25 always available; vector search when embed module is initialized
--- Vectors persisted to .jenova/vectors.json for incremental updates
-
-local _dir = debug.getinfo(1, "S").source:match("^@(.*/)") or "./"
-if not package.path:find(_dir, 1, true) then
-  package.path = _dir .. "?.lua;" .. package.path
-end
+-- Vectors persisted to .coder/vectors.json for incremental updates
 
 local json = require("json")
 
@@ -30,7 +25,7 @@ local vec_index = {}    -- { filepath = { chunks = { {text=..., vec=..., start_l
 local CHUNK_WORDS = 300
 local CHUNK_OVERLAP = 50
 local BATCH_SIZE = 8
-local VECTOR_FILE = ".jenova/vectors.json"
+local VECTOR_FILE = ".coder/vectors.json"
 local BM25_WEIGHT = 0.4
 local SEMANTIC_WEIGHT = 0.6
 
@@ -53,11 +48,8 @@ end
 -------------------------------------------------------------------------------
 local function chunk_text(content)
   local lines = {}
-  if content ~= "" then
-    local clean_content = content:sub(-1) == "\n" and content:sub(1, -2) or content
-    for line in (clean_content .. "\n"):gmatch("([^\n]*)\n") do
-      lines[#lines + 1] = line
-    end
+  for line in (content .. "\n"):gmatch("([^\n]*)\n") do
+    lines[#lines + 1] = line
   end
 
   if #lines == 0 then return {} end
@@ -124,15 +116,11 @@ local function chunk_text(content)
   return chunks
 end
 
-local function shell_quote(s)
-  return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
-end
-
 -------------------------------------------------------------------------------
 -- Get file mtime
 -------------------------------------------------------------------------------
 local function file_mtime(filepath)
-  local p = io.popen(string.format("stat -f '%%m' %s 2>/dev/null", shell_quote(filepath)))
+  local p = io.popen("stat -f '%m' " .. filepath .. " 2>/dev/null")
   if not p then return 0 end
   local mtime = tonumber(p:read("*l")) or 0
   p:close()
@@ -160,13 +148,10 @@ local function bm25_index_file(filepath)
 
   local lines = {}
   local count = 0
-  if content ~= "" then
-    local clean_content = content:sub(-1) == "\n" and content:sub(1, -2) or content
-    for line in (clean_content .. "\n"):gmatch("([^\n]*)\n") do
-      count = count + 1
-      if count <= 200 then
-        lines[count] = line
-      end
+  for line in content:gmatch("[^\n]+") do
+    count = count + 1
+    if count <= 200 then
+      lines[count] = line
     end
   end
 
@@ -202,11 +187,11 @@ end
 -- Vector: Embed chunks for a file (if embed module available)
 -- Returns true if new embeddings were computed
 -------------------------------------------------------------------------------
-local function vec_index_file(filepath, content, mtime)
+local function vec_index_file(filepath, content)
   if not embed or not embed.is_available() then return false end
   if not content then return false end
 
-  mtime = mtime or file_mtime(filepath)
+  local mtime = file_mtime(filepath)
 
   -- Skip if already indexed with same mtime
   if vec_index[filepath] and vec_index[filepath].mtime == mtime and mtime > 0 then
@@ -242,7 +227,7 @@ local function vec_index_file(filepath, content, mtime)
     if vectors[i] then
       embed.normalize(vectors[i])
       indexed_chunks[#indexed_chunks + 1] = {
-        text = c.text:sub(1, 1000),
+        text = c.text:sub(1, 500), -- store snippet only for display
         vec = vectors[i],
         start_line = c.start_line,
       }
@@ -277,7 +262,7 @@ function search.save_vectors()
     save_data[filepath] = { mtime = entry.mtime, chunks = chunks_save }
   end
 
-  os.execute("mkdir -p .jenova")
+  os.execute("mkdir -p .coder")
   local f = io.open(VECTOR_FILE, "w")
   if not f then return false end
   f:write(json.encode(save_data))
@@ -357,36 +342,7 @@ function search.reindex_file(filepath)
 end
 
 -------------------------------------------------------------------------------
--- Background Indexer: Process a queue of files to embed
--- This is called from index_dir or as a standalone background process
--------------------------------------------------------------------------------
-function search.process_embedding_queue(files_to_embed)
-  if not files_to_embed or #files_to_embed == 0 then return 0 end
-  if not embed or not embed.is_available() then return 0 end
-
-  io.write(string.format("  [Jenova Indexer] Processing %d files in background...\n", #files_to_embed))
-  io.flush()
-  
-  local embedded = 0
-  for i, entry in ipairs(files_to_embed) do
-    local ok, _ = pcall(vec_index_file, entry.path, entry.content, entry.mtime)
-    if ok then
-      embedded = embedded + 1
-    end
-    -- Periodic save to allow incremental discovery
-    if i % 10 == 0 or i == #files_to_embed then
-      search.save_vectors()
-      if i % 10 == 0 then
-        io.write(string.format("  [Jenova Indexer] Embedded %d/%d\n", i, #files_to_embed))
-        io.flush()
-      end
-    end
-  end
-  return embedded
-end
-
--------------------------------------------------------------------------------
--- Index a directory tree (BM25 + background vectors)
+-- Index a directory tree (BM25 + optionally vectors)
 -------------------------------------------------------------------------------
 function search.index_dir(root_dir, extensions)
   root_dir = root_dir or "."
@@ -399,9 +355,8 @@ function search.index_dir(root_dir, extensions)
     ext_filter = "\\( " .. table.concat(parts, " -o ") .. " \\)"
   end
 
-  -- Use find -exec stat to get mtime and path in one go (FreeBSD compatible)
   local cmd = string.format(
-    "find %q -type f %s -not -path '*/.git/*' -not -path '*/.jenova/*' -not -path '*/.crush/*' -not -path '*/node_modules/*' -not -path '*/__pycache__/*' -not -path '*/build/*' -not -path '*/backups/*' -not -path '*/llama.cpp/*' -not -name '*.gguf' -not -name '*.bin' -not -name '*.o' -not -name '*.so' -size -100k -exec stat -f '%%m %%p' {} + 2>/dev/null | head -500",
+    "find %s -type f %s -not -path '*/.git/*' -not -path '*/.coder/*' -not -path '*/.crush/*' -not -path '*/node_modules/*' -not -path '*/__pycache__/*' -not -path '*/build/*' -not -path '*/backups/*' -not -path '*/llama.cpp/*' -not -name '*.gguf' -not -name '*.bin' -not -name '*.o' -not -name '*.so' -size -100k 2>/dev/null | head -500",
     root_dir, ext_filter
   )
   local p = io.popen(cmd)
@@ -417,15 +372,12 @@ function search.index_dir(root_dir, extensions)
   -- Collect files that need vector re-indexing
   local files_to_embed = {}
 
-  for line in output:gmatch("[^\n]+") do
-    local mtime_str, filepath = line:match("^(%d+)%s+(.+)$")
-    if mtime_str and filepath then
-      local mtime = tonumber(mtime_str) or 0
-      local content = bm25_index_file(filepath)
-      if content and embed and embed.is_available() then
-        if not vec_index[filepath] or vec_index[filepath].mtime ~= mtime or mtime == 0 then
-          files_to_embed[#files_to_embed + 1] = { path = filepath, content = content, mtime = mtime }
-        end
+  for filepath in output:gmatch("[^\n]+") do
+    local content = bm25_index_file(filepath)
+    if content and embed and embed.is_available() then
+      local mtime = file_mtime(filepath)
+      if not vec_index[filepath] or vec_index[filepath].mtime ~= mtime or mtime == 0 then
+        files_to_embed[#files_to_embed + 1] = { path = filepath, content = content }
       end
     end
   end
@@ -439,29 +391,26 @@ function search.index_dir(root_dir, extensions)
     avg_dl = total_len / total_docs
   end
 
-  -- Background the embedding part if there are files to process
+  -- Batch embed files that need updating
   if #files_to_embed > 0 and embed and embed.is_available() then
-    -- We'll use a simple backgrounding trick: 
-    -- We can't easily serialize the 'files_to_embed' table to a shell command,
-    -- but we can process them in the same process but return immediately.
-    -- Wait, Lua is single-threaded. If I process them here, it's blocking.
-    -- To truly background, I'll write the list to a temporary file and 
-    -- start a background luajit process.
-    
-    local tmp_list = ".jenova/index_queue.json"
-    os.execute("mkdir -p .jenova")
-    local f = io.open(tmp_list, "w")
-    if f then
-      f:write(json.encode(files_to_embed))
-      f:close()
-      
-      -- Start background indexer
-      local indexer_cmd = string.format(
-        "luajit -e \"package.path='lib/?.lua;?.lua;'..package.path; local s=require('search'); local e=require('embed'); local j=require('json'); e.init(); s.init_embeddings(e); local f=io.open('%s','r'); local q=j.decode(f:read('*a')); f:close(); s.process_embedding_queue(q); os.remove('%s')\" &",
-        tmp_list, tmp_list
-      )
-      os.execute(indexer_cmd)
-      io.write(string.format("  [Jenova] BM25 ready. Backgrounding %d embeddings...\n", #files_to_embed))
+    io.write(string.format("  [embedding %d files...]\n", #files_to_embed))
+    io.flush()
+    local embedded = 0
+    for i, entry in ipairs(files_to_embed) do
+      local ok, err = pcall(vec_index_file, entry.path, entry.content)
+      if ok then
+        embedded = embedded + 1
+      end
+      -- Progress every 10 files
+      if i % 10 == 0 then
+        io.write(string.format("  [embedded %d/%d]\n", i, #files_to_embed))
+        io.flush()
+      end
+    end
+    if embedded > 0 then
+      search.save_vectors()
+      io.write(string.format("  [embedded %d files, saved to %s]\n", embedded, VECTOR_FILE))
+      io.flush()
     end
   end
 
@@ -525,67 +474,35 @@ local function semantic_score(filepath, query_vec)
 end
 
 -------------------------------------------------------------------------------
--- Extract snippet with logical block awareness (functions, classes, blocks)
+-- Extract snippet from BM25 index
 -------------------------------------------------------------------------------
 local function extract_snippet(doc, query_terms, max_lines)
-  max_lines = max_lines or 12
+  max_lines = max_lines or 5
   if not doc.lines or #doc.lines == 0 then return nil end
 
-  -- 1. Identify best matching line (highest term frequency)
-  local best_line = 1
-  local max_term_hits = 0
-  for i, line in ipairs(doc.lines) do
-    local hits = 0
-    local line_lower = line:lower()
+  local best_start = 1
+  local best_score = 0
+
+  for i = 1, #doc.lines do
+    local line_lower = doc.lines[i]:lower()
+    local line_score = 0
     for _, qt in ipairs(query_terms) do
-      if line_lower:find(qt, 1, true) then hits = hits + 1 end
+      if line_lower:find(qt, 1, true) then
+        line_score = line_score + 1
+      end
     end
-    if hits > max_term_hits then
-      max_term_hits = hits
-      best_line = i
-    end
-  end
-
-  -- 2. Expand outwards to find a "Logical Block"
-  -- Look for lines that look like start of functions/classes
-  local start = best_line
-  local stop = best_line
-  
-  -- Search upwards for a boundary (function, class, struct, start of block)
-  local found_start = false
-  for i = best_line, math.max(1, best_line - 10), -1 do
-    local line = doc.lines[i]
-    if line:match("^%s*function%s") or line:match("^%s*class%s") or 
-       line:match("^%s*def%s") or line:match("^%s*struct%s") or
-       line:match("^{%s*$") or line:match("^%s*%w+%(.*%)%s*{") then
-      start = i
-      found_start = true
-      break
-    end
-  end
-  if not found_start then start = math.max(1, best_line - 3) end
-
-  -- Search downwards for an end boundary or until max_lines
-  stop = math.min(#doc.lines, start + max_lines - 1)
-  for i = best_line + 1, stop do
-    local line = doc.lines[i]
-    if line:match("^%s*}%s*$") or line:match("^%s*end%s*$") then
-      stop = i
-      break
+    if line_score > best_score then
+      best_score = line_score
+      best_start = i
     end
   end
 
-  -- Final snippet construction
+  local start = math.max(1, best_start - 1)
+  local stop = math.min(#doc.lines, start + max_lines - 1)
   local snippet_lines = {}
   for i = start, stop do
-    snippet_lines[#snippet_lines + 1] = string.format("%4d | %s", i, doc.lines[i])
+    snippet_lines[#snippet_lines + 1] = doc.lines[i]
   end
-  
-  -- Add ellipsis if we cut off
-  if stop < #doc.lines then
-    snippet_lines[#snippet_lines + 1] = "     ..."
-  end
-  
   return table.concat(snippet_lines, "\n")
 end
 

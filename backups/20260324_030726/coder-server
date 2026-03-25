@@ -1,0 +1,44 @@
+#!/bin/sh
+
+# coder-server: Launch llama-server with tool-calling support (--jinja)
+# This runs the server in the foreground. Use coder-agent to connect.
+
+SCRIPT_DIR=$(dirname "$(realpath "$0")")
+
+LLAMA_SERVER="$SCRIPT_DIR/llama.cpp/build/bin/llama-server"
+MODEL_PATH="$SCRIPT_DIR/models/Qwen2.5-Coder-7B-Q4_K_M.gguf"
+
+HOST="${CODER_HOST:-127.0.0.1}"
+PORT="${CODER_PORT:-8080}"
+
+if [ ! -f "$LLAMA_SERVER" ]; then
+    echo "Error: llama-server not found at $LLAMA_SERVER"
+    echo "Build llama.cpp with: cmake -B build -DGGML_VULKAN=ON && cmake --build build -j$(sysctl -n hw.ncpu)"
+    exit 1
+fi
+
+if [ ! -f "$MODEL_PATH" ]; then
+    echo "Error: Model not found at $MODEL_PATH"
+    exit 1
+fi
+
+echo "Starting llama-server with tool-calling support..."
+echo "  Model: $MODEL_PATH"
+echo "  Listen: $HOST:$PORT"
+echo "  Tools: enabled (--jinja)"
+echo ""
+
+exec "$LLAMA_SERVER" \
+    --jinja \
+    -m "$MODEL_PATH" \
+    -dev Vulkan0,Vulkan1 \
+    -ngl all \
+    -sm layer \
+    -ts 1.5,1 \
+    -fitt 1024 \
+    -c 32768 \
+    -b 2048 \
+    -ub 512 \
+    --host "$HOST" \
+    --port "$PORT" \
+    "$@"

@@ -1,5 +1,5 @@
 #!/usr/bin/env luajit
--- coder-agent: Agentic coding assistant with shell/file access
+-- jenova-agent: Agentic coding assistant with shell/file access
 -- Uses llama-server's OpenAI-compatible API with tool calling
 --
 -- Architecture v2:
@@ -169,7 +169,7 @@ end
 
 local function build_system_prompt()
   local parts = {}
-  parts[#parts+1] = "You are coder, an expert autonomous coding agent on FreeBSD. CWD: " .. (CWD or ".")
+  parts[#parts+1] = "You are Jenova, an expert autonomous cognitive agent on FreeBSD. CWD: " .. (CWD or ".")
   
   local complexity = assess_complexity(current_user_query)
   if complexity == "VERY_COMPLEX" or complexity == "COMPLEX" then
@@ -437,7 +437,7 @@ local function exec_edit_file(args)
   end
   
   -- Backup
-  local bk_dir = (CWD or ".") .. "/.coder/backups"
+  local bk_dir = (CWD or ".") .. "/.jenova/backups"
   os.execute(string.format("mkdir -p %q", bk_dir))
   local bn = path:match("([^/]+)$") or path
   local ts = os.date("%Y%m%d_%H%M%S")
@@ -479,7 +479,7 @@ local function exec_write_file(args)
   local ef = io.open(path, "r")
   if ef then
     local old_data = ef:read("*a"); ef:close()
-    local bk_dir = (CWD or ".") .. "/.coder/backups"
+    local bk_dir = (CWD or ".") .. "/.jenova/backups"
     os.execute(string.format("mkdir -p %q", bk_dir))
     local bn = path:match("([^/]+)$") or path
     local ts = os.date("%H%M%S")
@@ -552,7 +552,7 @@ local function exec_grep_search(args)
   local include = args.include or "*"
   ui.file_search("grep: " .. pattern)
   -- Use multiple --exclude-dir for /bin/sh compatibility (no brace expansion)
-  local cmd = string.format("grep -rnE -e %q . --include=%q --exclude-dir=.git --exclude-dir=.coder --exclude-dir=.crush --exclude-dir=node_modules --exclude-dir=build --exclude-dir=backups --exclude-dir=llama.cpp | head -20", pattern, include)
+  local cmd = string.format("grep -rnE -e %q . --include=%q --exclude-dir=.git --exclude-dir=.jenova --exclude-dir=.crush --exclude-dir=node_modules --exclude-dir=build --exclude-dir=backups --exclude-dir=llama.cpp | head -20", pattern, include)
   local out, ok = exec_shell({ command = cmd })
   if not ok then return out, false end
   if out == "" then return "No matches found for '" .. pattern .. "'", true end
@@ -920,7 +920,7 @@ local function chat(user_msg)
   })
   dbg("req", "prompt_est="..prompt_est.." max_tokens="..max_tok.." body_len="..#body)
 
-  spinner_start("thinking")
+  spinner_start("cognizing")
   local code, resp = http_post_retry(ENDPOINT, body, "chat", 3)
   spinner_stop()
   dbg("resp-code", tostring(code))
@@ -1168,14 +1168,35 @@ end
 -- Server health check
 -------------------------------------------------------------------------------
 local function check_server()
-  for _ = 1, 3 do
-    local code = http.get(API_URL .. "/health", 5)
-    if code == 200 then return true end
+  local function try_health()
+    local code = http.get(API_URL .. "/health", 3)
+    return (code == 200 or code == 404 or code == 502 or code == 503)
+  end
+
+  if try_health() then return true end
+
+  -- Backend not running. Try to launch it.
+  spinner_start("starting jenova-ca backend")
+  local root = coder_root or "."
+  local launcher = root .. "/bin/jenova-ca"
+  local log_file = root .. "/.jenova/server_auto.log"
+  os.execute("mkdir -p " .. root .. "/.jenova")
+  
+  -- Launch in background
+  os.execute(launcher .. " > " .. log_file .. " 2>&1 &")
+
+  -- Wait for ready (up to 60s)
+  for i = 1, 60 do
+    if try_health() then
+      spinner_stop()
+      return true
+    end
     local tv_sleep = ffi.new("struct timeval")
-    tv_sleep.tv_sec = 0
-    tv_sleep.tv_usec = 500000 -- 500ms
+    tv_sleep.tv_sec = 1
+    tv_sleep.tv_usec = 0
     ffi.C.select(0, nil, nil, nil, tv_sleep)
   end
+  spinner_stop()
   return false
 end
 
@@ -1203,12 +1224,17 @@ local function main()
     os.exit(1)
   end
 
+  local indexing = false
+  local f = io.open(".jenova/index_queue.json", "r")
+  if f then indexing = true; f:close() end
+
   io.write("\n")
   ui.draw_header()
   ui.draw_info({
     cwd = CWD,
     api_url = API_URL,
     indexed = tostring(indexed),
+    indexing = indexing,
     embed = embed_ok and tostring(search.vec_count()) or nil,
     turns = tostring(MAX_TURNS),
     timeout = tostring(HTTP_TIMEOUT),
@@ -1221,6 +1247,12 @@ local function main()
   })
 
   while true do
+    local idx_f = io.open(".jenova/index_queue.json", "r")
+    if idx_f then
+      idx_f:close()
+      ui.dimtext("  (background indexing in progress...)\n")
+    end
+
     ui.prompt()
     local ok_read, line = pcall(io.read, "*l")
     if not ok_read or not line then break end
@@ -1308,7 +1340,7 @@ local function main()
       local latency = math.floor((ffi_defs.wall_time() - t0) * 1000)
       ui.dimtext("  Server:     "..tostring(scode).." ("..latency.."ms, "..(sout or ""):gsub("\n"," "):sub(1,40)..")\n")
       if scode ~= 200 then
-        ui.status_err("Server not healthy — check coder-server log")
+        ui.status_err("Server not healthy — check jenova-ca log")
       end
       -- 2. Config
       ui.dimtext("  Endpoint:   "..ENDPOINT.."\n")

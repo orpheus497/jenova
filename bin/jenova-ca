@@ -1,0 +1,183 @@
+#!/bin/sh
+
+# jenova-ca: Launch llama-server + Intelligence Proxy
+# Optimized for: Jenova Cognitive Architecture | FreeBSD 15 | Optane-paging
+# Hardware: GTX 1650 Ti 4GB | Intel Xe ~7GB (System Swap) | 16GB RAM
+
+SCRIPT_DIR=$(dirname "$(realpath "$0")")
+
+# Load configuration
+if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
+    . "$SCRIPT_DIR/etc/jenova.conf"
+elif [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
+    . "$SCRIPT_DIR/../etc/jenova.conf"
+else
+    echo "Error: etc/jenova.conf not found."
+    exit 1
+fi
+
+MODEL_PATH="${JENOVA_MODEL:-$MODEL_7B}"
+if [ ! -f "$MODEL_PATH" ]; then
+    echo "Attempting to fall back to 14B..."
+    MODEL_PATH="$MODEL_14B"
+    JENOVA_MODEL="$MODEL_14B"
+    # Recompute TENSOR_SPLIT for 14B with Jenova Optane-paging strategy:
+    # Intel Iris Xe (3.0) can utilize the 27GB Optane swap via system memory.
+    TENSOR_SPLIT="1.0,3.0"
+fi
+DRAFT_PATH="${JENOVA_DRAFT_PATH:-$MODEL_DRAFT}"
+
+# Ensure Jenova state directory exists
+mkdir -p "$JENOVA_STATE"
+mkdir -p "$LOG_DIR"
+
+# Check for model existence
+if [ ! -f "$LLAMA_SERVER" ]; then
+    echo "Error: llama-server not found at $LLAMA_SERVER"
+    exit 1
+fi
+
+if [ ! -f "$MODEL_PATH" ]; then
+    echo "Error: Model not found at $MODEL_PATH"
+    exit 1
+fi
+
+echo "Starting Jenova CA (Optane-optimized for FreeBSD)..."
+echo "  Model:   $MODEL_PATH"
+echo "  Slots:   $NUM_SLOTS"
+echo "  Tensor Split: $TENSOR_SPLIT"
+echo "  MLock:   Disabled (Leveraging Optane-NVMe Swap)"
+echo ""
+
+DRAFT_ARGS=""
+if [ -f "$DRAFT_PATH" ] && [ -n "$JENOVA_DRAFT" ]; then
+    echo "  Draft:   $DRAFT_PATH (speculative decoding)"
+    DRAFT_ARGS="-md $DRAFT_PATH -ngld all --draft-max 16 --draft-min 4 --draft-p-min 0.6"
+fi
+
+# NO MLOCK: We explicitly disable mlock to allow FreeBSD to page to Optane NVMe.
+# This prevents the process from being OOM-killed when context size grows.
+MLOCK_ARG=""
+
+# Find proxy.lua relative to script
+if [ -f "$SCRIPT_DIR/lib/proxy.lua" ]; then
+    PROXY_SCRIPT="$SCRIPT_DIR/lib/proxy.lua"
+    export JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
+elif [ -f "$SCRIPT_DIR/../lib/proxy.lua" ]; then
+    PROXY_SCRIPT="$SCRIPT_DIR/../lib/proxy.lua"
+    export JENOVA_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+else
+    PROXY_SCRIPT="$SCRIPT_DIR/../lib/proxy.lua"
+fi
+
+export CODER_ROOT="$JENOVA_ROOT" # Backwards compatibility
+export JENOVA_LLAMA_URL="http://${HOST}:${LLAMA_PORT}"
+export JENOVA_PROXY_PORT="$PORT"
+export JENOVA_PROXY_HOST="$HOST"
+export JENOVA_EMBED_DEVICES="$EMBED_DEVICES"
+
+# Background management
+if [ "$1" = "--daemon" ]; then
+    if [ -f "$PID_FILE" ]; then
+        OLD_PID=$(cat "$PID_FILE")
+        if kill -0 "$OLD_PID" 2>/dev/null; then
+            echo "Jenova CA is already running (PID $OLD_PID)."
+            exit 0
+        fi
+        rm "$PID_FILE"
+    fi
+    
+    # Use daemon(8) on FreeBSD if available, or nohup
+    LOG_FILE="${LOG_DIR}/jenova-ca.log"
+    echo "Daemonizing... Logs at $LOG_FILE"
+    
+    # Start processes in a subshell and background it
+    (
+        # Start llama-server
+        "$LLAMA_SERVER" \
+            -m "$MODEL_PATH" \
+            -dev "$DEVICES" \
+            -sm layer \
+            -ts "$TENSOR_SPLIT" \
+            -fitt "$LLAMA_FITT" \
+            -ngl all \
+            -c "$CTX_SIZE" \
+            -b 2048 \
+            -ub 256 \
+            -np "$NUM_SLOTS" \
+            -t "$THREADS" \
+            -tb "$THREADS_BATCH" \
+            -fa auto \
+            $MLOCK_ARG \
+            -cb \
+            --spm-infill \
+            --offline \
+            --host "$HOST" \
+            --port "$LLAMA_PORT" \
+            $DRAFT_ARGS \
+            "$@" > "$LOG_FILE" 2>&1 &
+        LLAMA_PID=$!
+        
+        # Wait a moment for llama-server to bind
+        sleep 2
+        
+        # Start Proxy
+        luajit "$PROXY_SCRIPT" >> "$LOG_FILE" 2>&1 &
+        PROXY_PID=$!
+        
+        # Save PIDs
+        echo $! > "$PID_FILE" # This might not be right if we want to track both or the main one
+        # Actually we'll just track the proxy PID or create a small wrapper
+        # For Jenova, let's just save the child shell PID or similar
+    ) &
+    echo $! > "$PID_FILE"
+    exit 0
+fi
+
+# Foreground mode (original behavior)
+# Start llama-server
+"$LLAMA_SERVER" \
+    -m "$MODEL_PATH" \
+    -dev "$DEVICES" \
+    -sm layer \
+    -ts "$TENSOR_SPLIT" \
+    -fitt "$LLAMA_FITT" \
+    -ngl all \
+    -c "$CTX_SIZE" \
+    -b 2048 \
+    -ub 256 \
+    -np "$NUM_SLOTS" \
+    -t "$THREADS" \
+    -tb "$THREADS_BATCH" \
+    -fa auto \
+    $MLOCK_ARG \
+    -cb \
+    --spm-infill \
+    --offline \
+    --host "$HOST" \
+    --port "$LLAMA_PORT" \
+    $DRAFT_ARGS \
+    "$@" &
+LLAMA_PID=$!
+
+# Trap to clean up server on exit
+cleanup() {
+    if [ -n "$LLAMA_PID" ]; then
+        echo "Stopping llama-server (PID $LLAMA_PID)..."
+        kill "$LLAMA_PID" 2>/dev/null
+        wait "$LLAMA_PID" 2>/dev/null
+    fi
+    if [ -n "$PROXY_PID" ]; then
+        echo "Stopping Intelligence Proxy (PID $PROXY_PID)..."
+        kill "$PROXY_PID" 2>/dev/null
+        wait "$PROXY_PID" 2>/dev/null
+    fi
+}
+trap cleanup EXIT INT TERM
+
+echo "Starting Jenova Intelligence Proxy on port $PORT..."
+luajit "$PROXY_SCRIPT" &
+PROXY_PID=$!
+
+# Wait for background processes
+wait "$LLAMA_PID" "$PROXY_PID"

@@ -1,4 +1,4 @@
--- ffi_defs.lua: Centralized FFI definitions for coder-agent
+-- ffi_defs.lua: Centralized FFI definitions for jenova-agent
 -- Prevents redefinition errors across modules and provides common utilities.
 
 local ffi = require("ffi")
@@ -62,6 +62,7 @@ ffi.cdef[[
   ssize_t send(int sockfd, const void *buf, size_t len, int flags);
   ssize_t recv(int sockfd, void *buf, size_t len, int flags);
   int close(int fd);
+  int fcntl(int fd, int cmd, ...);
   int select(int nfds, void *readfds, void *writefds, void *exceptfds, struct timeval *timeout);
   in_addr_t inet_addr(const char *cp);
   uint16_t htons(uint16_t hostshort);
@@ -74,6 +75,29 @@ ffi.cdef[[
 ]]
 
 local ffi_defs = {}
+
+-- FreeBSD constants (from fcntl.h and sys/ioctl.h)
+ffi_defs.F_SETFL = 4
+ffi_defs.O_NONBLOCK = 0x0004
+ffi_defs.FIONBIO = 0x8004667e
+
+-- FD_SET implementation for LuaJIT FFI
+local bit = require("bit")
+function ffi_defs.FD_ZERO(set)
+  ffi.fill(set, ffi.sizeof(set))
+end
+
+function ffi_defs.FD_SET(fd, set)
+  local i = bit.rshift(fd, 5)
+  local b = bit.lshift(1, bit.band(fd, 31))
+  set[i] = bit.bor(set[i], b)
+end
+
+function ffi_defs.FD_ISSET(fd, set)
+  local i = bit.rshift(fd, 5)
+  local b = bit.lshift(1, bit.band(fd, 31))
+  return bit.band(set[i], b) ~= 0
+end
 
 -- Returns wall clock time in seconds with microsecond precision
 function ffi_defs.wall_time()

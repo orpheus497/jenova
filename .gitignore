@@ -1,41 +1,38 @@
-# --- IDE & System ---
-.DS_Store
-.vscode/
-.idea/
-*.swp
-*~
-*.bak
-*.tmp
-
-# --- Build & Binaries ---
+# --- Build Artifacts ---
 /llama.cpp/build/
+/llama.cpp/bin/
 *.o
 *.so
 *.a
-*.gguf
-/models/*
+
+# --- Models (GGUF) ---
+/models/*.gguf
 !/models/.gitkeep
 
-# --- Coder Runtime (Private Data) ---
-/.coder/
-/.crush/
+# --- Runtime Data ---
 /var/log/*
 /var/cache/*
-/backups/
 !/var/log/.gitkeep
 !/var/cache/.gitkeep
 
-# --- Secrets & Configs ---
+# --- Jenova Runtime (Private Data) ---
+/.jenova/
+/.coder/
+
+# --- Environment & Keys ---
 .env
-.env.*
-*.pem
 *.key
+*.pem
 id_rsa
 id_ed25519
-/etc/coder.conf.local
 
-# --- Python & Node ---
-__pycache__/
-node_modules/
-venv/
-.venv/
+# --- System & IDE ---
+.DS_Store
+.vscode/
+.idea/
+*~
+*.swp
+
+# --- Configuration ---
+/etc/jenova.conf.local
+/etc/coder.conf.local

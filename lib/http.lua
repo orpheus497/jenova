@@ -1,5 +1,5 @@
 -- http.lua: Minimal HTTP client using LuaJIT FFI (no external dependencies)
--- Only implements POST with JSON body, which is all coder-agent needs.
+-- Only implements POST with JSON body, which is all jenova-agent needs.
 
 local ffi = require("ffi")
 require("ffi_defs")
@@ -51,6 +51,7 @@ function http.post(url, body, timeout)
   ffi.C.setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, tv, ffi.sizeof(tv))
 
   local addr = ffi.new("struct sockaddr_in")
+  addr.sin_len = ffi.sizeof(addr)
   addr.sin_family = AF_INET
   addr.sin_port = ffi.C.htons(port)
   addr.sin_addr.s_addr = ffi.C.inet_addr(host)
@@ -80,14 +81,15 @@ function http.post(url, body, timeout)
     sent = sent + tonumber(n)
   end
 
-  local buf = ffi.new("char[65536]")
+  local buf_size = 131072 -- 128KB
+  local buf = ffi.new("char[?]", buf_size)
   local chunks = {}
   local total_recv = 0
   local stall_count = 0
   local recv_err = nil
   while true do
     ::retry_post::
-    local recv_n = ffi.C.recv(fd, buf, 65536, 0)
+    local recv_n = ffi.C.recv(fd, buf, buf_size, 0)
     if recv_n > 0 then
       chunks[#chunks + 1] = ffi.string(buf, recv_n)
       total_recv = total_recv + tonumber(recv_n)
@@ -100,12 +102,13 @@ function http.post(url, body, timeout)
         goto retry_post
       elseif err == EAGAIN or err == EWOULDBLOCK or err == ETIMEDOUT then
         stall_count = stall_count + 1
-        if stall_count >= 3 or (stall_count >= 2 and total_recv > 0) then
+        -- BSD stack can be noisy; allow more retries for large payloads
+        if stall_count >= 10 then
           break
         end
         local tv_sleep = ffi.new("struct timeval")
         tv_sleep.tv_sec = 0
-        tv_sleep.tv_usec = 100000 -- 100ms
+        tv_sleep.tv_usec = 50000 -- 50ms
         ffi.C.select(0, nil, nil, nil, tv_sleep)
       else
         -- Fatal error (e.g., ECONNRESET)
@@ -164,6 +167,7 @@ function http.get(url, timeout)
   ffi.C.setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, tv, ffi.sizeof(tv))
 
   local addr = ffi.new("struct sockaddr_in")
+  addr.sin_len = ffi.sizeof(addr)
   addr.sin_family = AF_INET
   addr.sin_port = ffi.C.htons(port)
   addr.sin_addr.s_addr = ffi.C.inet_addr(host)
@@ -189,14 +193,15 @@ function http.get(url, timeout)
     return 0, "send() failed"
   end
 
-  local buf = ffi.new("char[8192]")
+  local buf_size = 65536 -- 64KB for GET
+  local buf = ffi.new("char[?]", buf_size)
   local chunks = {}
   local total_recv = 0
   local stall_count = 0
   local recv_err = nil
   while true do
     ::retry_get::
-    local recv_n = ffi.C.recv(fd, buf, 8192, 0)
+    local recv_n = ffi.C.recv(fd, buf, buf_size, 0)
     if recv_n > 0 then
       chunks[#chunks + 1] = ffi.string(buf, recv_n)
       total_recv = total_recv + tonumber(recv_n)
@@ -209,12 +214,12 @@ function http.get(url, timeout)
         goto retry_get
       elseif err == EAGAIN or err == EWOULDBLOCK or err == ETIMEDOUT then
         stall_count = stall_count + 1
-        if stall_count >= 3 or (stall_count >= 2 and total_recv > 0) then
+        if stall_count >= 10 then
           break
         end
         local tv_sleep = ffi.new("struct timeval")
         tv_sleep.tv_sec = 0
-        tv_sleep.tv_usec = 100000 -- 100ms
+        tv_sleep.tv_usec = 50000 -- 50ms
         ffi.C.select(0, nil, nil, nil, tv_sleep)
       else
         recv_err = "recv() fatal error: " .. get_errstr(err) .. " (errno=" .. tostring(err) .. ")"

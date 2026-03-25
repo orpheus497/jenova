@@ -1,26 +1,26 @@
 #!/bin/sh
 
-# coder: Launch the agentic coding assistant
-# Starts llama-server (if not already running), then connects the LuaJIT agent
+# jenova: Launch the Jenova Cognitive Architecture agent
+# Starts jenova-ca (if not already running), then connects the LuaJIT agent
 
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 
 # Load configuration
-if [ -f "$SCRIPT_DIR/etc/coder.conf" ]; then
-    . "$SCRIPT_DIR/etc/coder.conf"
-elif [ -f "$SCRIPT_DIR/../etc/coder.conf" ]; then
-    . "$SCRIPT_DIR/../etc/coder.conf"
+if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
+    . "$SCRIPT_DIR/etc/jenova.conf"
+elif [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
+    . "$SCRIPT_DIR/../etc/jenova.conf"
 else
-    echo "Error: etc/coder.conf not found."
+    echo "Error: etc/jenova.conf not found."
     exit 1
 fi
 
 API_URL="http://${HOST}:${PORT}"
-CODER_DIR="${CODER_STATE:-$SCRIPT_DIR/.coder}"
-SERVER_LOG="${LOG_DIR:-$CODER_DIR}/server.log"
+JENOVA_DIR="${JENOVA_STATE:-$SCRIPT_DIR/.jenova}"
+SERVER_LOG="${LOG_DIR:-$JENOVA_DIR/jenova-ca.log}"
 
 # Ensure directories exist
-mkdir -p "$CODER_DIR"
+mkdir -p "$JENOVA_DIR"
 [ -n "$LOG_DIR" ] && mkdir -p "$LOG_DIR"
 [ -n "$CACHE_DIR" ] && mkdir -p "$CACHE_DIR"
 
@@ -40,23 +40,23 @@ check_health() {
 }
 
 if check_health; then
-    echo "Server already running at $API_URL"
+    echo "Jenova CA already running at $API_URL"
 else
-    echo "Starting llama-server in background..."
-    echo "Server log: $SERVER_LOG"
+    echo "Starting Jenova CA in background..."
+    echo "Log: $SERVER_LOG"
     
     # Run the server script (relative to this script's location)
-    if [ -f "$SCRIPT_DIR/coder-server" ]; then
-        "$SCRIPT_DIR/coder-server" > "$SERVER_LOG" 2>&1 &
-    elif [ -f "$SCRIPT_DIR/../coder-server" ]; then
-        "$SCRIPT_DIR/../coder-server" > "$SERVER_LOG" 2>&1 &
+    if [ -f "$SCRIPT_DIR/jenova-ca" ]; then
+        "$SCRIPT_DIR/jenova-ca" > "$SERVER_LOG" 2>&1 &
+    elif [ -f "$SCRIPT_DIR/../jenova-ca" ]; then
+        "$SCRIPT_DIR/../jenova-ca" > "$SERVER_LOG" 2>&1 &
     else
-        echo "Error: coder-server launcher not found."
+        echo "Error: jenova-ca launcher not found."
         exit 1
     fi
     SERVER_PID=$!
 
-    printf "Waiting for server"
+    printf "Waiting for Jenova CA"
     for i in $(seq 1 120); do
         if check_health; then
             echo " ready!"
@@ -64,10 +64,9 @@ else
         fi
         printf "."
         sleep 1
-        # Fix: quote the variable to prevent globbing (ShellCheck SC2086)
         if [ "$i" -eq 120 ]; then
             echo " timeout!"
-            echo "Check server log: $SERVER_LOG"
+            echo "Check log: $SERVER_LOG"
             [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null
             exit 1
         fi
@@ -76,15 +75,19 @@ fi
 
 cleanup() {
     if [ -n "$SERVER_PID" ]; then
-        echo "Stopping server (PID $SERVER_PID)..."
+        echo "Stopping Jenova CA (PID $SERVER_PID)..."
         kill "$SERVER_PID" 2>/dev/null
         wait "$SERVER_PID" 2>/dev/null
     fi
 }
 trap cleanup EXIT INT TERM
 
+# Exporting CODER_ variables for backward compatibility until all agents finish
+export JENOVA_API_URL="$API_URL"
 export CODER_API_URL="$API_URL"
+export JENOVA_ROOT="$CODER_ROOT"
 export CODER_ROOT
+
 # Find agent.lua relative to script
 if [ -f "$SCRIPT_DIR/lib/agent.lua" ]; then
     AGENT_PATH="$SCRIPT_DIR/lib/agent.lua"

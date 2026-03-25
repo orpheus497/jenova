@@ -1,4 +1,4 @@
--- ui.lua: Polished terminal UI for coder-agent
+-- ui.lua: Polished terminal UI for jenova-agent
 -- Pure ANSI escape sequences — no ncurses dependency, works on any terminal.
 -- Provides: header with ASCII art, structured output regions, status bar,
 --           styled input prompt, scrollback buffer, terminal resize handling.
@@ -38,27 +38,27 @@ local SCROLL_RESET = esc("r")
 -- Color palette — cool, professional tones
 -------------------------------------------------------------------------------
 local P = {
-  header_bg    = 235,
-  header_fg    = 75,
-  header_accent = 117,
-  header_dim   = 241,
-  title_fg     = 153,
-  border       = 240,
-  border_light = 245,
-  status_bg    = 236,
-  status_fg    = 250,
-  status_dim   = 243,
-  prompt_fg    = 75,
-  prompt_arrow = 117,
-  text         = 253,
-  dim          = 243,
-  green        = 114,
-  red          = 203,
-  yellow       = 221,
-  cyan         = 117,
-  magenta      = 176,
-  blue         = 75,
-  orange       = 215,
+  header_bg    = 234,
+  header_fg    = 51,
+  header_accent = 33,
+  header_dim   = 240,
+  title_fg     = 45,
+  border       = 238,
+  border_light = 242,
+  status_bg    = 235,
+  status_fg    = 252,
+  status_dim   = 241,
+  prompt_fg    = 51,
+  prompt_arrow = 33,
+  text         = 254,
+  dim          = 242,
+  green        = 48,
+  red          = 196,
+  yellow       = 226,
+  cyan         = 51,
+  magenta      = 171,
+  blue         = 33,
+  orange       = 208,
   white        = 255,
 }
 
@@ -222,24 +222,23 @@ end
 -- ASCII art header
 -------------------------------------------------------------------------------
 local HEADER_ART = {
-  "  ██████╗ ██████╗ ██████╗ ███████╗██████╗ ",
-  " ██╔════╝██╔═══██╗██╔══██╗██╔════╝██╔══██╗",
-  " ██║     ██║   ██║██║  ██║█████╗  ██████╔╝",
-  " ██║     ██║   ██║██║  ██║██╔══╝  ██╔══██╗",
-  " ╚██████╗╚██████╔╝██████╔╝███████╗██║  ██║",
-  "  ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝",
+  "      ██╗███████╗███╗   ██╗ ██████╗ ██╗   ██╗ █████╗ ",
+  "      ██║██╔════╝████╗  ██║██╔═══██╗██║   ██║██╔══██╗",
+  "      ██║█████╗  ██╔██╗ ██║██║   ██║██║   ██║███████║",
+  " ██   ██║██╔══╝  ██║╚██╗██║██║   ██║╚██╗ ██╔╝██╔══██║",
+  " ╚█████╔╝███████╗██║ ╚████║╚██████╔╝ ╚████╔╝ ██║  ██║",
+  "  ╚════╝ ╚══════╝╚═╝  ╚═══╝ ╚═════╝   ╚═══╝  ╚═╝  ╚═╝",
 }
 
 local HEADER_SMALL = {
-  " ▄████▄  ▒█████  ▓█████▄ ▓█████  ██▀███  ",
-  "▒██▀ ▀█ ▒██▒  ██▒▒██▀ ██▌▓█   ▀ ▓██ ▒ ██▒",
-  "▒▓█    ▄▒██░  ██▒░██   █▌▒███   ▓██ ░▄█ ▒",
-  "▒▓▓▄ ▄██▒██   ██░░▓█▄   ▌▒▓█  ▄ ▒██▀▀█▄  ",
-  "▒ ▓███▀ ░ ████▓▒░░▒████▓ ░▒████▒░██▓ ▒██▒",
-  "░ ░▒ ▒  ░ ▒░▒░▒░  ▒▒▓  ▒ ░░ ▒░ ░░ ▒▓ ░▒▓░",
+  "      _  _____ _   _  _____     ___ _   ",
+  "     | || ____| \ | |/ _ \ \   / / \ \  ",
+  "  _  | ||  _| |  \| | | | \ \ / / _ \ \ ",
+  " | |_| || |___| |\  | |_| |\ V / ___ \ \",
+  "  \\___/ |_____|_| \\_|\\___/  \\_/_/   \\_\\",
 }
 
-local HEADER_MINI = " ◆ C O D E R "
+local HEADER_MINI = " ◆ J E N O V A "
 
 local function header_row(inner_w, content)
   local dw = display_width(content)
@@ -290,7 +289,7 @@ function ui.draw_header()
   header_lines = header_lines + 1
 
   -- Subtitle
-  w(header_row(inner_w, fg(P.header_accent) .. "FreeBSD Local Coding Agent" .. RESET))
+  w(header_row(inner_w, fg(P.header_accent) .. "Jenova Cognitive Architecture" .. RESET))
   header_lines = header_lines + 1
 
   -- Blank line
@@ -320,6 +319,7 @@ function ui.draw_info(opts)
   local stats = {}
   if opts.api_url then stats[#stats + 1] = fg(P.dim) .. "⚡ " .. RESET .. fg(P.status_dim) .. opts.api_url .. RESET end
   if opts.indexed then stats[#stats + 1] = fg(P.green) .. "◉ " .. RESET .. fg(P.status_dim) .. opts.indexed .. " files" .. RESET end
+  if opts.indexing then stats[#stats + 1] = fg(P.yellow) .. "◌ " .. RESET .. fg(P.status_dim) .. "indexing..." .. RESET end
   if opts.embed then stats[#stats + 1] = fg(P.cyan) .. "◎ " .. RESET .. fg(P.status_dim) .. "embed:" .. opts.embed .. RESET end
   if opts.turns then stats[#stats + 1] = fg(P.dim) .. "turns:" .. opts.turns .. RESET end
   if opts.timeout then stats[#stats + 1] = fg(P.dim) .. "timeout:" .. opts.timeout .. "s" .. RESET end
@@ -479,7 +479,7 @@ function ui.file_list(path)
 end
 
 function ui.think_status(chars)
-  wflush("  " .. fg(P.cyan) .. ICONS.think .. " thinking" .. RESET .. fg(P.dim) .. " (" .. chars .. " chars)" .. RESET .. "\n")
+  wflush("  " .. fg(P.cyan) .. ICONS.think .. " cognizing" .. RESET .. fg(P.dim) .. " (" .. chars .. " chars)" .. RESET .. "\n")
 end
 
 function ui.compile_check(path)
@@ -491,7 +491,7 @@ end
 -------------------------------------------------------------------------------
 function ui.spinner_start(label)
   spinner_active = true
-  spinner_label = label or "thinking"
+  spinner_label = label or "cognizing"
   spinner_idx = 1
   wflush("  " .. fg(P.cyan) .. spinner_frames[1] .. " " .. spinner_label .. RESET)
 end
@@ -577,7 +577,7 @@ end
 function ui.agent_response(text)
   if not text or text == "" then return end
   wflush(
-    "\n  " .. fg(P.green) .. BOLD .. "coder" .. RESET .. fg(P.dim) .. " │ " .. RESET .. text .. "\n\n"
+    "\n  " .. fg(P.cyan) .. BOLD .. "jenova" .. RESET .. fg(P.dim) .. " │ " .. RESET .. text .. "\n\n"
   )
 end
 
@@ -618,8 +618,8 @@ function ui.boldtext(text)
 end
 
 function ui.server_not_running(url)
-  wflush(fg(P.red) .. ICONS.err .. " llama-server not running at " .. url .. RESET .. "\n")
-  wflush(fg(P.dim) .. "  Start with: ./coder-server" .. RESET .. "\n")
+  wflush(fg(P.red) .. ICONS.err .. " jenova-ca backend not running at " .. url .. RESET .. "\n")
+  wflush(fg(P.dim) .. "  Start with: ./bin/jenova" .. RESET .. "\n")
 end
 
 -------------------------------------------------------------------------------
