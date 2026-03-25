@@ -8,11 +8,11 @@ local search = require("search")
 local embed = require("embed")
 local prompts = require("prompts")
 
-local HOST = os.getenv("CODER_PROXY_HOST") or "127.0.0.1"
-local PORT = tonumber(os.getenv("CODER_PROXY_PORT")) or 8080
-local LLAMA_URL = os.getenv("CODER_LLAMA_URL") or "http://127.0.0.1:8081"
+local HOST = os.getenv("JENOVA_PROXY_HOST") or os.getenv("CODER_PROXY_HOST") or "127.0.0.1"
+local PORT = tonumber(os.getenv("JENOVA_PROXY_PORT") or os.getenv("CODER_PROXY_PORT")) or 8080
+local LLAMA_URL = os.getenv("JENOVA_LLAMA_URL") or os.getenv("CODER_LLAMA_URL") or "http://127.0.0.1:8081"
 local LLAMA_PORT = tonumber(LLAMA_URL:match(":(%d+)")) or 8081
-local EMBED_DEVICES = os.getenv("CODER_EMBED_DEVICES") or "Vulkan1"
+local EMBED_DEVICES = os.getenv("JENOVA_EMBED_DEVICES") or os.getenv("CODER_EMBED_DEVICES") or "Vulkan1"
 
 local embed_ok = embed.init({ 
   script_dir = script_dir,

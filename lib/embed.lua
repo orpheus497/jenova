@@ -16,7 +16,7 @@ local embed = {}
 -------------------------------------------------------------------------------
 -- Config
 -------------------------------------------------------------------------------
-local EMBED_URL = os.getenv("JENOVA_LLAMA_EMBED_URL") or "http://127.0.0.1:8082"
+local EMBED_URL = os.getenv("JENOVA_LLAMA_EMBED_URL") or os.getenv("CODER_LLAMA_EMBED_URL") or "http://127.0.0.1:8082"
 local DIMS = 768        -- nomic-embed-text-v1.5 dimension
 local CTX_SIZE = 2048   -- nomic context window (max tokens)
 
@@ -48,22 +48,23 @@ function embed.init(opts)
     local f = io.open(embed_bin, "r")
     if f then
       f:close()
-      local cmd = string.format(
-        'nohup %s -m %s --embedding --port %s --host %s -dev %s -ngl all --offline >/dev/null 2>&1 &',
-        embed_bin, model_path, port, host, devices
-      )
-      os.execute(cmd)
-      
+      -- Use daemon.start_background to start persistent embedding server reliably
+    local daemon = require('daemon')
+    local ok, pid_or_err = daemon.start_background({ embed_bin, '-m', model_path, '--embedding', '--port', port, '--host', host, '-dev', devices, '-ngl', 'all', '--offline' }, '.jenova/llama-embed.log', opts.script_dir or '.')
+    if not ok then
+      io.write('[embed] WARNING: failed to start embedding binary: ' .. tostring(pid_or_err) .. '\n')
+    else
       -- Wait for it to come up
       for i = 1, 5 do
-        local tv = ffi.new("struct timeval", {tv_sec=1, tv_usec=0})
+        local tv = ffi.new('struct timeval', {tv_sec=1, tv_usec=0})
         ffi.C.select(0, nil, nil, nil, tv) -- Sleep 1s
-        status, body = http.get(EMBED_URL .. "/health", 1)
+        status, body = http.get(EMBED_URL .. '/health', 1)
         if status == 200 then
           initialized = true
           return true
         end
       end
+    end
     end
   end
 

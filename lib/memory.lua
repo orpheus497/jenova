@@ -49,6 +49,7 @@ local session_action_index = {} -- "tool:args_hash" -> {count, last_result, succ
 function memory.init()
   os.execute("mkdir -p " .. CODER_DIR)
   os.execute("mkdir -p " .. CODER_DIR .. "/backups")
+  -- prefer daemon helper for background tasks in future; dir creation keeps os.execute for portability
 
   session_id = string.format("%x", os.time()) .. string.format("%04x", math.random(0, 0xFFFF))
   session_start = os.time()

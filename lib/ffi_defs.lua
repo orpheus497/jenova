@@ -83,6 +83,9 @@ ffi_defs.FIONBIO = 0x8004667e
 
 -- FD_SET implementation for LuaJIT FFI
 local bit = require("bit")
+-- FD_SETSIZE: number of file descriptors supported in a fd_set
+ffi_defs.FD_SETSIZE = 1024
+
 function ffi_defs.FD_ZERO(set)
   ffi.fill(set, ffi.sizeof(set))
 end
@@ -97,6 +100,12 @@ function ffi_defs.FD_ISSET(fd, set)
   local i = bit.rshift(fd, 5)
   local b = bit.lshift(1, bit.band(fd, 31))
   return bit.band(set[i], b) ~= 0
+end
+
+-- Create a new fd_set compatible buffer for use with FD_* helpers
+function ffi_defs.fd_set_new()
+  local words = math.floor((ffi_defs.FD_SETSIZE + 31) / 32)
+  return ffi.new("unsigned int[?]", words)
 end
 
 -- Returns wall clock time in seconds with microsecond precision

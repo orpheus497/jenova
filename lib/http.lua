@@ -10,6 +10,14 @@ local SOL_SOCKET = 0xffff
 local SO_RCVTIMEO = 0x1006
 local SO_SNDTIMEO = 0x1005
 
+-- Ensure getaddrinfo/freeaddrinfo are defined (POSIX)
+ffi.cdef[[
+  struct addrinfo { int ai_flags; int ai_family; int ai_socktype; int ai_protocol; socklen_t ai_addrlen; struct sockaddr *ai_addr; struct addrinfo *ai_next; };
+  int getaddrinfo(const char *node, const char *service, const struct addrinfo *hints, struct addrinfo **res);
+  void freeaddrinfo(struct addrinfo *res);
+]]
+
+
 -- Platform-specific errnos (FreeBSD defaults, but we'll use ffi.errno where possible)
 local EAGAIN      = 35
 local ETIMEDOUT   = 60
@@ -34,6 +42,35 @@ local function parse_url(url)
   end
   if not path or path == "" then path = "/" end
   return host, tonumber(port), path
+end
+
+-- Resolve hostname to IPv4 address using getaddrinfo (fallback to inet_addr)
+local function resolve_host(host)
+  -- Try numeric dotted address first
+  local addr = ffi.C.inet_addr(host)
+  if tonumber(addr) ~= 0xffffffff then return addr end
+
+  -- getaddrinfo fallback
+  local hints = ffi.new("struct addrinfo[1]")
+  hints[0].ai_family = ffi.C.AF_INET
+  hints[0].ai_socktype = ffi.C.SOCK_STREAM
+  hints[0].ai_protocol = 0
+
+  local res = ffi.new("struct addrinfo*[1]")
+  local rc = ffi.C.getaddrinfo(host, nil, hints, res)
+  if rc ~= 0 then
+    return 0xffffffff
+  end
+  local ai = res[0]
+  if ai == nil then
+    ffi.C.freeaddrinfo(res[0])
+    return 0xffffffff
+  end
+
+  local sa = ffi.cast("struct sockaddr_in *", ai.ai_addr)
+  local out = sa.sin_addr.s_addr
+  ffi.C.freeaddrinfo(res[0])
+  return out
 end
 
 function http.post(url, body, timeout)

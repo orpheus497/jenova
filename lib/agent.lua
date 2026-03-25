@@ -32,7 +32,7 @@ local ffi_defs = require("ffi_defs")
 -------------------------------------------------------------------------------
 -- Config
 -------------------------------------------------------------------------------
-local API_URL   = os.getenv("CODER_API_URL") or "http://127.0.0.1:8080"
+local API_URL   = os.getenv("JENOVA_API_URL") or os.getenv("CODER_API_URL") or "http://127.0.0.1:8080"
 local ENDPOINT  = API_URL .. "/v1/chat/completions"
 local MODEL     = "qwen2.5-coder"
 local MAX_TURNS = tonumber(os.getenv("CODER_MAX_TURNS")) or 25
@@ -1182,8 +1182,12 @@ local function check_server()
   local log_file = root .. "/.jenova/server_auto.log"
   os.execute("mkdir -p " .. root .. "/.jenova")
   
-  -- Launch in background
-  os.execute(launcher .. " > " .. log_file .. " 2>&1 &")
+  -- Launch in background using daemon helper
+  local daemon = require('daemon')
+  local ok, pid_or_err = daemon.start_background({ launcher, '--daemon' }, log_file, root)
+  if not ok then
+    ui.status_err('failed to start backend: ' .. tostring(pid_or_err))
+  end
 
   -- Wait for ready (up to 60s)
   for i = 1, 60 do

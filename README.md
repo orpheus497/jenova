@@ -1,132 +1,121 @@
-# Jenova Cognitive Architecture (FreeBSD/Vulkan Optimized)
+# Jenova Cognitive Architecture (FreeBSD / Vulkan Optimized)
 
-Jenova Cognitive Architecture (CA)
-Persistent intelligence. Systems-level engineering. FreeBSD Native.
+Jenova is a high-performance, low-latency cognitive engine that turns a FreeBSD workstation into a persistent, systems-level AI environment. It implements a "Fluid Memory" architecture that treats high-speed NVMe (Optane) as an extended L4 cache for Large Language Models (LLMs), enabling large-context reasoning on modest hardware.
 
-Jenova is a high-performance, low-latency cognitive engine designed to turn a FreeBSD workstation into a self-aware AI environment. Moving beyond the stateless request-response model, Jenova implements a "Fluid Memory" architecture that treats high-speed NVMe (Optane) as an extended L4 cache for Large Language Models (LLMs).
-1. The Systems Engineering Edge
+## Goals
 
-Unlike Python-based alternatives, Jenova is built on LuaJIT with a C FFI core. This allows for near-native performance while maintaining a minimal memory footprint—crucial for running 14B models on consumer hardware.
-1.1 Fluid Memory & Optane Integration
+- Persistent intelligence with a daemonized cognitive backend
+- Low-latency, hardware-aware inference using Vulkan and LuaJIT
+- Optane-backed paging and cache strategies to enable large-context models on 16GB systems
+- Minimal memory footprint and high throughput for 7B / 14B model workflows
 
-    Virtual Memory Mastery: By disabling mlock, Jenova leverages FreeBSD’s kernel to page inactive LLM weights to Optane NVMe.
+## Key Features
 
-    Context Expansion: Handles context windows up to 32k on 16GB RAM systems by utilizing 10μs latency Optane swap as a secondary weight-store.
+- Fluid Memory: Uses FreeBSD paging + Optane NVMe to extend effective model memory and support large context windows (up to 32k in practical configurations).
+- Persistent Embedding Daemon: Eliminates subprocess and reinitialization bottlenecks for fast retrieval-augmented generation (RAG).
+- Vulkan Tensor Splitting: Distributes compute across available GPUs (NVIDIA + Intel) to maximize usable VRAM for key-value cache residency.
+- Hybrid Search: BM25 keyword search combined with semantic vector search.
+- FreeBSD-first: Tuned for FreeBSD 15, ZFS ARC management, and kernel-friendly operation.
 
-    ARC Management: Operates in harmony with ZFS by strictly capping vfs.zfs.arc_max to 2GB, preventing kernel OOM kills during heavy KV cache growth.
+## Architecture
 
-1.2 Persistent Intelligence (The Daemon Architecture)
+Jenova is partitioned into four parallel execution streams:
 
-    No Subprocess Bottlenecks: Replaces legacy os.execute calls with a persistent Embedding Daemon.
+- The Architect (infrastructure): daemonized process management and runtime supervision (.jenova/jenova-ca.pid).
+- The Signal (networking): non-blocking I/O loop with Lua coroutines for asynchronous proxying.
+- The Mind (intelligence): hybrid BM25 + semantic vector retrieval with line-aware parsers.
+- The Voice (UX): hardware-aware CLI reporting real-time GPU and indexing stats.
 
-    Instant RAG: Eliminated the 800ms Vulkan device re-initialization penalty. Codebase indexing is now near-instantaneous via a background server-client model.
+## Hardware & Performance (Target)
 
-    Protocol Resilience: Networking is handled by libcurl via FFI, ensuring robust HTTP/1.1 chunked-encoding support and BSD socket integrity (correct sin_len alignment).
+| Component | Target specification |
+|---|---|
+| OS | FreeBSD 15 (STABLE/CURRENT) |
+| CPU | Intel i5-1135G7 (4P / 8T) |
+| GPU(s) | GTX 1650 Ti (4GB) + Intel Iris Xe (~7GB) |
+| Storage | Intel Optane-backed NVMe (recommended 27GB+ swap) |
+| Memory | 16GB RAM (recommend capping ZFS ARC to 2GB) |
 
-2. Technical Architecture
+Jenova supports tensor-splitting across GPUs. Example: TENSOR_SPLIT="2.0,1.0" to allocate work across NVIDIA and Intel devices.
 
-Jenova is partitioned into four independent, parallel execution streams:
+## Installation
 
-    The Architect (Infrastructure): High-efficiency process management using daemon(8) and PID tracking in .jenova/jenova-ca.pid.
+Prerequisites (example):
 
-    The Signal (Networking): A non-blocking, select()-based I/O loop using Lua coroutines for asynchronous intelligence proxying.
-
-    The Mind (Intelligence): Hybrid BM25 and Semantic vector search with line-aware parsers that respect function and class boundaries.
-
-    The Voice (UX): A responsive, hardware-aware CLI providing real-time stats on GPU utilization and background indexing progress.
-
-3. Hardware Requirements & Performance
-
-Optimized for high-efficiency mobile/mini-PC workstations:
-Component	Target Specification
-OS	FreeBSD 15 (STABLE/CURRENT)
-CPU	i5-1135G7 (4P / 8L Cores)
-GPU (Hybrid)	GTX 1650 Ti (4GB) + Intel Iris Xe (~7GB)
-Storage	Intel Optane-backed NVMe (27GB+ Swap)
-Memory	16GB Physical RAM (ZFS ARC capped at 2GB)
-GPU Acceleration
-
-Jenova utilizes Vulkan-based Tensor Splitting. By setting TENSOR_SPLIT="2.0, 1.0", compute is distributed across the NVIDIA and Intel Iris Xe chips, maximizing the available 11GB of total VRAM for KV cache residency.
-4. Installation & Setup
-Prerequisites
-Bash
-
+```sh
 pkg install luajit-openresty curl llama-server-ggml vulkan-loader
+```
 
-Configuration
+Adjust packages to match your platform and repositories.
 
-Edit etc/jenova.conf to tune hardware splits and memory targets:
-Bash
+## Configuration
 
+Copy and edit `etc/jenova.conf` to tune hardware splits and memory targets. Example entries:
+
+```ini
 # etc/jenova.conf
-TENSOR_SPLIT="2.0,1.0" # Balanced NVIDIA/Intel split
-EMBED_DEVICES="Vulkan1" # Offload embeddings to Intel Xe to save NVIDIA VRAM
-CTX_SIZE="16384"        # Optimized context for speed/memory balance
+MODEL_PATH="models/qwen-7b.gguf"
+TENSOR_SPLIT="2.0,1.0"     # Balanced NVIDIA/Intel split
+EMBED_DEVICES="Vulkan1"     # Offload embeddings to Intel Xe to save NVIDIA VRAM
+CTX_SIZE="16384"            # Context window size for the agent
+JENOVA_DRAFT=1                # Enable speculative decoding (requires small drafter model)
+```
 
-Launching the CA
-Bash
+Notes:
+- Ensure `/etc/sysctl.conf` and ZFS ARC settings are tuned if running on ZFS-heavy workloads: e.g. `vfs.zfs.arc_max=2147483648`.
+- If relying on Optane swap, configure a dedicated swap partition/file and test paging behavior safely.
 
-# Start the background CA server
+## Launching
+
+Start the cognitive backend (daemon) and then the interactive agent:
+
+```bash
+# Start the Jenova Cognitive Architecture backend in daemon mode
 bin/jenova-ca --daemon
 
 # Launch the interactive agent
 bin/jenova
+```
 
-5. Deployment Methodology
+## Models & Roles
 
-This architecture was developed using a Quad-Agent implementation plan, ensuring strict separation between intelligence, networking, and hardware optimization. Every component is hardened against the unique requirements of the FreeBSD kernel, making it the definitive cognitive suite for the BSD power user.
+- Fast Agent (7B): recommended for tool-calling and low-latency tasks (e.g., Qwen2.5-Coder-7B-Instruct).
+- Deep Reasoner (14B): used by the `jenova-ca` server for heavy reasoning workloads.
+- Drafter (0.5B): optional small model for speculative decoding to accelerate generation.
 
-Project Creator: @orpheus497
+When enabling speculative decoding, provide the drafter model path and set `JENOVA_DRAFT=1`.
+
+## Directory Layout
+
+- `bin/` — Launch scripts (`jenova`, `jenova-ca`).
+- `lib/` — Core LuaJIT logic for the agent, embedding, HTTP, and memory.
+- `etc/` — Configuration files (`jenova.conf`).
+- `models/` — Model storage (GGUF or similar formats).
+- `var/` — Runtime state, logs, and cache.
+- `.jenova/` — Internal agent state, PID files, and automated backups.
+
+## Security & Privacy
+
+- All session data, logs, and backups are stored locally in `.jenova/` and `var/` by default.
+- Large binaries and personal configuration are ignored by Git; verify `.gitignore` entries before committing.
+
+## Neovim Integration
+
+`jenova-ca` supports multi-slot usage for both the interactive agent and Neovim FIM (Fill-In-Middle) completions. Configure your Neovim plugin to point at the local `jenova-ca` service.
+
+## Troubleshooting & Notes
+
+- If running into OOMs with ZFS, lower ARC (`vfs.zfs.arc_max`) and confirm swap/Optane configuration.
+- Network behavior uses libcurl via FFI for robust HTTP/1.1 chunked encoding support.
+- The codebase is tuned to avoid subprocess reinitialization penalties by using a persistent embedding daemon.
+
+## License & Credits
+
+Project creator: @orpheus497
 
 License: AGPL-3.0
 
-Jenova is optimized for a dual-tier model hierarchy with advanced memory paging:
 
-- **Fast Agent (7B)**: The `jenova` launcher uses **Qwen2.5-Coder-7B-Instruct** for rapid tool calling (15-20+ tokens/s).
-- **Deep Reasoner (14B)**: The `jenova-ca` (Cognitive Architecture) server uses **Qwen2.5-Coder-14B-Instruct**.
-- **Optane Paging**: Optimized for FreeBSD 15 to leverage 27GB of Optane NVMe swap as secondary RAM, allowing 14B models to handle massive context (up to 32k) without OOM.
-- **Speculative Decoding**: Uses the **0.5B model** as a drafter to accelerate generation by up to 3x.
+---
 
-## 🛠 Features
-
-- **Robust Tooling**: `read_file`, `edit_file`, `write_file`, and a high-speed `grep_search`.
-- **Hybrid Search**: BM25 keyword matching + Semantic vector search (Nomic Embed v1.5).
-- **FreeBSD First**: Tailored for `cc`, `sysctl`, and Vulkan offloading (NVIDIA + Intel).
-- **Session Isolation**: Automatic backups and session-local memory in `.jenova/`.
-
-## 📁 Directory Structure
-
-- `bin/`: Launch scripts (`jenova`, `jenova-ca`).
-- `lib/`: Core logic (LuaJIT) for the agent, tool execution, and memory.
-- `etc/`: Central configuration (`jenova.conf`).
-- `models/`: Model storage (GGUF format).
-- `var/`: Runtime state, logs, and cache.
-- `.jenova/`: Internal agent state, PID files, and automated file backups.
-
-## ⚙️ Configuration
-
-Edit `etc/jenova.conf` to adjust:
-
-- `MODEL_PATH`: Primary server model (Default: 7B).
-- `MODEL_7B`: Agent model (Default: 7B).
-- `TENSOR_SPLIT`: Hardware allocation (Optimized for 1650 Ti + Iris Xe + Optane).
-- `JENOVA_DRAFT=1`: Enable speculative decoding (Requires 0.5B model).
-
-## 🔒 Security
-
-- All session data, logs, and backups are stored locally in `.jenova/` and `var/`.
-- Large binary files and personal configuration files are ignored by Git.
-
-## 🖥 Usage
-
-```bash
-# Start the Jenova Cognitive Architecture backend
-bin/jenova-ca --daemon
-
-# Run the Jenova agent
-bin/jenova
-```
-
-## 📋 Neovim Integration
-
-The `jenova-ca` server supports multi-slot usage for both the agent and Neovim FIM (Fill-In-Middle) completions simultaneously.
+(See `etc/jenova.conf` and files under `lib/` for implementation details.)
