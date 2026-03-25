@@ -40,6 +40,7 @@ check_health() {
     fi
 }
 
+STARTED_BY_THIS_INVOCATION=0
 if check_health; then
     echo "Jenova CA already running at $API_URL"
 else
@@ -49,8 +50,10 @@ else
     # Run the server script using --daemon mode (jenova-ca handles its own backgrounding)
     if [ -f "$SCRIPT_DIR/jenova-ca" ]; then
         "$SCRIPT_DIR/jenova-ca" --daemon
+        STARTED_BY_THIS_INVOCATION=1
     elif [ -f "$SCRIPT_DIR/../jenova-ca" ]; then
         "$SCRIPT_DIR/../jenova-ca" --daemon
+        STARTED_BY_THIS_INVOCATION=1
     else
         echo "Error: jenova-ca launcher not found."
         exit 1
