@@ -60,7 +60,6 @@ exec "$LLAMA_SERVER" \
     -t "$THREADS" \
     -tb "$THREADS_BATCH" \
     -fa auto \
-    --mlock \
     -cb \
     --host "$HOST" \
     --port "$PORT" \
