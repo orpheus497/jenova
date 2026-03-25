@@ -2,6 +2,7 @@ local script_dir = os.getenv("JENOVA_ROOT") or (debug.getinfo(1, "S").source:mat
 package.path = script_dir .. "/lib/?.lua;" .. script_dir .. "/?.lua;" .. package.path
 
 local ffi = require("ffi")
+local bit = require("bit")
 local _ffi_defs = require("ffi_defs")
 local json = require("json")
 local search = require("search")
@@ -12,17 +13,19 @@ local HOST = os.getenv("JENOVA_PROXY_HOST") or "127.0.0.1"
 local PORT = tonumber(os.getenv("JENOVA_PROXY_PORT")) or 8080
 local LLAMA_URL = os.getenv("JENOVA_LLAMA_URL") or "http://127.0.0.1:8081"
 local LLAMA_PORT = tonumber(LLAMA_URL:match(":(%d+)")) or 8081
+-- Extract host from LLAMA_URL; fall back to proxy HOST if parsing fails
+local LLAMA_HOST = LLAMA_URL:match("//([^:/]+)") or HOST
 
-local embed_ok, embed_err = pcall(function()
-  return embed.init({ 
+local embed_ok, embed_res = pcall(function()
+  return embed.init({
     script_dir = script_dir,
   })
 end)
 if not embed_ok then
-  io.write("[proxy] WARNING: embed.init failed: " .. tostring(embed_err) .. "\n")
+  io.write("[proxy] WARNING: embed.init failed: " .. tostring(embed_res) .. "\n")
   embed_ok = false
 else
-  embed_ok = embed_err
+  embed_ok = embed_res
 end
 if embed_ok then search.init_embeddings(embed) end
 search.index_dir(".", {
@@ -44,7 +47,12 @@ local EWOULDBLOCK = 35
 local EINPROGRESS = 36
 
 local function set_nonblocking(fd)
-    ffi.C.fcntl(fd, _ffi_defs.F_SETFL, _ffi_defs.O_NONBLOCK)
+    local flags = ffi.C.fcntl(fd, _ffi_defs.F_GETFL, 0)
+    if flags < 0 then
+        io.write("[proxy] WARNING: fcntl(F_GETFL) failed for fd=" .. fd .. "\n")
+        flags = 0
+    end
+    ffi.C.fcntl(fd, _ffi_defs.F_SETFL, bit.bor(flags, _ffi_defs.O_NONBLOCK))
 end
 
 local function decode_chunked_body(after_headers)
@@ -140,7 +148,7 @@ local function proxy_connection(client_fd)
     -- Read body
     if not is_get then
         if is_chunked then
-            while not body_raw:find("0\r\n\r\n$") do
+            while body_raw:sub(-5) ~= "0\r\n\r\n" do
                 local n = async_recv(client_fd, buf, 8192)
                 if n <= 0 then break end
                 body_raw = body_raw .. ffi.string(buf, n)
@@ -208,7 +216,8 @@ local function proxy_connection(client_fd)
                         if req_json.tools then
                             req_json.messages[1].content = system_p .. "\n\n" .. req_json.messages[1].content
                         else
-                            req_json.messages[1].content = system_p
+                            -- Preserve original client instructions by merging, not overwriting
+                            req_json.messages[1].content = system_p .. "\n\n" .. req_json.messages[1].content
                         end
                     else
                         table.insert(req_json.messages, 1, {role = "system", content = system_p})
@@ -249,19 +258,24 @@ local function proxy_connection(client_fd)
     l_addr.sin_len = ffi.sizeof(l_addr)
     l_addr.sin_family = AF_INET
     l_addr.sin_port = ffi.C.htons(LLAMA_PORT)
-    l_addr.sin_addr.s_addr = ffi.C.inet_addr(HOST)
+    l_addr.sin_addr.s_addr = ffi.C.inet_addr(LLAMA_HOST)
 
-    local connected, err = async_connect(llama_fd, l_addr)
+    local connected, conn_err = async_connect(llama_fd, l_addr)
     if not connected then
-        print("[proxy] ERROR: C++ llama-server backend is down on port " .. LLAMA_PORT .. " (err: " .. tostring(err) .. ")")
+        print("[proxy] ERROR: C++ llama-server backend is down on " .. LLAMA_HOST .. ":" .. LLAMA_PORT .. " (err: " .. tostring(conn_err) .. ")")
         local err_resp = "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"
         async_send(client_fd, err_resp)
         safe_close()
         return
     end
 
-    -- Forward request
-    async_send(llama_fd, proxied_req)
+    -- Forward request; abort if send fails
+    local send_result = async_send(llama_fd, proxied_req)
+    if send_result < 0 then
+        io.write("[proxy] ERROR: async_send to llama_fd=" .. llama_fd .. " failed\n")
+        safe_close()
+        return
+    end
 
     -- Backward response
     while true do
@@ -323,7 +337,7 @@ while running do
     _ffi_defs.FD_SET(server_fd, read_fds)
     
     local max_fd = server_fd
-    for fd, info in pairs(clients) do
+    for _fd, info in pairs(clients) do
         if info.type == "read" then
             _ffi_defs.FD_SET(info.watch_fd, read_fds)
         elseif info.type == "write" then
@@ -379,6 +393,9 @@ while running do
     local now = os.time()
     for fd, info in pairs(clients) do
         if now - (info.created or now) > COROUTINE_TIMEOUT then
+            local age = now - (info.created or now)
+            io.write(string.format("[proxy] timeout: closing fd=%d age=%ds (limit=%ds watch_fd=%s)\n",
+                fd, age, COROUTINE_TIMEOUT, tostring(info.watch_fd)))
             pcall(ffi.C.close, fd)
             if info.watch_fd and info.watch_fd ~= fd then
                 pcall(ffi.C.close, info.watch_fd)

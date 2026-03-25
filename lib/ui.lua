@@ -253,9 +253,15 @@ function ui.draw_header()
   w(blank_row(inner_w))
   header_lines = header_lines + 1
 
-  -- ASCII art
+  -- ASCII art or fallback
   if art then
     for _, line in ipairs(art) do
+      w(header_row(inner_w, fg(P.header_fg) .. BOLD .. line .. RESET))
+      header_lines = header_lines + 1
+    end
+  elseif term_w >= 30 then
+    -- Medium-width fallback: two-line compact banner
+    for _, line in ipairs(HEADER_SMALL) do
       w(header_row(inner_w, fg(P.header_fg) .. BOLD .. line .. RESET))
       header_lines = header_lines + 1
     end

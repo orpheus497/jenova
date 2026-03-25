@@ -28,8 +28,11 @@ CHANGED=0
 sysctl_persist() {
     _line="$1"
     _key=$(echo "$_line" | cut -d= -f1)
-    if grep -q "^${_key}=" /etc/sysctl.conf 2>/dev/null; then
-        sed -i '' "s|^${_key}=.*|${_line}|" /etc/sysctl.conf
+    # Escape regex metacharacters in _key before use in grep -E and sed
+    # Character class: ] . [ * ^ $ \ /  (] must be first inside [])
+    _esc_key=$(printf '%s' "$_key" | sed 's/[].[*^$\\/]/\\&/g')
+    if grep -q -E "^${_esc_key}[[:space:]]*=" /etc/sysctl.conf 2>/dev/null; then
+        sed -i '' "s|^${_esc_key}[[:space:]]*=.*|${_line}|" /etc/sysctl.conf
     else
         echo "$_line" >> /etc/sysctl.conf
     fi
@@ -68,12 +71,18 @@ apply_sysctl vm.disable_swapspace_pageouts 0 "allow swap pageouts"
 # freeing real RAM for hot GPU tensors and KV cache
 apply_sysctl vm.pageout_update_period 1 "fast pageout cycle"
 
-# Target more free pages (2 GiB worth at 4K pages = 524288)
-# This gives the Iris Xe headroom to allocate from real RAM
-apply_sysctl vm.v_free_target 524288 "2 GiB free page target"
+# Compute page targets from runtime page size (supports non-4K systems)
+PAGE_SIZE=$(getconf PAGESIZE 2>/dev/null || echo 4096)
+# Target: 2 GiB free, 3 GiB inactive
+FREE_PAGES=$(expr \( 2 \* 1024 \* 1024 \* 1024 \) / $PAGE_SIZE)
+INACTIVE_PAGES=$(expr \( 3 \* 1024 \* 1024 \* 1024 \) / $PAGE_SIZE)
 
-# Large inactive target — pages here are swap candidates
-apply_sysctl vm.v_inactive_target 786432 "3 GiB inactive target"
+# Target more free pages (~2 GiB worth)
+# This gives the Iris Xe headroom to allocate from real RAM
+apply_sysctl vm.v_free_target $FREE_PAGES "2 GiB free page target"
+
+# Large inactive target (~3 GiB) — pages here are swap candidates
+apply_sysctl vm.v_inactive_target $INACTIVE_PAGES "3 GiB inactive target"
 
 # Bias the scanner toward laundering inactive pages
 apply_sysctl vm.inact_scan_laundry_weight 25 "aggressive inactive scan"
@@ -87,6 +96,8 @@ apply_sysctl vfs.zfs.arc_max 1073741824 "ZFS ARC max 1 GiB"
 for _nvme in 0 1; do
     if sysctl "dev.nvme.${_nvme}.int_coal_time" > /dev/null 2>&1; then
         apply_sysctl "dev.nvme.${_nvme}.int_coal_time" 0 "nvme${_nvme} zero coalesce delay"
+    fi
+    if sysctl "dev.nvme.${_nvme}.int_coal_threshold" > /dev/null 2>&1; then
         apply_sysctl "dev.nvme.${_nvme}.int_coal_threshold" 0 "nvme${_nvme} zero coalesce threshold"
     fi
 done

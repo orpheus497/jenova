@@ -5,6 +5,7 @@
 #
 # Dual-GPU inference: NVIDIA (discrete) + Intel Iris Xe (UMA) via Vulkan.
 # No mlock — mmap'd weights page through Optane swap.
+# Model: Qwen2.5-Coder-7B — all 28 layers fit on dual-GPU, 16k context, 2 slots.
 
 set -e
 
@@ -23,31 +24,9 @@ mkdir -p "$JENOVA_STATE"
 mkdir -p "$LOG_DIR"
 mkdir -p "$CACHE_DIR"
 
-# --- Model selection with NGL auto-tuning ---
-# Primary: 14B (dual-GPU, ~33 layers offloaded, 8k ctx, 1 slot)
-# Fallback: 7B (dual-GPU, all layers offloaded, 16k ctx, 2 slots)
-MODEL_PATH="${JENOVA_MODEL:-$MODEL_14B}"
-LLAMA_NGL="$NGL_14B"
-if [ ! -f "$MODEL_PATH" ]; then
-    echo "Primary 14B model not found, falling back to 7B..."
-    MODEL_PATH="$MODEL_7B"
-    LLAMA_NGL="$NGL_7B"
-    CTX_SIZE="${JENOVA_CTX:-16384}"
-    NUM_SLOTS="${JENOVA_SLOTS:-2}"
-fi
-
-case "$MODEL_PATH" in
-    *14B*|*14b*|*13B*|*13b*)
-        LLAMA_NGL="${JENOVA_NGL:-$NGL_14B}"
-        CTX_SIZE="${JENOVA_CTX:-8192}"
-        NUM_SLOTS="${JENOVA_SLOTS:-1}"
-        ;;
-    *7B*|*7b*|*8B*|*8b*)
-        LLAMA_NGL="${JENOVA_NGL:-$NGL_7B}"
-        CTX_SIZE="${JENOVA_CTX:-16384}"
-        NUM_SLOTS="${JENOVA_SLOTS:-2}"
-        ;;
-esac
+# --- Model: 7B only ---
+MODEL_PATH="${JENOVA_MODEL:-$MODEL_7B}"
+LLAMA_NGL="${JENOVA_NGL:-$NGL_7B}"
 
 if [ ! -f "$LLAMA_SERVER" ]; then
     echo "Error: llama-server not found at $LLAMA_SERVER"
@@ -79,6 +58,7 @@ fi
 export JENOVA_LLAMA_URL="http://${HOST}:${LLAMA_PORT}"
 export JENOVA_PROXY_PORT="$PORT"
 export JENOVA_PROXY_HOST="$HOST"
+export JENOVA_CTX="$CTX_SIZE"
 
 # --- LD_LIBRARY_PATH for shared libs ---
 LLAMA_LIB_DIR="$JENOVA_ROOT/llama.cpp/build/bin"
@@ -96,6 +76,12 @@ fi
 SPLIT_ARGS="-sm layer -fitt $FIT_TARGET"
 if [ -n "$TENSOR_SPLIT" ]; then
     SPLIT_ARGS="$SPLIT_ARGS -ts $TENSOR_SPLIT"
+fi
+
+# --- KV cache quantization (halves KV memory vs f16) ---
+KV_ARGS=""
+if [ -n "$KV_CACHE_TYPE" ]; then
+    KV_ARGS="-ctk $KV_CACHE_TYPE -ctv $KV_CACHE_TYPE"
 fi
 
 # --- Control verbs ---
@@ -157,8 +143,7 @@ echo "  Model:     $MODEL_PATH"
 echo "  Embed:     $MODEL_EMBED (CPU-only, Vulkan disabled)"
 echo "  Devices:   ${DEVICES:-CPU only}"
 echo "  GPU Layers: $LLAMA_NGL${TENSOR_SPLIT:+ (ts $TENSOR_SPLIT)}${FIT_TARGET:+ (fitt $FIT_TARGET)}"
-echo "  Context:   $CTX_SIZE"
-echo "  Slots:     $NUM_SLOTS"
+echo "  Context:   $CTX_SIZE  Slots: $NUM_SLOTS  KV: ${KV_CACHE_TYPE:-f16}"
 echo ""
 
 # =====================================================================
@@ -185,6 +170,7 @@ if [ "$1" = "--daemon" ]; then
         -m "$MODEL_PATH" \
         $DEV_ARGS \
         $SPLIT_ARGS \
+        $KV_ARGS \
         -c "$CTX_SIZE" \
         -b 2048 \
         -ub 256 \
@@ -194,6 +180,7 @@ if [ "$1" = "--daemon" ]; then
         -fa auto \
         -cb \
         --spm-infill \
+        --cache-prompt \
         --offline \
         --host "$HOST" \
         --port "$LLAMA_PORT" \
@@ -201,12 +188,14 @@ if [ "$1" = "--daemon" ]; then
         "$@" > "$LOG_FILE" 2>&1 &
     LLAMA_PID=$!
 
+    EMBED_PID=""
     if [ -f "$MODEL_EMBED" ]; then
         GGML_VULKAN_DISABLE=1 "$LLAMA_SERVER" \
             -m "$MODEL_EMBED" \
             --embedding \
             -ngl 0 \
-            -c 2048 \
+            -c 4096 \
+            -b 512 \
             -t "$THREADS" \
             --offline \
             --host "$HOST" \
@@ -215,7 +204,6 @@ if [ "$1" = "--daemon" ]; then
         EMBED_PID=$!
     else
         echo "Warning: embed model not found at $MODEL_EMBED — skipping embed server"
-        EMBED_PID=""
     fi
 
     sleep 3
@@ -223,7 +211,9 @@ if [ "$1" = "--daemon" ]; then
     luajit "$PROXY_SCRIPT" >> "$LOG_FILE" 2>&1 &
     PROXY_PID=$!
 
-    echo "$LLAMA_PID $PROXY_PID ${EMBED_PID:-0}" > "$PID_FILE"
+    # Write pidfile — never write "0" as a placeholder PID
+    printf '%s' "$LLAMA_PID $PROXY_PID${EMBED_PID:+ $EMBED_PID}" > "$PID_FILE"
+    echo "" >> "$PID_FILE"
     echo "Started: llama-server=$LLAMA_PID proxy=$PROXY_PID embed=${EMBED_PID:-none}"
     exit 0
 fi
@@ -237,6 +227,7 @@ while [ "$1" = "--daemon" ]; do shift; done
     -m "$MODEL_PATH" \
     $DEV_ARGS \
     $SPLIT_ARGS \
+    $KV_ARGS \
     -c "$CTX_SIZE" \
     -b 2048 \
     -ub 256 \
@@ -246,6 +237,7 @@ while [ "$1" = "--daemon" ]; do shift; done
     -fa auto \
     -cb \
     --spm-infill \
+    --cache-prompt \
     --offline \
     --host "$HOST" \
     --port "$LLAMA_PORT" \
@@ -260,7 +252,8 @@ if [ -f "$MODEL_EMBED" ]; then
         -m "$MODEL_EMBED" \
         --embedding \
         -ngl 0 \
-        -c 2048 \
+        -c 4096 \
+        -b 512 \
         -t "$THREADS" \
         --offline \
         --host "$HOST" \
@@ -295,6 +288,8 @@ echo "Starting Jenova Intelligence Proxy on port $PORT..."
 luajit "$PROXY_SCRIPT" &
 PROXY_PID=$!
 
-echo "$LLAMA_PID $PROXY_PID ${EMBED_PID:-0}" > "$PID_FILE"
+# Write pidfile — never write "0" as a placeholder PID
+printf '%s' "$LLAMA_PID $PROXY_PID${EMBED_PID:+ $EMBED_PID}" > "$PID_FILE"
+echo "" >> "$PID_FILE"
 
 wait $LLAMA_PID $PROXY_PID ${EMBED_PID:+$EMBED_PID}

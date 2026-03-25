@@ -10,7 +10,7 @@ local port = arg[2] or '8080'
 local timeout = tonumber(arg[3]) or 3
 local url = string.format('http://%s:%s/health', host, port)
 local code = http.get(url, timeout)
-if code == 200 or code == 404 or code == 502 or code == 503 then
+if code == 200 then
   os.exit(0)
 else
   os.exit(1)

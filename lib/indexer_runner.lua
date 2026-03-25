@@ -23,8 +23,12 @@ if not ok or type(data) ~= 'table' then
   os.exit(1)
 end
 
-local embed_ok = pcall(function() embed.init() end)
-if embed_ok then search.init_embeddings(embed) end
+local embed_ok = embed.init()
+if not embed_ok then
+  io.stderr:write('[indexer_runner] embed.init() failed — aborting without deleting queue\n')
+  os.exit(1)
+end
+search.init_embeddings(embed)
 
 local res = search.process_embedding_queue(data)
 io.write(string.format('[indexer_runner] processed %d files\n', res))

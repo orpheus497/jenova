@@ -90,6 +90,9 @@ ffi.cdef[[
   int ioctl(int fd, unsigned long request, ...);
   int isatty(int fd);
   int chdir(const char *path);
+  int pipe(int pipefd[2]);
+  ssize_t read(int fd, void *buf, size_t count);
+  ssize_t write(int fd, const void *buf, size_t count);
 
   /* --- Terminal --- */
   int tcgetattr(int fd, struct termios *termios_p);
@@ -117,7 +120,11 @@ ffi.cdef[[
 local ffi_defs = {}
 
 -- FreeBSD constants
+ffi_defs.F_GETFL    = 3
 ffi_defs.F_SETFL    = 4
+ffi_defs.F_GETFD    = 1
+ffi_defs.F_SETFD    = 2
+ffi_defs.FD_CLOEXEC = 1
 ffi_defs.O_NONBLOCK = 0x0004
 ffi_defs.FIONBIO    = 0x8004667e
 ffi_defs.O_RDONLY    = 0

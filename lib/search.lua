@@ -265,7 +265,21 @@ end
 function search.save_vectors()
   if not embed or not embed.is_available() then return false end
 
+  -- Load and merge existing on-disk entries so concurrent processes don't lose each other's work
   local save_data = {}
+  local ef = io.open(VECTOR_FILE, "r")
+  if ef then
+    local existing_content = ef:read("*a")
+    ef:close()
+    local ok_e, existing = pcall(json.decode, existing_content)
+    if ok_e and type(existing) == "table" then
+      for filepath, entry in pairs(existing) do
+        save_data[filepath] = entry
+      end
+    end
+  end
+
+  -- Overlay in-memory entries (newer/current values win)
   for filepath, entry in pairs(vec_index) do
     local chunks_save = {}
     for _, c in ipairs(entry.chunks) do
@@ -279,10 +293,19 @@ function search.save_vectors()
 
   local ok, err = pcall(function() os.execute("mkdir -p .jenova") end)
   if not ok then io.write("[search] warning: failed to create .jenova: "..tostring(err).."\n") end
-  local f = io.open(VECTOR_FILE, "w")
+
+  -- Atomic write via temp file + rename
+  local tmp_path = VECTOR_FILE .. ".tmp"
+  local f = io.open(tmp_path, "w")
   if not f then return false end
   f:write(json.encode(save_data))
   f:close()
+  local ok_rename, rename_err = pcall(os.rename, tmp_path, VECTOR_FILE)
+  if not ok_rename then
+    io.write("[search] WARNING: failed to rename vector file: " .. tostring(rename_err) .. "\n")
+    os.remove(tmp_path)
+    return false
+  end
   return true
 end
 
@@ -443,28 +466,25 @@ function search.index_dir(root_dir, extensions)
 
   -- Background the embedding part if there are files to process
   if #files_to_embed > 0 and embed and embed.is_available() then
-    -- We'll use a simple backgrounding trick: 
-    -- We can't easily serialize the 'files_to_embed' table to a shell command,
-    -- but we can process them in the same process but return immediately.
-    -- Wait, Lua is single-threaded. If I process them here, it's blocking.
-    -- To truly background, I'll write the list to a temporary file and 
-    -- start a background luajit process.
-    
-    local tmp_list = ".jenova/index_queue.json"
-    local ok, err = pcall(function() os.execute("mkdir -p .jenova") end)
-    if not ok then io.write("[search] warning: failed to create .jenova: "..tostring(err).."\n") end
+    -- Seed RNG with time + process-derived entropy so temp filenames are unique
+    math.randomseed(os.time() + math.floor(os.clock() * 1000000))
+    local tmp_list = string.format(".jenova/index_queue_%d_%d.json", os.time(), math.random(100000))
+    local ok_mkdir, err_mkdir = pcall(function() os.execute("mkdir -p .jenova") end)    if not ok_mkdir then io.write("[search] warning: failed to create .jenova: "..tostring(err_mkdir).."\n") end
     local f = io.open(tmp_list, "w")
     if f then
       f:write(json.encode(files_to_embed))
       f:close()
-      
+
       local daemon = require('daemon')
       local existing_pid = daemon.check_pidfile('.jenova/indexer.pid')
       if existing_pid then
         io.write(string.format("  [Jenova] BM25 ready. Indexer already running (pid=%d), skipping.\n", existing_pid))
+        os.remove(tmp_list)
       else
-        local ok, pid_or_err = daemon.start_background({ 'luajit', 'lib/indexer_runner.lua', tmp_list }, '.jenova/indexer.log', '.', '.jenova/indexer.pid')
-        if ok then
+        -- Atomically move temp file into place, then start indexer
+        os.rename(tmp_list, ".jenova/index_queue.json")
+        local ok2, pid_or_err = daemon.start_background({ 'luajit', 'lib/indexer_runner.lua', '.jenova/index_queue.json' }, '.jenova/indexer.log', '.', '.jenova/indexer.pid')
+        if ok2 then
           io.write(string.format("  [Jenova] BM25 ready. Backgrounded %d embeddings (pid=%s)...\n", #files_to_embed, tostring(pid_or_err)))
         else
           io.write("  [Jenova] BM25 ready. Failed to background indexer: " .. tostring(pid_or_err) .. "\n")

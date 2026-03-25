@@ -39,7 +39,8 @@ fi
 exec "$LLAMA_SERVER" \
     -m "$MODEL_PATH" \
     $DEV_ARGS \
-    -ngl "$NGL_7B" \
+    -sm layer \
+    -fitt $FIT_TARGET \
     --host 127.0.0.1 \
     --port 8012 \
     -c 8192 \

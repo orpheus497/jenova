@@ -27,6 +27,7 @@ local initialized = false
 -------------------------------------------------------------------------------
 function embed.init(opts)
   opts = opts or {}
+  initialized = false  -- reset before each attempt
   EMBED_URL = opts.embed_url or os.getenv("JENOVA_LLAMA_EMBED_URL") or "http://127.0.0.1:8082"
   local embed_bin = opts.embed_bin or os.getenv("JENOVA_LLAMA_SERVER") or (opts.script_dir and (opts.script_dir .. "/llama.cpp/build/bin/llama-server"))
   local model_path = opts.model_path or os.getenv("JENOVA_MODEL_EMBED") or (opts.script_dir and (opts.script_dir .. "/models/nomic-embed-text-v1.5.Q8_0.gguf"))
@@ -51,11 +52,13 @@ function embed.init(opts)
       local daemon = require('daemon')
 
       local args = { embed_bin, '-m', model_path, '--embedding', '--port', port, '--host', host,
-                      '-ngl', '0', '-c', '2048', '--offline' }
+                      '-ngl', '0', '-c', '4096', '-b', '512', '--offline' }
 
       local ok, pid_or_err = daemon.start_background(args, '.jenova/llama-embed.log', opts.script_dir or '.', '.jenova/llama-embed.pid', {GGML_VULKAN_DISABLE="1"})
       if not ok then
         io.write('[embed] WARNING: failed to start embedding binary: ' .. tostring(pid_or_err) .. '\n')
+        initialized = false
+        return false
       else
         -- Wait for it to come up
         for i = 1, 15 do
@@ -72,6 +75,7 @@ function embed.init(opts)
   end
 
   io.write("[embed] WARNING: Embedding server not reachable at " .. EMBED_URL .. "\n")
+  initialized = false
   return false
 end
 

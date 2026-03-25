@@ -54,7 +54,7 @@ while true do
 
     if status == 200 then
         local ok, data = pcall(json.decode, resp)
-        if ok and data.choices and data.choices[1].message then
+        if ok and data.choices and #data.choices > 0 and data.choices[1].message then
             local reply = data.choices[1].message.content or ""
             table.insert(messages, { role = "assistant", content = reply })
             print("\n\27[36mjenova:\27[0m\n" .. reply .. "\n")

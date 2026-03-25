@@ -9,9 +9,9 @@
 --   Compact system prompt maximizes model reasoning capacity
 --
 -- Architecture notes (do not remove):
--- * Qwen2.5-Coder-14B returns tool calls as text in msg.content.
---   Extracted via fallback parser (Stage 2) or code-block interceptor (Stage 3).
---   The 14B model outputs {"arguments":{...},"name":"..."} (reversed key order).
+-- * Qwen2.5-Coder-7B returns tool calls as structured JSON in tool_calls field.
+--   Fallback parser (Stage 2) handles text/content tool calls when tool_calls is absent.
+--   Code-block interceptor (Stage 3) catches code-in-content with write intent.
 -- * edit_file exists because write_file requires the model to regenerate
 --   the entire file as JSON content, which can exceed generation timeout.
 --   edit_file only needs the old/new snippet.
@@ -41,7 +41,7 @@ local HOME      = os.getenv("HOME") or "/home/orpheus497"
 local CWD       = nil  -- set in main()
 local HTTP_TIMEOUT = tonumber(os.getenv("JENOVA_TIMEOUT")) or 600
 local MAX_ACTIONS  = 20
-local CONTEXT_WINDOW = tonumber(os.getenv("JENOVA_CTX")) or 8192
+local CONTEXT_WINDOW = tonumber(os.getenv("JENOVA_CTX")) or 16384
 
 -- Per-turn state
 local files_written_this_turn = {}
@@ -756,7 +756,9 @@ local function http_post_retry(url, body, label, max_retries)
         memory.log("retry", { label = label, attempt = attempt, code = code })
         ui.nonblocking_wait(2, "retrying ("..label..")")
       end
-    elseif code >= 500 then
+    elseif code >= 500 or code == 499 then
+      -- 499 is a synthetic transport error from recv_all (socket closed mid-stream),
+      -- treated as retryable just like 5xx server errors.
       if attempt < max_retries then
         ui.status_warn(label.." HTTP "..code..", retry "..attempt.."/"..max_retries)
         memory.log("retry", { label = label, attempt = attempt, code = code })
@@ -783,11 +785,18 @@ local function trim_messages(max)
   local keep_from = #messages - max + 2
   if keep_from < 2 then keep_from = 2 end
 
+  -- Skip past any leading "tool" messages to avoid orphaned tool responses
   while keep_from < #messages and messages[keep_from].role == "tool" do
     keep_from = keep_from + 1
   end
+  -- Also skip past a leading "assistant" that lacks a preceding user/tool pair
+  while keep_from < #messages and messages[keep_from].role == "assistant"
+      and (keep_from == 1 or messages[keep_from - 1].role == "tool") do
+    keep_from = keep_from + 1
+  end
 
-  local new_messages = { messages[1] }
+  -- Seed with a fresh system prompt, not whatever messages[1] happened to be
+  local new_messages = { { role = "system", content = build_system_prompt() } }
 
   local summary_parts = {}
   for i = 2, keep_from - 1 do

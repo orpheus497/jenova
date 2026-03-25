@@ -67,7 +67,9 @@ local function send_all(fd, data)
     local n = ffi.C.send(fd, data:sub(sent + 1), #data - sent, 0)
     if n <= 0 then
       local err = get_errno()
-      if err == EINTR then goto continue end
+      if err == EINTR or err == EAGAIN or err == EWOULDBLOCK or err == ETIMEDOUT then
+        goto continue
+      end
       return false, "send() failed: " .. get_errstr(err)
     end
     sent = sent + tonumber(n)
@@ -142,6 +144,9 @@ end
 
 function http.post(url, body, timeout)
   timeout = timeout or 600
+  if url:lower():match("^https://") then
+    return 0, "https endpoint not supported"
+  end
   local host, port, path = parse_url(url)
   if not host then return 0, "invalid url: " .. tostring(url) end
 
@@ -197,6 +202,9 @@ end
 
 function http.get(url, timeout)
   timeout = timeout or 5
+  if url:lower():match("^https://") then
+    return 0, "https endpoint not supported"
+  end
   local host, port, path = parse_url(url)
   if not host then return 0, "invalid url" end
 

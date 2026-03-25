@@ -76,14 +76,43 @@ function daemon.start_background(cmd_table, log_path, working_dir, pidfile, env)
   end
   argv[argc] = nil
 
+  -- Create a pipe for parent/child exec handshake:
+  -- child closes write end on successful execvp (FD_CLOEXEC), or writes a byte on error.
+  -- parent reads: EOF = success, byte = exec failure.
+  local pipefd = ffi.new("int[2]")
+  if ffi.C.pipe(pipefd) ~= 0 then return false, "pipe() failed" end
+
   local pid = ffi.C.fork()
-  if pid < 0 then return false, "fork failed" end
+  if pid < 0 then
+    ffi.C.close(pipefd[0])
+    ffi.C.close(pipefd[1])
+    return false, "fork failed"
+  end
+
   if pid > 0 then
+    -- Parent: close write end, wait for child signal.
+    ffi.C.close(pipefd[1])
+    local buf = ffi.new("char[1]")
+    local n = ffi.C.read(pipefd[0], buf, 1)
+    ffi.C.close(pipefd[0])
+    if n < 0 then
+      -- read() error — treat as exec failure
+      return false, "pipe read failed"
+    end
+    if n > 0 then
+      -- Child sent an error byte before exec
+      return false, "child exec failed"
+    end
+    -- n == 0 means EOF: child exec'd successfully (FD_CLOEXEC closed write end)
     if pidfile then
       daemon.write_pidfile(pidfile, pid)
     end
     return true, tonumber(pid)
   end
+
+  -- Child: close read end, set FD_CLOEXEC on write end so execvp closes it automatically.
+  ffi.C.close(pipefd[0])
+  ffi.C.fcntl(pipefd[1], ffi_defs.F_SETFD, ffi_defs.FD_CLOEXEC)
 
   ffi.C.setpgid(0, 0)
   ffi.C.setsid()
@@ -106,6 +135,9 @@ function daemon.start_background(cmd_table, log_path, working_dir, pidfile, env)
   end
 
   ffi.C.execvp(argv[0], argv)
+  -- execvp failed: write an error byte to the pipe so parent knows.
+  local errbyte = ffi.new("char[1]", { 1 })
+  ffi.C.write(pipefd[1], errbyte, 1)
   ffi.C._exit(127)
 end
 
