@@ -65,7 +65,8 @@ if [ -f "$SCRIPT_DIR/lib/proxy.lua" ]; then
     export JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
 elif [ -f "$SCRIPT_DIR/../lib/proxy.lua" ]; then
     PROXY_SCRIPT="$SCRIPT_DIR/../lib/proxy.lua"
-    export JENOVA_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+    # SCRIPT_DIR is <repo>/bin; take its parent as the repo root
+    export JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
 else
     PROXY_SCRIPT="$SCRIPT_DIR/../lib/proxy.lua"
 fi
@@ -75,6 +76,17 @@ export JENOVA_LLAMA_URL="http://${HOST}:${LLAMA_PORT}"
 export JENOVA_PROXY_PORT="$PORT"
 export JENOVA_PROXY_HOST="$HOST"
 export JENOVA_EMBED_DEVICES="$EMBED_DEVICES"
+
+# Ensure local llama.cpp build libraries are on the runtime linker path (FreeBSD)
+# Some builds place shared libs in build/bin rather than build/lib
+LLAMA_LIB_DIR="$JENOVA_ROOT/llama.cpp/build/bin"
+if [ -d "$LLAMA_LIB_DIR" ]; then
+    if [ -f "$LLAMA_LIB_DIR/libmtmd.so.0" ] || [ -f "$LLAMA_LIB_DIR/libmtmd.so" ]; then
+        export LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"
+    else
+        echo "Warning: libmtmd not found in $LLAMA_LIB_DIR; llama-server may fail to start."
+    fi
+fi
 
 # Background management
 if [ "$1" = "--daemon" ]; then

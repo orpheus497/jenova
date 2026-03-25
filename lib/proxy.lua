@@ -1,4 +1,4 @@
-local script_dir = os.getenv("CODER_ROOT") or debug.getinfo(1, "S").source:match("^@(.*/)") and debug.getinfo(1, "S").source:match("^@(.*/)..") or "."
+local script_dir = os.getenv("JENOVA_ROOT") or os.getenv("CODER_ROOT") or (debug.getinfo(1, "S").source:match("^@(.*/)" ) or "./")
 package.path = script_dir .. "/lib/?.lua;" .. script_dir .. "/?.lua;" .. package.path
 
 local ffi = require("ffi")

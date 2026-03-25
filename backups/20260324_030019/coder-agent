@@ -23,6 +23,14 @@ else
             echo " ready!"
             break
         fi
+
+        # Liveness probe: check the server process is still running; fail fast if it exited
+        if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+            echo "server died"
+            kill "$SERVER_PID" 2>/dev/null
+            exit 1
+        fi
+
         printf "."
         sleep 1
         if [ $i -eq 120 ]; then
@@ -45,4 +53,14 @@ trap cleanup EXIT INT TERM
 
 # Run the LuaJIT agent
 export CODER_API_URL="$API_URL"
-exec luajit "$SCRIPT_DIR/agent.lua"
+
+# Start luajit as a child process so the EXIT trap can run cleanup
+luajit "$SCRIPT_DIR/agent.lua" &
+AGENT_PID=$!
+
+# Wait for the agent to exit, capture status, then run cleanup explicitly
+wait "$AGENT_PID"
+AGENT_STATUS=$?
+
+cleanup
+exit "$AGENT_STATUS"

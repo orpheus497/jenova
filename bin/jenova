@@ -17,7 +17,11 @@ fi
 
 API_URL="http://${HOST}:${PORT}"
 JENOVA_DIR="${JENOVA_STATE:-$SCRIPT_DIR/.jenova}"
-SERVER_LOG="${LOG_DIR:-$JENOVA_DIR/jenova-ca.log}"
+if [ -n "$LOG_DIR" ]; then
+    SERVER_LOG="$LOG_DIR/jenova-ca.log"
+else
+    SERVER_LOG="${JENOVA_DIR}/jenova-ca.log"
+fi
 
 # Ensure directories exist
 mkdir -p "$JENOVA_DIR"

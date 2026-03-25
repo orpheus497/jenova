@@ -31,7 +31,7 @@ fi
 # Execute llama-cli with dual-GPU Vulkan offloading
 # -sm layer: Split layers across GPUs for better performance on heterogeneous setups.
 # -ts 1.5,1: Prioritize Dedicated GPU (Vulkan0) over Integrated (Vulkan1).
-# -fitt 384: Target ~90% VRAM utilization (leave 384MB margin).
+# -fitt 1024: Target ~90% VRAM utilization (leave 1024MB margin).
 # -c 32768: High-quality 32k context for coding tasks.
 # -ngl all: Fully offload model and KV to GPUs.
 "$LLAMA_CLI" \
