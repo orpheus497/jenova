@@ -21,9 +21,6 @@ if [ ! -f "$MODEL_PATH" ]; then
     echo "Attempting to fall back to 14B..."
     MODEL_PATH="$MODEL_14B"
     JENOVA_MODEL="$MODEL_14B"
-    # Recompute TENSOR_SPLIT for 14B with Jenova Optane-paging strategy:
-    # Intel Iris Xe (3.0) can utilize the 27GB Optane swap via system memory.
-    TENSOR_SPLIT="1.5,2.5"
 fi
 DRAFT_PATH="${JENOVA_DRAFT_PATH:-$MODEL_DRAFT}"
 
@@ -52,7 +49,7 @@ echo ""
 DRAFT_ARGS=""
 if [ -f "$DRAFT_PATH" ] && [ -n "$JENOVA_DRAFT" ]; then
     echo "  Draft:   $DRAFT_PATH (speculative decoding)"
-    DRAFT_ARGS="-md $DRAFT_PATH -ngld all --draft-max 16 --draft-min 4 --draft-p-min 0.6"
+    DRAFT_ARGS="-md '${DRAFT_PATH}' -ngld all --draft-max 16 --draft-min 4 --draft-p-min 0.6"
 fi
 
 # NO MLOCK: We explicitly disable mlock to allow FreeBSD to page to Optane NVMe.
@@ -68,7 +65,8 @@ elif [ -f "$SCRIPT_DIR/../lib/proxy.lua" ]; then
     # SCRIPT_DIR is <repo>/bin; take its parent as the repo root
     export JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
 else
-    PROXY_SCRIPT="$SCRIPT_DIR/../lib/proxy.lua"
+    echo "Error: proxy.lua not found relative to $SCRIPT_DIR"
+    exit 1
 fi
 
 export CODER_ROOT="$JENOVA_ROOT" # Backwards compatibility
@@ -77,9 +75,8 @@ export JENOVA_PROXY_PORT="$PORT"
 export JENOVA_PROXY_HOST="$HOST"
 export JENOVA_EMBED_DEVICES="$EMBED_DEVICES"
 
-# Control passing explicit tensor split. Leave FORCE_TENSOR_SPLIT unset to allow llama.cpp auto-fit.
-if [ -n "$FORCE_TENSOR_SPLIT" ] && [ -n "$TENSOR_SPLIT" ]; then
-    TS_ARG="-ts \"$TENSOR_SPLIT\""
+if [ -n "$TENSOR_SPLIT" ]; then
+    TS_ARG="-ts '$TENSOR_SPLIT'"
 else
     TS_ARG=""
 fi
@@ -96,67 +93,156 @@ if [ -d "$LLAMA_LIB_DIR" ]; then
 fi
 
 # Background management
+# Support simple control verbs: start (--daemon), stop, status, restart
+if [ "$1" = "stop" ]; then
+    if [ -f "$PID_FILE" ]; then
+        read OLD_LLAMA_PID OLD_PROXY_PID OLD_EMBED_PID < "$PID_FILE" 2>/dev/null || OLD_LLAMA_PID=$(cat "$PID_FILE")
+        for P in $OLD_LLAMA_PID $OLD_PROXY_PID $OLD_EMBED_PID; do
+            if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
+                echo "Stopping PID $P..."
+                kill "$P" 2>/dev/null || true
+            fi
+        done
+        rm -f "$PID_FILE"
+        echo "Stopped."
+        exit 0
+    else
+        echo "No PID file found at $PID_FILE"
+        exit 1
+    fi
+fi
+
+if [ "$1" = "status" ]; then
+    if [ -f "$PID_FILE" ]; then
+        read LLAMA_PID PROXY_PID EMBED_PID < "$PID_FILE" 2>/dev/null || LLAMA_PID=$(cat "$PID_FILE")
+        echo "PID file: $PID_FILE"
+        if [ -n "$LLAMA_PID" ] && kill -0 "$LLAMA_PID" 2>/dev/null; then
+            echo "llama-server running (PID $LLAMA_PID)"
+        else
+            echo "llama-server not running"
+        fi
+        if [ -n "$PROXY_PID" ] && kill -0 "$PROXY_PID" 2>/dev/null; then
+            echo "Proxy running (PID $PROXY_PID)"
+        else
+            echo "Proxy not running"
+        fi
+        if [ -n "$EMBED_PID" ] && kill -0 "$EMBED_PID" 2>/dev/null; then
+            echo "Embed server running (PID $EMBED_PID)"
+        else
+            echo "Embed server not running"
+        fi
+        exit 0
+    else
+        echo "No PID file found at $PID_FILE"
+        exit 1
+    fi
+fi
+
+if [ "$1" = "restart" ]; then
+    "$0" stop || true
+    shift || true
+    set -- "--daemon" "$@"
+fi
+
 if [ "$1" = "--daemon" ]; then
     if [ -f "$PID_FILE" ]; then
-        OLD_PID=$(cat "$PID_FILE")
-        if kill -0 "$OLD_PID" 2>/dev/null; then
-            echo "Jenova CA is already running (PID $OLD_PID)."
+        read OLD_LLAMA_PID OLD_PROXY_PID OLD_EMBED_PID < "$PID_FILE" 2>/dev/null || OLD_LLAMA_PID=$(cat "$PID_FILE")
+        if [ -n "$OLD_LLAMA_PID" ] && kill -0 "$OLD_LLAMA_PID" 2>/dev/null; then
+            echo "Jenova CA appears to be running (llama PID $OLD_LLAMA_PID)."
             exit 0
         fi
-        rm "$PID_FILE"
+        if [ -n "$OLD_PROXY_PID" ] && kill -0 "$OLD_PROXY_PID" 2>/dev/null; then
+            echo "Jenova CA appears to be running (proxy PID $OLD_PROXY_PID)."
+            exit 0
+        fi
+        rm -f "$PID_FILE"
     fi
-    
-    # Use daemon(8) on FreeBSD if available, or nohup
+
     LOG_FILE="${LOG_DIR}/jenova-ca.log"
     echo "Daemonizing... Logs at $LOG_FILE"
-    
-    # Start processes in a subshell and background it
-    (
-        # Start llama-server
-        "$LLAMA_SERVER" \
-            -m "$MODEL_PATH" \
-            -dev "$DEVICES" \
-            -sm layer \
-            $TS_ARG \
-            -fitt "$LLAMA_FITT" \
-            -c "$CTX_SIZE" \
-            -b 2048 \
-            -ub 256 \
-            -np "$NUM_SLOTS" \
-            -t "$THREADS" \
-            -tb "$THREADS_BATCH" \
-            -fa auto \
-            $MLOCK_ARG \
-            -cb \
-            --spm-infill \
-            --offline \
-            --host "$HOST" \
-            --port "$LLAMA_PORT" \
-            $DRAFT_ARGS \
-            "$@" > "$LOG_FILE" 2>&1 &
-        LLAMA_PID=$!
-        
-        # Wait a moment for llama-server to bind
-        sleep 2
-        
-        # Start Proxy
-        luajit "$PROXY_SCRIPT" >> "$LOG_FILE" 2>&1 &
-        PROXY_PID=$!
-        
-        # Save PIDs
-        echo $! > "$PID_FILE" # This might not be right if we want to track both or the main one
-        # Actually we'll just track the proxy PID or create a small wrapper
-        # For Jenova, let's just save the child shell PID or similar
-    ) &
-    echo $! > "$PID_FILE"
+
+    # Detect available Vulkan devices (best-effort) and set device arguments
+    VULKAN_LIST=$("$LLAMA_SERVER" --list-devices 2>&1 | sed -n '1,200p' || true)
+    VULKAN_COUNT=$(printf "%s\n" "$VULKAN_LIST" | grep -c 'Vulkan' || true)
+    if [ -z "$VULKAN_COUNT" ] || [ "$VULKAN_COUNT" -le 0 ]; then
+        echo "No Vulkan devices found or list-devices failed; running llama-server on CPU"
+        MAIN_ENV=""
+        MAIN_DEV_ARG=""
+    else
+        # Map visible devices per-invocation to avoid global side-effects
+        # Force main LLM to use NVIDIA physical device (prefer index 0)
+        MAIN_ENV="GGML_VK_VISIBLE_DEVICES=0 GGML_VK_VISIBLE_DEVICES_ORDER=0"
+        MAIN_DEV_ARG="-dev Vulkan0"
+    fi
+
+    # Launch main llama-server with KV on GPU but allow KV offload to CPU when needed
+    eval $MAIN_ENV "$LLAMA_SERVER" \
+        -m "$MODEL_PATH" \
+        $MAIN_DEV_ARG \
+        -sm layer \
+        $TS_ARG \
+        -fitt "$LLAMA_FITT" \
+        -c "$CTX_SIZE" \
+        -b 2048 \
+        -ub 256 \
+        -np "$NUM_SLOTS" \
+        -t "$THREADS" \
+        -tb "$THREADS_BATCH" \
+        -fa auto \
+        $MLOCK_ARG \
+        -cb \
+        --spm-infill \
+        --offline \
+        --host "$HOST" \
+        --port "$LLAMA_PORT" \
+        --kv-unified \
+        --kv-offload \
+        $DRAFT_ARGS \
+        "$@" > "$LOG_FILE" 2>&1 &
+    LLAMA_PID=$!
+
+    # Start embedding server on Intel if configured and a second Vulkan device exists
+    EMBED_PID=""
+    if [ -n "$EMBED_DEVICES" ] && [ "$EMBED_DEVICES" = "Vulkan1" ] && [ "$VULKAN_COUNT" -ge 2 ]; then
+        EMBED_LOG="${LOG_DIR}/jenova-embed.log"
+        echo "Starting embedding server on physical Vulkan device 1 (Intel) mapped to visible index 0 for the embed process"
+        # For the embed process, make physical device 1 visible as index 0 inside that process
+        EMBED_ENV="GGML_VK_VISIBLE_DEVICES=1 GGML_VK_VISIBLE_DEVICES_ORDER=1"
+        eval $EMBED_ENV "$LLAMA_SERVER" -m "$MODEL_EMBED" --embedding --host "$HOST" --port "$LLAMA_EMBED_PORT" -dev Vulkan0 --offline > "$EMBED_LOG" 2>&1 &
+        EMBED_PID=$!
+    else
+        echo "[embed] Not starting embedding Vulkan server; embed will start on demand or fall back to CPU"
+    fi
+
+    # Wait a moment for llama-server to bind
+    sleep 2
+
+    # Start Proxy
+    luajit "$PROXY_SCRIPT" >> "$LOG_FILE" 2>&1 &
+    PROXY_PID=$!
+
+    # Save PIDs (llama-server then proxy then embed if any)
+    echo "$LLAMA_PID $PROXY_PID $EMBED_PID" > "$PID_FILE"
+    echo "Started llama-server (PID $LLAMA_PID) and Proxy (PID $PROXY_PID) embed PID $EMBED_PID"
+
     exit 0
 fi
 
 # Foreground mode (original behavior)
-# Start llama-server
-"$LLAMA_SERVER" \
+# Start llama-server (force NVidia primary; KV offload on GPU; CPU will handle overflow; embeddings on CPU)
+VULKAN_LIST=$("$LLAMA_SERVER" --list-devices 2>&1 | sed -n '1,200p' || true)
+VULKAN_COUNT=$(printf "%s\n" "$VULKAN_LIST" | grep -c 'Vulkan' || true)
+if [ -z "$VULKAN_COUNT" ] || [ "$VULKAN_COUNT" -le 0 ]; then
+    echo "No Vulkan devices found; running llama-server on CPU"
+    MAIN_ENV=""
+    MAIN_DEV_ARG=""
+else
+    MAIN_ENV="GGML_VK_VISIBLE_DEVICES=0 GGML_VK_VISIBLE_DEVICES_ORDER=0"
+    MAIN_DEV_ARG="-dev Vulkan0"
+fi
+eval $MAIN_ENV "$LLAMA_SERVER" \
     -m "$MODEL_PATH" \
-    -dev "$DEVICES" \
+    $MAIN_DEV_ARG \
     -sm layer \
     $TS_ARG \
     -fitt "$LLAMA_FITT" \
@@ -173,22 +259,21 @@ fi
     --offline \
     --host "$HOST" \
     --port "$LLAMA_PORT" \
+    --kv-unified \
+    --kv-offload \
     $DRAFT_ARGS \
     "$@" &
 LLAMA_PID=$!
 
 # Trap to clean up server on exit
 cleanup() {
-    if [ -n "$LLAMA_PID" ]; then
-        echo "Stopping llama-server (PID $LLAMA_PID)..."
-        kill "$LLAMA_PID" 2>/dev/null
-        wait "$LLAMA_PID" 2>/dev/null
-    fi
-    if [ -n "$PROXY_PID" ]; then
-        echo "Stopping Intelligence Proxy (PID $PROXY_PID)..."
-        kill "$PROXY_PID" 2>/dev/null
-        wait "$PROXY_PID" 2>/dev/null
-    fi
+    for P in $LLAMA_PID $PROXY_PID; do
+        if [ -n "$P" ]; then
+            echo "Stopping PID $P..."
+            kill "$P" 2>/dev/null
+            wait "$P" 2>/dev/null
+        fi
+    done
 }
 trap cleanup EXIT INT TERM
 

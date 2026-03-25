@@ -457,15 +457,17 @@ function search.index_dir(root_dir, extensions)
       f:write(json.encode(files_to_embed))
       f:close()
       
-      -- Start background indexer
-      local indexer_cmd = string.format('luajit lib/indexer_runner.lua %q &', tmp_list, tmp_list)
-      -- Use daemon.start_background() to reliably background indexer instead of os.execute one-liner
       local daemon = require('daemon')
-      local ok, pid_or_err = daemon.start_background({ 'luajit', 'lib/indexer_runner.lua', tmp_list }, '.jenova/indexer.log', '.')
-      if ok then
-        io.write(string.format("  [Jenova] BM25 ready. Backgrounded %d embeddings (pid=%s)...\n", #files_to_embed, tostring(pid_or_err)))
+      local existing_pid = daemon.check_pidfile('.jenova/indexer.pid')
+      if existing_pid then
+        io.write(string.format("  [Jenova] BM25 ready. Indexer already running (pid=%d), skipping.\n", existing_pid))
       else
-        io.write("  [Jenova] BM25 ready. Failed to background indexer: " .. tostring(pid_or_err) .. "\n")
+        local ok, pid_or_err = daemon.start_background({ 'luajit', 'lib/indexer_runner.lua', tmp_list }, '.jenova/indexer.log', '.', '.jenova/indexer.pid')
+        if ok then
+          io.write(string.format("  [Jenova] BM25 ready. Backgrounded %d embeddings (pid=%s)...\n", #files_to_embed, tostring(pid_or_err)))
+        else
+          io.write("  [Jenova] BM25 ready. Failed to background indexer: " .. tostring(pid_or_err) .. "\n")
+        end
       end
     end
   end

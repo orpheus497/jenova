@@ -12,12 +12,21 @@ local HOST = os.getenv("JENOVA_PROXY_HOST") or os.getenv("CODER_PROXY_HOST") or 
 local PORT = tonumber(os.getenv("JENOVA_PROXY_PORT") or os.getenv("CODER_PROXY_PORT")) or 8080
 local LLAMA_URL = os.getenv("JENOVA_LLAMA_URL") or os.getenv("CODER_LLAMA_URL") or "http://127.0.0.1:8081"
 local LLAMA_PORT = tonumber(LLAMA_URL:match(":(%d+)")) or 8081
-local EMBED_DEVICES = os.getenv("JENOVA_EMBED_DEVICES") or os.getenv("CODER_EMBED_DEVICES") or "Vulkan1"
+local _embed_env = os.getenv("JENOVA_EMBED_DEVICES") or os.getenv("CODER_EMBED_DEVICES")
+local EMBED_DEVICES = _embed_env or ""
 
-local embed_ok = embed.init({ 
-  script_dir = script_dir,
-  devices = EMBED_DEVICES
-})
+local embed_ok, embed_err = pcall(function()
+  return embed.init({ 
+    script_dir = script_dir,
+    devices = EMBED_DEVICES
+  })
+end)
+if not embed_ok then
+  io.write("[proxy] WARNING: embed.init failed: " .. tostring(embed_err) .. "\n")
+  embed_ok = false
+else
+  embed_ok = embed_err
+end
 if embed_ok then search.init_embeddings(embed) end
 search.index_dir(".", {
   "lua","sh","c","h","cpp","py","js","ts","go","rs",
@@ -31,7 +40,7 @@ local AF_INET = 2
 local SOCK_STREAM = 1
 local SOL_SOCKET = 0xffff
 local SO_REUSEADDR = 0x0004
-local SO_RCVTIMEO = 0x1006
+local SO_ERROR = 0x1007
 
 local EAGAIN = 35
 local EWOULDBLOCK = 35
@@ -93,12 +102,19 @@ local function async_connect(fd, addr)
     -- After yield, check connection status
     local opt = ffi.new("int[1]")
     local len = ffi.new("socklen_t[1]", ffi.sizeof("int"))
-    ffi.C.setsockopt(fd, SOL_SOCKET, 0x1007, opt, len) -- SO_ERROR = 0x1007
+    ffi.C.getsockopt(fd, SOL_SOCKET, SO_ERROR, opt, len)
     if opt[0] == 0 then return true else return false, opt[0] end
 end
 
 local function proxy_connection(client_fd)
     set_nonblocking(client_fd)
+    local llama_fd = -1
+
+    local function safe_close()
+        if llama_fd >= 0 then pcall(ffi.C.close, llama_fd); llama_fd = -1 end
+        pcall(ffi.C.close, client_fd)
+    end
+
     local buf = ffi.new("char[8192]")
     local headers_raw = ""
     local body_raw = ""
@@ -109,7 +125,7 @@ local function proxy_connection(client_fd)
     -- Read headers
     while true do
         local n = async_recv(client_fd, buf, 8192)
-        if n <= 0 then ffi.C.close(client_fd); return end
+        if n <= 0 then safe_close(); return end
         headers_raw = headers_raw .. ffi.string(buf, n)
         
         local header_end = headers_raw:find("\r\n\r\n")
@@ -222,11 +238,12 @@ local function proxy_connection(client_fd)
     end
 
     -- Connect to llama-server
-    local llama_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
+    llama_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
     if llama_fd < 0 then
         local err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
         async_send(client_fd, err_resp)
-        ffi.C.close(client_fd)
+        llama_fd = -1
+        safe_close()
         return
     end
     set_nonblocking(llama_fd)
@@ -242,8 +259,7 @@ local function proxy_connection(client_fd)
         print("[proxy] ERROR: C++ llama-server backend is down on port " .. LLAMA_PORT .. " (err: " .. tostring(err) .. ")")
         local err_resp = "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"
         async_send(client_fd, err_resp)
-        ffi.C.close(llama_fd)
-        ffi.C.close(client_fd)
+        safe_close()
         return
     end
 
@@ -258,8 +274,7 @@ local function proxy_connection(client_fd)
         if async_send(client_fd, to_send) < 0 then break end
     end
 
-    ffi.C.close(llama_fd)
-    ffi.C.close(client_fd)
+    safe_close()
 end
 
 -- Server Setup
@@ -290,7 +305,8 @@ if ffi.C.listen(server_fd, 100) < 0 then
 end
 
 -- Main Select Loop
-local clients = {} -- fd -> {co = co, type = "read"|"write", watch_fd = fd}
+local clients = {} -- fd -> {co = co, type = "read"|"write", watch_fd = fd, created = time}
+local COROUTINE_TIMEOUT = 120
 local read_fds = _ffi_defs.fd_set_new()
 local write_fds = _ffi_defs.fd_set_new()
 
@@ -318,15 +334,21 @@ while true do
             local addrlen = ffi.new("socklen_t[1]", ffi.sizeof(client_addr))
             local client_fd = ffi.C.accept(server_fd, ffi.cast("struct sockaddr *", client_addr), addrlen)
             if client_fd >= 0 then
-                local co = coroutine.create(function() proxy_connection(client_fd) end)
-                local status, type, watch_fd = coroutine.resume(co)
+                local co = coroutine.create(function()
+                    local ok, err = pcall(proxy_connection, client_fd)
+                    if not ok then
+                        io.write("[proxy] connection error: " .. tostring(err) .. "\n")
+                        ffi.C.close(client_fd)
+                    end
+                end)
+                local _ok, type, watch_fd = coroutine.resume(co)
                 if coroutine.status(co) ~= "dead" then
-                    clients[client_fd] = {co = co, type = type, watch_fd = watch_fd}
+                    clients[client_fd] = {co = co, type = type, watch_fd = watch_fd, created = os.time()}
                 end
             end
         end
 
-        for fd, info in pairs(clients) do
+        for cfd, info in pairs(clients) do
             local ready = false
             if info.type == "read" and _ffi_defs.FD_ISSET(info.watch_fd, read_fds) then
                 ready = true
@@ -335,14 +357,26 @@ while true do
             end
 
             if ready then
-                local status, type, watch_fd = coroutine.resume(info.co)
+                local _ok, type, watch_fd = coroutine.resume(info.co)
                 if coroutine.status(info.co) == "dead" then
-                    clients[fd] = nil
+                    clients[cfd] = nil
                 else
                     info.type = type
                     info.watch_fd = watch_fd
                 end
             end
+        end
+    end
+
+    -- Sweep stale coroutines that exceeded timeout
+    local now = os.time()
+    for fd, info in pairs(clients) do
+        if now - (info.created or now) > COROUTINE_TIMEOUT then
+            ffi.C.close(fd)
+            if info.watch_fd and info.watch_fd ~= fd then
+                ffi.C.close(info.watch_fd)
+            end
+            clients[fd] = nil
         end
     end
 end

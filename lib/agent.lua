@@ -518,7 +518,8 @@ local function exec_write_file(args)
     ui.compile_check(path)
     local tmpf = os.tmpname()
     -- Run compile in subshell and capture output
-    local ok_compile, err_compile = pcall(function() os.execute(compile_cmd .. " > " .. tmpf .. " 2>&1") end)\n    if not ok_compile then ui.status_warn('compile command failed to run: '..tostring(err_compile)) end
+    local ok_compile, err_compile = pcall(function() os.execute(compile_cmd .. " > " .. tmpf .. " 2>&1") end)
+    if not ok_compile then ui.status_warn('compile command failed to run: '..tostring(err_compile)) end
     local cf = io.open(tmpf, "r")
     local compile_out = cf and cf:read("*a") or ""
     if cf then cf:close() end
@@ -1217,7 +1218,7 @@ local function main()
 
   local embed_ok = embed.init({ 
     script_dir = coder_root,
-    devices = os.getenv("JENOVA_EMBED_DEVICES") or os.getenv("CODER_EMBED_DEVICES") or "Vulkan1"
+    devices = os.getenv("JENOVA_EMBED_DEVICES") or os.getenv("CODER_EMBED_DEVICES") or ""
   })
   if embed_ok then search.init_embeddings(embed) end
 

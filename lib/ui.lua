@@ -231,11 +231,8 @@ local HEADER_ART = {
 }
 
 local HEADER_SMALL = {
-  "      _  _____ _   _  _____     ___ _   ",
-  "     | || ____| \ | |/ _ \ \   / / \ \  ",
-  "  _  | ||  _| |  \| | | | \ \ / / _ \ \ ",
-  " | |_| || |___| |\  | |_| |\ V / ___ \ \",
-  "  \\___/ |_____|_| \\_|\\___/  \\_/_/   \\_\\",
+  "      J E N O V A",
+  "  Cognitive Architecture",
 }
 
 local HEADER_MINI = " ◆ J E N O V A "

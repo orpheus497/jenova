@@ -59,6 +59,7 @@ ffi.cdef[[
   int listen(int sockfd, int backlog);
   int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
   int setsockopt(int sockfd, int level, int optname, const void *optval, socklen_t optlen);
+  int getsockopt(int sockfd, int level, int optname, void *optval, socklen_t *optlen);
   ssize_t send(int sockfd, const void *buf, size_t len, int flags);
   ssize_t recv(int sockfd, void *buf, size_t len, int flags);
   int close(int fd);
@@ -91,12 +92,14 @@ function ffi_defs.FD_ZERO(set)
 end
 
 function ffi_defs.FD_SET(fd, set)
+  if fd < 0 or fd >= ffi_defs.FD_SETSIZE then return end
   local i = bit.rshift(fd, 5)
   local b = bit.lshift(1, bit.band(fd, 31))
   set[i] = bit.bor(set[i], b)
 end
 
 function ffi_defs.FD_ISSET(fd, set)
+  if fd < 0 or fd >= ffi_defs.FD_SETSIZE then return false end
   local i = bit.rshift(fd, 5)
   local b = bit.lshift(1, bit.band(fd, 31))
   return bit.band(set[i], b) ~= 0

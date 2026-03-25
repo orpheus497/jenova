@@ -30,7 +30,10 @@ function embed.init(opts)
   EMBED_URL = opts.embed_url or os.getenv("JENOVA_LLAMA_EMBED_URL") or "http://127.0.0.1:8082"
   local embed_bin = opts.embed_bin or os.getenv("JENOVA_LLAMA_SERVER") or (opts.script_dir and (opts.script_dir .. "/llama.cpp/build/bin/llama-server"))
   local model_path = opts.model_path or os.getenv("JENOVA_MODEL_EMBED") or (opts.script_dir and (opts.script_dir .. "/models/nomic-embed-text-v1.5.Q8_0.gguf"))
-  local devices = opts.devices or os.getenv("JENOVA_EMBED_DEVICES") or "Vulkan1"
+
+  local env_devices = os.getenv("JENOVA_EMBED_DEVICES")
+  local devices = opts.devices
+  if devices == nil then devices = env_devices end
 
   -- Check if llama-server is alive at this URL
   local status, body = http.get(EMBED_URL .. "/health", 1)
@@ -43,28 +46,39 @@ function embed.init(opts)
   if embed_bin and model_path then
     local port = EMBED_URL:match(":(%d+)") or "8082"
     local host = EMBED_URL:match("//([^:]+)") or "127.0.0.1"
-    
+
     -- Check if binary exists
     local f = io.open(embed_bin, "r")
     if f then
       f:close()
       -- Use daemon.start_background to start persistent embedding server reliably
-    local daemon = require('daemon')
-    local ok, pid_or_err = daemon.start_background({ embed_bin, '-m', model_path, '--embedding', '--port', port, '--host', host, '-dev', devices, '-ngl', 'all', '--offline' }, '.jenova/llama-embed.log', opts.script_dir or '.')
-    if not ok then
-      io.write('[embed] WARNING: failed to start embedding binary: ' .. tostring(pid_or_err) .. '\n')
-    else
-      -- Wait for it to come up
-      for i = 1, 5 do
-        local tv = ffi.new('struct timeval', {tv_sec=1, tv_usec=0})
-        ffi.C.select(0, nil, nil, nil, tv) -- Sleep 1s
-        status, body = http.get(EMBED_URL .. '/health', 1)
-        if status == 200 then
-          initialized = true
-          return true
+      local daemon = require('daemon')
+
+      -- Build args conditionally so we don't pass an empty -dev
+      local args = { embed_bin, '-m', model_path, '--embedding', '--port', port, '--host', host }
+      if devices and devices ~= "" then
+        table.insert(args, '-dev')
+        table.insert(args, devices)
+      end
+      table.insert(args, '-ngl')
+      table.insert(args, 'all')
+      table.insert(args, '--offline')
+
+      local ok, pid_or_err = daemon.start_background(args, '.jenova/llama-embed.log', opts.script_dir or '.', '.jenova/llama-embed.pid')
+      if not ok then
+        io.write('[embed] WARNING: failed to start embedding binary: ' .. tostring(pid_or_err) .. '\n')
+      else
+        -- Wait for it to come up
+        for i = 1, 5 do
+          local tv = ffi.new('struct timeval', {tv_sec=1, tv_usec=0})
+          ffi.C.select(0, nil, nil, nil, tv) -- Sleep 1s
+          status, body = http.get(EMBED_URL .. '/health', 1)
+          if status == 200 then
+            initialized = true
+            return true
+          end
         end
       end
-    end
     end
   end
 
