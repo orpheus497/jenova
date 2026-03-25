@@ -438,7 +438,8 @@ local function exec_edit_file(args)
   
   -- Backup
   local bk_dir = (CWD or ".") .. "/.jenova/backups"
-  os.execute(string.format("mkdir -p %q", bk_dir))
+  local ok_bkdir, err_bkdir = pcall(function() os.execute(string.format("mkdir -p %q", bk_dir)) end)
+  if not ok_bkdir then ui.status_warn('failed to ensure backup dir: '..tostring(err_bkdir)) end
   local bn = path:match("([^/]+)$") or path
   local ts = os.date("%Y%m%d_%H%M%S")
   local bk_path = bk_dir .. "/" .. bn .. "." .. ts
@@ -480,7 +481,8 @@ local function exec_write_file(args)
   if ef then
     local old_data = ef:read("*a"); ef:close()
     local bk_dir = (CWD or ".") .. "/.jenova/backups"
-    os.execute(string.format("mkdir -p %q", bk_dir))
+    local ok_bkdir2, err_bkdir2 = pcall(function() os.execute(string.format("mkdir -p %q", bk_dir)) end)
+  if not ok_bkdir2 then ui.status_warn('failed to ensure backup dir: '..tostring(err_bkdir2)) end
     local bn = path:match("([^/]+)$") or path
     local ts = os.date("%H%M%S")
     local bk_path = bk_dir .. "/" .. bn .. "." .. ts
@@ -516,7 +518,7 @@ local function exec_write_file(args)
     ui.compile_check(path)
     local tmpf = os.tmpname()
     -- Run compile in subshell and capture output
-    os.execute(compile_cmd .. " > " .. tmpf .. " 2>&1")
+    local ok_compile, err_compile = pcall(function() os.execute(compile_cmd .. " > " .. tmpf .. " 2>&1") end)\n    if not ok_compile then ui.status_warn('compile command failed to run: '..tostring(err_compile)) end
     local cf = io.open(tmpf, "r")
     local compile_out = cf and cf:read("*a") or ""
     if cf then cf:close() end
@@ -1215,7 +1217,7 @@ local function main()
 
   local embed_ok = embed.init({ 
     script_dir = coder_root,
-    devices = os.getenv("CODER_EMBED_DEVICES") or "Vulkan1"
+    devices = os.getenv("JENOVA_EMBED_DEVICES") or os.getenv("CODER_EMBED_DEVICES") or "Vulkan1"
   })
   if embed_ok then search.init_embeddings(embed) end
 

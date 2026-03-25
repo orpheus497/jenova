@@ -91,7 +91,9 @@ function http.post(url, body, timeout)
   addr.sin_len = ffi.sizeof(addr)
   addr.sin_family = AF_INET
   addr.sin_port = ffi.C.htons(port)
-  addr.sin_addr.s_addr = ffi.C.inet_addr(host)
+
+  local resolved = resolve_host(host)
+  addr.sin_addr.s_addr = resolved
 
   if tonumber(addr.sin_addr.s_addr) == 0xffffffff then
     ffi.C.close(fd)
@@ -207,7 +209,9 @@ function http.get(url, timeout)
   addr.sin_len = ffi.sizeof(addr)
   addr.sin_family = AF_INET
   addr.sin_port = ffi.C.htons(port)
-  addr.sin_addr.s_addr = ffi.C.inet_addr(host)
+
+  local resolved = resolve_host(host)
+  addr.sin_addr.s_addr = resolved
 
   if tonumber(addr.sin_addr.s_addr) == 0xffffffff then
     ffi.C.close(fd)
@@ -276,5 +280,4 @@ function http.get(url, timeout)
 
   return status_code, resp_body
 end
-
 return http

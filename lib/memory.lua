@@ -15,7 +15,7 @@ local json = require("json")
 
 local memory = {}
 
-local CODER_DIR = ".jenova"
+local CODER_DIR = os.getenv("JENOVA_STATE_DIR") or ".jenova"
 local SESSION_LOG = CODER_DIR .. "/session.jsonl"
 local ERROR_FILE = CODER_DIR .. "/errors.jsonl"
 local LEARN_FILE = CODER_DIR .. "/learned.jsonl"
