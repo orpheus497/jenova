@@ -27,16 +27,7 @@ mkdir -p "$JENOVA_DIR"
 # Health check — uses luajit with the FFI HTTP module (zero dependencies)
 # Accepts 200, 404, 502, 503 as success codes for the launcher check
 check_health() {
-    luajit -e "
-        local script_dir = [[$SCRIPT_DIR]]
-        if script_dir:match('bin$') then script_dir = script_dir .. '/..' end
-        package.path=script_dir .. '/lib/?.lua;' .. package.path
-        local http=require('http')
-        local c=http.get('http://${HOST}:${PORT}/health',3)
-        -- Accept 200, 404, 502, 503
-        local ok = (c==200 or c==404 or c==502 or c==503)
-        os.exit(ok and 0 or 1)
-    " 2>/dev/null
+    luajit lib/healthcheck.lua ${HOST} ${PORT} 3 2>/dev/null
 }
 
 if check_health; then
