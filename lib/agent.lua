@@ -485,7 +485,7 @@ local function exec_write_file(args)
     local ts = os.date("%H%M%S")
     local bk_path = bk_dir .. "/" .. bn .. "." .. ts
     local bk_out = io.open(bk_path, "w")
-    if bk_out thenbk_out:write(old_data); bk_out:close()
+    if bk_out then bk_out:write(old_data); bk_out:close()
       ui.file_backup(bk_path)
     end
   end
