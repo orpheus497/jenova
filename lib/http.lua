@@ -52,8 +52,8 @@ local function resolve_host(host)
 
   -- getaddrinfo fallback
   local hints = ffi.new("struct addrinfo[1]")
-  hints[0].ai_family = ffi.C.AF_INET
-  hints[0].ai_socktype = ffi.C.SOCK_STREAM
+  hints[0].ai_family = AF_INET
+  hints[0].ai_socktype = SOCK_STREAM
   hints[0].ai_protocol = 0
 
   local res = ffi.new("struct addrinfo*[1]")

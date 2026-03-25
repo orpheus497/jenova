@@ -277,7 +277,8 @@ function search.save_vectors()
     save_data[filepath] = { mtime = entry.mtime, chunks = chunks_save }
   end
 
-  os.execute("mkdir -p .jenova")
+  local ok, err = pcall(function() os.execute("mkdir -p .jenova") end)
+  if not ok then io.write("[search] warning: failed to create .jenova: "..tostring(err).."\n") end
   local f = io.open(VECTOR_FILE, "w")
   if not f then return false end
   f:write(json.encode(save_data))
@@ -449,7 +450,8 @@ function search.index_dir(root_dir, extensions)
     -- start a background luajit process.
     
     local tmp_list = ".jenova/index_queue.json"
-    os.execute("mkdir -p .jenova")
+    local ok, err = pcall(function() os.execute("mkdir -p .jenova") end)
+  if not ok then io.write("[search] warning: failed to create .jenova: "..tostring(err).."\n") end
     local f = io.open(tmp_list, "w")
     if f then
       f:write(json.encode(files_to_embed))

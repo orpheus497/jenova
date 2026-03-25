@@ -47,8 +47,10 @@ local session_action_index = {} -- "tool:args_hash" -> {count, last_result, succ
 -- Ensure .coder directory exists
 -------------------------------------------------------------------------------
 function memory.init()
-  os.execute("mkdir -p " .. CODER_DIR)
-  os.execute("mkdir -p " .. CODER_DIR .. "/backups")
+  local ok_mkdir, err_mkdir = pcall(function() os.execute("mkdir -p " .. CODER_DIR) end)
+  if not ok_mkdir then io.write("[memory] warning: mkdir failed: "..tostring(err_mkdir).."\n") end
+  local ok_bk, err_bk = pcall(function() os.execute("mkdir -p " .. CODER_DIR .. "/backups") end)
+  if not ok_bk then io.write("[memory] warning: mkdir backups failed: "..tostring(err_bk).."\n") end
   -- prefer daemon helper for background tasks in future; dir creation keeps os.execute for portability
 
   session_id = string.format("%x", os.time()) .. string.format("%04x", math.random(0, 0xFFFF))

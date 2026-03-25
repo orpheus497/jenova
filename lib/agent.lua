@@ -492,7 +492,7 @@ local function exec_write_file(args)
 
   ui.file_write(path, #content)
   local dir = path:match("^(.+)/[^/]+$")
-  if dir then os.execute(string.format("mkdir -p %q", dir)) end
+  if dir then local ok,err = pcall(function() os.execute(string.format("mkdir -p %q", dir)) end) if not ok then ui.status_warn('failed to create dir '..tostring(dir)..': '..tostring(err)) end end
   local f = io.open(path, "w")
   if not f then
     memory.log_error("write_file", path, "cannot write")
@@ -515,6 +515,7 @@ local function exec_write_file(args)
     local compile_cmd = string.format("cd %q && cc -fsyntax-only -Wall %q 2>&1", CWD or ".", path)
     ui.compile_check(path)
     local tmpf = os.tmpname()
+    -- Run compile in subshell and capture output
     os.execute(compile_cmd .. " > " .. tmpf .. " 2>&1")
     local cf = io.open(tmpf, "r")
     local compile_out = cf and cf:read("*a") or ""
@@ -1180,7 +1181,8 @@ local function check_server()
   local root = coder_root or "."
   local launcher = root .. "/bin/jenova-ca"
   local log_file = root .. "/.jenova/server_auto.log"
-  os.execute("mkdir -p " .. root .. "/.jenova")
+  local _ok,_err = pcall(function() os.execute("mkdir -p " .. root .. "/.jenova") end)
+  if not _ok then ui.status_warn('failed to ensure .jenova: '..tostring(_err)) end
   
   -- Launch in background using daemon helper
   local daemon = require('daemon')
