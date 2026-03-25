@@ -1,10 +1,12 @@
 #!/bin/sh
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
-LLAMA_CLI="$SCRIPT_DIR/llama.cpp/build/bin/llama-cli"
-MODEL_PATH="$SCRIPT_DIR/models/Qwen2.5-Coder-7B-Q5_K_M.gguf"
+. "$SCRIPT_DIR/../etc/jenova.conf"
+
+export LD_LIBRARY_PATH="$JENOVA_ROOT/llama.cpp/build/bin:$LD_LIBRARY_PATH"
+LLAMA_CLI="$JENOVA_ROOT/llama.cpp/build/bin/llama-cli"
 
 "$LLAMA_CLI" \
-  -m "$MODEL_PATH" \
+  -m "$MODEL_7B" \
   -dev Vulkan0 \
   -ngl all \
   -c 8192 \

@@ -64,9 +64,9 @@ else
         fi
         # Fast-fail: if all daemon PIDs are dead, don't keep waiting
         if [ -f "$PID_FILE" ]; then
-            read _LP _PP _EP < "$PID_FILE" 2>/dev/null
+            read _LP _PP < "$PID_FILE" 2>/dev/null
             _ANY_ALIVE=false
-            for _P in $_LP $_PP $_EP; do
+            for _P in $_LP $_PP; do
                 [ -n "$_P" ] && kill -0 "$_P" 2>/dev/null && _ANY_ALIVE=true
             done
             if ! $_ANY_ALIVE; then

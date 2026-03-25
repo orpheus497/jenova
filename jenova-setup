@@ -2,10 +2,17 @@
 
 # jenova-setup: One-time system configuration for Jenova Cognitive Architecture
 # Run with: sudo ./jenova-setup
-# 
+#
 # Configures:
-#   - memorylocked limit (capability for mlock)
+#   - memorylocked limit (for mlock capability)
 #   - unprivileged mlock sysctl
+#   - Optane NVMe swap tuning for Iris Xe UMA GPU paging
+#
+# Hardware context:
+#   Intel Iris Xe (TGL GT2) is a UMA GPU — it shares system RAM.
+#   With 27 GiB Optane NVMe swap, the kernel pages inactive LLM weights
+#   through the Iris Xe's shared memory pool. These sysctls ensure the
+#   pager cooperates rather than OOM-killing the process.
 
 set -e
 
@@ -18,6 +25,17 @@ echo "=== jenova-setup: configuring FreeBSD for Jenova CA ==="
 echo ""
 
 CHANGED=0
+
+# Helper: add to sysctl.conf if not already present
+sysctl_persist() {
+    _line="$1"
+    _key=$(echo "$_line" | cut -d= -f1)
+    if grep -q "^${_key}=" /etc/sysctl.conf 2>/dev/null; then
+        sed -i '' "s|^${_key}=.*|${_line}|" /etc/sysctl.conf
+    else
+        echo "$_line" >> /etc/sysctl.conf
+    fi
+}
 
 # 1. Raise memorylocked limit in login.conf
 CURRENT=$(grep -c 'memorylocked=64K' /etc/login.conf 2>/dev/null || echo 0)
@@ -36,18 +54,73 @@ MLOCK_SYSCTL=$(sysctl -n security.bsd.unprivileged_mlock 2>/dev/null || echo 0)
 if [ "$MLOCK_SYSCTL" -ne 1 ]; then
     echo "[fix] sysctl: security.bsd.unprivileged_mlock=1"
     sysctl security.bsd.unprivileged_mlock=1
-    if ! grep 'security.bsd.unprivileged_mlock' /etc/sysctl.conf > /dev/null 2>&1; then
-        echo 'security.bsd.unprivileged_mlock=1' >> /etc/sysctl.conf
-    fi
+    sysctl_persist "security.bsd.unprivileged_mlock=1"
     CHANGED=1
 else
     echo "[ok]  sysctl: security.bsd.unprivileged_mlock=1"
 fi
 
+# 3. Optane swap paging optimizations for Iris Xe UMA
+# The Iris Xe's VRAM *is* system RAM. When llama.cpp allocates tensors on
+# Vulkan1, those pages live in the kernel's unified address space. With
+# vm.overcommit=0 (default) and aggressive pageout, the kernel can swap
+# inactive tensor pages to Optane without the process being killed.
+echo ""
+echo "--- Optane NVMe Swap Tuning for UMA GPU ---"
+
+apply_sysctl() {
+    _key="$1"
+    _val="$2"
+    _desc="$3"
+    _current=$(sysctl -n "$_key" 2>/dev/null || echo "?")
+    if [ "$_current" = "$_val" ]; then
+        echo "[ok]  $_key=$_val ($_desc)"
+    else
+        echo "[fix] $_key: $_current -> $_val ($_desc)"
+        sysctl "$_key=$_val"
+        sysctl_persist "$_key=$_val"
+        CHANGED=1
+    fi
+}
+
+# Don't panic on OOM — let the pager work
+apply_sysctl vm.panic_on_oom 0 "no kernel panic on OOM"
+
+# Keep swap enabled and proactive
+apply_sysctl vm.disable_swapspace_pageouts 0 "allow swap pageouts"
+
+# Aggressive inactive scanning — pushes cold pages to swap faster,
+# freeing real RAM for hot GPU tensors and KV cache
+apply_sysctl vm.pageout_update_period 1 "fast pageout cycle"
+
+# Target more free pages (2 GiB worth at 4K pages = 524288)
+# This gives the Iris Xe headroom to allocate from real RAM
+apply_sysctl vm.v_free_target 524288 "2 GiB free page target"
+
+# Large inactive target — pages here are swap candidates
+apply_sysctl vm.v_inactive_target 786432 "3 GiB inactive target"
+
+# Bias the scanner toward laundering inactive pages
+apply_sysctl vm.inact_scan_laundry_weight 25 "aggressive inactive scan"
+apply_sysctl vm.act_scan_laundry_weight 5 "moderate active scan"
+
+# Keep ZFS ARC from eating RAM that the GPU needs
+apply_sysctl vfs.zfs.arc_max 1073741824 "ZFS ARC max 1 GiB"
+
+# NVMe interrupt coalescing off for lowest swap latency
+# nda1 = Optane drive (27 GiB swap)
+for _nvme in 0 1; do
+    if sysctl "dev.nvme.${_nvme}.int_coal_time" > /dev/null 2>&1; then
+        apply_sysctl "dev.nvme.${_nvme}.int_coal_time" 0 "nvme${_nvme} zero coalesce delay"
+        apply_sysctl "dev.nvme.${_nvme}.int_coal_threshold" 0 "nvme${_nvme} zero coalesce threshold"
+    fi
+done
+
 echo ""
 if [ "$CHANGED" -eq 1 ]; then
-    echo "Done. Log out and back in for limits to take effect."
+    echo "Done. Log out and back in for login.conf limits to take effect."
     echo "Verify with: ulimit -l  (should show 'unlimited')"
+    echo "Verify swap: swapinfo   (should show ~27 GiB on nda1p1)"
 else
     echo "Nothing to change. System already configured."
 fi

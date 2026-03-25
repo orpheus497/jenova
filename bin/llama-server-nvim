@@ -2,18 +2,16 @@
 
 # llama-server-nvim: Launch llama-server for Neovim llama.vim FIM completions
 # Port 8012 (llama.vim default), separate from agent on 8080
-# Optimized for Jenova on FreeBSD 15 with GTX 1650 Ti (Vulkan)
 
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 
-# Load configuration
 if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
     . "$SCRIPT_DIR/etc/jenova.conf"
 elif [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
     . "$SCRIPT_DIR/../etc/jenova.conf"
 else
-    # Fallback for coder.conf if not yet migrated
-    . "$SCRIPT_DIR/../etc/coder.conf"
+    echo "Error: jenova.conf not found"
+    exit 1
 fi
 
 MODEL_PATH="${MODEL_7B}"
@@ -28,13 +26,20 @@ if [ ! -f "$MODEL_PATH" ]; then
     exit 1
 fi
 
-# NO MLOCK: Leveraging Optane-paging
+LLAMA_LIB_DIR="$JENOVA_ROOT/llama.cpp/build/bin"
+if [ -d "$LLAMA_LIB_DIR" ]; then
+    export LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"
+fi
+
+DEV_ARGS=""
+if [ -n "$DEVICES" ]; then
+    DEV_ARGS="-dev $DEVICES"
+fi
+
 exec "$LLAMA_SERVER" \
     -m "$MODEL_PATH" \
-    -dev "$DEVICES" \
-    -ngl all \
-    -sm layer \
-    -ts "$TENSOR_SPLIT" \
+    $DEV_ARGS \
+    -ngl "$NGL_7B" \
     --host 127.0.0.1 \
     --port 8012 \
     -c 8192 \

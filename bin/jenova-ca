@@ -1,12 +1,15 @@
 #!/bin/sh
 
 # jenova-ca: Launch llama-server + Intelligence Proxy
-# Optimized for: Jenova Cognitive Architecture | FreeBSD 15 | Optane-paging
-# Hardware: GTX 1650 Ti 4GB | Intel Xe ~7GB (System Swap) | 16GB RAM
+# FreeBSD 15 | GTX 1650 Ti 4GB | 16GB RAM | 27GB Optane NVMe swap
+#
+# CPU-predominant inference with partial NVIDIA offload.
+# No mlock — mmap'd weights page through Optane swap.
+
+set -e
 
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 
-# Load configuration
 if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
     . "$SCRIPT_DIR/etc/jenova.conf"
 elif [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
@@ -16,163 +19,151 @@ else
     exit 1
 fi
 
-MODEL_PATH="${JENOVA_MODEL:-$MODEL_7B}"
-if [ ! -f "$MODEL_PATH" ]; then
-    echo "Attempting to fall back to 14B..."
-    MODEL_PATH="$MODEL_14B"
-    JENOVA_MODEL="$MODEL_14B"
-fi
-DRAFT_PATH="${JENOVA_DRAFT_PATH:-$MODEL_DRAFT}"
-
-# Ensure Jenova state directory exists
 mkdir -p "$JENOVA_STATE"
 mkdir -p "$LOG_DIR"
+mkdir -p "$CACHE_DIR"
 
-# Check for model existence
+# --- Model selection with NGL auto-tuning ---
+MODEL_PATH="${JENOVA_MODEL:-$MODEL_7B}"
+LLAMA_NGL="$NGL_7B"
+if [ ! -f "$MODEL_PATH" ]; then
+    echo "Primary model not found, falling back to 14B..."
+    MODEL_PATH="$MODEL_14B"
+    LLAMA_NGL="$NGL_14B"
+    CTX_SIZE="${JENOVA_CTX:-8192}"
+    NUM_SLOTS="${JENOVA_SLOTS:-1}"
+fi
+
+case "$MODEL_PATH" in
+    *14B*|*14b*|*13B*|*13b*)
+        LLAMA_NGL="${JENOVA_NGL:-$NGL_14B}"
+        CTX_SIZE="${JENOVA_CTX:-8192}"
+        NUM_SLOTS="${JENOVA_SLOTS:-1}"
+        ;;
+    *7B*|*7b*|*8B*|*8b*)
+        LLAMA_NGL="${JENOVA_NGL:-$NGL_7B}"
+        ;;
+esac
+
 if [ ! -f "$LLAMA_SERVER" ]; then
     echo "Error: llama-server not found at $LLAMA_SERVER"
     exit 1
 fi
-
 if [ ! -f "$MODEL_PATH" ]; then
     echo "Error: Model not found at $MODEL_PATH"
     exit 1
 fi
 
-echo "Starting Jenova CA (Optane-optimized for FreeBSD)..."
-echo "  Model:   $MODEL_PATH"
-echo "  Slots:   $NUM_SLOTS"
-echo "  GPU Layers: $LLAMA_NGL"
-echo "  MLock:   Disabled (Leveraging Optane-NVMe Swap)"
-echo ""
-
+DRAFT_PATH="${JENOVA_DRAFT_PATH:-$MODEL_DRAFT}"
 DRAFT_ARGS=""
 if [ -f "$DRAFT_PATH" ] && [ -n "$JENOVA_DRAFT" ]; then
-    echo "  Draft:   $DRAFT_PATH (speculative decoding)"
-    DRAFT_ARGS="-md '${DRAFT_PATH}' -ngld all --draft-max 16 --draft-min 4 --draft-p-min 0.6"
+    DRAFT_ARGS="-md $DRAFT_PATH -ngld all --draft-max 16 --draft-min 4 --draft-p-min 0.6"
 fi
 
-# NO MLOCK: We explicitly disable mlock to allow FreeBSD to page to Optane NVMe.
-# This prevents the process from being OOM-killed when context size grows.
-MLOCK_ARG=""
-
-# Find proxy.lua relative to script
+# --- Find proxy.lua ---
 if [ -f "$SCRIPT_DIR/lib/proxy.lua" ]; then
     PROXY_SCRIPT="$SCRIPT_DIR/lib/proxy.lua"
     export JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
 elif [ -f "$SCRIPT_DIR/../lib/proxy.lua" ]; then
     PROXY_SCRIPT="$SCRIPT_DIR/../lib/proxy.lua"
-    # SCRIPT_DIR is <repo>/bin; take its parent as the repo root
     export JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
 else
     echo "Error: proxy.lua not found relative to $SCRIPT_DIR"
     exit 1
 fi
 
-export CODER_ROOT="$JENOVA_ROOT" # Backwards compatibility
+export CODER_ROOT="$JENOVA_ROOT"
 export JENOVA_LLAMA_URL="http://${HOST}:${LLAMA_PORT}"
 export JENOVA_PROXY_PORT="$PORT"
 export JENOVA_PROXY_HOST="$HOST"
-export JENOVA_EMBED_DEVICES="$EMBED_DEVICES"
 
-# Ensure local llama.cpp build libraries are on the runtime linker path (FreeBSD)
-# Some builds place shared libs in build/bin rather than build/lib
+# --- LD_LIBRARY_PATH for shared libs ---
 LLAMA_LIB_DIR="$JENOVA_ROOT/llama.cpp/build/bin"
 if [ -d "$LLAMA_LIB_DIR" ]; then
-    if [ -f "$LLAMA_LIB_DIR/libmtmd.so.0" ] || [ -f "$LLAMA_LIB_DIR/libmtmd.so" ]; then
-        export LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"
-    else
-        echo "Warning: libmtmd not found in $LLAMA_LIB_DIR; llama-server may fail to start."
-    fi
+    export LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"
 fi
 
-# Background management
-# Support simple control verbs: start (--daemon), stop, status, restart
-if [ "$1" = "stop" ]; then
+# --- Build device arguments ---
+DEV_ARGS=""
+if [ -n "$DEVICES" ]; then
+    DEV_ARGS="-dev $DEVICES"
+fi
+
+# --- Control verbs ---
+case "$1" in
+    stop)
+        if [ -f "$PID_FILE" ]; then
+            read OLD_LLAMA_PID OLD_PROXY_PID < "$PID_FILE" 2>/dev/null || OLD_LLAMA_PID=$(cat "$PID_FILE")
+            for P in $OLD_LLAMA_PID $OLD_PROXY_PID; do
+                if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
+                    echo "Stopping PID $P..."
+                    kill "$P" 2>/dev/null || true
+                fi
+            done
+            rm -f "$PID_FILE"
+            echo "Stopped."
+        else
+            echo "No PID file found at $PID_FILE"
+        fi
+        exit 0
+        ;;
+    status)
+        if [ -f "$PID_FILE" ]; then
+            read LLAMA_PID PROXY_PID < "$PID_FILE" 2>/dev/null || LLAMA_PID=$(cat "$PID_FILE")
+            echo "PID file: $PID_FILE"
+            for _N in "llama-server:$LLAMA_PID" "Proxy:$PROXY_PID"; do
+                _LABEL=$(echo "$_N" | cut -d: -f1)
+                _PID=$(echo "$_N" | cut -d: -f2)
+                if [ -n "$_PID" ] && kill -0 "$_PID" 2>/dev/null; then
+                    echo "$_LABEL running (PID $_PID)"
+                else
+                    echo "$_LABEL not running"
+                fi
+            done
+        else
+            echo "No PID file found at $PID_FILE"
+        fi
+        exit 0
+        ;;
+    restart)
+        "$0" stop 2>/dev/null || true
+        shift || true
+        set -- "--daemon" "$@"
+        ;;
+esac
+
+# --- Startup banner ---
+echo "Starting Jenova CA..."
+echo "  Model:     $MODEL_PATH"
+echo "  Devices:   ${DEVICES:-CPU only}"
+echo "  GPU Layers: $LLAMA_NGL"
+echo "  Context:   $CTX_SIZE"
+echo "  Slots:     $NUM_SLOTS"
+echo "  MLock:     off (Optane NVMe swap backing)"
+echo ""
+
+# =====================================================================
+# DAEMON MODE
+# =====================================================================
+if [ "$1" = "--daemon" ]; then
+    shift
     if [ -f "$PID_FILE" ]; then
-        read OLD_LLAMA_PID OLD_PROXY_PID OLD_EMBED_PID < "$PID_FILE" 2>/dev/null || OLD_LLAMA_PID=$(cat "$PID_FILE")
-        for P in $OLD_LLAMA_PID $OLD_PROXY_PID $OLD_EMBED_PID; do
-            if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
-                echo "Stopping PID $P..."
-                kill "$P" 2>/dev/null || true
+        read OLD_LLAMA_PID OLD_PROXY_PID < "$PID_FILE" 2>/dev/null || OLD_LLAMA_PID=$(cat "$PID_FILE")
+        for _P in $OLD_LLAMA_PID $OLD_PROXY_PID; do
+            if [ -n "$_P" ] && kill -0 "$_P" 2>/dev/null; then
+                echo "Jenova CA already running (PID $_P)."
+                exit 0
             fi
         done
-        rm -f "$PID_FILE"
-        echo "Stopped."
-        exit 0
-    else
-        echo "No PID file found at $PID_FILE"
-        exit 1
-    fi
-fi
-
-if [ "$1" = "status" ]; then
-    if [ -f "$PID_FILE" ]; then
-        read LLAMA_PID PROXY_PID EMBED_PID < "$PID_FILE" 2>/dev/null || LLAMA_PID=$(cat "$PID_FILE")
-        echo "PID file: $PID_FILE"
-        if [ -n "$LLAMA_PID" ] && kill -0 "$LLAMA_PID" 2>/dev/null; then
-            echo "llama-server running (PID $LLAMA_PID)"
-        else
-            echo "llama-server not running"
-        fi
-        if [ -n "$PROXY_PID" ] && kill -0 "$PROXY_PID" 2>/dev/null; then
-            echo "Proxy running (PID $PROXY_PID)"
-        else
-            echo "Proxy not running"
-        fi
-        if [ -n "$EMBED_PID" ] && kill -0 "$EMBED_PID" 2>/dev/null; then
-            echo "Embed server running (PID $EMBED_PID)"
-        else
-            echo "Embed server not running"
-        fi
-        exit 0
-    else
-        echo "No PID file found at $PID_FILE"
-        exit 1
-    fi
-fi
-
-if [ "$1" = "restart" ]; then
-    "$0" stop || true
-    shift || true
-    set -- "--daemon" "$@"
-fi
-
-if [ "$1" = "--daemon" ]; then
-    if [ -f "$PID_FILE" ]; then
-        read OLD_LLAMA_PID OLD_PROXY_PID OLD_EMBED_PID < "$PID_FILE" 2>/dev/null || OLD_LLAMA_PID=$(cat "$PID_FILE")
-        if [ -n "$OLD_LLAMA_PID" ] && kill -0 "$OLD_LLAMA_PID" 2>/dev/null; then
-            echo "Jenova CA appears to be running (llama PID $OLD_LLAMA_PID)."
-            exit 0
-        fi
-        if [ -n "$OLD_PROXY_PID" ] && kill -0 "$OLD_PROXY_PID" 2>/dev/null; then
-            echo "Jenova CA appears to be running (proxy PID $OLD_PROXY_PID)."
-            exit 0
-        fi
         rm -f "$PID_FILE"
     fi
 
     LOG_FILE="${LOG_DIR}/jenova-ca.log"
     echo "Daemonizing... Logs at $LOG_FILE"
 
-    # Detect available Vulkan devices (best-effort) and set device arguments
-    VULKAN_LIST=$("$LLAMA_SERVER" --list-devices 2>&1 | sed -n '1,200p' || true)
-    VULKAN_COUNT=$(printf "%s\n" "$VULKAN_LIST" | grep -c 'Vulkan' || true)
-    if [ -z "$VULKAN_COUNT" ] || [ "$VULKAN_COUNT" -le 0 ]; then
-        echo "No Vulkan devices found or list-devices failed; running llama-server on CPU"
-        MAIN_ENV=""
-        MAIN_DEV_ARG=""
-    else
-        MAIN_ENV=""
-        MAIN_DEV_ARG="-dev Vulkan0"
-    fi
-
-    # Launch main llama-server with KV on GPU but allow KV offload to CPU when needed
-    eval $MAIN_ENV "$LLAMA_SERVER" \
+    "$LLAMA_SERVER" \
         -m "$MODEL_PATH" \
-        $MAIN_DEV_ARG \
-        -sm layer \
-        -ts 1.5,3 \
+        $DEV_ARGS \
         -ngl "$LLAMA_NGL" \
         -c "$CTX_SIZE" \
         -b 2048 \
@@ -181,75 +172,33 @@ if [ "$1" = "--daemon" ]; then
         -t "$THREADS" \
         -tb "$THREADS_BATCH" \
         -fa auto \
-        $MLOCK_ARG \
         -cb \
         --spm-infill \
         --offline \
         --host "$HOST" \
         --port "$LLAMA_PORT" \
-        --kv-unified \
-        --kv-offload \
         $DRAFT_ARGS \
         "$@" > "$LOG_FILE" 2>&1 &
     LLAMA_PID=$!
 
-    EMBED_PID=""
-    if [ -n "$EMBED_DEVICES" ]; then
-        EMBED_LOG="${LOG_DIR}/jenova-embed.log"
-        EMBED_ENV=""
-        EMBED_NGL="all"
-        EMBED_DEV_ARG=""
-        case "$EMBED_DEVICES" in
-            Vulkan*)
-                VK_IDX=$(echo "$EMBED_DEVICES" | sed 's/Vulkan//')
-                EMBED_ENV="GGML_VK_VISIBLE_DEVICES=$VK_IDX"
-                EMBED_DEV_ARG="-dev Vulkan0"
-                ;;
-            *)
-                EMBED_DEV_ARG="-dev $EMBED_DEVICES"
-                ;;
-        esac
-        echo "Starting embedding server (device: $EMBED_DEVICES)"
-        eval $EMBED_ENV "$LLAMA_SERVER" -m "$MODEL_EMBED" --embedding -ngl $EMBED_NGL --host "$HOST" --port "$LLAMA_EMBED_PORT" $EMBED_DEV_ARG --offline > "$EMBED_LOG" 2>&1 &
-        EMBED_PID=$!
-    else
-        EMBED_LOG="${LOG_DIR}/jenova-embed.log"
-        echo "Starting embedding server on CPU"
-        "$LLAMA_SERVER" -m "$MODEL_EMBED" --embedding -ngl 0 --host "$HOST" --port "$LLAMA_EMBED_PORT" --offline > "$EMBED_LOG" 2>&1 &
-        EMBED_PID=$!
-    fi
+    sleep 3
 
-    # Wait a moment for llama-server to bind
-    sleep 2
-
-    # Start Proxy
     luajit "$PROXY_SCRIPT" >> "$LOG_FILE" 2>&1 &
     PROXY_PID=$!
 
-    # Save PIDs (llama-server then proxy then embed if any)
-    echo "$LLAMA_PID $PROXY_PID $EMBED_PID" > "$PID_FILE"
-    echo "Started llama-server (PID $LLAMA_PID) and Proxy (PID $PROXY_PID) embed PID $EMBED_PID"
-
+    echo "$LLAMA_PID $PROXY_PID" > "$PID_FILE"
+    echo "Started: llama-server=$LLAMA_PID proxy=$PROXY_PID"
     exit 0
 fi
 
-# Foreground mode (original behavior)
-# Start llama-server (force NVidia primary; KV offload on GPU; CPU will handle overflow; embeddings on CPU)
-VULKAN_LIST=$("$LLAMA_SERVER" --list-devices 2>&1 | sed -n '1,200p' || true)
-VULKAN_COUNT=$(printf "%s\n" "$VULKAN_LIST" | grep -c 'Vulkan' || true)
-if [ -z "$VULKAN_COUNT" ] || [ "$VULKAN_COUNT" -le 0 ]; then
-    echo "No Vulkan devices found; running llama-server on CPU"
-    MAIN_ENV=""
-    MAIN_DEV_ARG=""
-else
-    MAIN_ENV=""
-    MAIN_DEV_ARG="-dev Vulkan0"
-fi
-eval $MAIN_ENV "$LLAMA_SERVER" \
+# =====================================================================
+# FOREGROUND MODE
+# =====================================================================
+while [ "$1" = "--daemon" ]; do shift; done
+
+"$LLAMA_SERVER" \
     -m "$MODEL_PATH" \
-    $MAIN_DEV_ARG \
-    -sm layer \
-    -ts 1.5,3 \
+    $DEV_ARGS \
     -ngl "$LLAMA_NGL" \
     -c "$CTX_SIZE" \
     -b 2048 \
@@ -258,19 +207,15 @@ eval $MAIN_ENV "$LLAMA_SERVER" \
     -t "$THREADS" \
     -tb "$THREADS_BATCH" \
     -fa auto \
-    $MLOCK_ARG \
     -cb \
     --spm-infill \
     --offline \
     --host "$HOST" \
     --port "$LLAMA_PORT" \
-    --kv-unified \
-    --kv-offload \
     $DRAFT_ARGS \
     "$@" &
 LLAMA_PID=$!
 
-# Trap to clean up server on exit
 cleanup() {
     for P in $LLAMA_PID $PROXY_PID; do
         if [ -n "$P" ]; then
@@ -286,5 +231,4 @@ echo "Starting Jenova Intelligence Proxy on port $PORT..."
 luajit "$PROXY_SCRIPT" &
 PROXY_PID=$!
 
-# Wait for background processes
 wait "$LLAMA_PID" "$PROXY_PID"
