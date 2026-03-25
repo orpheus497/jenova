@@ -17,7 +17,7 @@
 --   edit_file only needs the old/new snippet.
 
 local script_dir = arg[0]:match("^(.*)/") or "."
-local coder_root = os.getenv("CODER_ROOT") or script_dir:match("^(.*)/lib$") or script_dir .. "/.."
+local jenova_root = os.getenv("JENOVA_ROOT") or script_dir:match("^(.*)/lib$") or script_dir .. "/.."
 package.path = script_dir .. "/?.lua;" .. package.path
 
 local json = require("json")
@@ -32,16 +32,16 @@ local ffi_defs = require("ffi_defs")
 -------------------------------------------------------------------------------
 -- Config
 -------------------------------------------------------------------------------
-local API_URL   = os.getenv("JENOVA_API_URL") or os.getenv("CODER_API_URL") or "http://127.0.0.1:8080"
+local API_URL   = os.getenv("JENOVA_API_URL") or "http://127.0.0.1:8080"
 local ENDPOINT  = API_URL .. "/v1/chat/completions"
 local MODEL     = "qwen2.5-coder"
-local MAX_TURNS = tonumber(os.getenv("CODER_MAX_TURNS")) or 25
-local DEBUG     = os.getenv("CODER_DEBUG") == "1"
+local MAX_TURNS = tonumber(os.getenv("JENOVA_MAX_TURNS")) or 25
+local DEBUG     = os.getenv("JENOVA_DEBUG") == "1"
 local HOME      = os.getenv("HOME") or "/home/orpheus497"
 local CWD       = nil  -- set in main()
-local HTTP_TIMEOUT = tonumber(os.getenv("CODER_TIMEOUT")) or 600
+local HTTP_TIMEOUT = tonumber(os.getenv("JENOVA_TIMEOUT")) or 600
 local MAX_ACTIONS  = 20
-local CONTEXT_WINDOW = tonumber(os.getenv("CODER_CTX")) or 8192
+local CONTEXT_WINDOW = tonumber(os.getenv("JENOVA_CTX")) or 8192
 
 -- Per-turn state
 local files_written_this_turn = {}
@@ -1181,7 +1181,7 @@ local function check_server()
 
   -- Backend not running. Try to launch it.
   spinner_start("starting jenova-ca backend")
-  local root = coder_root or "."
+  local root = jenova_root or "."
   local launcher = root .. "/bin/jenova-ca"
   local log_file = root .. "/.jenova/server_auto.log"
   local _ok,_err = pcall(function() os.execute("mkdir -p " .. root .. "/.jenova") end)
@@ -1213,12 +1213,13 @@ end
 -- Main REPL
 -------------------------------------------------------------------------------
 local function main()
-  local p = io.popen("pwd"); CWD = p:read("*l"); p:close()
+  local p = io.popen("pwd")
+  CWD = p and p:read("*l") or "."
+  if p then p:close() end
   memory.init()
 
   local embed_ok = embed.init({ 
-    script_dir = coder_root,
-    devices = os.getenv("JENOVA_EMBED_DEVICES") or os.getenv("CODER_EMBED_DEVICES") or ""
+    script_dir = jenova_root,
   })
   if embed_ok then search.init_embeddings(embed) end
 
@@ -1328,8 +1329,10 @@ local function main()
       goto continue
     elseif line == "/bench" then
       ui.status_info("Running benchmark...")
-      local bench_cmd = coder_root.."/llama.cpp/build/bin/llama-bench -m "..coder_root.."/models/Qwen2.5-Coder-7B-Q5_K_M.gguf -ngl 99 -fa 1 -pg 512,128 2>&1"
-      local bp = io.popen(bench_cmd); local bout = bp:read("*a"); bp:close()
+      local bench_cmd = jenova_root.."/llama.cpp/build/bin/llama-bench -m "..jenova_root.."/models/Qwen2.5-Coder-7B-Q5_K_M.gguf -ngl 99 -fa 1 -pg 512,128 2>&1"
+      local bp = io.popen(bench_cmd)
+      local bout = bp and bp:read("*a") or "(bench failed)"
+      if bp then bp:close() end
       ui.dimtext(bout.."\n"); goto continue
     elseif line == "/stats" then
       local scode, sout = http.get(API_URL .. "/health", 3)
@@ -1338,7 +1341,8 @@ local function main()
       ui.dimtext("  Server: "..tostring(scode).." "..sout:sub(1,200).."\n")
       ui.dimtext("  Session: "..memory.get_session_id().." | "..dur.."s | "..acts.." actions\n")
       local mp = io.popen("nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu --format=csv,noheader 2>/dev/null")
-      local mout = mp:read("*a"); mp:close()
+      local mout = mp and mp:read("*a") or ""
+      if mp then mp:close() end
       if mout and mout ~= "" then ui.dimtext("  GPU: "..mout:gsub("\n","").."\n") end
       goto continue
     elseif line == "/diag" then
@@ -1372,7 +1376,8 @@ local function main()
       end
       -- 5. GPU
       local mp2 = io.popen("nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu,temperature.gpu --format=csv,noheader 2>/dev/null")
-      local mout2 = mp2:read("*a"); mp2:close()
+      local mout2 = mp2 and mp2:read("*a") or ""
+      if mp2 then mp2:close() end
       if mout2 and mout2 ~= "" then
         ui.dimtext("  GPU(NV):    "..mout2:gsub("\n","").."\n")
       end

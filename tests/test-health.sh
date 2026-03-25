@@ -1,11 +1,12 @@
 #!/bin/sh
 # Quick smoke test: verify Jenova server starts and responds
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
-# Try to load jenova.conf
+# Load jenova.conf
 if [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
     . "$SCRIPT_DIR/../etc/jenova.conf"
 else
-    . "$SCRIPT_DIR/../etc/coder.conf"
+    echo "Error: etc/jenova.conf not found."
+    exit 1
 fi
 
 echo "Testing Jenova server health..."

@@ -1,8 +1,13 @@
+#!/usr/bin/env luajit
+local _dir = debug.getinfo(1, "S").source:match("^@(.*/)") or "./"
+if not package.path:find(_dir, 1, true) then
+  package.path = _dir .. "?.lua;" .. package.path
+end
+
 local json = require('json')
 local search = require('search')
 local embed = require('embed')
 
--- Usage: luajit lib/indexer_runner.lua <queue_file>
 local qfile = arg and arg[1] or '.jenova/index_queue.json'
 local f = io.open(qfile, 'r')
 if not f then
@@ -18,11 +23,10 @@ if not ok or type(data) ~= 'table' then
   os.exit(1)
 end
 
--- initialize embedder if available
-pcall(function() embed.init() end)
-search.init_embeddings(embed)
+local embed_ok = pcall(function() embed.init() end)
+if embed_ok then search.init_embeddings(embed) end
 
 local res = search.process_embedding_queue(data)
 io.write(string.format('[indexer_runner] processed %d files\n', res))
 os.remove(qfile)
-return 0
+os.exit(0)

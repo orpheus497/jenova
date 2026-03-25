@@ -1,4 +1,4 @@
-local script_dir = os.getenv("JENOVA_ROOT") or os.getenv("CODER_ROOT") or (debug.getinfo(1, "S").source:match("^@(.*/)" ) or "./")
+local script_dir = os.getenv("JENOVA_ROOT") or (debug.getinfo(1, "S").source:match("^@(.*/)" ) or "./")
 package.path = script_dir .. "/lib/?.lua;" .. script_dir .. "/?.lua;" .. package.path
 
 local ffi = require("ffi")
@@ -8,17 +8,14 @@ local search = require("search")
 local embed = require("embed")
 local prompts = require("prompts")
 
-local HOST = os.getenv("JENOVA_PROXY_HOST") or os.getenv("CODER_PROXY_HOST") or "127.0.0.1"
-local PORT = tonumber(os.getenv("JENOVA_PROXY_PORT") or os.getenv("CODER_PROXY_PORT")) or 8080
-local LLAMA_URL = os.getenv("JENOVA_LLAMA_URL") or os.getenv("CODER_LLAMA_URL") or "http://127.0.0.1:8081"
+local HOST = os.getenv("JENOVA_PROXY_HOST") or "127.0.0.1"
+local PORT = tonumber(os.getenv("JENOVA_PROXY_PORT")) or 8080
+local LLAMA_URL = os.getenv("JENOVA_LLAMA_URL") or "http://127.0.0.1:8081"
 local LLAMA_PORT = tonumber(LLAMA_URL:match(":(%d+)")) or 8081
-local _embed_env = os.getenv("JENOVA_EMBED_DEVICES") or os.getenv("CODER_EMBED_DEVICES")
-local EMBED_DEVICES = _embed_env or ""
 
 local embed_ok, embed_err = pcall(function()
   return embed.init({ 
     script_dir = script_dir,
-    devices = EMBED_DEVICES
   })
 end)
 if not embed_ok then
@@ -278,6 +275,8 @@ local function proxy_connection(client_fd)
 end
 
 -- Server Setup
+ffi.C.signal(_ffi_defs.SIGPIPE, _ffi_defs.SIG_IGN)
+
 local server_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
 if server_fd < 0 then
     print("[proxy] Failed to create socket")
@@ -310,7 +309,16 @@ local COROUTINE_TIMEOUT = 120
 local read_fds = _ffi_defs.fd_set_new()
 local write_fds = _ffi_defs.fd_set_new()
 
-while true do
+local running = true
+local function shutdown_handler()
+    running = false
+end
+local shutdown_cb = ffi.cast("sighandler_t", shutdown_handler)
+ffi.C.signal(_ffi_defs.SIGTERM, shutdown_cb)
+ffi.C.signal(_ffi_defs.SIGINT, shutdown_cb)
+ffi.C.signal(_ffi_defs.SIGPIPE, ffi.cast("sighandler_t", function() end))
+
+while running do
     _ffi_defs.FD_ZERO(read_fds)
     _ffi_defs.FD_ZERO(write_fds)
     _ffi_defs.FD_SET(server_fd, read_fds)
@@ -380,3 +388,13 @@ while true do
         end
     end
 end
+
+print("[proxy] Shutting down...")
+for fd, info in pairs(clients) do
+    pcall(ffi.C.close, fd)
+    if info.watch_fd and info.watch_fd ~= fd then
+        pcall(ffi.C.close, info.watch_fd)
+    end
+end
+ffi.C.close(server_fd)
+shutdown_cb:free()

@@ -15,24 +15,13 @@ local ESC = "\27"
 local CSI = ESC .. "["
 
 local function esc(code)      return CSI .. code end
-local function move(row, col) return CSI .. row .. ";" .. col .. "H" end
 local function fg(n)          return CSI .. "38;5;" .. n .. "m" end
 local function bg(n)          return CSI .. "48;5;" .. n .. "m" end
 
 local RESET     = esc("0m")
 local BOLD      = esc("1m")
 local DIM       = esc("2m")
-local ITALIC    = esc("3m")
-local UNDERLINE = esc("4m")
 local CLEAR_LINE = esc("2K")
-local CLEAR_DOWN = esc("J")
-local HIDE_CURSOR = esc("?25l")
-local SHOW_CURSOR = esc("?25h")
-local SAVE_CURSOR = ESC .. "7"
-local RESTORE_CURSOR = ESC .. "8"
-local ALT_SCREEN = esc("?1049h")
-local MAIN_SCREEN = esc("?1049l")
-local SCROLL_RESET = esc("r")
 
 -------------------------------------------------------------------------------
 -- Color palette — cool, professional tones
@@ -67,17 +56,11 @@ local P = {
 -------------------------------------------------------------------------------
 local term_w = 80
 local term_h = 24
-local is_tty = false
-local use_alt_screen = false
 local header_lines = 0
-local output_lines = {}
-local status_text = ""
-local turn_info = { turn = 0, max_turns = 25, actions = 0 }
 local spinner_frames = { "⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷" }
 local spinner_idx = 0
 local spinner_label = ""
 local spinner_active = false
-local original_termios = nil
 
 local TIOCGWINSZ = 0x40087468  -- FreeBSD
 

@@ -72,7 +72,6 @@ else
     exit 1
 fi
 
-export CODER_ROOT="$JENOVA_ROOT"
 export JENOVA_LLAMA_URL="http://${HOST}:${LLAMA_PORT}"
 export JENOVA_PROXY_PORT="$PORT"
 export JENOVA_PROXY_HOST="$HOST"
@@ -93,11 +92,18 @@ fi
 case "$1" in
     stop)
         if [ -f "$PID_FILE" ]; then
-            read OLD_LLAMA_PID OLD_PROXY_PID < "$PID_FILE" 2>/dev/null || OLD_LLAMA_PID=$(cat "$PID_FILE")
-            for P in $OLD_LLAMA_PID $OLD_PROXY_PID; do
+            read OLD_LLAMA_PID OLD_PROXY_PID OLD_EMBED_PID < "$PID_FILE" 2>/dev/null || OLD_LLAMA_PID=$(cat "$PID_FILE")
+            for P in $OLD_LLAMA_PID $OLD_PROXY_PID $OLD_EMBED_PID; do
                 if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
                     echo "Stopping PID $P..."
                     kill "$P" 2>/dev/null || true
+                fi
+            done
+            sleep 1
+            for P in $OLD_LLAMA_PID $OLD_PROXY_PID $OLD_EMBED_PID; do
+                if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
+                    echo "Force-killing PID $P..."
+                    kill -9 "$P" 2>/dev/null || true
                 fi
             done
             rm -f "$PID_FILE"
@@ -109,9 +115,9 @@ case "$1" in
         ;;
     status)
         if [ -f "$PID_FILE" ]; then
-            read LLAMA_PID PROXY_PID < "$PID_FILE" 2>/dev/null || LLAMA_PID=$(cat "$PID_FILE")
+            read LLAMA_PID PROXY_PID EMBED_PID < "$PID_FILE" 2>/dev/null || LLAMA_PID=$(cat "$PID_FILE")
             echo "PID file: $PID_FILE"
-            for _N in "llama-server:$LLAMA_PID" "Proxy:$PROXY_PID"; do
+            for _N in "llama-server:$LLAMA_PID" "Proxy:$PROXY_PID" "Embed:$EMBED_PID"; do
                 _LABEL=$(echo "$_N" | cut -d: -f1)
                 _PID=$(echo "$_N" | cut -d: -f2)
                 if [ -n "$_PID" ] && kill -0 "$_PID" 2>/dev/null; then
@@ -135,6 +141,7 @@ esac
 # --- Startup banner ---
 echo "Starting Jenova CA..."
 echo "  Model:     $MODEL_PATH"
+echo "  Embed:     $MODEL_EMBED (CPU-only, ngl 0)"
 echo "  Devices:   ${DEVICES:-CPU only}"
 echo "  GPU Layers: $LLAMA_NGL"
 echo "  Context:   $CTX_SIZE"
@@ -148,8 +155,8 @@ echo ""
 if [ "$1" = "--daemon" ]; then
     shift
     if [ -f "$PID_FILE" ]; then
-        read OLD_LLAMA_PID OLD_PROXY_PID < "$PID_FILE" 2>/dev/null || OLD_LLAMA_PID=$(cat "$PID_FILE")
-        for _P in $OLD_LLAMA_PID $OLD_PROXY_PID; do
+        read OLD_LLAMA_PID OLD_PROXY_PID OLD_EMBED_PID < "$PID_FILE" 2>/dev/null || OLD_LLAMA_PID=$(cat "$PID_FILE")
+        for _P in $OLD_LLAMA_PID $OLD_PROXY_PID $OLD_EMBED_PID; do
             if [ -n "$_P" ] && kill -0 "$_P" 2>/dev/null; then
                 echo "Jenova CA already running (PID $_P)."
                 exit 0
@@ -159,6 +166,7 @@ if [ "$1" = "--daemon" ]; then
     fi
 
     LOG_FILE="${LOG_DIR}/jenova-ca.log"
+    EMBED_LOG="${LOG_DIR}/jenova-embed.log"
     echo "Daemonizing... Logs at $LOG_FILE"
 
     "$LLAMA_SERVER" \
@@ -181,13 +189,30 @@ if [ "$1" = "--daemon" ]; then
         "$@" > "$LOG_FILE" 2>&1 &
     LLAMA_PID=$!
 
+    if [ -f "$MODEL_EMBED" ]; then
+        "$LLAMA_SERVER" \
+            -m "$MODEL_EMBED" \
+            --embedding \
+            -ngl 0 \
+            -c 2048 \
+            -t "$THREADS" \
+            --offline \
+            --host "$HOST" \
+            --port "$LLAMA_EMBED_PORT" \
+            > "$EMBED_LOG" 2>&1 &
+        EMBED_PID=$!
+    else
+        echo "Warning: embed model not found at $MODEL_EMBED — skipping embed server"
+        EMBED_PID=""
+    fi
+
     sleep 3
 
     luajit "$PROXY_SCRIPT" >> "$LOG_FILE" 2>&1 &
     PROXY_PID=$!
 
-    echo "$LLAMA_PID $PROXY_PID" > "$PID_FILE"
-    echo "Started: llama-server=$LLAMA_PID proxy=$PROXY_PID"
+    echo "$LLAMA_PID $PROXY_PID $EMBED_PID" > "$PID_FILE"
+    echo "Started: llama-server=$LLAMA_PID proxy=$PROXY_PID embed=${EMBED_PID:-none}"
     exit 0
 fi
 
@@ -216,8 +241,26 @@ while [ "$1" = "--daemon" ]; do shift; done
     "$@" &
 LLAMA_PID=$!
 
+EMBED_PID=""
+if [ -f "$MODEL_EMBED" ]; then
+    echo "Starting embedding server (CPU-only) on port $LLAMA_EMBED_PORT..."
+    "$LLAMA_SERVER" \
+        -m "$MODEL_EMBED" \
+        --embedding \
+        -ngl 0 \
+        -c 2048 \
+        -t "$THREADS" \
+        --offline \
+        --host "$HOST" \
+        --port "$LLAMA_EMBED_PORT" \
+        > "${LOG_DIR}/jenova-embed.log" 2>&1 &
+    EMBED_PID=$!
+else
+    echo "Warning: embed model not found at $MODEL_EMBED — skipping embed server"
+fi
+
 cleanup() {
-    for P in $LLAMA_PID $PROXY_PID; do
+    for P in $LLAMA_PID $PROXY_PID $EMBED_PID; do
         if [ -n "$P" ]; then
             echo "Stopping PID $P..."
             kill "$P" 2>/dev/null
@@ -231,4 +274,4 @@ echo "Starting Jenova Intelligence Proxy on port $PORT..."
 luajit "$PROXY_SCRIPT" &
 PROXY_PID=$!
 
-wait "$LLAMA_PID" "$PROXY_PID"
+wait $LLAMA_PID $PROXY_PID ${EMBED_PID:+$EMBED_PID}

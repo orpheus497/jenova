@@ -1,8 +1,8 @@
 -- http.lua: Minimal HTTP client using LuaJIT FFI (no external dependencies)
--- Only implements POST with JSON body, which is all jenova-agent needs.
+-- Uses centralized definitions from ffi_defs.lua.
 
 local ffi = require("ffi")
-require("ffi_defs")
+local ffi_defs = require("ffi_defs")
 
 local AF_INET = 2
 local SOCK_STREAM = 1
@@ -10,15 +10,6 @@ local SOL_SOCKET = 0xffff
 local SO_RCVTIMEO = 0x1006
 local SO_SNDTIMEO = 0x1005
 
--- Ensure getaddrinfo/freeaddrinfo are defined (POSIX)
-ffi.cdef[[
-  struct addrinfo { int ai_flags; int ai_family; int ai_socktype; int ai_protocol; socklen_t ai_addrlen; struct sockaddr *ai_addr; struct addrinfo *ai_next; };
-  int getaddrinfo(const char *node, const char *service, const struct addrinfo *hints, struct addrinfo **res);
-  void freeaddrinfo(struct addrinfo *res);
-]]
-
-
--- Platform-specific errnos (FreeBSD defaults, but we'll use ffi.errno where possible)
 local EAGAIN      = 35
 local ETIMEDOUT   = 60
 local EINTR       = 4
@@ -44,13 +35,10 @@ local function parse_url(url)
   return host, tonumber(port), path
 end
 
--- Resolve hostname to IPv4 address using getaddrinfo (fallback to inet_addr)
 local function resolve_host(host)
-  -- Try numeric dotted address first
   local addr = ffi.C.inet_addr(host)
   if tonumber(addr) ~= 0xffffffff then return addr end
 
-  -- getaddrinfo fallback
   local hints = ffi.new("struct addrinfo[1]")
   hints[0].ai_family = AF_INET
   hints[0].ai_socktype = SOCK_STREAM
@@ -71,6 +59,85 @@ local function resolve_host(host)
   local out = sa.sin_addr.s_addr
   ffi.C.freeaddrinfo(res[0])
   return out
+end
+
+local function send_all(fd, data)
+  local sent = 0
+  while sent < #data do
+    local n = ffi.C.send(fd, data:sub(sent + 1), #data - sent, 0)
+    if n <= 0 then
+      local err = get_errno()
+      if err == EINTR then goto continue end
+      return false, "send() failed: " .. get_errstr(err)
+    end
+    sent = sent + tonumber(n)
+    ::continue::
+  end
+  return true
+end
+
+local function recv_all(fd, buf, buf_size)
+  local chunks = {}
+  local total_recv = 0
+  local stall_count = 0
+  local recv_err = nil
+  while true do
+    ::retry::
+    local recv_n = ffi.C.recv(fd, buf, buf_size, 0)
+    if recv_n > 0 then
+      chunks[#chunks + 1] = ffi.string(buf, recv_n)
+      total_recv = total_recv + tonumber(recv_n)
+      stall_count = 0
+    elseif recv_n == 0 then
+      break
+    else
+      local err = get_errno()
+      if err == EINTR then
+        goto retry
+      elseif err == EAGAIN or err == EWOULDBLOCK or err == ETIMEDOUT then
+        stall_count = stall_count + 1
+        if stall_count >= 10 then break end
+        local tv_sleep = ffi.new("struct timeval")
+        tv_sleep.tv_sec = 0
+        tv_sleep.tv_usec = 50000
+        ffi.C.select(0, nil, nil, nil, tv_sleep)
+      else
+        recv_err = "recv() fatal error: " .. get_errstr(err) .. " (errno=" .. tostring(err) .. ")"
+        break
+      end
+    end
+  end
+  return chunks, recv_err
+end
+
+local function decode_chunked(after_headers)
+  local decoded = {}
+  local pos = 1
+  while pos <= #after_headers do
+    local chunk_end = after_headers:find("\r\n", pos)
+    if not chunk_end then break end
+    local size_str = after_headers:sub(pos, chunk_end - 1)
+    local chunk_size = tonumber(size_str, 16)
+    if not chunk_size or chunk_size == 0 then break end
+    local chunk_data = after_headers:sub(chunk_end + 2, chunk_end + 1 + chunk_size)
+    decoded[#decoded + 1] = chunk_data
+    pos = chunk_end + 2 + chunk_size + 2
+  end
+  return table.concat(decoded)
+end
+
+local function parse_response(raw)
+  if raw == "" then return 0, "" end
+  local status_code = tonumber(raw:match("HTTP/%d%.%d%s+(%d+)")) or 0
+  local header_end = raw:find("\r\n\r\n")
+  if not header_end then return status_code, "" end
+
+  local headers = raw:sub(1, header_end + 1)
+  local after_headers = raw:sub(header_end + 4)
+  if headers:lower():find("transfer%-encoding:%s*chunked") then
+    return status_code, decode_chunked(after_headers)
+  end
+  return status_code, after_headers
 end
 
 function http.post(url, body, timeout)
@@ -110,52 +177,14 @@ function http.post(url, body, timeout)
     "POST %s HTTP/1.1\r\nHost: %s:%d\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
     path, host, port, #body, body)
 
-  local sent = 0
-  while sent < #req do
-    local n = ffi.C.send(fd, req:sub(sent + 1), #req - sent, 0)
-    if n <= 0 then
-      ffi.C.close(fd)
-      return 0, "send() failed"
-    end
-    sent = sent + tonumber(n)
+  local ok, err = send_all(fd, req)
+  if not ok then
+    ffi.C.close(fd)
+    return 0, err
   end
 
-  local buf_size = 131072 -- 128KB
-  local buf = ffi.new("char[?]", buf_size)
-  local chunks = {}
-  local total_recv = 0
-  local stall_count = 0
-  local recv_err = nil
-  while true do
-    ::retry_post::
-    local recv_n = ffi.C.recv(fd, buf, buf_size, 0)
-    if recv_n > 0 then
-      chunks[#chunks + 1] = ffi.string(buf, recv_n)
-      total_recv = total_recv + tonumber(recv_n)
-      stall_count = 0
-    elseif recv_n == 0 then
-      break
-    else
-      local err = get_errno()
-      if err == EINTR then
-        goto retry_post
-      elseif err == EAGAIN or err == EWOULDBLOCK or err == ETIMEDOUT then
-        stall_count = stall_count + 1
-        -- BSD stack can be noisy; allow more retries for large payloads
-        if stall_count >= 10 then
-          break
-        end
-        local tv_sleep = ffi.new("struct timeval")
-        tv_sleep.tv_sec = 0
-        tv_sleep.tv_usec = 50000 -- 50ms
-        ffi.C.select(0, nil, nil, nil, tv_sleep)
-      else
-        -- Fatal error (e.g., ECONNRESET)
-        recv_err = "recv() fatal error: " .. get_errstr(err) .. " (errno=" .. tostring(err) .. ")"
-        break
-      end
-    end
-  end
+  local buf = ffi.new("char[?]", 131072)
+  local chunks, recv_err = recv_all(fd, buf, 131072)
   ffi.C.close(fd)
 
   if recv_err then return 499, recv_err end
@@ -163,32 +192,7 @@ function http.post(url, body, timeout)
   local raw = table.concat(chunks)
   if raw == "" then return 0, "empty response (received 0 bytes after send)" end
 
-  local status_code = tonumber(raw:match("HTTP/%d%.%d%s+(%d+)")) or 0
-  local header_end = raw:find("\r\n\r\n")
-  local resp_body = ""
-  if header_end then
-    local headers = raw:sub(1, header_end + 1)
-    local after_headers = raw:sub(header_end + 4)
-    if headers:lower():find("transfer%-encoding:%s*chunked") then
-      local decoded = {}
-      local pos = 1
-      while pos <= #after_headers do
-        local chunk_end = after_headers:find("\r\n", pos)
-        if not chunk_end then break end
-        local size_str = after_headers:sub(pos, chunk_end - 1)
-        local chunk_size = tonumber(size_str, 16)
-        if not chunk_size or chunk_size == 0 then break end
-        local chunk_data = after_headers:sub(chunk_end + 2, chunk_end + 1 + chunk_size)
-        decoded[#decoded + 1] = chunk_data
-        pos = chunk_end + 2 + chunk_size + 2
-      end
-      resp_body = table.concat(decoded)
-    else
-      resp_body = after_headers
-    end
-  end
-
-  return status_code, resp_body
+  return parse_response(raw)
 end
 
 function http.get(url, timeout)
@@ -228,56 +232,22 @@ function http.get(url, timeout)
     "GET %s HTTP/1.1\r\nHost: %s:%d\r\nConnection: close\r\n\r\n",
     path, host, port)
 
-  local n = ffi.C.send(fd, req, #req, 0)
-  if n <= 0 then
+  local ok, err = send_all(fd, req)
+  if not ok then
     ffi.C.close(fd)
-    return 0, "send() failed"
+    return 0, err
   end
 
-  local buf_size = 65536 -- 64KB for GET
-  local buf = ffi.new("char[?]", buf_size)
-  local chunks = {}
-  local total_recv = 0
-  local stall_count = 0
-  local recv_err = nil
-  while true do
-    ::retry_get::
-    local recv_n = ffi.C.recv(fd, buf, buf_size, 0)
-    if recv_n > 0 then
-      chunks[#chunks + 1] = ffi.string(buf, recv_n)
-      total_recv = total_recv + tonumber(recv_n)
-      stall_count = 0
-    elseif recv_n == 0 then
-      break
-    else
-      local err = get_errno()
-      if err == EINTR then
-        goto retry_get
-      elseif err == EAGAIN or err == EWOULDBLOCK or err == ETIMEDOUT then
-        stall_count = stall_count + 1
-        if stall_count >= 10 then
-          break
-        end
-        local tv_sleep = ffi.new("struct timeval")
-        tv_sleep.tv_sec = 0
-        tv_sleep.tv_usec = 50000 -- 50ms
-        ffi.C.select(0, nil, nil, nil, tv_sleep)
-      else
-        recv_err = "recv() fatal error: " .. get_errstr(err) .. " (errno=" .. tostring(err) .. ")"
-        break
-      end
-    end
-  end
+  local buf = ffi.new("char[?]", 65536)
+  local chunks, recv_err = recv_all(fd, buf, 65536)
   ffi.C.close(fd)
 
   if recv_err then return 499, recv_err end
 
   local raw = table.concat(chunks)
   if raw == "" then return 0, "empty response" end
-  local status_code = tonumber(raw:match("HTTP/%d%.%d%s+(%d+)")) or 0
-  local header_end = raw:find("\r\n\r\n")
-  local resp_body = header_end and raw:sub(header_end + 4) or ""
 
-  return status_code, resp_body
+  return parse_response(raw)
 end
+
 return http

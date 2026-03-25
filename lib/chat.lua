@@ -8,9 +8,9 @@ local json = require("json")
 local function spinner_start(msg) io.write("\27[36m" .. msg .. "...\27[0m"); io.flush() end
 local function spinner_stop() io.write("\r\27[K"); io.flush() end
 
-local API_BASE = os.getenv("JENOVA_API_URL") or os.getenv("CODER_API_URL") or "http://127.0.0.1:8080"
+local API_BASE = os.getenv("JENOVA_API_URL") or "http://127.0.0.1:8080"
 local API_URL = API_BASE .. "/v1/chat/completions"
-local SYS_PROMPT = os.getenv("CODER_SYSTEM_PROMPT") or "You are an expert coder."
+local SYS_PROMPT = os.getenv("JENOVA_SYSTEM_PROMPT") or "You are an expert coder."
 
 local messages = {
     { role = "system", content = SYS_PROMPT }

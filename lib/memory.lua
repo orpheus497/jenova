@@ -15,13 +15,17 @@ local json = require("json")
 
 local memory = {}
 
-local CODER_DIR = os.getenv("JENOVA_STATE_DIR") or ".jenova"
-local SESSION_LOG = CODER_DIR .. "/session.jsonl"
-local ERROR_FILE = CODER_DIR .. "/errors.jsonl"
-local LEARN_FILE = CODER_DIR .. "/learned.jsonl"
-local PREFS_FILE = CODER_DIR .. "/preferences.json"
-local NOTES_FILE = CODER_DIR .. "/notes.md"
-local ACTION_FILE = CODER_DIR .. "/actions.jsonl"
+local JENOVA_DIR = os.getenv("JENOVA_STATE_DIR") or ".jenova"
+local SESSION_LOG = JENOVA_DIR .. "/session.jsonl"
+local ERROR_FILE = JENOVA_DIR .. "/errors.jsonl"
+local LEARN_FILE = JENOVA_DIR .. "/learned.jsonl"
+local PREFS_FILE = JENOVA_DIR .. "/preferences.json"
+local NOTES_FILE = JENOVA_DIR .. "/notes.md"
+local ACTION_FILE = JENOVA_DIR .. "/actions.jsonl"
+
+local function shell_quote(s)
+  return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
 
 -------------------------------------------------------------------------------
 -- TTL constants (seconds)
@@ -44,12 +48,12 @@ local session_errors = {}      -- errors from THIS session only
 local session_action_index = {} -- "tool:args_hash" -> {count, last_result, success}
 
 -------------------------------------------------------------------------------
--- Ensure .coder directory exists
+-- Ensure .jenova directory exists
 -------------------------------------------------------------------------------
 function memory.init()
-  local ok_mkdir, err_mkdir = pcall(function() os.execute("mkdir -p " .. CODER_DIR) end)
+  local ok_mkdir, err_mkdir = pcall(function() os.execute("mkdir -p " .. shell_quote(JENOVA_DIR)) end)
   if not ok_mkdir then io.write("[memory] warning: mkdir failed: "..tostring(err_mkdir).."\n") end
-  local ok_bk, err_bk = pcall(function() os.execute("mkdir -p " .. CODER_DIR .. "/backups") end)
+  local ok_bk, err_bk = pcall(function() os.execute("mkdir -p " .. shell_quote(JENOVA_DIR .. "/backups")) end)
   if not ok_bk then io.write("[memory] warning: mkdir backups failed: "..tostring(err_bk).."\n") end
   -- prefer daemon helper for background tasks in future; dir creation keeps os.execute for portability
 
@@ -506,10 +510,6 @@ function memory.get_preferences()
   return table.concat(parts, "\n")
 end
 
-local function shell_quote(s)
-  return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
-end
-
 -------------------------------------------------------------------------------
 -- Project tree (cached per session)
 -------------------------------------------------------------------------------
@@ -524,6 +524,7 @@ function memory.get_project_tree(root, max_depth)
     shell_quote(root), max_depth
   )
   local p = io.popen(cmd)
+  if not p then cached_tree = ""; return cached_tree end
   local output = p:read("*a")
   p:close()
   cached_tree = output

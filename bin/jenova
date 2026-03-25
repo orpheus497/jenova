@@ -64,9 +64,9 @@ else
         fi
         # Fast-fail: if all daemon PIDs are dead, don't keep waiting
         if [ -f "$PID_FILE" ]; then
-            read _LP _PP < "$PID_FILE" 2>/dev/null
+            read _LP _PP _EP < "$PID_FILE" 2>/dev/null
             _ANY_ALIVE=false
-            for _P in $_LP $_PP; do
+            for _P in $_LP $_PP $_EP; do
                 [ -n "$_P" ] && kill -0 "$_P" 2>/dev/null && _ANY_ALIVE=true
             done
             if ! $_ANY_ALIVE; then
@@ -86,11 +86,8 @@ else
     done
 fi
 
-# Exporting CODER_ variables for backward compatibility until all agents finish
 export JENOVA_API_URL="$API_URL"
-export CODER_API_URL="$API_URL"
-export JENOVA_ROOT="$CODER_ROOT"
-export CODER_ROOT
+export JENOVA_ROOT="${JENOVA_ROOT:-$CODER_ROOT}"
 
 # Find agent.lua relative to script
 if [ -f "$SCRIPT_DIR/lib/agent.lua" ]; then

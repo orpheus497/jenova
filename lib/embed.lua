@@ -16,7 +16,7 @@ local embed = {}
 -------------------------------------------------------------------------------
 -- Config
 -------------------------------------------------------------------------------
-local EMBED_URL = os.getenv("JENOVA_LLAMA_EMBED_URL") or os.getenv("CODER_LLAMA_EMBED_URL") or "http://127.0.0.1:8082"
+local EMBED_URL = os.getenv("JENOVA_LLAMA_EMBED_URL") or "http://127.0.0.1:8082"
 local DIMS = 768        -- nomic-embed-text-v1.5 dimension
 local CTX_SIZE = 2048   -- nomic context window (max tokens)
 
@@ -30,10 +30,6 @@ function embed.init(opts)
   EMBED_URL = opts.embed_url or os.getenv("JENOVA_LLAMA_EMBED_URL") or "http://127.0.0.1:8082"
   local embed_bin = opts.embed_bin or os.getenv("JENOVA_LLAMA_SERVER") or (opts.script_dir and (opts.script_dir .. "/llama.cpp/build/bin/llama-server"))
   local model_path = opts.model_path or os.getenv("JENOVA_MODEL_EMBED") or (opts.script_dir and (opts.script_dir .. "/models/nomic-embed-text-v1.5.Q8_0.gguf"))
-
-  local env_devices = os.getenv("JENOVA_EMBED_DEVICES")
-  local devices = opts.devices
-  if devices == nil then devices = env_devices end
 
   -- Check if llama-server is alive at this URL
   local status, body = http.get(EMBED_URL .. "/health", 1)
@@ -54,35 +50,15 @@ function embed.init(opts)
       -- Use daemon.start_background to start persistent embedding server reliably
       local daemon = require('daemon')
 
-      -- Build args conditionally so we don't pass an empty -dev
-      -- When targeting a specific Vulkan device (e.g., Vulkan1), isolate it via
-      -- GGML_VK_VISIBLE_DEVICES so the embed process only sees that one GPU,
-      -- then address it as Vulkan0 inside the process.
-      local args = { embed_bin, '-m', model_path, '--embedding', '--port', port, '--host', host }
-      local child_env = nil
-      local vk_idx = devices and devices:match("^Vulkan(%d+)$")
-      if vk_idx then
-        child_env = {
-          GGML_VK_VISIBLE_DEVICES = vk_idx,
-          GGML_VK_VISIBLE_DEVICES_ORDER = vk_idx,
-        }
-        table.insert(args, '-dev')
-        table.insert(args, 'Vulkan0')
-      elseif devices and devices ~= "" then
-        table.insert(args, '-dev')
-        table.insert(args, devices)
-      end
-      local ngl = (vk_idx or (devices and devices ~= "")) and 'all' or '0'
-      table.insert(args, '-ngl')
-      table.insert(args, ngl)
-      table.insert(args, '--offline')
+      local args = { embed_bin, '-m', model_path, '--embedding', '--port', port, '--host', host,
+                      '-ngl', '0', '-c', '2048', '--offline' }
 
-      local ok, pid_or_err = daemon.start_background(args, '.jenova/llama-embed.log', opts.script_dir or '.', '.jenova/llama-embed.pid', child_env)
+      local ok, pid_or_err = daemon.start_background(args, '.jenova/llama-embed.log', opts.script_dir or '.', '.jenova/llama-embed.pid')
       if not ok then
         io.write('[embed] WARNING: failed to start embedding binary: ' .. tostring(pid_or_err) .. '\n')
       else
         -- Wait for it to come up
-        for i = 1, 5 do
+        for i = 1, 15 do
           local tv = ffi.new('struct timeval', {tv_sec=1, tv_usec=0})
           ffi.C.select(0, nil, nil, nil, tv) -- Sleep 1s
           status, body = http.get(EMBED_URL .. '/health', 1)

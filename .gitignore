@@ -17,7 +17,6 @@
 
 # --- Jenova Runtime (Private Data) ---
 /.jenova/
-/.coder/
 
 # --- Environment & Keys ---
 .env
@@ -35,4 +34,3 @@ id_ed25519
 
 # --- Configuration ---
 /etc/jenova.conf.local
-/etc/coder.conf.local
