@@ -42,7 +42,7 @@ fi
 echo "Starting Jenova CA (Optane-optimized for FreeBSD)..."
 echo "  Model:   $MODEL_PATH"
 echo "  Slots:   $NUM_SLOTS"
-echo "  Tensor Split: $TENSOR_SPLIT"
+echo "  GPU Layers: $LLAMA_NGL"
 echo "  MLock:   Disabled (Leveraging Optane-NVMe Swap)"
 echo ""
 
@@ -74,12 +74,6 @@ export JENOVA_LLAMA_URL="http://${HOST}:${LLAMA_PORT}"
 export JENOVA_PROXY_PORT="$PORT"
 export JENOVA_PROXY_HOST="$HOST"
 export JENOVA_EMBED_DEVICES="$EMBED_DEVICES"
-
-if [ -n "$TENSOR_SPLIT" ]; then
-    TS_ARG="-ts '$TENSOR_SPLIT'"
-else
-    TS_ARG=""
-fi
 
 # Ensure local llama.cpp build libraries are on the runtime linker path (FreeBSD)
 # Some builds place shared libs in build/bin rather than build/lib
@@ -169,9 +163,7 @@ if [ "$1" = "--daemon" ]; then
         MAIN_ENV=""
         MAIN_DEV_ARG=""
     else
-        # Map visible devices per-invocation to avoid global side-effects
-        # Force main LLM to use NVIDIA physical device (prefer index 0)
-        MAIN_ENV="GGML_VK_VISIBLE_DEVICES=0 GGML_VK_VISIBLE_DEVICES_ORDER=0"
+        MAIN_ENV=""
         MAIN_DEV_ARG="-dev Vulkan0"
     fi
 
@@ -180,8 +172,8 @@ if [ "$1" = "--daemon" ]; then
         -m "$MODEL_PATH" \
         $MAIN_DEV_ARG \
         -sm layer \
-        $TS_ARG \
-        -fitt "$LLAMA_FITT" \
+        -ts 1.5,3 \
+        -ngl "$LLAMA_NGL" \
         -c "$CTX_SIZE" \
         -b 2048 \
         -ub 256 \
@@ -201,17 +193,30 @@ if [ "$1" = "--daemon" ]; then
         "$@" > "$LOG_FILE" 2>&1 &
     LLAMA_PID=$!
 
-    # Start embedding server on Intel if configured and a second Vulkan device exists
     EMBED_PID=""
-    if [ -n "$EMBED_DEVICES" ] && [ "$EMBED_DEVICES" = "Vulkan1" ] && [ "$VULKAN_COUNT" -ge 2 ]; then
+    if [ -n "$EMBED_DEVICES" ]; then
         EMBED_LOG="${LOG_DIR}/jenova-embed.log"
-        echo "Starting embedding server on physical Vulkan device 1 (Intel) mapped to visible index 0 for the embed process"
-        # For the embed process, make physical device 1 visible as index 0 inside that process
-        EMBED_ENV="GGML_VK_VISIBLE_DEVICES=1 GGML_VK_VISIBLE_DEVICES_ORDER=1"
-        eval $EMBED_ENV "$LLAMA_SERVER" -m "$MODEL_EMBED" --embedding --host "$HOST" --port "$LLAMA_EMBED_PORT" -dev Vulkan0 --offline > "$EMBED_LOG" 2>&1 &
+        EMBED_ENV=""
+        EMBED_NGL="all"
+        EMBED_DEV_ARG=""
+        case "$EMBED_DEVICES" in
+            Vulkan*)
+                VK_IDX=$(echo "$EMBED_DEVICES" | sed 's/Vulkan//')
+                EMBED_ENV="GGML_VK_VISIBLE_DEVICES=$VK_IDX"
+                EMBED_DEV_ARG="-dev Vulkan0"
+                ;;
+            *)
+                EMBED_DEV_ARG="-dev $EMBED_DEVICES"
+                ;;
+        esac
+        echo "Starting embedding server (device: $EMBED_DEVICES)"
+        eval $EMBED_ENV "$LLAMA_SERVER" -m "$MODEL_EMBED" --embedding -ngl $EMBED_NGL --host "$HOST" --port "$LLAMA_EMBED_PORT" $EMBED_DEV_ARG --offline > "$EMBED_LOG" 2>&1 &
         EMBED_PID=$!
     else
-        echo "[embed] Not starting embedding Vulkan server; embed will start on demand or fall back to CPU"
+        EMBED_LOG="${LOG_DIR}/jenova-embed.log"
+        echo "Starting embedding server on CPU"
+        "$LLAMA_SERVER" -m "$MODEL_EMBED" --embedding -ngl 0 --host "$HOST" --port "$LLAMA_EMBED_PORT" --offline > "$EMBED_LOG" 2>&1 &
+        EMBED_PID=$!
     fi
 
     # Wait a moment for llama-server to bind
@@ -237,15 +242,15 @@ if [ -z "$VULKAN_COUNT" ] || [ "$VULKAN_COUNT" -le 0 ]; then
     MAIN_ENV=""
     MAIN_DEV_ARG=""
 else
-    MAIN_ENV="GGML_VK_VISIBLE_DEVICES=0 GGML_VK_VISIBLE_DEVICES_ORDER=0"
+    MAIN_ENV=""
     MAIN_DEV_ARG="-dev Vulkan0"
 fi
 eval $MAIN_ENV "$LLAMA_SERVER" \
     -m "$MODEL_PATH" \
     $MAIN_DEV_ARG \
     -sm layer \
-    $TS_ARG \
-    -fitt "$LLAMA_FITT" \
+    -ts 1.5,3 \
+    -ngl "$LLAMA_NGL" \
     -c "$CTX_SIZE" \
     -b 2048 \
     -ub 256 \

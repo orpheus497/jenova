@@ -55,16 +55,29 @@ function embed.init(opts)
       local daemon = require('daemon')
 
       -- Build args conditionally so we don't pass an empty -dev
+      -- When targeting a specific Vulkan device (e.g., Vulkan1), isolate it via
+      -- GGML_VK_VISIBLE_DEVICES so the embed process only sees that one GPU,
+      -- then address it as Vulkan0 inside the process.
       local args = { embed_bin, '-m', model_path, '--embedding', '--port', port, '--host', host }
-      if devices and devices ~= "" then
+      local child_env = nil
+      local vk_idx = devices and devices:match("^Vulkan(%d+)$")
+      if vk_idx then
+        child_env = {
+          GGML_VK_VISIBLE_DEVICES = vk_idx,
+          GGML_VK_VISIBLE_DEVICES_ORDER = vk_idx,
+        }
+        table.insert(args, '-dev')
+        table.insert(args, 'Vulkan0')
+      elseif devices and devices ~= "" then
         table.insert(args, '-dev')
         table.insert(args, devices)
       end
+      local ngl = (vk_idx or (devices and devices ~= "")) and 'all' or '0'
       table.insert(args, '-ngl')
-      table.insert(args, 'all')
+      table.insert(args, ngl)
       table.insert(args, '--offline')
 
-      local ok, pid_or_err = daemon.start_background(args, '.jenova/llama-embed.log', opts.script_dir or '.', '.jenova/llama-embed.pid')
+      local ok, pid_or_err = daemon.start_background(args, '.jenova/llama-embed.log', opts.script_dir or '.', '.jenova/llama-embed.pid', child_env)
       if not ok then
         io.write('[embed] WARNING: failed to start embedding binary: ' .. tostring(pid_or_err) .. '\n')
       else

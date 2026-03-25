@@ -11,6 +11,7 @@ ffi.cdef[[
   int close(int fd);
   int chdir(const char *path);
   int setpgid(pid_t pid, pid_t pgid);
+  int setenv(const char *name, const char *value, int overwrite);
   pid_t waitpid(pid_t pid, int *status, int options);
   int kill(pid_t pid, int sig);
 
@@ -85,7 +86,7 @@ end
 -- Start a command in background. cmd_table is an array-like Lua table of argv (first is program).
 -- log_path optional; if provided, stdout/stderr are redirected to that file (created/appended).
 -- pidfile optional; if provided, child PID is written to this file for lifecycle tracking.
-function daemon.start_background(cmd_table, log_path, working_dir, pidfile)
+function daemon.start_background(cmd_table, log_path, working_dir, pidfile, env)
   if type(cmd_table) ~= "table" or #cmd_table == 0 then return false, "invalid command" end
 
   -- If pidfile provided, check if already running
@@ -120,6 +121,12 @@ function daemon.start_background(cmd_table, log_path, working_dir, pidfile)
   ffi.C.setpgid(0, 0)
   ffi.C.setsid()
   if working_dir and working_dir ~= "" then ffi.C.chdir(working_dir) end
+
+  if env and type(env) == "table" then
+    for k, v in pairs(env) do
+      ffi.C.setenv(k, tostring(v), 1)
+    end
+  end
 
   if log_path and log_path ~= "" then
     local fd = ffi.C.open(log_path, ffi.C.O_WRONLY + ffi.C.O_CREAT + ffi.C.O_APPEND, 438) -- 0666
