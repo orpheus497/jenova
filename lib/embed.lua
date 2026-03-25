@@ -15,6 +15,7 @@ local embed = {}
 -------------------------------------------------------------------------------
 local EMBED_BIN = nil   -- resolved in init()
 local MODEL_PATH = nil  -- resolved in init()
+local DEVICES = nil     -- resolved in init()
 local DIMS = 768        -- nomic-embed-text-v1.5 dimension
 local CTX_SIZE = 512    -- nomic context window (512 tokens max)
 local POOLING = "mean"
@@ -30,6 +31,7 @@ function embed.init(opts)
 
   EMBED_BIN = opts.embed_bin or (script_dir .. "/llama.cpp/build/bin/llama-embedding")
   MODEL_PATH = opts.model_path or (script_dir .. "/models/nomic-embed-text-v1.5.Q8_0.gguf")
+  DEVICES = opts.devices or "Vulkan1"
 
   local f = io.open(EMBED_BIN, "r")
   if not f then
@@ -57,6 +59,10 @@ function embed.dimensions()
   return DIMS
 end
 
+local function shell_quote(s)
+  return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
+
 -------------------------------------------------------------------------------
 -- Encode a single text string -> vector (table of floats)
 -- nomic-embed-text uses task prefixes:
@@ -82,8 +88,8 @@ function embed.encode(text, task)
   f:close()
 
   local cmd = string.format(
-    '%q -m %q --embd-output-format json --pooling %s -c %d -f %q >%q 2>/dev/null',
-    EMBED_BIN, MODEL_PATH, POOLING, CTX_SIZE, tmpfile_in, tmpfile_out
+    '%s -m %s -dev %s -ngl all --embd-output-format json --pooling %s -c %d -f %s >%s 2>/dev/null',
+    shell_quote(EMBED_BIN), shell_quote(MODEL_PATH), shell_quote(DEVICES), POOLING, CTX_SIZE, shell_quote(tmpfile_in), shell_quote(tmpfile_out)
   )
 
   os.execute(cmd)
@@ -139,8 +145,8 @@ function embed.batch_encode(texts, task)
   f:close()
 
   local cmd = string.format(
-    '%q -m %q --embd-output-format json --pooling %s -c %d -f %q --embd-separator %q >%q 2>/dev/null',
-    EMBED_BIN, MODEL_PATH, POOLING, CTX_SIZE, tmpfile_in, separator, tmpfile_out
+    '%s -m %s -dev %s -ngl all --embd-output-format json --pooling %s -c %d -f %s --embd-separator %s >%s 2>/dev/null',
+    shell_quote(EMBED_BIN), shell_quote(MODEL_PATH), shell_quote(DEVICES), POOLING, CTX_SIZE, shell_quote(tmpfile_in), shell_quote(separator), shell_quote(tmpfile_out)
   )
 
   os.execute(cmd)

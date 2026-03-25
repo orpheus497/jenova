@@ -6,7 +6,7 @@ local ffi = require("ffi")
 -- Define all common structures and functions used by http.lua, ui.lua, and agent.lua
 -- FreeBSD-compatible definitions.
 ffi.cdef[[
-  typedef int ssize_t;
+  typedef long ssize_t;
   typedef unsigned int socklen_t;
   typedef uint8_t sa_family_t;
   typedef unsigned short in_port_t;

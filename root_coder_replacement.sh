@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# coder-agent: Launch the agentic coding assistant
+# coder: Launch the agentic coding assistant
 # Starts llama-server (if not already running), then connects the LuaJIT agent
 
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
@@ -54,4 +54,5 @@ trap cleanup EXIT INT TERM
 
 # Run the LuaJIT agent
 export CODER_API_URL="$API_URL"
+export CODER_EMBED_DEVICES="$EMBED_DEVICES"
 exec luajit "$SCRIPT_DIR/lib/agent.lua"

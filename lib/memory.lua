@@ -503,6 +503,10 @@ function memory.get_preferences()
   return table.concat(parts, "\n")
 end
 
+local function shell_quote(s)
+  return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
+
 -------------------------------------------------------------------------------
 -- Project tree (cached per session)
 -------------------------------------------------------------------------------
@@ -513,8 +517,8 @@ function memory.get_project_tree(root, max_depth)
   root = root or "."
   max_depth = max_depth or 3
   local cmd = string.format(
-    "find %q -maxdepth %d -type f -not -path '*/.git/*' -not -path '*/.coder/*' -not -path '*/.crush/*' -not -path '*/node_modules/*' -not -path '*/__pycache__/*' -not -path '*/build/*' -not -path '*/backups/*' -not -path '*/llama.cpp/*' -not -name '*.gguf' -not -name '*.bin' -not -name '*.o' -not -name '*.so' 2>/dev/null | head -100 | sort",
-    root, max_depth
+    "find %s -maxdepth %d -type f -not -path '*/.git/*' -not -path '*/.coder/*' -not -path '*/.crush/*' -not -path '*/node_modules/*' -not -path '*/__pycache__/*' -not -path '*/build/*' -not -path '*/backups/*' -not -path '*/llama.cpp/*' -not -name '*.gguf' -not -name '*.bin' -not -name '*.o' -not -name '*.so' 2>/dev/null | head -100 | sort",
+    shell_quote(root), max_depth
   )
   local p = io.popen(cmd)
   local output = p:read("*a")

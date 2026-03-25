@@ -412,7 +412,7 @@ function search.index_dir(root_dir, extensions)
     io.flush()
     local embedded = 0
     for i, entry in ipairs(files_to_embed) do
-      local ok, err = pcall(vec_index_file, entry.path, entry.content, entry.mtime)
+      local ok, _ = pcall(vec_index_file, entry.path, entry.content, entry.mtime)
       if ok then
         embedded = embedded + 1
       end

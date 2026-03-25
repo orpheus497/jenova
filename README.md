@@ -15,7 +15,7 @@ The project is optimized for a dual-tier model hierarchy:
 - **Session Isolation**: Automatic backups and session-local memory to prevent stale context pollution.
 
 ## 📁 Directory Structure
-- `bin/`: Launch scripts (`coder-server`, `coder-agent`, `llama-server-nvim`).
+- `bin/`: Launch scripts (`coder-server`, `coder-agent`).
 - `lib/`: Core logic (LuaJIT) for the agent, tool execution, and memory.
 - `etc/`: Central configuration (`coder.conf`).
 - `models/`: Model storage (GGUF format).

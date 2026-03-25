@@ -21,6 +21,12 @@ SCRIPT_DIR=$(dirname "$(realpath "$0")")
 
 LLAMA_SERVER="$CODER_ROOT/llama.cpp/build/bin/llama-server"
 MODEL_PATH="${CODER_MODEL:-$MODEL_7B}"
+if [ ! -f "$MODEL_PATH" ]; then
+    echo "Attempting to fall back to 14B..."
+    MODEL_PATH="$MODEL_14B"
+    CODER_MODEL="$MODEL_14B"
+    . "$SCRIPT_DIR/etc/coder.conf"
+fi
 DRAFT_PATH="${CODER_DRAFT_PATH:-$MODEL_DRAFT}"
 
 # Fix mlock: raise memory lock limit
@@ -60,7 +66,7 @@ $LLAMA_SERVER \
     -dev "$DEVICES" \
     -sm layer \
     -ts "$TENSOR_SPLIT" \
-    -fitt "$FIT_TARGET" \
+    -fitt "$LLAMA_FITT" \
     -ngl all \
     -c "$CTX_SIZE" \
     -b 2048 \
@@ -94,4 +100,5 @@ export CODER_ROOT="$CODER_ROOT"
 export CODER_LLAMA_URL="http://${HOST}:${LLAMA_PORT}"
 export CODER_PROXY_PORT="$PORT"
 export CODER_PROXY_HOST="$HOST"
+export CODER_EMBED_DEVICES="$EMBED_DEVICES"
 exec luajit "$SCRIPT_DIR/lib/proxy.lua"

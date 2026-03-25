@@ -9,7 +9,6 @@
 
 # --- Build & Binaries ---
 /llama.cpp/build/
-/bin/
 *.o
 *.so
 *.a

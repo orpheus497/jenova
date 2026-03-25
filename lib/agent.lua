@@ -410,7 +410,7 @@ local function exec_edit_file(args)
     if start_line ~= 1 or end_line ~= 1 then
       return "error: file is empty, range must be 1-1", false
     end
-  elseif start_line < 1 or start_line > #lines + 1 or end_line < start_line or end_line > #lines + 1 then
+  elseif start_line < 1 or start_line > #lines + 1 or end_line < start_line or (end_line > #lines and not (start_line == #lines + 1 and end_line == #lines + 1)) then
     return string.format("error: invalid line range %d-%d (file has %d lines). To append, use %d-%d.", start_line, end_line, #lines, #lines + 1, #lines + 1), false
   end
 
@@ -443,7 +443,7 @@ local function exec_edit_file(args)
   local ts = os.date("%Y%m%d_%H%M%S")
   local bk_path = bk_dir .. "/" .. bn .. "." .. ts
   local bk_out = io.open(bk_path, "w")
-  if bk_out then 
+  if bk_out then
     bk_out:write(content)
     bk_out:close()
     ui.file_backup(bk_path)
@@ -485,7 +485,7 @@ local function exec_write_file(args)
     local ts = os.date("%H%M%S")
     local bk_path = bk_dir .. "/" .. bn .. "." .. ts
     local bk_out = io.open(bk_path, "w")
-    if bk_out then bk_out:write(old_data); bk_out:close()
+    if bk_out thenbk_out:write(old_data); bk_out:close()
       ui.file_backup(bk_path)
     end
   end
@@ -842,7 +842,6 @@ local function trim_messages(max)
     keep_from = keep_from + 1
   end
 
-  local evicted = {}
   local new_messages = { messages[1] } -- Keep system prompt
 
   -- Summarize what we're evicting
@@ -1202,7 +1201,10 @@ local function main()
   local p = io.popen("pwd"); CWD = p:read("*l"); p:close()
   memory.init()
 
-  local embed_ok = embed.init({ script_dir = coder_root })
+  local embed_ok = embed.init({ 
+    script_dir = coder_root,
+    devices = os.getenv("CODER_EMBED_DEVICES") or "Vulkan1"
+  })
   if embed_ok then search.init_embeddings(embed) end
 
   local indexed = search.index_dir(".", {

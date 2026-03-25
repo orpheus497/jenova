@@ -510,11 +510,14 @@ function ui.nonblocking_wait(seconds, label)
   spinner_label = label or "waiting"
   spinner_idx = 1
 
-  while ffi_defs.wall_time() - start_time < seconds do
-    if ffi_defs.wall_time() - last_spinner_update > 0.1 then
+  while true do
+    local current_time = ffi_defs.wall_time()
+    if current_time - start_time >= seconds then break end
+    
+    if current_time - last_spinner_update > 0.1 then
       spinner_idx = (spinner_idx % #spinner_frames) + 1
       wflush("\r" .. CLEAR_LINE .. "  " .. fg(P.cyan) .. spinner_frames[spinner_idx] .. " " .. spinner_label .. RESET)
-      last_spinner_update = ffi_defs.wall_time()
+      last_spinner_update = current_time
     end
     -- Efficiently sleep for 0.1 seconds without busy-waiting
     local tv = ffi.new("struct timeval")

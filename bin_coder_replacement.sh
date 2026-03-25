@@ -1,11 +1,11 @@
 #!/bin/sh
 
-# coder-agent: Launch the agentic coding assistant
+# coder: Launch the agentic coding assistant
 # Starts llama-server if not running, then connects the LuaJIT agent
 #
 # Usage:
-#   ./bin/coder-agent              # auto-start server + agent
-#   CODER_PORT=8081 ./bin/coder-agent  # use different port
+#   ./bin/coder              # auto-start server + agent
+#   CODER_PORT=8081 ./bin/coder  # use different port
 
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 . "$SCRIPT_DIR/../etc/coder.conf"

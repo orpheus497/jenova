@@ -87,12 +87,12 @@ function http.post(url, body, timeout)
   local recv_err = nil
   while true do
     ::retry_post::
-    local n = ffi.C.recv(fd, buf, 65536, 0)
-    if n > 0 then
-      chunks[#chunks + 1] = ffi.string(buf, n)
-      total_recv = total_recv + tonumber(n)
+    local recv_n = ffi.C.recv(fd, buf, 65536, 0)
+    if recv_n > 0 then
+      chunks[#chunks + 1] = ffi.string(buf, recv_n)
+      total_recv = total_recv + tonumber(recv_n)
       stall_count = 0
-    elseif n == 0 then
+    elseif recv_n == 0 then
       break
     else
       local err = get_errno()
@@ -196,12 +196,12 @@ function http.get(url, timeout)
   local recv_err = nil
   while true do
     ::retry_get::
-    local n = ffi.C.recv(fd, buf, 8192, 0)
-    if n > 0 then
-      chunks[#chunks + 1] = ffi.string(buf, n)
-      total_recv = total_recv + tonumber(n)
+    local recv_n = ffi.C.recv(fd, buf, 8192, 0)
+    if recv_n > 0 then
+      chunks[#chunks + 1] = ffi.string(buf, recv_n)
+      total_recv = total_recv + tonumber(recv_n)
       stall_count = 0
-    elseif n == 0 then
+    elseif recv_n == 0 then
       break
     else
       local err = get_errno()

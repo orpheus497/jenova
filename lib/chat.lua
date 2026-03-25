@@ -25,14 +25,14 @@ while true do
     if not input then break end
     input = input:match("^%s*(.-)%s*$")
     
-    if input == "/quit" or input == "/exit" or input == "/q" then 
-        break 
+    if input == "/quit" or input == "/exit" or input == "/q" then
+        break
     elseif input == "/clear" then
         messages = { { role = "system", content = SYS_PROMPT } }
         print("\n\27[33m[Session cleared]\27[0m\n")
         goto continue
-    elseif input == "" then 
-        goto continue 
+    elseif input == "" then
+        goto continue
     end
 
     table.insert(messages, { role = "user", content = input })
@@ -58,10 +58,14 @@ while true do
             table.insert(messages, { role = "assistant", content = reply })
             print("\n\27[36mcoder:\27[0m\n" .. reply .. "\n")
         else
-            print("\n\27[31m[error]\27[0m Failed to parse response data.\n")
+            local safe_body = (resp or ""):gsub("\n", " "):gsub("[%c]", ""):sub(1, 200)
+            if #(resp or "") > 200 then safe_body = safe_body .. "..." end
+            print("\n\27[31m[error]\27[0m Failed to parse response data. Preview: " .. safe_body .. "\n")
         end
     else
-        print("\n\27[31m[error]\27[0m Server returned HTTP " .. tostring(status) .. "\n")
+        local safe_body = (resp or ""):gsub("\n", " "):gsub("[%c]", ""):sub(1, 200)
+        if #(resp or "") > 200 then safe_body = safe_body .. "..." end
+        print("\n\27[31m[error]\27[0m Server returned HTTP " .. tostring(status) .. ". Preview: " .. safe_body .. "\n")
     end
 
     ::continue::

@@ -2,7 +2,7 @@ local script_dir = os.getenv("CODER_ROOT") or debug.getinfo(1, "S").source:match
 package.path = script_dir .. "/lib/?.lua;" .. script_dir .. "/?.lua;" .. package.path
 
 local ffi = require("ffi")
-local ffi_defs = require("ffi_defs")
+local _ffi_defs = require("ffi_defs")
 local json = require("json")
 local search = require("search")
 local embed = require("embed")
@@ -11,8 +11,12 @@ local HOST = os.getenv("CODER_PROXY_HOST") or "127.0.0.1"
 local PORT = tonumber(os.getenv("CODER_PROXY_PORT")) or 8080
 local LLAMA_URL = os.getenv("CODER_LLAMA_URL") or "http://127.0.0.1:8081"
 local LLAMA_PORT = tonumber(LLAMA_URL:match(":(%d+)")) or 8081
+local EMBED_DEVICES = os.getenv("CODER_EMBED_DEVICES") or "Vulkan1"
 
-local embed_ok = embed.init({ script_dir = script_dir })
+local embed_ok = embed.init({ 
+  script_dir = script_dir,
+  devices = EMBED_DEVICES
+})
 if embed_ok then search.init_embeddings(embed) end
 search.index_dir(".", {
   "lua","sh","c","h","cpp","py","js","ts","go","rs",
@@ -26,6 +30,7 @@ local AF_INET = 2
 local SOCK_STREAM = 1
 local SOL_SOCKET = 0xffff
 local SO_REUSEADDR = 0x0004
+local SO_RCVTIMEO = 0x1006
 
 local server_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
 if server_fd < 0 then
@@ -54,7 +59,7 @@ end
 local function proxy_connection(client_fd)
     -- Set 5-second timeout for reading request headers
     local tv = ffi.new("struct timeval", {tv_sec=5, tv_usec=0})
-    ffi.C.setsockopt(client_fd, SOL_SOCKET, 0x1006, tv, ffi.sizeof(tv))
+    ffi.C.setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, tv, ffi.sizeof(tv))
     
     local buf = ffi.new("char[8192]")
     local headers_raw = ""
@@ -153,7 +158,7 @@ local function proxy_connection(client_fd)
 
     -- Disable timeout for the response stream (generations can take a while)
     local tv_zero = ffi.new("struct timeval", {tv_sec=0, tv_usec=0})
-    ffi.C.setsockopt(llama_fd, SOL_SOCKET, 0x1006, tv_zero, ffi.sizeof(tv_zero))
+    ffi.C.setsockopt(llama_fd, SOL_SOCKET, SO_RCVTIMEO, tv_zero, ffi.sizeof(tv_zero))
     
     -- Stream response backward to client (Nvim / terminal)
     while true do
