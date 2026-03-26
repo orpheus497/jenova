@@ -7,6 +7,12 @@ if not package.path:find(_dir, 1, true) then
   package.path = _dir .. "?.lua;" .. package.path
 end
 
+-- Resolve project root so all state paths are absolute regardless of CWD.
+-- Prefer JENOVA_ROOT env var (set by bin/jenova and bin/jenova-ca); fall back
+-- to deriving from the script's own location (lib/../).
+local _jenova_root = os.getenv("JENOVA_ROOT") or _dir:match("^(.+)/lib/?$") or _dir .. ".."
+local JENOVA_STATE = _jenova_root .. "/.jenova"
+
 local json = require("json")
 
 local search = {}
@@ -30,7 +36,7 @@ local vec_index = {}    -- { filepath = { chunks = { {text=..., vec=..., start_l
 local CHUNK_WORDS = 300
 local CHUNK_OVERLAP = 50
 local BATCH_SIZE = 8
-local VECTOR_FILE = ".jenova/vectors.json"
+local VECTOR_FILE = JENOVA_STATE .. "/vectors.json"
 local BM25_WEIGHT = 0.4
 local SEMANTIC_WEIGHT = 0.6
 
@@ -350,8 +356,9 @@ function search.save_vectors()
     save_data[filepath] = { mtime = entry.mtime, chunks = chunks_save }
   end
 
-  local ok, err = pcall(function() os.execute("mkdir -p .jenova") end)
-  if not ok then io.write("[search] warning: failed to create .jenova: "..tostring(err).."\n") end
+  -- mkdir -p returns 0 on success; pcall won't catch a non-zero exit, so check the return value directly.
+  local rc = os.execute("mkdir -p " .. JENOVA_STATE)
+  if rc ~= 0 then io.write("[search] warning: failed to create state dir: " .. JENOVA_STATE .. "\n") end
 
   -- Atomic write via temp file + rename
   local tmp_path = VECTOR_FILE .. ".tmp"
@@ -453,8 +460,8 @@ function search.process_embedding_queue(files_to_embed)
   
   local embedded = 0
   for i, entry in ipairs(files_to_embed) do
-    local ok, _ = pcall(vec_index_file, entry.path, entry.content, entry.mtime)
-    if ok then
+    local ok, indexed = pcall(vec_index_file, entry.path, entry.content, entry.mtime)
+    if ok and indexed then
       embedded = embedded + 1
     end
     -- Periodic save to allow incremental discovery
@@ -529,23 +536,29 @@ function search.index_dir(root_dir, extensions)
   if #files_to_embed > 0 and embed and embed.is_available() then
     -- Seed RNG with time + process-derived entropy so temp filenames are unique
     math.randomseed(os.time() + math.floor(os.clock() * 1000000))
-    local tmp_list = string.format(".jenova/index_queue_%d_%d.json", os.time(), math.random(100000))
-    local ok_mkdir, err_mkdir = pcall(function() os.execute("mkdir -p .jenova") end)
-    if not ok_mkdir then io.write("[search] warning: failed to create .jenova: "..tostring(err_mkdir).."\n") end
+    local tmp_list = string.format("%s/index_queue_%d_%d.json", JENOVA_STATE, os.time(), math.random(100000))
+    -- Use os.execute return value directly; pcall won't detect non-zero exit.
+    local rc_mkdir = os.execute("mkdir -p " .. JENOVA_STATE)
+    if rc_mkdir ~= 0 then io.write("[search] warning: failed to create state dir: " .. JENOVA_STATE .. "\n") end
     local f = io.open(tmp_list, "w")
     if f then
       f:write(json.encode(files_to_embed))
       f:close()
 
       local daemon = require('daemon')
-      local existing_pid = daemon.check_pidfile('.jenova/indexer.pid')
+      local pid_file = JENOVA_STATE .. "/indexer.pid"
+      local existing_pid = daemon.check_pidfile(pid_file)
       if existing_pid then
         io.write(string.format("  [Jenova] BM25 ready. Indexer already running (pid=%d), skipping.\n", existing_pid))
         os.remove(tmp_list)
       else
         -- Atomically move temp file into place, then start indexer
-        os.rename(tmp_list, ".jenova/index_queue.json")
-        local ok2, pid_or_err = daemon.start_background({ 'luajit', 'lib/indexer_runner.lua', '.jenova/index_queue.json' }, '.jenova/indexer.log', '.', '.jenova/indexer.pid')
+        local queue_file = JENOVA_STATE .. "/index_queue.json"
+        os.rename(tmp_list, queue_file)
+        local log_file = JENOVA_STATE .. "/indexer.log"
+        local ok2, pid_or_err = daemon.start_background(
+          { 'luajit', _dir .. 'indexer_runner.lua', queue_file },
+          log_file, _jenova_root, pid_file)
         if ok2 then
           io.write(string.format("  [Jenova] BM25 ready. Backgrounded %d embeddings (pid=%s)...\n", #files_to_embed, tostring(pid_or_err)))
         else
