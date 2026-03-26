@@ -152,11 +152,18 @@ echo ""
 # =====================================================================
 if [ "$1" = "--daemon" ]; then
     shift
+
+    # Acquire exclusive lock to prevent concurrent startup (TOCTOU guard)
+    LOCK_FILE="${PID_FILE}.lock"
+    exec 9>"$LOCK_FILE"
+    flock -n 9 || { echo "Another instance is starting. Exiting." >&2; exit 1; }
+
     if [ -f "$PID_FILE" ]; then
         read OLD_LLAMA_PID OLD_PROXY_PID OLD_EMBED_PID < "$PID_FILE" 2>/dev/null || OLD_LLAMA_PID=$(cat "$PID_FILE")
         for _P in $OLD_LLAMA_PID $OLD_PROXY_PID $OLD_EMBED_PID; do
             if [ -n "$_P" ] && kill -0 "$_P" 2>/dev/null; then
                 echo "Jenova CA already running (PID $_P)."
+                exec 9>&-
                 exit 0
             fi
         done
@@ -207,17 +214,42 @@ if [ "$1" = "--daemon" ]; then
         echo "Warning: embed model not found at $MODEL_EMBED — skipping embed server"
     fi
 
-    sleep 3
+    # Poll llama-server /health until ready (replaces fixed sleep)
+    CONNECT_HOST="${JENOVA_CONNECT_HOST:-127.0.0.1}"
+    HEALTH_URL="http://${CONNECT_HOST}:${LLAMA_PORT}/health"
+    HEALTH_TIMEOUT="${JENOVA_HEALTH_TIMEOUT:-90}"
+    HEALTH_INTERVAL=2
+    _ELAPSED=0
+    echo "Waiting for llama-server to become ready..."
+    while [ "$_ELAPSED" -lt "$HEALTH_TIMEOUT" ]; do
+        if curl -sf -o /dev/null "$HEALTH_URL" 2>/dev/null; then
+            echo "llama-server ready (${_ELAPSED}s)"
+            break
+        fi
+        if ! kill -0 "$LLAMA_PID" 2>/dev/null; then
+            echo "ERROR: llama-server (PID $LLAMA_PID) died during startup. Check $LOG_FILE" >&2
+            if [ -n "$EMBED_PID" ]; then kill "$EMBED_PID" 2>/dev/null || true; fi
+            exec 9>&-
+            exit 1
+        fi
+        sleep "$HEALTH_INTERVAL"
+        _ELAPSED=$((_ELAPSED + HEALTH_INTERVAL))
+    done
+    if [ "$_ELAPSED" -ge "$HEALTH_TIMEOUT" ]; then
+        echo "ERROR: llama-server failed to become ready within ${HEALTH_TIMEOUT}s" >&2
+        echo "Check logs at $LOG_FILE" >&2
+        kill "$LLAMA_PID" 2>/dev/null || true
+        if [ -n "$EMBED_PID" ]; then kill "$EMBED_PID" 2>/dev/null || true; fi
+        exec 9>&-
+        exit 1
+    fi
 
     luajit "$PROXY_SCRIPT" >> "$LOG_FILE" 2>&1 &
     PROXY_PID=$!
 
-    # Write pidfile — never write "0" as a placeholder PID
-    printf '%s' "$LLAMA_PID $PROXY_PID${EMBED_PID:+ $EMBED_PID}" > "$PID_FILE"
-    echo "" >> "$PID_FILE"
     echo "Started: llama-server=$LLAMA_PID proxy=$PROXY_PID embed=${EMBED_PID:-none}"
 
-    # Perform basic liveness check — ensure processes are still alive after a short delay
+    # Liveness check — verify all processes survive startup
     sleep 2
     _ANY_DEAD=false
     for _P in $LLAMA_PID $PROXY_PID $EMBED_PID; do
@@ -226,11 +258,21 @@ if [ "$1" = "--daemon" ]; then
             _ANY_DEAD=true
         fi
     done
+    # Readiness probe: confirm llama-server still responds after all processes up
+    if ! curl -sf -o /dev/null "$HEALTH_URL" 2>/dev/null; then
+        echo "ERROR: llama-server health check failed after startup" >&2
+        _ANY_DEAD=true
+    fi
     if $_ANY_DEAD; then
-        rm -f "$PID_FILE"
+        exec 9>&-
         exit 1
     fi
 
+    # Write pidfile only after verified alive (while still holding lock)
+    printf '%s' "$LLAMA_PID $PROXY_PID${EMBED_PID:+ $EMBED_PID}" > "$PID_FILE"
+    echo "" >> "$PID_FILE"
+
+    exec 9>&-
     exit 0
 fi
 

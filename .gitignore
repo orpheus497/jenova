@@ -18,8 +18,8 @@
 !/models/.gitkeep
 
 # --- Runtime Data ---
-/var/log/*
-/var/cache/*
+/var/log/**
+/var/cache/**
 !/var/log/.gitkeep
 !/var/cache/.gitkeep
 
