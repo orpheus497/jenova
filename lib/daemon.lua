@@ -24,11 +24,12 @@ end
 
 function daemon.write_pidfile(path, pid)
   local tmp = path .. ".tmp"
-  local f = io.open(tmp, "w")
-  if not f then return false end
+  local f, open_err = io.open(tmp, "w")
+  if not f then return false, "failed to open pidfile for writing: " .. (open_err and tostring(open_err) or "unknown error") end
   f:write(tostring(pid) .. "\n")
   f:close()
-  os.rename(tmp, path)
+  local ok, rename_err = os.rename(tmp, path)
+  if not ok then return false, "failed to rename pidfile: " .. (rename_err and tostring(rename_err) or "unknown error") end
   return true
 end
 
@@ -105,7 +106,10 @@ function daemon.start_background(cmd_table, log_path, working_dir, pidfile, env)
       return false, "child exec failed"
     end
     if pidfile then
-      daemon.write_pidfile(pidfile, pid)
+      local ok, err = daemon.write_pidfile(pidfile, pid)
+      if not ok then
+        return false, err or "failed to write pidfile"
+      end
     end
     return true, tonumber(pid)
   end

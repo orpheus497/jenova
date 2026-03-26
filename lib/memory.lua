@@ -54,10 +54,14 @@ local session_action_key_order = {} -- insertion-order list for LRU eviction of 
 -- Ensure .jenova directory exists
 -------------------------------------------------------------------------------
 function memory.init()
-  local ok_mkdir, err_mkdir = pcall(function() os.execute("mkdir -p " .. shell_quote(JENOVA_DIR)) end)
-  if not ok_mkdir then io.write("[memory] warning: mkdir failed: "..tostring(err_mkdir).."\n") end
-  local ok_bk, err_bk = pcall(function() os.execute("mkdir -p " .. shell_quote(JENOVA_DIR .. "/backups")) end)
-  if not ok_bk then io.write("[memory] warning: mkdir backups failed: "..tostring(err_bk).."\n") end
+  local rc_mkdir = os.execute("mkdir -p " .. shell_quote(JENOVA_DIR))
+  if rc_mkdir ~= 0 then
+    io.write(string.format("[memory] warning: mkdir failed for %s (exit status %s)\n", JENOVA_DIR, tostring(rc_mkdir)))
+  end
+  local rc_bk = os.execute("mkdir -p " .. shell_quote(JENOVA_DIR .. "/backups"))
+  if rc_bk ~= 0 then
+    io.write(string.format("[memory] warning: mkdir failed for %s (exit status %s)\n", JENOVA_DIR .. "/backups", tostring(rc_bk)))
+  end
   -- prefer daemon helper for background tasks in future; dir creation keeps os.execute for portability
 
   session_id = string.format("%x", os.time()) .. string.format("%04x", math.random(0, 0xFFFF))
