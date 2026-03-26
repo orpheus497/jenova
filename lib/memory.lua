@@ -55,9 +55,13 @@ local session_action_key_order = {} -- insertion-order list for LRU eviction of 
 -------------------------------------------------------------------------------
 function memory.init()
   local rc_mkdir = os.execute("mkdir -p " .. shell_quote(JENOVA_DIR))
-  if rc_mkdir ~= 0 then io.write("[memory] warning: mkdir failed\n") end
+  if rc_mkdir ~= 0 then
+    io.write(string.format("[memory] warning: mkdir failed for %s (exit status %s)\n", JENOVA_DIR, tostring(rc_mkdir)))
+  end
   local rc_bk = os.execute("mkdir -p " .. shell_quote(JENOVA_DIR .. "/backups"))
-  if rc_bk ~= 0 then io.write("[memory] warning: mkdir backups failed\n") end
+  if rc_bk ~= 0 then
+    io.write(string.format("[memory] warning: mkdir failed for %s (exit status %s)\n", JENOVA_DIR .. "/backups", tostring(rc_bk)))
+  end
   -- prefer daemon helper for background tasks in future; dir creation keeps os.execute for portability
 
   session_id = string.format("%x", os.time()) .. string.format("%04x", math.random(0, 0xFFFF))
