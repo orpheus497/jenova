@@ -15,7 +15,10 @@ else
     exit 1
 fi
 
-API_URL="http://${HOST}:${PORT}"
+# Separate HOST (bind address) from CONNECT_HOST (client connect address)
+# HOST may be 0.0.0.0 (listen on all interfaces), but clients need a real IP
+CONNECT_HOST="${JENOVA_CONNECT_HOST:-127.0.0.1}"
+API_URL="http://${CONNECT_HOST}:${PORT}"
 JENOVA_DIR="${JENOVA_STATE:-$SCRIPT_DIR/.jenova}"
 if [ -n "$LOG_DIR" ]; then
     SERVER_LOG="$LOG_DIR/jenova-ca.log"
@@ -32,9 +35,9 @@ mkdir -p "$JENOVA_DIR"
 # Accepts HTTP 200 from the proxy /health endpoint as the success signal.
 check_health() {
     if [ -f "$SCRIPT_DIR/lib/healthcheck.lua" ]; then
-        luajit "$SCRIPT_DIR/lib/healthcheck.lua" "$HOST" "$PORT" 3 2>/dev/null
+        luajit "$SCRIPT_DIR/lib/healthcheck.lua" "$CONNECT_HOST" "$PORT" 3 2>/dev/null
     elif [ -f "$SCRIPT_DIR/../lib/healthcheck.lua" ]; then
-        luajit "$SCRIPT_DIR/../lib/healthcheck.lua" "$HOST" "$PORT" 3 2>/dev/null
+        luajit "$SCRIPT_DIR/../lib/healthcheck.lua" "$CONNECT_HOST" "$PORT" 3 2>/dev/null
     else
         return 1
     fi
@@ -49,11 +52,19 @@ else
     
     # Run the server script using --daemon mode (jenova-ca handles its own backgrounding)
     if [ -f "$SCRIPT_DIR/jenova-ca" ]; then
-        "$SCRIPT_DIR/jenova-ca" --daemon
-        STARTED_BY_THIS_INVOCATION=1
+        if "$SCRIPT_DIR/jenova-ca" --daemon; then
+            STARTED_BY_THIS_INVOCATION=1
+        else
+            echo "Error: jenova-ca failed to start" >&2
+            exit 1
+        fi
     elif [ -f "$SCRIPT_DIR/../jenova-ca" ]; then
-        "$SCRIPT_DIR/../jenova-ca" --daemon
-        STARTED_BY_THIS_INVOCATION=1
+        if "$SCRIPT_DIR/../jenova-ca" --daemon; then
+            STARTED_BY_THIS_INVOCATION=1
+        else
+            echo "Error: jenova-ca failed to start" >&2
+            exit 1
+        fi
     else
         echo "Error: jenova-ca launcher not found."
         exit 1

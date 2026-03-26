@@ -216,6 +216,21 @@ if [ "$1" = "--daemon" ]; then
     printf '%s' "$LLAMA_PID $PROXY_PID${EMBED_PID:+ $EMBED_PID}" > "$PID_FILE"
     echo "" >> "$PID_FILE"
     echo "Started: llama-server=$LLAMA_PID proxy=$PROXY_PID embed=${EMBED_PID:-none}"
+
+    # Perform basic liveness check — ensure processes are still alive after a short delay
+    sleep 2
+    _ANY_DEAD=false
+    for _P in $LLAMA_PID $PROXY_PID $EMBED_PID; do
+        if [ -n "$_P" ] && ! kill -0 "$_P" 2>/dev/null; then
+            echo "ERROR: Process $_P died shortly after startup. Check logs at $LOG_FILE" >&2
+            _ANY_DEAD=true
+        fi
+    done
+    if $_ANY_DEAD; then
+        rm -f "$PID_FILE"
+        exit 1
+    fi
+
     exit 0
 fi
 

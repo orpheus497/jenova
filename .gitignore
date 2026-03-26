@@ -8,7 +8,8 @@
 
 # --- Models (never upload multi-GB LLM weights) ---
 *.gguf
-*.bin
+/models/*.bin
+models/**/*.bin
 *.safetensors
 *.onnx
 *.pt
