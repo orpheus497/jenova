@@ -39,7 +39,7 @@ fi
 
 DRAFT_PATH="${JENOVA_DRAFT_PATH:-$MODEL_DRAFT}"
 DRAFT_ARGS=""
-if [ -f "$DRAFT_PATH" ] && [ -n "$JENOVA_DRAFT" ]; then
+if [ -f "$DRAFT_PATH" ] && [ "${JENOVA_DRAFT:-1}" != "0" ]; then
     DRAFT_ARGS="-md $DRAFT_PATH -ngld all --draft-max 16 --draft-min 4 --draft-p-min 0.6"
 fi
 
@@ -95,7 +95,7 @@ case "$1" in
                     kill "$P" 2>/dev/null || true
                 fi
             done
-            sleep 1
+            sleep 2
             for P in $OLD_LLAMA_PID $OLD_PROXY_PID $OLD_EMBED_PID; do
                 if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
                     echo "Force-killing PID $P..."
@@ -104,6 +104,7 @@ case "$1" in
             done
             rm -f "$PID_FILE"
             rm -f "$JENOVA_STATE/llama-embed.pid"
+            rm -f "$JENOVA_STATE/indexer.pid"
             echo "Stopped."
         else
             echo "No PID file found at $PID_FILE"
@@ -173,7 +174,7 @@ if [ "$1" = "--daemon" ]; then
         $KV_ARGS \
         -c "$CTX_SIZE" \
         -b 2048 \
-        -ub 256 \
+        -ub 512 \
         -np "$NUM_SLOTS" \
         -t "$THREADS" \
         -tb "$THREADS_BATCH" \
@@ -181,6 +182,7 @@ if [ "$1" = "--daemon" ]; then
         -cb \
         --spm-infill \
         --cache-prompt \
+        --conn-timeout 300 \
         --offline \
         --host "$HOST" \
         --port "$LLAMA_PORT" \
@@ -230,7 +232,7 @@ while [ "$1" = "--daemon" ]; do shift; done
     $KV_ARGS \
     -c "$CTX_SIZE" \
     -b 2048 \
-    -ub 256 \
+    -ub 512 \
     -np "$NUM_SLOTS" \
     -t "$THREADS" \
     -tb "$THREADS_BATCH" \
@@ -238,6 +240,7 @@ while [ "$1" = "--daemon" ]; do shift; done
     -cb \
     --spm-infill \
     --cache-prompt \
+    --conn-timeout 300 \
     --offline \
     --host "$HOST" \
     --port "$LLAMA_PORT" \
@@ -266,21 +269,27 @@ fi
 
 cleanup() {
     echo "Cleaning up..."
-    kill -- -$$ 2>/dev/null || true
     for P in $LLAMA_PID $PROXY_PID $EMBED_PID; do
         if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
-            kill "$P" 2>/dev/null
+            kill "$P" 2>/dev/null || true
+            kill -"$P" 2>/dev/null || true
         fi
     done
-    sleep 1
+    sleep 2
     for P in $LLAMA_PID $PROXY_PID $EMBED_PID; do
         if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
-            kill -9 "$P" 2>/dev/null
+            kill -9 "$P" 2>/dev/null || true
+            kill -9 -"$P" 2>/dev/null || true
         fi
     done
+    wait $LLAMA_PID 2>/dev/null
+    wait $PROXY_PID 2>/dev/null
+    [ -n "$EMBED_PID" ] && wait $EMBED_PID 2>/dev/null
     pkill -f "llama-server.*${LLAMA_EMBED_PORT}" 2>/dev/null || true
     pkill -f "llama-server.*${LLAMA_PORT}" 2>/dev/null || true
     rm -f "$PID_FILE"
+    rm -f "$JENOVA_STATE/llama-embed.pid"
+    rm -f "$JENOVA_STATE/indexer.pid"
 }
 trap cleanup EXIT INT TERM
 

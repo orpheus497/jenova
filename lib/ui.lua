@@ -74,11 +74,19 @@ local function get_term_size()
     return ws[1], ws[0]  -- cols, rows
   end
   local p = io.popen("tput cols 2>/dev/null")
-  local c = p and tonumber(p:read("*l")) or 80
-  if p then p:close() end
+  local c = 80
+  if p then
+    local rd_ok, rd_val = pcall(p.read, p, "*l")
+    p:close()
+    if rd_ok and rd_val then c = tonumber(rd_val) or 80 end
+  end
   p = io.popen("tput lines 2>/dev/null")
-  local r = p and tonumber(p:read("*l")) or 24
-  if p then p:close() end
+  local r = 24
+  if p then
+    local rd_ok, rd_val = pcall(p.read, p, "*l")
+    p:close()
+    if rd_ok and rd_val then r = tonumber(rd_val) or 24 end
+  end
   return c, r
 end
 

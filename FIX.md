@@ -1,6 +1,6 @@
 # Jenova Fix Ledger
 
-**Updated:** 2026-03-25 (cohesion pass complete)
+**Updated:** 2026-03-26
 **Branch:** `build`
 
 All items in this ledger are **resolved**. The codebase has been fully audited and fixed in the cohesion pass commit.
@@ -10,7 +10,8 @@ All items in this ledger are **resolved**. The codebase has been fully audited a
 ## Resolved Items
 
 ### GPU Strategy
-- [x] **Bug 1.1** — `-ngl` conflicted with `-fitt`: removed from all launch commands (`bin/jenova-ca`, `bin/llama-server-nvim`)
+- [x] **Bug 1.1** — `-ngl` conflicted with `-fitt`: removed from all launch commands (`bin/jenova-ca`)
+- [x] **Bug 1.2** — `bin/llama-server-nvim` spawned a second llama-server on port 8012 using the same 7B model, competing for GPU memory and bypassing the proxy. Rewritten: now ensures jenova-ca is running via the shared health-check pattern and exits. Neovim connects to `:8081` (FIM) or `:8080` (chat+RAG).
 - [x] **14B model removed** — codebase now targets 7B (Qwen2.5-Coder-7B-Q5_K_M) exclusively; 16k context, 2 slots, q8_0 KV cache
 
 ### Launcher / Scripts
@@ -81,6 +82,30 @@ All items in this ledger are **resolved**. The codebase has been fully audited a
 - [x] **`tests/download-draft-model.sh`** — echo fallback path corrected to `$SCRIPT_DIR/../llama.cpp/...`
 - [x] **`test_bin_jenova.sh`** — preflight check for `jenova-ca`; `EXIT_CODE` tracks health check failures
 - [x] **`README.md` dual-GPU notes** — docs already reflect current dual-GPU auto-fit config
+
+---
+
+## Hardware Optimization Pass — 2026-03-26
+
+- [x] **Tensor split corrected** — `TENSOR_SPLIT` changed from `2.0,1.0` to `1.0,1.8` in `etc/jenova.conf`. Previous ratio over-allocated NVIDIA (4 GiB VRAM) relative to Intel Xe (~7 GiB UMA); new ratio lets Intel carry more layers while keeping NVIDIA within its discrete VRAM budget.
+- [x] **Ubatch raised** — `-ub 256` → `-ub 512` in both daemon and foreground launch paths in `bin/jenova-ca`. Improves GPU kernel utilisation during prompt prefill on dual-Vulkan setup.
+- [x] **Speculative decoding on by default** — `JENOVA_DRAFT` defaults to `1` in `etc/jenova.conf`; condition in `bin/jenova-ca` updated from `[ -n "$JENOVA_DRAFT" ]` to `[ "${JENOVA_DRAFT:-1}" != "0" ]`. The 0.5B drafter (Qwen2.5-Coder-0.5B-Q8_0) now loads automatically. Set `JENOVA_DRAFT=0` to disable.
+- [x] **README config example** — `TENSOR_SPLIT` and `CTX_SIZE` examples corrected to match current values (`1.0,1.8`, `16384`).
+
+---
+
+## Search & Agent Cohesion Pass — 2026-03-26
+
+- [x] **`bm25_index_file` stale entries on skip** — Early returns for >100KB files, binary files, and zero-term files now evict the old entry from `bm25_index`, `df`, and `total_docs` before returning nil. Previously, calling `reindex_file` on a file that had grown large or become binary left stale BM25 data that persisted in search results.
+- [x] **`/reindex` extension filter** — `search.index_dir(".")` in the `/reindex` slash command now passes the same extension whitelist as the startup index. Previously it indexed all file types (minus hardcoded exclusions), polluting BM25 with noise.
+- [x] **`search.lua` line formatting** — `ok_mkdir` error handler was jammed on the same line as the preceding `end)`, making it effectively invisible. Split to separate lines.
+
+---
+
+## Neovim Config Audit — 2026-03-26
+
+- [x] **`init.lua` llama.vim endpoint** — `vim.g.llama_config` pointed to `/completion` (non-existent). Corrected to `/v1/chat/completions` (the only POST endpoint on the proxy). Ghost-text completion now routes through the intelligence proxy with RAG injection.
+- [x] **`init.lua` `<leader>ca` keybind** — Referenced `./jenova-agent` which does not exist. Fixed to `cd ~/Projects/jenova && bin/jenova`.
 
 ---
 

@@ -36,6 +36,8 @@ local ACTION_TTL = 1800       -- action history expires after 30 minutes
 local MAX_ERRORS = 50         -- max error entries on disk
 local MAX_LEARNED = 100       -- max learned entries on disk
 local MAX_ACTIONS = 200       -- max action entries on disk
+local MAX_SESSION_ERRORS = 100  -- cap in-memory session error list
+local MAX_INDEX_KEYS = 400    -- cap in-memory action index map
 
 -------------------------------------------------------------------------------
 -- Session state (in-memory, not persisted)
@@ -46,6 +48,7 @@ local session_actions = {}     -- { {tool, args_key, result_key, ts, success} }
 local session_plan = {}        -- { {step, status, detail} }  status: pending/done/failed
 local session_errors = {}      -- errors from THIS session only
 local session_action_index = {} -- "tool:args_hash" -> {count, last_result, success}
+local session_action_key_order = {} -- insertion-order list for LRU eviction of session_action_index
 
 -------------------------------------------------------------------------------
 -- Ensure .jenova directory exists
@@ -63,6 +66,7 @@ function memory.init()
   session_plan = {}
   session_errors = {}
   session_action_index = {}
+  session_action_key_order = {}
 
   memory.gc()
 end
@@ -166,8 +170,16 @@ function memory.log_error(tool_name, args_summary, error_msg)
     f:close()
   end
 
-  -- Session-local (for fast access)
+  -- Session-local (for fast access); cap to avoid unbounded growth
   session_errors[#session_errors + 1] = entry
+  if #session_errors > MAX_SESSION_ERRORS then
+    local half = math.floor(MAX_SESSION_ERRORS / 2)
+    local trimmed = {}
+    for i = #session_errors - half + 1, #session_errors do
+      trimmed[#trimmed + 1] = session_errors[i]
+    end
+    session_errors = trimmed
+  end
 end
 
 -------------------------------------------------------------------------------
@@ -198,11 +210,23 @@ function memory.record_action(tool_name, args, result, success)
     result_summary = (result or ""):sub(1, 100),
   }
 
-  -- In-memory index for fast lookup
+  -- In-memory index for fast lookup; evict oldest quarter when over limit
   local idx = session_action_index[key]
   if not idx then
     idx = { count = 0, last_result = "", successes = 0, failures = 0 }
     session_action_index[key] = idx
+    session_action_key_order[#session_action_key_order + 1] = key
+    if #session_action_key_order > MAX_INDEX_KEYS then
+      local evict = math.floor(MAX_INDEX_KEYS / 4)
+      for i = 1, evict do
+        session_action_index[session_action_key_order[i]] = nil
+      end
+      local new_order = {}
+      for i = evict + 1, #session_action_key_order do
+        new_order[#new_order + 1] = session_action_key_order[i]
+      end
+      session_action_key_order = new_order
+    end
   end
   idx.count = idx.count + 1
   idx.last_result = (result or ""):sub(1, 200)
@@ -212,7 +236,15 @@ function memory.record_action(tool_name, args, result, success)
     idx.failures = idx.failures + 1
   end
 
-  -- Sequential history
+  -- Sequential history (capped to prevent unbounded growth)
+  local MAX_SESSION_ACTIONS = 200
+  if #session_actions >= MAX_SESSION_ACTIONS then
+    local trimmed = {}
+    for i = #session_actions - math.floor(MAX_SESSION_ACTIONS / 2) + 1, #session_actions do
+      trimmed[#trimmed + 1] = session_actions[i]
+    end
+    session_actions = trimmed
+  end
   session_actions[#session_actions + 1] = entry
 
   -- Persistent (for cross-session pattern detection)
@@ -525,9 +557,10 @@ function memory.get_project_tree(root, max_depth)
   )
   local p = io.popen(cmd)
   if not p then cached_tree = ""; return cached_tree end
-  local output = p:read("*a")
+  local ok, output = pcall(p.read, p, "*a")
   p:close()
-  cached_tree = output
+  if not ok then cached_tree = ""; return cached_tree end
+  cached_tree = output or ""
   return cached_tree
 end
 
@@ -577,6 +610,7 @@ function memory.clear_session()
   session_plan = {}
   session_errors = {}
   session_action_index = {}
+  session_action_key_order = {}
 end
 
 -------------------------------------------------------------------------------

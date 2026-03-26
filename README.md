@@ -7,7 +7,7 @@ Jenova is a high-performance, low-latency cognitive engine that turns a FreeBSD 
 - Persistent intelligence with a daemonized cognitive backend
 - Low-latency, hardware-aware inference using dual Vulkan GPU offload (NVIDIA + Intel Iris Xe) and LuaJIT
 - Optane-backed paging and cache strategies to enable large-context models on 16GB systems
-- Minimal memory footprint and high throughput for 7B / 14B model workflows
+- Minimal memory footprint and high throughput for 7B model workflows with optional speculative decoding
 
 ## Key Features
 
@@ -49,10 +49,10 @@ The system is partitioned into four conceptual streams:
 
 ### GPU Layer Distribution (auto-tuned by `-fitt`)
 
-| Model | Total Layers | Typical GPU Layers | GPU Memory | CPU Layers |
+| Model | Total Layers | GPU Layers | GPU Memory | CPU Layers |
 |---|---|---|---|---|
-| 7B | 28 | ~28 (all) | ~4.4 GiB across both | 0 |
-| 14B | 48 | ~33-38 | ~8-10 GiB across both | 10-15 via mmap/Optane |
+| Qwen2.5-Coder-7B | 28 | 28 (all) | ~4.4 GiB across both | 0 |
+| Qwen2.5-Coder-0.5B (drafter) | 28 | 28 (all) | ~0.5 GiB | 0 |
 
 ## Installation
 
@@ -70,10 +70,10 @@ Edit `etc/jenova.conf` to tune hardware settings. Key entries:
 
 ```sh
 DEVICES="Vulkan0,Vulkan1"     # Dual-GPU: NVIDIA + Intel Iris Xe
-TENSOR_SPLIT="2.0,1.0"        # Split ratio (NVIDIA gets 2 parts, Intel 1)
+TENSOR_SPLIT="1.0,1.8"        # Split ratio: Intel Xe carries more layers (~7 GiB UMA vs NVIDIA 4 GiB)
 FIT_TARGET=768                 # Safety margin in MiB for -fitt auto-tuning
-CTX_SIZE="8192"                # Context window (14B default; 7B uses 16384)
-JENOVA_DRAFT=1                 # Enable speculative decoding (requires drafter model)
+CTX_SIZE="16384"               # Context window (7B: 16k)
+JENOVA_DRAFT=1                 # Speculative decoding on by default; set to 0 to disable
 ```
 
 Notes:
@@ -94,14 +94,15 @@ bin/jenova
 
 ## Models & Roles
 
-- Fast Agent (7B): recommended for tool-calling and low-latency tasks (e.g., Qwen2.5-Coder-7B).
-- Deep Reasoner (14B): used for heavy reasoning workloads.
-- Drafter (0.5B): optional small model for speculative decoding to accelerate generation.
-- Embedding (nomic-embed-text-v1.5): CPU-only, persistent daemon for RAG and semantic search.
+- Agent (7B): Qwen2.5-Coder-7B-Q5_K_M — all 28 transformer layers fit across both Vulkan devices; 16k context, 2 slots, q8_0 KV cache.
+- Drafter (0.5B): Qwen2.5-Coder-0.5B-Q8_0 — speculative decoding target; enabled by default (`JENOVA_DRAFT=1`), disable with `JENOVA_DRAFT=0`.
+- Embedding (nomic-embed-text-v1.5): CPU-only persistent daemon on port 8082 for RAG and semantic search.
 
 ## Directory Layout
 
-- `bin/` — Launch scripts (`jenova`, `jenova-ca`, `llama-server-nvim`).
+- `bin/jenova` — Interactive agent launcher (auto-starts backend if needed, runs `agent.lua`).
+- `bin/jenova-ca` — Backend manager: starts/stops/restarts llama-server, proxy, and embed server as a unit.
+- `bin/llama-server-nvim` — Neovim helper: ensures jenova-ca is running, then exits. Does **not** start a separate server.
 - `lib/` — Core LuaJIT logic for the agent, embedding, HTTP, search, memory, and UI.
 - `etc/` — Configuration files (`jenova.conf`).
 - `models/` — Model storage (GGUF format).
@@ -119,13 +120,36 @@ All HTTP communication uses raw BSD sockets via LuaJIT FFI — no libcurl depend
 
 ## Neovim Integration
 
-`jenova-ca` supports multi-slot usage for both the interactive agent and Neovim FIM (Fill-In-Middle) completions. Configure your Neovim plugin to point at the local `jenova-ca` service.
+All clients — CLI agent, Neovim, and any other HTTP consumer — share the **single** backend started by `jenova-ca`. No separate model instance is loaded for Neovim.
+
+Run `bin/llama-server-nvim` once before opening Neovim to ensure the backend is up. Then configure `llama.vim` (or equivalent plugin) with these endpoints:
+
+| Use case | Endpoint | Notes |
+|---|---|---|
+| FIM / infill completions | `http://127.0.0.1:8081` | Direct to llama-server; `--spm-infill` is always enabled |
+| Chat completions + RAG | `http://127.0.0.1:8080` | Routes through intelligence proxy; RAG context injected |
+
+Both ports are defined in `etc/jenova.conf` as `LLAMA_PORT` and `PORT`.
+
+## Environment Variables
+
+| Variable | Default | Effect |
+|---|---|---|
+| `JENOVA_API_URL` | `http://127.0.0.1:8080` | Proxy endpoint for the agent |
+| `JENOVA_LLAMA_URL` | `http://127.0.0.1:8081` | Direct llama-server endpoint (proxy internal) |
+| `JENOVA_CONN_TIMEOUT` | `600` | Max seconds a proxy connection coroutine may live |
+| `JENOVA_TIMEOUT` | `600` | Agent HTTP timeout (seconds) |
+| `JENOVA_MAX_TURNS` | `25` | Max agentic tool-call turns per user message |
+| `JENOVA_CTX` | `16384` | Context window token limit |
+| `JENOVA_DEBUG` | `""` | Set to `1` for verbose debug output |
 
 ## Troubleshooting & Notes
 
 - If running into OOMs with ZFS, lower ARC (`vfs.zfs.arc_max`) and confirm swap/Optane configuration.
 - The embedding server runs on CPU (`GGML_VULKAN_DISABLE=1`, ngl 0) to preserve all GPU memory for main model inference.
 - The codebase avoids subprocess reinitialization penalties by using persistent daemon processes.
+- Backup files in `.jenova/backups/` are rotated automatically: only the 5 most recent backups per filename are kept.
+- Shell command output is capped at ~10KB in memory (head + tail) before being sent to the model, preventing OOM on runaway commands.
 
 ## License & Credits
 

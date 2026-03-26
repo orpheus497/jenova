@@ -50,6 +50,8 @@ local last_read_path          = nil
 local last_read_content       = nil
 local edit_fails_this_turn    = {}
 
+local MAX_BACKUPS_PER_FILE = 5  -- keep only the N most-recent backups per filename
+
 -------------------------------------------------------------------------------
 -- UI shorthand aliases
 -------------------------------------------------------------------------------
@@ -255,10 +257,30 @@ local function exec_shell(args)
   ui.shell_cmd(cmd)
   local tmpfile = os.tmpname()
   local full = string.format("cd %q && %s; echo \"\\n[EXIT:$?]\"", CWD or ".", cmd)
-  os.execute(full .. " >" .. string.format("%q", tmpfile) .. " 2>&1")
+  local exec_ok, exec_err = pcall(os.execute, full .. " >" .. string.format("%q", tmpfile) .. " 2>&1")
   local f = io.open(tmpfile, "r")
-  local output = f and f:read("*a") or ""
-  if f then f:close() end
+  local output = ""
+  if f then
+    -- Read head+tail to cap memory regardless of output size.
+    -- Avoids loading 1GB+ into the Lua heap before truncation.
+    local MAX_HEAD = 8192
+    local MAX_TAIL = 2048
+    local head_ok, head = pcall(f.read, f, MAX_HEAD)
+    if head_ok and head then
+      local size_ok, size = pcall(f.seek, f, "end", 0)
+      if size_ok and size and size > MAX_HEAD + MAX_TAIL then
+        pcall(f.seek, f, "set", size - MAX_TAIL)
+        local tail_ok, tail = pcall(f.read, f, MAX_TAIL)
+        output = head .. "\n...[output truncated: " .. size .. " bytes total]...\n"
+          .. (tail_ok and tail or "")
+      else
+        if size_ok then pcall(f.seek, f, "set", #head) end
+        local rest_ok, rest = pcall(f.read, f, "*a")
+        output = head .. (rest_ok and rest or "")
+      end
+    end
+    f:close()
+  end
   os.remove(tmpfile)
 
   local code = 0
@@ -323,6 +345,30 @@ local function exec_read_file(args)
   return result, true
 end
 
+-- Prune old backups for a given basename, keeping the MAX_BACKUPS_PER_FILE newest.
+-- Backup filenames are "{basename}.{YYYYMMDD_HHMMSS}", so lexicographic sort = chronological.
+local function prune_backups(bk_dir, basename)
+  local p = io.popen(string.format("ls -1 %q 2>/dev/null", bk_dir))
+  if not p then return end
+  local files = {}
+  local escaped = basename:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
+  local pattern = "^" .. escaped .. "%.[0-9]"
+  local ok_iter = pcall(function()
+    for line in p:lines() do
+      if line:match(pattern) then
+        files[#files + 1] = line
+      end
+    end
+  end)
+  p:close()
+  if not ok_iter then return end
+  table.sort(files)  -- lexicographic = chronological for YYYYMMDD_HHMMSS names
+  local excess = #files - MAX_BACKUPS_PER_FILE
+  for i = 1, excess do
+    os.remove(bk_dir .. "/" .. files[i])
+  end
+end
+
 local function exec_edit_file(args)
   local path = resolve_path(args.path)
   local start_line = tonumber(args.start_line)
@@ -378,7 +424,7 @@ local function exec_edit_file(args)
     new_content = new_content .. "\n"
   end
   
-  -- Backup
+  -- Backup (rotate: keep only MAX_BACKUPS_PER_FILE per filename)
   local bk_dir = (CWD or ".") .. "/.jenova/backups"
   local ok_bkdir, err_bkdir = pcall(function() os.execute(string.format("mkdir -p %q", bk_dir)) end)
   if not ok_bkdir then ui.status_warn('failed to ensure backup dir: '..tostring(err_bkdir)) end
@@ -390,6 +436,7 @@ local function exec_edit_file(args)
     bk_out:write(content)
     bk_out:close()
     ui.file_backup(bk_path)
+    prune_backups(bk_dir, bn)
   end
 
   ui.file_edit(path, start_line, end_line)
@@ -424,13 +471,15 @@ local function exec_write_file(args)
     local old_data = ef:read("*a"); ef:close()
     local bk_dir = (CWD or ".") .. "/.jenova/backups"
     local ok_bkdir2, err_bkdir2 = pcall(function() os.execute(string.format("mkdir -p %q", bk_dir)) end)
-  if not ok_bkdir2 then ui.status_warn('failed to ensure backup dir: '..tostring(err_bkdir2)) end
+    if not ok_bkdir2 then ui.status_warn('failed to ensure backup dir: '..tostring(err_bkdir2)) end
     local bn = path:match("([^/]+)$") or path
-    local ts = os.date("%H%M%S")
+    local ts = os.date("%Y%m%d_%H%M%S")
     local bk_path = bk_dir .. "/" .. bn .. "." .. ts
     local bk_out = io.open(bk_path, "w")
-    if bk_out then bk_out:write(old_data); bk_out:close()
+    if bk_out then
+      bk_out:write(old_data); bk_out:close()
       ui.file_backup(bk_path)
+      prune_backups(bk_dir, bn)
     end
   end
 
@@ -459,12 +508,15 @@ local function exec_write_file(args)
     local compile_cmd = string.format("cd %q && cc -fsyntax-only -Wall %q 2>&1", CWD or ".", path)
     ui.compile_check(path)
     local tmpf = os.tmpname()
-    -- Run compile in subshell and capture output
-    local ok_compile, err_compile = pcall(function() os.execute(compile_cmd .. " > " .. tmpf .. " 2>&1") end)
+    local ok_compile, err_compile = pcall(os.execute, compile_cmd .. " > " .. tmpf .. " 2>&1")
     if not ok_compile then ui.status_warn('compile command failed to run: '..tostring(err_compile)) end
     local cf = io.open(tmpf, "r")
-    local compile_out = cf and cf:read("*a") or ""
-    if cf then cf:close() end
+    local compile_out = ""
+    if cf then
+      local rd_ok, rd_data = pcall(cf.read, cf, "*a")
+      cf:close()
+      if rd_ok then compile_out = rd_data or "" end
+    end
     os.remove(tmpf)
     if compile_out ~= "" and #compile_out > 5 then
       ui.status_warn("compile issues remain")
@@ -1083,6 +1135,10 @@ local function agent_turn(user_msg)
 
         status_turn(turn, name)
         local result, success = execute_tool(name, arguments)
+        local MAX_TOOL_RESULT = 16000
+        if #result > MAX_TOOL_RESULT then
+          result = result:sub(1, MAX_TOOL_RESULT / 2) .. "\n...[truncated " .. #result .. " bytes]...\n" .. result:sub(-MAX_TOOL_RESULT / 4)
+        end
         messages[#messages+1] = { role = "tool", content = result, tool_call_id = call_id }
 
         -- Reflect: if we got BLOCKED, add guidance
@@ -1177,8 +1233,13 @@ end
 -------------------------------------------------------------------------------
 local function main()
   local p = io.popen("pwd")
-  CWD = p and p:read("*l") or "."
-  if p then p:close() end
+  if p then
+    local ok, line = pcall(p.read, p, "*l")
+    p:close()
+    CWD = (ok and line) or "."
+  else
+    CWD = "."
+  end
   memory.init()
 
   local embed_ok = embed.init({ 
@@ -1249,7 +1310,11 @@ local function main()
       ui.dimtext("=== System Prompt ===\n"..build_system_prompt().."\n=== End ===\n"); goto continue
     elseif line == "/reindex" then
       memory.invalidate_tree_cache()
-      indexed = search.index_dir(".")
+      indexed = search.index_dir(".", {
+        "lua","sh","c","h","cpp","py","js","ts","go","rs",
+        "md","txt","json","yaml","yml","toml","conf","cfg",
+        "html","css","Makefile","zig",
+      })
       ui.status_ok("reindexed "..indexed); goto continue
     elseif line == "/files" then
       ui.dimtext((memory.get_project_tree() or "(none)").."\n"); goto continue
@@ -1294,8 +1359,12 @@ local function main()
       ui.status_info("Running benchmark...")
       local bench_cmd = jenova_root.."/llama.cpp/build/bin/llama-bench -m "..jenova_root.."/models/Qwen2.5-Coder-7B-Q5_K_M.gguf -ngl 99 -fa 1 -pg 512,128 2>&1"
       local bp = io.popen(bench_cmd)
-      local bout = bp and bp:read("*a") or "(bench failed)"
-      if bp then bp:close() end
+      local bout = "(bench failed)"
+      if bp then
+        local rd_ok, rd_data = pcall(bp.read, bp, "*a")
+        bp:close()
+        if rd_ok and rd_data then bout = rd_data end
+      end
       ui.dimtext(bout.."\n"); goto continue
     elseif line == "/stats" then
       local scode, sout = http.get(API_URL .. "/health", 3)
@@ -1304,8 +1373,12 @@ local function main()
       ui.dimtext("  Server: "..tostring(scode).." "..sout:sub(1,200).."\n")
       ui.dimtext("  Session: "..memory.get_session_id().." | "..dur.."s | "..acts.." actions\n")
       local mp = io.popen("nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu --format=csv,noheader 2>/dev/null")
-      local mout = mp and mp:read("*a") or ""
-      if mp then mp:close() end
+      local mout = ""
+      if mp then
+        local rd_ok, rd_data = pcall(mp.read, mp, "*a")
+        mp:close()
+        if rd_ok and rd_data then mout = rd_data end
+      end
       if mout and mout ~= "" then ui.dimtext("  GPU: "..mout:gsub("\n","").."\n") end
       goto continue
     elseif line == "/diag" then
@@ -1339,8 +1412,12 @@ local function main()
       end
       -- 5. GPU
       local mp2 = io.popen("nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu,temperature.gpu --format=csv,noheader 2>/dev/null")
-      local mout2 = mp2 and mp2:read("*a") or ""
-      if mp2 then mp2:close() end
+      local mout2 = ""
+      if mp2 then
+        local rd_ok, rd_data = pcall(mp2.read, mp2, "*a")
+        mp2:close()
+        if rd_ok and rd_data then mout2 = rd_data end
+      end
       if mout2 and mout2 ~= "" then
         ui.dimtext("  GPU(NV):    "..mout2:gsub("\n","").."\n")
       end
@@ -1359,7 +1436,7 @@ local function main()
 
       if gcode == 200 then
         local gok, gdata = pcall(json.decode, gresp)
-        if gok and gdata and gdata.choices then
+        if gok and gdata and gdata.choices and #gdata.choices > 0 then
           local _ = gdata.choices[1].message
           local gtok = (gdata.usage or {}).completion_tokens or "?"
           ui.dimtext("OK ("..gtime.."ms, "..tostring(gtok).." tokens)\n")

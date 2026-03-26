@@ -54,18 +54,17 @@ function embed.init(opts)
       local args = { embed_bin, '-m', model_path, '--embedding', '--port', port, '--host', host,
                       '-ngl', '0', '-c', '4096', '-b', '512', '--offline' }
 
-      local ok, pid_or_err = daemon.start_background(args, '.jenova/llama-embed.log', opts.script_dir or '.', '.jenova/llama-embed.pid', {GGML_VULKAN_DISABLE="1"})
+      local ok, pid_or_err = daemon.start_background(args, '.jenova/llama-embed.log', opts.script_dir or '.', '.jenova/llama-embed.pid', {GGML_VULKAN_DISABLE="1", GGML_VK_DEVICE=""})
       if not ok then
         io.write('[embed] WARNING: failed to start embedding binary: ' .. tostring(pid_or_err) .. '\n')
         initialized = false
         return false
       else
-        -- Wait for it to come up
-        for i = 1, 15 do
+        for _i = 1, 15 do
           local tv = ffi.new('struct timeval', {tv_sec=1, tv_usec=0})
-          ffi.C.select(0, nil, nil, nil, tv) -- Sleep 1s
-          status, body = http.get(EMBED_URL .. '/health', 1)
-          if status == 200 then
+          ffi.C.select(0, nil, nil, nil, tv)
+          local hstatus = http.get(EMBED_URL .. '/health', 1)
+          if hstatus == 200 then
             initialized = true
             return true
           end

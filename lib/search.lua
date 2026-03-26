@@ -134,9 +134,10 @@ end
 local function file_mtime(filepath)
   local p = io.popen(string.format("stat -f '%%m' %s 2>/dev/null", shell_quote(filepath)))
   if not p then return 0 end
-  local mtime = tonumber(p:read("*l")) or 0
+  local ok, line = pcall(p.read, p, "*l")
+  if not ok then p:close(); return 0 end
   p:close()
-  return mtime
+  return tonumber(line) or 0
 end
 
 -------------------------------------------------------------------------------
@@ -147,11 +148,47 @@ local function bm25_index_file(filepath)
   if not f then return nil end
   local content = f:read("*a")
   f:close()
-  if #content > 100000 then return nil end
-  if content:find("%z") then return nil end
+  if #content > 100000 then
+    -- Remove stale entry if the file grew too large since last index
+    local old = bm25_index[filepath]
+    if old then
+      for t in pairs(old.terms) do
+        df[t] = (df[t] or 1) - 1
+        if df[t] <= 0 then df[t] = nil end
+      end
+      total_docs = total_docs - 1
+      bm25_index[filepath] = nil
+    end
+    return nil
+  end
+  if content:find("%z") then
+    -- Remove stale entry if the file became binary since last index
+    local old = bm25_index[filepath]
+    if old then
+      for t in pairs(old.terms) do
+        df[t] = (df[t] or 1) - 1
+        if df[t] <= 0 then df[t] = nil end
+      end
+      total_docs = total_docs - 1
+      bm25_index[filepath] = nil
+    end
+    return nil
+  end
 
   local terms = tokenize(content)
-  if #terms == 0 then return nil end
+  if #terms == 0 then
+    -- Remove stale entry if file has become untokenizable since last index
+    local old = bm25_index[filepath]
+    if old then
+      for t in pairs(old.terms) do
+        df[t] = (df[t] or 1) - 1
+        if df[t] <= 0 then df[t] = nil end
+      end
+      total_docs = total_docs - 1
+      bm25_index[filepath] = nil
+    end
+    return nil
+  end
 
   local term_counts = {}
   for _, t in ipairs(terms) do
@@ -265,16 +302,29 @@ end
 function search.save_vectors()
   if not embed or not embed.is_available() then return false end
 
-  -- Load and merge existing on-disk entries so concurrent processes don't lose each other's work
+  -- Load and merge existing on-disk entries so concurrent background indexer
+  -- results are not lost. Skip merge if the file exceeds the safety cap to
+  -- avoid large memory spikes; in that case our in-memory vec_index wins.
+  local MAX_VECTOR_MERGE_BYTES = 20 * 1024 * 1024  -- 20 MB
   local save_data = {}
   local ef = io.open(VECTOR_FILE, "r")
   if ef then
-    local existing_content = ef:read("*a")
-    ef:close()
-    local ok_e, existing = pcall(json.decode, existing_content)
-    if ok_e and type(existing) == "table" then
-      for filepath, entry in pairs(existing) do
-        save_data[filepath] = entry
+    local file_size = ef:seek("end", 0) or 0
+    if file_size > 0 and file_size <= MAX_VECTOR_MERGE_BYTES then
+      ef:seek("set", 0)
+      local existing_content = ef:read("*a")
+      ef:close()
+      local ok_e, existing = pcall(json.decode, existing_content)
+      if ok_e and type(existing) == "table" then
+        for filepath, entry in pairs(existing) do
+          save_data[filepath] = entry
+        end
+      end
+    else
+      ef:close()
+      if file_size > MAX_VECTOR_MERGE_BYTES then
+        io.write(string.format("[search] vectors.json (%dMB) exceeds merge cap; overwriting with in-memory index.\n",
+          math.floor(file_size / 1048576)))
       end
     end
   end
@@ -430,8 +480,9 @@ function search.index_dir(root_dir, extensions)
   )
   local p = io.popen(cmd)
   if not p then return 0 end
-  local output = p:read("*a")
+  local ok_read, output = pcall(p.read, p, "*a")
   p:close()
+  if not ok_read or not output then return 0 end
 
   -- Reset BM25 index
   bm25_index = {}
@@ -469,7 +520,8 @@ function search.index_dir(root_dir, extensions)
     -- Seed RNG with time + process-derived entropy so temp filenames are unique
     math.randomseed(os.time() + math.floor(os.clock() * 1000000))
     local tmp_list = string.format(".jenova/index_queue_%d_%d.json", os.time(), math.random(100000))
-    local ok_mkdir, err_mkdir = pcall(function() os.execute("mkdir -p .jenova") end)    if not ok_mkdir then io.write("[search] warning: failed to create .jenova: "..tostring(err_mkdir).."\n") end
+    local ok_mkdir, err_mkdir = pcall(function() os.execute("mkdir -p .jenova") end)
+    if not ok_mkdir then io.write("[search] warning: failed to create .jenova: "..tostring(err_mkdir).."\n") end
     local f = io.open(tmp_list, "w")
     if f then
       f:write(json.encode(files_to_embed))
@@ -503,6 +555,22 @@ function search.index_dir(root_dir, extensions)
     end
     for _, filepath in ipairs(stale) do
       vec_index[filepath] = nil
+    end
+  end
+
+  -- Cap total vector entries to prevent unbounded memory growth
+  local MAX_VEC_FILES = 600
+  local vec_count = 0
+  for _ in pairs(vec_index) do vec_count = vec_count + 1 end
+  if vec_count > MAX_VEC_FILES then
+    local entries = {}
+    for fp, entry in pairs(vec_index) do
+      entries[#entries + 1] = { path = fp, mtime = entry.mtime or 0 }
+    end
+    table.sort(entries, function(a, b_) return a.mtime < b_.mtime end)
+    local to_remove = vec_count - MAX_VEC_FILES
+    for i = 1, to_remove do
+      vec_index[entries[i].path] = nil
     end
   end
 

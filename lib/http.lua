@@ -51,7 +51,6 @@ local function resolve_host(host)
   end
   local ai = res[0]
   if ai == nil then
-    ffi.C.freeaddrinfo(res[0])
     return 0xffffffff
   end
 
@@ -63,16 +62,27 @@ end
 
 local function send_all(fd, data)
   local sent = 0
+  local retries = 0
+  local MAX_SEND_RETRIES = 50
   while sent < #data do
     local n = ffi.C.send(fd, data:sub(sent + 1), #data - sent, 0)
     if n <= 0 then
       local err = get_errno()
-      if err == EINTR or err == EAGAIN or err == EWOULDBLOCK or err == ETIMEDOUT then
+      if err == EINTR or err == EAGAIN or err == EWOULDBLOCK then
+        retries = retries + 1
+        if retries > MAX_SEND_RETRIES then
+          return false, "send() stalled after " .. retries .. " retries"
+        end
+        local tv_sleep = ffi.new("struct timeval")
+        tv_sleep.tv_sec = 0
+        tv_sleep.tv_usec = 50000
+        ffi.C.select(0, nil, nil, nil, tv_sleep)
         goto continue
       end
       return false, "send() failed: " .. get_errstr(err)
     end
     sent = sent + tonumber(n)
+    retries = 0
     ::continue::
   end
   return true

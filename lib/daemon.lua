@@ -90,20 +90,20 @@ function daemon.start_background(cmd_table, log_path, working_dir, pidfile, env)
   end
 
   if pid > 0 then
-    -- Parent: close write end, wait for child signal.
     ffi.C.close(pipefd[1])
     local buf = ffi.new("char[1]")
     local n = ffi.C.read(pipefd[0], buf, 1)
     ffi.C.close(pipefd[0])
     if n < 0 then
-      -- read() error — treat as exec failure
+      local status_buf = ffi.new("int[1]")
+      ffi.C.waitpid(pid, status_buf, ffi_defs.WNOHANG)
       return false, "pipe read failed"
     end
     if n > 0 then
-      -- Child sent an error byte before exec
+      local status_buf = ffi.new("int[1]")
+      ffi.C.waitpid(pid, status_buf, 0)
       return false, "child exec failed"
     end
-    -- n == 0 means EOF: child exec'd successfully (FD_CLOEXEC closed write end)
     if pidfile then
       daemon.write_pidfile(pidfile, pid)
     end
@@ -146,19 +146,25 @@ function daemon.stop_by_pidfile(pidfile)
   if not pid then return false, "no pidfile" end
   if not daemon.is_alive(pid) then
     daemon.remove_pidfile(pidfile)
+    daemon.reap_children()
     return true, "already dead"
   end
   ffi.C.kill(-pid, 15)
   ffi.C.kill(pid, 15)
-  for _ = 1, 10 do
+  for _ = 1, 20 do
     local tv = ffi.new("struct timeval", {tv_sec=0, tv_usec=100000})
     ffi.C.select(0, nil, nil, nil, tv)
     if not daemon.is_alive(pid) then
       daemon.remove_pidfile(pidfile)
+      daemon.reap_children()
       return true, "stopped"
     end
   end
+  ffi.C.kill(-pid, 9)
   ffi.C.kill(pid, 9)
+  local tv = ffi.new("struct timeval", {tv_sec=0, tv_usec=200000})
+  ffi.C.select(0, nil, nil, nil, tv)
+  daemon.reap_children()
   daemon.remove_pidfile(pidfile)
   return true, "killed"
 end

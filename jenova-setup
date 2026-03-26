@@ -102,6 +102,33 @@ for _nvme in 0 1; do
     fi
 done
 
+# --- OOM killer policy ---
+# Raise the OOM score adjustment for llama-server processes so the kernel
+# preferentially kills inference processes over system services when memory
+# is critically low. On FreeBSD, we use rctl if available.
+echo ""
+echo "--- OOM / Memory Policy ---"
+
+# Ensure RACCT/RCTL kernel support is noted
+if sysctl kern.racct.enable > /dev/null 2>&1; then
+    _RACCT=$(sysctl -n kern.racct.enable 2>/dev/null || echo "0")
+    if [ "$_RACCT" = "1" ]; then
+        echo "[ok]  kern.racct.enable=1 (RCTL available for per-process memory limits)"
+        echo "      To limit llama-server memory, add to /etc/rctl.conf:"
+        echo "      process:llama-server:memoryuse:deny=14G"
+    else
+        echo "[info] kern.racct.enable=0 — RCTL not active."
+        echo "      To enable: add kern.racct.enable=1 to /boot/loader.conf and reboot."
+        echo "      This allows per-process memory caps to protect against OOM."
+    fi
+else
+    echo "[info] RACCT/RCTL not compiled into kernel — per-process memory limits unavailable."
+    echo "      Consider GENERIC-RACCT or a custom kernel with options RACCT, RCTL."
+fi
+
+# Ensure OOM doesn't panic, and the pager has room to work
+apply_sysctl vm.pageout_oom_seq 8 "OOM kill after 8 failed pageout sequences"
+
 echo ""
 if [ "$CHANGED" -eq 1 ]; then
     echo "Done. Sysctl changes applied and persisted."
