@@ -357,7 +357,7 @@ function search.save_vectors()
   end
 
   -- mkdir -p returns 0 on success; pcall won't catch a non-zero exit, so check the return value directly.
-  local rc = os.execute("mkdir -p " .. JENOVA_STATE)
+  local rc = os.execute("mkdir -p " .. shell_quote(JENOVA_STATE))
   if rc ~= 0 then io.write("[search] warning: failed to create state dir: " .. JENOVA_STATE .. "\n") end
 
   -- Atomic write via temp file + rename
@@ -367,8 +367,8 @@ function search.save_vectors()
   f:write(json.encode(save_data))
   f:close()
   save_data = nil  -- Release memory
-  local ok_rename, rename_err = pcall(os.rename, tmp_path, VECTOR_FILE)
-  if not ok_rename then
+  local rename_ok, rename_err = os.rename(tmp_path, VECTOR_FILE)
+  if not rename_ok then
     io.write("[search] WARNING: failed to rename vector file: " .. tostring(rename_err) .. "\n")
     os.remove(tmp_path)
     return false

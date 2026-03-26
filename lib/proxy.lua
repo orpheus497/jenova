@@ -1,5 +1,11 @@
 local script_dir = os.getenv("JENOVA_ROOT") or (debug.getinfo(1, "S").source:match("^@(.*/)" ) or "./")
-package.path = script_dir .. "/lib/?.lua;" .. script_dir .. "/?.lua;" .. package.path
+local root_dir = script_dir
+-- If script_dir points at the lib/ directory (e.g., when running lib/proxy.lua directly),
+-- strip the trailing "lib/" so root_dir becomes the project root.
+if root_dir:match("/lib/$") then
+  root_dir = root_dir:sub(1, #root_dir - #"lib/")
+end
+package.path = root_dir .. "/lib/?.lua;" .. script_dir .. "/?.lua;" .. package.path
 
 local ffi = require("ffi")
 local bit = require("bit")

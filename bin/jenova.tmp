@@ -1,3 +1,0 @@
-check_health() {
-    luajit lib/healthcheck.lua ${HOST} ${PORT} 3 2>/dev/null
-}

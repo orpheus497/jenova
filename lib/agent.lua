@@ -470,8 +470,8 @@ local function exec_write_file(args)
   if ef then
     local old_data = ef:read("*a"); ef:close()
     local bk_dir = (CWD or ".") .. "/.jenova/backups"
-    local ok_bkdir2, err_bkdir2 = pcall(function() os.execute(string.format("mkdir -p %q", bk_dir)) end)
-    if not ok_bkdir2 then ui.status_warn('failed to ensure backup dir: '..tostring(err_bkdir2)) end
+    local ok_bkdir, err_bkdir = pcall(function() os.execute(string.format("mkdir -p %q", bk_dir)) end)
+    if not ok_bkdir then ui.status_warn('failed to ensure backup dir: '..tostring(err_bkdir)) end
     local bn = path:match("([^/]+)$") or path
     local ts = os.date("%Y%m%d_%H%M%S")
     local bk_path = bk_dir .. "/" .. bn .. "." .. ts

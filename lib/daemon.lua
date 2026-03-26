@@ -105,7 +105,10 @@ function daemon.start_background(cmd_table, log_path, working_dir, pidfile, env)
       return false, "child exec failed"
     end
     if pidfile then
-      daemon.write_pidfile(pidfile, pid)
+      local ok, err = daemon.write_pidfile(pidfile, pid)
+      if not ok then
+        return false, err or "failed to write pidfile"
+      end
     end
     return true, tonumber(pid)
   end

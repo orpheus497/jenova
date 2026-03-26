@@ -92,7 +92,7 @@ case "$1" in
             for P in $OLD_LLAMA_PID $OLD_PROXY_PID $OLD_EMBED_PID; do
                 if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
                     echo "Stopping PID $P..."
-                    kill "$P" 2>/dev/null || true
+                    kill -- "-$P" 2>/dev/null || kill "$P" 2>/dev/null || true
                 fi
             done
             sleep 2

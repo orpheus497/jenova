@@ -57,6 +57,9 @@ function embed.init(opts)
       -- Resolve state dir to an absolute path so the pidfile and log are written
       -- correctly regardless of the caller's CWD.
       local state_dir = (opts.script_dir and opts.script_dir ~= '') and (opts.script_dir .. "/.jenova") or ".jenova"
+      -- Ensure the state directory exists so log/pid files can be created reliably.
+      -- Use mkdir -p semantics so this is safe if the directory already exists.
+      os.execute(string.format('mkdir -p %q', state_dir))
       local ok, pid_or_err = daemon.start_background(args, state_dir .. '/llama-embed.log', opts.script_dir or '.', state_dir .. '/llama-embed.pid', {GGML_VULKAN_DISABLE="1", GGML_VK_DEVICE=""})
       if not ok then
         io.write('[embed] WARNING: failed to start embedding binary: ' .. tostring(pid_or_err) .. '\n')
