@@ -1,5 +1,6 @@
--- embed.lua: Embedding interface using llama-embedding CLI + nomic-embed-text-v1.5
--- Pure LuaJIT, calls llama-embedding as subprocess, returns float vectors
+-- embed.lua: Persistent embedding interface using llama-server --embedding
+-- Pure LuaJIT, communicates with llama-server via HTTP/JSON
+-- Optimized for: Jenova Cognitive Architecture | Vulkan context persistence
 
 local _dir = debug.getinfo(1, "S").source:match("^@(.*/)") or "./"
 if not package.path:find(_dir, 1, true) then
@@ -7,46 +8,77 @@ if not package.path:find(_dir, 1, true) then
 end
 
 local json = require("json")
+local http = require("http")
+local ffi = require("ffi")
 
 local embed = {}
 
 -------------------------------------------------------------------------------
 -- Config
 -------------------------------------------------------------------------------
-local EMBED_BIN = nil   -- resolved in init()
-local MODEL_PATH = nil  -- resolved in init()
+local EMBED_URL = os.getenv("JENOVA_LLAMA_EMBED_URL") or "http://127.0.0.1:8082"
 local DIMS = 768        -- nomic-embed-text-v1.5 dimension
-local CTX_SIZE = 512    -- nomic context window (512 tokens max)
-local POOLING = "mean"
+local CTX_SIZE = 2048   -- nomic context window (max tokens)
 
 local initialized = false
 
 -------------------------------------------------------------------------------
--- Initialize: locate binary and model
+-- Initialize: check if server is reachable
 -------------------------------------------------------------------------------
 function embed.init(opts)
   opts = opts or {}
-  local script_dir = opts.script_dir or "."
+  initialized = false  -- reset before each attempt
+  EMBED_URL = opts.embed_url or os.getenv("JENOVA_LLAMA_EMBED_URL") or "http://127.0.0.1:8082"
+  local embed_bin = opts.embed_bin or os.getenv("JENOVA_LLAMA_SERVER") or (opts.script_dir and (opts.script_dir .. "/llama.cpp/build/bin/llama-server"))
+  local model_path = opts.model_path or os.getenv("JENOVA_MODEL_EMBED") or (opts.script_dir and (opts.script_dir .. "/models/nomic-embed-text-v1.5.Q8_0.gguf"))
 
-  EMBED_BIN = opts.embed_bin or (script_dir .. "/llama.cpp/build/bin/llama-embedding")
-  MODEL_PATH = opts.model_path or (script_dir .. "/models/nomic-embed-text-v1.5.Q8_0.gguf")
-
-  local f = io.open(EMBED_BIN, "r")
-  if not f then
-    io.write("[embed] WARNING: llama-embedding not found at " .. EMBED_BIN .. "\n")
-    return false
+  -- Check if llama-server is alive at this URL
+  local status, body = http.get(EMBED_URL .. "/health", 1)
+  if status == 200 then
+    initialized = true
+    return true
   end
-  f:close()
 
-  f = io.open(MODEL_PATH, "r")
-  if not f then
-    io.write("[embed] WARNING: embedding model not found at " .. MODEL_PATH .. "\n")
-    return false
+  -- If not reachable and we have a binary/model, try to start it in background
+  if embed_bin and model_path then
+    local port = EMBED_URL:match(":(%d+)") or "8082"
+    local host = EMBED_URL:match("//([^:]+)") or "127.0.0.1"
+
+    -- Check if binary exists
+    local f = io.open(embed_bin, "r")
+    if f then
+      f:close()
+      -- Use daemon.start_background to start persistent embedding server reliably
+      local daemon = require('daemon')
+
+      local args = { embed_bin, '-m', model_path, '--embedding', '--port', port, '--host', host,
+                      '-ngl', '0', '-c', '4096', '-b', '512', '--offline' }
+
+      -- Resolve state dir to an absolute path so the pidfile and log are written
+      -- correctly regardless of the caller's CWD.
+      local state_dir = (opts.script_dir and opts.script_dir ~= '') and (opts.script_dir .. "/.jenova") or ".jenova"
+      local ok, pid_or_err = daemon.start_background(args, state_dir .. '/llama-embed.log', opts.script_dir or '.', state_dir .. '/llama-embed.pid', {GGML_VULKAN_DISABLE="1", GGML_VK_DEVICE=""})
+      if not ok then
+        io.write('[embed] WARNING: failed to start embedding binary: ' .. tostring(pid_or_err) .. '\n')
+        initialized = false
+        return false
+      else
+        for _i = 1, 15 do
+          local tv = ffi.new('struct timeval', {tv_sec=1, tv_usec=0})
+          ffi.C.select(0, nil, nil, nil, tv)
+          local hstatus = http.get(EMBED_URL .. '/health', 1)
+          if hstatus == 200 then
+            initialized = true
+            return true
+          end
+        end
+      end
+    end
   end
-  f:close()
 
-  initialized = true
-  return true
+  io.write("[embed] WARNING: Embedding server not reachable at " .. EMBED_URL .. "\n")
+  initialized = false
+  return false
 end
 
 function embed.is_available()
@@ -59,11 +91,7 @@ end
 
 -------------------------------------------------------------------------------
 -- Encode a single text string -> vector (table of floats)
--- nomic-embed-text uses task prefixes:
---   "search_document: " for indexing documents
---   "search_query: " for queries
---   "clustering: " for clustering
---   "classification: " for classification
+-- Uses the /embedding endpoint of llama-server
 -------------------------------------------------------------------------------
 function embed.encode(text, task)
   if not initialized then return nil, "not initialized" end
@@ -72,109 +100,57 @@ function embed.encode(text, task)
   task = task or "search_document"
   local prefixed = task .. ": " .. text
 
-  -- Write text to temp file to avoid shell escaping issues
-  local tmpfile_in = os.tmpname()
-  local tmpfile_out = os.tmpname()
+  local payload = json.encode({
+    content = prefixed
+  })
 
-  local f = io.open(tmpfile_in, "w")
-  if not f then return nil, "cannot write temp file" end
-  f:write(prefixed)
-  f:close()
-
-  local cmd = string.format(
-    '%s -m %s --embd-output-format json --pooling %s -c %d -f %s >%s 2>/dev/null',
-    EMBED_BIN, MODEL_PATH, POOLING, CTX_SIZE, tmpfile_in, tmpfile_out
-  )
-
-  os.execute(cmd)
-
-  local rf = io.open(tmpfile_out, "r")
-  if not rf then
-    os.remove(tmpfile_in)
-    return nil, "no output from llama-embedding"
+  local status, body = http.post(EMBED_URL .. "/embedding", payload, 30)
+  if status ~= 200 then
+    return nil, "embedding request failed: status " .. tostring(status) .. " - " .. tostring(body)
   end
-  local output = rf:read("*a")
-  rf:close()
-  os.remove(tmpfile_in)
-  os.remove(tmpfile_out)
 
-  if output == "" then return nil, "empty output from llama-embedding" end
-
-  local ok, data = pcall(json.decode, output)
+  local ok, data = pcall(json.decode, body)
   if not ok or not data then return nil, "JSON decode failed" end
-  if not data.data or #data.data == 0 then return nil, "no embeddings in response" end
-
-  local vec = data.data[1].embedding
-  if not vec or #vec == 0 then return nil, "empty embedding vector" end
+  
+  -- llama-server returns { "embedding": [...] }
+  local vec = data.embedding
+  if not vec or #vec == 0 then return nil, "empty embedding vector in response" end
 
   DIMS = #vec
   return vec, nil
 end
 
 -------------------------------------------------------------------------------
--- Encode multiple texts in one CLI call (batch mode via separator)
--- Returns list of vectors in same order as input texts
+-- Encode multiple texts in one call
 -------------------------------------------------------------------------------
 function embed.batch_encode(texts, task)
   if not initialized then return nil, "not initialized" end
   if not texts or #texts == 0 then return nil, "empty text list" end
 
   task = task or "search_document"
-
-  -- llama-embedding supports multiple prompts via -p with separator
-  -- But safest approach: write each as a separate line with -f and separator
-  local tmpfile_in = os.tmpname()
-  local tmpfile_out = os.tmpname()
-  local separator = "<#sep#>"
-
-  local f = io.open(tmpfile_in, "w")
-  if not f then return nil, "cannot write temp file" end
-  local parts = {}
-  for _, text in ipairs(texts) do
-    -- Remove newlines within each text (llama-embedding treats newlines as separators)
-    local clean = text:gsub("\n", " "):gsub("\r", "")
-    parts[#parts + 1] = task .. ": " .. clean
-  end
-  f:write(table.concat(parts, separator))
-  f:close()
-
-  local cmd = string.format(
-    '%s -m %s --embd-output-format json --pooling %s -c %d -f %s --embd-separator "%s" >%s 2>/dev/null',
-    EMBED_BIN, MODEL_PATH, POOLING, CTX_SIZE, tmpfile_in, separator, tmpfile_out
-  )
-
-  os.execute(cmd)
-
-  local rf = io.open(tmpfile_out, "r")
-  if not rf then
-    os.remove(tmpfile_in)
-    return nil, "no output from llama-embedding"
-  end
-  local output = rf:read("*a")
-  rf:close()
-  os.remove(tmpfile_in)
-  os.remove(tmpfile_out)
-
-  if output == "" then return nil, "empty output from llama-embedding" end
-
-  local ok, data = pcall(json.decode, output)
-  if not ok or not data then return nil, "JSON decode failed" end
-  if not data.data then return nil, "no data in response" end
-
   local vectors = {}
-  for i, item in ipairs(data.data) do
-    vectors[i] = item.embedding
-  end
 
-  if #vectors ~= #texts then
-    return nil, string.format("expected %d vectors, got %d", #texts, #vectors)
+  -- llama-server supports batch embedding in some versions, but to be safe 
+  -- and maintain compatibility with the standard /embedding endpoint,
+  -- we'll process them efficiently. 
+  -- NOTE: llama-server typically handles one prompt per /embedding call.
+  -- Some versions support arrays, but let's stick to reliable sequential or concurrent-like logic.
+  
+  -- Optimization: If the server is truly persistent, sequential POSTs are fast
+  -- because we skip the 800ms Vulkan init.
+  for i, text in ipairs(texts) do
+    local vec, err = embed.encode(text, task)
+    if not vec then
+      return nil, "batch error at index " .. i .. ": " .. tostring(err)
+    end
+    vectors[i] = vec
   end
 
   return vectors, nil
 end
 
 -------------------------------------------------------------------------------
--- Cosine similarity between two vectors
+-- Vector math utilities
 -------------------------------------------------------------------------------
 function embed.cosine(a, b)
   if not a or not b then return 0 end
@@ -195,9 +171,6 @@ function embed.cosine(a, b)
   return dot / denom
 end
 
--------------------------------------------------------------------------------
--- Dot product (for pre-normalized vectors)
--------------------------------------------------------------------------------
 function embed.dot(a, b)
   if not a or not b then return 0 end
   local n = math.min(#a, #b)
@@ -208,9 +181,6 @@ function embed.dot(a, b)
   return sum
 end
 
--------------------------------------------------------------------------------
--- L2 normalize a vector in-place
--------------------------------------------------------------------------------
 function embed.normalize(vec)
   if not vec or #vec == 0 then return vec end
   local norm = 0

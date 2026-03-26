@@ -1,40 +1,84 @@
 #!/bin/sh
 
-# llama-server-nvim: Launch llama-server for Neovim llama.vim FIM completions
-# Port 8012 (llama.vim default), separate from agent on 8080
-# Optimized for FreeBSD 15 with GTX 1650 Ti (Vulkan)
+# llama-server-nvim: Ensure Jenova CA is running for Neovim llama.vim FIM completions
+#
+# Does NOT start a separate llama-server. The main jenova-ca backend already has
+# --spm-infill enabled on port $LLAMA_PORT and is shared across CLI, server, and nvim.
+#
+# Configure llama.vim to point at http://127.0.0.1:$LLAMA_PORT (default: 8081)
+# for FIM/infill completions, or http://127.0.0.1:$PORT (default: 8080) for
+# chat completions with RAG injection via the proxy.
 
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
-. "$SCRIPT_DIR/../etc/coder.conf"
 
-MODEL_PATH="${MODEL_PRIMARY}"
-
-if [ ! -f "$LLAMA_SERVER" ]; then
-    echo "Error: llama-server not found at $LLAMA_SERVER"
+if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
+    . "$SCRIPT_DIR/etc/jenova.conf"
+elif [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
+    . "$SCRIPT_DIR/../etc/jenova.conf"
+else
+    echo "Error: jenova.conf not found"
     exit 1
 fi
 
-if [ ! -f "$MODEL_PATH" ]; then
-    echo "Error: Model not found at $MODEL_PATH"
+LLAMA_LIB_DIR="$JENOVA_ROOT/llama.cpp/build/bin"
+if [ -d "$LLAMA_LIB_DIR" ]; then
+    export LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"
+fi
+
+check_health() {
+    if [ -f "$SCRIPT_DIR/lib/healthcheck.lua" ]; then
+        luajit "$SCRIPT_DIR/lib/healthcheck.lua" "$HOST" "$PORT" 3 2>/dev/null
+    elif [ -f "$SCRIPT_DIR/../lib/healthcheck.lua" ]; then
+        luajit "$SCRIPT_DIR/../lib/healthcheck.lua" "$HOST" "$PORT" 3 2>/dev/null
+    else
+        return 1
+    fi
+}
+
+if check_health; then
+    echo "Jenova CA already running."
+    echo "  FIM (infill) endpoint : http://${HOST}:${LLAMA_PORT}"
+    echo "  Chat + RAG endpoint   : http://${HOST}:${PORT}"
+    exit 0
+fi
+
+echo "Starting Jenova CA..."
+
+if [ -f "$SCRIPT_DIR/jenova-ca" ]; then
+    "$SCRIPT_DIR/jenova-ca" --daemon
+elif [ -f "$SCRIPT_DIR/../bin/jenova-ca" ]; then
+    "$SCRIPT_DIR/../bin/jenova-ca" --daemon
+else
+    echo "Error: jenova-ca not found"
     exit 1
 fi
 
-exec "$LLAMA_SERVER" \
-    -m "$MODEL_PATH" \
-    -dev "$DEVICES" \
-    -ngl all \
-    -sm layer \
-    -ts "$TENSOR_SPLIT" \
-    --host 127.0.0.1 \
-    --port 8012 \
-    -c 8192 \
-    -b 512 \
-    -ub 256 \
-    -t "$THREADS" \
-    -tb "$THREADS_BATCH" \
-    -fa auto \
-    --mlock \
-    -cb \
-    --spm-infill \
-    --offline \
-    "$@"
+printf "Waiting for Jenova CA"
+for i in $(seq 1 120); do
+    if check_health; then
+        echo " ready!"
+        break
+    fi
+    if [ -f "$PID_FILE" ]; then
+        read _LP _PP _EP < "$PID_FILE" 2>/dev/null || true
+        _ANY_ALIVE=false
+        for _P in $_LP $_PP $_EP; do
+            [ -n "$_P" ] && kill -0 "$_P" 2>/dev/null && _ANY_ALIVE=true
+        done
+        if ! $_ANY_ALIVE; then
+            echo " failed! (all daemon processes died)"
+            exit 1
+        fi
+    fi
+    printf "."
+    sleep 1
+    if [ "$i" -eq 120 ]; then
+        echo " timeout!"
+        exit 1
+    fi
+done
+
+echo ""
+echo "Jenova CA is running. Shared backend serving all clients:"
+echo "  FIM (infill) endpoint : http://${HOST}:${LLAMA_PORT}"
+echo "  Chat + RAG endpoint   : http://${HOST}:${PORT}"

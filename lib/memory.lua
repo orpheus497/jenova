@@ -15,13 +15,17 @@ local json = require("json")
 
 local memory = {}
 
-local CODER_DIR = ".coder"
-local SESSION_LOG = CODER_DIR .. "/session.jsonl"
-local ERROR_FILE = CODER_DIR .. "/errors.jsonl"
-local LEARN_FILE = CODER_DIR .. "/learned.jsonl"
-local PREFS_FILE = CODER_DIR .. "/preferences.json"
-local NOTES_FILE = CODER_DIR .. "/notes.md"
-local ACTION_FILE = CODER_DIR .. "/actions.jsonl"
+local JENOVA_DIR = os.getenv("JENOVA_STATE_DIR") or ".jenova"
+local SESSION_LOG = JENOVA_DIR .. "/session.jsonl"
+local ERROR_FILE = JENOVA_DIR .. "/errors.jsonl"
+local LEARN_FILE = JENOVA_DIR .. "/learned.jsonl"
+local PREFS_FILE = JENOVA_DIR .. "/preferences.json"
+local NOTES_FILE = JENOVA_DIR .. "/notes.md"
+local ACTION_FILE = JENOVA_DIR .. "/actions.jsonl"
+
+local function shell_quote(s)
+  return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
 
 -------------------------------------------------------------------------------
 -- TTL constants (seconds)
@@ -32,6 +36,8 @@ local ACTION_TTL = 1800       -- action history expires after 30 minutes
 local MAX_ERRORS = 50         -- max error entries on disk
 local MAX_LEARNED = 100       -- max learned entries on disk
 local MAX_ACTIONS = 200       -- max action entries on disk
+local MAX_SESSION_ERRORS = 100  -- cap in-memory session error list
+local MAX_INDEX_KEYS = 400    -- cap in-memory action index map
 
 -------------------------------------------------------------------------------
 -- Session state (in-memory, not persisted)
@@ -42,13 +48,17 @@ local session_actions = {}     -- { {tool, args_key, result_key, ts, success} }
 local session_plan = {}        -- { {step, status, detail} }  status: pending/done/failed
 local session_errors = {}      -- errors from THIS session only
 local session_action_index = {} -- "tool:args_hash" -> {count, last_result, success}
+local session_action_key_order = {} -- insertion-order list for LRU eviction of session_action_index
 
 -------------------------------------------------------------------------------
--- Ensure .coder directory exists
+-- Ensure .jenova directory exists
 -------------------------------------------------------------------------------
 function memory.init()
-  os.execute("mkdir -p " .. CODER_DIR)
-  os.execute("mkdir -p " .. CODER_DIR .. "/backups")
+  local ok_mkdir, err_mkdir = pcall(function() os.execute("mkdir -p " .. shell_quote(JENOVA_DIR)) end)
+  if not ok_mkdir then io.write("[memory] warning: mkdir failed: "..tostring(err_mkdir).."\n") end
+  local ok_bk, err_bk = pcall(function() os.execute("mkdir -p " .. shell_quote(JENOVA_DIR .. "/backups")) end)
+  if not ok_bk then io.write("[memory] warning: mkdir backups failed: "..tostring(err_bk).."\n") end
+  -- prefer daemon helper for background tasks in future; dir creation keeps os.execute for portability
 
   session_id = string.format("%x", os.time()) .. string.format("%04x", math.random(0, 0xFFFF))
   session_start = os.time()
@@ -56,6 +66,7 @@ function memory.init()
   session_plan = {}
   session_errors = {}
   session_action_index = {}
+  session_action_key_order = {}
 
   memory.gc()
 end
@@ -100,6 +111,22 @@ function memory.gc()
   prune_file(ERROR_FILE, ERROR_TTL, MAX_ERRORS)
   prune_file(LEARN_FILE, LEARN_TTL, MAX_LEARNED)
   prune_file(ACTION_FILE, ACTION_TTL, MAX_ACTIONS)
+
+  -- Trim session_action_index if session is old or index is large (H2 fix)
+  local age = os.time() - session_start
+  if age > 7200 or #session_action_key_order > 300 then
+    if #session_action_key_order > 200 then
+      local keep_from = #session_action_key_order - 200 + 1
+      for i = 1, keep_from - 1 do
+        session_action_index[session_action_key_order[i]] = nil
+      end
+      local new_order = {}
+      for i = keep_from, #session_action_key_order do
+        new_order[#new_order + 1] = session_action_key_order[i]
+      end
+      session_action_key_order = new_order
+    end
+  end
 
   -- Truncate session log if > 500KB
   local sf = io.open(SESSION_LOG, "r")
@@ -159,8 +186,16 @@ function memory.log_error(tool_name, args_summary, error_msg)
     f:close()
   end
 
-  -- Session-local (for fast access)
+  -- Session-local (for fast access); cap to avoid unbounded growth
   session_errors[#session_errors + 1] = entry
+  if #session_errors > MAX_SESSION_ERRORS then
+    local half = math.floor(MAX_SESSION_ERRORS / 2)
+    local trimmed = {}
+    for i = #session_errors - half + 1, #session_errors do
+      trimmed[#trimmed + 1] = session_errors[i]
+    end
+    session_errors = trimmed
+  end
 end
 
 -------------------------------------------------------------------------------
@@ -191,11 +226,23 @@ function memory.record_action(tool_name, args, result, success)
     result_summary = (result or ""):sub(1, 100),
   }
 
-  -- In-memory index for fast lookup
+  -- In-memory index for fast lookup; evict oldest quarter when over limit
   local idx = session_action_index[key]
   if not idx then
     idx = { count = 0, last_result = "", successes = 0, failures = 0 }
     session_action_index[key] = idx
+    session_action_key_order[#session_action_key_order + 1] = key
+    if #session_action_key_order > MAX_INDEX_KEYS then
+      local evict = math.floor(MAX_INDEX_KEYS / 4)
+      for i = 1, evict do
+        session_action_index[session_action_key_order[i]] = nil
+      end
+      local new_order = {}
+      for i = evict + 1, #session_action_key_order do
+        new_order[#new_order + 1] = session_action_key_order[i]
+      end
+      session_action_key_order = new_order
+    end
   end
   idx.count = idx.count + 1
   idx.last_result = (result or ""):sub(1, 200)
@@ -205,7 +252,15 @@ function memory.record_action(tool_name, args, result, success)
     idx.failures = idx.failures + 1
   end
 
-  -- Sequential history
+  -- Sequential history (capped to prevent unbounded growth)
+  local MAX_SESSION_ACTIONS = 200
+  if #session_actions >= MAX_SESSION_ACTIONS then
+    local trimmed = {}
+    for i = #session_actions - math.floor(MAX_SESSION_ACTIONS / 2) + 1, #session_actions do
+      trimmed[#trimmed + 1] = session_actions[i]
+    end
+    session_actions = trimmed
+  end
   session_actions[#session_actions + 1] = entry
 
   -- Persistent (for cross-session pattern detection)
@@ -230,6 +285,7 @@ end
 -------------------------------------------------------------------------------
 -- Format action history for the model — concise summary of what was tried
 -- Only includes THIS session's actions relevant to the current turn
+-- Optimized: O(n) deduplication using hash table instead of O(n²)
 -------------------------------------------------------------------------------
 function memory.format_action_history(max_entries)
   max_entries = max_entries or 8
@@ -238,22 +294,17 @@ function memory.format_action_history(max_entries)
   local parts = { "\nActions tried this session (avoid repeating failures):" }
   local start = math.max(1, #session_actions - max_entries + 1)
 
-  -- Deduplicate by key, keep last result
-  local seen = {}
+  -- Deduplicate by key, keep last result - O(n) using hash table
+  local seen_index = {}  -- key -> index in unique array
   local unique = {}
   for i = start, #session_actions do
     local a = session_actions[i]
-    if not seen[a.key] then
-      seen[a.key] = true
+    local existing_idx = seen_index[a.key]
+    if not existing_idx then
       unique[#unique + 1] = a
+      seen_index[a.key] = #unique
     else
-      -- Update existing entry with latest result
-      for j = #unique, 1, -1 do
-        if unique[j].key == a.key then
-          unique[j] = a
-          break
-        end
-      end
+      unique[existing_idx] = a
     end
   end
 
@@ -513,13 +564,15 @@ function memory.get_project_tree(root, max_depth)
   root = root or "."
   max_depth = max_depth or 3
   local cmd = string.format(
-    "find %s -maxdepth %d -type f -not -path '*/.git/*' -not -path '*/.coder/*' -not -path '*/.crush/*' -not -path '*/node_modules/*' -not -path '*/__pycache__/*' -not -path '*/build/*' -not -path '*/backups/*' -not -path '*/llama.cpp/*' -not -name '*.gguf' -not -name '*.bin' -not -name '*.o' -not -name '*.so' 2>/dev/null | head -100 | sort",
-    root, max_depth
+    "find %s -maxdepth %d -type f -not -path '*/.git/*' -not -path '*/.jenova/*' -not -path '*/.crush/*' -not -path '*/node_modules/*' -not -path '*/__pycache__/*' -not -path '*/build/*' -not -path '*/backups/*' -not -path '*/llama.cpp/*' -not -name '*.gguf' -not -name '*.bin' -not -name '*.o' -not -name '*.so' 2>/dev/null | head -100 | sort",
+    shell_quote(root), max_depth
   )
   local p = io.popen(cmd)
-  local output = p:read("*a")
+  if not p then cached_tree = ""; return cached_tree end
+  local ok, output = pcall(p.read, p, "*a")
   p:close()
-  cached_tree = output
+  if not ok then cached_tree = ""; return cached_tree end
+  cached_tree = output or ""
   return cached_tree
 end
 
@@ -569,6 +622,7 @@ function memory.clear_session()
   session_plan = {}
   session_errors = {}
   session_action_index = {}
+  session_action_key_order = {}
 end
 
 -------------------------------------------------------------------------------

@@ -1,11 +1,17 @@
--- search.lua: Hybrid BM25 + semantic vector search for coder-agent
+-- search.lua: Hybrid BM25 + semantic vector search for jenova-agent
 -- BM25 always available; vector search when embed module is initialized
--- Vectors persisted to .coder/vectors.json for incremental updates
+-- Vectors persisted to .jenova/vectors.json for incremental updates
 
 local _dir = debug.getinfo(1, "S").source:match("^@(.*/)") or "./"
 if not package.path:find(_dir, 1, true) then
   package.path = _dir .. "?.lua;" .. package.path
 end
+
+-- Resolve project root so all state paths are absolute regardless of CWD.
+-- Prefer JENOVA_ROOT env var (set by bin/jenova and bin/jenova-ca); fall back
+-- to deriving from the script's own location (lib/../).
+local _jenova_root = os.getenv("JENOVA_ROOT") or _dir:match("^(.+)/lib/?$") or _dir .. ".."
+local JENOVA_STATE = _jenova_root .. "/.jenova"
 
 local json = require("json")
 
@@ -30,7 +36,7 @@ local vec_index = {}    -- { filepath = { chunks = { {text=..., vec=..., start_l
 local CHUNK_WORDS = 300
 local CHUNK_OVERLAP = 50
 local BATCH_SIZE = 8
-local VECTOR_FILE = ".coder/vectors.json"
+local VECTOR_FILE = JENOVA_STATE .. "/vectors.json"
 local BM25_WEIGHT = 0.4
 local SEMANTIC_WEIGHT = 0.6
 
@@ -53,8 +59,11 @@ end
 -------------------------------------------------------------------------------
 local function chunk_text(content)
   local lines = {}
-  for line in (content .. "\n"):gmatch("([^\n]*)\n") do
-    lines[#lines + 1] = line
+  if content ~= "" then
+    local clean_content = content:sub(-1) == "\n" and content:sub(1, -2) or content
+    for line in (clean_content .. "\n"):gmatch("([^\n]*)\n") do
+      lines[#lines + 1] = line
+    end
   end
 
   if #lines == 0 then return {} end
@@ -121,15 +130,20 @@ local function chunk_text(content)
   return chunks
 end
 
+local function shell_quote(s)
+  return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
+
 -------------------------------------------------------------------------------
 -- Get file mtime
 -------------------------------------------------------------------------------
 local function file_mtime(filepath)
-  local p = io.popen("stat -f '%m' " .. filepath .. " 2>/dev/null")
+  local p = io.popen(string.format("stat -f '%%m' %s 2>/dev/null", shell_quote(filepath)))
   if not p then return 0 end
-  local mtime = tonumber(p:read("*l")) or 0
+  local ok, line = pcall(p.read, p, "*l")
+  if not ok then p:close(); return 0 end
   p:close()
-  return mtime
+  return tonumber(line) or 0
 end
 
 -------------------------------------------------------------------------------
@@ -140,11 +154,47 @@ local function bm25_index_file(filepath)
   if not f then return nil end
   local content = f:read("*a")
   f:close()
-  if #content > 100000 then return nil end
-  if content:find("%z") then return nil end
+  if #content > 100000 then
+    -- Remove stale entry if the file grew too large since last index
+    local old = bm25_index[filepath]
+    if old then
+      for t in pairs(old.terms) do
+        df[t] = (df[t] or 1) - 1
+        if df[t] <= 0 then df[t] = nil end
+      end
+      total_docs = total_docs - 1
+      bm25_index[filepath] = nil
+    end
+    return nil
+  end
+  if content:find("%z") then
+    -- Remove stale entry if the file became binary since last index
+    local old = bm25_index[filepath]
+    if old then
+      for t in pairs(old.terms) do
+        df[t] = (df[t] or 1) - 1
+        if df[t] <= 0 then df[t] = nil end
+      end
+      total_docs = total_docs - 1
+      bm25_index[filepath] = nil
+    end
+    return nil
+  end
 
   local terms = tokenize(content)
-  if #terms == 0 then return nil end
+  if #terms == 0 then
+    -- Remove stale entry if file has become untokenizable since last index
+    local old = bm25_index[filepath]
+    if old then
+      for t in pairs(old.terms) do
+        df[t] = (df[t] or 1) - 1
+        if df[t] <= 0 then df[t] = nil end
+      end
+      total_docs = total_docs - 1
+      bm25_index[filepath] = nil
+    end
+    return nil
+  end
 
   local term_counts = {}
   for _, t in ipairs(terms) do
@@ -153,10 +203,13 @@ local function bm25_index_file(filepath)
 
   local lines = {}
   local count = 0
-  for line in content:gmatch("[^\n]+") do
-    count = count + 1
-    if count <= 200 then
-      lines[count] = line
+  if content ~= "" then
+    local clean_content = content:sub(-1) == "\n" and content:sub(1, -2) or content
+    for line in (clean_content .. "\n"):gmatch("([^\n]*)\n") do
+      count = count + 1
+      if count <= 200 then
+        lines[count] = line
+      end
     end
   end
 
@@ -192,11 +245,11 @@ end
 -- Vector: Embed chunks for a file (if embed module available)
 -- Returns true if new embeddings were computed
 -------------------------------------------------------------------------------
-local function vec_index_file(filepath, content)
+local function vec_index_file(filepath, content, mtime)
   if not embed or not embed.is_available() then return false end
   if not content then return false end
 
-  local mtime = file_mtime(filepath)
+  mtime = mtime or file_mtime(filepath)
 
   -- Skip if already indexed with same mtime
   if vec_index[filepath] and vec_index[filepath].mtime == mtime and mtime > 0 then
@@ -255,7 +308,43 @@ end
 function search.save_vectors()
   if not embed or not embed.is_available() then return false end
 
+  -- Load and merge existing on-disk entries in streaming fashion to avoid loading entire file into memory
+  local MAX_VECTOR_MERGE_BYTES = 20 * 1024 * 1024  -- 20 MB
   local save_data = {}
+  local ef = io.open(VECTOR_FILE, "r")
+  if ef then
+    local file_size = ef:seek("end", 0) or 0
+    if file_size > 0 and file_size <= MAX_VECTOR_MERGE_BYTES then
+      ef:seek("set", 0)
+      -- Read in chunks to avoid loading 20MB at once
+      local chunk_size = 1024 * 1024  -- 1MB chunks
+      local content_parts = {}
+      while true do
+        local chunk = ef:read(chunk_size)
+        if not chunk then break end
+        content_parts[#content_parts + 1] = chunk
+      end
+      ef:close()
+      local existing_content = table.concat(content_parts)
+      content_parts = nil  -- Release memory
+      local ok_e, existing = pcall(json.decode, existing_content)
+      existing_content = nil  -- Release memory
+      if ok_e and type(existing) == "table" then
+        for filepath, entry in pairs(existing) do
+          save_data[filepath] = entry
+        end
+      end
+      existing = nil  -- Release memory
+    else
+      ef:close()
+      if file_size > MAX_VECTOR_MERGE_BYTES then
+        io.write(string.format("[search] vectors.json (%dMB) exceeds merge cap; overwriting with in-memory index.\n",
+          math.floor(file_size / 1048576)))
+      end
+    end
+  end
+
+  -- Overlay in-memory entries (newer/current values win)
   for filepath, entry in pairs(vec_index) do
     local chunks_save = {}
     for _, c in ipairs(entry.chunks) do
@@ -267,11 +356,23 @@ function search.save_vectors()
     save_data[filepath] = { mtime = entry.mtime, chunks = chunks_save }
   end
 
-  os.execute("mkdir -p .coder")
-  local f = io.open(VECTOR_FILE, "w")
+  -- mkdir -p returns 0 on success; pcall won't catch a non-zero exit, so check the return value directly.
+  local rc = os.execute("mkdir -p " .. JENOVA_STATE)
+  if rc ~= 0 then io.write("[search] warning: failed to create state dir: " .. JENOVA_STATE .. "\n") end
+
+  -- Atomic write via temp file + rename
+  local tmp_path = VECTOR_FILE .. ".tmp"
+  local f = io.open(tmp_path, "w")
   if not f then return false end
   f:write(json.encode(save_data))
   f:close()
+  save_data = nil  -- Release memory
+  local ok_rename, rename_err = pcall(os.rename, tmp_path, VECTOR_FILE)
+  if not ok_rename then
+    io.write("[search] WARNING: failed to rename vector file: " .. tostring(rename_err) .. "\n")
+    os.remove(tmp_path)
+    return false
+  end
   return true
 end
 
@@ -347,7 +448,36 @@ function search.reindex_file(filepath)
 end
 
 -------------------------------------------------------------------------------
--- Index a directory tree (BM25 + optionally vectors)
+-- Background Indexer: Process a queue of files to embed
+-- This is called from index_dir or as a standalone background process
+-------------------------------------------------------------------------------
+function search.process_embedding_queue(files_to_embed)
+  if not files_to_embed or #files_to_embed == 0 then return 0 end
+  if not embed or not embed.is_available() then return 0 end
+
+  io.write(string.format("  [Jenova Indexer] Processing %d files in background...\n", #files_to_embed))
+  io.flush()
+  
+  local embedded = 0
+  for i, entry in ipairs(files_to_embed) do
+    local ok, indexed = pcall(vec_index_file, entry.path, entry.content, entry.mtime)
+    if ok and indexed then
+      embedded = embedded + 1
+    end
+    -- Periodic save to allow incremental discovery
+    if i % 10 == 0 or i == #files_to_embed then
+      search.save_vectors()
+      if i % 10 == 0 then
+        io.write(string.format("  [Jenova Indexer] Embedded %d/%d\n", i, #files_to_embed))
+        io.flush()
+      end
+    end
+  end
+  return embedded
+end
+
+-------------------------------------------------------------------------------
+-- Index a directory tree (BM25 + background vectors)
 -------------------------------------------------------------------------------
 function search.index_dir(root_dir, extensions)
   root_dir = root_dir or "."
@@ -360,13 +490,16 @@ function search.index_dir(root_dir, extensions)
     ext_filter = "\\( " .. table.concat(parts, " -o ") .. " \\)"
   end
 
+  -- Use find -exec stat to get mtime and path in one go (FreeBSD compatible)
   local cmd = string.format(
-    "find %s -type f %s -not -path '*/.git/*' -not -path '*/.coder/*' -not -path '*/.crush/*' -not -path '*/node_modules/*' -not -path '*/__pycache__/*' -not -path '*/build/*' -not -path '*/backups/*' -not -path '*/llama.cpp/*' -not -name '*.gguf' -not -name '*.bin' -not -name '*.o' -not -name '*.so' -size -100k 2>/dev/null | head -500",
-    root_dir, ext_filter
+    "find %s -type f %s -not -path '*/.git/*' -not -path '*/.jenova/*' -not -path '*/.crush/*' -not -path '*/node_modules/*' -not -path '*/__pycache__/*' -not -path '*/build/*' -not -path '*/backups/*' -not -path '*/llama.cpp/*' -not -name '*.gguf' -not -name '*.bin' -not -name '*.o' -not -name '*.so' -size -100k -exec stat -f '%%m %%p' {} + 2>/dev/null | head -500",
+    shell_quote(root_dir), ext_filter
   )
   local p = io.popen(cmd)
-  local output = p:read("*a")
+  if not p then return 0 end
+  local ok_read, output = pcall(p.read, p, "*a")
   p:close()
+  if not ok_read or not output then return 0 end
 
   -- Reset BM25 index
   bm25_index = {}
@@ -377,12 +510,15 @@ function search.index_dir(root_dir, extensions)
   -- Collect files that need vector re-indexing
   local files_to_embed = {}
 
-  for filepath in output:gmatch("[^\n]+") do
-    local content = bm25_index_file(filepath)
-    if content and embed and embed.is_available() then
-      local mtime = file_mtime(filepath)
-      if not vec_index[filepath] or vec_index[filepath].mtime ~= mtime or mtime == 0 then
-        files_to_embed[#files_to_embed + 1] = { path = filepath, content = content }
+  for line in output:gmatch("[^\n]+") do
+    local mtime_str, filepath = line:match("^(%d+)%s+(.+)$")
+    if mtime_str and filepath then
+      local mtime = tonumber(mtime_str) or 0
+      local content = bm25_index_file(filepath)
+      if content and embed and embed.is_available() then
+        if not vec_index[filepath] or vec_index[filepath].mtime ~= mtime or mtime == 0 then
+          files_to_embed[#files_to_embed + 1] = { path = filepath, content = content, mtime = mtime }
+        end
       end
     end
   end
@@ -396,26 +532,39 @@ function search.index_dir(root_dir, extensions)
     avg_dl = total_len / total_docs
   end
 
-  -- Batch embed files that need updating
+  -- Background the embedding part if there are files to process
   if #files_to_embed > 0 and embed and embed.is_available() then
-    io.write(string.format("  [embedding %d files...]\n", #files_to_embed))
-    io.flush()
-    local embedded = 0
-    for i, entry in ipairs(files_to_embed) do
-      local ok, err = pcall(vec_index_file, entry.path, entry.content)
-      if ok then
-        embedded = embedded + 1
+    -- Seed RNG with time + process-derived entropy so temp filenames are unique
+    math.randomseed(os.time() + math.floor(os.clock() * 1000000))
+    local tmp_list = string.format("%s/index_queue_%d_%d.json", JENOVA_STATE, os.time(), math.random(100000))
+    -- Use os.execute return value directly; pcall won't detect non-zero exit.
+    local rc_mkdir = os.execute("mkdir -p " .. JENOVA_STATE)
+    if rc_mkdir ~= 0 then io.write("[search] warning: failed to create state dir: " .. JENOVA_STATE .. "\n") end
+    local f = io.open(tmp_list, "w")
+    if f then
+      f:write(json.encode(files_to_embed))
+      f:close()
+
+      local daemon = require('daemon')
+      local pid_file = JENOVA_STATE .. "/indexer.pid"
+      local existing_pid = daemon.check_pidfile(pid_file)
+      if existing_pid then
+        io.write(string.format("  [Jenova] BM25 ready. Indexer already running (pid=%d), skipping.\n", existing_pid))
+        os.remove(tmp_list)
+      else
+        -- Atomically move temp file into place, then start indexer
+        local queue_file = JENOVA_STATE .. "/index_queue.json"
+        os.rename(tmp_list, queue_file)
+        local log_file = JENOVA_STATE .. "/indexer.log"
+        local ok2, pid_or_err = daemon.start_background(
+          { 'luajit', _dir .. 'indexer_runner.lua', queue_file },
+          log_file, _jenova_root, pid_file)
+        if ok2 then
+          io.write(string.format("  [Jenova] BM25 ready. Backgrounded %d embeddings (pid=%s)...\n", #files_to_embed, tostring(pid_or_err)))
+        else
+          io.write("  [Jenova] BM25 ready. Failed to background indexer: " .. tostring(pid_or_err) .. "\n")
+        end
       end
-      -- Progress every 10 files
-      if i % 10 == 0 then
-        io.write(string.format("  [embedded %d/%d]\n", i, #files_to_embed))
-        io.flush()
-      end
-    end
-    if embedded > 0 then
-      search.save_vectors()
-      io.write(string.format("  [embedded %d files, saved to %s]\n", embedded, VECTOR_FILE))
-      io.flush()
     end
   end
 
@@ -429,6 +578,27 @@ function search.index_dir(root_dir, extensions)
     end
     for _, filepath in ipairs(stale) do
       vec_index[filepath] = nil
+    end
+  end
+
+  -- Cap total vector entries to prevent unbounded memory growth
+  local MAX_VEC_FILES = 600
+  local vec_count = 0
+  for _ in pairs(vec_index) do vec_count = vec_count + 1 end
+  if vec_count > MAX_VEC_FILES then
+    local entries = {}
+    for fp, entry in pairs(vec_index) do
+      entries[#entries + 1] = { path = fp, mtime = entry.mtime or 0 }
+    end
+    table.sort(entries, function(a, b_) return a.mtime < b_.mtime end)
+    local to_remove = vec_count - MAX_VEC_FILES
+    for i = 1, to_remove do
+      vec_index[entries[i].path] = nil
+    end
+    -- M4 fix: Warn user about capped index
+    if to_remove > 0 then
+      io.write(string.format("[search] WARNING: Vector index capped at %d files; removed %d oldest. Consider raising MAX_VEC_FILES.\n",
+        MAX_VEC_FILES, to_remove))
     end
   end
 
@@ -479,46 +649,67 @@ local function semantic_score(filepath, query_vec)
 end
 
 -------------------------------------------------------------------------------
--- Extract snippet from BM25 index
+-- Extract snippet with logical block awareness (functions, classes, blocks)
 -------------------------------------------------------------------------------
 local function extract_snippet(doc, query_terms, max_lines)
-  max_lines = max_lines or 8
+  max_lines = max_lines or 12
   if not doc.lines or #doc.lines == 0 then return nil end
 
-  -- Score each line by how many query terms it contains
-  local line_scores = {}
-  for i = 1, #doc.lines do
-    local line_lower = doc.lines[i]:lower()
-    local line_score = 0
+  -- 1. Identify best matching line (highest term frequency)
+  local best_line = 1
+  local max_term_hits = 0
+  for i, line in ipairs(doc.lines) do
+    local hits = 0
+    local line_lower = line:lower()
     for _, qt in ipairs(query_terms) do
-      if line_lower:find(qt, 1, true) then
-        line_score = line_score + 1
-      end
+      if line_lower:find(qt, 1, true) then hits = hits + 1 end
     end
-    line_scores[i] = line_score
-  end
-
-  -- Find the best window of max_lines with highest total score
-  local best_start = 1
-  local best_score = 0
-  for i = 1, math.max(1, #doc.lines - max_lines + 1) do
-    local window_score = 0
-    for j = i, math.min(i + max_lines - 1, #doc.lines) do
-      window_score = window_score + line_scores[j]
-    end
-    if window_score > best_score then
-      best_score = window_score
-      best_start = i
+    if hits > max_term_hits then
+      max_term_hits = hits
+      best_line = i
     end
   end
 
-  -- Expand context slightly before the match
-  local start = math.max(1, best_start - 2)
-  local stop = math.min(#doc.lines, start + max_lines - 1)
+  -- 2. Expand outwards to find a "Logical Block"
+  -- Look for lines that look like start of functions/classes
+  local start = best_line
+  local stop = best_line
+  
+  -- Search upwards for a boundary (function, class, struct, start of block)
+  local found_start = false
+  for i = best_line, math.max(1, best_line - 10), -1 do
+    local line = doc.lines[i]
+    if line:match("^%s*function%s") or line:match("^%s*class%s") or 
+       line:match("^%s*def%s") or line:match("^%s*struct%s") or
+       line:match("^{%s*$") or line:match("^%s*%w+%(.*%)%s*{") then
+      start = i
+      found_start = true
+      break
+    end
+  end
+  if not found_start then start = math.max(1, best_line - 3) end
+
+  -- Search downwards for an end boundary or until max_lines
+  stop = math.min(#doc.lines, start + max_lines - 1)
+  for i = best_line + 1, stop do
+    local line = doc.lines[i]
+    if line:match("^%s*}%s*$") or line:match("^%s*end%s*$") then
+      stop = i
+      break
+    end
+  end
+
+  -- Final snippet construction
   local snippet_lines = {}
   for i = start, stop do
-    snippet_lines[#snippet_lines + 1] = doc.lines[i]
+    snippet_lines[#snippet_lines + 1] = string.format("%4d | %s", i, doc.lines[i])
   end
+  
+  -- Add ellipsis if we cut off
+  if stop < #doc.lines then
+    snippet_lines[#snippet_lines + 1] = "     ..."
+  end
+  
   return table.concat(snippet_lines, "\n")
 end
 

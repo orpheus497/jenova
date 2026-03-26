@@ -1,10 +1,87 @@
-models/
-llama.cpp/
-.coder/
-var/
-backups/
-*.gguf
-*.bin
+# --- Build Artifacts ---
+/llama.cpp/build/
+/llama.cpp/bin/
 *.o
 *.so
+*.a
+*.dylib
+
+# --- Models (never upload multi-GB LLM weights) ---
+*.gguf
+*.bin
+*.safetensors
+*.onnx
+*.pt
+*.pth
+*.h5
+*.tflite
+!/models/.gitkeep
+
+# --- Runtime Data ---
+/var/log/*
+/var/cache/*
+!/var/log/.gitkeep
+!/var/cache/.gitkeep
+
+# --- Jenova Runtime (Private Data) ---
+/.jenova/
+
+# --- Backups (local-only snapshots) ---
+/backups/
+
+# --- AI Agent / Assistant Data (chat history, session data, dev docs) ---
+.claude/
+.crush/
+.gemini/
+.cursor/
+.copilot/
+.codeium/
+.aider/
+.continue/
+.tabnine/
+.devdocs/
+.windsurf/
+
+# --- Environment, Keys & Secrets ---
 .env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.csr
+id_rsa
+id_ed25519
+*.secret
+*_secret*
+*.token
+credentials.json
+secrets.json
+auth.json
+
+# --- System & IDE ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.iml
+*~
+*.swp
+*.swo
+\#*\#
+
+# --- Configuration (local overrides) ---
+/etc/jenova.conf.local
+
+# --- Large / temporary files ---
+*.log
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+*.bak
+*.tmp
+core
+core.*

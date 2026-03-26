@@ -1,5 +1,5 @@
 #!/usr/bin/env luajit
--- coder-agent: Agentic coding assistant with shell/file access
+-- jenova-agent: Agentic coding assistant with shell/file access
 -- Uses llama-server's OpenAI-compatible API with tool calling
 --
 -- Architecture v2:
@@ -9,15 +9,15 @@
 --   Compact system prompt maximizes model reasoning capacity
 --
 -- Architecture notes (do not remove):
--- * Qwen2.5-Coder-14B returns tool calls as text in msg.content.
---   Extracted via fallback parser (Stage 2) or code-block interceptor (Stage 3).
---   The 14B model outputs {"arguments":{...},"name":"..."} (reversed key order).
+-- * Qwen2.5-Coder-7B returns tool calls as structured JSON in tool_calls field.
+--   Fallback parser (Stage 2) handles text/content tool calls when tool_calls is absent.
+--   Code-block interceptor (Stage 3) catches code-in-content with write intent.
 -- * edit_file exists because write_file requires the model to regenerate
 --   the entire file as JSON content, which can exceed generation timeout.
 --   edit_file only needs the old/new snippet.
 
 local script_dir = arg[0]:match("^(.*)/") or "."
-local coder_root = os.getenv("CODER_ROOT") or script_dir:match("^(.*)/lib$") or script_dir .. "/.."
+local jenova_root = os.getenv("JENOVA_ROOT") or script_dir:match("^(.*)/lib$") or script_dir .. "/.."
 package.path = script_dir .. "/?.lua;" .. package.path
 
 local json = require("json")
@@ -26,19 +26,22 @@ local memory = require("memory")
 local search = require("search")
 local embed = require("embed")
 local ui = require("ui")
+local ffi = require("ffi")
+local ffi_defs = require("ffi_defs")
 
 -------------------------------------------------------------------------------
 -- Config
 -------------------------------------------------------------------------------
-local API_URL   = os.getenv("CODER_API_URL") or "http://127.0.0.1:8080"
+local API_URL   = os.getenv("JENOVA_API_URL") or "http://127.0.0.1:8080"
 local ENDPOINT  = API_URL .. "/v1/chat/completions"
 local MODEL     = "qwen2.5-coder"
-local MAX_TURNS = tonumber(os.getenv("CODER_MAX_TURNS")) or 25
-local DEBUG     = os.getenv("CODER_DEBUG") == "1"
+local MAX_TURNS = tonumber(os.getenv("JENOVA_MAX_TURNS")) or 25
+local DEBUG     = os.getenv("JENOVA_DEBUG") == "1"
 local HOME      = os.getenv("HOME") or "/home/orpheus497"
 local CWD       = nil  -- set in main()
-local HTTP_TIMEOUT = tonumber(os.getenv("CODER_TIMEOUT")) or 600
+local HTTP_TIMEOUT = tonumber(os.getenv("JENOVA_TIMEOUT")) or 600
 local MAX_ACTIONS  = 20
+local CONTEXT_WINDOW = tonumber(os.getenv("JENOVA_CTX")) or 16384
 
 -- Per-turn state
 local files_written_this_turn = {}
@@ -46,6 +49,8 @@ local files_read_this_turn    = {}
 local last_read_path          = nil
 local last_read_content       = nil
 local edit_fails_this_turn    = {}
+
+local MAX_BACKUPS_PER_FILE = 5  -- keep only the N most-recent backups per filename
 
 -------------------------------------------------------------------------------
 -- UI shorthand aliases
@@ -132,35 +137,25 @@ local current_user_query = nil
 
 local function build_system_prompt()
   local parts = {}
-  parts[#parts+1] = "You are coder, an expert autonomous coding agent on FreeBSD. CWD: " .. (CWD or ".")
+  parts[#parts+1] = "You are Jenova, an expert autonomous cognitive agent on FreeBSD. CWD: " .. (CWD or ".")
+
   parts[#parts+1] = [[
 
 TOOLS (call ONE per response as JSON):
-  shell(command)       — Run shell commands: compile, test, diagnose, install (pkg, not apt).
-  read_file(path)      — Read a file's contents. ALWAYS do this before editing.
-  edit_file(path, old, new) — Replace exact text. old must match file content exactly.
+  shell(command)       — Run shell commands: compile, test, diagnose.
+  read_file(path)      — Read a file's contents with line numbers.
+  edit_file(path, start_line, end_line, new_content) — Replace lines.
   write_file(path, content) — Create/overwrite entire file. Use for NEW files only.
   list_dir(path)       — List directory contents.
   search_files(query, top_k) — Search project files by code identifiers/keywords.
-  think(thought)       — Internal reasoning (hidden from user). Use to plan multi-step work.
+  think(thought)       — Internal reasoning. Use ONLY for complex multi-step planning.
 
-RESPONSE FORMAT — respond ONLY with a JSON tool call:
-{"name": "tool_name", "arguments": {"arg": "value"}}
+RESPONSE FORMAT:
+<think>reasoning</think>
+{"name": "tool_name", "arguments": {...}}
 
-WORKFLOW: Plan → Execute → Reflect
-1. THINK first — plan your approach. Identify what you need to learn/verify.
-2. READ before editing — never guess at file content.
-3. VERIFY — check headers exist, libraries installed, code compiles.
-4. EDIT precisely — copy exact whitespace from read_file output.
-5. VALIDATE — compile/test after changes. If errors, fix immediately.
-6. REFLECT — if something failed, try a DIFFERENT approach. Do NOT repeat.
-7. REPORT — only after ALL work done, give 1-2 sentence summary.
-
-CRITICAL:
-- ONLY call tools. No narration, explanation, or code blocks.
-- FreeBSD: use pkg (not apt), cc (not gcc), /usr/local/include for ports.
-- If an action already failed (shown below), try something DIFFERENT.
-- Fix root causes, not symptoms.]]
+Respond ONLY with <think> block then ONE JSON tool call. No other text.
+Read before editing. Verify after changes. FreeBSD: use cc, /usr/local/include for ports.]]
 
   -- Session-aware context (errors, actions, plan — only from THIS session)
   local ctx = memory.build_context(current_user_query)
@@ -190,13 +185,14 @@ local TOOLS = {
       required = { "path" } } } },
   { type = "function", ["function"] = {
     name = "edit_file",
-    description = "Replace text in a file. Provide exact old text and new text. Creates backup.",
+    description = "Replace a range of lines in a file. start_line and end_line are inclusive.",
     parameters = { type = "object",
       properties = {
         path = { type = "string", description = "File path" },
-        old  = { type = "string", description = "Exact text to replace" },
-        new  = { type = "string", description = "Replacement text" } },
-      required = { "path", "old", "new" } } } },
+        start_line = { type = "number", description = "First line to replace" },
+        end_line = { type = "number", description = "Last line to replace" },
+        new_content = { type = "string", description = "Replacement text" } },
+      required = { "path", "start_line", "end_line", "new_content" } } } },
   { type = "function", ["function"] = {
     name = "write_file",
     description = "Create or overwrite a file with complete content. Creates backup. Prefer edit_file for changes.",
@@ -217,6 +213,13 @@ local TOOLS = {
         query = { type = "string", description = "Search query — use code identifiers, function names, types" },
         top_k = { type = "number", description = "Results (default: 5)" } },
       required = { "query" } } } },
+  { type = "function", ["function"] = {
+    name = "grep_search", description = "Search for an exact string in the project using grep.",
+    parameters = { type = "object",
+      properties = {
+        pattern = { type = "string", description = "Exact string or regex to find" },
+        include = { type = "string", description = "Glob pattern for files to include (e.g. *.c)" } },
+      required = { "pattern" } } } },
   { type = "function", ["function"] = {
     name = "think",
     description = "Reason about a problem before acting. Use when you need to plan. Output is NOT shown to user.",
@@ -254,10 +257,30 @@ local function exec_shell(args)
   ui.shell_cmd(cmd)
   local tmpfile = os.tmpname()
   local full = string.format("cd %q && %s; echo \"\\n[EXIT:$?]\"", CWD or ".", cmd)
-  os.execute(full .. " >" .. tmpfile .. " 2>&1")
+  local exec_ok, exec_err = pcall(os.execute, full .. " >" .. string.format("%q", tmpfile) .. " 2>&1")
   local f = io.open(tmpfile, "r")
-  local output = f and f:read("*a") or ""
-  if f then f:close() end
+  local output = ""
+  if f then
+    -- Read head+tail to cap memory regardless of output size.
+    -- Avoids loading 1GB+ into the Lua heap before truncation.
+    local MAX_HEAD = 8192
+    local MAX_TAIL = 2048
+    local head_ok, head = pcall(f.read, f, MAX_HEAD)
+    if head_ok and head then
+      local size_ok, size = pcall(f.seek, f, "end", 0)
+      if size_ok and size and size > MAX_HEAD + MAX_TAIL then
+        pcall(f.seek, f, "set", size - MAX_TAIL)
+        local tail_ok, tail = pcall(f.read, f, MAX_TAIL)
+        output = head .. "\n...[output truncated: " .. size .. " bytes total]...\n"
+          .. (tail_ok and tail or "")
+      else
+        if size_ok then pcall(f.seek, f, "set", #head) end
+        local rest_ok, rest = pcall(f.read, f, "*a")
+        output = head .. (rest_ok and rest or "")
+      end
+    end
+    f:close()
+  end
   os.remove(tmpfile)
 
   local code = 0
@@ -288,60 +311,73 @@ local function exec_read_file(args)
   local path = resolve_path(args.path)
   if not path or path == "" then return "error: no path", false end
 
-  if files_read_this_turn[path] and not files_written_this_turn[path] then
-    ui.status_info("already read "..path)
-    local content = files_read_this_turn[path]
-    if #content > 16000 then
-      content = content:sub(1,8000) .. "\n...[truncated "..#content.." bytes]...\n" .. content:sub(-4000)
-    end
-    return content .. "\n(already read this turn — proceed to edit)", true
-  end
-
   ui.file_read(path)
 
   local f = io.open(path, "r")
   if not f then
-    local bn = path:match("([^/]+)$")
-    if bn and CWD then
-      local p = io.popen(string.format("find %q -name %q -type f 2>/dev/null | head -1", CWD, bn))
-      local found = p:read("*l"); p:close()
-      if found and found ~= "" then
-        ui.status_warn("found "..found)
-        f = io.open(found, "r")
-        if f then path = found end
-      end
-    end
-    if not f then
-      memory.log_error("read_file", path, "not found")
-      ui.status_err("not found")
-      return "error: file not found: "..path..". Use list_dir or search_files.", false
-    end
+    return "error: file not found: "..path, false
   end
 
   local content = f:read("*a"); f:close()
   files_read_this_turn[path] = content
   last_read_path = path
   last_read_content = content
-  local bn = path:match("([^/]+)$")
-  if bn then files_read_this_turn[bn] = path end
+
+  -- Format with line numbers for the model
+  local formatted = {}
+  local lnum = 1
+  if content ~= "" then
+    local clean_content = content:sub(-1) == "\n" and content:sub(1, -2) or content
+    for line in (clean_content .. "\n"):gmatch("([^\n]*)\n") do
+      formatted[#formatted+1] = string.format("%4d | %s", lnum, line)
+      lnum = lnum + 1
+    end
+  end
+  local result = table.concat(formatted, "\n")
 
   local kb = string.format("%.1fkb", #content/1024)
   ui.file_read_done(kb)
 
-  if #content > 16000 then
-    content = content:sub(1,8000) .. "\n...[truncated "..#content.." bytes]...\n" .. content:sub(-4000)
+  if #result > 24000 then
+    result = result:sub(1,12000) .. "\n...[truncated]...\n" .. result:sub(-8000)
   end
   memory.log("read_file", { path = path, size = #content })
-  return content, true
+  return result, true
+end
+
+-- Prune old backups for a given basename, keeping the MAX_BACKUPS_PER_FILE newest.
+-- Backup filenames are "{basename}.{YYYYMMDD_HHMMSS}", so lexicographic sort = chronological.
+local function prune_backups(bk_dir, basename)
+  local p = io.popen(string.format("ls -1 %q 2>/dev/null", bk_dir))
+  if not p then return end
+  local files = {}
+  local escaped = basename:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
+  local pattern = "^" .. escaped .. "%.[0-9]"
+  local ok_iter = pcall(function()
+    for line in p:lines() do
+      if line:match(pattern) then
+        files[#files + 1] = line
+      end
+    end
+  end)
+  p:close()
+  if not ok_iter then return end
+  table.sort(files)  -- lexicographic = chronological for YYYYMMDD_HHMMSS names
+  local excess = #files - MAX_BACKUPS_PER_FILE
+  for i = 1, excess do
+    os.remove(bk_dir .. "/" .. files[i])
+  end
 end
 
 local function exec_edit_file(args)
   local path = resolve_path(args.path)
-  local old_text = args.old
-  local new_text = args.new
-  if not path or path == "" then return "error: no path", false end
-  if not old_text or old_text == "" then return "error: no 'old' text", false end
-  if new_text == nil then return "error: no 'new' text", false end
+  local start_line = tonumber(args.start_line)
+  local end_line = tonumber(args.end_line)
+  local new_text = args.new_content
+  
+  if not path or not start_line or not end_line or not new_text then
+    return "error: missing arguments for edit_file", false
+  end
 
   local content = files_read_this_turn[path]
   if not content then
@@ -350,102 +386,75 @@ local function exec_edit_file(args)
     content = f:read("*a"); f:close()
   end
 
-  local s, e = content:find(old_text, 1, true)
-  if not s then
-    local norm_old = old_text:gsub("%s+", " "):gsub("^%s+",""):gsub("%s+$","")
-    if #norm_old < 3 then
-      return "error: old text too short to match safely", false
-    end
-    local lines = {}
-    for line in (content.."\n"):gmatch("([^\n]*)\n") do lines[#lines+1] = line end
-    local norm_lines = {}
-    for i, l in ipairs(lines) do norm_lines[i] = l:gsub("%s+", " "):gsub("^%s+",""):gsub("%s+$","") end
-
-    local first_line_old = norm_old:match("^([^\n]*)")
-    if not first_line_old then first_line_old = norm_old end
-    first_line_old = first_line_old:gsub("%s+", " "):gsub("^%s+",""):gsub("%s+$","")
-
-    local found_start = nil
-    for i, nl in ipairs(norm_lines) do
-      if nl:find(first_line_old, 1, true) then
-        found_start = i
-        break
-      end
-    end
-
-    if not found_start then
-      return "error: text not found in "..path..". Use read_file to check current content.", false
-    end
-
-    local old_line_count = 1
-    for _ in old_text:gmatch("\n") do old_line_count = old_line_count + 1 end
-    local found_end = math.min(found_start + old_line_count - 1, #lines)
-
-    local actual_lines = {}
-    for i = found_start, found_end do actual_lines[#actual_lines+1] = lines[i] end
-    local actual_old = table.concat(actual_lines, "\n")
-
-    s, e = content:find(actual_old, 1, true)
-    if not s then
-      return "error: fuzzy match failed in "..path..". Use read_file to check content.", false
+  local lines = {}
+  if content ~= "" then
+    local clean_content = content:sub(-1) == "\n" and content:sub(1, -2) or content
+    for line in (clean_content .. "\n"):gmatch("([^\n]*)\n") do
+      lines[#lines+1] = line
     end
   end
 
-  local bk_f = io.open(path, "r")
-  if bk_f then
-    local bk_data = bk_f:read("*a"); bk_f:close()
-    local bk_dir = (CWD or ".") .. "/.coder/backups"
-    os.execute("mkdir -p " .. bk_dir)
-    local bn = path:match("([^/]+)$") or path
-    local ts = os.date("%H%M%S")
-    local bk_path = bk_dir .. "/" .. bn .. "." .. ts
-    local bk_out = io.open(bk_path, "w")
-    if bk_out then bk_out:write(bk_data); bk_out:close()
-      ui.file_backup(bk_path)
+  if #lines == 0 then
+    if start_line ~= 1 or end_line ~= 1 then
+      return "error: file is empty, range must be 1-1", false
+    end
+  elseif start_line < 1 or start_line > #lines + 1 or end_line < start_line or (end_line > #lines and not (start_line == #lines + 1 and end_line == #lines + 1)) then
+    return string.format("error: invalid line range %d-%d (file has %d lines). To append, use %d-%d.", start_line, end_line, #lines, #lines + 1, #lines + 1), false
+  end
+
+  local new_lines = {}
+  for i = 1, start_line - 1 do
+    new_lines[#new_lines+1] = lines[i]
+  end
+  
+  if new_text ~= "" then
+    local clean_new = new_text:sub(-1) == "\n" and new_text:sub(1, -2) or new_text
+    for line in (clean_new .. "\n"):gmatch("([^\n]*)\n") do
+      new_lines[#new_lines+1] = line
     end
   end
 
-  local new_content = content:sub(1, s-1) .. new_text .. content:sub(e+1)
-  ui.file_edit(path, #old_text, #new_text)
+  for i = end_line + 1, #lines do
+    new_lines[#new_lines+1] = lines[i]
+  end
 
-  local dir = path:match("^(.+)/[^/]+$")
-  if dir then os.execute("mkdir -p "..dir) end
+  local new_content = table.concat(new_lines, "\n")
+  -- Preserve UNIX newline convention if original file had it, or if it's a new file
+  if #new_content > 0 and (content == "" or content:sub(-1) == "\n" or new_text:sub(-1) == "\n") then
+    new_content = new_content .. "\n"
+  end
+  
+  -- Backup (rotate: keep only MAX_BACKUPS_PER_FILE per filename)
+  local bk_dir = (CWD or ".") .. "/.jenova/backups"
+  local ok_bkdir, err_bkdir = pcall(function() os.execute(string.format("mkdir -p %q", bk_dir)) end)
+  if not ok_bkdir then ui.status_warn('failed to ensure backup dir: '..tostring(err_bkdir)) end
+  local bn = path:match("([^/]+)$") or path
+  local ts = os.date("%Y%m%d_%H%M%S")
+  local bk_path = bk_dir .. "/" .. bn .. "." .. ts
+  local bk_out = io.open(bk_path, "w")
+  if bk_out then
+    bk_out:write(content)
+    bk_out:close()
+    ui.file_backup(bk_path)
+    prune_backups(bk_dir, bn)
+  end
+
+  ui.file_edit(path, start_line, end_line)
+
   local wf = io.open(path, "w")
-  if not wf then
-    memory.log_error("edit_file", path, "cannot write")
-    return "error: cannot write "..path, false
-  end
+  if not wf then return "error: cannot write "..path, false end
   wf:write(new_content); wf:close()
 
   files_read_this_turn[path] = new_content
   files_written_this_turn[path] = true
   last_read_path = path
   last_read_content = new_content
-  memory.log("edit_file", { path = path, old_len = #old_text, new_len = #new_text })
+  memory.log("edit_file", { path = path, range = start_line.."-"..end_line })
   search.reindex_file(path)
   memory.invalidate_tree_cache()
 
   ui.status_ok("done")
-
-  local ext = path:match("%.([^.]+)$")
-  if ext == "c" or ext == "h" or ext == "cpp" or ext == "cc" or ext == "cxx" then
-    local compile_cmd = string.format("cd %q && cc -fsyntax-only -Wall %q 2>&1", CWD or ".", path)
-    ui.compile_check(path)
-    local tmpf = os.tmpname()
-    os.execute(compile_cmd .. " > " .. tmpf .. " 2>&1")
-    local cf = io.open(tmpf, "r")
-    local compile_out = cf and cf:read("*a") or ""
-    if cf then cf:close() end
-    os.remove(tmpf)
-    if compile_out ~= "" and #compile_out > 5 then
-      ui.status_warn("compile issues remain")
-      return "ok: edited "..path.."\n\nCompile check:\n"..compile_out:sub(1, 2000).."\nFix the remaining errors.", true
-    else
-      ui.status_ok("compiles clean")
-    end
-  end
-
-  return "ok: edited "..path, true
+  return "ok: updated lines "..start_line.." to "..end_line.." in "..path, true
 end
 
 local function exec_write_file(args)
@@ -460,20 +469,23 @@ local function exec_write_file(args)
   local ef = io.open(path, "r")
   if ef then
     local old_data = ef:read("*a"); ef:close()
-    local bk_dir = (CWD or ".") .. "/.coder/backups"
-    os.execute("mkdir -p " .. bk_dir)
+    local bk_dir = (CWD or ".") .. "/.jenova/backups"
+    local ok_bkdir2, err_bkdir2 = pcall(function() os.execute(string.format("mkdir -p %q", bk_dir)) end)
+    if not ok_bkdir2 then ui.status_warn('failed to ensure backup dir: '..tostring(err_bkdir2)) end
     local bn = path:match("([^/]+)$") or path
-    local ts = os.date("%H%M%S")
+    local ts = os.date("%Y%m%d_%H%M%S")
     local bk_path = bk_dir .. "/" .. bn .. "." .. ts
     local bk_out = io.open(bk_path, "w")
-    if bk_out then bk_out:write(old_data); bk_out:close()
+    if bk_out then
+      bk_out:write(old_data); bk_out:close()
       ui.file_backup(bk_path)
+      prune_backups(bk_dir, bn)
     end
   end
 
   ui.file_write(path, #content)
   local dir = path:match("^(.+)/[^/]+$")
-  if dir then os.execute("mkdir -p "..dir) end
+  if dir then local ok,err = pcall(function() os.execute(string.format("mkdir -p %q", dir)) end) if not ok then ui.status_warn('failed to create dir '..tostring(dir)..': '..tostring(err)) end end
   local f = io.open(path, "w")
   if not f then
     memory.log_error("write_file", path, "cannot write")
@@ -496,10 +508,15 @@ local function exec_write_file(args)
     local compile_cmd = string.format("cd %q && cc -fsyntax-only -Wall %q 2>&1", CWD or ".", path)
     ui.compile_check(path)
     local tmpf = os.tmpname()
-    os.execute(compile_cmd .. " > " .. tmpf .. " 2>&1")
+    local ok_compile, err_compile = pcall(os.execute, compile_cmd .. " > " .. tmpf .. " 2>&1")
+    if not ok_compile then ui.status_warn('compile command failed to run: '..tostring(err_compile)) end
     local cf = io.open(tmpf, "r")
-    local compile_out = cf and cf:read("*a") or ""
-    if cf then cf:close() end
+    local compile_out = ""
+    if cf then
+      local rd_ok, rd_data = pcall(cf.read, cf, "*a")
+      cf:close()
+      if rd_ok then compile_out = rd_data or "" end
+    end
     os.remove(tmpf)
     if compile_out ~= "" and #compile_out > 5 then
       ui.status_warn("compile issues remain")
@@ -527,6 +544,19 @@ local function exec_search_files(args)
   return search.format_results(results), true
 end
 
+local function exec_grep_search(args)
+  local pattern = args.pattern
+  if not pattern or pattern == "" then return "error: no pattern", false end
+  local include = args.include or "*"
+  ui.file_search("grep: " .. pattern)
+  -- Use multiple --exclude-dir for /bin/sh compatibility (no brace expansion)
+  local cmd = string.format("grep -rnE -e %q . --include=%q --exclude-dir=.git --exclude-dir=.jenova --exclude-dir=.crush --exclude-dir=node_modules --exclude-dir=build --exclude-dir=backups --exclude-dir=llama.cpp | head -20", pattern, include)
+  local out, ok = exec_shell({ command = cmd })
+  if not ok then return out, false end
+  if out == "" then return "No matches found for '" .. pattern .. "'", true end
+  return out, true
+end
+
 local function exec_think(args)
   local thought = args.thought or ""
   ui.think_status(#thought)
@@ -551,7 +581,7 @@ end
 TOOL_HANDLERS = {
   shell = exec_shell, read_file = exec_read_file, edit_file = exec_edit_file,
   write_file = exec_write_file, list_dir = exec_list_dir, search_files = exec_search_files,
-  think = exec_think,
+  grep_search = exec_grep_search, think = exec_think,
 }
 
 -------------------------------------------------------------------------------
@@ -626,7 +656,14 @@ local function parse_tool_calls_from_content(content)
   if not content or content == "" then return nil end
   local calls = {}
 
-  for block in content:gmatch("<tool_call>(.-)<%s*/tool_call>") do
+  -- If it has <think> block, only look for tools AFTER </think>
+  local actual_content = content
+  local think_end = content:find("</think>", 1, true)
+  if think_end then
+    actual_content = content:sub(think_end + 8)
+  end
+
+  for block in actual_content:gmatch("<tool_call>(.-)<%s*/tool_call>") do
     local ok, tc = pcall(json.decode, block)
     if ok and tc and tc.name and TOOL_HANDLERS[tc.name] then
       calls[#calls+1] = { id = "fb_"..#calls, ["function"] = { name = tc.name, arguments = tc.arguments or {} } }
@@ -640,7 +677,7 @@ local function parse_tool_calls_from_content(content)
     '%{%s*"arguments"%s*:%s*%b{}%s*,%s*"name"%s*:%s*"[^"]+"%s*%}',
   }
   for _, pat in ipairs(json_patterns) do
-    for block in content:gmatch(pat) do
+    for block in actual_content:gmatch(pat) do
       local ok, tc = pcall(json.decode, block)
       if ok and tc and tc.name and TOOL_HANDLERS[tc.name] then
         calls[#calls+1] = { id = "fb_"..#calls, ["function"] = { name = tc.name, arguments = tc.arguments or {} } }
@@ -650,7 +687,7 @@ local function parse_tool_calls_from_content(content)
     if #calls > 0 then dbg("fb", #calls.." bare JSON"); return calls end
   end
 
-  for block in content:gmatch("```json%s*(.-)%s*```") do
+  for block in actual_content:gmatch("```json%s*(.-)%s*```") do
     local ok, tc = pcall(json.decode, block)
     if ok and tc and tc.name and TOOL_HANDLERS[tc.name] then
       calls[#calls+1] = { id = "fb_"..#calls, ["function"] = { name = tc.name, arguments = tc.arguments or {} } }
@@ -699,6 +736,7 @@ end
 local function strip_tool_json(content)
   if not content or content == "" then return "" end
   local s = content
+  s = s:gsub("<think>.-</think>", "")
   s = s:gsub("<tool_call>.-<%s*/tool_call>", "")
   s = s:gsub("```json%s*%b{}%s*```", "")
   s = s:gsub('%{%s*"name"%s*:%s*"[^"]+"%s*,%s*"arguments"%s*:%s*%b{}%s*%}', "")
@@ -758,25 +796,105 @@ local function http_post(url, body)
   return http.post(url, body, HTTP_TIMEOUT)
 end
 
+local function http_post_retry(url, body, label, max_retries)
+  max_retries = max_retries or 2
+  local code, resp
+  for attempt = 1, max_retries do
+    code, resp = http.post(url, body, HTTP_TIMEOUT)
+    if code == 200 then return code, resp end
+    if code == 0 then
+      if attempt < max_retries then
+        ui.status_warn(label.." timeout, retry "..attempt.."/"..max_retries)
+        memory.log("retry", { label = label, attempt = attempt, code = code })
+        ui.nonblocking_wait(2, "retrying ("..label..")")
+      end
+    elseif code >= 500 or code == 499 then
+      -- 499 is a synthetic transport error from recv_all (socket closed mid-stream),
+      -- treated as retryable just like 5xx server errors.
+      if attempt < max_retries then
+        ui.status_warn(label.." HTTP "..code..", retry "..attempt.."/"..max_retries)
+        memory.log("retry", { label = label, attempt = attempt, code = code })
+        ui.nonblocking_wait(1, "retrying ("..label..")")
+      end
+    else
+      return code, resp
+    end
+  end
+  return code, resp
+end
+
 -------------------------------------------------------------------------------
 -- Chat API — v2: rebuilds system prompt each turn with fresh session context
+-- v2.1: retry on timeout/5xx, higher max_tokens, truncation detection,
+--        response diagnostics on every failure path
 -------------------------------------------------------------------------------
 local messages = {}
 
 local function trim_messages(max)
-  max = max or 30
+  max = max or 24
   if #messages <= max then return end
-  local trimmed = {}
-  if messages[1] then trimmed[1] = messages[1] end
-  local start = math.max(2, #messages - max + 2)
-  for i = start, #messages do
-    local m = messages[i]
-    if m.role == "tool" and m.content and #m.content > 1500 and i < #messages - 4 then
-      m = { role = m.role, content = m.content:sub(1, 800) .. "\n...[truncated]", tool_call_id = m.tool_call_id }
-    end
-    trimmed[#trimmed+1] = m
+
+  local keep_from = #messages - max + 2
+  if keep_from < 2 then keep_from = 2 end
+
+  -- Skip past any leading "tool" messages to avoid orphaned tool responses
+  while keep_from < #messages and messages[keep_from].role == "tool" do
+    keep_from = keep_from + 1
   end
-  messages = trimmed
+  -- Also skip past a leading "assistant" that lacks a preceding user/tool pair
+  while keep_from < #messages and messages[keep_from].role == "assistant"
+      and (keep_from == 1 or messages[keep_from - 1].role == "tool") do
+    keep_from = keep_from + 1
+  end
+
+  -- Seed with a fresh system prompt, not whatever messages[1] happened to be
+  local new_messages = { { role = "system", content = build_system_prompt() } }
+
+  local summary_parts = {}
+  for i = 2, keep_from - 1 do
+    local m = messages[i]
+    if m.role == "assistant" and m.tool_calls then
+      for _, tc in ipairs(m.tool_calls) do
+        summary_parts[#summary_parts+1] = (tc["function"] and tc["function"].name or "tool")
+      end
+    end
+  end
+
+  if #summary_parts > 0 then
+    local summary = "[System: Previous actions summarized and evicted from context: " .. table.concat(summary_parts, ", ") .. "]"
+    new_messages[#new_messages+1] = { role = "system", content = summary }
+  end
+
+  for i = keep_from, #messages do
+    local m = messages[i]
+    if m.role == "tool" and m.content and #m.content > 2000 and i < #messages - 4 then
+      m.content = m.content:sub(1, 1000) .. "\n...[truncated]"
+    end
+    new_messages[#new_messages+1] = m
+  end
+
+  messages = new_messages
+end
+
+local function estimate_token_count(msgs)
+  local chars = 0
+  if TOOLS then
+    local ok, tools_json = pcall(json.encode, TOOLS)
+    if ok then chars = chars + #tools_json end
+  end
+  for _, m in ipairs(msgs) do
+    chars = chars + #(m.role or "")
+    chars = chars + #(m.name or "")
+    chars = chars + #(m.content or "")
+    if m.tool_calls then
+      for _, tc in ipairs(m.tool_calls) do
+        chars = chars + #(tc["function"] and tc["function"].name or "")
+        chars = chars + #(tc["function"] and tc["function"].arguments or "")
+      end
+    end
+    chars = chars + 30 -- Structural overhead per message
+  end
+  return math.floor(chars / 2.8) + 100
 end
 
 local function chat(user_msg)
@@ -789,42 +907,88 @@ local function chat(user_msg)
   local send = {{ role = "system", content = build_system_prompt() }}
   for _, m in ipairs(messages) do send[#send+1] = m end
 
+  local prompt_est = estimate_token_count(send)
+  local min_budget = math.min(2048, math.floor(CONTEXT_WINDOW * 0.25))
+  
+  while prompt_est > (CONTEXT_WINDOW - min_budget) and #messages > 1 do
+    table.remove(messages, 1)
+    send = {{ role = "system", content = build_system_prompt() }}
+    for _, m in ipairs(messages) do send[#send+1] = m end
+    prompt_est = estimate_token_count(send)
+  end
+
+  if prompt_est > (CONTEXT_WINDOW - min_budget) and #messages == 1 then
+    local m = messages[1]
+    if m.content and type(m.content) == "string" and #m.content > 1000 then
+      m.content = m.content:sub(1, #m.content / 2) .. "\n...[force truncated to fit context]...\n"
+      send = {{ role = "system", content = build_system_prompt() }, m}
+      prompt_est = estimate_token_count(send)
+    end
+  end
+
+  local budget = CONTEXT_WINDOW - prompt_est
+  local max_tok = math.max(1, math.min(budget, 8192)) -- Cap at 8192 or budget, minimum 1
+
   local body = json.encode({
     model = MODEL,
     messages = send,
     tools = TOOLS,
     tool_choice = "auto",
     temperature = 0.6,
-    max_tokens = 4096,
+    max_tokens = max_tok,
   })
-  dbg("req", body)
+  dbg("req", "prompt_est="..prompt_est.." max_tokens="..max_tok.." body_len="..#body)
 
-  spinner_start("thinking")
-  local code, resp = http_post(ENDPOINT, body)
+  spinner_start("cognizing")
+  local code, resp = http_post_retry(ENDPOINT, body, "chat", 3)
   spinner_stop()
   dbg("resp-code", tostring(code))
   dbg("resp-body", resp)
 
   if code == 0 then
-    ui.status_err("timeout ("..HTTP_TIMEOUT.."s)")
+    local diag = string.format("timeout after %ds (prompt ~%d tok, max_tokens=%d, body=%db)",
+      HTTP_TIMEOUT, prompt_est, max_tok, #body)
+    ui.status_err(diag)
+    memory.log_error("chat", "timeout", diag)
+    ui.diagnostic("Tip: try /clear to reduce context, or check GPU utilization with /stats")
     return nil
   end
   if code ~= 200 then
-    ui.status_err("HTTP "..code)
-    dbg("http-err", resp:sub(1,500))
+    ui.status_err("HTTP "..code.." ("..#resp.."b)")
+    ui.diagnostic(resp:sub(1, 300))
+    memory.log_error("chat", "http_"..code, resp:sub(1, 200))
     return nil
   end
 
   local ok, data = pcall(json.decode, resp)
-  if not ok or not data or not data.choices or #data.choices == 0 then
-    ui.status_err("bad response")
+  if not ok or not data then
+    ui.status_err("JSON decode failed ("..#resp.."b response)")
+    ui.diagnostic("First 200 chars: "..resp:sub(1, 200))
+    ui.diagnostic("Last 200 chars: "..resp:sub(-200))
+    memory.log_error("chat", "json_fail", "len="..#resp.." start="..resp:sub(1,80))
+    return nil
+  end
+  if not data.choices or #data.choices == 0 then
+    ui.status_err("no choices in response")
     dbg("bad-resp", resp:sub(1, 500))
     return nil
   end
 
+  local finish_reason = data.choices[1].finish_reason or "unknown"
+  local usage = data.usage or {}
+  local pt = usage.prompt_tokens or "?"
+  local ct = usage.completion_tokens or "?"
+
+  if finish_reason == "length" then
+    ui.status_warn("response truncated (hit max_tokens="..max_tok..")")
+    ui.diagnostic("prompt="..tostring(pt).." completion="..tostring(ct).." — model ran out of generation space")
+    memory.log_error("chat", "truncated", "max_tokens="..max_tok.." pt="..tostring(pt).." ct="..tostring(ct))
+  end
+
   local msg = data.choices[1].message
   if not msg then
-    ui.status_err("no message")
+    ui.status_err("no message in response (finish="..finish_reason..")")
+    ui.diagnostic("prompt_tokens="..tostring(pt).." completion_tokens="..tostring(ct))
     return nil
   end
 
@@ -832,13 +996,9 @@ local function chat(user_msg)
   local has_tools = msg.tool_calls and #msg.tool_calls > 0
   if not has_content and not has_tools then
     ui.status_warn("empty response from model")
-    local fr = data.choices[1].finish_reason or "unknown"
-    local pt = (data.usage or {}).prompt_tokens or "?"
-    local ct = (data.usage or {}).completion_tokens or "?"
-    ui.diagnostic("finish_reason="..fr..", prompt_tokens="..tostring(pt)..", completion_tokens="..tostring(ct))
-    memory.log_error("chat", "empty_response", "finish="..fr.." pt="..tostring(pt).." ct="..tostring(ct))
+    ui.diagnostic("finish_reason="..finish_reason..", prompt_tokens="..tostring(pt)..", completion_tokens="..tostring(ct))
+    memory.log_error("chat", "empty_response", "finish="..finish_reason.." pt="..tostring(pt).." ct="..tostring(ct))
 
-    -- Single retry with a direct nudge
     local retry_msgs = {}
     for _, m in ipairs(send) do retry_msgs[#retry_msgs+1] = m end
     retry_msgs[#retry_msgs+1] = {
@@ -852,10 +1012,10 @@ local function chat(user_msg)
       tools = TOOLS,
       tool_choice = "auto",
       temperature = 0.7,
-      max_tokens = 4096,
+      max_tokens = max_tok,
     })
     spinner_start("retrying")
-    local rcode, rresp = http_post(ENDPOINT, retry_body)
+    local rcode, rresp = http_post_retry(ENDPOINT, retry_body, "retry", 2)
     spinner_stop()
     if rcode == 200 then
       local rok, rdata = pcall(json.decode, rresp)
@@ -873,12 +1033,19 @@ local function chat(user_msg)
     end
 
     ui.status_err("model unable to generate — try /clear and rephrase")
+    ui.diagnostic("Context may be too large ("..tostring(pt).." prompt tokens). Use /clear or simplify your request.")
     return nil
   end
 
   messages[#messages+1] = msg
-  memory.log("assistant", { content = (msg.content or ""):sub(1,200), has_tc = msg.tool_calls ~= nil })
-  return msg, data.choices[1].finish_reason
+  memory.log("assistant", {
+    content = (msg.content or ""):sub(1,200),
+    has_tc = msg.tool_calls ~= nil,
+    finish = finish_reason,
+    prompt_tok = pt,
+    comp_tok = ct,
+  })
+  return msg, finish_reason
 end
 
 -------------------------------------------------------------------------------
@@ -899,23 +1066,7 @@ local function agent_turn(user_msg)
   last_read_content = nil
   edit_fails_this_turn = {}
 
-  -- RAG: hybrid search — only inject compact, relevant results
-  rag_context = ""
-  local rag = search.query(user_msg, 3, true)  -- reduced from 5 to 3 to save tokens
-  if #rag > 0 then
-    local parts = { "\nRelevant files:" }
-    for i, r in ipairs(rag) do
-      parts[#parts+1] = string.format("[%d] %s (%.0f%%, %db)", i, r.path, r.score * 100, r.size or 0)
-      if r.snippet then
-        parts[#parts+1] = r.snippet:sub(1, 500)  -- reduced from 800
-      end
-    end
-    rag_context = table.concat(parts, "\n")
-    if #rag_context > 2500 then  -- reduced from 4000
-      rag_context = rag_context:sub(1, 2500) .. "\n...[truncated]"
-    end
-  end
-
+  -- RAG: now handled automatically by the Intelligence Proxy Server
   local msg = chat(user_msg)
   if not msg then return end
 
@@ -984,6 +1135,10 @@ local function agent_turn(user_msg)
 
         status_turn(turn, name)
         local result, success = execute_tool(name, arguments)
+        local MAX_TOOL_RESULT = 16000
+        if #result > MAX_TOOL_RESULT then
+          result = result:sub(1, MAX_TOOL_RESULT / 2) .. "\n...[truncated " .. #result .. " bytes]...\n" .. result:sub(-MAX_TOOL_RESULT / 4)
+        end
         messages[#messages+1] = { role = "tool", content = result, tool_call_id = call_id }
 
         -- Reflect: if we got BLOCKED, add guidance
@@ -1001,7 +1156,8 @@ local function agent_turn(user_msg)
       if not msg then return end
 
     elseif msg.content then
-      local narrating, reason = is_narrating(msg.content)
+      local clean_content = strip_tool_json(msg.content)
+      local narrating, reason = is_narrating(clean_content)
 
       if narrating and nudge_count < 3 then
         nudge_count = nudge_count + 1
@@ -1035,11 +1191,40 @@ end
 -- Server health check
 -------------------------------------------------------------------------------
 local function check_server()
-  for _ = 1, 3 do
-    local code = http.get(API_URL .. "/health", 5)
-    if code == 200 then return true end
-    os.execute("sleep 0.5")
+  local function try_health()
+    local code = http.get(API_URL .. "/health", 3)
+    return (code == 200 or code == 404 or code == 502 or code == 503)
   end
+
+  if try_health() then return true end
+
+  -- Backend not running. Try to launch it.
+  spinner_start("starting jenova-ca backend")
+  local root = jenova_root or "."
+  local launcher = root .. "/bin/jenova-ca"
+  local log_file = root .. "/.jenova/server_auto.log"
+  local _ok,_err = pcall(function() os.execute("mkdir -p " .. root .. "/.jenova") end)
+  if not _ok then ui.status_warn('failed to ensure .jenova: '..tostring(_err)) end
+  
+  -- Launch in background using daemon helper
+  local daemon = require('daemon')
+  local ok, pid_or_err = daemon.start_background({ launcher, '--daemon' }, log_file, root)
+  if not ok then
+    ui.status_err('failed to start backend: ' .. tostring(pid_or_err))
+  end
+
+  -- Wait for ready (up to 60s)
+  for i = 1, 60 do
+    if try_health() then
+      spinner_stop()
+      return true
+    end
+    local tv_sleep = ffi.new("struct timeval")
+    tv_sleep.tv_sec = 1
+    tv_sleep.tv_usec = 0
+    ffi.C.select(0, nil, nil, nil, tv_sleep)
+  end
+  spinner_stop()
   return false
 end
 
@@ -1047,10 +1232,19 @@ end
 -- Main REPL
 -------------------------------------------------------------------------------
 local function main()
-  local p = io.popen("pwd"); CWD = p:read("*l"); p:close()
+  local p = io.popen("pwd")
+  if p then
+    local ok, line = pcall(p.read, p, "*l")
+    p:close()
+    CWD = (ok and line) or "."
+  else
+    CWD = "."
+  end
   memory.init()
 
-  local embed_ok = embed.init({ script_dir = coder_root })
+  local embed_ok = embed.init({ 
+    script_dir = jenova_root,
+  })
   if embed_ok then search.init_embeddings(embed) end
 
   local indexed = search.index_dir(".", {
@@ -1064,12 +1258,17 @@ local function main()
     os.exit(1)
   end
 
+  local indexing = false
+  local f = io.open(".jenova/index_queue.json", "r")
+  if f then indexing = true; f:close() end
+
   io.write("\n")
   ui.draw_header()
   ui.draw_info({
     cwd = CWD,
     api_url = API_URL,
     indexed = tostring(indexed),
+    indexing = indexing,
     embed = embed_ok and tostring(search.vec_count()) or nil,
     turns = tostring(MAX_TURNS),
     timeout = tostring(HTTP_TIMEOUT),
@@ -1078,10 +1277,16 @@ local function main()
   ui.separator("session")
   ui.draw_commands({
     "/clear", "/history", "/debug", "/context", "/reindex", "/files",
-    "/search", "/errors", "/learn", "/plan", "/prefs", "/bench", "/stats", "/quit",
+    "/search", "/errors", "/learn", "/plan", "/prefs", "/bench", "/stats", "/diag", "/quit",
   })
 
   while true do
+    local idx_f = io.open(".jenova/index_queue.json", "r")
+    if idx_f then
+      idx_f:close()
+      ui.dimtext("  (background indexing in progress...)\n")
+    end
+
     ui.prompt()
     local ok_read, line = pcall(io.read, "*l")
     if not ok_read or not line then break end
@@ -1105,7 +1310,11 @@ local function main()
       ui.dimtext("=== System Prompt ===\n"..build_system_prompt().."\n=== End ===\n"); goto continue
     elseif line == "/reindex" then
       memory.invalidate_tree_cache()
-      indexed = search.index_dir(".")
+      indexed = search.index_dir(".", {
+        "lua","sh","c","h","cpp","py","js","ts","go","rs",
+        "md","txt","json","yaml","yml","toml","conf","cfg",
+        "html","css","Makefile","zig",
+      })
       ui.status_ok("reindexed "..indexed); goto continue
     elseif line == "/files" then
       ui.dimtext((memory.get_project_tree() or "(none)").."\n"); goto continue
@@ -1148,8 +1357,14 @@ local function main()
       goto continue
     elseif line == "/bench" then
       ui.status_info("Running benchmark...")
-      local bench_cmd = coder_root.."/llama.cpp/build/bin/llama-bench -m "..coder_root.."/models/Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf -ngl 99 -fa 1 -pg 512,128 2>&1"
-      local bp = io.popen(bench_cmd); local bout = bp:read("*a"); bp:close()
+      local bench_cmd = jenova_root.."/llama.cpp/build/bin/llama-bench -m "..jenova_root.."/models/Qwen2.5-Coder-7B-Q5_K_M.gguf -ngl 99 -fa 1 -pg 512,128 2>&1"
+      local bp = io.popen(bench_cmd)
+      local bout = "(bench failed)"
+      if bp then
+        local rd_ok, rd_data = pcall(bp.read, bp, "*a")
+        bp:close()
+        if rd_ok and rd_data then bout = rd_data end
+      end
       ui.dimtext(bout.."\n"); goto continue
     elseif line == "/stats" then
       local scode, sout = http.get(API_URL .. "/health", 3)
@@ -1158,8 +1373,80 @@ local function main()
       ui.dimtext("  Server: "..tostring(scode).." "..sout:sub(1,200).."\n")
       ui.dimtext("  Session: "..memory.get_session_id().." | "..dur.."s | "..acts.." actions\n")
       local mp = io.popen("nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu --format=csv,noheader 2>/dev/null")
-      local mout = mp:read("*a"); mp:close()
+      local mout = ""
+      if mp then
+        local rd_ok, rd_data = pcall(mp.read, mp, "*a")
+        mp:close()
+        if rd_ok and rd_data then mout = rd_data end
+      end
       if mout and mout ~= "" then ui.dimtext("  GPU: "..mout:gsub("\n","").."\n") end
+      goto continue
+    elseif line == "/diag" then
+      ui.boldtext("\n  === DIAGNOSTICS ===\n\n")
+      -- 1. Server health
+      local t0 = ffi_defs.wall_time()
+      local scode, sout = http.get(API_URL .. "/health", 5)
+      local latency = math.floor((ffi_defs.wall_time() - t0) * 1000)
+      ui.dimtext("  Server:     "..tostring(scode).." ("..latency.."ms, "..(sout or ""):gsub("\n"," "):sub(1,40)..")\n")
+      if scode ~= 200 then
+        ui.status_err("Server not healthy — check jenova-ca log")
+      end
+      -- 2. Config
+      ui.dimtext("  Endpoint:   "..ENDPOINT.."\n")
+      ui.dimtext("  Timeout:    "..HTTP_TIMEOUT.."s\n")
+      ui.dimtext("  Max turns:  "..MAX_TURNS.."\n")
+      ui.dimtext("  Context:    "..#messages.." messages in history\n")
+      -- 3. Context size estimate
+      local diag_send = {{ role = "system", content = build_system_prompt() }}
+      for _, m in ipairs(messages) do diag_send[#diag_send+1] = m end
+      local est_tokens = estimate_token_count(diag_send)
+      ui.dimtext("  Est tokens: ~"..est_tokens.." (limit "..CONTEXT_WINDOW..")\n")
+      if est_tokens > (CONTEXT_WINDOW * 0.75) then
+        ui.status_warn("context is large — may cause slow/truncated responses. Consider /clear")
+      end
+      -- 4. Session errors
+      local errs = memory.get_errors(5)
+      ui.dimtext("  Errors:     "..#errs.." this session\n")
+      for _, e in ipairs(errs) do
+        ui.dimtext("    - ["..( e.tool or "?").."] "..(e.error or ""):sub(1,80).."\n")
+      end
+      -- 5. GPU
+      local mp2 = io.popen("nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu,temperature.gpu --format=csv,noheader 2>/dev/null")
+      local mout2 = ""
+      if mp2 then
+        local rd_ok, rd_data = pcall(mp2.read, mp2, "*a")
+        mp2:close()
+        if rd_ok and rd_data then mout2 = rd_data end
+      end
+      if mout2 and mout2 ~= "" then
+        ui.dimtext("  GPU(NV):    "..mout2:gsub("\n","").."\n")
+      end
+      -- 6. Quick generation test
+      ui.dimtext("  Gen test:   ")
+      io.flush()
+      local test_body = json.encode({
+        model = MODEL,
+        messages = {{ role = "user", content = "Reply with exactly: OK" }},
+        max_tokens = 8,
+        temperature = 0.0,
+      })
+      local gt0 = ffi_defs.wall_time()
+      local gcode, gresp = http.post(ENDPOINT, test_body, 30)
+      local gtime = math.floor((ffi_defs.wall_time() - gt0) * 1000)
+
+      if gcode == 200 then
+        local gok, gdata = pcall(json.decode, gresp)
+        if gok and gdata and gdata.choices and #gdata.choices > 0 then
+          local _ = gdata.choices[1].message
+          local gtok = (gdata.usage or {}).completion_tokens or "?"
+          ui.dimtext("OK ("..gtime.."ms, "..tostring(gtok).." tokens)\n")
+        else
+          ui.dimtext("FAIL — bad JSON ("..gtime.."ms)\n")
+        end
+      else
+        ui.dimtext("FAIL — HTTP "..gcode.." ("..gtime.."ms)\n")
+      end
+      ui.boldtext("\n  === END DIAGNOSTICS ===\n\n")
       goto continue
     end
 
