@@ -302,9 +302,7 @@ end
 function search.save_vectors()
   if not embed or not embed.is_available() then return false end
 
-  -- Load and merge existing on-disk entries so concurrent background indexer
-  -- results are not lost. Skip merge if the file exceeds the safety cap to
-  -- avoid large memory spikes; in that case our in-memory vec_index wins.
+  -- Load and merge existing on-disk entries in streaming fashion to avoid loading entire file into memory
   local MAX_VECTOR_MERGE_BYTES = 20 * 1024 * 1024  -- 20 MB
   local save_data = {}
   local ef = io.open(VECTOR_FILE, "r")
@@ -312,14 +310,25 @@ function search.save_vectors()
     local file_size = ef:seek("end", 0) or 0
     if file_size > 0 and file_size <= MAX_VECTOR_MERGE_BYTES then
       ef:seek("set", 0)
-      local existing_content = ef:read("*a")
+      -- Read in chunks to avoid loading 20MB at once
+      local chunk_size = 1024 * 1024  -- 1MB chunks
+      local content_parts = {}
+      while true do
+        local chunk = ef:read(chunk_size)
+        if not chunk then break end
+        content_parts[#content_parts + 1] = chunk
+      end
       ef:close()
+      local existing_content = table.concat(content_parts)
+      content_parts = nil  -- Release memory
       local ok_e, existing = pcall(json.decode, existing_content)
+      existing_content = nil  -- Release memory
       if ok_e and type(existing) == "table" then
         for filepath, entry in pairs(existing) do
           save_data[filepath] = entry
         end
       end
+      existing = nil  -- Release memory
     else
       ef:close()
       if file_size > MAX_VECTOR_MERGE_BYTES then
@@ -350,6 +359,7 @@ function search.save_vectors()
   if not f then return false end
   f:write(json.encode(save_data))
   f:close()
+  save_data = nil  -- Release memory
   local ok_rename, rename_err = pcall(os.rename, tmp_path, VECTOR_FILE)
   if not ok_rename then
     io.write("[search] WARNING: failed to rename vector file: " .. tostring(rename_err) .. "\n")
@@ -571,6 +581,11 @@ function search.index_dir(root_dir, extensions)
     local to_remove = vec_count - MAX_VEC_FILES
     for i = 1, to_remove do
       vec_index[entries[i].path] = nil
+    end
+    -- M4 fix: Warn user about capped index
+    if to_remove > 0 then
+      io.write(string.format("[search] WARNING: Vector index capped at %d files; removed %d oldest. Consider raising MAX_VEC_FILES.\n",
+        MAX_VEC_FILES, to_remove))
     end
   end
 

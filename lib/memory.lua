@@ -112,6 +112,22 @@ function memory.gc()
   prune_file(LEARN_FILE, LEARN_TTL, MAX_LEARNED)
   prune_file(ACTION_FILE, ACTION_TTL, MAX_ACTIONS)
 
+  -- Trim session_action_index if session is old or index is large (H2 fix)
+  local age = os.time() - session_start
+  if age > 7200 or #session_action_key_order > 300 then
+    if #session_action_key_order > 200 then
+      local keep_from = #session_action_key_order - 200 + 1
+      for i = 1, keep_from - 1 do
+        session_action_index[session_action_key_order[i]] = nil
+      end
+      local new_order = {}
+      for i = keep_from, #session_action_key_order do
+        new_order[#new_order + 1] = session_action_key_order[i]
+      end
+      session_action_key_order = new_order
+    end
+  end
+
   -- Truncate session log if > 500KB
   local sf = io.open(SESSION_LOG, "r")
   if sf then
@@ -269,6 +285,7 @@ end
 -------------------------------------------------------------------------------
 -- Format action history for the model — concise summary of what was tried
 -- Only includes THIS session's actions relevant to the current turn
+-- Optimized: O(n) deduplication using hash table instead of O(n²)
 -------------------------------------------------------------------------------
 function memory.format_action_history(max_entries)
   max_entries = max_entries or 8
@@ -277,22 +294,17 @@ function memory.format_action_history(max_entries)
   local parts = { "\nActions tried this session (avoid repeating failures):" }
   local start = math.max(1, #session_actions - max_entries + 1)
 
-  -- Deduplicate by key, keep last result
-  local seen = {}
+  -- Deduplicate by key, keep last result - O(n) using hash table
+  local seen_index = {}  -- key -> index in unique array
   local unique = {}
   for i = start, #session_actions do
     local a = session_actions[i]
-    if not seen[a.key] then
-      seen[a.key] = true
+    local existing_idx = seen_index[a.key]
+    if not existing_idx then
       unique[#unique + 1] = a
+      seen_index[a.key] = #unique
     else
-      -- Update existing entry with latest result
-      for j = #unique, 1, -1 do
-        if unique[j].key == a.key then
-          unique[j] = a
-          break
-        end
-      end
+      unique[existing_idx] = a
     end
   end
 

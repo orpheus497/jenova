@@ -56,7 +56,7 @@ local function resolve_host(host)
 
   local sa = ffi.cast("struct sockaddr_in *", ai.ai_addr)
   local out = sa.sin_addr.s_addr
-  ffi.C.freeaddrinfo(res[0])
+  ffi.C.freeaddrinfo(ai)  -- Fixed: pass ai directly, not res[0]
   return out
 end
 
@@ -93,12 +93,17 @@ local function recv_all(fd, buf, buf_size)
   local total_recv = 0
   local stall_count = 0
   local recv_err = nil
+  local MAX_RECV_SIZE = 10 * 1024 * 1024  -- 10MB cap to prevent memory exhaustion
   while true do
     ::retry::
     local recv_n = ffi.C.recv(fd, buf, buf_size, 0)
     if recv_n > 0 then
-      chunks[#chunks + 1] = ffi.string(buf, recv_n)
       total_recv = total_recv + tonumber(recv_n)
+      if total_recv > MAX_RECV_SIZE then
+        recv_err = "response too large (>" .. (MAX_RECV_SIZE/1048576) .. "MB)"
+        break
+      end
+      chunks[#chunks + 1] = ffi.string(buf, recv_n)
       stall_count = 0
     elseif recv_n == 0 then
       break
