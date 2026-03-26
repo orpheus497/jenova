@@ -182,7 +182,6 @@ if [ "$1" = "--daemon" ]; then
         -cb \
         --spm-infill \
         --cache-prompt \
-        --conn-timeout 300 \
         --offline \
         --host "$HOST" \
         --port "$LLAMA_PORT" \
@@ -240,7 +239,6 @@ while [ "$1" = "--daemon" ]; do shift; done
     -cb \
     --spm-infill \
     --cache-prompt \
-    --conn-timeout 300 \
     --offline \
     --host "$HOST" \
     --port "$LLAMA_PORT" \
