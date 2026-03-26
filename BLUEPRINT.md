@@ -45,10 +45,12 @@ PID tracking: `.jenova/jenova-ca.pid` (space-separated, no "0" placeholders)
 ### Phase 1: GPU Strategy ✅ Fixed
 
 #### Bug 1.1 — `-ngl` conflicted with `-fitt` auto-tuning
+
 - **Fix:** Removed `-ngl` from all launch commands. `-sm layer -fitt $FIT_TARGET` handles layer distribution.
 - **Status:** ✅ Fixed in `bin/jenova-ca`
 
 #### Bug 1.2 — `bin/llama-server-nvim` spawned a duplicate model instance
+
 - **Root cause:** Script was `exec`'ing a second `llama-server` on port 8012 with the same 7B model, causing double VRAM load and bypassing the proxy entirely (no RAG injection for Neovim).
 - **Fix:** Rewritten as a "ensure jenova-ca is running" helper. Starts the shared backend via `jenova-ca --daemon` if not already up, waits for health, then exits. All clients (CLI, Neovim, HTTP) now share the single model instance.
 - **Neovim endpoints:** FIM/infill → `:8081` (direct, `--spm-infill` enabled); chat + RAG → `:8080` (proxy).
@@ -57,35 +59,45 @@ PID tracking: `.jenova/jenova-ca.pid` (space-separated, no "0" placeholders)
 ### Phase 2: Non-GPU Bug Fixes ✅ All Fixed
 
 #### Bug 2.1 — `embed.lua` missing `GGML_VULKAN_DISABLE=1`
+
 - **Status:** ✅ Fixed — `{GGML_VULKAN_DISABLE="1"}` passed to `daemon.start_background()`
 
 #### Bug 2.2 — Dead `CODER_ROOT` reference in `bin/jenova`
+
 - **Status:** ✅ Fixed — removed; `JENOVA_ROOT` used directly
 
 #### Bug 2.3 — No trap in `bin/jenova`
+
 - **Status:** ✅ Fixed — `cleanup_agent()` + `trap cleanup_agent EXIT INT TERM` added; now guards with `STARTED_BY_THIS_INVOCATION` so pre-existing daemons are not stopped on agent exit
 
 #### Bug 2.4 — SIGPIPE double-set in `proxy.lua`
+
 - **Status:** ✅ Verified not present — `ffi.C.signal(_ffi_defs.SIGPIPE, _ffi_defs.SIG_IGN)` is the only SIGPIPE handler; no GC-able closure override found in current code
 
 #### Bug 2.5 — `COROUTINE_TIMEOUT` too short
+
 - **Status:** ✅ Fixed — `COROUTINE_TIMEOUT = 600` in `lib/proxy.lua`
 
 #### Bug 2.6 — Bare `ffi.C.close()` in sweeper
+
 - **Status:** ✅ Fixed — sweeper uses `pcall(ffi.C.close, fd)` with timeout logging
 
 #### Bug 2.7 — `search.lua` indentation error
+
 - **Status:** ✅ Fixed
 
 #### Bug 2.8 — Dead `assess_complexity` in `agent.lua`
+
 - **Status:** ✅ Verified not present in current `lib/agent.lua`
 
 #### Bug 2.9 — `jenova-ca stop` didn't clean `llama-embed.pid`
+
 - **Status:** ✅ Fixed — `rm -f "$JENOVA_STATE/llama-embed.pid"` added to stop verb
 
 ### Phase 3: Documentation ✅ Updated
 
 #### Bug 3.1 — README/docs contradicted actual configuration
+
 - **Status:** ✅ Updated — BLUEPRINT.md and FIX.md refreshed to match current code
 
 ---
@@ -137,16 +149,19 @@ All items from the inline code review have been applied:
 Additional integration issues found and fixed after comprehensive cross-module analysis:
 
 #### Bug 7.1 — `bm25_index_file` stale entries on filtered-out files
+
 - **Root cause:** Early returns for files >100KB, binary files, and zero-term files skipped the stale-entry cleanup (`df` decrement, `total_docs` decrement, `bm25_index[filepath] = nil`). If `reindex_file` was called after a file grew above the 100KB threshold, the old terms remained in the BM25 index indefinitely.
 - **Fix:** All three early-return paths in `bm25_index_file` now evict the existing entry before returning nil.
 - **Status:** ✅ Fixed in `lib/search.lua`
 
 #### Bug 7.2 — `/reindex` command dropped extension filter
+
 - **Root cause:** `search.index_dir(".")` in the `/reindex` slash command was called without an extension array. The initial startup index uses an explicit whitelist (`lua`, `sh`, `c`, `h`, etc.), so `/reindex` produced a wider index that included all non-excluded file types.
 - **Fix:** `/reindex` now passes the identical extension array as the startup index.
 - **Status:** ✅ Fixed in `lib/agent.lua`
 
 #### Bug 7.3 — `search.lua` formatting: double-statement on single line
+
 - **Root cause:** `ok_mkdir` error handler was placed immediately after `end)` on the same line (no newline), making it visually invisible.
 - **Fix:** Split to separate lines.
 - **Status:** ✅ Fixed in `lib/search.lua`
@@ -214,11 +229,13 @@ Deep analysis of all Lua modules for memory leaks, unbounded allocations, FD lea
 Full cross-module audit of all 14 library files + `bin/` scripts + `~/.config/nvim`. No breaking changes found in Jenova itself. Two bugs in the nvim config fixed.
 
 #### Bug 9.1 — `llama.vim` pointed at non-existent endpoint (`~/.config/nvim/init.lua`)
+
 - **Root cause:** `vim.g.llama_config = { endpoint = "http://127.0.0.1:8080/completion" }` — the proxy only exposes `/v1/chat/completions`. Ghost-text completions were silently failing.
 - **Fix:** Updated to `/v1/chat/completions`. Llama.vim now routes through the proxy and receives RAG-injected context.
 - **Status:** ✅ Fixed in `~/.config/nvim/init.lua`
 
 #### Bug 9.2 — `<leader>ca` keybind referenced non-existent binary (`~/.config/nvim/init.lua`)
+
 - **Root cause:** `:term ./jenova-agent<CR>` — `jenova-agent` was never the binary name. The correct entry point is `bin/jenova`.
 - **Fix:** Updated to `:term cd ~/Projects/jenova && bin/jenova<CR>`.
 - **Status:** ✅ Fixed in `~/.config/nvim/init.lua`

@@ -109,8 +109,8 @@ case "$1" in
         else
             echo "No PID file found at $PID_FILE"
         fi
-        pkill -f "llama-server.*${LLAMA_EMBED_PORT}" 2>/dev/null || true
-        pkill -f "llama-server.*${LLAMA_PORT}" 2>/dev/null || true
+        pkill -f "llama-server.*--port.*${LLAMA_EMBED_PORT}" 2>/dev/null || true
+        pkill -f "llama-server.*--port.*${LLAMA_PORT}" 2>/dev/null || true
         exit 0
         ;;
     status)
@@ -285,8 +285,8 @@ cleanup() {
     wait $LLAMA_PID 2>/dev/null
     wait $PROXY_PID 2>/dev/null
     [ -n "$EMBED_PID" ] && wait $EMBED_PID 2>/dev/null
-    pkill -f "llama-server.*${LLAMA_EMBED_PORT}" 2>/dev/null || true
-    pkill -f "llama-server.*${LLAMA_PORT}" 2>/dev/null || true
+    pkill -f "llama-server.*--port.*${LLAMA_EMBED_PORT}" 2>/dev/null || true
+    pkill -f "llama-server.*--port.*${LLAMA_PORT}" 2>/dev/null || true
     rm -f "$PID_FILE"
     rm -f "$JENOVA_STATE/llama-embed.pid"
     rm -f "$JENOVA_STATE/indexer.pid"
