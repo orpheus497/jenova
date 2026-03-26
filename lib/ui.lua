@@ -1,28 +1,10 @@
--- ui.lua: Polished terminal UI for coder-agent
+-- ui.lua: Polished terminal UI for jenova-agent
 -- Pure ANSI escape sequences — no ncurses dependency, works on any terminal.
 -- Provides: header with ASCII art, structured output regions, status bar,
 --           styled input prompt, scrollback buffer, terminal resize handling.
 
 local ffi = require("ffi")
-
-ffi.cdef[[
-  int ioctl(int fd, unsigned long request, ...);
-  typedef unsigned short tcflag_t;
-  typedef unsigned char cc_t;
-  typedef unsigned int speed_t;
-  struct termios {
-    tcflag_t c_iflag;
-    tcflag_t c_oflag;
-    tcflag_t c_cflag;
-    tcflag_t c_lflag;
-    cc_t     c_cc[20];
-    speed_t  c_ispeed;
-    speed_t  c_ospeed;
-  };
-  int tcgetattr(int fd, struct termios *termios_p);
-  int tcsetattr(int fd, int optional_actions, const struct termios *termios_p);
-  int isatty(int fd);
-]]
+local ffi_defs = require("ffi_defs")
 
 local ui = {}
 
@@ -33,50 +15,39 @@ local ESC = "\27"
 local CSI = ESC .. "["
 
 local function esc(code)      return CSI .. code end
-local function move(row, col) return CSI .. row .. ";" .. col .. "H" end
 local function fg(n)          return CSI .. "38;5;" .. n .. "m" end
 local function bg(n)          return CSI .. "48;5;" .. n .. "m" end
 
 local RESET     = esc("0m")
 local BOLD      = esc("1m")
 local DIM       = esc("2m")
-local ITALIC    = esc("3m")
-local UNDERLINE = esc("4m")
 local CLEAR_LINE = esc("2K")
-local CLEAR_DOWN = esc("J")
-local HIDE_CURSOR = esc("?25l")
-local SHOW_CURSOR = esc("?25h")
-local SAVE_CURSOR = ESC .. "7"
-local RESTORE_CURSOR = ESC .. "8"
-local ALT_SCREEN = esc("?1049h")
-local MAIN_SCREEN = esc("?1049l")
-local SCROLL_RESET = esc("r")
 
 -------------------------------------------------------------------------------
 -- Color palette — cool, professional tones
 -------------------------------------------------------------------------------
 local P = {
-  header_bg    = 235,
-  header_fg    = 75,
-  header_accent = 117,
-  header_dim   = 241,
-  title_fg     = 153,
-  border       = 240,
-  border_light = 245,
-  status_bg    = 236,
-  status_fg    = 250,
-  status_dim   = 243,
-  prompt_fg    = 75,
-  prompt_arrow = 117,
-  text         = 253,
-  dim          = 243,
-  green        = 114,
-  red          = 203,
-  yellow       = 221,
-  cyan         = 117,
-  magenta      = 176,
-  blue         = 75,
-  orange       = 215,
+  header_bg    = 234,
+  header_fg    = 51,
+  header_accent = 33,
+  header_dim   = 240,
+  title_fg     = 45,
+  border       = 238,
+  border_light = 242,
+  status_bg    = 235,
+  status_fg    = 252,
+  status_dim   = 241,
+  prompt_fg    = 51,
+  prompt_arrow = 33,
+  text         = 254,
+  dim          = 242,
+  green        = 48,
+  red          = 196,
+  yellow       = 226,
+  cyan         = 51,
+  magenta      = 171,
+  blue         = 33,
+  orange       = 208,
   white        = 255,
 }
 
@@ -85,17 +56,11 @@ local P = {
 -------------------------------------------------------------------------------
 local term_w = 80
 local term_h = 24
-local is_tty = false
-local use_alt_screen = false
 local header_lines = 0
-local output_lines = {}
-local status_text = ""
-local turn_info = { turn = 0, max_turns = 25, actions = 0 }
 local spinner_frames = { "⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷" }
 local spinner_idx = 0
 local spinner_label = ""
 local spinner_active = false
-local original_termios = nil
 
 local TIOCGWINSZ = 0x40087468  -- FreeBSD
 
@@ -109,11 +74,19 @@ local function get_term_size()
     return ws[1], ws[0]  -- cols, rows
   end
   local p = io.popen("tput cols 2>/dev/null")
-  local c = p and tonumber(p:read("*l")) or 80
-  if p then p:close() end
+  local c = 80
+  if p then
+    local rd_ok, rd_val = pcall(p.read, p, "*l")
+    p:close()
+    if rd_ok and rd_val then c = tonumber(rd_val) or 80 end
+  end
   p = io.popen("tput lines 2>/dev/null")
-  local r = p and tonumber(p:read("*l")) or 24
-  if p then p:close() end
+  local r = 24
+  if p then
+    local rd_ok, rd_val = pcall(p.read, p, "*l")
+    p:close()
+    if rd_ok and rd_val then r = tonumber(rd_val) or 24 end
+  end
   return c, r
 end
 
@@ -240,24 +213,20 @@ end
 -- ASCII art header
 -------------------------------------------------------------------------------
 local HEADER_ART = {
-  "  ██████╗ ██████╗ ██████╗ ███████╗██████╗ ",
-  " ██╔════╝██╔═══██╗██╔══██╗██╔════╝██╔══██╗",
-  " ██║     ██║   ██║██║  ██║█████╗  ██████╔╝",
-  " ██║     ██║   ██║██║  ██║██╔══╝  ██╔══██╗",
-  " ╚██████╗╚██████╔╝██████╔╝███████╗██║  ██║",
-  "  ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝",
+  "      ██╗███████╗███╗   ██╗ ██████╗ ██╗   ██╗ █████╗ ",
+  "      ██║██╔════╝████╗  ██║██╔═══██╗██║   ██║██╔══██╗",
+  "      ██║█████╗  ██╔██╗ ██║██║   ██║██║   ██║███████║",
+  " ██   ██║██╔══╝  ██║╚██╗██║██║   ██║╚██╗ ██╔╝██╔══██║",
+  " ╚█████╔╝███████╗██║ ╚████║╚██████╔╝ ╚████╔╝ ██║  ██║",
+  "  ╚════╝ ╚══════╝╚═╝  ╚═══╝ ╚═════╝   ╚═══╝  ╚═╝  ╚═╝",
 }
 
 local HEADER_SMALL = {
-  " ▄████▄  ▒█████  ▓█████▄ ▓█████  ██▀███  ",
-  "▒██▀ ▀█ ▒██▒  ██▒▒██▀ ██▌▓█   ▀ ▓██ ▒ ██▒",
-  "▒▓█    ▄▒██░  ██▒░██   █▌▒███   ▓██ ░▄█ ▒",
-  "▒▓▓▄ ▄██▒██   ██░░▓█▄   ▌▒▓█  ▄ ▒██▀▀█▄  ",
-  "▒ ▓███▀ ░ ████▓▒░░▒████▓ ░▒████▒░██▓ ▒██▒",
-  "░ ░▒ ▒  ░ ▒░▒░▒░  ▒▒▓  ▒ ░░ ▒░ ░░ ▒▓ ░▒▓░",
+  "      J E N O V A",
+  "  Cognitive Architecture",
 }
 
-local HEADER_MINI = " ◆ C O D E R "
+local HEADER_MINI = " ◆ J E N O V A "
 
 local function header_row(inner_w, content)
   local dw = display_width(content)
@@ -292,9 +261,15 @@ function ui.draw_header()
   w(blank_row(inner_w))
   header_lines = header_lines + 1
 
-  -- ASCII art
+  -- ASCII art or fallback
   if art then
     for _, line in ipairs(art) do
+      w(header_row(inner_w, fg(P.header_fg) .. BOLD .. line .. RESET))
+      header_lines = header_lines + 1
+    end
+  elseif term_w >= 30 then
+    -- Medium-width fallback: two-line compact banner
+    for _, line in ipairs(HEADER_SMALL) do
       w(header_row(inner_w, fg(P.header_fg) .. BOLD .. line .. RESET))
       header_lines = header_lines + 1
     end
@@ -308,7 +283,7 @@ function ui.draw_header()
   header_lines = header_lines + 1
 
   -- Subtitle
-  w(header_row(inner_w, fg(P.header_accent) .. "FreeBSD Local Coding Agent" .. RESET))
+  w(header_row(inner_w, fg(P.header_accent) .. "Jenova Cognitive Architecture" .. RESET))
   header_lines = header_lines + 1
 
   -- Blank line
@@ -338,6 +313,7 @@ function ui.draw_info(opts)
   local stats = {}
   if opts.api_url then stats[#stats + 1] = fg(P.dim) .. "⚡ " .. RESET .. fg(P.status_dim) .. opts.api_url .. RESET end
   if opts.indexed then stats[#stats + 1] = fg(P.green) .. "◉ " .. RESET .. fg(P.status_dim) .. opts.indexed .. " files" .. RESET end
+  if opts.indexing then stats[#stats + 1] = fg(P.yellow) .. "◌ " .. RESET .. fg(P.status_dim) .. "indexing..." .. RESET end
   if opts.embed then stats[#stats + 1] = fg(P.cyan) .. "◎ " .. RESET .. fg(P.status_dim) .. "embed:" .. opts.embed .. RESET end
   if opts.turns then stats[#stats + 1] = fg(P.dim) .. "turns:" .. opts.turns .. RESET end
   if opts.timeout then stats[#stats + 1] = fg(P.dim) .. "timeout:" .. opts.timeout .. "s" .. RESET end
@@ -473,10 +449,10 @@ function ui.file_read_done(size_str)
   ui.status_ok(size_str .. " read")
 end
 
-function ui.file_edit(path, old_len, new_len)
+function ui.file_edit(path, start_line, end_line)
   wflush(
     "  " .. fg(P.green) .. ICONS.edit .. " editing " .. RESET .. path
-    .. fg(P.dim) .. " (-" .. old_len .. "b +" .. new_len .. "b)" .. RESET .. "\n"
+    .. fg(P.dim) .. " (lines " .. start_line .. "-" .. end_line .. ")" .. RESET .. "\n"
   )
 end
 
@@ -497,7 +473,7 @@ function ui.file_list(path)
 end
 
 function ui.think_status(chars)
-  wflush("  " .. fg(P.cyan) .. ICONS.think .. " thinking" .. RESET .. fg(P.dim) .. " (" .. chars .. " chars)" .. RESET .. "\n")
+  wflush("  " .. fg(P.cyan) .. ICONS.think .. " cognizing" .. RESET .. fg(P.dim) .. " (" .. chars .. " chars)" .. RESET .. "\n")
 end
 
 function ui.compile_check(path)
@@ -509,7 +485,7 @@ end
 -------------------------------------------------------------------------------
 function ui.spinner_start(label)
   spinner_active = true
-  spinner_label = label or "thinking"
+  spinner_label = label or "cognizing"
   spinner_idx = 1
   wflush("  " .. fg(P.cyan) .. spinner_frames[1] .. " " .. spinner_label .. RESET)
 end
@@ -521,6 +497,30 @@ function ui.spinner_stop()
   end
 end
 
+function ui.nonblocking_wait(seconds, label)
+  local start_time = ffi_defs.wall_time()
+  local last_spinner_update = 0
+  spinner_active = true
+  spinner_label = label or "waiting"
+  spinner_idx = 1
+
+  while true do
+    local current_time = ffi_defs.wall_time()
+    if current_time - start_time >= seconds then break end
+    
+    if current_time - last_spinner_update > 0.1 then
+      spinner_idx = (spinner_idx % #spinner_frames) + 1
+      wflush("\r" .. CLEAR_LINE .. "  " .. fg(P.cyan) .. spinner_frames[spinner_idx] .. " " .. spinner_label .. RESET)
+      last_spinner_update = current_time
+    end
+    -- Efficiently sleep for 0.1 seconds without busy-waiting
+    local tv = ffi.new("struct timeval")
+    tv.tv_sec = 0
+    tv.tv_usec = 100000 -- 100ms
+    ffi.C.select(0, nil, nil, nil, tv)
+  end
+  ui.spinner_stop()
+end
 -------------------------------------------------------------------------------
 -- Nudge display
 -------------------------------------------------------------------------------
@@ -571,7 +571,7 @@ end
 function ui.agent_response(text)
   if not text or text == "" then return end
   wflush(
-    "\n  " .. fg(P.green) .. BOLD .. "coder" .. RESET .. fg(P.dim) .. " │ " .. RESET .. text .. "\n\n"
+    "\n  " .. fg(P.cyan) .. BOLD .. "jenova" .. RESET .. fg(P.dim) .. " │ " .. RESET .. text .. "\n\n"
   )
 end
 
@@ -612,8 +612,8 @@ function ui.boldtext(text)
 end
 
 function ui.server_not_running(url)
-  wflush(fg(P.red) .. ICONS.err .. " llama-server not running at " .. url .. RESET .. "\n")
-  wflush(fg(P.dim) .. "  Start with: ./coder-server" .. RESET .. "\n")
+  wflush(fg(P.red) .. ICONS.err .. " jenova-ca backend not running at " .. url .. RESET .. "\n")
+  wflush(fg(P.dim) .. "  Start with: ./bin/jenova" .. RESET .. "\n")
 end
 
 -------------------------------------------------------------------------------

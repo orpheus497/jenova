@@ -5,7 +5,7 @@
 # This can give 1.5-2x speed improvement on token generation.
 
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
-MODEL_DIR="$SCRIPT_DIR/models"
+MODEL_DIR="$SCRIPT_DIR/../models"
 
 DRAFT_MODEL="Qwen2.5-Coder-0.5B-Q8_0.gguf"
 DRAFT_URL="https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q8_0.gguf"
@@ -32,7 +32,7 @@ elif command -v fetch >/dev/null 2>&1; then
 else
     echo "Error: No download tool available (need curl or fetch)"
     echo "Alternatively, download the draft model from llama-server directly:"
-    echo "  $SCRIPT_DIR/llama.cpp/build/bin/llama-server -hfrd Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF:q8_0"
+    echo "  $SCRIPT_DIR/../llama.cpp/build/bin/llama-server -hfrd Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF:q8_0"
     exit 1
 fi
 
