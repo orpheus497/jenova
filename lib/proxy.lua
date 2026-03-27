@@ -166,6 +166,45 @@ local function proxy_connection(client_fd, conn_fds)
         end
     end
 
+    -- Native /health endpoint — exact path match ([ %?] catches both "GET /health HTTP/" and
+    -- "GET /health?…" while excluding paths like /healthz).
+    local is_health = is_get and headers_raw:match("^GET /health[ %?]")
+    if is_health then
+        -- Non-blocking backend liveness check via async_connect (coroutine-safe, no blocking).
+        local health_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
+        local backend_ok = false
+        if health_fd >= 0 then
+            set_nonblocking(health_fd)
+            -- Normalize wildcard bind addresses (e.g., 0.0.0.0) to a loopback address for connect().
+            local backend_connect_host = LLAMA_HOST
+            if backend_connect_host == "0.0.0.0" or backend_connect_host == "::" or backend_connect_host == "*" then
+                backend_connect_host = "127.0.0.1"
+            end
+            local h_addr = ffi.new("struct sockaddr_in")
+            h_addr.sin_len   = ffi.sizeof(h_addr)
+            h_addr.sin_family = AF_INET
+            h_addr.sin_port   = ffi.C.htons(LLAMA_PORT)
+            h_addr.sin_addr.s_addr = ffi.C.inet_addr(backend_connect_host)
+            backend_ok = (async_connect(health_fd, h_addr) == true)
+            ffi.C.close(health_fd)
+        end
+        local status_str  = backend_ok and "ok" or "degraded"
+        local http_status = backend_ok and "200 OK" or "503 Service Unavailable"
+        local health_body = json.encode({
+            status     = status_str,
+            proxy      = "running",
+            backend    = string.format("%s:%d", LLAMA_HOST, LLAMA_PORT),
+            embed      = embed_ok,
+            backend_ok = backend_ok,
+        })
+        local health_resp = string.format(
+            "HTTP/1.1 %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
+            http_status, #health_body, health_body)
+        async_send(client_fd, health_resp)
+        safe_close()
+        return
+    end
+
     if not is_get then
         if content_length > MAX_BODY_SIZE then
             local err_resp = "HTTP/1.1 413 Content Too Large\r\nConnection: close\r\n\r\n"

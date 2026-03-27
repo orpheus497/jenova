@@ -1,7 +1,7 @@
 # Jenova Fix Ledger
 
-**Updated:** 2026-03-26
-**Branch:** `build`
+**Updated:** 2026-03-27
+**Branch:** `claude/roadmap-alignment-y91ZF`
 
 All items in this ledger are **resolved**. The codebase has been fully audited and fixed in the cohesion pass commit.
 
@@ -106,6 +106,22 @@ All items in this ledger are **resolved**. The codebase has been fully audited a
 
 - [x] **`init.lua` llama.vim endpoint** — `vim.g.llama_config` pointed to `/completion` (non-existent). Corrected to `/v1/chat/completions` (the only POST endpoint on the proxy). Ghost-text completion now routes through the intelligence proxy with RAG injection.
 - [x] **`init.lua` `<leader>ca` keybind** — Referenced `./jenova-agent` which does not exist. Fixed to `cd ~/Projects/jenova && bin/jenova`.
+
+---
+
+---
+
+## Roadmap Alignment Audit — 2026-03-27
+
+Full cross-module audit of all BLUEPRINT items against actual source code. Seven issues found and fixed:
+
+- [x] **Dead `LLAMA_NGL` variable** — `bin/jenova-ca` still assigned `LLAMA_NGL` (from removed `-ngl` flag) and printed it in the startup banner as "GPU Layers: all". Removed dead variable; banner now shows "GPU: auto-fit" with tensor split and fit target.
+- [x] **`JENOVA_ROOT` unconditional override** — `bin/jenova-ca` lines 49/52 clobbered user-set `JENOVA_ROOT` env var. Changed to `${JENOVA_ROOT:-...}` conditional assignment.
+- [x] **`lib/embed.lua` stale `CTX_SIZE=2048`** — Local variable was 2048 while server launches with `-c 4096`. Updated to 4096.
+- [x] **`agent.lua` check_server accepted 502/503** — `try_health()` accepted 502/503 as healthy, contradicting BLUEPRINT healthcheck fix. Now only accepts 200.
+- [x] **`grep_search` missing from system prompt** — Tool was defined with a handler but not listed in the model's system prompt. Added to prompt.
+- [x] **Proxy lacked native `/health` endpoint** — `GET /health` was forwarded to llama-server. Added native handler with JSON status response (proxy state + backend connectivity).
+- [x] **`tests/test_bin_jenova.sh` missing** — Referenced in BLUEPRINT but never created. Added with 8 test cases covering config, modules, health check, PID format, cleanup guard, and trap.
 
 ---
 
