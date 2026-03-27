@@ -111,8 +111,7 @@ vim.api.nvim_create_user_command("IDE", function()
     vim.cmd("bd")
   end
 
-  -- ##Step purpose: Save references to the main buffer before panels open
-  local main_buf = vim.api.nvim_get_current_buf()
+  -- ##Step purpose: Save reference to the main window before panels open
   local main_win = vim.api.nvim_get_current_win()
 
   -- ##Step purpose: Open left-side panels (NvimTree file explorer + Trouble diagnostics)

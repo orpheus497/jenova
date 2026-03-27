@@ -78,8 +78,9 @@ return {
         end,
       })
 
-      -- ##Step purpose: Configure individual LSP servers with shared capabilities
-      local servers = { "lua_ls", "pyright", "clangd", "bashls" }
+      -- ##Step purpose: Configure other LSP servers with shared capabilities
+      -- lua_ls is excluded here — it is set up separately below with extra settings
+      local servers = { "pyright", "clangd", "bashls" }
       for _, server in ipairs(servers) do
         lspconfig[server].setup({ capabilities = capabilities })
       end

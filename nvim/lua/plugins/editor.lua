@@ -47,8 +47,9 @@ return {
           layout_config = { horizontal = { preview_width = 0.55 } },
         },
       })
-      -- ##Action purpose: Load fzf sorter for faster fuzzy matching
-      telescope.load_extension("fzf")
+      -- ##Action purpose: Load fzf sorter for faster fuzzy matching (pcall so Telescope
+      -- still works if telescope-fzf-native fails to build or isn't installed)
+      pcall(telescope.load_extension, "fzf")
     end,
   },
 

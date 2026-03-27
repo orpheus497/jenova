@@ -8,10 +8,12 @@ return {
     -- ##Step purpose: Load on insert entry so it only activates when editing
     event = "InsertEnter",
     init = function()
-      -- ##Action purpose: Point llama.vim at the Jenova infill endpoint (default port 8081)
-      -- LLAMA_PORT is defined in jenova.conf; fall back to 8081 if not set in env
+      -- ##Action purpose: Point llama.vim at the Jenova infill endpoint (default http://127.0.0.1:8081)
+      -- LLAMA_PORT (and optionally LLAMA_HOST) may be set in the environment; fall back to 127.0.0.1:8081 if unset
+      local llama_host = vim.env.LLAMA_HOST or "127.0.0.1"
+      local llama_port = vim.env.LLAMA_PORT or "8081"
       vim.g.llama_config = {
-        endpoint = "http://127.0.0.1:8081",
+        endpoint = string.format("http://%s:%s", llama_host, llama_port),
         -- ##Step purpose: Model name as recognised by the running llama-server
         model = "",   -- empty = use whatever model the server has loaded
         -- ##Step purpose: Token budget for prefix + suffix context fed to FIM

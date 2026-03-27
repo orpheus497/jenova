@@ -1,6 +1,6 @@
 -- ##Script function and purpose: Configures mini.nvim utility modules — mini.pairs
 -- for auto-pairing brackets/quotes, mini.comment for toggling comments, mini.surround
--- for surround operations, and mini.statusline as a lightweight fallback statusline.
+-- for surround operations, and mini.bufremove for safe buffer deletion while keeping layout.
 
 return {
   -- ##Section purpose: mini.nvim — collection of small independent Lua modules
