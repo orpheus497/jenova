@@ -184,8 +184,7 @@ local _init_uv = vim.uv or vim.loop
 local _jenova_timer = _init_uv and _init_uv.new_timer()
 if _jenova_timer then
   _jenova_timer:start(5000, 30000, vim.schedule_wrap(function()
-    local uv = vim.uv or vim.loop
-    if not uv then return end
+    local uv = vim.uv or vim.loop  ---@diagnostic disable-line: redefined-local
     local h = vim.env.JENOVA_CONNECT_HOST or "127.0.0.1"
     local p = tonumber(vim.env.JENOVA_PORT or "8080")
     local tcp = uv.new_tcp()
