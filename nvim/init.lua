@@ -125,23 +125,52 @@ vim.api.nvim_create_autocmd("VimEnter", {
       local host = vim.env.JENOVA_CONNECT_HOST or "127.0.0.1"
       local port = vim.env.JENOVA_PORT or "8080"
       local url  = string.format("http://%s:%s/health", host, port)
-      -- ##Action purpose: Non-blocking health probe — curl with 2s timeout
-      if vim.fn.executable("curl") ~= 1 then
+      -- ##Action purpose: Non-blocking health probe via native TCP connect
+      -- Uses vim.uv with vim.loop fallback for older Neovim builds.
+      -- A 2s timeout timer prevents hung connections from leaking sockets.
+      local uv = vim.uv or vim.loop
+      if not uv then
         vim.g.jenova_connected = false
         return
       end
-      local result = vim.fn.system(string.format("curl -sf -o /dev/null -m 2 %s", vim.fn.shellescape(url)))
-      if vim.v.shell_error == 0 then
-        vim.g.jenova_connected = true
-      else
+      local tcp = uv.new_tcp()
+      if not tcp then
         vim.g.jenova_connected = false
-        vim.notify(
-          "Jenova CA backend not running. AI features unavailable.\n" ..
-          "Run:  jvim somefile.lua   OR   bin/llama-server-nvim",
-          vim.log.levels.WARN,
-          { title = "Jenova" }
-        )
+        return
       end
+      local timeout = uv.new_timer()
+      local closed = false
+      if timeout then
+        timeout:start(2000, 0, function()
+          if not closed then
+            closed = true
+            pcall(function() tcp:close() end)
+            vim.schedule(function()
+              vim.g.jenova_connected = false
+            end)
+          end
+          pcall(function() timeout:close() end)
+        end)
+      end
+      tcp:connect(host, tonumber(port), function(err)
+        if closed then return end
+        closed = true
+        pcall(function() tcp:close() end)
+        if timeout then pcall(function() timeout:close() end) end
+        vim.schedule(function()
+          if not err then
+            vim.g.jenova_connected = true
+          else
+            vim.g.jenova_connected = false
+            vim.notify(
+              "Jenova CA backend not running. AI features unavailable.\n" ..
+              "Run:  jvim somefile.lua   OR   bin/llama-server-nvim",
+              vim.log.levels.WARN,
+              { title = "Jenova" }
+            )
+          end
+        end)
+      end)
     end, 1500)
   end,
   once = true,
@@ -149,20 +178,41 @@ vim.api.nvim_create_autocmd("VimEnter", {
 
 -- ##Section purpose: Periodic backend health refresh every 30s
 -- Updates vim.g.jenova_connected so the lualine status component stays current.
+-- Uses vim.uv with vim.loop fallback; gracefully disabled if neither is available.
 vim.g.jenova_connected = false  -- initialise pessimistically
-local _jenova_timer = vim.uv.new_timer()
+local _init_uv = vim.uv or vim.loop
+local _jenova_timer = _init_uv and _init_uv.new_timer()
 if _jenova_timer then
   _jenova_timer:start(5000, 30000, vim.schedule_wrap(function()
-    if vim.fn.executable("curl") ~= 1 then return end
+    local uv = vim.uv or vim.loop  ---@diagnostic disable-line: redefined-local
     local h = vim.env.JENOVA_CONNECT_HOST or "127.0.0.1"
-    local p = vim.env.JENOVA_PORT or "8080"
-    vim.fn.jobstart(
-      { "curl", "-sf", "-o", "/dev/null", "-m", "2",
-        string.format("http://%s:%s/health", h, p) },
-      { on_exit = function(_, code)
-          vim.g.jenova_connected = (code == 0)
-        end }
-    )
+    local p = tonumber(vim.env.JENOVA_PORT or "8080")
+    local tcp = uv.new_tcp()
+    if not tcp then return end
+    -- 2s timeout prevents hung connections from accumulating in-flight sockets
+    local timeout = uv.new_timer()
+    local closed = false
+    if timeout then
+      timeout:start(2000, 0, function()
+        if not closed then
+          closed = true
+          pcall(function() tcp:close() end)
+          vim.schedule(function()
+            vim.g.jenova_connected = false
+          end)
+        end
+        pcall(function() timeout:close() end)
+      end)
+    end
+    tcp:connect(h, p, function(err)
+      if closed then return end
+      closed = true
+      pcall(function() tcp:close() end)
+      if timeout then pcall(function() timeout:close() end) end
+      vim.schedule(function()
+        vim.g.jenova_connected = (not err)
+      end)
+    end)
   end))
 end
 

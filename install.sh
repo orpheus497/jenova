@@ -201,7 +201,7 @@ if [ "$SKIP_LLAMA" = "0" ]; then
         warn "Build llama.cpp with Vulkan support:"
         warn "  cd $JENOVA_ROOT/llama.cpp"
         warn "  cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release"
-        warn "  cmake --build build --config Release -j\$(nproc)"
+        warn "  cmake --build build --config Release -j\$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
         WARNINGS=$((WARNINGS + 1))
     fi
 fi
@@ -345,7 +345,7 @@ fi
 echo ""
 info "Next steps:"
 echo "  1. Place model GGUF files in: $JENOVA_ROOT/models/"
-echo "  2. Build llama.cpp if not done: cd llama.cpp && cmake -B build -DGGML_VULKAN=ON && cmake --build build -j\$(nproc)"
+echo "  2. Build llama.cpp if not done: cd llama.cpp && cmake -B build -DGGML_VULKAN=ON && cmake --build build -j\$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 echo "  3. Start the backend:  $JENOVA_ROOT/bin/jenova-ca --daemon"
 echo "     Or launch agent:    $JENOVA_ROOT/bin/jenova"
 echo "     Or launch editor:   $JENOVA_ROOT/bin/jvim  (or just: jvim)"

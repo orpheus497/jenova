@@ -6,16 +6,30 @@
 local M = {}
 
 -- ---------------------------------------------------------------------------
--- Helper: HTTP probe (curl-based, 2s timeout)
+-- Helper: TCP probe (native vim.uv, no external dependencies)
 -- ---------------------------------------------------------------------------
---- Probe a URL for reachability via curl.
---- @return boolean|nil  true = reachable, false = unreachable, nil = probe skipped (curl missing)
-local function probe(url)
-  if vim.fn.executable("curl") ~= 1 then
-    return nil
+--- Probe a host:port for reachability via TCP connect.
+--- @return boolean|nil  true = reachable, false = unreachable, nil = probe skipped (vim.uv unavailable)
+local function probe(host, port)
+  local uv = vim.uv or vim.loop
+  if not uv then return nil end
+  local tcp = uv.new_tcp()
+  if not tcp then return nil end
+  local connected = false
+  local done = false
+  tcp:connect(host, tonumber(port), function(err)
+    connected = (not err)
+    done = true
+    pcall(function() tcp:close() end)
+  end)
+  -- Synchronous wait using vim.wait — safe inside Neovim's event loop
+  -- (uv.run('once') can conflict with the already-running loop)
+  vim.wait(2000, function() return done end, 50)
+  if not done then
+    pcall(function() tcp:close() end)
+    return false
   end
-  local _ = vim.fn.system(string.format("curl -sf -o /dev/null -m 2 %s", vim.fn.shellescape(url)))
-  return vim.v.shell_error == 0
+  return connected
 end
 
 -- ---------------------------------------------------------------------------
@@ -46,16 +60,10 @@ function M.check()
   -- Embed port is not exposed as env var by jvim yet; use fixed default
   local embed_port   = "8082"
 
-  -- Check curl availability once before backend probes
-  local curl_available = vim.fn.executable("curl") == 1
-  if not curl_available then
-    h.warn("curl not found: skipping HTTP reachability checks. Install curl for full Jenova checkhealth coverage.")
-  end
-
   local proxy_url = string.format("http://%s:%s/health", connect_host, proxy_port)
-  local proxy_status = probe(proxy_url)
+  local proxy_status = probe(connect_host, proxy_port)
   if proxy_status == nil then
-    h.info(string.format("Intelligence Proxy probe skipped (no curl) — %s", proxy_url))
+    h.info(string.format("Intelligence Proxy probe skipped (vim.uv unavailable) — %s", proxy_url))
   elseif proxy_status then
     h.ok(string.format("Intelligence Proxy reachable at %s", proxy_url))
   else
@@ -66,9 +74,9 @@ function M.check()
   end
 
   local llama_url = string.format("http://%s:%s/health", connect_host, llama_port)
-  local llama_status = probe(llama_url)
+  local llama_status = probe(connect_host, llama_port)
   if llama_status == nil then
-    h.info(string.format("llama-server probe skipped (no curl) — %s", llama_url))
+    h.info(string.format("llama-server probe skipped (vim.uv unavailable) — %s", llama_url))
   elseif llama_status then
     h.ok(string.format("llama-server (main inference) reachable at %s", llama_url))
   else
@@ -79,9 +87,9 @@ function M.check()
   end
 
   local embed_url = string.format("http://%s:%s/health", connect_host, embed_port)
-  local embed_status = probe(embed_url)
+  local embed_status = probe(connect_host, embed_port)
   if embed_status == nil then
-    h.info(string.format("Embedding server probe skipped (no curl) — %s", embed_url))
+    h.info(string.format("Embedding server probe skipped (vim.uv unavailable) — %s", embed_url))
   elseif embed_status then
     h.ok(string.format("Embedding server (nomic-embed) reachable at %s", embed_url))
   else
@@ -279,18 +287,21 @@ function M.check()
   h.start("System Memory")
 
   local mem_total_mb = 0
-  local uname = (vim.uv or vim.loop).os_uname()
-  local is_linux = uname.sysname == "Linux"
-  local free_out = vim.fn.system("sysctl -n hw.physmem 2>/dev/null || grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}'")
-  if vim.v.shell_error == 0 then
-    local val = tonumber(free_out:match("%d+"))
-    if val then
-      if is_linux then
-        -- Linux /proc/meminfo awk output is in KB
-        mem_total_mb = math.floor(val / 1024)
-      else
-        -- FreeBSD sysctl hw.physmem returns bytes
-        mem_total_mb = math.floor(val / 1024 / 1024)
+  if vim.uv and vim.uv.get_total_memory then
+    mem_total_mb = math.floor(vim.uv.get_total_memory() / 1024 / 1024)
+  else
+    -- Fallback for older Neovim versions
+    local uname = (vim.uv or vim.loop).os_uname()
+    local is_linux = uname.sysname == "Linux"
+    local free_out = vim.fn.system("sysctl -n hw.physmem 2>/dev/null || grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}'")
+    if vim.v.shell_error == 0 then
+      local val = tonumber(free_out:match("%d+"))
+      if val then
+        if is_linux then
+          mem_total_mb = math.floor(val / 1024)
+        else
+          mem_total_mb = math.floor(val / 1024 / 1024)
+        end
       end
     end
   end
