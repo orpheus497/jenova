@@ -132,6 +132,10 @@ case "$1" in
         fi
         exit 0
         ;;
+    start)
+        shift
+        set -- "--daemon" "$@"
+        ;;
     restart)
         "$0" stop 2>/dev/null || true
         shift || true
@@ -221,9 +225,32 @@ if [ "$1" = "--daemon" ]; then
     HEALTH_TIMEOUT="${JENOVA_HEALTH_TIMEOUT:-90}"
     HEALTH_INTERVAL=2
     _ELAPSED=0
+
+    # Probe function: tries luajit healthcheck.lua first (no curl needed),
+    # falls back to curl if luajit/healthcheck.lua is not available.
+    _probe_health() {
+        if [ -f "$PROXY_SCRIPT" ]; then
+            _HC=$(dirname "$PROXY_SCRIPT")/healthcheck.lua
+        else
+            _HC=""
+        fi
+        if [ -f "$_HC" ]; then
+            luajit "$_HC" "$CONNECT_HOST" "$LLAMA_PORT" 2 2>/dev/null
+        elif command -v curl >/dev/null 2>&1; then
+            curl -sf -o /dev/null -m 3 "$HEALTH_URL" 2>/dev/null
+        else
+            # Last resort: plain TCP probe via /dev/tcp (bash-only) or nc
+            if command -v nc >/dev/null 2>&1; then
+                nc -z -w 2 "$CONNECT_HOST" "$LLAMA_PORT" >/dev/null 2>&1
+            else
+                return 1
+            fi
+        fi
+    }
+
     echo "Waiting for llama-server to become ready..."
     while [ "$_ELAPSED" -lt "$HEALTH_TIMEOUT" ]; do
-        if curl -sf -o /dev/null "$HEALTH_URL" 2>/dev/null; then
+        if _probe_health; then
             echo "llama-server ready (${_ELAPSED}s)"
             break
         fi
@@ -260,7 +287,7 @@ if [ "$1" = "--daemon" ]; then
         fi
     done
     # Readiness probe: confirm llama-server still responds after all processes up
-    if ! curl -sf -o /dev/null "$HEALTH_URL" 2>/dev/null; then
+    if ! _probe_health; then
         echo "ERROR: llama-server health check failed after startup" >&2
         _ANY_DEAD=true
     fi
