@@ -18,7 +18,7 @@ local embed = {}
 -------------------------------------------------------------------------------
 local EMBED_URL = os.getenv("JENOVA_LLAMA_EMBED_URL") or "http://127.0.0.1:8082"
 local DIMS = 768        -- nomic-embed-text-v1.5 dimension
-local CTX_SIZE = 2048   -- nomic context window (max tokens)
+local CTX_SIZE = 4096   -- nomic context window (max tokens) — must match -c in jenova-ca
 
 local initialized = false
 
