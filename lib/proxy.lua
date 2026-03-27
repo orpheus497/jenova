@@ -234,34 +234,6 @@ local function proxy_connection(client_fd, conn_fds)
         end
     end
 
-    -- Native /health endpoint: responds directly without forwarding to llama-server.
-    -- Returns 200 with JSON status of proxy + backend connectivity.
-    local is_health = is_get and headers_raw:match("^GET /health")
-    if is_health then
-        -- Quick check if llama-server is reachable
-        local health_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
-        local backend_ok = false
-        if health_fd >= 0 then
-            local h_addr = ffi.new("struct sockaddr_in")
-            h_addr.sin_len = ffi.sizeof(h_addr)
-            h_addr.sin_family = AF_INET
-            h_addr.sin_port = ffi.C.htons(LLAMA_PORT)
-            h_addr.sin_addr.s_addr = ffi.C.inet_addr(LLAMA_HOST)
-            backend_ok = (ffi.C.connect(health_fd, ffi.cast("struct sockaddr *", h_addr), ffi.sizeof(h_addr)) == 0)
-            ffi.C.close(health_fd)
-        end
-        local status_str = backend_ok and "ok" or "backend_unavailable"
-        local health_code = backend_ok and "200 OK" or "503 Service Unavailable"
-        local health_body = string.format('{"status":"%s","proxy":"running","backend":"%s:%d","embed":"%s"}',
-            status_str, LLAMA_HOST, LLAMA_PORT, tostring(embed_ok))
-        local health_resp = string.format(
-            "HTTP/1.1 %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
-            health_code, #health_body, health_body)
-        async_send(client_fd, health_resp)
-        safe_close()
-        return
-    end
-
     local is_chat_completion = headers_raw:find("POST /v1/chat/completions")
     local intent = headers_raw:match("[Xx]%-Intent:%s*(%w+)")
     local proxied_req = headers_raw .. body_raw
