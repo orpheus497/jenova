@@ -1,8 +1,8 @@
 # Jenova Cognitive Architecture — Remediation Blueprint
 
-**Date:** 2026-03-26
-**Branch:** `build`
-**Status:** All phases implemented ✅
+**Date:** 2026-03-27
+**Branch:** `claude/roadmap-alignment-y91ZF`
+**Status:** All phases implemented ✅ — Alignment audit pass applied
 
 ---
 
@@ -224,17 +224,65 @@ Deep analysis of all Lua modules for memory leaks, unbounded allocations, FD lea
 
 ---
 
-## 9. Neovim Config Audit (2026-03-26)
+## 9. Roadmap Alignment Audit (2026-03-27)
+
+Full cross-module audit verifying all BLUEPRINT items against actual code. Eight issues found and fixed.
+
+#### Bug 9A.1 — Dead `LLAMA_NGL` variable in `bin/jenova-ca`
+
+- **Root cause:** Bug 1.1 removed `-ngl` from all launch commands, but the `LLAMA_NGL` variable assignment (line 29) and its use in the startup banner (line 146) were left behind. The banner printed "GPU Layers: all" misleadingly when the actual mechanism is `-fitt` auto-tuning.
+- **Fix:** Removed dead `LLAMA_NGL` assignment. Updated banner to show "GPU: auto-fit" with tensor split and fit target info.
+- **Status:** ✅ Fixed in `bin/jenova-ca`
+
+#### Bug 9A.2 — `JENOVA_ROOT` unconditional override in `bin/jenova-ca`
+
+- **Root cause:** Lines 49/52 used `export JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"` which unconditionally overwrote any user-set `JENOVA_ROOT` environment variable. The config file (`etc/jenova.conf`) correctly uses `JENOVA_ROOT="${JENOVA_ROOT:-$_ROOT}"` to preserve env vars, but `jenova-ca` then clobbered it.
+- **Fix:** Changed to `export JENOVA_ROOT="${JENOVA_ROOT:-$(dirname "$SCRIPT_DIR")}"` — only sets if not already defined.
+- **Status:** ✅ Fixed in `bin/jenova-ca`
+
+#### Bug 9A.3 — `lib/embed.lua` stale `CTX_SIZE = 2048`
+
+- **Root cause:** The local `CTX_SIZE` variable was still set to 2048 even though the embedding server is launched with `-c 4096` in both `bin/jenova-ca` and `embed.init()`. While the variable isn't used at runtime (the server flag is what matters), it was misleading for anyone reading the code.
+- **Fix:** Updated to `CTX_SIZE = 4096` with a comment referencing the matching server flag.
+- **Status:** ✅ Fixed in `lib/embed.lua`
+
+#### Bug 9A.4 — `agent.lua` `check_server` accepted 502/503 as healthy
+
+- **Root cause:** The agent's internal `try_health()` function (in `check_server()`) accepted HTTP 200, 404, 502, and 503 as "healthy". This contradicted BLUEPRINT Bug 2.1 ("only HTTP 200 treated as healthy") and meant the agent would consider the system ready even when the proxy was up but the backend was down, leading to immediate 502 errors on first API call.
+- **Fix:** Changed to only accept HTTP 200, consistent with `lib/healthcheck.lua`.
+- **Status:** ✅ Fixed in `lib/agent.lua`
+
+#### Bug 9A.5 — `grep_search` tool missing from system prompt
+
+- **Root cause:** The `grep_search` tool was defined in the TOOLS table (line 217) and had a working handler, but was not listed in the system prompt's TOOLS section. The model could never discover or use it, making the capability dead.
+- **Fix:** Added `grep_search(pattern, include)` to the system prompt tool list.
+- **Status:** ✅ Fixed in `lib/agent.lua`
+
+#### Bug 9A.6 — Proxy lacked native `/health` endpoint
+
+- **Root cause:** `GET /health` on the proxy port (8080) was forwarded to llama-server (8081) like any other request. This made the proxy's liveness indistinguishable from the backend's health. If llama-server was starting up (slow GPU init), the proxy appeared unhealthy even though it was running fine.
+- **Fix:** Added native `/health` handler in `proxy.lua` that responds directly with JSON status including proxy state and backend connectivity check (TCP connect to llama port). Returns 200 when backend is reachable, 503 when backend is down.
+- **Status:** ✅ Fixed in `lib/proxy.lua`
+
+#### Bug 9A.7 — `tests/test_bin_jenova.sh` missing
+
+- **Root cause:** BLUEPRINT section 6 referenced fixes to `test_bin_jenova.sh`, but the file didn't exist in the repository. The test was documented but never created.
+- **Fix:** Created `tests/test_bin_jenova.sh` with 8 test cases: config loading, module existence, jenova-ca status verb, health check, PID file format validation, cleanup guard, and trap verification.
+- **Status:** ✅ Created in `tests/test_bin_jenova.sh`
+
+---
+
+## 10. Neovim Config Audit (2026-03-26)
 
 Full cross-module audit of all 14 library files + `bin/` scripts + `~/.config/nvim`. No breaking changes found in Jenova itself. Two bugs in the nvim config fixed.
 
-#### Bug 9.1 — `llama.vim` pointed at non-existent endpoint (`~/.config/nvim/init.lua`)
+#### Bug 10.1 — `llama.vim` pointed at non-existent endpoint (`~/.config/nvim/init.lua`)
 
 - **Root cause:** `vim.g.llama_config = { endpoint = "http://127.0.0.1:8080/completion" }` — the proxy only exposes `/v1/chat/completions`. Ghost-text completions were silently failing.
 - **Fix:** Updated to `/v1/chat/completions`. Llama.vim now routes through the proxy and receives RAG-injected context.
 - **Status:** ✅ Fixed in `~/.config/nvim/init.lua`
 
-#### Bug 9.2 — `<leader>ca` keybind referenced non-existent binary (`~/.config/nvim/init.lua`)
+#### Bug 10.2 — `<leader>ca` keybind referenced non-existent binary (`~/.config/nvim/init.lua`)
 
 - **Root cause:** `:term ./jenova-agent<CR>` — `jenova-agent` was never the binary name. The correct entry point is `bin/jenova`.
 - **Fix:** Updated to `:term cd ~/Projects/jenova && bin/jenova<CR>`.

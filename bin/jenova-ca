@@ -26,7 +26,6 @@ mkdir -p "$CACHE_DIR"
 
 # --- Model: 7B only ---
 MODEL_PATH="${JENOVA_MODEL:-$MODEL_7B}"
-LLAMA_NGL="${JENOVA_NGL:-$NGL_7B}"
 
 if [ ! -f "$LLAMA_SERVER" ]; then
     echo "Error: llama-server not found at $LLAMA_SERVER"
@@ -46,10 +45,10 @@ fi
 # --- Find proxy.lua ---
 if [ -f "$SCRIPT_DIR/lib/proxy.lua" ]; then
     PROXY_SCRIPT="$SCRIPT_DIR/lib/proxy.lua"
-    export JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
+    export JENOVA_ROOT="${JENOVA_ROOT:-$(dirname "$SCRIPT_DIR")}"
 elif [ -f "$SCRIPT_DIR/../lib/proxy.lua" ]; then
     PROXY_SCRIPT="$SCRIPT_DIR/../lib/proxy.lua"
-    export JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
+    export JENOVA_ROOT="${JENOVA_ROOT:-$(dirname "$SCRIPT_DIR")}"
 else
     echo "Error: proxy.lua not found relative to $SCRIPT_DIR"
     exit 1
@@ -143,7 +142,7 @@ echo "Starting Jenova CA..."
 echo "  Model:     $MODEL_PATH"
 echo "  Embed:     $MODEL_EMBED (CPU-only, Vulkan disabled)"
 echo "  Devices:   ${DEVICES:-CPU only}"
-echo "  GPU Layers: $LLAMA_NGL${TENSOR_SPLIT:+ (ts $TENSOR_SPLIT)}${FIT_TARGET:+ (fitt $FIT_TARGET)}"
+echo "  GPU:       auto-fit${TENSOR_SPLIT:+ (ts $TENSOR_SPLIT)}${FIT_TARGET:+ (fitt $FIT_TARGET MiB)}"
 echo "  Context:   $CTX_SIZE  Slots: $NUM_SLOTS  KV: ${KV_CACHE_TYPE:-f16}"
 echo ""
 
