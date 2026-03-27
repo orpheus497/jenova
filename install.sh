@@ -146,7 +146,25 @@ fi
 # ---------------------------------------------------------------------------
 info "Checking optional LSP servers..."
 
-check_optional "clangd"               "pkg install llvm (provides clangd)"
+# On FreeBSD, LLVM installs versioned clangd (clangd19, clangd18, …) without
+# an unversioned symlink; try them all before falling back to plain 'clangd'.
+if [ "$_OS" = "FreeBSD" ]; then
+    _CLANGD_BIN=""
+    for _c in clangd clangd19 clangd18 clangd17 clangd16 clangd15; do
+        if command -v "$_c" >/dev/null 2>&1; then
+            _CLANGD_BIN="$_c"
+            break
+        fi
+    done
+    if [ -n "$_CLANGD_BIN" ]; then
+        ok "clangd (found as $_CLANGD_BIN) (optional)"
+    else
+        warn "clangd not found (optional) — install: pkg install llvm (provides clangd)"
+        WARNINGS=$((WARNINGS + 1))
+    fi
+else
+    check_optional "clangd"               "pkg install llvm (provides clangd)"
+fi
 check_optional "rust-analyzer"        "pkg install rust-analyzer  OR  rustup component add rust-analyzer"
 check_optional "lua-language-server"  "pkg install lua-language-server"
 check_optional "pyright"              "pkg install py311-pyright"

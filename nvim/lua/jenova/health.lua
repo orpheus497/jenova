@@ -9,7 +9,14 @@ local M = {}
 -- Helper: HTTP probe (curl-based, 2s timeout)
 -- ---------------------------------------------------------------------------
 local function probe(url)
-  local out = vim.fn.system(string.format("curl -sf -o /dev/null -m 2 %s", vim.fn.shellescape(url)))
+  if vim.fn.executable("curl") ~= 1 then
+    -- curl unavailable: skip HTTP probe rather than misreporting backends as unreachable
+    if vim.health and vim.health.warn then
+      vim.health.warn("curl not found: skipping HTTP reachability checks; install curl for full Jenova checkhealth coverage.")
+    end
+    return false
+  end
+  local _ = vim.fn.system(string.format("curl -sf -o /dev/null -m 2 %s", vim.fn.shellescape(url)))
   return vim.v.shell_error == 0
 end
 
@@ -255,14 +262,17 @@ function M.check()
   h.start("System Memory")
 
   local mem_total_mb = 0
+  local uname = (vim.uv or vim.loop).os_uname()
+  local is_linux = uname.sysname == "Linux"
   local free_out = vim.fn.system("sysctl -n hw.physmem 2>/dev/null || grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}'")
   if vim.v.shell_error == 0 then
     local val = tonumber(free_out:match("%d+"))
     if val then
-      -- FreeBSD returns bytes; Linux returns KB
-      if free_out:match("MemTotal") then
+      if is_linux then
+        -- Linux /proc/meminfo awk output is in KB
         mem_total_mb = math.floor(val / 1024)
       else
+        -- FreeBSD sysctl hw.physmem returns bytes
         mem_total_mb = math.floor(val / 1024 / 1024)
       end
     end

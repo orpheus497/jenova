@@ -1,6 +1,6 @@
 -- ##Script function and purpose: Configures core editor plugins — NvimTree file
 -- explorer, Telescope fuzzy finder, nvim-treesitter syntax, Trouble diagnostics,
--- indent-blankline guides, and conform.nvim code formatting.
+-- and indent-blankline guides. (conform.nvim formatting is configured in lsp.lua.)
 
 return {
 
@@ -114,29 +114,6 @@ return {
     event = { "BufReadPost", "BufNewFile" },
     main = "ibl",
     opts = {},
-  },
-
-  -- ##Section purpose: conform.nvim — format-on-save with FreeBSD-available formatters
-  {
-    "stevearc/conform.nvim",
-    event = { "BufWritePre" },
-    keys = {
-      {
-        "<leader>cf",
-        function() require("conform").format({ async = true, lsp_fallback = true }) end,
-        desc = "Format Buffer",
-      },
-    },
-    opts = {
-      formatters_by_ft = {
-        lua = { "stylua" },
-        python = { "isort", "black" },
-        rust = { "rustfmt" },
-        go = { "gofmt", "goimports" },
-        c = { "clang-format" },
-      },
-      format_on_save = { timeout_ms = 500, lsp_fallback = true },
-    },
   },
 
 }

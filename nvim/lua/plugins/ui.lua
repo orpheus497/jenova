@@ -119,10 +119,10 @@ return {
       -- is actually loaded. LazyLoad fires per-plugin on first load event.
       vim.api.nvim_create_autocmd("User", {
         pattern = "LazyLoad",
+        once = true,
         callback = function(ev)
           if ev.data == "telescope.nvim" then
             pcall(require("telescope").load_extension, "notify")
-            return true  -- remove this autocmd after it fires once
           end
         end,
       })
