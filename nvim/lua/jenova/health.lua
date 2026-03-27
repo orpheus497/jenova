@@ -20,13 +20,11 @@ local function probe(host, port)
   tcp:connect(host, tonumber(port), function(err)
     connected = (not err)
     done = true
-    tcp:close()
+    pcall(function() tcp:close() end)
   end)
-  -- Synchronous wait with 2s timeout for checkhealth context
-  local deadline = uv.now() + 2000
-  while not done and uv.now() < deadline do
-    uv.run("once")
-  end
+  -- Synchronous wait using vim.wait — safe inside Neovim's event loop
+  -- (uv.run('once') can conflict with the already-running loop)
+  vim.wait(2000, function() return done end, 50)
   if not done then
     pcall(function() tcp:close() end)
     return false

@@ -126,13 +126,37 @@ vim.api.nvim_create_autocmd("VimEnter", {
       local port = vim.env.JENOVA_PORT or "8080"
       local url  = string.format("http://%s:%s/health", host, port)
       -- ##Action purpose: Non-blocking health probe via native TCP connect
-      local tcp = vim.uv.new_tcp()
+      -- Uses vim.uv with vim.loop fallback for older Neovim builds.
+      -- A 2s timeout timer prevents hung connections from leaking sockets.
+      local uv = vim.uv or vim.loop
+      if not uv then
+        vim.g.jenova_connected = false
+        return
+      end
+      local tcp = uv.new_tcp()
       if not tcp then
         vim.g.jenova_connected = false
         return
       end
+      local timeout = uv.new_timer()
+      local closed = false
+      if timeout then
+        timeout:start(2000, 0, function()
+          if not closed then
+            closed = true
+            pcall(function() tcp:close() end)
+            vim.schedule(function()
+              vim.g.jenova_connected = false
+            end)
+          end
+          pcall(function() timeout:close() end)
+        end)
+      end
       tcp:connect(host, tonumber(port), function(err)
-        tcp:close()
+        if closed then return end
+        closed = true
+        pcall(function() tcp:close() end)
+        if timeout then pcall(function() timeout:close() end) end
         vim.schedule(function()
           if not err then
             vim.g.jenova_connected = true
@@ -154,16 +178,38 @@ vim.api.nvim_create_autocmd("VimEnter", {
 
 -- ##Section purpose: Periodic backend health refresh every 30s
 -- Updates vim.g.jenova_connected so the lualine status component stays current.
+-- Uses vim.uv with vim.loop fallback; gracefully disabled if neither is available.
 vim.g.jenova_connected = false  -- initialise pessimistically
-local _jenova_timer = vim.uv.new_timer()
+local _init_uv = vim.uv or vim.loop
+local _jenova_timer = _init_uv and _init_uv.new_timer()
 if _jenova_timer then
   _jenova_timer:start(5000, 30000, vim.schedule_wrap(function()
+    local uv = vim.uv or vim.loop
+    if not uv then return end
     local h = vim.env.JENOVA_CONNECT_HOST or "127.0.0.1"
     local p = tonumber(vim.env.JENOVA_PORT or "8080")
-    local tcp = vim.uv.new_tcp()
+    local tcp = uv.new_tcp()
     if not tcp then return end
+    -- 2s timeout prevents hung connections from accumulating in-flight sockets
+    local timeout = uv.new_timer()
+    local closed = false
+    if timeout then
+      timeout:start(2000, 0, function()
+        if not closed then
+          closed = true
+          pcall(function() tcp:close() end)
+          vim.schedule(function()
+            vim.g.jenova_connected = false
+          end)
+        end
+        pcall(function() timeout:close() end)
+      end)
+    end
     tcp:connect(h, p, function(err)
-      tcp:close()
+      if closed then return end
+      closed = true
+      pcall(function() tcp:close() end)
+      if timeout then pcall(function() timeout:close() end) end
       vim.schedule(function()
         vim.g.jenova_connected = (not err)
       end)
