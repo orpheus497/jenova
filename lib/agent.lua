@@ -148,6 +148,7 @@ TOOLS (call ONE per response as JSON):
   write_file(path, content) — Create/overwrite entire file. Use for NEW files only.
   list_dir(path)       — List directory contents.
   search_files(query, top_k) — Search project files by code identifiers/keywords.
+  grep_search(pattern, include) — Exact string/regex search across project files.
   think(thought)       — Internal reasoning. Use ONLY for complex multi-step planning.
 
 RESPONSE FORMAT:
@@ -1195,7 +1196,7 @@ end
 local function check_server()
   local function try_health()
     local code = http.get(API_URL .. "/health", 3)
-    return (code == 200 or code == 404 or code == 502 or code == 503)
+    return (code == 200)
   end
 
   if try_health() then return true end
