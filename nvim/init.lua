@@ -125,23 +125,28 @@ vim.api.nvim_create_autocmd("VimEnter", {
       local host = vim.env.JENOVA_CONNECT_HOST or "127.0.0.1"
       local port = vim.env.JENOVA_PORT or "8080"
       local url  = string.format("http://%s:%s/health", host, port)
-      -- ##Action purpose: Non-blocking health probe — curl with 2s timeout
-      if vim.fn.executable("curl") ~= 1 then
+      -- ##Action purpose: Non-blocking health probe via native TCP connect
+      local tcp = vim.uv.new_tcp()
+      if not tcp then
         vim.g.jenova_connected = false
         return
       end
-      local result = vim.fn.system(string.format("curl -sf -o /dev/null -m 2 %s", vim.fn.shellescape(url)))
-      if vim.v.shell_error == 0 then
-        vim.g.jenova_connected = true
-      else
-        vim.g.jenova_connected = false
-        vim.notify(
-          "Jenova CA backend not running. AI features unavailable.\n" ..
-          "Run:  jvim somefile.lua   OR   bin/llama-server-nvim",
-          vim.log.levels.WARN,
-          { title = "Jenova" }
-        )
-      end
+      tcp:connect(host, tonumber(port), function(err)
+        tcp:close()
+        vim.schedule(function()
+          if not err then
+            vim.g.jenova_connected = true
+          else
+            vim.g.jenova_connected = false
+            vim.notify(
+              "Jenova CA backend not running. AI features unavailable.\n" ..
+              "Run:  jvim somefile.lua   OR   bin/llama-server-nvim",
+              vim.log.levels.WARN,
+              { title = "Jenova" }
+            )
+          end
+        end)
+      end)
     end, 1500)
   end,
   once = true,
@@ -153,16 +158,16 @@ vim.g.jenova_connected = false  -- initialise pessimistically
 local _jenova_timer = vim.uv.new_timer()
 if _jenova_timer then
   _jenova_timer:start(5000, 30000, vim.schedule_wrap(function()
-    if vim.fn.executable("curl") ~= 1 then return end
     local h = vim.env.JENOVA_CONNECT_HOST or "127.0.0.1"
-    local p = vim.env.JENOVA_PORT or "8080"
-    vim.fn.jobstart(
-      { "curl", "-sf", "-o", "/dev/null", "-m", "2",
-        string.format("http://%s:%s/health", h, p) },
-      { on_exit = function(_, code)
-          vim.g.jenova_connected = (code == 0)
-        end }
-    )
+    local p = tonumber(vim.env.JENOVA_PORT or "8080")
+    local tcp = vim.uv.new_tcp()
+    if not tcp then return end
+    tcp:connect(h, p, function(err)
+      tcp:close()
+      vim.schedule(function()
+        vim.g.jenova_connected = (not err)
+      end)
+    end)
   end))
 end
 
