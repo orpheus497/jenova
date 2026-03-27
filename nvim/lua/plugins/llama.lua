@@ -10,8 +10,16 @@ return {
     -- ##Step purpose: Load on insert so it only activates when editing
     event = "InsertEnter",
     init = function()
-      -- ##Action purpose: Read ports from environment (set by jvim) or defaults
-      local host       = vim.env.JENOVA_HOST       or "127.0.0.1"
+      -- ##Action purpose: Read ports from environment (set by jvim) or defaults.
+      -- JENOVA_CONNECT_HOST takes priority over JENOVA_HOST; wildcard binds
+      -- (0.0.0.0 / :: / *) are mapped to 127.0.0.1 for client connect.
+      local _raw_host  = vim.env.JENOVA_CONNECT_HOST or vim.env.JENOVA_HOST or "127.0.0.1"
+      local host
+      if _raw_host == "0.0.0.0" or _raw_host == "::" or _raw_host == "*" then
+        host = "127.0.0.1"
+      else
+        host = _raw_host
+      end
       local fim_port   = vim.env.JENOVA_LLAMA_PORT or "8081"
       local proxy_port = vim.env.JENOVA_PORT       or "8080"
 

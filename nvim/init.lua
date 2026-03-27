@@ -96,9 +96,16 @@ map("n", "<S-l>", "<cmd>bnext<CR>", { desc = "Next Buffer" })
 map("n", "[d", vim.diagnostic.goto_prev, { desc = "Prev Diagnostic" })
 map("n", "]d", vim.diagnostic.goto_next, { desc = "Next Diagnostic" })
 
--- ##Action purpose: Launch Jenova CLI agent in a terminal split
--- FIX B2: Changed from <leader>ca to <leader>aj to avoid collision with LSP code action
-vim.keymap.set('n', '<leader>aj', '<cmd>term cd ~/Projects/jenova && bin/jenova<CR>', { desc = "Jenova Agent Terminal" })
+-- ##Action purpose: Launch Jenova CLI agent in a terminal split.
+-- Uses $JENOVA_ROOT env var (set by jenova.conf / jvim); falls back to ~/Projects/jenova
+-- so the binding works on a fresh clone where the variable may not yet be exported.
+vim.keymap.set('n', '<leader>aj', function()
+  local root = vim.fn.expand("$JENOVA_ROOT")
+  if root == "" or root == "$JENOVA_ROOT" then
+    root = vim.fn.expand("~/Projects/jenova")
+  end
+  vim.cmd("term cd " .. vim.fn.shellescape(root) .. " && bin/jenova")
+end, { desc = "Jenova Agent Terminal" })
 
 --------------------------------------------------------------------------------
 -- [6] IDE PANEL OPENER

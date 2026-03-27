@@ -175,11 +175,16 @@ local function proxy_connection(client_fd, conn_fds)
         local backend_ok = false
         if health_fd >= 0 then
             set_nonblocking(health_fd)
+            -- Normalize wildcard bind addresses (e.g., 0.0.0.0) to a loopback address for connect().
+            local backend_connect_host = LLAMA_HOST
+            if backend_connect_host == "0.0.0.0" or backend_connect_host == "::" or backend_connect_host == "*" then
+                backend_connect_host = "127.0.0.1"
+            end
             local h_addr = ffi.new("struct sockaddr_in")
             h_addr.sin_len   = ffi.sizeof(h_addr)
             h_addr.sin_family = AF_INET
             h_addr.sin_port   = ffi.C.htons(LLAMA_PORT)
-            h_addr.sin_addr.s_addr = ffi.C.inet_addr(LLAMA_HOST)
+            h_addr.sin_addr.s_addr = ffi.C.inet_addr(backend_connect_host)
             backend_ok = (async_connect(health_fd, h_addr) == true)
             ffi.C.close(health_fd)
         end

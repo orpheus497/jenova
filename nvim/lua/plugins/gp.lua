@@ -15,14 +15,21 @@ return {
         return { noremap = true, silent = true, nowait = true, desc = "GP: " .. desc }
       end
 
+      -- ##Action purpose: Read proxy host/port from environment (set by jvim) or defaults.
+      -- JENOVA_CONNECT_HOST takes priority over JENOVA_HOST; wildcard binds
+      -- (0.0.0.0 / :: / *) are mapped to 127.0.0.1 for client connect.
+      local jenova_host = vim.env.JENOVA_CONNECT_HOST or vim.env.JENOVA_HOST or "127.0.0.1"
+      if jenova_host == "0.0.0.0" or jenova_host == "::" or jenova_host == "*" then
+        jenova_host = "127.0.0.1"
+      end
+
       -- ##Step purpose: Core gp.nvim setup — point at local Jenova backend
       require("gp").setup({
         -- ##Action purpose: Use the Jenova LuaJIT proxy as the OpenAI-compatible endpoint
         openai_api_key = "jenova-local",
-        -- ##Action purpose: Read proxy host/port from environment (set by jvim) or defaults
         openai_api_endpoint = string.format(
           "http://%s:%s/v1/chat/completions",
-          vim.env.JENOVA_HOST or "127.0.0.1",
+          jenova_host,
           vim.env.JENOVA_PORT or "8080"
         ),
 
