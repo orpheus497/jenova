@@ -89,7 +89,7 @@ return {
 
         -- ##Condition purpose: Extra lua_ls settings — lazydev handles globals
         if server == "lua_ls" then
-          config.settings = { Lua = { telemetry = { enabled = false } } }
+          config.settings = { Lua = { telemetry = { enable = false } } }
         end
 
         -- ##Condition purpose: Use Neovim 0.11+ native LSP config API if available
@@ -103,6 +103,7 @@ return {
 
       -- ##Function purpose: Attach buffer-local LSP keybinds when a server connects
       vim.api.nvim_create_autocmd("LspAttach", {
+        group = vim.api.nvim_create_augroup("jenova_lsp_attach", { clear = true }),
         callback = function(ev)
           local o = { buffer = ev.buf }
           vim.keymap.set("n", "gd", vim.lsp.buf.definition, o)

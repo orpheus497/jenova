@@ -11,6 +11,12 @@ return {
   {
     "echasnovski/mini.nvim",
     version = false,
+    -- ##Step purpose: mini.icons mock must run in init (before other plugins' config)
+    -- so that require("nvim-web-devicons") calls resolve to the mock immediately
+    init = function()
+      require("mini.icons").setup()
+      require("mini.icons").mock_nvim_web_devicons()
+    end,
     config = function()
       -- ##Step purpose: mini.ai — enhanced around/inside textobjects
       require("mini.ai").setup({ n_lines = 500 })
@@ -32,11 +38,6 @@ return {
       vim.keymap.set("n", "<leader>bD", function()
         require("mini.bufremove").delete(0, true)
       end, { desc = "Delete Buffer (Force)" })
-
-      -- ##Step purpose: mini.icons — lightweight icon provider that replaces
-      -- nvim-web-devicons (satisfies all require("nvim-web-devicons") calls)
-      require("mini.icons").setup()
-      require("mini.icons").mock_nvim_web_devicons()
     end,
   },
 }

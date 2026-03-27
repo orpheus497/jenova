@@ -31,14 +31,13 @@ return {
         -- ##Step purpose: Dragon is the darkest variant — ideal for terminal sessions
         theme = "dragon",
       })
-      vim.cmd("colorscheme kanagawa-dragon")
+      vim.cmd("colorscheme kanagawa")
     end,
   },
 
   -- ##Section purpose: lualine.nvim — statusline with mode, branch, diagnostics
   {
     "nvim-lualine/lualine.nvim",
-    dependencies = { "nvim-tree/nvim-web-devicons" },
     opts = {
       options = {
         theme = "kanagawa",

@@ -7,7 +7,6 @@ return {
   -- ##Section purpose: nvim-tree — file explorer sidebar
   {
     "nvim-tree/nvim-tree.lua",
-    dependencies = { "nvim-tree/nvim-web-devicons" },
     cmd = { "NvimTreeToggle", "NvimTreeOpen", "NvimTreeFocus", "NvimTreeFindFileToggle" },
     keys = {
       { "<leader>e", "<cmd>NvimTreeToggle<CR>", desc = "Toggle File Explorer" },
