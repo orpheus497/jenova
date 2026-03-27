@@ -115,13 +115,13 @@ Because gitsigns maps are buffer-local (set in `on_attach` for each git-tracked 
 
 **Line 14:** Model is `qwen2.5-coder-7b` — matches the model loaded by jenova-ca. However, the model name sent in the request body is used by llama-server for logging only (it serves whatever model was loaded at startup). No functional issue but worth noting.
 
-**Lines 38-42:** `<leader>gc` "New Chat (Fresh Context)" does `os.execute("rm -rf " .. vim.fn.stdpath("state") .. "/gp/chats/*")`. This is the single most dangerous line in the entire configuration:
+**Lines 38-42:** `<leader>gc` "New Chat (Fresh Context)" previously did `os.execute("rm -rf " .. vim.fn.stdpath("state") .. "/gp/chats/*")`. This was the single most dangerous line in the entire configuration:
 
 1. `os.execute` shells out to `/bin/sh`, which means the path is subject to shell expansion and word splitting.
 2. `vim.fn.stdpath("state")` returns a string like `/home/orpheus497/.local/state/nvim`. If this ever returned an empty string, a path with spaces, or was manipulated, the `rm -rf` would be catastrophic.
 3. The glob `*` is expanded by the shell, not by Lua. If the directory is empty, `rm -rf /path/to/chats/*` on some shells tries to remove a literal file named `*`.
 
-Safe replacement: use `vim.fn.delete(dir, "rf")` which is Neovim-native and doesn't shell out.
+**Status:** ✅ **FIXED** — Current code uses `vim.fn.delete(chat_dir, "rf")` which is Neovim-native and doesn't shell out (see gp.lua:75).
 
 **Line 43:** `<leader>gt` collides with gitsigns toggle-blame (see above).
 

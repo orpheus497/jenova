@@ -135,12 +135,18 @@ Both ports are defined in `etc/jenova.conf` as `LLAMA_PORT` and `PORT`.
 
 | Variable | Default | Effect |
 |---|---|---|
+| `JENOVA_ROOT` | `$PWD` (auto-detected) | Project root directory path |
+| `JENOVA_HOST` | `127.0.0.1` | Bind address for backend services (`0.0.0.0` to listen on all interfaces) |
+| `JENOVA_CONNECT_HOST` | `127.0.0.1` | Client connection address (used by Neovim/CLI when `JENOVA_HOST` is a wildcard bind) |
+| `JENOVA_PORT` | `8080` | Port for Jenova intelligence proxy |
+| `JENOVA_LLAMA_PORT` | `8081` | Port for llama-server inference |
 | `JENOVA_API_URL` | `http://127.0.0.1:8080` | Proxy endpoint for the agent |
 | `JENOVA_LLAMA_URL` | `http://127.0.0.1:8081` | Direct llama-server endpoint (proxy internal) |
 | `JENOVA_CONN_TIMEOUT` | `600` | Max seconds a proxy connection coroutine may live |
 | `JENOVA_TIMEOUT` | `600` | Agent HTTP timeout (seconds) |
 | `JENOVA_MAX_TURNS` | `25` | Max agentic tool-call turns per user message |
 | `JENOVA_CTX` | `16384` | Context window token limit |
+| `JENOVA_DRAFT` | `1` | Enable speculative decoding with 0.5B drafter model (`0` to disable) |
 | `JENOVA_DEBUG` | `""` | Set to `1` for verbose debug output |
 
 ## Troubleshooting & Notes
