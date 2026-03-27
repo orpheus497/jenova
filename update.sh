@@ -65,7 +65,8 @@ echo ""
 # ---------------------------------------------------------------------------
 info "Pulling latest changes from origin..."
 cd "$JENOVA_ROOT"
-git pull origin "$(git branch --show-current)" && ok "git pull complete" || {
+_branch=$(git branch --show-current 2>/dev/null || echo "main")
+git pull origin "${_branch:-main}" && ok "git pull complete" || {
     warn "git pull failed — continuing with current code"
 }
 

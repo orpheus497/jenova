@@ -126,6 +126,10 @@ vim.api.nvim_create_autocmd("VimEnter", {
       local port = vim.env.JENOVA_PORT or "8080"
       local url  = string.format("http://%s:%s/health", host, port)
       -- ##Action purpose: Non-blocking health probe — curl with 2s timeout
+      if vim.fn.executable("curl") ~= 1 then
+        vim.g.jenova_connected = false
+        return
+      end
       local result = vim.fn.system(string.format("curl -sf -o /dev/null -m 2 %s", vim.fn.shellescape(url)))
       if vim.v.shell_error == 0 then
         vim.g.jenova_connected = true
@@ -149,6 +153,7 @@ vim.g.jenova_connected = false  -- initialise pessimistically
 local _jenova_timer = vim.uv.new_timer()
 if _jenova_timer then
   _jenova_timer:start(5000, 30000, vim.schedule_wrap(function()
+    if vim.fn.executable("curl") ~= 1 then return end
     local h = vim.env.JENOVA_CONNECT_HOST or "127.0.0.1"
     local p = vim.env.JENOVA_PORT or "8080"
     vim.fn.jobstart(

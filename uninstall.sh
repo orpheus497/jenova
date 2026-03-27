@@ -151,13 +151,17 @@ for _d in "$HOME/.local/bin" "$HOME/bin"; do
     for _bin in jvim jenova; do
         _sym="$_d/$_bin"
         if [ -L "$_sym" ]; then
-            _target=$(readlink "$_sym")
-            if echo "$_target" | grep -q "$JENOVA_ROOT"; then
-                rm -f "$_sym"
-                ok "Removed $_sym -> $_target"
-            else
-                warn "Skipping $_sym (points to $_target, not this Jenova install)"
-            fi
+            _target=$(readlink -f "$_sym" 2>/dev/null || readlink "$_sym")
+            _canon_root=$(cd "$JENOVA_ROOT" 2>/dev/null && pwd -P)
+            case "$_target" in
+                "$_canon_root"/*)
+                    rm -f "$_sym"
+                    ok "Removed $_sym -> $_target"
+                    ;;
+                *)
+                    warn "Skipping $_sym (points to $_target, not this Jenova install)"
+                    ;;
+            esac
         fi
     done
 done

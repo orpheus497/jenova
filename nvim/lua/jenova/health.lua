@@ -8,13 +8,11 @@ local M = {}
 -- ---------------------------------------------------------------------------
 -- Helper: HTTP probe (curl-based, 2s timeout)
 -- ---------------------------------------------------------------------------
+--- Probe a URL for reachability via curl.
+--- @return boolean|nil  true = reachable, false = unreachable, nil = probe skipped (curl missing)
 local function probe(url)
   if vim.fn.executable("curl") ~= 1 then
-    -- curl unavailable: skip HTTP probe rather than misreporting backends as unreachable
-    if vim.health and vim.health.warn then
-      vim.health.warn("curl not found: skipping HTTP reachability checks; install curl for full Jenova checkhealth coverage.")
-    end
-    return false
+    return nil
   end
   local _ = vim.fn.system(string.format("curl -sf -o /dev/null -m 2 %s", vim.fn.shellescape(url)))
   return vim.v.shell_error == 0
@@ -38,14 +36,27 @@ function M.check()
   -- -------------------------------------------------------------------------
   h.start("Jenova CA Backend")
 
-  local connect_host = vim.env.JENOVA_CONNECT_HOST or "127.0.0.1"
+  local connect_host = vim.env.JENOVA_CONNECT_HOST or vim.env.JENOVA_HOST or "127.0.0.1"
+  -- Normalize wildcard bind addresses to loopback for client connections
+  if connect_host == "0.0.0.0" or connect_host == "::" or connect_host == "*" then
+    connect_host = "127.0.0.1"
+  end
   local proxy_port   = vim.env.JENOVA_PORT          or "8080"
   local llama_port   = vim.env.JENOVA_LLAMA_PORT    or "8081"
   -- Embed port is not exposed as env var by jvim yet; use fixed default
   local embed_port   = "8082"
 
+  -- Check curl availability once before backend probes
+  local curl_available = vim.fn.executable("curl") == 1
+  if not curl_available then
+    h.warn("curl not found: skipping HTTP reachability checks. Install curl for full Jenova checkhealth coverage.")
+  end
+
   local proxy_url = string.format("http://%s:%s/health", connect_host, proxy_port)
-  if probe(proxy_url) then
+  local proxy_status = probe(proxy_url)
+  if proxy_status == nil then
+    h.info(string.format("Intelligence Proxy probe skipped (no curl) — %s", proxy_url))
+  elseif proxy_status then
     h.ok(string.format("Intelligence Proxy reachable at %s", proxy_url))
   else
     h.error(
@@ -55,7 +66,10 @@ function M.check()
   end
 
   local llama_url = string.format("http://%s:%s/health", connect_host, llama_port)
-  if probe(llama_url) then
+  local llama_status = probe(llama_url)
+  if llama_status == nil then
+    h.info(string.format("llama-server probe skipped (no curl) — %s", llama_url))
+  elseif llama_status then
     h.ok(string.format("llama-server (main inference) reachable at %s", llama_url))
   else
     h.warn(
@@ -65,7 +79,10 @@ function M.check()
   end
 
   local embed_url = string.format("http://%s:%s/health", connect_host, embed_port)
-  if probe(embed_url) then
+  local embed_status = probe(embed_url)
+  if embed_status == nil then
+    h.info(string.format("Embedding server probe skipped (no curl) — %s", embed_url))
+  elseif embed_status then
     h.ok(string.format("Embedding server (nomic-embed) reachable at %s", embed_url))
   else
     h.warn(
@@ -224,8 +241,8 @@ function M.check()
 
   local models = {
     {
-      path = jenova_root .. "/models/Qwen2.5-Coder-7B-Q5_K_M.gguf",
-      label = "7B Agent model (Qwen2.5-Coder-7B-Q5_K_M)",
+      path = vim.env.JENOVA_MODEL or (jenova_root .. "/models/jenova.gguf"),
+      label = "Agent model (" .. vim.fn.fnamemodify(vim.env.JENOVA_MODEL or (jenova_root .. "/models/jenova.gguf"), ":t") .. ")",
       required = true,
     },
     {

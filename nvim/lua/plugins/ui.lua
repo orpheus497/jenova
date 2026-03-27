@@ -117,12 +117,14 @@ return {
 
       -- ##Step purpose: Defer Telescope notify extension registration until Telescope
       -- is actually loaded. LazyLoad fires per-plugin on first load event.
+      local group = vim.api.nvim_create_augroup("LazyTelescopeNotify", { clear = true })
       vim.api.nvim_create_autocmd("User", {
+        group = group,
         pattern = "LazyLoad",
-        once = true,
         callback = function(ev)
           if ev.data == "telescope.nvim" then
             pcall(require("telescope").load_extension, "notify")
+            vim.api.nvim_del_augroup_by_id(group)
           end
         end,
       })

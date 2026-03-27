@@ -222,10 +222,11 @@ check_model() {
     fi
 }
 
-check_model "${MODEL_7B:-$JENOVA_ROOT/models/Qwen2.5-Coder-7B-Q5_K_M.gguf}"             "7B agent model (Qwen2.5-Coder-7B-Q5_K_M)"
+_agent_model="${MODEL_PATH:-${JENOVA_MODEL:-$JENOVA_ROOT/models/jenova.gguf}}"
+check_model "$_agent_model"                                                               "Agent model ($(basename "$_agent_model"))"
 check_model "${MODEL_EMBED:-$JENOVA_ROOT/models/nomic-embed-text-v1.5.Q8_0.gguf}"        "Embedding model (nomic-embed-text-v1.5)"
 if [ -f "${MODEL_DRAFT:-$JENOVA_ROOT/models/Qwen2.5-Coder-0.5B-Q8_0.gguf}" ]; then
-    ok "Draft model (Qwen2.5-Coder-0.5B-Q8_0) — speculative decoding enabled"
+    ok "Draft model — speculative decoding enabled"
 else
     warn "Draft model not found — speculative decoding disabled (set JENOVA_DRAFT=0 in conf)"
     WARNINGS=$((WARNINGS + 1))
