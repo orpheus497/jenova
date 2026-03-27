@@ -30,14 +30,17 @@ return {
         endpoint_inst = string.format("http://%s:%s/v1/chat/completions", host, proxy_port),
         -- ##Step purpose: show_info=2 displays model name and timing
         show_info     = 2,
-        -- ##Step purpose: Auto-trigger FIM on typing pause
+        -- ##Step purpose: Auto-trigger FIM on typing pause (debounced by t_max_prompt_ms)
         auto_fim      = true,
-        -- ##Step purpose: Token context budget
-        n_prefix  = 256,
+        -- ##Step purpose: Token context budget — reduced from 256 to 128 to cut per-request
+        -- GPU slot time on the constrained 16 GiB system (2 KV-cache slots shared with gp.nvim)
+        n_prefix  = 128,
         n_suffix  = 64,
-        -- ##Step purpose: Max new tokens per completion
-        n_predict = 128,
-        -- ##Step purpose: Timing limits
+        -- ##Step purpose: Max new tokens — reduced from 128 to 64 for faster completions
+        -- and lower slot pressure when gp.nvim chat is active concurrently.
+        -- Set to 128 or higher on systems where slot contention is not a concern.
+        n_predict = 64,
+        -- ##Step purpose: Timing limits — 500ms typing pause before FIM fires
         t_max_prompt_ms  = 500,
         t_max_predict_ms = 1000,
       }

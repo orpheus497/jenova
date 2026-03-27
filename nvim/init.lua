@@ -45,6 +45,10 @@ opt.splitbelow = true
 opt.splitright = true
 opt.mouse = "a"
 opt.clipboard = "unnamedplus"
+-- ##Step purpose: FreeBSD/ZFS optimizations — ZFS snapshots + persistent undo make
+-- swapfiles redundant. maxmempattern raised for complex treesitter/LSP patterns.
+opt.swapfile = false
+opt.maxmempattern = 2000
 
 --------------------------------------------------------------------------------
 -- [4] PLUGIN ORCHESTRATION
@@ -108,7 +112,57 @@ vim.keymap.set('n', '<leader>aj', function()
 end, { desc = "Jenova Agent Terminal" })
 
 --------------------------------------------------------------------------------
--- [6] IDE PANEL OPENER
+-- [6] JENOVA BACKEND HEALTH CHECK
+--------------------------------------------------------------------------------
+-- ##Section purpose: Notify user if Jenova CA backend is unreachable at startup.
+-- Deferred 1.5s so the notification fires after noice.nvim is fully initialised.
+-- Checks proxy (:8080/health) which validates all three daemons are up.
+-- Backend status is cached in vim.g.jenova_connected for lualine status component.
+vim.api.nvim_create_autocmd("VimEnter", {
+  callback = function()
+    vim.defer_fn(function()
+      -- ##Step purpose: Read port from env (set by jvim) or fall back to default
+      local host = vim.env.JENOVA_CONNECT_HOST or "127.0.0.1"
+      local port = vim.env.JENOVA_PORT or "8080"
+      local url  = string.format("http://%s:%s/health", host, port)
+      -- ##Action purpose: Non-blocking health probe — curl with 2s timeout
+      local result = vim.fn.system(string.format("curl -sf -o /dev/null -m 2 %s", vim.fn.shellescape(url)))
+      if vim.v.shell_error == 0 then
+        vim.g.jenova_connected = true
+      else
+        vim.g.jenova_connected = false
+        vim.notify(
+          "Jenova CA backend not running. AI features unavailable.\n" ..
+          "Run:  jvim somefile.lua   OR   bin/llama-server-nvim",
+          vim.log.levels.WARN,
+          { title = "Jenova" }
+        )
+      end
+    end, 1500)
+  end,
+  once = true,
+})
+
+-- ##Section purpose: Periodic backend health refresh every 30s
+-- Updates vim.g.jenova_connected so the lualine status component stays current.
+vim.g.jenova_connected = false  -- initialise pessimistically
+local _jenova_timer = vim.uv.new_timer()
+if _jenova_timer then
+  _jenova_timer:start(5000, 30000, vim.schedule_wrap(function()
+    local h = vim.env.JENOVA_CONNECT_HOST or "127.0.0.1"
+    local p = vim.env.JENOVA_PORT or "8080"
+    vim.fn.jobstart(
+      { "curl", "-sf", "-o", "/dev/null", "-m", "2",
+        string.format("http://%s:%s/health", h, p) },
+      { on_exit = function(_, code)
+          vim.g.jenova_connected = (code == 0)
+        end }
+    )
+  end))
+end
+
+--------------------------------------------------------------------------------
+-- [7] IDE PANEL OPENER
 --------------------------------------------------------------------------------
 -- ##Section purpose: :IDE user command — opens NvimTree, Edgy auto-manages layout
 -- FIX F1: Removed manual panel management that raced with Edgy. Edgy now owns

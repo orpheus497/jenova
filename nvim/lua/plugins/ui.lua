@@ -35,7 +35,9 @@ return {
     end,
   },
 
-  -- ##Section purpose: lualine.nvim — statusline with mode, branch, diagnostics
+  -- ##Section purpose: lualine.nvim — statusline with mode, branch, diagnostics, AI status
+  -- PR #26: Added Jenova backend status indicator (AI: ● connected / AI: ○ offline)
+  -- Uses vim.g.jenova_connected which is updated by the periodic health check in init.lua.
   {
     "nvim-lualine/lualine.nvim",
     opts = {
@@ -49,7 +51,25 @@ return {
         lualine_a = { "mode" },
         lualine_b = { "branch", "diff", "diagnostics" },
         lualine_c = { { "filename", path = 1 } },
-        lualine_x = { "encoding", "fileformat", "filetype" },
+        -- ##Step purpose: Jenova AI status indicator — green dot = proxy reachable,
+        -- red circle = backend offline. Updates every 30s via timer in init.lua.
+        lualine_x = {
+          {
+            function()
+              if vim.g.jenova_connected then
+                return "AI: ●"
+              else
+                return "AI: ○"
+              end
+            end,
+            color = function()
+              return {
+                fg = vim.g.jenova_connected and "#98BB6C" or "#FF5D62",
+              }
+            end,
+          },
+          "encoding", "fileformat", "filetype",
+        },
         lualine_y = { "progress" },
         lualine_z = { "location" },
       },
@@ -80,6 +100,9 @@ return {
   },
 
   -- ##Section purpose: nvim-notify — styled notification popups used by noice
+  -- PR #23: Telescope notify extension loading deferred until Telescope is ready.
+  -- Previously pcall(require("telescope").load_extension, "notify") ran at notify
+  -- config time but Telescope is lazy-loaded later, so the extension silently failed.
   {
     "rcarriga/nvim-notify",
     opts = {
@@ -87,6 +110,23 @@ return {
       render = "compact",
       stages = "fade",
     },
+    config = function(_, opts)
+      local notify = require("notify")
+      notify.setup(opts)
+      vim.notify = notify
+
+      -- ##Step purpose: Defer Telescope notify extension registration until Telescope
+      -- is actually loaded. LazyLoad fires per-plugin on first load event.
+      vim.api.nvim_create_autocmd("User", {
+        pattern = "LazyLoad",
+        callback = function(ev)
+          if ev.data == "telescope.nvim" then
+            pcall(require("telescope").load_extension, "notify")
+            return true  -- remove this autocmd after it fires once
+          end
+        end,
+      })
+    end,
   },
 
   -- ##Section purpose: noice.nvim — replaces cmdline, messages, and popupmenu UI
