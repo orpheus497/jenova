@@ -144,7 +144,7 @@ echo "Starting Jenova CA..."
 echo "  Model:     $MODEL_PATH"
 echo "  Embed:     $MODEL_EMBED (CPU-only, Vulkan disabled)"
 echo "  Devices:   ${DEVICES:-CPU only}"
-echo "  GPU:       auto-fit${TENSOR_SPLIT:+ (ts $TENSOR_SPLIT)}${FIT_TARGET:+ (fitt $FIT_TARGET)}"
+echo "  GPU:       auto-fit${TENSOR_SPLIT:+ (ts $TENSOR_SPLIT)}${FIT_TARGET:+ (fitt $FIT_TARGET MiB)}"
 echo "  Context:   $CTX_SIZE  Slots: $NUM_SLOTS  KV: ${KV_CACHE_TYPE:-f16}"
 echo ""
 

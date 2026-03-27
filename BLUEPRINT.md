@@ -1,8 +1,8 @@
 # Jenova Cognitive Architecture — Remediation Blueprint
 
-**Date:** 2026-03-26
-**Branch:** `build`
-**Status:** All phases implemented ✅
+**Date:** 2026-03-27
+**Branch:** `claude/roadmap-alignment-y91ZF`
+**Status:** All phases implemented ✅ — Alignment audit pass applied
 
 ---
 
@@ -230,45 +230,45 @@ Full cross-module audit verifying all BLUEPRINT items against actual code. Seven
 
 #### Bug 9A.1 — Dead `LLAMA_NGL` variable in `bin/jenova-ca`
 
-- **Root cause:** `LLAMA_NGL="${JENOVA_NGL:-$NGL_7B}"` was set but `-ngl` was removed from all launch commands (Bug 1.1 fix). The variable lingered in the file and was referenced in the startup banner, printing a misleading "GPU Layers" line.
-- **Fix:** Removed `LLAMA_NGL` assignment; banner updated to show "GPU: auto-fit".
+- **Root cause:** Bug 1.1 removed `-ngl` from all launch commands, but the `LLAMA_NGL` variable assignment and its use in the startup banner were left behind. The banner printed "GPU Layers: all" misleadingly when the actual mechanism is `-fitt` auto-tuning.
+- **Fix:** Removed dead `LLAMA_NGL` assignment. Updated banner to show "GPU: auto-fit" with tensor split and fit target info.
 - **Status:** ✅ Fixed in `bin/jenova-ca`
 
 #### Bug 9A.2 — `JENOVA_ROOT` unconditional override in `bin/jenova-ca`
 
-- **Root cause:** `export JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"` overwrote any user-supplied `JENOVA_ROOT` environment variable on every invocation. Additionally, the branch-1 path (`$SCRIPT_DIR/lib/proxy.lua` found) incorrectly set `JENOVA_ROOT` to the parent of `SCRIPT_DIR` rather than `SCRIPT_DIR` itself.
+- **Root cause:** Lines 49/52 used `export JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"` which unconditionally overwrote any user-set `JENOVA_ROOT`. The config file (`etc/jenova.conf`) correctly preserves env vars with `${JENOVA_ROOT:-$_ROOT}`, but `jenova-ca` then clobbered it. Additionally, the branch-1 path (`$SCRIPT_DIR/lib/proxy.lua` found) incorrectly set the root to the parent of `SCRIPT_DIR` rather than `SCRIPT_DIR` itself.
 - **Fix:** Both branches now use conditional assignment (`${JENOVA_ROOT:-...}`). Branch-1 uses `SCRIPT_DIR` as the root; branch-2 uses `dirname "$SCRIPT_DIR"`.
 - **Status:** ✅ Fixed in `bin/jenova-ca`
 
 #### Bug 9A.3 — No native `/health` endpoint in `lib/proxy.lua`
 
-- **Root cause:** All requests including `GET /health` were forwarded to llama-server, creating a circular dependency when checking proxy liveness. If llama-server was down, health checks returned 502 rather than indicating whether the proxy itself was up.
-- **Fix:** Added a native `/health` handler in `proxy_connection`. Pattern `^GET /health[ %?]` matches exactly (excludes `/healthz` etc.). Uses `async_connect` (non-blocking, coroutine-safe) to check llama-server reachability with a 1-second timeout. Returns 200/503 with JSON: `{status, proxy, backend, embed (boolean), backend_ok (boolean)}`.
+- **Root cause:** `GET /health` on the proxy port (8080) was forwarded to llama-server like any other request, making proxy liveness indistinguishable from backend health. If llama-server was starting (slow GPU init), the proxy appeared unhealthy even though it was running fine.
+- **Fix:** Added native `/health` handler in `proxy_connection`. Pattern `^GET /health[ %?]` matches exactly (excludes `/healthz` etc.). Uses `async_connect` (non-blocking, coroutine-safe) to check llama-server reachability. Returns 200/503 with JSON: `{status, proxy, backend, embed (boolean), backend_ok (boolean)}`.
 - **Status:** ✅ Fixed in `lib/proxy.lua`
 
 #### Bug 9A.4 — `check_server()` accepted 502/503 as healthy (`lib/agent.lua`)
 
-- **Root cause:** `try_health()` returned `true` for HTTP 502 and 503, meaning the agent considered itself connected to a working backend even when llama-server was down. First API call would immediately fail.
-- **Fix:** Only HTTP 200 is accepted as healthy.
+- **Root cause:** The agent's `try_health()` accepted HTTP 200, 404, 502, and 503 as "healthy", contradicting BLUEPRINT Bug 2.1 (healthcheck.lua accepts only 200). The agent considered itself ready even when the proxy was up but the backend was down, leading to immediate 502 errors on first API call.
+- **Fix:** Only HTTP 200 is accepted as healthy, consistent with `lib/healthcheck.lua`.
 - **Status:** ✅ Fixed in `lib/agent.lua`
 
 #### Bug 9A.5 — `grep_search` missing from agent system prompt (`lib/agent.lua`)
 
-- **Root cause:** `grep_search` was defined in `TOOLS` and `TOOL_HANDLERS` but not listed in the `TOOLS` section of the system prompt string in `build_system_prompt()`. The model had no way to discover or invoke it.
-- **Fix:** Added `grep_search(pattern, include)` entry to the system prompt tool list.
+- **Root cause:** `grep_search` was defined in the TOOLS table (line 217) with a working handler, but was not listed in the system prompt's TOOLS section. The model could never discover or use it, making the capability dead.
+- **Fix:** Added `grep_search(pattern, include)` to the system prompt tool list.
 - **Status:** ✅ Fixed in `lib/agent.lua`
 
 #### Bug 9A.6 — Stale `CTX_SIZE = 2048` in `lib/embed.lua`
 
-- **Root cause:** The embedding server is launched with `-c 4096` (from Bug 6 / additional fixes), but the Lua-side `CTX_SIZE` constant remained at 2048. Embeddings for inputs longer than 2048 tokens were silently truncated.
-- **Fix:** `CTX_SIZE = 4096`.
+- **Root cause:** The embedding server is launched with `-c 4096`, but the Lua-side `CTX_SIZE` constant remained at 2048. Embeddings for inputs longer than 2048 tokens were silently truncated at the wrong boundary.
+- **Fix:** `CTX_SIZE = 4096` with a comment referencing the matching server flag.
 - **Status:** ✅ Fixed in `lib/embed.lua`
 
-#### Bug 9A.7 — No unit-level launcher test (`tests/`)
+#### Bug 9A.7 — No unit-level tests for the launcher (`tests/`)
 
-- **Root cause:** Only integration tests (starting real daemons) existed. No static tests for config loading, module presence, PID file format, cleanup guard presence, or health endpoint existence.
-- **Fix:** Added `tests/test-launcher.sh` (8 test cases, no daemon startup required). Named distinctly from root-level `test_bin_jenova.sh` (which is a live integration test) to avoid confusion.
-- **Status:** ✅ Added `tests/test-launcher.sh`
+- **Root cause:** Only integration tests starting real daemons existed. No static tests for config loading, module presence, PID file format, cleanup guard, or health endpoint presence.
+- **Fix:** Added `tests/test_bin_jenova.sh` (config/module/integration tests, 8 cases) and `tests/test-launcher.sh` (fully static unit tests, strict PID validation rejecting zeros, no daemon startup required). The unit test file uses a distinct name to avoid collision with root-level `test_bin_jenova.sh`.
+- **Status:** ✅ Added `tests/test_bin_jenova.sh` and `tests/test-launcher.sh`
 
 ---
 
