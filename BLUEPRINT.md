@@ -224,17 +224,65 @@ Deep analysis of all Lua modules for memory leaks, unbounded allocations, FD lea
 
 ---
 
-## 9. Neovim Config Audit (2026-03-26)
+## 9. Roadmap Alignment Audit (2026-03-27)
+
+Full cross-module audit verifying all BLUEPRINT items against actual code. Seven issues found and fixed.
+
+#### Bug 9A.1 — Dead `LLAMA_NGL` variable in `bin/jenova-ca`
+
+- **Root cause:** `LLAMA_NGL="${JENOVA_NGL:-$NGL_7B}"` was set but `-ngl` was removed from all launch commands (Bug 1.1 fix). The variable lingered in the file and was referenced in the startup banner, printing a misleading "GPU Layers" line.
+- **Fix:** Removed `LLAMA_NGL` assignment; banner updated to show "GPU: auto-fit".
+- **Status:** ✅ Fixed in `bin/jenova-ca`
+
+#### Bug 9A.2 — `JENOVA_ROOT` unconditional override in `bin/jenova-ca`
+
+- **Root cause:** `export JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"` overwrote any user-supplied `JENOVA_ROOT` environment variable on every invocation. Additionally, the branch-1 path (`$SCRIPT_DIR/lib/proxy.lua` found) incorrectly set `JENOVA_ROOT` to the parent of `SCRIPT_DIR` rather than `SCRIPT_DIR` itself.
+- **Fix:** Both branches now use conditional assignment (`${JENOVA_ROOT:-...}`). Branch-1 uses `SCRIPT_DIR` as the root; branch-2 uses `dirname "$SCRIPT_DIR"`.
+- **Status:** ✅ Fixed in `bin/jenova-ca`
+
+#### Bug 9A.3 — No native `/health` endpoint in `lib/proxy.lua`
+
+- **Root cause:** All requests including `GET /health` were forwarded to llama-server, creating a circular dependency when checking proxy liveness. If llama-server was down, health checks returned 502 rather than indicating whether the proxy itself was up.
+- **Fix:** Added a native `/health` handler in `proxy_connection`. Pattern `^GET /health[ %?]` matches exactly (excludes `/healthz` etc.). Uses `async_connect` (non-blocking, coroutine-safe) to check llama-server reachability with a 1-second timeout. Returns 200/503 with JSON: `{status, proxy, backend, embed (boolean), backend_ok (boolean)}`.
+- **Status:** ✅ Fixed in `lib/proxy.lua`
+
+#### Bug 9A.4 — `check_server()` accepted 502/503 as healthy (`lib/agent.lua`)
+
+- **Root cause:** `try_health()` returned `true` for HTTP 502 and 503, meaning the agent considered itself connected to a working backend even when llama-server was down. First API call would immediately fail.
+- **Fix:** Only HTTP 200 is accepted as healthy.
+- **Status:** ✅ Fixed in `lib/agent.lua`
+
+#### Bug 9A.5 — `grep_search` missing from agent system prompt (`lib/agent.lua`)
+
+- **Root cause:** `grep_search` was defined in `TOOLS` and `TOOL_HANDLERS` but not listed in the `TOOLS` section of the system prompt string in `build_system_prompt()`. The model had no way to discover or invoke it.
+- **Fix:** Added `grep_search(pattern, include)` entry to the system prompt tool list.
+- **Status:** ✅ Fixed in `lib/agent.lua`
+
+#### Bug 9A.6 — Stale `CTX_SIZE = 2048` in `lib/embed.lua`
+
+- **Root cause:** The embedding server is launched with `-c 4096` (from Bug 6 / additional fixes), but the Lua-side `CTX_SIZE` constant remained at 2048. Embeddings for inputs longer than 2048 tokens were silently truncated.
+- **Fix:** `CTX_SIZE = 4096`.
+- **Status:** ✅ Fixed in `lib/embed.lua`
+
+#### Bug 9A.7 — No unit-level launcher test (`tests/`)
+
+- **Root cause:** Only integration tests (starting real daemons) existed. No static tests for config loading, module presence, PID file format, cleanup guard presence, or health endpoint existence.
+- **Fix:** Added `tests/test-launcher.sh` (8 test cases, no daemon startup required). Named distinctly from root-level `test_bin_jenova.sh` (which is a live integration test) to avoid confusion.
+- **Status:** ✅ Added `tests/test-launcher.sh`
+
+---
+
+## 10. Neovim Config Audit (2026-03-26)
 
 Full cross-module audit of all 14 library files + `bin/` scripts + `~/.config/nvim`. No breaking changes found in Jenova itself. Two bugs in the nvim config fixed.
 
-#### Bug 9.1 — `llama.vim` pointed at non-existent endpoint (`~/.config/nvim/init.lua`)
+#### Bug 10.1 — `llama.vim` pointed at non-existent endpoint (`~/.config/nvim/init.lua`)
 
 - **Root cause:** `vim.g.llama_config = { endpoint = "http://127.0.0.1:8080/completion" }` — the proxy only exposes `/v1/chat/completions`. Ghost-text completions were silently failing.
 - **Fix:** Updated to `/v1/chat/completions`. Llama.vim now routes through the proxy and receives RAG-injected context.
 - **Status:** ✅ Fixed in `~/.config/nvim/init.lua`
 
-#### Bug 9.2 — `<leader>ca` keybind referenced non-existent binary (`~/.config/nvim/init.lua`)
+#### Bug 10.2 — `<leader>ca` keybind referenced non-existent binary (`~/.config/nvim/init.lua`)
 
 - **Root cause:** `:term ./jenova-agent<CR>` — `jenova-agent` was never the binary name. The correct entry point is `bin/jenova`.
 - **Fix:** Updated to `:term cd ~/Projects/jenova && bin/jenova<CR>`.
