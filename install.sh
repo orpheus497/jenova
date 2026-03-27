@@ -146,7 +146,25 @@ fi
 # ---------------------------------------------------------------------------
 info "Checking optional LSP servers..."
 
-check_optional "clangd"               "pkg install llvm (provides clangd)"
+# On FreeBSD, LLVM installs versioned clangd (clangd19, clangd18, …) without
+# an unversioned symlink; try them all before falling back to plain 'clangd'.
+if [ "$_OS" = "FreeBSD" ]; then
+    _CLANGD_BIN=""
+    for _c in clangd clangd19 clangd18 clangd17 clangd16 clangd15; do
+        if command -v "$_c" >/dev/null 2>&1; then
+            _CLANGD_BIN="$_c"
+            break
+        fi
+    done
+    if [ -n "$_CLANGD_BIN" ]; then
+        ok "clangd (found as $_CLANGD_BIN) (optional)"
+    else
+        warn "clangd not found (optional) — install: pkg install llvm (provides clangd)"
+        WARNINGS=$((WARNINGS + 1))
+    fi
+else
+    check_optional "clangd"               "pkg install llvm (provides clangd)"
+fi
 check_optional "rust-analyzer"        "pkg install rust-analyzer  OR  rustup component add rust-analyzer"
 check_optional "lua-language-server"  "pkg install lua-language-server"
 check_optional "pyright"              "pkg install py311-pyright"
@@ -183,7 +201,7 @@ if [ "$SKIP_LLAMA" = "0" ]; then
         warn "Build llama.cpp with Vulkan support:"
         warn "  cd $JENOVA_ROOT/llama.cpp"
         warn "  cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release"
-        warn "  cmake --build build --config Release -j\$(nproc)"
+        warn "  cmake --build build --config Release -j\$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
         WARNINGS=$((WARNINGS + 1))
     fi
 fi
@@ -204,10 +222,11 @@ check_model() {
     fi
 }
 
-check_model "${MODEL_7B:-$JENOVA_ROOT/models/Qwen2.5-Coder-7B-Q5_K_M.gguf}"             "7B agent model (Qwen2.5-Coder-7B-Q5_K_M)"
+_agent_model="${MODEL_PATH:-${JENOVA_MODEL:-$JENOVA_ROOT/models/jenova.gguf}}"
+check_model "$_agent_model"                                                               "Agent model ($(basename "$_agent_model"))"
 check_model "${MODEL_EMBED:-$JENOVA_ROOT/models/nomic-embed-text-v1.5.Q8_0.gguf}"        "Embedding model (nomic-embed-text-v1.5)"
 if [ -f "${MODEL_DRAFT:-$JENOVA_ROOT/models/Qwen2.5-Coder-0.5B-Q8_0.gguf}" ]; then
-    ok "Draft model (Qwen2.5-Coder-0.5B-Q8_0) — speculative decoding enabled"
+    ok "Draft model — speculative decoding enabled"
 else
     warn "Draft model not found — speculative decoding disabled (set JENOVA_DRAFT=0 in conf)"
     WARNINGS=$((WARNINGS + 1))
@@ -326,7 +345,7 @@ fi
 echo ""
 info "Next steps:"
 echo "  1. Place model GGUF files in: $JENOVA_ROOT/models/"
-echo "  2. Build llama.cpp if not done: cd llama.cpp && cmake -B build -DGGML_VULKAN=ON && cmake --build build -j\$(nproc)"
+echo "  2. Build llama.cpp if not done: cd llama.cpp && cmake -B build -DGGML_VULKAN=ON && cmake --build build -j\$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 echo "  3. Start the backend:  $JENOVA_ROOT/bin/jenova-ca --daemon"
 echo "     Or launch agent:    $JENOVA_ROOT/bin/jenova"
 echo "     Or launch editor:   $JENOVA_ROOT/bin/jvim  (or just: jvim)"

@@ -85,7 +85,10 @@ fi
 
 # Test 6: Verify PID file format (if exists)
 echo "[test 6] PID file format..."
-if [ -f "$PID_FILE" ]; then
+PID_FILE="${PID_FILE:-${JENOVA_ROOT:+$JENOVA_ROOT/.jenova/jenova-ca.pid}}"
+if [ -z "$PID_FILE" ]; then
+    echo "  SKIP: PID_FILE not set and JENOVA_ROOT unavailable"
+elif [ -f "$PID_FILE" ]; then
     PID_CONTENT=$(tr -d '\n' < "$PID_FILE" | tr -s ' ')
     # PID file must be non-empty, all tokens must be non-zero positive integers, no "0" anywhere.
     if [ -n "$PID_CONTENT" ] && \
@@ -97,7 +100,7 @@ if [ -f "$PID_FILE" ]; then
         EXIT_CODE=1
     fi
 else
-    echo "  SKIP: No PID file at $PID_FILE (backend not running)"
+    echo "  SKIP: No PID file at ${PID_FILE} (backend not running)"
 fi
 
 # Test 7: Verify cleanup guard variable

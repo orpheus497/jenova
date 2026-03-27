@@ -65,7 +65,8 @@ echo ""
 # ---------------------------------------------------------------------------
 info "Pulling latest changes from origin..."
 cd "$JENOVA_ROOT"
-git pull origin "$(git branch --show-current)" && ok "git pull complete" || {
+_branch=$(git branch --show-current 2>/dev/null || echo "main")
+git pull origin "${_branch:-main}" && ok "git pull complete" || {
     warn "git pull failed — continuing with current code"
 }
 
@@ -116,7 +117,7 @@ if [ "$SKIP_REBUILD" = "0" ]; then
         cd "$JENOVA_ROOT"
 
         if [ "$_BEFORE" != "$_AFTER" ] && [ -d "$LLAMA_SRC/build" ]; then
-            warn "llama.cpp updated (${"$_BEFORE" | cut -c1-8} → ${"$_AFTER" | cut -c1-8}) — rebuilding..."
+            warn "llama.cpp updated ($(echo "$_BEFORE" | cut -c1-8) → $(echo "$_AFTER" | cut -c1-8)) — rebuilding..."
             cmake --build "$LLAMA_SRC/build" --config Release -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)" \
                 && ok "llama.cpp rebuilt successfully" \
                 || warn "llama.cpp rebuild failed — check $LLAMA_SRC/build for errors"
