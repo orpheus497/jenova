@@ -20,16 +20,22 @@ else
     exit 1
 fi
 
+# ##Step purpose: Separate HOST (bind address) from CONNECT_HOST (client connect address)
+# HOST may be 0.0.0.0 (listen on all interfaces), but clients need a real IP
+CONNECT_HOST="${JENOVA_CONNECT_HOST:-127.0.0.1}"
+
 LLAMA_LIB_DIR="$JENOVA_ROOT/llama.cpp/build/bin"
 if [ -d "$LLAMA_LIB_DIR" ]; then
     export LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"
 fi
 
+# ##Function purpose: Check if the Jenova CA backend is reachable via HTTP health endpoint
+# Uses CONNECT_HOST (not HOST) so wildcards like 0.0.0.0 don't break the probe
 check_health() {
     if [ -f "$SCRIPT_DIR/lib/healthcheck.lua" ]; then
-        luajit "$SCRIPT_DIR/lib/healthcheck.lua" "$HOST" "$PORT" 3 2>/dev/null
+        luajit "$SCRIPT_DIR/lib/healthcheck.lua" "$CONNECT_HOST" "$PORT" 3 2>/dev/null
     elif [ -f "$SCRIPT_DIR/../lib/healthcheck.lua" ]; then
-        luajit "$SCRIPT_DIR/../lib/healthcheck.lua" "$HOST" "$PORT" 3 2>/dev/null
+        luajit "$SCRIPT_DIR/../lib/healthcheck.lua" "$CONNECT_HOST" "$PORT" 3 2>/dev/null
     else
         return 1
     fi
@@ -37,8 +43,8 @@ check_health() {
 
 if check_health; then
     echo "Jenova CA already running."
-    echo "  FIM (infill) endpoint : http://${HOST}:${LLAMA_PORT}"
-    echo "  Chat + RAG endpoint   : http://${HOST}:${PORT}"
+    echo "  FIM (infill) endpoint : http://${CONNECT_HOST}:${LLAMA_PORT}"
+    echo "  Chat + RAG endpoint   : http://${CONNECT_HOST}:${PORT}"
     exit 0
 fi
 
@@ -80,5 +86,5 @@ done
 
 echo ""
 echo "Jenova CA is running. Shared backend serving all clients:"
-echo "  FIM (infill) endpoint : http://${HOST}:${LLAMA_PORT}"
-echo "  Chat + RAG endpoint   : http://${HOST}:${PORT}"
+echo "  FIM (infill) endpoint : http://${CONNECT_HOST}:${LLAMA_PORT}"
+echo "  Chat + RAG endpoint   : http://${CONNECT_HOST}:${PORT}"
