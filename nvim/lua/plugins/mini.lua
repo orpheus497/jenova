@@ -1,33 +1,36 @@
--- ##Script function and purpose: Configures mini.nvim utility modules — mini.pairs
--- for auto-pairing brackets/quotes, mini.comment for toggling comments, mini.surround
--- for surround operations, and mini.bufremove for safe buffer deletion while keeping layout.
+-- ##Script function and purpose: Configures mini.nvim utility modules — mini.ai for
+-- better around/inside textobjects, mini.surround for bracket operations, mini.pairs
+-- for auto-pairing, mini.comment for toggling comments, mini.bufremove for safe buffer
+-- deletion, and mini.icons which replaces nvim-web-devicons.
 
 return {
+  -- ##Section purpose: Disable nvim-web-devicons — mini.icons mocks it in memory
+  { "nvim-tree/nvim-web-devicons", enabled = false },
+
   -- ##Section purpose: mini.nvim — collection of small independent Lua modules
   {
     "echasnovski/mini.nvim",
     version = false,
+    -- ##Step purpose: mini.icons mock must run in init (before other plugins' config)
+    -- so that require("nvim-web-devicons") calls resolve to the mock immediately
+    init = function()
+      require("mini.icons").setup()
+      require("mini.icons").mock_nvim_web_devicons()
+    end,
     config = function()
-      -- ##Step purpose: mini.pairs — auto-close brackets, parens, quotes
+      -- ##Step purpose: mini.ai — enhanced around/inside textobjects
+      require("mini.ai").setup({ n_lines = 500 })
+
+      -- ##Step purpose: mini.surround — add/delete/replace surroundings
+      require("mini.surround").setup()
+
+      -- ##Step purpose: mini.pairs — auto-close brackets and quotes
       require("mini.pairs").setup()
 
       -- ##Step purpose: mini.comment — gc to toggle line/block comments
       require("mini.comment").setup()
 
-      -- ##Step purpose: mini.surround — ys, ds, cs surround operations (vim-surround style)
-      require("mini.surround").setup({
-        mappings = {
-          add            = "ys",
-          delete         = "ds",
-          find           = "fs",
-          find_left      = "Fs",
-          highlight      = "hs",
-          replace        = "cs",
-          update_n_lines = "ns",
-        },
-      })
-
-      -- ##Step purpose: mini.bufremove — safe buffer deletion that keeps window layout
+      -- ##Step purpose: mini.bufremove — safe buffer deletion preserving window layout
       require("mini.bufremove").setup()
       vim.keymap.set("n", "<leader>bd", function()
         require("mini.bufremove").delete(0, false)

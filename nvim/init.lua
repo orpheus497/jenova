@@ -101,30 +101,16 @@ map("n", "]d", vim.diagnostic.goto_next, { desc = "Next Diagnostic" })
 vim.keymap.set('n', '<leader>aj', '<cmd>term cd ~/Projects/jenova && bin/jenova<CR>', { desc = "Jenova Agent Terminal" })
 
 --------------------------------------------------------------------------------
--- [6] IDE THREE-PANEL LAYOUT COMMAND
+-- [6] IDE PANEL OPENER
 --------------------------------------------------------------------------------
--- ##Section purpose: :IDE user command — opens NvimTree + Trouble + GpChat vsplit
+-- ##Section purpose: :IDE user command — opens NvimTree, Edgy auto-manages layout
+-- FIX F1: Removed manual panel management that raced with Edgy. Edgy now owns
+-- the three-panel layout (NvimTree + Trouble left, AI Chat right).
 vim.api.nvim_create_user_command("IDE", function()
-  -- ##Condition purpose: If we are on the dashboard, close it first so it doesn't
-  -- occupy the main window when the three-panel layout is built
+  -- ##Condition purpose: If on dashboard, close it first
   if vim.bo.filetype == "alpha" then
     vim.cmd("bd")
   end
-
-  -- ##Step purpose: Save reference to the main window before panels open
-  local main_win = vim.api.nvim_get_current_win()
-
-  -- ##Step purpose: Open left-side panels (NvimTree file explorer + Trouble diagnostics)
+  -- ##Step purpose: Open NvimTree — Edgy intercepts and docks it left
   vim.cmd("NvimTreeOpen")
-  -- Open Trouble locked to the current buffer only (not workspace)
-  vim.cmd("Trouble diagnostics toggle filter.buf=0")
-
-  -- ##Step purpose: Return focus to the main editor centre pane
-  vim.api.nvim_set_current_win(main_win)
-
-  -- ##Step purpose: Open GpChat vsplit for the full file as AI context
-  vim.cmd("1,$GpChatNew vsplit")
-
-  -- ##Step purpose: Force focus back to main window one last time
-  vim.api.nvim_set_current_win(main_win)
-end, { desc = "Start Three-Panel IDE Layout" })
+end, { desc = "Open IDE panels (Edgy auto-manages layout)" })

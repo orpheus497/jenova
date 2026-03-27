@@ -7,20 +7,25 @@ return {
   -- ##Section purpose: nvim-tree — file explorer sidebar
   {
     "nvim-tree/nvim-tree.lua",
-    dependencies = { "nvim-tree/nvim-web-devicons" },
+    cmd = { "NvimTreeToggle", "NvimTreeOpen", "NvimTreeFocus", "NvimTreeFindFileToggle" },
     keys = {
-      { "<leader>e", "<cmd>NvimTreeToggle<CR>",  desc = "Toggle File Explorer" },
-      { "<leader>E", "<cmd>NvimTreeFocus<CR>",   desc = "Focus File Explorer" },
+      { "<leader>e", "<cmd>NvimTreeToggle<CR>", desc = "Toggle File Explorer" },
     },
-    opts = {
-      view = { width = 32 },
-      renderer = {
-        group_empty = true,
-        icons = { show = { git = true, folder = true, file = true } },
-      },
-      filters = { dotfiles = false },
-      git = { enable = true, ignore = false },
-    },
+    config = function()
+      require("nvim-tree").setup({
+        -- ##Step purpose: Explorer opens on the left at 30 columns
+        view = { side = "left", width = 30 },
+        -- ##Step purpose: Disable window picker to prevent interference with panel layout
+        actions = { open_file = { window_picker = { enable = false } } },
+        renderer = {
+          -- ##Step purpose: Highlight opened files in the tree for visual context
+          highlight_opened_files = "all",
+          icons = { show = { file = true, folder = true, folder_arrow = true, git = true } },
+        },
+        -- ##Step purpose: Show LSP diagnostics on directory nodes
+        diagnostics = { enable = true, show_on_dirs = true },
+      })
+    end,
   },
 
   -- ##Section purpose: Telescope — fuzzy finder for files, buffers, grep
@@ -28,14 +33,15 @@ return {
     "nvim-telescope/telescope.nvim",
     dependencies = {
       "nvim-lua/plenary.nvim",
-      { "nvim-telescope/telescope-fzf-native.nvim", build = "make" },
+      -- ##Step purpose: gmake is required on FreeBSD (GNU Make is not 'make')
+      { "nvim-telescope/telescope-fzf-native.nvim", build = "gmake" },
     },
     keys = {
-      { "<leader>ff", "<cmd>Telescope find_files<CR>",  desc = "Find Files" },
-      { "<leader>fg", "<cmd>Telescope live_grep<CR>",   desc = "Live Grep" },
-      { "<leader>fb", "<cmd>Telescope buffers<CR>",     desc = "Buffers" },
-      { "<leader>fh", "<cmd>Telescope help_tags<CR>",   desc = "Help Tags" },
-      { "<leader>fo", "<cmd>Telescope oldfiles<CR>",    desc = "Recent Files" },
+      { "<leader>ff", "<cmd>Telescope find_files<CR>", desc = "Find Files" },
+      { "<leader>fg", "<cmd>Telescope live_grep<CR>", desc = "Live Grep" },
+      { "<leader>fb", "<cmd>Telescope buffers<CR>", desc = "Buffers" },
+      { "<leader>fh", "<cmd>Telescope help_tags<CR>", desc = "Help Tags" },
+      { "<leader>fo", "<cmd>Telescope oldfiles<CR>", desc = "Recent Files" },
       { "<leader>fd", "<cmd>Telescope diagnostics<CR>", desc = "Diagnostics" },
     },
     config = function()
@@ -44,11 +50,9 @@ return {
         defaults = {
           prompt_prefix = "   ",
           selection_caret = "  ",
-          layout_config = { horizontal = { preview_width = 0.55 } },
         },
       })
-      -- ##Action purpose: Load fzf sorter for faster fuzzy matching (pcall so Telescope
-      -- still works if telescope-fzf-native fails to build or isn't installed)
+      -- ##Action purpose: Load fzf sorter (pcall in case it failed to build)
       pcall(telescope.load_extension, "fzf")
     end,
   },
@@ -59,30 +63,49 @@ return {
     build = ":TSUpdate",
     event = { "BufReadPost", "BufNewFile" },
     opts = {
+      -- ##Step purpose: Install parsers for all languages used in Jenova development
       ensure_installed = {
-        "lua", "luadoc", "vim", "vimdoc",
-        "bash", "c", "cpp", "python",
-        "json", "yaml", "toml", "markdown",
+        "c", "cpp", "rust", "go", "python", "zig",
+        "bash", "lua", "luadoc", "vim", "vimdoc",
+        "json", "yaml", "toml",
+        "markdown", "markdown_inline",
       },
       highlight = { enable = true },
       indent = { enable = true },
     },
     config = function(_, opts)
-      require("nvim-treesitter.configs").setup(opts)
+      -- ##Step purpose: Defensive pcall handles API name change between treesitter versions
+      local ok, configs = pcall(require, "nvim-treesitter.configs")
+      if not ok then configs = require("nvim-treesitter.config") end
+      configs.setup(opts)
     end,
   },
 
-  -- ##Section purpose: Trouble — pretty diagnostics and quickfix list
+  -- ##Section purpose: Trouble — pretty diagnostics, symbols, quickfix
   {
     "folke/trouble.nvim",
-    dependencies = { "nvim-tree/nvim-web-devicons" },
-    keys = {
-      { "<leader>xx", "<cmd>Trouble diagnostics toggle<CR>",              desc = "Workspace Diagnostics" },
-      { "<leader>xb", "<cmd>Trouble diagnostics toggle filter.buf=0<CR>", desc = "Buffer Diagnostics" },
-      { "<leader>xq", "<cmd>Trouble qflist toggle<CR>",                   desc = "Quickfix List" },
-      { "<leader>xl", "<cmd>Trouble loclist toggle<CR>",                  desc = "Location List" },
+    cmd = { "Trouble" },
+    opts = {
+      -- ##Step purpose: Enable text wrapping so long diagnostic messages are not clipped
+      win = { type = "split", wo = { wrap = true } },
+      modes = {
+        diagnostics = {
+          auto_preview = true,
+          -- ##Step purpose: Only show diagnostics for the currently open buffer
+          filter = { buf = 0 },
+          -- ##Step purpose: Flat list of errors, not grouped by file
+          groups = {},
+        },
+      },
     },
-    opts = { use_diagnostic_signs = true },
+    keys = {
+      { "<leader>xx", "<cmd>Trouble diagnostics toggle<CR>", desc = "Workspace Diagnostics" },
+      { "<leader>xb", "<cmd>Trouble diagnostics toggle filter.buf=0<CR>", desc = "Buffer Diagnostics" },
+      { "<leader>cs", "<cmd>Trouble symbols toggle focus=false<CR>", desc = "Symbols (Trouble)" },
+      { "<leader>cl", "<cmd>Trouble lsp toggle focus=false win.position=right<CR>", desc = "LSP Definitions / References" },
+      { "<leader>xq", "<cmd>Trouble qflist toggle<CR>", desc = "Quickfix List" },
+      { "<leader>xl", "<cmd>Trouble loclist toggle<CR>", desc = "Location List" },
+    },
   },
 
   -- ##Section purpose: indent-blankline — visual indent guide lines
@@ -90,13 +113,10 @@ return {
     "lukas-reineke/indent-blankline.nvim",
     event = { "BufReadPost", "BufNewFile" },
     main = "ibl",
-    opts = {
-      indent = { char = "│" },
-      scope = { enabled = true },
-    },
+    opts = {},
   },
 
-  -- ##Section purpose: conform.nvim — lightweight, async code formatter
+  -- ##Section purpose: conform.nvim — format-on-save with FreeBSD-available formatters
   {
     "stevearc/conform.nvim",
     event = { "BufWritePre" },
@@ -109,9 +129,11 @@ return {
     },
     opts = {
       formatters_by_ft = {
-        lua    = { "stylua" },
-        python = { "black" },
-        sh     = { "shfmt" },
+        lua = { "stylua" },
+        python = { "isort", "black" },
+        rust = { "rustfmt" },
+        go = { "gofmt", "goimports" },
+        c = { "clang-format" },
       },
       format_on_save = { timeout_ms = 500, lsp_fallback = true },
     },
