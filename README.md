@@ -172,6 +172,81 @@ Both ports are defined in `etc/jenova.conf` as `LLAMA_PORT` and `PORT`.
 
 ## Troubleshooting & Notes
 
+### Common Issues
+
+#### "llama-server not found"
+
+If you see this error, llama.cpp hasn't been built yet:
+
+```bash
+cd llama.cpp
+cmake -B build -DGGML_VULKAN=ON
+cmake --build build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+```
+
+On FreeBSD, install dependencies first:
+```bash
+pkg install cmake gmake vulkan-loader
+```
+
+#### "Model not found"
+
+Download a GGUF model file and place it in `models/`. Recommended:
+- **Qwen2.5-Coder-7B-Q5_K_M.gguf** (main agent model)
+- **nomic-embed-text-v1.5.Q8_0.gguf** (embedding for RAG)
+- **Qwen2.5-Coder-0.5B-Q8_0.gguf** (optional drafter for speculative decoding)
+
+Or set `JENOVA_MODEL` environment variable to point to your model file.
+
+#### Neovim Plugins Not Working
+
+**Always use `bin/jvim` to launch Neovim**, not `nvim` directly. The `jvim` wrapper:
+- Starts the backend if needed
+- Exports required environment variables (`JENOVA_CONNECT_HOST`, `JENOVA_PORT`, etc.)
+- Ensures plugins can connect to the local backend
+
+If you launch `nvim` directly, you'll see warning messages from gp.nvim and llama.vim about missing environment variables.
+
+#### "Permission denied" creating .jenova directory
+
+**Do not run scripts with sudo**. All Jenova commands should run as your regular user:
+
+```bash
+./install.sh           # NOT: sudo ./install.sh
+bin/jenova-ca --daemon # NOT: sudo bin/jenova-ca --daemon
+bin/jvim myfile.lua    # NOT: sudo bin/jvim myfile.lua
+```
+
+If you already ran with sudo and have permission issues:
+```bash
+sudo chown -R $USER:$USER .jenova/ var/
+chmod -R u+w .jenova/ var/
+```
+
+#### Checking Backend Status
+
+```bash
+bin/jenova-ca status          # Check if backend is running
+bin/jenova-ca stop            # Stop backend
+bin/jenova-ca restart         # Restart backend
+```
+
+Check logs if something goes wrong:
+```bash
+tail -f var/log/jenova-ca.log
+```
+
+### Path Resolution
+
+All scripts (`bin/jenova`, `bin/jvim`, `bin/jenova-ca`) automatically detect `JENOVA_ROOT` by resolving their own location. This works whether you:
+- Run them from the project root: `./bin/jvim`
+- Run them via symlinks in PATH: `jvim` (after `./install.sh`)
+- Run them from any directory: `/full/path/to/bin/jvim`
+
+The `JENOVA_ROOT` environment variable is automatically set and exported before loading `etc/jenova.conf`.
+
+### Performance Notes
+
 - If running into OOMs with ZFS, lower ARC (`vfs.zfs.arc_max`) and confirm swap/Optane configuration.
 - The embedding server runs on CPU (`GGML_VULKAN_DISABLE=1`, ngl 0) to preserve all GPU memory for main model inference.
 - The codebase avoids subprocess reinitialization penalties by using persistent daemon processes.
