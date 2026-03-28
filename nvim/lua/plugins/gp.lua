@@ -71,13 +71,54 @@ return {
             gp.Prompt(params, gp.Target.rewrite, agent, nil, nil)
           end,
 
-          -- ##Action purpose: Visual rewrite hook — constrained, surgical edits only
-          -- Sends "Visual Rewrite:" prefix to signal visual intent to proxy
+          -- ##Action purpose: Visual rewrite hook — prompts user for instruction after
+          -- selecting text, then rewrites the selection based on user input.
+          -- Previously auto-sent a fixed template which caused the model to rewrite
+          -- without knowing the user's intent. Now the user provides direction.
+          -- The "Visual Rewrite:" prefix is preserved so the proxy detects intent
+          -- (lib/proxy.lua:259 matches ^Visual Rewrite: to set RAG limit=1 and
+          -- disable tools for surgical edits).
           VisualRewrite = function(gp, params)
             local agent = gp.get_command_agent()
-            -- Prepend visual marker so proxy applies surgical constraints
-            local template = "Visual Rewrite: {{selection}}"
-            gp.Prompt(params, gp.Target.rewrite, agent, template, nil)
+            local ft = vim.bo.filetype or ""
+            local template = string.format(
+              "Visual Rewrite: {{command}}\n\nI have the following code:\n```%s\n{{selection}}\n```", ft)
+            gp.Prompt(params, gp.Target.rewrite, agent, template, "Rewrite instruction: ")
+          end,
+
+          -- ##Action purpose: Web search hook — prompts user for a query, opens a chat
+          -- with "Web Search:" prefix, and auto-sends. The proxy detects the prefix,
+          -- fetches DuckDuckGo results, and injects them for the model to synthesize.
+          WebSearch = function(gp, params)
+            vim.ui.input({ prompt = "Web search: " }, function(query)
+              if not query or query == "" then return end
+              local agent = gp.get_chat_agent()
+              gp.cmd.ChatNew(params, nil, agent)
+
+              vim.defer_fn(function()
+                local chat_buf = vim.api.nvim_get_current_buf()
+                if not vim.api.nvim_buf_is_valid(chat_buf) then return end
+
+                local chat_lines = vim.api.nvim_buf_get_lines(chat_buf, 0, -1, false)
+                local user_prefix = require("gp").config.chat_user_prefix or "💬:"
+
+                local insert_after = -1
+                for i, line in ipairs(chat_lines) do
+                  if line:sub(1, #user_prefix) == user_prefix then
+                    insert_after = i
+                  end
+                end
+
+                if insert_after < 0 then return end
+
+                vim.api.nvim_buf_set_lines(chat_buf, insert_after, insert_after, false,
+                  { "Web Search: " .. query })
+
+                vim.defer_fn(function()
+                  vim.cmd("GpChatRespond")
+                end, 50)
+              end, 50)
+            end)
           end,
 
           ChatWithContext = function(gp, params)
@@ -154,8 +195,11 @@ return {
       -- ##Step purpose: Delete the current chat file from disk
       vim.keymap.set("n", "<leader>ad", "<cmd>GpChatDelete<CR>", opts("Delete Chat"))
 
-      -- ##Step purpose: Visual-mode: surgical rewrite (constrained to selection only)
-      vim.keymap.set("v", "<leader>aw", ":<C-u>'<,'>GpVisualRewrite<CR>", opts("Visual Rewrite (Surgical)"))
+      -- ##Step purpose: Visual-mode: rewrite selection with user-provided instruction
+      vim.keymap.set("v", "<leader>aw", ":<C-u>'<,'>GpVisualRewrite<CR>", opts("Visual Rewrite (Prompted)"))
+
+      -- ##Step purpose: Normal-mode: web search — prompts for query, synthesizes from results
+      vim.keymap.set("n", "<leader>as", "<cmd>GpWebSearch<CR>", opts("Web Search"))
 
       -- ##Step purpose: Normal-mode: inline rewrite via InlineRewrite hook
       vim.keymap.set("n", "<leader>ai", "<cmd>GpInlineRewrite<CR>", opts("Inline Rewrite"))

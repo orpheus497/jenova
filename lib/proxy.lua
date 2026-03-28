@@ -118,6 +118,47 @@ local function async_connect(fd, addr)
     if opt[0] == 0 then return true else return false, opt[0] end
 end
 
+-- Web search via FreeBSD fetch (HTTPS-capable). Called only on explicit "Web Search:"
+-- intent from the user. Blocks the calling coroutine for up to 5 seconds (fetch -T 5).
+-- Acceptable: single-user system, user-initiated, short timeout.
+local function exec_web_search(query)
+    local encoded = query:gsub("([^%w%-%._~ ])", function(c)
+        return string.format("%%%02X", string.byte(c))
+    end):gsub(" ", "+")
+    local url = "https://html.duckduckgo.com/html/?q=" .. encoded
+    local cmd = string.format("fetch -T 5 -qo - '%s' 2>/dev/null", url)
+    local handle = io.popen(cmd)
+    if not handle then return nil end
+    local html = handle:read(256 * 1024)
+    handle:close()
+    if not html or #html < 100 then return nil end
+
+    local function strip_tags(s)
+        return s:gsub("<[^>]+>", "")
+            :gsub("&amp;", "&"):gsub("&lt;", "<"):gsub("&gt;", ">")
+            :gsub("&quot;", '"'):gsub("&#x27;", "'"):gsub("&nbsp;", " ")
+            :match("^%s*(.-)%s*$")
+    end
+
+    local titles, snippets = {}, {}
+    for t in html:gmatch('class="result__a"[^>]*>(.-)</a>') do
+        local clean = strip_tags(t)
+        if clean and #clean > 0 then titles[#titles + 1] = clean end
+    end
+    for s in html:gmatch('class="result__snippet"[^>]*>(.-)</a>') do
+        local clean = strip_tags(s)
+        if clean and #clean > 10 then snippets[#snippets + 1] = clean end
+    end
+
+    local count = math.min(#titles, #snippets, 5)
+    if count == 0 then return nil end
+    local results = {}
+    for i = 1, count do
+        results[i] = string.format("[%d] %s\n    %s", i, titles[i], snippets[i])
+    end
+    return results
+end
+
 local active_connection_count = 0
 
 local function proxy_connection(client_fd, conn_fds)
@@ -264,10 +305,14 @@ local function proxy_connection(client_fd, conn_fds)
                 intent = "chat"
                 req_json.messages[last_user_idx].content = last_user_msg:gsub("^%s*Chatbot:%s*", "")
                 last_user_msg = req_json.messages[last_user_idx].content
+            elseif last_user_msg:match("^%s*Web Search:%s*") then
+                intent = "websearch"
+                req_json.messages[last_user_idx].content = last_user_msg:gsub("^%s*Web Search:%s*", "")
+                last_user_msg = req_json.messages[last_user_idx].content
             end
 
             if last_user_msg ~= "" and not last_user_msg:find("--- REPOSITORY CONTEXT ---") then
-                local rag_limit = (intent == "visual") and 1 or 3
+                local rag_limit = (intent == "visual") and 1 or (intent == "websearch") and 0 or 3
                 local rag_query = last_user_msg
                 local embedded_path = last_user_msg:match("Path:%s*(%S+)")
                 if embedded_path and #last_user_msg > 2000 then
@@ -292,10 +337,19 @@ local function proxy_connection(client_fd, conn_fds)
                     rag_context = table.concat(parts, "\n")
                 end
 
+                local web_context = ""
+                if intent == "websearch" and last_user_msg ~= "" then
+                    local web_results = exec_web_search(last_user_msg)
+                    if web_results then
+                        web_context = "\n--- WEB SEARCH RESULTS ---\n" .. table.concat(web_results, "\n")
+                    end
+                end
+
                 if intent then
                     local system_p = prompts[intent] or prompts.chat
+                    if web_context ~= "" then system_p = system_p .. "\n" .. web_context end
                     if rag_context ~= "" then system_p = system_p .. "\n" .. rag_context end
-                    if intent == "visual" then
+                    if intent == "visual" or intent == "websearch" then
                         req_json.tools = nil
                         req_json.tool_choice = "none"
                     end
@@ -319,7 +373,11 @@ local function proxy_connection(client_fd, conn_fds)
                     new_headers = new_headers:gsub("\r\n\r\n", "\r\nContent-Length: " .. #new_body .. "\r\n\r\n")
                 end
                 proxied_req = new_headers .. new_body
-                if intent then print("[proxy] Intent: " .. intent .. " | Injected intelligence (" .. #rag .. " files)") end
+                if intent then
+                    local detail = #rag .. " files"
+                    if web_context ~= "" then detail = detail .. " + web results" end
+                    print("[proxy] Intent: " .. intent .. " | Injected intelligence (" .. detail .. ")")
+                end
             end
         end
     end
