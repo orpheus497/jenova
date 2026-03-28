@@ -65,10 +65,36 @@ return {
         chat_window = { style = "vsplit", width = 60 },
 
         hooks = {
-          -- ##Action purpose: Inline code rewrite hook — streams replacement in-place
-          InlineRewrite = function(gp, params)
+          -- ##Action purpose: Visual rewrite hook — constrained, surgical edits only
+          -- Sends "Visual Rewrite:" prefix to signal visual intent to proxy
+          VisualRewrite = function(gp, params)
             local agent = gp.get_command_agent()
-            gp.Prompt(params, gp.Target.rewrite, agent, nil, nil)
+            -- Prepend visual marker so proxy applies surgical constraints
+            local template = "Visual Rewrite: {{selection}}"
+            gp.Prompt(params, gp.Target.rewrite, agent, template, nil)
+          end,
+
+          -- ##Action purpose: Chat with full buffer context
+          -- Opens chat with entire current buffer as context so AI understands the file
+          ChatWithContext = function(gp, params)
+            local agent = gp.get_chat_agent()
+            -- Get current buffer content
+            local buf = vim.api.nvim_get_current_buf()
+            local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+            local filename = vim.fn.expand("%:t")
+            local filepath = vim.fn.expand("%:p")
+            local content = table.concat(lines, "\n")
+
+            -- Create context message with file info
+            local context = string.format(
+              "Chatbot: I'm working on file: %s\nPath: %s\n\n```\n%s\n```\n\nQuestion: ",
+              filename,
+              filepath,
+              content
+            )
+
+            -- Open chat with buffer context pre-filled
+            local chat_buffer = gp.cmd.ChatNew(params, agent.model, context)
           end,
         },
       })
@@ -80,9 +106,12 @@ return {
       -- ##Step purpose: Visual-mode: open chat with selected text as context
       vim.keymap.set("v", "<leader>ae", ":<C-u>'<,'>GpChatNew vsplit<CR>", opts("Visual Chat"))
 
+      -- ##Step purpose: Normal-mode: open chat with full buffer context
+      vim.keymap.set("n", "<leader>ac", "<cmd>GpChatWithContext<CR>", opts("Chat with Buffer Context"))
+
       -- ##Step purpose: Normal-mode: open new chat with empty/fresh context
       -- FIX F2: Use vim.fn.delete() to wipe stale chats — avoids os.execute rm -rf
-      vim.keymap.set("n", "<leader>ac", function()
+      vim.keymap.set("n", "<leader>aF", function()
         local chat_dir = vim.fn.stdpath("state") .. "/gp/chats"
         -- ##Condition purpose: Only attempt deletion if the directory actually exists
         if vim.fn.isdirectory(chat_dir) == 1 then
@@ -101,8 +130,8 @@ return {
       -- ##Step purpose: Delete the current chat file from disk
       vim.keymap.set("n", "<leader>ad", "<cmd>GpChatDelete<CR>", opts("Delete Chat"))
 
-      -- ##Step purpose: Visual-mode: rewrite the selected text via AI inline
-      vim.keymap.set("v", "<leader>aw", ":<C-u>'<,'>GpRewrite<CR>", opts("Visual Rewrite"))
+      -- ##Step purpose: Visual-mode: surgical rewrite (constrained to selection only)
+      vim.keymap.set("v", "<leader>aw", ":<C-u>'<,'>GpVisualRewrite<CR>", opts("Visual Rewrite (Surgical)"))
 
       -- ##Step purpose: Normal-mode: inline rewrite via InlineRewrite hook
       vim.keymap.set("n", "<leader>ai", "<cmd>GpInlineRewrite<CR>", opts("Inline Rewrite"))
