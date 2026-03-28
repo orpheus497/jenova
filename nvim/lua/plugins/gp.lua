@@ -38,14 +38,18 @@ return {
 
       -- ##Step purpose: Core gp.nvim setup — point at local Jenova backend
       require("gp").setup({
-        -- ##Action purpose: Use the Jenova LuaJIT proxy as the OpenAI-compatible endpoint
-        -- IMPORTANT: This MUST be a local endpoint. Never use external OpenAI API.
-        openai_api_key = "jenova-local",
-        openai_api_endpoint = endpoint_url,
+        -- ##Action purpose: Configure providers - new gp.nvim format
+        providers = {
+          openai = {
+            endpoint = endpoint_url,
+            secret = "jenova-local",
+          },
+        },
 
         agents = {
           {
             name = "Jenova",
+            provider = "openai",
             chat = true,
             command = true,
             model = { model = "jenova", temperature = 0.7, top_p = 0.9 },
