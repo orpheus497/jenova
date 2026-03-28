@@ -20,9 +20,15 @@ else
     exit 1
 fi
 
-mkdir -p "$JENOVA_STATE"
-mkdir -p "$LOG_DIR"
-mkdir -p "$CACHE_DIR"
+# Ensure runtime directories exist with proper permissions
+# Note: Run without sudo to avoid permission issues with lock files
+mkdir -p "$JENOVA_STATE" 2>/dev/null || {
+    echo "Error: Cannot create $JENOVA_STATE directory" >&2
+    echo "       Do not run with sudo — run as regular user instead" >&2
+    exit 1
+}
+mkdir -p "$LOG_DIR" || true
+mkdir -p "$CACHE_DIR" || true
 
 # --- Model: 7B only ---
 MODEL_PATH="${JENOVA_MODEL:-$MODEL_7B}"
@@ -299,9 +305,46 @@ if [ "$1" = "--daemon" ]; then
     set -- $_FILTERED_ARGS
 
     # Acquire exclusive lock to prevent concurrent startup (TOCTOU guard)
+    # Use portable locking: flock on Linux/FreeBSD, or fallback to mkdir-based lock
     LOCK_FILE="${PID_FILE}.lock"
-    exec 9>"$LOCK_FILE"
-    flock -n 9 || { echo "Another instance is starting. Exiting." >&2; exit 1; }
+
+    if command -v flock >/dev/null 2>&1; then
+        # flock available (Linux, FreeBSD with flock installed)
+        exec 9>"$LOCK_FILE"
+        if ! flock -n 9; then
+            echo "Another instance is starting. Exiting." >&2
+            exit 1
+        fi
+    else
+        # Fallback: atomic mkdir-based locking (portable but requires cleanup)
+        if ! mkdir "$LOCK_FILE.d" 2>/dev/null; then
+            if [ -d "$LOCK_FILE.d" ]; then
+                # Check if lock is stale (>2 minutes old)
+                if command -v stat >/dev/null 2>&1; then
+                    _LOCK_AGE=$(($(date +%s) - $(stat -c %Y "$LOCK_FILE.d" 2>/dev/null || stat -f %m "$LOCK_FILE.d" 2>/dev/null || echo 0)))
+                    if [ "$_LOCK_AGE" -gt 120 ]; then
+                        echo "Removing stale lock (${_LOCK_AGE}s old)" >&2
+                        rmdir "$LOCK_FILE.d" 2>/dev/null || true
+                        if ! mkdir "$LOCK_FILE.d" 2>/dev/null; then
+                            echo "Another instance is starting. Exiting." >&2
+                            exit 1
+                        fi
+                    else
+                        echo "Another instance is starting. Exiting." >&2
+                        exit 1
+                    fi
+                else
+                    echo "Another instance is starting. Exiting." >&2
+                    exit 1
+                fi
+            else
+                echo "Cannot create lock at $LOCK_FILE.d" >&2
+                exit 1
+            fi
+        fi
+        # Cleanup fallback lock on exit
+        trap 'rmdir "$LOCK_FILE.d" 2>/dev/null || true' EXIT
+    fi
 
     if [ -f "$PID_FILE" ]; then
         read OLD_LLAMA_PID OLD_PROXY_PID OLD_EMBED_PID < "$PID_FILE" 2>/dev/null || OLD_LLAMA_PID=$(cat "$PID_FILE")

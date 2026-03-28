@@ -96,7 +96,29 @@ case "$_OS" in
 esac
 
 # ---------------------------------------------------------------------------
-# 2. Required binaries
+# 2. Create required runtime directories
+# ---------------------------------------------------------------------------
+info "Creating runtime directories..."
+
+mkdir -p "$JENOVA_ROOT/.jenova" 2>/dev/null || {
+    fail "Cannot create $JENOVA_ROOT/.jenova directory"
+    fail "Do not run install.sh with sudo — run as regular user"
+    ERRORS=$((ERRORS + 1))
+}
+mkdir -p "$JENOVA_ROOT/var/log" || true
+mkdir -p "$JENOVA_ROOT/var/cache" || true
+mkdir -p "$JENOVA_ROOT/models" || true
+
+if [ -w "$JENOVA_ROOT/.jenova" ]; then
+    ok "Runtime directories created with proper permissions"
+else
+    warn ".jenova directory exists but may have permission issues"
+    warn "Run: chmod -R u+w $JENOVA_ROOT/.jenova"
+    WARNINGS=$((WARNINGS + 1))
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Required binaries
 # ---------------------------------------------------------------------------
 info "Checking required binaries..."
 
@@ -142,7 +164,7 @@ if [ "$_OS" = "FreeBSD" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Optional LSP servers / formatters
+# 4. Optional LSP servers / formatters
 # ---------------------------------------------------------------------------
 info "Checking optional LSP servers..."
 
@@ -287,9 +309,9 @@ if [ "$SKIP_NVIM" = "0" ] && command -v nvim >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
-# 8. Install bin/jvim to PATH
+# 9. Install launchers to PATH
 # ---------------------------------------------------------------------------
-info "Installing jvim launcher..."
+info "Installing launchers to PATH..."
 
 _BIN_DIR=""
 for _d in "$HOME/.local/bin" "$HOME/bin"; do
@@ -303,15 +325,20 @@ if [ -n "$_BIN_DIR" ]; then
     mkdir -p "$_BIN_DIR"
     ln -sf "$JENOVA_ROOT/bin/jvim" "$_BIN_DIR/jvim"
     ln -sf "$JENOVA_ROOT/bin/jenova" "$_BIN_DIR/jenova"
-    ok "Symlinked jvim + jenova to $_BIN_DIR"
+    ln -sf "$JENOVA_ROOT/bin/jenova-ca" "$_BIN_DIR/jenova-ca"
+    ok "Symlinked jvim, jenova, and jenova-ca to $_BIN_DIR"
 else
     warn "No writable bin dir found on PATH (~/.local/bin or ~/bin)."
     warn "Add '$JENOVA_ROOT/bin' to your PATH or manually symlink:"
+    warn "  mkdir -p ~/.local/bin"
     warn "  ln -sf $JENOVA_ROOT/bin/jvim ~/.local/bin/jvim"
+    warn "  ln -sf $JENOVA_ROOT/bin/jenova ~/.local/bin/jenova"
+    warn "  ln -sf $JENOVA_ROOT/bin/jenova-ca ~/.local/bin/jenova-ca"
+    warn "  export PATH=\"\$HOME/.local/bin:\$PATH\"  # Add to ~/.bashrc or ~/.zshrc"
 fi
 
 # ---------------------------------------------------------------------------
-# 9. jenova-setup (system tuning) reminder
+# 10. jenova-setup (system tuning) reminder
 # ---------------------------------------------------------------------------
 if [ "$_OS" = "FreeBSD" ]; then
     info "System tuning..."
@@ -321,7 +348,7 @@ if [ "$_OS" = "FreeBSD" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 10. Summary
+# 11. Summary
 # ---------------------------------------------------------------------------
 echo ""
 printf "${_B}══════════════════════════════════════════════════════${_N}\n"
