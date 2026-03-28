@@ -118,35 +118,124 @@ local function async_connect(fd, addr)
     if opt[0] == 0 then return true else return false, opt[0] end
 end
 
--- Web search via FreeBSD fetch (HTTPS-capable). Called only on explicit "Web Search:"
--- intent from the user. Blocks the calling coroutine for up to 5 seconds (fetch -T 5).
--- Acceptable: single-user system, user-initiated, short timeout.
-local function exec_web_search(query)
-    local encoded = query:gsub("([^%w%-%._~ ])", function(c)
+-- Detect available HTTPS-capable command-line tool (once at startup).
+-- FreeBSD: 'fetch' is in base. Linux/other: fall back to 'curl'.
+local HTTPS_CMD
+do
+    local function cmd_exists(name)
+        local h = io.popen("command -v " .. name .. " 2>/dev/null")
+        if not h then return false end
+        local out = h:read("*l")
+        h:close()
+        return out and #out > 0
+    end
+    if cmd_exists("fetch") then
+        HTTPS_CMD = "fetch"
+    elseif cmd_exists("curl") then
+        HTTPS_CMD = "curl"
+    end
+    if HTTPS_CMD then
+        print("[proxy] Web search HTTP client: " .. HTTPS_CMD)
+    else
+        print("[proxy] WARNING: No HTTPS client found (fetch/curl). Web search disabled.")
+    end
+end
+
+-- Build a shell command to fetch a URL to stdout, with a timeout.
+local function https_fetch_cmd(url, timeout)
+    timeout = timeout or 5
+    if HTTPS_CMD == "fetch" then
+        return string.format("fetch -T %d -qo - '%s' 2>/dev/null", timeout, url)
+    elseif HTTPS_CMD == "curl" then
+        return string.format("curl -sL --max-time %d '%s' 2>/dev/null", timeout, url)
+    end
+    return nil
+end
+
+local function strip_html(s)
+    return s:gsub("<[^>]+>", "")
+        :gsub("&amp;", "&"):gsub("&lt;", "<"):gsub("&gt;", ">")
+        :gsub("&quot;", '"'):gsub("&#x27;", "'"):gsub("&#039;", "'")
+        :gsub("&nbsp;", " "):gsub("\\n", " ")
+        :match("^%s*(.-)%s*$")
+end
+
+-- URL-encode a query string for use in search URLs.
+local function url_encode(query)
+    return query:gsub("([^%w%-%._~ ])", function(c)
         return string.format("%%%02X", string.byte(c))
     end):gsub(" ", "+")
+end
+
+-- DuckDuckGo Instant Answer API: returns JSON, no scraping needed.
+-- Good for factual queries (definitions, summaries, related topics).
+-- Does NOT return full web results for every query — supplementary source.
+local function ddg_instant_answer(query)
+    if not HTTPS_CMD then return nil end
+    local encoded = url_encode(query)
+    local url = "https://api.duckduckgo.com/?q=" .. encoded .. "&format=json&no_html=1&skip_disambig=1"
+    local cmd = https_fetch_cmd(url, 5)
+    if not cmd then return nil end
+
+    local handle = io.popen(cmd)
+    if not handle then return nil end
+    local raw = handle:read(256 * 1024)
+    handle:close()
+    if not raw or #raw < 10 then return nil end
+
+    local ok, data = pcall(json.decode, raw)
+    if not ok or not data then return nil end
+
+    local results = {}
+
+    -- AbstractText: direct answer (e.g. Wikipedia summary)
+    if data.AbstractText and #data.AbstractText > 20 then
+        results[#results + 1] = string.format("[1] %s\n    %s",
+            data.AbstractSource or "Summary",
+            data.AbstractText:sub(1, 500))
+    end
+
+    -- RelatedTopics: list of related items with text and URLs
+    if data.RelatedTopics then
+        for _, topic in ipairs(data.RelatedTopics) do
+            if #results >= 5 then break end
+            if topic.Text and #topic.Text > 10 then
+                local title = topic.Text:match("^(.-)%s+%-") or topic.Text:sub(1, 80)
+                results[#results + 1] = string.format("[%d] %s\n    %s",
+                    #results + 1, title, topic.Text:sub(1, 300))
+            end
+        end
+    end
+
+    if #results > 0 then
+        print("[proxy] Web search: DuckDuckGo Instant Answer returned " .. #results .. " result(s)")
+        return results
+    end
+    return nil
+end
+
+-- DuckDuckGo HTML scraping: returns full web search results.
+-- Parses titles and snippets from the HTML endpoint.
+local function ddg_html_search(query)
+    if not HTTPS_CMD then return nil end
+    local encoded = url_encode(query)
     local url = "https://html.duckduckgo.com/html/?q=" .. encoded
-    local cmd = string.format("fetch -T 5 -qo - '%s' 2>/dev/null", url)
+    local cmd = https_fetch_cmd(url, 8)
+    if not cmd then return nil end
+
     local handle = io.popen(cmd)
     if not handle then return nil end
     local html = handle:read(256 * 1024)
     handle:close()
     if not html or #html < 100 then return nil end
 
-    local function strip_tags(s)
-        return s:gsub("<[^>]+>", "")
-            :gsub("&amp;", "&"):gsub("&lt;", "<"):gsub("&gt;", ">")
-            :gsub("&quot;", '"'):gsub("&#x27;", "'"):gsub("&nbsp;", " ")
-            :match("^%s*(.-)%s*$")
-    end
-
     local titles, snippets = {}, {}
     for t in html:gmatch('class="result__a"[^>]*>(.-)</a>') do
-        local clean = strip_tags(t)
+        local clean = strip_html(t)
         if clean and #clean > 0 then titles[#titles + 1] = clean end
     end
     for s in html:gmatch('class="result__snippet"[^>]*>(.-)</a>') do
-        local clean = strip_tags(s)
+        local clean = strip_html(s)
         if clean and #clean > 10 then snippets[#snippets + 1] = clean end
     end
 
@@ -156,7 +245,32 @@ local function exec_web_search(query)
     for i = 1, count do
         results[i] = string.format("[%d] %s\n    %s", i, titles[i], snippets[i])
     end
+    print("[proxy] Web search: DuckDuckGo HTML returned " .. count .. " result(s)")
     return results
+end
+
+-- Web search: combines DuckDuckGo Instant Answer API + HTML scraping.
+-- Strategy: try HTML scraping first (full web results), fall back to
+-- Instant Answer API (JSON, good for factual/definition queries).
+-- Called only on explicit "Web Search:" intent from the user.
+-- Blocks the calling coroutine for up to ~13 seconds worst case.
+-- Acceptable: single-user system, user-initiated, short timeout.
+local function exec_web_search(query)
+    if not HTTPS_CMD then
+        print("[proxy] Web search FAILED: no HTTPS client available (install curl or use FreeBSD fetch)")
+        return nil
+    end
+
+    -- Try full HTML results first (most useful for general queries)
+    local results = ddg_html_search(query)
+    if results then return results end
+
+    -- Fall back to Instant Answer API (good for factual queries)
+    results = ddg_instant_answer(query)
+    if results then return results end
+
+    print("[proxy] Web search: no results found for query: " .. query:sub(1, 80))
+    return nil
 end
 
 local active_connection_count = 0
@@ -342,6 +456,11 @@ local function proxy_connection(client_fd, conn_fds)
                     local web_results = exec_web_search(last_user_msg)
                     if web_results then
                         web_context = "\n--- WEB SEARCH RESULTS ---\n" .. table.concat(web_results, "\n")
+                    else
+                        web_context = "\n--- WEB SEARCH RESULTS ---\nWeb search returned no results. "
+                            .. (HTTPS_CMD and "The search engine did not return matching results for this query."
+                                or "No HTTPS client available (install curl or use FreeBSD). Cannot perform web searches.")
+                            .. "\nAnswer the user's question using your own knowledge and clearly state that web search was unavailable."
                     end
                 end
 

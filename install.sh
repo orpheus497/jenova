@@ -157,12 +157,10 @@ check_optional "curl"    "pkg install curl      (used by jenova-ca health probe 
 if command -v fetch >/dev/null 2>&1; then
     ok "fetch (web search: native FreeBSD fetch available)"
 elif command -v curl >/dev/null 2>&1; then
-    warn "fetch not found (not FreeBSD?) — web search in jvim (<leader>as) will not work"
-    warn "Web search requires FreeBSD's native 'fetch' command (part of base system)"
-    warn "All other AI features (chat, rewrite, FIM, RAG) work without fetch"
-    WARNINGS=$((WARNINGS + 1))
+    ok "curl (web search: curl fallback available)"
 else
-    warn "Neither fetch nor curl found — web search and health probe fallback unavailable"
+    warn "Neither fetch nor curl found — web search (<leader>as) and health probe fallback unavailable"
+    warn "Install curl to enable web search: pkg install curl  OR  apt install curl"
     WARNINGS=$((WARNINGS + 1))
 fi
 
@@ -243,29 +241,86 @@ if [ "$SKIP_LLAMA" = "0" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Model files
+# 6. Model files — check and offer to download missing models
 # ---------------------------------------------------------------------------
 info "Checking model files..."
 . "$JENOVA_ROOT/etc/jenova.conf" 2>/dev/null || true
 
-check_model() {
-    _path="$1"; _name="$2"
+# Determine which download tool is available
+_DL_CMD=""
+if command -v curl >/dev/null 2>&1; then
+    _DL_CMD="curl"
+elif command -v fetch >/dev/null 2>&1; then
+    _DL_CMD="fetch"
+fi
+
+# Download a model file if missing. Args: path, name, url, size_hint
+download_model() {
+    _path="$1"; _name="$2"; _url="$3"; _size="$4"
     if [ -f "$_path" ]; then
-        ok "$_name"
-    else
-        warn "$_name not found at $_path"
-        WARNINGS=$((WARNINGS + 1))
+        ok "$_name ($(basename "$_path"))"
+        return 0
     fi
+    if [ -z "$_DL_CMD" ]; then
+        warn "$_name not found at $_path"
+        warn "  Install curl or fetch, then re-run install.sh to auto-download"
+        WARNINGS=$((WARNINGS + 1))
+        return 1
+    fi
+    warn "$_name not found at $_path"
+    printf "  Download %s (~%s)? [y/N] " "$(basename "$_path")" "$_size"
+    read _ans
+    case "$_ans" in
+        y|Y|yes|YES)
+            mkdir -p "$(dirname "$_path")"
+            info "Downloading $(basename "$_path") (~$_size) ..."
+            if [ "$_DL_CMD" = "curl" ]; then
+                curl -L --progress-bar -o "$_path" "$_url"
+            else
+                fetch -o "$_path" "$_url"
+            fi
+            if [ -f "$_path" ]; then
+                ok "$_name downloaded successfully"
+                return 0
+            else
+                fail "Download failed for $_name"
+                ERRORS=$((ERRORS + 1))
+                return 1
+            fi
+            ;;
+        *)
+            warn "Skipping $_name download"
+            WARNINGS=$((WARNINGS + 1))
+            return 1
+            ;;
+    esac
 }
 
-_agent_model="${MODEL_PATH:-${JENOVA_MODEL:-$JENOVA_ROOT/models/jenova.gguf}}"
-check_model "$_agent_model"                                                               "Agent model ($(basename "$_agent_model"))"
-check_model "${MODEL_EMBED:-$JENOVA_ROOT/models/nomic-embed-text-v1.5.Q8_0.gguf}"        "Embedding model (nomic-embed-text-v1.5)"
-if [ -f "${MODEL_DRAFT:-$JENOVA_ROOT/models/Qwen2.5-Coder-0.5B-Q8_0.gguf}" ]; then
+# Agent model (required)
+_agent_model="${MODEL_PATH:-${JENOVA_MODEL:-$JENOVA_ROOT/models/Qwen2.5-Coder-7B-Q5_K_M.gguf}}"
+download_model "$_agent_model" \
+    "Agent model (Qwen2.5-Coder-7B)" \
+    "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q5_k_m.gguf" \
+    "5.1GB"
+
+# Embedding model (recommended for RAG)
+download_model "${MODEL_EMBED:-$JENOVA_ROOT/models/nomic-embed-text-v1.5.Q8_0.gguf}" \
+    "Embedding model (nomic-embed-text-v1.5)" \
+    "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q8_0.gguf" \
+    "134MB"
+
+# Draft model (optional — enables speculative decoding for ~1.5-2x speedup)
+_draft_path="${MODEL_DRAFT:-$JENOVA_ROOT/models/Qwen2.5-Coder-0.5B-Q8_0.gguf}"
+if [ -f "$_draft_path" ]; then
     ok "Draft model — speculative decoding enabled"
 else
-    warn "Draft model not found — speculative decoding disabled (set JENOVA_DRAFT=0 in conf)"
-    WARNINGS=$((WARNINGS + 1))
+    download_model "$_draft_path" \
+        "Draft model (Qwen2.5-Coder-0.5B)" \
+        "https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q8_0.gguf" \
+        "530MB"
+    if [ ! -f "$_draft_path" ]; then
+        warn "Speculative decoding disabled without draft model (set JENOVA_DRAFT=0 in conf)"
+    fi
 fi
 
 # ---------------------------------------------------------------------------
