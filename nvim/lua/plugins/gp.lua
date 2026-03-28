@@ -65,6 +65,12 @@ return {
         chat_window = { style = "vsplit", width = 60 },
 
         hooks = {
+          -- ##Action purpose: Inline rewrite hook — streams replacement in-place
+          InlineRewrite = function(gp, params)
+            local agent = gp.get_command_agent()
+            gp.Prompt(params, gp.Target.rewrite, agent, nil, nil)
+          end,
+
           -- ##Action purpose: Visual rewrite hook — constrained, surgical edits only
           -- Sends "Visual Rewrite:" prefix to signal visual intent to proxy
           VisualRewrite = function(gp, params)
