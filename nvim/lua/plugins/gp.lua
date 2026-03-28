@@ -25,6 +25,17 @@ return {
       local jenova_port = vim.env.JENOVA_PORT or "8080"
       local endpoint_url = string.format("http://%s:%s/v1/chat/completions", jenova_host, jenova_port)
 
+      -- ##Action purpose: Warn if JENOVA_CONNECT_HOST/JENOVA_ROOT not set (user launched nvim directly)
+      if not vim.env.JENOVA_CONNECT_HOST and not vim.env.JENOVA_ROOT then
+        vim.notify(
+          "⚠️  Jenova environment not detected!\n\n" ..
+          "Launch Neovim using 'bin/jvim' instead of 'nvim' directly.\n" ..
+          "Without the jvim wrapper, plugins cannot connect to the local backend.",
+          vim.log.levels.WARN,
+          { title = "Jenova Setup Warning" }
+        )
+      end
+
       -- ##Step purpose: Core gp.nvim setup — point at local Jenova backend
       require("gp").setup({
         -- ##Action purpose: Use the Jenova LuaJIT proxy as the OpenAI-compatible endpoint

@@ -23,6 +23,17 @@ return {
       local fim_port   = vim.env.JENOVA_LLAMA_PORT or "8081"
       local proxy_port = vim.env.JENOVA_PORT       or "8080"
 
+      -- ##Action purpose: Warn if JENOVA_CONNECT_HOST/JENOVA_ROOT not set (user launched nvim directly)
+      if not vim.env.JENOVA_CONNECT_HOST and not vim.env.JENOVA_ROOT then
+        vim.notify(
+          "⚠️  Jenova environment not detected!\n\n" ..
+          "Launch Neovim using 'bin/jvim' instead of 'nvim' directly.\n" ..
+          "Without the jvim wrapper, llama.vim FIM completions will not work.",
+          vim.log.levels.WARN,
+          { title = "Jenova Setup Warning" }
+        )
+      end
+
       vim.g.llama_config = {
         -- ##Step purpose: FIM endpoint direct to llama-server (bypasses proxy)
         endpoint_fim  = string.format("http://%s:%s/infill", host, fim_port),
