@@ -268,7 +268,19 @@ local function proxy_connection(client_fd, conn_fds)
 
             if last_user_msg ~= "" and not last_user_msg:find("--- REPOSITORY CONTEXT ---") then
                 local rag_limit = (intent == "visual") and 1 or 3
-                local rag = search.query(last_user_msg, rag_limit, true)
+                local rag_query = last_user_msg
+                local embedded_path = last_user_msg:match("Path:%s*(%S+)")
+                if embedded_path and #last_user_msg > 2000 then
+                    local basename = embedded_path:match("([^/]+)$") or embedded_path
+                    local after_code = last_user_msg:match("```\n\n(.+)$")
+                    if after_code and #after_code > 10 then
+                        rag_query = basename .. " " .. after_code
+                    else
+                        rag_query = basename
+                    end
+                    rag_limit = 5
+                end
+                local rag = search.query(rag_query, rag_limit, true)
                 local rag_context = ""
 
                 if #rag > 0 then

@@ -80,50 +80,45 @@ return {
             gp.Prompt(params, gp.Target.rewrite, agent, template, nil)
           end,
 
-          -- ##Action purpose: Chat with full buffer context
-          -- Opens chat with entire current buffer as context so AI understands the file
           ChatWithContext = function(gp, params)
             local agent = gp.get_chat_agent()
-            -- Get current buffer content
             local buf = vim.api.nvim_get_current_buf()
             local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
             local filename = vim.fn.expand("%:t")
             local filepath = vim.fn.expand("%:p")
             local content = table.concat(lines, "\n")
 
-            -- Create initial user message with buffer context
-            -- The "Chatbot:" prefix triggers chat intent in proxy for proper prompt injection
-            local initial_message = string.format(
-              "Chatbot: I'm working on file: %s\nPath: %s\n\n```\n%s\n```\n\n",
+            local context_msg = string.format(
+              "Chatbot: I'm working on file: %s\nPath: %s\n\n```\n%s\n```\n\nPlease review this file and help me with it.",
               filename,
               filepath,
               content
             )
 
-            -- Open new chat first with default system prompt
             gp.cmd.ChatNew(params, nil, agent)
 
-            -- Schedule inserting the context after chat buffer is created
-            vim.schedule(function()
+            vim.defer_fn(function()
               local chat_buf = vim.api.nvim_get_current_buf()
-              -- Check if buffer is valid before writing
-              if vim.api.nvim_buf_is_valid(chat_buf) then
-                -- Get existing content (usually just the role markers)
-                local existing = vim.api.nvim_buf_get_lines(chat_buf, 0, -1, false)
-                -- Find where to insert (after # topic line and role marker)
-                local insert_line = 0
-                for i, line in ipairs(existing) do
-                  if line:match("^# user$") then
-                    insert_line = i
-                    break
-                  end
-                end
-                -- Insert the context message after the user role marker
-                if insert_line > 0 then
-                  vim.api.nvim_buf_set_lines(chat_buf, insert_line, insert_line, false, {initial_message})
+              if not vim.api.nvim_buf_is_valid(chat_buf) then return end
+
+              local chat_lines = vim.api.nvim_buf_get_lines(chat_buf, 0, -1, false)
+              local user_prefix = require("gp").config.chat_user_prefix or "💬:"
+
+              local insert_after = -1
+              for i, line in ipairs(chat_lines) do
+                if line:sub(1, #user_prefix) == user_prefix then
+                  insert_after = i
                 end
               end
-            end)
+
+              if insert_after < 0 then return end
+
+              local context_lines = vim.split(context_msg, "\n")
+              vim.api.nvim_buf_set_lines(chat_buf, insert_after, insert_after, false, context_lines)
+
+              local total = vim.api.nvim_buf_line_count(chat_buf)
+              vim.api.nvim_win_set_cursor(0, { total, 0 })
+            end, 50)
           end,
         },
       })
