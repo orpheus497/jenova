@@ -91,16 +91,17 @@ return {
             local filepath = vim.fn.expand("%:p")
             local content = table.concat(lines, "\n")
 
-            -- Create context message with file info as system prompt
-            local chat_system_prompt = string.format(
-              "Chatbot: I'm working on file: %s\nPath: %s\n\n```\n%s\n```\n\nQuestion: ",
+            -- Create initial user message with buffer context
+            -- The "Chatbot:" prefix triggers chat intent in proxy for proper prompt injection
+            local initial_message = string.format(
+              "Chatbot: I'm working on file: %s\nPath: %s\n\n```\n%s\n```",
               filename,
               filepath,
               content
             )
 
-            -- Open chat with buffer context using new signature: (params, system_prompt, agent)
-            gp.cmd.ChatNew(params, chat_system_prompt, agent)
+            -- Open new chat and prepopulate with buffer context as first message
+            gp.cmd.ChatNew(params, initial_message, agent)
           end,
         },
       })
