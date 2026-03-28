@@ -207,7 +207,7 @@ Or set `JENOVA_MODEL` environment variable to point to your model file.
 
 If you launch `nvim` directly, you'll see warning messages from gp.nvim and llama.vim about missing environment variables.
 
-#### "Permission denied" creating .jenova directory
+#### "Permission denied" or "Cannot create lock" errors
 
 **Do not run scripts with sudo**. All Jenova commands should run as your regular user:
 
@@ -217,11 +217,16 @@ bin/jenova-ca --daemon # NOT: sudo bin/jenova-ca --daemon
 bin/jvim myfile.lua    # NOT: sudo bin/jvim myfile.lua
 ```
 
-If you already ran with sudo and have permission issues:
+If you already ran with sudo and have permission issues, fix the ownership first:
 ```bash
+# Fix ownership (if directory is owned by root)
 sudo chown -R $USER:$USER .jenova/ var/
+
+# Then fix permissions
 chmod -R u+w .jenova/ var/
 ```
+
+**Do NOT use `sudo chmod`** - this doesn't fix the ownership issue and can make it worse. Always use `chmod` without sudo after fixing ownership with `chown`.
 
 #### Checking Backend Status
 

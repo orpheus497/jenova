@@ -33,6 +33,24 @@ mkdir -p "$JENOVA_STATE" 2>/dev/null || {
 mkdir -p "$LOG_DIR" || true
 mkdir -p "$CACHE_DIR" || true
 
+# Check for ownership issues early (detect if directory owned by root from sudo usage)
+if [ -d "$JENOVA_STATE" ] && [ ! -w "$JENOVA_STATE" ]; then
+    echo "Error: $JENOVA_STATE directory is not writable" >&2
+    echo "" >&2
+    _OWNER=$(stat -c '%U' "$JENOVA_STATE" 2>/dev/null || stat -f '%Su' "$JENOVA_STATE" 2>/dev/null || echo "unknown")
+    if [ "$_OWNER" = "root" ]; then
+        echo "Directory is owned by root (likely from running with sudo previously)." >&2
+        echo "Fix with:" >&2
+        echo "  sudo chown -R \$USER:\$USER $JENOVA_STATE" >&2
+        echo "  chmod -R u+w $JENOVA_STATE" >&2
+    else
+        echo "Fix permissions with:" >&2
+        echo "  chmod -R u+w $JENOVA_STATE" >&2
+    fi
+    echo "" >&2
+    exit 1
+fi
+
 # --- Model: 7B only ---
 MODEL_PATH="${JENOVA_MODEL:-$MODEL_7B}"
 
@@ -355,6 +373,15 @@ if [ "$1" = "--daemon" ]; then
                 fi
             else
                 echo "Cannot create lock at $LOCK_FILE.d" >&2
+                echo "" >&2
+                echo "This usually means .jenova directory has permission issues." >&2
+                echo "Fix with (do NOT use sudo):" >&2
+                echo "  chmod -R u+w $JENOVA_STATE" >&2
+                echo "" >&2
+                echo "If owned by root (from running with sudo previously), fix with:" >&2
+                echo "  sudo chown -R \$USER:\$USER $JENOVA_STATE" >&2
+                echo "  chmod -R u+w $JENOVA_STATE" >&2
+                echo "" >&2
                 exit 1
             fi
         fi
