@@ -37,11 +37,24 @@ mkdir -p "$CACHE_DIR" || true
 MODEL_PATH="${JENOVA_MODEL:-$MODEL_7B}"
 
 if [ ! -f "$LLAMA_SERVER" ]; then
-    echo "Error: llama-server not found at $LLAMA_SERVER"
+    echo "Error: llama-server not found at $LLAMA_SERVER" >&2
+    echo "" >&2
+    echo "Build llama.cpp first:" >&2
+    echo "  cd $JENOVA_ROOT/llama.cpp" >&2
+    echo "  cmake -B build -DGGML_VULKAN=ON" >&2
+    echo "  cmake --build build -j\$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)" >&2
+    echo "" >&2
     exit 1
 fi
 if [ ! -f "$MODEL_PATH" ]; then
-    echo "Error: Model not found at $MODEL_PATH"
+    echo "Error: Model not found at $MODEL_PATH" >&2
+    echo "" >&2
+    echo "Download a model file (GGUF format) and place it at:" >&2
+    echo "  $JENOVA_ROOT/models/" >&2
+    echo "" >&2
+    echo "Recommended: Qwen2.5-Coder-7B-Q5_K_M.gguf" >&2
+    echo "Or set JENOVA_MODEL environment variable to point to your model." >&2
+    echo "" >&2
     exit 1
 fi
 
