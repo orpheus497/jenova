@@ -391,13 +391,34 @@ if [ "$1" = "--daemon" ]; then
 
     if [ -f "$PID_FILE" ]; then
         read OLD_LLAMA_PID OLD_PROXY_PID OLD_EMBED_PID < "$PID_FILE" 2>/dev/null || OLD_LLAMA_PID=$(cat "$PID_FILE")
-        for _P in $OLD_LLAMA_PID $OLD_PROXY_PID $OLD_EMBED_PID; do
+        _ALL_ALIVE=true
+        _ANY_ALIVE=false
+        for _P in $OLD_LLAMA_PID $OLD_PROXY_PID; do
             if [ -n "$_P" ] && kill -0 "$_P" 2>/dev/null; then
-                echo "Jenova CA already running (PID $_P)."
-                exec 9>&-
-                exit 0
+                _ANY_ALIVE=true
+            elif [ -n "$_P" ]; then
+                _ALL_ALIVE=false
             fi
         done
+        if $_ALL_ALIVE && $_ANY_ALIVE; then
+            echo "Jenova CA already running (llama=$OLD_LLAMA_PID proxy=$OLD_PROXY_PID embed=${OLD_EMBED_PID:-none})."
+            exec 9>&-
+            exit 0
+        fi
+        if $_ANY_ALIVE; then
+            echo "Partial failure detected — stopping survivors before restart..."
+            for _P in $OLD_LLAMA_PID $OLD_PROXY_PID $OLD_EMBED_PID; do
+                if [ -n "$_P" ] && kill -0 "$_P" 2>/dev/null; then
+                    kill -- "-$_P" 2>/dev/null || kill "$_P" 2>/dev/null || true
+                fi
+            done
+            sleep 2
+            for _P in $OLD_LLAMA_PID $OLD_PROXY_PID $OLD_EMBED_PID; do
+                if [ -n "$_P" ] && kill -0 "$_P" 2>/dev/null; then
+                    kill -9 "$_P" 2>/dev/null || true
+                fi
+            done
+        fi
         rm -f "$PID_FILE"
     fi
 
