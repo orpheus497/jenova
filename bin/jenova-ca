@@ -141,7 +141,136 @@ case "$1" in
         shift || true
         set -- "--daemon" "$@"
         ;;
+    watch)
+        shift
+        # Fall through to watchdog loop below
+        _ENTER_WATCHDOG=1
+        ;;
 esac
+
+# =====================================================================
+# WATCHDOG: Continuous runtime health monitoring with auto-restart
+# =====================================================================
+_watchdog() {
+    WATCH_INTERVAL="${JENOVA_WATCH_INTERVAL:-30}"
+    WATCH_LOG="${LOG_DIR}/jenova-watchdog.log"
+    CONNECT_HOST="${JENOVA_CONNECT_HOST:-127.0.0.1}"
+    HEALTH_URL="http://${CONNECT_HOST}:${LLAMA_PORT}/health"
+    _WATCHDOG_RUNNING=true
+    _RESTART_COOLDOWN=60
+    _LAST_RESTART=0
+    _CONSECUTIVE_FAILURES=0
+    _MAX_CONSECUTIVE_FAILURES=3
+
+    _wlog() {
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] $1" >> "$WATCH_LOG"
+        echo "[watchdog] $1"
+    }
+
+    _watchdog_shutdown() {
+        _WATCHDOG_RUNNING=false
+        _wlog "shutdown signal received"
+    }
+    trap _watchdog_shutdown INT TERM
+
+    _wlog "started (interval=${WATCH_INTERVAL}s, cooldown=${_RESTART_COOLDOWN}s)"
+
+    while $_WATCHDOG_RUNNING; do
+        sleep "$WATCH_INTERVAL" &
+        _SLEEP_PID=$!
+        wait $_SLEEP_PID 2>/dev/null || true
+        $_WATCHDOG_RUNNING || break
+
+        if [ ! -f "$PID_FILE" ]; then
+            _wlog "no PID file — services not running"
+            _CONSECUTIVE_FAILURES=$((_CONSECUTIVE_FAILURES + 1))
+            if [ $_CONSECUTIVE_FAILURES -ge $_MAX_CONSECUTIVE_FAILURES ]; then
+                _NOW=$(date +%s)
+                _ELAPSED=$((_NOW - _LAST_RESTART))
+                if [ $_ELAPSED -ge $_RESTART_COOLDOWN ]; then
+                    _wlog "attempting full restart (no PID file for ${_CONSECUTIVE_FAILURES} checks)"
+                    "$0" start >> "$WATCH_LOG" 2>&1
+                    _LAST_RESTART=$_NOW
+                    _CONSECUTIVE_FAILURES=0
+                    sleep 5
+                else
+                    _wlog "restart cooldown active (${_ELAPSED}s/${_RESTART_COOLDOWN}s)"
+                fi
+            fi
+            continue
+        fi
+
+        read _W_LLAMA _W_PROXY _W_EMBED < "$PID_FILE" 2>/dev/null || _W_LLAMA=$(cat "$PID_FILE")
+        _ANY_DEAD=false
+        _DEAD_NAMES=""
+
+        for _ENTRY in "llama-server:$_W_LLAMA" "proxy:$_W_PROXY" "embed:$_W_EMBED"; do
+            _NAME=$(echo "$_ENTRY" | cut -d: -f1)
+            _PID=$(echo "$_ENTRY" | cut -d: -f2)
+            if [ -n "$_PID" ] && ! kill -0 "$_PID" 2>/dev/null; then
+                _ANY_DEAD=true
+                _DEAD_NAMES="$_DEAD_NAMES $_NAME(PID=$_PID)"
+            fi
+        done
+
+        # Health endpoint check (catches hung processes that are alive but unresponsive)
+        _HEALTH_OK=true
+        if [ -n "$_W_LLAMA" ] && kill -0 "$_W_LLAMA" 2>/dev/null; then
+            if [ -f "$PROXY_SCRIPT" ]; then
+                _HC=$(dirname "$PROXY_SCRIPT")/healthcheck.lua
+            else
+                _HC=""
+            fi
+            if [ -f "$_HC" ]; then
+                if ! luajit "$_HC" "$CONNECT_HOST" "$LLAMA_PORT" 5 2>/dev/null; then
+                    _HEALTH_OK=false
+                fi
+            elif command -v curl >/dev/null 2>&1; then
+                if ! curl -sf -o /dev/null -m 5 "$HEALTH_URL" 2>/dev/null; then
+                    _HEALTH_OK=false
+                fi
+            fi
+        fi
+
+        if $_ANY_DEAD || ! $_HEALTH_OK; then
+            if $_ANY_DEAD; then
+                _wlog "DEAD processes detected:$_DEAD_NAMES"
+            fi
+            if ! $_HEALTH_OK; then
+                _wlog "health check FAILED (llama-server unresponsive)"
+            fi
+            _CONSECUTIVE_FAILURES=$((_CONSECUTIVE_FAILURES + 1))
+
+            if [ $_CONSECUTIVE_FAILURES -ge $_MAX_CONSECUTIVE_FAILURES ]; then
+                _NOW=$(date +%s)
+                _ELAPSED=$((_NOW - _LAST_RESTART))
+                if [ $_ELAPSED -ge $_RESTART_COOLDOWN ]; then
+                    _wlog "restarting all services (${_CONSECUTIVE_FAILURES} consecutive failures)"
+                    "$0" stop >> "$WATCH_LOG" 2>&1 || true
+                    sleep 2
+                    "$0" start >> "$WATCH_LOG" 2>&1
+                    _LAST_RESTART=$_NOW
+                    _CONSECUTIVE_FAILURES=0
+                    sleep 10
+                else
+                    _wlog "restart cooldown active (${_ELAPSED}s/${_RESTART_COOLDOWN}s)"
+                fi
+            fi
+        else
+            if [ $_CONSECUTIVE_FAILURES -gt 0 ]; then
+                _wlog "services recovered after ${_CONSECUTIVE_FAILURES} failure(s)"
+            fi
+            _CONSECUTIVE_FAILURES=0
+        fi
+    done
+
+    _wlog "watchdog exiting"
+}
+
+if [ "${_ENTER_WATCHDOG:-0}" = "1" ]; then
+    _watchdog
+    exit 0
+fi
 
 # --- Startup banner ---
 echo "Starting Jenova CA..."
@@ -155,8 +284,19 @@ echo ""
 # =====================================================================
 # DAEMON MODE
 # =====================================================================
+_WATCH_AFTER_START=false
+for _arg in "$@"; do
+    if [ "$_arg" = "--watch" ]; then _WATCH_AFTER_START=true; fi
+done
+
 if [ "$1" = "--daemon" ]; then
     shift
+    # Strip --watch from remaining args (it's for post-startup, not llama-server)
+    _FILTERED_ARGS=""
+    for _arg in "$@"; do
+        if [ "$_arg" != "--watch" ]; then _FILTERED_ARGS="$_FILTERED_ARGS $_arg"; fi
+    done
+    set -- $_FILTERED_ARGS
 
     # Acquire exclusive lock to prevent concurrent startup (TOCTOU guard)
     LOCK_FILE="${PID_FILE}.lock"
@@ -301,6 +441,11 @@ if [ "$1" = "--daemon" ]; then
     echo "" >> "$PID_FILE"
 
     exec 9>&-
+
+    if $_WATCH_AFTER_START; then
+        echo "Entering watchdog mode..."
+        _watchdog
+    fi
     exit 0
 fi
 
