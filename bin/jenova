@@ -5,10 +5,12 @@
 
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 
-# Load configuration
+# Determine JENOVA_ROOT before loading config
 if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
+    export JENOVA_ROOT="$SCRIPT_DIR"
     . "$SCRIPT_DIR/etc/jenova.conf"
 elif [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
+    export JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
     . "$SCRIPT_DIR/../etc/jenova.conf"
 else
     echo "Error: etc/jenova.conf not found."

@@ -56,13 +56,65 @@ The system is partitioned into four conceptual streams:
 
 ## Installation
 
-Prerequisites:
+### Required Dependencies
+
+| Dependency | FreeBSD Install | Purpose |
+|---|---|---|
+| `luajit` (OpenResty) | `pkg install luajit-openresty` | LuaJIT runtime for proxy, agent, embeddings, and all Lua modules |
+| `git` | `pkg install git` | Repository management and lazy.nvim plugin bootstrap |
+| `neovim` (0.9+) | `pkg install neovim` | Editor frontend (jvim) |
+| `cmake` | `pkg install cmake` | Building llama.cpp from source |
+| `vulkan-loader` | `pkg install vulkan-loader` | GPU inference via Vulkan (dual-GPU offload) |
+
+### Optional Dependencies
+
+| Dependency | FreeBSD Install | Purpose |
+|---|---|---|
+| `gmake` | `pkg install gmake` | Building telescope-fzf-native (Neovim plugin) |
+| `curl` | `pkg install curl` | Fallback health probe in jenova-ca watchdog |
+| `fetch` | *(FreeBSD base system)* | Web search feature in jvim (`<leader>as`) — see Known Limitations |
+| `clangd` | `pkg install llvm` | C/C++ LSP server (optional) |
+| `rust-analyzer` | `pkg install rust-analyzer` | Rust LSP server (optional) |
+| `lua-language-server` | `pkg install lua-language-server` | Lua LSP server (optional) |
+| `pyright` | `pkg install py311-pyright` | Python LSP server (optional) |
+| `zls` | `pkg install zig` | Zig LSP server (optional) |
+| `bash-language-server` | `npm install -g bash-language-server` | Bash/Shell LSP server (optional) |
+| `stylua` | `cargo install stylua` | Lua code formatter (optional) |
+| `goimports` | `go install golang.org/x/tools/cmd/goimports@latest` | Go import formatter (optional) |
+
+### Required Model Files
+
+Download GGUF model files and place them in `models/`:
+
+| Model | Filename | Purpose | Required |
+|---|---|---|---|
+| Qwen2.5-Coder-7B | `Qwen2.5-Coder-7B-Q5_K_M.gguf` | Main inference (chat, code, rewrite) | **Yes** |
+| nomic-embed-text-v1.5 | `nomic-embed-text-v1.5.Q8_0.gguf` | Embedding for RAG semantic search | Recommended |
+| Qwen2.5-Coder-0.5B | `Qwen2.5-Coder-0.5B-Q8_0.gguf` | Speculative decoding drafter | Optional |
+
+### Quick Install
 
 ```sh
-pkg install luajit-openresty vulkan-loader
+# Install system dependencies
+pkg install luajit-openresty git neovim cmake vulkan-loader curl
+
+# Build llama.cpp with Vulkan support
+cd llama.cpp
+cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release -j$(sysctl -n hw.ncpu)
+cd ..
+
+# Run the installer (creates dirs, downloads models, deploys nvim config, symlinks launchers)
+./install.sh
 ```
 
-Build llama.cpp locally with Vulkan support. The built binary lives at `llama.cpp/build/bin/llama-server`.
+The installer will:
+1. Verify all required and optional dependencies
+2. **Offer to download missing model files** (agent, embedding, drafter) from Hugging Face
+3. Deploy the Neovim configuration to `~/.config/nvim/`
+4. Symlink `jvim`, `jenova`, and `jenova-ca` to your PATH
+
+The built binary lives at `llama.cpp/build/bin/llama-server`.
 
 ## Configuration
 
@@ -82,7 +134,7 @@ Notes:
 
 ## Launching
 
-Start the cognitive backend (daemon) and then the interactive agent:
+Start the cognitive backend (daemon) and then the interactive agent or Neovim:
 
 ```bash
 # Start the Jenova Cognitive Architecture backend in daemon mode
@@ -90,6 +142,9 @@ bin/jenova-ca --daemon
 
 # Launch the interactive agent (auto-starts backend if needed)
 bin/jenova
+
+# OR launch Neovim with Jenova integration (auto-starts backend if needed)
+bin/jvim [files...]
 ```
 
 ## Models & Roles
@@ -101,13 +156,14 @@ bin/jenova
 ## Directory Layout
 
 - `bin/jenova` — Interactive agent launcher (auto-starts backend if needed, runs `agent.lua`).
+- `bin/jvim` — Neovim launcher with Jenova backend integration (auto-starts backend, exports environment variables).
 - `bin/jenova-ca` — Backend manager: starts/stops/restarts llama-server, proxy, and embed server as a unit.
-- `bin/llama-server-nvim` — Neovim helper: ensures jenova-ca is running, then exits. Does **not** start a separate server.
 - `lib/` — Core LuaJIT logic for the agent, embedding, HTTP, search, memory, and UI.
 - `etc/` — Configuration files (`jenova.conf`).
 - `models/` — Model storage (GGUF format).
 - `var/` — Runtime logs and cache.
 - `.jenova/` — Internal agent state, PID files, vectors, and automated backups.
+- `nvim/` — Neovim configuration (plugins, LSP, UI) for the integrated IDE.
 
 ## Networking
 
@@ -122,7 +178,24 @@ All HTTP communication uses raw BSD sockets via LuaJIT FFI — no libcurl depend
 
 All clients — CLI agent, Neovim, and any other HTTP consumer — share the **single** backend started by `jenova-ca`. No separate model instance is loaded for Neovim.
 
-Run `bin/llama-server-nvim` once before opening Neovim to ensure the backend is up. Then configure `llama.vim` (or equivalent plugin) with these endpoints:
+### Using jvim (Recommended)
+
+**IMPORTANT:** Always launch Neovim using the `jvim` wrapper to ensure proper backend integration:
+
+```bash
+bin/jvim [files...]     # Launch Neovim with Jenova backend
+```
+
+The `jvim` wrapper:
+- Auto-starts the Jenova CA backend if not already running
+- Exports environment variables (`JENOVA_CONNECT_HOST`, `JENOVA_PORT`, `JENOVA_LLAMA_PORT`) so plugins can connect
+- Stops the backend on exit (only if `jvim` started it)
+
+**Do NOT launch `nvim` directly** — the plugins (gp.nvim, llama.vim) require environment variables set by `jvim` to connect to the local backend. Launching `nvim` directly will cause connection failures and may attempt to use external APIs.
+
+### Endpoints
+
+Once launched via `jvim`, plugins use these endpoints automatically:
 
 | Use case | Endpoint | Notes |
 |---|---|---|
@@ -135,21 +208,124 @@ Both ports are defined in `etc/jenova.conf` as `LLAMA_PORT` and `PORT`.
 
 | Variable | Default | Effect |
 |---|---|---|
+| `JENOVA_ROOT` | `$PWD` (auto-detected) | Project root directory path |
+| `JENOVA_HOST` | `127.0.0.1` | Bind address for backend services (`0.0.0.0` to listen on all interfaces) |
+| `JENOVA_CONNECT_HOST` | `127.0.0.1` | Client connection address (used by Neovim/CLI when `JENOVA_HOST` is a wildcard bind) |
+| `JENOVA_PORT` | `8080` | Port for Jenova intelligence proxy |
+| `JENOVA_LLAMA_PORT` | `8081` | Port for llama-server inference |
 | `JENOVA_API_URL` | `http://127.0.0.1:8080` | Proxy endpoint for the agent |
 | `JENOVA_LLAMA_URL` | `http://127.0.0.1:8081` | Direct llama-server endpoint (proxy internal) |
 | `JENOVA_CONN_TIMEOUT` | `600` | Max seconds a proxy connection coroutine may live |
 | `JENOVA_TIMEOUT` | `600` | Agent HTTP timeout (seconds) |
 | `JENOVA_MAX_TURNS` | `25` | Max agentic tool-call turns per user message |
 | `JENOVA_CTX` | `16384` | Context window token limit |
+| `JENOVA_DRAFT` | `1` | Enable speculative decoding with 0.5B drafter model (`0` to disable) |
 | `JENOVA_DEBUG` | `""` | Set to `1` for verbose debug output |
 
 ## Troubleshooting & Notes
+
+### Common Issues
+
+#### "llama-server not found"
+
+If you see this error, llama.cpp hasn't been built yet:
+
+```bash
+cd llama.cpp
+cmake -B build -DGGML_VULKAN=ON
+cmake --build build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+```
+
+On FreeBSD, install dependencies first:
+```bash
+pkg install cmake gmake vulkan-loader
+```
+
+#### "Model not found"
+
+Download a GGUF model file and place it in `models/`. Recommended:
+- **Qwen2.5-Coder-7B-Q5_K_M.gguf** (main agent model)
+- **nomic-embed-text-v1.5.Q8_0.gguf** (embedding for RAG)
+- **Qwen2.5-Coder-0.5B-Q8_0.gguf** (optional drafter for speculative decoding)
+
+Or set `JENOVA_MODEL` environment variable to point to your model file.
+
+#### Neovim Plugins Not Working
+
+**Always use `bin/jvim` to launch Neovim**, not `nvim` directly. The `jvim` wrapper:
+- Starts the backend if needed
+- Exports required environment variables (`JENOVA_CONNECT_HOST`, `JENOVA_PORT`, etc.)
+- Ensures plugins can connect to the local backend
+
+If you launch `nvim` directly, you'll see warning messages from gp.nvim and llama.vim about missing environment variables.
+
+#### "Permission denied" or "Cannot create lock" errors
+
+**Do not run scripts with sudo**. All Jenova commands should run as your regular user:
+
+```bash
+./install.sh           # NOT: sudo ./install.sh
+bin/jenova-ca --daemon # NOT: sudo bin/jenova-ca --daemon
+bin/jvim myfile.lua    # NOT: sudo bin/jvim myfile.lua
+```
+
+If you already ran with sudo and have permission issues, fix the ownership first:
+```bash
+# Fix ownership (if directory is owned by root)
+sudo chown -R $USER:$USER .jenova/ var/
+
+# Then fix permissions
+chmod -R u+w .jenova/ var/
+```
+
+**Do NOT use `sudo chmod`** - this doesn't fix the ownership issue and can make it worse. Always use `chmod` without sudo after fixing ownership with `chown`.
+
+#### Checking Backend Status
+
+```bash
+bin/jenova-ca status          # Check if backend is running
+bin/jenova-ca stop            # Stop backend
+bin/jenova-ca restart         # Restart backend
+```
+
+Check logs if something goes wrong:
+```bash
+tail -f var/log/jenova-ca.log
+```
+
+### Path Resolution
+
+All scripts (`bin/jenova`, `bin/jvim`, `bin/jenova-ca`) automatically detect `JENOVA_ROOT` by resolving their own location. This works whether you:
+- Run them from the project root: `./bin/jvim`
+- Run them via symlinks in PATH: `jvim` (after `./install.sh`)
+- Run them from any directory: `/full/path/to/bin/jvim`
+
+The `JENOVA_ROOT` environment variable is automatically set and exported before loading `etc/jenova.conf`.
+
+### Performance Notes
 
 - If running into OOMs with ZFS, lower ARC (`vfs.zfs.arc_max`) and confirm swap/Optane configuration.
 - The embedding server runs on CPU (`GGML_VULKAN_DISABLE=1`, ngl 0) to preserve all GPU memory for main model inference.
 - The codebase avoids subprocess reinitialization penalties by using persistent daemon processes.
 - Backup files in `.jenova/backups/` are rotated automatically: only the 5 most recent backups per filename are kept.
 - Shell command output is capped at ~10KB in memory (head + tail) before being sent to the model, preventing OOM on runaway commands.
+
+## Web Search
+
+The `<leader>as` keybind in jvim opens a web search chat. The proxy queries DuckDuckGo
+(HTML scraping + Instant Answer JSON API) and injects results into the model context.
+
+**Requirements:** An HTTPS-capable command-line tool must be available:
+- **FreeBSD:** `fetch` (part of base system — nothing to install)
+- **Linux:** `curl` (install via your distro's package manager, e.g. `apt install curl` on Debian/Ubuntu)
+- **macOS:** `curl` (preinstalled on recent macOS; if missing, `brew install curl`)
+
+The proxy auto-detects `fetch` or `curl` at startup and logs which client is in use.
+If neither is found, web search is disabled with a log warning and the model will
+inform you that search was unavailable.
+
+**Search strategy:** HTML scraping for full web results, with DuckDuckGo Instant Answer
+API fallback for factual/definition queries.
 
 ## License & Credits
 

@@ -1,7 +1,7 @@
 # Jenova Fix Ledger
 
-**Updated:** 2026-03-26
-**Branch:** `build`
+**Updated:** 2026-03-27
+**Branch:** `claude/roadmap-alignment-y91ZF`
 
 All items in this ledger are **resolved**. The codebase has been fully audited and fixed in the cohesion pass commit.
 
@@ -109,4 +109,54 @@ All items in this ledger are **resolved**. The codebase has been fully audited a
 
 ---
 
-*No outstanding items.*
+---
+
+## Roadmap Alignment Audit — 2026-03-27
+
+Full cross-module audit of all BLUEPRINT items against actual source code. Seven issues found and fixed:
+
+- [x] **Dead `LLAMA_NGL` variable** — `bin/jenova-ca` still assigned `LLAMA_NGL` (from removed `-ngl` flag) and printed it in the startup banner as "GPU Layers: all". Removed dead variable; banner now shows "GPU: auto-fit" with tensor split and fit target.
+- [x] **`JENOVA_ROOT` unconditional override** — `bin/jenova-ca` lines 49/52 clobbered user-set `JENOVA_ROOT` env var. Changed to `${JENOVA_ROOT:-...}` conditional assignment.
+- [x] **`lib/embed.lua` stale `CTX_SIZE=2048`** — Local variable was 2048 while server launches with `-c 4096`. Updated to 4096.
+- [x] **`agent.lua` check_server accepted 502/503** — `try_health()` accepted 502/503 as healthy, contradicting BLUEPRINT healthcheck fix. Now only accepts 200.
+- [x] **`grep_search` missing from system prompt** — Tool was defined with a handler but not listed in the model's system prompt. Added to prompt.
+- [x] **Proxy lacked native `/health` endpoint** — `GET /health` was forwarded to llama-server. Added native handler with JSON status response (proxy state + backend connectivity).
+- [x] **`tests/test_bin_jenova.sh` missing** — Referenced in BLUEPRINT but never created. Added with 8 test cases covering config, modules, health check, PID format, cleanup guard, and trap.
+
+---
+
+---
+
+## Resolved — Web Search in jvim (2026-03-28)
+
+### Web Search — curl fallback + DuckDuckGo Instant Answer API
+
+**Status:** ✅ Fixed
+**Affected files:** `lib/proxy.lua`
+**Branch:** `claude/review-progress-websearch-44Tzs`
+
+**Original Problem:**
+`exec_web_search()` was hardcoded to use FreeBSD's `fetch` command, which doesn't
+exist on Linux. Failures were completely silent — no logging, no user feedback.
+
+**Fix — Three improvements:**
+
+1. **Platform-adaptive HTTPS client:** At proxy startup, detects the available HTTPS
+   tool (`fetch` on FreeBSD, `curl` on Linux/macOS). Logs the selected client. If
+   neither is available, logs a warning and disables web search gracefully.
+
+2. **DuckDuckGo Instant Answer API:** Added `ddg_instant_answer()` — queries
+   `api.duckduckgo.com/?format=json` which returns structured JSON (no HTML scraping).
+   Provides abstracts, summaries, and related topics for factual queries. Used as
+   fallback when HTML scraping returns no results.
+
+3. **User feedback on failure:** When web search returns no results, the proxy now
+   injects a "Web search was unavailable" notice into the model context so the model
+   explicitly tells the user rather than silently proceeding without results.
+
+**Search strategy (ordered):**
+1. DuckDuckGo HTML scraping → full web results with titles and snippets (5 results max)
+2. DuckDuckGo Instant Answer API → JSON-based factual answers and related topics
+3. Failure notice → model informs user that search was unavailable
+
+**Dependencies:** `fetch` (FreeBSD base) OR `curl` (install: `pkg install curl` / `apt install curl`)

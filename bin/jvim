@@ -1,0 +1,142 @@
+#!/bin/sh
+
+# jvim: Launch Neovim with Jenova CA backend lifecycle management
+# FreeBSD 15 | Jenova Cognitive Architecture
+#
+# Mirrors bin/jenova's lifecycle pattern but replaces the LuaJIT agent with Neovim.
+# Exports JENOVA_CONNECT_HOST, JENOVA_PORT, JENOVA_LLAMA_PORT, and JENOVA_ROOT so
+# that llama.lua and gp.nvim plugins read the correct endpoints at startup.
+# Sets LD_LIBRARY_PATH for llama.cpp shared libraries before exec'ing Neovim.
+# On Neovim exit, stops Jenova CA only if this invocation started it.
+
+SCRIPT_DIR=$(dirname "$(realpath "$0")")
+
+# Determine JENOVA_ROOT before loading config
+if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
+    export JENOVA_ROOT="$SCRIPT_DIR"
+    . "$SCRIPT_DIR/etc/jenova.conf"
+elif [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
+    export JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
+    . "$SCRIPT_DIR/../etc/jenova.conf"
+else
+    echo "Error: etc/jenova.conf not found." >&2
+    exit 1
+fi
+
+# Separate HOST (bind address) from CONNECT_HOST (client connect address).
+# HOST may be 0.0.0.0 (listen on all interfaces), but clients need a real IP.
+CONNECT_HOST="${JENOVA_CONNECT_HOST:-127.0.0.1}"
+API_URL="http://${CONNECT_HOST}:${PORT}"
+
+JENOVA_DIR="${JENOVA_STATE:-$JENOVA_ROOT/.jenova}"
+if [ -n "$LOG_DIR" ]; then
+    SERVER_LOG="$LOG_DIR/jenova-ca.log"
+else
+    SERVER_LOG="${JENOVA_DIR}/jenova-ca.log"
+fi
+
+# Ensure runtime directories exist
+mkdir -p "$JENOVA_DIR"
+[ -n "$LOG_DIR" ]   && mkdir -p "$LOG_DIR"
+[ -n "$CACHE_DIR" ] && mkdir -p "$CACHE_DIR"
+
+# Export environment for Neovim plugins (llama.lua + gp.lua read these)
+export JENOVA_CONNECT_HOST="$CONNECT_HOST"
+export JENOVA_PORT="$PORT"
+export JENOVA_LLAMA_PORT="$LLAMA_PORT"
+export JENOVA_ROOT="${JENOVA_ROOT}"
+export JENOVA_API_URL="$API_URL"
+
+# Set LD_LIBRARY_PATH so llama.cpp shared libraries are found by llama-server
+# even when Neovim's child processes inherit the environment.
+LLAMA_LIB_DIR="$JENOVA_ROOT/llama.cpp/build/bin"
+if [ -d "$LLAMA_LIB_DIR" ]; then
+    export LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"
+fi
+
+# --- Health check ---
+# Uses LuaJIT + FFI HTTP (zero system dependencies; no curl required).
+check_health() {
+    if [ -f "$SCRIPT_DIR/../lib/healthcheck.lua" ]; then
+        luajit "$SCRIPT_DIR/../lib/healthcheck.lua" "$CONNECT_HOST" "$PORT" 3 2>/dev/null
+    elif [ -f "$SCRIPT_DIR/lib/healthcheck.lua" ]; then
+        luajit "$SCRIPT_DIR/lib/healthcheck.lua" "$CONNECT_HOST" "$PORT" 3 2>/dev/null
+    else
+        return 1
+    fi
+}
+
+# --- Locate jenova-ca ---
+find_jenova_ca() {
+    if [ -f "$SCRIPT_DIR/jenova-ca" ]; then
+        echo "$SCRIPT_DIR/jenova-ca"
+    elif [ -f "$SCRIPT_DIR/../bin/jenova-ca" ]; then
+        echo "$SCRIPT_DIR/../bin/jenova-ca"
+    else
+        echo ""
+    fi
+}
+
+JENOVA_CA=$(find_jenova_ca)
+if [ -z "$JENOVA_CA" ]; then
+    echo "Error: jenova-ca not found." >&2
+    exit 1
+fi
+
+# --- Start backend if not already running ---
+STARTED_BY_THIS_INVOCATION=0
+if check_health; then
+    echo "Jenova CA already running at $API_URL"
+else
+    echo "Starting Jenova CA in background..."
+    echo "Log: $SERVER_LOG"
+
+    if "$JENOVA_CA" --daemon; then
+        STARTED_BY_THIS_INVOCATION=1
+    else
+        echo "Error: jenova-ca failed to start" >&2
+        exit 1
+    fi
+
+    # Wait for proxy to become ready (fast-fail on dead PIDs)
+    printf "Waiting for Jenova CA"
+    for i in $(seq 1 120); do
+        if check_health; then
+            echo " ready!"
+            break
+        fi
+        # Fast-fail: if all daemon PIDs are dead, stop waiting
+        if [ -f "$PID_FILE" ]; then
+            read _LP _PP _EP < "$PID_FILE" 2>/dev/null || true
+            _ANY_ALIVE=false
+            for _P in $_LP $_PP $_EP; do
+                [ -n "$_P" ] && kill -0 "$_P" 2>/dev/null && _ANY_ALIVE=true
+            done
+            if ! $_ANY_ALIVE; then
+                echo " failed! (all daemon processes died)"
+                echo "Check log: $SERVER_LOG"
+                exit 1
+            fi
+        fi
+        printf "."
+        sleep 1
+        if [ "$i" -eq 120 ]; then
+            echo " timeout!"
+            echo "Check log: $SERVER_LOG"
+            exit 1
+        fi
+    done
+fi
+
+# --- Cleanup: stop backend on exit only if jvim started it ---
+cleanup_jvim() {
+    if [ "$STARTED_BY_THIS_INVOCATION" = "1" ] && [ -f "$PID_FILE" ]; then
+        echo "Stopping Jenova CA..."
+        "$JENOVA_CA" stop 2>/dev/null || true
+    fi
+}
+trap cleanup_jvim EXIT INT TERM
+
+# --- Launch Neovim ---
+# exec replaces this shell process with Neovim; the EXIT trap fires when Neovim exits.
+exec nvim "$@"
