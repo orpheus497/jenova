@@ -75,9 +75,14 @@ return {
           -- selecting text, then rewrites the selection based on user input.
           -- Previously auto-sent a fixed template which caused the model to rewrite
           -- without knowing the user's intent. Now the user provides direction.
+          -- The "Visual Rewrite:" prefix is preserved so the proxy detects intent
+          -- (lib/proxy.lua:259 matches ^Visual Rewrite: to set RAG limit=1 and
+          -- disable tools for surgical edits).
           VisualRewrite = function(gp, params)
             local agent = gp.get_command_agent()
-            local template = "I have the following code:\n\n{{selection}}\n\n{{command}}"
+            local ft = vim.bo.filetype or ""
+            local template = string.format(
+              "Visual Rewrite: {{command}}\n\nI have the following code:\n```%s\n{{selection}}\n```", ft)
             gp.Prompt(params, gp.Target.rewrite, agent, template, "Rewrite instruction: ")
           end,
 
