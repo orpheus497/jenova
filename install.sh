@@ -274,16 +274,29 @@ download_model() {
         y|Y|yes|YES)
             mkdir -p "$(dirname "$_path")"
             info "Downloading $(basename "$_path") (~$_size) ..."
+            _tmp="${_path}.tmp.$$"
             if [ "$_DL_CMD" = "curl" ]; then
-                curl -L --progress-bar -o "$_path" "$_url"
+                if ! curl -L --fail --progress-bar -o "$_tmp" "$_url"; then
+                    rm -f "$_tmp"
+                    fail "Download failed for $_name"
+                    ERRORS=$((ERRORS + 1))
+                    return 1
+                fi
             else
-                fetch -o "$_path" "$_url"
+                if ! fetch -o "$_tmp" "$_url"; then
+                    rm -f "$_tmp"
+                    fail "Download failed for $_name"
+                    ERRORS=$((ERRORS + 1))
+                    return 1
+                fi
             fi
-            if [ -f "$_path" ]; then
+            if [ -s "$_tmp" ]; then
+                mv "$_tmp" "$_path"
                 ok "$_name downloaded successfully"
                 return 0
             else
-                fail "Download failed for $_name"
+                rm -f "$_tmp"
+                fail "Download failed for $_name (empty file)"
                 ERRORS=$((ERRORS + 1))
                 return 1
             fi
@@ -302,6 +315,18 @@ download_model "$_agent_model" \
     "Agent model (Qwen2.5-Coder-7B)" \
     "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q5_k_m.gguf" \
     "5.1GB"
+
+# Ensure Neovim health check default model path stays in sync.
+# When JENOVA_MODEL is unset, Neovim expects $JENOVA_ROOT/models/jenova.gguf.
+# Create or refresh a symlink pointing to the chosen agent model path.
+if [ -f "$_agent_model" ]; then
+    _jenova_link="$JENOVA_ROOT/models/jenova.gguf"
+    mkdir -p "$(dirname "$_jenova_link")"
+    if [ -L "$_jenova_link" ] || [ ! -e "$_jenova_link" ]; then
+        ln -sf "$_agent_model" "$_jenova_link"
+        ok "Symlinked models/jenova.gguf -> $(basename "$_agent_model")"
+    fi
+fi
 
 # Embedding model (recommended for RAG)
 download_model "${MODEL_EMBED:-$JENOVA_ROOT/models/nomic-embed-text-v1.5.Q8_0.gguf}" \

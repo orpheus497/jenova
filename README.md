@@ -317,7 +317,8 @@ The `<leader>as` keybind in jvim opens a web search chat. The proxy queries Duck
 
 **Requirements:** An HTTPS-capable command-line tool must be available:
 - **FreeBSD:** `fetch` (part of base system — nothing to install)
-- **Linux/macOS:** `curl` (install: `pkg install curl` or `apt install curl`)
+- **Linux:** `curl` (install via your distro's package manager, e.g. `apt install curl` on Debian/Ubuntu)
+- **macOS:** `curl` (preinstalled on recent macOS; if missing, `brew install curl`)
 
 The proxy auto-detects `fetch` or `curl` at startup and logs which client is in use.
 If neither is found, web search is disabled with a log warning and the model will

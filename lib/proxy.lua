@@ -156,7 +156,7 @@ local function strip_html(s)
     return s:gsub("<[^>]+>", "")
         :gsub("&amp;", "&"):gsub("&lt;", "<"):gsub("&gt;", ">")
         :gsub("&quot;", '"'):gsub("&#x27;", "'"):gsub("&#039;", "'")
-        :gsub("&nbsp;", " "):gsub("\\n", " ")
+        :gsub("&nbsp;", " "):gsub("\\n", " "):gsub("\r", " "):gsub("\n", " ")
         :match("^%s*(.-)%s*$")
 end
 
@@ -458,9 +458,11 @@ local function proxy_connection(client_fd, conn_fds)
                         web_context = "\n--- WEB SEARCH RESULTS ---\n" .. table.concat(web_results, "\n")
                     else
                         web_context = "\n--- WEB SEARCH RESULTS ---\nWeb search returned no results. "
-                            .. (HTTPS_CMD and "The search engine did not return matching results for this query."
-                                or "No HTTPS client available (install curl or use FreeBSD). Cannot perform web searches.")
-                            .. "\nAnswer the user's question using your own knowledge and clearly state that web search was unavailable."
+                            .. (HTTPS_CMD
+                                and "The search engine did not return matching results for this query. "
+                                    .. "Answer the user's question using your own knowledge and clearly state that web search did not find any relevant results for this query."
+                                or "No HTTPS client available (install curl or use FreeBSD). Cannot perform web searches. "
+                                    .. "Answer the user's question using your own knowledge and clearly state that web search was unavailable.")
                     end
                 end
 
