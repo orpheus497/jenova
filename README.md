@@ -56,13 +56,59 @@ The system is partitioned into four conceptual streams:
 
 ## Installation
 
-Prerequisites:
+### Required Dependencies
+
+| Dependency | FreeBSD Install | Purpose |
+|---|---|---|
+| `luajit` (OpenResty) | `pkg install luajit-openresty` | LuaJIT runtime for proxy, agent, embeddings, and all Lua modules |
+| `git` | `pkg install git` | Repository management and lazy.nvim plugin bootstrap |
+| `neovim` (0.9+) | `pkg install neovim` | Editor frontend (jvim) |
+| `cmake` | `pkg install cmake` | Building llama.cpp from source |
+| `vulkan-loader` | `pkg install vulkan-loader` | GPU inference via Vulkan (dual-GPU offload) |
+
+### Optional Dependencies
+
+| Dependency | FreeBSD Install | Purpose |
+|---|---|---|
+| `gmake` | `pkg install gmake` | Building telescope-fzf-native (Neovim plugin) |
+| `curl` | `pkg install curl` | Fallback health probe in jenova-ca watchdog |
+| `fetch` | *(FreeBSD base system)* | Web search feature in jvim (`<leader>as`) — see Known Limitations |
+| `clangd` | `pkg install llvm` | C/C++ LSP server (optional) |
+| `rust-analyzer` | `pkg install rust-analyzer` | Rust LSP server (optional) |
+| `lua-language-server` | `pkg install lua-language-server` | Lua LSP server (optional) |
+| `pyright` | `pkg install py311-pyright` | Python LSP server (optional) |
+| `zls` | `pkg install zig` | Zig LSP server (optional) |
+| `bash-language-server` | `npm install -g bash-language-server` | Bash/Shell LSP server (optional) |
+| `stylua` | `cargo install stylua` | Lua code formatter (optional) |
+| `goimports` | `go install golang.org/x/tools/cmd/goimports@latest` | Go import formatter (optional) |
+
+### Required Model Files
+
+Download GGUF model files and place them in `models/`:
+
+| Model | Filename | Purpose | Required |
+|---|---|---|---|
+| Qwen2.5-Coder-7B | `Qwen2.5-Coder-7B-Q5_K_M.gguf` | Main inference (chat, code, rewrite) | **Yes** |
+| nomic-embed-text-v1.5 | `nomic-embed-text-v1.5.Q8_0.gguf` | Embedding for RAG semantic search | Recommended |
+| Qwen2.5-Coder-0.5B | `Qwen2.5-Coder-0.5B-Q8_0.gguf` | Speculative decoding drafter | Optional |
+
+### Quick Install
 
 ```sh
-pkg install luajit-openresty vulkan-loader
+# Install system dependencies
+pkg install luajit-openresty git neovim cmake vulkan-loader
+
+# Build llama.cpp with Vulkan support
+cd llama.cpp
+cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release -j$(sysctl -n hw.ncpu)
+cd ..
+
+# Run the installer (creates dirs, deploys nvim config, symlinks launchers)
+./install.sh
 ```
 
-Build llama.cpp locally with Vulkan support. The built binary lives at `llama.cpp/build/bin/llama-server`.
+The built binary lives at `llama.cpp/build/bin/llama-server`.
 
 ## Configuration
 
@@ -257,6 +303,26 @@ The `JENOVA_ROOT` environment variable is automatically set and exported before 
 - The codebase avoids subprocess reinitialization penalties by using persistent daemon processes.
 - Backup files in `.jenova/backups/` are rotated automatically: only the 5 most recent backups per filename are kept.
 - Shell command output is capped at ~10KB in memory (head + tail) before being sent to the model, preventing OOM on runaway commands.
+
+## Known Limitations
+
+### Web Search (`<leader>as`) — FreeBSD Only
+
+The web search feature in jvim uses FreeBSD's native `fetch` command to query DuckDuckGo.
+This command is part of the FreeBSD base system and is **not available on Linux**.
+
+**On FreeBSD:** Works as designed — `fetch` performs HTTPS requests to DuckDuckGo, results
+are parsed and injected into the model context for synthesis.
+
+**On Linux:** The search silently fails (no error shown) and the model responds without
+web context. This is a known limitation that will be addressed in a future release by
+adding a `curl` fallback.
+
+**Affected keybind:** `<leader>as` (normal mode)
+**Affected files:** `lib/proxy.lua` (`exec_web_search`), `nvim/lua/plugins/gp.lua` (`WebSearch` hook)
+
+All other AI features (chat, visual rewrite, FIM completions, RAG, ChatWithContext) work
+on both FreeBSD and Linux.
 
 ## License & Credits
 

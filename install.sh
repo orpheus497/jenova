@@ -150,7 +150,21 @@ if [ "$SKIP_NVIM" = "0" ]; then
     check_optional "gmake"  "pkg install gmake  (needed for telescope-fzf-native)"
 fi
 
+check_optional "cmake"   "pkg install cmake     (needed to build llama.cpp)"
 check_optional "curl"    "pkg install curl      (used by jenova-ca health probe fallback)"
+
+# Web search dependency: FreeBSD 'fetch' (base system) or curl fallback
+if command -v fetch >/dev/null 2>&1; then
+    ok "fetch (web search: native FreeBSD fetch available)"
+elif command -v curl >/dev/null 2>&1; then
+    warn "fetch not found (not FreeBSD?) — web search in jvim (<leader>as) will not work"
+    warn "Web search requires FreeBSD's native 'fetch' command (part of base system)"
+    warn "All other AI features (chat, rewrite, FIM, RAG) work without fetch"
+    WARNINGS=$((WARNINGS + 1))
+else
+    warn "Neither fetch nor curl found — web search and health probe fallback unavailable"
+    WARNINGS=$((WARNINGS + 1))
+fi
 
 # Vulkan loader
 if [ "$_OS" = "FreeBSD" ]; then

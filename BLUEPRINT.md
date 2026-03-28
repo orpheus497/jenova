@@ -3,12 +3,21 @@
 **Date:** 2026-03-27
 **Branch:** `claude/roadmap-alignment-y91ZF`
 **Status:** All phases implemented ✅ — Alignment audit pass applied
+**Last reviewed:** 2026-03-28
 
 ---
 
 ## 1. Summary
 
 All bugs documented in this blueprint have been fixed. The codebase now runs exclusively on the **7B model** (Qwen2.5-Coder-7B-Q5_K_M) with full dual-GPU auto-fit, 16k context, 2 slots, and q8_0 quantized KV cache.
+
+### Known Limitations (Deferred)
+
+| Feature | Status | Root Cause | Impact |
+|---|---|---|---|
+| Web Search (`<leader>as`) | Non-functional on Linux | Uses FreeBSD `fetch` (base system); not available on Linux | Low — works on target platform (FreeBSD); all other AI features unaffected |
+
+See `FIX.md` for detailed root cause analysis and future fix options.
 
 ---
 

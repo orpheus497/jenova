@@ -125,4 +125,44 @@ Full cross-module audit of all BLUEPRINT items against actual source code. Seven
 
 ---
 
-*No outstanding items.*
+---
+
+## Open Items — Known Limitations
+
+### Web Search in jvim — Non-functional (Deferred)
+
+**Status:** Known limitation — documented for future fix
+**Severity:** Low (non-critical feature; all other AI features work)
+**Affected files:** `lib/proxy.lua:124-160`, `nvim/lua/plugins/gp.lua:92-121`, `lib/prompts.lua:33-41`
+
+**Root Cause 1 — Platform-specific HTTP client:**
+`exec_web_search()` in `lib/proxy.lua:129` uses FreeBSD's native `fetch` command:
+```
+fetch -T 5 -qo - 'https://html.duckduckgo.com/html/?q=...'
+```
+`fetch` is a FreeBSD-native utility (part of the base system). It does not exist on Linux.
+On Linux, `io.popen(cmd)` silently returns nil, and the function returns nil.
+
+**Root Cause 2 — Silent failure path:**
+When `exec_web_search()` returns nil, the proxy simply proceeds without web results.
+No error is logged, and the user receives a normal chat response without any indication
+that the search failed. The chat proceeds as if websearch was never requested.
+
+**Root Cause 3 — HTTPS requirement:**
+DuckDuckGo requires HTTPS. The project's built-in `lib/http.lua` only supports plain
+HTTP (raw BSD sockets via LuaJIT FFI). This is why websearch shells out to `fetch`
+rather than using the internal HTTP library.
+
+**User-visible behavior:**
+- `<leader>as` (Web Search) opens a chat, sends the query, but the model responds
+  without any web search context — effectively a normal chat response.
+- No error message or notification is shown.
+
+**Future fix options (not implemented — deferred):**
+1. Add `curl` fallback: `curl -sL --max-time 5 'URL'` works on both FreeBSD and Linux
+2. Add error feedback: log a warning and notify the user when web search fails
+3. Long-term: implement HTTPS in `lib/http.lua` using LuaJIT FFI + OpenSSL bindings
+
+**Workaround:** On FreeBSD (the target platform), `fetch` is available in the base
+system and websearch should work as designed, provided the system has outbound HTTPS
+access to `html.duckduckgo.com`.
