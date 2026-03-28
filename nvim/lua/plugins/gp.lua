@@ -71,13 +71,14 @@ return {
             gp.Prompt(params, gp.Target.rewrite, agent, nil, nil)
           end,
 
-          -- ##Action purpose: Visual rewrite hook — constrained, surgical edits only
-          -- Sends "Visual Rewrite:" prefix to signal visual intent to proxy
+          -- ##Action purpose: Visual rewrite hook — prompts user for instruction after
+          -- selecting text, then rewrites the selection based on user input.
+          -- Previously auto-sent a fixed template which caused the model to rewrite
+          -- without knowing the user's intent. Now the user provides direction.
           VisualRewrite = function(gp, params)
             local agent = gp.get_command_agent()
-            -- Prepend visual marker so proxy applies surgical constraints
-            local template = "Visual Rewrite: {{selection}}"
-            gp.Prompt(params, gp.Target.rewrite, agent, template, nil)
+            local template = "I have the following code:\n\n{{selection}}\n\n{{command}}"
+            gp.Prompt(params, gp.Target.rewrite, agent, template, "Rewrite instruction: ")
           end,
 
           ChatWithContext = function(gp, params)
@@ -154,8 +155,8 @@ return {
       -- ##Step purpose: Delete the current chat file from disk
       vim.keymap.set("n", "<leader>ad", "<cmd>GpChatDelete<CR>", opts("Delete Chat"))
 
-      -- ##Step purpose: Visual-mode: surgical rewrite (constrained to selection only)
-      vim.keymap.set("v", "<leader>aw", ":<C-u>'<,'>GpVisualRewrite<CR>", opts("Visual Rewrite (Surgical)"))
+      -- ##Step purpose: Visual-mode: rewrite selection with user-provided instruction
+      vim.keymap.set("v", "<leader>aw", ":<C-u>'<,'>GpVisualRewrite<CR>", opts("Visual Rewrite (Prompted)"))
 
       -- ##Step purpose: Normal-mode: inline rewrite via InlineRewrite hook
       vim.keymap.set("n", "<leader>ai", "<cmd>GpInlineRewrite<CR>", opts("Inline Rewrite"))
