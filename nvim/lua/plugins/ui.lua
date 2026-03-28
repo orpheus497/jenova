@@ -29,9 +29,11 @@ return {
         },
         overrides = function(colors) return {} end,
         -- ##Step purpose: Dragon is the darkest variant — ideal for terminal sessions
+        -- Dragon provides dark background with red/black/grey color palette
         theme = "dragon",
       })
-      vim.cmd("colorscheme kanagawa")
+      -- ##Step purpose: Explicitly load kanagawa-dragon variant
+      vim.cmd("colorscheme kanagawa-dragon")
     end,
   },
 
