@@ -22,16 +22,15 @@ return {
       if jenova_host == "0.0.0.0" or jenova_host == "::" or jenova_host == "*" then
         jenova_host = "127.0.0.1"
       end
+      local jenova_port = vim.env.JENOVA_PORT or "8080"
+      local endpoint_url = string.format("http://%s:%s/v1/chat/completions", jenova_host, jenova_port)
 
       -- ##Step purpose: Core gp.nvim setup — point at local Jenova backend
       require("gp").setup({
         -- ##Action purpose: Use the Jenova LuaJIT proxy as the OpenAI-compatible endpoint
+        -- IMPORTANT: This MUST be a local endpoint. Never use external OpenAI API.
         openai_api_key = "jenova-local",
-        openai_api_endpoint = string.format(
-          "http://%s:%s/v1/chat/completions",
-          jenova_host,
-          vim.env.JENOVA_PORT or "8080"
-        ),
+        openai_api_endpoint = endpoint_url,
 
         agents = {
           {

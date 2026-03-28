@@ -82,7 +82,7 @@ Notes:
 
 ## Launching
 
-Start the cognitive backend (daemon) and then the interactive agent:
+Start the cognitive backend (daemon) and then the interactive agent or Neovim:
 
 ```bash
 # Start the Jenova Cognitive Architecture backend in daemon mode
@@ -90,6 +90,9 @@ bin/jenova-ca --daemon
 
 # Launch the interactive agent (auto-starts backend if needed)
 bin/jenova
+
+# OR launch Neovim with Jenova integration (auto-starts backend if needed)
+bin/jvim [files...]
 ```
 
 ## Models & Roles
@@ -101,13 +104,14 @@ bin/jenova
 ## Directory Layout
 
 - `bin/jenova` — Interactive agent launcher (auto-starts backend if needed, runs `agent.lua`).
+- `bin/jvim` — Neovim launcher with Jenova backend integration (auto-starts backend, exports environment variables).
 - `bin/jenova-ca` — Backend manager: starts/stops/restarts llama-server, proxy, and embed server as a unit.
-- `bin/llama-server-nvim` — Neovim helper: ensures jenova-ca is running, then exits. Does **not** start a separate server.
 - `lib/` — Core LuaJIT logic for the agent, embedding, HTTP, search, memory, and UI.
 - `etc/` — Configuration files (`jenova.conf`).
 - `models/` — Model storage (GGUF format).
 - `var/` — Runtime logs and cache.
 - `.jenova/` — Internal agent state, PID files, vectors, and automated backups.
+- `nvim/` — Neovim configuration (plugins, LSP, UI) for the integrated IDE.
 
 ## Networking
 
@@ -122,7 +126,24 @@ All HTTP communication uses raw BSD sockets via LuaJIT FFI — no libcurl depend
 
 All clients — CLI agent, Neovim, and any other HTTP consumer — share the **single** backend started by `jenova-ca`. No separate model instance is loaded for Neovim.
 
-Run `bin/llama-server-nvim` once before opening Neovim to ensure the backend is up. Then configure `llama.vim` (or equivalent plugin) with these endpoints:
+### Using jvim (Recommended)
+
+**IMPORTANT:** Always launch Neovim using the `jvim` wrapper to ensure proper backend integration:
+
+```bash
+bin/jvim [files...]     # Launch Neovim with Jenova backend
+```
+
+The `jvim` wrapper:
+- Auto-starts the Jenova CA backend if not already running
+- Exports environment variables (`JENOVA_CONNECT_HOST`, `JENOVA_PORT`, `JENOVA_LLAMA_PORT`) so plugins can connect
+- Stops the backend on exit (only if `jvim` started it)
+
+**Do NOT launch `nvim` directly** — the plugins (gp.nvim, llama.vim) require environment variables set by `jvim` to connect to the local backend. Launching `nvim` directly will cause connection failures and may attempt to use external APIs.
+
+### Endpoints
+
+Once launched via `jvim`, plugins use these endpoints automatically:
 
 | Use case | Endpoint | Notes |
 |---|---|---|
