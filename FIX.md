@@ -127,42 +127,36 @@ Full cross-module audit of all BLUEPRINT items against actual source code. Seven
 
 ---
 
-## Open Items — Known Limitations
+## Resolved — Web Search in jvim (2026-03-28)
 
-### Web Search in jvim — Non-functional (Deferred)
+### Web Search — curl fallback + DuckDuckGo Instant Answer API
 
-**Status:** Known limitation — documented for future fix
-**Severity:** Low (non-critical feature; all other AI features work)
-**Affected files:** `lib/proxy.lua:124-160`, `nvim/lua/plugins/gp.lua:92-121`, `lib/prompts.lua:33-41`
+**Status:** ✅ Fixed
+**Affected files:** `lib/proxy.lua`
+**Branch:** `claude/review-progress-websearch-44Tzs`
 
-**Root Cause 1 — Platform-specific HTTP client:**
-`exec_web_search()` in `lib/proxy.lua:129` uses FreeBSD's native `fetch` command:
-```
-fetch -T 5 -qo - 'https://html.duckduckgo.com/html/?q=...'
-```
-`fetch` is a FreeBSD-native utility (part of the base system). It does not exist on Linux.
-On Linux, `io.popen(cmd)` silently returns nil, and the function returns nil.
+**Original Problem:**
+`exec_web_search()` was hardcoded to use FreeBSD's `fetch` command, which doesn't
+exist on Linux. Failures were completely silent — no logging, no user feedback.
 
-**Root Cause 2 — Silent failure path:**
-When `exec_web_search()` returns nil, the proxy simply proceeds without web results.
-No error is logged, and the user receives a normal chat response without any indication
-that the search failed. The chat proceeds as if websearch was never requested.
+**Fix — Three improvements:**
 
-**Root Cause 3 — HTTPS requirement:**
-DuckDuckGo requires HTTPS. The project's built-in `lib/http.lua` only supports plain
-HTTP (raw BSD sockets via LuaJIT FFI). This is why websearch shells out to `fetch`
-rather than using the internal HTTP library.
+1. **Platform-adaptive HTTPS client:** At proxy startup, detects the available HTTPS
+   tool (`fetch` on FreeBSD, `curl` on Linux/macOS). Logs the selected client. If
+   neither is available, logs a warning and disables web search gracefully.
 
-**User-visible behavior:**
-- `<leader>as` (Web Search) opens a chat, sends the query, but the model responds
-  without any web search context — effectively a normal chat response.
-- No error message or notification is shown.
+2. **DuckDuckGo Instant Answer API:** Added `ddg_instant_answer()` — queries
+   `api.duckduckgo.com/?format=json` which returns structured JSON (no HTML scraping).
+   Provides abstracts, summaries, and related topics for factual queries. Used as
+   fallback when HTML scraping returns no results.
 
-**Future fix options (not implemented — deferred):**
-1. Add `curl` fallback: `curl -sL --max-time 5 'URL'` works on both FreeBSD and Linux
-2. Add error feedback: log a warning and notify the user when web search fails
-3. Long-term: implement HTTPS in `lib/http.lua` using LuaJIT FFI + OpenSSL bindings
+3. **User feedback on failure:** When web search returns no results, the proxy now
+   injects a "Web search was unavailable" notice into the model context so the model
+   explicitly tells the user rather than silently proceeding without results.
 
-**Workaround:** On FreeBSD (the target platform), `fetch` is available in the base
-system and websearch should work as designed, provided the system has outbound HTTPS
-access to `html.duckduckgo.com`.
+**Search strategy (ordered):**
+1. DuckDuckGo HTML scraping → full web results with titles and snippets (5 results max)
+2. DuckDuckGo Instant Answer API → JSON-based factual answers and related topics
+3. Failure notice → model informs user that search was unavailable
+
+**Dependencies:** `fetch` (FreeBSD base) OR `curl` (install: `pkg install curl` / `apt install curl`)

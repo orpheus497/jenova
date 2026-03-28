@@ -96,7 +96,7 @@ Download GGUF model files and place them in `models/`:
 
 ```sh
 # Install system dependencies
-pkg install luajit-openresty git neovim cmake vulkan-loader
+pkg install luajit-openresty git neovim cmake vulkan-loader curl
 
 # Build llama.cpp with Vulkan support
 cd llama.cpp
@@ -104,9 +104,15 @@ cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release -j$(sysctl -n hw.ncpu)
 cd ..
 
-# Run the installer (creates dirs, deploys nvim config, symlinks launchers)
+# Run the installer (creates dirs, downloads models, deploys nvim config, symlinks launchers)
 ./install.sh
 ```
+
+The installer will:
+1. Verify all required and optional dependencies
+2. **Offer to download missing model files** (agent, embedding, drafter) from Hugging Face
+3. Deploy the Neovim configuration to `~/.config/nvim/`
+4. Symlink `jvim`, `jenova`, and `jenova-ca` to your PATH
 
 The built binary lives at `llama.cpp/build/bin/llama-server`.
 
@@ -304,25 +310,22 @@ The `JENOVA_ROOT` environment variable is automatically set and exported before 
 - Backup files in `.jenova/backups/` are rotated automatically: only the 5 most recent backups per filename are kept.
 - Shell command output is capped at ~10KB in memory (head + tail) before being sent to the model, preventing OOM on runaway commands.
 
-## Known Limitations
+## Web Search
 
-### Web Search (`<leader>as`) — FreeBSD Only
+The `<leader>as` keybind in jvim opens a web search chat. The proxy queries DuckDuckGo
+(HTML scraping + Instant Answer JSON API) and injects results into the model context.
 
-The web search feature in jvim uses FreeBSD's native `fetch` command to query DuckDuckGo.
-This command is part of the FreeBSD base system and is **not available on Linux**.
+**Requirements:** An HTTPS-capable command-line tool must be available:
+- **FreeBSD:** `fetch` (part of base system — nothing to install)
+- **Linux:** `curl` (install via your distro's package manager, e.g. `apt install curl` on Debian/Ubuntu)
+- **macOS:** `curl` (preinstalled on recent macOS; if missing, `brew install curl`)
 
-**On FreeBSD:** Works as designed — `fetch` performs HTTPS requests to DuckDuckGo, results
-are parsed and injected into the model context for synthesis.
+The proxy auto-detects `fetch` or `curl` at startup and logs which client is in use.
+If neither is found, web search is disabled with a log warning and the model will
+inform you that search was unavailable.
 
-**On Linux:** The search silently fails (no error shown) and the model responds without
-web context. This is a known limitation that will be addressed in a future release by
-adding a `curl` fallback.
-
-**Affected keybind:** `<leader>as` (normal mode)
-**Affected files:** `lib/proxy.lua` (`exec_web_search`), `nvim/lua/plugins/gp.lua` (`WebSearch` hook)
-
-All other AI features (chat, visual rewrite, FIM completions, RAG, ChatWithContext) work
-on both FreeBSD and Linux.
+**Search strategy:** HTML scraping for full web results, with DuckDuckGo Instant Answer
+API fallback for factual/definition queries.
 
 ## License & Credits
 
