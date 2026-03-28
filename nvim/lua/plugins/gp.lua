@@ -94,14 +94,36 @@ return {
             -- Create initial user message with buffer context
             -- The "Chatbot:" prefix triggers chat intent in proxy for proper prompt injection
             local initial_message = string.format(
-              "Chatbot: I'm working on file: %s\nPath: %s\n\n```\n%s\n```",
+              "Chatbot: I'm working on file: %s\nPath: %s\n\n```\n%s\n```\n\n",
               filename,
               filepath,
               content
             )
 
-            -- Open new chat and prepopulate with buffer context as first message
-            gp.cmd.ChatNew(params, initial_message, agent)
+            -- Open new chat first with default system prompt
+            gp.cmd.ChatNew(params, nil, agent)
+
+            -- Schedule inserting the context after chat buffer is created
+            vim.schedule(function()
+              local chat_buf = vim.api.nvim_get_current_buf()
+              -- Check if buffer is valid before writing
+              if vim.api.nvim_buf_is_valid(chat_buf) then
+                -- Get existing content (usually just the role markers)
+                local existing = vim.api.nvim_buf_get_lines(chat_buf, 0, -1, false)
+                -- Find where to insert (after # topic line and role marker)
+                local insert_line = 0
+                for i, line in ipairs(existing) do
+                  if line:match("^# user$") then
+                    insert_line = i
+                    break
+                  end
+                end
+                -- Insert the context message after the user role marker
+                if insert_line > 0 then
+                  vim.api.nvim_buf_set_lines(chat_buf, insert_line, insert_line, false, {initial_message})
+                end
+              end
+            end)
           end,
         },
       })
