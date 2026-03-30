@@ -11,13 +11,13 @@
 
 All bugs documented in this blueprint have been fixed. The codebase now runs exclusively on the **7B model** (Qwen2.5-Coder-7B-Q5_K_M) with full dual-GPU auto-fit, 16k context, 2 slots, and q8_0 quantized KV cache.
 
-### Known Limitations (Deferred)
+### Resolved Limitations
 
-| Feature | Status | Root Cause | Impact |
-|---|---|---|---|
-| Web Search (`<leader>as`) | Non-functional on Linux | Uses FreeBSD `fetch` (base system); not available on Linux | Low — works on target platform (FreeBSD); all other AI features unaffected |
+| Feature | Status | Fix Applied |
+|---|---|---|
+| Web Search (`<leader>as`) | ✅ Fixed | Auto-detects `fetch` (FreeBSD) or `curl` (Linux/macOS); added DuckDuckGo Instant Answer JSON API fallback; added user feedback on failure |
 
-See `FIX.md` for detailed root cause analysis and future fix options.
+See `FIX.md` for full details.
 
 ---
 
