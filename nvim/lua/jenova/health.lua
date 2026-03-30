@@ -259,8 +259,8 @@ function M.check()
       required = true,
     },
     {
-      path = jenova_root .. "/models/Qwen2.5-Coder-0.5B-Q8_0.gguf",
-      label = "Draft model (Qwen2.5-Coder-0.5B) — speculative decoding",
+      path = jenova_root .. "/models/Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf",
+      label = "Draft model (Qwen2.5-Coder-0.5B-Instruct) — speculative decoding",
       required = false,
     },
   }

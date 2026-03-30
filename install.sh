@@ -295,9 +295,9 @@ download_model() {
 }
 
 # Agent model (required)
-_agent_model="${MODEL_PATH:-${JENOVA_MODEL:-$JENOVA_ROOT/models/Qwen2.5-Coder-7B-Q5_K_M.gguf}}"
+_agent_model="${MODEL_PATH:-${JENOVA_MODEL:-$JENOVA_ROOT/models/Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf}}"
 download_model "$_agent_model" \
-    "Agent model (Qwen2.5-Coder-7B)" \
+    "Agent model (Qwen2.5-Coder-7B-Instruct)" \
     "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q5_k_m.gguf" \
     "5.1GB"
 
@@ -320,7 +320,7 @@ download_model "${MODEL_EMBED:-$JENOVA_ROOT/models/nomic-embed-text-v1.5.Q8_0.gg
     "134MB"
 
 # Draft model (optional — enables speculative decoding for ~1.5-2x speedup)
-_draft_path="${MODEL_DRAFT:-$JENOVA_ROOT/models/Qwen2.5-Coder-0.5B-Q8_0.gguf}"
+_draft_path="${MODEL_DRAFT:-$JENOVA_ROOT/models/Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf}"
 if [ -f "$_draft_path" ]; then
     ok "Draft model — speculative decoding enabled"
 else

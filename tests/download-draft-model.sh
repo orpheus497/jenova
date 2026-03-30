@@ -7,7 +7,7 @@
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 MODEL_DIR="$SCRIPT_DIR/../models"
 
-DRAFT_MODEL="Qwen2.5-Coder-0.5B-Q8_0.gguf"
+DRAFT_MODEL="Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf"
 DRAFT_URL="https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q8_0.gguf"
 
 mkdir -p "$MODEL_DIR"
