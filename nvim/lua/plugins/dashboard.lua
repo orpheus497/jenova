@@ -33,7 +33,8 @@ return {
       end
 
       local os_info = detect_os()
-      local nvim_version = "NVIM " .. tostring(vim.version())
+      local v = vim.version()
+      local nvim_version = string.format("NVIM %d.%d.%d", v.major, v.minor, v.patch)
 
       local header = {
         type = "text",
@@ -76,10 +77,10 @@ return {
         val = {
           { type = "text", val = "── AI / Jenova ──", opts = { position = "center", hl = "AlphaHeaderLabel" } },
           { type = "padding", val = 1 },
-          btn("a c",   "  AI Chat (Buffer Context)",  "require('lazy').load({plugins={'gp.nvim'}}); vim.cmd('GpChatNew vsplit')"),
-          btn("a t",   "  Toggle AI Chat",            "require('lazy').load({plugins={'gp.nvim'}}); vim.cmd('GpChatToggle vsplit')"),
-          btn("a s",   "  Web Search",                "require('lazy').load({plugins={'gp.nvim'}}); vim.cmd('GpWebSearch')"),
-          btn("a j",   "  Jenova Agent Terminal",     "local r=vim.fn.expand('$JENOVA_ROOT'); if r=='' or r=='$JENOVA_ROOT' then r=vim.fn.expand('~/Projects/jenova') end; vim.cmd('term cd '..vim.fn.shellescape(r)..' && bin/jenova')"),
+          btn("c",   "  AI Chat (Buffer Context)",  "require('lazy').load({plugins={'gp.nvim'}}); vim.cmd('GpChatNew vsplit')"),
+          btn("t",   "  Toggle AI Chat",            "require('lazy').load({plugins={'gp.nvim'}}); vim.cmd('GpChatToggle vsplit')"),
+          btn("s",   "  Web Search",                "require('lazy').load({plugins={'gp.nvim'}}); vim.cmd('GpWebSearch')"),
+          btn("j",   "  Jenova Agent Terminal",     "local r=vim.fn.expand('$JENOVA_ROOT'); if r=='' or r=='$JENOVA_ROOT' then r=vim.fn.expand('~/Projects/jenova') end; vim.cmd('term cd '..vim.fn.shellescape(r)..' && bin/jenova')"),
         },
         opts = { spacing = 0 },
       }
@@ -89,9 +90,9 @@ return {
         val = {
           { type = "text", val = "── Git ──", opts = { position = "center", hl = "AlphaHeaderLabel" } },
           { type = "padding", val = 1 },
-          btn("SPC g g", "  Neogit Status",       "require('lazy').load({plugins={'neogit'}}); vim.cmd('Neogit')"),
-          btn("SPC g v", "  Diff View",            "require('lazy').load({plugins={'diffview.nvim'}}); vim.cmd('DiffviewOpen')"),
-          dashboard.button("SPC g f", "  Fugitive",  "<cmd>Git<CR>"),
+          btn("G",   "  Neogit Status",       "require('lazy').load({plugins={'neogit'}}); vim.cmd('Neogit')"),
+          btn("D",   "  Diff View",            "require('lazy').load({plugins={'diffview.nvim'}}); vim.cmd('DiffviewOpen')"),
+          dashboard.button("F",   "  Fugitive",  "<cmd>Git<CR>"),
         },
         opts = { spacing = 0 },
       }
@@ -101,9 +102,9 @@ return {
         val = {
           { type = "text", val = "── Diagnostics & LSP ──", opts = { position = "center", hl = "AlphaHeaderLabel" } },
           { type = "padding", val = 1 },
-          dashboard.button("SPC x x", "  Workspace Diagnostics",  "<cmd>Trouble diagnostics toggle<CR>"),
-          dashboard.button("SPC c s", "  Symbols",                 "<cmd>Trouble symbols toggle focus=false<CR>"),
-          dashboard.button("SPC c l", "  LSP Defs / References",   "<cmd>Trouble lsp toggle focus=false win.position=right<CR>"),
+          dashboard.button("x",   "  Workspace Diagnostics",  "<cmd>Trouble diagnostics toggle<CR>"),
+          dashboard.button("S",   "  Symbols",                 "<cmd>Trouble symbols toggle focus=false<CR>"),
+          dashboard.button("R",   "  LSP Defs / References",   "<cmd>Trouble lsp toggle focus=false win.position=right<CR>"),
         },
         opts = { spacing = 0 },
       }

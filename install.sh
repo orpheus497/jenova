@@ -265,7 +265,7 @@ download_model() {
         warn "$_name not found at $_path"
         warn "  Install curl or fetch, then re-run install.sh to auto-download"
         WARNINGS=$((WARNINGS + 1))
-        return 1
+        return 0
     fi
     warn "$_name not found at $_path"
     printf "  Download %s (~%s)? [y/N] " "$(basename "$_path")" "$_size"
@@ -276,18 +276,18 @@ download_model() {
             info "Downloading $(basename "$_path") (~$_size) ..."
             _tmp="${_path}.tmp.$$"
             if [ "$_DL_CMD" = "curl" ]; then
-                if ! curl -L --fail --progress-bar -o "$_tmp" "$_url"; then
+                if ! curl -L --fail --max-time 600 --connect-timeout 15 --progress-bar -o "$_tmp" "$_url"; then
                     rm -f "$_tmp"
                     fail "Download failed for $_name"
                     ERRORS=$((ERRORS + 1))
-                    return 1
+                    return 0
                 fi
             else
-                if ! fetch -o "$_tmp" "$_url"; then
+                if ! fetch -T 600 -o "$_tmp" "$_url"; then
                     rm -f "$_tmp"
                     fail "Download failed for $_name"
                     ERRORS=$((ERRORS + 1))
-                    return 1
+                    return 0
                 fi
             fi
             if [ -s "$_tmp" ]; then
@@ -298,13 +298,13 @@ download_model() {
                 rm -f "$_tmp"
                 fail "Download failed for $_name (empty file)"
                 ERRORS=$((ERRORS + 1))
-                return 1
+                return 0
             fi
             ;;
         *)
             warn "Skipping $_name download"
             WARNINGS=$((WARNINGS + 1))
-            return 1
+            return 0
             ;;
     esac
 }
