@@ -70,7 +70,7 @@ if [ ! -f "$MODEL_PATH" ]; then
     echo "Download a model file (GGUF format) and place it at:" >&2
     echo "  $JENOVA_ROOT/models/" >&2
     echo "" >&2
-    echo "Recommended: Qwen2.5-Coder-7B-Q5_K_M.gguf" >&2
+    echo "Recommended: Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf" >&2
     echo "Or set JENOVA_MODEL environment variable to point to your model." >&2
     echo "" >&2
     exit 1
@@ -189,13 +189,41 @@ case "$1" in
 esac
 
 # =====================================================================
+# _probe_health: shared health probe used by daemon startup and watchdog.
+# Tries luajit healthcheck.lua first (no curl needed), falls back to
+# curl, then plain TCP via nc.  Returns 0 on success, non-zero on failure.
+# Requires CONNECT_HOST and LLAMA_PORT to be set in the calling scope.
+# Optional first argument overrides the luajit timeout (default: 2s).
+# =====================================================================
+_probe_health() {
+    _ph_timeout="${1:-2}"
+    if [ -f "$PROXY_SCRIPT" ]; then
+        _HC=$(dirname "$PROXY_SCRIPT")/healthcheck.lua
+    else
+        _HC=""
+    fi
+    if [ -f "$_HC" ]; then
+        luajit "$_HC" "$CONNECT_HOST" "$LLAMA_PORT" "$_ph_timeout" 2>/dev/null
+    elif command -v curl >/dev/null 2>&1; then
+        curl -sf -o /dev/null -m "$_ph_timeout" \
+            "http://${CONNECT_HOST}:${LLAMA_PORT}/health" 2>/dev/null
+    else
+        # Last resort: plain TCP probe via nc
+        if command -v nc >/dev/null 2>&1; then
+            nc -z -w "$_ph_timeout" "$CONNECT_HOST" "$LLAMA_PORT" >/dev/null 2>&1
+        else
+            return 1
+        fi
+    fi
+}
+
+# =====================================================================
 # WATCHDOG: Continuous runtime health monitoring with auto-restart
 # =====================================================================
 _watchdog() {
     WATCH_INTERVAL="${JENOVA_WATCH_INTERVAL:-30}"
     WATCH_LOG="${LOG_DIR}/jenova-watchdog.log"
     CONNECT_HOST="${JENOVA_CONNECT_HOST:-127.0.0.1}"
-    HEALTH_URL="http://${CONNECT_HOST}:${LLAMA_PORT}/health"
     _WATCHDOG_RUNNING=true
     _RESTART_COOLDOWN=60
     _LAST_RESTART=0
@@ -256,19 +284,8 @@ _watchdog() {
         # Health endpoint check (catches hung processes that are alive but unresponsive)
         _HEALTH_OK=true
         if [ -n "$_W_LLAMA" ] && kill -0 "$_W_LLAMA" 2>/dev/null; then
-            if [ -f "$PROXY_SCRIPT" ]; then
-                _HC=$(dirname "$PROXY_SCRIPT")/healthcheck.lua
-            else
-                _HC=""
-            fi
-            if [ -f "$_HC" ]; then
-                if ! luajit "$_HC" "$CONNECT_HOST" "$LLAMA_PORT" 5 2>/dev/null; then
-                    _HEALTH_OK=false
-                fi
-            elif command -v curl >/dev/null 2>&1; then
-                if ! curl -sf -o /dev/null -m 5 "$HEALTH_URL" 2>/dev/null; then
-                    _HEALTH_OK=false
-                fi
+            if ! _probe_health 5; then
+                _HEALTH_OK=false
             fi
         fi
 
@@ -468,32 +485,9 @@ if [ "$1" = "--daemon" ]; then
 
     # Poll llama-server /health until ready (replaces fixed sleep)
     CONNECT_HOST="${JENOVA_CONNECT_HOST:-127.0.0.1}"
-    HEALTH_URL="http://${CONNECT_HOST}:${LLAMA_PORT}/health"
     HEALTH_TIMEOUT="${JENOVA_HEALTH_TIMEOUT:-90}"
     HEALTH_INTERVAL=2
     _ELAPSED=0
-
-    # Probe function: tries luajit healthcheck.lua first (no curl needed),
-    # falls back to curl if luajit/healthcheck.lua is not available.
-    _probe_health() {
-        if [ -f "$PROXY_SCRIPT" ]; then
-            _HC=$(dirname "$PROXY_SCRIPT")/healthcheck.lua
-        else
-            _HC=""
-        fi
-        if [ -f "$_HC" ]; then
-            luajit "$_HC" "$CONNECT_HOST" "$LLAMA_PORT" 2 2>/dev/null
-        elif command -v curl >/dev/null 2>&1; then
-            curl -sf -o /dev/null -m 3 "$HEALTH_URL" 2>/dev/null
-        else
-            # Last resort: plain TCP probe via /dev/tcp (bash-only) or nc
-            if command -v nc >/dev/null 2>&1; then
-                nc -z -w 2 "$CONNECT_HOST" "$LLAMA_PORT" >/dev/null 2>&1
-            else
-                return 1
-            fi
-        fi
-    }
 
     echo "Waiting for llama-server to become ready..."
     while [ "$_ELAPSED" -lt "$HEALTH_TIMEOUT" ]; do

@@ -208,21 +208,6 @@ check_optional "stylua"               "cargo install stylua  OR  pkg install sty
 check_optional "goimports"            "go install golang.org/x/tools/cmd/goimports@latest"
 
 # ---------------------------------------------------------------------------
-# 4. Runtime directories
-# ---------------------------------------------------------------------------
-info "Creating runtime directories..."
-
-for _d in \
-    "$JENOVA_ROOT/models" \
-    "$JENOVA_ROOT/var/log" \
-    "$JENOVA_ROOT/var/cache" \
-    "$JENOVA_ROOT/.jenova"
-do
-    mkdir -p "$_d"
-    ok "$_d"
-done
-
-# ---------------------------------------------------------------------------
 # 5. llama.cpp build check
 # ---------------------------------------------------------------------------
 if [ "$SKIP_LLAMA" = "0" ]; then
@@ -265,7 +250,7 @@ download_model() {
         warn "$_name not found at $_path"
         warn "  Install curl or fetch, then re-run install.sh to auto-download"
         WARNINGS=$((WARNINGS + 1))
-        return 1
+        return 0
     fi
     warn "$_name not found at $_path"
     printf "  Download %s (~%s)? [y/N] " "$(basename "$_path")" "$_size"
@@ -276,18 +261,18 @@ download_model() {
             info "Downloading $(basename "$_path") (~$_size) ..."
             _tmp="${_path}.tmp.$$"
             if [ "$_DL_CMD" = "curl" ]; then
-                if ! curl -L --fail --progress-bar -o "$_tmp" "$_url"; then
+                if ! curl -L --fail --max-time 600 --connect-timeout 15 --progress-bar -o "$_tmp" "$_url"; then
                     rm -f "$_tmp"
                     fail "Download failed for $_name"
                     ERRORS=$((ERRORS + 1))
-                    return 1
+                    return 0
                 fi
             else
-                if ! fetch -o "$_tmp" "$_url"; then
+                if ! fetch -T 600 -o "$_tmp" "$_url"; then
                     rm -f "$_tmp"
                     fail "Download failed for $_name"
                     ERRORS=$((ERRORS + 1))
-                    return 1
+                    return 0
                 fi
             fi
             if [ -s "$_tmp" ]; then
@@ -298,21 +283,21 @@ download_model() {
                 rm -f "$_tmp"
                 fail "Download failed for $_name (empty file)"
                 ERRORS=$((ERRORS + 1))
-                return 1
+                return 0
             fi
             ;;
         *)
             warn "Skipping $_name download"
             WARNINGS=$((WARNINGS + 1))
-            return 1
+            return 0
             ;;
     esac
 }
 
 # Agent model (required)
-_agent_model="${MODEL_PATH:-${JENOVA_MODEL:-$JENOVA_ROOT/models/Qwen2.5-Coder-7B-Q5_K_M.gguf}}"
+_agent_model="${MODEL_PATH:-${JENOVA_MODEL:-$JENOVA_ROOT/models/Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf}}"
 download_model "$_agent_model" \
-    "Agent model (Qwen2.5-Coder-7B)" \
+    "Agent model (Qwen2.5-Coder-7B-Instruct)" \
     "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q5_k_m.gguf" \
     "5.1GB"
 
@@ -335,7 +320,7 @@ download_model "${MODEL_EMBED:-$JENOVA_ROOT/models/nomic-embed-text-v1.5.Q8_0.gg
     "134MB"
 
 # Draft model (optional — enables speculative decoding for ~1.5-2x speedup)
-_draft_path="${MODEL_DRAFT:-$JENOVA_ROOT/models/Qwen2.5-Coder-0.5B-Q8_0.gguf}"
+_draft_path="${MODEL_DRAFT:-$JENOVA_ROOT/models/Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf}"
 if [ -f "$_draft_path" ]; then
     ok "Draft model — speculative decoding enabled"
 else
@@ -403,7 +388,7 @@ if [ "$SKIP_NVIM" = "0" ] && command -v nvim >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
-# 9. Install launchers to PATH
+# 8. Install launchers to PATH
 # ---------------------------------------------------------------------------
 info "Installing launchers to PATH..."
 
@@ -432,7 +417,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 10. jenova-setup (system tuning) reminder
+# 9. jenova-setup (system tuning) reminder
 # ---------------------------------------------------------------------------
 if [ "$_OS" = "FreeBSD" ]; then
     info "System tuning..."
@@ -442,7 +427,7 @@ if [ "$_OS" = "FreeBSD" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 11. Summary
+# 10. Summary
 # ---------------------------------------------------------------------------
 echo ""
 printf "${_B}══════════════════════════════════════════════════════${_N}\n"

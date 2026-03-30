@@ -88,9 +88,9 @@ Download GGUF model files and place them in `models/`:
 
 | Model | Filename | Purpose | Required |
 |---|---|---|---|
-| Qwen2.5-Coder-7B | `Qwen2.5-Coder-7B-Q5_K_M.gguf` | Main inference (chat, code, rewrite) | **Yes** |
+| Qwen2.5-Coder-7B | `Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf` | Main inference (chat, code, rewrite) | **Yes** |
 | nomic-embed-text-v1.5 | `nomic-embed-text-v1.5.Q8_0.gguf` | Embedding for RAG semantic search | Recommended |
-| Qwen2.5-Coder-0.5B | `Qwen2.5-Coder-0.5B-Q8_0.gguf` | Speculative decoding drafter | Optional |
+| Qwen2.5-Coder-0.5B | `Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf` | Speculative decoding drafter | Optional |
 
 ### Quick Install
 
@@ -149,8 +149,8 @@ bin/jvim [files...]
 
 ## Models & Roles
 
-- Agent (7B): Qwen2.5-Coder-7B-Q5_K_M — all 28 transformer layers fit across both Vulkan devices; 16k context, 2 slots, q8_0 KV cache.
-- Drafter (0.5B): Qwen2.5-Coder-0.5B-Q8_0 — speculative decoding target; enabled by default (`JENOVA_DRAFT=1`), disable with `JENOVA_DRAFT=0`.
+- Agent (7B): Qwen2.5-Coder-7B-Instruct-Q5_K_M — all 28 transformer layers fit across both Vulkan devices; 16k context, 2 slots, q8_0 KV cache.
+- Drafter (0.5B): Qwen2.5-Coder-0.5B-Instruct-Q8_0 — speculative decoding target; enabled by default (`JENOVA_DRAFT=1`), disable with `JENOVA_DRAFT=0`.
 - Embedding (nomic-embed-text-v1.5): CPU-only persistent daemon on port 8082 for RAG and semantic search.
 
 ## Directory Layout
@@ -244,9 +244,9 @@ pkg install cmake gmake vulkan-loader
 #### "Model not found"
 
 Download a GGUF model file and place it in `models/`. Recommended:
-- **Qwen2.5-Coder-7B-Q5_K_M.gguf** (main agent model)
+- **Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf** (main agent model)
 - **nomic-embed-text-v1.5.Q8_0.gguf** (embedding for RAG)
-- **Qwen2.5-Coder-0.5B-Q8_0.gguf** (optional drafter for speculative decoding)
+- **Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf** (optional drafter for speculative decoding)
 
 Or set `JENOVA_MODEL` environment variable to point to your model file.
 
