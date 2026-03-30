@@ -116,10 +116,12 @@ return {
     opts = {},
   },
 
-  -- ##Section purpose: conform.nvim — format-on-save with FreeBSD-available formatters
+  -- ##Section purpose: conform.nvim — format-on-save with per-formatter existence checks
+  -- Only format if at least one formatter is installed; silently skips missing tools.
   {
     "stevearc/conform.nvim",
     event = { "BufWritePre" },
+    cmd   = { "ConformInfo" },
     keys = {
       {
         "<leader>cf",
@@ -129,13 +131,40 @@ return {
     },
     opts = {
       formatters_by_ft = {
-        lua = { "stylua" },
+        lua    = { "stylua" },
         python = { "isort", "black" },
-        rust = { "rustfmt" },
-        go = { "gofmt", "goimports" },
-        c = { "clang-format" },
+        rust   = { "rustfmt" },
+        go     = { "gofmt", "goimports" },
+        c      = { "clang-format" },
+        cpp    = { "clang-format" },
+        sh     = { "shfmt" },
+        bash   = { "shfmt" },
       },
-      format_on_save = { timeout_ms = 500, lsp_fallback = true },
+      -- ##Step purpose: Only format if at least one formatter is installed and available.
+      -- lsp_fallback=true means LSP formatting fires when no conform formatter matches.
+      format_on_save = function(bufnr)
+        -- ##Condition purpose: Skip format-on-save for buffers in large files
+        -- to avoid stalling on 10k+ line generated files.
+        if vim.api.nvim_buf_line_count(bufnr) > 5000 then
+          return nil
+        end
+        -- ##Condition purpose: Only run if at least one formatter is available;
+        -- prevents noisy "no formatter" errors on filetypes with no formatters set.
+        local ok, conform = pcall(require, "conform")
+        if not ok then return nil end
+        local formatters = conform.list_formatters(bufnr)
+        local any_available = false
+        for _, f in ipairs(formatters) do
+          if f.available then
+            any_available = true
+            break
+          end
+        end
+        if not any_available then
+          return nil
+        end
+        return { timeout_ms = 500, lsp_fallback = true }
+      end,
     },
   },
 

@@ -208,21 +208,6 @@ check_optional "stylua"               "cargo install stylua  OR  pkg install sty
 check_optional "goimports"            "go install golang.org/x/tools/cmd/goimports@latest"
 
 # ---------------------------------------------------------------------------
-# 4. Runtime directories
-# ---------------------------------------------------------------------------
-info "Creating runtime directories..."
-
-for _d in \
-    "$JENOVA_ROOT/models" \
-    "$JENOVA_ROOT/var/log" \
-    "$JENOVA_ROOT/var/cache" \
-    "$JENOVA_ROOT/.jenova"
-do
-    mkdir -p "$_d"
-    ok "$_d"
-done
-
-# ---------------------------------------------------------------------------
 # 5. llama.cpp build check
 # ---------------------------------------------------------------------------
 if [ "$SKIP_LLAMA" = "0" ]; then
@@ -403,7 +388,7 @@ if [ "$SKIP_NVIM" = "0" ] && command -v nvim >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
-# 9. Install launchers to PATH
+# 8. Install launchers to PATH
 # ---------------------------------------------------------------------------
 info "Installing launchers to PATH..."
 
@@ -432,7 +417,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 10. jenova-setup (system tuning) reminder
+# 9. jenova-setup (system tuning) reminder
 # ---------------------------------------------------------------------------
 if [ "$_OS" = "FreeBSD" ]; then
     info "System tuning..."
@@ -442,7 +427,7 @@ if [ "$_OS" = "FreeBSD" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 11. Summary
+# 10. Summary
 # ---------------------------------------------------------------------------
 echo ""
 printf "${_B}══════════════════════════════════════════════════════${_N}\n"

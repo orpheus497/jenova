@@ -118,7 +118,8 @@ return {
       vim.notify = notify
 
       -- ##Step purpose: Defer Telescope notify extension registration until Telescope
-      -- is actually loaded. LazyLoad fires per-plugin on first load event.
+      -- is actually loaded. The autocmd group is deleted once telescope fires so it
+      -- does not run on every subsequent LazyLoad event.
       -- Augroup with clear=true prevents duplicate autocmds if this file is re-sourced.
       local group = vim.api.nvim_create_augroup("NotifyTelescopeLoad", { clear = true })
       vim.api.nvim_create_autocmd("User", {
@@ -127,7 +128,7 @@ return {
         callback = function(ev)
           if ev.data == "telescope.nvim" then
             pcall(require("telescope").load_extension, "notify")
-            return true  -- de-register this autocmd after telescope loads
+            vim.api.nvim_del_augroup_by_name("NotifyTelescopeLoad")
           end
         end,
       })
