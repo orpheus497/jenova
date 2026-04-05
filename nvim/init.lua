@@ -122,7 +122,8 @@ local function _jenova_tcp_probe(callback)
     callback(false)
     return
   end
-  local host = vim.env.JENOVA_CONNECT_HOST or "127.0.0.1"
+  local host = vim.env.JENOVA_CONNECT_HOST or vim.env.JENOVA_HOST or "127.0.0.1"
+  if host == "0.0.0.0" or host == "::" or host == "*" then host = "127.0.0.1" end
   local port = tonumber(vim.env.JENOVA_PORT or "8080")
   local tcp = uv.new_tcp()
   if not tcp then

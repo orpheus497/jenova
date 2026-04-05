@@ -341,8 +341,8 @@ function M.stop_polling()
   end
 end
 
---- Helper: render monitor lines into a buffer, creating or updating the window.
-local function render_monitor_window(buf, win)
+--- Helper: render monitor lines into a buffer.
+local function render_monitor_window(buf)
   local lines = M._build_monitor_lines()
   if buf and vim.api.nvim_buf_is_valid(buf) then
     vim.bo[buf].modifiable = true
@@ -395,13 +395,13 @@ function M.open_monitor()
   -- Refresh on 'r' — uses poll callback instead of heuristic delay
   vim.keymap.set("n", "r", function()
     M.poll(function()
-      render_monitor_window(buf, win)
+      render_monitor_window(buf)
     end)
   end, { buffer = buf, nowait = true })
 
   -- Trigger an immediate poll and refresh when data arrives
   M.poll(function()
-    render_monitor_window(buf, win)
+    render_monitor_window(buf)
   end)
 end
 

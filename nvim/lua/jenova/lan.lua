@@ -18,9 +18,6 @@ local DEFAULT_LLAMA_PORT = 8081
 local PROBE_TIMEOUT_MS = 300
 local MAX_CONCURRENT = 20
 
---- Active timer handles — stored here to prevent Lua GC collection during LAN scan
-local _active_timers = {}
-
 --- Parse local IP addresses from system commands.
 --- Returns a list of {ip=string, prefix=number} for non-loopback IPv4 addresses.
 local function get_local_networks()
@@ -115,6 +112,10 @@ local function generate_candidates(network)
   return candidates
 end
 
+-- Pin active timer/tcp handles to prevent GC during concurrent LAN scanning.
+-- Handles are removed from this table when closed.
+local _active_handles = {}
+
 --- Non-blocking TCP probe for a single host:port
 --- @param host string
 --- @param port number
@@ -126,15 +127,19 @@ local function tcp_probe(host, port, timeout_ms, callback)
   local tcp = uv.new_tcp()
   if not tcp then callback(false) return end
   local timer = uv.new_timer()
+  -- Pin handles to prevent GC collection during async operations
+  _active_handles[tcp] = true
+  if timer then _active_handles[timer] = true end
   local closed = false
-  -- Pin timer in module table to prevent GC collection before it fires
-  if timer then _active_timers[timer] = true end
   local function close_all()
     if not closed then
       closed = true
-      if timer then _active_timers[timer] = nil end
       pcall(function() tcp:close() end)
-      if timer then pcall(function() timer:close() end) end
+      _active_handles[tcp] = nil
+      if timer then
+        pcall(function() timer:close() end)
+        _active_handles[timer] = nil
+      end
     end
   end
   if timer then
@@ -208,12 +213,20 @@ function M.discover(opts)
     return
   end
 
-  -- Batch-probe candidates with limited concurrency
+  -- Batch-probe candidates with limited concurrency.
+  -- Track both TCP probes (active) and HTTP validations (validate_pending)
+  -- to prevent on_complete firing while validations are still in-flight.
   local found = false
   local idx = 1
   local active = 0
   local validate_pending = 0  -- HTTP validations in-flight (active counts TCP only)
   local total = #all_candidates
+
+  local function check_complete()
+    if not found and active == 0 and validate_pending == 0 and idx > total then
+      if on_complete then on_complete() end
+    end
+  end
 
   local function probe_next()
     if found then return end
@@ -223,28 +236,34 @@ function M.discover(opts)
       active = active + 1
       tcp_probe(candidate, port, PROBE_TIMEOUT_MS, function(ok)
         active = active - 1
-        if found then return end
+        if found then
+          check_complete()
+          return
+        end
         if ok then
           -- TCP open — validate with /health (track in-flight to avoid premature on_complete)
           validate_pending = validate_pending + 1
           validate_health(candidate, port, function(valid)
             validate_pending = validate_pending - 1
-            if found then return end
+            if found then
+              check_complete()
+              return
+            end
             if valid then
               found = true
               on_found(candidate, port)
+              return
             end
             probe_next()
+            check_complete()
           end)
         else
           probe_next()
+          check_complete()
         end
       end)
     end
-    -- All probes dispatched and completed with no match (including HTTP validations)
-    if active == 0 and validate_pending == 0 and idx > total and not found then
-      if on_complete then on_complete() end
-    end
+    check_complete()
   end
 
   probe_next()
