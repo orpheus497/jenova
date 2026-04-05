@@ -213,11 +213,19 @@ vim.api.nvim_create_autocmd("VimEnter", {
 vim.g.jenova_connected = false  -- initialise pessimistically
 local _init_uv = vim.uv or vim.loop
 local _jenova_timer = _init_uv and _init_uv.new_timer()
+-- Cache monitor module reference once (avoids pcall+require on every 30s tick)
+local _cached_monitor = nil
+local _monitor_checked = false
 if _jenova_timer then
   _jenova_timer:start(5000, 30000, vim.schedule_wrap(function()
+    -- Cache the monitor module lookup (only try once)
+    if not _monitor_checked then
+      _monitor_checked = true
+      local ok, mod = pcall(require, "jenova.monitor")
+      if ok then _cached_monitor = mod end
+    end
     -- Skip if monitor module is handling polling (avoid duplicate probes)
-    local mon_ok, monitor = pcall(require, "jenova.monitor")
-    if mon_ok and monitor._timer then return end
+    if _cached_monitor and _cached_monitor._timer then return end
     _jenova_tcp_probe(function(connected)
       vim.g.jenova_connected = connected
     end)

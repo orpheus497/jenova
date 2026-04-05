@@ -18,52 +18,55 @@ local DEFAULT_LLAMA_PORT = 8081
 local PROBE_TIMEOUT_MS = 300
 local MAX_CONCURRENT = 20
 
---- Parse local IP addresses from system commands.
---- Returns a list of {ip=string, prefix=number} for non-loopback IPv4 addresses.
-local function get_local_networks()
+--- Parse network interface output for IPv4 addresses (shared by ifconfig/ip addr).
+local function parse_network_output(output)
   local networks = {}
+  if not output or output == "" then return networks end
 
-  -- Try FreeBSD/macOS ifconfig first, then Linux ip addr
-  local cmds = {
-    "ifconfig 2>/dev/null",
-    "ip -4 addr show 2>/dev/null",
-  }
-
-  for _, cmd in ipairs(cmds) do
-    local handle = io.popen(cmd)
-    if handle then
-      local output = handle:read("*a")
-      handle:close()
-      if output and output ~= "" then
-        -- FreeBSD/macOS ifconfig: "inet 192.168.1.5 netmask 0xffffff00"
-        for ip, hex_mask in output:gmatch("inet (%d+%.%d+%.%d+%.%d+) netmask 0x(%x+)") do
-          if ip ~= "127.0.0.1" then
-            -- Convert hex netmask to prefix by counting set bits
-            local mask_num = tonumber(hex_mask, 16) or 0
-            local prefix = 0
-            while mask_num > 0 do
-              prefix = prefix + (mask_num % 2)
-              mask_num = math.floor(mask_num / 2)
-            end
-            -- Default to /24 if parsing failed
-            if prefix == 0 then prefix = 24 end
-            table.insert(networks, { ip = ip, prefix = prefix })
-          end
-        end
-
-        -- Linux ip addr: "inet 192.168.1.5/24"
-        for ip, prefix in output:gmatch("inet (%d+%.%d+%.%d+%.%d+)/(%d+)") do
-          if ip ~= "127.0.0.1" then
-            table.insert(networks, { ip = ip, prefix = tonumber(prefix) })
-          end
-        end
-
-        if #networks > 0 then break end
+  -- FreeBSD/macOS ifconfig: "inet 192.168.1.5 netmask 0xffffff00"
+  for ip, hex_mask in output:gmatch("inet (%d+%.%d+%.%d+%.%d+) netmask 0x(%x+)") do
+    if ip ~= "127.0.0.1" then
+      local mask_num = tonumber(hex_mask, 16) or 0
+      local prefix = 0
+      while mask_num > 0 do
+        prefix = prefix + (mask_num % 2)
+        mask_num = math.floor(mask_num / 2)
       end
+      if prefix == 0 then prefix = 24 end
+      table.insert(networks, { ip = ip, prefix = prefix })
+    end
+  end
+
+  -- Linux ip addr: "inet 192.168.1.5/24"
+  for ip, prefix in output:gmatch("inet (%d+%.%d+%.%d+%.%d+)/(%d+)") do
+    if ip ~= "127.0.0.1" then
+      table.insert(networks, { ip = ip, prefix = tonumber(prefix) })
     end
   end
 
   return networks
+end
+
+--- Parse local IP addresses from system commands (async via vim.system).
+--- @param callback fun(networks: table) Called with list of {ip=string, prefix=number}
+local function get_local_networks(callback)
+  if not vim.system then callback({}) return end
+
+  vim.system({ "ifconfig" }, { text = true }, function(result)
+    vim.schedule(function()
+      local networks = parse_network_output((result and result.stdout) or "")
+      if #networks > 0 then
+        callback(networks)
+      else
+        -- Fallback: try Linux ip addr
+        vim.system({ "ip", "-4", "addr", "show" }, { text = true }, function(r2)
+          vim.schedule(function()
+            callback(parse_network_output((r2 and r2.stdout) or ""))
+          end)
+        end)
+      end
+    end)
+  end)
 end
 
 --- Parse an IPv4 address into 4 octets
@@ -163,7 +166,11 @@ end
 --- @param port number
 --- @param callback fun(ok: boolean)
 local function validate_health(host, port, callback)
-  if not vim.system then callback(false) return end
+  if not vim.system or vim.fn.executable("curl") ~= 1 then
+    -- No curl available — accept TCP-reachable hosts as valid candidates
+    callback(true)
+    return
+  end
   local url = string.format("http://%s:%d/health", host, port)
   vim.system(
     { "curl", "-sf", "--max-time", "2", "--connect-timeout", "1", url },
@@ -193,7 +200,7 @@ function M.discover(opts)
 
   if not on_found then return end
 
-  local networks = get_local_networks()
+  get_local_networks(function(networks)
   if #networks == 0 then
     if on_complete then on_complete() end
     return
@@ -258,6 +265,7 @@ function M.discover(opts)
   end
 
   probe_next()
+  end) -- get_local_networks callback
 end
 
 --- Configure Neovim environment for a discovered remote Jenova CA instance.

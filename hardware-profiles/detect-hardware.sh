@@ -145,6 +145,9 @@ match_profile() {
     PROFILE_DEVICES="" PROFILE_TENSOR_SPLIT="" PROFILE_FIT_TARGET=""
     PROFILE_CTX_SIZE="" PROFILE_NUM_SLOTS="" PROFILE_THREADS=""
     PROFILE_THREADS_BATCH="" PROFILE_NGL="" PROFILE_KV_TYPE=""
+    # SECURITY NOTE: Sourcing executes the file as shell code. This is safe because
+    # profile.conf files are part of this repository and contain only variable
+    # assignments. Never source profile configs from untrusted/external sources.
     . "$_profile_conf"
 
     _score=0
