@@ -138,7 +138,6 @@ detect_storage() {
 load_profile_conf() {
     _lpc_file="$1"; shift
     for _lpc_var; do
-        eval "$_lpc_var=''"
         _lpc_val="$(grep -m1 "^${_lpc_var}=" "$_lpc_file" 2>/dev/null | head -n 1)" || true
         if [ -n "$_lpc_val" ]; then
             # Strip the KEY= prefix, then strip matching surrounding quotes (single or double)
@@ -149,8 +148,15 @@ load_profile_conf() {
                 \'*\') _lpc_stripped="${_lpc_val#\'}"
                        case "$_lpc_stripped" in *\') _lpc_val="${_lpc_stripped%\'}" ;; esac ;;
             esac
-            eval "$_lpc_var=\$_lpc_val"
         fi
+        # Assign to the named variable via case — avoids eval for security and correctness
+        case "$_lpc_var" in
+            MATCH_CPU)    MATCH_CPU="$_lpc_val" ;;
+            MATCH_GPU_0)  MATCH_GPU_0="$_lpc_val" ;;
+            MATCH_GPU_1)  MATCH_GPU_1="$_lpc_val" ;;
+            MATCH_OS)     MATCH_OS="$_lpc_val" ;;
+            PROFILE_DESC) PROFILE_DESC="$_lpc_val" ;;
+        esac
     done
 }
 

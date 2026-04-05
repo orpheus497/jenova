@@ -50,8 +50,9 @@ if [ -n "$REMOTE_HOST" ]; then
 
     # Quick health check on the remote
     if command -v curl >/dev/null 2>&1; then
-        if curl -sf --max-time 3 --connect-timeout 2 \
-            "http://${REMOTE_HOST}:${REMOTE_PROXY_PORT}/health" >/dev/null 2>&1; then
+        _remote_url="http://${REMOTE_HOST}:${REMOTE_PROXY_PORT}/health"
+        if echo "$REMOTE_HOST" | grep -q ":"; then _remote_url="http://[${REMOTE_HOST}]:${REMOTE_PROXY_PORT}/health"; fi
+        if curl -sf --max-time 3 --connect-timeout 2 "$_remote_url" >/dev/null 2>&1; then
             echo "Remote Jenova CA is healthy"
         else
             echo "Warning: Remote Jenova CA at $REMOTE_HOST:$REMOTE_PROXY_PORT is not responding" >&2

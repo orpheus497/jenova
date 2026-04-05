@@ -205,8 +205,9 @@ _probe_health() {
     if [ -f "$_HC" ]; then
         luajit "$_HC" "$CONNECT_HOST" "$LLAMA_PORT" "$_ph_timeout" 2>/dev/null
     elif command -v curl >/dev/null 2>&1; then
-        curl -sf -o /dev/null -m "$_ph_timeout" \
-            "http://${CONNECT_HOST}:${LLAMA_PORT}/health" 2>/dev/null
+        _url="http://${CONNECT_HOST}:${LLAMA_PORT}/health"
+        if echo "$CONNECT_HOST" | grep -q ":"; then _url="http://[${CONNECT_HOST}]:${LLAMA_PORT}/health"; fi
+        curl -sf -o /dev/null -m "$_ph_timeout" "$_url" 2>/dev/null
     else
         # Last resort: plain TCP probe via nc
         if command -v nc >/dev/null 2>&1; then
