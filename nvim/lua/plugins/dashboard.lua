@@ -81,6 +81,7 @@ return {
           btn("t",   "  Toggle AI Chat",            "require('lazy').load({plugins={'gp.nvim'}}); vim.cmd('GpChatToggle vsplit')"),
           btn("s",   "  Web Search",                "require('lazy').load({plugins={'gp.nvim'}}); vim.cmd('GpWebSearch')"),
           btn("j",   "  Jenova Agent Terminal",     "local r=vim.fn.expand('$JENOVA_ROOT'); if r=='' or r=='$JENOVA_ROOT' then r=vim.fn.expand('~/Projects/jenova') end; vim.cmd('term cd '..vim.fn.shellescape(r)..' && bin/jenova')"),
+          btn("M",   "  Backend Monitor",           "require('jenova.monitor').open_monitor()"),
         },
         opts = { spacing = 0 },
       }
@@ -122,6 +123,64 @@ return {
         opts = { spacing = 0 },
       }
 
+      -- ##Section purpose: Dynamic backend status section — async profile detection
+      -- Use centralized endpoint config from monitor module when available
+      local _mon_ok, _monitor = pcall(require, "jenova.monitor")
+      local _ep
+      if _mon_ok and _monitor.get_endpoints then
+        _ep = _monitor.get_endpoints()
+      else
+        local _h = vim.env.JENOVA_CONNECT_HOST or vim.env.JENOVA_HOST or "127.0.0.1"
+        if _h == "0.0.0.0" or _h == "::" or _h == "*" then _h = "127.0.0.1" end
+        _ep = { host = _h, proxy_port = 8080, llama_port = 8081, embed_port = 8082 }
+      end
+      local host = _ep.host
+      local proxy_port = tostring(_ep.proxy_port)
+      local llama_port = tostring(_ep.llama_port)
+      local embed_port = tostring(_ep.embed_port)
+
+      local function make_backend_status(profile_name)
+        return {
+          "",
+          "── Backend Status ──",
+          "",
+          string.format("     Proxy:    :%s     Llama:  :%s     Embed:  :%s",
+            proxy_port, llama_port, embed_port),
+          string.format("     Host:     %s      Profile: %s", host, profile_name),
+          "",
+        }
+      end
+
+      local backend_status = {
+        type = "text",
+        val = make_backend_status("detecting..."),
+        opts = { position = "center", hl = "AlphaHeaderLabel" },
+      }
+
+      -- Async hardware profile detection (avoids blocking UI on startup)
+      local jenova_root = vim.env.JENOVA_ROOT or ""
+      if jenova_root ~= "" and jenova_root ~= "$JENOVA_ROOT" then
+        local detect = jenova_root .. "/hardware-profiles/detect-hardware.sh"
+        if vim.fn.executable(detect) == 1 and vim.system then
+          vim.system({ detect }, { text = true, timeout = 5000 }, function(obj)
+            vim.schedule(function()
+              local profile_name = "unknown"
+              if obj and obj.code == 0 then
+                local raw = obj.stdout or ""
+                local result = raw:match("^%s*(.-)%s*$") or ""
+                if result ~= "" then profile_name = result end
+              end
+              backend_status.val = make_backend_status(profile_name)
+              pcall(vim.cmd, "AlphaRedraw")
+            end)
+          end)
+        else
+          backend_status.val = make_backend_status("unknown")
+        end
+      else
+        backend_status.val = make_backend_status("(no JENOVA_ROOT)")
+      end
+
       local controls = {
         type = "text",
         val = {
@@ -144,6 +203,7 @@ return {
           "│  SPC a c   AI Chat     SPC a t   Toggle Chat          │",
           "│  SPC a r   Respond     SPC a d   Delete Chat          │",
           "│  SPC a w   Rewrite (v) SPC a s   Web Search           │",
+          "│  SPC a m   Monitor     SPC a h   Checkhealth          │",
           "│                                                      │",
           "│  g c       Toggle Comment   s a / s d / s r  Surround │",
           "│  SPC b d   Delete Buffer    SPC c f   Format Buffer   │",
@@ -173,6 +233,8 @@ return {
           diagnostics_section,
           { type = "padding", val = 1 },
           config_section,
+          { type = "padding", val = 1 },
+          backend_status,
           { type = "padding", val = 1 },
           controls,
           { type = "padding", val = 1 },
