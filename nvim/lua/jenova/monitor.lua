@@ -1,0 +1,376 @@
+-- jenova/monitor.lua: Backend monitoring and status polling for Neovim UI.
+-- Provides non-blocking HTTP queries to llama-server /health and /slots
+-- endpoints, caching results for use by lualine, dashboard, and the
+-- :JenovaMonitor floating window.
+
+local M = {}
+
+-- Cached state (updated by periodic timer)
+M.state = {
+  connected = false,
+  model = "",
+  slots_used = 0,
+  slots_total = 0,
+  ctx_used = 0,
+  ctx_total = 0,
+  tokens_predicted = 0,
+  tokens_per_sec = 0,
+  uptime_seconds = 0,
+  gpu_layers = 0,
+  gpu_layers_total = 0,
+  last_update = 0,
+  proxy_ok = false,
+  llama_ok = false,
+  embed_ok = false,
+  error = nil,
+}
+
+-- Configuration
+local POLL_INTERVAL_MS = 10000  -- 10 seconds between full polls
+local CONNECT_TIMEOUT_MS = 2000
+
+--- Get connection host/port from environment
+local function get_endpoints()
+  local host = vim.env.JENOVA_CONNECT_HOST or vim.env.JENOVA_HOST or "127.0.0.1"
+  if host == "0.0.0.0" or host == "::" or host == "*" then
+    host = "127.0.0.1"
+  end
+  return {
+    host = host,
+    proxy_port = tonumber(vim.env.JENOVA_PORT or "8080"),
+    llama_port = tonumber(vim.env.JENOVA_LLAMA_PORT or "8081"),
+    embed_port = 8082,
+  }
+end
+
+--- Non-blocking TCP probe
+--- @param host string
+--- @param port number
+--- @param callback fun(ok: boolean)
+local function tcp_probe(host, port, callback)
+  local uv = vim.uv or vim.loop
+  if not uv then
+    callback(false)
+    return
+  end
+  local tcp = uv.new_tcp()
+  if not tcp then
+    callback(false)
+    return
+  end
+  local timeout = uv.new_timer()
+  local closed = false
+  local function close_handles()
+    if not closed then
+      closed = true
+      pcall(function() tcp:close() end)
+      if timeout then pcall(function() timeout:close() end) end
+    end
+  end
+  if timeout then
+    timeout:start(CONNECT_TIMEOUT_MS, 0, function()
+      if not closed then
+        close_handles()
+        vim.schedule(function() callback(false) end)
+      end
+    end)
+  end
+  tcp:connect(host, port, function(err)
+    if closed then return end
+    close_handles()
+    vim.schedule(function() callback(not err) end)
+  end)
+end
+
+--- Non-blocking HTTP GET via vim.system (Neovim 0.10+)
+--- @param url string
+--- @param callback fun(ok: boolean, body: string|nil)
+local function http_get(url, callback)
+  if not vim.system then
+    callback(false, nil)
+    return
+  end
+  vim.system(
+    { "curl", "-sf", "--max-time", "3", "--connect-timeout", "2", url },
+    { text = true },
+    function(result)
+      vim.schedule(function()
+        if result.code == 0 and result.stdout and result.stdout ~= "" then
+          callback(true, result.stdout)
+        else
+          callback(false, nil)
+        end
+      end)
+    end
+  )
+end
+
+--- Parse JSON safely
+local function json_decode(str)
+  local ok, result = pcall(vim.json.decode, str)
+  if ok then return result end
+  return nil
+end
+
+--- Poll /health endpoint for basic status
+local function poll_health(endpoints, callback)
+  local url = string.format("http://%s:%d/health", endpoints.host, endpoints.llama_port)
+  http_get(url, function(ok, body)
+    if ok and body then
+      local data = json_decode(body)
+      if data then
+        M.state.llama_ok = true
+        if data.slots_idle ~= nil then
+          M.state.slots_used = (data.slots_processing or 0)
+          M.state.slots_total = (data.slots_idle or 0) + (data.slots_processing or 0)
+        end
+        if callback then callback(true) end
+        return
+      end
+    end
+    M.state.llama_ok = false
+    if callback then callback(false) end
+  end)
+end
+
+--- Poll /slots endpoint for detailed slot and model info
+local function poll_slots(endpoints, callback)
+  local url = string.format("http://%s:%d/slots", endpoints.host, endpoints.llama_port)
+  http_get(url, function(ok, body)
+    if ok and body then
+      local data = json_decode(body)
+      if data and type(data) == "table" and #data > 0 then
+        -- Extract model name from first slot
+        local slot = data[1]
+        if slot.model then
+          -- Trim to just the filename without path and extension
+          local model_name = slot.model:match("([^/\\]+)$") or slot.model
+          model_name = model_name:gsub("%.gguf$", "")
+          M.state.model = model_name
+        end
+
+        -- Aggregate context usage and performance across all slots
+        local total_ctx = 0
+        local used_ctx = 0
+        local total_predicted = 0
+        for _, s in ipairs(data) do
+          if s.n_ctx then total_ctx = total_ctx + s.n_ctx end
+          if s.n_predict then used_ctx = used_ctx + (s.prompt_tokens or 0) end
+          if s.tokens_predicted then total_predicted = total_predicted + s.tokens_predicted end
+          -- Try to get GPU layer info
+          if s.n_gpu_layers then
+            M.state.gpu_layers = s.n_gpu_layers
+          end
+        end
+        M.state.ctx_total = total_ctx
+        M.state.ctx_used = used_ctx
+        M.state.tokens_predicted = total_predicted
+      end
+    end
+    if callback then callback(ok) end
+  end)
+end
+
+--- Poll /props endpoint for server properties (model info)
+local function poll_props(endpoints, callback)
+  local url = string.format("http://%s:%d/props", endpoints.host, endpoints.llama_port)
+  http_get(url, function(ok, body)
+    if ok and body then
+      local data = json_decode(body)
+      if data then
+        if data.total_slots then
+          M.state.slots_total = data.total_slots
+        end
+        if data.default_generation_settings then
+          local gs = data.default_generation_settings
+          if gs.model then
+            local model_name = gs.model:match("([^/\\]+)$") or gs.model
+            model_name = model_name:gsub("%.gguf$", "")
+            M.state.model = model_name
+          end
+          if gs.n_ctx then
+            M.state.ctx_total = gs.n_ctx
+          end
+          if gs.n_gpu_layers then
+            M.state.gpu_layers = gs.n_gpu_layers
+          end
+        end
+      end
+    end
+    if callback then callback(ok) end
+  end)
+end
+
+--- Full poll cycle
+function M.poll()
+  local endpoints = get_endpoints()
+
+  -- Probe all three services in parallel
+  tcp_probe(endpoints.host, endpoints.proxy_port, function(ok)
+    M.state.proxy_ok = ok
+    M.state.connected = ok
+    vim.g.jenova_connected = ok
+  end)
+
+  tcp_probe(endpoints.host, endpoints.embed_port, function(ok)
+    M.state.embed_ok = ok
+  end)
+
+  -- HTTP polls for detailed info (only if curl is available)
+  if vim.fn.executable("curl") == 1 then
+    poll_health(endpoints, function()
+      poll_props(endpoints, nil)
+    end)
+  else
+    -- Fallback: just TCP probe
+    tcp_probe(endpoints.host, endpoints.llama_port, function(ok)
+      M.state.llama_ok = ok
+    end)
+  end
+
+  M.state.last_update = os.time()
+end
+
+--- Get a compact status string for lualine
+function M.lualine_status()
+  if not M.state.connected then
+    return "AI: offline"
+  end
+  local parts = { "AI: on" }
+  if M.state.model ~= "" then
+    -- Shorten model name for status bar
+    local short = M.state.model
+    if #short > 20 then
+      short = short:sub(1, 18) .. ".."
+    end
+    parts = { short }
+  end
+  if M.state.slots_total > 0 then
+    parts[#parts + 1] = string.format("%d/%d", M.state.slots_used, M.state.slots_total)
+  end
+  return table.concat(parts, " | ")
+end
+
+--- Get service status icons for lualine
+function M.service_icons()
+  local proxy = M.state.proxy_ok and "P" or "p"
+  local llama = M.state.llama_ok and "L" or "l"
+  local embed = M.state.embed_ok and "E" or "e"
+  return string.format("[%s%s%s]", proxy, llama, embed)
+end
+
+--- Start the periodic polling timer
+function M.start_polling()
+  local uv = vim.uv or vim.loop
+  if not uv then return end
+
+  -- Initial poll after 2 seconds (let UI settle)
+  vim.defer_fn(function()
+    M.poll()
+  end, 2000)
+
+  -- Periodic poll
+  local timer = uv.new_timer()
+  if timer then
+    timer:start(POLL_INTERVAL_MS, POLL_INTERVAL_MS, vim.schedule_wrap(function()
+      M.poll()
+    end))
+  end
+end
+
+--- Open a floating window showing real-time backend stats
+function M.open_monitor()
+  -- Force an immediate poll
+  M.poll()
+
+  -- Create the floating window after a short delay to let poll complete
+  vim.defer_fn(function()
+    local lines = M._build_monitor_lines()
+    local width = 60
+    local height = #lines + 2
+
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+    vim.bo[buf].modifiable = false
+    vim.bo[buf].bufhidden = "wipe"
+
+    local win_opts = {
+      relative = "editor",
+      width = width,
+      height = height,
+      col = math.floor((vim.o.columns - width) / 2),
+      row = math.floor((vim.o.lines - height) / 2),
+      style = "minimal",
+      border = "rounded",
+      title = " Jenova Monitor ",
+      title_pos = "center",
+    }
+    local win = vim.api.nvim_open_win(buf, true, win_opts)
+
+    -- Highlight setup
+    vim.api.nvim_set_option_value("winhl", "Normal:NormalFloat,FloatBorder:FloatBorder", { win = win })
+
+    -- Close on q or Escape
+    vim.keymap.set("n", "q", function()
+      if vim.api.nvim_win_is_valid(win) then
+        vim.api.nvim_win_close(win, true)
+      end
+    end, { buffer = buf, nowait = true })
+    vim.keymap.set("n", "<Esc>", function()
+      if vim.api.nvim_win_is_valid(win) then
+        vim.api.nvim_win_close(win, true)
+      end
+    end, { buffer = buf, nowait = true })
+
+    -- Refresh on 'r'
+    vim.keymap.set("n", "r", function()
+      M.poll()
+      vim.defer_fn(function()
+        if vim.api.nvim_buf_is_valid(buf) then
+          vim.bo[buf].modifiable = true
+          vim.api.nvim_buf_set_lines(buf, 0, -1, false, M._build_monitor_lines())
+          vim.bo[buf].modifiable = false
+        end
+      end, 1500)
+    end, { buffer = buf, nowait = true })
+  end, 500)
+end
+
+--- Build the lines for the monitor display
+function M._build_monitor_lines()
+  local s = M.state
+  local endpoints = get_endpoints()
+
+  local function status_icon(ok)
+    return ok and "  ONLINE" or "  OFFLINE"
+  end
+
+  local lines = {
+    "  Jenova Cognitive Architecture — Backend Monitor",
+    string.rep("-", 56),
+    "",
+    "  Services:",
+    string.format("    Proxy (:%d)     %s", endpoints.proxy_port, status_icon(s.proxy_ok)),
+    string.format("    llama (:%d)     %s", endpoints.llama_port, status_icon(s.llama_ok)),
+    string.format("    Embed (:%d)     %s", endpoints.embed_port, status_icon(s.embed_ok)),
+    "",
+    "  Model:",
+    string.format("    Name:           %s", s.model ~= "" and s.model or "(unknown)"),
+    string.format("    GPU Layers:     %s", s.gpu_layers > 0 and tostring(s.gpu_layers) or "(unknown)"),
+    "",
+    "  Inference:",
+    string.format("    Slots:          %d / %d", s.slots_used, s.slots_total),
+    string.format("    Context:        %s", s.ctx_total > 0 and string.format("%d tokens", s.ctx_total) or "(unknown)"),
+    string.format("    Predicted:      %d tokens", s.tokens_predicted),
+    "",
+    "  Connection:",
+    string.format("    Host:           %s", endpoints.host),
+    string.format("    Last Poll:      %s", s.last_update > 0 and os.date("%H:%M:%S", s.last_update) or "never"),
+    "",
+    string.rep("-", 56),
+    "  [r] Refresh    [q/Esc] Close",
+  }
+  return lines
+end
+
+return M

@@ -318,6 +318,80 @@ function M.check()
 
   h.info("Estimated resident usage when fully loaded: ~8.3 GiB (see JENOVA-NVIM-ROADMAP.md §9.3)")
   h.info("Optane NVMe swap handles cold tensor pages — check jenova-setup was run")
+
+  -- -------------------------------------------------------------------------
+  -- 9. Hardware Profile Detection
+  -- -------------------------------------------------------------------------
+  h.start("Hardware Profile")
+
+  local detect_script = jenova_root .. "/hardware-profiles/detect-hardware.sh"
+  if vim.fn.filereadable(detect_script) == 1 then
+    -- Detect current profile
+    local profile_name = vim.fn.system(detect_script .. " 2>/dev/null")
+    profile_name = vim.fn.trim(profile_name or "")
+
+    if profile_name ~= "" and vim.v.shell_error == 0 then
+      h.ok("Detected hardware profile: " .. profile_name)
+
+      -- Check if the active config matches the detected profile
+      local profile_conf = jenova_root .. "/hardware-profiles/" .. profile_name .. "/jenova.conf"
+      if vim.fn.filereadable(profile_conf) == 1 then
+        h.ok("Profile config available at hardware-profiles/" .. profile_name .. "/jenova.conf")
+      else
+        h.warn("Profile config not found at " .. profile_conf)
+      end
+
+      local profile_setup = jenova_root .. "/hardware-profiles/" .. profile_name .. "/jenova-setup"
+      if vim.fn.filereadable(profile_setup) == 1 then
+        h.ok("System tuning script available at hardware-profiles/" .. profile_name .. "/jenova-setup")
+      end
+    else
+      h.warn(
+        "No hardware profile matched this system",
+        "Run: ./hardware-profiles/detect-hardware.sh --info  to see detection details"
+      )
+    end
+
+    -- List available profiles
+    local profiles_dir = jenova_root .. "/hardware-profiles"
+    local profiles = vim.fn.glob(profiles_dir .. "/*/profile.conf", true, true)
+    if #profiles > 0 then
+      h.info(string.format("%d hardware profile(s) available:", #profiles))
+      for _, pconf in ipairs(profiles) do
+        local pdir = vim.fn.fnamemodify(pconf, ":h:t")
+        h.info("  - " .. pdir)
+      end
+    end
+  else
+    h.info("Hardware profiles not configured (hardware-profiles/detect-hardware.sh not found)")
+    h.info("Run ./install.sh or create hardware-profiles/ directory for multi-device support")
+  end
+
+  -- -------------------------------------------------------------------------
+  -- 10. Monitor Module
+  -- -------------------------------------------------------------------------
+  h.start("Monitor Module")
+
+  local mon_ok, monitor = pcall(require, "jenova.monitor")
+  if mon_ok then
+    h.ok("jenova.monitor module loaded")
+    if monitor.state.connected then
+      h.ok("Backend connected")
+      if monitor.state.model ~= "" then
+        h.ok("Active model: " .. monitor.state.model)
+      end
+      if monitor.state.gpu_layers > 0 then
+        h.ok(string.format("GPU layers: %d", monitor.state.gpu_layers))
+      end
+      if monitor.state.slots_total > 0 then
+        h.ok(string.format("Inference slots: %d/%d in use", monitor.state.slots_used, monitor.state.slots_total))
+      end
+    else
+      h.warn("Backend not connected — monitor data unavailable until backend starts")
+    end
+  else
+    h.warn("jenova.monitor module not available", "Check nvim/lua/jenova/monitor.lua exists")
+  end
 end
 
 return M

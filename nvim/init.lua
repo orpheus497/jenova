@@ -156,6 +156,7 @@ end
 -- ##Section purpose: Notify user if Jenova CA backend is unreachable at startup.
 -- Deferred 1.5s so the notification fires after noice.nvim is fully initialised.
 -- Backend status is cached in vim.g.jenova_connected for lualine status component.
+-- The jenova.monitor module handles periodic polling and provides data to lualine.
 vim.api.nvim_create_autocmd("VimEnter", {
   callback = function()
     vim.defer_fn(function()
@@ -170,13 +171,20 @@ vim.api.nvim_create_autocmd("VimEnter", {
           )
         end
       end)
+
+      -- Start the monitor module polling (provides data for lualine + :JenovaMonitor)
+      local ok, monitor = pcall(require, "jenova.monitor")
+      if ok then
+        monitor.start_polling()
+      end
     end, 1500)
   end,
   once = true,
 })
 
--- ##Section purpose: Periodic backend health refresh every 30s
--- Updates vim.g.jenova_connected so the lualine status component stays current.
+-- ##Section purpose: Periodic backend health refresh every 30s (fallback TCP probe)
+-- The monitor module also polls, but this ensures vim.g.jenova_connected stays
+-- updated even if the monitor module fails to load.
 vim.g.jenova_connected = false  -- initialise pessimistically
 local _init_uv = vim.uv or vim.loop
 local _jenova_timer = _init_uv and _init_uv.new_timer()
@@ -194,6 +202,20 @@ end
 -- ##Section purpose: :IDE user command — opens NvimTree, Edgy auto-manages layout
 -- FIX F1: Removed manual panel management that raced with Edgy. Edgy now owns
 -- the three-panel layout (NvimTree + Trouble left, AI Chat right).
+-- ##Section purpose: :JenovaMonitor — opens floating window with real-time backend stats
+vim.api.nvim_create_user_command("JenovaMonitor", function()
+  local ok, monitor = pcall(require, "jenova.monitor")
+  if ok then
+    monitor.open_monitor()
+  else
+    vim.notify("Failed to load jenova.monitor module", vim.log.levels.ERROR)
+  end
+end, { desc = "Open Jenova backend monitor" })
+
+-- ##Step purpose: <leader>am — open backend monitor, <leader>ah — run checkhealth
+map("n", "<leader>am", "<cmd>JenovaMonitor<CR>", { desc = "Jenova Monitor" })
+map("n", "<leader>ah", "<cmd>checkhealth jenova<CR>", { desc = "Jenova Health" })
+
 vim.api.nvim_create_user_command("IDE", function()
   -- ##Condition purpose: If on dashboard, close it first
   if vim.bo.filetype == "alpha" then

@@ -81,6 +81,7 @@ return {
           btn("t",   "  Toggle AI Chat",            "require('lazy').load({plugins={'gp.nvim'}}); vim.cmd('GpChatToggle vsplit')"),
           btn("s",   "  Web Search",                "require('lazy').load({plugins={'gp.nvim'}}); vim.cmd('GpWebSearch')"),
           btn("j",   "  Jenova Agent Terminal",     "local r=vim.fn.expand('$JENOVA_ROOT'); if r=='' or r=='$JENOVA_ROOT' then r=vim.fn.expand('~/Projects/jenova') end; vim.cmd('term cd '..vim.fn.shellescape(r)..' && bin/jenova')"),
+          btn("M",   "  Backend Monitor",           "require('jenova.monitor').open_monitor()"),
         },
         opts = { spacing = 0 },
       }
@@ -122,6 +123,43 @@ return {
         opts = { spacing = 0 },
       }
 
+      -- ##Section purpose: Dynamic backend status section — polls services at startup
+      local backend_status = {
+        type = "text",
+        val = (function()
+          local host = vim.env.JENOVA_CONNECT_HOST or vim.env.JENOVA_HOST or "127.0.0.1"
+          if host == "0.0.0.0" or host == "::" or host == "*" then host = "127.0.0.1" end
+          local proxy_port = vim.env.JENOVA_PORT or "8080"
+          local llama_port = vim.env.JENOVA_LLAMA_PORT or "8081"
+          local embed_port = "8082"
+
+          -- Detect hardware profile
+          local jenova_root = vim.env.JENOVA_ROOT or ""
+          local profile_name = "unknown"
+          if jenova_root ~= "" and jenova_root ~= "$JENOVA_ROOT" then
+            local detect = jenova_root .. "/hardware-profiles/detect-hardware.sh"
+            if vim.fn.filereadable(detect) == 1 then
+              local result = vim.fn.system(detect .. " 2>/dev/null")
+              result = vim.fn.trim(result or "")
+              if result ~= "" and vim.v.shell_error == 0 then
+                profile_name = result
+              end
+            end
+          end
+
+          return {
+            "",
+            "── Backend Status ──",
+            "",
+            string.format("     Proxy:    :%s     Llama:  :%s     Embed:  :%s",
+              proxy_port, llama_port, embed_port),
+            string.format("     Host:     %s      Profile: %s", host, profile_name),
+            "",
+          }
+        end)(),
+        opts = { position = "center", hl = "AlphaHeaderLabel" },
+      }
+
       local controls = {
         type = "text",
         val = {
@@ -144,6 +182,7 @@ return {
           "│  SPC a c   AI Chat     SPC a t   Toggle Chat          │",
           "│  SPC a r   Respond     SPC a d   Delete Chat          │",
           "│  SPC a w   Rewrite (v) SPC a s   Web Search           │",
+          "│  SPC a m   Monitor     SPC a h   Checkhealth          │",
           "│                                                      │",
           "│  g c       Toggle Comment   s a / s d / s r  Surround │",
           "│  SPC b d   Delete Buffer    SPC c f   Format Buffer   │",
@@ -173,6 +212,8 @@ return {
           diagnostics_section,
           { type = "padding", val = 1 },
           config_section,
+          { type = "padding", val = 1 },
+          backend_status,
           { type = "padding", val = 1 },
           controls,
           { type = "padding", val = 1 },

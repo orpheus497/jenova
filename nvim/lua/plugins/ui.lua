@@ -38,8 +38,8 @@ return {
   },
 
   -- ##Section purpose: lualine.nvim — statusline with mode, branch, diagnostics, AI status
-  -- PR #26: Added Jenova backend status indicator (AI: ● connected / AI: ○ offline)
-  -- Uses vim.g.jenova_connected which is updated by the periodic health check in init.lua.
+  -- Enhanced: Shows model name, slot usage, service health icons, and connection state.
+  -- Uses jenova.monitor module for real-time backend data.
   {
     "nvim-lualine/lualine.nvim",
     opts = {
@@ -53,16 +53,32 @@ return {
         lualine_a = { "mode" },
         lualine_b = { "branch", "diff", "diagnostics" },
         lualine_c = { { "filename", path = 1 } },
-        -- ##Step purpose: Jenova AI status indicator — green dot = proxy reachable,
-        -- red circle = backend offline. Updates every 30s via timer in init.lua.
         lualine_x = {
+          -- ##Step purpose: Service health icons — [PLE] = Proxy/Llama/Embed
+          -- Uppercase = online, lowercase = offline
           {
             function()
-              if vim.g.jenova_connected then
-                return "AI: ●"
-              else
-                return "AI: ○"
+              local ok, monitor = pcall(require, "jenova.monitor")
+              if ok then return monitor.service_icons() end
+              return ""
+            end,
+            color = function()
+              local ok, monitor = pcall(require, "jenova.monitor")
+              if ok and monitor.state.proxy_ok and monitor.state.llama_ok then
+                return { fg = "#98BB6C" }
+              elseif ok and (monitor.state.proxy_ok or monitor.state.llama_ok) then
+                return { fg = "#DCA561" }
               end
+              return { fg = "#FF5D62" }
+            end,
+          },
+          -- ##Step purpose: Model name and slot status from live backend data
+          {
+            function()
+              local ok, monitor = pcall(require, "jenova.monitor")
+              if ok then return monitor.lualine_status() end
+              if vim.g.jenova_connected then return "AI: on" end
+              return "AI: off"
             end,
             color = function()
               return {
@@ -70,7 +86,7 @@ return {
               }
             end,
           },
-          "encoding", "fileformat", "filetype",
+          "encoding", "filetype",
         },
         lualine_y = { "progress" },
         lualine_z = { "location" },
