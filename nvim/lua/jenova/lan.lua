@@ -1,0 +1,294 @@
+-- jenova/lan.lua: LAN discovery for remote Jenova CA instances.
+-- When Neovim is launched without jvim (no JENOVA_ROOT / JENOVA_CONNECT_HOST),
+-- this module scans the local network for a running Jenova CA proxy and
+-- configures the connection if one is found.
+--
+-- Discovery strategy:
+--   1. Determine the local machine's IP and subnet via `ifconfig` or `ip addr`
+--   2. Probe candidate IPs on the Jenova proxy port (default 8080) via TCP
+--   3. Validate by fetching /health from responsive hosts
+--   4. On success, set JENOVA_CONNECT_HOST, JENOVA_PORT, JENOVA_LLAMA_PORT
+--      so that gp.nvim, llama.vim, and the monitor module pick them up
+
+local M = {}
+
+--- Default ports to probe
+local DEFAULT_PROXY_PORT = 8080
+local DEFAULT_LLAMA_PORT = 8081
+local PROBE_TIMEOUT_MS = 300
+local MAX_CONCURRENT = 20
+
+--- Parse local IP addresses from system commands.
+--- Returns a list of {ip=string, prefix=number} for non-loopback IPv4 addresses.
+local function get_local_networks()
+  local networks = {}
+
+  -- Try FreeBSD/macOS ifconfig first, then Linux ip addr
+  local cmds = {
+    "ifconfig 2>/dev/null",
+    "ip -4 addr show 2>/dev/null",
+  }
+
+  for _, cmd in ipairs(cmds) do
+    local handle = io.popen(cmd)
+    if handle then
+      local output = handle:read("*a")
+      handle:close()
+      if output and output ~= "" then
+        -- FreeBSD/macOS ifconfig: "inet 192.168.1.5 netmask 0xffffff00"
+        for ip, hex_mask in output:gmatch("inet (%d+%.%d+%.%d+%.%d+) netmask 0x(%x+)") do
+          if ip ~= "127.0.0.1" then
+            -- Convert hex netmask to prefix by counting set bits
+            local mask_num = tonumber(hex_mask, 16) or 0
+            local prefix = 0
+            while mask_num > 0 do
+              prefix = prefix + (mask_num % 2)
+              mask_num = math.floor(mask_num / 2)
+            end
+            -- Default to /24 if parsing failed
+            if prefix == 0 then prefix = 24 end
+            table.insert(networks, { ip = ip, prefix = prefix })
+          end
+        end
+
+        -- Linux ip addr: "inet 192.168.1.5/24"
+        for ip, prefix in output:gmatch("inet (%d+%.%d+%.%d+%.%d+)/(%d+)") do
+          if ip ~= "127.0.0.1" then
+            table.insert(networks, { ip = ip, prefix = tonumber(prefix) })
+          end
+        end
+
+        if #networks > 0 then break end
+      end
+    end
+  end
+
+  return networks
+end
+
+--- Parse an IPv4 address into 4 octets
+local function ip_to_octets(ip)
+  local a, b, c, d = ip:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)$")
+  if a then
+    return tonumber(a), tonumber(b), tonumber(c), tonumber(d)
+  end
+  return nil
+end
+
+--- Generate candidate IPs for a /24 subnet (most common LAN)
+local function generate_candidates(network)
+  local a, b, c, _ = ip_to_octets(network.ip)
+  if not a then return {} end
+
+  -- Only scan /24 subnets (common home/office LAN)
+  -- Skip the local machine's own IP
+  local candidates = {}
+  local local_ip = network.ip
+  for host = 1, 254 do
+    local candidate = string.format("%d.%d.%d.%d", a, b, c, host)
+    if candidate ~= local_ip then
+      table.insert(candidates, candidate)
+    end
+  end
+  return candidates
+end
+
+--- Non-blocking TCP probe for a single host:port
+--- @param host string
+--- @param port number
+--- @param timeout_ms number
+--- @param callback fun(ok: boolean)
+local function tcp_probe(host, port, timeout_ms, callback)
+  local uv = vim.uv or vim.loop
+  if not uv then callback(false) return end
+  local tcp = uv.new_tcp()
+  if not tcp then callback(false) return end
+  local timer = uv.new_timer()
+  local closed = false
+  local function close_all()
+    if not closed then
+      closed = true
+      pcall(function() tcp:close() end)
+      if timer then pcall(function() timer:close() end) end
+    end
+  end
+  if timer then
+    timer:start(timeout_ms, 0, function()
+      if not closed then
+        close_all()
+        vim.schedule(function() callback(false) end)
+      end
+    end)
+  end
+  tcp:connect(host, port, function(err)
+    if closed then return end
+    close_all()
+    vim.schedule(function() callback(not err) end)
+  end)
+end
+
+--- Validate a candidate host by checking if it responds with a Jenova-compatible
+--- /health endpoint (llama-server returns JSON with status field).
+--- @param host string
+--- @param port number
+--- @param callback fun(ok: boolean)
+local function validate_health(host, port, callback)
+  if not vim.system then callback(false) return end
+  local url = string.format("http://%s:%d/health", host, port)
+  vim.system(
+    { "curl", "-sf", "--max-time", "2", "--connect-timeout", "1", url },
+    { text = true },
+    function(result)
+      vim.schedule(function()
+        if result.code == 0 and result.stdout then
+          -- llama-server /health returns JSON with "status" field
+          local has_status = result.stdout:find('"status"') ~= nil
+          callback(has_status)
+        else
+          callback(false)
+        end
+      end)
+    end
+  )
+end
+
+--- Scan the local network for a Jenova CA instance.
+--- Probes all /24 candidates on the proxy port, validates via /health.
+--- @param opts? {port?: number, on_found: fun(host: string, port: number), on_complete?: fun()}
+function M.discover(opts)
+  opts = opts or {}
+  local port = opts.port or DEFAULT_PROXY_PORT
+  local on_found = opts.on_found
+  local on_complete = opts.on_complete
+
+  if not on_found then return end
+
+  local networks = get_local_networks()
+  if #networks == 0 then
+    if on_complete then on_complete() end
+    return
+  end
+
+  -- Collect all candidate IPs from all local subnets
+  local all_candidates = {}
+  for _, net in ipairs(networks) do
+    local candidates = generate_candidates(net)
+    for _, c in ipairs(candidates) do
+      table.insert(all_candidates, c)
+    end
+  end
+
+  if #all_candidates == 0 then
+    if on_complete then on_complete() end
+    return
+  end
+
+  -- Batch-probe candidates with limited concurrency
+  local found = false
+  local idx = 1
+  local active = 0
+  local total = #all_candidates
+
+  local function probe_next()
+    if found then return end
+    while active < MAX_CONCURRENT and idx <= total do
+      local candidate = all_candidates[idx]
+      idx = idx + 1
+      active = active + 1
+      tcp_probe(candidate, port, PROBE_TIMEOUT_MS, function(ok)
+        active = active - 1
+        if found then return end
+        if ok then
+          -- TCP open — validate with /health
+          validate_health(candidate, port, function(valid)
+            if found then return end
+            if valid then
+              found = true
+              on_found(candidate, port)
+            end
+            probe_next()
+          end)
+        else
+          probe_next()
+        end
+      end)
+    end
+    -- All probes dispatched and completed with no match
+    if active == 0 and idx > total and not found then
+      if on_complete then on_complete() end
+    end
+  end
+
+  probe_next()
+end
+
+--- Configure Neovim environment for a discovered remote Jenova CA instance.
+--- Sets env vars so gp.nvim, llama.vim, and monitor all pick up the remote host.
+--- @param host string  The LAN IP of the Jenova CA server
+--- @param proxy_port? number  Proxy port (default 8080)
+--- @param llama_port? number  llama-server port (default 8081)
+function M.configure_remote(host, proxy_port, llama_port)
+  proxy_port = proxy_port or DEFAULT_PROXY_PORT
+  llama_port = llama_port or DEFAULT_LLAMA_PORT
+
+  vim.env.JENOVA_CONNECT_HOST = host
+  vim.env.JENOVA_PORT = tostring(proxy_port)
+  vim.env.JENOVA_LLAMA_PORT = tostring(llama_port)
+
+  -- Update global state for lualine / statusbar
+  vim.g.jenova_connected = true
+  vim.g.jenova_lan_host = host
+
+  vim.notify(
+    string.format("Jenova CA discovered on LAN: %s:%d", host, proxy_port),
+    vim.log.levels.INFO,
+    { title = "Jenova LAN" }
+  )
+end
+
+--- Auto-discover and connect: convenience function for init.lua integration.
+--- Only runs when JENOVA_CONNECT_HOST is not set (i.e., nvim launched without jvim).
+--- @param opts? {silent?: boolean}
+function M.auto_discover(opts)
+  opts = opts or {}
+  local silent = opts.silent or false
+
+  -- Skip if already configured (launched via jvim or env set manually)
+  if vim.env.JENOVA_CONNECT_HOST and vim.env.JENOVA_CONNECT_HOST ~= "" then
+    return
+  end
+
+  -- Also skip if JENOVA_ROOT is set (jvim sets this)
+  if vim.env.JENOVA_ROOT and vim.env.JENOVA_ROOT ~= "" and vim.env.JENOVA_ROOT ~= "$JENOVA_ROOT" then
+    return
+  end
+
+  -- Skip if JENOVA_LAN_SCAN is explicitly disabled
+  if vim.env.JENOVA_LAN_SCAN == "0" or vim.env.JENOVA_LAN_SCAN == "false" then
+    return
+  end
+
+  M.discover({
+    on_found = function(host, port)
+      M.configure_remote(host, port)
+
+      -- Start monitor polling now that we have a connection
+      local mon_ok, monitor = pcall(require, "jenova.monitor")
+      if mon_ok then
+        monitor.start_polling()
+      end
+    end,
+    on_complete = function()
+      if not silent then
+        vim.notify(
+          "No Jenova CA found on LAN. AI features unavailable.\n" ..
+          "Set JENOVA_CONNECT_HOST=<ip> or use jvim to start locally.",
+          vim.log.levels.INFO,
+          { title = "Jenova LAN" }
+        )
+      end
+    end,
+  })
+end
+
+return M

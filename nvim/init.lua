@@ -157,26 +157,51 @@ end
 -- Deferred 1.5s so the notification fires after noice.nvim is fully initialised.
 -- Backend status is cached in vim.g.jenova_connected for lualine status component.
 -- The jenova.monitor module handles periodic polling and provides data to lualine.
+-- When launched without jvim (no JENOVA_ROOT set), falls back to LAN discovery
+-- to find a remote Jenova CA instance on the local network.
 vim.api.nvim_create_autocmd("VimEnter", {
   callback = function()
     vim.defer_fn(function()
       _jenova_tcp_probe(function(connected)
         vim.g.jenova_connected = connected
-        if not connected then
-          vim.notify(
-            "Jenova CA backend not running. AI features unavailable.\n" ..
-            "Run:  jvim somefile.lua   OR   bin/llama-server-nvim",
-            vim.log.levels.WARN,
-            { title = "Jenova" }
-          )
+        if connected then
+          -- Backend reachable — start monitor polling
+          local ok, monitor = pcall(require, "jenova.monitor")
+          if ok then
+            monitor.start_polling()
+          end
+        else
+          -- Backend not reachable locally — check if we should try LAN discovery
+          local has_jvim_env = vim.env.JENOVA_ROOT and vim.env.JENOVA_ROOT ~= ""
+            and vim.env.JENOVA_ROOT ~= "$JENOVA_ROOT"
+          if has_jvim_env then
+            -- Launched via jvim but backend is down — warn normally
+            vim.notify(
+              "Jenova CA backend not running. AI features unavailable.\n" ..
+              "Run:  jvim somefile.lua   OR   bin/llama-server-nvim",
+              vim.log.levels.WARN,
+              { title = "Jenova" }
+            )
+            -- Still start monitor so it picks up when backend comes online
+            local ok, monitor = pcall(require, "jenova.monitor")
+            if ok then
+              monitor.start_polling()
+            end
+          else
+            -- Standalone nvim (no jvim) — attempt LAN discovery
+            local lan_ok, lan = pcall(require, "jenova.lan")
+            if lan_ok then
+              lan.auto_discover()
+            else
+              vim.notify(
+                "Jenova CA not configured. Use jvim or set JENOVA_CONNECT_HOST.",
+                vim.log.levels.INFO,
+                { title = "Jenova" }
+              )
+            end
+          end
         end
       end)
-
-      -- Start the monitor module polling (provides data for lualine + :JenovaMonitor)
-      local ok, monitor = pcall(require, "jenova.monitor")
-      if ok then
-        monitor.start_polling()
-      end
     end, 1500)
   end,
   once = true,
@@ -223,9 +248,33 @@ vim.api.nvim_create_user_command("JenovaMonitor", function()
   end
 end, { desc = "Open Jenova backend monitor" })
 
--- ##Step purpose: <leader>am — open backend monitor, <leader>ah — run checkhealth
+-- ##Section purpose: :JenovaLanScan — manual LAN discovery for remote Jenova CA
+vim.api.nvim_create_user_command("JenovaLanScan", function()
+  local ok, lan = pcall(require, "jenova.lan")
+  if ok then
+    vim.notify("Scanning LAN for Jenova CA instances...", vim.log.levels.INFO, { title = "Jenova LAN" })
+    lan.discover({
+      on_found = function(host, port)
+        lan.configure_remote(host, port)
+        -- Restart monitor polling with new endpoint
+        local mon_ok, monitor = pcall(require, "jenova.monitor")
+        if mon_ok then
+          monitor.start_polling()
+        end
+      end,
+      on_complete = function()
+        vim.notify("No Jenova CA found on LAN.", vim.log.levels.WARN, { title = "Jenova LAN" })
+      end,
+    })
+  else
+    vim.notify("Failed to load jenova.lan module", vim.log.levels.ERROR)
+  end
+end, { desc = "Scan LAN for remote Jenova CA instances" })
+
+-- ##Step purpose: <leader>am — open backend monitor, <leader>ah — run checkhealth, <leader>al — LAN scan
 map("n", "<leader>am", "<cmd>JenovaMonitor<CR>", { desc = "Jenova Monitor" })
 map("n", "<leader>ah", "<cmd>checkhealth jenova<CR>", { desc = "Jenova Health" })
+map("n", "<leader>al", "<cmd>JenovaLanScan<CR>", { desc = "Jenova LAN Scan" })
 
 vim.api.nvim_create_user_command("IDE", function()
   -- ##Condition purpose: If on dashboard, close it first

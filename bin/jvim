@@ -8,8 +8,72 @@
 # that llama.lua and gp.nvim plugins read the correct endpoints at startup.
 # Sets LD_LIBRARY_PATH for llama.cpp shared libraries before exec'ing Neovim.
 # On Neovim exit, stops Jenova CA only if this invocation started it.
+#
+# Usage: jvim [options] [nvim args...]
+#   --remote <host>   Connect to a remote Jenova CA on the LAN (client-only mode)
+#   --remote-port <p> Override proxy port for remote mode (default: 8080)
+#   --llama-port <p>  Override llama-server port for remote mode (default: 8081)
 
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
+
+# --- Parse --remote flag for LAN client mode ---
+REMOTE_HOST=""
+REMOTE_PROXY_PORT="8080"
+REMOTE_LLAMA_PORT="8081"
+NVIM_ARGS=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --remote)
+            shift
+            if [ -z "$1" ]; then
+                echo "Error: --remote requires a host argument" >&2
+                exit 1
+            fi
+            REMOTE_HOST="$1"
+            shift
+            ;;
+        --remote-port)
+            shift
+            REMOTE_PROXY_PORT="$1"
+            shift
+            ;;
+        --llama-port)
+            shift
+            REMOTE_LLAMA_PORT="$1"
+            shift
+            ;;
+        *)
+            # Collect remaining args for nvim
+            NVIM_ARGS="$NVIM_ARGS $1"
+            shift
+            ;;
+    esac
+done
+
+# --- Remote/LAN client mode: skip backend start, just export env and launch nvim ---
+if [ -n "$REMOTE_HOST" ]; then
+    export JENOVA_CONNECT_HOST="$REMOTE_HOST"
+    export JENOVA_PORT="$REMOTE_PROXY_PORT"
+    export JENOVA_LLAMA_PORT="$REMOTE_LLAMA_PORT"
+    export JENOVA_LAN_MODE="1"
+
+    echo "Jenova LAN client mode: connecting to $REMOTE_HOST:$REMOTE_PROXY_PORT"
+
+    # Quick health check on the remote
+    if command -v curl >/dev/null 2>&1; then
+        if curl -sf --max-time 3 --connect-timeout 2 \
+            "http://${REMOTE_HOST}:${REMOTE_PROXY_PORT}/health" >/dev/null 2>&1; then
+            echo "Remote Jenova CA is healthy"
+        else
+            echo "Warning: Remote Jenova CA at $REMOTE_HOST:$REMOTE_PROXY_PORT is not responding" >&2
+            echo "Neovim will launch anyway — monitor will retry automatically" >&2
+        fi
+    fi
+
+    # shellcheck disable=SC2086
+    exec nvim $NVIM_ARGS
+fi
 
 # Determine JENOVA_ROOT before loading config
 if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then

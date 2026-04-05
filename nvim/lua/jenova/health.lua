@@ -399,6 +399,36 @@ function M.check()
   else
     h.warn("jenova.monitor module not available", "Check nvim/lua/jenova/monitor.lua exists")
   end
+
+  -- -------------------------------------------------------------------------
+  h.start("LAN Mode")
+
+  local lan_mode = vim.env.JENOVA_LAN_MODE == "1"
+  local lan_host = vim.g.jenova_lan_host
+  local connect_host_env = vim.env.JENOVA_CONNECT_HOST or ""
+
+  if lan_mode then
+    h.ok("LAN client mode active (launched via jvim --remote)")
+    h.ok(string.format("Remote host: %s", connect_host_env))
+  elseif lan_host then
+    h.ok("LAN discovery found remote Jenova CA")
+    h.ok(string.format("Discovered host: %s", lan_host))
+  else
+    h.info("LAN mode not active (local backend or not configured)")
+    h.info("Use :JenovaLanScan or jvim --remote <host> for LAN mode")
+  end
+
+  local lan_ok, lan = pcall(require, "jenova.lan")
+  if lan_ok then
+    h.ok("jenova.lan module loaded")
+  else
+    h.warn("jenova.lan module not available", "Check nvim/lua/jenova/lan.lua exists")
+  end
+
+  local scan_disabled = vim.env.JENOVA_LAN_SCAN == "0" or vim.env.JENOVA_LAN_SCAN == "false"
+  if scan_disabled then
+    h.info("LAN auto-scan disabled (JENOVA_LAN_SCAN=0)")
+  end
 end
 
 return M
