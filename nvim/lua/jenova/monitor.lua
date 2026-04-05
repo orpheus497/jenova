@@ -138,7 +138,8 @@ local function poll_health(endpoints, callback)
   http_get(url, function(ok, body)
     if ok and body then
       local data = json_decode(body)
-      if data then
+      -- llama-server returns status="ok" when ready, "loading model" while starting
+      if data and data.status == "ok" then
         M.state.llama_ok = true
         if data.slots_idle ~= nil then
           M.state.slots_used = (data.slots_processing or 0)
@@ -164,7 +165,7 @@ local function poll_slots(endpoints, callback)
       if data and type(data) == "table" and #data > 0 then
         -- Extract model name from first slot
         local slot = data[1]
-        if slot.model then
+        if type(slot.model) == "string" then
           -- Trim to just the filename without path and extension
           local model_name = slot.model:match("([^/\\]+)$") or slot.model
           model_name = model_name:gsub("%.gguf$", "")
@@ -205,7 +206,7 @@ local function poll_props(endpoints, callback)
         end
         if data.default_generation_settings then
           local gs = data.default_generation_settings
-          if gs.model then
+          if type(gs.model) == "string" then
             local model_name = gs.model:match("([^/\\]+)$") or gs.model
             model_name = model_name:gsub("%.gguf$", "")
             M.state.model = model_name

@@ -18,6 +18,9 @@ local DEFAULT_LLAMA_PORT = 8081
 local PROBE_TIMEOUT_MS = 300
 local MAX_CONCURRENT = 20
 
+--- Active timer handles — stored here to prevent Lua GC collection during LAN scan
+local _active_timers = {}
+
 --- Parse local IP addresses from system commands.
 --- Returns a list of {ip=string, prefix=number} for non-loopback IPv4 addresses.
 local function get_local_networks()
@@ -124,9 +127,12 @@ local function tcp_probe(host, port, timeout_ms, callback)
   if not tcp then callback(false) return end
   local timer = uv.new_timer()
   local closed = false
+  -- Pin timer in module table to prevent GC collection before it fires
+  if timer then _active_timers[timer] = true end
   local function close_all()
     if not closed then
       closed = true
+      if timer then _active_timers[timer] = nil end
       pcall(function() tcp:close() end)
       if timer then pcall(function() timer:close() end) end
     end
@@ -206,6 +212,7 @@ function M.discover(opts)
   local found = false
   local idx = 1
   local active = 0
+  local validate_pending = 0  -- HTTP validations in-flight (active counts TCP only)
   local total = #all_candidates
 
   local function probe_next()
@@ -218,8 +225,10 @@ function M.discover(opts)
         active = active - 1
         if found then return end
         if ok then
-          -- TCP open — validate with /health
+          -- TCP open — validate with /health (track in-flight to avoid premature on_complete)
+          validate_pending = validate_pending + 1
           validate_health(candidate, port, function(valid)
+            validate_pending = validate_pending - 1
             if found then return end
             if valid then
               found = true
@@ -232,8 +241,8 @@ function M.discover(opts)
         end
       end)
     end
-    -- All probes dispatched and completed with no match
-    if active == 0 and idx > total and not found then
+    -- All probes dispatched and completed with no match (including HTTP validations)
+    if active == 0 and validate_pending == 0 and idx > total and not found then
       if on_complete then on_complete() end
     end
   end
