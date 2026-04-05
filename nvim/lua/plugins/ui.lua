@@ -146,7 +146,7 @@ return {
         pattern = "LazyLoad",
         callback = function(ev)
           if ev.data == "telescope.nvim" then
-            pcall(require("telescope").load_extension, "notify")
+            pcall(function() require("telescope").load_extension("notify") end)
             vim.api.nvim_del_augroup_by_name("NotifyTelescopeLoad")
           end
         end,

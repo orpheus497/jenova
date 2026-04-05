@@ -136,8 +136,15 @@ match_profile() {
 
     [ -f "$_profile_conf" ] || return 1
 
-    # Source profile.conf to extract all match variables robustly
+    # Source profile.conf to extract all match variables robustly.
+    # Reset all known profile.conf variables to prevent cross-iteration leakage.
     MATCH_CPU="" MATCH_GPU_0="" MATCH_GPU_1="" MATCH_OS=""
+    PROFILE_NAME="" PROFILE_DESC="" STRATEGY="" STRATEGY_DESC=""
+    HW_CPU="" HW_GPU_0="" HW_GPU_1="" HW_RAM="" HW_SWAP="" HW_STORAGE=""
+    HW_GPU_TOTAL_VRAM=""
+    PROFILE_DEVICES="" PROFILE_TENSOR_SPLIT="" PROFILE_FIT_TARGET=""
+    PROFILE_CTX_SIZE="" PROFILE_NUM_SLOTS="" PROFILE_THREADS=""
+    PROFILE_THREADS_BATCH="" PROFILE_NGL="" PROFILE_KV_TYPE=""
     . "$_profile_conf"
 
     _score=0

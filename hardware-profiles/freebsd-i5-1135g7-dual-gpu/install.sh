@@ -19,7 +19,7 @@
 
 set -e
 
-JENOVA_ROOT="$(dirname "$(realpath "$0")")"
+JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")/.."
 NVIM_CONFIG_SRC="$JENOVA_ROOT/nvim"
 NVIM_CONFIG_DST="$HOME/.config/nvim"
 
@@ -254,7 +254,7 @@ download_model() {
     fi
     warn "$_name not found at $_path"
     printf "  Download %s (~%s)? [y/N] " "$(basename "$_path")" "$_size"
-    read _ans
+    read -r _ans
     case "$_ans" in
         y|Y|yes|YES)
             mkdir -p "$(dirname "$_path")"
@@ -341,7 +341,7 @@ if [ "$SKIP_NVIM" = "0" ] && command -v nvim >/dev/null 2>&1; then
 
     if [ -d "$NVIM_CONFIG_DST" ] && [ "$FORCE" = "0" ]; then
         printf "  ~/.config/nvim already exists. Overwrite? [y/N] "
-        read _ans
+        read -r _ans
         case "$_ans" in
             y|Y|yes|YES) ;;
             *)
@@ -394,7 +394,7 @@ info "Installing launchers to PATH..."
 
 _BIN_DIR=""
 for _d in "$HOME/.local/bin" "$HOME/bin"; do
-    if echo "$PATH" | grep -q "$_d"; then
+    if echo "$PATH" | grep -qF "$_d"; then
         _BIN_DIR="$_d"
         break
     fi

@@ -182,18 +182,29 @@ vim.api.nvim_create_autocmd("VimEnter", {
   once = true,
 })
 
--- ##Section purpose: Periodic backend health refresh every 30s (fallback TCP probe)
--- The monitor module also polls, but this ensures vim.g.jenova_connected stays
--- updated even if the monitor module fails to load.
+-- ##Section purpose: Fallback backend health refresh every 30s (only if monitor module
+-- fails to load). Cleaned up on VimLeavePre to prevent late callbacks.
 vim.g.jenova_connected = false  -- initialise pessimistically
 local _init_uv = vim.uv or vim.loop
 local _jenova_timer = _init_uv and _init_uv.new_timer()
 if _jenova_timer then
   _jenova_timer:start(5000, 30000, vim.schedule_wrap(function()
+    -- Skip if monitor module is handling polling (avoid duplicate probes)
+    local mon_ok, monitor = pcall(require, "jenova.monitor")
+    if mon_ok and monitor._timer then return end
     _jenova_tcp_probe(function(connected)
       vim.g.jenova_connected = connected
     end)
   end))
+  -- Clean up fallback timer on exit
+  vim.api.nvim_create_autocmd("VimLeavePre", {
+    callback = function()
+      if _jenova_timer then
+        pcall(function() _jenova_timer:close() end)
+      end
+    end,
+    once = true,
+  })
 end
 
 --------------------------------------------------------------------------------

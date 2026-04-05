@@ -152,14 +152,15 @@ return {
       local jenova_root = vim.env.JENOVA_ROOT or ""
       if jenova_root ~= "" and jenova_root ~= "$JENOVA_ROOT" then
         local detect = jenova_root .. "/hardware-profiles/detect-hardware.sh"
-        if vim.fn.filereadable(detect) == 1 and vim.system then
-          vim.system({ detect }, { text = true }, function(obj)
-            local profile_name = "unknown"
-            if obj and obj.code == 0 then
-              local result = vim.fn.trim(obj.stdout or "")
-              if result ~= "" then profile_name = result end
-            end
+        if vim.fn.executable(detect) == 1 and vim.system then
+          vim.system({ detect }, { text = true, timeout = 5000 }, function(obj)
             vim.schedule(function()
+              local profile_name = "unknown"
+              if obj and obj.code == 0 then
+                local raw = obj.stdout or ""
+                local result = raw:match("^%s*(.-)%s*$") or ""
+                if result ~= "" then profile_name = result end
+              end
               backend_status.val = make_backend_status(profile_name)
               pcall(vim.cmd, "AlphaRedraw")
             end)

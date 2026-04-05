@@ -245,7 +245,9 @@ function M.poll()
     poll_health(endpoints, function()
       -- Chain: health -> props -> slots for progressive detail
       poll_props(endpoints, function()
-        poll_slots(endpoints, nil)
+        poll_slots(endpoints, function()
+          M.state.last_update = os.time()
+        end)
       end)
     end)
   else
@@ -253,10 +255,9 @@ function M.poll()
     tcp_probe(endpoints.host, endpoints.llama_port, function(ok)
       M.state.llama_ok = ok
       update_connected_state()
+      M.state.last_update = os.time()
     end)
   end
-
-  M.state.last_update = os.time()
 end
 
 --- Get a compact status string for lualine
@@ -307,9 +308,17 @@ function M.start_polling()
   M._timer = uv.new_timer()
   if M._timer then
     M._timer:start(POLL_INTERVAL_MS, POLL_INTERVAL_MS, vim.schedule_wrap(function()
+      -- Guard: skip if timer was stopped between schedule and execution
+      if not M._timer then return end
       M.poll()
     end))
   end
+
+  -- Cleanup timer on Neovim exit to prevent late callbacks on invalid state
+  vim.api.nvim_create_autocmd("VimLeavePre", {
+    callback = function() M.stop_polling() end,
+    once = true,
+  })
 end
 
 --- Stop polling and clean up timer handle

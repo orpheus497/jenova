@@ -79,10 +79,10 @@ INACTIVE_PAGES=$(( (3 * 1024 * 1024 * 1024) / PAGE_SIZE ))
 
 # Target more free pages (~2 GiB worth)
 # This gives the Iris Xe headroom to allocate from real RAM
-apply_sysctl vm.v_free_target $FREE_PAGES "2 GiB free page target"
+apply_sysctl vm.v_free_target "$FREE_PAGES" "2 GiB free page target"
 
 # Large inactive target (~3 GiB) — pages here are swap candidates
-apply_sysctl vm.v_inactive_target $INACTIVE_PAGES "3 GiB inactive target"
+apply_sysctl vm.v_inactive_target "$INACTIVE_PAGES" "3 GiB inactive target"
 
 # Bias the scanner toward laundering inactive pages
 apply_sysctl vm.inact_scan_laundry_weight 25 "aggressive inactive scan"
