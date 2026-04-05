@@ -148,15 +148,24 @@ load_profile_conf() {
                 \'*\') _lpc_stripped="${_lpc_val#\'}"
                        case "$_lpc_stripped" in *\') _lpc_val="${_lpc_stripped%\'}" ;; esac ;;
             esac
+            # Assign to the named variable via case — avoids eval for security and correctness
+            case "$_lpc_var" in
+                MATCH_CPU)    MATCH_CPU="$_lpc_val" ;;
+                MATCH_GPU_0)  MATCH_GPU_0="$_lpc_val" ;;
+                MATCH_GPU_1)  MATCH_GPU_1="$_lpc_val" ;;
+                MATCH_OS)     MATCH_OS="$_lpc_val" ;;
+                PROFILE_DESC) PROFILE_DESC="$_lpc_val" ;;
+            esac
+        else
+            # Variable not found in config — clear it explicitly
+            case "$_lpc_var" in
+                MATCH_CPU)    MATCH_CPU="" ;;
+                MATCH_GPU_0)  MATCH_GPU_0="" ;;
+                MATCH_GPU_1)  MATCH_GPU_1="" ;;
+                MATCH_OS)     MATCH_OS="" ;;
+                PROFILE_DESC) PROFILE_DESC="" ;;
+            esac
         fi
-        # Assign to the named variable via case — avoids eval for security and correctness
-        case "$_lpc_var" in
-            MATCH_CPU)    MATCH_CPU="$_lpc_val" ;;
-            MATCH_GPU_0)  MATCH_GPU_0="$_lpc_val" ;;
-            MATCH_GPU_1)  MATCH_GPU_1="$_lpc_val" ;;
-            MATCH_OS)     MATCH_OS="$_lpc_val" ;;
-            PROFILE_DESC) PROFILE_DESC="$_lpc_val" ;;
-        esac
     done
 }
 
