@@ -75,17 +75,36 @@ local function ip_to_octets(ip)
   return nil
 end
 
---- Generate candidate IPs for a /24 subnet (most common LAN)
+--- Generate candidate IPs for a subnet based on its prefix length.
+--- Supports /24 (254 hosts), /23 (510), /22 (1022), /16 (limited to first 1024).
+--- Subnets larger than /16 or smaller than /24 are clamped for safety.
 local function generate_candidates(network)
-  local a, b, c, _ = ip_to_octets(network.ip)
+  local a, b, c, d = ip_to_octets(network.ip)
   if not a then return {} end
 
-  -- Only scan /24 subnets (common home/office LAN)
-  -- Skip the local machine's own IP
+  local prefix = network.prefix or 24
+  -- Clamp to reasonable range for scanning
+  if prefix < 16 then prefix = 16 end
+  if prefix > 30 then return {} end
+
+  local host_bits = 32 - prefix
+  local host_count = math.min(2 ^ host_bits - 2, 1024)  -- cap at 1024 to avoid flooding
+
+  -- Compute network address by masking
+  local ip_num = a * 16777216 + b * 65536 + c * 256 + d
+  local mask = 0xFFFFFFFF - (2 ^ host_bits - 1)
+  local net_base = ip_num % 4294967296  -- ensure unsigned
+  net_base = math.floor(net_base / (2 ^ host_bits)) * (2 ^ host_bits)
+
   local candidates = {}
   local local_ip = network.ip
-  for host = 1, 254 do
-    local candidate = string.format("%d.%d.%d.%d", a, b, c, host)
+  for i = 1, host_count do
+    local candidate_num = net_base + i
+    local ca = math.floor(candidate_num / 16777216) % 256
+    local cb = math.floor(candidate_num / 65536) % 256
+    local cc = math.floor(candidate_num / 256) % 256
+    local cd = candidate_num % 256
+    local candidate = string.format("%d.%d.%d.%d", ca, cb, cc, cd)
     if candidate ~= local_ip then
       table.insert(candidates, candidate)
     end

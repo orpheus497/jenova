@@ -400,10 +400,12 @@ info "Installing launchers to PATH..."
 
 _BIN_DIR=""
 for _d in "$HOME/.local/bin" "$HOME/bin"; do
-    if echo "$PATH" | grep -qF "$_d"; then
-        _BIN_DIR="$_d"
-        break
-    fi
+    case ":$PATH:" in
+        *:"$_d":*)
+            _BIN_DIR="$_d"
+            break
+            ;;
+    esac
 done
 
 if [ -n "$_BIN_DIR" ]; then

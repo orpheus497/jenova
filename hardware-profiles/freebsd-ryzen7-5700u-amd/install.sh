@@ -175,6 +175,12 @@ PROFILE_DIR="$(dirname "$(realpath "$0")")"
 PROFILE_CONF="$PROFILE_DIR/jenova.conf"
 
 if [ -f "$PROFILE_CONF" ]; then
+    if [ -f "$JENOVA_ROOT/etc/jenova.conf" ]; then
+        _ts=$(date +%Y%m%d_%H%M%S)
+        cp "$JENOVA_ROOT/etc/jenova.conf" "$JENOVA_ROOT/etc/jenova.conf.bak.${_ts}"
+        ok "Backed up existing config to etc/jenova.conf.bak.${_ts}"
+    fi
+    mkdir -p "$JENOVA_ROOT/etc"
     cp "$PROFILE_CONF" "$JENOVA_ROOT/etc/jenova.conf"
     ok "Deployed AMD Ryzen 7 5700U configuration to etc/jenova.conf"
 else

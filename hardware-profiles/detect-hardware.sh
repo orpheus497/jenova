@@ -38,7 +38,7 @@ detect_os() {
     if [ "$OS_NAME" = "FreeBSD" ]; then
         OS_PRETTY="FreeBSD ${OS_RELEASE}"
     elif [ -f /etc/os-release ]; then
-        OS_PRETTY=$(grep "^PRETTY_NAME=" /etc/os-release 2>/dev/null | sed 's/^PRETTY_NAME=//;s/"//g')
+        OS_PRETTY=$(. /etc/os-release 2>/dev/null && printf '%s\n' "$PRETTY_NAME")
         [ -z "$OS_PRETTY" ] && OS_PRETTY="$OS_FULL"
     else
         OS_PRETTY="$OS_FULL"

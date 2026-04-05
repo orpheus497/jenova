@@ -16,18 +16,18 @@
 
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 
-# --- Parse --remote flag for LAN client mode ---
+# --- Parse jvim-specific flags, then pass remaining args to nvim via "$@" ---
 REMOTE_HOST=""
 REMOTE_PROXY_PORT="8080"
 REMOTE_LLAMA_PORT="8081"
-NVIM_ARGS=""
 
+# Consume only jvim flags; stop at first non-jvim argument (preserves "$@" for nvim)
 while [ $# -gt 0 ]; do
     case "$1" in
         --remote)
             shift
-            if [ -z "$1" ]; then
-                echo "Error: --remote requires a host argument" >&2
+            if [ -z "$1" ] || [ "${1#--}" != "$1" ]; then
+                echo "Error: --remote requires a host argument, not another option" >&2
                 exit 1
             fi
             REMOTE_HOST="$1"
@@ -35,18 +35,25 @@ while [ $# -gt 0 ]; do
             ;;
         --remote-port)
             shift
+            if [ -z "$1" ] || [ "${1#--}" != "$1" ]; then
+                echo "Error: --remote-port requires a port number" >&2
+                exit 1
+            fi
             REMOTE_PROXY_PORT="$1"
             shift
             ;;
         --llama-port)
             shift
+            if [ -z "$1" ] || [ "${1#--}" != "$1" ]; then
+                echo "Error: --llama-port requires a port number" >&2
+                exit 1
+            fi
             REMOTE_LLAMA_PORT="$1"
             shift
             ;;
         *)
-            # Collect remaining args for nvim
-            NVIM_ARGS="$NVIM_ARGS $1"
-            shift
+            # First non-jvim arg — stop parsing, rest is for nvim
+            break
             ;;
     esac
 done
@@ -71,8 +78,7 @@ if [ -n "$REMOTE_HOST" ]; then
         fi
     fi
 
-    # shellcheck disable=SC2086
-    exec nvim $NVIM_ARGS
+    exec nvim "$@"
 fi
 
 # Determine JENOVA_ROOT before loading config
