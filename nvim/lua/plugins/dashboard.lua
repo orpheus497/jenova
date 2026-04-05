@@ -123,42 +123,53 @@ return {
         opts = { spacing = 0 },
       }
 
-      -- ##Section purpose: Dynamic backend status section — polls services at startup
+      -- ##Section purpose: Dynamic backend status section — async profile detection
+      local host = vim.env.JENOVA_CONNECT_HOST or vim.env.JENOVA_HOST or "127.0.0.1"
+      if host == "0.0.0.0" or host == "::" or host == "*" then host = "127.0.0.1" end
+      local proxy_port = vim.env.JENOVA_PORT or "8080"
+      local llama_port = vim.env.JENOVA_LLAMA_PORT or "8081"
+      local embed_port = "8082"
+
+      local function make_backend_status(profile_name)
+        return {
+          "",
+          "── Backend Status ──",
+          "",
+          string.format("     Proxy:    :%s     Llama:  :%s     Embed:  :%s",
+            proxy_port, llama_port, embed_port),
+          string.format("     Host:     %s      Profile: %s", host, profile_name),
+          "",
+        }
+      end
+
       local backend_status = {
         type = "text",
-        val = (function()
-          local host = vim.env.JENOVA_CONNECT_HOST or vim.env.JENOVA_HOST or "127.0.0.1"
-          if host == "0.0.0.0" or host == "::" or host == "*" then host = "127.0.0.1" end
-          local proxy_port = vim.env.JENOVA_PORT or "8080"
-          local llama_port = vim.env.JENOVA_LLAMA_PORT or "8081"
-          local embed_port = "8082"
-
-          -- Detect hardware profile
-          local jenova_root = vim.env.JENOVA_ROOT or ""
-          local profile_name = "unknown"
-          if jenova_root ~= "" and jenova_root ~= "$JENOVA_ROOT" then
-            local detect = jenova_root .. "/hardware-profiles/detect-hardware.sh"
-            if vim.fn.filereadable(detect) == 1 then
-              local result = vim.fn.system(detect .. " 2>/dev/null")
-              result = vim.fn.trim(result or "")
-              if result ~= "" and vim.v.shell_error == 0 then
-                profile_name = result
-              end
-            end
-          end
-
-          return {
-            "",
-            "── Backend Status ──",
-            "",
-            string.format("     Proxy:    :%s     Llama:  :%s     Embed:  :%s",
-              proxy_port, llama_port, embed_port),
-            string.format("     Host:     %s      Profile: %s", host, profile_name),
-            "",
-          }
-        end)(),
+        val = make_backend_status("detecting..."),
         opts = { position = "center", hl = "AlphaHeaderLabel" },
       }
+
+      -- Async hardware profile detection (avoids blocking UI on startup)
+      local jenova_root = vim.env.JENOVA_ROOT or ""
+      if jenova_root ~= "" and jenova_root ~= "$JENOVA_ROOT" then
+        local detect = jenova_root .. "/hardware-profiles/detect-hardware.sh"
+        if vim.fn.filereadable(detect) == 1 and vim.system then
+          vim.system({ detect }, { text = true }, function(obj)
+            local profile_name = "unknown"
+            if obj and obj.code == 0 then
+              local result = vim.fn.trim(obj.stdout or "")
+              if result ~= "" then profile_name = result end
+            end
+            vim.schedule(function()
+              backend_status.val = make_backend_status(profile_name)
+              pcall(vim.cmd, "AlphaRedraw")
+            end)
+          end)
+        else
+          backend_status.val = make_backend_status("unknown")
+        end
+      else
+        backend_status.val = make_backend_status("(no JENOVA_ROOT)")
+      end
 
       local controls = {
         type = "text",

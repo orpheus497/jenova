@@ -327,7 +327,7 @@ function M.check()
   local detect_script = jenova_root .. "/hardware-profiles/detect-hardware.sh"
   if vim.fn.filereadable(detect_script) == 1 then
     -- Detect current profile
-    local profile_name = vim.fn.system(detect_script .. " 2>/dev/null")
+    local profile_name = vim.fn.system({ detect_script })
     profile_name = vim.fn.trim(profile_name or "")
 
     if profile_name ~= "" and vim.v.shell_error == 0 then

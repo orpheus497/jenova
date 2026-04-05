@@ -74,8 +74,8 @@ apply_sysctl vm.pageout_update_period 1 "fast pageout cycle"
 # Compute page targets from runtime page size (supports non-4K systems)
 PAGE_SIZE=$(getconf PAGESIZE 2>/dev/null || echo 4096)
 # Target: 2 GiB free, 3 GiB inactive
-FREE_PAGES=$(expr \( 2 \* 1024 \* 1024 \* 1024 \) / $PAGE_SIZE)
-INACTIVE_PAGES=$(expr \( 3 \* 1024 \* 1024 \* 1024 \) / $PAGE_SIZE)
+FREE_PAGES=$(( (2 * 1024 * 1024 * 1024) / PAGE_SIZE ))
+INACTIVE_PAGES=$(( (3 * 1024 * 1024 * 1024) / PAGE_SIZE ))
 
 # Target more free pages (~2 GiB worth)
 # This gives the Iris Xe headroom to allocate from real RAM

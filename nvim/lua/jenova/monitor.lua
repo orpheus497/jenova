@@ -1,6 +1,6 @@
 -- jenova/monitor.lua: Backend monitoring and status polling for Neovim UI.
--- Provides non-blocking HTTP queries to llama-server /health and /slots
--- endpoints, caching results for use by lualine, dashboard, and the
+-- Provides non-blocking HTTP queries to llama-server /health, /slots, and
+-- /props endpoints, caching results for use by lualine, dashboard, and the
 -- :JenovaMonitor floating window.
 
 local M = {}
@@ -25,6 +25,9 @@ M.state = {
   error = nil,
 }
 
+-- Polling timer handle (stored on module to prevent GC collection)
+M._timer = nil
+
 -- Configuration
 local POLL_INTERVAL_MS = 10000  -- 10 seconds between full polls
 local CONNECT_TIMEOUT_MS = 2000
@@ -37,10 +40,23 @@ local function get_endpoints()
   end
   return {
     host = host,
-    proxy_port = tonumber(vim.env.JENOVA_PORT or "8080"),
-    llama_port = tonumber(vim.env.JENOVA_LLAMA_PORT or "8081"),
+    proxy_port = tonumber(vim.env.JENOVA_PORT) or 8080,
+    llama_port = tonumber(vim.env.JENOVA_LLAMA_PORT) or 8081,
     embed_port = 8082,
   }
+end
+
+--- Build an HTTP URL, bracketing IPv6 literals as required by URL syntax
+--- @param host string
+--- @param port integer
+--- @param path string
+--- @return string
+local function format_http_url(host, port, path)
+  local formatted_host = host
+  if host:find(":", 1, true) and not host:match("^%[.*%]$") then
+    formatted_host = string.format("[%s]", host)
+  end
+  return string.format("http://%s:%d%s", formatted_host, port, path)
 end
 
 --- Non-blocking TCP probe
@@ -112,9 +128,16 @@ local function json_decode(str)
   return nil
 end
 
+--- Update composite connected state from individual service probes.
+--- "connected" requires both proxy and llama-server to be reachable.
+local function update_connected_state()
+  M.state.connected = M.state.proxy_ok and M.state.llama_ok
+  vim.g.jenova_connected = M.state.connected
+end
+
 --- Poll /health endpoint for basic status
 local function poll_health(endpoints, callback)
-  local url = string.format("http://%s:%d/health", endpoints.host, endpoints.llama_port)
+  local url = format_http_url(endpoints.host, endpoints.llama_port, "/health")
   http_get(url, function(ok, body)
     if ok and body then
       local data = json_decode(body)
@@ -124,18 +147,20 @@ local function poll_health(endpoints, callback)
           M.state.slots_used = (data.slots_processing or 0)
           M.state.slots_total = (data.slots_idle or 0) + (data.slots_processing or 0)
         end
+        update_connected_state()
         if callback then callback(true) end
         return
       end
     end
     M.state.llama_ok = false
+    update_connected_state()
     if callback then callback(false) end
   end)
 end
 
 --- Poll /slots endpoint for detailed slot and model info
 local function poll_slots(endpoints, callback)
-  local url = string.format("http://%s:%d/slots", endpoints.host, endpoints.llama_port)
+  local url = format_http_url(endpoints.host, endpoints.llama_port, "/slots")
   http_get(url, function(ok, body)
     if ok and body then
       local data = json_decode(body)
@@ -155,9 +180,9 @@ local function poll_slots(endpoints, callback)
         local total_predicted = 0
         for _, s in ipairs(data) do
           if s.n_ctx then total_ctx = total_ctx + s.n_ctx end
-          if s.n_predict then used_ctx = used_ctx + (s.prompt_tokens or 0) end
+          -- n_past = total tokens (prompt + generated) in KV cache for this slot
+          used_ctx = used_ctx + (s.n_past or 0)
           if s.tokens_predicted then total_predicted = total_predicted + s.tokens_predicted end
-          -- Try to get GPU layer info
           if s.n_gpu_layers then
             M.state.gpu_layers = s.n_gpu_layers
           end
@@ -173,7 +198,7 @@ end
 
 --- Poll /props endpoint for server properties (model info)
 local function poll_props(endpoints, callback)
-  local url = string.format("http://%s:%d/props", endpoints.host, endpoints.llama_port)
+  local url = format_http_url(endpoints.host, endpoints.llama_port, "/props")
   http_get(url, function(ok, body)
     if ok and body then
       local data = json_decode(body)
@@ -208,8 +233,7 @@ function M.poll()
   -- Probe all three services in parallel
   tcp_probe(endpoints.host, endpoints.proxy_port, function(ok)
     M.state.proxy_ok = ok
-    M.state.connected = ok
-    vim.g.jenova_connected = ok
+    update_connected_state()
   end)
 
   tcp_probe(endpoints.host, endpoints.embed_port, function(ok)
@@ -219,12 +243,16 @@ function M.poll()
   -- HTTP polls for detailed info (only if curl is available)
   if vim.fn.executable("curl") == 1 then
     poll_health(endpoints, function()
-      poll_props(endpoints, nil)
+      -- Chain: health -> props -> slots for progressive detail
+      poll_props(endpoints, function()
+        poll_slots(endpoints, nil)
+      end)
     end)
   else
     -- Fallback: just TCP probe
     tcp_probe(endpoints.host, endpoints.llama_port, function(ok)
       M.state.llama_ok = ok
+      update_connected_state()
     end)
   end
 
@@ -264,17 +292,31 @@ function M.start_polling()
   local uv = vim.uv or vim.loop
   if not uv then return end
 
+  -- Stop existing timer if re-called
+  if M._timer then
+    pcall(function() M._timer:close() end)
+    M._timer = nil
+  end
+
   -- Initial poll after 2 seconds (let UI settle)
   vim.defer_fn(function()
     M.poll()
   end, 2000)
 
-  -- Periodic poll
-  local timer = uv.new_timer()
-  if timer then
-    timer:start(POLL_INTERVAL_MS, POLL_INTERVAL_MS, vim.schedule_wrap(function()
+  -- Periodic poll — store on module to prevent GC collection
+  M._timer = uv.new_timer()
+  if M._timer then
+    M._timer:start(POLL_INTERVAL_MS, POLL_INTERVAL_MS, vim.schedule_wrap(function()
       M.poll()
     end))
+  end
+end
+
+--- Stop polling and clean up timer handle
+function M.stop_polling()
+  if M._timer then
+    pcall(function() M._timer:close() end)
+    M._timer = nil
   end
 end
 
@@ -361,6 +403,7 @@ function M._build_monitor_lines()
     "  Inference:",
     string.format("    Slots:          %d / %d", s.slots_used, s.slots_total),
     string.format("    Context:        %s", s.ctx_total > 0 and string.format("%d tokens", s.ctx_total) or "(unknown)"),
+    string.format("    KV Used:        %d tokens", s.ctx_used),
     string.format("    Predicted:      %d tokens", s.tokens_predicted),
     "",
     "  Connection:",

@@ -107,8 +107,8 @@ apply_sysctl vm.pageout_update_period 2 "moderate pageout cycle (standard NVMe)"
 # Compute page targets from runtime page size
 PAGE_SIZE=$(getconf PAGESIZE 2>/dev/null || echo 4096)
 # Target: 2 GiB free, 2 GiB inactive (less aggressive than Optane config)
-FREE_PAGES=$(expr \( 2 \* 1024 \* 1024 \* 1024 \) / $PAGE_SIZE)
-INACTIVE_PAGES=$(expr \( 2 \* 1024 \* 1024 \* 1024 \) / $PAGE_SIZE)
+FREE_PAGES=$(( (2 * 1024 * 1024 * 1024) / PAGE_SIZE ))
+INACTIVE_PAGES=$(( (2 * 1024 * 1024 * 1024) / PAGE_SIZE ))
 
 apply_sysctl vm.v_free_target $FREE_PAGES "2 GiB free page target"
 apply_sysctl vm.v_inactive_target $INACTIVE_PAGES "2 GiB inactive target"
