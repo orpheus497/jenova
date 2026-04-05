@@ -96,9 +96,8 @@ local function generate_candidates(network)
   local host_bits = 32 - prefix
   local host_count = math.min(2 ^ host_bits - 2, 1024)  -- cap at 1024 to avoid flooding
 
-  -- Compute network address by masking
+  -- Compute network address by truncating host bits
   local ip_num = a * 16777216 + b * 65536 + c * 256 + d
-  local mask = 0xFFFFFFFF - (2 ^ host_bits - 1)
   local net_base = ip_num % 4294967296  -- ensure unsigned
   net_base = math.floor(net_base / (2 ^ host_bits)) * (2 ^ host_bits)
 

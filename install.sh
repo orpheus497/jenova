@@ -300,6 +300,11 @@ download_model "$_agent_model" \
     "Agent model (Qwen2.5-Coder-7B-Instruct)" \
     "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q5_k_m.gguf" \
     "5.1GB"
+if [ ! -s "$_agent_model" ]; then
+    warn "Required agent model is missing: $_agent_model"
+    warn "Core backend functionality is blocked until the agent model is installed"
+    ERRORS=$((ERRORS + 1))
+fi
 
 # Ensure Neovim health check default model path stays in sync.
 # When JENOVA_MODEL is unset, Neovim expects $JENOVA_ROOT/models/jenova.gguf.

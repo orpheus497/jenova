@@ -130,21 +130,34 @@ detect_storage() {
 # Profile Matching
 # =========================================================================
 
+# load_profile_conf <file> <VAR1> [VAR2 ...]
+# Safely read only simple KEY=VALUE assignments from a profile.conf file
+# without sourcing (executing) it. Only lines matching KEY=VALUE or
+# KEY="VALUE" for an explicitly requested list of variable names are parsed.
+# All other content (shell code, comments, etc.) is ignored.
+load_profile_conf() {
+    _lpc_file="$1"; shift
+    for _lpc_var; do
+        eval "$_lpc_var=''"
+        _lpc_val="$(grep -m1 "^${_lpc_var}=" "$_lpc_file" 2>/dev/null | head -c 512)" || true
+        if [ -n "$_lpc_val" ]; then
+            # Strip the KEY= prefix, then strip surrounding quotes (single or double)
+            _lpc_val="${_lpc_val#*=}"
+            case "$_lpc_val" in
+                \"*\") _lpc_val="${_lpc_val#\"}" ; _lpc_val="${_lpc_val%\"}" ;;
+                \'*\') _lpc_val="${_lpc_val#\'}" ; _lpc_val="${_lpc_val%\'}" ;;
+            esac
+            eval "$_lpc_var=\$_lpc_val"
+        fi
+    done
+}
+
 match_profile() {
     _profile_dir="$1"
     _profile_conf="$_profile_dir/profile.conf"
 
     [ -f "$_profile_conf" ] || return 1
 
-    # Source profile.conf to extract all match variables robustly.
-    # Reset all known profile.conf variables to prevent cross-iteration leakage.
-    MATCH_CPU="" MATCH_GPU_0="" MATCH_GPU_1="" MATCH_OS=""
-    PROFILE_NAME="" PROFILE_DESC="" STRATEGY="" STRATEGY_DESC=""
-    HW_CPU="" HW_GPU_0="" HW_GPU_1="" HW_RAM="" HW_SWAP="" HW_STORAGE=""
-    HW_GPU_TOTAL_VRAM=""
-    PROFILE_DEVICES="" PROFILE_TENSOR_SPLIT="" PROFILE_FIT_TARGET=""
-    PROFILE_CTX_SIZE="" PROFILE_NUM_SLOTS="" PROFILE_THREADS=""
-    PROFILE_THREADS_BATCH="" PROFILE_NGL="" PROFILE_KV_TYPE=""
     # Validate that profile.conf is inside our hardware-profiles directory tree
     # to prevent path traversal or symlink attacks.
     _real_conf="$(realpath "$_profile_conf" 2>/dev/null)" || return 1
@@ -152,7 +165,11 @@ match_profile() {
         "$SCRIPT_DIR"/*) ;;  # OK — within hardware-profiles/
         *) printf "WARN: Skipping profile.conf outside expected directory: %s\n" "$_real_conf" >&2; return 1 ;;
     esac
-    . "$_profile_conf"
+
+    # Parse only the known match variables — never source/execute the file.
+    MATCH_CPU="" MATCH_GPU_0="" MATCH_GPU_1="" MATCH_OS=""
+    load_profile_conf "$_real_conf" \
+        MATCH_CPU MATCH_GPU_0 MATCH_GPU_1 MATCH_OS
 
     _score=0
 
@@ -247,7 +264,14 @@ print_info() {
         [ -d "$_pdir" ] || continue
         [ -f "$_pdir/profile.conf" ] || continue
         _pname=$(basename "$_pdir")
-        _pdesc=$( ( . "$_pdir/profile.conf" && printf '%s\n' "$PROFILE_DESC" ) 2>/dev/null )
+        _real_pconf="$(realpath "$_pdir/profile.conf" 2>/dev/null)" || continue
+        case "$_real_pconf" in
+            "$SCRIPT_DIR"/*) ;;
+            *) continue ;;
+        esac
+        PROFILE_DESC=""
+        load_profile_conf "$_real_pconf" PROFILE_DESC
+        _pdesc="$PROFILE_DESC"
         _pscore=$(match_profile "$_pdir" 2>/dev/null || echo "0")
         if [ "$_pscore" -gt 0 ]; then
             printf "    ${_G}[match: %2d]${_N}  %-40s %s\n" "$_pscore" "$_pname" "$_pdesc"

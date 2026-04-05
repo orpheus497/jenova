@@ -39,7 +39,7 @@ local function get_endpoints()
     host = host,
     proxy_port = tonumber(vim.env.JENOVA_PORT) or 8080,
     llama_port = tonumber(vim.env.JENOVA_LLAMA_PORT) or 8081,
-    embed_port = 8082,
+    embed_port = tonumber(vim.env.JENOVA_LLAMA_EMBED_PORT or vim.env.LLAMA_EMBED_PORT) or 8082,
   }
 end
 

@@ -93,6 +93,7 @@ if [ "$YES" = "0" ]; then
         echo "    $JENOVA_ROOT/.jenova/ (PID files, locks — --clean-runtime)"
         echo "    $JENOVA_ROOT/var/log/ (log files — --clean-runtime)"
         echo "    $JENOVA_ROOT/var/cache/ (cache — --clean-runtime)"
+        echo "    $JENOVA_ROOT/models/jenova.gguf (symlink — --clean-runtime)"
     fi
     echo ""
     printf "  Continue? [y/N] "
