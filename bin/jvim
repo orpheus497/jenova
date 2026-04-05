@@ -21,40 +21,21 @@ REMOTE_HOST=""
 REMOTE_PROXY_PORT="8080"
 REMOTE_LLAMA_PORT="8081"
 
+# Require a non-option argument after a flag; exits on missing/invalid value.
+require_arg() {
+    if [ -z "$2" ] || [ "${2#--}" != "$2" ]; then
+        echo "Error: $1 requires a value, not another option" >&2
+        exit 1
+    fi
+}
+
 # Consume only jvim flags; stop at first non-jvim argument (preserves "$@" for nvim)
 while [ $# -gt 0 ]; do
     case "$1" in
-        --remote)
-            shift
-            if [ -z "$1" ] || [ "${1#--}" != "$1" ]; then
-                echo "Error: --remote requires a host argument, not another option" >&2
-                exit 1
-            fi
-            REMOTE_HOST="$1"
-            shift
-            ;;
-        --remote-port)
-            shift
-            if [ -z "$1" ] || [ "${1#--}" != "$1" ]; then
-                echo "Error: --remote-port requires a port number" >&2
-                exit 1
-            fi
-            REMOTE_PROXY_PORT="$1"
-            shift
-            ;;
-        --llama-port)
-            shift
-            if [ -z "$1" ] || [ "${1#--}" != "$1" ]; then
-                echo "Error: --llama-port requires a port number" >&2
-                exit 1
-            fi
-            REMOTE_LLAMA_PORT="$1"
-            shift
-            ;;
-        *)
-            # First non-jvim arg — stop parsing, rest is for nvim
-            break
-            ;;
+        --remote)      shift; require_arg "--remote" "$1";      REMOTE_HOST="$1";       shift ;;
+        --remote-port) shift; require_arg "--remote-port" "$1"; REMOTE_PROXY_PORT="$1"; shift ;;
+        --llama-port)  shift; require_arg "--llama-port" "$1";  REMOTE_LLAMA_PORT="$1"; shift ;;
+        *) break ;;  # First non-jvim arg — rest is for nvim
     esac
 done
 

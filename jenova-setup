@@ -86,7 +86,10 @@ PROFILE_DIR=""
 PROFILE_NAME=""
 
 if [ -n "$FORCE_PROFILE" ]; then
-    # Explicit profile override
+    # Reject path traversal in profile name (must be a plain directory name)
+    case "$FORCE_PROFILE" in
+        */*|..|.*) fail "Invalid profile name: '$FORCE_PROFILE' (must not contain '/' or start with '.')"; exit 1 ;;
+    esac
     PROFILE_DIR="$SCRIPT_DIR/hardware-profiles/$FORCE_PROFILE"
     PROFILE_NAME="$FORCE_PROFILE"
     if [ ! -d "$PROFILE_DIR" ]; then

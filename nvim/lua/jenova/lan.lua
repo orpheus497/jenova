@@ -53,21 +53,23 @@ end
 local function get_local_networks(callback)
   if not vim.system then callback({}) return end
 
-  vim.system({ "ifconfig" }, { text = true }, function(result)
+  local ok, _ = pcall(vim.system, { "ifconfig" }, { text = true }, function(result)
     vim.schedule(function()
       local networks = parse_network_output((result and result.stdout) or "")
       if #networks > 0 then
         callback(networks)
       else
         -- Fallback: try Linux ip addr
-        vim.system({ "ip", "-4", "addr", "show" }, { text = true }, function(r2)
+        local ok2, _ = pcall(vim.system, { "ip", "-4", "addr", "show" }, { text = true }, function(r2)
           vim.schedule(function()
             callback(parse_network_output((r2 and r2.stdout) or ""))
           end)
         end)
+        if not ok2 then callback({}) end
       end
     end)
   end)
+  if not ok then callback({}) end
 end
 
 --- Parse an IPv4 address into 4 octets

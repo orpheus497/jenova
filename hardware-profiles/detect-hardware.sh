@@ -145,16 +145,21 @@ match_profile() {
     PROFILE_DEVICES="" PROFILE_TENSOR_SPLIT="" PROFILE_FIT_TARGET=""
     PROFILE_CTX_SIZE="" PROFILE_NUM_SLOTS="" PROFILE_THREADS=""
     PROFILE_THREADS_BATCH="" PROFILE_NGL="" PROFILE_KV_TYPE=""
-    # SECURITY NOTE: Sourcing executes the file as shell code. This is safe because
-    # profile.conf files are part of this repository and contain only variable
-    # assignments. Never source profile configs from untrusted/external sources.
+    # Validate that profile.conf is inside our hardware-profiles directory tree
+    # to prevent path traversal or symlink attacks.
+    _real_conf="$(realpath "$_profile_conf" 2>/dev/null)" || return 1
+    case "$_real_conf" in
+        "$SCRIPT_DIR"/*) ;;  # OK — within hardware-profiles/
+        *) printf "WARN: Skipping profile.conf outside expected directory: %s\n" "$_real_conf" >&2; return 1 ;;
+    esac
     . "$_profile_conf"
 
     _score=0
 
     # CPU match (most important — worth 10 points)
+    # Uses -Fi (fixed string, case-insensitive) to avoid regex injection from profile values
     if [ -n "$MATCH_CPU" ]; then
-        if printf '%s\n' "$CPU_MODEL" | grep -qi "$MATCH_CPU" 2>/dev/null; then
+        if printf '%s\n' "$CPU_MODEL" | grep -qFi "$MATCH_CPU" 2>/dev/null; then
             _score=$((_score + 10))
         else
             return 1  # CPU mismatch is disqualifying
@@ -162,6 +167,7 @@ match_profile() {
     fi
 
     # GPU match (worth 5 points per matching device)
+    # Uses -iE (extended regex) because GPU patterns use alternation (e.g., "Lucienne|Renoir")
     [ -n "$MATCH_GPU_0" ] && printf '%s\n' "$GPU_DEVICES" | grep -qiE "$MATCH_GPU_0" 2>/dev/null && _score=$((_score + 5))
 
     # MATCH_GPU_1: if defined, require it for multi-GPU profiles
@@ -175,7 +181,7 @@ match_profile() {
     fi
 
     # OS match (worth 3 points)
-    [ -n "$MATCH_OS" ] && printf '%s\n' "$OS_NAME" | grep -qi "$MATCH_OS" 2>/dev/null && _score=$((_score + 3))
+    [ -n "$MATCH_OS" ] && printf '%s\n' "$OS_NAME" | grep -qFi "$MATCH_OS" 2>/dev/null && _score=$((_score + 3))
 
     printf '%d\n' "$_score"
     return 0
