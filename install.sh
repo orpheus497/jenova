@@ -423,6 +423,7 @@ fi
 # ---------------------------------------------------------------------------
 info "Detecting hardware profile..."
 DETECT_SCRIPT="$JENOVA_ROOT/hardware-profiles/detect-hardware.sh"
+_PROFILE=""
 if [ -f "$DETECT_SCRIPT" ] && [ -x "$DETECT_SCRIPT" ]; then
     _PROFILE=$("$DETECT_SCRIPT" 2>/dev/null) || _PROFILE=""
     if [ -n "$_PROFILE" ]; then

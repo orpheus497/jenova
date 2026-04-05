@@ -99,6 +99,7 @@ CONNECT_HOST="${JENOVA_CONNECT_HOST:-127.0.0.1}"
 API_URL="http://${CONNECT_HOST}:${PORT}"
 
 JENOVA_DIR="${JENOVA_STATE:-$JENOVA_ROOT/.jenova}"
+PID_FILE="$JENOVA_DIR/jenova-ca.pid"
 if [ -n "$LOG_DIR" ]; then
     SERVER_LOG="$LOG_DIR/jenova-ca.log"
 else

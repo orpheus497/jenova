@@ -161,7 +161,7 @@ for _d in "$HOME/.local/bin" "$HOME/bin"; do
         _sym="$_d/$_bin"
         if [ -L "$_sym" ]; then
             _target=$(readlink "$_sym")
-            if echo "$_target" | grep -q "$JENOVA_ROOT"; then
+            if echo "$_target" | grep -qF "$JENOVA_ROOT"; then
                 rm -f "$_sym"
                 ok "Removed $_sym -> $_target"
             else
