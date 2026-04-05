@@ -17,6 +17,7 @@ local DEFAULT_PROXY_PORT = 8080
 local DEFAULT_LLAMA_PORT = 8081
 local PROBE_TIMEOUT_MS = 300
 local MAX_CONCURRENT = 20
+local MAX_VALIDATE_CONCURRENT = 5  -- cap concurrent curl processes for /health checks
 
 --- Parse network interface output for IPv4 addresses (shared by ifconfig/ip addr).
 local function parse_network_output(output)
@@ -235,6 +236,26 @@ function M.discover(opts)
     end
   end
 
+  -- Queue for HTTP validations waiting for a concurrency slot
+  local validate_queue = {}
+
+  local function drain_validate_queue()
+    while #validate_queue > 0 and validate_pending < MAX_VALIDATE_CONCURRENT do
+      if found then return end
+      local queued = table.remove(validate_queue, 1)
+      validate_pending = validate_pending + 1
+      validate_health(queued, port, function(valid)
+        validate_pending = validate_pending - 1
+        if not found and valid then
+          found = true
+          on_found(queued, port)
+        end
+        drain_validate_queue()
+        check_complete()
+      end)
+    end
+  end
+
   local function probe_next()
     if found then return end
     while active < MAX_CONCURRENT and idx <= total do
@@ -244,19 +265,10 @@ function M.discover(opts)
       tcp_probe(candidate, port, PROBE_TIMEOUT_MS, function(ok)
         active = active - 1
         if not found and ok then
-          -- TCP open — validate with /health (track in-flight to avoid premature on_complete)
-          validate_pending = validate_pending + 1
-          validate_health(candidate, port, function(valid)
-            validate_pending = validate_pending - 1
-            if not found and valid then
-              found = true
-              on_found(candidate, port)
-            end
-            check_complete()
-          end)
+          -- TCP open — queue for /health validation (capped at MAX_VALIDATE_CONCURRENT)
+          table.insert(validate_queue, candidate)
+          drain_validate_queue()
         end
-        -- Always try to fill the pipeline immediately after a TCP probe completes,
-        -- rather than waiting for HTTP validation (keeps concurrency high)
         probe_next()
         check_complete()
       end)
