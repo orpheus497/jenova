@@ -236,31 +236,22 @@ function M.discover(opts)
       active = active + 1
       tcp_probe(candidate, port, PROBE_TIMEOUT_MS, function(ok)
         active = active - 1
-        if found then
-          check_complete()
-          return
-        end
-        if ok then
+        if not found and ok then
           -- TCP open — validate with /health (track in-flight to avoid premature on_complete)
           validate_pending = validate_pending + 1
           validate_health(candidate, port, function(valid)
             validate_pending = validate_pending - 1
-            if found then
-              check_complete()
-              return
-            end
-            if valid then
+            if not found and valid then
               found = true
               on_found(candidate, port)
-              return
             end
-            probe_next()
             check_complete()
           end)
-        else
-          probe_next()
-          check_complete()
         end
+        -- Always try to fill the pipeline immediately after a TCP probe completes,
+        -- rather than waiting for HTTP validation (keeps concurrency high)
+        probe_next()
+        check_complete()
       end)
     end
     check_complete()

@@ -259,7 +259,7 @@ download_model() {
         y|Y|yes|YES)
             mkdir -p "$(dirname "$_path")"
             info "Downloading $(basename "$_path") (~$_size) ..."
-            _tmp="${_path}.tmp.$$"
+            _tmp=$(mktemp "${_path}.tmp.XXXXXX")
             if [ "$_DL_CMD" = "curl" ]; then
                 if ! curl -L --fail --max-time 600 --connect-timeout 15 --progress-bar -o "$_tmp" "$_url"; then
                     rm -f "$_tmp"
@@ -378,7 +378,9 @@ if [ "$SKIP_NVIM" = "0" ] && command -v nvim >/dev/null 2>&1; then
             # Copy mode — stable snapshot
             cp "$NVIM_CONFIG_SRC/init.lua"       "$NVIM_CONFIG_DST/init.lua"
             cp "$NVIM_CONFIG_SRC/lazy-lock.json" "$NVIM_CONFIG_DST/lazy-lock.json"
-            cp "$NVIM_CONFIG_SRC/lua/plugins/"*.lua "$NVIM_CONFIG_DST/lua/plugins/"
+            for _f in "$NVIM_CONFIG_SRC/lua/plugins/"*.lua; do
+                [ -f "$_f" ] && cp "$_f" "$NVIM_CONFIG_DST/lua/plugins/"
+            done
             for _f in "$NVIM_CONFIG_SRC/lua/jenova/"*.lua; do
                 [ -f "$_f" ] && cp "$_f" "$NVIM_CONFIG_DST/lua/jenova/"
             done
