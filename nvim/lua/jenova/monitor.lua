@@ -14,15 +14,11 @@ M.state = {
   ctx_used = 0,
   ctx_total = 0,
   tokens_predicted = 0,
-  tokens_per_sec = 0,
-  uptime_seconds = 0,
   gpu_layers = 0,
-  gpu_layers_total = 0,
   last_update = 0,
   proxy_ok = false,
   llama_ok = false,
   embed_ok = false,
-  error = nil,
 }
 
 -- Polling timer handle (stored on module to prevent GC collection)
@@ -227,18 +223,32 @@ local function poll_props(endpoints, callback)
   end)
 end
 
---- Full poll cycle
-function M.poll()
+--- Full poll cycle.
+--- @param on_complete? fun() Optional callback invoked after all async probes finish.
+function M.poll(on_complete)
   local endpoints = get_endpoints()
+
+  -- Track parallel TCP probes + sequential HTTP chain with a countdown latch.
+  -- TCP probes for proxy and embed run in parallel with the HTTP chain.
+  local pending = 3  -- proxy TCP + embed TCP + HTTP chain (or llama TCP fallback)
+  local function finish_one()
+    pending = pending - 1
+    if pending <= 0 then
+      M.state.last_update = os.time()
+      if on_complete then on_complete() end
+    end
+  end
 
   -- Probe all three services in parallel
   tcp_probe(endpoints.host, endpoints.proxy_port, function(ok)
     M.state.proxy_ok = ok
     update_connected_state()
+    finish_one()
   end)
 
   tcp_probe(endpoints.host, endpoints.embed_port, function(ok)
     M.state.embed_ok = ok
+    finish_one()
   end)
 
   -- HTTP polls for detailed info (only if curl is available)
@@ -247,7 +257,7 @@ function M.poll()
       -- Chain: health -> props -> slots for progressive detail
       poll_props(endpoints, function()
         poll_slots(endpoints, function()
-          M.state.last_update = os.time()
+          finish_one()
         end)
       end)
     end)
@@ -256,7 +266,7 @@ function M.poll()
     tcp_probe(endpoints.host, endpoints.llama_port, function(ok)
       M.state.llama_ok = ok
       update_connected_state()
-      M.state.last_update = os.time()
+      finish_one()
     end)
   end
 end
@@ -330,62 +340,68 @@ function M.stop_polling()
   end
 end
 
---- Open a floating window showing real-time backend stats
-function M.open_monitor()
-  -- Force an immediate poll
-  M.poll()
-
-  -- Create the floating window after a short delay to let poll complete
-  vim.defer_fn(function()
-    local lines = M._build_monitor_lines()
-    local width = 60
-    local height = #lines + 2
-
-    local buf = vim.api.nvim_create_buf(false, true)
+--- Helper: render monitor lines into a buffer, creating or updating the window.
+local function render_monitor_window(buf, win)
+  local lines = M._build_monitor_lines()
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    vim.bo[buf].modifiable = true
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
     vim.bo[buf].modifiable = false
-    vim.bo[buf].bufhidden = "wipe"
+  end
+  return lines
+end
 
-    local win_opts = {
-      relative = "editor",
-      width = width,
-      height = height,
-      col = math.floor((vim.o.columns - width) / 2),
-      row = math.floor((vim.o.lines - height) / 2),
-      style = "minimal",
-      border = "rounded",
-      title = " Jenova Monitor ",
-      title_pos = "center",
-    }
-    local win = vim.api.nvim_open_win(buf, true, win_opts)
+--- Open a floating window showing real-time backend stats
+function M.open_monitor()
+  -- Show window immediately with current (possibly stale) data, then refresh
+  local lines = M._build_monitor_lines()
+  local width = 60
+  local height = #lines + 2
 
-    -- Highlight setup
-    vim.api.nvim_set_option_value("winhl", "Normal:NormalFloat,FloatBorder:FloatBorder", { win = win })
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.bo[buf].modifiable = false
+  vim.bo[buf].bufhidden = "wipe"
 
-    -- Close on q or Escape
-    vim.keymap.set("n", "q", function()
-      if vim.api.nvim_win_is_valid(win) then
-        vim.api.nvim_win_close(win, true)
-      end
-    end, { buffer = buf, nowait = true })
-    vim.keymap.set("n", "<Esc>", function()
-      if vim.api.nvim_win_is_valid(win) then
-        vim.api.nvim_win_close(win, true)
-      end
-    end, { buffer = buf, nowait = true })
+  local win_opts = {
+    relative = "editor",
+    width = width,
+    height = height,
+    col = math.floor((vim.o.columns - width) / 2),
+    row = math.floor((vim.o.lines - height) / 2),
+    style = "minimal",
+    border = "rounded",
+    title = " Jenova Monitor ",
+    title_pos = "center",
+  }
+  local win = vim.api.nvim_open_win(buf, true, win_opts)
 
-    -- Refresh on 'r'
-    vim.keymap.set("n", "r", function()
-      M.poll()
-      vim.defer_fn(function()
-        if vim.api.nvim_buf_is_valid(buf) then
-          vim.bo[buf].modifiable = true
-          vim.api.nvim_buf_set_lines(buf, 0, -1, false, M._build_monitor_lines())
-          vim.bo[buf].modifiable = false
-        end
-      end, 1500)
-    end, { buffer = buf, nowait = true })
-  end, 500)
+  -- Highlight setup
+  vim.api.nvim_set_option_value("winhl", "Normal:NormalFloat,FloatBorder:FloatBorder", { win = win })
+
+  -- Close on q or Escape
+  vim.keymap.set("n", "q", function()
+    if vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_close(win, true)
+    end
+  end, { buffer = buf, nowait = true })
+  vim.keymap.set("n", "<Esc>", function()
+    if vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_close(win, true)
+    end
+  end, { buffer = buf, nowait = true })
+
+  -- Refresh on 'r' — uses poll callback instead of heuristic delay
+  vim.keymap.set("n", "r", function()
+    M.poll(function()
+      render_monitor_window(buf, win)
+    end)
+  end, { buffer = buf, nowait = true })
+
+  -- Trigger an immediate poll and refresh when data arrives
+  M.poll(function()
+    render_monitor_window(buf, win)
+  end)
 end
 
 --- Build the lines for the monitor display

@@ -151,7 +151,7 @@ match_profile() {
 
     # CPU match (most important — worth 10 points)
     if [ -n "$MATCH_CPU" ]; then
-        if echo "$CPU_MODEL" | grep -qi "$MATCH_CPU" 2>/dev/null; then
+        if printf '%s\n' "$CPU_MODEL" | grep -qi "$MATCH_CPU" 2>/dev/null; then
             _score=$((_score + 10))
         else
             return 1  # CPU mismatch is disqualifying
@@ -159,11 +159,11 @@ match_profile() {
     fi
 
     # GPU match (worth 5 points per matching device)
-    [ -n "$MATCH_GPU_0" ] && echo "$GPU_DEVICES" | grep -qiE "$MATCH_GPU_0" 2>/dev/null && _score=$((_score + 5))
+    [ -n "$MATCH_GPU_0" ] && printf '%s\n' "$GPU_DEVICES" | grep -qiE "$MATCH_GPU_0" 2>/dev/null && _score=$((_score + 5))
 
     # MATCH_GPU_1: if defined, require it for multi-GPU profiles
     if [ -n "$MATCH_GPU_1" ]; then
-        if echo "$GPU_DEVICES" | grep -qiE "$MATCH_GPU_1" 2>/dev/null; then
+        if printf '%s\n' "$GPU_DEVICES" | grep -qiE "$MATCH_GPU_1" 2>/dev/null; then
             _score=$((_score + 5))
         else
             # Multi-GPU profile requires second GPU — penalize heavily
@@ -172,9 +172,9 @@ match_profile() {
     fi
 
     # OS match (worth 3 points)
-    [ -n "$MATCH_OS" ] && echo "$OS_NAME" | grep -qi "$MATCH_OS" 2>/dev/null && _score=$((_score + 3))
+    [ -n "$MATCH_OS" ] && printf '%s\n' "$OS_NAME" | grep -qi "$MATCH_OS" 2>/dev/null && _score=$((_score + 3))
 
-    echo "$_score"
+    printf '%d\n' "$_score"
     return 0
 }
 
@@ -238,7 +238,7 @@ print_info() {
         [ -d "$_pdir" ] || continue
         [ -f "$_pdir/profile.conf" ] || continue
         _pname=$(basename "$_pdir")
-        _pdesc=$(grep "^PROFILE_DESC=" "$_pdir/profile.conf" | cut -d'"' -f2)
+        _pdesc=$( ( . "$_pdir/profile.conf" && printf '%s\n' "$PROFILE_DESC" ) 2>/dev/null )
         _pscore=$(match_profile "$_pdir" 2>/dev/null || echo "0")
         if [ "$_pscore" -gt 0 ]; then
             printf "    ${_G}[match: %2d]${_N}  %-40s %s\n" "$_pscore" "$_pname" "$_pdesc"
