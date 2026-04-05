@@ -139,13 +139,15 @@ load_profile_conf() {
     _lpc_file="$1"; shift
     for _lpc_var; do
         eval "$_lpc_var=''"
-        _lpc_val="$(grep -m1 "^${_lpc_var}=" "$_lpc_file" 2>/dev/null | head -c 512)" || true
+        _lpc_val="$(grep -m1 "^${_lpc_var}=" "$_lpc_file" 2>/dev/null | head -n 1)" || true
         if [ -n "$_lpc_val" ]; then
-            # Strip the KEY= prefix, then strip surrounding quotes (single or double)
+            # Strip the KEY= prefix, then strip matching surrounding quotes (single or double)
             _lpc_val="${_lpc_val#*=}"
             case "$_lpc_val" in
-                \"*\") _lpc_val="${_lpc_val#\"}" ; _lpc_val="${_lpc_val%\"}" ;;
-                \'*\') _lpc_val="${_lpc_val#\'}" ; _lpc_val="${_lpc_val%\'}" ;;
+                \"*\") _lpc_stripped="${_lpc_val#\"}"
+                       case "$_lpc_stripped" in *\") _lpc_val="${_lpc_stripped%\"}" ;; esac ;;
+                \'*\') _lpc_stripped="${_lpc_val#\'}"
+                       case "$_lpc_stripped" in *\') _lpc_val="${_lpc_stripped%\'}" ;; esac ;;
             esac
             eval "$_lpc_var=\$_lpc_val"
         fi
