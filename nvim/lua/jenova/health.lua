@@ -50,15 +50,22 @@ function M.check()
   -- -------------------------------------------------------------------------
   h.start("Jenova CA Backend")
 
-  local connect_host = vim.env.JENOVA_CONNECT_HOST or vim.env.JENOVA_HOST or "127.0.0.1"
-  -- Normalize wildcard bind addresses to loopback for client connections
-  if connect_host == "0.0.0.0" or connect_host == "::" or connect_host == "*" then
-    connect_host = "127.0.0.1"
+  -- Use centralized endpoint config from monitor module (single source of truth
+  -- for host normalization, port defaults, and wildcard-to-loopback mapping)
+  local mon_ok, monitor = pcall(require, "jenova.monitor")
+  local endpoints
+  if mon_ok and monitor.get_endpoints then
+    endpoints = monitor.get_endpoints()
+  else
+    -- Fallback if monitor module unavailable
+    local host = vim.env.JENOVA_CONNECT_HOST or vim.env.JENOVA_HOST or "127.0.0.1"
+    if host == "0.0.0.0" or host == "::" or host == "*" then host = "127.0.0.1" end
+    endpoints = { host = host, proxy_port = 8080, llama_port = 8081, embed_port = 8082 }
   end
-  local proxy_port   = vim.env.JENOVA_PORT          or "8080"
-  local llama_port   = vim.env.JENOVA_LLAMA_PORT    or "8081"
-  -- Embed port is not exposed as env var by jvim yet; use fixed default
-  local embed_port   = "8082"
+  local connect_host = endpoints.host
+  local proxy_port   = tostring(endpoints.proxy_port)
+  local llama_port   = tostring(endpoints.llama_port)
+  local embed_port   = tostring(endpoints.embed_port)
 
   local proxy_url = string.format("http://%s:%s/health", connect_host, proxy_port)
   local proxy_status = probe(connect_host, proxy_port)

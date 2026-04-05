@@ -38,7 +38,7 @@ detect_os() {
     if [ "$OS_NAME" = "FreeBSD" ]; then
         OS_PRETTY="FreeBSD ${OS_RELEASE}"
     elif [ -f /etc/os-release ]; then
-        OS_PRETTY=$(grep "^PRETTY_NAME=" /etc/os-release 2>/dev/null | cut -d'"' -f2)
+        OS_PRETTY=$(grep "^PRETTY_NAME=" /etc/os-release 2>/dev/null | sed 's/^PRETTY_NAME=//;s/"//g')
         [ -z "$OS_PRETTY" ] && OS_PRETTY="$OS_FULL"
     else
         OS_PRETTY="$OS_FULL"
@@ -190,7 +190,7 @@ find_best_profile() {
         _pscore=$(match_profile "$_pdir" 2>/dev/null || echo "0")
         _pname=$(basename "$_pdir")
 
-        if [ "$_pscore" -gt "$_best_score" ]; then
+        if [ "${_pscore:-0}" -gt "$_best_score" ]; then
             _best_score=$_pscore
             _best_profile="$_pdir"
             _best_name="$_pname"
@@ -266,6 +266,7 @@ apply_profile() {
             ok "Backed up existing config to etc/jenova.conf.bak.${_ts}"
         fi
 
+        mkdir -p "$_jenova_root/etc"
         cp "$_profile_conf" "$_jenova_root/etc/jenova.conf"
         ok "Deployed $MATCHED_PROFILE configuration to etc/jenova.conf"
     else

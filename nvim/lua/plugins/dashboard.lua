@@ -124,11 +124,20 @@ return {
       }
 
       -- ##Section purpose: Dynamic backend status section — async profile detection
-      local host = vim.env.JENOVA_CONNECT_HOST or vim.env.JENOVA_HOST or "127.0.0.1"
-      if host == "0.0.0.0" or host == "::" or host == "*" then host = "127.0.0.1" end
-      local proxy_port = vim.env.JENOVA_PORT or "8080"
-      local llama_port = vim.env.JENOVA_LLAMA_PORT or "8081"
-      local embed_port = "8082"
+      -- Use centralized endpoint config from monitor module when available
+      local _mon_ok, _monitor = pcall(require, "jenova.monitor")
+      local _ep
+      if _mon_ok and _monitor.get_endpoints then
+        _ep = _monitor.get_endpoints()
+      else
+        local _h = vim.env.JENOVA_CONNECT_HOST or vim.env.JENOVA_HOST or "127.0.0.1"
+        if _h == "0.0.0.0" or _h == "::" or _h == "*" then _h = "127.0.0.1" end
+        _ep = { host = _h, proxy_port = 8080, llama_port = 8081, embed_port = 8082 }
+      end
+      local host = _ep.host
+      local proxy_port = tostring(_ep.proxy_port)
+      local llama_port = tostring(_ep.llama_port)
+      local embed_port = tostring(_ep.embed_port)
 
       local function make_backend_status(profile_name)
         return {

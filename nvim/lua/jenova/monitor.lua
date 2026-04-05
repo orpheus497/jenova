@@ -32,7 +32,8 @@ M._timer = nil
 local POLL_INTERVAL_MS = 10000  -- 10 seconds between full polls
 local CONNECT_TIMEOUT_MS = 2000
 
---- Get connection host/port from environment
+--- Get connection host/port from environment.
+--- Exposed as M.get_endpoints() for reuse by health.lua and dashboard.lua.
 local function get_endpoints()
   local host = vim.env.JENOVA_CONNECT_HOST or vim.env.JENOVA_HOST or "127.0.0.1"
   if host == "0.0.0.0" or host == "::" or host == "*" then
@@ -424,5 +425,8 @@ function M._build_monitor_lines()
   }
   return lines
 end
+
+--- Public accessor for endpoint config (reused by health.lua and dashboard.lua)
+M.get_endpoints = get_endpoints
 
 return M

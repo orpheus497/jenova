@@ -253,8 +253,11 @@ download_model() {
         return 0
     fi
     warn "$_name not found at $_path"
-    printf "  Download %s (~%s)? [y/N] " "$(basename "$_path")" "$_size"
-    read -r _ans
+    _ans="n"
+    if [ -t 0 ]; then
+        printf "  Download %s (~%s)? [y/N] " "$(basename "$_path")" "$_size"
+        read -r _ans
+    fi
     case "$_ans" in
         y|Y|yes|YES)
             mkdir -p "$(dirname "$_path")"
@@ -340,8 +343,11 @@ if [ "$SKIP_NVIM" = "0" ] && command -v nvim >/dev/null 2>&1; then
     info "Installing Neovim configuration..."
 
     if [ -d "$NVIM_CONFIG_DST" ] && [ "$FORCE" = "0" ]; then
-        printf "  ~/.config/nvim already exists. Overwrite? [y/N] "
-        read -r _ans
+        _ans="n"
+        if [ -t 0 ]; then
+            printf "  ~/.config/nvim already exists. Overwrite? [y/N] "
+            read -r _ans
+        fi
         case "$_ans" in
             y|Y|yes|YES) ;;
             *)
