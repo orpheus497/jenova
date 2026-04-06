@@ -17,6 +17,7 @@ local M = {}
 local DEFAULT_PROXY_PORT = 8080
 local DEFAULT_LLAMA_PORT = 8081
 local PROBE_TIMEOUT_MS = 1000 -- Increased for more reliable LAN discovery
+local MAX_CONCURRENT = 50            -- parallel TCP probes in-flight
 local MAX_VALIDATE_CONCURRENT = 5  -- cap concurrent curl processes for /health checks
 
 --- Parse network interface output for IPv4 addresses (shared by ifconfig/ip addr).
