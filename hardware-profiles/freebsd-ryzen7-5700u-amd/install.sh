@@ -179,7 +179,7 @@ else
     warn "Build llama.cpp with Vulkan support (requires cmake, gmake, vulkan-loader):"
     warn "  cd $JENOVA_ROOT/llama.cpp"
     warn "  cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release"
-    warn "  cmake --build build --config Release -j\$(sysctl -n hw.ncpu 2>/dev/null || nproc || echo 8)"
+    warn "  cmake --build build --config Release -j\$(sysctl -n hw.ncpu 2>/dev/null || echo 8)"
     warn "For AMD on FreeBSD, also install: pkg install drm-kmod gpu-firmware-amd-kmod"
     WARNINGS=$((WARNINGS + 1))
 fi

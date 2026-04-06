@@ -49,7 +49,7 @@ Jenova supports multiple hardware profiles, auto-detected at install time. Two v
 | Storage | Intel Optane NVMe (27GB+ swap partition) |
 | Memory | 16GB RAM |
 
-**Strategy:** Full dual-GPU offload via `-fitt` auto-distribution. All 28 layers across both Vulkan devices. KV cache fits with 768 MiB safety margin.
+**Strategy:** Full dual-GPU offload via `-fitt` auto-distribution. All 28 layers across both Vulkan devices. KV cache fits with 768 MiB safety margin. Combined addressable GPU memory is ~11 GiB — the llama.cpp `-fitt` flag auto-distributes transformer layers across both devices.
 
 ### Profile 2: FreeBSD Ryzen 7 5700U AMD
 
@@ -62,8 +62,6 @@ Jenova supports multiple hardware profiles, auto-detected at install time. Two v
 | Memory | 15.28 GiB RAM |
 
 **Strategy:** Partial GPU offload — 18 of 28 transformer layers on Vulkan (AMD Vega 8), remaining 10 on CPU. Strong 8C/16T CPU handles CPU-resident layers efficiently.
-
-**Dual-GPU strategy (i5 profile):** Combined addressable GPU memory is ~11 GiB. The llama.cpp `-fitt` (fit target) flag auto-distributes transformer layers across both devices.
 
 ### GPU Layer Distribution
 
@@ -364,7 +362,7 @@ Use `cleanup.sh` to clear logs, cache, and stale state files without touching mo
 | `JENOVA_CONNECT_HOST` | `127.0.0.1` | Client connection address (wildcard binds are auto-mapped to `127.0.0.1`) |
 | `JENOVA_PORT` | `8080` | Port for Jenova intelligence proxy |
 | `JENOVA_LLAMA_PORT` | `8081` | Port for llama-server inference |
-| `JENOVA_LLAMA_EMBED_PORT` | `8082` | Port for embedding server (used by monitor and health checks) |
+| `JENOVA_LLAMA_EMBED_PORT` | `8082` | Port for the CPU-only embedding server (nomic-embed-text for RAG semantic search; also used by monitor and health checks) |
 | `JENOVA_API_URL` | `http://127.0.0.1:8080` | Proxy endpoint for the agent |
 | `JENOVA_LLAMA_URL` | `http://127.0.0.1:8081` | Direct llama-server endpoint (proxy internal) |
 
