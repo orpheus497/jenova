@@ -1,11 +1,11 @@
 #!/bin/sh
 
 # jenova-ca: Launch llama-server + Intelligence Proxy
-# FreeBSD 15 | GTX 1650 Ti 4GB + Iris Xe UMA | 16GB RAM | 27GB Optane NVMe swap
+# Jenova Cognitive Architecture — hardware-profile-aware daemon manager.
 #
-# Dual-GPU inference: NVIDIA (discrete) + Intel Iris Xe (UMA) via Vulkan.
-# No mlock — mmap'd weights page through Optane swap.
-# Model: Qwen2.5-Coder-7B — all 28 layers fit on dual-GPU, 16k context, 2 slots.
+# Loads hardware settings from etc/jenova.conf (or a hardware-profile jenova.conf
+# deployed by install.sh). Supports single-GPU, dual-GPU, and CPU-only modes
+# via the DEVICES / TENSOR_SPLIT / NGL_7B / FIT_TARGET profile variables.
 
 set -e
 
@@ -113,10 +113,20 @@ if [ -n "$DEVICES" ]; then
     DEV_ARGS="-dev $DEVICES"
 fi
 
-# --- Split mode + fit target (always on; tensor split only if dual-GPU) ---
-SPLIT_ARGS="-sm layer -fitt $FIT_TARGET"
-if [ -n "$TENSOR_SPLIT" ]; then
-    SPLIT_ARGS="$SPLIT_ARGS -ts $TENSOR_SPLIT"
+# --- Split mode + layer offload ---
+# NGL_7B="all" (default): use -fitt auto-fit to distribute layers across GPUs.
+#   Best for dual-GPU setups where all layers fit (i5-1135G7 dual-GPU profile).
+# NGL_7B=N (explicit count): use -ngl N for partial offload on limited-VRAM GPUs.
+#   Required for single-GPU UMA setups (e.g., AMD Lucienne Ryzen profile: NGL_7B=18).
+SPLIT_ARGS="-sm layer"
+if [ "$NGL_7B" = "all" ] || [ -z "$NGL_7B" ]; then
+    SPLIT_ARGS="$SPLIT_ARGS -fitt $FIT_TARGET"
+    if [ -n "$TENSOR_SPLIT" ]; then
+        SPLIT_ARGS="$SPLIT_ARGS -ts $TENSOR_SPLIT"
+    fi
+else
+    # Explicit layer count — skip -fitt (they conflict) and any tensor split
+    SPLIT_ARGS="$SPLIT_ARGS -ngl $NGL_7B"
 fi
 
 # --- KV cache quantization (halves KV memory vs f16) ---
@@ -335,7 +345,11 @@ echo "Starting Jenova CA..."
 echo "  Model:     $MODEL_PATH"
 echo "  Embed:     $MODEL_EMBED (CPU-only, Vulkan disabled)"
 echo "  Devices:   ${DEVICES:-CPU only}"
-echo "  GPU:       auto-fit${TENSOR_SPLIT:+ (ts $TENSOR_SPLIT)}${FIT_TARGET:+ (fitt $FIT_TARGET MiB)}"
+if [ "$NGL_7B" = "all" ] || [ -z "$NGL_7B" ]; then
+    echo "  GPU:       auto-fit (fitt ${FIT_TARGET} MiB)${TENSOR_SPLIT:+ ts $TENSOR_SPLIT}"
+else
+    echo "  GPU:       ngl ${NGL_7B} layers"
+fi
 echo "  Context:   $CTX_SIZE  Slots: $NUM_SLOTS  KV: ${KV_CACHE_TYPE:-f16}"
 echo ""
 

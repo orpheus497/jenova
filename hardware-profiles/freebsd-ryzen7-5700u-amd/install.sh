@@ -168,6 +168,23 @@ check_optional "cmake"   "pkg install cmake"
 check_optional "curl"    "pkg install curl"
 
 # ---------------------------------------------------------------------------
+# 5b. llama.cpp build check
+# ---------------------------------------------------------------------------
+info "Checking llama.cpp build..."
+LLAMA_BIN="$JENOVA_ROOT/llama.cpp/build/bin/llama-server"
+if [ -f "$LLAMA_BIN" ]; then
+    ok "llama-server binary found at $LLAMA_BIN"
+else
+    warn "llama-server not found at $LLAMA_BIN"
+    warn "Build llama.cpp with Vulkan support (requires cmake, gmake, vulkan-loader):"
+    warn "  cd $JENOVA_ROOT/llama.cpp"
+    warn "  cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release"
+    warn "  cmake --build build --config Release -j\$(sysctl -n hw.ncpu 2>/dev/null || nproc || echo 8)"
+    warn "For AMD on FreeBSD, also install: pkg install drm-kmod gpu-firmware-amd-kmod"
+    WARNINGS=$((WARNINGS + 1))
+fi
+
+# ---------------------------------------------------------------------------
 # 6. Deploy profile config
 # ---------------------------------------------------------------------------
 info "Installing hardware profile configuration..."
