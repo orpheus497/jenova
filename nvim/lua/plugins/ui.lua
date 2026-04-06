@@ -38,44 +38,63 @@ return {
   },
 
   -- ##Section purpose: lualine.nvim — statusline with mode, branch, diagnostics, AI status
-  -- PR #26: Added Jenova backend status indicator (AI: ● connected / AI: ○ offline)
-  -- Uses vim.g.jenova_connected which is updated by the periodic health check in init.lua.
+  -- Enhanced: Shows model name, slot usage, service health icons, and connection state.
+  -- Uses jenova.monitor module for real-time backend data.
   {
     "nvim-lualine/lualine.nvim",
-    opts = {
-      options = {
-        theme = "kanagawa",
-        component_separators = "|",
-        section_separators = { left = "", right = "" },
-        globalstatus = true,
-      },
-      sections = {
-        lualine_a = { "mode" },
-        lualine_b = { "branch", "diff", "diagnostics" },
-        lualine_c = { { "filename", path = 1 } },
-        -- ##Step purpose: Jenova AI status indicator — green dot = proxy reachable,
-        -- red circle = backend offline. Updates every 30s via timer in init.lua.
-        lualine_x = {
-          {
-            function()
-              if vim.g.jenova_connected then
-                return "AI: ●"
-              else
-                return "AI: ○"
-              end
-            end,
-            color = function()
-              return {
-                fg = vim.g.jenova_connected and "#98BB6C" or "#FF5D62",
-              }
-            end,
-          },
-          "encoding", "fileformat", "filetype",
+    config = function()
+      -- Cache monitor module reference once (avoids repeated pcall on every render)
+      local mon_ok, monitor = pcall(require, "jenova.monitor")
+      if not mon_ok then monitor = nil end
+
+      require("lualine").setup({
+        options = {
+          theme = "kanagawa",
+          component_separators = "|",
+          section_separators = { left = "", right = "" },
+          globalstatus = true,
         },
-        lualine_y = { "progress" },
-        lualine_z = { "location" },
-      },
-    },
+        sections = {
+          lualine_a = { "mode" },
+          lualine_b = { "branch", "diff", "diagnostics" },
+          lualine_c = { { "filename", path = 1 } },
+          lualine_x = {
+            -- ##Step purpose: Service health icons — [PLE] = Proxy/Llama/Embed
+            -- Uppercase = online, lowercase = offline
+            {
+              function()
+                if monitor then return monitor.service_icons() end
+                return ""
+              end,
+              color = function()
+                if monitor and monitor.state.proxy_ok and monitor.state.llama_ok then
+                  return { fg = "#98BB6C" }
+                elseif monitor and (monitor.state.proxy_ok or monitor.state.llama_ok) then
+                  return { fg = "#DCA561" }
+                end
+                return { fg = "#FF5D62" }
+              end,
+            },
+            -- ##Step purpose: Model name and slot status from live backend data
+            {
+              function()
+                if monitor then return monitor.lualine_status() end
+                if vim.g.jenova_connected then return "AI: on" end
+                return "AI: off"
+              end,
+              color = function()
+                return {
+                  fg = vim.g.jenova_connected and "#98BB6C" or "#FF5D62",
+                }
+              end,
+            },
+            "encoding", "filetype",
+          },
+          lualine_y = { "progress" },
+          lualine_z = { "location" },
+        },
+      })
+    end,
   },
 
   -- ##Section purpose: which-key.nvim — popup keybind hint overlay
@@ -118,7 +137,8 @@ return {
       vim.notify = notify
 
       -- ##Step purpose: Defer Telescope notify extension registration until Telescope
-      -- is actually loaded. LazyLoad fires per-plugin on first load event.
+      -- is actually loaded. The autocmd group is deleted once telescope fires so it
+      -- does not run on every subsequent LazyLoad event.
       -- Augroup with clear=true prevents duplicate autocmds if this file is re-sourced.
       local group = vim.api.nvim_create_augroup("NotifyTelescopeLoad", { clear = true })
       vim.api.nvim_create_autocmd("User", {
@@ -126,8 +146,8 @@ return {
         pattern = "LazyLoad",
         callback = function(ev)
           if ev.data == "telescope.nvim" then
-            pcall(require("telescope").load_extension, "notify")
-            return true  -- de-register this autocmd after telescope loads
+            pcall(function() require("telescope").load_extension("notify") end)
+            vim.api.nvim_del_augroup_by_name("NotifyTelescopeLoad")
           end
         end,
       })

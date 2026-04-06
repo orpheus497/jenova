@@ -8,8 +8,60 @@
 # that llama.lua and gp.nvim plugins read the correct endpoints at startup.
 # Sets LD_LIBRARY_PATH for llama.cpp shared libraries before exec'ing Neovim.
 # On Neovim exit, stops Jenova CA only if this invocation started it.
+#
+# Usage: jvim [options] [nvim args...]
+#   --remote <host>   Connect to a remote Jenova CA on the LAN (client-only mode)
+#   --remote-port <p> Override proxy port for remote mode (default: 8080)
+#   --llama-port <p>  Override llama-server port for remote mode (default: 8081)
 
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
+
+# --- Parse jvim-specific flags, then pass remaining args to nvim via "$@" ---
+REMOTE_HOST=""
+REMOTE_PROXY_PORT="8080"
+REMOTE_LLAMA_PORT="8081"
+
+# Require a non-option argument after a flag; exits on missing/invalid value.
+require_arg() {
+    if [ -z "$2" ] || [ "${2#--}" != "$2" ]; then
+        echo "Error: $1 requires a value, not another option" >&2
+        exit 1
+    fi
+}
+
+# Consume only jvim flags; stop at first non-jvim argument (preserves "$@" for nvim)
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --remote)      shift; require_arg "--remote" "$1";      REMOTE_HOST="$1";       shift ;;
+        --remote-port) shift; require_arg "--remote-port" "$1"; REMOTE_PROXY_PORT="$1"; shift ;;
+        --llama-port)  shift; require_arg "--llama-port" "$1";  REMOTE_LLAMA_PORT="$1"; shift ;;
+        *) break ;;  # First non-jvim arg — rest is for nvim
+    esac
+done
+
+# --- Remote/LAN client mode: skip backend start, just export env and launch nvim ---
+if [ -n "$REMOTE_HOST" ]; then
+    export JENOVA_CONNECT_HOST="$REMOTE_HOST"
+    export JENOVA_PORT="$REMOTE_PROXY_PORT"
+    export JENOVA_LLAMA_PORT="$REMOTE_LLAMA_PORT"
+    export JENOVA_LAN_MODE="1"
+
+    echo "Jenova LAN client mode: connecting to $REMOTE_HOST:$REMOTE_PROXY_PORT"
+
+    # Quick health check on the remote
+    if command -v curl >/dev/null 2>&1; then
+        _remote_url="http://${REMOTE_HOST}:${REMOTE_PROXY_PORT}/health"
+        if echo "$REMOTE_HOST" | grep -q ":"; then _remote_url="http://[${REMOTE_HOST}]:${REMOTE_PROXY_PORT}/health"; fi
+        if curl -sf --max-time 3 --connect-timeout 2 "$_remote_url" >/dev/null 2>&1; then
+            echo "Remote Jenova CA is healthy"
+        else
+            echo "Warning: Remote Jenova CA at $REMOTE_HOST:$REMOTE_PROXY_PORT is not responding" >&2
+            echo "Neovim will launch anyway — monitor will retry automatically" >&2
+        fi
+    fi
+
+    exec nvim "$@"
+fi
 
 # Determine JENOVA_ROOT before loading config
 if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
@@ -29,6 +81,7 @@ CONNECT_HOST="${JENOVA_CONNECT_HOST:-127.0.0.1}"
 API_URL="http://${CONNECT_HOST}:${PORT}"
 
 JENOVA_DIR="${JENOVA_STATE:-$JENOVA_ROOT/.jenova}"
+PID_FILE="$JENOVA_DIR/jenova-ca.pid"
 if [ -n "$LOG_DIR" ]; then
     SERVER_LOG="$LOG_DIR/jenova-ca.log"
 else

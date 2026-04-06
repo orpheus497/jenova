@@ -19,7 +19,7 @@
 
 set -e
 
-JENOVA_ROOT="$(dirname "$(realpath "$0")")"
+JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")/.."
 NVIM_CONFIG_SRC="$JENOVA_ROOT/nvim"
 NVIM_CONFIG_DST="$HOME/.config/nvim"
 
@@ -253,8 +253,11 @@ download_model() {
         return 0
     fi
     warn "$_name not found at $_path"
-    printf "  Download %s (~%s)? [y/N] " "$(basename "$_path")" "$_size"
-    read _ans
+    _ans="n"
+    if [ -t 0 ]; then
+        printf "  Download %s (~%s)? [y/N] " "$(basename "$_path")" "$_size"
+        read -r _ans
+    fi
     case "$_ans" in
         y|Y|yes|YES)
             mkdir -p "$(dirname "$_path")"
@@ -300,11 +303,6 @@ download_model "$_agent_model" \
     "Agent model (Qwen2.5-Coder-7B-Instruct)" \
     "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q5_k_m.gguf" \
     "5.1GB"
-if [ ! -s "$_agent_model" ]; then
-    warn "Required agent model is missing: $_agent_model"
-    warn "Core backend functionality is blocked until the agent model is installed"
-    ERRORS=$((ERRORS + 1))
-fi
 
 # Ensure Neovim health check default model path stays in sync.
 # When JENOVA_MODEL is unset, Neovim expects $JENOVA_ROOT/models/jenova.gguf.
@@ -345,8 +343,11 @@ if [ "$SKIP_NVIM" = "0" ] && command -v nvim >/dev/null 2>&1; then
     info "Installing Neovim configuration..."
 
     if [ -d "$NVIM_CONFIG_DST" ] && [ "$FORCE" = "0" ]; then
-        printf "  ~/.config/nvim already exists. Overwrite? [y/N] "
-        read _ans
+        _ans="n"
+        if [ -t 0 ]; then
+            printf "  ~/.config/nvim already exists. Overwrite? [y/N] "
+            read -r _ans
+        fi
         case "$_ans" in
             y|Y|yes|YES) ;;
             *)
@@ -401,10 +402,12 @@ info "Installing launchers to PATH..."
 
 _BIN_DIR=""
 for _d in "$HOME/.local/bin" "$HOME/bin"; do
-    if echo "$PATH" | grep -q "$_d"; then
-        _BIN_DIR="$_d"
-        break
-    fi
+    case ":$PATH:" in
+        *:"$_d":*)
+            _BIN_DIR="$_d"
+            break
+            ;;
+    esac
 done
 
 if [ -n "$_BIN_DIR" ]; then
@@ -424,34 +427,9 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 9. Hardware profile detection
+# 9. jenova-setup (system tuning) reminder
 # ---------------------------------------------------------------------------
-info "Detecting hardware profile..."
-DETECT_SCRIPT="$JENOVA_ROOT/hardware-profiles/detect-hardware.sh"
-_PROFILE=""
-if [ -f "$DETECT_SCRIPT" ] && [ -x "$DETECT_SCRIPT" ]; then
-    _PROFILE=$("$DETECT_SCRIPT" 2>/dev/null) || _PROFILE=""
-    if [ -n "$_PROFILE" ]; then
-        ok "Matched hardware profile: $_PROFILE"
-        _PROFILE_DIR="$JENOVA_ROOT/hardware-profiles/$_PROFILE"
-        if [ -f "$_PROFILE_DIR/jenova-setup" ]; then
-            warn "Run 'sudo $_PROFILE_DIR/jenova-setup' once to tune system for this hardware."
-        fi
-    else
-        warn "No hardware profile matched this system."
-        warn "Run: $DETECT_SCRIPT --info  to see detection details."
-        warn "You can create a new profile in hardware-profiles/<name>/"
-        WARNINGS=$((WARNINGS + 1))
-    fi
-else
-    warn "Hardware detection script not found at $DETECT_SCRIPT"
-    WARNINGS=$((WARNINGS + 1))
-fi
-
-# ---------------------------------------------------------------------------
-# 9b. jenova-setup (system tuning) reminder — fallback for unmatched profiles
-# ---------------------------------------------------------------------------
-if [ "$_OS" = "FreeBSD" ] && [ -z "$_PROFILE" ]; then
+if [ "$_OS" = "FreeBSD" ]; then
     info "System tuning..."
     warn "Run 'sudo $JENOVA_ROOT/jenova-setup' once to tune vm.* sysctls and ZFS ARC"
     warn "for optimal Optane swap / Iris Xe UMA performance."

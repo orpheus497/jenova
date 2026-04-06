@@ -50,15 +50,22 @@ function M.check()
   -- -------------------------------------------------------------------------
   h.start("Jenova CA Backend")
 
-  local connect_host = vim.env.JENOVA_CONNECT_HOST or vim.env.JENOVA_HOST or "127.0.0.1"
-  -- Normalize wildcard bind addresses to loopback for client connections
-  if connect_host == "0.0.0.0" or connect_host == "::" or connect_host == "*" then
-    connect_host = "127.0.0.1"
+  -- Use centralized endpoint config from monitor module (single source of truth
+  -- for host normalization, port defaults, and wildcard-to-loopback mapping)
+  local mon_ok, monitor = pcall(require, "jenova.monitor")
+  local endpoints
+  if mon_ok and monitor.get_endpoints then
+    endpoints = monitor.get_endpoints()
+  else
+    -- Fallback if monitor module unavailable
+    local host = vim.env.JENOVA_CONNECT_HOST or vim.env.JENOVA_HOST or "127.0.0.1"
+    if host == "0.0.0.0" or host == "::" or host == "*" then host = "127.0.0.1" end
+    endpoints = { host = host, proxy_port = 8080, llama_port = 8081, embed_port = 8082 }
   end
-  local proxy_port   = vim.env.JENOVA_PORT          or "8080"
-  local llama_port   = vim.env.JENOVA_LLAMA_PORT    or "8081"
-  -- Embed port is not exposed as env var by jvim yet; use fixed default
-  local embed_port   = "8082"
+  local connect_host = endpoints.host
+  local proxy_port   = tostring(endpoints.proxy_port)
+  local llama_port   = tostring(endpoints.llama_port)
+  local embed_port   = tostring(endpoints.embed_port)
 
   local proxy_url = string.format("http://%s:%s/health", connect_host, proxy_port)
   local proxy_status = probe(connect_host, proxy_port)
@@ -259,8 +266,8 @@ function M.check()
       required = true,
     },
     {
-      path = jenova_root .. "/models/Qwen2.5-Coder-0.5B-Q8_0.gguf",
-      label = "Draft model (Qwen2.5-Coder-0.5B) — speculative decoding",
+      path = jenova_root .. "/models/Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf",
+      label = "Draft model (Qwen2.5-Coder-0.5B-Instruct) — speculative decoding",
       required = false,
     },
   }
@@ -318,6 +325,110 @@ function M.check()
 
   h.info("Estimated resident usage when fully loaded: ~8.3 GiB (see JENOVA-NVIM-ROADMAP.md §9.3)")
   h.info("Optane NVMe swap handles cold tensor pages — check jenova-setup was run")
+
+  -- -------------------------------------------------------------------------
+  -- 9. Hardware Profile Detection
+  -- -------------------------------------------------------------------------
+  h.start("Hardware Profile")
+
+  local detect_script = jenova_root .. "/hardware-profiles/detect-hardware.sh"
+  if vim.fn.filereadable(detect_script) == 1 then
+    -- Detect current profile
+    local profile_name = vim.fn.system({ detect_script })
+    profile_name = vim.fn.trim(profile_name or "")
+
+    if profile_name ~= "" and vim.v.shell_error == 0 then
+      h.ok("Detected hardware profile: " .. profile_name)
+
+      -- Check if the active config matches the detected profile
+      local profile_conf = jenova_root .. "/hardware-profiles/" .. profile_name .. "/jenova.conf"
+      if vim.fn.filereadable(profile_conf) == 1 then
+        h.ok("Profile config available at hardware-profiles/" .. profile_name .. "/jenova.conf")
+      else
+        h.warn("Profile config not found at " .. profile_conf)
+      end
+
+      local profile_setup = jenova_root .. "/hardware-profiles/" .. profile_name .. "/jenova-setup"
+      if vim.fn.filereadable(profile_setup) == 1 then
+        h.ok("System tuning script available at hardware-profiles/" .. profile_name .. "/jenova-setup")
+      end
+    else
+      h.warn(
+        "No hardware profile matched this system",
+        "Run: ./hardware-profiles/detect-hardware.sh --info  to see detection details"
+      )
+    end
+
+    -- List available profiles
+    local profiles_dir = jenova_root .. "/hardware-profiles"
+    local profiles = vim.fn.glob(profiles_dir .. "/*/profile.conf", true, true)
+    if #profiles > 0 then
+      h.info(string.format("%d hardware profile(s) available:", #profiles))
+      for _, pconf in ipairs(profiles) do
+        local pdir = vim.fn.fnamemodify(pconf, ":h:t")
+        h.info("  - " .. pdir)
+      end
+    end
+  else
+    h.info("Hardware profiles not configured (hardware-profiles/detect-hardware.sh not found)")
+    h.info("Run ./install.sh or create hardware-profiles/ directory for multi-device support")
+  end
+
+  -- -------------------------------------------------------------------------
+  -- 10. Monitor Module
+  -- -------------------------------------------------------------------------
+  h.start("Monitor Module")
+
+  local mon_ok, monitor = pcall(require, "jenova.monitor")
+  if mon_ok then
+    h.ok("jenova.monitor module loaded")
+    if monitor.state.connected then
+      h.ok("Backend connected")
+      if monitor.state.model ~= "" then
+        h.ok("Active model: " .. monitor.state.model)
+      end
+      if monitor.state.gpu_layers > 0 then
+        h.ok(string.format("GPU layers: %d", monitor.state.gpu_layers))
+      end
+      if monitor.state.slots_total > 0 then
+        h.ok(string.format("Inference slots: %d/%d in use", monitor.state.slots_used, monitor.state.slots_total))
+      end
+    else
+      h.warn("Backend not connected — monitor data unavailable until backend starts")
+    end
+  else
+    h.warn("jenova.monitor module not available", "Check nvim/lua/jenova/monitor.lua exists")
+  end
+
+  -- -------------------------------------------------------------------------
+  h.start("LAN Mode")
+
+  local lan_mode = vim.env.JENOVA_LAN_MODE == "1"
+  local lan_host = vim.g.jenova_lan_host
+  local connect_host_env = vim.env.JENOVA_CONNECT_HOST or ""
+
+  if lan_mode then
+    h.ok("LAN client mode active (launched via jvim --remote)")
+    h.ok(string.format("Remote host: %s", connect_host_env))
+  elseif lan_host then
+    h.ok("LAN discovery found remote Jenova CA")
+    h.ok(string.format("Discovered host: %s", lan_host))
+  else
+    h.info("LAN mode not active (local backend or not configured)")
+    h.info("Use :JenovaLanScan or jvim --remote <host> for LAN mode")
+  end
+
+  local lan_ok, lan = pcall(require, "jenova.lan")
+  if lan_ok then
+    h.ok("jenova.lan module loaded")
+  else
+    h.warn("jenova.lan module not available", "Check nvim/lua/jenova/lan.lua exists")
+  end
+
+  local scan_disabled = vim.env.JENOVA_LAN_SCAN == "0" or vim.env.JENOVA_LAN_SCAN == "false"
+  if scan_disabled then
+    h.info("LAN auto-scan disabled (JENOVA_LAN_SCAN=0)")
+  end
 end
 
 return M

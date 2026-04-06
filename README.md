@@ -34,7 +34,11 @@ The system is partitioned into four conceptual streams:
 - The Mind (intelligence): hybrid BM25 + semantic vector retrieval with line-aware parsers.
 - The Voice (UX): hardware-aware CLI reporting real-time GPU and indexing stats.
 
-## Hardware & Performance (Target)
+## Hardware & Performance
+
+Jenova supports multiple hardware profiles, auto-detected at install time. Two validated profiles are included:
+
+### Profile 1: FreeBSD i5-1135G7 Dual-GPU (Primary Target)
 
 | Component | Specification |
 |---|---|
@@ -43,16 +47,30 @@ The system is partitioned into four conceptual streams:
 | GPU 0 | GTX 1650 Ti 4GB (Vulkan0) — discrete VRAM |
 | GPU 1 | Intel Iris Xe TGL GT2 (Vulkan1) — UMA, ~7 GiB from system RAM |
 | Storage | Intel Optane NVMe (27GB+ swap partition) |
-| Memory | 16GB RAM (recommend capping ZFS ARC to 2GB) |
+| Memory | 16GB RAM |
 
-**Dual-GPU strategy:** Both GPUs are used via Vulkan. Combined addressable GPU memory is ~11 GiB. The llama.cpp `-fitt` (fit target) flag auto-distributes transformer layers across both devices, reserving a configurable safety margin (default 768 MiB) so the KV cache fits without OOM. No explicit `-ngl` is needed — the fitter handles layer placement automatically.
+**Strategy:** Full dual-GPU offload via `-fitt` auto-distribution. All 28 layers across both Vulkan devices. KV cache fits with 768 MiB safety margin. Combined addressable GPU memory is ~11 GiB — the llama.cpp `-fitt` flag auto-distributes transformer layers across both devices.
 
-### GPU Layer Distribution (auto-tuned by `-fitt`)
+### Profile 2: FreeBSD Ryzen 7 5700U AMD
 
-| Model | Total Layers | GPU Layers | GPU Memory | CPU Layers |
+| Component | Specification |
+|---|---|
+| OS | FreeBSD 15 |
+| CPU | AMD Ryzen 7 5700U (8C / 16T, Zen 2) |
+| GPU | AMD Radeon Vega 8 (Lucienne) — UMA, ~2-4 GiB from system RAM |
+| Storage | Standard NVMe (16 GiB ZFS swap) |
+| Memory | 15.28 GiB RAM |
+
+**Strategy:** Partial GPU offload — 18 of 28 transformer layers on Vulkan (AMD Vega 8), remaining 10 on CPU. Strong 8C/16T CPU handles CPU-resident layers efficiently.
+
+### GPU Layer Distribution
+
+| Profile | Model | GPU Layers | GPU Memory | CPU Layers |
 |---|---|---|---|---|
-| Qwen2.5-Coder-7B | 28 | 28 (all) | ~4.4 GiB across both | 0 |
-| Qwen2.5-Coder-0.5B (drafter) | 28 | 28 (all) | ~0.5 GiB | 0 |
+| i5 dual-GPU | Qwen2.5-Coder-7B (28 layers) | 28 (all) — auto-fit | ~4.4 GiB across both | 0 |
+| i5 dual-GPU | Qwen2.5-Coder-0.5B (28 layers) | 28 (all) | ~0.5 GiB | 0 |
+| Ryzen AMD | Qwen2.5-Coder-7B (28 layers) | 18 (partial) | ~2-3.5 GiB UMA | 10 |
+| Ryzen AMD | Qwen2.5-Coder-0.5B (28 layers) | 18 or CPU | ~0.5 GiB UMA | varies |
 
 ## Installation
 
@@ -88,49 +106,119 @@ Download GGUF model files and place them in `models/`:
 
 | Model | Filename | Purpose | Required |
 |---|---|---|---|
-| Qwen2.5-Coder-7B | `Qwen2.5-Coder-7B-Q5_K_M.gguf` | Main inference (chat, code, rewrite) | **Yes** |
+| Qwen2.5-Coder-7B | `Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf` | Main inference (chat, code, rewrite) | **Yes** |
 | nomic-embed-text-v1.5 | `nomic-embed-text-v1.5.Q8_0.gguf` | Embedding for RAG semantic search | Recommended |
-| Qwen2.5-Coder-0.5B | `Qwen2.5-Coder-0.5B-Q8_0.gguf` | Speculative decoding drafter | Optional |
+| Qwen2.5-Coder-0.5B | `Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf` | Speculative decoding drafter | Optional |
 
 ### Quick Install
 
 ```sh
-# Install system dependencies
+# 1. Install system dependencies
 pkg install luajit-openresty git neovim cmake vulkan-loader curl
 
-# Build llama.cpp with Vulkan support
+# 2. Build llama.cpp with Vulkan support
 cd llama.cpp
 cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release -j$(sysctl -n hw.ncpu)
 cd ..
 
-# Run the installer (creates dirs, downloads models, deploys nvim config, symlinks launchers)
+# 3. Run the installer (hardware-aware: detects your hardware and selects a profile)
 ./install.sh
 ```
 
 The installer will:
 1. Verify all required and optional dependencies
-2. **Offer to download missing model files** (agent, embedding, drafter) from Hugging Face
-3. Deploy the Neovim configuration to `~/.config/nvim/`
-4. Symlink `jvim`, `jenova`, and `jenova-ca` to your PATH
+2. Create runtime directories (`.jenova/`, `var/log/`, `var/cache/`, `models/`)
+3. Check for llama.cpp build
+4. **Offer to download missing model files** (agent, embedding, drafter) from Hugging Face
+5. Deploy the Neovim configuration to `~/.config/nvim/`
+6. Symlink `jvim`, `jenova`, and `jenova-ca` to your PATH
+7. **Auto-detect your hardware** and recommend the matching profile
 
 The built binary lives at `llama.cpp/build/bin/llama-server`.
 
+### Hardware Profile Installation
+
+After running `install.sh`, configure your specific hardware:
+
+```sh
+# 1. Auto-detect your hardware and show a report
+./hardware-profiles/detect-hardware.sh --info
+
+# 2. Deploy the matched hardware profile config (backs up existing etc/jenova.conf)
+./hardware-profiles/detect-hardware.sh --apply
+
+# 3. Run one-time system tuning (sysctls, ZFS ARC, GPU driver check)
+#    This auto-detects your hardware and runs the right profile's setup script
+sudo ./jenova-setup
+```
+
+Available options for `detect-hardware.sh`:
+
+| Flag | Action |
+|---|---|
+| *(no args)* | Print matched profile name (for scripting) |
+| `--info` | Full hardware report with profile match scores |
+| `--apply` | Deploy matched profile's `jenova.conf` to `etc/jenova.conf` |
+| `--install` | Detect hardware and run matched profile's `install.sh` |
+| `--list` | List all available profiles |
+
+**Forcing a specific profile:**
+```sh
+sudo ./jenova-setup --profile freebsd-ryzen7-5700u-amd
+```
+
+### AMD Ryzen / Vega 8 Additional Requirements
+
+For the `freebsd-ryzen7-5700u-amd` profile, AMD GPU kernel support must be installed first:
+
+```sh
+# Install AMD GPU driver and firmware
+pkg install drm-kmod gpu-firmware-amd-kmod
+
+# Enable on boot
+sysrc kld_list+=amdgpu
+
+# Reboot for the kernel module to take effect, then verify
+kldstat -m amdgpu    # should show module loaded
+vulkaninfo --summary  # should show RADV/AMD Vulkan device
+```
+
+BIOS setting: increase the UMA Frame Buffer Size to 4 GB for better GPU offload (more layers on GPU, faster inference).
+
 ## Configuration
 
-Edit `etc/jenova.conf` to tune hardware settings. Key entries:
+Edit `etc/jenova.conf` to tune hardware settings. This file is automatically generated from the matched hardware profile when you run `detect-hardware.sh --apply`.
+
+### i5-1135G7 Dual-GPU Profile Settings
 
 ```sh
 DEVICES="Vulkan0,Vulkan1"     # Dual-GPU: NVIDIA + Intel Iris Xe
 TENSOR_SPLIT="1.0,1.8"        # Split ratio: Intel Xe carries more layers (~7 GiB UMA vs NVIDIA 4 GiB)
 FIT_TARGET=768                 # Safety margin in MiB for -fitt auto-tuning
+NGL_7B="all"                   # Auto-fit all layers across dual GPU (managed by -fitt)
 CTX_SIZE="16384"               # Context window (7B: 16k)
 JENOVA_DRAFT=1                 # Speculative decoding on by default; set to 0 to disable
 ```
 
-Notes:
-- Ensure `/etc/sysctl.conf` and ZFS ARC settings are tuned if running on ZFS-heavy workloads: e.g. `vfs.zfs.arc_max=2147483648`.
-- Configure a dedicated Optane swap partition and test paging behavior safely.
+### Ryzen 7 5700U AMD Profile Settings
+
+```sh
+DEVICES="Vulkan0"             # Single AMD Vega 8 GPU (UMA)
+TENSOR_SPLIT=""               # No tensor split — single GPU
+FIT_TARGET=512                # Smaller safety margin for UMA GPU
+NGL_7B=18                    # Explicit partial offload: 18 of 28 layers on GPU
+CTX_SIZE="8192"              # Conservative context for limited UMA VRAM
+JENOVA_DRAFT=1               # Speculative decoding on (0.5B drafter runs on CPU)
+THREADS=8                    # Full core count (8C Zen 2)
+THREADS_BATCH=12             # ~1.5x cores for batch processing
+```
+
+**Notes:**
+- `NGL_7B="all"` uses `-fitt` auto-distribution (best for multi-GPU full offload).
+- `NGL_7B=N` uses explicit `-ngl N` (required for partial offload on single limited-VRAM GPUs).
+- For ZFS systems: add `vfs.zfs.arc_max=2147483648` to `/etc/sysctl.conf` (2 GiB ARC cap frees RAM for inference).
+- Configure a dedicated Optane/NVMe swap partition and test paging behavior safely.
 
 ## Launching
 
@@ -149,8 +237,8 @@ bin/jvim [files...]
 
 ## Models & Roles
 
-- Agent (7B): Qwen2.5-Coder-7B-Q5_K_M — all 28 transformer layers fit across both Vulkan devices; 16k context, 2 slots, q8_0 KV cache.
-- Drafter (0.5B): Qwen2.5-Coder-0.5B-Q8_0 — speculative decoding target; enabled by default (`JENOVA_DRAFT=1`), disable with `JENOVA_DRAFT=0`.
+- Agent (7B): Qwen2.5-Coder-7B-Instruct-Q5_K_M — all 28 transformer layers fit across both Vulkan devices; 16k context, 2 slots, q8_0 KV cache.
+- Drafter (0.5B): Qwen2.5-Coder-0.5B-Instruct-Q8_0 — speculative decoding target; enabled by default (`JENOVA_DRAFT=1`), disable with `JENOVA_DRAFT=0`.
 - Embedding (nomic-embed-text-v1.5): CPU-only persistent daemon on port 8082 for RAG and semantic search.
 
 ## Directory Layout
@@ -201,26 +289,120 @@ Once launched via `jvim`, plugins use these endpoints automatically:
 |---|---|---|
 | FIM / infill completions | `http://127.0.0.1:8081` | Direct to llama-server; `--spm-infill` is always enabled |
 | Chat completions + RAG | `http://127.0.0.1:8080` | Routes through intelligence proxy; RAG context injected |
+| Embedding / semantic search | `http://127.0.0.1:8082` | CPU-only nomic-embed-text server (persistent daemon) |
 
 Both ports are defined in `etc/jenova.conf` as `LLAMA_PORT` and `PORT`.
 
+### Backend Monitor (`:JenovaMonitor`)
+
+The backend monitor provides a real-time floating window showing service status and inference metrics:
+
+```
+Press  M  from the dashboard, OR run  :JenovaMonitor  in Neovim
+```
+
+The monitor displays:
+- **Services**: proxy (`:8080`), llama-server (`:8081`), embed server (`:8082`) — ONLINE/OFFLINE
+- **Model**: loaded model name and GPU layer count
+- **Inference**: slot utilization, context window usage, KV cache tokens, total predicted tokens
+- **Connection**: host, last poll time
+
+The lualine statusbar also shows a compact AI status indicator (e.g., `Qwen2.5-Coder-7B | 0/2`).
+
+Controls inside the monitor window:
+- **`r`** — Refresh immediately (triggers a new poll)
+- **`q` / `Esc`** — Close
+
+### LAN Discovery (`:JenovaLanScan`)
+
+When you open Neovim directly (not via `jvim`) and no backend is configured, Jenova can discover a Jenova CA instance running elsewhere on your LAN:
+
+```
+:JenovaLanScan     -- scan LAN and auto-connect to first found Jenova CA
+```
+
+Or connect to a known remote host directly via `jvim`:
+
+```sh
+jvim --remote 192.168.1.42                  # connect to remote Jenova CA
+jvim --remote 192.168.1.42 --remote-port 8080 --llama-port 8081
+```
+
+**Disabling auto LAN scan:** Set `JENOVA_LAN_SCAN=0` in your shell environment to skip the automatic network scan when launching bare `nvim`.
+
+### Runtime Cleanup
+
+Use `cleanup.sh` to clear logs, cache, and stale state files without touching models or config:
+
+```sh
+./cleanup.sh --logs          # Remove log files from var/log/
+./cleanup.sh --cache         # Clear var/cache/
+./cleanup.sh --state         # Remove stale PID/lock files from .jenova/
+./cleanup.sh --all           # All of the above
+./cleanup.sh --logs --rotate # Rotate logs instead of deleting
+./cleanup.sh --all --yes     # Skip confirmation prompt
+```
+
+### Uninstalling
+
+```sh
+./uninstall.sh                    # Interactive uninstall — confirms each step
+./uninstall.sh --clean-runtime    # Also remove models/jenova.gguf symlink
+./uninstall.sh --yes              # Non-interactive (skip confirmation)
+```
+
 ## Environment Variables
+
+### Core / Connection
 
 | Variable | Default | Effect |
 |---|---|---|
 | `JENOVA_ROOT` | `$PWD` (auto-detected) | Project root directory path |
 | `JENOVA_HOST` | `127.0.0.1` | Bind address for backend services (`0.0.0.0` to listen on all interfaces) |
-| `JENOVA_CONNECT_HOST` | `127.0.0.1` | Client connection address (used by Neovim/CLI when `JENOVA_HOST` is a wildcard bind) |
+| `JENOVA_CONNECT_HOST` | `127.0.0.1` | Client connection address (wildcard binds are auto-mapped to `127.0.0.1`) |
 | `JENOVA_PORT` | `8080` | Port for Jenova intelligence proxy |
 | `JENOVA_LLAMA_PORT` | `8081` | Port for llama-server inference |
+| `JENOVA_LLAMA_EMBED_PORT` | `8082` | Port for the CPU-only embedding server (nomic-embed-text for RAG semantic search; also used by monitor and health checks) |
 | `JENOVA_API_URL` | `http://127.0.0.1:8080` | Proxy endpoint for the agent |
 | `JENOVA_LLAMA_URL` | `http://127.0.0.1:8081` | Direct llama-server endpoint (proxy internal) |
+
+### Models
+
+| Variable | Default | Effect |
+|---|---|---|
+| `JENOVA_MODEL` | `models/jenova.gguf` | Override the agent model path (symlink or full GGUF path) |
+| `JENOVA_DRAFT` | `1` | Enable speculative decoding with 0.5B drafter model (`0` to disable) |
+
+### Hardware / GPU (override `etc/jenova.conf` per-session)
+
+| Variable | Default | Effect |
+|---|---|---|
+| `JENOVA_DEVICES` | `Vulkan0,Vulkan1` | Vulkan device list (e.g., `Vulkan0` for single GPU) |
+| `JENOVA_TS` | `1.0,1.8` | Tensor split ratio across devices (empty for single GPU) |
+| `JENOVA_FITT` | `768` | GPU memory safety margin in MiB for `-fitt` auto-fit |
+| `JENOVA_NGL_7B` | `all` | GPU layers for main model (`all` = auto-fit, number = partial offload) |
+| `JENOVA_THREADS` | `4` | CPU inference threads |
+| `JENOVA_THREADS_BATCH` | `6` | CPU threads for batch processing |
+| `JENOVA_KV_TYPE` | `q8_0` | KV cache quantization type (`q8_0`, `q4_0`, or `f16`) |
+
+### Inference / Agent
+
+| Variable | Default | Effect |
+|---|---|---|
+| `JENOVA_CTX` | `16384` | Context window token limit |
+| `JENOVA_SLOTS` | `2` | Number of parallel inference slots |
 | `JENOVA_CONN_TIMEOUT` | `600` | Max seconds a proxy connection coroutine may live |
 | `JENOVA_TIMEOUT` | `600` | Agent HTTP timeout (seconds) |
 | `JENOVA_MAX_TURNS` | `25` | Max agentic tool-call turns per user message |
-| `JENOVA_CTX` | `16384` | Context window token limit |
-| `JENOVA_DRAFT` | `1` | Enable speculative decoding with 0.5B drafter model (`0` to disable) |
+| `JENOVA_HEALTH_TIMEOUT` | `90` | Max seconds to wait for llama-server to start |
 | `JENOVA_DEBUG` | `""` | Set to `1` for verbose debug output |
+
+### Neovim / LAN
+
+| Variable | Default | Effect |
+|---|---|---|
+| `JENOVA_LAN_SCAN` | `""` | Set to `0` to disable automatic LAN discovery when launching bare `nvim` |
+| `JENOVA_LAN_MODE` | `""` | Set to `1` by `jvim --remote` (client-only mode, no local backend) |
 
 ## Troubleshooting & Notes
 
@@ -244,9 +426,9 @@ pkg install cmake gmake vulkan-loader
 #### "Model not found"
 
 Download a GGUF model file and place it in `models/`. Recommended:
-- **Qwen2.5-Coder-7B-Q5_K_M.gguf** (main agent model)
+- **Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf** (main agent model)
 - **nomic-embed-text-v1.5.Q8_0.gguf** (embedding for RAG)
-- **Qwen2.5-Coder-0.5B-Q8_0.gguf** (optional drafter for speculative decoding)
+- **Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf** (optional drafter for speculative decoding)
 
 Or set `JENOVA_MODEL` environment variable to point to your model file.
 
@@ -286,12 +468,36 @@ chmod -R u+w .jenova/ var/
 bin/jenova-ca status          # Check if backend is running
 bin/jenova-ca stop            # Stop backend
 bin/jenova-ca restart         # Restart backend
+bin/jenova-ca watch           # Start standalone watchdog for running services
 ```
 
 Check logs if something goes wrong:
 ```bash
-tail -f var/log/jenova-ca.log
+tail -f var/log/jenova-ca.log      # Main llama-server + proxy log
+tail -f var/log/jenova-embed.log   # Embedding server log
 ```
+
+#### AMD GPU Not Detected
+
+If the AMD Vega 8 GPU isn't being used for inference on the Ryzen profile:
+
+```bash
+# 1. Verify amdgpu module is loaded
+kldstat -m amdgpu
+
+# 2. Verify RADV Vulkan driver is detected
+vulkaninfo --summary | grep -i "RADV\|AMD"
+
+# 3. Check jenova-ca startup banner — should show "ngl 18 layers"
+bin/jenova-ca status
+
+# If amdgpu not loaded:
+pkg install drm-kmod gpu-firmware-amd-kmod
+sysrc kld_list+=amdgpu
+reboot
+```
+
+Increase BIOS UMA Frame Buffer Size to 4 GiB for better offload (adjusts VRAM available to Vega 8).
 
 ### Path Resolution
 
@@ -309,6 +515,8 @@ The `JENOVA_ROOT` environment variable is automatically set and exported before 
 - The codebase avoids subprocess reinitialization penalties by using persistent daemon processes.
 - Backup files in `.jenova/backups/` are rotated automatically: only the 5 most recent backups per filename are kept.
 - Shell command output is capped at ~10KB in memory (head + tail) before being sent to the model, preventing OOM on runaway commands.
+- **Ryzen profile**: Standard NVMe swap latency (~100μs) is much slower than Optane (~7μs). Keep `CTX_SIZE` conservative (8192) to avoid heavy swap pressure. Reduce to 4096 if you see paging stalls.
+- **i5 dual-GPU profile**: Optane NVMe swap makes large-context inference viable. The `-fitt 768` reserves GPU headroom so KV cache doesn't OOM during long conversations.
 
 ## Web Search
 

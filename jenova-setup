@@ -1,138 +1,144 @@
 #!/bin/sh
 
 # jenova-setup: One-time system configuration for Jenova Cognitive Architecture
-# Run with: sudo ./jenova-setup
+# Run with: sudo ./jenova-setup [--profile <name>]
 #
-# Configures:
-#   - Optane NVMe swap tuning for Iris Xe UMA GPU paging
+# This is a hardware-aware dispatcher. It detects your system hardware using
+# detect-hardware.sh and runs the matched profile's jenova-setup script,
+# which applies profile-specific kernel tuning (sysctls, swap, ZFS ARC, etc.)
 #
-# Hardware context:
-#   Intel Iris Xe (TGL GT2) is a UMA GPU — it shares system RAM.
-#   With 27 GiB Optane NVMe swap, the kernel pages inactive LLM weights
-#   through the Iris Xe's shared memory pool. These sysctls ensure the
-#   pager cooperates rather than OOM-killing the process.
+# Options:
+#   --profile <name>   Skip auto-detection and use a specific profile
+#   --list             Show available profiles and detection results
+#   --info             Show detected hardware information
+#
+# Hardware profiles are in: hardware-profiles/<profile-name>/jenova-setup
 
 set -e
 
+SCRIPT_DIR="$(dirname "$(realpath "$0")")"
+DETECT="$SCRIPT_DIR/hardware-profiles/detect-hardware.sh"
+
+# Colours
+if [ -t 1 ]; then
+    _G="\033[0;32m"; _Y="\033[0;33m"; _R="\033[0;31m"; _B="\033[1;34m"; _N="\033[0m"
+else
+    _G=""; _Y=""; _R=""; _B=""; _N=""
+fi
+
+ok()   { printf "${_G}  OK${_N}  %s\n" "$1"; }
+warn() { printf "${_Y} WARN${_N}  %s\n" "$1"; }
+info() { printf "${_B} INFO${_N}  %s\n" "$1"; }
+fail() { printf "${_R} FAIL${_N}  %s\n" "$1"; }
+
+FORCE_PROFILE=""
+
+# Parse arguments
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --profile)
+            shift
+            FORCE_PROFILE="$1"
+            shift
+            ;;
+        --list)
+            if [ -x "$DETECT" ]; then
+                "$DETECT" --list
+            else
+                echo "Error: detect-hardware.sh not found at $DETECT" >&2
+                exit 1
+            fi
+            exit 0
+            ;;
+        --info)
+            if [ -x "$DETECT" ]; then
+                "$DETECT" --info
+            else
+                echo "Error: detect-hardware.sh not found at $DETECT" >&2
+                exit 1
+            fi
+            exit 0
+            ;;
+        -h|--help)
+            sed -n '2,15p' "$0"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
 if [ "$(id -u)" -ne 0 ]; then
-    echo "Error: must run as root (sudo ./jenova-setup)"
+    echo "Error: must run as root (sudo ./jenova-setup)" >&2
     exit 1
 fi
 
-echo "=== jenova-setup: configuring FreeBSD for Jenova CA ==="
+echo ""
+printf "${_B}╔══════════════════════════════════════════════════════╗${_N}\n"
+printf "${_B}║  Jenova Cognitive Architecture — System Setup        ║${_N}\n"
+printf "${_B}╚══════════════════════════════════════════════════════╝${_N}\n"
 echo ""
 
-CHANGED=0
+# Determine which profile to use
+PROFILE_DIR=""
+PROFILE_NAME=""
 
-# Helper: add to sysctl.conf if not already present
-sysctl_persist() {
-    _line="$1"
-    _key=$(echo "$_line" | cut -d= -f1)
-    # Escape regex metacharacters in _key before use in grep -E and sed
-    # Character class: ] . [ * ^ $ \ /  (] must be first inside [])
-    _esc_key=$(printf '%s' "$_key" | sed 's/[].[*^$\\/]/\\&/g')
-    if grep -q -E "^${_esc_key}[[:space:]]*=" /etc/sysctl.conf 2>/dev/null; then
-        sed -i '' "s|^${_esc_key}[[:space:]]*=.*|${_line}|" /etc/sysctl.conf
-    else
-        echo "$_line" >> /etc/sysctl.conf
-    fi
-}
-
-# 1. Optane swap paging optimizations for Iris Xe UMA
-# The Iris Xe's VRAM *is* system RAM. When llama.cpp allocates tensors on
-# Vulkan1, those pages live in the kernel's unified address space. With
-# vm.overcommit=0 (default) and aggressive pageout, the kernel can swap
-# inactive tensor pages to Optane without the process being killed.
-echo ""
-echo "--- Optane NVMe Swap Tuning for UMA GPU ---"
-
-apply_sysctl() {
-    _key="$1"
-    _val="$2"
-    _desc="$3"
-    _current=$(sysctl -n "$_key" 2>/dev/null || echo "?")
-    if [ "$_current" = "$_val" ]; then
-        echo "[ok]  $_key=$_val ($_desc)"
-    else
-        echo "[fix] $_key: $_current -> $_val ($_desc)"
-        sysctl "$_key=$_val"
-        sysctl_persist "$_key=$_val"
-        CHANGED=1
-    fi
-}
-
-# Don't panic on OOM — let the pager work
-apply_sysctl vm.panic_on_oom 0 "no kernel panic on OOM"
-
-# Keep swap enabled and proactive
-apply_sysctl vm.disable_swapspace_pageouts 0 "allow swap pageouts"
-
-# Aggressive inactive scanning — pushes cold pages to swap faster,
-# freeing real RAM for hot GPU tensors and KV cache
-apply_sysctl vm.pageout_update_period 1 "fast pageout cycle"
-
-# Compute page targets from runtime page size (supports non-4K systems)
-PAGE_SIZE=$(getconf PAGESIZE 2>/dev/null || echo 4096)
-# Target: 2 GiB free, 3 GiB inactive
-FREE_PAGES=$(expr \( 2 \* 1024 \* 1024 \* 1024 \) / $PAGE_SIZE)
-INACTIVE_PAGES=$(expr \( 3 \* 1024 \* 1024 \* 1024 \) / $PAGE_SIZE)
-
-# Target more free pages (~2 GiB worth)
-# This gives the Iris Xe headroom to allocate from real RAM
-apply_sysctl vm.v_free_target $FREE_PAGES "2 GiB free page target"
-
-# Large inactive target (~3 GiB) — pages here are swap candidates
-apply_sysctl vm.v_inactive_target $INACTIVE_PAGES "3 GiB inactive target"
-
-# Bias the scanner toward laundering inactive pages
-apply_sysctl vm.inact_scan_laundry_weight 25 "aggressive inactive scan"
-apply_sysctl vm.act_scan_laundry_weight 5 "moderate active scan"
-
-# Keep ZFS ARC from eating RAM that the GPU needs
-apply_sysctl vfs.zfs.arc_max 1073741824 "ZFS ARC max 1 GiB"
-
-# NVMe interrupt coalescing off for lowest swap latency
-# nda1 = Optane drive (27 GiB swap)
-for _nvme in 0 1; do
-    if sysctl "dev.nvme.${_nvme}.int_coal_time" > /dev/null 2>&1; then
-        apply_sysctl "dev.nvme.${_nvme}.int_coal_time" 0 "nvme${_nvme} zero coalesce delay"
-    fi
-    if sysctl "dev.nvme.${_nvme}.int_coal_threshold" > /dev/null 2>&1; then
-        apply_sysctl "dev.nvme.${_nvme}.int_coal_threshold" 0 "nvme${_nvme} zero coalesce threshold"
-    fi
-done
-
-# --- OOM killer policy ---
-# Raise the OOM score adjustment for llama-server processes so the kernel
-# preferentially kills inference processes over system services when memory
-# is critically low. On FreeBSD, we use rctl if available.
-echo ""
-echo "--- OOM / Memory Policy ---"
-
-# Ensure RACCT/RCTL kernel support is noted
-if sysctl kern.racct.enable > /dev/null 2>&1; then
-    _RACCT=$(sysctl -n kern.racct.enable 2>/dev/null || echo "0")
-    if [ "$_RACCT" = "1" ]; then
-        echo "[ok]  kern.racct.enable=1 (RCTL available for per-process memory limits)"
-        echo "      To limit llama-server memory, add to /etc/rctl.conf:"
-        echo "      process:llama-server:memoryuse:deny=14G"
-    else
-        echo "[info] kern.racct.enable=0 — RCTL not active."
-        echo "      To enable: add kern.racct.enable=1 to /boot/loader.conf and reboot."
-        echo "      This allows per-process memory caps to protect against OOM."
+if [ -n "$FORCE_PROFILE" ]; then
+    # Reject path traversal in profile name (must be a plain directory name)
+    case "$FORCE_PROFILE" in
+        */*|..|.*) fail "Invalid profile name: '$FORCE_PROFILE' (must not contain '/' or start with '.')"; exit 1 ;;
+    esac
+    PROFILE_DIR="$SCRIPT_DIR/hardware-profiles/$FORCE_PROFILE"
+    PROFILE_NAME="$FORCE_PROFILE"
+    if [ ! -d "$PROFILE_DIR" ]; then
+        fail "Profile '$FORCE_PROFILE' not found in hardware-profiles/"
+        info "Available profiles:"
+        for _d in "$SCRIPT_DIR/hardware-profiles"/*/; do
+            [ -d "$_d" ] && echo "    $(basename "$_d")"
+        done
+        exit 1
     fi
 else
-    echo "[info] RACCT/RCTL not compiled into kernel — per-process memory limits unavailable."
-    echo "      Consider GENERIC-RACCT or a custom kernel with options RACCT, RCTL."
+    # Auto-detect hardware
+    if [ ! -x "$DETECT" ]; then
+        fail "detect-hardware.sh not found or not executable"
+        info "Run: chmod +x $DETECT"
+        exit 1
+    fi
+
+    info "Detecting system hardware..."
+    PROFILE_NAME=$("$DETECT" 2>/dev/null) || true
+
+    if [ -z "$PROFILE_NAME" ] || [ "$PROFILE_NAME" = "unknown" ]; then
+        fail "No matching hardware profile found for this system"
+        echo ""
+        info "Detected hardware:"
+        "$DETECT" --info 2>/dev/null || true
+        echo ""
+        info "Available profiles:"
+        "$DETECT" --list 2>/dev/null || true
+        echo ""
+        info "You can force a profile: sudo ./jenova-setup --profile <name>"
+        exit 1
+    fi
+
+    PROFILE_DIR="$SCRIPT_DIR/hardware-profiles/$PROFILE_NAME"
 fi
 
-# Ensure OOM doesn't panic, and the pager has room to work
-apply_sysctl vm.pageout_oom_seq 8 "OOM kill after 8 failed pageout sequences"
+PROFILE_SETUP="$PROFILE_DIR/jenova-setup"
 
+if [ ! -f "$PROFILE_SETUP" ]; then
+    fail "Profile '$PROFILE_NAME' has no jenova-setup script"
+    info "Expected: $PROFILE_SETUP"
+    exit 1
+fi
+
+ok "Matched profile: $PROFILE_NAME"
+info "Running profile-specific system setup..."
 echo ""
-if [ "$CHANGED" -eq 1 ]; then
-    echo "Done. Sysctl changes applied and persisted."
-    echo "Verify swap: swapinfo   (should show ~27 GiB on nda1p1)"
-else
-    echo "Nothing to change. System already configured."
-fi
+
+# Execute the profile's jenova-setup
+# Pass through to the profile script — it handles sysctl, ZFS, driver checks, etc.
+exec sh "$PROFILE_SETUP"
