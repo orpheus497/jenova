@@ -119,7 +119,7 @@ end, { desc = "Jenova Agent Terminal" })
 local function _jenova_tcp_probe(callback)
   local uv = vim.uv or vim.loop
   if not uv then
-    callback(false)
+    vim.schedule(function() callback(false) end)
     return
   end
   local host = vim.env.JENOVA_CONNECT_HOST or vim.env.JENOVA_HOST or "127.0.0.1"
@@ -127,7 +127,7 @@ local function _jenova_tcp_probe(callback)
   local port = tonumber(vim.env.JENOVA_PORT or "8080")
   local tcp = uv.new_tcp()
   if not tcp then
-    callback(false)
+    vim.schedule(function() callback(false) end)
     return
   end
   local timeout = uv.new_timer()

@@ -72,6 +72,7 @@ Thumbs.db
 
 # --- Configuration (local overrides) ---
 /etc/jenova.conf.local
+/etc/jenova.conf.bak.*
 
 # --- Large / temporary files ---
 *.log
