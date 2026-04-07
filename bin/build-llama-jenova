@@ -87,6 +87,7 @@ fi
 
 ENABLE_CUDA=0
 ENABLE_VULKAN=0
+MISSING_VULKAN_PREREQS=""
 
 case "$BACKEND" in
     cuda)
@@ -117,14 +118,30 @@ if [ "$ENABLE_CUDA" -eq 1 ] && ! command -v nvcc >/dev/null 2>&1; then
 fi
 
 if [ "$ENABLE_CUDA" -eq 1 ] && [ "$CUDA_WITH_VULKAN" = "1" ]; then
-    if (command -v pkg-config >/dev/null 2>&1 && pkg-config --exists vulkan) || \
-       [ -f /usr/include/vulkan/vulkan.h ] || \
-       [ -f /usr/local/include/vulkan/vulkan.h ]; then
+    if ! command -v glslc >/dev/null 2>&1; then
+        MISSING_VULKAN_PREREQS="${MISSING_VULKAN_PREREQS} glslc"
+    fi
+    if ! ((command -v pkg-config >/dev/null 2>&1 && pkg-config --exists vulkan) || \
+          [ -f /usr/include/vulkan/vulkan.h ] || \
+          [ -f /usr/local/include/vulkan/vulkan.h ]); then
+        MISSING_VULKAN_PREREQS="${MISSING_VULKAN_PREREQS} vulkan-sdk"
+    fi
+
+    if [ -z "$MISSING_VULKAN_PREREQS" ]; then
         ENABLE_VULKAN=1
     else
-        echo "Warning: Vulkan development files not found; building CUDA-only binary."
-        echo "         Install Vulkan headers/loader, then rerun to enable CUDA->Vulkan fallback."
+        echo "Warning: Vulkan build prerequisites missing:${MISSING_VULKAN_PREREQS}"
+        echo "         On Fedora install:"
+        echo "           sudo dnf install -y vulkan-headers vulkan-loader-devel glslc"
+        echo "         Building CUDA-only binary for now."
     fi
+fi
+
+if [ "$ENABLE_VULKAN" -eq 1 ] && [ ! -x "$(command -v glslc 2>/dev/null)" ]; then
+    echo "Error: Vulkan backend requested but glslc was not found." >&2
+    echo "Install Vulkan shader compiler, then rerun:" >&2
+    echo "  sudo dnf install -y glslc" >&2
+    exit 1
 fi
 
 VRAM_MB=0
@@ -229,6 +246,7 @@ fi
 mkdir -p "$(dirname "$LOCAL_CONF")"
 
 DEVICES=""
+GENERATED_TENSOR_SPLIT=""
 if [ "$ENABLE_CUDA" -eq 1 ]; then
     DEVICES="CUDA0"
 elif [ "$ENABLE_VULKAN" -eq 1 ]; then
@@ -251,6 +269,7 @@ EOF
 if [ -n "$DEVICES" ]; then
 cat >> "$LOCAL_CONF" <<EOF
 DEVICES="\${JENOVA_DEVICES:-$DEVICES}"
+TENSOR_SPLIT="\${JENOVA_TS:-$GENERATED_TENSOR_SPLIT}"
 EOF
 fi
 

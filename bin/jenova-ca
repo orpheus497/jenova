@@ -124,6 +124,11 @@ if [ -n "$DEVICES" ]; then
     DEV_ARGS="-dev $DEVICES"
 fi
 
+DEVICE_COUNT=0
+if [ -n "$DEVICES" ]; then
+    DEVICE_COUNT=$(printf '%s\n' "$DEVICES" | awk -F',' '{ print NF }')
+fi
+
 # --- Split mode + layer offload ---
 # NGL_7B="all" (default): use -fitt auto-fit to distribute layers across GPUs.
 #   Best for dual-GPU setups where all layers fit (i5-1135G7 dual-GPU profile).
@@ -132,7 +137,7 @@ fi
 SPLIT_ARGS="-sm layer"
 if [ "$NGL_7B" = "all" ] || [ -z "$NGL_7B" ]; then
     SPLIT_ARGS="$SPLIT_ARGS -fitt $FIT_TARGET"
-    if [ -n "$TENSOR_SPLIT" ]; then
+    if [ "$DEVICE_COUNT" -gt 1 ] && [ -n "$TENSOR_SPLIT" ]; then
         SPLIT_ARGS="$SPLIT_ARGS -ts $TENSOR_SPLIT"
     fi
 else
@@ -278,6 +283,13 @@ esac
 # =====================================================================
 _probe_health() {
     _ph_timeout="${1:-2}"
+    if command -v curl >/dev/null 2>&1; then
+        _url="http://${CONNECT_HOST}:${LLAMA_PORT}/health"
+        if echo "$CONNECT_HOST" | grep -q ":"; then _url="http://[${CONNECT_HOST}]:${LLAMA_PORT}/health"; fi
+        curl -sf -o /dev/null -m "$_ph_timeout" "$_url" 2>/dev/null
+        return $?
+    fi
+
     if [ -f "$PROXY_SCRIPT" ]; then
         _HC=$(dirname "$PROXY_SCRIPT")/healthcheck.lua
     else
@@ -285,10 +297,7 @@ _probe_health() {
     fi
     if [ -f "$_HC" ]; then
         luajit "$_HC" "$CONNECT_HOST" "$LLAMA_PORT" "$_ph_timeout" 2>/dev/null
-    elif command -v curl >/dev/null 2>&1; then
-        _url="http://${CONNECT_HOST}:${LLAMA_PORT}/health"
-        if echo "$CONNECT_HOST" | grep -q ":"; then _url="http://[${CONNECT_HOST}]:${LLAMA_PORT}/health"; fi
-        curl -sf -o /dev/null -m "$_ph_timeout" "$_url" 2>/dev/null
+        return $?
     else
         # Last resort: plain TCP probe via nc
         if command -v nc >/dev/null 2>&1; then
@@ -426,7 +435,11 @@ else
 fi
 echo "  Backend:   $RUN_BACKEND_LABEL"
 if [ "$NGL_7B" = "all" ] || [ -z "$NGL_7B" ]; then
-    echo "  GPU:       auto-fit (fitt ${FIT_TARGET} MiB)${TENSOR_SPLIT:+ ts $TENSOR_SPLIT}"
+    if [ "$DEVICE_COUNT" -gt 1 ] && [ -n "$TENSOR_SPLIT" ]; then
+        echo "  GPU:       auto-fit (fitt ${FIT_TARGET} MiB) ts $TENSOR_SPLIT"
+    else
+        echo "  GPU:       auto-fit (fitt ${FIT_TARGET} MiB)"
+    fi
 else
     echo "  GPU:       ngl ${NGL_7B} layers"
 fi
