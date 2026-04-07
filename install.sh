@@ -123,7 +123,9 @@ mkdir -p "$JENOVA_ROOT/.jenova" 2>/dev/null || {
 }
 mkdir -p "$JENOVA_ROOT/var/log" || true
 mkdir -p "$JENOVA_ROOT/var/cache" || true
-mkdir -p "$JENOVA_ROOT/models" || true
+mkdir -p "$JENOVA_ROOT/models/agent" || true
+mkdir -p "$JENOVA_ROOT/models/embed" || true
+mkdir -p "$JENOVA_ROOT/models/draft" || true
 
 if [ -w "$JENOVA_ROOT/.jenova" ]; then
     ok "Runtime directories created with proper permissions"
@@ -255,10 +257,21 @@ elif [ "$SKIP_LLAMA" = "0" ]; then
         ok "llama-server binary found at $LLAMA_BIN"
     else
         warn "llama-server not found at $LLAMA_BIN"
-        warn "Build llama.cpp with Vulkan support:"
+        warn "Build llama.cpp with Vulkan support using:"
+        warn "  $JENOVA_ROOT/bin/build-llama-jenova"
+        warn ""
+        warn "Or manually:"
         warn "  cd $JENOVA_ROOT/llama.cpp"
-        warn "  cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release"
+        warn "  cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=ON -DGGML_LTO=ON"
         warn "  cmake --build build --config Release -j\$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+        WARNINGS=$((WARNINGS + 1))
+    fi
+
+    # Check for Vulkan SDK components (needed for build)
+    if ! command -v glslc >/dev/null 2>&1; then
+        warn "glslc (Vulkan shader compiler) not found — needed to build llama.cpp with Vulkan"
+        warn "FreeBSD: pkg install shaderc"
+        warn "Linux:   install vulkan-sdk or vulkan-tools package"
         WARNINGS=$((WARNINGS + 1))
     fi
 fi
@@ -340,8 +353,8 @@ download_model() {
     esac
 }
 
-# Agent model (required)
-_agent_model="${MODEL_PATH:-${JENOVA_MODEL:-$JENOVA_ROOT/models/Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf}}"
+# Agent model (required) - downloads to models/agent/
+_agent_model="${MODEL_PATH:-${JENOVA_MODEL:-$JENOVA_ROOT/models/agent/Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf}}"
 download_model "$_agent_model" \
     "Agent model (Qwen2.5-Coder-7B-Instruct)" \
     "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q5_k_m.gguf" \
@@ -360,14 +373,14 @@ if [ -f "$_agent_model" ]; then
     fi
 fi
 
-# Embedding model (recommended for RAG)
-download_model "${MODEL_EMBED:-$JENOVA_ROOT/models/nomic-embed-text-v1.5.Q8_0.gguf}" \
+# Embedding model (recommended for RAG) - downloads to models/embed/
+download_model "${MODEL_EMBED:-$JENOVA_ROOT/models/embed/nomic-embed-text-v1.5.Q8_0.gguf}" \
     "Embedding model (nomic-embed-text-v1.5)" \
     "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q8_0.gguf" \
     "134MB"
 
-# Draft model (optional — enables speculative decoding for ~1.5-2x speedup)
-_draft_path="${MODEL_DRAFT:-$JENOVA_ROOT/models/Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf}"
+# Draft model (optional — enables speculative decoding for ~1.5-2x speedup) - downloads to models/draft/
+_draft_path="${MODEL_DRAFT:-$JENOVA_ROOT/models/draft/Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf}"
 if [ -f "$_draft_path" ]; then
     ok "Draft model — speculative decoding enabled"
 else
