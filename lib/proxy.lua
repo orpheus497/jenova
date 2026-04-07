@@ -417,8 +417,12 @@ local function proxy_connection(client_fd, conn_fds)
                 intent = "visual"
                 req_json.messages[last_user_idx].content = last_user_msg:gsub("^%s*Visual Rewrite:%s*", "")
                 last_user_msg = req_json.messages[last_user_idx].content
+            elseif last_user_msg:match("^%s*Open File Chat:%s*") then
+                intent = "filechat"
+                req_json.messages[last_user_idx].content = last_user_msg:gsub("^%s*Open File Chat:%s*", "")
+                last_user_msg = req_json.messages[last_user_idx].content
             elseif last_user_msg:match("^%s*Chatbot:%s*") then
-                intent = "chat"
+                intent = "filechat"
                 req_json.messages[last_user_idx].content = last_user_msg:gsub("^%s*Chatbot:%s*", "")
                 last_user_msg = req_json.messages[last_user_idx].content
             elseif last_user_msg:match("^%s*Web Search:%s*") then
@@ -469,7 +473,7 @@ local function proxy_connection(client_fd, conn_fds)
                 end
 
                 if intent then
-                    local system_p = prompts[intent] or prompts.chat
+                    local system_p = prompts[intent] or prompts.freechat
                     if web_context ~= "" then system_p = system_p .. "\n" .. web_context end
                     if rag_context ~= "" then system_p = system_p .. "\n" .. rag_context end
                     if intent == "visual" or intent == "websearch" then
@@ -481,11 +485,15 @@ local function proxy_connection(client_fd, conn_fds)
                     else
                         table.insert(req_json.messages, 1, {role = "system", content = system_p})
                     end
-                elseif rag_context ~= "" then
+                else
+                    local system_p = prompts.freechat
+                    if rag_context ~= "" then
+                        system_p = system_p .. "\n" .. rag_context
+                    end
                     if req_json.messages[1].role == "system" then
-                        req_json.messages[1].content = req_json.messages[1].content .. "\n" .. rag_context
+                        req_json.messages[1].content = system_p .. "\n\n" .. req_json.messages[1].content
                     else
-                        table.insert(req_json.messages, 1, {role = "system", content = rag_context})
+                        table.insert(req_json.messages, 1, {role = "system", content = system_p})
                     end
                 end
 
