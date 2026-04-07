@@ -146,6 +146,25 @@ load_jenova_conf() {
     export JENOVA_ROOT="$_real_root"
     # shellcheck disable=SC1090
     . "$_real_conf"
+
+    _local_candidate="$_real_root/etc/jenova.local.conf"
+    if [ ! -f "$_local_candidate" ]; then
+        _local_candidate="$_real_root/llama.cpp/build/jenova.local.conf"
+    fi
+    if [ -f "$_local_candidate" ]; then
+        _real_local=$(realpath "$_local_candidate" 2>/dev/null) || {
+            echo "Error: cannot resolve $_local_candidate" >&2; exit 1; }
+        case "$_real_local" in
+            "$_real_root"/etc/jenova.local.conf|\
+            "$_real_root"/llama.cpp/build/jenova.local.conf) ;;
+            *)
+                echo "Error: refusing to source $_real_local (outside $_real_root)" >&2
+                exit 1
+                ;;
+        esac
+        # shellcheck disable=SC1090
+        . "$_real_local"
+    fi
 }
 
 # Always load config first so remote mode honours custom ports / model paths

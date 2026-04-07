@@ -1,0 +1,254 @@
+#!/bin/sh
+# build-llama-jenova: CUDA-first llama.cpp build + Jenova runtime tuning.
+#
+# Defaults:
+#   - backend: CUDA
+#   - build dir: <jenova>/llama.cpp/build
+#   - config override: <jenova>/etc/jenova.local.conf
+#
+# Env overrides:
+#   JENOVA_BACKEND=auto|cuda|vulkan|cpu
+#   JENOVA_BUILD_DIR=/custom/path
+#   JENOVA_THREADS=<int>
+#   JENOVA_THREADS_BATCH=<int>
+#   JENOVA_NGL_7B=all|<int>
+#   JENOVA_FITT=<int>
+#   JENOVA_CUDA_ARCHITECTURES=<e.g. 75 or 86;89>
+#   JOBS=<int>
+
+set -eu
+
+SCRIPT_DIR="$(dirname "$(realpath "$0")")"
+JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
+LLAMA_DIR="$JENOVA_ROOT/llama.cpp"
+BUILD_DIR="${JENOVA_BUILD_DIR:-$LLAMA_DIR/build}"
+LOCAL_CONF_ETC="$JENOVA_ROOT/etc/jenova.local.conf"
+LOCAL_CONF_BUILD="$LLAMA_DIR/build/jenova.local.conf"
+LOCAL_CONF="$LOCAL_CONF_ETC"
+BACKEND="${JENOVA_BACKEND:-cuda}"
+
+if [ ! -d "$LLAMA_DIR" ]; then
+    echo "Error: llama.cpp directory not found at $LLAMA_DIR" >&2
+    exit 1
+fi
+
+if command -v nproc >/dev/null 2>&1; then
+    LOGICAL_THREADS="$(nproc)"
+elif command -v sysctl >/dev/null 2>&1; then
+    LOGICAL_THREADS="$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+else
+    LOGICAL_THREADS=4
+fi
+
+if command -v lscpu >/dev/null 2>&1; then
+    _cores="$(lscpu 2>/dev/null | awk -F: '/Core\(s\) per socket/{gsub(/ /,"",$2); print $2; exit}')"
+    _sockets="$(lscpu 2>/dev/null | awk -F: '/Socket\(s\)/{gsub(/ /,"",$2); print $2; exit}')"
+    if [ -n "${_cores:-}" ] && [ -n "${_sockets:-}" ]; then
+        PHYSICAL_THREADS=$((_cores * _sockets))
+    else
+        PHYSICAL_THREADS="$LOGICAL_THREADS"
+    fi
+else
+    PHYSICAL_THREADS="$LOGICAL_THREADS"
+fi
+
+[ "$PHYSICAL_THREADS" -lt 1 ] && PHYSICAL_THREADS=1
+[ "$LOGICAL_THREADS" -lt 1 ] && LOGICAL_THREADS=1
+
+THREADS="${JENOVA_THREADS:-$PHYSICAL_THREADS}"
+THREADS_BATCH="${JENOVA_THREADS_BATCH:-$((PHYSICAL_THREADS + 2))}"
+[ "$THREADS_BATCH" -gt "$LOGICAL_THREADS" ] && THREADS_BATCH="$LOGICAL_THREADS"
+[ "$THREADS_BATCH" -lt "$THREADS" ] && THREADS_BATCH="$THREADS"
+
+if command -v awk >/dev/null 2>&1 && [ -f /proc/meminfo ]; then
+    RAM_GIB="$(awk '/^MemTotal:/{printf "%d", $2/1024/1024}' /proc/meminfo 2>/dev/null || echo 0)"
+    SWAP_GIB="$(awk '/^SwapTotal:/{printf "%d", $2/1024/1024}' /proc/meminfo 2>/dev/null || echo 0)"
+else
+    RAM_GIB=0
+    SWAP_GIB=0
+fi
+
+if [ -z "${JOBS:-}" ]; then
+    JOBS="$LOGICAL_THREADS"
+fi
+
+if ! command -v cmake >/dev/null 2>&1; then
+    echo "Error: cmake is required but was not found in PATH." >&2
+    echo "Install it, then re-run this script." >&2
+    exit 1
+fi
+
+GENERATOR="Unix Makefiles"
+if command -v ninja >/dev/null 2>&1; then
+    GENERATOR="Ninja"
+fi
+
+ENABLE_CUDA=0
+ENABLE_VULKAN=0
+
+case "$BACKEND" in
+    cuda)
+        ENABLE_CUDA=1
+        ;;
+    vulkan)
+        ENABLE_VULKAN=1
+        ;;
+    cpu)
+        ;;
+    auto)
+        if command -v nvcc >/dev/null 2>&1; then
+            ENABLE_CUDA=1
+        elif command -v vulkaninfo >/dev/null 2>&1 && vulkaninfo --summary 2>/dev/null | grep -q "deviceName"; then
+            ENABLE_VULKAN=1
+        fi
+        ;;
+    *)
+        echo "Error: unsupported JENOVA_BACKEND='$BACKEND' (use auto|cuda|vulkan|cpu)" >&2
+        exit 1
+        ;;
+esac
+
+if [ "$ENABLE_CUDA" -eq 1 ] && ! command -v nvcc >/dev/null 2>&1; then
+    echo "Error: CUDA backend requested but nvcc was not found." >&2
+    echo "Set JENOVA_BACKEND=cpu temporarily or install CUDA toolkit." >&2
+    exit 1
+fi
+
+VRAM_MB=0
+if [ "$ENABLE_CUDA" -eq 1 ] && command -v nvidia-smi >/dev/null 2>&1; then
+    _vram="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -n1 || true)"
+    case "$_vram" in
+        ''|*[!0-9]*)
+            VRAM_MB=0
+            ;;
+        *)
+            VRAM_MB="$_vram"
+            ;;
+    esac
+fi
+
+if [ -n "${JENOVA_NGL_7B:-}" ]; then
+    NGL_7B="$JENOVA_NGL_7B"
+else
+    if [ "$ENABLE_CUDA" -eq 1 ]; then
+        if [ "$VRAM_MB" -ge 10000 ]; then
+            NGL_7B="all"
+        elif [ "$VRAM_MB" -ge 7000 ]; then
+            NGL_7B=24
+        elif [ "$VRAM_MB" -ge 5000 ]; then
+            NGL_7B=18
+        elif [ "$VRAM_MB" -gt 0 ]; then
+            NGL_7B=12
+        else
+            # Driver-less environments cannot report VRAM; choose a conservative default.
+            NGL_7B=16
+        fi
+    elif [ "$ENABLE_VULKAN" -eq 1 ]; then
+        NGL_7B=16
+    else
+        NGL_7B=0
+    fi
+fi
+
+FIT_TARGET="${JENOVA_FITT:-768}"
+
+echo "== Jenova llama.cpp build =="
+echo "Root:         $JENOVA_ROOT"
+echo "llama.cpp:    $LLAMA_DIR"
+echo "Build dir:    $BUILD_DIR"
+echo "Backend:      $BACKEND"
+echo "Threads:      $THREADS (batch $THREADS_BATCH)"
+echo "RAM / Swap:   ${RAM_GIB}GiB / ${SWAP_GIB}GiB"
+echo "NGL_7B:       $NGL_7B"
+echo "Generator:    $GENERATOR"
+echo ""
+
+mkdir -p "$BUILD_DIR"
+
+set -- \
+    -G "$GENERATOR" \
+    -B "$BUILD_DIR" \
+    -S "$LLAMA_DIR" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DGGML_NATIVE=ON \
+    -DGGML_LTO=ON \
+    -DGGML_OPENMP=ON \
+    -DBUILD_SHARED_LIBS=ON \
+    -DGGML_CUDA=OFF \
+    -DGGML_VULKAN=OFF
+
+if [ "$ENABLE_CUDA" -eq 1 ]; then
+    set -- "$@" -DGGML_CUDA=ON
+    if [ -n "${JENOVA_CUDA_ARCHITECTURES:-}" ]; then
+        set -- "$@" -DCMAKE_CUDA_ARCHITECTURES="$JENOVA_CUDA_ARCHITECTURES"
+    fi
+fi
+if [ "$ENABLE_VULKAN" -eq 1 ]; then
+    set -- "$@" -DGGML_VULKAN=ON
+fi
+
+cmake "$@"
+cmake --build "$BUILD_DIR" --config Release -j "$JOBS"
+
+LLAMA_SERVER="$BUILD_DIR/bin/llama-server"
+if [ ! -x "$LLAMA_SERVER" ]; then
+    echo "Error: build completed but llama-server is missing at $LLAMA_SERVER" >&2
+    exit 1
+fi
+
+if [ -e "$LOCAL_CONF_ETC" ]; then
+    if [ ! -w "$LOCAL_CONF_ETC" ]; then
+        LOCAL_CONF="$LOCAL_CONF_BUILD"
+    fi
+elif [ ! -w "$JENOVA_ROOT/etc" ]; then
+    LOCAL_CONF="$LOCAL_CONF_BUILD"
+fi
+
+mkdir -p "$(dirname "$LOCAL_CONF")"
+
+DEVICES=""
+if [ "$ENABLE_CUDA" -eq 1 ]; then
+    DEVICES="CUDA0"
+elif [ "$ENABLE_VULKAN" -eq 1 ]; then
+    DEVICES="Vulkan0"
+fi
+
+cat > "$LOCAL_CONF" <<EOF
+#!/bin/sh
+# Auto-generated by bin/build-llama-jenova on $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+# Host-specific overrides for llama.cpp runtime in Jenova.
+
+LLAMA_SERVER="\$JENOVA_ROOT/llama.cpp/build/bin/llama-server"
+THREADS="\${JENOVA_THREADS:-$THREADS}"
+THREADS_BATCH="\${JENOVA_THREADS_BATCH:-$THREADS_BATCH}"
+NGL_7B="\${JENOVA_NGL_7B:-$NGL_7B}"
+FIT_TARGET="\${JENOVA_FITT:-$FIT_TARGET}"
+KV_CACHE_TYPE="\${JENOVA_KV_TYPE:-q8_0}"
+EOF
+
+if [ -n "$DEVICES" ]; then
+cat >> "$LOCAL_CONF" <<EOF
+DEVICES="\${JENOVA_DEVICES:-$DEVICES}"
+EOF
+fi
+
+if [ "$ENABLE_CUDA" -eq 1 ]; then
+cat >> "$LOCAL_CONF" <<'EOF'
+# Allow CUDA to overflow VRAM into system RAM instead of hard OOM.
+GGML_CUDA_ENABLE_UNIFIED_MEMORY="${GGML_CUDA_ENABLE_UNIFIED_MEMORY:-1}"
+EOF
+fi
+
+if [ "$ENABLE_VULKAN" -eq 1 ]; then
+cat >> "$LOCAL_CONF" <<'EOF'
+# Allow Vulkan backend to fallback to system memory under pressure.
+GGML_VK_ALLOW_SYSMEM_FALLBACK="${GGML_VK_ALLOW_SYSMEM_FALLBACK:-1}"
+EOF
+fi
+
+echo ""
+echo "Build complete: $LLAMA_SERVER"
+echo "Runtime overrides written: $LOCAL_CONF"
+echo ""
+echo "Next:"
+echo "  $JENOVA_ROOT/bin/jenova-ca restart"

@@ -23,6 +23,12 @@ else
     exit 1
 fi
 
+if [ -f "$JENOVA_ROOT/etc/jenova.local.conf" ]; then
+    . "$JENOVA_ROOT/etc/jenova.local.conf"
+elif [ -f "$JENOVA_ROOT/llama.cpp/build/jenova.local.conf" ]; then
+    . "$JENOVA_ROOT/llama.cpp/build/jenova.local.conf"
+fi
+
 # Ensure runtime directories exist with proper permissions
 # Note: Run without sudo to avoid permission issues with lock files
 mkdir -p "$JENOVA_STATE" 2>/dev/null || {
@@ -100,6 +106,11 @@ export JENOVA_LLAMA_URL="http://${HOST}:${LLAMA_PORT}"
 export JENOVA_PROXY_PORT="$PORT"
 export JENOVA_PROXY_HOST="$HOST"
 export JENOVA_CTX="$CTX_SIZE"
+
+# Optional backend memory-fallback tuning from etc/jenova.local.conf.
+[ -n "${GGML_CUDA_ENABLE_UNIFIED_MEMORY:-}" ] && export GGML_CUDA_ENABLE_UNIFIED_MEMORY
+[ -n "${GGML_VK_ALLOW_SYSMEM_FALLBACK:-}" ] && export GGML_VK_ALLOW_SYSMEM_FALLBACK
+[ -n "${GGML_VK_PREFER_HOST_MEMORY:-}" ] && export GGML_VK_PREFER_HOST_MEMORY
 
 # --- LD_LIBRARY_PATH for shared libs ---
 LLAMA_LIB_DIR="$JENOVA_ROOT/llama.cpp/build/bin"
