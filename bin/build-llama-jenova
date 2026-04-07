@@ -1,8 +1,8 @@
 #!/bin/sh
-# build-llama-jenova: CUDA-first llama.cpp build + Jenova runtime tuning.
+# build-llama-jenova: Vulkan-first llama.cpp build + Jenova runtime tuning.
 #
 # Defaults:
-#   - backend: CUDA (+ Vulkan fallback support when available)
+#   - backend: Vulkan
 #   - build dir: <jenova>/llama.cpp/build
 #   - config override: <jenova>/etc/jenova.local.conf
 #
@@ -26,7 +26,7 @@ BUILD_DIR="${JENOVA_BUILD_DIR:-$LLAMA_DIR/build}"
 LOCAL_CONF_ETC="$JENOVA_ROOT/etc/jenova.local.conf"
 LOCAL_CONF_BUILD="$LLAMA_DIR/build/jenova.local.conf"
 LOCAL_CONF="$LOCAL_CONF_ETC"
-BACKEND="${JENOVA_BACKEND:-cuda}"
+BACKEND="${JENOVA_BACKEND:-vulkan}"
 CUDA_WITH_VULKAN="${JENOVA_CUDA_WITH_VULKAN:-1}"
 
 if [ ! -d "$LLAMA_DIR" ]; then
@@ -174,7 +174,7 @@ else
             NGL_7B=16
         fi
     elif [ "$ENABLE_VULKAN" -eq 1 ]; then
-        NGL_7B=16
+        NGL_7B=all
     else
         NGL_7B=0
     fi
@@ -233,6 +233,10 @@ LLAMA_SERVER="$BUILD_DIR/bin/llama-server"
 if [ ! -x "$LLAMA_SERVER" ]; then
     echo "Error: build completed but llama-server is missing at $LLAMA_SERVER" >&2
     exit 1
+fi
+
+if [ "$ENABLE_VULKAN" -eq 1 ] && [ "$ENABLE_CUDA" -eq 0 ]; then
+    rm -f "$BUILD_DIR/bin"/libggml-cuda.so*
 fi
 
 if [ -e "$LOCAL_CONF_ETC" ]; then

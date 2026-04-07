@@ -166,7 +166,7 @@ _use_vulkan_fallback() {
         RUN_SPLIT_ARGS="-sm layer -ngl $NGL_7B"
     fi
     RUN_MAIN_NGL_ARGS=""
-    RUN_DRAFT_ARGS="$DRAFT_ARGS"
+    RUN_DRAFT_ARGS=""
     RUN_BACKEND_LABEL="vulkan-fallback"
     export GGML_CUDA_DISABLE=1
 }
@@ -558,6 +558,7 @@ if [ "$1" = "--daemon" ]; then
         GGML_VULKAN_DISABLE=1 "$LLAMA_SERVER" \
             -m "$MODEL_EMBED" \
             --embedding \
+            -dev none \
             -ngl 0 \
             -c 4096 \
             -b 512 \
@@ -587,7 +588,7 @@ if [ "$1" = "--daemon" ]; then
         if ! kill -0 "$LLAMA_PID" 2>/dev/null; then
             if ! $_VULKAN_RETRY_DONE && _log_has_cuda_kernel_image_mismatch "$LOG_FILE"; then
                 if _vulkan_backend_available; then
-                    echo "Warning: CUDA backend failed with kernel-image mismatch; retrying with Vulkan backend (Vulkan0)."
+                    echo "Warning: CUDA backend failed with kernel-image mismatch; retrying with Vulkan backend (Vulkan0) and speculative decoding disabled."
                     _VULKAN_RETRY_DONE=true
                     _use_vulkan_fallback
                     _launch_llama_server_bg "$LOG_FILE" "$@"
@@ -685,6 +686,7 @@ if [ -f "$MODEL_EMBED" ]; then
     GGML_VULKAN_DISABLE=1 "$LLAMA_SERVER" \
         -m "$MODEL_EMBED" \
         --embedding \
+        -dev none \
         -ngl 0 \
         -c 4096 \
         -b 512 \
