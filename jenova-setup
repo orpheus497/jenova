@@ -33,11 +33,20 @@ fail() { printf "${_R} FAIL${_N}  %s\n" "$1"; }
 
 FORCE_PROFILE=""
 
+# Require a non-empty, non-flag value after an option; exits with a clear message otherwise.
+require_arg() {
+    if [ -z "$2" ] || [ "${2#--}" != "$2" ]; then
+        echo "Error: $1 requires a value" >&2
+        exit 1
+    fi
+}
+
 # Parse arguments
 while [ $# -gt 0 ]; do
     case "$1" in
         --profile)
             shift
+            require_arg "--profile" "$1"
             FORCE_PROFILE="$1"
             shift
             ;;

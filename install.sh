@@ -239,9 +239,12 @@ elif command -v fetch >/dev/null 2>&1; then
     _DL_CMD="fetch"
 fi
 
-# Download a model file if missing. Args: path, name, url, size_hint
+# Download a model file if missing. Args: path, name, url, size_hint [, required]
+# Pass required=1 for models that are mandatory; failures increment ERRORS.
+# Optional/recommended models (default) increment WARNINGS on failure so a
+# transient download problem does not mark the whole install as failed.
 download_model() {
-    _path="$1"; _name="$2"; _url="$3"; _size="$4"
+    _path="$1"; _name="$2"; _url="$3"; _size="$4"; _required="${5:-0}"
     if [ -f "$_path" ]; then
         ok "$_name ($(basename "$_path"))"
         return 0
@@ -249,7 +252,7 @@ download_model() {
     if [ -z "$_DL_CMD" ]; then
         warn "$_name not found at $_path"
         warn "  Install curl or fetch, then re-run install.sh to auto-download"
-        WARNINGS=$((WARNINGS + 1))
+        if [ "$_required" = "1" ]; then ERRORS=$((ERRORS + 1)); else WARNINGS=$((WARNINGS + 1)); fi
         return 0
     fi
     warn "$_name not found at $_path"
@@ -265,14 +268,14 @@ download_model() {
                 if ! curl -L --fail --max-time "$_dl_timeout" --connect-timeout 30 --progress-bar -o "$_tmp" "$_url"; then
                     rm -f "$_tmp"
                     fail "Download failed for $_name"
-                    ERRORS=$((ERRORS + 1))
+                    if [ "$_required" = "1" ]; then ERRORS=$((ERRORS + 1)); else WARNINGS=$((WARNINGS + 1)); fi
                     return 0
                 fi
             else
                 if ! fetch -T "$_dl_timeout" -o "$_tmp" "$_url"; then
                     rm -f "$_tmp"
                     fail "Download failed for $_name"
-                    ERRORS=$((ERRORS + 1))
+                    if [ "$_required" = "1" ]; then ERRORS=$((ERRORS + 1)); else WARNINGS=$((WARNINGS + 1)); fi
                     return 0
                 fi
             fi
@@ -283,13 +286,13 @@ download_model() {
             else
                 rm -f "$_tmp"
                 fail "Download failed for $_name (empty file)"
-                ERRORS=$((ERRORS + 1))
+                if [ "$_required" = "1" ]; then ERRORS=$((ERRORS + 1)); else WARNINGS=$((WARNINGS + 1)); fi
                 return 0
             fi
             ;;
         *)
             warn "Skipping $_name download"
-            WARNINGS=$((WARNINGS + 1))
+            if [ "$_required" = "1" ]; then ERRORS=$((ERRORS + 1)); else WARNINGS=$((WARNINGS + 1)); fi
             return 0
             ;;
     esac
@@ -300,11 +303,11 @@ _agent_model="${MODEL_PATH:-${JENOVA_MODEL:-$JENOVA_ROOT/models/Qwen2.5-Coder-7B
 download_model "$_agent_model" \
     "Agent model (Qwen2.5-Coder-7B-Instruct)" \
     "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q5_k_m.gguf" \
-    "5.1GB"
+    "5.1GB" \
+    "1"
 if [ ! -s "$_agent_model" ]; then
     warn "Required agent model is missing: $_agent_model"
     warn "Core backend functionality is blocked until the agent model is installed"
-    ERRORS=$((ERRORS + 1))
 fi
 
 # Ensure Neovim health check default model path stays in sync.
