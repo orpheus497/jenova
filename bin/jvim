@@ -22,7 +22,7 @@
 #     plugins still work but jvim-specific behaviour will not be present.
 #
 # Usage: jvim [options] [nvim args...]
-#   --remote <host>     Connect to a remote Jenova CA on the LAN (client mode)
+#   --remote [host]     Connect to remote Jenova CA: explicit host or LAN auto-discover
 #   --remote-port <p>   Override proxy port for remote mode      (default 8080)
 #   --llama-port <p>    Override llama-server port for remote    (default 8081)
 #   --embed-port <p>    Override embedding-server port for remote (default 8082)
@@ -35,6 +35,7 @@ SCRIPT_DIR=$(dirname "$(realpath "$0")")
 
 # --- Parse jvim-specific flags, then pass remaining args to nvim via "$@" ---
 REMOTE_HOST=""
+REMOTE_AUTO_DISCOVER=0
 REMOTE_PROXY_PORT="8080"
 REMOTE_LLAMA_PORT="8081"
 REMOTE_EMBED_PORT="8082"
@@ -52,14 +53,23 @@ require_arg() {
 # Consume only jvim flags; stop at first non-jvim argument (preserves "$@" for nvim)
 while [ $# -gt 0 ]; do
     case "$1" in
-        --remote)      shift; require_arg "--remote" "$1";      REMOTE_HOST="$1";       shift ;;
+        --remote)
+            shift
+            # Optional argument: if next token exists and is not a flag, it's the host
+            if [ $# -gt 0 ] && [ "${1#--}" = "$1" ] && [ -n "$1" ]; then
+                REMOTE_HOST="$1"; shift
+            else
+                # No host given → LAN auto-discover
+                REMOTE_AUTO_DISCOVER=1
+            fi
+            ;;
         --remote-port) shift; require_arg "--remote-port" "$1"; REMOTE_PROXY_PORT="$1"; shift ;;
         --llama-port)  shift; require_arg "--llama-port" "$1";  REMOTE_LLAMA_PORT="$1"; shift ;;
         --embed-port)  shift; require_arg "--embed-port" "$1";  REMOTE_EMBED_PORT="$1"; shift ;;
         --no-backend)  NO_BACKEND=1; shift ;;
         --check)       CHECK_ONLY=1; shift ;;
         -h|--help)
-            sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *) break ;;  # First non-jvim arg — rest is for nvim
@@ -171,13 +181,16 @@ load_jenova_conf() {
 # defined in etc/jenova.conf the same way local mode does.
 load_jenova_conf
 
-# --- Remote/LAN client mode: skip backend start, just export env and launch nvim ---
-if [ -n "$REMOTE_HOST" ]; then
-    export JENOVA_CONNECT_HOST="$REMOTE_HOST"
+# --- Remote/LAN client mode: skip backend start, just export env and launch editor ---
+# Two sub-modes:
+#   jvim --remote <host>  — explicit host, connect and health-check immediately
+#   jvim --remote         — LAN auto-discover: set JENOVA_LAN_MODE=1 and let the
+#                           Lua plugin (jenova/lan.lua) scan the subnet for a
+#                           running Jenova CA, then set JENOVA_CONNECT_HOST.
+if [ -n "$REMOTE_HOST" ] || [ "$REMOTE_AUTO_DISCOVER" = "1" ]; then
     export JENOVA_PORT="$REMOTE_PROXY_PORT"
     export JENOVA_LLAMA_PORT="$REMOTE_LLAMA_PORT"
     export JENOVA_LLAMA_EMBED_PORT="$REMOTE_EMBED_PORT"
-    export JENOVA_API_URL="$(build_http_url "$REMOTE_HOST" "$REMOTE_PROXY_PORT")"
     export JENOVA_LAN_MODE="1"
 
     LLAMA_LIB_DIR="$JENOVA_ROOT/llama.cpp/build/bin"
@@ -185,24 +198,33 @@ if [ -n "$REMOTE_HOST" ]; then
         export LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"
     fi
 
-    echo "Jenova LAN client mode: connecting to $REMOTE_HOST:$REMOTE_PROXY_PORT"
+    if [ -n "$REMOTE_HOST" ]; then
+        # Explicit host mode
+        export JENOVA_CONNECT_HOST="$REMOTE_HOST"
+        export JENOVA_API_URL="$(build_http_url "$REMOTE_HOST" "$REMOTE_PROXY_PORT")"
+        echo "Jenova LAN client mode: connecting to $REMOTE_HOST:$REMOTE_PROXY_PORT"
 
-    # Quick health check on the remote
-    if command -v curl >/dev/null 2>&1; then
-        _remote_url="$(build_http_url "$REMOTE_HOST" "$REMOTE_PROXY_PORT")/health"
-        if curl -sf --max-time 3 --connect-timeout 2 "$_remote_url" >/dev/null 2>&1; then
-            echo "Remote Jenova CA is healthy"
-        else
-            echo "Warning: Remote Jenova CA at $REMOTE_HOST:$REMOTE_PROXY_PORT is not responding" >&2
-            echo "" >&2
-            echo "Troubleshooting:" >&2
-            echo "  1. Is jenova-ca running on $REMOTE_HOST?  (ssh $REMOTE_HOST bin/jenova-ca status)" >&2
-            echo "  2. Is it bound to 0.0.0.0?  (JENOVA_HOST=0.0.0.0 in etc/jenova.conf on the server)" >&2
-            echo "     Services bound to 127.0.0.1 reject LAN connections." >&2
-            echo "  3. Firewall blocking port $REMOTE_PROXY_PORT?" >&2
-            echo "" >&2
-            echo "Neovim will launch anyway — monitor will retry automatically" >&2
+        # Quick health check on the remote
+        if command -v curl >/dev/null 2>&1; then
+            _remote_url="$(build_http_url "$REMOTE_HOST" "$REMOTE_PROXY_PORT")/health"
+            if curl -sf --max-time 3 --connect-timeout 2 "$_remote_url" >/dev/null 2>&1; then
+                echo "Remote Jenova CA is healthy"
+            else
+                echo "Warning: Remote Jenova CA at $REMOTE_HOST:$REMOTE_PROXY_PORT is not responding" >&2
+                echo "" >&2
+                echo "Troubleshooting:" >&2
+                echo "  1. Is jenova-ca running on $REMOTE_HOST?  (ssh $REMOTE_HOST bin/jenova-ca status)" >&2
+                echo "  2. Is it bound to 0.0.0.0?  (JENOVA_HOST=0.0.0.0 in etc/jenova.conf on the server)" >&2
+                echo "     Services bound to 127.0.0.1 reject LAN connections." >&2
+                echo "  3. Firewall blocking port $REMOTE_PROXY_PORT?" >&2
+                echo "" >&2
+                echo "Editor will launch anyway — monitor will retry automatically" >&2
+            fi
         fi
+    else
+        # Auto-discover mode: let the Lua plugin (jenova/lan.lua) scan the subnet
+        echo "Jenova LAN auto-discover mode: scanning subnet for Jenova CA..."
+        echo "The editor will connect automatically when a server is found."
     fi
 
     if [ "$CHECK_ONLY" = "1" ]; then

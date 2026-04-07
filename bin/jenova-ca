@@ -119,15 +119,21 @@ if [ -d "$LLAMA_LIB_DIR" ]; then
 fi
 
 # --- Build device arguments ---
+# count_devices: count comma-separated device entries in a device string.
+count_devices() {
+    if [ -n "$1" ]; then
+        printf '%s\n' "$1" | awk -F',' '{ print NF }'
+    else
+        echo 0
+    fi
+}
+
 DEV_ARGS=""
 if [ -n "$DEVICES" ]; then
     DEV_ARGS="-dev $DEVICES"
 fi
 
-DEVICE_COUNT=0
-if [ -n "$DEVICES" ]; then
-    DEVICE_COUNT=$(printf '%s\n' "$DEVICES" | awk -F',' '{ print NF }')
-fi
+DEVICE_COUNT=$(count_devices "$DEVICES")
 
 # --- Split mode + layer offload ---
 # NGL_7B="all" (default): use -fitt auto-fit to distribute layers across GPUs.
