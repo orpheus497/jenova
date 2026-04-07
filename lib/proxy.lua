@@ -486,15 +486,19 @@ local function proxy_connection(client_fd, conn_fds)
                         table.insert(req_json.messages, 1, {role = "system", content = system_p})
                     end
                 else
-                    local system_p = prompts.freechat
+                    -- No intent: only inject context if we have RAG, or if there's no existing system prompt
                     if rag_context ~= "" then
-                        system_p = system_p .. "\n" .. rag_context
+                        local system_p = prompts.freechat .. "\n" .. rag_context
+                        if req_json.messages[1].role == "system" then
+                            req_json.messages[1].content = system_p .. "\n\n" .. req_json.messages[1].content
+                        else
+                            table.insert(req_json.messages, 1, {role = "system", content = system_p})
+                        end
+                    elseif req_json.messages[1].role ~= "system" then
+                        -- No RAG and no existing system prompt: inject default freechat prompt
+                        table.insert(req_json.messages, 1, {role = "system", content = prompts.freechat})
                     end
-                    if req_json.messages[1].role == "system" then
-                        req_json.messages[1].content = system_p .. "\n\n" .. req_json.messages[1].content
-                    else
-                        table.insert(req_json.messages, 1, {role = "system", content = system_p})
-                    end
+                    -- Otherwise: client provided system prompt and no RAG, respect it as-is
                 end
 
                 local new_body = json.encode(req_json)
@@ -562,7 +566,8 @@ ffi.C.signal(_ffi_defs.SIGPIPE, _ffi_defs.SIG_IGN)
 
 local server_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
 if server_fd < 0 then
-    print("[proxy] Failed to create socket: errno=" .. tostring(ffi.errno()) .. " " .. ffi.string(ffi.C.strerror(ffi.errno())))
+    local err = ffi.errno()
+    print("[proxy] Failed to create socket: errno=" .. tostring(err) .. " " .. ffi.string(ffi.C.strerror(err)))
     os.exit(1)
 end
 
@@ -579,12 +584,14 @@ addr.sin_port = ffi.C.htons(PORT)
 addr.sin_addr.s_addr = ffi.C.inet_addr(HOST)
 
 if ffi.C.bind(server_fd, ffi.cast("struct sockaddr *", addr), ffi.sizeof(addr)) < 0 then
-    print("[proxy] Failed to bind to " .. HOST .. ":" .. PORT .. ": errno=" .. tostring(ffi.errno()) .. " " .. ffi.string(ffi.C.strerror(ffi.errno())))
+    local err = ffi.errno()
+    print("[proxy] Failed to bind to " .. HOST .. ":" .. PORT .. ": errno=" .. tostring(err) .. " " .. ffi.string(ffi.C.strerror(err)))
     os.exit(1)
 end
 
 if ffi.C.listen(server_fd, 16) < 0 then
-    print("[proxy] Failed to listen: errno=" .. tostring(ffi.errno()) .. " " .. ffi.string(ffi.C.strerror(ffi.errno())))
+    local err = ffi.errno()
+    print("[proxy] Failed to listen: errno=" .. tostring(err) .. " " .. ffi.string(ffi.C.strerror(err)))
     os.exit(1)
 end
 

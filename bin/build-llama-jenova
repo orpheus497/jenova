@@ -295,5 +295,10 @@ echo ""
 echo "Build complete: $LLAMA_SERVER"
 echo "Runtime overrides written: $LOCAL_CONF"
 echo ""
+if [ "$LOCAL_CONF" = "$LOCAL_CONF_ETC" ]; then
+    echo "NOTE: $LOCAL_CONF is auto-generated and gitignored."
+    echo "      See etc/jenova.local.conf.example for template."
+fi
+echo ""
 echo "Next:"
 echo "  $JENOVA_ROOT/bin/jenova-ca restart"
