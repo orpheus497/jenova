@@ -59,12 +59,15 @@ TENSOR_SPLIT="${JENOVA_TS:-}"
 # Override any model path by setting these variables.
 # JENOVA_MODEL overrides the agent model path.
 # JENOVA_EMBED_MODEL overrides the embedding model path.
-# JENOVA_DRAFT_MODEL overrides the draft model path.
-# JENOVA_DRAFT_PATH is an additional alias for the draft model (checked by jenova-ca).
+# JENOVA_DRAFT_MODEL overrides the draft model path (applied during jenova.conf sourcing).
+# JENOVA_DRAFT_PATH is a jenova-ca-specific alias; it takes precedence over JENOVA_DRAFT_MODEL
+#   at runtime and is the final value used to pass -md to llama-server.
+#   For most users, setting JENOVA_DRAFT_MODEL is sufficient.
 #
 # JENOVA_MODEL="$JENOVA_ROOT/models/agent/MyCustomModel-Q5_K_M.gguf"
 # JENOVA_EMBED_MODEL="$JENOVA_ROOT/models/embed/my-embed-model.gguf"
 # JENOVA_DRAFT_MODEL="$JENOVA_ROOT/models/draft/my-draft-model.gguf"
+# JENOVA_DRAFT_PATH="$JENOVA_ROOT/models/draft/my-draft-model.gguf"
 
 # --- Backend-specific settings ---
 
