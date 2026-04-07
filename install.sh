@@ -1,6 +1,6 @@
 #!/bin/sh
 # install.sh: Jenova Cognitive Architecture — System Installation Script
-# FreeBSD 15 | Dual Vulkan GPU (GTX 1650 Ti + Intel Iris Xe) | Optane NVMe
+# Supports all Vulkan hardware profiles (auto-detected via detect-hardware.sh)
 #
 # Jenova is the cognitive backend half of a two-repo system. The matching
 # editor frontend is the jvim fork of Neovim:
@@ -544,7 +544,10 @@ if [ "$CLIENT_ONLY" = "1" ]; then
     echo "  Make sure the server has JENOVA_HOST=0.0.0.0 in etc/jenova.conf and"
     echo "  the firewall allows ports 8080, 8081, and 8082 from this host."
 else
-    echo "  1. Place model GGUF files in: $JENOVA_ROOT/models/"
+    echo "  1. Place model GGUF files in type-specific folders:"
+    echo "       Agent:  $JENOVA_ROOT/models/agent/"
+    echo "       Embed:  $JENOVA_ROOT/models/embed/"
+    echo "       Draft:  $JENOVA_ROOT/models/draft/"
     echo "  2. Build llama.cpp if not done:"
     echo "       cd llama.cpp && cmake -B build -DGGML_VULKAN=ON && \\"
     echo "       cmake --build build -j\$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"

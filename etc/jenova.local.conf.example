@@ -50,6 +50,22 @@ DEVICES="${JENOVA_DEVICES:-}"
 # Leave empty for single GPU
 TENSOR_SPLIT="${JENOVA_TS:-}"
 
+# --- Model path overrides ---
+# By default, Jenova auto-discovers the first .gguf file in each model folder:
+#   models/agent/   → main inference model
+#   models/embed/   → embedding model for RAG
+#   models/draft/   → drafter for speculative decoding
+#
+# Override any model path by setting these variables.
+# JENOVA_MODEL overrides the agent model path.
+# JENOVA_EMBED_MODEL overrides the embedding model path.
+# JENOVA_DRAFT_MODEL overrides the draft model path.
+# JENOVA_DRAFT_PATH is an additional alias for the draft model (checked by jenova-ca).
+#
+# JENOVA_MODEL="$JENOVA_ROOT/models/agent/MyCustomModel-Q5_K_M.gguf"
+# JENOVA_EMBED_MODEL="$JENOVA_ROOT/models/embed/my-embed-model.gguf"
+# JENOVA_DRAFT_MODEL="$JENOVA_ROOT/models/draft/my-draft-model.gguf"
+
 # --- Backend-specific settings ---
 
 # Vulkan: Allow system memory fallback under pressure

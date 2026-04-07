@@ -129,6 +129,9 @@ mkdir -p "$JENOVA_ROOT/.jenova" 2>/dev/null || {
 mkdir -p "$JENOVA_ROOT/var/log" || true
 mkdir -p "$JENOVA_ROOT/var/cache" || true
 mkdir -p "$JENOVA_ROOT/models" || true
+mkdir -p "$JENOVA_ROOT/models/agent" || true
+mkdir -p "$JENOVA_ROOT/models/embed" || true
+mkdir -p "$JENOVA_ROOT/models/draft" || true
 ok "Runtime directories created"
 
 # ---------------------------------------------------------------------------
@@ -227,7 +230,11 @@ echo ""
 info "Next steps:"
 echo "  1. Run: sudo $PROFILE_DIR/jenova-setup  (one-time system tuning)"
 echo "  2. Build llama.cpp with Vulkan: cd llama.cpp && cmake -B build -DGGML_VULKAN=ON"
-echo "  3. Download models to $JENOVA_ROOT/models/"
+echo "  3. Place model GGUF files in type-specific folders:"
+echo "       Agent:  $JENOVA_ROOT/models/agent/"
+echo "       Embed:  $JENOVA_ROOT/models/embed/"
+echo "       Draft:  $JENOVA_ROOT/models/draft/"
+echo "     (or use main ./install.sh to download automatically)"
 echo "  4. Start: bin/jenova-ca --daemon"
 echo ""
 info "AMD Lucienne notes:"

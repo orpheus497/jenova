@@ -42,6 +42,14 @@ cp "$PROFILE_CONF" "$JENOVA_ROOT/etc/jenova.conf"
 echo "  Profile deployed: $JENOVA_ROOT/etc/jenova.conf"
 echo ""
 
+# Create model subdirectories so auto-discovery works immediately
+echo "Creating model directories..."
+mkdir -p "$JENOVA_ROOT/models/agent" || true
+mkdir -p "$JENOVA_ROOT/models/embed" || true
+mkdir -p "$JENOVA_ROOT/models/draft" || true
+echo "  Model directories ready."
+echo ""
+
 echo "Profile installation complete!"
 echo ""
 echo "Next steps:"
@@ -49,8 +57,11 @@ echo "  1. Build llama.cpp with Vulkan:"
 echo "     cd $JENOVA_ROOT"
 echo "     ./bin/build-llama-jenova"
 echo ""
-echo "  2. Download models (if needed):"
-echo "     ./install.sh  # Run main installer"
+echo "  2. Download or place models in type-specific folders:"
+echo "       Agent:  $JENOVA_ROOT/models/agent/"
+echo "       Embed:  $JENOVA_ROOT/models/embed/"
+echo "       Draft:  $JENOVA_ROOT/models/draft/"
+echo "     (or run main installer: ./install.sh)"
 echo ""
 echo "  3. Start Jenova:"
 echo "     ./bin/jenova-ca start"
