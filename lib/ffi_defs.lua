@@ -3,20 +3,41 @@
 -- FreeBSD 15 / amd64 compatible.
 
 local ffi = require("ffi")
+local jit = require("jit")
 
-ffi.cdef[[
-  typedef long ssize_t;
+local is_linux = jit.os == "Linux"
+
+local socket_struct_defs
+if is_linux then
+  socket_struct_defs = [[
+  typedef unsigned int socklen_t;
+  typedef unsigned short sa_family_t;
+  typedef unsigned short in_port_t;
+
+  struct in_addr {
+    uint32_t s_addr;
+  };
+
+  struct sockaddr_in {
+    sa_family_t sin_family;
+    in_port_t sin_port;
+    struct in_addr sin_addr;
+    unsigned char sin_zero[8];
+  };
+
+  struct sockaddr {
+    sa_family_t sa_family;
+    char sa_data[14];
+  };
+]]
+else
+  socket_struct_defs = [[
   typedef unsigned int socklen_t;
   typedef uint8_t sa_family_t;
   typedef unsigned short in_port_t;
-  typedef unsigned int in_addr_t;
-  typedef unsigned int tcflag_t;
-  typedef unsigned char cc_t;
-  typedef unsigned int speed_t;
-  typedef int pid_t;
 
   struct in_addr {
-    in_addr_t s_addr;
+    uint32_t s_addr;
   };
 
   struct sockaddr_in {
@@ -32,6 +53,16 @@ ffi.cdef[[
     sa_family_t sa_family;
     char sa_data[14];
   };
+]]
+end
+
+ffi.cdef(socket_struct_defs .. [[
+  typedef long ssize_t;
+  typedef unsigned int in_addr_t;
+  typedef unsigned int tcflag_t;
+  typedef unsigned char cc_t;
+  typedef unsigned int speed_t;
+  typedef int pid_t;
 
   struct addrinfo {
     int ai_flags;
@@ -115,25 +146,55 @@ ffi.cdef[[
   /* --- Signals --- */
   typedef void (*sighandler_t)(int);
   sighandler_t signal(int sig, sighandler_t handler);
-]]
+]])
 
 local ffi_defs = {}
 
--- FreeBSD constants
+ffi_defs.IS_LINUX = is_linux
+
 ffi_defs.F_GETFL    = 3
 ffi_defs.F_SETFL    = 4
 ffi_defs.F_GETFD    = 1
 ffi_defs.F_SETFD    = 2
 ffi_defs.FD_CLOEXEC = 1
-ffi_defs.O_NONBLOCK = 0x0004
-ffi_defs.FIONBIO    = 0x8004667e
-ffi_defs.O_RDONLY    = 0
-ffi_defs.O_WRONLY    = 1
-ffi_defs.O_RDWR      = 2
-ffi_defs.O_CREAT     = 0x0200
-ffi_defs.O_APPEND    = 0x0008
-ffi_defs.O_TRUNC     = 0x0400
-ffi_defs.WNOHANG     = 1
+ffi_defs.O_RDONLY   = 0
+ffi_defs.O_WRONLY   = 1
+ffi_defs.O_RDWR     = 2
+ffi_defs.WNOHANG    = 1
+
+if is_linux then
+  ffi_defs.O_NONBLOCK   = 0x0800
+  ffi_defs.FIONBIO      = 0x5421
+  ffi_defs.O_CREAT      = 0x0040
+  ffi_defs.O_APPEND     = 0x0400
+  ffi_defs.O_TRUNC      = 0x0200
+  ffi_defs.SOL_SOCKET   = 1
+  ffi_defs.SO_REUSEADDR = 2
+  ffi_defs.SO_ERROR     = 4
+  ffi_defs.SO_RCVTIMEO  = 20
+  ffi_defs.SO_SNDTIMEO  = 21
+  ffi_defs.EAGAIN       = 11
+  ffi_defs.EWOULDBLOCK  = 11
+  ffi_defs.EINPROGRESS  = 115
+  ffi_defs.ETIMEDOUT    = 110
+  ffi_defs.EINTR        = 4
+else
+  ffi_defs.O_NONBLOCK   = 0x0004
+  ffi_defs.FIONBIO      = 0x8004667e
+  ffi_defs.O_CREAT      = 0x0200
+  ffi_defs.O_APPEND     = 0x0008
+  ffi_defs.O_TRUNC      = 0x0400
+  ffi_defs.SOL_SOCKET   = 0xffff
+  ffi_defs.SO_REUSEADDR = 0x0004
+  ffi_defs.SO_ERROR     = 0x1007
+  ffi_defs.SO_RCVTIMEO  = 0x1006
+  ffi_defs.SO_SNDTIMEO  = 0x1005
+  ffi_defs.EAGAIN       = 35
+  ffi_defs.EWOULDBLOCK  = 35
+  ffi_defs.EINPROGRESS  = 36
+  ffi_defs.ETIMEDOUT    = 60
+  ffi_defs.EINTR        = 4
+end
 
 -- FreeBSD signal numbers
 ffi_defs.SIGINT  = 2

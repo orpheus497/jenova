@@ -43,13 +43,13 @@ print("[proxy] Jenova Signal Proxy loaded on port " .. PORT .. ". Embeddings: " 
 
 local AF_INET = 2
 local SOCK_STREAM = 1
-local SOL_SOCKET = 0xffff
-local SO_REUSEADDR = 0x0004
-local SO_ERROR = 0x1007
+local SOL_SOCKET = _ffi_defs.SOL_SOCKET
+local SO_REUSEADDR = _ffi_defs.SO_REUSEADDR
+local SO_ERROR = _ffi_defs.SO_ERROR
 
-local EAGAIN = 35
-local EWOULDBLOCK = 35
-local EINPROGRESS = 36
+local EAGAIN = _ffi_defs.EAGAIN
+local EWOULDBLOCK = _ffi_defs.EWOULDBLOCK
+local EINPROGRESS = _ffi_defs.EINPROGRESS
 
 local MAX_ACTIVE_CONNECTIONS = 6
 local MAX_HEADER_SIZE = 65536
@@ -336,7 +336,9 @@ local function proxy_connection(client_fd, conn_fds)
                 backend_connect_host = "127.0.0.1"
             end
             local h_addr = ffi.new("struct sockaddr_in")
-            h_addr.sin_len   = ffi.sizeof(h_addr)
+            if not _ffi_defs.IS_LINUX then
+                h_addr.sin_len = ffi.sizeof(h_addr)
+            end
             h_addr.sin_family = AF_INET
             h_addr.sin_port   = ffi.C.htons(LLAMA_PORT)
             h_addr.sin_addr.s_addr = ffi.C.inet_addr(backend_connect_host)
@@ -514,7 +516,9 @@ local function proxy_connection(client_fd, conn_fds)
     set_nonblocking(llama_fd)
 
     local l_addr = ffi.new("struct sockaddr_in")
-    l_addr.sin_len = ffi.sizeof(l_addr)
+    if not _ffi_defs.IS_LINUX then
+        l_addr.sin_len = ffi.sizeof(l_addr)
+    end
     l_addr.sin_family = AF_INET
     l_addr.sin_port = ffi.C.htons(LLAMA_PORT)
     l_addr.sin_addr.s_addr = ffi.C.inet_addr(LLAMA_HOST)
@@ -550,7 +554,7 @@ ffi.C.signal(_ffi_defs.SIGPIPE, _ffi_defs.SIG_IGN)
 
 local server_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
 if server_fd < 0 then
-    print("[proxy] Failed to create socket")
+    print("[proxy] Failed to create socket: errno=" .. tostring(ffi.errno()) .. " " .. ffi.string(ffi.C.strerror(ffi.errno())))
     os.exit(1)
 end
 
@@ -559,18 +563,20 @@ ffi.C.setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, opt, ffi.sizeof("int"))
 set_nonblocking(server_fd)
 
 local addr = ffi.new("struct sockaddr_in")
-addr.sin_len = ffi.sizeof(addr)
+if not _ffi_defs.IS_LINUX then
+    addr.sin_len = ffi.sizeof(addr)
+end
 addr.sin_family = AF_INET
 addr.sin_port = ffi.C.htons(PORT)
 addr.sin_addr.s_addr = ffi.C.inet_addr(HOST)
 
 if ffi.C.bind(server_fd, ffi.cast("struct sockaddr *", addr), ffi.sizeof(addr)) < 0 then
-    print("[proxy] Failed to bind to " .. HOST .. ":" .. PORT)
+    print("[proxy] Failed to bind to " .. HOST .. ":" .. PORT .. ": errno=" .. tostring(ffi.errno()) .. " " .. ffi.string(ffi.C.strerror(ffi.errno())))
     os.exit(1)
 end
 
 if ffi.C.listen(server_fd, 16) < 0 then
-    print("[proxy] Failed to listen")
+    print("[proxy] Failed to listen: errno=" .. tostring(ffi.errno()) .. " " .. ffi.string(ffi.C.strerror(ffi.errno())))
     os.exit(1)
 end
 

@@ -6,14 +6,14 @@ local ffi_defs = require("ffi_defs")
 
 local AF_INET = 2
 local SOCK_STREAM = 1
-local SOL_SOCKET = 0xffff
-local SO_RCVTIMEO = 0x1006
-local SO_SNDTIMEO = 0x1005
+local SOL_SOCKET = ffi_defs.SOL_SOCKET
+local SO_RCVTIMEO = ffi_defs.SO_RCVTIMEO
+local SO_SNDTIMEO = ffi_defs.SO_SNDTIMEO
 
-local EAGAIN      = 35
-local ETIMEDOUT   = 60
-local EINTR       = 4
-local EWOULDBLOCK = EAGAIN
+local EAGAIN      = ffi_defs.EAGAIN
+local ETIMEDOUT   = ffi_defs.ETIMEDOUT
+local EINTR       = ffi_defs.EINTR
+local EWOULDBLOCK = ffi_defs.EWOULDBLOCK
 
 local http = {}
 
@@ -175,7 +175,9 @@ function http.post(url, body, timeout)
   ffi.C.setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, tv, ffi.sizeof(tv))
 
   local addr = ffi.new("struct sockaddr_in")
-  addr.sin_len = ffi.sizeof(addr)
+  if not ffi_defs.IS_LINUX then
+    addr.sin_len = ffi.sizeof(addr)
+  end
   addr.sin_family = AF_INET
   addr.sin_port = ffi.C.htons(port)
 
@@ -233,7 +235,9 @@ function http.get(url, timeout)
   ffi.C.setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, tv, ffi.sizeof(tv))
 
   local addr = ffi.new("struct sockaddr_in")
-  addr.sin_len = ffi.sizeof(addr)
+  if not ffi_defs.IS_LINUX then
+    addr.sin_len = ffi.sizeof(addr)
+  end
   addr.sin_family = AF_INET
   addr.sin_port = ffi.C.htons(port)
 
