@@ -2,6 +2,18 @@
 
 Jenova is a high-performance, low-latency cognitive engine that turns a FreeBSD workstation into a persistent, systems-level AI environment. It implements a "Fluid Memory" architecture that treats high-speed NVMe (Optane) as an extended L4 cache for Large Language Models (LLMs), enabling large-context reasoning on modest hardware.
 
+## The Jenova trinity
+
+Jenova is partitioned across three repositories that together form the complete system:
+
+| Repo | Role | Stack |
+|------|------|-------|
+| [`orpheus497/jenova`](https://github.com/orpheus497/jenova) *(this repo)* | **Cognitive backend** — `llama-server`, LuaJIT `proxy.lua`, embedding daemon, `jenova-ca` supervisor | C/C++ + LuaJIT |
+| [`orpheus497/jvim`](https://github.com/orpheus497/jvim) | **Editor / IDE** — `jvim`, a Neovim hard-fork purpose-built for Jenova | C + Lua |
+| [`orpheus497/cloda-codey-lua`](https://github.com/orpheus497/cloda-codey-lua) | **Terminal agent** — `jenova-cli` for headless and scripted workflows | Lua 5.4 + Rust |
+
+The backend in this repository is the shared brain. `jvim` is the editor that the user lives inside; `jenova-cli` is the terminal agent for scripted, headless, and async workflows. Both frontends communicate with the backend services, primarily via `proxy.lua` on port 8080, with `jvim` additionally talking to `llama-server` on port 8081 for FIM completions and the embedding server on port 8082.
+
 ## Goals
 
 - Persistent intelligence with a daemonized cognitive backend
