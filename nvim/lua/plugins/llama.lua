@@ -24,7 +24,7 @@ return {
       local proxy_port = vim.env.JENOVA_PORT       or "8080"
 
       -- ##Action purpose: Warn if JENOVA_CONNECT_HOST/JENOVA_ROOT not set (user launched nvim directly)
-      if not vim.env.JENOVA_CONNECT_HOST and not vim.env.JENOVA_ROOT then
+      if not vim.env.JENOVA_CONNECT_HOST and not vim.env.JENOVA_ROOT and vim.env.JENOVA_LAN_MODE ~= "1" then
         vim.notify(
           "⚠️  Jenova environment not detected!\n\n" ..
           "Launch Neovim using 'bin/jvim' instead of 'nvim' directly.\n" ..

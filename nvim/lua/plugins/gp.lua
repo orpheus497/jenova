@@ -26,7 +26,7 @@ return {
       local endpoint_url = string.format("http://%s:%s/v1/chat/completions", jenova_host, jenova_port)
 
       -- ##Action purpose: Warn if JENOVA_CONNECT_HOST/JENOVA_ROOT not set (user launched nvim directly)
-      if not vim.env.JENOVA_CONNECT_HOST and not vim.env.JENOVA_ROOT then
+      if not vim.env.JENOVA_CONNECT_HOST and not vim.env.JENOVA_ROOT and vim.env.JENOVA_LAN_MODE ~= "1" then
         vim.notify(
           "⚠️  Jenova environment not detected!\n\n" ..
           "Launch Neovim using 'bin/jvim' instead of 'nvim' directly.\n" ..

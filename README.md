@@ -36,7 +36,7 @@ The system is partitioned into four conceptual streams:
 
 ## Hardware & Performance
 
-Jenova supports multiple hardware profiles, auto-detected at install time. Two validated profiles are included:
+Jenova supports multiple hardware profiles, auto-detected at install time. One validated primary profile is included below; additional profiles may be experimental until hardware validation is completed:
 
 ### Profile 1: FreeBSD i5-1135G7 Dual-GPU (Primary Target)
 
