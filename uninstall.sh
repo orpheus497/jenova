@@ -1,22 +1,32 @@
 #!/bin/sh
 # uninstall.sh: Jenova Cognitive Architecture — Uninstall Script
 #
+# This removes ONLY the Jenova half of the Jenova/jvim pair. The jvim editor
+# fork (https://github.com/orpheus497/jvim) installs its `nvim` binary
+# system-wide and must be uninstalled separately (e.g. `sudo make uninstall`
+# inside the jvim source tree, or `pkg delete neovim` for upstream Neovim).
+#
 # Usage: ./uninstall.sh [--purge] [--clean-runtime] [--yes]
 #
 #   --purge          Also remove Neovim plugin data (~/.local/share/nvim/lazy/)
 #                    and Mason data (~/.local/share/nvim/mason/).
 #                    Does NOT remove undo files or shada (user data).
 #   --clean-runtime  Remove runtime artifacts within the project directory:
-#                    .jenova/ (PID/lock files), var/log/, var/cache/
+#                    .jenova/ (PID/lock files), var/log/, var/cache/, and the
+#                    models/jenova.gguf convenience symlink.
 #   --yes            Skip all confirmation prompts (non-interactive mode).
 #
 # What this removes:
-#   - ~/.config/nvim/init.lua and lua/plugins/*.lua deployed by install.sh
-#   - ~/.local/bin/jvim, ~/.local/bin/jenova, ~/.local/bin/jenova-ca symlinks
-#   - ~/bin/jvim, ~/bin/jenova, ~/bin/jenova-ca symlinks
+#   - ~/.config/nvim/init.lua, lazy-lock.json, and lua/{plugins,jenova}/*.lua
+#     that were deployed by install.sh
+#   - ~/.local/bin/{jvim,jenova,jenova-ca} symlinks (only those pointing into
+#     this Jenova checkout)
+#   - ~/bin/{jvim,jenova,jenova-ca} symlinks (same scope)
 #
-# What this preserves (user data, not overwritten by install):
+# What this preserves (user data, never touched by install/update):
+#   - The jvim editor binary (managed by the jvim repository)
 #   - ~/.local/state/nvim/ (undo files, shada, gp.nvim chat history)
+#   - $JENOVA_ROOT/models/*.gguf (actual GGUF files; only the symlink is removed)
 #   - The Jenova project directory itself (models, config, source code)
 
 set -e
@@ -34,7 +44,7 @@ for _arg in "$@"; do
         --clean-runtime) CLEAN_RUNTIME=1 ;;
         --yes)           YES=1 ;;
         -h|--help)
-            sed -n '2,25p' "$0"
+            sed -n '2,32p' "$0"
             exit 0
             ;;
         *)
@@ -244,7 +254,11 @@ if [ "$CLEAN_RUNTIME" = "0" ]; then
     echo "    $JENOVA_ROOT/var/     (logs, cache — use --clean-runtime to remove)"
 fi
 echo "    $JENOVA_ROOT/          (project directory — models, config, source)"
+echo "    jvim editor binary    (uninstall separately from the jvim repo)"
 echo ""
 info "To fully remove the Jenova project directory:"
 echo "    rm -rf $JENOVA_ROOT"
+echo ""
+info "To remove the jvim editor binary:"
+echo "    cd /path/to/jvim && sudo make uninstall   # or 'pkg delete neovim'"
 echo ""

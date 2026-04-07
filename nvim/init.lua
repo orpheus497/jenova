@@ -196,7 +196,7 @@ vim.api.nvim_create_autocmd("VimEnter", {
           elseif has_jvim_env then
             vim.notify(
               "Jenova CA backend not running. AI features unavailable.\n" ..
-              "Run:  jvim somefile.lua   OR   bin/llama-server-nvim",
+              "Run:  jvim somefile.lua   OR   bin/jenova-ca --daemon",
               vim.log.levels.WARN,
               { title = "Jenova" }
             )

@@ -2,20 +2,34 @@
 # install.sh: Jenova Cognitive Architecture — System Installation Script
 # FreeBSD 15 | Dual Vulkan GPU (GTX 1650 Ti + Intel Iris Xe) | Optane NVMe
 #
-# Usage: ./install.sh [--force] [--link] [--skip-nvim] [--skip-llama]
+# Jenova is the cognitive backend half of a two-repo system. The matching
+# editor frontend is the jvim fork of Neovim:
+#     https://github.com/orpheus497/jvim
+# Both repos are designed to be installed together; this script handles the
+# Jenova half (backend, models, plugin config) and verifies that a jvim or
+# Neovim binary is available so the bin/jvim wrapper can launch the editor.
 #
-#   --force       Overwrite existing ~/.config/nvim without prompting
-#   --link        Install Neovim config as symlinks (for development workflow)
-#   --skip-nvim   Skip Neovim config installation
-#   --skip-llama  Skip llama.cpp build check
+# Usage: ./install.sh [--force] [--link] [--skip-nvim] [--skip-llama]
+#                     [--client-only]
+#
+#   --force        Overwrite existing ~/.config/nvim without prompting
+#   --link         Install Jenova nvim config as symlinks into ~/.config/nvim
+#                  (development workflow — edits in repo apply immediately)
+#   --skip-nvim    Skip the Neovim/jvim config deployment step
+#   --skip-llama   Skip llama.cpp build check
+#   --client-only  LAN client install: skip llama.cpp, skip model downloads.
+#                  Use when this host will only ever connect to a remote
+#                  Jenova CA via 'jvim --remote <host>'.
 #
 # This script:
 #   1. Verifies required system dependencies
 #   2. Creates required runtime directories (var/log, var/cache, models, .jenova)
-#   3. Checks for llama.cpp build
-#   4. Installs the Neovim configuration to ~/.config/nvim/
-#   5. Installs bin/jvim symlink to ~/bin/ or ~/.local/bin/ if on PATH
-#   6. Prints a summary of what is ready and what still needs manual setup
+#   3. Checks for llama.cpp build (skipped with --client-only)
+#   4. Downloads required model files (skipped with --client-only)
+#   5. Detects whether the installed nvim is jvim or upstream Neovim
+#   6. Installs the Jenova nvim configuration to ~/.config/nvim/
+#   7. Installs bin/jvim, bin/jenova, bin/jenova-ca symlinks to PATH
+#   8. Prints a summary plus next-step commands
 
 set -e
 
@@ -27,15 +41,17 @@ FORCE=0
 LINK=0
 SKIP_NVIM=0
 SKIP_LLAMA=0
+CLIENT_ONLY=0
 
 for _arg in "$@"; do
     case "$_arg" in
-        --force)      FORCE=1 ;;
-        --link)       LINK=1 ;;
-        --skip-nvim)  SKIP_NVIM=1 ;;
-        --skip-llama) SKIP_LLAMA=1 ;;
+        --force)       FORCE=1 ;;
+        --link)        LINK=1 ;;
+        --skip-nvim)   SKIP_NVIM=1 ;;
+        --skip-llama)  SKIP_LLAMA=1 ;;
+        --client-only) CLIENT_ONLY=1; SKIP_LLAMA=1 ;;
         -h|--help)
-            sed -n '2,20p' "$0"
+            sed -n '2,32p' "$0"
             exit 0
             ;;
         *)
@@ -146,7 +162,27 @@ check_bin  "luajit"  "pkg install luajit-openresty"
 check_bin  "git"     "pkg install git"
 
 if [ "$SKIP_NVIM" = "0" ]; then
-    check_bin  "nvim"    "pkg install neovim"
+    if command -v nvim >/dev/null 2>&1; then
+        # Detect whether the resolved nvim is the jvim fork or upstream Neovim.
+        # The jvim version string is "JVIM v0.x.x" (see jvim/src/nvim/version.c).
+        _NVIM_VLINE=$(nvim --version 2>/dev/null | head -n 1)
+        case "$_NVIM_VLINE" in
+            *JVIM*)
+                ok "nvim is jvim ($_NVIM_VLINE) — fully integrated"
+                ;;
+            *)
+                warn "nvim is upstream Neovim ($_NVIM_VLINE), not jvim."
+                warn "Jenova plugins will still load, but jvim-specific behaviour"
+                warn "will be unavailable. Install jvim from:"
+                warn "    https://github.com/orpheus497/jvim"
+                WARNINGS=$((WARNINGS + 1))
+                ;;
+        esac
+    else
+        fail "nvim not found — install jvim (https://github.com/orpheus497/jvim)"
+        fail "or upstream Neovim: pkg install neovim"
+        ERRORS=$((ERRORS + 1))
+    fi
     check_optional "gmake"  "pkg install gmake  (needed for telescope-fzf-native)"
 fi
 
@@ -210,7 +246,9 @@ check_optional "goimports"            "go install golang.org/x/tools/cmd/goimpor
 # ---------------------------------------------------------------------------
 # 5. llama.cpp build check
 # ---------------------------------------------------------------------------
-if [ "$SKIP_LLAMA" = "0" ]; then
+if [ "$CLIENT_ONLY" = "1" ]; then
+    info "Skipping llama.cpp build check (--client-only)"
+elif [ "$SKIP_LLAMA" = "0" ]; then
     info "Checking llama.cpp build..."
     LLAMA_BIN="$JENOVA_ROOT/llama.cpp/build/bin/llama-server"
     if [ -f "$LLAMA_BIN" ]; then
@@ -228,6 +266,10 @@ fi
 # ---------------------------------------------------------------------------
 # 6. Model files — check and offer to download missing models
 # ---------------------------------------------------------------------------
+if [ "$CLIENT_ONLY" = "1" ]; then
+    info "Skipping model checks (--client-only — models live on the remote host)"
+    . "$JENOVA_ROOT/etc/jenova.conf" 2>/dev/null || true
+else
 info "Checking model files..."
 . "$JENOVA_ROOT/etc/jenova.conf" 2>/dev/null || true
 
@@ -337,6 +379,7 @@ else
         warn "Speculative decoding disabled without draft model (set JENOVA_DRAFT=0 in conf)"
     fi
 fi
+fi  # CLIENT_ONLY model-checks guard
 
 # ---------------------------------------------------------------------------
 # 7. Neovim config installation
@@ -482,12 +525,33 @@ fi
 
 echo ""
 info "Next steps:"
-echo "  1. Place model GGUF files in: $JENOVA_ROOT/models/"
-echo "  2. Build llama.cpp if not done: cd llama.cpp && cmake -B build -DGGML_VULKAN=ON && cmake --build build -j\$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
-echo "  3. Start the backend:  $JENOVA_ROOT/bin/jenova-ca --daemon"
-echo "     Or launch agent:    $JENOVA_ROOT/bin/jenova"
-echo "     Or launch editor:   $JENOVA_ROOT/bin/jvim  (or just: jvim)"
-if [ "$SKIP_NVIM" = "0" ]; then
-    echo "  4. Inside Neovim:      :Lazy install   (install plugins on first launch)"
+if [ "$CLIENT_ONLY" = "1" ]; then
+    echo "  This is a LAN-client install. To connect to a remote Jenova CA:"
+    echo "      jvim --remote <server-ip>            # default ports 8080/8081/8082"
+    echo "      jvim --remote <server-ip> --remote-port 8080 --llama-port 8081"
+    echo ""
+    echo "  Make sure the server has JENOVA_HOST=0.0.0.0 in etc/jenova.conf and"
+    echo "  the firewall allows ports 8080, 8081, and 8082 from this host."
+else
+    echo "  1. Place model GGUF files in: $JENOVA_ROOT/models/"
+    echo "  2. Build llama.cpp if not done:"
+    echo "       cd llama.cpp && cmake -B build -DGGML_VULKAN=ON && \\"
+    echo "       cmake --build build -j\$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+    echo "  3. Start the backend:  $JENOVA_ROOT/bin/jenova-ca --daemon"
+    echo "     Or launch agent:    $JENOVA_ROOT/bin/jenova"
+    echo "     Or launch editor:   $JENOVA_ROOT/bin/jvim  (or just: jvim)"
+    echo "     LAN client mode:    jvim --remote <host>"
+    if [ "$SKIP_NVIM" = "0" ]; then
+        echo "  4. Inside the editor:  :Lazy install   (install plugins on first launch)"
+        echo "                         :checkhealth jenova"
+    fi
+    echo ""
+    echo "  Maintenance:"
+    echo "    ./update.sh             — pull latest jenova + sync nvim config"
+    echo "    ./cleanup.sh --all      — clear logs and cache"
+    echo "    ./uninstall.sh          — remove deployed files (preserves models)"
+    echo "    bin/jvim --check        — print resolved env without launching editor"
 fi
+echo ""
+info "Editor frontend (jvim): https://github.com/orpheus497/jvim"
 echo ""

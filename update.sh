@@ -1,19 +1,26 @@
 #!/bin/sh
 # update.sh: Jenova Cognitive Architecture — Update Script
 #
-# Usage: ./update.sh [--upgrade-plugins] [--skip-nvim] [--skip-rebuild]
+# Updates the Jenova backend half of the Jenova/jvim pair. The jvim editor
+# fork (https://github.com/orpheus497/jvim) is updated separately by pulling
+# its own repository and rebuilding.
+#
+# Usage: ./update.sh [--upgrade-plugins] [--skip-nvim] [--skip-rebuild] [--link]
 #
 #   --upgrade-plugins   Run :Lazy update (move to latest plugin versions).
 #                       Without this flag, runs :Lazy restore (pin to lock file).
 #   --skip-nvim         Skip Neovim config redeployment.
 #   --skip-rebuild      Skip llama.cpp rebuild check.
+#   --link              Re-establish symlinks from ~/.config/nvim into the repo
+#                       if a previous --link install was clobbered by a copy.
 #
 # Steps:
 #   1. git pull (update Jenova repo from origin)
 #   2. Restart or reload jenova-ca if currently running
-#   3. Redeploy Neovim config files to ~/.config/nvim/ (same logic as install.sh)
-#   4. Sync Neovim plugins (headless Lazy restore or update)
-#   5. Print changelog summary (last 10 commits)
+#   3. Rebuild llama.cpp if its checkout moved
+#   4. Redeploy Jenova nvim config to ~/.config/nvim/ (auto-detects symlink mode)
+#   5. Sync nvim plugins (headless :Lazy restore or update)
+#   6. Print changelog summary (last 10 commits)
 
 set -e
 
@@ -24,14 +31,16 @@ NVIM_CONFIG_DST="$HOME/.config/nvim"
 UPGRADE_PLUGINS=0
 SKIP_NVIM=0
 SKIP_REBUILD=0
+LINK=0
 
 for _arg in "$@"; do
     case "$_arg" in
         --upgrade-plugins) UPGRADE_PLUGINS=1 ;;
         --skip-nvim)       SKIP_NVIM=1 ;;
         --skip-rebuild)    SKIP_REBUILD=1 ;;
+        --link)            LINK=1 ;;
         -h|--help)
-            sed -n '2,20p' "$0"
+            sed -n '2,28p' "$0"
             exit 0
             ;;
         *)
@@ -133,7 +142,17 @@ fi
 # 4. Redeploy Neovim config
 # ---------------------------------------------------------------------------
 if [ "$SKIP_NVIM" = "0" ] && command -v nvim >/dev/null 2>&1; then
-    info "Redeploying Neovim configuration..."
+    info "Redeploying Jenova nvim configuration..."
+
+    # Friendly warning if the active editor is upstream Neovim instead of jvim
+    _NVIM_VLINE=$(nvim --version 2>/dev/null | head -n 1)
+    case "$_NVIM_VLINE" in
+        *JVIM*) ok "Editor: $_NVIM_VLINE" ;;
+        *)
+            warn "Editor is upstream Neovim ($_NVIM_VLINE), not jvim."
+            warn "Install jvim from https://github.com/orpheus497/jvim for full integration."
+            ;;
+    esac
 
     if [ ! -d "$NVIM_CONFIG_DST" ]; then
         warn "~/.config/nvim/ not found — run install.sh first to do the initial setup"
@@ -142,8 +161,29 @@ if [ "$SKIP_NVIM" = "0" ] && command -v nvim >/dev/null 2>&1; then
 
     if [ "$SKIP_NVIM" = "0" ]; then
         # Detect whether we're in symlink mode (init.lua is a symlink into the repo)
-        if [ -L "$NVIM_CONFIG_DST/init.lua" ]; then
-            ok "Symlink mode detected — files auto-updated via git pull (no copy needed)"
+        if [ "$LINK" = "1" ]; then
+            info "--link given: (re)establishing symlinks into $NVIM_CONFIG_SRC"
+            mkdir -p "$NVIM_CONFIG_DST/lua/plugins" "$NVIM_CONFIG_DST/lua/jenova"
+            ln -sf "$NVIM_CONFIG_SRC/init.lua"       "$NVIM_CONFIG_DST/init.lua"
+            ln -sf "$NVIM_CONFIG_SRC/lazy-lock.json" "$NVIM_CONFIG_DST/lazy-lock.json"
+            for _f in "$NVIM_CONFIG_SRC/lua/plugins/"*.lua; do
+                [ -f "$_f" ] && ln -sf "$_f" "$NVIM_CONFIG_DST/lua/plugins/$(basename "$_f")"
+            done
+            for _f in "$NVIM_CONFIG_SRC/lua/jenova/"*.lua; do
+                [ -f "$_f" ] && ln -sf "$_f" "$NVIM_CONFIG_DST/lua/jenova/$(basename "$_f")"
+            done
+            ok "Symlinked Jenova nvim config — edits in $NVIM_CONFIG_SRC are live"
+        elif [ -L "$NVIM_CONFIG_DST/init.lua" ]; then
+            _LINK_TGT=$(readlink "$NVIM_CONFIG_DST/init.lua")
+            case "$_LINK_TGT" in
+                "$NVIM_CONFIG_SRC"/*|"$NVIM_CONFIG_SRC")
+                    ok "Symlink mode active — files auto-updated via git pull"
+                    ;;
+                *)
+                    warn "init.lua symlink points outside this repo: $_LINK_TGT"
+                    warn "Run: ./update.sh --link  to re-anchor it to $NVIM_CONFIG_SRC"
+                    ;;
+            esac
         else
             mkdir -p "$NVIM_CONFIG_DST/lua/plugins"
             mkdir -p "$NVIM_CONFIG_DST/lua/jenova"
@@ -153,7 +193,7 @@ if [ "$SKIP_NVIM" = "0" ] && command -v nvim >/dev/null 2>&1; then
             for _f in "$NVIM_CONFIG_SRC/lua/jenova/"*.lua; do
                 [ -f "$_f" ] && cp "$_f" "$NVIM_CONFIG_DST/lua/jenova/"
             done
-            ok "Neovim config files redeployed to $NVIM_CONFIG_DST"
+            ok "Jenova nvim config redeployed to $NVIM_CONFIG_DST"
         fi
     fi
 fi
@@ -183,7 +223,12 @@ echo ""
 ok "Update complete."
 echo ""
 info "To launch Jenova:"
-echo "    bin/jenova           — CLI agent (auto-starts backend)"
-echo "    bin/jvim [file]      — Neovim IDE (auto-starts backend)"
-echo "    bin/jenova-ca status — Check backend daemon status"
+echo "    bin/jenova            — CLI agent (auto-starts backend)"
+echo "    bin/jvim [file]       — jvim editor (auto-starts backend)"
+echo "    bin/jvim --remote H   — connect to a remote Jenova CA on host H"
+echo "    bin/jvim --check      — print resolved env without launching editor"
+echo "    bin/jenova-ca status  — check backend daemon status"
+echo ""
+info "The matching editor frontend (jvim) is updated separately:"
+echo "    cd /path/to/jvim && git pull && make CMAKE_BUILD_TYPE=Release && sudo make install"
 echo ""
