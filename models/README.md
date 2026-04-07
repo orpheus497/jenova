@@ -53,24 +53,42 @@ Place small, fast models here for speculative decoding, which accelerates main m
 
 ## Model Detection
 
-Jenova automatically detects models in these directories. The system will:
+Jenova automatically detects models in these directories via `lib/jenova-model.sh`.
+The system will:
 
-1. **Scan each directory** for `.gguf` files
+1. **Scan each type-specific directory** (`agent/`, `embed/`, `draft/`) for `.gguf` files
 2. **Select the first model found** in each directory (sorted alphabetically)
-3. **Fall back to environment variables** if directories are empty
+3. **Fall back to a legacy filename** in the flat `models/` root if the subdirectory is empty
 
 ## Model Selection Priority
 
-For each model type, Jenova uses the following priority:
+For each model type, Jenova uses the following priority (evaluated by `lib/jenova-model.sh`
+and the `jenova.conf` sourcing chain at startup — before model inference begins):
 
-1. **Environment variable** (e.g., `JENOVA_MODEL` for agent)
-2. **First .gguf file** in the corresponding directory (alphabetically)
-3. **Legacy default path** (`models/*.gguf` for backward compatibility)
-4. **Error** if no model is found
+1. **First `.gguf` file** in the corresponding typed subdirectory (alphabetically):
+   - Agent: `models/agent/*.gguf`
+   - Draft: `models/draft/*.gguf`
+   - Embed: `models/embed/*.gguf`
+2. **Legacy named file** in the flat `models/` root (specific filenames only, not a glob):
+   - Agent: `models/Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf`
+   - Draft: `models/Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf`
+   - Embed: `models/nomic-embed-text-v1.5.Q8_0.gguf`
+3. **Environment variable override** — applied in `jenova.conf` after the helper runs,
+   so it wins regardless of what the directory scan found:
+   - `JENOVA_MODEL` overrides the agent model path
+   - `JENOVA_DRAFT_MODEL` overrides the draft model path
+   - `JENOVA_EMBED_MODEL` overrides the embed model path
+4. **Empty string / error** if no model is found and no override is set
+
+> **Note:** There is no generic `models/*.gguf` glob fallback. Only the specific legacy
+> filenames listed above are checked when the typed subdirectories are empty. Place new
+> models in the appropriate subdirectory (`agent/`, `embed/`, or `draft/`) to ensure
+> auto-discovery works correctly.
 
 ## Environment Variable Overrides
 
-You can override auto-detected models using environment variables:
+You can override auto-detected models using environment variables (set in your shell or
+via `etc/jenova.local.conf`):
 
 ```sh
 export JENOVA_MODEL=/path/to/custom/agent.gguf

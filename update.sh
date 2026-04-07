@@ -173,9 +173,10 @@ if [ "$SKIP_NVIM" = "0" ] && command -v nvim >/dev/null 2>&1; then
             done
             ok "Symlinked Jenova nvim config — edits in $NVIM_CONFIG_SRC are live"
         elif [ -L "$NVIM_CONFIG_DST/init.lua" ]; then
-            _LINK_TGT=$(readlink "$NVIM_CONFIG_DST/init.lua")
+            _LINK_TGT=$(realpath "$NVIM_CONFIG_DST/init.lua" 2>/dev/null || readlink -f "$NVIM_CONFIG_DST/init.lua" 2>/dev/null || readlink "$NVIM_CONFIG_DST/init.lua")
+            _NVIM_SRC_REAL=$(realpath "$NVIM_CONFIG_SRC" 2>/dev/null || readlink -f "$NVIM_CONFIG_SRC" 2>/dev/null || echo "$NVIM_CONFIG_SRC")
             case "$_LINK_TGT" in
-                "$NVIM_CONFIG_SRC"/*|"$NVIM_CONFIG_SRC")
+                "$_NVIM_SRC_REAL"/*|"$_NVIM_SRC_REAL")
                     ok "Symlink mode active — files auto-updated via git pull"
                     ;;
                 *)
