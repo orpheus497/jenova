@@ -16,6 +16,8 @@
 *.h5
 *.tflite
 !/models/.gitkeep
+!/models/**/.gitkeep
+!/models/README.md
 
 # --- Runtime Data ---
 /var/log/**
@@ -73,6 +75,7 @@ Thumbs.db
 # --- Configuration (local overrides) ---
 /etc/jenova.conf.local
 /etc/jenova.conf.bak.*
+/etc/jenova.local.conf
 
 # --- Large / temporary files ---
 *.log

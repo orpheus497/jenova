@@ -82,7 +82,7 @@ return {
             local agent = gp.get_command_agent()
             local ft = vim.bo.filetype or ""
             local template = string.format(
-              "Visual Rewrite: {{command}}\n\nI have the following code:\n```%s\n{{selection}}\n```", ft)
+              "Visual Rewrite: {{command}}\n\nI have the following selection:\n```%s\n{{selection}}\n```", ft)
             gp.Prompt(params, gp.Target.rewrite, agent, template, "Rewrite instruction: ")
           end,
 
@@ -130,7 +130,7 @@ return {
             local content = table.concat(lines, "\n")
 
             local context_msg = string.format(
-              "Chatbot: I'm working on file: %s\nPath: %s\n\n```\n%s\n```\n\nPlease review this file and help me with it.",
+              "Open File Chat: I'm working on file: %s\nPath: %s\n\n```\n%s\n```\n\nLet's discuss this file and help me move the task forward.",
               filename,
               filepath,
               content

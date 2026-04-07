@@ -173,11 +173,14 @@ vim.api.nvim_create_autocmd("VimEnter", {
           end
         else
           local is_lan_mode = vim.env.JENOVA_LAN_MODE == "1"
+          local has_connect_host = vim.env.JENOVA_CONNECT_HOST
+            and vim.env.JENOVA_CONNECT_HOST ~= ""
           local has_jvim_env = vim.env.JENOVA_ROOT and vim.env.JENOVA_ROOT ~= ""
             and vim.env.JENOVA_ROOT ~= "$JENOVA_ROOT"
 
-          if is_lan_mode then
-            local remote = vim.env.JENOVA_CONNECT_HOST or "unknown"
+          if is_lan_mode and has_connect_host then
+            -- Explicit remote host: jvim --remote <host>
+            local remote = vim.env.JENOVA_CONNECT_HOST
             local port = vim.env.JENOVA_PORT or "8080"
             vim.notify(
               string.format(
@@ -192,6 +195,18 @@ vim.api.nvim_create_autocmd("VimEnter", {
             local ok, monitor = pcall(require, "jenova.monitor")
             if ok then
               monitor.start_polling()
+            end
+          elseif is_lan_mode and not has_connect_host then
+            -- Auto-discover mode: jvim --remote (no host given)
+            local lan_ok, lan = pcall(require, "jenova.lan")
+            if lan_ok then
+              lan.auto_discover()
+            else
+              vim.notify(
+                "LAN auto-discover: jenova.lan module unavailable.",
+                vim.log.levels.WARN,
+                { title = "Jenova LAN" }
+              )
             end
           elseif has_jvim_env then
             vim.notify(
