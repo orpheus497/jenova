@@ -487,6 +487,8 @@ if [ -f "$DETECT_SCRIPT" ] && [ -x "$DETECT_SCRIPT" ]; then
     _PROFILE=$("$DETECT_SCRIPT" 2>/dev/null) || _PROFILE=""
     if [ -n "$_PROFILE" ]; then
         ok "Matched hardware profile: $_PROFILE"
+        # Automatically apply the profile configuration
+        "$DETECT_SCRIPT" --apply
         _PROFILE_DIR="$JENOVA_ROOT/hardware-profiles/$_PROFILE"
         if [ -f "$_PROFILE_DIR/jenova-setup" ]; then
             warn "Run 'sudo $_PROFILE_DIR/jenova-setup' once to tune system for this hardware."
