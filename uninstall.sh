@@ -44,7 +44,7 @@ for _arg in "$@"; do
         --clean-runtime) CLEAN_RUNTIME=1 ;;
         --yes)           YES=1 ;;
         -h|--help)
-            sed -n '2,32p' "$0"
+            sed -n '2,30p' "$0"
             exit 0
             ;;
         *)

@@ -415,22 +415,20 @@ if [ "$SKIP_NVIM" = "0" ] && command -v nvim >/dev/null 2>&1; then
             # Symlink mode — changes in repo instantly reflected in Neovim
             ln -sf "$NVIM_CONFIG_SRC/init.lua"        "$NVIM_CONFIG_DST/init.lua"
             ln -sf "$NVIM_CONFIG_SRC/lazy-lock.json"  "$NVIM_CONFIG_DST/lazy-lock.json"
-            for _f in "$NVIM_CONFIG_SRC/lua/plugins/"*.lua; do
-                [ -f "$_f" ] && ln -sf "$_f" "$NVIM_CONFIG_DST/lua/plugins/$(basename "$_f")"
-            done
-            for _f in "$NVIM_CONFIG_SRC/lua/jenova/"*.lua; do
-                [ -f "$_f" ] && ln -sf "$_f" "$NVIM_CONFIG_DST/lua/jenova/$(basename "$_f")"
+            for _dir in plugins jenova; do
+                for _f in "$NVIM_CONFIG_SRC/lua/$_dir/"*.lua; do
+                    [ -f "$_f" ] && ln -sf "$_f" "$NVIM_CONFIG_DST/lua/$_dir/$(basename "$_f")"
+                done
             done
             ok "Symlinked Neovim config (--link mode, edits in $NVIM_CONFIG_SRC take effect immediately)"
         else
             # Copy mode — stable snapshot
             cp "$NVIM_CONFIG_SRC/init.lua"       "$NVIM_CONFIG_DST/init.lua"
             cp "$NVIM_CONFIG_SRC/lazy-lock.json" "$NVIM_CONFIG_DST/lazy-lock.json"
-            for _f in "$NVIM_CONFIG_SRC/lua/plugins/"*.lua; do
-                [ -f "$_f" ] && cp "$_f" "$NVIM_CONFIG_DST/lua/plugins/"
-            done
-            for _f in "$NVIM_CONFIG_SRC/lua/jenova/"*.lua; do
-                [ -f "$_f" ] && cp "$_f" "$NVIM_CONFIG_DST/lua/jenova/"
+            for _dir in plugins jenova; do
+                for _f in "$NVIM_CONFIG_SRC/lua/$_dir/"*.lua; do
+                    [ -f "$_f" ] && cp "$_f" "$NVIM_CONFIG_DST/lua/$_dir/"
+                done
             done
             ok "Copied Neovim config to $NVIM_CONFIG_DST"
         fi

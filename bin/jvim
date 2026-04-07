@@ -91,36 +91,91 @@ case "$_EDITOR_VERSION_LINE" in
         ;;
 esac
 
+# --- Helpers ---
+# Build an http://host:port URL, bracketing IPv6 literals as required by RFC 3986.
+build_http_url() {
+    _h="$1"; _p="$2"
+    case "$_h" in
+        *:*) printf 'http://[%s]:%s' "$_h" "$_p" ;;
+        *)   printf 'http://%s:%s'   "$_h" "$_p" ;;
+    esac
+}
+
+# Print resolved JENOVA_* environment for --check (single source of truth
+# used by both remote and local mode).
+print_check_env() {
+    echo "JENOVA_ROOT=$JENOVA_ROOT"
+    echo "JENOVA_CONNECT_HOST=$JENOVA_CONNECT_HOST"
+    echo "JENOVA_PORT=$JENOVA_PORT"
+    echo "JENOVA_LLAMA_PORT=$JENOVA_LLAMA_PORT"
+    echo "JENOVA_LLAMA_EMBED_PORT=$JENOVA_LLAMA_EMBED_PORT"
+    echo "JENOVA_API_URL=$JENOVA_API_URL"
+    echo "JENOVA_LAN_MODE=${JENOVA_LAN_MODE:-0}"
+    echo "EDITOR_BIN=$EDITOR_BIN  ($_EDITOR_VERSION_LINE)"
+    echo "IS_JVIM=$IS_JVIM"
+}
+
+# Resolve JENOVA_ROOT and source etc/jenova.conf, validating the path with
+# realpath + a case statement so a malicious symlink cannot redirect us to a
+# file outside the Jenova checkout. Run unconditionally so both remote and
+# local modes inherit the same defaults (model paths, custom ports, etc.).
+load_jenova_conf() {
+    _candidate=""
+    if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
+        _candidate="$SCRIPT_DIR/etc/jenova.conf"
+        _root="$SCRIPT_DIR"
+    elif [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
+        _candidate="$SCRIPT_DIR/../etc/jenova.conf"
+        _root="$(dirname "$SCRIPT_DIR")"
+    else
+        echo "Error: etc/jenova.conf not found." >&2
+        exit 1
+    fi
+
+    _real_conf=$(realpath "$_candidate" 2>/dev/null) || {
+        echo "Error: cannot resolve $_candidate" >&2; exit 1; }
+    _real_root=$(realpath "$_root" 2>/dev/null) || {
+        echo "Error: cannot resolve $_root" >&2; exit 1; }
+
+    # Reject any conf path not living under the resolved JENOVA_ROOT.
+    case "$_real_conf" in
+        "$_real_root"/etc/jenova.conf) ;;
+        *)
+            echo "Error: refusing to source $_real_conf (outside $_real_root)" >&2
+            exit 1
+            ;;
+    esac
+
+    export JENOVA_ROOT="$_real_root"
+    # shellcheck disable=SC1090
+    . "$_real_conf"
+}
+
+# Always load config first so remote mode honours custom ports / model paths
+# defined in etc/jenova.conf the same way local mode does.
+load_jenova_conf
+
 # --- Remote/LAN client mode: skip backend start, just export env and launch nvim ---
 if [ -n "$REMOTE_HOST" ]; then
     export JENOVA_CONNECT_HOST="$REMOTE_HOST"
     export JENOVA_PORT="$REMOTE_PROXY_PORT"
     export JENOVA_LLAMA_PORT="$REMOTE_LLAMA_PORT"
     export JENOVA_LLAMA_EMBED_PORT="$REMOTE_EMBED_PORT"
-    export JENOVA_API_URL="http://${REMOTE_HOST}:${REMOTE_PROXY_PORT}"
+    export JENOVA_API_URL="$(build_http_url "$REMOTE_HOST" "$REMOTE_PROXY_PORT")"
     export JENOVA_LAN_MODE="1"
 
-    if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
-        export JENOVA_ROOT="$SCRIPT_DIR"
-    elif [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
-        export JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
-    fi
-
-    LLAMA_LIB_DIR="${JENOVA_ROOT:+$JENOVA_ROOT/llama.cpp/build/bin}"
-    if [ -n "$LLAMA_LIB_DIR" ] && [ -d "$LLAMA_LIB_DIR" ]; then
+    LLAMA_LIB_DIR="$JENOVA_ROOT/llama.cpp/build/bin"
+    if [ -d "$LLAMA_LIB_DIR" ]; then
         export LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"
     fi
 
     echo "Jenova LAN client mode: connecting to $REMOTE_HOST:$REMOTE_PROXY_PORT"
 
     # Quick health check on the remote
-    _remote_healthy=false
     if command -v curl >/dev/null 2>&1; then
-        _remote_url="http://${REMOTE_HOST}:${REMOTE_PROXY_PORT}/health"
-        if echo "$REMOTE_HOST" | grep -q ":"; then _remote_url="http://[${REMOTE_HOST}]:${REMOTE_PROXY_PORT}/health"; fi
+        _remote_url="$(build_http_url "$REMOTE_HOST" "$REMOTE_PROXY_PORT")/health"
         if curl -sf --max-time 3 --connect-timeout 2 "$_remote_url" >/dev/null 2>&1; then
             echo "Remote Jenova CA is healthy"
-            _remote_healthy=true
         else
             echo "Warning: Remote Jenova CA at $REMOTE_HOST:$REMOTE_PROXY_PORT is not responding" >&2
             echo "" >&2
@@ -135,36 +190,17 @@ if [ -n "$REMOTE_HOST" ]; then
     fi
 
     if [ "$CHECK_ONLY" = "1" ]; then
-        echo "JENOVA_ROOT=$JENOVA_ROOT"
-        echo "JENOVA_CONNECT_HOST=$JENOVA_CONNECT_HOST"
-        echo "JENOVA_PORT=$JENOVA_PORT"
-        echo "JENOVA_LLAMA_PORT=$JENOVA_LLAMA_PORT"
-        echo "JENOVA_LLAMA_EMBED_PORT=$JENOVA_LLAMA_EMBED_PORT"
-        echo "JENOVA_API_URL=$JENOVA_API_URL"
-        echo "JENOVA_LAN_MODE=$JENOVA_LAN_MODE"
-        echo "EDITOR_BIN=$EDITOR_BIN  ($_EDITOR_VERSION_LINE)"
+        print_check_env
         exit 0
     fi
 
     exec "$EDITOR_BIN" "$@"
 fi
 
-# Determine JENOVA_ROOT before loading config
-if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
-    export JENOVA_ROOT="$SCRIPT_DIR"
-    . "$SCRIPT_DIR/etc/jenova.conf"
-elif [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
-    export JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
-    . "$SCRIPT_DIR/../etc/jenova.conf"
-else
-    echo "Error: etc/jenova.conf not found." >&2
-    exit 1
-fi
-
 # Separate HOST (bind address) from CONNECT_HOST (client connect address).
 # HOST may be 0.0.0.0 (listen on all interfaces), but clients need a real IP.
 CONNECT_HOST="${JENOVA_CONNECT_HOST:-127.0.0.1}"
-API_URL="http://${CONNECT_HOST}:${PORT}"
+API_URL="$(build_http_url "$CONNECT_HOST" "$PORT")"
 
 JENOVA_DIR="${JENOVA_STATE:-$JENOVA_ROOT/.jenova}"
 PID_FILE="$JENOVA_DIR/jenova-ca.pid"
@@ -198,14 +234,7 @@ fi
 
 # --- --check: dump resolved environment and exit ---
 if [ "$CHECK_ONLY" = "1" ]; then
-    echo "JENOVA_ROOT=$JENOVA_ROOT"
-    echo "JENOVA_CONNECT_HOST=$JENOVA_CONNECT_HOST"
-    echo "JENOVA_PORT=$JENOVA_PORT"
-    echo "JENOVA_LLAMA_PORT=$JENOVA_LLAMA_PORT"
-    echo "JENOVA_LLAMA_EMBED_PORT=$JENOVA_LLAMA_EMBED_PORT"
-    echo "JENOVA_API_URL=$JENOVA_API_URL"
-    echo "EDITOR_BIN=$EDITOR_BIN  ($_EDITOR_VERSION_LINE)"
-    echo "IS_JVIM=$IS_JVIM"
+    print_check_env
     exit 0
 fi
 
