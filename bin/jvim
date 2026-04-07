@@ -121,10 +121,7 @@ print_check_env() {
 # local modes inherit the same defaults (model paths, custom ports, etc.).
 load_jenova_conf() {
     _candidate=""
-    if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
-        _candidate="$SCRIPT_DIR/etc/jenova.conf"
-        _root="$SCRIPT_DIR"
-    elif [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
+    if [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
         _candidate="$SCRIPT_DIR/../etc/jenova.conf"
         _root="$(dirname "$SCRIPT_DIR")"
     else
