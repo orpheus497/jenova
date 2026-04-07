@@ -5,18 +5,19 @@
 --
 -- Discovery strategy:
 --   1. Determine the local machine's IP and subnet via `ifconfig` or `ip addr`
---   2. Probe candidate IPs on the Jenova proxy port (default 8080) via TCP
---   3. Validate by fetching /health from responsive hosts
+--   2. Probe all candidate IPs in the local subnet (e.g., /24) on the 
+--      Jenova proxy port (default 8080) via non-blocking TCP.
+--   3. Validate by fetching /health from responsive hosts (llama-server check).
 --   4. On success, set JENOVA_CONNECT_HOST, JENOVA_PORT, JENOVA_LLAMA_PORT
---      so that gp.nvim, llama.vim, and the monitor module pick them up
+--      so that plugins and monitors pick them up.
 
 local M = {}
 
 --- Default ports to probe
 local DEFAULT_PROXY_PORT = 8080
 local DEFAULT_LLAMA_PORT = 8081
-local PROBE_TIMEOUT_MS = 300
-local MAX_CONCURRENT = 20
+local PROBE_TIMEOUT_MS = 1000 -- Increased for more reliable LAN discovery
+local MAX_CONCURRENT = 50            -- parallel TCP probes in-flight
 local MAX_VALIDATE_CONCURRENT = 5  -- cap concurrent curl processes for /health checks
 
 --- Parse network interface output for IPv4 addresses (shared by ifconfig/ip addr).
@@ -293,13 +294,31 @@ function M.configure_remote(host, proxy_port, llama_port)
   vim.env.JENOVA_CONNECT_HOST = host
   vim.env.JENOVA_PORT = tostring(proxy_port)
   vim.env.JENOVA_LLAMA_PORT = tostring(llama_port)
+  vim.env.JENOVA_LAN_MODE = "1"
 
   -- Update global state for lualine / statusbar
   vim.g.jenova_connected = true
   vim.g.jenova_lan_host = host
 
+  local proxy_url = string.format("http://%s:%d/v1/chat/completions", host, proxy_port)
+  local fim_url   = string.format("http://%s:%d/infill", host, llama_port)
+
+  -- Reconfigure gp.nvim dispatcher endpoint (already initialized with 127.0.0.1)
+  local gp_ok, gp_dispatcher = pcall(require, "gp.dispatcher")
+  if gp_ok and gp_dispatcher.providers and gp_dispatcher.providers.openai then
+    gp_dispatcher.providers.openai.endpoint = proxy_url
+  end
+
+  -- Reconfigure llama.vim endpoints (reads g:llama_config fresh each request)
+  local cfg = vim.g.llama_config
+  if cfg then
+    cfg.endpoint_fim  = fim_url
+    cfg.endpoint_inst = proxy_url
+    vim.g.llama_config = cfg
+  end
+
   vim.notify(
-    string.format("Jenova CA discovered on LAN: %s:%d", host, proxy_port),
+    string.format("Jenova CA discovered on LAN: %s:%d — plugins reconfigured", host, proxy_port),
     vim.log.levels.INFO,
     { title = "Jenova LAN" }
   )

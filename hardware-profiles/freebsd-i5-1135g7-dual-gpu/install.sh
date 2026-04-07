@@ -263,15 +263,16 @@ download_model() {
             mkdir -p "$(dirname "$_path")"
             info "Downloading $(basename "$_path") (~$_size) ..."
             _tmp=$(mktemp "${_path}.tmp.XXXXXX")
+            _dl_timeout="${JENOVA_DL_TIMEOUT:-14400}"
             if [ "$_DL_CMD" = "curl" ]; then
-                if ! curl -L --fail --max-time 600 --connect-timeout 15 --progress-bar -o "$_tmp" "$_url"; then
+                if ! curl -L --fail --max-time "$_dl_timeout" --connect-timeout 30 --progress-bar -o "$_tmp" "$_url"; then
                     rm -f "$_tmp"
                     fail "Download failed for $_name"
                     ERRORS=$((ERRORS + 1))
                     return 0
                 fi
             else
-                if ! fetch -T 600 -o "$_tmp" "$_url"; then
+                if ! fetch -T "$_dl_timeout" -o "$_tmp" "$_url"; then
                     rm -f "$_tmp"
                     fail "Download failed for $_name"
                     ERRORS=$((ERRORS + 1))

@@ -46,16 +46,36 @@ if [ -n "$REMOTE_HOST" ]; then
     export JENOVA_LLAMA_PORT="$REMOTE_LLAMA_PORT"
     export JENOVA_LAN_MODE="1"
 
+    if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
+        export JENOVA_ROOT="$SCRIPT_DIR"
+    elif [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
+        export JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
+    fi
+
+    LLAMA_LIB_DIR="${JENOVA_ROOT:+$JENOVA_ROOT/llama.cpp/build/bin}"
+    if [ -n "$LLAMA_LIB_DIR" ] && [ -d "$LLAMA_LIB_DIR" ]; then
+        export LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"
+    fi
+
     echo "Jenova LAN client mode: connecting to $REMOTE_HOST:$REMOTE_PROXY_PORT"
 
     # Quick health check on the remote
+    _remote_healthy=false
     if command -v curl >/dev/null 2>&1; then
         _remote_url="http://${REMOTE_HOST}:${REMOTE_PROXY_PORT}/health"
         if echo "$REMOTE_HOST" | grep -q ":"; then _remote_url="http://[${REMOTE_HOST}]:${REMOTE_PROXY_PORT}/health"; fi
         if curl -sf --max-time 3 --connect-timeout 2 "$_remote_url" >/dev/null 2>&1; then
             echo "Remote Jenova CA is healthy"
+            _remote_healthy=true
         else
             echo "Warning: Remote Jenova CA at $REMOTE_HOST:$REMOTE_PROXY_PORT is not responding" >&2
+            echo "" >&2
+            echo "Troubleshooting:" >&2
+            echo "  1. Is jenova-ca running on $REMOTE_HOST?  (ssh $REMOTE_HOST bin/jenova-ca status)" >&2
+            echo "  2. Is it bound to 0.0.0.0?  (JENOVA_HOST=0.0.0.0 in etc/jenova.conf on the server)" >&2
+            echo "     Services bound to 127.0.0.1 reject LAN connections." >&2
+            echo "  3. Firewall blocking port $REMOTE_PROXY_PORT?" >&2
+            echo "" >&2
             echo "Neovim will launch anyway — monitor will retry automatically" >&2
         fi
     fi

@@ -119,7 +119,7 @@ end, { desc = "Jenova Agent Terminal" })
 local function _jenova_tcp_probe(callback)
   local uv = vim.uv or vim.loop
   if not uv then
-    callback(false)
+    vim.schedule(function() callback(false) end)
     return
   end
   local host = vim.env.JENOVA_CONNECT_HOST or vim.env.JENOVA_HOST or "127.0.0.1"
@@ -127,7 +127,7 @@ local function _jenova_tcp_probe(callback)
   local port = tonumber(vim.env.JENOVA_PORT or "8080")
   local tcp = uv.new_tcp()
   if not tcp then
-    callback(false)
+    vim.schedule(function() callback(false) end)
     return
   end
   local timeout = uv.new_timer()
@@ -172,24 +172,39 @@ vim.api.nvim_create_autocmd("VimEnter", {
             monitor.start_polling()
           end
         else
-          -- Backend not reachable locally — check if we should try LAN discovery
+          local is_lan_mode = vim.env.JENOVA_LAN_MODE == "1"
           local has_jvim_env = vim.env.JENOVA_ROOT and vim.env.JENOVA_ROOT ~= ""
             and vim.env.JENOVA_ROOT ~= "$JENOVA_ROOT"
-          if has_jvim_env then
-            -- Launched via jvim but backend is down — warn normally
+
+          if is_lan_mode then
+            local remote = vim.env.JENOVA_CONNECT_HOST or "unknown"
+            local port = vim.env.JENOVA_PORT or "8080"
+            vim.notify(
+              string.format(
+                "LAN remote %s:%s not responding.\n" ..
+                "Verify server has JENOVA_HOST=0.0.0.0 and jenova-ca is running.\n" ..
+                "Monitor will keep retrying.",
+                remote, port
+              ),
+              vim.log.levels.WARN,
+              { title = "Jenova LAN" }
+            )
+            local ok, monitor = pcall(require, "jenova.monitor")
+            if ok then
+              monitor.start_polling()
+            end
+          elseif has_jvim_env then
             vim.notify(
               "Jenova CA backend not running. AI features unavailable.\n" ..
               "Run:  jvim somefile.lua   OR   bin/llama-server-nvim",
               vim.log.levels.WARN,
               { title = "Jenova" }
             )
-            -- Still start monitor so it picks up when backend comes online
             local ok, monitor = pcall(require, "jenova.monitor")
             if ok then
               monitor.start_polling()
             end
           else
-            -- Standalone nvim (no jvim) — attempt LAN discovery
             local lan_ok, lan = pcall(require, "jenova.lan")
             if lan_ok then
               lan.auto_discover()
