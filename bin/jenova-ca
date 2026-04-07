@@ -146,6 +146,66 @@ if [ -n "$KV_CACHE_TYPE" ]; then
     KV_ARGS="-ctk $KV_CACHE_TYPE -ctv $KV_CACHE_TYPE"
 fi
 
+# --- Runtime backend args (may be rewritten by fallback logic) ---
+RUN_DEV_ARGS="$DEV_ARGS"
+RUN_SPLIT_ARGS="$SPLIT_ARGS"
+RUN_MAIN_NGL_ARGS=""
+RUN_DRAFT_ARGS="$DRAFT_ARGS"
+RUN_BACKEND_LABEL="configured"
+
+_use_vulkan_fallback() {
+    RUN_DEV_ARGS="-dev Vulkan0"
+    if [ "$NGL_7B" = "all" ] || [ -z "$NGL_7B" ]; then
+        RUN_SPLIT_ARGS="-sm layer -fitt $FIT_TARGET"
+    else
+        RUN_SPLIT_ARGS="-sm layer -ngl $NGL_7B"
+    fi
+    RUN_MAIN_NGL_ARGS=""
+    RUN_DRAFT_ARGS="$DRAFT_ARGS"
+    RUN_BACKEND_LABEL="vulkan-fallback"
+    export GGML_CUDA_DISABLE=1
+}
+
+_vulkan_backend_available() {
+    [ -f "$LLAMA_LIB_DIR/libggml-vulkan.so" ] || \
+    [ -f "$LLAMA_LIB_DIR/libggml-vulkan.so.0" ] || \
+    ls "$LLAMA_LIB_DIR"/libggml-vulkan.so.* >/dev/null 2>&1
+}
+
+_log_has_cuda_kernel_image_mismatch() {
+    _lm_file="$1"
+    [ -f "$_lm_file" ] || return 1
+    grep -q "no kernel image is available for execution on the device" "$_lm_file"
+}
+
+_launch_llama_server_bg() {
+    _ls_log="$1"
+    shift
+
+    "$LLAMA_SERVER" \
+        -m "$MODEL_PATH" \
+        $RUN_DEV_ARGS \
+        $RUN_SPLIT_ARGS \
+        $RUN_MAIN_NGL_ARGS \
+        $KV_ARGS \
+        -c "$CTX_SIZE" \
+        -b 2048 \
+        -ub 512 \
+        -np "$NUM_SLOTS" \
+        -t "$THREADS" \
+        -tb "$THREADS_BATCH" \
+        -fa auto \
+        -cb \
+        --spm-infill \
+        --cache-prompt \
+        --offline \
+        --host "$HOST" \
+        --port "$LLAMA_PORT" \
+        $RUN_DRAFT_ARGS \
+        "$@" > "$_ls_log" 2>&1 &
+    LLAMA_PID=$!
+}
+
 # --- Control verbs ---
 case "$1" in
     stop)
@@ -352,10 +412,19 @@ if [ "${_ENTER_WATCHDOG:-0}" = "1" ]; then
 fi
 
 # --- Startup banner ---
+if [ "${JENOVA_FORCE_VULKAN:-0}" = "1" ]; then
+    _use_vulkan_fallback
+fi
+
 echo "Starting Jenova CA..."
 echo "  Model:     $MODEL_PATH"
 echo "  Embed:     $MODEL_EMBED (CPU-only, Vulkan disabled)"
-echo "  Devices:   ${DEVICES:-CPU only}"
+if [ -n "$RUN_DEV_ARGS" ]; then
+    echo "  Devices:   $(echo "$RUN_DEV_ARGS" | sed 's/^-dev //')"
+else
+    echo "  Devices:   CPU only"
+fi
+echo "  Backend:   $RUN_BACKEND_LABEL"
 if [ "$NGL_7B" = "all" ] || [ -z "$NGL_7B" ]; then
     echo "  GPU:       auto-fit (fitt ${FIT_TARGET} MiB)${TENSOR_SPLIT:+ ts $TENSOR_SPLIT}"
 else
@@ -469,27 +538,7 @@ if [ "$1" = "--daemon" ]; then
     EMBED_LOG="${LOG_DIR}/jenova-embed.log"
     echo "Daemonizing... Logs at $LOG_FILE"
 
-    "$LLAMA_SERVER" \
-        -m "$MODEL_PATH" \
-        $DEV_ARGS \
-        $SPLIT_ARGS \
-        $KV_ARGS \
-        -c "$CTX_SIZE" \
-        -b 2048 \
-        -ub 512 \
-        -np "$NUM_SLOTS" \
-        -t "$THREADS" \
-        -tb "$THREADS_BATCH" \
-        -fa auto \
-        -cb \
-        --spm-infill \
-        --cache-prompt \
-        --offline \
-        --host "$HOST" \
-        --port "$LLAMA_PORT" \
-        $DRAFT_ARGS \
-        "$@" > "$LOG_FILE" 2>&1 &
-    LLAMA_PID=$!
+    _launch_llama_server_bg "$LOG_FILE" "$@"
 
     EMBED_PID=""
     if [ -f "$MODEL_EMBED" ]; then
@@ -514,6 +563,7 @@ if [ "$1" = "--daemon" ]; then
     HEALTH_TIMEOUT="${JENOVA_HEALTH_TIMEOUT:-90}"
     HEALTH_INTERVAL=2
     _ELAPSED=0
+    _VULKAN_RETRY_DONE=false
 
     echo "Waiting for llama-server to become ready..."
     while [ "$_ELAPSED" -lt "$HEALTH_TIMEOUT" ]; do
@@ -522,6 +572,18 @@ if [ "$1" = "--daemon" ]; then
             break
         fi
         if ! kill -0 "$LLAMA_PID" 2>/dev/null; then
+            if ! $_VULKAN_RETRY_DONE && _log_has_cuda_kernel_image_mismatch "$LOG_FILE"; then
+                if _vulkan_backend_available; then
+                    echo "Warning: CUDA backend failed with kernel-image mismatch; retrying with Vulkan backend (Vulkan0)."
+                    _VULKAN_RETRY_DONE=true
+                    _use_vulkan_fallback
+                    _launch_llama_server_bg "$LOG_FILE" "$@"
+                    continue
+                fi
+                echo "ERROR: CUDA kernel-image mismatch detected, but this llama.cpp build has no Vulkan backend." >&2
+                echo "Rebuild with CUDA+Vulkan support, then retry:" >&2
+                echo "  $JENOVA_ROOT/bin/build-llama-jenova" >&2
+            fi
             echo "ERROR: llama-server (PID $LLAMA_PID) died during startup. Check $LOG_FILE" >&2
             if [ -n "$EMBED_PID" ]; then kill "$EMBED_PID" 2>/dev/null || true; fi
             exec 9>&-
@@ -583,8 +645,9 @@ while [ "$1" = "--daemon" ]; do shift; done
 
 "$LLAMA_SERVER" \
     -m "$MODEL_PATH" \
-    $DEV_ARGS \
-    $SPLIT_ARGS \
+    $RUN_DEV_ARGS \
+    $RUN_SPLIT_ARGS \
+    $RUN_MAIN_NGL_ARGS \
     $KV_ARGS \
     -c "$CTX_SIZE" \
     -b 2048 \
@@ -599,7 +662,7 @@ while [ "$1" = "--daemon" ]; do shift; done
     --offline \
     --host "$HOST" \
     --port "$LLAMA_PORT" \
-    $DRAFT_ARGS \
+    $RUN_DRAFT_ARGS \
     "$@" &
 LLAMA_PID=$!
 

@@ -2,7 +2,7 @@
 # build-llama-jenova: CUDA-first llama.cpp build + Jenova runtime tuning.
 #
 # Defaults:
-#   - backend: CUDA
+#   - backend: CUDA (+ Vulkan fallback support when available)
 #   - build dir: <jenova>/llama.cpp/build
 #   - config override: <jenova>/etc/jenova.local.conf
 #
@@ -13,6 +13,7 @@
 #   JENOVA_THREADS_BATCH=<int>
 #   JENOVA_NGL_7B=all|<int>
 #   JENOVA_FITT=<int>
+#   JENOVA_CUDA_WITH_VULKAN=1|0
 #   JENOVA_CUDA_ARCHITECTURES=<e.g. 75 or 86;89>
 #   JOBS=<int>
 
@@ -26,6 +27,7 @@ LOCAL_CONF_ETC="$JENOVA_ROOT/etc/jenova.local.conf"
 LOCAL_CONF_BUILD="$LLAMA_DIR/build/jenova.local.conf"
 LOCAL_CONF="$LOCAL_CONF_ETC"
 BACKEND="${JENOVA_BACKEND:-cuda}"
+CUDA_WITH_VULKAN="${JENOVA_CUDA_WITH_VULKAN:-1}"
 
 if [ ! -d "$LLAMA_DIR" ]; then
     echo "Error: llama.cpp directory not found at $LLAMA_DIR" >&2
@@ -114,6 +116,17 @@ if [ "$ENABLE_CUDA" -eq 1 ] && ! command -v nvcc >/dev/null 2>&1; then
     exit 1
 fi
 
+if [ "$ENABLE_CUDA" -eq 1 ] && [ "$CUDA_WITH_VULKAN" = "1" ]; then
+    if (command -v pkg-config >/dev/null 2>&1 && pkg-config --exists vulkan) || \
+       [ -f /usr/include/vulkan/vulkan.h ] || \
+       [ -f /usr/local/include/vulkan/vulkan.h ]; then
+        ENABLE_VULKAN=1
+    else
+        echo "Warning: Vulkan development files not found; building CUDA-only binary."
+        echo "         Install Vulkan headers/loader, then rerun to enable CUDA->Vulkan fallback."
+    fi
+fi
+
 VRAM_MB=0
 if [ "$ENABLE_CUDA" -eq 1 ] && command -v nvidia-smi >/dev/null 2>&1; then
     _vram="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -n1 || true)"
@@ -156,7 +169,16 @@ echo "== Jenova llama.cpp build =="
 echo "Root:         $JENOVA_ROOT"
 echo "llama.cpp:    $LLAMA_DIR"
 echo "Build dir:    $BUILD_DIR"
-echo "Backend:      $BACKEND"
+if [ "$ENABLE_CUDA" -eq 1 ] && [ "$ENABLE_VULKAN" -eq 1 ]; then
+    EFFECTIVE_BACKEND="cuda+vulkan"
+elif [ "$ENABLE_CUDA" -eq 1 ]; then
+    EFFECTIVE_BACKEND="cuda"
+elif [ "$ENABLE_VULKAN" -eq 1 ]; then
+    EFFECTIVE_BACKEND="vulkan"
+else
+    EFFECTIVE_BACKEND="cpu"
+fi
+echo "Backend:      $EFFECTIVE_BACKEND"
 echo "Threads:      $THREADS (batch $THREADS_BATCH)"
 echo "RAM / Swap:   ${RAM_GIB}GiB / ${SWAP_GIB}GiB"
 echo "NGL_7B:       $NGL_7B"
