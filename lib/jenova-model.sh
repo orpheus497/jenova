@@ -56,3 +56,14 @@ elif [ -f "$JENOVA_ROOT/models/nomic-embed-text-v1.5.Q8_0.gguf" ]; then
 else
     MODEL_EMBED=""
 fi
+
+# --- Shared Device Utilities ---
+# count_devices: count comma-separated entries in a device string.
+# Usage: DEVICE_COUNT=$(count_devices "$DEVICES")
+count_devices() {
+    if [ -n "$1" ]; then
+        printf '%s\n' "$1" | awk -F',' '{ print NF }'
+    else
+        echo 0
+    fi
+}

@@ -56,7 +56,11 @@ while [ $# -gt 0 ]; do
         --remote)
             shift
             # Optional argument: if next token exists and is not a flag, it's the host
-            if [ $# -gt 0 ] && [ "${1#--}" = "$1" ] && [ -n "$1" ]; then
+            if [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; then
+                if [ -z "$1" ]; then
+                    echo "Error: --remote received an empty hostname argument." >&2
+                    exit 1
+                fi
                 REMOTE_HOST="$1"; shift
             else
                 # No host given → LAN auto-discover

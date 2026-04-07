@@ -1,5 +1,5 @@
 #!/bin/sh
-# build-llama-jenova: Vulkan-first llama.cpp build + Jenova runtime tuning.
+# build-llama-jenova: Vulkan llama.cpp build + Jenova runtime tuning.
 #
 # Defaults:
 #   - backend: Vulkan
@@ -7,14 +7,12 @@
 #   - config override: <jenova>/etc/jenova.local.conf
 #
 # Env overrides:
-#   JENOVA_BACKEND=auto|cuda|vulkan|cpu
+#   JENOVA_BACKEND=auto|vulkan|cpu
 #   JENOVA_BUILD_DIR=/custom/path
 #   JENOVA_THREADS=<int>
 #   JENOVA_THREADS_BATCH=<int>
 #   JENOVA_NGL_7B=all|<int>
 #   JENOVA_FITT=<int>
-#   JENOVA_CUDA_WITH_VULKAN=1|0
-#   JENOVA_CUDA_ARCHITECTURES=<e.g. 75 or 86;89>
 #   JOBS=<int>
 
 set -eu
@@ -27,7 +25,6 @@ LOCAL_CONF_ETC="$JENOVA_ROOT/etc/jenova.local.conf"
 LOCAL_CONF_BUILD="$LLAMA_DIR/build/jenova.local.conf"
 LOCAL_CONF="$LOCAL_CONF_ETC"
 BACKEND="${JENOVA_BACKEND:-vulkan}"
-CUDA_WITH_VULKAN="${JENOVA_CUDA_WITH_VULKAN:-1}"
 
 if [ ! -d "$LLAMA_DIR" ]; then
     echo "Error: llama.cpp directory not found at $LLAMA_DIR" >&2
@@ -85,57 +82,25 @@ if command -v ninja >/dev/null 2>&1; then
     GENERATOR="Ninja"
 fi
 
-ENABLE_CUDA=0
 ENABLE_VULKAN=0
 MISSING_VULKAN_PREREQS=""
 
 case "$BACKEND" in
-    cuda)
-        ENABLE_CUDA=1
-        ;;
     vulkan)
         ENABLE_VULKAN=1
         ;;
     cpu)
         ;;
     auto)
-        if command -v nvcc >/dev/null 2>&1; then
-            ENABLE_CUDA=1
-        elif command -v vulkaninfo >/dev/null 2>&1 && vulkaninfo --summary 2>/dev/null | grep -q "deviceName"; then
+        if command -v vulkaninfo >/dev/null 2>&1 && vulkaninfo --summary 2>/dev/null | grep -q "deviceName"; then
             ENABLE_VULKAN=1
         fi
         ;;
     *)
-        echo "Error: unsupported JENOVA_BACKEND='$BACKEND' (use auto|cuda|vulkan|cpu)" >&2
+        echo "Error: unsupported JENOVA_BACKEND='$BACKEND' (use auto|vulkan|cpu)" >&2
         exit 1
         ;;
 esac
-
-if [ "$ENABLE_CUDA" -eq 1 ] && ! command -v nvcc >/dev/null 2>&1; then
-    echo "Error: CUDA backend requested but nvcc was not found." >&2
-    echo "Set JENOVA_BACKEND=cpu temporarily or install CUDA toolkit." >&2
-    exit 1
-fi
-
-if [ "$ENABLE_CUDA" -eq 1 ] && [ "$CUDA_WITH_VULKAN" = "1" ]; then
-    if ! command -v glslc >/dev/null 2>&1; then
-        MISSING_VULKAN_PREREQS="${MISSING_VULKAN_PREREQS} glslc"
-    fi
-    if ! { { command -v pkg-config >/dev/null 2>&1 && pkg-config --exists vulkan; } || \
-           [ -f /usr/include/vulkan/vulkan.h ] || \
-           [ -f /usr/local/include/vulkan/vulkan.h ]; }; then
-        MISSING_VULKAN_PREREQS="${MISSING_VULKAN_PREREQS} vulkan-sdk"
-    fi
-
-    if [ -z "$MISSING_VULKAN_PREREQS" ]; then
-        ENABLE_VULKAN=1
-    else
-        echo "Warning: Vulkan build prerequisites missing:${MISSING_VULKAN_PREREQS}"
-        echo "         On Fedora install:"
-        echo "           sudo dnf install -y vulkan-headers vulkan-loader-devel glslc"
-        echo "         Building CUDA-only binary for now."
-    fi
-fi
 
 if [ "$ENABLE_VULKAN" -eq 1 ] && ! command -v glslc >/dev/null 2>&1; then
     echo "Error: Vulkan backend requested but glslc was not found." >&2
@@ -144,36 +109,10 @@ if [ "$ENABLE_VULKAN" -eq 1 ] && ! command -v glslc >/dev/null 2>&1; then
     exit 1
 fi
 
-VRAM_MB=0
-if [ "$ENABLE_CUDA" -eq 1 ] && command -v nvidia-smi >/dev/null 2>&1; then
-    _vram="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -n1 || true)"
-    case "$_vram" in
-        ''|*[!0-9]*)
-            VRAM_MB=0
-            ;;
-        *)
-            VRAM_MB="$_vram"
-            ;;
-    esac
-fi
-
 if [ -n "${JENOVA_NGL_7B:-}" ]; then
     NGL_7B="$JENOVA_NGL_7B"
 else
-    if [ "$ENABLE_CUDA" -eq 1 ]; then
-        if [ "$VRAM_MB" -ge 10000 ]; then
-            NGL_7B="all"
-        elif [ "$VRAM_MB" -ge 7000 ]; then
-            NGL_7B=24
-        elif [ "$VRAM_MB" -ge 5000 ]; then
-            NGL_7B=18
-        elif [ "$VRAM_MB" -gt 0 ]; then
-            NGL_7B=12
-        else
-            # Driver-less environments cannot report VRAM; choose a conservative default.
-            NGL_7B=16
-        fi
-    elif [ "$ENABLE_VULKAN" -eq 1 ]; then
+    if [ "$ENABLE_VULKAN" -eq 1 ]; then
         NGL_7B=all
     else
         NGL_7B=0
@@ -186,11 +125,7 @@ echo "== Jenova llama.cpp build =="
 echo "Root:         $JENOVA_ROOT"
 echo "llama.cpp:    $LLAMA_DIR"
 echo "Build dir:    $BUILD_DIR"
-if [ "$ENABLE_CUDA" -eq 1 ] && [ "$ENABLE_VULKAN" -eq 1 ]; then
-    EFFECTIVE_BACKEND="cuda+vulkan"
-elif [ "$ENABLE_CUDA" -eq 1 ]; then
-    EFFECTIVE_BACKEND="cuda"
-elif [ "$ENABLE_VULKAN" -eq 1 ]; then
+if [ "$ENABLE_VULKAN" -eq 1 ]; then
     EFFECTIVE_BACKEND="vulkan"
 else
     EFFECTIVE_BACKEND="cpu"
@@ -216,12 +151,6 @@ set -- \
     -DGGML_CUDA=OFF \
     -DGGML_VULKAN=OFF
 
-if [ "$ENABLE_CUDA" -eq 1 ]; then
-    set -- "$@" -DGGML_CUDA=ON
-    if [ -n "${JENOVA_CUDA_ARCHITECTURES:-}" ]; then
-        set -- "$@" -DCMAKE_CUDA_ARCHITECTURES="$JENOVA_CUDA_ARCHITECTURES"
-    fi
-fi
 if [ "$ENABLE_VULKAN" -eq 1 ]; then
     set -- "$@" -DGGML_VULKAN=ON
 fi
@@ -233,10 +162,6 @@ LLAMA_SERVER="$BUILD_DIR/bin/llama-server"
 if [ ! -x "$LLAMA_SERVER" ]; then
     echo "Error: build completed but llama-server is missing at $LLAMA_SERVER" >&2
     exit 1
-fi
-
-if [ "$ENABLE_VULKAN" -eq 1 ] && [ "$ENABLE_CUDA" -eq 0 ]; then
-    rm -f "$BUILD_DIR/bin"/libggml-cuda.so*
 fi
 
 if [ -e "$LOCAL_CONF_ETC" ]; then
@@ -251,16 +176,13 @@ mkdir -p "$(dirname "$LOCAL_CONF")"
 
 DEVICES=""
 GENERATED_TENSOR_SPLIT=""
-if [ "$ENABLE_CUDA" -eq 1 ]; then
-    DEVICES="CUDA0"
-elif [ "$ENABLE_VULKAN" -eq 1 ]; then
+if [ "$ENABLE_VULKAN" -eq 1 ]; then
     DEVICES="Vulkan0"
 fi
 
 cat > "$LOCAL_CONF" <<EOF
 #!/bin/sh
-# Auto-generated by bin/build-llama-jenova on $(date -u '+%Y-%m-%d %H:%M:%S UTC')
-# Host-specific overrides for llama.cpp runtime in Jenova.
+# Auto-generated by bin/build-llama-jenova — host-specific overrides for Jenova.
 
 LLAMA_SERVER="\$JENOVA_ROOT/llama.cpp/build/bin/llama-server"
 THREADS="\${JENOVA_THREADS:-$THREADS}"
@@ -274,13 +196,6 @@ if [ -n "$DEVICES" ]; then
 cat >> "$LOCAL_CONF" <<EOF
 DEVICES="\${JENOVA_DEVICES:-$DEVICES}"
 TENSOR_SPLIT="\${JENOVA_TS:-$GENERATED_TENSOR_SPLIT}"
-EOF
-fi
-
-if [ "$ENABLE_CUDA" -eq 1 ]; then
-cat >> "$LOCAL_CONF" <<'EOF'
-# Allow CUDA to overflow VRAM into system RAM instead of hard OOM.
-GGML_CUDA_ENABLE_UNIFIED_MEMORY="${GGML_CUDA_ENABLE_UNIFIED_MEMORY:-1}"
 EOF
 fi
 

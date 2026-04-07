@@ -413,22 +413,21 @@ local function proxy_connection(client_fd, conn_fds)
                 end
             end
 
-            if last_user_msg:match("^%s*Visual Rewrite:%s*") then
-                intent = "visual"
-                req_json.messages[last_user_idx].content = last_user_msg:gsub("^%s*Visual Rewrite:%s*", "")
-                last_user_msg = req_json.messages[last_user_idx].content
-            elseif last_user_msg:match("^%s*Open File Chat:%s*") then
-                intent = "filechat"
-                req_json.messages[last_user_idx].content = last_user_msg:gsub("^%s*Open File Chat:%s*", "")
-                last_user_msg = req_json.messages[last_user_idx].content
-            elseif last_user_msg:match("^%s*Chatbot:%s*") then
-                intent = "filechat"
-                req_json.messages[last_user_idx].content = last_user_msg:gsub("^%s*Chatbot:%s*", "")
-                last_user_msg = req_json.messages[last_user_idx].content
-            elseif last_user_msg:match("^%s*Web Search:%s*") then
-                intent = "websearch"
-                req_json.messages[last_user_idx].content = last_user_msg:gsub("^%s*Web Search:%s*", "")
-                last_user_msg = req_json.messages[last_user_idx].content
+            -- Intent detection: each entry maps a prefix pattern to an intent name.
+            -- The same pattern is used both to detect the intent and to strip the prefix.
+            local intent_prefixes = {
+                { pattern = "^%s*Visual Rewrite:%s*",  intent = "visual"    },
+                { pattern = "^%s*Open File Chat:%s*",  intent = "filechat"  },
+                { pattern = "^%s*Chatbot:%s*",         intent = "filechat"  },
+                { pattern = "^%s*Web Search:%s*",      intent = "websearch" },
+            }
+            for _, entry in ipairs(intent_prefixes) do
+                if last_user_msg:match(entry.pattern) then
+                    intent = entry.intent
+                    req_json.messages[last_user_idx].content = last_user_msg:gsub(entry.pattern, "")
+                    last_user_msg = req_json.messages[last_user_idx].content
+                    break
+                end
             end
 
             if last_user_msg ~= "" and not last_user_msg:find("--- REPOSITORY CONTEXT ---") then

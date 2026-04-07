@@ -162,6 +162,11 @@ ffi_defs.O_WRONLY   = 1
 ffi_defs.O_RDWR     = 2
 ffi_defs.WNOHANG    = 1
 
+-- Platform-specific socket and errno constants are hardcoded here because
+-- LuaJIT FFI cannot call cpp-style '#include <errno.h>' at runtime.
+-- Values are taken directly from the FreeBSD and Linux kernel headers:
+--   FreeBSD: /usr/include/sys/socket.h, /usr/include/errno.h
+--   Linux:   /usr/include/asm-generic/socket.h, /usr/include/asm-generic/errno-base.h
 if is_linux then
   ffi_defs.O_NONBLOCK   = 0x0800
   ffi_defs.FIONBIO      = 0x5421

@@ -184,20 +184,12 @@ export JENOVA_PORT=8080
 
 ## Backend Support
 
-All profiles use Vulkan by default. To build with CUDA or CPU:
+All profiles use Vulkan by default. To build CPU-only:
 
 ```bash
-# Build with CUDA
-JENOVA_BACKEND=cuda ./bin/build-llama-jenova
-
-# Build with CUDA + Vulkan
-JENOVA_BACKEND=cuda JENOVA_CUDA_WITH_VULKAN=1 ./bin/build-llama-jenova
-
 # Build CPU-only
 JENOVA_BACKEND=cpu ./bin/build-llama-jenova
 ```
-
-Then adjust your profile's `DEVICES` setting or set `JENOVA_DEVICES=CUDA0`.
 
 ## Troubleshooting
 
