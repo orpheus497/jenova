@@ -270,7 +270,7 @@ local function stream_response(buf, messages, on_done)
         if ok and parsed then
           if parsed.choices and parsed.choices[1] then
             local delta = parsed.choices[1].delta
-            if delta and delta.content then
+            if delta and type(delta.content) == "string" then
               append_text(delta.content)
             end
           elseif parsed.error then
@@ -426,12 +426,13 @@ function M.visual_chat()
   local buf = open_chat_split()
   if not buf then return end
 
-  local msg = string.format("I have the following from %s:\n\n```%s\n%s\n```\n\nLet's discuss this code.",
+  local context = string.format("Selected code from %s:\n\n```%s\n%s\n```\n",
     filename, ft, selection)
 
-  append_user_section(buf, msg)
+  append_user_section(buf, context)
   save_chat(buf)
   scroll_to_bottom(buf)
+  vim.cmd("startinsert")
 end
 
 local function strip_code_fences(text)
@@ -495,7 +496,7 @@ local function do_rewrite(src_buf, start_ln, end_ln, instruction, selection, ft)
             local ok, parsed = pcall(vim.json.decode, line:sub(7))
             if ok and parsed and parsed.choices and parsed.choices[1] then
               local delta = parsed.choices[1].delta
-              if delta and delta.content then
+              if delta and type(delta.content) == "string" then
                 response_text = response_text .. delta.content
               end
             end
@@ -560,16 +561,15 @@ function M.chat_with_context()
   local buf = open_chat_split()
   if not buf then return end
 
-  local msg = string.format(
-    "Open File Chat: I'm working on file: %s\nPath: %s\n\n```\n%s\n```\n\nLet's discuss this file and help me move the task forward.",
+  local context = string.format(
+    "Open File Chat: Working on: %s\nPath: %s\n\n```\n%s\n```\n\n",
     filename, filepath, content
   )
 
-  append_user_section(buf, msg)
+  append_user_section(buf, context)
   save_chat(buf)
-
-  local messages = parse_messages(buf)
-  stream_response(buf, messages)
+  scroll_to_bottom(buf)
+  vim.cmd("startinsert")
 end
 
 function M.fresh_chat()

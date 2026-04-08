@@ -16,6 +16,7 @@ local M = {}
 --- Default ports to probe
 local DEFAULT_PROXY_PORT = 8080
 local DEFAULT_LLAMA_PORT = 8081
+local DEFAULT_EMBED_PORT = 8082
 local PROBE_TIMEOUT_MS = 1000 -- Increased for more reliable LAN discovery
 local MAX_CONCURRENT = 50            -- parallel TCP probes in-flight
 local MAX_VALIDATE_CONCURRENT = 5  -- cap concurrent curl processes for /health checks
@@ -285,10 +286,10 @@ end
 --- @param host string  The LAN IP of the Jenova CA server
 --- @param proxy_port? number  Proxy port (default 8080)
 --- @param llama_port? number  llama-server port (default 8081)
-function M.configure_remote(host, proxy_port, llama_port)
+function M.configure_remote(host, proxy_port, llama_port, embed_port)
   proxy_port = proxy_port or DEFAULT_PROXY_PORT
   llama_port = llama_port or DEFAULT_LLAMA_PORT
-  local embed_port = llama_port + 1
+  embed_port = embed_port or DEFAULT_EMBED_PORT
 
   vim.env.JENOVA_CONNECT_HOST = host
   vim.env.JENOVA_PORT = tostring(proxy_port)

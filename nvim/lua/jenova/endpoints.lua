@@ -28,6 +28,10 @@ function M.fim_url()
   return string.format("http://%s:%d/infill", M.host(), M.llama_port())
 end
 
+function M.embed_url()
+  return string.format("http://%s:%d/v1/embeddings", M.host(), M.embed_port())
+end
+
 function M.url(port, path)
   local h = M.host()
   if h:find(":", 1, true) and not h:match("^%[.*%]$") then
