@@ -347,10 +347,14 @@ function M.start_polling()
   end
 
   -- Cleanup timer on Neovim exit to prevent late callbacks on invalid state
-  vim.api.nvim_create_autocmd("VimLeavePre", {
-    callback = function() M.stop_polling() end,
-    once = true,
-  })
+  -- Guard: only register once even if start_polling() is called multiple times
+  if not M._vimleave_registered then
+    M._vimleave_registered = true
+    vim.api.nvim_create_autocmd("VimLeavePre", {
+      callback = function() M.stop_polling() end,
+      once = true,
+    })
+  end
 end
 
 --- Stop polling and clean up timer handle

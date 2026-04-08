@@ -380,14 +380,18 @@ local function proxy_connection(client_fd, conn_fds)
         if is_chunked then
             body_chunks[1] = body_raw
             body_total = #body_raw
-            while body_raw:sub(-5) ~= "0\r\n\r\n" do
+            -- Track last 5 bytes of accumulated data for terminator detection
+            local tail = body_raw:sub(-5)
+            while tail ~= "0\r\n\r\n" do
                 local n = async_recv(client_fd, buf, 8192)
                 if n <= 0 then break end
                 local chunk = ffi.string(buf, n)
                 body_chunks[#body_chunks + 1] = chunk
                 body_total = body_total + n
                 if body_total > MAX_BODY_SIZE then break end
-                body_raw = body_chunks[#body_chunks - 1]:sub(-5) .. chunk
+                -- Build terminator window from tail of previous data + new chunk
+                local window = tail .. chunk
+                tail = window:sub(-5)
             end
             body_raw = decode_chunked_body(table.concat(body_chunks))
             body_chunks = nil
@@ -663,7 +667,7 @@ while running do
                             if conn_fds.llama >= 0 then pcall(ffi.C.close, conn_fds.llama); conn_fds.llama = -1 end
                             if conn_fds.client >= 0 then pcall(ffi.C.close, conn_fds.client); conn_fds.client = -1 end
                         end
-                        active_connection_count = active_connection_count - 1
+                        active_connection_count = math.max(0, active_connection_count - 1)
                     end)
                     local _ok, type, watch_fd = coroutine.resume(co)
                     if coroutine.status(co) ~= "dead" then

@@ -88,14 +88,21 @@ local function send_all(fd, data)
   return true
 end
 
-local function recv_all(fd, buf, buf_size)
+local function recv_all(fd, buf, buf_size, wall_timeout)
   local chunks = {}
   local total_recv = 0
   local stall_count = 0
   local recv_err = nil
   local MAX_RECV_SIZE = 10 * 1024 * 1024  -- 10MB cap to prevent memory exhaustion
+  local start_time = os.time()
+  local max_stall = wall_timeout and (wall_timeout * 20) or 12000  -- scale stall limit to timeout
   while true do
     ::retry::
+    -- Wall-clock timeout: break if elapsed time exceeds configured timeout
+    if wall_timeout and (os.time() - start_time) >= wall_timeout then
+      recv_err = "wall-clock timeout (" .. wall_timeout .. "s)"
+      break
+    end
     local recv_n = ffi.C.recv(fd, buf, buf_size, 0)
     if recv_n > 0 then
       total_recv = total_recv + tonumber(recv_n)
@@ -113,7 +120,7 @@ local function recv_all(fd, buf, buf_size)
         goto retry
       elseif err == EAGAIN or err == EWOULDBLOCK or err == ETIMEDOUT then
         stall_count = stall_count + 1
-        if stall_count >= 12000 then break end
+        if stall_count >= max_stall then break end
         local tv_sleep = ffi.new("struct timeval")
         tv_sleep.tv_sec = 0
         tv_sleep.tv_usec = 50000
@@ -206,7 +213,7 @@ function http.post(url, body, timeout)
   end
 
   local buf = ffi.new("char[?]", 131072)
-  local chunks, recv_err = recv_all(fd, buf, 131072)
+  local chunks, recv_err = recv_all(fd, buf, 131072, timeout)
   ffi.C.close(fd)
 
   if recv_err then return 499, recv_err end
@@ -266,7 +273,7 @@ function http.get(url, timeout)
   end
 
   local buf = ffi.new("char[?]", 65536)
-  local chunks, recv_err = recv_all(fd, buf, 65536)
+  local chunks, recv_err = recv_all(fd, buf, 65536, timeout)
   ffi.C.close(fd)
 
   if recv_err then return 499, recv_err end
