@@ -181,6 +181,9 @@ if is_linux then
   ffi_defs.SO_KEEPALIVE = 9
   ffi_defs.IPPROTO_TCP  = 6
   ffi_defs.TCP_NODELAY  = 1
+  ffi_defs.TCP_KEEPIDLE = 4   -- seconds before first keepalive probe
+  ffi_defs.TCP_KEEPINTVL = 5  -- interval between subsequent keepalive probes
+  ffi_defs.TCP_KEEPCNT = 6    -- number of unacknowledged probes before connection is dead
   ffi_defs.EAGAIN       = 11
   ffi_defs.EWOULDBLOCK  = 11
   ffi_defs.EINPROGRESS  = 115
@@ -202,6 +205,9 @@ else
   ffi_defs.SO_KEEPALIVE = 0x0008
   ffi_defs.IPPROTO_TCP  = 6
   ffi_defs.TCP_NODELAY  = 1
+  ffi_defs.TCP_KEEPIDLE = 0x10   -- FreeBSD TCP_KEEPIDLE (seconds before first probe)
+  ffi_defs.TCP_KEEPINTVL = 0x200 -- FreeBSD TCP_KEEPINTVL (interval between probes)
+  ffi_defs.TCP_KEEPCNT = 0x400   -- FreeBSD TCP_KEEPCNT (max probes before dead)
   ffi_defs.EAGAIN       = 35
   ffi_defs.EWOULDBLOCK  = 35
   ffi_defs.EINPROGRESS  = 36

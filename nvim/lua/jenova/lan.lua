@@ -139,14 +139,13 @@ local function tcp_probe(host, port, timeout_ms, callback)
   if timer then _active_handles[timer] = true end
   local closed = false
   local function close_all()
-    if not closed then
-      closed = true
-      pcall(function() tcp:close() end)
-      _active_handles[tcp] = nil
-      if timer then
-        pcall(function() timer:close() end)
-        _active_handles[timer] = nil
-      end
+    if closed then return end
+    closed = true  -- Set flag BEFORE closing to prevent double-close
+    pcall(function() tcp:close() end)
+    _active_handles[tcp] = nil
+    if timer then
+      pcall(function() timer:close() end)
+      _active_handles[timer] = nil
     end
   end
   if timer then
