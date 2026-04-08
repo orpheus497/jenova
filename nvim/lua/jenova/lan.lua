@@ -163,25 +163,24 @@ local function tcp_probe(host, port, timeout_ms, callback)
   end)
 end
 
---- Validate a candidate host by checking if it responds with a Jenova-compatible
---- /health endpoint (llama-server returns JSON with status field).
+--- Validate a candidate host by checking the llama-server /health endpoint.
+--- The proxy port (8080) does not expose /health; llama-server (8081) does.
 --- @param host string
---- @param port number
+--- @param proxy_port number
 --- @param callback fun(ok: boolean)
-local function validate_health(host, port, callback)
+local function validate_health(host, proxy_port, callback)
+  local llama_port = proxy_port + 1
   if not vim.system or vim.fn.executable("curl") ~= 1 then
-    -- No curl available — accept TCP-reachable hosts as valid candidates
     callback(true)
     return
   end
-  local url = string.format("http://%s:%d/health", host, port)
+  local url = string.format("http://%s:%d/health", host, llama_port)
   vim.system(
     { "curl", "-sf", "--max-time", "2", "--connect-timeout", "1", url },
     { text = true },
     function(result)
       vim.schedule(function()
         if result.code == 0 and result.stdout then
-          -- llama-server /health returns JSON with "status" field
           local has_status = result.stdout:find('"status"') ~= nil
           callback(has_status)
         else
@@ -267,7 +266,6 @@ function M.discover(opts)
       tcp_probe(candidate, port, PROBE_TIMEOUT_MS, function(ok)
         active = active - 1
         if not found and ok then
-          -- TCP open — queue for /health validation (capped at MAX_VALIDATE_CONCURRENT)
           table.insert(validate_queue, candidate)
           drain_validate_queue()
         end
@@ -290,10 +288,12 @@ end
 function M.configure_remote(host, proxy_port, llama_port)
   proxy_port = proxy_port or DEFAULT_PROXY_PORT
   llama_port = llama_port or DEFAULT_LLAMA_PORT
+  local embed_port = llama_port + 1
 
   vim.env.JENOVA_CONNECT_HOST = host
   vim.env.JENOVA_PORT = tostring(proxy_port)
   vim.env.JENOVA_LLAMA_PORT = tostring(llama_port)
+  vim.env.JENOVA_LLAMA_EMBED_PORT = tostring(embed_port)
   vim.env.JENOVA_LAN_MODE = "1"
 
   vim.g.jenova_connected = true
@@ -305,7 +305,8 @@ function M.configure_remote(host, proxy_port, llama_port)
   end
 
   vim.notify(
-    string.format("Jenova CA discovered on LAN: %s:%d — plugins reconfigured", host, proxy_port),
+    string.format("Jenova CA found on LAN: %s (proxy:%d llama:%d embed:%d)",
+      host, proxy_port, llama_port, embed_port),
     vim.log.levels.INFO,
     { title = "Jenova LAN" }
   )

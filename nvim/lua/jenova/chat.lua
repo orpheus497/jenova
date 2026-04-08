@@ -1,5 +1,8 @@
 local M = {}
-local ep = require("jenova.endpoints")
+
+local function ep()
+  return require("jenova.endpoints")
+end
 
 local CHAT_DIR = vim.fn.stdpath("state") .. "/jenova/chats"
 local SYSTEM_PROMPT = "You are Jenova, an expert coding assistant running fully locally on FreeBSD. "
@@ -170,7 +173,7 @@ end
 local function stream_response(buf, messages, on_done)
   stop_generation()
 
-  local url = ep.proxy_url()
+  local url = ep().proxy_url()
   local payload = vim.json.encode({
     model = MODEL,
     messages = messages,
@@ -414,7 +417,7 @@ function M.visual_rewrite()
       { role = "user", content = user_msg },
     }
 
-    local url = ep.proxy_url()
+    local url = ep().proxy_url()
     local payload = vim.json.encode({
       model = MODEL,
       messages = messages,
@@ -581,7 +584,7 @@ function M.inline_rewrite()
       { role = "user", content = user_msg },
     }
 
-    local url = ep.proxy_url()
+    local url = ep().proxy_url()
     local payload = vim.json.encode({
       model = MODEL,
       messages = messages,

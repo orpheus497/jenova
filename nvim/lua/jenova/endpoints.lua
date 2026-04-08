@@ -64,6 +64,8 @@ function M.reconfigure_plugins()
     cfg.endpoint_inst = proxy_url
     vim.g.llama_config = cfg
   end
+
+  vim.g.jenova_connected = true
 end
 
 return M
