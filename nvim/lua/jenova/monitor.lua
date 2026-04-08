@@ -31,6 +31,12 @@ local CONNECT_TIMEOUT_MS = 3000
 --- Get connection host/port from shared endpoints module.
 --- Exposed as M.get_endpoints() for reuse by health.lua and dashboard.lua.
 --- Always reads live env vars via jenova.endpoints so LAN discovery changes propagate.
+local function is_lan_mode()
+  local ep_ok, ep = pcall(require, "jenova.endpoints")
+  if ep_ok then return ep.is_lan_mode() end
+  return vim.env.JENOVA_LAN_MODE == "1"
+end
+
 local function get_endpoints()
   local ep_ok, ep = pcall(require, "jenova.endpoints")
   if ep_ok then
@@ -46,6 +52,11 @@ local function get_endpoints()
     llama_port = tonumber(vim.env.JENOVA_LLAMA_PORT) or 8081,
     embed_port = tonumber(vim.env.JENOVA_LLAMA_EMBED_PORT or vim.env.LLAMA_EMBED_PORT) or 8082,
   }
+end
+
+local function llama_api_port(endpoints)
+  if is_lan_mode() then return endpoints.proxy_port end
+  return endpoints.llama_port
 end
 
 --- Build an HTTP URL, bracketing IPv6 literals as required by URL syntax
@@ -139,17 +150,19 @@ end
 
 --- Poll /health endpoint for basic status
 local function poll_health(endpoints, callback)
-  local url = format_http_url(endpoints.host, endpoints.llama_port, "/health")
+  local port = llama_api_port(endpoints)
+  local url = format_http_url(endpoints.host, port, "/health")
   http_get(url, function(ok, body)
     if ok and body then
       local data = json_decode(body)
-      -- llama-server returns status="ok" when ready, "loading model" while starting
-      if data and data.status == "ok" then
+      -- llama-server returns status="ok"; proxy returns status="ok" + backend_ok=true
+      if data and (data.status == "ok" or data.backend_ok == true) then
         M.state.llama_ok = true
         if data.slots_idle ~= nil then
           M.state.slots_used = (data.slots_processing or 0)
           M.state.slots_total = (data.slots_idle or 0) + (data.slots_processing or 0)
         end
+        M.state.proxy_ok = true
         update_connected_state()
         if callback then callback(true) end
         return
@@ -163,7 +176,8 @@ end
 
 --- Poll /slots endpoint for detailed slot and model info
 local function poll_slots(endpoints, callback)
-  local url = format_http_url(endpoints.host, endpoints.llama_port, "/slots")
+  local port = llama_api_port(endpoints)
+  local url = format_http_url(endpoints.host, port, "/slots")
   http_get(url, function(ok, body)
     if ok and body then
       local data = json_decode(body)
@@ -201,7 +215,8 @@ end
 
 --- Poll /props endpoint for server properties (model info)
 local function poll_props(endpoints, callback)
-  local url = format_http_url(endpoints.host, endpoints.llama_port, "/props")
+  local port = llama_api_port(endpoints)
+  local url = format_http_url(endpoints.host, port, "/props")
   http_get(url, function(ok, body)
     if ok and body then
       local data = json_decode(body)
@@ -269,7 +284,7 @@ function M.poll(on_complete)
     end)
   else
     -- Fallback: just TCP probe
-    tcp_probe(endpoints.host, endpoints.llama_port, function(ok)
+    tcp_probe(endpoints.host, llama_api_port(endpoints), function(ok)
       M.state.llama_ok = ok
       update_connected_state()
       finish_one()

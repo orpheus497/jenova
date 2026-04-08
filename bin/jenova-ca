@@ -410,11 +410,27 @@ if [ "${_ENTER_WATCHDOG:-0}" = "1" ]; then
 fi
 
 # --- Startup banner ---
+# --lan flag: bind on all interfaces for LAN access
+for _arg in "$@"; do
+    if [ "$_arg" = "--lan" ]; then
+        HOST="0.0.0.0"
+        _INT_HOST="127.0.0.1"
+        API_URL="http://${_INT_HOST}:${PORT}"
+        LLAMA_URL="http://${_INT_HOST}:${LLAMA_PORT}"
+        LLAMA_EMBED_URL="http://${_INT_HOST}:${LLAMA_EMBED_PORT}"
+        break
+    fi
+done
+
 if [ "${JENOVA_FORCE_VULKAN:-0}" = "1" ]; then
     _use_vulkan_fallback
 fi
 
 echo "Starting Jenova CA..."
+echo "  Bind:      $HOST:$PORT (llama:$LLAMA_PORT embed:$LLAMA_EMBED_PORT)"
+if [ "$HOST" = "127.0.0.1" ]; then
+    echo "             Local only — use 'jenova-ca --daemon --lan' for LAN access"
+fi
 echo "  Model:     $MODEL_PATH"
 echo "  Embed:     $MODEL_EMBED (CPU-only, Vulkan disabled)"
 if [ -n "$RUN_DEV_ARGS" ]; then
@@ -448,7 +464,7 @@ if [ "$1" = "--daemon" ]; then
     # Strip --watch from remaining args (it's for post-startup, not llama-server)
     _FILTERED_ARGS=""
     for _arg in "$@"; do
-        if [ "$_arg" != "--watch" ]; then _FILTERED_ARGS="$_FILTERED_ARGS $_arg"; fi
+        if [ "$_arg" != "--watch" ] && [ "$_arg" != "--lan" ]; then _FILTERED_ARGS="$_FILTERED_ARGS $_arg"; fi
     done
     # Strip any other jenova-ca flags that aren't for llama-server
     _FINAL_LLAMA_ARGS=""

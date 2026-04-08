@@ -20,6 +20,10 @@ local PORT = tonumber(os.getenv("JENOVA_PROXY_PORT") or os.getenv("JENOVA_PORT")
 local LLAMA_URL = os.getenv("JENOVA_LLAMA_URL") or "http://127.0.0.1:" .. (os.getenv("JENOVA_LLAMA_PORT") or "8081")
 local LLAMA_PORT = tonumber(LLAMA_URL:match(":(%d+)")) or 8081
 local LLAMA_HOST = LLAMA_URL:match("//([^:/]+)") or "127.0.0.1"
+local LLAMA_CONNECT_HOST = LLAMA_HOST
+if LLAMA_CONNECT_HOST == "0.0.0.0" or LLAMA_CONNECT_HOST == "::" or LLAMA_CONNECT_HOST == "*" then
+    LLAMA_CONNECT_HOST = "127.0.0.1"
+end
 
 local embed_ok, embed_res = pcall(function()
   return embed.init({
@@ -340,18 +344,13 @@ local function proxy_connection(client_fd, conn_fds)
         local backend_ok = false
         if health_fd >= 0 then
             set_nonblocking(health_fd)
-            -- Normalize wildcard bind addresses (e.g., 0.0.0.0) to a loopback address for connect().
-            local backend_connect_host = LLAMA_HOST
-            if backend_connect_host == "0.0.0.0" or backend_connect_host == "::" or backend_connect_host == "*" then
-                backend_connect_host = "127.0.0.1"
-            end
             local h_addr = ffi.new("struct sockaddr_in")
             if not _ffi_defs.IS_LINUX then
                 h_addr.sin_len = ffi.sizeof(h_addr)
             end
             h_addr.sin_family = AF_INET
             h_addr.sin_port   = ffi.C.htons(LLAMA_PORT)
-            h_addr.sin_addr.s_addr = ffi.C.inet_addr(backend_connect_host)
+            h_addr.sin_addr.s_addr = ffi.C.inet_addr(LLAMA_CONNECT_HOST)
             backend_ok = (async_connect(health_fd, h_addr) == true)
             ffi.C.close(health_fd)
         end
@@ -546,11 +545,11 @@ local function proxy_connection(client_fd, conn_fds)
     end
     l_addr.sin_family = AF_INET
     l_addr.sin_port = ffi.C.htons(LLAMA_PORT)
-    l_addr.sin_addr.s_addr = ffi.C.inet_addr(LLAMA_HOST)
+    l_addr.sin_addr.s_addr = ffi.C.inet_addr(LLAMA_CONNECT_HOST)
 
     local connected, conn_err = async_connect(llama_fd, l_addr)
     if not connected then
-        print("[proxy] ERROR: C++ llama-server backend is down on " .. LLAMA_HOST .. ":" .. LLAMA_PORT .. " (err: " .. tostring(conn_err) .. ")")
+        print("[proxy] ERROR: C++ llama-server backend is down on " .. LLAMA_CONNECT_HOST .. ":" .. LLAMA_PORT .. " (err: " .. tostring(conn_err) .. ")")
         local err_resp = "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"
         async_send(client_fd, err_resp)
         safe_close()
