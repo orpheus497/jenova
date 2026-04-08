@@ -283,7 +283,7 @@ function M.discover(opts)
 end
 
 --- Configure Neovim environment for a discovered remote Jenova CA instance.
---- Sets env vars so gp.nvim, llama.vim, and monitor all pick up the remote host.
+--- Sets env vars so chat, llama.vim, and monitor all pick up the remote host.
 --- @param host string  The LAN IP of the Jenova CA server
 --- @param proxy_port? number  Proxy port (default 8080)
 --- @param llama_port? number  llama-server port (default 8081)
@@ -296,25 +296,12 @@ function M.configure_remote(host, proxy_port, llama_port)
   vim.env.JENOVA_LLAMA_PORT = tostring(llama_port)
   vim.env.JENOVA_LAN_MODE = "1"
 
-  -- Update global state for lualine / statusbar
   vim.g.jenova_connected = true
   vim.g.jenova_lan_host = host
 
-  local proxy_url = string.format("http://%s:%d/v1/chat/completions", host, proxy_port)
-  local fim_url   = string.format("http://%s:%d/infill", host, llama_port)
-
-  -- Reconfigure gp.nvim dispatcher endpoint (already initialized with 127.0.0.1)
-  local gp_ok, gp_dispatcher = pcall(require, "gp.dispatcher")
-  if gp_ok and gp_dispatcher.providers and gp_dispatcher.providers.openai then
-    gp_dispatcher.providers.openai.endpoint = proxy_url
-  end
-
-  -- Reconfigure llama.vim endpoints (reads g:llama_config fresh each request)
-  local cfg = vim.g.llama_config
-  if cfg then
-    cfg.endpoint_fim  = fim_url
-    cfg.endpoint_inst = proxy_url
-    vim.g.llama_config = cfg
+  local ep_ok, endpoints = pcall(require, "jenova.endpoints")
+  if ep_ok then
+    endpoints.reconfigure_plugins()
   end
 
   vim.notify(

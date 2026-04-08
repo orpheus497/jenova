@@ -15,11 +15,11 @@ local search = require("search")
 local embed = require("embed")
 local prompts = require("prompts")
 
-local HOST = os.getenv("JENOVA_PROXY_HOST") or "127.0.0.1"
-local PORT = tonumber(os.getenv("JENOVA_PROXY_PORT")) or 8080
-local LLAMA_URL = os.getenv("JENOVA_LLAMA_URL") or "http://127.0.0.1:8081"
+local HOST = os.getenv("JENOVA_PROXY_HOST") or os.getenv("JENOVA_HOST") or "0.0.0.0"
+local PORT = tonumber(os.getenv("JENOVA_PROXY_PORT") or os.getenv("JENOVA_PORT")) or 8080
+local LLAMA_URL = os.getenv("JENOVA_LLAMA_URL") or "http://127.0.0.1:" .. (os.getenv("JENOVA_LLAMA_PORT") or "8081")
 local LLAMA_PORT = tonumber(LLAMA_URL:match(":(%d+)")) or 8081
-local LLAMA_HOST = LLAMA_URL:match("//([^:/]+)") or HOST
+local LLAMA_HOST = LLAMA_URL:match("//([^:/]+)") or "127.0.0.1"
 
 local embed_ok, embed_res = pcall(function()
   return embed.init({
@@ -62,6 +62,12 @@ local function set_nonblocking(fd)
         flags = 0
     end
     ffi.C.fcntl(fd, _ffi_defs.F_SETFL, bit.bor(flags, _ffi_defs.O_NONBLOCK))
+end
+
+local function set_socket_opts(fd)
+    local one = ffi.new("int[1]", 1)
+    ffi.C.setsockopt(fd, _ffi_defs.IPPROTO_TCP, _ffi_defs.TCP_NODELAY, one, ffi.sizeof("int"))
+    ffi.C.setsockopt(fd, SOL_SOCKET, _ffi_defs.SO_KEEPALIVE, one, ffi.sizeof("int"))
 end
 
 local function decode_chunked_body(after_headers)
@@ -277,6 +283,7 @@ local active_connection_count = 0
 
 local function proxy_connection(client_fd, conn_fds)
     set_nonblocking(client_fd)
+    set_socket_opts(client_fd)
     conn_fds.client = client_fd
     conn_fds.llama = -1
 
@@ -398,6 +405,7 @@ local function proxy_connection(client_fd, conn_fds)
 
     local is_chat_completion = headers_raw:find("POST /v1/chat/completions")
     local intent = headers_raw:match("[Xx]%-Intent:%s*(%w+)")
+    headers_raw = headers_raw:gsub("([Hh][Oo][Ss][Tt]:%s*)[^\r\n]+", "%1" .. LLAMA_HOST .. ":" .. LLAMA_PORT)
     local proxied_req = headers_raw .. body_raw
 
     if is_chat_completion and #body_raw > 0 then
@@ -525,6 +533,7 @@ local function proxy_connection(client_fd, conn_fds)
     end
     conn_fds.llama = llama_fd
     set_nonblocking(llama_fd)
+    set_socket_opts(llama_fd)
 
     local l_addr = ffi.new("struct sockaddr_in")
     if not _ffi_defs.IS_LINUX then

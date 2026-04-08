@@ -26,11 +26,16 @@ M._timer = nil
 
 -- Configuration
 local POLL_INTERVAL_MS = 10000  -- 10 seconds between full polls
-local CONNECT_TIMEOUT_MS = 2000
+local CONNECT_TIMEOUT_MS = 3000
 
---- Get connection host/port from environment.
+--- Get connection host/port from shared endpoints module.
 --- Exposed as M.get_endpoints() for reuse by health.lua and dashboard.lua.
+--- Always reads live env vars via jenova.endpoints so LAN discovery changes propagate.
 local function get_endpoints()
+  local ep_ok, ep = pcall(require, "jenova.endpoints")
+  if ep_ok then
+    return ep.all()
+  end
   local host = vim.env.JENOVA_CONNECT_HOST or vim.env.JENOVA_HOST or "127.0.0.1"
   if host == "0.0.0.0" or host == "::" or host == "*" then
     host = "127.0.0.1"

@@ -77,9 +77,9 @@ return {
         val = {
           { type = "text", val = "── AI / Jenova ──", opts = { position = "center", hl = "AlphaHeaderLabel" } },
           { type = "padding", val = 1 },
-          btn("c",   "  AI Chat (Buffer Context)",  "require('lazy').load({plugins={'gp.nvim'}}); vim.cmd('GpChatNew vsplit')"),
-          btn("t",   "  Toggle AI Chat",            "require('lazy').load({plugins={'gp.nvim'}}); vim.cmd('GpChatToggle vsplit')"),
-          btn("s",   "  Web Search",                "require('lazy').load({plugins={'gp.nvim'}}); vim.cmd('GpWebSearch')"),
+          btn("c",   "  AI Chat (Buffer Context)",  "require('jenova.chat').setup(); require('jenova.chat').chat_with_context()"),
+          btn("t",   "  Toggle AI Chat",            "require('jenova.chat').setup(); require('jenova.chat').toggle_chat()"),
+          btn("s",   "  Web Search",                "require('jenova.chat').setup(); require('jenova.chat').web_search()"),
           btn("j",   "  Jenova Agent Terminal",     "local r=vim.fn.expand('$JENOVA_ROOT'); if r=='' or r=='$JENOVA_ROOT' then r=vim.fn.expand('~/Projects/jenova') end; vim.cmd('term cd '..vim.fn.shellescape(r)..' && bin/jenova')"),
           btn("M",   "  Backend Monitor",           "require('jenova.monitor').open_monitor()"),
         },

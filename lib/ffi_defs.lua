@@ -178,6 +178,9 @@ if is_linux then
   ffi_defs.SO_ERROR     = 4
   ffi_defs.SO_RCVTIMEO  = 20
   ffi_defs.SO_SNDTIMEO  = 21
+  ffi_defs.SO_KEEPALIVE = 9
+  ffi_defs.IPPROTO_TCP  = 6
+  ffi_defs.TCP_NODELAY  = 1
   ffi_defs.EAGAIN       = 11
   ffi_defs.EWOULDBLOCK  = 11
   ffi_defs.EINPROGRESS  = 115
@@ -194,6 +197,9 @@ else
   ffi_defs.SO_ERROR     = 0x1007
   ffi_defs.SO_RCVTIMEO  = 0x1006
   ffi_defs.SO_SNDTIMEO  = 0x1005
+  ffi_defs.SO_KEEPALIVE = 0x0008
+  ffi_defs.IPPROTO_TCP  = 6
+  ffi_defs.TCP_NODELAY  = 1
   ffi_defs.EAGAIN       = 35
   ffi_defs.EWOULDBLOCK  = 35
   ffi_defs.EINPROGRESS  = 36
