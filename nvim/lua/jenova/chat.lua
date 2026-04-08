@@ -311,10 +311,11 @@ local function stream_response(buf, messages, on_done)
     {
       stdout = function(_, data)
         if data then
-          process_sse(data)
+          process_sse(type(data) == "string" and data or tostring(data))
         end
       end,
       stderr = function(_, data)
+        if data then data = type(data) == "string" and data or tostring(data) end
         if data and data:match("%S") then
           vim.schedule(function()
             if data:find("Could not resolve host") or data:find("Connection refused") then
@@ -340,6 +341,7 @@ local function stream_response(buf, messages, on_done)
           vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## user", "" })
           save_chat(buf)
           scroll_to_bottom(buf)
+          vim.cmd("startinsert!")
         end
         if on_done then on_done() end
       end)
@@ -410,9 +412,7 @@ function M.send_message(text, prefix)
   local msg = prefix and (prefix .. text) or text
   append_user_section(buf, msg)
   save_chat(buf)
-
-  local messages = parse_messages(buf)
-  stream_response(buf, messages)
+  scroll_to_bottom(buf)
 end
 
 function M.visual_chat()
@@ -433,7 +433,7 @@ function M.visual_chat()
   append_user_section(buf, context)
   save_chat(buf)
   scroll_to_bottom(buf)
-  vim.cmd("startinsert")
+  vim.cmd("startinsert!")
 end
 
 local function strip_code_fences(text)
@@ -488,6 +488,7 @@ local function do_rewrite(src_buf, start_ln, end_ln, instruction, selection, ft)
     {
       stdout = function(_, data)
         if not data then return end
+        data = type(data) == "string" and data or tostring(data)
         sse_buf = sse_buf .. data
         while true do
           local nl = sse_buf:find("\n")
@@ -547,9 +548,8 @@ function M.web_search()
     local msg = "Web Search: " .. query
     append_user_section(buf, msg)
     save_chat(buf)
-
-    local messages = parse_messages(buf)
-    stream_response(buf, messages)
+    scroll_to_bottom(buf)
+    vim.cmd("startinsert!")
   end)
 end
 
@@ -571,7 +571,7 @@ function M.chat_with_context()
   append_user_section(buf, context)
   save_chat(buf)
   scroll_to_bottom(buf)
-  vim.cmd("startinsert")
+  vim.cmd("startinsert!")
 end
 
 function M.fresh_chat()
