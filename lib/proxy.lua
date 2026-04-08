@@ -25,6 +25,105 @@ if LLAMA_CONNECT_HOST == "0.0.0.0" or LLAMA_CONNECT_HOST == "::" or LLAMA_CONNEC
     LLAMA_CONNECT_HOST = "127.0.0.1"
 end
 
+-- =========================================================================
+-- Connection Pool: reuse TCP connections to llama-server backends
+-- Eliminates TCP handshake overhead (3-way handshake + Nagle) per request.
+-- =========================================================================
+local connection_pool = {}  -- { host_port_key = { {fd=N, last_used=time}, ... } }
+local POOL_MAX_PER_BACKEND = 4
+local POOL_IDLE_TIMEOUT = 30  -- seconds before idle connections are reaped
+
+local function pool_key(host, port)
+  return host .. ":" .. port
+end
+
+--- Return an idle connection from the pool, or nil if none available.
+local function pool_get(host, port)
+  local key = pool_key(host, port)
+  local bucket = connection_pool[key]
+  if not bucket or #bucket == 0 then return nil end
+  -- Take the most recently used connection (LIFO for better keep-alive)
+  local entry = table.remove(bucket)
+  -- Verify the socket is still alive with a zero-byte peek
+  local test_buf = ffi.new("char[1]")
+  local n = ffi.C.recv(entry.fd, test_buf, 1, bit.bor(_ffi_defs.MSG_PEEK, _ffi_defs.MSG_DONTWAIT))
+  if n == 0 then
+    -- Server closed the connection
+    pcall(ffi.C.close, entry.fd)
+    return pool_get(host, port)  -- try next in pool
+  end
+  -- n < 0 with EAGAIN/EWOULDBLOCK means socket is alive but no data (good)
+  -- n > 0 means unexpected data pending (bad — server sent something unprompted)
+  if n > 0 then
+    pcall(ffi.C.close, entry.fd)
+    return pool_get(host, port)
+  end
+  return entry.fd
+end
+
+--- Return a connection to the pool for reuse.
+local function pool_put(host, port, fd)
+  local key = pool_key(host, port)
+  if not connection_pool[key] then connection_pool[key] = {} end
+  local bucket = connection_pool[key]
+  if #bucket >= POOL_MAX_PER_BACKEND then
+    -- Pool full — close the oldest
+    local oldest = table.remove(bucket, 1)
+    pcall(ffi.C.close, oldest.fd)
+  end
+  bucket[#bucket + 1] = { fd = fd, last_used = os.time() }
+end
+
+--- Reap idle connections that have exceeded the timeout.
+local function pool_reap()
+  local now = os.time()
+  for key, bucket in pairs(connection_pool) do
+    local i = 1
+    while i <= #bucket do
+      if now - bucket[i].last_used > POOL_IDLE_TIMEOUT then
+        pcall(ffi.C.close, bucket[i].fd)
+        table.remove(bucket, i)
+      else
+        i = i + 1
+      end
+    end
+    if #bucket == 0 then connection_pool[key] = nil end
+  end
+end
+
+-- =========================================================================
+-- Multi-Backend Round-Robin Load Balancer
+-- Reads JENOVA_BACKENDS env var: comma-separated host:port pairs.
+-- Falls back to single LLAMA_CONNECT_HOST:LLAMA_PORT if not set.
+-- =========================================================================
+local backends = {}
+local backend_idx = 0
+
+do
+  local backends_env = os.getenv("JENOVA_BACKENDS")
+  if backends_env and backends_env ~= "" then
+    for entry in backends_env:gmatch("[^,]+") do
+      local h, p = entry:match("^%s*([^:]+):(%d+)%s*$")
+      if h and p then
+        backends[#backends + 1] = { host = h, port = tonumber(p) }
+      end
+    end
+  end
+  if #backends == 0 then
+    backends[1] = { host = LLAMA_CONNECT_HOST, port = LLAMA_PORT }
+  end
+  print("[proxy] Backends: " .. #backends .. " configured")
+  for i, b in ipairs(backends) do
+    print("[proxy]   [" .. i .. "] " .. b.host .. ":" .. b.port)
+  end
+end
+
+--- Select next backend using round-robin.
+local function next_backend()
+  backend_idx = (backend_idx % #backends) + 1
+  return backends[backend_idx]
+end
+
 local embed_ok, embed_res = pcall(function()
   return embed.init({
     script_dir = script_dir,
@@ -362,6 +461,8 @@ local function proxy_connection(client_fd, conn_fds)
             backend    = string.format("%s:%d", LLAMA_HOST, LLAMA_PORT),
             embed      = embed_ok,
             backend_ok = backend_ok,
+            jenova     = true,
+            backends   = #backends,
         })
         local health_resp = string.format(
             "HTTP/1.1 %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
@@ -532,33 +633,44 @@ local function proxy_connection(client_fd, conn_fds)
         end
     end
 
-    local llama_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
-    if llama_fd < 0 then
-        local err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
-        async_send(client_fd, err_resp)
-        safe_close()
-        return
+    -- Select backend via round-robin and try connection pool first
+    local backend = next_backend()
+    local llama_fd = pool_get(backend.host, backend.port)
+    local from_pool = (llama_fd ~= nil)
+
+    if not llama_fd then
+        llama_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
+        if llama_fd < 0 then
+            local err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, err_resp)
+            safe_close()
+            return
+        end
+        set_nonblocking(llama_fd)
+        set_socket_opts(llama_fd)
+
+        local l_addr = ffi.new("struct sockaddr_in")
+        if not _ffi_defs.IS_LINUX then
+            l_addr.sin_len = ffi.sizeof(l_addr)
+        end
+        l_addr.sin_family = AF_INET
+        l_addr.sin_port = ffi.C.htons(backend.port)
+        l_addr.sin_addr.s_addr = ffi.C.inet_addr(backend.host)
+
+        local connected, conn_err = async_connect(llama_fd, l_addr)
+        if not connected then
+            print("[proxy] ERROR: backend down on " .. backend.host .. ":" .. backend.port .. " (err: " .. tostring(conn_err) .. ")")
+            pcall(ffi.C.close, llama_fd)
+            local err_resp = "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, err_resp)
+            safe_close()
+            return
+        end
     end
     conn_fds.llama = llama_fd
-    set_nonblocking(llama_fd)
-    set_socket_opts(llama_fd)
 
-    local l_addr = ffi.new("struct sockaddr_in")
-    if not _ffi_defs.IS_LINUX then
-        l_addr.sin_len = ffi.sizeof(l_addr)
-    end
-    l_addr.sin_family = AF_INET
-    l_addr.sin_port = ffi.C.htons(LLAMA_PORT)
-    l_addr.sin_addr.s_addr = ffi.C.inet_addr(LLAMA_CONNECT_HOST)
-
-    local connected, conn_err = async_connect(llama_fd, l_addr)
-    if not connected then
-        print("[proxy] ERROR: C++ llama-server backend is down on " .. LLAMA_CONNECT_HOST .. ":" .. LLAMA_PORT .. " (err: " .. tostring(conn_err) .. ")")
-        local err_resp = "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"
-        async_send(client_fd, err_resp)
-        safe_close()
-        return
-    end
+    -- Rewrite Host header to backend address and use keep-alive for pool reuse
+    proxied_req = proxied_req:gsub("([Hh][Oo][Ss][Tt]:%s*)[^\r\n]+", "%1" .. backend.host .. ":" .. backend.port)
 
     local send_result = async_send(llama_fd, proxied_req)
     proxied_req = nil
@@ -568,11 +680,23 @@ local function proxy_connection(client_fd, conn_fds)
         return
     end
 
+    -- Relay response from backend to client
+    local response_complete = false
     while true do
         local n = async_recv(llama_fd, buf, 8192)
-        if n <= 0 then break end
+        if n <= 0 then
+            response_complete = (n == 0)
+            break
+        end
         local to_send = ffi.string(buf, n)
         if async_send(client_fd, to_send) < 0 then break end
+    end
+
+    -- Return connection to pool if response completed cleanly and not streaming
+    -- (Connection: close from backend means don't pool)
+    if response_complete and not is_chat_completion then
+        conn_fds.llama = -1  -- prevent safe_close from closing it
+        pool_put(backend.host, backend.port, llama_fd)
     end
 
     safe_close()
@@ -701,6 +825,8 @@ while running do
     end
 
     local now = os.time()
+    -- Reap idle pooled connections every sweep
+    pool_reap()
     for fd, info in pairs(clients) do
         if now - (info.created or now) > COROUTINE_TIMEOUT then
             local age = now - (info.created or now)
@@ -723,6 +849,13 @@ while running do
 end
 
 print("[proxy] Shutting down...")
+-- Close all pooled connections
+for key, bucket in pairs(connection_pool) do
+    for _, entry in ipairs(bucket) do
+        pcall(ffi.C.close, entry.fd)
+    end
+end
+connection_pool = {}
 for fd, info in pairs(clients) do
     local fds = conn_fds_map[fd]
     if fds then

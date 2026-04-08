@@ -186,6 +186,8 @@ if is_linux then
   ffi_defs.EINPROGRESS  = 115
   ffi_defs.ETIMEDOUT    = 110
   ffi_defs.EINTR        = 4
+  ffi_defs.MSG_PEEK     = 2
+  ffi_defs.MSG_DONTWAIT = 0x40
 else
   ffi_defs.O_NONBLOCK   = 0x0004
   ffi_defs.FIONBIO      = 0x8004667e
@@ -205,6 +207,8 @@ else
   ffi_defs.EINPROGRESS  = 36
   ffi_defs.ETIMEDOUT    = 60
   ffi_defs.EINTR        = 4
+  ffi_defs.MSG_PEEK     = 0x02
+  ffi_defs.MSG_DONTWAIT = 0x80
 end
 
 -- FreeBSD signal numbers
