@@ -95,7 +95,7 @@ local function recv_all(fd, buf, buf_size, wall_timeout)
   local recv_err = nil
   local MAX_RECV_SIZE = 10 * 1024 * 1024  -- 10MB cap to prevent memory exhaustion
   local start_time = os.time()
-  local max_stall = wall_timeout and (wall_timeout * 20) or 12000  -- scale stall limit to timeout
+  local max_stall = wall_timeout and (wall_timeout * 20) or 12000  -- 20 iterations/sec × timeout (50ms sleep per stall)
   while true do
     ::retry::
     -- Wall-clock timeout: break if elapsed time exceeds configured timeout

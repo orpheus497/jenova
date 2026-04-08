@@ -195,14 +195,12 @@ load_jenova_conf
 # jvim --lan starts jenova-ca with --daemon --lan and waits in foreground.
 # This makes the local machine's AI backend available to LAN clients.
 if [ "$LAN_SERVER_MODE" = "1" ]; then
-    JENOVA_CA=$(find_jenova_ca 2>/dev/null || true)
-    # find_jenova_ca is defined below — provide an inline fallback for ordering
-    if [ -z "$JENOVA_CA" ]; then
-        if [ -f "$SCRIPT_DIR/jenova-ca" ]; then
-            JENOVA_CA="$SCRIPT_DIR/jenova-ca"
-        elif [ -f "$SCRIPT_DIR/../bin/jenova-ca" ]; then
-            JENOVA_CA="$SCRIPT_DIR/../bin/jenova-ca"
-        fi
+    # Locate jenova-ca (inline — find_jenova_ca is defined later in the script)
+    JENOVA_CA=""
+    if [ -f "$SCRIPT_DIR/jenova-ca" ]; then
+        JENOVA_CA="$SCRIPT_DIR/jenova-ca"
+    elif [ -f "$SCRIPT_DIR/../bin/jenova-ca" ]; then
+        JENOVA_CA="$SCRIPT_DIR/../bin/jenova-ca"
     fi
     if [ -z "$JENOVA_CA" ]; then
         echo "Error: jenova-ca not found." >&2
