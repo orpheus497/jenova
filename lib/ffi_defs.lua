@@ -70,8 +70,8 @@ ffi.cdef(socket_struct_defs .. [[
     int ai_socktype;
     int ai_protocol;
     socklen_t ai_addrlen;
-    char *ai_canonname;
     struct sockaddr *ai_addr;
+    char *ai_canonname;
     struct addrinfo *ai_next;
   };
 

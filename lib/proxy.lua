@@ -87,13 +87,16 @@ local function decode_chunked_body(after_headers)
     return table.concat(decoded)
 end
 
+local EINTR = 4
 local function async_recv(fd, buf, len)
     while true do
         local n = ffi.C.recv(fd, buf, len, 0)
         if n >= 0 then return tonumber(n) end
         local err = ffi.errno()
+        if err == EINTR then goto retry end
         if err ~= EAGAIN and err ~= EWOULDBLOCK then return -1, err end
         coroutine.yield("read", fd)
+        ::retry::
     end
 end
 
@@ -406,6 +409,8 @@ local function proxy_connection(client_fd, conn_fds)
     local is_chat_completion = headers_raw:find("POST /v1/chat/completions")
     local intent = headers_raw:match("[Xx]%-Intent:%s*(%w+)")
     headers_raw = headers_raw:gsub("([Hh][Oo][Ss][Tt]:%s*)[^\r\n]+", "%1" .. LLAMA_HOST .. ":" .. LLAMA_PORT)
+    headers_raw = headers_raw:gsub("[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]:%s*[^\r\n]+\r\n", "")
+    headers_raw = headers_raw:gsub("\r\n\r\n", "\r\nConnection: close\r\n\r\n")
     local proxied_req = headers_raw .. body_raw
 
     if is_chat_completion and #body_raw > 0 then

@@ -164,20 +164,19 @@ local function tcp_probe(host, port, timeout_ms, callback)
   end)
 end
 
---- Validate a candidate host by checking the llama-server /health endpoint.
---- The proxy port (8080) does not expose /health; llama-server (8081) does.
+--- Validate a candidate host by checking the proxy /health endpoint.
+--- The proxy exposes /health on its own port and checks backend liveness internally.
 --- @param host string
 --- @param proxy_port number
 --- @param callback fun(ok: boolean)
 local function validate_health(host, proxy_port, callback)
-  local llama_port = proxy_port + 1
   if not vim.system or vim.fn.executable("curl") ~= 1 then
     callback(true)
     return
   end
-  local url = string.format("http://%s:%d/health", host, llama_port)
+  local url = string.format("http://%s:%d/health", host, proxy_port)
   vim.system(
-    { "curl", "-sf", "--max-time", "2", "--connect-timeout", "1", url },
+    { "curl", "-sf", "--max-time", "3", "--connect-timeout", "2", url },
     { text = true },
     function(result)
       vim.schedule(function()
