@@ -211,6 +211,7 @@ local function stream_response(buf, messages, on_done)
     temperature = TEMPERATURE,
     top_p = TOP_P,
     stream = true,
+    max_tokens = 16384,
   })
 
   local tmpfile = vim.fn.tempname() .. ".json"
@@ -462,6 +463,7 @@ local function do_rewrite(src_buf, start_ln, end_ln, instruction, selection, ft)
     temperature = TEMPERATURE,
     top_p = TOP_P,
     stream = true,
+    max_tokens = 16384,
   })
 
   local tmpfile = vim.fn.tempname() .. ".json"
