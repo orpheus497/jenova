@@ -5,16 +5,11 @@ local function ep()
 end
 
 local CHAT_DIR = vim.fn.stdpath("state") .. "/jenova/chats"
-local SYSTEM_PROMPT = "You are Jenova, an expert coding assistant running fully locally on FreeBSD. "
-  .. "Prefer concise, correct answers. Use shell, Lua, and C idioms appropriate for FreeBSD."
 local MODEL = "jenova"
 local SECRET = "jenova-local"
 local TEMPERATURE = 0.7
 local TOP_P = 0.9
 local CHAT_WIDTH = 60
-
-local USER_SEP = "---\n\n## user\n\n"
-local ASST_SEP = "\n\n## assistant\n\n"
 
 local active_job = nil
 local toggle_buf = nil
@@ -54,34 +49,32 @@ end
 
 local function parse_messages(buf)
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  local text = table.concat(lines, "\n")
   local messages = {}
-  local in_header = true
+  local found_header_end = false
   local current_role = nil
   local current_content = {}
 
-  for _, line in ipairs(lines) do
-    if in_header then
-      if line == "---" then
-        in_header = false
+  local function flush()
+    if current_role then
+      local content = vim.trim(table.concat(current_content, "\n"))
+      if content ~= "" then
+        table.insert(messages, { role = current_role, content = content })
+      end
+    end
+  end
+
+  for i, line in ipairs(lines) do
+    if not found_header_end then
+      if line:match("^%-%-%-") and i > 1 then
+        found_header_end = true
       end
     else
       if line:match("^## user%s*$") then
-        if current_role then
-          table.insert(messages, {
-            role = current_role,
-            content = vim.trim(table.concat(current_content, "\n")),
-          })
-        end
+        flush()
         current_role = "user"
         current_content = {}
       elseif line:match("^## assistant%s*$") then
-        if current_role then
-          table.insert(messages, {
-            role = current_role,
-            content = vim.trim(table.concat(current_content, "\n")),
-          })
-        end
+        flush()
         current_role = "assistant"
         current_content = {}
       elseif current_role then
@@ -90,18 +83,12 @@ local function parse_messages(buf)
     end
   end
 
-  if current_role and #current_content > 0 then
-    local content = vim.trim(table.concat(current_content, "\n"))
-    if content ~= "" then
-      table.insert(messages, { role = current_role, content = content })
-    end
-  end
-
+  flush()
   return messages
 end
 
 local function build_header(topic)
-  topic = topic or "?"
+  topic = topic or "Jenova Chat"
   return string.format(
     "# topic: %s\n- model: %s\n- temperature: %s\n- top_p: %s\n",
     topic, MODEL, TEMPERATURE, TOP_P
@@ -110,7 +97,8 @@ end
 
 local function init_chat_buffer(buf, topic)
   local header = build_header(topic)
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(header .. "---\n\n## user\n\n", "\n"))
+  local init_lines = vim.split(header .. "---\n\n## user\n\n", "\n")
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, init_lines)
   set_chat_buf_options(buf)
 end
 
@@ -125,6 +113,13 @@ local function save_chat(buf)
     f:close()
   end
   vim.bo[buf].modified = false
+end
+
+local function scroll_to_bottom(buf)
+  local total = vim.api.nvim_buf_line_count(buf)
+  for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+    pcall(vim.api.nvim_win_set_cursor, win, { total, 0 })
+  end
 end
 
 local function open_chat_split(path)
@@ -155,8 +150,7 @@ local function open_chat_split(path)
     end,
   })
 
-  local total = vim.api.nvim_buf_line_count(buf)
-  vim.api.nvim_win_set_cursor(win, { total, 0 })
+  scroll_to_bottom(buf)
 
   toggle_buf = buf
   toggle_win = win
@@ -168,6 +162,43 @@ local function stop_generation()
     active_job:kill(9)
     active_job = nil
   end
+end
+
+local function append_user_section(buf, msg_text)
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local last = lines[#lines] or ""
+
+  local new_lines = {}
+  local needs_user_header = true
+  for i = #lines, math.max(1, #lines - 5), -1 do
+    if lines[i] and lines[i]:match("^## user%s*$") then
+      local has_content = false
+      for j = i + 1, #lines do
+        if vim.trim(lines[j]) ~= "" then
+          has_content = true
+          break
+        end
+      end
+      if not has_content then
+        needs_user_header = false
+      end
+      break
+    end
+  end
+
+  if needs_user_header then
+    if vim.trim(last) ~= "" then
+      table.insert(new_lines, "")
+    end
+    table.insert(new_lines, "## user")
+    table.insert(new_lines, "")
+  end
+
+  for _, l in ipairs(vim.split(msg_text, "\n", { plain = true })) do
+    table.insert(new_lines, l)
+  end
+
+  vim.api.nvim_buf_set_lines(buf, -1, -1, false, new_lines)
 end
 
 local function stream_response(buf, messages, on_done)
@@ -185,44 +216,43 @@ local function stream_response(buf, messages, on_done)
   local tmpfile = vim.fn.tempname() .. ".json"
   local f = io.open(tmpfile, "w")
   if not f then
-    vim.notify("Failed to create temp file", vim.log.levels.ERROR, { title = "Jenova Chat" })
+    vim.notify("Failed to create temp file", vim.log.levels.ERROR, { title = "Jenova" })
     return
   end
   f:write(payload)
   f:close()
 
-  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
   vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## assistant", "" })
   local insert_line = vim.api.nvim_buf_line_count(buf)
-  local response_lines = { "" }
-
-  local partial_line = ""
+  local current_lines = { "" }
+  local got_content = false
 
   local function append_text(text)
     vim.schedule(function()
       if not vim.api.nvim_buf_is_valid(buf) then return end
 
-      partial_line = partial_line .. text
-      local split = vim.split(partial_line, "\n", { plain = true })
+      got_content = true
+      local pieces = vim.split(text, "\n", { plain = true })
 
-      response_lines[#response_lines] = split[1]
-      for i = 2, #split do
-        table.insert(response_lines, split[i])
+      current_lines[#current_lines] = current_lines[#current_lines] .. pieces[1]
+      for i = 2, #pieces do
+        table.insert(current_lines, pieces[i])
       end
-      partial_line = split[#split]
-      response_lines[#response_lines] = partial_line
 
-      local start = insert_line - 1
-      vim.api.nvim_buf_set_lines(buf, start, start + #response_lines, false, response_lines)
-
-      local total = vim.api.nvim_buf_line_count(buf)
-      for _, win in ipairs(vim.fn.win_findbuf(buf)) do
-        pcall(vim.api.nvim_win_set_cursor, win, { total, 0 })
+      local start_idx = insert_line - 1
+      local end_idx = start_idx + #current_lines
+      local buf_total = vim.api.nvim_buf_line_count(buf)
+      if end_idx > buf_total then
+        end_idx = buf_total
       end
+      pcall(vim.api.nvim_buf_set_lines, buf, start_idx, end_idx, false, current_lines)
+
+      scroll_to_bottom(buf)
     end)
   end
 
   local sse_buffer = ""
+  local got_error = false
 
   local function process_sse(data)
     sse_buffer = sse_buffer .. data
@@ -237,12 +267,34 @@ local function stream_response(buf, messages, on_done)
       elseif line:sub(1, 6) == "data: " then
         local json_str = line:sub(7)
         local ok, parsed = pcall(vim.json.decode, json_str)
-        if ok and parsed and parsed.choices and parsed.choices[1] then
-          local delta = parsed.choices[1].delta
-          if delta and delta.content then
-            append_text(delta.content)
+        if ok and parsed then
+          if parsed.choices and parsed.choices[1] then
+            local delta = parsed.choices[1].delta
+            if delta and delta.content then
+              append_text(delta.content)
+            end
+          elseif parsed.error then
+            got_error = true
+            local err_msg = parsed.error.message or vim.json.encode(parsed.error)
+            append_text("[Error: " .. err_msg .. "]")
           end
         end
+      elseif not got_content and line:match("^HTTP/1%.. %d%d%d") then
+        local code = tonumber(line:match("(%d%d%d)"))
+        if code and code >= 400 then
+          got_error = true
+          append_text("[Backend error: HTTP " .. code .. "]")
+        end
+      end
+    end
+
+    if not got_content and not got_error and #sse_buffer > 200 then
+      local ok, parsed = pcall(vim.json.decode, sse_buffer)
+      if ok and parsed and parsed.error then
+        got_error = true
+        local err_msg = parsed.error.message or vim.json.encode(parsed.error)
+        append_text("[Error: " .. err_msg .. "]")
+        sse_buffer = ""
       end
     end
   end
@@ -262,10 +314,10 @@ local function stream_response(buf, messages, on_done)
         end
       end,
       stderr = function(_, data)
-        if data and data ~= "" then
+        if data and data:match("%S") then
           vim.schedule(function()
-            if data:match("%S") then
-              vim.notify("curl: " .. vim.trim(data), vim.log.levels.WARN, { title = "Jenova Chat" })
+            if data:find("Could not resolve host") or data:find("Connection refused") then
+              vim.notify("Backend unreachable: " .. vim.trim(data), vim.log.levels.ERROR, { title = "Jenova" })
             end
           end)
         end
@@ -275,8 +327,18 @@ local function stream_response(buf, messages, on_done)
       vim.schedule(function()
         active_job = nil
         pcall(os.remove, tmpfile)
+
         if vim.api.nvim_buf_is_valid(buf) then
+          if not got_content and not got_error then
+            if result.code ~= 0 then
+              pcall(vim.api.nvim_buf_set_lines, buf, insert_line - 1, insert_line, false,
+                { "[Connection failed — is the Jenova backend running?]" })
+            end
+          end
+
+          vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## user", "" })
           save_chat(buf)
+          scroll_to_bottom(buf)
         end
         if on_done then on_done() end
       end)
@@ -306,11 +368,11 @@ function M.toggle_chat()
   local latest_time = 0
   ensure_chat_dir()
   local files = vim.fn.glob(CHAT_DIR .. "/*.md", false, true)
-  for _, f in ipairs(files) do
-    local mtime = vim.fn.getftime(f)
+  for _, fpath in ipairs(files) do
+    local mtime = vim.fn.getftime(fpath)
     if mtime > latest_time then
       latest_time = mtime
-      latest = f
+      latest = fpath
     end
   end
 
@@ -324,17 +386,16 @@ end
 function M.respond()
   local buf = vim.api.nvim_get_current_buf()
   if not is_chat_buf(buf) then
-    vim.notify("Not a Jenova chat buffer", vim.log.levels.WARN, { title = "Jenova Chat" })
+    vim.notify("Not a Jenova chat buffer", vim.log.levels.WARN, { title = "Jenova" })
     return
   end
 
   local messages = parse_messages(buf)
   if #messages == 0 then
-    vim.notify("No messages to send", vim.log.levels.WARN, { title = "Jenova Chat" })
+    vim.notify("No messages to send", vim.log.levels.WARN, { title = "Jenova" })
     return
   end
 
-  table.insert(messages, 1, { role = "system", content = SYSTEM_PROMPT })
   stream_response(buf, messages)
 end
 
@@ -346,139 +407,130 @@ function M.send_message(text, prefix)
   end
 
   local msg = prefix and (prefix .. text) or text
-  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-
-  local last_line = lines[#lines] or ""
-  local new_lines = {}
-  if vim.trim(last_line) ~= "" then
-    table.insert(new_lines, "")
-  end
-  for _, l in ipairs(vim.split(msg, "\n", { plain = true })) do
-    table.insert(new_lines, l)
-  end
-
-  vim.api.nvim_buf_set_lines(buf, -1, -1, false, new_lines)
+  append_user_section(buf, msg)
   save_chat(buf)
 
   local messages = parse_messages(buf)
-  table.insert(messages, 1, { role = "system", content = SYSTEM_PROMPT })
   stream_response(buf, messages)
 end
 
 function M.visual_chat()
+  local src_buf = vim.api.nvim_get_current_buf()
   local start_line = vim.fn.line("'<")
   local end_line = vim.fn.line("'>")
-  local lines = vim.api.nvim_buf_get_lines(0, start_line - 1, end_line, false)
+  local lines = vim.api.nvim_buf_get_lines(src_buf, start_line - 1, end_line, false)
   local selection = table.concat(lines, "\n")
-  local ft = vim.bo.filetype or ""
+  local ft = vim.bo[src_buf].filetype or ""
+  local filename = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(src_buf), ":t")
 
   local buf = open_chat_split()
   if not buf then return end
 
   local msg = string.format("I have the following from %s:\n\n```%s\n%s\n```\n\nLet's discuss this code.",
-    vim.fn.expand("%:t"), ft, selection)
+    filename, ft, selection)
 
-  local buf_lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  local last = buf_lines[#buf_lines] or ""
-  local new_lines = {}
-  if vim.trim(last) ~= "" then
-    table.insert(new_lines, "")
-  end
-  for _, l in ipairs(vim.split(msg, "\n", { plain = true })) do
-    table.insert(new_lines, l)
-  end
-  vim.api.nvim_buf_set_lines(buf, -1, -1, false, new_lines)
+  append_user_section(buf, msg)
   save_chat(buf)
-
-  local total = vim.api.nvim_buf_line_count(buf)
-  for _, win in ipairs(vim.fn.win_findbuf(buf)) do
-    pcall(vim.api.nvim_win_set_cursor, win, { total, 0 })
-  end
+  scroll_to_bottom(buf)
 end
 
-function M.visual_rewrite()
-  local start_line = vim.fn.line("'<")
-  local end_line = vim.fn.line("'>")
-  local src_buf = vim.api.nvim_get_current_buf()
-  local lines = vim.api.nvim_buf_get_lines(src_buf, start_line - 1, end_line, false)
-  local selection = table.concat(lines, "\n")
-  local ft = vim.bo.filetype or ""
+local function strip_code_fences(text)
+  local stripped = text
+  stripped = stripped:gsub("^%s*", "")
+  if stripped:match("^```") then
+    stripped = stripped:gsub("^```[^\n]*\n", "")
+    stripped = stripped:gsub("\n?```%s*$", "")
+  end
+  return stripped
+end
 
-  vim.ui.input({ prompt = "Rewrite instruction: " }, function(instruction)
-    if not instruction or instruction == "" then return end
+local function do_rewrite(src_buf, start_ln, end_ln, instruction, selection, ft)
+  local user_msg = string.format(
+    "Visual Rewrite: %s\n\nI have the following selection:\n```%s\n%s\n```",
+    instruction, ft, selection
+  )
 
-    local user_msg = string.format(
-      "Visual Rewrite: %s\n\nI have the following selection:\n```%s\n%s\n```",
-      instruction, ft, selection
-    )
+  local messages = {
+    { role = "user", content = user_msg },
+  }
 
-    local messages = {
-      { role = "system", content = SYSTEM_PROMPT },
-      { role = "user", content = user_msg },
-    }
+  local url = ep().proxy_url()
+  local payload = vim.json.encode({
+    model = MODEL,
+    messages = messages,
+    temperature = TEMPERATURE,
+    top_p = TOP_P,
+    stream = true,
+  })
 
-    local url = ep().proxy_url()
-    local payload = vim.json.encode({
-      model = MODEL,
-      messages = messages,
-      temperature = TEMPERATURE,
-      top_p = TOP_P,
-      stream = true,
-    })
+  local tmpfile = vim.fn.tempname() .. ".json"
+  local f = io.open(tmpfile, "w")
+  if not f then return end
+  f:write(payload)
+  f:close()
 
-    local tmpfile = vim.fn.tempname() .. ".json"
-    local f = io.open(tmpfile, "w")
-    if not f then return end
-    f:write(payload)
-    f:close()
+  local response_text = ""
+  local sse_buf = ""
 
-    local response_text = ""
-    local sse_buf = ""
+  vim.notify("Rewriting...", vim.log.levels.INFO, { title = "Jenova" })
 
-    active_job = vim.system(
-      {
-        "curl", "--no-buffer", "-s", "-N",
-        "-H", "Content-Type: application/json",
-        "-H", "Authorization: Bearer " .. SECRET,
-        "-d", "@" .. tmpfile,
-        url,
-      },
-      {
-        stdout = function(_, data)
-          if not data then return end
-          sse_buf = sse_buf .. data
-          while true do
-            local nl = sse_buf:find("\n")
-            if not nl then break end
-            local line = sse_buf:sub(1, nl - 1):gsub("\r$", "")
-            sse_buf = sse_buf:sub(nl + 1)
-            if line:sub(1, 6) == "data: " and line ~= "data: [DONE]" then
-              local ok, parsed = pcall(vim.json.decode, line:sub(7))
-              if ok and parsed and parsed.choices and parsed.choices[1] then
-                local delta = parsed.choices[1].delta
-                if delta and delta.content then
-                  response_text = response_text .. delta.content
-                end
+  active_job = vim.system(
+    {
+      "curl", "--no-buffer", "-s", "-N",
+      "-H", "Content-Type: application/json",
+      "-H", "Authorization: Bearer " .. SECRET,
+      "-d", "@" .. tmpfile,
+      url,
+    },
+    {
+      stdout = function(_, data)
+        if not data then return end
+        sse_buf = sse_buf .. data
+        while true do
+          local nl = sse_buf:find("\n")
+          if not nl then break end
+          local line = sse_buf:sub(1, nl - 1):gsub("\r$", "")
+          sse_buf = sse_buf:sub(nl + 1)
+          if line:sub(1, 6) == "data: " and line ~= "data: [DONE]" then
+            local ok, parsed = pcall(vim.json.decode, line:sub(7))
+            if ok and parsed and parsed.choices and parsed.choices[1] then
+              local delta = parsed.choices[1].delta
+              if delta and delta.content then
+                response_text = response_text .. delta.content
               end
             end
           end
-        end,
-      },
-      function(result)
-        vim.schedule(function()
-          active_job = nil
-          pcall(os.remove, tmpfile)
-          if vim.api.nvim_buf_is_valid(src_buf) and response_text ~= "" then
-            local cleaned = response_text
-            if cleaned:match("^```") then
-              cleaned = cleaned:gsub("^```[^\n]*\n", ""):gsub("\n?```%s*$", "")
-            end
-            local new_lines = vim.split(cleaned, "\n", { plain = true })
-            vim.api.nvim_buf_set_lines(src_buf, start_line - 1, end_line, false, new_lines)
-          end
-        end)
-      end
-    )
+        end
+      end,
+    },
+    function(result)
+      vim.schedule(function()
+        active_job = nil
+        pcall(os.remove, tmpfile)
+        if vim.api.nvim_buf_is_valid(src_buf) and response_text ~= "" then
+          local cleaned = strip_code_fences(response_text)
+          local new_lines = vim.split(cleaned, "\n", { plain = true })
+          vim.api.nvim_buf_set_lines(src_buf, start_ln - 1, end_ln, false, new_lines)
+          vim.notify("Rewrite applied", vim.log.levels.INFO, { title = "Jenova" })
+        elseif response_text == "" then
+          vim.notify("Rewrite failed — empty response from backend", vim.log.levels.ERROR, { title = "Jenova" })
+        end
+      end)
+    end
+  )
+end
+
+function M.visual_rewrite()
+  local src_buf = vim.api.nvim_get_current_buf()
+  local start_line = vim.fn.line("'<")
+  local end_line = vim.fn.line("'>")
+  local lines = vim.api.nvim_buf_get_lines(src_buf, start_line - 1, end_line, false)
+  local selection = table.concat(lines, "\n")
+  local ft = vim.bo[src_buf].filetype or ""
+
+  vim.ui.input({ prompt = "Rewrite instruction: " }, function(instruction)
+    if not instruction or instruction == "" then return end
+    do_rewrite(src_buf, start_line, end_line, instruction, selection, ft)
   end)
 end
 
@@ -490,18 +542,10 @@ function M.web_search()
     if not buf then return end
 
     local msg = "Web Search: " .. query
-    local buf_lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-    local last = buf_lines[#buf_lines] or ""
-    local new_lines = {}
-    if vim.trim(last) ~= "" then
-      table.insert(new_lines, "")
-    end
-    table.insert(new_lines, msg)
-    vim.api.nvim_buf_set_lines(buf, -1, -1, false, new_lines)
+    append_user_section(buf, msg)
     save_chat(buf)
 
     local messages = parse_messages(buf)
-    table.insert(messages, 1, { role = "system", content = SYSTEM_PROMPT })
     stream_response(buf, messages)
   end)
 end
@@ -509,8 +553,8 @@ end
 function M.chat_with_context()
   local src_buf = vim.api.nvim_get_current_buf()
   local lines = vim.api.nvim_buf_get_lines(src_buf, 0, -1, false)
-  local filename = vim.fn.expand("%:t")
-  local filepath = vim.fn.expand("%:p")
+  local filename = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(src_buf), ":t")
+  local filepath = vim.api.nvim_buf_get_name(src_buf)
   local content = table.concat(lines, "\n")
 
   local buf = open_chat_split()
@@ -521,20 +565,10 @@ function M.chat_with_context()
     filename, filepath, content
   )
 
-  local buf_lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  local last = buf_lines[#buf_lines] or ""
-  local new_lines = {}
-  if vim.trim(last) ~= "" then
-    table.insert(new_lines, "")
-  end
-  for _, l in ipairs(vim.split(msg, "\n", { plain = true })) do
-    table.insert(new_lines, l)
-  end
-  vim.api.nvim_buf_set_lines(buf, -1, -1, false, new_lines)
+  append_user_section(buf, msg)
   save_chat(buf)
 
   local messages = parse_messages(buf)
-  table.insert(messages, 1, { role = "system", content = SYSTEM_PROMPT })
   stream_response(buf, messages)
 end
 
@@ -550,7 +584,7 @@ end
 function M.delete_chat()
   local buf = vim.api.nvim_get_current_buf()
   if not is_chat_buf(buf) then
-    vim.notify("Not a Jenova chat buffer", vim.log.levels.WARN, { title = "Jenova Chat" })
+    vim.notify("Not a Jenova chat buffer", vim.log.levels.WARN, { title = "Jenova" })
     return
   end
   local path = chat_filepath(buf)
@@ -562,96 +596,24 @@ function M.delete_chat()
     toggle_win = nil
   end
   vim.api.nvim_buf_delete(buf, { force = true })
-  vim.notify("Chat deleted", vim.log.levels.INFO, { title = "Jenova Chat" })
+  vim.notify("Chat deleted", vim.log.levels.INFO, { title = "Jenova" })
 end
 
 function M.inline_rewrite()
-  local line = vim.api.nvim_get_current_line()
+  local src_buf = vim.api.nvim_get_current_buf()
   local lnum = vim.fn.line(".")
+  local line = vim.api.nvim_get_current_line()
+  local ft = vim.bo[src_buf].filetype or ""
 
   vim.ui.input({ prompt = "Inline rewrite instruction: " }, function(instruction)
     if not instruction or instruction == "" then return end
-
-    local src_buf = vim.api.nvim_get_current_buf()
-    local ft = vim.bo.filetype or ""
-    local user_msg = string.format(
-      "Visual Rewrite: %s\n\nI have the following selection:\n```%s\n%s\n```",
-      instruction, ft, line
-    )
-
-    local messages = {
-      { role = "system", content = SYSTEM_PROMPT },
-      { role = "user", content = user_msg },
-    }
-
-    local url = ep().proxy_url()
-    local payload = vim.json.encode({
-      model = MODEL,
-      messages = messages,
-      temperature = TEMPERATURE,
-      top_p = TOP_P,
-      stream = true,
-    })
-
-    local tmpfile = vim.fn.tempname() .. ".json"
-    local f = io.open(tmpfile, "w")
-    if not f then return end
-    f:write(payload)
-    f:close()
-
-    local response_text = ""
-    local sse_buf = ""
-
-    active_job = vim.system(
-      {
-        "curl", "--no-buffer", "-s", "-N",
-        "-H", "Content-Type: application/json",
-        "-H", "Authorization: Bearer " .. SECRET,
-        "-d", "@" .. tmpfile,
-        url,
-      },
-      {
-        stdout = function(_, data)
-          if not data then return end
-          sse_buf = sse_buf .. data
-          while true do
-            local nl = sse_buf:find("\n")
-            if not nl then break end
-            local sline = sse_buf:sub(1, nl - 1):gsub("\r$", "")
-            sse_buf = sse_buf:sub(nl + 1)
-            if sline:sub(1, 6) == "data: " and sline ~= "data: [DONE]" then
-              local ok, parsed = pcall(vim.json.decode, sline:sub(7))
-              if ok and parsed and parsed.choices and parsed.choices[1] then
-                local delta = parsed.choices[1].delta
-                if delta and delta.content then
-                  response_text = response_text .. delta.content
-                end
-              end
-            end
-          end
-        end,
-      },
-      function(result)
-        vim.schedule(function()
-          active_job = nil
-          pcall(os.remove, tmpfile)
-          if vim.api.nvim_buf_is_valid(src_buf) and response_text ~= "" then
-            local cleaned = response_text
-            if cleaned:match("^```") then
-              cleaned = cleaned:gsub("^```[^\n]*\n", ""):gsub("\n?```%s*$", "")
-            end
-            local new_lines = vim.split(cleaned, "\n", { plain = true })
-            vim.api.nvim_buf_set_lines(src_buf, lnum - 1, lnum, false, new_lines)
-          end
-        end)
-      end
-    )
+    do_rewrite(src_buf, lnum, lnum, instruction, line, ft)
   end)
 end
 
 function M.stop()
   stop_generation()
-  vim.notify("Generation stopped", vim.log.levels.INFO, { title = "Jenova Chat" })
+  vim.notify("Generation stopped", vim.log.levels.INFO, { title = "Jenova" })
 end
 
 local _setup_done = false
@@ -684,6 +646,7 @@ function M.setup()
   vim.keymap.set("n", "<leader>at", function() M.toggle_chat() end, opts("Toggle Chat"))
   vim.keymap.set("n", "<leader>ar", function() M.respond() end, opts("Chat Respond"))
   vim.keymap.set("n", "<leader>ad", function() M.delete_chat() end, opts("Delete Chat"))
+  vim.keymap.set("n", "<leader>an", function() M.open_chat() end, opts("New Chat"))
 
   vim.keymap.set("v", "<leader>aw", function()
     local esc = vim.api.nvim_replace_termcodes("<Esc>", true, false, true)

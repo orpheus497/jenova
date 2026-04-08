@@ -65,6 +65,9 @@ function M.reconfigure_plugins()
     vim.g.llama_config = cfg
   end
 
+  package.loaded["jenova.endpoints"] = nil
+  package.loaded["jenova.endpoints"] = M
+
   vim.g.jenova_connected = true
 end
 
