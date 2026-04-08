@@ -25,10 +25,21 @@ function M.proxy_url()
 end
 
 function M.fim_url()
+  if M.is_lan_mode() then
+    return string.format("http://%s:%d/infill", M.host(), M.proxy_port())
+  end
   return string.format("http://%s:%d/infill", M.host(), M.llama_port())
 end
 
+function M.llama_api_port()
+  if M.is_lan_mode() then return M.proxy_port() end
+  return M.llama_port()
+end
+
 function M.embed_url()
+  if M.is_lan_mode() then
+    return string.format("http://%s:%d/v1/embeddings", M.host(), M.proxy_port())
+  end
   return string.format("http://%s:%d/v1/embeddings", M.host(), M.embed_port())
 end
 

@@ -113,7 +113,7 @@ local function recv_all(fd, buf, buf_size)
         goto retry
       elseif err == EAGAIN or err == EWOULDBLOCK or err == ETIMEDOUT then
         stall_count = stall_count + 1
-        if stall_count >= 10 then break end
+        if stall_count >= 12000 then break end
         local tv_sleep = ffi.new("struct timeval")
         tv_sleep.tv_sec = 0
         tv_sleep.tv_usec = 50000
