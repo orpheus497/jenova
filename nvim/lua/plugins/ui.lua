@@ -200,15 +200,13 @@ return {
           size = { height = 0.5 },
         },
       },
-      -- ##Step purpose: Right panel for AI Chat — gp.nvim chat buffers
       right = {
         {
           title = "AI Chat",
           ft = "markdown",
-          -- ##Condition purpose: Only capture markdown buffers that are gp.nvim chats
           filter = function(buf)
             local name = vim.api.nvim_buf_get_name(buf)
-            return name:match("/gp/") ~= nil
+            return name:match("/jenova/chats/") ~= nil
           end,
           pinned = true,
           size = { width = 0.3 },

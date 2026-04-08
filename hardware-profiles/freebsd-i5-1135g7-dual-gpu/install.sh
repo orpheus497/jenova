@@ -108,6 +108,9 @@ mkdir -p "$JENOVA_ROOT/.jenova" 2>/dev/null || {
 mkdir -p "$JENOVA_ROOT/var/log" || true
 mkdir -p "$JENOVA_ROOT/var/cache" || true
 mkdir -p "$JENOVA_ROOT/models" || true
+mkdir -p "$JENOVA_ROOT/models/agent" || true
+mkdir -p "$JENOVA_ROOT/models/embed" || true
+mkdir -p "$JENOVA_ROOT/models/draft" || true
 
 if [ -w "$JENOVA_ROOT/.jenova" ]; then
     ok "Runtime directories created with proper permissions"
@@ -299,7 +302,7 @@ download_model() {
 }
 
 # Agent model (required)
-_agent_model="${MODEL_PATH:-${JENOVA_MODEL:-$JENOVA_ROOT/models/Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf}}"
+_agent_model="${MODEL_PATH:-${JENOVA_MODEL:-$JENOVA_ROOT/models/agent/Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf}}"
 download_model "$_agent_model" \
     "Agent model (Qwen2.5-Coder-7B-Instruct)" \
     "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q5_k_m.gguf" \
@@ -318,13 +321,13 @@ if [ -f "$_agent_model" ]; then
 fi
 
 # Embedding model (recommended for RAG)
-download_model "${MODEL_EMBED:-$JENOVA_ROOT/models/nomic-embed-text-v1.5.Q8_0.gguf}" \
+download_model "${MODEL_EMBED:-$JENOVA_ROOT/models/embed/nomic-embed-text-v1.5.Q8_0.gguf}" \
     "Embedding model (nomic-embed-text-v1.5)" \
     "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q8_0.gguf" \
     "134MB"
 
 # Draft model (optional — enables speculative decoding for ~1.5-2x speedup)
-_draft_path="${MODEL_DRAFT:-$JENOVA_ROOT/models/Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf}"
+_draft_path="${MODEL_DRAFT:-$JENOVA_ROOT/models/draft/Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf}"
 if [ -f "$_draft_path" ]; then
     ok "Draft model — speculative decoding enabled"
 else
@@ -461,7 +464,11 @@ fi
 
 echo ""
 info "Next steps:"
-echo "  1. Place model GGUF files in: $JENOVA_ROOT/models/"
+echo "  1. Place model GGUF files in type-specific folders:"
+echo "       Agent:  $JENOVA_ROOT/models/agent/"
+echo "       Embed:  $JENOVA_ROOT/models/embed/"
+echo "       Draft:  $JENOVA_ROOT/models/draft/"
+echo "     (or use main installer ./install.sh to download automatically)"
 echo "  2. Build llama.cpp if not done: cd llama.cpp && cmake -B build -DGGML_VULKAN=ON && cmake --build build -j\$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 echo "  3. Start the backend:  $JENOVA_ROOT/bin/jenova-ca --daemon"
 echo "     Or launch agent:    $JENOVA_ROOT/bin/jenova"

@@ -6,14 +6,14 @@ local ffi_defs = require("ffi_defs")
 
 local AF_INET = 2
 local SOCK_STREAM = 1
-local SOL_SOCKET = 0xffff
-local SO_RCVTIMEO = 0x1006
-local SO_SNDTIMEO = 0x1005
+local SOL_SOCKET = ffi_defs.SOL_SOCKET
+local SO_RCVTIMEO = ffi_defs.SO_RCVTIMEO
+local SO_SNDTIMEO = ffi_defs.SO_SNDTIMEO
 
-local EAGAIN      = 35
-local ETIMEDOUT   = 60
-local EINTR       = 4
-local EWOULDBLOCK = EAGAIN
+local EAGAIN      = ffi_defs.EAGAIN
+local ETIMEDOUT   = ffi_defs.ETIMEDOUT
+local EINTR       = ffi_defs.EINTR
+local EWOULDBLOCK = ffi_defs.EWOULDBLOCK
 
 local http = {}
 
@@ -88,14 +88,21 @@ local function send_all(fd, data)
   return true
 end
 
-local function recv_all(fd, buf, buf_size)
+local function recv_all(fd, buf, buf_size, wall_timeout)
   local chunks = {}
   local total_recv = 0
   local stall_count = 0
   local recv_err = nil
   local MAX_RECV_SIZE = 10 * 1024 * 1024  -- 10MB cap to prevent memory exhaustion
+  local start_time = os.time()
+  local max_stall = wall_timeout and (wall_timeout * 20) or 12000  -- 20 iterations/sec × timeout (50ms sleep per stall)
   while true do
     ::retry::
+    -- Wall-clock timeout: break if elapsed time exceeds configured timeout
+    if wall_timeout and (os.time() - start_time) >= wall_timeout then
+      recv_err = "wall-clock timeout (" .. wall_timeout .. "s)"
+      break
+    end
     local recv_n = ffi.C.recv(fd, buf, buf_size, 0)
     if recv_n > 0 then
       total_recv = total_recv + tonumber(recv_n)
@@ -113,7 +120,7 @@ local function recv_all(fd, buf, buf_size)
         goto retry
       elseif err == EAGAIN or err == EWOULDBLOCK or err == ETIMEDOUT then
         stall_count = stall_count + 1
-        if stall_count >= 10 then break end
+        if stall_count >= max_stall then break end
         local tv_sleep = ffi.new("struct timeval")
         tv_sleep.tv_sec = 0
         tv_sleep.tv_usec = 50000
@@ -175,7 +182,9 @@ function http.post(url, body, timeout)
   ffi.C.setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, tv, ffi.sizeof(tv))
 
   local addr = ffi.new("struct sockaddr_in")
-  addr.sin_len = ffi.sizeof(addr)
+  if not ffi_defs.IS_LINUX then
+    addr.sin_len = ffi.sizeof(addr)
+  end
   addr.sin_family = AF_INET
   addr.sin_port = ffi.C.htons(port)
 
@@ -204,7 +213,7 @@ function http.post(url, body, timeout)
   end
 
   local buf = ffi.new("char[?]", 131072)
-  local chunks, recv_err = recv_all(fd, buf, 131072)
+  local chunks, recv_err = recv_all(fd, buf, 131072, timeout)
   ffi.C.close(fd)
 
   if recv_err then return 499, recv_err end
@@ -233,7 +242,9 @@ function http.get(url, timeout)
   ffi.C.setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, tv, ffi.sizeof(tv))
 
   local addr = ffi.new("struct sockaddr_in")
-  addr.sin_len = ffi.sizeof(addr)
+  if not ffi_defs.IS_LINUX then
+    addr.sin_len = ffi.sizeof(addr)
+  end
   addr.sin_family = AF_INET
   addr.sin_port = ffi.C.htons(port)
 
@@ -262,7 +273,7 @@ function http.get(url, timeout)
   end
 
   local buf = ffi.new("char[?]", 65536)
-  local chunks, recv_err = recv_all(fd, buf, 65536)
+  local chunks, recv_err = recv_all(fd, buf, 65536, timeout)
   ffi.C.close(fd)
 
   if recv_err then return 499, recv_err end
