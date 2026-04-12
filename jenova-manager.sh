@@ -98,7 +98,7 @@ check_jenova_core() {
 resolve_bin_dir() {
     local _d
     for _d in "$HOME/.local/bin" "$HOME/bin"; do
-        if echo "$PATH" | grep -q "$_d"; then
+        if echo ":$PATH:" | grep -q ":$_d:"; then
             printf '%s\n' "$_d"
             return 0
         fi
@@ -297,14 +297,18 @@ install_jvim() {
     echo "Installing jvim..."
     mkdir -p "$JENOVA_WORKSPACE"
     cd "$JENOVA_WORKSPACE"
-    git clone https://github.com/orpheus497/jvim.git || true
+    if [ ! -d "jvim" ]; then
+        git clone https://github.com/orpheus497/jvim.git
+    fi
     cd jvim && make CMAKE_BUILD_TYPE=Release && sudo make install
 }
 install_jenova_cli() {
     echo "Installing jenova-cli..."
     mkdir -p "$JENOVA_WORKSPACE"
     cd "$JENOVA_WORKSPACE"
-    git clone https://github.com/orpheus497/cloda-codey-lua.git || true
+    if [ ! -d "cloda-codey-lua" ]; then
+        git clone https://github.com/orpheus497/cloda-codey-lua.git
+    fi
     cd cloda-codey-lua && cargo build --release
 
     local bin_dir
@@ -327,7 +331,7 @@ update_jenova_core() {
 }
 update_jvim() {
     echo "Updating jvim..."
-    cd "$JENOVA_WORKSPACE/jvim" || { echo "jvim directory not found at $JENOVA_WORKSPACE/jvim"; return 1; }
+    cd "$JENOVA_WORKSPACE/jvim" || { echo "Cannot access jvim directory at $JENOVA_WORKSPACE/jvim"; return 1; }
     git pull --ff-only origin main
     if $DIALOG --yesno "Do you want to rebuild jvim?" 8 50; then
         make CMAKE_BUILD_TYPE=Release && sudo make install
@@ -335,7 +339,7 @@ update_jvim() {
 }
 update_jenova_cli() {
     echo "Updating jenova-cli..."
-    cd "$JENOVA_WORKSPACE/cloda-codey-lua" || { echo "jenova-cli directory not found at $JENOVA_WORKSPACE/cloda-codey-lua"; return 1; }
+    cd "$JENOVA_WORKSPACE/cloda-codey-lua" || { echo "Cannot access jenova-cli directory at $JENOVA_WORKSPACE/cloda-codey-lua"; return 1; }
     git pull --ff-only origin main
     if $DIALOG --yesno "Do you want to rebuild jenova-cli?" 8 50; then
         cargo build --release
@@ -352,7 +356,7 @@ update_jenova_cli() {
 }
 update_llama() {
     echo "Updating llama.cpp..."
-    cd "$JENOVA_ROOT/llama.cpp" || { echo "llama.cpp directory not found"; return 1; }
+    cd "$JENOVA_ROOT/llama.cpp" || { echo "Cannot access llama.cpp directory at $JENOVA_ROOT/llama.cpp"; return 1; }
     git pull --ff-only origin master
     if $DIALOG --yesno "Do you want to rebuild llama.cpp?" 8 50; then
         "$JENOVA_ROOT/bin/build-llama-jenova"
@@ -365,7 +369,7 @@ uninstall_jenova_core() {
 }
 uninstall_jvim() {
     echo "Uninstalling jvim..."
-    cd "$JENOVA_WORKSPACE/jvim" || { echo "jvim directory not found at $JENOVA_WORKSPACE/jvim"; return 1; }
+    cd "$JENOVA_WORKSPACE/jvim" || { echo "Cannot access jvim directory at $JENOVA_WORKSPACE/jvim"; return 1; }
     sudo make uninstall
 }
 uninstall_jenova_cli() {
