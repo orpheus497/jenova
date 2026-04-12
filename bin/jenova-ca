@@ -462,16 +462,14 @@ done
 if [ "$1" = "--daemon" ]; then
     shift
     # Strip --watch from remaining args (it's for post-startup, not llama-server)
-    _FILTERED_ARGS=""
-    for _arg in "$@"; do
-        if [ "$_arg" != "--watch" ] && [ "$_arg" != "--lan" ]; then _FILTERED_ARGS="$_FILTERED_ARGS $_arg"; fi
+    # Strip jenova-ca-specific flags that aren't for llama-server
+    for _arg; do
+        shift
+        case "$_arg" in
+            --watch|--lan|--daemon) continue ;;
+        esac
+        set -- "$@" "$_arg"
     done
-    # Strip any other jenova-ca flags that aren't for llama-server
-    _FINAL_LLAMA_ARGS=""
-    for _arg in $_FILTERED_ARGS; do
-        if [ "$_arg" != "--daemon" ]; then _FINAL_LLAMA_ARGS="$_FINAL_LLAMA_ARGS $_arg"; fi
-    done
-    set -- $_FINAL_LLAMA_ARGS
 
     # Acquire exclusive lock to prevent concurrent startup (TOCTOU guard)
     # Use portable locking: flock on Linux/FreeBSD, or fallback to mkdir-based lock
