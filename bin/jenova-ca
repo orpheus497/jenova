@@ -23,6 +23,12 @@ else
     exit 1
 fi
 
+if [ -f "$JENOVA_ROOT/etc/jenova.local.conf" ]; then
+    . "$JENOVA_ROOT/etc/jenova.local.conf"
+elif [ -f "$JENOVA_ROOT/llama.cpp/build/jenova.local.conf" ]; then
+    . "$JENOVA_ROOT/llama.cpp/build/jenova.local.conf"
+fi
+
 # Ensure runtime directories exist with proper permissions
 # Note: Run without sudo to avoid permission issues with lock files
 mkdir -p "$JENOVA_STATE" 2>/dev/null || {
@@ -101,6 +107,10 @@ export JENOVA_PROXY_PORT="$PORT"
 export JENOVA_PROXY_HOST="$HOST"
 export JENOVA_CTX="$CTX_SIZE"
 
+# Optional backend memory-fallback tuning from etc/jenova.local.conf.
+[ -n "${GGML_VK_ALLOW_SYSMEM_FALLBACK:-}" ] && export GGML_VK_ALLOW_SYSMEM_FALLBACK
+[ -n "${GGML_VK_PREFER_HOST_MEMORY:-}" ] && export GGML_VK_PREFER_HOST_MEMORY
+
 # --- LD_LIBRARY_PATH for shared libs ---
 LLAMA_LIB_DIR="$JENOVA_ROOT/llama.cpp/build/bin"
 if [ -d "$LLAMA_LIB_DIR" ]; then
@@ -113,6 +123,8 @@ if [ -n "$DEVICES" ]; then
     DEV_ARGS="-dev $DEVICES"
 fi
 
+DEVICE_COUNT=$(count_devices "$DEVICES")
+
 # --- Split mode + layer offload ---
 # NGL_7B="all" (default): use -fitt auto-fit to distribute layers across GPUs.
 #   Best for dual-GPU setups where all layers fit (i5-1135G7 dual-GPU profile).
@@ -121,7 +133,7 @@ fi
 SPLIT_ARGS="-sm layer"
 if [ "$NGL_7B" = "all" ] || [ -z "$NGL_7B" ]; then
     SPLIT_ARGS="$SPLIT_ARGS -fitt $FIT_TARGET"
-    if [ -n "$TENSOR_SPLIT" ]; then
+    if [ "$DEVICE_COUNT" -gt 1 ] && [ -n "$TENSOR_SPLIT" ]; then
         SPLIT_ARGS="$SPLIT_ARGS -ts $TENSOR_SPLIT"
     fi
 else
@@ -134,6 +146,59 @@ KV_ARGS=""
 if [ -n "$KV_CACHE_TYPE" ]; then
     KV_ARGS="-ctk $KV_CACHE_TYPE -ctv $KV_CACHE_TYPE"
 fi
+
+# --- Runtime backend args (may be rewritten by fallback logic) ---
+RUN_DEV_ARGS="$DEV_ARGS"
+RUN_SPLIT_ARGS="$SPLIT_ARGS"
+RUN_MAIN_NGL_ARGS=""
+RUN_DRAFT_ARGS="$DRAFT_ARGS"
+RUN_BACKEND_LABEL="configured"
+
+_use_vulkan_fallback() {
+    RUN_DEV_ARGS="-dev Vulkan0"
+    if [ "$NGL_7B" = "all" ] || [ -z "$NGL_7B" ]; then
+        RUN_SPLIT_ARGS="-sm layer -fitt $FIT_TARGET"
+    else
+        RUN_SPLIT_ARGS="-sm layer -ngl $NGL_7B"
+    fi
+    RUN_MAIN_NGL_ARGS=""
+    RUN_DRAFT_ARGS=""
+    RUN_BACKEND_LABEL="vulkan-fallback"
+}
+
+_vulkan_backend_available() {
+    [ -f "$LLAMA_LIB_DIR/libggml-vulkan.so" ] || \
+    [ -f "$LLAMA_LIB_DIR/libggml-vulkan.so.0" ] || \
+    ls "$LLAMA_LIB_DIR"/libggml-vulkan.so.* >/dev/null 2>&1
+}
+
+_launch_llama_server_bg() {
+    _ls_log="$1"
+    shift
+
+    "$LLAMA_SERVER" \
+        -m "$MODEL_PATH" \
+        $RUN_DEV_ARGS \
+        $RUN_SPLIT_ARGS \
+        $RUN_MAIN_NGL_ARGS \
+        $KV_ARGS \
+        -c "$CTX_SIZE" \
+        -b 2048 \
+        -ub 512 \
+        -np "$NUM_SLOTS" \
+        -t "$THREADS" \
+        -tb "$THREADS_BATCH" \
+        -fa auto \
+        -cb \
+        --spm-infill \
+        --cache-prompt \
+        --offline \
+        --host "$HOST" \
+        --port "$LLAMA_PORT" \
+        $RUN_DRAFT_ARGS \
+        "$@" > "$_ls_log" 2>&1 &
+    LLAMA_PID=$!
+}
 
 # --- Control verbs ---
 case "$1" in
@@ -207,6 +272,13 @@ esac
 # =====================================================================
 _probe_health() {
     _ph_timeout="${1:-2}"
+    if command -v curl >/dev/null 2>&1; then
+        _url="http://${CONNECT_HOST}:${LLAMA_PORT}/health"
+        if echo "$CONNECT_HOST" | grep -q ":"; then _url="http://[${CONNECT_HOST}]:${LLAMA_PORT}/health"; fi
+        curl -sf -o /dev/null -m "$_ph_timeout" "$_url" 2>/dev/null
+        return $?
+    fi
+
     if [ -f "$PROXY_SCRIPT" ]; then
         _HC=$(dirname "$PROXY_SCRIPT")/healthcheck.lua
     else
@@ -214,10 +286,7 @@ _probe_health() {
     fi
     if [ -f "$_HC" ]; then
         luajit "$_HC" "$CONNECT_HOST" "$LLAMA_PORT" "$_ph_timeout" 2>/dev/null
-    elif command -v curl >/dev/null 2>&1; then
-        _url="http://${CONNECT_HOST}:${LLAMA_PORT}/health"
-        if echo "$CONNECT_HOST" | grep -q ":"; then _url="http://[${CONNECT_HOST}]:${LLAMA_PORT}/health"; fi
-        curl -sf -o /dev/null -m "$_ph_timeout" "$_url" 2>/dev/null
+        return $?
     else
         # Last resort: plain TCP probe via nc
         if command -v nc >/dev/null 2>&1; then
@@ -341,12 +410,25 @@ if [ "${_ENTER_WATCHDOG:-0}" = "1" ]; then
 fi
 
 # --- Startup banner ---
+if [ "${JENOVA_FORCE_VULKAN:-0}" = "1" ]; then
+    _use_vulkan_fallback
+fi
+
 echo "Starting Jenova CA..."
 echo "  Model:     $MODEL_PATH"
 echo "  Embed:     $MODEL_EMBED (CPU-only, Vulkan disabled)"
-echo "  Devices:   ${DEVICES:-CPU only}"
+if [ -n "$RUN_DEV_ARGS" ]; then
+    echo "  Devices:   $(echo "$RUN_DEV_ARGS" | sed 's/^-dev //')"
+else
+    echo "  Devices:   CPU only"
+fi
+echo "  Backend:   $RUN_BACKEND_LABEL"
 if [ "$NGL_7B" = "all" ] || [ -z "$NGL_7B" ]; then
-    echo "  GPU:       auto-fit (fitt ${FIT_TARGET} MiB)${TENSOR_SPLIT:+ ts $TENSOR_SPLIT}"
+    if [ "$DEVICE_COUNT" -gt 1 ] && [ -n "$TENSOR_SPLIT" ]; then
+        echo "  GPU:       auto-fit (fitt ${FIT_TARGET} MiB) ts $TENSOR_SPLIT"
+    else
+        echo "  GPU:       auto-fit (fitt ${FIT_TARGET} MiB)"
+    fi
 else
     echo "  GPU:       ngl ${NGL_7B} layers"
 fi
@@ -458,33 +540,14 @@ if [ "$1" = "--daemon" ]; then
     EMBED_LOG="${LOG_DIR}/jenova-embed.log"
     echo "Daemonizing... Logs at $LOG_FILE"
 
-    "$LLAMA_SERVER" \
-        -m "$MODEL_PATH" \
-        $DEV_ARGS \
-        $SPLIT_ARGS \
-        $KV_ARGS \
-        -c "$CTX_SIZE" \
-        -b 2048 \
-        -ub 512 \
-        -np "$NUM_SLOTS" \
-        -t "$THREADS" \
-        -tb "$THREADS_BATCH" \
-        -fa auto \
-        -cb \
-        --spm-infill \
-        --cache-prompt \
-        --offline \
-        --host "$HOST" \
-        --port "$LLAMA_PORT" \
-        $DRAFT_ARGS \
-        "$@" > "$LOG_FILE" 2>&1 &
-    LLAMA_PID=$!
+    _launch_llama_server_bg "$LOG_FILE" "$@"
 
     EMBED_PID=""
     if [ -f "$MODEL_EMBED" ]; then
         GGML_VULKAN_DISABLE=1 "$LLAMA_SERVER" \
             -m "$MODEL_EMBED" \
             --embedding \
+            -dev none \
             -ngl 0 \
             -c 4096 \
             -b 512 \
@@ -572,8 +635,9 @@ while [ "$1" = "--daemon" ]; do shift; done
 
 "$LLAMA_SERVER" \
     -m "$MODEL_PATH" \
-    $DEV_ARGS \
-    $SPLIT_ARGS \
+    $RUN_DEV_ARGS \
+    $RUN_SPLIT_ARGS \
+    $RUN_MAIN_NGL_ARGS \
     $KV_ARGS \
     -c "$CTX_SIZE" \
     -b 2048 \
@@ -588,7 +652,7 @@ while [ "$1" = "--daemon" ]; do shift; done
     --offline \
     --host "$HOST" \
     --port "$LLAMA_PORT" \
-    $DRAFT_ARGS \
+    $RUN_DRAFT_ARGS \
     "$@" &
 LLAMA_PID=$!
 
@@ -598,6 +662,7 @@ if [ -f "$MODEL_EMBED" ]; then
     GGML_VULKAN_DISABLE=1 "$LLAMA_SERVER" \
         -m "$MODEL_EMBED" \
         --embedding \
+        -dev none \
         -ngl 0 \
         -c 4096 \
         -b 512 \
