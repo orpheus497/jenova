@@ -15,7 +15,7 @@ local search = require("search")
 local embed = require("embed")
 local prompts = require("prompts")
 
-local HOST = os.getenv("JENOVA_PROXY_HOST") or os.getenv("JENOVA_HOST") or "0.0.0.0"
+local HOST = os.getenv("JENOVA_PROXY_HOST") or os.getenv("JENOVA_HOST") or "127.0.0.1"
 local PORT = tonumber(os.getenv("JENOVA_PROXY_PORT") or os.getenv("JENOVA_PORT")) or 8080
 local LLAMA_URL = os.getenv("JENOVA_LLAMA_URL") or "http://127.0.0.1:" .. (os.getenv("JENOVA_LLAMA_PORT") or "8081")
 local LLAMA_PORT = tonumber(LLAMA_URL:match(":(%d+)")) or 8081
@@ -217,17 +217,17 @@ local function set_socket_opts(fd)
     local keepcnt = ffi.new("int[1]", 3)     -- 3 failed probes = dead connection
 
     ret = ffi.C.setsockopt(fd, _ffi_defs.IPPROTO_TCP, _ffi_defs.TCP_KEEPIDLE, keepidle, ffi.sizeof("int"))
-    if ret ~= 0 and ret ~= -1 then
+    if ret == -1 then
         io.write("[proxy] WARNING: failed to set TCP_KEEPIDLE on fd=" .. fd .. " (may not be supported)\n")
     end
 
     ret = ffi.C.setsockopt(fd, _ffi_defs.IPPROTO_TCP, _ffi_defs.TCP_KEEPINTVL, keepintvl, ffi.sizeof("int"))
-    if ret ~= 0 and ret ~= -1 then
+    if ret == -1 then
         io.write("[proxy] WARNING: failed to set TCP_KEEPINTVL on fd=" .. fd .. " (may not be supported)\n")
     end
 
     ret = ffi.C.setsockopt(fd, _ffi_defs.IPPROTO_TCP, _ffi_defs.TCP_KEEPCNT, keepcnt, ffi.sizeof("int"))
-    if ret ~= 0 and ret ~= -1 then
+    if ret == -1 then
         io.write("[proxy] WARNING: failed to set TCP_KEEPCNT on fd=" .. fd .. " (may not be supported)\n")
     end
 
@@ -583,8 +583,9 @@ local function proxy_connection(client_fd, conn_fds)
 
     local is_chat_completion = headers_raw:find("POST /v1/chat/completions")
     local intent = headers_raw:match("[Xx]%-Intent:%s*(%w+)")
-    headers_raw = headers_raw:gsub("([Hh][Oo][Ss][Tt]:%s*)[^\r\n]+", "%1" .. LLAMA_HOST .. ":" .. LLAMA_PORT)
-    headers_raw = headers_raw:gsub("[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]:%s*[^\r\n]+\r\n", "")
+    -- Remove Connection header from client request (backend rewrite handles Host).
+    -- headers_raw starts with the request line so ^\r\n-anchored form is sufficient.
+    headers_raw = headers_raw:gsub("(\r\n)[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]:%s*[^\r\n]+\r\n", "%1")
     headers_raw = headers_raw:gsub("\r\n\r\n", "\r\nConnection: close\r\n\r\n")
     local proxied_req = headers_raw .. body_raw
 
@@ -781,8 +782,9 @@ local function proxy_connection(client_fd, conn_fds)
     end
     conn_fds.llama = llama_fd
 
-    -- Rewrite Host header to backend address and use keep-alive for pool reuse
-    proxied_req = proxied_req:gsub("([Hh][Oo][Ss][Tt]:%s*)[^\r\n]+", "%1" .. backend.host .. ":" .. backend.port)
+    -- Rewrite Host header to backend address. proxied_req starts with the request
+    -- line so the \r\n-anchored form catches all Host headers after the first line.
+    proxied_req = proxied_req:gsub("(\r\n)([Hh][Oo][Ss][Tt]:%s*)[^\r\n]+", "%1%2" .. backend.host .. ":" .. backend.port)
 
     local send_result = async_send(llama_fd, proxied_req)
     proxied_req = nil

@@ -6,6 +6,7 @@
 # its own repository and rebuilding.
 #
 # Usage: ./update.sh [--upgrade-plugins] [--skip-nvim] [--skip-rebuild] [--link]
+#                    [--apply-profile]
 #
 #   --upgrade-plugins   Run :Lazy update (move to latest plugin versions).
 #                       Without this flag, runs :Lazy restore (pin to lock file).
@@ -13,6 +14,9 @@
 #   --skip-rebuild      Skip llama.cpp rebuild check.
 #   --link              Re-establish symlinks from ~/.config/nvim into the repo
 #                       if a previous --link install was clobbered by a copy.
+#   --apply-profile     Re-apply the matched hardware profile after pulling.
+#                       Opt-in only — without this flag any local edits to
+#                       etc/jenova.conf are preserved unchanged.
 #
 # Steps:
 #   1. git pull (update Jenova repo from origin)
@@ -32,6 +36,7 @@ UPGRADE_PLUGINS=0
 SKIP_NVIM=0
 SKIP_REBUILD=0
 LINK=0
+APPLY_PROFILE=0
 
 for _arg in "$@"; do
     case "$_arg" in
@@ -39,8 +44,9 @@ for _arg in "$@"; do
         --skip-nvim)       SKIP_NVIM=1 ;;
         --skip-rebuild)    SKIP_REBUILD=1 ;;
         --link)            LINK=1 ;;
+        --apply-profile)   APPLY_PROFILE=1 ;;
         -h|--help)
-            sed -n '2,23p' "$0"
+            sed -n '2,27p' "$0"
             exit 0
             ;;
         *)
@@ -79,10 +85,10 @@ git pull origin "${_branch:-main}" && ok "git pull complete" || {
     warn "git pull failed — continuing with current code"
 }
 
-# Re-apply hardware profile after pull to ensure etc/jenova.conf matches the host
-# (especially if the pull overwrote it with the repo's default i5 config)
+# Re-apply hardware profile only when explicitly requested via --apply-profile.
+# Without this flag, local edits to etc/jenova.conf are preserved.
 DETECT_SCRIPT="$JENOVA_ROOT/hardware-profiles/detect-hardware.sh"
-if [ -f "$DETECT_SCRIPT" ] && [ -x "$DETECT_SCRIPT" ]; then
+if [ "$APPLY_PROFILE" = "1" ] && [ -f "$DETECT_SCRIPT" ] && [ -x "$DETECT_SCRIPT" ]; then
     info "Re-applying hardware profile..."
     "$DETECT_SCRIPT" --apply || warn "Failed to re-apply hardware profile"
 fi

@@ -107,12 +107,11 @@ local function save_chat(buf)
   local path = chat_filepath(buf)
   if not path then return end
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  local f = io.open(path, "w")
-  if f then
-    f:write(table.concat(lines, "\n") .. "\n")
-    f:close()
+  if vim.fn.writefile(lines, path) == 0 then
+    vim.bo[buf].modified = false
+  else
+    vim.notify("Failed to save chat file", vim.log.levels.ERROR, { title = "Jenova" })
   end
-  vim.bo[buf].modified = false
 end
 
 local function scroll_to_bottom(buf)
@@ -141,14 +140,21 @@ local function open_chat_split(path)
   local buf = vim.api.nvim_get_current_buf()
   set_chat_buf_options(buf)
 
-  vim.api.nvim_create_autocmd({ "TextChanged", "InsertLeave" }, {
-    buffer = buf,
-    callback = function()
-      if vim.bo[buf].modified then
-        save_chat(buf)
-      end
-    end,
-  })
+  -- Use a named augroup per buffer to prevent stacking duplicate handlers
+  -- on repeated open/close toggles
+  if not vim.b[buf]._jenova_chat_autocmd then
+    local group = vim.api.nvim_create_augroup("JenovaChatAutoSave_" .. buf, { clear = true })
+    vim.api.nvim_create_autocmd({ "TextChanged", "InsertLeave" }, {
+      group = group,
+      buffer = buf,
+      callback = function()
+        if vim.bo[buf].modified then
+          save_chat(buf)
+        end
+      end,
+    })
+    vim.b[buf]._jenova_chat_autocmd = true
+  end
 
   scroll_to_bottom(buf)
 
@@ -215,13 +221,10 @@ local function stream_response(buf, messages, on_done)
   })
 
   local tmpfile = vim.fn.tempname() .. ".json"
-  local f = io.open(tmpfile, "w")
-  if not f then
+  if vim.fn.writefile({ payload }, tmpfile) ~= 0 then
     vim.notify("Failed to create temp file", vim.log.levels.ERROR, { title = "Jenova" })
     return
   end
-  f:write(payload)
-  f:close()
 
   vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## assistant", "" })
   local insert_line = vim.api.nvim_buf_line_count(buf)
@@ -467,10 +470,10 @@ local function do_rewrite(src_buf, start_ln, end_ln, instruction, selection, ft)
   })
 
   local tmpfile = vim.fn.tempname() .. ".json"
-  local f = io.open(tmpfile, "w")
-  if not f then return end
-  f:write(payload)
-  f:close()
+  if vim.fn.writefile({ payload }, tmpfile) ~= 0 then
+    vim.notify("Failed to create temp file", vim.log.levels.ERROR, { title = "Jenova" })
+    return
+  end
 
   local response_text = ""
   local sse_buf = ""
@@ -517,7 +520,13 @@ local function do_rewrite(src_buf, start_ln, end_ln, instruction, selection, ft)
           vim.api.nvim_buf_set_lines(src_buf, start_ln - 1, end_ln, false, new_lines)
           vim.notify("Rewrite applied", vim.log.levels.INFO, { title = "Jenova" })
         elseif response_text == "" then
-          vim.notify("Rewrite failed — empty response from backend", vim.log.levels.ERROR, { title = "Jenova" })
+          if result.code ~= 0 then
+            vim.notify("Rewrite failed: connection error (is the backend running?)",
+              vim.log.levels.ERROR, { title = "Jenova" })
+          else
+            vim.notify("Rewrite failed: empty response from backend",
+              vim.log.levels.ERROR, { title = "Jenova" })
+          end
         end
       end)
     end

@@ -20,15 +20,25 @@ function M.embed_port()
   return tonumber(vim.env.JENOVA_LLAMA_EMBED_PORT or vim.env.LLAMA_EMBED_PORT) or 8082
 end
 
+--- Build an HTTP URL, bracketing IPv6 literals as required by RFC 3986.
+--- All URL constructors use this helper so IPv6 LAN addresses work correctly.
+function M.url(port, path)
+  local h = M.host()
+  if h:find(":", 1, true) and not h:match("^%[.*%]$") then
+    h = string.format("[%s]", h)
+  end
+  return string.format("http://%s:%d%s", h, port, path)
+end
+
 function M.proxy_url()
-  return string.format("http://%s:%d/v1/chat/completions", M.host(), M.proxy_port())
+  return M.url(M.proxy_port(), "/v1/chat/completions")
 end
 
 function M.fim_url()
   if M.is_lan_mode() then
-    return string.format("http://%s:%d/infill", M.host(), M.proxy_port())
+    return M.url(M.proxy_port(), "/infill")
   end
-  return string.format("http://%s:%d/infill", M.host(), M.llama_port())
+  return M.url(M.llama_port(), "/infill")
 end
 
 function M.llama_api_port()
@@ -37,18 +47,12 @@ function M.llama_api_port()
 end
 
 function M.embed_url()
+  -- In LAN mode, embeddings are routed through the proxy port.
+  -- Locally, always connect directly to the dedicated embed server port.
   if M.is_lan_mode() then
-    return string.format("http://%s:%d/v1/embeddings", M.host(), M.proxy_port())
+    return M.url(M.proxy_port(), "/v1/embeddings")
   end
-  return string.format("http://%s:%d/v1/embeddings", M.host(), M.embed_port())
-end
-
-function M.url(port, path)
-  local h = M.host()
-  if h:find(":", 1, true) and not h:match("^%[.*%]$") then
-    h = string.format("[%s]", h)
-  end
-  return string.format("http://%s:%d%s", h, port, path)
+  return M.url(M.embed_port(), "/v1/embeddings")
 end
 
 function M.all()
