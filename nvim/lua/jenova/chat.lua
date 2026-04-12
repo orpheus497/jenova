@@ -107,8 +107,11 @@ local function save_chat(buf)
   local path = chat_filepath(buf)
   if not path then return end
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  vim.fn.writefile(lines, path)
-  vim.bo[buf].modified = false
+  if vim.fn.writefile(lines, path) == 0 then
+    vim.bo[buf].modified = false
+  else
+    vim.notify("Failed to save chat file", vim.log.levels.ERROR, { title = "Jenova" })
+  end
 end
 
 local function scroll_to_bottom(buf)

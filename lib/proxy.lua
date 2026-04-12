@@ -584,8 +584,7 @@ local function proxy_connection(client_fd, conn_fds)
     local is_chat_completion = headers_raw:find("POST /v1/chat/completions")
     local intent = headers_raw:match("[Xx]%-Intent:%s*(%w+)")
     -- Remove Connection header from client request (backend rewrite handles Host).
-    -- Anchored to line starts to avoid matching Proxy-Connection or similar headers.
-    headers_raw = headers_raw:gsub("^[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]:%s*[^\r\n]+\r\n", "")
+    -- headers_raw starts with the request line so ^\r\n-anchored form is sufficient.
     headers_raw = headers_raw:gsub("(\r\n)[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]:%s*[^\r\n]+\r\n", "%1")
     headers_raw = headers_raw:gsub("\r\n\r\n", "\r\nConnection: close\r\n\r\n")
     local proxied_req = headers_raw .. body_raw
@@ -783,8 +782,8 @@ local function proxy_connection(client_fd, conn_fds)
     end
     conn_fds.llama = llama_fd
 
-    -- Rewrite Host header to backend address (anchored to prevent matching X-Forwarded-Host etc.)
-    proxied_req = proxied_req:gsub("^([Hh][Oo][Ss][Tt]:%s*)[^\r\n]+", "%1" .. backend.host .. ":" .. backend.port)
+    -- Rewrite Host header to backend address. proxied_req starts with the request
+    -- line so the \r\n-anchored form catches all Host headers after the first line.
     proxied_req = proxied_req:gsub("(\r\n)([Hh][Oo][Ss][Tt]:%s*)[^\r\n]+", "%1%2" .. backend.host .. ":" .. backend.port)
 
     local send_result = async_send(llama_fd, proxied_req)
