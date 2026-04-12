@@ -15,7 +15,7 @@ local search = require("search")
 local embed = require("embed")
 local prompts = require("prompts")
 
-local HOST = os.getenv("JENOVA_PROXY_HOST") or os.getenv("JENOVA_HOST") or "0.0.0.0"
+local HOST = os.getenv("JENOVA_PROXY_HOST") or os.getenv("JENOVA_HOST") or "127.0.0.1"
 local PORT = tonumber(os.getenv("JENOVA_PROXY_PORT") or os.getenv("JENOVA_PORT")) or 8080
 local LLAMA_URL = os.getenv("JENOVA_LLAMA_URL") or "http://127.0.0.1:" .. (os.getenv("JENOVA_LLAMA_PORT") or "8081")
 local LLAMA_PORT = tonumber(LLAMA_URL:match(":(%d+)")) or 8081
@@ -217,17 +217,17 @@ local function set_socket_opts(fd)
     local keepcnt = ffi.new("int[1]", 3)     -- 3 failed probes = dead connection
 
     ret = ffi.C.setsockopt(fd, _ffi_defs.IPPROTO_TCP, _ffi_defs.TCP_KEEPIDLE, keepidle, ffi.sizeof("int"))
-    if ret ~= 0 and ret ~= -1 then
+    if ret == -1 then
         io.write("[proxy] WARNING: failed to set TCP_KEEPIDLE on fd=" .. fd .. " (may not be supported)\n")
     end
 
     ret = ffi.C.setsockopt(fd, _ffi_defs.IPPROTO_TCP, _ffi_defs.TCP_KEEPINTVL, keepintvl, ffi.sizeof("int"))
-    if ret ~= 0 and ret ~= -1 then
+    if ret == -1 then
         io.write("[proxy] WARNING: failed to set TCP_KEEPINTVL on fd=" .. fd .. " (may not be supported)\n")
     end
 
     ret = ffi.C.setsockopt(fd, _ffi_defs.IPPROTO_TCP, _ffi_defs.TCP_KEEPCNT, keepcnt, ffi.sizeof("int"))
-    if ret ~= 0 and ret ~= -1 then
+    if ret == -1 then
         io.write("[proxy] WARNING: failed to set TCP_KEEPCNT on fd=" .. fd .. " (may not be supported)\n")
     end
 
@@ -583,10 +583,8 @@ local function proxy_connection(client_fd, conn_fds)
 
     local is_chat_completion = headers_raw:find("POST /v1/chat/completions")
     local intent = headers_raw:match("[Xx]%-Intent:%s*(%w+)")
-    -- Anchor Host/Connection rewrites to line starts to avoid matching substrings
-    -- inside unrelated headers (e.g. X-Forwarded-Host, Proxy-Connection).
-    headers_raw = headers_raw:gsub("^([Hh][Oo][Ss][Tt]:%s*)[^\r\n]+", "%1" .. LLAMA_HOST .. ":" .. LLAMA_PORT)
-    headers_raw = headers_raw:gsub("(\r\n)([Hh][Oo][Ss][Tt]:%s*)[^\r\n]+", "%1%2" .. LLAMA_HOST .. ":" .. LLAMA_PORT)
+    -- Remove Connection header from client request (backend rewrite handles Host).
+    -- Anchored to line starts to avoid matching Proxy-Connection or similar headers.
     headers_raw = headers_raw:gsub("^[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]:%s*[^\r\n]+\r\n", "")
     headers_raw = headers_raw:gsub("(\r\n)[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]:%s*[^\r\n]+\r\n", "%1")
     headers_raw = headers_raw:gsub("\r\n\r\n", "\r\nConnection: close\r\n\r\n")
