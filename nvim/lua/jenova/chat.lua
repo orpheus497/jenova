@@ -467,7 +467,10 @@ local function do_rewrite(src_buf, start_ln, end_ln, instruction, selection, ft)
   })
 
   local tmpfile = vim.fn.tempname() .. ".json"
-  if vim.fn.writefile({ payload }, tmpfile) ~= 0 then return end
+  if vim.fn.writefile({ payload }, tmpfile) ~= 0 then
+    vim.notify("Failed to create temp file", vim.log.levels.ERROR, { title = "Jenova" })
+    return
+  end
 
   local response_text = ""
   local sse_buf = ""
