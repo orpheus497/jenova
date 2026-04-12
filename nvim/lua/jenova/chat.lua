@@ -218,13 +218,10 @@ local function stream_response(buf, messages, on_done)
   })
 
   local tmpfile = vim.fn.tempname() .. ".json"
-  local f = io.open(tmpfile, "w")
-  if not f then
+  if vim.fn.writefile({ payload }, tmpfile) ~= 0 then
     vim.notify("Failed to create temp file", vim.log.levels.ERROR, { title = "Jenova" })
     return
   end
-  f:write(payload)
-  f:close()
 
   vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## assistant", "" })
   local insert_line = vim.api.nvim_buf_line_count(buf)
@@ -470,10 +467,7 @@ local function do_rewrite(src_buf, start_ln, end_ln, instruction, selection, ft)
   })
 
   local tmpfile = vim.fn.tempname() .. ".json"
-  local f = io.open(tmpfile, "w")
-  if not f then return end
-  f:write(payload)
-  f:close()
+  if vim.fn.writefile({ payload }, tmpfile) ~= 0 then return end
 
   local response_text = ""
   local sse_buf = ""
@@ -520,7 +514,13 @@ local function do_rewrite(src_buf, start_ln, end_ln, instruction, selection, ft)
           vim.api.nvim_buf_set_lines(src_buf, start_ln - 1, end_ln, false, new_lines)
           vim.notify("Rewrite applied", vim.log.levels.INFO, { title = "Jenova" })
         elseif response_text == "" then
-          vim.notify("Rewrite failed — empty response from backend", vim.log.levels.ERROR, { title = "Jenova" })
+          if result.code ~= 0 then
+            vim.notify("Rewrite failed: connection error (is the backend running?)",
+              vim.log.levels.ERROR, { title = "Jenova" })
+          else
+            vim.notify("Rewrite failed: empty response from backend",
+              vim.log.levels.ERROR, { title = "Jenova" })
+          end
         end
       end)
     end
