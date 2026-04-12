@@ -98,13 +98,14 @@ function M.check()
     )
   end
 
-  local embed_check_port = embed_port
+  local embed_check_port = lan_mode and proxy_port or embed_port
   local embed_url = string.format("http://%s:%s/health", connect_host, embed_check_port)
   local embed_status = probe(connect_host, tonumber(embed_check_port))
   if embed_status == nil then
     h.info(string.format("Embedding server probe skipped (vim.uv unavailable) — %s", embed_url))
   elseif embed_status then
-    h.ok(string.format("Embedding server (nomic-embed) reachable at %s", embed_url))
+    local via = lan_mode and " (via proxy)" or ""
+    h.ok(string.format("Embedding server (nomic-embed) reachable at %s%s", embed_url, via))
   else
     h.warn(
       string.format("Embedding server NOT reachable at %s", embed_url),
@@ -260,26 +261,65 @@ function M.check()
   -- -------------------------------------------------------------------------
   h.start("Model Files")
 
+  --- Search typed subdirectories and legacy paths for a model file.
+  --- Mirrors the discovery logic in lib/jenova-model.sh: typed subdir first,
+  --- then legacy flat paths, then env var override.
+  local function find_model(env_var, subdirs, legacy_names)
+    -- 1. Env var override (highest priority)
+    local env_val = vim.env[env_var]
+    if env_val and env_val ~= "" then
+      if vim.fn.filereadable(env_val) == 1 then return env_val end
+      return env_val  -- return even if missing so error message shows the override path
+    end
+    -- 2. Typed subdirectories (scan for first *.gguf)
+    for _, subdir in ipairs(subdirs) do
+      local dir_path = jenova_root .. "/models/" .. subdir
+      local glob_result = vim.fn.glob(dir_path .. "/*.gguf", false, true)
+      if #glob_result > 0 then return glob_result[1] end
+    end
+    -- 3. Legacy flat paths (specific filenames only, no wildcard)
+    for _, name in ipairs(legacy_names) do
+      local p = jenova_root .. "/models/" .. name
+      if vim.fn.filereadable(p) == 1 then return p end
+    end
+    return nil
+  end
+
+  local agent_path = find_model("JENOVA_MODEL", { "agent" }, {
+    "jenova.gguf",
+    "Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf",
+    "Qwen2.5-Coder-7B-Q5_K_M.gguf",
+  })
+  local embed_path = find_model("JENOVA_EMBED_MODEL", { "embed" }, {
+    "nomic-embed-text-v1.5.Q8_0.gguf",
+  })
+  local draft_path = find_model("JENOVA_DRAFT_MODEL", { "draft" }, {
+    "Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf",
+  })
+
   local models = {
     {
-      path = vim.env.JENOVA_MODEL or (jenova_root .. "/models/jenova.gguf"),
-      label = "Agent model (" .. vim.fn.fnamemodify(vim.env.JENOVA_MODEL or (jenova_root .. "/models/jenova.gguf"), ":t") .. ")",
+      path = agent_path,
+      label = "Agent model (" .. vim.fn.fnamemodify(agent_path or "not found", ":t") .. ")",
       required = true,
+      hint = "Download a GGUF model into " .. jenova_root .. "/models/agent/ or set JENOVA_MODEL",
     },
     {
-      path = jenova_root .. "/models/nomic-embed-text-v1.5.Q8_0.gguf",
-      label = "Embedding model (nomic-embed-text-v1.5)",
+      path = embed_path,
+      label = "Embedding model (" .. vim.fn.fnamemodify(embed_path or "not found", ":t") .. ")",
       required = true,
+      hint = "Download nomic-embed-text-v1.5.Q8_0.gguf into " .. jenova_root .. "/models/embed/ or set JENOVA_EMBED_MODEL",
     },
     {
-      path = jenova_root .. "/models/Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf",
-      label = "Draft model (Qwen2.5-Coder-0.5B-Instruct) — speculative decoding",
+      path = draft_path,
+      label = "Draft model (" .. vim.fn.fnamemodify(draft_path or "not found", ":t") .. ") — speculative decoding",
       required = false,
+      hint = "Speculative decoding disabled. Run: tests/download-draft-model.sh",
     },
   }
 
   for _, m in ipairs(models) do
-    if vim.fn.filereadable(m.path) == 1 then
+    if m.path and vim.fn.filereadable(m.path) == 1 then
       -- File size check: warn if <100MB (may be corrupted/placeholder)
       local size_bytes = vim.fn.getfsize(m.path)
       if size_bytes > 100 * 1024 * 1024 then
@@ -288,9 +328,9 @@ function M.check()
         h.warn(m.label .. " — file exists but is very small (" .. math.floor(size_bytes / 1024) .. " KB); may be corrupted")
       end
     elseif m.required then
-      h.error(m.label .. " — NOT FOUND at " .. m.path, "Download the model GGUF and place it in " .. jenova_root .. "/models/")
+      h.error(m.label .. " — NOT FOUND", m.hint)
     else
-      h.warn(m.label .. " — not found (optional)", "Speculative decoding disabled. Run: tests/download-draft-model.sh")
+      h.warn(m.label .. " — not found (optional)", m.hint)
     end
   end
 

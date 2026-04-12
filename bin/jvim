@@ -22,6 +22,8 @@
 #     plugins still work but jvim-specific behaviour will not be present.
 #
 # Usage: jvim [options] [nvim args...]
+#   --lan               Server/host-only mode: start jenova-ca bound to 0.0.0.0
+#                       for LAN access without launching the editor
 #   --remote [host]     Connect to remote Jenova CA: explicit host or LAN auto-discover
 #   --remote-port <p>   Override proxy port for remote mode      (default 8080)
 #   --llama-port <p>    Override llama-server port for remote    (default 8081)
@@ -41,6 +43,7 @@ REMOTE_LLAMA_PORT="8081"
 REMOTE_EMBED_PORT="8082"
 NO_BACKEND=0
 CHECK_ONLY=0
+LAN_SERVER_MODE=0
 
 # Require a non-option argument after a flag; exits on missing/invalid value.
 require_arg() {
@@ -53,6 +56,9 @@ require_arg() {
 # Consume only jvim flags; stop at first non-jvim argument (preserves "$@" for nvim)
 while [ $# -gt 0 ]; do
     case "$1" in
+        --lan)
+            LAN_SERVER_MODE=1; shift
+            ;;
         --remote)
             shift
             # Optional argument: if next token exists and is not a flag, it's the host
@@ -73,7 +79,7 @@ while [ $# -gt 0 ]; do
         --no-backend)  NO_BACKEND=1; shift ;;
         --check)       CHECK_ONLY=1; shift ;;
         -h|--help)
-            sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *) break ;;  # First non-jvim arg — rest is for nvim
@@ -184,6 +190,54 @@ load_jenova_conf() {
 # Always load config first so remote mode honours custom ports / model paths
 # defined in etc/jenova.conf the same way local mode does.
 load_jenova_conf
+
+# --- LAN server/host-only mode: start backend bound to 0.0.0.0, no editor ---
+# jvim --lan starts jenova-ca with --daemon --lan and waits in foreground.
+# This makes the local machine's AI backend available to LAN clients.
+if [ "$LAN_SERVER_MODE" = "1" ]; then
+    # Locate jenova-ca (inline — find_jenova_ca is defined later in the script)
+    JENOVA_CA=""
+    if [ -f "$SCRIPT_DIR/jenova-ca" ]; then
+        JENOVA_CA="$SCRIPT_DIR/jenova-ca"
+    elif [ -f "$SCRIPT_DIR/../bin/jenova-ca" ]; then
+        JENOVA_CA="$SCRIPT_DIR/../bin/jenova-ca"
+    fi
+    if [ -z "$JENOVA_CA" ]; then
+        echo "Error: jenova-ca not found." >&2
+        exit 1
+    fi
+
+    echo "═══════════════════════════════════════════════════════════════"
+    echo "  Jenova CA — LAN Server Mode"
+    echo "  Backend will bind to 0.0.0.0 (all interfaces)"
+    echo "  Clients can connect with: jvim --remote $(hostname -f 2>/dev/null || hostname)"
+    echo "═══════════════════════════════════════════════════════════════"
+    echo ""
+
+    if [ "$CHECK_ONLY" = "1" ]; then
+        echo "JENOVA_ROOT=$JENOVA_ROOT"
+        echo "MODE=lan-server"
+        echo "JENOVA_CA=$JENOVA_CA"
+        exit 0
+    fi
+
+    # Start with --daemon --lan and then enter watchdog mode
+    "$JENOVA_CA" start --lan || {
+        echo "Error: jenova-ca failed to start in LAN mode" >&2
+        exit 1
+    }
+
+    echo ""
+    echo "Jenova CA is running. Press Ctrl+C to stop."
+    echo ""
+
+    # Trap to stop the backend on exit
+    trap '"$JENOVA_CA" stop 2>/dev/null; echo "Jenova CA stopped."' EXIT INT TERM
+
+    # Enter watchdog loop to keep backend alive
+    "$JENOVA_CA" watch
+    exit 0
+fi
 
 # --- Remote/LAN client mode: skip backend start, just export env and launch editor ---
 # Two sub-modes:

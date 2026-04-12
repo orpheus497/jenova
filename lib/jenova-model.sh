@@ -21,41 +21,12 @@ _find_model() {
 }
 
 # --- Model Discovery ---
-# Scans each type-specific folder and falls back to legacy flat paths.
-# Priority (overrides applied by calling conf after sourcing this file):
-#   1. First .gguf in models/agent|embed|draft/ (alphabetically)
-#   2. Legacy flat path under models/ for backward compatibility
-#   3. Empty string if no model found
-
-# Agent model (main inference)
-_AGENT_MODEL_AUTO="$(_find_model "$JENOVA_ROOT/models/agent")"
-if [ -n "$_AGENT_MODEL_AUTO" ]; then
-    MODEL_7B="$_AGENT_MODEL_AUTO"
-elif [ -f "$JENOVA_ROOT/models/Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf" ]; then
-    MODEL_7B="$JENOVA_ROOT/models/Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf"
-else
-    MODEL_7B=""
-fi
-
-# Draft model (speculative decoding)
-_DRAFT_MODEL_AUTO="$(_find_model "$JENOVA_ROOT/models/draft")"
-if [ -n "$_DRAFT_MODEL_AUTO" ]; then
-    MODEL_DRAFT="$_DRAFT_MODEL_AUTO"
-elif [ -f "$JENOVA_ROOT/models/Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf" ]; then
-    MODEL_DRAFT="$JENOVA_ROOT/models/Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf"
-else
-    MODEL_DRAFT=""
-fi
-
-# Embed model (RAG and semantic search)
-_EMBED_MODEL_AUTO="$(_find_model "$JENOVA_ROOT/models/embed")"
-if [ -n "$_EMBED_MODEL_AUTO" ]; then
-    MODEL_EMBED="$_EMBED_MODEL_AUTO"
-elif [ -f "$JENOVA_ROOT/models/nomic-embed-text-v1.5.Q8_0.gguf" ]; then
-    MODEL_EMBED="$JENOVA_ROOT/models/nomic-embed-text-v1.5.Q8_0.gguf"
-else
-    MODEL_EMBED=""
-fi
+# Scans each type-specific folder for the first .gguf file (alphabetically).
+# Model-agnostic: drop any .gguf into models/agent/, models/draft/, or
+# models/embed/ and it will be picked up automatically. No hardcoded filenames.
+MODEL_7B="$(_find_model "$JENOVA_ROOT/models/agent")"
+MODEL_DRAFT="$(_find_model "$JENOVA_ROOT/models/draft")"
+MODEL_EMBED="$(_find_model "$JENOVA_ROOT/models/embed")"
 
 # --- Shared Device Utilities ---
 # count_devices: count comma-separated entries in a device string.
