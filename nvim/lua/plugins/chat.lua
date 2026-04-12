@@ -1,6 +1,6 @@
 return {
   {
-    dir = vim.fn.stdpath("config") .. "/lua/jenova",
+    dir = vim.fn.stdpath("config"),
     name = "jenova-chat",
     event = "VeryLazy",
     config = function()

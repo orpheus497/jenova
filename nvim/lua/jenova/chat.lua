@@ -107,11 +107,7 @@ local function save_chat(buf)
   local path = chat_filepath(buf)
   if not path then return end
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  local f = io.open(path, "w")
-  if f then
-    f:write(table.concat(lines, "\n") .. "\n")
-    f:close()
-  end
+  vim.fn.writefile(lines, path)
   vim.bo[buf].modified = false
 end
 
@@ -141,14 +137,21 @@ local function open_chat_split(path)
   local buf = vim.api.nvim_get_current_buf()
   set_chat_buf_options(buf)
 
-  vim.api.nvim_create_autocmd({ "TextChanged", "InsertLeave" }, {
-    buffer = buf,
-    callback = function()
-      if vim.bo[buf].modified then
-        save_chat(buf)
-      end
-    end,
-  })
+  -- Use a named augroup per buffer to prevent stacking duplicate handlers
+  -- on repeated open/close toggles
+  if not vim.b[buf]._jenova_chat_autocmd then
+    local group = vim.api.nvim_create_augroup("JenovaChatAutoSave_" .. buf, { clear = true })
+    vim.api.nvim_create_autocmd({ "TextChanged", "InsertLeave" }, {
+      group = group,
+      buffer = buf,
+      callback = function()
+        if vim.bo[buf].modified then
+          save_chat(buf)
+        end
+      end,
+    })
+    vim.b[buf]._jenova_chat_autocmd = true
+  end
 
   scroll_to_bottom(buf)
 

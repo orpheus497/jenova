@@ -181,8 +181,11 @@ local function validate_health(host, proxy_port, callback)
     function(result)
       vim.schedule(function()
         if result.code == 0 and result.stdout then
+          -- Validate both the Jenova-specific marker and status field
+          -- to prevent adoption of non-Jenova services
+          local has_jenova = result.stdout:find('"jenova"') ~= nil
           local has_status = result.stdout:find('"status"') ~= nil
-          callback(has_status)
+          callback(has_jenova and has_status)
         else
           callback(false)
         end

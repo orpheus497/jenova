@@ -98,14 +98,13 @@ function M.check()
     )
   end
 
-  local embed_check_port = lan_mode and proxy_port or embed_port
+  local embed_check_port = embed_port
   local embed_url = string.format("http://%s:%s/health", connect_host, embed_check_port)
   local embed_status = probe(connect_host, tonumber(embed_check_port))
   if embed_status == nil then
     h.info(string.format("Embedding server probe skipped (vim.uv unavailable) — %s", embed_url))
   elseif embed_status then
-    local via = lan_mode and " (via proxy)" or ""
-    h.ok(string.format("Embedding server (nomic-embed) reachable at %s%s", embed_url, via))
+    h.ok(string.format("Embedding server (nomic-embed) reachable at %s", embed_url))
   else
     h.warn(
       string.format("Embedding server NOT reachable at %s", embed_url),

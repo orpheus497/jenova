@@ -37,9 +37,8 @@ function M.llama_api_port()
 end
 
 function M.embed_url()
-  if M.is_lan_mode() then
-    return string.format("http://%s:%d/v1/embeddings", M.host(), M.proxy_port())
-  end
+  -- Always use embed_port directly — the proxy does not multiplex
+  -- embedding requests to the separate embedding server
   return string.format("http://%s:%d/v1/embeddings", M.host(), M.embed_port())
 end
 
