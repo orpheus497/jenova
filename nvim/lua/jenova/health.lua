@@ -80,12 +80,17 @@ function M.check()
     )
   end
 
-  local llama_url = string.format("http://%s:%s/health", connect_host, llama_port)
-  local llama_status = probe(connect_host, llama_port)
+  local ep_ok, ep = pcall(require, "jenova.endpoints")
+  local lan_mode = ep_ok and ep.is_lan_mode() or vim.env.JENOVA_LAN_MODE == "1"
+
+  local llama_check_port = lan_mode and proxy_port or llama_port
+  local llama_url = string.format("http://%s:%s/health", connect_host, llama_check_port)
+  local llama_status = probe(connect_host, tonumber(llama_check_port))
   if llama_status == nil then
     h.info(string.format("llama-server probe skipped (vim.uv unavailable) — %s", llama_url))
   elseif llama_status then
-    h.ok(string.format("llama-server (main inference) reachable at %s", llama_url))
+    local via = lan_mode and " (via proxy)" or ""
+    h.ok(string.format("llama-server (main inference) reachable at %s%s", llama_url, via))
   else
     h.warn(
       string.format("llama-server NOT reachable at %s", llama_url),
@@ -93,8 +98,9 @@ function M.check()
     )
   end
 
-  local embed_url = string.format("http://%s:%s/health", connect_host, embed_port)
-  local embed_status = probe(connect_host, embed_port)
+  local embed_check_port = embed_port
+  local embed_url = string.format("http://%s:%s/health", connect_host, embed_check_port)
+  local embed_status = probe(connect_host, tonumber(embed_check_port))
   if embed_status == nil then
     h.info(string.format("Embedding server probe skipped (vim.uv unavailable) — %s", embed_url))
   elseif embed_status then

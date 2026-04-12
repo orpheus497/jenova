@@ -122,9 +122,16 @@ local function _jenova_tcp_probe(callback)
     vim.schedule(function() callback(false) end)
     return
   end
-  local host = vim.env.JENOVA_CONNECT_HOST or vim.env.JENOVA_HOST or "127.0.0.1"
-  if host == "0.0.0.0" or host == "::" or host == "*" then host = "127.0.0.1" end
-  local port = tonumber(vim.env.JENOVA_PORT or "8080")
+  local ep_ok, ep = pcall(require, "jenova.endpoints")
+  local host, port
+  if ep_ok then
+    host = ep.host()
+    port = ep.proxy_port()
+  else
+    host = vim.env.JENOVA_CONNECT_HOST or vim.env.JENOVA_HOST or "127.0.0.1"
+    if host == "0.0.0.0" or host == "::" or host == "*" then host = "127.0.0.1" end
+    port = tonumber(vim.env.JENOVA_PORT or "8080")
+  end
   local tcp = uv.new_tcp()
   if not tcp then
     vim.schedule(function() callback(false) end)
@@ -140,7 +147,7 @@ local function _jenova_tcp_probe(callback)
     end
   end
   if timeout then
-    timeout:start(2000, 0, function()
+    timeout:start(3000, 0, function()
       if not closed then
         close_handles()
         vim.schedule(function() callback(false) end)
@@ -172,11 +179,14 @@ vim.api.nvim_create_autocmd("VimEnter", {
             monitor.start_polling()
           end
         else
+          local ep_ok, ep = pcall(require, "jenova.endpoints")
           local is_lan_mode = vim.env.JENOVA_LAN_MODE == "1"
           local has_connect_host = vim.env.JENOVA_CONNECT_HOST
             and vim.env.JENOVA_CONNECT_HOST ~= ""
-          local has_jvim_env = vim.env.JENOVA_ROOT and vim.env.JENOVA_ROOT ~= ""
+          local has_jvim_env = ep_ok and ep.has_jvim_env() or (
+            vim.env.JENOVA_ROOT and vim.env.JENOVA_ROOT ~= ""
             and vim.env.JENOVA_ROOT ~= "$JENOVA_ROOT"
+          )
 
           if is_lan_mode and has_connect_host then
             -- Explicit remote host: jvim --remote <host>

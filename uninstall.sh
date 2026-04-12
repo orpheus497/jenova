@@ -25,7 +25,7 @@
 #
 # What this preserves (user data, never touched by install/update):
 #   - The jvim editor binary (managed by the jvim repository)
-#   - ~/.local/state/nvim/ (undo files, shada, gp.nvim chat history)
+#   - ~/.local/state/nvim/ (undo files, shada, jenova chat history)
 #   - $JENOVA_ROOT/models/*.gguf (actual GGUF files; only the symlink is removed)
 #   - The Jenova project directory itself (models, config, source code)
 
@@ -248,7 +248,7 @@ echo ""
 ok "Uninstall complete."
 echo ""
 info "Preserved (user data):"
-echo "    ~/.local/state/nvim/  (undo files, shada, gp.nvim chats)"
+echo "    ~/.local/state/nvim/  (undo files, shada, jenova chats)"
 if [ "$CLEAN_RUNTIME" = "0" ]; then
     echo "    $JENOVA_ROOT/.jenova/ (runtime state — use --clean-runtime to remove)"
     echo "    $JENOVA_ROOT/var/     (logs, cache — use --clean-runtime to remove)"

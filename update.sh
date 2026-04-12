@@ -79,6 +79,14 @@ git pull origin "${_branch:-main}" && ok "git pull complete" || {
     warn "git pull failed — continuing with current code"
 }
 
+# Re-apply hardware profile after pull to ensure etc/jenova.conf matches the host
+# (especially if the pull overwrote it with the repo's default i5 config)
+DETECT_SCRIPT="$JENOVA_ROOT/hardware-profiles/detect-hardware.sh"
+if [ -f "$DETECT_SCRIPT" ] && [ -x "$DETECT_SCRIPT" ]; then
+    info "Re-applying hardware profile..."
+    "$DETECT_SCRIPT" --apply || warn "Failed to re-apply hardware profile"
+fi
+
 echo ""
 info "Recent changes (last 10 commits):"
 git log --oneline -10 2>/dev/null | sed 's/^/    /'
@@ -173,9 +181,10 @@ if [ "$SKIP_NVIM" = "0" ] && command -v nvim >/dev/null 2>&1; then
             done
             ok "Symlinked Jenova nvim config — edits in $NVIM_CONFIG_SRC are live"
         elif [ -L "$NVIM_CONFIG_DST/init.lua" ]; then
-            _LINK_TGT=$(readlink "$NVIM_CONFIG_DST/init.lua")
+            _LINK_TGT=$(realpath "$NVIM_CONFIG_DST/init.lua" 2>/dev/null || readlink -f "$NVIM_CONFIG_DST/init.lua" 2>/dev/null || readlink "$NVIM_CONFIG_DST/init.lua")
+            _NVIM_SRC_REAL=$(realpath "$NVIM_CONFIG_SRC" 2>/dev/null || readlink -f "$NVIM_CONFIG_SRC" 2>/dev/null || echo "$NVIM_CONFIG_SRC")
             case "$_LINK_TGT" in
-                "$NVIM_CONFIG_SRC"/*|"$NVIM_CONFIG_SRC")
+                "$_NVIM_SRC_REAL"/*|"$_NVIM_SRC_REAL")
                     ok "Symlink mode active — files auto-updated via git pull"
                     ;;
                 *)
