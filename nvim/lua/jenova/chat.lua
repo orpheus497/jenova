@@ -207,6 +207,11 @@ end
 local function stream_response(buf, messages, on_done)
   stop_generation()
 
+  if vim.fn.executable("curl") ~= 1 then
+    vim.notify("curl not found. Install curl to enable chat streaming.", vim.log.levels.ERROR, { title = "Jenova" })
+    return
+  end
+
   local url = ep().proxy_url()
   local payload = vim.json.encode({
     model = MODEL,
@@ -298,11 +303,6 @@ local function stream_response(buf, messages, on_done)
         sse_buffer = ""
       end
     end
-  end
-
-  if vim.fn.executable("curl") ~= 1 then
-    vim.notify("curl not found. Install curl to enable chat streaming.", vim.log.levels.ERROR, { title = "Jenova" })
-    return
   end
 
   active_job = vim.system(
@@ -452,6 +452,11 @@ local function strip_code_fences(text)
 end
 
 local function do_rewrite(src_buf, start_ln, end_ln, instruction, selection, ft)
+  if vim.fn.executable("curl") ~= 1 then
+    vim.notify("curl not found. Install curl to enable rewrite.", vim.log.levels.ERROR, { title = "Jenova" })
+    return
+  end
+
   local user_msg = string.format(
     "Visual Rewrite: %s\n\nI have the following selection:\n```%s\n%s\n```",
     instruction, ft, selection
@@ -479,12 +484,6 @@ local function do_rewrite(src_buf, start_ln, end_ln, instruction, selection, ft)
 
   local response_text = ""
   local sse_buf = ""
-
-  if vim.fn.executable("curl") ~= 1 then
-    vim.notify("curl not found. Install curl to enable rewrite.", vim.log.levels.ERROR, { title = "Jenova" })
-    pcall(os.remove, tmpfile)
-    return
-  end
 
   vim.notify("Rewriting...", vim.log.levels.INFO, { title = "Jenova" })
 
