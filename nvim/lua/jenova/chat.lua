@@ -300,6 +300,11 @@ local function stream_response(buf, messages, on_done)
     end
   end
 
+  if vim.fn.executable("curl") ~= 1 then
+    vim.notify("curl not found. Install curl to enable chat streaming.", vim.log.levels.ERROR, { title = "Jenova" })
+    return
+  end
+
   active_job = vim.system(
     {
       "curl", "--no-buffer", "-s", "-N",
@@ -474,6 +479,12 @@ local function do_rewrite(src_buf, start_ln, end_ln, instruction, selection, ft)
 
   local response_text = ""
   local sse_buf = ""
+
+  if vim.fn.executable("curl") ~= 1 then
+    vim.notify("curl not found. Install curl to enable rewrite.", vim.log.levels.ERROR, { title = "Jenova" })
+    pcall(os.remove, tmpfile)
+    return
+  end
 
   vim.notify("Rewriting...", vim.log.levels.INFO, { title = "Jenova" })
 

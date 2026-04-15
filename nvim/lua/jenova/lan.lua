@@ -327,8 +327,13 @@ function M.auto_discover(opts)
     return
   end
 
-  -- Also skip if JENOVA_ROOT is set (jvim sets this)
-  if vim.env.JENOVA_ROOT and vim.env.JENOVA_ROOT ~= "" and vim.env.JENOVA_ROOT ~= "$JENOVA_ROOT" then
+  -- Skip if JENOVA_ROOT is set (jvim local mode), UNLESS we are explicitly in
+  -- LAN mode (jvim --remote without a host sets JENOVA_LAN_MODE=1 AND JENOVA_ROOT).
+  -- In that case we must proceed with discovery rather than short-circuiting.
+  local in_lan_mode = vim.env.JENOVA_LAN_MODE == "1"
+  if not in_lan_mode
+    and vim.env.JENOVA_ROOT and vim.env.JENOVA_ROOT ~= "" and vim.env.JENOVA_ROOT ~= "$JENOVA_ROOT"
+  then
     return
   end
 
