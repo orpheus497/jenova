@@ -21,14 +21,14 @@ function M.embed_port()
 end
 
 function M.proxy_url()
-  return string.format("http://%s:%d/v1/chat/completions", M.host(), M.proxy_port())
+  return M.url(M.proxy_port(), "/v1/chat/completions")
 end
 
 function M.fim_url()
   if M.is_lan_mode() then
-    return string.format("http://%s:%d/infill", M.host(), M.proxy_port())
+    return M.url(M.proxy_port(), "/infill")
   end
-  return string.format("http://%s:%d/infill", M.host(), M.llama_port())
+  return M.url(M.llama_port(), "/infill")
 end
 
 function M.llama_api_port()
@@ -39,7 +39,7 @@ end
 function M.embed_url()
   -- Always use embed_port directly — the proxy does not multiplex
   -- embedding requests to the separate embedding server
-  return string.format("http://%s:%d/v1/embeddings", M.host(), M.embed_port())
+  return M.url(M.embed_port(), "/v1/embeddings")
 end
 
 function M.url(port, path)

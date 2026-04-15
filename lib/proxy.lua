@@ -408,8 +408,8 @@ local function proxy_connection(client_fd, conn_fds)
 
     local is_chat_completion = headers_raw:find("POST /v1/chat/completions")
     local intent = headers_raw:match("[Xx]%-Intent:%s*(%w+)")
-    headers_raw = headers_raw:gsub("([Hh][Oo][Ss][Tt]:%s*)[^\r\n]+", "%1" .. LLAMA_HOST .. ":" .. LLAMA_PORT)
-    headers_raw = headers_raw:gsub("[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]:%s*[^\r\n]+\r\n", "")
+    headers_raw = headers_raw:gsub("(\r\n[Hh][Oo][Ss][Tt]:%s*)[^\r\n]+", "%1" .. LLAMA_HOST .. ":" .. LLAMA_PORT)
+    headers_raw = headers_raw:gsub("\r\n[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]:%s*[^\r\n]+", "")
     headers_raw = headers_raw:gsub("\r\n\r\n", "\r\nConnection: close\r\n\r\n")
     local proxied_req = headers_raw .. body_raw
 

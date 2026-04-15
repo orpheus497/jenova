@@ -107,8 +107,12 @@ local function save_chat(buf)
   local path = chat_filepath(buf)
   if not path then return end
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  vim.fn.writefile(lines, path)
-  vim.bo[buf].modified = false
+  local ret = vim.fn.writefile(lines, path)
+  if ret == 0 then
+    vim.bo[buf].modified = false
+  else
+    vim.notify("Failed to save chat: " .. path, vim.log.levels.ERROR, { title = "Jenova" })
+  end
 end
 
 local function scroll_to_bottom(buf)
@@ -206,6 +210,11 @@ end
 
 local function stream_response(buf, messages, on_done)
   stop_generation()
+
+  if vim.fn.executable("curl") ~= 1 then
+    vim.notify("curl not found on PATH — install curl to enable chat streaming", vim.log.levels.ERROR, { title = "Jenova" })
+    return
+  end
 
   local url = ep().proxy_url()
   local payload = vim.json.encode({
