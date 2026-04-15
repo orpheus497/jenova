@@ -1,0 +1,34 @@
+#!/bin/sh
+# jenova-swap-mount: Sets up a swap-backed memory filesystem for LLM models
+# This allows FreeBSD to page mmap'd model weights to a hardware swap partition
+# (like an Optane NVMe drive) instead of dropping them and re-reading from ZFS.
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "Error: must run as root (sudo ./bin/jenova-swap-mount)"
+    exit 1
+fi
+
+MOUNT_DIR="/mnt/jenova-models"
+# Default to 25G, but allow override
+SIZE="${1:-25G}"
+
+if mount | grep -q "on $MOUNT_DIR "; then
+    echo "Directory $MOUNT_DIR is already mounted."
+    exit 0
+fi
+
+echo "Creating swap-backed filesystem at $MOUNT_DIR (Size: $SIZE)..."
+mkdir -p "$MOUNT_DIR"
+mdmfs -S -s "$SIZE" md "$MOUNT_DIR"
+chmod 777 "$MOUNT_DIR"
+
+echo "Success! $MOUNT_DIR is now mounted on swap."
+echo ""
+echo "To use this with Jenova:"
+echo "1. Move or symlink your active .gguf models into $MOUNT_DIR"
+echo "   (e.g., cp models/*.gguf $MOUNT_DIR/)"
+echo "2. Update your JENOVA_MODEL path in etc/jenova.conf, or create a symlink"
+echo "   from $MOUNT_DIR into the models/agent directory."
+echo ""
+echo "To make this mount permanent across reboots, add the following to /etc/fstab:"
+echo "md $MOUNT_DIR mfs rw,-S,-s$SIZE 2 0"
