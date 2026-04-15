@@ -9,20 +9,42 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 MOUNT_DIR="/mnt/jenova-models"
-# Default to 25G, but allow override
-SIZE="${1:-25G}"
+# Default to 8G (sized for 14B Q3_K_M ~6.8 GiB + filesystem overhead)
+SIZE="${1:-8G}"
 
 if mount | grep -q "on $MOUNT_DIR "; then
-    echo "Directory $MOUNT_DIR is already mounted."
-    exit 0
+    _CURRENT_SIZE=$(df -m "$MOUNT_DIR" | tail -1 | awk '{print $2}')
+    _TARGET_MB=$(echo "$SIZE" | sed 's/G//' | awk '{printf "%d", $1 * 1024}')
+    if [ "$_CURRENT_SIZE" -eq "$_TARGET_MB" ] 2>/dev/null; then
+        echo "$MOUNT_DIR already mounted at $SIZE."
+        exit 0
+    fi
+    echo "$MOUNT_DIR mounted but wrong size ($(df -h "$MOUNT_DIR" | tail -1 | awk '{print $2}') != $SIZE)"
+    echo "Backing up model files before resize..."
+    _BACKUP_DIR=$(mktemp -d /tmp/jenova-models-backup.XXXXXX)
+    if [ -n "$(ls -A "$MOUNT_DIR" 2>/dev/null)" ]; then
+        cp -a "$MOUNT_DIR"/* "$_BACKUP_DIR"/
+        echo "Backed up to $_BACKUP_DIR"
+    fi
+    echo "Unmounting old mdmfs..."
+    umount "$MOUNT_DIR"
+    echo "Creating new ${SIZE} mdmfs..."
+    mdmfs -S -s "$SIZE" md "$MOUNT_DIR"
+    chmod 777 "$MOUNT_DIR"
+    if [ -n "$(ls -A "$_BACKUP_DIR" 2>/dev/null)" ]; then
+        echo "Restoring model files..."
+        cp -a "$_BACKUP_DIR"/* "$MOUNT_DIR"/
+        rm -rf "$_BACKUP_DIR"
+        echo "Models restored to resized mount."
+    fi
+    echo "Success! $MOUNT_DIR remounted at $SIZE."
+else
+    echo "Creating swap-backed filesystem at $MOUNT_DIR (Size: $SIZE)..."
+    mkdir -p "$MOUNT_DIR"
+    mdmfs -S -s "$SIZE" md "$MOUNT_DIR"
+    chmod 777 "$MOUNT_DIR"
+    echo "Success! $MOUNT_DIR is now mounted on swap."
 fi
-
-echo "Creating swap-backed filesystem at $MOUNT_DIR (Size: $SIZE)..."
-mkdir -p "$MOUNT_DIR"
-mdmfs -S -s "$SIZE" md "$MOUNT_DIR"
-chmod 777 "$MOUNT_DIR"
-
-echo "Success! $MOUNT_DIR is now mounted on swap."
 echo ""
 echo "To use this with Jenova:"
 echo "1. Move or symlink your active .gguf models into $MOUNT_DIR"

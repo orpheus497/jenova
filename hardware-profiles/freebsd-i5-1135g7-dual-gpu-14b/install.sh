@@ -128,7 +128,7 @@ if mount | grep -q "on $MOUNT_DIR "; then
 else
     warn "$MOUNT_DIR not mounted — model needs swap-backed mdmfs"
     warn "  Run: sudo ./hardware-profiles/freebsd-i5-1135g7-dual-gpu-14b/jenova-setup"
-    warn "  Or:  sudo mdmfs -S -s 25G md $MOUNT_DIR && chmod 777 $MOUNT_DIR"
+    warn "  Or:  sudo mdmfs -S -s 8G md $MOUNT_DIR && chmod 777 $MOUNT_DIR"
     WARNINGS=$((WARNINGS + 1))
 fi
 
