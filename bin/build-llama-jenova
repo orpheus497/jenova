@@ -40,8 +40,9 @@ else
 fi
 
 if command -v lscpu >/dev/null 2>&1; then
-    _cores="$(lscpu 2>/dev/null | awk -F: '/Core\(s\) per socket/{gsub(/ /,"",$2); print $2; exit}')"
-    _sockets="$(lscpu 2>/dev/null | awk -F: '/Socket\(s\)/{gsub(/ /,"",$2); print $2; exit}')"
+    _lscpu_output="$(lscpu 2>/dev/null)"
+    _cores="$(echo "$_lscpu_output" | awk -F: '/Core\(s\) per socket/{gsub(/ /,"",$2); print $2; exit}')"
+    _sockets="$(echo "$_lscpu_output" | awk -F: '/Socket\(s\)/{gsub(/ /,"",$2); print $2; exit}')"
     if [ -n "${_cores:-}" ] && [ -n "${_sockets:-}" ]; then
         PHYSICAL_THREADS=$((_cores * _sockets))
     else
@@ -88,7 +89,6 @@ if command -v ninja >/dev/null 2>&1; then
 fi
 
 ENABLE_VULKAN=0
-MISSING_VULKAN_PREREQS=""
 
 case "$BACKEND" in
     vulkan)

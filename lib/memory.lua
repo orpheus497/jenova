@@ -64,6 +64,11 @@ function memory.init()
   end
   -- prefer daemon helper for background tasks in future; dir creation keeps os.execute for portability
 
+  -- Seed RNG with time + PID for unique session IDs across rapid restarts
+  local pid = 0
+  pcall(function() pid = tonumber(require("ffi").C.getpid()) or 0 end)
+  math.randomseed(os.time() * 1000 + pid)
+
   session_id = string.format("%x", os.time()) .. string.format("%04x", math.random(0, 0xFFFF))
   session_start = os.time()
   session_actions = {}

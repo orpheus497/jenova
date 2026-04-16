@@ -159,7 +159,7 @@ _agent_model="${MODEL_PATH:-$JENOVA_ROOT/models/agent/Qwen2.5-Coder-14B-Instruct
 if [ -f "$_agent_model" ] || [ -L "$_agent_model" ]; then
     ok "Agent model (14B): $(basename "$_agent_model")"
     if [ -L "$_agent_model" ]; then
-        _target=$(readlink "$_agent_model" 2>/dev/null)
+        _target=$(realpath "$_agent_model" 2>/dev/null)
         if [ -f "$_target" ]; then
             ok "  -> $_target (symlink valid)"
         else

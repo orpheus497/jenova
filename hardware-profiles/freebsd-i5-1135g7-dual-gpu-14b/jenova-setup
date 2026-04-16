@@ -91,41 +91,25 @@ echo "--- Swap-Backed Model Filesystem ---"
 MOUNT_DIR="/mnt/jenova-models"
 MOUNT_SIZE="8G"
 
-if mount | grep -q "on $MOUNT_DIR "; then
-    _CURRENT_SIZE=$(df -m "$MOUNT_DIR" | tail -1 | awk '{print $2}')
-    _TARGET_MB=$(echo "$MOUNT_SIZE" | sed 's/G//' | awk '{printf "%d", $1 * 1024}')
-    if [ "$_CURRENT_SIZE" -eq "$_TARGET_MB" ] 2>/dev/null; then
-        echo "[ok]  $MOUNT_DIR already mounted at $MOUNT_SIZE"
+_SCRIPT_DIR=$(dirname "$(realpath "$0")")
+_JENOVA_ROOT=$(realpath "$_SCRIPT_DIR/../..")
+_SWAP_MOUNT_SCRIPT="$_JENOVA_ROOT/bin/jenova-swap-mount"
+
+if [ -x "$_SWAP_MOUNT_SCRIPT" ]; then
+    "$_SWAP_MOUNT_SCRIPT" "$MOUNT_SIZE" && CHANGED=1
+else
+    # Fallback: inline mdmfs setup if jenova-swap-mount is not found
+    if mount | grep -q "on $MOUNT_DIR "; then
+        echo "[ok]  $MOUNT_DIR already mounted"
         df -h "$MOUNT_DIR" | tail -1 | awk '{printf "[ok]  %s used / %s total (%s)\n", $3, $2, $5}'
     else
-        echo "[fix] $MOUNT_DIR mounted but wrong size ($(df -h "$MOUNT_DIR" | tail -1 | awk '{print $2}') != $MOUNT_SIZE)"
-        echo "       Backing up model files before resize..."
-        _BACKUP_DIR=$(mktemp -d /tmp/jenova-models-backup.XXXXXX)
-        if [ -n "$(ls -A "$MOUNT_DIR" 2>/dev/null)" ]; then
-            cp -a "$MOUNT_DIR"/* "$_BACKUP_DIR"/
-            echo "[ok]  Backed up to $_BACKUP_DIR"
-        fi
-        echo "       Unmounting old mdmfs..."
-        umount "$MOUNT_DIR"
-        echo "       Creating new $MOUNT_SIZE mdmfs..."
+        echo "[fix] Creating swap-backed mdmfs at $MOUNT_DIR ($MOUNT_SIZE)"
+        mkdir -p "$MOUNT_DIR"
         mdmfs -S -s "$MOUNT_SIZE" md "$MOUNT_DIR"
         chmod 777 "$MOUNT_DIR"
-        if [ -n "$(ls -A "$_BACKUP_DIR" 2>/dev/null)" ]; then
-            echo "       Restoring model files..."
-            cp -a "$_BACKUP_DIR"/* "$MOUNT_DIR"/
-            rm -rf "$_BACKUP_DIR"
-            echo "[ok]  Models restored to resized mount"
-        fi
         CHANGED=1
-        echo "[ok]  $MOUNT_DIR remounted at $MOUNT_SIZE"
+        echo "[ok]  $MOUNT_DIR mounted on swap"
     fi
-else
-    echo "[fix] Creating swap-backed mdmfs at $MOUNT_DIR ($MOUNT_SIZE)"
-    mkdir -p "$MOUNT_DIR"
-    mdmfs -S -s "$MOUNT_SIZE" md "$MOUNT_DIR"
-    chmod 777 "$MOUNT_DIR"
-    CHANGED=1
-    echo "[ok]  $MOUNT_DIR mounted on swap"
 fi
 
 echo ""

@@ -29,6 +29,17 @@ if is_linux then
     sa_family_t sa_family;
     char sa_data[14];
   };
+
+  struct addrinfo {
+    int ai_flags;
+    int ai_family;
+    int ai_socktype;
+    int ai_protocol;
+    socklen_t ai_addrlen;
+    struct sockaddr *ai_addr;
+    char *ai_canonname;
+    struct addrinfo *ai_next;
+  };
 ]]
 else
   socket_struct_defs = [[
@@ -53,6 +64,17 @@ else
     sa_family_t sa_family;
     char sa_data[14];
   };
+
+  struct addrinfo {
+    int ai_flags;
+    int ai_family;
+    int ai_socktype;
+    int ai_protocol;
+    socklen_t ai_addrlen;
+    char *ai_canonname;
+    struct sockaddr *ai_addr;
+    struct addrinfo *ai_next;
+  };
 ]]
 end
 
@@ -63,17 +85,6 @@ ffi.cdef(socket_struct_defs .. [[
   typedef unsigned char cc_t;
   typedef unsigned int speed_t;
   typedef int pid_t;
-
-  struct addrinfo {
-    int ai_flags;
-    int ai_family;
-    int ai_socktype;
-    int ai_protocol;
-    socklen_t ai_addrlen;
-    struct sockaddr *ai_addr;
-    char *ai_canonname;
-    struct addrinfo *ai_next;
-  };
 
   struct timeval {
     long tv_sec;
@@ -181,11 +192,16 @@ if is_linux then
   ffi_defs.SO_KEEPALIVE = 9
   ffi_defs.IPPROTO_TCP  = 6
   ffi_defs.TCP_NODELAY  = 1
+  ffi_defs.TCP_KEEPIDLE = 4   -- seconds before first keepalive probe
+  ffi_defs.TCP_KEEPINTVL = 5  -- interval between subsequent keepalive probes
+  ffi_defs.TCP_KEEPCNT = 6    -- number of unacknowledged probes before connection is dead
   ffi_defs.EAGAIN       = 11
   ffi_defs.EWOULDBLOCK  = 11
   ffi_defs.EINPROGRESS  = 115
   ffi_defs.ETIMEDOUT    = 110
   ffi_defs.EINTR        = 4
+  ffi_defs.MSG_PEEK     = 2
+  ffi_defs.MSG_DONTWAIT = 0x40
 else
   ffi_defs.O_NONBLOCK   = 0x0004
   ffi_defs.FIONBIO      = 0x8004667e
@@ -200,11 +216,16 @@ else
   ffi_defs.SO_KEEPALIVE = 0x0008
   ffi_defs.IPPROTO_TCP  = 6
   ffi_defs.TCP_NODELAY  = 1
+  ffi_defs.TCP_KEEPIDLE = 0x10   -- FreeBSD TCP_KEEPIDLE (seconds before first probe)
+  ffi_defs.TCP_KEEPINTVL = 0x200 -- FreeBSD TCP_KEEPINTVL (interval between probes)
+  ffi_defs.TCP_KEEPCNT = 0x400   -- FreeBSD TCP_KEEPCNT (max probes before dead)
   ffi_defs.EAGAIN       = 35
   ffi_defs.EWOULDBLOCK  = 35
   ffi_defs.EINPROGRESS  = 36
   ffi_defs.ETIMEDOUT    = 60
   ffi_defs.EINTR        = 4
+  ffi_defs.MSG_PEEK     = 0x02
+  ffi_defs.MSG_DONTWAIT = 0x80
 end
 
 -- FreeBSD signal numbers

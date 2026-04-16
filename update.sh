@@ -5,7 +5,8 @@
 # fork (https://github.com/orpheus497/jvim) is updated separately by pulling
 # its own repository and rebuilding.
 #
-# Usage: ./update.sh [--upgrade-plugins] [--skip-nvim] [--skip-rebuild] [--link] [--apply-profile]
+# Usage: ./update.sh [--upgrade-plugins] [--skip-nvim] [--skip-rebuild] [--link]
+#                    [--apply-profile]
 #
 #   --upgrade-plugins   Run :Lazy update (move to latest plugin versions).
 #                       Without this flag, runs :Lazy restore (pin to lock file).
