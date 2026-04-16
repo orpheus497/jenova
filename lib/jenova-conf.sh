@@ -23,7 +23,11 @@ if [ -f "$_jenova_local_candidate" ]; then
         unset _jenova_local_candidate _jenova_real_local
         return 0
     }
-    _jenova_real_root=$(realpath "$JENOVA_ROOT" 2>/dev/null) || _jenova_real_root="$JENOVA_ROOT"
+    _jenova_real_root=$(realpath "$JENOVA_ROOT" 2>/dev/null) || {
+        echo "Warning: cannot resolve JENOVA_ROOT='$JENOVA_ROOT' — skipping local conf" >&2
+        unset _jenova_local_candidate _jenova_real_local _jenova_real_root
+        return 0
+    }
     case "$_jenova_real_local" in
         "$_jenova_real_root"/etc/jenova.local.conf|\
         "$_jenova_real_root"/llama.cpp/build/jenova.local.conf)

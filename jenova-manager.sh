@@ -151,7 +151,7 @@ show_install_menu() {
     fi
 
     local selected
-    selected=$(cat "$TEMP_FILE" | tr -d '"')
+    selected=$(tr -d '"' < "$TEMP_FILE")
     if [ -z "$selected" ]; then
         $DIALOG --msgbox "No components selected." 8 40
         show_main_menu
@@ -204,7 +204,7 @@ show_update_menu() {
     fi
 
     local selected
-    selected=$(cat "$TEMP_FILE" | tr -d '"')
+    selected=$(tr -d '"' < "$TEMP_FILE")
     if [ -z "$selected" ]; then
         $DIALOG --msgbox "No components selected." 8 40
         show_main_menu
@@ -257,7 +257,7 @@ show_uninstall_menu() {
     fi
 
     local selected
-    selected=$(cat "$TEMP_FILE" | tr -d '"')
+    selected=$(tr -d '"' < "$TEMP_FILE")
     if [ -z "$selected" ]; then
         $DIALOG --msgbox "No components selected." 8 40
         show_main_menu
