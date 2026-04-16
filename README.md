@@ -1,6 +1,6 @@
 # Jenova Cognitive Architecture
 
-Jenova is a persistent, hardware-aware AI backend designed for laptops. It turns a FreeBSD laptop into an always-on cognitive engine — daemonized LLM inference that survives session logout, reconnects on demand, and scales from a 3B model on a thin-and-light APU to a full 14B model on a dedicated GPU laptop. Jenova is the project. The hardware stack, models, and memory strategies are all in service of that goal.
+Jenova is a local AI coding environment for FreeBSD laptops. It runs `llama-server`, a LuaJIT proxy, and an embedding daemon as background processes — started once, left running while you work. There is no cloud dependency. Conversation history is stored as plain text files managed by `jvim`. The install script detects your GPU and selects an appropriate model profile at setup time. Everything from the hardware configurations to the model choices to the memory strategies exists to make Jenova work well on real laptop hardware.
 
 ## The Jenova trinity
 
@@ -16,8 +16,8 @@ The backend in this repository is the shared brain. `jvim` is the editor that th
 
 ## Goals
 
-- Run persistent AI inference on a laptop — no cloud, no internet dependency, no reboot required
-- Hardware-aware: auto-detects your GPU(s) and selects the right model profile (3B → 14B) at install time
+- Run local LLM inference on a laptop — no cloud, no internet dependency, processes stay running in the background
+- Install-time profile selection: auto-detects your GPU(s) at setup and configures the right model (3B → 14B) and offload strategy
 - Low-latency proxy and RAG pipeline using LuaJIT coroutines — no subprocess overhead, no blocking I/O
 - Minimal memory footprint with optional speculative decoding for faster generation
 - FreeBSD-first: tuned for ZFS, FreeBSD paging, and Vulkan (NVIDIA, AMD, Intel)
