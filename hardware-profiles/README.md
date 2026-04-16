@@ -9,9 +9,9 @@ Hardware-specific configuration profiles for Jenova Cognitive Architecture. Each
 **Hardware:** Any Vulkan-capable GPU with 8GB+ VRAM
 **OS:** Any (Linux, FreeBSD, Windows with Vulkan)
 **Strategy:** Full single-GPU offload — all 48 layers on GPU via `-fitt` auto-fit
-**Performance:** 16K context, 2 slots, 0.5B speculative drafter
+**Performance:** 32K context, 2 slots, 0.5B speculative drafter
 
-Best-quality Jenova agent for systems with a capable GPU. 10+ GiB VRAM recommended for 16k context with KV cache and drafter. For strict 8 GiB GPUs, set `JENOVA_CTX=8192 JENOVA_SLOTS=1`.
+Best-quality Jenova agent for systems with a capable GPU. 10+ GiB VRAM recommended for 32k context with KV cache and drafter. For strict 8 GiB GPUs, set `JENOVA_CTX=8192 JENOVA_SLOTS=1`.
 
 **Suitable for:** NVIDIA RTX 3080/4070/4080/4090, AMD RX 6900/7900, Intel Arc A770 (16GB)
 
@@ -19,7 +19,7 @@ Best-quality Jenova agent for systems with a capable GPU. 10+ GiB VRAM recommend
 - `DEVICES: Vulkan0`
 - `NGL: all` (full offload)
 - `FIT_TARGET: 1024`
-- `CTX: 16384`
+- `CTX: 32768`
 
 ---
 
@@ -46,7 +46,7 @@ The compact 3B model at Q8_0 (~3.1 GiB) fits easily on either GPU alone. Running
 **Hardware:** Intel i5-1135G7 | GTX 1650 Ti 4GB + Intel Iris Xe ~7GB UMA | 16GB RAM | Intel Optane NVMe
 **OS:** FreeBSD 15
 **Strategy:** Full dual-GPU offload with speculative decoding; Optane swap-backed mdmfs for fast model loading and KV overflow
-**Performance:** All 28 layers on GPU, 16K context, 2 slots, 0.5B drafter on Iris Xe
+**Performance:** All 28 layers on GPU, 32K context, 2 slots, 0.5B drafter on Iris Xe
 
 Same hardware as profile 2, running the 7B model at Q5_K_M. Intel Optane NVMe (~7 μs swap latency) provides a fast swap-backed mdmfs mount at `/mnt/jenova-models` for cold-start model loading and KV cache overflow during long sessions.
 
@@ -60,7 +60,7 @@ sudo hardware-profiles/freebsd-i5-1135g7-dual-gpu-7b/jenova-setup
 - `DEVICES: Vulkan0,Vulkan1`
 - `NGL: all` (full offload)
 - `FIT_TARGET: 512`
-- `CTX: 16384`
+- `CTX: 32768`
 - `DRAFT_DEVICE: Vulkan1`
 
 ---
@@ -70,9 +70,9 @@ sudo hardware-profiles/freebsd-i5-1135g7-dual-gpu-7b/jenova-setup
 **Hardware:** AMD Ryzen 7 5700U 8C/16T | AMD Vega 8 UMA ~2-4GB | 15.28GB RAM | ZFS swap
 **OS:** FreeBSD 15
 **Strategy:** Partial GPU offload — 24 of 36 layers on Vega 8, remainder on CPU
-**Performance:** 8K context, 2 slots, 0.5B drafter
+**Performance:** 16K context, 2 slots, 0.5B drafter
 
-Compact 3B model suited to limited UMA VRAM. The Zen 2 CPU handles CPU-resident layers efficiently. Increase `NGL` to 36 if BIOS allocates 4+ GiB to Vega 8. Keep context conservative to avoid swap pressure (standard NVMe at ~100 μs latency).
+Compact 3B model suited to limited UMA VRAM. The Zen 2 CPU handles CPU-resident layers efficiently. Increase `NGL` to 36 if BIOS allocates 4+ GiB to Vega 8. Standard NVMe at ~100 μs latency; reduce context to 8192 if swap pressure is observed.
 
 **AMD GPU requirements:** Install `drm-kmod` + `gpu-firmware-amd-kmod`; add `amdgpu` to `kld_list`.
 
@@ -80,7 +80,7 @@ Compact 3B model suited to limited UMA VRAM. The Zen 2 CPU handles CPU-resident 
 - `DEVICES: Vulkan0` (AMD RADV)
 - `NGL: 24` (partial offload)
 - `FIT_TARGET: 256`
-- `CTX: 8192`
+- `CTX: 16384`
 - `THREADS: 8` (Zen 2 8C/16T)
 
 ---
@@ -89,10 +89,10 @@ Compact 3B model suited to limited UMA VRAM. The Zen 2 CPU handles CPU-resident 
 
 | Profile | Model | Quant | GPU Memory | Context |
 |---|---|---|---|---|
-| `vulkan-full-offload` | Qwen2.5-Coder-14B-Instruct | Q4_K_M | 8+ GiB (10+ GiB recommended) | 16K |
+| `vulkan-full-offload` | Qwen2.5-Coder-14B-Instruct | Q4_K_M | 8+ GiB (10+ GiB recommended) | 32K |
 | `freebsd-i5-1135g7-dual-gpu` | Qwen2.5-Coder-3B-Instruct | Q8_0 | ~11 GiB dual GPU | 32K |
-| `freebsd-i5-1135g7-dual-gpu-7b` | Qwen2.5-Coder-7B-Instruct | Q5_K_M | ~11 GiB dual GPU | 16K |
-| `freebsd-ryzen7-5700u-amd` | Qwen2.5-Coder-3B-Instruct | Q8_0 | ~2-4 GiB UMA (partial) | 8K |
+| `freebsd-i5-1135g7-dual-gpu-7b` | Qwen2.5-Coder-7B-Instruct | Q5_K_M | ~11 GiB dual GPU | 32K |
+| `freebsd-ryzen7-5700u-amd` | Qwen2.5-Coder-3B-Instruct | Q8_0 | ~2-4 GiB UMA (partial) | 16K |
 
 All profiles use the 0.5B Qwen2.5-Coder drafter for speculative decoding (disable with `JENOVA_DRAFT=0` if needed). The embedding server always runs on CPU using `nomic-embed-text-v1.5.Q8_0.gguf`.
 

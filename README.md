@@ -1,6 +1,6 @@
 # Jenova Cognitive Architecture
 
-Jenova is a high-performance, low-latency cognitive engine that turns a FreeBSD workstation into a persistent, systems-level AI environment. It provides hardware-aware LLM inference across multiple profiles — from compact 3B models on modest APUs to full 14B inference on discrete GPUs — managed by a daemonized backend that persists across sessions.
+Jenova is a persistent, hardware-aware AI backend designed for laptops. It turns a FreeBSD laptop into an always-on cognitive engine — daemonized LLM inference that survives session logout, reconnects on demand, and scales from a 3B model on a thin-and-light APU to a full 14B model on a dedicated GPU laptop. Jenova is the project. The hardware stack, models, and memory strategies are all in service of that goal.
 
 ## The Jenova trinity
 
@@ -16,8 +16,8 @@ The backend in this repository is the shared brain. `jvim` is the editor that th
 
 ## Goals
 
-- Persistent intelligence with a daemonized cognitive backend — services survive session logout and resume instantly
-- Hardware-aware inference: auto-detects your GPU(s) and selects the best profile from 3B → 14B Qwen2.5-Coder models
+- Run persistent AI inference on a laptop — no cloud, no internet dependency, no reboot required
+- Hardware-aware: auto-detects your GPU(s) and selects the right model profile (3B → 14B) at install time
 - Low-latency proxy and RAG pipeline using LuaJIT coroutines — no subprocess overhead, no blocking I/O
 - Minimal memory footprint with optional speculative decoding for faster generation
 - FreeBSD-first: tuned for ZFS, FreeBSD paging, and Vulkan (NVIDIA, AMD, Intel)
@@ -27,10 +27,10 @@ The backend in this repository is the shared brain. `jvim` is the editor that th
 - **Multi-profile model support:** 3B Q8_0, 7B Q5_K_M, and 14B Q4_K_M profiles — hardware auto-detected at install time.
 - **Persistent Embedding Daemon:** CPU-only nomic-embed-text server eliminates subprocess and reinitialization bottlenecks for fast retrieval-augmented generation (RAG).
 - **Vulkan GPU Offload:** Single or dual-GPU layer distribution via the llama.cpp `-fitt` auto-fitter. Works with NVIDIA (NVIDIA), AMD (RADV), and Intel (ANV) Vulkan drivers.
-- **Speculative Decoding:** 0.5B Qwen2.5-Coder drafter accelerates all main model sizes. Disabled per-profile when GPU memory is constrained.
+- **Speculative Decoding:** 0.5B Qwen2.5-Coder drafter accelerates all main model sizes.
 - **Hybrid Search:** BM25 keyword search combined with semantic vector search.
 - **FreeBSD-first:** Tuned for FreeBSD 15, ZFS ARC management, and kernel-friendly operation. Linux and macOS are supported.
-- **Fluid Memory (optional):** On systems with Intel Optane NVMe, the swap-backed mdmfs mount at `/mnt/jenova-models` provides ~7 μs page latency for KV cache overflow — enabling larger context windows on modest hardware. This is a hardware-specific feature of the `freebsd-i5-1135g7-dual-gpu-7b` profile, not a requirement of Jenova itself.
+- **Fluid Memory:** An optional technique used on the `freebsd-i5-1135g7-dual-gpu-7b` profile. By layering Intel Optane NVMe swap (UFS, ~7 μs latency) with ZFS and 16 GiB RAM, the system creates a double-paging effect — hot pages stay in RAM, warm pages flow to Optane swap, cold pages go to ZFS. This extends the effective working set of the LLM runtime well beyond physical RAM without the stall penalty of standard NVMe swap (~100 μs). It is one strategy Jenova can use, not a requirement.
 
 ## Architecture
 
@@ -51,21 +51,21 @@ The system is partitioned into four conceptual streams:
 
 ## Hardware & Performance
 
-Jenova supports multiple hardware profiles, auto-detected at install time:
+Jenova is designed for laptops. Every profile targets a real laptop form factor: thin-and-light APU, GPU laptop, or a compact workstation. The profiles auto-detect at install time — no manual hardware configuration required.
 
 | Profile | Hardware | Model | Context |
 |---|---|---|---|
-| `vulkan-full-offload` | Any GPU 8GB+ VRAM | Qwen2.5-Coder-14B Q4_K_M | 16K |
-| `freebsd-i5-1135g7-dual-gpu` | i5-1135G7 + GTX 1650 Ti + Iris Xe | Qwen2.5-Coder-3B Q8_0 | 32K |
-| `freebsd-i5-1135g7-dual-gpu-7b` | i5-1135G7 + GTX 1650 Ti + Iris Xe + Optane | Qwen2.5-Coder-7B Q5_K_M | 16K |
-| `freebsd-ryzen7-5700u-amd` | Ryzen 7 5700U + Vega 8 UMA | Qwen2.5-Coder-3B Q8_0 | 8K |
+| `vulkan-full-offload` | Any GPU 8GB+ VRAM (laptop or desktop) | Qwen2.5-Coder-14B Q4_K_M | 32K |
+| `freebsd-i5-1135g7-dual-gpu` | i5-1135G7 laptop + GTX 1650 Ti + Iris Xe | Qwen2.5-Coder-3B Q8_0 | 32K |
+| `freebsd-i5-1135g7-dual-gpu-7b` | i5-1135G7 laptop + GTX 1650 Ti + Iris Xe + Optane | Qwen2.5-Coder-7B Q5_K_M | 32K |
+| `freebsd-ryzen7-5700u-amd` | Ryzen 7 5700U thin-and-light + Vega 8 UMA | Qwen2.5-Coder-3B Q8_0 | 16K |
 
 ### i5-1135G7 Dual-GPU (3B, default)
 
 | Component | Specification |
 |---|---|
 | OS | FreeBSD 15 (STABLE/CURRENT) |
-| CPU | Intel i5-1135G7 (4P / 8T) |
+| CPU | Intel i5-1135G7 (4P / 8T) — laptop CPU |
 | GPU 0 | GTX 1650 Ti 4GB (Vulkan0) — discrete VRAM |
 | GPU 1 | Intel Iris Xe TGL GT2 (Vulkan1) — UMA, ~7 GiB from system RAM |
 | Memory | 16GB RAM |
@@ -77,12 +77,12 @@ Jenova supports multiple hardware profiles, auto-detected at install time:
 | Component | Specification |
 |---|---|
 | OS | FreeBSD 15 |
-| CPU | AMD Ryzen 7 5700U (8C / 16T, Zen 2) |
+| CPU | AMD Ryzen 7 5700U (8C / 16T, Zen 2) — thin-and-light laptop CPU |
 | GPU | AMD Radeon Vega 8 (Lucienne) — UMA, ~2-4 GiB from system RAM |
 | Storage | Standard NVMe (16 GiB ZFS swap) |
 | Memory | 15.28 GiB RAM |
 
-**Strategy:** 3B Q8_0 with partial Vega 8 offload — 24 of 36 layers on GPU, remainder on the 8C/16T Zen 2 CPU.
+**Strategy:** 3B Q8_0 with partial Vega 8 offload — 24 of 36 layers on GPU, remainder on the 8C/16T Zen 2 CPU. 16K context default; reduce to 8192 if swap pressure is observed.
 
 ### GPU Layer Distribution
 
@@ -215,14 +215,13 @@ BIOS setting: increase the UMA Frame Buffer Size to 4 GB for better GPU offload 
 
 Edit `etc/jenova.conf` to tune hardware settings. This file is automatically generated from the matched hardware profile when you run `detect-hardware.sh --apply`.
 
-### i5-1135G7 Dual-GPU Profile Settings
+### i5-1135G7 Dual-GPU Profile Settings (3B default)
 
 ```sh
 DEVICES="Vulkan0,Vulkan1"     # Dual-GPU: NVIDIA + Intel Iris Xe
-TENSOR_SPLIT="1.0,1.8"        # Split ratio: Intel Xe carries more layers (~7 GiB UMA vs NVIDIA 4 GiB)
-FIT_TARGET=768                 # Safety margin in MiB for -fitt auto-tuning
-NGL_7B="all"                   # Auto-fit all layers across dual GPU (managed by -fitt)
-CTX_SIZE="16384"               # Context window (7B: 16k)
+FIT_TARGET=512                 # Safety margin in MiB for -fitt auto-tuning
+NGL_7B="all"                   # Auto-fit all 36 layers across dual GPU (managed by -fitt)
+CTX_SIZE="32768"               # 32K context — fits easily in ~11 GiB combined GPU
 JENOVA_DRAFT=1                 # Speculative decoding on by default; set to 0 to disable
 ```
 
@@ -231,9 +230,9 @@ JENOVA_DRAFT=1                 # Speculative decoding on by default; set to 0 to
 ```sh
 DEVICES="Vulkan0"             # Single AMD Vega 8 GPU (UMA)
 TENSOR_SPLIT=""               # No tensor split — single GPU
-FIT_TARGET=512                # Smaller safety margin for UMA GPU
-NGL_7B=18                    # Explicit partial offload: 18 of 28 layers on GPU
-CTX_SIZE="8192"              # Conservative context for limited UMA VRAM
+FIT_TARGET=256                # Smaller safety margin for UMA GPU
+NGL_7B=24                    # Partial offload: 24 of 36 layers on GPU
+CTX_SIZE="16384"             # 16K context — manageable for UMA; reduce to 8192 if swap pressure observed
 JENOVA_DRAFT=1               # Speculative decoding on (0.5B drafter runs on CPU)
 THREADS=8                    # Full core count (8C Zen 2)
 THREADS_BATCH=12             # ~1.5x cores for batch processing
@@ -414,7 +413,7 @@ Use `cleanup.sh` to clear logs, cache, and stale state files without touching mo
 
 | Variable | Default | Effect |
 |---|---|---|
-| `JENOVA_CTX` | `16384` | Context window token limit |
+| `JENOVA_CTX` | Profile-dependent (32768 for most; 16384 for Ryzen) | Context window token limit |
 | `JENOVA_SLOTS` | `2` | Number of parallel inference slots |
 | `JENOVA_CONN_TIMEOUT` | `600` | Max seconds a proxy connection coroutine may live |
 | `JENOVA_TIMEOUT` | `600` | Agent HTTP timeout (seconds) |
@@ -540,9 +539,9 @@ The `JENOVA_ROOT` environment variable is automatically set and exported before 
 - The codebase avoids subprocess reinitialization penalties by using persistent daemon processes.
 - Backup files in `.jenova/backups/` are rotated automatically: only the 5 most recent backups per filename are kept.
 - Shell command output is capped at ~10KB in memory (head + tail) before being sent to the model, preventing OOM on runaway commands.
-- **Ryzen profile**: Standard NVMe swap latency (~100 μs) is much slower than Optane (~7 μs). Keep `CTX_SIZE=8192` to avoid heavy swap pressure. Reduce to 4096 if you see paging stalls.
+- **Ryzen profile**: Standard NVMe swap latency (~100 μs). Default is 16K context — reduce to 8192 if swap pressure is observed (watch `swapinfo` and `vmstat -H`).
 - **i5 dual-GPU 3B profile**: 3B Q8_0 with 32K context uses only ~4 GiB of the 11 GiB combined GPU — no swap pressure expected.
-- **i5 dual-GPU 7B+Optane profile**: Optane NVMe swap makes large-context 7B inference viable. The `-fitt 512` reserves GPU headroom so KV cache doesn't OOM during long sessions.
+- **i5 dual-GPU 7B+Optane profile**: Optane NVMe (~7 μs swap latency) enables comfortable 32K context with the 7B model. The `-fitt 512` reserves GPU headroom so KV cache doesn't OOM during long sessions.
 
 ## Web Search
 
