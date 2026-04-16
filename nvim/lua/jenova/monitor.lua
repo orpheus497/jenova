@@ -162,7 +162,12 @@ local function poll_health(endpoints, callback)
           M.state.slots_used = (data.slots_processing or 0)
           M.state.slots_total = (data.slots_idle or 0) + (data.slots_processing or 0)
         end
-        M.state.proxy_ok = true
+        -- Only set proxy_ok from /health when in LAN mode (hitting the proxy).
+        -- In local mode, /health hits llama-server directly; proxy_ok is driven
+        -- by the dedicated TCP probe instead.
+        if is_lan_mode() then
+          M.state.proxy_ok = true
+        end
         update_connected_state()
         if callback then callback(true) end
         return
@@ -347,14 +352,10 @@ function M.start_polling()
   end
 
   -- Cleanup timer on Neovim exit to prevent late callbacks on invalid state
-  -- Guard: only register once even if start_polling() is called multiple times
-  if not M._vimleave_registered then
-    M._vimleave_registered = true
-    vim.api.nvim_create_autocmd("VimLeavePre", {
-      callback = function() M.stop_polling() end,
-      once = true,
-    })
-  end
+  vim.api.nvim_create_autocmd("VimLeavePre", {
+    callback = function() M.stop_polling() end,
+    once = true,
+  })
 end
 
 --- Stop polling and clean up timer handle

@@ -88,19 +88,17 @@ local function send_all(fd, data)
   return true
 end
 
-local function recv_all(fd, buf, buf_size, wall_timeout)
+local function recv_all(fd, buf, buf_size, deadline)
   local chunks = {}
   local total_recv = 0
-  local stall_count = 0
   local recv_err = nil
   local MAX_RECV_SIZE = 10 * 1024 * 1024  -- 10MB cap to prevent memory exhaustion
-  local start_time = os.time()
-  local max_stall = wall_timeout and (wall_timeout * 20) or 12000  -- 20 iterations/sec × timeout (50ms sleep per stall)
+  -- Default deadline: 30 seconds from now if none provided
+  deadline = deadline or (os.time() + 30)
   while true do
     ::retry::
-    -- Wall-clock timeout: break if elapsed time exceeds configured timeout
-    if wall_timeout and (os.time() - start_time) >= wall_timeout then
-      recv_err = "wall-clock timeout (" .. wall_timeout .. "s)"
+    if os.time() >= deadline then
+      recv_err = "recv() timed out"
       break
     end
     local recv_n = ffi.C.recv(fd, buf, buf_size, 0)
@@ -111,7 +109,6 @@ local function recv_all(fd, buf, buf_size, wall_timeout)
         break
       end
       chunks[#chunks + 1] = ffi.string(buf, recv_n)
-      stall_count = 0
     elseif recv_n == 0 then
       break
     else
@@ -119,8 +116,6 @@ local function recv_all(fd, buf, buf_size, wall_timeout)
       if err == EINTR then
         goto retry
       elseif err == EAGAIN or err == EWOULDBLOCK or err == ETIMEDOUT then
-        stall_count = stall_count + 1
-        if stall_count >= max_stall then break end
         local tv_sleep = ffi.new("struct timeval")
         tv_sleep.tv_sec = 0
         tv_sleep.tv_usec = 50000
@@ -213,7 +208,7 @@ function http.post(url, body, timeout)
   end
 
   local buf = ffi.new("char[?]", 131072)
-  local chunks, recv_err = recv_all(fd, buf, 131072, timeout)
+  local chunks, recv_err = recv_all(fd, buf, 131072, os.time() + timeout)
   ffi.C.close(fd)
 
   if recv_err then return 499, recv_err end
@@ -273,7 +268,7 @@ function http.get(url, timeout)
   end
 
   local buf = ffi.new("char[?]", 65536)
-  local chunks, recv_err = recv_all(fd, buf, 65536, timeout)
+  local chunks, recv_err = recv_all(fd, buf, 65536, os.time() + timeout)
   ffi.C.close(fd)
 
   if recv_err then return 499, recv_err end

@@ -107,10 +107,11 @@ local function save_chat(buf)
   local path = chat_filepath(buf)
   if not path then return end
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  if vim.fn.writefile(lines, path) == 0 then
+  local ret = vim.fn.writefile(lines, path)
+  if ret == 0 then
     vim.bo[buf].modified = false
   else
-    vim.notify("Failed to save chat file", vim.log.levels.ERROR, { title = "Jenova" })
+    vim.notify("Failed to save chat: " .. path, vim.log.levels.ERROR, { title = "Jenova" })
   end
 end
 
@@ -209,6 +210,11 @@ end
 
 local function stream_response(buf, messages, on_done)
   stop_generation()
+
+  if vim.fn.executable("curl") ~= 1 then
+    vim.notify("curl not found. Install curl to enable chat streaming.", vim.log.levels.ERROR, { title = "Jenova" })
+    return
+  end
 
   local url = ep().proxy_url()
   local payload = vim.json.encode({
@@ -450,6 +456,11 @@ local function strip_code_fences(text)
 end
 
 local function do_rewrite(src_buf, start_ln, end_ln, instruction, selection, ft)
+  if vim.fn.executable("curl") ~= 1 then
+    vim.notify("curl not found. Install curl to enable rewrite.", vim.log.levels.ERROR, { title = "Jenova" })
+    return
+  end
+
   local user_msg = string.format(
     "Visual Rewrite: %s\n\nI have the following selection:\n```%s\n%s\n```",
     instruction, ft, selection

@@ -29,6 +29,17 @@ if is_linux then
     sa_family_t sa_family;
     char sa_data[14];
   };
+
+  struct addrinfo {
+    int ai_flags;
+    int ai_family;
+    int ai_socktype;
+    int ai_protocol;
+    socklen_t ai_addrlen;
+    struct sockaddr *ai_addr;
+    char *ai_canonname;
+    struct addrinfo *ai_next;
+  };
 ]]
 else
   socket_struct_defs = [[
@@ -53,6 +64,17 @@ else
     sa_family_t sa_family;
     char sa_data[14];
   };
+
+  struct addrinfo {
+    int ai_flags;
+    int ai_family;
+    int ai_socktype;
+    int ai_protocol;
+    socklen_t ai_addrlen;
+    char *ai_canonname;
+    struct sockaddr *ai_addr;
+    struct addrinfo *ai_next;
+  };
 ]]
 end
 
@@ -63,17 +85,6 @@ ffi.cdef(socket_struct_defs .. [[
   typedef unsigned char cc_t;
   typedef unsigned int speed_t;
   typedef int pid_t;
-
-  struct addrinfo {
-    int ai_flags;
-    int ai_family;
-    int ai_socktype;
-    int ai_protocol;
-    socklen_t ai_addrlen;
-    struct sockaddr *ai_addr;
-    char *ai_canonname;
-    struct addrinfo *ai_next;
-  };
 
   struct timeval {
     long tv_sec;

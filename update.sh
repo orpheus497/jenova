@@ -14,9 +14,9 @@
 #   --skip-rebuild      Skip llama.cpp rebuild check.
 #   --link              Re-establish symlinks from ~/.config/nvim into the repo
 #                       if a previous --link install was clobbered by a copy.
-#   --apply-profile     Re-apply the matched hardware profile after pulling.
-#                       Opt-in only — without this flag any local edits to
-#                       etc/jenova.conf are preserved unchanged.
+#   --apply-profile     Re-apply the detected hardware profile (overwrites
+#                       etc/jenova.conf). Skipped by default to preserve any
+#                       manual edits or pinned profile configs.
 #
 # Steps:
 #   1. git pull (update Jenova repo from origin)
@@ -46,7 +46,7 @@ for _arg in "$@"; do
         --link)            LINK=1 ;;
         --apply-profile)   APPLY_PROFILE=1 ;;
         -h|--help)
-            sed -n '2,27p' "$0"
+            sed -n '2,26p' "$0"
             exit 0
             ;;
         *)
@@ -86,10 +86,10 @@ git pull origin "${_branch:-main}" && ok "git pull complete" || {
 }
 
 # Re-apply hardware profile only when explicitly requested via --apply-profile.
-# Without this flag, local edits to etc/jenova.conf are preserved.
+# By default we skip this to avoid overwriting user-customised etc/jenova.conf.
 DETECT_SCRIPT="$JENOVA_ROOT/hardware-profiles/detect-hardware.sh"
 if [ "$APPLY_PROFILE" = "1" ] && [ -f "$DETECT_SCRIPT" ] && [ -x "$DETECT_SCRIPT" ]; then
-    info "Re-applying hardware profile..."
+    info "Re-applying hardware profile (--apply-profile)..."
     "$DETECT_SCRIPT" --apply || warn "Failed to re-apply hardware profile"
 fi
 

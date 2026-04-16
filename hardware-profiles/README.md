@@ -16,7 +16,32 @@ This directory contains hardware-specific configuration profiles for Jenova Cogn
 - NGL_7B: all (full offload with auto-fit)
 - CTX: 16384
 
-### 2. `freebsd-ryzen7-5700u-amd/`
+### 2. `freebsd-i5-1135g7-dual-gpu-14b/`
+**Hardware:** Intel i5-1135G7 | GTX 1650 Ti 4GB + Intel Iris Xe ~7GB | 16GB RAM | Optane NVMe
+**OS:** FreeBSD 15
+**Model:** Qwen2.5-Coder-14B-Instruct-Q3_K_M (~6.8 GiB)
+**Strategy:** Full dual-GPU offload with speculative decoding
+**Performance:** All 48 layers on GPU, 16K context, 2 slots, 0.5B drafter
+
+Same hardware as profile 1, tuned for a 14B model. Model (~6.8 GiB) fits entirely
+across both GPUs (~11 GiB combined). 0.5B speculative drafter enabled (same Qwen2.5
+family — good acceptance rate). Model loaded from swap-backed `mdmfs -S` filesystem
+at `/mnt/jenova-models`. No explicit tensor split — `-fitt` probes free VRAM per device.
+
+**Key settings:**
+- DEVICES: Vulkan0,Vulkan1
+- TENSOR_SPLIT: (none — let -fitt auto-distribute)
+- NGL_7B: all (auto-fit with -fitt 768)
+- CTX: 16384 (2 slots, q8_0 KV)
+- DRAFT: enabled (0.5B Qwen2.5-Coder)
+- HEALTH_TIMEOUT: 120s
+
+**Manual deploy only** (auto-detection can't distinguish model size):
+```bash
+cp hardware-profiles/freebsd-i5-1135g7-dual-gpu-14b/jenova.conf etc/jenova.conf
+```
+
+### 3. `freebsd-ryzen7-5700u-amd/`
 **Hardware:** AMD Ryzen 7 5700U 8C/16T | AMD Vega 8 (UMA ~2-4GB) | 15GB RAM | ZFS swap
 **OS:** FreeBSD 15
 **Strategy:** Hybrid CPU+GPU inference with partial offload
@@ -28,7 +53,7 @@ This directory contains hardware-specific configuration profiles for Jenova Cogn
 - CTX: 8192 (conservative for UMA)
 - THREADS: 8 (Zen 2 handles CPU layers well)
 
-### 3. `vulkan-full-offload/`
+### 4. `vulkan-full-offload/`
 **Hardware:** Generic Vulkan GPU with 8GB+ VRAM (NVIDIA/AMD/Intel)
 **OS:** Any (Linux, FreeBSD, Windows with Vulkan)
 **Strategy:** Full GPU offload for maximum performance

@@ -23,11 +23,7 @@ else
     exit 1
 fi
 
-if [ -f "$JENOVA_ROOT/etc/jenova.local.conf" ]; then
-    . "$JENOVA_ROOT/etc/jenova.local.conf"
-elif [ -f "$JENOVA_ROOT/llama.cpp/build/jenova.local.conf" ]; then
-    . "$JENOVA_ROOT/llama.cpp/build/jenova.local.conf"
-fi
+. "$JENOVA_ROOT/lib/jenova-conf.sh"
 
 # Ensure runtime directories exist with proper permissions
 # Note: Run without sudo to avoid permission issues with lock files
@@ -103,7 +99,6 @@ else
 fi
 
 export JENOVA_LLAMA_URL="http://${HOST}:${LLAMA_PORT}"
-export JENOVA_LLAMA_EMBED_URL="${LLAMA_EMBED_URL:-http://${HOST}:${LLAMA_EMBED_PORT}}"
 export JENOVA_PROXY_PORT="$PORT"
 export JENOVA_PROXY_HOST="$HOST"
 export JENOVA_CTX="$CTX_SIZE"
@@ -170,7 +165,7 @@ _use_vulkan_fallback() {
 _vulkan_backend_available() {
     [ -f "$LLAMA_LIB_DIR/libggml-vulkan.so" ] || \
     [ -f "$LLAMA_LIB_DIR/libggml-vulkan.so.0" ] || \
-    ls "$LLAMA_LIB_DIR"/libggml-vulkan.so.* >/dev/null 2>&1
+    find "$LLAMA_LIB_DIR" -maxdepth 1 -name 'libggml-vulkan.so.*' -print -quit 2>/dev/null | grep -q .
 }
 
 _launch_llama_server_bg() {
@@ -463,16 +458,14 @@ done
 if [ "$1" = "--daemon" ]; then
     shift
     # Strip --watch from remaining args (it's for post-startup, not llama-server)
-    _FILTERED_ARGS=""
-    for _arg in "$@"; do
-        if [ "$_arg" != "--watch" ] && [ "$_arg" != "--lan" ]; then _FILTERED_ARGS="$_FILTERED_ARGS $_arg"; fi
+    # Strip jenova-ca-specific flags that aren't for llama-server
+    for _arg; do
+        shift
+        case "$_arg" in
+            --watch|--lan|--daemon) continue ;;
+        esac
+        set -- "$@" "$_arg"
     done
-    # Strip any other jenova-ca flags that aren't for llama-server
-    _FINAL_LLAMA_ARGS=""
-    for _arg in $_FILTERED_ARGS; do
-        if [ "$_arg" != "--daemon" ]; then _FINAL_LLAMA_ARGS="$_FINAL_LLAMA_ARGS $_arg"; fi
-    done
-    set -- $_FINAL_LLAMA_ARGS
 
     # Acquire exclusive lock to prevent concurrent startup (TOCTOU guard)
     # Use portable locking: flock on Linux/FreeBSD, or fallback to mkdir-based lock
@@ -480,7 +473,6 @@ if [ "$1" = "--daemon" ]; then
 
     if command -v flock >/dev/null 2>&1; then
         # flock available (Linux, FreeBSD with flock installed)
-        _LOCK_METHOD="flock"
         exec 9>"$LOCK_FILE"
         if ! flock -n 9; then
             echo "Another instance is starting. Exiting." >&2
@@ -488,7 +480,6 @@ if [ "$1" = "--daemon" ]; then
         fi
     else
         # Fallback: atomic mkdir-based locking (portable but requires cleanup)
-        _LOCK_METHOD="mkdir"
         if ! mkdir "$LOCK_FILE.d" 2>/dev/null; then
             if [ -d "$LOCK_FILE.d" ]; then
                 # Check if lock is stale (>2 minutes old)
@@ -540,7 +531,7 @@ if [ "$1" = "--daemon" ]; then
         done
         if $_ALL_ALIVE && $_ANY_ALIVE; then
             echo "Jenova CA already running (llama=$OLD_LLAMA_PID proxy=$OLD_PROXY_PID embed=${OLD_EMBED_PID:-none})."
-            [ "$_LOCK_METHOD" = "flock" ] && exec 9>&-
+            exec 9>&-
             exit 0
         fi
         if $_ANY_ALIVE; then
@@ -600,7 +591,7 @@ if [ "$1" = "--daemon" ]; then
         if ! kill -0 "$LLAMA_PID" 2>/dev/null; then
             echo "ERROR: llama-server (PID $LLAMA_PID) died during startup. Check $LOG_FILE" >&2
             if [ -n "$EMBED_PID" ]; then kill "$EMBED_PID" 2>/dev/null || true; fi
-            [ "$_LOCK_METHOD" = "flock" ] && exec 9>&-
+            exec 9>&-
             exit 1
         fi
         sleep "$HEALTH_INTERVAL"
@@ -611,7 +602,7 @@ if [ "$1" = "--daemon" ]; then
         echo "Check logs at $LOG_FILE" >&2
         kill "$LLAMA_PID" 2>/dev/null || true
         if [ -n "$EMBED_PID" ]; then kill "$EMBED_PID" 2>/dev/null || true; fi
-        [ "$_LOCK_METHOD" = "flock" ] && exec 9>&-
+        exec 9>&-
         exit 1
     fi
 
@@ -635,7 +626,7 @@ if [ "$1" = "--daemon" ]; then
         _ANY_DEAD=true
     fi
     if $_ANY_DEAD; then
-        [ "$_LOCK_METHOD" = "flock" ] && exec 9>&-
+        exec 9>&-
         exit 1
     fi
 
@@ -643,7 +634,7 @@ if [ "$1" = "--daemon" ]; then
     printf '%s' "$LLAMA_PID $PROXY_PID${EMBED_PID:+ $EMBED_PID}" > "$PID_FILE"
     echo "" >> "$PID_FILE"
 
-    [ "$_LOCK_METHOD" = "flock" ] && exec 9>&-
+    exec 9>&-
 
     if $_WATCH_AFTER_START; then
         echo "Entering watchdog mode..."
