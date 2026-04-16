@@ -16,7 +16,7 @@
 _find_model() {
     _dir="$1"
     if [ -d "$_dir" ]; then
-        find "$_dir" -maxdepth 1 -name "*.gguf" -type f 2>/dev/null | sort | head -n 1
+        find "$_dir" -maxdepth 1 -name "*.gguf" \( -type f -o -type l \) 2>/dev/null | sort | head -n 1
     fi
 }
 

@@ -23,11 +23,7 @@ else
     exit 1
 fi
 
-if [ -f "$JENOVA_ROOT/etc/jenova.local.conf" ]; then
-    . "$JENOVA_ROOT/etc/jenova.local.conf"
-elif [ -f "$JENOVA_ROOT/llama.cpp/build/jenova.local.conf" ]; then
-    . "$JENOVA_ROOT/llama.cpp/build/jenova.local.conf"
-fi
+. "$JENOVA_ROOT/lib/jenova-conf.sh"
 
 # Ensure runtime directories exist with proper permissions
 # Note: Run without sudo to avoid permission issues with lock files
@@ -169,7 +165,7 @@ _use_vulkan_fallback() {
 _vulkan_backend_available() {
     [ -f "$LLAMA_LIB_DIR/libggml-vulkan.so" ] || \
     [ -f "$LLAMA_LIB_DIR/libggml-vulkan.so.0" ] || \
-    ls "$LLAMA_LIB_DIR"/libggml-vulkan.so.* >/dev/null 2>&1
+    find "$LLAMA_LIB_DIR" -maxdepth 1 -name 'libggml-vulkan.so.*' -print -quit 2>/dev/null | grep -q .
 }
 
 _launch_llama_server_bg() {
@@ -410,11 +406,27 @@ if [ "${_ENTER_WATCHDOG:-0}" = "1" ]; then
 fi
 
 # --- Startup banner ---
+# --lan flag: bind on all interfaces for LAN access
+for _arg in "$@"; do
+    if [ "$_arg" = "--lan" ]; then
+        HOST="0.0.0.0"
+        _INT_HOST="127.0.0.1"
+        API_URL="http://${_INT_HOST}:${PORT}"
+        LLAMA_URL="http://${_INT_HOST}:${LLAMA_PORT}"
+        LLAMA_EMBED_URL="http://${_INT_HOST}:${LLAMA_EMBED_PORT}"
+        break
+    fi
+done
+
 if [ "${JENOVA_FORCE_VULKAN:-0}" = "1" ]; then
     _use_vulkan_fallback
 fi
 
 echo "Starting Jenova CA..."
+echo "  Bind:      $HOST:$PORT (llama:$LLAMA_PORT embed:$LLAMA_EMBED_PORT)"
+if [ "$HOST" = "127.0.0.1" ]; then
+    echo "             Local only — use 'jenova-ca --daemon --lan' for LAN access"
+fi
 echo "  Model:     $MODEL_PATH"
 echo "  Embed:     $MODEL_EMBED (CPU-only, Vulkan disabled)"
 if [ -n "$RUN_DEV_ARGS" ]; then
@@ -446,11 +458,14 @@ done
 if [ "$1" = "--daemon" ]; then
     shift
     # Strip --watch from remaining args (it's for post-startup, not llama-server)
-    _FILTERED_ARGS=""
-    for _arg in "$@"; do
-        if [ "$_arg" != "--watch" ]; then _FILTERED_ARGS="$_FILTERED_ARGS $_arg"; fi
+    # Strip jenova-ca-specific flags that aren't for llama-server
+    for _arg; do
+        shift
+        case "$_arg" in
+            --watch|--lan|--daemon) continue ;;
+        esac
+        set -- "$@" "$_arg"
     done
-    set -- $_FILTERED_ARGS
 
     # Acquire exclusive lock to prevent concurrent startup (TOCTOU guard)
     # Use portable locking: flock on Linux/FreeBSD, or fallback to mkdir-based lock

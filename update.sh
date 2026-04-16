@@ -6,6 +6,7 @@
 # its own repository and rebuilding.
 #
 # Usage: ./update.sh [--upgrade-plugins] [--skip-nvim] [--skip-rebuild] [--link]
+#                    [--apply-profile]
 #
 #   --upgrade-plugins   Run :Lazy update (move to latest plugin versions).
 #                       Without this flag, runs :Lazy restore (pin to lock file).
@@ -13,6 +14,9 @@
 #   --skip-rebuild      Skip llama.cpp rebuild check.
 #   --link              Re-establish symlinks from ~/.config/nvim into the repo
 #                       if a previous --link install was clobbered by a copy.
+#   --apply-profile     Re-apply the detected hardware profile (overwrites
+#                       etc/jenova.conf). Skipped by default to preserve any
+#                       manual edits or pinned profile configs.
 #
 # Steps:
 #   1. git pull (update Jenova repo from origin)
@@ -32,6 +36,7 @@ UPGRADE_PLUGINS=0
 SKIP_NVIM=0
 SKIP_REBUILD=0
 LINK=0
+APPLY_PROFILE=0
 
 for _arg in "$@"; do
     case "$_arg" in
@@ -39,8 +44,9 @@ for _arg in "$@"; do
         --skip-nvim)       SKIP_NVIM=1 ;;
         --skip-rebuild)    SKIP_REBUILD=1 ;;
         --link)            LINK=1 ;;
+        --apply-profile)   APPLY_PROFILE=1 ;;
         -h|--help)
-            sed -n '2,23p' "$0"
+            sed -n '2,26p' "$0"
             exit 0
             ;;
         *)
@@ -78,6 +84,14 @@ _branch=$(git branch --show-current 2>/dev/null || echo "main")
 git pull origin "${_branch:-main}" && ok "git pull complete" || {
     warn "git pull failed — continuing with current code"
 }
+
+# Re-apply hardware profile only when explicitly requested via --apply-profile.
+# By default we skip this to avoid overwriting user-customised etc/jenova.conf.
+DETECT_SCRIPT="$JENOVA_ROOT/hardware-profiles/detect-hardware.sh"
+if [ "$APPLY_PROFILE" = "1" ] && [ -f "$DETECT_SCRIPT" ] && [ -x "$DETECT_SCRIPT" ]; then
+    info "Re-applying hardware profile (--apply-profile)..."
+    "$DETECT_SCRIPT" --apply || warn "Failed to re-apply hardware profile"
+fi
 
 echo ""
 info "Recent changes (last 10 commits):"
@@ -173,9 +187,10 @@ if [ "$SKIP_NVIM" = "0" ] && command -v nvim >/dev/null 2>&1; then
             done
             ok "Symlinked Jenova nvim config — edits in $NVIM_CONFIG_SRC are live"
         elif [ -L "$NVIM_CONFIG_DST/init.lua" ]; then
-            _LINK_TGT=$(readlink "$NVIM_CONFIG_DST/init.lua")
+            _LINK_TGT=$(realpath "$NVIM_CONFIG_DST/init.lua" 2>/dev/null || readlink -f "$NVIM_CONFIG_DST/init.lua" 2>/dev/null || readlink "$NVIM_CONFIG_DST/init.lua")
+            _NVIM_SRC_REAL=$(realpath "$NVIM_CONFIG_SRC" 2>/dev/null || readlink -f "$NVIM_CONFIG_SRC" 2>/dev/null || echo "$NVIM_CONFIG_SRC")
             case "$_LINK_TGT" in
-                "$NVIM_CONFIG_SRC"/*|"$NVIM_CONFIG_SRC")
+                "$_NVIM_SRC_REAL"/*|"$_NVIM_SRC_REAL")
                     ok "Symlink mode active — files auto-updated via git pull"
                     ;;
                 *)

@@ -11,7 +11,7 @@
 #     the same host/port/model configuration.
 #   - Export JENOVA_CONNECT_HOST, JENOVA_PORT, JENOVA_LLAMA_PORT,
 #     JENOVA_LLAMA_EMBED_PORT, JENOVA_ROOT, and JENOVA_API_URL so that the
-#     Jenova nvim plugins (llama.lua, gp.lua, jenova/monitor.lua,
+#     Jenova nvim plugins (llama.lua, chat.lua, jenova/monitor.lua,
 #     jenova/health.lua) read the correct endpoints at startup.
 #   - Set LD_LIBRARY_PATH so llama.cpp shared libraries are visible to any
 #     child process spawned by the editor (e.g. headless Lazy installs).
@@ -258,7 +258,7 @@ mkdir -p "$JENOVA_DIR"
 [ -n "$CACHE_DIR" ] && mkdir -p "$CACHE_DIR"
 
 # Export environment for the jvim editor and Jenova plugins.
-# llama.lua, gp.lua, jenova/monitor.lua, jenova/health.lua all read these.
+# llama.lua, chat.lua, jenova/monitor.lua, jenova/health.lua all read these.
 # Keep this list in sync with runtime/doc/jvim.txt in the jvim repo.
 export JENOVA_CONNECT_HOST="$CONNECT_HOST"
 export JENOVA_PORT="$PORT"

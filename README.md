@@ -291,7 +291,7 @@ The `jvim` wrapper:
 - Exports environment variables (`JENOVA_CONNECT_HOST`, `JENOVA_PORT`, `JENOVA_LLAMA_PORT`) so plugins can connect
 - Stops the backend on exit (only if `jvim` started it)
 
-**Do NOT launch `nvim` directly** — the plugins (gp.nvim, llama.vim) require environment variables set by `jvim` to connect to the local backend. Launching `nvim` directly will cause connection failures and may attempt to use external APIs.
+**Do NOT launch `nvim` directly** — the plugins (jenova-chat, llama.vim) require environment variables set by `jvim` to connect to the local backend. Launching `nvim` directly will cause connection failures and may attempt to use external APIs.
 
 ### Endpoints
 
@@ -451,7 +451,7 @@ Or set `JENOVA_MODEL` environment variable to point to your model file.
 - Exports required environment variables (`JENOVA_CONNECT_HOST`, `JENOVA_PORT`, etc.)
 - Ensures plugins can connect to the local backend
 
-If you launch `nvim` directly, you'll see warning messages from gp.nvim and llama.vim about missing environment variables.
+If you launch `nvim` directly, you'll see warning messages from jenova-chat and llama.vim about missing environment variables.
 
 #### "Permission denied" or "Cannot create lock" errors
 

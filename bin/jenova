@@ -17,13 +17,7 @@ else
     exit 1
 fi
 
-if [ -f "$JENOVA_ROOT/etc/jenova.local.conf" ]; then
-    . "$JENOVA_ROOT/etc/jenova.local.conf"
-elif [ -f "$JENOVA_ROOT/llama.cpp/build/jenova.local.conf" ]; then
-    . "$JENOVA_ROOT/llama.cpp/build/jenova.local.conf"
-fi
-
-# Separate HOST (bind address) from CONNECT_HOST (client connect address)
+. "$JENOVA_ROOT/lib/jenova-conf.sh"
 # HOST may be 0.0.0.0 (listen on all interfaces), but clients need a real IP
 CONNECT_HOST="${JENOVA_CONNECT_HOST:-127.0.0.1}"
 API_URL="http://${CONNECT_HOST}:${PORT}"

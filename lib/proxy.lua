@@ -15,11 +15,15 @@ local search = require("search")
 local embed = require("embed")
 local prompts = require("prompts")
 
-local HOST = os.getenv("JENOVA_PROXY_HOST") or "127.0.0.1"
-local PORT = tonumber(os.getenv("JENOVA_PROXY_PORT")) or 8080
-local LLAMA_URL = os.getenv("JENOVA_LLAMA_URL") or "http://127.0.0.1:8081"
+local HOST = os.getenv("JENOVA_PROXY_HOST") or os.getenv("JENOVA_HOST") or "127.0.0.1"
+local PORT = tonumber(os.getenv("JENOVA_PROXY_PORT") or os.getenv("JENOVA_PORT")) or 8080
+local LLAMA_URL = os.getenv("JENOVA_LLAMA_URL") or "http://127.0.0.1:" .. (os.getenv("JENOVA_LLAMA_PORT") or "8081")
 local LLAMA_PORT = tonumber(LLAMA_URL:match(":(%d+)")) or 8081
-local LLAMA_HOST = LLAMA_URL:match("//([^:/]+)") or HOST
+local LLAMA_HOST = LLAMA_URL:match("//([^:/]+)") or "127.0.0.1"
+local LLAMA_CONNECT_HOST = LLAMA_HOST
+if LLAMA_CONNECT_HOST == "0.0.0.0" or LLAMA_CONNECT_HOST == "::" or LLAMA_CONNECT_HOST == "*" then
+    LLAMA_CONNECT_HOST = "127.0.0.1"
+end
 
 local embed_ok, embed_res = pcall(function()
   return embed.init({
@@ -64,6 +68,12 @@ local function set_nonblocking(fd)
     ffi.C.fcntl(fd, _ffi_defs.F_SETFL, bit.bor(flags, _ffi_defs.O_NONBLOCK))
 end
 
+local function set_socket_opts(fd)
+    local one = ffi.new("int[1]", 1)
+    ffi.C.setsockopt(fd, _ffi_defs.IPPROTO_TCP, _ffi_defs.TCP_NODELAY, one, ffi.sizeof("int"))
+    ffi.C.setsockopt(fd, SOL_SOCKET, _ffi_defs.SO_KEEPALIVE, one, ffi.sizeof("int"))
+end
+
 local function decode_chunked_body(after_headers)
     local decoded = {}
     local pos = 1
@@ -81,13 +91,16 @@ local function decode_chunked_body(after_headers)
     return table.concat(decoded)
 end
 
+local EINTR = 4
 local function async_recv(fd, buf, len)
     while true do
         local n = ffi.C.recv(fd, buf, len, 0)
         if n >= 0 then return tonumber(n) end
         local err = ffi.errno()
+        if err == EINTR then goto retry end
         if err ~= EAGAIN and err ~= EWOULDBLOCK then return -1, err end
         coroutine.yield("read", fd)
+        ::retry::
     end
 end
 
@@ -277,6 +290,7 @@ local active_connection_count = 0
 
 local function proxy_connection(client_fd, conn_fds)
     set_nonblocking(client_fd)
+    set_socket_opts(client_fd)
     conn_fds.client = client_fd
     conn_fds.llama = -1
 
@@ -330,18 +344,13 @@ local function proxy_connection(client_fd, conn_fds)
         local backend_ok = false
         if health_fd >= 0 then
             set_nonblocking(health_fd)
-            -- Normalize wildcard bind addresses (e.g., 0.0.0.0) to a loopback address for connect().
-            local backend_connect_host = LLAMA_HOST
-            if backend_connect_host == "0.0.0.0" or backend_connect_host == "::" or backend_connect_host == "*" then
-                backend_connect_host = "127.0.0.1"
-            end
             local h_addr = ffi.new("struct sockaddr_in")
             if not _ffi_defs.IS_LINUX then
                 h_addr.sin_len = ffi.sizeof(h_addr)
             end
             h_addr.sin_family = AF_INET
             h_addr.sin_port   = ffi.C.htons(LLAMA_PORT)
-            h_addr.sin_addr.s_addr = ffi.C.inet_addr(backend_connect_host)
+            h_addr.sin_addr.s_addr = ffi.C.inet_addr(LLAMA_CONNECT_HOST)
             backend_ok = (async_connect(health_fd, h_addr) == true)
             ffi.C.close(health_fd)
         end
@@ -353,6 +362,7 @@ local function proxy_connection(client_fd, conn_fds)
             backend    = string.format("%s:%d", LLAMA_HOST, LLAMA_PORT),
             embed      = embed_ok,
             backend_ok = backend_ok,
+            jenova     = true,
         })
         local health_resp = string.format(
             "HTTP/1.1 %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
@@ -398,6 +408,9 @@ local function proxy_connection(client_fd, conn_fds)
 
     local is_chat_completion = headers_raw:find("POST /v1/chat/completions")
     local intent = headers_raw:match("[Xx]%-Intent:%s*(%w+)")
+    headers_raw = headers_raw:gsub("(\r\n[Hh][Oo][Ss][Tt]:%s*)[^\r\n]+", "%1" .. LLAMA_HOST .. ":" .. LLAMA_PORT)
+    headers_raw = headers_raw:gsub("\r\n[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]:%s*[^\r\n]+", "")
+    headers_raw = headers_raw:gsub("\r\n\r\n", "\r\nConnection: close\r\n\r\n")
     local proxied_req = headers_raw .. body_raw
 
     if is_chat_completion and #body_raw > 0 then
@@ -525,6 +538,7 @@ local function proxy_connection(client_fd, conn_fds)
     end
     conn_fds.llama = llama_fd
     set_nonblocking(llama_fd)
+    set_socket_opts(llama_fd)
 
     local l_addr = ffi.new("struct sockaddr_in")
     if not _ffi_defs.IS_LINUX then
@@ -532,11 +546,11 @@ local function proxy_connection(client_fd, conn_fds)
     end
     l_addr.sin_family = AF_INET
     l_addr.sin_port = ffi.C.htons(LLAMA_PORT)
-    l_addr.sin_addr.s_addr = ffi.C.inet_addr(LLAMA_HOST)
+    l_addr.sin_addr.s_addr = ffi.C.inet_addr(LLAMA_CONNECT_HOST)
 
     local connected, conn_err = async_connect(llama_fd, l_addr)
     if not connected then
-        print("[proxy] ERROR: C++ llama-server backend is down on " .. LLAMA_HOST .. ":" .. LLAMA_PORT .. " (err: " .. tostring(conn_err) .. ")")
+        print("[proxy] ERROR: C++ llama-server backend is down on " .. LLAMA_CONNECT_HOST .. ":" .. LLAMA_PORT .. " (err: " .. tostring(conn_err) .. ")")
         local err_resp = "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"
         async_send(client_fd, err_resp)
         safe_close()
