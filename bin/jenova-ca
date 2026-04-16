@@ -81,7 +81,11 @@ fi
 DRAFT_PATH="${JENOVA_DRAFT_PATH:-$MODEL_DRAFT}"
 DRAFT_ARGS=""
 if [ -f "$DRAFT_PATH" ] && [ "${JENOVA_DRAFT:-1}" != "0" ]; then
-    DRAFT_ARGS="-md $DRAFT_PATH -ngld all --draft-max 16 --draft-min 4 --draft-p-min 0.6"
+    _DEVD=""
+    if [ -n "$DRAFT_DEVICE" ]; then
+        _DEVD="-devd $DRAFT_DEVICE"
+    fi
+    DRAFT_ARGS="-md $DRAFT_PATH $_DEVD -ngld all --draft-max 16 --draft-min 4 --draft-p-min 0.6"
 fi
 
 # --- Find proxy.lua ---
