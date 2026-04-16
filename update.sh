@@ -46,7 +46,7 @@ for _arg in "$@"; do
         --link)            LINK=1 ;;
         --apply-profile)   APPLY_PROFILE=1 ;;
         -h|--help)
-            sed -n '2,27p' "$0"
+            sed -n '2,26p' "$0"
             exit 0
             ;;
         *)
