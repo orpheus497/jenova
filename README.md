@@ -1,6 +1,6 @@
-# Jenova Cognitive Architecture (FreeBSD / Dual Vulkan GPU + Optane NVMe)
+# Jenova Cognitive Architecture
 
-Jenova is a high-performance, low-latency cognitive engine that turns a FreeBSD workstation into a persistent, systems-level AI environment. It implements a "Fluid Memory" architecture that treats high-speed NVMe (Optane) as an extended L4 cache for Large Language Models (LLMs), enabling large-context reasoning on modest hardware.
+Jenova is a high-performance, low-latency cognitive engine that turns a FreeBSD workstation into a persistent, systems-level AI environment. It provides hardware-aware LLM inference across multiple profiles — from compact 3B models on modest APUs to full 14B inference on discrete GPUs — managed by a daemonized backend that persists across sessions.
 
 ## The Jenova trinity
 
@@ -16,18 +16,21 @@ The backend in this repository is the shared brain. `jvim` is the editor that th
 
 ## Goals
 
-- Persistent intelligence with a daemonized cognitive backend
-- Low-latency, hardware-aware inference using dual Vulkan GPU offload (NVIDIA + Intel Iris Xe) and LuaJIT
-- Optane-backed paging and cache strategies to enable large-context models on 16GB systems
-- Minimal memory footprint and high throughput for 7B model workflows with optional speculative decoding
+- Persistent intelligence with a daemonized cognitive backend — services survive session logout and resume instantly
+- Hardware-aware inference: auto-detects your GPU(s) and selects the best profile from 3B → 14B Qwen2.5-Coder models
+- Low-latency proxy and RAG pipeline using LuaJIT coroutines — no subprocess overhead, no blocking I/O
+- Minimal memory footprint with optional speculative decoding for faster generation
+- FreeBSD-first: tuned for ZFS, FreeBSD paging, and Vulkan (NVIDIA, AMD, Intel)
 
 ## Key Features
 
-- Fluid Memory: Uses FreeBSD paging + Optane NVMe to extend effective model memory and support large context windows (up to 32k in practical configurations).
-- Persistent Embedding Daemon: CPU-only nomic-embed-text server eliminates subprocess and reinitialization bottlenecks for fast retrieval-augmented generation (RAG).
-- NVIDIA GPU Offload: Dual-GPU layer distribution across GTX 1650 Ti (4GB discrete) and Intel Iris Xe (~7 GiB UMA) via Vulkan. The `-fitt` auto-fitter distributes transformer layers across both devices with a configurable safety margin. Remaining layers stay on CPU, paged through Optane swap.
-- Hybrid Search: BM25 keyword search combined with semantic vector search.
-- FreeBSD-first: Tuned for FreeBSD 15, ZFS ARC management, and kernel-friendly operation.
+- **Multi-profile model support:** 3B Q8_0, 7B Q5_K_M, and 14B Q4_K_M profiles — hardware auto-detected at install time.
+- **Persistent Embedding Daemon:** CPU-only nomic-embed-text server eliminates subprocess and reinitialization bottlenecks for fast retrieval-augmented generation (RAG).
+- **Vulkan GPU Offload:** Single or dual-GPU layer distribution via the llama.cpp `-fitt` auto-fitter. Works with NVIDIA (NVIDIA), AMD (RADV), and Intel (ANV) Vulkan drivers.
+- **Speculative Decoding:** 0.5B Qwen2.5-Coder drafter accelerates all main model sizes. Disabled per-profile when GPU memory is constrained.
+- **Hybrid Search:** BM25 keyword search combined with semantic vector search.
+- **FreeBSD-first:** Tuned for FreeBSD 15, ZFS ARC management, and kernel-friendly operation. Linux and macOS are supported.
+- **Fluid Memory (optional):** On systems with Intel Optane NVMe, the swap-backed mdmfs mount at `/mnt/jenova-models` provides ~7 μs page latency for KV cache overflow — enabling larger context windows on modest hardware. This is a hardware-specific feature of the `freebsd-i5-1135g7-dual-gpu-7b` profile, not a requirement of Jenova itself.
 
 ## Architecture
 
@@ -48,9 +51,16 @@ The system is partitioned into four conceptual streams:
 
 ## Hardware & Performance
 
-Jenova supports multiple hardware profiles, auto-detected at install time. One validated primary profile is included below; additional profiles may be experimental until hardware validation is completed:
+Jenova supports multiple hardware profiles, auto-detected at install time:
 
-### Profile 1: FreeBSD i5-1135G7 Dual-GPU (Primary Target)
+| Profile | Hardware | Model | Context |
+|---|---|---|---|
+| `vulkan-full-offload` | Any GPU 8GB+ VRAM | Qwen2.5-Coder-14B Q4_K_M | 16K |
+| `freebsd-i5-1135g7-dual-gpu` | i5-1135G7 + GTX 1650 Ti + Iris Xe | Qwen2.5-Coder-3B Q8_0 | 32K |
+| `freebsd-i5-1135g7-dual-gpu-7b` | i5-1135G7 + GTX 1650 Ti + Iris Xe + Optane | Qwen2.5-Coder-7B Q5_K_M | 16K |
+| `freebsd-ryzen7-5700u-amd` | Ryzen 7 5700U + Vega 8 UMA | Qwen2.5-Coder-3B Q8_0 | 8K |
+
+### i5-1135G7 Dual-GPU (3B, default)
 
 | Component | Specification |
 |---|---|
@@ -58,12 +68,11 @@ Jenova supports multiple hardware profiles, auto-detected at install time. One v
 | CPU | Intel i5-1135G7 (4P / 8T) |
 | GPU 0 | GTX 1650 Ti 4GB (Vulkan0) — discrete VRAM |
 | GPU 1 | Intel Iris Xe TGL GT2 (Vulkan1) — UMA, ~7 GiB from system RAM |
-| Storage | Intel Optane NVMe (27GB+ swap partition) |
 | Memory | 16GB RAM |
 
-**Strategy:** Full dual-GPU offload via `-fitt` auto-distribution. All 28 layers across both Vulkan devices. KV cache fits with 768 MiB safety margin. Combined addressable GPU memory is ~11 GiB — the llama.cpp `-fitt` flag auto-distributes transformer layers across both devices.
+**Strategy:** 3B Q8_0 (~3.1 GiB) fully offloaded across both GPUs (~11 GiB combined). ~8 GiB headroom available for 32K context + KV cache + 0.5B drafter. The `-fitt` flag auto-distributes transformer layers across both Vulkan devices.
 
-### Profile 2: FreeBSD Ryzen 7 5700U AMD
+### Ryzen 7 5700U AMD
 
 | Component | Specification |
 |---|---|
@@ -73,16 +82,16 @@ Jenova supports multiple hardware profiles, auto-detected at install time. One v
 | Storage | Standard NVMe (16 GiB ZFS swap) |
 | Memory | 15.28 GiB RAM |
 
-**Strategy:** Partial GPU offload — 18 of 28 transformer layers on Vulkan (AMD Vega 8), remaining 10 on CPU. Strong 8C/16T CPU handles CPU-resident layers efficiently.
+**Strategy:** 3B Q8_0 with partial Vega 8 offload — 24 of 36 layers on GPU, remainder on the 8C/16T Zen 2 CPU.
 
 ### GPU Layer Distribution
 
-| Profile | Model | GPU Layers | GPU Memory | CPU Layers |
+| Profile | Model | Layers | GPU Memory | CPU Layers |
 |---|---|---|---|---|
-| i5 dual-GPU | Qwen2.5-Coder-7B (28 layers) | 28 (all) — auto-fit | ~4.4 GiB across both | 0 |
-| i5 dual-GPU | Qwen2.5-Coder-0.5B (28 layers) | 28 (all) | ~0.5 GiB | 0 |
-| Ryzen AMD | Qwen2.5-Coder-7B (28 layers) | 18 (partial) | ~2-3.5 GiB UMA | 10 |
-| Ryzen AMD | Qwen2.5-Coder-0.5B (28 layers) | 18 or CPU | ~0.5 GiB UMA | varies |
+| i5 dual-GPU (3B) | Qwen2.5-Coder-3B Q8_0 (36 layers) | all | ~3.1 GiB | 0 |
+| i5 dual-GPU (7B+Optane) | Qwen2.5-Coder-7B Q5_K_M (28 layers) | all | ~4.8 GiB | 0 |
+| Ryzen AMD (3B) | Qwen2.5-Coder-3B Q8_0 (36 layers) | 24 (partial) | ~2-3 GiB UMA | 12 |
+| All profiles | Qwen2.5-Coder-0.5B drafter | all | ~0.5 GiB | 0 |
 
 ## Installation
 
@@ -114,13 +123,17 @@ Jenova supports multiple hardware profiles, auto-detected at install time. One v
 
 ### Required Model Files
 
-Download GGUF model files and place them in `models/`:
+Download GGUF model files and place them in `models/agent/` (or `models/` for legacy flat layout):
 
-| Model | Filename | Purpose | Required |
+| Model | Filename | Profiles | Required |
 |---|---|---|---|
-| Qwen2.5-Coder-7B | `Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf` | Main inference (chat, code, rewrite) | **Yes** |
-| nomic-embed-text-v1.5 | `nomic-embed-text-v1.5.Q8_0.gguf` | Embedding for RAG semantic search | Recommended |
-| Qwen2.5-Coder-0.5B | `Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf` | Speculative decoding drafter | Optional |
+| Qwen2.5-Coder-14B | `Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf` | `vulkan-full-offload` | Profile-dependent |
+| Qwen2.5-Coder-7B | `Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf` | `freebsd-i5-1135g7-dual-gpu-7b` | Profile-dependent |
+| Qwen2.5-Coder-3B | `Qwen2.5-Coder-3B-Instruct-Q8_0.gguf` | `freebsd-i5-1135g7-dual-gpu`, `freebsd-ryzen7-5700u-amd` | Profile-dependent |
+| nomic-embed-text-v1.5 | `nomic-embed-text-v1.5.Q8_0.gguf` | All profiles | Recommended |
+| Qwen2.5-Coder-0.5B | `Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf` | All profiles (drafter) | Optional |
+
+The installer will offer to download the correct model for your detected hardware profile.
 
 ### Quick Install
 
@@ -522,13 +535,14 @@ The `JENOVA_ROOT` environment variable is automatically set and exported before 
 
 ### Performance Notes
 
-- If running into OOMs with ZFS, lower ARC (`vfs.zfs.arc_max`) and confirm swap/Optane configuration.
+- If running into OOMs with ZFS, lower ARC (`vfs.zfs.arc_max`) and confirm swap configuration.
 - The embedding server runs on CPU (`GGML_VULKAN_DISABLE=1`, ngl 0) to preserve all GPU memory for main model inference.
 - The codebase avoids subprocess reinitialization penalties by using persistent daemon processes.
 - Backup files in `.jenova/backups/` are rotated automatically: only the 5 most recent backups per filename are kept.
 - Shell command output is capped at ~10KB in memory (head + tail) before being sent to the model, preventing OOM on runaway commands.
-- **Ryzen profile**: Standard NVMe swap latency (~100μs) is much slower than Optane (~7μs). Keep `CTX_SIZE` conservative (8192) to avoid heavy swap pressure. Reduce to 4096 if you see paging stalls.
-- **i5 dual-GPU profile**: Optane NVMe swap makes large-context inference viable. The `-fitt 768` reserves GPU headroom so KV cache doesn't OOM during long conversations.
+- **Ryzen profile**: Standard NVMe swap latency (~100 μs) is much slower than Optane (~7 μs). Keep `CTX_SIZE=8192` to avoid heavy swap pressure. Reduce to 4096 if you see paging stalls.
+- **i5 dual-GPU 3B profile**: 3B Q8_0 with 32K context uses only ~4 GiB of the 11 GiB combined GPU — no swap pressure expected.
+- **i5 dual-GPU 7B+Optane profile**: Optane NVMe swap makes large-context 7B inference viable. The `-fitt 512` reserves GPU headroom so KV cache doesn't OOM during long sessions.
 
 ## Web Search
 

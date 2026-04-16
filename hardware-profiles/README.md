@@ -1,78 +1,106 @@
 # Jenova Hardware Profiles
 
-This directory contains hardware-specific configuration profiles for Jenova Cognitive Architecture. Each profile is optimized for specific hardware combinations (CPU, GPU, RAM, storage).
+Hardware-specific configuration profiles for Jenova Cognitive Architecture. Each profile sets the model, GPU offload strategy, context size, and thread counts for a given hardware combination. Auto-detection selects the best match at install time; profiles can also be deployed manually.
 
 ## Available Profiles
 
-### 1. `freebsd-i5-1135g7-dual-gpu/`
-**Hardware:** Intel i5-1135G7 | GTX 1650 Ti 4GB + Intel Iris Xe ~7GB | 16GB RAM | Optane NVMe
-**OS:** FreeBSD 15
-**Strategy:** Dual-GPU full offload with tensor splitting (Vulkan0=NVIDIA, Vulkan1=Intel)
-**Performance:** All 28 layers on GPU, 16K context, 2 slots
+### 1. `vulkan-full-offload/` — 14B Q4_K_M, single GPU
+**Model:** Qwen2.5-Coder-14B-Instruct-Q4_K_M (~8.7 GiB)
+**Hardware:** Any Vulkan-capable GPU with 8GB+ VRAM
+**OS:** Any (Linux, FreeBSD, Windows with Vulkan)
+**Strategy:** Full single-GPU offload — all 48 layers on GPU via `-fitt` auto-fit
+**Performance:** 16K context, 2 slots, 0.5B speculative drafter
+
+Best-quality Jenova agent for systems with a capable GPU. 10+ GiB VRAM recommended for 16k context with KV cache and drafter. For strict 8 GiB GPUs, set `JENOVA_CTX=8192 JENOVA_SLOTS=1`.
+
+**Suitable for:** NVIDIA RTX 3080/4070/4080/4090, AMD RX 6900/7900, Intel Arc A770 (16GB)
 
 **Key settings:**
-- DEVICES: Vulkan0,Vulkan1
-- TENSOR_SPLIT: 1.0,1.8 (4GB:7GB ratio)
-- NGL_7B: all (full offload with auto-fit)
-- CTX: 16384
+- `DEVICES: Vulkan0`
+- `NGL: all` (full offload)
+- `FIT_TARGET: 1024`
+- `CTX: 16384`
 
-### 2. `freebsd-i5-1135g7-dual-gpu-14b/`
-**Hardware:** Intel i5-1135G7 | GTX 1650 Ti 4GB + Intel Iris Xe ~7GB | 16GB RAM | Optane NVMe
+---
+
+### 2. `freebsd-i5-1135g7-dual-gpu/` — 3B Q8_0, dual GPU
+**Model:** Qwen2.5-Coder-3B-Instruct-Q8_0 (~3.1 GiB)
+**Hardware:** Intel i5-1135G7 | GTX 1650 Ti 4GB + Intel Iris Xe ~7GB UMA | 16GB RAM
 **OS:** FreeBSD 15
-**Model:** Qwen2.5-Coder-14B-Instruct-Q3_K_M (~6.8 GiB)
-**Strategy:** Full dual-GPU offload with speculative decoding
-**Performance:** All 48 layers on GPU, 16K context, 2 slots, 0.5B drafter
+**Strategy:** Full dual-GPU offload; compact model leaves large GPU headroom for wide context
+**Performance:** All 36 layers on GPU, 32K context, 2 slots, 0.5B drafter
 
-Same hardware as profile 1, tuned for a 14B model. Model (~6.8 GiB) fits entirely
-across both GPUs (~11 GiB combined). 0.5B speculative drafter enabled (same Qwen2.5
-family — good acceptance rate). Model loaded from swap-backed `mdmfs -S` filesystem
-at `/mnt/jenova-models`. No explicit tensor split — `-fitt` probes free VRAM per device.
+The compact 3B model at Q8_0 (~3.1 GiB) fits easily on either GPU alone. Running across both devices leaves ~8 GiB free for a 32K context window, KV cache, and the 0.5B drafter. No swap-backed filesystem required.
 
 **Key settings:**
-- DEVICES: Vulkan0,Vulkan1
-- TENSOR_SPLIT: (none — let -fitt auto-distribute)
-- NGL_7B: all (auto-fit with -fitt 768)
-- CTX: 16384 (2 slots, q8_0 KV)
-- DRAFT: enabled (0.5B Qwen2.5-Coder)
-- HEALTH_TIMEOUT: 120s
+- `DEVICES: Vulkan0,Vulkan1`
+- `NGL: all` (full offload)
+- `FIT_TARGET: 512`
+- `CTX: 32768`
+- `DRAFT_DEVICE: Vulkan1`
 
-**Manual deploy only** (auto-detection can't distinguish model size):
+---
+
+### 3. `freebsd-i5-1135g7-dual-gpu-7b/` — 7B Q5_K_M, dual GPU + Optane swap
+**Model:** Qwen2.5-Coder-7B-Instruct-Q5_K_M (~4.8 GiB)
+**Hardware:** Intel i5-1135G7 | GTX 1650 Ti 4GB + Intel Iris Xe ~7GB UMA | 16GB RAM | Intel Optane NVMe
+**OS:** FreeBSD 15
+**Strategy:** Full dual-GPU offload with speculative decoding; Optane swap-backed mdmfs for fast model loading and KV overflow
+**Performance:** All 28 layers on GPU, 16K context, 2 slots, 0.5B drafter on Iris Xe
+
+Same hardware as profile 2, running the 7B model at Q5_K_M. Intel Optane NVMe (~7 μs swap latency) provides a fast swap-backed mdmfs mount at `/mnt/jenova-models` for cold-start model loading and KV cache overflow during long sessions.
+
+**Manual deploy only** (auto-detection selects the 3B profile for this hardware):
 ```bash
-cp hardware-profiles/freebsd-i5-1135g7-dual-gpu-14b/jenova.conf etc/jenova.conf
+cp hardware-profiles/freebsd-i5-1135g7-dual-gpu-7b/jenova.conf etc/jenova.conf
+sudo hardware-profiles/freebsd-i5-1135g7-dual-gpu-7b/jenova-setup
 ```
 
-### 3. `freebsd-ryzen7-5700u-amd/`
-**Hardware:** AMD Ryzen 7 5700U 8C/16T | AMD Vega 8 (UMA ~2-4GB) | 15GB RAM | ZFS swap
+**Key settings:**
+- `DEVICES: Vulkan0,Vulkan1`
+- `NGL: all` (full offload)
+- `FIT_TARGET: 512`
+- `CTX: 16384`
+- `DRAFT_DEVICE: Vulkan1`
+
+---
+
+### 4. `freebsd-ryzen7-5700u-amd/` — 3B Q8_0, AMD UMA
+**Model:** Qwen2.5-Coder-3B-Instruct-Q8_0 (~3.1 GiB)
+**Hardware:** AMD Ryzen 7 5700U 8C/16T | AMD Vega 8 UMA ~2-4GB | 15.28GB RAM | ZFS swap
 **OS:** FreeBSD 15
-**Strategy:** Hybrid CPU+GPU inference with partial offload
-**Performance:** 18/28 layers on GPU, 10 layers on CPU, 8K context
+**Strategy:** Partial GPU offload — 24 of 36 layers on Vega 8, remainder on CPU
+**Performance:** 8K context, 2 slots, 0.5B drafter
+
+Compact 3B model suited to limited UMA VRAM. The Zen 2 CPU handles CPU-resident layers efficiently. Increase `NGL` to 36 if BIOS allocates 4+ GiB to Vega 8. Keep context conservative to avoid swap pressure (standard NVMe at ~100 μs latency).
+
+**AMD GPU requirements:** Install `drm-kmod` + `gpu-firmware-amd-kmod`; add `amdgpu` to `kld_list`.
 
 **Key settings:**
-- DEVICES: Vulkan0 (AMD RADV)
-- NGL_7B: 18 (partial offload)
-- CTX: 8192 (conservative for UMA)
-- THREADS: 8 (Zen 2 handles CPU layers well)
+- `DEVICES: Vulkan0` (AMD RADV)
+- `NGL: 24` (partial offload)
+- `FIT_TARGET: 256`
+- `CTX: 8192`
+- `THREADS: 8` (Zen 2 8C/16T)
 
-### 4. `vulkan-full-offload/`
-**Hardware:** Generic Vulkan GPU with 8GB+ VRAM (NVIDIA/AMD/Intel)
-**OS:** Any (Linux, FreeBSD, Windows with Vulkan)
-**Strategy:** Full GPU offload for maximum performance
-**Performance:** All 28 layers on GPU, 16K context, 2 slots
+---
 
-**Key settings:**
-- DEVICES: Vulkan0
-- NGL_7B: all (full offload)
-- CTX: 16384
-- FIT_TARGET: 1024 (larger safety margin)
+## Profile Summary
 
-**Suitable for:**
-- NVIDIA RTX 3060/4060 (12GB/8GB), RTX 3070+ (8GB+)
-- AMD RX 6800/7800 (16GB/8GB+)
-- Intel Arc A770 (16GB)
+| Profile | Model | Quant | GPU Memory | Context |
+|---|---|---|---|---|
+| `vulkan-full-offload` | Qwen2.5-Coder-14B-Instruct | Q4_K_M | 8+ GiB (10+ GiB recommended) | 16K |
+| `freebsd-i5-1135g7-dual-gpu` | Qwen2.5-Coder-3B-Instruct | Q8_0 | ~11 GiB dual GPU | 32K |
+| `freebsd-i5-1135g7-dual-gpu-7b` | Qwen2.5-Coder-7B-Instruct | Q5_K_M | ~11 GiB dual GPU | 16K |
+| `freebsd-ryzen7-5700u-amd` | Qwen2.5-Coder-3B-Instruct | Q8_0 | ~2-4 GiB UMA (partial) | 8K |
+
+All profiles use the 0.5B Qwen2.5-Coder drafter for speculative decoding (disable with `JENOVA_DRAFT=0` if needed). The embedding server always runs on CPU using `nomic-embed-text-v1.5.Q8_0.gguf`.
+
+---
 
 ## Profile Detection
 
-Jenova automatically detects your hardware and selects the best-matching profile:
+Jenova automatically detects hardware and selects the best-matching profile at install time:
 
 ```bash
 # View hardware detection report
@@ -87,12 +115,14 @@ Jenova automatically detects your hardware and selects the best-matching profile
 
 ### Detection Scoring
 
-Profiles are scored based on hardware matches:
+Profiles are scored on hardware matches:
 - **CPU match:** +10 points (required for specific profiles)
 - **GPU match:** +5 points per device
 - **OS match:** +3 points
 
-The profile with the highest score is selected. Generic profiles (like `vulkan-full-offload`) have lower scores and serve as fallbacks.
+The highest-scoring profile is selected. Generic profiles (like `vulkan-full-offload`) have lower scores and serve as fallbacks.
+
+---
 
 ## Profile Structure
 
@@ -101,13 +131,13 @@ Each profile directory contains:
 ```
 profile-name/
 ├── profile.conf        # Detection rules (MATCH_CPU, MATCH_GPU_0, MATCH_GPU_1, MATCH_OS)
-├── jenova.conf         # Runtime configuration (DEVICES, NGL, CTX, etc.)
+├── jenova.conf         # Runtime configuration (DEVICES, NGL, CTX, model, etc.)
 ├── install.sh          # Profile-specific installer (optional)
-└── jenova-setup        # Quick profile deployment script (optional)
+└── jenova-setup        # One-time system tuning script (run as root, optional)
 ```
 
 ### `profile.conf`
-Defines hardware detection patterns:
+Hardware detection patterns and metadata:
 ```sh
 PROFILE_NAME="my-profile"
 PROFILE_DESC="Hardware description"
@@ -118,56 +148,18 @@ MATCH_OS="FreeBSD"           # OS name (optional)
 ```
 
 ### `jenova.conf`
-Runtime configuration sourced by `bin/jenova-ca`. Contains:
+Runtime configuration sourced by `jenova-ca`. Contains:
 - Model paths (auto-detected from `models/agent/`, `models/embed/`, `models/draft/`)
-- Hardware settings (DEVICES, TENSOR_SPLIT, NGL_7B, CTX_SIZE, etc.)
-- Network configuration (HOST, ports)
-- Thread settings (THREADS, THREADS_BATCH)
-
-### `install.sh`
-Profile-specific installation script that:
-1. Validates hardware compatibility
-2. Deploys profile configuration
-3. Builds llama.cpp with correct backend
-4. Downloads models (if needed)
+- Hardware settings (`DEVICES`, `NGL_7B`, `CTX_SIZE`, `FIT_TARGET`, etc.)
+- Network configuration (`HOST`, ports)
+- Thread settings (`THREADS`, `THREADS_BATCH`)
 
 ### `jenova-setup`
-Quick profile deployment script. Copies or symlinks `jenova.conf` to `etc/jenova.conf`.
+One-time system tuning script. Configures kernel parameters, ZFS ARC cap, and hardware-specific settings. Run once as root after deploying a profile.
 
-## Creating a New Profile
-
-1. **Create profile directory:**
-   ```bash
-   mkdir hardware-profiles/my-new-profile
-   ```
-
-2. **Create `profile.conf`:**
-   ```sh
-   PROFILE_NAME="my-new-profile"
-   PROFILE_DESC="My Custom Hardware"
-   MATCH_CPU="CPU-Model-String"
-   MATCH_GPU_0="GPU-Pattern"
-   MATCH_OS="Linux"  # Optional
-   ```
-
-3. **Create `jenova.conf`:**
-   - Copy an existing profile's `jenova.conf` as a template
-   - Adjust DEVICES, NGL_7B, TENSOR_SPLIT, CTX_SIZE for your hardware
-   - Include model auto-discovery code (see `vulkan-full-offload/jenova.conf`)
-
-4. **Create `install.sh` (optional):**
-   - Hardware validation
-   - Profile deployment
-   - Build instructions
-
-5. **Test detection:**
-   ```bash
-   ./hardware-profiles/detect-hardware.sh --info
-   ```
+---
 
 ## Manual Profile Selection
-
-If auto-detection doesn't work or you want to use a specific profile:
 
 ```bash
 # Deploy a specific profile
@@ -180,19 +172,13 @@ cp hardware-profiles/vulkan-full-offload/jenova.conf etc/jenova.conf
 ./hardware-profiles/vulkan-full-offload/install.sh
 ```
 
-## Profile Priority
-
-When multiple profiles match:
-1. Higher-scored profiles win (more specific matches)
-2. CPU matches are required for non-generic profiles
-3. Multi-GPU profiles require all specified GPUs
-4. Generic profiles (like `vulkan-full-offload`) have the lowest priority
+---
 
 ## Environment Overrides
 
-All profiles respect environment variables:
+All profiles respect environment variable overrides:
 ```bash
-# Override model selection
+# Override model
 export JENOVA_MODEL=/path/to/my-model.gguf
 export JENOVA_EMBED_MODEL=/path/to/my-embed.gguf
 export JENOVA_DRAFT_MODEL=/path/to/my-draft.gguf
@@ -201,42 +187,30 @@ export JENOVA_DRAFT_MODEL=/path/to/my-draft.gguf
 export JENOVA_DEVICES="Vulkan0"
 export JENOVA_NGL_7B=24
 export JENOVA_CTX=8192
+export JENOVA_SLOTS=1
 
 # Override network
 export JENOVA_HOST=0.0.0.0  # Listen on all interfaces (LAN mode)
 export JENOVA_PORT=8080
 ```
 
-## Backend Support
+---
 
-All profiles use Vulkan by default. To build CPU-only:
+## Creating a New Profile
 
-```bash
-# Build CPU-only
-JENOVA_BACKEND=cpu ./bin/build-llama-jenova
-```
+1. Create a profile directory under `hardware-profiles/`
+2. Add `profile.conf` with detection patterns and metadata
+3. Add `jenova.conf` by copying an existing profile and adjusting `DEVICES`, `NGL_7B`, `CTX_SIZE`, and model comments
+4. Test auto-detection: `./hardware-profiles/detect-hardware.sh --info`
+5. Validate: `jenova-ca start && jenova-ca status`
+
+Profile names should describe the hardware (e.g., `linux-rtx4090-fulloffload`), not the model — model selection can always be overridden via environment variables.
+
+---
 
 ## Troubleshooting
 
-### No matching profile found
-- Run `./hardware-profiles/detect-hardware.sh --info` to see detection results
-- Use the generic `vulkan-full-offload` profile as a starting point
-- Create a custom profile for your hardware
-
-### Profile deployed but Jenova fails to start
-- Check `var/log/jenova-ca.log` and `var/log/llama-*.log`
-- Verify Vulkan drivers: `vulkaninfo --summary`
-- Verify models exist: `ls -lh models/agent/ models/embed/ models/draft/`
-- Check GPU memory: `nvidia-smi` or `vulkaninfo`
-
-### Wrong profile selected
-- Manually deploy the correct profile: `cp hardware-profiles/PROFILE/jenova.conf etc/jenova.conf`
-- Or adjust profile.conf detection patterns for better matching
-
-## Contributing
-
-When contributing new hardware profiles:
-1. Use descriptive profile names (e.g., `linux-rtx4090-fulloffload`)
-2. Document hardware requirements in `profile.conf` comments
-3. Test auto-detection with `detect-hardware.sh --info`
-4. Validate with: `bin/jenova-ca start && bin/jenova-ca status`
+- **No matching profile:** Use `detect-hardware.sh --info` to see scores; fall back to `vulkan-full-offload`.
+- **Jenova fails to start:** Check `var/log/jenova-ca.log` and `var/log/llama-*.log`. Verify Vulkan drivers (`vulkaninfo --summary`) and that models exist in `models/agent/`, `models/embed/`, `models/draft/`.
+- **GPU OOM:** Reduce `JENOVA_CTX`, `JENOVA_SLOTS`, or disable the drafter (`JENOVA_DRAFT=0`). Consider a lower-quant model.
+- **Wrong profile selected:** Deploy manually: `cp hardware-profiles/PROFILE/jenova.conf etc/jenova.conf`

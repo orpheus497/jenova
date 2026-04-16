@@ -1,7 +1,7 @@
 #!/bin/sh
-# install.sh: Jenova Cognitive Architecture — 14B Profile Installation
+# install.sh: Jenova Cognitive Architecture — Dual-GPU 7B Profile Installation (Optane)
 # FreeBSD 15 | Dual Vulkan GPU (GTX 1650 Ti + Intel Iris Xe) | Optane NVMe
-# Model: Qwen2.5-Coder-14B-Instruct-Q3_K_M (~6.8 GiB)
+# Model: Qwen2.5-Coder-7B-Instruct-Q5_K_M (~4.8 GiB)
 #
 # Usage: ./install.sh [--force] [--link] [--skip-nvim] [--skip-llama]
 

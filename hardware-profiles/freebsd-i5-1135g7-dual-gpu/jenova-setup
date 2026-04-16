@@ -1,16 +1,17 @@
 #!/bin/sh
 
 # jenova-setup: One-time system configuration for Jenova Cognitive Architecture
+# Profile: freebsd-i5-1135g7-dual-gpu (3B dual-GPU)
 # Run with: sudo ./jenova-setup
 #
 # Configures:
-#   - Optane NVMe swap tuning for Iris Xe UMA GPU paging
+#   - ZFS ARC cap (2 GiB)
+#   - VM memory policy for smooth inference
+#   - NVMe interrupt coalescing off
 #
 # Hardware context:
-#   Intel Iris Xe (TGL GT2) is a UMA GPU — it shares system RAM.
-#   With 27 GiB Optane NVMe swap, the kernel pages inactive LLM weights
-#   through the Iris Xe's shared memory pool. These sysctls ensure the
-#   pager cooperates rather than OOM-killing the process.
+#   Qwen2.5-Coder-3B Q8_0 (~3.1 GiB) fits fully on dual GPU (~11 GiB combined).
+#   No swap-backed model filesystem required.
 
 set -e
 
@@ -19,17 +20,14 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-echo "=== jenova-setup: configuring FreeBSD for Jenova CA ==="
+echo "=== jenova-setup: configuring FreeBSD for Jenova (3B dual-GPU profile) ==="
 echo ""
 
 CHANGED=0
 
-# Helper: add to sysctl.conf if not already present
 sysctl_persist() {
     _line="$1"
     _key=$(echo "$_line" | cut -d= -f1)
-    # Escape regex metacharacters in _key before use in grep -E and sed
-    # Character class: ] . [ * ^ $ \ /  (] must be first inside [])
     _esc_key=$(printf '%s' "$_key" | sed 's/[].[*^$\\/]/\\&/g')
     if grep -q -E "^${_esc_key}[[:space:]]*=" /etc/sysctl.conf 2>/dev/null; then
         sed -i '' "s|^${_esc_key}[[:space:]]*=.*|${_line}|" /etc/sysctl.conf
@@ -37,14 +35,6 @@ sysctl_persist() {
         echo "$_line" >> /etc/sysctl.conf
     fi
 }
-
-# 1. Optane swap paging optimizations for Iris Xe UMA
-# The Iris Xe's VRAM *is* system RAM. When llama.cpp allocates tensors on
-# Vulkan1, those pages live in the kernel's unified address space. With
-# vm.overcommit=0 (default) and aggressive pageout, the kernel can swap
-# inactive tensor pages to Optane without the process being killed.
-echo ""
-echo "--- Optane NVMe Swap Tuning for UMA GPU ---"
 
 apply_sysctl() {
     _key="$1"
@@ -61,38 +51,31 @@ apply_sysctl() {
     fi
 }
 
-# Don't panic on OOM — let the pager work
+# =========================================================================
+# 1. VM Memory Policy
+# =========================================================================
+echo ""
+echo "--- VM Memory Policy ---"
+
 apply_sysctl vm.panic_on_oom 0 "no kernel panic on OOM"
-
-# Keep swap enabled and proactive
 apply_sysctl vm.disable_swapspace_pageouts 0 "allow swap pageouts"
+apply_sysctl vm.pageout_oom_seq 8 "OOM kill after 8 failed pageout sequences"
 
-# Aggressive inactive scanning — pushes cold pages to swap faster,
-# freeing real RAM for hot GPU tensors and KV cache
-apply_sysctl vm.pageout_update_period 1 "fast pageout cycle"
+# =========================================================================
+# 2. ZFS ARC Cap
+# =========================================================================
+echo ""
+echo "--- ZFS ARC Cap ---"
 
-# Compute page targets from runtime page size (supports non-4K systems)
-PAGE_SIZE=$(getconf PAGESIZE 2>/dev/null || echo 4096)
-# Target: 2 GiB free, 3 GiB inactive
-FREE_PAGES=$(( (2 * 1024 * 1024 * 1024) / PAGE_SIZE ))
-INACTIVE_PAGES=$(( (3 * 1024 * 1024 * 1024) / PAGE_SIZE ))
+# 3B model is fully on GPU; cap ARC at 2 GiB to keep RAM available for OS + KV buffers.
+apply_sysctl vfs.zfs.arc_max 2147483648 "ZFS ARC max 2 GiB"
 
-# Target more free pages (~2 GiB worth)
-# This gives the Iris Xe headroom to allocate from real RAM
-apply_sysctl vm.v_free_target "$FREE_PAGES" "2 GiB free page target"
+# =========================================================================
+# 3. NVMe Interrupt Coalescing
+# =========================================================================
+echo ""
+echo "--- NVMe Tuning ---"
 
-# Large inactive target (~3 GiB) — pages here are swap candidates
-apply_sysctl vm.v_inactive_target "$INACTIVE_PAGES" "3 GiB inactive target"
-
-# Bias the scanner toward laundering inactive pages
-apply_sysctl vm.inact_scan_laundry_weight 25 "aggressive inactive scan"
-apply_sysctl vm.act_scan_laundry_weight 5 "moderate active scan"
-
-# Keep ZFS ARC from eating RAM that the GPU needs
-apply_sysctl vfs.zfs.arc_max 1073741824 "ZFS ARC max 1 GiB"
-
-# NVMe interrupt coalescing off for lowest swap latency
-# nda1 = Optane drive (27 GiB swap)
 for _nvme in 0 1; do
     if sysctl "dev.nvme.${_nvme}.int_coal_time" > /dev/null 2>&1; then
         apply_sysctl "dev.nvme.${_nvme}.int_coal_time" 0 "nvme${_nvme} zero coalesce delay"
@@ -102,37 +85,9 @@ for _nvme in 0 1; do
     fi
 done
 
-# --- OOM killer policy ---
-# Raise the OOM score adjustment for llama-server processes so the kernel
-# preferentially kills inference processes over system services when memory
-# is critically low. On FreeBSD, we use rctl if available.
-echo ""
-echo "--- OOM / Memory Policy ---"
-
-# Ensure RACCT/RCTL kernel support is noted
-if sysctl kern.racct.enable > /dev/null 2>&1; then
-    _RACCT=$(sysctl -n kern.racct.enable 2>/dev/null || echo "0")
-    if [ "$_RACCT" = "1" ]; then
-        echo "[ok]  kern.racct.enable=1 (RCTL available for per-process memory limits)"
-        echo "      To limit llama-server memory, add to /etc/rctl.conf:"
-        echo "      process:llama-server:memoryuse:deny=14G"
-    else
-        echo "[info] kern.racct.enable=0 — RCTL not active."
-        echo "      To enable: add kern.racct.enable=1 to /boot/loader.conf and reboot."
-        echo "      This allows per-process memory caps to protect against OOM."
-    fi
-else
-    echo "[info] RACCT/RCTL not compiled into kernel — per-process memory limits unavailable."
-    echo "      Consider GENERIC-RACCT or a custom kernel with options RACCT, RCTL."
-fi
-
-# Ensure OOM doesn't panic, and the pager has room to work
-apply_sysctl vm.pageout_oom_seq 8 "OOM kill after 8 failed pageout sequences"
-
 echo ""
 if [ "$CHANGED" -eq 1 ]; then
-    echo "Done. Sysctl changes applied and persisted."
-    echo "Verify swap: swapinfo   (should show ~27 GiB on nda1p1)"
+    echo "Done. Changes applied and persisted to /etc/sysctl.conf."
 else
     echo "Nothing to change. System already configured."
 fi
