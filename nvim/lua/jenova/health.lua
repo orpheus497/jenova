@@ -277,10 +277,12 @@ function M.check()
   local embed_model_path = resolve_model_path(vim.env.JENOVA_EMBED_MODEL, "embed", "nomic-embed-text-v1.5.Q8_0.gguf")
   local draft_model_path = resolve_model_path(vim.env.JENOVA_DRAFT_MODEL, "draft", "Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf")
 
+  local agent_model_path = resolve_model_path(vim.env.JENOVA_MODEL, "agent", "jenova.gguf")
+
   local models = {
     {
-      path = vim.env.JENOVA_MODEL or (jenova_root .. "/models/jenova.gguf"),
-      label = "Agent model (" .. vim.fn.fnamemodify(vim.env.JENOVA_MODEL or (jenova_root .. "/models/jenova.gguf"), ":t") .. ")",
+      path = agent_model_path,
+      label = "Agent model (" .. vim.fn.fnamemodify(agent_model_path, ":t") .. ")",
       required = true,
     },
     {
