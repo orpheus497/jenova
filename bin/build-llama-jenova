@@ -63,7 +63,7 @@ THREADS_BATCH="${JENOVA_THREADS_BATCH:-$((PHYSICAL_THREADS + 2))}"
 if command -v sysctl >/dev/null 2>&1 && sysctl -n hw.physmem >/dev/null 2>&1; then
     # FreeBSD / macOS: use sysctl for hardware info
     RAM_GIB="$(sysctl -n hw.physmem 2>/dev/null | awk '{printf "%d", $1/1024/1024/1024}' || echo 0)"
-    SWAP_GIB="$(sysctl -n vm.swap_total 2>/dev/null | awk '{printf "%d", $1/1024/1024/1024}' || echo 0)"
+    SWAP_GIB="$(swapinfo -m 2>/dev/null | awk 'NR>1{s+=$2} END{printf "%d", s/1024}' || echo 0)"
 elif command -v awk >/dev/null 2>&1 && [ -f /proc/meminfo ]; then
     # Linux: use /proc/meminfo
     RAM_GIB="$(awk '/^MemTotal:/{printf "%d", $2/1024/1024}' /proc/meminfo 2>/dev/null || echo 0)"
