@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # jenova-setup: One-time system configuration for Jenova Cognitive Architecture
-# Profile: freebsd-i5-1135g7-dual-gpu (3B dual-GPU)
+# Profile: Intel/dgpu_igpu/i5-1135g7-3b (3B dual-GPU)
 # Run with: sudo ./jenova-setup
 #
 # Configures:

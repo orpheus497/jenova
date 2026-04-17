@@ -14,7 +14,7 @@ validate_size() {
     local size="$1"
     case "$size" in
         *[!0-9G]*) return 1 ;;
-        *G) return 0 ;;
+        [0-9]*G) return 0 ;;
         *) return 1 ;;
     esac
 }

@@ -271,7 +271,11 @@ function M.check()
       table.sort(files)
       return files[1]
     end
-    return jenova_root .. "/models/" .. legacy_basename
+    local legacy = jenova_root .. "/models/" .. legacy_basename
+    if vim.fn.filereadable(legacy) == 1 then
+      return legacy
+    end
+    return ""
   end
 
   local embed_model_path = resolve_model_path(vim.env.JENOVA_EMBED_MODEL, "embed", "nomic-embed-text-v1.5.Q8_0.gguf")
@@ -279,20 +283,25 @@ function M.check()
 
   local agent_model_path = resolve_model_path(vim.env.JENOVA_MODEL, "agent", "jenova.gguf")
 
+  local function model_label(prefix, path, suffix)
+    local name = path ~= "" and vim.fn.fnamemodify(path, ":t") or "not found"
+    return prefix .. " (" .. name .. ")" .. (suffix or "")
+  end
+
   local models = {
     {
       path = agent_model_path,
-      label = "Agent model (" .. vim.fn.fnamemodify(agent_model_path, ":t") .. ")",
+      label = model_label("Agent model", agent_model_path),
       required = true,
     },
     {
       path = embed_model_path,
-      label = "Embedding model (" .. vim.fn.fnamemodify(embed_model_path, ":t") .. ")",
+      label = model_label("Embedding model", embed_model_path),
       required = true,
     },
     {
       path = draft_model_path,
-      label = "Draft model (" .. vim.fn.fnamemodify(draft_model_path, ":t") .. ") — speculative decoding",
+      label = model_label("Draft model", draft_model_path, " — speculative decoding"),
       required = false,
     },
   }
@@ -386,12 +395,13 @@ function M.check()
 
     -- List available profiles
     local profiles_dir = jenova_root .. "/hardware-profiles"
-    local profiles = vim.fn.glob(profiles_dir .. "/*/profile.conf", true, true)
+    local profiles = vim.fn.glob(profiles_dir .. "/*/*/*/profile.conf", true, true)
     if #profiles > 0 then
       h.info(string.format("%d hardware profile(s) available:", #profiles))
       for _, pconf in ipairs(profiles) do
-        local pdir = vim.fn.fnamemodify(pconf, ":h:t")
-        h.info("  - " .. pdir)
+        local pdir = vim.fn.fnamemodify(pconf, ":h")
+        local rel = pdir:sub(#profiles_dir + 2)
+        h.info("  - " .. rel)
       end
     end
   else

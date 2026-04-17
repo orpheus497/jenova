@@ -12,7 +12,7 @@
 #   --list             Show available profiles and detection results
 #   --info             Show detected hardware information
 #
-# Hardware profiles are in: hardware-profiles/<profile-name>/jenova-setup
+# Hardware profiles are in: hardware-profiles/<Category>/<gpu_type>/<name>/jenova-setup
 
 set -e
 
@@ -95,17 +95,17 @@ PROFILE_DIR=""
 PROFILE_NAME=""
 
 if [ -n "$FORCE_PROFILE" ]; then
-    # Reject path traversal in profile name (must be a plain directory name)
+    # Reject path traversal in profile name (allow / for nested paths but block ..)
     case "$FORCE_PROFILE" in
-        */*|..|.*) fail "Invalid profile name: '$FORCE_PROFILE' (must not contain '/' or start with '.')"; exit 1 ;;
+        ..*|*/..*|*/../*) fail "Invalid profile name: '$FORCE_PROFILE' (path traversal not allowed)"; exit 1 ;;
     esac
     PROFILE_DIR="$SCRIPT_DIR/hardware-profiles/$FORCE_PROFILE"
     PROFILE_NAME="$FORCE_PROFILE"
     if [ ! -d "$PROFILE_DIR" ]; then
         fail "Profile '$FORCE_PROFILE' not found in hardware-profiles/"
         info "Available profiles:"
-        for _d in "$SCRIPT_DIR/hardware-profiles"/*/; do
-            [ -d "$_d" ] && echo "    $(basename "$_d")"
+        for _pc in "$SCRIPT_DIR/hardware-profiles"/*/*/*/profile.conf; do
+            [ -f "$_pc" ] && echo "    ${_pc#"$SCRIPT_DIR/hardware-profiles"/}" | sed 's|/profile.conf||'
         done
         exit 1
     fi

@@ -7,7 +7,7 @@
 set -e
 
 PROFILE_DIR="$(dirname "$(realpath "$0")")"
-JENOVA_ROOT="$(dirname "$(dirname "$PROFILE_DIR")")"
+JENOVA_ROOT="$(dirname "$(dirname "$(dirname "$(dirname "$PROFILE_DIR")")")")"
 PROFILE_CONF="$PROFILE_DIR/jenova.conf"
 
 echo "================================================================"

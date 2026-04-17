@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # jenova-setup: One-time system configuration for Jenova Cognitive Architecture
-# Profile: freebsd-i5-1135g7-dual-gpu-7b (Optane swap-backed)
+# Profile: Optane/dgpu/i5-1135g7-3b (dGPU-only, Optane swap-backed)
 # Run with: sudo ./jenova-setup
 #
 # Configures:
@@ -10,9 +10,9 @@
 #   - Swap-backed mdmfs mount at /mnt/jenova-models for fast model cold-start
 #
 # Hardware context:
-#   7B Q5_K_M (~4.8 GiB) fits fully on dual GPU (~11 GiB combined).
-#   Intel Optane NVMe provides ~7 μs swap latency — fast enough to page
-#   KV overflow without stalling inference. Model loaded from mdmfs on swap.
+#   3B Q8_0 (~3.1 GiB) + 0.5B drafter (~644 MiB) on GTX 1650 Ti (4 GiB).
+#   Intel Iris Xe iGPU excluded — no UMA contention with system RAM.
+#   Intel Optane NVMe provides ~7 μs swap latency for KV overflow paging.
 
 set -e
 
@@ -21,7 +21,7 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-echo "=== jenova-setup: configuring FreeBSD for Jenova (7B Optane profile) ==="
+echo "=== jenova-setup: configuring FreeBSD for Jenova (3B dGPU-only Optane profile) ==="
 echo ""
 
 CHANGED=0
@@ -92,7 +92,7 @@ MOUNT_DIR="/mnt/jenova-models"
 MOUNT_SIZE="8G"
 
 _SCRIPT_DIR=$(dirname "$(realpath "$0")")
-_JENOVA_ROOT=$(realpath "$_SCRIPT_DIR/../..")
+_JENOVA_ROOT=$(realpath "$_SCRIPT_DIR/../../../..")
 _SWAP_MOUNT_SCRIPT="$_JENOVA_ROOT/bin/jenova-swap-mount"
 
 if [ -x "$_SWAP_MOUNT_SCRIPT" ]; then

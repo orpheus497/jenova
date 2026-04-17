@@ -1,0 +1,145 @@
+#!/bin/sh
+
+# jenova-setup: One-time system configuration for Jenova Cognitive Architecture
+# Profile: Optane/dgpu/i5-1135g7-7b (dGPU-only, Optane swap-backed, partial offload)
+# Run with: sudo ./jenova-setup
+#
+# Configures:
+#   - Optane NVMe swap tuning for low-latency KV cache and CPU-layer paging
+#   - ZFS ARC cap (1 GiB) to keep RAM free for CPU-resident model layers
+#   - Swap-backed mdmfs mount at /mnt/jenova-models for fast model cold-start
+#
+# Hardware context:
+#   7B Q5_K_M (~4.8 GiB) partially offloaded — ~16/28 layers on GTX 1650 Ti (4 GiB).
+#   12 layers remain on CPU; Optane NVMe (~7 μs) provides fast swap paging.
+#   No drafter — VRAM budget too tight. iGPU excluded.
+
+set -e
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "Error: must run as root (sudo ./jenova-setup)"
+    exit 1
+fi
+
+echo "=== jenova-setup: configuring FreeBSD for Jenova (7B dGPU-only Optane profile) ==="
+echo ""
+
+CHANGED=0
+
+sysctl_persist() {
+    _line="$1"
+    _key=$(echo "$_line" | cut -d= -f1)
+    _esc_key=$(printf '%s' "$_key" | sed 's/[].[*^$\\/]/\\&/g')
+    if grep -q -E "^${_esc_key}[[:space:]]*=" /etc/sysctl.conf 2>/dev/null; then
+        sed -i '' "s|^${_esc_key}[[:space:]]*=.*|${_line}|" /etc/sysctl.conf
+    else
+        echo "$_line" >> /etc/sysctl.conf
+    fi
+}
+
+apply_sysctl() {
+    _key="$1"
+    _val="$2"
+    _desc="$3"
+    _current=$(sysctl -n "$_key" 2>/dev/null || echo "?")
+    if [ "$_current" = "$_val" ]; then
+        echo "[ok]  $_key=$_val ($_desc)"
+    else
+        echo "[fix] $_key: $_current -> $_val ($_desc)"
+        sysctl "$_key=$_val"
+        sysctl_persist "$_key=$_val"
+        CHANGED=1
+    fi
+}
+
+# =========================================================================
+# 1. Optane NVMe Swap Tuning (critical for partial offload)
+# =========================================================================
+echo ""
+echo "--- Optane NVMe Swap Tuning ---"
+echo "    (12 of 28 layers on CPU — swap performance directly impacts inference)"
+
+apply_sysctl vm.panic_on_oom 0 "no kernel panic on OOM"
+apply_sysctl vm.disable_swapspace_pageouts 0 "allow swap pageouts"
+apply_sysctl vm.pageout_update_period 1 "fast pageout cycle"
+
+PAGE_SIZE=$(getconf PAGESIZE 2>/dev/null || echo 4096)
+FREE_PAGES=$(( (2 * 1024 * 1024 * 1024) / PAGE_SIZE ))
+INACTIVE_PAGES=$(( (3 * 1024 * 1024 * 1024) / PAGE_SIZE ))
+
+apply_sysctl vm.v_free_target "$FREE_PAGES" "2 GiB free page target"
+apply_sysctl vm.v_inactive_target "$INACTIVE_PAGES" "3 GiB inactive target"
+apply_sysctl vm.inact_scan_laundry_weight 25 "aggressive inactive scan"
+apply_sysctl vm.act_scan_laundry_weight 5 "moderate active scan"
+
+apply_sysctl vfs.zfs.arc_max 1073741824 "ZFS ARC max 1 GiB"
+
+for _nvme in 0 1; do
+    if sysctl "dev.nvme.${_nvme}.int_coal_time" > /dev/null 2>&1; then
+        apply_sysctl "dev.nvme.${_nvme}.int_coal_time" 0 "nvme${_nvme} zero coalesce delay"
+    fi
+    if sysctl "dev.nvme.${_nvme}.int_coal_threshold" > /dev/null 2>&1; then
+        apply_sysctl "dev.nvme.${_nvme}.int_coal_threshold" 0 "nvme${_nvme} zero coalesce threshold"
+    fi
+done
+
+# =========================================================================
+# 2. Swap-Backed Model Filesystem
+# =========================================================================
+echo ""
+echo "--- Swap-Backed Model Filesystem ---"
+
+MOUNT_DIR="/mnt/jenova-models"
+MOUNT_SIZE="8G"
+
+_SCRIPT_DIR=$(dirname "$(realpath "$0")")
+_JENOVA_ROOT=$(realpath "$_SCRIPT_DIR/../../../..")
+_SWAP_MOUNT_SCRIPT="$_JENOVA_ROOT/bin/jenova-swap-mount"
+
+if [ -x "$_SWAP_MOUNT_SCRIPT" ]; then
+    "$_SWAP_MOUNT_SCRIPT" "$MOUNT_SIZE" && CHANGED=1
+else
+    if mount | grep -q "on $MOUNT_DIR "; then
+        echo "[ok]  $MOUNT_DIR already mounted"
+        df -h "$MOUNT_DIR" | tail -1 | awk '{printf "[ok]  %s used / %s total (%s)\n", $3, $2, $5}'
+    else
+        echo "[fix] Creating swap-backed mdmfs at $MOUNT_DIR ($MOUNT_SIZE)"
+        mkdir -p "$MOUNT_DIR"
+        mdmfs -S -s "$MOUNT_SIZE" md "$MOUNT_DIR"
+        chmod 777 "$MOUNT_DIR"
+        CHANGED=1
+        echo "[ok]  $MOUNT_DIR mounted on swap"
+    fi
+fi
+
+echo ""
+echo "  To persist across reboots, add to /etc/fstab:"
+echo "  md $MOUNT_DIR mfs rw,-S,-s$MOUNT_SIZE 2 0"
+
+# =========================================================================
+# 3. OOM Policy
+# =========================================================================
+echo ""
+echo "--- OOM / Memory Policy ---"
+
+if sysctl kern.racct.enable > /dev/null 2>&1; then
+    _RACCT=$(sysctl -n kern.racct.enable 2>/dev/null || echo "0")
+    if [ "$_RACCT" = "1" ]; then
+        echo "[ok]  kern.racct.enable=1 (RCTL available for per-process memory limits)"
+    else
+        echo "[info] kern.racct.enable=0 — RCTL not active. Add kern.racct.enable=1 to /boot/loader.conf to enable."
+    fi
+else
+    echo "[info] RACCT/RCTL not compiled into kernel."
+fi
+
+apply_sysctl vm.pageout_oom_seq 8 "OOM kill after 8 failed pageout sequences"
+
+echo ""
+if [ "$CHANGED" -eq 1 ]; then
+    echo "Done. Changes applied and persisted."
+    echo "Verify swap: swapinfo   (should show ~27 GiB on nda1p1)"
+    echo "Verify mount: df -h $MOUNT_DIR"
+else
+    echo "Nothing to change. System already configured."
+fi

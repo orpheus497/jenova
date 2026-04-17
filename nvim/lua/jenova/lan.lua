@@ -170,6 +170,9 @@ end
 --- @param proxy_port number
 --- @param callback fun(ok: boolean)
 local function validate_health(host, proxy_port, callback)
+  -- Fail-closed by design: without curl we cannot verify the remote is actually
+  -- a Jenova instance (vs a random TCP service). FreeBSD fetch or vim.uv TCP
+  -- probe could be added as future fallback validators.
   if not vim.system or vim.fn.executable("curl") ~= 1 then
     callback(false)
     return

@@ -7,7 +7,7 @@
 
 set -e
 
-JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")/.."
+JENOVA_ROOT="$(dirname "$(dirname "$(dirname "$(dirname "$(realpath "$0")")")")")"
 NVIM_CONFIG_SRC="$JENOVA_ROOT/nvim"
 NVIM_CONFIG_DST="$HOME/.config/nvim"
 
@@ -127,7 +127,7 @@ if mount | grep -q "on $MOUNT_DIR "; then
     df -h "$MOUNT_DIR" | tail -1 | awk '{printf "     %s used / %s total (%s)\n", $3, $2, $5}'
 else
     warn "$MOUNT_DIR not mounted — model needs swap-backed mdmfs"
-    warn "  Run: sudo ./hardware-profiles/freebsd-i5-1135g7-dual-gpu-7b/jenova-setup"
+    warn "  Run: sudo ./hardware-profiles/Optane/dgpu_igpu/i5-1135g7-7b/jenova-setup"
     warn "  Or:  sudo mdmfs -S -s 8G md $MOUNT_DIR && chmod 777 $MOUNT_DIR"
     WARNINGS=$((WARNINGS + 1))
 fi
@@ -281,7 +281,7 @@ fi
 
 echo ""
 info "Next steps:"
-echo "  1. Run system tuning (once):  sudo ./hardware-profiles/freebsd-i5-1135g7-dual-gpu-7b/jenova-setup"
+echo "  1. Run system tuning (once):  sudo ./hardware-profiles/Optane/dgpu_igpu/i5-1135g7-7b/jenova-setup"
 echo "  2. Ensure swap mount is up:   df -h /mnt/jenova-models"
 echo "  3. Copy 7B model to mount:    cp <model>.gguf /mnt/jenova-models/"
 echo "  4. Symlink into models/agent:  ln -sf /mnt/jenova-models/<model>.gguf models/agent/"

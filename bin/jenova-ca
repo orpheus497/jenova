@@ -196,7 +196,7 @@ _launch_llama_server_bg() {
         --host "$HOST" \
         --port "$LLAMA_PORT" \
         $RUN_DRAFT_ARGS \
-        "$@" > "$_ls_log" 2>&1 &
+        "$@" > "$_ls_log" 2>&1 9>&- &
     LLAMA_PID=$!
 }
 
@@ -576,7 +576,7 @@ if [ "$1" = "--daemon" ]; then
             --offline \
             --host "$HOST" \
             --port "$LLAMA_EMBED_PORT" \
-            > "$EMBED_LOG" 2>&1 &
+            > "$EMBED_LOG" 2>&1 9>&- &
         EMBED_PID=$!
     else
         echo "Warning: embed model not found at $MODEL_EMBED — skipping embed server"
@@ -612,7 +612,7 @@ if [ "$1" = "--daemon" ]; then
         exit 1
     fi
 
-    luajit "$PROXY_SCRIPT" >> "$LOG_FILE" 2>&1 &
+    luajit "$PROXY_SCRIPT" >> "$LOG_FILE" 2>&1 9>&- &
     PROXY_PID=$!
 
     echo "Started: llama-server=$LLAMA_PID proxy=$PROXY_PID embed=${EMBED_PID:-none}"
