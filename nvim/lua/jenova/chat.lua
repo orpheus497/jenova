@@ -31,7 +31,9 @@ end
 
 local function new_chat_filename()
   ensure_chat_dir()
-  return CHAT_DIR .. "/" .. os.date("%Y%m%d_%H%M%S") .. ".md"
+  local pid = vim.fn.getpid()
+  local suffix = string.format("%04x", math.random(0, 0xFFFF))
+  return CHAT_DIR .. "/" .. os.date("%Y%m%d_%H%M%S") .. "_" .. pid .. "_" .. suffix .. ".md"
 end
 
 local function is_chat_buf(buf)

@@ -81,7 +81,11 @@ fi
 DRAFT_PATH="${JENOVA_DRAFT_PATH:-$MODEL_DRAFT}"
 DRAFT_ARGS=""
 if [ -f "$DRAFT_PATH" ] && [ "${JENOVA_DRAFT:-1}" != "0" ]; then
-    DRAFT_ARGS="-md $DRAFT_PATH -ngld all --draft-max 16 --draft-min 4 --draft-p-min 0.6"
+    _DEVD=""
+    if [ -n "$DRAFT_DEVICE" ]; then
+        _DEVD="-devd $DRAFT_DEVICE"
+    fi
+    DRAFT_ARGS="-md $DRAFT_PATH $_DEVD -ngld all --draft-max 16 --draft-min 4 --draft-p-min 0.6"
 fi
 
 # --- Find proxy.lua ---
@@ -470,6 +474,7 @@ if [ "$1" = "--daemon" ]; then
     # Acquire exclusive lock to prevent concurrent startup (TOCTOU guard)
     # Use portable locking: flock on Linux/FreeBSD, or fallback to mkdir-based lock
     LOCK_FILE="${PID_FILE}.lock"
+    _LOCK_FLOCK=0
 
     if command -v flock >/dev/null 2>&1; then
         # flock available (Linux, FreeBSD with flock installed)
@@ -478,6 +483,7 @@ if [ "$1" = "--daemon" ]; then
             echo "Another instance is starting. Exiting." >&2
             exit 1
         fi
+        _LOCK_FLOCK=1
     else
         # Fallback: atomic mkdir-based locking (portable but requires cleanup)
         if ! mkdir "$LOCK_FILE.d" 2>/dev/null; then
@@ -531,7 +537,7 @@ if [ "$1" = "--daemon" ]; then
         done
         if $_ALL_ALIVE && $_ANY_ALIVE; then
             echo "Jenova CA already running (llama=$OLD_LLAMA_PID proxy=$OLD_PROXY_PID embed=${OLD_EMBED_PID:-none})."
-            exec 9>&-
+            if [ "$_LOCK_FLOCK" = "1" ]; then exec 9>&-; fi
             exit 0
         fi
         if $_ANY_ALIVE; then
@@ -591,7 +597,7 @@ if [ "$1" = "--daemon" ]; then
         if ! kill -0 "$LLAMA_PID" 2>/dev/null; then
             echo "ERROR: llama-server (PID $LLAMA_PID) died during startup. Check $LOG_FILE" >&2
             if [ -n "$EMBED_PID" ]; then kill "$EMBED_PID" 2>/dev/null || true; fi
-            exec 9>&-
+            if [ "$_LOCK_FLOCK" = "1" ]; then exec 9>&-; fi
             exit 1
         fi
         sleep "$HEALTH_INTERVAL"
@@ -602,7 +608,7 @@ if [ "$1" = "--daemon" ]; then
         echo "Check logs at $LOG_FILE" >&2
         kill "$LLAMA_PID" 2>/dev/null || true
         if [ -n "$EMBED_PID" ]; then kill "$EMBED_PID" 2>/dev/null || true; fi
-        exec 9>&-
+        if [ "$_LOCK_FLOCK" = "1" ]; then exec 9>&-; fi
         exit 1
     fi
 
@@ -626,7 +632,7 @@ if [ "$1" = "--daemon" ]; then
         _ANY_DEAD=true
     fi
     if $_ANY_DEAD; then
-        exec 9>&-
+        if [ "$_LOCK_FLOCK" = "1" ]; then exec 9>&-; fi
         exit 1
     fi
 
@@ -634,7 +640,7 @@ if [ "$1" = "--daemon" ]; then
     printf '%s' "$LLAMA_PID $PROXY_PID${EMBED_PID:+ $EMBED_PID}" > "$PID_FILE"
     echo "" >> "$PID_FILE"
 
-    exec 9>&-
+    if [ "$_LOCK_FLOCK" = "1" ]; then exec 9>&-; fi
 
     if $_WATCH_AFTER_START; then
         echo "Entering watchdog mode..."

@@ -260,20 +260,39 @@ function M.check()
   -- -------------------------------------------------------------------------
   h.start("Model Files")
 
+  -- Mirrors jenova-model.sh discovery: env override → models/<subdir>/ first gguf → legacy flat path.
+  local function resolve_model_path(env_override, subdir, legacy_basename)
+    if env_override and env_override ~= "" then
+      return env_override
+    end
+    local dir = jenova_root .. "/models/" .. subdir
+    local files = vim.fn.glob(dir .. "/*.gguf", false, true)
+    if files and #files > 0 then
+      table.sort(files)
+      return files[1]
+    end
+    return jenova_root .. "/models/" .. legacy_basename
+  end
+
+  local embed_model_path = resolve_model_path(vim.env.JENOVA_EMBED_MODEL, "embed", "nomic-embed-text-v1.5.Q8_0.gguf")
+  local draft_model_path = resolve_model_path(vim.env.JENOVA_DRAFT_MODEL, "draft", "Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf")
+
+  local agent_model_path = resolve_model_path(vim.env.JENOVA_MODEL, "agent", "jenova.gguf")
+
   local models = {
     {
-      path = vim.env.JENOVA_MODEL or (jenova_root .. "/models/jenova.gguf"),
-      label = "Agent model (" .. vim.fn.fnamemodify(vim.env.JENOVA_MODEL or (jenova_root .. "/models/jenova.gguf"), ":t") .. ")",
+      path = agent_model_path,
+      label = "Agent model (" .. vim.fn.fnamemodify(agent_model_path, ":t") .. ")",
       required = true,
     },
     {
-      path = jenova_root .. "/models/nomic-embed-text-v1.5.Q8_0.gguf",
-      label = "Embedding model (nomic-embed-text-v1.5)",
+      path = embed_model_path,
+      label = "Embedding model (" .. vim.fn.fnamemodify(embed_model_path, ":t") .. ")",
       required = true,
     },
     {
-      path = jenova_root .. "/models/Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf",
-      label = "Draft model (Qwen2.5-Coder-0.5B-Instruct) — speculative decoding",
+      path = draft_model_path,
+      label = "Draft model (" .. vim.fn.fnamemodify(draft_model_path, ":t") .. ") — speculative decoding",
       required = false,
     },
   }

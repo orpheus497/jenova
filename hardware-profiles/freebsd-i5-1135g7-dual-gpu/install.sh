@@ -1,6 +1,7 @@
 #!/bin/sh
-# install.sh: Jenova Cognitive Architecture — System Installation Script
-# FreeBSD 15 | Dual Vulkan GPU (GTX 1650 Ti + Intel Iris Xe) | Optane NVMe
+# install.sh: Jenova Cognitive Architecture — Dual-GPU 3B Profile Installation
+# FreeBSD 15 | Dual Vulkan GPU (GTX 1650 Ti + Intel Iris Xe) | 16GB RAM
+# Model: Qwen2.5-Coder-3B-Instruct-Q8_0 (~3.1 GiB)
 #
 # Usage: ./install.sh [--force] [--link] [--skip-nvim] [--skip-llama]
 #
