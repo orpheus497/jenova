@@ -171,7 +171,7 @@ end
 --- @param callback fun(ok: boolean)
 local function validate_health(host, proxy_port, callback)
   if not vim.system or vim.fn.executable("curl") ~= 1 then
-    callback(true)
+    callback(false)
     return
   end
   local url = string.format("http://%s:%d/health", host, proxy_port)

@@ -46,7 +46,7 @@ info() { printf "${_B} INFO${_N}  %s\n" "$1"; }
 
 echo ""
 printf "${_B}╔══════════════════════════════════════════════════════╗${_N}\n"
-printf "${_B}║  Jenova CA — 14B Dual-GPU Optane Profile Install     ║${_N}\n"
+printf "${_B}║  Jenova CA — 7B Dual-GPU Optane Profile Install      ║${_N}\n"
 printf "${_B}╚══════════════════════════════════════════════════════╝${_N}\n"
 echo ""
 
@@ -127,7 +127,7 @@ if mount | grep -q "on $MOUNT_DIR "; then
     df -h "$MOUNT_DIR" | tail -1 | awk '{printf "     %s used / %s total (%s)\n", $3, $2, $5}'
 else
     warn "$MOUNT_DIR not mounted — model needs swap-backed mdmfs"
-    warn "  Run: sudo ./hardware-profiles/freebsd-i5-1135g7-dual-gpu-14b/jenova-setup"
+    warn "  Run: sudo ./hardware-profiles/freebsd-i5-1135g7-dual-gpu-7b/jenova-setup"
     warn "  Or:  sudo mdmfs -S -s 8G md $MOUNT_DIR && chmod 777 $MOUNT_DIR"
     WARNINGS=$((WARNINGS + 1))
 fi
@@ -155,9 +155,9 @@ fi
 info "Checking model files..."
 . "$JENOVA_ROOT/etc/jenova.conf" 2>/dev/null || true
 
-_agent_model="${MODEL_PATH:-$JENOVA_ROOT/models/agent/Qwen2.5-Coder-14B-Instruct-Q3_K_M.gguf}"
+_agent_model="${MODEL_PATH:-$JENOVA_ROOT/models/agent/Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf}"
 if [ -f "$_agent_model" ] || [ -L "$_agent_model" ]; then
-    ok "Agent model (14B): $(basename "$_agent_model")"
+    ok "Agent model (7B): $(basename "$_agent_model")"
     if [ -L "$_agent_model" ]; then
         _target=$(realpath "$_agent_model" 2>/dev/null)
         if [ -f "$_target" ]; then
@@ -169,8 +169,8 @@ if [ -f "$_agent_model" ] || [ -L "$_agent_model" ]; then
     fi
 else
     fail "Agent model not found at $_agent_model"
-    echo "     Place a 14B GGUF model in models/agent/ or symlink from $MOUNT_DIR"
-    echo "     e.g.: ln -s $MOUNT_DIR/Qwen2.5-Coder-14B-Instruct-Q3_K_M.gguf models/agent/"
+    echo "     Place a 7B GGUF model in models/agent/ or symlink from $MOUNT_DIR"
+    echo "     e.g.: ln -s $MOUNT_DIR/Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf models/agent/"
     ERRORS=$((ERRORS + 1))
 fi
 
@@ -185,7 +185,7 @@ fi
 # ---------------------------------------------------------------------------
 # 7. Deploy profile config
 # ---------------------------------------------------------------------------
-info "Deploying 14B profile configuration..."
+info "Deploying 7B profile configuration..."
 _PROFILE_DIR="$(dirname "$(realpath "$0")")"
 _PROFILE_CONF="$_PROFILE_DIR/jenova.conf"
 
@@ -196,7 +196,7 @@ if [ -f "$_PROFILE_CONF" ]; then
         ok "Backed up existing config to etc/jenova.conf.bak.${_ts}"
     fi
     cp "$_PROFILE_CONF" "$JENOVA_ROOT/etc/jenova.conf"
-    ok "Deployed 14B profile to etc/jenova.conf"
+    ok "Deployed 7B profile to etc/jenova.conf"
 else
     fail "Profile jenova.conf not found at $_PROFILE_CONF"
     ERRORS=$((ERRORS + 1))
@@ -265,7 +265,7 @@ fi
 # ---------------------------------------------------------------------------
 echo ""
 printf "${_B}══════════════════════════════════════════════════════${_N}\n"
-printf "${_B}  Installation Summary (14B Profile)${_N}\n"
+printf "${_B}  Installation Summary (7B Profile)${_N}\n"
 printf "${_B}══════════════════════════════════════════════════════${_N}\n"
 echo "  Errors:   $ERRORS"
 echo "  Warnings: $WARNINGS"
@@ -281,9 +281,9 @@ fi
 
 echo ""
 info "Next steps:"
-echo "  1. Run system tuning (once):  sudo ./hardware-profiles/freebsd-i5-1135g7-dual-gpu-14b/jenova-setup"
+echo "  1. Run system tuning (once):  sudo ./hardware-profiles/freebsd-i5-1135g7-dual-gpu-7b/jenova-setup"
 echo "  2. Ensure swap mount is up:   df -h /mnt/jenova-models"
-echo "  3. Copy 14B model to mount:   cp <model>.gguf /mnt/jenova-models/"
+echo "  3. Copy 7B model to mount:    cp <model>.gguf /mnt/jenova-models/"
 echo "  4. Symlink into models/agent:  ln -sf /mnt/jenova-models/<model>.gguf models/agent/"
 echo "  5. Start backend:             jenova-ca start"
 echo "  6. Launch editor:             jvim"
