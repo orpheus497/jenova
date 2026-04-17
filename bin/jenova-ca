@@ -141,6 +141,10 @@ else
     SPLIT_ARGS="$SPLIT_ARGS -ngl $NGL_7B"
 fi
 
+# --- Batch sizes (controls VRAM pressure during prompt ingestion) ---
+BATCH_SIZE="${JENOVA_BATCH:-2048}"
+UBATCH_SIZE="${JENOVA_UBATCH:-512}"
+
 # --- KV cache quantization (halves KV memory vs f16) ---
 KV_ARGS=""
 if [ -n "$KV_CACHE_TYPE" ]; then
@@ -183,8 +187,8 @@ _launch_llama_server_bg() {
         $RUN_MAIN_NGL_ARGS \
         $KV_ARGS \
         -c "$CTX_SIZE" \
-        -b 2048 \
-        -ub 512 \
+        -b "$BATCH_SIZE" \
+        -ub "$UBATCH_SIZE" \
         -np "$NUM_SLOTS" \
         -t "$THREADS" \
         -tb "$THREADS_BATCH" \
@@ -485,6 +489,8 @@ if [ "$1" = "--daemon" ]; then
         fi
         _LOCK_FLOCK=1
     else
+        # Open fd 9 to /dev/null so background 9>&- closures don't fail
+        exec 9>/dev/null
         # Fallback: atomic mkdir-based locking (portable but requires cleanup)
         if ! mkdir "$LOCK_FILE.d" 2>/dev/null; then
             if [ -d "$LOCK_FILE.d" ]; then
@@ -661,8 +667,8 @@ while [ "$1" = "--daemon" ]; do shift; done
     $RUN_MAIN_NGL_ARGS \
     $KV_ARGS \
     -c "$CTX_SIZE" \
-    -b 2048 \
-    -ub 512 \
+    -b "$BATCH_SIZE" \
+    -ub "$UBATCH_SIZE" \
     -np "$NUM_SLOTS" \
     -t "$THREADS" \
     -tb "$THREADS_BATCH" \
