@@ -1,2 +1,0 @@
-{"success":true,"query_type":"explain","sid":"69e1a9bdd623","ts":1776396757,"actions":1,"edit_failures":0,"query_summary":"tell me what is inside this folder"}
-{"success":true,"query_type":"general","sid":"69e1a9bdd623","ts":1776396806,"actions":3,"edit_failures":0,"query_summary":"that's incorrect there are files and folders inside"}

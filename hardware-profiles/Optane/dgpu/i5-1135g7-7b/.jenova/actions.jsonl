@@ -1,4 +1,0 @@
-{"success":true,"sid":"69e1a9bdd623","ts":1776396750,"tool":"list_dir","key":"list_dir","result_summary":"\\n"}
-{"success":true,"sid":"69e1a9bdd623","ts":1776396777,"tool":"list_dir","key":"list_dir","result_summary":"\\n"}
-{"success":true,"sid":"69e1a9bdd623","ts":1776396785,"tool":"shell","key":"shell|ls -la","result_summary":"\\n"}
-{"success":true,"sid":"69e1a9bdd623","ts":1776396803,"tool":"shell","key":"shell|ls -la","result_summary":"\\n"}
