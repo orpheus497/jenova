@@ -97,7 +97,7 @@ PROFILE_NAME=""
 if [ -n "$FORCE_PROFILE" ]; then
     # Reject path traversal in profile name (allow / for nested paths but block ..)
     case "$FORCE_PROFILE" in
-        ..*|*/..*|*/../*) fail "Invalid profile name: '$FORCE_PROFILE' (path traversal not allowed)"; exit 1 ;;
+        /*|..*|.*|*/..*|*/../*) fail "Invalid profile name: '$FORCE_PROFILE' (path traversal not allowed)"; exit 1 ;;
     esac
     PROFILE_DIR="$SCRIPT_DIR/hardware-profiles/$FORCE_PROFILE"
     PROFILE_NAME="$FORCE_PROFILE"

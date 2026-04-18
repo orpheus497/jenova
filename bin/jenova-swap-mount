@@ -19,6 +19,7 @@ validate_size() {
     esac
 }
 
+
 SIZE="${1:-8G}"
 if ! validate_size "$SIZE"; then
     echo "Error: Invalid size format for '$SIZE'. Use format like '8G'." >&2
@@ -43,7 +44,7 @@ if mount | grep -q "on $MOUNT_DIR "; then
     umount "$MOUNT_DIR"
     echo "Creating new ${SIZE} mdmfs..."
     mdmfs -S -s "$SIZE" md "$MOUNT_DIR"
-    chmod 777 "$MOUNT_DIR"
+    chmod 775 "$MOUNT_DIR"
     if [ -n "$(ls -A "$_BACKUP_DIR" 2>/dev/null)" ]; then
         echo "Restoring model files..."
         cp -a "$_BACKUP_DIR"/* "$MOUNT_DIR"/
@@ -55,7 +56,7 @@ else
     echo "Creating swap-backed filesystem at $MOUNT_DIR (Size: $SIZE)..."
     mkdir -p "$MOUNT_DIR"
     mdmfs -S -s "$SIZE" md "$MOUNT_DIR"
-    chmod 777 "$MOUNT_DIR"
+    chmod 775 "$MOUNT_DIR"
     echo "Success! $MOUNT_DIR is now mounted on swap."
 fi
 echo ""

@@ -105,7 +105,7 @@ else
         echo "[fix] Creating swap-backed mdmfs at $MOUNT_DIR ($MOUNT_SIZE)"
         mkdir -p "$MOUNT_DIR"
         mdmfs -S -s "$MOUNT_SIZE" md "$MOUNT_DIR"
-        chmod 777 "$MOUNT_DIR"
+        chmod 775 "$MOUNT_DIR"
         CHANGED=1
         echo "[ok]  $MOUNT_DIR mounted on swap"
     fi
