@@ -142,8 +142,9 @@ else
 fi
 
 # --- Batch sizes (controls VRAM pressure during prompt ingestion) ---
-BATCH_SIZE="${JENOVA_BATCH:-2048}"
-UBATCH_SIZE="${JENOVA_UBATCH:-512}"
+# Respect values already set by jenova.conf; only apply defaults if unset.
+BATCH_SIZE="${BATCH_SIZE:-${JENOVA_BATCH:-2048}}"
+UBATCH_SIZE="${UBATCH_SIZE:-${JENOVA_UBATCH:-512}}"
 
 # --- KV cache quantization (halves KV memory vs f16) ---
 KV_ARGS=""
