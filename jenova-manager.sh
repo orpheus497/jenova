@@ -307,16 +307,21 @@ install_jenova_cli() {
     mkdir -p "$JENOVA_WORKSPACE"
     cd "$JENOVA_WORKSPACE"
     if [ ! -d "jenova-cli" ]; then
-        git clone https://github.com/orpheus497/jenova-cli.git
+        if [ -d "cloda-codey-lua" ]; then
+            mv cloda-codey-lua jenova-cli
+        else
+            git clone https://github.com/orpheus497/jenova-cli.git
+        fi
     fi
     cd jenova-cli
 
     local bin_dir
     if bin_dir="$(resolve_bin_dir)"; then
+        mkdir -p "$bin_dir"
         make install PREFIX="$(dirname "$bin_dir")"
     else
         echo "No writable bin dir found on PATH; installing to /usr/local (requires sudo)."
-        sudo make install
+        sudo make install PREFIX=/usr/local
     fi
 }
 install_llama() {
@@ -338,15 +343,19 @@ update_jvim() {
 }
 update_jenova_cli() {
     echo "Updating jenova-cli..."
+    if [ ! -d "$JENOVA_WORKSPACE/jenova-cli" ] && [ -d "$JENOVA_WORKSPACE/cloda-codey-lua" ]; then
+        mv "$JENOVA_WORKSPACE/cloda-codey-lua" "$JENOVA_WORKSPACE/jenova-cli"
+    fi
     cd "$JENOVA_WORKSPACE/jenova-cli" || { echo "Cannot access jenova-cli directory at $JENOVA_WORKSPACE/jenova-cli"; return 1; }
     git pull --ff-only origin main
     if $DIALOG --yesno "Do you want to rebuild jenova-cli?" 8 50; then
         local bin_dir
         if bin_dir="$(resolve_bin_dir)"; then
+            mkdir -p "$bin_dir"
             make install PREFIX="$(dirname "$bin_dir")"
         else
             echo "No writable bin dir found on PATH; installing to /usr/local (requires sudo)."
-            sudo make install
+            sudo make install PREFIX=/usr/local
         fi
     fi
 }
