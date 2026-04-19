@@ -106,6 +106,21 @@ resolve_bin_dir() {
     return 1
 }
 
+# Build jenova-cli as the current user, then install to a user-writable
+# prefix if one is on PATH, else fall back to a system-wide sudo install.
+# Must be called from inside the jenova-cli source directory.
+_jenova_cli_build_and_install() {
+    make
+    local bin_dir
+    if bin_dir="$(resolve_bin_dir)"; then
+        mkdir -p "$bin_dir"
+        make install PREFIX="$(dirname "$bin_dir")"
+    else
+        echo "No writable bin dir found on PATH; installing to /usr/local (requires sudo)."
+        sudo make install PREFIX=/usr/local
+    fi
+}
+
 # Temporary file to store dialog selections
 TEMP_FILE=$(mktemp)
 trap 'rm -f "$TEMP_FILE"' EXIT INT TERM
@@ -306,19 +321,15 @@ install_jenova_cli() {
     echo "Installing jenova-cli..."
     mkdir -p "$JENOVA_WORKSPACE"
     cd "$JENOVA_WORKSPACE"
-    if [ ! -d "cloda-codey-lua" ]; then
-        git clone https://github.com/orpheus497/cloda-codey-lua.git
+    if [ ! -d "jenova-cli" ]; then
+        if [ -d "cloda-codey-lua" ]; then
+            mv cloda-codey-lua jenova-cli
+        else
+            git clone https://github.com/orpheus497/jenova-cli.git
+        fi
     fi
-    cd cloda-codey-lua && cargo build --release
-
-    local bin_dir
-    if bin_dir="$(resolve_bin_dir)"; then
-        mkdir -p "$bin_dir"
-        cp target/release/jenova-cli "$bin_dir/jenova-cli"
-    else
-        echo "No writable bin dir found on PATH; installing to /usr/local/bin (requires sudo)."
-        sudo cp target/release/jenova-cli /usr/local/bin/
-    fi
+    cd jenova-cli
+    _jenova_cli_build_and_install
 }
 install_llama() {
     echo "Installing llama.cpp..."
@@ -339,19 +350,13 @@ update_jvim() {
 }
 update_jenova_cli() {
     echo "Updating jenova-cli..."
-    cd "$JENOVA_WORKSPACE/cloda-codey-lua" || { echo "Cannot access jenova-cli directory at $JENOVA_WORKSPACE/cloda-codey-lua"; return 1; }
+    if [ ! -d "$JENOVA_WORKSPACE/jenova-cli" ] && [ -d "$JENOVA_WORKSPACE/cloda-codey-lua" ]; then
+        mv "$JENOVA_WORKSPACE/cloda-codey-lua" "$JENOVA_WORKSPACE/jenova-cli"
+    fi
+    cd "$JENOVA_WORKSPACE/jenova-cli" || { echo "Cannot access jenova-cli directory at $JENOVA_WORKSPACE/jenova-cli"; return 1; }
     git pull --ff-only origin main
     if $DIALOG --yesno "Do you want to rebuild jenova-cli?" 8 50; then
-        cargo build --release
-
-        local bin_dir
-        if bin_dir="$(resolve_bin_dir)"; then
-            mkdir -p "$bin_dir"
-            cp target/release/jenova-cli "$bin_dir/jenova-cli"
-        else
-            echo "No writable bin dir found on PATH; installing to /usr/local/bin (requires sudo)."
-            sudo cp target/release/jenova-cli /usr/local/bin/
-        fi
+        _jenova_cli_build_and_install
     fi
 }
 update_llama() {
