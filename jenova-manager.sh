@@ -106,6 +106,21 @@ resolve_bin_dir() {
     return 1
 }
 
+# Build jenova-cli as the current user, then install to a user-writable
+# prefix if one is on PATH, else fall back to a system-wide sudo install.
+# Must be called from inside the jenova-cli source directory.
+_jenova_cli_build_and_install() {
+    make
+    local bin_dir
+    if bin_dir="$(resolve_bin_dir)"; then
+        mkdir -p "$bin_dir"
+        make install PREFIX="$(dirname "$bin_dir")"
+    else
+        echo "No writable bin dir found on PATH; installing to /usr/local (requires sudo)."
+        sudo make install PREFIX=/usr/local
+    fi
+}
+
 # Temporary file to store dialog selections
 TEMP_FILE=$(mktemp)
 trap 'rm -f "$TEMP_FILE"' EXIT INT TERM
@@ -314,15 +329,7 @@ install_jenova_cli() {
         fi
     fi
     cd jenova-cli
-
-    local bin_dir
-    if bin_dir="$(resolve_bin_dir)"; then
-        mkdir -p "$bin_dir"
-        make install PREFIX="$(dirname "$bin_dir")"
-    else
-        echo "No writable bin dir found on PATH; installing to /usr/local (requires sudo)."
-        sudo make install PREFIX=/usr/local
-    fi
+    _jenova_cli_build_and_install
 }
 install_llama() {
     echo "Installing llama.cpp..."
@@ -349,14 +356,7 @@ update_jenova_cli() {
     cd "$JENOVA_WORKSPACE/jenova-cli" || { echo "Cannot access jenova-cli directory at $JENOVA_WORKSPACE/jenova-cli"; return 1; }
     git pull --ff-only origin main
     if $DIALOG --yesno "Do you want to rebuild jenova-cli?" 8 50; then
-        local bin_dir
-        if bin_dir="$(resolve_bin_dir)"; then
-            mkdir -p "$bin_dir"
-            make install PREFIX="$(dirname "$bin_dir")"
-        else
-            echo "No writable bin dir found on PATH; installing to /usr/local (requires sudo)."
-            sudo make install PREFIX=/usr/local
-        fi
+        _jenova_cli_build_and_install
     fi
 }
 update_llama() {
