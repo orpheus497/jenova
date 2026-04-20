@@ -112,64 +112,6 @@ end, {
     aliases = { "plugin" },
 })
 
--- ── Context Commands ──────────────────────────────────────────────────
-
-registry.register("context", function(args)
-    local context = require("context.manager")
-
-    print("System context:\n")
-    print(context.build_context_string())
-    print("")
-
-    local user_ctx = context.get_user_context()
-    print("User context:")
-    print(string.format("  Username: %s", user_ctx.username))
-    print(string.format("  Home: %s", user_ctx.home_directory))
-    print(string.format("  Shell: %s", user_ctx.shell))
-    print(string.format("  Editor: %s", user_ctx.editor))
-end, {
-    description = "Show system and user context",
-})
-
--- ── History Commands ──────────────────────────────────────────────────
-
-registry.register("history", function(args)
-    local history = require("history.manager")
-    local subcommand = args:match("^(%S+)")
-
-    if not subcommand or subcommand == "list" then
-        local count = tonumber(args:match("^%S+%s+(%d+)")) or 20
-        local items = history.get_recent(count)
-        print(string.format("Recent history (%d items):\n", #items))
-        for i, item in ipairs(items) do
-            local timestamp = os.date("%Y-%m-%d %H:%M:%S", item.timestamp)
-            print(string.format("%d. [%s] %s", i, timestamp, item.content))
-        end
-    elseif subcommand == "search" then
-        local query = args:match("^%S+%s+(.+)")
-        if not query then
-            print("Usage: /history search <query>")
-            return
-        end
-        local results = history.search(query)
-        print(string.format("Found %d results:\n", #results))
-        for i, item in ipairs(results) do
-            print(string.format("%d. %s", i, item.content))
-        end
-    elseif subcommand == "clear" then
-        history.clear()
-        print("History cleared")
-    else
-        print("History commands:")
-        print("  /history list [count]  List recent history")
-        print("  /history search <query> Search history")
-        print("  /history clear         Clear history")
-    end
-end, {
-    description = "Manage command history",
-    usage = "/history [list|search|clear]"
-})
-
 -- ── Permissions Commands ──────────────────────────────────────────────
 
 registry.register("permissions", function(args)
@@ -222,7 +164,8 @@ local shell = require("utils.shell")
 -- and POSIX. The io.popen fallback is only used on builds without the
 -- FFI bridge, and uses shell.quote() above. Returns (stdout, exit_status).
 local function run_git(args)
-    if jenova and jenova.process and jenova.process.spawn_json then
+    local _jenova = rawget(_G, "jenova")
+    if type(_jenova) == "table" and _jenova.process and _jenova.process.spawn_json then
         local json = require("utils.json_fallback")
         local argv = {}
         if type(args) == "table" then
@@ -240,7 +183,7 @@ local function run_git(args)
             capture_stdout = true,
             capture_stderr = true,
         })
-        local result = jenova.process.spawn_json(config)
+        local result = _jenova.process.spawn_json(config)
         if result and type(result) == "table" then
             local out = (result.stdout or "") .. (result.stderr or "")
             return out, result.exit_code or 0
@@ -444,13 +387,12 @@ registry.register("init", function(args)
     local ok_fs, fs = pcall(require, "utils.fs_fallback")
     if ok_fs and fs and fs.mkdir then
         fs.mkdir(project_dir)
-    elseif jenova and jenova.process and jenova.process.spawn then
-        -- Prefer the FFI argv form so the project path never touches a
-        -- shell. This is both safer (no injection via directory names
-        -- containing metacharacters) and works on Windows.
+    elseif type(rawget(_G, "jenova")) == "table" and rawget(_G, "jenova").process and rawget(_G, "jenova").process.spawn then
+        -- Prefer the FFI argv form so the project path never touches a shell.
+        local _j = rawget(_G, "jenova")
         local json = require("utils.json_fallback")
         local cmd, argv = "mkdir", { "-p", project_dir }
-        jenova.process.spawn(json.stringify({
+        _j.process.spawn(json.stringify({
             cmd = cmd,
             args = argv,
             timeout_ms = 10000,
@@ -674,7 +616,8 @@ registry.register("backend", function(args)
         print(string.format("  Llama Port:   %d", endpoints.llama_port))
         print(string.format("  Embed Port:   %d", endpoints.embed_port))
 
-        local http = jenova and jenova.http
+        local _j = rawget(_G, "jenova")
+        local http = type(_j) == "table" and _j.http or nil
         if http then
             local ok, resp = pcall(http.get, endpoints.health_url, nil)
             if ok and resp then
@@ -844,41 +787,6 @@ end, {
     usage = "/provider [show|set|test] [name]"
 })
 
--- ── /plan ────────────────────────────────────────────────────────────
-
-registry.register("plan", function(args)
-    local config = require("config.loader")
-    local permissions = require("permissions.manager")
-
-    local current = config.get("permission_mode")
-
-    if not args or #args == 0 then
-        if current == "plan" then
-            -- Toggle off plan mode
-            config.set("permission_mode", "default")
-            print("Plan mode: disabled (switched to default)")
-        else
-            config.set("permission_mode", "plan")
-            print("Plan mode: enabled")
-            print("  Only read-only tools are auto-approved")
-            print("  Write tools require explicit permission")
-        end
-    elseif args == "on" then
-        config.set("permission_mode", "plan")
-        print("Plan mode: enabled")
-    elseif args == "off" then
-        config.set("permission_mode", "default")
-        print("Plan mode: disabled")
-    else
-        print("Plan mode: toggle read-only exploration mode")
-        print("Usage: /plan [on|off]")
-        print(string.format("Current: %s", current == "plan" and "enabled" or "disabled"))
-    end
-end, {
-    description = "Toggle plan/exploration mode (read-only tools auto-approved)",
-    usage = "/plan [on|off]"
-})
-
 -- ── /sandbox ─────────────────────────────────────────────────────────
 
 registry.register("sandbox", function(args)
@@ -901,8 +809,9 @@ registry.register("sandbox", function(args)
         print(string.format("Sandbox: %s", enabled and "enabled" or "disabled"))
         local app_state = require("state.app_state")
         print(string.format("Working directory: %s", app_state.get_cwd()))
-        if jenova and jenova.sandbox and jenova.sandbox.validate_path then
-            print("✓ Path validation available (Rust FFI)")
+        local _j = rawget(_G, "jenova")
+        if type(_j) == "table" and _j.sandbox and _j.sandbox.validate_path then
+            print("✓ Path validation available (C FFI)")
         else
             print("⚠ Path validation not available")
         end
@@ -928,7 +837,8 @@ registry.register("diff", function(args)
     local target = args and #args > 0 and args or nil
 
     -- Use jenova.process.spawn if available for safe execution
-    if jenova and jenova.process and jenova.process.spawn then
+    local _jenova = rawget(_G, "jenova")
+    if type(_jenova) == "table" and _jenova.process and _jenova.process.spawn_json then
         local json = require("utils.json_fallback")
         local cmd_args = { "diff", "--stat" }
         if target then
@@ -942,7 +852,7 @@ registry.register("diff", function(args)
             capture_stdout = true,
             capture_stderr = true,
         })
-        local result = jenova.process.spawn(proc_config)
+        local result = _jenova.process.spawn_json(proc_config)
         if result then
             local ok, parsed = pcall(json.parse, result)
             if ok and parsed then
@@ -957,7 +867,6 @@ registry.register("diff", function(args)
             end
         end
     else
-        -- Fallback to fs_fallback process helper
         print("git diff not available without process FFI")
     end
 end, {
@@ -971,7 +880,8 @@ registry.register("branch", function(args)
     local app_state = require("state.app_state")
     local cwd = app_state.get_cwd()
 
-    if jenova and jenova.process and jenova.process.spawn then
+    local _jenova = rawget(_G, "jenova")
+    if type(_jenova) == "table" and _jenova.process and _jenova.process.spawn_json then
         local json = require("utils.json_fallback")
         local subcommand = args:match("^(%S+)")
 
@@ -1011,7 +921,7 @@ registry.register("branch", function(args)
             capture_stdout = true,
             capture_stderr = true,
         })
-        local result = jenova.process.spawn(proc_config)
+        local result = _jenova.process.spawn_json(proc_config)
         if result then
             local ok, parsed = pcall(json.parse, result)
             if ok and parsed then
@@ -1029,37 +939,6 @@ registry.register("branch", function(args)
 end, {
     description = "Manage git branches",
     usage = "/branch [list|current|create|switch] [name]"
-})
-
--- ── /files ───────────────────────────────────────────────────────────
-
-registry.register("files", function(args)
-    local app_state = require("state.app_state")
-    local cwd = app_state.get_cwd()
-
-    if jenova and jenova.fs and jenova.fs.glob then
-        local json = require("utils.json_fallback")
-        local pattern = (args and #args > 0) and args or "**/*"
-        local result = jenova.fs.glob(pattern, cwd, 50)
-        if result then
-            local ok, files = pcall(json.parse, result)
-            if ok and type(files) == "table" then
-                print(string.format("Files matching '%s' (%d results):\n", pattern, #files))
-                for _, f in ipairs(files) do
-                    print("  " .. tostring(f))
-                end
-            else
-                print("No files found")
-            end
-        else
-            print("No files found")
-        end
-    else
-        print("File listing not available without FS FFI")
-    end
-end, {
-    description = "List files in working directory",
-    usage = "/files [pattern]"
 })
 
 -- ── /env ─────────────────────────────────────────────────────────────
@@ -1137,138 +1016,19 @@ end, {
 })
 
 -- ── /summary ─────────────────────────────────────────────────────────
-
-registry.register("summary", function(args)
+-- Kept for backward compatibility; delegates to /stats
+registry.register("summary", function(_)
     local app_state = require("state.app_state")
     local messages = app_state.get_messages()
     local usage = app_state.get_usage()
-
-    print("Session Summary:")
-    print(string.format("  Session: %s", app_state.get("session_id") or "none"))
-    print(string.format("  Messages: %d", #messages))
-    print(string.format("  Working dir: %s", app_state.get_cwd()))
-    print(string.format("  Input tokens: %d", usage.input_tokens))
-    print(string.format("  Output tokens: %d", usage.output_tokens))
-
-    -- Count tool uses
-    local tool_count = 0
-    for _, msg in ipairs(messages) do
-        if type(msg.content) == "table" then
-            for _, block in ipairs(msg.content) do
-                if type(block) == "table" and block.type == "tool_use" then
-                    tool_count = tool_count + 1
-                end
-            end
-        end
-    end
-    print(string.format("  Tool uses: %d", tool_count))
+    print(string.format("Session: %s  Msgs: %d  In: %d  Out: %d tokens  CWD: %s",
+        app_state.get("session_id") or "none",
+        #messages,
+        usage.input_tokens, usage.output_tokens,
+        app_state.get_cwd()))
 end, {
-    description = "Show conversation summary and statistics",
-})
-
--- ── /theme ───────────────────────────────────────────────────────────
-
-registry.register("theme", function(args)
-    local config = require("config.loader")
-    local subcommand = args:match("^(%S+)")
-
-    if not subcommand then
-        local current = config.get("theme") or "default"
-        print(string.format("Current theme: %s", current))
-        print("\nAvailable themes:")
-        print("  default     Standard terminal colors")
-        print("  dark        Optimized for dark backgrounds")
-        print("  light       Optimized for light backgrounds")
-        print("  minimal     Minimal decoration")
-    else
-        config.set("theme", subcommand)
-        print(string.format("Theme set to: %s", subcommand))
-    end
-end, {
-    description = "Change color theme",
-    usage = "/theme [name]"
-})
-
--- ── /tasks ───────────────────────────────────────────────────────────
-
-registry.register("tasks", function(args)
-    local app_state = require("state.app_state")
-    local subcommand = args:match("^(%S+)")
-
-    -- Task tracking is maintained in app_state
-    local tasks = app_state.get("active_tasks") or {}
-
-    if not subcommand or subcommand == "list" then
-        if #tasks == 0 then
-            print("No active tasks")
-        else
-            print(string.format("Active tasks (%d):\n", #tasks))
-            for i, task in ipairs(tasks) do
-                local status_icon = task.status == "running" and "▶" or
-                                   task.status == "done" and "✓" or
-                                   task.status == "failed" and "✗" or "○"
-                print(string.format("  %s %d. %s [%s]", status_icon, i, task.description or "unnamed", task.status or "pending"))
-            end
-        end
-    elseif subcommand == "clear" then
-        app_state.set("active_tasks", {})
-        print("Tasks cleared")
-    else
-        print("Task commands:")
-        print("  /tasks         List active tasks")
-        print("  /tasks clear   Clear all tasks")
-    end
-end, {
-    description = "Manage background tasks",
-    usage = "/tasks [list|clear]"
-})
-
--- ── /tools ───────────────────────────────────────────────────────────
-
-registry.register("tools", function(args)
-    local tool_registry = require("tools.registry")
-    local subcommand = args:match("^(%S+)")
-
-    if not subcommand or subcommand == "list" then
-        local tools = tool_registry.get_all()
-        print(string.format("Registered tools (%d):\n", #tools))
-        for _, tool in ipairs(tools) do
-            local desc = type(tool.description) == "function"
-                and tool.description({}) or (tool.description or "")
-            -- Truncate long descriptions
-            if #desc > 60 then desc = desc:sub(1, 57) .. "..." end
-            print(string.format("  %-20s %s", tool.name, desc))
-        end
-    elseif subcommand == "info" then
-        local name = args:match("^%S+%s+(%S+)")
-        if not name then
-            print("Usage: /tools info <tool-name>")
-            return
-        end
-        local tool = tool_registry.get(name)
-        if tool then
-            print(string.format("Tool: %s", tool.name))
-            local desc = type(tool.description) == "function"
-                and tool.description({}) or (tool.description or "")
-            print(string.format("Description: %s", desc))
-            if tool.input_schema then
-                local json = require("utils.json_fallback")
-                local ok, schema_str = pcall(json.stringify, tool.input_schema, { pretty = true })
-                if ok then
-                    print(string.format("Input schema:\n%s", schema_str))
-                end
-            end
-        else
-            print(string.format("Tool not found: %s", name))
-        end
-    else
-        print("Tool commands:")
-        print("  /tools              List all registered tools")
-        print("  /tools info <name>  Show tool details and schema")
-    end
-end, {
-    description = "List and inspect registered tools",
-    usage = "/tools [list|info] [name]"
+    description = "Show session summary (alias for /stats)",
+    hidden = true,
 })
 
 -- ── /rename ──────────────────────────────────────────────────────────
@@ -1287,132 +1047,6 @@ registry.register("rename", function(args)
 end, {
     description = "Rename the current session",
     usage = "/rename <name>"
-})
-
--- ── /keybindings ─────────────────────────────────────────────────────
-
-registry.register("keybindings", function(args)
-    print("Keybindings:")
-    print("")
-    print("  Navigation:")
-    print("    Ctrl+D        Exit / EOF")
-    print("    Ctrl+C        Cancel current operation")
-    print("    Up/Down       Navigate command history")
-    print("")
-    print("  Commands:")
-    print("    /help         Show available commands")
-    print("    /exit         Exit the CLI")
-    print("    /clear        Clear conversation")
-    print("")
-    if require("config.loader").get("vim_mode") then
-        print("  Vim mode (enabled):")
-        local ok, keybindings = pcall(require, "vim.keybindings")
-        if ok and keybindings and keybindings.list then
-            local binds = keybindings.list()
-            for _, bind in ipairs(binds) do
-                print(string.format("    %-14s %s", bind.key, bind.description))
-            end
-        else
-            print("    (vim keybinding module not loaded)")
-        end
-    end
-end, {
-    description = "Show keyboard shortcuts",
-    aliases = { "keys" }
-})
-
--- ── /stats ───────────────────────────────────────────────────────────
-
-registry.register("stats", function(args)
-    local app_state = require("state.app_state")
-    local config = require("config.loader")
-    local tool_registry = require("tools.registry")
-
-    print("Jenova CLI Statistics:")
-    print("")
-    print("  System:")
-    if jenova and jenova.system then
-        if jenova.system.platform then
-            print(string.format("    Platform: %s", jenova.system.platform()))
-        end
-        if jenova.system.version then
-            print(string.format("    Version: %s", jenova.system.version()))
-        end
-    end
-
-    print(string.format("    Provider: %s", config.get("provider") or "llamacpp"))
-    print(string.format("    Model: %s", config.get("model") or "auto"))
-
-    local tools = tool_registry.get_names()
-    print(string.format("    Tools: %d registered", #tools))
-
-    -- FFI status
-    print("\n  FFI Bindings:")
-    local bindings = { "http", "json", "crypto", "sandbox", "process", "fs", "mcp", "llama", "system" }
-    for _, name in ipairs(bindings) do
-        local available = jenova and jenova[name] ~= nil
-        print(string.format("    jenova.%s: %s", name, available and "✓" or "✗"))
-    end
-
-    -- Session stats
-    local usage = app_state.get_usage()
-    print("\n  Session:")
-    print(string.format("    Messages: %d", #(app_state.get_messages() or {})))
-    print(string.format("    Input tokens: %d", usage.input_tokens))
-    print(string.format("    Output tokens: %d", usage.output_tokens))
-end, {
-    description = "Show detailed CLI statistics",
-})
-
--- ── /effort ──────────────────────────────────────────────────────────
-
-registry.register("effort", function(args)
-    local config = require("config.loader")
-
-    if not args or #args == 0 then
-        local current = config.get("effort") or "normal"
-        print(string.format("Current effort level: %s", current))
-        print("\nEffort levels control response thoroughness:")
-        print("  low       Quick answers, minimal tool use")
-        print("  normal    Balanced (default)")
-        print("  high      Thorough, extensive tool use and verification")
-        return
-    end
-
-    local valid = { low = true, normal = true, high = true }
-    if valid[args] then
-        config.set("effort", args)
-        print(string.format("Effort level set to: %s", args))
-    else
-        print(string.format("Invalid effort level: %s (use low/normal/high)", args))
-    end
-end, {
-    description = "Set response effort level",
-    usage = "/effort [low|normal|high]"
-})
-
--- ── /output-style ────────────────────────────────────────────────────
-
-registry.register("output-style", function(args)
-    local config = require("config.loader")
-
-    if not args or #args == 0 then
-        local current = config.get("output_style") or "normal"
-        print(string.format("Current output style: %s", current))
-        print("\nAvailable styles:")
-        print("  normal      Standard output")
-        print("  concise     Shorter, more direct responses")
-        print("  verbose     Detailed explanations")
-        print("  code-only   Only output code blocks")
-        return
-    end
-
-    config.set("output_style", args)
-    print(string.format("Output style set to: %s", args))
-end, {
-    description = "Change response output style",
-    usage = "/output-style [normal|concise|verbose|code-only]",
-    aliases = { "style" }
 })
 
 -- ── /sessions ────────────────────────────────────────────────────────
@@ -1448,19 +1082,6 @@ registry.register("sessions", function(args)
 end, {
     description = "List and manage saved sessions",
     usage = "/sessions [list|save]"
-})
-
--- ── /exit /quit ───────────────────────────────────────────────────────
--- The REPL loop already catches /exit and /quit directly to save state
--- before exiting. Register these as visible commands so /help lists them.
-
-registry.register("exit", function(args)
-    -- Normally intercepted by the REPL loop; if a handler runs, fall back.
-    print("Goodbye!")
-    os.exit(0)
-end, {
-    description = "Exit the CLI",
-    aliases = { "quit" },
 })
 
 return extended

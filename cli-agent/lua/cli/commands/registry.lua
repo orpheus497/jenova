@@ -1,9 +1,7 @@
 -- cli/commands/registry.lua — Slash command registry
--- Equivalent to src/commands.ts
 
 local CommandRegistry = {}
 
--- Command storage
 local commands = {}
 
 -- ── Command Registration ──────────────────────────────────────────────
@@ -20,7 +18,6 @@ function CommandRegistry.register(name, handler, options)
         hidden = options.hidden or false,
     }
 
-    -- Register aliases
     if options.aliases then
         for _, alias in ipairs(options.aliases) do
             commands[alias] = commands[name]
@@ -55,8 +52,7 @@ end
 
 -- ── Built-in Commands ─────────────────────────────────────────────────
 
--- /help
-CommandRegistry.register("help", function(args)
+CommandRegistry.register("help", function(_)
     print("Available commands:\n")
     local cmds = CommandRegistry.list_commands()
     for _, cmd in ipairs(cmds) do
@@ -72,26 +68,21 @@ end, {
     aliases = {"h", "?"}
 })
 
--- /config
 CommandRegistry.register("config", function(args)
     local config = require("config.loader")
 
     if not args or #args == 0 then
-        -- Show all config
         print("Current configuration:\n")
         local cfg = config.get()
         for k, v in pairs(cfg) do
             print(string.format("  %s = %s", k, tostring(v)))
         end
     else
-        -- Parse key=value or just key
         local key, value = args:match("([^=]+)=(.+)")
         if key and value then
-            -- Set config
             config.set(key, value)
             print(string.format("Set %s = %s", key, value))
         else
-            -- Get config
             local val = config.get(args)
             print(string.format("%s = %s", args, tostring(val)))
         end
@@ -101,114 +92,67 @@ end, {
     usage = "/config [key] or /config key=value"
 })
 
--- /model
-CommandRegistry.register("model", function(args)
-    local config = require("config.loader")
-
-    if not args or #args == 0 then
-        local current = config.get("model") or "auto"
-        print(string.format("Current model: %s", current))
-        print("\nSet a GGUF model name or use 'auto' to let the backend choose.")
-        print("  /model auto")
-        print("  /model <gguf-model-name>")
-        print("  env: JENOVA_MODEL=<name>")
-    else
-        config.set("model", args)
-        print(string.format("Model set to: %s", args))
-    end
-end, {
-    description = "View or change the local model",
-    usage = "/model [model-name]"
-})
-
--- /clear
-CommandRegistry.register("clear", function(args)
+CommandRegistry.register("clear", function(_)
     local app_state = require("state.app_state")
-
     app_state.clear_messages()
     app_state.reset_usage()
-
-    -- Clear screen
-    os.execute("clear || cls")
-
+    os.execute("clear")
     print("Conversation cleared")
 end, {
-    description = "Clear conversation history",
+    description = "Clear conversation history and screen",
 })
 
--- /compact
-CommandRegistry.register("compact", function(args)
+CommandRegistry.register("compact", function(_)
     local config = require("config.loader")
     local current = config.get("compact_mode")
     config.set("compact_mode", not current)
-
     print(string.format("Compact mode: %s", not current and "enabled" or "disabled"))
 end, {
     description = "Toggle compact output mode",
 })
 
--- /thinking
-CommandRegistry.register("thinking", function(args)
+CommandRegistry.register("thinking", function(_)
     local config = require("config.loader")
     local current = config.get("thinking_enabled")
     config.set("thinking_enabled", not current)
-
     print(string.format("Thinking mode: %s", not current and "enabled" or "disabled"))
 end, {
-    description = "Toggle thinking/reasoning display",
+    description = "Toggle reasoning/thinking display",
 })
 
--- /vim
-CommandRegistry.register("vim", function(args)
-    local config = require("config.loader")
-    local current = config.get("vim_mode")
-    config.set("vim_mode", not current)
-
-    print(string.format("Vim mode: %s", not current and "enabled" or "disabled"))
-    print("(Note: Full vim mode implementation pending)")
+CommandRegistry.register("version", function(_)
+    print("Jenova CLI v0.2.0 (C + Lua + llama.cpp)")
+    print("Backend: jenova proxy + llama-server")
 end, {
-    description = "Toggle vim keybindings",
-})
-
--- /version
-CommandRegistry.register("version", function(args)
-    print("Jenova CLI v0.1.0 (Lua/C)")
-    print("Build: Lua application layer + C core + Rust FFI")
-end, {
-    description = "Show version information",
+    description = "Show version",
     aliases = {"v"}
 })
 
--- /session
-CommandRegistry.register("session", function(args)
+CommandRegistry.register("session", function(_)
     local app_state = require("state.app_state")
-
     print(string.format("Session ID: %s", app_state.get("session_id") or "none"))
     print(string.format("Session dir: %s", app_state.get("session_dir") or "none"))
     print(string.format("Working dir: %s", app_state.get_cwd()))
+    local tag = app_state.get("session_tag")
+    if tag then print(string.format("Tag: #%s", tag)) end
 end, {
     description = "Show current session information",
 })
 
--- /cwd
 CommandRegistry.register("cwd", function(args)
     local app_state = require("state.app_state")
 
     if args and #args > 0 then
-        -- Change directory
         local fs = require("utils.fs_fallback")
-        
-        -- Resolve relative path against current cwd if needed
         local target = args
-        if not args:match("^/") and not args:match("^%a:\\") then
+        if not args:match("^/") then
             target = app_state.get_cwd() .. "/" .. args
         end
-        
         if fs.is_directory(target) then
             app_state.set_cwd(target)
             print(string.format("Changed directory to: %s", target))
         else
-            print(string.format("Failed to change directory to: %s", args))
+            print(string.format("Not a directory: %s", args))
         end
     else
         print(string.format("Current directory: %s", app_state.get_cwd()))
@@ -219,63 +163,79 @@ end, {
     aliases = {"cd"}
 })
 
--- /doctor
-CommandRegistry.register("doctor", function(args)
-    print("Running diagnostics...\n")
+-- /doctor — consolidated diagnostics (replaces /diag and old /doctor)
+CommandRegistry.register("doctor", function(_)
+    print("Jenova diagnostics\n")
 
-    -- Check local backend
-    local jenova_http_ok = jenova and jenova.http ~= nil
-    if jenova_http_ok then
-        print("✓ jenova.http available (local backend)")
+    local _jenova = rawget(_G, "jenova")
+
+    local bindings = { "http", "json", "fs", "llama", "system", "process", "mcp", "crypto", "sandbox" }
+    print("  FFI bindings:")
+    for _, name in ipairs(bindings) do
+        local available = type(_jenova) == "table" and _jenova[name] ~= nil
+        print(string.format("    %s jenova.%s", available and "✓" or "✗", name))
+    end
+    print("")
+
+    local ok_cfg, config = pcall(require, "config.loader")
+    print(ok_cfg and "✓ Configuration loaded" or "✗ Configuration failed to load")
+
+    local ok_prov = pcall(require, "providers.base")
+    print(ok_prov and "✓ Provider system loaded" or "✗ Provider system failed to load")
+
+    local ok_tr, tool_registry = pcall(require, "tools.registry")
+    if ok_tr then
+        print(string.format("✓ %d tools registered", #tool_registry.get_names()))
     else
-        print("⚠ jenova.http not available")
+        print("✗ Tool registry failed to load")
     end
 
-    -- Check config
-    local config = require("config.loader")
-    local cfg = config.get()
-    if cfg then
-        print("✓ Configuration loaded")
-    else
-        print("✗ Configuration not loaded")
+    if ok_cfg then
+        local provider = config.get("provider") or "jenova_backend"
+        local endpoint = config.get("api_url") or "http://127.0.0.1:8080"
+        print(string.format("  Provider: %s  Endpoint: %s", provider, endpoint))
     end
 
-    -- Check tools
-    local tool_registry = require("tools.registry")
-    local tools = tool_registry.list_tools()
-    print(string.format("✓ %d tools available", #tools))
+    local ok_mem, memory = pcall(require, "services.memory.manager")
+    if ok_mem then
+        local errs = memory.format_errors_for_prompt(5)
+        if errs and #errs > 0 then
+            print("\n  Recent session errors:")
+            print(errs)
+        else
+            print("✓ No session errors recorded")
+        end
+    end
 
-    print("\nDiagnostics complete")
+    print("\nDiagnostics complete.")
 end, {
-    description = "Run environment diagnostics",
+    description = "Run full environment diagnostics",
+    aliases = { "diag", "diagnostics" },
 })
 
--- /mcp
 CommandRegistry.register("mcp", function(args)
-    local subcommand = args:match("^(%S+)")
+    local subcommand = args and args:match("^(%S+)")
 
     if subcommand == "list" then
         print("MCP servers:")
         local config = require("config.loader")
         local servers = config.get("mcp_servers") or {}
-        if #servers == 0 then
+        if type(servers) ~= "table" or not next(servers) then
             print("  (none configured)")
         else
             for _, server in ipairs(servers) do
-                print(string.format("  - %s", server.name))
+                print(string.format("  - %s", server.name or tostring(server)))
             end
         end
     else
-        print("MCP management:")
-        print("  /mcp list          List configured MCP servers")
-        print("  (Additional MCP features pending)")
+        print("MCP commands:")
+        print("  /mcp list    List configured MCP servers")
     end
 end, {
     description = "Manage MCP servers",
-    usage = "/mcp <subcommand>"
+    usage = "/mcp [list]"
 })
 
--- /history
 CommandRegistry.register("history", function(args)
     local history = require("history.manager")
     local subcommand = args and args:match("^(%S+)")
@@ -305,52 +265,49 @@ CommandRegistry.register("history", function(args)
         history.clear()
         print("History cleared.")
     else
-        print("History commands:")
-        print("  /history [list] [count]  List recent history")
-        print("  /history search <query>  Search history")
-        print("  /history clear           Clear history")
+        print("Usage: /history [list [count] | search <query> | clear]")
     end
 end, {
     description = "Manage conversation history",
     usage = "/history [list|search|clear]",
 })
 
--- /context
-CommandRegistry.register("context", function(args)
+CommandRegistry.register("context", function(_)
     local context = require("context.manager")
     print(context.build_context_string())
+    local user_ctx = context.get_user_context()
+    if user_ctx then
+        print(string.format("  User: %s  Home: %s  Shell: %s",
+            user_ctx.username or "?", user_ctx.home_directory or "?", user_ctx.shell or "?"))
+    end
 end, {
     description = "Show system and user context",
 })
 
--- /files
 CommandRegistry.register("files", function(args)
     local app_state = require("state.app_state")
     local cwd = app_state.get_cwd()
     local pattern = (args and #args > 0) and args or "**/*"
+    local _jenova = rawget(_G, "jenova")
 
-    if jenova and jenova.fs and jenova.fs.glob then
+    if type(_jenova) == "table" and _jenova.fs and _jenova.fs.glob then
         local json = require("utils.json_fallback")
-        local result = jenova.fs.glob(pattern, cwd, 50)
+        local result = _jenova.fs.glob(pattern, cwd, 50)
         if result then
             local ok, files = pcall(json.parse, result)
             if ok and type(files) == "table" and #files > 0 then
-                print(string.format("Files matching '%s' (%d results):\n", pattern, #files))
-                for _, f in ipairs(files) do
-                    print("  " .. tostring(f))
-                end
+                print(string.format("Files matching '%s' (%d):\n", pattern, #files))
+                for _, f in ipairs(files) do print("  " .. tostring(f)) end
                 return
             end
         end
         print("No files found.")
     else
-        -- Fallback: shell ls
-        local out = io.popen("ls -1 " .. cwd .. " 2>/dev/null")
+        local shell = require("utils.shell")
+        local out = io.popen("ls -1 " .. shell.quote(cwd) .. " 2>/dev/null")
         if out then
             print(string.format("Files in %s:\n", cwd))
-            for line in out:lines() do
-                print("  " .. line)
-            end
+            for line in out:lines() do print("  " .. line) end
             out:close()
         end
     end
@@ -359,19 +316,15 @@ end, {
     usage = "/files [glob-pattern]",
 })
 
--- /search
 CommandRegistry.register("search", function(args)
     if not args or #args == 0 then
         print("Usage: /search <query>")
-        print("  Searches conversation history and memory for <query>.")
         return
     end
-
     local history = require("history.manager")
     local results = history.search(args)
-
     if #results == 0 then
-        print(string.format("No results found for: %s", args))
+        print(string.format("No results for: %s", args))
     else
         print(string.format("Found %d result(s) for '%s':\n", #results, args))
         for i, item in ipairs(results) do
@@ -384,8 +337,7 @@ end, {
     usage = "/search <query>",
 })
 
--- /errors
-CommandRegistry.register("errors", function(args)
+CommandRegistry.register("errors", function(_)
     local memory = require("services.memory.manager")
     local formatted = memory.format_errors_for_prompt(20)
     if not formatted or #formatted == 0 then
@@ -397,7 +349,6 @@ end, {
     description = "Show errors from this session",
 })
 
--- /plan
 CommandRegistry.register("plan", function(args)
     local config = require("config.loader")
     local current = config.get("permission_mode")
@@ -405,12 +356,10 @@ CommandRegistry.register("plan", function(args)
     if not args or #args == 0 then
         if current == "plan" then
             config.set("permission_mode", "default")
-            print("Plan mode: disabled (switched to default)")
+            print("Plan mode: disabled")
         else
             config.set("permission_mode", "plan")
-            print("Plan mode: enabled")
-            print("  Only read-only tools are auto-approved")
-            print("  Write tools require explicit permission")
+            print("Plan mode: enabled (read-only tools auto-approved)")
         end
     elseif args == "on" then
         config.set("permission_mode", "plan")
@@ -419,62 +368,61 @@ CommandRegistry.register("plan", function(args)
         config.set("permission_mode", "default")
         print("Plan mode: disabled")
     else
-        print("Plan mode: toggle read-only exploration mode")
+        print(string.format("Plan mode: %s", current == "plan" and "enabled" or "disabled"))
         print("Usage: /plan [on|off]")
-        print(string.format("Current: %s", current == "plan" and "enabled" or "disabled"))
     end
 end, {
-    description = "Toggle plan/exploration mode (read-only tools auto-approved)",
+    description = "Toggle plan mode (read-only tools auto-approved)",
     usage = "/plan [on|off]",
 })
 
--- /diag
-CommandRegistry.register("diag", function(args)
-    print("Running diagnostics...\n")
+-- /stats — consolidated session stats (replaces /summary and /insights)
+CommandRegistry.register("stats", function(_)
+    local app_state = require("state.app_state")
+    local config = require("config.loader")
+    local tool_registry = require("tools.registry")
 
-    -- Config
-    local ok_cfg, config = pcall(require, "config.loader")
-    print(ok_cfg and "✓ Configuration loaded" or "✗ Configuration failed to load")
+    local messages = app_state.get_messages() or {}
+    local usage = app_state.get_usage()
 
-    -- Providers
-    local ok_prov, _ = pcall(require, "providers.base")
-    print(ok_prov and "✓ providers.base loaded" or "✗ providers.base failed to load")
-
-    -- Tools
-    local ok_tr, tool_registry = pcall(require, "tools.registry")
-    if ok_tr then
-        print(string.format("✓ %d tools available", #tool_registry.get_names()))
-    else
-        print("✗ tools registry failed to load")
-    end
-
-    -- FFI
-    local bindings = { "http", "json", "fs", "llama", "system", "process", "mcp" }
-    print("\n  FFI:")
-    for _, name in ipairs(bindings) do
-        local available = jenova and jenova[name] ~= nil
-        print(string.format("  %s jenova.%s", available and "✓" or "✗", name))
-    end
-
-    -- Memory/session errors
-    local ok_mem, memory = pcall(require, "services.memory.manager")
-    if ok_mem then
-        local errs = memory.format_errors_for_prompt(5)
-        if errs and #errs > 0 then
-            print("\n  Recent errors:")
-            print(errs)
-        else
-            print("\n✓ No session errors recorded")
+    local user_msgs, assistant_msgs, tool_uses = 0, 0, 0
+    local total_chars = 0
+    for _, m in ipairs(messages) do
+        if m.role == "user" then user_msgs = user_msgs + 1 end
+        if m.role == "assistant" then assistant_msgs = assistant_msgs + 1 end
+        if type(m.content) == "table" then
+            for _, b in ipairs(m.content) do
+                if type(b) == "table" and b.type == "tool_use" then tool_uses = tool_uses + 1 end
+                if type(b) == "table" and b.type == "text" and b.text then
+                    total_chars = total_chars + #b.text
+                end
+            end
+        elseif type(m.content) == "string" then
+            total_chars = total_chars + #m.content
         end
     end
 
-    print("\nDiagnostics complete.")
+    print("Session stats:")
+    print(string.format("  Session:          %s", app_state.get("session_id") or "none"))
+    local tag = app_state.get("session_tag")
+    if tag then print(string.format("  Tag:              #%s", tag)) end
+    print(string.format("  Working dir:      %s", app_state.get_cwd()))
+    print(string.format("  Provider:         %s", config.get("provider") or "jenova_backend"))
+    print(string.format("  Tools registered: %d", #tool_registry.get_names()))
+    print(string.format("  User turns:       %d", user_msgs))
+    print(string.format("  Assistant turns:  %d", assistant_msgs))
+    print(string.format("  Tool uses:        %d", tool_uses))
+    print(string.format("  Input tokens:     %d", usage.input_tokens))
+    print(string.format("  Output tokens:    %d", usage.output_tokens))
+    if user_msgs > 0 then
+        print(string.format("  Avg tokens/turn:  %.1f",
+            (usage.input_tokens + usage.output_tokens) / user_msgs))
+    end
 end, {
-    description = "Run full environment diagnostics",
-    aliases = { "diagnostics" },
+    description = "Show session statistics",
+    aliases = { "summary", "insights" },
 })
 
--- /tools
 CommandRegistry.register("tools", function(args)
     local tool_registry = require("tools.registry")
     local subcommand = args and args:match("^(%S+)")
@@ -487,37 +435,33 @@ CommandRegistry.register("tools", function(args)
             local desc = type(tool.description) == "function"
                 and tool.description({}) or (tool.description or "")
             if #desc > 60 then desc = desc:sub(1, 57) .. "..." end
-            print(string.format("  %-20s %s", tool.name, desc))
+            print(string.format("  %-22s %s", tool.name, desc))
         end
     elseif subcommand == "info" then
         local name = args:match("^%S+%s+(%S+)")
-        if not name then print("Usage: /tools info <tool-name>"); return end
+        if not name then print("Usage: /tools info <name>"); return end
         local tool = tool_registry.get(name)
         if tool then
             local desc = type(tool.description) == "function"
                 and tool.description({}) or (tool.description or "")
-            print(string.format("Tool: %s", tool.name))
-            print(string.format("Description: %s", desc))
+            print(string.format("Tool: %s\nDescription: %s", tool.name, desc))
             if tool.input_schema then
                 local json = require("utils.json_fallback")
                 local ok2, schema_str = pcall(json.stringify, tool.input_schema, { pretty = true })
-                if ok2 then print(string.format("Input schema:\n%s", schema_str)) end
+                if ok2 then print("Input schema:\n" .. schema_str) end
             end
         else
             print(string.format("Tool not found: %s", name))
         end
     else
-        print("Tool commands:")
-        print("  /tools              List all registered tools")
-        print("  /tools info <name>  Show tool details and schema")
+        print("Usage: /tools [list | info <name>]")
     end
 end, {
     description = "List and inspect registered tools",
     usage = "/tools [list|info] [name]",
 })
 
--- /quit
-CommandRegistry.register("quit", function(args)
+CommandRegistry.register("quit", function(_)
     print("Goodbye!")
     os.exit(0)
 end, {

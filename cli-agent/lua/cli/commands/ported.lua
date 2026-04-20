@@ -1,8 +1,6 @@
--- cli/commands/ported.lua — CLI commands ported from the legacy TS CLI.
--- These are the remaining user-facing slash commands that were not yet
--- present in registry.lua or extended.lua. Each command is registered via
--- the same CommandRegistry module used by the other command files so they
--- appear in /help and dispatch through the standard REPL routing.
+-- cli/commands/ported.lua — Additional Jenova CLI slash commands
+-- Git workflow helpers, session management, and convenience utilities
+-- focused on the Jenova cognitive architecture use-case.
 
 local M = {}
 
@@ -13,12 +11,6 @@ local registry = require("cli.commands.registry")
 local function trim(s)
     if not s then return "" end
     return (s:match("^%s*(.-)%s*$")) or ""
-end
-
-local function first_word(s)
-    if not s then return nil, nil end
-    local w, rest = s:match("^(%S+)%s*(.*)$")
-    return w, rest
 end
 
 local function get_state()
@@ -57,76 +49,6 @@ local function copy_to_clipboard(text)
     return false, "clipboard command failed"
 end
 
--- ── /agents ───────────────────────────────────────────────────────────
--- Manage named agent configurations stored in config.agents.
-
-registry.register("agents", function(args)
-    local cfg = get_config()
-    local sub, rest = first_word(args)
-    local agents = cfg.get("agents")
-    if type(agents) ~= "table" then
-        agents = {}
-        cfg.set("agents", agents)
-    end
-
-    if not sub or sub == "list" then
-        local count = 0
-        for _ in pairs(agents) do count = count + 1 end
-        if count == 0 then
-            print("No agents configured.")
-            print("Create one with: /agents create <name>")
-            return
-        end
-        print(string.format("Configured agents (%d):", count))
-        for name, spec in pairs(agents) do
-            local model = (spec and spec.model) or "(default)"
-            local desc  = (spec and spec.description) or ""
-            print(string.format("  %-20s  model=%s  %s", name, model, desc))
-        end
-    elseif sub == "create" then
-        local name = rest and trim(rest) or ""
-        if name == "" then
-            print("Usage: /agents create <name>")
-            return
-        end
-        if agents[name] then
-            print(string.format("Agent '%s' already exists.", name))
-            return
-        end
-        agents[name] = { model = nil, description = "", tools = {} }
-        cfg.set("agents", agents)
-        print(string.format("Created agent '%s'.", name))
-    elseif sub == "remove" or sub == "delete" then
-        local name = rest and trim(rest) or ""
-        if name == "" or not agents[name] then
-            print("Usage: /agents remove <name>")
-            return
-        end
-        agents[name] = nil
-        cfg.set("agents", agents)
-        print(string.format("Removed agent '%s'.", name))
-    elseif sub == "show" then
-        local name = rest and trim(rest) or ""
-        local spec = agents[name]
-        if not spec then
-            print(string.format("No such agent: %s", name))
-            return
-        end
-        local json = require("utils.json_fallback")
-        local ok, s = pcall(json.stringify, spec, { pretty = true })
-        print(ok and s or tostring(spec))
-    else
-        print("Agent commands:")
-        print("  /agents              List agents")
-        print("  /agents create <n>   Create a new agent")
-        print("  /agents show <n>     Show agent config")
-        print("  /agents remove <n>   Delete an agent")
-    end
-end, {
-    description = "Manage agent configurations",
-    usage = "/agents [list|create|show|remove] [name]",
-})
-
 -- ── /brief ────────────────────────────────────────────────────────────
 
 registry.register("brief", function(args)
@@ -163,7 +85,6 @@ end, {
 })
 
 -- ── /btw ──────────────────────────────────────────────────────────────
--- Ask a quick side question without disturbing the main conversation.
 
 registry.register("btw", function(args)
     local prompt = trim(args)
@@ -189,35 +110,7 @@ end, {
     usage = "/btw <question>",
 })
 
--- ── /color ────────────────────────────────────────────────────────────
--- Set the prompt accent color for the session.
-
-registry.register("color", function(args)
-    local cfg = get_config()
-    local arg = trim(args):lower()
-    local palette = {
-        default=true, red=true, green=true, yellow=true, blue=true,
-        magenta=true, cyan=true, white=true, gray=true,
-    }
-    if arg == "" then
-        local current = cfg.get("prompt_color") or "default"
-        print(string.format("Current prompt color: %s", current))
-        print("Available colors:")
-        for name in pairs(palette) do io.write("  " .. name .. "\n") end
-    elseif palette[arg] then
-        cfg.set("prompt_color", arg)
-        print(string.format("Prompt color set to %s.", arg))
-    else
-        print(string.format("Unknown color: %s", arg))
-        print("Valid colors: default, red, green, yellow, blue, magenta, cyan, white, gray")
-    end
-end, {
-    description = "Set the prompt accent color",
-    usage = "/color [name]",
-})
-
 -- ── /copy ─────────────────────────────────────────────────────────────
--- Copy the assistant's last response text to the clipboard.
 
 registry.register("copy", function(_)
     local app_state = get_state()
@@ -260,7 +153,6 @@ end, {
 })
 
 -- ── /commit-push-pr ───────────────────────────────────────────────────
--- Hand an engineered prompt to the assistant to stage/commit/push and open a PR.
 
 registry.register("commit-push-pr", function(args)
     local ok_qe, query_engine = pcall(require, "engine.query_engine")
@@ -294,63 +186,6 @@ working tree is dirty in a way that needs human judgement.
 end, {
     description = "Commit staged work, push the branch, and open a PR",
     usage = "/commit-push-pr [extra instructions]",
-})
-
--- ── /insights ─────────────────────────────────────────────────────────
-
-registry.register("insights", function(_)
-    local app_state = get_state()
-    local messages = app_state.get_messages() or {}
-    local usage = app_state.get_usage()
-
-    local user_msgs, assistant_msgs, tool_uses = 0, 0, 0
-    local total_chars = 0
-    for _, m in ipairs(messages) do
-        if m.role == "user" then user_msgs = user_msgs + 1 end
-        if m.role == "assistant" then assistant_msgs = assistant_msgs + 1 end
-        if type(m.content) == "table" then
-            for _, b in ipairs(m.content) do
-                if type(b) == "table" and b.type == "tool_use" then tool_uses = tool_uses + 1 end
-                if type(b) == "table" and b.type == "text" and b.text then
-                    total_chars = total_chars + #b.text
-                end
-            end
-        elseif type(m.content) == "string" then
-            total_chars = total_chars + #m.content
-        end
-    end
-
-    print("Session insights:")
-    print(string.format("  User messages:      %d", user_msgs))
-    print(string.format("  Assistant messages: %d", assistant_msgs))
-    print(string.format("  Tool uses:          %d", tool_uses))
-    print(string.format("  Total text length:  %d chars", total_chars))
-    print(string.format("  Input tokens:       %d", usage.input_tokens))
-    print(string.format("  Output tokens:      %d", usage.output_tokens))
-    if user_msgs > 0 then
-        print(string.format("  Avg tokens/turn:    %.1f",
-            (usage.input_tokens + usage.output_tokens) / user_msgs))
-    end
-end, {
-    description = "Analyze the current session (message and tool stats)",
-    usage = "/insights",
-})
-
--- ── /reload-plugins ───────────────────────────────────────────────────
-
-registry.register("reload-plugins", function(_)
-    local ok, plugins = pcall(require, "plugins.loader")
-    if not ok or not plugins or not plugins.load_all then
-        print("Plugin loader not available.")
-        return
-    end
-    if plugins.reset then plugins.reset() end
-    plugins.load_all()
-    local list = (plugins.list and plugins.list()) or {}
-    print(string.format("Plugins reloaded (%d active).", #list))
-end, {
-    description = "Reset and reload all plugins in the current session",
-    usage = "/reload-plugins",
 })
 
 -- ── /rewind ───────────────────────────────────────────────────────────
@@ -406,103 +241,6 @@ registry.register("tag", function(args)
 end, {
     description = "Add, show, or remove a tag on the current session",
     usage = "/tag [name|remove]",
-})
-
--- ── /terminal-setup ───────────────────────────────────────────────────
-
-registry.register("terminal-setup", function(_)
-    print("Terminal setup diagnostics:")
-    print(string.format("  TERM:         %s", os.getenv("TERM") or "(unset)"))
-    print(string.format("  COLORTERM:    %s", os.getenv("COLORTERM") or "(unset)"))
-    print(string.format("  TERM_PROGRAM: %s", os.getenv("TERM_PROGRAM") or "(unset)"))
-    print("")
-    print("Recommended: TERM=xterm-256color and a Nerd Font with ligatures.")
-    print("For keyboard protocol support (Shift+Enter, etc.), use a terminal")
-    print("with the Kitty keyboard protocol: kitty, ghostty, wezterm, foot, alacritty.")
-end, {
-    description = "Show terminal capabilities and setup tips",
-    usage = "/terminal-setup",
-    aliases = { "terminalsetup", "terminalSetup" },
-})
-
--- ── /statusline ───────────────────────────────────────────────────────
-
-registry.register("statusline", function(args)
-    local cfg = get_config()
-    local arg = trim(args)
-    if arg == "" then
-        local current = cfg.get("statusline") or "(default)"
-        print(string.format("Status line: %s", current))
-        print("Set with:   /statusline \"<format>\"")
-        print("Reset with: /statusline reset")
-        print("")
-        print("Format tokens: {cwd} {branch} {model} {provider} {usage}")
-        return
-    end
-    if arg:lower() == "reset" or arg:lower() == "default" then
-        cfg.set("statusline", nil)
-        print("Status line reset to default.")
-        return
-    end
-    cfg.set("statusline", arg)
-    print(string.format("Status line set to: %s", arg))
-end, {
-    description = "Configure the REPL status line format",
-    usage = "/statusline [<format>|reset]",
-})
-
--- ── /upgrade ──────────────────────────────────────────────────────────
-
-registry.register("upgrade", function(_)
-    print("cli-agent upgrade instructions")
-    print(string.rep("-", 40))
-    print("This CLI is distributed from source. To upgrade:")
-    print("")
-    print("  cd <path-to-cloda-codey-lua>")
-    print("  git pull")
-    print("  make release")
-    print("  sudo make install")
-    print("")
-    print("For the backend services, see:")
-    print("  https://github.com/orpheus497/jenova")
-end, {
-    description = "Show upgrade instructions for cli-agent",
-    usage = "/upgrade",
-})
-
--- ── /release-notes ────────────────────────────────────────────────────
--- Show a local CHANGELOG if present, otherwise point to the repo.
-
-registry.register("release-notes", function(args)
-    local version = trim(args)
-    local candidates = { "CHANGELOG.md", "CHANGES.md", "HISTORY.md" }
-    local path
-    for _, name in ipairs(candidates) do
-        local f = io.open(name, "r")
-        if f then f:close(); path = name; break end
-    end
-    if not path then
-        print("No local changelog found.")
-        print("See: https://github.com/orpheus497/cloda-codey-lua/releases")
-        return
-    end
-    local f = io.open(path, "r")
-    if not f then
-        print("Failed to open " .. path)
-        return
-    end
-    local content = f:read("*a") or ""
-    f:close()
-    if version ~= "" then
-        local pat = "(#+%s*[vV]?" .. version:gsub("%.", "%%.") .. "[^\n]*\n.-)\n#+%s"
-        local section = content:match(pat)
-        if section then print(section) else print(content) end
-    else
-        print(content)
-    end
-end, {
-    description = "Show release notes / changelog",
-    usage = "/release-notes [version]",
 })
 
 return M

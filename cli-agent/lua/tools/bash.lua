@@ -1,13 +1,13 @@
--- tools/bash.lua — BashTool: Execute shell commands
--- Uses jenova.process (Rust FFI) for proper subprocess management with
+-- tools/bash.lua — ShellTool: Execute shell commands
+-- Uses jenova.process (C FFI) for proper subprocess management with
 -- timeout, output capture, and exit code handling. Falls back to io.popen.
 
 local json = require("utils.json_fallback")
 
 local M = {}
 
-M.name = "Bash"
-M.description = "Execute a bash command on the system. Use for running scripts, installing packages, compiling code, managing files, or any system operation."
+M.name = "Shell"
+M.description = "Execute a shell command (sh) on the system. Use for running scripts, installing packages, compiling code, managing files, or any system operation."
 
 M.input_schema = {
     type = "object",
@@ -18,7 +18,7 @@ M.input_schema = {
         },
         description = {
             type = "string",
-            description = "Brief description of what the command does"
+            description = "Brief description of what the command does (shown to user)"
         },
         timeout = {
             type = "integer",
@@ -71,9 +71,9 @@ function M.user_facing_name(input)
     if input and input.command then
         local short = input.command:sub(1, 40)
         if #input.command > 40 then short = short .. "..." end
-        return "Bash: " .. short
+        return "Shell: " .. short
     end
-    return "Bash"
+    return "Shell"
 end
 
 function M.check_permissions(input, context)
@@ -92,7 +92,7 @@ function M.check_permissions(input, context)
         return { allowed = false, reason = "permissions manager unavailable" }
     end
 
-    local allowed, reason = manager.can_use_tool("Bash", input, context or {})
+    local allowed, reason = manager.can_use_tool("Shell", input, context or {})
     if allowed then
         return { allowed = true }
     end
@@ -108,8 +108,9 @@ function M.call(args, context)
     local timeout = args.timeout or 120000
     local cwd = context and context.cwd or nil
 
-    if jenova and jenova.sandbox and jenova.sandbox.validate_command then
-        if jenova.sandbox.validate_command(command) == 0 then
+    local _jenova = rawget(_G, "jenova")
+    if type(_jenova) == "table" and _jenova.sandbox and _jenova.sandbox.validate_command then
+        if _jenova.sandbox.validate_command(command) == 0 then
             return { type = "error", error = "Command blocked by sandbox" }
         end
     end
@@ -126,17 +127,16 @@ function M.call(args, context)
         { "JENOVA_LLAMA_EMBED_PORT", tostring(endpoints.embed_port) },
     }
 
-    -- Use Rust FFI process spawning (preferred)
-    if jenova and jenova.process and jenova.process.spawn then
+    -- Use C FFI process spawning (preferred)
+    if type(_jenova) == "table" and _jenova.process and _jenova.process.spawn_json then
         local config = json.stringify({
-            command = "bash",
+            command = "sh",
             args = { "-c", command },
             cwd = cwd,
             timeout_ms = timeout,
-            env = env,
             inherit_env = true,
         })
-        local result_json = jenova.process.spawn(config)
+        local result_json = _jenova.process.spawn_json(config)
         if result_json then
             local ok, result = pcall(json.parse, result_json)
             if ok and result then
