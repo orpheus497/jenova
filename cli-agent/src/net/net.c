@@ -19,11 +19,13 @@ typedef struct {
 static void buffer_init(buffer_t *buf) {
     buf->capacity = 4096;
     buf->data = malloc(buf->capacity);
+    if (!buf->data) { buf->capacity = 0; buf->size = 0; return; }
     buf->data[0] = '\0';
     buf->size = 0;
 }
 
 static void buffer_append(buffer_t *buf, const char *data, size_t len) {
+    if (!buf->data) return;
     while (buf->size + len + 1 > buf->capacity) {
         buf->capacity *= 2;
         char *tmp = realloc(buf->data, buf->capacity);
@@ -101,7 +103,7 @@ static struct curl_slist *parse_headers_json(const char *headers_json) {
         if (val_len >= sizeof(val)) { p = val_end + 1; continue; }
         unescape_json_string(p, val_len, val, sizeof(val));
 
-        char header[1536];
+        char header[2048];
         snprintf(header, sizeof(header), "%s: %s", key, val);
         headers = curl_slist_append(headers, header);
 

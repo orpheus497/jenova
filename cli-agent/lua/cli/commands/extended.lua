@@ -726,7 +726,7 @@ end, {
 registry.register("backend", function(args)
     local trio = require("utils.trio")
     local endpoints = trio.get_endpoints()
-    local sub = args[1]
+    local sub = args:match("^(%S+)")
 
     if not sub or sub == "status" then
         print("Jenova Backend Status:")

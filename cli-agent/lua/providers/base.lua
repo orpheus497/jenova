@@ -83,18 +83,21 @@ end
 --- Tries providers in priority order: llamacpp (primary), then cloud providers
 --- @return string|nil provider_name Name of available provider or nil
 function M.find_available()
-    -- Always try the primary provider first
-    local priority = {"jenova_backend", "llamacpp", "anthropic", "openai", "gemini", "openrouter"}
+    -- Build priority list with the primary provider always first
+    local base_priority = {"jenova_backend", "llamacpp", "anthropic", "openai", "gemini", "openrouter"}
+    local priority = {}
+    local seen = {}
 
-    -- If primary is different, move it to front
-    if primary_provider_name ~= "llamacpp" then
-        local reordered = {primary_provider_name}
-        for _, name in ipairs(priority) do
-            if name ~= primary_provider_name then
-                table.insert(reordered, name)
-            end
+    -- Primary first
+    priority[1] = primary_provider_name
+    seen[primary_provider_name] = true
+
+    -- Then the rest in default order, skipping the primary
+    for _, name in ipairs(base_priority) do
+        if not seen[name] then
+            table.insert(priority, name)
+            seen[name] = true
         end
-        priority = reordered
     end
 
     for _, name in ipairs(priority) do

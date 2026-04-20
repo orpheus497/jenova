@@ -255,28 +255,21 @@ end
 function QueryEngine:execute_tool(tool_name, tool_use_id, input)
     self.on_tool_use(tool_name, input)
 
-    -- Check permission via the centralized permissions manager
-    local perm_ok, permissions = pcall(require, "permissions.manager")
-    if perm_ok then
-        local allowed, perm_err = permissions.can_use_tool(tool_name, input)
-        if not allowed then
-            permissions.record_permission(tool_name, input, false)
-            return nil, "Permission denied for tool: " .. tool_name .. (perm_err and (" — " .. perm_err) or "")
-        end
-        permissions.record_permission(tool_name, input, true)
-    elseif not self.can_use_tool(tool_name, input) then
-        return nil, "Permission denied for tool: " .. tool_name
-    end
+    -- Build context for the tool (cwd, session info, etc.)
+    local app_state_ok, app_state = pcall(require, "state.app_state")
+    local tool_context = {
+        cwd = app_state_ok and app_state.get_cwd() or nil,
+    }
 
-    -- Get tool implementation
+    -- Get tool implementation (verify it exists before execute)
     local tool = tool_registry.get_tool(tool_name)
     if not tool then
         return nil, "Unknown tool: " .. tool_name
     end
 
-    -- Execute tool via the registry's execute() helper, which calls tool.call()
-    -- and handles its own permission checks.
-    local ok, result, exec_err = pcall(tool_registry.execute, tool_name, input)
+    -- Execute tool via the registry's execute() helper, which handles
+    -- permission checks via tool.check_permissions() — single enforcement point.
+    local ok, result, exec_err = pcall(tool_registry.execute, tool_name, input, tool_context)
 
     -- Record action in memory manager
     local mem_ok, memory = pcall(require, "services.memory.manager")
@@ -410,17 +403,24 @@ function QueryEngine:query(user_message, options)
             end
         end
 
-        -- Add all tool uses from this turn as one assistant message
-        local tool_use_blocks = {}
+        -- Add all tool uses from this turn as one assistant message.
+        -- Include any text the model emitted before/alongside tool calls.
+        local assistant_content = {}
+        if response.text and #response.text > 0 then
+            table.insert(assistant_content, {
+                type = "text",
+                text = response.text,
+            })
+        end
         for _, tool_use in ipairs(response.tool_uses) do
-            table.insert(tool_use_blocks, {
+            table.insert(assistant_content, {
                 type  = "tool_use",
                 id    = tool_use.id,
                 name  = tool_use.name,
                 input = tool_use.input,
             })
         end
-        table.insert(self.messages, { role = "assistant", content = tool_use_blocks })
+        table.insert(self.messages, { role = "assistant", content = assistant_content })
 
         -- Add tool results
         for _, tool_result in ipairs(tool_results_content) do

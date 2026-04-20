@@ -146,7 +146,7 @@ registry.register("agents", function(args)
             return
         end
         local json = require("utils.json_fallback")
-        local ok, s = pcall(json.stringify_pretty, spec)
+        local ok, s = pcall(json.stringify, spec, { pretty = true })
         print(ok and s or tostring(spec))
     else
         print("Agent commands:")

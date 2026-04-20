@@ -4,6 +4,8 @@
 
 local M = {}
 
+local MAX_DEPTH = 128
+
 -- ── JSON Encoding ─────────────────────────────────────────────────────
 
 local encode_value  -- forward declaration
@@ -60,6 +62,7 @@ local function encode_table(t, indent, level)
 end
 
 encode_value = function(v, indent, level)
+    if level > MAX_DEPTH then error("JSON encode: max depth exceeded") end
     local t = type(v)
     if t == "nil" then
         return "null"
@@ -126,15 +129,31 @@ local function decode_string(s, pos)
                 local hex = s:sub(i + 1, i + 4)
                 local code = tonumber(hex, 16)
                 if code then
+                    if code >= 0xD800 and code <= 0xDBFF then
+                        local lo_hex = s:sub(i + 5, i + 10)
+                        if lo_hex:sub(1, 2) == '\\u' then
+                            local lo = tonumber(lo_hex:sub(3, 6), 16)
+                            if lo and lo >= 0xDC00 and lo <= 0xDFFF then
+                                code = 0x10000 + (code - 0xD800) * 0x400 + (lo - 0xDC00)
+                                i = i + 6
+                            end
+                        end
+                    end
                     if code < 0x80 then
                         table.insert(result, string.char(code))
                     elseif code < 0x800 then
                         table.insert(result, string.char(
                             0xC0 + math.floor(code / 64),
                             0x80 + (code % 64)))
-                    else
+                    elseif code < 0x10000 then
                         table.insert(result, string.char(
                             0xE0 + math.floor(code / 4096),
+                            0x80 + (math.floor(code / 64) % 64),
+                            0x80 + (code % 64)))
+                    else
+                        table.insert(result, string.char(
+                            0xF0 + math.floor(code / 262144),
+                            0x80 + (math.floor(code / 4096) % 64),
                             0x80 + (math.floor(code / 64) % 64),
                             0x80 + (code % 64)))
                     end
@@ -156,7 +175,8 @@ local function decode_number(s, pos)
     return val, num_str
 end
 
-local function decode_array(s, pos)
+local function decode_array(s, pos, depth)
+    if depth > MAX_DEPTH then error("JSON decode: max depth exceeded") end
     pos = skip_whitespace(s, pos + 1)  -- skip '['
     local arr = {}
     if s:sub(pos, pos) == ']' then
@@ -164,7 +184,7 @@ local function decode_array(s, pos)
     end
     while true do
         local val
-        val, pos = decode_value(s, pos)
+        val, pos = decode_value(s, pos, depth)
         table.insert(arr, val)
         pos = skip_whitespace(s, pos)
         local c = s:sub(pos, pos)
@@ -178,7 +198,8 @@ local function decode_array(s, pos)
     end
 end
 
-local function decode_object(s, pos)
+local function decode_object(s, pos, depth)
+    if depth > MAX_DEPTH then error("JSON decode: max depth exceeded") end
     pos = skip_whitespace(s, pos + 1)  -- skip '{'
     local obj = {}
     if s:sub(pos, pos) == '}' then
@@ -197,7 +218,7 @@ local function decode_object(s, pos)
         end
         pos = skip_whitespace(s, pos + 1)
         local val
-        val, pos = decode_value(s, pos)
+        val, pos = decode_value(s, pos, depth)
         obj[key] = val
         pos = skip_whitespace(s, pos)
         local c = s:sub(pos, pos)
@@ -211,15 +232,16 @@ local function decode_object(s, pos)
     end
 end
 
-decode_value = function(s, pos)
+decode_value = function(s, pos, depth)
+    depth = depth or 0
     pos = skip_whitespace(s, pos)
     local c = s:sub(pos, pos)
     if c == '"' then
         return decode_string(s, pos)
     elseif c == '{' then
-        return decode_object(s, pos)
+        return decode_object(s, pos, depth + 1)
     elseif c == '[' then
-        return decode_array(s, pos)
+        return decode_array(s, pos, depth + 1)
     elseif c == 't' then
         if s:sub(pos, pos + 3) == 'true' then return true, pos + 4 end
         error("Invalid value at position " .. pos)

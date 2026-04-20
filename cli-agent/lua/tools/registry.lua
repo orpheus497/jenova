@@ -79,8 +79,8 @@ function M.execute(name, args, context)
         end
     end
 
-    -- Execute
-    local ok, result = pcall(tool.call, args, context)
+    -- Execute — always forward context so tools can access cwd, session, etc.
+    local ok, result = pcall(tool.call, args, context or {})
     if not ok then
         return nil, "Tool error: " .. tostring(result)
     end
@@ -121,6 +121,7 @@ function M.load_builtin_tools()
         "tools.verify_plan", "tools.enter_worktree", "tools.exit_worktree",
         "tools.schedule_cron", "tools.remote_trigger",
         "tools.team_create", "tools.team_delete",
+        "tools.local_search",
     }
 
     for _, mod_name in ipairs(tool_modules) do

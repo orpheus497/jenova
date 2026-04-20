@@ -139,6 +139,7 @@ function Context.build_context_string()
         string.format("OS Version: %s", sys_ctx.os_version),
         string.format("Working directory: %s", sys_ctx.working_directory),
         string.format("Date: %s", sys_ctx.date),
+        string.format("Shell: %s", user_ctx.shell),
     }
 
     if sys_ctx.is_git_repo then

@@ -3,6 +3,9 @@
 
 local AppState = {}
 
+-- Seed the RNG once at module load so session IDs don't collide
+math.randomseed(os.time() + math.floor(os.clock() * 1000))
+
 -- Global state instance
 local state = {
     -- Session

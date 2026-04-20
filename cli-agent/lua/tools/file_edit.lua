@@ -25,7 +25,17 @@ function M.user_facing_name(input)
     return input and input.file_path and ("Edit: " .. input.file_path) or "Edit"
 end
 
-function M.check_permissions(input, ctx) return { allowed = true } end
+function M.check_permissions(input, ctx)
+    local ok_mgr, manager = pcall(require, "permissions.manager")
+    if not ok_mgr or not manager or not manager.can_use_tool then
+        return { allowed = false, reason = "permissions manager unavailable" }
+    end
+    local allowed, reason = manager.can_use_tool("Edit", input, ctx or {})
+    if allowed then
+        return { allowed = true }
+    end
+    return { allowed = false, reason = reason or "Permission denied" }
+end
 
 function M.call(args, context)
     local path = args.file_path

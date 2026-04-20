@@ -2,7 +2,6 @@
 -- Equivalent to src/utils/config.ts and src/schemas/config.ts
 
 local json = jenova.json or require("utils.json_fallback")
-local fs = jenova.fs or require("utils.fs_fallback")
 
 local Config = {}
 

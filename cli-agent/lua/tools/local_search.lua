@@ -58,7 +58,7 @@ function M.call(args, context)
         local parts = {}
         for _, ext in ipairs(extensions) do
             if ext:match("^[%w%.]+$") then
-                table.insert(parts, "-name '*." .. ext .. "'")
+                table.insert(parts, "-name " .. shell.quote("*." .. ext))
             end
         end
         if #parts > 0 then

@@ -39,7 +39,7 @@ local permission_cache = {}
 function Permissions.can_use_tool(tool_name, input, context)
     context = context or {}
 
-    local mode = app_state.permission_mode or config.get("permission_mode") or Permissions.MODES.DEFAULT
+    local mode = app_state.get("permission_mode") or config.get("permission_mode") or Permissions.MODES.DEFAULT
 
     -- Bypass mode: always allow
     if mode == Permissions.MODES.BYPASS or mode == Permissions.MODES.AUTO then

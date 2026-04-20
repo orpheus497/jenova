@@ -1,14 +1,12 @@
--- agent/loop.lua — Unified agentic loop (integrated from legacy-agent)
+-- agent/loop.lua — Unified REPL loop
 --
--- Plan → Execute → Reflect loop with:
---   - Tool calling via the full tool registry
---   - Action deduplication from memory
---   - Context window management
---   - Narration detection + nudging
---   - FreeBSD-aware shell command rewriting
+-- The REPL (prompt, slash command dispatch, history, interrupt handling)
+-- lives here. All LLM generation and tool execution is delegated to
+-- engine/query_engine.lua — the single agentic loop implementation.
 --
--- This replaces the standalone legacy-agent/agent.lua by integrating it
--- with the full cli-agent tool ecosystem and provider system.
+-- This eliminates the previous duplication where agent/loop.lua had its own
+-- inline generate → parse-tool-calls → single-follow-up path that was inferior
+-- to QueryEngine's multi-turn tool loop.
 
 local M = {}
 
@@ -18,14 +16,14 @@ local function try_require(name)
 end
 
 function M.run(opts)
-    local providers = try_require("providers.base")
-    local tool_registry = try_require("tools.registry")
+    local QueryEngine = try_require("engine.query_engine")
     local memory = try_require("agent.memory")
     local ui = try_require("agent.ui")
     local json = try_require("utils.json_fallback")
+    local app_state = try_require("state.app_state")
 
-    if not providers then
-        io.stderr:write("Error: provider system not available\n")
+    if not QueryEngine then
+        io.stderr:write("Error: query engine not available\n")
         return 1
     end
 
@@ -40,13 +38,39 @@ function M.run(opts)
         memory.init()
     end
 
-    local conversation = {}
-    local max_turns = opts.max_turns or 100
-    local turn_count = 0
+    -- Create the query engine instance — this is the single agentic loop
+    local engine = QueryEngine.new({
+        model = opts.model,
+        system_prompt = opts.system_prompt or "",
+        max_tokens = opts.max_tokens,
+        temperature = opts.temperature,
+        thinking_enabled = opts.thinking_enabled,
+        on_text = function(text)
+            io.write(text)
+            io.flush()
+        end,
+        on_thinking = function(text)
+            if ui and ui.show_thinking then
+                ui.show_thinking(text)
+            end
+        end,
+        on_tool_use = function(tool_name, input)
+            if ui and ui.status_info then
+                ui.status_info(tool_name, "running")
+            end
+        end,
+        on_tool_result = function(tool_name, result)
+            if ui and ui.status_info then
+                ui.status_info(tool_name, "ok")
+            end
+        end,
+        on_error = function(err)
+            io.stderr:write("Error: " .. tostring(err) .. "\n")
+        end,
+    })
 
-    local function add_message(role, content)
-        table.insert(conversation, { role = role, content = content })
-    end
+    local turn_count = 0
+    local max_turns = opts.max_turns or 100
 
     local cmd_registry = nil
     local function get_cmd_registry()
@@ -55,57 +79,6 @@ function M.run(opts)
             cmd_registry = ok_reg and reg or false
         end
         return cmd_registry
-    end
-
-    local function execute_tool(name, arguments)
-        if not tool_registry then
-            return nil, "tool registry not available"
-        end
-
-        local action_key = name .. ":" .. (json and json.stringify(arguments) or tostring(arguments))
-
-        if memory and memory.was_action_tried then
-            if memory.was_action_tried(action_key) then
-                return nil, "action already tried and failed"
-            end
-        end
-
-        local result, err = tool_registry.execute(name, arguments)
-
-        if memory and memory.record_action then
-            memory.record_action(action_key, err == nil)
-        end
-
-        return result, err
-    end
-
-    local function process_tool_calls(response_text)
-        if not response_text then return nil end
-
-        local tool_calls = {}
-
-        local function safe_parse(text)
-            if not json or not json.parse then return nil end
-            local ok, parsed = pcall(json.parse, text)
-            if ok and type(parsed) == "table" then return parsed end
-            return nil
-        end
-
-        for tag_content in response_text:gmatch("<tool_call>(.-)</tool_call>") do
-            local parsed = safe_parse(tag_content)
-            if parsed and parsed.name then
-                table.insert(tool_calls, parsed)
-            end
-        end
-
-        if #tool_calls == 0 then
-            local parsed = safe_parse(response_text)
-            if parsed and parsed.name and parsed.arguments then
-                table.insert(tool_calls, parsed)
-            end
-        end
-
-        return #tool_calls > 0 and tool_calls or nil
     end
 
     local function agent_turn(user_input)
@@ -118,71 +91,54 @@ function M.run(opts)
             ui.status_turn(turn_count)
         end
 
-        add_message("user", user_input)
-
-        local context_injection = ""
-        if memory and memory.build_context then
-            context_injection = memory.build_context()
-        end
-
+        -- Inject memory context into system prompt for this turn
         local system_prompt = opts.system_prompt or ""
-        if #context_injection > 0 then
-            system_prompt = system_prompt .. "\n\n" .. context_injection
+        if memory and memory.build_context then
+            local ctx = memory.build_context()
+            if ctx and #ctx > 0 then
+                system_prompt = system_prompt .. "\n\n" .. ctx
+            end
         end
+        engine.system_prompt = system_prompt
 
         if ui and ui.thinking then ui.thinking() end
 
-        local response, err = providers.generate(conversation, {
-            model = opts.model,
-            system_prompt = system_prompt,
-            tools = tool_registry and tool_registry.build_api_tools() or nil,
+        local result, err = engine:query(user_input, {
+            max_turns = opts.agent_max_turns or 25,
         })
 
         if ui and ui.thinking_done then ui.thinking_done() end
 
-        if not response then
+        if not result then
             return "Error: " .. tostring(err)
         end
 
-        local tool_calls = process_tool_calls(response)
-        if tool_calls then
-            local results = {}
-            for _, tc in ipairs(tool_calls) do
-                local result, tool_err = execute_tool(tc.name, tc.arguments or {})
-                if tool_err then
-                    table.insert(results, string.format("[%s] Error: %s", tc.name, tool_err))
-                else
-                    local text = type(result) == "string" and result
-                        or (json and json.stringify(result) or tostring(result))
-                    table.insert(results, string.format("[%s] %s", tc.name, text))
-                end
-
-                if ui and ui.status_info then
-                    ui.status_info(tc.name, tool_err and "failed" or "ok")
-                end
-            end
-
-            add_message("assistant", response)
-            add_message("tool", table.concat(results, "\n"))
-
-            local follow_up, fu_err = providers.generate(conversation, {
-                model = opts.model,
-                system_prompt = system_prompt,
-            })
-
-            if follow_up then
-                add_message("assistant", follow_up)
-                return follow_up
-            end
-            return table.concat(results, "\n")
+        -- Update cost tracking in app_state
+        if app_state then
+            local usage = engine:get_usage()
+            app_state.update_usage(
+                usage.input_tokens - (app_state.get("_last_input_tokens") or 0),
+                usage.output_tokens - (app_state.get("_last_output_tokens") or 0),
+                usage.total_cost_usd - (app_state.get("_last_cost") or 0)
+            )
+            app_state.set("_last_input_tokens", usage.input_tokens)
+            app_state.set("_last_output_tokens", usage.output_tokens)
+            app_state.set("_last_cost", usage.total_cost_usd)
         end
 
-        add_message("assistant", response)
-        return response
+        return result.text or ""
+    end
+
+    -- Check for interrupt: the C host may expose a global, or we no-op
+    local function check_interrupted()
+        if type(is_interrupted) == "function" then
+            return is_interrupted()
+        end
+        return false
     end
 
     while true do
-        if is_interrupted and is_interrupted() then
+        if check_interrupted() then
             print("\nInterrupted.")
             break
         end
@@ -204,15 +160,23 @@ function M.run(opts)
             print("Goodbye!")
             break
         elseif line == "/clear" then
-            conversation = {}
+            engine.messages = {}
             turn_count = 0
             if memory and memory.clear then memory.clear() end
+            if app_state then
+                app_state.clear_messages()
+                app_state.reset_usage()
+            end
             print("Session cleared.")
         elseif line == "/history" then
-            print(string.format("Turns: %d, Messages: %d", turn_count, #conversation))
+            print(string.format("Turns: %d, Messages: %d", turn_count, #engine.messages))
         elseif line == "/debug" then
             if json then
-                print(json.stringify({ turns = turn_count, messages = #conversation }))
+                print(json.stringify({
+                    turns = turn_count,
+                    messages = #engine.messages,
+                    usage = engine:get_usage(),
+                }))
             end
         elseif line == "/context" then
             if memory and memory.build_context then
@@ -230,7 +194,7 @@ function M.run(opts)
             end
         elseif #line > 0 then
             local response = agent_turn(line)
-            if response then
+            if response and #response > 0 then
                 print(response)
             end
         end
@@ -238,6 +202,11 @@ function M.run(opts)
 
     if memory and memory.save then
         memory.save()
+    end
+
+    -- Save session state
+    if app_state and app_state.save_session then
+        pcall(app_state.save_session)
     end
 
     if jenova and jenova.agent and jenova.agent.shutdown then
