@@ -224,10 +224,19 @@ static struct {
     const char *pattern;
     const char *root;
     size_t root_len;
-    /* pattern_tail points at the portion of the pattern after any leading
-     * "**" segment, e.g. "**\/*.lua" → "*.lua". When the pattern has no
-     * "**" component this equals `pattern`. */
+    /* pattern_tail points at the portion of the pattern after the last
+     * "/" (the filename template), used for basename matching when the
+     * pattern contains a doublestar. When the pattern has no "**"
+     * component this equals `pattern`. */
     const char *pattern_tail;
+    /* pattern_prefix: the portion of the pattern before the first "**",
+     * with any trailing '/' stripped. For "src/**\/*.c" this is "src";
+     * for "**\/*.lua" it's the empty string. Only used when
+     * has_doublestar is set — callers must ensure the relative path
+     * starts with this prefix so anchored recursive globs don't match
+     * paths outside the intended root. */
+    char pattern_prefix[PATH_MAX];
+    size_t pattern_prefix_len;
     /* has_slash: pattern contains a path separator, meaning fnmatch should
      * consider the relative path, not just the basename. */
     int has_slash;
@@ -263,7 +272,19 @@ static int glob_nftw_cb(const char *fpath, const struct stat *sb,
 
     int matched;
     if (glob_ctx.has_doublestar) {
-        /* Recursive glob: match the trailing component against basename. */
+        /* Recursive glob: require the relative path to start with the
+         * anchor prefix (the directory portion before "**"), then match
+         * the trailing component against basename. This stops patterns
+         * like "src/**\/*.c" from matching files under "other/dir/". */
+        if (glob_ctx.pattern_prefix_len > 0) {
+            if (strncmp(rel, glob_ctx.pattern_prefix,
+                        glob_ctx.pattern_prefix_len) != 0) {
+                return 0;
+            }
+            /* Require a boundary so "src" doesn't match "src_extra". */
+            char after = rel[glob_ctx.pattern_prefix_len];
+            if (after != '/' && after != '\0') return 0;
+        }
         matched = (fnmatch(glob_ctx.pattern_tail, basename, 0) == 0);
     } else if (glob_ctx.has_slash) {
         /* Anchored pattern (e.g. src/foo.c) — match the relative path. */
@@ -311,6 +332,21 @@ char *jenova_fs_glob(const char *pattern, const char *root, int32_t max_results)
      * basename matching when "**" is present. */
     const char *last_slash = strrchr(pattern, '/');
     glob_ctx.pattern_tail = last_slash ? last_slash + 1 : pattern;
+    /* pattern_prefix: directory anchor before the first doublestar token.
+     * For "src/<DS>/foo.c" that's "src"; for "<DS>/*.lua" it's empty. */
+    glob_ctx.pattern_prefix[0] = '\0';
+    glob_ctx.pattern_prefix_len = 0;
+    if (glob_ctx.has_doublestar) {
+        const char *dstar = strstr(pattern, "**");
+        size_t prefix_len = (size_t)(dstar - pattern);
+        /* Strip trailing '/' from prefix so "src/" → "src". */
+        while (prefix_len > 0 && pattern[prefix_len - 1] == '/') prefix_len--;
+        if (prefix_len > 0 && prefix_len < sizeof(glob_ctx.pattern_prefix)) {
+            memcpy(glob_ctx.pattern_prefix, pattern, prefix_len);
+            glob_ctx.pattern_prefix[prefix_len] = '\0';
+            glob_ctx.pattern_prefix_len = prefix_len;
+        }
+    }
     glob_ctx.limit = max_results > 0 ? max_results : 500;
     glob_ctx.capacity = 4096;
     glob_ctx.result = malloc(glob_ctx.capacity);

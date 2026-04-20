@@ -179,26 +179,44 @@ int32_t jenova_sandbox_validate_command(const char *command) {
     }
 
     /* Detect the "curl/wget <URL> | sh/bash" remote-execution pattern even
-     * when the URL sits between the fetcher and the pipe. Any command that
-     * both contains a URL fetcher and pipes into a shell is almost
-     * certainly a remote-install-script. */
+     * when the URL sits between the fetcher and the pipe, and even when
+     * absolute paths are used (e.g. "/usr/bin/curl http://x | /bin/sh").
+     * strstr("curl") matches "/usr/bin/curl" naturally since "curl" is a
+     * substring. For the shell side, we scan every '|' occurrence and
+     * inspect the first whitespace-delimited token after it to see
+     * whether it's a shell (possibly via an absolute path). */
     int has_fetcher = (strstr(normalized, "curl") != NULL) ||
-                      (strstr(normalized, "wget") != NULL);
+                      (strstr(normalized, "wget") != NULL) ||
+                      (strstr(normalized, "fetch") != NULL);
     if (has_fetcher) {
-        const char *shell_pipes[] = {
-            "|sh", "| sh", "|bash", "| bash", "|zsh", "| zsh", NULL
+        static const char *shells[] = {
+            "sh", "bash", "zsh", "ksh", "dash", "ash", "csh", "tcsh",
+            "fish", "python", "python3", "perl", "ruby", "node", NULL
         };
-        for (int i = 0; shell_pipes[i]; i++) {
-            const char *hit = strstr(normalized, shell_pipes[i]);
-            if (hit) {
-                /* Avoid false positives like "|shred" by requiring the
-                 * matched token to end the string or be followed by a
-                 * space, newline, or redirection/pipe char. */
-                size_t tok_len = strlen(shell_pipes[i]);
-                char next = hit[tok_len];
-                if (next == '\0' || next == ' ' || next == '\t' ||
-                    next == '\n' || next == '|' || next == ';' ||
-                    next == '&' || next == '>') {
+        for (const char *p = normalized; *p; p++) {
+            if (*p != '|') continue;
+            /* Skip past the pipe and any whitespace. */
+            const char *t = p + 1;
+            while (*t == ' ' || *t == '\t') t++;
+            /* Skip a leading absolute/relative path so "|/bin/sh" and
+             * "|./script.sh" still resolve to their basename. */
+            const char *base = t;
+            for (const char *s = t; *s && *s != ' ' && *s != '\t' &&
+                                    *s != '\n' && *s != ';' && *s != '|' &&
+                                    *s != '&' && *s != '>'; s++) {
+                if (*s == '/') base = s + 1;
+            }
+            /* Determine token end. */
+            const char *end = base;
+            while (*end && *end != ' ' && *end != '\t' && *end != '\n' &&
+                   *end != ';' && *end != '|' && *end != '&' && *end != '>') {
+                end++;
+            }
+            size_t token_len = (size_t)(end - base);
+            if (token_len == 0) continue;
+            for (int i = 0; shells[i]; i++) {
+                size_t sl = strlen(shells[i]);
+                if (sl == token_len && strncmp(base, shells[i], sl) == 0) {
                     free(normalized);
                     return 0;
                 }
