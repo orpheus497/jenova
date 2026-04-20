@@ -4,9 +4,7 @@
 -- lives here. All LLM generation and tool execution is delegated to
 -- engine/query_engine.lua — the single agentic loop implementation.
 --
--- This eliminates the previous duplication where agent/loop.lua had its own
--- inline generate → parse-tool-calls → single-follow-up path that was inferior
--- to QueryEngine's multi-turn tool loop.
+-- Full polished terminal UI via agent/ui.lua (restored from legacy-agent).
 
 local M = {}
 
@@ -21,14 +19,47 @@ function M.run(opts)
     local ui = try_require("agent.ui")
     local json = try_require("utils.json_fallback")
     local app_state = try_require("state.app_state")
+    local config = try_require("config.loader")
 
     if not QueryEngine then
         io.stderr:write("Error: query engine not available\n")
         return 1
     end
 
-    if ui and ui.show_header then
-        ui.show_header()
+    -- ── Startup: Full UI dashboard ──────────────────────────────────────
+    if ui and ui.draw_header then
+        io.write("\n")
+        ui.draw_header()
+
+        local info_opts = {
+            cwd = os.getenv("PWD") or ".",
+        }
+
+        if config then
+            info_opts.provider = config.get("provider") or "llamacpp"
+            info_opts.model = config.get("model") or opts.model or "auto"
+        end
+
+        local tool_registry = try_require("tools.registry")
+        if tool_registry and tool_registry.list_tools then
+            local tools = tool_registry.list_tools()
+            info_opts.tools = tostring(#tools)
+        end
+
+        info_opts.turns = tostring(opts.max_turns or 100)
+
+        if app_state and app_state.get then
+            local sid = app_state.get("session_id")
+            if sid then info_opts.session = sid end
+        end
+
+        ui.draw_info(info_opts)
+        ui.separator("session")
+        ui.draw_commands({
+            "/clear", "/history", "/context", "/files", "/search",
+            "/errors", "/plan", "/stats", "/diag", "/model",
+            "/provider", "/tools", "/help", "/quit",
+        })
     else
         print("cli-agent 0.2.0 (C + Lua + llama.cpp)")
         print("Type your message or /help. Ctrl+D to exit.\n")
@@ -38,34 +69,52 @@ function M.run(opts)
         memory.init()
     end
 
-    -- Create the query engine instance — this is the single agentic loop
+    -- ── Create query engine with UI-aware callbacks ─────────────────────
+    local thinking_buf = ""
+    local thinking_tokens = 0
+
     local engine = QueryEngine.new({
         model = opts.model,
         system_prompt = opts.system_prompt or "",
         max_tokens = opts.max_tokens,
         temperature = opts.temperature,
         thinking_enabled = opts.thinking_enabled,
+
         on_text = function(text)
             io.write(text)
             io.flush()
         end,
+
         on_thinking = function(text)
-            if ui and ui.show_thinking then
-                ui.show_thinking(text)
+            thinking_buf = thinking_buf .. text
+            thinking_tokens = thinking_tokens + 1
+            if ui and ui.thinking_inline then
+                ui.thinking_inline(thinking_tokens)
             end
         end,
+
         on_tool_use = function(tool_name, input)
-            if ui and ui.status_info then
-                ui.status_info(tool_name, "running")
+            if ui and ui.tool_badge then
+                ui.tool_badge(tool_name, "running")
+            elseif ui and ui.status_info then
+                ui.status_info(tool_name .. " running")
             end
         end,
+
         on_tool_result = function(tool_name, result)
-            if ui and ui.status_info then
-                ui.status_info(tool_name, "ok")
+            if ui and ui.tool_badge then
+                ui.tool_badge(tool_name, "done")
+            elseif ui and ui.status_info then
+                ui.status_info(tool_name .. " done")
             end
         end,
+
         on_error = function(err)
-            io.stderr:write("Error: " .. tostring(err) .. "\n")
+            if ui and ui.status_err then
+                ui.status_err(tostring(err))
+            else
+                io.stderr:write("Error: " .. tostring(err) .. "\n")
+            end
         end,
     })
 
@@ -84,14 +133,20 @@ function M.run(opts)
     local function agent_turn(user_input)
         turn_count = turn_count + 1
         if turn_count > max_turns then
+            if ui then ui.status_warn("max turns reached — use /clear to reset") end
             return "Max turns reached. Use /clear to reset."
         end
 
+        -- Turn indicator
         if ui and ui.status_turn then
-            ui.status_turn(turn_count)
+            ui.status_turn(turn_count, max_turns, "thinking")
         end
 
-        -- Inject memory context into system prompt for this turn
+        -- Reset thinking buffer
+        thinking_buf = ""
+        thinking_tokens = 0
+
+        -- Inject memory context
         local system_prompt = opts.system_prompt or ""
         if memory and memory.build_context then
             local ctx = memory.build_context()
@@ -101,29 +156,63 @@ function M.run(opts)
         end
         engine.system_prompt = system_prompt
 
-        if ui and ui.thinking then ui.thinking() end
+        -- Start spinner
+        if ui and ui.spinner_start then
+            ui.spinner_start("cognizing")
+        end
+
+        -- Agent label before response
+        if ui and ui.agent_label then
+            -- Clear spinner before output
+            if ui.spinner_stop then ui.spinner_stop() end
+        end
 
         local result, err = engine:query(user_input, {
             max_turns = opts.agent_max_turns or 25,
         })
 
-        if ui and ui.thinking_done then ui.thinking_done() end
-
-        if not result then
-            return "Error: " .. tostring(err)
+        -- Stop spinner
+        if ui and ui.spinner_stop then
+            ui.spinner_stop()
         end
 
-        -- Update cost tracking in app_state
-        if app_state then
+        -- Clear inline thinking indicator
+        if ui and ui.thinking_inline_done and thinking_tokens > 0 then
+            ui.thinking_inline_done()
+            -- Show thinking summary if we had substantial thinking
+            if #thinking_buf > 100 and ui.think_status then
+                ui.think_status(#thinking_buf)
+            end
+        end
+
+        if not result then
+            if ui then
+                ui.status_err("query failed: " .. tostring(err))
+                ui.diagnostic("Check backend with /diag or /backend status")
+            end
+            return nil
+        end
+
+        -- Update cost tracking
+        if app_state and app_state.update_usage then
             local usage = engine:get_usage()
+            local prev_in = app_state.get("_last_input_tokens") or 0
+            local prev_out = app_state.get("_last_output_tokens") or 0
+            local prev_cost = app_state.get("_last_cost") or 0
             app_state.update_usage(
-                usage.input_tokens - (app_state.get("_last_input_tokens") or 0),
-                usage.output_tokens - (app_state.get("_last_output_tokens") or 0),
-                usage.total_cost_usd - (app_state.get("_last_cost") or 0)
+                usage.input_tokens - prev_in,
+                usage.output_tokens - prev_out,
+                usage.total_cost_usd - prev_cost
             )
             app_state.set("_last_input_tokens", usage.input_tokens)
             app_state.set("_last_output_tokens", usage.output_tokens)
             app_state.set("_last_cost", usage.total_cost_usd)
+        end
+
+        -- Show token usage if config says so
+        if config and config.get("show_cost") and ui and ui.token_usage then
+            local usage = engine:get_usage()
+            ui.token_usage(usage.input_tokens, usage.output_tokens, usage.total_cost_usd)
         end
 
         return result.text or ""
@@ -137,39 +226,78 @@ function M.run(opts)
         return false
     end
 
+    -- ── Main REPL loop ──────────────────────────────────────────────────
     while true do
         if check_interrupted() then
-            print("\nInterrupted.")
+            if ui and ui.status_warn then
+                ui.status_warn("interrupted")
+            else
+                print("\nInterrupted.")
+            end
             break
         end
 
-        if ui and ui.prompt then
+        -- Write prompt
+        if ui and ui.write_prompt then
+            ui.write_prompt()
+        elseif ui and ui.prompt then
             io.write(ui.prompt())
+            io.flush()
         else
             io.write("> ")
+            io.flush()
         end
-        io.flush()
 
         local line = io.read("*l")
         if not line then
-            print("\nGoodbye!")
+            if ui and ui.goodbye then
+                ui.goodbye()
+            else
+                print("\nGoodbye!")
+            end
             break
         end
 
-        if line == "/exit" or line == "/quit" then
-            print("Goodbye!")
+        -- Trim
+        line = line:match("^%s*(.-)%s*$")
+        if #line == 0 then goto continue end
+
+        -- Multi-line input (backslash continuation)
+        while line:sub(-1) == "\\" do
+            line = line:sub(1, -2) .. "\n"
+            if ui and ui.continuation_prompt then
+                ui.continuation_prompt()
+            else
+                io.write("... "); io.flush()
+            end
+            local nl = io.read("*l")
+            if not nl then break end
+            line = line .. nl
+        end
+
+        -- Commands
+        if line == "/exit" or line == "/quit" or line == "/q" then
+            if ui and ui.goodbye then ui.goodbye()
+            else print("Goodbye!") end
             break
         elseif line == "/clear" then
             engine.messages = {}
             turn_count = 0
             if memory and memory.clear then memory.clear() end
             if app_state then
-                app_state.clear_messages()
-                app_state.reset_usage()
+                if app_state.clear_messages then app_state.clear_messages() end
+                if app_state.reset_usage then app_state.reset_usage() end
             end
-            print("Session cleared.")
+            if ui then ui.status_ok("cleared (session + history)")
+            else print("Session cleared.") end
         elseif line == "/history" then
-            print(string.format("Turns: %d, Messages: %d", turn_count, #engine.messages))
+            if ui and ui.dimtext then
+                for i, m in ipairs(engine.messages) do
+                    ui.dimtext(string.format("  [%d] %s: %s\n", i, m.role, tostring(m.content):sub(1, 80)))
+                end
+            else
+                print(string.format("Turns: %d, Messages: %d", turn_count, #engine.messages))
+            end
         elseif line == "/debug" then
             if json then
                 print(json.stringify({
@@ -180,7 +308,11 @@ function M.run(opts)
             end
         elseif line == "/context" then
             if memory and memory.build_context then
-                print(memory.build_context())
+                if ui and ui.dimtext then
+                    ui.dimtext("=== Context ===\n" .. memory.build_context() .. "\n=== End ===\n")
+                else
+                    print(memory.build_context())
+                end
             end
         elseif line:sub(1, 1) == "/" then
             local cmd_name = line:match("^/(%S+)")
@@ -190,21 +322,38 @@ function M.run(opts)
             if handler then
                 pcall(handler, cmd_args)
             else
-                print("Unknown command: " .. line)
+                if ui and ui.status_err then
+                    ui.status_err("unknown command: " .. line .. " — try /help")
+                else
+                    print("Unknown command: " .. line)
+                end
             end
-        elseif #line > 0 then
+        else
+            -- Agent query
+            if ui and ui.agent_label then
+                ui.agent_label()
+            end
             local response = agent_turn(line)
             if response and #response > 0 then
-                print(response)
+                -- Response was already streamed via on_text callback
+                if ui and ui.stream_end then
+                    ui.stream_end()
+                else
+                    print("")
+                end
+            else
+                print("")
             end
         end
+
+        ::continue::
     end
 
+    -- ── Shutdown ────────────────────────────────────────────────────────
     if memory and memory.save then
         memory.save()
     end
 
-    -- Save session state
     if app_state and app_state.save_session then
         pcall(app_state.save_session)
     end

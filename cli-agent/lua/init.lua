@@ -183,42 +183,64 @@ end
 -- ── Agent Loop (integrated from legacy-agent) ───────────────────────────
 
 local function run_agent_repl(opts)
+    -- Primary path: agent/loop.lua (full UI + QueryEngine)
     local ok_agent, agent_loop = pcall(require, "agent.loop")
     if ok_agent and agent_loop then
         return agent_loop.run(opts)
     end
 
-    local ok_ui, ui = pcall(require, "ui.screens.repl")
-    if ok_ui and ui then
-        return ui.run(opts)
+    -- Secondary path: ui/screens/repl.lua (full UI + QueryEngine)
+    local ok_repl, repl_screen = pcall(require, "ui.screens.repl")
+    if ok_repl and repl_screen then
+        return repl_screen.run(opts)
     end
 
-    print("cli-agent " .. VERSION .. " (C + Lua + llama.cpp)")
-    print("Type your message or /help for commands. Ctrl+D to exit.\n")
+    -- Fallback: minimal REPL with UI where available
+    local ui = nil
+    pcall(function() ui = require("agent.ui") end)
+
+    if ui and ui.draw_header then
+        io.write("\n")
+        ui.draw_header()
+        ui.draw_info({ cwd = os.getenv("PWD") or "." })
+        ui.separator("session")
+    else
+        print("cli-agent " .. VERSION .. " (C + Lua + llama.cpp)")
+        print("Type your message or /help for commands. Ctrl+D to exit.\n")
+    end
 
     local memory = nil
     pcall(function() memory = require("agent.memory") end)
 
     while true do
         if is_interrupted and is_interrupted() then
-            print("\nInterrupted. Goodbye!")
+            if ui then ui.status_warn("interrupted")
+            else print("\nInterrupted.") end
             break
         end
 
-        io.write("> ")
-        io.flush()
+        if ui and ui.write_prompt then
+            ui.write_prompt()
+        else
+            io.write("> ")
+            io.flush()
+        end
+
         local line = io.read("*l")
         if not line then
-            print("\nGoodbye!")
+            if ui and ui.goodbye then ui.goodbye()
+            else print("\nGoodbye!") end
             break
         end
 
-        if line == "/exit" or line == "/quit" then
-            print("Goodbye!")
+        if line == "/exit" or line == "/quit" or line == "/q" then
+            if ui and ui.goodbye then ui.goodbye()
+            else print("Goodbye!") end
             break
         elseif line == "/clear" then
             if memory then memory.clear() end
-            print("Session cleared.")
+            if ui then ui.status_ok("cleared")
+            else print("Session cleared.") end
         elseif line:sub(1, 1) == "/" then
             local cmd_name = line:match("^/(%S+)")
             local cmd_args = line:match("^/%S+%s+(.*)") or ""
@@ -227,19 +249,29 @@ local function run_agent_repl(opts)
             if handler then
                 pcall(handler, cmd_args)
             else
-                print("Unknown command: " .. line)
+                if ui then ui.status_err("unknown command: " .. line)
+                else print("Unknown command: " .. line) end
             end
         elseif #line > 0 then
+            if ui and ui.spinner_start then ui.spinner_start("cognizing") end
             local ok_prov, provider_base = pcall(require, "providers.base")
             if ok_prov then
                 local response, err = provider_base.generate(line, { model = opts.model })
+                if ui and ui.spinner_stop then ui.spinner_stop() end
                 if response then
-                    print(response)
+                    if ui and ui.agent_response then
+                        ui.agent_response(response)
+                    else
+                        print(response)
+                    end
                 else
-                    print("[Error: " .. tostring(err) .. "]")
+                    if ui then ui.status_err(tostring(err))
+                    else print("[Error: " .. tostring(err) .. "]") end
                 end
             else
-                print("[No AI provider configured]")
+                if ui and ui.spinner_stop then ui.spinner_stop() end
+                if ui then ui.status_err("no AI provider configured")
+                else print("[No AI provider configured]") end
             end
         end
     end

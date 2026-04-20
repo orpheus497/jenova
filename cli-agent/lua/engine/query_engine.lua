@@ -116,11 +116,34 @@ function QueryEngine.new(options)
     self.system_prompt = options.system_prompt or ""
     self.tools = options.tools or tool_registry.build_api_tools()
     self.can_use_tool = options.can_use_tool or function() return true end
-    self.on_text = options.on_text or function(text) io.write(text); io.flush() end
-    self.on_thinking = options.on_thinking or function(_text) end
-    self.on_tool_use = options.on_tool_use or function(_tool_name, _input) end
-    self.on_tool_result = options.on_tool_result or function(_tool_name, _result) end
-    self.on_error = options.on_error or function(err) io.stderr:write("Error: " .. tostring(err) .. "\n") end
+
+    -- Default callbacks use agent.ui if available for polished terminal output
+    local _ui = nil
+    do
+        local _ok, _mod = pcall(require, "agent.ui")
+        if _ok then _ui = _mod end
+    end
+
+    self.on_text = options.on_text or function(text)
+        if _ui then _ui.stream_text(text) else io.write(text); io.flush() end
+    end
+    self.on_thinking = options.on_thinking or function(text)
+        if _ui and _ui.thinking_inline then
+            self._thinking_count = (self._thinking_count or 0) + 1
+            _ui.thinking_inline(self._thinking_count)
+        end
+    end
+    self.on_tool_use = options.on_tool_use or function(tool_name, _input)
+        if _ui and _ui.tool_badge then _ui.tool_badge(tool_name, "running")
+        elseif _ui then _ui.status_info(tool_name .. " running") end
+    end
+    self.on_tool_result = options.on_tool_result or function(tool_name, _result)
+        if _ui and _ui.tool_badge then _ui.tool_badge(tool_name, "done") end
+    end
+    self.on_error = options.on_error or function(err)
+        if _ui and _ui.status_err then _ui.status_err(tostring(err))
+        else io.stderr:write("Error: " .. tostring(err) .. "\n") end
+    end
 
     self.messages = {}
     self.total_input_tokens = 0
