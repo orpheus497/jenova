@@ -500,19 +500,27 @@ local function proxy_connection(client_fd, conn_fds)
                         table.insert(req_json.messages, 1, {role = "system", content = system_p})
                     end
                 else
-                    -- No intent: only inject context if we have RAG, or if there's no existing system prompt
+                    -- No intent: only inject context if we have RAG, or if there's no existing system prompt.
+                    -- When the client sent tools, preserve its system prompt verbatim — it contains
+                    -- the tool-use instructions the model needs. Only append RAG context.
+                    local has_tools = type(req_json.tools) == "table" and #req_json.tools > 0
+                    local has_system = req_json.messages[1].role == "system"
                     if rag_context ~= "" then
-                        local system_p = prompts.freechat .. "\n" .. rag_context
-                        if req_json.messages[1].role == "system" then
-                            req_json.messages[1].content = system_p .. "\n\n" .. req_json.messages[1].content
+                        if has_system then
+                            -- Append RAG to existing system prompt regardless of tools
+                            req_json.messages[1].content = req_json.messages[1].content .. "\n" .. rag_context
                         else
+                            local system_p = prompts.freechat .. "\n" .. rag_context
                             table.insert(req_json.messages, 1, {role = "system", content = system_p})
                         end
-                    elseif req_json.messages[1].role ~= "system" then
-                        -- No RAG and no existing system prompt: inject default freechat prompt
+                    elseif not has_system and not has_tools then
+                        -- No RAG, no tools, no system prompt: inject default freechat prompt
                         table.insert(req_json.messages, 1, {role = "system", content = prompts.freechat})
                     end
-                    -- Otherwise: client provided system prompt and no RAG, respect it as-is
+                    -- When tools are present: set tool_choice auto so llama-server knows to call them
+                    if has_tools then
+                        req_json.tool_choice = req_json.tool_choice or "auto"
+                    end
                 end
 
                 local new_body = json.encode(req_json)

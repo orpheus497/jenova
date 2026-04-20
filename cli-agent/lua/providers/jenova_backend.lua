@@ -107,6 +107,8 @@ local function to_chat_body(messages, options)
                 }
             })
         end
+        -- Tell llama-server it may call tools; without this it silently ignores them.
+        body.tool_choice = "auto"
     end
     if options.system_prompt then
         -- Prepend as a system message if not already present.
