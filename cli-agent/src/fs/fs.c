@@ -14,7 +14,22 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <time.h>
+#include <limits.h>
+#include <glob.h>
 #include "jenova.h"
+
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+
+static char *safe_realloc(char *ptr, size_t new_size) {
+    char *new_ptr = realloc(ptr, new_size);
+    if (!new_ptr) {
+        free(ptr);
+        return NULL;
+    }
+    return new_ptr;
+}
 
 char *jenova_fs_read(const char *path, int32_t offset, int32_t limit) {
     if (!path) return NULL;
@@ -22,13 +37,19 @@ char *jenova_fs_read(const char *path, int32_t offset, int32_t limit) {
     FILE *f = fopen(path, "r");
     if (!f) return NULL;
 
-    fseek(f, 0, SEEK_END);
-    long file_size = ftell(f);
-    fseek(f, 0, SEEK_SET);
+    fseeko(f, 0, SEEK_END);
+    off_t file_size = ftello(f);
+    fseeko(f, 0, SEEK_SET);
+
+    if (file_size < 0) {
+        fclose(f);
+        return NULL;
+    }
 
     if (offset > 0 || limit > 0) {
         size_t capacity = 8192;
         char *result = malloc(capacity);
+        if (!result) { fclose(f); return NULL; }
         size_t pos = 0;
         int line_num = 0;
         char line[4096];
@@ -41,7 +62,8 @@ char *jenova_fs_read(const char *path, int32_t offset, int32_t limit) {
             size_t line_len = strlen(line);
             while (pos + line_len + 32 > capacity) {
                 capacity *= 2;
-                result = realloc(result, capacity);
+                result = safe_realloc(result, capacity);
+                if (!result) { fclose(f); return NULL; }
             }
             int n = snprintf(result + pos, capacity - pos, "%6d|%s", line_num, line);
             pos += (size_t)n;
@@ -52,6 +74,7 @@ char *jenova_fs_read(const char *path, int32_t offset, int32_t limit) {
     }
 
     char *content = malloc((size_t)file_size + 1);
+    if (!content) { fclose(f); return NULL; }
     size_t read_bytes = fread(content, 1, (size_t)file_size, f);
     content[read_bytes] = '\0';
     fclose(f);
@@ -97,6 +120,7 @@ char *jenova_fs_edit(const char *path, const char *old_string,
 
     size_t result_len = content_len + (size_t)count * (new_len - old_len);
     char *result = malloc(result_len + 1);
+    if (!result) { free(content); return strdup("{\"error\":\"allocation failed\"}"); }
     char *rp = result;
     char *cp = content;
 
@@ -127,41 +151,67 @@ char *jenova_fs_edit(const char *path, const char *old_string,
     return strdup(response);
 }
 
+static int has_shell_metachar(const char *s) {
+    while (*s) {
+        switch (*s) {
+            case '\'': case '"': case '\\': case '`':
+            case '$': case '&': case '|': case ';':
+            case '<': case '>': case '(': case ')':
+            case '{': case '}': case '\n': case '\r':
+                return 1;
+        }
+        s++;
+    }
+    return 0;
+}
+
 char *jenova_fs_glob(const char *pattern, const char *root, int32_t max_results) {
     if (!pattern || !root) return NULL;
+    if (has_shell_metachar(root)) return strdup("[]");
 
-    char cmd[1024];
-    snprintf(cmd, sizeof(cmd), "find %s -name '%s' -type f 2>/dev/null | head -n %d",
-             root, pattern, max_results > 0 ? max_results : 500);
+    char glob_pattern[PATH_MAX];
+    snprintf(glob_pattern, sizeof(glob_pattern), "%s/**/%s", root, pattern);
 
-    FILE *p = popen(cmd, "r");
-    if (!p) return strdup("[]");
+    glob_t globbuf;
+    int flags = GLOB_NOSORT;
+#ifdef GLOB_BRACE
+    flags |= GLOB_BRACE;
+#endif
 
+    int ret = glob(glob_pattern, flags, NULL, &globbuf);
+    if (ret != 0 && ret != GLOB_NOMATCH) {
+        snprintf(glob_pattern, sizeof(glob_pattern), "%s/%s", root, pattern);
+        ret = glob(glob_pattern, flags, NULL, &globbuf);
+    }
+
+    if (ret != 0) return strdup("[]");
+
+    int limit = max_results > 0 ? max_results : 500;
     size_t capacity = 4096;
     char *result = malloc(capacity);
+    if (!result) { globfree(&globbuf); return strdup("[]"); }
     strcpy(result, "[");
     size_t pos = 1;
     int first = 1;
 
-    char line[PATH_MAX];
-    while (fgets(line, sizeof(line), p)) {
-        size_t len = strlen(line);
-        while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) line[--len] = '\0';
-        if (len == 0) continue;
+    for (size_t i = 0; i < globbuf.gl_pathc && i < (size_t)limit; i++) {
+        const char *path = globbuf.gl_pathv[i];
+        size_t len = strlen(path);
 
         while (pos + len + 8 > capacity) {
             capacity *= 2;
-            result = realloc(result, capacity);
+            result = safe_realloc(result, capacity);
+            if (!result) { globfree(&globbuf); return strdup("[]"); }
         }
 
         if (!first) result[pos++] = ',';
         result[pos++] = '"';
-        memcpy(result + pos, line, len);
+        memcpy(result + pos, path, len);
         pos += len;
         result[pos++] = '"';
         first = 0;
     }
-    pclose(p);
+    globfree(&globbuf);
 
     result[pos++] = ']';
     result[pos] = '\0';
@@ -171,15 +221,17 @@ char *jenova_fs_glob(const char *pattern, const char *root, int32_t max_results)
 char *jenova_fs_grep(const char *pattern, const char *root,
                      const char *file_glob, int32_t max_results) {
     if (!pattern || !root) return NULL;
+    if (has_shell_metachar(pattern) || has_shell_metachar(root)) return strdup("[]");
+    if (file_glob && has_shell_metachar(file_glob)) return strdup("[]");
 
     char cmd[2048];
     if (file_glob) {
         snprintf(cmd, sizeof(cmd),
-                 "grep -rl --include='%s' '%s' %s 2>/dev/null | head -n %d",
+                 "grep -rlF --include='%s' -- '%s' '%s' 2>/dev/null | head -n %d",
                  file_glob, pattern, root, max_results > 0 ? max_results : 200);
     } else {
         snprintf(cmd, sizeof(cmd),
-                 "grep -rl '%s' %s 2>/dev/null | head -n %d",
+                 "grep -rlF -- '%s' '%s' 2>/dev/null | head -n %d",
                  pattern, root, max_results > 0 ? max_results : 200);
     }
 
@@ -188,6 +240,7 @@ char *jenova_fs_grep(const char *pattern, const char *root,
 
     size_t capacity = 4096;
     char *result = malloc(capacity);
+    if (!result) { pclose(p); return strdup("[]"); }
     strcpy(result, "[");
     size_t pos = 1;
     int first = 1;
@@ -200,7 +253,8 @@ char *jenova_fs_grep(const char *pattern, const char *root,
 
         while (pos + len + 8 > capacity) {
             capacity *= 2;
-            result = realloc(result, capacity);
+            result = safe_realloc(result, capacity);
+            if (!result) { pclose(p); return strdup("[]"); }
         }
 
         if (!first) result[pos++] = ',';
@@ -272,6 +326,7 @@ char *jenova_fs_list_dir(const char *path) {
 
     size_t capacity = 4096;
     char *result = malloc(capacity);
+    if (!result) { closedir(dir); return NULL; }
     strcpy(result, "[");
     size_t pos = 1;
     int first = 1;
@@ -280,17 +335,28 @@ char *jenova_fs_list_dir(const char *path) {
     while ((entry = readdir(dir)) != NULL) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
 
+        int is_dir = 0;
+#ifdef DT_DIR
+        is_dir = (entry->d_type == DT_DIR);
+#else
+        struct stat st;
+        char full_path[PATH_MAX];
+        snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
+        if (stat(full_path, &st) == 0) is_dir = S_ISDIR(st.st_mode);
+#endif
+
         size_t name_len = strlen(entry->d_name);
         while (pos + name_len + 16 > capacity) {
             capacity *= 2;
-            result = realloc(result, capacity);
+            result = safe_realloc(result, capacity);
+            if (!result) { closedir(dir); return NULL; }
         }
 
         if (!first) result[pos++] = ',';
         pos += (size_t)snprintf(result + pos, capacity - pos,
                                 "{\"name\":\"%s\",\"is_dir\":%s}",
                                 entry->d_name,
-                                entry->d_type == DT_DIR ? "true" : "false");
+                                is_dir ? "true" : "false");
         first = 0;
     }
     closedir(dir);
@@ -307,6 +373,7 @@ int32_t jenova_fs_remove(const char *path) {
 
 int32_t jenova_fs_remove_recursive(const char *path) {
     if (!path) return -1;
+    if (has_shell_metachar(path)) return -1;
     char cmd[PATH_MAX + 16];
     snprintf(cmd, sizeof(cmd), "rm -rf '%s'", path);
     return system(cmd) == 0 ? 0 : -1;
