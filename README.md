@@ -274,10 +274,13 @@ jenova/
 ├── bin/                      Executables: jvim, jenova, jenova-ca, build-llama-jenova, jenova-swap-mount
 ├── lib/                      Core LuaJIT backend: proxy, embedding, HTTP, search, daemon management
 ├── cli-agent/                Terminal agent (C + Lua 5.4) — built with gmake
-│   ├── src/                  C service layer: core, fs, process, net, crypto, sandbox, auth, mcp, json, llama, agent
-│   ├── lua/                  Lua agent logic: providers, tools, engine, memory, context, state, UI
+│   ├── src/                  C service layer: core, agent, auth, crypto, fs, json, llama, mcp, net, process, sandbox
+│   ├── lua/                  Lua agent logic: engine (QueryEngine), tools (43), providers, cli,
+│   │                           permissions, context, coordinator, buddy, history, hooks, plugins,
+│   │                           state, ui, utils, vim
 │   ├── include/              Public C header (jenova.h)
 │   ├── docs/                 Architecture documentation
+│   ├── vendor/               Vendored dependencies (Lua 5.4)
 │   └── build/                Build output (gitignored)
 ├── etc/                      Configuration files (jenova.conf)
 ├── scripts/                  Install, cleanup, uninstall, update, management scripts
