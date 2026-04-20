@@ -67,7 +67,7 @@ local global_config = nil
 -- ── Config File Paths ─────────────────────────────────────────────────
 
 local function get_config_dir()
-    local home = os.getenv("HOME") or os.getenv("USERPROFILE")
+    local home = os.getenv("HOME")
     if not home then
         return nil, "Cannot determine home directory"
     end
@@ -183,12 +183,7 @@ function Config.save()
         fs_mod.mkdir(config_dir)
     else
         local shell = require("utils.shell")
-        local is_windows = package.config:sub(1, 1) == "\\"
-        if is_windows then
-            os.execute("if not exist " .. shell.quote(config_dir) .. " mkdir " .. shell.quote(config_dir))
-        else
-            os.execute("mkdir -p " .. shell.quote(config_dir))
-        end
+        os.execute("mkdir -p " .. shell.quote(config_dir))
     end
 
     -- Write config

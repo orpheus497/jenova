@@ -53,14 +53,8 @@ function M.call(args, context)
     end
 
     -- Fallback: use curl
-    local is_windows = package.config:sub(1, 1) == "\\"
-    local cmd
     local shell = require("utils.shell")
-    if is_windows then
-        cmd = string.format('curl -sL %s 2>nul', shell.quote(url))
-    else
-        cmd = string.format('curl -sL %s 2>/dev/null | head -c 100000', shell.quote(url))
-    end
+    local cmd = string.format('curl -sL %s 2>/dev/null | head -c 100000', shell.quote(url))
     
     local h = io.popen(cmd)
     if not h then return { type = "error", error = "Fetch failed" } end

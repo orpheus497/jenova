@@ -282,7 +282,7 @@ function LlamaCppProvider:get_models_dirs()
         table.insert(dirs, jenova_root .. "/models/agent")
     end
 
-    local home = os.getenv("HOME") or os.getenv("USERPROFILE")
+    local home = os.getenv("HOME")
     if home then
         table.insert(dirs, home .. "/.local/share/cli-agent/models")
     end
@@ -295,7 +295,7 @@ end
 function LlamaCppProvider:get_models_dir()
     local dirs = self:get_models_dirs()
     if #dirs > 0 then return dirs[1] end
-    local home = os.getenv("HOME") or os.getenv("USERPROFILE")
+    local home = os.getenv("HOME")
     return home .. "/.local/share/cli-agent/models"
 end
 

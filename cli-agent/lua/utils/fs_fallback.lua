@@ -100,13 +100,7 @@ function M.mkdir(path)
         return jenova.fs.mkdir(path)
     end
     local shell = require("utils.shell")
-    local is_windows = package.config:sub(1, 1) == "\\"
-    local cmd
-    if is_windows then
-        cmd = string.format('if not exist %s mkdir %s', shell.quote(path), shell.quote(path))
-    else
-        cmd = string.format('mkdir -p %s 2>/dev/null', shell.quote(path))
-    end
+    local cmd = string.format('mkdir -p %s 2>/dev/null', shell.quote(path))
     local ok = os.execute(cmd)
     return ok == true or ok == 0
 end
@@ -127,13 +121,7 @@ function M.list_dir(path)
         return nil
     end
     local shell = require("utils.shell")
-    local is_windows = package.config:sub(1, 1) == "\\"
-    local cmd
-    if is_windows then
-        cmd = string.format('dir /b %s 2>nul', shell.quote(path))
-    else
-        cmd = string.format('ls -1 %s 2>/dev/null', shell.quote(path))
-    end
+    local cmd = string.format('ls -1 %s 2>/dev/null', shell.quote(path))
     local handle = io.popen(cmd)
     if not handle then
         return nil
@@ -179,19 +167,12 @@ function M.is_directory(path)
         return jenova.fs.is_dir(path)
     end
     local shell = require("utils.shell")
-    local is_windows = package.config:sub(1, 1) == "\\"
-    if is_windows then
-        local cmd = string.format('if exist %s\\ (exit 0) else (exit 1)', shell.quote(path))
-        local ok = os.execute(cmd)
-        return ok == true or ok == 0
-    else
-        local cmd = string.format('test -d %s && echo yes || echo no', shell.quote(path))
-        local handle = io.popen(cmd)
-        if not handle then return false end
-        local result = handle:read("*l")
-        handle:close()
-        return result == "yes"
-    end
+    local cmd = string.format('test -d %s && echo yes || echo no', shell.quote(path))
+    local handle = io.popen(cmd)
+    if not handle then return false end
+    local result = handle:read("*l")
+    handle:close()
+    return result == "yes"
 end
 
 --- Remove a file or empty directory
@@ -213,13 +194,7 @@ function M.remove_recursive(path)
     end
     -- Pure Lua fallback: use shell command
     local shell = require("utils.shell")
-    local is_windows = package.config:sub(1, 1) == "\\"
-    local cmd
-    if is_windows then
-        cmd = string.format('rmdir /s /q %s 2>nul', shell.quote(path))
-    else
-        cmd = string.format('rm -rf %s 2>/dev/null', shell.quote(path))
-    end
+    local cmd = string.format('rm -rf %s 2>/dev/null', shell.quote(path))
     local ok = os.execute(cmd)
     return ok == true or ok == 0
 end

@@ -20,7 +20,7 @@ function Plugins.get_plugins_dir()
         if config_dir then
             plugins_dir = config_dir .. "/plugins"
         else
-            local home = os.getenv("HOME") or os.getenv("USERPROFILE")
+            local home = os.getenv("HOME")
             plugins_dir = home .. "/.config/cli-agent/plugins"
         end
     end

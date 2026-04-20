@@ -29,7 +29,7 @@ Zero Rust dependency. All system services implemented in C11. All application lo
 
 | Aspect | cli-agent |
 |--------|----------|
-| Services | Pure C11 (~10 .c files) |
+| Services | Pure C11 (13 .c files) |
 | Build | CMake only (single C compiler) |
 | Dependencies | libcurl, OpenSSL (optional) |
 | Binary size | ~2MB (C static) |
@@ -40,17 +40,17 @@ Zero Rust dependency. All system services implemented in C11. All application lo
 ## Building
 
 ```bash
-# Debug build
-make
+# Debug build (requires GNU make — use gmake on FreeBSD)
+gmake
 
 # Release build
-make release
+gmake release
 
 # With llama.cpp support
-cmake -B build -DAGENT_WITH_LLAMA=ON && cmake --build build
+cmake -B build/cmake -DAGENT_WITH_LLAMA=ON && cmake --build build/cmake
 
 # Install
-make install PREFIX=/usr/local
+gmake install PREFIX=/usr/local
 ```
 
 ## Requirements
@@ -94,11 +94,14 @@ cli-agent/
 │   └── agent/       Agent lifecycle (C)
 ├── lua/
 │   ├── agent/       Agent loop, memory, UI
-│   ├── tools/       40+ built-in tools
-│   ├── providers/   LLM providers (llama.cpp, cloud)
+│   ├── tools/       45 built-in tools
+│   ├── providers/   LLM providers (llama.cpp, jenova_backend, cloud)
 │   ├── services/    Memory, API services
 │   ├── utils/       Utility libraries
 │   ├── config/      Configuration loader
+│   ├── cli/         CLI commands (ported, extended, registry)
+│   ├── context/     Context window management
+│   ├── state/       Application state
 │   ├── ui/          Terminal UI screens
 │   └── init.lua     Bootstrap entry point
 ├── include/         jenova.h (public C API)
@@ -109,13 +112,15 @@ cli-agent/
 └── README.md        This file
 ```
 
-## Tools (40+)
+## Tools (45)
 
 All built-in tools are available: bash, file_read, file_write, file_edit,
 glob, grep, agent, web_fetch, web_search, ask_user, todo_write, notebook_edit,
-skill, brief, plan mode, MCP tools, task management, send_message, tool_search,
-sleep, config, LSP, REPL, powershell, snip, verify_plan, worktree, cron,
-remote_trigger, team management.
+skill, brief, enter/exit_plan_mode, mcp_tool, mcp_auth, list/read_mcp_resource,
+task_create, task_get, task_list, task_update, task_stop, task_output,
+send_message, tool_search, sleep, config_tool, lsp, repl, powershell, snip,
+verify_plan, enter/exit_worktree, schedule_cron, remote_trigger,
+team_create, team_delete, local_search, synthetic_output.
 
 ## Agent Features (from legacy-agent)
 

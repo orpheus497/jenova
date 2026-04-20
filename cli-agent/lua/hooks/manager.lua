@@ -132,9 +132,7 @@ function M._run_shell_hooks(hook_point, context)
         if M._matches(hook.matcher, context) then
             local command = hook.command
             if command and #command > 0 then
-                -- Build a platform-appropriate command line. On POSIX we use
-                -- an inline `VAR='val' command` prefix; on Windows cmd.exe
-                -- that syntax is invalid, so we chain `set VAR=val && ...`.
+                -- Build the command line with inline `VAR='val' command` prefix.
                 local full_cmd = M._build_full_cmd(hook_point, context, command)
 
                 local handle = io.popen(full_cmd)
@@ -208,9 +206,8 @@ end
 
 local shell = require("utils.shell")
 
--- Build the full command string including environment variables. POSIX
--- uses inline assignments before the command; Windows chains `set` via
--- `&&` because cmd.exe has no inline env syntax.
+-- Build the full command string including environment variables using
+-- inline `VAR='val' command` prefix syntax.
 function M._build_full_cmd(hook_point, context, command)
     local env = {
         { "JENOVA_HOOK", hook_point }

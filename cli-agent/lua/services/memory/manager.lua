@@ -76,7 +76,7 @@ function Memory.get_memory_dir()
         if config_dir then
             memory_dir = config_dir .. "/memory"
         else
-            local home = os.getenv("HOME") or os.getenv("USERPROFILE")
+            local home = os.getenv("HOME")
             memory_dir = home .. "/.local/share/cli-agent/memory"
         end
     end

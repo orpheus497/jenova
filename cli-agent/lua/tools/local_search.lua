@@ -67,16 +67,10 @@ function M.call(args, context)
     end
 
     -- Find files to index
-    local is_windows = package.config:sub(1, 1) == "\\"
-    local cmd
-    if is_windows then
-        cmd = string.format('dir /s /b /a-d %s 2>nul', shell.quote(root_dir))
-    else
-        cmd = string.format(
-            "find %s -type f %s -not -path '*/.git/*' -not -path '*/.jenova/*' -not -path '*/node_modules/*' -size -100k 2>/dev/null | head -300",
-            shell.quote(root_dir), ext_filter
-        )
-    end
+    local cmd = string.format(
+        "find %s -type f %s -not -path '*/.git/*' -not -path '*/.jenova/*' -not -path '*/node_modules/*' -size -100k 2>/dev/null | head -300",
+        shell.quote(root_dir), ext_filter
+    )
 
     local h = io.popen(cmd)
     if not h then return { type = "error", error = "Failed to list files" } end

@@ -76,15 +76,7 @@ function AppState.generate_session_id()
 end
 
 function AppState.get_session_dir(session_id)
-    local is_windows = package.config:sub(1, 1) == "\\"
-    if is_windows then
-        local localappdata = os.getenv("LOCALAPPDATA")
-        if localappdata then
-            return localappdata .. "/cli-agent/sessions/" .. session_id
-        end
-    end
-
-    local home = os.getenv("HOME") or os.getenv("USERPROFILE")
+    local home = os.getenv("HOME") or "/tmp"
     return home .. "/.cache/cli-agent/sessions/" .. session_id
 end
 
@@ -178,18 +170,9 @@ local function _is_safe_session_name(name)
 end
 
 function AppState.list_sessions()
-    local is_windows = package.config:sub(1, 1) == "\\"
-    local root
-    if is_windows then
-        local localappdata = os.getenv("LOCALAPPDATA")
-        root = localappdata and (localappdata .. "/cli-agent/sessions")
-    end
-
-    if not root then
-        local home = os.getenv("HOME") or os.getenv("USERPROFILE")
-        if not home then return {} end
-        root = home .. "/.cache/cli-agent/sessions"
-    end
+    local home = os.getenv("HOME")
+    if not home then return {} end
+    local root = home .. "/.cache/cli-agent/sessions"
 
     local results = {}
     local seen = {}
@@ -220,14 +203,8 @@ function AppState.list_sessions()
         -- the FFI.
         local listed = false
         if jenova and jenova.process and jenova.process.spawn then
-            local json = (jenova and jenova.json) or require("utils.json_fallback")
-            local is_windows = package.config:sub(1, 1) == "\\"
-            local cmd, argv
-            if is_windows then
-                cmd, argv = "cmd.exe", { "/C", "dir", "/B", root }
-            else
-                cmd, argv = "ls", { "-1", root }
-            end
+            local json = require("utils.json_fallback")
+            local cmd, argv = "ls", { "-1", root }
             local config = json.stringify({
                 cmd = cmd,
                 args = argv,
@@ -247,18 +224,8 @@ function AppState.list_sessions()
             end
         end
         if not listed then
-            -- io.popen last-resort. Build a platform-appropriate command:
-            -- `dir /B` on Windows (cmd.exe), `ls -1` on POSIX. Entries are
-            -- filtered through _is_safe_session_name so a stale "." or
-            -- ".." entry from either tool cannot traverse out of root.
-            local is_windows = package.config:sub(1, 1) == "\\"
-            local cmd
             local shell = require("utils.shell")
-            if is_windows then
-                cmd = "dir /B " .. shell.quote(root) .. " 2>nul"
-            else
-                cmd = "ls -1 " .. shell.quote(root) .. " 2>/dev/null"
-            end
+            local cmd = "ls -1 " .. shell.quote(root) .. " 2>/dev/null"
             local handle = io.popen(cmd)
             if handle then
                 for name in handle:lines() do

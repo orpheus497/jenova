@@ -76,10 +76,7 @@ function M.call(args, ctx)
         html = jenova.http.get(url, nil) or ""
     else
         local shell = require("utils.shell")
-        local cmd = string.format("curl -sL %s 2>nul", shell.quote(url))
-        if package.config:sub(1, 1) ~= "\\" then
-            cmd = string.format("curl -sL %s 2>/dev/null", shell.quote(url))
-        end
+        local cmd = string.format("curl -sL %s 2>/dev/null", shell.quote(url))
         local h = io.popen(cmd)
         if h then
             html = h:read("*a") or ""

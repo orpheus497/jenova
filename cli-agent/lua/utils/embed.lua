@@ -35,13 +35,7 @@ function M.init()
             end
         end
     else
-        -- io.popen fallback with platform-aware quoting
-        local cmd
-        if shell.is_windows() then
-            cmd = string.format('curl -sf --max-time 1 %s 2>NUL', shell.quote(health_url))
-        else
-            cmd = string.format("curl -sf --max-time 1 %s 2>/dev/null", shell.quote(health_url))
-        end
+        local cmd = string.format("curl -sf --max-time 1 %s 2>/dev/null", shell.quote(health_url))
         local p = io.popen(cmd)
         if p then
             res = p:read("*a")
@@ -102,15 +96,8 @@ function M.encode(text, task)
             end
         end
     else
-        -- io.popen fallback with platform-aware quoting
-        local cmd
-        if shell.is_windows() then
-            cmd = string.format('curl -sf -X POST -H "Content-Type: application/json" -d @%s %s 2>NUL',
-                shell.quote(tmp_file), shell.quote(embed_url))
-        else
-            cmd = string.format("curl -sf -X POST -H 'Content-Type: application/json' -d @%s %s 2>/dev/null",
-                shell.quote(tmp_file), shell.quote(embed_url))
-        end
+        local cmd = string.format("curl -sf -X POST -H 'Content-Type: application/json' -d @%s %s 2>/dev/null",
+            shell.quote(tmp_file), shell.quote(embed_url))
         local p = io.popen(cmd)
         if p then
             body = p:read("*a")

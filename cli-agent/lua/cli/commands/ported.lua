@@ -31,9 +31,8 @@ end
 
 local function copy_to_clipboard(text)
     local shell = require("utils.shell")
-    local is_windows = shell.is_windows()
 
-    local temp_dir = os.getenv("TMPDIR") or os.getenv("TEMP") or os.getenv("TMP") or "/tmp"
+    local temp_dir = os.getenv("TMPDIR") or "/tmp"
     local tmp = string.format("%s/jenova_clip_%d_%d", temp_dir, os.time(), math.random(10000, 99999))
 
     local f = io.open(tmp, "w")
@@ -43,15 +42,12 @@ local function copy_to_clipboard(text)
 
     local q = shell.quote(tmp)
     local cmd
-    if is_windows then
-        cmd = "type " .. q .. " | clip"
-    elseif os.getenv("WAYLAND_DISPLAY") then
+    if os.getenv("WAYLAND_DISPLAY") then
         cmd = "wl-copy < " .. q
     elseif os.getenv("DISPLAY") then
         cmd = "xclip -selection clipboard < " .. q
             .. " 2>/dev/null || xsel --clipboard --input < " .. q .. " 2>/dev/null"
     else
-        -- macOS
         cmd = "pbcopy < " .. q
     end
 

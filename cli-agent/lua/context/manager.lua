@@ -3,15 +3,6 @@
 
 local app_state = require("state.app_state")
 
--- Detect Windows hosts so we can pick the right shell redirection.
-local function is_windows()
-    return package.config:sub(1, 1) == "\\"
-end
-
-local function dev_null()
-    return is_windows() and "2>nul" or "2>/dev/null"
-end
-
 local Context = {}
 
 -- ── System Context ────────────────────────────────────────────────────
@@ -38,45 +29,40 @@ end
 -- ── Platform Detection ────────────────────────────────────────────────
 
 function Context.get_platform()
-    local os_name = is_windows() and "windows" or "unix"
+    local handle = io.popen("uname -s 2>/dev/null")
+    if handle then
+        local result = handle:read("*a"):gsub("%s+$", "")
+        handle:close()
 
-    if os_name == "unix" then
-        local handle = io.popen("uname -s " .. dev_null())
-        if handle then
-            local result = handle:read("*a"):gsub("%s+$", "")
-            handle:close()
-
-            if result == "Darwin" then
-                return "macos"
-            elseif result == "Linux" then
-                return "linux"
-            end
+        if result == "Darwin" then
+            return "macos"
+        elseif result == "Linux" then
+            return "linux"
+        elseif result:find("BSD") then
+            return "freebsd"
         end
     end
 
-    return os_name
+    return "unix"
 end
 
 function Context.get_os_version()
     local platform = Context.get_platform()
-    local null = dev_null()
 
-    if platform == "linux" then
-        local handle = io.popen("uname -r " .. null)
+    if platform == "linux" or platform == "freebsd" then
+        local handle = io.popen("uname -r 2>/dev/null")
         if handle then
             local version = handle:read("*a"):gsub("%s+$", "")
             handle:close()
-            return "Linux " .. version
+            return (platform == "freebsd" and "FreeBSD " or "Linux ") .. version
         end
     elseif platform == "macos" then
-        local handle = io.popen("sw_vers -productVersion " .. null)
+        local handle = io.popen("sw_vers -productVersion 2>/dev/null")
         if handle then
             local version = handle:read("*a"):gsub("%s+$", "")
             handle:close()
             return "macOS " .. version
         end
-    elseif platform == "windows" then
-        return "Windows"
     end
 
     return "Unknown"
@@ -85,7 +71,7 @@ end
 -- ── Git Context ───────────────────────────────────────────────────────
 
 function Context.is_git_repository()
-    local handle = io.popen("git rev-parse --is-inside-work-tree " .. dev_null())
+    local handle = io.popen("git rev-parse --is-inside-work-tree " .. "2>/dev/null")
     if not handle then
         return false
     end
@@ -97,7 +83,7 @@ function Context.is_git_repository()
 end
 
 function Context.get_git_branch()
-    local handle = io.popen("git branch --show-current " .. dev_null())
+    local handle = io.popen("git branch --show-current " .. "2>/dev/null")
     if not handle then
         return nil
     end
@@ -109,7 +95,7 @@ function Context.get_git_branch()
 end
 
 function Context.get_git_status()
-    local handle = io.popen("git status --short " .. dev_null())
+    local handle = io.popen("git status --short " .. "2>/dev/null")
     if not handle then
         return nil
     end
@@ -133,7 +119,7 @@ end
 function Context.get_user_context()
     local context = {
         username = os.getenv("USER") or os.getenv("USERNAME") or "unknown",
-        home_directory = os.getenv("HOME") or os.getenv("USERPROFILE") or "~",
+        home_directory = os.getenv("HOME") or "~",
         shell = os.getenv("SHELL") or "unknown",
         terminal = os.getenv("TERM") or "unknown",
         editor = os.getenv("EDITOR") or "unknown",

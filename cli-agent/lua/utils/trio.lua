@@ -9,7 +9,7 @@ function M.get_root()
     end
 
     -- Try common locations
-    local home = os.getenv("HOME") or os.getenv("USERPROFILE")
+    local home = os.getenv("HOME")
     if home then
         local paths = {
             home .. "/Projects/jenova",

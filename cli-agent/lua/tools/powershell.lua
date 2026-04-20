@@ -13,17 +13,7 @@ M.input_schema = {
     required = { "command" }
 }
 
--- Only enabled on Windows
 function M.is_enabled()
-    local is_windows = package.config:sub(1, 1) == "\\"
-    if is_windows then return true end
-    -- Also enable if pwsh is available (PowerShell Core on Linux/macOS)
-    local handle = io.popen("which pwsh 2>/dev/null || where pwsh 2>nul")
-    if handle then
-        local result = handle:read("*a")
-        handle:close()
-        return result and #result > 0
-    end
     return false
 end
 

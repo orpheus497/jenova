@@ -20,7 +20,7 @@ function Skills.get_skills_dir()
         if config_dir then
             skills_dir = config_dir .. "/skills"
         else
-            local home = os.getenv("HOME") or os.getenv("USERPROFILE")
+            local home = os.getenv("HOME")
             skills_dir = home .. "/.config/cli-agent/skills"
         end
     end

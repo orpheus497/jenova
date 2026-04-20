@@ -263,20 +263,21 @@ cli-agent/build/cli-agent
 
 ## Models & Roles
 
-- Agent (7B): Qwen2.5-Coder-7B-Instruct-Q5_K_M — all 28 transformer layers fit across both Vulkan devices; 16k context, 2 slots, q8_0 KV cache.
-- Drafter (0.5B): Qwen2.5-Coder-0.5B-Instruct-Q8_0 — speculative decoding target; enabled by default (`JENOVA_DRAFT=1`), disable with `JENOVA_DRAFT=0`.
+- Agent (7B): Qwen2.5-Coder-7B-Instruct-Q5_K_M — profile-dependent GPU offload. Dual-GPU profiles fit all 28 layers across both Vulkan devices (32K context, 2 slots); the dGPU-only profile partially offloads ~22/28 layers to a single GPU (8K context, 1 slot). KV cache uses q8_0 quantization.
+- Drafter (0.5B): Qwen2.5-Coder-0.5B-Instruct-Q8_0 — speculative decoding target. Enabled by default on profiles with sufficient VRAM headroom (`JENOVA_DRAFT=1`); disabled on tight-VRAM profiles like `Optane/dgpu` where the 0.5B model would exceed the GPU budget. Set `JENOVA_DRAFT=0` to disable manually.
 - Embedding (nomic-embed-text-v1.5): CPU-only persistent daemon on port 8082 for RAG and semantic search.
 
 ## Directory Layout
 
 ```
 jenova/
-├── bin/                      Executables: jvim, jenova-ca, build-llama-jenova, jenova-swap-mount
+├── bin/                      Executables: jvim, jenova, jenova-ca, build-llama-jenova, jenova-swap-mount
 ├── lib/                      Core LuaJIT backend: proxy, embedding, HTTP, search, daemon management
 ├── cli-agent/                Terminal agent (C + Lua 5.4) — built with gmake
-│   ├── src/                  C service layer: fs, process, net, crypto, sandbox, auth, mcp, llama
-│   ├── lua/                  Lua agent logic: providers, tools, engine, memory, UI
+│   ├── src/                  C service layer: core, fs, process, net, crypto, sandbox, auth, mcp, json, llama, agent
+│   ├── lua/                  Lua agent logic: providers, tools, engine, memory, context, state, UI
 │   ├── include/              Public C header (jenova.h)
+│   ├── docs/                 Architecture documentation
 │   └── build/                Build output (gitignored)
 ├── etc/                      Configuration files (jenova.conf)
 ├── scripts/                  Install, cleanup, uninstall, update, management scripts
@@ -521,7 +522,7 @@ kldstat -m amdgpu
 # 2. Verify RADV Vulkan driver is detected
 vulkaninfo --summary | grep -i "RADV\|AMD"
 
-# 3. Check jenova-ca startup banner — should show "ngl 18 layers"
+# 3. Check jenova-ca startup banner — should show "ngl 24 layers"
 bin/jenova-ca status
 
 # If amdgpu not loaded:

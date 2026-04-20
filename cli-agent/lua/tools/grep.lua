@@ -81,30 +81,19 @@ function M.call(args, context)
 
     -- Fallback: use ripgrep or grep
     -- Pattern already has (?i) prefix if -i was set, so don't pass -i again.
-    local is_windows = package.config:sub(1, 1) == "\\"
-    local null = is_windows and "2>nul" or "2>/dev/null"
-    local check_rg = is_windows and "where rg >nul 2>nul" or "command -v rg >/dev/null 2>&1"
-    
     local shell = require("utils.shell")
     local cmd
-    if os.execute(check_rg) then
-        -- Use -- to separate flags from pattern/path to prevent injection
+    if os.execute("command -v rg >/dev/null 2>&1") then
         cmd = string.format("rg --line-number --no-heading -- %s %s",
             shell.quote(pattern), shell.quote(dir))
         if file_glob then
             cmd = cmd .. " --glob " .. shell.quote(file_glob)
         end
     else
-        -- Windows usually doesn't have grep, but if it does (e.g. Git Bash)
         cmd = string.format("grep -Prn -- %s %s",
             shell.quote(pattern), shell.quote(dir))
     end
-    
-    if is_windows then
-        cmd = cmd .. " 2>nul"
-    else
-        cmd = cmd .. " 2>/dev/null"
-    end
+    cmd = cmd .. " 2>/dev/null"
 
     local h = io.popen(cmd)
     if not h then return { type = "error", error = "Grep failed" } end

@@ -452,14 +452,7 @@ registry.register("init", function(args)
         -- shell. This is both safer (no injection via directory names
         -- containing metacharacters) and works on Windows.
         local json = require("utils.json_fallback")
-        local cmd, argv
-        if shell.is_windows() then
-            -- `mkdir` in cmd.exe already creates intermediate directories
-            -- for a non-existent path; no /p flag exists.
-            cmd, argv = "cmd.exe", { "/C", "mkdir", project_dir }
-        else
-            cmd, argv = "mkdir", { "-p", project_dir }
-        end
+        local cmd, argv = "mkdir", { "-p", project_dir }
         jenova.process.spawn(json.stringify({
             cmd = cmd,
             args = argv,
@@ -468,12 +461,7 @@ registry.register("init", function(args)
             capture_stderr = false,
         }))
     else
-        -- Last-resort os.execute fallback: platform-aware shell quoting.
-        if shell.is_windows() then
-            os.execute('mkdir ' .. shell.quote(project_dir))
-        else
-            os.execute("mkdir -p " .. shell.quote(project_dir))
-        end
+        os.execute("mkdir -p " .. shell.quote(project_dir))
     end
 
     local jenova_md_path = cwd .. "/JENOVA.md"
@@ -662,7 +650,7 @@ registry.register("add-dir", function(args)
 
     -- Expand ~ and resolve
     if path:sub(1, 1) == "~" then
-        local home = os.getenv("HOME") or os.getenv("USERPROFILE") or ""
+        local home = os.getenv("HOME") or ""
         path = home .. path:sub(2)
     end
 
@@ -779,14 +767,7 @@ registry.register("backend", function(args)
         end
 
         print("Starting Jenova backend (jenova-ca)...")
-        local is_windows = package.config:sub(1, 1) == "\\"
-        local cmd
-        if is_windows then
-            local exe = (root .. "/bin/jenova-ca.exe"):gsub("/", "\\")
-            cmd = string.format('start /B "" %s', shell.quote(exe))
-        else
-            cmd = string.format("%s &", shell.quote(root .. "/bin/jenova-ca"))
-        end
+        local cmd = string.format("%s &", shell.quote(root .. "/bin/jenova-ca"))
         os.execute(cmd)
         
         -- Wait for ready
@@ -804,7 +785,7 @@ registry.register("backend", function(args)
             end
             io.write(".")
             io.flush()
-            os.execute(is_windows and "timeout /t 1 >nul" or "sleep 1")
+            os.execute("sleep 1")
         end
         if ready then
             print("\nBackend ready!")
@@ -857,14 +838,8 @@ registry.register("backend", function(args)
             return
         end
         print("Stopping Jenova backend...")
-        local is_windows = package.config:sub(1, 1) == "\\"
-        if is_windows then
-            os.execute("taskkill /F /IM llama-server.exe /T 2>nul")
-            os.execute("taskkill /F /IM jenova-ca.exe /T 2>nul")
-        else
-            os.execute("pkill -f llama-server")
-            os.execute("pkill -f jenova-ca")
-        end
+        os.execute("pkill -f llama-server")
+        os.execute("pkill -f jenova-ca")
         print("Stop commands issued.")
     elseif sub == "config" then
         local conf = trio.load_jenova_conf()
@@ -1648,7 +1623,7 @@ registry.register("feedback", function(args)
 
     -- Save feedback to local file
     local json = require("utils.json_fallback")
-    local home = os.getenv("HOME") or os.getenv("USERPROFILE") or "/tmp"
+    local home = os.getenv("HOME") or "/tmp"
     local feedback_file = home .. "/.local/share/cli-agent/feedback.jsonl"
 
     -- Ensure directory exists
