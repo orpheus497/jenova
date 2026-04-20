@@ -29,6 +29,33 @@ static const char *blocked_patterns[] = {
     NULL
 };
 
+static const char *sensitive_paths[] = {
+    "/etc/passwd",
+    "/etc/shadow",
+    NULL
+};
+
+static int redirects_to_sensitive_file(const char *normalized) {
+    for (int i = 0; sensitive_paths[i]; i++) {
+        const char *path = sensitive_paths[i];
+        const char *pos = normalized;
+        while ((pos = strstr(pos, path)) != NULL) {
+            const char *before = pos - 1;
+            while (before >= normalized && (*before == ' ' || *before == '\t')) before--;
+            if (before < normalized) { pos++; continue; }
+            if (*before == '>' || *before == '<') return 1;
+            if (*before == '|' && before > normalized && *(before-1) == '>') return 1;
+            if ((*before >= '0' && *before <= '9') && before > normalized) {
+                char op = *(before - 1);
+                if (op == '>' || op == '<') return 1;
+                if (op == '|' && before > normalized + 1 && *(before - 2) == '>') return 1;
+            }
+            pos++;
+        }
+    }
+    return 0;
+}
+
 static const char *blocked_substrings[] = {
     "curl|sh",
     "curl|bash",
@@ -137,11 +164,16 @@ int32_t jenova_sandbox_validate_command(const char *command) {
 
     if (contains_obfuscation(command)) return 0;
 
+    /* CR/LF in a command argument is almost always a log-injection attempt
+     * or a multi-command smuggle — reject. Backticks allow arbitrary
+     * subshell execution without the `$(...)` form the obfuscation check
+     * inspects, so keep them off the allowlist as well. Shell composition
+     * characters (`&`, `;`, `|`, `>`, `<`, `$`) are intentionally allowed
+     * — blocked_patterns/blocked_substrings below handle the dangerous
+     * combinations, and real coding workflows require pipes and chains
+     * (e.g. "git add . && git commit", "cat file | head"). */
     for (const char *p = command; *p; p++) {
-        if (*p == ';' || *p == '`' || *p == '$' || *p == '\n' || *p == '\r') return 0;
-        if (*p == '|') return 0;
-        if (*p == '&') return 0;
-        if (*p == '>' || *p == '<') return 0;
+        if (*p == '\n' || *p == '\r' || *p == '`') return 0;
     }
 
     char *normalized = normalize_command(command);
@@ -158,6 +190,80 @@ int32_t jenova_sandbox_validate_command(const char *command) {
         if (strstr(normalized, blocked_substrings[i]) != NULL) {
             free(normalized);
             return 0;
+        }
+    }
+
+    if (redirects_to_sensitive_file(normalized)) {
+        free(normalized);
+        return 0;
+    }
+
+    /* Detect the "curl/wget <URL> | sh/bash" remote-execution pattern.
+     * For 'curl' and 'wget', strstr is sufficient since these names
+     * don't appear as substrings of common legitimate tools.
+     * For 'fetch', require word-boundary matching to avoid false positives
+     * like `git fetch`, `--fetch-options`, or `fetchmail`. */
+    static const char *fetcher_words[] = { "curl", "wget", NULL };
+    static const char *fetcher_substrings[] = { "fetch", NULL };
+    int has_fetcher = 0;
+    for (int i = 0; fetcher_words[i]; i++) {
+        if (strstr(normalized, fetcher_words[i]) != NULL) {
+            has_fetcher = 1;
+            break;
+        }
+    }
+    if (!has_fetcher) {
+        for (int i = 0; fetcher_substrings[i]; i++) {
+            const char *kw = fetcher_substrings[i];
+            size_t kw_len = strlen(kw);
+            const char *hit = normalized;
+            while ((hit = strstr(hit, kw)) != NULL) {
+                char before = (hit > normalized) ? hit[-1] : ' ';
+                char after  = hit[kw_len];
+                int pre_ok  = (before == ' ' || before == '\t' || before == ';' ||
+                               before == '|' || before == '&'  || before == '/');
+                int post_ok = (after == ' ' || after == '\t'  || after == '\0' ||
+                               after == ';' || after == '|'   || after == '&'  ||
+                               after == '>');
+                if (pre_ok && post_ok) { has_fetcher = 1; break; }
+                hit++;
+            }
+            if (has_fetcher) break;
+        }
+    }
+    if (has_fetcher) {
+        static const char *shells[] = {
+            "sh", "bash", "zsh", "ksh", "dash", "ash", "csh", "tcsh",
+            "fish", "python", "python3", "perl", "ruby", "node", NULL
+        };
+        for (const char *p = normalized; *p; p++) {
+            if (*p != '|') continue;
+            /* Skip past the pipe and any whitespace. */
+            const char *t = p + 1;
+            while (*t == ' ' || *t == '\t') t++;
+            /* Skip a leading absolute/relative path so "|/bin/sh" and
+             * "|./script.sh" still resolve to their basename. */
+            const char *base = t;
+            for (const char *s = t; *s && *s != ' ' && *s != '\t' &&
+                                    *s != '\n' && *s != ';' && *s != '|' &&
+                                    *s != '&' && *s != '>'; s++) {
+                if (*s == '/') base = s + 1;
+            }
+            /* Determine token end. */
+            const char *end = base;
+            while (*end && *end != ' ' && *end != '\t' && *end != '\n' &&
+                   *end != ';' && *end != '|' && *end != '&' && *end != '>') {
+                end++;
+            }
+            size_t token_len = (size_t)(end - base);
+            if (token_len == 0) continue;
+            for (int i = 0; shells[i]; i++) {
+                size_t sl = strlen(shells[i]);
+                if (sl == token_len && strncmp(base, shells[i], sl) == 0) {
+                    free(normalized);
+                    return 0;
+                }
+            }
         }
     }
 
