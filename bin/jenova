@@ -92,5 +92,7 @@ export JENOVA_CWD="$PWD"
 
 # Launch the CLI agent
 # The cd is required so relative Lua paths (lua/init.lua etc.) resolve correctly.
+# Note: do NOT exec here — we need the shell process to stay alive so the
+# cleanup_agent trap (registered above) fires when the agent exits.
 cd "$JENOVA_ROOT/cli-agent"
-exec "$CLI_AGENT" "$@"
+"$CLI_AGENT" "$@"

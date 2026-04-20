@@ -18,6 +18,7 @@ function M.call(args, ctx)
     end
     local ok_st, app_state = pcall(require, "state.app_state")
     if ok_st and app_state and app_state.set then
+        app_state.set("permission_mode", "default")
         app_state.set("current_screen", "repl")
     end
     return {

@@ -44,6 +44,13 @@ function M._create(args)
         return { type = "error", error = "name, schedule, and command are required for 'create'" }
     end
 
+    local _jenova = rawget(_G, "jenova")
+    if type(_jenova) == "table" and _jenova.sandbox and _jenova.sandbox.validate_command then
+        if _jenova.sandbox.validate_command(args.command) == 0 then
+            return { type = "error", error = "Command blocked by sandbox: " .. args.command }
+        end
+    end
+
     local schedules = app_state.get("cron_schedules") or {}
     local id = string.format("cron_%d_%s", os.time(), args.name:gsub("[^%w]", "_"):sub(1, 20))
 
@@ -120,16 +127,17 @@ function M._run(args)
     for i, sched in ipairs(schedules) do
         if sched.id == task_id or sched.name == task_id then
             local output = ""
-            if jenova and jenova.process and jenova.process.spawn then
+            local _jenova = rawget(_G, "jenova")
+            if type(_jenova) == "table" and _jenova.process and _jenova.process.spawn_json then
                 local json = require("utils.json_fallback")
-                local shell = require("utils.shell")
                 local config = json.stringify({
                     command = "sh",
                     args = { "-c", sched.command },
                     timeout_ms = 60000,
-                    capture_output = true,
+                    capture_stdout = true,
+                    capture_stderr = true,
                 })
-                local result_json = jenova.process.spawn(config)
+                local result_json = _jenova.process.spawn_json(config)
                 if result_json then
                     local ok, result = pcall(json.parse, result_json)
                     if ok and result then
@@ -138,8 +146,7 @@ function M._run(args)
                 end
             else
                 local shell = require("utils.shell")
-                local quoted = shell.quote(sched.command)
-                local handle = io.popen("sh -c " .. quoted .. " 2>&1")
+                local handle = io.popen("sh -c " .. shell.quote(sched.command) .. " 2>&1")
                 if handle then
                     output = handle:read("*a")
                     handle:close()

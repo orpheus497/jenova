@@ -183,10 +183,13 @@ local function run_git(args)
             capture_stdout = true,
             capture_stderr = true,
         })
-        local result = _jenova.process.spawn_json(config)
-        if result and type(result) == "table" then
-            local out = (result.stdout or "") .. (result.stderr or "")
-            return out, result.exit_code or 0
+        local result_raw = _jenova.process.spawn_json(config)
+        if result_raw then
+            local ok2, result = pcall(json.parse, result_raw)
+            if ok2 and result then
+                local out = (result.stdout or "") .. (result.stderr or "")
+                return out, result.exit_code or 0
+            end
         end
         -- fall through to io.popen if FFI returned nothing
     end

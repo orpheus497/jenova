@@ -190,10 +190,10 @@ function Context.get_directory_snapshot(cwd, max_files)
 
     -- Fallback: use find
     if #files == 0 then
-        local safe_cwd = "'" .. cwd:gsub("'", "'\\''") .. "'"
+        local shell = require("utils.shell")
         local cmd = string.format(
             "find %s -not -path '*/.git/*' -not -name '.git' -not -path '*/.jenova/*' -not -path '*/.claude/*' -maxdepth 6 2>/dev/null | head -n %d",
-            safe_cwd, max_files
+            shell.quote(cwd), max_files
         )
         local handle = io.popen(cmd)
         if handle then

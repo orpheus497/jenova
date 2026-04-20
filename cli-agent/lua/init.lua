@@ -274,9 +274,9 @@ local function run_agent_repl(opts)
                 if ui and ui.spinner_stop then ui.spinner_stop() end
                 if response then
                     if ui and ui.agent_response then
-                        ui.agent_response(response)
+                        ui.agent_response(type(response) == "table" and response.content or response)
                     else
-                        print(response)
+                        print(type(response) == "table" and response.content or response)
                     end
                 else
                     if ui then ui.status_err(tostring(err))
@@ -433,7 +433,7 @@ local function main()
                 model = opts.model,
                 system_prompt = opts.system_prompt,
             })
-            if response then print(response) else io.stderr:write("Error: " .. tostring(err) .. "\n"); return 1 end
+            if response then print(type(response) == "table" and response.content or response) else io.stderr:write("Error: " .. tostring(err) .. "\n"); return 1 end
         end
         return 0
     end

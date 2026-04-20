@@ -115,8 +115,6 @@ function M.call(args, ctx)
     end
 
     -- io.popen last-resort: build a properly quoted command line. Each
-    -- header value has already had CR/LF stripped. Use platform-appropriate
-    -- io.popen last-resort: build a properly quoted command line. Each
     -- header value has already had CR/LF stripped, and we re-escape any
     -- single quotes inside the POSIX single-quote wrapper.
     local shell = require("utils.shell")

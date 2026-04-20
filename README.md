@@ -48,14 +48,14 @@ The `cli-agent` is a standalone C + Lua 5.4 binary that provides an interactive 
 
 Jenova is designed for laptops. Every profile targets a real laptop form factor: thin-and-light APU, GPU laptop, or a compact workstation. The profiles auto-detect at install time — no manual hardware configuration required.
 
-| Profile | Hardware | Model | Context |
-|---|---|---|---|
-| `Vulkan/dgpu/full-offload-14b` | Any GPU 8GB+ VRAM | Qwen2.5-Coder-14B Q4_K_M | 32K |
-| `Intel/dgpu_igpu/i5-1135g7-3b` | i5-1135G7 + GTX 1650 Ti + Iris Xe | Qwen2.5-Coder-3B Q8_0 | 32K |
-| `Optane/dgpu_igpu/i5-1135g7-7b` | i5-1135G7 + GTX 1650 Ti + Iris Xe + Optane | Qwen2.5-Coder-7B Q5_K_M | 32K |
-| `Optane/dgpu/i5-1135g7-3b` | i5-1135G7 + GTX 1650 Ti (dGPU only) + Optane | Qwen2.5-Coder-3B Q8_0 | 16K |
-| `Optane/dgpu/i5-1135g7-7b` | i5-1135G7 + GTX 1650 Ti (dGPU only) + Optane | Qwen2.5-Coder-7B Q5_K_M | 8K |
-| `AMD/apu/ryzen7-5700u-3b` | Ryzen 7 5700U + Vega 8 UMA | Qwen2.5-Coder-3B Q8_0 | 16K |
+| Profile | Hardware | Model | CTX | Slots | NGL |
+|---|---|---|---|---|---|
+| `Vulkan/dgpu/full-offload-14b` | Any GPU 8GB+ VRAM | Qwen2.5-Coder-14B Q4_K_M | 32768 | 2 | all |
+| `Intel/dgpu_igpu/i5-1135g7-3b` | i5-1135G7 + GTX 1650 Ti + Iris Xe | Qwen2.5-Coder-3B Q8_0 | 32768 | 2 | all |
+| `Optane/dgpu_igpu/i5-1135g7-7b` | i5-1135G7 + GTX 1650 Ti + Iris Xe + Optane | Qwen2.5-Coder-7B Q5_K_M | 32768 | 2 | all |
+| `Optane/dgpu/i5-1135g7-3b` | i5-1135G7 + GTX 1650 Ti (dGPU only) + Optane | Qwen2.5-Coder-3B Q8_0 | 16384 | 2 | all |
+| `Optane/dgpu/i5-1135g7-7b` | i5-1135G7 + GTX 1650 Ti (dGPU only) + Optane | Qwen2.5-Coder-7B Q5_K_M | 8192 | 1 | 22 |
+| `AMD/apu/ryzen7-5700u-3b` | Ryzen 7 5700U + Vega 8 UMA | Qwen2.5-Coder-3B Q8_0 | 16384 | 2 | 24 |
 
 ### i5-1135G7 Dual-GPU (3B, default)
 
@@ -153,13 +153,24 @@ cd cli-agent && gmake && cd ..
 scripts/install.sh
 ```
 
+`scripts/install.sh` flags:
+
+| Flag | Action |
+|---|---|
+| *(no flags)* | Full interactive install |
+| `--force` | Overwrite existing config/symlinks without prompting |
+| `--link` | Create symlinks in PATH only (skip build/model steps) |
+| `--skip-nvim` | Skip Neovim config deployment |
+| `--skip-llama` | Skip llama.cpp build check |
+| `--client-only` | Install client tools only (no backend/model setup) |
+
 The installer will:
 1. Verify all required and optional dependencies
 2. Create runtime directories (`.jenova/`, `var/log/`, `var/cache/`, `models/{agent,embed,draft}/`)
 3. Check for llama.cpp build
 4. **Offer to download missing model files** (agent, embedding, drafter) from Hugging Face
 5. Deploy the Neovim configuration to `~/.config/nvim/`
-6. Symlink `jvim` and `jenova-ca` to your PATH (`~/.local/bin/` or `~/bin/`)
+6. Symlink `jvim`, `jenova`, and `jenova-ca` to your PATH (`~/.local/bin/` or `~/bin/`)
 7. **Auto-detect your hardware** and recommend the matching profile
 
 The built binary lives at `llama.cpp/build/bin/llama-server`.
@@ -257,9 +268,54 @@ bin/jenova-ca --daemon
 # Launch Neovim with Jenova integration (auto-starts backend if needed)
 bin/jvim [files...]
 
-# OR use the terminal agent (built from cli-agent/)
-cli-agent/build/cli-agent
+# Launch the terminal agent (interactive REPL)
+bin/jenova
+
+# Launch terminal agent with a one-shot prompt
+bin/jenova --one-shot "explain this codebase"
 ```
+
+### `bin/jenova` — Terminal Agent
+
+The terminal agent entry point. Resolves `JENOVA_ROOT`, exports environment, and invokes `cli-agent/build/cli-agent`.
+
+| Flag | Action |
+|---|---|
+| `--model <model>` | Override model selection |
+| `--provider <name>` | Override provider (`llamacpp`, `openai`, `anthropic`, `gemini`) |
+| `--one-shot` | Process prompt and exit (no REPL) |
+| `--no-backend` | Skip backend health check |
+| `--check` | Print resolved `JENOVA_*` environment and exit |
+| `-h` / `--help` | Show help and exit |
+
+### `bin/jvim` — Editor Launcher
+
+Neovim wrapper with full Jenova backend integration.
+
+| Flag | Action |
+|---|---|
+| `--remote [host]` | Connect to remote Jenova CA (explicit host, or LAN auto-discover if no host given) |
+| `--remote-port <p>` | Override proxy port for remote mode (default 8080) |
+| `--llama-port <p>` | Override llama-server port for remote mode (default 8081) |
+| `--embed-port <p>` | Override embedding-server port for remote mode (default 8082) |
+| `--no-backend` | Skip starting `jenova-ca` (editor loads with env vars exported, no backend managed) |
+| `--check` | Print resolved `JENOVA_*` environment and exit |
+| `-h` / `--help` | Show help and exit |
+
+### `bin/jenova-ca` — Backend Supervisor
+
+Manages the three backend daemons (llama-server, proxy.lua, embed server) as a unit.
+
+| Subcommand / Flag | Action |
+|---|---|
+| `--daemon` | Start backend services and daemonize |
+| `start` | Start backend services (foreground) |
+| `stop` | Stop all backend services |
+| `restart` | Restart all backend services |
+| `status` | Show service status (PIDs, ports, health) |
+| `watch` | Start standalone watchdog for already-running services |
+| `--lan` | Bind to all interfaces for LAN access (`0.0.0.0`) |
+| `--watch` | Enable watchdog after start (auto-restart on crash) |
 
 ## Models & Roles
 
@@ -271,19 +327,19 @@ cli-agent/build/cli-agent
 
 ```
 jenova/
-├── bin/                      Executables: jvim, jenova, jenova-ca, build-llama-jenova, jenova-swap-mount
+├── bin/                      Executables: jenova, jvim, jenova-ca, build-llama-jenova, jenova-swap-mount
 ├── lib/                      Core LuaJIT backend: proxy, embedding, HTTP, search, daemon management
 ├── cli-agent/                Terminal agent (C + Lua 5.4) — built with gmake
-│   ├── src/                  C service layer: core, agent, auth, crypto, fs, json, llama, mcp, net, process, sandbox
+│   ├── src/                  C service layer: agent, auth, core, crypto, fs, json, llama, mcp, net, process, sandbox
 │   ├── lua/                  Lua agent logic: engine (QueryEngine), tools (43), providers, cli,
 │   │                           permissions, context, coordinator, buddy, history, hooks, plugins,
-│   │                           state, ui, utils, vim
+│   │                           services, skills, state, utils, vim, and init.lua
 │   ├── include/              Public C header (jenova.h)
 │   ├── docs/                 Architecture documentation
 │   ├── vendor/               Vendored dependencies (Lua 5.4)
 │   └── build/                Build output (gitignored)
 ├── etc/                      Configuration files (jenova.conf)
-├── scripts/                  Install, cleanup, uninstall, update, management scripts
+├── scripts/                  install.sh, cleanup.sh, uninstall.sh, update.sh, jenova-manager.sh, jenova-setup
 ├── models/                   Model storage: agent/, embed/, draft/ (GGUF format, gitignored)
 ├── hardware-profiles/        Hardware detection and per-profile configs
 ├── nvim/                     Neovim configuration (plugins, LSP, UI) for jvim
@@ -301,7 +357,7 @@ All HTTP communication in the backend uses raw BSD sockets via LuaJIT FFI — no
 
 - All session data, logs, and backups are stored locally in `.jenova/` and `var/`.
 - Model weights, databases, shell history, and sensitive files are excluded from git via `.gitignore`.
-- The `cli-agent` C layer includes path validation (prevents directory traversal) and command sandboxing (blocks dangerous shell patterns and obfuscation attempts).
+- The `cli-agent` C layer includes path validation (prevents directory traversal) and command sandboxing (blocks dangerous shell patterns and obfuscation attempts). Note: the sandbox uses a blacklist approach — it is a defence-in-depth layer, not a hard security boundary. The permission manager (interactive user confirmation for action tools) is the primary gate.
 - No telemetry, no external analytics, no network calls except to your own local backend.
 
 ## Neovim Integration
@@ -335,12 +391,47 @@ Once launched via `jvim`, plugins use these endpoints automatically:
 
 Both ports are defined in `etc/jenova.conf` as `LLAMA_PORT` and `PORT`.
 
+### Keymaps (`<leader>a*`)
+
+| Keymap | Mode | Action |
+|---|---|---|
+| `<leader>at` | n | Toggle chat panel |
+| `<leader>an` | n | New chat |
+| `<leader>ac` | n | Chat with buffer context |
+| `<leader>aF` | n | Fresh chat (wipe all history) |
+| `<leader>ar` | n | Respond / send message |
+| `<leader>ad` | n | Delete current chat |
+| `<leader>as` | n | Web search |
+| `<leader>ai` | n | Inline rewrite |
+| `<leader>ax` | n | Stop generation |
+| `<leader>ae` | v | Explain selection |
+| `<leader>aw` | v | Web search selection |
+| `<leader>aj` | n | Launch terminal agent (`bin/jenova`) in split |
+| `<leader>am` | n | Open backend monitor (`:JenovaMonitor`) |
+| `<leader>ah` | n | Health check (`:checkhealth jenova`) |
+| `<leader>al` | n | LAN scan (`:JenovaLanScan`) |
+
+### Commands
+
+| Command | Action |
+|---|---|
+| `:JenovaChat` | Toggle chat panel |
+| `:JenovaChatNew` | Open a new chat |
+| `:JenovaChatRespond` | Send the current chat message |
+| `:JenovaChatDelete` | Delete the current chat |
+| `:JenovaChatFresh` | Fresh chat — wipe all history |
+| `:JenovaChatStop` | Stop the current generation |
+| `:JenovaWebSearch` | Open web search chat |
+| `:JenovaChatContext` | Chat with current file as context |
+| `:JenovaMonitor` | Open backend monitor floating window |
+| `:JenovaLanScan` | Scan LAN and auto-connect to first found Jenova CA |
+
 ### Backend Monitor (`:JenovaMonitor`)
 
 The backend monitor provides a real-time floating window showing service status and inference metrics:
 
 ```
-Press  M  from the dashboard, OR run  :JenovaMonitor  in Neovim
+Press  <leader>am  OR run  :JenovaMonitor  in Neovim
 ```
 
 The monitor displays:
@@ -431,7 +522,7 @@ scripts/uninstall.sh --yes              # Non-interactive (skip confirmation)
 
 | Variable | Default | Effect |
 |---|---|---|
-| `JENOVA_CTX` | Profile-dependent (32768 for most; 16384 for Ryzen) | Context window token limit |
+| `JENOVA_CTX` | Profile-dependent (32768 / 16384 / 8192) | Context window token limit |
 | `JENOVA_SLOTS` | `2` | Number of parallel inference slots |
 | `JENOVA_CONN_TIMEOUT` | `600` | Max seconds a proxy connection coroutine may live |
 | `JENOVA_TIMEOUT` | `600` | Agent HTTP timeout (seconds) |
@@ -547,7 +638,7 @@ Requirements: `cmake`, `lua54`, `curl`, `openssl`. See `cli-agent/README.md` for
 
 ### Path Resolution
 
-All scripts (`bin/jvim`, `bin/jenova-ca`) automatically detect `JENOVA_ROOT` by resolving their own location. This works whether you:
+All scripts (`bin/jvim`, `bin/jenova-ca`, `bin/jenova`) automatically detect `JENOVA_ROOT` by resolving their own location. This works whether you:
 - Run them from the project root: `./bin/jvim`
 - Run them via symlinks in PATH: `jvim` (after `scripts/install.sh`)
 - Run them from any directory: `/full/path/to/bin/jvim`
@@ -564,6 +655,7 @@ The `JENOVA_ROOT` environment variable is automatically set and exported before 
 - **Ryzen profile**: Standard NVMe swap latency (~100 μs). Default is 16K context — reduce to 8192 if swap pressure is observed (watch `swapinfo` and `vmstat -H`).
 - **i5 dual-GPU 3B profile**: 3B Q8_0 with 32K context uses only ~4 GiB of the 11 GiB combined GPU — no swap pressure expected.
 - **i5 dual-GPU 7B+Optane profile**: Optane NVMe (~7 μs swap latency) enables comfortable 32K context with the 7B model. The `-fitt 512` reserves GPU headroom so KV cache doesn't OOM during long sessions.
+- **Optane/dgpu/7b profile**: CTX=8192 and 1 slot by default — this is intentional to avoid KV-cache OOM on the tight-VRAM single-GPU configuration. Do not increase `CTX_SIZE` without verifying VRAM headroom.
 
 ## Web Search
 

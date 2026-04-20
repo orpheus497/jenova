@@ -151,8 +151,8 @@ function M.save()
 
     local dir = path:match("^(.*)/")
     if dir then
-        local quoted_dir = "'" .. dir:gsub("'", "'\\''") .. "'"
-        os.execute("mkdir -p " .. quoted_dir)
+        local shell = require("utils.shell")
+        os.execute("mkdir -p " .. shell.quote(dir))
     end
 
     if json then

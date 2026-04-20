@@ -74,7 +74,8 @@ function M.call(args, context)
 
     if args.replace_all then
         local count = 0
-        local new_content = content:gsub(args.old_string:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1"), function()
+        local escape_pattern = require("utils.string").escape_pattern
+        local new_content = content:gsub(escape_pattern(args.old_string), function()
             count = count + 1
             return args.new_string
         end)
