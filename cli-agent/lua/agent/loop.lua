@@ -146,9 +146,17 @@ Tool selection guide:
 - Fetch a specific URL: WebFetch
 
 File paths can be relative (e.g. "src/main.c") or absolute — relative paths are resolved against the working directory shown above.
-When you have finished a task or want to respond with text, use the Brief tool.
 Do NOT use WebSearch or WebFetch for local filesystem tasks — use Read, Grep, Glob, or Shell instead.
-Do NOT repeat the same tool call with the same arguments — if it returned an answer, use Brief to report it.]]
+Do NOT repeat the same tool call with the same arguments — if it returned an answer, move to the next step.
+
+## Workflow rules (follow these strictly)
+1. DISCOVER before acting: use Glob or Grep to find the relevant files first if you don't already know them.
+2. READ before editing: always call Read on a file before attempting to Edit or Write it.
+3. VERIFY after editing: after every Write/Edit, call Read on the changed file to confirm the result is correct.
+4. COMPILE to confirm: for code tasks, use Shell to compile or run tests after all edits are made.
+5. Never fabricate file contents from memory — always Read the actual file.
+6. If a tool returns an error, analyse the error message, adjust your approach, and try again with corrected arguments. Do not give up and do not pretend the error didn't happen.
+7. Only call Brief when you have actually completed the task and verified the result.]]
     base_system_prompt = base_system_prompt .. tool_mandate
 
     local thinking_buf = ""

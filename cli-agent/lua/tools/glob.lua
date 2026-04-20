@@ -30,7 +30,8 @@ function M.call(args, context)
     local pattern = args.pattern
     if not pattern then return { type = "error", error = "No pattern provided" } end
 
-    local dir = args.path or (context and context.cwd) or "."
+    local dir = args.path and paths.resolve(args.path, context and context.cwd)
+        or (context and context.cwd) or "."
     if paths.is_restricted(dir) then return paths.restricted_error(dir) end
 
     -- Use Rust FFI (preferred)
@@ -72,7 +73,7 @@ function M.call(args, context)
 
     return {
         type = "text",
-        text = table.concat(files, "\n"),
+        text = #files > 0 and table.concat(files, "\n") or ("No files matched: " .. pattern),
         num_files = #files,
     }
 end

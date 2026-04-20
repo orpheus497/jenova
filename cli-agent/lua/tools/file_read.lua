@@ -38,7 +38,15 @@ function M.call(args, context)
     -- regardless of whether the FFI layer is available. The C jenova.fs.read
     -- produces "%6d|%s" output which would diverge from the fallback path.
     local f = io.open(path, "r")
-    if not f then return { type = "error", error = "Cannot open: " .. path } end
+    if not f then
+        return {
+            type = "error",
+            error = string.format(
+                "Cannot open file: %s — check the path is correct. Use Glob to discover available files.",
+                path
+            )
+        }
+    end
 
     local lines = {}
     local n = 0

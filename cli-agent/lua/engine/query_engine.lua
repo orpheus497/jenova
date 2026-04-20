@@ -304,14 +304,13 @@ function QueryEngine:query(user_message, options)
         -- Use "auto" only when there are no tools (avoids a bad-request error).
         local has_tools = self.tools and #self.tools > 0
 
-        -- tool_choice: "required" on the first turn to guarantee the model uses a
-        -- tool rather than replying with plain text (Brief is available as the
-        -- "I want to reply" path). After the first turn we switch to "auto" so the
-        -- model can also emit text naturally if stop_reason is "end_turn".
-        local tool_choice_val
-        if has_tools then
-            tool_choice_val = (turn_count == 1) and "required" or "auto"
-        end
+        -- tool_choice: always "required" so the model must use a tool every turn.
+        -- Brief is the designated exit path — the model calls Brief({response="..."})
+        -- when it wants to deliver a plain-text reply to the user.
+        -- Switching to "auto" lets the model short-circuit by emitting plain text
+        -- directly, which causes it to fabricate answers instead of actually
+        -- reading files or running shell commands.
+        local tool_choice_val = has_tools and "required" or nil
 
         -- Prepare API request
         local request = {

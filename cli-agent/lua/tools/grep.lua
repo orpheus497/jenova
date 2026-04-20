@@ -42,7 +42,8 @@ function M.call(args, context)
         pattern = "(?i)" .. pattern
     end
 
-    local dir = args.path or (context and context.cwd) or "."
+    local dir = paths.resolve(args.path or ".", context and context.cwd)
+    if not args.path then dir = (context and context.cwd) or "." end
     local file_glob = args.glob or args.include
     if paths.is_restricted(dir) then return paths.restricted_error(dir) end
 
@@ -108,6 +109,9 @@ function M.call(args, context)
     h:close()
 
     local output = table.concat(lines, "\n")
+    if #output == 0 then
+        return { type = "text", text = "No matches found for pattern: " .. (args.pattern or "") }
+    end
     return { type = "text", text = output }
 end
 
