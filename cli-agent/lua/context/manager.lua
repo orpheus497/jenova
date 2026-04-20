@@ -2,6 +2,7 @@
 -- Equivalent to src/context.ts
 
 local app_state = require("state.app_state")
+local paths = require("utils.paths")
 
 local Context = {}
 
@@ -149,7 +150,7 @@ function Context.get_directory_snapshot(cwd, max_files)
                 for _, f in ipairs(result) do
                     -- Strip leading cwd prefix for readability
                     local rel = tostring(f):gsub("^" .. cwd:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1") .. "/?", "")
-                    if #rel > 0 then
+                    if #rel > 0 and not paths.is_restricted(rel) then
                         table.insert(files, rel)
                     end
                 end
@@ -161,7 +162,7 @@ function Context.get_directory_snapshot(cwd, max_files)
     if #files == 0 then
         local safe_cwd = "'" .. cwd:gsub("'", "'\\''") .. "'"
         local cmd = string.format(
-            "find %s -not -path '*/.git/*' -not -name '.git' -maxdepth 6 2>/dev/null | head -n %d",
+            "find %s -not -path '*/.git/*' -not -name '.git' -not -path '*/.jenova/*' -not -path '*/.claude/*' -maxdepth 6 2>/dev/null | head -n %d",
             safe_cwd, max_files
         )
         local handle = io.popen(cmd)

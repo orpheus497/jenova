@@ -2,6 +2,8 @@
 -- Pure-Lua implementation: emits "<line_no>\t<line>" for each line, honoring
 -- offset (lines to skip, 0-based) and limit (max lines to return, default 2000).
 
+local paths = require("utils.paths")
+
 local M = {}
 M.name = "Read"
 M.description = "Read the contents of a file from the filesystem. Results are returned with line numbers."
@@ -28,6 +30,7 @@ function M.check_permissions(input, ctx) return { allowed = true } end
 function M.call(args, context)
     local path = args.file_path
     if not path then return { type = "error", error = "No file path provided" } end
+    if paths.is_restricted(path) then return paths.restricted_error(path) end
 
     -- Pure-Lua reader: keeps the line-number format ("%d\t%s") consistent
     -- regardless of whether the FFI layer is available. The C jenova.fs.read

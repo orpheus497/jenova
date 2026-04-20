@@ -2,6 +2,7 @@
 -- Uses jenova.fs.glob (Rust FFI) for fast globbing with globset.
 
 local json = require("utils.json_fallback")
+local paths = require("utils.paths")
 
 local M = {}
 M.name = "Glob"
@@ -30,6 +31,7 @@ function M.call(args, context)
     if not pattern then return { type = "error", error = "No pattern provided" } end
 
     local dir = args.path or (context and context.cwd) or "."
+    if paths.is_restricted(dir) then return paths.restricted_error(dir) end
 
     -- Use Rust FFI (preferred)
     if jenova and jenova.fs and jenova.fs.glob then
@@ -56,7 +58,7 @@ function M.call(args, context)
     local shell = require("utils.shell")
     local find_pattern = pattern:gsub("%*%*", "*")
     local cmd = string.format(
-        "find %s -path %s -type f 2>/dev/null | sort | head -500",
+        "find %s -path %s -not -path '*/.jenova/*' -not -path '*/.claude/*' -type f 2>/dev/null | sort | head -500",
         shell.quote(dir),
         shell.quote(find_pattern)
     )

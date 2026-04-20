@@ -293,6 +293,10 @@ function REPL.run(opts)
         -- Query the model
         app_state.set("is_querying", true)
 
+        -- Ensure spinner is stopped and cursor is on a clean line before
+        -- starting the agent_label animation.
+        if ui and ui.spinner_stop then ui.spinner_stop() end
+
         -- Show agent label before streaming response
         if ui and ui.agent_label then
             ui.agent_label()
@@ -322,19 +326,24 @@ function REPL.run(opts)
                 io.stderr:write(string.format("\x1b[31mQuery failed: %s\x1b[0m\n", err))
             end
         else
-            -- End streaming output
+            -- End streaming output; stream_end writes one \n to close the text
+            -- line. When show_cost is off we still need a blank line gap.
             if ui and ui.stream_end then
                 ui.stream_end()
+                if not config.get("show_cost") then
+                    io.write("\n")
+                    io.flush()
+                end
             else
                 print("")
             end
 
             -- Show cost if enabled
             if config.get("show_cost") then
-                local usage = response.usage
-                if ui and ui.token_usage then
+                local usage = response and response.usage
+                if usage and ui and ui.token_usage then
                     ui.token_usage(usage.input_tokens, usage.output_tokens, usage.total_cost_usd)
-                else
+                elseif usage then
                     print(string.format(
                         "\n\x1b[2m[Tokens: %d in, %d out | Cost: $%.4f]\x1b[0m",
                         usage.input_tokens,

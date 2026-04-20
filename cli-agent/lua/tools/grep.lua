@@ -2,6 +2,7 @@
 -- Uses jenova.fs.grep (Rust FFI) or falls back to ripgrep/grep.
 
 local json = require("utils.json_fallback")
+local paths = require("utils.paths")
 
 local M = {}
 M.name = "Grep"
@@ -43,6 +44,7 @@ function M.call(args, context)
 
     local dir = args.path or (context and context.cwd) or "."
     local file_glob = args.glob or args.include
+    if paths.is_restricted(dir) then return paths.restricted_error(dir) end
 
     -- Use Rust FFI (preferred)
     if jenova and jenova.fs and jenova.fs.grep then
@@ -94,7 +96,7 @@ function M.call(args, context)
         cmd = string.format("grep -Prn -- %s %s",
             shell.quote(pattern), shell.quote(dir))
     end
-    cmd = cmd .. " 2>/dev/null"
+    cmd = cmd .. " --exclude-dir=.jenova --exclude-dir=.claude 2>/dev/null"
 
     local h = io.popen(cmd)
     if not h then return { type = "error", error = "Grep failed" } end

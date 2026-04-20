@@ -865,7 +865,7 @@ end
 
 function ui.stream_end()
   _stream_col = 0
-  wflush("\n\n")
+  wflush("\n")
 end
 
 -------------------------------------------------------------------------------
@@ -899,7 +899,7 @@ end
 -------------------------------------------------------------------------------
 function ui.token_usage(input_tokens, output_tokens, cost_usd)
   wflush(
-    "  " .. fg(P.dim) .. "tokens: " .. RESET
+    "\n  " .. fg(P.dim) .. "tokens: " .. RESET
     .. fg(P.status_dim) .. tostring(input_tokens) .. " in" .. RESET
     .. fg(P.dim) .. " / " .. RESET
     .. fg(P.status_dim) .. tostring(output_tokens) .. " out" .. RESET
@@ -908,7 +908,7 @@ function ui.token_usage(input_tokens, output_tokens, cost_usd)
     wflush(fg(P.dim) .. " │ " .. RESET .. fg(P.status_dim)
       .. string.format("$%.4f", cost_usd) .. RESET)
   end
-  wflush("\n")
+  wflush("\n\n")
 end
 
 -------------------------------------------------------------------------------

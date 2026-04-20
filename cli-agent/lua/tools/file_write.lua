@@ -3,6 +3,8 @@
 
 local M = {}
 M.name = "Write"
+
+local paths = require("utils.paths")
 M.description = "Write content to a file, creating it and parent directories if they don't exist. Overwrites existing files."
 
 M.input_schema = {
@@ -28,6 +30,7 @@ function M.call(args, context)
     local content = args.content
     if not path then return { type = "error", error = "No file path provided" } end
     if not content then return { type = "error", error = "No content provided" } end
+    if paths.is_restricted(path) then return paths.restricted_error(path) end
 
     -- Use Rust FFI (preferred — handles mkdir -p)
     if jenova and jenova.fs and jenova.fs.write then
