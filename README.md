@@ -1,18 +1,18 @@
 # Jenova Cognitive Architecture
 
-Jenova is a local AI coding environment for FreeBSD laptops. It runs `llama-server`, a LuaJIT proxy, and an embedding daemon as background processes — started once, left running while you work. There is no cloud dependency. Conversation history is stored as plain text files managed by `jvim`. The install script detects your GPU and selects an appropriate model profile at setup time. Everything from the hardware configurations to the model choices to the memory strategies exists to make Jenova work well on real laptop hardware.
+Jenova is a local AI coding environment for FreeBSD laptops. It runs `llama-server`, a LuaJIT proxy, and an embedding daemon as background processes — started once, left running while you work. There is no cloud dependency. The install script detects your GPU and selects an appropriate model profile at setup time. Everything from the hardware configurations to the model choices to the memory strategies exists to make Jenova work well on real laptop hardware.
 
-## The Jenova trinity
+## System Overview
 
-Jenova is partitioned across three repositories that together form the complete system:
+Jenova is two repositories plus a bundled CLI agent:
 
-| Repo | Role | Stack |
-|------|------|-------|
-| [`orpheus497/jenova`](https://github.com/orpheus497/jenova) *(this repo)* | **Cognitive backend** — `llama-server`, LuaJIT `proxy.lua`, embedding daemon, `jenova-ca` supervisor | C/C++ + LuaJIT |
-| [`orpheus497/jvim`](https://github.com/orpheus497/jvim) | **Editor / IDE** — `jvim`, a Neovim hard-fork purpose-built for Jenova | C + Lua |
-| [`orpheus497/cloda-codey-lua`](https://github.com/orpheus497/cloda-codey-lua) | **Terminal agent** — `jenova-cli` for headless and scripted workflows (vendored in this repo under `jenova-cli/`) | Lua 5.4 + Rust |
+| Component | Location | Stack |
+|-----------|----------|-------|
+| **Cognitive backend** — `llama-server`, LuaJIT `proxy.lua`, embedding daemon, `jenova-ca` supervisor | This repo (`orpheus497/jenova`) | C/C++ + LuaJIT |
+| **Editor / IDE** — `jvim`, a Neovim hard-fork purpose-built for Jenova | [`orpheus497/jvim`](https://github.com/orpheus497/jvim) | C + Lua |
+| **Terminal agent** — `cli-agent` for headless and scripted workflows | This repo, `cli-agent/` directory | C + Lua 5.4 |
 
-The backend in this repository is the shared brain. `jvim` is the editor that the user lives inside; `jenova-cli` is the terminal agent for scripted, headless, and async workflows. Both frontends communicate with the backend services, primarily via `proxy.lua` on port 8080, with `jvim` additionally talking to `llama-server` on port 8081 for FIM completions and the embedding server on port 8082.
+The backend is the shared brain. `jvim` is the editor the user lives inside; `cli-agent` is the terminal agent for scripted, headless, and async workflows. Both frontends communicate with the backend services — primarily via `proxy.lua` on port 8080 — with `jvim` additionally talking to `llama-server` on port 8081 for FIM completions and the embedding server on port 8082.
 
 ## Goals
 
@@ -30,7 +30,7 @@ The backend in this repository is the shared brain. `jvim` is the editor that th
 - **Speculative Decoding:** 0.5B Qwen2.5-Coder drafter accelerates all main model sizes.
 - **Hybrid Search:** BM25 keyword search combined with semantic vector search.
 - **FreeBSD-first:** Tuned for FreeBSD 15, ZFS ARC management, and kernel-friendly operation. Linux and macOS are supported.
-- **Fluid Memory:** An optional technique used on the Optane profiles (`Optane/dgpu_igpu/i5-1135g7-7b`, `Optane/dgpu/i5-1135g7-3b`, `Optane/dgpu/i5-1135g7-7b`). By layering Intel Optane NVMe swap (UFS, ~7 μs latency) with ZFS and 16 GiB RAM, the system creates a double-paging effect — hot pages stay in RAM, warm pages flow to Optane swap, cold pages go to ZFS. This extends the effective working set of the LLM runtime well beyond physical RAM without the stall penalty of standard NVMe swap (~100 μs). It is one strategy Jenova can use, not a requirement.
+- **Fluid Memory:** An optional technique used on the Optane profiles. By layering Intel Optane NVMe swap (~7 μs latency) with ZFS and 16 GiB RAM, hot pages stay in RAM, warm pages flow to Optane swap, cold pages go to ZFS. This extends the effective working set well beyond physical RAM without standard NVMe swap penalty (~100 μs). It is one strategy Jenova can use, not a requirement.
 
 ## Architecture
 
@@ -42,12 +42,7 @@ Jenova runs three persistent daemon processes:
 
 These are managed as a unit by `jenova-ca` with 3-PID tracking.
 
-The system is partitioned into four conceptual streams:
-
-- The Architect (infrastructure): daemonized process management and runtime supervision (.jenova/jenova-ca.pid).
-- The Signal (networking): non-blocking I/O loop with Lua coroutines for asynchronous proxying.
-- The Mind (intelligence): hybrid BM25 + semantic vector retrieval with line-aware parsers.
-- The Voice (UX): hardware-aware CLI reporting real-time GPU and indexing stats.
+The `cli-agent` is a standalone C + Lua 5.4 binary that provides an interactive terminal agent. It links against libcurl, OpenSSL, and optionally llama.cpp directly. It communicates with the backend daemons over HTTP, or can run inference locally via its own embedded llama.cpp bindings. See `cli-agent/README.md` for build instructions.
 
 ## Hardware & Performance
 
@@ -101,19 +96,20 @@ Jenova is designed for laptops. Every profile targets a real laptop form factor:
 
 | Dependency | FreeBSD Install | Purpose |
 |---|---|---|
-| `luajit` (OpenResty) | `pkg install luajit-openresty` | LuaJIT runtime for proxy, agent, embeddings, and all Lua modules |
-| `git` | `pkg install git` | Repository management and lazy.nvim plugin bootstrap |
+| `luajit` (OpenResty) | `pkg install luajit-openresty` | LuaJIT runtime for proxy, embedding, and all backend Lua modules |
+| `git` | `pkg install git` | Repository management |
 | `neovim` (0.9+) | `pkg install neovim` | Editor frontend (jvim) |
-| `cmake` | `pkg install cmake` | Building llama.cpp from source |
+| `cmake` | `pkg install cmake` | Building llama.cpp and cli-agent from source |
 | `vulkan-loader` | `pkg install vulkan-loader` | GPU inference via Vulkan (dual-GPU offload) |
+| `lua54` | `pkg install lua54` | Lua 5.4 runtime for cli-agent |
+| `curl` | `pkg install curl` | HTTP client (used by cli-agent C layer) |
 
 ### Optional Dependencies
 
 | Dependency | FreeBSD Install | Purpose |
 |---|---|---|
-| `gmake` | `pkg install gmake` | Building telescope-fzf-native (Neovim plugin) |
-| `curl` | `pkg install curl` | Fallback health probe in jenova-ca watchdog |
-| `fetch` | *(FreeBSD base system)* | Web search feature in jvim (`<leader>as`) — see Known Limitations |
+| `gmake` | `pkg install gmake` | Building cli-agent and telescope-fzf-native |
+| `fetch` | *(FreeBSD base system)* | Web search feature in jvim (`<leader>as`) |
 | `clangd` | `pkg install llvm` | C/C++ LSP server (optional) |
 | `rust-analyzer` | `pkg install rust-analyzer` | Rust LSP server (optional) |
 | `lua-language-server` | `pkg install lua-language-server` | Lua LSP server (optional) |
@@ -141,17 +137,19 @@ The installer will offer to download the correct model for your detected hardwar
 
 ```sh
 # 1. Install system dependencies
-pkg install luajit-openresty git neovim cmake vulkan-loader curl
+pkg install luajit-openresty git neovim cmake vulkan-loader curl lua54
 
-# 2. Build llama.cpp with Vulkan support (or use the convenience script)
+# 2. Build llama.cpp with Vulkan support
 bin/build-llama-jenova
 # Or manually:
 #   cd llama.cpp
 #   cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
 #   cmake --build build --config Release -j$(sysctl -n hw.ncpu)
-#   cd ..
 
-# 3. Run the installer (hardware-aware: detects your hardware and selects a profile)
+# 3. Build the CLI agent
+cd cli-agent && gmake && cd ..
+
+# 4. Run the installer (hardware-aware: detects your hardware and selects a profile)
 scripts/install.sh
 ```
 
@@ -259,9 +257,8 @@ bin/jenova-ca --daemon
 # Launch Neovim with Jenova integration (auto-starts backend if needed)
 bin/jvim [files...]
 
-# OR use the terminal agent (jenova-cli, built separately from jenova-cli/)
-# See jenova-cli/README.md for build instructions
-jenova-cli
+# OR use the terminal agent (built from cli-agent/)
+cli-agent/build/cli-agent
 ```
 
 ## Models & Roles
@@ -272,30 +269,36 @@ jenova-cli
 
 ## Directory Layout
 
-- `bin/jvim` — Neovim launcher with Jenova backend integration (auto-starts backend, exports environment variables).
-- `bin/jenova-ca` — Backend manager: starts/stops/restarts llama-server, proxy, and embed server as a unit.
-- `bin/build-llama-jenova` — Vulkan llama.cpp build script with Jenova runtime tuning.
-- `bin/jenova-swap-mount` — FreeBSD swap-backed memory filesystem for LLM model mmap (root required).
-- `lib/` — Core LuaJIT logic for the proxy, embedding, HTTP, search, daemon management, and configuration.
-- `etc/` — Configuration files (`jenova.conf`, `jenova.local.conf.example`).
-- `scripts/` — Installation, cleanup, uninstall, update, and management scripts.
-- `models/` — Model storage organised into `agent/`, `embed/`, and `draft/` subdirectories (GGUF format).
-- `var/` — Runtime logs (`var/log/`) and cache (`var/cache/`).
-- `.jenova/` — Internal state and PID files.
-- `nvim/` — Neovim configuration (plugins, LSP, UI) for the integrated IDE.
-- `hardware-profiles/` — Hardware detection script and per-profile configs.
-- `jenova-cli/` — Terminal agent (Lua 5.4 + Rust + llama.cpp) — built separately.
-- `llama.cpp/` — Vendored llama.cpp source (built with Vulkan support).
-- `tests/` — Integration and hardware tests.
+```
+jenova/
+├── bin/                      Executables: jvim, jenova-ca, build-llama-jenova, jenova-swap-mount
+├── lib/                      Core LuaJIT backend: proxy, embedding, HTTP, search, daemon management
+├── cli-agent/                Terminal agent (C + Lua 5.4) — built with gmake
+│   ├── src/                  C service layer: fs, process, net, crypto, sandbox, auth, mcp, llama
+│   ├── lua/                  Lua agent logic: providers, tools, engine, memory, UI
+│   ├── include/              Public C header (jenova.h)
+│   └── build/                Build output (gitignored)
+├── etc/                      Configuration files (jenova.conf)
+├── scripts/                  Install, cleanup, uninstall, update, management scripts
+├── models/                   Model storage: agent/, embed/, draft/ (GGUF format, gitignored)
+├── hardware-profiles/        Hardware detection and per-profile configs
+├── nvim/                     Neovim configuration (plugins, LSP, UI) for jvim
+├── llama.cpp/                Vendored llama.cpp source (built with Vulkan support)
+├── tests/                    Integration and hardware tests
+├── var/                      Runtime logs (var/log/) and cache (var/cache/)
+└── .jenova/                  Internal state and PID files (gitignored)
+```
 
 ## Networking
 
-All HTTP communication uses raw BSD sockets via LuaJIT FFI — no libcurl dependency. The proxy handles HTTP/1.1 chunked transfer-encoding, non-blocking I/O via `select()`, and coroutine-based connection multiplexing.
+All HTTP communication in the backend uses raw BSD sockets via LuaJIT FFI — no libcurl dependency for the proxy. The proxy handles HTTP/1.1 chunked transfer-encoding, non-blocking I/O via `select()`, and coroutine-based connection multiplexing. The `cli-agent` uses libcurl for its HTTP operations.
 
 ## Security & Privacy
 
-- All session data, logs, and backups are stored locally in `.jenova/` and `var/` by default.
-- Large binaries and personal configuration are ignored by Git; verify `.gitignore` entries before committing.
+- All session data, logs, and backups are stored locally in `.jenova/` and `var/`.
+- Model weights, databases, shell history, and sensitive files are excluded from git via `.gitignore`.
+- The `cli-agent` C layer includes path validation (prevents directory traversal) and command sandboxing (blocks dangerous shell patterns and obfuscation attempts).
+- No telemetry, no external analytics, no network calls except to your own local backend.
 
 ## Neovim Integration
 
@@ -397,7 +400,7 @@ scripts/uninstall.sh --yes              # Non-interactive (skip confirmation)
 | `JENOVA_CONNECT_HOST` | `127.0.0.1` | Client connection address (wildcard binds are auto-mapped to `127.0.0.1`) |
 | `JENOVA_PORT` | `8080` | Port for Jenova intelligence proxy |
 | `JENOVA_LLAMA_PORT` | `8081` | Port for llama-server inference |
-| `JENOVA_LLAMA_EMBED_PORT` | `8082` | Port for the CPU-only embedding server (nomic-embed-text for RAG semantic search; also used by monitor and health checks) |
+| `JENOVA_LLAMA_EMBED_PORT` | `8082` | Port for the CPU-only embedding server |
 | `JENOVA_API_URL` | `http://127.0.0.1:8080` | Proxy endpoint for the agent |
 | `JENOVA_LLAMA_URL` | `http://127.0.0.1:8081` | Direct llama-server endpoint (proxy internal) |
 
@@ -488,14 +491,9 @@ bin/jvim myfile.lua    # NOT: sudo bin/jvim myfile.lua
 
 If you already ran with sudo and have permission issues, fix the ownership first:
 ```bash
-# Fix ownership (if directory is owned by root)
 sudo chown -R $USER:$USER .jenova/ var/
-
-# Then fix permissions
 chmod -R u+w .jenova/ var/
 ```
-
-**Do NOT use `sudo chmod`** - this doesn't fix the ownership issue and can make it worse. Always use `chmod` without sudo after fixing ownership with `chown`.
 
 #### Checking Backend Status
 
@@ -532,7 +530,16 @@ sysrc kld_list+=amdgpu
 reboot
 ```
 
-Increase BIOS UMA Frame Buffer Size to 4 GiB for better offload (adjusts VRAM available to Vega 8).
+Increase BIOS UMA Frame Buffer Size to 4 GiB for better offload.
+
+### Building cli-agent
+
+```bash
+cd cli-agent
+gmake          # uses CMake under the hood, builds to build/cli-agent
+```
+
+Requirements: `cmake`, `lua54`, `curl`, `openssl`. See `cli-agent/README.md` for details.
 
 ### Path Resolution
 
@@ -556,20 +563,14 @@ The `JENOVA_ROOT` environment variable is automatically set and exported before 
 
 ## Web Search
 
-The `<leader>as` keybind in jvim opens a web search chat. The proxy queries DuckDuckGo
-(HTML scraping + Instant Answer JSON API) and injects results into the model context.
+The `<leader>as` keybind in jvim opens a web search chat. The proxy queries DuckDuckGo (HTML scraping + Instant Answer JSON API) and injects results into the model context.
 
 **Requirements:** An HTTPS-capable command-line tool must be available:
 - **FreeBSD:** `fetch` (part of base system — nothing to install)
-- **Linux:** `curl` (install via your distro's package manager, e.g. `apt install curl` on Debian/Ubuntu)
-- **macOS:** `curl` (preinstalled on recent macOS; if missing, `brew install curl`)
+- **Linux:** `curl` (install via your distro's package manager)
+- **macOS:** `curl` (preinstalled on recent macOS)
 
-The proxy auto-detects `fetch` or `curl` at startup and logs which client is in use.
-If neither is found, web search is disabled with a log warning and the model will
-inform you that search was unavailable.
-
-**Search strategy:** HTML scraping for full web results, with DuckDuckGo Instant Answer
-API fallback for factual/definition queries.
+The proxy auto-detects `fetch` or `curl` at startup and logs which client is in use. If neither is found, web search is disabled with a log warning.
 
 ## License & Credits
 
