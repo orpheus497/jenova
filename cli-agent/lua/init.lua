@@ -152,6 +152,10 @@ local function bootstrap()
         end
     end
 
+    -- Load command extensions (self-register on require)
+    pcall(require, "cli.commands.extended")
+    pcall(require, "cli.commands.ported")
+
     local ok_tools, tool_registry = pcall(require, "tools.registry")
     if ok_tools then
         tool_registry.load_builtin_tools()

@@ -361,15 +361,16 @@ function QueryEngine:query(user_message, options)
         end
 
         -- Call provider system (llama.cpp primary, cloud fallback)
-        local ok, response_stream
-        if provider_base then
+        local ok = false
+        local response_stream
+        if provider_base and type(provider_base.create_message_stream) == "function" then
             ok, response_stream = pcall(function()
                 return provider_base.create_message_stream(request)
             end)
         end
 
         -- Fall back to direct API client if provider system unavailable
-        if not ok and api_client then
+        if not ok and api_client and type(api_client.create_message_stream) == "function" then
             ok, response_stream = pcall(function()
                 return api_client.create_message_stream(request)
             end)

@@ -70,7 +70,8 @@ function M.call(args, context)
                     else
                         local lines = {}
                         for _, m in ipairs(matches) do
-                            table.insert(lines, string.format("%s:%d:%s", m.file, m.line_number, m.content))
+                            local lnum = tonumber(m.line_number) or 0
+                            table.insert(lines, string.format("%s:%d:%s", m.file or "?", lnum, m.content or ""))
                         end
                         return { type = "text", text = table.concat(lines, "\n") }
                     end

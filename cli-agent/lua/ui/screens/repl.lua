@@ -209,8 +209,9 @@ function REPL.run(opts)
         ui.draw_info(info_opts)
         ui.separator("session")
         ui.draw_commands({
-            "/clear", "/history", "/context", "/model", "/provider",
-            "/tools", "/plan", "/stats", "/help", "/quit",
+            "/clear", "/history", "/context", "/files", "/sessions",
+            "/plan", "/stats", "/diag", "/model",
+            "/provider", "/tools", "/help", "/quit",
         })
     else
         print("Jenova CLI v0.2.0 (Lua/C)")

@@ -39,7 +39,7 @@ function M.build_headers(api_key)
 end
 
 --- Send a message and return the response (blocking, non-streaming)
---- @param prompt string The user message
+--- @param prompt string|nil The user message (nil to use only opts.messages)
 --- @param opts table Options: model, system_prompt, output_format, tools, messages
 --- @return string|nil response The assistant's text response
 function M.send_message(prompt, opts)
@@ -104,6 +104,40 @@ function M.send_message(prompt, opts)
     end
 
     return nil, "HTTP client not available"
+end
+
+--- Wrap send_message as a fake SSE event iterator compatible with query_engine.
+--- This allows api_client to serve as a fallback in query_engine when
+--- provider_base is unavailable. Yields the same event table structure that
+--- providers/base.lua create_message_stream produces.
+--- @param request table API request with messages, model, tools, system, etc.
+--- @return function iterator over event tables
+function M.create_message_stream(request)
+    local opts = {
+        model       = request.model,
+        max_tokens  = request.max_tokens,
+        messages    = request.messages,
+        tools       = request.tools,
+        system_prompt = request.system,
+    }
+    local text, err = M.send_message(nil, opts)
+    if not text then
+        text = "[API error: " .. tostring(err) .. "]"
+    end
+
+    local events = {
+        { type = "message_start", message = { usage = { input_tokens = 0 } } },
+        { type = "content_block_start", content_block = { type = "text" } },
+        { type = "content_block_delta", delta = { type = "text_delta", text = text } },
+        { type = "content_block_stop" },
+        { type = "message_delta", delta = { stop_reason = "end_turn" }, usage = { output_tokens = 0 } },
+        { type = "message_stop" },
+    }
+    local i = 0
+    return function()
+        i = i + 1
+        return events[i]
+    end
 end
 
 --- Calculate cost for a request

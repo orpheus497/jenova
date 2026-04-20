@@ -161,19 +161,16 @@ function M.run(opts)
             ui.spinner_start("cognizing")
         end
 
-        -- Agent label before response
-        if ui and ui.agent_label then
-            -- Clear spinner before output
-            if ui.spinner_stop then ui.spinner_stop() end
-        end
-
         local result, err = engine:query(user_input, {
             max_turns = opts.agent_max_turns or 25,
         })
 
-        -- Stop spinner
+        -- Stop spinner and print agent label before response
         if ui and ui.spinner_stop then
             ui.spinner_stop()
+        end
+        if ui and ui.agent_label then
+            ui.agent_label()
         end
 
         -- Clear inline thinking indicator
@@ -330,9 +327,6 @@ function M.run(opts)
             end
         else
             -- Agent query
-            if ui and ui.agent_label then
-                ui.agent_label()
-            end
             local response = agent_turn(line)
             if response and #response > 0 then
                 -- Response was already streamed via on_text callback

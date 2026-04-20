@@ -301,4 +301,349 @@ end, {
     usage = "/mcp <subcommand>"
 })
 
+-- /history
+CommandRegistry.register("history", function(args)
+    local history = require("history.manager")
+    local subcommand = args and args:match("^(%S+)")
+
+    if not subcommand or subcommand == "list" then
+        local count = (args and tonumber(args:match("^%S+%s+(%d+)"))) or 20
+        local items = history.get_recent(count)
+        if #items == 0 then
+            print("No history entries.")
+            return
+        end
+        print(string.format("Recent history (%d items):\n", #items))
+        for i, item in ipairs(items) do
+            local timestamp = os.date("%Y-%m-%d %H:%M:%S", item.timestamp)
+            print(string.format("%d. [%s] %s", i, timestamp, item.content))
+        end
+    elseif subcommand == "search" then
+        local query = args:match("^%S+%s+(.+)")
+        if not query then print("Usage: /history search <query>"); return end
+        local results = history.search(query)
+        if #results == 0 then print("No results found."); return end
+        print(string.format("Found %d results:\n", #results))
+        for i, item in ipairs(results) do
+            print(string.format("%d. %s", i, item.content))
+        end
+    elseif subcommand == "clear" then
+        history.clear()
+        print("History cleared.")
+    else
+        print("History commands:")
+        print("  /history [list] [count]  List recent history")
+        print("  /history search <query>  Search history")
+        print("  /history clear           Clear history")
+    end
+end, {
+    description = "Manage conversation history",
+    usage = "/history [list|search|clear]",
+})
+
+-- /context
+CommandRegistry.register("context", function(args)
+    local context = require("context.manager")
+    print(context.build_context_string())
+end, {
+    description = "Show system and user context",
+})
+
+-- /files
+CommandRegistry.register("files", function(args)
+    local app_state = require("state.app_state")
+    local cwd = app_state.get_cwd()
+    local pattern = (args and #args > 0) and args or "**/*"
+
+    if jenova and jenova.fs and jenova.fs.glob then
+        local json = require("utils.json_fallback")
+        local result = jenova.fs.glob(pattern, cwd, 50)
+        if result then
+            local ok, files = pcall(json.parse, result)
+            if ok and type(files) == "table" and #files > 0 then
+                print(string.format("Files matching '%s' (%d results):\n", pattern, #files))
+                for _, f in ipairs(files) do
+                    print("  " .. tostring(f))
+                end
+                return
+            end
+        end
+        print("No files found.")
+    else
+        -- Fallback: shell ls
+        local out = io.popen("ls -1 " .. cwd .. " 2>/dev/null")
+        if out then
+            print(string.format("Files in %s:\n", cwd))
+            for line in out:lines() do
+                print("  " .. line)
+            end
+            out:close()
+        end
+    end
+end, {
+    description = "List files in working directory",
+    usage = "/files [glob-pattern]",
+})
+
+-- /search
+CommandRegistry.register("search", function(args)
+    if not args or #args == 0 then
+        print("Usage: /search <query>")
+        print("  Searches conversation history and memory for <query>.")
+        return
+    end
+
+    local history = require("history.manager")
+    local results = history.search(args)
+
+    if #results == 0 then
+        print(string.format("No results found for: %s", args))
+    else
+        print(string.format("Found %d result(s) for '%s':\n", #results, args))
+        for i, item in ipairs(results) do
+            local ts = item.timestamp and os.date("%Y-%m-%d %H:%M", item.timestamp) or ""
+            print(string.format("%d. [%s] %s", i, ts, item.content))
+        end
+    end
+end, {
+    description = "Search conversation history",
+    usage = "/search <query>",
+})
+
+-- /errors
+CommandRegistry.register("errors", function(args)
+    local memory = require("services.memory.manager")
+    local formatted = memory.format_errors_for_prompt(20)
+    if not formatted or #formatted == 0 then
+        print("No errors recorded this session.")
+    else
+        print(formatted)
+    end
+end, {
+    description = "Show errors from this session",
+})
+
+-- /plan
+CommandRegistry.register("plan", function(args)
+    local config = require("config.loader")
+    local current = config.get("permission_mode")
+
+    if not args or #args == 0 then
+        if current == "plan" then
+            config.set("permission_mode", "default")
+            print("Plan mode: disabled (switched to default)")
+        else
+            config.set("permission_mode", "plan")
+            print("Plan mode: enabled")
+            print("  Only read-only tools are auto-approved")
+            print("  Write tools require explicit permission")
+        end
+    elseif args == "on" then
+        config.set("permission_mode", "plan")
+        print("Plan mode: enabled")
+    elseif args == "off" then
+        config.set("permission_mode", "default")
+        print("Plan mode: disabled")
+    else
+        print("Plan mode: toggle read-only exploration mode")
+        print("Usage: /plan [on|off]")
+        print(string.format("Current: %s", current == "plan" and "enabled" or "disabled"))
+    end
+end, {
+    description = "Toggle plan/exploration mode (read-only tools auto-approved)",
+    usage = "/plan [on|off]",
+})
+
+-- /stats
+CommandRegistry.register("stats", function(args)
+    local app_state = require("state.app_state")
+    local config = require("config.loader")
+    local tool_registry = require("tools.registry")
+
+    print("Jenova CLI Statistics:\n")
+    print(string.format("  Provider:  %s", config.get("provider") or "llamacpp"))
+    print(string.format("  Model:     %s", config.get("model") or "auto"))
+    print(string.format("  Tools:     %d registered", #tool_registry.get_names()))
+
+    if jenova and jenova.system then
+        if jenova.system.platform then
+            print(string.format("  Platform:  %s", jenova.system.platform()))
+        end
+        if jenova.system.version then
+            print(string.format("  Version:   %s", jenova.system.version()))
+        end
+    end
+
+    print("\n  FFI Bindings:")
+    local bindings = { "http", "json", "crypto", "fs", "llama", "system", "process", "mcp" }
+    for _, name in ipairs(bindings) do
+        local available = jenova and jenova[name] ~= nil
+        print(string.format("    jenova.%-8s %s", name .. ":", available and "✓" or "✗"))
+    end
+
+    local usage = app_state.get_usage()
+    print("\n  Session:")
+    print(string.format("    Messages:       %d", #(app_state.get_messages() or {})))
+    print(string.format("    Input tokens:   %d", usage.input_tokens))
+    print(string.format("    Output tokens:  %d", usage.output_tokens))
+    print(string.format("    Cost:           $%.4f", usage.total_cost_usd))
+end, {
+    description = "Show detailed CLI statistics",
+})
+
+-- /diag
+CommandRegistry.register("diag", function(args)
+    print("Running diagnostics...\n")
+
+    -- API keys
+    local keys = { "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY" }
+    for _, k in ipairs(keys) do
+        if os.getenv(k) then
+            print(string.format("✓ %s is set", k))
+        else
+            print(string.format("✗ %s is not set", k))
+        end
+    end
+
+    -- Config
+    local ok_cfg, config = pcall(require, "config.loader")
+    print(ok_cfg and "✓ Configuration loaded" or "✗ Configuration failed to load")
+
+    -- Providers
+    local ok_prov, provider_base = pcall(require, "providers.base")
+    print(ok_prov and "✓ providers.base loaded" or "✗ providers.base failed to load")
+
+    -- Tools
+    local ok_tr, tool_registry = pcall(require, "tools.registry")
+    if ok_tr then
+        print(string.format("✓ %d tools available", #tool_registry.get_names()))
+    else
+        print("✗ tools registry failed to load")
+    end
+
+    -- FFI
+    local bindings = { "http", "json", "fs", "llama", "system", "process", "mcp" }
+    print("\n  FFI:")
+    for _, name in ipairs(bindings) do
+        local available = jenova and jenova[name] ~= nil
+        print(string.format("  %s jenova.%s", available and "✓" or "✗", name))
+    end
+
+    -- Memory/session errors
+    local ok_mem, memory = pcall(require, "services.memory.manager")
+    if ok_mem then
+        local errs = memory.format_errors_for_prompt(5)
+        if errs and #errs > 0 then
+            print("\n  Recent errors:")
+            print(errs)
+        else
+            print("\n✓ No session errors recorded")
+        end
+    end
+
+    print("\nDiagnostics complete.")
+end, {
+    description = "Run full environment diagnostics",
+    aliases = { "diagnostics" },
+})
+
+-- /provider
+CommandRegistry.register("provider", function(args)
+    local config = require("config.loader")
+    local subcommand = args and args:match("^(%S+)")
+
+    if not subcommand or subcommand == "show" then
+        local current = config.get("provider") or "llamacpp"
+        print(string.format("Current provider: %s\n", current))
+        print("Available providers:")
+        print("  llamacpp      Local llama.cpp inference (default)")
+        print("  anthropic     Anthropic Claude API")
+        print("  openai        OpenAI API")
+        print("  gemini        Google Gemini API")
+        print("  openrouter    OpenRouter API")
+        print("  jenova        Jenova backend")
+    elseif subcommand == "set" then
+        local name = args:match("^%S+%s+(%S+)")
+        if not name then print("Usage: /provider set <provider-name>"); return end
+        local valid = { llamacpp=true, anthropic=true, openai=true, gemini=true, openrouter=true, jenova=true }
+        if valid[name] then
+            config.set("provider", name)
+            print(string.format("Provider set to: %s", name))
+        else
+            print(string.format("Unknown provider: %s", name))
+            print("Valid providers: llamacpp, anthropic, openai, gemini, openrouter, jenova")
+        end
+    elseif subcommand == "test" then
+        local provider_name = args:match("^%S+%s+(%S+)")
+            or (config and config.get("provider")) or "llamacpp"
+        print(string.format("Testing provider: %s ...", provider_name))
+        local ok2, prov = pcall(require, "providers." .. provider_name)
+        if ok2 and prov and prov.test then
+            local success = pcall(prov.test)
+            print(success and "✓ Provider is working" or "✗ Provider test failed")
+        else
+            print(string.format("⚠ Provider '%s' has no test function or failed to load", provider_name))
+        end
+    else
+        print("Provider commands:")
+        print("  /provider              Show current provider")
+        print("  /provider set <name>   Switch active provider")
+        print("  /provider test [name]  Test a provider connection")
+    end
+end, {
+    description = "Manage LLM providers",
+    usage = "/provider [show|set|test] [name]",
+})
+
+-- /tools
+CommandRegistry.register("tools", function(args)
+    local tool_registry = require("tools.registry")
+    local subcommand = args and args:match("^(%S+)")
+
+    if not subcommand or subcommand == "list" then
+        local names = tool_registry.get_names()
+        print(string.format("Registered tools (%d):\n", #names))
+        local all = tool_registry.get_all()
+        for _, tool in ipairs(all) do
+            local desc = type(tool.description) == "function"
+                and tool.description({}) or (tool.description or "")
+            if #desc > 60 then desc = desc:sub(1, 57) .. "..." end
+            print(string.format("  %-20s %s", tool.name, desc))
+        end
+    elseif subcommand == "info" then
+        local name = args:match("^%S+%s+(%S+)")
+        if not name then print("Usage: /tools info <tool-name>"); return end
+        local tool = tool_registry.get(name)
+        if tool then
+            local desc = type(tool.description) == "function"
+                and tool.description({}) or (tool.description or "")
+            print(string.format("Tool: %s", tool.name))
+            print(string.format("Description: %s", desc))
+            if tool.input_schema then
+                local json = require("utils.json_fallback")
+                local ok2, schema_str = pcall(json.stringify, tool.input_schema, { pretty = true })
+                if ok2 then print(string.format("Input schema:\n%s", schema_str)) end
+            end
+        else
+            print(string.format("Tool not found: %s", name))
+        end
+    else
+        print("Tool commands:")
+        print("  /tools              List all registered tools")
+        print("  /tools info <name>  Show tool details and schema")
+    end
+end, {
+    description = "List and inspect registered tools",
+    usage = "/tools [list|info] [name]",
+})
+
+-- /quit
+CommandRegistry.register("quit", function(args)
+    print("Goodbye!")
+    os.exit(0)
+end, {
+    description = "Exit the CLI",
+    aliases = { "exit", "q" },
+})
+
 return CommandRegistry
