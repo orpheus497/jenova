@@ -9,7 +9,7 @@
 
 set -e
 
-JENOVA_ROOT="$(dirname "$(realpath "$0")")/../.."
+JENOVA_ROOT="$(dirname "$(dirname "$(dirname "$(dirname "$(dirname "$(realpath "$0")")")")")")"
 NVIM_CONFIG_SRC="$JENOVA_ROOT/nvim"
 NVIM_CONFIG_DST="$HOME/.config/nvim"
 
@@ -215,7 +215,7 @@ echo ""
 printf "${_B}══════════════════════════════════════════════════════${_N}\n"
 printf "${_B}  Installation Summary${_N}\n"
 printf "${_B}══════════════════════════════════════════════════════${_N}\n"
-echo "  Profile:  freebsd-ryzen7-5700u-amd"
+echo "  Profile:  AMD/apu/ryzen7-5700u-3b"
 echo "  Errors:   $ERRORS"
 echo "  Warnings: $WARNINGS"
 echo ""

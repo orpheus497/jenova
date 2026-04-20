@@ -30,7 +30,7 @@ The backend in this repository is the shared brain. `jvim` is the editor that th
 - **Speculative Decoding:** 0.5B Qwen2.5-Coder drafter accelerates all main model sizes.
 - **Hybrid Search:** BM25 keyword search combined with semantic vector search.
 - **FreeBSD-first:** Tuned for FreeBSD 15, ZFS ARC management, and kernel-friendly operation. Linux and macOS are supported.
-- **Fluid Memory:** An optional technique used on the `freebsd-i5-1135g7-dual-gpu-7b` profile. By layering Intel Optane NVMe swap (UFS, ~7 μs latency) with ZFS and 16 GiB RAM, the system creates a double-paging effect — hot pages stay in RAM, warm pages flow to Optane swap, cold pages go to ZFS. This extends the effective working set of the LLM runtime well beyond physical RAM without the stall penalty of standard NVMe swap (~100 μs). It is one strategy Jenova can use, not a requirement.
+- **Fluid Memory:** An optional technique used on the Optane profiles (`Optane/dgpu_igpu/i5-1135g7-7b`, `Optane/dgpu/i5-1135g7-3b`, `Optane/dgpu/i5-1135g7-7b`). By layering Intel Optane NVMe swap (UFS, ~7 μs latency) with ZFS and 16 GiB RAM, the system creates a double-paging effect — hot pages stay in RAM, warm pages flow to Optane swap, cold pages go to ZFS. This extends the effective working set of the LLM runtime well beyond physical RAM without the stall penalty of standard NVMe swap (~100 μs). It is one strategy Jenova can use, not a requirement.
 
 ## Architecture
 
@@ -55,10 +55,12 @@ Jenova is designed for laptops. Every profile targets a real laptop form factor:
 
 | Profile | Hardware | Model | Context |
 |---|---|---|---|
-| `vulkan-full-offload` | Any GPU 8GB+ VRAM (laptop or desktop) | Qwen2.5-Coder-14B Q4_K_M | 32K |
-| `freebsd-i5-1135g7-dual-gpu` | i5-1135G7 laptop + GTX 1650 Ti + Iris Xe | Qwen2.5-Coder-3B Q8_0 | 32K |
-| `freebsd-i5-1135g7-dual-gpu-7b` | i5-1135G7 laptop + GTX 1650 Ti + Iris Xe + Optane | Qwen2.5-Coder-7B Q5_K_M | 32K |
-| `freebsd-ryzen7-5700u-amd` | Ryzen 7 5700U thin-and-light + Vega 8 UMA | Qwen2.5-Coder-3B Q8_0 | 16K |
+| `Vulkan/dgpu/full-offload-14b` | Any GPU 8GB+ VRAM | Qwen2.5-Coder-14B Q4_K_M | 32K |
+| `Intel/dgpu_igpu/i5-1135g7-3b` | i5-1135G7 + GTX 1650 Ti + Iris Xe | Qwen2.5-Coder-3B Q8_0 | 32K |
+| `Optane/dgpu_igpu/i5-1135g7-7b` | i5-1135G7 + GTX 1650 Ti + Iris Xe + Optane | Qwen2.5-Coder-7B Q5_K_M | 32K |
+| `Optane/dgpu/i5-1135g7-3b` | i5-1135G7 + GTX 1650 Ti (dGPU only) + Optane | Qwen2.5-Coder-3B Q8_0 | 16K |
+| `Optane/dgpu/i5-1135g7-7b` | i5-1135G7 + GTX 1650 Ti (dGPU only) + Optane | Qwen2.5-Coder-7B Q5_K_M | 8K |
+| `AMD/apu/ryzen7-5700u-3b` | Ryzen 7 5700U + Vega 8 UMA | Qwen2.5-Coder-3B Q8_0 | 16K |
 
 ### i5-1135G7 Dual-GPU (3B, default)
 
@@ -127,9 +129,9 @@ Download GGUF model files and place them in `models/agent/` (or `models/` for le
 
 | Model | Filename | Profiles | Required |
 |---|---|---|---|
-| Qwen2.5-Coder-14B | `Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf` | `vulkan-full-offload` | Profile-dependent |
-| Qwen2.5-Coder-7B | `Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf` | `freebsd-i5-1135g7-dual-gpu-7b` | Profile-dependent |
-| Qwen2.5-Coder-3B | `Qwen2.5-Coder-3B-Instruct-Q8_0.gguf` | `freebsd-i5-1135g7-dual-gpu`, `freebsd-ryzen7-5700u-amd` | Profile-dependent |
+| Qwen2.5-Coder-14B | `Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf` | `Vulkan/dgpu/full-offload-14b` | Profile-dependent |
+| Qwen2.5-Coder-7B | `Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf` | `Optane/dgpu_igpu/i5-1135g7-7b`, `Optane/dgpu/i5-1135g7-7b` | Profile-dependent |
+| Qwen2.5-Coder-3B | `Qwen2.5-Coder-3B-Instruct-Q8_0.gguf` | `Intel/dgpu_igpu/i5-1135g7-3b`, `Optane/dgpu/i5-1135g7-3b`, `AMD/apu/ryzen7-5700u-3b` | Profile-dependent |
 | nomic-embed-text-v1.5 | `nomic-embed-text-v1.5.Q8_0.gguf` | All profiles | Recommended |
 | Qwen2.5-Coder-0.5B | `Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf` | All profiles (drafter) | Optional |
 
@@ -190,12 +192,12 @@ Available options for `detect-hardware.sh`:
 
 **Forcing a specific profile:**
 ```sh
-sudo ./jenova-setup --profile freebsd-ryzen7-5700u-amd
+sudo ./jenova-setup --profile AMD/apu/ryzen7-5700u-3b
 ```
 
 ### AMD Ryzen / Vega 8 Additional Requirements
 
-For the `freebsd-ryzen7-5700u-amd` profile, AMD GPU kernel support must be installed first:
+For the `AMD/apu/ryzen7-5700u-3b` profile, AMD GPU kernel support must be installed first:
 
 ```sh
 # Install AMD GPU driver and firmware

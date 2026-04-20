@@ -226,12 +226,12 @@ find_best_profile() {
     _best_profile=""
     _best_name=""
 
-    for _pdir in "$SCRIPT_DIR"/*/; do
-        [ -d "$_pdir" ] || continue
-        [ -f "$_pdir/profile.conf" ] || continue
+    for _pconf in "$SCRIPT_DIR"/*/*/*/profile.conf; do
+        [ -f "$_pconf" ] || continue
+        _pdir=$(dirname "$_pconf")
+        _pname="${_pdir#"$SCRIPT_DIR"/}"
 
         _pscore=$(match_profile "$_pdir" 2>/dev/null || echo "0")
-        _pname=$(basename "$_pdir")
 
         if [ "${_pscore:-0}" -gt "$_best_score" ]; then
             _best_score=$_pscore
@@ -277,11 +277,11 @@ print_info() {
     echo ""
 
     echo "  Available profiles:"
-    for _pdir in "$SCRIPT_DIR"/*/; do
-        [ -d "$_pdir" ] || continue
-        [ -f "$_pdir/profile.conf" ] || continue
-        _pname=$(basename "$_pdir")
-        _real_pconf="$(realpath "$_pdir/profile.conf" 2>/dev/null)" || continue
+    for _pconf in "$SCRIPT_DIR"/*/*/*/profile.conf; do
+        [ -f "$_pconf" ] || continue
+        _pdir=$(dirname "$_pconf")
+        _pname="${_pdir#"$SCRIPT_DIR"/}"
+        _real_pconf="$(realpath "$_pconf" 2>/dev/null)" || continue
         case "$_real_pconf" in
             "$SCRIPT_DIR"/*) ;;
             *) continue ;;
@@ -374,7 +374,7 @@ case "$ACTION" in
             print_info
             fail "No matching hardware profile found."
             echo ""
-            echo "  Create a new profile in hardware-profiles/<your-profile-name>/"
+            echo "  Create a new profile in hardware-profiles/<Category>/<gpu_type>/<name>/"
             echo "  with profile.conf, jenova.conf, jenova-setup, and install.sh"
             exit 1
         fi
@@ -390,10 +390,10 @@ case "$ACTION" in
         fi
         ;;
     --list)
-        for _pdir in "$SCRIPT_DIR"/*/; do
-            [ -d "$_pdir" ] || continue
-            [ -f "$_pdir/profile.conf" ] || continue
-            basename "$_pdir"
+        for _pconf in "$SCRIPT_DIR"/*/*/*/profile.conf; do
+            [ -f "$_pconf" ] || continue
+            _pdir=$(dirname "$_pconf")
+            printf '%s\n' "${_pdir#"$SCRIPT_DIR"/}"
         done
         ;;
     "")

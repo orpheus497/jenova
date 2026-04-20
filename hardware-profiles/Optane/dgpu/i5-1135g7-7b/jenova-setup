@@ -1,18 +1,18 @@
 #!/bin/sh
 
 # jenova-setup: One-time system configuration for Jenova Cognitive Architecture
-# Profile: freebsd-i5-1135g7-dual-gpu-7b (Optane swap-backed)
+# Profile: Optane/dgpu/i5-1135g7-7b (dGPU-only, Optane swap-backed, partial offload)
 # Run with: sudo ./jenova-setup
 #
 # Configures:
-#   - Optane NVMe swap tuning for low-latency KV cache paging
-#   - ZFS ARC cap (1 GiB) to keep RAM free for inference
+#   - Optane NVMe swap tuning for low-latency KV cache and CPU-layer paging
+#   - ZFS ARC cap (1 GiB) to keep RAM free for CPU-resident model layers
 #   - Swap-backed mdmfs mount at /mnt/jenova-models for fast model cold-start
 #
 # Hardware context:
-#   7B Q5_K_M (~4.8 GiB) fits fully on dual GPU (~11 GiB combined).
-#   Intel Optane NVMe provides ~7 μs swap latency — fast enough to page
-#   KV overflow without stalling inference. Model loaded from mdmfs on swap.
+#   7B Q5_K_M (~4.8 GiB) partially offloaded — ~16/28 layers on GTX 1650 Ti (4 GiB).
+#   12 layers remain on CPU; Optane NVMe (~7 μs) provides fast swap paging.
+#   No drafter — VRAM budget too tight. iGPU excluded.
 
 set -e
 
@@ -21,7 +21,7 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-echo "=== jenova-setup: configuring FreeBSD for Jenova (7B Optane profile) ==="
+echo "=== jenova-setup: configuring FreeBSD for Jenova (7B dGPU-only Optane profile) ==="
 echo ""
 
 CHANGED=0
@@ -53,10 +53,11 @@ apply_sysctl() {
 }
 
 # =========================================================================
-# 1. Optane NVMe Swap Tuning
+# 1. Optane NVMe Swap Tuning (critical for partial offload)
 # =========================================================================
 echo ""
 echo "--- Optane NVMe Swap Tuning ---"
+echo "    (12 of 28 layers on CPU — swap performance directly impacts inference)"
 
 apply_sysctl vm.panic_on_oom 0 "no kernel panic on OOM"
 apply_sysctl vm.disable_swapspace_pageouts 0 "allow swap pageouts"
@@ -92,7 +93,7 @@ MOUNT_DIR="/mnt/jenova-models"
 MOUNT_SIZE="8G"
 
 _SCRIPT_DIR=$(dirname "$(realpath "$0")")
-_JENOVA_ROOT=$(realpath "$_SCRIPT_DIR/../..")
+_JENOVA_ROOT=$(realpath "$_SCRIPT_DIR/../../../..")
 _SWAP_MOUNT_SCRIPT="$_JENOVA_ROOT/bin/jenova-swap-mount"
 
 if [ -x "$_SWAP_MOUNT_SCRIPT" ]; then
@@ -105,7 +106,7 @@ else
         echo "[fix] Creating swap-backed mdmfs at $MOUNT_DIR ($MOUNT_SIZE)"
         mkdir -p "$MOUNT_DIR"
         mdmfs -S -s "$MOUNT_SIZE" md "$MOUNT_DIR"
-        chmod 777 "$MOUNT_DIR"
+        chmod 775 "$MOUNT_DIR"
         CHANGED=1
         echo "[ok]  $MOUNT_DIR mounted on swap"
     fi

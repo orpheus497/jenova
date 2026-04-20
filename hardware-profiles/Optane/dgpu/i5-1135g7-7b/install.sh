@@ -1,13 +1,13 @@
 #!/bin/sh
-# install.sh: Jenova Cognitive Architecture — Dual-GPU 7B Profile Installation (Optane)
-# FreeBSD 15 | Dual Vulkan GPU (GTX 1650 Ti + Intel Iris Xe) | Optane NVMe
-# Model: Qwen2.5-Coder-7B-Instruct-Q5_K_M (~4.8 GiB)
+# install.sh: Jenova Cognitive Architecture — dGPU-Only 7B Profile Installation (Optane)
+# FreeBSD 15 | GTX 1650 Ti 4GB (sole GPU, iGPU excluded) | Optane NVMe
+# Model: Qwen2.5-Coder-7B-Instruct-Q5_K_M (~4.8 GiB, partial GPU offload)
 #
 # Usage: ./install.sh [--force] [--link] [--skip-nvim] [--skip-llama]
 
 set -e
 
-JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")/.."
+JENOVA_ROOT="$(dirname "$(dirname "$(dirname "$(dirname "$(dirname "$(realpath "$0")")")")")")"
 NVIM_CONFIG_SRC="$JENOVA_ROOT/nvim"
 NVIM_CONFIG_DST="$HOME/.config/nvim"
 
@@ -46,7 +46,7 @@ info() { printf "${_B} INFO${_N}  %s\n" "$1"; }
 
 echo ""
 printf "${_B}╔══════════════════════════════════════════════════════╗${_N}\n"
-printf "${_B}║  Jenova CA — 7B Dual-GPU Optane Profile Install      ║${_N}\n"
+printf "${_B}║  Jenova CA — 7B dGPU-Only Optane Profile Install     ║${_N}\n"
 printf "${_B}╚══════════════════════════════════════════════════════╝${_N}\n"
 echo ""
 
@@ -112,7 +112,7 @@ if [ "$_OS" = "FreeBSD" ]; then
     if [ -f /usr/local/lib/libvulkan.so ] || ldconfig -r 2>/dev/null | grep -q libvulkan; then
         ok "libvulkan (Vulkan loader)"
     else
-        fail "libvulkan not found — pkg install vulkan-loader (required for dual-GPU)"
+        fail "libvulkan not found — pkg install vulkan-loader (required for dGPU offload)"
         ERRORS=$((ERRORS + 1))
     fi
 fi
@@ -127,8 +127,8 @@ if mount | grep -q "on $MOUNT_DIR "; then
     df -h "$MOUNT_DIR" | tail -1 | awk '{printf "     %s used / %s total (%s)\n", $3, $2, $5}'
 else
     warn "$MOUNT_DIR not mounted — model needs swap-backed mdmfs"
-    warn "  Run: sudo ./hardware-profiles/freebsd-i5-1135g7-dual-gpu-7b/jenova-setup"
-    warn "  Or:  sudo mdmfs -S -s 8G md $MOUNT_DIR && chmod 777 $MOUNT_DIR"
+    warn "  Run: sudo ./hardware-profiles/Optane/dgpu/i5-1135g7-7b/jenova-setup"
+    warn "  Or:  sudo mdmfs -S -s 8G md $MOUNT_DIR && chmod 775 $MOUNT_DIR"
     WARNINGS=$((WARNINGS + 1))
 fi
 
@@ -182,10 +182,12 @@ else
     WARNINGS=$((WARNINGS + 1))
 fi
 
+info "Speculative decoding: DISABLED (no VRAM budget for drafter on single 4GB dGPU)"
+
 # ---------------------------------------------------------------------------
 # 7. Deploy profile config
 # ---------------------------------------------------------------------------
-info "Deploying 7B profile configuration..."
+info "Deploying 7B dGPU-only profile configuration..."
 _PROFILE_DIR="$(dirname "$(realpath "$0")")"
 _PROFILE_CONF="$_PROFILE_DIR/jenova.conf"
 
@@ -196,7 +198,7 @@ if [ -f "$_PROFILE_CONF" ]; then
         ok "Backed up existing config to etc/jenova.conf.bak.${_ts}"
     fi
     cp "$_PROFILE_CONF" "$JENOVA_ROOT/etc/jenova.conf"
-    ok "Deployed 7B profile to etc/jenova.conf"
+    ok "Deployed 7B dGPU-only profile to etc/jenova.conf"
 else
     fail "Profile jenova.conf not found at $_PROFILE_CONF"
     ERRORS=$((ERRORS + 1))
@@ -265,10 +267,12 @@ fi
 # ---------------------------------------------------------------------------
 echo ""
 printf "${_B}══════════════════════════════════════════════════════${_N}\n"
-printf "${_B}  Installation Summary (7B Profile)${_N}\n"
+printf "${_B}  Installation Summary (7B dGPU-Only Optane Profile)${_N}\n"
 printf "${_B}══════════════════════════════════════════════════════${_N}\n"
 echo "  Errors:   $ERRORS"
 echo "  Warnings: $WARNINGS"
+echo "  Note:     Speculative decoding disabled (4GB VRAM limit)"
+echo "            Partial GPU offload (~16/28 layers on GPU)"
 echo ""
 if [ "$ERRORS" -gt 0 ]; then
     fail "Resolve errors above before running."
@@ -281,7 +285,7 @@ fi
 
 echo ""
 info "Next steps:"
-echo "  1. Run system tuning (once):  sudo ./hardware-profiles/freebsd-i5-1135g7-dual-gpu-7b/jenova-setup"
+echo "  1. Run system tuning (once):  sudo ./hardware-profiles/Optane/dgpu/i5-1135g7-7b/jenova-setup"
 echo "  2. Ensure swap mount is up:   df -h /mnt/jenova-models"
 echo "  3. Copy 7B model to mount:    cp <model>.gguf /mnt/jenova-models/"
 echo "  4. Symlink into models/agent:  ln -sf /mnt/jenova-models/<model>.gguf models/agent/"

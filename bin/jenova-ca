@@ -141,6 +141,11 @@ else
     SPLIT_ARGS="$SPLIT_ARGS -ngl $NGL_7B"
 fi
 
+# --- Batch sizes (controls VRAM pressure during prompt ingestion) ---
+# Respect values already set by jenova.conf; only apply defaults if unset.
+BATCH_SIZE="${BATCH_SIZE:-${JENOVA_BATCH:-2048}}"
+UBATCH_SIZE="${UBATCH_SIZE:-${JENOVA_UBATCH:-512}}"
+
 # --- KV cache quantization (halves KV memory vs f16) ---
 KV_ARGS=""
 if [ -n "$KV_CACHE_TYPE" ]; then
@@ -183,8 +188,8 @@ _launch_llama_server_bg() {
         $RUN_MAIN_NGL_ARGS \
         $KV_ARGS \
         -c "$CTX_SIZE" \
-        -b 2048 \
-        -ub 512 \
+        -b "$BATCH_SIZE" \
+        -ub "$UBATCH_SIZE" \
         -np "$NUM_SLOTS" \
         -t "$THREADS" \
         -tb "$THREADS_BATCH" \
@@ -196,7 +201,7 @@ _launch_llama_server_bg() {
         --host "$HOST" \
         --port "$LLAMA_PORT" \
         $RUN_DRAFT_ARGS \
-        "$@" > "$_ls_log" 2>&1 &
+        "$@" > "$_ls_log" 2>&1 9>&- &
     LLAMA_PID=$!
 }
 
@@ -485,6 +490,8 @@ if [ "$1" = "--daemon" ]; then
         fi
         _LOCK_FLOCK=1
     else
+        # Open fd 9 to /dev/null so background 9>&- closures don't fail
+        exec 9>/dev/null
         # Fallback: atomic mkdir-based locking (portable but requires cleanup)
         if ! mkdir "$LOCK_FILE.d" 2>/dev/null; then
             if [ -d "$LOCK_FILE.d" ]; then
@@ -576,7 +583,7 @@ if [ "$1" = "--daemon" ]; then
             --offline \
             --host "$HOST" \
             --port "$LLAMA_EMBED_PORT" \
-            > "$EMBED_LOG" 2>&1 &
+            > "$EMBED_LOG" 2>&1 9>&- &
         EMBED_PID=$!
     else
         echo "Warning: embed model not found at $MODEL_EMBED — skipping embed server"
@@ -612,7 +619,7 @@ if [ "$1" = "--daemon" ]; then
         exit 1
     fi
 
-    luajit "$PROXY_SCRIPT" >> "$LOG_FILE" 2>&1 &
+    luajit "$PROXY_SCRIPT" >> "$LOG_FILE" 2>&1 9>&- &
     PROXY_PID=$!
 
     echo "Started: llama-server=$LLAMA_PID proxy=$PROXY_PID embed=${EMBED_PID:-none}"
@@ -661,8 +668,8 @@ while [ "$1" = "--daemon" ]; do shift; done
     $RUN_MAIN_NGL_ARGS \
     $KV_ARGS \
     -c "$CTX_SIZE" \
-    -b 2048 \
-    -ub 512 \
+    -b "$BATCH_SIZE" \
+    -ub "$UBATCH_SIZE" \
     -np "$NUM_SLOTS" \
     -t "$THREADS" \
     -tb "$THREADS_BATCH" \

@@ -500,7 +500,7 @@ if [ -f "$DETECT_SCRIPT" ] && [ -x "$DETECT_SCRIPT" ]; then
     else
         warn "No hardware profile matched this system."
         warn "Run: $DETECT_SCRIPT --info  to see detection details."
-        warn "You can create a new profile in hardware-profiles/<name>/"
+        warn "You can create a new profile in hardware-profiles/<Category>/<gpu_type>/<name>/"
         WARNINGS=$((WARNINGS + 1))
     fi
 else
