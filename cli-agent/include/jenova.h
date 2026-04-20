@@ -150,6 +150,14 @@ char   *jenova_agent_run_turn(const char *user_message);
 int32_t jenova_agent_reset(void);
 char   *jenova_agent_get_state_json(void);
 
+/* ── LSP Bridge (src/agent/) ──────────────────────────────────────────── */
+/* Forwards an LSP JSON-RPC request to a running language server via stdin/
+ * stdout (stdio transport). Returns the response JSON string or NULL.     */
+char *jenova_lsp_request(const char *request_json);
+
+/* ── System Utilities ─────────────────────────────────────────────────── */
+int32_t jenova_system_setenv(const char *name, const char *value);
+
 #ifdef __cplusplus
 }
 #endif

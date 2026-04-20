@@ -1,7 +1,7 @@
 -- history/manager.lua — Command and conversation history
 -- Equivalent to src/history.ts
 
-local json = jenova.json or require("utils.json_fallback")
+local json = require("utils.json_fallback")
 local app_state = require("state.app_state")
 
 local History = {}

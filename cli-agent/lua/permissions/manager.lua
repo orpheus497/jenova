@@ -67,7 +67,7 @@ end
 
 -- ── Permission Request ────────────────────────────────────────────────
 
-function Permissions.request_permission(tool_name, input, context)
+function Permissions.request_permission(tool_name, input, _context)
     -- Check cache
     local cache_key = Permissions.get_cache_key(tool_name, input)
     if permission_cache[cache_key] ~= nil then
@@ -111,9 +111,11 @@ function Permissions.request_permission(tool_name, input, context)
     end
 
     if not allowed then
+        Permissions.record_permission(tool_name, input, false)
         return false, "Permission denied by user"
     end
 
+    Permissions.record_permission(tool_name, input, true)
     return true, nil
 end
 

@@ -222,7 +222,7 @@ local shell = require("utils.shell")
 -- and POSIX. The io.popen fallback is only used on builds without the
 -- FFI bridge, and uses shell.quote() above. Returns (stdout, exit_status).
 local function run_git(args)
-    if jenova and jenova.process and jenova.process.spawn then
+    if jenova and jenova.process and jenova.process.spawn_json then
         local json = require("utils.json_fallback")
         local argv = {}
         if type(args) == "table" then
@@ -240,13 +240,10 @@ local function run_git(args)
             capture_stdout = true,
             capture_stderr = true,
         })
-        local result_json = jenova.process.spawn(config)
-        if result_json then
-            local ok, result = pcall(json.parse, result_json)
-            if ok and result then
-                local out = (result.stdout or "") .. (result.stderr or "")
-                return out, result.exit_code or 0
-            end
+        local result = jenova.process.spawn_json(config)
+        if result and type(result) == "table" then
+            local out = (result.stdout or "") .. (result.stderr or "")
+            return out, result.exit_code or 0
         end
         -- fall through to io.popen if FFI returned nothing
     end

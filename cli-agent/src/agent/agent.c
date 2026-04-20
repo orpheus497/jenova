@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include "jenova.h"
 
 typedef struct {
@@ -86,4 +87,99 @@ char *jenova_agent_get_state_json(void) {
              g_agent.enable_tools ? "true" : "false",
              g_agent.enable_memory ? "true" : "false");
     return strdup(buf);
+}
+
+/* ── LSP bridge (stdio transport, synchronous) ─────────────────────────── */
+/*
+ * Very thin wrapper: forks a child process running the LSP binary for the
+ * file's language (resolved via JENOVA_LSP_BIN env or defaults), writes the
+ * request JSON to its stdin followed by the required header framing, and
+ * reads back one response.  Returns a malloc'd response JSON string or NULL.
+ *
+ * This is intentionally minimal — the Lua layer in tools/lsp.lua only calls
+ * this when jenova.lsp.request is available, and falls back to grep/ctags
+ * heuristics otherwise.  A persistent per-language-server process pool is a
+ * future enhancement.
+ */
+char *jenova_lsp_request(const char *request_json) {
+    if (!request_json) return NULL;
+
+    const char *lsp_bin = getenv("JENOVA_LSP_BIN");
+    if (!lsp_bin || lsp_bin[0] == '\0') {
+        return strdup("{\"error\":\"JENOVA_LSP_BIN not set\"}");
+    }
+
+    int in_pipe[2], out_pipe[2];
+    if (pipe(in_pipe) < 0 || pipe(out_pipe) < 0) return NULL;
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(in_pipe[0]); close(in_pipe[1]);
+        close(out_pipe[0]); close(out_pipe[1]);
+        return NULL;
+    }
+
+    if (pid == 0) {
+        /* Child: wire stdin/stdout to pipes */
+        close(in_pipe[1]);
+        close(out_pipe[0]);
+        dup2(in_pipe[0], STDIN_FILENO);
+        dup2(out_pipe[1], STDOUT_FILENO);
+        close(in_pipe[0]);
+        close(out_pipe[1]);
+        execlp(lsp_bin, lsp_bin, (char *)NULL);
+        _exit(127);
+    }
+
+    /* Parent: send framed request */
+    close(in_pipe[0]);
+    close(out_pipe[1]);
+
+    size_t body_len = strlen(request_json);
+    char header[64];
+    int hlen = snprintf(header, sizeof(header),
+                        "Content-Length: %zu\r\n\r\n", body_len);
+    write(in_pipe[1], header, (size_t)hlen);
+    write(in_pipe[1], request_json, body_len);
+    close(in_pipe[1]);
+
+    /* Read response (simple: read everything until EOF) */
+    size_t capacity = 8192, pos = 0;
+    char *buf = malloc(capacity);
+    if (!buf) { close(out_pipe[0]); return NULL; }
+
+    ssize_t n;
+    while ((n = read(out_pipe[0], buf + pos, capacity - pos - 1)) > 0) {
+        pos += (size_t)n;
+        if (pos + 1 >= capacity) {
+            capacity *= 2;
+            char *nb = realloc(buf, capacity);
+            if (!nb) { free(buf); close(out_pipe[0]); return NULL; }
+            buf = nb;
+        }
+    }
+    buf[pos] = '\0';
+    close(out_pipe[0]);
+
+    /* Strip the Content-Length header framing — return body only */
+    char *body = strstr(buf, "\r\n\r\n");
+    if (body) {
+        body += 4;
+        char *result = strdup(body);
+        free(buf);
+        return result;
+    }
+
+    return buf;
+}
+
+/* ── System utilities ───────────────────────────────────────────────────── */
+
+int32_t jenova_system_setenv(const char *name, const char *value) {
+    if (!name) return -1;
+    if (!value) {
+        unsetenv(name);
+        return 0;
+    }
+    return setenv(name, value, 1) == 0 ? 0 : -1;
 }

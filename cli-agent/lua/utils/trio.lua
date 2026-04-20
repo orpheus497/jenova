@@ -72,7 +72,7 @@ function M.get_endpoints()
         host = "127.0.0.1"
     end
 
-    local port = tonumber(os.getenv("JENOVA_PORT") or conf.PORT) or 8080
+    local port = tonumber(os.getenv("JENOVA_PROXY_PORT") or os.getenv("JENOVA_PORT") or conf.PORT) or 8080
     local llama_port = tonumber(os.getenv("JENOVA_LLAMA_PORT") or conf.LLAMA_PORT) or 8081
     local embed_port = tonumber(os.getenv("JENOVA_LLAMA_EMBED_PORT") or os.getenv("LLAMA_EMBED_PORT") or conf.LLAMA_EMBED_PORT) or 8082
 

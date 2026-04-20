@@ -77,7 +77,10 @@ function M:is_available()
     return body.status == "ok" or body.ok == true
 end
 
-function M:supports_streaming() return true end
+function M:supports_streaming()
+    return type(jenova) == "table" and type(jenova.http) == "table"
+        and type(jenova.http.post_stream) == "function"
+end
 function M:supports_tools() return true end
 
 -- Convert a messages array into the OpenAI-compatible body proxy.lua expects.
@@ -86,7 +89,7 @@ local function to_chat_body(messages, options)
     local body = {
         model = options.model or os.getenv("JENOVA_DEFAULT_MODEL") or "qwen2.5-coder-7b-instruct",
         messages = messages,
-        stream = false,
+        stream = options.stream or false,
     }
     if options.max_tokens then body.max_tokens = options.max_tokens end
     if options.temperature then body.temperature = options.temperature end
@@ -121,6 +124,69 @@ local function normalize_messages(messages)
         return { { role = "user", content = messages } }
     end
     return messages
+end
+
+-- Parse an SSE stream body (multi-line string of "data: {...}" lines)
+-- and call on_chunk(delta_text) for each token.  Returns the final
+-- accumulated text and finish_reason.
+local function parse_sse_stream(body, on_chunk)
+    local content = ""
+    local finish_reason = "stop"
+    for line in (body .. "\n"):gmatch("([^\n]*)\n") do
+        line = line:match("^%s*(.-)%s*$")
+        if line:sub(1, 6) == "data: " then
+            local payload = line:sub(7)
+            if payload == "[DONE]" then break end
+            local ok, chunk = pcall(json.parse, payload)
+            if ok and type(chunk) == "table" then
+                local choices = chunk.choices
+                if type(choices) == "table" and choices[1] then
+                    local delta = choices[1].delta or {}
+                    local piece = delta.content or ""
+                    if piece ~= "" then
+                        content = content .. piece
+                        if on_chunk then on_chunk(piece) end
+                    end
+                    if choices[1].finish_reason then
+                        finish_reason = choices[1].finish_reason
+                    end
+                end
+            end
+        end
+    end
+    return content, finish_reason
+end
+
+function M:generate_stream(messages, options, on_chunk)
+    if not self._initialized then self:initialize() end
+    if not (type(jenova) == "table" and jenova.http and jenova.http.post_stream) then
+        -- Fall back to non-streaming generate, deliver whole response as one chunk.
+        local resp, err = self:generate(messages, options)
+        if not resp then return nil, err end
+        local text = type(resp) == "table" and (resp.content or "") or tostring(resp)
+        if on_chunk then on_chunk(text) end
+        return resp
+    end
+
+    local opts_stream = setmetatable({ stream = true }, { __index = options or {} })
+    local body = to_chat_body(normalize_messages(messages), opts_stream)
+    local body_str = json.stringify(body)
+    local headers = {
+        ["Content-Type"] = "application/json",
+        ["X-Jenova-Client"] = "cli-agent/0.1",
+    }
+    local headers_str = json.stringify(headers)
+
+    local raw, err = jenova.http.post_stream(
+        self._base_url .. "/v1/chat/completions", headers_str, body_str)
+    if not raw then return nil, err or "stream request failed" end
+
+    local content, finish_reason = parse_sse_stream(raw, on_chunk)
+    return {
+        content       = content,
+        tool_calls    = nil,
+        finish_reason = finish_reason,
+    }
 end
 
 function M:generate(messages, options)

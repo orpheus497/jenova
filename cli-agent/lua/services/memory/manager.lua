@@ -447,8 +447,92 @@ function Memory.add(subject, fact, citations, reason)
     if f then f:write(json.stringify(entry) .. "\n"); f:close() end
 end
 
-function Memory.get_recent(count) return {} end
-function Memory.search(query) return {} end
+function Memory.get_recent(count)
+    count = count or 20
+    local items = {}
+    if not JENOVA_DIR then return items end
+    local manual_file = JENOVA_DIR .. "/manual_memory.jsonl"
+    local f = io.open(manual_file, "r")
+    if not f then return items end
+    local lines = {}
+    for line in f:lines() do lines[#lines + 1] = line end
+    f:close()
+    local start = math.max(1, #lines - count + 1)
+    for i = start, #lines do
+        local ok, entry = pcall(json.parse, lines[i])
+        if ok and type(entry) == "table" then
+            items[#items + 1] = {
+                subject   = entry.subject or "(unknown)",
+                fact      = entry.fact or "",
+                citations = entry.citations,
+                ts        = entry.ts,
+            }
+        end
+    end
+    return items
+end
+
+function Memory.search(query)
+    if not query or query == "" or not JENOVA_DIR then return {} end
+    local results = {}
+    local low_query = query:lower()
+    local terms = {}
+    for t in low_query:gmatch("%S+") do terms[#terms + 1] = t end
+
+    local function score_text(text)
+        if not text then return 0 end
+        local low = text:lower()
+        local s = 0
+        for _, t in ipairs(terms) do
+            if low:find(t, 1, true) then s = s + 1 end
+        end
+        return s
+    end
+
+    local manual_file = JENOVA_DIR .. "/manual_memory.jsonl"
+    local f = io.open(manual_file, "r")
+    if f then
+        for line in f:lines() do
+            local ok, entry = pcall(json.parse, line)
+            if ok and type(entry) == "table" then
+                local text = (entry.subject or "") .. " " .. (entry.fact or "")
+                local s = score_text(text)
+                if s > 0 then
+                    results[#results + 1] = {
+                        score     = s,
+                        subject   = entry.subject or "(unknown)",
+                        fact      = entry.fact or "",
+                        citations = entry.citations,
+                        ts        = entry.ts,
+                    }
+                end
+            end
+        end
+        f:close()
+    end
+
+    for _, a in ipairs(session_actions) do
+        local text = (a.tool or "") .. " " .. (a.result_summary or "")
+        local s = score_text(text)
+        if s > 0 then
+            results[#results + 1] = {
+                score   = s,
+                subject = a.tool or "action",
+                fact    = a.result_summary or "",
+                ts      = a.ts,
+            }
+        end
+    end
+
+    table.sort(results, function(a, b) return (a.score or 0) > (b.score or 0) end)
+    if #results > 20 then
+        local trimmed = {}
+        for i = 1, 20 do trimmed[i] = results[i] end
+        results = trimmed
+    end
+    return results
+end
+
 function Memory.clear() Memory.clear_session() end
 
 return Memory

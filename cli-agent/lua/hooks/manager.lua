@@ -138,10 +138,13 @@ function M._run_shell_hooks(hook_point, context)
                 local handle = io.popen(full_cmd)
                 if handle then
                     local output = handle:read("*a")
-                    local ok = handle:close()
+                    local _, exit_type, exit_code = handle:close()
 
-                    -- Non-zero exit from PreToolUse blocks the tool
-                    if not ok and hook_point == "PreToolUse" then
+                    -- Non-zero exit from PreToolUse blocks the tool.
+                    -- handle:close() returns true on success; on failure it
+                    -- returns nil, "exit", <status> or nil, "signal", <signum>.
+                    local failed = exit_type == "exit" and (exit_code or 0) ~= 0
+                    if failed and hook_point == "PreToolUse" then
                         return {
                             blocked = true,
                             message = output and output:gsub("%s+$", "") or "Blocked by hook",
@@ -288,6 +291,15 @@ function M.list()
     end
 
     return result
+end
+
+--- Reload all Lua hooks by clearing the registry.
+--- Shell hooks are read from config on every run, so no reload needed for them.
+function M.reload()
+    for point, _ in pairs(lua_hooks) do
+        lua_hooks[point] = {}
+    end
+    return true
 end
 
 return M

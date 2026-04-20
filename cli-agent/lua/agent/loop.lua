@@ -205,8 +205,8 @@ function M.run(opts)
         thinking_buf = ""
         thinking_tokens = 0
 
-        -- Inject memory context
-        local system_prompt = opts.system_prompt or ""
+        -- Inject memory context on top of the rich base system prompt
+        local system_prompt = base_system_prompt
         if memory and memory.build_context then
             local ctx = memory.build_context()
             if ctx and #ctx > 0 then

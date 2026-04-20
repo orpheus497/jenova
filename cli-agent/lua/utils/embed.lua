@@ -19,7 +19,7 @@ function M.init()
     -- Quick health check — prefer argv-based spawn (no shell, cross-platform)
     local health_url = EMBED_URL .. "/health"
     local res
-    if jenova and jenova.process and jenova.process.spawn then
+    if jenova and jenova.process and jenova.process.spawn_json then
         local config = json.stringify({
             cmd = "curl",
             args = { "-sf", "--max-time", "1", health_url },
@@ -27,12 +27,9 @@ function M.init()
             capture_stdout = true,
             capture_stderr = false,
         })
-        local result_json = jenova.process.spawn(config)
-        if result_json then
-            local ok, parsed = pcall(json.parse, result_json)
-            if ok and parsed then
-                res = parsed.stdout or ""
-            end
+        local result = jenova.process.spawn_json(config)
+        if result and type(result) == "table" then
+            res = result.stdout or ""
         end
     else
         local cmd = string.format("curl -sf --max-time 1 %s 2>/dev/null", shell.quote(health_url))
@@ -77,7 +74,7 @@ function M.encode(text, task)
     local body
 
     -- Prefer argv-based spawn (no shell, cross-platform)
-    if jenova and jenova.process and jenova.process.spawn then
+    if jenova and jenova.process and jenova.process.spawn_json then
         local config = json.stringify({
             cmd = "curl",
             args = { "-sf", "-X", "POST",
@@ -88,12 +85,9 @@ function M.encode(text, task)
             capture_stdout = true,
             capture_stderr = false,
         })
-        local result_json = jenova.process.spawn(config)
-        if result_json then
-            local ok, parsed = pcall(json.parse, result_json)
-            if ok and parsed then
-                body = parsed.stdout or ""
-            end
+        local result = jenova.process.spawn_json(config)
+        if result and type(result) == "table" then
+            body = result.stdout or ""
         end
     else
         local cmd = string.format("curl -sf -X POST -H 'Content-Type: application/json' -d @%s %s 2>/dev/null",

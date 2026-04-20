@@ -228,17 +228,36 @@ function LlamaCppProvider:generate(messages, options)
         return nil, "Generation failed"
     end
 
-    -- Parse tool calls if present
+    -- Parse tool calls if present: extract JSON fenced block and return
+    -- structured {content, tool_calls} so the query engine can dispatch them.
     if options.tools and #options.tools > 0 then
-        -- Check if response contains tool call
-        local tool_call_start = response:find("```json")
-        if tool_call_start then
-            -- Extract and return tool call info
-            -- This would be handled by the query engine
+        local fence_start, fence_end = response:find("```json\n?")
+        if fence_start then
+            local json_start = fence_end + 1
+            local close_fence = response:find("\n?```", json_start)
+            if close_fence then
+                local json_str = response:sub(json_start, close_fence - 1)
+                local ok, parsed = pcall(json.parse, json_str)
+                if ok and type(parsed) == "table" and parsed.name then
+                    local text_before = response:sub(1, fence_start - 1):match("^%s*(.-)%s*$")
+                    return {
+                        content = text_before ~= "" and text_before or nil,
+                        tool_calls = {{
+                            id = "tc-" .. tostring(os.time()),
+                            type = "function",
+                            ["function"] = {
+                                name = parsed.name,
+                                arguments = json.stringify(parsed.input or parsed.parameters or {}),
+                            },
+                        }},
+                        finish_reason = "tool_calls",
+                    }
+                end
+            end
         end
     end
 
-    return response
+    return { content = response, finish_reason = "stop" }
 end
 
 --- Count tokens in text
