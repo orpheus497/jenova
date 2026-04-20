@@ -133,7 +133,14 @@ function M:generate(messages, options)
         return nil, "no choices in proxy.lua response"
     end
     local msg = choices[1].message or {}
-    return msg.content or ""
+    -- Return structured response so tool_calls survive the provider boundary.
+    -- create_message_stream in providers/base.lua inspects this table to emit
+    -- proper tool_use events. Plain text callers still get msg.content.
+    return {
+        content    = msg.content or "",
+        tool_calls = msg.tool_calls,
+        finish_reason = choices[1].finish_reason,
+    }
 end
 
 function M:count_tokens(text)

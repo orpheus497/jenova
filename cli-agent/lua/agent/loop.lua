@@ -55,11 +55,26 @@ function M.run(opts)
 
         ui.draw_info(info_opts)
         ui.separator("session")
-        ui.draw_commands({
-            "/clear", "/history", "/context", "/files", "/search",
-            "/errors", "/plan", "/stats", "/diag", "/model",
-            "/provider", "/tools", "/help", "/quit",
-        })
+        do
+            local ok_reg, reg = pcall(require, "cli.commands.registry")
+            local cmd_list
+            if ok_reg and reg and reg.list_commands then
+                local cmds = reg.list_commands()
+                cmd_list = {}
+                for _, c in ipairs(cmds) do
+                    table.insert(cmd_list, "/" .. c.name)
+                end
+            else
+                cmd_list = {
+                    "/clear", "/compact", "/config", "/context", "/cost",
+                    "/cwd", "/diag", "/doctor", "/diff", "/files",
+                    "/help", "/history", "/mcp", "/model", "/plan",
+                    "/provider", "/quit", "/sessions", "/session",
+                    "/stats", "/thinking", "/tools", "/version", "/vim",
+                }
+            end
+            ui.draw_commands(cmd_list)
+        end
     else
         print("cli-agent 0.2.0 (C + Lua + llama.cpp)")
         print("Type your message or /help. Ctrl+D to exit.\n")
@@ -69,13 +84,52 @@ function M.run(opts)
         memory.init()
     end
 
-    -- ── Create query engine with UI-aware callbacks ─────────────────────
+    -- ── Inject startup filesystem snapshot into system prompt ───────────
+    -- Gives the model immediate awareness of the working directory tree
+    -- so it can answer questions about files without needing tool calls.
+    local context_mod = try_require("context.manager")
+    local base_system_prompt = opts.system_prompt or ""
+    if context_mod then
+        local cwd = (app_state and app_state.get_cwd and app_state.get_cwd())
+            or os.getenv("PWD") or "."
+        local sys_ctx  = context_mod.get_system_context()
+        local user_ctx = context_mod.get_user_context()
+
+        local ctx_parts = {
+            "## Environment",
+            string.format("Platform: %s (%s)", sys_ctx.platform, sys_ctx.os_version or ""),
+            string.format("Working directory: %s", cwd),
+            string.format("Shell: %s", user_ctx.shell or "unknown"),
+            string.format("User: %s", user_ctx.username or "unknown"),
+        }
+
+        if sys_ctx.is_git_repo then
+            table.insert(ctx_parts, string.format("Git branch: %s", sys_ctx.git_branch or "unknown"))
+            if sys_ctx.git_status and sys_ctx.git_status ~= "(clean)" then
+                table.insert(ctx_parts, "Git status (short):\n" .. sys_ctx.git_status)
+            else
+                table.insert(ctx_parts, "Git status: clean")
+            end
+        end
+
+        local snapshot = context_mod.get_directory_snapshot(cwd, 400)
+        if snapshot then
+            table.insert(ctx_parts, "\n## Directory tree (cwd)\n" .. snapshot)
+        end
+
+        local ctx_block = table.concat(ctx_parts, "\n")
+        if #base_system_prompt > 0 then
+            base_system_prompt = base_system_prompt .. "\n\n" .. ctx_block
+        else
+            base_system_prompt = ctx_block
+        end
+    end
     local thinking_buf = ""
     local thinking_tokens = 0
 
     local engine = QueryEngine.new({
         model = opts.model,
-        system_prompt = opts.system_prompt or "",
+        system_prompt = base_system_prompt,
         max_tokens = opts.max_tokens,
         temperature = opts.temperature,
         thinking_enabled = opts.thinking_enabled,

@@ -208,11 +208,18 @@ function REPL.run(opts)
 
         ui.draw_info(info_opts)
         ui.separator("session")
-        ui.draw_commands({
-            "/clear", "/history", "/context", "/files", "/sessions",
-            "/plan", "/stats", "/diag", "/model",
-            "/provider", "/tools", "/help", "/quit",
-        })
+        do
+            local cmd_list = {}
+            if command_registry and command_registry.list_commands then
+                for _, c in ipairs(command_registry.list_commands()) do
+                    table.insert(cmd_list, "/" .. c.name)
+                end
+            end
+            if #cmd_list == 0 then
+                cmd_list = { "/clear", "/help", "/model", "/provider", "/tools", "/quit" }
+            end
+            ui.draw_commands(cmd_list)
+        end
     else
         print("Jenova CLI v0.2.0 (Lua/C)")
         print(string.format("Session: %s", app_state.get("session_id")))

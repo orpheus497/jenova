@@ -128,6 +128,59 @@ function Context.get_user_context()
     return context
 end
 
+-- ── Directory Snapshot ────────────────────────────────────────────────
+
+-- Scans the working directory (recursively, up to max_files entries) and
+-- returns a compact tree string for injection into the system prompt.
+-- Uses `find` as a portable fallback when jenova.fs is unavailable.
+function Context.get_directory_snapshot(cwd, max_files)
+    cwd = cwd or app_state.get_cwd()
+    max_files = max_files or 300
+
+    local files = {}
+
+    -- Prefer Rust FFI glob (fastest, respects gitignore via rg internally)
+    if jenova and jenova.fs and jenova.fs.glob then
+        local json = require("utils.json_fallback")
+        local raw = jenova.fs.glob("**/*", cwd, max_files)
+        if raw then
+            local ok, result = pcall(json.parse, raw)
+            if ok and type(result) == "table" then
+                for _, f in ipairs(result) do
+                    -- Strip leading cwd prefix for readability
+                    local rel = tostring(f):gsub("^" .. cwd:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1") .. "/?", "")
+                    if #rel > 0 then
+                        table.insert(files, rel)
+                    end
+                end
+            end
+        end
+    end
+
+    -- Fallback: use find
+    if #files == 0 then
+        local cmd = string.format(
+            "find %s -not -path '*/.git/*' -not -name '.git' -maxdepth 6 2>/dev/null | head -n %d",
+            cwd, max_files
+        )
+        local handle = io.popen(cmd)
+        if handle then
+            for line in handle:lines() do
+                local rel = line:gsub("^" .. cwd:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1") .. "/?", "")
+                if #rel > 0 and rel ~= "." then
+                    table.insert(files, rel)
+                end
+            end
+            handle:close()
+        end
+    end
+
+    if #files == 0 then return nil end
+
+    table.sort(files)
+    return table.concat(files, "\n")
+end
+
 -- ── Build Context String ──────────────────────────────────────────────
 
 function Context.build_context_string()
@@ -145,6 +198,11 @@ function Context.build_context_string()
     if sys_ctx.is_git_repo then
         table.insert(parts, string.format("Git branch: %s", sys_ctx.git_branch or "unknown"))
         table.insert(parts, string.format("Git status: %s", sys_ctx.git_status or "unknown"))
+    end
+
+    local snapshot = Context.get_directory_snapshot(sys_ctx.working_directory)
+    if snapshot then
+        table.insert(parts, "\nDirectory contents:\n" .. snapshot)
     end
 
     return table.concat(parts, "\n")
