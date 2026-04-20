@@ -1,17 +1,18 @@
--- tools/web_search.lua — WebSearchTool: Search the web
--- Uses jenova.http to query a search API or falls back to a web scraping approach.
+-- tools/web_search.lua — WebSearch: Search the web using DuckDuckGo
+-- Uses DuckDuckGo Lite (no API key required) as the default engine.
+-- Set BRAVE_SEARCH_API_KEY in the environment to use Brave Search instead.
 
 local json = require("utils.json_fallback")
 
 local M = {}
 M.name = "WebSearch"
-M.description = "Search the web for information. Returns search results with titles, URLs, and snippets."
+M.description = "Search the web for current information, documentation, or news. Returns titles, URLs, and snippets. Use this only when you need information not available locally — do NOT use it for tasks that only require reading files or running code."
 
 M.parameters = {
     type = "object",
     properties = {
         query = { type = "string", description = "The search query" },
-        num_results = { type = "integer", description = "Number of results to return (default: 5)" },
+        num_results = { type = "integer", description = "Number of results to return (default: 5, max: 10)" },
     },
     required = { "query" }
 }
@@ -25,86 +26,131 @@ end
 
 function M.check_permissions() return { allowed = true } end
 
-function M.call(args, ctx)
+local function url_encode(s)
+    return s:gsub("([^%w%-_%.~])", function(c)
+        return string.format("%%%02X", string.byte(c))
+    end)
+end
+
+local function http_get(url)
+    local _j = rawget(_G, "jenova")
+    if type(_j) == "table" and _j.http and _j.http.get then
+        return _j.http.get(url, nil)
+    end
+    local shell = require("utils.shell")
+    local h = io.popen(string.format(
+        "curl -sL --max-time 10 --user-agent 'Mozilla/5.0' %s 2>/dev/null",
+        shell.quote(url)))
+    if h then
+        local out = h:read("*a"); h:close(); return out
+    end
+end
+
+local function strip_html(html)
+    if not html or #html == 0 then return "" end
+    local out = html
+    out = out:gsub("<[sS][cC][rR][iI][pP][tT][^>]*>.-</[sS][cC][rR][iI][pP][tT]>", " ")
+    out = out:gsub("<[sS][tT][yY][lL][eE][^>]*>.-</[sS][tT][yY][lL][eE]>", " ")
+    out = out:gsub("<[^>]+>", " ")
+    out = out:gsub("&amp;", "&"):gsub("&lt;", "<"):gsub("&gt;", ">")
+             :gsub("&quot;", '"'):gsub("&#39;", "'"):gsub("&nbsp;", " ")
+    out = out:gsub("%s+", " "):gsub("^ +", ""):gsub(" +$", "")
+    return out
+end
+
+-- Parse DuckDuckGo Lite HTML into structured results.
+local function parse_ddg_lite(html, max)
+    local results = {}
+    -- DDG Lite wraps each result in an anchor with the external URL.
+    for url, title in html:gmatch('<a[^>]+href="(https?://[^"]+)"[^>]*>([^<]+)</a>') do
+        if #results >= max then break end
+        if not url:find("duckduckgo%.com") and not url:find("duck%.co") then
+            title = strip_html(title):match("^%s*(.-)%s*$")
+            if title and #title > 2 then
+                table.insert(results, { url = url, title = title, snippet = "" })
+            end
+        end
+    end
+    if #results == 0 then
+        -- Fallback: return raw stripped text so the model still gets something.
+        local text = strip_html(html)
+        if #text > 50 then
+            return nil, text:sub(1, 3000)
+        end
+    end
+    return results, nil
+end
+
+function M.call(args, _ctx)
     local query = args.query
-    if not query then return { type = "error", error = "No query provided" } end
+    if not query or #query == 0 then
+        return { type = "error", error = "No query provided" }
+    end
+    local num_results = math.min(args.num_results or 5, 10)
 
-    local num_results = args.num_results or 5
-
-    -- Check for Brave Search API key
+    -- Brave Search (only if API key is present)
     local brave_key = os.getenv("BRAVE_SEARCH_API_KEY")
-    if brave_key and brave_key ~= "" and jenova and jenova.http then
-        local encoded_query = query:gsub(" ", "+"):gsub("[^%w%+%-_%.~]", function(c)
-            return string.format("%%%02X", string.byte(c))
-        end)
-        local url = string.format(
-            "https://api.search.brave.com/res/v1/web/search?q=%s&count=%d",
-            encoded_query, num_results
-        )
-        local headers = json.stringify({
-            ["Accept"] = "application/json",
-            ["Accept-Encoding"] = "gzip",
-            ["X-Subscription-Token"] = brave_key,
-        })
-        local body = jenova.http.get(url, headers)
-        if body then
-            local ok, data = pcall(json.parse, body)
-            if ok and data and data.web and data.web.results then
-                local lines = {}
-                for i, result in ipairs(data.web.results) do
-                    if i > num_results then break end
-                    table.insert(lines, string.format("%d. %s", i, result.title or ""))
-                    table.insert(lines, string.format("   %s", result.url or ""))
-                    if result.description then
-                        table.insert(lines, string.format("   %s", result.description))
+    if brave_key and brave_key ~= "" then
+        local _j = rawget(_G, "jenova")
+        if type(_j) == "table" and _j.http and _j.http.get then
+            local url = string.format(
+                "https://api.search.brave.com/res/v1/web/search?q=%s&count=%d",
+                url_encode(query), num_results)
+            local headers = json.stringify({
+                ["Accept"] = "application/json",
+                ["X-Subscription-Token"] = brave_key,
+            })
+            local body = _j.http.get(url, headers)
+            if body then
+                local ok, data = pcall(json.parse, body)
+                if ok and data and data.web and data.web.results then
+                    local lines = { "Brave Search results for: " .. query, "" }
+                    for i, r in ipairs(data.web.results) do
+                        if i > num_results then break end
+                        table.insert(lines, string.format("%d. %s", i, r.title or "(no title)"))
+                        table.insert(lines, "   " .. (r.url or ""))
+                        if r.description and #r.description > 0 then
+                            table.insert(lines, "   " .. r.description)
+                        end
+                        table.insert(lines, "")
                     end
-                    table.insert(lines, "")
+                    return { type = "text", text = table.concat(lines, "\n") }
                 end
-                return { type = "text", text = table.concat(lines, "\n") }
             end
         end
     end
 
-    -- Fallback: use DuckDuckGo Lite (text-only, no API key needed)
-    local encoded_query = query:gsub(" ", "+"):gsub("[^%w%+%-_%.~]", function(c)
-        return string.format("%%%02X", string.byte(c))
-    end)
-    local url = "https://lite.duckduckgo.com/lite/?q=" .. encoded_query
-    local html = ""
-    
-    if jenova and jenova.http then
-        html = jenova.http.get(url, nil) or ""
-    else
-        local shell = require("utils.shell")
-        local cmd = string.format("curl -sL %s 2>/dev/null", shell.quote(url))
-        local h = io.popen(cmd)
-        if h then
-            html = h:read("*a") or ""
-            h:close()
+    -- DuckDuckGo Lite (default — no API key needed)
+    local ddg_url = "https://lite.duckduckgo.com/lite/?q=" .. url_encode(query)
+    local html = http_get(ddg_url)
+
+    if not html or #html < 50 then
+        return {
+            type = "text",
+            text = string.format(
+                "Web search unavailable (no network or search blocked). Query: %s", query),
+        }
+    end
+
+    local results, fallback_text = parse_ddg_lite(html, num_results)
+    if fallback_text then
+        return { type = "text", text = "DuckDuckGo results (raw):\n" .. fallback_text }
+    end
+
+    if not results or #results == 0 then
+        return { type = "text", text = "No results found for: " .. query }
+    end
+
+    local lines = { "DuckDuckGo results for: " .. query, "" }
+    for i, r in ipairs(results) do
+        table.insert(lines, string.format("%d. %s", i, r.title))
+        table.insert(lines, "   " .. r.url)
+        if r.snippet and #r.snippet > 0 then
+            table.insert(lines, "   " .. r.snippet)
         end
+        table.insert(lines, "")
     end
-
-    if html and #html > 10 then
-        -- Robust HTML tag stripping in pure Lua (cross-platform, no shell injection)
-        local out = html
-        -- Remove script and style blocks (case insensitive simulation)
-        out = out:gsub("<[sS][cC][rR][iI][pP][tT][^>]*>.-</[sS][cC][rR][iI][pP][tT]>", " ")
-        out = out:gsub("<[sS][tT][yY][lL][eE][^>]*>.-</[sS][tT][yY][lL][eE]>", " ")
-        -- Remove all other tags
-        out = out:gsub("<[^>]+>", " ")
-        -- Unescape basic HTML entities
-        out = out:gsub("&amp;", "&"):gsub("&lt;", "<"):gsub("&gt;", ">"):gsub("&quot;", '"'):gsub("&#39;", "'")
-        -- Condense whitespace
-        out = out:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
-        -- Limit output size
-        if #out > 3000 then out = out:sub(1, 3000) .. "..." end
-        return { type = "text", text = "DuckDuckGo (Lite) results:\n" .. out }
-    end
-
-    return {
-        type = "text",
-        text = string.format("Web search for '%s' — set BRAVE_SEARCH_API_KEY for full results.", query),
-    }
+    return { type = "text", text = table.concat(lines, "\n") }
 end
 
 return M

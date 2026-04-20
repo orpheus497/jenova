@@ -219,8 +219,24 @@ end
 
 -- ── Tool Execution ────────────────────────────────────────────────────
 
+-- Summarise tool input for display (max ~60 chars, human-readable).
+local function summarise_input(tool_name, input)
+    if type(input) ~= "table" then return tool_name end
+    -- Pick the most meaningful field in priority order
+    local keys = { "path", "file_path", "command", "query", "url", "pattern", "text", "response" }
+    for _, k in ipairs(keys) do
+        local v = input[k]
+        if type(v) == "string" and #v > 0 then
+            local short = v:sub(1, 55)
+            if #v > 55 then short = short .. "…" end
+            return short
+        end
+    end
+    return tool_name
+end
+
 function QueryEngine:execute_tool(tool_name, tool_use_id, input)
-    self.on_tool_use(tool_name, input)
+    self.on_tool_use(tool_name, input, summarise_input(tool_name, input))
 
     -- Build context for the tool (cwd, session info, etc.)
     local app_state_ok, app_state = pcall(require, "state.app_state")
@@ -274,8 +290,28 @@ function QueryEngine:query(user_message, options)
     -- Add user message
     self:add_user_message(user_message)
 
+    -- Dedup: track (tool_name, args_fingerprint) pairs to detect tight repetitive loops.
+    -- After MAX_REPEATS identical calls in a row we inject a nudge instead of looping.
+    local MAX_REPEATS = 2
+    local last_tool_sig = nil
+    local repeat_count = 0
+
     while turn_count < max_turns do
         turn_count = turn_count + 1
+
+        -- tool_choice: "required" forces a tool call every turn so the model can't
+        -- silently emit plain text. Brief is the designated "I want to reply" tool.
+        -- Use "auto" only when there are no tools (avoids a bad-request error).
+        local has_tools = self.tools and #self.tools > 0
+
+        -- tool_choice: "required" on the first turn to guarantee the model uses a
+        -- tool rather than replying with plain text (Brief is available as the
+        -- "I want to reply" path). After the first turn we switch to "auto" so the
+        -- model can also emit text naturally if stop_reason is "end_turn".
+        local tool_choice_val
+        if has_tools then
+            tool_choice_val = (turn_count == 1) and "required" or "auto"
+        end
 
         -- Prepare API request
         local request = {
@@ -286,10 +322,7 @@ function QueryEngine:query(user_message, options)
             messages = self.messages,
             tools = self.tools,
             stream = true,
-            -- Force the model to call a tool on every turn. The Brief tool
-            -- exists for turns where the correct action is to reply with text.
-            -- Pass "auto" only when there are no tools to avoid a bad request.
-            tool_choice = (self.tools and #self.tools > 0) and "required" or nil,
+            tool_choice = tool_choice_val,
         }
 
         -- Enrich system prompt with memory context (errors, actions, plan)
@@ -348,24 +381,84 @@ function QueryEngine:query(user_message, options)
 
         -- Execute tools
         local tool_results_content = {}
+        local brief_response = nil
+
         for _, tool_use in ipairs(response.tool_uses) do
+            -- Brief is a terminal signal: the model is done and wants to reply.
+            if tool_use.name == "Brief" then
+                local br = type(tool_use.input) == "table" and tool_use.input.response or nil
+                if br and #br > 0 then
+                    -- Print the Brief response (on_text may have already been called for
+                    -- any streamed text prefix; this is the authoritative final reply).
+                    io.write(br)
+                    io.flush()
+                    brief_response = br
+                end
+                -- Don't add Brief to tool_results — terminate the loop instead.
+                goto continue_loop
+            end
+
+            -- Dedup guard: detect the model calling the same tool with the same args
+            -- repeatedly without making progress (common failure mode on small models).
+            local sig = tool_use.name .. ":" .. json_codec.stringify(tool_use.input or {})
+            if sig == last_tool_sig then
+                repeat_count = repeat_count + 1
+                if repeat_count >= MAX_REPEATS then
+                    -- Inject a nudge into the conversation instead of running again.
+                    table.insert(self.messages, {
+                        role = "user",
+                        content = "[System: You just called " .. tool_use.name ..
+                            " with identical arguments " .. repeat_count ..
+                            " times in a row. The result will not change. " ..
+                            "Either move on to the next step or call Brief to report what you found.]",
+                    })
+                    last_tool_sig = nil
+                    repeat_count = 0
+                    break
+                end
+            else
+                last_tool_sig = sig
+                repeat_count = 1
+            end
+
             local result, err = self:execute_tool(tool_use.name, tool_use.id, tool_use.input)
 
+            -- Extract the text content from tool result table
+            local result_text
             if err then
-                table.insert(tool_results_content, {
-                    type = "tool_result",
-                    tool_use_id = tool_use.id,
-                    content = "Error: " .. err,
-                    is_error = true
-                })
+                result_text = "Error: " .. err
+            elseif type(result) == "string" then
+                result_text = result
+            elseif type(result) == "table" then
+                result_text = result.text or result.output or result.content
+                    or json_codec.stringify(result)
             else
-                table.insert(tool_results_content, {
-                    type = "tool_result",
-                    tool_use_id = tool_use.id,
-                    content = type(result) == "string" and result or json_codec.stringify(result),
-                    is_error = false
-                })
+                result_text = tostring(result or "")
             end
+
+            table.insert(tool_results_content, {
+                type = "tool_result",
+                tool_use_id = tool_use.id,
+                content = result_text,
+                is_error = err ~= nil,
+            })
+        end
+
+        ::continue_loop::
+        -- If Brief was called, end here — the model has given its final response.
+        if brief_response then
+            self:add_assistant_message(brief_response)
+            return {
+                text = brief_response,
+                thinking = response.thinking,
+                stop_reason = "end_turn",
+                turns = turn_count,
+                usage = {
+                    input_tokens = self.total_input_tokens,
+                    output_tokens = self.total_output_tokens,
+                    total_cost_usd = self.total_cost_usd
+                }
+            }
         end
 
         -- Add all tool uses from this turn as one assistant message.

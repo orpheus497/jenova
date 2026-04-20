@@ -130,13 +130,24 @@ function M.run(opts)
     local tool_mandate = [[
 
 ## Tool Use
-You have access to a set of tools for interacting with the filesystem, shell, search, web, and more.
-You MUST use tools to perform any action — do not describe what you would do, do it.
-- File operations (read, write, edit, search): use Read, Write, Edit, Glob, Grep
-- Running commands, scripts, compiling: use Shell
-- Searching the web or fetching URLs: use WebSearch, WebFetch
-- When you have nothing to execute and only need to reply with text: use Brief
-Never simulate tool output in your response text. If a task requires system interaction, call the relevant tool.]]
+You have access to tools for interacting with the local filesystem, shell, code search, and the web.
+ALWAYS use tools to perform any real action — do not describe what you would do, actually do it.
+
+Tool selection guide:
+- Read a file: Read
+- Write or create a file: Write
+- Edit an existing file: Edit
+- List files by pattern: Glob
+- Search file contents: Grep
+- Search the codebase: LocalSearch
+- Run a shell command, compile, or test: Shell
+- Reply to the user with text, report results, or ask a question: Brief
+- Search the web (only for information NOT available locally): WebSearch
+- Fetch a specific URL: WebFetch
+
+When you have finished a task or want to respond with text, use the Brief tool.
+Do NOT use WebSearch or WebFetch for local filesystem tasks — use Read, Grep, Glob, or Shell instead.
+Do NOT repeat the same tool call with the same arguments — if it returned an answer, use Brief to report it.]]
     base_system_prompt = base_system_prompt .. tool_mandate
 
     local thinking_buf = ""
@@ -165,13 +176,14 @@ Never simulate tool output in your response text. If a task requires system inte
             end
         end,
 
-        on_tool_use = function(tool_name, _input)
+        on_tool_use = function(tool_name, _input, summary)
             -- Stop the spinner so the badge lands on its own line.
             if ui and ui.spinner_stop then ui.spinner_stop() end
+            local label = summary and (tool_name .. ": " .. summary) or tool_name
             if ui and ui.tool_badge then
-                ui.tool_badge(tool_name, "running")
+                ui.tool_badge(label, "running")
             elseif ui and ui.status_info then
-                ui.status_info(tool_name .. " running")
+                ui.status_info(label .. " running")
             end
         end,
 

@@ -17,8 +17,8 @@ PREFIX     ?= /usr/local
 BUILD_DIR  := build
 CMAKE_BUILD:= $(BUILD_DIR)/cmake
 
-UNAME_S := $(shell uname -s)
-UNAME_M := $(shell uname -m)
+UNAME_S := $(UNAME_S)
+UNAME_M := $(UNAME_M)
 
 ifeq ($(UNAME_S),Linux)
   PLATFORM := linux
