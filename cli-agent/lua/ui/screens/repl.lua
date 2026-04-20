@@ -53,8 +53,9 @@ function REPL.init(opts)
         app_state.init_session()
     end
 
-    -- Set working directory
-    app_state.set_cwd(os.getenv("PWD") or ".")
+    -- Set working directory to wherever the user invoked the CLI from.
+    -- JENOVA_CWD is exported by bin/jenova before it cds into the source tree.
+    app_state.set_cwd(os.getenv("JENOVA_CWD") or os.getenv("PWD") or ".")
 
     -- Create query engine with UI-aware callbacks
     local query_opts = {

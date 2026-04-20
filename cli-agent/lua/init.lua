@@ -209,7 +209,7 @@ local function run_agent_repl(opts)
     if ui and ui.draw_header then
         io.write("\n")
         ui.draw_header()
-        ui.draw_info({ cwd = os.getenv("PWD") or "." })
+        ui.draw_info({ cwd = os.getenv("JENOVA_CWD") or os.getenv("PWD") or "." })
         ui.separator("session")
     else
         print("cli-agent " .. VERSION .. " (C + Lua + llama.cpp)")

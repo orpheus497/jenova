@@ -86,6 +86,11 @@ cleanup_agent() {
 }
 trap cleanup_agent EXIT INT TERM
 
+# Capture the user's working directory before changing into the agent source
+# tree so Lua can display/use the correct project directory.
+export JENOVA_CWD="$PWD"
+
 # Launch the CLI agent
+# The cd is required so relative Lua paths (lua/init.lua etc.) resolve correctly.
 cd "$JENOVA_ROOT/cli-agent"
 exec "$CLI_AGENT" "$@"

@@ -359,7 +359,13 @@ function AppState.set_cwd(dir)
 end
 
 function AppState.get_cwd()
-    return state.working_directory or os.getenv("PWD") or os.getenv("CD") or "."
+    -- JENOVA_CWD is set by bin/jenova before it cds into the source tree;
+    -- it preserves the directory the user actually invoked the CLI from.
+    return state.working_directory
+        or os.getenv("JENOVA_CWD")
+        or os.getenv("PWD")
+        or os.getenv("CD")
+        or "."
 end
 
 return AppState

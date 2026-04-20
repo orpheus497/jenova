@@ -32,7 +32,7 @@ function M.run(opts)
         ui.draw_header()
 
         local info_opts = {
-            cwd = os.getenv("PWD") or ".",
+            cwd = os.getenv("JENOVA_CWD") or os.getenv("PWD") or ".",
         }
 
         if config then
