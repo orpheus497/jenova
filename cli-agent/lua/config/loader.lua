@@ -9,17 +9,13 @@ local Config = {}
 local DEFAULT_CONFIG = {
     -- Provider selection
     -- Default: jenova_backend (routes through proxy.lua → Jenova's own llama-server)
-    -- Alternatives: llamacpp (in-process), anthropic, openai, gemini, openrouter
+    -- Alternative: llamacpp (in-process)
     provider = "jenova_backend",
     fallback_enabled = true,
 
     -- Model configuration
     model = nil, -- Auto-select based on provider
     llamacpp_model = nil, -- Specific llama.cpp model name (auto-select if nil)
-    anthropic_model = "claude-sonnet-4-5-20250929",
-    openai_model = "gpt-4o-mini",
-    gemini_model = "gemini-2.0-flash-exp",
-    openrouter_model = "anthropic/claude-3.5-sonnet",
 
     -- llama.cpp specific settings
     llamacpp_context_size = 8192,

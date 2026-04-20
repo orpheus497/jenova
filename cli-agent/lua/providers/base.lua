@@ -84,7 +84,7 @@ end
 --- @return string|nil provider_name Name of available provider or nil
 function M.find_available()
     -- Build priority list with the primary provider always first
-    local base_priority = {"jenova_backend", "llamacpp", "anthropic", "openai", "gemini", "openrouter"}
+    local base_priority = {"jenova_backend", "llamacpp"}
     local priority = {}
     local seen = {}
 
@@ -171,7 +171,7 @@ function M.create_manager(preferred_provider)
 
                 -- Try fallback providers
                 local tried = { [provider_name] = true }
-                local priority = {"jenova_backend", "llamacpp", "anthropic", "openai", "gemini", "openrouter"}
+                local priority = {"jenova_backend", "llamacpp"}
                 for _, name in ipairs(priority) do
                     if not tried[name] then
                         ok, err = self:initialize(name)
@@ -202,7 +202,7 @@ function M.create_manager(preferred_provider)
         -- If generation failed and fallback is enabled, try other providers
         if self.fallback_enabled then
             local current_name = self.current_provider.name
-            local priority = {"jenova_backend", "llamacpp", "anthropic", "openai", "gemini", "openrouter"}
+            local priority = {"jenova_backend", "llamacpp"}
             for _, name in ipairs(priority) do
                 if name ~= current_name then
                     local ok_init, _ = self:initialize(name)

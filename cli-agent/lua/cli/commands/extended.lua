@@ -865,19 +865,15 @@ registry.register("provider", function(args)
         local current = config.get("provider") or "llamacpp"
         print(string.format("Current provider: %s", current))
         print("\nAvailable providers:")
-        print("  llamacpp      Local llama.cpp inference (default/primary)")
-        print("  anthropic     Anthropic Claude API")
-        print("  openai        OpenAI API")
-        print("  gemini        Google Gemini API")
-        print("  openrouter    OpenRouter API")
-        print("  jenova        Jenova backend")
+        print("  jenova_backend  Jenova cognitive architecture (proxy.lua :8080)")
+        print("  llamacpp        Local in-process llama.cpp inference")
     elseif subcommand == "set" then
         local name = args:match("^%S+%s+(%S+)")
         if not name then
             print("Usage: /provider set <provider-name>")
             return
         end
-        local valid = { llamacpp=true, anthropic=true, openai=true, gemini=true, openrouter=true, jenova=true }
+        local valid = { llamacpp=true, jenova_backend=true }
         if valid[name] then
             config.set("provider", name)
             print(string.format("Provider set to: %s", name))
@@ -940,19 +936,7 @@ registry.register("models", function(args)
         end
 
         -- Cloud models
-        print("\n  Anthropic:")
-        print("    - claude-sonnet-4-5-20250929")
-        print("    - claude-opus-4-5-20251101")
-        print("    - claude-sonnet-4-20250514")
-        print("    - claude-opus-4-20250514")
-        print("    - claude-haiku-3-20250307")
-        print("\n  OpenAI:")
-        print("    - gpt-4o")
-        print("    - gpt-4o-mini")
-        print("    - gpt-4-turbo")
-        print("\n  Gemini:")
-        print("    - gemini-2.0-flash-exp")
-        print("    - gemini-1.5-pro")
+        -- (no cloud models — all inference is local)
 
     elseif subcommand == "download" then
         local model_name = args:match("^%S+%s+(.+)")
@@ -1010,33 +994,9 @@ registry.register("auth", function(args)
     if not subcommand or subcommand == "status" then
         print("Authentication status:\n")
 
-        -- Check each provider
-        local providers = {
-            { name = "anthropic", env = "ANTHROPIC_API_KEY" },
-            { name = "openai", env = "OPENAI_API_KEY" },
-            { name = "gemini", env = "GEMINI_API_KEY" },
-            { name = "openrouter", env = "OPENROUTER_API_KEY" },
-        }
-        for _, p in ipairs(providers) do
-            local key = os.getenv(p.env)
-            if key then
-                local masked = key:sub(1, 4) .. "..." .. key:sub(-2)
-                print(string.format("  ✓ %s: %s (via %s)", p.name, masked, p.env))
-            elseif jenova and jenova.auth and jenova.auth.resolve_key then
-                local stored = jenova.auth.resolve_key(p.name)
-                if stored and #stored > 0 then
-                    local masked = stored:sub(1, 4) .. "..." .. stored:sub(-2)
-                    print(string.format("  ✓ %s: %s (from keychain)", p.name, masked))
-                else
-                    print(string.format("  ✗ %s: not configured", p.name))
-                end
-            else
-                print(string.format("  ✗ %s: not configured", p.name))
-            end
-        end
-
-        -- Local models don't need auth
-        print("\n  ✓ llamacpp: no authentication required (local)")
+        -- All providers are local — no API keys required
+        print("  ✓ jenova_backend: no authentication required (local)")
+        print("  ✓ llamacpp: no authentication required (local)")
 
     elseif subcommand == "set" then
         local provider_name = args:match("^%S+%s+(%S+)")
@@ -1321,8 +1281,7 @@ registry.register("env", function(args)
         print("Environment check:")
         local vars = {
             "HOME", "USER", "SHELL", "TERM",
-            "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY",
-            "OPENROUTER_API_KEY", "JENOVA_MODEL", "JENOVA_PROVIDER",
+            "JENOVA_MODEL", "JENOVA_PROVIDER",
         }
         for _, name in ipairs(vars) do
             local val = os.getenv(name)

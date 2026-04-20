@@ -13,17 +13,12 @@ local json_codec = require("utils.json_fallback")
 local tool_registry = require("tools.registry")
 local array = require("utils.array")
 
--- Try to load provider system (preferred) or fall back to direct API client
+-- Try to load provider system
 local provider_base
-local api_client
 do
     local ok, mod = pcall(require, "providers.base")
     if ok then
         provider_base = mod
-    end
-    local ok2, mod2 = pcall(require, "services.api.jenova")
-    if ok2 then
-        api_client = mod2
     end
 end
 
@@ -91,22 +86,14 @@ function QueryEngine.new(options)
     if not self.model then
         local ok, config = pcall(require, "config.loader")
         if ok then
-            local provider_name = config.get("provider") or "llamacpp"
+            local provider_name = config.get("provider") or "jenova_backend"
             if provider_name == "llamacpp" then
                 self.model = config.get("llamacpp_model") or "auto"
-            elseif provider_name == "anthropic" then
-                self.model = config.get("anthropic_model") or "claude-sonnet-4-5-20250929"
-            elseif provider_name == "openai" then
-                self.model = config.get("openai_model") or "gpt-4o-mini"
-            elseif provider_name == "gemini" then
-                self.model = config.get("gemini_model") or "gemini-2.0-flash-exp"
-            elseif provider_name == "openrouter" then
-                self.model = config.get("openrouter_model") or "anthropic/claude-3.5-sonnet"
             else
-                self.model = "claude-sonnet-4-5-20250929"
+                self.model = "auto"
             end
         else
-            self.model = "claude-sonnet-4-5-20250929"
+            self.model = "auto"
         end
     end
 
@@ -360,19 +347,12 @@ function QueryEngine:query(user_message, options)
             }
         end
 
-        -- Call provider system (llama.cpp primary, cloud fallback)
+        -- Call provider system (llama.cpp primary, jenova_backend)
         local ok = false
         local response_stream
         if provider_base and type(provider_base.create_message_stream) == "function" then
             ok, response_stream = pcall(function()
                 return provider_base.create_message_stream(request)
-            end)
-        end
-
-        -- Fall back to direct API client if provider system unavailable
-        if not ok and api_client and type(api_client.create_message_stream) == "function" then
-            ok, response_stream = pcall(function()
-                return api_client.create_message_stream(request)
             end)
         end
 

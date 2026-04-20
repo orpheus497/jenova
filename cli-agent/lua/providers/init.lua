@@ -4,12 +4,11 @@
 -- Provider priority:
 --   jenova_backend (Jenova cognitive architecture, proxy.lua :8080)
 --     → llamacpp (local in-process llama.cpp)
---     → anthropic → openai → gemini → openrouter
 --
 -- When the Jenova backend is running on the workstation, cli-agent prefers
 -- routing through `proxy.lua` to get hybrid BM25 + semantic RAG and shared
 -- session memory. If the proxy is not reachable, it falls back to the local
--- in-process llamacpp provider, and finally to cloud providers.
+-- in-process llamacpp provider.
 
 local base = require("providers.base")
 
@@ -17,14 +16,9 @@ local M = {}
 
 -- Load and register all providers
 local function init_providers()
-    -- Load each provider with graceful degradation
     local providers_to_load = {
         { name = "jenova_backend", module = "providers.jenova_backend" },
         { name = "llamacpp",       module = "providers.llamacpp" },
-        { name = "anthropic",      module = "providers.anthropic" },
-        { name = "openai",         module = "providers.openai" },
-        { name = "gemini",         module = "providers.gemini" },
-        { name = "openrouter",     module = "providers.openrouter" },
     }
 
     for _, p in ipairs(providers_to_load) do

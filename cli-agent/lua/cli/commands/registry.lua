@@ -108,10 +108,9 @@ CommandRegistry.register("model", function(args)
     if not args or #args == 0 then
         local current = config.get("model")
         print(string.format("Current model: %s", current))
-        print("\nAvailable models:")
-        print("  claude-sonnet-4-5-20250929")
-        print("  claude-opus-4-5-20251101")
-        print("  claude-3-5-sonnet-20241022")
+        print("\nAvailable models (set by local backend):")
+        print("  auto  — let the backend select (default)")
+        print("  Set JENOVA_MODEL env var to prefer a specific GGUF model")
     else
         config.set("model", args)
         print(string.format("Model set to: %s", args))
@@ -236,12 +235,12 @@ end, {
 CommandRegistry.register("doctor", function(args)
     print("Running diagnostics...\n")
 
-    -- Check API key
-    local api_key = os.getenv("ANTHROPIC_API_KEY")
-    if api_key then
-        print("✓ ANTHROPIC_API_KEY is set")
+    -- Check local backend
+    local jenova_http_ok = jenova and jenova.http ~= nil
+    if jenova_http_ok then
+        print("✓ jenova.http available (local backend)")
     else
-        print("✗ ANTHROPIC_API_KEY is not set")
+        print("⚠ jenova.http not available")
     end
 
     -- Check config
@@ -257,19 +256,6 @@ CommandRegistry.register("doctor", function(args)
     local tool_registry = require("tools.registry")
     local tools = tool_registry.list_tools()
     print(string.format("✓ %d tools available", #tools))
-
-    -- Check Rust FFI
-    if jenova and jenova.http then
-        print("✓ Rust FFI available (HTTP)")
-    else
-        print("⚠ Rust FFI not available (HTTP)")
-    end
-
-    if jenova and jenova.json then
-        print("✓ Rust FFI available (JSON)")
-    else
-        print("⚠ Rust FFI not available (JSON)")
-    end
 
     print("\nDiagnostics complete")
 end, {
@@ -565,13 +551,13 @@ CommandRegistry.register("provider", function(args)
     elseif subcommand == "set" then
         local name = args:match("^%S+%s+(%S+)")
         if not name then print("Usage: /provider set <provider-name>"); return end
-        local valid = { llamacpp=true, anthropic=true, openai=true, gemini=true, openrouter=true, jenova=true }
+        local valid = { llamacpp=true, jenova_backend=true }
         if valid[name] then
             config.set("provider", name)
             print(string.format("Provider set to: %s", name))
         else
             print(string.format("Unknown provider: %s", name))
-            print("Valid providers: llamacpp, anthropic, openai, gemini, openrouter, jenova")
+            print("Valid providers: jenova_backend, llamacpp")
         end
     elseif subcommand == "test" then
         local provider_name = args:match("^%S+%s+(%S+)")
