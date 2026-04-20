@@ -162,6 +162,8 @@ function M.save()
             preferences = preferences,
         })
         if data then
+            local dir = path:match("^(.*)/")
+            if dir then os.execute("mkdir -p " .. dir) end
             local f = io.open(path, "w")
             if f then
                 f:write(data)

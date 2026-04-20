@@ -505,49 +505,6 @@ end, {
     usage = "/init",
 })
 
--- ── /login /logout ────────────────────────────────────────────────────
--- Delegate to the auth service if available.
-
-registry.register("login", function(args)
-    local ok, auth = pcall(require, "services.auth")
-    if not ok or not auth or not auth.login then
-        print("OAuth login is not wired up in this build.")
-        print("Set your API key with:")
-        print("  export ANTHROPIC_API_KEY=sk-ant-...")
-        return
-    end
-    local url, err = auth.login()
-    if err then
-        io.stderr:write("Login failed: " .. err .. "\n")
-        return
-    end
-    if url then
-        print("Open this URL in your browser to complete sign-in:")
-        print("  " .. url)
-    else
-        print("Login complete.")
-    end
-end, {
-    description = "Sign in with Anthropic OAuth",
-    usage = "/login",
-})
-
-registry.register("logout", function(args)
-    local ok, auth = pcall(require, "services.auth")
-    if ok and auth and auth.logout then
-        auth.logout()
-        print("Signed out.")
-        return
-    end
-    -- Fallback: wipe the cached OAuth config block.
-    local cfg = require("config.loader")
-    cfg.set("oauth_account", nil)
-    print("Cleared cached OAuth credentials.")
-end, {
-    description = "Sign out and clear cached credentials",
-    usage = "/logout",
-})
-
 -- ── /resume ───────────────────────────────────────────────────────────
 -- List saved sessions (no arg) or rehydrate one into the running REPL.
 
@@ -610,24 +567,9 @@ registry.register("status", function(args)
 
     local usage = app_state.get_usage()
     print(string.format("  Tokens:         %d in / %d out", usage.input_tokens, usage.output_tokens))
-    print(string.format("  Cost:           $%.4f", usage.total_cost_usd))
 end, {
     description = "Show current CLI status summary",
     usage = "/status",
-})
-
--- ── /usage ────────────────────────────────────────────────────────────
--- Alias for /cost with slightly different formatting.
-
-registry.register("usage", function(args)
-    local app_state = require("state.app_state")
-    local usage = app_state.get_usage()
-    print("Token usage this session:")
-    print(string.format("  Input tokens:  %d", usage.input_tokens))
-    print(string.format("  Output tokens: %d", usage.output_tokens))
-    print(string.format("  Total cost:    $%.4f USD", usage.total_cost_usd))
-end, {
-    description = "Show token usage for the current session",
 })
 
 -- ── /add-dir ──────────────────────────────────────────────────────────
@@ -903,150 +845,6 @@ registry.register("provider", function(args)
 end, {
     description = "Manage LLM providers",
     usage = "/provider [show|set|test] [name]"
-})
-
--- ── /models ──────────────────────────────────────────────────────────
-
-registry.register("models", function(args)
-    local config = require("config.loader")
-    local subcommand = args:match("^(%S+)")
-
-    if not subcommand or subcommand == "list" then
-        print("Available models:\n")
-
-        -- Local models via llama.cpp
-        print("  Local (llama.cpp):")
-        if jenova and jenova.llama and jenova.llama.list_models then
-            local json = require("utils.json_fallback")
-            local models_json = jenova.llama.list_models()
-            if models_json then
-                local ok, models = pcall(json.parse, models_json)
-                if ok and type(models) == "table" then
-                    for _, m in ipairs(models) do
-                        print(string.format("    - %s", m.name or m.path or "unknown"))
-                    end
-                else
-                    print("    (none found)")
-                end
-            else
-                print("    (none found)")
-            end
-        else
-            print("    (llama.cpp not available)")
-        end
-
-        -- Cloud models
-        -- (no cloud models — all inference is local)
-
-    elseif subcommand == "download" then
-        local model_name = args:match("^%S+%s+(.+)")
-        if not model_name then
-            print("Usage: /models download <model-name-or-url>")
-            print("\nRecommended models:")
-            print("  llama-3.2-1b    Small (1GB)  — good for quick tasks")
-            print("  llama-3.1-8b    Medium (5GB)  — balanced performance")
-            print("  llama-3.3-70b   Large (40GB) — highest quality")
-            return
-        end
-        print(string.format("Model download: %s", model_name))
-        print("(Model download via huggingface-cli or direct URL pending)")
-
-    elseif subcommand == "info" then
-        local model_name = args:match("^%S+%s+(.+)")
-        if not model_name then
-            print("Usage: /models info <model-name>")
-            return
-        end
-        if jenova and jenova.llama and jenova.llama.find_model then
-            local json = require("utils.json_fallback")
-            local info_json = jenova.llama.find_model(model_name)
-            if info_json then
-                local ok, info = pcall(json.parse, info_json)
-                if ok and type(info) == "table" then
-                    for k, v in pairs(info) do
-                        print(string.format("  %s: %s", k, tostring(v)))
-                    end
-                else
-                    print(string.format("Model not found: %s", model_name))
-                end
-            else
-                print(string.format("Model not found: %s", model_name))
-            end
-        else
-            print("llama.cpp not available for local model lookup")
-        end
-    else
-        print("Model commands:")
-        print("  /models              List available models")
-        print("  /models download <n> Download a model")
-        print("  /models info <name>  Show model details")
-    end
-end, {
-    description = "List, download, and manage AI models",
-    usage = "/models [list|download|info] [name]"
-})
-
--- ── /auth ────────────────────────────────────────────────────────────
-
-registry.register("auth", function(args)
-    local subcommand = args:match("^(%S+)")
-
-    if not subcommand or subcommand == "status" then
-        print("Authentication status:\n")
-
-        -- All providers are local — no API keys required
-        print("  ✓ jenova_backend: no authentication required (local)")
-        print("  ✓ llamacpp: no authentication required (local)")
-
-    elseif subcommand == "set" then
-        local provider_name = args:match("^%S+%s+(%S+)")
-        if not provider_name then
-            print("Usage: /auth set <provider>")
-            return
-        end
-        io.write(string.format("Enter API key for %s: ", provider_name))
-        io.flush()
-        local key = io.read("*l")
-        if key and #key > 0 then
-            if jenova and jenova.auth and jenova.auth.store_key then
-                jenova.auth.store_key(provider_name, key)
-                print(string.format("✓ API key stored for %s", provider_name))
-            else
-                print("⚠ Keychain storage not available. Set via environment variable instead:")
-                local env_map = {
-                    anthropic = "ANTHROPIC_API_KEY",
-                    openai = "OPENAI_API_KEY",
-                    gemini = "GEMINI_API_KEY",
-                    openrouter = "OPENROUTER_API_KEY",
-                }
-                local env_name = env_map[provider_name] or (provider_name:upper() .. "_API_KEY")
-                print(string.format("  export %s='<YOUR_API_KEY>'", env_name))
-            end
-        else
-            print("No key provided")
-        end
-
-    elseif subcommand == "remove" then
-        local provider_name = args:match("^%S+%s+(%S+)")
-        if not provider_name then
-            print("Usage: /auth remove <provider>")
-            return
-        end
-        if jenova and jenova.auth and jenova.auth.delete_key then
-            jenova.auth.delete_key(provider_name)
-            print(string.format("✓ API key removed for %s", provider_name))
-        else
-            print("Keychain storage not available")
-        end
-    else
-        print("Auth commands:")
-        print("  /auth              Show authentication status")
-        print("  /auth set <prov>   Set API key for a provider")
-        print("  /auth remove <p>   Remove stored API key")
-    end
-end, {
-    description = "Manage API authentication",
-    usage = "/auth [status|set|remove] [provider]"
 })
 
 -- ── /plan ────────────────────────────────────────────────────────────
@@ -1354,7 +1152,6 @@ registry.register("summary", function(args)
     print(string.format("  Working dir: %s", app_state.get_cwd()))
     print(string.format("  Input tokens: %d", usage.input_tokens))
     print(string.format("  Output tokens: %d", usage.output_tokens))
-    print(string.format("  Total cost: $%.4f", usage.total_cost_usd))
 
     -- Count tool uses
     local tool_count = 0
@@ -1554,7 +1351,7 @@ registry.register("stats", function(args)
 
     -- FFI status
     print("\n  FFI Bindings:")
-    local bindings = { "http", "json", "crypto", "auth", "sandbox", "process", "fs", "mcp", "llama", "system" }
+    local bindings = { "http", "json", "crypto", "sandbox", "process", "fs", "mcp", "llama", "system" }
     for _, name in ipairs(bindings) do
         local available = jenova and jenova[name] ~= nil
         print(string.format("    jenova.%s: %s", name, available and "✓" or "✗"))
@@ -1566,48 +1363,8 @@ registry.register("stats", function(args)
     print(string.format("    Messages: %d", #(app_state.get_messages() or {})))
     print(string.format("    Input tokens: %d", usage.input_tokens))
     print(string.format("    Output tokens: %d", usage.output_tokens))
-    print(string.format("    Cost: $%.4f", usage.total_cost_usd))
 end, {
     description = "Show detailed CLI statistics",
-})
-
--- ── /feedback ────────────────────────────────────────────────────────
-
-registry.register("feedback", function(args)
-    if not args or #args == 0 then
-        print("Usage: /feedback <your-feedback-text>")
-        print("Feedback is saved locally and can be submitted later.")
-        return
-    end
-
-    -- Save feedback to local file
-    local json = require("utils.json_fallback")
-    local home = os.getenv("HOME") or "/tmp"
-    local feedback_file = home .. "/.local/share/cli-agent/feedback.jsonl"
-
-    -- Ensure directory exists
-    local ok_fs, fs = pcall(require, "utils.fs_fallback")
-    if ok_fs and fs and fs.mkdir then
-        fs.mkdir(home .. "/.local/share/cli-agent")
-    end
-
-    local entry = {
-        ts = os.time(),
-        feedback = args,
-        session = require("state.app_state").get("session_id"),
-    }
-
-    local f = io.open(feedback_file, "a")
-    if f then
-        f:write(json.stringify(entry) .. "\n")
-        f:close()
-        print("✓ Feedback saved. Thank you!")
-    else
-        print("⚠ Failed to save feedback")
-    end
-end, {
-    description = "Submit feedback about the CLI",
-    usage = "/feedback <text>"
 })
 
 -- ── /effort ──────────────────────────────────────────────────────────

@@ -1,4 +1,6 @@
 -I./include
+-I/usr/local/include/lua54
+-I/usr/local/include
 -Wall
 -Wextra
 -std=c11

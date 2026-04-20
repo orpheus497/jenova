@@ -11,6 +11,16 @@
 local trio = require("utils.trio")
 local json = require("utils.json_fallback")
 
+-- Lazy-loaded pure-Lua HTTP fallback (no C binding required)
+local _lua_http = nil
+local function get_lua_http()
+    if _lua_http == nil then
+        local ok, mod = pcall(require, "utils.http")
+        _lua_http = ok and mod or false
+    end
+    return _lua_http or nil
+end
+
 local M = {
     name = "jenova_backend",
     _initialized = false,
@@ -23,14 +33,19 @@ local function resolve_endpoints()
 end
 
 local function get_http()
-    return jenova and jenova.http or nil
+    -- Prefer C binding when available (zero subprocess overhead)
+    if type(jenova) == "table" and jenova.http then
+        return jenova.http
+    end
+    -- Fall back to pure-Lua curl wrapper
+    return get_lua_http()
 end
 
 function M:initialize(opts)
     opts = opts or {}
     self._endpoints = resolve_endpoints()
     -- Base URL should be host:port, NOT the full proxy_url path.
-    self._base_url = opts.base_url or os.getenv("JENOVA_PROXY_URL") or 
+    self._base_url = opts.base_url or os.getenv("JENOVA_PROXY_URL") or
                      string.format("http://%s:%d", self._endpoints.host, self._endpoints.port)
     -- Strip trailing endpoint paths if they exist (like /v1/chat/completions)
     self._base_url = self._base_url:gsub("/v1/chat/completions/?$", "")
@@ -50,6 +65,7 @@ function M:is_available()
     if not self._initialized then self:initialize() end
     local health_url = self._base_url .. "/v1/health"
     -- GET /v1/health is served by proxy.lua's health handler.
+    -- Both the C binding and utils.http expose get() as plain functions.
     local ok, resp = pcall(http.get, health_url, nil)
     if not ok or not resp then return false end
     -- proxy.lua returns a small JSON object including { "status": "ok" }.
@@ -111,17 +127,18 @@ function M:generate(messages, options)
     if not self._initialized then self:initialize() end
     local http = get_http()
     if not http then
-        return nil, "jenova.http binding unavailable"
+        return nil, "no HTTP client available (install curl or build with C bindings)"
     end
 
     local body = to_chat_body(normalize_messages(messages), options)
     local body_str = json.stringify(body)
-    local headers = json.stringify({
+    local headers = {
         ["Content-Type"] = "application/json",
         ["X-Jenova-Client"] = "cli-agent/0.1",
-    })
+    }
+    local headers_str = json.stringify(headers)
 
-    local resp, err = http.post_json(self._base_url .. "/v1/chat/completions", headers, body_str)
+    local resp, err = http.post_json(self._base_url .. "/v1/chat/completions", headers_str, body_str)
     if not resp then return nil, err or "proxy.lua request failed" end
 
     local parsed = json.parse(resp)
@@ -149,6 +166,7 @@ function M:count_tokens(text)
         local body = json.stringify({ text = text })
         local resp = http.post_json(self._base_url .. "/v1/tokenize",
             json.stringify({ ["Content-Type"] = "application/json" }), body)
+            -- (plain function call — works for both C binding and utils.http)
         if resp then
             local parsed = json.parse(resp)
             if type(parsed) == "table" and type(parsed.count) == "number" then
@@ -173,6 +191,7 @@ function M:get_models()
     local http = get_http()
     if not (http and self._base_url) then return {} end
     local resp = http.get(self._base_url .. "/v1/models", nil)
+    -- (plain function call — works for both C binding and utils.http)
     if not resp then return {} end
     local parsed = json.parse(resp)
     if type(parsed) ~= "table" or type(parsed.data) ~= "table" then

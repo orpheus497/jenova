@@ -216,7 +216,7 @@ function REPL.run(opts)
                 end
             end
             if #cmd_list == 0 then
-                cmd_list = { "/clear", "/help", "/model", "/provider", "/tools", "/quit" }
+                cmd_list = { "/clear", "/help", "/model", "/tools", "/status", "/quit" }
             end
             ui.draw_commands(cmd_list)
         end

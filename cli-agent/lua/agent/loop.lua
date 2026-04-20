@@ -135,6 +135,9 @@ function M.run(opts)
         thinking_enabled = opts.thinking_enabled,
 
         on_text = function(text)
+            -- Stop the spinner before the first text token so the cursor is
+            -- on a clean line. spinner_stop() is idempotent.
+            if ui and ui.spinner_stop then ui.spinner_stop() end
             io.write(text)
             io.flush()
         end,
@@ -147,7 +150,9 @@ function M.run(opts)
             end
         end,
 
-        on_tool_use = function(tool_name, input)
+        on_tool_use = function(tool_name, _input)
+            -- Stop the spinner so the badge lands on its own line.
+            if ui and ui.spinner_stop then ui.spinner_stop() end
             if ui and ui.tool_badge then
                 ui.tool_badge(tool_name, "running")
             elseif ui and ui.status_info then
@@ -155,7 +160,7 @@ function M.run(opts)
             end
         end,
 
-        on_tool_result = function(tool_name, result)
+        on_tool_result = function(tool_name, _result)
             if ui and ui.tool_badge then
                 ui.tool_badge(tool_name, "done")
             elseif ui and ui.status_info then

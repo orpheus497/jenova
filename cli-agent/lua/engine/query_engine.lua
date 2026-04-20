@@ -112,6 +112,7 @@ function QueryEngine.new(options)
     end
 
     self.on_text = options.on_text or function(text)
+        if _ui and _ui.spinner_stop then _ui.spinner_stop() end
         if _ui then _ui.stream_text(text) else io.write(text); io.flush() end
     end
     self.on_thinking = options.on_thinking or function(text)
@@ -121,6 +122,7 @@ function QueryEngine.new(options)
         end
     end
     self.on_tool_use = options.on_tool_use or function(tool_name, _input)
+        if _ui and _ui.spinner_stop then _ui.spinner_stop() end
         if _ui and _ui.tool_badge then _ui.tool_badge(tool_name, "running")
         elseif _ui then _ui.status_info(tool_name .. " running") end
     end

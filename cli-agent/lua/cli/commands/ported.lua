@@ -57,38 +57,6 @@ local function copy_to_clipboard(text)
     return false, "clipboard command failed"
 end
 
--- ── /advisor ──────────────────────────────────────────────────────────
--- Configure the advisor model — an auxiliary model used for planning/review.
-
-registry.register("advisor", function(args)
-    local cfg = get_config()
-    local arg = trim(args):lower()
-
-    if arg == "" then
-        local current = cfg.get("advisor_model")
-        if not current or current == "" then
-            print("Advisor: not set")
-            print('Use "/advisor <model>" to enable (e.g. "/advisor claude-opus-4-5-20251101").')
-        else
-            print(string.format("Advisor: %s", current))
-            print('Use "/advisor unset" to disable or "/advisor <model>" to change.')
-        end
-        return
-    end
-
-    if arg == "unset" or arg == "off" or arg == "disable" then
-        cfg.set("advisor_model", nil)
-        print("Advisor disabled.")
-        return
-    end
-
-    cfg.set("advisor_model", arg)
-    print(string.format("Advisor set to: %s", arg))
-end, {
-    description = "Configure the advisor (auxiliary) model",
-    usage = "/advisor [model|unset]",
-})
-
 -- ── /agents ───────────────────────────────────────────────────────────
 -- Manage named agent configurations stored in config.agents.
 
@@ -97,7 +65,6 @@ registry.register("agents", function(args)
     local sub, rest = first_word(args)
     local agents = cfg.get("agents")
     if type(agents) ~= "table" then
-        -- Repair any non-table value that somehow made it into config.
         agents = {}
         cfg.set("agents", agents)
     end
@@ -163,8 +130,6 @@ end, {
 -- ── /brief ────────────────────────────────────────────────────────────
 
 registry.register("brief", function(args)
-    -- Brief mode is read by BriefTool and the query engine via AppState.
-    -- We also mirror the flag into config so it survives a restart.
     local cfg = get_config()
     local app_state = get_state()
     local arg = trim(args):lower()
@@ -198,9 +163,7 @@ end, {
 })
 
 -- ── /btw ──────────────────────────────────────────────────────────────
--- Ask a quick side question. In TS this opens a side-conversation dialog;
--- here we simply forward the prompt to the assistant with a framing hint
--- so the main conversation context is not disturbed in the user's mind.
+-- Ask a quick side question without disturbing the main conversation.
 
 registry.register("btw", function(args)
     local prompt = trim(args)
@@ -226,44 +189,6 @@ end, {
     usage = "/btw <question>",
 })
 
--- ── /bridge ───────────────────────────────────────────────────────────
--- Minimal bridge status / toggle. The full TS bridge integrates with the
--- Jenova remote-control server; here we expose its on/off state and URL.
-
-registry.register("bridge", function(args)
-    local cfg = get_config()
-    local sub, rest = first_word(args)
-
-    if not sub or sub == "status" then
-        local enabled = cfg.get("bridge_enabled") and true or false
-        local url = cfg.get("bridge_url") or "(not set)"
-        print(string.format("Bridge: %s", enabled and "enabled" or "disabled"))
-        print(string.format("Bridge URL: %s", url))
-    elseif sub == "on" or sub == "enable" then
-        cfg.set("bridge_enabled", true)
-        print("Bridge enabled. Set URL with /bridge url <url>.")
-    elseif sub == "off" or sub == "disable" then
-        cfg.set("bridge_enabled", false)
-        print("Bridge disabled.")
-    elseif sub == "url" then
-        local url = rest and trim(rest) or ""
-        if url == "" then
-            print(string.format("Bridge URL: %s", cfg.get("bridge_url") or "(not set)"))
-        else
-            cfg.set("bridge_url", url)
-            print(string.format("Bridge URL set to %s", url))
-        end
-    else
-        print("Bridge commands:")
-        print("  /bridge            Show status")
-        print("  /bridge on|off     Enable/disable")
-        print("  /bridge url <url>  Set the remote-control URL")
-    end
-end, {
-    description = "Manage remote-control bridge session",
-    usage = "/bridge [status|on|off|url]",
-})
-
 -- ── /color ────────────────────────────────────────────────────────────
 -- Set the prompt accent color for the session.
 
@@ -287,14 +212,14 @@ registry.register("color", function(args)
         print("Valid colors: default, red, green, yellow, blue, magenta, cyan, white, gray")
     end
 end, {
-    description = "Set the prompt accent color (stored in config; read by REPL on next prompt)",
+    description = "Set the prompt accent color",
     usage = "/color [name]",
 })
 
 -- ── /copy ─────────────────────────────────────────────────────────────
 -- Copy the assistant's last response text to the clipboard.
 
-registry.register("copy", function(args)
+registry.register("copy", function(_)
     local app_state = get_state()
     local messages = app_state.get_messages() or {}
     local last_text
@@ -335,8 +260,7 @@ end, {
 })
 
 -- ── /commit-push-pr ───────────────────────────────────────────────────
--- Hand an engineered prompt to the assistant to stage/commit/push and open
--- a PR. Mirrors the flow from the TS command.
+-- Hand an engineered prompt to the assistant to stage/commit/push and open a PR.
 
 registry.register("commit-push-pr", function(args)
     local ok_qe, query_engine = pcall(require, "engine.query_engine")
@@ -372,94 +296,9 @@ end, {
     usage = "/commit-push-pr [extra instructions]",
 })
 
--- ── /extra-usage ──────────────────────────────────────────────────────
-
-registry.register("extra-usage", function(args)
-    local cfg = get_config()
-    local arg = trim(args):lower()
-    if arg == "on" or arg == "enable" then
-        cfg.set("extra_usage_enabled", true)
-        print("Extra usage: enabled (will continue after rate limits using fallback)")
-    elseif arg == "off" or arg == "disable" then
-        cfg.set("extra_usage_enabled", false)
-        print("Extra usage: disabled")
-    elseif arg == "" then
-        local enabled = cfg.get("extra_usage_enabled") and true or false
-        print(string.format("Extra usage: %s", enabled and "enabled" or "disabled"))
-        print("When enabled, the CLI auto-falls-back to a secondary provider on 429/quota errors.")
-    else
-        print("Usage: /extra-usage [on|off]")
-    end
-end, {
-    description = "Configure fallback usage after hitting rate limits",
-    usage = "/extra-usage [on|off]",
-})
-
--- ── /fast ─────────────────────────────────────────────────────────────
--- Toggle "fast" mode: swap to a lower-latency model for this session.
-
-registry.register("fast", function(args)
-    local cfg = get_config()
-    local arg = trim(args):lower()
-    local fast_model = cfg.get("fast_model") or cfg.get("model")
-
-    local function enable()
-        cfg.set("fast_mode", true)
-        cfg.set("previous_model", cfg.get("model"))
-        cfg.set("model", fast_model)
-        print(string.format("Fast mode: enabled (model=%s)", tostring(fast_model)))
-        print("Note: restart the REPL for the change to take effect in the active session.")
-    end
-    local function disable()
-        cfg.set("fast_mode", false)
-        local prev = cfg.get("previous_model")
-        cfg.set("model", prev)
-        cfg.set("previous_model", nil)
-        print(string.format("Fast mode: disabled (model=%s)", tostring(prev)))
-        print("Note: restart the REPL for the change to take effect in the active session.")
-    end
-
-    if arg == "on" or arg == "enable" then
-        enable()
-    elseif arg == "off" or arg == "disable" then
-        disable()
-    elseif arg == "" then
-        if cfg.get("fast_mode") then disable() else enable() end
-    else
-        print("Usage: /fast [on|off]")
-    end
-end, {
-    description = "Toggle fast (low-latency) model mode (REPL restart required to take effect)",
-    usage = "/fast [on|off]",
-})
-
--- ── /ide ──────────────────────────────────────────────────────────────
-
-registry.register("ide", function(args)
-    local sub = first_word(args)
-    if not sub or sub == "status" then
-        local ide_env = os.getenv("TERM_PROGRAM") or os.getenv("TERMINAL_EMULATOR") or "(unknown)"
-        print("IDE integration status:")
-        print(string.format("  Terminal:         %s", ide_env))
-        print(string.format("  VSCode env:       %s", os.getenv("VSCODE_INJECTION") and "detected" or "not detected"))
-        print(string.format("  Cursor env:       %s", os.getenv("CURSOR_TRACE_ID") and "detected" or "not detected"))
-        print(string.format("  JetBrains env:    %s", os.getenv("TERMINAL_EMULATOR") == "JetBrains-JediTerm" and "detected" or "not detected"))
-    elseif sub == "install" then
-        print("IDE extension installation is not wired up in this build.")
-        print("Install the cli-agent extension from your IDE marketplace manually.")
-    else
-        print("IDE commands:")
-        print("  /ide status   Show detected IDE/terminal")
-        print("  /ide install  Install/refresh IDE extension (manual)")
-    end
-end, {
-    description = "Show IDE integration status",
-    usage = "/ide [status|install]",
-})
-
 -- ── /insights ─────────────────────────────────────────────────────────
 
-registry.register("insights", function(args)
+registry.register("insights", function(_)
     local app_state = get_state()
     local messages = app_state.get_messages() or {}
     local usage = app_state.get_usage()
@@ -488,7 +327,6 @@ registry.register("insights", function(args)
     print(string.format("  Total text length:  %d chars", total_chars))
     print(string.format("  Input tokens:       %d", usage.input_tokens))
     print(string.format("  Output tokens:      %d", usage.output_tokens))
-    print(string.format("  Cost:               $%.4f", usage.total_cost_usd))
     if user_msgs > 0 then
         print(string.format("  Avg tokens/turn:    %.1f",
             (usage.input_tokens + usage.output_tokens) / user_msgs))
@@ -513,84 +351,6 @@ registry.register("reload-plugins", function(_)
 end, {
     description = "Reset and reload all plugins in the current session",
     usage = "/reload-plugins",
-})
-
--- ── /remote-env ───────────────────────────────────────────────────────
-
-registry.register("remote-env", function(args)
-    local cfg = get_config()
-    local sub, rest = first_word(args)
-    local function get_env()
-        local e = cfg.get("remote_env")
-        if type(e) ~= "table" then e = {} end
-        return e
-    end
-    if not sub or sub == "show" then
-        local env = get_env()
-        local count = 0
-        for _ in pairs(env) do count = count + 1 end
-        if count == 0 then
-            print("No remote env vars set.")
-            print('Use "/remote-env set KEY=VALUE" to add one.')
-            return
-        end
-        print(string.format("Remote environment (%d):", count))
-        for k, v in pairs(env) do
-            local val = tostring(v)
-            if k:match("KEY$") or k:match("TOKEN$") or k:match("SECRET$") then
-                val = val:sub(1, 4) .. "..." .. val:sub(-2)
-            end
-            print(string.format("  %s=%s", k, val))
-        end
-    elseif sub == "set" then
-        local kv = rest and trim(rest) or ""
-        local k, v = kv:match("^([^=]+)=(.*)$")
-        if not k then
-            print("Usage: /remote-env set KEY=VALUE")
-            return
-        end
-        local env = get_env()
-        env[k] = v
-        cfg.set("remote_env", env)
-        print(string.format("Set remote env %s", k))
-    elseif sub == "unset" then
-        local key = rest and trim(rest) or ""
-        if key == "" then
-            print("Usage: /remote-env unset <KEY>")
-            return
-        end
-        local env = get_env()
-        env[key] = nil
-        cfg.set("remote_env", env)
-        print(string.format("Unset remote env %s", key))
-    else
-        print("Remote-env commands:")
-        print("  /remote-env show            List remote env vars")
-        print("  /remote-env set KEY=VALUE   Set a remote env var")
-        print("  /remote-env unset KEY       Remove a remote env var")
-    end
-end, {
-    description = "Configure the default environment for remote (teleport) sessions",
-    usage = "/remote-env [show|set|unset]",
-})
-
--- ── /remote-setup ─────────────────────────────────────────────────────
-
-registry.register("remote-setup", function(_)
-    print("Jenova CLI — Remote Setup")
-    print(string.rep("-", 40))
-    print("Remote mode delegates inference to a Jenova backend host.")
-    print("Configure it with:")
-    print("  /config remote_host=<host>")
-    print("  /config remote_port=<port>")
-    print("  /remote-env set JENOVA_API_KEY=<key>")
-    print("")
-    print("Then enable with:")
-    print("  /provider set jenova_backend")
-    print("  /bridge on")
-end, {
-    description = "Instructions for setting up a remote Jenova backend",
-    usage = "/remote-setup",
 })
 
 -- ── /rewind ───────────────────────────────────────────────────────────
@@ -620,19 +380,6 @@ end, {
     usage = "/rewind [n]",
 })
 
--- ── /sandbox-toggle ───────────────────────────────────────────────────
--- Alias for /sandbox on|off (the full /sandbox command exists in extended.lua).
-
-registry.register("sandbox-toggle", function(_)
-    local cfg = get_config()
-    local cur = cfg.get("sandbox_enabled") and true or false
-    cfg.set("sandbox_enabled", not cur)
-    print(string.format("Sandbox: %s", (not cur) and "enabled" or "disabled"))
-end, {
-    description = "Quick-toggle the filesystem sandbox",
-    usage = "/sandbox-toggle",
-})
-
 -- ── /tag ──────────────────────────────────────────────────────────────
 
 registry.register("tag", function(args)
@@ -653,12 +400,11 @@ registry.register("tag", function(args)
         print("Session tag removed.")
         return
     end
-    -- Normalize: strip leading # and spaces.
     tag = tag:gsub("^#+", ""):gsub("%s+", "-")
     app_state.set("session_tag", tag)
     print(string.format("Session tagged #%s", tag))
 end, {
-    description = "Add, show, or remove an in-memory tag on the current session (not persisted across restarts)",
+    description = "Add, show, or remove a tag on the current session",
     usage = "/tag [name|remove]",
 })
 
@@ -677,78 +423,6 @@ end, {
     description = "Show terminal capabilities and setup tips",
     usage = "/terminal-setup",
     aliases = { "terminalsetup", "terminalSetup" },
-})
-
--- ── /voice ────────────────────────────────────────────────────────────
-
-registry.register("voice", function(args)
-    local cfg = get_config()
-    local arg = trim(args):lower()
-    if arg == "on" or arg == "enable" then
-        cfg.set("voice_enabled", true)
-        print("Voice mode: enabled (requires voice backend to be configured)")
-    elseif arg == "off" or arg == "disable" then
-        cfg.set("voice_enabled", false)
-        print("Voice mode: disabled")
-    elseif arg == "" then
-        local cur = cfg.get("voice_enabled") and true or false
-        cfg.set("voice_enabled", not cur)
-        print(string.format("Voice mode: %s", (not cur) and "enabled" or "disabled"))
-    else
-        print("Usage: /voice [on|off]")
-    end
-end, {
-    description = "Toggle voice input/output mode",
-    usage = "/voice [on|off]",
-})
-
--- ── /x402 ─────────────────────────────────────────────────────────────
--- Configure x402 USDC-on-Base payments. We only store config; actual
--- payment execution belongs in a dedicated service.
-
-registry.register("x402", function(args)
-    local cfg = get_config()
-    local sub, rest = first_word(args)
-
-    if not sub or sub == "status" then
-        local enabled = cfg.get("x402_enabled") and true or false
-        local addr = cfg.get("x402_wallet_address") or "(not set)"
-        local max = cfg.get("x402_max_spend_usd")
-        print(string.format("x402: %s", enabled and "enabled" or "disabled"))
-        print(string.format("Wallet: %s", addr))
-        print(string.format("Max spend: $%s USD", max and tostring(max) or "unlimited"))
-    elseif sub == "on" or sub == "enable" then
-        cfg.set("x402_enabled", true)
-        print("x402 payments: enabled")
-    elseif sub == "off" or sub == "disable" then
-        cfg.set("x402_enabled", false)
-        print("x402 payments: disabled")
-    elseif sub == "wallet" then
-        local addr = rest and trim(rest) or ""
-        if addr == "" then
-            print(string.format("Wallet: %s", cfg.get("x402_wallet_address") or "(not set)"))
-        else
-            cfg.set("x402_wallet_address", addr)
-            print("Wallet set.")
-        end
-    elseif sub == "limit" then
-        local v = tonumber(trim(rest or ""))
-        if not v then
-            print("Usage: /x402 limit <usd-amount>")
-            return
-        end
-        cfg.set("x402_max_spend_usd", v)
-        print(string.format("Max spend set to $%.2f.", v))
-    else
-        print("x402 commands:")
-        print("  /x402              Show status")
-        print("  /x402 on|off       Enable/disable")
-        print("  /x402 wallet <addr> Set wallet address")
-        print("  /x402 limit <usd>  Set max spend in USD")
-    end
-end, {
-    description = "Configure x402 USDC-on-Base payment settings",
-    usage = "/x402 [status|on|off|wallet|limit]",
 })
 
 -- ── /statusline ───────────────────────────────────────────────────────
@@ -820,7 +494,6 @@ registry.register("release-notes", function(args)
     local content = f:read("*a") or ""
     f:close()
     if version ~= "" then
-        -- Try to extract just the requested version's section.
         local pat = "(#+%s*[vV]?" .. version:gsub("%.", "%%.") .. "[^\n]*\n.-)\n#+%s"
         local section = content:match(pat)
         if section then print(section) else print(content) end
@@ -831,25 +504,5 @@ end, {
     description = "Show release notes / changelog",
     usage = "/release-notes [version]",
 })
-
--- ── Plugin-moved stubs ────────────────────────────────────────────────
-
-local function moved_to_plugin(plugin_name)
-    return function(_)
-        print(string.format(
-            "This command has moved to a plugin. Install it with:\n  /plugins install %s",
-            plugin_name))
-    end
-end
-
-registry.register("pr-comments",
-    moved_to_plugin("pr-comments"),
-    { description = "(moved) Fetch and reply to pull request review comments",
-      usage = "/pr-comments", aliases = { "pr_comments" } })
-
-registry.register("security-review",
-    moved_to_plugin("security-review"),
-    { description = "(moved) Run a security review of pending changes",
-      usage = "/security-review" })
 
 return M

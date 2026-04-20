@@ -106,31 +106,19 @@ CommandRegistry.register("model", function(args)
     local config = require("config.loader")
 
     if not args or #args == 0 then
-        local current = config.get("model")
+        local current = config.get("model") or "auto"
         print(string.format("Current model: %s", current))
-        print("\nAvailable models (set by local backend):")
-        print("  auto  — let the backend select (default)")
-        print("  Set JENOVA_MODEL env var to prefer a specific GGUF model")
+        print("\nSet a GGUF model name or use 'auto' to let the backend choose.")
+        print("  /model auto")
+        print("  /model <gguf-model-name>")
+        print("  env: JENOVA_MODEL=<name>")
     else
         config.set("model", args)
         print(string.format("Model set to: %s", args))
     end
 end, {
-    description = "View or change the model",
+    description = "View or change the local model",
     usage = "/model [model-name]"
-})
-
--- /cost
-CommandRegistry.register("cost", function(args)
-    local app_state = require("state.app_state")
-    local usage = app_state.get_usage()
-
-    print(string.format("Token usage:"))
-    print(string.format("  Input:  %d tokens", usage.input_tokens))
-    print(string.format("  Output: %d tokens", usage.output_tokens))
-    print(string.format("  Total cost: $%.4f", usage.total_cost_usd))
-end, {
-    description = "Show token usage and cost",
 })
 
 -- /clear
@@ -440,63 +428,16 @@ end, {
     usage = "/plan [on|off]",
 })
 
--- /stats
-CommandRegistry.register("stats", function(args)
-    local app_state = require("state.app_state")
-    local config = require("config.loader")
-    local tool_registry = require("tools.registry")
-
-    print("Jenova CLI Statistics:\n")
-    print(string.format("  Provider:  %s", config.get("provider") or "llamacpp"))
-    print(string.format("  Model:     %s", config.get("model") or "auto"))
-    print(string.format("  Tools:     %d registered", #tool_registry.get_names()))
-
-    if jenova and jenova.system then
-        if jenova.system.platform then
-            print(string.format("  Platform:  %s", jenova.system.platform()))
-        end
-        if jenova.system.version then
-            print(string.format("  Version:   %s", jenova.system.version()))
-        end
-    end
-
-    print("\n  FFI Bindings:")
-    local bindings = { "http", "json", "crypto", "fs", "llama", "system", "process", "mcp" }
-    for _, name in ipairs(bindings) do
-        local available = jenova and jenova[name] ~= nil
-        print(string.format("    jenova.%-8s %s", name .. ":", available and "✓" or "✗"))
-    end
-
-    local usage = app_state.get_usage()
-    print("\n  Session:")
-    print(string.format("    Messages:       %d", #(app_state.get_messages() or {})))
-    print(string.format("    Input tokens:   %d", usage.input_tokens))
-    print(string.format("    Output tokens:  %d", usage.output_tokens))
-    print(string.format("    Cost:           $%.4f", usage.total_cost_usd))
-end, {
-    description = "Show detailed CLI statistics",
-})
-
 -- /diag
 CommandRegistry.register("diag", function(args)
     print("Running diagnostics...\n")
-
-    -- API keys
-    local keys = { "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY" }
-    for _, k in ipairs(keys) do
-        if os.getenv(k) then
-            print(string.format("✓ %s is set", k))
-        else
-            print(string.format("✗ %s is not set", k))
-        end
-    end
 
     -- Config
     local ok_cfg, config = pcall(require, "config.loader")
     print(ok_cfg and "✓ Configuration loaded" or "✗ Configuration failed to load")
 
     -- Providers
-    local ok_prov, provider_base = pcall(require, "providers.base")
+    local ok_prov, _ = pcall(require, "providers.base")
     print(ok_prov and "✓ providers.base loaded" or "✗ providers.base failed to load")
 
     -- Tools
@@ -531,54 +472,6 @@ CommandRegistry.register("diag", function(args)
 end, {
     description = "Run full environment diagnostics",
     aliases = { "diagnostics" },
-})
-
--- /provider
-CommandRegistry.register("provider", function(args)
-    local config = require("config.loader")
-    local subcommand = args and args:match("^(%S+)")
-
-    if not subcommand or subcommand == "show" then
-        local current = config.get("provider") or "llamacpp"
-        print(string.format("Current provider: %s\n", current))
-        print("Available providers:")
-        print("  llamacpp      Local llama.cpp inference (default)")
-        print("  anthropic     Anthropic Claude API")
-        print("  openai        OpenAI API")
-        print("  gemini        Google Gemini API")
-        print("  openrouter    OpenRouter API")
-        print("  jenova        Jenova backend")
-    elseif subcommand == "set" then
-        local name = args:match("^%S+%s+(%S+)")
-        if not name then print("Usage: /provider set <provider-name>"); return end
-        local valid = { llamacpp=true, jenova_backend=true }
-        if valid[name] then
-            config.set("provider", name)
-            print(string.format("Provider set to: %s", name))
-        else
-            print(string.format("Unknown provider: %s", name))
-            print("Valid providers: jenova_backend, llamacpp")
-        end
-    elseif subcommand == "test" then
-        local provider_name = args:match("^%S+%s+(%S+)")
-            or (config and config.get("provider")) or "llamacpp"
-        print(string.format("Testing provider: %s ...", provider_name))
-        local ok2, prov = pcall(require, "providers." .. provider_name)
-        if ok2 and prov and prov.test then
-            local success = pcall(prov.test)
-            print(success and "✓ Provider is working" or "✗ Provider test failed")
-        else
-            print(string.format("⚠ Provider '%s' has no test function or failed to load", provider_name))
-        end
-    else
-        print("Provider commands:")
-        print("  /provider              Show current provider")
-        print("  /provider set <name>   Switch active provider")
-        print("  /provider test [name]  Test a provider connection")
-    end
-end, {
-    description = "Manage LLM providers",
-    usage = "/provider [show|set|test] [name]",
 })
 
 -- /tools
