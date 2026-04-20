@@ -10,7 +10,7 @@ Jenova is partitioned across three repositories that together form the complete 
 |------|------|-------|
 | [`orpheus497/jenova`](https://github.com/orpheus497/jenova) *(this repo)* | **Cognitive backend** — `llama-server`, LuaJIT `proxy.lua`, embedding daemon, `jenova-ca` supervisor | C/C++ + LuaJIT |
 | [`orpheus497/jvim`](https://github.com/orpheus497/jvim) | **Editor / IDE** — `jvim`, a Neovim hard-fork purpose-built for Jenova | C + Lua |
-| [`orpheus497/cloda-codey-lua`](https://github.com/orpheus497/cloda-codey-lua) | **Terminal agent** — `jenova-cli` for headless and scripted workflows | Lua 5.4 + Rust |
+| [`orpheus497/cloda-codey-lua`](https://github.com/orpheus497/cloda-codey-lua) | **Terminal agent** — `jenova-cli` for headless and scripted workflows (vendored in this repo under `jenova-cli/`) | Lua 5.4 + Rust |
 
 The backend in this repository is the shared brain. `jvim` is the editor that the user lives inside; `jenova-cli` is the terminal agent for scripted, headless, and async workflows. Both frontends communicate with the backend services, primarily via `proxy.lua` on port 8080, with `jvim` additionally talking to `llama-server` on port 8081 for FIM completions and the embedding server on port 8082.
 
@@ -143,23 +143,25 @@ The installer will offer to download the correct model for your detected hardwar
 # 1. Install system dependencies
 pkg install luajit-openresty git neovim cmake vulkan-loader curl
 
-# 2. Build llama.cpp with Vulkan support
-cd llama.cpp
-cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release -j$(sysctl -n hw.ncpu)
-cd ..
+# 2. Build llama.cpp with Vulkan support (or use the convenience script)
+bin/build-llama-jenova
+# Or manually:
+#   cd llama.cpp
+#   cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
+#   cmake --build build --config Release -j$(sysctl -n hw.ncpu)
+#   cd ..
 
 # 3. Run the installer (hardware-aware: detects your hardware and selects a profile)
-./install.sh
+scripts/install.sh
 ```
 
 The installer will:
 1. Verify all required and optional dependencies
-2. Create runtime directories (`.jenova/`, `var/log/`, `var/cache/`, `models/`)
+2. Create runtime directories (`.jenova/`, `var/log/`, `var/cache/`, `models/{agent,embed,draft}/`)
 3. Check for llama.cpp build
 4. **Offer to download missing model files** (agent, embedding, drafter) from Hugging Face
 5. Deploy the Neovim configuration to `~/.config/nvim/`
-6. Symlink `jvim`, `jenova`, and `jenova-ca` to your PATH
+6. Symlink `jvim` and `jenova-ca` to your PATH (`~/.local/bin/` or `~/bin/`)
 7. **Auto-detect your hardware** and recommend the matching profile
 
 The built binary lives at `llama.cpp/build/bin/llama-server`.
@@ -177,7 +179,7 @@ After running `install.sh`, configure your specific hardware:
 
 # 3. Run one-time system tuning (sysctls, ZFS ARC, GPU driver check)
 #    This auto-detects your hardware and runs the right profile's setup script
-sudo ./jenova-setup
+sudo scripts/jenova-setup
 ```
 
 Available options for `detect-hardware.sh`:
@@ -192,7 +194,7 @@ Available options for `detect-hardware.sh`:
 
 **Forcing a specific profile:**
 ```sh
-sudo ./jenova-setup --profile AMD/apu/ryzen7-5700u-3b
+sudo scripts/jenova-setup --profile AMD/apu/ryzen7-5700u-3b
 ```
 
 ### AMD Ryzen / Vega 8 Additional Requirements
@@ -248,17 +250,18 @@ THREADS_BATCH=12             # ~1.5x cores for batch processing
 
 ## Launching
 
-Start the cognitive backend (daemon) and then the interactive agent or Neovim:
+Start the cognitive backend (daemon) and then the editor or CLI agent:
 
 ```bash
 # Start the Jenova Cognitive Architecture backend in daemon mode
 bin/jenova-ca --daemon
 
-# Launch the interactive agent (auto-starts backend if needed)
-bin/jenova
-
-# OR launch Neovim with Jenova integration (auto-starts backend if needed)
+# Launch Neovim with Jenova integration (auto-starts backend if needed)
 bin/jvim [files...]
+
+# OR use the terminal agent (jenova-cli, built separately from jenova-cli/)
+# See jenova-cli/README.md for build instructions
+jenova-cli
 ```
 
 ## Models & Roles
@@ -269,15 +272,21 @@ bin/jvim [files...]
 
 ## Directory Layout
 
-- `bin/jenova` — Interactive agent launcher (auto-starts backend if needed, runs `agent.lua`).
 - `bin/jvim` — Neovim launcher with Jenova backend integration (auto-starts backend, exports environment variables).
 - `bin/jenova-ca` — Backend manager: starts/stops/restarts llama-server, proxy, and embed server as a unit.
-- `lib/` — Core LuaJIT logic for the agent, embedding, HTTP, search, memory, and UI.
-- `etc/` — Configuration files (`jenova.conf`).
-- `models/` — Model storage (GGUF format).
-- `var/` — Runtime logs and cache.
-- `.jenova/` — Internal agent state, PID files, vectors, and automated backups.
+- `bin/build-llama-jenova` — Vulkan llama.cpp build script with Jenova runtime tuning.
+- `bin/jenova-swap-mount` — FreeBSD swap-backed memory filesystem for LLM model mmap (root required).
+- `lib/` — Core LuaJIT logic for the proxy, embedding, HTTP, search, daemon management, and configuration.
+- `etc/` — Configuration files (`jenova.conf`, `jenova.local.conf.example`).
+- `scripts/` — Installation, cleanup, uninstall, update, and management scripts.
+- `models/` — Model storage organised into `agent/`, `embed/`, and `draft/` subdirectories (GGUF format).
+- `var/` — Runtime logs (`var/log/`) and cache (`var/cache/`).
+- `.jenova/` — Internal state and PID files.
 - `nvim/` — Neovim configuration (plugins, LSP, UI) for the integrated IDE.
+- `hardware-profiles/` — Hardware detection script and per-profile configs.
+- `jenova-cli/` — Terminal agent (Lua 5.4 + Rust + llama.cpp) — built separately.
+- `llama.cpp/` — Vendored llama.cpp source (built with Vulkan support).
+- `tests/` — Integration and hardware tests.
 
 ## Networking
 
@@ -358,23 +367,23 @@ jvim --remote 192.168.1.42 --remote-port 8080 --llama-port 8081
 
 ### Runtime Cleanup
 
-Use `cleanup.sh` to clear logs, cache, and stale state files without touching models or config:
+Use `scripts/cleanup.sh` to clear logs, cache, and stale state files without touching models or config:
 
 ```sh
-./cleanup.sh --logs          # Remove log files from var/log/
-./cleanup.sh --cache         # Clear var/cache/
-./cleanup.sh --state         # Remove stale PID/lock files from .jenova/
-./cleanup.sh --all           # All of the above
-./cleanup.sh --logs --rotate # Rotate logs instead of deleting
-./cleanup.sh --all --yes     # Skip confirmation prompt
+scripts/cleanup.sh --logs          # Remove log files from var/log/
+scripts/cleanup.sh --cache         # Clear var/cache/
+scripts/cleanup.sh --state         # Remove stale PID/lock files from .jenova/
+scripts/cleanup.sh --all           # All of the above
+scripts/cleanup.sh --logs --rotate # Rotate logs instead of deleting
+scripts/cleanup.sh --all --yes     # Skip confirmation prompt
 ```
 
 ### Uninstalling
 
 ```sh
-./uninstall.sh                    # Interactive uninstall — confirms each step
-./uninstall.sh --clean-runtime    # Also remove models/jenova.gguf symlink
-./uninstall.sh --yes              # Non-interactive (skip confirmation)
+scripts/uninstall.sh                    # Interactive uninstall — confirms each step
+scripts/uninstall.sh --clean-runtime    # Also remove models/jenova.gguf symlink
+scripts/uninstall.sh --yes              # Non-interactive (skip confirmation)
 ```
 
 ## Environment Variables
@@ -472,7 +481,7 @@ If you launch `nvim` directly, you'll see warning messages from jenova-chat and 
 **Do not run scripts with sudo**. All Jenova commands should run as your regular user:
 
 ```bash
-./install.sh           # NOT: sudo ./install.sh
+scripts/install.sh     # NOT: sudo scripts/install.sh
 bin/jenova-ca --daemon # NOT: sudo bin/jenova-ca --daemon
 bin/jvim myfile.lua    # NOT: sudo bin/jvim myfile.lua
 ```
@@ -527,9 +536,9 @@ Increase BIOS UMA Frame Buffer Size to 4 GiB for better offload (adjusts VRAM av
 
 ### Path Resolution
 
-All scripts (`bin/jenova`, `bin/jvim`, `bin/jenova-ca`) automatically detect `JENOVA_ROOT` by resolving their own location. This works whether you:
+All scripts (`bin/jvim`, `bin/jenova-ca`) automatically detect `JENOVA_ROOT` by resolving their own location. This works whether you:
 - Run them from the project root: `./bin/jvim`
-- Run them via symlinks in PATH: `jvim` (after `./install.sh`)
+- Run them via symlinks in PATH: `jvim` (after `scripts/install.sh`)
 - Run them from any directory: `/full/path/to/bin/jvim`
 
 The `JENOVA_ROOT` environment variable is automatically set and exported before loading `etc/jenova.conf`.
