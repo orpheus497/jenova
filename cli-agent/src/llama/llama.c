@@ -102,12 +102,25 @@ char *jenova_llama_generate(uint32_t model_id, const char *prompt, const char *p
 }
 
 uint32_t jenova_llama_count_tokens(uint32_t model_id, const char *text) {
+    if (!text) return 0;
     for (int i = 0; i < 8; i++) {
         if (g_models[i].id == model_id && g_models[i].model) {
             return (uint32_t)(strlen(text) / 4);
         }
     }
     return 0;
+}
+
+int32_t jenova_llama_generate_stream(uint32_t model_id, const char *prompt,
+                                     const char *params_json,
+                                     jenova_llama_stream_cb cb, void *userdata) {
+    (void)params_json; (void)cb; (void)userdata;
+    for (int i = 0; i < 8; i++) {
+        if (g_models[i].id == model_id) {
+            return -1;
+        }
+    }
+    return -1;
 }
 
 #else /* No llama.cpp */
@@ -150,6 +163,7 @@ char *jenova_llama_list_models(void) {
 
     size_t capacity = 4096;
     char *result = malloc(capacity);
+    if (!result) return strdup("[]");
     strcpy(result, "[");
     size_t pos = 1;
     int first = 1;
@@ -166,7 +180,9 @@ char *jenova_llama_list_models(void) {
 
             while (pos + name_len + strlen(model_dirs[d]) + 32 > capacity) {
                 capacity *= 2;
-                result = realloc(result, capacity);
+                char *new_result = realloc(result, capacity);
+                if (!new_result) { free(result); return strdup("[]"); }
+                result = new_result;
             }
 
             if (!first) result[pos++] = ',';

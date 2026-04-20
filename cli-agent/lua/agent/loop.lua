@@ -53,8 +53,9 @@ function M.run(opts)
             return nil, "tool registry not available"
         end
 
+        local action_key = name .. ":" .. (json and json.stringify(arguments) or tostring(arguments))
+
         if memory and memory.was_action_tried then
-            local action_key = name .. ":" .. (json and json.stringify(arguments) or tostring(arguments))
             if memory.was_action_tried(action_key) then
                 return nil, "action already tried and failed"
             end
@@ -63,7 +64,6 @@ function M.run(opts)
         local result, err = tool_registry.execute(name, arguments)
 
         if memory and memory.record_action then
-            local action_key = name .. ":" .. (json and json.stringify(arguments) or tostring(arguments))
             memory.record_action(action_key, err == nil)
         end
 

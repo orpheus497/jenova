@@ -124,7 +124,7 @@ function embed.encode(text, task)
   local vec = data.embedding
   if not vec or #vec == 0 then return nil, "empty embedding vector in response" end
 
-  if DIMS == 768 and #vec ~= 768 then DIMS = #vec end
+  if not DIMS or DIMS == 0 or (DIMS ~= #vec) then DIMS = #vec end
   return vec, nil
 end
 

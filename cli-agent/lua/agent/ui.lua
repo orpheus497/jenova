@@ -23,14 +23,24 @@ local P = {
     white   = "\27[38;5;255m",
 }
 
+local _cached_width = nil
+local _cached_width_time = 0
+
 local function get_terminal_width()
+    local now = os.time()
+    if _cached_width and (now - _cached_width_time) < 5 then
+        return _cached_width
+    end
     local f = io.popen("tput cols 2>/dev/null")
     if f then
         local w = tonumber(f:read("*l"))
         f:close()
-        return w or 80
+        _cached_width = w or 80
+    else
+        _cached_width = 80
     end
-    return 80
+    _cached_width_time = now
+    return _cached_width
 end
 
 function M.show_header()

@@ -22,6 +22,7 @@ char *jenova_json_stringify(const char *json_str) {
     size_t in_len = strlen(json_str);
     size_t capacity = in_len * 2 + 128;
     char *out = malloc(capacity);
+    if (!out) return NULL;
     size_t pos = 0;
     int indent = 0;
     int in_string = 0;
@@ -31,7 +32,9 @@ char *jenova_json_stringify(const char *json_str) {
 
         if (pos + 64 > capacity) {
             capacity *= 2;
-            out = realloc(out, capacity);
+            char *new_out = realloc(out, capacity);
+            if (!new_out) { free(out); return NULL; }
+            out = new_out;
         }
 
         if (in_string) {

@@ -94,7 +94,9 @@ int32_t jenova_sandbox_validate_path(const char *path, const char *working_dir) 
     }
 
     if (realpath(path, resolved_path)) {
-        return strncmp(resolved_path, resolved_dir, strlen(resolved_dir)) == 0;
+        size_t dir_len = strlen(resolved_dir);
+        if (strncmp(resolved_path, resolved_dir, dir_len) != 0) return 0;
+        return resolved_path[dir_len] == '/' || resolved_path[dir_len] == '\0';
     }
 
     char parent[PATH_MAX];
@@ -105,11 +107,15 @@ int32_t jenova_sandbox_validate_path(const char *path, const char *working_dir) 
     if (last_slash) {
         *last_slash = '\0';
         if (realpath(parent, resolved_path)) {
-            return strncmp(resolved_path, resolved_dir, strlen(resolved_dir)) == 0;
+            size_t dir_len = strlen(resolved_dir);
+            if (strncmp(resolved_path, resolved_dir, dir_len) != 0) return 0;
+            return resolved_path[dir_len] == '/' || resolved_path[dir_len] == '\0';
         }
     }
 
-    return strncmp(path, working_dir, strlen(working_dir)) == 0;
+    size_t wd_len = strlen(working_dir);
+    if (strncmp(path, working_dir, wd_len) != 0) return 0;
+    return path[wd_len] == '/' || path[wd_len] == '\0';
 }
 
 int32_t jenova_sandbox_validate_command(const char *command) {

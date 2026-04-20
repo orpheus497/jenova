@@ -8,13 +8,18 @@
 #include <string.h>
 #include "jenova.h"
 
+static unsigned long g_mcp_next_id = 1;
+
 char *jenova_mcp_build_init_request(void) {
-    return strdup(
-        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\","
+    char buf[512];
+    unsigned long id = g_mcp_next_id++;
+    snprintf(buf, sizeof(buf),
+        "{\"jsonrpc\":\"2.0\",\"id\":%lu,\"method\":\"initialize\","
         "\"params\":{\"protocolVersion\":\"2024-11-05\","
         "\"capabilities\":{\"roots\":{\"listChanged\":true}},"
-        "\"clientInfo\":{\"name\":\"cli-agent\",\"version\":\"0.2.0\"}}}"
-    );
+        "\"clientInfo\":{\"name\":\"cli-agent\",\"version\":\"0.2.0\"}}}",
+        id);
+    return strdup(buf);
 }
 
 char *jenova_mcp_parse_message(const char *message) {
@@ -47,5 +52,20 @@ char *jenova_mcp_handle_message(const char *message) {
         return strdup(buf);
     }
 
-    return strdup("{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}");
+    const char *id_str = strstr(message, "\"id\"");
+    int id_found = 0;
+    int id_val = 0;
+    if (id_str) {
+        id_str = strchr(id_str + 4, ':');
+        if (id_str) { id_val = atoi(id_str + 1); id_found = 1; }
+    }
+    char buf[256];
+    if (id_found) {
+        snprintf(buf, sizeof(buf),
+            "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}", id_val);
+    } else {
+        snprintf(buf, sizeof(buf),
+            "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}");
+    }
+    return strdup(buf);
 }

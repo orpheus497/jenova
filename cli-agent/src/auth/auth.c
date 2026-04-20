@@ -22,17 +22,31 @@ static char *get_keys_dir(void) {
     return dir;
 }
 
+static int is_safe_provider_name(const char *name) {
+    if (!name || !*name) return 0;
+    for (const char *p = name; *p; p++) {
+        if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+              (*p >= '0' && *p <= '9') || *p == '_' || *p == '-')) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static char *get_key_path(const char *provider) {
+    if (!is_safe_provider_name(provider)) return NULL;
     char *dir = get_keys_dir();
+    if (!dir) return NULL;
     size_t len = strlen(dir) + strlen(provider) + 1;
     char *path = malloc(len);
+    if (!path) { free(dir); return NULL; }
     snprintf(path, len, "%s%s", dir, provider);
     free(dir);
     return path;
 }
 
 int32_t jenova_auth_validate_key(const char *provider, const char *key) {
-    if (!key || strlen(key) < 8) return 0;
+    if (!provider || !key || strlen(key) < 8) return 0;
 
     if (strcmp(provider, "anthropic") == 0) {
         return strncmp(key, "sk-ant-", 7) == 0;
@@ -77,9 +91,27 @@ char *jenova_auth_resolve_key(const char *provider) {
     return NULL;
 }
 
+static void mkdir_recursive(const char *path) {
+    if (!path) return;
+    char tmp[512];
+    strncpy(tmp, path, sizeof(tmp) - 1);
+    tmp[sizeof(tmp) - 1] = '\0';
+    for (char *p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = '\0';
+            mkdir(tmp, 0700);
+            *p = '/';
+        }
+    }
+    mkdir(tmp, 0700);
+}
+
 int32_t jenova_auth_store_key(const char *provider, const char *key) {
+    if (!provider || !key) return -1;
+    if (!is_safe_provider_name(provider)) return -1;
     char *dir = get_keys_dir();
-    mkdir(dir, 0700);
+    if (!dir) return -1;
+    mkdir_recursive(dir);
     free(dir);
 
     char *path = get_key_path(provider);

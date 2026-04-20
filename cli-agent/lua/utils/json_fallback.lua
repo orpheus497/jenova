@@ -31,7 +31,7 @@ end
 
 local function encode_table(t, indent, level)
     if next(t) == nil then
-        if is_array(t) then return "[]" else return "{}" end
+        return "{}"
     end
 
     level = level or 0

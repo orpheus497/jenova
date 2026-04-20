@@ -145,9 +145,11 @@ function M.build_context()
 end
 
 function M.save()
-    -- Persist to disk if configured
     local home = os.getenv("HOME") or "/tmp"
     local path = home .. "/.config/cli-agent/memory.json"
+
+    local dir = path:match("^(.*)/")
+    if dir then os.execute("mkdir -p " .. dir) end
 
     if json then
         local data = json.stringify({

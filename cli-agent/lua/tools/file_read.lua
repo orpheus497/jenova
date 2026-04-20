@@ -72,6 +72,7 @@ function M.call(args, context)
                 table.insert(lines, string.format("%d\t%s", n, line))
             else
                 truncated = true
+                break
             end
         end
     end

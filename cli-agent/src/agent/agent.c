@@ -24,6 +24,8 @@ typedef struct {
 static agent_state_t g_agent = {0};
 
 int32_t jenova_agent_init(const jenova_agent_config_t *config) {
+    if (!config) return -1;
+
     if (g_agent.initialized) {
         jenova_agent_shutdown();
     }

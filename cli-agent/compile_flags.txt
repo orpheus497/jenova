@@ -1,4 +1,4 @@
--I/home/orpheus497/Projects/jenova/cli-agent/include
+-I./include
 -Wall
 -Wextra
 -std=c11

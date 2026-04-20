@@ -1,4 +1,4 @@
-# --- Jenova CLI (git submodule) ---
+# --- Jenova CLI (external checkout, not tracked by parent repo) ---
 /jenova-cli/*
 !/jenova-cli/.gitkeep
 
