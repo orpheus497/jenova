@@ -63,7 +63,7 @@ function M.run(opts)
         local result, err = tool_registry.execute(name, arguments)
 
         if memory and memory.record_action then
-            local action_key = name .. ":" .. tostring(arguments)
+            local action_key = name .. ":" .. (json and json.stringify(arguments) or tostring(arguments))
             memory.record_action(action_key, err == nil)
         end
 
@@ -216,7 +216,9 @@ function M.run(opts)
         memory.save()
     end
 
-    jenova.agent.shutdown()
+    if jenova and jenova.agent and jenova.agent.shutdown then
+        jenova.agent.shutdown()
+    end
     return 0
 end
 

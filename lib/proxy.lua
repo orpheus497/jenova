@@ -381,14 +381,16 @@ local function proxy_connection(client_fd, conn_fds)
         if is_chunked then
             body_chunks[1] = body_raw
             body_total = #body_raw
-            while body_raw:sub(-5) ~= "0\r\n\r\n" do
+            local tail = body_raw:sub(-5)
+            while tail ~= "0\r\n\r\n" do
                 local n = async_recv(client_fd, buf, 8192)
                 if n <= 0 then break end
                 local chunk = ffi.string(buf, n)
                 body_chunks[#body_chunks + 1] = chunk
                 body_total = body_total + n
                 if body_total > MAX_BODY_SIZE then break end
-                body_raw = body_chunks[#body_chunks - 1]:sub(-5) .. chunk
+                local combined = table.concat(body_chunks)
+                tail = combined:sub(-5)
             end
             body_raw = decode_chunked_body(table.concat(body_chunks))
             body_chunks = nil
@@ -704,12 +706,13 @@ while running do
             io.write(string.format("[proxy] timeout: closing fd=%d age=%ds (limit=%ds)\n",
                 fd, age, COROUTINE_TIMEOUT))
             local fds = conn_fds_map[fd]
+            local closed_set = {}
             if fds then
-                if fds.llama >= 0 then pcall(ffi.C.close, fds.llama); fds.llama = -1 end
-                if fds.client >= 0 then pcall(ffi.C.close, fds.client); fds.client = -1 end
+                if fds.llama >= 0 then pcall(ffi.C.close, fds.llama); closed_set[fds.llama] = true; fds.llama = -1 end
+                if fds.client >= 0 then pcall(ffi.C.close, fds.client); closed_set[fds.client] = true; fds.client = -1 end
             end
-            pcall(ffi.C.close, fd)
-            if info.watch_fd and info.watch_fd ~= fd then
+            if not closed_set[fd] then pcall(ffi.C.close, fd) end
+            if info.watch_fd and info.watch_fd ~= fd and not closed_set[info.watch_fd] then
                 pcall(ffi.C.close, info.watch_fd)
             end
             active_connection_count = math.max(0, active_connection_count - 1)
@@ -722,12 +725,13 @@ end
 print("[proxy] Shutting down...")
 for fd, info in pairs(clients) do
     local fds = conn_fds_map[fd]
+    local closed_set = {}
     if fds then
-        if fds.llama >= 0 then pcall(ffi.C.close, fds.llama) end
-        if fds.client >= 0 then pcall(ffi.C.close, fds.client) end
+        if fds.llama >= 0 then pcall(ffi.C.close, fds.llama); closed_set[fds.llama] = true end
+        if fds.client >= 0 then pcall(ffi.C.close, fds.client); closed_set[fds.client] = true end
     end
-    pcall(ffi.C.close, fd)
-    if info.watch_fd and info.watch_fd ~= fd then
+    if not closed_set[fd] then pcall(ffi.C.close, fd) end
+    if info.watch_fd and info.watch_fd ~= fd and not closed_set[info.watch_fd] then
         pcall(ffi.C.close, info.watch_fd)
     end
 end

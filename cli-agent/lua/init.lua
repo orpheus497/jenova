@@ -292,6 +292,7 @@ local function run_mcp_server(opts)
                     protocolVersion = "2024-11-05",
                     capabilities = { tools = { listChanged = false } },
                     serverInfo = { name = "cli-agent", version = VERSION },
+                    tools = tool_list,
                 },
             }) .. "\n")
             io.flush()

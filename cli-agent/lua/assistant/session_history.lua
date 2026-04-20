@@ -18,10 +18,16 @@ function M.create_auth_ctx(session_id, oauth)
     }
 end
 
+local function url_encode(str)
+    return tostring(str):gsub("([^%w%-%._~])", function(c)
+        return string.format("%%%02X", string.byte(c))
+    end)
+end
+
 local function encode_query(params)
     local parts = {}
     for k, v in pairs(params) do
-        table.insert(parts, tostring(k) .. "=" .. tostring(v))
+        table.insert(parts, url_encode(tostring(k)) .. "=" .. url_encode(tostring(v)))
     end
     return table.concat(parts, "&")
 end
@@ -38,7 +44,10 @@ local function fetch_page(ctx, params, label)
     if not resp then
         return nil, label .. ": " .. tostring(err)
     end
-    local ok, body = pcall(json.parse, resp)
+    if resp.status and resp.status ~= 200 then
+        return nil, label .. ": HTTP " .. tostring(resp.status)
+    end
+    local ok, body = pcall(json.parse, resp.body or "")
     if not ok or type(body) ~= "table" then
         return nil, label .. ": invalid JSON response"
     end

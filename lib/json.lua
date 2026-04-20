@@ -74,11 +74,6 @@ function json.decode(s)
     pos = s:match('^%s*()', pos)
   end
 
-  local function peek()
-    skip_ws()
-    return s:sub(pos, pos)
-  end
-
   local decode_value
 
   local function decode_string()
@@ -106,15 +101,31 @@ function json.decode(s)
           local hex = s:sub(pos, pos + 3)
           pos = pos + 4
           local cp = tonumber(hex, 16)
+          if cp >= 0xD800 and cp <= 0xDBFF then
+            if s:sub(pos, pos + 1) == '\\u' then
+              local hex2 = s:sub(pos + 2, pos + 5)
+              local low = tonumber(hex2, 16)
+              if low and low >= 0xDC00 and low <= 0xDFFF then
+                pos = pos + 6
+                cp = 0x10000 + (cp - 0xD800) * 0x400 + (low - 0xDC00)
+              end
+            end
+          end
           if cp < 0x80 then
             parts[#parts+1] = string.char(cp)
           elseif cp < 0x800 then
             parts[#parts+1] = string.char(
               0xC0 + math.floor(cp / 64),
               0x80 + (cp % 64))
-          else
+          elseif cp < 0x10000 then
             parts[#parts+1] = string.char(
               0xE0 + math.floor(cp / 4096),
+              0x80 + math.floor((cp % 4096) / 64),
+              0x80 + (cp % 64))
+          else
+            parts[#parts+1] = string.char(
+              0xF0 + math.floor(cp / 262144),
+              0x80 + math.floor((cp % 262144) / 4096),
               0x80 + math.floor((cp % 4096) / 64),
               0x80 + (cp % 64))
           end

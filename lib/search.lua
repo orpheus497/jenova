@@ -115,7 +115,7 @@ local function chunk_text(content)
           chunk_word_count = chunk_word_count + 1
         end
       end
-      chunk_start = i - #overlap_lines + 1
+      chunk_start = i + 1 - #overlap_lines
     end
   end
 
