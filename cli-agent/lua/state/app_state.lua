@@ -112,7 +112,7 @@ function AppState.save_session(session_id)
     session_id = session_id or state.session_id
     if not session_id then return nil, "No active session" end
 
-    local json = (jenova and jenova.json) or require("utils.json_fallback")
+    local json = require("utils.json_fallback")
     local ok_dump, content = pcall(json.stringify, _snapshot())
     if not ok_dump then
         return nil, "Failed to serialize session: " .. tostring(content)
@@ -139,7 +139,7 @@ function AppState.load_session(session_id)
     local content = f:read("*a")
     f:close()
 
-    local json = (jenova and jenova.json) or require("utils.json_fallback")
+    local json = require("utils.json_fallback")
     local ok, data = pcall(json.parse, content)
     if not ok or type(data) ~= "table" then
         return nil, "Failed to parse session state"
@@ -215,9 +215,9 @@ function AppState.list_sessions()
                 capture_stdout = true,
                 capture_stderr = false,
             })
-            local res = jenova.process.spawn(config)
-            if res then
-                local pok, parsed = pcall(json.parse, res)
+            local res = jenova.process.spawn_json(config)
+            if res and type(res) == "table" then
+                local pok, parsed = true, res
                 if pok and parsed and parsed.exit_code == 0 then
                     for name in (parsed.stdout or ""):gmatch("[^\r\n]+") do
                         _add_if_session(name)
