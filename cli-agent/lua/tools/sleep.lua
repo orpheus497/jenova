@@ -20,7 +20,8 @@ end
 function M.check_permissions() return { allowed = true } end
 
 function M.call(args, ctx)
-    local seconds = args.seconds or 1
+    local seconds = tonumber(args.seconds) or 1
+    if not seconds then seconds = 1 end
     if seconds < 0 then seconds = 0 end
     if seconds > 300 then seconds = 300 end -- Cap at 5 minutes
 

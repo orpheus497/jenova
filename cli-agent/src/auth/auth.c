@@ -75,6 +75,7 @@ char *jenova_auth_resolve_key(const char *provider) {
     }
 
     char *path = get_key_path(provider);
+    if (!path) return NULL;
     FILE *f = fopen(path, "r");
     free(path);
     if (!f) return NULL;

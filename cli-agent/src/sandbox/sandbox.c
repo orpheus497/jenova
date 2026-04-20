@@ -155,6 +155,8 @@ int32_t jenova_sandbox_validate_path(const char *path, const char *working_dir) 
 
     size_t dir_len = strlen(resolved_dir);
     if (strncmp(candidate, resolved_dir, dir_len) != 0) return 0;
+    if (strstr(candidate, "/../") || (strlen(candidate) >= 3 &&
+        strcmp(candidate + strlen(candidate) - 3, "/..") == 0)) return 0;
     return candidate[dir_len] == '/' || candidate[dir_len] == '\0';
 }
 

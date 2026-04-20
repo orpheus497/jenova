@@ -338,6 +338,7 @@ jenova_process_result_t *jenova_process_spawn_json(const char *config_json) {
     if (!config_json) return NULL;
 
     char *command = json_extract_string(config_json, "command");
+    if (!command) command = json_extract_string(config_json, "cmd");
     if (!command) return NULL;
 
     char *args_cmd = json_extract_args_command(config_json);

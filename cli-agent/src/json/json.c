@@ -94,36 +94,71 @@ char *jenova_json_stringify(const char *json_str) {
     return out;
 }
 
+static const char *json_skip_ws(const char *p) {
+    while (*p && isspace((unsigned char)*p)) p++;
+    return p;
+}
+
+static const char *json_find_string_end(const char *p) {
+    while (*p) {
+        if (*p == '\\') {
+            p++;
+            if (!*p) return NULL;
+        } else if (*p == '"') {
+            return p;
+        }
+        p++;
+    }
+    return NULL;
+}
+
+static int json_key_matches(const char *start, const char *end, const char *key) {
+    size_t len = (size_t)(end - start);
+    return strlen(key) == len && strncmp(start, key, len) == 0;
+}
+
 char *jenova_json_get(const char *json_str, const char *path) {
     if (!json_str || !path) return NULL;
 
-    char key[256];
-    snprintf(key, sizeof(key), "\"%s\"", path);
+    const char *p = json_str;
+    while (*p) {
+        if (*p == '"') {
+            const char *key_start = p + 1;
+            const char *key_end = json_find_string_end(key_start);
+            if (!key_end) return NULL;
 
-    const char *found = strstr(json_str, key);
-    if (!found) return NULL;
+            const char *after_key = json_skip_ws(key_end + 1);
+            if (*after_key == ':' && json_key_matches(key_start, key_end, path)) {
+                const char *value_start = json_skip_ws(after_key + 1);
+                if (!*value_start) return NULL;
 
-    found += strlen(key);
-    while (*found && (*found == ' ' || *found == ':')) found++;
-
-    if (*found == '"') {
-        found++;
-        const char *end = strchr(found, '"');
-        if (!end) return NULL;
-        size_t len = (size_t)(end - found);
-        char *result = malloc(len + 1);
-        memcpy(result, found, len);
-        result[len] = '\0';
-        return result;
+                if (*value_start == '"') {
+                    const char *value_end = json_find_string_end(value_start + 1);
+                    if (!value_end) return NULL;
+                    size_t len = (size_t)(value_end - (value_start + 1));
+                    char *result = malloc(len + 1);
+                    if (!result) return NULL;
+                    memcpy(result, value_start + 1, len);
+                    result[len] = '\0';
+                    return result;
+                } else {
+                    const char *end = value_start;
+                    while (*end && *end != ',' && *end != '}' && *end != ']') end++;
+                    while (end > value_start && isspace((unsigned char)*(end - 1))) end--;
+                    size_t len = (size_t)(end - value_start);
+                    char *result = malloc(len + 1);
+                    if (!result) return NULL;
+                    memcpy(result, value_start, len);
+                    result[len] = '\0';
+                    return result;
+                }
+            }
+            p = key_end + 1;
+            continue;
+        }
+        p++;
     }
-
-    const char *end = found;
-    while (*end && *end != ',' && *end != '}' && *end != ']' && *end != '\n') end++;
-    size_t len = (size_t)(end - found);
-    char *result = malloc(len + 1);
-    memcpy(result, found, len);
-    result[len] = '\0';
-    return result;
+    return NULL;
 }
 
 void jenova_json_free(char *ptr) {

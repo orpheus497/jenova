@@ -12,18 +12,23 @@
 #include <unistd.h>
 #include "jenova.h"
 
+#ifndef HAS_OPENSSL
 #ifdef __has_include
 #if __has_include(<openssl/sha.h>)
 #define HAS_OPENSSL 1
+#else
+#define HAS_OPENSSL 0
+#endif
+#else
+#define HAS_OPENSSL 0
+#endif
+#endif
+
+#if HAS_OPENSSL
 #include <openssl/sha.h>
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
 #include <openssl/evp.h>
-#endif
-#endif
-
-#ifndef HAS_OPENSSL
-#define HAS_OPENSSL 0
 #endif
 
 static void hex_encode(const unsigned char *data, size_t len, char *out) {
@@ -50,35 +55,35 @@ static int get_random_bytes(unsigned char *buf, size_t len) {
 char *jenova_crypto_sha256(const char *input) {
     if (!input) return NULL;
 
-    unsigned char hash[32];
-#if HAS_OPENSSL
-    SHA256((const unsigned char *)input, strlen(input), hash);
+#if !HAS_OPENSSL
+    (void)input;
+    return NULL;
 #else
-    memset(hash, 0, sizeof(hash));
-    size_t len = strlen(input);
-    for (size_t i = 0; i < len && i < 32; i++) {
-        hash[i] = (unsigned char)input[i];
-    }
-#endif
-
+    unsigned char hash[32];
+    SHA256((const unsigned char *)input, strlen(input), hash);
     char *hex = malloc(65);
+    if (!hex) return NULL;
     hex_encode(hash, 32, hex);
     return hex;
+#endif
 }
 
 char *jenova_crypto_hmac_sha256(const char *key, const char *data) {
     if (!key || !data) return NULL;
 
-#if HAS_OPENSSL
+#if !HAS_OPENSSL
+    (void)key;
+    (void)data;
+    return NULL;
+#else
     unsigned char result[32];
     unsigned int result_len = 32;
     HMAC(EVP_sha256(), key, (int)strlen(key),
          (const unsigned char *)data, strlen(data), result, &result_len);
     char *hex = malloc(65);
+    if (!hex) return NULL;
     hex_encode(result, 32, hex);
     return hex;
-#else
-    return jenova_crypto_sha256(data);
 #endif
 }
 
@@ -164,7 +169,9 @@ char *jenova_crypto_base64_decode(const char *input, size_t *out_len) {
         int c = (input[i+2] == '=') ? 0 : b64_decode_char(input[i+2]);
         int d = (input[i+3] == '=') ? 0 : b64_decode_char(input[i+3]);
 
-        if (a < 0 || b < 0) { free(out); return NULL; }
+        if (a < 0 || b < 0 ||
+            (input[i+2] != '=' && c < 0) ||
+            (input[i+3] != '=' && d < 0)) { free(out); return NULL; }
 
         uint32_t n = ((uint32_t)a << 18) | ((uint32_t)b << 12) | ((uint32_t)c << 6) | (uint32_t)d;
         if (j < decoded_len) out[j++] = (char)((n >> 16) & 0xff);
