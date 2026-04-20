@@ -13,14 +13,13 @@ MOUNT_DIR="/mnt/jenova-models"
 validate_size() {
     local size="$1"
     case "$size" in
-        *[!0-9G]*) return 1 ;;
-        [0-9]*G) return 0 ;;
-        *) return 1 ;;
+    *[!0-9G]*) return 1 ;;
+    [0-9]*G) return 0 ;;
+    *) return 1 ;;
     esac
 }
 
-
-SIZE="${1:-8G}"
+SIZE="${1:-5G}"
 if ! validate_size "$SIZE"; then
     echo "Error: Invalid size format for '$SIZE'. Use format like '8G'." >&2
     exit 1

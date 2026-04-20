@@ -291,16 +291,19 @@ function M.check()
   local models = {
     {
       path = agent_model_path,
+      subdir = "agent",
       label = model_label("Agent model", agent_model_path),
       required = true,
     },
     {
       path = embed_model_path,
+      subdir = "embed",
       label = model_label("Embedding model", embed_model_path),
       required = true,
     },
     {
       path = draft_model_path,
+      subdir = "draft",
       label = model_label("Draft model", draft_model_path, " — speculative decoding"),
       required = false,
     },
@@ -316,7 +319,8 @@ function M.check()
         h.warn(m.label .. " — file exists but is very small (" .. math.floor(size_bytes / 1024) .. " KB); may be corrupted")
       end
     elseif m.required then
-      h.error(m.label .. " — NOT FOUND at " .. m.path, "Download the model GGUF and place it in " .. jenova_root .. "/models/")
+      local location = m.path ~= "" and (" at " .. m.path) or ("; searched models/" .. m.subdir .. "/ and legacy path")
+      h.error(m.label .. " — NOT FOUND" .. location, "Download the model GGUF and place it in " .. jenova_root .. "/models/")
     else
       h.warn(m.label .. " — not found (optional)", "Speculative decoding disabled. Run: tests/download-draft-model.sh")
     end

@@ -25,7 +25,7 @@ hardware-profiles/
 │   └── apu/
 ├── Optane/                        # Intel Optane NVMe swap-backed
 │   ├── dgpu_igpu/
-│   │   └── i5-1135g7-7b/         # 7B Q5_K_M, dual GPU + Optane swap
+│   │   └── i5-1135g7-7b/         # 7B, dual GPU + Optane swap
 │   ├── dgpu/
 │   │   ├── i5-1135g7-3b/         # 3B Q8_0, GTX 1650 Ti only + Optane
 │   │   └── i5-1135g7-7b/         # 7B Q5_K_M, partial offload + Optane
@@ -94,8 +94,8 @@ Best-quality Jenova agent for systems with a capable GPU. 10+ GiB VRAM recommend
 
 ---
 
-### 4. `Optane/dgpu_igpu/i5-1135g7-7b` — 7B Q5_K_M, dual GPU + Optane swap
-**Model:** Qwen2.5-Coder-7B-Instruct-Q5_K_M (~4.8 GiB)
+### 4. `Optane/dgpu_igpu/i5-1135g7-7b` — 7B, dual GPU + Optane swap
+**Model:** 7B Jenova agent model (resolved from `models/agent`)
 **Hardware:** Intel i5-1135G7 | GTX 1650 Ti 4GB + Intel Iris Xe ~7GB UMA | 16GB RAM | Intel Optane NVMe
 **OS:** FreeBSD 15
 **Strategy:** Full dual-GPU offload with speculative decoding; Optane swap-backed mdmfs for fast model loading and KV overflow
@@ -171,7 +171,7 @@ sudo hardware-profiles/Optane/dgpu/i5-1135g7-7b/jenova-setup
 | `Intel/dgpu_igpu/i5-1135g7-3b` | Qwen2.5-Coder-3B | Q8_0 | ~11 GiB dual GPU | 32K | Yes (Vulkan1) |
 | `AMD/apu/ryzen7-5700u-3b` | Qwen2.5-Coder-3B | Q8_0 | ~2-4 GiB UMA (partial) | 16K | Yes |
 | `Vulkan/dgpu/full-offload-14b` | Qwen2.5-Coder-14B | Q4_K_M | 8+ GiB (10+ rec.) | 32K | Yes |
-| `Optane/dgpu_igpu/i5-1135g7-7b` | Qwen2.5-Coder-7B | Q5_K_M | ~11 GiB dual GPU | 32K | Yes (Vulkan1) |
+| `Optane/dgpu_igpu/i5-1135g7-7b` | Qwen2.5-Coder-7B | auto | ~11 GiB dual GPU | 32K | Yes (Vulkan1) |
 | `Optane/dgpu/i5-1135g7-3b` | Qwen2.5-Coder-3B | Q8_0 | 4 GiB dGPU only | 16K | Yes (shared) |
 | `Optane/dgpu/i5-1135g7-7b` | Qwen2.5-Coder-7B | Q5_K_M | 4 GiB dGPU (partial) | 8K | No |
 
