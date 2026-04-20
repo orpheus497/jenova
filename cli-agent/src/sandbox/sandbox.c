@@ -140,7 +140,7 @@ int32_t jenova_sandbox_validate_command(const char *command) {
     for (const char *p = command; *p; p++) {
         if (*p == ';' || *p == '`' || *p == '\n' || *p == '\r') return 0;
         if (*p == '|') return 0;
-        if (*p == '&' && *(p+1) == '&') return 0;
+        if (*p == '&') return 0;
         if (*p == '>' || *p == '<') return 0;
     }
 

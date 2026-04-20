@@ -15,6 +15,8 @@
 #include <fcntl.h>
 #include <time.h>
 #include <limits.h>
+#include <ftw.h>
+#include <fnmatch.h>
 #include <glob.h>
 #include "jenova.h"
 
@@ -151,19 +153,7 @@ char *jenova_fs_edit(const char *path, const char *old_string,
     return strdup(response);
 }
 
-static int has_shell_metachar(const char *s) {
-    while (*s) {
-        switch (*s) {
-            case '\'': case '"': case '\\': case '`':
-            case '$': case '&': case '|': case ';':
-            case '<': case '>': case '(': case ')':
-            case '{': case '}': case '\n': case '\r':
-                return 1;
-        }
-        s++;
-    }
-    return 0;
-}
+
 
 static int shell_quote(const char *src, char *dst, size_t dst_size) {
     if (!src || !dst || dst_size < 3) return -1;
@@ -221,57 +211,67 @@ static char *json_escape_string(const char *src) {
     return result;
 }
 
+static struct {
+    const char *pattern;
+    char *result;
+    size_t capacity;
+    size_t pos;
+    int count;
+    int limit;
+    int first;
+} glob_ctx;
+
+static int glob_nftw_cb(const char *fpath, const struct stat *sb,
+                        int typeflag, struct FTW *ftwbuf) {
+    (void)sb; (void)ftwbuf;
+    if (typeflag != FTW_F) return 0;
+    if (glob_ctx.count >= glob_ctx.limit) return 0;
+
+    const char *basename = strrchr(fpath, '/');
+    basename = basename ? basename + 1 : fpath;
+
+    if (fnmatch(glob_ctx.pattern, basename, 0) != 0) return 0;
+
+    char *escaped = json_escape_string(fpath);
+    if (!escaped) return 0;
+    size_t len = strlen(escaped);
+
+    while (glob_ctx.pos + len + 8 > glob_ctx.capacity) {
+        glob_ctx.capacity *= 2;
+        glob_ctx.result = safe_realloc(glob_ctx.result, glob_ctx.capacity);
+        if (!glob_ctx.result) { free(escaped); return 1; }
+    }
+
+    if (!glob_ctx.first) glob_ctx.result[glob_ctx.pos++] = ',';
+    glob_ctx.result[glob_ctx.pos++] = '"';
+    memcpy(glob_ctx.result + glob_ctx.pos, escaped, len);
+    glob_ctx.pos += len;
+    glob_ctx.result[glob_ctx.pos++] = '"';
+    glob_ctx.first = 0;
+    glob_ctx.count++;
+    free(escaped);
+    return 0;
+}
+
 char *jenova_fs_glob(const char *pattern, const char *root, int32_t max_results) {
     if (!pattern || !root) return NULL;
-    if (has_shell_metachar(root)) return strdup("[]");
 
-    char glob_pattern[PATH_MAX];
-    snprintf(glob_pattern, sizeof(glob_pattern), "%s/**/%s", root, pattern);
+    glob_ctx.pattern = pattern;
+    glob_ctx.limit = max_results > 0 ? max_results : 500;
+    glob_ctx.capacity = 4096;
+    glob_ctx.result = malloc(glob_ctx.capacity);
+    if (!glob_ctx.result) return strdup("[]");
+    glob_ctx.result[0] = '[';
+    glob_ctx.pos = 1;
+    glob_ctx.first = 1;
+    glob_ctx.count = 0;
 
-    glob_t globbuf;
-    int flags = GLOB_NOSORT;
-#ifdef GLOB_BRACE
-    flags |= GLOB_BRACE;
-#endif
+    nftw(root, glob_nftw_cb, 20, FTW_PHYS);
 
-    int ret = glob(glob_pattern, flags, NULL, &globbuf);
-    if (ret != 0 && ret != GLOB_NOMATCH) {
-        snprintf(glob_pattern, sizeof(glob_pattern), "%s/%s", root, pattern);
-        ret = glob(glob_pattern, flags, NULL, &globbuf);
-    }
-
-    if (ret != 0) return strdup("[]");
-
-    int limit = max_results > 0 ? max_results : 500;
-    size_t capacity = 4096;
-    char *result = malloc(capacity);
-    if (!result) { globfree(&globbuf); return strdup("[]"); }
-    strcpy(result, "[");
-    size_t pos = 1;
-    int first = 1;
-
-    for (size_t i = 0; i < globbuf.gl_pathc && i < (size_t)limit; i++) {
-        const char *path = globbuf.gl_pathv[i];
-        size_t len = strlen(path);
-
-        while (pos + len + 8 > capacity) {
-            capacity *= 2;
-            result = safe_realloc(result, capacity);
-            if (!result) { globfree(&globbuf); return strdup("[]"); }
-        }
-
-        if (!first) result[pos++] = ',';
-        result[pos++] = '"';
-        memcpy(result + pos, path, len);
-        pos += len;
-        result[pos++] = '"';
-        first = 0;
-    }
-    globfree(&globbuf);
-
-    result[pos++] = ']';
-    result[pos] = '\0';
-    return result;
+    if (!glob_ctx.result) return strdup("[]");
+    glob_ctx.result[glob_ctx.pos++] = ']';
+    glob_ctx.result[glob_ctx.pos] = '\0';
+    return glob_ctx.result;
 }
 
 char *jenova_fs_grep(const char *pattern, const char *root,
