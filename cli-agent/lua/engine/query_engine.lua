@@ -175,78 +175,33 @@ end
 
 -- ── Streaming Response Handler ────────────────────────────────────────
 
-function QueryEngine:handle_streaming_response(response_stream)
-    local current_text = ""
-    local current_thinking = ""
+-- Converts an OpenAI-style structured result { content, tool_calls, finish_reason }
+-- into the internal { text, thinking, tool_uses, stop_reason } shape used by the query loop.
+function QueryEngine:handle_response(result)
+    local current_text = result.content or ""
+    local stop_reason = result.finish_reason or "end_turn"
     local tool_uses = {}
-    local stop_reason = nil
 
-    for event in response_stream do
-        if event.type == "message_start" then
-            -- Track usage from message start
-            if event.message and event.message.usage then
-                self.total_input_tokens = self.total_input_tokens + (event.message.usage.input_tokens or 0)
-            end
+    if current_text and #current_text > 0 then
+        self.on_text(current_text)
+    end
 
-        elseif event.type == "content_block_start" then
-            local block = event.content_block
-            if block.type == "text" then
-                current_text = ""
-            elseif block.type == "thinking" then
-                current_thinking = ""
-            elseif block.type == "tool_use" then
-                table.insert(tool_uses, {
-                    id = block.id,
-                    name = block.name,
-                    input = {}
-                })
-            end
-
-        elseif event.type == "content_block_delta" then
-            local delta = event.delta
-            if delta.type == "text_delta" then
-                current_text = current_text .. delta.text
-                self.on_text(delta.text)
-            elseif delta.type == "thinking_delta" then
-                current_thinking = current_thinking .. delta.thinking
-                if self.thinking_enabled then
-                    self.on_thinking(delta.thinking)
-                end
-            elseif delta.type == "input_json_delta" then
-                -- Accumulate tool input JSON
-                local last_tool = tool_uses[#tool_uses]
-                if last_tool then
-                    last_tool.input_json = (last_tool.input_json or "") .. delta.partial_json
-                end
-            end
-
-        elseif event.type == "content_block_stop" then
-            -- Finalize the current block
-            if #tool_uses > 0 then
-                local last_tool = tool_uses[#tool_uses]
-                if last_tool.input_json then
-                    last_tool.input = json_codec.parse(last_tool.input_json) or {}
-                    last_tool.input_json = nil
-                end
-            end
-
-        elseif event.type == "message_delta" then
-            if event.delta and event.delta.stop_reason then
-                stop_reason = event.delta.stop_reason
-            end
-            if event.usage then
-                self.total_output_tokens = self.total_output_tokens + (event.usage.output_tokens or 0)
-            end
-
-        elseif event.type == "message_stop" then
-            -- Final message stop
-            break
+    local tool_calls = result.tool_calls
+    if tool_calls and #tool_calls > 0 then
+        for idx, tc in ipairs(tool_calls) do
+            local fn = tc["function"] or tc
+            local name = fn.name or ""
+            local args_raw = fn.arguments or fn.parameters or "{}"
+            local input = type(args_raw) == "table" and args_raw
+                or (json_codec.parse(args_raw) or {})
+            local id = tc.id or string.format("tc-%d", idx)
+            table.insert(tool_uses, { id = id, name = name, input = input })
         end
     end
 
     -- Stage 2 fallback: parse tool calls embedded in text content.
-    -- Handles local models that emit JSON in content rather than tool_use blocks.
-    if #tool_uses == 0 and #current_text > 0 then
+    -- Handles local models that emit JSON in content rather than structured tool_calls.
+    if #tool_uses == 0 and current_text and #current_text > 0 then
         local extracted = parse_text_tool_calls(current_text)
         if #extracted > 0 then
             tool_uses = extracted
@@ -256,7 +211,7 @@ function QueryEngine:handle_streaming_response(response_stream)
 
     return {
         text = current_text,
-        thinking = current_thinking,
+        thinking = "",
         tool_uses = tool_uses,
         stop_reason = stop_reason
     }
