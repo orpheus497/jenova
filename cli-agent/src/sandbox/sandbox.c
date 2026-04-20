@@ -26,6 +26,18 @@ static const char *blocked_patterns[] = {
     "> /dev/sd",
     "chmod 777 /",
     "chown root",
+    /* Writing to critical system files. The substring "/etc/passwd"
+     * after `>`/`>>` would be ideal, but strstr can match regardless
+     * of direction — any command mentioning these paths for write
+     * intent should already be running under different privileges. */
+    ">/etc/passwd",
+    "> /etc/passwd",
+    ">>/etc/passwd",
+    ">> /etc/passwd",
+    ">/etc/shadow",
+    "> /etc/shadow",
+    ">>/etc/shadow",
+    ">> /etc/shadow",
     NULL
 };
 
@@ -137,11 +149,16 @@ int32_t jenova_sandbox_validate_command(const char *command) {
 
     if (contains_obfuscation(command)) return 0;
 
+    /* CR/LF in a command argument is almost always a log-injection attempt
+     * or a multi-command smuggle — reject. Backticks allow arbitrary
+     * subshell execution without the `$(...)` form the obfuscation check
+     * inspects, so keep them off the allowlist as well. Shell composition
+     * characters (`&`, `;`, `|`, `>`, `<`, `$`) are intentionally allowed
+     * — blocked_patterns/blocked_substrings below handle the dangerous
+     * combinations, and real coding workflows require pipes and chains
+     * (e.g. "git add . && git commit", "cat file | head"). */
     for (const char *p = command; *p; p++) {
-        if (*p == ';' || *p == '`' || *p == '$' || *p == '\n' || *p == '\r') return 0;
-        if (*p == '|') return 0;
-        if (*p == '&') return 0;
-        if (*p == '>' || *p == '<') return 0;
+        if (*p == '\n' || *p == '\r' || *p == '`') return 0;
     }
 
     char *normalized = normalize_command(command);
@@ -158,6 +175,34 @@ int32_t jenova_sandbox_validate_command(const char *command) {
         if (strstr(normalized, blocked_substrings[i]) != NULL) {
             free(normalized);
             return 0;
+        }
+    }
+
+    /* Detect the "curl/wget <URL> | sh/bash" remote-execution pattern even
+     * when the URL sits between the fetcher and the pipe. Any command that
+     * both contains a URL fetcher and pipes into a shell is almost
+     * certainly a remote-install-script. */
+    int has_fetcher = (strstr(normalized, "curl") != NULL) ||
+                      (strstr(normalized, "wget") != NULL);
+    if (has_fetcher) {
+        const char *shell_pipes[] = {
+            "|sh", "| sh", "|bash", "| bash", "|zsh", "| zsh", NULL
+        };
+        for (int i = 0; shell_pipes[i]; i++) {
+            const char *hit = strstr(normalized, shell_pipes[i]);
+            if (hit) {
+                /* Avoid false positives like "|shred" by requiring the
+                 * matched token to end the string or be followed by a
+                 * space, newline, or redirection/pipe char. */
+                size_t tok_len = strlen(shell_pipes[i]);
+                char next = hit[tok_len];
+                if (next == '\0' || next == ' ' || next == '\t' ||
+                    next == '\n' || next == '|' || next == ';' ||
+                    next == '&' || next == '>') {
+                    free(normalized);
+                    return 0;
+                }
+            }
         }
     }
 

@@ -1,7 +1,6 @@
 -- tools/file_read.lua — FileReadTool: Read file contents
--- Uses jenova.fs (Rust FFI) for line-numbered output with offset/limit.
-
-local json = require("utils.json_fallback")
+-- Pure-Lua implementation: emits "<line_no>\t<line>" for each line, honoring
+-- offset (lines to skip, 0-based) and limit (max lines to return, default 2000).
 
 local M = {}
 M.name = "Read"
@@ -30,28 +29,9 @@ function M.call(args, context)
     local path = args.file_path
     if not path then return { type = "error", error = "No file path provided" } end
 
-    -- Use Rust FFI (preferred)
-    if jenova and jenova.fs and jenova.fs.read then
-        local offset = args.offset or 0
-        local limit = args.limit or 2000
-        local result_json = jenova.fs.read(path, offset, limit)
-        if result_json then
-            local ok, result = pcall(json.parse, result_json)
-            if ok and result then
-                if result.error then
-                    return { type = "error", error = result.error }
-                end
-                return {
-                    type = "text",
-                    text = result.content or "",
-                    num_lines = result.total_lines or 0,
-                    truncated = result.truncated or false,
-                }
-            end
-        end
-    end
-
-    -- Fallback: pure Lua file reading
+    -- Pure-Lua reader: keeps the line-number format ("%d\t%s") consistent
+    -- regardless of whether the FFI layer is available. The C jenova.fs.read
+    -- produces "%6d|%s" output which would diverge from the fallback path.
     local f = io.open(path, "r")
     if not f then return { type = "error", error = "Cannot open: " .. path } end
 

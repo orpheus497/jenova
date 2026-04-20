@@ -4,6 +4,15 @@
  * Uses POSIX APIs and optionally spawns external tools (grep/find).
  */
 
+/* nftw()/FTW_PHYS live behind _XOPEN_SOURCE=500 on glibc; realpath needs
+ * _DEFAULT_SOURCE. Define before any system header include. */
+#ifndef _XOPEN_SOURCE
+#define _XOPEN_SOURCE 500
+#endif
+#ifndef _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -213,6 +222,18 @@ static char *json_escape_string(const char *src) {
 
 static struct {
     const char *pattern;
+    const char *root;
+    size_t root_len;
+    /* pattern_tail points at the portion of the pattern after any leading
+     * "**" segment, e.g. "**\/*.lua" → "*.lua". When the pattern has no
+     * "**" component this equals `pattern`. */
+    const char *pattern_tail;
+    /* has_slash: pattern contains a path separator, meaning fnmatch should
+     * consider the relative path, not just the basename. */
+    int has_slash;
+    /* has_doublestar: pattern contains "**" — recursive match, fall back
+     * to basename-only matching using pattern_tail. */
+    int has_doublestar;
     char *result;
     size_t capacity;
     size_t pos;
@@ -230,7 +251,27 @@ static int glob_nftw_cb(const char *fpath, const struct stat *sb,
     const char *basename = strrchr(fpath, '/');
     basename = basename ? basename + 1 : fpath;
 
-    if (fnmatch(glob_ctx.pattern, basename, 0) != 0) return 0;
+    /* Compute the relative path below `root` for patterns containing a
+     * path separator. If the file path doesn't start with root (unlikely
+     * given nftw traversal) fall back to the full fpath. */
+    const char *rel = fpath;
+    if (glob_ctx.root_len > 0 &&
+        strncmp(fpath, glob_ctx.root, glob_ctx.root_len) == 0) {
+        rel = fpath + glob_ctx.root_len;
+        while (*rel == '/') rel++;
+    }
+
+    int matched;
+    if (glob_ctx.has_doublestar) {
+        /* Recursive glob: match the trailing component against basename. */
+        matched = (fnmatch(glob_ctx.pattern_tail, basename, 0) == 0);
+    } else if (glob_ctx.has_slash) {
+        /* Anchored pattern (e.g. src/foo.c) — match the relative path. */
+        matched = (fnmatch(glob_ctx.pattern, rel, FNM_PATHNAME) == 0);
+    } else {
+        matched = (fnmatch(glob_ctx.pattern, basename, 0) == 0);
+    }
+    if (!matched) return 0;
 
     char *escaped = json_escape_string(fpath);
     if (!escaped) return 0;
@@ -257,6 +298,19 @@ char *jenova_fs_glob(const char *pattern, const char *root, int32_t max_results)
     if (!pattern || !root) return NULL;
 
     glob_ctx.pattern = pattern;
+    glob_ctx.root = root;
+    glob_ctx.root_len = strlen(root);
+    /* Strip trailing slash from root so the relative-path computation
+     * doesn't leave an empty component. */
+    while (glob_ctx.root_len > 0 && root[glob_ctx.root_len - 1] == '/') {
+        glob_ctx.root_len--;
+    }
+    glob_ctx.has_slash = (strchr(pattern, '/') != NULL);
+    glob_ctx.has_doublestar = (strstr(pattern, "**") != NULL);
+    /* pattern_tail: text after the last '/' in the pattern, used for
+     * basename matching when "**" is present. */
+    const char *last_slash = strrchr(pattern, '/');
+    glob_ctx.pattern_tail = last_slash ? last_slash + 1 : pattern;
     glob_ctx.limit = max_results > 0 ? max_results : 500;
     glob_ctx.capacity = 4096;
     glob_ctx.result = malloc(glob_ctx.capacity);
@@ -285,48 +339,93 @@ char *jenova_fs_grep(const char *pattern, const char *root,
         if (shell_quote(file_glob, q_glob, sizeof(q_glob)) != 0) return strdup("[]");
     }
 
-    char cmd[4096];
+    /* Use `-rHn` so every match is printed as "file:line_number:content",
+     * which we parse into structured JSON for the Lua layer. -F is dropped
+     * so Perl-compatible regex (patterns like "(?i)…") work. */
+    int cap = max_results > 0 ? max_results : 200;
+    char cmd[8192];
     if (file_glob) {
         snprintf(cmd, sizeof(cmd),
-                 "grep -rlF --include=%s -- %s %s 2>/dev/null | head -n %d",
-                 q_glob, q_pattern, q_root, max_results > 0 ? max_results : 200);
+                 "grep -rHnP --include=%s -- %s %s 2>/dev/null | head -n %d",
+                 q_glob, q_pattern, q_root, cap);
     } else {
         snprintf(cmd, sizeof(cmd),
-                 "grep -rlF -- %s %s 2>/dev/null | head -n %d",
-                 q_pattern, q_root, max_results > 0 ? max_results : 200);
+                 "grep -rHnP -- %s %s 2>/dev/null | head -n %d",
+                 q_pattern, q_root, cap);
     }
 
     FILE *p = popen(cmd, "r");
     if (!p) return strdup("[]");
 
-    size_t capacity = 4096;
+    size_t capacity = 8192;
     char *result = malloc(capacity);
     if (!result) { pclose(p); return strdup("[]"); }
     strcpy(result, "[");
     size_t pos = 1;
     int first = 1;
 
-    char line[PATH_MAX];
+    /* grep output can exceed PATH_MAX when lines are long; use a larger buffer. */
+    char line[16384];
     while (fgets(line, sizeof(line), p)) {
         size_t len = strlen(line);
         while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) line[--len] = '\0';
         if (len == 0) continue;
 
-        while (pos + len + 8 > capacity) {
-            capacity *= 2;
-            result = safe_realloc(result, capacity);
-            if (!result) { pclose(p); return strdup("[]"); }
+        /* Parse "file:line:content". The filename may contain ':', so we
+         * scan for the first ':' followed by digits followed by ':'. */
+        char *first_colon = strchr(line, ':');
+        if (!first_colon) continue;
+        char *scan = first_colon;
+        char *line_num_end = NULL;
+        while (scan) {
+            char *digits = scan + 1;
+            char *after = digits;
+            while (*after >= '0' && *after <= '9') after++;
+            if (after > digits && *after == ':') {
+                line_num_end = after;
+                first_colon = scan;
+                break;
+            }
+            scan = strchr(scan + 1, ':');
+        }
+        if (!line_num_end) continue;
+
+        *first_colon = '\0';
+        char *line_num_str = first_colon + 1;
+        *line_num_end = '\0';
+        const char *content = line_num_end + 1;
+
+        char *esc_file = json_escape_string(line);
+        char *esc_content = json_escape_string(content);
+        if (!esc_file || !esc_content) {
+            free(esc_file); free(esc_content);
+            continue;
         }
 
-        if (!first) result[pos++] = ',';
-        result[pos++] = '"';
-        memcpy(result + pos, line, len);
-        pos += len;
-        result[pos++] = '"';
+        size_t entry_cap = strlen(esc_file) + strlen(esc_content) + strlen(line_num_str) + 64;
+        while (pos + entry_cap > capacity) {
+            capacity *= 2;
+            result = safe_realloc(result, capacity);
+            if (!result) {
+                free(esc_file); free(esc_content);
+                pclose(p); return strdup("[]");
+            }
+        }
+
+        int written = snprintf(result + pos, capacity - pos,
+                               "%s{\"file\":\"%s\",\"line_number\":%s,\"content\":\"%s\"}",
+                               first ? "" : ",", esc_file, line_num_str, esc_content);
+        if (written > 0) pos += (size_t)written;
         first = 0;
+        free(esc_file);
+        free(esc_content);
     }
     pclose(p);
 
+    if (pos + 2 > capacity) {
+        result = safe_realloc(result, pos + 2);
+        if (!result) return strdup("[]");
+    }
     result[pos++] = ']';
     result[pos] = '\0';
     return result;

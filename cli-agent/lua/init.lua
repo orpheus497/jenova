@@ -290,6 +290,14 @@ local function run_mcp_server(opts)
     local json = require("utils.json_fallback")
     local tool_registry = require("tools.registry")
 
+    -- MCP clients are expected to mediate permissions themselves — we
+    -- must never block tools/call waiting for interactive y/n input on
+    -- stdin, which would deadlock the JSON-RPC stream.
+    local ok_state, app_state = pcall(require, "state.app_state")
+    if ok_state and app_state and app_state.set then
+        app_state.set("permission_mode", "bypassPermissions")
+    end
+
     while true do
         local line = io.read("*l")
         if not line then break end
