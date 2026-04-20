@@ -26,7 +26,9 @@ static void buffer_init(buffer_t *buf) {
 static void buffer_append(buffer_t *buf, const char *data, size_t len) {
     while (buf->size + len + 1 > buf->capacity) {
         buf->capacity *= 2;
-        buf->data = realloc(buf->data, buf->capacity);
+        char *tmp = realloc(buf->data, buf->capacity);
+        if (!tmp) return;
+        buf->data = tmp;
     }
     memcpy(buf->data + buf->size, data, len);
     buf->size += len;

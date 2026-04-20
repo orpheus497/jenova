@@ -114,6 +114,10 @@ function M.run(opts)
             return "Max turns reached. Use /clear to reset."
         end
 
+        if ui and ui.status_turn then
+            ui.status_turn(turn_count)
+        end
+
         add_message("user", user_input)
 
         local context_injection = ""
@@ -126,11 +130,15 @@ function M.run(opts)
             system_prompt = system_prompt .. "\n\n" .. context_injection
         end
 
+        if ui and ui.thinking then ui.thinking() end
+
         local response, err = providers.generate(conversation, {
             model = opts.model,
             system_prompt = system_prompt,
             tools = tool_registry and tool_registry.build_api_tools() or nil,
         })
+
+        if ui and ui.thinking_done then ui.thinking_done() end
 
         if not response then
             return "Error: " .. tostring(err)

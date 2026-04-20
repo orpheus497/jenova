@@ -57,9 +57,13 @@ function M.call(args, context)
     if extensions and #extensions > 0 then
         local parts = {}
         for _, ext in ipairs(extensions) do
-            table.insert(parts, "-name '*." .. ext .. "'")
+            if ext:match("^[%w%.]+$") then
+                table.insert(parts, "-name '*." .. ext .. "'")
+            end
         end
-        ext_filter = "\\( " .. table.concat(parts, " -o ") .. " \\)"
+        if #parts > 0 then
+            ext_filter = "\\( " .. table.concat(parts, " -o ") .. " \\)"
+        end
     end
 
     -- Find files to index

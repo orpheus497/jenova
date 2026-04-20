@@ -51,8 +51,6 @@ function M:is_available()
     -- GET /v1/health is served by proxy.lua's health handler.
     local ok, resp = pcall(http.get, health_url, nil)
     if not ok or not resp then return false end
-    if type(resp) == "table" then resp = resp.body or "" end
-    if type(resp) ~= "string" then return false end
     -- proxy.lua returns a small JSON object including { "status": "ok" }.
     local parsed_ok, body = pcall(json.parse, resp)
     if not parsed_ok or type(body) ~= "table" then

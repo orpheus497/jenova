@@ -138,7 +138,7 @@ int32_t jenova_sandbox_validate_command(const char *command) {
     if (contains_obfuscation(command)) return 0;
 
     for (const char *p = command; *p; p++) {
-        if (*p == ';' || *p == '`' || *p == '\n' || *p == '\r') return 0;
+        if (*p == ';' || *p == '`' || *p == '$' || *p == '\n' || *p == '\r') return 0;
         if (*p == '|') return 0;
         if (*p == '&') return 0;
         if (*p == '>' || *p == '<') return 0;

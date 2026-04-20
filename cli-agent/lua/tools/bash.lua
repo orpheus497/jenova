@@ -108,6 +108,12 @@ function M.call(args, context)
     local timeout = args.timeout or 120000
     local cwd = context and context.cwd or nil
 
+    if jenova and jenova.sandbox and jenova.sandbox.validate_command then
+        if jenova.sandbox.validate_command(command) == 0 then
+            return { type = "error", error = "Command blocked by sandbox" }
+        end
+    end
+
     -- Inject "trio" environment variables
     local trio = require("utils.trio")
     local endpoints = trio.get_endpoints()

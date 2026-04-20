@@ -186,13 +186,15 @@ function M.create_manager(preferred_provider)
         end
 
         -- Try generation with current provider
-        local ok, result = pcall(function()
+        local ok, result, gen_err = pcall(function()
             return self.current_provider:generate(messages, options)
         end)
 
-        if ok then
+        if ok and result then
             return result
         end
+
+        local error_msg = (not ok) and tostring(result) or gen_err
 
         -- If generation failed and fallback is enabled, try other providers
         if self.fallback_enabled then
@@ -202,19 +204,19 @@ function M.create_manager(preferred_provider)
                 if name ~= current_name then
                     local ok_init, _ = self:initialize(name)
                     if ok_init then
-                        ok, result = pcall(function()
+                        local fb_ok, fb_result = pcall(function()
                             return self.current_provider:generate(messages, options)
                         end)
-                        if ok then
+                        if fb_ok and fb_result then
                             io.stderr:write(string.format("Note: Using fallback provider '%s'\n", name))
-                            return result
+                            return fb_result
                         end
                     end
                 end
             end
         end
 
-        return nil, string.format("Generation failed: %s", tostring(result))
+        return nil, string.format("Generation failed: %s", tostring(error_msg or result))
     end
 
     --- Count tokens
