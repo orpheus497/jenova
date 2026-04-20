@@ -4,11 +4,10 @@
 
 REPO_URL="https://github.com/ggml-org/llama.cpp.git"
 
-if [ -n "$JENOVA_ROOT" ]; then
-    TARGET_DIR="$JENOVA_ROOT/llama.cpp"
-else
-    TARGET_DIR="./llama.cpp"
+if [ -z "$JENOVA_ROOT" ]; then
+    JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
 fi
+TARGET_DIR="$JENOVA_ROOT/llama.cpp"
 
 if [ -d "$TARGET_DIR/.git" ]; then
     git -C "$TARGET_DIR" pull --ff-only

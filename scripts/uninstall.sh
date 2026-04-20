@@ -31,7 +31,7 @@
 
 set -e
 
-JENOVA_ROOT="$(dirname "$(realpath "$0")")"
+JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
 NVIM_CONFIG_DST="$HOME/.config/nvim"
 
 PURGE=0

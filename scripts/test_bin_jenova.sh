@@ -1,5 +1,5 @@
 #!/bin/sh
-SCRIPT_DIR=$(dirname "$(realpath "$0")")
+SCRIPT_DIR=$(dirname "$(dirname "$(realpath "$0")")")
 if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
     . "$SCRIPT_DIR/etc/jenova.conf"
 fi

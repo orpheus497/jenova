@@ -33,7 +33,7 @@
 
 set -e
 
-JENOVA_ROOT="$(dirname "$(realpath "$0")")"
+JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
 NVIM_CONFIG_SRC="$JENOVA_ROOT/nvim"
 NVIM_CONFIG_DST="$HOME/.config/nvim"
 
@@ -513,7 +513,7 @@ fi
 # ---------------------------------------------------------------------------
 if [ "$_OS" = "FreeBSD" ] && [ -z "$_PROFILE" ]; then
     info "System tuning..."
-    warn "Run 'sudo $JENOVA_ROOT/jenova-setup' once to tune vm.* sysctls and ZFS ARC"
+    warn "Run 'sudo $JENOVA_ROOT/scripts/jenova-setup' once to tune vm.* sysctls and ZFS ARC"
     warn "for optimal Optane swap / Iris Xe UMA performance."
     WARNINGS=$((WARNINGS + 1))
 fi
@@ -567,9 +567,9 @@ else
     fi
     echo ""
     echo "  Maintenance:"
-    echo "    ./update.sh             — pull latest jenova + sync nvim config"
-    echo "    ./cleanup.sh --all      — clear logs and cache"
-    echo "    ./uninstall.sh          — remove deployed files (preserves models)"
+    echo "    scripts/update.sh             — pull latest jenova + sync nvim config"
+    echo "    scripts/cleanup.sh --all      — clear logs and cache"
+    echo "    scripts/uninstall.sh          — remove deployed files (preserves models)"
     echo "    bin/jvim --check        — print resolved env without launching editor"
 fi
 echo ""

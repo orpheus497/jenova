@@ -17,7 +17,7 @@
 
 set -e
 
-JENOVA_ROOT="$(dirname "$(realpath "$0")")"
+JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
 JENOVA_DIR="${JENOVA_STATE:-$JENOVA_ROOT/.jenova}"
 LOG_DIR="$JENOVA_ROOT/var/log"
 CACHE_DIR="$JENOVA_ROOT/var/cache"

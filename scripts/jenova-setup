@@ -16,7 +16,7 @@
 
 set -e
 
-SCRIPT_DIR="$(dirname "$(realpath "$0")")"
+SCRIPT_DIR="$(dirname "$(dirname "$(realpath "$0")")")"
 DETECT="$SCRIPT_DIR/hardware-profiles/detect-hardware.sh"
 
 # Colours

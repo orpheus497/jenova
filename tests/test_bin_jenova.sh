@@ -22,7 +22,7 @@ if [ -z "$JENOVA_ROOT" ]; then
     exit 1
 fi
 
-JENOVA_BIN="$SCRIPT_DIR/../bin/jenova"
+JENOVA_BIN="$SCRIPT_DIR/../jenova-cli/jenova"
 JENOVA_CA="$SCRIPT_DIR/../bin/jenova-ca"
 
 if [ ! -x "$JENOVA_BIN" ]; then
@@ -57,10 +57,10 @@ fi
 
 # Test 3: Agent module exists
 echo "[test 3] Agent module..."
-if [ -f "$SCRIPT_DIR/../lib/agent.lua" ]; then
-    echo "  PASS: lib/agent.lua exists"
+if [ -f "$SCRIPT_DIR/../jenova-cli/legacy-agent/agent.lua" ]; then
+    echo "  PASS: jenova-cli/legacy-agent/agent.lua exists"
 else
-    echo "  FAIL: lib/agent.lua not found"
+    echo "  FAIL: jenova-cli/legacy-agent/agent.lua not found"
     EXIT_CODE=1
 fi
 

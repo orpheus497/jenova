@@ -1,3 +1,7 @@
+# --- Jenova CLI (installed via download, not tracked) ---
+/jenova-cli/*
+!/jenova-cli/.gitkeep
+
 # --- Build Artifacts ---
 /llama.cpp/build/
 /llama.cpp/bin/

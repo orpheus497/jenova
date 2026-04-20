@@ -3,7 +3,7 @@
 
 set -e
 
-JENOVA_ROOT="$(dirname "$(realpath "$0")")"
+JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
 export JENOVA_ROOT
 
 # User-writable workspace for cloned components (jvim, jenova-cli).
@@ -306,7 +306,7 @@ show_uninstall_menu() {
 # --- Action Implementations ---
 install_jenova_core() {
     echo "Installing Jenova Core..."
-    "$JENOVA_ROOT/install.sh"
+    "$JENOVA_ROOT/scripts/install.sh"
 }
 install_jvim() {
     echo "Installing jvim..."
@@ -338,7 +338,7 @@ install_llama() {
 
 update_jenova_core() {
     echo "Updating Jenova Core..."
-    "$JENOVA_ROOT/update.sh"
+    "$JENOVA_ROOT/scripts/update.sh"
 }
 update_jvim() {
     echo "Updating jvim..."
@@ -370,7 +370,7 @@ update_llama() {
 
 uninstall_jenova_core() {
     echo "Uninstalling Jenova Core..."
-    "$JENOVA_ROOT/uninstall.sh"
+    "$JENOVA_ROOT/scripts/uninstall.sh"
 }
 uninstall_jvim() {
     echo "Uninstalling jvim..."
