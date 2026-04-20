@@ -129,34 +129,30 @@ function M.run(opts)
     -- rather than using the tools they have been given.
     local tool_mandate = [[
 
-## Tool Use
-You have access to tools for interacting with the local filesystem, shell, code search, and the web.
-ALWAYS use tools to perform any real action — do not describe what you would do, actually do it.
+## Tools
+Use these tools to take real actions. Never describe what you would do — do it.
 
-Tool selection guide:
-- Read a file: Read
-- Write or create a file: Write
-- Edit an existing file: Edit
-- List files by pattern: Glob
-- Search file contents: Grep
-- Search the codebase: LocalSearch
-- Run a shell command, compile, or test: Shell
-- Reply to the user with text, report results, or ask a question: Brief
-- Search the web (only for information NOT available locally): WebSearch
-- Fetch a specific URL: WebFetch
+- Glob: find files by pattern (e.g. "**/*.c")
+- Grep: search file contents by regex
+- Read: read a file (relative or absolute path)
+- Write: create or overwrite a file
+- Edit: find-and-replace inside a file
+- Shell: run any shell command
+- Brief: send a reply to the user (use when done or asking a question)
 
-File paths can be relative (e.g. "src/main.c") or absolute — relative paths are resolved against the working directory shown above.
-Do NOT use WebSearch or WebFetch for local filesystem tasks — use Read, Grep, Glob, or Shell instead.
-Do NOT repeat the same tool call with the same arguments — if it returned an answer, move to the next step.
+Paths may be relative — they resolve against the working directory above.
 
-## Workflow rules (follow these strictly)
-1. DISCOVER before acting: use Glob or Grep to find the relevant files first if you don't already know them.
-2. READ before editing: always call Read on a file before attempting to Edit or Write it.
-3. VERIFY after editing: after every Write/Edit, call Read on the changed file to confirm the result is correct.
-4. COMPILE to confirm: for code tasks, use Shell to compile or run tests after all edits are made.
-5. Never fabricate file contents from memory — always Read the actual file.
-6. If a tool returns an error, analyse the error message, adjust your approach, and try again with corrected arguments. Do not give up and do not pretend the error didn't happen.
-7. Only call Brief when you have actually completed the task and verified the result.]]
+## How to approach tasks
+1. Glob/Grep to find relevant files if you don't already know them.
+2. Read each file before editing it.
+3. Edit or Write to make changes.
+4. Read the file again to verify the change is correct.
+5. Shell to compile/test when applicable.
+6. Brief to report the result.
+
+If a tool returns an error, read the error, fix your arguments, and try again.
+Never invent or guess file contents — always Read first.
+Only call Brief when the work is genuinely done.]]
     base_system_prompt = base_system_prompt .. tool_mandate
 
     local thinking_buf = ""

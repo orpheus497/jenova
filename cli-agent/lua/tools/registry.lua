@@ -108,22 +108,30 @@ end
 -- MCP and LSP tools load only when the respective runtime is present.
 -- Web tools load unless the user has disabled network access.
 function M.load_builtin_tools()
-    -- Core: always loaded — covers all day-to-day coding assistant needs
+    -- Core: always loaded — the minimal set needed for coding tasks.
+    -- Keep this small so local models have a clear, unambiguous choice space.
     local core_tools = {
         "tools.bash",
         "tools.file_read", "tools.file_write", "tools.file_edit",
         "tools.glob", "tools.grep", "tools.local_search",
+        "tools.brief",
+    }
+
+    -- Extended: useful but not needed for every session.
+    -- Loaded unless explicitly disabled via config `no_extended_tools: true`.
+    local extended_tools = {
         "tools.ask_user",
         "tools.todo_write",
-        "tools.brief",
         "tools.enter_plan_mode", "tools.exit_plan_mode", "tools.verify_plan",
-        "tools.config_tool",
         "tools.snip",
         "tools.repl",
         "tools.sleep",
+        "tools.config_tool",
     }
 
-    -- Web: load unless network is explicitly disabled
+    -- Web: OFF by default. Enable via config `enable_web: true`.
+    -- Most coding tasks are purely local; presenting WebSearch to a local model
+    -- by default causes it to reach for the web instead of reading files.
     local web_tools = {
         "tools.web_fetch", "tools.web_search",
     }
@@ -151,8 +159,14 @@ function M.load_builtin_tools()
     load_set(core_tools)
 
     local ok_config, config = pcall(require, "config.loader")
-    local no_network = ok_config and config.get("no_network") or false
-    if not no_network then
+    local no_extended = ok_config and config.get("no_extended_tools") or false
+    if not no_extended then
+        load_set(extended_tools)
+    end
+
+    -- Web tools are opt-in: set `enable_web: true` in jenova config to enable.
+    local enable_web = ok_config and config.get("enable_web") or false
+    if enable_web then
         load_set(web_tools)
     end
 
