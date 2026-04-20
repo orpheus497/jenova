@@ -41,6 +41,7 @@ function M.call(args, ctx)
                 content = content,
                 timestamp = os.time(),
             })
+            app_state.set("active_tasks", tasks)
             return {
                 type = "text",
                 text = string.format("Message sent to %s", to),

@@ -68,7 +68,7 @@ function M.call(args, ctx)
             local body = payload and json.stringify(payload) or ""
             headers["Content-Type"] = headers["Content-Type"] or "application/json"
             headers_json = json.stringify(headers)
-            result, err = jenova.http.post_json(url, body, headers_json)
+            result, err = jenova.http.post_json(url, headers_json, body)
         else
             return { type = "error", error = "Unsupported method: " .. method }
         end

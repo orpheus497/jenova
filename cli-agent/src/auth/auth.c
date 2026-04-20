@@ -9,6 +9,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include "jenova.h"
 
 #define KEYS_DIR_REL "/.config/cli-agent/keys/"
@@ -115,9 +116,13 @@ int32_t jenova_auth_store_key(const char *provider, const char *key) {
     free(dir);
 
     char *path = get_key_path(provider);
-    FILE *f = fopen(path, "w");
+    if (!path) return -1;
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
     free(path);
-    if (!f) return -1;
+    if (fd < 0) return -1;
+
+    FILE *f = fdopen(fd, "w");
+    if (!f) { close(fd); return -1; }
 
     fprintf(f, "%s\n", key);
     fclose(f);

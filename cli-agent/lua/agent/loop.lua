@@ -75,15 +75,22 @@ function M.run(opts)
 
         local tool_calls = {}
 
+        local function safe_parse(text)
+            if not json or not json.parse then return nil end
+            local ok, parsed = pcall(json.parse, text)
+            if ok and type(parsed) == "table" then return parsed end
+            return nil
+        end
+
         for tag_content in response_text:gmatch("<tool_call>(.-)</tool_call>") do
-            local parsed = json and json.parse(tag_content)
+            local parsed = safe_parse(tag_content)
             if parsed and parsed.name then
                 table.insert(tool_calls, parsed)
             end
         end
 
         if #tool_calls == 0 then
-            local parsed = json and json.parse(response_text)
+            local parsed = safe_parse(response_text)
             if parsed and parsed.name and parsed.arguments then
                 table.insert(tool_calls, parsed)
             end

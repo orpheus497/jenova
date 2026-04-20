@@ -39,8 +39,14 @@ char *jenova_json_stringify(const char *json_str) {
 
         if (in_string) {
             out[pos++] = c;
-            if (c == '"' && (i == 0 || json_str[i-1] != '\\')) {
-                in_string = 0;
+            if (c == '"') {
+                int backslashes = 0;
+                for (int k = (int)i - 1; k >= 0 && json_str[k] == '\\'; k--) {
+                    backslashes++;
+                }
+                if (backslashes % 2 == 0) {
+                    in_string = 0;
+                }
             }
             continue;
         }
