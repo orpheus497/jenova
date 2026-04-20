@@ -34,8 +34,9 @@ end
 
 local function get_http()
     -- Prefer C binding when available (zero subprocess overhead)
-    if type(jenova) == "table" and jenova.http then
-        return jenova.http
+    local _j = rawget(_G, "jenova")
+    if type(_j) == "table" and _j.http then
+        return _j.http
     end
     -- Fall back to pure-Lua curl wrapper
     return get_lua_http()
@@ -78,8 +79,9 @@ function M:is_available()
 end
 
 function M:supports_streaming()
-    return type(jenova) == "table" and type(jenova.http) == "table"
-        and type(jenova.http.post_stream) == "function"
+    local _j = rawget(_G, "jenova")
+    return type(_j) == "table" and type(_j.http) == "table"
+        and type(_j.http.post_stream) == "function"
 end
 function M:supports_tools() return true end
 
@@ -159,7 +161,8 @@ end
 
 function M:generate_stream(messages, options, on_chunk)
     if not self._initialized then self:initialize() end
-    if not (type(jenova) == "table" and jenova.http and jenova.http.post_stream) then
+    local _j = rawget(_G, "jenova")
+    if not (type(_j) == "table" and _j.http and _j.http.post_stream) then
         -- Fall back to non-streaming generate, deliver whole response as one chunk.
         local resp, err = self:generate(messages, options)
         if not resp then return nil, err end
@@ -177,7 +180,7 @@ function M:generate_stream(messages, options, on_chunk)
     }
     local headers_str = json.stringify(headers)
 
-    local raw, err = jenova.http.post_stream(
+    local raw, err = _j.http.post_stream(
         self._base_url .. "/v1/chat/completions", headers_str, body_str)
     if not raw then return nil, err or "stream request failed" end
 
@@ -241,8 +244,9 @@ function M:count_tokens(text)
         end
     end
     -- Try in-process llama tokenizer (accurate when a model is loaded).
-    if jenova and jenova.llama and jenova.llama.count_tokens then
-        local ok, count = pcall(jenova.llama.count_tokens, 1, text)
+    local _j2 = rawget(_G, "jenova")
+    if _j2 and _j2.llama and _j2.llama.count_tokens then
+        local ok, count = pcall(_j2.llama.count_tokens, 1, text)
         if ok and type(count) == "number" and count > 0 then
             return count
         end
