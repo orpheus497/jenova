@@ -74,7 +74,19 @@ local function to_chat_body(messages, options)
     }
     if options.max_tokens then body.max_tokens = options.max_tokens end
     if options.temperature then body.temperature = options.temperature end
-    if options.tools then body.tools = options.tools end
+    if options.tools and #options.tools > 0 then
+        body.tools = {}
+        for _, tool in ipairs(options.tools) do
+            table.insert(body.tools, {
+                type = "function",
+                ["function"] = {
+                    name = tool.name,
+                    description = tool.description,
+                    parameters = tool.input_schema or {},
+                }
+            })
+        end
+    end
     if options.system_prompt then
         -- Prepend as a system message if not already present.
         local has_system = false
