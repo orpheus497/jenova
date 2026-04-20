@@ -103,32 +103,120 @@ function M.build_api_tools()
     return api_tools
 end
 
---- Load all built-in tools
+--- Load all built-in tools, gated by category and environment availability.
+-- Core filesystem/search tools are always loaded. Specialized tools (MCP,
+-- tasks, LSP, scheduling, web, powershell, remote) are loaded only when
+-- the required runtime is present, reducing prompt token usage.
 function M.load_builtin_tools()
-    local tool_modules = {
+    -- Always-on: core file, code and search operations
+    local core_tools = {
         "tools.bash", "tools.file_read", "tools.file_write", "tools.file_edit",
-        "tools.glob", "tools.grep", "tools.agent", "tools.web_fetch",
-        "tools.web_search", "tools.ask_user", "tools.todo_write",
-        "tools.notebook_edit", "tools.skill", "tools.brief",
-        "tools.enter_plan_mode", "tools.exit_plan_mode",
-        "tools.mcp_tool", "tools.mcp_auth",
-        "tools.list_mcp_resources", "tools.read_mcp_resource",
-        "tools.task_create", "tools.task_get", "tools.task_list",
-        "tools.task_update", "tools.task_stop", "tools.task_output",
-        "tools.send_message", "tools.tool_search",
-        "tools.sleep", "tools.config_tool", "tools.synthetic_output",
-        "tools.lsp", "tools.repl", "tools.powershell", "tools.snip",
-        "tools.verify_plan", "tools.enter_worktree", "tools.exit_worktree",
-        "tools.schedule_cron", "tools.remote_trigger",
-        "tools.team_create", "tools.team_delete",
-        "tools.local_search",
+        "tools.glob", "tools.grep", "tools.ask_user", "tools.todo_write",
+        "tools.brief", "tools.enter_plan_mode", "tools.exit_plan_mode",
+        "tools.verify_plan", "tools.tool_search", "tools.config_tool",
+        "tools.synthetic_output", "tools.sleep",
     }
 
-    for _, mod_name in ipairs(tool_modules) do
-        local ok, tool = pcall(require, mod_name)
-        if ok and tool and tool.name then
-            M.register(tool)
+    -- Web tools: load when network is expected to be available
+    local web_tools = {
+        "tools.web_fetch", "tools.web_search",
+    }
+
+    -- MCP tools: only load when an MCP server is configured
+    local mcp_tools = {
+        "tools.mcp_tool", "tools.mcp_auth",
+        "tools.list_mcp_resources", "tools.read_mcp_resource",
+    }
+
+    -- Task/team/agent orchestration: load when multi-agent mode is enabled
+    local orchestration_tools = {
+        "tools.agent", "tools.task_create", "tools.task_get", "tools.task_list",
+        "tools.task_update", "tools.task_stop", "tools.task_output",
+        "tools.send_message", "tools.team_create", "tools.team_delete",
+    }
+
+    -- LSP tools: load when LSP bindings or a known LSP client is present
+    local lsp_tools = {
+        "tools.lsp",
+    }
+
+    -- Dev environment tools
+    local dev_tools = {
+        "tools.notebook_edit", "tools.skill", "tools.snip",
+        "tools.repl", "tools.local_search",
+        "tools.enter_worktree", "tools.exit_worktree",
+    }
+
+    -- Platform-specific: PowerShell (Windows / pwsh available)
+    local platform_tools = {
+        "tools.powershell",
+    }
+
+    -- Scheduling / remote: only when explicitly needed
+    local automation_tools = {
+        "tools.schedule_cron", "tools.remote_trigger",
+    }
+
+    local function load_set(set)
+        for _, mod_name in ipairs(set) do
+            local ok, tool = pcall(require, mod_name)
+            if ok and tool and tool.name then
+                M.register(tool)
+            end
         end
+    end
+
+    -- Core always loads
+    load_set(core_tools)
+
+    -- Web: load unless explicitly disabled
+    local ok_config, config = pcall(require, "config.loader")
+    local no_network = ok_config and config.get("no_network") or false
+    if not no_network then
+        load_set(web_tools)
+    end
+
+    -- MCP: load when mcp_servers config exists or MCP binding present
+    local _jenova = rawget(_G, "jenova")
+    local has_mcp = (type(_jenova) == "table" and _jenova.mcp ~= nil)
+    if not has_mcp and ok_config then
+        local mcp_servers = config.get("mcp_servers")
+        has_mcp = type(mcp_servers) == "table" and next(mcp_servers) ~= nil
+    end
+    if has_mcp then
+        load_set(mcp_tools)
+    end
+
+    -- LSP: load when jenova.lsp binding or LSP client is present
+    local has_lsp = (type(_jenova) == "table" and _jenova.lsp ~= nil)
+    if has_lsp then
+        load_set(lsp_tools)
+    end
+
+    -- Orchestration: load when multi-agent or tasks feature is enabled
+    local enable_tasks = ok_config and (config.get("enable_tasks") ~= false) or true
+    if enable_tasks then
+        load_set(orchestration_tools)
+    end
+
+    -- Dev tools: always load
+    load_set(dev_tools)
+
+    -- PowerShell: only when pwsh or powershell binary is present
+    local pwsh_check = io.popen("pwsh --version 2>/dev/null || powershell -Version 2>/dev/null", "r")
+    if pwsh_check then
+        local out = pwsh_check:read("*l")
+        pwsh_check:close()
+        if out and #out > 0 then
+            load_set(platform_tools)
+        end
+    end
+
+    -- Automation: load when cron or remote config is present
+    local enable_cron = ok_config and config.get("enable_cron") or false
+    local enable_remote = ok_config and config.get("enable_remote") or false
+    if enable_cron or enable_remote then
+        load_set(automation_tools)
     end
 end
 

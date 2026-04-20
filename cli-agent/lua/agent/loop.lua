@@ -275,9 +275,10 @@ function M.run(opts)
     end
 
     -- Check for interrupt: the C host may expose a global, or we no-op
+    local _is_interrupted = rawget(_G, "is_interrupted")
     local function check_interrupted()
-        if type(is_interrupted) == "function" then
-            return is_interrupted()
+        if type(_is_interrupted) == "function" then
+            return _is_interrupted()
         end
         return false
     end
@@ -332,7 +333,7 @@ function M.run(opts)
         end
 
         -- Commands
-        if line == "/exit" or line == "/quit" or line == "/q" then
+        if line == "/exit" or line == "/quit" or line == "/q" or line == "\3" then
             if ui and ui.goodbye then ui.goodbye()
             else print("Goodbye!") end
             break
@@ -411,8 +412,9 @@ function M.run(opts)
         pcall(app_state.save_session)
     end
 
-    if jenova and jenova.agent and jenova.agent.shutdown then
-        jenova.agent.shutdown()
+    local _jenova = rawget(_G, "jenova")
+    if type(_jenova) == "table" and _jenova.agent and _jenova.agent.shutdown then
+        _jenova.agent.shutdown()
     end
     return 0
 end

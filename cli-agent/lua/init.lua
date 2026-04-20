@@ -176,12 +176,15 @@ local function bootstrap()
         pcall(skills.load_all)
     end
 
-    jenova.agent.init({
-        enable_tools = true,
-        enable_memory = true,
-        context_size = 8192,
-        max_turns = 100,
-    })
+    local _jenova = rawget(_G, "jenova")
+    if type(_jenova) == "table" and _jenova.agent and _jenova.agent.init then
+        _jenova.agent.init({
+            enable_tools = true,
+            enable_memory = true,
+            context_size = 16384,
+            max_turns = 100,
+        })
+    end
 end
 
 -- ── Agent Loop (integrated from legacy-agent) ───────────────────────────
@@ -217,7 +220,8 @@ local function run_agent_repl(opts)
     pcall(function() memory = require("agent.memory") end)
 
     while true do
-        if is_interrupted and is_interrupted() then
+        local _is_interrupted = rawget(_G, "is_interrupted")
+        if type(_is_interrupted) == "function" and _is_interrupted() then
             if ui then ui.status_warn("interrupted")
             else print("\nInterrupted.") end
             break
@@ -237,7 +241,7 @@ local function run_agent_repl(opts)
             break
         end
 
-        if line == "/exit" or line == "/quit" or line == "/q" then
+        if line == "/exit" or line == "/quit" or line == "/q" or line == "\3" then
             if ui and ui.goodbye then ui.goodbye()
             else print("Goodbye!") end
             break

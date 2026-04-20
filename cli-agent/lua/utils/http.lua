@@ -55,7 +55,7 @@ end
 
 -- Run curl and return (body_string | nil, error_string | nil)
 local function run_curl(args)
-    local cmd = "curl -s -S --max-time 60 --connect-timeout 10 " .. args .. " 2>&1"
+    local cmd = "curl -s -S --max-time 300 --connect-timeout 10 " .. args .. " 2>&1"
     local h = io.popen(cmd, "r")
     if not h then return nil, "failed to spawn curl" end
     local out = h:read("*a")

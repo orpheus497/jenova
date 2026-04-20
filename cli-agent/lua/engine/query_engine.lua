@@ -50,8 +50,8 @@ local function parse_text_tool_calls(text)
 
     -- Stage 2a: JSON code fences  ```json\n{...}\n```
     for json_str in text:gmatch("```json%s*\n?(.-)\n?```") do
-        local data = json_codec.parse(json_str)
-        if type(data) == "table" then
+        local ok_json, data = pcall(json_codec.parse, json_str)
+        if ok_json and type(data) == "table" then
             local entry = make_tool_use(data)
             if entry then table.insert(tool_uses, entry) end
         end
@@ -60,8 +60,8 @@ local function parse_text_tool_calls(text)
 
     -- Stage 2b: bare JSON objects, allowing nested braces via %b{}
     for json_str in text:gmatch("%b{}") do
-        local data = json_codec.parse(json_str)
-        if type(data) == "table" then
+        local ok_json, data = pcall(json_codec.parse, json_str)
+        if ok_json and type(data) == "table" then
             local entry = make_tool_use(data)
             if entry then table.insert(tool_uses, entry) end
         end
@@ -97,7 +97,7 @@ function QueryEngine.new(options)
         end
     end
 
-    self.max_tokens = options.max_tokens or 8192
+    self.max_tokens = options.max_tokens or 16384
     self.thinking_enabled = options.thinking_enabled or false
     self.temperature = options.temperature or 1.0
     self.system_prompt = options.system_prompt or ""
