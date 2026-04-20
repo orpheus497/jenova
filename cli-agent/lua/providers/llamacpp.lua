@@ -1,7 +1,7 @@
 -- providers/llamacpp.lua — llama.cpp provider (PRIMARY AI backend)
 -- Uses local GGUF models via the jenova_llama FFI
 
-local json = jenova.json or require("utils.json_fallback")
+local json = require("utils.json_fallback")
 
 local LlamaCppProvider = {
     name = "llamacpp",

@@ -9,6 +9,7 @@
 -- llamacpp provider (see providers/llamacpp.lua).
 
 local trio = require("utils.trio")
+local json = require("utils.json_fallback")
 
 local M = {
     name = "jenova_backend",
@@ -21,8 +22,8 @@ local function resolve_endpoints()
     return trio.get_endpoints()
 end
 
-local function http_json()
-    return jenova and jenova.http or nil, jenova and jenova.json or nil
+local function get_http()
+    return jenova and jenova.http or nil
 end
 
 function M:initialize(opts)
@@ -44,8 +45,8 @@ function M:shutdown()
 end
 
 function M:is_available()
-    local http, json = http_json()
-    if not http or not json then return false end
+    local http = get_http()
+    if not http then return false end
     if not self._initialized then self:initialize() end
     local health_url = self._base_url .. "/v1/health"
     -- GET /v1/health is served by proxy.lua's health handler.
@@ -96,9 +97,9 @@ end
 
 function M:generate(messages, options)
     if not self._initialized then self:initialize() end
-    local http, json = http_json()
-    if not http or not json then
-        return nil, "jenova.http / jenova.json bindings unavailable"
+    local http = get_http()
+    if not http then
+        return nil, "jenova.http binding unavailable"
     end
 
     local body = to_chat_body(normalize_messages(messages), options)
@@ -111,8 +112,8 @@ function M:generate(messages, options)
     local resp, err = http.post_json(self._base_url .. "/v1/chat/completions", headers, body_str)
     if not resp then return nil, err or "proxy.lua request failed" end
 
-    local ok, parsed = pcall(json.parse, resp)
-    if not ok or type(parsed) ~= "table" then
+    local parsed = json.parse(resp)
+    if type(parsed) ~= "table" then
         return nil, "invalid JSON from proxy.lua"
     end
     local choices = parsed.choices
@@ -124,15 +125,14 @@ function M:generate(messages, options)
 end
 
 function M:count_tokens(text)
-    -- Ask proxy.lua's /v1/tokenize endpoint if available; otherwise estimate.
-    local http, json = http_json()
-    if http and json and self._base_url then
+    local http = get_http()
+    if http and self._base_url then
         local body = json.stringify({ text = text })
         local resp = http.post_json(self._base_url .. "/v1/tokenize",
             json.stringify({ ["Content-Type"] = "application/json" }), body)
         if resp then
-            local ok, parsed = pcall(json.parse, resp)
-            if ok and type(parsed) == "table" and type(parsed.count) == "number" then
+            local parsed = json.parse(resp)
+            if type(parsed) == "table" and type(parsed.count) == "number" then
                 return parsed.count
             end
         end
@@ -151,12 +151,12 @@ function M:count_tokens(text)
 end
 
 function M:get_models()
-    local http, json = http_json()
-    if not (http and json and self._base_url) then return {} end
+    local http = get_http()
+    if not (http and self._base_url) then return {} end
     local resp = http.get(self._base_url .. "/v1/models", nil)
     if not resp then return {} end
-    local ok, parsed = pcall(json.parse, resp)
-    if not ok or type(parsed) ~= "table" or type(parsed.data) ~= "table" then
+    local parsed = json.parse(resp)
+    if type(parsed) ~= "table" or type(parsed.data) ~= "table" then
         return {}
     end
     local out = {}

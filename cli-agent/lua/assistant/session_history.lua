@@ -34,17 +34,17 @@ end
 
 local function fetch_page(ctx, params, label)
     local http = jenova and jenova.http or nil
-    local json = jenova and jenova.json or nil
-    if not http or not json then
-        return nil, label .. ": jenova.http/jenova.json unavailable"
+    local json_enc = require("utils.json_fallback")
+    if not http then
+        return nil, label .. ": jenova.http unavailable"
     end
     local url = ctx.base_url .. "?" .. encode_query(params)
-    local headers_json = json.stringify(ctx.headers)
+    local headers_json = json_enc.stringify(ctx.headers)
     local resp, err = http.get(url, headers_json)
     if not resp then
         return nil, label .. ": " .. tostring(err)
     end
-    local ok, body = pcall(json.parse, resp)
+    local ok, body = pcall(json_enc.parse, resp)
     if not ok or type(body) ~= "table" then
         return nil, label .. ": invalid JSON response"
     end
