@@ -5,12 +5,12 @@ local M = {}
 M.name = "Write"
 
 local paths = require("utils.paths")
-M.description = "Write content to a file, creating it and parent directories if they don't exist. Overwrites existing files."
+M.description = "Write content to a file, creating it and parent directories if they don't exist. Supports both absolute and relative paths. Overwrites existing files."
 
 M.parameters = {
     type = "object",
     properties = {
-        file_path = { type = "string", description = "Absolute path to the file to write" },
+        file_path = { type = "string", description = "Path to the file to write (absolute or relative to working directory)" },
         content = { type = "string", description = "The content to write to the file" },
     },
     required = { "file_path", "content" }
@@ -30,6 +30,8 @@ function M.call(args, context)
     local content = args.content
     if not path then return { type = "error", error = "No file path provided" } end
     if not content then return { type = "error", error = "No content provided" } end
+    -- Resolve relative paths against the session working directory
+    path = paths.resolve(path, context and context.cwd)
     if paths.is_restricted(path) then return paths.restricted_error(path) end
 
     -- Use Rust FFI (preferred — handles mkdir -p)

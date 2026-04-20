@@ -2,15 +2,16 @@
 -- Uses jenova.fs (Rust FFI) for reliable edit operations.
 
 local json = require("utils.json_fallback")
+local paths = require("utils.paths")
 
 local M = {}
 M.name = "Edit"
-M.description = "Edit a file by replacing an exact string match with new content. The old_string must be unique in the file."
+M.description = "Edit a file by replacing an exact string match with new content. Supports both absolute and relative paths. The old_string must be unique in the file."
 
 M.parameters = {
     type = "object",
     properties = {
-        file_path = { type = "string", description = "Absolute path to the file to modify" },
+        file_path = { type = "string", description = "Path to the file to edit (absolute or relative to working directory)" },
         old_string = { type = "string", description = "The exact text to find and replace (must be unique)" },
         new_string = { type = "string", description = "The replacement text" },
         replace_all = { type = "boolean", description = "Replace all occurrences (default: false)" },
@@ -45,6 +46,8 @@ function M.call(args, context)
     if args.old_string == args.new_string then
         return { type = "error", error = "old_string and new_string are identical" }
     end
+    -- Resolve relative paths against the session working directory
+    path = paths.resolve(path, context and context.cwd)
 
     -- Use Rust FFI (preferred)
     if jenova and jenova.fs and jenova.fs.edit then

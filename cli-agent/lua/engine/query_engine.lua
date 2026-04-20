@@ -423,15 +423,23 @@ function QueryEngine:query(user_message, options)
 
             local result, err = self:execute_tool(tool_use.name, tool_use.id, tool_use.input)
 
-            -- Extract the text content from tool result table
+            -- Extract the text content from tool result table.
+            -- Tools may return {type="error", error="..."} — surface that as an error
+            -- so the model knows the call failed rather than seeing raw JSON.
             local result_text
+            local is_err = err ~= nil
             if err then
                 result_text = "Error: " .. err
             elseif type(result) == "string" then
                 result_text = result
             elseif type(result) == "table" then
-                result_text = result.text or result.output or result.content
-                    or json_codec.stringify(result)
+                if result.type == "error" then
+                    is_err = true
+                    result_text = "Error: " .. (result.error or "unknown error")
+                else
+                    result_text = result.text or result.output or result.content
+                        or json_codec.stringify(result)
+                end
             else
                 result_text = tostring(result or "")
             end
@@ -440,7 +448,7 @@ function QueryEngine:query(user_message, options)
                 type = "tool_result",
                 tool_use_id = tool_use.id,
                 content = result_text,
-                is_error = err ~= nil,
+                is_error = is_err,
             })
         end
 

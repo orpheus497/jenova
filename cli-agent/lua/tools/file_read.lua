@@ -6,7 +6,7 @@ local paths = require("utils.paths")
 
 local M = {}
 M.name = "Read"
-M.description = "Read the contents of a file from the filesystem. Results are returned with line numbers."
+M.description = "Read the contents of a file from the filesystem. Supports both absolute and relative paths (resolved against the working directory). Results are returned with line numbers."
 
 M.parameters = {
     type = "object",
@@ -30,6 +30,8 @@ function M.check_permissions(input, ctx) return { allowed = true } end
 function M.call(args, context)
     local path = args.file_path
     if not path then return { type = "error", error = "No file path provided" } end
+    -- Resolve relative paths against the session working directory
+    path = paths.resolve(path, context and context.cwd)
     if paths.is_restricted(path) then return paths.restricted_error(path) end
 
     -- Pure-Lua reader: keeps the line-number format ("%d\t%s") consistent

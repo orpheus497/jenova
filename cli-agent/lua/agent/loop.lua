@@ -145,6 +145,7 @@ Tool selection guide:
 - Search the web (only for information NOT available locally): WebSearch
 - Fetch a specific URL: WebFetch
 
+File paths can be relative (e.g. "src/main.c") or absolute — relative paths are resolved against the working directory shown above.
 When you have finished a task or want to respond with text, use the Brief tool.
 Do NOT use WebSearch or WebFetch for local filesystem tasks — use Read, Grep, Glob, or Shell instead.
 Do NOT repeat the same tool call with the same arguments — if it returned an answer, use Brief to report it.]]

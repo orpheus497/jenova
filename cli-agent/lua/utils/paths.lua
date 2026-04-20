@@ -44,4 +44,19 @@ function M.restricted_error(path)
     }
 end
 
+-- Resolve a (possibly relative) path against a base directory.
+-- If path is already absolute (starts with / or a Windows drive letter)
+-- it is returned unchanged. Otherwise it is joined to base_dir.
+function M.resolve(path, base_dir)
+    if type(path) ~= "string" then return path end
+    -- Already absolute
+    if path:sub(1, 1) == "/" or path:match("^%a:[/\\]") then
+        return path
+    end
+    if type(base_dir) == "string" and #base_dir > 0 then
+        return base_dir:gsub("[/\\]+$", "") .. "/" .. path
+    end
+    return path
+end
+
 return M
