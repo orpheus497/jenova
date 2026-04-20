@@ -14,6 +14,33 @@
 #include <sys/stat.h>
 #include "jenova.h"
 
+static char *json_escape(const char *src) {
+    if (!src) return strdup("");
+    size_t len = strlen(src);
+    size_t capacity = len * 2 + 1;
+    char *result = malloc(capacity);
+    if (!result) return NULL;
+    size_t pos = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (pos + 6 >= capacity) {
+            capacity *= 2;
+            char *nr = realloc(result, capacity);
+            if (!nr) { free(result); return NULL; }
+            result = nr;
+        }
+        switch (src[i]) {
+            case '"':  result[pos++] = '\\'; result[pos++] = '"'; break;
+            case '\\': result[pos++] = '\\'; result[pos++] = '\\'; break;
+            case '\n': result[pos++] = '\\'; result[pos++] = 'n'; break;
+            case '\r': result[pos++] = '\\'; result[pos++] = 'r'; break;
+            case '\t': result[pos++] = '\\'; result[pos++] = 't'; break;
+            default:   result[pos++] = src[i]; break;
+        }
+    }
+    result[pos] = '\0';
+    return result;
+}
+
 #ifdef JENOVA_HAS_LLAMA
 #include "llama.h"
 #include "common.h"
@@ -204,9 +231,16 @@ char *jenova_llama_list_models(void) {
             }
 
             if (!first) result[pos++] = ',';
+            char *esc_name = json_escape(entry->d_name);
+            char *esc_dir = json_escape(model_dirs[d]);
+            if (!esc_name || !esc_dir) {
+                free(esc_name); free(esc_dir); continue;
+            }
             pos += (size_t)snprintf(result + pos, capacity - pos,
                                     "{\"name\":\"%s\",\"path\":\"%s%s\"}",
-                                    entry->d_name, model_dirs[d], entry->d_name);
+                                    esc_name, esc_dir, esc_name);
+            free(esc_name);
+            free(esc_dir);
             first = 0;
         }
         closedir(dir);

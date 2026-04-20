@@ -40,32 +40,67 @@ static size_t write_callback(void *contents, size_t size, size_t nmemb, void *us
     return total;
 }
 
+static const char *find_unescaped_quote(const char *p) {
+    while (*p) {
+        if (*p == '\\') { p += 2; continue; }
+        if (*p == '"') return p;
+        p++;
+    }
+    return NULL;
+}
+
+static size_t unescape_json_string(const char *src, size_t src_len, char *dst, size_t dst_size) {
+    size_t out = 0;
+    for (size_t i = 0; i < src_len && out + 1 < dst_size; i++) {
+        if (src[i] == '\\' && i + 1 < src_len) {
+            i++;
+            switch (src[i]) {
+                case '"': dst[out++] = '"'; break;
+                case '\\': dst[out++] = '\\'; break;
+                case '/': dst[out++] = '/'; break;
+                case 'n': dst[out++] = '\n'; break;
+                case 't': dst[out++] = '\t'; break;
+                default: dst[out++] = src[i]; break;
+            }
+        } else {
+            dst[out++] = src[i];
+        }
+    }
+    dst[out] = '\0';
+    return out;
+}
+
 static struct curl_slist *parse_headers_json(const char *headers_json) {
     struct curl_slist *headers = NULL;
     if (!headers_json || headers_json[0] == '\0') return NULL;
 
     const char *p = headers_json;
-    while ((p = strstr(p, "\"")) != NULL) {
-        p++;
-        const char *key_end = strchr(p, '"');
+    while (*p) {
+        const char *key_start = strchr(p, '"');
+        if (!key_start) break;
+        key_start++;
+        const char *key_end = find_unescaped_quote(key_start);
         if (!key_end) break;
 
-        size_t key_len = (size_t)(key_end - p);
+        size_t key_len = (size_t)(key_end - key_start);
         char key[512];
         if (key_len >= sizeof(key)) { p = key_end + 1; continue; }
-        memcpy(key, p, key_len);
-        key[key_len] = '\0';
+        unescape_json_string(key_start, key_len, key, sizeof(key));
 
         p = key_end + 1;
-        const char *val_start = strchr(p, '"');
-        if (!val_start) break;
-        val_start++;
-        const char *val_end = strchr(val_start, '"');
+        while (*p && *p != '"') p++;
+        if (!*p) break;
+        p++;
+        const char *val_end = find_unescaped_quote(p);
         if (!val_end) break;
 
-        size_t val_len = (size_t)(val_end - val_start);
-        char header[1024];
-        snprintf(header, sizeof(header), "%s: %.*s", key, (int)val_len, val_start);
+        size_t val_len = (size_t)(val_end - p);
+        char val[1024];
+        if (val_len >= sizeof(val)) { p = val_end + 1; continue; }
+        unescape_json_string(p, val_len, val, sizeof(val));
+
+        char header[1536];
+        snprintf(header, sizeof(header), "%s: %s", key, val);
         headers = curl_slist_append(headers, header);
 
         p = val_end + 1;

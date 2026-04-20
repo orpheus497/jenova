@@ -131,6 +131,7 @@ int32_t jenova_auth_store_key(const char *provider, const char *key) {
 
 int32_t jenova_auth_delete_key(const char *provider) {
     char *path = get_key_path(provider);
+    if (!path) return -1;
     int result = unlink(path);
     free(path);
     return result;

@@ -29,6 +29,7 @@ local TTL = {
 }
 
 function M.init()
+    math.randomseed(os.time() + math.floor(os.clock() * 1000))
     session_id = os.time() .. "-" .. math.random(10000, 99999)
     actions = {}
     errors = {}
@@ -149,7 +150,10 @@ function M.save()
     local path = home .. "/.config/cli-agent/memory.json"
 
     local dir = path:match("^(.*)/")
-    if dir then os.execute("mkdir -p " .. dir) end
+    if dir then
+        local quoted_dir = "'" .. dir:gsub("'", "'\\'") .. "'"
+        os.execute("mkdir -p " .. quoted_dir)
+    end
 
     if json then
         local data = json.stringify({

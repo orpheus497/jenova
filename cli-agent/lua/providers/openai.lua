@@ -65,6 +65,10 @@ end
 function OpenAIProvider:generate(messages, options)
     options = options or {}
 
+    if not http then
+        return nil, "HTTP bindings not available (jenova.http not loaded)"
+    end
+
     local body = {
         model = options.model or "gpt-4o-mini",
         messages = messages,

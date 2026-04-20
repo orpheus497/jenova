@@ -46,7 +46,7 @@ function M.load_jenova_conf()
             -- Strip comments and leading/trailing whitespace
             line = line:gsub("#.*", ""):match("^%s*(.-)%s*$")
             if line and line ~= "" then
-                local k, v = line:match("^([%w_]+)=[\"']?(.-)[\"']?$")
+                local k, v = line:match("^([%w_]+)%s*=%s*[\"']?(.-)[\"']?$")
                 if k and v then
                     -- Basic shell expansion for $JENOVA_ROOT
                     v = v:gsub("%$JENOVA_ROOT", root)

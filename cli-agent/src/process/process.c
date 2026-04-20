@@ -254,6 +254,28 @@ static int32_t json_extract_int(const char *json, const char *key, int32_t defau
     return atoi(pos);
 }
 
+static int shell_quote_arg(const char *src, size_t src_len, char *dst, size_t dst_size) {
+    if (!src || !dst || dst_size < 3) return -1;
+    size_t pos = 0;
+    dst[pos++] = '\'';
+    for (size_t i = 0; i < src_len; i++) {
+        if (src[i] == '\'') {
+            if (pos + 4 >= dst_size) return -1;
+            dst[pos++] = '\'';
+            dst[pos++] = '\\';
+            dst[pos++] = '\'';
+            dst[pos++] = '\'';
+        } else {
+            if (pos + 1 >= dst_size) return -1;
+            dst[pos++] = src[i];
+        }
+    }
+    if (pos + 1 >= dst_size) return -1;
+    dst[pos++] = '\'';
+    dst[pos] = '\0';
+    return (int)pos;
+}
+
 static char *json_extract_args_command(const char *json) {
     if (!json) return NULL;
 
@@ -288,15 +310,19 @@ static char *json_extract_args_command(const char *json) {
             }
             if (*p == '"') {
                 size_t arg_len = (size_t)(p - str_start);
-                while (cmd_len + arg_len + 2 > capacity) {
+                char quoted[4096];
+                int qlen = shell_quote_arg(str_start, arg_len, quoted, sizeof(quoted));
+                if (qlen < 0) { free(command); return NULL; }
+
+                while (cmd_len + (size_t)qlen + 2 > capacity) {
                     capacity *= 2;
                     char *new_cmd = realloc(command, capacity);
                     if (!new_cmd) { free(command); return NULL; }
                     command = new_cmd;
                 }
                 if (!first_arg) command[cmd_len++] = ' ';
-                memcpy(command + cmd_len, str_start, arg_len);
-                cmd_len += arg_len;
+                memcpy(command + cmd_len, quoted, (size_t)qlen);
+                cmd_len += (size_t)qlen;
                 command[cmd_len] = '\0';
                 first_arg = 0;
                 in_string = 0;

@@ -199,7 +199,12 @@ function LlamaCppProvider:generate(messages, options)
                 local dirs = self:get_models_dirs()
                 return nil, "No models available. Place a GGUF model in: " .. table.concat(dirs, ", ")
             end
-            local ok, err = self:find_and_load_model(models[1])
+            local model_entry = models[1]
+            local model_name = type(model_entry) == "table" and model_entry.name or model_entry
+            if not model_name then
+                return nil, "No valid model found in models list"
+            end
+            local ok, err = self:find_and_load_model(model_name)
             if not ok then return nil, err end
         end
     end

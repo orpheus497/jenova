@@ -44,10 +44,18 @@ local function fetch_page(ctx, params, label)
     if not resp then
         return nil, label .. ": " .. tostring(err)
     end
-    if resp.status and resp.status ~= 200 then
-        return nil, label .. ": HTTP " .. tostring(resp.status)
+    local body_str
+    if type(resp) == "string" then
+        body_str = resp
+    elseif type(resp) == "table" then
+        if resp.status and resp.status ~= 200 then
+            return nil, label .. ": HTTP " .. tostring(resp.status)
+        end
+        body_str = resp.body or ""
+    else
+        return nil, label .. ": unexpected response type"
     end
-    local ok, body = pcall(json.parse, resp.body or "")
+    local ok, body = pcall(json.parse, body_str)
     if not ok or type(body) ~= "table" then
         return nil, label .. ": invalid JSON response"
     end

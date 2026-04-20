@@ -119,12 +119,13 @@ function M._run(args)
     local schedules = app_state.get("cron_schedules") or {}
     for i, sched in ipairs(schedules) do
         if sched.id == task_id or sched.name == task_id then
-            -- Execute the command via jenova.process.spawn or io.popen fallback
             local output = ""
             if jenova and jenova.process and jenova.process.spawn then
                 local json = require("utils.json_fallback")
+                local shell = require("utils.shell")
                 local config = json.stringify({
-                    command = sched.command,
+                    command = "sh",
+                    args = { "-c", sched.command },
                     timeout_ms = 60000,
                     capture_output = true,
                 })
@@ -136,7 +137,9 @@ function M._run(args)
                     end
                 end
             else
-                local handle = io.popen(sched.command .. " 2>&1")
+                local shell = require("utils.shell")
+                local quoted = shell.quote(sched.command)
+                local handle = io.popen("sh -c " .. quoted .. " 2>&1")
                 if handle then
                     output = handle:read("*a")
                     handle:close()

@@ -48,6 +48,15 @@ function M.run(opts)
         table.insert(conversation, { role = role, content = content })
     end
 
+    local cmd_registry = nil
+    local function get_cmd_registry()
+        if cmd_registry == nil then
+            local ok_reg, reg = pcall(require, "cli.commands.registry")
+            cmd_registry = ok_reg and reg or false
+        end
+        return cmd_registry
+    end
+
     local function execute_tool(name, arguments)
         if not tool_registry then
             return nil, "tool registry not available"
@@ -204,8 +213,8 @@ function M.run(opts)
         elseif line:sub(1, 1) == "/" then
             local cmd_name = line:match("^/(%S+)")
             local cmd_args = line:match("^/%S+%s+(.*)") or ""
-            local ok_reg, cmd_registry = pcall(require, "cli.commands.registry")
-            local handler = ok_reg and cmd_registry.get_command(cmd_name) or nil
+            local reg = get_cmd_registry()
+            local handler = reg and reg.get_command(cmd_name) or nil
             if handler then
                 pcall(handler, cmd_args)
             else

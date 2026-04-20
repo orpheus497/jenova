@@ -436,34 +436,12 @@ end
 -- ── Cost Tracking ─────────────────────────────────────────────────────
 
 function QueryEngine:update_cost()
-    -- Model pricing (USD per million tokens)
-    -- Local llama.cpp models: $0 (free local inference)
-    -- Cloud providers: per-model pricing
-    local pricing = {
-        -- Local (free)
-        ["local"] = { input = 0, output = 0 },
-        ["llamacpp"] = { input = 0, output = 0 },
-        -- Anthropic
-        ["claude-sonnet-4-5-20250929"] = { input = 3.00, output = 15.00 },
-        ["claude-opus-4-5-20251101"] = { input = 15.00, output = 75.00 },
-        ["claude-3-5-sonnet-20241022"] = { input = 3.00, output = 15.00 },
-        ["claude-sonnet-4-20250514"] = { input = 3.00, output = 15.00 },
-        ["claude-opus-4-20250514"] = { input = 15.00, output = 75.00 },
-        ["claude-haiku-3-20250307"] = { input = 0.25, output = 1.25 },
-        -- OpenAI
-        ["gpt-4o"] = { input = 2.50, output = 10.00 },
-        ["gpt-4o-mini"] = { input = 0.15, output = 0.60 },
-        ["gpt-4-turbo"] = { input = 10.00, output = 30.00 },
-        -- Gemini
-        ["gemini-2.0-flash-exp"] = { input = 0.075, output = 0.30 },
-        ["gemini-1.5-pro"] = { input = 1.25, output = 5.00 },
-    }
-
-    local model_pricing = pricing[self.model] or pricing["llamacpp"] or { input = 0, output = 0 }
-
-    -- Check if using a local model (model starts with "/" or is "auto")
-    if self.model == "auto" or (self.model and self.model:sub(1, 1) == "/") then
-        model_pricing = pricing["local"]
+    local ok, pricing_mod = pcall(require, "config.pricing")
+    local model_pricing
+    if ok and pricing_mod and pricing_mod.get then
+        model_pricing = pricing_mod.get(self.model)
+    else
+        model_pricing = { input = 0, output = 0 }
     end
 
     local input_cost = (self.total_input_tokens / 1000000) * model_pricing.input

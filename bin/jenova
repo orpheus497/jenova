@@ -1,0 +1,91 @@
+#!/bin/sh
+
+# jenova: Launch the Jenova CLI agent (C + Lua + llama.cpp)
+# FreeBSD 15 | Jenova Cognitive Architecture
+#
+# This is the canonical entry point for the terminal-based AI coding agent.
+# It resolves JENOVA_ROOT, loads configuration, and invokes the cli-agent
+# binary with the correct environment and Lua path.
+#
+# Usage: jenova [options] [prompt...]
+#   --model <model>     Override model selection
+#   --provider <name>   Override provider (llamacpp, openai, anthropic, gemini)
+#   --one-shot          Process prompt and exit (no REPL)
+#   --no-backend        Skip backend health check
+#   --check             Print resolved JENOVA_* environment and exit
+#   -h | --help         Show this help and exit
+
+set -e
+
+SCRIPT_DIR=$(dirname "$(realpath "$0")")
+JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Verify the cli-agent binary exists
+CLI_AGENT="$JENOVA_ROOT/cli-agent/build/cli-agent"
+if [ ! -x "$CLI_AGENT" ]; then
+    echo "Error: cli-agent binary not found at $CLI_AGENT" >&2
+    echo "       Build it first: cd $JENOVA_ROOT/cli-agent && make" >&2
+    exit 1
+fi
+
+# Load configuration
+if [ -f "$JENOVA_ROOT/etc/jenova.conf" ]; then
+    . "$JENOVA_ROOT/etc/jenova.conf"
+fi
+if [ -f "$JENOVA_ROOT/etc/jenova.local.conf" ]; then
+    . "$JENOVA_ROOT/etc/jenova.local.conf"
+fi
+
+# Export environment for the agent
+CONNECT_HOST="${JENOVA_CONNECT_HOST:-${HOST:-127.0.0.1}}"
+if [ "$CONNECT_HOST" = "0.0.0.0" ] || [ "$CONNECT_HOST" = "::" ]; then
+    CONNECT_HOST="127.0.0.1"
+fi
+
+export JENOVA_ROOT
+export JENOVA_CONNECT_HOST="$CONNECT_HOST"
+export JENOVA_PORT="${PORT:-8080}"
+export JENOVA_LLAMA_PORT="${LLAMA_PORT:-8081}"
+export JENOVA_LLAMA_EMBED_PORT="${LLAMA_EMBED_PORT:-8082}"
+export JENOVA_API_URL="http://${CONNECT_HOST}:${JENOVA_PORT}"
+
+# Set LD_LIBRARY_PATH for llama.cpp shared libraries
+LLAMA_LIB_DIR="$JENOVA_ROOT/llama.cpp/build/bin"
+if [ -d "$LLAMA_LIB_DIR" ]; then
+    export LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"
+fi
+
+# Set LUA_PATH so the agent finds its Lua modules
+export LUA_PATH="$JENOVA_ROOT/cli-agent/lua/?.lua;$JENOVA_ROOT/cli-agent/lua/?/init.lua;;"
+
+# Parse jenova-specific flags
+STARTED_BY_THIS_INVOCATION=0
+
+case "${1:-}" in
+    --check)
+        echo "JENOVA_ROOT=$JENOVA_ROOT"
+        echo "JENOVA_CONNECT_HOST=$JENOVA_CONNECT_HOST"
+        echo "JENOVA_PORT=$JENOVA_PORT"
+        echo "JENOVA_LLAMA_PORT=$JENOVA_LLAMA_PORT"
+        echo "JENOVA_LLAMA_EMBED_PORT=$JENOVA_LLAMA_EMBED_PORT"
+        echo "JENOVA_API_URL=$JENOVA_API_URL"
+        echo "CLI_AGENT=$CLI_AGENT"
+        exit 0
+        ;;
+    -h|--help)
+        sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+        exit 0
+        ;;
+esac
+
+# Cleanup: stop backend on exit only if this invocation started it
+cleanup_agent() {
+    if [ "$STARTED_BY_THIS_INVOCATION" = "1" ]; then
+        "$JENOVA_ROOT/bin/jenova-ca" stop 2>/dev/null || true
+    fi
+}
+trap cleanup_agent EXIT INT TERM
+
+# Launch the CLI agent
+cd "$JENOVA_ROOT/cli-agent"
+exec "$CLI_AGENT" "$@"

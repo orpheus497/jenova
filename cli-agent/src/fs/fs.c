@@ -165,6 +165,62 @@ static int has_shell_metachar(const char *s) {
     return 0;
 }
 
+static int shell_quote(const char *src, char *dst, size_t dst_size) {
+    if (!src || !dst || dst_size < 3) return -1;
+    size_t pos = 0;
+    dst[pos++] = '\'';
+    for (const char *p = src; *p; p++) {
+        if (*p == '\'') {
+            if (pos + 4 >= dst_size) return -1;
+            dst[pos++] = '\'';
+            dst[pos++] = '\\';
+            dst[pos++] = '\'';
+            dst[pos++] = '\'';
+        } else {
+            if (pos + 1 >= dst_size) return -1;
+            dst[pos++] = *p;
+        }
+    }
+    if (pos + 1 >= dst_size) return -1;
+    dst[pos++] = '\'';
+    dst[pos] = '\0';
+    return 0;
+}
+
+static char *json_escape_string(const char *src) {
+    if (!src) return strdup("");
+    size_t len = strlen(src);
+    size_t capacity = len * 2 + 1;
+    char *result = malloc(capacity);
+    if (!result) return NULL;
+    size_t pos = 0;
+    for (size_t i = 0; i < len; i++) {
+        char c = src[i];
+        if (pos + 6 >= capacity) {
+            capacity *= 2;
+            char *new_r = realloc(result, capacity);
+            if (!new_r) { free(result); return NULL; }
+            result = new_r;
+        }
+        switch (c) {
+            case '"':  result[pos++] = '\\'; result[pos++] = '"'; break;
+            case '\\': result[pos++] = '\\'; result[pos++] = '\\'; break;
+            case '\n': result[pos++] = '\\'; result[pos++] = 'n'; break;
+            case '\r': result[pos++] = '\\'; result[pos++] = 'r'; break;
+            case '\t': result[pos++] = '\\'; result[pos++] = 't'; break;
+            default:
+                if ((unsigned char)c < 0x20) {
+                    pos += (size_t)snprintf(result + pos, capacity - pos, "\\u%04x", (unsigned char)c);
+                } else {
+                    result[pos++] = c;
+                }
+                break;
+        }
+    }
+    result[pos] = '\0';
+    return result;
+}
+
 char *jenova_fs_glob(const char *pattern, const char *root, int32_t max_results) {
     if (!pattern || !root) return NULL;
     if (has_shell_metachar(root)) return strdup("[]");
@@ -221,18 +277,23 @@ char *jenova_fs_glob(const char *pattern, const char *root, int32_t max_results)
 char *jenova_fs_grep(const char *pattern, const char *root,
                      const char *file_glob, int32_t max_results) {
     if (!pattern || !root) return NULL;
-    if (has_shell_metachar(pattern) || has_shell_metachar(root)) return strdup("[]");
-    if (file_glob && has_shell_metachar(file_glob)) return strdup("[]");
 
-    char cmd[2048];
+    char q_pattern[2048], q_root[PATH_MAX + 4], q_glob[512];
+    if (shell_quote(pattern, q_pattern, sizeof(q_pattern)) != 0) return strdup("[]");
+    if (shell_quote(root, q_root, sizeof(q_root)) != 0) return strdup("[]");
+    if (file_glob) {
+        if (shell_quote(file_glob, q_glob, sizeof(q_glob)) != 0) return strdup("[]");
+    }
+
+    char cmd[4096];
     if (file_glob) {
         snprintf(cmd, sizeof(cmd),
-                 "grep -rlF --include='%s' -- '%s' '%s' 2>/dev/null | head -n %d",
-                 file_glob, pattern, root, max_results > 0 ? max_results : 200);
+                 "grep -rlF --include=%s -- %s %s 2>/dev/null | head -n %d",
+                 q_glob, q_pattern, q_root, max_results > 0 ? max_results : 200);
     } else {
         snprintf(cmd, sizeof(cmd),
-                 "grep -rlF -- '%s' '%s' 2>/dev/null | head -n %d",
-                 pattern, root, max_results > 0 ? max_results : 200);
+                 "grep -rlF -- %s %s 2>/dev/null | head -n %d",
+                 q_pattern, q_root, max_results > 0 ? max_results : 200);
     }
 
     FILE *p = popen(cmd, "r");
@@ -277,16 +338,20 @@ char *jenova_fs_stat(const char *path) {
     struct stat st;
     if (stat(path, &st) != 0) return NULL;
 
-    char buf[512];
+    char *escaped_path = json_escape_string(path);
+    if (!escaped_path) return NULL;
+
+    char buf[1024];
     snprintf(buf, sizeof(buf),
              "{\"path\":\"%s\",\"size\":%lld,\"is_file\":%s,\"is_dir\":%s,"
              "\"is_symlink\":%s,\"modified\":%lld,\"permissions\":%o}",
-             path, (long long)st.st_size,
+             escaped_path, (long long)st.st_size,
              S_ISREG(st.st_mode) ? "true" : "false",
              S_ISDIR(st.st_mode) ? "true" : "false",
              S_ISLNK(st.st_mode) ? "true" : "false",
              (long long)st.st_mtime,
              (unsigned int)(st.st_mode & 0777));
+    free(escaped_path);
     return strdup(buf);
 }
 
@@ -345,18 +410,22 @@ char *jenova_fs_list_dir(const char *path) {
         if (stat(full_path, &st) == 0) is_dir = S_ISDIR(st.st_mode);
 #endif
 
-        size_t name_len = strlen(entry->d_name);
-        while (pos + name_len + 16 > capacity) {
+        char *escaped_name = json_escape_string(entry->d_name);
+        if (!escaped_name) continue;
+
+        size_t escaped_len = strlen(escaped_name);
+        while (pos + escaped_len + 32 > capacity) {
             capacity *= 2;
             result = safe_realloc(result, capacity);
-            if (!result) { closedir(dir); return NULL; }
+            if (!result) { free(escaped_name); closedir(dir); return NULL; }
         }
 
         if (!first) result[pos++] = ',';
         pos += (size_t)snprintf(result + pos, capacity - pos,
                                 "{\"name\":\"%s\",\"is_dir\":%s}",
-                                entry->d_name,
+                                escaped_name,
                                 is_dir ? "true" : "false");
+        free(escaped_name);
         first = 0;
     }
     closedir(dir);
@@ -373,9 +442,10 @@ int32_t jenova_fs_remove(const char *path) {
 
 int32_t jenova_fs_remove_recursive(const char *path) {
     if (!path) return -1;
-    if (has_shell_metachar(path)) return -1;
+    char q_path[PATH_MAX + 4];
+    if (shell_quote(path, q_path, sizeof(q_path)) != 0) return -1;
     char cmd[PATH_MAX + 16];
-    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", path);
+    snprintf(cmd, sizeof(cmd), "rm -rf %s", q_path);
     return system(cmd) == 0 ? 0 : -1;
 }
 

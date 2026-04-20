@@ -165,7 +165,9 @@ enable_testing()
 file(GLOB TEST_SOURCES tests/c/*.c)
 foreach(test_src ${TEST_SOURCES})
     get_filename_component(test_name ${test_src} NAME_WE)
-    add_executable(test_${test_name} ${test_src})
+    add_executable(test_${test_name} ${test_src}
+        ${CMAKE_SOURCE_DIR}/src/sandbox/sandbox.c
+    )
     target_include_directories(test_${test_name} PRIVATE
         ${CMAKE_SOURCE_DIR}/include
         ${LUA_INCLUDE_DIR}

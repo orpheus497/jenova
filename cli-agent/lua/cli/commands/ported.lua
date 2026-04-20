@@ -30,18 +30,11 @@ local function get_config()
 end
 
 local function copy_to_clipboard(text)
-    -- Try the platform-appropriate clipboard helper. Returns (ok, err).
     local shell = require("utils.shell")
     local is_windows = shell.is_windows()
 
-    -- os.tmpname() on Windows returns a drive-relative path like `\s34.`
-    -- that the current process typically can't write to. Anchor it to
-    -- the system temp dir when that happens.
-    local tmp = os.tmpname()
-    if is_windows and tmp:sub(1, 1) == "\\" then
-        local temp_dir = os.getenv("TEMP") or os.getenv("TMP") or "."
-        tmp = temp_dir .. tmp
-    end
+    local temp_dir = os.getenv("TMPDIR") or os.getenv("TEMP") or os.getenv("TMP") or "/tmp"
+    local tmp = string.format("%s/jenova_clip_%d_%d", temp_dir, os.time(), math.random(10000, 99999))
 
     local f = io.open(tmp, "w")
     if not f then return false, "tmpfile" end
