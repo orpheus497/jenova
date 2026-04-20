@@ -1,7 +1,9 @@
 -- config/loader.lua — Configuration loader and manager
 -- Equivalent to src/utils/config.ts and src/schemas/config.ts
-
-local json = jenova.json or require("utils.json_fallback")
+--
+-- NOTE: Always use utils.json_fallback for parse/stringify — jenova.json is a
+-- C validator that returns strings, not Lua tables.
+local json = require("utils.json_fallback")
 
 local Config = {}
 
@@ -98,15 +100,19 @@ local function resolve_trio_config(cfg)
 
     if not cfg.models_dir then
         local model_dir = conf.MODEL_DIR or (root .. "/models")
-        local f = io.open(model_dir, "r")
-        if f then
-            f:close()
+        local ok_fs, fs = pcall(require, "utils.fs_fallback")
+        local dir_exists = ok_fs and fs and fs.is_directory and fs.is_directory(model_dir)
+        if not dir_exists then
+            local stat_handle = io.open(model_dir .. "/.gitkeep", "r")
+            if stat_handle then stat_handle:close(); dir_exists = true end
+        end
+        if dir_exists then
             cfg.models_dir = model_dir
         end
     end
 
     if cfg.provider == "jenova_backend" then
-        local http = jenova and jenova.http
+        local http = type(jenova) == "table" and jenova.http
         if http then
             local ok = pcall(http.get, endpoints.health_url, nil)
             if not ok then
@@ -144,7 +150,7 @@ function Config.load()
     file:close()
 
     local ok, user_config = pcall(json.parse, content)
-    if not ok then
+    if not ok or type(user_config) ~= "table" then
         io.stderr:write("Warning: Failed to parse config file, using defaults\n")
         global_config = Config.deep_copy(DEFAULT_CONFIG)
         resolve_trio_config(global_config)
@@ -182,7 +188,8 @@ function Config.save()
     end
 
     -- Write config
-    local ok, json_str = pcall(json.stringify, global_config, { pretty = true })
+    local stringify_fn = json.stringify_pretty or json.stringify
+    local ok, json_str = pcall(stringify_fn, global_config)
     if not ok then
         return nil, "Failed to serialize config"
     end
