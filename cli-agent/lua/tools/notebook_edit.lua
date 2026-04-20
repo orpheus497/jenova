@@ -7,7 +7,7 @@ local M = {}
 M.name = "NotebookEdit"
 M.description = "Edit a Jupyter notebook cell. Modifies the source of a specific cell by index."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         notebook_path = { type = "string", description = "Path to the .ipynb notebook file" },

@@ -8,7 +8,7 @@ local M = {}
 M.name = "Read"
 M.description = "Read the contents of a file from the filesystem. Results are returned with line numbers."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         file_path = { type = "string", description = "The absolute path to the file to read" },

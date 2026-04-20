@@ -27,7 +27,7 @@ local M = {}
 M.name = "REPL"
 M.description = "Execute code in a persistent interactive REPL session (Python, Node, Lua)."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         language = { type = "string", description = "Language: 'python', 'node', 'lua'" },
@@ -290,7 +290,7 @@ function M._run_interpreter(interpreter, code)
     if jenova and jenova.process and jenova.process.spawn then
         local json = require("utils.json_fallback")
         local config = json.stringify({
-            cmd = cmd,
+            command = cmd,
             args = { flag, code },
             timeout_ms = 30000,
             capture_stdout = true,

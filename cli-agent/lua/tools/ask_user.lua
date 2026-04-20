@@ -2,7 +2,7 @@
 local M = {}
 M.name = "AskUserQuestion"
 M.description = "Ask the user a question and wait for their response."
-M.input_schema = { type = "object", properties = { question = { type = "string", description = "Question to ask" } }, required = { "question" } }
+M.parameters = { type = "object", properties = { question = { type = "string", description = "Question to ask" } }, required = { "question" } }
 function M.is_enabled() return true end
 function M.is_read_only() return true end
 function M.user_facing_name() return "AskUser" end

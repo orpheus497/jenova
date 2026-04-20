@@ -209,7 +209,7 @@ function AppState.list_sessions()
             local json = require("utils.json_fallback")
             local cmd, argv = "ls", { "-1", root }
             local config = json.stringify({
-                cmd = cmd,
+                command = cmd,
                 args = argv,
                 timeout_ms = 10000,
                 capture_stdout = true,

@@ -7,7 +7,7 @@ local M = {}
 M.name = "Edit"
 M.description = "Edit a file by replacing an exact string match with new content. The old_string must be unique in the file."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         file_path = { type = "string", description = "Absolute path to the file to modify" },

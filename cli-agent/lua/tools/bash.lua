@@ -9,7 +9,7 @@ local M = {}
 M.name = "Shell"
 M.description = "Execute a shell command (sh) on the system. Use for running scripts, installing packages, compiling code, managing files, or any system operation."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         command = {

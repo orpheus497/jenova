@@ -44,70 +44,81 @@ static size_t write_callback(void *contents, size_t size, size_t nmemb, void *us
     return total;
 }
 
-static const char *find_unescaped_quote(const char *p) {
-    while (*p) {
-        if (*p == '\\') { p += 2; continue; }
-        if (*p == '"') return p;
-        p++;
-    }
-    return NULL;
-}
-
-static size_t unescape_json_string(const char *src, size_t src_len, char *dst, size_t dst_size) {
-    size_t out = 0;
-    for (size_t i = 0; i < src_len && out + 1 < dst_size; i++) {
-        if (src[i] == '\\' && i + 1 < src_len) {
-            i++;
-            switch (src[i]) {
-                case '"': dst[out++] = '"'; break;
-                case '\\': dst[out++] = '\\'; break;
-                case '/': dst[out++] = '/'; break;
-                case 'n': dst[out++] = '\n'; break;
-                case 't': dst[out++] = '\t'; break;
-                default: dst[out++] = src[i]; break;
-            }
-        } else {
-            dst[out++] = src[i];
-        }
-    }
-    dst[out] = '\0';
-    return out;
-}
-
+/* Parse a JSON object of the form {"Key": "Value", ...} into a curl_slist.
+ * Uses a proper state-machine string scanner so escaped quotes inside values
+ * cannot trick the parser into treating them as key/value boundaries. */
 static struct curl_slist *parse_headers_json(const char *headers_json) {
     struct curl_slist *headers = NULL;
     if (!headers_json || headers_json[0] == '\0') return NULL;
 
     const char *p = headers_json;
+    /* Skip to opening brace */
+    while (*p && *p != '{') p++;
+    if (*p != '{') return NULL;
+    p++;
+
     while (*p) {
-        const char *key_start = strchr(p, '"');
-        if (!key_start) break;
-        key_start++;
-        const char *key_end = find_unescaped_quote(key_start);
-        if (!key_end) break;
-
-        size_t key_len = (size_t)(key_end - key_start);
-        char key[512];
-        if (key_len >= sizeof(key)) { p = key_end + 1; continue; }
-        unescape_json_string(key_start, key_len, key, sizeof(key));
-
-        p = key_end + 1;
-        while (*p && *p != '"') p++;
-        if (!*p) break;
+        /* Skip whitespace and commas between entries */
+        while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == ',') p++;
+        if (*p == '}' || !*p) break;
+        if (*p != '"') return headers;  /* malformed */
         p++;
-        const char *val_end = find_unescaped_quote(p);
-        if (!val_end) break;
 
-        size_t val_len = (size_t)(val_end - p);
-        char val[1024];
-        if (val_len >= sizeof(val)) { p = val_end + 1; continue; }
-        unescape_json_string(p, val_len, val, sizeof(val));
+        /* Read key */
+        char key[512];
+        size_t klen = 0;
+        while (*p && *p != '"' && klen + 1 < sizeof(key)) {
+            if (*p == '\\' && *(p+1)) {
+                p++;
+                switch (*p) {
+                    case '"': key[klen++] = '"'; break;
+                    case 'n': key[klen++] = '\n'; break;
+                    case 't': key[klen++] = '\t'; break;
+                    case '\\': key[klen++] = '\\'; break;
+                    default:  key[klen++] = *p; break;
+                }
+            } else { key[klen++] = *p; }
+            p++;
+        }
+        key[klen] = '\0';
+        if (*p != '"') return headers;
+        p++;
 
-        char header[2048];
+        /* Skip colon */
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p != ':') return headers;
+        p++;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p != '"') return headers;
+        p++;
+
+        /* Read value */
+        char val[2048];
+        size_t vlen = 0;
+        while (*p && *p != '"' && vlen + 1 < sizeof(val)) {
+            if (*p == '\\' && *(p+1)) {
+                p++;
+                switch (*p) {
+                    case '"': val[vlen++] = '"'; break;
+                    case 'n': val[vlen++] = '\n'; break;
+                    case 't': val[vlen++] = '\t'; break;
+                    case '\\': val[vlen++] = '\\'; break;
+                    default:  val[vlen++] = *p; break;
+                }
+            } else { val[vlen++] = *p; }
+            p++;
+        }
+        val[vlen] = '\0';
+        if (*p != '"') return headers;
+        p++;
+
+        /* Reject headers with CR/LF in name or value to prevent injection */
+        if (strchr(key, '\r') || strchr(key, '\n')) continue;
+        if (strchr(val, '\r') || strchr(val, '\n')) continue;
+
+        char header[2560];  /* 512 + 2048 + ": \0" */
         snprintf(header, sizeof(header), "%s: %s", key, val);
         headers = curl_slist_append(headers, header);
-
-        p = val_end + 1;
     }
     return headers;
 }

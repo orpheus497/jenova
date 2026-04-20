@@ -7,7 +7,7 @@ local M = {}
 M.name = "ToolSearch"
 M.description = "Search for available tools by name or keyword. Returns tool names and descriptions."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         query = { type = "string", description = "Search query to match against tool names and descriptions" },

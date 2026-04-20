@@ -13,7 +13,7 @@ local M = {}
 M.name = "Agent"
 M.description = "Launch a new agent to handle complex, multi-step tasks independently."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         description = { type = "string", description = "Short (3-5 word) description of the task" },

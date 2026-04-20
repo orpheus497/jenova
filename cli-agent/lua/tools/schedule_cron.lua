@@ -6,7 +6,7 @@ local M = {}
 M.name = "ScheduleCron"
 M.description = "Create, list, or remove scheduled recurring tasks."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         action = { type = "string", description = "Action: 'create', 'list', 'remove', 'run'" },

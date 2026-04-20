@@ -445,9 +445,9 @@ CommandRegistry.register("tools", function(args)
             local desc = type(tool.description) == "function"
                 and tool.description({}) or (tool.description or "")
             print(string.format("Tool: %s\nDescription: %s", tool.name, desc))
-            if tool.input_schema then
+            if tool.parameters then
                 local json = require("utils.json_fallback")
-                local ok2, schema_str = pcall(json.stringify, tool.input_schema, { pretty = true })
+                local ok2, schema_str = pcall(json.stringify, tool.parameters, { pretty = true })
                 if ok2 then print("Input schema:\n" .. schema_str) end
             end
         else

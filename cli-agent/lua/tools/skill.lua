@@ -5,7 +5,7 @@ local M = {}
 M.name = "Skill"
 M.description = "Execute a named skill. Skills are pre-defined prompts or workflows."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         skill = { type = "string", description = "The skill name to execute" },

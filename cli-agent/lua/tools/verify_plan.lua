@@ -6,7 +6,7 @@ local M = {}
 M.name = "VerifyPlanExecution"
 M.description = "Verify that planned steps have been executed and check for remaining work."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         plan_id = { type = "string", description = "ID of the plan to verify (optional, uses active plan)" },

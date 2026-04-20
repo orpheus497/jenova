@@ -8,7 +8,7 @@ local M = {}
 M.name = "TodoWrite"
 M.description = "Create and manage a structured task list for tracking progress on multi-step tasks."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         todos = {

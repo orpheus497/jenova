@@ -7,7 +7,7 @@ local M = {}
 M.name = "WebSearch"
 M.description = "Search the web for information. Returns search results with titles, URLs, and snippets."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         query = { type = "string", description = "The search query" },

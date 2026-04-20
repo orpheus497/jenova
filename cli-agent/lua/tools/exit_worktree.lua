@@ -6,7 +6,7 @@ local M = {}
 M.name = "ExitWorktree"
 M.description = "Exit and optionally clean up a git worktree."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         cleanup = { type = "boolean", description = "Remove the worktree directory after exiting (default true)" },

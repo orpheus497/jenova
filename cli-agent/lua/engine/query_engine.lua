@@ -330,7 +330,11 @@ function QueryEngine:query(user_message, options)
             system = self.system_prompt,
             messages = self.messages,
             tools = self.tools,
-            stream = true
+            stream = true,
+            -- Force the model to call a tool on every turn. The Brief tool
+            -- exists for turns where the correct action is to reply with text.
+            -- Pass "auto" only when there are no tools to avoid a bad request.
+            tool_choice = (self.tools and #self.tools > 0) and "required" or nil,
         }
 
         -- Enrich system prompt with memory context (errors, actions, plan)
@@ -351,20 +355,20 @@ function QueryEngine:query(user_message, options)
 
         -- Call provider system (llama.cpp primary, jenova_backend)
         local ok = false
-        local response_stream
-        if provider_base and type(provider_base.create_message_stream) == "function" then
-            ok, response_stream = pcall(function()
-                return provider_base.create_message_stream(request)
+        local raw_result
+        if provider_base and type(provider_base.generate_request) == "function" then
+            ok, raw_result = pcall(function()
+                return provider_base.generate_request(request)
             end)
         end
 
         if not ok then
-            self.on_error("API call failed: " .. tostring(response_stream))
-            return nil, tostring(response_stream)
+            self.on_error("API call failed: " .. tostring(raw_result))
+            return nil, tostring(raw_result)
         end
 
-        -- Handle streaming response
-        local response = self:handle_streaming_response(response_stream)
+        -- Convert OpenAI result to internal shape
+        local response = self:handle_response(raw_result or {})
 
         -- Update cost tracking
         self:update_cost()

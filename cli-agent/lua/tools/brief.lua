@@ -6,7 +6,7 @@ local M = {}
 M.name = "Brief"
 M.description = "Toggle brief mode for shorter, more concise responses."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         enabled = { type = "boolean", description = "Enable or disable brief mode" },

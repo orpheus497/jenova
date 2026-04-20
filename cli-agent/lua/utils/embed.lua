@@ -21,7 +21,7 @@ function M.init()
     local res
     if jenova and jenova.process and jenova.process.spawn_json then
         local config = json.stringify({
-            cmd = "curl",
+            command = "curl",
             args = { "-sf", "--max-time", "1", health_url },
             timeout_ms = 5000,
             capture_stdout = true,
@@ -76,7 +76,7 @@ function M.encode(text, task)
     -- Prefer argv-based spawn (no shell, cross-platform)
     if jenova and jenova.process and jenova.process.spawn_json then
         local config = json.stringify({
-            cmd = "curl",
+            command = "curl",
             args = { "-sf", "-X", "POST",
                      "-H", "Content-Type: application/json",
                      "-d", "@" .. tmp_file,

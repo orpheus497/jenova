@@ -7,7 +7,7 @@ M.name = "Write"
 local paths = require("utils.paths")
 M.description = "Write content to a file, creating it and parent directories if they don't exist. Overwrites existing files."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         file_path = { type = "string", description = "Absolute path to the file to write" },

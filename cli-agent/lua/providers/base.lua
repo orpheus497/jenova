@@ -275,10 +275,12 @@ function M.count_tokens(text)
     return mgr:count_tokens(text)
 end
 
---- Module-level create_message_stream (for query engine compatibility)
---- @param request table API request with messages, model, tools, etc.
---- @return function|nil stream Iterator function or nil
-function M.create_message_stream(request)
+--- Generate a completion and return structured result directly (no event bus).
+--- Returns { content, tool_calls, finish_reason } or raises on error.
+--- tool_calls is an OpenAI-format array: [{id, type, function={name, arguments}}]
+--- @param request table Full API request (messages, model, tools, tool_choice, etc.)
+--- @return table result Structured result with content/tool_calls/finish_reason
+function M.generate_request(request)
     local mgr = get_default_manager()
     local result, err = mgr:generate(request.messages, {
         model = request.model,
@@ -286,66 +288,18 @@ function M.create_message_stream(request)
         temperature = request.temperature,
         system_prompt = request.system,
         tools = request.tools,
+        tool_choice = request.tool_choice,
     })
 
     if not result then
         error(err or "Generation failed")
     end
 
-    -- result may be a plain string (legacy providers) or a structured table
-    -- { content, tool_calls, finish_reason } (jenova_backend).
-    local text = type(result) == "table" and (result.content or "") or tostring(result)
-    local tool_calls = type(result) == "table" and result.tool_calls or nil
-    local finish_reason = type(result) == "table" and (result.finish_reason or "end_turn") or "end_turn"
-
-    -- Build event list: text block first, then one tool_use block per call.
-    local events = {}
-    local json_codec = require("utils.json_fallback")
-
-    table.insert(events, { type = "message_start", message = { usage = { input_tokens = 0 } } })
-
-    -- Text content block (always emit even if empty, so parsers don't break)
-    table.insert(events, { type = "content_block_start", content_block = { type = "text" } })
-    table.insert(events, { type = "content_block_delta", delta = { type = "text_delta", text = text } })
-    table.insert(events, { type = "content_block_stop" })
-
-    -- Tool-use blocks
-    if tool_calls and #tool_calls > 0 then
-        for idx, tc in ipairs(tool_calls) do
-            local fn = tc["function"] or tc
-            local name = fn.name or ""
-            local args_raw = fn.arguments or fn.parameters or "{}"
-            -- arguments may already be a table or a JSON string
-            local input = type(args_raw) == "table" and args_raw
-                or (json_codec.parse(args_raw) or {})
-            local id = tc.id or string.format("tc-%d", idx)
-
-            table.insert(events, {
-                type = "content_block_start",
-                content_block = { type = "tool_use", id = id, name = name }
-            })
-            -- Emit the input as a single input_json_delta
-            table.insert(events, {
-                type = "content_block_delta",
-                delta = { type = "input_json_delta", partial_json = json_codec.stringify(input) }
-            })
-            table.insert(events, { type = "content_block_stop" })
-        end
-        finish_reason = "tool_use"
+    if type(result) == "table" then
+        return result
     end
 
-    table.insert(events, {
-        type = "message_delta",
-        delta = { stop_reason = finish_reason },
-        usage = { output_tokens = 0 }
-    })
-    table.insert(events, { type = "message_stop" })
-
-    local i = 0
-    return function()
-        i = i + 1
-        return events[i]
-    end
+    return { content = tostring(result), tool_calls = nil, finish_reason = "end_turn" }
 end
 
 return M

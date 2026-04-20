@@ -226,7 +226,10 @@ static char *json_escape_string(const char *src) {
     return result;
 }
 
-static struct {
+/* Thread-local storage makes jenova_fs_glob reentrant: concurrent calls from
+ * different threads (or recursive Lua coroutines running in separate OS threads)
+ * each get their own copy of glob_ctx and cannot corrupt each other's state. */
+static _Thread_local struct {
     const char *pattern;
     const char *root;
     size_t root_len;

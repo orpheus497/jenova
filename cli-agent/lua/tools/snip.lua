@@ -6,7 +6,7 @@ local M = {}
 M.name = "Snip"
 M.description = "Remove older messages from conversation context to free up token space."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         keep_recent = { type = "integer", description = "Number of recent message pairs to keep (default 4)" },

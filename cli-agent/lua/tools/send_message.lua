@@ -6,7 +6,7 @@ local M = {}
 M.name = "SendMessage"
 M.description = "Send a message to another running agent or task by ID."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         to = { type = "string", description = "Target agent or task ID" },

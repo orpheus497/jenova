@@ -7,7 +7,7 @@ local M = {}
 M.name = "TaskCreate"
 M.description = "Create a new background task that runs independently."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         description = { type = "string", description = "Description of the task" },

@@ -486,15 +486,21 @@ local function proxy_connection(client_fd, conn_fds)
                     end
                 end
 
+                local has_tools = type(req_json.tools) == "table" and #req_json.tools > 0
+
                 if intent then
                     local system_p = prompts[intent] or prompts.freechat
                     if web_context ~= "" then system_p = system_p .. "\n" .. web_context end
                     if rag_context ~= "" then system_p = system_p .. "\n" .. rag_context end
                     if intent == "visual" or intent == "websearch" then
+                        -- These intents do not benefit from tool calling; strip them.
                         req_json.tools = nil
                         req_json.tool_choice = "none"
+                        has_tools = false
                     end
                     if req_json.messages[1].role == "system" then
+                        -- When the client already has a system prompt (e.g. cli-agent with tool
+                        -- mandate), prepend the intent context so tool instructions are preserved.
                         req_json.messages[1].content = system_p .. "\n\n" .. req_json.messages[1].content
                     else
                         table.insert(req_json.messages, 1, {role = "system", content = system_p})
@@ -503,24 +509,25 @@ local function proxy_connection(client_fd, conn_fds)
                     -- No intent: only inject context if we have RAG, or if there's no existing system prompt.
                     -- When the client sent tools, preserve its system prompt verbatim — it contains
                     -- the tool-use instructions the model needs. Only append RAG context.
-                    local has_tools = type(req_json.tools) == "table" and #req_json.tools > 0
                     local has_system = req_json.messages[1].role == "system"
                     if rag_context ~= "" then
                         if has_system then
-                            -- Append RAG to existing system prompt regardless of tools
                             req_json.messages[1].content = req_json.messages[1].content .. "\n" .. rag_context
                         else
                             local system_p = prompts.freechat .. "\n" .. rag_context
                             table.insert(req_json.messages, 1, {role = "system", content = system_p})
                         end
                     elseif not has_system and not has_tools then
-                        -- No RAG, no tools, no system prompt: inject default freechat prompt
                         table.insert(req_json.messages, 1, {role = "system", content = prompts.freechat})
                     end
-                    -- When tools are present: set tool_choice auto so llama-server knows to call them
-                    if has_tools then
-                        req_json.tool_choice = req_json.tool_choice or "auto"
-                    end
+                end
+
+                -- Enforce tool_choice for ALL paths: if the request carries tools,
+                -- llama-server must be told it is allowed (or required) to call them.
+                -- This must run after intent handling so the visual/websearch nil-out above
+                -- is respected via the has_tools flag.
+                if has_tools then
+                    req_json.tool_choice = req_json.tool_choice or "auto"
                 end
 
                 local new_body = json.encode(req_json)

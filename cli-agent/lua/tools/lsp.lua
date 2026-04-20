@@ -31,7 +31,7 @@ local function _run_argv(cmd, args)
 
     if jenova and jenova.process and jenova.process.spawn then
         local config = json.stringify({
-            cmd = cmd,
+            command = cmd,
             args = args,
             timeout_ms = 30000,
             capture_output = true,
@@ -59,7 +59,7 @@ local function _run_argv(cmd, args)
     return output, status or 0
 end
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         action = { type = "string", description = "Action: 'diagnostics', 'definition', 'references', 'hover', 'symbols'" },

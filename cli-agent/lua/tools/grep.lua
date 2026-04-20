@@ -8,7 +8,7 @@ local M = {}
 M.name = "Grep"
 M.description = "Search for a pattern in file contents. Supports regex patterns. Returns matching lines with file paths and line numbers."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         pattern = { type = "string", description = "The regular expression pattern to search for" },

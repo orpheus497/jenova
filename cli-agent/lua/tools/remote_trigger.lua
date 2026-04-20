@@ -6,7 +6,7 @@ local M = {}
 M.name = "RemoteTrigger"
 M.description = "Trigger a remote agent session or fire a webhook."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         url = { type = "string", description = "Webhook URL or remote agent endpoint" },
@@ -98,7 +98,7 @@ function M.call(args, ctx)
         argv[#argv + 1] = url
 
         local config = json.stringify({
-            cmd = "curl",
+            command = "curl",
             args = argv,
             timeout_ms = 60000,
             capture_stdout = true,

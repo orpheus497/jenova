@@ -26,7 +26,7 @@ local function make_task_tool(name, description)
         required = {}
     end
 
-    M.input_schema = {
+    M.parameters = {
         type = "object",
         properties = properties,
         required = required,

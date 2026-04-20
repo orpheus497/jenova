@@ -8,7 +8,7 @@ local M = {}
 M.name = "Glob"
 M.description = "Fast file pattern matching tool. Supports glob patterns like '**/*.lua' or 'src/**/*.rs'. Returns matching file paths sorted lexicographically."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         pattern = { type = "string", description = "The glob pattern to match files against" },

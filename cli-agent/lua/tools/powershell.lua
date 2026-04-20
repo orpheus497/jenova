@@ -4,7 +4,7 @@ local M = {}
 M.name = "PowerShell"
 M.description = "Execute PowerShell commands. Only available on Windows."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         command = { type = "string", description = "PowerShell command to execute" },

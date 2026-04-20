@@ -177,7 +177,7 @@ local function run_git(args)
             for token in args:gmatch("%S+") do argv[#argv + 1] = token end
         end
         local config = json.stringify({
-            cmd = "git",
+            command = "git",
             args = argv,
             timeout_ms = 30000,
             capture_stdout = true,
@@ -393,7 +393,7 @@ registry.register("init", function(args)
         local json = require("utils.json_fallback")
         local cmd, argv = "mkdir", { "-p", project_dir }
         _j.process.spawn(json.stringify({
-            cmd = cmd,
+            command = cmd,
             args = argv,
             timeout_ms = 10000,
             capture_stdout = false,
@@ -845,7 +845,7 @@ registry.register("diff", function(args)
             table.insert(cmd_args, target)
         end
         local proc_config = json.stringify({
-            cmd = "git",
+            command = "git",
             args = cmd_args,
             cwd = cwd,
             timeout_ms = 10000,
@@ -914,7 +914,7 @@ registry.register("branch", function(args)
         end
 
         local proc_config = json.stringify({
-            cmd = "git",
+            command = "git",
             args = cmd_args,
             cwd = cwd,
             timeout_ms = 10000,

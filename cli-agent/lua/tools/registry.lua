@@ -96,7 +96,7 @@ function M.build_api_tools()
                 name = tool.name,
                 description = type(tool.description) == "function"
                     and tool.description({}) or tool.description,
-                input_schema = tool.input_schema,
+                parameters = tool.parameters,
             })
         end
     end

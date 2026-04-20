@@ -6,7 +6,7 @@ local M = {}
 M.name = "ReadMcpResource"
 M.description = "Read a specific resource from a connected MCP server by URI."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         uri = { type = "string", description = "Resource URI (e.g. 'file:///path' or 'custom://resource')" },

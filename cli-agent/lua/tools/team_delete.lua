@@ -6,7 +6,7 @@ local M = {}
 M.name = "TeamDelete"
 M.description = "Delete a team and stop its worker agents."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         team_id = { type = "string", description = "Team ID or name to delete" },

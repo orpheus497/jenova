@@ -103,12 +103,14 @@ local function to_chat_body(messages, options)
                 ["function"] = {
                     name = tool.name,
                     description = tool.description,
-                    parameters = tool.input_schema or {},
+                    parameters = tool.parameters or {},
                 }
             })
         end
-        -- Tell llama-server it may call tools; without this it silently ignores them.
-        body.tool_choice = "auto"
+        -- tool_choice: honour an explicit caller override, otherwise use "required"
+        -- so the model cannot skip tools and answer with plain text in agentic loops.
+        -- Callers that want opt-in behaviour can pass tool_choice = "auto" explicitly.
+        body.tool_choice = options.tool_choice or "required"
     end
     if options.system_prompt then
         -- Prepend as a system message if not already present.
@@ -194,11 +196,16 @@ local function normalize_messages(messages)
 end
 
 -- Parse an SSE stream body (multi-line string of "data: {...}" lines)
--- and call on_chunk(delta_text) for each token.  Returns the final
--- accumulated text and finish_reason.
+-- and call on_chunk(delta_text) for each token.
+-- Returns content string, finish_reason string, and accumulated tool_calls table.
+-- llama-server sends tool_calls as delta chunks:
+--   delta.tool_calls = [{index, id, type, function={name, arguments(partial)}}]
 local function parse_sse_stream(body, on_chunk)
     local content = ""
     local finish_reason = "stop"
+    -- tool_call_bufs: index → {id, type, name, arguments_buf}
+    local tool_call_bufs = {}
+
     for line in (body .. "\n"):gmatch("([^\n]*)\n") do
         line = line:match("^%s*(.-)%s*$")
         if line:sub(1, 6) == "data: " then
@@ -209,11 +216,34 @@ local function parse_sse_stream(body, on_chunk)
                 local choices = chunk.choices
                 if type(choices) == "table" and choices[1] then
                     local delta = choices[1].delta or {}
+
+                    -- Text content
                     local piece = delta.content or ""
                     if piece ~= "" then
                         content = content .. piece
                         if on_chunk then on_chunk(piece) end
                     end
+
+                    -- Tool call deltas
+                    if type(delta.tool_calls) == "table" then
+                        for _, tc_delta in ipairs(delta.tool_calls) do
+                            local idx = (tc_delta.index or 0) + 1  -- 1-based
+                            if not tool_call_bufs[idx] then
+                                tool_call_bufs[idx] = { id = "", type = "function", name = "", arguments_buf = "" }
+                            end
+                            local buf = tool_call_bufs[idx]
+                            if tc_delta.id and tc_delta.id ~= "" then buf.id = tc_delta.id end
+                            if tc_delta.type and tc_delta.type ~= "" then buf.type = tc_delta.type end
+                            if type(tc_delta["function"]) == "table" then
+                                local fn = tc_delta["function"]
+                                if fn.name and fn.name ~= "" then buf.name = buf.name .. fn.name end
+                                if fn.arguments and fn.arguments ~= "" then
+                                    buf.arguments_buf = buf.arguments_buf .. fn.arguments
+                                end
+                            end
+                        end
+                    end
+
                     if choices[1].finish_reason then
                         finish_reason = choices[1].finish_reason
                     end
@@ -221,7 +251,25 @@ local function parse_sse_stream(body, on_chunk)
             end
         end
     end
-    return content, finish_reason
+
+    -- Assemble final tool_calls list (nil if none)
+    local tool_calls = nil
+    if next(tool_call_bufs) then
+        tool_calls = {}
+        for _, buf in ipairs(tool_call_bufs) do
+            table.insert(tool_calls, {
+                id   = buf.id,
+                type = buf.type,
+                ["function"] = {
+                    name      = buf.name,
+                    arguments = buf.arguments_buf,
+                },
+            })
+        end
+        finish_reason = "tool_calls"
+    end
+
+    return content, finish_reason, tool_calls
 end
 
 function M:generate_stream(messages, options, on_chunk)
@@ -249,10 +297,10 @@ function M:generate_stream(messages, options, on_chunk)
         self._base_url .. "/v1/chat/completions", headers_str, body_str)
     if not raw then return nil, err or "stream request failed" end
 
-    local content, finish_reason = parse_sse_stream(raw, on_chunk)
+    local content, finish_reason, tool_calls = parse_sse_stream(raw, on_chunk)
     return {
         content       = content,
-        tool_calls    = nil,
+        tool_calls    = tool_calls,
         finish_reason = finish_reason,
     }
 end

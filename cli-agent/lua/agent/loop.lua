@@ -124,6 +124,21 @@ function M.run(opts)
             base_system_prompt = ctx_block
         end
     end
+
+    -- Tool-use mandate: without this, models default to answering in plain text
+    -- rather than using the tools they have been given.
+    local tool_mandate = [[
+
+## Tool Use
+You have access to a set of tools for interacting with the filesystem, shell, search, web, and more.
+You MUST use tools to perform any action — do not describe what you would do, do it.
+- File operations (read, write, edit, search): use Read, Write, Edit, Glob, Grep
+- Running commands, scripts, compiling: use Shell
+- Searching the web or fetching URLs: use WebSearch, WebFetch
+- When you have nothing to execute and only need to reply with text: use Brief
+Never simulate tool output in your response text. If a task requires system interaction, call the relevant tool.]]
+    base_system_prompt = base_system_prompt .. tool_mandate
+
     local thinking_buf = ""
     local thinking_tokens = 0
 

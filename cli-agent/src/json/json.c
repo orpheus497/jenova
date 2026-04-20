@@ -117,6 +117,7 @@ static int json_key_matches(const char *start, const char *end, const char *key)
     return strlen(key) == len && strncmp(start, key, len) == 0;
 }
 
+/* DEBUG/LOGGING ONLY — not JSON-aware, do not use for security-sensitive key extraction */
 char *jenova_json_get(const char *json_str, const char *path) {
     if (!json_str || !path) return NULL;
 

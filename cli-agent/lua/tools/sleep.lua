@@ -4,7 +4,7 @@ local M = {}
 M.name = "Sleep"
 M.description = "Wait for a specified number of seconds before continuing."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         seconds = { type = "number", description = "Number of seconds to sleep" },

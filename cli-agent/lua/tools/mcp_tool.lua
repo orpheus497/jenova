@@ -7,7 +7,7 @@ local M = {}
 M.name = "MCPTool"
 M.description = "Execute a tool on a connected MCP server."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         server_name = { type = "string", description = "Name of the MCP server" },

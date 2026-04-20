@@ -9,7 +9,7 @@ local M = {}
 M.name = "LocalSearch"
 M.description = "Search local files using hybrid BM25 + semantic vector ranking. Better than grep for finding relevant code/docs by relevance."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         query = { type = "string", description = "The search query" },

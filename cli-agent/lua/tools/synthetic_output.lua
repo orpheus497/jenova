@@ -8,7 +8,7 @@ local M = {}
 M.name = "SyntheticOutput"
 M.description = "Inject synthetic assistant output into the conversation stream."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         content = { type = "string", description = "Content to inject as synthetic output" },

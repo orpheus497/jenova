@@ -14,7 +14,7 @@ local M = {}
 M.name = "McpAuth"
 M.description = "Start the OAuth flow for an MCP server that requires authentication. Returns an authorization URL for the user to open in their browser."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         server_name = {

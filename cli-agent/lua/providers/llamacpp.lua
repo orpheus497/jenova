@@ -150,8 +150,8 @@ function LlamaCppProvider:format_prompt(messages, tools)
                 for _, tool in ipairs(tools) do
                     prompt = prompt .. string.format("Tool: %s\n", tool.name)
                     prompt = prompt .. string.format("Description: %s\n", tool.description)
-                    if tool.input_schema then
-                        prompt = prompt .. string.format("Parameters: %s\n\n", json.stringify(tool.input_schema))
+                    if tool.parameters then
+                        prompt = prompt .. string.format("Parameters: %s\n\n", json.stringify(tool.parameters))
                     end
                 end
                 prompt = prompt .. "\nTo use a tool, respond with a JSON block:\n"

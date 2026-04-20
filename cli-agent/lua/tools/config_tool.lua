@@ -7,7 +7,7 @@ local M = {}
 M.name = "Config"
 M.description = "Read or write Jenova CLI configuration settings."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         action = { type = "string", description = "Action: 'get', 'set', or 'list'" },

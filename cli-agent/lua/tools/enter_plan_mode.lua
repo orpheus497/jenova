@@ -4,7 +4,7 @@
 local M = {}
 M.name = "EnterPlanMode"
 M.description = "Enter plan mode for high-level architectural planning. Only read-only tools are available in plan mode."
-M.input_schema = { type = "object", properties = {} }
+M.parameters = { type = "object", properties = {} }
 
 function M.is_enabled() return true end
 function M.is_read_only() return true end

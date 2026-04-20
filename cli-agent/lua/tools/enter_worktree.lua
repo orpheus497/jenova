@@ -10,7 +10,7 @@ local M = {}
 M.name = "EnterWorktree"
 M.description = "Create a temporary git worktree for isolated work."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         branch = { type = "string", description = "Branch name for the worktree" },

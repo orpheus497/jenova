@@ -7,7 +7,7 @@ local M = {}
 M.name = "WebFetch"
 M.description = "Fetch a URL and return its content. Supports HTTP/HTTPS. Content is truncated to 100KB."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         url = { type = "string", description = "URL to fetch" },

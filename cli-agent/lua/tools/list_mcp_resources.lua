@@ -7,7 +7,7 @@ local M = {}
 M.name = "ListMcpResources"
 M.description = "List resources exposed by connected MCP servers."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         server_name = { type = "string", description = "Filter by MCP server name (optional)" },

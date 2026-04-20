@@ -4,7 +4,7 @@
 local M = {}
 M.name = "ExitPlanMode"
 M.description = "Exit plan mode and return to normal mode with full tool access."
-M.input_schema = { type = "object", properties = {} }
+M.parameters = { type = "object", properties = {} }
 
 function M.is_enabled() return true end
 function M.is_read_only() return true end

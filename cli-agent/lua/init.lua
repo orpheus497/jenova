@@ -264,7 +264,13 @@ local function run_agent_repl(opts)
             if ui and ui.spinner_start then ui.spinner_start("cognizing") end
             local ok_prov, provider_base = pcall(require, "providers.base")
             if ok_prov then
-                local response, err = provider_base.generate(line, { model = opts.model })
+                local ok_reg, tool_registry = pcall(require, "tools.registry")
+                local tools = ok_reg and tool_registry.build_api_tools() or nil
+                local response, err = provider_base.generate(line, {
+                    model = opts.model,
+                    tools = tools,
+                    tool_choice = (tools and #tools > 0) and "required" or nil,
+                })
                 if ui and ui.spinner_stop then ui.spinner_stop() end
                 if response then
                     if ui and ui.agent_response then
@@ -329,7 +335,7 @@ local function run_mcp_server(opts)
                     name = tool.name,
                     description = type(tool.description) == "function"
                         and tool.description({}) or (tool.description or ""),
-                    inputSchema = tool.input_schema or { type = "object", properties = {} },
+                    inputSchema = tool.parameters or { type = "object", properties = {} },
                 })
             end
 
@@ -353,7 +359,7 @@ local function run_mcp_server(opts)
                     name = tool.name,
                     description = type(tool.description) == "function"
                         and tool.description({}) or (tool.description or ""),
-                    inputSchema = tool.input_schema or { type = "object", properties = {} },
+                    inputSchema = tool.parameters or { type = "object", properties = {} },
                 })
             end
             io.write(json.stringify({

@@ -7,7 +7,7 @@ local M = {}
 M.name = "TeamCreate"
 M.description = "Create a team of worker agents for coordinated multi-agent task execution."
 
-M.input_schema = {
+M.parameters = {
     type = "object",
     properties = {
         name = { type = "string", description = "Team name" },
