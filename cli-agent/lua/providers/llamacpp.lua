@@ -189,16 +189,18 @@ function LlamaCppProvider:generate(messages, options)
 
     -- Ensure a model is loaded
     if not self.loaded_model_id then
-        -- Try to load default model
-        local models = self:get_models()
-        if #models == 0 then
-            return nil, "No models available. Download a GGUF model to ~/.local/share/cli-agent/models/"
-        end
-
-        -- Load first available model
-        local ok, err = self:load_model(self:get_models_dir() .. "/" .. models[1])
-        if not ok then
-            return nil, err
+        local override = os.getenv("JENOVA_MODEL")
+        if override and override ~= "" then
+            local ok, err = self:load_model(override)
+            if not ok then return nil, err end
+        else
+            local models = self:get_models()
+            if #models == 0 then
+                local dirs = self:get_models_dirs()
+                return nil, "No models available. Place a GGUF model in: " .. table.concat(dirs, ", ")
+            end
+            local ok, err = self:find_and_load_model(models[1])
+            if not ok then return nil, err end
         end
     end
 
@@ -258,9 +260,36 @@ function LlamaCppProvider:get_pricing(model)
     }
 end
 
---- Get models directory
+--- Get models directories in priority order
+--- @return table paths List of model directory paths to search
+function LlamaCppProvider:get_models_dirs()
+    local dirs = {}
+
+    local ok, config = pcall(require, "config.loader")
+    if ok then
+        local cfg_dir = config.get("models_dir")
+        if cfg_dir then table.insert(dirs, cfg_dir) end
+    end
+
+    local jenova_root = os.getenv("JENOVA_ROOT")
+    if jenova_root and jenova_root ~= "" then
+        table.insert(dirs, jenova_root .. "/models")
+        table.insert(dirs, jenova_root .. "/models/agent")
+    end
+
+    local home = os.getenv("HOME") or os.getenv("USERPROFILE")
+    if home then
+        table.insert(dirs, home .. "/.local/share/cli-agent/models")
+    end
+
+    return dirs
+end
+
+--- Get primary models directory (for backward compat)
 --- @return string path Models directory path
 function LlamaCppProvider:get_models_dir()
+    local dirs = self:get_models_dirs()
+    if #dirs > 0 then return dirs[1] end
     local home = os.getenv("HOME") or os.getenv("USERPROFILE")
     return home .. "/.local/share/cli-agent/models"
 end

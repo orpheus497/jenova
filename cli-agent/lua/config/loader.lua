@@ -9,8 +9,10 @@ local Config = {}
 -- Default configuration
 local DEFAULT_CONFIG = {
     -- Provider selection
-    provider = "llamacpp", -- "llamacpp" (primary), "anthropic", "openai", "gemini", "openrouter"
-    fallback_enabled = true, -- Auto-fallback to cloud providers if llamacpp unavailable
+    -- Default: jenova_backend (routes through proxy.lua → Jenova's own llama-server)
+    -- Alternatives: llamacpp (in-process), anthropic, openai, gemini, openrouter
+    provider = "jenova_backend",
+    fallback_enabled = true,
 
     -- Model configuration
     model = nil, -- Auto-select based on provider
@@ -51,8 +53,12 @@ local DEFAULT_CONFIG = {
     session_dir = nil,
     memory_dir = nil,
 
-    -- Model directories
-    models_dir = nil, -- Default: ~/.local/share/cli-agent/models
+    -- Model directories (searched in order; first match wins)
+    models_dir = nil, -- Resolved at runtime: $JENOVA_ROOT/models/ → ~/.local/share/cli-agent/models
+
+    -- Jenova-specific paths (auto-resolved from JENOVA_ROOT or etc/jenova.conf)
+    jenova_root = nil,
+    llama_server_path = nil, -- e.g. $JENOVA_ROOT/llama.cpp/build/bin/llama-server
 }
 
 -- Global config instance
@@ -80,20 +86,36 @@ end
 
 local function resolve_trio_config(cfg)
     local trio_ok, trio = pcall(require, "utils.trio")
-    if trio_ok then
-        local endpoints = trio.get_endpoints()
-        if endpoints.root then
-            -- If we have a JENOVA_ROOT, default to jenova_backend provider
-            -- and set up the proxy_url if not already set by the user.
-            if not cfg.provider or cfg.provider == "llamacpp" then
-                -- Check if the proxy is actually alive
-                local http = jenova and jenova.http
-                if http then
-                    local ok = pcall(http.get, endpoints.health_url, nil)
-                    if ok then
-                        cfg.provider = "jenova_backend"
-                    end
-                end
+    if not trio_ok then return end
+
+    local endpoints = trio.get_endpoints()
+    local root = endpoints.root
+    if not root then return end
+
+    cfg.jenova_root = root
+
+    local conf = trio.load_jenova_conf()
+
+    cfg.llama_server_path = cfg.llama_server_path
+        or os.getenv("JENOVA_LLAMA_SERVER")
+        or conf.LLAMA_SERVER
+        or (root .. "/llama.cpp/build/bin/llama-server")
+
+    if not cfg.models_dir then
+        local model_dir = conf.MODEL_DIR or (root .. "/models")
+        local f = io.open(model_dir, "r")
+        if f then
+            f:close()
+            cfg.models_dir = model_dir
+        end
+    end
+
+    if cfg.provider == "jenova_backend" then
+        local http = jenova and jenova.http
+        if http then
+            local ok = pcall(http.get, endpoints.health_url, nil)
+            if not ok then
+                cfg.provider = "llamacpp"
             end
         end
     end

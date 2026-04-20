@@ -54,4 +54,16 @@ M.get_provider = base.get
 M.list_providers = base.list
 M.set_primary = base.set_primary
 
+function M.switch_provider(name)
+    local provider = base.get(name)
+    if not provider then
+        return false, string.format("Unknown provider: %s (available: %s)",
+            name, table.concat(base.list(), ", "))
+    end
+    base.set_primary(name)
+    local ok, config = pcall(require, "config.loader")
+    if ok then config.set("provider", name) end
+    return true
+end
+
 return M

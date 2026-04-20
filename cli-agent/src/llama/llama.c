@@ -156,10 +156,28 @@ int32_t jenova_llama_generate_stream(uint32_t model_id, const char *prompt,
 #endif /* JENOVA_HAS_LLAMA */
 
 char *jenova_llama_list_models(void) {
-    const char *model_dirs[] = {
+    const char *jenova_root = getenv("JENOVA_ROOT");
+
+    const char *static_dirs[] = {
         "models/", "../models/", "/usr/local/share/cli-agent/models/",
         NULL
     };
+
+    char jenova_models[512] = {0};
+    char jenova_agent_models[512] = {0};
+    const char *model_dirs[8];
+    int dir_count = 0;
+
+    if (jenova_root && jenova_root[0] != '\0') {
+        snprintf(jenova_models, sizeof(jenova_models), "%s/models/", jenova_root);
+        snprintf(jenova_agent_models, sizeof(jenova_agent_models), "%s/models/agent/", jenova_root);
+        model_dirs[dir_count++] = jenova_models;
+        model_dirs[dir_count++] = jenova_agent_models;
+    }
+    for (int i = 0; static_dirs[i] && dir_count < 7; i++) {
+        model_dirs[dir_count++] = static_dirs[i];
+    }
+    model_dirs[dir_count] = NULL;
 
     size_t capacity = 4096;
     char *result = malloc(capacity);
