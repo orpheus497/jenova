@@ -151,7 +151,7 @@ function M.save()
 
     local dir = path:match("^(.*)/")
     if dir then
-        local quoted_dir = "'" .. dir:gsub("'", "'\\'") .. "'"
+        local quoted_dir = "'" .. dir:gsub("'", "'\\''") .. "'"
         os.execute("mkdir -p " .. quoted_dir)
     end
 

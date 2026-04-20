@@ -138,19 +138,44 @@ int32_t jenova_auth_delete_key(const char *provider) {
     return result;
 }
 
-char *jenova_auth_build_headers(const char *provider, const char *key) {
-    char buf[1024];
+/* Escape a string for safe embedding in a JSON value field.
+ * Only handles the characters that can appear in an API key
+ * (no control chars, but backslash and double-quote are possible). */
+static char *json_escape_key(const char *input) {
+    if (!input) return NULL;
+    size_t len = strlen(input);
+    char *out = malloc(len * 2 + 1);
+    if (!out) return NULL;
+    size_t j = 0;
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)input[i];
+        if (c == '"')  { out[j++] = '\\'; out[j++] = '"'; }
+        else if (c == '\\') { out[j++] = '\\'; out[j++] = '\\'; }
+        else if (c < 0x20) { /* skip control chars */ }
+        else { out[j++] = (char)c; }
+    }
+    out[j] = '\0';
+    return out;
+}
 
+char *jenova_auth_build_headers(const char *provider, const char *key) {
+    if (!provider || !key) return NULL;
+
+    char *ekey = json_escape_key(key);
+    if (!ekey) return NULL;
+
+    char buf[1024];
     if (strcmp(provider, "anthropic") == 0) {
         snprintf(buf, sizeof(buf),
-                 "{\"x-api-key\":\"%s\",\"anthropic-version\":\"2023-06-01\"}", key);
+                 "{\"x-api-key\":\"%s\",\"anthropic-version\":\"2023-06-01\"}", ekey);
     } else if (strcmp(provider, "openai") == 0 || strcmp(provider, "openrouter") == 0) {
-        snprintf(buf, sizeof(buf), "{\"Authorization\":\"Bearer %s\"}", key);
+        snprintf(buf, sizeof(buf), "{\"Authorization\":\"Bearer %s\"}", ekey);
     } else if (strcmp(provider, "gemini") == 0) {
-        snprintf(buf, sizeof(buf), "{\"x-goog-api-key\":\"%s\"}", key);
+        snprintf(buf, sizeof(buf), "{\"x-goog-api-key\":\"%s\"}", ekey);
     } else {
-        snprintf(buf, sizeof(buf), "{\"Authorization\":\"Bearer %s\"}", key);
+        snprintf(buf, sizeof(buf), "{\"Authorization\":\"Bearer %s\"}", ekey);
     }
 
+    free(ekey);
     return strdup(buf);
 }

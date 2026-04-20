@@ -44,6 +44,14 @@ function M.call(args, ctx)
     -- the TypeScript implementation for local file resources.
     local file_path = uri:match("^file://(.+)")
     if file_path then
+        local _jenova = rawget(_G, "jenova")
+        if type(_jenova) == "table" and _jenova.sandbox and _jenova.sandbox.validate_path then
+            local cwd = (require and pcall(require, "state.app_state") and require("state.app_state").get_cwd())
+                or os.getenv("PWD") or "."
+            if _jenova.sandbox.validate_path(file_path, cwd) == 0 then
+                return { type = "error", error = "Access denied: path outside working directory" }
+            end
+        end
         local f = io.open(file_path, "r")
         if not f then
             return { type = "error", error = "Cannot open file: " .. file_path }

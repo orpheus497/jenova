@@ -35,9 +35,10 @@ local function build_header_args(headers)
     if type(t) ~= "table" then return "" end
     local parts = {}
     for k, v in pairs(t) do
-        -- shell-single-quote each value to prevent injection
-        local safe_k = tostring(k):gsub("'", "")
-        local safe_v = tostring(v):gsub("'", "")
+        -- Strip CRLF from header names and values to prevent header injection,
+        -- then single-quote each for shell safety.
+        local safe_k = tostring(k):gsub("[\r\n]", ""):gsub("'", "")
+        local safe_v = tostring(v):gsub("[\r\n]", ""):gsub("'", "")
         parts[#parts + 1] = string.format("-H '%s: %s'", safe_k, safe_v)
     end
     return table.concat(parts, " ")

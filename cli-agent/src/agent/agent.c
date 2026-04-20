@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/wait.h>
 #include "jenova.h"
 
 typedef struct {
@@ -160,6 +161,7 @@ char *jenova_lsp_request(const char *request_json) {
     }
     buf[pos] = '\0';
     close(out_pipe[0]);
+    waitpid(pid, NULL, 0);
 
     /* Strip the Content-Length header framing — return body only */
     char *body = strstr(buf, "\r\n\r\n");

@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include "jenova.h"
@@ -46,9 +47,19 @@ static int get_random_bytes(unsigned char *buf, size_t len) {
 #else
     int fd = open("/dev/urandom", O_RDONLY);
     if (fd < 0) return -1;
-    ssize_t n = read(fd, buf, len);
+    size_t total = 0;
+    while (total < len) {
+        ssize_t n = read(fd, (char *)buf + total, len - total);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            close(fd);
+            return -1;
+        }
+        if (n == 0) { close(fd); return -1; }
+        total += (size_t)n;
+    }
     close(fd);
-    return (n == (ssize_t)len) ? 0 : -1;
+    return 0;
 #endif
 }
 
@@ -95,6 +106,7 @@ char *jenova_crypto_uuid(void) {
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
 
     char *uuid = malloc(37);
+    if (!uuid) return NULL;
     snprintf(uuid, 37, "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
              bytes[0], bytes[1], bytes[2], bytes[3],
              bytes[4], bytes[5], bytes[6], bytes[7],
