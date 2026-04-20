@@ -11,12 +11,12 @@ local M = {}
 -- We intentionally also block the legacy .claude directory used by the
 -- Anthropic reference client for the same reasons.
 local BLOCKED_DIRS = {
-    "/.jenova/",
-    "/.jenova$",
+    "/%.jenova/",
+    "/%.jenova$",
     "^%.jenova/",
     "^%.jenova$",
-    "/.claude/",
-    "/.claude$",
+    "/%.claude/",
+    "/%.claude$",
     "^%.claude/",
     "^%.claude$",
 }

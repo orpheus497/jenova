@@ -30,7 +30,10 @@ char *jenova_json_stringify(const char *json_str) {
     for (size_t i = 0; i < in_len; i++) {
         char c = json_str[i];
 
-        if (pos + 64 > capacity) {
+        /* Worst case per iteration: newline + indent spaces + 2 chars + NUL.
+         * Grow until we have enough headroom before touching `out`. */
+        size_t needed = (size_t)indent + 4;
+        while (pos + needed + 1 > capacity) {
             capacity *= 2;
             char *new_out = realloc(out, capacity);
             if (!new_out) { free(out); return NULL; }

@@ -129,12 +129,17 @@ function M.call(args, context)
 
     -- Use C FFI process spawning (preferred)
     if type(_jenova) == "table" and _jenova.process and _jenova.process.spawn_json then
+        local env_table = {}
+        for _, pair in ipairs(env) do
+            env_table[pair[1]] = pair[2]
+        end
         local config = json.stringify({
             command = "sh",
             args = { "-c", command },
             cwd = cwd,
             timeout_ms = timeout,
             inherit_env = true,
+            env = env_table,
         })
         local result_json = _jenova.process.spawn_json(config)
         if result_json then

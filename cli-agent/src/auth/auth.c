@@ -19,6 +19,7 @@ static char *get_keys_dir(void) {
     if (!home) home = "/tmp";
     size_t len = strlen(home) + strlen(KEYS_DIR_REL) + 1;
     char *dir = malloc(len);
+    if (!dir) return NULL;
     snprintf(dir, len, "%s%s", home, KEYS_DIR_REL);
     return dir;
 }

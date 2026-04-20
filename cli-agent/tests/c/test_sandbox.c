@@ -59,7 +59,11 @@ static void test_validate_path_basics(void) {
     printf("  validate_path basics...\n");
 
     char cwd[1024];
-    if (!getcwd(cwd, sizeof(cwd))) return;
+    if (!getcwd(cwd, sizeof(cwd))) {
+        fprintf(stderr, "  FAIL: getcwd() failed (line %d)\n", __LINE__);
+        tests_run++;
+        return;
+    }
 
     ASSERT(jenova_sandbox_validate_path(NULL, cwd) == 0, "NULL path rejected");
     ASSERT(jenova_sandbox_validate_path("/tmp", NULL) == 0, "NULL dir rejected");
@@ -70,7 +74,11 @@ static void test_validate_path_relative(void) {
     printf("  validate_path relative paths...\n");
 
     char cwd[1024];
-    if (!getcwd(cwd, sizeof(cwd))) return;
+    if (!getcwd(cwd, sizeof(cwd))) {
+        fprintf(stderr, "  FAIL: getcwd() failed (line %d)\n", __LINE__);
+        tests_run++;
+        return;
+    }
 
     ASSERT(jenova_sandbox_validate_path(".", cwd) == 1, "dot allowed");
     ASSERT(jenova_sandbox_validate_path("./test_sandbox.c", cwd) == 1, "relative file allowed");
@@ -82,7 +90,11 @@ static void test_validate_path_symlinks(void) {
     printf("  validate_path symlinks...\n");
 
     char cwd[1024];
-    if (!getcwd(cwd, sizeof(cwd))) return;
+    if (!getcwd(cwd, sizeof(cwd))) {
+        fprintf(stderr, "  FAIL: getcwd() failed (line %d)\n", __LINE__);
+        tests_run++;
+        return;
+    }
 
     char link_path[1100];
     snprintf(link_path, sizeof(link_path), "%s/.test_symlink_to_etc", cwd);
@@ -99,7 +111,11 @@ static void test_validate_path_nonexistent(void) {
     printf("  validate_path non-existent targets...\n");
 
     char cwd[1024];
-    if (!getcwd(cwd, sizeof(cwd))) return;
+    if (!getcwd(cwd, sizeof(cwd))) {
+        fprintf(stderr, "  FAIL: getcwd() failed (line %d)\n", __LINE__);
+        tests_run++;
+        return;
+    }
 
     char nonexist[1100];
     snprintf(nonexist, sizeof(nonexist), "%s/nonexistent_file_xyz.txt", cwd);

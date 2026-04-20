@@ -8,9 +8,24 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <unistd.h>
 #include <sys/wait.h>
 #include "jenova.h"
+
+/* Write exactly `len` bytes, retrying on partial writes and EINTR. */
+static int write_all(int fd, const char *buf, size_t len) {
+    while (len > 0) {
+        ssize_t w = write(fd, buf, len);
+        if (w < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        buf += (size_t)w;
+        len -= (size_t)w;
+    }
+    return 0;
+}
 
 typedef struct {
     int32_t  initialized;
@@ -140,24 +155,33 @@ char *jenova_lsp_request(const char *request_json) {
     char header[64];
     int hlen = snprintf(header, sizeof(header),
                         "Content-Length: %zu\r\n\r\n", body_len);
-    write(in_pipe[1], header, (size_t)hlen);
-    write(in_pipe[1], request_json, body_len);
+    if (write_all(in_pipe[1], header, (size_t)hlen) < 0 ||
+        write_all(in_pipe[1], request_json, body_len) < 0) {
+        close(in_pipe[1]);
+        close(out_pipe[0]);
+        waitpid(pid, NULL, 0);
+        return NULL;
+    }
     close(in_pipe[1]);
 
-    /* Read response (simple: read everything until EOF) */
+    /* Read LSP response: first parse Content-Length header, then read body. */
     size_t capacity = 8192, pos = 0;
     char *buf = malloc(capacity);
-    if (!buf) { close(out_pipe[0]); return NULL; }
+    if (!buf) { close(out_pipe[0]); waitpid(pid, NULL, 0); return NULL; }
 
+    /* Read until we find "\r\n\r\n" to get the header block. */
     ssize_t n;
     while ((n = read(out_pipe[0], buf + pos, capacity - pos - 1)) > 0) {
         pos += (size_t)n;
+        /* Grow before the buffer is full. */
         if (pos + 1 >= capacity) {
             capacity *= 2;
             char *nb = realloc(buf, capacity);
-            if (!nb) { free(buf); close(out_pipe[0]); return NULL; }
+            if (!nb) { free(buf); close(out_pipe[0]); waitpid(pid, NULL, 0); return NULL; }
             buf = nb;
         }
+        buf[pos] = '\0';
+        if (strstr(buf, "\r\n\r\n")) break;
     }
     buf[pos] = '\0';
     close(out_pipe[0]);
