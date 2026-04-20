@@ -1,189 +1,185 @@
 -- permissions/manager.lua — Tool permission management
--- Equivalent to src/hooks/toolPermission/
 
 local config = require("config.loader")
 local app_state = require("state.app_state")
 
 local Permissions = {}
 
--- Permission modes
 Permissions.MODES = {
-    DEFAULT = "default",           -- Ask for permission each time
-    AUTO = "auto",                 -- Auto-approve all
-    BYPASS = "bypassPermissions",  -- Bypass all permission checks
-    PLAN = "plan",                 -- Plan mode: limited tools
+    DEFAULT  = "default",           -- ask before any action tool
+    AUTO     = "auto",              -- approve all without asking
+    BYPASS   = "bypassPermissions", -- same as auto
+    PLAN     = "plan",              -- read-only; action tools always ask
 }
 
--- Tool categories (TitleCase names matching tools/registry.lua registrations)
+-- Read-only: no side-effects, never need confirmation
 local READONLY_TOOLS = {
-    "Read", "Glob", "Grep", "WebFetch", "WebSearch",
-    "ListMcpResources", "ReadMcpResource", "LSP",
-    "TaskGet", "TaskList", "TaskOutput"
+    Read=true, Glob=true, Grep=true, LocalSearch=true, Brief=true,
+    WebFetch=true, WebSearch=true,
+    ListMcpResources=true, ReadMcpResource=true, LSP=true,
+    TaskGet=true, TaskList=true, TaskOutput=true,
 }
 
-local WRITE_TOOLS = {
-    "Write", "Edit", "Bash", "PowerShell",
-    "NotebookEdit", "MCPTool"
+-- Action tools: modify files, run code, or spawn processes.
+-- These ALWAYS require user confirmation in default/plan mode.
+-- "Bash" kept as alias in case old code uses it.
+local ACTION_TOOLS = {
+    Write=true, Edit=true, Shell=true, Bash=true,
+    NotebookEdit=true, MCPTool=true,
+    TaskCreate=true, TaskUpdate=true, TaskStop=true,
+    Agent=true, TeamCreate=true, TeamDelete=true,
+    RemoteTrigger=true,
 }
 
-local DANGEROUS_TOOLS = {
-    "Bash", "PowerShell", "Write", "Edit",
-    "TaskCreate", "Agent", "TeamCreate"
-}
-
--- Permission cache
 local permission_cache = {}
 
--- ── Check Permission ──────────────────────────────────────────────────
+-- ── Public API ────────────────────────────────────────────────────────
+
+function Permissions.is_readonly_tool(name)  return READONLY_TOOLS[name] == true end
+function Permissions.is_action_tool(name)    return ACTION_TOOLS[name]   == true end
+
+-- Kept for compat with old callers
+function Permissions.is_write_tool(name)     return ACTION_TOOLS[name]   == true end
+function Permissions.is_dangerous_tool(name) return ACTION_TOOLS[name]   == true end
 
 function Permissions.can_use_tool(tool_name, input, context)
     context = context or {}
 
-    local mode = app_state.get("permission_mode") or config.get("permission_mode") or Permissions.MODES.DEFAULT
+    local mode = app_state.get("permission_mode")
+        or config.get("permission_mode")
+        or Permissions.MODES.DEFAULT
 
-    -- Bypass mode: always allow
+    -- Auto/bypass: never block
     if mode == Permissions.MODES.BYPASS or mode == Permissions.MODES.AUTO then
         return true, nil
     end
 
-    -- Plan mode: only allow readonly tools
-    if mode == Permissions.MODES.PLAN then
-        if Permissions.is_readonly_tool(tool_name) then
-            return true, nil
-        end
-
-        -- Ask for permission for write tools
-        return Permissions.request_permission(tool_name, input, context)
+    -- Read-only tools: always allowed
+    if Permissions.is_readonly_tool(tool_name) then
+        return true, nil
     end
 
-    -- Default mode: ask for permission for dangerous tools
-    if Permissions.is_dangerous_tool(tool_name) then
-        return Permissions.request_permission(tool_name, input, context)
-    end
-
-    -- All other tools are allowed by default
-    return true, nil
+    -- Everything else (action tools and unknown tools) requires confirmation
+    return Permissions.request_permission(tool_name, input, context)
 end
 
 -- ── Permission Request ────────────────────────────────────────────────
 
+-- Build a concise human-readable summary of what the tool will do.
+local function describe_action(tool_name, input)
+    if type(input) ~= "table" then return nil end
+    if tool_name == "Shell" or tool_name == "Bash" then
+        return input.command and ("$ " .. input.command:sub(1, 200))
+    elseif tool_name == "Write" then
+        local size = input.content and (#input.content .. " bytes") or ""
+        return input.file_path and ("write " .. size .. " → " .. input.file_path)
+    elseif tool_name == "Edit" then
+        return input.file_path and ("edit " .. input.file_path)
+    end
+    -- Generic: show first non-content string field
+    for _, k in ipairs({"file_path", "path", "command", "query", "url"}) do
+        if type(input[k]) == "string" and #input[k] > 0 then
+            return k .. ": " .. input[k]:sub(1, 120)
+        end
+    end
+    return nil
+end
+
 function Permissions.request_permission(tool_name, input, _context)
-    -- Check cache
     local cache_key = Permissions.get_cache_key(tool_name, input)
     if permission_cache[cache_key] ~= nil then
-        return permission_cache[cache_key], nil
+        local cached = permission_cache[cache_key]
+        if not cached then
+            return false, "Permission denied (cached)"
+        end
+        return true, nil
     end
 
-    -- Format the request
-    print(string.format("\n\x1b[33m┌─ Permission Request ────────────────────\x1b[0m"))
-    print(string.format("\x1b[33m│\x1b[0m Tool: \x1b[1m%s\x1b[0m", tool_name))
+    local Y  = "\27[33m"
+    local B  = "\27[1m"
+    local D  = "\27[2m"
+    local R  = "\27[0m"
+    local CY = "\27[36m"
 
-    -- Show relevant input fields
-    if type(input) == "table" then
-        for k, v in pairs(input) do
-            if type(v) == "string" and #v < 200 then
-                print(string.format("\x1b[33m│\x1b[0m %s: %s", k, v))
-            elseif type(v) == "string" then
-                print(string.format("\x1b[33m│\x1b[0m %s: %s...", k, v:sub(1, 197)))
-            end
+    io.write("\n")
+    io.write(Y .. "  ┌─ action required " .. string.rep("─", 40) .. R .. "\n")
+    io.write(Y .. "  │ " .. R .. B .. tool_name .. R .. "\n")
+
+    local detail = describe_action(tool_name, input)
+    if detail then
+        -- Wrap long details
+        local max = 68
+        while #detail > max do
+            io.write(Y .. "  │ " .. R .. D .. detail:sub(1, max) .. R .. "\n")
+            detail = detail:sub(max + 1)
+        end
+        if #detail > 0 then
+            io.write(Y .. "  │ " .. R .. D .. detail .. R .. "\n")
         end
     end
 
-    print(string.format("\x1b[33m└─────────────────────────────────────────\x1b[0m"))
-    io.write("\x1b[33mAllow? [y/n/always/never]: \x1b[0m")
+    io.write(Y .. "  └" .. string.rep("─", 58) .. R .. "\n")
+    io.write(CY .. "  [y]es  [n]o  [a]lways  [s]ession: " .. R)
     io.flush()
 
     local response = io.read("*l")
-    response = response and response:lower() or "n"
+    response = response and response:lower():match("^%s*(.-)%s*$") or "n"
 
     local allowed = false
 
     if response == "y" or response == "yes" then
         allowed = true
-    elseif response == "always" or response == "a" then
+    elseif response == "a" or response == "always" then
         allowed = true
         permission_cache[cache_key] = true
-    elseif response == "never" or response == "nev" then
+    elseif response == "s" or response == "session" then
+        -- Allow for the rest of the session (cache by tool name only)
+        allowed = true
+        permission_cache[tool_name .. ":*"] = true
+    elseif response == "n" or response == "no" or response == "" then
         allowed = false
         permission_cache[cache_key] = false
-    else
-        allowed = false
     end
 
+    io.write("\n")
+
+    Permissions.record_permission(tool_name, input, allowed)
     if not allowed then
-        Permissions.record_permission(tool_name, input, false)
         return false, "Permission denied by user"
     end
-
-    Permissions.record_permission(tool_name, input, true)
     return true, nil
 end
 
--- ── Tool Classification ───────────────────────────────────────────────
-
-function Permissions.is_readonly_tool(tool_name)
-    for _, name in ipairs(READONLY_TOOLS) do
-        if name == tool_name then
-            return true
-        end
-    end
-    return false
-end
-
-function Permissions.is_write_tool(tool_name)
-    for _, name in ipairs(WRITE_TOOLS) do
-        if name == tool_name then
-            return true
-        end
-    end
-    return false
-end
-
-function Permissions.is_dangerous_tool(tool_name)
-    for _, name in ipairs(DANGEROUS_TOOLS) do
-        if name == tool_name then
-            return true
-        end
-    end
-    return false
-end
-
--- ── Cache Management ──────────────────────────────────────────────────
+-- ── Cache ─────────────────────────────────────────────────────────────
 
 function Permissions.get_cache_key(tool_name, input)
-    -- Simple cache key: tool name + relevant input fields
-    local key_parts = {tool_name}
-
-    if type(input) == "table" then
-        -- Include critical fields in cache key
-        if input.command then
-            table.insert(key_parts, input.command)
-        end
-        if input.file_path then
-            table.insert(key_parts, input.file_path)
-        end
+    -- Check for session-wide grant first
+    if permission_cache[tool_name .. ":*"] then
+        return tool_name .. ":*"
     end
-
-    return table.concat(key_parts, ":")
+    local parts = {tool_name}
+    if type(input) == "table" then
+        if input.command   then parts[#parts+1] = input.command end
+        if input.file_path then parts[#parts+1] = input.file_path end
+    end
+    return table.concat(parts, ":")
 end
 
 function Permissions.clear_cache()
     permission_cache = {}
 end
 
--- ── Permission History ────────────────────────────────────────────────
+-- ── History ───────────────────────────────────────────────────────────
 
 local permission_history = {}
 
 function Permissions.record_permission(tool_name, input, allowed)
     table.insert(permission_history, {
         tool_name = tool_name,
-        input = input,
-        allowed = allowed,
-        timestamp = os.time()
+        input     = input,
+        allowed   = allowed,
+        timestamp = os.time(),
     })
-
-    -- Keep only last 100 entries
     if #permission_history > 100 then
         table.remove(permission_history, 1)
     end

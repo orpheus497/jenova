@@ -129,7 +129,37 @@ function Context.get_user_context()
     return context
 end
 
--- ── Directory Snapshot ────────────────────────────────────────────────
+-- ── Toolchain Detection ───────────────────────────────────────────────
+
+-- Probe which compilers and common build tools are available on PATH.
+-- Returns a string like "cc, clang, make, cmake" or nil if nothing found.
+function Context.get_toolchain()
+    local candidates = {
+        -- C/C++ compilers (order matters: prefer cc first as the POSIX alias)
+        "cc", "gcc", "clang", "g++", "clang++", "c99", "c11",
+        -- Build systems
+        "make", "gmake", "cmake", "ninja", "meson",
+        -- Other langs common in coding tasks
+        "python3", "python", "node", "npm", "cargo", "rustc", "go",
+        "java", "javac", "mvn", "gradle",
+        -- Utils
+        "git", "pkg-config",
+    }
+    local found = {}
+    for _, tool in ipairs(candidates) do
+        local h = io.popen("command -v " .. tool .. " 2>/dev/null")
+        if h then
+            local out = h:read("*l")
+            h:close()
+            if out and #out > 0 then
+                found[#found + 1] = tool
+            end
+        end
+    end
+    return #found > 0 and table.concat(found, ", ") or nil
+end
+
+
 
 -- Scans the working directory (recursively, up to max_files entries) and
 -- returns a compact tree string for injection into the system prompt.

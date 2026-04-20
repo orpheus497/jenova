@@ -112,6 +112,13 @@ function M.run(opts)
             end
         end
 
+        -- Toolchain: probe PATH for compilers/build tools so the model
+        -- knows what is actually available before attempting to compile.
+        local toolchain = context_mod.get_toolchain and context_mod.get_toolchain()
+        if toolchain then
+            table.insert(ctx_parts, string.format("Available build tools: %s", toolchain))
+        end
+
         local snapshot = context_mod.get_directory_snapshot(cwd, 400)
         if snapshot then
             table.insert(ctx_parts, "\n## Directory tree (cwd)\n" .. snapshot)
@@ -181,22 +188,57 @@ Only call Brief when the work is genuinely done.]]
             end
         end,
 
-        on_tool_use = function(tool_name, _input, summary)
-            -- Stop the spinner so the badge lands on its own line.
+        on_tool_use = function(tool_name, input, summary)
             if ui and ui.spinner_stop then ui.spinner_stop() end
-            local label = summary and (tool_name .. ": " .. summary) or tool_name
+            -- Show tool name + summary of what it's acting on
+            local label = tool_name
+            if summary and #summary > 0 then
+                label = tool_name .. ": " .. summary
+            end
             if ui and ui.tool_badge then
                 ui.tool_badge(label, "running")
             elseif ui and ui.status_info then
-                ui.status_info(label .. " running")
+                ui.status_info(label .. " …")
+            end
+            -- For action tools, show extra detail so the user knows exactly what will run
+            if ui and ui.status_info then
+                local mgr_ok, mgr = pcall(require, "permissions.manager")
+                if mgr_ok and mgr and mgr.is_action_tool and mgr.is_action_tool(tool_name) then
+                    if type(input) == "table" then
+                        if input.command then
+                            ui.status_info("  $ " .. input.command:sub(1, 120))
+                        elseif input.file_path then
+                            ui.status_info("  " .. input.file_path)
+                        end
+                    end
+                end
             end
         end,
 
-        on_tool_result = function(tool_name, _result)
+        on_tool_result = function(tool_name, result)
+            -- Determine success/failure from the result table
+            local status = "done"
+            local detail = nil
+            if type(result) == "table" then
+                if result.type == "error" then
+                    status = "failed"
+                    detail = result.error
+                elseif result.exit_code and result.exit_code ~= 0 then
+                    status = "failed"
+                    detail = "exit " .. tostring(result.exit_code)
+                elseif result.num_lines then
+                    detail = tostring(result.num_lines) .. " lines"
+                elseif result.num_files then
+                    detail = tostring(result.num_files) .. " files"
+                end
+            end
             if ui and ui.tool_badge then
-                ui.tool_badge(tool_name, "done")
+                ui.tool_badge(tool_name, status)
             elseif ui and ui.status_info then
-                ui.status_info(tool_name .. " done")
+                ui.status_info(tool_name .. " " .. status)
+            end
+            if detail and ui and ui.status_info then
+                ui.status_info("  " .. detail)
             end
         end,
 
@@ -264,12 +306,25 @@ Only call Brief when the work is genuinely done.]]
             ui.agent_label()
         end
 
-        -- Clear inline thinking indicator
+        -- Clear inline thinking indicator and show a brief snippet of what was concluded
         if ui and ui.thinking_inline_done and thinking_tokens > 0 then
             ui.thinking_inline_done()
-            -- Show thinking summary if we had substantial thinking
-            if #thinking_buf > 100 and ui.think_status then
-                ui.think_status(#thinking_buf)
+            if #thinking_buf > 0 and ui.think_summary then
+                -- Extract the last meaningful sentence from the thinking buffer
+                -- as a summary of what the model concluded before acting.
+                local snippet = thinking_buf
+                -- Strip leading/trailing whitespace
+                snippet = snippet:match("^%s*(.-)%s*$") or snippet
+                -- Prefer last non-empty sentence (after final period/newline cluster)
+                local last_sent = snippet:match("[%.!?]%s*([^%.!?\n][^\n%.!?]+)%s*$")
+                    or snippet:match("\n([^\n]+)%s*$")
+                if last_sent and #last_sent > 15 then
+                    snippet = last_sent:match("^%s*(.-)%s*$") or last_sent
+                else
+                    -- Fall back to first 120 chars
+                    snippet = snippet:sub(1, 120)
+                end
+                ui.think_summary(snippet)
             end
         end
 

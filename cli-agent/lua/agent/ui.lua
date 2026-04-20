@@ -657,6 +657,14 @@ function ui.think_status(chars)
     .. fg(P.dim) .. " (" .. chars .. " chars)" .. RESET .. "\n")
 end
 
+function ui.think_summary(snippet)
+  refresh_size()
+  local max_w = term_w - 8
+  if #snippet > max_w then snippet = snippet:sub(1, max_w - 1) .. "…" end
+  wflush("  " .. fg(P.thinking_border) .. ICONS.think .. RESET
+    .. " " .. fg(P.thinking_fg) .. snippet .. RESET .. "\n")
+end
+
 function ui.thinking_start()
   refresh_size()
   local inner_w = term_w - 6

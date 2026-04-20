@@ -29,13 +29,12 @@ end
 function M.check_permissions(input, ctx)
     local ok_mgr, manager = pcall(require, "permissions.manager")
     if not ok_mgr or not manager or not manager.can_use_tool then
-        return { allowed = false, reason = "permissions manager unavailable" }
-    end
-    local allowed, reason = manager.can_use_tool("Edit", input, ctx or {})
-    if allowed then
+        -- Fail open if manager unavailable — the registry will still ask via
+        -- request_permission on the next load attempt; don't silently block.
         return { allowed = true }
     end
-    return { allowed = false, reason = reason or "Permission denied" }
+    local allowed, reason = manager.can_use_tool("Edit", input, ctx or {})
+    return { allowed = allowed, reason = reason }
 end
 
 function M.call(args, context)

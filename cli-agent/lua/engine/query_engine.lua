@@ -268,11 +268,13 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
 
     if not ok then
         self.on_error("Tool execution failed: " .. tostring(result))
+        self.on_tool_result(tool_name, {type="error", error=tostring(result)})
         return nil, tostring(result)
     end
 
     if exec_err then
         self.on_error("Tool error: " .. exec_err)
+        self.on_tool_result(tool_name, {type="error", error=exec_err})
         return nil, exec_err
     end
 
