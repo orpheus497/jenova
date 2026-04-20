@@ -13,6 +13,11 @@
 #define _DEFAULT_SOURCE
 #endif
 
+/* S_ISLNK may be gated behind _XOPEN_SOURCE on strict C99 compilers. */
+#ifndef S_ISLNK
+#define S_ISLNK(m) (((m) & S_IFMT) == S_IFLNK)
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,6 +32,7 @@
 #include <ftw.h>
 #include <fnmatch.h>
 #include <glob.h>
+#include <sys/wait.h>
 #include "jenova.h"
 
 #ifndef PATH_MAX
@@ -230,8 +236,8 @@ static struct {
      * component this equals `pattern`. */
     const char *pattern_tail;
     /* pattern_prefix: the portion of the pattern before the first "**",
-     * with any trailing '/' stripped. For "src/**\/*.c" this is "src";
-     * for "**\/*.lua" it's the empty string. Only used when
+     * with any trailing '/' stripped. For "src/GLOB/x.c" it is "src";
+     * for "GLOB/y.lua" it is the empty string. Only used when
      * has_doublestar is set — callers must ensure the relative path
      * starts with this prefix so anchored recursive globs don't match
      * paths outside the intended root. */
@@ -272,20 +278,31 @@ static int glob_nftw_cb(const char *fpath, const struct stat *sb,
 
     int matched;
     if (glob_ctx.has_doublestar) {
-        /* Recursive glob: require the relative path to start with the
-         * anchor prefix (the directory portion before "**"), then match
-         * the trailing component against basename. This stops patterns
-         * like "src/**\/*.c" from matching files under "other/dir/". */
+        /* For doublestar patterns: validate prefix anchor first, then try
+         * matching pattern_tail against every directory-aligned suffix of
+         * the relative path. E.g., "src/DST/tests/f.c" correctly matches
+         * a file under src/ whose sub-path starts with "tests/". */
+        const char *search = rel;
         if (glob_ctx.pattern_prefix_len > 0) {
             if (strncmp(rel, glob_ctx.pattern_prefix,
                         glob_ctx.pattern_prefix_len) != 0) {
                 return 0;
             }
-            /* Require a boundary so "src" doesn't match "src_extra". */
-            char after = rel[glob_ctx.pattern_prefix_len];
-            if (after != '/' && after != '\0') return 0;
+            char bnd = rel[glob_ctx.pattern_prefix_len];
+            if (bnd != '/' && bnd != '\0') return 0;
+            search = rel + glob_ctx.pattern_prefix_len;
+            while (*search == '/') search++;
         }
-        matched = (fnmatch(glob_ctx.pattern_tail, basename, 0) == 0);
+        matched = 0;
+        const char *suffix = search;
+        while (suffix) {
+            if (fnmatch(glob_ctx.pattern_tail, suffix, FNM_PATHNAME) == 0) {
+                matched = 1;
+                break;
+            }
+            suffix = strchr(suffix, '/');
+            if (suffix) suffix++;
+        }
     } else if (glob_ctx.has_slash) {
         /* Anchored pattern (e.g. src/foo.c) — match the relative path. */
         matched = (fnmatch(glob_ctx.pattern, rel, FNM_PATHNAME) == 0);
@@ -328,12 +345,16 @@ char *jenova_fs_glob(const char *pattern, const char *root, int32_t max_results)
     }
     glob_ctx.has_slash = (strchr(pattern, '/') != NULL);
     glob_ctx.has_doublestar = (strstr(pattern, "**") != NULL);
-    /* pattern_tail: text after the last '/' in the pattern, used for
-     * basename matching when "**" is present. */
-    const char *last_slash = strrchr(pattern, '/');
-    glob_ctx.pattern_tail = last_slash ? last_slash + 1 : pattern;
+    /* pattern_tail: text after the "**" segment in the pattern, used\n     * for sub-path matching against the relative path suffix. Derived\n     * from the position of "**" so anchored patterns like\n     * "src/DST/tests/f.c" set the tail to "tests/f.c" (not just "f.c"). */
+    glob_ctx.pattern_tail = pattern;
+    if (glob_ctx.has_doublestar) {
+        const char *dstar = strstr(pattern, "**");
+        const char *after_dstar = dstar + 2;
+        if (*after_dstar == '/') after_dstar++;
+        glob_ctx.pattern_tail = after_dstar;
+    }
     /* pattern_prefix: directory anchor before the first doublestar token.
-     * For "src/<DS>/foo.c" that's "src"; for "<DS>/*.lua" it's empty. */
+     * For "src/GLOB/foo.c" that is "src"; for "GLOB/bar" it is empty. */
     glob_ctx.pattern_prefix[0] = '\0';
     glob_ctx.pattern_prefix_len = 0;
     if (glob_ctx.has_doublestar) {
@@ -377,17 +398,19 @@ char *jenova_fs_grep(const char *pattern, const char *root,
 
     /* Use `-rHn` so every match is printed as "file:line_number:content",
      * which we parse into structured JSON for the Lua layer. -F is dropped
-     * so Perl-compatible regex (patterns like "(?i)…") work. */
+     * so Perl-compatible regex (patterns like "(?i)...") work.
+     * Avoid piping through `head` so we can distinguish grep failures
+     * (bad flags, permission errors) from empty results via pclose(). */
     int cap = max_results > 0 ? max_results : 200;
     char cmd[8192];
     if (file_glob) {
         snprintf(cmd, sizeof(cmd),
-                 "grep -rHnP --include=%s -- %s %s 2>/dev/null | head -n %d",
-                 q_glob, q_pattern, q_root, cap);
+                 "grep -rHnP --include=%s -- %s %s 2>/dev/null",
+                 q_glob, q_pattern, q_root);
     } else {
         snprintf(cmd, sizeof(cmd),
-                 "grep -rHnP -- %s %s 2>/dev/null | head -n %d",
-                 q_pattern, q_root, cap);
+                 "grep -rHnP -- %s %s 2>/dev/null",
+                 q_pattern, q_root);
     }
 
     FILE *p = popen(cmd, "r");
@@ -402,7 +425,8 @@ char *jenova_fs_grep(const char *pattern, const char *root,
 
     /* grep output can exceed PATH_MAX when lines are long; use a larger buffer. */
     char line[16384];
-    while (fgets(line, sizeof(line), p)) {
+    int match_count = 0;
+    while (match_count < cap && fgets(line, sizeof(line), p)) {
         size_t len = strlen(line);
         while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) line[--len] = '\0';
         if (len == 0) continue;
@@ -453,10 +477,21 @@ char *jenova_fs_grep(const char *pattern, const char *root,
                                first ? "" : ",", esc_file, line_num_str, esc_content);
         if (written > 0) pos += (size_t)written;
         first = 0;
+        match_count++;
         free(esc_file);
         free(esc_content);
     }
-    pclose(p);
+    int pclose_status = pclose(p);
+    /* grep exits 1 when no matches (normal), 2 on error (bad flags, etc.).
+     * If the exit status signals an execution error and we collected nothing,
+     * return NULL so callers can fall back to an alternate strategy. */
+    if (pclose_status != -1) {
+        int exit_code = WIFEXITED(pclose_status) ? WEXITSTATUS(pclose_status) : -1;
+        if (exit_code == 2 && match_count == 0) {
+            free(result);
+            return NULL;
+        }
+    }
 
     if (pos + 2 > capacity) {
         result = safe_realloc(result, pos + 2);

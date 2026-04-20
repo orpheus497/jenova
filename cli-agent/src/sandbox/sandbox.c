@@ -26,20 +26,35 @@ static const char *blocked_patterns[] = {
     "> /dev/sd",
     "chmod 777 /",
     "chown root",
-    /* Writing to critical system files. The substring "/etc/passwd"
-     * after `>`/`>>` would be ideal, but strstr can match regardless
-     * of direction — any command mentioning these paths for write
-     * intent should already be running under different privileges. */
-    ">/etc/passwd",
-    "> /etc/passwd",
-    ">>/etc/passwd",
-    ">> /etc/passwd",
-    ">/etc/shadow",
-    "> /etc/shadow",
-    ">>/etc/shadow",
-    ">> /etc/shadow",
     NULL
 };
+
+static const char *sensitive_paths[] = {
+    "/etc/passwd",
+    "/etc/shadow",
+    NULL
+};
+
+static int redirects_to_sensitive_file(const char *normalized) {
+    for (int i = 0; sensitive_paths[i]; i++) {
+        const char *path = sensitive_paths[i];
+        const char *pos = normalized;
+        while ((pos = strstr(pos, path)) != NULL) {
+            const char *before = pos - 1;
+            while (before >= normalized && (*before == ' ' || *before == '\t')) before--;
+            if (before < normalized) { pos++; continue; }
+            if (*before == '>' || *before == '<') return 1;
+            if (*before == '|' && before > normalized && *(before-1) == '>') return 1;
+            if ((*before >= '0' && *before <= '9') && before > normalized) {
+                char op = *(before - 1);
+                if (op == '>' || op == '<') return 1;
+                if (op == '|' && before > normalized + 1 && *(before - 2) == '>') return 1;
+            }
+            pos++;
+        }
+    }
+    return 0;
+}
 
 static const char *blocked_substrings[] = {
     "curl|sh",
@@ -178,16 +193,44 @@ int32_t jenova_sandbox_validate_command(const char *command) {
         }
     }
 
-    /* Detect the "curl/wget <URL> | sh/bash" remote-execution pattern even
-     * when the URL sits between the fetcher and the pipe, and even when
-     * absolute paths are used (e.g. "/usr/bin/curl http://x | /bin/sh").
-     * strstr("curl") matches "/usr/bin/curl" naturally since "curl" is a
-     * substring. For the shell side, we scan every '|' occurrence and
-     * inspect the first whitespace-delimited token after it to see
-     * whether it's a shell (possibly via an absolute path). */
-    int has_fetcher = (strstr(normalized, "curl") != NULL) ||
-                      (strstr(normalized, "wget") != NULL) ||
-                      (strstr(normalized, "fetch") != NULL);
+    if (redirects_to_sensitive_file(normalized)) {
+        free(normalized);
+        return 0;
+    }
+
+    /* Detect the "curl/wget <URL> | sh/bash" remote-execution pattern.
+     * For 'curl' and 'wget', strstr is sufficient since these names
+     * don't appear as substrings of common legitimate tools.
+     * For 'fetch', require word-boundary matching to avoid false positives
+     * like `git fetch`, `--fetch-options`, or `fetchmail`. */
+    static const char *fetcher_words[] = { "curl", "wget", NULL };
+    static const char *fetcher_substrings[] = { "fetch", NULL };
+    int has_fetcher = 0;
+    for (int i = 0; fetcher_words[i]; i++) {
+        if (strstr(normalized, fetcher_words[i]) != NULL) {
+            has_fetcher = 1;
+            break;
+        }
+    }
+    if (!has_fetcher) {
+        for (int i = 0; fetcher_substrings[i]; i++) {
+            const char *kw = fetcher_substrings[i];
+            size_t kw_len = strlen(kw);
+            const char *hit = normalized;
+            while ((hit = strstr(hit, kw)) != NULL) {
+                char before = (hit > normalized) ? hit[-1] : ' ';
+                char after  = hit[kw_len];
+                int pre_ok  = (before == ' ' || before == '\t' || before == ';' ||
+                               before == '|' || before == '&'  || before == '/');
+                int post_ok = (after == ' ' || after == '\t'  || after == '\0' ||
+                               after == ';' || after == '|'   || after == '&'  ||
+                               after == '>');
+                if (pre_ok && post_ok) { has_fetcher = 1; break; }
+                hit++;
+            }
+            if (has_fetcher) break;
+        }
+    }
     if (has_fetcher) {
         static const char *shells[] = {
             "sh", "bash", "zsh", "ksh", "dash", "ash", "csh", "tcsh",
