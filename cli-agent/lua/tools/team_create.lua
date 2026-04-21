@@ -52,7 +52,7 @@ function M.call(args, ctx)
     end
 
     local team = {
-        id = string.format("team_%d_%s", os.time(), name:gsub("[^%w]", "_"):sub(1, 20)),
+        id = string.format("team_%d_%04x_%s", os.time(), math.random(0, 0xffff), name:gsub("[^%w]", "_"):sub(1, 20)),
         name = name,
         description = args.description or "",
         members = args.members or {},

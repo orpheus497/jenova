@@ -73,8 +73,11 @@ function M.call(args, ctx)
     if not url or #url == 0 then
         return { type = "error", error = "URL is required" }
     end
-    -- Reject URLs containing CR/LF outright — they should never appear in
-    -- a real URL and only show up via injection attempts.
+    -- Only http:// and https:// are permitted — block file://, gopher://, etc.
+    if not url:match("^https?://") then
+        return { type = "error", error = "Only http:// and https:// URLs are permitted" }
+    end
+    -- Reject URLs containing CR/LF — they only appear in injection attempts.
     if url:find("[\r\n]") then
         return { type = "error", error = "URL must not contain newline characters" }
     end

@@ -119,12 +119,14 @@ char *jenova_crypto_random_hex(int32_t byte_len) {
     if (byte_len <= 0 || byte_len > 256) byte_len = 16;
 
     unsigned char *bytes = malloc((size_t)byte_len);
+    if (!bytes) return NULL;
     if (get_random_bytes(bytes, (size_t)byte_len) != 0) {
         free(bytes);
         return NULL;
     }
 
     char *hex = malloc((size_t)(byte_len * 2 + 1));
+    if (!hex) { free(bytes); return NULL; }
     hex_encode(bytes, (size_t)byte_len, hex);
     free(bytes);
     return hex;
