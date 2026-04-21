@@ -34,7 +34,7 @@ function M.is_restricted(path)
     if type(path) ~= "string" then return false end
     -- Normalize backslashes to forward slashes before pattern matching so
     -- Windows-style paths (C:\repo\.jenova\...) are caught by the same set.
-    local normalized = path:gsub("\\\\", "/")
+    local normalized = path:gsub("\\", "/")
     for _, pat in ipairs(BLOCKED_DIRS) do
         if normalized:find(pat) then return true end
     end

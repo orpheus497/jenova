@@ -120,6 +120,43 @@ static int json_key_matches(const char *start, const char *end, const char *key)
     return strlen(key) == len && strncmp(start, key, len) == 0;
 }
 
+/* Skip a complete JSON value starting at `p` (after whitespace has been
+ * consumed) and return a pointer to the character immediately after it.
+ * Correctly handles strings, objects, arrays, and scalars.
+ * Returns NULL if the input is malformed. */
+static const char *json_skip_value(const char *p) {
+    p = json_skip_ws(p);
+    if (!*p) return NULL;
+
+    if (*p == '"') {
+        const char *end = json_find_string_end(p + 1);
+        return end ? end + 1 : NULL;
+    }
+
+    if (*p == '{' || *p == '[') {
+        int d = 1;
+        p++;
+        while (*p && d > 0) {
+            if (*p == '"') {
+                /* Skip string contents so structural characters inside strings
+                 * do not affect the depth counter. */
+                const char *se = json_find_string_end(p + 1);
+                if (!se) return NULL;
+                p = se + 1;
+                continue;
+            }
+            if (*p == '{' || *p == '[') d++;
+            else if (*p == '}' || *p == ']') d--;
+            p++;
+        }
+        return (d == 0) ? p : NULL;
+    }
+
+    /* Scalar: number, true, false, null — advance to the next delimiter. */
+    while (*p && *p != ',' && *p != '}' && *p != ']') p++;
+    return p;
+}
+
 /* jenova_json_get — extract a top-level string or scalar value from a flat
  * JSON object.  Only keys at depth 1 (the outermost object) are examined, so
  * identically-named keys inside nested objects or arrays are never matched.
@@ -133,76 +170,56 @@ char *jenova_json_get(const char *json_str, const char *path) {
     if (*p != '{') return NULL;
     p++;
 
-    int depth = 1;
-
-    while (*p && depth >= 1) {
+    while (1) {
         p = json_skip_ws(p);
         if (!*p) break;
+        /* End of object */
+        if (*p == '}') break;
+        /* Comma between key-value pairs */
+        if (*p == ',') { p++; continue; }
 
-        if (*p == '{' || *p == '[') {
-            depth++;
-            p++;
-            continue;
-        }
-        if (*p == '}' || *p == ']') {
-            depth--;
-            p++;
-            continue;
-        }
+        /* We expect a key string at this level of the outer object. */
+        if (*p != '"') return NULL;
 
-        /* Skip strings at depth > 1 so that structural characters inside
-         * string values (e.g. "{" in "hello {world}") do not corrupt the
-         * depth counter. */
-        if (*p == '"' && depth > 1) {
-            const char *end = json_find_string_end(p + 1);
-            p = end ? end + 1 : p + 1;
-            continue;
-        }
+        const char *key_start = p + 1;
+        const char *key_end   = json_find_string_end(key_start);
+        if (!key_end) return NULL;
 
-        /* Only try to match keys at the top level of the outer object. */
-        if (*p == '"' && depth == 1) {
-            const char *key_start = p + 1;
-            const char *key_end = json_find_string_end(key_start);
-            if (!key_end) return NULL;
+        const char *after_colon = json_skip_ws(key_end + 1);
+        if (*after_colon != ':') return NULL;
 
-            const char *after_key = json_skip_ws(key_end + 1);
-            if (*after_key == ':') {
-                if (json_key_matches(key_start, key_end, path)) {
-                    const char *value_start = json_skip_ws(after_key + 1);
-                    if (!*value_start) return NULL;
+        const char *value_start = json_skip_ws(after_colon + 1);
+        if (!*value_start) return NULL;
 
-                    if (*value_start == '"') {
-                        const char *value_end = json_find_string_end(value_start + 1);
-                        if (!value_end) return NULL;
-                        size_t len = (size_t)(value_end - (value_start + 1));
-                        char *result = malloc(len + 1);
-                        if (!result) return NULL;
-                        memcpy(result, value_start + 1, len);
-                        result[len] = '\0';
-                        return result;
-                    } else {
-                        const char *end = value_start;
-                        while (*end && *end != ',' && *end != '}' && *end != ']') end++;
-                        while (end > value_start && isspace((unsigned char)*(end - 1))) end--;
-                        size_t len = (size_t)(end - value_start);
-                        char *result = malloc(len + 1);
-                        if (!result) return NULL;
-                        memcpy(result, value_start, len);
-                        result[len] = '\0';
-                        return result;
-                    }
-                }
-                /* Skip past the value (whatever type) so the depth tracking
-                 * in the outer loop handles nested objects/arrays correctly. */
-                p = after_key + 1;
-                continue;
+        if (json_key_matches(key_start, key_end, path)) {
+            /* Extract the value. */
+            if (*value_start == '"') {
+                const char *value_end = json_find_string_end(value_start + 1);
+                if (!value_end) return NULL;
+                size_t len = (size_t)(value_end - (value_start + 1));
+                char *result = malloc(len + 1);
+                if (!result) return NULL;
+                memcpy(result, value_start + 1, len);
+                result[len] = '\0';
+                return result;
+            } else {
+                const char *end = value_start;
+                while (*end && *end != ',' && *end != '}' && *end != ']') end++;
+                while (end > value_start && isspace((unsigned char)*(end - 1))) end--;
+                size_t len = (size_t)(end - value_start);
+                char *result = malloc(len + 1);
+                if (!result) return NULL;
+                memcpy(result, value_start, len);
+                result[len] = '\0';
+                return result;
             }
-            /* Bare string not followed by ':' — skip past it. */
-            p = key_end + 1;
-            continue;
         }
 
-        p++;
+        /* Key did not match: skip the entire value so structural characters
+         * inside nested objects, arrays, or string values never corrupt the
+         * parser state. */
+        p = json_skip_value(value_start);
+        if (!p) return NULL;
     }
     return NULL;
 }

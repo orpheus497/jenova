@@ -20,21 +20,26 @@ option(AGENT_WITH_LLAMA   "Build with llama.cpp support"    OFF)
 option(AGENT_WITH_OPENSSL "Build with OpenSSL crypto"       ON)
 
 # ── Compiler flags ───────────────────────────────────────────────────────
-add_compile_options(
-    -Wall -Wextra -Wpedantic
-    -Wno-unused-parameter
-    -D_POSIX_C_SOURCE=200809L
-)
-
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    add_compile_options(-g -O0 -DDEBUG)
-else()
-    add_compile_options(-O2 -DNDEBUG)
+if(UNIX)
+    add_compile_definitions(_POSIX_C_SOURCE=200809L)
 endif()
 
-if(AGENT_SANITIZE)
-    add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
-    add_link_options(-fsanitize=address)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+    add_compile_options(
+        -Wall -Wextra -Wpedantic
+        -Wno-unused-parameter
+    )
+
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        add_compile_options(-g -O0 -DDEBUG)
+    else()
+        add_compile_options(-O2 -DNDEBUG)
+    endif()
+
+    if(AGENT_SANITIZE)
+        add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+        add_link_options(-fsanitize=address)
+    endif()
 endif()
 
 # ── Platform detection ───────────────────────────────────────────────────
@@ -167,6 +172,7 @@ foreach(test_src ${TEST_SOURCES})
     get_filename_component(test_name ${test_src} NAME_WE)
     add_executable(test_${test_name} ${test_src}
         ${CMAKE_SOURCE_DIR}/src/sandbox/sandbox.c
+        ${CMAKE_SOURCE_DIR}/src/json/json.c
     )
     target_include_directories(test_${test_name} PRIVATE
         ${CMAKE_SOURCE_DIR}/include
@@ -174,7 +180,7 @@ foreach(test_src ${TEST_SOURCES})
     )
     target_link_libraries(test_${test_name} PRIVATE ${LUA_LIBRARY} ${CURL_LIBRARIES})
     if(UNIX)
-        target_link_libraries(test_${test_name} PRIVATE pthread)
+        target_link_libraries(test_${test_name} PRIVATE Threads::Threads)
     endif()
     add_test(NAME ${test_name} COMMAND test_${test_name})
 endforeach()

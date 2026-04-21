@@ -47,6 +47,9 @@ function M.call(args, context)
     end
     -- Resolve relative paths against the session working directory
     path = paths.resolve(path, context and context.cwd)
+    if paths.is_restricted(path) then
+        return { type = "error", error = "Access denied: cannot edit restricted path " .. path }
+    end
 
     -- Use Rust FFI (preferred)
     if jenova and jenova.fs and jenova.fs.edit then

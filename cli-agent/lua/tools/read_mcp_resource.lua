@@ -46,8 +46,14 @@ function M.call(args, ctx)
     if file_path then
         local _jenova = rawget(_G, "jenova")
         if type(_jenova) == "table" and _jenova.sandbox and _jenova.sandbox.validate_path then
-            local cwd = (require and pcall(require, "state.app_state") and require("state.app_state").get_cwd())
-                or os.getenv("PWD") or "."
+            local cwd
+        do
+            local ok, app_state = pcall(require, "state.app_state")
+            if ok and type(app_state) == "table" and type(app_state.get_cwd) == "function" then
+                cwd = app_state.get_cwd()
+            end
+        end
+        cwd = cwd or os.getenv("PWD") or "."
             if _jenova.sandbox.validate_path(file_path, cwd) == 0 then
                 return { type = "error", error = "Access denied: path outside working directory" }
             end

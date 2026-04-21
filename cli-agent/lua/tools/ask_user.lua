@@ -8,7 +8,7 @@ function M.is_read_only() return true end
 function M.user_facing_name() return "AskUser" end
 function M.check_permissions() return { allowed = true } end
 function M.call(args, ctx)
-    io.write("\n❓ " .. args.question .. "\n> ")
+    io.write("\nQuestion: " .. args.question .. "\n> ")
     io.flush()
     local answer = io.read("*l")
     return { type = "text", text = answer or "" }

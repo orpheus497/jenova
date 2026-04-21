@@ -52,7 +52,8 @@ function M.load_jenova_conf()
                 -- The optional whitespace around '=' is handled by %s* in the pattern.
                 local k, quote, v = line:match("^([%w_]+)%s*=%s*([\"']?)(.-)%2%s*$")
                 if k and v then
-                    _ = quote  -- consumed to strip matching surrounding quotes
+                    -- `quote` consumed by the pattern to strip matching surrounding quotes
+                    local _ = quote
                     -- Basic shell expansion for $JENOVA_ROOT
                     v = v:gsub("%$JENOVA_ROOT", root)
                     config[k] = v

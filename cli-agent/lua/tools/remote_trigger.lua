@@ -48,9 +48,28 @@ local function _is_private_url(url)
     local host = url:match("https?://([^/:?#]+)")
     if not host then return true end  -- unparseable — reject
     host = host:lower()
-    if host == "localhost" then return true end
+    -- Strip brackets from IPv6 literals: [::1] -> ::1
+    local ipv6_literal = host:match("^%[(.+)%]$")
+    if ipv6_literal then host = ipv6_literal end
+    -- Localhost — covers "localhost", "localhost.", etc.
+    if host == "localhost" or host:match("^localhost%.?$") then return true end
     if host == "0.0.0.0"   then return true end
-    if host == "::1"        then return true end
+    -- IPv6 loopback
+    if host == "::1" then return true end
+    -- IPv6 unspecified
+    if host == "::" then return true end
+    -- IPv6 link-local: fe80::/10
+    if host:match("^fe[89ab]") or host:match("^fe[89ab]") then return true end
+    if host:match("^fe[89ab]%x") then return true end
+    -- IPv6 link-local prefix fe80-febf
+    local fe_prefix = host:match("^fe(%x%x):")
+    if fe_prefix then
+        local n = tonumber(fe_prefix, 16)
+        if n and n >= 0x80 and n <= 0xbf then return true end
+    end
+    -- IPv6 unique local: fc00::/7  (fc00:: - fdff::)
+    local fc_prefix = host:match("^(f[cd])")
+    if fc_prefix then return true end
     -- IPv4 loopback: 127.0.0.0/8
     if host:match("^127%.[%d]+%.[%d]+%.[%d]+$") then return true end
     -- RFC-1918: 10.0.0.0/8
@@ -65,6 +84,12 @@ local function _is_private_url(url)
     end
     -- Link-local: 169.254.0.0/16
     if host:match("^169%.254%.[%d]+%.[%d]+$") then return true end
+    -- CGNAT: 100.64.0.0/10
+    local cgnat_oct2 = host:match("^100%.(%d+)%.[%d]+%.[%d]+$")
+    if cgnat_oct2 then
+        local n = tonumber(cgnat_oct2)
+        if n and n >= 64 and n <= 127 then return true end
+    end
     return false
 end
 
