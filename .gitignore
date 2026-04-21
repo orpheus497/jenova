@@ -1,4 +1,4 @@
-# --- Jenova CLI (git submodule) ---
+# --- Jenova CLI (downloaded/untracked) ---
 /jenova-cli/*
 !/jenova-cli/.gitkeep
 

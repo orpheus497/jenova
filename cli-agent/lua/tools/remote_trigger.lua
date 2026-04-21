@@ -42,6 +42,32 @@ local function _sanitize_headers(headers)
     return clean
 end
 
+-- Returns true when the URL resolves to a private/loopback address that
+-- must not be reachable from an agent tool (SSRF protection).
+local function _is_private_url(url)
+    local host = url:match("https?://([^/:?#]+)")
+    if not host then return true end  -- unparseable — reject
+    host = host:lower()
+    if host == "localhost" then return true end
+    if host == "0.0.0.0"   then return true end
+    if host == "::1"        then return true end
+    -- IPv4 loopback: 127.0.0.0/8
+    if host:match("^127%.[%d]+%.[%d]+%.[%d]+$") then return true end
+    -- RFC-1918: 10.0.0.0/8
+    if host:match("^10%.[%d]+%.[%d]+%.[%d]+$") then return true end
+    -- RFC-1918: 192.168.0.0/16
+    if host:match("^192%.168%.[%d]+%.[%d]+$") then return true end
+    -- RFC-1918: 172.16.0.0/12  (172.16–172.31)
+    local oct2 = host:match("^172%.(%d+)%.[%d]+%.[%d]+$")
+    if oct2 then
+        local n = tonumber(oct2)
+        if n and n >= 16 and n <= 31 then return true end
+    end
+    -- Link-local: 169.254.0.0/16
+    if host:match("^169%.254%.[%d]+%.[%d]+$") then return true end
+    return false
+end
+
 function M.call(args, ctx)
     local url = args.url
     if not url or #url == 0 then
@@ -51,6 +77,10 @@ function M.call(args, ctx)
     -- a real URL and only show up via injection attempts.
     if url:find("[\r\n]") then
         return { type = "error", error = "URL must not contain newline characters" }
+    end
+    -- SSRF protection: block requests to private/loopback address ranges.
+    if _is_private_url(url) then
+        return { type = "error", error = "SSRF: requests to private/loopback addresses are not permitted" }
     end
 
     local method = (args.method or "POST"):upper()

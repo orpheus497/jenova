@@ -26,7 +26,7 @@ JENOVA_BIN="$SCRIPT_DIR/../bin/jenova"
 JENOVA_CA="$SCRIPT_DIR/../bin/jenova-ca"
 
 if [ ! -x "$JENOVA_BIN" ]; then
-    echo "SKIP: bin/jenova not found or not executable at $JENOVA_BIN (run setup first)" >&2
+    echo "SKIP: jenova-cli/jenova not found or not executable at $JENOVA_BIN (run setup first)" >&2
     exit 0
 fi
 if [ ! -x "$JENOVA_CA" ]; then
