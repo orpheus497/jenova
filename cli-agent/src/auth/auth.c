@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -96,7 +97,7 @@ char *jenova_auth_resolve_key(const char *provider) {
 
 static void mkdir_recursive(const char *path) {
     if (!path) return;
-    char tmp[512];
+    char tmp[PATH_MAX];
     strncpy(tmp, path, sizeof(tmp) - 1);
     tmp[sizeof(tmp) - 1] = '\0';
     for (char *p = tmp + 1; *p; p++) {

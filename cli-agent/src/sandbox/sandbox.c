@@ -65,6 +65,14 @@ static const char *blocked_substrings[] = {
     "curl | bash",
     "wget | sh",
     "wget | bash",
+    "curl;sh",
+    "curl; sh",
+    "wget;sh",
+    "wget; sh",
+    "curl&&sh",
+    "curl && sh",
+    "wget&&sh",
+    "wget && sh",
     NULL
 };
 

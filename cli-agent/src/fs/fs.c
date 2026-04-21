@@ -135,7 +135,9 @@ char *jenova_fs_edit(const char *path, const char *old_string,
         if (!replace_all) break;
     }
 
-    size_t result_len = content_len + (size_t)count * (new_len - old_len);
+    /* Use signed arithmetic to avoid size_t underflow when new_len < old_len */
+    ssize_t delta = (ssize_t)new_len - (ssize_t)old_len;
+    size_t result_len = (size_t)((ssize_t)content_len + (ssize_t)count * delta);
     char *result = malloc(result_len + 1);
     if (!result) { free(content); return strdup("{\"error\":\"allocation failed\"}"); }
     char *rp = result;

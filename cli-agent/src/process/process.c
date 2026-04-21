@@ -272,9 +272,16 @@ static jenova_process_result_t *spawn_argv(char *const argv[], const char *cwd,
     if (!result) return NULL;
 
     int stdout_pipe[2], stderr_pipe[2];
-    if (pipe(stdout_pipe) != 0 || pipe(stderr_pipe) != 0) {
+    if (pipe(stdout_pipe) != 0) {
         result->exit_code = -1;
-        result->stderr_buf = strdup("failed to create pipes");
+        result->stderr_buf = strdup("failed to create stdout pipe");
+        return result;
+    }
+    if (pipe(stderr_pipe) != 0) {
+        close(stdout_pipe[0]);
+        close(stdout_pipe[1]);
+        result->exit_code = -1;
+        result->stderr_buf = strdup("failed to create stderr pipe");
         return result;
     }
 

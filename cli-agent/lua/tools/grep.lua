@@ -94,7 +94,7 @@ function M.call(args, context)
             cmd = cmd .. " --glob " .. shell.quote(file_glob)
         end
     else
-        cmd = string.format("grep -Prn -- %s %s",
+        cmd = string.format("grep -Ern -- %s %s",
             shell.quote(pattern), shell.quote(dir))
     end
     cmd = cmd .. " --exclude-dir=.jenova --exclude-dir=.claude 2>/dev/null"

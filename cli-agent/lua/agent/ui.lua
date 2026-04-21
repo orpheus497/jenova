@@ -811,14 +811,20 @@ local AGENT_LABEL_FRAMES = {
 
 function ui.agent_label()
   -- Animated slide-in of "jenova │ "
+  -- Use jenova.system.sleep_ms if available to avoid busy-waiting.
+  local _jenova = rawget(_G, "jenova")
+  local can_sleep = type(_jenova) == "table"
+      and type(_jenova.system) == "table"
+      and type(_jenova.system.sleep_ms) == "function"
+
   for i, frame in ipairs(AGENT_LABEL_FRAMES) do
     local pad = string.rep(" ", #AGENT_LABEL_FRAMES[#AGENT_LABEL_FRAMES] - #frame)
     io.write("\r  " .. fg(P.cyan) .. BOLD .. frame .. pad .. RESET)
     io.flush()
-    -- tiny busy-wait animation (≈15 ms per frame, pure Lua)
-    local t0 = os.clock()
-    while os.clock() - t0 < 0.015 do end
-    _ = i  -- suppress unused warning
+    if can_sleep then
+      _jenova.system.sleep_ms(15)
+    end
+    _ = i
   end
   -- Final state: "jenova │ " — leave cursor at end of line ready for streaming
   io.write("\r  " .. fg(P.cyan) .. BOLD .. "jenova" .. RESET

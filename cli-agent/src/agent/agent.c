@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <errno.h>
 #include <unistd.h>
 #include <sys/wait.h>
@@ -164,10 +165,12 @@ char *jenova_lsp_request(const char *request_json) {
     }
     close(in_pipe[1]);
 
-    /* Read LSP response: first parse Content-Length header, then read body. */
+    /* Read LSP response: parse Content-Length header, then read exact body. */
     size_t capacity = 8192, pos = 0;
     char *buf = malloc(capacity);
     if (!buf) { close(out_pipe[0]); waitpid(pid, NULL, 0); return NULL; }
+
+#define LSP_MAX_RESPONSE (16 * 1024 * 1024)  /* 16 MiB hard cap */
 
     /* Read until we find "\r\n\r\n" to get the header block. */
     ssize_t n;
@@ -175,6 +178,12 @@ char *jenova_lsp_request(const char *request_json) {
         pos += (size_t)n;
         /* Grow before the buffer is full. */
         if (pos + 1 >= capacity) {
+            if (capacity >= LSP_MAX_RESPONSE) {
+                free(buf);
+                close(out_pipe[0]);
+                waitpid(pid, NULL, 0);
+                return strdup("{\"error\":\"LSP response too large\"}");
+            }
             capacity *= 2;
             char *nb = realloc(buf, capacity);
             if (!nb) { free(buf); close(out_pipe[0]); waitpid(pid, NULL, 0); return NULL; }
@@ -182,6 +191,49 @@ char *jenova_lsp_request(const char *request_json) {
         }
         buf[pos] = '\0';
         if (strstr(buf, "\r\n\r\n")) break;
+    }
+    buf[pos] = '\0';
+
+    /* Parse Content-Length from header block */
+    char *header_end = strstr(buf, "\r\n\r\n");
+    size_t body_start_off = header_end ? (size_t)(header_end - buf) + 4 : pos;
+    size_t content_length = 0;
+    {
+        char *cl = buf;
+        while (cl < (header_end ? header_end : buf + pos)) {
+            if (strncasecmp(cl, "Content-Length:", 15) == 0) {
+                content_length = (size_t)strtoul(cl + 15, NULL, 10);
+                break;
+            }
+            char *nl = memchr(cl, '\n', (size_t)((header_end ? header_end : buf + pos) - cl));
+            if (!nl) break;
+            cl = nl + 1;
+        }
+    }
+
+    /* Read remaining body bytes if Content-Length indicates more */
+    if (content_length > 0) {
+        size_t body_have = pos > body_start_off ? pos - body_start_off : 0;
+        while (body_have < content_length) {
+            size_t need = content_length - body_have;
+            if (body_start_off + content_length + 1 > capacity) {
+                if (body_start_off + content_length + 1 > LSP_MAX_RESPONSE) {
+                    free(buf);
+                    close(out_pipe[0]);
+                    waitpid(pid, NULL, 0);
+                    return strdup("{\"error\":\"LSP response too large\"}");
+                }
+                capacity = body_start_off + content_length + 1;
+                char *nb = realloc(buf, capacity);
+                if (!nb) { free(buf); close(out_pipe[0]); waitpid(pid, NULL, 0); return NULL; }
+                buf = nb;
+            }
+            n = read(out_pipe[0], buf + pos, need < (capacity - pos - 1) ? need : (capacity - pos - 1));
+            if (n <= 0) break;
+            pos += (size_t)n;
+            buf[pos] = '\0';
+            body_have = pos > body_start_off ? pos - body_start_off : 0;
+        }
     }
     buf[pos] = '\0';
     close(out_pipe[0]);
