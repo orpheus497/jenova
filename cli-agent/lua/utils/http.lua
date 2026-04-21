@@ -45,11 +45,14 @@ local function build_header_args(headers)
 end
 
 -- Write body to a temp file and return the path (avoids shell injection).
--- Generates a unique name inside /tmp rather than using os.tmpname(), which
--- is vulnerable to symlink races on some platforms.
+-- Uses mktemp(1) so the kernel atomically creates the file with O_EXCL,
+-- eliminating the TOCTOU race that exists when generating names ourselves.
 local function write_tempfile(content)
-    local rand = math.random(0x10000, 0xffffff)
-    local path = string.format("/tmp/jenova_http_%d_%x", os.time(), rand)
+    local h = io.popen("mktemp /tmp/jenova_http_XXXXXX 2>/dev/null", "r")
+    if not h then return nil end
+    local path = h:read("*l")
+    h:close()
+    if not path or path == "" then return nil end
     local f = io.open(path, "w")
     if not f then return nil end
     f:write(content)

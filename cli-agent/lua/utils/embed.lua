@@ -54,10 +54,10 @@ end
 
 function M.encode(text, task)
     if not initialized and not M.init() then return nil, "not available" end
-    
+
     task = task or "search_document"
     local prefixed = task .. ": " .. text
-    
+
     local payload = json.stringify({ content = prefixed })
 
     local tmp_base = os.getenv("TMP") or os.getenv("TEMP") or "/tmp"
@@ -100,13 +100,31 @@ function M.encode(text, task)
     end
 
     os.remove(tmp_file)
-    
+
     if not body or body == "" then return nil, "request failed" end
-    
+
     local ok, data = pcall(json.parse, body)
     if not ok or not data or not data.embedding then return nil, "parse failed" end
-    
+
     return data.embedding
+end
+
+-- Encode a list of texts sequentially.  The llama-server /embedding endpoint
+-- does not support multi-document batching in a single HTTP request, so this
+-- is O(N) HTTP calls.  Callers should pass only as many texts as necessary;
+-- local_search caps this at the number of candidate files (≤ 300).
+function M.encode_batch(texts, task)
+    if not texts or #texts == 0 then return {}, nil end
+    local vectors = {}
+    for i, text in ipairs(texts) do
+        local vec, err = M.encode(text, task)
+        if not vec then
+            vectors[i] = nil
+        else
+            vectors[i] = vec
+        end
+    end
+    return vectors, nil
 end
 
 function M.cosine(a, b)

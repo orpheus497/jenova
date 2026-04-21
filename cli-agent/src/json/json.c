@@ -120,46 +120,79 @@ static int json_key_matches(const char *start, const char *end, const char *key)
     return strlen(key) == len && strncmp(start, key, len) == 0;
 }
 
-/* DEBUG/LOGGING ONLY — not JSON-aware, do not use for security-sensitive key extraction */
+/* jenova_json_get — extract a top-level string or scalar value from a flat
+ * JSON object.  Only keys at depth 1 (the outermost object) are examined, so
+ * identically-named keys inside nested objects or arrays are never matched.
+ * The function does not handle Unicode escapes in key names; callers must use
+ * plain ASCII keys.  For deeply nested or complex JSON use the Lua-side
+ * json_fallback module instead. */
 char *jenova_json_get(const char *json_str, const char *path) {
     if (!json_str || !path) return NULL;
 
-    const char *p = json_str;
-    while (*p) {
-        if (*p == '"') {
+    const char *p = json_skip_ws(json_str);
+    if (*p != '{') return NULL;
+    p++;
+
+    int depth = 1;
+
+    while (*p && depth >= 1) {
+        p = json_skip_ws(p);
+        if (!*p) break;
+
+        if (*p == '{' || *p == '[') {
+            depth++;
+            p++;
+            continue;
+        }
+        if (*p == '}' || *p == ']') {
+            depth--;
+            p++;
+            continue;
+        }
+
+        /* Only try to match keys at the top level of the outer object. */
+        if (*p == '"' && depth == 1) {
             const char *key_start = p + 1;
             const char *key_end = json_find_string_end(key_start);
             if (!key_end) return NULL;
 
             const char *after_key = json_skip_ws(key_end + 1);
-            if (*after_key == ':' && json_key_matches(key_start, key_end, path)) {
-                const char *value_start = json_skip_ws(after_key + 1);
-                if (!*value_start) return NULL;
+            if (*after_key == ':') {
+                if (json_key_matches(key_start, key_end, path)) {
+                    const char *value_start = json_skip_ws(after_key + 1);
+                    if (!*value_start) return NULL;
 
-                if (*value_start == '"') {
-                    const char *value_end = json_find_string_end(value_start + 1);
-                    if (!value_end) return NULL;
-                    size_t len = (size_t)(value_end - (value_start + 1));
-                    char *result = malloc(len + 1);
-                    if (!result) return NULL;
-                    memcpy(result, value_start + 1, len);
-                    result[len] = '\0';
-                    return result;
-                } else {
-                    const char *end = value_start;
-                    while (*end && *end != ',' && *end != '}' && *end != ']') end++;
-                    while (end > value_start && isspace((unsigned char)*(end - 1))) end--;
-                    size_t len = (size_t)(end - value_start);
-                    char *result = malloc(len + 1);
-                    if (!result) return NULL;
-                    memcpy(result, value_start, len);
-                    result[len] = '\0';
-                    return result;
+                    if (*value_start == '"') {
+                        const char *value_end = json_find_string_end(value_start + 1);
+                        if (!value_end) return NULL;
+                        size_t len = (size_t)(value_end - (value_start + 1));
+                        char *result = malloc(len + 1);
+                        if (!result) return NULL;
+                        memcpy(result, value_start + 1, len);
+                        result[len] = '\0';
+                        return result;
+                    } else {
+                        const char *end = value_start;
+                        while (*end && *end != ',' && *end != '}' && *end != ']') end++;
+                        while (end > value_start && isspace((unsigned char)*(end - 1))) end--;
+                        size_t len = (size_t)(end - value_start);
+                        char *result = malloc(len + 1);
+                        if (!result) return NULL;
+                        memcpy(result, value_start, len);
+                        result[len] = '\0';
+                        return result;
+                    }
                 }
+                /* Skip past the value (whatever type) so the depth tracking
+                 * in the outer loop handles nested objects/arrays correctly. */
+                p = after_key + 1;
+                continue;
             }
+            /* Bare string not followed by ':' — skip past it. */
             p = key_end + 1;
             continue;
         }
+
         p++;
     }
     return NULL;

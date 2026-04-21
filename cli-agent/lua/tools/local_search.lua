@@ -93,11 +93,16 @@ function M.call(args, context)
         if query_vec then embed.normalize(query_vec) end
     end
 
-    -- Indexing and scoring
+    -- Collect file contents for BM25 indexing; also gather texts for batch embedding.
+    -- embed.encode_batch issues one HTTP request per document (the llama-server
+    -- /embedding endpoint is single-document only), so the total is O(N) HTTP calls
+    -- where N ≤ 300.  This is unavoidable without a batch-capable embedding server.
     local bm25_index = {}
     local df = {}
     local total_docs = 0
     local total_len = 0
+    local embed_texts = {}   -- texts to embed, in order
+    local embed_paths = {}   -- parallel path list
 
     for _, path in ipairs(files) do
         local f = io.open(path, "r")
@@ -116,40 +121,45 @@ function M.call(args, context)
                             seen[t] = true
                         end
                     end
-                    
-                    local sem_score = 0
+
+                    bm25_index[path] = {
+                        terms = term_counts,
+                        len = #terms,
+                        size = #content,
+                        sem_score = 0,
+                    }
+                    total_docs = total_docs + 1
+                    total_len = total_len + #terms
+
                     if query_vec then
-                        -- For simplicity in the CLI tool (which doesn't persist vectors),
-                        -- we just embed the whole file content once if it fits.
                         local text_to_embed = content
                         if #text_to_embed > 4000 then
                             local trunc_len = 4000
-                            -- Backtrack if we land on a UTF-8 continuation byte (10xxxxxx)
                             while trunc_len > 0 and text_to_embed:byte(trunc_len) >= 128 and text_to_embed:byte(trunc_len) <= 191 do
                                 trunc_len = trunc_len - 1
                             end
-                            -- Backtrack one more to drop the start byte of the incomplete character
                             if trunc_len > 0 and text_to_embed:byte(trunc_len) >= 192 then
                                 trunc_len = trunc_len - 1
                             end
                             text_to_embed = text_to_embed:sub(1, trunc_len)
                         end
-                        
-                        local doc_vec = embed.encode(text_to_embed, "search_document")
-                        if doc_vec then
-                            embed.normalize(doc_vec)
-                            sem_score = embed.cosine(query_vec, doc_vec)
-                        end
+                        embed_texts[#embed_texts + 1] = text_to_embed
+                        embed_paths[#embed_paths + 1] = path
                     end
+                end
+            end
+        end
+    end
 
-                    bm25_index[path] = { 
-                        terms = term_counts, 
-                        len = #terms, 
-                        size = #content,
-                        sem_score = sem_score
-                    }
-                    total_docs = total_docs + 1
-                    total_len = total_len + #terms
+    -- Embed all candidate documents in one batch call (sequential internally).
+    if query_vec and #embed_texts > 0 then
+        local vectors = embed.encode_batch(embed_texts, "search_document")
+        for i, vec in ipairs(vectors) do
+            if vec then
+                embed.normalize(vec)
+                local doc = bm25_index[embed_paths[i]]
+                if doc then
+                    doc.sem_score = embed.cosine(query_vec, vec)
                 end
             end
         end

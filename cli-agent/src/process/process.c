@@ -27,6 +27,7 @@
 #include <signal.h>
 #include <time.h>
 #include <fcntl.h>
+#include <poll.h>
 #include "jenova.h"
 
 #if defined(__FreeBSD__)
@@ -363,6 +364,14 @@ static jenova_process_result_t *spawn_argv(char *const argv[], const char *cwd,
             break;
         }
 
+        /* Wait up to 20 ms for data on either pipe before draining. */
+        struct pollfd pfds[2];
+        pfds[0].fd = stdout_pipe[0];
+        pfds[0].events = POLLIN;
+        pfds[1].fd = stderr_pipe[0];
+        pfds[1].events = POLLIN;
+        poll(pfds, 2, 20);
+
         /* Drain available output */
         {
             char tmp[4096];
@@ -394,8 +403,6 @@ static jenova_process_result_t *spawn_argv(char *const argv[], const char *cwd,
                 }
             }
         }
-
-        usleep(5000);
     }
 
     /* Final drain after process exit */
