@@ -165,18 +165,21 @@ static int b64_decode_char(char c) {
     return -1;
 }
 
-char *jenova_crypto_base64_decode(const char *input, size_t *out_len) {
+/* Returns a heap-allocated binary buffer whose length is written to *out_len.
+ * The buffer is NOT a C string — it may contain embedded NUL bytes and must
+ * be handled using *out_len.  Free with jenova_crypto_free(). */
+unsigned char *jenova_crypto_base64_decode(const char *input, size_t *out_len) {
     if (!input) return NULL;
 
     size_t in_len = strlen(input);
-    if (in_len == 0) { if (out_len) *out_len = 0; return strdup(""); }
+    if (in_len == 0) { if (out_len) *out_len = 0; return (unsigned char *)strdup(""); }
     if (in_len % 4 != 0) return NULL;
 
     size_t decoded_len = in_len / 4 * 3;
     if (input[in_len - 1] == '=') decoded_len--;
     if (input[in_len - 2] == '=') decoded_len--;
 
-    char *out = malloc(decoded_len + 1);
+    unsigned char *out = (unsigned char *)malloc(decoded_len);
     if (!out) return NULL;
     size_t j = 0;
 
@@ -191,12 +194,11 @@ char *jenova_crypto_base64_decode(const char *input, size_t *out_len) {
             (input[i+3] != '=' && d < 0)) { free(out); return NULL; }
 
         uint32_t n = ((uint32_t)a << 18) | ((uint32_t)b << 12) | ((uint32_t)c << 6) | (uint32_t)d;
-        if (j < decoded_len) out[j++] = (char)((n >> 16) & 0xff);
-        if (j < decoded_len) out[j++] = (char)((n >> 8) & 0xff);
-        if (j < decoded_len) out[j++] = (char)(n & 0xff);
+        if (j < decoded_len) out[j++] = (unsigned char)((n >> 16) & 0xff);
+        if (j < decoded_len) out[j++] = (unsigned char)((n >> 8) & 0xff);
+        if (j < decoded_len) out[j++] = (unsigned char)(n & 0xff);
     }
 
-    out[decoded_len] = '\0';
     if (out_len) *out_len = decoded_len;
     return out;
 }

@@ -12,30 +12,27 @@
 /* Atomic request-ID counter: safe for concurrent use across connections. */
 static atomic_ulong g_mcp_next_id = 1;
 
-/* Extract the numeric or null `id` field from a JSON-RPC message using the
- * proper jenova_json_get() helper so that keys in nested objects, string
- * values containing "id", and reordered fields are handled correctly.
- * Returns the id value as a long, or 0 if the id is null / absent / non-
- * numeric.  The caller is responsible for freeing *id_str_out if non-NULL. */
-static long _extract_id(const char *message, char **id_str_out) {
-    if (id_str_out) *id_str_out = NULL;
-    if (!message) return 0;
+/* Represents the result of extracting the JSON-RPC `id` field.  `has_id` is
+ * 1 when the field is present and non-null; in that case `value` holds the
+ * numeric id.  This avoids conflating "id absent" with "id == 0". */
+typedef struct { int has_id; long value; } _id_result_t;
+
+/* Extract the numeric or null `id` field from a JSON-RPC message using
+ * jenova_json_get() so nested objects, escaped quotes, and reordered fields
+ * are handled correctly. */
+static _id_result_t _extract_id(const char *message) {
+    _id_result_t r = {0, 0};
+    if (!message) return r;
 
     char *id_val = jenova_json_get(message, "id");
-    if (!id_val) return 0;
+    if (!id_val) return r;
 
-    if (strcmp(id_val, "null") == 0) {
-        jenova_json_free(id_val);
-        return 0;
+    if (strcmp(id_val, "null") != 0) {
+        r.has_id = 1;
+        r.value  = strtol(id_val, NULL, 10);
     }
-
-    long id = strtol(id_val, NULL, 10);
-    if (id_str_out) {
-        *id_str_out = id_val;
-    } else {
-        jenova_json_free(id_val);
-    }
-    return id;
+    jenova_json_free(id_val);
+    return r;
 }
 
 char *jenova_mcp_build_init_request(void) {
@@ -53,21 +50,23 @@ char *jenova_mcp_build_init_request(void) {
 char *jenova_mcp_parse_message(const char *message) {
     if (!message) return NULL;
 
-    if (strstr(message, "\"method\"")) {
-        char *method_val = jenova_json_get(message, "method");
-        if (method_val) { jenova_json_free(method_val); }
-        char *id_val = jenova_json_get(message, "id");
-        int has_id = (id_val != NULL);
-        if (id_val) jenova_json_free(id_val);
+    /* Use jenova_json_get() for top-level field presence checks so that
+     * substrings appearing only inside string values do not cause false
+     * positives (e.g. {"note":"has a method field"} must not be a request). */
+    char *method_val = jenova_json_get(message, "method");
+    if (method_val) {
+        jenova_json_free(method_val);
+        _id_result_t id_r = _extract_id(message);
+        return strdup(id_r.has_id ? "{\"type\":\"request\"}" : "{\"type\":\"notification\"}");
+    }
 
-        if (has_id) {
-            return strdup("{\"type\":\"request\"}");
-        }
-        return strdup("{\"type\":\"notification\"}");
-    }
-    if (strstr(message, "\"result\"") || strstr(message, "\"error\"")) {
-        return strdup("{\"type\":\"response\"}");
-    }
+    char *result_val = jenova_json_get(message, "result");
+    char *error_val  = jenova_json_get(message, "error");
+    int is_response  = (result_val != NULL || error_val != NULL);
+    if (result_val) jenova_json_free(result_val);
+    if (error_val)  jenova_json_free(error_val);
+    if (is_response) return strdup("{\"type\":\"response\"}");
+
     return strdup("{\"type\":\"unknown\"}");
 }
 
@@ -78,18 +77,24 @@ char *jenova_mcp_handle_message(const char *message) {
     int is_ping = method_val && strcmp(method_val, "ping") == 0;
     if (method_val) jenova_json_free(method_val);
 
-    long id = _extract_id(message, NULL);
+    _id_result_t id_r = _extract_id(message);
 
+    char buf[256];
     if (is_ping) {
-        char buf[128];
-        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%ld,\"result\":{}}", id);
+        if (id_r.has_id) {
+            snprintf(buf, sizeof(buf),
+                "{\"jsonrpc\":\"2.0\",\"id\":%ld,\"result\":{}}", id_r.value);
+        } else {
+            snprintf(buf, sizeof(buf),
+                "{\"jsonrpc\":\"2.0\",\"id\":null,\"result\":{}}");
+        }
         return strdup(buf);
     }
 
-    char buf[256];
-    if (id != 0) {
+    if (id_r.has_id) {
         snprintf(buf, sizeof(buf),
-            "{\"jsonrpc\":\"2.0\",\"id\":%ld,\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}", id);
+            "{\"jsonrpc\":\"2.0\",\"id\":%ld,\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}",
+            id_r.value);
     } else {
         snprintf(buf, sizeof(buf),
             "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}");

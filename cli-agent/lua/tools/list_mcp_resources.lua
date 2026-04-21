@@ -1,6 +1,5 @@
 -- tools/list_mcp_resources.lua — ListMcpResources: List resources from MCP servers
 
-local json = require("utils.json_fallback")
 local config = require("config.loader")
 
 local M = {}
@@ -19,11 +18,39 @@ function M.is_read_only() return true end
 function M.user_facing_name() return "ListMcpResources" end
 function M.check_permissions() return { allowed = true } end
 
-function M.call(args, ctx)
+-- Normalise the `mcp_servers` config value into a flat list of server records.
+-- The config may be an array ({ name, url, ... } entries) or a map
+-- ({ server_name -> { url, ... } }).  Both shapes are normalised so that each
+-- record has a `.name` field set.
+local function normalise_servers(raw)
+    if type(raw) ~= "table" then return {} end
+    local out = {}
+    -- Detect array shape: numeric keys from 1..#raw
+    if #raw > 0 then
+        for _, entry in ipairs(raw) do
+            if type(entry) == "table" then
+                table.insert(out, entry)
+            end
+        end
+    else
+        -- Map shape: keys are server names
+        for name, entry in pairs(raw) do
+            if type(entry) == "table" then
+                local rec = {}
+                for k, v in pairs(entry) do rec[k] = v end
+                rec.name = rec.name or name
+                table.insert(out, rec)
+            end
+        end
+    end
+    return out
+end
+
+function M.call(args, _ctx)
     local server_filter = args.server_name
 
-    -- Read from config-registered MCP servers
-    local servers = config.get("mcp_servers") or {}
+    local raw = config.get("mcp_servers") or {}
+    local servers = normalise_servers(raw)
     if #servers == 0 then
         return { type = "text", text = "No MCP servers configured." }
     end

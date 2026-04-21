@@ -168,11 +168,18 @@ install(DIRECTORY lua/ DESTINATION share/cli-agent/lua)
 enable_testing()
 
 file(GLOB TEST_SOURCES tests/c/*.c)
+
+# Per-test extra source files (beyond the common sandbox + json).
+# Add mcp.c for test_mcp so it can call jenova_mcp_* directly.
+set(TEST_EXTRA_SRCS_test_mcp ${CMAKE_SOURCE_DIR}/src/mcp/mcp.c)
+
 foreach(test_src ${TEST_SOURCES})
     get_filename_component(test_name ${test_src} NAME_WE)
+    set(_extra ${TEST_EXTRA_SRCS_${test_name}})
     add_executable(test_${test_name} ${test_src}
         ${CMAKE_SOURCE_DIR}/src/sandbox/sandbox.c
         ${CMAKE_SOURCE_DIR}/src/json/json.c
+        ${_extra}
     )
     target_include_directories(test_${test_name} PRIVATE
         ${CMAKE_SOURCE_DIR}/include

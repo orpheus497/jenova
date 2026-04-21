@@ -74,7 +74,9 @@ char   *jenova_crypto_hmac_sha256(const char *key, const char *data);
 char   *jenova_crypto_uuid(void);
 char   *jenova_crypto_random_hex(int32_t byte_len);
 char   *jenova_crypto_base64_encode(const char *data, size_t len);
-char   *jenova_crypto_base64_decode(const char *input, size_t *out_len);
+/* Returns a binary buffer (may contain NUL bytes); length written to *out_len.
+ * Free with jenova_crypto_free(). */
+unsigned char *jenova_crypto_base64_decode(const char *input, size_t *out_len);
 void    jenova_crypto_free(char *ptr);
 
 /* ── Process Management (src/process/) ─────────────────────────────────── */
