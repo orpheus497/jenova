@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -94,6 +95,33 @@ static const char *sm_read_string(const char *p, char *buf, size_t buf_size) {
                 case 'n': c = '\n'; break;
                 case 't': c = '\t'; break;
                 case 'r': c = '\r'; break;
+                case 'u': {
+                    /* Basic \uXXXX → UTF-8 conversion.  Only BMP code-points
+                     * (U+0000..U+FFFF) are handled; surrogates pass through. */
+                    if (p[1] && p[2] && p[3] && p[4]) {
+                        char hex[5] = { p[1], p[2], p[3], p[4], '\0' };
+                        unsigned long cp = strtoul(hex, NULL, 16);
+                        p += 4; /* advance past the 4 hex digits */
+                        if (buf) {
+                            if (cp < 0x80) {
+                                if (len + 1 < buf_size) buf[len++] = (char)cp;
+                            } else if (cp < 0x800) {
+                                if (len + 2 < buf_size) {
+                                    buf[len++] = (char)(0xC0 | (cp >> 6));
+                                    buf[len++] = (char)(0x80 | (cp & 0x3F));
+                                }
+                            } else {
+                                if (len + 3 < buf_size) {
+                                    buf[len++] = (char)(0xE0 | (cp >> 12));
+                                    buf[len++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+                                    buf[len++] = (char)(0x80 | (cp & 0x3F));
+                                }
+                            }
+                        }
+                    }
+                    p++; /* will be incremented again at loop bottom */
+                    continue;
+                }
                 default:  c = *p; break;
             }
             if (buf && len + 1 < buf_size) buf[len++] = c;
@@ -353,7 +381,10 @@ static jenova_process_result_t *spawn_argv(char *const argv[], const char *cwd,
     while (1) {
         wpid = waitpid(pid, &status, WNOHANG);
         if (wpid == pid) break;
-        if (wpid < 0) break;
+        if (wpid < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
 
         if (timeout_ms > 0 && (time_ms() - start_time) > timeout_ms) {
             kill(pid, SIGTERM);
@@ -376,7 +407,9 @@ static jenova_process_result_t *spawn_argv(char *const argv[], const char *cwd,
         {
             char tmp[4096];
             ssize_t n;
-            while ((n = read(stdout_pipe[0], tmp, sizeof(tmp))) > 0) {
+            while ((n = read(stdout_pipe[0], tmp, sizeof(tmp))) > 0 ||
+                   (n < 0 && errno == EINTR)) {
+                if (n <= 0) continue;
                 if (!stdout_buf) break;
                 while (stdout_len + (size_t)n + 1 > stdout_cap) {
                     stdout_cap *= 2;
@@ -389,7 +422,9 @@ static jenova_process_result_t *spawn_argv(char *const argv[], const char *cwd,
                     stdout_len += (size_t)n;
                 }
             }
-            while ((n = read(stderr_pipe[0], tmp, sizeof(tmp))) > 0) {
+            while ((n = read(stderr_pipe[0], tmp, sizeof(tmp))) > 0 ||
+                   (n < 0 && errno == EINTR)) {
+                if (n <= 0) continue;
                 if (!stderr_buf) break;
                 while (stderr_len + (size_t)n + 1 > stderr_cap) {
                     stderr_cap *= 2;

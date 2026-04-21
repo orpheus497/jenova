@@ -116,7 +116,7 @@ static struct curl_slist *parse_headers_json(const char *headers_json) {
         if (strchr(key, '\r') || strchr(key, '\n')) continue;
         if (strchr(val, '\r') || strchr(val, '\n')) continue;
 
-        char header[2560];  /* 512 + 2048 + ": \0" */
+        char header[2565];  /* 512 + 2048 + ": " + '\0' + padding */
         snprintf(header, sizeof(header), "%s: %s", key, val);
         headers = curl_slist_append(headers, header);
     }

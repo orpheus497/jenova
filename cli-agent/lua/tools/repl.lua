@@ -250,10 +250,23 @@ function M._exec_lua(code, session_id)
         table.insert(output, table.concat(parts, "\t"))
     end
 
+    -- Guard against infinite loops / runaway code: abort after 1 000 000
+    -- VM instructions. The hook fires in the "count" event; we raise an
+    -- error so pcall catches it rather than killing the whole process.
+    local INSTRUCTION_LIMIT = 1000000
+    local instruction_count = 0
+    debug.sethook(function()
+        instruction_count = instruction_count + 1
+        if instruction_count > INSTRUCTION_LIMIT then
+            error("Lua REPL: instruction limit exceeded (possible infinite loop)", 2)
+        end
+    end, "", 1000)
+
     -- Capture *all* return values — not just the first. We pack pcall's
     -- results into a table with an explicit length so trailing nils are
     -- preserved, then tostring() each one for display.
     local results = table.pack(pcall(fn))
+    debug.sethook()  -- always clear the hook, even on error
     local ok = results[1]
 
     if not ok then

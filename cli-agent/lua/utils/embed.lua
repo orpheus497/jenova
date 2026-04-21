@@ -62,7 +62,20 @@ function M.encode(text, task)
 
     local tmp_base = os.getenv("TMP") or os.getenv("TEMP") or "/tmp"
     tmp_base = tmp_base:gsub("[/\\]$", "")
-    local tmp_file = string.format("%s/jenova-embed-%d-%04x.json", tmp_base, os.time(), math.random(0, 0xffff))
+    -- Use mktemp for secure, non-predictable, exclusively-created temp files.
+    -- Fall back to the legacy random-suffix name only when mktemp is absent.
+    local tmp_file
+    local mk_handle = io.popen("mktemp " .. tmp_base .. "/jenova-embed-XXXXXX.json 2>/dev/null")
+    if mk_handle then
+        local mk_path = mk_handle:read("*l")
+        mk_handle:close()
+        if mk_path and #mk_path > 0 then
+            tmp_file = mk_path
+        end
+    end
+    if not tmp_file then
+        tmp_file = string.format("%s/jenova-embed-%d-%04x.json", tmp_base, os.time(), math.random(0, 0xffff))
+    end
 
     local f = io.open(tmp_file, "w")
     if f then
