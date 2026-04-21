@@ -381,14 +381,16 @@ local function proxy_connection(client_fd, conn_fds)
         if is_chunked then
             body_chunks[1] = body_raw
             body_total = #body_raw
-            while body_raw:sub(-5) ~= "0\r\n\r\n" do
+            local tail = body_raw:sub(-5)
+            while tail ~= "0\r\n\r\n" do
                 local n = async_recv(client_fd, buf, 8192)
                 if n <= 0 then break end
                 local chunk = ffi.string(buf, n)
                 body_chunks[#body_chunks + 1] = chunk
                 body_total = body_total + n
                 if body_total > MAX_BODY_SIZE then break end
-                body_raw = body_chunks[#body_chunks - 1]:sub(-5) .. chunk
+                local combined = table.concat(body_chunks)
+                tail = combined:sub(-5)
             end
             body_raw = decode_chunked_body(table.concat(body_chunks))
             body_chunks = nil
@@ -484,33 +486,48 @@ local function proxy_connection(client_fd, conn_fds)
                     end
                 end
 
+                local has_tools = type(req_json.tools) == "table" and #req_json.tools > 0
+
                 if intent then
                     local system_p = prompts[intent] or prompts.freechat
                     if web_context ~= "" then system_p = system_p .. "\n" .. web_context end
                     if rag_context ~= "" then system_p = system_p .. "\n" .. rag_context end
                     if intent == "visual" or intent == "websearch" then
+                        -- These intents do not benefit from tool calling; strip them.
                         req_json.tools = nil
                         req_json.tool_choice = "none"
+                        has_tools = false
                     end
                     if req_json.messages[1].role == "system" then
+                        -- When the client already has a system prompt (e.g. cli-agent with tool
+                        -- mandate), prepend the intent context so tool instructions are preserved.
                         req_json.messages[1].content = system_p .. "\n\n" .. req_json.messages[1].content
                     else
                         table.insert(req_json.messages, 1, {role = "system", content = system_p})
                     end
                 else
-                    -- No intent: only inject context if we have RAG, or if there's no existing system prompt
+                    -- No intent: only inject context if we have RAG, or if there's no existing system prompt.
+                    -- When the client sent tools, preserve its system prompt verbatim — it contains
+                    -- the tool-use instructions the model needs. Only append RAG context.
+                    local has_system = req_json.messages[1].role == "system"
                     if rag_context ~= "" then
-                        local system_p = prompts.freechat .. "\n" .. rag_context
-                        if req_json.messages[1].role == "system" then
-                            req_json.messages[1].content = system_p .. "\n\n" .. req_json.messages[1].content
+                        if has_system then
+                            req_json.messages[1].content = req_json.messages[1].content .. "\n" .. rag_context
                         else
+                            local system_p = prompts.freechat .. "\n" .. rag_context
                             table.insert(req_json.messages, 1, {role = "system", content = system_p})
                         end
-                    elseif req_json.messages[1].role ~= "system" then
-                        -- No RAG and no existing system prompt: inject default freechat prompt
+                    elseif not has_system and not has_tools then
                         table.insert(req_json.messages, 1, {role = "system", content = prompts.freechat})
                     end
-                    -- Otherwise: client provided system prompt and no RAG, respect it as-is
+                end
+
+                -- Enforce tool_choice for ALL paths: if the request carries tools,
+                -- llama-server must be told it is allowed (or required) to call them.
+                -- This must run after intent handling so the visual/websearch nil-out above
+                -- is respected via the has_tools flag.
+                if has_tools then
+                    req_json.tool_choice = req_json.tool_choice or "auto"
                 end
 
                 local new_body = json.encode(req_json)
@@ -704,12 +721,13 @@ while running do
             io.write(string.format("[proxy] timeout: closing fd=%d age=%ds (limit=%ds)\n",
                 fd, age, COROUTINE_TIMEOUT))
             local fds = conn_fds_map[fd]
+            local closed_set = {}
             if fds then
-                if fds.llama >= 0 then pcall(ffi.C.close, fds.llama); fds.llama = -1 end
-                if fds.client >= 0 then pcall(ffi.C.close, fds.client); fds.client = -1 end
+                if fds.llama >= 0 then pcall(ffi.C.close, fds.llama); closed_set[fds.llama] = true; fds.llama = -1 end
+                if fds.client >= 0 then pcall(ffi.C.close, fds.client); closed_set[fds.client] = true; fds.client = -1 end
             end
-            pcall(ffi.C.close, fd)
-            if info.watch_fd and info.watch_fd ~= fd then
+            if not closed_set[fd] then pcall(ffi.C.close, fd) end
+            if info.watch_fd and info.watch_fd ~= fd and not closed_set[info.watch_fd] then
                 pcall(ffi.C.close, info.watch_fd)
             end
             active_connection_count = math.max(0, active_connection_count - 1)
@@ -722,12 +740,13 @@ end
 print("[proxy] Shutting down...")
 for fd, info in pairs(clients) do
     local fds = conn_fds_map[fd]
+    local closed_set = {}
     if fds then
-        if fds.llama >= 0 then pcall(ffi.C.close, fds.llama) end
-        if fds.client >= 0 then pcall(ffi.C.close, fds.client) end
+        if fds.llama >= 0 then pcall(ffi.C.close, fds.llama); closed_set[fds.llama] = true end
+        if fds.client >= 0 then pcall(ffi.C.close, fds.client); closed_set[fds.client] = true end
     end
-    pcall(ffi.C.close, fd)
-    if info.watch_fd and info.watch_fd ~= fd then
+    if not closed_set[fd] then pcall(ffi.C.close, fd) end
+    if info.watch_fd and info.watch_fd ~= fd and not closed_set[info.watch_fd] then
         pcall(ffi.C.close, info.watch_fd)
     end
 end

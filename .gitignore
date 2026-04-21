@@ -1,3 +1,7 @@
+# --- Jenova CLI (external checkout — downloaded at runtime, not tracked or a submodule) ---
+/jenova-cli/*
+!/jenova-cli/.gitkeep
+
 # --- Build Artifacts ---
 /llama.cpp/build/
 /llama.cpp/bin/
@@ -77,6 +81,15 @@ Thumbs.db
 /etc/jenova.conf.bak.*
 /etc/jenova.local.conf
 
+# --- User / Session Data (chat history, memory, training data) ---
+*.sqlite
+*.sqlite3
+*.db
+*.jsonl
+.bash_history
+.zsh_history
+.history
+
 # --- Large / temporary files ---
 *.log
 *.tar
@@ -88,3 +101,5 @@ Thumbs.db
 *.tmp
 core
 core.*
+*.dmp
+nul

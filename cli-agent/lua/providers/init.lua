@@ -1,0 +1,63 @@
+-- providers/init.lua — Provider registry initialization
+-- Registers all available LLM providers.
+--
+-- Provider priority:
+--   jenova_backend (Jenova cognitive architecture, proxy.lua :8080)
+--     → llamacpp (local in-process llama.cpp)
+--
+-- When the Jenova backend is running on the workstation, cli-agent prefers
+-- routing through `proxy.lua` to get hybrid BM25 + semantic RAG and shared
+-- session memory. If the proxy is not reachable, it falls back to the local
+-- in-process llamacpp provider.
+
+local base = require("providers.base")
+
+local M = {}
+
+-- Load and register all providers
+local function init_providers()
+    local providers_to_load = {
+        { name = "jenova_backend", module = "providers.jenova_backend" },
+        { name = "llamacpp",       module = "providers.llamacpp" },
+    }
+
+    for _, p in ipairs(providers_to_load) do
+        local ok, provider = pcall(require, p.module)
+        if ok then
+            base.register(p.name, provider)
+        end
+    end
+end
+
+function M.init()
+    init_providers()
+
+    -- Initialize the provider manager with config
+    local ok, config = pcall(require, "config.loader")
+    if ok then
+        local provider_name = config.get("provider") or "jenova_backend"
+        base.set_primary(provider_name)
+        base.set_fallback_enabled(config.get("fallback_enabled") ~= false)
+    end
+end
+
+-- Re-export base functions for convenience
+M.generate = base.generate
+M.count_tokens = base.count_tokens
+M.get_provider = base.get
+M.list_providers = base.list
+M.set_primary = base.set_primary
+
+function M.switch_provider(name)
+    local provider = base.get(name)
+    if not provider then
+        return false, string.format("Unknown provider: %s (available: %s)",
+            name, table.concat(base.list(), ", "))
+    end
+    base.set_primary(name)
+    local ok, config = pcall(require, "config.loader")
+    if ok then config.set("provider", name) end
+    return true
+end
+
+return M

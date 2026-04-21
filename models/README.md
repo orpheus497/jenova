@@ -102,7 +102,7 @@ Download models using the installer or manually:
 
 ```sh
 # Automatic download (downloads defaults)
-./install.sh
+scripts/install.sh
 
 # Manual download
 cd models/agent

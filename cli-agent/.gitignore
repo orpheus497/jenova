@@ -1,0 +1,9 @@
+build/
+vendor/lua-5.4.7/
+*.o
+*.a
+*.so
+*.dylib
+cli-agent
+.cache/
+compile_commands.json

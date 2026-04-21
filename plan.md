@@ -1,8 +1,8 @@
 # Jenova — Hardware Detection & Portable Installation Plan
 
-**Branch:** `copilot/update-branch-to-main`
+**Branch:** `dev/cli`
 **Date:** 2026-03-30
-**Status:** Planning Phase
+**Status:** Implemented (Phases 1–3 complete; Phase 4 partial; Phases 5–7 ongoing)
 
 ---
 
@@ -392,39 +392,37 @@ end
 
 ---
 
-## File Inventory (New & Modified)
+## File Inventory (Implemented)
 
-### New Files
+### Implemented Files
 | File | Purpose |
 |---|---|
-| `detect-hardware.sh` | Main hardware detection script |
-| `etc/jenova.conf.detected` | Auto-generated config (gitignored) |
-| `etc/hardware-profiles/` | Optional preset profiles for known configs |
+| `hardware-profiles/detect-hardware.sh` | Main hardware detection script (with `--info`, `--apply`, `--install`, `--list`) |
+| `hardware-profiles/<Category>/<gpu_type>/<name>/` | Per-profile directories with `profile.conf`, `jenova.conf`, `install.sh`, `jenova-setup` |
+| `scripts/jenova-setup` | Dispatcher that auto-detects hardware and runs the matched profile's setup script |
+| `lib/jenova-model.sh` | Model auto-discovery helper (scans `models/{agent,embed,draft}/`) |
+| `bin/build-llama-jenova` | Vulkan llama.cpp build with Jenova runtime tuning |
+| `bin/jenova-swap-mount` | FreeBSD swap-backed memory filesystem for model mmap |
 
 ### Modified Files
 | File | Change |
 |---|---|
-| `install.sh` | Call `detect-hardware.sh`, source build profile, use detected deps |
-| `etc/jenova.conf` | Source `jenova.conf.detected` if present; keep hardcoded as fallback |
-| `lib/ffi_defs.lua` | OS-conditional errno/ioctl constants |
-| `.gitignore` | Add `etc/jenova.conf.detected` |
-
-### Removed Files
-| File | Reason |
-|---|---|
-| `JENOVA-NVIM-ROADMAP.md` | Superseded by this plan |
+| `scripts/install.sh` | Calls `detect-hardware.sh --apply`, sources build profile, downloads models |
+| `etc/jenova.conf` | Per-profile configs deployed by detection; sources `lib/jenova-model.sh` for auto-discovery |
+| `lib/ffi_defs.lua` | OS-conditional errno/ioctl constants (FreeBSD vs Linux) |
+| `.gitignore` | Runtime artifacts ignored |
 
 ---
 
 ## Implementation Order
 
-1. **`detect-hardware.sh`** — Core detection logic (OS, CPU, RAM, GPU, swap, packages)
-2. **Config generation** — Output `jenova.conf.detected` and `build-profile.sh`
-3. **`lib/ffi_defs.lua`** — OS-conditional constants for Linux portability
-4. **`install.sh` integration** — Wire detection into install flow
-5. **`etc/jenova.conf`** — Source detected config with override chain
-6. **Testing** — Validate across profiles (mock + real where possible)
-7. **Documentation** — Update README with portability instructions
+1. **`detect-hardware.sh`** — Core detection logic (OS, CPU, RAM, GPU, swap, packages) ✅
+2. **Config generation** — Per-profile `jenova.conf` files (not `jenova.conf.detected`) ✅
+3. **`lib/ffi_defs.lua`** — OS-conditional constants for Linux portability ✅
+4. **`install.sh` integration** — Wire detection into install flow ✅
+5. **`etc/jenova.conf`** — Profile-based config with env var override chain ✅
+6. **Testing** — Validate across profiles (mock + real where possible) 🚧
+7. **Documentation** — Update README with portability instructions 🚧
 
 ---
 

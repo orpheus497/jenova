@@ -37,7 +37,7 @@ end
 
 local function resolve_host(host)
   local addr = ffi.C.inet_addr(host)
-  if tonumber(addr) ~= 0xffffffff then return addr end
+  if addr ~= ffi.cast("in_addr_t", 0xffffffff) then return addr end
 
   local hints = ffi.new("struct addrinfo[1]")
   hints[0].ai_family = AF_INET
@@ -47,16 +47,16 @@ local function resolve_host(host)
   local res = ffi.new("struct addrinfo*[1]")
   local rc = ffi.C.getaddrinfo(host, nil, hints, res)
   if rc ~= 0 then
-    return 0xffffffff
+    return ffi.cast("in_addr_t", 0xffffffff)
   end
   local ai = res[0]
   if ai == nil then
-    return 0xffffffff
+    return ffi.cast("in_addr_t", 0xffffffff)
   end
 
   local sa = ffi.cast("struct sockaddr_in *", ai.ai_addr)
   local out = sa.sin_addr.s_addr
-  ffi.C.freeaddrinfo(ai)  -- Fixed: pass ai directly, not res[0]
+  ffi.C.freeaddrinfo(ai)
   return out
 end
 
@@ -186,7 +186,7 @@ function http.post(url, body, timeout)
   local resolved = resolve_host(host)
   addr.sin_addr.s_addr = resolved
 
-  if tonumber(addr.sin_addr.s_addr) == 0xffffffff then
+  if resolved == ffi.cast("in_addr_t", 0xffffffff) then
     ffi.C.close(fd)
     return 0, "invalid host: " .. host
   end
@@ -246,7 +246,7 @@ function http.get(url, timeout)
   local resolved = resolve_host(host)
   addr.sin_addr.s_addr = resolved
 
-  if tonumber(addr.sin_addr.s_addr) == 0xffffffff then
+  if resolved == ffi.cast("in_addr_t", 0xffffffff) then
     ffi.C.close(fd)
     return 0, "invalid host"
   end
