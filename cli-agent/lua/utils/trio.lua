@@ -29,7 +29,9 @@ function M.get_root()
 end
 
 -- Load shell-style config from etc/jenova.conf
--- This is a very basic parser for KEY="VALUE" or KEY=VALUE lines
+-- Handles KEY=VALUE, KEY="VALUE", KEY='VALUE', and optional whitespace around =.
+-- Inline comments after the value are stripped.  Escaped quotes inside values
+-- are not supported (shell-eval is out of scope for a pure-Lua parser).
 function M.load_jenova_conf()
     local root = M.get_root()
     if not root then return {} end
@@ -43,11 +45,14 @@ function M.load_jenova_conf()
         local f = io.open(path, "r")
         if not f then return end
         for line in f:lines() do
-            -- Strip comments and leading/trailing whitespace
-            line = line:gsub("#.*", ""):match("^%s*(.-)%s*$")
+            -- Strip inline comments and leading/trailing whitespace
+            line = line:gsub("%s*#[^\n]*$", ""):match("^%s*(.-)%s*$")
             if line and line ~= "" then
-                local k, v = line:match("^([%w_]+)%s*=%s*[\"']?(.-)[\"']?$")
+                -- Match: KEY = "value", KEY = 'value', or KEY = value
+                -- The optional whitespace around '=' is handled by %s* in the pattern.
+                local k, quote, v = line:match("^([%w_]+)%s*=%s*([\"']?)(.-)%2%s*$")
                 if k and v then
+                    _ = quote  -- consumed to strip matching surrounding quotes
                     -- Basic shell expansion for $JENOVA_ROOT
                     v = v:gsub("%$JENOVA_ROOT", root)
                     config[k] = v

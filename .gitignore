@@ -1,4 +1,4 @@
-# --- Jenova CLI (downloaded/untracked) ---
+# --- Jenova CLI (external checkout — downloaded at runtime, not tracked or a submodule) ---
 /jenova-cli/*
 !/jenova-cli/.gitkeep
 

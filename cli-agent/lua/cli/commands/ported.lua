@@ -24,8 +24,20 @@ end
 local function copy_to_clipboard(text)
     local shell = require("utils.shell")
 
-    local temp_dir = os.getenv("TMPDIR") or "/tmp"
-    local tmp = string.format("%s/jenova_clip_%d_%d", temp_dir, os.time(), math.random(10000, 99999))
+    -- Use mktemp(1) for atomic, exclusive, securely-permissioned creation
+    -- (avoids the TOCTOU race inherent in composing a predictable path then
+    -- opening it separately).  Fall back to the pid+random pattern on systems
+    -- that lack mktemp.
+    local tmp
+    local h = io.popen("mktemp 2>/dev/null")
+    if h then
+        tmp = h:read("*l")
+        h:close()
+    end
+    if not tmp or tmp == "" then
+        local temp_dir = os.getenv("TMPDIR") or "/tmp"
+        tmp = string.format("%s/jenova_clip_%d_%d", temp_dir, os.time(), math.random(10000, 99999))
+    end
 
     local f = io.open(tmp, "w")
     if not f then return false, "tmpfile" end
