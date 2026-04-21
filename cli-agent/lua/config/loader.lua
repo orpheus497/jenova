@@ -114,8 +114,8 @@ local function resolve_trio_config(cfg)
     if cfg.provider == "jenova_backend" then
         local http = type(jenova) == "table" and jenova.http
         if http then
-            local ok = pcall(http.get, endpoints.health_url, nil)
-            if not ok then
+            local ok, resp = pcall(http.get, endpoints.health_url, nil)
+            if not ok or resp == nil or resp == "" then
                 cfg.provider = "llamacpp"
             end
         end

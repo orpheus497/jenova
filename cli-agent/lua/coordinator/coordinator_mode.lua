@@ -11,7 +11,7 @@ local SIMPLE_FLAG = "JENOVA_SIMPLE"
 
 local TOOL_NAMES = {
     AGENT = "Agent",
-    BASH = "Bash",
+    BASH = "Shell",
     FILE_READ = "Read",
     FILE_EDIT = "Edit",
     SEND_MESSAGE = "SendMessage",

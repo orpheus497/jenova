@@ -17,7 +17,7 @@
 
 static char *get_keys_dir(void) {
     const char *home = getenv("HOME");
-    if (!home) home = "/tmp";
+    if (!home || !*home) return NULL;
     size_t len = strlen(home) + strlen(KEYS_DIR_REL) + 1;
     char *dir = malloc(len);
     if (!dir) return NULL;

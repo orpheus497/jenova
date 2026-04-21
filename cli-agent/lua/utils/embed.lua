@@ -65,7 +65,8 @@ function M.encode(text, task)
     -- Use mktemp for secure, non-predictable, exclusively-created temp files.
     -- Fall back to the legacy random-suffix name only when mktemp is absent.
     local tmp_file
-    local mk_handle = io.popen("mktemp " .. tmp_base .. "/jenova-embed-XXXXXX.json 2>/dev/null")
+    local mk_template = tmp_base .. "/jenova-embed-XXXXXX.json"
+    local mk_handle = io.popen("mktemp " .. shell.quote(mk_template) .. " 2>/dev/null")
     if mk_handle then
         local mk_path = mk_handle:read("*l")
         mk_handle:close()

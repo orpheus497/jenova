@@ -150,6 +150,15 @@ char *jenova_json_get(const char *json_str, const char *path) {
             continue;
         }
 
+        /* Skip strings at depth > 1 so that structural characters inside
+         * string values (e.g. "{" in "hello {world}") do not corrupt the
+         * depth counter. */
+        if (*p == '"' && depth > 1) {
+            const char *end = json_find_string_end(p + 1);
+            p = end ? end + 1 : p + 1;
+            continue;
+        }
+
         /* Only try to match keys at the top level of the outer object. */
         if (*p == '"' && depth == 1) {
             const char *key_start = p + 1;

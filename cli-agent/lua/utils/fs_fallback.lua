@@ -1,5 +1,5 @@
--- fs_fallback.lua — Filesystem operations with Rust FFI acceleration
--- Prefers jenova.fs (Rust FFI) when available, falls back to pure Lua.
+-- fs_fallback.lua — Filesystem operations with native jenova.fs services
+-- Prefers jenova.fs when available, falls back to pure Lua.
 -- All operations that touch the shell validate paths via utils.shell.quote()
 -- to prevent command injection.
 

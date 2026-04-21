@@ -19,14 +19,24 @@ local BLOCKED_DIRS = {
     "/%.claude$",
     "^%.claude/",
     "^%.claude$",
+    -- Windows backslash variants
+    "\\%.jenova\\",
+    "\\%.jenova$",
+    "^%.jenova\\",
+    "\\%.claude\\",
+    "\\%.claude$",
+    "^%.claude\\",
 }
 
 -- Returns true when a path refers to a .jenova (or .claude) subtree that
 -- the agent should never touch.
 function M.is_restricted(path)
     if type(path) ~= "string" then return false end
+    -- Normalize backslashes to forward slashes before pattern matching so
+    -- Windows-style paths (C:\repo\.jenova\...) are caught by the same set.
+    local normalized = path:gsub("\\\\", "/")
     for _, pat in ipairs(BLOCKED_DIRS) do
-        if path:find(pat) then return true end
+        if normalized:find(pat) then return true end
     end
     return false
 end

@@ -137,6 +137,7 @@ char *jenova_crypto_base64_encode(const char *data, size_t len) {
 
     size_t out_len = 4 * ((len + 2) / 3);
     char *out = malloc(out_len + 1);
+    if (!out) return NULL;
 
     size_t i, j;
     for (i = 0, j = 0; i < len; i += 3, j += 4) {
@@ -166,6 +167,7 @@ char *jenova_crypto_base64_decode(const char *input, size_t *out_len) {
     if (!input) return NULL;
 
     size_t in_len = strlen(input);
+    if (in_len == 0) { if (out_len) *out_len = 0; return strdup(""); }
     if (in_len % 4 != 0) return NULL;
 
     size_t decoded_len = in_len / 4 * 3;
@@ -173,6 +175,7 @@ char *jenova_crypto_base64_decode(const char *input, size_t *out_len) {
     if (input[in_len - 2] == '=') decoded_len--;
 
     char *out = malloc(decoded_len + 1);
+    if (!out) return NULL;
     size_t j = 0;
 
     for (size_t i = 0; i < in_len; i += 4) {
