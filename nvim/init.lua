@@ -19,12 +19,21 @@ vim.opt.rtp:prepend(vim.fn.stdpath("data") .. "/site")
 --
 -- Disable a few rarely-used built-ins for faster startup, matching the prior
 -- lazy.nvim performance.rtp.disabled_plugins set.
+-- Also disable jvim's bundled first-party UI plugins (jvim_ui, jvim_dashboard) —
+-- they conflict with the vendored nvim-tree/telescope/lualine/etc. stack and
+-- contain the E5108 'Invalid col: out of range' bug in jvim/tree.lua:140.
 for _, name in ipairs({
   "gzip", "matchit", "matchparen", "netrwPlugin",
   "tarPlugin", "tohtml", "tutor", "zipPlugin",
+  "jvim_ui", "jvim_dashboard",
 }) do
   vim.g["loaded_" .. name] = 1
 end
+
+-- nvim-tree clears netrw's FileExplorer autocmd group to take over file:// URIs.
+-- We disabled netrw above, so the group never gets created and `autocmd! FileExplorer *`
+-- raises E216. Pre-create an empty group so the clear is a no-op.
+vim.api.nvim_create_augroup("FileExplorer", { clear = true })
 
 --------------------------------------------------------------------------------
 -- [3] MASTER EDITOR OPTIONS
