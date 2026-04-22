@@ -115,6 +115,9 @@ function M.call(args, context)
         local new = edit.new_string
         if type(old) ~= "string" or type(new) ~= "string" then
             table.insert(failed, string.format("edit[%d]: old_string and new_string must be strings", i))
+        elseif old == "" then
+            table.insert(failed, string.format(
+                "edit[%d]: old_string is empty — you must Read the file first and copy the exact text to replace.", i))
         elseif old == new then
             table.insert(failed, string.format("edit[%d]: old_string == new_string, skipped", i))
         else

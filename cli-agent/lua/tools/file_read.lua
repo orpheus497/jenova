@@ -71,9 +71,17 @@ function M.call(args, context)
     end
     f:close()
 
+    local text = table.concat(lines, "\n")
+    if truncated then
+        local next_offset = offset + limit
+        text = text .. string.format(
+            "\n\n[FILE TRUNCATED: showing lines %d-%d of %d total. Call Read('%s', offset=%d) to continue reading.]",
+            offset + 1, offset + limit, n, path, next_offset)
+    end
+
     return {
         type = "text",
-        text = table.concat(lines, "\n"),
+        text = text,
         num_lines = n,
         truncated = truncated,
     }

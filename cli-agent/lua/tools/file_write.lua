@@ -42,8 +42,9 @@ function M.call(args, context)
     if paths.is_restricted(path) then return paths.restricted_error(path) end
 
     -- Use Rust FFI (preferred — handles mkdir -p)
-    if jenova and jenova.fs and jenova.fs.write then
-        local ok = jenova.fs.write(path, content)
+    local _jenova_ffi = rawget(_G, "jenova")
+    if type(_jenova_ffi) == "table" and _jenova_ffi.fs and _jenova_ffi.fs.write then
+        local ok = _jenova_ffi.fs.write(path, content)
         if ok then
             return {
                 type = "text",
@@ -57,23 +58,24 @@ function M.call(args, context)
     -- their parent directory correctly.
     local dir = path:match("^(.*)[/\\][^/\\]+$")
     if dir and #dir > 0 then
-        -- Prefer jenova.fs.mkdir or fs_fallback over raw shell to avoid injection
-        local mkdir_ok = false
-        if jenova and jenova.fs and jenova.fs.mkdir then
-            mkdir_ok = jenova.fs.mkdir(dir)
+        -- Prefer jenova.fs.mkdir or fs_fallback over raw shell to avoid injection.
+        -- Ignore mkdir failure: directory may already exist. The io.open below
+        -- will surface a real error if the path is truly inaccessible.
+        local _jenova = rawget(_G, "jenova")
+        if type(_jenova) == "table" and _jenova.fs and _jenova.fs.mkdir then
+            _jenova.fs.mkdir(dir)
         else
             local has_fb, fs_fb = pcall(require, "utils.fs_fallback")
             if has_fb and fs_fb and fs_fb.mkdir then
-                mkdir_ok = fs_fb.mkdir(dir)
+                fs_fb.mkdir(dir)
+            else
+                os.execute('mkdir -p "' .. dir:gsub('"', '\\"') .. '" 2>/dev/null')
             end
-        end
-        if not mkdir_ok then
-            return { type = "error", error = "Cannot create parent directory: " .. dir }
         end
     end
 
     local f = io.open(path, "w")
-    if not f then return { type = "error", error = "Cannot write: " .. path } end
+    if not f then return { type = "error", error = "Cannot write to: " .. path .. " — check the path and parent directory exist." } end
     f:write(content)
     f:close()
 
