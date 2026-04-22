@@ -11,6 +11,8 @@
 -- whenever we need real Lua table ↔ JSON conversion.
 local json_codec = require("utils.json_fallback")
 local tool_registry = require("tools.registry")
+local paths = require("utils.paths")
+local mem_ok, memory = pcall(require, "services.memory.manager")
 
 -- Try to load provider system
 local provider_base
@@ -250,8 +252,8 @@ local function summarise_input(tool_name, input)
     return tool_name
 end
 
-function QueryEngine:_cache_file_read(path, text, num_lines)
-    self._file_cache[path] = { text = text, num_lines = num_lines, ts = os.time() }
+function QueryEngine:_cache_file_read(path, text, num_lines, truncated)
+    self._file_cache[path] = { text = text, num_lines = num_lines, ts = os.time(), truncated = truncated }
     if self._file_tracker then
         self._file_tracker.record_read(path, text)
     end
@@ -279,7 +281,6 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
     -- This breaks the "read the same file 4 times" loop without any prompt
     -- changes, and ensures the model always has current content.
     if tool_name == "Read" and type(input) == "table" and input.file_path then
-        local paths = require("utils.paths")
         local resolved = paths.resolve(input.file_path, tool_context.cwd)
         local cached = self._file_cache[resolved]
         -- Return from cache ONLY when:
@@ -288,8 +289,8 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
         --   3. The file has NOT changed on disk since we last read it
         --      (checked via file_tracker mtime+size; if tracker unavailable,
         --       fall through to a fresh read so we never serve stale content).
-        local disk_stale = self._file_tracker and self._file_tracker.is_stale(resolved)
-        if cached and not (input.offset and input.offset > 0) and not disk_stale then
+        local disk_stale = not self._file_tracker or self._file_tracker.is_stale(resolved)
+        if cached and not cached.truncated and not (input.offset and input.offset > 0) and not disk_stale then
             self.on_tool_result(tool_name, { type = "text", text = cached.text,
                 num_lines = cached.num_lines })
             return { type = "text", text = cached.text,
@@ -311,11 +312,10 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
     if ok and not exec_err and type(result) == "table" then
         if tool_name == "Read" and result.text and type(input) == "table" and input.file_path
                and not (input.offset and input.offset > 0) then
-            local paths = require("utils.paths")
             local resolved = paths.resolve(input.file_path, tool_context.cwd)
             -- Cache even truncated reads so partial content can be used as an
             -- Edit hint, but mark truncated so full reads are not suppressed.
-            self:_cache_file_read(resolved, result.text, result.num_lines)
+            self:_cache_file_read(resolved, result.text, result.num_lines, result.truncated)
             -- Surface truncation notice to the model as an embed warning, not in text
             if result.truncation_hint then
                 if not self._pending_embed_warnings then self._pending_embed_warnings = {} end
@@ -324,14 +324,12 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
         elseif (tool_name == "Edit" or tool_name == "MultiEdit" or tool_name == "Write")
                and type(input) == "table" and input.file_path then
             -- Invalidate cache after any successful write so the next Read is fresh.
-            local paths = require("utils.paths")
             local resolved = paths.resolve(input.file_path, tool_context.cwd)
             self:_invalidate_cache(resolved)
         end
     end
 
     -- Record action in memory manager
-    local mem_ok, memory = pcall(require, "services.memory.manager")
     local input_summary
     if type(input) == "table" then
         input_summary = input.file_path or input.command or input.path
@@ -432,7 +430,6 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
         if (tool_name == "Edit" or tool_name == "MultiEdit")
            and verdict == "retry"
            and type(input) == "table" and input.file_path then
-            local paths = require("utils.paths")
             local resolved = paths.resolve(input.file_path, tool_context.cwd)
             local cached = self._file_cache[resolved]
             if cached and cached.text then
@@ -502,7 +499,6 @@ function QueryEngine:query(user_message, options)
         }
 
         -- Enrich system prompt with memory context (errors, actions, plan)
-        local mem_ok, memory = pcall(require, "services.memory.manager")
         if mem_ok then
             local context = memory.build_context(user_message)
             if context and #context > 0 then

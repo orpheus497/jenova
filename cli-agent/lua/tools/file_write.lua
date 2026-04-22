@@ -1,5 +1,5 @@
 -- tools/file_write.lua — FileWriteTool: Write/create files
--- Uses jenova.fs (Rust FFI) for file writing with parent directory creation.
+-- Uses jenova.fs (C FFI) for file writing with parent directory creation.
 
 local M = {}
 M.name = "Write"
@@ -41,7 +41,7 @@ function M.call(args, context)
     path = paths.resolve(path, context and context.cwd)
     if paths.is_restricted(path) then return paths.restricted_error(path) end
 
-    -- Use Rust FFI (preferred — handles mkdir -p)
+    -- Use C FFI (preferred — handles mkdir -p)
     local _jenova_ffi = rawget(_G, "jenova")
     if type(_jenova_ffi) == "table" and _jenova_ffi.fs and _jenova_ffi.fs.write then
         local ok = _jenova_ffi.fs.write(path, content)

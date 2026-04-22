@@ -176,7 +176,7 @@ function M.run(opts)
     table.insert(tool_mandate_lines, "1. ALWAYS call Read before Edit or MultiEdit. No exceptions. Never assume file content.")
     table.insert(tool_mandate_lines, "2. Copy old_string CHARACTER-FOR-CHARACTER from the Read output. Read returns lines as \"42\\t<content>\" — the old_string must contain ONLY the content after the tab, NOT the line-number prefix. Include every space, newline, and indent. Never reconstruct or guess it.")
     table.insert(tool_mandate_lines, "3. If Edit fails with 'not found': a [System:] message will inject the current file content. Read that injected content, copy exact text, then Edit.")
-    table.insert(tool_mandate_lines, "4. Do NOT call Read on the same file twice in a row — the system already cached it. If you need the content again, read the [System:] injection in the conversation.")
+    table.insert(tool_mandate_lines, "4. Avoid redundant Read calls when you already have the needed content, but call Read again if the earlier result was partial/truncated, if you need more context, or if the file may have changed. You may also use relevant [System:] injected content when available.")
     table.insert(tool_mandate_lines, "5. Use MultiEdit when making more than one change to the same file. Do not chain multiple single Edit calls.")
     table.insert(tool_mandate_lines, "6. To build/compile/run tests: use Bash(command). Never use Read to check compiler output.")
     table.insert(tool_mandate_lines, "7. If old_string == new_string the edit is already done — call Brief to confirm it.")
@@ -512,6 +512,9 @@ function M.run(opts)
             -- Reset file tracker state so stale-detection is fresh
             local ft_ok, ft = pcall(require, "context.file_tracker")
             if ft_ok and ft then ft.reset() end
+            -- Reset verifier attempt counters so retry budgets are fresh
+            local tv_ok, tv = pcall(require, "services.tool_verifier")
+            if tv_ok and tv and tv.reset then tv.reset() end
             if ui then ui.status_ok("cleared (session + history + file cache)")
             else print("Session cleared.") end
         elseif line == "/history" then

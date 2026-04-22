@@ -8,18 +8,18 @@ local M = {}
 
 M.DEFAULT_PREFIX = "You are Jenova CLI, a local-first AI assistant."
 M.AGENT_SDK_PRESET_PREFIX = "You are Jenova CLI, running within the Agent Environment."
-M.AGENT_SDK_PREFIX = "You are dedicated to help all of Humanity, built by orpheus497."
+M.AGENT_SDK_PREFIX = "You are Jenova CLI, a local-first AI coding assistant running in a non-interactive environment."
 
 -- Pick a prefix based on runtime context.
 function M.get_cli_sysprompt_prefix(opts)
-	opts = opts or {}
-	if opts.is_non_interactive then
-		if opts.has_append_system_prompt then
-			return M.AGENT_SDK_PRESET_PREFIX
-		end
-		return M.AGENT_SDK_PREFIX
-	end
-	return M.DEFAULT_PREFIX
+    opts = opts or {}
+    if opts.is_non_interactive then
+        if opts.has_append_system_prompt then
+            return M.AGENT_SDK_PRESET_PREFIX
+        end
+        return M.AGENT_SDK_PREFIX
+    end
+    return M.DEFAULT_PREFIX
 end
 
 -- ── Default System Prompt ─────────────────────────────────────────────
@@ -29,7 +29,7 @@ end
 M.DEFAULT_SYSTEM_PROMPT = [[
 You are Jenova CLI, a local-first AI coding assistant that runs in the user's terminal.
 
-You help users with tasks: reading and editing code, running commands, 
+You help users with tasks: reading and editing code, running commands,
 searching the codebase, debugging, writing tests, and explaining behavior.
 
 # Tone and style
@@ -79,47 +79,47 @@ the user to approve it before taking any action.
 -- Mirror of src/utils/systemPrompt.ts buildEffectiveSystemPrompt().
 
 function M.build_effective_system_prompt(opts)
-	opts = opts or {}
+    opts = opts or {}
 
-	-- 0. override: replaces everything
-	if opts.override_system_prompt and #opts.override_system_prompt > 0 then
-		return { opts.override_system_prompt }
-	end
+    -- 0. override: replaces everything
+    if opts.override_system_prompt and #opts.override_system_prompt > 0 then
+        return { opts.override_system_prompt }
+    end
 
-	local parts = {}
+    local parts = {}
 
-	-- 1. coordinator mode
-	if opts.coordinator_mode then
-		table.insert(parts, M.COORDINATOR_SYSTEM_PROMPT)
-	-- 2. agent definition
-	elseif opts.agent_system_prompt and #opts.agent_system_prompt > 0 then
-		table.insert(parts, opts.agent_system_prompt)
-	-- 3. custom --system-prompt
-	elseif opts.custom_system_prompt and #opts.custom_system_prompt > 0 then
-		table.insert(parts, opts.custom_system_prompt)
-	-- 4. default
-	else
-		table.insert(parts, M.get_cli_sysprompt_prefix(opts))
-		table.insert(parts, M.DEFAULT_SYSTEM_PROMPT)
-	end
+    -- 1. coordinator mode
+    if opts.coordinator_mode then
+        table.insert(parts, M.COORDINATOR_SYSTEM_PROMPT)
+    -- 2. agent definition
+    elseif opts.agent_system_prompt and #opts.agent_system_prompt > 0 then
+        table.insert(parts, opts.agent_system_prompt)
+    -- 3. custom --system-prompt
+    elseif opts.custom_system_prompt and #opts.custom_system_prompt > 0 then
+        table.insert(parts, opts.custom_system_prompt)
+    -- 4. default
+    else
+        table.insert(parts, M.get_cli_sysprompt_prefix(opts))
+        table.insert(parts, M.DEFAULT_SYSTEM_PROMPT)
+    end
 
-	-- Plan mode suffix
-	if opts.plan_mode then
-		table.insert(parts, M.PLAN_MODE_SUFFIX)
-	end
+    -- Plan mode suffix
+    if opts.plan_mode then
+        table.insert(parts, M.PLAN_MODE_SUFFIX)
+    end
 
-	-- Always-append
-	if opts.append_system_prompt and #opts.append_system_prompt > 0 then
-		table.insert(parts, opts.append_system_prompt)
-	end
+    -- Always-append
+    if opts.append_system_prompt and #opts.append_system_prompt > 0 then
+        table.insert(parts, opts.append_system_prompt)
+    end
 
-	return parts
+    return parts
 end
 
 -- Convenience: return the effective prompt as a single string.
 function M.get_system_prompt(opts)
-	local parts = M.build_effective_system_prompt(opts)
-	return table.concat(parts, "\n\n")
+    local parts = M.build_effective_system_prompt(opts)
+    return table.concat(parts, "\n\n")
 end
 
 return M
