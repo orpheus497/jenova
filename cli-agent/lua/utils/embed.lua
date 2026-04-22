@@ -10,8 +10,26 @@ local M = {}
 local initialized = false
 local EMBED_URL = nil
 
+-- Negative-cache for failed init AND encode attempts. When the embed sidecar
+-- is down or unresponsive, every record_action()/log_error() call would
+-- otherwise re-run init() (~1s curl health check) and/or pay the full encode
+-- timeout per tool call. Remember the most recent failure timestamp and skip
+-- network work for a short backoff window so the agent loop stays responsive
+-- while embeddings are unavailable. Both init() and encode() update the
+-- timestamp on failure; encode() additionally clears `initialized` on a
+-- request/parse failure so the next call re-checks via init() (which is the
+-- backoff gate).
+local last_failure_ts = 0
+local FAILURE_BACKOFF_SECONDS = 30
+
+local function in_backoff()
+    if last_failure_ts == 0 then return false end
+    return (os.time() - last_failure_ts) < FAILURE_BACKOFF_SECONDS
+end
+
 function M.init()
     if initialized then return true end
+    if in_backoff() then return false end
     
     local endpoints = trio.get_endpoints()
     EMBED_URL = string.format("http://%s:%d", endpoints.host, endpoints.embed_port)
@@ -42,9 +60,11 @@ function M.init()
 
     if res and res ~= "" then
         initialized = true
+        last_failure_ts = 0
         return true
     end
-    
+
+    last_failure_ts = os.time()
     return false
 end
 
@@ -52,11 +72,15 @@ function M.is_available()
     return initialized
 end
 
-function M.encode(text, task)
+function M.encode(text, task, opts)
     if not initialized and not M.init() then return nil, "not available" end
 
     task = task or "search_document"
     local prefixed = task .. ": " .. text
+    -- Allow callers to cap blocking time. Memory-cache hot paths use a tight
+    -- budget (e.g. 2s) so a slow embed sidecar can't stall the agent loop;
+    -- the default of 30s preserves prior behaviour for batch/search callers.
+    local timeout_ms = (opts and opts.timeout_ms) or 30000
 
     local payload = json.stringify({ content = prefixed })
 
@@ -94,8 +118,9 @@ function M.encode(text, task)
             args = { "-sf", "-X", "POST",
                      "-H", "Content-Type: application/json",
                      "-d", "@" .. tmp_file,
+                     "--max-time", tostring(math.max(1, math.floor(timeout_ms / 1000))),
                      embed_url },
-            timeout_ms = 30000,
+            timeout_ms = timeout_ms,
             capture_stdout = true,
             capture_stderr = false,
         })
@@ -104,7 +129,9 @@ function M.encode(text, task)
             body = result.stdout or ""
         end
     else
-        local cmd = string.format("curl -sf -X POST -H 'Content-Type: application/json' -d @%s %s 2>/dev/null",
+        local cmd = string.format(
+            "curl -sf -X POST -H 'Content-Type: application/json' --max-time %d -d @%s %s 2>/dev/null",
+            math.max(1, math.floor(timeout_ms / 1000)),
             shell.quote(tmp_file), shell.quote(embed_url))
         local p = io.popen(cmd)
         if p then
@@ -115,11 +142,25 @@ function M.encode(text, task)
 
     os.remove(tmp_file)
 
-    if not body or body == "" then return nil, "request failed" end
+    if not body or body == "" then
+        -- Sidecar unreachable / curl failed. Trigger backoff so subsequent
+        -- agent-loop calls don't repeatedly pay the full encode timeout.
+        last_failure_ts = os.time()
+        initialized = false
+        return nil, "request failed"
+    end
 
     local ok, data = pcall(json.parse, body)
-    if not ok or not data or not data.embedding then return nil, "parse failed" end
+    if not ok or not data or not data.embedding then
+        -- Malformed response (sidecar speaking but broken). Same backoff
+        -- treatment so we don't keep hammering it within the agent loop.
+        last_failure_ts = os.time()
+        initialized = false
+        return nil, "parse failed"
+    end
 
+    -- Success: clear any previous failure window.
+    last_failure_ts = 0
     return data.embedding
 end
 

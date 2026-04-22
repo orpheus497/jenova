@@ -147,10 +147,35 @@ function Memory.log_error(tool_name, args_summary, error_msg)
         error = error_msg,
     }
 
-    -- Persistent
+    -- Pre-compute and cache the embedding for this error at log time.
+    -- This makes get_similar_errors() O(1) per entry (dot product only)
+    -- instead of O(N) embed HTTP calls per query.
+    --
+    -- Use a tight (2s) timeout because this runs synchronously inside the
+    -- agent loop after every failed tool call: a slow/unreachable embed
+    -- sidecar must NOT be allowed to stall the agent. On timeout the entry
+    -- is logged without a vector and simply skipped by similarity search.
+    local embed_ok, embed = pcall(require, "utils.embed")
+    if embed_ok then
+        -- Don't gate on is_available() — that flag flips only after a
+        -- successful init/encode, which would mean the very first errors of
+        -- a session never get a vector. encode() lazy-inits internally and
+        -- returns nil on failure, which we silently skip.
+        local text = (tool_name or "") .. ": " .. (error_msg or "") .. " [" .. (args_summary or "") .. "]"
+        local vec = embed.encode(text, "search_document", { timeout_ms = 2000 })
+        if vec then entry._vec = vec end
+    end
+
+    -- Persistent — strip _vec before writing. Embedding vectors are large
+    -- (hundreds of floats), session-local, and never re-loaded from disk;
+    -- persisting them bloats errors.jsonl and slows future I/O.
     local f = io.open(ERROR_FILE, "a")
     if f then
-        f:write(json.stringify(entry) .. "\n")
+        local persisted = {
+            ts = entry.ts, sid = entry.sid, tool = entry.tool,
+            args = entry.args, error = entry.error,
+        }
+        f:write(json.stringify(persisted) .. "\n")
         f:close()
     end
 
@@ -216,6 +241,31 @@ function Memory.record_action(tool_name, args, result, success)
         result_summary = tostring(result or ""):sub(1, 100),
     }
 
+    -- Pre-compute and cache the embedding for successful actions so that
+    -- get_similar_actions() can retrieve relevant past successes using pure
+    -- cosine arithmetic rather than O(N) HTTP embed calls per query.
+    --
+    -- Tight 2s timeout (see log_error) so a slow embed sidecar can't stall
+    -- the agent loop — the cache is best-effort.
+    if success then
+        local embed_ok, embed = pcall(require, "utils.embed")
+        if embed_ok then
+            -- See log_error: don't hard-gate on is_available() so the first
+            -- successful action of a session can also be cached.
+            local input_summary
+            if type(args) == "table" then
+                input_summary = args.file_path or args.command or args.path
+                    or args.query or args.pattern or "(table)"
+            else
+                input_summary = tostring(args or "")
+            end
+            local text = (tool_name or "") .. ": " .. (entry.result_summary or "")
+                .. " [" .. (input_summary or "") .. "]"
+            local vec = embed.encode(text, "search_document", { timeout_ms = 2000 })
+            if vec then entry._vec = vec end
+        end
+    end
+
     local idx = session_action_index[key]
     if not idx then
         idx = { count = 0, last_result = "", successes = 0, failures = 0 }
@@ -235,7 +285,13 @@ function Memory.record_action(tool_name, args, result, success)
 
     local f = io.open(ACTION_FILE, "a")
     if f then
-        f:write(json.stringify(entry) .. "\n")
+        -- Strip _vec before writing (session-local cache only — see log_error).
+        local persisted = {
+            ts = entry.ts, sid = entry.sid, tool = entry.tool,
+            key = entry.key, success = entry.success,
+            result_summary = entry.result_summary,
+        }
+        f:write(json.stringify(persisted) .. "\n")
         f:close()
     end
 end
@@ -423,8 +479,26 @@ function Memory.build_context(current_query)
     local errs = Memory.format_errors_for_prompt(3)
     if errs ~= "" then table.insert(parts, errs) end
 
-    local acts = Memory.format_action_history(6)
-    if acts ~= "" then table.insert(parts, acts) end
+    -- Semantic action context: try semantic search first; get_similar_actions
+    -- lazy-inits the embed model and returns {} if unavailable. Recency-based
+    -- history is the fallback below.
+    local used_semantic = false
+    if current_query and current_query ~= "" then
+        local similar_acts = Memory.get_similar_actions(current_query, 4)
+        if #similar_acts > 0 then
+            local act_parts = { "\nRelevant past actions (semantically similar to current task):" }
+            for _, a in ipairs(similar_acts) do
+                act_parts[#act_parts + 1] = string.format(
+                    "- [OK] %s: %s", a.tool, a.result_summary:sub(1, 60))
+            end
+            table.insert(parts, table.concat(act_parts, "\n"))
+            used_semantic = true
+        end
+    end
+    if not used_semantic then
+        local acts = Memory.format_action_history(6)
+        if acts ~= "" then table.insert(parts, acts) end
+    end
 
     local plan = Memory.format_plan()
     if plan ~= "" then table.insert(parts, plan) end
@@ -529,6 +603,73 @@ function Memory.search(query)
         local trimmed = {}
         for i = 1, 20 do trimmed[i] = results[i] end
         results = trimmed
+    end
+    return results
+end
+
+-- ── Embed-based similarity retrieval ────────────────────────────────
+-- Returns errors from this session whose description is semantically
+-- similar to `query_text` according to the embedding model.
+-- Returns {} if the embed model is not running.
+function Memory.get_similar_errors(query_text, top_k)
+    top_k = top_k or 2
+    if #session_errors == 0 then return {} end
+
+    local embed_ok, embed = pcall(require, "utils.embed")
+    if not embed_ok then return {} end
+
+    -- encode() lazy-inits embedding so the first similarity query of the
+    -- session can succeed even before is_available() flips true.
+    local query_vec = embed.encode(query_text, "search_query", { timeout_ms = 2000 })
+    if not query_vec then return {} end
+
+    -- Use pre-cached vectors from log_error (O(1) dot product per entry).
+    local scored = {}
+    for _, e in ipairs(session_errors) do
+        if e._vec then
+            local score = embed.cosine(query_vec, e._vec)
+            table.insert(scored, { score = score, entry = e })
+        end
+    end
+    table.sort(scored, function(a, b) return a.score > b.score end)
+
+    local results = {}
+    for i = 1, math.min(top_k, #scored) do
+        if scored[i].score > 0.75 then
+            table.insert(results, scored[i].entry)
+        end
+    end
+    return results
+end
+
+-- Returns successful actions from this session that are semantically similar
+-- to `query_text`.  Useful for proactive context: surface what worked before
+-- on similar tasks so the model can follow the same pattern.
+function Memory.get_similar_actions(query_text, top_k)
+    top_k = top_k or 3
+    if #session_actions == 0 then return {} end
+
+    local embed_ok, embed = pcall(require, "utils.embed")
+    if not embed_ok then return {} end
+
+    -- See get_similar_errors: encode() lazy-inits, so don't hard-gate.
+    local query_vec = embed.encode(query_text, "search_query", { timeout_ms = 2000 })
+    if not query_vec then return {} end
+
+    local scored = {}
+    for _, a in ipairs(session_actions) do
+        if a.success and a._vec then
+            local score = embed.cosine(query_vec, a._vec)
+            table.insert(scored, { score = score, entry = a })
+        end
+    end
+    table.sort(scored, function(a, b) return a.score > b.score end)
+
+    local results = {}
+    for i = 1, math.min(top_k, #scored) do
+        if scored[i].score > 0.70 then
+            table.insert(results, scored[i].entry)
+        end
     end
     return results
 end

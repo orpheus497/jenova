@@ -3,8 +3,23 @@
 
 local app_state = require("state.app_state")
 local paths = require("utils.paths")
+local shell = require("utils.shell")
 
 local Context = {}
+
+-- Run a `git` command in the active CLI working directory (which may differ
+-- from the process CWD when /cwd has been used).  Returns the trimmed stdout
+-- string (possibly empty) or nil if the popen failed.
+local function run_git_in_cwd(args)
+    local cwd = app_state.get_cwd() or "."
+    local cmd = "git -C " .. shell.quote(cwd) .. " " .. args
+    local handle = io.popen(cmd)
+    if not handle then return nil end
+    local out = handle:read("*a")
+    handle:close()
+    if not out then return "" end
+    return (out:gsub("%s+$", ""))
+end
 
 -- ── System Context ────────────────────────────────────────────────────
 
@@ -72,38 +87,19 @@ end
 -- ── Git Context ───────────────────────────────────────────────────────
 
 function Context.is_git_repository()
-    local handle = io.popen("git rev-parse --is-inside-work-tree " .. "2>/dev/null")
-    if not handle then
-        return false
-    end
-
-    local result = handle:read("*a"):gsub("%s+$", "")
-    handle:close()
-
+    local result = run_git_in_cwd("rev-parse --is-inside-work-tree 2>/dev/null")
     return result == "true"
 end
 
 function Context.get_git_branch()
-    local handle = io.popen("git branch --show-current " .. "2>/dev/null")
-    if not handle then
-        return nil
-    end
-
-    local branch = handle:read("*a"):gsub("%s+$", "")
-    handle:close()
-
+    local branch = run_git_in_cwd("branch --show-current 2>/dev/null")
+    if not branch then return nil end
     return #branch > 0 and branch or nil
 end
 
 function Context.get_git_status()
-    local handle = io.popen("git status --short " .. "2>/dev/null")
-    if not handle then
-        return nil
-    end
-
-    local status = handle:read("*a"):gsub("%s+$", "")
-    handle:close()
-
+    local status = run_git_in_cwd("status --short 2>/dev/null")
+    if not status then return nil end
     if #status == 0 then
         return "(clean)"
     else
@@ -113,6 +109,14 @@ function Context.get_git_status()
         end
         return table.concat(lines, "\n")
     end
+end
+
+-- Returns a compact `git diff --stat HEAD` so the model knows which files
+-- have been modified since the last commit without needing a full diff dump.
+function Context.get_git_diff_stat()
+    local out = run_git_in_cwd("diff --stat HEAD 2>/dev/null | head -40")
+    if not out then return nil end
+    return #out > 0 and out or nil
 end
 
 -- ── User Context ──────────────────────────────────────────────────────
