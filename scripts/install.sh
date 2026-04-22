@@ -2,12 +2,10 @@
 # install.sh: Jenova Cognitive Architecture — System Installation Script
 # Supports all Vulkan hardware profiles (auto-detected via detect-hardware.sh)
 #
-# Jenova is the cognitive backend half of a two-repo system. The matching
-# editor frontend is the jvim fork of Neovim:
-#     https://github.com/orpheus497/jvim
-# Both repos are designed to be installed together; this script handles the
-# Jenova half (backend, models, plugin config) and verifies that a jvim or
-# Neovim binary is available so the bin/jvim wrapper can launch the editor.
+# This is the single installer for the whole monorepo: it builds (or verifies)
+# llama.cpp, builds the bundled jvim editor, builds the cli-agent, downloads
+# missing model GGUFs, deploys the Neovim plugin set, and symlinks `jvim`,
+# `jenova`, and `jenova-ca` onto your PATH.
 #
 # Usage: ./install.sh [--force] [--link] [--skip-nvim] [--skip-jvim]
 #                     [--skip-llama] [--client-only]
@@ -614,6 +612,4 @@ else
     echo "    scripts/uninstall.sh          — remove deployed files (preserves models)"
     echo "    bin/jvim --check        — print resolved env without launching editor"
 fi
-echo ""
-info "Editor frontend (jvim): https://github.com/orpheus497/jvim"
 echo ""

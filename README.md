@@ -9,30 +9,28 @@ Jenova is a **single repository** containing the complete terminal IDE — backe
 | Component | Location in this repo | Stack | Binary |
 |-----------|-----------------------|-------|--------|
 | **Cognitive backend** — `llama-server`, LuaJIT `proxy.lua`, embedding daemon, supervisor | `lib/`, `bin/jenova-ca`, `llama.cpp/` | C/C++ + LuaJIT | `jenova-ca` |
-| **Editor / IDE** — `jvim`, a Neovim hard-fork purpose-built for Jenova (formerly `orpheus497/jvim`) | `jvim/` | C + Lua | `jvim` |
+| **Editor / IDE** — `jvim`, a Neovim hard-fork purpose-built for Jenova | `jvim/` | C + Lua | `jvim` |
 | **Terminal agent** — `cli-agent` for headless and scripted workflows | `cli-agent/` | C + Lua 5.4 | `jenova` |
 
-The backend is the shared brain. `jvim` is the editor the user lives inside; `cli-agent` is the terminal agent for scripted, headless, and async workflows. Both frontends communicate with the backend services — primarily via `proxy.lua` on port 8080 — with `jvim` additionally talking to `llama-server` on port 8081 for FIM completions and the embedding server on port 8082.
-
-> **Note:** the previously separate `orpheus497/jvim` repository has been merged into this one. The bundled `jvim/` source tree is now the canonical home for the editor; do not clone the standalone repo.
+The backend is the shared brain. `jvim` is the editor; `cli-agent` is the terminal agent for scripted, headless, and async workflows. Both frontends talk to the backend services — primarily via `proxy.lua` on port 8080 — with `jvim` additionally talking to `llama-server` on port 8081 for FIM completions and the embedding server on port 8082.
 
 ## Goals
 
 - Run local LLM inference on a laptop — no cloud, no internet dependency, processes stay running in the background
-- Install-time profile selection: auto-detects your GPU(s) at setup and configures the right model (3B → 14B) and offload strategy
-- Low-latency proxy and RAG pipeline using LuaJIT coroutines — no subprocess overhead, no blocking I/O
-- Minimal memory footprint with optional speculative decoding for faster generation
+- Install-time profile selection: auto-detects your GPU(s) at setup and selects a model (3B → 14B) and offload strategy
+- LuaJIT-based proxy and RAG pipeline using coroutines — single-process, non-blocking I/O
+- Optional speculative decoding via a small drafter model
 - FreeBSD-first: tuned for ZFS, FreeBSD paging, and Vulkan (NVIDIA, AMD, Intel)
 
 ## Key Features
 
 - **Multi-profile model support:** 3B Q8_0, 7B Q5_K_M, and 14B Q4_K_M profiles — hardware auto-detected at install time.
-- **Persistent Embedding Daemon:** CPU-only nomic-embed-text server eliminates subprocess and reinitialization bottlenecks for fast retrieval-augmented generation (RAG).
-- **Vulkan GPU Offload:** Single or dual-GPU layer distribution via the llama.cpp `-fitt` auto-fitter. Works with NVIDIA (NVIDIA), AMD (RADV), and Intel (ANV) Vulkan drivers.
-- **Speculative Decoding:** 0.5B Qwen2.5-Coder drafter accelerates all main model sizes.
-- **Hybrid Search:** BM25 keyword search combined with semantic vector search.
-- **FreeBSD-first:** Tuned for FreeBSD 15, ZFS ARC management, and kernel-friendly operation. Linux and macOS are supported.
-- **Fluid Memory:** An optional technique used on the Optane profiles. By layering Intel Optane NVMe swap (~7 μs latency) with ZFS and 16 GiB RAM, hot pages stay in RAM, warm pages flow to Optane swap, cold pages go to ZFS. This extends the effective working set well beyond physical RAM without standard NVMe swap penalty (~100 μs). It is one strategy Jenova can use, not a requirement.
+- **Persistent embedding daemon:** CPU-only nomic-embed-text server kept resident so RAG queries don't pay subprocess startup cost on every request.
+- **Vulkan GPU offload:** Single or dual-GPU layer distribution via the llama.cpp `-fitt` auto-fitter. Works with NVIDIA, AMD (RADV), and Intel (ANV) Vulkan drivers.
+- **Speculative decoding:** Optional 0.5B Qwen2.5-Coder drafter alongside the main model.
+- **Hybrid search:** BM25 keyword search combined with semantic vector search.
+- **FreeBSD-first:** Tuned for FreeBSD 15, ZFS ARC management, and kernel-friendly operation. Linux works with caveats (Vulkan device names and BSD socket constants differ); other platforms are untested.
+- **Optional fluid-memory layout:** On Optane profiles, Intel Optane NVMe swap is layered above ZFS so paging happens against ~7 μs storage instead of standard NVMe (~100 μs). It is one strategy Jenova can use, not a requirement.
 
 ## Architecture
 
@@ -699,7 +697,3 @@ The proxy auto-detects `fetch` or `curl` at startup and logs which client is in 
 Project creator: @orpheus497
 
 License: AGPL-3.0
-
----
-
-(See `etc/jenova.conf` and files under `lib/` for implementation details.)

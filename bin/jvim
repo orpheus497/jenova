@@ -3,8 +3,8 @@
 # jvim: Launch the jvim editor (Neovim fork) with Jenova CA backend lifecycle.
 # FreeBSD 15 | Jenova Cognitive Architecture
 #
-# This is the canonical entry point that interlinks the jvim editor frontend
-# (orpheus497/jvim) with the Jenova cognitive backend (orpheus497/jenova).
+# This is the canonical entry point that interlinks the in-tree jvim editor
+# (jvim/ in this monorepo) with the Jenova cognitive backend.
 #
 # Responsibilities:
 #   - Resolve JENOVA_ROOT and load etc/jenova.conf so client and backend share

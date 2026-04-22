@@ -1,17 +1,18 @@
 #!/bin/sh
 # update.sh: Jenova Cognitive Architecture — Update Script
 #
-# Updates the Jenova backend half of the Jenova/jvim pair. The jvim editor
-# fork (https://github.com/orpheus497/jvim) is updated separately by pulling
-# its own repository and rebuilding.
+# Single-repo update: pulls the latest jenova source, rebuilds llama.cpp and
+# the in-tree jvim editor when their sources have moved, restarts a running
+# jenova-ca, and resyncs the Neovim plugin set.
 #
-# Usage: ./update.sh [--upgrade-plugins] [--skip-nvim] [--skip-rebuild] [--link]
-#                    [--apply-profile]
+# Usage: ./update.sh [--upgrade-plugins] [--skip-nvim] [--skip-rebuild]
+#                    [--skip-jvim] [--link] [--apply-profile]
 #
 #   --upgrade-plugins   Run :Lazy update (move to latest plugin versions).
 #                       Without this flag, runs :Lazy restore (pin to lock file).
 #   --skip-nvim         Skip Neovim config redeployment.
 #   --skip-rebuild      Skip llama.cpp rebuild check.
+#   --skip-jvim         Skip the in-tree jvim rebuild check.
 #   --link              Re-establish symlinks from ~/.config/nvim into the repo
 #                       if a previous --link install was clobbered by a copy.
 #   --apply-profile     Re-apply the detected hardware profile (overwrites
@@ -19,12 +20,13 @@
 #                       manual edits or pinned profile configs.
 #
 # Steps:
-#   1. git pull (update Jenova repo from origin)
+#   1. git pull (update repo from origin)
 #   2. Restart or reload jenova-ca if currently running
 #   3. Rebuild llama.cpp if its checkout moved
-#   4. Redeploy Jenova nvim config to ~/.config/nvim/ (auto-detects symlink mode)
-#   5. Sync nvim plugins (headless :Lazy restore or update)
-#   6. Print changelog summary (last 10 commits)
+#   4. Rebuild bundled jvim if its sources changed
+#   5. Redeploy Jenova nvim config to ~/.config/nvim/
+#   6. Sync nvim plugins (headless :Lazy restore or update)
+#   7. Print changelog summary (last 10 commits)
 
 set -e
 
@@ -35,6 +37,7 @@ NVIM_CONFIG_DST="$HOME/.config/nvim"
 UPGRADE_PLUGINS=0
 SKIP_NVIM=0
 SKIP_REBUILD=0
+SKIP_JVIM=0
 LINK=0
 APPLY_PROFILE=0
 
@@ -43,10 +46,11 @@ for _arg in "$@"; do
         --upgrade-plugins) UPGRADE_PLUGINS=1 ;;
         --skip-nvim)       SKIP_NVIM=1 ;;
         --skip-rebuild)    SKIP_REBUILD=1 ;;
+        --skip-jvim)       SKIP_JVIM=1 ;;
         --link)            LINK=1 ;;
         --apply-profile)   APPLY_PROFILE=1 ;;
         -h|--help)
-            sed -n '2,27p' "$0"
+            sed -n '2,28p' "$0"
             exit 0
             ;;
         *)
@@ -153,6 +157,44 @@ if [ "$SKIP_REBUILD" = "0" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 3b. jvim rebuild check — rebuild if jvim/ sources changed since last build
+# ---------------------------------------------------------------------------
+if [ "$SKIP_JVIM" = "0" ]; then
+    info "Checking bundled jvim editor..."
+    JVIM_SRC="$JENOVA_ROOT/jvim"
+    JVIM_BIN="$JVIM_SRC/build/bin/nvim"
+    if [ ! -f "$JVIM_SRC/CMakeLists.txt" ]; then
+        warn "jvim/ source tree missing — skipping jvim rebuild"
+    elif ! command -v cmake >/dev/null 2>&1; then
+        warn "cmake not found — cannot rebuild jvim"
+    else
+        # Rebuild if the binary is missing OR any tracked source under
+        # jvim/src or jvim/runtime is newer than the binary.
+        _need_rebuild=0
+        if [ ! -x "$JVIM_BIN" ]; then
+            _need_rebuild=1
+        elif [ -n "$(find "$JVIM_SRC/src" "$JVIM_SRC/runtime" "$JVIM_SRC/cmake" \
+                          "$JVIM_SRC/CMakeLists.txt" -newer "$JVIM_BIN" \
+                          -print -quit 2>/dev/null)" ]; then
+            _need_rebuild=1
+        fi
+        if [ "$_need_rebuild" = "1" ]; then
+            info "jvim sources changed (or no build present) — rebuilding..."
+            _JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+            (
+                cd "$JVIM_SRC" && \
+                cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+                      -DCMAKE_INSTALL_PREFIX="$JVIM_SRC/install" >/dev/null && \
+                cmake --build build -j"$_JOBS"
+            ) && ok "jvim rebuilt: $JVIM_BIN" \
+              || warn "jvim rebuild failed — re-run: make jvim"
+        else
+            ok "jvim up to date"
+        fi
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # 4. Redeploy Neovim config
 # ---------------------------------------------------------------------------
 if [ "$SKIP_NVIM" = "0" ] && command -v nvim >/dev/null 2>&1; then
@@ -164,7 +206,7 @@ if [ "$SKIP_NVIM" = "0" ] && command -v nvim >/dev/null 2>&1; then
         *JVIM*) ok "Editor: $_NVIM_VLINE" ;;
         *)
             warn "Editor is upstream Neovim ($_NVIM_VLINE), not jvim."
-            warn "Install jvim from https://github.com/orpheus497/jvim for full integration."
+            warn "Build the in-tree jvim with: make jvim"
             ;;
     esac
 
@@ -242,7 +284,4 @@ echo "    bin/jvim [file]       — jvim editor (auto-starts backend)"
 echo "    bin/jvim --remote H   — connect to a remote Jenova CA on host H"
 echo "    bin/jvim --check      — print resolved env without launching editor"
 echo "    bin/jenova-ca status  — check backend daemon status"
-echo ""
-info "The matching editor frontend (jvim) is updated separately:"
-echo "    cd /path/to/jvim && git pull && make CMAKE_BUILD_TYPE=Release && sudo make install"
 echo ""
