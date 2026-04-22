@@ -88,7 +88,10 @@ done
 # Determining $JENOVA_ROOT here is duplicated below, but we need it before
 # load_jenova_conf runs so the in-tree jvim binary can be discovered first.
 _JENOVA_ROOT_HINT="$(dirname "$SCRIPT_DIR")"
-_INTREE_JVIM="$_JENOVA_ROOT_HINT/jvim/build/bin/nvim"
+_INTREE_JVIM="$_JENOVA_ROOT_HINT/jvim/build/bin/jvim"
+if [ ! -x "$_INTREE_JVIM" ]; then
+    _INTREE_JVIM="$_JENOVA_ROOT_HINT/jvim/build/bin/nvim"
+fi
 
 if [ -n "$JVIM_BIN" ]; then
     EDITOR_BIN="$JVIM_BIN"
