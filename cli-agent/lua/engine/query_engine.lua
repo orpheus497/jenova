@@ -11,7 +11,6 @@
 -- whenever we need real Lua table ↔ JSON conversion.
 local json_codec = require("utils.json_fallback")
 local tool_registry = require("tools.registry")
-local array = require("utils.array")
 
 -- Try to load provider system
 local provider_base
@@ -140,6 +139,17 @@ function QueryEngine.new(options)
     self.total_cost_usd = 0
     self.abort_controller = nil
 
+    -- File read cache: stores the content of files read during this session.
+    -- Key: resolved absolute path. Value: { text, ts }
+    -- Used to:
+    --   1. Detect redundant re-reads (same path, no intervening write) and skip the I/O.
+    --   2. Inject cached content as a hint when an Edit/MultiEdit fails with "not found".
+    self._file_cache = {}
+
+    -- Load verifier once — it holds per-session attempt counters.
+    local v_ok, verifier = pcall(require, "services.tool_verifier")
+    self._verifier = (v_ok and verifier) or nil
+
     return self
 end
 
@@ -235,6 +245,14 @@ local function summarise_input(tool_name, input)
     return tool_name
 end
 
+function QueryEngine:_cache_file_read(path, text, num_lines)
+    self._file_cache[path] = { text = text, num_lines = num_lines, ts = os.time() }
+end
+
+function QueryEngine:_invalidate_cache(path)
+    self._file_cache[path] = nil
+end
+
 function QueryEngine:execute_tool(tool_name, tool_use_id, input)
     self.on_tool_use(tool_name, input, summarise_input(tool_name, input))
 
@@ -243,6 +261,23 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
     local tool_context = {
         cwd = app_state_ok and app_state.get_cwd() or nil,
     }
+
+    -- ── File-read deduplication ────────────────────────────────────────
+    -- If the model is calling Read on a file it already read with no
+    -- intervening write/edit, return the cached result instantly.
+    -- This breaks the "read the same file 4 times" loop without any prompt
+    -- changes, and ensures the model always has current content.
+    if tool_name == "Read" and type(input) == "table" and input.file_path then
+        local paths = require("utils.paths")
+        local resolved = paths.resolve(input.file_path, tool_context.cwd)
+        local cached = self._file_cache[resolved]
+        if cached and not (input.offset and input.offset > 0) then
+            self.on_tool_result(tool_name, { type = "text", text = cached.text,
+                num_lines = cached.num_lines })
+            return { type = "text", text = cached.text,
+                     num_lines = cached.num_lines, _from_cache = true }, nil
+        end
+    end
 
     -- Get tool implementation (verify it exists before execute)
     local tool = tool_registry.get_tool(tool_name)
@@ -254,8 +289,37 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
     -- permission checks via tool.check_permissions() — single enforcement point.
     local ok, result, exec_err = pcall(tool_registry.execute, tool_name, input, tool_context)
 
+    -- ── Post-execution cache maintenance ──────────────────────────────
+    if ok and not exec_err and type(result) == "table" then
+        if tool_name == "Read" and result.text and type(input) == "table" and input.file_path
+               and not (input.offset and input.offset > 0) and not result.truncated then
+            local paths = require("utils.paths")
+            local resolved = paths.resolve(input.file_path, tool_context.cwd)
+            self:_cache_file_read(resolved, result.text, result.num_lines)
+            -- Surface truncation notice to the model as an embed warning, not in text
+            if result.truncation_hint then
+                if not self._pending_embed_warnings then self._pending_embed_warnings = {} end
+                table.insert(self._pending_embed_warnings, result.truncation_hint)
+            end
+        elseif (tool_name == "Edit" or tool_name == "MultiEdit" or tool_name == "Write")
+               and type(input) == "table" and input.file_path then
+            -- Invalidate cache after any successful write so the next Read is fresh.
+            local paths = require("utils.paths")
+            local resolved = paths.resolve(input.file_path, tool_context.cwd)
+            self:_invalidate_cache(resolved)
+        end
+    end
+
     -- Record action in memory manager
     local mem_ok, memory = pcall(require, "services.memory.manager")
+    local input_summary = ""
+    if type(input) == "table" then
+        input_summary = input.file_path or input.command or input.path
+            or input.query or input.pattern or "(table)"
+    else
+        input_summary = tostring(input or "")
+    end
+
     if mem_ok then
         -- Summarise input meaningfully so memory entries are human-readable.
         local input_summary
@@ -295,6 +359,7 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
                 end
             end
 
+
             if #similar > 0 then
                 local parts = {"[System: Similar failures in this session — do not repeat these patterns:]"}
                 for _, se in ipairs(similar) do
@@ -305,6 +370,7 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
                 -- Injected directly into self.messages via the caller's loop.
                 -- Store as a pending pre-action warning on self so execute_tool
                 -- callers can append it after the tool_result message.
+
                 if not self._pending_embed_warnings then
                     self._pending_embed_warnings = {}
                 end
@@ -316,13 +382,56 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
     if not ok then
         self.on_error("Tool execution failed: " .. tostring(result))
         self.on_tool_result(tool_name, {type="error", error=tostring(result)})
+        -- ── Verifier: decide retry vs fail ─────────────────────────────
+        if self._verifier then
+            local _verdict, hint = self._verifier.verify(tool_name, input, nil, tostring(result))
+            if hint and hint ~= "" then
+                if not self._pending_embed_warnings then self._pending_embed_warnings = {} end
+                table.insert(self._pending_embed_warnings, hint)
+            end
+        end
         return nil, tostring(result)
     end
 
     if exec_err then
         self.on_error("Tool error: " .. exec_err)
         self.on_tool_result(tool_name, {type="error", error=exec_err})
+        if self._verifier then
+            local _verdict, hint = self._verifier.verify(tool_name, input, nil, exec_err)
+            if hint and hint ~= "" then
+                if not self._pending_embed_warnings then self._pending_embed_warnings = {} end
+                table.insert(self._pending_embed_warnings, hint)
+            end
+        end
         return nil, exec_err
+    end
+
+    -- ── Verifier: handle tool-level errors returned as {type="error"} ──
+    if self._verifier and type(result) == "table" and result.type == "error" then
+        local verdict, hint = self._verifier.verify(tool_name, input, result, nil)
+        if hint and hint ~= "" then
+            if not self._pending_embed_warnings then self._pending_embed_warnings = {} end
+            table.insert(self._pending_embed_warnings, hint)
+        end
+        -- If verdict is "retry" and this is an Edit/MultiEdit, inject the cached
+        -- file content as a direct hint so the model can see the actual text.
+        if (tool_name == "Edit" or tool_name == "MultiEdit")
+           and verdict == "retry"
+           and type(input) == "table" and input.file_path then
+            local paths = require("utils.paths")
+            local resolved = paths.resolve(input.file_path, tool_context.cwd)
+            local cached = self._file_cache[resolved]
+            if cached and cached.text then
+                if not self._pending_embed_warnings then self._pending_embed_warnings = {} end
+                local suffix = #cached.text > 3000 and "\n...[truncated]" or ""
+                table.insert(self._pending_embed_warnings,
+                    "[System: Current content of " .. input.file_path .. " (from last Read):\n"
+                    .. cached.text:sub(1, 3000) .. suffix
+                    .. "\nCopy old_string verbatim from this content.]")
+            end
+        end
+    elseif self._verifier and (type(result) ~= "table" or result.type ~= "error") then
+        self._verifier.verify(tool_name, input, result, nil)  -- reset attempt counter on success
     end
 
     self.on_tool_result(tool_name, result)
@@ -626,6 +735,7 @@ function QueryEngine:query(user_message, options)
                 -- Fallback: emit a fresh user message (only happens when there
                 -- is no preceding user message at all, which is rare).
                 table.insert(self.messages, { role = "user", content = warning_text })
+
             end
             self._pending_embed_warnings = {}
         end

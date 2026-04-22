@@ -9,13 +9,15 @@ local string_utils = require("utils.string")
 
 local M = {}
 M.name = "Edit"
-M.description = "Edit a file by replacing an exact string match with new content. You MUST Read the file before calling Edit so your old_string matches exactly. The old_string must be unique in the file."
+M.description = "Edit a file by replacing an exact string match with new content. You MUST Read the file before calling Edit so your old_string matches exactly. Read returns lines prefixed with \"N\\t\" — old_string must contain ONLY the content after the tab, never the line-number prefix. The old_string must be unique in the file."
+
 
 M.parameters = {
     type = "object",
     properties = {
         file_path = { type = "string", description = "Path to the file to edit (absolute or relative to working directory)" },
-        old_string = { type = "string", description = "The exact text to find and replace. Must match the file byte-for-byte. Read the file first." },
+        old_string = { type = "string", description = "The exact text to find and replace. Must match the file byte-for-byte, excluding Read's line-number prefix (\"N\\t\"). Read the file first." },
+
         new_string = { type = "string", description = "The replacement text" },
         replace_all = { type = "boolean", description = "Replace all occurrences (default: false)" },
     },
@@ -77,6 +79,7 @@ local function build_hint(content, old_string)
                 lower_content = lower_content or content:lower()
                 p = lower_content:find(word_lower, 1, true)
             end
+
             if p then hint_pos = p end
             break
         end
@@ -146,6 +149,7 @@ local function build_hint(content, old_string)
             cur_line = cur_line + 1
             line_start = p + 1
         end
+
     end
 
     return table.concat(snippet_lines, "\n")
@@ -171,6 +175,7 @@ function M.call(args, context)
     if args.old_string == args.new_string then
         return { type = "error", error = "old_string and new_string are identical — no change needed" }
     end
+
 
     path = paths.resolve(path, context and context.cwd)
     if paths.is_restricted(path) then

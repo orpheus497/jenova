@@ -167,7 +167,10 @@ function LlamaCppProvider:format_prompt(messages, tools)
     for _, msg in ipairs(messages) do
         if msg.role == "user" then
             prompt = prompt .. "<|start_header_id|>user<|end_header_id|>\n\n"
-            prompt = prompt .. msg.content .. "<|eot_id|>"
+            local user_content = type(msg.content) == "string" and msg.content
+                or (type(msg.content) == "table" and require("utils.json_fallback").stringify(msg.content))
+                or tostring(msg.content or "")
+            prompt = prompt .. user_content .. "<|eot_id|>"
         elseif msg.role == "assistant" then
             prompt = prompt .. "<|start_header_id|>assistant<|end_header_id|>\n\n"
             prompt = prompt .. (type(msg.content) == "string" and msg.content or "") .. "<|eot_id|>"

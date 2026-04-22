@@ -176,6 +176,7 @@ function Memory.log_error(tool_name, args_summary, error_msg)
             args = entry.args, error = entry.error,
         }
         f:write(json.stringify(persisted) .. "\n")
+
         f:close()
     end
 
@@ -252,6 +253,7 @@ function Memory.record_action(tool_name, args, result, success)
         if embed_ok then
             -- See log_error: don't hard-gate on is_available() so the first
             -- successful action of a session can also be cached.
+
             local input_summary
             if type(args) == "table" then
                 input_summary = args.file_path or args.command or args.path
@@ -262,6 +264,7 @@ function Memory.record_action(tool_name, args, result, success)
             local text = (tool_name or "") .. ": " .. (entry.result_summary or "")
                 .. " [" .. (input_summary or "") .. "]"
             local vec = embed.encode(text, "search_document", { timeout_ms = 2000 })
+
             if vec then entry._vec = vec end
         end
     end
@@ -292,6 +295,7 @@ function Memory.record_action(tool_name, args, result, success)
             result_summary = entry.result_summary,
         }
         f:write(json.stringify(persisted) .. "\n")
+
         f:close()
     end
 end
@@ -484,6 +488,7 @@ function Memory.build_context(current_query)
     -- history is the fallback below.
     local used_semantic = false
     if current_query and current_query ~= "" then
+
         local similar_acts = Memory.get_similar_actions(current_query, 4)
         if #similar_acts > 0 then
             local act_parts = { "\nRelevant past actions (semantically similar to current task):" }
@@ -621,6 +626,7 @@ function Memory.get_similar_errors(query_text, top_k)
     -- encode() lazy-inits embedding so the first similarity query of the
     -- session can succeed even before is_available() flips true.
     local query_vec = embed.encode(query_text, "search_query", { timeout_ms = 2000 })
+
     if not query_vec then return {} end
 
     -- Use pre-cached vectors from log_error (O(1) dot product per entry).
@@ -654,6 +660,7 @@ function Memory.get_similar_actions(query_text, top_k)
 
     -- See get_similar_errors: encode() lazy-inits, so don't hard-gate.
     local query_vec = embed.encode(query_text, "search_query", { timeout_ms = 2000 })
+
     if not query_vec then return {} end
 
     local scored = {}
