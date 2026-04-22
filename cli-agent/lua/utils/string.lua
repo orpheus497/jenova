@@ -92,56 +92,62 @@ function M.fuzzy_find(content, old_string)
         return nil, nil, true
     end
 
-    -- Build orig_pos[norm_byte_index] = orig_byte_index by scanning both
-    -- strings in lockstep, consuming the original at the same rate as normalize_ws.
-    local orig_pos = {}
+    -- Walk both strings in lockstep, but only record the two orig offsets we
+    -- actually need (start and end of the match) instead of building a full
+    -- normalized→original byte map.  The previous implementation allocated
+    -- one table entry per normalized byte, which is wasteful for large files.
+    local end_norm   = pos + #no - 1
+    local start_orig = nil
+    local end_orig   = nil
+
     local ni = 1
     local oi = 1
     local olen = #content
     local nlen = #nc
 
     while oi <= olen and ni <= nlen do
+        if ni == pos then start_orig = oi end
+
         local ob = content:byte(oi)
-        orig_pos[ni] = oi
+        local mapped_oi = oi  -- the original byte that this norm byte maps to
 
         if ob == 13 and content:byte(oi + 1) == 10 then
-            -- \r\n → \n in normalized form.  Map the normalized \n byte to
-            -- the original \n (oi+1), not \r (oi), so that a replacement span
-            -- including this newline covers both bytes (\r and \n) rather than
-            -- only \r, which would leave a stray LF in the file.
-            orig_pos[ni] = oi + 1
+            -- \r\n → \n in normalized form. Map the normalized \n byte to
+            -- the original \n (oi+1), not \r (oi), so a replacement span
+            -- including this newline covers both bytes (\r and \n).
+            mapped_oi = oi + 1
+            if ni == pos then start_orig = mapped_oi end
+            if ni == end_norm then end_orig = mapped_oi end
             oi = oi + 2
             ni = ni + 1
         elseif ob == 32 or ob == 9 then
             -- Possibly trailing whitespace stripped by normaliser.
-            -- Scan to end of whitespace run.
             local oi2 = oi
             while oi2 <= olen and (content:byte(oi2) == 32 or content:byte(oi2) == 9) do
                 oi2 = oi2 + 1
             end
             local next_ob = content:byte(oi2)
-            -- nil means end-of-file: trailing whitespace before EOF is treated
-            -- the same as trailing whitespace before a newline — strip it.
             if next_ob == nil or next_ob == 10 or next_ob == 13 then
                 -- Trailing whitespace: skip in original without advancing norm.
+                -- Loop will re-enter at same ni and reassign start_orig if needed.
                 oi = oi2
             else
-                -- Non-trailing: both advance by 1
+                if ni == end_norm then end_orig = mapped_oi end
                 oi = oi + 1
                 ni = ni + 1
             end
         else
+            if ni == end_norm then end_orig = mapped_oi end
             oi = oi + 1
             ni = ni + 1
         end
+
+        -- Stop once we've finalized end_orig (and start_orig must already be set
+        -- because pos <= end_norm).
+        if end_orig then break end
     end
 
-    local start_orig = orig_pos[pos]
-    if not start_orig then return nil end
-
-    local end_norm = pos + #no - 1
-    local end_orig = orig_pos[end_norm]
-    if not end_orig then return nil end
+    if not start_orig or not end_orig then return nil end
 
     -- Extend end_orig to cover any trailing spaces before newline that the
     -- normaliser stripped but belong to the matched span.

@@ -58,7 +58,14 @@ local BLOCKED_FLAGS = {
 -- Characters that could break shell quoting or inject commands.
 -- Includes newlines (\n, \r) to prevent multi-line injection where a crafted
 -- subcommand like "status\nid" would pass base_sub validation then execute id.
-local SHELL_META = "[;&|`$<>%(%){}%[%]\\!\n\r]"
+-- Notes:
+--   • [ ] are intentionally permitted — valid in pathspecs/globs and log
+--     search patterns; every parsed token is shell.quote()'d before the shell
+--     sees it.
+--   • backslash is also permitted because the shell-word splitter below
+--     interprets it as an escape (e.g. "file\ name.txt"), and parsed tokens
+--     are likewise shell.quote()'d.
+local SHELL_META = "[;&|`$<>%(%){}!\n\r]"
 
 function M.is_enabled() return true end
 function M.is_read_only() return true end
@@ -116,13 +123,6 @@ function M.call(args, context)
         return { type = "error", error = "Shell metacharacters are not allowed in git commands." }
     end
 
-    -- Reject blocked flags anywhere in sub + extra
-    for _, flag in ipairs(BLOCKED_FLAGS) do
-        if combined:find(flag, 1, true) then
-            return { type = "error", error = "Blocked option: " .. flag }
-        end
-    end
-
     -- Resolve and validate working directory
     local app_state_ok, app_state = pcall(require, "state.app_state")
     local cwd = args.path
@@ -157,8 +157,9 @@ function M.call(args, context)
     -- We cannot use gmatch("%S+") because it would incorrectly split
     -- filenames that contain spaces (e.g. HEAD -- "file with spaces.c").
     -- Instead we use a POSIX-aware shell-word splitter that respects double
-    -- and single quotes and backslash escapes.
-    local quoted_args = {}
+    -- and single quotes and backslash escapes (both inside double quotes
+    -- and outside, mirroring standard /bin/sh word-splitting semantics).
+    local raw_tokens = {}
     local i = 1
     local elen = #extra
     while i <= elen do
@@ -166,48 +167,116 @@ function M.call(args, context)
         while i <= elen and extra:sub(i,i):match("%s") do i = i + 1 end
         if i > elen then break end
         local ch = extra:sub(i,i)
-        local tok
+        local tok_buf = {}
         if ch == '"' then
-            -- double-quoted token: consume until closing "
-            local j = extra:find('"', i + 1, true)
-            if not j then
+            -- double-quoted token: handle \" and \\ escapes; consume to closing "
+            i = i + 1
+            local closed = false
+            while i <= elen do
+                local c = extra:sub(i,i)
+                if c == "\\" and i < elen then
+                    local nxt = extra:sub(i+1, i+1)
+                    -- POSIX: inside double quotes, backslash only escapes
+                    -- $, `, ", \, and newline. Other backslashes are literal.
+                    if nxt == '"' or nxt == "\\" or nxt == "$" or nxt == "`" then
+                        table.insert(tok_buf, nxt)
+                        i = i + 2
+                    else
+                        table.insert(tok_buf, c)
+                        i = i + 1
+                    end
+                elseif c == '"' then
+                    closed = true
+                    i = i + 1
+                    break
+                else
+                    table.insert(tok_buf, c)
+                    i = i + 1
+                end
+            end
+            if not closed then
                 return { type = "error", error = "Unterminated double-quoted argument in args" }
             end
-            tok = extra:sub(i + 1, j - 1)
-            i = j + 1
         elseif ch == "'" then
-            -- single-quoted token
+            -- single-quoted token: no escapes inside
             local j = extra:find("'", i + 1, true)
             if not j then
                 return { type = "error", error = "Unterminated single-quoted argument in args" }
             end
-            tok = extra:sub(i + 1, j - 1)
+            table.insert(tok_buf, extra:sub(i + 1, j - 1))
             i = j + 1
         else
-            -- unquoted token: stop at whitespace
-            local j = extra:find("%s", i + 1)
-            if j then
-                tok = extra:sub(i, j - 1)
-                i = j
-            else
-                tok = extra:sub(i)
-                i = elen + 1
+            -- unquoted token: stop at whitespace; honor backslash escapes for
+            -- spaces and other shell metas (e.g. file\ name.txt)
+            while i <= elen do
+                local c = extra:sub(i,i)
+                if c:match("%s") then break end
+                if c == "\\" and i < elen then
+                    table.insert(tok_buf, extra:sub(i+1, i+1))
+                    i = i + 2
+                else
+                    table.insert(tok_buf, c)
+                    i = i + 1
+                end
             end
         end
+        table.insert(raw_tokens, table.concat(tok_buf))
+    end
+
+    -- Reject blocked flags by exact token match. Substring search on the
+    -- combined string would false-positive on filenames containing the flag
+    -- text (e.g. a path like "config-env.txt" matches "--config-env").
+    local BLOCKED_SET = {}
+    for _, flag in ipairs(BLOCKED_FLAGS) do BLOCKED_SET[flag] = true end
+    for _, tok in ipairs(raw_tokens) do
+        -- Match exact token, or "--flag=value" form
+        if BLOCKED_SET[tok] then
+            return { type = "error", error = "Blocked option: " .. tok }
+        end
+        local prefix = tok:match("^([^=]+)=")
+        if prefix and BLOCKED_SET[prefix] then
+            return { type = "error", error = "Blocked option: " .. prefix }
+        end
+    end
+
+    local quoted_args = {}
+    for _, tok in ipairs(raw_tokens) do
         table.insert(quoted_args, shell.quote(tok))
     end
     local cmd = string.format(
-        "git --no-pager -C %s %s %s 2>&1 | head -600",
+        "git --no-pager -C %s %s %s 2>&1",
         shell.quote(cwd), shell.quote(sub), table.concat(quoted_args, " ")
     )
 
     local h = io.popen(cmd)
     if not h then return { type = "error", error = "Failed to spawn git" } end
-    local output = h:read("*a")
+
+    -- Read up to MAX_LINES; if we hit the cap, drain the rest and report.
+    local MAX_LINES = 600
+    local lines = {}
+    local truncated = false
+    local extra_lines = 0
+    while true do
+        local line = h:read("*l")
+        if not line then break end
+        if #lines < MAX_LINES then
+            table.insert(lines, line)
+        else
+            truncated = true
+            extra_lines = extra_lines + 1
+        end
+    end
     h:close()
 
-    if not output or #output == 0 then
+    if #lines == 0 and not truncated then
         return { type = "text", text = "(no output)" }
+    end
+
+    local output = table.concat(lines, "\n")
+    if truncated then
+        output = output .. string.format(
+            "\n\n[output truncated: showing first %d of ~%d lines — narrow the command (e.g. add a path, use -n, --since, or -- <path>) for the full result]",
+            MAX_LINES, MAX_LINES + extra_lines)
     end
 
     return { type = "text", text = output }
