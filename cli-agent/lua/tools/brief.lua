@@ -5,7 +5,15 @@
 
 local M = {}
 M.name = "Brief"
-M.description = [[Respond to the user with a plain-text message. Call this when the task is complete and you need to report results, explain findings, answer a question, or ask for clarification. Do NOT call other tools to "search" or "fetch" information before using Brief — if you already have the answer, call Brief directly.]]
+M.description = [[Deliver a final plain-text reply to the user. Call this ONLY when all required actions are fully complete and you have concrete results to report.
+
+FORBIDDEN uses of Brief:
+- Announcing what you are about to do ("I will run make", "I'll read the file", "Let me check...")
+- Saying you are "proceeding", "running", or "checking" anything
+- Responding to "proceed", "go ahead", or "continue" with words instead of action
+- Calling Brief mid-task before the work is done
+
+CORRECT use: call the appropriate action tool first (Bash, Read, Edit, etc.), complete all work, THEN call Brief with the actual results.]]
 
 M.parameters = {
     type = "object",

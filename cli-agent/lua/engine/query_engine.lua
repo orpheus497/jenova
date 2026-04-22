@@ -563,10 +563,44 @@ function QueryEngine:query(user_message, options)
             -- Brief is a terminal signal: the model is done and wants to reply.
             if tool_use.name == "Brief" then
                 local br = type(tool_use.input) == "table" and tool_use.input.response or nil
+
+                -- ── Narration guard ───────────────────────────────────────
+                -- Detect when the model uses Brief to announce intent instead of
+                -- acting. Patterns: "I will", "I'll", "Let me", "I am going to",
+                -- "Running", "Proceeding", "I'm going to", "I would", "I need to".
+                -- If detected, redirect by injecting a nudge and continuing the loop.
+                local is_narration = false
                 if br and #br > 0 then
-                    -- Route through on_text so the agent label fires before the first
-                    -- character — Brief responses were previously printed raw, bypassing
-                    -- the label-on-first-token logic in loop.lua.
+                    local lower = br:lower():match("^%s*(.-)%s*$") or ""
+                    local narration_patterns = {
+                        "^i will ", "^i'll ", "^let me ", "^i am going to ",
+                        "^i'm going to ", "^running ", "^proceeding",
+                        "^i would ", "^i need to ", "^i'm going to ",
+                        "^now i ", "^first ", "^to do this", "^i should ",
+                    }
+                    for _, pat in ipairs(narration_patterns) do
+                        if lower:find(pat) then
+                            is_narration = true
+                            break
+                        end
+                    end
+                end
+
+                if is_narration then
+                    -- Reject the Brief and force the model to actually act.
+                    if not self._pending_embed_warnings then
+                        self._pending_embed_warnings = {}
+                    end
+                    table.insert(self._pending_embed_warnings,
+                        "[System: You called Brief with an announcement ('" ..
+                        (br or ""):sub(1, 80) ..
+                        "'). This is FORBIDDEN. DO NOT announce what you will do. " ..
+                        "IMMEDIATELY call the appropriate action tool (Bash, Read, Edit, etc.) " ..
+                        "and perform the work. Do not call Brief until the task is fully complete.]")
+                    -- Don't terminate the loop — continue so the nudge is sent
+                    -- and the model gets another turn to act.
+                elseif br and #br > 0 then
+                    -- Legitimate final response — surface it and terminate.
                     self.on_text(br)
                     brief_response = br
                 end

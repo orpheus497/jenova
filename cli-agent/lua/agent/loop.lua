@@ -161,7 +161,7 @@ function M.run(opts)
         "- Glob(pattern): find files by name. Use before Read when path is uncertain.",
         "- Grep(pattern, path): search file contents. Use to locate a symbol or string.",
         "- Bash(command): run shell commands for build, compile, test, or install tasks. Not for file reading.",
-        "- Brief(response): deliver your final reply to the user. Call this ONLY when the task is fully complete.",
+        "- Brief(response): deliver your final reply to the user. Call this ONLY when ALL work is done and you have actual results to report. NEVER use Brief to announce what you are about to do — just do it with the appropriate tool.",
     }
 
     -- Git tool: only mention it when we're actually in a git repo
@@ -172,6 +172,7 @@ function M.run(opts)
 
     table.insert(tool_mandate_lines, "")
     table.insert(tool_mandate_lines, "## Rules (in order of importance)")
+    table.insert(tool_mandate_lines, "0. NEVER narrate intent with Brief. If you need to run make, call Bash({command='make'}). If you need to read a file, call Read. Do the action — never announce it.")
     table.insert(tool_mandate_lines, "1. ALWAYS call Read before Edit or MultiEdit. No exceptions. Never assume file content.")
     table.insert(tool_mandate_lines, "2. Copy old_string CHARACTER-FOR-CHARACTER from the Read output. Read returns lines as \"42\\t<content>\" — the old_string must contain ONLY the content after the tab, NOT the line-number prefix. Include every space, newline, and indent. Never reconstruct or guess it.")
     table.insert(tool_mandate_lines, "3. If Edit fails with 'not found': a [System:] message will inject the current file content. Read that injected content, copy exact text, then Edit.")
