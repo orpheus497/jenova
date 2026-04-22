@@ -52,11 +52,15 @@ function M.is_available()
     return initialized
 end
 
-function M.encode(text, task)
+function M.encode(text, task, opts)
     if not initialized and not M.init() then return nil, "not available" end
 
     task = task or "search_document"
     local prefixed = task .. ": " .. text
+    -- Allow callers to cap blocking time. Memory-cache hot paths use a tight
+    -- budget (e.g. 2s) so a slow embed sidecar can't stall the agent loop;
+    -- the default of 30s preserves prior behaviour for batch/search callers.
+    local timeout_ms = (opts and opts.timeout_ms) or 30000
 
     local payload = json.stringify({ content = prefixed })
 
@@ -94,8 +98,9 @@ function M.encode(text, task)
             args = { "-sf", "-X", "POST",
                      "-H", "Content-Type: application/json",
                      "-d", "@" .. tmp_file,
+                     "--max-time", tostring(math.max(1, math.floor(timeout_ms / 1000))),
                      embed_url },
-            timeout_ms = 30000,
+            timeout_ms = timeout_ms,
             capture_stdout = true,
             capture_stderr = false,
         })
@@ -104,7 +109,9 @@ function M.encode(text, task)
             body = result.stdout or ""
         end
     else
-        local cmd = string.format("curl -sf -X POST -H 'Content-Type: application/json' -d @%s %s 2>/dev/null",
+        local cmd = string.format(
+            "curl -sf -X POST -H 'Content-Type: application/json' --max-time %d -d @%s %s 2>/dev/null",
+            math.max(1, math.floor(timeout_ms / 1000)),
             shell.quote(tmp_file), shell.quote(embed_url))
         local p = io.popen(cmd)
         if p then

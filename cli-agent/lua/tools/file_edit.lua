@@ -111,12 +111,17 @@ local function build_hint(content, old_string)
     if to_pos > clen then to_pos = clen end
 
     -- Compute the 1-based line number of from_pos by counting newlines in
-    -- the prefix [1, from_pos). This is O(from_pos) but only runs once and
-    -- is the only unavoidable cost of producing a true line number.
+    -- [1, from_pos). Use string.find in a loop instead of building a prefix
+    -- string copy (which can be expensive for large files).
     local from_line = 1
     do
-        local pfx = content:sub(1, from_pos - 1)
-        for _ in pfx:gmatch("\n") do from_line = from_line + 1 end
+        local last_nl = 0
+        while true do
+            local nxt = content:find("\n", last_nl + 1, true)
+            if not nxt or nxt >= from_pos then break end
+            from_line = from_line + 1
+            last_nl = nxt
+        end
     end
 
     local snippet_lines = {}

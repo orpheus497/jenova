@@ -292,30 +292,33 @@ function M.call(args, context)
     for _, tok in ipairs(raw_tokens) do
         table.insert(quoted_args, shell.quote(tok))
     end
+
+    -- Cap output by piping through `head -N+1` so the OS terminates git
+    -- early and doesn't materialise multi-MB output for nothing. We read
+    -- one extra line (MAX_LINES + 1) so we can detect truncation: if it
+    -- exists, we know there was more, even if we don't know how much.
+    local MAX_LINES = 600
     local cmd = string.format(
-        "git --no-pager -C %s %s %s 2>&1",
-        shell.quote(cwd), shell.quote(sub), table.concat(quoted_args, " ")
+        "git --no-pager -C %s %s %s 2>&1 | head -%d",
+        shell.quote(cwd), shell.quote(sub), table.concat(quoted_args, " "), MAX_LINES + 1
     )
 
     local h = io.popen(cmd)
     if not h then return { type = "error", error = "Failed to spawn git" } end
 
-    -- Read up to MAX_LINES; if we hit the cap, drain the rest and report.
-    local MAX_LINES = 600
     local lines = {}
-    local truncated = false
-    local extra_lines = 0
     while true do
         local line = h:read("*l")
         if not line then break end
-        if #lines < MAX_LINES then
-            table.insert(lines, line)
-        else
-            truncated = true
-            extra_lines = extra_lines + 1
-        end
+        table.insert(lines, line)
     end
     h:close()
+
+    local truncated = #lines > MAX_LINES
+    if truncated then
+        -- Drop the +1 probe line so output ends at a real boundary
+        lines[#lines] = nil
+    end
 
     if #lines == 0 and not truncated then
         return { type = "text", text = "(no output)" }
@@ -324,8 +327,8 @@ function M.call(args, context)
     local output = table.concat(lines, "\n")
     if truncated then
         output = output .. string.format(
-            "\n\n[output truncated: showing first %d of ~%d lines — narrow the command (e.g. add a path, use -n, --since, or -- <path>) for the full result]",
-            MAX_LINES, MAX_LINES + extra_lines)
+            "\n\n[output truncated at %d lines — narrow the command (e.g. add a path, use -n, --since, or -- <path>) for the full result]",
+            MAX_LINES)
     end
 
     return { type = "text", text = output }

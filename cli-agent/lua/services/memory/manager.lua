@@ -150,10 +150,15 @@ function Memory.log_error(tool_name, args_summary, error_msg)
     -- Pre-compute and cache the embedding for this error at log time.
     -- This makes get_similar_errors() O(1) per entry (dot product only)
     -- instead of O(N) embed HTTP calls per query.
+    --
+    -- Use a tight (2s) timeout because this runs synchronously inside the
+    -- agent loop after every failed tool call: a slow/unreachable embed
+    -- sidecar must NOT be allowed to stall the agent. On timeout the entry
+    -- is logged without a vector and simply skipped by similarity search.
     local embed_ok, embed = pcall(require, "utils.embed")
     if embed_ok and embed.is_available() then
         local text = (tool_name or "") .. ": " .. (error_msg or "") .. " [" .. (args_summary or "") .. "]"
-        local vec = embed.encode(text, "search_document")
+        local vec = embed.encode(text, "search_document", { timeout_ms = 2000 })
         if vec then entry._vec = vec end
     end
 
@@ -235,6 +240,9 @@ function Memory.record_action(tool_name, args, result, success)
     -- Pre-compute and cache the embedding for successful actions so that
     -- get_similar_actions() can retrieve relevant past successes using pure
     -- cosine arithmetic rather than O(N) HTTP embed calls per query.
+    --
+    -- Tight 2s timeout (see log_error) so a slow embed sidecar can't stall
+    -- the agent loop — the cache is best-effort.
     if success then
         local embed_ok, embed = pcall(require, "utils.embed")
         if embed_ok and embed.is_available() then
@@ -247,7 +255,7 @@ function Memory.record_action(tool_name, args, result, success)
             end
             local text = (tool_name or "") .. ": " .. (entry.result_summary or "")
                 .. " [" .. (input_summary or "") .. "]"
-            local vec = embed.encode(text, "search_document")
+            local vec = embed.encode(text, "search_document", { timeout_ms = 2000 })
             if vec then entry._vec = vec end
         end
     end
