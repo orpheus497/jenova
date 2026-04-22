@@ -151,6 +151,12 @@ function M.call(args, context)
     if type(args.new_string) ~= "string" then
         return { type = "error", error = "Invalid new_string: expected string, got " .. type(args.new_string) }
     end
+    if args.old_string == "" then
+        -- gsub on an empty pattern matches between every byte and would
+        -- explode/corrupt the file with replace_all; without replace_all it
+        -- would insert at byte 1 instead of replacing anything meaningful.
+        return { type = "error", error = "Invalid old_string: must not be empty" }
+    end
     if args.old_string == args.new_string then
         return { type = "error", error = "old_string and new_string are identical — no change needed" }
     end

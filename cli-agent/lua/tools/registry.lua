@@ -182,10 +182,16 @@ function M.load_builtin_tools()
         load_set(lsp_tools)
     end
 
-    -- Git: only when working directory is inside a git repository.
+    -- Git: only when the active working directory is inside a git repo.
     -- Avoids advertising a tool that will always fail in non-repo contexts,
     -- and keeps the tool list lean for models running without git.
-    local h = io.popen("git rev-parse --is-inside-work-tree 2>/dev/null")
+    -- Use app_state.get_cwd() (the CLI's logical /cwd) with `git -C` instead
+    -- of the process CWD, which never changes when /cwd is set.
+    local ok_state, app_state = pcall(require, "state.app_state")
+    local active_cwd = (ok_state and app_state and app_state.get_cwd and app_state.get_cwd()) or "."
+    local ok_shell, shell = pcall(require, "utils.shell")
+    local quoted_cwd = ok_shell and shell.quote(active_cwd) or active_cwd
+    local h = io.popen("git -C " .. quoted_cwd .. " rev-parse --is-inside-work-tree 2>/dev/null")
     local is_git = h and h:read("*l") == "true"
     if h then h:close() end
     if is_git then

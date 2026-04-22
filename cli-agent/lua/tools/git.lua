@@ -140,7 +140,7 @@ function M.call(args, context)
     local base_sub = sub
     if not ALLOWED_SUBS[base_sub] then
         return { type = "error", error = string.format(
-            "'%s' is not a permitted subcommand. Allowed: diff, log, show, status, blame, branch, remote, ls-files.",
+            "'%s' is not a permitted subcommand. Allowed: diff, log, show, status, blame, branch, remote, ls-files, rev-parse, shortlog, describe.",
             base_sub) }
     end
 

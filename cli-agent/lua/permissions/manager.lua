@@ -15,7 +15,7 @@ Permissions.MODES = {
 -- Read-only: no side-effects, never need confirmation
 local READONLY_TOOLS = {
     Read=true, Glob=true, Grep=true, LocalSearch=true, Brief=true,
-    WebFetch=true, WebSearch=true,
+    WebFetch=true, WebSearch=true, Git=true,
     ListMcpResources=true, ReadMcpResource=true, LSP=true,
     TaskGet=true, TaskList=true, TaskOutput=true,
 }

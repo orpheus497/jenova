@@ -68,7 +68,10 @@ function M.normalize_ws(s)
     s = s:gsub("\r\n", "\n"):gsub("\r", "\n")
     local lines = {}
     for line in (s .. "\n"):gmatch("([^\n]*)\n") do
-        table.insert(lines, (line:gsub("%s+$", "")))
+        -- Strip only spaces and tabs (not \v/\f) so the matcher's behaviour
+        -- matches the comment above and so vertical-tab/form-feed bytes are
+        -- preserved as-is in the file.
+        table.insert(lines, (line:gsub("[ \t]+$", "")))
     end
     if lines[#lines] == "" then table.remove(lines) end
     return table.concat(lines, "\n")

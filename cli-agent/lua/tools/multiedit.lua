@@ -115,6 +115,10 @@ function M.call(args, context)
         local new = edit.new_string
         if type(old) ~= "string" or type(new) ~= "string" then
             table.insert(failed, string.format("edit[%d]: old_string and new_string must be strings", i))
+        elseif old == "" then
+            -- See file_edit: empty old_string would corrupt the file via
+            -- gsub matching between every byte (or insert at byte 1).
+            table.insert(failed, string.format("edit[%d]: old_string must be non-empty", i))
         elseif old == new then
             table.insert(failed, string.format("edit[%d]: old_string == new_string, skipped", i))
         else
