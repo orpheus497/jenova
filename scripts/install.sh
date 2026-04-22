@@ -9,17 +9,19 @@
 # Jenova half (backend, models, plugin config) and verifies that a jvim or
 # Neovim binary is available so the bin/jvim wrapper can launch the editor.
 #
-# Usage: ./install.sh [--force] [--link] [--skip-nvim] [--skip-llama]
-#                     [--client-only]
+# Usage: ./install.sh [--force] [--link] [--skip-nvim] [--skip-jvim]
+#                     [--skip-llama] [--client-only]
 #
-#   --force        Overwrite existing ~/.config/nvim without prompting
+#   --force        Overwrite existing ~/.config/nvim without prompting and
+#                  force a fresh jvim rebuild even if jvim/build/ exists
 #   --link         Install Jenova nvim config as symlinks into ~/.config/nvim
 #                  (development workflow — edits in repo apply immediately)
 #   --skip-nvim    Skip the Neovim/jvim config deployment step
+#   --skip-jvim    Skip building the bundled jvim editor (jvim/)
 #   --skip-llama   Skip llama.cpp build check
-#   --client-only  LAN client install: skip llama.cpp, skip model downloads.
-#                  Use when this host will only ever connect to a remote
-#                  Jenova CA via 'jvim --remote <host>'.
+#   --client-only  LAN client install: skip llama.cpp, skip jvim build,
+#                  skip model downloads. Use when this host will only ever
+#                  connect to a remote Jenova CA via 'jvim --remote <host>'.
 #
 # This script:
 #   1. Verifies required system dependencies
@@ -40,6 +42,7 @@ NVIM_CONFIG_DST="$HOME/.config/nvim"
 FORCE=0
 LINK=0
 SKIP_NVIM=0
+SKIP_JVIM=0
 SKIP_LLAMA=0
 CLIENT_ONLY=0
 
@@ -48,8 +51,9 @@ for _arg in "$@"; do
         --force)       FORCE=1 ;;
         --link)        LINK=1 ;;
         --skip-nvim)   SKIP_NVIM=1 ;;
+        --skip-jvim)   SKIP_JVIM=1 ;;
         --skip-llama)  SKIP_LLAMA=1 ;;
-        --client-only) CLIENT_ONLY=1; SKIP_LLAMA=1 ;;
+        --client-only) CLIENT_ONLY=1; SKIP_LLAMA=1; SKIP_JVIM=1 ;;
         -h|--help)
             sed -n '2,32p' "$0"
             exit 0
@@ -164,25 +168,30 @@ check_bin  "luajit"  "pkg install luajit-openresty"
 check_bin  "git"     "pkg install git"
 
 if [ "$SKIP_NVIM" = "0" ]; then
-    if command -v nvim >/dev/null 2>&1; then
-        # Detect whether the resolved nvim is the jvim fork or upstream Neovim.
-        # The jvim version string is "JVIM v0.x.x" (see jvim/src/nvim/version.c).
+    # Prefer the in-tree jvim build (jvim/build/bin/nvim) which the unified
+    # `make jvim` target produces. Fall back to whatever `nvim` is on PATH
+    # (warn if it's not jvim) and finally fail with a build hint.
+    _JVIM_BIN="$JENOVA_ROOT/jvim/build/bin/nvim"
+    if [ -x "$_JVIM_BIN" ]; then
+        _NVIM_VLINE=$("$_JVIM_BIN" --version 2>/dev/null | head -n 1)
+        case "$_NVIM_VLINE" in
+            *JVIM*) ok "in-tree jvim build ($_NVIM_VLINE) — fully integrated" ;;
+            *)      warn "in-tree binary $_JVIM_BIN is not jvim ($_NVIM_VLINE)"; WARNINGS=$((WARNINGS + 1)) ;;
+        esac
+    elif command -v nvim >/dev/null 2>&1; then
         _NVIM_VLINE=$(nvim --version 2>/dev/null | head -n 1)
         case "$_NVIM_VLINE" in
             *JVIM*)
-                ok "nvim is jvim ($_NVIM_VLINE) — fully integrated"
+                ok "system nvim is jvim ($_NVIM_VLINE) — fully integrated"
                 ;;
             *)
-                warn "nvim is upstream Neovim ($_NVIM_VLINE), not jvim."
-                warn "Jenova plugins will still load, but jvim-specific behaviour"
-                warn "will be unavailable. Install jvim from:"
-                warn "    https://github.com/orpheus497/jvim"
+                warn "system nvim is upstream Neovim ($_NVIM_VLINE), not jvim."
+                warn "Build the bundled jvim editor: make jvim"
                 WARNINGS=$((WARNINGS + 1))
                 ;;
         esac
     else
-        fail "nvim not found — install jvim (https://github.com/orpheus497/jvim)"
-        fail "or upstream Neovim: pkg install neovim"
+        fail "No editor found. Build the bundled jvim: make jvim"
         ERRORS=$((ERRORS + 1))
     fi
     check_optional "gmake"  "pkg install gmake  (needed for telescope-fzf-native)"
@@ -273,6 +282,39 @@ elif [ "$SKIP_LLAMA" = "0" ]; then
         warn "FreeBSD: pkg install shaderc"
         warn "Linux:   install vulkan-sdk or vulkan-tools package"
         WARNINGS=$((WARNINGS + 1))
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 5b. jvim editor — build the in-tree fork unless --skip-jvim was passed
+# ---------------------------------------------------------------------------
+if [ "$SKIP_JVIM" = "0" ] && [ "$CLIENT_ONLY" = "0" ]; then
+    info "Building bundled jvim editor (jvim/)..."
+    if [ ! -f "$JENOVA_ROOT/jvim/CMakeLists.txt" ]; then
+        warn "jvim/ source tree missing — skipping jvim build"
+        WARNINGS=$((WARNINGS + 1))
+    elif ! command -v cmake >/dev/null 2>&1; then
+        warn "cmake not found — cannot build jvim. Install: pkg install cmake"
+        WARNINGS=$((WARNINGS + 1))
+    else
+        _JVIM_BIN_OUT="$JENOVA_ROOT/jvim/build/bin/nvim"
+        if [ -x "$_JVIM_BIN_OUT" ] && [ "$FORCE" = "0" ]; then
+            ok "jvim already built at $_JVIM_BIN_OUT (use --force to rebuild)"
+        else
+            _JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+            (
+                cd "$JENOVA_ROOT/jvim" && \
+                cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+                      -DCMAKE_INSTALL_PREFIX="$JENOVA_ROOT/jvim/install" >/dev/null && \
+                cmake --build build -j"$_JOBS"
+            ) || {
+                fail "jvim build failed — see above. Re-run: make jvim"
+                ERRORS=$((ERRORS + 1))
+            }
+            if [ -x "$_JVIM_BIN_OUT" ]; then
+                ok "jvim built at $_JVIM_BIN_OUT"
+            fi
+        fi
     fi
 fi
 

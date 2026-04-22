@@ -41,30 +41,48 @@ end
 -- ── Stat helper (mtime + size via sh stat) ───────────────────────────────────
 -- Returns mtime_unix (integer), size_bytes (integer), or nil, nil on failure.
 -- Uses POSIX stat(1) syntax common to BSD and Linux with a portable format.
+--
+-- The stat flavour (BSD `-f` vs GNU/Linux `-c`) is detected ONCE at module
+-- load using a cheap probe against `/`, then cached. Without this, each call
+-- spawned two child processes (BSD probe + GNU probe) — significant overhead
+-- given how often the file tracker runs during agent loops.
+
+local _stat_fmt   -- sh format string for `stat -X <fmt> <path>` style
+local _stat_flag  -- "-f" (BSD/macOS) or "-c" (GNU/Linux), nil if unavailable
+
+local function _detect_stat_flavour()
+    -- BSD stat: stat -f "%m %z" /
+    local h = io.popen("stat -f '%m %z' / 2>/dev/null")
+    if h then
+        local line = h:read("*l"); h:close()
+        if line and line:match("^%d+%s+%d+$") then
+            _stat_flag = "-f"; _stat_fmt = "'%m %z'"; return
+        end
+    end
+    -- GNU/Linux stat: stat -c "%Y %s" /
+    h = io.popen("stat -c '%Y %s' / 2>/dev/null")
+    if h then
+        local line = h:read("*l"); h:close()
+        if line and line:match("^%d+%s+%d+$") then
+            _stat_flag = "-c"; _stat_fmt = "'%Y %s'"; return
+        end
+    end
+    -- No usable stat(1) — leave nil; stat_file() will return nil and the
+    -- tracker will treat every file as freshly stale (safe degradation).
+end
+_detect_stat_flavour()
 
 local function stat_file(path)
-    -- Try BSD stat first (FreeBSD/macOS), then GNU/Linux stat
-    -- BSD:   stat -f "%m %z" <path>
-    -- Linux: stat -c "%Y %s" <path>
-    -- We probe both and take whichever succeeds.
-    local function try(cmd)
-        local h = io.popen(cmd .. " 2>/dev/null")
-        if not h then return nil, nil end
-        local line = h:read("*l")
-        h:close()
-        if not line or line == "" then return nil, nil end
-        local mt, sz = line:match("^(%d+)%s+(%d+)$")
-        if mt then return tonumber(mt), tonumber(sz) end
-        return nil, nil
-    end
-
+    if not _stat_flag then return nil, nil end
     -- Build path quoted for shell
     local q = "'" .. path:gsub("'", "'\\''") .. "'"
-
-    local mt, sz = try("stat -f '%m %z' " .. q)
-    if mt then return mt, sz end
-    mt, sz = try("stat -c '%Y %s' " .. q)
-    return mt, sz
+    local h = io.popen("stat " .. _stat_flag .. " " .. _stat_fmt .. " " .. q .. " 2>/dev/null")
+    if not h then return nil, nil end
+    local line = h:read("*l"); h:close()
+    if not line or line == "" then return nil, nil end
+    local mt, sz = line:match("^(%d+)%s+(%d+)$")
+    if mt then return tonumber(mt), tonumber(sz) end
+    return nil, nil
 end
 
 -- ── Public API ──────────────────────────────────────────────────────────────

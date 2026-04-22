@@ -160,7 +160,7 @@ function M.run(opts)
         "- Write(file_path, content): create or overwrite a file. Only for new files or full rewrites.",
         "- Glob(pattern): find files by name. Use before Read when path is uncertain.",
         "- Grep(pattern, path): search file contents. Use to locate a symbol or string.",
-        "- Bash(command): run shell commands for build, compile, test, or install tasks. Not for file reading.",
+        "- Shell(command): run shell commands for build, compile, test, or install tasks. Not for file reading.",
         "- Brief(response): deliver your final reply to the user. Call this ONLY when ALL work is done and you have actual results to report. NEVER use Brief to announce what you are about to do — just do it with the appropriate tool.",
     }
 
@@ -172,13 +172,13 @@ function M.run(opts)
 
     table.insert(tool_mandate_lines, "")
     table.insert(tool_mandate_lines, "## Rules (in order of importance)")
-    table.insert(tool_mandate_lines, "0. NEVER narrate intent with Brief. If you need to run make, call Bash({command='make'}). If you need to read a file, call Read. Do the action — never announce it.")
+    table.insert(tool_mandate_lines, "0. NEVER narrate intent with Brief. If you need to run make, call Shell({command='make'}). If you need to read a file, call Read. Do the action — never announce it.")
     table.insert(tool_mandate_lines, "1. ALWAYS call Read before Edit or MultiEdit. No exceptions. Never assume file content.")
     table.insert(tool_mandate_lines, "2. Copy old_string CHARACTER-FOR-CHARACTER from the Read output. Read returns lines as \"42\\t<content>\" — the old_string must contain ONLY the content after the tab, NOT the line-number prefix. Include every space, newline, and indent. Never reconstruct or guess it.")
     table.insert(tool_mandate_lines, "3. If Edit fails with 'not found': a [System:] message will inject the current file content. Read that injected content, copy exact text, then Edit.")
     table.insert(tool_mandate_lines, "4. Avoid redundant Read calls when you already have the needed content, but call Read again if the earlier result was partial/truncated, if you need more context, or if the file may have changed. You may also use relevant [System:] injected content when available.")
     table.insert(tool_mandate_lines, "5. Use MultiEdit when making more than one change to the same file. Do not chain multiple single Edit calls.")
-    table.insert(tool_mandate_lines, "6. To build/compile/run tests: use Bash(command). Never use Read to check compiler output.")
+    table.insert(tool_mandate_lines, "6. To build/compile/run tests: use Shell(command). Never use Read to check compiler output.")
     table.insert(tool_mandate_lines, "7. If old_string == new_string the edit is already done — call Brief to confirm it.")
     table.insert(tool_mandate_lines, "8. Do NOT repeat any failed tool call with the same arguments. Read the [System:] hint and change your approach.")
     table.insert(tool_mandate_lines, "9. After two failed Edit attempts on the same file: report what you tried and what failed, then call Brief.")
@@ -189,7 +189,7 @@ function M.run(opts)
     table.insert(tool_mandate_lines, "- REWRITE (Write tool, full file replacement): ONLY when the user explicitly says 'rewrite', 'rewrite from scratch', 'replace the whole file', or when the file is new/empty AND less than ~150 lines. Never rewrite large files silently.")
     table.insert(tool_mandate_lines, "- When unsure: prefer refactor. If a rewrite seems necessary, say so via Brief and confirm with the user first.")
     table.insert(tool_mandate_lines, "")
-    table.insert(tool_mandate_lines, "## Shell (Bash tool)")
+    table.insert(tool_mandate_lines, "## Shell (Shell tool)")
     table.insert(tool_mandate_lines, "- The shell is POSIX sh (not bash). Write sh-compatible commands only.")
     table.insert(tool_mandate_lines, "- Avoid bashisms: no arrays, no [[ ]], no $'...', no process substitution <(...), no {a,b} brace expansion in critical paths.")
     table.insert(tool_mandate_lines, "- Use single quotes for strings containing special characters. Use printf instead of echo -e.")

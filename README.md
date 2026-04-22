@@ -4,15 +4,17 @@ Jenova is a local AI coding environment for FreeBSD laptops. It runs `llama-serv
 
 ## System Overview
 
-Jenova is two repositories plus a bundled CLI agent:
+Jenova is a **single repository** containing the complete terminal IDE — backend, editor, and CLI agent — built and installed together:
 
-| Component | Location | Stack |
-|-----------|----------|-------|
-| **Cognitive backend** — `llama-server`, LuaJIT `proxy.lua`, embedding daemon, `jenova-ca` supervisor | This repo (`orpheus497/jenova`) | C/C++ + LuaJIT |
-| **Editor / IDE** — `jvim`, a Neovim hard-fork purpose-built for Jenova | [`orpheus497/jvim`](https://github.com/orpheus497/jvim) | C + Lua |
-| **Terminal agent** — `cli-agent` for headless and scripted workflows | This repo, `cli-agent/` directory | C + Lua 5.4 |
+| Component | Location in this repo | Stack | Binary |
+|-----------|-----------------------|-------|--------|
+| **Cognitive backend** — `llama-server`, LuaJIT `proxy.lua`, embedding daemon, supervisor | `lib/`, `bin/jenova-ca`, `llama.cpp/` | C/C++ + LuaJIT | `jenova-ca` |
+| **Editor / IDE** — `jvim`, a Neovim hard-fork purpose-built for Jenova (formerly `orpheus497/jvim`) | `jvim/` | C + Lua | `jvim` |
+| **Terminal agent** — `cli-agent` for headless and scripted workflows | `cli-agent/` | C + Lua 5.4 | `jenova` |
 
 The backend is the shared brain. `jvim` is the editor the user lives inside; `cli-agent` is the terminal agent for scripted, headless, and async workflows. Both frontends communicate with the backend services — primarily via `proxy.lua` on port 8080 — with `jvim` additionally talking to `llama-server` on port 8081 for FIM completions and the embedding server on port 8082.
+
+> **Note:** the previously separate `orpheus497/jvim` repository has been merged into this one. The bundled `jvim/` source tree is now the canonical home for the editor; do not clone the standalone repo.
 
 ## Goals
 
@@ -98,11 +100,13 @@ Jenova is designed for laptops. Every profile targets a real laptop form factor:
 |---|---|---|
 | `luajit` (OpenResty) | `pkg install luajit-openresty` | LuaJIT runtime for proxy, embedding, and all backend Lua modules |
 | `git` | `pkg install git` | Repository management |
-| `neovim` (0.9+) | `pkg install neovim` | Editor frontend (jvim) |
-| `cmake` | `pkg install cmake` | Building llama.cpp and cli-agent from source |
+| `cmake` | `pkg install cmake` | Building llama.cpp, the bundled jvim editor, and cli-agent from source |
+| `gettext` | `pkg install gettext-tools` | Required by the jvim build (msgfmt) |
 | `vulkan-loader` | `pkg install vulkan-loader` | GPU inference via Vulkan (dual-GPU offload) |
 | `lua54` | `pkg install lua54` | Lua 5.4 runtime for cli-agent |
 | `curl` | `pkg install curl` | HTTP client (used by cli-agent C layer) |
+
+> The bundled jvim editor (`jvim/`) is built from source as part of `make`. You no longer need to install `neovim` separately — `make jvim` produces `jvim/build/bin/nvim`, and `bin/jvim` prefers that binary automatically.
 
 ### Optional Dependencies
 
@@ -137,20 +141,17 @@ The installer will offer to download the correct model for your detected hardwar
 
 ```sh
 # 1. Install system dependencies
-pkg install luajit-openresty git neovim cmake vulkan-loader curl lua54
+pkg install luajit-openresty git cmake vulkan-loader curl lua54 gettext-tools
 
-# 2. Build llama.cpp with Vulkan support
-bin/build-llama-jenova
-# Or manually:
-#   cd llama.cpp
-#   cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
-#   cmake --build build --config Release -j$(sysctl -n hw.ncpu)
+# 2. Clone (recursive — pulls llama.cpp submodule)
+git clone --recursive https://github.com/orpheus497/jenova
+cd jenova
 
-# 3. Build the CLI agent
-cd cli-agent && gmake && cd ..
+# 3. Build everything: llama.cpp + cli-agent + bundled jvim editor
+make            # equivalent to: make llama && make cli-agent && make jvim
 
 # 4. Run the installer (hardware-aware: detects your hardware and selects a profile)
-scripts/install.sh
+make install    # equivalent to: scripts/install.sh
 ```
 
 `scripts/install.sh` flags:
@@ -158,22 +159,27 @@ scripts/install.sh
 | Flag | Action |
 |---|---|
 | *(no flags)* | Full interactive install |
-| `--force` | Overwrite existing config/symlinks without prompting |
-| `--link` | Create symlinks in PATH only (skip build/model steps) |
-| `--skip-nvim` | Skip Neovim config deployment |
+| `--force` | Overwrite existing config/symlinks without prompting; force a fresh jvim rebuild |
+| `--link` | Install Jenova nvim config as symlinks (development workflow) |
+| `--skip-nvim` | Skip Neovim/jvim config deployment to `~/.config/nvim/` |
+| `--skip-jvim` | Skip building the bundled jvim editor |
 | `--skip-llama` | Skip llama.cpp build check |
-| `--client-only` | Install client tools only (no backend/model setup) |
+| `--client-only` | LAN client install (no llama.cpp, no jvim build, no model downloads) |
 
 The installer will:
 1. Verify all required and optional dependencies
 2. Create runtime directories (`.jenova/`, `var/log/`, `var/cache/`, `models/{agent,embed,draft}/`)
-3. Check for llama.cpp build
-4. **Offer to download missing model files** (agent, embedding, drafter) from Hugging Face
-5. Deploy the Neovim configuration to `~/.config/nvim/`
-6. Symlink `jvim`, `jenova`, and `jenova-ca` to your PATH (`~/.local/bin/` or `~/bin/`)
-7. **Auto-detect your hardware** and recommend the matching profile
+3. Check for the llama.cpp build (build it via `make llama` if missing)
+4. **Build the bundled jvim editor** (`jvim/`) via cmake (skip with `--skip-jvim`)
+5. **Offer to download missing model files** (agent, embedding, drafter) from Hugging Face
+6. Deploy the Neovim configuration to `~/.config/nvim/`
+7. Symlink `jvim`, `jenova`, and `jenova-ca` to your PATH (`~/.local/bin/` or `~/bin/`)
+8. **Auto-detect your hardware** and recommend the matching profile
 
-The built binary lives at `llama.cpp/build/bin/llama-server`.
+The built binaries live at:
+- `llama.cpp/build/bin/llama-server` — inference engine
+- `jvim/build/bin/nvim`             — bundled jvim editor (the `bin/jvim` wrapper auto-detects this)
+- `cli-agent/build/cli-agent`       — terminal agent
 
 ### Hardware Profile Installation
 
@@ -327,8 +333,15 @@ Manages the three backend daemons (llama-server, proxy.lua, embed server) as a u
 
 ```
 jenova/
+├── Makefile                  Top-level build orchestration: make / make llama / make cli-agent / make jvim
 ├── bin/                      Executables: jenova, jvim, jenova-ca, build-llama-jenova, jenova-swap-mount
 ├── lib/                      Core LuaJIT backend: proxy, embedding, HTTP, search, daemon management
+├── jvim/                     Bundled jvim editor (Neovim hard-fork) — built in-tree via `make jvim`
+│   ├── src/nvim/             Editor C core
+│   ├── runtime/              vim/lua/plugin/queries/spell/colors/doc/ftplugin/indent/syntax/pack
+│   ├── cmake/, cmake.config/, cmake.deps/, deps/, scripts/
+│   ├── CMakeLists.txt, build.zig, Makefile, BSDmakefile
+│   └── build/                Build output (gitignored), produces build/bin/nvim
 ├── cli-agent/                Terminal agent (C + Lua 5.4) — built with gmake
 │   ├── src/                  C service layer: agent, auth, core, crypto, fs, json, llama, mcp, net, process, sandbox
 │   ├── lua/                  Lua agent logic: engine (QueryEngine), tools (43), providers, cli,
@@ -342,7 +355,7 @@ jenova/
 ├── scripts/                  install.sh, cleanup.sh, uninstall.sh, update.sh, jenova-manager.sh, jenova-setup
 ├── models/                   Model storage: agent/, embed/, draft/ (GGUF format, gitignored)
 ├── hardware-profiles/        Hardware detection and per-profile configs
-├── nvim/                     Neovim configuration (plugins, LSP, UI) for jvim
+├── nvim/                     Jenova plugins/config deployed into ~/.config/nvim/ at install time
 ├── llama.cpp/                Vendored llama.cpp source (built with Vulkan support)
 ├── tests/                    Integration and hardware tests
 ├── var/                      Runtime logs (var/log/) and cache (var/cache/)
@@ -546,9 +559,11 @@ scripts/uninstall.sh --yes              # Non-interactive (skip confirmation)
 If you see this error, llama.cpp hasn't been built yet:
 
 ```bash
-cd llama.cpp
-cmake -B build -DGGML_VULKAN=ON
-cmake --build build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+make llama
+# Or directly:
+#   cd llama.cpp
+#   cmake -B build -DGGML_VULKAN=ON
+#   cmake --build build -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 ```
 
 On FreeBSD, install dependencies first:
@@ -630,11 +645,22 @@ Increase BIOS UMA Frame Buffer Size to 4 GiB for better offload.
 ### Building cli-agent
 
 ```bash
-cd cli-agent
-gmake          # uses CMake under the hood, builds to build/cli-agent
+make cli-agent          # from the repo root
+# Or directly:
+cd cli-agent && gmake   # uses CMake under the hood, builds to build/cli-agent
 ```
 
 Requirements: `cmake`, `lua54`, `curl`, `openssl`. See `cli-agent/README.md` for details.
+
+### Building jvim
+
+```bash
+make jvim               # from the repo root — produces jvim/build/bin/nvim
+# Or directly:
+cd jvim && cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo && cmake --build build -j$(nproc)
+```
+
+Requirements: `cmake`, `gettext-tools` (for msgfmt), C compiler, ninja (optional). The `bin/jvim` wrapper automatically prefers `jvim/build/bin/nvim` over any system-installed nvim, so once `make jvim` succeeds the editor is wired up — no need to `pkg install neovim`.
 
 ### Path Resolution
 

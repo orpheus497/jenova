@@ -99,14 +99,19 @@ function M.call(args, context)
         end
         cmd = cmd .. " 2>/dev/null"
     else
-        -- POSIX grep via find+xargs: avoids GNU-only --exclude-dir
+        -- POSIX grep via find -prune ... -exec: avoids GNU-only --exclude-dir
+        -- and the unsafe `xargs grep` pipeline (whitespace-in-filenames hangs,
+        -- silently dropped matches). `-prune` skips noisy dirs entirely; the
+        -- `/dev/null` argument forces grep to print filenames even when there
+        -- is exactly one matching file. Output is capped via head to prevent
+        -- the agent from blocking on enormous result sets.
         local include_filter = ""
         if file_glob then
             include_filter = " -name " .. shell.quote(file_glob)
         end
         cmd = string.format(
-            "find %s%s -not -path '*/.git/*' -not -path '*/.jenova/*' -not -path '*/.claude/*'" ..
-            " -type f 2>/dev/null | xargs grep -En -- %s 2>/dev/null",
+            "find %s -name .git -prune -o -name .jenova -prune -o -name .claude -prune -o " ..
+            "-type f%s -exec grep -En -- %s /dev/null {} + 2>/dev/null | head -n 1000",
             shell.quote(dir), include_filter, shell.quote(pattern))
     end
 

@@ -571,7 +571,7 @@ function QueryEngine:query(user_message, options)
                     local narration_patterns = {
                         "^i will ", "^i'll ", "^let me ", "^i am going to ",
                         "^i'm going to ", "^running ", "^proceeding",
-                        "^i would ", "^i need to ", "^i'm going to ",
+                        "^i would ", "^i need to ",
                         "^now i ", "^first ", "^to do this", "^i should ",
                     }
                     for _, pat in ipairs(narration_patterns) do

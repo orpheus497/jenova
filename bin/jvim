@@ -81,11 +81,27 @@ while [ $# -gt 0 ]; do
 done
 
 # --- Resolve the editor binary and verify it is jvim (warn-only) ---
-# Allows JVIM_BIN override so the wrapper can drive a non-PATH build.
-EDITOR_BIN="${JVIM_BIN:-nvim}"
-if ! command -v "$EDITOR_BIN" >/dev/null 2>&1; then
-    echo "Error: editor binary '$EDITOR_BIN' not found in PATH." >&2
-    echo "       Install jvim from https://github.com/orpheus497/jvim or set JVIM_BIN." >&2
+# Resolution order:
+#   1. $JVIM_BIN               — explicit override
+#   2. $JENOVA_ROOT/jvim/build/bin/nvim — in-tree jvim build (preferred)
+#   3. nvim on PATH            — fallback (may be upstream Neovim)
+# Determining $JENOVA_ROOT here is duplicated below, but we need it before
+# load_jenova_conf runs so the in-tree jvim binary can be discovered first.
+_JENOVA_ROOT_HINT="$(dirname "$SCRIPT_DIR")"
+_INTREE_JVIM="$_JENOVA_ROOT_HINT/jvim/build/bin/nvim"
+
+if [ -n "$JVIM_BIN" ]; then
+    EDITOR_BIN="$JVIM_BIN"
+elif [ -x "$_INTREE_JVIM" ]; then
+    EDITOR_BIN="$_INTREE_JVIM"
+else
+    EDITOR_BIN="nvim"
+fi
+
+if ! command -v "$EDITOR_BIN" >/dev/null 2>&1 && [ ! -x "$EDITOR_BIN" ]; then
+    echo "Error: editor binary '$EDITOR_BIN' not found." >&2
+    echo "       Build the in-tree jvim with: make jvim" >&2
+    echo "       Or set JVIM_BIN to a jvim binary you have installed." >&2
     exit 1
 fi
 
@@ -100,7 +116,7 @@ case "$_EDITOR_VERSION_LINE" in
         if [ "${JENOVA_QUIET:-0}" != "1" ]; then
             echo "Warning: '$EDITOR_BIN' is not jvim — Jenova plugins will still load," >&2
             echo "         but jvim-specific behaviour is unavailable." >&2
-            echo "         Install jvim: https://github.com/orpheus497/jvim" >&2
+            echo "         Build the in-tree jvim: make jvim" >&2
         fi
         ;;
 esac
