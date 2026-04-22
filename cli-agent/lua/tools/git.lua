@@ -52,7 +52,9 @@ local BLOCKED_FLAGS = {
 }
 
 -- Characters that could break shell quoting or inject commands.
-local SHELL_META = "[;&|`$<>%(%){}%[%]\\!]"
+-- Includes newlines (\n, \r) to prevent multi-line injection where a crafted
+-- subcommand like "status\nid" would pass base_sub validation then execute id.
+local SHELL_META = "[;&|`$<>%(%){}%[%]\\!\n\r]"
 
 function M.is_enabled() return true end
 function M.is_read_only() return true end
@@ -139,13 +141,16 @@ function M.call(args, context)
         extra = defaults[base_sub]
     end
 
-    -- Build command: each separate token quoted individually where possible.
-    -- For `extra` we trust the metacharacter check above and quote the whole
-    -- string only if it is a single token; multi-token args are passed as-is
-    -- (they have already been sanitised above).
+    -- Build command using shell.quote for each argument token.
+    -- Each extra arg is quoted individually so filenames/refs with spaces are
+    -- passed correctly to git rather than being split by the shell.
+    local quoted_args = {}
+    for token in extra:gmatch("%S+") do
+        table.insert(quoted_args, shell.quote(token))
+    end
     local cmd = string.format(
         "git -C %s %s %s 2>&1 | head -600",
-        shell.quote(cwd), sub, extra
+        shell.quote(cwd), shell.quote(sub), table.concat(quoted_args, " ")
     )
 
     local h = io.popen(cmd)

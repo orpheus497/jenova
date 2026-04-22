@@ -147,6 +147,16 @@ function Memory.log_error(tool_name, args_summary, error_msg)
         error = error_msg,
     }
 
+    -- Pre-compute and cache the embedding for this error at log time.
+    -- This makes get_similar_errors() O(1) per entry (dot product only)
+    -- instead of O(N) embed HTTP calls per query.
+    local embed_ok, embed = pcall(require, "utils.embed")
+    if embed_ok and embed.is_available() then
+        local text = (tool_name or "") .. ": " .. (error_msg or "") .. " [" .. (args_summary or "") .. "]"
+        local vec = embed.encode(text, "search_document")
+        if vec then entry._vec = vec end
+    end
+
     -- Persistent
     local f = io.open(ERROR_FILE, "a")
     if f then
@@ -547,12 +557,11 @@ function Memory.get_similar_errors(query_text, top_k)
     local query_vec = embed.encode(query_text, "search_query")
     if not query_vec then return {} end
 
+    -- Use pre-cached vectors from log_error (O(1) dot product per entry).
     local scored = {}
     for _, e in ipairs(session_errors) do
-        local text = (e.tool or "") .. ": " .. (e.error or "") .. " [" .. (e.args or "") .. "]"
-        local vec = embed.encode(text, "search_document")
-        if vec then
-            local score = embed.cosine(query_vec, vec)
+        if e._vec then
+            local score = embed.cosine(query_vec, e._vec)
             table.insert(scored, { score = score, entry = e })
         end
     end

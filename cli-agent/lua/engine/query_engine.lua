@@ -491,15 +491,18 @@ function QueryEngine:query(user_message, options)
                     edit_fail_count = 1
                 end
                 if fp ~= "" then
-                    table.insert(self.messages, {
-                        role = "user",
-                        content = string.format(
-                            "[System: Edit on '%s' failed (attempt %d). " ..
-                            "You MUST call Read('%s') NOW to get the exact current content. " ..
-                            "Do NOT guess old_string — copy it verbatim from the Read output. " ..
-                            "Do NOT call Edit again until you have called Read.]",
-                            fp, edit_fail_count, fp),
-                    })
+                    -- Queue via _pending_embed_warnings so the nudge is appended
+                    -- AFTER the assistant message for this turn, preserving the
+                    -- required User→Assistant→User role alternation.
+                    if not self._pending_embed_warnings then
+                        self._pending_embed_warnings = {}
+                    end
+                    table.insert(self._pending_embed_warnings, string.format(
+                        "[System: Edit on '%s' failed (attempt %d). " ..
+                        "You MUST call Read('%s') NOW to get the exact current content. " ..
+                        "Do NOT guess old_string — copy it verbatim from the Read output. " ..
+                        "Do NOT call Edit again until you have called Read.]",
+                        fp, edit_fail_count, fp))
                 end
             elseif not is_err and (tool_use.name == "Edit" or tool_use.name == "MultiEdit") then
                 -- Reset on success

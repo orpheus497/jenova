@@ -106,6 +106,10 @@ function M.call(args, context)
     local applied = 0
     local failed  = {}
 
+    -- Dry-run pass: validate ALL edits against the current content before
+    -- writing anything. This makes the operation atomic — either all edits
+    -- succeed and the file is written once, or none are applied.
+    local dry_content = content
     for i, edit in ipairs(edits) do
         local old = edit.old_string
         local new = edit.new_string
@@ -114,23 +118,28 @@ function M.call(args, context)
         elseif old == new then
             table.insert(failed, string.format("edit[%d]: old_string == new_string, skipped", i))
         else
-            local result, err = apply_one(content, old, new, edit.replace_all)
+            local result, err = apply_one(dry_content, old, new, edit.replace_all)
             if err then
                 table.insert(failed, string.format("edit[%d]: %s", i, err))
             else
-                content = result
+                dry_content = result
                 applied = applied + 1
             end
         end
     end
 
-    if applied == 0 then
-        local msg = "No edits applied."
-        if #failed > 0 then
-            msg = msg .. "\n" .. table.concat(failed, "\n")
-        end
+    if #failed > 0 then
+        local msg = string.format("%d/%d edits failed — file NOT modified (atomic):\n", #failed, #edits)
+            .. table.concat(failed, "\n")
         return { type = "error", error = msg }
     end
+
+    if applied == 0 then
+        return { type = "error", error = "No edits applied." }
+    end
+
+    -- All edits validated — write the result once.
+    content = dry_content
 
     local wf = io.open(path, "w")
     if not wf then
@@ -139,11 +148,7 @@ function M.call(args, context)
     wf:write(content)
     wf:close()
 
-    local status = string.format("MultiEdit %s: %d/%d edits applied.", path, applied, #edits)
-    if #failed > 0 then
-        status = status .. "\nFailed edits:\n" .. table.concat(failed, "\n")
-    end
-    return { type = "text", text = status }
+    return { type = "text", text = string.format("MultiEdit %s: %d/%d edits applied.", path, applied, #edits) }
 end
 
 return M
