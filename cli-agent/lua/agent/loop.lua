@@ -140,27 +140,35 @@ function M.run(opts)
     -- rather than using the tools they have been given.
     -- Kept deliberately short for 3B models — every token in the system prompt
     -- competes with context for code editing tasks.
-    local tool_mandate = [[
+    local tool_mandate_lines = {
+        "",
+        "## Tools available",
+        "- Glob(pattern): find files",
+        "- Grep(pattern, path): search file contents",
+        "- Read(file_path): read a file with line numbers",
+        "- Write(file_path, content): create/overwrite a file",
+        "- Edit(file_path, old_string, new_string): replace exact text in a file",
+        "- MultiEdit(file_path, edits[]): apply several edits to one file at once",
+        "- Shell(command): run shell commands",
+        "- Brief(response): send your final reply to the user",
+    }
 
-## Tools available
-- Glob(pattern): find files
-- Grep(pattern, path): search file contents
-- Read(file_path): read a file with line numbers
-- Write(file_path, content): create/overwrite a file
-- Edit(file_path, old_string, new_string): replace exact text in a file
-- MultiEdit(file_path, edits[]): apply several edits to one file at once
-- Git(subcommand, args): git diff/log/show/status/blame
-- Shell(command): run shell commands
-- Brief(response): send your final reply to the user
+    -- Git tool: only mention it when we're actually in a git repo
+    local context_mod2 = context_mod or try_require("context.manager")
+    if context_mod2 and context_mod2.is_git_repository and context_mod2.is_git_repository() then
+        table.insert(tool_mandate_lines, "- Git(subcommand, args): git diff/log/show/status/blame — use to inspect changes before editing")
+    end
 
-## Rules
-1. ALWAYS Read a file before calling Edit or MultiEdit on it.
-2. Copy old_string character-for-character from the Read output — never guess.
-3. If Edit fails with "not found", call Read again and copy the text again.
-4. Use MultiEdit when making more than one change to the same file.
-5. Use Git to inspect recent changes before editing.
-6. Call Brief only when the task is fully done.
-7. Never describe what you will do — just do it with tools.]]
+    table.insert(tool_mandate_lines, "")
+    table.insert(tool_mandate_lines, "## Rules")
+    table.insert(tool_mandate_lines, "1. ALWAYS Read a file before calling Edit or MultiEdit on it.")
+    table.insert(tool_mandate_lines, "2. Copy old_string character-for-character from the Read output — never guess.")
+    table.insert(tool_mandate_lines, "3. If Edit fails with \"not found\", call Read again and copy the text again.")
+    table.insert(tool_mandate_lines, "4. Use MultiEdit when making more than one change to the same file.")
+    table.insert(tool_mandate_lines, "5. Call Brief only when the task is fully done.")
+    table.insert(tool_mandate_lines, "6. Never describe what you will do — just do it with tools.")
+
+    local tool_mandate = table.concat(tool_mandate_lines, "\n")
     base_system_prompt = base_system_prompt .. tool_mandate
 
     local thinking_buf = ""

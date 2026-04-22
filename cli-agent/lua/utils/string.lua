@@ -59,6 +59,100 @@ function M.escape_pattern(s)
     return s:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
 end
 
+-- ── Edit helpers (shared by file_edit and multiedit) ─────────────────────────
+
+-- Normalize a string for fuzzy edit comparison:
+--   • CRLF / bare CR  →  LF
+--   • trailing spaces/tabs stripped per line
+function M.normalize_ws(s)
+    s = s:gsub("\r\n", "\n"):gsub("\r", "\n")
+    local lines = {}
+    for line in (s .. "\n"):gmatch("([^\n]*)\n") do
+        table.insert(lines, (line:gsub("%s+$", "")))
+    end
+    if lines[#lines] == "" then table.remove(lines) end
+    return table.concat(lines, "\n")
+end
+
+-- Try to find `old_string` inside `content` using whitespace-normalised
+-- comparison. Returns (start_orig, end_orig, multi) where:
+--   start_orig, end_orig  — byte offsets in the *original* content string
+--   multi                 — true when the match is not unique (normalised)
+-- Returns nil when no match is found at all.
+function M.fuzzy_find(content, old_string)
+    local nc = M.normalize_ws(content)
+    local no = M.normalize_ws(old_string)
+    if #no == 0 then return nil end
+
+    local pos = nc:find(no, 1, true)
+    if not pos then return nil end
+
+    -- Uniqueness check in normalised space
+    if nc:find(no, pos + 1, true) then
+        return nil, nil, true
+    end
+
+    -- Build orig_pos[norm_byte_index] = orig_byte_index by scanning both
+    -- strings in lockstep, consuming the original at the same rate as normalize_ws.
+    local orig_pos = {}
+    local ni = 1
+    local oi = 1
+    local olen = #content
+    local nlen = #nc
+
+    while oi <= olen and ni <= nlen do
+        local ob = content:byte(oi)
+        orig_pos[ni] = oi
+
+        if ob == 13 and content:byte(oi + 1) == 10 then
+            -- \r\n → \n: skip \r in original, norm advances by 1 (\n)
+            oi = oi + 2
+            ni = ni + 1
+        elseif ob == 32 or ob == 9 then
+            -- Possibly trailing whitespace stripped by normaliser.
+            -- Scan to end of whitespace run.
+            local oi2 = oi
+            while oi2 <= olen and (content:byte(oi2) == 32 or content:byte(oi2) == 9) do
+                oi2 = oi2 + 1
+            end
+            local next_ob = content:byte(oi2)
+            if next_ob == 10 or next_ob == 13 then
+                -- Trailing whitespace: skip in original without advancing norm.
+                oi = oi2
+            else
+                -- Non-trailing: both advance by 1
+                oi = oi + 1
+                ni = ni + 1
+            end
+        else
+            oi = oi + 1
+            ni = ni + 1
+        end
+    end
+
+    local start_orig = orig_pos[pos]
+    if not start_orig then return nil end
+
+    local end_norm = pos + #no - 1
+    local end_orig = orig_pos[end_norm]
+    if not end_orig then return nil end
+
+    -- Extend end_orig to cover any trailing spaces before newline that the
+    -- normaliser stripped but belong to the matched span.
+    local eo2 = end_orig
+    if eo2 + 1 <= olen then
+        local probe = eo2 + 1
+        while probe <= olen and (content:byte(probe) == 32 or content:byte(probe) == 9) do
+            probe = probe + 1
+        end
+        if content:byte(probe) == 10 or content:byte(probe) == 13 then
+            eo2 = probe - 1
+        end
+    end
+
+    return start_orig, eo2, false
+end
+
 function M.count(s, sub)
     local count = 0
     local start = 1

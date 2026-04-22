@@ -1,1 +1,0 @@
-/usr/bin/cc -g -Xlinker --dependency-file=CMakeFiles/test_test_json.dir/link.d CMakeFiles/test_test_json.dir/tests/c/test_json.c.o CMakeFiles/test_test_json.dir/src/sandbox/sandbox.c.o CMakeFiles/test_test_json.dir/src/json/json.c.o -o test_test_json  -Wl,-rpath,/usr/local/lib /usr/local/lib/liblua-5.4.so /usr/lib/libm.so /usr/local/lib/libcurl.so -lpthread

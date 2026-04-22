@@ -1,9 +1,11 @@
 -- tools/file_edit.lua — FileEditTool: Search & replace editing
 -- Uses jenova.fs (C FFI) for reliable edit operations.
 -- Falls back to pure-Lua with whitespace-normalized matching.
+-- Fuzzy match logic is shared with multiedit via utils/string.
 
-local json = require("utils.json_fallback")
-local paths = require("utils.paths")
+local json         = require("utils.json_fallback")
+local paths        = require("utils.paths")
+local string_utils = require("utils.string")
 
 local M = {}
 M.name = "Edit"
@@ -36,70 +38,9 @@ function M.check_permissions(input, ctx)
     return { allowed = allowed, reason = reason }
 end
 
--- Normalize a string for fuzzy comparison:
---   • CRLF → LF
---   • trailing spaces stripped per line
-local function normalize(s)
-    s = s:gsub("\r\n", "\n"):gsub("\r", "\n")
-    local lines = {}
-    for line in (s .. "\n"):gmatch("([^\n]*)\n") do
-        table.insert(lines, (line:gsub("%s+$", "")))
-    end
-    -- Remove trailing empty line added by the loop sentinel
-    if lines[#lines] == "" then table.remove(lines) end
-    return table.concat(lines, "\n")
-end
-
--- Try to find old_string in content with CRLF + trailing-space normalisation.
--- Returns the start/end byte offsets in the *original* content, or nil.
-local function fuzzy_find(content, old_string)
-    local nc = normalize(content)
-    local no = normalize(old_string)
-    local pos = nc:find(no, 1, true)
-    if not pos then return nil end
-
-    -- Map byte position in normalised string back to original content.
-    -- Build a cumulative map: normalised_pos[i] = original_pos[i]
-    -- This is O(n) and only runs on mismatch, so it's acceptable.
-    local orig_pos = {}  -- orig_pos[norm_byte] = orig_byte
-    local ni = 1
-    local oi = 1
-    local olen = #content
-    local nlen = #nc
-    while oi <= olen and ni <= nlen do
-        local ob = content:byte(oi)
-        local nb = nc:byte(ni)
-        orig_pos[ni] = oi
-        if ob == 13 and content:byte(oi + 1) == 10 then
-            -- CRLF in original maps to LF in normalised
-            oi = oi + 2
-        elseif ob == 32 or ob == 9 then
-            -- Possible trailing space — check if normalised consumed it
-            if nb == 10 then
-                -- normalised moved to newline, skip spaces in original
-                while oi <= olen and (content:byte(oi) == 32 or content:byte(oi) == 9) do
-                    oi = oi + 1
-                end
-            else
-                oi = oi + 1
-            end
-        else
-            oi = oi + 1
-        end
-        ni = ni + 1
-    end
-
-    local start_orig = orig_pos[pos]
-    if not start_orig then return nil end
-
-    -- The replacement span in original ends where normalised match ends.
-    local end_norm = pos + #no - 1
-    local end_orig = orig_pos[end_norm]
-    if not end_orig then return nil end
-
-    return start_orig, end_orig
-end
-
+-- Delegate fuzzy_find to shared utils/string module so the
+-- logic stays identical with multiedit.lua.
+local fuzzy_find  = string_utils.fuzzy_find
 -- Build a diagnostic hint: show lines near the search position (or the head of the file).
 local function build_hint(content, old_string)
     -- Find the first word of old_string in the file for context
@@ -184,8 +125,7 @@ function M.call(args, context)
 
         if args.replace_all then
             local count = 0
-            local escape_pattern = require("utils.string").escape_pattern
-            local new_content = content:gsub(escape_pattern(old), function()
+            local new_content = content:gsub(string_utils.escape_pattern(old), function()
                 count = count + 1
                 return new
             end)
@@ -218,7 +158,10 @@ function M.call(args, context)
         end
 
         -- Fuzzy fallback: CRLF + trailing-whitespace normalised match
-        local start_orig, end_orig = fuzzy_find(content, old)
+        local start_orig, end_orig, multi = fuzzy_find(content, old)
+        if multi then
+            return { type = "error", error = "old_string matches multiple locations (normalised) — add more surrounding lines to make it unique." }
+        end
         if start_orig and end_orig then
             local new_content = content:sub(1, start_orig - 1) .. new .. content:sub(end_orig + 1)
             local wf = io.open(path, "w")

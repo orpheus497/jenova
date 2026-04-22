@@ -2,8 +2,9 @@
 -- Lets the model batch all edits for a file into one call instead of repeated
 -- single-Edit calls (which create a retry-loop hazard on small models).
 -- Each edit in the array is applied in order on the result of the previous one.
+-- Fuzzy whitespace matching is shared with file_edit via utils/string.
 
-local paths = require("utils.paths")
+local paths       = require("utils.paths")
 local string_utils = require("utils.string")
 
 local M = {}
@@ -38,7 +39,7 @@ function M.is_enabled() return true end
 function M.is_read_only() return false end
 
 function M.user_facing_name(input)
-    local n = type(input) == "table" and type(input.edits) == "table" and #input.edits or "?"
+    local n  = type(input) == "table" and type(input.edits) == "table" and #input.edits or "?"
     local fp = type(input) == "table" and input.file_path or ""
     return string.format("MultiEdit(%s): %s edits", fp, tostring(n))
 end
@@ -52,28 +53,17 @@ function M.check_permissions(input, ctx)
     return { allowed = allowed, reason = reason }
 end
 
--- Normalize CRLF + trailing whitespace (same as file_edit.lua)
-local function normalize(s)
-    s = s:gsub("\r\n", "\n"):gsub("\r", "\n")
-    local lines = {}
-    for line in (s .. "\n"):gmatch("([^\n]*)\n") do
-        table.insert(lines, (line:gsub("%s+$", "")))
-    end
-    if lines[#lines] == "" then table.remove(lines) end
-    return table.concat(lines, "\n")
-end
-
+-- Apply a single edit to `content`.  Returns (new_content, err, count).
 local function apply_one(content, old, new, replace_all)
-    -- Exact match first
+    -- 1. Exact byte match
     local pos = content:find(old, 1, true)
     if pos then
         if replace_all then
             local count = 0
-            local ep = string_utils.escape_pattern
-            local result = content:gsub(ep(old), function()
+            local new_content = content:gsub(string_utils.escape_pattern(old), function()
                 count = count + 1; return new
             end)
-            return result, nil, count
+            return new_content, nil, count
         end
         local second = content:find(old, pos + 1, true)
         if second then
@@ -82,32 +72,15 @@ local function apply_one(content, old, new, replace_all)
         return content:sub(1, pos - 1) .. new .. content:sub(pos + #old), nil, 1
     end
 
-    -- Normalised fallback
-    local nc = normalize(content)
-    local no = normalize(old)
-    local npos = nc:find(no, 1, true)
-    if not npos then
+    -- 2. Normalised fallback (shared logic with file_edit)
+    local start_orig, end_orig, multi = string_utils.fuzzy_find(content, old)
+    if multi then
+        return nil, "old_string matches multiple locations (normalised) — add more context to make it unique"
+    end
+    if not start_orig then
         return nil, "old_string not found — Read the file and copy the exact text"
     end
-    -- Re-map: find the raw offset by scanning original
-    local orig_pos = {}
-    local ni, oi = 1, 1
-    while oi <= #content and ni <= #nc do
-        orig_pos[ni] = oi
-        local ob = content:byte(oi)
-        if ob == 13 and content:byte(oi + 1) == 10 then
-            oi = oi + 2
-        else
-            oi = oi + 1
-        end
-        ni = ni + 1
-    end
-    local so = orig_pos[npos]
-    local eo = orig_pos[npos + #no - 1]
-    if not so or not eo then
-        return nil, "old_string not found (normalisation mapping failed)"
-    end
-    return content:sub(1, so - 1) .. new .. content:sub(eo + 1), nil, 1
+    return content:sub(1, start_orig - 1) .. new .. content:sub(end_orig + 1), nil, 1
 end
 
 function M.call(args, context)
@@ -141,7 +114,7 @@ function M.call(args, context)
         elseif old == new then
             table.insert(failed, string.format("edit[%d]: old_string == new_string, skipped", i))
         else
-            local result, err, _ = apply_one(content, old, new, edit.replace_all)
+            local result, err = apply_one(content, old, new, edit.replace_all)
             if err then
                 table.insert(failed, string.format("edit[%d]: %s", i, err))
             else

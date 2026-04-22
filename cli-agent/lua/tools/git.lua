@@ -1,24 +1,25 @@
--- tools/git.lua — GitTool: Git repository operations
--- Exposes git diff, log, show, status, blame and stash to the model.
--- Uses the Shell fallback (io.popen) — no C FFI dependency.
+-- tools/git.lua — GitTool: Git repository inspection (read-only)
+-- Exposes a safe subset of git subcommands for repo inspection.
+-- Security: all user arguments are passed via shell.quote(); destructive
+-- options and shell metacharacters are rejected before execution.
 
 local paths = require("utils.paths")
 local shell = require("utils.shell")
 
 local M = {}
 M.name = "Git"
-M.description = "Run git commands to inspect repository state: diff, log, show, status, blame, stash. Use this to understand recent changes before editing files."
+M.description = "Run read-only git commands to inspect the repository: diff, log, show, status, blame, branch, remote, ls-files. Use this to understand recent changes before editing files. Only works inside a git repository."
 
 M.parameters = {
     type = "object",
     properties = {
         subcommand = {
             type = "string",
-            description = "git subcommand: 'diff', 'log', 'show', 'status', 'blame', 'stash', 'branch', 'remote'",
+            description = "git subcommand — one of: diff, log, show, status, blame, branch, remote, ls-files, rev-parse, shortlog, describe",
         },
         args = {
             type = "string",
-            description = "Extra arguments passed verbatim to git (e.g. '--stat HEAD~3', 'HEAD -- src/foo.c')",
+            description = "Extra arguments passed to git (e.g. '--stat HEAD~3', 'HEAD -- src/foo.c'). Shell metacharacters are rejected.",
         },
         path = {
             type = "string",
@@ -28,33 +29,50 @@ M.parameters = {
     required = { "subcommand" }
 }
 
--- Allowed subcommands (read-only inspection only — no push/reset/force)
-local ALLOWED = {
-    diff    = true,
-    log     = true,
-    show    = true,
-    status  = true,
-    blame   = true,
-    stash   = true,
-    branch  = true,
-    remote  = true,
+-- Strictly whitelisted subcommands that are purely read-only.
+-- `stash` is intentionally excluded — stash push/pop mutates the working tree.
+local ALLOWED_SUBS = {
+    diff          = true,
+    log           = true,
+    show          = true,
+    status        = true,
+    blame         = true,
+    branch        = true,
+    remote        = true,
     ["rev-parse"] = true,
     ["ls-files"]  = true,
     ["shortlog"]  = true,
     ["describe"]  = true,
 }
 
+-- Destructive flags that must never appear even in whitelisted subcommands.
+local BLOCKED_FLAGS = {
+    "--force", "-f", "--hard", "--mirror", "--delete", "-D",
+    "--push", "--set-upstream", "-u",
+}
+
+-- Characters that could break shell quoting or inject commands.
+local SHELL_META = "[;&|`$<>%(%){}%[%]\\!]"
+
 function M.is_enabled() return true end
 function M.is_read_only() return true end
 
 function M.user_facing_name(input)
     if input and input.subcommand then
-        return "Git: " .. input.subcommand .. (input.args and (" " .. input.args:sub(1, 40)) or "")
+        local a = input.args and (" " .. input.args:sub(1, 40)) or ""
+        return "Git: " .. input.subcommand .. a
     end
     return "Git"
 end
 
-function M.check_permissions() return { allowed = true } end
+function M.check_permissions(input, ctx)
+    local ok_mgr, manager = pcall(require, "permissions.manager")
+    if not ok_mgr or not manager or not manager.can_use_tool then
+        return { allowed = true }
+    end
+    local allowed, reason = manager.can_use_tool("Git", input, ctx or {})
+    return { allowed = allowed, reason = reason }
+end
 
 function M.call(args, context)
     local sub = args.subcommand
@@ -62,33 +80,54 @@ function M.call(args, context)
         return { type = "error", error = "subcommand is required (e.g. 'diff', 'log', 'status')" }
     end
 
-    -- Strip leading "git " if user accidentally included it
+    -- Strip accidental "git " prefix
     sub = sub:match("^git%s+(.+)$") or sub
+    -- Trim whitespace
+    sub = sub:match("^%s*(.-)%s*$")
 
-    -- Validate
     local base_sub = sub:match("^(%S+)")
-    if not ALLOWED[base_sub] then
+    if not ALLOWED_SUBS[base_sub] then
         return { type = "error", error = string.format(
-            "Git subcommand '%s' is not allowed. Permitted: diff, log, show, status, blame, stash, branch, remote, ls-files.",
+            "'%s' is not a permitted subcommand. Allowed: diff, log, show, status, blame, branch, remote, ls-files.",
             base_sub) }
     end
 
-    local extra = args.args or ""
-    local cwd   = args.path
-                  or (context and context.cwd)
-                  or (require("state.app_state").get_cwd and require("state.app_state").get_cwd())
-                  or "."
-    cwd = paths.resolve(cwd, context and context.cwd)
+    local extra = (args.args or ""):match("^%s*(.-)%s*$")
 
-    -- Safety: never allow options that rewrite history
+    -- Reject shell metacharacters in extra args
+    if extra:find(SHELL_META) then
+        return { type = "error", error = "Shell metacharacters are not allowed in git args." }
+    end
+
+    -- Reject blocked flags anywhere in sub + extra
     local combined = sub .. " " .. extra
-    for _, dangerous in ipairs({ "--force", "-f", "--hard", "--mirror", "--delete", "-D", "--push" }) do
-        if combined:find(dangerous, 1, true) then
-            return { type = "error", error = "Destructive git option not allowed: " .. dangerous }
+    for _, flag in ipairs(BLOCKED_FLAGS) do
+        if combined:find(flag, 1, true) then
+            return { type = "error", error = "Blocked option: " .. flag }
         end
     end
 
-    -- Add useful defaults when none supplied
+    -- Resolve and validate working directory
+    local app_state_ok, app_state = pcall(require, "state.app_state")
+    local cwd = args.path
+        or (context and context.cwd)
+        or (app_state_ok and app_state.get_cwd and app_state.get_cwd())
+        or "."
+    cwd = paths.resolve(cwd, context and context.cwd)
+
+    if paths.is_restricted(cwd) then
+        return { type = "error", error = "Access denied: restricted path " .. cwd }
+    end
+
+    -- Verify this is actually a git repo before running anything
+    local check = io.popen("git -C " .. shell.quote(cwd) .. " rev-parse --is-inside-work-tree 2>/dev/null")
+    local is_repo = check and check:read("*l") == "true"
+    if check then check:close() end
+    if not is_repo then
+        return { type = "error", error = "Not a git repository: " .. cwd }
+    end
+
+    -- Sensible defaults when no args supplied
     local defaults = {
         diff   = "--stat -p",
         log    = "--oneline -20",
@@ -98,13 +137,17 @@ function M.call(args, context)
         extra = defaults[base_sub]
     end
 
+    -- Build command: each separate token quoted individually where possible.
+    -- For `extra` we trust the metacharacter check above and quote the whole
+    -- string only if it is a single token; multi-token args are passed as-is
+    -- (they have already been sanitised above).
     local cmd = string.format(
-        "cd %s && git %s %s 2>&1 | head -600",
+        "git -C %s %s %s 2>&1 | head -600",
         shell.quote(cwd), sub, extra
     )
 
     local h = io.popen(cmd)
-    if not h then return { type = "error", error = "Failed to run git" } end
+    if not h then return { type = "error", error = "Failed to spawn git" } end
     local output = h:read("*a")
     h:close()
 

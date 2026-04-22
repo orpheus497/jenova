@@ -115,7 +115,6 @@ function M.load_builtin_tools()
         "tools.multiedit",
         "tools.glob", "tools.grep", "tools.local_search",
         "tools.bash",
-        "tools.git",
         "tools.brief",
     }
 
@@ -181,6 +180,16 @@ function M.load_builtin_tools()
     local has_lsp = (type(_jenova) == "table" and _jenova.lsp ~= nil)
     if has_lsp then
         load_set(lsp_tools)
+    end
+
+    -- Git: only when working directory is inside a git repository.
+    -- Avoids advertising a tool that will always fail in non-repo contexts,
+    -- and keeps the tool list lean for models running without git.
+    local h = io.popen("git rev-parse --is-inside-work-tree 2>/dev/null")
+    local is_git = h and h:read("*l") == "true"
+    if h then h:close() end
+    if is_git then
+        load_set({ "tools.git" })
     end
 end
 
