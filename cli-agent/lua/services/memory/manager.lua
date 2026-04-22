@@ -533,6 +533,40 @@ function Memory.search(query)
     return results
 end
 
+-- ── Embed-based similarity retrieval ────────────────────────────────
+-- Returns errors from this session whose description is semantically
+-- similar to `query_text` according to the embedding model.
+-- Returns {} if the embed model is not running.
+function Memory.get_similar_errors(query_text, top_k)
+    top_k = top_k or 2
+    if #session_errors == 0 then return {} end
+
+    local embed_ok, embed = pcall(require, "utils.embed")
+    if not embed_ok or not embed.is_available() then return {} end
+
+    local query_vec = embed.encode(query_text, "search_query")
+    if not query_vec then return {} end
+
+    local scored = {}
+    for _, e in ipairs(session_errors) do
+        local text = (e.tool or "") .. ": " .. (e.error or "") .. " [" .. (e.args or "") .. "]"
+        local vec = embed.encode(text, "search_document")
+        if vec then
+            local score = embed.cosine(query_vec, vec)
+            table.insert(scored, { score = score, entry = e })
+        end
+    end
+    table.sort(scored, function(a, b) return a.score > b.score end)
+
+    local results = {}
+    for i = 1, math.min(top_k, #scored) do
+        if scored[i].score > 0.75 then
+            table.insert(results, scored[i].entry)
+        end
+    end
+    return results
+end
+
 function Memory.clear() Memory.clear_session() end
 
 return Memory

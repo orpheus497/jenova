@@ -41,6 +41,16 @@ end
 -- Delegate fuzzy_find to shared utils/string module so the
 -- logic stays identical with multiedit.lua.
 local fuzzy_find  = string_utils.fuzzy_find
+
+-- Write helper — extracted to avoid repeating open/write/close boilerplate
+-- at every call site within M.call.
+local function write_file(path, content)
+    local wf = io.open(path, "w")
+    if not wf then return false end
+    wf:write(content)
+    wf:close()
+    return true
+end
 -- Build a diagnostic hint: show lines near the search position (or the head of the file).
 local function build_hint(content, old_string)
     -- Find the first word of old_string in the file for context
@@ -135,10 +145,9 @@ function M.call(args, context)
                     "old_string not found in %s.\n\nYou must Read the file and copy text exactly before calling Edit.\n\nNearest lines in file:\n%s",
                     path, hint) }
             end
-            local wf = io.open(path, "w")
-            if not wf then return { type = "error", error = "Cannot write: " .. path } end
-            wf:write(new_content)
-            wf:close()
+            if not write_file(path, new_content) then
+                return { type = "error", error = "Cannot write: " .. path }
+            end
             return { type = "text", text = string.format("Edited %s — replaced %d occurrence(s).", path, count) }
         end
 
@@ -150,10 +159,9 @@ function M.call(args, context)
                 return { type = "error", error = "old_string matches multiple locations — add more surrounding lines to make it unique." }
             end
             local new_content = content:sub(1, pos - 1) .. new .. content:sub(pos + #old)
-            local wf = io.open(path, "w")
-            if not wf then return { type = "error", error = "Cannot write: " .. path } end
-            wf:write(new_content)
-            wf:close()
+            if not write_file(path, new_content) then
+                return { type = "error", error = "Cannot write: " .. path }
+            end
             return { type = "text", text = string.format("Edited %s successfully.", path) }
         end
 
@@ -164,10 +172,9 @@ function M.call(args, context)
         end
         if start_orig and end_orig then
             local new_content = content:sub(1, start_orig - 1) .. new .. content:sub(end_orig + 1)
-            local wf = io.open(path, "w")
-            if not wf then return { type = "error", error = "Cannot write: " .. path } end
-            wf:write(new_content)
-            wf:close()
+            if not write_file(path, new_content) then
+                return { type = "error", error = "Cannot write: " .. path }
+            end
             return { type = "text", text = string.format("Edited %s (whitespace-normalised match).", path) }
         end
 

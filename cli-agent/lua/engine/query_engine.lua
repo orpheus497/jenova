@@ -257,12 +257,42 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
     -- Record action in memory manager
     local mem_ok, memory = pcall(require, "services.memory.manager")
     if mem_ok then
+        -- Summarise input meaningfully so memory entries are human-readable.
+        local input_summary
+        if type(input) == "table" then
+            input_summary = input.file_path or input.command or input.path
+                or input.query or input.pattern or "(table)"
+        else
+            input_summary = tostring(input or "")
+        end
         if ok and not exec_err then
             memory.record_action(tool_name, input, result, true)
         else
             local err_msg = ok and exec_err or tostring(result)
             memory.record_action(tool_name, input, err_msg, false)
-            memory.log_error(tool_name, tostring(input), err_msg)
+            memory.log_error(tool_name, input_summary, err_msg)
+
+            -- Embed-based self-correction: query the embedding model for similar
+            -- past errors in this session and inject a targeted warning so the
+            -- model can correct itself before retrying.
+            -- This is non-blocking: if embed is unavailable it returns {} immediately.
+            local query = tool_name .. " " .. input_summary .. " " .. err_msg
+            local similar = memory.get_similar_errors and memory.get_similar_errors(query, 2) or {}
+            if #similar > 0 then
+                local parts = {"[System: Similar failures in this session — do not repeat these patterns:]"}
+                for _, se in ipairs(similar) do
+                    table.insert(parts, string.format(
+                        "  - %s(%s): %s",
+                        se.tool or "?", (se.args or ""):sub(1,40), (se.error or ""):sub(1,80)))
+                end
+                -- Injected directly into self.messages via the caller's loop.
+                -- Store as a pending pre-action warning on self so execute_tool
+                -- callers can append it after the tool_result message.
+                if not self._pending_embed_warnings then
+                    self._pending_embed_warnings = {}
+                end
+                table.insert(self._pending_embed_warnings, table.concat(parts, "\n"))
+            end
         end
     end
 
@@ -298,8 +328,8 @@ function QueryEngine:query(user_message, options)
     local last_tool_sig = nil
     local repeat_count = 0
 
-    -- Per-file edit failure tracking: if a model fails to edit the same file twice
-    -- in a row, nudge it to Read the file before retrying.
+    -- Per-file edit failure tracking: nudge the model to Read the file immediately
+    -- after the FIRST failure. Waiting for a second failure lets it waste a turn.
     local edit_fail_file = nil
     local edit_fail_count = 0
 
@@ -394,10 +424,10 @@ function QueryEngine:query(user_message, options)
             if tool_use.name == "Brief" then
                 local br = type(tool_use.input) == "table" and tool_use.input.response or nil
                 if br and #br > 0 then
-                    -- Print the Brief response (on_text may have already been called for
-                    -- any streamed text prefix; this is the authoritative final reply).
-                    io.write(br)
-                    io.flush()
+                    -- Route through on_text so the agent label fires before the first
+                    -- character — Brief responses were previously printed raw, bypassing
+                    -- the label-on-first-token logic in loop.lua.
+                    self.on_text(br)
                     brief_response = br
                 end
                 -- Don't add Brief to tool_results — terminate the loop instead.
@@ -450,8 +480,8 @@ function QueryEngine:query(user_message, options)
                 result_text = tostring(result or "")
             end
 
-            -- Edit-failure recovery: if Edit/MultiEdit keeps failing on the same
-            -- file, inject a hard nudge to Read the file first before retrying.
+            -- Edit-failure recovery: inject a hard nudge to Read the file on the
+            -- FIRST failure so the model cannot waste a second turn guessing.
             if is_err and (tool_use.name == "Edit" or tool_use.name == "MultiEdit") then
                 local fp = type(tool_use.input) == "table" and tool_use.input.file_path or ""
                 if fp == edit_fail_file then
@@ -460,13 +490,14 @@ function QueryEngine:query(user_message, options)
                     edit_fail_file  = fp
                     edit_fail_count = 1
                 end
-                if edit_fail_count >= 2 and fp ~= "" then
+                if fp ~= "" then
                     table.insert(self.messages, {
                         role = "user",
                         content = string.format(
-                            "[System: Edit on '%s' has failed %d times. You MUST call Read('%s') " ..
-                            "to fetch the current exact file content before attempting another Edit. " ..
-                            "Do NOT guess the old_string — copy it verbatim from the Read result.]",
+                            "[System: Edit on '%s' failed (attempt %d). " ..
+                            "You MUST call Read('%s') NOW to get the exact current content. " ..
+                            "Do NOT guess old_string — copy it verbatim from the Read output. " ..
+                            "Do NOT call Edit again until you have called Read.]",
                             fp, edit_fail_count, fp),
                     })
                 end
@@ -523,6 +554,17 @@ function QueryEngine:query(user_message, options)
         -- Add tool results
         for _, tool_result in ipairs(tool_results_content) do
             self:add_tool_result(tool_result.tool_use_id, tool_result.content, tool_result.is_error)
+        end
+
+        -- Flush any embed-based self-correction warnings generated during this
+        -- turn's tool executions. These are injected as user-role [System: ...]
+        -- messages immediately after the tool results so the model reads them
+        -- before generating its next action.
+        if self._pending_embed_warnings and #self._pending_embed_warnings > 0 then
+            for _, warning in ipairs(self._pending_embed_warnings) do
+                table.insert(self.messages, { role = "user", content = warning })
+            end
+            self._pending_embed_warnings = {}
         end
 
         -- Continue the loop

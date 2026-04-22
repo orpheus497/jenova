@@ -84,6 +84,14 @@ function M.run(opts)
         memory.init()
     end
 
+    -- Warm up the embedding model in the background so it is ready when the
+    -- first tool failure occurs. Non-blocking: if the server is not running,
+    -- embed.init() returns false and all embed calls degrade silently.
+    local embed_ok, embed = pcall(require, "utils.embed")
+    if embed_ok and embed and embed.init then
+        pcall(embed.init)
+    end
+
     -- ── Inject startup filesystem snapshot into system prompt ───────────
     -- Gives the model immediate awareness of the working directory tree
     -- so it can answer questions about files without needing tool calls.
@@ -140,39 +148,44 @@ function M.run(opts)
     -- rather than using the tools they have been given.
     -- Kept deliberately short for 3B models — every token in the system prompt
     -- competes with context for code editing tasks.
+    -- Rules are ordered by priority: the most commonly violated constraint first.
     local tool_mandate_lines = {
         "",
         "## Tools available",
-        "- Glob(pattern): find files",
-        "- Grep(pattern, path): search file contents",
-        "- Read(file_path): read a file with line numbers",
-        "- Write(file_path, content): create/overwrite a file",
-        "- Edit(file_path, old_string, new_string): replace exact text in a file",
-        "- MultiEdit(file_path, edits[]): apply several edits to one file at once",
-        "- Shell(command): run shell commands",
-        "- Brief(response): send your final reply to the user",
+        "- Read(file_path): read a file. ALWAYS call this before Edit or MultiEdit.",
+        "- Edit(file_path, old_string, new_string): replace exact text. old_string must be copied verbatim from a prior Read. Never guess it.",
+        "- MultiEdit(file_path, edits[]): batch several edits to one file. Prefer over multiple Edit calls.",
+        "- Write(file_path, content): create or overwrite a file. Only for new files or full rewrites.",
+        "- Glob(pattern): find files by name. Use before Read when path is uncertain.",
+        "- Grep(pattern, path): search file contents. Use to locate a symbol or string.",
+        "- Bash(command): run shell commands for build, compile, test, or install tasks. Not for file reading.",
+        "- Brief(response): deliver your final reply to the user. Call this ONLY when the task is fully complete.",
     }
 
     -- Git tool: only mention it when we're actually in a git repo
     local context_mod2 = context_mod or try_require("context.manager")
     if context_mod2 and context_mod2.is_git_repository and context_mod2.is_git_repository() then
-        table.insert(tool_mandate_lines, "- Git(subcommand, args): git diff/log/show/status/blame — use to inspect changes before editing")
+        table.insert(tool_mandate_lines, "- Git(subcommand, args): inspect the repo (diff, log, status, blame). Use to understand recent changes before editing. Only available inside a git repository.")
     end
 
     table.insert(tool_mandate_lines, "")
-    table.insert(tool_mandate_lines, "## Rules")
-    table.insert(tool_mandate_lines, "1. ALWAYS Read a file before calling Edit or MultiEdit on it.")
-    table.insert(tool_mandate_lines, "2. Copy old_string character-for-character from the Read output — never guess.")
-    table.insert(tool_mandate_lines, "3. If Edit fails with \"not found\", call Read again and copy the text again.")
+    table.insert(tool_mandate_lines, "## Rules (in order of importance)")
+    table.insert(tool_mandate_lines, "1. ALWAYS call Read before Edit or MultiEdit. No exceptions. Never assume file content.")
+    table.insert(tool_mandate_lines, "2. Copy old_string character-for-character from the Read output. Never construct or guess it.")
+    table.insert(tool_mandate_lines, "3. If Edit fails with 'not found', call Read again, then copy the exact text again.")
     table.insert(tool_mandate_lines, "4. Use MultiEdit when making more than one change to the same file.")
-    table.insert(tool_mandate_lines, "5. Call Brief only when the task is fully done.")
-    table.insert(tool_mandate_lines, "6. Never describe what you will do — just do it with tools.")
+    table.insert(tool_mandate_lines, "5. Do NOT call tools you do not need. If the answer is already known, call Brief.")
+    table.insert(tool_mandate_lines, "6. Call Brief only when the task is fully done. Never call it mid-task.")
+    table.insert(tool_mandate_lines, "7. Do not repeat a failed tool call with the same arguments. Change your approach.")
 
     local tool_mandate = table.concat(tool_mandate_lines, "\n")
     base_system_prompt = base_system_prompt .. tool_mandate
 
     local thinking_buf = ""
     local thinking_tokens = 0
+    -- Tracks whether the agent label has been printed for the current turn.
+    -- Must be reset at the start of each agent_turn() call.
+    local label_printed = false
 
     local engine = QueryEngine.new({
         model = opts.model,
@@ -182,9 +195,14 @@ function M.run(opts)
         thinking_enabled = opts.thinking_enabled,
 
         on_text = function(text)
-            -- Stop the spinner before the first text token so the cursor is
-            -- on a clean line. spinner_stop() is idempotent.
+            -- Stop spinner and print the "jenova │ " label exactly once before
+            -- the first streamed token of each turn. This must happen here
+            -- (not after query() returns) so the label precedes the text.
             if ui and ui.spinner_stop then ui.spinner_stop() end
+            if not label_printed then
+                label_printed = true
+                if ui and ui.agent_label then ui.agent_label() end
+            end
             io.write(text)
             io.flush()
         end,
@@ -298,6 +316,9 @@ function M.run(opts)
         end
         engine.system_prompt = system_prompt
 
+        -- Reset the label flag so agent_label fires again on first token
+        label_printed = false
+
         -- Start spinner
         if ui and ui.spinner_start then
             ui.spinner_start("cognizing")
@@ -307,12 +328,14 @@ function M.run(opts)
             max_turns = opts.agent_max_turns or 25,
         })
 
-        -- Stop spinner and print agent label before response
+        -- Stop spinner (idempotent — on_text may have already stopped it)
         if ui and ui.spinner_stop then
             ui.spinner_stop()
         end
-        if ui and ui.agent_label then
-            ui.agent_label()
+        -- If no text was ever streamed (e.g. pure Brief response), print label now
+        if not label_printed then
+            label_printed = true
+            if ui and ui.agent_label then ui.agent_label() end
         end
 
         -- Clear inline thinking indicator and show a brief snippet of what was concluded

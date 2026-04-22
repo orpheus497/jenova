@@ -94,13 +94,15 @@ function M.call(args, context)
 
     local extra = (args.args or ""):match("^%s*(.-)%s*$")
 
-    -- Reject shell metacharacters in extra args
-    if extra:find(SHELL_META) then
-        return { type = "error", error = "Shell metacharacters are not allowed in git args." }
+    -- Reject shell metacharacters in the combined sub + extra string.
+    -- Checking only `extra` allowed injection via a crafted subcommand like
+    -- "status; id" whose base_sub passes the allowlist check.
+    local combined = sub .. " " .. extra
+    if combined:find(SHELL_META) then
+        return { type = "error", error = "Shell metacharacters are not allowed in git commands." }
     end
 
     -- Reject blocked flags anywhere in sub + extra
-    local combined = sub .. " " .. extra
     for _, flag in ipairs(BLOCKED_FLAGS) do
         if combined:find(flag, 1, true) then
             return { type = "error", error = "Blocked option: " .. flag }
