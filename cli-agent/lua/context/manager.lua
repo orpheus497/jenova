@@ -115,6 +115,16 @@ function Context.get_git_status()
     end
 end
 
+-- Returns a compact `git diff --stat HEAD` so the model knows which files
+-- have been modified since the last commit without needing a full diff dump.
+function Context.get_git_diff_stat()
+    local handle = io.popen("git diff --stat HEAD 2>/dev/null | head -40")
+    if not handle then return nil end
+    local out = handle:read("*a"):gsub("%s+$", "")
+    handle:close()
+    return #out > 0 and out or nil
+end
+
 -- ── User Context ──────────────────────────────────────────────────────
 
 function Context.get_user_context()

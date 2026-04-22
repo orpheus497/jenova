@@ -298,6 +298,11 @@ function QueryEngine:query(user_message, options)
     local last_tool_sig = nil
     local repeat_count = 0
 
+    -- Per-file edit failure tracking: if a model fails to edit the same file twice
+    -- in a row, nudge it to Read the file before retrying.
+    local edit_fail_file = nil
+    local edit_fail_count = 0
+
     while turn_count < max_turns do
         turn_count = turn_count + 1
 
@@ -443,6 +448,32 @@ function QueryEngine:query(user_message, options)
                 end
             else
                 result_text = tostring(result or "")
+            end
+
+            -- Edit-failure recovery: if Edit/MultiEdit keeps failing on the same
+            -- file, inject a hard nudge to Read the file first before retrying.
+            if is_err and (tool_use.name == "Edit" or tool_use.name == "MultiEdit") then
+                local fp = type(tool_use.input) == "table" and tool_use.input.file_path or ""
+                if fp == edit_fail_file then
+                    edit_fail_count = edit_fail_count + 1
+                else
+                    edit_fail_file  = fp
+                    edit_fail_count = 1
+                end
+                if edit_fail_count >= 2 and fp ~= "" then
+                    table.insert(self.messages, {
+                        role = "user",
+                        content = string.format(
+                            "[System: Edit on '%s' has failed %d times. You MUST call Read('%s') " ..
+                            "to fetch the current exact file content before attempting another Edit. " ..
+                            "Do NOT guess the old_string — copy it verbatim from the Read result.]",
+                            fp, edit_fail_count, fp),
+                    })
+                end
+            elseif not is_err and (tool_use.name == "Edit" or tool_use.name == "MultiEdit") then
+                -- Reset on success
+                edit_fail_file  = nil
+                edit_fail_count = 0
             end
 
             table.insert(tool_results_content, {

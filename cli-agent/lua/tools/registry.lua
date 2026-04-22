@@ -112,8 +112,10 @@ function M.load_builtin_tools()
     -- Deliberately minimal: local models perform best with a small, clear tool set.
     local core_tools = {
         "tools.file_read", "tools.file_write", "tools.file_edit",
+        "tools.multiedit",
         "tools.glob", "tools.grep", "tools.local_search",
         "tools.bash",
+        "tools.git",
         "tools.brief",
     }
 

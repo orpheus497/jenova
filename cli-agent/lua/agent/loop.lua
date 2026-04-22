@@ -110,6 +110,10 @@ function M.run(opts)
             else
                 table.insert(ctx_parts, "Git status: clean")
             end
+            local diff_stat = context_mod.get_git_diff_stat and context_mod.get_git_diff_stat()
+            if diff_stat then
+                table.insert(ctx_parts, "Git diff --stat HEAD:\n" .. diff_stat)
+            end
         end
 
         -- Toolchain: probe PATH for compilers/build tools so the model
@@ -134,32 +138,29 @@ function M.run(opts)
 
     -- Tool-use mandate: without this, models default to answering in plain text
     -- rather than using the tools they have been given.
+    -- Kept deliberately short for 3B models — every token in the system prompt
+    -- competes with context for code editing tasks.
     local tool_mandate = [[
 
-## Tools
-Use these tools to take real actions. Never describe what you would do — do it.
+## Tools available
+- Glob(pattern): find files
+- Grep(pattern, path): search file contents
+- Read(file_path): read a file with line numbers
+- Write(file_path, content): create/overwrite a file
+- Edit(file_path, old_string, new_string): replace exact text in a file
+- MultiEdit(file_path, edits[]): apply several edits to one file at once
+- Git(subcommand, args): git diff/log/show/status/blame
+- Shell(command): run shell commands
+- Brief(response): send your final reply to the user
 
-- Glob: find files by pattern (e.g. "**/*.c")
-- Grep: search file contents by regex
-- Read: read a file (relative or absolute path)
-- Write: create or overwrite a file
-- Edit: find-and-replace inside a file
-- Shell: run any shell command
-- Brief: send a reply to the user (use when done or asking a question)
-
-Paths may be relative — they resolve against the working directory above.
-
-## How to approach tasks
-1. Glob/Grep to find relevant files if you don't already know them.
-2. Read each file before editing it.
-3. Edit or Write to make changes.
-4. Read the file again to verify the change is correct.
-5. Shell to compile/test when applicable.
-6. Brief to report the result.
-
-If a tool returns an error, read the error, fix your arguments, and try again.
-Never invent or guess file contents — always Read first.
-Only call Brief when the work is genuinely done.]]
+## Rules
+1. ALWAYS Read a file before calling Edit or MultiEdit on it.
+2. Copy old_string character-for-character from the Read output — never guess.
+3. If Edit fails with "not found", call Read again and copy the text again.
+4. Use MultiEdit when making more than one change to the same file.
+5. Use Git to inspect recent changes before editing.
+6. Call Brief only when the task is fully done.
+7. Never describe what you will do — just do it with tools.]]
     base_system_prompt = base_system_prompt .. tool_mandate
 
     local thinking_buf = ""
