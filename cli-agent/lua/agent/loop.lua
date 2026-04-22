@@ -84,9 +84,11 @@ function M.run(opts)
         memory.init()
     end
 
-    -- Warm up the embedding model in the background so it is ready when the
-    -- first tool failure occurs. Non-blocking: if the server is not running,
-    -- embed.init() returns false and all embed calls degrade silently.
+    -- Quick synchronous probe of the embedding sidecar so it is ready when
+    -- the first tool failure / similarity lookup occurs. embed.init() shells
+    -- out to curl with a short --max-time, so this delays startup by at
+    -- most ~1s when the server is not running. If embed is unavailable, all
+    -- embed calls degrade silently (they lazy-init on first use too).
     local embed_ok, embed = pcall(require, "utils.embed")
     if embed_ok and embed and embed.init then
         pcall(embed.init)

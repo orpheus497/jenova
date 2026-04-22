@@ -321,6 +321,14 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
     end
 
     if mem_ok then
+        -- Summarise input meaningfully so memory entries are human-readable.
+        local input_summary
+        if type(input) == "table" then
+            input_summary = input.file_path or input.command or input.path
+                or input.query or input.pattern or "(table)"
+        else
+            input_summary = tostring(input or "")
+        end
         if ok and not exec_err then
             memory.record_action(tool_name, input, result, true)
         else
@@ -328,8 +336,30 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
             memory.record_action(tool_name, input, err_msg, false)
             memory.log_error(tool_name, input_summary, err_msg)
 
+            -- Embed-based self-correction: query the embedding model for similar
+            -- past errors in this session and inject a targeted warning so the
+            -- model can correct itself before retrying.
+            -- This is non-blocking: if embed is unavailable it returns {} immediately.
             local query = tool_name .. " " .. input_summary .. " " .. err_msg
-            local similar = memory.get_similar_errors and memory.get_similar_errors(query, 2) or {}
+            local raw_similar = memory.get_similar_errors and memory.get_similar_errors(query, 3) or {}
+
+            -- Filter out the just-logged error: log_error() inserted it into
+            -- session_errors immediately above, so the cosine search will
+            -- return it as the top hit. Match by tool + truncated args + error
+            -- (the same fields formatted in the warning) instead of by `ts`,
+            -- which has 1s resolution and could collide on rapid-fire calls.
+            local similar = {}
+            for _, se in ipairs(raw_similar) do
+                local same = (se.tool == tool_name)
+                    and (se.args == input_summary)
+                    and (se.error == err_msg)
+                if not same then
+                    table.insert(similar, se)
+                    if #similar >= 2 then break end
+                end
+            end
+
+
             if #similar > 0 then
                 local parts = {"[System: Similar failures in this session — do not repeat these patterns:]"}
                 for _, se in ipairs(similar) do
@@ -337,6 +367,10 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
                         "  - %s(%s): %s",
                         se.tool or "?", (se.args or ""):sub(1,40), (se.error or ""):sub(1,80)))
                 end
+                -- Injected directly into self.messages via the caller's loop.
+                -- Store as a pending pre-action warning on self so execute_tool
+                -- callers can append it after the tool_result message.
+
                 if not self._pending_embed_warnings then
                     self._pending_embed_warnings = {}
                 end
@@ -652,12 +686,56 @@ function QueryEngine:query(user_message, options)
         end
 
         -- Flush any embed-based self-correction warnings generated during this
-        -- turn's tool executions. These are injected as user-role [System: ...]
-        -- messages immediately after the tool results so the model reads them
-        -- before generating its next action.
+        -- turn's tool executions. Many LLM providers (Anthropic, OpenAI) reject
+        -- requests with consecutive same-role messages, and tool_results are
+        -- already user-role. We must also be careful about HOW we attach: the
+        -- jenova_backend provider converts each tool_result block into a
+        -- separate role="tool" message and DROPS any non-tool_result blocks in
+        -- the same user message — so a `{type="text"}` sibling would silently
+        -- vanish before reaching the model. Append the warning to the LAST
+        -- tool_result's `content` string instead, which the provider preserves
+        -- verbatim into the role="tool" payload.
         if self._pending_embed_warnings and #self._pending_embed_warnings > 0 then
-            for _, warning in ipairs(self._pending_embed_warnings) do
-                table.insert(self.messages, { role = "user", content = warning })
+            local warning_text = table.concat(self._pending_embed_warnings, "\n\n")
+            local last_msg = self.messages[#self.messages]
+            local attached = false
+            if last_msg and last_msg.role == "user" then
+                if type(last_msg.content) == "table" then
+                    -- Find the last tool_result block and append to its content.
+                    for i = #last_msg.content, 1, -1 do
+                        local block = last_msg.content[i]
+                        if type(block) == "table" and block.type == "tool_result" then
+                            if type(block.content) == "string" then
+                                block.content = block.content .. "\n\n" .. warning_text
+                            elseif type(block.content) == "table" then
+                                -- Nested content array — append a text block;
+                                -- providers that consume the array form do
+                                -- preserve text blocks here.
+                                table.insert(block.content, { type = "text", text = warning_text })
+                            else
+                                block.content = warning_text
+                            end
+                            attached = true
+                            break
+                        end
+                    end
+                    if not attached then
+                        -- No tool_result block — safe to add as a sibling text
+                        -- block (provider only filters non-tool_result blocks
+                        -- when a tool_result IS present).
+                        table.insert(last_msg.content, { type = "text", text = warning_text })
+                        attached = true
+                    end
+                elseif type(last_msg.content) == "string" then
+                    last_msg.content = last_msg.content .. "\n\n" .. warning_text
+                    attached = true
+                end
+            end
+            if not attached then
+                -- Fallback: emit a fresh user message (only happens when there
+                -- is no preceding user message at all, which is rare).
+                table.insert(self.messages, { role = "user", content = warning_text })
+
             end
             self._pending_embed_warnings = {}
         end

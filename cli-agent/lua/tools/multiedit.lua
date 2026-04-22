@@ -72,7 +72,15 @@ local function apply_one(content, old, new, replace_all)
         return content:sub(1, pos - 1) .. new .. content:sub(pos + #old), nil, 1
     end
 
-    -- 2. Normalised fallback (shared logic with file_edit)
+    -- 2. Normalised fallback (shared logic with file_edit).
+    -- IMPORTANT: fuzzy_find only locates ONE occurrence, so falling through
+    -- here when replace_all=true would silently replace a single match and
+    -- violate the contract (the caller asked for "all"). Edit doesn't fuzz
+    -- in replace_all mode either; preserve that invariant by erroring out
+    -- and forcing the model to copy exact text via Read.
+    if replace_all then
+        return nil, "old_string not found exactly and replace_all=true does not support fuzzy fallback — Read the file and copy the exact bytes (including whitespace)"
+    end
     local start_orig, end_orig, multi = string_utils.fuzzy_find(content, old)
     if multi then
         return nil, "old_string matches multiple locations (normalised) — add more context to make it unique"
@@ -104,6 +112,7 @@ function M.call(args, context)
     f:close()
 
     local applied = 0
+    local skipped = 0
     local failed  = {}
 
     -- Dry-run pass: validate ALL edits against the current content before
@@ -111,22 +120,38 @@ function M.call(args, context)
     -- succeed and the file is written once, or none are applied.
     local dry_content = content
     for i, edit in ipairs(edits) do
-        local old = edit.old_string
-        local new = edit.new_string
-        if type(old) ~= "string" or type(new) ~= "string" then
-            table.insert(failed, string.format("edit[%d]: old_string and new_string must be strings", i))
-        elseif old == "" then
+        if type(edit) ~= "table" then
+            -- Non-object element (e.g. a stray string/number in the array)
+            -- would crash with "attempt to index a string value" on the
+            -- field accesses below. Report a structured per-edit failure
+            -- instead of letting the registry surface a generic tool error.
             table.insert(failed, string.format(
-                "edit[%d]: old_string is empty — you must Read the file first and copy the exact text to replace.", i))
-        elseif old == new then
-            table.insert(failed, string.format("edit[%d]: old_string == new_string, skipped", i))
+                "edit[%d]: must be an object with old_string/new_string (got %s)", i, type(edit)))
         else
-            local result, err = apply_one(dry_content, old, new, edit.replace_all)
-            if err then
-                table.insert(failed, string.format("edit[%d]: %s", i, err))
+            local old = edit.old_string
+            local new = edit.new_string
+            if type(old) ~= "string" or type(new) ~= "string" then
+                table.insert(failed, string.format("edit[%d]: old_string and new_string must be strings", i))
+            elseif old == "" then
+                -- See file_edit: empty old_string would corrupt the file via
+                -- gsub matching between every byte (or insert at byte 1).
+                table.insert(failed, string.format("edit[%d]: old_string must be non-empty", i))
+            elseif old == new then
+                -- No-op edit: the requested replacement is identical to the
+                -- existing text. Treat this as a successful skip — neither
+                -- counted as `applied` (no real change made) nor recorded in
+                -- `failed` (which would abort the entire atomic batch). This
+                -- prevents otherwise-valid sibling edits from being rejected
+                -- because of an inert duplicate request.
+                skipped = skipped + 1
             else
-                dry_content = result
-                applied = applied + 1
+                local result, err = apply_one(dry_content, old, new, edit.replace_all)
+                if err then
+                    table.insert(failed, string.format("edit[%d]: %s", i, err))
+                else
+                    dry_content = result
+                    applied = applied + 1
+                end
             end
         end
     end
@@ -138,6 +163,11 @@ function M.call(args, context)
     end
 
     if applied == 0 then
+        if skipped > 0 then
+            return { type = "text", text = string.format(
+                "MultiEdit %s: 0/%d edits applied (%d no-op — old_string == new_string). File unchanged.",
+                path, #edits, skipped) }
+        end
         return { type = "error", error = "No edits applied." }
     end
 
@@ -151,6 +181,11 @@ function M.call(args, context)
     wf:write(content)
     wf:close()
 
+    if skipped > 0 then
+        return { type = "text", text = string.format(
+            "MultiEdit %s: %d/%d edits applied (%d no-op skipped).",
+            path, applied, #edits, skipped) }
+    end
     return { type = "text", text = string.format("MultiEdit %s: %d/%d edits applied.", path, applied, #edits) }
 end
 
