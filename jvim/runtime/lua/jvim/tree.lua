@@ -132,14 +132,16 @@ local function render()
         hl_group = glyph_hl,
       })
     end
-    local name_start = glyph_byte_end + 1
+    local name_start = math.min(glyph_byte_end + 1, #line)
     local name_hl = r.kind == "dir" and "JvimTreeDir" or "JvimTreeFile"
     if r.path == vim.api.nvim_buf_get_name(0) then
       name_hl = "JvimTreeOpened"
     end
-    vim.api.nvim_buf_set_extmark(state.buf, NS, i, name_start, {
-      end_row = i, end_col = #line, hl_group = name_hl,
-    })
+    if name_start < #line then
+      vim.api.nvim_buf_set_extmark(state.buf, NS, i, name_start, {
+        end_row = i, end_col = #line, hl_group = name_hl,
+      })
+    end
   end
 end
 
