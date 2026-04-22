@@ -11,14 +11,20 @@
 vim.opt.rtp:prepend(vim.fn.stdpath("data") .. "/site")
 
 --------------------------------------------------------------------------------
--- [2] BOOTSTRAP LAZY.NVIM
+-- [2] NATIVE PACKAGE LOADING
 --------------------------------------------------------------------------------
--- ##Section purpose: Auto-install lazy.nvim plugin manager on first launch if absent
-local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
-if not (vim.uv or vim.loop).fs_stat(lazypath) then
-  vim.fn.system({ "git", "clone", "--filter=blob:none", "https://github.com/folke/lazy.nvim.git", lazypath })
+-- ##Section purpose: All plugins are vendored under jvim/runtime/pack/jenova/start/
+-- and loaded by Neovim's native packpath at startup. No external plugin manager
+-- (no lazy.nvim, no packer) — everything ships with jvim.
+--
+-- Disable a few rarely-used built-ins for faster startup, matching the prior
+-- lazy.nvim performance.rtp.disabled_plugins set.
+for _, name in ipairs({
+  "gzip", "matchit", "matchparen", "netrwPlugin",
+  "tarPlugin", "tohtml", "tutor", "zipPlugin",
+}) do
+  vim.g["loaded_" .. name] = 1
 end
-vim.opt.rtp:prepend(lazypath)
 
 --------------------------------------------------------------------------------
 -- [3] MASTER EDITOR OPTIONS
@@ -51,29 +57,26 @@ opt.swapfile = false
 opt.maxmempattern = 2000
 
 --------------------------------------------------------------------------------
--- [4] PLUGIN ORCHESTRATION
+-- [4] PLUGIN CONFIGURATION
 --------------------------------------------------------------------------------
--- ##Section purpose: Load all plugin specs from nvim/lua/plugins/ via lazy.nvim
-require("lazy").setup("plugins", {
-  defaults = { lazy = false },
-  install = { colorscheme = { "kanagawa" } },
-  rocks = { enabled = false }, -- Fix for FreeBSD libc/rocks conflict
-  ui = { border = "rounded" },
-  performance = {
-    rtp = {
-      disabled_plugins = {
-        "gzip",
-        "matchit",
-        "matchparen",
-        "netrwPlugin",
-        "tarPlugin",
-        "tohtml",
-        "tutor",
-        "zipPlugin",
-      },
-    },
-  },
-})
+-- ##Section purpose: Plugins themselves are auto-discovered by packpath; these
+-- modules carry only the .setup() calls and Jenova-specific keymaps.
+for _, mod in ipairs({
+  "plugins.ui",
+  "plugins.editor",
+  "plugins.lsp",
+  "plugins.git",
+  "plugins.mini",
+  "plugins.dashboard",
+  "plugins.llama",
+  "plugins.chat",
+  "plugins.health",
+}) do
+  local ok, err = pcall(require, mod)
+  if not ok then
+    vim.notify(("Failed to load %s: %s"):format(mod, err), vim.log.levels.WARN)
+  end
+end
 
 --------------------------------------------------------------------------------
 -- [5] MASTER KEYBOARD ORCHESTRATION (General)
