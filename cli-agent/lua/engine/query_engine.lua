@@ -584,15 +584,24 @@ function QueryEngine:query(user_message, options)
 
                 if is_narration then
                     -- Reject the Brief and force the model to actually act.
-                    if not self._pending_embed_warnings then
-                        self._pending_embed_warnings = {}
-                    end
-                    table.insert(self._pending_embed_warnings,
+                    -- IMPORTANT: We must record a tool_result for this Brief
+                    -- tool_use to maintain the User→Assistant→User role
+                    -- alternation that providers (Anthropic/OpenAI) require.
+                    -- Without it, the assistant message added below would
+                    -- contain a tool_use with no matching tool_result on the
+                    -- next request and the API would reject the call.
+                    local nudge =
                         "[System: You called Brief with an announcement ('" ..
                         (br or ""):sub(1, 80) ..
                         "'). This is FORBIDDEN. DO NOT announce what you will do. " ..
-                        "IMMEDIATELY call the appropriate action tool (Bash, Read, Edit, etc.) " ..
-                        "and perform the work. Do not call Brief until the task is fully complete.]")
+                        "IMMEDIATELY call the appropriate action tool (Shell, Read, Edit, etc.) " ..
+                        "and perform the work. Do not call Brief until the task is fully complete.]"
+                    table.insert(tool_results_content, {
+                        type = "tool_result",
+                        tool_use_id = tool_use.id,
+                        content = nudge,
+                        is_error = true,
+                    })
                     -- Don't terminate the loop — continue so the nudge is sent
                     -- and the model gets another turn to act.
                 elseif br and #br > 0 then

@@ -13,7 +13,7 @@ FORBIDDEN uses of Brief:
 - Responding to "proceed", "go ahead", or "continue" with words instead of action
 - Calling Brief mid-task before the work is done
 
-CORRECT use: call the appropriate action tool first (Bash, Read, Edit, etc.), complete all work, THEN call Brief with the actual results.]]
+CORRECT use: call the appropriate action tool first (Shell, Read, Edit, etc.), complete all work, THEN call Brief with the actual results.]]
 
 M.parameters = {
     type = "object",
