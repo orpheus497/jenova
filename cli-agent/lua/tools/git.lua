@@ -56,9 +56,9 @@ local BLOCKED_FLAGS = {
 }
 
 -- Characters that could break shell quoting or inject commands.
--- Includes newlines (\n, \r) to prevent multi-line injection where a crafted
--- subcommand like "status\nid" would pass base_sub validation then execute id.
-local SHELL_META = "[;&|`$<>%(%){}%[%]\\!\n\r]"
+-- Restricted to true command separators/redirects only; braces and parens are
+-- valid in git revspecs like HEAD@{1} or main^{} so they must not be blocked.
+local SHELL_META = "[;&|`$<>\n\r]"
 
 function M.is_enabled() return true end
 function M.is_read_only() return true end
@@ -116,10 +116,18 @@ function M.call(args, context)
         return { type = "error", error = "Shell metacharacters are not allowed in git commands." }
     end
 
-    -- Reject blocked flags anywhere in sub + extra
-    for _, flag in ipairs(BLOCKED_FLAGS) do
-        if combined:find(flag, 1, true) then
-            return { type = "error", error = "Blocked option: " .. flag }
+    -- Reject blocked flags: tokenise first to avoid substring false-positives.
+    -- e.g. "--cached" contains "-c" but is not a blocked flag;
+    -- a path like "/data/delete/foo" contains "-D" but is not a flag at all.
+    local tokens = {}
+    for tok in (sub .. " " .. extra):gmatch("%S+") do
+        tokens[#tokens + 1] = tok
+    end
+    for _, tok in ipairs(tokens) do
+        for _, flag in ipairs(BLOCKED_FLAGS) do
+            if tok == flag or tok:sub(1, #flag + 1) == flag .. "=" then
+                return { type = "error", error = "Blocked option: " .. flag }
+            end
         end
     end
 

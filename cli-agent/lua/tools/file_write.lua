@@ -69,7 +69,8 @@ function M.call(args, context)
             if has_fb and fs_fb and fs_fb.mkdir then
                 fs_fb.mkdir(dir)
             else
-                os.execute('mkdir -p "' .. dir:gsub('"', '\\"') .. '" 2>/dev/null')
+                local shell = require("utils.shell")
+                os.execute("mkdir -p " .. shell.quote(dir) .. " 2>/dev/null")
             end
         end
     end

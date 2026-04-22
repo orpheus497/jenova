@@ -118,7 +118,10 @@ end
 -- Returns a compact `git diff --stat HEAD` so the model knows which files
 -- have been modified since the last commit without needing a full diff dump.
 function Context.get_git_diff_stat()
-    local handle = io.popen("git diff --stat HEAD 2>/dev/null | head -40")
+    local cwd = app_state.get_cwd()
+    local shell_ok, shell = pcall(require, "utils.shell")
+    local cwd_arg = (shell_ok and shell.quote(cwd)) or ('"' .. cwd .. '"')
+    local handle = io.popen("git -C " .. cwd_arg .. " diff --stat HEAD 2>/dev/null | head -40")
     if not handle then return nil end
     local out = handle:read("*a"):gsub("%s+$", "")
     handle:close()

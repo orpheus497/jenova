@@ -245,8 +245,8 @@ local function summarise_input(tool_name, input)
     return tool_name
 end
 
-function QueryEngine:_cache_file_read(path, text)
-    self._file_cache[path] = { text = text, ts = os.time() }
+function QueryEngine:_cache_file_read(path, text, num_lines)
+    self._file_cache[path] = { text = text, num_lines = num_lines, ts = os.time() }
 end
 
 function QueryEngine:_invalidate_cache(path)
@@ -291,11 +291,16 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
 
     -- ── Post-execution cache maintenance ──────────────────────────────
     if ok and not exec_err and type(result) == "table" then
-        if tool_name == "Read" and result.text and type(input) == "table" and input.file_path then
+        if tool_name == "Read" and result.text and type(input) == "table" and input.file_path
+               and not (input.offset and input.offset > 0) and not result.truncated then
             local paths = require("utils.paths")
             local resolved = paths.resolve(input.file_path, tool_context.cwd)
-            self:_cache_file_read(resolved, result.text)
-            result.num_lines = result.num_lines  -- passthrough
+            self:_cache_file_read(resolved, result.text, result.num_lines)
+            -- Surface truncation notice to the model as an embed warning, not in text
+            if result.truncation_hint then
+                if not self._pending_embed_warnings then self._pending_embed_warnings = {} end
+                table.insert(self._pending_embed_warnings, result.truncation_hint)
+            end
         elseif (tool_name == "Edit" or tool_name == "MultiEdit" or tool_name == "Write")
                and type(input) == "table" and input.file_path then
             -- Invalidate cache after any successful write so the next Read is fresh.
@@ -374,7 +379,7 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
             if not self._pending_embed_warnings then self._pending_embed_warnings = {} end
             table.insert(self._pending_embed_warnings, hint)
         end
-        -- If verdict is "fail" and this is an Edit/MultiEdit, inject the cached
+        -- If verdict is "retry" and this is an Edit/MultiEdit, inject the cached
         -- file content as a direct hint so the model can see the actual text.
         if (tool_name == "Edit" or tool_name == "MultiEdit")
            and verdict == "retry"

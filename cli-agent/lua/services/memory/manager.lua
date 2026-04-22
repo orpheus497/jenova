@@ -157,10 +157,13 @@ function Memory.log_error(tool_name, args_summary, error_msg)
         if vec then entry._vec = vec end
     end
 
-    -- Persistent
+    -- Persistent: strip _vec before writing to avoid bloating the .jsonl file.
+    -- The vector is session-only state; it will be recomputed on next load if needed.
     local f = io.open(ERROR_FILE, "a")
     if f then
-        f:write(json.stringify(entry) .. "\n")
+        local disk_entry = {}
+        for k, v in pairs(entry) do if k ~= "_vec" then disk_entry[k] = v end end
+        f:write(json.stringify(disk_entry) .. "\n")
         f:close()
     end
 
@@ -265,7 +268,9 @@ function Memory.record_action(tool_name, args, result, success)
 
     local f = io.open(ACTION_FILE, "a")
     if f then
-        f:write(json.stringify(entry) .. "\n")
+        local disk_entry = {}
+        for k, v in pairs(entry) do if k ~= "_vec" then disk_entry[k] = v end end
+        f:write(json.stringify(disk_entry) .. "\n")
         f:close()
     end
 end

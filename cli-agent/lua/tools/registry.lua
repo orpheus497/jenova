@@ -185,7 +185,10 @@ function M.load_builtin_tools()
     -- Git: only when working directory is inside a git repository.
     -- Avoids advertising a tool that will always fail in non-repo contexts,
     -- and keeps the tool list lean for models running without git.
-    local h = io.popen("git rev-parse --is-inside-work-tree 2>/dev/null")
+    local app_state_ok, app_state = pcall(require, "state.app_state")
+    local session_cwd = (app_state_ok and app_state.get_cwd and app_state.get_cwd()) or "."
+    local shell = require("utils.shell")
+    local h = io.popen("git -C " .. shell.quote(session_cwd) .. " rev-parse --is-inside-work-tree 2>/dev/null")
     local is_git = h and h:read("*l") == "true"
     if h then h:close() end
     if is_git then
