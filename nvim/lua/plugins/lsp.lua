@@ -1,59 +1,26 @@
--- ##Script function and purpose: LSP stack — Mason package manager (manual mode
--- only; no auto-installs because Mason's prebuilt binaries are Linux-only),
--- nvim-lspconfig with FreeBSD versioned binary detection, and nvim-cmp
--- completion engine with LSP/buffer/path/snippet sources.
+-- LSP stack: mason, nvim-lspconfig, lazydev, nvim-cmp, conform.
 
--- lazydev — Lua LSP type annotations for the Neovim API (lua filetypes only)
 require("lazydev").setup({
-  library = {
-    { path = "luvit-meta/library", words = { "vim%.uv" } },
-  },
+  library = { { path = "luvit-meta/library", words = { "vim%.uv" } } },
 })
 
--- Mason — package manager UI (no auto-install; FreeBSD/BSD users install LSP
--- servers via pkg/ports, Linux users via their distro package manager).
 require("mason").setup({
   ui = {
     border = "rounded",
-    icons = {
-      package_installed = "✓",
-      package_pending = "➜",
-      package_uninstalled = "✗",
-    },
+    icons = { package_installed = "✓", package_pending = "➜", package_uninstalled = "✗" },
   },
 })
-require("mason-lspconfig").setup({
-  ensure_installed = {},
-  automatic_installation = false,
-})
+require("mason-lspconfig").setup({ ensure_installed = {}, automatic_installation = false })
 
--- ── Diagnostic display ────────────────────────────────────────────────
--- Neovim 0.11 ships with virtual_text DISABLED by default (see
--- :h news-0.11). Without re-enabling it, LSP errors/warnings produce no
--- inline messages — only signs in the gutter — which makes the editor
--- look like linting is broken even when servers are attached. Restore
--- the classic UX: inline virtual text (truncated to the right of code),
--- sign-column markers, underlines, severity-based ordering, and a
--- bordered hover float that names the source server when ambiguous.
 vim.diagnostic.config({
-  virtual_text = {
-    spacing = 2,
-    prefix  = "●",
-    source  = "if_many",
-  },
+  virtual_text = { spacing = 2, prefix = "●", source = "if_many" },
   signs            = true,
   underline        = true,
   update_in_insert = false,
   severity_sort    = true,
-  float = {
-    border = "rounded",
-    source = "if_many",
-    header = "",
-    prefix = "",
-  },
+  float = { border = "rounded", source = "if_many", header = "", prefix = "" },
 })
 
--- Sign column glyphs for each severity (Neovim 0.10+ unified API).
 for sev, icon in pairs({ Error = "", Warn = "", Info = "", Hint = "" }) do
   local hl = "DiagnosticSign" .. sev
   vim.fn.sign_define(hl, { text = icon, texthl = hl, numhl = hl })
@@ -61,13 +28,10 @@ end
 
 local capabilities = require("cmp_nvim_lsp").default_capabilities()
 
--- FreeBSD/Linux binary detection — tries versioned names for system-installed
--- LSP servers (FreeBSD LLVM is versioned: clangd19, etc.)
 local function get_cmd(server)
   if server == "clangd" then
     for _, v in ipairs({ "19", "18", "17", "15", "" }) do
-      local name = "clangd" .. v
-      if vim.fn.executable(name) == 1 then return { name } end
+      if vim.fn.executable("clangd" .. v) == 1 then return { "clangd" .. v } end
     end
   elseif server == "rust_analyzer" then
     if vim.fn.executable("rust-analyzer") == 1 then return { "rust-analyzer" } end
@@ -78,20 +42,17 @@ local function get_cmd(server)
   elseif server == "zls" then
     if vim.fn.executable("zls") == 1 then return { "zls" } end
   elseif server == "bashls" then
-    if vim.fn.executable("bash-language-server") == 1 then
-      return { "bash-language-server", "start" }
-    end
+    if vim.fn.executable("bash-language-server") == 1 then return { "bash-language-server", "start" } end
   elseif server == "gopls" then
     if vim.fn.executable("gopls") == 1 then return { "gopls" } end
   end
   return nil
 end
 
-local servers = { "clangd", "rust_analyzer", "gopls", "pyright", "zls", "bashls", "lua_ls" }
-for _, server in ipairs(servers) do
+for _, server in ipairs({ "clangd", "rust_analyzer", "gopls", "pyright", "zls", "bashls", "lua_ls" }) do
   local config = { capabilities = capabilities }
-  local custom_cmd = get_cmd(server)
-  if custom_cmd then config.cmd = custom_cmd end
+  local cmd = get_cmd(server)
+  if cmd then config.cmd = cmd end
   if server == "lua_ls" then
     config.settings = { Lua = { telemetry = { enable = false } } }
   end
@@ -103,21 +64,19 @@ for _, server in ipairs(servers) do
   end
 end
 
--- Buffer-local LSP keymaps when a server attaches
 vim.api.nvim_create_autocmd("LspAttach", {
   group = vim.api.nvim_create_augroup("jenova_lsp_attach", { clear = true }),
   callback = function(ev)
     local o = { buffer = ev.buf }
-    vim.keymap.set("n", "gd", vim.lsp.buf.definition, o)
-    vim.keymap.set("n", "K",  vim.lsp.buf.hover,      o)
-    vim.keymap.set("n", "<leader>ca", vim.lsp.buf.code_action, o)
-    vim.keymap.set("n", "<leader>rn", vim.lsp.buf.rename,      o)
+    vim.keymap.set("n", "gd",         vim.lsp.buf.definition,    o)
+    vim.keymap.set("n", "K",          vim.lsp.buf.hover,         o)
+    vim.keymap.set("n", "<leader>ca", vim.lsp.buf.code_action,   o)
+    vim.keymap.set("n", "<leader>rn", vim.lsp.buf.rename,        o)
     vim.keymap.set("n", "<leader>cd", vim.diagnostic.open_float, o)
   end,
 })
 
--- nvim-cmp — completion engine
-local cmp = require("cmp")
+local cmp     = require("cmp")
 local lspkind = require("lspkind")
 cmp.setup({
   snippet = {
@@ -138,10 +97,31 @@ cmp.setup({
     { name = "buffer" },
   }),
   formatting = {
-    format = lspkind.cmp_format({
-      mode = "symbol_text",
-      maxwidth = 50,
-      ellipsis_char = "...",
-    }),
+    format = lspkind.cmp_format({ mode = "symbol_text", maxwidth = 50, ellipsis_char = "..." }),
   },
 })
+
+require("conform").setup({
+  formatters_by_ft = {
+    lua    = { "stylua" },
+    python = { "isort", "black" },
+    rust   = { "rustfmt" },
+    go     = { "gofmt", "goimports" },
+    c      = { "clang-format" },
+    cpp    = { "clang-format" },
+    sh     = { "shfmt" },
+    bash   = { "shfmt" },
+  },
+  format_on_save = function(bufnr)
+    if vim.api.nvim_buf_line_count(bufnr) > 5000 then return nil end
+    local ok, conform = pcall(require, "conform")
+    if not ok then return nil end
+    for _, f in ipairs(conform.list_formatters(bufnr)) do
+      if f.available then return { timeout_ms = 500, lsp_fallback = true } end
+    end
+    return nil
+  end,
+})
+vim.keymap.set("n", "<leader>cf", function()
+  require("conform").format({ async = true, lsp_fallback = true })
+end, { desc = "Format Buffer" })
