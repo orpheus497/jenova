@@ -54,10 +54,19 @@ local ALLOWED_SUBS = {
 -- false-positive on legitimate inspection commands. We block `--set-upstream`
 -- explicitly to prevent the upstream-tracking mutation, and `push` is not in
 -- the allowlist anyway.
+--
+-- Note: `-c` is also intentionally NOT blocked globally. This tool always
+-- places user-supplied args AFTER the subcommand, so a `-c` token in args is
+-- parsed by git as a subcommand flag (e.g. `git show -c` for combined-merge
+-- diff, `git log -c`), never as the global config override (`git -c k=v sub`)
+-- which would have to come BEFORE the subcommand. Blocking it here would
+-- false-positive on legitimate read-only inspection commands. We still block
+-- `--git-dir/--work-tree/--config-env` to prevent any redirection escapes,
+-- and `--ext-diff/--textconv` to prevent triggering external programs.
 local BLOCKED_FLAGS = {
     "--force", "-f", "--hard", "--mirror", "--delete", "-D",
     "--push", "--set-upstream",
-    "--git-dir", "--work-tree", "-c", "--config-env",
+    "--git-dir", "--work-tree", "--config-env",
     "--ext-diff", "--textconv",
 }
 
@@ -86,17 +95,15 @@ local SUBCOMMAND_BLOCKED_FLAGS = {
     },
 }
 
--- Characters that could break shell quoting or inject commands.
--- Includes newlines (\n, \r) to prevent multi-line injection where a crafted
--- subcommand like "status\nid" would pass base_sub validation then execute id.
--- Notes:
---   • [ ] are intentionally permitted — valid in pathspecs/globs and log
---     search patterns; every parsed token is shell.quote()'d before the shell
---     sees it.
---   • backslash is also permitted because the shell-word splitter below
---     interprets it as an escape (e.g. "file\ name.txt"), and parsed tokens
---     are likewise shell.quote()'d.
-local SHELL_META = "[;&|`$<>%(%){}!\n\r]"
+-- Pre-tokenisation safety check.  We rely on the POSIX-aware shell-word
+-- splitter below combined with shell.quote() on every parsed token to
+-- neutralise per-character shell metas (`;`, `&`, `|`, `` ` ``, `$`, `<`,
+-- `>`, parens/braces, `!`, `[`, `]`, `\`) when they appear inside legitimate
+-- quoted args (e.g. `git log --grep='fix!'`, pathspecs containing `[`,
+-- filenames with `;` or `$`).  The only characters that the tokeniser
+-- cannot make safe are raw line terminators, which would let a crafted
+-- subcommand like "status\nid" inject a second command.  Block ONLY those.
+local SHELL_META = "[\n\r]"
 
 function M.is_enabled() return true end
 function M.is_read_only() return true end
@@ -146,12 +153,13 @@ function M.call(args, context)
 
     local extra = (args.args or ""):match("^%s*(.-)%s*$")
 
-    -- Reject shell metacharacters in the combined sub + extra string.
-    -- Checking only `extra` allowed injection via a crafted subcommand like
-    -- "status; id" whose base_sub passes the allowlist check.
+    -- Reject raw line terminators in the combined sub + extra string.
+    -- All other shell metas are handled per-token by shell.quote() below,
+    -- which makes them safe even when present in legitimate args
+    -- (e.g. `git log --grep='fix!'`, pathspecs containing `;` or `$`).
     local combined = sub .. " " .. extra
     if combined:find(SHELL_META) then
-        return { type = "error", error = "Shell metacharacters are not allowed in git commands." }
+        return { type = "error", error = "Newlines are not allowed in git commands." }
     end
 
     -- Resolve and validate working directory
@@ -293,14 +301,27 @@ function M.call(args, context)
         table.insert(quoted_args, shell.quote(tok))
     end
 
+    -- For diff-producing subcommands, force git to use its built-in diff
+    -- machinery and skip user-defined external diff drivers / textconv
+    -- filters.  These can be configured globally (gitconfig) or per repo
+    -- (.gitattributes) and would otherwise let a hostile repository run
+    -- arbitrary external programs through what we advertise as a read-only
+    -- inspection tool.  The `--no-ext-diff` and `--no-textconv` flags must
+    -- precede the subcommand args so git applies them before any pathspec.
+    local DIFF_SAFE_SUBS = { diff = true, show = true, log = true, blame = true }
+    local fixed_flags = ""
+    if DIFF_SAFE_SUBS[base_sub] then
+        fixed_flags = "--no-ext-diff --no-textconv "
+    end
+
     -- Cap output by piping through `head -N+1` so the OS terminates git
     -- early and doesn't materialise multi-MB output for nothing. We read
     -- one extra line (MAX_LINES + 1) so we can detect truncation: if it
     -- exists, we know there was more, even if we don't know how much.
     local MAX_LINES = 600
     local cmd = string.format(
-        "git --no-pager -C %s %s %s 2>&1 | head -%d",
-        shell.quote(cwd), shell.quote(sub), table.concat(quoted_args, " "), MAX_LINES + 1
+        "git --no-pager -C %s %s %s%s 2>&1 | head -%d",
+        shell.quote(cwd), shell.quote(sub), fixed_flags, table.concat(quoted_args, " "), MAX_LINES + 1
     )
 
     local h = io.popen(cmd)

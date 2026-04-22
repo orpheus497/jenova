@@ -66,12 +66,24 @@ end
 --   • trailing spaces/tabs stripped per line
 function M.normalize_ws(s)
     s = s:gsub("\r\n", "\n"):gsub("\r", "\n")
+    -- Iterate without appending a trailing "\n" copy of `s` (which would
+    -- double the memory footprint on multi-MB files).  Walk newline
+    -- positions with string.find and slice each line in place.
     local lines = {}
-    for line in (s .. "\n"):gmatch("([^\n]*)\n") do
+    local count = 0
+    local pos = 1
+    local slen = #s
+    while pos <= slen + 1 do
+        local nl = s:find("\n", pos, true)
+        local ending = nl or (slen + 1)
+        local line = s:sub(pos, ending - 1)
         -- Strip only spaces and tabs (not \v/\f) so the matcher's behaviour
         -- matches the comment above and so vertical-tab/form-feed bytes are
         -- preserved as-is in the file.
-        table.insert(lines, (line:gsub("[ \t]+$", "")))
+        count = count + 1
+        lines[count] = (line:gsub("[ \t]+$", ""))
+        if not nl then break end
+        pos = nl + 1
     end
     if lines[#lines] == "" then table.remove(lines) end
     return table.concat(lines, "\n")

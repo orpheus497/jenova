@@ -61,11 +61,22 @@ local function build_hint(content, old_string)
         ["true"]=true,["false"]=true,["nil"]=true,["repeat"]=true,["until"]=true,
         ["break"]=true,["goto"]=true,
     }
-    -- Skip over common keywords; use the first substantive identifier
+    -- Skip over common keywords; use the first substantive identifier.
+    -- Try a case-sensitive plain search first to avoid lowercasing the entire
+    -- file content (which doubles peak memory on large files and is wasted
+    -- work in the common case where old_string was copied verbatim from a
+    -- prior Read). Fall back to a case-insensitive probe only when the exact
+    -- token isn't present.
     local hint_pos = 1
+    local lower_content
     for word in old_string:gmatch("[%w_]+") do
-        if not KEYWORDS[word:lower()] then
-            local p = content:lower():find(word:lower(), 1, true)
+        local word_lower = word:lower()
+        if not KEYWORDS[word_lower] then
+            local p = content:find(word, 1, true)
+            if not p then
+                lower_content = lower_content or content:lower()
+                p = lower_content:find(word_lower, 1, true)
+            end
             if p then hint_pos = p end
             break
         end

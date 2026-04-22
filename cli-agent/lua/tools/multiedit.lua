@@ -104,6 +104,7 @@ function M.call(args, context)
     f:close()
 
     local applied = 0
+    local skipped = 0
     local failed  = {}
 
     -- Dry-run pass: validate ALL edits against the current content before
@@ -120,7 +121,13 @@ function M.call(args, context)
             -- gsub matching between every byte (or insert at byte 1).
             table.insert(failed, string.format("edit[%d]: old_string must be non-empty", i))
         elseif old == new then
-            table.insert(failed, string.format("edit[%d]: old_string == new_string, skipped", i))
+            -- No-op edit: the requested replacement is identical to the
+            -- existing text. Treat this as a successful skip — neither
+            -- counted as `applied` (no real change made) nor recorded in
+            -- `failed` (which would abort the entire atomic batch). This
+            -- prevents otherwise-valid sibling edits from being rejected
+            -- because of an inert duplicate request.
+            skipped = skipped + 1
         else
             local result, err = apply_one(dry_content, old, new, edit.replace_all)
             if err then
@@ -139,6 +146,11 @@ function M.call(args, context)
     end
 
     if applied == 0 then
+        if skipped > 0 then
+            return { type = "text", text = string.format(
+                "MultiEdit %s: 0/%d edits applied (%d no-op — old_string == new_string). File unchanged.",
+                path, #edits, skipped) }
+        end
         return { type = "error", error = "No edits applied." }
     end
 
@@ -152,6 +164,11 @@ function M.call(args, context)
     wf:write(content)
     wf:close()
 
+    if skipped > 0 then
+        return { type = "text", text = string.format(
+            "MultiEdit %s: %d/%d edits applied (%d no-op skipped).",
+            path, applied, #edits, skipped) }
+    end
     return { type = "text", text = string.format("MultiEdit %s: %d/%d edits applied.", path, applied, #edits) }
 end
 

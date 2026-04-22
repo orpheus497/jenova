@@ -577,12 +577,23 @@ function QueryEngine:query(user_message, options)
         end
 
         -- Flush any embed-based self-correction warnings generated during this
-        -- turn's tool executions. These are injected as user-role [System: ...]
-        -- messages immediately after the tool results so the model reads them
-        -- before generating its next action.
+        -- turn's tool executions. Many LLM providers (Anthropic, OpenAI) reject
+        -- requests with consecutive same-role messages, and tool_results are
+        -- already user-role. Append warnings to the last user message instead
+        -- of inserting a new one to preserve strict role alternation.
         if self._pending_embed_warnings and #self._pending_embed_warnings > 0 then
-            for _, warning in ipairs(self._pending_embed_warnings) do
-                table.insert(self.messages, { role = "user", content = warning })
+            local warning_text = table.concat(self._pending_embed_warnings, "\n\n")
+            local last_msg = self.messages[#self.messages]
+            if last_msg and last_msg.role == "user" then
+                if type(last_msg.content) == "string" then
+                    last_msg.content = last_msg.content .. "\n\n" .. warning_text
+                elseif type(last_msg.content) == "table" then
+                    table.insert(last_msg.content, { type = "text", text = warning_text })
+                else
+                    last_msg.content = warning_text
+                end
+            else
+                table.insert(self.messages, { role = "user", content = warning_text })
             end
             self._pending_embed_warnings = {}
         end

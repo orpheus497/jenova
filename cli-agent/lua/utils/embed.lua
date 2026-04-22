@@ -10,8 +10,22 @@ local M = {}
 local initialized = false
 local EMBED_URL = nil
 
+-- Negative-cache for failed init/encode attempts. When the embed sidecar is
+-- down, every record_action()/log_error() call would otherwise re-run init()
+-- (a curl health check) and pay ~1s of latency per tool call. Remember the
+-- most recent failure timestamp and skip work for a short backoff window so
+-- the agent loop stays responsive while embeddings are unavailable.
+local last_init_failure_ts = 0
+local INIT_BACKOFF_SECONDS = 30
+
+local function in_init_backoff()
+    if last_init_failure_ts == 0 then return false end
+    return (os.time() - last_init_failure_ts) < INIT_BACKOFF_SECONDS
+end
+
 function M.init()
     if initialized then return true end
+    if in_init_backoff() then return false end
     
     local endpoints = trio.get_endpoints()
     EMBED_URL = string.format("http://%s:%d", endpoints.host, endpoints.embed_port)
@@ -42,9 +56,11 @@ function M.init()
 
     if res and res ~= "" then
         initialized = true
+        last_init_failure_ts = 0
         return true
     end
-    
+
+    last_init_failure_ts = os.time()
     return false
 end
 
