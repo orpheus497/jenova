@@ -57,7 +57,7 @@ local function normalize(s)
     s = s:gsub("\r\n", "\n"):gsub("\r", "\n")
     local lines = {}
     for line in (s .. "\n"):gmatch("([^\n]*)\n") do
-        table.insert(lines, line:gsub("%s+$", ""))
+        table.insert(lines, (line:gsub("%s+$", "")))
     end
     if lines[#lines] == "" then table.remove(lines) end
     return table.concat(lines, "\n")
