@@ -579,20 +579,52 @@ function QueryEngine:query(user_message, options)
         -- Flush any embed-based self-correction warnings generated during this
         -- turn's tool executions. Many LLM providers (Anthropic, OpenAI) reject
         -- requests with consecutive same-role messages, and tool_results are
-        -- already user-role. Append warnings to the last user message instead
-        -- of inserting a new one to preserve strict role alternation.
+        -- already user-role. We must also be careful about HOW we attach: the
+        -- jenova_backend provider converts each tool_result block into a
+        -- separate role="tool" message and DROPS any non-tool_result blocks in
+        -- the same user message — so a `{type="text"}` sibling would silently
+        -- vanish before reaching the model. Append the warning to the LAST
+        -- tool_result's `content` string instead, which the provider preserves
+        -- verbatim into the role="tool" payload.
         if self._pending_embed_warnings and #self._pending_embed_warnings > 0 then
             local warning_text = table.concat(self._pending_embed_warnings, "\n\n")
             local last_msg = self.messages[#self.messages]
+            local attached = false
             if last_msg and last_msg.role == "user" then
-                if type(last_msg.content) == "string" then
+                if type(last_msg.content) == "table" then
+                    -- Find the last tool_result block and append to its content.
+                    for i = #last_msg.content, 1, -1 do
+                        local block = last_msg.content[i]
+                        if type(block) == "table" and block.type == "tool_result" then
+                            if type(block.content) == "string" then
+                                block.content = block.content .. "\n\n" .. warning_text
+                            elseif type(block.content) == "table" then
+                                -- Nested content array — append a text block;
+                                -- providers that consume the array form do
+                                -- preserve text blocks here.
+                                table.insert(block.content, { type = "text", text = warning_text })
+                            else
+                                block.content = warning_text
+                            end
+                            attached = true
+                            break
+                        end
+                    end
+                    if not attached then
+                        -- No tool_result block — safe to add as a sibling text
+                        -- block (provider only filters non-tool_result blocks
+                        -- when a tool_result IS present).
+                        table.insert(last_msg.content, { type = "text", text = warning_text })
+                        attached = true
+                    end
+                elseif type(last_msg.content) == "string" then
                     last_msg.content = last_msg.content .. "\n\n" .. warning_text
-                elseif type(last_msg.content) == "table" then
-                    table.insert(last_msg.content, { type = "text", text = warning_text })
-                else
-                    last_msg.content = warning_text
+                    attached = true
                 end
-            else
+            end
+            if not attached then
+                -- Fallback: emit a fresh user message (only happens when there
+                -- is no preceding user message at all, which is rare).
                 table.insert(self.messages, { role = "user", content = warning_text })
             end
             self._pending_embed_warnings = {}

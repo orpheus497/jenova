@@ -112,29 +112,38 @@ function M.call(args, context)
     -- succeed and the file is written once, or none are applied.
     local dry_content = content
     for i, edit in ipairs(edits) do
-        local old = edit.old_string
-        local new = edit.new_string
-        if type(old) ~= "string" or type(new) ~= "string" then
-            table.insert(failed, string.format("edit[%d]: old_string and new_string must be strings", i))
-        elseif old == "" then
-            -- See file_edit: empty old_string would corrupt the file via
-            -- gsub matching between every byte (or insert at byte 1).
-            table.insert(failed, string.format("edit[%d]: old_string must be non-empty", i))
-        elseif old == new then
-            -- No-op edit: the requested replacement is identical to the
-            -- existing text. Treat this as a successful skip — neither
-            -- counted as `applied` (no real change made) nor recorded in
-            -- `failed` (which would abort the entire atomic batch). This
-            -- prevents otherwise-valid sibling edits from being rejected
-            -- because of an inert duplicate request.
-            skipped = skipped + 1
+        if type(edit) ~= "table" then
+            -- Non-object element (e.g. a stray string/number in the array)
+            -- would crash with "attempt to index a string value" on the
+            -- field accesses below. Report a structured per-edit failure
+            -- instead of letting the registry surface a generic tool error.
+            table.insert(failed, string.format(
+                "edit[%d]: must be an object with old_string/new_string (got %s)", i, type(edit)))
         else
-            local result, err = apply_one(dry_content, old, new, edit.replace_all)
-            if err then
-                table.insert(failed, string.format("edit[%d]: %s", i, err))
+            local old = edit.old_string
+            local new = edit.new_string
+            if type(old) ~= "string" or type(new) ~= "string" then
+                table.insert(failed, string.format("edit[%d]: old_string and new_string must be strings", i))
+            elseif old == "" then
+                -- See file_edit: empty old_string would corrupt the file via
+                -- gsub matching between every byte (or insert at byte 1).
+                table.insert(failed, string.format("edit[%d]: old_string must be non-empty", i))
+            elseif old == new then
+                -- No-op edit: the requested replacement is identical to the
+                -- existing text. Treat this as a successful skip — neither
+                -- counted as `applied` (no real change made) nor recorded in
+                -- `failed` (which would abort the entire atomic batch). This
+                -- prevents otherwise-valid sibling edits from being rejected
+                -- because of an inert duplicate request.
+                skipped = skipped + 1
             else
-                dry_content = result
-                applied = applied + 1
+                local result, err = apply_one(dry_content, old, new, edit.replace_all)
+                if err then
+                    table.insert(failed, string.format("edit[%d]: %s", i, err))
+                else
+                    dry_content = result
+                    applied = applied + 1
+                end
             end
         end
     end

@@ -5,6 +5,7 @@
 
 local paths = require("utils.paths")
 local shell = require("utils.shell")
+local json = require("utils.json_fallback")
 
 local M = {}
 M.name = "Git"
@@ -296,11 +297,6 @@ function M.call(args, context)
         end
     end
 
-    local quoted_args = {}
-    for _, tok in ipairs(raw_tokens) do
-        table.insert(quoted_args, shell.quote(tok))
-    end
-
     -- For diff-producing subcommands, force git to use its built-in diff
     -- machinery and skip user-defined external diff drivers / textconv
     -- filters.  These can be configured globally (gitconfig) or per repo
@@ -309,36 +305,114 @@ function M.call(args, context)
     -- inspection tool.  The `--no-ext-diff` and `--no-textconv` flags must
     -- precede the subcommand args so git applies them before any pathspec.
     local DIFF_SAFE_SUBS = { diff = true, show = true, log = true, blame = true }
-    local fixed_flags = ""
+    local extra_git_flags = {}
     if DIFF_SAFE_SUBS[base_sub] then
-        fixed_flags = "--no-ext-diff --no-textconv "
+        table.insert(extra_git_flags, "--no-ext-diff")
+        table.insert(extra_git_flags, "--no-textconv")
     end
 
-    -- Cap output by piping through `head -N+1` so the OS terminates git
-    -- early and doesn't materialise multi-MB output for nothing. We read
-    -- one extra line (MAX_LINES + 1) so we can detect truncation: if it
-    -- exists, we know there was more, even if we don't know how much.
+    -- Output cap and total wall-clock timeout.  A slow `git` (large diff,
+    -- pathological blame) or any subcommand that touches a hung remote
+    -- could otherwise wedge the agent loop indefinitely.  Use the C FFI
+    -- subprocess runner (preferred — argv-based, hard timeout, no shell)
+    -- when available, with in-process line capping; fall back to io.popen
+    -- with a `head` pipe when the FFI helper is unavailable.
     local MAX_LINES = 600
-    local cmd = string.format(
-        "git --no-pager -C %s %s %s%s 2>&1 | head -%d",
-        shell.quote(cwd), shell.quote(sub), fixed_flags, table.concat(quoted_args, " "), MAX_LINES + 1
-    )
+    local TIMEOUT_MS = 30000
 
-    local h = io.popen(cmd)
-    if not h then return { type = "error", error = "Failed to spawn git" } end
-
-    local lines = {}
-    while true do
-        local line = h:read("*l")
-        if not line then break end
-        table.insert(lines, line)
+    local function build_argv()
+        local argv = { "--no-pager", "-C", cwd }
+        for _, f in ipairs(extra_git_flags) do table.insert(argv, f) end
+        table.insert(argv, sub)
+        for _, tok in ipairs(raw_tokens) do table.insert(argv, tok) end
+        return argv
     end
-    h:close()
 
-    local truncated = #lines > MAX_LINES
-    if truncated then
-        -- Drop the +1 probe line so output ends at a real boundary
-        lines[#lines] = nil
+    local function cap_lines(text)
+        -- Split into at most MAX_LINES + 1 lines so we can detect overflow.
+        local lines, count, pos, slen = {}, 0, 1, #text
+        while pos <= slen + 1 do
+            local nl = text:find("\n", pos, true)
+            local ending = nl or (slen + 1)
+            count = count + 1
+            lines[count] = text:sub(pos, ending - 1)
+            if count > MAX_LINES then break end
+            if not nl then break end
+            pos = nl + 1
+        end
+        if lines[#lines] == "" and not (count > MAX_LINES) then
+            table.remove(lines)
+        end
+        return lines
+    end
+
+    local lines, truncated, timed_out
+    local _jenova = rawget(_G, "jenova")
+    if type(_jenova) == "table" and _jenova.process and _jenova.process.spawn_json then
+        local argv = build_argv()
+        -- Combine stdout+stderr (git prints diagnostics on stderr).
+        local config = json.stringify({
+            command = "git",
+            args = argv,
+            timeout_ms = TIMEOUT_MS,
+            capture_stdout = true,
+            capture_stderr = true,
+        })
+        local result_json = _jenova.process.spawn_json(config)
+        if not result_json then
+            return { type = "error", error = "Failed to spawn git" }
+        end
+        local ok, result = pcall(json.parse, result_json)
+        if not ok or type(result) ~= "table" then
+            return { type = "error", error = "Failed to parse git result" }
+        end
+        local out = (result.stdout or "")
+        if result.stderr and #result.stderr > 0 then
+            out = (#out > 0) and (out .. "\n" .. result.stderr) or result.stderr
+        end
+        timed_out = result.timed_out or false
+        lines = cap_lines(out)
+        truncated = #lines > MAX_LINES
+        if truncated then lines[#lines] = nil end
+    else
+        -- Fallback path: cap output via `head -N+1` shell pipeline, and
+        -- defend against runaway runtime with `timeout` if available.
+        local head_cmd = "head -" .. (MAX_LINES + 1)
+        local quoted_args = {}
+        for _, tok in ipairs(raw_tokens) do
+            table.insert(quoted_args, shell.quote(tok))
+        end
+        local fixed_flags = ""
+        if #extra_git_flags > 0 then
+            local qf = {}
+            for _, f in ipairs(extra_git_flags) do table.insert(qf, shell.quote(f)) end
+            fixed_flags = table.concat(qf, " ") .. " "
+        end
+        local timeout_secs = math.floor(TIMEOUT_MS / 1000)
+        local cmd = string.format(
+            "command -v timeout >/dev/null 2>&1 && TO='timeout %d' || TO=''; $TO git --no-pager -C %s %s %s%s 2>&1 | %s",
+            timeout_secs,
+            shell.quote(cwd), shell.quote(sub), fixed_flags,
+            table.concat(quoted_args, " "), head_cmd
+        )
+        local h = io.popen(cmd)
+        if not h then return { type = "error", error = "Failed to spawn git" } end
+        lines = {}
+        while true do
+            local line = h:read("*l")
+            if not line then break end
+            table.insert(lines, line)
+        end
+        h:close()
+        truncated = #lines > MAX_LINES
+        if truncated then lines[#lines] = nil end
+    end
+
+    if timed_out then
+        local prefix = (#lines > 0) and (table.concat(lines, "\n") .. "\n\n") or ""
+        return { type = "error", error = string.format(
+            "%s[git timed out after %dms — narrow the command (add a path, --since, -n) and retry]",
+            prefix, TIMEOUT_MS) }
     end
 
     if #lines == 0 and not truncated then

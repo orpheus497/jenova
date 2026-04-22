@@ -10,22 +10,26 @@ local M = {}
 local initialized = false
 local EMBED_URL = nil
 
--- Negative-cache for failed init/encode attempts. When the embed sidecar is
--- down, every record_action()/log_error() call would otherwise re-run init()
--- (a curl health check) and pay ~1s of latency per tool call. Remember the
--- most recent failure timestamp and skip work for a short backoff window so
--- the agent loop stays responsive while embeddings are unavailable.
-local last_init_failure_ts = 0
-local INIT_BACKOFF_SECONDS = 30
+-- Negative-cache for failed init AND encode attempts. When the embed sidecar
+-- is down or unresponsive, every record_action()/log_error() call would
+-- otherwise re-run init() (~1s curl health check) and/or pay the full encode
+-- timeout per tool call. Remember the most recent failure timestamp and skip
+-- network work for a short backoff window so the agent loop stays responsive
+-- while embeddings are unavailable. Both init() and encode() update the
+-- timestamp on failure; encode() additionally clears `initialized` on a
+-- request/parse failure so the next call re-checks via init() (which is the
+-- backoff gate).
+local last_failure_ts = 0
+local FAILURE_BACKOFF_SECONDS = 30
 
-local function in_init_backoff()
-    if last_init_failure_ts == 0 then return false end
-    return (os.time() - last_init_failure_ts) < INIT_BACKOFF_SECONDS
+local function in_backoff()
+    if last_failure_ts == 0 then return false end
+    return (os.time() - last_failure_ts) < FAILURE_BACKOFF_SECONDS
 end
 
 function M.init()
     if initialized then return true end
-    if in_init_backoff() then return false end
+    if in_backoff() then return false end
     
     local endpoints = trio.get_endpoints()
     EMBED_URL = string.format("http://%s:%d", endpoints.host, endpoints.embed_port)
@@ -56,11 +60,11 @@ function M.init()
 
     if res and res ~= "" then
         initialized = true
-        last_init_failure_ts = 0
+        last_failure_ts = 0
         return true
     end
 
-    last_init_failure_ts = os.time()
+    last_failure_ts = os.time()
     return false
 end
 
@@ -138,11 +142,25 @@ function M.encode(text, task, opts)
 
     os.remove(tmp_file)
 
-    if not body or body == "" then return nil, "request failed" end
+    if not body or body == "" then
+        -- Sidecar unreachable / curl failed. Trigger backoff so subsequent
+        -- agent-loop calls don't repeatedly pay the full encode timeout.
+        last_failure_ts = os.time()
+        initialized = false
+        return nil, "request failed"
+    end
 
     local ok, data = pcall(json.parse, body)
-    if not ok or not data or not data.embedding then return nil, "parse failed" end
+    if not ok or not data or not data.embedding then
+        -- Malformed response (sidecar speaking but broken). Same backoff
+        -- treatment so we don't keep hammering it within the agent loop.
+        last_failure_ts = os.time()
+        initialized = false
+        return nil, "parse failed"
+    end
 
+    -- Success: clear any previous failure window.
+    last_failure_ts = 0
     return data.embedding
 end
 
