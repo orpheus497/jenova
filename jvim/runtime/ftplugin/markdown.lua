@@ -1,4 +1,4 @@
-vim.treesitter.start()
+pcall(vim.treesitter.start)
 
 vim.keymap.set('n', 'gO', function()
   require('vim.treesitter._headings').show_toc()
