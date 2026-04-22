@@ -40,10 +40,9 @@ jvim:
 	@if [ ! -f jvim/CMakeLists.txt ]; then \
 		echo "ERROR: jvim/ source tree missing." >&2; exit 1; \
 	fi
-	@cd jvim && cmake -B build \
-		-DCMAKE_BUILD_TYPE=RelWithDebInfo \
-		-DCMAKE_INSTALL_PREFIX="$(JENOVA_ROOT)/jvim/install" >/dev/null
-	@cmake --build jvim/build -j$(JOBS)
+	@$(MAKE) -C jvim \
+		CMAKE_BUILD_TYPE=RelWithDebInfo \
+		CMAKE_INSTALL_PREFIX="$(JENOVA_ROOT)/jvim/install"
 	@echo "   jvim built: jvim/build/bin/nvim"
 
 install:

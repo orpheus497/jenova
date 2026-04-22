@@ -337,12 +337,15 @@ add_subdirectory(src/tee)
 add_subdirectory(src/xxd)
 add_subdirectory(cmake.config)
 add_subdirectory(runtime)
-add_subdirectory(test)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/test/CMakeLists.txt)
+  add_subdirectory(test)
+endif()
 
 add_custom_target(uninstall
   COMMAND ${CMAKE_COMMAND} -P ${PROJECT_SOURCE_DIR}/cmake/UninstallHelper.cmake)
 
-if(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_CURRENT_SOURCE_DIR})
+if(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_CURRENT_SOURCE_DIR}
+    AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/cmake.packaging/CMakeLists.txt)
   add_subdirectory(cmake.packaging)
 endif()
 
