@@ -10,9 +10,9 @@
 # Usage: ./install.sh [--force] [--link] [--skip-nvim] [--skip-jvim]
 #                     [--skip-llama] [--client-only]
 #
-#   --force        Overwrite existing ~/.config/nvim without prompting and
+#   --force        Overwrite existing ~/.config/jvim without prompting and
 #                  force a fresh jvim rebuild even if jvim/build/ exists
-#   --link         Install Jenova nvim config as symlinks into ~/.config/nvim
+#   --link         Install Jenova nvim config as symlinks into ~/.config/jvim
 #                  (development workflow — edits in repo apply immediately)
 #   --skip-nvim    Skip the Neovim/jvim config deployment step
 #   --skip-jvim    Skip building the bundled jvim editor (jvim/)
@@ -27,7 +27,7 @@
 #   3. Checks for llama.cpp build (skipped with --client-only)
 #   4. Downloads required model files (skipped with --client-only)
 #   5. Detects whether the installed nvim is jvim or upstream Neovim
-#   6. Installs the Jenova nvim configuration to ~/.config/nvim/
+#   6. Installs the Jenova nvim configuration to ~/.config/jvim/
 #   7. Installs bin/jvim, bin/jenova, bin/jenova-ca symlinks to PATH
 #   8. Prints a summary plus next-step commands
 
@@ -35,7 +35,7 @@ set -e
 
 JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
 NVIM_CONFIG_SRC="$JENOVA_ROOT/nvim"
-NVIM_CONFIG_DST="$HOME/.config/nvim"
+NVIM_CONFIG_DST="$HOME/.config/jvim"
 
 FORCE=0
 LINK=0
@@ -176,7 +176,7 @@ if [ "$SKIP_NVIM" = "0" ]; then
             *JVIM*) ok "in-tree jvim build ($_NVIM_VLINE) — fully integrated" ;;
             *)      warn "in-tree binary $_JVIM_BIN is not jvim ($_NVIM_VLINE)"; WARNINGS=$((WARNINGS + 1)) ;;
         esac
-    elif command -v nvim >/dev/null 2>&1; then
+    elif command -v jvim >/dev/null 2>&1; then
         _NVIM_VLINE=$(nvim --version 2>/dev/null | head -n 1)
         case "$_NVIM_VLINE" in
             *JVIM*)
@@ -437,11 +437,11 @@ fi  # CLIENT_ONLY model-checks guard
 # ---------------------------------------------------------------------------
 # 7. Neovim config installation
 # ---------------------------------------------------------------------------
-if [ "$SKIP_NVIM" = "0" ] && command -v nvim >/dev/null 2>&1; then
+if [ "$SKIP_NVIM" = "0" ] && command -v jvim >/dev/null 2>&1; then
     info "Installing Neovim configuration..."
 
     if [ -d "$NVIM_CONFIG_DST" ] && [ "$FORCE" = "0" ]; then
-        printf "  ~/.config/nvim already exists. Overwrite? [y/N] "
+        printf "  ~/.config/jvim already exists. Overwrite? [y/N] "
         read -r _ans
         case "$_ans" in
             y|Y|yes|YES) ;;

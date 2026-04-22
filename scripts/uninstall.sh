@@ -2,7 +2,7 @@
 # uninstall.sh: Jenova Cognitive Architecture — Uninstall Script
 #
 # Removes the files this monorepo's installer deployed: the Neovim config in
-# ~/.config/nvim/ and the launcher symlinks (jvim, jenova, jenova-ca) that
+# ~/.config/jvim/ and the launcher symlinks (jvim, jenova, jenova-ca) that
 # install.sh placed on PATH. Optional flags also clear plugin data, runtime
 # state, and the in-tree jvim/cli-agent/llama.cpp build outputs.
 #
@@ -19,7 +19,7 @@
 #   --yes            Skip all confirmation prompts (non-interactive mode).
 #
 # What this removes:
-#   - ~/.config/nvim/init.lua, lazy-lock.json, and lua/{plugins,jenova}/*.lua
+#   - ~/.config/jvim/init.lua, lazy-lock.json, and lua/{plugins,jenova}/*.lua
 #     that were deployed by install.sh
 #   - ~/.local/bin/{jvim,jenova,jenova-ca} symlinks (only those pointing into
 #     this Jenova checkout)
@@ -33,7 +33,7 @@
 set -e
 
 JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
-NVIM_CONFIG_DST="$HOME/.config/nvim"
+NVIM_CONFIG_DST="$HOME/.config/jvim"
 
 PURGE=0
 CLEAN_RUNTIME=0
@@ -165,7 +165,7 @@ if [ -d "$NVIM_CONFIG_DST/lua" ]; then
     rmdir "$NVIM_CONFIG_DST/lua" 2>/dev/null && ok "Removed empty lua/ dir" || true
 fi
 if [ -d "$NVIM_CONFIG_DST" ]; then
-    rmdir "$NVIM_CONFIG_DST" 2>/dev/null && ok "Removed empty ~/.config/nvim/ dir" || true
+    rmdir "$NVIM_CONFIG_DST" 2>/dev/null && ok "Removed empty ~/.config/jvim/ dir" || true
 fi
 
 if [ "$_removed" = "0" ]; then

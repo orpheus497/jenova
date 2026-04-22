@@ -13,7 +13,7 @@
 #   --skip-nvim         Skip Neovim config redeployment.
 #   --skip-rebuild      Skip llama.cpp rebuild check.
 #   --skip-jvim         Skip the in-tree jvim rebuild check.
-#   --link              Re-establish symlinks from ~/.config/nvim into the repo
+#   --link              Re-establish symlinks from ~/.config/jvim into the repo
 #                       if a previous --link install was clobbered by a copy.
 #   --apply-profile     Re-apply the detected hardware profile (overwrites
 #                       etc/jenova.conf). Skipped by default to preserve any
@@ -24,7 +24,7 @@
 #   2. Restart or reload jenova-ca if currently running
 #   3. Rebuild llama.cpp if its checkout moved
 #   4. Rebuild bundled jvim if its sources changed
-#   5. Redeploy Jenova nvim config to ~/.config/nvim/
+#   5. Redeploy Jenova nvim config to ~/.config/jvim/
 #   6. Sync nvim plugins (headless :Lazy restore or update)
 #   7. Print changelog summary (last 10 commits)
 
@@ -32,7 +32,7 @@ set -e
 
 JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
 NVIM_CONFIG_SRC="$JENOVA_ROOT/nvim"
-NVIM_CONFIG_DST="$HOME/.config/nvim"
+NVIM_CONFIG_DST="$HOME/.config/jvim"
 
 UPGRADE_PLUGINS=0
 SKIP_NVIM=0
@@ -197,7 +197,7 @@ fi
 # ---------------------------------------------------------------------------
 # 4. Redeploy Neovim config
 # ---------------------------------------------------------------------------
-if [ "$SKIP_NVIM" = "0" ] && command -v nvim >/dev/null 2>&1; then
+if [ "$SKIP_NVIM" = "0" ] && command -v jvim >/dev/null 2>&1; then
     info "Redeploying Jenova nvim configuration..."
 
     # Friendly warning if the active editor is upstream Neovim instead of jvim
@@ -211,7 +211,7 @@ if [ "$SKIP_NVIM" = "0" ] && command -v nvim >/dev/null 2>&1; then
     esac
 
     if [ ! -d "$NVIM_CONFIG_DST" ]; then
-        warn "~/.config/nvim/ not found — run install.sh first to do the initial setup"
+        warn "~/.config/jvim/ not found — run install.sh first to do the initial setup"
         SKIP_NVIM=1
     fi
 
@@ -221,7 +221,6 @@ if [ "$SKIP_NVIM" = "0" ] && command -v nvim >/dev/null 2>&1; then
             info "--link given: (re)establishing symlinks into $NVIM_CONFIG_SRC"
             mkdir -p "$NVIM_CONFIG_DST/lua/plugins" "$NVIM_CONFIG_DST/lua/jenova"
             ln -sf "$NVIM_CONFIG_SRC/init.lua"       "$NVIM_CONFIG_DST/init.lua"
-            ln -sf "$NVIM_CONFIG_SRC/lazy-lock.json" "$NVIM_CONFIG_DST/lazy-lock.json"
             for _dir in plugins jenova; do
                 for _f in "$NVIM_CONFIG_SRC/lua/$_dir/"*.lua; do
                     [ -f "$_f" ] && ln -sf "$_f" "$NVIM_CONFIG_DST/lua/$_dir/$(basename "$_f")"
@@ -244,7 +243,6 @@ if [ "$SKIP_NVIM" = "0" ] && command -v nvim >/dev/null 2>&1; then
             mkdir -p "$NVIM_CONFIG_DST/lua/plugins"
             mkdir -p "$NVIM_CONFIG_DST/lua/jenova"
             cp "$NVIM_CONFIG_SRC/init.lua"       "$NVIM_CONFIG_DST/init.lua"
-            cp "$NVIM_CONFIG_SRC/lazy-lock.json" "$NVIM_CONFIG_DST/lazy-lock.json"
             cp "$NVIM_CONFIG_SRC/lua/plugins/"*.lua "$NVIM_CONFIG_DST/lua/plugins/"
             for _f in "$NVIM_CONFIG_SRC/lua/jenova/"*.lua; do
                 [ -f "$_f" ] && cp "$_f" "$NVIM_CONFIG_DST/lua/jenova/"
@@ -257,7 +255,7 @@ fi
 # ---------------------------------------------------------------------------
 # 5. Sync Neovim plugins
 # ---------------------------------------------------------------------------
-if [ "$SKIP_NVIM" = "0" ] && command -v nvim >/dev/null 2>&1 && [ -d "$NVIM_CONFIG_DST" ]; then
+if [ "$SKIP_NVIM" = "0" ] && command -v jvim >/dev/null 2>&1 && [ -d "$NVIM_CONFIG_DST" ]; then
     info "Syncing Neovim plugins..."
     if [ "$UPGRADE_PLUGINS" = "1" ]; then
         warn "Running :Lazy update (moving plugins to latest versions — ignores lock file)"
