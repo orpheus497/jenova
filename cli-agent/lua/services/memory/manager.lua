@@ -226,6 +226,26 @@ function Memory.record_action(tool_name, args, result, success)
         result_summary = tostring(result or ""):sub(1, 100),
     }
 
+    -- Pre-compute and cache the embedding for successful actions so that
+    -- get_similar_actions() can retrieve relevant past successes using pure
+    -- cosine arithmetic rather than O(N) HTTP embed calls per query.
+    if success then
+        local embed_ok, embed = pcall(require, "utils.embed")
+        if embed_ok and embed.is_available() then
+            local input_summary
+            if type(args) == "table" then
+                input_summary = args.file_path or args.command or args.path
+                    or args.query or args.pattern or "(table)"
+            else
+                input_summary = tostring(args or "")
+            end
+            local text = (tool_name or "") .. ": " .. (entry.result_summary or "")
+                .. " [" .. (input_summary or "") .. "]"
+            local vec = embed.encode(text, "search_document")
+            if vec then entry._vec = vec end
+        end
+    end
+
     local idx = session_action_index[key]
     if not idx then
         idx = { count = 0, last_result = "", successes = 0, failures = 0 }
@@ -433,8 +453,27 @@ function Memory.build_context(current_query)
     local errs = Memory.format_errors_for_prompt(3)
     if errs ~= "" then table.insert(parts, errs) end
 
-    local acts = Memory.format_action_history(6)
-    if acts ~= "" then table.insert(parts, acts) end
+    -- Semantic action context: if embed is available, surface the most
+    -- relevant past successes for this query rather than just the last 6.
+    -- Falls back to recency-based history when embed is offline.
+    local embed_ok, embed = pcall(require, "utils.embed")
+    local used_semantic = false
+    if current_query and current_query ~= "" and embed_ok and embed.is_available() then
+        local similar_acts = Memory.get_similar_actions(current_query, 4)
+        if #similar_acts > 0 then
+            local act_parts = { "\nRelevant past actions (semantically similar to current task):" }
+            for _, a in ipairs(similar_acts) do
+                act_parts[#act_parts + 1] = string.format(
+                    "- [OK] %s: %s", a.tool, a.result_summary:sub(1, 60))
+            end
+            table.insert(parts, table.concat(act_parts, "\n"))
+            used_semantic = true
+        end
+    end
+    if not used_semantic then
+        local acts = Memory.format_action_history(6)
+        if acts ~= "" then table.insert(parts, acts) end
+    end
 
     local plan = Memory.format_plan()
     if plan ~= "" then table.insert(parts, plan) end
@@ -570,6 +609,37 @@ function Memory.get_similar_errors(query_text, top_k)
     local results = {}
     for i = 1, math.min(top_k, #scored) do
         if scored[i].score > 0.75 then
+            table.insert(results, scored[i].entry)
+        end
+    end
+    return results
+end
+
+-- Returns successful actions from this session that are semantically similar
+-- to `query_text`.  Useful for proactive context: surface what worked before
+-- on similar tasks so the model can follow the same pattern.
+function Memory.get_similar_actions(query_text, top_k)
+    top_k = top_k or 3
+    if #session_actions == 0 then return {} end
+
+    local embed_ok, embed = pcall(require, "utils.embed")
+    if not embed_ok or not embed.is_available() then return {} end
+
+    local query_vec = embed.encode(query_text, "search_query")
+    if not query_vec then return {} end
+
+    local scored = {}
+    for _, a in ipairs(session_actions) do
+        if a.success and a._vec then
+            local score = embed.cosine(query_vec, a._vec)
+            table.insert(scored, { score = score, entry = a })
+        end
+    end
+    table.sort(scored, function(a, b) return a.score > b.score end)
+
+    local results = {}
+    for i = 1, math.min(top_k, #scored) do
+        if scored[i].score > 0.70 then
             table.insert(results, scored[i].entry)
         end
     end

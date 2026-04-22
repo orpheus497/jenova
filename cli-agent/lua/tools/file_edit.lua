@@ -53,12 +53,22 @@ local function write_file(path, content)
 end
 -- Build a diagnostic hint: show lines near the search position (or the head of the file).
 local function build_hint(content, old_string)
-    -- Find the first word of old_string in the file for context
-    local first_word = old_string:match("[%w_]+")
+    -- Common Lua/C keywords that appear too frequently to be useful anchors.
+    local KEYWORDS = {
+        ["local"]=true,["if"]=true,["then"]=true,["else"]=true,["elseif"]=true,
+        ["end"]=true,["do"]=true,["while"]=true,["for"]=true,["in"]=true,
+        ["return"]=true,["function"]=true,["and"]=true,["or"]=true,["not"]=true,
+        ["true"]=true,["false"]=true,["nil"]=true,["repeat"]=true,["until"]=true,
+        ["break"]=true,["goto"]=true,
+    }
+    -- Skip over common keywords; use the first substantive identifier
     local hint_pos = 1
-    if first_word then
-        local p = content:lower():find(first_word:lower(), 1, true)
-        if p then hint_pos = p end
+    for word in old_string:gmatch("[%w_]+") do
+        if not KEYWORDS[word:lower()] then
+            local p = content:lower():find(word:lower(), 1, true)
+            if p then hint_pos = p end
+            break
+        end
     end
 
     -- Extract up to 6 lines around hint_pos

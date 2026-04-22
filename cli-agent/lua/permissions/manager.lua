@@ -24,7 +24,7 @@ local READONLY_TOOLS = {
 -- These ALWAYS require user confirmation in default/plan mode.
 -- "Bash" kept as alias in case old code uses it.
 local ACTION_TOOLS = {
-    Write=true, Edit=true, Shell=true, Bash=true,
+    Write=true, Edit=true, MultiEdit=true, Shell=true, Bash=true,
     NotebookEdit=true, MCPTool=true,
     TaskCreate=true, TaskUpdate=true, TaskStop=true,
     Agent=true, TeamCreate=true, TeamDelete=true,
@@ -75,6 +75,9 @@ local function describe_action(tool_name, input)
         return input.file_path and ("write " .. size .. " → " .. input.file_path)
     elseif tool_name == "Edit" then
         return input.file_path and ("edit " .. input.file_path)
+    elseif tool_name == "MultiEdit" then
+        local n = type(input.edits) == "table" and tostring(#input.edits) or "?"
+        return input.file_path and ("multiedit (" .. n .. " edits) " .. input.file_path)
     end
     -- Generic: show first non-content string field
     for _, k in ipairs({"file_path", "path", "command", "query", "url"}) do
@@ -136,9 +139,11 @@ function Permissions.request_permission(tool_name, input, _context)
         -- Allow for the rest of the session (cache by tool name only)
         allowed = true
         permission_cache[tool_name .. ":*"] = true
-    elseif response == "n" or response == "no" or response == "" then
+    else
+        -- "n", "no", empty, or anything else = deny this one time only.
+        -- Do NOT cache the denial: the user should be asked again on the next
+        -- call so they can approve after reviewing what went wrong.
         allowed = false
-        permission_cache[cache_key] = false
     end
 
     io.write("\n")

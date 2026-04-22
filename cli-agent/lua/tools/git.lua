@@ -46,9 +46,13 @@ local ALLOWED_SUBS = {
 }
 
 -- Destructive flags that must never appear even in whitelisted subcommands.
+-- Also blocks git-dir/work-tree/config-env redirection that could escape cwd
+-- confinement, and ext-diff/textconv that might invoke external programs.
 local BLOCKED_FLAGS = {
     "--force", "-f", "--hard", "--mirror", "--delete", "-D",
     "--push", "--set-upstream", "-u",
+    "--git-dir", "--work-tree", "-c", "--config-env",
+    "--ext-diff", "--textconv",
 }
 
 -- Characters that could break shell quoting or inject commands.
@@ -87,7 +91,15 @@ function M.call(args, context)
     -- Trim whitespace
     sub = sub:match("^%s*(.-)%s*$")
 
-    local base_sub = sub:match("^(%S+)")
+    -- Reject subcommands that contain embedded whitespace.  Flags and options
+    -- must go in `args`, not in `subcommand`.  A value like "log -n 5" passed
+    -- as the subcommand would be quoted as a single token and cause git to fail.
+    if sub:find("%s") then
+        return { type = "error", error =
+            "subcommand must be a single word (e.g. 'log'). Put flags in the args field." }
+    end
+
+    local base_sub = sub
     if not ALLOWED_SUBS[base_sub] then
         return { type = "error", error = string.format(
             "'%s' is not a permitted subcommand. Allowed: diff, log, show, status, blame, branch, remote, ls-files.",
@@ -141,15 +153,51 @@ function M.call(args, context)
         extra = defaults[base_sub]
     end
 
-    -- Build command using shell.quote for each argument token.
-    -- Each extra arg is quoted individually so filenames/refs with spaces are
-    -- passed correctly to git rather than being split by the shell.
+    -- Build command quoting each argument individually.
+    -- We cannot use gmatch("%S+") because it would incorrectly split
+    -- filenames that contain spaces (e.g. HEAD -- "file with spaces.c").
+    -- Instead we use a POSIX-aware shell-word splitter that respects double
+    -- and single quotes and backslash escapes.
     local quoted_args = {}
-    for token in extra:gmatch("%S+") do
-        table.insert(quoted_args, shell.quote(token))
+    local i = 1
+    local elen = #extra
+    while i <= elen do
+        -- skip whitespace
+        while i <= elen and extra:sub(i,i):match("%s") do i = i + 1 end
+        if i > elen then break end
+        local ch = extra:sub(i,i)
+        local tok
+        if ch == '"' then
+            -- double-quoted token: consume until closing "
+            local j = extra:find('"', i + 1, true)
+            if not j then
+                return { type = "error", error = "Unterminated double-quoted argument in args" }
+            end
+            tok = extra:sub(i + 1, j - 1)
+            i = j + 1
+        elseif ch == "'" then
+            -- single-quoted token
+            local j = extra:find("'", i + 1, true)
+            if not j then
+                return { type = "error", error = "Unterminated single-quoted argument in args" }
+            end
+            tok = extra:sub(i + 1, j - 1)
+            i = j + 1
+        else
+            -- unquoted token: stop at whitespace
+            local j = extra:find("%s", i + 1)
+            if j then
+                tok = extra:sub(i, j - 1)
+                i = j
+            else
+                tok = extra:sub(i)
+                i = elen + 1
+            end
+        end
+        table.insert(quoted_args, shell.quote(tok))
     end
     local cmd = string.format(
-        "git -C %s %s %s 2>&1 | head -600",
+        "git --no-pager -C %s %s %s 2>&1 | head -600",
         shell.quote(cwd), shell.quote(sub), table.concat(quoted_args, " ")
     )
 

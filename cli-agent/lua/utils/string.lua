@@ -105,7 +105,11 @@ function M.fuzzy_find(content, old_string)
         orig_pos[ni] = oi
 
         if ob == 13 and content:byte(oi + 1) == 10 then
-            -- \r\n → \n: skip \r in original, norm advances by 1 (\n)
+            -- \r\n → \n in normalized form.  Map the normalized \n byte to
+            -- the original \n (oi+1), not \r (oi), so that a replacement span
+            -- including this newline covers both bytes (\r and \n) rather than
+            -- only \r, which would leave a stray LF in the file.
+            orig_pos[ni] = oi + 1
             oi = oi + 2
             ni = ni + 1
         elseif ob == 32 or ob == 9 then
@@ -116,7 +120,9 @@ function M.fuzzy_find(content, old_string)
                 oi2 = oi2 + 1
             end
             local next_ob = content:byte(oi2)
-            if next_ob == 10 or next_ob == 13 then
+            -- nil means end-of-file: trailing whitespace before EOF is treated
+            -- the same as trailing whitespace before a newline — strip it.
+            if next_ob == nil or next_ob == 10 or next_ob == 13 then
                 -- Trailing whitespace: skip in original without advancing norm.
                 oi = oi2
             else
