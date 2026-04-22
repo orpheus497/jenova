@@ -157,10 +157,16 @@ function Memory.log_error(tool_name, args_summary, error_msg)
         if vec then entry._vec = vec end
     end
 
-    -- Persistent
+    -- Persistent — strip _vec before writing. Embedding vectors are large
+    -- (hundreds of floats), session-local, and never re-loaded from disk;
+    -- persisting them bloats errors.jsonl and slows future I/O.
     local f = io.open(ERROR_FILE, "a")
     if f then
-        f:write(json.stringify(entry) .. "\n")
+        local persisted = {
+            ts = entry.ts, sid = entry.sid, tool = entry.tool,
+            args = entry.args, error = entry.error,
+        }
+        f:write(json.stringify(persisted) .. "\n")
         f:close()
     end
 
@@ -265,7 +271,13 @@ function Memory.record_action(tool_name, args, result, success)
 
     local f = io.open(ACTION_FILE, "a")
     if f then
-        f:write(json.stringify(entry) .. "\n")
+        -- Strip _vec before writing (session-local cache only — see log_error).
+        local persisted = {
+            ts = entry.ts, sid = entry.sid, tool = entry.tool,
+            key = entry.key, success = entry.success,
+            result_summary = entry.result_summary,
+        }
+        f:write(json.stringify(persisted) .. "\n")
         f:close()
     end
 end

@@ -277,7 +277,24 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
             -- model can correct itself before retrying.
             -- This is non-blocking: if embed is unavailable it returns {} immediately.
             local query = tool_name .. " " .. input_summary .. " " .. err_msg
-            local similar = memory.get_similar_errors and memory.get_similar_errors(query, 2) or {}
+            local raw_similar = memory.get_similar_errors and memory.get_similar_errors(query, 3) or {}
+
+            -- Filter out the just-logged error: log_error() inserted it into
+            -- session_errors immediately above, so the cosine search will
+            -- return it as the top hit. Match by tool + truncated args + error
+            -- (the same fields formatted in the warning) instead of by `ts`,
+            -- which has 1s resolution and could collide on rapid-fire calls.
+            local similar = {}
+            for _, se in ipairs(raw_similar) do
+                local same = (se.tool == tool_name)
+                    and (se.args == input_summary)
+                    and (se.error == err_msg)
+                if not same then
+                    table.insert(similar, se)
+                    if #similar >= 2 then break end
+                end
+            end
+
             if #similar > 0 then
                 local parts = {"[System: Similar failures in this session — do not repeat these patterns:]"}
                 for _, se in ipairs(similar) do

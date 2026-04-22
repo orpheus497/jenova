@@ -48,11 +48,42 @@ local ALLOWED_SUBS = {
 -- Destructive flags that must never appear even in whitelisted subcommands.
 -- Also blocks git-dir/work-tree/config-env redirection that could escape cwd
 -- confinement, and ext-diff/textconv that might invoke external programs.
+--
+-- Note: `-u` is intentionally NOT blocked globally because it is the standard
+-- short form of `--unified` for `git diff -u` (unified diff format) and would
+-- false-positive on legitimate inspection commands. We block `--set-upstream`
+-- explicitly to prevent the upstream-tracking mutation, and `push` is not in
+-- the allowlist anyway.
 local BLOCKED_FLAGS = {
     "--force", "-f", "--hard", "--mirror", "--delete", "-D",
-    "--push", "--set-upstream", "-u",
+    "--push", "--set-upstream",
     "--git-dir", "--work-tree", "-c", "--config-env",
     "--ext-diff", "--textconv",
+}
+
+-- Per-subcommand mutation guards.
+-- `branch` and `remote` accept read-only and mutating invocations through the
+-- same subcommand. Block the mutating forms (flags AND positional verbs)
+-- explicitly so that AUTO/BYPASS permission modes cannot be tricked into
+-- mutating repo state. Read-only invocations (e.g. `branch --list`,
+-- `branch -v`, `remote -v`, `remote show origin`, `remote get-url origin`) are
+-- unaffected.
+local SUBCOMMAND_BLOCKED_FLAGS = {
+    branch = {
+        ["-d"] = true, ["-D"] = true, ["--delete"] = true,
+        ["-m"] = true, ["-M"] = true, ["--move"] = true,
+        ["-c"] = true, ["-C"] = true, ["--copy"] = true,
+        ["--set-upstream-to"] = true, ["--unset-upstream"] = true,
+        ["--edit-description"] = true,
+        ["--track"] = true, ["--no-track"] = true,
+        ["-t"] = true, ["-u"] = true,
+    },
+    remote = {
+        -- remote uses positional verbs; treat them as mutating tokens.
+        ["add"] = true, ["remove"] = true, ["rm"] = true,
+        ["rename"] = true, ["set-url"] = true, ["set-head"] = true,
+        ["set-branches"] = true, ["prune"] = true, ["update"] = true,
+    },
 }
 
 -- Characters that could break shell quoting or inject commands.
@@ -236,6 +267,24 @@ function M.call(args, context)
         local prefix = tok:match("^([^=]+)=")
         if prefix and BLOCKED_SET[prefix] then
             return { type = "error", error = "Blocked option: " .. prefix }
+        end
+    end
+
+    -- Per-subcommand mutation guards (e.g. `branch -d`, `remote add`).
+    local sub_blocked = SUBCOMMAND_BLOCKED_FLAGS[base_sub]
+    if sub_blocked then
+        for _, tok in ipairs(raw_tokens) do
+            if sub_blocked[tok] then
+                return { type = "error", error = string.format(
+                    "'git %s %s' would mutate the repository — Git tool is read-only.",
+                    base_sub, tok) }
+            end
+            local prefix = tok:match("^([^=]+)=")
+            if prefix and sub_blocked[prefix] then
+                return { type = "error", error = string.format(
+                    "'git %s %s' would mutate the repository — Git tool is read-only.",
+                    base_sub, prefix) }
+            end
         end
     end
 

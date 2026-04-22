@@ -112,12 +112,14 @@ function M.fuzzy_find(content, old_string)
         local mapped_oi = oi  -- the original byte that this norm byte maps to
 
         if ob == 13 and content:byte(oi + 1) == 10 then
-            -- \r\n → \n in normalized form. Map the normalized \n byte to
-            -- the original \n (oi+1), not \r (oi), so a replacement span
-            -- including this newline covers both bytes (\r and \n).
-            mapped_oi = oi + 1
-            if ni == pos then start_orig = mapped_oi end
-            if ni == end_norm then end_orig = mapped_oi end
+            -- \r\n → \n in normalized form. Cover both bytes when the match
+            -- includes this newline:
+            --   • start_orig must point to the \r (oi) so the prefix doesn't
+            --     leave a stray \r before the replacement.
+            --   • end_orig must point to the \n (oi+1) so the suffix begins
+            --     after both bytes.
+            if ni == pos then start_orig = oi end
+            if ni == end_norm then end_orig = oi + 1 end
             oi = oi + 2
             ni = ni + 1
         elseif ob == 32 or ob == 9 then

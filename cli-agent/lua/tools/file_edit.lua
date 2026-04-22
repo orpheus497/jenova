@@ -140,6 +140,12 @@ function M.call(args, context)
     if not path then return { type = "error", error = "No file_path provided" } end
     if args.old_string == nil then return { type = "error", error = "No old_string provided" } end
     if args.new_string == nil then return { type = "error", error = "No new_string provided" } end
+    if type(args.old_string) ~= "string" then
+        return { type = "error", error = "Invalid old_string: expected string, got " .. type(args.old_string) }
+    end
+    if type(args.new_string) ~= "string" then
+        return { type = "error", error = "Invalid new_string: expected string, got " .. type(args.new_string) }
+    end
     if args.old_string == args.new_string then
         return { type = "error", error = "old_string and new_string are identical — no change needed" }
     end
