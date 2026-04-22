@@ -140,11 +140,16 @@ function QueryEngine.new(options)
     self.abort_controller = nil
 
     -- File read cache: stores the content of files read during this session.
-    -- Key: resolved absolute path. Value: { text, ts }
+    -- Key: resolved absolute path. Value: { text, ts, num_lines }
     -- Used to:
     --   1. Detect redundant re-reads (same path, no intervening write) and skip the I/O.
     --   2. Inject cached content as a hint when an Edit/MultiEdit fails with "not found".
     self._file_cache = {}
+
+    -- Git-like file state tracker — records mtime+size+hash on every read/write
+    -- so the cache knows reliably when disk content has changed.
+    local ft_ok, ft = pcall(require, "context.file_tracker")
+    self._file_tracker = ft_ok and ft or nil
 
     -- Load verifier once — it holds per-session attempt counters.
     local v_ok, verifier = pcall(require, "services.tool_verifier")
@@ -247,10 +252,16 @@ end
 
 function QueryEngine:_cache_file_read(path, text, num_lines)
     self._file_cache[path] = { text = text, num_lines = num_lines, ts = os.time() }
+    if self._file_tracker then
+        self._file_tracker.record_read(path, text)
+    end
 end
 
 function QueryEngine:_invalidate_cache(path)
     self._file_cache[path] = nil
+    if self._file_tracker then
+        self._file_tracker.invalidate(path)
+    end
 end
 
 function QueryEngine:execute_tool(tool_name, tool_use_id, input)
@@ -271,7 +282,14 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
         local paths = require("utils.paths")
         local resolved = paths.resolve(input.file_path, tool_context.cwd)
         local cached = self._file_cache[resolved]
-        if cached and not (input.offset and input.offset > 0) then
+        -- Return from cache ONLY when:
+        --   1. We have a cached entry for this path.
+        --   2. Not a partial read (no offset).
+        --   3. The file has NOT changed on disk since we last read it
+        --      (checked via file_tracker mtime+size; if tracker unavailable,
+        --       fall through to a fresh read so we never serve stale content).
+        local disk_stale = self._file_tracker and self._file_tracker.is_stale(resolved)
+        if cached and not (input.offset and input.offset > 0) and not disk_stale then
             self.on_tool_result(tool_name, { type = "text", text = cached.text,
                 num_lines = cached.num_lines })
             return { type = "text", text = cached.text,
@@ -292,9 +310,11 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
     -- ── Post-execution cache maintenance ──────────────────────────────
     if ok and not exec_err and type(result) == "table" then
         if tool_name == "Read" and result.text and type(input) == "table" and input.file_path
-               and not (input.offset and input.offset > 0) and not result.truncated then
+               and not (input.offset and input.offset > 0) then
             local paths = require("utils.paths")
             local resolved = paths.resolve(input.file_path, tool_context.cwd)
+            -- Cache even truncated reads so partial content can be used as an
+            -- Edit hint, but mark truncated so full reads are not suppressed.
             self:_cache_file_read(resolved, result.text, result.num_lines)
             -- Surface truncation notice to the model as an embed warning, not in text
             if result.truncation_hint then
@@ -312,7 +332,7 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
 
     -- Record action in memory manager
     local mem_ok, memory = pcall(require, "services.memory.manager")
-    local input_summary = ""
+    local input_summary
     if type(input) == "table" then
         input_summary = input.file_path or input.command or input.path
             or input.query or input.pattern or "(table)"
@@ -321,20 +341,14 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
     end
 
     if mem_ok then
-        -- Summarise input meaningfully so memory entries are human-readable.
-        local input_summary
-        if type(input) == "table" then
-            input_summary = input.file_path or input.command or input.path
-                or input.query or input.pattern or "(table)"
-        else
-            input_summary = tostring(input or "")
-        end
         if ok and not exec_err then
             memory.record_action(tool_name, input, result, true)
         else
             local err_msg = ok and exec_err or tostring(result)
             memory.record_action(tool_name, input, err_msg, false)
-            memory.log_error(tool_name, input_summary, err_msg)
+            if memory.log_error then
+                memory.log_error(tool_name, input_summary, err_msg)
+            end
 
             -- Embed-based self-correction: query the embedding model for similar
             -- past errors in this session and inject a targeted warning so the

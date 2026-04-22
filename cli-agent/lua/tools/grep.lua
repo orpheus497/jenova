@@ -83,21 +83,32 @@ function M.call(args, context)
         end
     end
 
-    -- Fallback: use ripgrep or grep
+    -- Fallback: use ripgrep or POSIX grep (BSD/FreeBSD compatible)
     -- Pattern already has (?i) prefix if -i was set, so don't pass -i again.
     local shell = require("utils.shell")
     local cmd
-    if os.execute("command -v rg >/dev/null 2>&1") then
+    -- Probe for rg portably via sh (os.execute return semantics differ by platform)
+    local rg_probe = io.popen("command -v rg 2>/dev/null")
+    local has_rg = rg_probe and (rg_probe:read("*l") or "") ~= ""
+    if rg_probe then rg_probe:close() end
+    if has_rg then
         cmd = string.format("rg --line-number --no-heading -- %s %s",
             shell.quote(pattern), shell.quote(dir))
         if file_glob then
             cmd = cmd .. " --glob " .. shell.quote(file_glob)
         end
+        cmd = cmd .. " 2>/dev/null"
     else
-        cmd = string.format("grep -Ern -- %s %s",
-            shell.quote(pattern), shell.quote(dir))
+        -- POSIX grep via find+xargs: avoids GNU-only --exclude-dir
+        local include_filter = ""
+        if file_glob then
+            include_filter = " -name " .. shell.quote(file_glob)
+        end
+        cmd = string.format(
+            "find %s%s -not -path '*/.git/*' -not -path '*/.jenova/*' -not -path '*/.claude/*'" ..
+            " -type f 2>/dev/null | xargs grep -En -- %s 2>/dev/null",
+            shell.quote(dir), include_filter, shell.quote(pattern))
     end
-    cmd = cmd .. " --exclude-dir=.jenova --exclude-dir=.claude 2>/dev/null"
 
     local h = io.popen(cmd)
     if not h then return { type = "error", error = "Grep failed" } end

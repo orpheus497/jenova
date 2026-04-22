@@ -7,14 +7,14 @@ local json = require("utils.json_fallback")
 local M = {}
 
 M.name = "Shell"
-M.description = "Execute a shell command (sh) on the system. Use for running scripts, installing packages, compiling code, managing files, or any system operation."
+M.description = "Execute a POSIX sh command on the system. Use for running scripts, installing packages, compiling code, managing files, build/test tasks, or any system operation. Always provide a description of what the command does."
 
 M.parameters = {
     type = "object",
     properties = {
         command = {
             type = "string",
-            description = "The bash command to execute"
+            description = "The POSIX sh command to execute. Use sh-compatible syntax only (no bashisms like arrays, [[ ]], or process substitution)."
         },
         description = {
             type = "string",
@@ -167,18 +167,20 @@ function M.call(args, context)
         end
     end
 
-    -- Fallback: use io.popen with env prefix
+    -- Fallback: use io.popen (sh -c) with env prefix
     local shell = require("utils.shell")
     local env_prefix = ""
     for _, pair in ipairs(env) do
         env_prefix = env_prefix .. shell.format_env(pair[1], pair[2])
     end
-    local handle = io.popen(env_prefix .. command .. " 2>&1", "r")
+    -- Always invoke via sh (POSIX portable), not the process shell
+    local full_cmd = env_prefix .. "sh -c " .. shell.quote(command) .. " 2>&1"
+    local handle = io.popen(full_cmd, "r")
     if not handle then
-        return { type = "error", error = "Failed to execute command" }
+        return { type = "error", error = "Failed to execute command via sh" }
     end
     local output = handle:read("*a")
-    local ok, _, code = handle:close()
+    local _, _, code = handle:close()
     return {
         type = "text",
         text = output or "",
