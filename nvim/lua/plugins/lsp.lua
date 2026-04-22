@@ -27,6 +27,38 @@ require("mason-lspconfig").setup({
   automatic_installation = false,
 })
 
+-- ── Diagnostic display ────────────────────────────────────────────────
+-- Neovim 0.11 ships with virtual_text DISABLED by default (see
+-- :h news-0.11). Without re-enabling it, LSP errors/warnings produce no
+-- inline messages — only signs in the gutter — which makes the editor
+-- look like linting is broken even when servers are attached. Restore
+-- the classic UX: inline virtual text (truncated to the right of code),
+-- sign-column markers, underlines, severity-based ordering, and a
+-- bordered hover float that names the source server when ambiguous.
+vim.diagnostic.config({
+  virtual_text = {
+    spacing = 2,
+    prefix  = "●",
+    source  = "if_many",
+  },
+  signs            = true,
+  underline        = true,
+  update_in_insert = false,
+  severity_sort    = true,
+  float = {
+    border = "rounded",
+    source = "if_many",
+    header = "",
+    prefix = "",
+  },
+})
+
+-- Sign column glyphs for each severity (Neovim 0.10+ unified API).
+for sev, icon in pairs({ Error = "", Warn = "", Info = "", Hint = "" }) do
+  local hl = "DiagnosticSign" .. sev
+  vim.fn.sign_define(hl, { text = icon, texthl = hl, numhl = hl })
+end
+
 local capabilities = require("cmp_nvim_lsp").default_capabilities()
 
 -- FreeBSD/Linux binary detection — tries versioned names for system-installed
