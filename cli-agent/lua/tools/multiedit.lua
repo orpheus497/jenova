@@ -72,7 +72,15 @@ local function apply_one(content, old, new, replace_all)
         return content:sub(1, pos - 1) .. new .. content:sub(pos + #old), nil, 1
     end
 
-    -- 2. Normalised fallback (shared logic with file_edit)
+    -- 2. Normalised fallback (shared logic with file_edit).
+    -- IMPORTANT: fuzzy_find only locates ONE occurrence, so falling through
+    -- here when replace_all=true would silently replace a single match and
+    -- violate the contract (the caller asked for "all"). Edit doesn't fuzz
+    -- in replace_all mode either; preserve that invariant by erroring out
+    -- and forcing the model to copy exact text via Read.
+    if replace_all then
+        return nil, "old_string not found exactly and replace_all=true does not support fuzzy fallback — Read the file and copy the exact bytes (including whitespace)"
+    end
     local start_orig, end_orig, multi = string_utils.fuzzy_find(content, old)
     if multi then
         return nil, "old_string matches multiple locations (normalised) — add more context to make it unique"
