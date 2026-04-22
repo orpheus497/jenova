@@ -162,11 +162,13 @@ function M.notify(msg, level, opts)
   -- Compose buffer.
   local body = {}
   local icon = LEVEL_ICON[lvl] or ""
-  local first = string.format("%s %s", icon, lines[1] or "")
-  body[1] = first
-  for i = 2, #lines do body[i + (title and 1 or 0)] = "  " .. lines[i] end
   if title then
-    table.insert(body, 1, "  " .. title)
+    body[1] = "  " .. title
+    body[2] = string.format("%s %s", icon, lines[1] or "")
+    for i = 2, #lines do body[#body + 1] = "  " .. lines[i] end
+  else
+    body[1] = string.format("%s %s", icon, lines[1] or "")
+    for i = 2, #lines do body[#body + 1] = "  " .. lines[i] end
   end
 
   local width = 0
