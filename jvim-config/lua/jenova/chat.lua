@@ -35,41 +35,67 @@ M._agent_cost       = 0.0
 -- role headers, tool ✓/✗ badges, indented tool-output preview lines.
 local HL_NS = vim.api.nvim_create_namespace("JenovaChat")
 
+-- Palette: dark red (failures), dark purple (jenova role), forest green (ok),
+-- muted plum (preview/cost) — chosen so they read against both light and dark
+-- colorschemes without bleaching into the "grey comment" tone that buried
+-- code-block syntax in earlier rounds.
+local PALETTE = {
+  user_hdr     = "#4FA3D1",  -- cool blue
+  jenova_hdr   = "#7A4FBF",  -- dark purple
+  ok           = "#5FAE5F",  -- forest green
+  fail         = "#A33A3A",  -- dark red
+  tool_name    = "#C9A227",  -- amber
+  preview      = "#8B7AA8",  -- muted plum (visible, not grey)
+  cost         = "#8B7AA8",
+}
+
 local function setup_chat_hl_groups()
-  local function def(name, link, fg)
-    if vim.fn.hlexists(name) == 1 and vim.api.nvim_get_hl(0, { name = name }).fg then return end
-    if link then
-      vim.api.nvim_set_hl(0, name, { link = link, default = true })
-    elseif fg then
-      vim.api.nvim_set_hl(0, name, { fg = fg, default = true })
-    end
+  local function def(name, fg, opts)
+    opts = opts or {}
+    opts.fg = fg
+    opts.default = true
+    vim.api.nvim_set_hl(0, name, opts)
   end
-  def("JenovaChatUserHdr",     "Identifier")     -- ## user
-  def("JenovaChatJenovaHdr",   "Function")       -- ## jenova
-  def("JenovaChatToolOk",      nil, "#7CB36B")   -- ✓
-  def("JenovaChatToolFail",    "ErrorMsg")       -- ✗
-  def("JenovaChatToolName",    "Type")           -- tool name on badge line
-  def("JenovaChatToolPreview", "Comment")        -- indented preview lines
-  def("JenovaChatError",       "ErrorMsg")
-  def("JenovaChatCost",        "Comment")        -- > turn N in:.. out:..
+  def("JenovaChatUserHdr",     PALETTE.user_hdr,   { bold = true })
+  def("JenovaChatJenovaHdr",   PALETTE.jenova_hdr, { bold = true })
+  def("JenovaChatToolOk",      PALETTE.ok,         { bold = true })
+  def("JenovaChatToolFail",    PALETTE.fail,       { bold = true })
+  def("JenovaChatToolName",    PALETTE.tool_name)
+  def("JenovaChatToolPreview", PALETTE.preview,    { italic = true })
+  def("JenovaChatError",       PALETTE.fail,       { bold = true })
+  def("JenovaChatCost",        PALETTE.cost,       { italic = true })
 end
 
 local function apply_chat_highlights(buf)
   if not vim.api.nvim_buf_is_valid(buf) then return end
   setup_chat_hl_groups()
   vim.api.nvim_buf_clear_namespace(buf, HL_NS, 0, -1)
-  local total = vim.api.nvim_buf_line_count(buf)
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local in_fence = false       -- inside a ``` markdown code fence
+  local in_preview = false     -- inside a tool-output preview block (after ✓/✗)
   for i, line in ipairs(lines) do
-    if i > total then break end
     local lnum = i - 1
+
+    -- Track ``` fences first; never colourise code-block content (let markdown
+    -- syntax own those lines, otherwise our extmark would override the
+    -- language highlighting and bleach keywords/strings into grey).
+    if line:match("^%s*```") then
+      in_fence = not in_fence
+      in_preview = false
+      goto continue
+    end
+    if in_fence then goto continue end
+
     if line:match("^## user%s*$") then
+      in_preview = false
       pcall(vim.api.nvim_buf_set_extmark, buf, HL_NS, lnum, 0,
         { end_col = #line, hl_group = "JenovaChatUserHdr" })
     elseif line:match("^## jenova%s*$") or line:match("^## assistant%s*$") then
+      in_preview = false
       pcall(vim.api.nvim_buf_set_extmark, buf, HL_NS, lnum, 0,
         { end_col = #line, hl_group = "JenovaChatJenovaHdr" })
     elseif line:match("^✓ ") then
+      in_preview = true
       pcall(vim.api.nvim_buf_set_extmark, buf, HL_NS, lnum, 0,
         { end_col = #"✓", hl_group = "JenovaChatToolOk" })
       local _, te = line:find("^✓ [%w_-]+")
@@ -78,6 +104,7 @@ local function apply_chat_highlights(buf)
           { end_col = te, hl_group = "JenovaChatToolName" })
       end
     elseif line:match("^✗ ") then
+      in_preview = true
       pcall(vim.api.nvim_buf_set_extmark, buf, HL_NS, lnum, 0,
         { end_col = #"✗", hl_group = "JenovaChatToolFail" })
       local _, te = line:find("^✗ [%w_-]+")
@@ -85,14 +112,22 @@ local function apply_chat_highlights(buf)
         pcall(vim.api.nvim_buf_set_extmark, buf, HL_NS, lnum, #"✗ ",
           { end_col = te, hl_group = "JenovaChatToolName" })
       end
-    elseif line:match("^  ") and not line:match("^  *#") then
-      -- Indented tool-output preview line (skip indented markdown headers).
-      pcall(vim.api.nvim_buf_set_extmark, buf, HL_NS, lnum, 0,
-        { end_col = #line, hl_group = "JenovaChatToolPreview" })
     elseif line:match("^> turn ") then
+      in_preview = false
       pcall(vim.api.nvim_buf_set_extmark, buf, HL_NS, lnum, 0,
         { end_col = #line, hl_group = "JenovaChatCost" })
+    elseif in_preview and line:match("^  ") then
+      -- Only paint indented lines as preview when they actually belong to a
+      -- recent ✓/✗ block. This stops us from greying out indented content
+      -- inside the model's prose (lists, nested markdown, etc.).
+      pcall(vim.api.nvim_buf_set_extmark, buf, HL_NS, lnum, 0,
+        { end_col = #line, hl_group = "JenovaChatToolPreview" })
+    elseif vim.trim(line) == "" then
+      -- blank line keeps preview state (preview blocks may include blanks)
+    else
+      in_preview = false
     end
+    ::continue::
   end
 end
 
