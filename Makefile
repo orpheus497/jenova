@@ -19,9 +19,6 @@
 
 .PHONY: all llama cli-agent jvim sync-modules install clean help
 
-JENOVA_ROOT := $(CURDIR)
-JOBS        := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
-
 all: llama cli-agent sync-modules jvim
 	@echo ""
 	@echo "✅ Jenova build complete (llama.cpp + cli-agent + jvim)"
@@ -39,13 +36,11 @@ cli-agent:
 # jvim-native overrides in jenova/agent/ shadow these via Lua module resolution.
 SHARED_MODULES = \
   engine/query_engine.lua \
-  engine/session_history.lua \
   tools/registry.lua \
   providers/base.lua \
   providers/init.lua \
   providers/jenova_backend.lua \
   providers/llamacpp.lua \
-  providers/loader.lua \
   config/loader.lua \
   history/manager.lua \
   context/manager.lua \
@@ -61,18 +56,9 @@ SHARED_MODULES = \
   constants/prompts.lua \
   state/app_state.lua
 
-SHARED_SRC  = $(JENOVA_ROOT)/cli-agent/lua
-SHARED_DEST = $(JENOVA_ROOT)/jvim/runtime/lua/jenova/agent/shared
-
 sync-modules:
 	@echo "🔄 Syncing shared Lua modules cli-agent → jvim runtime..."
-	@for mod in $(SHARED_MODULES); do \
-		destfile="$(SHARED_DEST)/$$mod"; \
-		destdir=$$(dirname "$$destfile"); \
-		mkdir -p "$$destdir"; \
-		cp "$(SHARED_SRC)/$$mod" "$$destfile"; \
-	done
-	@echo "   Synced $$(echo $(SHARED_MODULES) | wc -w | tr -d ' ') modules → jvim/runtime/lua/jenova/agent/shared/"
+	@sh scripts/sync-modules.sh
 
 jvim: sync-modules
 	@echo "🔨 Building jvim (in-tree editor)..."
@@ -81,7 +67,7 @@ jvim: sync-modules
 	fi
 	@$(MAKE) -C jvim \
 		CMAKE_BUILD_TYPE=RelWithDebInfo \
-		CMAKE_INSTALL_PREFIX="$(JENOVA_ROOT)/jvim/install"
+		CMAKE_INSTALL_PREFIX="$(CURDIR)/jvim/install"
 	@echo "   jvim built: jvim/build/bin/nvim"
 
 install:

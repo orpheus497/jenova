@@ -624,6 +624,9 @@ if [ "$SKIP_NVIM" = "0" ] && command -v jvim >/dev/null 2>&1; then
         mkdir -p "$NVIM_CONFIG_DST/lua/plugins"
         mkdir -p "$NVIM_CONFIG_DST/lua/jenova"
 
+        # Sync the embedded agent shared modules before deploying
+        sh "$JENOVA_ROOT/scripts/sync-modules.sh"
+
         if [ "$LINK" = "1" ]; then
             # Symlink mode — changes in repo instantly reflected in jvim
             ln -sf "$NVIM_CONFIG_SRC/init.lua" "$NVIM_CONFIG_DST/init.lua"
@@ -632,6 +635,9 @@ if [ "$SKIP_NVIM" = "0" ] && command -v jvim >/dev/null 2>&1; then
                     [ -f "$_f" ] && ln -sf "$_f" "$NVIM_CONFIG_DST/lua/$_dir/$(basename "$_f")"
                 done
             done
+            # Also symlink the agent/ subtree from jvim/runtime
+            ln -sfn "$JENOVA_ROOT/jvim/runtime/lua/jenova/agent" \
+                "$NVIM_CONFIG_DST/lua/jenova/agent"
             ok "Symlinked jvim user config (--link mode, edits in $NVIM_CONFIG_SRC take effect immediately)"
         else
             # Copy mode — stable snapshot
@@ -641,6 +647,9 @@ if [ "$SKIP_NVIM" = "0" ] && command -v jvim >/dev/null 2>&1; then
                     [ -f "$_f" ] && cp "$_f" "$NVIM_CONFIG_DST/lua/$_dir/"
                 done
             done
+            # Copy the agent/ subtree (includes shared/ from sync-modules)
+            cp -r "$JENOVA_ROOT/jvim/runtime/lua/jenova/agent" \
+                "$NVIM_CONFIG_DST/lua/jenova/"
             ok "Copied jvim user config to $NVIM_CONFIG_DST"
         fi
         info "Plugins ship vendored inside jvim/runtime/pack/jenova/start/ — no network fetch required."

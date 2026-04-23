@@ -6,7 +6,7 @@ end
 
 local CHAT_DIR = vim.fn.stdpath("state") .. "/jenova/chats"
 local MODEL = "jenova"
-local SECRET = vim.env.JENOVA_SECRET or "jenova-local"
+local SECRET = "jenova-local"
 local TEMPERATURE = 0.7
 local TOP_P = 0.9
 local CHAT_WIDTH = 60
@@ -31,7 +31,9 @@ end
 
 local function new_chat_filename()
   ensure_chat_dir()
-  return CHAT_DIR .. "/" .. os.date("%Y%m%d_%H%M%S") .. ".md"
+  local pid = vim.fn.getpid()
+  local suffix = string.format("%04x", math.random(0, 0xFFFF))
+  return CHAT_DIR .. "/" .. os.date("%Y%m%d_%H%M%S") .. "_" .. pid .. "_" .. suffix .. ".md"
 end
 
 local function is_chat_buf(buf)
@@ -107,12 +109,12 @@ local function save_chat(buf)
   local path = chat_filepath(buf)
   if not path then return end
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  local f = io.open(path, "w")
-  if f then
-    f:write(table.concat(lines, "\n") .. "\n")
-    f:close()
+  local ret = vim.fn.writefile(lines, path)
+  if ret == 0 then
+    vim.bo[buf].modified = false
+  else
+    vim.notify("Failed to save chat: " .. path, vim.log.levels.ERROR, { title = "Jenova" })
   end
-  vim.bo[buf].modified = false
 end
 
 local function scroll_to_bottom(buf)
@@ -141,14 +143,21 @@ local function open_chat_split(path)
   local buf = vim.api.nvim_get_current_buf()
   set_chat_buf_options(buf)
 
-  vim.api.nvim_create_autocmd({ "TextChanged", "InsertLeave" }, {
-    buffer = buf,
-    callback = function()
-      if vim.bo[buf].modified then
-        save_chat(buf)
-      end
-    end,
-  })
+  -- Use a named augroup per buffer to prevent stacking duplicate handlers
+  -- on repeated open/close toggles
+  if not vim.b[buf]._jenova_chat_autocmd then
+    local group = vim.api.nvim_create_augroup("JenovaChatAutoSave_" .. buf, { clear = true })
+    vim.api.nvim_create_autocmd({ "TextChanged", "InsertLeave" }, {
+      group = group,
+      buffer = buf,
+      callback = function()
+        if vim.bo[buf].modified then
+          save_chat(buf)
+        end
+      end,
+    })
+    vim.b[buf]._jenova_chat_autocmd = true
+  end
 
   scroll_to_bottom(buf)
 
@@ -159,7 +168,7 @@ end
 
 local function stop_generation()
   if active_job then
-    active_job:kill(15)
+    active_job:kill(9)
     active_job = nil
   end
 end
@@ -204,6 +213,11 @@ end
 local function stream_response(buf, messages, on_done)
   stop_generation()
 
+  if vim.fn.executable("curl") ~= 1 then
+    vim.notify("curl not found. Install curl to enable chat streaming.", vim.log.levels.ERROR, { title = "Jenova" })
+    return
+  end
+
   local url = ep().proxy_url()
   local payload = vim.json.encode({
     model = MODEL,
@@ -215,13 +229,10 @@ local function stream_response(buf, messages, on_done)
   })
 
   local tmpfile = vim.fn.tempname() .. ".json"
-  local f = io.open(tmpfile, "w")
-  if not f then
+  if vim.fn.writefile({ payload }, tmpfile) ~= 0 then
     vim.notify("Failed to create temp file", vim.log.levels.ERROR, { title = "Jenova" })
     return
   end
-  f:write(payload)
-  f:close()
 
   vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## assistant", "" })
   local insert_line = vim.api.nvim_buf_line_count(buf)
@@ -386,9 +397,6 @@ function M.toggle_chat()
   end
 end
 
--- respond() routes through the embedded agent when available so tool-use,
--- context injection, and the full agentic loop are active.  It falls back
--- to the plain streaming path for raw chat buffers.
 function M.respond()
   local buf = vim.api.nvim_get_current_buf()
   if not is_chat_buf(buf) then
@@ -405,7 +413,6 @@ function M.respond()
   -- Try agent path first (full agentic loop with editor context + tool use)
   local agent_ok, agent = pcall(require, "jenova.agent")
   if agent_ok and agent then
-    -- Collect the last user message as the prompt.
     local prompt = ""
     for i = #messages, 1, -1 do
       if messages[i].role == "user" then
@@ -495,6 +502,11 @@ local function strip_code_fences(text)
 end
 
 local function do_rewrite(src_buf, start_ln, end_ln, instruction, selection, ft)
+  if vim.fn.executable("curl") ~= 1 then
+    vim.notify("curl not found. Install curl to enable rewrite.", vim.log.levels.ERROR, { title = "Jenova" })
+    return
+  end
+
   local user_msg = string.format(
     "Visual Rewrite: %s\n\nI have the following selection:\n```%s\n%s\n```",
     instruction, ft, selection
@@ -515,10 +527,10 @@ local function do_rewrite(src_buf, start_ln, end_ln, instruction, selection, ft)
   })
 
   local tmpfile = vim.fn.tempname() .. ".json"
-  local f = io.open(tmpfile, "w")
-  if not f then return end
-  f:write(payload)
-  f:close()
+  if vim.fn.writefile({ payload }, tmpfile) ~= 0 then
+    vim.notify("Failed to create temp file", vim.log.levels.ERROR, { title = "Jenova" })
+    return
+  end
 
   local response_text = ""
   local sse_buf = ""
@@ -565,7 +577,13 @@ local function do_rewrite(src_buf, start_ln, end_ln, instruction, selection, ft)
           vim.api.nvim_buf_set_lines(src_buf, start_ln - 1, end_ln, false, new_lines)
           vim.notify("Rewrite applied", vim.log.levels.INFO, { title = "Jenova" })
         elseif response_text == "" then
-          vim.notify("Rewrite failed — empty response from backend", vim.log.levels.ERROR, { title = "Jenova" })
+          if result.code ~= 0 then
+            vim.notify("Rewrite failed: connection error (is the backend running?)",
+              vim.log.levels.ERROR, { title = "Jenova" })
+          else
+            vim.notify("Rewrite failed: empty response from backend",
+              vim.log.levels.ERROR, { title = "Jenova" })
+          end
         end
       end)
     end
@@ -624,6 +642,10 @@ end
 
 function M.fresh_chat()
   ensure_chat_dir()
+  if vim.fn.isdirectory(CHAT_DIR) == 1 then
+    vim.fn.delete(CHAT_DIR, "rf")
+    vim.fn.mkdir(CHAT_DIR, "p")
+  end
   return open_chat_split()
 end
 
@@ -704,7 +726,6 @@ function M.setup()
   vim.keymap.set("n", "<leader>ai", function() M.inline_rewrite() end, opts("Inline Rewrite"))
   vim.keymap.set("n", "<leader>ax", function() M.stop() end, opts("Stop Generation"))
 
-  -- Agent-specific keymaps (embedded agent required)
   vim.keymap.set("n", "<leader>aa", function()
     local ok, agent = pcall(require, "jenova.agent")
     if ok and agent then
@@ -733,11 +754,11 @@ function M.setup()
     local prompt = string.format(
       "Fix all LSP diagnostics in `%s`:\n%s\n\nApply fixes directly.",
       fname, table.concat(lines, "\n"))
-    local buf = M.toggle_chat()
-    if buf then
-      append_user_section(buf, prompt)
-      save_chat(buf)
-      scroll_to_bottom(buf)
+    local cbuf = M.toggle_chat()
+    if cbuf then
+      append_user_section(cbuf, prompt)
+      save_chat(cbuf)
+      scroll_to_bottom(cbuf)
       M.respond()
     end
   end, opts("Fix diagnostics in current buffer"))
