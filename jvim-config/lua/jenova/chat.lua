@@ -596,7 +596,7 @@ local function agent_respond(buf, prompt, on_done)
         if type(preview_text) == "string" and #preview_text > 0 then
           local lines = vim.split(preview_text, "\n", { plain = true })
           local kept = {}
-          local MAX_LINES = 20
+          local MAX_LINES = 8
           for i = 1, math.min(#lines, MAX_LINES) do
             table.insert(kept, "  " .. lines[i])
           end

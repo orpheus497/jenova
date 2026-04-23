@@ -407,13 +407,42 @@ function M.query(prompt, opts)
   local as_ok, app_state = pcall(require, "state.app_state")
   if as_ok and app_state and app_state.set_cwd then
     local cwd = vim.fn.getcwd()
-    local cur = vim.api.nvim_buf_get_name(0)
-    if cur and cur ~= "" and vim.fn.filereadable(cur) == 1 then
+
+    -- Pick the most recent *real* source buffer to anchor the workspace
+    -- on. The active buffer is often the jvim chat markdown (in
+    -- ~/.local/state/jvim/jenova/chats/) which would mis-anchor cwd to
+    -- the chat-state directory. Skip those, plus scratch/help/quickfix.
+    local function is_workspace_buffer(b)
+      if not vim.api.nvim_buf_is_loaded(b) then return false end
+      local bt = vim.bo[b].buftype
+      if bt ~= "" then return false end -- nofile/help/quickfix/terminal/etc.
+      local n = vim.api.nvim_buf_get_name(b)
+      if not n or n == "" then return false end
+      if n:match("/%.local/state/jvim/") then return false end
+      if n:match("/jenova/chats/") then return false end
+      return vim.fn.filereadable(n) == 1
+    end
+
+    local cur = nil
+    -- Try active buffer first.
+    local active = vim.api.nvim_get_current_buf()
+    if is_workspace_buffer(active) then
+      cur = vim.api.nvim_buf_get_name(active)
+    else
+      -- Fall back to the most recently used loaded buffer.
+      local best, best_ts = nil, -1
+      for _, b in ipairs(vim.api.nvim_list_bufs()) do
+        if is_workspace_buffer(b) then
+          local info = vim.fn.getbufinfo(b)[1]
+          local lu = info and info.lastused or 0
+          if lu > best_ts then best_ts = lu; best = b end
+        end
+      end
+      if best then cur = vim.api.nvim_buf_get_name(best) end
+    end
+
+    if cur and cur ~= "" then
       local cur_dir = vim.fn.fnamemodify(cur, ":p:h")
-      -- If the buffer is *not* under cwd, walk up from the buffer's
-      -- directory looking for a project-root marker so relative paths in
-      -- the user's prompt (e.g. "src", "include/foo.h") resolve at the
-      -- project level rather than inside the source-file's own folder.
       if cur_dir and not cur_dir:find(cwd, 1, true) then
         local markers = {
           ".git", "Makefile", "makefile", "CMakeLists.txt",

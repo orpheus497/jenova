@@ -95,76 +95,27 @@ function M.build_editor_context()
   local buf = vim.api.nvim_get_current_buf()
   local path, ft, row, col = current_file_info()
   local branch  = git_branch()
-  local changes = git_status_short()
   local diag    = lsp_diagnostics_summary(buf)
   local sel     = visual_selection()
   local bufs    = open_buffers()
 
-  local lines = { "## Editor Context" }
-  table.insert(lines, "- Workspace cwd: " .. vim.fn.getcwd())
-  table.insert(lines, string.format("- Current file: %s  (line %d, col %d)",
-    vim.fn.fnamemodify(path, ":~:."), row, col))
-  if ft ~= "" then
-    table.insert(lines, "- Filetype: " .. ft)
-  end
-  if diag then
-    table.insert(lines, "- LSP diagnostics: " .. diag)
-  end
-  if branch then
-    local git_line = "- Git: branch `" .. branch .. "`"
-    if changes > 0 then
-      git_line = git_line .. ", " .. changes .. " changed file(s)"
-    end
-    table.insert(lines, git_line)
-  end
+  local lines = { "## Context" }
+  table.insert(lines, "cwd: " .. vim.fn.getcwd())
+  table.insert(lines, string.format("file: %s:%d:%d (%s)",
+    vim.fn.fnamemodify(path, ":~:."), row, col, ft ~= "" and ft or "?"))
+  if diag then table.insert(lines, "diagnostics: " .. diag) end
+  if branch then table.insert(lines, "git: " .. branch) end
 
-  -- Always list every open buffer (not just count) so the model can answer
-  -- "the other files I have open" without first calling Buffers. Capped at
-  -- 20 entries to keep the system prompt small.
+  -- Compact one-line buffer list (max 8 entries) — full list available via Buffers tool.
   if #bufs > 0 then
-    table.insert(lines, "- Open buffers (" .. #bufs .. "):")
-    for i, b in ipairs(bufs) do
-      if i > 20 then
-        table.insert(lines, "    … (" .. (#bufs - 20) .. " more)")
-        break
-      end
-      table.insert(lines, "    • " .. b)
-    end
-  end
-
-  -- Sibling files in the current file's directory — the most common
-  -- "related files" the user means when they say "the other files".
-  if path ~= "[scratch]" and path ~= "" then
-    local dir = vim.fn.fnamemodify(path, ":h")
-    if dir and dir ~= "" and vim.fn.isdirectory(dir) == 1 then
-      local handle = vim.uv.fs_scandir(dir)
-      if handle then
-        local siblings = {}
-        while true do
-          local name, t = vim.uv.fs_scandir_next(handle)
-          if not name then break end
-          if t == "file" and not name:match("^%.") then
-            table.insert(siblings, name)
-          end
-        end
-        table.sort(siblings)
-        if #siblings > 0 then
-          table.insert(lines, string.format("- Files in %s/ (%d):",
-            vim.fn.fnamemodify(dir, ":~:."), #siblings))
-          for i, name in ipairs(siblings) do
-            if i > 30 then
-              table.insert(lines, "    … (" .. (#siblings - 30) .. " more)")
-              break
-            end
-            table.insert(lines, "    • " .. name)
-          end
-        end
-      end
-    end
+    local shown, n = {}, math.min(#bufs, 8)
+    for i = 1, n do table.insert(shown, bufs[i]) end
+    local extra = #bufs > n and (" +" .. (#bufs - n)) or ""
+    table.insert(lines, "buffers: " .. table.concat(shown, ", ") .. extra)
   end
 
   if sel then
-    table.insert(lines, "- Active selection:\n```\n" .. sel .. "\n```")
+    table.insert(lines, "selection:\n```\n" .. sel .. "\n```")
   end
 
   return table.concat(lines, "\n")
@@ -172,45 +123,15 @@ end
 
 function M.build_system_prompt()
   local base = table.concat({
-    "You are Jenova, an expert coding assistant embedded inside jvim.",
-    "You have direct access to the user's editor buffers, LSP, and the full project file system.",
-    "",
-    "## File traversal — use these tools, do NOT guess",
-    "  • Buffers — list every file the user currently has open (tabs/buffers)",
-    "  • LS      — list a directory's contents (tree view, default depth 3)",
-    "  • Glob    — find files by pattern; use `**/*.ext` for recursive matches",
-    "  • Grep    — search file contents across the workspace",
-    "  • Read    — read a file or open buffer (returns line-numbered output)",
-    "  • Edit / MultiEdit / Write — modify files (live buffers when open)",
-    "",
-    "## Mandatory workflow",
-    "When the user asks you to inspect, debug, or report on multiple files:",
-    "  1. Call **Buffers** first if they reference 'open', 'these', 'related' files.",
-    "  2. Call **LS** on the relevant directory if they reference 'this directory',",
-    "     'the parent directory', 'all files in X', 'the include folder', etc.",
-    "  3. Then call **Read** on each discovered file — one Read per file. You MUST",
-    "     chain the calls in the same turn; do not stop after a single Read when",
-    "     the user clearly asked for multiple files.",
-    "  4. Only after every relevant file has been Read, write your analysis.",
-    "",
-    "## Absolute rules — never break these",
-    "  • NEVER fabricate or guess file contents. If you have not Read a file in",
-    "    this conversation, you do not know what it contains. Say so and call Read.",
-    "  • NEVER invent header bodies, function prototypes, or Makefile rules from",
-    "    the file name alone. Always Read first, then quote the actual content.",
-    "  • NEVER write `<tool_response>`, `</tool_response>`, `<observation>`,",
-    "    `<tool_result>`, `<function_response>`, or any similar tag. Tool output",
-    "    is delivered to you by the runtime as a separate `tool` message — you",
-    "    do not have to (and must not) write it yourself. Emitting these tags",
-    "    is fabrication and will be discarded.",
-    "  • NEVER assume a tool succeeded with the answer you wanted. After every",
-    "    tool call, STOP and wait for the real `tool` message. Only then continue.",
-    "  • Emit each tool call in its OWN ```json fence, one JSON object per fence.",
-    "    Do not concatenate multiple JSON objects in one fence.",
-    "",
-    "Relative paths resolve against the workspace root (jvim's cwd).",
-    "Prefer Read on a buffer over re-reading from disk when a file is open.",
-    "Be concise and precise. Apply edits directly rather than describing them unless asked.",
+    "You are Jenova, a coding assistant in jvim.",
+    "Tools: Buffers, LS, Glob, Grep, Read, Edit, MultiEdit, Write, Shell, LSP, Brief.",
+    "Each tool call: a single ```json {\"name\":..,\"arguments\":{..}}``` fence. One object per fence.",
+    "Rules:",
+    "- Never invent file contents. Read first.",
+    "- Never write <tool_response>, <observation>, <result> or similar. The runtime delivers tool output as a separate message; wait for it.",
+    "- Multi-file tasks: discover with LS/Glob/Buffers, then issue one Read per file in the same turn.",
+    "- Relative paths resolve against workspace cwd (shown below).",
+    "- Be terse. Apply edits directly. Use Brief only for the final summary.",
   }, "\n")
 
   local editor_ctx = safe(M.build_editor_context)
