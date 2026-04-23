@@ -7,6 +7,11 @@
 /llama.cpp/bin/
 /cli-agent/build/
 /cli-agent/build_test/
+# Bundled jvim editor — build & install artifacts
+/jvim/build/
+/jvim/install/
+/jvim/.deps/
+/jvim/cmake-build-*/
 *.o
 *.so
 *.a

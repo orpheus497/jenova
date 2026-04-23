@@ -2,24 +2,25 @@
 # install.sh: Jenova Cognitive Architecture — System Installation Script
 # Supports all Vulkan hardware profiles (auto-detected via detect-hardware.sh)
 #
-# Jenova is the cognitive backend half of a two-repo system. The matching
-# editor frontend is the jvim fork of Neovim:
-#     https://github.com/orpheus497/jvim
-# Both repos are designed to be installed together; this script handles the
-# Jenova half (backend, models, plugin config) and verifies that a jvim or
-# Neovim binary is available so the bin/jvim wrapper can launch the editor.
+# This is the single installer for the whole monorepo: it builds (or verifies)
+# llama.cpp, builds the bundled jvim editor (which contains the embedded
+# Jenova agent), downloads missing model GGUFs, deploys the jvim user config,
+# and symlinks `jvim`, `jenova`, and `jenova-ca` onto your PATH.
 #
-# Usage: ./install.sh [--force] [--link] [--skip-nvim] [--skip-llama]
-#                     [--client-only]
+# Usage: ./install.sh [--force] [--link] [--skip-config] [--skip-jvim]
+#                     [--skip-llama] [--skip-lsp] [--client-only]
 #
-#   --force        Overwrite existing ~/.config/nvim without prompting
-#   --link         Install Jenova nvim config as symlinks into ~/.config/nvim
+#   --force        Overwrite existing ~/.config/jvim without prompting and
+#                  force a fresh jvim rebuild even if jvim/build/ exists
+#   --link         Install Jenova jvim config as symlinks into ~/.config/jvim
 #                  (development workflow — edits in repo apply immediately)
-#   --skip-nvim    Skip the Neovim/jvim config deployment step
+#   --skip-config  Skip the jvim user-config deployment step
+#   --skip-jvim    Skip building the bundled jvim editor (jvim/)
 #   --skip-llama   Skip llama.cpp build check
-#   --client-only  LAN client install: skip llama.cpp, skip model downloads.
-#                  Use when this host will only ever connect to a remote
-#                  Jenova CA via 'jvim --remote <host>'.
+#   --skip-lsp     Skip auto-installing LSP servers / linters / formatters
+#   --client-only  LAN client install: skip llama.cpp, skip jvim build,
+#                  skip model downloads. Use when this host will only ever
+#                  connect to a remote Jenova CA via 'jvim --remote <host>'.
 #
 # This script:
 #   1. Verifies required system dependencies
@@ -27,29 +28,33 @@
 #   3. Checks for llama.cpp build (skipped with --client-only)
 #   4. Downloads required model files (skipped with --client-only)
 #   5. Detects whether the installed nvim is jvim or upstream Neovim
-#   6. Installs the Jenova nvim configuration to ~/.config/nvim/
+#   6. Installs the Jenova nvim configuration to ~/.config/jvim/
 #   7. Installs bin/jvim, bin/jenova, bin/jenova-ca symlinks to PATH
 #   8. Prints a summary plus next-step commands
 
 set -e
 
 JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
-NVIM_CONFIG_SRC="$JENOVA_ROOT/nvim"
-NVIM_CONFIG_DST="$HOME/.config/nvim"
+JVIM_CONFIG_SRC="$JENOVA_ROOT/jvim-config"
+JVIM_CONFIG_DST="$HOME/.config/jvim"
 
 FORCE=0
 LINK=0
 SKIP_NVIM=0
+SKIP_JVIM=0
 SKIP_LLAMA=0
+SKIP_LSP=0
 CLIENT_ONLY=0
 
 for _arg in "$@"; do
     case "$_arg" in
         --force)       FORCE=1 ;;
         --link)        LINK=1 ;;
-        --skip-nvim)   SKIP_NVIM=1 ;;
+        --skip-config|--skip-nvim) SKIP_NVIM=1 ;;
+        --skip-jvim)   SKIP_JVIM=1 ;;
         --skip-llama)  SKIP_LLAMA=1 ;;
-        --client-only) CLIENT_ONLY=1; SKIP_LLAMA=1 ;;
+        --skip-lsp)    SKIP_LSP=1 ;;
+        --client-only) CLIENT_ONLY=1; SKIP_LLAMA=1; SKIP_JVIM=1 ;;
         -h|--help)
             sed -n '2,32p' "$0"
             exit 0
@@ -164,25 +169,30 @@ check_bin  "luajit"  "pkg install luajit-openresty"
 check_bin  "git"     "pkg install git"
 
 if [ "$SKIP_NVIM" = "0" ]; then
-    if command -v nvim >/dev/null 2>&1; then
-        # Detect whether the resolved nvim is the jvim fork or upstream Neovim.
-        # The jvim version string is "JVIM v0.x.x" (see jvim/src/nvim/version.c).
+    # Prefer the in-tree jvim build (jvim/build/bin/nvim) which the unified
+    # `make jvim` target produces. Fall back to whatever `nvim` is on PATH
+    # (warn if it's not jvim) and finally fail with a build hint.
+    _JVIM_BIN="$JENOVA_ROOT/jvim/build/bin/nvim"
+    if [ -x "$_JVIM_BIN" ]; then
+        _NVIM_VLINE=$("$_JVIM_BIN" --version 2>/dev/null | head -n 1)
+        case "$_NVIM_VLINE" in
+            *JVIM*) ok "in-tree jvim build ($_NVIM_VLINE) — fully integrated" ;;
+            *)      warn "in-tree binary $_JVIM_BIN is not jvim ($_NVIM_VLINE)"; WARNINGS=$((WARNINGS + 1)) ;;
+        esac
+    elif command -v jvim >/dev/null 2>&1; then
         _NVIM_VLINE=$(nvim --version 2>/dev/null | head -n 1)
         case "$_NVIM_VLINE" in
             *JVIM*)
-                ok "nvim is jvim ($_NVIM_VLINE) — fully integrated"
+                ok "system nvim is jvim ($_NVIM_VLINE) — fully integrated"
                 ;;
             *)
-                warn "nvim is upstream Neovim ($_NVIM_VLINE), not jvim."
-                warn "Jenova plugins will still load, but jvim-specific behaviour"
-                warn "will be unavailable. Install jvim from:"
-                warn "    https://github.com/orpheus497/jvim"
+                warn "system nvim is upstream Neovim ($_NVIM_VLINE), not jvim."
+                warn "Build the bundled jvim editor: make jvim"
                 WARNINGS=$((WARNINGS + 1))
                 ;;
         esac
     else
-        fail "nvim not found — install jvim (https://github.com/orpheus497/jvim)"
-        fail "or upstream Neovim: pkg install neovim"
+        fail "No editor found. Build the bundled jvim: make jvim"
         ERRORS=$((ERRORS + 1))
     fi
     check_optional "gmake"  "pkg install gmake  (needed for telescope-fzf-native)"
@@ -214,36 +224,193 @@ if [ "$_OS" = "FreeBSD" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Optional LSP servers / formatters
+# 4. LSP servers / linters / formatters
 # ---------------------------------------------------------------------------
-info "Checking optional LSP servers..."
+# Without LSPs nothing in the editor lints, so we install the ones we can
+# obtain from the local package manager / npm / cargo / go automatically.
+# Anything we cannot install is downgraded to a warning with the manual
+# install hint instead of failing the script.
+if [ "$SKIP_LSP" = "1" ]; then
+    info "Skipping LSP / linter / formatter installation (--skip-lsp)"
+else
+info "Installing LSP servers, linters and formatters..."
 
-# On FreeBSD, LLVM installs versioned clangd (clangd19, clangd18, …) without
-# an unversioned symlink; try them all before falling back to plain 'clangd'.
-if [ "$_OS" = "FreeBSD" ]; then
-    _CLANGD_BIN=""
-    for _c in clangd clangd19 clangd18 clangd17 clangd16 clangd15; do
-        if command -v "$_c" >/dev/null 2>&1; then
-            _CLANGD_BIN="$_c"
-            break
-        fi
-    done
-    if [ -n "$_CLANGD_BIN" ]; then
-        ok "clangd (found as $_CLANGD_BIN) (optional)"
+# ── helpers ──────────────────────────────────────────────────────────
+_have() { command -v "$1" >/dev/null 2>&1; }
+
+# Try sudo when available and the current user is not root.
+_PRIV=""
+if [ "$(id -u)" != "0" ] && _have sudo; then
+    _PRIV="sudo"
+fi
+
+_apt_install() {
+    # Quietly install one-or-more apt packages (Debian/Ubuntu/derivatives).
+    _have apt-get || return 1
+    $_PRIV apt-get install -y -q "$@" >/dev/null 2>&1
+}
+
+_pkg_install() {
+    # FreeBSD pkg(8). Run unattended; root is required.
+    _have pkg || return 1
+    $_PRIV pkg install -y "$@" >/dev/null 2>&1
+}
+
+_npm_install_g() {
+    _have npm || return 1
+    if [ "$(id -u)" = "0" ]; then
+        npm install -g --silent "$@" >/dev/null 2>&1
     else
-        warn "clangd not found (optional) — install: pkg install llvm (provides clangd)"
+        # User-prefix install avoids needing root.
+        npm install -g --silent --prefix "$HOME/.local" "$@" >/dev/null 2>&1
+    fi
+}
+
+_cargo_install() {
+    _have cargo || return 1
+    cargo install --quiet --locked "$@" >/dev/null 2>&1
+}
+
+_go_install() {
+    _have go || return 1
+    GOBIN="${GOBIN:-$HOME/go/bin}" go install "$@" >/dev/null 2>&1
+}
+
+_pip_install() {
+    if _have pipx; then
+        pipx install --quiet "$@" >/dev/null 2>&1
+    elif _have pip3; then
+        pip3 install --quiet --user "$@" >/dev/null 2>&1
+    else
+        return 1
+    fi
+}
+
+# Ensure the GOBIN / cargo / pipx / npm-prefix bins are on PATH for the
+# rest of this script and any spawned tools.
+for _d in "$HOME/.local/bin" "$HOME/.cargo/bin" "$HOME/go/bin" "$HOME/.local/share/pipx/venvs"; do
+    case ":$PATH:" in *":$_d:"*) : ;; *) PATH="$_d:$PATH" ;; esac
+done
+export PATH
+
+# Install one tool by trying the appropriate manager for this OS first,
+# then falling back. Already-present tools are reported as ok and skipped.
+_install_lsp() {
+    _exe="$1"; _label="$2"; _apt="$3"; _pkg="$4"; _npm="$5"; _cargo="$6"; _go="$7"; _pip="$8"
+    if _have "$_exe"; then
+        ok "$_label ($(command -v "$_exe"))"
+        return 0
+    fi
+    case "$_OS" in
+        FreeBSD) [ -n "$_pkg" ]   && _pkg_install $_pkg   || true ;;
+        *)       [ -n "$_apt" ]   && _apt_install $_apt   || true ;;
+    esac
+    if ! _have "$_exe" && [ -n "$_npm" ];   then _npm_install_g $_npm  || true; fi
+    if ! _have "$_exe" && [ -n "$_cargo" ]; then _cargo_install $_cargo || true; fi
+    if ! _have "$_exe" && [ -n "$_go" ];    then _go_install $_go       || true; fi
+    if ! _have "$_exe" && [ -n "$_pip" ];   then _pip_install $_pip     || true; fi
+    if _have "$_exe"; then
+        ok "$_label installed ($(command -v "$_exe"))"
+    else
+        warn "$_label could not be installed automatically"
         WARNINGS=$((WARNINGS + 1))
     fi
+    return 0
+}
+
+# clangd: FreeBSD ships versioned binaries (clangd19, clangd18, …) without
+# an unversioned symlink. Probe versioned names first.
+_clangd_present() {
+    for _c in clangd clangd21 clangd19 clangd18 clangd17 clangd16 clangd15; do
+        _have "$_c" && { _CLANGD_BIN="$_c"; return 0; }
+    done
+    return 1
+}
+if _clangd_present; then
+    ok "clangd (found as $_CLANGD_BIN)"
 else
-    check_optional "clangd"               "pkg install llvm (provides clangd)"
+    case "$_OS" in
+        FreeBSD) _pkg_install llvm ;;
+        *)       _apt_install clangd ;;
+    esac
+    if _clangd_present; then
+        ok "clangd installed (as $_CLANGD_BIN)"
+    else
+        warn "clangd could not be installed automatically"
+        WARNINGS=$((WARNINGS + 1))
+    fi
 fi
-check_optional "rust-analyzer"        "pkg install rust-analyzer  OR  rustup component add rust-analyzer"
-check_optional "lua-language-server"  "pkg install lua-language-server"
-check_optional "pyright"              "pkg install py311-pyright"
-check_optional "zls"                  "pkg install zig  (includes zls on some versions)"
-check_optional "bash-language-server" "npm install -g bash-language-server"
-check_optional "stylua"               "cargo install stylua  OR  pkg install stylua"
-check_optional "goimports"            "go install golang.org/x/tools/cmd/goimports@latest"
+
+# Detect cpu arch in the github-release naming convention.
+case "$(uname -m)" in
+    x86_64|amd64)  _GH_ARCH_LLS="x64";   _GH_ARCH_ZLS="x86_64" ;;
+    aarch64|arm64) _GH_ARCH_LLS="arm64"; _GH_ARCH_ZLS="aarch64" ;;
+    *)             _GH_ARCH_LLS="";      _GH_ARCH_ZLS="" ;;
+esac
+
+# Install lua-language-server from upstream github release tarball.
+# Debian/Ubuntu do not package it, npm/cargo do not provide it, and FreeBSD
+# only has it via the lua-language-server pkg (handled above).
+_install_lls_from_github() {
+    [ -z "$_GH_ARCH_LLS" ] && return 1
+    _have curl || return 1
+    _ver="3.13.5"
+    _dst="$HOME/.local/share/lua-language-server"
+    info "Downloading lua-language-server $_ver from github..."
+    mkdir -p "$_dst" "$HOME/.local/bin"
+    _url="https://github.com/LuaLS/lua-language-server/releases/download/${_ver}/lua-language-server-${_ver}-linux-${_GH_ARCH_LLS}.tar.gz"
+    _tmp="$(mktemp)"
+    curl -fsSL "$_url" -o "$_tmp" || { rm -f "$_tmp"; return 1; }
+    tar -xzf "$_tmp" -C "$_dst" || { rm -f "$_tmp"; return 1; }
+    rm -f "$_tmp"
+    printf '#!/bin/sh\nexec "%s/bin/lua-language-server" "$@"\n' "$_dst" > "$HOME/.local/bin/lua-language-server"
+    chmod +x "$HOME/.local/bin/lua-language-server"
+    _have lua-language-server
+}
+
+# Install zls from upstream github release tarball as a last resort.
+_install_zls_from_github() {
+    [ -z "$_GH_ARCH_ZLS" ] && return 1
+    _have curl || return 1
+    _ver="0.13.0"
+    mkdir -p "$HOME/.local/bin"
+    _url="https://github.com/zigtools/zls/releases/download/${_ver}/zls-${_GH_ARCH_ZLS}-linux.tar.xz"
+    _tmp="$(mktemp --suffix=.tar.xz)"
+    info "Downloading zls $_ver from github..."
+    curl -fsSL "$_url" -o "$_tmp" || { rm -f "$_tmp"; return 1; }
+    tar -xJf "$_tmp" -C /tmp/ zls 2>/dev/null || { rm -f "$_tmp"; return 1; }
+    mv /tmp/zls "$HOME/.local/bin/zls"
+    chmod +x "$HOME/.local/bin/zls"
+    rm -f "$_tmp"
+    _have zls
+}
+
+# args:        exe                    label                apt                    pkg                          npm                          cargo            go                                                          pip
+_install_lsp "rust-analyzer"          "rust-analyzer"       "rust-analyzer"        "rust-analyzer"              ""                           ""               ""                                                          ""
+_install_lsp "lua-language-server"    "lua-language-server" "lua-language-server"  "lua-language-server"        ""                           ""               ""                                                          ""
+if ! _have lua-language-server; then
+    _install_lls_from_github && ok "lua-language-server installed ($(command -v lua-language-server))" || warn "lua-language-server could not be installed automatically"
+fi
+_install_lsp "pyright-langserver"     "pyright"             ""                     "py311-pyright"              "pyright"                    ""               ""                                                          ""
+_install_lsp "bash-language-server"   "bash-language-server" ""                    "npm"                        "bash-language-server"       ""               ""                                                          ""
+_install_lsp "gopls"                  "gopls"               "gopls"                "go gopls"                   ""                           ""               "golang.org/x/tools/gopls@latest"                            ""
+_install_lsp "zls"                    "zls"                 ""                     "zig"                        ""                           ""               ""                                                          ""
+if ! _have zls; then
+    _install_zls_from_github && ok "zls installed ($(command -v zls))" || warn "zls could not be installed automatically"
+fi
+
+# Linters (used by LSP-equivalents and conform.nvim).
+_install_lsp "shellcheck"             "shellcheck"          "shellcheck"           "shellcheck"                 ""                           ""               ""                                                          ""
+
+# Formatters used by conform.nvim (format-on-save).
+_install_lsp "stylua"                 "stylua"              ""                     "stylua"                     ""                           "stylua"         ""                                                          ""
+_install_lsp "shfmt"                  "shfmt"               "shfmt"                "shfmt"                      ""                           ""               "mvdan.cc/sh/v3/cmd/shfmt@latest"                            ""
+_install_lsp "goimports"              "goimports"           ""                     "go"                         ""                           ""               "golang.org/x/tools/cmd/goimports@latest"                    ""
+_install_lsp "black"                  "black"               "black"                "py311-black"                ""                           ""               ""                                                          "black"
+_install_lsp "isort"                  "isort"               "isort"                "py311-isort"                ""                           ""               ""                                                          "isort"
+
+fi  # SKIP_LSP
+
 
 # ---------------------------------------------------------------------------
 # 5. llama.cpp build check
@@ -273,6 +440,39 @@ elif [ "$SKIP_LLAMA" = "0" ]; then
         warn "FreeBSD: pkg install shaderc"
         warn "Linux:   install vulkan-sdk or vulkan-tools package"
         WARNINGS=$((WARNINGS + 1))
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 5b. jvim editor — build the in-tree fork unless --skip-jvim was passed
+# ---------------------------------------------------------------------------
+if [ "$SKIP_JVIM" = "0" ] && [ "$CLIENT_ONLY" = "0" ]; then
+    info "Building bundled jvim editor (jvim/)..."
+    if [ ! -f "$JENOVA_ROOT/jvim/CMakeLists.txt" ]; then
+        warn "jvim/ source tree missing — skipping jvim build"
+        WARNINGS=$((WARNINGS + 1))
+    elif ! command -v cmake >/dev/null 2>&1; then
+        warn "cmake not found — cannot build jvim. Install: pkg install cmake"
+        WARNINGS=$((WARNINGS + 1))
+    else
+        _JVIM_BIN_OUT="$JENOVA_ROOT/jvim/build/bin/nvim"
+        if [ -x "$_JVIM_BIN_OUT" ] && [ "$FORCE" = "0" ]; then
+            ok "jvim already built at $_JVIM_BIN_OUT (use --force to rebuild)"
+        else
+            _JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+            (
+                cd "$JENOVA_ROOT/jvim" && \
+                cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+                      -DCMAKE_INSTALL_PREFIX="$JENOVA_ROOT/jvim/install" >/dev/null && \
+                cmake --build build -j"$_JOBS"
+            ) || {
+                fail "jvim build failed — see above. Re-run: make jvim"
+                ERRORS=$((ERRORS + 1))
+            }
+            if [ -x "$_JVIM_BIN_OUT" ]; then
+                ok "jvim built at $_JVIM_BIN_OUT"
+            fi
+        fi
     fi
 fi
 
@@ -397,16 +597,16 @@ fi  # CLIENT_ONLY model-checks guard
 # ---------------------------------------------------------------------------
 # 7. Neovim config installation
 # ---------------------------------------------------------------------------
-if [ "$SKIP_NVIM" = "0" ] && command -v nvim >/dev/null 2>&1; then
-    info "Installing Neovim configuration..."
+if [ "$SKIP_NVIM" = "0" ] && command -v jvim >/dev/null 2>&1; then
+    info "Installing jvim configuration..."
 
-    if [ -d "$NVIM_CONFIG_DST" ] && [ "$FORCE" = "0" ]; then
-        printf "  ~/.config/nvim already exists. Overwrite? [y/N] "
+    if [ -d "$JVIM_CONFIG_DST" ] && [ "$FORCE" = "0" ]; then
+        printf "  ~/.config/jvim already exists. Overwrite? [y/N] "
         read -r _ans
         case "$_ans" in
             y|Y|yes|YES) ;;
             *)
-                warn "Skipping Neovim config installation (use --force to override)"
+                warn "Skipping jvim config installation (use --force to override)"
                 SKIP_NVIM=1
                 ;;
         esac
@@ -414,37 +614,43 @@ if [ "$SKIP_NVIM" = "0" ] && command -v nvim >/dev/null 2>&1; then
 
     if [ "$SKIP_NVIM" = "0" ]; then
         # Backup existing config
-        if [ -d "$NVIM_CONFIG_DST" ]; then
+        if [ -d "$JVIM_CONFIG_DST" ]; then
             _TS=$(date +%Y%m%d_%H%M%S)
-            _BAK="${NVIM_CONFIG_DST}.bak.${_TS}"
-            mv "$NVIM_CONFIG_DST" "$_BAK"
+            _BAK="${JVIM_CONFIG_DST}.bak.${_TS}"
+            mv "$JVIM_CONFIG_DST" "$_BAK"
             ok "Backed up existing config to $_BAK"
         fi
 
-        mkdir -p "$NVIM_CONFIG_DST/lua/plugins"
-        mkdir -p "$NVIM_CONFIG_DST/lua/jenova"
+        mkdir -p "$JVIM_CONFIG_DST/lua/plugins"
+        mkdir -p "$JVIM_CONFIG_DST/lua/jenova"
 
         if [ "$LINK" = "1" ]; then
-            # Symlink mode — changes in repo instantly reflected in Neovim
-            ln -sf "$NVIM_CONFIG_SRC/init.lua"        "$NVIM_CONFIG_DST/init.lua"
-            ln -sf "$NVIM_CONFIG_SRC/lazy-lock.json"  "$NVIM_CONFIG_DST/lazy-lock.json"
-            for _dir in plugins jenova; do
-                for _f in "$NVIM_CONFIG_SRC/lua/$_dir/"*.lua; do
-                    [ -f "$_f" ] && ln -sf "$_f" "$NVIM_CONFIG_DST/lua/$_dir/$(basename "$_f")"
-                done
+            # Symlink mode — changes in repo instantly reflected in jvim
+            ln -sf "$JVIM_CONFIG_SRC/init.lua" "$JVIM_CONFIG_DST/init.lua"
+            for _f in "$JVIM_CONFIG_SRC/lua/plugins/"*.lua; do
+                [ -f "$_f" ] && ln -sf "$_f" "$JVIM_CONFIG_DST/lua/plugins/$(basename "$_f")"
             done
-            ok "Symlinked Neovim config (--link mode, edits in $NVIM_CONFIG_SRC take effect immediately)"
+            # jenova/ contains both leaf .lua modules AND the agent/ subtree
+            for _f in "$JVIM_CONFIG_SRC/lua/jenova/"*.lua; do
+                [ -f "$_f" ] && ln -sf "$_f" "$JVIM_CONFIG_DST/lua/jenova/$(basename "$_f")"
+            done
+            ln -sfn "$JVIM_CONFIG_SRC/lua/jenova/agent" \
+                "$JVIM_CONFIG_DST/lua/jenova/agent"
+            ok "Symlinked jvim user config (--link mode, edits in $JVIM_CONFIG_SRC take effect immediately)"
         else
             # Copy mode — stable snapshot
-            cp "$NVIM_CONFIG_SRC/init.lua"       "$NVIM_CONFIG_DST/init.lua"
-            cp "$NVIM_CONFIG_SRC/lazy-lock.json" "$NVIM_CONFIG_DST/lazy-lock.json"
-            for _dir in plugins jenova; do
-                for _f in "$NVIM_CONFIG_SRC/lua/$_dir/"*.lua; do
-                    [ -f "$_f" ] && cp "$_f" "$NVIM_CONFIG_DST/lua/$_dir/"
-                done
+            cp "$JVIM_CONFIG_SRC/init.lua" "$JVIM_CONFIG_DST/init.lua"
+            for _f in "$JVIM_CONFIG_SRC/lua/plugins/"*.lua; do
+                [ -f "$_f" ] && cp "$_f" "$JVIM_CONFIG_DST/lua/plugins/"
             done
-            ok "Copied Neovim config to $NVIM_CONFIG_DST"
+            for _f in "$JVIM_CONFIG_SRC/lua/jenova/"*.lua; do
+                [ -f "$_f" ] && cp "$_f" "$JVIM_CONFIG_DST/lua/jenova/"
+            done
+            cp -r "$JVIM_CONFIG_SRC/lua/jenova/agent" \
+                "$JVIM_CONFIG_DST/lua/jenova/"
+            ok "Copied jvim user config to $JVIM_CONFIG_DST"
         fi
+        info "Plugins ship vendored inside jvim/runtime/pack/jenova/start/ — no network fetch required."
     fi
 fi
 
@@ -562,8 +768,8 @@ else
     echo "     Or launch editor:   $JENOVA_ROOT/bin/jvim  (or just: jvim)"
     echo "     LAN client mode:    jvim --remote <host>"
     if [ "$SKIP_NVIM" = "0" ]; then
-        echo "  4. Inside the editor:  :Lazy install   (install plugins on first launch)"
-        echo "                         :checkhealth jenova"
+        echo "  4. Inside the editor:  :checkhealth jenova"
+        echo "                         (plugins are vendored under jvim/runtime/pack/jenova/start/)"
     fi
     echo ""
     echo "  Maintenance:"
@@ -572,6 +778,4 @@ else
     echo "    scripts/uninstall.sh          — remove deployed files (preserves models)"
     echo "    bin/jvim --check        — print resolved env without launching editor"
 fi
-echo ""
-info "Editor frontend (jvim): https://github.com/orpheus497/jvim"
 echo ""

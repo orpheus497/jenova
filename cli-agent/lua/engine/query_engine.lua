@@ -11,6 +11,8 @@
 -- whenever we need real Lua table ↔ JSON conversion.
 local json_codec = require("utils.json_fallback")
 local tool_registry = require("tools.registry")
+local paths = require("utils.paths")
+local mem_ok, memory = pcall(require, "services.memory.manager")
 
 -- Try to load provider system
 local provider_base
@@ -140,11 +142,16 @@ function QueryEngine.new(options)
     self.abort_controller = nil
 
     -- File read cache: stores the content of files read during this session.
-    -- Key: resolved absolute path. Value: { text, ts }
+    -- Key: resolved absolute path. Value: { text, ts, num_lines }
     -- Used to:
     --   1. Detect redundant re-reads (same path, no intervening write) and skip the I/O.
     --   2. Inject cached content as a hint when an Edit/MultiEdit fails with "not found".
     self._file_cache = {}
+
+    -- Git-like file state tracker — records mtime+size+hash on every read/write
+    -- so the cache knows reliably when disk content has changed.
+    local ft_ok, ft = pcall(require, "context.file_tracker")
+    self._file_tracker = ft_ok and ft or nil
 
     -- Load verifier once — it holds per-session attempt counters.
     local v_ok, verifier = pcall(require, "services.tool_verifier")
@@ -245,12 +252,18 @@ local function summarise_input(tool_name, input)
     return tool_name
 end
 
-function QueryEngine:_cache_file_read(path, text, num_lines)
-    self._file_cache[path] = { text = text, num_lines = num_lines, ts = os.time() }
+function QueryEngine:_cache_file_read(path, text, num_lines, truncated)
+    self._file_cache[path] = { text = text, num_lines = num_lines, ts = os.time(), truncated = truncated }
+    if self._file_tracker then
+        self._file_tracker.record_read(path, text)
+    end
 end
 
 function QueryEngine:_invalidate_cache(path)
     self._file_cache[path] = nil
+    if self._file_tracker then
+        self._file_tracker.invalidate(path)
+    end
 end
 
 function QueryEngine:execute_tool(tool_name, tool_use_id, input)
@@ -268,10 +281,16 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
     -- This breaks the "read the same file 4 times" loop without any prompt
     -- changes, and ensures the model always has current content.
     if tool_name == "Read" and type(input) == "table" and input.file_path then
-        local paths = require("utils.paths")
         local resolved = paths.resolve(input.file_path, tool_context.cwd)
         local cached = self._file_cache[resolved]
-        if cached and not (input.offset and input.offset > 0) then
+        -- Return from cache ONLY when:
+        --   1. We have a cached entry for this path.
+        --   2. Not a partial read (no offset).
+        --   3. The file has NOT changed on disk since we last read it
+        --      (checked via file_tracker mtime+size; if tracker unavailable,
+        --       fall through to a fresh read so we never serve stale content).
+        local disk_stale = not self._file_tracker or self._file_tracker.is_stale(resolved)
+        if cached and not cached.truncated and not (input.offset and input.offset > 0) and not disk_stale then
             self.on_tool_result(tool_name, { type = "text", text = cached.text,
                 num_lines = cached.num_lines })
             return { type = "text", text = cached.text,
@@ -292,10 +311,11 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
     -- ── Post-execution cache maintenance ──────────────────────────────
     if ok and not exec_err and type(result) == "table" then
         if tool_name == "Read" and result.text and type(input) == "table" and input.file_path
-               and not (input.offset and input.offset > 0) and not result.truncated then
-            local paths = require("utils.paths")
+               and not (input.offset and input.offset > 0) then
             local resolved = paths.resolve(input.file_path, tool_context.cwd)
-            self:_cache_file_read(resolved, result.text, result.num_lines)
+            -- Cache even truncated reads so partial content can be used as an
+            -- Edit hint, but mark truncated so full reads are not suppressed.
+            self:_cache_file_read(resolved, result.text, result.num_lines, result.truncated)
             -- Surface truncation notice to the model as an embed warning, not in text
             if result.truncation_hint then
                 if not self._pending_embed_warnings then self._pending_embed_warnings = {} end
@@ -304,15 +324,13 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
         elseif (tool_name == "Edit" or tool_name == "MultiEdit" or tool_name == "Write")
                and type(input) == "table" and input.file_path then
             -- Invalidate cache after any successful write so the next Read is fresh.
-            local paths = require("utils.paths")
             local resolved = paths.resolve(input.file_path, tool_context.cwd)
             self:_invalidate_cache(resolved)
         end
     end
 
     -- Record action in memory manager
-    local mem_ok, memory = pcall(require, "services.memory.manager")
-    local input_summary = ""
+    local input_summary
     if type(input) == "table" then
         input_summary = input.file_path or input.command or input.path
             or input.query or input.pattern or "(table)"
@@ -321,20 +339,14 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
     end
 
     if mem_ok then
-        -- Summarise input meaningfully so memory entries are human-readable.
-        local input_summary
-        if type(input) == "table" then
-            input_summary = input.file_path or input.command or input.path
-                or input.query or input.pattern or "(table)"
-        else
-            input_summary = tostring(input or "")
-        end
         if ok and not exec_err then
             memory.record_action(tool_name, input, result, true)
         else
             local err_msg = ok and exec_err or tostring(result)
             memory.record_action(tool_name, input, err_msg, false)
-            memory.log_error(tool_name, input_summary, err_msg)
+            if memory.log_error then
+                memory.log_error(tool_name, input_summary, err_msg)
+            end
 
             -- Embed-based self-correction: query the embedding model for similar
             -- past errors in this session and inject a targeted warning so the
@@ -418,7 +430,6 @@ function QueryEngine:execute_tool(tool_name, tool_use_id, input)
         if (tool_name == "Edit" or tool_name == "MultiEdit")
            and verdict == "retry"
            and type(input) == "table" and input.file_path then
-            local paths = require("utils.paths")
             local resolved = paths.resolve(input.file_path, tool_context.cwd)
             local cached = self._file_cache[resolved]
             if cached and cached.text then
@@ -488,7 +499,6 @@ function QueryEngine:query(user_message, options)
         }
 
         -- Enrich system prompt with memory context (errors, actions, plan)
-        local mem_ok, memory = pcall(require, "services.memory.manager")
         if mem_ok then
             local context = memory.build_context(user_message)
             if context and #context > 0 then
@@ -549,10 +559,53 @@ function QueryEngine:query(user_message, options)
             -- Brief is a terminal signal: the model is done and wants to reply.
             if tool_use.name == "Brief" then
                 local br = type(tool_use.input) == "table" and tool_use.input.response or nil
+
+                -- ── Narration guard ───────────────────────────────────────
+                -- Detect when the model uses Brief to announce intent instead of
+                -- acting. Patterns: "I will", "I'll", "Let me", "I am going to",
+                -- "Running", "Proceeding", "I'm going to", "I would", "I need to".
+                -- If detected, redirect by injecting a nudge and continuing the loop.
+                local is_narration = false
                 if br and #br > 0 then
-                    -- Route through on_text so the agent label fires before the first
-                    -- character — Brief responses were previously printed raw, bypassing
-                    -- the label-on-first-token logic in loop.lua.
+                    local lower = br:lower():match("^%s*(.-)%s*$") or ""
+                    local narration_patterns = {
+                        "^i will ", "^i'll ", "^let me ", "^i am going to ",
+                        "^i'm going to ", "^running ", "^proceeding",
+                        "^i would ", "^i need to ",
+                        "^now i ", "^first ", "^to do this", "^i should ",
+                    }
+                    for _, pat in ipairs(narration_patterns) do
+                        if lower:find(pat) then
+                            is_narration = true
+                            break
+                        end
+                    end
+                end
+
+                if is_narration then
+                    -- Reject the Brief and force the model to actually act.
+                    -- IMPORTANT: We must record a tool_result for this Brief
+                    -- tool_use to maintain the User→Assistant→User role
+                    -- alternation that providers (Anthropic/OpenAI) require.
+                    -- Without it, the assistant message added below would
+                    -- contain a tool_use with no matching tool_result on the
+                    -- next request and the API would reject the call.
+                    local nudge =
+                        "[System: You called Brief with an announcement ('" ..
+                        (br or ""):sub(1, 80) ..
+                        "'). This is FORBIDDEN. DO NOT announce what you will do. " ..
+                        "IMMEDIATELY call the appropriate action tool (Shell, Read, Edit, etc.) " ..
+                        "and perform the work. Do not call Brief until the task is fully complete.]"
+                    table.insert(tool_results_content, {
+                        type = "tool_result",
+                        tool_use_id = tool_use.id,
+                        content = nudge,
+                        is_error = true,
+                    })
+                    -- Don't terminate the loop — continue so the nudge is sent
+                    -- and the model gets another turn to act.
+                elseif br and #br > 0 then
+                    -- Legitimate final response — surface it and terminate.
                     self.on_text(br)
                     brief_response = br
                 end

@@ -1,22 +1,15 @@
 #!/usr/bin/env bash
-# jenova-manager.sh: TUI Manager for Jenova ecosystem
+# jenova-manager.sh: TUI manager for this monorepo
+#
+# All four components — Jenova Core (backend + scripts), the bundled jvim
+# editor, the cli-agent, and llama.cpp — live inside this repository. This
+# manager dispatches install / update / uninstall actions to the in-tree
+# Makefile targets and helper scripts. Nothing is cloned from external repos.
 
 set -e
 
 JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
 export JENOVA_ROOT
-
-# User-writable workspace for cloned components (jvim, jenova-cli).
-# Falls back to $HOME/src if the parent of JENOVA_ROOT is not writable.
-JENOVA_WORKSPACE="${JENOVA_WORKSPACE:-}"
-if [ -z "$JENOVA_WORKSPACE" ]; then
-    _parent="$(dirname "$JENOVA_ROOT")"
-    if [ -w "$_parent" ]; then
-        JENOVA_WORKSPACE="$_parent"
-    else
-        JENOVA_WORKSPACE="$HOME/src"
-    fi
-fi
 
 # Detect dialog or whiptail
 if command -v dialog >/dev/null 2>&1; then
@@ -29,13 +22,24 @@ else
     exit 1
 fi
 
+# Prefer GNU make (gmake) on FreeBSD; falls back to system make.
+if command -v gmake >/dev/null 2>&1; then
+    MAKE="gmake"
+else
+    MAKE="make"
+fi
+
 # --- Component detection ---
 
 check_jvim() {
-    command -v jvim >/dev/null 2>&1 && jvim --version 2>/dev/null | grep -q 'JVIM'
+    # In-tree build is the canonical install; PATH binary is a secondary check.
+    [ -x "$JENOVA_ROOT/jvim/build/bin/nvim" ] || \
+        ( command -v jvim >/dev/null 2>&1 && jvim --version 2>/dev/null | grep -q 'JVIM' )
 }
 
-check_jenova_cli() { command -v jenova-cli >/dev/null 2>&1; }
+check_jenova_cli() {
+    [ -x "$JENOVA_ROOT/cli-agent/build/cli-agent" ] || command -v jenova-cli >/dev/null 2>&1
+}
 
 resolve_llama_server_path() {
     local config_file
@@ -94,31 +98,10 @@ check_jenova_core() {
     [ "$(realpath "$installed_path")" = "$expected_path" ]
 }
 
-# Resolve a writable bin directory on PATH, matching install.sh logic.
-resolve_bin_dir() {
-    local _d
-    for _d in "$HOME/.local/bin" "$HOME/bin"; do
-        if echo ":$PATH:" | grep -q ":$_d:"; then
-            printf '%s\n' "$_d"
-            return 0
-        fi
-    done
-    return 1
-}
-
-# Build jenova-cli as the current user, then install to a user-writable
-# prefix if one is on PATH, else fall back to a system-wide sudo install.
-# Must be called from inside the jenova-cli source directory.
-_jenova_cli_build_and_install() {
-    make
-    local bin_dir
-    if bin_dir="$(resolve_bin_dir)"; then
-        mkdir -p "$bin_dir"
-        make install PREFIX="$(dirname "$bin_dir")"
-    else
-        echo "No writable bin dir found on PATH; installing to /usr/local (requires sudo)."
-        sudo make install PREFIX=/usr/local
-    fi
+# Build the in-tree jenova-cli (sources live under cli-agent/; the user-facing
+# launcher is bin/jenova which execs cli-agent/build/cli-agent).
+_jenova_cli_build() {
+    "$MAKE" -C "$JENOVA_ROOT/cli-agent"
 }
 
 # Temporary file to store dialog selections
@@ -309,27 +292,12 @@ install_jenova_core() {
     "$JENOVA_ROOT/scripts/install.sh"
 }
 install_jvim() {
-    echo "Installing jvim..."
-    mkdir -p "$JENOVA_WORKSPACE"
-    cd "$JENOVA_WORKSPACE"
-    if [ ! -d "jvim" ]; then
-        git clone https://github.com/orpheus497/jvim.git
-    fi
-    cd jvim && make CMAKE_BUILD_TYPE=Release && sudo make install
+    echo "Building in-tree jvim..."
+    "$MAKE" -C "$JENOVA_ROOT" jvim
 }
 install_jenova_cli() {
-    echo "Installing jenova-cli..."
-    mkdir -p "$JENOVA_WORKSPACE"
-    cd "$JENOVA_WORKSPACE"
-    if [ ! -d "jenova-cli" ]; then
-        if [ -d "cloda-codey-lua" ]; then
-            mv cloda-codey-lua jenova-cli
-        else
-            git clone https://github.com/orpheus497/jenova-cli.git
-        fi
-    fi
-    cd jenova-cli
-    _jenova_cli_build_and_install
+    echo "Building in-tree jenova-cli..."
+    _jenova_cli_build
 }
 install_llama() {
     echo "Installing llama.cpp..."
@@ -341,22 +309,17 @@ update_jenova_core() {
     "$JENOVA_ROOT/scripts/update.sh"
 }
 update_jvim() {
-    echo "Updating jvim..."
-    cd "$JENOVA_WORKSPACE/jvim" || { echo "Cannot access jvim directory at $JENOVA_WORKSPACE/jvim"; return 1; }
-    git pull --ff-only origin main
-    if $DIALOG --yesno "Do you want to rebuild jvim?" 8 50; then
-        make CMAKE_BUILD_TYPE=Release && sudo make install
+    echo "Updating jvim (in-tree)..."
+    git -C "$JENOVA_ROOT" pull --ff-only || true
+    if $DIALOG --yesno "Rebuild jvim now?" 8 50; then
+        "$MAKE" -C "$JENOVA_ROOT" jvim
     fi
 }
 update_jenova_cli() {
-    echo "Updating jenova-cli..."
-    if [ ! -d "$JENOVA_WORKSPACE/jenova-cli" ] && [ -d "$JENOVA_WORKSPACE/cloda-codey-lua" ]; then
-        mv "$JENOVA_WORKSPACE/cloda-codey-lua" "$JENOVA_WORKSPACE/jenova-cli"
-    fi
-    cd "$JENOVA_WORKSPACE/jenova-cli" || { echo "Cannot access jenova-cli directory at $JENOVA_WORKSPACE/jenova-cli"; return 1; }
-    git pull --ff-only origin main
-    if $DIALOG --yesno "Do you want to rebuild jenova-cli?" 8 50; then
-        _jenova_cli_build_and_install
+    echo "Updating jenova-cli (in-tree)..."
+    git -C "$JENOVA_ROOT" pull --ff-only || true
+    if $DIALOG --yesno "Rebuild jenova-cli now?" 8 50; then
+        _jenova_cli_build
     fi
 }
 update_llama() {
@@ -373,39 +336,14 @@ uninstall_jenova_core() {
     "$JENOVA_ROOT/scripts/uninstall.sh"
 }
 uninstall_jvim() {
-    echo "Uninstalling jvim..."
-    cd "$JENOVA_WORKSPACE/jvim" || { echo "Cannot access jvim directory at $JENOVA_WORKSPACE/jvim"; return 1; }
-    sudo make uninstall
+    echo "Removing in-tree jvim build artifacts..."
+    rm -rf "$JENOVA_ROOT/jvim/build" "$JENOVA_ROOT/jvim/install"
+    echo "jvim build artifacts removed."
 }
 uninstall_jenova_cli() {
-    echo "Uninstalling jenova-cli..."
-
-    local cli_path expected_path
-    cli_path="$(command -v jenova-cli 2>/dev/null || true)"
-
-    if [ -z "$cli_path" ]; then
-        echo "jenova-cli is not installed on PATH; nothing to remove."
-        return
-    fi
-
-    if command -v realpath >/dev/null 2>&1; then
-        cli_path="$(realpath "$cli_path")"
-    fi
-
-    # Only remove if it resolves to a known install location
-    for expected_path in "/usr/local/bin/jenova-cli" "$HOME/.local/bin/jenova-cli" "$HOME/bin/jenova-cli"; do
-        if [ "$cli_path" = "$expected_path" ]; then
-            if [ -w "$(dirname "$cli_path")" ]; then
-                rm -f "$cli_path"
-            else
-                sudo rm -f "$cli_path"
-            fi
-            echo "jenova-cli removed from $cli_path."
-            return
-        fi
-    done
-
-    echo "Skipping removal: jenova-cli resolves to '$cli_path', not a known install location."
+    echo "Removing in-tree jenova-cli build artifacts..."
+    rm -rf "$JENOVA_ROOT/cli-agent/build" "$JENOVA_ROOT/cli-agent/build_test"
+    echo "jenova-cli build artifacts removed."
 }
 uninstall_llama() {
     echo "Uninstalling llama.cpp..."

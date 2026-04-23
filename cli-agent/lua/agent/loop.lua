@@ -160,8 +160,8 @@ function M.run(opts)
         "- Write(file_path, content): create or overwrite a file. Only for new files or full rewrites.",
         "- Glob(pattern): find files by name. Use before Read when path is uncertain.",
         "- Grep(pattern, path): search file contents. Use to locate a symbol or string.",
-        "- Bash(command): run shell commands for build, compile, test, or install tasks. Not for file reading.",
-        "- Brief(response): deliver your final reply to the user. Call this ONLY when the task is fully complete.",
+        "- Shell(command): run shell commands for build, compile, test, or install tasks. Not for file reading.",
+        "- Brief(response): deliver your final reply to the user. Call this ONLY when ALL work is done and you have actual results to report. NEVER use Brief to announce what you are about to do — just do it with the appropriate tool.",
     }
 
     -- Git tool: only mention it when we're actually in a git repo
@@ -172,16 +172,27 @@ function M.run(opts)
 
     table.insert(tool_mandate_lines, "")
     table.insert(tool_mandate_lines, "## Rules (in order of importance)")
+    table.insert(tool_mandate_lines, "0. NEVER narrate intent with Brief. If you need to run make, call Shell({command='make'}). If you need to read a file, call Read. Do the action — never announce it.")
     table.insert(tool_mandate_lines, "1. ALWAYS call Read before Edit or MultiEdit. No exceptions. Never assume file content.")
     table.insert(tool_mandate_lines, "2. Copy old_string CHARACTER-FOR-CHARACTER from the Read output. Read returns lines as \"42\\t<content>\" — the old_string must contain ONLY the content after the tab, NOT the line-number prefix. Include every space, newline, and indent. Never reconstruct or guess it.")
     table.insert(tool_mandate_lines, "3. If Edit fails with 'not found': a [System:] message will inject the current file content. Read that injected content, copy exact text, then Edit.")
-    table.insert(tool_mandate_lines, "4. Do NOT call Read on the same file twice in a row — the system already cached it. If you need the content again, read the [System:] injection in the conversation.")
+    table.insert(tool_mandate_lines, "4. Avoid redundant Read calls when you already have the needed content, but call Read again if the earlier result was partial/truncated, if you need more context, or if the file may have changed. You may also use relevant [System:] injected content when available.")
     table.insert(tool_mandate_lines, "5. Use MultiEdit when making more than one change to the same file. Do not chain multiple single Edit calls.")
-    table.insert(tool_mandate_lines, "6. To build/compile/run tests: use Bash(command). Never use Read to check compiler output.")
+    table.insert(tool_mandate_lines, "6. To build/compile/run tests: use Shell(command). Never use Read to check compiler output.")
     table.insert(tool_mandate_lines, "7. If old_string == new_string the edit is already done — call Brief to confirm it.")
     table.insert(tool_mandate_lines, "8. Do NOT repeat any failed tool call with the same arguments. Read the [System:] hint and change your approach.")
     table.insert(tool_mandate_lines, "9. After two failed Edit attempts on the same file: report what you tried and what failed, then call Brief.")
     table.insert(tool_mandate_lines, "10. Call Brief only when the task is FULLY complete. Never call it mid-task.")
+    table.insert(tool_mandate_lines, "")
+    table.insert(tool_mandate_lines, "## Refactor vs Rewrite decision")
+    table.insert(tool_mandate_lines, "- REFACTOR (targeted edits via Edit/MultiEdit): when the user asks to fix a bug, add a small feature, rename something, or improve a specific section. Preserve all unrelated code exactly.")
+    table.insert(tool_mandate_lines, "- REWRITE (Write tool, full file replacement): ONLY when the user explicitly says 'rewrite', 'rewrite from scratch', 'replace the whole file', or when the file is new/empty AND less than ~150 lines. Never rewrite large files silently.")
+    table.insert(tool_mandate_lines, "- When unsure: prefer refactor. If a rewrite seems necessary, say so via Brief and confirm with the user first.")
+    table.insert(tool_mandate_lines, "")
+    table.insert(tool_mandate_lines, "## Shell (Shell tool)")
+    table.insert(tool_mandate_lines, "- The shell is POSIX sh (not bash). Write sh-compatible commands only.")
+    table.insert(tool_mandate_lines, "- Avoid bashisms: no arrays, no [[ ]], no $'...', no process substitution <(...), no {a,b} brace expansion in critical paths.")
+    table.insert(tool_mandate_lines, "- Use single quotes for strings containing special characters. Use printf instead of echo -e.")
 
     local tool_mandate = table.concat(tool_mandate_lines, "\n")
     base_system_prompt = base_system_prompt .. tool_mandate
@@ -222,7 +233,7 @@ function M.run(opts)
 
         on_tool_use = function(tool_name, input, summary)
             if ui and ui.spinner_stop then ui.spinner_stop() end
-            -- Show tool name + summary of what it's acting on
+            -- Build a human-readable label with maximum context
             local label = tool_name
             if summary and #summary > 0 then
                 label = tool_name .. ": " .. summary
@@ -232,36 +243,62 @@ function M.run(opts)
             elseif ui and ui.status_info then
                 ui.status_info(label .. " …")
             end
-            -- For action tools, show extra detail so the user knows exactly what will run
-            if ui and ui.status_info then
-                local mgr_ok, mgr = pcall(require, "permissions.manager")
-                if mgr_ok and mgr and mgr.is_action_tool and mgr.is_action_tool(tool_name) then
-                    if type(input) == "table" then
-                        if input.command then
-                            ui.status_info("  $ " .. input.command:sub(1, 120))
-                        elseif input.file_path then
-                            ui.status_info("  " .. input.file_path)
-                        end
+            -- Always show detail line for any tool that touches files or runs commands
+            if ui and ui.status_info and type(input) == "table" then
+                if input.command then
+                    -- Shell: show full command (truncated at terminal width)
+                    local cmd_display = input.command:gsub("\n", " "):sub(1, 140)
+                    ui.status_info("  $ " .. cmd_display)
+                    if input.description and #input.description > 0 then
+                        ui.status_info("  → " .. input.description:sub(1, 100))
                     end
+                elseif input.file_path then
+                    ui.status_info("  " .. input.file_path)
+                    -- Edit: show a brief preview of what old_string looks like
+                    if input.old_string then
+                        local preview = input.old_string:gsub("\n", "↵"):sub(1, 80)
+                        ui.status_info("  replace: " .. preview)
+                    end
+                elseif input.pattern then
+                    ui.status_info("  pattern: " .. tostring(input.pattern):sub(1, 100))
+                elseif input.query then
+                    ui.status_info("  query: " .. tostring(input.query):sub(1, 100))
                 end
             end
         end,
 
         on_tool_result = function(tool_name, result)
-            -- Determine success/failure from the result table
+            -- Determine success/failure + gather rich detail
             local status = "done"
-            local detail = nil
+            local details = {}
             if type(result) == "table" then
                 if result.type == "error" then
                     status = "failed"
-                    detail = result.error
+                    if result.error then
+                        -- Show first meaningful line of the error
+                        local first_line = result.error:match("([^\n]+)") or result.error
+                        table.insert(details, first_line:sub(1, 120))
+                    end
                 elseif result.exit_code and result.exit_code ~= 0 then
                     status = "failed"
-                    detail = "exit " .. tostring(result.exit_code)
-                elseif result.num_lines then
-                    detail = tostring(result.num_lines) .. " lines"
-                elseif result.num_files then
-                    detail = tostring(result.num_files) .. " files"
+                    table.insert(details, "exit " .. tostring(result.exit_code))
+                    -- Show first error line from output if present
+                    if result.text and #result.text > 0 then
+                        local err_line = result.text:match("([^\n]+)")
+                        if err_line then
+                            table.insert(details, err_line:sub(1, 100))
+                        end
+                    end
+                else
+                    if result.num_lines then
+                        table.insert(details, tostring(result.num_lines) .. " lines")
+                    end
+                    if result.num_files then
+                        table.insert(details, tostring(result.num_files) .. " files")
+                    end
+                    if result.duration_ms and result.duration_ms > 0 then
+                        table.insert(details, tostring(result.duration_ms) .. "ms")
+                    end
                 end
             end
             if ui and ui.tool_badge then
@@ -269,8 +306,10 @@ function M.run(opts)
             elseif ui and ui.status_info then
                 ui.status_info(tool_name .. " " .. status)
             end
-            if detail and ui and ui.status_info then
-                ui.status_info("  " .. detail)
+            for _, d in ipairs(details) do
+                if ui and ui.status_info then
+                    ui.status_info("  " .. d)
+                end
             end
         end,
 
@@ -463,13 +502,20 @@ function M.run(opts)
             break
         elseif line == "/clear" then
             engine.messages = {}
+            engine._file_cache = {}
             turn_count = 0
             if memory and memory.clear then memory.clear() end
             if app_state then
                 if app_state.clear_messages then app_state.clear_messages() end
                 if app_state.reset_usage then app_state.reset_usage() end
             end
-            if ui then ui.status_ok("cleared (session + history)")
+            -- Reset file tracker state so stale-detection is fresh
+            local ft_ok, ft = pcall(require, "context.file_tracker")
+            if ft_ok and ft then ft.reset() end
+            -- Reset verifier attempt counters so retry budgets are fresh
+            local tv_ok, tv = pcall(require, "services.tool_verifier")
+            if tv_ok and tv and tv.reset then tv.reset() end
+            if ui then ui.status_ok("cleared (session + history + file cache)")
             else print("Session cleared.") end
         elseif line == "/history" then
             if ui and ui.dimtext then

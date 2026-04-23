@@ -1,0 +1,193 @@
+-- jenova/agent/provider.lua
+-- jvim-native HTTP provider for the embedded agent.
+--
+-- Exposes the same surface as cli-agent's utils/http.lua so jenova_backend.lua
+-- can use it via package.loaded injection.  When called from a coroutine the
+-- HTTP calls are asynchronous (vim.system + coroutine.yield/resume), keeping
+-- the editor event loop free.  When called outside a coroutine they fall back
+-- to blocking vim.system():wait().
+
+local M = {}
+
+local ep = require("jenova.endpoints")
+
+-- ── Helpers ───────────────────────────────────────────────────────────────────
+
+local function make_headers(headers_tbl)
+  local args = {}
+  if type(headers_tbl) == "table" then
+    for k, v in pairs(headers_tbl) do
+      local sk = tostring(k):gsub("[\r\n]", "")
+      local sv = tostring(v):gsub("[\r\n]", "")
+      table.insert(args, "-H")
+      table.insert(args, sk .. ": " .. sv)
+    end
+  end
+  return args
+end
+
+local function write_tempfile(body)
+  local path = vim.fn.tempname() .. "_jenova_agent.json"
+  local f = io.open(path, "w")
+  if not f then return nil end
+  f:write(body)
+  f:close()
+  return path
+end
+
+-- Run curl, yielding the calling coroutine if inside one so the editor stays
+-- responsive.  Falls back to blocking :wait() when on the main thread directly.
+local function run(cmd)
+  local co = coroutine.running()
+  if co then
+    vim.system(cmd, { text = true }, function(result)
+      vim.schedule(function()
+        if result.code ~= 0 then
+          coroutine.resume(co, nil, result.stderr or ("curl exit " .. result.code))
+        else
+          coroutine.resume(co, result.stdout, nil)
+        end
+      end)
+    end)
+    return coroutine.yield()
+  end
+  -- Blocking fallback
+  local result = vim.system(cmd, { text = true }):wait()
+  if result.code ~= 0 then
+    return nil, result.stderr or ("curl exit " .. result.code)
+  end
+  return result.stdout, nil
+end
+
+-- ── Public API (mirrors utils/http.lua) ───────────────────────────────────────
+
+function M.get(url, headers)
+  local hdr = headers
+  if type(hdr) == "string" and #hdr > 0 then
+    local ok, t = pcall(vim.json.decode, hdr)
+    hdr = (ok and type(t) == "table") and t or {}
+  end
+  local header_args = make_headers(type(hdr) == "table" and hdr or {})
+  local cmd = vim.list_extend(
+    { "curl", "-s", "-S", "--max-time", "30", "--connect-timeout", "10" },
+    header_args
+  )
+  table.insert(cmd, url)
+  return run(cmd)
+end
+
+function M.post_json(url, headers, body)
+  local hdr = headers
+  if type(hdr) == "string" and #hdr > 0 then
+    local ok, t = pcall(vim.json.decode, hdr)
+    hdr = (ok and type(t) == "table") and t or {}
+  end
+  if type(hdr) ~= "table" then hdr = {} end
+  if not hdr["Content-Type"] then hdr["Content-Type"] = "application/json" end
+
+  local tmpfile = body and write_tempfile(body)
+  if not tmpfile and body and #body > 0 then
+    return nil, "failed to write temp file"
+  end
+
+  local header_args = make_headers(hdr)
+  local cmd = vim.list_extend(
+    { "curl", "-s", "-S", "--max-time", "300", "--connect-timeout", "10", "-X", "POST" },
+    header_args
+  )
+  if tmpfile then
+    table.insert(cmd, "-d")
+    table.insert(cmd, "@" .. tmpfile)
+  end
+  table.insert(cmd, url)
+
+  local result, err = run(cmd)
+  if tmpfile then pcall(os.remove, tmpfile) end
+  return result, err
+end
+
+M.post = M.post_json
+
+-- Streaming POST: calls on_chunk(text) for each SSE delta token.
+-- When called from a coroutine the final response is returned after streaming
+-- completes.  on_chunk fires via vim.schedule (always on the main thread).
+function M.post_stream(url, headers_str, body, on_chunk)
+  local hdr = {}
+  if type(headers_str) == "string" and #headers_str > 0 then
+    local ok, t = pcall(vim.json.decode, headers_str)
+    if ok and type(t) == "table" then hdr = t end
+  end
+  if not hdr["Content-Type"] then hdr["Content-Type"] = "application/json" end
+
+  local tmpfile = body and write_tempfile(body)
+  if not tmpfile and body and #body > 0 then
+    return nil, "failed to write temp file"
+  end
+
+  local header_args = make_headers(hdr)
+  local cmd = vim.list_extend(
+    { "curl", "--no-buffer", "-s", "-N", "-X", "POST" },
+    header_args
+  )
+  if tmpfile then
+    table.insert(cmd, "-d")
+    table.insert(cmd, "@" .. tmpfile)
+  end
+  table.insert(cmd, url)
+
+  local co = coroutine.running()
+  local buf = {}
+
+  local handle = vim.system(cmd, {
+    text = true,
+    stdout = function(_, data)
+      if data then
+        table.insert(buf, data)
+        if on_chunk then
+          for line in data:gmatch("[^\n]+") do
+            if line:sub(1, 6) == "data: " and line ~= "data: [DONE]" then
+              local ok2, chunk = pcall(vim.json.decode, line:sub(7))
+              if ok2 and chunk and chunk.choices and chunk.choices[1] then
+                local delta = chunk.choices[1].delta or {}
+                if type(delta.content) == "string" and delta.content ~= "" then
+                  vim.schedule(function() on_chunk(delta.content) end)
+                end
+              end
+            end
+          end
+        end
+      end
+    end,
+  }, function(result)
+    if tmpfile then pcall(os.remove, tmpfile) end
+    local body_str = table.concat(buf)
+    if co then
+      vim.schedule(function()
+        if result.code ~= 0 then
+          coroutine.resume(co, nil, result.stderr or "curl failed")
+        else
+          coroutine.resume(co, body_str, nil)
+        end
+      end)
+    end
+  end)
+
+  if co then
+    return coroutine.yield()
+  end
+
+  local result = handle:wait()
+  if tmpfile then pcall(os.remove, tmpfile) end
+  if result.code ~= 0 then
+    return nil, result.stderr or "curl failed"
+  end
+  return table.concat(buf), nil
+end
+
+-- ── Endpoint helpers for the jvim context ─────────────────────────────────────
+
+function M.base_url()
+  return string.format("http://%s:%d", ep.host(), ep.proxy_port())
+end
+
+return M

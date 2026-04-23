@@ -1,33 +1,27 @@
 #!/bin/sh
 
-# jvim: Launch the jvim editor (Neovim fork) with Jenova CA backend lifecycle.
+# jvim: Launch the jvim editor only (no backend lifecycle management).
 # FreeBSD 15 | Jenova Cognitive Architecture
 #
-# This is the canonical entry point that interlinks the jvim editor frontend
-# (orpheus497/jvim) with the Jenova cognitive backend (orpheus497/jenova).
+# jvim is the editor-only entry point.  It does NOT start or stop jenova-ca.
+# Use  bin/jenova  to start the full environment (backend + jvim).
 #
 # Responsibilities:
-#   - Resolve JENOVA_ROOT and load etc/jenova.conf so client and backend share
-#     the same host/port/model configuration.
+#   - Resolve JENOVA_ROOT and load etc/jenova.conf.
 #   - Export JENOVA_CONNECT_HOST, JENOVA_PORT, JENOVA_LLAMA_PORT,
-#     JENOVA_LLAMA_EMBED_PORT, JENOVA_ROOT, and JENOVA_API_URL so that the
-#     Jenova nvim plugins (llama.lua, chat.lua, jenova/monitor.lua,
-#     jenova/health.lua) read the correct endpoints at startup.
+#     JENOVA_LLAMA_EMBED_PORT, JENOVA_ROOT, and JENOVA_API_URL.
+#   - If no backend is reachable on startup, set JENOVA_LAN_SCAN=1 so the
+#     in-editor lan.lua plugin auto-scans the subnet for a running server.
 #   - Set LD_LIBRARY_PATH so llama.cpp shared libraries are visible to any
-#     child process spawned by the editor (e.g. headless Lazy installs).
-#   - Start jenova-ca on demand and stop it on exit only when this invocation
-#     started it (so concurrent jvim sessions do not race the daemon).
-#   - Detect whether the resolved `nvim` binary is the jvim fork or upstream
-#     Neovim, and warn (without failing) when running on upstream — the
-#     plugins still work but jvim-specific behaviour will not be present.
+#     child process spawned by the editor.
+#   - Detect whether the resolved binary is the jvim fork or upstream Neovim.
 #
 # Usage: jvim [options] [nvim args...]
 #   --remote [host]     Connect to remote Jenova CA: explicit host or LAN auto-discover
 #   --remote-port <p>   Override proxy port for remote mode      (default 8080)
 #   --llama-port <p>    Override llama-server port for remote    (default 8081)
 #   --embed-port <p>    Override embedding-server port for remote (default 8082)
-#   --no-backend        Skip starting jenova-ca even in local mode
-#                       (the editor still loads with Jenova env vars exported)
+#   --no-backend        Suppress the "no backend" warning (backend is managed externally)
 #   --check             Print resolved JENOVA_* environment and exit
 #   -h | --help         Show this help and exit
 
@@ -73,7 +67,7 @@ while [ $# -gt 0 ]; do
         --no-backend)  NO_BACKEND=1; shift ;;
         --check)       CHECK_ONLY=1; shift ;;
         -h|--help)
-            sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *) break ;;  # First non-jvim arg — rest is for nvim
@@ -81,11 +75,30 @@ while [ $# -gt 0 ]; do
 done
 
 # --- Resolve the editor binary and verify it is jvim (warn-only) ---
-# Allows JVIM_BIN override so the wrapper can drive a non-PATH build.
-EDITOR_BIN="${JVIM_BIN:-nvim}"
-if ! command -v "$EDITOR_BIN" >/dev/null 2>&1; then
-    echo "Error: editor binary '$EDITOR_BIN' not found in PATH." >&2
-    echo "       Install jvim from https://github.com/orpheus497/jvim or set JVIM_BIN." >&2
+# Resolution order:
+#   1. $JVIM_BIN               — explicit override
+#   2. $JENOVA_ROOT/jvim/build/bin/nvim — in-tree jvim build (preferred)
+#   3. nvim on PATH            — fallback (may be upstream Neovim)
+# Determining $JENOVA_ROOT here is duplicated below, but we need it before
+# load_jenova_conf runs so the in-tree jvim binary can be discovered first.
+_JENOVA_ROOT_HINT="$(dirname "$SCRIPT_DIR")"
+_INTREE_JVIM="$_JENOVA_ROOT_HINT/jvim/build/bin/jvim"
+if [ ! -x "$_INTREE_JVIM" ]; then
+    _INTREE_JVIM="$_JENOVA_ROOT_HINT/jvim/build/bin/nvim"
+fi
+
+if [ -n "$JVIM_BIN" ]; then
+    EDITOR_BIN="$JVIM_BIN"
+elif [ -x "$_INTREE_JVIM" ]; then
+    EDITOR_BIN="$_INTREE_JVIM"
+else
+    EDITOR_BIN="nvim"
+fi
+
+if ! command -v "$EDITOR_BIN" >/dev/null 2>&1 && [ ! -x "$EDITOR_BIN" ]; then
+    echo "Error: editor binary '$EDITOR_BIN' not found." >&2
+    echo "       Build the in-tree jvim with: make jvim" >&2
+    echo "       Or set JVIM_BIN to a jvim binary you have installed." >&2
     exit 1
 fi
 
@@ -100,7 +113,7 @@ case "$_EDITOR_VERSION_LINE" in
         if [ "${JENOVA_QUIET:-0}" != "1" ]; then
             echo "Warning: '$EDITOR_BIN' is not jvim — Jenova plugins will still load," >&2
             echo "         but jvim-specific behaviour is unavailable." >&2
-            echo "         Install jvim: https://github.com/orpheus497/jvim" >&2
+            echo "         Build the in-tree jvim: make jvim" >&2
         fi
         ;;
 esac
@@ -245,16 +258,8 @@ CONNECT_HOST="${JENOVA_CONNECT_HOST:-127.0.0.1}"
 API_URL="$(build_http_url "$CONNECT_HOST" "$PORT")"
 
 JENOVA_DIR="${JENOVA_STATE:-$JENOVA_ROOT/.jenova}"
-PID_FILE="$JENOVA_DIR/jenova-ca.pid"
-if [ -n "$LOG_DIR" ]; then
-    SERVER_LOG="$LOG_DIR/jenova-ca.log"
-else
-    SERVER_LOG="${JENOVA_DIR}/jenova-ca.log"
-fi
-
-# Ensure runtime directories exist
+# Ensure state dir exists for plugins that may write there
 mkdir -p "$JENOVA_DIR"
-[ -n "$LOG_DIR" ]   && mkdir -p "$LOG_DIR"
 [ -n "$CACHE_DIR" ] && mkdir -p "$CACHE_DIR"
 
 # Export environment for the jvim editor and Jenova plugins.
@@ -280,96 +285,37 @@ if [ "$CHECK_ONLY" = "1" ]; then
     exit 0
 fi
 
-# --- Health check ---
-# Uses LuaJIT + FFI HTTP (zero system dependencies; no curl required).
+# --- Health check via curl ---
 check_health() {
-    if [ -f "$SCRIPT_DIR/../lib/healthcheck.lua" ]; then
-        luajit "$SCRIPT_DIR/../lib/healthcheck.lua" "$CONNECT_HOST" "$PORT" 3 2>/dev/null
-    elif [ -f "$SCRIPT_DIR/lib/healthcheck.lua" ]; then
-        luajit "$SCRIPT_DIR/lib/healthcheck.lua" "$CONNECT_HOST" "$PORT" 3 2>/dev/null
+    if command -v curl >/dev/null 2>&1; then
+        curl -sf --max-time 3 --connect-timeout 2 \
+             "$(build_http_url "$CONNECT_HOST" "$PORT")/v1/health" >/dev/null 2>&1
     else
         return 1
     fi
 }
 
-# --- Locate jenova-ca ---
-find_jenova_ca() {
-    if [ -f "$SCRIPT_DIR/jenova-ca" ]; then
-        echo "$SCRIPT_DIR/jenova-ca"
-    elif [ -f "$SCRIPT_DIR/../bin/jenova-ca" ]; then
-        echo "$SCRIPT_DIR/../bin/jenova-ca"
-    else
-        echo ""
-    fi
-}
-
-JENOVA_CA=$(find_jenova_ca)
-if [ -z "$JENOVA_CA" ]; then
-    echo "Error: jenova-ca not found." >&2
-    exit 1
-fi
-
-# --- Start backend if not already running ---
-STARTED_BY_THIS_INVOCATION=0
+# --- Check backend availability; set LAN_SCAN if none reachable ---
 if [ "$NO_BACKEND" = "1" ]; then
-    if check_health; then
-        echo "Jenova CA already running at $API_URL  (--no-backend: not touching it)"
-    else
-        echo "Warning: --no-backend set and Jenova CA is not running." >&2
-        echo "         Plugins will fail to connect until you start it manually." >&2
+    # Caller (bin/jenova) manages the backend — just report status quietly.
+    if ! check_health && [ "${JENOVA_QUIET:-0}" != "1" ]; then
+        echo "Note: backend not reachable at $API_URL (managed externally)" >&2
     fi
-elif check_health; then
-    echo "Jenova CA already running at $API_URL"
 else
-    echo "Starting Jenova CA in background..."
-    echo "Log: $SERVER_LOG"
-
-    if "$JENOVA_CA" --daemon; then
-        STARTED_BY_THIS_INVOCATION=1
+    if check_health; then
+        if [ "${JENOVA_QUIET:-0}" != "1" ]; then
+            echo "Jenova CA is ready at $API_URL"
+        fi
     else
-        echo "Error: jenova-ca failed to start" >&2
-        exit 1
+        # No local backend found — enable LAN scan so the Lua plugin
+        # (jenova/lan.lua) discovers one on the subnet at startup.
+        export JENOVA_LAN_SCAN=1
+        if [ "${JENOVA_QUIET:-0}" != "1" ]; then
+            echo "No local Jenova CA found — LAN scan enabled." >&2
+            echo "Start a local backend with: jenova --daemon-only" >&2
+        fi
     fi
-
-    # Wait for proxy to become ready (fast-fail on dead PIDs)
-    printf "Waiting for Jenova CA"
-    for i in $(seq 1 120); do
-        if check_health; then
-            echo " ready!"
-            break
-        fi
-        # Fast-fail: if all daemon PIDs are dead, stop waiting
-        if [ -f "$PID_FILE" ]; then
-            read _LP _PP _EP < "$PID_FILE" 2>/dev/null || true
-            _ANY_ALIVE=false
-            for _P in $_LP $_PP $_EP; do
-                [ -n "$_P" ] && kill -0 "$_P" 2>/dev/null && _ANY_ALIVE=true
-            done
-            if ! $_ANY_ALIVE; then
-                echo " failed! (all daemon processes died)"
-                echo "Check log: $SERVER_LOG"
-                exit 1
-            fi
-        fi
-        printf "."
-        sleep 1
-        if [ "$i" -eq 120 ]; then
-            echo " timeout!"
-            echo "Check log: $SERVER_LOG"
-            exit 1
-        fi
-    done
 fi
-
-# --- Cleanup: stop backend on exit only if jvim started it ---
-cleanup_jvim() {
-    if [ "$STARTED_BY_THIS_INVOCATION" = "1" ] && [ -f "$PID_FILE" ]; then
-        echo "Stopping Jenova CA..."
-        "$JENOVA_CA" stop 2>/dev/null || true
-    fi
-}
-trap cleanup_jvim EXIT INT TERM
 
 # --- Launch the editor ---
-# exec replaces this shell process with the editor; the EXIT trap fires when it exits.
 exec "$EDITOR_BIN" "$@"
