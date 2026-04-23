@@ -5,6 +5,23 @@
 cli-agent is a pure C + Lua AI coding agent. All system services are implemented in C11; all
 application logic runs in Lua 5.4. There is no Rust dependency.
 
+## Role in the Jenova Ecosystem
+
+`cli-agent` is the **headless agent** — it handles scripted, CI, and one-shot workflows.
+The canonical interactive experience is the **jvim embedded agent** (see
+`jvim/runtime/lua/jenova/agent/`), which runs inside the editor with full buffer, LSP,
+and context access. Both agents share the same `QueryEngine`, tool registry, and
+provider layer.
+
+```
+Interactive use:   jenova  →  jenova-ca (backend)  +  jvim (embedded agent)
+Headless use:   jenova-cli  →  jenova-ca (optional) +  cli-agent
+```
+
+The shared Lua modules live in `cli-agent/lua/` as the source of truth and are
+synced into `jvim/runtime/lua/jenova/agent/shared/` at build time via
+`make sync-modules`.
+
 ## Migration Map (Rust → C, completed)
 
 | Former Rust Crate | C File | Dependencies |
@@ -51,7 +68,7 @@ lua/
 │   ├── memory.lua      — Session memory access helper
 │   └── ui.lua          — Terminal rendering helpers (spinners, boxes, colours)
 │
-├── engine/             — Unified agentic loop
+├── engine/             — Unified agentic loop  ← SOURCE OF TRUTH (shared with jvim)
 │   ├── query_engine.lua    — Plan→Execute→Reflect; multi-turn tool calling; streaming
 │   └── session_history.lua — In-memory message/turn history for QueryEngine
 │
@@ -69,31 +86,32 @@ lua/
 │   │   └── registry.lua    — Command registration and dispatch table
 │   └── registry.lua    — Top-level CLI registry
 │
-├── config/             — Configuration
+├── config/             — Configuration  ← SHARED with jvim
 │   └── loader.lua      — Reads env vars + etc/jenova.conf; exposes config.get()
 │
-├── constants/          — Shared constants (model names, limits, exit codes)
+├── constants/          — Shared constants (model names, limits, exit codes)  ← SHARED
 │
-├── context/            — Context window management
+├── context/            — Context window management  ← SHARED with jvim
+│   ├── file_tracker.lua — Git-like mtime/hash tracker for cache invalidation
 │   └── manager.lua     — Token counting, trimming, priority-based retention
 │
 ├── coordinator/        — Multi-agent coordinator
 │   ├── coordinator_mode.lua — Orchestrator logic
 │   └── manager.lua         — Task/team state management
 │
-├── history/            — Conversation history
+├── history/            — Conversation history  ← SHARED with jvim
 │   └── manager.lua     — Load/save/prune JSONL history files
 │
 ├── hooks/              — Event hook system
 │   └── loader.lua      — Register and fire pre/post-tool hooks
 │
-├── permissions/        — Permission management
+├── permissions/        — Permission management  ← SHARED with jvim
 │   └── manager.lua     — can_use_tool(); permission prompt; mode enforcement
 │
 ├── plugins/            — Plugin loader
 │   └── loader.lua      — Dynamic plugin loading from .jenova/plugins/
 │
-├── providers/          — LLM provider adapters
+├── providers/          — LLM provider adapters  ← SHARED with jvim
 │   ├── base.lua            — Provider base class and priority selection
 │   ├── init.lua            — Provider initialisation
 │   ├── jenova_backend.lua  — Jenova proxy (port 8080) — primary provider
@@ -105,6 +123,7 @@ lua/
 ├── services/           — Background services
 │   ├── memory/
 │   │   └── manager.lua — Session memory store; TTL-based GC; JSONL pruning
+│   ├── tool_verifier.lua — Retry/fail/accept decisions; corrective hints injection
 │   └── api/            — Jenova backend API client helpers
 │
 ├── skills/             — Named reusable agent scripts
@@ -112,14 +131,14 @@ lua/
 ├── state/              — Application-wide mutable state
 │   └── app_state.lua   — get()/set() for permission_mode, session_id, flags
 │
-├── tools/              — 43 built-in tools (see README.md for full list)
+├── tools/              — 43 built-in tools (see README.md for full list)  ← SHARED registry
 │   └── registry.lua    — Tool registration, lookup, and execute() dispatch
 │
 ├── ui/                 — Terminal UI
 │   ├── manager.lua     — Top-level UI manager; route to active screen
 │   └── screens/        — Individual screen modules (chat, settings, …)
 │
-├── utils/              — Utility libraries
+├── utils/              — Utility libraries  ← SHARED with jvim
 │   ├── array.lua       — Array helpers
 │   ├── embed.lua       — Embedding utilities
 │   ├── fs_fallback.lua — Pure-Lua filesystem fallback
@@ -144,7 +163,7 @@ User input
     ▼
 QueryEngine:query()
     │
-    ├─ Build system prompt (context + memory)
+    ├─ Build system prompt (context + memory + [editor context if jvim])
     ├─ Send to provider (jenova_backend / llamacpp / cloud)
     │
     ├─ Stream response
@@ -154,6 +173,7 @@ QueryEngine:query()
     ├─ For each tool call:
     │    ├─ permissions.manager.can_use_tool() → prompt user if needed
     │    ├─ tool_registry.execute(name, args, context)
+    │    │    └─ [jvim] buffer/LSP tools shadow CLI file tools
     │    └─ Append tool result to message history
     │
     ├─ If tool calls were made → loop (multi-turn)
@@ -162,6 +182,30 @@ QueryEngine:query()
 
 The REPL (`agent/loop.lua`) and all slash commands (`cli/commands/`) delegate to
 `QueryEngine:query()`. There is no separate agentic code path.
+
+## Shared Module List
+
+The following modules are canonical in `cli-agent/lua/` and synced to jvim at build time:
+
+| Module | Synced to jvim |
+|---|---|
+| `engine/query_engine.lua` | ✅ |
+| `engine/session_history.lua` | ✅ |
+| `tools/registry.lua` | ✅ |
+| `providers/` (all) | ✅ |
+| `config/loader.lua` | ✅ |
+| `history/manager.lua` | ✅ |
+| `context/manager.lua` | ✅ |
+| `context/file_tracker.lua` | ✅ |
+| `permissions/manager.lua` | ✅ |
+| `services/tool_verifier.lua` | ✅ |
+| `utils/` (all) | ✅ |
+| `constants/prompts.lua` | ✅ |
+| `state/app_state.lua` | ✅ |
+| `cli/` (REPL commands) | ❌ CLI-only |
+| `agent/ui.lua` (terminal spinners) | ❌ CLI-only |
+| `buddy/` | ❌ CLI-only |
+| `coordinator/` | Future |
 
 ## Legacy Agent Integration (completed)
 
@@ -173,6 +217,13 @@ The former standalone `legacy-agent/` has been fully decomposed:
 | `memory.lua` | `lua/agent/memory.lua` + `lua/services/memory/manager.lua` |
 | `ui.lua` | `lua/agent/ui.lua` |
 | `chat.lua` | `lua/init.lua` (simple chat fallback path) |
+
+## Unification Plan Phase 4 (open cleanup items)
+
+- [ ] Remove dead `process_tool_calls()` and `execute_tool()` in `agent/loop.lua` if confirmed unreachable
+- [ ] Consolidate `provider_base.generate()` vs `create_message_stream()` (two call paths remain)
+- [ ] Fix `providers/base.lua:87` duplicate entry in priority list
+- [ ] Make `config/loader.lua` health check async or skippable
 
 ## Build System
 

@@ -1,437 +1,350 @@
-## **✨ The Monorepo Strategy: Building Jenova as a Unified Terminal IDE**
+# Jenova Master Plan
 
-This is **actually a brilliant idea** and solves many of the architectural issues I identified. Let me break down why this works and how to execute it:
+## Vision
+
+Jenova is a local-first AI coding environment. The **canonical interactive experience** is
+`jvim` — the purpose-built Neovim hard-fork. The agent lives *inside* the editor, not
+alongside it in a terminal pane. The CLI agent remains as a thin headless wrapper for
+scripted / CI / one-shot workflows only.
+
+```
+jenova          → starts backend daemons + jvim (full environment)
+jvim            → starts ONLY the editor (no backend management)
+bin/jenova-ca   → starts ONLY the backend daemons (headless / server use)
+bin/jenova      → CLI agent (headless / scripted / one-shot)
+```
+
+The central thesis: **the CLI agent's failures come from context-blindness**. It cannot
+see what is in the editor, what the cursor is on, or what the LSP knows. Embedding the
+agent in jvim fixes this at the root by giving it:
+
+- **Buffer APIs** instead of string-search Edit tool heuristics → zero false-negative edits
+- **Instant buffer state** instead of disk reads → no stale-file bugs
+- **LSP superpowers** — type information, go-to-definition, workspace diagnostics
+- **Real-time visibility** — edits stream into the buffer as they happen
+- **Shared history** — the agent sees what the user is working on without being told
+
+The reuse ratio is high: `query_engine.lua`, the tool registry, and the provider layer
+are all reused verbatim or with thin adapters.
 
 ---
 
-## **🎯 Why This Makes Sense**
+## Current State (as of this branch)
 
-### **1. Eliminates the "Documentation vs. Reality" Gap**
-Right now, your README says "three repositories" but `jenova-cli` is already dead and rewritten as `cli-agent/` inside jenova. **Merging jvim completes the unification** — everything is in one place.
+| Component | Status |
+|---|---|
+| `jvim` — editor | ✅ Built in-tree, native UI (statusline, tree, finder, notify…) |
+| `jenova/` runtime plugins | ✅ chat, monitor, health, LAN discovery, llama.vim FIM |
+| `cli-agent` — C + Lua 5.4 | ✅ Phases 1–3 complete; file tracker + tool verifier merged (PR #43) |
+| `lib/` — backend daemons | ✅ proxy, embedding server, daemon supervisor |
+| `bin/jvim` launcher | ✅ starts backend + editor |
+| `bin/jenova` launcher | ✅ CLI REPL / one-shot |
+| **jvim embedded agent** | 🔴 Not started — this plan |
+| `jenova` top-level launcher | 🔴 Currently absent — this plan |
 
-### **2. Single Build System**
-Currently:
-- `jenova/` has its own install.sh + hardware detection + llama.cpp build
-- `jvim/` has its own CMake build system + dependency management
+---
 
-**After merge**: One unified `make` command that:
-1. Detects hardware (existing `detect-hardware.sh`)
-2. Builds llama.cpp with the right flags (existing `bin/build-llama-jenova`)
-3. Builds jvim with bundled Lua modules
-4. Builds cli-agent
-5. Deploys everything to `~/.local/bin/`
+## Architecture: Three Entry Points
 
-### **4. Simplifies Installation**
-**Current (confusing)**:
+### `jenova` (new top-level launcher)
+The *full environment* entry point. A shell script that:
+1. Starts `jenova-ca --daemon` (if not already running)
+2. Waits for backend health
+3. Launches `jvim` (which loads the embedded agent automatically)
+
+Users who want the complete experience type `jenova`. Power users who manage the backend
+separately type `jvim`.
+
+### `jvim` (editor only)
+Launches the editor. Does **not** start the backend. Accepts the same `--remote`,
+`--no-backend`, `--check` flags as today. The embedded agent is always available inside
+jvim — it connects to whatever backend is reachable (local or remote).
+
+### `bin/jenova` (CLI agent)
+Unchanged thin wrapper. Headless / scripted use, CI pipelines, one-shot prompts.
+Context-blind by nature; useful for tasks that don't need editor integration.
+
+---
+
+## Phase 1 — Launch Semantics (immediate)
+
+**Goal:** `jenova` starts the world; `jvim` starts just the editor.
+
+### 1.1 Create `bin/jenova` top-level launcher (rename / refactor)
+
+Current `bin/jenova` invokes `cli-agent`. Rename it to `bin/jenova-cli`. Create a new
+`bin/jenova` that:
+
 ```sh
-# Install backend
-git clone https://github.com/orpheus497/jenova
-cd jenova && ./scripts/install.sh
-
-# Install editor (separate repo)
-git clone https://github.com/orpheus497/jvim
-cd jvim && make && sudo make install
-```
-
-**After merge (clean)**:
-```sh
-git clone https://github.com/orpheus497/jenova
-cd jenova && ./scripts/install.sh --full
-# ☝️ Builds llama.cpp, cli-agent, jvim, and wires them together
-```
-
----
-
-## **📐 Proposed Directory Structure**
-
-```
-orpheus497/jenova/
-├── bin/
-│   ├── jenova-ca              # Daemon supervisor (existing)
-│   ├── jenova                 # CLI agent wrapper (existing)
-│   └── jvim                   # Editor wrapper (existing)
-│
-├── jenova-cli/                 # C + Lua 5.4 terminal agent (existing)
-│   ├── src/                   # C service layer
-│   ├── lua/                   # Lua agent logic
-│   └── Makefile
-│
-├── jvim/                      # ← NEW: jvim fork moved here
-│   ├── src/nvim/              # C editor core
-│   ├── runtime/               # Lua modules, docs, colorschemes
-│   │   ├── lua/jvim/          # Native UI modules (finder, tree, statusline)
-│   │   └── lua/jenova/        # Jenova integration (existing nvim/ config)
-│   ├── CMakeLists.txt         # jvim build config
-│   └── build/                 # Build artifacts (gitignored)
-│
-├── llama.cpp/                 # llama.cpp submodule (existing)
-│
-├── lib/                       # LuaJIT proxy, FFI defs (existing)
-│   ├── proxy.lua
-│   ├── ffi_defs.lua
-│   └── jenova-model.sh
-│
-├── etc/                       # Runtime config (existing)
-│   └── jenova.conf
-│
-├── hardware-profiles/         # Hardware detection (existing)
-│   └── detect-hardware.sh
-│
-├── scripts/
-│   ├── install.sh             # ← UPDATED: unified installer
-│   ├── jenova-setup           # System tuning (existing)
-│   └── build-jvim.sh          # ← NEW: jvim build wrapper
-│
-├── models/                    # GGUF files (existing)
-│   ├── agent/
-│   ├── embed/
-│   └── draft/
-│
-├── Makefile                   # ← NEW: top-level build orchestration
-└── README.md                  # ← UPDATED: single-repo docs
-```
-
----
-
-## **🔧 How to Execute the Merge**
-
-### **Phase 1: Move jvim into jenova**
-
-### **Phase 2: Unified Build System**
-
-Create `Makefile` at the root:
-
-```makefile name=Makefile
-# Jenova Cognitive Architecture — Unified Build System
-# Builds llama.cpp, jvim, and cli-agent with hardware-aware configuration
-
-.PHONY: all deps llama jvim cli-agent install clean help
-
-# Detect hardware and load config
-JENOVA_ROOT := $(shell pwd)
-HARDWARE_PROFILE := $(shell ./hardware-profiles/detect-hardware.sh)
-
-all: deps llama jvim cli-agent
-	@echo "✅ Jenova build complete"
-	@echo "   Run: ./scripts/install.sh to deploy"
-
-deps:
-	@echo "🔍 Detecting hardware..."
-	./hardware-profiles/detect-hardware.sh --info
-	./hardware-profiles/detect-hardware.sh --apply
-
-llama: deps
-	@echo "🔨 Building llama.cpp (Vulkan)..."
-	./bin/build-llama-jenova
-
-jvim: deps
-	@echo "🔨 Building jvim..."
-	cd jvim && \
-	  cmake -B build -G Ninja \
-	    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-	    -DCMAKE_INSTALL_PREFIX=$(JENOVA_ROOT)/jvim/install && \
-	  cmake --build build --target jvim -j$(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
-
-cli-agent: deps
-	@echo "🔨 Building cli-agent..."
-	cd cli-agent && $(MAKE)
-
-install: all
-	./scripts/install.sh --unified
-
-clean:
-	rm -rf llama.cpp/build jvim/build cli-agent/build
-	rm -f bin/jvim bin/jenova bin/jenova-ca
-
-help:
-	@echo "Jenova Cognitive Architecture — Build Targets"
-	@echo ""
-	@echo "  make all         - Build everything (llama.cpp + jvim + cli-agent)"
-	@echo "  make llama       - Build llama.cpp only"
-	@echo "  make jvim        - Build jvim editor only"
-	@echo "  make cli-agent   - Build CLI agent only"
-	@echo "  make install     - Install binaries to ~/.local/bin/"
-	@echo "  make clean       - Remove build artifacts"
-```
-
-### **Phase 3: Update install.sh**
-
-Modify `scripts/install.sh` to build jvim:
-
-```bash name=scripts/install.sh
 #!/bin/sh
-# Jenova Cognitive Architecture — Unified Installer
-# Builds and installs llama.cpp, jvim, cli-agent as a single system
-
-set -e
-
-JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
-cd "$JENOVA_ROOT"
-
-# ... (existing hardware detection code) ...
-
-# ---------------------------------------------------------------------------
-# Step 1: Detect hardware and deploy config
-# ---------------------------------------------------------------------------
-info "Detecting hardware..."
-./hardware-profiles/detect-hardware.sh --apply
-
-# ---------------------------------------------------------------------------
-# Step 2: Build llama.cpp
-# ---------------------------------------------------------------------------
-if [ "$SKIP_LLAMA" = "0" ]; then
-    info "Building llama.cpp..."
-    ./bin/build-llama-jenova
-fi
-
-# ---------------------------------------------------------------------------
-# Step 3: Build jvim (NEW)
-# ---------------------------------------------------------------------------
-if [ "$SKIP_JVIM" = "0" ]; then
-    info "Building jvim..."
-    cd jvim
-    cmake -B build -G Ninja \
-        -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-        -DCMAKE_INSTALL_PREFIX="$JENOVA_ROOT/jvim/install"
-    cmake --build build --target jvim -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
-    cd "$JENOVA_ROOT"
-    ok "jvim built successfully"
-fi
-
-# ---------------------------------------------------------------------------
-# Step 4: Build cli-agent
-# ---------------------------------------------------------------------------
-info "Building cli-agent..."
-cd cli-agent && make && cd "$JENOVA_ROOT"
-
-# ---------------------------------------------------------------------------
-# Step 5: Symlink binaries to PATH
-# ---------------------------------------------------------------------------
-info "Installing binaries..."
-_BIN_DIR="$HOME/.local/bin"
-mkdir -p "$_BIN_DIR"
-
-# Symlink jvim binary
-ln -sf "$JENOVA_ROOT/jvim/build/bin/jvim" "$_BIN_DIR/jvim"
-ln -sf "$JENOVA_ROOT/bin/jenova" "$_BIN_DIR/jenova"
-ln -sf "$JENOVA_ROOT/bin/jenova-ca" "$_BIN_DIR/jenova-ca"
-
-ok "Installed jvim, jenova, jenova-ca to $(_BIN_DIR)"
-
-# ---------------------------------------------------------------------------
-# Step 6: Deploy jvim runtime config
-# ---------------------------------------------------------------------------
-info "Deploying jvim configuration..."
-# Copy jvim/runtime/lua/jenova/* → ~/.config/jvim/lua/jenova/
-# (This is the Jenova integration layer)
-# ...
+# bin/jenova — full environment launcher
+# 1. Start backend
+bin/jenova-ca --daemon --wait
+# 2. Launch editor (which has the embedded agent)
+exec bin/jvim "$@"
 ```
 
-### **Phase 4: Branding & Naming**
+Flags pass through to `jvim` (`--remote`, `--no-backend`, etc.).
+`bin/jenova --cli` or `bin/jenova --headless` drops through to `bin/jenova-cli`.
 
+### 1.2 Update `bin/jvim`
 
-**Option A: Keep `jvim` as the editor binary**
-```sh
-jvim myfile.lua          # Opens editor
-jenova "Refactor this"   # Runs CLI agent
-jenova-ca --daemon       # Starts backend
-```
+Remove backend auto-start responsibility from `jvim`. `jvim` should:
+- Export env vars (`JENOVA_CONNECT_HOST`, `JENOVA_PORT`, etc.) from `jenova.conf`
+- Launch the editor
+- NOT call `jenova-ca --daemon` (that is `jenova`'s job now)
+
+Keep `--no-backend` flag for raw editor use.
+
+### 1.3 Update `scripts/install.sh`
+
+Symlink `jenova`, `jvim`, `jenova-ca`, `jenova-cli` to PATH. Update the man page and
+help text in each binary.
+
+### 1.4 Update `Makefile`
+
+`make install` wires the new `bin/jenova` launcher. `make cli-agent` still builds
+`cli-agent/build/cli-agent` and wires it as `jenova-cli`.
 
 ---
 
-## **📚 Updated README Structure**
+## Phase 2 — jvim Embedded Agent (core work)
 
-```markdown name=README.md
-# Jenova Cognitive Architecture
+**Goal:** A fully functional agentic loop running inside jvim, context-aware, with
+buffer/LSP tools.
 
-**A FreeBSD-first, hardware-aware local AI coding environment powered by llama.cpp, LuaJIT, and jvim.**
+### 2.1 Architecture: `jvim/runtime/lua/jenova/agent/`
 
-Jenova is a **unified terminal IDE** consisting of:
-- **jvim** — Neovim-based editor with native UI and Jenova integration
-- **jenova-cli** — C + Lua 5.4 agentic assistant with 43 tools
-- **jenova-ca** — Daemon supervisor for llama-server + intelligence proxy
-- **llama.cpp** — Vulkan/CUDA/Metal inference backend
+The embedded agent lives entirely in Lua inside jvim's runtime. It **reuses** the
+following from `cli-agent/lua/` verbatim (symlinked or copied at build time):
+
+| cli-agent module | jvim reuse strategy |
+|---|---|
+| `engine/query_engine.lua` | Copy/symlink — minimal changes |
+| `tools/registry.lua` | Reuse with jvim-native tool overrides |
+| `providers/` | Reuse entirely |
+| `config/loader.lua` | Reuse (reads same `etc/jenova.conf`) |
+| `history/manager.lua` | Reuse |
+| `context/manager.lua` | Reuse |
+| `permissions/manager.lua` | Reuse with jvim UI adapter |
+| `utils/` | Reuse entirely |
+| `constants/prompts.lua` | Reuse, extend with editor context |
+
+New jvim-native modules:
+
+| Module | Purpose |
+|---|---|
+| `jenova/agent/init.lua` | Bootstrap: load engine, register jvim tools, start agent loop |
+| `jenova/agent/tools/buffer.lua` | Read/write buffer content via `vim.api` |
+| `jenova/agent/tools/edit_buffer.lua` | Apply edits to buffer (replaces file_edit.lua) |
+| `jenova/agent/tools/lsp.lua` | LSP: hover, definition, references, diagnostics |
+| `jenova/agent/tools/cursor.lua` | Cursor position, selection, surrounding context |
+| `jenova/agent/tools/treesitter.lua` | AST-aware symbol extraction |
+| `jenova/agent/ui/panel.lua` | Chat panel (extends existing `jenova/chat.lua`) |
+| `jenova/agent/ui/inline.lua` | Inline diff preview in buffer |
+| `jenova/agent/context/editor.lua` | Editor context: open files, git status, diagnostics |
+
+### 2.2 Tool Override Table
+
+When the agent runs inside jvim, certain CLI tools are replaced by buffer-native versions:
+
+| CLI tool | jvim replacement | Why |
+|---|---|---|
+| `file_read.lua` (disk read) | `buffer.lua` (buffer API) | Instant, no stale-file risk |
+| `file_edit.lua` (string search) | `edit_buffer.lua` (buffer API) | Zero false-negatives |
+| `file_write.lua` (disk write) | `buffer.lua` write path | Visible in real-time |
+| `lsp.lua` (CLI LSP client) | `lsp.lua` (native vim.lsp) | Full workspace LSP |
+| `glob.lua` / `grep.lua` | Keep CLI versions | Fine for file discovery |
+| `bash.lua` | Keep CLI version | Shell commands unchanged |
+
+The tool registry uses a priority system: jvim tools shadow CLI tools when running
+inside the editor.
+
+### 2.3 Context Injection
+
+The system prompt is augmented with live editor context before every query:
+
+```
+## Editor Context
+- Current file: lua/engine/query_engine.lua (line 143, col 5)
+- Cursor symbol: QueryEngine:query
+- LSP diagnostics: 2 warnings in current buffer
+- Open buffers: [list of open files]
+- Git branch: cli3, 3 unstaged changes
+- Selection: [if active visual selection, include the text]
+```
+
+This is injected by `jenova/agent/context/editor.lua` and replaces the need for the
+agent to explicitly call Read before every edit.
+
+### 2.4 UI: Chat Panel
+
+Extend the existing `jvim/runtime/lua/jenova/chat.lua` to be the agent's primary UI.
+The panel renders:
+- Conversation history (markdown rendered via treesitter)
+- Streaming token output
+- Tool-use progress (inline: `⚙ Reading buffer...`, `✏ Editing line 143...`)
+- Inline diff preview before applying edits (user can accept/reject)
+
+Key bindings inside the agent panel:
+
+| Key | Action |
+|---|---|
+| `<leader>aa` | Open / focus agent panel |
+| `<leader>ac` | Chat with current buffer as context |
+| `<leader>ae` | Explain visual selection |
+| `<leader>ai` | Inline rewrite of selection |
+| `<leader>af` | Fix diagnostics in current buffer |
+| `<leader>ar` | Resume last conversation |
+| `<leader>ax` | Stop generation |
+| `<CR>` (in panel) | Send message |
+| `q` / `<Esc>` (in panel) | Close panel |
+
+### 2.5 Inline Edit Preview
+
+Before the agent applies an edit to a buffer, it shows a floating diff:
+
+```
+┌─ Proposed edit ───────────────────────────────────────┐
+│  - local result = tool_registry.execute(name, args)   │
+│  + local ok, result = pcall(tool_registry.execute,    │
+│  +   name, args, context)                             │
+│                                                       │
+│  [a] Accept  [r] Reject  [A] Accept all  [R] Reject all │
+└───────────────────────────────────────────────────────┘
+```
+
+This is opt-in: configurable via `jenova.conf` (`JENOVA_AGENT_PREVIEW_EDITS=1`).
+When disabled (default for non-interactive use), edits apply immediately.
+
+### 2.6 Permission Model
+
+The jvim permission model mirrors the CLI agent's permission manager but uses
+`vim.ui.input` / floating prompts instead of stdin reads:
+
+- `JENOVA_PERMISSION_MODE=auto` — all tools run without prompting (default)
+- `JENOVA_PERMISSION_MODE=cautious` — prompt before destructive tools (edit, write, shell)
+- `JENOVA_PERMISSION_MODE=strict` — prompt before every tool use
 
 ---
 
-## Installation
+## Phase 3 — Build System Integration
 
-```sh
-git clone https://github.com/orpheus497/jenova
-cd jenova
-make          # Builds llama.cpp + jvim + cli-agent
-make install  # Installs to ~/.local/bin/
+### 3.1 Shared Lua Modules
+
+The modules shared between `cli-agent` and jvim are maintained in `cli-agent/lua/`
+as the source of truth. At build time (`make jvim`), a subset is copied into
+`jvim/runtime/lua/jenova/agent/shared/`:
+
+```makefile
+SHARED_MODULES = \
+  engine/query_engine.lua \
+  tools/registry.lua \
+  providers/base.lua \
+  providers/init.lua \
+  providers/jenova_backend.lua \
+  providers/llamacpp.lua \
+  config/loader.lua \
+  history/manager.lua \
+  context/manager.lua \
+  context/file_tracker.lua \
+  permissions/manager.lua \
+  utils/array.lua \
+  utils/http.lua \
+  utils/json_fallback.lua \
+  utils/paths.lua \
+  utils/string.lua \
+  constants/prompts.lua
 ```
 
-Or use the interactive installer:
-```sh
-./scripts/install.sh
+Copy is preferred over symlinks to keep jvim's runtime self-contained and to allow
+divergence where needed (jvim-specific overrides sit in `jenova/agent/` and shadow
+shared modules via Lua's module resolution order).
+
+### 3.2 Makefile Targets
+
+```makefile
+make              # build everything: llama + cli-agent + jvim (including module sync)
+make jvim         # build jvim only (also syncs shared modules)
+make cli-agent    # build cli-agent only
+make sync-modules # copy shared Lua modules from cli-agent → jvim runtime
+make install      # deploy, symlink jenova / jvim / jenova-ca / jenova-cli
 ```
+
+### 3.3 Module Resolution in jvim
+
+jvim's Lua `package.path` is set to prefer `jenova/agent/` over `jenova/agent/shared/`,
+so any jvim-native override automatically wins without touching shared code.
 
 ---
 
-## Components
+## Phase 4 — CLI Agent Transition
 
-### jvim (Editor)
-A Neovim fork with:
-- **Native UI modules** (no telescope/nvim-tree/lualine dependencies)
-- Deep Jenova integration (`:JenovaChat`, `:JenovaMonitor`)
-- Bundled treesitter parsers + LSP configs
+The CLI agent (`bin/jenova-cli`, formerly `bin/jenova`) is **not deleted**. It remains
+useful for:
+- Headless / CI / scripted workflows
+- Remote machines without a display
+- One-shot prompts piped from shell scripts
+- Testing the query engine in isolation
 
-```sh
-jvim myfile.lua
-```
+However, it is no longer the primary interactive interface. Documentation and install
+scripts will direct users to `jenova` (full environment) for interactive use and
+`jenova-cli` for scripted use.
 
-### jenova-cli (Terminal Agent)
-A C-based agentic assistant with:
-- 43 built-in tools (Edit, Read, Grep, Shell, LocalSearch)
-- Plan→Execute→Reflect loop
-- Sandbox with interactive permission prompts
+### 4.1 CLI Agent Cleanup (from UNIFICATION_PLAN.md Phase 4, still open)
 
-```sh
-jenova "Refactor all error handling to use Result<T>"
-```
-
-### jenova-ca (Backend Daemon)
-Manages:
-- `llama-server` (port 8081) — main inference
-- `proxy.lua` (port 8080) — RAG + intent routing
-- `llama-server --embedding` (port 8082) — semantic search
-
-```sh
-jenova-ca --daemon
-jenova-ca status
-```
+- [ ] Remove dead `process_tool_calls()` / `execute_tool()` in `agent/loop.lua`
+- [ ] Consolidate `provider_base.generate()` vs `create_message_stream()` call paths
+- [ ] Fix `providers/base.lua:87` duplicate entry in priority list
+- [ ] Make `config/loader.lua` health check async or skippable
 
 ---
 
-## Hardware Profiles
+## Phase 5 — Documentation & Cleanup
 
-Jenova auto-detects your hardware and optimizes for:
-- Dual-GPU (NVIDIA + Intel)
-- Single-GPU (NVIDIA/AMD/Intel)
-- CPU-only
-- Optane-backed swap (for 7B models on 4GB VRAM)
-
-```sh
-./hardware-profiles/detect-hardware.sh --info   # Show detected hardware
-./hardware-profiles/detect-hardware.sh --apply  # Deploy optimized config
-sudo ./scripts/jenova-setup                     # One-time system tuning
-```
-
-See [`hardware-profiles/`](hardware-profiles/) for details.
+- [ ] Update `README.md` launch section: `jenova` = full env, `jvim` = editor only
+- [ ] Update `cli-agent/docs/architecture.md` to reflect shared module strategy
+- [ ] Add `jvim/runtime/lua/jenova/agent/` architecture doc
+- [ ] Update keymaps table in README.md with new `<leader>aa`, `<leader>af` bindings
+- [ ] Remove references to launching `bin/jenova` as an interactive terminal agent in
+      user-facing docs (redirect to `jenova` top-level launcher)
+- [ ] Update `scripts/install.sh` to symlink `jenova-cli` in addition to the new
+      `jenova` top-level launcher
 
 ---
 
-## Architecture
+## Risk Register
 
-```
-┌─────────────────────────────────────────┐
-│  jvim (Editor Frontend)                 │
-│  - Native UI (finder, tree, statusline) │
-│  - Jenova chat integration              │
-│  - FIM completions (llama.vim)          │
-└──────────────┬──────────────────────────┘
-               │ HTTP (port 8080/8081)
-┌──────────────▼──────────────────────────┐
-│  jenova-ca (Backend Daemon)             │
-│  ├─ llama-server (8081)                 │
-│  ├─ proxy.lua (8080) — RAG + routing    │
-│  └─ embedding server (8082)             │
-└──────────────┬──────────────────────────┘
-               │
-┌──────────────▼──────────────────────────┐
-│  jenova-cli (Terminal Agent)             │
-│  - C service layer + Lua query engine   │
-│  - 43 tools, sandbox, permission gate   │
-└─────────────────────────────────────────┘
-```
+| Risk | Mitigation |
+|---|---|
+| Shared module divergence (cli-agent vs jvim copy) | `make sync-modules` is idempotent; diff checked in CI |
+| Lua 5.4 (cli-agent) vs LuaJIT (jvim) API incompatibilities | Shared modules avoid Lua 5.4-isms; tested in both runtimes |
+| jvim buffer API instability | Buffer tools wrap `vim.api` with pcall; fallback to disk read on error |
+| Permission model UX regression | jvim permission prompts tested manually; auto mode is default |
+| `jenova` launcher masking old `bin/jenova` CLI semantics | `--cli` / `--headless` flag drops through; old `jenova-cli` binary preserved |
 
 ---
 
-## Building from Source
+## Milestones
 
-```sh
-# 1. Clone
-git clone --recursive https://github.com/orpheus497/jenova
-cd jenova
-
-# 2. Install dependencies (FreeBSD example)
-pkg install luajit-openresty cmake neovim vulkan-loader curl lua54
-
-# 3. Build
-make all
-
-# 4. Install
-make install
-```
-
-See [`BUILD.md`](BUILD.md) for platform-specific instructions.
+| Milestone | Description | Phase |
+|---|---|---|
+| M1 | `jenova` starts world; `jvim` starts editor only | 1 |
+| M2 | `jenova/agent/` skeleton with buffer read/write tools | 2.1–2.2 |
+| M3 | Context injection (editor state in system prompt) | 2.3 |
+| M4 | Chat panel + streaming in jvim | 2.4 |
+| M5 | Inline edit preview | 2.5 |
+| M6 | LSP tools (`hover`, `definition`, `diagnostics`) | 2.2 |
+| M7 | Build system: `make sync-modules` + CI | 3 |
+| M8 | CLI agent cleanup (Phase 4) | 4 |
+| M9 | Documentation pass | 5 |
 
 ---
 
-## License
-jvim — a hard fork of Neovim purpose-built for the Jenova Cognitive
-Architecture.
+## What We Are NOT Doing
 
-Copyright © 2025 orpheus497.
-
-This software consists of:
-
-1. CODE INHERITED FROM NEOVIM (Apache 2.0):
-   - All code in src/nvim/ not marked "jvim-specific"
-   - Licensed under Apache License, Version 2.0
-   - Copyright Neovim contributors
-   - See full Apache 2.0 license below
-
-2. JVIM-SPECIFIC CODE (AGPL-3.0):
-   - All files under runtime/lua/jvim/
-   - All jvim branding, dashboard, native UI modules
-   - Licensed under GNU Affero General Public License v3.0
-   - Copyright © 2025 orpheus497
-   - See full AGPL-3.0 license below
-
-THE COMBINED WORK IS DISTRIBUTED UNDER AGPL-3.0.
-Users must comply with both Apache 2.0 attribution requirements
-AND AGPL-3.0 network service provisions.
-
-======================================================================
-APACHE LICENSE 2.0 (Neovim Upstream Code)
-======================================================================
-[... full Apache 2.0 text ...]
-
-======================================================================
-GNU AFFERO GENERAL PUBLIC LICENSE v3.0 (jvim Contributions)
-======================================================================
-[... full AGPL-3.0 text ...]
-```
-
----
-
-## **🚀 Benefits Summary**
-
-| Aspect | Before (2 repos) | After (monorepo) |
-|--------|------------------|------------------|
-| **Installation** | Clone 2 repos, build separately | `make && make install` |
-| **Documentation** | Stale (references dead `jenova-cli` submodule) | Single source of truth |
-| **Fork justification** | Weak (just bundled plugins) | Strong (official Jenova IDE) |
-| **CI/Testing** | 2 separate pipelines | Unified tests, one build matrix |
-| **Version sync** | Manual (jvim version ≠ jenova version) | Single version number |
-| **User confusion** | "Which repo do I clone?" | One repo, one install command |
-
----
----
-## **✅ Final Recommendation**
-
-**Do it.** Merge jvim into jenova as `jenova/jvim/`.
-
-**Why**:
-1. **Aligns with reality** — jvim is already tightly coupled to Jenova (the nvim/ config is in jenova repo)
-2. **Simplifies the story** — "Jenova is a terminal IDE" is clearer than "Jenova is 3 repos"
-3. **Reduces maintenance** — one CI pipeline, one installer, one version number
-4. **Justifies the fork** — jvim becomes "the Jenova editor", not "a Neovim fork with some plugins"
-
-**What to rename**:
-- Keep the binary as `jvim` (already established)
-- Rename the repo from "jvim" → "jenova" (already done)
-- Brand it as **"Jenova Terminal IDE 
+- Not deleting the CLI agent
+- Not replacing the backend (proxy.lua, llama-server) — it remains shared
+- Not requiring a display for server / headless installs (`jenova-ca` + `jenova-cli` still work)
+- Not introducing a plugin manager (jvim is self-contained)
+- Not adding new external dependencies for the embedded agent

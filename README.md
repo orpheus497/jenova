@@ -263,25 +263,52 @@ THREADS_BATCH=12             # ~1.5x cores for batch processing
 
 ## Launching
 
-Start the cognitive backend (daemon) and then the editor or CLI agent:
-
 ```bash
-# Start the Jenova Cognitive Architecture backend in daemon mode
+# Full environment: start backend daemons + jvim with embedded agent
+jenova [files...]
+
+# Editor only: launch jvim (backend must already be running)
+jvim [files...]
+
+# Backend only: start daemons in the background (headless / server)
 bin/jenova-ca --daemon
 
-# Launch Neovim with Jenova integration (auto-starts backend if needed)
-bin/jvim [files...]
-
-# Launch the terminal agent (interactive REPL)
-bin/jenova
-
-# Launch terminal agent with a one-shot prompt
-bin/jenova --one-shot "explain this codebase"
+# CLI agent: headless / scripted / one-shot (no editor)
+jenova-cli --one-shot "explain this codebase"
 ```
 
-### `bin/jenova` — Terminal Agent
+### `jenova` — Full Environment Launcher
 
-The terminal agent entry point. Resolves `JENOVA_ROOT`, exports environment, and invokes `cli-agent/build/cli-agent`.
+The recommended entry point for interactive use. Starts the backend daemons and then
+launches `jvim` (which loads the embedded agent automatically).
+
+| Flag | Action |
+|---|---|
+| `--cli` / `--headless` | Drop through to `jenova-cli` instead of launching the editor |
+| `--no-backend` | Skip starting `jenova-ca`; launch editor only |
+| `--remote [host]` | Connect to remote Jenova CA and launch editor |
+| `--check` | Print resolved `JENOVA_*` environment and exit |
+| `-h` / `--help` | Show help and exit |
+
+### `jvim` — Editor Launcher
+
+Launches the editor **without** starting the backend. Use when you manage the backend
+separately. The embedded agent connects to whatever backend is already running.
+
+| Flag | Action |
+|---|---|
+| `--remote [host]` | Connect to remote Jenova CA (explicit host, or LAN auto-discover if no host given) |
+| `--remote-port <p>` | Override proxy port for remote mode (default 8080) |
+| `--llama-port <p>` | Override llama-server port for remote mode (default 8081) |
+| `--embed-port <p>` | Override embedding-server port for remote mode (default 8082) |
+| `--no-backend` | Launch editor with no backend connection |
+| `--check` | Print resolved `JENOVA_*` environment and exit |
+| `-h` / `--help` | Show help and exit |
+
+### `jenova-cli` — Headless CLI Agent
+
+The terminal agent for scripted, CI, and one-shot workflows. Resolves `JENOVA_ROOT`,
+exports environment, and invokes `cli-agent/build/cli-agent`.
 
 | Flag | Action |
 |---|---|
@@ -292,21 +319,7 @@ The terminal agent entry point. Resolves `JENOVA_ROOT`, exports environment, and
 | `--check` | Print resolved `JENOVA_*` environment and exit |
 | `-h` / `--help` | Show help and exit |
 
-### `bin/jvim` — Editor Launcher
-
-Neovim wrapper with full Jenova backend integration.
-
-| Flag | Action |
-|---|---|
-| `--remote [host]` | Connect to remote Jenova CA (explicit host, or LAN auto-discover if no host given) |
-| `--remote-port <p>` | Override proxy port for remote mode (default 8080) |
-| `--llama-port <p>` | Override llama-server port for remote mode (default 8081) |
-| `--embed-port <p>` | Override embedding-server port for remote mode (default 8082) |
-| `--no-backend` | Skip starting `jenova-ca` (editor loads with env vars exported, no backend managed) |
-| `--check` | Print resolved `JENOVA_*` environment and exit |
-| `-h` / `--help` | Show help and exit |
-
-### `bin/jenova-ca` — Backend Supervisor
+### `jenova-ca` — Backend Supervisor
 
 Manages the three backend daemons (llama-server, proxy.lua, embed server) as a unit.
 
@@ -332,7 +345,7 @@ Manages the three backend daemons (llama-server, proxy.lua, embed server) as a u
 ```
 jenova/
 ├── Makefile                  Top-level build orchestration: make / make llama / make cli-agent / make jvim
-├── bin/                      Executables: jenova, jvim, jenova-ca, build-llama-jenova, jenova-swap-mount
+├── bin/                      Executables: jenova (full env), jvim (editor), jenova-cli (headless), jenova-ca (backend)
 ├── lib/                      Core LuaJIT backend: proxy, embedding, HTTP, search, daemon management
 ├── jvim/                     Bundled jvim editor (Neovim hard-fork) — built in-tree via `make jvim`
 │   ├── src/nvim/             Editor C core
@@ -371,24 +384,22 @@ All HTTP communication in the backend uses raw BSD sockets via LuaJIT FFI — no
 - The `cli-agent` C layer includes path validation (prevents directory traversal) and command sandboxing (blocks dangerous shell patterns and obfuscation attempts). Note: the sandbox uses a blacklist approach — it is a defence-in-depth layer, not a hard security boundary. The permission manager (interactive user confirmation for action tools) is the primary gate.
 - No telemetry, no external analytics, no network calls except to your own local backend.
 
-## Neovim Integration
+## Editor Integration
 
-All clients — CLI agent, Neovim, and any other HTTP consumer — share the **single** backend started by `jenova-ca`. No separate model instance is loaded for Neovim.
+All clients — embedded agent, CLI agent, and any other HTTP consumer — share the **single** backend started by `jenova-ca`. No separate model instance is loaded per client.
 
-### Using jvim (Recommended)
+### Using `jenova` (Recommended)
 
-**IMPORTANT:** Always launch Neovim using the `jvim` wrapper to ensure proper backend integration:
+The `jenova` launcher is the recommended entry point. It starts the backend and the editor together:
 
 ```bash
-bin/jvim [files...]     # Launch Neovim with Jenova backend
+jenova [files...]       # Start backend + launch jvim with embedded agent
+jvim [files...]        # Launch editor only (backend must already be running)
 ```
 
-The `jvim` wrapper:
-- Auto-starts the Jenova CA backend if not already running
-- Exports environment variables (`JENOVA_CONNECT_HOST`, `JENOVA_PORT`, `JENOVA_LLAMA_PORT`) so plugins can connect
-- Stops the backend on exit (only if `jvim` started it)
+`jvim` exports environment variables (`JENOVA_CONNECT_HOST`, `JENOVA_PORT`, `JENOVA_LLAMA_PORT`) so all plugins connect automatically.
 
-**Do NOT launch `nvim` directly** — the plugins (jenova-chat, llama.vim) require environment variables set by `jvim` to connect to the local backend. Launching `nvim` directly will cause connection failures and may attempt to use external APIs.
+**Do NOT launch `nvim` directly** — the plugins (jenova-chat, llama.vim) require environment variables set by `jvim`. Launching `nvim` directly will cause connection failures.
 
 ### Endpoints
 
@@ -417,7 +428,7 @@ Both ports are defined in `etc/jenova.conf` as `LLAMA_PORT` and `PORT`.
 | `<leader>ax` | n | Stop generation |
 | `<leader>ae` | v | Explain selection |
 | `<leader>aw` | v | Web search selection |
-| `<leader>aj` | n | Launch terminal agent (`bin/jenova`) in split |
+| `<leader>aj` | n | Launch CLI agent (`jenova-cli`) in split |
 | `<leader>am` | n | Open backend monitor (`:JenovaMonitor`) |
 | `<leader>ah` | n | Health check (`:checkhealth jenova`) |
 | `<leader>al` | n | LAN scan (`:JenovaLanScan`) |
@@ -580,8 +591,7 @@ Or set `JENOVA_MODEL` environment variable to point to your model file.
 
 #### Neovim Plugins Not Working
 
-**Always use `bin/jvim` to launch Neovim**, not `nvim` directly. The `jvim` wrapper:
-- Starts the backend if needed
+**Always use `jenova` or `jvim` to launch the editor**, not `nvim` directly. The `jvim` wrapper:
 - Exports required environment variables (`JENOVA_CONNECT_HOST`, `JENOVA_PORT`, etc.)
 - Ensures plugins can connect to the local backend
 
@@ -595,6 +605,7 @@ If you launch `nvim` directly, you'll see warning messages from jenova-chat and 
 scripts/install.sh     # NOT: sudo scripts/install.sh
 bin/jenova-ca --daemon # NOT: sudo bin/jenova-ca --daemon
 bin/jvim myfile.lua    # NOT: sudo bin/jvim myfile.lua
+jenova-cli --one-shot  # NOT: sudo jenova-cli
 ```
 
 If you already ran with sudo and have permission issues, fix the ownership first:
@@ -662,7 +673,7 @@ Requirements: `cmake`, `gettext-tools` (for msgfmt), C compiler, ninja (optional
 
 ### Path Resolution
 
-All scripts (`bin/jvim`, `bin/jenova-ca`, `bin/jenova`) automatically detect `JENOVA_ROOT` by resolving their own location. This works whether you:
+All scripts (`bin/jvim`, `bin/jenova-ca`, `bin/jenova-cli`) automatically detect `JENOVA_ROOT` by resolving their own location. This works whether you:
 - Run them from the project root: `./bin/jvim`
 - Run them via symlinks in PATH: `jvim` (after `scripts/install.sh`)
 - Run them from any directory: `/full/path/to/bin/jvim`
