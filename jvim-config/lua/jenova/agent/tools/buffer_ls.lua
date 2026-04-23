@@ -83,11 +83,17 @@ end
 
 function M.call(args, context)
   local raw = args.path
+  local include_parent = false
   local root
   if raw and #raw > 0 then
     root = paths.resolve(raw, context and context.cwd)
   else
+    -- "LS" with no arguments is the model's way of saying "show me where
+    -- I am". List the workspace root AND its parent so cross-directory
+    -- analysis tasks (e.g. "fix this file plus everything in the parent
+    -- directory") have visibility on both levels in a single call.
     root = (context and context.cwd) or vim.fn.getcwd()
+    include_parent = true
   end
   if paths.is_restricted(root) then return paths.restricted_error(root) end
 
@@ -111,6 +117,19 @@ function M.call(args, context)
   local depth = math.min(math.max(args.depth or 3, 1), 5)
   local lines = { abs .. "/" }
   walk(abs, depth, lines, "", 1, { 0 })
+
+  -- Auto-include parent listing when called with no arguments. Many user
+  -- prompts mention "the current directory and the parent directory" or
+  -- "all related files" — surfacing both at once removes the need for the
+  -- model to issue a follow-up LS that it might fabricate the answer to.
+  if include_parent then
+    local parent = vim.fn.fnamemodify(abs, ":h")
+    if parent and parent ~= abs and vim.fn.isdirectory(parent) == 1 then
+      table.insert(lines, "")
+      table.insert(lines, parent .. "/  (parent, depth 1)")
+      walk(parent, 1, lines, "", 1, { 0 })
+    end
+  end
 
   return {
     type = "text",

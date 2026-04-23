@@ -263,6 +263,23 @@ function QueryEngine:handle_response(result)
     local stop_reason = result.finish_reason or "end_turn"
     local tool_uses = {}
 
+    -- ── Hallucinated tool-output guard ────────────────────────────────
+    -- Local models trained on chat-ML transcripts often emit FAKE tool
+    -- output blocks (<tool_response>…</tool_response>, <observation>…,
+    -- <result>…) right after their tool call, fabricating the answer
+    -- instead of waiting for the real result. Strip these before either
+    -- displaying the text or storing it on the assistant message so they
+    -- never enter the conversation as ground truth.
+    if current_text and #current_text > 0 then
+        local cleaned = current_text
+        for _, tag in ipairs({ "tool_response", "tool_result", "observation",
+                               "tool_output", "function_response", "result" }) do
+            cleaned = cleaned:gsub("<" .. tag .. "[^>]*>.-</" .. tag .. ">", "")
+            cleaned = cleaned:gsub("```" .. tag .. "%s*\n?.-\n?```", "")
+        end
+        current_text = cleaned
+    end
+
     if current_text and #current_text > 0 then
         self.on_text(current_text)
     end

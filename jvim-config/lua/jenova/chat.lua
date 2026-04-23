@@ -581,6 +581,30 @@ local function agent_respond(buf, prompt, on_done)
           pcall(vim.api.nvim_buf_set_lines, buf, row - 1, row, false,
             { string.format("%s %s%s%s", icon, name, detail, suffix) })
         end
+        -- Render a short preview of the actual tool output below the badge.
+        -- The model invents <tool_response> blocks when it cannot see the
+        -- real result; surfacing the genuine output here both informs the
+        -- user and (because save_chat persists it into the assistant turn)
+        -- gives the next turn ground truth to anchor on.
+        local preview_text
+        if type(result) == "table" then
+          preview_text = result.text or result.output or result.content
+            or (result.error and ("Error: " .. tostring(result.error)))
+        elseif type(result) == "string" then
+          preview_text = result
+        end
+        if type(preview_text) == "string" and #preview_text > 0 then
+          local lines = vim.split(preview_text, "\n", { plain = true })
+          local kept = {}
+          local MAX_LINES = 20
+          for i = 1, math.min(#lines, MAX_LINES) do
+            table.insert(kept, "  " .. lines[i])
+          end
+          if #lines > MAX_LINES then
+            table.insert(kept, string.format("  … (+%d more lines)", #lines - MAX_LINES))
+          end
+          buf_append(kept)
+        end
         if transient_lnum == row then transient_lnum = nil end
         active_tool = nil
         M._agent_tool = nil
