@@ -172,11 +172,53 @@ local function is_chat_buf(buf)
   return name:find("/jenova/chats/", 1, true) ~= nil
 end
 
+-- Languages we want stock vim-markdown fence-syntax injection for as a fallback
+-- when treesitter is unavailable. Treesitter's markdown injections handle a far
+-- wider set automatically.
+local FENCED_LANGUAGES = {
+  "bash=sh", "sh", "zsh", "fish",
+  "c", "cpp", "rust", "go", "zig",
+  "python", "py=python",
+  "lua", "vim", "viml=vim",
+  "json", "yaml", "yml=yaml", "toml",
+  "html", "css", "scss",
+  "javascript", "js=javascript", "typescript", "ts=typescript",
+  "markdown", "md=markdown",
+  "make", "makefile=make", "cmake", "dockerfile",
+  "sql", "diff", "git=diff",
+}
+
+local function ensure_fenced_languages()
+  -- Merge instead of clobber so the user's own markdown config keeps working.
+  local existing = vim.g.markdown_fenced_languages or {}
+  local seen = {}
+  for _, v in ipairs(existing) do seen[v] = true end
+  for _, v in ipairs(FENCED_LANGUAGES) do
+    if not seen[v] then table.insert(existing, v) end
+  end
+  vim.g.markdown_fenced_languages = existing
+end
+
 local function set_chat_buf_options(buf)
   vim.bo[buf].filetype = "markdown"
   vim.bo[buf].buftype = ""
   vim.bo[buf].swapfile = false
   vim.bo[buf].buflisted = true
+  vim.bo[buf].conceallevel = 2
+  vim.bo[buf].wrap = true
+
+  ensure_fenced_languages()
+
+  -- Treesitter gives us proper syntax for fenced code blocks via injection
+  -- queries (markdown -> markdown_inline -> embedded language). Falls back
+  -- to vim's stock markdown syntax (which honours markdown_fenced_languages
+  -- above) if treesitter or the parser is unavailable.
+  pcall(function()
+    if vim.treesitter and vim.treesitter.start then
+      vim.treesitter.start(buf, "markdown")
+    end
+  end)
+
   apply_chat_highlights(buf)
 end
 
