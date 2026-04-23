@@ -79,13 +79,27 @@ function M.register_overrides()
     return
   end
 
-  -- Read → buffer_read: returns live buffer content, falls back to disk
+  -- Read → buffer_read: returns live buffer content, falls back to disk.
+  -- Schema must match shared/tools/file_read (file_path/offset/limit) or the
+  -- model will silently send the wrong parameters.
   local r_ok, buffer_read = pcall(require, "jenova.agent.tools.buffer_read")
   if r_ok and buffer_read then registry.register(buffer_read) end
 
   -- Edit → buffer_edit: applies edits via vim.api, preserves undo history
   local e_ok, buffer_edit = pcall(require, "jenova.agent.tools.buffer_edit")
   if e_ok and buffer_edit then registry.register(buffer_edit) end
+
+  -- Glob → buffer_glob: vim.fn.globpath-based recursive matcher. The shared
+  -- tool's `find -path '*.lua'` fallback can't handle the ** patterns the
+  -- model emits, so it always returned 0 matches in jvim.
+  local g_ok, buffer_glob = pcall(require, "jenova.agent.tools.buffer_glob")
+  if g_ok and buffer_glob then registry.register(buffer_glob) end
+
+  -- LS → buffer_ls: tree-style directory listing. Without this the agent
+  -- has no way to enumerate folder contents — only Glob, which requires
+  -- the model to guess a pattern.
+  local ls_ok, buffer_ls = pcall(require, "jenova.agent.tools.buffer_ls")
+  if ls_ok and buffer_ls then registry.register(buffer_ls) end
 
   -- LSP → jvim-native: uses vim.lsp + vim.diagnostic instead of grep fallback
   local l_ok, lsp_tool = pcall(require, "jenova.agent.tools.lsp")

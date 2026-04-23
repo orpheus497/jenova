@@ -396,6 +396,17 @@ function M.query(prompt, opts)
   local ctx_ok, context = pcall(require, "jenova.agent.context")
   if ctx_ok then engine.system_prompt = context.build_system_prompt() end
 
+  -- Seed the shared app_state with jvim's actual working directory so the
+  -- file/glob/grep tools resolve relative paths against the workspace
+  -- instead of "." (which would be wherever jvim was launched from, or the
+  -- empty string when AppState.get_cwd() falls through to its defaults).
+  -- Without this, every model-emitted relative path (e.g. "lua/init.lua")
+  -- silently resolved to a path that didn't exist.
+  local as_ok, app_state = pcall(require, "state.app_state")
+  if as_ok and app_state and app_state.set_cwd then
+    app_state.set_cwd(vim.fn.getcwd())
+  end
+
   M._text_sink      = opts.on_text
   M._done_sink      = opts.on_done
   M._thinking_cb    = opts.on_thinking
