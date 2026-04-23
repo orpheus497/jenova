@@ -11,9 +11,16 @@ local TEMPERATURE = 0.7
 local TOP_P = 0.9
 local CHAT_WIDTH = 60
 
+-- ── Mode state ────────────────────────────────────────────────────────────────
+-- agent_mode=true  → full QueryEngine loop with tool use and editor context
+-- agent_mode=false → plain streaming direct to proxy (legacy behaviour)
+local agent_mode = true
+
 local active_job = nil
 local toggle_buf = nil
 local toggle_win = nil
+
+-- ── Utilities ─────────────────────────────────────────────────────────────────
 
 local function ensure_chat_dir()
   if vim.fn.isdirectory(CHAT_DIR) == 0 then
@@ -47,6 +54,37 @@ local function set_chat_buf_options(buf)
   vim.bo[buf].buftype = ""
   vim.bo[buf].swapfile = false
   vim.bo[buf].buflisted = true
+end
+
+local function mode_tag()
+  return agent_mode and "[agent]" or "[chat]"
+end
+
+-- ── Header / parsing ──────────────────────────────────────────────────────────
+
+local function build_header(topic)
+  topic = topic or "Jenova Chat"
+  return string.format(
+    "# topic: %s  %s\n- model: %s\n- temperature: %s\n- top_p: %s\n",
+    topic, mode_tag(), MODEL, TEMPERATURE, TOP_P
+  )
+end
+
+-- Update the header line of an existing chat buffer to reflect the current mode.
+local function refresh_header_mode(buf)
+  if not vim.api.nvim_buf_is_valid(buf) then return end
+  local first = vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] or ""
+  -- Replace or append the mode tag
+  local updated = first:gsub("%[agent%]", ""):gsub("%[chat%]", "")
+  updated = vim.trim(updated) .. "  " .. mode_tag()
+  vim.api.nvim_buf_set_lines(buf, 0, 1, false, { updated })
+end
+
+local function init_chat_buffer(buf, topic)
+  local header = build_header(topic)
+  local init_lines = vim.split(header .. "---\n\n## user\n\n", "\n")
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, init_lines)
+  set_chat_buf_options(buf)
 end
 
 local function parse_messages(buf)
@@ -89,20 +127,7 @@ local function parse_messages(buf)
   return messages
 end
 
-local function build_header(topic)
-  topic = topic or "Jenova Chat"
-  return string.format(
-    "# topic: %s\n- model: %s\n- temperature: %s\n- top_p: %s\n",
-    topic, MODEL, TEMPERATURE, TOP_P
-  )
-end
-
-local function init_chat_buffer(buf, topic)
-  local header = build_header(topic)
-  local init_lines = vim.split(header .. "---\n\n## user\n\n", "\n")
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, init_lines)
-  set_chat_buf_options(buf)
-end
+-- ── File I/O ──────────────────────────────────────────────────────────────────
 
 local function save_chat(buf)
   if not is_chat_buf(buf) then return end
@@ -117,12 +142,16 @@ local function save_chat(buf)
   end
 end
 
+-- ── Scroll ────────────────────────────────────────────────────────────────────
+
 local function scroll_to_bottom(buf)
   local total = vim.api.nvim_buf_line_count(buf)
   for _, win in ipairs(vim.fn.win_findbuf(buf)) do
     pcall(vim.api.nvim_win_set_cursor, win, { total, 0 })
   end
 end
+
+-- ── Window management ─────────────────────────────────────────────────────────
 
 local function open_chat_split(path)
   vim.cmd("vsplit")
@@ -143,8 +172,6 @@ local function open_chat_split(path)
   local buf = vim.api.nvim_get_current_buf()
   set_chat_buf_options(buf)
 
-  -- Use a named augroup per buffer to prevent stacking duplicate handlers
-  -- on repeated open/close toggles
   if not vim.b[buf]._jenova_chat_autocmd then
     local group = vim.api.nvim_create_augroup("JenovaChatAutoSave_" .. buf, { clear = true })
     vim.api.nvim_create_autocmd({ "TextChanged", "InsertLeave" }, {
@@ -166,12 +193,21 @@ local function open_chat_split(path)
   return buf, win
 end
 
+-- ── Generation control ────────────────────────────────────────────────────────
+
 local function stop_generation()
   if active_job then
     active_job:kill(9)
     active_job = nil
   end
+  -- Also signal the agent to abort.
+  local ok, agent = pcall(require, "jenova.agent")
+  if ok and agent then
+    pcall(agent.stop)
+  end
 end
+
+-- ── Buffer helpers ────────────────────────────────────────────────────────────
 
 local function append_user_section(buf, msg_text)
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
@@ -210,6 +246,8 @@ local function append_user_section(buf, msg_text)
   vim.api.nvim_buf_set_lines(buf, -1, -1, false, new_lines)
 end
 
+-- ── Plain streaming (conversation mode) ───────────────────────────────────────
+
 local function stream_response(buf, messages, on_done)
   stop_generation()
 
@@ -242,23 +280,17 @@ local function stream_response(buf, messages, on_done)
   local function append_text(text)
     vim.schedule(function()
       if not vim.api.nvim_buf_is_valid(buf) then return end
-
       got_content = true
       local pieces = vim.split(text, "\n", { plain = true })
-
       current_lines[#current_lines] = current_lines[#current_lines] .. pieces[1]
       for i = 2, #pieces do
         table.insert(current_lines, pieces[i])
       end
-
       local start_idx = insert_line - 1
       local end_idx = start_idx + #current_lines
       local buf_total = vim.api.nvim_buf_line_count(buf)
-      if end_idx > buf_total then
-        end_idx = buf_total
-      end
+      if end_idx > buf_total then end_idx = buf_total end
       pcall(vim.api.nvim_buf_set_lines, buf, start_idx, end_idx, false, current_lines)
-
       scroll_to_bottom(buf)
     end)
   end
@@ -275,7 +307,6 @@ local function stream_response(buf, messages, on_done)
       sse_buffer = sse_buffer:sub(nl + 1)
 
       if line == "data: [DONE]" then
-        -- stream finished
       elseif line:sub(1, 6) == "data: " then
         local json_str = line:sub(7)
         local ok, parsed = pcall(vim.json.decode, json_str)
@@ -360,6 +391,47 @@ local function stream_response(buf, messages, on_done)
   )
 end
 
+-- ── Agent response (agent mode) ───────────────────────────────────────────────
+
+local function agent_respond(buf, prompt, on_done)
+  local ok, agent = pcall(require, "jenova.agent")
+  if not ok or not agent then
+    vim.notify(
+      "Embedded agent not available — run: make sync-modules && make install",
+      vim.log.levels.WARN, { title = "Jenova" })
+    return false
+  end
+
+  vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## assistant", "" })
+  local insert_line = vim.api.nvim_buf_line_count(buf)
+  local current_lines = { "" }
+
+  agent.query(prompt, {
+    on_text = function(text)
+      if not vim.api.nvim_buf_is_valid(buf) then return end
+      local pieces = vim.split(text, "\n", { plain = true })
+      current_lines[#current_lines] = current_lines[#current_lines] .. pieces[1]
+      for i = 2, #pieces do table.insert(current_lines, pieces[i]) end
+      local s = insert_line - 1
+      local e = math.min(s + #current_lines, vim.api.nvim_buf_line_count(buf))
+      pcall(vim.api.nvim_buf_set_lines, buf, s, e, false, current_lines)
+      scroll_to_bottom(buf)
+    end,
+    on_done = function()
+      if vim.api.nvim_buf_is_valid(buf) then
+        vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## user", "" })
+        save_chat(buf)
+        scroll_to_bottom(buf)
+        vim.cmd("startinsert!")
+      end
+      if on_done then on_done() end
+    end,
+  })
+  return true
+end
+
+-- ── Public API ────────────────────────────────────────────────────────────────
+
 function M.open_chat(path)
   return open_chat_split(path)
 end
@@ -397,6 +469,21 @@ function M.toggle_chat()
   end
 end
 
+-- Toggle between agent mode and plain conversation mode.
+function M.toggle_mode()
+  agent_mode = not agent_mode
+  local label = agent_mode and "Agent mode (tools + context)" or "Conversation mode (plain stream)"
+  vim.notify(label, vim.log.levels.INFO, { title = "Jenova" })
+
+  -- Update header in all open chat buffers.
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if is_chat_buf(buf) then
+      refresh_header_mode(buf)
+      save_chat(buf)
+    end
+  end
+end
+
 function M.respond()
   local buf = vim.api.nvim_get_current_buf()
   if not is_chat_buf(buf) then
@@ -410,9 +497,8 @@ function M.respond()
     return
   end
 
-  -- Try agent path first (full agentic loop with editor context + tool use)
-  local agent_ok, agent = pcall(require, "jenova.agent")
-  if agent_ok and agent then
+  if agent_mode then
+    -- Extract the last user message as the prompt for the agent loop.
     local prompt = ""
     for i = #messages, 1, -1 do
       if messages[i].role == "user" then
@@ -421,39 +507,12 @@ function M.respond()
       end
     end
     if prompt ~= "" then
-      vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## assistant", "" })
-      local insert_line = vim.api.nvim_buf_line_count(buf)
-      local current_lines = { "" }
-
-      agent.query(prompt, {
-        on_text = function(text)
-          vim.schedule(function()
-            if not vim.api.nvim_buf_is_valid(buf) then return end
-            local pieces = vim.split(text, "\n", { plain = true })
-            current_lines[#current_lines] = current_lines[#current_lines] .. pieces[1]
-            for i = 2, #pieces do table.insert(current_lines, pieces[i]) end
-            local s = insert_line - 1
-            local e = math.min(s + #current_lines, vim.api.nvim_buf_line_count(buf))
-            pcall(vim.api.nvim_buf_set_lines, buf, s, e, false, current_lines)
-            scroll_to_bottom(buf)
-          end)
-        end,
-        on_done = function()
-          vim.schedule(function()
-            if vim.api.nvim_buf_is_valid(buf) then
-              vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## user", "" })
-              save_chat(buf)
-              scroll_to_bottom(buf)
-              vim.cmd("startinsert!")
-            end
-          end)
-        end,
-      })
+      agent_respond(buf, prompt)
       return
     end
   end
 
-  -- Fallback: plain streaming (no tool use)
+  -- Fallback: plain streaming (conversation mode or empty prompt).
   stream_response(buf, messages)
 end
 
@@ -684,20 +743,30 @@ function M.stop()
   vim.notify("Generation stopped", vim.log.levels.INFO, { title = "Jenova" })
 end
 
+function M.agent_reset()
+  local ok, agent = pcall(require, "jenova.agent")
+  if ok and agent then
+    agent.reset()
+    vim.notify("Agent context reset", vim.log.levels.INFO, { title = "Jenova" })
+  end
+end
+
 local _setup_done = false
 
 function M.setup()
   if _setup_done then return end
   _setup_done = true
 
-  vim.api.nvim_create_user_command("JenovaChat", function() M.toggle_chat() end, { desc = "Toggle Jenova Chat" })
-  vim.api.nvim_create_user_command("JenovaChatNew", function() M.open_chat() end, { desc = "New Jenova Chat" })
-  vim.api.nvim_create_user_command("JenovaChatRespond", function() M.respond() end, { desc = "Send chat message" })
-  vim.api.nvim_create_user_command("JenovaChatDelete", function() M.delete_chat() end, { desc = "Delete current chat" })
-  vim.api.nvim_create_user_command("JenovaChatFresh", function() M.fresh_chat() end, { desc = "Fresh chat (wipe all)" })
-  vim.api.nvim_create_user_command("JenovaChatStop", function() M.stop() end, { desc = "Stop generation" })
-  vim.api.nvim_create_user_command("JenovaWebSearch", function() M.web_search() end, { desc = "Web search" })
+  vim.api.nvim_create_user_command("JenovaChat",        function() M.toggle_chat() end,   { desc = "Toggle Jenova Chat" })
+  vim.api.nvim_create_user_command("JenovaChatNew",     function() M.open_chat() end,     { desc = "New Jenova Chat" })
+  vim.api.nvim_create_user_command("JenovaChatRespond", function() M.respond() end,       { desc = "Send chat message" })
+  vim.api.nvim_create_user_command("JenovaChatDelete",  function() M.delete_chat() end,   { desc = "Delete current chat" })
+  vim.api.nvim_create_user_command("JenovaChatFresh",   function() M.fresh_chat() end,    { desc = "Fresh chat (wipe all)" })
+  vim.api.nvim_create_user_command("JenovaChatStop",    function() M.stop() end,          { desc = "Stop generation" })
+  vim.api.nvim_create_user_command("JenovaWebSearch",   function() M.web_search() end,    { desc = "Web search" })
   vim.api.nvim_create_user_command("JenovaChatContext", function() M.chat_with_context() end, { desc = "Chat with file context" })
+  vim.api.nvim_create_user_command("JenovaToggleMode",  function() M.toggle_mode() end,   { desc = "Toggle agent/conversation mode" })
+  vim.api.nvim_create_user_command("JenovaAgentReset",  function() M.agent_reset() end,   { desc = "Reset agent context" })
 
   local function opts(desc)
     return { noremap = true, silent = true, nowait = true, desc = "Jenova: " .. desc }
@@ -715,6 +784,8 @@ function M.setup()
   vim.keymap.set("n", "<leader>ar", function() M.respond() end, opts("Chat Respond"))
   vim.keymap.set("n", "<leader>ad", function() M.delete_chat() end, opts("Delete Chat"))
   vim.keymap.set("n", "<leader>an", function() M.open_chat() end, opts("New Chat"))
+  vim.keymap.set("n", "<leader>am", function() M.toggle_mode() end, opts("Toggle Agent/Conversation Mode"))
+  vim.keymap.set("n", "<leader>aR", function() M.agent_reset() end, opts("Reset Agent Context"))
 
   vim.keymap.set("v", "<leader>aw", function()
     local esc = vim.api.nvim_replace_termcodes("<Esc>", true, false, true)
@@ -726,15 +797,7 @@ function M.setup()
   vim.keymap.set("n", "<leader>ai", function() M.inline_rewrite() end, opts("Inline Rewrite"))
   vim.keymap.set("n", "<leader>ax", function() M.stop() end, opts("Stop Generation"))
 
-  vim.keymap.set("n", "<leader>aa", function()
-    local ok, agent = pcall(require, "jenova.agent")
-    if ok and agent then
-      M.toggle_chat()
-    else
-      vim.notify("Embedded agent not available (run make sync-modules)",
-        vim.log.levels.WARN, { title = "Jenova" })
-    end
-  end, opts("Open / focus agent panel"))
+  vim.keymap.set("n", "<leader>aa", function() M.toggle_chat() end, opts("Open / focus chat"))
 
   vim.keymap.set("n", "<leader>af", function()
     local src_buf = vim.api.nvim_get_current_buf()

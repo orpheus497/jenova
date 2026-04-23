@@ -1,34 +1,26 @@
 #!/bin/sh
 
-# jenova: Launch the Jenova CLI agent (C + Lua + llama.cpp)
+# jenova: Full-environment launcher — start Jenova CA backend and open jvim.
 # FreeBSD 15 | Jenova Cognitive Architecture
 #
-# This is the canonical entry point for the terminal-based AI coding agent.
-# It resolves JENOVA_ROOT, loads configuration, and invokes the cli-agent
-# binary with the correct environment and Lua path.
+# This is the canonical entry point for a local development session.
+# It starts the jenova-ca backend (if not already running) and then
+# launches jvim with --no-backend so jvim does not try to manage it.
 #
-# Usage: jenova [options] [prompt...]
-#   --model <model>     Override model selection
-#   --provider <name>   Override provider (llamacpp, openai, anthropic, gemini)
-#   --one-shot          Process prompt and exit (no REPL)
-#   --no-backend        Skip backend health check
+# The old CLI agent REPL entry point is now bin/jenova-cli.
+#
+# Usage: jenova [options] [files...]
+#   --no-backend        Skip starting jenova-ca (just launch jvim)
+#   --daemon-only       Start jenova-ca in daemon mode and exit (no editor)
 #   --check             Print resolved JENOVA_* environment and exit
 #   -h | --help         Show this help and exit
 
 set -e
 
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
-JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
+JENOVA_ROOT=$(dirname "$SCRIPT_DIR")
 
-# Verify the cli-agent binary exists
-CLI_AGENT="$JENOVA_ROOT/cli-agent/build/cli-agent"
-if [ ! -x "$CLI_AGENT" ]; then
-    echo "Error: cli-agent binary not found at $CLI_AGENT" >&2
-    echo "       Build it first: cd $JENOVA_ROOT/cli-agent && make" >&2
-    exit 1
-fi
-
-# Load configuration
+# ── Load configuration ────────────────────────────────────────────────────────
 if [ -f "$JENOVA_ROOT/etc/jenova.conf" ]; then
     . "$JENOVA_ROOT/etc/jenova.conf"
 fi
@@ -36,63 +28,136 @@ if [ -f "$JENOVA_ROOT/etc/jenova.local.conf" ]; then
     . "$JENOVA_ROOT/etc/jenova.local.conf"
 fi
 
-# Export environment for the agent
+# ── Resolve connect host ──────────────────────────────────────────────────────
 CONNECT_HOST="${JENOVA_CONNECT_HOST:-${HOST:-127.0.0.1}}"
 if [ "$CONNECT_HOST" = "0.0.0.0" ] || [ "$CONNECT_HOST" = "::" ]; then
     CONNECT_HOST="127.0.0.1"
 fi
 
+# ── Export environment for child processes ────────────────────────────────────
 export JENOVA_ROOT
 export JENOVA_CONNECT_HOST="$CONNECT_HOST"
 export JENOVA_PORT="${PORT:-8080}"
 export JENOVA_LLAMA_PORT="${LLAMA_PORT:-8081}"
 export JENOVA_LLAMA_EMBED_PORT="${LLAMA_EMBED_PORT:-8082}"
 export JENOVA_API_URL="http://${CONNECT_HOST}:${JENOVA_PORT}"
+export JENOVA_CWD="$PWD"
 
-# Set LD_LIBRARY_PATH for llama.cpp shared libraries
 LLAMA_LIB_DIR="$JENOVA_ROOT/llama.cpp/build/bin"
 if [ -d "$LLAMA_LIB_DIR" ]; then
     export LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"
 fi
 
-# Set LUA_PATH so the agent finds its Lua modules
-export LUA_PATH="$JENOVA_ROOT/cli-agent/lua/?.lua;$JENOVA_ROOT/cli-agent/lua/?/init.lua;;"
+# ── Parse flags ───────────────────────────────────────────────────────────────
+NO_BACKEND=0
+DAEMON_ONLY=0
 
-# Parse jenova-specific flags
-STARTED_BY_THIS_INVOCATION=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --no-backend)  NO_BACKEND=1; shift ;;
+        --daemon-only) DAEMON_ONLY=1; shift ;;
+        --check)
+            echo "JENOVA_ROOT=$JENOVA_ROOT"
+            echo "JENOVA_CONNECT_HOST=$JENOVA_CONNECT_HOST"
+            echo "JENOVA_PORT=$JENOVA_PORT"
+            echo "JENOVA_LLAMA_PORT=$JENOVA_LLAMA_PORT"
+            echo "JENOVA_LLAMA_EMBED_PORT=$JENOVA_LLAMA_EMBED_PORT"
+            echo "JENOVA_API_URL=$JENOVA_API_URL"
+            exit 0
+            ;;
+        -h|--help)
+            sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+            exit 0
+            ;;
+        *) break ;;
+    esac
+done
 
-case "${1:-}" in
-    --check)
-        echo "JENOVA_ROOT=$JENOVA_ROOT"
-        echo "JENOVA_CONNECT_HOST=$JENOVA_CONNECT_HOST"
-        echo "JENOVA_PORT=$JENOVA_PORT"
-        echo "JENOVA_LLAMA_PORT=$JENOVA_LLAMA_PORT"
-        echo "JENOVA_LLAMA_EMBED_PORT=$JENOVA_LLAMA_EMBED_PORT"
-        echo "JENOVA_API_URL=$JENOVA_API_URL"
-        echo "CLI_AGENT=$CLI_AGENT"
-        exit 0
-        ;;
-    -h|--help)
-        sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
-        exit 0
-        ;;
-esac
+# ── Locate jenova-ca ──────────────────────────────────────────────────────────
+JENOVA_CA="$SCRIPT_DIR/jenova-ca"
+if [ ! -x "$JENOVA_CA" ]; then
+    echo "Error: jenova-ca not found at $JENOVA_CA" >&2
+    exit 1
+fi
 
-# Cleanup: stop backend on exit only if this invocation started it
-cleanup_agent() {
-    if [ "$STARTED_BY_THIS_INVOCATION" = "1" ]; then
-        "$JENOVA_ROOT/bin/jenova-ca" stop 2>/dev/null || true
+# ── Health check helper ───────────────────────────────────────────────────────
+JENOVA_DIR="${JENOVA_STATE:-$JENOVA_ROOT/.jenova}"
+PID_FILE="$JENOVA_DIR/jenova-ca.pid"
+
+check_health() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -sf --max-time 3 --connect-timeout 2 \
+             "http://${CONNECT_HOST}:${JENOVA_PORT}/v1/health" >/dev/null 2>&1
+    else
+        return 1
     fi
 }
-trap cleanup_agent EXIT INT TERM
 
-# Capture the user's working directory before changing into the agent source
-# tree so Lua can display/use the correct project directory.
-export JENOVA_CWD="$PWD"
+# ── Start backend ─────────────────────────────────────────────────────────────
+STARTED_BY_THIS_INVOCATION=0
 
-# Launch the CLI agent
-# The cd is required so relative Lua paths (lua/init.lua etc.) resolve correctly.
-# Note: do NOT exec here — we need the shell process to stay alive so the
-# cleanup_agent trap (registered above) fires when the agent exits.
-cd "$JENOVA_ROOT/cli-agent"
-"$CLI_AGENT" "$@"
+if [ "$NO_BACKEND" = "0" ]; then
+    mkdir -p "$JENOVA_DIR"
+
+    if check_health; then
+        echo "Jenova CA already running at $JENOVA_API_URL"
+    else
+        echo "Starting Jenova CA in background..."
+        if "$JENOVA_CA" --daemon; then
+            STARTED_BY_THIS_INVOCATION=1
+        else
+            echo "Error: jenova-ca failed to start" >&2
+            exit 1
+        fi
+
+        printf "Waiting for Jenova CA"
+        i=0
+        while [ $i -lt 120 ]; do
+            if check_health; then
+                echo " ready!"
+                break
+            fi
+            if [ -f "$PID_FILE" ]; then
+                read -r _LP _PP _EP < "$PID_FILE" 2>/dev/null || true
+                _ANY_ALIVE=false
+                for _P in $_LP $_PP $_EP; do
+                    [ -n "$_P" ] && kill -0 "$_P" 2>/dev/null && _ANY_ALIVE=true
+                done
+                if ! $_ANY_ALIVE; then
+                    echo " failed! (all daemon processes died)"
+                    LOG_DIR="${LOG_DIR:-$JENOVA_DIR}"
+                    echo "Check log: $LOG_DIR/jenova-ca.log"
+                    exit 1
+                fi
+            fi
+            printf "."
+            sleep 1
+            i=$((i + 1))
+            if [ "$i" -eq 120 ]; then
+                echo " timeout!"
+                exit 1
+            fi
+        done
+    fi
+fi
+
+# ── Cleanup trap ──────────────────────────────────────────────────────────────
+cleanup() {
+    if [ "$STARTED_BY_THIS_INVOCATION" = "1" ] && [ -f "$PID_FILE" ]; then
+        echo "Stopping Jenova CA..."
+        "$JENOVA_CA" stop 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT INT TERM
+
+# ── Daemon-only mode ──────────────────────────────────────────────────────────
+if [ "$DAEMON_ONLY" = "1" ]; then
+    echo "Jenova CA is running. Exiting (--daemon-only)."
+    # Don't trigger the cleanup trap.
+    trap - EXIT INT TERM
+    exit 0
+fi
+
+# ── Launch jvim ───────────────────────────────────────────────────────────────
+# Pass --no-backend so jvim does not attempt to start or stop jenova-ca.
+exec "$SCRIPT_DIR/jvim" --no-backend "$@"
