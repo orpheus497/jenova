@@ -147,6 +147,119 @@ local function inject_shims()
   end
 end
 
+-- ── Permission UI shim ────────────────────────────────────────────────────────
+-- The shared permissions manager prompts via io.write/io.read with ANSI colour.
+-- That works in a real terminal, but inside jvim's chat buffer it is invisible
+-- and io.read blocks the editor. We monkey-patch request_permission to use a
+-- vim.ui.select picker instead, yielding the agent coroutine until the user
+-- picks Yes/No/Always/Session. The rest of the manager (mode lookup, caches,
+-- read-only tool whitelist) is reused unchanged.
+local function patch_permissions()
+  local ok, perms = pcall(require, "permissions.manager")
+  if not ok or type(perms) ~= "table" then return end
+  if perms._jvim_patched then return end
+  perms._jvim_patched = true
+
+  local function describe(tool_name, input)
+    if type(input) ~= "table" then return tool_name end
+    if tool_name == "Shell" or tool_name == "Bash" then
+      return input.command and ("$ " .. tostring(input.command):sub(1, 200)) or tool_name
+    elseif tool_name == "Write" then
+      local size = input.content and (#input.content .. " bytes ") or ""
+      return "write " .. size .. "→ " .. tostring(input.file_path or "?")
+    elseif tool_name == "Edit" then
+      return "edit " .. tostring(input.file_path or "?")
+    elseif tool_name == "MultiEdit" then
+      local n = type(input.edits) == "table" and tostring(#input.edits) or "?"
+      return "multiedit (" .. n .. ") " .. tostring(input.file_path or "?")
+    end
+    for _, k in ipairs({ "file_path", "path", "command", "query", "url" }) do
+      if type(input[k]) == "string" and #input[k] > 0 then
+        return k .. ": " .. input[k]:sub(1, 120)
+      end
+    end
+    return tool_name
+  end
+
+  perms.request_permission = function(tool_name, input, _context)
+    perms._cache = perms._cache or {}
+
+    -- Session-wide grant check (matches original semantics: a "session"
+    -- decision allows every subsequent call of the same tool name).
+    if perms._cache[tool_name .. ":*"] then
+      return true, nil
+    end
+
+    local cache_key = perms.get_cache_key(tool_name, input)
+    if perms._cache[cache_key] ~= nil then
+      local cached = perms._cache[cache_key]
+      if not cached then return false, "Permission denied (cached)" end
+      return true, nil
+    end
+
+    local co = coroutine.running()
+    if not co then
+      -- Outside coroutine: fall back to a non-interactive deny so jvim never
+      -- blocks on stdin. Action tools called from headless contexts must use
+      -- /permissions auto.
+      return false, "Permission required (no UI available)"
+    end
+
+    local detail = describe(tool_name, input)
+    local title  = string.format("Allow %s?", tool_name)
+    local prompt = title .. "\n" .. detail
+
+    local choices = {
+      "Yes — once",
+      "No — deny",
+      "Always — remember this exact call",
+      "Session — allow " .. tool_name .. " for the rest of this session",
+    }
+
+    vim.schedule(function()
+      vim.ui.select(choices, {
+        prompt  = prompt,
+        format_item = function(item) return item end,
+      }, function(choice)
+        local allowed, sticky_session, sticky_call
+        if not choice or choice == choices[2] then
+          allowed = false
+        elseif choice == choices[1] then
+          allowed = true
+        elseif choice == choices[3] then
+          allowed = true; sticky_call = true
+        elseif choice == choices[4] then
+          allowed = true; sticky_session = true
+        else
+          allowed = false
+        end
+
+        if sticky_call then
+          perms._cache = perms._cache or {}
+          perms._cache[cache_key] = true
+        elseif sticky_session then
+          perms._cache = perms._cache or {}
+          perms._cache[tool_name .. ":*"] = true
+        end
+
+        pcall(perms.record_permission, tool_name, input, allowed)
+
+        local ok_resume, err = coroutine.resume(co, allowed)
+        if not ok_resume then
+          vim.notify("permission resume failed: " .. tostring(err),
+            vim.log.levels.ERROR, { title = "Jenova Agent" })
+        end
+      end)
+    end)
+
+    local allowed = coroutine.yield()
+    if not allowed then
+      return false, "Permission denied by user"
+    end
+    return true, nil
+  end
+end
+
 -- ── Lazy singleton ────────────────────────────────────────────────────────────
 
 local _engine = nil
@@ -181,6 +294,11 @@ local function get_engine()
     vim.notify("jenova.agent: failed to load providers.init: " .. tostring(providers),
       vim.log.levels.ERROR, { title = "Jenova Agent" })
   end
+
+  -- Replace permissions.manager.request_permission with a vim.ui.select
+  -- driven prompt that yields the agent coroutine instead of blocking on
+  -- io.read. Must run AFTER the path shim is in place.
+  patch_permissions()
 
   -- Load all shared CLI tools AND register jvim-native overrides FIRST.
   -- QueryEngine.new() calls tool_registry.build_api_tools() internally so the

@@ -472,18 +472,40 @@ function QueryEngine:query(user_message, options)
     while turn_count < max_turns do
         turn_count = turn_count + 1
 
-        -- tool_choice: "required" forces a tool call every turn so the model can't
-        -- silently emit plain text. Brief is the designated "I want to reply" tool.
-        -- Use "auto" only when there are no tools (avoids a bad-request error).
-        local has_tools = self.tools and #self.tools > 0
+        -- Per-turn lookup of tool-dispatch policy. Both knobs are runtime
+        -- mutable via config.set/app_state.set so the user can flip behaviour
+        -- between turns (e.g. from the chat slash commands /tools and
+        -- /permissions) without restarting the engine.
+        local cfg_ok, cfg_mod = pcall(require, "config.loader")
+        local state_ok, state_mod = pcall(require, "state.app_state")
 
-        -- tool_choice: always "required" so the model must use a tool every turn.
-        -- Brief is the designated exit path — the model calls Brief({response="..."})
-        -- when it wants to deliver a plain-text reply to the user.
-        -- Switching to "auto" lets the model short-circuit by emitting plain text
-        -- directly, which causes it to fabricate answers instead of actually
-        -- reading files or running shell commands.
-        local tool_choice_val = has_tools and "required" or nil
+        local tools_enabled = true
+        if state_ok and state_mod and state_mod.get then
+            local v = state_mod.get("tools_enabled")
+            if v ~= nil then tools_enabled = v and true or false end
+        end
+        if tools_enabled and cfg_ok and cfg_mod and cfg_mod.get then
+            local v = cfg_mod.get("tools_enabled")
+            if v == false then tools_enabled = false end
+        end
+
+        local has_tools = tools_enabled and self.tools and #self.tools > 0
+        local request_tools = has_tools and self.tools or nil
+
+        -- tool_choice precedence: app_state → config → "auto" (when tools
+        -- are present). "required" is still available for users who want
+        -- the old aggressive behaviour, but it's no longer the default.
+        local tool_choice_val = nil
+        if has_tools then
+            local choice = nil
+            if state_ok and state_mod and state_mod.get then
+                choice = state_mod.get("tool_choice")
+            end
+            if not choice and cfg_ok and cfg_mod and cfg_mod.get then
+                choice = cfg_mod.get("tool_choice")
+            end
+            tool_choice_val = choice or "auto"
+        end
 
         -- Prepare API request
         local request = {
@@ -492,7 +514,7 @@ function QueryEngine:query(user_message, options)
             temperature = self.temperature,
             system = self.system_prompt,
             messages = self.messages,
-            tools = self.tools,
+            tools = request_tools,
             stream = true,
             tool_choice = tool_choice_val,
         }

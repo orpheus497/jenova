@@ -415,68 +415,109 @@ local function agent_respond(buf, prompt, on_done)
     return false
   end
 
-  -- Insert assistant header + placeholder thinking line
+  -- ── State ───────────────────────────────────────────────────────────────
+  -- We render assistant output by maintaining a single mutable "transient"
+  -- line at the bottom of the buffer that displays either the spinner or a
+  -- ⚙ tool badge. Permanent content (assistant text, completed ✓/✗ tool
+  -- badges, error rows) is committed ABOVE the transient line. Treating the
+  -- transient row as a single in-place slot prevents the mid-stream tearing
+  -- and stale "thinking…" lines that the previous renderer left behind.
+
   vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## assistant", "" })
-  -- Reserve the placeholder slot
-  vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "⟳ thinking…" })
-  local thinking_slot = vim.api.nvim_buf_line_count(buf)  -- 1-based index of that line
 
-  -- Text content is appended AFTER the thinking slot
-  local insert_line = thinking_slot + 1  -- next line after spinner (1-based, exclusive end for set_lines)
-  local current_lines = { "" }
-  local text_started = false
+  local transient_lnum = nil   -- 1-based row of the live spinner/badge, or nil
+  local stream_lines   = nil   -- accumulator for the current text run
+  local stream_start   = nil   -- 1-based row where the current stream begins
+  local active_tool    = nil   -- { name = ..., lnum = ... } when a tool is running
+  local spinner_idx    = 0
+  local spinner_timer  = nil
 
-  -- Spinner timer
-  local spinner_idx = 0
-  local spinner_timer = vim.uv and vim.uv.new_timer() or vim.loop.new_timer()
+  local function buf_append(lines)
+    if not vim.api.nvim_buf_is_valid(buf) then return end
+    vim.api.nvim_buf_set_lines(buf, -1, -1, false, lines)
+  end
+
+  local function clear_transient()
+    if not transient_lnum then return end
+    if not vim.api.nvim_buf_is_valid(buf) then transient_lnum = nil; return end
+    pcall(vim.api.nvim_buf_set_lines, buf,
+      transient_lnum - 1, transient_lnum, false, {})
+    transient_lnum = nil
+  end
+
+  local function commit_stream()
+    -- Stream rows are already in the buffer (text was written in place);
+    -- just drop the accumulator so the next run starts fresh.
+    stream_lines = nil
+    stream_start = nil
+  end
+
   local function stop_spinner()
     if spinner_timer then
-      spinner_timer:stop()
-      spinner_timer:close()
+      pcall(function() spinner_timer:stop(); spinner_timer:close() end)
       spinner_timer = nil
     end
   end
-  spinner_timer:start(0, 100, vim.schedule_wrap(function()
-    if not vim.api.nvim_buf_is_valid(buf) then stop_spinner(); return end
+
+  local function spinner_label()
     spinner_idx = (spinner_idx % #SPINNER) + 1
-    local tool = M._agent_tool
-    local label = tool
-      and string.format("%s %s…", SPINNER[spinner_idx], tool)
-      or  string.format("%s thinking…", SPINNER[spinner_idx])
-    pcall(vim.api.nvim_buf_set_lines, buf, thinking_slot - 1, thinking_slot, false, { label })
-  end))
+    if active_tool then
+      return string.format("%s %s…", SPINNER[spinner_idx], active_tool.name)
+    end
+    return string.format("%s thinking…", SPINNER[spinner_idx])
+  end
 
-  -- Tool badge tracking: map tool_name → line number in buffer (1-based)
-  local tool_lines = {}
+  local function ensure_transient()
+    if transient_lnum then return end
+    buf_append({ spinner_label() })
+    transient_lnum = vim.api.nvim_buf_line_count(buf)
+  end
 
-  -- Update M state for statusline
-  M._agent_running    = true
-  M._agent_tool       = nil
-  M._agent_turn       = (M._agent_turn or 0) + 1
+  local function start_spinner()
+    ensure_transient()
+    if spinner_timer then return end
+    spinner_timer = (vim.uv or vim.loop).new_timer()
+    spinner_timer:start(0, 100, vim.schedule_wrap(function()
+      if not vim.api.nvim_buf_is_valid(buf) then stop_spinner(); return end
+      if not transient_lnum then return end
+      pcall(vim.api.nvim_buf_set_lines, buf,
+        transient_lnum - 1, transient_lnum, false, { spinner_label() })
+    end))
+  end
+
+  -- Module statusline state
+  M._agent_running = true
+  M._agent_tool    = nil
+  M._agent_turn    = (M._agent_turn or 0) + 1
+
+  start_spinner()
 
   local function append_text(text)
-    if not vim.api.nvim_buf_is_valid(buf) then return end
-    if not text_started then
-      -- Remove the thinking placeholder now that real text is arriving
-      stop_spinner()
-      pcall(vim.api.nvim_buf_set_lines, buf, thinking_slot - 1, thinking_slot, false, {})
-      -- Recalculate insert_line after removal
-      insert_line = vim.api.nvim_buf_line_count(buf) + 1
-      thinking_slot = 0
-      text_started = true
-      current_lines = { "" }
+    if not vim.api.nvim_buf_is_valid(buf) or text == "" then return end
+    -- Replace the transient line with a fresh empty stream row before the
+    -- first chunk arrives, so streamed text grows in place where the
+    -- spinner used to sit.
+    if not stream_start then
+      if transient_lnum then
+        pcall(vim.api.nvim_buf_set_lines, buf,
+          transient_lnum - 1, transient_lnum, false, { "" })
+        stream_start   = transient_lnum
+        transient_lnum = nil
+      else
+        buf_append({ "" })
+        stream_start = vim.api.nvim_buf_line_count(buf)
+      end
+      stream_lines = { "" }
     end
+
     local pieces = vim.split(text, "\n", { plain = true })
-    current_lines[#current_lines] = current_lines[#current_lines] .. pieces[1]
-    for i = 2, #pieces do table.insert(current_lines, pieces[i]) end
-    local s = insert_line - 1
-    local buf_total = vim.api.nvim_buf_line_count(buf)
-    local e = math.min(s + #current_lines, buf_total)
-    if s >= buf_total then
-      pcall(vim.api.nvim_buf_set_lines, buf, -1, -1, false, current_lines)
-    else
-      pcall(vim.api.nvim_buf_set_lines, buf, s, e, false, current_lines)
-    end
+    stream_lines[#stream_lines] = stream_lines[#stream_lines] .. pieces[1]
+    for i = 2, #pieces do table.insert(stream_lines, pieces[i]) end
+
+    pcall(vim.api.nvim_buf_set_lines, buf,
+      stream_start - 1,
+      stream_start - 1 + #stream_lines,
+      false, stream_lines)
     scroll_to_bottom(buf)
   end
 
@@ -488,23 +529,22 @@ local function agent_respond(buf, prompt, on_done)
     on_thinking = function()
       vim.schedule(function()
         if not vim.api.nvim_buf_is_valid(buf) then return end
-        -- spinner already running; just keep M state accurate
+        active_tool = nil
         M._agent_tool = nil
+        ensure_transient()
       end)
     end,
 
     on_tool_use = function(name, _)
       vim.schedule(function()
         if not vim.api.nvim_buf_is_valid(buf) then return end
+        commit_stream()
+        clear_transient()
+        active_tool = { name = name }
         M._agent_tool = name
-        -- Append a tool badge line
-        local badge = string.format("⚙ %s…", name)
-        vim.api.nvim_buf_set_lines(buf, -1, -1, false, { badge })
-        tool_lines[name] = vim.api.nvim_buf_line_count(buf)
-        -- Bump insert_line past the badge so text goes after
-        insert_line = tool_lines[name] + 1
-        text_started = false
-        current_lines = { "" }
+        -- Append a fresh transient row that the spinner will animate.
+        ensure_transient()
+        active_tool.lnum = transient_lnum
         scroll_to_bottom(buf)
       end)
     end,
@@ -512,58 +552,34 @@ local function agent_respond(buf, prompt, on_done)
     on_tool_result = function(name, result)
       vim.schedule(function()
         if not vim.api.nvim_buf_is_valid(buf) then return end
-        M._agent_tool = nil
-        local lnum = tool_lines[name]
-        if lnum and vim.api.nvim_buf_is_valid(buf) then
-          local success = not (type(result) == "table" and result.error)
-          local icon = success and "✓" or "✗"
-          pcall(vim.api.nvim_buf_set_lines, buf, lnum - 1, lnum, false,
+        local success = not (type(result) == "table" and result.error)
+        local icon    = success and "✓" or "✗"
+        local row     = active_tool and active_tool.lnum or transient_lnum
+        if row and vim.api.nvim_buf_is_valid(buf) then
+          pcall(vim.api.nvim_buf_set_lines, buf, row - 1, row, false,
             { string.format("%s %s", icon, name) })
-          tool_lines[name] = nil
         end
-        -- Re-start thinking spinner after tool returns
-        if spinner_timer then
-          -- already running
-        else
-          spinner_timer = (vim.uv or vim.loop).new_timer()
-          spinner_timer:start(0, 100, vim.schedule_wrap(function()
-            if not vim.api.nvim_buf_is_valid(buf) then stop_spinner(); return end
-            spinner_idx = (spinner_idx % #SPINNER) + 1
-            local tool = M._agent_tool
-            local label = tool
-              and string.format("%s %s…", SPINNER[spinner_idx], tool)
-              or  string.format("%s thinking…", SPINNER[spinner_idx])
-            -- Only update if we have a live thinking slot
-            if thinking_slot > 0 then
-              pcall(vim.api.nvim_buf_set_lines, buf, thinking_slot - 1, thinking_slot, false, { label })
-            end
-          end))
-          -- Append a new thinking line after tool result
-          vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "⟳ thinking…" })
-          thinking_slot = vim.api.nvim_buf_line_count(buf)
-          insert_line = thinking_slot + 1
-          text_started = false
-          current_lines = { "" }
-        end
+        if transient_lnum == row then transient_lnum = nil end
+        active_tool = nil
+        M._agent_tool = nil
+        -- Spinner timer keeps running; ensure_transient appends a new line
+        -- below the now-permanent badge.
+        ensure_transient()
+        scroll_to_bottom(buf)
       end)
     end,
 
     on_error = function(msg)
       vim.schedule(function()
         stop_spinner()
+        commit_stream()
+        clear_transient()
+        active_tool = nil
         M._agent_running = false
         M._agent_tool    = nil
         if vim.api.nvim_buf_is_valid(buf) then
-          -- Replace thinking line with error
-          if thinking_slot > 0 then
-            pcall(vim.api.nvim_buf_set_lines, buf, thinking_slot - 1, thinking_slot, false,
-              { string.format("✗ Error: %s", msg) })
-            thinking_slot = 0
-          else
-            vim.api.nvim_buf_set_lines(buf, -1, -1, false,
-              { string.format("✗ Error: %s", msg) })
-          end
-          vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## user", "" })
+          buf_append({ string.format("✗ Error: %s", msg) })
+          buf_append({ "", "## user", "" })
           save_chat(buf)
           scroll_to_bottom(buf)
           vim.cmd("startinsert!")
@@ -575,17 +591,13 @@ local function agent_respond(buf, prompt, on_done)
     on_done = function(usage)
       vim.schedule(function()
         stop_spinner()
+        commit_stream()
+        clear_transient()
+        active_tool = nil
         M._agent_running = false
         M._agent_tool    = nil
 
         if vim.api.nvim_buf_is_valid(buf) then
-          -- Remove leftover thinking slot if text arrived
-          if thinking_slot > 0 then
-            pcall(vim.api.nvim_buf_set_lines, buf, thinking_slot - 1, thinking_slot, false, {})
-            thinking_slot = 0
-          end
-
-          -- Append cost/usage line if available
           if usage and (usage.input or 0) + (usage.output or 0) > 0 then
             M._agent_tokens_in  = usage.input  or 0
             M._agent_tokens_out = usage.output or 0
@@ -600,10 +612,9 @@ local function agent_respond(buf, prompt, on_done)
                 "> turn %d  in:%d out:%d",
                 M._agent_turn, usage.input, usage.output)
             end
-            vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", cost_line })
+            buf_append({ "", cost_line })
           end
-
-          vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## user", "" })
+          buf_append({ "", "## user", "" })
           save_chat(buf)
           scroll_to_bottom(buf)
           vim.cmd("startinsert!")
@@ -619,7 +630,11 @@ end
 
 local function dispatch_slash(buf, cmd_line)
   local cmd = (cmd_line:match("^/(%S+)") or ""):lower()
-  local _ = cmd_line:match("^/%S+%s*(.*)")
+  local arg = (cmd_line:match("^/%S+%s+(.*)") or ""):match("^%s*(.-)%s*$")
+  local function info(line)
+    vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "<!-- " .. line .. " -->", "" })
+    scroll_to_bottom(buf)
+  end
   if cmd == "clear" then
     local ok, agent = pcall(require, "jenova.agent")
     if ok and agent then agent.clear() end
@@ -678,6 +693,39 @@ local function dispatch_slash(buf, cmd_line)
     scroll_to_bottom(buf)
 
   elseif cmd == "tools" then
+    -- /tools                — list registered tools
+    -- /tools on | enable    — re-enable tool dispatch
+    -- /tools off | disable  — strip tools, plain chat replies only
+    -- /tools status         — show whether tools are currently enabled
+    local sub = arg:lower()
+    if sub == "on" or sub == "enable" then
+      pcall(function()
+        local s = require("jenova.agent.shared.state.app_state")
+        s.set("tools_enabled", true)
+        local c = require("jenova.agent.shared.config.loader")
+        c.set("tools_enabled", true)
+      end)
+      info("/tools enabled — model can call tools")
+      return
+    elseif sub == "off" or sub == "disable" then
+      pcall(function()
+        local s = require("jenova.agent.shared.state.app_state")
+        s.set("tools_enabled", false)
+        local c = require("jenova.agent.shared.config.loader")
+        c.set("tools_enabled", false)
+      end)
+      info("/tools disabled — replies will be plain chat (no tools)")
+      return
+    elseif sub == "status" then
+      local enabled = true
+      pcall(function()
+        local s = require("jenova.agent.shared.state.app_state")
+        local v = s.get("tools_enabled")
+        if v ~= nil then enabled = v and true or false end
+      end)
+      info("/tools status: " .. (enabled and "enabled" or "disabled"))
+      return
+    end
     local ok, reg = pcall(require, "jenova.agent.shared.tools.registry")
     if not ok then ok, reg = pcall(require, "tools.registry") end
     local lines = { "", "<!-- /tools -->" }
@@ -694,9 +742,70 @@ local function dispatch_slash(buf, cmd_line)
     else
       table.insert(lines, "  (registry not available)")
     end
+    table.insert(lines, "  ──")
+    table.insert(lines, "  /tools on|off    toggle tool dispatch")
+    table.insert(lines, "  /tools status    show current state")
     table.insert(lines, "")
     vim.api.nvim_buf_set_lines(buf, -1, -1, false, lines)
     scroll_to_bottom(buf)
+
+  elseif cmd == "permissions" or cmd == "perm" then
+    -- /permissions [default|auto|plan|yolo]
+    -- yolo is an alias for bypassPermissions (silently auto-approve everything)
+    local sub = arg:lower()
+    local mode_map = {
+      default = "default",
+      ask     = "default",
+      auto    = "auto",
+      plan    = "plan",
+      yolo    = "bypassPermissions",
+      bypass  = "bypassPermissions",
+    }
+    if sub == "" then
+      local mode = "default"
+      pcall(function()
+        local s = require("jenova.agent.shared.state.app_state")
+        mode = s.get("permission_mode") or mode
+      end)
+      info("permission mode: " .. mode .. "  (use /permissions default|auto|plan|yolo)")
+      return
+    end
+    local mode = mode_map[sub]
+    if not mode then
+      info("unknown mode '" .. sub .. "' (try: default, auto, plan, yolo)")
+      return
+    end
+    pcall(function()
+      local s = require("jenova.agent.shared.state.app_state")
+      s.set("permission_mode", mode)
+      local c = require("jenova.agent.shared.config.loader")
+      c.set("permission_mode", mode)
+    end)
+    info("permission mode → " .. mode)
+
+  elseif cmd == "tool-choice" or cmd == "toolchoice" then
+    -- /tool-choice [auto|required|none]
+    local sub = arg:lower()
+    if sub == "" then
+      local choice = "auto"
+      pcall(function()
+        local s = require("jenova.agent.shared.state.app_state")
+        choice = s.get("tool_choice") or choice
+      end)
+      info("tool_choice: " .. choice .. "  (use /tool-choice auto|required)")
+      return
+    end
+    if sub ~= "auto" and sub ~= "required" and sub ~= "none" then
+      info("invalid tool_choice (use: auto, required, none)")
+      return
+    end
+    pcall(function()
+      local s = require("jenova.agent.shared.state.app_state")
+      s.set("tool_choice", sub)
+      local c = require("jenova.agent.shared.config.loader")
+      c.set("tool_choice", sub)
+    end)
+    info("tool_choice → " .. sub)
 
   elseif cmd == "model" then
     vim.api.nvim_buf_set_lines(buf, -1, -1, false,
@@ -711,16 +820,18 @@ local function dispatch_slash(buf, cmd_line)
     local lines = {
       "",
       "<!-- /help -->",
-      "  /clear      — clear session history (keep engine)",
-      "  /reset      — destroy engine, rebuild on next query",
-      "  /stop       — abort in-flight generation",
-      "  /history    — show message context summary",
-      "  /debug      — show engine state as JSON",
-      "  /diag       — show LSP diagnostics summary",
-      "  /tools      — list registered agent tools",
-      "  /model      — show current model",
-      "  /thinking   — toggle extended thinking (if supported)",
-      "  /help       — this reference",
+      "  /clear              clear session history (keep engine)",
+      "  /reset              destroy engine, rebuild on next query",
+      "  /stop               abort in-flight generation",
+      "  /history            show message context summary",
+      "  /debug              show engine state as JSON",
+      "  /diag               show LSP diagnostics summary",
+      "  /tools [on|off]     list / toggle tool dispatch",
+      "  /tool-choice MODE   auto | required | none",
+      "  /permissions MODE   default | auto | plan | yolo",
+      "  /model              show current model",
+      "  /thinking           toggle extended thinking (if supported)",
+      "  /help               this reference",
       "",
     }
     vim.api.nvim_buf_set_lines(buf, -1, -1, false, lines)

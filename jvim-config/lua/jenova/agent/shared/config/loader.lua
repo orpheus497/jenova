@@ -32,6 +32,15 @@ local DEFAULT_CONFIG = {
     -- Permission system
     permission_mode = "default", -- "default", "auto", "plan", "bypassPermissions"
 
+    -- Tool dispatch
+    -- tools_enabled=false → strip tools from every request, model replies as a
+    --   plain chat assistant (no Brief gymnastics). Useful for casual Q&A.
+    -- tool_choice options: "auto" (let the model decide), "required" (force a
+    --   tool call every turn — old behaviour), or nil (= "auto" when tools are
+    --   present). Default "auto" is far less brittle for small local models.
+    tools_enabled = true,
+    tool_choice   = "auto",
+
     -- UI settings
     vim_mode = false,
     theme = "auto", -- "auto", "light", "dark"
