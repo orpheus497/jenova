@@ -14,7 +14,8 @@ local M = {
   name        = "Glob",
   description = "Find files by glob pattern (e.g. '**/*.lua', 'src/**/*.rs'). " ..
     "Returns matching file paths (one per line), newest first. " ..
-    "Use this to discover files before reading them.",
+    "Use this ONLY when you know the specific file pattern you are looking for. " ..
+    "DO NOT use this to just 'explore' or 'list' a directory; use the LS tool for that.",
   parameters  = {
     type = "object",
     properties = {

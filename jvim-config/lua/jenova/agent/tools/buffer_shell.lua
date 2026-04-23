@@ -6,7 +6,7 @@ local paths = require("utils.paths")
 
 local M = {
   name        = "Shell",
-  description = "Run a shell command. Use this for compiling, testing, or querying system state. Output is truncated if too long.",
+  description = "Run a shell command. DO NOT use this for linting, compiling to check for errors, or checking code issues. Use the LSP tool for that. Use this for testing or querying system state. Output is truncated if too long.",
   parameters  = {
     type = "object",
     properties = {

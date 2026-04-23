@@ -6,7 +6,7 @@
 local M = {}
 
 M.name = "LSP"
-M.description = "Query live language server data inside jvim. Actions: " ..
+M.description = "Query live language server data inside jvim. This is the ONLY tool you should use to check for errors, unused variables, and linting issues. Actions: " ..
   "'diagnostics' (errors/warnings for a file or the whole project), " ..
   "'definition' (jump targets for symbol at a position), " ..
   "'references' (all usage sites of a symbol), " ..

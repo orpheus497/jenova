@@ -14,7 +14,7 @@ local paths = require("utils.paths")
 local M = {
   name        = "LS",
   description = "List the contents of a directory in tree form. " ..
-    "Use this to discover the structure of a folder before reading specific files. " ..
+    "Use this instead of Glob or Shell to explore project structures and discover files before reading them. " ..
     "Defaults to depth 3 from the given path; pass depth=1 for a shallow listing.",
   parameters  = {
     type = "object",
