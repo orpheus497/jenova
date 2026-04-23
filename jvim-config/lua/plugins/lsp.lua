@@ -26,6 +26,27 @@ return {
       "hrsh7th/cmp-nvim-lsp",
     },
     config = function()
+      -- ##Step purpose: Restore inline diagnostic display ("on the line with the
+      -- details"). jvim's vendored vim.diagnostic.lua defaults virtual_text to
+      -- false (jvim/runtime/lua/vim/diagnostic.lua:400), diverging from upstream
+      -- Neovim. The file tree's own badge counts in jvim/tree.lua are unaffected.
+      vim.diagnostic.config({
+        virtual_text = {
+          spacing = 4,
+          prefix  = "●",
+          source  = "if_many",
+        },
+        signs            = true,
+        underline        = true,
+        severity_sort    = true,
+        update_in_insert = false,
+        float = {
+          border = "rounded",
+          source = "if_many",
+          header = "",
+        },
+      })
+
       -- ##Step purpose: Mason UI setup
       require("mason").setup({
         ui = {
