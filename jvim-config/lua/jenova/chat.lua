@@ -535,12 +535,12 @@ local function agent_respond(buf, prompt, on_done)
       end)
     end,
 
-    on_tool_use = function(name, _)
+    on_tool_use = function(name, input)
       vim.schedule(function()
         if not vim.api.nvim_buf_is_valid(buf) then return end
         commit_stream()
         clear_transient()
-        active_tool = { name = name }
+        active_tool = { name = name, input = input }
         M._agent_tool = name
         -- Append a fresh transient row that the spinner will animate.
         ensure_transient()
@@ -555,9 +555,31 @@ local function agent_respond(buf, prompt, on_done)
         local success = not (type(result) == "table" and result.error)
         local icon    = success and "✓" or "✗"
         local row     = active_tool and active_tool.lnum or transient_lnum
+        -- Build a concise badge that includes the operand the user cares
+        -- about (file path, glob pattern, command, etc.) so the chat log
+        -- shows what actually happened, not just the tool name.
+        local input   = active_tool and active_tool.input or nil
+        local detail  = ""
+        if type(input) == "table" then
+          local d = input.file_path or input.path or input.pattern
+              or input.command or input.query or input.url
+          if type(d) == "string" and #d > 0 then
+            detail = " " .. d:sub(1, 200)
+          end
+        end
+        local suffix = ""
+        if success and type(result) == "table" then
+          if result.num_lines then
+            suffix = string.format(" (%d lines)", result.num_lines)
+          elseif result.num_files then
+            suffix = string.format(" (%d files)", result.num_files)
+          end
+        elseif not success and type(result) == "table" and result.error then
+          suffix = " — " .. tostring(result.error):sub(1, 120)
+        end
         if row and vim.api.nvim_buf_is_valid(buf) then
           pcall(vim.api.nvim_buf_set_lines, buf, row - 1, row, false,
-            { string.format("%s %s", icon, name) })
+            { string.format("%s %s%s%s", icon, name, detail, suffix) })
         end
         if transient_lnum == row then transient_lnum = nil end
         active_tool = nil

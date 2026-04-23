@@ -101,6 +101,7 @@ function M.build_editor_context()
   local bufs    = open_buffers()
 
   local lines = { "## Editor Context" }
+  table.insert(lines, "- Workspace cwd: " .. vim.fn.getcwd())
   table.insert(lines, string.format("- Current file: %s  (line %d, col %d)",
     vim.fn.fnamemodify(path, ":~:."), row, col))
   if ft ~= "" then
@@ -116,14 +117,52 @@ function M.build_editor_context()
     end
     table.insert(lines, git_line)
   end
-  if #bufs > 1 then
-    local shown = {}
+
+  -- Always list every open buffer (not just count) so the model can answer
+  -- "the other files I have open" without first calling Buffers. Capped at
+  -- 20 entries to keep the system prompt small.
+  if #bufs > 0 then
+    table.insert(lines, "- Open buffers (" .. #bufs .. "):")
     for i, b in ipairs(bufs) do
-      if i > 8 then table.insert(shown, "… (" .. (#bufs - 8) .. " more)"); break end
-      table.insert(shown, b)
+      if i > 20 then
+        table.insert(lines, "    … (" .. (#bufs - 20) .. " more)")
+        break
+      end
+      table.insert(lines, "    • " .. b)
     end
-    table.insert(lines, "- Open buffers: " .. table.concat(shown, ", "))
   end
+
+  -- Sibling files in the current file's directory — the most common
+  -- "related files" the user means when they say "the other files".
+  if path ~= "[scratch]" and path ~= "" then
+    local dir = vim.fn.fnamemodify(path, ":h")
+    if dir and dir ~= "" and vim.fn.isdirectory(dir) == 1 then
+      local handle = vim.uv.fs_scandir(dir)
+      if handle then
+        local siblings = {}
+        while true do
+          local name, t = vim.uv.fs_scandir_next(handle)
+          if not name then break end
+          if t == "file" and not name:match("^%.") then
+            table.insert(siblings, name)
+          end
+        end
+        table.sort(siblings)
+        if #siblings > 0 then
+          table.insert(lines, string.format("- Files in %s/ (%d):",
+            vim.fn.fnamemodify(dir, ":~:."), #siblings))
+          for i, name in ipairs(siblings) do
+            if i > 30 then
+              table.insert(lines, "    … (" .. (#siblings - 30) .. " more)")
+              break
+            end
+            table.insert(lines, "    • " .. name)
+          end
+        end
+      end
+    end
+  end
+
   if sel then
     table.insert(lines, "- Active selection:\n```\n" .. sel .. "\n```")
   end
@@ -136,15 +175,27 @@ function M.build_system_prompt()
     "You are Jenova, an expert coding assistant embedded inside jvim.",
     "You have direct access to the user's editor buffers, LSP, and the full project file system.",
     "",
-    "Use your tools freely to traverse and inspect the workspace before acting:",
-    "  • LS    — list a directory's contents (tree view, default depth 3)",
-    "  • Glob  — find files by pattern (supports ** for recursive matching)",
-    "  • Grep  — search file contents across the workspace",
-    "  • Read  — read a file or open buffer (returns line-numbered output)",
+    "## File traversal — use these tools, do NOT guess",
+    "  • Buffers — list every file the user currently has open (tabs/buffers)",
+    "  • LS      — list a directory's contents (tree view, default depth 3)",
+    "  • Glob    — find files by pattern; use `**/*.ext` for recursive matches",
+    "  • Grep    — search file contents across the workspace",
+    "  • Read    — read a file or open buffer (returns line-numbered output)",
     "  • Edit / MultiEdit / Write — modify files (live buffers when open)",
+    "",
+    "## Mandatory workflow",
+    "When the user asks you to inspect, debug, or report on multiple files:",
+    "  1. Call **Buffers** first if they reference 'open', 'these', 'related' files.",
+    "  2. Call **LS** on the relevant directory if they reference 'this directory',",
+    "     'the parent directory', 'all files in X', 'the include folder', etc.",
+    "  3. Then call **Read** on each discovered file — one Read per file. You MUST",
+    "     chain the calls in the same turn; do not stop after a single Read when",
+    "     the user clearly asked for multiple files.",
+    "  4. Only after every relevant file has been Read, write your analysis.",
+    "",
     "Relative paths resolve against the workspace root (jvim's cwd).",
-    "Prefer Read on a buffer over re-reading from disk when the file is open.",
-    "Be concise and precise. Apply edits directly rather than explaining them unless asked.",
+    "Prefer Read on a buffer over re-reading from disk when a file is open.",
+    "Be concise and precise. Apply edits directly rather than describing them unless asked.",
   }, "\n")
 
   local editor_ctx = safe(M.build_editor_context)

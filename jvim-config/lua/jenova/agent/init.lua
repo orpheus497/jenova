@@ -400,11 +400,22 @@ function M.query(prompt, opts)
   -- file/glob/grep tools resolve relative paths against the workspace
   -- instead of "." (which would be wherever jvim was launched from, or the
   -- empty string when AppState.get_cwd() falls through to its defaults).
-  -- Without this, every model-emitted relative path (e.g. "lua/init.lua")
-  -- silently resolved to a path that didn't exist.
+  -- If the user is editing a file outside the launch cwd (very common with
+  -- `jvim somefile.c`), fall back to the current buffer's directory so
+  -- relative paths in the user's prompt resolve to the project they're
+  -- actually working on.
   local as_ok, app_state = pcall(require, "state.app_state")
   if as_ok and app_state and app_state.set_cwd then
-    app_state.set_cwd(vim.fn.getcwd())
+    local cwd = vim.fn.getcwd()
+    local cur = vim.api.nvim_buf_get_name(0)
+    if cur and cur ~= "" and vim.fn.filereadable(cur) == 1 then
+      local cur_dir = vim.fn.fnamemodify(cur, ":p:h")
+      -- If the buffer is *not* under cwd, prefer the buffer's directory.
+      if cur_dir and not cur_dir:find(cwd, 1, true) then
+        cwd = cur_dir
+      end
+    end
+    app_state.set_cwd(cwd)
   end
 
   M._text_sink      = opts.on_text

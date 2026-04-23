@@ -101,6 +101,11 @@ function M.register_overrides()
   local ls_ok, buffer_ls = pcall(require, "jenova.agent.tools.buffer_ls")
   if ls_ok and buffer_ls then registry.register(buffer_ls) end
 
+  -- Buffers → list of currently open jvim buffers/tabs. Lets the agent
+  -- answer questions like "the other files I have open" without guessing.
+  local b_ok, buffer_list = pcall(require, "jenova.agent.tools.buffer_list")
+  if b_ok and buffer_list then registry.register(buffer_list) end
+
   -- LSP → jvim-native: uses vim.lsp + vim.diagnostic instead of grep fallback
   local l_ok, lsp_tool = pcall(require, "jenova.agent.tools.lsp")
   if l_ok and lsp_tool then registry.register(lsp_tool) end

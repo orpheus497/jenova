@@ -33,11 +33,32 @@ end
 local txt_tool_counter = 0
 
 local function make_tool_use(data)
+    -- Many local models emit OpenAI's nested shape:
+    --   {"name":"Read","arguments":{...}}
+    --   {"function":{"name":"Read","arguments":"{...}"}}
+    --   {"tool_calls":[{"function":{"name":"Read","arguments":"{...}"}}]}
+    -- Unwrap progressively until we land on the leaf {name, arguments|input}.
+    if type(data) ~= "table" then return nil end
+    if data.tool_calls and type(data.tool_calls) == "table" and data.tool_calls[1] then
+        data = data.tool_calls[1]
+    end
+    if data["function"] and type(data["function"]) == "table" then
+        data = data["function"]
+    end
+
     local name = data.tool or data.tool_name or data.name or data.function_name
     if type(name) ~= "string" or not tool_registry.get_tool(name) then
         return nil
     end
+
     local input = data.parameters or data.arguments or data.input or data.params or {}
+    -- arguments may itself be a JSON string — parse it lazily.
+    if type(input) == "string" then
+        local ok_p, parsed = pcall(json_codec.parse, input)
+        if ok_p and type(parsed) == "table" then input = parsed
+        else input = {} end
+    end
+
     txt_tool_counter = txt_tool_counter + 1
     return {
         id = string.format("txt-%d", txt_tool_counter),
@@ -59,12 +80,26 @@ local function parse_text_tool_calls(text)
     end
     if #tool_uses > 0 then return tool_uses end
 
-    -- Stage 2b: bare JSON objects, allowing nested braces via %b{}
+    -- Stage 2b: bare JSON objects, allowing nested braces via %b{}.
+    -- Some local models double-brace tool calls (Jinja template artifacts:
+    -- "{{...}}"). Try the matched object as-is, then again with a stripped
+    -- outer wrapper if the inner candidate looks like a tool envelope.
     for json_str in text:gmatch("%b{}") do
-        local ok_json, data = pcall(json_codec.parse, json_str)
-        if ok_json and type(data) == "table" then
-            local entry = make_tool_use(data)
-            if entry then table.insert(tool_uses, entry) end
+        local candidates = { json_str }
+        -- Strip a single outer "{...}" wrapper if it just contains another
+        -- balanced object (handles doubled braces and stray padding).
+        local inner = json_str:match("^{%s*(%b{})%s*}$")
+        if inner then table.insert(candidates, inner) end
+
+        for _, c in ipairs(candidates) do
+            local ok_json, data = pcall(json_codec.parse, c)
+            if ok_json and type(data) == "table" then
+                local entry = make_tool_use(data)
+                if entry then
+                    table.insert(tool_uses, entry)
+                    break
+                end
+            end
         end
     end
 
