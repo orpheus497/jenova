@@ -17,12 +17,12 @@
 #   make install    # Run scripts/install.sh (system-aware deploy)
 #   make clean      # Remove build artifacts from all three components
 
-.PHONY: all llama cli-agent jvim install clean help
+.PHONY: all llama cli-agent jvim sync-modules install clean help
 
 JENOVA_ROOT := $(CURDIR)
 JOBS        := $(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
-all: llama cli-agent jvim
+all: llama cli-agent sync-modules jvim
 	@echo ""
 	@echo "✅ Jenova build complete (llama.cpp + cli-agent + jvim)"
 	@echo "   Run 'make install' (or scripts/install.sh) to deploy."
@@ -35,7 +35,46 @@ cli-agent:
 	@echo "🔨 Building cli-agent..."
 	@$(MAKE) -C cli-agent
 
-jvim:
+# SHARED_MODULES — cli-agent/lua/ subset synced into jvim's runtime at build time.
+# jvim-native overrides in jenova/agent/ shadow these via Lua module resolution.
+SHARED_MODULES = \
+  engine/query_engine.lua \
+  engine/session_history.lua \
+  tools/registry.lua \
+  providers/base.lua \
+  providers/init.lua \
+  providers/jenova_backend.lua \
+  providers/llamacpp.lua \
+  providers/loader.lua \
+  config/loader.lua \
+  history/manager.lua \
+  context/manager.lua \
+  context/file_tracker.lua \
+  permissions/manager.lua \
+  services/tool_verifier.lua \
+  utils/array.lua \
+  utils/http.lua \
+  utils/json_fallback.lua \
+  utils/paths.lua \
+  utils/string.lua \
+  utils/trio.lua \
+  constants/prompts.lua \
+  state/app_state.lua
+
+SHARED_SRC  = $(JENOVA_ROOT)/cli-agent/lua
+SHARED_DEST = $(JENOVA_ROOT)/jvim/runtime/lua/jenova/agent/shared
+
+sync-modules:
+	@echo "🔄 Syncing shared Lua modules cli-agent → jvim runtime..."
+	@for mod in $(SHARED_MODULES); do \
+		destfile="$(SHARED_DEST)/$$mod"; \
+		destdir=$$(dirname "$$destfile"); \
+		mkdir -p "$$destdir"; \
+		cp "$(SHARED_SRC)/$$mod" "$$destfile"; \
+	done
+	@echo "   Synced $$(echo $(SHARED_MODULES) | wc -w | tr -d ' ') modules → jvim/runtime/lua/jenova/agent/shared/"
+
+jvim: sync-modules
 	@echo "🔨 Building jvim (in-tree editor)..."
 	@if [ ! -f jvim/CMakeLists.txt ]; then \
 		echo "ERROR: jvim/ source tree missing." >&2; exit 1; \
@@ -59,6 +98,7 @@ help:
 	@echo "  make            Build llama.cpp + cli-agent + jvim"
 	@echo "  make llama      Build only llama.cpp (Vulkan)"
 	@echo "  make cli-agent  Build only the cli-agent"
-	@echo "  make jvim       Build only the bundled jvim editor"
-	@echo "  make install    Run scripts/install.sh"
-	@echo "  make clean      Remove build artifacts"
+	@echo "  make jvim         Build only the bundled jvim editor (also runs sync-modules)"
+	@echo "  make sync-modules Copy shared Lua modules from cli-agent to jvim runtime"
+	@echo "  make install      Run scripts/install.sh"
+	@echo "  make clean        Remove build artifacts"

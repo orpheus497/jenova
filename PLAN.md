@@ -39,8 +39,8 @@ are all reused verbatim or with thin adapters.
 | `lib/` — backend daemons | ✅ proxy, embedding server, daemon supervisor |
 | `bin/jvim` launcher | ✅ starts backend + editor |
 | `bin/jenova` launcher | ✅ CLI REPL / one-shot |
-| **jvim embedded agent** | 🔴 Not started — this plan |
-| `jenova` top-level launcher | 🔴 Currently absent — this plan |
+| **jvim embedded agent** | 🟡 Phase 2 in progress — skeleton complete |
+| `jenova` top-level launcher | 🔴 Not started — this plan |
 
 ---
 
@@ -113,10 +113,18 @@ help text in each binary.
 **Goal:** A fully functional agentic loop running inside jvim, context-aware, with
 buffer/LSP tools.
 
-### 2.1 Architecture: `jvim/runtime/lua/jenova/agent/`
-
-The embedded agent lives entirely in Lua inside jvim's runtime. It **reuses** the
-following from `cli-agent/lua/` verbatim (symlinked or copied at build time):
+- [x] Create `jenova/agent/init.lua` — path shim + QueryEngine bootstrap with jvim callbacks
+- [x] Create `jenova/agent/provider.lua` — jvim-native HTTP via `vim.system` (non-blocking)
+- [x] Create `jenova/agent/tools/buffer_read.lua` — live buffer read via `vim.api`
+- [x] Create `jenova/agent/tools/buffer_edit.lua` — buffer search-and-replace via `vim.api`
+- [x] Create `jenova/agent/tools/init.lua` — registers jvim overrides on the shared tool registry
+- [x] Create `jenova/agent/context.lua` — editor state injected into system prompt
+- [x] Wire `chat.lua` `respond()` → `jenova.agent.query()` (full agentic loop, falls back to streaming)
+- [x] Add `<leader>aa` and `<leader>af` keymaps
+- [x] Add `make sync-modules` Makefile target
+- [ ] `jenova/agent/ui/inline.lua` — inline diff preview before applying edits
+- [ ] `jenova/agent/tools/lsp.lua` — LSP hover, definition, references via `vim.lsp`
+- [ ] `jenova/agent/tools/cursor.lua` — cursor position / selection context tool
 
 | cli-agent module | jvim reuse strategy |
 |---|---|
@@ -302,10 +310,9 @@ scripts will direct users to `jenova` (full environment) for interactive use and
 
 ## Phase 5 — Documentation & Cleanup
 
-- [ ] Update `README.md` launch section: `jenova` = full env, `jvim` = editor only
-- [ ] Update `cli-agent/docs/architecture.md` to reflect shared module strategy
+- [x] Update `README.md` — keymaps table, directory layout, build instructions
+- [x] Update `cli-agent/docs/architecture.md` to reflect shared module strategy
 - [ ] Add `jvim/runtime/lua/jenova/agent/` architecture doc
-- [ ] Update keymaps table in README.md with new `<leader>aa`, `<leader>af` bindings
 - [ ] Remove references to launching `bin/jenova` as an interactive terminal agent in
       user-facing docs (redirect to `jenova` top-level launcher)
 - [ ] Update `scripts/install.sh` to symlink `jenova-cli` in addition to the new

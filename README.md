@@ -145,8 +145,8 @@ pkg install luajit-openresty git cmake vulkan-loader curl lua54 gettext-tools
 git clone --recursive https://github.com/orpheus497/jenova
 cd jenova
 
-# 3. Build everything: llama.cpp + cli-agent + bundled jvim editor
-make            # equivalent to: make llama && make cli-agent && make jvim
+# 3. Build everything: llama.cpp + cli-agent + sync shared modules + bundled jvim editor
+make            # equivalent to: make llama && make cli-agent && make sync-modules && make jvim
 
 # 4. Run the installer (hardware-aware: detects your hardware and selects a profile)
 make install    # equivalent to: scripts/install.sh
@@ -350,6 +350,8 @@ jenova/
 ├── jvim/                     Bundled jvim editor (Neovim hard-fork) — built in-tree via `make jvim`
 │   ├── src/nvim/             Editor C core
 │   ├── runtime/              vim/lua/plugin/queries/spell/colors/doc/ftplugin/indent/syntax/pack
+│   │   └── lua/jenova/agent/ Embedded agent: init, provider, context, tools/
+│   │       └── shared/       Shared modules synced from cli-agent at build time (gitignored)
 │   ├── cmake/, cmake.config/, cmake.deps/, deps/, scripts/
 │   ├── CMakeLists.txt, build.zig, Makefile, BSDmakefile
 │   └── build/                Build output (gitignored), produces build/bin/nvim
@@ -426,6 +428,8 @@ Both ports are defined in `etc/jenova.conf` as `LLAMA_PORT` and `PORT`.
 | `<leader>as` | n | Web search |
 | `<leader>ai` | n | Inline rewrite |
 | `<leader>ax` | n | Stop generation |
+| `<leader>aa` | n | Open / focus agent panel (embedded agent) |
+| `<leader>af` | n | Fix LSP diagnostics in current buffer (agent) |
 | `<leader>ae` | v | Explain selection |
 | `<leader>aw` | v | Web search selection |
 | `<leader>aj` | n | Launch CLI agent (`jenova-cli`) in split |

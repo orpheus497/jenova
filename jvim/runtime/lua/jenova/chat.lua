@@ -386,6 +386,9 @@ function M.toggle_chat()
   end
 end
 
+-- respond() routes through the embedded agent when available so tool-use,
+-- context injection, and the full agentic loop are active.  It falls back
+-- to the plain streaming path for raw chat buffers.
 function M.respond()
   local buf = vim.api.nvim_get_current_buf()
   if not is_chat_buf(buf) then
@@ -399,6 +402,51 @@ function M.respond()
     return
   end
 
+  -- Try agent path first (full agentic loop with editor context + tool use)
+  local agent_ok, agent = pcall(require, "jenova.agent")
+  if agent_ok and agent then
+    -- Collect the last user message as the prompt.
+    local prompt = ""
+    for i = #messages, 1, -1 do
+      if messages[i].role == "user" then
+        prompt = messages[i].content
+        break
+      end
+    end
+    if prompt ~= "" then
+      vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## assistant", "" })
+      local insert_line = vim.api.nvim_buf_line_count(buf)
+      local current_lines = { "" }
+
+      agent.query(prompt, {
+        on_text = function(text)
+          vim.schedule(function()
+            if not vim.api.nvim_buf_is_valid(buf) then return end
+            local pieces = vim.split(text, "\n", { plain = true })
+            current_lines[#current_lines] = current_lines[#current_lines] .. pieces[1]
+            for i = 2, #pieces do table.insert(current_lines, pieces[i]) end
+            local s = insert_line - 1
+            local e = math.min(s + #current_lines, vim.api.nvim_buf_line_count(buf))
+            pcall(vim.api.nvim_buf_set_lines, buf, s, e, false, current_lines)
+            scroll_to_bottom(buf)
+          end)
+        end,
+        on_done = function()
+          vim.schedule(function()
+            if vim.api.nvim_buf_is_valid(buf) then
+              vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## user", "" })
+              save_chat(buf)
+              scroll_to_bottom(buf)
+              vim.cmd("startinsert!")
+            end
+          end)
+        end,
+      })
+      return
+    end
+  end
+
+  -- Fallback: plain streaming (no tool use)
   stream_response(buf, messages)
 end
 
@@ -655,6 +703,44 @@ function M.setup()
   vim.keymap.set("n", "<leader>as", function() M.web_search() end, opts("Web Search"))
   vim.keymap.set("n", "<leader>ai", function() M.inline_rewrite() end, opts("Inline Rewrite"))
   vim.keymap.set("n", "<leader>ax", function() M.stop() end, opts("Stop Generation"))
+
+  -- Agent-specific keymaps (embedded agent required)
+  vim.keymap.set("n", "<leader>aa", function()
+    local ok, agent = pcall(require, "jenova.agent")
+    if ok and agent then
+      M.toggle_chat()
+    else
+      vim.notify("Embedded agent not available (run make sync-modules)",
+        vim.log.levels.WARN, { title = "Jenova" })
+    end
+  end, opts("Open / focus agent panel"))
+
+  vim.keymap.set("n", "<leader>af", function()
+    local src_buf = vim.api.nvim_get_current_buf()
+    local diags = vim.diagnostic.get(src_buf)
+    if #diags == 0 then
+      vim.notify("No diagnostics in current buffer", vim.log.levels.INFO, { title = "Jenova" })
+      return
+    end
+    local lines = {}
+    for _, d in ipairs(diags) do
+      table.insert(lines, string.format("  line %d: [%s] %s",
+        d.lnum + 1,
+        vim.diagnostic.severity[d.severity] or "?",
+        d.message))
+    end
+    local fname = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(src_buf), ":t")
+    local prompt = string.format(
+      "Fix all LSP diagnostics in `%s`:\n%s\n\nApply fixes directly.",
+      fname, table.concat(lines, "\n"))
+    local buf = M.toggle_chat()
+    if buf then
+      append_user_section(buf, prompt)
+      save_chat(buf)
+      scroll_to_bottom(buf)
+      M.respond()
+    end
+  end, opts("Fix diagnostics in current buffer"))
 end
 
 return M
