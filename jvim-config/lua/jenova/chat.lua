@@ -204,18 +204,18 @@ local function set_chat_buf_options(buf)
   vim.bo[buf].buftype = ""
   vim.bo[buf].swapfile = false
   vim.bo[buf].buflisted = true
-  vim.bo[buf].conceallevel = 2
-  vim.bo[buf].wrap = true
 
   ensure_fenced_languages()
 
   -- Treesitter gives us proper syntax for fenced code blocks via injection
-  -- queries (markdown -> markdown_inline -> embedded language). Falls back
-  -- to vim's stock markdown syntax (which honours markdown_fenced_languages
-  -- above) if treesitter or the parser is unavailable.
+  -- queries when the markdown parser is installed. Wrapped in pcall because
+  -- the parser may not yet be loaded (lazy plugin) at first chat open — in
+  -- that case we silently fall back to vim's stock markdown syntax which
+  -- honours markdown_fenced_languages.
   pcall(function()
-    if vim.treesitter and vim.treesitter.start then
-      vim.treesitter.start(buf, "markdown")
+    if vim.treesitter and vim.treesitter.language and vim.treesitter.language.add then
+      local ok = pcall(vim.treesitter.language.add, "markdown")
+      if ok then vim.treesitter.start(buf, "markdown") end
     end
   end)
 
