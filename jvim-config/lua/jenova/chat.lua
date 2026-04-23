@@ -30,6 +30,84 @@ M._agent_tokens_in  = 0
 M._agent_tokens_out = 0
 M._agent_cost       = 0.0
 
+-- ── Highlights ────────────────────────────────────────────────────────────────
+-- Custom colour for chat-specific glyphs that markdown syntax does not cover:
+-- role headers, tool ✓/✗ badges, indented tool-output preview lines.
+local HL_NS = vim.api.nvim_create_namespace("JenovaChat")
+
+local function setup_chat_hl_groups()
+  local function def(name, link, fg)
+    if vim.fn.hlexists(name) == 1 and vim.api.nvim_get_hl(0, { name = name }).fg then return end
+    if link then
+      vim.api.nvim_set_hl(0, name, { link = link, default = true })
+    elseif fg then
+      vim.api.nvim_set_hl(0, name, { fg = fg, default = true })
+    end
+  end
+  def("JenovaChatUserHdr",     "Identifier")     -- ## user
+  def("JenovaChatJenovaHdr",   "Function")       -- ## jenova
+  def("JenovaChatToolOk",      nil, "#7CB36B")   -- ✓
+  def("JenovaChatToolFail",    "ErrorMsg")       -- ✗
+  def("JenovaChatToolName",    "Type")           -- tool name on badge line
+  def("JenovaChatToolPreview", "Comment")        -- indented preview lines
+  def("JenovaChatError",       "ErrorMsg")
+  def("JenovaChatCost",        "Comment")        -- > turn N in:.. out:..
+end
+
+local function apply_chat_highlights(buf)
+  if not vim.api.nvim_buf_is_valid(buf) then return end
+  setup_chat_hl_groups()
+  vim.api.nvim_buf_clear_namespace(buf, HL_NS, 0, -1)
+  local total = vim.api.nvim_buf_line_count(buf)
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  for i, line in ipairs(lines) do
+    if i > total then break end
+    local lnum = i - 1
+    if line:match("^## user%s*$") then
+      pcall(vim.api.nvim_buf_set_extmark, buf, HL_NS, lnum, 0,
+        { end_col = #line, hl_group = "JenovaChatUserHdr" })
+    elseif line:match("^## jenova%s*$") or line:match("^## assistant%s*$") then
+      pcall(vim.api.nvim_buf_set_extmark, buf, HL_NS, lnum, 0,
+        { end_col = #line, hl_group = "JenovaChatJenovaHdr" })
+    elseif line:match("^✓ ") then
+      pcall(vim.api.nvim_buf_set_extmark, buf, HL_NS, lnum, 0,
+        { end_col = #"✓", hl_group = "JenovaChatToolOk" })
+      local _, te = line:find("^✓ [%w_-]+")
+      if te then
+        pcall(vim.api.nvim_buf_set_extmark, buf, HL_NS, lnum, #"✓ ",
+          { end_col = te, hl_group = "JenovaChatToolName" })
+      end
+    elseif line:match("^✗ ") then
+      pcall(vim.api.nvim_buf_set_extmark, buf, HL_NS, lnum, 0,
+        { end_col = #"✗", hl_group = "JenovaChatToolFail" })
+      local _, te = line:find("^✗ [%w_-]+")
+      if te then
+        pcall(vim.api.nvim_buf_set_extmark, buf, HL_NS, lnum, #"✗ ",
+          { end_col = te, hl_group = "JenovaChatToolName" })
+      end
+    elseif line:match("^  ") and not line:match("^  *#") then
+      -- Indented tool-output preview line (skip indented markdown headers).
+      pcall(vim.api.nvim_buf_set_extmark, buf, HL_NS, lnum, 0,
+        { end_col = #line, hl_group = "JenovaChatToolPreview" })
+    elseif line:match("^> turn ") then
+      pcall(vim.api.nvim_buf_set_extmark, buf, HL_NS, lnum, 0,
+        { end_col = #line, hl_group = "JenovaChatCost" })
+    end
+  end
+end
+
+-- ── Error sanitization ───────────────────────────────────────────────────────
+-- Strip Lua source-prefix and stack-traceback noise from raw pcall errors
+-- so the chat shows a single readable line instead of a traceback dump.
+local function clean_err(s)
+  s = tostring(s or "")
+  s = s:gsub("^%s*[^\n]+%.lua:%d+:%s*", "")
+  s = s:gsub("\nstack traceback:.*$", "")
+  local first = s:match("^[^\n]+") or s
+  if #first > 240 then first = first:sub(1, 237) .. "..." end
+  return first
+end
+
 -- ── Utilities ─────────────────────────────────────────────────────────────────
 
 local function ensure_chat_dir()
@@ -64,6 +142,7 @@ local function set_chat_buf_options(buf)
   vim.bo[buf].buftype = ""
   vim.bo[buf].swapfile = false
   vim.bo[buf].buflisted = true
+  apply_chat_highlights(buf)
 end
 
 local function mode_tag()
@@ -123,7 +202,7 @@ local function parse_messages(buf)
         flush()
         current_role = "user"
         current_content = {}
-      elseif line:match("^## assistant%s*$") then
+      elseif line:match("^## assistant%s*$") or line:match("^## jenova%s*$") then
         flush()
         current_role = "assistant"
         current_content = {}
@@ -191,6 +270,7 @@ local function open_chat_split(path)
         if vim.bo[buf].modified then
           save_chat(buf)
         end
+        apply_chat_highlights(buf)
       end,
     })
     vim.b[buf]._jenova_chat_autocmd = true
@@ -282,7 +362,7 @@ local function stream_response(buf, messages, on_done)
     return
   end
 
-  vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## assistant", "" })
+  vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## jenova", "" })
   local insert_line = vim.api.nvim_buf_line_count(buf)
   local current_lines = { "" }
   local got_content = false
@@ -423,7 +503,8 @@ local function agent_respond(buf, prompt, on_done)
   -- transient row as a single in-place slot prevents the mid-stream tearing
   -- and stale "thinking…" lines that the previous renderer left behind.
 
-  vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## assistant", "" })
+  vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## jenova", "" })
+  apply_chat_highlights(buf)
 
   local transient_lnum = nil   -- 1-based row of the live spinner/badge, or nil
   local stream_lines   = nil   -- accumulator for the current text run
@@ -435,6 +516,7 @@ local function agent_respond(buf, prompt, on_done)
   local function buf_append(lines)
     if not vim.api.nvim_buf_is_valid(buf) then return end
     vim.api.nvim_buf_set_lines(buf, -1, -1, false, lines)
+    apply_chat_highlights(buf)
   end
 
   local function clear_transient()
@@ -624,7 +706,7 @@ local function agent_respond(buf, prompt, on_done)
         M._agent_running = false
         M._agent_tool    = nil
         if vim.api.nvim_buf_is_valid(buf) then
-          buf_append({ string.format("✗ Error: %s", msg) })
+          buf_append({ "✗ Error: " .. clean_err(msg) })
           buf_append({ "", "## user", "" })
           save_chat(buf)
           scroll_to_bottom(buf)
