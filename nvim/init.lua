@@ -76,12 +76,8 @@ map("n", "[d", vim.diagnostic.goto_prev, { desc = "Prev Diagnostic" })
 map("n", "]d", vim.diagnostic.goto_next, { desc = "Next Diagnostic" })
 
 map("n", "<leader>aj", function()
-  local root = vim.fn.expand("$JENOVA_ROOT")
-  if root == "" or root == "$JENOVA_ROOT" then
-    root = vim.fn.expand("~/Projects/jenova")
-  end
-  vim.cmd("term cd " .. vim.fn.shellescape(root) .. " && bin/jenova --repl")
-end, { desc = "Jenova CLI REPL Terminal" })
+  require("jvim.terminal").toggle_shell()
+end, { desc = "Toggle Terminal Shell" })
 
 --------------------------------------------------------------------------------
 -- [5] IDE COMMAND
