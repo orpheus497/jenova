@@ -6,8 +6,9 @@
 local M = {}
 
 M.name = "LSP"
-M.description = "Query live language server data inside jvim. This is the ONLY tool you should use to check for errors, unused variables, and linting issues. Actions: " ..
-  "'diagnostics' (errors/warnings for a file or the whole project), " ..
+M.description = "Query live language server data inside jvim. This is the ONLY tool you should use to check for errors, unused variables, and linting issues. " ..
+  "CRITICAL: You MUST provide the `file_path` argument to get diagnostics for a specific file. Without a file_path, you will only see errors for files already open in the editor. Actions: " ..
+  "'diagnostics' (errors/warnings), " ..
   "'definition' (jump targets for symbol at a position), " ..
   "'references' (all usage sites of a symbol), " ..
   "'hover' (type/doc for symbol at a position), " ..
@@ -55,14 +56,14 @@ function M.check_permissions() return { allowed = true } end
 
 local function resolve_buf(file_path)
   if not file_path then
-    return vim.api.nvim_get_current_buf()
+    return vim.api.nvim_get_current_buf(), false
   end
   local abs = vim.fn.fnamemodify(file_path, ":p")
   for _, b in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(b) then
       local bname = vim.api.nvim_buf_get_name(b)
       if bname == abs or bname == file_path then
-        return b
+        return b, false
       end
     end
   end
@@ -70,9 +71,15 @@ local function resolve_buf(file_path)
   local ok, bn = pcall(vim.fn.bufadd, abs)
   if ok and bn > 0 then
     vim.fn.bufload(bn)
-    return bn
+    -- Wait up to 1 second for LSP to attach
+    vim.wait(1000, function()
+      local clients = vim.lsp.get_clients and vim.lsp.get_clients({ bufnr = bn })
+        or (vim.lsp.get_active_clients and vim.lsp.get_active_clients({ bufnr = bn })) or {}
+      return #clients > 0
+    end, 50)
+    return bn, true
   end
-  return nil
+  return nil, false
 end
 
 local function buf_has_lsp(buf)
