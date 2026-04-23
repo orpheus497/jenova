@@ -35,19 +35,43 @@ M._agent_cost       = 0.0
 -- role headers, tool ✓/✗ badges, indented tool-output preview lines.
 local HL_NS = vim.api.nvim_create_namespace("JenovaChat")
 
--- Palette: dark red (failures), dark purple (jenova role), forest green (ok),
--- muted plum (preview/cost) — chosen so they read against both light and dark
--- colorschemes without bleaching into the "grey comment" tone that buried
--- code-block syntax in earlier rounds.
-local PALETTE = {
-  user_hdr     = "#4FA3D1",  -- cool blue
-  jenova_hdr   = "#7A4FBF",  -- dark purple
-  ok           = "#5FAE5F",  -- forest green
-  fail         = "#A33A3A",  -- dark red
-  tool_name    = "#C9A227",  -- amber
-  preview      = "#8B7AA8",  -- muted plum (visible, not grey)
-  cost         = "#8B7AA8",
+-- Palette mirrors the jvim colorscheme (powdery dark — maroon / royal-purple
+-- / plum / tan / peach). When pywal is available we adopt its accent slots
+-- so the chat blends with the rest of the editor and the user's wallpaper.
+local FALLBACK_PALETTE = {
+  user_hdr     = "#7A6AA0",  -- royal purple (matches Function/Tag)
+  jenova_hdr   = "#9B4F6D",  -- maroon (matches Keyword/Statement)
+  ok           = "#926A96",  -- plum
+  fail         = "#C4685E",  -- coral
+  tool_name    = "#C4A075",  -- tan
+  preview      = "#7A6E78",  -- muted (matches fg_dim)
+  cost         = "#926A96",  -- plum
 }
+
+local function load_pywal_palette()
+  local path = vim.fn.expand("~/.cache/wal/colors")
+  if vim.fn.filereadable(path) ~= 1 then return nil end
+  local ok, lines = pcall(vim.fn.readfile, path)
+  if not ok or type(lines) ~= "table" then return nil end
+  local hex = {}
+  for _, line in ipairs(lines) do
+    local h = line:match("(#%x%x%x%x%x%x)")
+    if h then table.insert(hex, h) end
+  end
+  if #hex < 8 then return nil end
+  -- wal slots: 1 maroon, 2 coral, 3 peach, 4 tan, 5 royal, 6 plum, 8 dim
+  return {
+    user_hdr   = hex[6] or FALLBACK_PALETTE.user_hdr,    -- royal
+    jenova_hdr = hex[2] or FALLBACK_PALETTE.jenova_hdr,  -- maroon
+    ok         = hex[7] or FALLBACK_PALETTE.ok,          -- plum
+    fail       = hex[3] or FALLBACK_PALETTE.fail,        -- coral
+    tool_name  = hex[5] or FALLBACK_PALETTE.tool_name,   -- tan
+    preview    = hex[9] or FALLBACK_PALETTE.preview,     -- dim
+    cost       = hex[7] or FALLBACK_PALETTE.cost,
+  }
+end
+
+local PALETTE = load_pywal_palette() or FALLBACK_PALETTE
 
 local function setup_chat_hl_groups()
   local function def(name, fg, opts)
