@@ -122,11 +122,14 @@ end
 -- ── Action: diagnostics ───────────────────────────────────────────────────────
 
 local function action_diagnostics(args)
-  local buf = resolve_buf(args.file_path)
-
   local diags
-  if buf then
-    diags = vim.diagnostic.get(buf)
+  if args.file_path and args.file_path ~= "" then
+    local buf = resolve_buf(args.file_path)
+    if buf then
+      diags = vim.diagnostic.get(buf)
+    else
+      return { type = "error", error = "Could not resolve buffer for " .. args.file_path }
+    end
   else
     diags = vim.diagnostic.get()
   end
