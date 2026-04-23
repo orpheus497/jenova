@@ -71,11 +71,41 @@ local function parse_text_tool_calls(text)
     local tool_uses = {}
 
     -- Stage 2a: JSON code fences  ```json\n{...}\n```
+    -- A single fence may contain MULTIPLE concatenated JSON objects when the
+    -- model batches tool calls (e.g. four Read calls in one fence). First try
+    -- the whole fence as a single document/array; if that fails or yields no
+    -- tool, fall back to scanning balanced %b{} chunks inside the fence.
+    local function ingest(data)
+        if type(data) ~= "table" then return false end
+        -- JSON array of tool calls
+        if data[1] ~= nil and data.name == nil then
+            local any = false
+            for _, item in ipairs(data) do
+                local entry = make_tool_use(item)
+                if entry then table.insert(tool_uses, entry); any = true end
+            end
+            return any
+        end
+        local entry = make_tool_use(data)
+        if entry then table.insert(tool_uses, entry); return true end
+        return false
+    end
     for json_str in text:gmatch("```json%s*\n?(.-)\n?```") do
-        local ok_json, data = pcall(json_codec.parse, json_str)
-        if ok_json and type(data) == "table" then
-            local entry = make_tool_use(data)
-            if entry then table.insert(tool_uses, entry) end
+        -- Count balanced JSON objects in this fence so we can decide whether
+        -- the model batched several tool calls together. Parsing the whole
+        -- fence as one document only reads the first object; for multi-object
+        -- fences we always scan with %b{}.
+        local obj_count = 0
+        for _ in json_str:gmatch("%b{}") do obj_count = obj_count + 1 end
+
+        if obj_count <= 1 then
+            local ok_json, data = pcall(json_codec.parse, json_str)
+            if ok_json then ingest(data) end
+        else
+            for obj_str in json_str:gmatch("%b{}") do
+                local ok2, obj = pcall(json_codec.parse, obj_str)
+                if ok2 then ingest(obj) end
+            end
         end
     end
     if #tool_uses > 0 then return tool_uses end

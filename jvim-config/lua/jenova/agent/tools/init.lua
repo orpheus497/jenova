@@ -31,15 +31,17 @@ local SHARED_TOOLS = {
   "tools.todo_write",
   "tools.ask_user",
   "tools.agent",
-  "tools.verify_plan",
   "tools.tool_search",
   "tools.snip",
   "tools.enter_plan_mode",
   "tools.exit_plan_mode",
-  "tools.synthetic_output",
   "tools.sleep",
   "tools.config_tool",
   "tools.send_message",
+  -- NOTE: tools.verify_plan and tools.synthetic_output are intentionally
+  -- omitted. The local jenova.gguf model treats them as cheap "I'm working"
+  -- placeholders and emits them in place of real Read/Edit calls, which
+  -- breaks file-traversal flows. Re-add only when running larger models.
 }
 
 function M.load_shared_tools()

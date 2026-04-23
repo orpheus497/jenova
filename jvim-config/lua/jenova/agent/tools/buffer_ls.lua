@@ -93,7 +93,19 @@ function M.call(args, context)
 
   local abs = vim.fn.fnamemodify(root, ":p"):gsub("/+$", "")
   if vim.fn.isdirectory(abs) == 0 then
-    return { type = "error", error = "Not a directory: " .. abs }
+    -- Helpful recovery: list the parent so the model can see what siblings
+    -- actually exist. Avoids the "the model retries with another guess"
+    -- loop after a typo or wrong-cwd assumption.
+    local parent = vim.fn.fnamemodify(abs, ":h")
+    local hint = ""
+    if vim.fn.isdirectory(parent) == 1 then
+      local plines = { parent .. "/" }
+      walk(parent, 1, plines, "", 1, { 0 })
+      hint = "\n\nParent listing (" .. parent .. "):\n" .. table.concat(plines, "\n")
+    end
+    return { type = "error",
+      error = "Not a directory: " .. abs ..
+        ". Re-call LS with one of the visible entries instead of guessing." .. hint }
   end
 
   local depth = math.min(math.max(args.depth or 3, 1), 5)

@@ -410,9 +410,32 @@ function M.query(prompt, opts)
     local cur = vim.api.nvim_buf_get_name(0)
     if cur and cur ~= "" and vim.fn.filereadable(cur) == 1 then
       local cur_dir = vim.fn.fnamemodify(cur, ":p:h")
-      -- If the buffer is *not* under cwd, prefer the buffer's directory.
+      -- If the buffer is *not* under cwd, walk up from the buffer's
+      -- directory looking for a project-root marker so relative paths in
+      -- the user's prompt (e.g. "src", "include/foo.h") resolve at the
+      -- project level rather than inside the source-file's own folder.
       if cur_dir and not cur_dir:find(cwd, 1, true) then
-        cwd = cur_dir
+        local markers = {
+          ".git", "Makefile", "makefile", "CMakeLists.txt",
+          "package.json", "pyproject.toml", "Cargo.toml", "go.mod",
+          ".jenova",
+        }
+        local function find_root(start)
+          local dir = start
+          while dir and dir ~= "" and dir ~= "/" do
+            for _, m in ipairs(markers) do
+              if vim.fn.filereadable(dir .. "/" .. m) == 1
+                or vim.fn.isdirectory(dir .. "/" .. m) == 1 then
+                return dir
+              end
+            end
+            local parent = vim.fn.fnamemodify(dir, ":h")
+            if parent == dir then break end
+            dir = parent
+          end
+          return nil
+        end
+        cwd = find_root(cur_dir) or cur_dir
       end
     end
     app_state.set_cwd(cwd)
