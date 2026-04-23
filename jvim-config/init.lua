@@ -40,19 +40,26 @@ opt.swapfile       = false
 opt.maxmempattern  = 2000
 
 --------------------------------------------------------------------------------
--- [3] PLUGIN CONFIGURATION (git / lsp / cmp — still vendored third-party)
+-- [3] PLUGIN CONFIGURATION
+-- Vendored plugins live under jvim/runtime/pack/jenova/start/ and are
+-- auto-loaded by Neovim's native package system. The plugin spec files in
+-- lua/plugins/ still use lazy.nvim-style table syntax for clarity, so we
+-- run them through a tiny native spec_runner that honours init/config/opts/
+-- keys/cmd/event/ft. No third-party plugin manager is loaded.
 --------------------------------------------------------------------------------
+local spec_runner = require("jenova.spec_runner")
 for _, mod in ipairs({
+  "plugins.editor",
   "plugins.git",
   "plugins.lsp",
+  "plugins.mini",
   "plugins.llama",
   "plugins.chat",
   "plugins.health",
+  "plugins.ui",
+  "plugins.dashboard",
 }) do
-  local ok, err = pcall(require, mod)
-  if not ok then
-    vim.notify(("Failed to load %s: %s"):format(mod, err), vim.log.levels.WARN)
-  end
+  spec_runner.run(mod)
 end
 
 --------------------------------------------------------------------------------

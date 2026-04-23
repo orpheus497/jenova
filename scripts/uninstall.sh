@@ -4,7 +4,7 @@
 # Removes the files this monorepo's installer deployed: the Neovim config in
 # ~/.config/jvim/ and the launcher symlinks (jvim, jenova, jenova-ca) that
 # install.sh placed on PATH. Optional flags also clear plugin data, runtime
-# state, and the in-tree jvim/cli-agent/llama.cpp build outputs.
+# state, and the in-tree jvim/llama.cpp build outputs.
 #
 # Usage: ./uninstall.sh [--purge] [--clean-runtime] [--clean-builds] [--yes]
 #
@@ -15,7 +15,7 @@
 #                    .jenova/ (PID/lock files), var/log/, var/cache/, and the
 #                    models/jenova.gguf convenience symlink.
 #   --clean-builds   Remove in-tree build outputs: jvim/build/, jvim/install/,
-#                    cli-agent/build/, llama.cpp/build/. Does NOT touch source.
+#                    llama.cpp/build/. Does NOT touch source.
 #   --yes            Skip all confirmation prompts (non-interactive mode).
 #
 # What this removes:
@@ -33,7 +33,7 @@
 set -e
 
 JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
-NVIM_CONFIG_DST="$HOME/.config/jvim"
+JVIM_CONFIG_DST="$HOME/.config/jvim"
 
 PURGE=0
 CLEAN_RUNTIME=0
@@ -93,9 +93,9 @@ fi
 if [ "$YES" = "0" ]; then
     echo ""
     warn "This will remove:"
-    echo "    $NVIM_CONFIG_DST/init.lua"
-    echo "    $NVIM_CONFIG_DST/lua/plugins/*.lua"
-    echo "    $NVIM_CONFIG_DST/lazy-lock.json"
+    echo "    $JVIM_CONFIG_DST/init.lua"
+    echo "    $JVIM_CONFIG_DST/lua/plugins/*.lua"
+    echo "    $JVIM_CONFIG_DST/lazy-lock.json"
     echo "    ~/.local/bin/jvim, ~/.local/bin/jenova, ~/.local/bin/jenova-ca (symlinks)"
     echo "    ~/bin/jvim, ~/bin/jenova, ~/bin/jenova-ca (symlinks)"
     if [ "$PURGE" = "1" ]; then
@@ -111,7 +111,7 @@ if [ "$YES" = "0" ]; then
     if [ "$CLEAN_BUILDS" = "1" ]; then
         echo "    $JENOVA_ROOT/jvim/build/ (in-tree jvim build — --clean-builds)"
         echo "    $JENOVA_ROOT/jvim/install/ (in-tree jvim install — --clean-builds)"
-        echo "    $JENOVA_ROOT/cli-agent/build/ (cli-agent build — --clean-builds)"
+        echo "    $JENOVA_ROOT/jvim/build/ (jvim build — --clean-builds)"
         echo "    $JENOVA_ROOT/llama.cpp/build/ (llama.cpp build — --clean-builds)"
     fi
     echo ""
@@ -133,8 +133,8 @@ info "Removing Neovim configuration files..."
 
 _removed=0
 for _f in \
-    "$NVIM_CONFIG_DST/init.lua" \
-    "$NVIM_CONFIG_DST/lazy-lock.json"
+    "$JVIM_CONFIG_DST/init.lua" \
+    "$JVIM_CONFIG_DST/lazy-lock.json"
 do
     if [ -e "$_f" ] || [ -L "$_f" ]; then
         rm -f "$_f"
@@ -143,33 +143,38 @@ do
     fi
 done
 
-if [ -d "$NVIM_CONFIG_DST/lua/plugins" ]; then
-    for _f in "$NVIM_CONFIG_DST/lua/plugins/"*.lua; do
+if [ -d "$JVIM_CONFIG_DST/lua/plugins" ]; then
+    for _f in "$JVIM_CONFIG_DST/lua/plugins/"*.lua; do
         [ -e "$_f" ] || [ -L "$_f" ] || continue
         rm -f "$_f"
         ok "Removed $_f"
         _removed=$((_removed + 1))
     done
-    rmdir "$NVIM_CONFIG_DST/lua/plugins" 2>/dev/null && ok "Removed empty plugins/ dir" || true
+    rmdir "$JVIM_CONFIG_DST/lua/plugins" 2>/dev/null && ok "Removed empty plugins/ dir" || true
 fi
-if [ -d "$NVIM_CONFIG_DST/lua/jenova" ]; then
-    for _f in "$NVIM_CONFIG_DST/lua/jenova/"*.lua; do
+if [ -d "$JVIM_CONFIG_DST/lua/jenova" ]; then
+    for _f in "$JVIM_CONFIG_DST/lua/jenova/"*.lua; do
         [ -e "$_f" ] || [ -L "$_f" ] || continue
         rm -f "$_f"
         ok "Removed $_f"
         _removed=$((_removed + 1))
     done
-    rmdir "$NVIM_CONFIG_DST/lua/jenova" 2>/dev/null && ok "Removed empty jenova/ dir" || true
+    rmdir "$JVIM_CONFIG_DST/lua/jenova" 2>/dev/null && ok "Removed empty jenova/ dir" || true
 fi
-if [ -d "$NVIM_CONFIG_DST/lua" ]; then
-    rmdir "$NVIM_CONFIG_DST/lua" 2>/dev/null && ok "Removed empty lua/ dir" || true
+if [ -d "$JVIM_CONFIG_DST/lua/jenova/agent" ]; then
+    rm -rf "$JVIM_CONFIG_DST/lua/jenova/agent"
+    ok "Removed embedded agent tree"
+    _removed=$((_removed + 1))
 fi
-if [ -d "$NVIM_CONFIG_DST" ]; then
-    rmdir "$NVIM_CONFIG_DST" 2>/dev/null && ok "Removed empty ~/.config/jvim/ dir" || true
+if [ -d "$JVIM_CONFIG_DST/lua" ]; then
+    rmdir "$JVIM_CONFIG_DST/lua" 2>/dev/null && ok "Removed empty lua/ dir" || true
+fi
+if [ -d "$JVIM_CONFIG_DST" ]; then
+    rmdir "$JVIM_CONFIG_DST" 2>/dev/null && ok "Removed empty ~/.config/jvim/ dir" || true
 fi
 
 if [ "$_removed" = "0" ]; then
-    warn "No Neovim config files found to remove (already clean)"
+    warn "No jvim config files found to remove (already clean)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -258,8 +263,8 @@ if [ "$CLEAN_BUILDS" = "1" ]; then
     for _bd in \
         "$JENOVA_ROOT/jvim/build" \
         "$JENOVA_ROOT/jvim/install" \
-        "$JENOVA_ROOT/cli-agent/build" \
-        "$JENOVA_ROOT/cli-agent/build_test" \
+        "$JENOVA_ROOT/jvim/build" \
+        "$JENOVA_ROOT/jvim/install" \
         "$JENOVA_ROOT/llama.cpp/build"
     do
         if [ -d "$_bd" ]; then
@@ -282,7 +287,7 @@ if [ "$CLEAN_RUNTIME" = "0" ]; then
     echo "    $JENOVA_ROOT/var/     (logs, cache — use --clean-runtime to remove)"
 fi
 if [ "$CLEAN_BUILDS" = "0" ]; then
-    echo "    $JENOVA_ROOT/jvim/build/, cli-agent/build/, llama.cpp/build/ (use --clean-builds to remove)"
+    echo "    $JENOVA_ROOT/jvim/build/, llama.cpp/build/ (use --clean-builds to remove)"
 fi
 echo "    $JENOVA_ROOT/          (project directory — source, configs, models)"
 echo ""

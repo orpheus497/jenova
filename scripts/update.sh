@@ -31,8 +31,8 @@
 set -e
 
 JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
-NVIM_CONFIG_SRC="$JENOVA_ROOT/nvim"
-NVIM_CONFIG_DST="$HOME/.config/jvim"
+JVIM_CONFIG_SRC="$JENOVA_ROOT/jvim-config"
+JVIM_CONFIG_DST="$HOME/.config/jvim"
 
 UPGRADE_PLUGINS=0
 SKIP_NVIM=0
@@ -210,7 +210,7 @@ if [ "$SKIP_NVIM" = "0" ] && command -v jvim >/dev/null 2>&1; then
             ;;
     esac
 
-    if [ ! -d "$NVIM_CONFIG_DST" ]; then
+    if [ ! -d "$JVIM_CONFIG_DST" ]; then
         warn "~/.config/jvim/ not found — run install.sh first to do the initial setup"
         SKIP_NVIM=1
     fi
@@ -218,36 +218,41 @@ if [ "$SKIP_NVIM" = "0" ] && command -v jvim >/dev/null 2>&1; then
     if [ "$SKIP_NVIM" = "0" ]; then
         # Detect whether we're in symlink mode (init.lua is a symlink into the repo)
         if [ "$LINK" = "1" ]; then
-            info "--link given: (re)establishing symlinks into $NVIM_CONFIG_SRC"
-            mkdir -p "$NVIM_CONFIG_DST/lua/plugins" "$NVIM_CONFIG_DST/lua/jenova"
-            ln -sf "$NVIM_CONFIG_SRC/init.lua"       "$NVIM_CONFIG_DST/init.lua"
+            info "--link given: (re)establishing symlinks into $JVIM_CONFIG_SRC"
+            mkdir -p "$JVIM_CONFIG_DST/lua/plugins" "$JVIM_CONFIG_DST/lua/jenova"
+            ln -sf "$JVIM_CONFIG_SRC/init.lua"       "$JVIM_CONFIG_DST/init.lua"
             for _dir in plugins jenova; do
-                for _f in "$NVIM_CONFIG_SRC/lua/$_dir/"*.lua; do
-                    [ -f "$_f" ] && ln -sf "$_f" "$NVIM_CONFIG_DST/lua/$_dir/$(basename "$_f")"
+                for _f in "$JVIM_CONFIG_SRC/lua/$_dir/"*.lua; do
+                    [ -f "$_f" ] && ln -sf "$_f" "$JVIM_CONFIG_DST/lua/$_dir/$(basename "$_f")"
                 done
             done
-            ok "Symlinked Jenova nvim config — edits in $NVIM_CONFIG_SRC are live"
-        elif [ -L "$NVIM_CONFIG_DST/init.lua" ]; then
-            _LINK_TGT=$(realpath "$NVIM_CONFIG_DST/init.lua" 2>/dev/null || readlink -f "$NVIM_CONFIG_DST/init.lua" 2>/dev/null || readlink "$NVIM_CONFIG_DST/init.lua")
-            _NVIM_SRC_REAL=$(realpath "$NVIM_CONFIG_SRC" 2>/dev/null || readlink -f "$NVIM_CONFIG_SRC" 2>/dev/null || echo "$NVIM_CONFIG_SRC")
+            ln -sfn "$JVIM_CONFIG_SRC/lua/jenova/agent" \
+                "$JVIM_CONFIG_DST/lua/jenova/agent"
+            ok "Symlinked Jenova jvim config — edits in $JVIM_CONFIG_SRC are live"
+        elif [ -L "$JVIM_CONFIG_DST/init.lua" ]; then
+            _LINK_TGT=$(realpath "$JVIM_CONFIG_DST/init.lua" 2>/dev/null || readlink -f "$JVIM_CONFIG_DST/init.lua" 2>/dev/null || readlink "$JVIM_CONFIG_DST/init.lua")
+            _NVIM_SRC_REAL=$(realpath "$JVIM_CONFIG_SRC" 2>/dev/null || readlink -f "$JVIM_CONFIG_SRC" 2>/dev/null || echo "$JVIM_CONFIG_SRC")
             case "$_LINK_TGT" in
                 "$_NVIM_SRC_REAL"/*|"$_NVIM_SRC_REAL")
                     ok "Symlink mode active — files auto-updated via git pull"
                     ;;
                 *)
                     warn "init.lua symlink points outside this repo: $_LINK_TGT"
-                    warn "Run: ./update.sh --link  to re-anchor it to $NVIM_CONFIG_SRC"
+                    warn "Run: ./update.sh --link  to re-anchor it to $JVIM_CONFIG_SRC"
                     ;;
             esac
         else
-            mkdir -p "$NVIM_CONFIG_DST/lua/plugins"
-            mkdir -p "$NVIM_CONFIG_DST/lua/jenova"
-            cp "$NVIM_CONFIG_SRC/init.lua"       "$NVIM_CONFIG_DST/init.lua"
-            cp "$NVIM_CONFIG_SRC/lua/plugins/"*.lua "$NVIM_CONFIG_DST/lua/plugins/"
-            for _f in "$NVIM_CONFIG_SRC/lua/jenova/"*.lua; do
-                [ -f "$_f" ] && cp "$_f" "$NVIM_CONFIG_DST/lua/jenova/"
+            mkdir -p "$JVIM_CONFIG_DST/lua/plugins"
+            mkdir -p "$JVIM_CONFIG_DST/lua/jenova"
+            cp "$JVIM_CONFIG_SRC/init.lua"       "$JVIM_CONFIG_DST/init.lua"
+            cp "$JVIM_CONFIG_SRC/lua/plugins/"*.lua "$JVIM_CONFIG_DST/lua/plugins/"
+            for _f in "$JVIM_CONFIG_SRC/lua/jenova/"*.lua; do
+                [ -f "$_f" ] && cp "$_f" "$JVIM_CONFIG_DST/lua/jenova/"
             done
-            ok "Jenova nvim config redeployed to $NVIM_CONFIG_DST"
+            rm -rf "$JVIM_CONFIG_DST/lua/jenova/agent"
+            cp -r "$JVIM_CONFIG_SRC/lua/jenova/agent" \
+                "$JVIM_CONFIG_DST/lua/jenova/"
+            ok "Jenova jvim config redeployed to $JVIM_CONFIG_DST"
         fi
     fi
 fi
@@ -255,7 +260,7 @@ fi
 # ---------------------------------------------------------------------------
 # 5. Sync Neovim plugins
 # ---------------------------------------------------------------------------
-if [ "$SKIP_NVIM" = "0" ] && command -v jvim >/dev/null 2>&1 && [ -d "$NVIM_CONFIG_DST" ]; then
+if [ "$SKIP_NVIM" = "0" ] && command -v jvim >/dev/null 2>&1 && [ -d "$JVIM_CONFIG_DST" ]; then
     info "Syncing Neovim plugins..."
     if [ "$UPGRADE_PLUGINS" = "1" ]; then
         warn "Running :Lazy update (moving plugins to latest versions — ignores lock file)"

@@ -1,1 +1,0 @@
--- UI is handled by jvim's native runtime/plugin/jvim_ui.lua

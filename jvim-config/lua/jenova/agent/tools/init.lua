@@ -27,6 +27,19 @@ local SHARED_TOOLS = {
   "tools.multiedit",
   "tools.web_fetch",
   "tools.web_search",
+  -- Ported from cli-agent (priority set: agentic loop, planning, search)
+  "tools.todo_write",
+  "tools.ask_user",
+  "tools.agent",
+  "tools.verify_plan",
+  "tools.tool_search",
+  "tools.snip",
+  "tools.enter_plan_mode",
+  "tools.exit_plan_mode",
+  "tools.synthetic_output",
+  "tools.sleep",
+  "tools.config_tool",
+  "tools.send_message",
 }
 
 function M.load_shared_tools()
@@ -77,6 +90,11 @@ function M.register_overrides()
   -- LSP → jvim-native: uses vim.lsp + vim.diagnostic instead of grep fallback
   local l_ok, lsp_tool = pcall(require, "jenova.agent.tools.lsp")
   if l_ok and lsp_tool then registry.register(lsp_tool) end
+
+  -- AskUser → jvim-native: uses vim.ui.input (the cli-agent original calls
+  -- io.read which would block jvim's event loop indefinitely).
+  local a_ok, ask_user = pcall(require, "jenova.agent.tools.ask_user")
+  if a_ok and ask_user then registry.register(ask_user) end
 end
 
 -- Convenience: load everything in the correct order.

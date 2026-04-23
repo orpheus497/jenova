@@ -125,74 +125,14 @@ local function to_chat_body(messages, options)
     return body
 end
 
--- Convert Anthropic-style multi-turn messages to OpenAI format.
--- query_engine stores turns as:
---   assistant: content array with {type="tool_use", id, name, input}
---   user:      content array with {type="tool_result", tool_use_id, content}
--- llama-server / OpenAI expect:
---   assistant: content=text, tool_calls=[{id, type="function", function={name, arguments}}]
---   tool:      role="tool", tool_call_id=id, content=string
-local function anthropic_to_openai_messages(messages)
-    local out = {}
-    for _, msg in ipairs(messages) do
-        if type(msg.content) ~= "table" then
-            -- plain string content — pass through unchanged
-            table.insert(out, msg)
-        elseif msg.role == "assistant" then
-            -- Split into text + tool_calls
-            local text_parts = {}
-            local tool_calls = {}
-            for _, block in ipairs(msg.content) do
-                if block.type == "text" then
-                    table.insert(text_parts, block.text or "")
-                elseif block.type == "tool_use" then
-                    table.insert(tool_calls, {
-                        id   = block.id or ("call_" .. #tool_calls),
-                        type = "function",
-                        ["function"] = {
-                            name      = block.name,
-                            arguments = type(block.input) == "table"
-                                and json.stringify(block.input)
-                                or tostring(block.input or "{}"),
-                        },
-                    })
-                end
-            end
-            local oai_msg = { role = "assistant" }
-            oai_msg.content = #text_parts > 0 and table.concat(text_parts, "") or nil
-            if #tool_calls > 0 then oai_msg.tool_calls = tool_calls end
-            table.insert(out, oai_msg)
-        elseif msg.role == "user" then
-            -- Check if this is a tool-result message
-            local has_tool_result = false
-            for _, block in ipairs(msg.content) do
-                if block.type == "tool_result" then
-                    has_tool_result = true
-                    table.insert(out, {
-                        role         = "tool",
-                        tool_call_id = block.tool_use_id,
-                        content      = type(block.content) == "string"
-                            and block.content
-                            or json.stringify(block.content),
-                    })
-                end
-            end
-            if not has_tool_result then
-                -- Regular user message with array content (e.g. image blocks) — pass through
-                table.insert(out, msg)
-            end
-        else
-            table.insert(out, msg)
-        end
-    end
-    return out
-end
-
+-- Native OpenAI message shape — query_engine now produces messages already in
+-- the wire format ({ role="assistant", content, tool_calls }, { role="tool",
+-- tool_call_id, content }), so this layer is a thin coercion only.
 local function normalize_messages(messages)
     if type(messages) == "string" then
         return { { role = "user", content = messages } }
     end
-    return anthropic_to_openai_messages(messages)
+    return messages
 end
 
 -- Parse an SSE stream body (multi-line string of "data: {...}" lines)

@@ -177,16 +177,15 @@ function QueryEngine:add_assistant_message(content)
 end
 
 function QueryEngine:add_tool_result(tool_use_id, result, is_error)
+    -- OpenAI-native shape: role="tool", tool_call_id, content=string.
+    -- is_error is signalled by prefixing the content with [ERROR] so the
+    -- model can see the failure status without needing a sidecar field.
+    local content = tostring(result or "")
+    if is_error then content = "[ERROR] " .. content end
     table.insert(self.messages, {
-        role = "user",
-        content = {
-            {
-                type = "tool_result",
-                tool_use_id = tool_use_id,
-                content = result,
-                is_error = is_error or false
-            }
-        }
+        role = "tool",
+        tool_call_id = tool_use_id,
+        content = content,
     })
 end
 
@@ -584,12 +583,10 @@ function QueryEngine:query(user_message, options)
 
                 if is_narration then
                     -- Reject the Brief and force the model to actually act.
-                    -- IMPORTANT: We must record a tool_result for this Brief
-                    -- tool_use to maintain the User→Assistant→User role
-                    -- alternation that providers (Anthropic/OpenAI) require.
-                    -- Without it, the assistant message added below would
-                    -- contain a tool_use with no matching tool_result on the
-                    -- next request and the API would reject the call.
+                    -- IMPORTANT: every Brief tool_use MUST get a matching
+                    -- tool_result before we either continue or terminate, or
+                    -- the OpenAI API will reject the next request because the
+                    -- assistant message added below contains an orphan tool_call.
                     local nudge =
                         "[System: You called Brief with an announcement ('" ..
                         (br or ""):sub(1, 80) ..
@@ -597,19 +594,28 @@ function QueryEngine:query(user_message, options)
                         "IMMEDIATELY call the appropriate action tool (Shell, Read, Edit, etc.) " ..
                         "and perform the work. Do not call Brief until the task is fully complete.]"
                     table.insert(tool_results_content, {
-                        type = "tool_result",
                         tool_use_id = tool_use.id,
                         content = nudge,
                         is_error = true,
                     })
                     -- Don't terminate the loop — continue so the nudge is sent
                     -- and the model gets another turn to act.
-                elseif br and #br > 0 then
-                    -- Legitimate final response — surface it and terminate.
-                    self.on_text(br)
-                    brief_response = br
+                else
+                    -- Brief is terminating: emit a paired tool_result FIRST so the
+                    -- transcript stays valid, then surface text and break.
+                    local final_text = (br and #br > 0) and br or "(no response)"
+                    table.insert(tool_results_content, {
+                        tool_use_id = tool_use.id,
+                        content = "OK",
+                        is_error = false,
+                    })
+                    if br and #br > 0 then
+                        self.on_text(br)
+                        brief_response = br
+                    else
+                        brief_response = final_text
+                    end
                 end
-                -- Don't add Brief to tool_results — terminate the loop instead.
                 goto continue_loop
             end
 
@@ -690,7 +696,6 @@ function QueryEngine:query(user_message, options)
             end
 
             table.insert(tool_results_content, {
-                type = "tool_result",
                 tool_use_id = tool_use.id,
                 content = result_text,
                 is_error = is_err,
@@ -698,9 +703,39 @@ function QueryEngine:query(user_message, options)
         end
 
         ::continue_loop::
+
+        -- Always emit one assistant message per turn carrying ALL tool_calls
+        -- (and any text), then emit one role="tool" message per call. This
+        -- keeps the role alternation valid for OpenAI even when Brief
+        -- terminates the loop.
+        local oai_tool_calls = {}
+        for _, tool_use in ipairs(response.tool_uses) do
+            table.insert(oai_tool_calls, {
+                id   = tool_use.id,
+                type = "function",
+                ["function"] = {
+                    name      = tool_use.name,
+                    arguments = (type(tool_use.input) == "table")
+                        and json_codec.stringify(tool_use.input)
+                        or tostring(tool_use.input or "{}"),
+                },
+            })
+        end
+        local assistant_msg = { role = "assistant" }
+        if response.text and #response.text > 0 then
+            assistant_msg.content = response.text
+        end
+        if #oai_tool_calls > 0 then
+            assistant_msg.tool_calls = oai_tool_calls
+        end
+        table.insert(self.messages, assistant_msg)
+
+        for _, tr in ipairs(tool_results_content) do
+            self:add_tool_result(tr.tool_use_id, tr.content, tr.is_error)
+        end
+
         -- If Brief was called, end here — the model has given its final response.
         if brief_response then
-            self:add_assistant_message(brief_response)
             return {
                 text = brief_response,
                 thinking = response.thinking,
@@ -714,81 +749,23 @@ function QueryEngine:query(user_message, options)
             }
         end
 
-        -- Add all tool uses from this turn as one assistant message.
-        -- Include any text the model emitted before/alongside tool calls.
-        local assistant_content = {}
-        if response.text and #response.text > 0 then
-            table.insert(assistant_content, {
-                type = "text",
-                text = response.text,
-            })
-        end
-        for _, tool_use in ipairs(response.tool_uses) do
-            table.insert(assistant_content, {
-                type  = "tool_use",
-                id    = tool_use.id,
-                name  = tool_use.name,
-                input = tool_use.input,
-            })
-        end
-        table.insert(self.messages, { role = "assistant", content = assistant_content })
-
-        -- Add tool results
-        for _, tool_result in ipairs(tool_results_content) do
-            self:add_tool_result(tool_result.tool_use_id, tool_result.content, tool_result.is_error)
-        end
-
         -- Flush any embed-based self-correction warnings generated during this
-        -- turn's tool executions. Many LLM providers (Anthropic, OpenAI) reject
-        -- requests with consecutive same-role messages, and tool_results are
-        -- already user-role. We must also be careful about HOW we attach: the
-        -- jenova_backend provider converts each tool_result block into a
-        -- separate role="tool" message and DROPS any non-tool_result blocks in
-        -- the same user message — so a `{type="text"}` sibling would silently
-        -- vanish before reaching the model. Append the warning to the LAST
-        -- tool_result's `content` string instead, which the provider preserves
-        -- verbatim into the role="tool" payload.
+        -- turn. With the OpenAI-native shape, the LAST message is a role="tool"
+        -- with a string content, so we simply append to it.
         if self._pending_embed_warnings and #self._pending_embed_warnings > 0 then
             local warning_text = table.concat(self._pending_embed_warnings, "\n\n")
-            local last_msg = self.messages[#self.messages]
             local attached = false
-            if last_msg and last_msg.role == "user" then
-                if type(last_msg.content) == "table" then
-                    -- Find the last tool_result block and append to its content.
-                    for i = #last_msg.content, 1, -1 do
-                        local block = last_msg.content[i]
-                        if type(block) == "table" and block.type == "tool_result" then
-                            if type(block.content) == "string" then
-                                block.content = block.content .. "\n\n" .. warning_text
-                            elseif type(block.content) == "table" then
-                                -- Nested content array — append a text block;
-                                -- providers that consume the array form do
-                                -- preserve text blocks here.
-                                table.insert(block.content, { type = "text", text = warning_text })
-                            else
-                                block.content = warning_text
-                            end
-                            attached = true
-                            break
-                        end
-                    end
-                    if not attached then
-                        -- No tool_result block — safe to add as a sibling text
-                        -- block (provider only filters non-tool_result blocks
-                        -- when a tool_result IS present).
-                        table.insert(last_msg.content, { type = "text", text = warning_text })
-                        attached = true
-                    end
-                elseif type(last_msg.content) == "string" then
-                    last_msg.content = last_msg.content .. "\n\n" .. warning_text
+            for i = #self.messages, 1, -1 do
+                local m = self.messages[i]
+                if m.role == "tool" then
+                    m.content = (m.content or "") .. "\n\n" .. warning_text
                     attached = true
+                    break
                 end
+                if m.role == "assistant" then break end
             end
             if not attached then
-                -- Fallback: emit a fresh user message (only happens when there
-                -- is no preceding user message at all, which is rare).
                 table.insert(self.messages, { role = "user", content = warning_text })
-
             end
             self._pending_embed_warnings = {}
         end

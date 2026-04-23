@@ -3,18 +3,18 @@
 # Supports all Vulkan hardware profiles (auto-detected via detect-hardware.sh)
 #
 # This is the single installer for the whole monorepo: it builds (or verifies)
-# llama.cpp, builds the bundled jvim editor, builds the cli-agent, downloads
-# missing model GGUFs, deploys the Neovim plugin set, and symlinks `jvim`,
-# `jenova`, and `jenova-ca` onto your PATH.
+# llama.cpp, builds the bundled jvim editor (which contains the embedded
+# Jenova agent), downloads missing model GGUFs, deploys the jvim user config,
+# and symlinks `jvim`, `jenova`, and `jenova-ca` onto your PATH.
 #
-# Usage: ./install.sh [--force] [--link] [--skip-nvim] [--skip-jvim]
+# Usage: ./install.sh [--force] [--link] [--skip-config] [--skip-jvim]
 #                     [--skip-llama] [--skip-lsp] [--client-only]
 #
 #   --force        Overwrite existing ~/.config/jvim without prompting and
 #                  force a fresh jvim rebuild even if jvim/build/ exists
-#   --link         Install Jenova nvim config as symlinks into ~/.config/jvim
+#   --link         Install Jenova jvim config as symlinks into ~/.config/jvim
 #                  (development workflow — edits in repo apply immediately)
-#   --skip-nvim    Skip the Neovim/jvim config deployment step
+#   --skip-config  Skip the jvim user-config deployment step
 #   --skip-jvim    Skip building the bundled jvim editor (jvim/)
 #   --skip-llama   Skip llama.cpp build check
 #   --skip-lsp     Skip auto-installing LSP servers / linters / formatters
@@ -35,8 +35,8 @@
 set -e
 
 JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
-NVIM_CONFIG_SRC="$JENOVA_ROOT/nvim"
-NVIM_CONFIG_DST="$HOME/.config/jvim"
+JVIM_CONFIG_SRC="$JENOVA_ROOT/jvim-config"
+JVIM_CONFIG_DST="$HOME/.config/jvim"
 
 FORCE=0
 LINK=0
@@ -50,7 +50,7 @@ for _arg in "$@"; do
     case "$_arg" in
         --force)       FORCE=1 ;;
         --link)        LINK=1 ;;
-        --skip-nvim)   SKIP_NVIM=1 ;;
+        --skip-config|--skip-nvim) SKIP_NVIM=1 ;;
         --skip-jvim)   SKIP_JVIM=1 ;;
         --skip-llama)  SKIP_LLAMA=1 ;;
         --skip-lsp)    SKIP_LSP=1 ;;
@@ -598,15 +598,15 @@ fi  # CLIENT_ONLY model-checks guard
 # 7. Neovim config installation
 # ---------------------------------------------------------------------------
 if [ "$SKIP_NVIM" = "0" ] && command -v jvim >/dev/null 2>&1; then
-    info "Installing Neovim configuration..."
+    info "Installing jvim configuration..."
 
-    if [ -d "$NVIM_CONFIG_DST" ] && [ "$FORCE" = "0" ]; then
+    if [ -d "$JVIM_CONFIG_DST" ] && [ "$FORCE" = "0" ]; then
         printf "  ~/.config/jvim already exists. Overwrite? [y/N] "
         read -r _ans
         case "$_ans" in
             y|Y|yes|YES) ;;
             *)
-                warn "Skipping Neovim config installation (use --force to override)"
+                warn "Skipping jvim config installation (use --force to override)"
                 SKIP_NVIM=1
                 ;;
         esac
@@ -614,43 +614,41 @@ if [ "$SKIP_NVIM" = "0" ] && command -v jvim >/dev/null 2>&1; then
 
     if [ "$SKIP_NVIM" = "0" ]; then
         # Backup existing config
-        if [ -d "$NVIM_CONFIG_DST" ]; then
+        if [ -d "$JVIM_CONFIG_DST" ]; then
             _TS=$(date +%Y%m%d_%H%M%S)
-            _BAK="${NVIM_CONFIG_DST}.bak.${_TS}"
-            mv "$NVIM_CONFIG_DST" "$_BAK"
+            _BAK="${JVIM_CONFIG_DST}.bak.${_TS}"
+            mv "$JVIM_CONFIG_DST" "$_BAK"
             ok "Backed up existing config to $_BAK"
         fi
 
-        mkdir -p "$NVIM_CONFIG_DST/lua/plugins"
-        mkdir -p "$NVIM_CONFIG_DST/lua/jenova"
-
-        # Sync the embedded agent shared modules before deploying
-        sh "$JENOVA_ROOT/scripts/sync-modules.sh"
+        mkdir -p "$JVIM_CONFIG_DST/lua/plugins"
+        mkdir -p "$JVIM_CONFIG_DST/lua/jenova"
 
         if [ "$LINK" = "1" ]; then
             # Symlink mode — changes in repo instantly reflected in jvim
-            ln -sf "$NVIM_CONFIG_SRC/init.lua" "$NVIM_CONFIG_DST/init.lua"
-            for _dir in plugins jenova; do
-                for _f in "$NVIM_CONFIG_SRC/lua/$_dir/"*.lua; do
-                    [ -f "$_f" ] && ln -sf "$_f" "$NVIM_CONFIG_DST/lua/$_dir/$(basename "$_f")"
-                done
+            ln -sf "$JVIM_CONFIG_SRC/init.lua" "$JVIM_CONFIG_DST/init.lua"
+            for _f in "$JVIM_CONFIG_SRC/lua/plugins/"*.lua; do
+                [ -f "$_f" ] && ln -sf "$_f" "$JVIM_CONFIG_DST/lua/plugins/$(basename "$_f")"
             done
-            # Also symlink the agent/ subtree from jvim/runtime
-            ln -sfn "$JENOVA_ROOT/jvim/runtime/lua/jenova/agent" \
-                "$NVIM_CONFIG_DST/lua/jenova/agent"
-            ok "Symlinked jvim user config (--link mode, edits in $NVIM_CONFIG_SRC take effect immediately)"
+            # jenova/ contains both leaf .lua modules AND the agent/ subtree
+            for _f in "$JVIM_CONFIG_SRC/lua/jenova/"*.lua; do
+                [ -f "$_f" ] && ln -sf "$_f" "$JVIM_CONFIG_DST/lua/jenova/$(basename "$_f")"
+            done
+            ln -sfn "$JVIM_CONFIG_SRC/lua/jenova/agent" \
+                "$JVIM_CONFIG_DST/lua/jenova/agent"
+            ok "Symlinked jvim user config (--link mode, edits in $JVIM_CONFIG_SRC take effect immediately)"
         else
             # Copy mode — stable snapshot
-            cp "$NVIM_CONFIG_SRC/init.lua" "$NVIM_CONFIG_DST/init.lua"
-            for _dir in plugins jenova; do
-                for _f in "$NVIM_CONFIG_SRC/lua/$_dir/"*.lua; do
-                    [ -f "$_f" ] && cp "$_f" "$NVIM_CONFIG_DST/lua/$_dir/"
-                done
+            cp "$JVIM_CONFIG_SRC/init.lua" "$JVIM_CONFIG_DST/init.lua"
+            for _f in "$JVIM_CONFIG_SRC/lua/plugins/"*.lua; do
+                [ -f "$_f" ] && cp "$_f" "$JVIM_CONFIG_DST/lua/plugins/"
             done
-            # Copy the agent/ subtree (includes shared/ from sync-modules)
-            cp -r "$JENOVA_ROOT/jvim/runtime/lua/jenova/agent" \
-                "$NVIM_CONFIG_DST/lua/jenova/"
-            ok "Copied jvim user config to $NVIM_CONFIG_DST"
+            for _f in "$JVIM_CONFIG_SRC/lua/jenova/"*.lua; do
+                [ -f "$_f" ] && cp "$_f" "$JVIM_CONFIG_DST/lua/jenova/"
+            done
+            cp -r "$JVIM_CONFIG_SRC/lua/jenova/agent" \
+                "$JVIM_CONFIG_DST/lua/jenova/"
+            ok "Copied jvim user config to $JVIM_CONFIG_DST"
         fi
         info "Plugins ship vendored inside jvim/runtime/pack/jenova/start/ — no network fetch required."
     fi
@@ -770,8 +768,8 @@ else
     echo "     Or launch editor:   $JENOVA_ROOT/bin/jvim  (or just: jvim)"
     echo "     LAN client mode:    jvim --remote <host>"
     if [ "$SKIP_NVIM" = "0" ]; then
-        echo "  4. Inside the editor:  :Lazy install   (install plugins on first launch)"
-        echo "                         :checkhealth jenova"
+        echo "  4. Inside the editor:  :checkhealth jenova"
+        echo "                         (plugins are vendored under jvim/runtime/pack/jenova/start/)"
     fi
     echo ""
     echo "  Maintenance:"
