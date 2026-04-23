@@ -165,6 +165,23 @@ local function get_engine()
     return nil
   end
 
+  -- Bootstrap the LLM provider registry. providers/base.lua is only the
+  -- registry/manager — providers/init.lua is what actually loads and
+  -- registers jenova_backend + llamacpp. Without this call, the registry
+  -- stays empty and the manager fails with "All providers failed to
+  -- initialize" the first time query_engine asks for a completion.
+  local pok, providers = pcall(require, "providers.init")
+  if pok and type(providers.init) == "function" then
+    local iok, ierr = pcall(providers.init)
+    if not iok then
+      vim.notify("jenova.agent: provider init failed: " .. tostring(ierr),
+        vim.log.levels.ERROR, { title = "Jenova Agent" })
+    end
+  else
+    vim.notify("jenova.agent: failed to load providers.init: " .. tostring(providers),
+      vim.log.levels.ERROR, { title = "Jenova Agent" })
+  end
+
   -- Load all shared CLI tools AND register jvim-native overrides FIRST.
   -- QueryEngine.new() calls tool_registry.build_api_tools() internally so the
   -- registry must be fully populated before the engine is constructed.
