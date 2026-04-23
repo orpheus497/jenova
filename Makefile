@@ -37,6 +37,18 @@ cli-agent:
 SHARED_MODULES = \
   engine/query_engine.lua \
   tools/registry.lua \
+  tools/bash.lua \
+  tools/brief.lua \
+  tools/file_edit.lua \
+  tools/file_read.lua \
+  tools/file_write.lua \
+  tools/git.lua \
+  tools/glob.lua \
+  tools/grep.lua \
+  tools/local_search.lua \
+  tools/multiedit.lua \
+  tools/web_fetch.lua \
+  tools/web_search.lua \
   providers/base.lua \
   providers/init.lua \
   providers/jenova_backend.lua \
@@ -48,9 +60,11 @@ SHARED_MODULES = \
   permissions/manager.lua \
   services/tool_verifier.lua \
   utils/array.lua \
+  utils/embed.lua \
   utils/http.lua \
   utils/json_fallback.lua \
   utils/paths.lua \
+  utils/shell.lua \
   utils/string.lua \
   utils/trio.lua \
   constants/prompts.lua \

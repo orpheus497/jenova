@@ -51,11 +51,28 @@ fi
 # ── Parse flags ───────────────────────────────────────────────────────────────
 NO_BACKEND=0
 DAEMON_ONLY=0
+REPL_MODE=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --no-backend)  NO_BACKEND=1; shift ;;
         --daemon-only) DAEMON_ONLY=1; shift ;;
+        --repl)
+            REPL_MODE=1
+            shift
+            # Exec the CLI agent REPL directly — do not start jvim.
+            CLI="$SCRIPT_DIR/jenova-cli"
+            if [ ! -x "$CLI" ]; then
+                # Fallback: run via luajit from the source tree
+                CLI_LUA="$JENOVA_ROOT/cli-agent/lua/init.lua"
+                if [ -f "$CLI_LUA" ] && command -v luajit >/dev/null 2>&1; then
+                    exec luajit "$CLI_LUA" "$@"
+                fi
+                echo "Error: jenova-cli not found at $CLI" >&2
+                exit 1
+            fi
+            exec "$CLI" "$@"
+            ;;
         --check)
             echo "JENOVA_ROOT=$JENOVA_ROOT"
             echo "JENOVA_CONNECT_HOST=$JENOVA_CONNECT_HOST"

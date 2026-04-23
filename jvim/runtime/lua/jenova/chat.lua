@@ -16,9 +16,19 @@ local CHAT_WIDTH = 60
 -- agent_mode=false → plain streaming direct to proxy (legacy behaviour)
 local agent_mode = true
 
-local active_job = nil
-local toggle_buf = nil
-local toggle_win = nil
+local active_job  = nil
+local toggle_buf  = nil
+local toggle_win  = nil
+
+-- ── Agent activity state (read by statusline) ─────────────────────────────────
+-- These are module-level so jvim.statusline can poll them without requiring
+-- a direct callback registration.
+M._agent_running   = false   -- true while a query coroutine is active
+M._agent_tool      = nil     -- name of currently running tool, or nil
+M._agent_turn      = 0       -- current turn index
+M._agent_tokens_in  = 0
+M._agent_tokens_out = 0
+M._agent_cost       = 0.0
 
 -- ── Utilities ─────────────────────────────────────────────────────────────────
 
@@ -393,6 +403,9 @@ end
 
 -- ── Agent response (agent mode) ───────────────────────────────────────────────
 
+-- Spinner frames for the thinking indicator
+local SPINNER = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
+
 local function agent_respond(buf, prompt, on_done)
   local ok, agent = pcall(require, "jenova.agent")
   if not ok or not agent then
@@ -402,32 +415,321 @@ local function agent_respond(buf, prompt, on_done)
     return false
   end
 
+  -- Insert assistant header + placeholder thinking line
   vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## assistant", "" })
-  local insert_line = vim.api.nvim_buf_line_count(buf)
+  -- Reserve the placeholder slot
+  vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "⟳ thinking…" })
+  local thinking_slot = vim.api.nvim_buf_line_count(buf)  -- 1-based index of that line
+
+  -- Text content is appended AFTER the thinking slot
+  local insert_line = thinking_slot + 1  -- next line after spinner (1-based, exclusive end for set_lines)
   local current_lines = { "" }
+  local text_started = false
+
+  -- Spinner timer
+  local spinner_idx = 0
+  local spinner_timer = vim.uv and vim.uv.new_timer() or vim.loop.new_timer()
+  local function stop_spinner()
+    if spinner_timer then
+      spinner_timer:stop()
+      spinner_timer:close()
+      spinner_timer = nil
+    end
+  end
+  spinner_timer:start(0, 100, vim.schedule_wrap(function()
+    if not vim.api.nvim_buf_is_valid(buf) then stop_spinner(); return end
+    spinner_idx = (spinner_idx % #SPINNER) + 1
+    local tool = M._agent_tool
+    local label = tool
+      and string.format("%s %s…", SPINNER[spinner_idx], tool)
+      or  string.format("%s thinking…", SPINNER[spinner_idx])
+    pcall(vim.api.nvim_buf_set_lines, buf, thinking_slot - 1, thinking_slot, false, { label })
+  end))
+
+  -- Tool badge tracking: map tool_name → line number in buffer (1-based)
+  local tool_lines = {}
+
+  -- Update M state for statusline
+  M._agent_running    = true
+  M._agent_tool       = nil
+  M._agent_turn       = (M._agent_turn or 0) + 1
+
+  local function append_text(text)
+    if not vim.api.nvim_buf_is_valid(buf) then return end
+    if not text_started then
+      -- Remove the thinking placeholder now that real text is arriving
+      stop_spinner()
+      pcall(vim.api.nvim_buf_set_lines, buf, thinking_slot - 1, thinking_slot, false, {})
+      -- Recalculate insert_line after removal
+      insert_line = vim.api.nvim_buf_line_count(buf) + 1
+      thinking_slot = 0
+      text_started = true
+      current_lines = { "" }
+    end
+    local pieces = vim.split(text, "\n", { plain = true })
+    current_lines[#current_lines] = current_lines[#current_lines] .. pieces[1]
+    for i = 2, #pieces do table.insert(current_lines, pieces[i]) end
+    local s = insert_line - 1
+    local buf_total = vim.api.nvim_buf_line_count(buf)
+    local e = math.min(s + #current_lines, buf_total)
+    if s >= buf_total then
+      pcall(vim.api.nvim_buf_set_lines, buf, -1, -1, false, current_lines)
+    else
+      pcall(vim.api.nvim_buf_set_lines, buf, s, e, false, current_lines)
+    end
+    scroll_to_bottom(buf)
+  end
 
   agent.query(prompt, {
     on_text = function(text)
-      if not vim.api.nvim_buf_is_valid(buf) then return end
-      local pieces = vim.split(text, "\n", { plain = true })
-      current_lines[#current_lines] = current_lines[#current_lines] .. pieces[1]
-      for i = 2, #pieces do table.insert(current_lines, pieces[i]) end
-      local s = insert_line - 1
-      local e = math.min(s + #current_lines, vim.api.nvim_buf_line_count(buf))
-      pcall(vim.api.nvim_buf_set_lines, buf, s, e, false, current_lines)
-      scroll_to_bottom(buf)
+      vim.schedule(function() append_text(text) end)
     end,
-    on_done = function()
-      if vim.api.nvim_buf_is_valid(buf) then
-        vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## user", "" })
-        save_chat(buf)
+
+    on_thinking = function()
+      vim.schedule(function()
+        if not vim.api.nvim_buf_is_valid(buf) then return end
+        -- spinner already running; just keep M state accurate
+        M._agent_tool = nil
+      end)
+    end,
+
+    on_tool_use = function(name, _)
+      vim.schedule(function()
+        if not vim.api.nvim_buf_is_valid(buf) then return end
+        M._agent_tool = name
+        -- Append a tool badge line
+        local badge = string.format("⚙ %s…", name)
+        vim.api.nvim_buf_set_lines(buf, -1, -1, false, { badge })
+        tool_lines[name] = vim.api.nvim_buf_line_count(buf)
+        -- Bump insert_line past the badge so text goes after
+        insert_line = tool_lines[name] + 1
+        text_started = false
+        current_lines = { "" }
         scroll_to_bottom(buf)
-        vim.cmd("startinsert!")
-      end
-      if on_done then on_done() end
+      end)
+    end,
+
+    on_tool_result = function(name, result)
+      vim.schedule(function()
+        if not vim.api.nvim_buf_is_valid(buf) then return end
+        M._agent_tool = nil
+        local lnum = tool_lines[name]
+        if lnum and vim.api.nvim_buf_is_valid(buf) then
+          local success = not (type(result) == "table" and result.error)
+          local icon = success and "✓" or "✗"
+          pcall(vim.api.nvim_buf_set_lines, buf, lnum - 1, lnum, false,
+            { string.format("%s %s", icon, name) })
+          tool_lines[name] = nil
+        end
+        -- Re-start thinking spinner after tool returns
+        if spinner_timer then
+          -- already running
+        else
+          spinner_timer = (vim.uv or vim.loop).new_timer()
+          spinner_timer:start(0, 100, vim.schedule_wrap(function()
+            if not vim.api.nvim_buf_is_valid(buf) then stop_spinner(); return end
+            spinner_idx = (spinner_idx % #SPINNER) + 1
+            local tool = M._agent_tool
+            local label = tool
+              and string.format("%s %s…", SPINNER[spinner_idx], tool)
+              or  string.format("%s thinking…", SPINNER[spinner_idx])
+            -- Only update if we have a live thinking slot
+            if thinking_slot > 0 then
+              pcall(vim.api.nvim_buf_set_lines, buf, thinking_slot - 1, thinking_slot, false, { label })
+            end
+          end))
+          -- Append a new thinking line after tool result
+          vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "⟳ thinking…" })
+          thinking_slot = vim.api.nvim_buf_line_count(buf)
+          insert_line = thinking_slot + 1
+          text_started = false
+          current_lines = { "" }
+        end
+      end)
+    end,
+
+    on_error = function(msg)
+      vim.schedule(function()
+        stop_spinner()
+        M._agent_running = false
+        M._agent_tool    = nil
+        if vim.api.nvim_buf_is_valid(buf) then
+          -- Replace thinking line with error
+          if thinking_slot > 0 then
+            pcall(vim.api.nvim_buf_set_lines, buf, thinking_slot - 1, thinking_slot, false,
+              { string.format("✗ Error: %s", msg) })
+            thinking_slot = 0
+          else
+            vim.api.nvim_buf_set_lines(buf, -1, -1, false,
+              { string.format("✗ Error: %s", msg) })
+          end
+          vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## user", "" })
+          save_chat(buf)
+          scroll_to_bottom(buf)
+          vim.cmd("startinsert!")
+        end
+        if on_done then on_done() end
+      end)
+    end,
+
+    on_done = function(usage)
+      vim.schedule(function()
+        stop_spinner()
+        M._agent_running = false
+        M._agent_tool    = nil
+
+        if vim.api.nvim_buf_is_valid(buf) then
+          -- Remove leftover thinking slot if text arrived
+          if thinking_slot > 0 then
+            pcall(vim.api.nvim_buf_set_lines, buf, thinking_slot - 1, thinking_slot, false, {})
+            thinking_slot = 0
+          end
+
+          -- Append cost/usage line if available
+          if usage and (usage.input or 0) + (usage.output or 0) > 0 then
+            M._agent_tokens_in  = usage.input  or 0
+            M._agent_tokens_out = usage.output or 0
+            M._agent_cost       = usage.cost   or 0.0
+            local cost_line
+            if usage.cost and usage.cost > 0 then
+              cost_line = string.format(
+                "> turn %d  in:%d out:%d  $%.4f",
+                M._agent_turn, usage.input, usage.output, usage.cost)
+            else
+              cost_line = string.format(
+                "> turn %d  in:%d out:%d",
+                M._agent_turn, usage.input, usage.output)
+            end
+            vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", cost_line })
+          end
+
+          vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## user", "" })
+          save_chat(buf)
+          scroll_to_bottom(buf)
+          vim.cmd("startinsert!")
+        end
+        if on_done then on_done() end
+      end)
     end,
   })
   return true
+end
+
+-- ── Slash command dispatcher ───────────────────────────────────────────────────
+
+local function dispatch_slash(buf, cmd_line)
+  local cmd = (cmd_line:match("^/(%S+)") or ""):lower()
+  local _ = cmd_line:match("^/%S+%s*(.*)")
+  if cmd == "clear" then
+    local ok, agent = pcall(require, "jenova.agent")
+    if ok and agent then agent.clear() end
+    M._agent_turn = 0
+    vim.notify("Session cleared", vim.log.levels.INFO, { title = "Jenova" })
+
+  elseif cmd == "reset" then
+    local ok, agent = pcall(require, "jenova.agent")
+    if ok and agent then agent.reset() end
+    M._agent_turn = 0
+    vim.notify("Agent reset — engine will rebuild on next query",
+      vim.log.levels.INFO, { title = "Jenova" })
+
+  elseif cmd == "stop" then
+    M.stop()
+
+  elseif cmd == "history" then
+    local ok, agent = pcall(require, "jenova.agent")
+    local msgs = ok and agent and agent.get_messages() or {}
+    local lines = { "", "<!-- /history -->", string.format("  %d messages in context:", #msgs) }
+    for i, m in ipairs(msgs) do
+      local snippet = (m.content or ""):sub(1, 80):gsub("\n", " ")
+      table.insert(lines, string.format("  [%d] %s: %s%s",
+        i, m.role, snippet, #(m.content or "") > 80 and "…" or ""))
+    end
+    table.insert(lines, "")
+    vim.api.nvim_buf_set_lines(buf, -1, -1, false, lines)
+    scroll_to_bottom(buf)
+
+  elseif cmd == "debug" then
+    local ok, agent = pcall(require, "jenova.agent")
+    local usage = ok and agent and agent.get_usage() or {}
+    local state = {
+      running  = M._agent_running,
+      turn     = M._agent_turn,
+      tool     = M._agent_tool,
+      tokens_in  = usage.input_tokens  or 0,
+      tokens_out = usage.output_tokens or 0,
+      cost     = usage.total_cost_usd  or 0,
+    }
+    local encoded = vim.json.encode(state)
+    vim.api.nvim_buf_set_lines(buf, -1, -1, false,
+      { "", "<!-- /debug -->", "```json", encoded, "```", "" })
+    scroll_to_bottom(buf)
+
+  elseif cmd == "diag" then
+    local diags = vim.diagnostic.get(nil)
+    local lines = { "", "<!-- /diag -->",
+      string.format("  %d diagnostics across all buffers:", #diags) }
+    local counts = { [1]=0,[2]=0,[3]=0,[4]=0 }
+    for _, d in ipairs(diags) do counts[d.severity] = (counts[d.severity] or 0) + 1 end
+    table.insert(lines, string.format("  E:%d W:%d I:%d H:%d",
+      counts[1], counts[2], counts[3], counts[4]))
+    table.insert(lines, "")
+    vim.api.nvim_buf_set_lines(buf, -1, -1, false, lines)
+    scroll_to_bottom(buf)
+
+  elseif cmd == "tools" then
+    local ok, reg = pcall(require, "jenova.agent.shared.tools.registry")
+    if not ok then ok, reg = pcall(require, "tools.registry") end
+    local lines = { "", "<!-- /tools -->" }
+    if ok and reg and reg.list_tools then
+      for _, t in ipairs(reg.list_tools()) do
+        table.insert(lines, string.format("  • %s — %s",
+          t.name or "?",
+          (t.description or ""):sub(1, 60)))
+      end
+    elseif ok and reg and reg._tools then
+      for name, _ in pairs(reg._tools) do
+        table.insert(lines, "  • " .. name)
+      end
+    else
+      table.insert(lines, "  (registry not available)")
+    end
+    table.insert(lines, "")
+    vim.api.nvim_buf_set_lines(buf, -1, -1, false, lines)
+    scroll_to_bottom(buf)
+
+  elseif cmd == "model" then
+    vim.api.nvim_buf_set_lines(buf, -1, -1, false,
+      { "", string.format("<!-- /model: %s -->", MODEL), "" })
+    scroll_to_bottom(buf)
+
+  elseif cmd == "thinking" then
+    vim.notify("Thinking mode toggle not yet supported for this model",
+      vim.log.levels.INFO, { title = "Jenova" })
+
+  elseif cmd == "help" then
+    local lines = {
+      "",
+      "<!-- /help -->",
+      "  /clear      — clear session history (keep engine)",
+      "  /reset      — destroy engine, rebuild on next query",
+      "  /stop       — abort in-flight generation",
+      "  /history    — show message context summary",
+      "  /debug      — show engine state as JSON",
+      "  /diag       — show LSP diagnostics summary",
+      "  /tools      — list registered agent tools",
+      "  /model      — show current model",
+      "  /thinking   — toggle extended thinking (if supported)",
+      "  /help       — this reference",
+      "",
+    }
+    vim.api.nvim_buf_set_lines(buf, -1, -1, false, lines)
+    scroll_to_bottom(buf)
+
+  else
+    vim.notify("Unknown slash command: /" .. cmd .. "  (try /help)",
+      vim.log.levels.WARN, { title = "Jenova" })
+  end
 end
 
 -- ── Public API ────────────────────────────────────────────────────────────────
@@ -497,19 +799,46 @@ function M.respond()
     return
   end
 
-  if agent_mode then
-    -- Extract the last user message as the prompt for the agent loop.
-    local prompt = ""
-    for i = #messages, 1, -1 do
-      if messages[i].role == "user" then
-        prompt = messages[i].content
-        break
-      end
+  -- Extract last user message
+  local prompt = ""
+  for i = #messages, 1, -1 do
+    if messages[i].role == "user" then
+      prompt = messages[i].content
+      break
     end
-    if prompt ~= "" then
-      agent_respond(buf, prompt)
-      return
+  end
+
+  -- Multi-line continuation: if prompt ends with backslash, wait for more input
+  if prompt:match("\\%s*$") then
+    vim.notify("Multi-line: remove trailing \\ and send again to submit",
+      vim.log.levels.INFO, { title = "Jenova" })
+    return
+  end
+
+  -- Slash command dispatch
+  if prompt:match("^/") then
+    dispatch_slash(buf, prompt)
+    -- Remove the slash command line from the buffer and add fresh user section
+    local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+    -- Remove the last user section that contained the slash command
+    local last_user = 0
+    for i = #lines, 1, -1 do
+      if lines[i]:match("^## user%s*$") then last_user = i; break end
     end
+    if last_user > 0 then
+      vim.api.nvim_buf_set_lines(buf, last_user - 1, -1, false, { "## user", "" })
+    else
+      vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## user", "" })
+    end
+    save_chat(buf)
+    scroll_to_bottom(buf)
+    vim.cmd("startinsert!")
+    return
+  end
+
+  if agent_mode and prompt ~= "" then
+    agent_respond(buf, prompt)
+    return
   end
 
   -- Fallback: plain streaming (conversation mode or empty prompt).

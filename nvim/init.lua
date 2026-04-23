@@ -80,8 +80,8 @@ map("n", "<leader>aj", function()
   if root == "" or root == "$JENOVA_ROOT" then
     root = vim.fn.expand("~/Projects/jenova")
   end
-  vim.cmd("term cd " .. vim.fn.shellescape(root) .. " && bin/jenova")
-end, { desc = "Jenova Agent Terminal" })
+  vim.cmd("term cd " .. vim.fn.shellescape(root) .. " && bin/jenova --repl")
+end, { desc = "Jenova CLI REPL Terminal" })
 
 --------------------------------------------------------------------------------
 -- [5] IDE COMMAND
@@ -115,7 +115,7 @@ vim.api.nvim_create_user_command("JenovaLanScan", function()
   end
 end, { desc = "Scan LAN for remote Jenova CA" })
 
-map("n", "<leader>am", "<cmd>JenovaMonitor<CR>",    { desc = "Jenova Monitor" })
+map("n", "<leader>aM", "<cmd>JenovaMonitor<CR>",    { desc = "Jenova Monitor" })
 map("n", "<leader>ah", "<cmd>checkhealth jenova<CR>", { desc = "Jenova Health" })
 map("n", "<leader>al", "<cmd>JenovaLanScan<CR>",    { desc = "Jenova LAN Scan" })
 

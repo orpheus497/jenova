@@ -1,19 +1,63 @@
 -- jenova/agent/tools/init.lua
--- Registers jvim-native tool overrides on the shared tool registry.
--- Called once during agent bootstrap from jenova/agent/init.lua.
+-- Loads the full cli-agent tool set from shared/ into the registry, then
+-- registers jvim-native overrides so buffer-aware tools shadow the disk-based
+-- CLI equivalents.
 --
--- Priority: jvim tools shadow cli-agent tools with the same name so the
--- agent automatically uses buffer APIs instead of disk I/O when running
--- inside the editor.
+-- Call order (enforced here):
+--   1. load_shared_tools()   — populates registry with all synced CLI tools
+--   2. register_overrides()  — replaces Read/Edit/LSP with jvim-native versions
+--
+-- This module is called by agent/init.lua BEFORE QueryEngine.new() so that
+-- QueryEngine.tools captures the final resolved set.
 
 local M = {}
 
-function M.register_overrides()
-  -- The shared tool registry lives in cli-agent/lua/tools/registry.lua,
-  -- synced to jenova/agent/shared/tools/registry.lua at build time.
+-- Canonical list of shared CLI tools to load from shared/tools/.
+-- Loaded via pcall so a broken individual tool does not block the rest.
+local SHARED_TOOLS = {
+  "tools.bash",
+  "tools.brief",
+  "tools.file_edit",
+  "tools.file_read",
+  "tools.file_write",
+  "tools.git",
+  "tools.glob",
+  "tools.grep",
+  "tools.local_search",
+  "tools.multiedit",
+  "tools.web_fetch",
+  "tools.web_search",
+}
+
+function M.load_shared_tools()
   local ok, registry = pcall(require, "tools.registry")
   if not ok then
-    -- Try absolute shared path as fallback
+    vim.notify("jenova.agent.tools: tools.registry not found — run make sync-modules",
+      vim.log.levels.ERROR, { title = "Jenova Agent" })
+    return false
+  end
+
+  local loaded, failed = 0, 0
+  for _, mod_name in ipairs(SHARED_TOOLS) do
+    local mok, tool = pcall(require, mod_name)
+    if mok and tool and tool.name and tool.call then
+      registry.register(tool)
+      loaded = loaded + 1
+    else
+      failed = failed + 1
+      vim.notify(
+        string.format("jenova.agent.tools: failed to load %s: %s", mod_name, tostring(tool)),
+        vim.log.levels.WARN, { title = "Jenova Agent" })
+    end
+  end
+
+  return loaded > 0
+end
+
+function M.register_overrides()
+  local ok, registry = pcall(require, "tools.registry")
+  if not ok then
+    -- Fallback to absolute dotted path
     ok, registry = pcall(require, "jenova.agent.shared.tools.registry")
   end
   if not ok then
@@ -22,14 +66,23 @@ function M.register_overrides()
     return
   end
 
-  local buffer_read = require("jenova.agent.tools.buffer_read")
-  local buffer_edit = require("jenova.agent.tools.buffer_edit")
+  -- Read → buffer_read: returns live buffer content, falls back to disk
+  local r_ok, buffer_read = pcall(require, "jenova.agent.tools.buffer_read")
+  if r_ok and buffer_read then registry.register(buffer_read) end
 
-  -- Override Read → buffer_read (live buffer content, falls back to disk)
-  registry.register(buffer_read)
+  -- Edit → buffer_edit: applies edits via vim.api, preserves undo history
+  local e_ok, buffer_edit = pcall(require, "jenova.agent.tools.buffer_edit")
+  if e_ok and buffer_edit then registry.register(buffer_edit) end
 
-  -- Override Edit → buffer_edit (buffer API search-and-replace)
-  registry.register(buffer_edit)
+  -- LSP → jvim-native: uses vim.lsp + vim.diagnostic instead of grep fallback
+  local l_ok, lsp_tool = pcall(require, "jenova.agent.tools.lsp")
+  if l_ok and lsp_tool then registry.register(lsp_tool) end
+end
+
+-- Convenience: load everything in the correct order.
+function M.setup()
+  M.load_shared_tools()
+  M.register_overrides()
 end
 
 return M

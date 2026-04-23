@@ -130,6 +130,19 @@ end
 
 -- ##Section: jenova backend integration (best-effort, no hard dependency).
 local function jenova_part()
+  -- Agent activity indicator (highest priority — checked first)
+  local chat_ok, chat = pcall(require, "jenova.chat")
+  if chat_ok and chat then
+    if chat._agent_running then
+      local tool = chat._agent_tool
+      if tool then
+        return string.format(" ⚙ %s… ", tool)
+      end
+      local turn = chat._agent_turn or 0
+      return string.format(" ⟳ turn %d ", turn)
+    end
+  end
+  -- Fall through to monitor / connected indicator
   local mon_ok, monitor = pcall(require, "jenova.monitor")
   if mon_ok and monitor and monitor.service_icons and monitor.lualine_status then
     local icons = monitor.service_icons() or ""

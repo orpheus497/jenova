@@ -14,12 +14,12 @@ local M = {
   parameters  = {
     type = "object",
     properties = {
-      path        = { type = "string",  description = "File path to edit" },
-      old_string  = { type = "string",  description = "Exact text to find" },
+      file_path   = { type = "string",  description = "Absolute or repo-relative file path to edit" },
+      old_string  = { type = "string",  description = "Exact text to find (must match verbatim including whitespace)" },
       new_string  = { type = "string",  description = "Replacement text" },
       replace_all = { type = "boolean", description = "Replace all occurrences (default false)" },
     },
-    required = { "path", "old_string", "new_string" },
+    required = { "file_path", "old_string", "new_string" },
   },
 }
 
@@ -122,12 +122,12 @@ local function disk_apply_edit(path, old_str, new_str, replace_all)
 end
 
 function M.call(args, _ctx)
-  local path       = args.path
-  local old_string = args.old_string
-  local new_string = args.new_string
+  local path        = args.file_path or args.path  -- accept both names
+  local old_string  = args.old_string
+  local new_string  = args.new_string
   local replace_all = args.replace_all or false
 
-  if not path or path == "" then return { error = "path is required" } end
+  if not path or path == "" then return { error = "file_path is required" } end
   if old_string == nil then return { error = "old_string is required" } end
   if new_string == nil then return { error = "new_string is required" } end
 
