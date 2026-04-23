@@ -176,14 +176,13 @@ end
 -- when treesitter is unavailable. Treesitter's markdown injections handle a far
 -- wider set automatically.
 local FENCED_LANGUAGES = {
-  "bash=sh", "sh", "zsh", "fish",
+  "bash=sh", "zsh=sh", "fish=sh",
   "c", "cpp", "rust", "go", "zig",
   "python", "py=python",
-  "lua", "vim", "viml=vim",
+  "lua",
   "json", "yaml", "yml=yaml", "toml",
   "html", "css", "scss",
   "javascript", "js=javascript", "typescript", "ts=typescript",
-  "markdown", "md=markdown",
   "make", "makefile=make", "cmake", "dockerfile",
   "sql", "diff", "git=diff",
 }
