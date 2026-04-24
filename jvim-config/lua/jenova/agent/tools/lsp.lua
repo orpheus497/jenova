@@ -103,9 +103,11 @@ end
 -- ── Action: diagnostics ───────────────────────────────────────────────────────
 
 local function action_diagnostics(args)
-  local diags
+  local diags = {}
+  local buf = nil
+  
   if args.file_path and args.file_path ~= "" then
-    local buf = resolve_buf(args.file_path)
+    buf = resolve_buf(args.file_path)
     if buf then
       diags = vim.diagnostic.get(buf)
     else
@@ -113,6 +115,19 @@ local function action_diagnostics(args)
     end
   else
     diags = vim.diagnostic.get()
+  end
+
+  -- Fallback: If no diagnostics found and it's a C file, try compiler-based linting
+  if (#diags == 0) and args.file_path then
+    local ext = args.file_path:match("%.([^.]+)$")
+    if ext == "c" or ext == "h" then
+      local abs = vim.fn.fnamemodify(args.file_path, ":p")
+      local res = vim.system({ "cc", "-fsyntax-only", "-I.", "-Iinclude", abs }, { text = true }):wait()
+      if res.code ~= 0 and res.stderr and res.stderr ~= "" then
+        -- Convert compiler stderr to a simplified diagnostic string
+        return { type = "text", text = "Compiler Diagnostics:\n" .. res.stderr }
+      end
+    end
   end
 
   if not diags or #diags == 0 then

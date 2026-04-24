@@ -319,6 +319,7 @@ local function get_engine()
 
   _engine = QueryEngine.new({
     system_prompt = context.build_system_prompt(),
+    tools = {}, -- Suppress formal API tool block to save context for 3B model
 
     on_text = function(text)
       vim.schedule(function()
