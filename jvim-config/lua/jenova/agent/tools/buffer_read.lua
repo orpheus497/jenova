@@ -5,7 +5,7 @@
 -- When the file is open in a jvim buffer the live buffer content is
 -- returned. Otherwise the file is loaded into a hidden buffer.
 
-local paths = require("utils.paths")
+local paths = require("jenova.agent.utils.paths")
 
 local M = {
   name = "Read",

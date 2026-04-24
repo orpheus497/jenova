@@ -9,7 +9,7 @@
 -- Returns a tree-style listing capped at depth 3 by default with .git,
 -- .jenova, node_modules and similar noise filtered out.
 
-local paths = require("utils.paths")
+local paths = require("jenova.agent.utils.paths")
 
 local M = {
   name = "LS",

@@ -907,45 +907,25 @@ local function dispatch_slash(buf, cmd_line)
     -- /tools status         — show whether tools are currently enabled
     local sub = arg:lower()
     if sub == "on" or sub == "enable" then
-      pcall(function()
-        local s = require("jenova.agent.shared.state.app_state")
-        s.set("tools_enabled", true)
-        local c = require("jenova.agent.shared.config.loader")
-        c.set("tools_enabled", true)
-      end)
+      vim.g.jenova_tools_enabled = true
       info("/tools enabled — model can call tools")
       return
     elseif sub == "off" or sub == "disable" then
-      pcall(function()
-        local s = require("jenova.agent.shared.state.app_state")
-        s.set("tools_enabled", false)
-        local c = require("jenova.agent.shared.config.loader")
-        c.set("tools_enabled", false)
-      end)
+      vim.g.jenova_tools_enabled = false
       info("/tools disabled — replies will be plain chat (no tools)")
       return
     elseif sub == "status" then
-      local enabled = true
-      pcall(function()
-        local s = require("jenova.agent.shared.state.app_state")
-        local v = s.get("tools_enabled")
-        if v ~= nil then enabled = v and true or false end
-      end)
+      local enabled = vim.g.jenova_tools_enabled ~= false
       info("/tools status: " .. (enabled and "enabled" or "disabled"))
       return
     end
-    local ok, reg = pcall(require, "jenova.agent.shared.tools.registry")
-    if not ok then ok, reg = pcall(require, "tools.registry") end
+    local ok, reg = pcall(require, "jenova.agent.registry")
     local lines = { "", "<!-- /tools -->" }
-    if ok and reg and reg.list_tools then
-      for _, t in ipairs(reg.list_tools()) do
+    if ok and reg then
+      for _, name in ipairs(reg.list()) do
+        local tool = reg.get(name)
         table.insert(lines, string.format("  • %s — %s",
-          t.name or "?",
-          (t.description or ""):sub(1, 60)))
-      end
-    elseif ok and reg and reg._tools then
-      for name, _ in pairs(reg._tools) do
-        table.insert(lines, "  • " .. name)
+          name, (tool.description or ""):sub(1, 60)))
       end
     else
       table.insert(lines, "  (registry not available)")
@@ -959,22 +939,17 @@ local function dispatch_slash(buf, cmd_line)
 
   elseif cmd == "permissions" or cmd == "perm" then
     -- /permissions [default|auto|plan|yolo]
-    -- yolo is an alias for bypassPermissions (silently auto-approve everything)
     local sub = arg:lower()
     local mode_map = {
       default = "default",
       ask     = "default",
       auto    = "auto",
       plan    = "plan",
-      yolo    = "bypassPermissions",
-      bypass  = "bypassPermissions",
+      yolo    = "bypass",
+      bypass  = "bypass",
     }
     if sub == "" then
-      local mode = "default"
-      pcall(function()
-        local s = require("jenova.agent.shared.state.app_state")
-        mode = s.get("permission_mode") or mode
-      end)
+      local mode = vim.g.jenova_permission_mode or "default"
       info("permission mode: " .. mode .. "  (use /permissions default|auto|plan|yolo)")
       return
     end
@@ -983,23 +958,14 @@ local function dispatch_slash(buf, cmd_line)
       info("unknown mode '" .. sub .. "' (try: default, auto, plan, yolo)")
       return
     end
-    pcall(function()
-      local s = require("jenova.agent.shared.state.app_state")
-      s.set("permission_mode", mode)
-      local c = require("jenova.agent.shared.config.loader")
-      c.set("permission_mode", mode)
-    end)
+    vim.g.jenova_permission_mode = mode
     info("permission mode → " .. mode)
 
   elseif cmd == "tool-choice" or cmd == "toolchoice" then
     -- /tool-choice [auto|required|none]
     local sub = arg:lower()
     if sub == "" then
-      local choice = "auto"
-      pcall(function()
-        local s = require("jenova.agent.shared.state.app_state")
-        choice = s.get("tool_choice") or choice
-      end)
+      local choice = vim.g.jenova_tool_choice or "auto"
       info("tool_choice: " .. choice .. "  (use /tool-choice auto|required)")
       return
     end
@@ -1007,12 +973,7 @@ local function dispatch_slash(buf, cmd_line)
       info("invalid tool_choice (use: auto, required, none)")
       return
     end
-    pcall(function()
-      local s = require("jenova.agent.shared.state.app_state")
-      s.set("tool_choice", sub)
-      local c = require("jenova.agent.shared.config.loader")
-      c.set("tool_choice", sub)
-    end)
+    vim.g.jenova_tool_choice = sub
     info("tool_choice → " .. sub)
 
   elseif cmd == "model" then
@@ -1146,11 +1107,6 @@ function M.respond()
     scroll_to_bottom(buf)
     vim.cmd("startinsert!")
     return
-  end
-
-  local ok_state, app_state = pcall(require, "jenova.agent.shared.state.app_state")
-  if ok_state and app_state then
-    app_state.set("tools_enabled", agent_mode)
   end
 
   agent_respond(buf, prompt, nil, history)

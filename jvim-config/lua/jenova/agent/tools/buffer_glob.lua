@@ -8,7 +8,7 @@
 -- vim.fn.glob with the magic-** suffix, then sorts newest-first to match
 -- upstream cli-agent behaviour the model expects.
 
-local paths = require("utils.paths")
+local paths = require("jenova.agent.utils.paths")
 
 local M = {
   name = "Glob",

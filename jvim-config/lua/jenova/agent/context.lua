@@ -170,15 +170,18 @@ function M.build_editor_context(chat_buf)
   if path ~= "" then
     table.insert(lines, string.format("file: %s:%d:%d (%s)",
       vim.fn.fnamemodify(path, ":~:."), row, col + 1, ft))
-    
-    -- AUTOMATICALLY INJECT CONTENT OF THE WORKSPACE BUFFER
-    local content = get_buffer_content(path)
+
+    -- Inject the full active buffer with line numbers. The agent has the
+    -- complete file from the start and can reference exact line numbers in
+    -- Edit/MultiEdit without a prior Read call.
+    local all_lines = vim.api.nvim_buf_get_lines(ws_buf, 0, -1, false)
     local numbered = {}
-    for i, l in ipairs(vim.split(content, "\n", { plain = true })) do
+    for i, l in ipairs(all_lines) do
       table.insert(numbered, string.format("%6d | %s", i, l))
     end
-    table.insert(lines, string.format("active_buffer_content (%s):\n```\n%s\n```", 
-      vim.fn.fnamemodify(path, ":~:."), table.concat(numbered, "\n")))
+    local rel = vim.fn.fnamemodify(path, ":~:.")
+    table.insert(lines, string.format("active_buffer (%s, %d lines):\n```\n%s\n```",
+      rel, #all_lines, table.concat(numbered, "\n")))
   end
 
   if metadata.path and metadata.path ~= path then

@@ -1,9 +1,9 @@
 return {
   {
-    dir = vim.env.VIMRUNTIME .. "/lua/jenova",
-    name = "jenova-chat",
+    "jenova.chat",
     event = "VeryLazy",
     config = function()
+      require("jenova.agent").setup()
       require("jenova.chat").setup()
     end,
   },

@@ -191,6 +191,47 @@ function M.post_stream(url, headers_str, body, on_chunk)
   return table.concat(buf), nil
 end
 
+--- Generate a completion, streaming chunks live to on_chunk while accumulating
+--- the full response text for tool-call parsing.
+---
+--- @param request table  Full API request (messages, model, system, etc.)
+--- @param on_chunk function|nil  Called per text delta (for live buffer updates).
+---                               When nil, falls back to a blocking non-streaming POST.
+--- @return string  The complete assembled response text.
+function M.generate_request(request, on_chunk)
+  local url = ep.proxy_url()
+  local body = vim.json.encode(request)
+
+  if on_chunk then
+    -- Streaming path: accumulate text chunks while forwarding each to on_chunk.
+    -- post_stream handles SSE parsing, calls on_chunk(delta) per token via vim.schedule,
+    -- and yields the calling coroutine until streaming completes.
+    local chunks = {}
+    local function collect(delta)
+      table.insert(chunks, delta)
+      on_chunk(delta)
+    end
+    local _, err = M.post_stream(url, nil, body, collect)
+    if err then error("generate_request (stream): " .. err) end
+    return table.concat(chunks)
+  end
+
+  -- Non-streaming fallback (used when called outside a coroutine / no on_chunk).
+  local res, err = M.post_json(url, nil, body)
+  if err then error("generate_request: " .. err) end
+
+  local ok, data = pcall(vim.json.decode, res)
+  if not ok then return res end
+
+  if data.choices and data.choices[1] then
+    local msg = data.choices[1].message or {}
+    return msg.content or ""
+  end
+
+  -- Backend may return a raw string or non-standard envelope.
+  return res
+end
+
 -- ── Endpoint helpers for the jvim context ─────────────────────────────────────
 
 function M.base_url()

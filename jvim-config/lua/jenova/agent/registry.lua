@@ -25,6 +25,10 @@ function M.get_all()
   return res
 end
 
+function M.clear()
+  tools = {}
+end
+
 function M.execute(name, args, context)
   local tool = tools[name]
   if not tool then return nil, "Unknown tool: " .. name end

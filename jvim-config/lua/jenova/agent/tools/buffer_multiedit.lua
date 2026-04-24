@@ -1,12 +1,12 @@
 -- jenova/agent/tools/buffer_multiedit.lua
--- jvim-native override for the shared "MultiEdit" tool.
+-- jvim-native MultiEdit tool.
 -- Applies multiple sequential line-range-based edits to a single file.
 
-local paths = require("utils.paths")
+local paths = require("jenova.agent.utils.paths")
 
 local M = {
   name = "MultiEdit",
-  description = "Apply multiple line-range edits. MUST order bottom-to-top (highest start_line first).",
+  description = "Apply multiple line-range edits to one file. Edits are sorted bottom-to-top automatically so line numbers stay stable.",
   parameters = {
     type = "object",
     properties = {
@@ -35,71 +35,58 @@ function M.user_facing_name(input)
   return input and input.file_path and ("MultiEdit: " .. input.file_path) or "MultiEdit"
 end
 
-function M.check_permissions(input, ctx)
-  local ok_mgr, manager = pcall(require, "permissions.manager")
-  if not ok_mgr or not manager or not manager.can_use_tool then
-    return { allowed = true }
-  end
-  local allowed, reason = manager.can_use_tool("MultiEdit", input, ctx or {})
-  return { allowed = allowed, reason = reason }
-end
+function M.check_permissions() return { allowed = true } end
 
 function M.call(args, context)
   local path = args.file_path or args.path
   if not path or path == "" then return { type = "error", error = "file_path is required" } end
   local edits = args.edits
-  if type(edits) ~= "table" or #edits == 0 then return { type = "error", error = "edits array is required and must not be empty" } end
+  if type(edits) ~= "table" or #edits == 0 then
+    return { type = "error", error = "edits array is required and must not be empty" }
+  end
 
   local resolved = paths.resolve(path, context and context.cwd)
   if paths.is_restricted(resolved) then return paths.restricted_error(resolved) end
 
   local abs = vim.fn.fnamemodify(resolved, ":p")
-
-  -- Use bufadd/bufload to handle the file transparently
   local buf = vim.fn.bufadd(abs)
   pcall(vim.fn.bufload, buf)
 
   local buf_line_count = vim.api.nvim_buf_line_count(buf)
-  
-  -- Sort edits in descending order of start_line so that replacements don't shift subsequent lines
-  local sorted_edits = {}
-  for _, e in ipairs(edits) do table.insert(sorted_edits, e) end
-  table.sort(sorted_edits, function(a, b)
-    return (a.start_line or 0) > (b.start_line or 0)
-  end)
 
-  for i, edit in ipairs(sorted_edits) do
-    local start_line = edit.start_line
-    local end_line = edit.end_line
-    local new_string = edit.new_string
+  -- Sort descending so edits don't shift subsequent line numbers.
+  local sorted = {}
+  for _, e in ipairs(edits) do table.insert(sorted, e) end
+  table.sort(sorted, function(a, b) return (a.start_line or 0) > (b.start_line or 0) end)
 
-    if type(start_line) ~= "number" or type(end_line) ~= "number" or not new_string then
-      return { type = "error", error = string.format("Edit %d is missing required fields or has invalid types", i) }
+  for i, edit in ipairs(sorted) do
+    local sl = edit.start_line
+    local el = edit.end_line
+    local ns = edit.new_string
+
+    if type(sl) ~= "number" or type(el) ~= "number" or not ns then
+      return { type = "error", error = string.format("Edit %d is missing required fields", i) }
     end
-    if start_line < 1 then return { type = "error", error = string.format("Edit %d: start_line must be >= 1", i) } end
-    if end_line < start_line - 1 then return { type = "error", error = string.format("Edit %d: end_line cannot be less than start_line - 1", i) } end
-    if start_line > buf_line_count + 1 then
-      return { type = "error", error = string.format("Edit %d: start_line %d is beyond the file length", i, start_line) }
+    if sl < 1 then return { type = "error", error = string.format("Edit %d: start_line must be >= 1", i) } end
+    if el < sl - 1 then return { type = "error", error = string.format("Edit %d: end_line < start_line - 1", i) } end
+    if sl > buf_line_count + 1 then
+      return { type = "error", error = string.format("Edit %d: start_line %d beyond file length %d", i, sl, buf_line_count) }
     end
 
     local new_lines = {}
-    if new_string == "" then
-      new_lines = {}
-    else
-      new_lines = vim.split(new_string, "\n", { plain = true })
-      if #new_lines > 0 and new_lines[#new_lines] == "" and new_string:sub(-1) == "\n" then
+    if ns ~= "" then
+      new_lines = vim.split(ns, "\n", { plain = true })
+      if #new_lines > 0 and new_lines[#new_lines] == "" and ns:sub(-1) == "\n" then
         table.remove(new_lines)
       end
     end
-    
-    local ok, err = pcall(function()
-      vim.api.nvim_buf_set_lines(buf, start_line - 1, math.min(end_line, buf_line_count), false, new_lines)
-    end)
 
+    local ok, err = pcall(function()
+      vim.api.nvim_buf_set_lines(buf, sl - 1, math.min(el, buf_line_count), false, new_lines)
+    end)
     if not ok then
-      return { type = "error", error = string.format("Failed to apply edit %d: %s", i, tostring(err)) }
+      return { type = "error", error = string.format("Edit %d failed: %s", i, tostring(err)) }
     end
-    -- Update buf_line_count for subsequent edits
     buf_line_count = vim.api.nvim_buf_line_count(buf)
   end
 
@@ -111,7 +98,7 @@ function M.call(args, context)
     end)
   end
 
-  return { type = "text", text = string.format("Successfully applied %d edits to %s", #edits, path) }
+  return { type = "text", text = string.format("Applied %d edit(s) to %s", #edits, path) }
 end
 
 return M

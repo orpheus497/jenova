@@ -9,13 +9,14 @@ local NATIVE_TOOLS = {
   "jenova.agent.tools.buffer_list",
   "jenova.agent.tools.buffer_shell",
   "jenova.agent.tools.lsp",
+  "jenova.agent.tools.lsp_diag",
   "jenova.agent.tools.ask_user",
 }
 
 local M = {}
 
 function M.setup()
-  local ok, registry = pcall(require, "tools.registry")
+  local ok, registry = pcall(require, "jenova.agent.registry")
   if not ok then
     vim.notify("jenova.agent.tools: registry not found", vim.log.levels.ERROR, {title="Jenova Agent"})
     return

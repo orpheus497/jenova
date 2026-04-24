@@ -2,7 +2,7 @@
 -- jvim-native Grep tool. 
 -- Searches live buffer content first (unsaved changes), then falls back to disk.
 
-local paths = require("utils.paths")
+local paths = require("jenova.agent.utils.paths")
 
 local M = {
   name = "Grep",
