@@ -11,16 +11,13 @@
 local paths = require("utils.paths")
 
 local M = {
-  name        = "Glob",
-  description = "Find files by glob pattern (e.g. '**/*.lua', 'src/**/*.rs'). " ..
-    "Returns matching file paths (one per line), newest first. " ..
-    "Use this ONLY when you know the specific file pattern you are looking for. " ..
-    "DO NOT use this to just 'explore' or 'list' a directory; use the LS tool for that.",
-  parameters  = {
+  name = "Glob",
+  description = "Find files by pattern (e.g. **/*.lua). Returns newest first.",
+  parameters = {
     type = "object",
     properties = {
-      pattern = { type = "string", description = "Glob pattern (** matches any number of directories)" },
-      path    = { type = "string", description = "Root directory to search from (default: workspace cwd)" },
+      pattern = { type = "string", description = "Glob pattern" },
+      path    = { type = "string", description = "Search root (default: .)" },
     },
     required = { "pattern" },
   },

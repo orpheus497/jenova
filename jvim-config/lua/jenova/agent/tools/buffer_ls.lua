@@ -12,17 +12,14 @@
 local paths = require("utils.paths")
 
 local M = {
-  name        = "LS",
-  description = "List the contents of a directory in tree form. " ..
-    "Use this instead of Glob or Shell to explore project structures and discover files before reading them. " ..
-    "Defaults to depth 3 from the given path; pass depth=1 for a shallow listing.",
-  parameters  = {
+  name = "LS",
+  description = "Tree listing of workspace directory. Use to discover files.",
+  parameters = {
     type = "object",
     properties = {
-      path  = { type = "string",  description = "Absolute or workspace-relative directory (default: workspace cwd)" },
-      depth = { type = "integer", description = "Maximum traversal depth (default 3, max 5)" },
+      path  = { type = "string", description = "Target directory (default: .)" },
+      depth = { type = "integer", description = "Max depth (default 3)" },
     },
-    required = {},
   },
 }
 

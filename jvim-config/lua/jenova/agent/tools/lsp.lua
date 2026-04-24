@@ -6,43 +6,17 @@
 local M = {}
 
 M.name = "LSP"
-M.description = "Query live language server data inside jvim. This is the ONLY tool you should use to check for errors, unused variables, and linting issues. " ..
-  "CRITICAL: You MUST provide the `file_path` argument to get diagnostics for a specific file. Without a file_path, you will only see errors for files already open in the editor. Actions: " ..
-  "'diagnostics' (errors/warnings), " ..
-  "'definition' (jump targets for symbol at a position), " ..
-  "'references' (all usage sites of a symbol), " ..
-  "'hover' (type/doc for symbol at a position), " ..
-  "'symbols' (all symbols in a file or workspace), " ..
-  "'code_actions' (available fixes at a position), " ..
-  "'rename_preview' (show where a rename would touch)."
+M.description = "ONLY tool for errors, linting, and definitions inside jvim. CRITICAL: You MUST provide 'file_path'. Actions: diagnostics, definition, references, hover, symbols, code_actions, rename_preview."
 
 M.parameters = {
   type = "object",
   properties = {
-    action = {
-      type = "string",
-      description = "Action: diagnostics | definition | references | hover | symbols | code_actions | rename_preview",
-    },
-    file_path = {
-      type = "string",
-      description = "Absolute or repo-relative file path (required for most actions)",
-    },
-    line = {
-      type = "integer",
-      description = "1-based line number (required for definition, references, hover, code_actions, rename_preview)",
-    },
-    character = {
-      type = "integer",
-      description = "0-based column (required for definition, references, hover, code_actions, rename_preview)",
-    },
-    query = {
-      type = "string",
-      description = "Symbol name for workspace 'symbols' search",
-    },
-    new_name = {
-      type = "string",
-      description = "New symbol name for rename_preview",
-    },
+    action = { enum = {"diagnostics", "definition", "references", "hover", "symbols", "code_actions", "rename_preview"} },
+    file_path = { type = "string", description = "Target file (required)" },
+    line = { type = "integer", description = "1-based line" },
+    character = { type = "integer", description = "0-based col" },
+    query = { type = "string", description = "Search query" },
+    new_name = { type = "string", description = "New name" },
   },
   required = { "action" },
 }

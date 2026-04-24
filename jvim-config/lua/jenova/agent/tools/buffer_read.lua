@@ -8,16 +8,14 @@
 local paths = require("utils.paths")
 
 local M = {
-  name        = "Read",
-  description = "Read the contents of a file. Returns line-numbered output. " ..
-    "Always Read files before Editing them to get exact line numbers. " ..
-    "Supports start_line and end_line for targeted reading.",
-  parameters  = {
+  name = "Read",
+  description = "Read file with line numbers. You MUST Read before Edit/MultiEdit to get exact line numbers.",
+  parameters = {
     type = "object",
     properties = {
-      file_path   = { type = "string",  description = "Absolute or workspace-relative path to read" },
-      start_line  = { type = "integer", description = "The 1-based line number to start reading from" },
-      end_line    = { type = "integer", description = "The 1-based line number to end reading at (inclusive)" },
+      file_path  = { type = "string" },
+      start_line = { type = "integer", description = "1-based start" },
+      end_line   = { type = "integer", description = "1-based end" },
     },
     required = { "file_path" },
   },

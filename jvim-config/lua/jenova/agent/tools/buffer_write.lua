@@ -1,18 +1,17 @@
 -- jenova/agent/tools/buffer_write.lua
--- jvim-native override for the shared "Write" tool.
--- Overwrites file and updates open buffers to show changes immediately.
+-- jvim-native Write tool.
+-- Unified buffer-first logic for creating or overwriting files.
 
 local paths = require("utils.paths")
 
 local M = {
   name        = "Write",
-  description = "Write content to a file, creating it and parent directories if they don't exist. " ..
-    "Overwrites existing files. When the file is open in jvim, the live buffer is updated in real-time.",
+  description = "Write content to a file. Uses jvim buffers to ensure real-time updates and proper formatting.",
   parameters  = {
     type = "object",
     properties = {
-      file_path = { type = "string", description = "Path to the file to write (absolute or relative to working directory)" },
-      content   = { type = "string", description = "The content to write to the file" },
+      file_path = { type = "string", description = "Target file path" },
+      content   = { type = "string", description = "Content to write" },
     },
     required = { "file_path", "content" }
   },
@@ -34,16 +33,6 @@ function M.check_permissions(input, ctx)
   return { allowed = allowed, reason = reason }
 end
 
-local function find_buf_by_path(abs_path)
-  for _, b in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_loaded(b) then
-      local bname = vim.api.nvim_buf_get_name(b)
-      if bname == abs_path then return b end
-    end
-  end
-  return nil
-end
-
 function M.call(args, context)
   local path = args.file_path
   local content = args.content
@@ -56,22 +45,28 @@ function M.call(args, context)
   local abs = vim.fn.fnamemodify(resolved, ":p")
   local dir = vim.fn.fnamemodify(abs, ":h")
 
+  -- Ensure directory exists
   vim.fn.mkdir(dir, "p")
+  
+  -- Unified buffer logic: add/load the buffer (works for new or existing files)
+  local buf = vim.fn.bufadd(abs)
+  vim.fn.bufload(buf)
+
   local lines = vim.split(content, "\n", { plain = true })
   
-  -- If buffer is open, update it
-  local buf = find_buf_by_path(abs)
-  if buf then
-    vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-    vim.bo[buf].modified = false
-  end
+  -- Replace entire buffer content
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.bo[buf].modified = true
 
-  -- Also write to disk
-  local ok = vim.fn.writefile(lines, abs)
-  if ok == 0 then
-    return { type = "text", text = "File written: " .. abs }
+  -- Save the buffer
+  local ok, err = pcall(vim.api.nvim_buf_call, buf, function()
+    vim.cmd("silent! write! " .. vim.fn.fnameescape(abs))
+  end)
+
+  if ok then
+    return { type = "text", text = "File written successfully: " .. abs }
   else
-    return { type = "error", error = "Failed to write file: " .. abs }
+    return { type = "error", error = "Failed to write file: " .. tostring(err) }
   end
 end
 

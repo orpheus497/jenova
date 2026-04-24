@@ -8,18 +8,15 @@
 local paths = require("utils.paths")
 
 local M = {
-  name        = "Edit",
-  description = "Edit a file using line ranges instead of string matching. " ..
-    "Replaces lines from start_line to end_line (inclusive) with new_string. " ..
-    "Line numbers are 1-based. To insert without deleting, use start_line = end_line + 1. " ..
-    "Always Read the file first to know the exact line numbers.",
-  parameters  = {
+  name = "Edit",
+  description = "Replace line range [start, end] with new_string. Use start=end+1 to insert.",
+  parameters = {
     type = "object",
     properties = {
-      file_path   = { type = "string",  description = "Absolute or workspace-relative file path to edit" },
-      start_line  = { type = "integer", description = "The 1-based line number to start replacing from" },
-      end_line    = { type = "integer", description = "The 1-based line number to end replacing at (inclusive)" },
-      new_string  = { type = "string",  description = "The new replacement text" },
+      file_path  = { type = "string" },
+      start_line = { type = "integer" },
+      end_line   = { type = "integer" },
+      new_string = { type = "string" },
     },
     required = { "file_path", "start_line", "end_line", "new_string" },
   },

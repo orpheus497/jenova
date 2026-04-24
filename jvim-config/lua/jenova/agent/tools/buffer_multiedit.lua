@@ -5,24 +5,20 @@
 local paths = require("utils.paths")
 
 local M = {
-  name        = "MultiEdit",
-  description = "Apply multiple sequential line-range edits to a single file in one operation. " ..
-    "Always Read the file first to get accurate line numbers. " ..
-    "IMPORTANT: Edits MUST be ordered from bottom to top (highest line numbers first) " ..
-    "so that earlier edits do not shift the line numbers for subsequent edits.",
-  parameters  = {
+  name = "MultiEdit",
+  description = "Apply multiple line-range edits. MUST order bottom-to-top (highest start_line first).",
+  parameters = {
     type = "object",
     properties = {
-      file_path = { type = "string", description = "Absolute or workspace-relative file path to edit" },
+      file_path = { type = "string" },
       edits = {
         type = "array",
-        description = "Array of edit operations, MUST be ordered from highest line number to lowest.",
         items = {
           type = "object",
           properties = {
-            start_line = { type = "integer", description = "The 1-based line number to start replacing from" },
-            end_line   = { type = "integer", description = "The 1-based line number to end replacing at (inclusive)" },
-            new_string = { type = "string",  description = "The new replacement text" },
+            start_line = { type = "integer" },
+            end_line   = { type = "integer" },
+            new_string = { type = "string" },
           },
           required = { "start_line", "end_line", "new_string" }
         }
