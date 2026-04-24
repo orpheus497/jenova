@@ -65,12 +65,20 @@ function M.call(args, context)
     return { type = "error", error = string.format("start_line %d is beyond the file length of %d lines", start_line, buf_line_count) }
   end
 
-  -- Trim any trailing newline to prevent inserting an extra blank line
-  if new_string:sub(-1) == "\n" then
+  -- Trim exactly one trailing newline IF it's a multi-line string ending in a newline
+  -- to match the expectation of vim.split, but don't collapse "\n" to ""
+  if #new_string > 1 and new_string:sub(-1) == "\n" then
     new_string = new_string:sub(1, -2)
   end
 
-  local new_lines = new_string == "" and {} or vim.split(new_string, "\n", { plain = true })
+  local new_lines = {}
+  if new_string == "" then
+    new_lines = {}
+  elseif new_string == "\n" then
+    new_lines = { "", "" }
+  else
+    new_lines = vim.split(new_string, "\n", { plain = true })
+  end
   
   local ok, err = pcall(function()
     -- vim.api.nvim_buf_set_lines uses 0-based indexing and is end-exclusive

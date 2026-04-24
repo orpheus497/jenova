@@ -73,7 +73,6 @@ function M.call(args, context)
     end
   end
 
-  -- 2. Call ripgrep for the rest
   local rg_cmd = { "rg", "-n", "--no-heading" }
   if mode == "files_with_matches" then rg_cmd = { "rg", "-l" }
   elseif mode == "count" then rg_cmd = { "rg", "-c" } end
@@ -82,7 +81,10 @@ function M.call(args, context)
   table.insert(rg_cmd, pattern)
   table.insert(rg_cmd, target)
 
-  local res = vim.system(rg_cmd, { text = true, cwd = cwd }):wait()
+  -- Wait with a 5-second timeout to prevent editor stalls
+  local obj = vim.system(rg_cmd, { text = true, cwd = cwd })
+  local res = obj:wait(5000)
+
   if res.code == 0 and res.stdout then
     for _, line in ipairs(vim.split(res.stdout, "\n", { plain = true })) do
       if line ~= "" then
@@ -92,6 +94,10 @@ function M.call(args, context)
           table.insert(results, line)
         end
       end
+    end
+  elseif res.signal ~= 0 or res.code ~= 0 then
+    if res.signal == 15 or res.signal == 9 then
+      return { type = "error", error = "Grep timed out after 5 seconds." }
     end
   end
 
