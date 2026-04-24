@@ -299,7 +299,7 @@ However, it is no longer the primary interactive interface. Documentation and in
 scripts will direct users to `jenova` (full environment) for interactive use and
 `jenova-cli` for scripted use.
 
-### 4.1 CLI Agent Cleanup (from UNIFICATION_PLAN.md Phase 4, still open)
+### 4.1 CLI Agent Cleanup (open)
 
 - [ ] Remove dead `process_tool_calls()` / `execute_tool()` in `agent/loop.lua`
 - [ ] Consolidate `provider_base.generate()` vs `create_message_stream()` call paths
@@ -311,7 +311,7 @@ scripts will direct users to `jenova` (full environment) for interactive use and
 ## Phase 5 — Documentation & Cleanup
 
 - [x] Update `README.md` — keymaps table, directory layout, build instructions
-- [x] Update `cli-agent/docs/architecture.md` to reflect shared module strategy
+- [x] Consolidate auxiliary docs into root `README.md` + `PLAN.md` (removed `cli-agent/README.md`, `cli-agent/docs/architecture.md`, `cli-agent/docs/UNIFICATION_PLAN.md`; `models/README.md` and `hardware-profiles/README.md` retained as in-tree references)
 - [ ] Add `jvim/runtime/lua/jenova/agent/` architecture doc
 - [ ] Remove references to launching `bin/jenova` as an interactive terminal agent in
       user-facing docs (redirect to `jenova` top-level launcher)

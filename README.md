@@ -42,7 +42,7 @@ Jenova runs three persistent daemon processes:
 
 These are managed as a unit by `jenova-ca` with 3-PID tracking.
 
-The `cli-agent` is a standalone C + Lua 5.4 binary that provides an interactive terminal agent. It links against libcurl, OpenSSL, and optionally llama.cpp directly. It communicates with the backend daemons over HTTP, or can run inference locally via its own embedded llama.cpp bindings. See `cli-agent/README.md` for build instructions.
+The `cli-agent` is a standalone C + Lua 5.4 binary that provides an interactive terminal agent. It links against libcurl, OpenSSL, and optionally llama.cpp directly. It communicates with the backend daemons over HTTP, or can run inference locally via its own embedded llama.cpp bindings. See [CLI Agent](#cli-agent-jenova-cli) below for build, structure, tools, and security notes.
 
 ## Hardware & Performance
 
@@ -361,7 +361,6 @@ jenova/
 │   │                           permissions, context, coordinator, buddy, history, hooks, plugins,
 │   │                           services, skills, state, utils, vim, and init.lua
 │   ├── include/              Public C header (jenova.h)
-│   ├── docs/                 Architecture documentation
 │   ├── vendor/               Vendored dependencies (Lua 5.4)
 │   └── build/                Build output (gitignored)
 ├── etc/                      Configuration files (jenova.conf)
@@ -663,7 +662,7 @@ make cli-agent          # from the repo root
 cd cli-agent && gmake   # uses CMake under the hood, builds to build/cli-agent
 ```
 
-Requirements: `cmake`, `lua54`, `curl`, `openssl`. See `cli-agent/README.md` for details.
+Requirements: `cmake`, `lua54`, `curl`, `openssl`. Full CLI agent reference is in the [CLI Agent](#cli-agent-jenova-cli) section below.
 
 ### Building jvim
 
@@ -706,6 +705,215 @@ The `<leader>as` keybind in jvim opens a web search chat. The proxy queries Duck
 - **macOS:** `curl` (preinstalled on recent macOS)
 
 The proxy auto-detects `fetch` or `curl` at startup and logs which client is in use. If neither is found, web search is disabled with a log warning.
+
+## CLI Agent (`jenova-cli`)
+
+Pure C + Lua + llama.cpp AI coding agent. Zero Rust dependency. All system services implemented in C11; all application logic in Lua 5.4.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Lua Application Layer                 │
+│  ┌──────────┐ ┌──────────┐ ┌─────────┐ ┌────────────┐   │
+│  │  Query   │ │  Tools   │ │Providers│ │    UI      │   │
+│  │  Engine  │ │ Registry │ │ (LLM)   │ │  (ANSI)    │   │
+│  └──────────┘ └──────────┘ └─────────┘ └────────────┘   │
+├─────────────────────────────────────────────────────────┤
+│                   C Service Layer                        │
+│  ┌──────┐ ┌─────┐ ┌────┐ ┌──────┐ ┌────┐ ┌──┐ ┌───┐    │
+│  │Agent │ │HTTP │ │Auth│ │Crypto│ │JSON│ │FS│ │MCP│    │
+│  │(LSP) │ │curl │ │    │ │ ssl  │ │    │ │  │ │   │    │
+│  └──────┘ └─────┘ └────┘ └──────┘ └────┘ └──┘ └───┘    │
+│  ┌─────────┐ ┌───────┐ ┌─────────┐                      │
+│  │ Process │ │ llama │ │ sandbox │                      │
+│  │  fork   │ │ .cpp  │ │         │                      │
+│  └─────────┘ └───────┘ └─────────┘                      │
+├─────────────────────────────────────────────────────────┤
+│                   llama.cpp (Local LLM)                  │
+│  GGUF model loading · Text generation · Token counting   │
+└─────────────────────────────────────────────────────────┘
+```
+
+The agentic loop lives in `cli-agent/lua/engine/query_engine.lua` (QueryEngine). `lua/agent/loop.lua` is a thin shim that sets up the REPL and delegates all LLM generation and tool execution to QueryEngine. Slash commands and the REPL share the same code path.
+
+### Role in the Jenova Ecosystem
+
+`cli-agent` is the **headless agent** for scripted, CI, and one-shot workflows. The canonical interactive experience is the **jvim embedded agent** (`jvim/runtime/lua/jenova/agent/`), which runs inside the editor with full buffer, LSP, and context access. Both agents share the same `QueryEngine`, tool registry, and provider layer.
+
+```
+Interactive use:   jenova       →  jenova-ca (backend)  +  jvim (embedded agent)
+Headless use:      jenova-cli   →  jenova-ca (optional) +  cli-agent
+```
+
+Shared Lua modules live in `cli-agent/lua/` as the source of truth and are synced into `jvim/runtime/lua/jenova/agent/shared/` at build time via `make sync-modules`.
+
+### Build
+
+```bash
+gmake                  # debug build (use gmake on FreeBSD; GNU make on Linux/macOS)
+gmake release          # release build
+gmake install PREFIX=/usr/local
+cmake -B build/cmake -DAGENT_WITH_LLAMA=ON && cmake --build build/cmake   # with llama.cpp linked
+```
+
+Requirements: C11 compiler, CMake ≥ 3.16, libcurl (dev), OpenSSL (optional, for crypto), Lua 5.4 (vendored).
+
+| OS | Install |
+|---|---|
+| FreeBSD | `pkg install cmake curl openssl` |
+| Linux | `apt install cmake libcurl4-openssl-dev libssl-dev` |
+| macOS | `brew install cmake curl openssl` |
+
+### Structure
+
+```
+cli-agent/
+├── src/
+│   ├── agent/       Agent lifecycle, LSP framing (Content-Length), write_all helper
+│   ├── auth/        API key management (~/.config/cli-agent/keys)
+│   ├── core/        main.c, init.c, lua_bindings.c
+│   ├── crypto/      SHA-256, HMAC, UUID, base64
+│   ├── fs/          Filesystem operations (glob, grep, read, write, edit)
+│   ├── json/        JSON pretty-printer and utilities
+│   ├── llama/       llama.cpp integration (model load, generate, embed)
+│   ├── mcp/         Model Context Protocol (JSON-RPC framing, init/call)
+│   ├── net/         HTTP client (libcurl wrapper)
+│   ├── process/     Subprocess spawning (fork/exec, pipe capture)
+│   └── sandbox/     Path and command validation
+├── lua/
+│   ├── agent/       REPL loop shim, session memory, ANSI UI
+│   ├── assistant/   Session history, query engine integration
+│   ├── buddy/       Companion mode
+│   ├── cli/         REPL commands (registry, extended, ported)
+│   ├── config/      Configuration loader (shared with jvim)
+│   ├── constants/   Shared constants
+│   ├── context/     Context window management (shared with jvim)
+│   ├── coordinator/ Multi-agent coordinator mode
+│   ├── engine/      QueryEngine — unified Plan→Execute→Reflect loop (shared with jvim)
+│   ├── history/     Conversation history (shared with jvim)
+│   ├── hooks/       Event hooks
+│   ├── permissions/ Permission manager — default/auto/plan/bypass modes (shared with jvim)
+│   ├── plugins/     Plugin loader
+│   ├── providers/   LLM providers — jenova_backend, llamacpp, openai (shared with jvim)
+│   ├── services/    Memory, API helpers, tool_verifier
+│   ├── skills/      Skill definitions
+│   ├── state/       Application state (app_state) (shared with jvim)
+│   ├── tools/       43 built-in tools — see table below (shared registry with jvim)
+│   ├── ui/          Terminal UI screens and manager
+│   ├── utils/       json_fallback, http, shell, paths, string, … (shared with jvim)
+│   ├── vim/         Vim/Neovim integration bridge
+│   └── init.lua     Bootstrap entry point (REPL, one-shot, MCP server modes)
+├── include/         jenova.h (public C API)
+├── tests/           C + Lua + integration tests
+├── vendor/          Vendored dependencies (Lua 5.4)
+├── CMakeLists.txt   Build configuration
+└── Makefile         Convenience targets (gmake wrapper)
+```
+
+### Unified Agent Loop
+
+```
+User input
+    │
+    ▼
+QueryEngine:query()
+    ├─ Build system prompt (context + memory + [editor context if jvim])
+    ├─ Send to provider (jenova_backend / llamacpp / cloud)
+    ├─ Stream response
+    │    ├─ Render text tokens via ui.agent_response()
+    │    └─ Collect tool_use blocks
+    ├─ For each tool call:
+    │    ├─ permissions.manager.can_use_tool() → prompt user if needed
+    │    ├─ tool_registry.execute(name, args, context)
+    │    │    └─ [jvim] buffer/LSP tools shadow CLI file tools
+    │    └─ Append tool result to message history
+    ├─ If tool calls were made → loop (multi-turn)
+    └─ Return final response
+```
+
+### Tools (43)
+
+All built-in tools registered via the tool registry (`cli-agent/lua/tools/registry.lua`). Tool names are canonical — they match the `M.name` field used by the LLM and permissions manager:
+
+| Name | Description |
+|---|---|
+| `Agent` | Spawn a sub-agent for a subtask |
+| `AskUserQuestion` | Prompt the user for input |
+| `Brief` | Summarise a file or topic |
+| `Config` | Read/write agent configuration |
+| `Edit` | Edit a file with search/replace (exact match, unique context required) |
+| `EnterPlanMode` | Switch to read-only planning mode (restricts to read-only tools) |
+| `EnterWorktree` | Enter a git worktree context |
+| `ExitPlanMode` | Exit plan mode, restore full tool access |
+| `ExitWorktree` | Exit a git worktree context |
+| `Glob` | Find files by name pattern |
+| `Grep` | Search file contents by regex |
+| `LSP` | Language-server protocol queries (hover, definition, references) |
+| `ListMcpResources` | Browse resources exposed by a connected MCP server |
+| `LocalSearch` | BM25 + semantic local codebase search |
+| `MCPTool` | Invoke a tool on a connected MCP server |
+| `McpAuth` | Authenticate to an MCP server |
+| `NotebookEdit` | Edit Jupyter notebook cells |
+| `PowerShell` | Run a PowerShell command |
+| `REPL` | Execute Lua snippets in a sandboxed session |
+| `Read` | Read a file (with optional line offset and limit) |
+| `ReadMcpResource` | Read a resource URI from a connected MCP server (sandbox-validated for `file://`) |
+| `RemoteTrigger` | HTTP POST to an external webhook (CRLF-sanitized headers, argv curl path) |
+| `ScheduleCron` | Schedule a recurring command (sandbox-validated at creation) |
+| `SendMessage` | Send a message to another agent/task |
+| `Shell` | Run a shell command (permission-prompted; read-only heuristic for pre-screening) |
+| `Skill` | Load and invoke a named skill |
+| `Sleep` | Pause execution for N seconds |
+| `Snip` | Insert a code snippet |
+| `SyntheticOutput` | Emit synthetic tool output |
+| `TaskCreate` | Create a background async task |
+| `TaskGet` | Get status and details of a background task |
+| `TaskList` | List all background tasks |
+| `TaskOutput` | Get output from a background task |
+| `TaskStop` | Stop a running background task |
+| `TaskUpdate` | Update a background task |
+| `TeamCreate` | Create a multi-agent team |
+| `TeamDelete` | Delete a multi-agent team |
+| `TodoWrite` | Write the agent todo list |
+| `ToolSearch` | Search available tool definitions |
+| `VerifyPlanExecution` | Verify a plan was executed correctly |
+| `WebFetch` | Fetch a URL via curl |
+| `WebSearch` | DuckDuckGo web search |
+| `Write` | Write or create a file |
+
+### Agent Features
+
+- **QueryEngine**: Plan → Execute → Reflect loop with multi-turn tool calling
+- **Action deduplication**: prevents repeated identical tool calls
+- **Context window management**: auto-trimming with narration detection and nudging
+- **Session memory**: TTL-based GC, persisted to `~/.config/cli-agent/memory.json`
+- **Permission prompts**: interactive y/n/always/session prompts for `Shell`, `Write`, `Edit`, and other action tools (plan mode blocks all action tools)
+- **FreeBSD-aware shell rewriting**: command translation for FreeBSD vs Linux
+- **MCP server support**: tool invocation and resource access over JSON-RPC stdio
+- **Companion mode** (Buddy) and **multi-agent coordinator mode**
+- **REPL commands**: `/clear`, `/compact`, `/config`, `/context`, `/cost`, `/cwd`, `/diff`, `/files`, `/help`, `/history`, `/mcp`, `/model`, `/plan`, `/provider`, `/quit`, `/sessions`, `/stats`, `/thinking`, `/tools`, `/version`, `/vim`, and more
+
+### Security Notes (cli-agent specific)
+
+- **Sandbox**: `cli-agent/src/sandbox/sandbox.c` uses a blacklist approach to block dangerous shell patterns, direct reads of sensitive paths, and directory-prefix confusion. Defence-in-depth, not a hard security boundary.
+- **Permission manager**: The primary security gate is the interactive permission manager (`lua/permissions/manager.lua`). Action tools (`Shell`, `Write`, `Edit`, etc.) always prompt for confirmation in default and plan modes.
+- **Temporary files**: `lua/utils/http.lua` uses a deterministic `/tmp/jenova_http_<time>_<hex>` path rather than `os.tmpname()` to avoid TOCTOU races.
+- **Header injection**: `RemoteTrigger` and `http.lua` strip `\r\n` from header names and values before constructing curl argv to prevent CRLF injection.
+- **Path patterns**: `.jenova` and `.claude` are matched with escaped Lua patterns (`/%.jenova/`) to prevent false matches on paths like `/xjenova/`.
+
+### Known Limitations
+
+- The C sandbox uses a blacklist — a whitelist or OS-level sandboxing (capsicum/pledge) would be stronger.
+- `src/fs/fs.c` uses `ftell`/`long` for file sizes — on 32-bit platforms files > 2 GB will overflow (`ftello`/`off_t` needed).
+- `src/process/process.c` uses a busy-wait loop (`usleep(10000)`) for subprocess output — `poll()`/`select()` would be more efficient.
+- Manual JSON extraction in C (`strstr`/`strchr` pattern) is fragile; a proper C JSON library would be more robust.
+- The LSP bridge in `src/agent/agent.c` is synchronous — persistent language servers that don't close stdout will cause it to hang after the first response.
+- Lua REPL (`tools/repl.lua`) shares the agent's Lua VM — a resource-exhausting snippet could crash the agent.
+
+### Standalone Build
+
+`cli-agent/` is fully self-contained. It can be built and deployed independently of the rest of the Jenova repo. The only external runtime dependencies are `libcurl` and (optionally) `libssl`. The Jenova backend services (`jenova-ca`, `proxy.lua`, `llama-server`) are optional — the agent can run against any OpenAI-compatible API by setting `JENOVA_PROVIDER` appropriately.
 
 ## License & Credits
 
