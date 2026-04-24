@@ -636,6 +636,23 @@ function QueryEngine:query(user_message, options)
         -- Update cost tracking
         self:update_cost()
 
+        -- ── Chat-Trap Intercept ──────────────────────────────────────────
+        -- Detect when the model outputs a Markdown code block but fails to
+        -- call any tools. This is a "Chat-Trap" failure. We reject the
+        -- response and nudge the model to use the proper tool.
+        if #response.tool_uses == 0 and response.text and response.text:match("```[%a%d%s_]*\n") then
+            local nudge =
+                "[System: You provided code in a Markdown block instead of calling a tool. " ..
+                "As an autonomous agent, you MUST use the appropriate tool (Edit, MultiEdit, or Write) " ..
+                "to apply changes to the filesystem. Markdown code blocks are for discussion ONLY. " ..
+                "RETRY by calling the proper tool immediately.]"
+            table.insert(self.messages, {
+                role = "user",
+                content = nudge,
+            })
+            goto next_turn
+        end
+
         -- If no tool uses, we're done
         if #response.tool_uses == 0 then
             if response.text and #response.text > 0 then
@@ -874,6 +891,7 @@ function QueryEngine:query(user_message, options)
             self._pending_embed_warnings = {}
         end
 
+        ::next_turn::
         -- Continue the loop
     end
 
