@@ -120,7 +120,27 @@ end
 
 -- ── Public ────────────────────────────────────────────────────────────────────
 
+-- Pinned workspace buffer — set by chat.lua the moment a chat split opens,
+-- while the source file is still the current buffer. This is more reliable
+-- than guessing from window state later inside the agent coroutine.
+local _pinned_workspace_buf = nil
+
+function M.set_workspace_buf(buf)
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    _pinned_workspace_buf = buf
+  end
+end
+
 local function get_best_workspace_buf()
+  -- 0. Use pinned buf captured at chat-open time (most reliable).
+  if _pinned_workspace_buf and vim.api.nvim_buf_is_valid(_pinned_workspace_buf) then
+    local n = vim.api.nvim_buf_get_name(_pinned_workspace_buf)
+    if n ~= "" and vim.bo[_pinned_workspace_buf].buftype == "" then
+      return _pinned_workspace_buf
+    end
+    _pinned_workspace_buf = nil  -- stale, fall through
+  end
+
   -- 1. Try active buffer if it's a real file
   local active = vim.api.nvim_get_current_buf()
   local name = vim.api.nvim_buf_get_name(active)
@@ -128,7 +148,7 @@ local function get_best_workspace_buf()
     return active
   end
 
-  -- 2. Try the first window that isn't the chat
+  -- 2. Try the first window that isn't the chat or tree
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     local b = vim.api.nvim_win_get_buf(win)
     local n = vim.api.nvim_buf_get_name(b)
@@ -167,7 +187,7 @@ function M.build_editor_context(chat_buf)
   local lines = { "## Context" }
   table.insert(lines, "cwd: " .. vim.fn.getcwd())
   
-  if path ~= "" then
+  if ws_buf and path ~= "" then
     table.insert(lines, string.format("file: %s:%d:%d (%s)",
       vim.fn.fnamemodify(path, ":~:."), row, col + 1, ft))
 

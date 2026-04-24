@@ -344,6 +344,20 @@ end
 -- ── Window management ─────────────────────────────────────────────────────────
 
 local function open_chat_split(path)
+  -- Pin the source buffer NOW, before vsplit shifts the current window.
+  -- This is the file the user is actually working on; the agent context
+  -- functions will use it to inject the full file content.
+  do
+    local src = vim.api.nvim_get_current_buf()
+    local src_name = vim.api.nvim_buf_get_name(src)
+    if src_name ~= ""
+      and vim.bo[src].buftype == ""
+      and not src_name:match("/jenova/chats/")
+    then
+      local ok, ctx = pcall(require, "jenova.agent.context")
+      if ok then ctx.set_workspace_buf(src) end
+    end
+  end
   vim.cmd("vsplit")
   local win = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_width(win, CHAT_WIDTH)
