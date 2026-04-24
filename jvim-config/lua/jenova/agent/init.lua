@@ -383,7 +383,7 @@ end
 --   opts.on_tool_use    function(name, input)
 --   opts.on_tool_result function(name, result)
 --   opts.on_error       function(msg)
-function M.query(prompt, opts, buf)
+function M.query(prompt, opts, buf, full_messages)
   opts = opts or {}
   if M._running then
     vim.notify("Agent is already running", vim.log.levels.WARN, { title = "Jenova Agent" })
@@ -392,6 +392,10 @@ function M.query(prompt, opts, buf)
 
   local engine = get_engine()
   if not engine then return end
+
+  if full_messages then
+    engine.messages = full_messages
+  end
 
   -- Refresh editor context each call, passing chat_buf to extract metadata.
   local ctx_ok, context = pcall(require, "jenova.agent.context")
@@ -544,6 +548,8 @@ function M.clear()
     local tv_ok, tv = pcall(require, "services.tool_verifier")
     if tv_ok and tv and tv.reset then tv.reset() end
   end
+  local mem_ok, mem = pcall(require, "services.memory.manager")
+  if mem_ok and mem and mem.clear_session then mem.clear_session() end
   M._turn = 0
 end
 

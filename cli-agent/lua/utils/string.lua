@@ -85,7 +85,7 @@ function M.normalize_ws(s)
         if not nl then break end
         pos = nl + 1
     end
-    if lines[#lines] == "" then table.remove(lines) end
+    -- if lines[#lines] == "" then table.remove(lines) end
     return table.concat(lines, "\n")
 end
 

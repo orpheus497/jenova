@@ -41,7 +41,18 @@ function M.call(args, context)
   local timeout = args.timeout or 30000
   local cwd = context and context.cwd or vim.fn.getcwd()
 
-  local result = vim.system({"sh", "-c", command}, { text = true, timeout = timeout, cwd = cwd }):wait()
+  local co = coroutine.running()
+  local result = nil
+  
+  if co then
+    vim.system({"sh", "-c", command}, { text = true, timeout = timeout, cwd = cwd }, function(res)
+      result = res
+      vim.schedule(function() coroutine.resume(co) end)
+    end)
+    coroutine.yield()
+  else
+    result = vim.system({"sh", "-c", command}, { text = true, timeout = timeout, cwd = cwd }):wait()
+  end
   
   local stdout = result.stdout or ""
   local stderr = result.stderr or ""

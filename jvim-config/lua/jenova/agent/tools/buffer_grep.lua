@@ -28,12 +28,11 @@ function M.check_permissions() return { allowed = true } end
 local function match_buffer(buf, pattern, insensitive)
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
   local matches = {}
-  local p = pattern
-  if insensitive then p = pattern:lower() end
+  local ok, regex = pcall(vim.regex, (insensitive and "\\c" or "") .. pattern)
+  if not ok then return matches end
 
   for i, line in ipairs(lines) do
-    local l = insensitive and line:lower() or line
-    if l:find(p) then
+    if regex:match_str(line) then
       table.insert(matches, { lnum = i, text = line })
     end
   end
@@ -54,7 +53,7 @@ function M.call(args, context)
   for _, b in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(b) then
       local name = vim.api.nvim_buf_get_name(b)
-      if name:find(target, 1, true) then
+      if vim.startswith(name, target) or target == "." or target == cwd then
         local matches = match_buffer(b, pattern, insensitive)
         if #matches > 0 then
           seen_files[name] = true
@@ -81,9 +80,17 @@ function M.call(args, context)
   table.insert(rg_cmd, pattern)
   table.insert(rg_cmd, target)
 
-  -- Wait with a 5-second timeout to prevent editor stalls
-  local obj = vim.system(rg_cmd, { text = true, cwd = cwd })
-  local res = obj:wait(5000)
+  local co = coroutine.running()
+  local res = nil
+  if co then
+    vim.system(rg_cmd, { text = true, cwd = cwd, timeout = 5000 }, function(out)
+      res = out
+      vim.schedule(function() coroutine.resume(co) end)
+    end)
+    coroutine.yield()
+  else
+    res = vim.system(rg_cmd, { text = true, cwd = cwd }):wait(5000)
+  end
 
   if res.code == 0 and res.stdout then
     for _, line in ipairs(vim.split(res.stdout, "\n", { plain = true })) do

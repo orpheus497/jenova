@@ -850,7 +850,7 @@ local function agent_respond(buf, prompt, on_done)
         if on_done then on_done() end
       end)
     end,
-  }, buf)
+  }, buf, history)
   return true
 end
 
@@ -1140,10 +1140,12 @@ function M.respond()
 
   -- Extract last user message
   local prompt = ""
-  for i = #messages, 1, -1 do
-    if messages[i].role == "user" then
-      prompt = messages[i].content
-      break
+  local history = {}
+  for i, m in ipairs(messages) do
+    if i == #messages and m.role == "user" then
+      prompt = m.content
+    else
+      table.insert(history, m)
     end
   end
 
@@ -1166,13 +1168,12 @@ function M.respond()
     return
   end
 
-  if agent_mode and prompt ~= "" then
-    agent_respond(buf, prompt)
-    return
+  local ok_state, app_state = pcall(require, "jenova.agent.shared.state.app_state")
+  if ok_state and app_state then
+    app_state.set("tools_enabled", agent_mode)
   end
 
-  -- Fallback: plain streaming (conversation mode or empty prompt).
-  stream_response(buf, messages)
+  agent_respond(buf, prompt, nil, history)
 end
 
 function M.send_message(text, prefix)

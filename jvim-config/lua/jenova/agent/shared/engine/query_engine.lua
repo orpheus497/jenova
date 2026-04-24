@@ -280,10 +280,6 @@ function QueryEngine:handle_response(result)
         current_text = cleaned
     end
 
-    if current_text and #current_text > 0 then
-        self.on_text(current_text)
-    end
-
     local tool_calls = result.tool_calls
     if tool_calls and #tool_calls > 0 then
         for idx, tc in ipairs(tool_calls) do
@@ -305,6 +301,10 @@ function QueryEngine:handle_response(result)
             tool_uses = extracted
             current_text = ""
         end
+    end
+
+    if current_text and #current_text > 0 then
+        self.on_text(current_text)
     end
 
     return {

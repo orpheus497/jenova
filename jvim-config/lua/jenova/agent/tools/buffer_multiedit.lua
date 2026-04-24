@@ -82,11 +82,15 @@ function M.call(args, context)
       return { type = "error", error = string.format("Edit %d: start_line %d is beyond the file length", i, start_line) }
     end
 
-    if new_string:sub(-1) == "\n" then
-      new_string = new_string:sub(1, -2)
+    local new_lines = {}
+    if new_string == "" then
+      new_lines = {}
+    else
+      new_lines = vim.split(new_string, "\n", { plain = true })
+      if #new_lines > 0 and new_lines[#new_lines] == "" and new_string:sub(-1) == "\n" then
+        table.remove(new_lines)
+      end
     end
-
-    local new_lines = new_string == "" and {} or vim.split(new_string, "\n", { plain = true })
     
     local ok, err = pcall(function()
       vim.api.nvim_buf_set_lines(buf, start_line - 1, math.min(end_line, buf_line_count), false, new_lines)

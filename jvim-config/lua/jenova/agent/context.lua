@@ -138,7 +138,12 @@ function M.build_editor_context(chat_buf)
   
   if metadata.path then
     local content = get_buffer_content(metadata.path, metadata.start_line, metadata.end_line)
-    table.insert(lines, string.format("active_buffer_content (%s):\n```\n%s\n```", metadata.path, content))
+    local numbered = {}
+    local sl = metadata.start_line or 1
+    for i, l in ipairs(vim.split(content, "\n", { plain = true })) do
+      table.insert(numbered, string.format("%6d | %s", sl + i - 1, l))
+    end
+    table.insert(lines, string.format("active_buffer_content (%s):\n```\n%s\n```", metadata.path, table.concat(numbered, "\n")))
   end
 
   if diag then table.insert(lines, "diagnostics: " .. diag) end
