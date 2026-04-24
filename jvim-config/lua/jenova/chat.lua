@@ -16,9 +16,10 @@ local CHAT_WIDTH = 60
 -- agent_mode=false → plain streaming direct to proxy (legacy behaviour)
 local agent_mode = true
 
-local active_job  = nil
-local toggle_buf  = nil
-local toggle_win  = nil
+local active_job      = nil
+local toggle_buf      = nil
+local toggle_win      = nil
+local stop_generation  -- forward-declared so BufDelete autocmd can reference it
 
 -- ── Agent activity state (read by statusline) ─────────────────────────────────
 -- These are module-level so jvim.statusline can poll them without requiring
@@ -373,6 +374,13 @@ local function open_chat_split(path)
         apply_chat_highlights(buf)
       end,
     })
+    -- Kill any in-flight agent when the buffer is wiped, so it doesn't keep
+    -- running silently in the background writing files and making API calls.
+    vim.api.nvim_create_autocmd({ "BufDelete", "BufWipeout" }, {
+      group = group,
+      buffer = buf,
+      callback = function() stop_generation() end,
+    })
     vim.b[buf]._jenova_chat_autocmd = true
   end
 
@@ -385,7 +393,7 @@ end
 
 -- ── Generation control ────────────────────────────────────────────────────────
 
-local function stop_generation()
+stop_generation = function()
   if active_job then
     active_job:kill(9)
     active_job = nil
@@ -434,151 +442,6 @@ local function append_user_section(buf, msg_text)
   end
 
   vim.api.nvim_buf_set_lines(buf, -1, -1, false, new_lines)
-end
-
--- ── Plain streaming (conversation mode) ───────────────────────────────────────
-
-local function stream_response(buf, messages, on_done)
-  stop_generation()
-
-  if vim.fn.executable("curl") ~= 1 then
-    vim.notify("curl not found. Install curl to enable chat streaming.", vim.log.levels.ERROR, { title = "Jenova" })
-    return
-  end
-
-  local url = ep().proxy_url()
-  local payload = vim.json.encode({
-    model = MODEL,
-    messages = messages,
-    temperature = TEMPERATURE,
-    top_p = TOP_P,
-    stream = true,
-    max_tokens = 16384,
-  })
-
-  local tmpfile = vim.fn.tempname() .. ".json"
-  if vim.fn.writefile({ payload }, tmpfile) ~= 0 then
-    vim.notify("Failed to create temp file", vim.log.levels.ERROR, { title = "Jenova" })
-    return
-  end
-
-  vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## jenova", "" })
-  local insert_line = vim.api.nvim_buf_line_count(buf)
-  local current_lines = { "" }
-  local got_content = false
-
-  local function append_text(text)
-    vim.schedule(function()
-      if not vim.api.nvim_buf_is_valid(buf) then return end
-      got_content = true
-      local pieces = vim.split(text, "\n", { plain = true })
-      current_lines[#current_lines] = current_lines[#current_lines] .. pieces[1]
-      for i = 2, #pieces do
-        table.insert(current_lines, pieces[i])
-      end
-      local start_idx = insert_line - 1
-      local end_idx = start_idx + #current_lines
-      local buf_total = vim.api.nvim_buf_line_count(buf)
-      if end_idx > buf_total then end_idx = buf_total end
-      pcall(vim.api.nvim_buf_set_lines, buf, start_idx, end_idx, false, current_lines)
-      scroll_to_bottom(buf)
-    end)
-  end
-
-  local sse_buffer = ""
-  local got_error = false
-
-  local function process_sse(data)
-    sse_buffer = sse_buffer .. data
-    while true do
-      local nl = sse_buffer:find("\n")
-      if not nl then break end
-      local line = sse_buffer:sub(1, nl - 1):gsub("\r$", "")
-      sse_buffer = sse_buffer:sub(nl + 1)
-
-      if line == "data: [DONE]" then
-      elseif line:sub(1, 6) == "data: " then
-        local json_str = line:sub(7)
-        local ok, parsed = pcall(vim.json.decode, json_str)
-        if ok and parsed then
-          if parsed.choices and parsed.choices[1] then
-            local delta = parsed.choices[1].delta
-            if delta and type(delta.content) == "string" then
-              append_text(delta.content)
-            end
-          elseif parsed.error then
-            got_error = true
-            local err_msg = parsed.error.message or vim.json.encode(parsed.error)
-            append_text("[Error: " .. err_msg .. "]")
-          end
-        end
-      elseif not got_content and line:match("^HTTP/1%.. %d%d%d") then
-        local code = tonumber(line:match("(%d%d%d)"))
-        if code and code >= 400 then
-          got_error = true
-          append_text("[Backend error: HTTP " .. code .. "]")
-        end
-      end
-    end
-
-    if not got_content and not got_error and #sse_buffer > 200 then
-      local ok, parsed = pcall(vim.json.decode, sse_buffer)
-      if ok and parsed and parsed.error then
-        got_error = true
-        local err_msg = parsed.error.message or vim.json.encode(parsed.error)
-        append_text("[Error: " .. err_msg .. "]")
-        sse_buffer = ""
-      end
-    end
-  end
-
-  active_job = vim.system(
-    {
-      "curl", "--no-buffer", "-s", "-N",
-      "-H", "Content-Type: application/json",
-      "-H", "Authorization: Bearer " .. SECRET,
-      "-d", "@" .. tmpfile,
-      url,
-    },
-    {
-      stdout = function(_, data)
-        if data then
-          process_sse(type(data) == "string" and data or tostring(data))
-        end
-      end,
-      stderr = function(_, data)
-        if data then data = type(data) == "string" and data or tostring(data) end
-        if data and data:match("%S") then
-          vim.schedule(function()
-            if data:find("Could not resolve host") or data:find("Connection refused") then
-              vim.notify("Backend unreachable: " .. vim.trim(data), vim.log.levels.ERROR, { title = "Jenova" })
-            end
-          end)
-        end
-      end,
-    },
-    function(result)
-      vim.schedule(function()
-        active_job = nil
-        pcall(os.remove, tmpfile)
-
-        if vim.api.nvim_buf_is_valid(buf) then
-          if not got_content and not got_error then
-            if result.code ~= 0 then
-              pcall(vim.api.nvim_buf_set_lines, buf, insert_line - 1, insert_line, false,
-                { "[Connection failed — is the Jenova backend running?]" })
-            end
-          end
-
-          vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## user", "" })
-          save_chat(buf)
-          scroll_to_bottom(buf)
-          vim.cmd("startinsert!")
-        end
-        if on_done then on_done() end
-      end)
-    end
-  )
 end
 
 -- ── Agent response (agent mode) ───────────────────────────────────────────────
@@ -659,6 +522,7 @@ local function agent_respond(buf, prompt, on_done, history)
     ensure_transient()
     if spinner_timer then return end
     spinner_timer = (vim.uv or vim.loop).new_timer()
+    if not spinner_timer then return end
     spinner_timer:start(0, 100, vim.schedule_wrap(function()
       if not vim.api.nvim_buf_is_valid(buf) then stop_spinner(); return end
       if not transient_lnum then return end
@@ -692,6 +556,7 @@ local function agent_respond(buf, prompt, on_done, history)
       stream_lines = { "" }
     end
 
+    if not stream_lines then return end
     local pieces = vim.split(text, "\n", { plain = true })
     stream_lines[#stream_lines] = stream_lines[#stream_lines] .. pieces[1]
     for i = 2, #pieces do table.insert(stream_lines, pieces[i]) end
@@ -1120,8 +985,9 @@ end
 function M.send_message(text, prefix)
   local buf = vim.api.nvim_get_current_buf()
   if not is_chat_buf(buf) then
-    buf = M.toggle_chat()
-    if not buf then return end
+    local chat_buf = M.toggle_chat()
+    if not chat_buf then return end
+    buf = chat_buf --[[@as integer]]
   end
 
   local msg = prefix and (prefix .. text) or text
@@ -1296,6 +1162,7 @@ function M.chat_with_context()
 end
 
 function M.fresh_chat()
+  stop_generation()
   vim.fn.delete(CHAT_DIR, "rf")
   vim.fn.mkdir(CHAT_DIR, "p")
   return open_chat_split()
@@ -1307,6 +1174,7 @@ function M.delete_chat()
     vim.notify("Not a Jenova chat buffer", vim.log.levels.WARN, { title = "Jenova" })
     return
   end
+  stop_generation()
   local path = chat_filepath(buf)
   if path then
     os.remove(path)

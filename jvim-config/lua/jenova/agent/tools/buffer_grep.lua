@@ -92,6 +92,8 @@ function M.call(args, context)
     res = vim.system(rg_cmd, { text = true, cwd = cwd }):wait(5000)
   end
 
+  if not res then return { type = "error", error = "rg did not complete" } end
+
   if res.code == 0 and res.stdout then
     for _, line in ipairs(vim.split(res.stdout, "\n", { plain = true })) do
       if line ~= "" then
@@ -113,7 +115,7 @@ function M.call(args, context)
   -- Cap output
   if #results > 500 then
     local total = #results
-    results = { unpack(results, 1, 500) }
+    results = { table.unpack(results, 1, 500) }
     table.insert(results, string.format("... [truncated %d more matches]", total - 500))
   end
 

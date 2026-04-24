@@ -227,7 +227,7 @@ function M.generate_request(request, on_chunk)
   if err then error("generate_request: " .. err) end
 
   local ok, data = pcall(vim.json.decode, res)
-  if not ok then return res end
+  if not ok then return res or "" end
 
   if data.choices and data.choices[1] then
     local msg = data.choices[1].message or {}
@@ -235,7 +235,7 @@ function M.generate_request(request, on_chunk)
   end
 
   -- Backend may return a raw string or non-standard envelope.
-  return res
+  return res or ""
 end
 
 -- ── Endpoint helpers for the jvim context ─────────────────────────────────────

@@ -40,13 +40,20 @@ function M.call(args, context)
   local result = nil
 
   if co then
-    vim.system({ "sh", "-c", command }, { text = true, timeout = timeout, cwd = cwd }, function(res)
+    local agent = package.loaded["jenova.agent"]
+    local handle = vim.system({ "sh", "-c", command }, { text = true, timeout = timeout, cwd = cwd }, function(res)
       result = res
+      if agent then agent._active_job = nil end
       vim.schedule(function() coroutine.resume(co) end)
     end)
+    if agent then agent._active_job = handle end
     coroutine.yield()
   else
     result = vim.system({ "sh", "-c", command }, { text = true, timeout = timeout, cwd = cwd }):wait()
+  end
+
+  if not result then
+    return { type = "error", error = "Command did not complete (no result)" }
   end
 
   local stdout = result.stdout or ""

@@ -72,10 +72,17 @@ function M.query(prompt, opts, buf, history)
 
   local co = coroutine.create(function()
     local ok, err = pcall(M._engine.query, M._engine, prompt, provider)
+    local was_stopped = M._engine and M._engine._stop
     M._running    = false
     M._active_job = nil
     if not ok then
-      if opts.on_error then opts.on_error(tostring(err)) end
+      if was_stopped then
+        -- User intentionally stopped: the kill produced an internal error but
+        -- we surface a clean completion (no "✗ Error:" in the buffer).
+        if opts.on_done then opts.on_done({ input = 0, output = 0, cost = 0 }) end
+      else
+        if opts.on_error then opts.on_error(tostring(err)) end
+      end
     else
       if opts.on_done then opts.on_done({ input = 0, output = 0, cost = 0 }) end
     end

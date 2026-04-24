@@ -105,6 +105,9 @@ function M:query(user_message, provider)
       if self._stop then return end
       self.on_tool_use(tu.name, tu.input)
       local res, err = registry.execute(tu.name, tu.input, { cwd = vim.fn.getcwd() })
+      -- Check again after the tool returns — it may have yielded (e.g. shell) and
+      -- the user could have pressed stop while it was running.
+      if self._stop then return end
       local result_text = err and ("Error: " .. err) or vim.json.encode(res)
       self.on_tool_result(tu.name, res or { error = err })
       table.insert(self.messages, {
