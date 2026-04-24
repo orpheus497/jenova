@@ -186,7 +186,12 @@ function M.build_editor_context(chat_buf)
 
   if metadata.path and metadata.path ~= path then
     local content = get_buffer_content(metadata.path, metadata.start_line, metadata.end_line)
-    -- ... (secondary metadata logic if needed)
+    if content and content ~= "" then
+      local label = metadata.start_line
+        and string.format("context (%s lines %d-%d)", metadata.path, metadata.start_line, metadata.end_line)
+        or  string.format("context (%s)", metadata.path)
+      table.insert(lines, label .. ":\n```\n" .. content .. "\n```")
+    end
   end
 
   if diag then table.insert(lines, "diagnostics: " .. diag) end
@@ -205,6 +210,28 @@ function M.build_editor_context(chat_buf)
   end
 
   return table.concat(lines, "\n")
+end
+
+-- Returns just the active buffer content as a formatted message string,
+-- suitable for injection as the first background exchange in a new session.
+-- This gives the model the file prominently in conversation history (it is
+-- also present in the system prompt via build_editor_context).
+function M.build_file_seed_prompt()
+  local ws_buf = safe(get_best_workspace_buf)
+  if not ws_buf then return nil end
+  local path = vim.api.nvim_buf_get_name(ws_buf)
+  if not path or path == "" then return nil end
+  local all_lines = vim.api.nvim_buf_get_lines(ws_buf, 0, -1, false)
+  if #all_lines == 0 then return nil end
+  local numbered = {}
+  for i, l in ipairs(all_lines) do
+    table.insert(numbered, string.format("%6d | %s", i, l))
+  end
+  local rel = vim.fn.fnamemodify(path, ":~:.")
+  local ft  = vim.bo[ws_buf].filetype or "?"
+  return string.format(
+    "I have the following file open in my editor. Use it as the primary context for this session.\n\nFile: %s (%s)\n```\n%s\n```",
+    rel, ft, table.concat(numbered, "\n"))
 end
 
 function M.build_system_prompt(chat_buf)

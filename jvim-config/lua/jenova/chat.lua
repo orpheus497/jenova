@@ -853,7 +853,12 @@ local function dispatch_slash(buf, cmd_line)
     local ok, agent = pcall(require, "jenova.agent")
     if ok and agent then agent.reset() end
     M._agent_turn = 0
-    vim.notify("Agent reset — engine will rebuild on next query",
+    -- Wipe the buffer so old turns aren't re-injected as history on the next
+    -- query.  agent.reset() sets _just_reset as a belt-and-suspenders guard,
+    -- but clearing the buffer keeps the visual state consistent too.
+    local header_lines = 4
+    vim.api.nvim_buf_set_lines(buf, header_lines, -1, false, { "---", "", "## user", "" })
+    vim.notify("Agent reset — fresh context on next query",
       vim.log.levels.INFO, { title = "Jenova" })
 
   elseif cmd == "stop" then
@@ -1291,11 +1296,8 @@ function M.chat_with_context()
 end
 
 function M.fresh_chat()
-  ensure_chat_dir()
-  if vim.fn.isdirectory(CHAT_DIR) == 1 then
-    vim.fn.delete(CHAT_DIR, "rf")
-    vim.fn.mkdir(CHAT_DIR, "p")
-  end
+  vim.fn.delete(CHAT_DIR, "rf")
+  vim.fn.mkdir(CHAT_DIR, "p")
   return open_chat_split()
 end
 
@@ -1338,7 +1340,14 @@ function M.agent_reset()
   local ok, agent = pcall(require, "jenova.agent")
   if ok and agent then
     agent.reset()
-    vim.notify("Agent context reset", vim.log.levels.INFO, { title = "Jenova" })
+    M._agent_turn = 0
+    -- Wipe the active chat buffer so old turns aren't re-injected as history.
+    local buf = vim.api.nvim_get_current_buf()
+    if is_chat_buf(buf) then
+      local header_lines = 4
+      vim.api.nvim_buf_set_lines(buf, header_lines, -1, false, { "---", "", "## user", "" })
+    end
+    vim.notify("Agent reset — fresh context on next query", vim.log.levels.INFO, { title = "Jenova" })
   end
 end
 

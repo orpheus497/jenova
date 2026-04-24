@@ -139,6 +139,7 @@ function M.post_stream(url, headers_str, body, on_chunk)
   local buf = {}
   local sse_buffer = ""
 
+  local agent = package.loaded["jenova.agent"]
   local handle = vim.system(cmd, {
     text = true,
     stdout = function(_, data)
@@ -167,6 +168,8 @@ function M.post_stream(url, headers_str, body, on_chunk)
     end,
   }, function(result)
     if tmpfile then pcall(os.remove, tmpfile) end
+    -- Clear the active job reference now that curl has exited.
+    if agent then agent._active_job = nil end
     local body_str = table.concat(buf)
     if co then
       vim.schedule(function()
@@ -178,6 +181,9 @@ function M.post_stream(url, headers_str, body, on_chunk)
       end)
     end
   end)
+
+  -- Register the handle so agent.stop() can kill the process.
+  if agent then agent._active_job = handle end
 
   if co then
     return coroutine.yield()
