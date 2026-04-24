@@ -586,7 +586,7 @@ end
 -- Spinner frames for the thinking indicator
 local SPINNER = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
 
-local function agent_respond(buf, prompt, on_done)
+local function agent_respond(buf, prompt, on_done, history)
   local ok, agent = pcall(require, "jenova.agent")
   if not ok or not agent then
     vim.notify(
@@ -839,7 +839,7 @@ local function dispatch_slash(buf, cmd_line)
     vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "<!-- " .. line .. " -->", "" })
     scroll_to_bottom(buf)
   end
-  elseif cmd == "clear" then
+  if cmd == "clear" then
     local ok, agent = pcall(require, "jenova.agent")
     if ok and agent then agent.clear() end
     M._agent_turn = 0
