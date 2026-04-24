@@ -89,20 +89,58 @@ local function visual_selection()
   return table.concat(lines, "\n")
 end
 
+local function parse_metadata_from_buffer(chat_buf)
+  local lines = vim.api.nvim_buf_get_lines(chat_buf, 0, -1, false)
+  local ctx = { path = nil, start_line = nil, end_line = nil }
+  for i = #lines, 1, -1 do
+    local line = lines[i]
+    local p = line:match("## Active Context: (.*)")
+    if p then
+      ctx.path = vim.trim(p)
+      break
+    end
+    local ps, s, e = line:match("## Active Selection: (.*) %(lines (%d+)-(%d+)%)")
+    if ps then
+      ctx.path = vim.trim(ps)
+      ctx.start_line = tonumber(s)
+      ctx.end_line = tonumber(e)
+      break
+    end
+  end
+  return ctx
+end
+
+local function get_buffer_content(path, start_line, end_line)
+  local abs = vim.fn.fnamemodify(path, ":p")
+  local buf = vim.fn.bufadd(abs)
+  vim.fn.bufload(buf)
+  local lines = vim.api.nvim_buf_get_lines(buf, (start_line or 1) - 1, end_line or -1, false)
+  return table.concat(lines, "\n")
+end
+
 -- ── Public ────────────────────────────────────────────────────────────────────
 
-function M.build_editor_context()
+function M.build_editor_context(chat_buf)
   local buf = vim.api.nvim_get_current_buf()
   local path, ft, row, col = current_file_info()
   local branch  = git_branch()
   local diag    = lsp_diagnostics_summary(buf)
   local sel     = visual_selection()
   local bufs    = open_buffers()
+  
+  -- Hardware metadata extraction
+  local metadata = chat_buf and parse_metadata_from_buffer(chat_buf) or {}
 
   local lines = { "## Context" }
   table.insert(lines, "cwd: " .. vim.fn.getcwd())
   table.insert(lines, string.format("file: %s:%d:%d (%s)",
     vim.fn.fnamemodify(path, ":~:."), row, col, ft ~= "" and ft or "?"))
+  
+  if metadata.path then
+    local content = get_buffer_content(metadata.path, metadata.start_line, metadata.end_line)
+    table.insert(lines, string.format("active_buffer_content (%s):\n```\n%s\n```", metadata.path, content))
+  end
+
   if diag then table.insert(lines, "diagnostics: " .. diag) end
   if branch then table.insert(lines, "git: " .. branch) end
 
@@ -121,7 +159,7 @@ function M.build_editor_context()
   return table.concat(lines, "\n")
 end
 
-function M.build_system_prompt()
+function M.build_system_prompt(chat_buf)
   local base = table.concat({
     "You are Jenova, an autonomous coding agent in jvim. You must solve tasks independently using tools.",
     "",
@@ -144,7 +182,7 @@ function M.build_system_prompt()
     "- Be terse. Apply edits directly.",
   }, "\n")
 
-  local editor_ctx = safe(M.build_editor_context)
+  local editor_ctx = safe(M.build_editor_context, chat_buf)
   if editor_ctx then
     return base .. "\n\n" .. editor_ctx
   end

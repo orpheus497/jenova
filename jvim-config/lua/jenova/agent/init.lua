@@ -383,7 +383,7 @@ end
 --   opts.on_tool_use    function(name, input)
 --   opts.on_tool_result function(name, result)
 --   opts.on_error       function(msg)
-function M.query(prompt, opts)
+function M.query(prompt, opts, buf)
   opts = opts or {}
   if M._running then
     vim.notify("Agent is already running", vim.log.levels.WARN, { title = "Jenova Agent" })
@@ -393,9 +393,9 @@ function M.query(prompt, opts)
   local engine = get_engine()
   if not engine then return end
 
-  -- Refresh editor context each call
+  -- Refresh editor context each call, passing chat_buf to extract metadata.
   local ctx_ok, context = pcall(require, "jenova.agent.context")
-  if ctx_ok then engine.system_prompt = context.build_system_prompt() end
+  if ctx_ok then engine.system_prompt = context.build_system_prompt(buf) end
 
   -- Seed the shared app_state with jvim's actual working directory so the
   -- file/glob/grep tools resolve relative paths against the workspace

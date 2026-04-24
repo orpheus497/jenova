@@ -18,14 +18,25 @@ The central thesis: **the CLI agent's failures come from context-blindness**. It
 see what is in the editor, what the cursor is on, or what the LSP knows. Embedding the
 agent in jvim fixes this at the root by giving it:
 
-- **Buffer APIs** instead of string-search Edit tool heuristics → zero false-negative edits
-- **Instant buffer state** instead of disk reads → no stale-file bugs
-- **LSP superpowers** — type information, go-to-definition, workspace diagnostics
-- **Real-time visibility** — edits stream into the buffer as they happen
-- **Shared history** — the agent sees what the user is working on without being told
+- **Hardened context automation** — project tree + active buffer + LSP pushed to prompt
+- **Zero-paste chat flow** — context is linked via metadata, not copied into history
+- [ ] `jenova/agent/ui/inline.lua` — inline diff preview before applying edits
+- [ ] `jenova/agent/tools/lsp.lua` — LSP hover, definition, references via `vim.lsp`
+- [ ] `jenova/agent/tools/cursor.lua` — cursor position / selection context tool
 
-The reuse ratio is high: `query_engine.lua`, the tool registry, and the provider layer
-are all reused verbatim or with thin adapters.
+---
+
+## Research: Database & Indexing Strategy (Internal Only)
+
+**Current State:**
+- **Legacy (`.crush/crush.db`):** An independent SQLite store used for session history, file versioning, and TODO tracking. It is a standalone system and is **NOT** currently connected to the jvim environment.
+- **Active (`.jenova/vectors.json`):** A lightweight JSON-based hybrid (BM25 + Semantic) index managed by the backend (`lib/search.lua`). This is the primary source for the jvim agent's codebase awareness.
+
+**Goal:**
+Identify a unified, high-performance method for persistent agent state without introducing the overhead of the legacy `crush` system.
+- **Do NOT** connect jvim to `crush.db`.
+- Research how to move from `vectors.json` to a more robust, queryable format (e.g., a dedicated `jenova.db`) while keeping it fully separate from legacy implementations.
+- Investigate "Passive RAG" — where the editor pushes relevant snippets to the agent based on cursor movement and buffer activity.
 
 ---
 

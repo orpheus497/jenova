@@ -850,7 +850,7 @@ local function agent_respond(buf, prompt, on_done)
         if on_done then on_done() end
       end)
     end,
-  })
+  }, buf)
   return true
 end
 
@@ -1192,16 +1192,14 @@ function M.visual_chat()
   local src_buf = vim.api.nvim_get_current_buf()
   local start_line = vim.fn.line("'<")
   local end_line = vim.fn.line("'>")
-  local lines = vim.api.nvim_buf_get_lines(src_buf, start_line - 1, end_line, false)
-  local selection = table.concat(lines, "\n")
-  local ft = vim.bo[src_buf].filetype or ""
-  local filename = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(src_buf), ":t")
+  local path = vim.api.nvim_buf_get_name(src_buf)
+  local rel = vim.fn.fnamemodify(path, ":~:.")
 
   local buf = open_chat_split()
   if not buf then return end
 
-  local context = string.format("Selected code from %s:\n\n```%s\n%s\n```\n",
-    filename, ft, selection)
+  -- Use metadata. context.lua will extract this range for the prompt.
+  local context = string.format("## Active Selection: %s (lines %d-%d)\n\n", rel, start_line, end_line)
 
   append_user_section(buf, context)
   save_chat(buf)
@@ -1339,18 +1337,15 @@ end
 
 function M.chat_with_context()
   local src_buf = vim.api.nvim_get_current_buf()
-  local lines = vim.api.nvim_buf_get_lines(src_buf, 0, -1, false)
-  local filename = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(src_buf), ":t")
-  local filepath = vim.api.nvim_buf_get_name(src_buf)
-  local content = table.concat(lines, "\n")
+  local path = vim.api.nvim_buf_get_name(src_buf)
+  local rel = vim.fn.fnamemodify(path, ":~:.")
 
   local buf = open_chat_split()
   if not buf then return end
 
-  local context = string.format(
-    "Open File Chat: Working on: %s\nPath: %s\n\n```\n%s\n```\n\n",
-    filename, filepath, content
-  )
+  -- Hardware the context as metadata. The context builder (context.lua)
+  -- will detect this tag and pull the buffer into the system prompt.
+  local context = string.format("## Active Context: %s\n\n", rel)
 
   append_user_section(buf, context)
   save_chat(buf)
