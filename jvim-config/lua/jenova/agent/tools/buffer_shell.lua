@@ -54,7 +54,7 @@ function M.call(args, context)
 
   local function cap(s, limit)
     if #s <= limit then return s end
-    return s:sub(1, limit // 2) .. "\n...[truncated]...\n" .. s:sub(-(limit // 2))
+    return s:sub(1, math.floor(limit / 2)) .. "\n...[truncated]...\n" .. s:sub(-math.floor(limit / 2))
   end
 
   local out = string.format("Exit: %d\n", result.code)
