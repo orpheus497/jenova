@@ -48,6 +48,8 @@ function M.load_jenova_conf()
             -- Strip inline comments and leading/trailing whitespace
             line = line:gsub("%s*#[^\n]*$", ""):match("^%s*(.-)%s*$")
             if line and line ~= "" then
+                -- Strip 'export ' prefix if present
+                line = line:gsub("^export%s+", "")
                 -- Match: KEY = "value", KEY = 'value', or KEY = value
                 -- The optional whitespace around '=' is handled by %s* in the pattern.
                 local k, quote, v = line:match("^([%w_]+)%s*=%s*([\"']?)(.-)%2%s*$")

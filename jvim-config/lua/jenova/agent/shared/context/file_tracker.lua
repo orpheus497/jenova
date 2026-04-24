@@ -73,15 +73,11 @@ end
 _detect_stat_flavour()
 
 local function stat_file(path)
-    if not _stat_flag then return nil, nil end
-    -- Build path quoted for shell
-    local q = "'" .. path:gsub("'", "'\\''") .. "'"
-    local h = io.popen("stat " .. _stat_flag .. " " .. _stat_fmt .. " " .. q .. " 2>/dev/null")
-    if not h then return nil, nil end
-    local line = h:read("*l"); h:close()
-    if not line or line == "" then return nil, nil end
-    local mt, sz = line:match("^(%d+)%s+(%d+)$")
-    if mt then return tonumber(mt), tonumber(sz) end
+    local uv = vim.uv or vim.loop
+    local stat = uv.fs_stat(path)
+    if stat then
+        return stat.mtime.sec, stat.size
+    end
     return nil, nil
 end
 

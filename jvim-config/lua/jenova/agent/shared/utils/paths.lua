@@ -19,6 +19,10 @@ local BLOCKED_DIRS = {
     "/%.claude$",
     "^%.claude/",
     "^%.claude$",
+    "%.jenova/",
+    "/%.jenova",
+    "%.claude/",
+    "/%.claude",
     -- Windows backslash variants
     "\\%.jenova\\",
     "\\%.jenova$",

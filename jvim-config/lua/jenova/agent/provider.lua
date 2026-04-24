@@ -137,6 +137,7 @@ function M.post_stream(url, headers_str, body, on_chunk)
 
   local co = coroutine.running()
   local buf = {}
+  local sse_buffer = ""
 
   local handle = vim.system(cmd, {
     text = true,
@@ -144,7 +145,13 @@ function M.post_stream(url, headers_str, body, on_chunk)
       if data then
         table.insert(buf, data)
         if on_chunk then
-          for line in data:gmatch("[^\n]+") do
+          sse_buffer = sse_buffer .. data
+          while true do
+            local nl = sse_buffer:find("\n")
+            if not nl then break end
+            local line = sse_buffer:sub(1, nl - 1):gsub("\r$", "")
+            sse_buffer = sse_buffer:sub(nl + 1)
+
             if line:sub(1, 6) == "data: " and line ~= "data: [DONE]" then
               local ok2, chunk = pcall(vim.json.decode, line:sub(7))
               if ok2 and chunk and chunk.choices and chunk.choices[1] then

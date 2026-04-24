@@ -286,21 +286,18 @@ so any jvim-native override automatically wins without touching shared code.
 
 ---
 
-## Phase 4 — CLI Agent Transition
+## Phase 4 — CLI Agent Transition (Decommissioning)
 
-The CLI agent (`bin/jenova-cli`, formerly `bin/jenova`) is **not deleted**. It remains
-useful for:
+The CLI agent (`bin/jenova-cli`, formerly `bin/jenova`) is **decommissioned as an interactive interface**. 
+It remains available for:
 - Headless / CI / scripted workflows
 - Remote machines without a display
 - One-shot prompts piped from shell scripts
-- Testing the query engine in isolation
 
-However, it is no longer the primary interactive interface. Documentation and install
-scripts will direct users to `jenova` (full environment) for interactive use and
-`jenova-cli` for scripted use.
+**The canonical interactive experience is now `jvim` only.** 
 
 ### 4.1 CLI Agent Cleanup (open)
-
+- [x] Add decommissioning notice to REPL.
 - [ ] Remove dead `process_tool_calls()` / `execute_tool()` in `agent/loop.lua`
 - [ ] Consolidate `provider_base.generate()` vs `create_message_stream()` call paths
 - [ ] Fix `providers/base.lua:87` duplicate entry in priority list

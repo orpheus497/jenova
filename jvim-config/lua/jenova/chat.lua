@@ -1157,18 +1157,9 @@ function M.respond()
   -- Slash command dispatch
   if prompt:match("^/") then
     dispatch_slash(buf, prompt)
-    -- Remove the slash command line from the buffer and add fresh user section
-    local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-    -- Remove the last user section that contained the slash command
-    local last_user = 0
-    for i = #lines, 1, -1 do
-      if lines[i]:match("^## user%s*$") then last_user = i; break end
-    end
-    if last_user > 0 then
-      vim.api.nvim_buf_set_lines(buf, last_user - 1, -1, false, { "## user", "" })
-    else
-      vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## user", "" })
-    end
+    -- Instead of risky line deletion, just append a fresh user header
+    -- to signal the end of the command processing and readiness for new input.
+    vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## user", "" })
     save_chat(buf)
     scroll_to_bottom(buf)
     vim.cmd("startinsert!")

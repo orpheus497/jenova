@@ -190,6 +190,13 @@ end
 -- ── Agent Loop (integrated from legacy-agent) ───────────────────────────
 
 local function run_agent_repl(opts)
+    print("\n" .. string.rep("!", 80))
+    print("!! NOTICE: The CLI agent and REPL are being decommissioned.")
+    print("!! The canonical Jenova experience is now the jvim full integration.")
+    print("!! Use `jenova` or `jvim` to access the full context-aware agent.")
+    print("!! CLI agent remains available for headless/scripted use ONLY.")
+    print(string.rep("!", 80) .. "\n")
+
     -- Primary path: agent/loop.lua (full UI + QueryEngine)
     local ok_agent, agent_loop = pcall(require, "agent.loop")
     if ok_agent and agent_loop then

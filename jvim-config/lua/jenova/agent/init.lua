@@ -419,8 +419,14 @@ function M.query(prompt, opts)
       if bt ~= "" then return false end -- nofile/help/quickfix/terminal/etc.
       local n = vim.api.nvim_buf_get_name(b)
       if not n or n == "" then return false end
-      if n:match("/%.local/state/jvim/") then return false end
-      if n:match("/jenova/chats/") then return false end
+      
+      -- Use the shared paths helper for robust restriction checks (.jenova, .claude, etc.)
+      local paths_mod = require("utils.paths")
+      if paths_mod.is_restricted(n) then return false end
+      
+      -- Also exclude standard nvim state/runtime paths that are not project source
+      if n:match("/%.local/state/") or n:match("/%.local/share/") then return false end
+      
       return vim.fn.filereadable(n) == 1
     end
 

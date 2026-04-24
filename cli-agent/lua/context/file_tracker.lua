@@ -76,7 +76,8 @@ local function stat_file(path)
     if not _stat_flag then return nil, nil end
     -- Build path quoted for shell
     local q = "'" .. path:gsub("'", "'\\''") .. "'"
-    local h = io.popen("stat " .. _stat_flag .. " " .. _stat_fmt .. " " .. q .. " 2>/dev/null")
+    local cmd = "stat " .. _stat_flag .. " " .. _stat_fmt .. " " .. q .. " 2>/dev/null"
+    local h = io.popen(cmd)
     if not h then return nil, nil end
     local line = h:read("*l"); h:close()
     if not line or line == "" then return nil, nil end
