@@ -1,30 +1,30 @@
 -- jenova/agent/tools/buffer_multiedit.lua
 -- jvim-native override for the shared "MultiEdit" tool.
--- Applies multiple sequential find-and-replace edits to a file.
--- Edits in an open buffer are batched and applied in a single nvim_buf_set_lines call.
+-- Applies multiple sequential line-range-based edits to a single file.
 
 local paths = require("utils.paths")
 
 local M = {
   name        = "MultiEdit",
-  description = "Apply multiple sequential find-and-replace edits to a single file in one operation. " ..
-    "You MUST Read the file first. Each edit's old_string is matched against the current file state after prior edits. " ..
-    "When the file is open in jvim, the live buffer is updated in real-time.",
+  description = "Apply multiple sequential line-range edits to a single file in one operation. " ..
+    "Always Read the file first to get accurate line numbers. " ..
+    "IMPORTANT: Edits MUST be ordered from bottom to top (highest line numbers first) " ..
+    "so that earlier edits do not shift the line numbers for subsequent edits.",
   parameters  = {
     type = "object",
     properties = {
-      file_path = { type = "string", description = "Absolute or repo-relative file path to edit" },
+      file_path = { type = "string", description = "Absolute or workspace-relative file path to edit" },
       edits = {
         type = "array",
-        description = "Array of edit operations applied in order",
+        description = "Array of edit operations, MUST be ordered from highest line number to lowest.",
         items = {
           type = "object",
           properties = {
-            old_string  = { type = "string", description = "Exact text to find (must match verbatim including whitespace)" },
-            new_string  = { type = "string", description = "Replacement text" },
-            replace_all = { type = "boolean", description = "Replace all occurrences (default false)" },
+            start_line = { type = "integer", description = "The 1-based line number to start replacing from" },
+            end_line   = { type = "integer", description = "The 1-based line number to end replacing at (inclusive)" },
+            new_string = { type = "string",  description = "The new replacement text" },
           },
-          required = { "old_string", "new_string" }
+          required = { "start_line", "end_line", "new_string" }
         }
       }
     },
@@ -48,94 +48,70 @@ function M.check_permissions(input, ctx)
   return { allowed = allowed, reason = reason }
 end
 
-local function find_buf_by_path(abs_path)
-  for _, b in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_loaded(b) then
-      local bname = vim.api.nvim_buf_get_name(b)
-      if bname == abs_path then return b end
-    end
-  end
-  return nil
-end
-
-local function apply_edits_to_content(content, edits, path)
-  for i, edit in ipairs(edits) do
-    local old_str = edit.old_string
-    local new_str = edit.new_string
-    local replace_all = edit.replace_all or false
-
-    local plain_count = 0
-    local start = 1
-    while true do
-      local s = content:find(old_str, start, true)
-      if not s then break end
-      plain_count = plain_count + 1
-      start = s + #old_str
-    end
-
-    if plain_count == 0 then
-      return nil, string.format("Edit %d failed: old_string not found in %s", i, path)
-    end
-    if plain_count > 1 and not replace_all then
-      return nil, string.format("Edit %d failed: old_string matches %d locations in %s — add more context or use replace_all=true", i, plain_count, path)
-    end
-
-    if replace_all then
-      local escaped = old_str:gsub("[%(%)%.%%%+%-%*%?%[%]%^%$]", "%%%1")
-      content = content:gsub(escaped, new_str:gsub("%%", "%%%%"))
-    else
-      local s = content:find(old_str, 1, true)
-      content = content:sub(1, s - 1) .. new_str .. content:sub(s + #old_str)
-    end
-  end
-  return content, nil
-end
-
 function M.call(args, context)
-  local raw_path = args.file_path or args.path
-  if not raw_path or raw_path == "" then return { type = "error", error = "file_path is required" } end
+  local path = args.file_path or args.path
+  if not path or path == "" then return { type = "error", error = "file_path is required" } end
   local edits = args.edits
   if type(edits) ~= "table" or #edits == 0 then return { type = "error", error = "edits array is required and must not be empty" } end
 
-  local resolved = paths.resolve(raw_path, context and context.cwd)
+  local resolved = paths.resolve(path, context and context.cwd)
   if paths.is_restricted(resolved) then return paths.restricted_error(resolved) end
 
   local abs = vim.fn.fnamemodify(resolved, ":p")
 
-  local buf = find_buf_by_path(abs)
-  if buf then
-    local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-    local content = table.concat(lines, "\n")
-    
-    local new_content, err = apply_edits_to_content(content, edits, abs)
-    if err then return { type = "error", error = err } end
+  -- Use bufadd/bufload to handle the file transparently
+  local buf = vim.fn.bufadd(abs)
+  pcall(vim.fn.bufload, buf)
 
-    local new_lines = vim.split(new_content, "\n", { plain = true })
-    vim.api.nvim_buf_set_lines(buf, 0, -1, false, new_lines)
-    vim.bo[buf].modified = true
+  local buf_line_count = vim.api.nvim_buf_line_count(buf)
+  
+  -- Sort edits in descending order of start_line so that replacements don't shift subsequent lines
+  local sorted_edits = {}
+  for _, e in ipairs(edits) do table.insert(sorted_edits, e) end
+  table.sort(sorted_edits, function(a, b)
+    return (a.start_line or 0) > (b.start_line or 0)
+  end)
 
-    local bname = vim.api.nvim_buf_get_name(buf)
-    if bname ~= "" then
-      pcall(vim.api.nvim_buf_call, buf, function()
-        vim.cmd("silent! write " .. vim.fn.fnameescape(bname))
-      end)
+  for i, edit in ipairs(sorted_edits) do
+    local start_line = edit.start_line
+    local end_line = edit.end_line
+    local new_string = edit.new_string
+
+    if type(start_line) ~= "number" or type(end_line) ~= "number" or not new_string then
+      return { type = "error", error = string.format("Edit %d is missing required fields or has invalid types", i) }
     end
-    return { type = "text", text = "Edits applied successfully to buffer" }
+    if start_line < 1 then return { type = "error", error = string.format("Edit %d: start_line must be >= 1", i) } end
+    if end_line < start_line - 1 then return { type = "error", error = string.format("Edit %d: end_line cannot be less than start_line - 1", i) } end
+    if start_line > buf_line_count + 1 then
+      return { type = "error", error = string.format("Edit %d: start_line %d is beyond the file length", i, start_line) }
+    end
+
+    if new_string:sub(-1) == "\n" then
+      new_string = new_string:sub(1, -2)
+    end
+
+    local new_lines = new_string == "" and {} or vim.split(new_string, "\n", { plain = true })
+    
+    local ok, err = pcall(function()
+      vim.api.nvim_buf_set_lines(buf, start_line - 1, math.min(end_line, buf_line_count), false, new_lines)
+    end)
+
+    if not ok then
+      return { type = "error", error = string.format("Failed to apply edit %d: %s", i, tostring(err)) }
+    end
+    -- Update buf_line_count for subsequent edits
+    buf_line_count = vim.api.nvim_buf_line_count(buf)
   end
 
-  local f = io.open(abs, "r")
-  if not f then return { type = "error", error = "file not found: " .. abs } end
-  local content = f:read("*a")
-  f:close()
+  vim.bo[buf].modified = true
+  local bname = vim.api.nvim_buf_get_name(buf)
+  if bname ~= "" then
+    pcall(vim.api.nvim_buf_call, buf, function()
+      vim.cmd("silent! write " .. vim.fn.fnameescape(bname))
+    end)
+  end
 
-  local new_content, err = apply_edits_to_content(content, edits, abs)
-  if err then return { type = "error", error = err } end
-
-  local wf = io.open(abs, "w")
-  if not wf then return { type = "error", error = "cannot write file: " .. abs } end
-  wf:write(new_content)
-  wf:close()
-  return { type = "text", text = "Edits applied successfully to disk" }
+  return { type = "text", text = string.format("Successfully applied %d edits to %s", #edits, path) }
 end
 
 return M
