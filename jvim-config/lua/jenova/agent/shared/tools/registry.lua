@@ -52,6 +52,11 @@ function M.get_names()
     return names
 end
 
+--- Purge all registered tools
+function M.clear()
+    tools = {}
+end
+
 --- Filter tools by permission context
 function M.filter_by_permissions(permission_context)
     local result = {}

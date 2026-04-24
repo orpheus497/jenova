@@ -20,6 +20,7 @@ function M.setup()
     vim.notify("jenova.agent.tools: registry not found", vim.log.levels.ERROR, {title="Jenova Agent"})
     return
   end
+  if registry.clear then registry.clear() end
   for _, mod in ipairs(NATIVE_TOOLS) do
     local mok, tool = pcall(require, mod)
     if mok and tool and tool.name and tool.call then

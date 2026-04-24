@@ -120,30 +120,70 @@ end
 
 -- ── Public ────────────────────────────────────────────────────────────────────
 
+local function get_best_workspace_buf()
+  -- 1. Try active buffer if it's a real file
+  local active = vim.api.nvim_get_current_buf()
+  local name = vim.api.nvim_buf_get_name(active)
+  if name ~= "" and vim.bo[active].buftype == "" and not name:match("/jenova/chats/") then
+    return active
+  end
+
+  -- 2. Try the first window that isn't the chat
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    local b = vim.api.nvim_win_get_buf(win)
+    local n = vim.api.nvim_buf_get_name(b)
+    if n ~= "" and vim.bo[b].buftype == "" and not n:match("/jenova/chats/") then
+      return b
+    end
+  end
+  return nil
+end
+
 function M.build_editor_context(chat_buf)
-  local buf = vim.api.nvim_get_current_buf()
-  local path, ft, row, col = current_file_info()
-  local branch  = git_branch()
-  local diag    = lsp_diagnostics_summary(buf)
-  local sel     = visual_selection()
-  local bufs    = open_buffers()
+  local ws_buf = get_best_workspace_buf()
+  local path = ws_buf and vim.api.nvim_buf_get_name(ws_buf) or ""
+  local ft = ws_buf and vim.bo[ws_buf].filetype or "?"
+  local row, col = 0, 0
+  if ws_buf then
+    local cursor = vim.api.nvim_win_get_cursor(0) -- fallback to global if ws_buf not focused
+    -- Better: if ws_buf is in a window, get that window's cursor
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      if vim.api.nvim_win_get_buf(win) == ws_buf then
+        cursor = vim.api.nvim_win_get_cursor(win)
+        break
+      end
+    end
+    row, col = cursor[1], cursor[2]
+  end
+
+  local branch = git_branch()
+  local diag = ws_buf and lsp_diagnostics_summary(ws_buf) or nil
+  local sel = visual_selection()
+  local bufs = open_buffers()
   
-  -- Hardware metadata extraction
+  -- Metadata from chat
   local metadata = chat_buf and parse_metadata_from_buffer(chat_buf) or {}
 
   local lines = { "## Context" }
   table.insert(lines, "cwd: " .. vim.fn.getcwd())
-  table.insert(lines, string.format("file: %s:%d:%d (%s)",
-    vim.fn.fnamemodify(path, ":~:."), row, col, ft ~= "" and ft or "?"))
   
-  if metadata.path then
-    local content = get_buffer_content(metadata.path, metadata.start_line, metadata.end_line)
+  if path ~= "" then
+    table.insert(lines, string.format("file: %s:%d:%d (%s)",
+      vim.fn.fnamemodify(path, ":~:."), row, col + 1, ft))
+    
+    -- AUTOMATICALLY INJECT CONTENT OF THE WORKSPACE BUFFER
+    local content = get_buffer_content(path)
     local numbered = {}
-    local sl = metadata.start_line or 1
     for i, l in ipairs(vim.split(content, "\n", { plain = true })) do
-      table.insert(numbered, string.format("%6d | %s", sl + i - 1, l))
+      table.insert(numbered, string.format("%6d | %s", i, l))
     end
-    table.insert(lines, string.format("active_buffer_content (%s):\n```\n%s\n```", metadata.path, table.concat(numbered, "\n")))
+    table.insert(lines, string.format("active_buffer_content (%s):\n```\n%s\n```", 
+      vim.fn.fnamemodify(path, ":~:."), table.concat(numbered, "\n")))
+  end
+
+  if metadata.path and metadata.path ~= path then
+    local content = get_buffer_content(metadata.path, metadata.start_line, metadata.end_line)
+    -- ... (secondary metadata logic if needed)
   end
 
   if diag then table.insert(lines, "diagnostics: " .. diag) end
