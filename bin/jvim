@@ -198,6 +198,14 @@ load_jenova_conf() {
 # defined in etc/jenova.conf the same way local mode does.
 load_jenova_conf
 
+# Override Neovim standard paths so jvim uses the in-tree jvim-config directory
+# instead of ~/.config/nvim or /usr/share/nvim. Set unconditionally so both
+# remote and local modes inherit the same editor environment.
+export XDG_CONFIG_HOME="$JENOVA_ROOT"
+export XDG_DATA_HOME="$JENOVA_ROOT/.jenova/share"
+export NVIM_APPNAME="jvim-config"
+export VIMRUNTIME="$JENOVA_ROOT/jvim/runtime"
+
 # --- Remote/LAN client mode: skip backend start, just export env and launch editor ---
 # Two sub-modes:
 #   jvim --remote <host>  — explicit host, connect and health-check immediately
@@ -209,12 +217,6 @@ if [ -n "$REMOTE_HOST" ] || [ "$REMOTE_AUTO_DISCOVER" = "1" ]; then
     export JENOVA_LLAMA_PORT="$REMOTE_LLAMA_PORT"
     export JENOVA_LLAMA_EMBED_PORT="$REMOTE_EMBED_PORT"
     export JENOVA_LAN_MODE="1"
-
-    # Override Neovim standard paths to use the in-tree jvim-config directory.
-    export XDG_CONFIG_HOME="$JENOVA_ROOT"
-    export XDG_DATA_HOME="$JENOVA_ROOT/.jenova/share"
-    export NVIM_APPNAME="jvim-config"
-    export VIMRUNTIME="$JENOVA_ROOT/jvim/runtime"
 
     LLAMA_LIB_DIR="$JENOVA_ROOT/llama.cpp/build/bin"
     if [ -d "$LLAMA_LIB_DIR" ]; then
@@ -277,13 +279,6 @@ export JENOVA_LLAMA_PORT="$LLAMA_PORT"
 export JENOVA_LLAMA_EMBED_PORT="${LLAMA_EMBED_PORT:-8082}"
 export JENOVA_ROOT="${JENOVA_ROOT}"
 export JENOVA_API_URL="$API_URL"
-
-# Override Neovim standard paths so jvim uses the in-tree jvim-config directory
-# instead of ~/.config/nvim or /usr/share/nvim.
-export XDG_CONFIG_HOME="$JENOVA_ROOT"
-export XDG_DATA_HOME="$JENOVA_ROOT/.jenova/share"
-export NVIM_APPNAME="jvim-config"
-export VIMRUNTIME="$JENOVA_ROOT/jvim/runtime"
 
 # Set LD_LIBRARY_PATH so llama.cpp shared libraries are found by llama-server
 # even when Neovim's child processes inherit the environment.
