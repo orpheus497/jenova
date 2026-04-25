@@ -120,10 +120,15 @@ elif [ -f /proc/cpuinfo ]; then
     else
         JENOVA_PHYSICAL_THREADS="$JENOVA_CPU_THREADS"
     fi
-elif command -v sysctl >/dev/null 2>&1; then
-    JENOVA_CPU_MODEL="$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "Unknown")"
-    JENOVA_CPU_THREADS="$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
-    JENOVA_PHYSICAL_THREADS="$JENOVA_CPU_THREADS"
+elif [ "$JENOVA_OS" = "macos" ] && command -v sysctl >/dev/null 2>&1; then
+    # Apple Silicon doesn't have machdep.cpu.brand_string; fall back to hw.model.
+    JENOVA_CPU_MODEL="$(sysctl -n machdep.cpu.brand_string 2>/dev/null \
+                        || sysctl -n hw.model 2>/dev/null \
+                        || echo "Unknown")"
+    JENOVA_CPU_THREADS="$(sysctl -n hw.logicalcpu 2>/dev/null \
+                          || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+    JENOVA_PHYSICAL_THREADS="$(sysctl -n hw.physicalcpu 2>/dev/null \
+                                || echo "$JENOVA_CPU_THREADS")"
 fi
 
 [ "${JENOVA_CPU_THREADS:-0}" -lt 1 ]  2>/dev/null && JENOVA_CPU_THREADS=1
@@ -142,6 +147,13 @@ if [ "$JENOVA_OS" = "freebsd" ] && command -v sysctl >/dev/null 2>&1; then
 elif [ -f /proc/meminfo ]; then
     JENOVA_RAM_GIB="$(awk '/^MemTotal:/{printf "%d", $2/1024/1024}' /proc/meminfo 2>/dev/null || echo 0)"
     JENOVA_SWAP_GIB="$(awk '/^SwapTotal:/{printf "%d", $2/1024/1024}' /proc/meminfo 2>/dev/null || echo 0)"
+elif [ "$JENOVA_OS" = "macos" ] && command -v sysctl >/dev/null 2>&1; then
+    # hw.memsize returns bytes; vm.swapusage is human-readable so we parse with awk.
+    _memsize="$(sysctl -n hw.memsize 2>/dev/null || echo 0)"
+    JENOVA_RAM_GIB=$(( ${_memsize:-0} / 1024 / 1024 / 1024 ))
+    JENOVA_SWAP_GIB="$(sysctl -n vm.swapusage 2>/dev/null \
+                       | awk '/total/{gsub(/M/,""); for(i=1;i<=NF;i++) if($i=="total") {printf "%d", $(i+2)/1024; exit}}' \
+                       || echo 0)"
 fi
 
 # ── Vulkan ────────────────────────────────────────────────────────────────────
