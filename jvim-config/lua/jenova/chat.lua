@@ -596,6 +596,19 @@ local function agent_respond(buf, prompt, on_done, history)
       end)
     end,
 
+    on_compact = function(dropped)
+      vim.schedule(function()
+        if not vim.api.nvim_buf_is_valid(buf) then return end
+        commit_stream()
+        clear_transient()
+        buf_append({ string.format(
+          "<!-- compacted %d earlier message(s) into session digest -->",
+          dropped) })
+        ensure_transient()
+        scroll_to_bottom(buf)
+      end)
+    end,
+
     on_tool_use = function(name, input)
       vim.schedule(function()
         if not vim.api.nvim_buf_is_valid(buf) then return end
@@ -772,6 +785,97 @@ local function dispatch_slash(buf, cmd_line)
       { "", "<!-- /debug -->", "```json", encoded, "```", "" })
     scroll_to_bottom(buf)
 
+  elseif cmd == "memory" or cmd == "mem" then
+    -- /memory                   — show top facts in scope (workspace + global)
+    -- /memory recall <query>    — preview what would be injected for <query>
+    -- /memory forget <id>       — delete a fact
+    -- /memory clear             — wipe workspace facts (keeps global)
+    -- /memory clear all         — wipe everything
+    local sub_word, sub_arg = arg:match("^(%S+)%s*(.*)$")
+    sub_word = sub_word and sub_word:lower() or ""
+    local lines = { "", "<!-- /memory -->" }
+    local ok, memory = pcall(require, "jenova.agent.memory")
+    if not ok or not memory then
+      table.insert(lines, "  (memory module not available)")
+    elseif sub_word == "recall" then
+      local q = sub_arg or ""
+      local facts = memory.recall(q, 10)
+      if #facts == 0 then
+        table.insert(lines, "  (no facts matched: " .. q .. ")")
+      else
+        table.insert(lines, string.format("  recall(\"%s\"):", q))
+        for _, f in ipairs(facts) do
+          table.insert(lines, string.format("    [%s] %s", f.id, f.text))
+        end
+      end
+    elseif sub_word == "forget" then
+      local id = sub_arg
+      if not id or id == "" then
+        table.insert(lines, "  usage: /memory forget <id>")
+      elseif memory.forget(id) then
+        table.insert(lines, "  forgot " .. id)
+      else
+        table.insert(lines, "  no fact with id " .. id)
+      end
+    elseif sub_word == "clear" then
+      if sub_arg == "all" then
+        memory.clear(false)
+        table.insert(lines, "  cleared ALL memory facts (workspace + global)")
+      else
+        memory.clear(true)
+        table.insert(lines, "  cleared workspace memory facts (global preserved)")
+      end
+    else
+      local stats = memory.stats()
+      table.insert(lines, string.format(
+        "  facts: %d total  (%d workspace, %d global)",
+        stats.total, stats.workspace, stats.global))
+      table.insert(lines, "  scope: " .. stats.scope)
+      local facts = memory.list(15)
+      if #facts > 0 then
+        table.insert(lines, "")
+        table.insert(lines, "  most-recent (top 15):")
+        for _, f in ipairs(facts) do
+          local snippet = f.text:gsub("\n", " ")
+          if #snippet > 100 then snippet = snippet:sub(1, 100) .. "…" end
+          table.insert(lines, string.format("    [%s] %s", f.id, snippet))
+        end
+      end
+      table.insert(lines, "")
+      table.insert(lines, "  /memory recall <query>  preview prompt injection")
+      table.insert(lines, "  /memory forget <id>     delete a fact")
+      table.insert(lines, "  /memory clear [all]     wipe workspace [or all]")
+    end
+    table.insert(lines, "")
+    vim.api.nvim_buf_set_lines(buf, -1, -1, false, lines)
+    scroll_to_bottom(buf)
+
+  elseif cmd == "compact" then
+    -- /compact            — force-compact the engine's current message log
+    -- /compact status     — show how many messages are currently held
+    local sub = arg:lower()
+    local lines = { "", "<!-- /compact -->" }
+    local ok_a, agent = pcall(require, "jenova.agent")
+    local ok_c, compactor = pcall(require, "jenova.agent.compactor")
+    if not ok_a or not agent or not agent._engine then
+      table.insert(lines, "  (no active engine — issue a query first)")
+    elseif sub == "status" then
+      local n = #(agent._engine.messages or {})
+      table.insert(lines, string.format("  %d messages currently in context", n))
+    elseif ok_c and compactor then
+      local before = #(agent._engine.messages or {})
+      local new_msgs, dropped = compactor.compact(agent._engine.messages, { keep_recent = 4 })
+      agent._engine.messages = new_msgs
+      table.insert(lines, string.format(
+        "  compacted: %d → %d messages (folded %d into a digest)",
+        before, #new_msgs, dropped))
+    else
+      table.insert(lines, "  (compactor unavailable)")
+    end
+    table.insert(lines, "")
+    vim.api.nvim_buf_set_lines(buf, -1, -1, false, lines)
+    scroll_to_bottom(buf)
+
   elseif cmd == "learning" or cmd == "learn" then
     -- /learning            — show per-tool aggregate stats from the
     --                        persistent database
@@ -939,6 +1043,8 @@ local function dispatch_slash(buf, cmd_line)
       "  /debug              show engine state as JSON",
       "  /diag               show LSP diagnostics summary",
       "  /learning [session] tool-usage stats; 'reset' clears repetition cache",
+      "  /memory [recall|forget|clear]  semantic memory inspect / manage",
+      "  /compact [status]   force-compact the engine's message history",
       "  /tools [on|off]     list / toggle tool dispatch",
       "  /tool-choice MODE   auto | required | none",
       "  /permissions MODE   default | auto | plan | yolo",

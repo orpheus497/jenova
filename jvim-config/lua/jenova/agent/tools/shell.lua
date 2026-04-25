@@ -78,6 +78,70 @@ function M.user_facing_name(input)
   return "Shell"
 end
 
+-- Whitespace-tokenise the command line. Argument-aware so legitimate
+-- arguments (filenames, paths) that *contain* substrings like "/" or
+-- "--no-preserve-root" don't trigger false positives — only standalone
+-- tokens count as the dangerous flag/path.
+local function tokenize(command)
+  local out = {}
+  for tok in command:gmatch("%S+") do table.insert(out, tok) end
+  return out
+end
+
+local function expand_home(tok)
+  if tok == "~" or tok == "~/" then return vim.fn.expand("~") end
+  if tok:sub(1, 2) == "~/" then return vim.fn.expand("~") .. tok:sub(2) end
+  if tok == "$HOME" then return vim.fn.expand("$HOME") end
+  return tok
+end
+
+local DANGEROUS_RM_TARGETS = {
+  ["/"] = true, ["/*"] = true,
+  ["/bin"] = true, ["/etc"] = true, ["/usr"] = true, ["/var"] = true,
+  ["/lib"] = true, ["/sbin"] = true, ["/boot"] = true, ["/root"] = true,
+  ["/home"] = true, ["/Users"] = true,
+}
+
+local function is_destructive_rm(tokens)
+  if tokens[1] ~= "rm" then return false end
+  local has_recursive = false
+  local force = false
+  local no_preserve_root = false
+  local has_root_arg = false
+
+  for i = 2, #tokens do
+    local tok = tokens[i]
+    if tok == "--no-preserve-root" then
+      no_preserve_root = true
+    elseif tok:sub(1, 2) == "--" then
+      -- long option, ignore
+    elseif tok:sub(1, 1) == "-" then
+      -- bundled short flags: check each char
+      for c in tok:sub(2):gmatch(".") do
+        if c == "r" or c == "R" then has_recursive = true end
+        if c == "f" then force = true end
+      end
+    else
+      local resolved = expand_home(tok)
+      local home = vim.fn.expand("~"):gsub("/+$", "")
+      if DANGEROUS_RM_TARGETS[tok] or DANGEROUS_RM_TARGETS[resolved]
+         or resolved == home or resolved == home .. "/" then
+        has_root_arg = true
+      end
+    end
+  end
+  -- A destructive rm needs both -r/-R and a dangerous target. -f alone is
+  -- fine; --no-preserve-root with / is unconditional refusal.
+  if no_preserve_root then return true end
+  return has_recursive and has_root_arg and force
+end
+
+local function is_fork_bomb(command)
+  -- Classic shell fork bomb. Whitespace insensitive between the parts.
+  local stripped = command:gsub("%s+", "")
+  return stripped:find(":(){:|:&};:", 1, true) ~= nil
+end
+
 function M.check_permissions(input, _ctx)
   -- The registry's interactive prompt gates write commands. Block obviously
   -- catastrophic patterns regardless so even an "allow all" session can't
@@ -86,16 +150,15 @@ function M.check_permissions(input, _ctx)
     return { allowed = false, reason = "command is required" }
   end
   local cmd = input.command
-  -- rm -rf / or rm -rf /something near root
-  if cmd:match("rm%s+%-[rRf]+%s+/%s*$") or cmd:match("rm%s+%-[rRf]+%s+/[^%s/]*%s*$") then
-    return { allowed = false, reason = "refusing rm -rf at filesystem root" }
+  local tokens = tokenize(cmd)
+
+  if is_destructive_rm(tokens) then
+    return { allowed = false, reason = "refusing rm -rf on a system / home root path" }
   end
-  if cmd:match("rm%s+%-[rRf]+%s+~/?%s*$") or cmd:match("rm%s+%-[rRf]+%s+%$HOME") then
-    return { allowed = false, reason = "refusing rm -rf on $HOME" }
-  end
-  if cmd:match(":%(%)%s*{%s*:|:") then
+  if is_fork_bomb(cmd) then
     return { allowed = false, reason = "refusing fork bomb pattern" }
   end
+
   return { allowed = true }
 end
 

@@ -1,7 +1,8 @@
 -- jvim-config/lua/jenova/agent/registry.lua
 -- Pure jvim-native tool registry. ZERO CLI dependencies.
 
-local learning = require("jenova.agent.learning")
+local learning   = require("jenova.agent.learning")
+local extractors = require("jenova.agent.learning_extractors")
 
 local M = {}
 local tools = {}
@@ -171,6 +172,11 @@ function M.execute(name, args, context)
     end
   end
   learning.record(name, args, soft_err == nil, soft_err)
+
+  -- Run the per-tool fact extractor: turns successful tool calls into
+  -- durable memory facts that get auto-injected into the system prompt
+  -- on subsequent turns. This is the engine of "natural compression".
+  pcall(extractors.apply, name, args, result, soft_err == nil)
 
   -- 5. Soft hint: when the same call has failed twice already (but not yet
   --    hit the hard guard), append a one-line warning so the model knows it

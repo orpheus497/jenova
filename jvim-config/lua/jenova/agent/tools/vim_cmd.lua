@@ -91,32 +91,45 @@ function M.check_permissions(input, _ctx)
   return { allowed = true }
 end
 
-local function capture_messages(fn)
-  local ok, captured = pcall(function()
-    return vim.api.nvim_exec2("redir => __jenova_redir__\nlua __jenova_redir_run__()\nredir END\nlet g:__jenova_redir__ = __jenova_redir__",
-      { output = false })
-  end)
-  -- The above redir trick is brittle. Use the cleaner nvim_exec2 with
-  -- output=true on the actual command instead — this function exists only
-  -- to keep the signature clean if we later need redir-based capture.
-  return ok, captured
+-- Capture only the messages added by `command` (avoids leaking unrelated
+-- prior plugin output). We snapshot :messages before and after, then return
+-- the suffix that wasn't there before.
+local function snapshot_messages()
+  local ok, res = pcall(vim.api.nvim_exec2, "messages", { output = true })
+  if not ok or type(res) ~= "table" then return "" end
+  return res.output or ""
+end
+
+local function diff_suffix(before, after)
+  if not after or after == "" then return "" end
+  if not before or before == "" then return after end
+  -- after is expected to start with the same prefix as before; subtract it.
+  if after:sub(1, #before) == before then
+    return after:sub(#before + 1):gsub("^[\r\n]+", "")
+  end
+  -- Otherwise the messages buffer rotated/cleared — return the whole tail
+  -- since we can't safely diff. Cap it so we don't leak much.
+  return after
 end
 
 local function run_ex(command)
   -- nvim_exec2 returns the captured ":echo"/":print" output for us when
   -- output=true, which is exactly what we want for ":LspInfo", ":Lazy",
   -- ":messages", etc. Errors are surfaced via pcall.
+  local before = snapshot_messages()
   local ok, res = pcall(vim.api.nvim_exec2, command, { output = true })
   if not ok then
     return { type = "error", error = "ex-command failed: " .. tostring(res) }
   end
   local out = (type(res) == "table" and res.output) or ""
   if out == "" then
-    -- Some commands print to messages without echoing. Pull the tail of
-    -- :messages so the agent still sees something meaningful.
-    local msgs_ok, msgs = pcall(vim.api.nvim_exec2, "messages", { output = true })
-    if msgs_ok and type(msgs) == "table" and msgs.output and msgs.output ~= "" then
-      out = msgs.output
+    -- Some commands print to :messages without echoing (e.g. :LspInfo on
+    -- some servers). Pull ONLY the new messages added by this command so
+    -- we don't leak unrelated prior plugin output to the agent.
+    local after = snapshot_messages()
+    local diff  = diff_suffix(before, after)
+    if diff and diff ~= "" then
+      out = diff
     else
       out = "(command produced no output)"
     end
@@ -164,9 +177,5 @@ function M.call(args, _context)
   end
   return { type = "error", error = "Unknown action: " .. tostring(action) }
 end
-
--- Suppress lint: capture_messages is currently unused but kept for the
--- redir-based capture path (see comment above).
-local _ = capture_messages
 
 return M

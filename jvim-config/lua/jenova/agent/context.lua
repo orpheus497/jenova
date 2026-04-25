@@ -230,7 +230,36 @@ function M.build_file_seed_prompt()
     rel, ft, table.concat(numbered, "\n"))
 end
 
-function M.build_system_prompt(chat_buf)
+-- Pull the most relevant facts out of the semantic memory store and format
+-- them as a "Known about this project" prompt section. Returns nil when
+-- nothing relevant is stored — the caller skips the section entirely so we
+-- don't waste tokens on a header with no content.
+local function build_memory_section(user_message, ws_buf)
+  local ok, memory = pcall(require, "jenova.agent.memory")
+  if not ok or not memory then return nil end
+  local active_file = nil
+  if ws_buf and vim.api.nvim_buf_is_valid(ws_buf) then
+    local n = vim.api.nvim_buf_get_name(ws_buf)
+    if n and n ~= "" then active_file = n end
+  end
+  local facts = memory.recall_for_context({
+    user_message = user_message,
+    active_file  = active_file,
+    cwd          = vim.fn.getcwd(),
+    n            = 10,
+  })
+  if not facts or #facts == 0 then return nil end
+  local body = memory.format_facts_for_prompt(facts)
+  if not body or body == "" then return nil end
+  return table.concat({
+    "## Known about this project",
+    "(auto-recalled from prior sessions; treat as background, supersede with",
+    " a fresh tool call if you suspect a fact is stale)",
+    body,
+  }, "\n")
+end
+
+function M.build_system_prompt(chat_buf, user_message)
   local base = table.concat({
     "You are JENOVA, built by orpheus497. You are a high-privilege autonomous AGENT integrated directly into the jvim editor.",
     "You are NOT a chatbot. You do not simply discuss code; you IMPLEMENT it by modifying the filesystem.",
@@ -252,6 +281,7 @@ function M.build_system_prompt(chat_buf)
     "- Grep(pattern, path?), Glob(pattern), LS(path?), Buffers(): Search files and buffers.",
     "- Shell(command, description, cwd?, timeout?): Run a POSIX sh command (build, test, git, install, scripts). Output is captured. Cancellable via /stop.",
     "- VimCmd(action, command?, code?): Native editor / plugin access. action=\"ex\" runs an ex-command (`:make`, `:Lazy sync`, `:LspInfo`, any plugin command). action=\"lua\" evaluates a Lua expression in the editor process (read plugin state, call plugin APIs).",
+    "- Remember(text, tags?, scope?): Pin a durable fact (user preferences, project conventions, build commands the user dictates). Auto-recalled into the system prompt on relevant turns.",
     "- AskUserQuestion(question): Prompt user for input.",
     "",
     "## Rules",
@@ -265,13 +295,21 @@ function M.build_system_prompt(chat_buf)
     "- A learning database tracks every tool call. If you call the SAME tool with the SAME arguments and it fails 3 times in a row, the engine BLOCKS further retries and returns a [REPETITION_GUARD] error. When you see that, stop, change your approach, and try a different tool or different arguments — never retry verbatim.",
     "- Prefer the dedicated tools (Read/Edit/Grep/LSP) over Shell when one fits. Use Shell for tasks that have no native equivalent (build, test, git, package install).",
     "- Use VimCmd to reach into installed plugins (LSP, treesitter, package manager, statusline) instead of inventing a workaround.",
+    "- A semantic memory system auto-records what each tool call learns and recalls relevant facts in the 'Known about this project' section. Trust those facts as background unless a fresh tool call contradicts them — DO NOT spend turns re-discovering things already listed there.",
+    "- Use Remember only for durable info the user explicitly states (preferences, conventions, build commands they dictate). Routine observations are auto-extracted; do not duplicate them with Remember.",
+    "- Older turns may be replaced with a [SESSION DIGEST] message summarising past tool calls; that is normal compression — the facts you needed are preserved in the memory section, do not re-derive them.",
   }, "\n")
 
+  local out_parts = { base }
+
   local editor_ctx = safe(M.build_editor_context, chat_buf)
-  if editor_ctx then
-    return base .. "\n\n" .. editor_ctx
-  end
-  return base
+  if editor_ctx then table.insert(out_parts, editor_ctx) end
+
+  local ws_buf = safe(get_best_workspace_buf)
+  local memory_section = safe(build_memory_section, user_message, ws_buf)
+  if memory_section then table.insert(out_parts, memory_section) end
+
+  return table.concat(out_parts, "\n\n")
 end
 
 return M

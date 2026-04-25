@@ -1,7 +1,8 @@
 -- jenova/agent/engine.lua
 -- 100% jvim-native Query Engine. No CLI dependencies.
 
-local registry = require("jenova.agent.registry")
+local registry  = require("jenova.agent.registry")
+local compactor = require("jenova.agent.compactor")
 local M = {}
 
 -- Extract all ```json ... ``` blocks from a response string.
@@ -47,13 +48,18 @@ end
 
 function M.new(options)
   local self = setmetatable({}, { __index = M })
-  self.system_prompt  = options.system_prompt  or ""
-  self.messages       = {}
-  self.on_text        = options.on_text        or function() end
-  self.on_tool_use    = options.on_tool_use    or function() end
-  self.on_tool_result = options.on_tool_result or function() end
-  self.on_thinking    = options.on_thinking    or function() end
-  self._stop          = false
+  self.system_prompt   = options.system_prompt  or ""
+  -- A function that returns the *current* system prompt. Allows the engine
+  -- to refresh the "Known about this project" memory section every turn
+  -- as new facts get learned. Falls back to the static system_prompt.
+  self.system_prompt_fn = options.system_prompt_fn
+  self.messages        = {}
+  self.on_text         = options.on_text        or function() end
+  self.on_tool_use     = options.on_tool_use    or function() end
+  self.on_tool_result  = options.on_tool_result or function() end
+  self.on_thinking     = options.on_thinking    or function() end
+  self.on_compact      = options.on_compact     or function() end
+  self._stop           = false
   return self
 end
 
@@ -71,9 +77,31 @@ function M:query(user_message, provider)
       self.on_thinking()
     end
 
+    -- Compact older history into a single session digest when the message
+    -- log gets large. Anything dropped here also lives in jenova.agent.memory
+    -- via the learning extractors, so the model can still recall facts about
+    -- earlier turns through the system prompt's "Known about this project"
+    -- section.
+    local compacted_n
+    self.messages, compacted_n = compactor.maybe_compact(self.messages)
+    if compacted_n and compacted_n > 0 then
+      pcall(self.on_compact, compacted_n)
+    end
+
+    -- Refresh the system prompt each turn so newly-learned memory facts get
+    -- surfaced immediately. Fall back to the static prompt when no builder
+    -- function was supplied.
+    local sys_prompt = self.system_prompt
+    if self.system_prompt_fn then
+      local ok_sp, fresh = pcall(self.system_prompt_fn, user_message, self)
+      if ok_sp and type(fresh) == "string" and fresh ~= "" then
+        sys_prompt = fresh
+      end
+    end
+
     -- System prompt goes in messages[0] (OpenAI format). The proxy detects
     -- has_system=true and preserves it; llama-server reads it as the system turn.
-    local full_messages = { { role = "system", content = self.system_prompt } }
+    local full_messages = { { role = "system", content = sys_prompt } }
     for _, m in ipairs(self.messages) do
       table.insert(full_messages, m)
     end

@@ -85,13 +85,26 @@ end
 
 -- Stable canonical JSON of the args table so identical calls map to the same
 -- signature. Field order matters in vim.json.encode, so sort keys first.
+--
+-- Use vim.islist (Neovim 0.10+) / vim.tbl_islist as a robust array check —
+-- the previous `#value > 0` heuristic gave the wrong answer for tables with
+-- holes or mixed key types, producing unstable signatures that defeated the
+-- repetition guard.
+local function is_list_like(value)
+  if vim.islist then return vim.islist(value) end
+  if vim.tbl_islist then return vim.tbl_islist(value) end
+  -- Fallback (very old nvim): require contiguous 1..n integer keys.
+  local n = 0
+  for _ in pairs(value) do n = n + 1 end
+  for i = 1, n do if value[i] == nil then return false end end
+  return n > 0
+end
+
 local function canonical(value)
   if type(value) ~= "table" then
     return vim.json.encode(value)
   end
-  -- detect array-ish vs map-ish
-  local is_array = (#value > 0)
-  if is_array then
+  if is_list_like(value) then
     local parts = {}
     for _, v in ipairs(value) do table.insert(parts, canonical(v)) end
     return "[" .. table.concat(parts, ",") .. "]"
