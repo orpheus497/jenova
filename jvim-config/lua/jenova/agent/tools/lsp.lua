@@ -118,7 +118,7 @@ local function action_diagnostics(args)
   end
 
   -- Fallback: If no diagnostics found and it's a C file, try compiler-based linting
-  if (#diags == 0) and args.file_path then
+  if (#diags == 0) and args.file_path and vim.fn.executable("cc") == 1 then
     local ext = args.file_path:match("%.([^.]+)$")
     if ext == "c" or ext == "h" then
       local abs = vim.fn.fnamemodify(args.file_path, ":p")
