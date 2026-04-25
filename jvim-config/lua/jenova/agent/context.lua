@@ -250,6 +250,8 @@ function M.build_system_prompt(chat_buf)
     "- MultiEdit(file_path, edits[{start_line, end_line, new_string}]): Batch edits. MUST Read first.",
     "- LSP(action, file_path, line?, character?, query?): ONLY tool for errors, definitions, references, hover, symbols, code_actions, rename_preview.",
     "- Grep(pattern, path?), Glob(pattern), LS(path?), Buffers(): Search files and buffers.",
+    "- Shell(command, description, cwd?, timeout?): Run a POSIX sh command (build, test, git, install, scripts). Output is captured. Cancellable via /stop.",
+    "- VimCmd(action, command?, code?): Native editor / plugin access. action=\"ex\" runs an ex-command (`:make`, `:Lazy sync`, `:LspInfo`, any plugin command). action=\"lua\" evaluates a Lua expression in the editor process (read plugin state, call plugin APIs).",
     "- AskUserQuestion(question): Prompt user for input.",
     "",
     "## Rules",
@@ -260,6 +262,9 @@ function M.build_system_prompt(chat_buf)
     "- You MUST Read a file before any Edit/MultiEdit. Use exact line numbers from the Read output.",
     "- Relative paths resolve against workspace cwd (shown below).",
     "- Be terse. Apply edits directly.",
+    "- A learning database tracks every tool call. If you call the SAME tool with the SAME arguments and it fails 3 times in a row, the engine BLOCKS further retries and returns a [REPETITION_GUARD] error. When you see that, stop, change your approach, and try a different tool or different arguments — never retry verbatim.",
+    "- Prefer the dedicated tools (Read/Edit/Grep/LSP) over Shell when one fits. Use Shell for tasks that have no native equivalent (build, test, git, package install).",
+    "- Use VimCmd to reach into installed plugins (LSP, treesitter, package manager, statusline) instead of inventing a workaround.",
   }, "\n")
 
   local editor_ctx = safe(M.build_editor_context, chat_buf)

@@ -1,6 +1,8 @@
 -- jvim-config/lua/jenova/agent/registry.lua
 -- Pure jvim-native tool registry. ZERO CLI dependencies.
 
+local learning = require("jenova.agent.learning")
+
 local M = {}
 local tools = {}
 
@@ -103,20 +105,34 @@ end
 
 function M.execute(name, args, context)
   local tool = tools[name]
-  if not tool then return nil, "Unknown tool: " .. name end
+  if not tool then
+    learning.record(name, args, false, "Unknown tool: " .. name)
+    return nil, "Unknown tool: " .. name
+  end
+
+  -- 0. Repetition guard — block before we even ask the user. If the model
+  --    has just failed this exact call REPETITION_WINDOW times in a row,
+  --    short-circuit with advice instead of running it (or re-prompting).
+  local looping, advice = learning.check_repetition(name, args)
+  if looping then
+    learning.record(name, args, false, "repetition_blocked")
+    return nil, advice
+  end
 
   -- 1. Tool-level automated permission check (e.g. restricted paths).
   if tool.check_permissions then
     local perm = tool.check_permissions(args, context)
     if perm and not perm.allowed then
-      return nil, "Permission denied: " .. (perm.reason or "")
+      local reason = "Permission denied: " .. (perm.reason or "")
+      learning.record(name, args, false, reason)
+      return nil, reason
     end
   end
 
   -- 2. Read-only tools (Read, Glob, Grep, LS, LSP, AskUser …) run without
   --    prompting. Write/execute tools require explicit user approval unless
   --    the session already granted permission.
-  local is_ro = tool.is_read_only and tool.is_read_only()
+  local is_ro = tool.is_read_only and tool.is_read_only(args)
   if not is_ro and not _session_allowed["*"] and not _session_allowed[name] then
     local decision = prompt_user_permission(name, args)
     if decision == "allow_tool" then
@@ -130,6 +146,7 @@ function M.execute(name, args, context)
         msg = msg .. " Your reason: " .. reason .. "."
       end
       msg = msg .. " Please try a different approach that does not require " .. name .. "."
+      learning.record(name, args, false, "user_denied")
       return nil, msg
     end
     -- "allow_once" falls through to execution below.
@@ -137,8 +154,44 @@ function M.execute(name, args, context)
 
   -- 3. Execute.
   local ok, result = pcall(tool.call, args, context or {})
-  if not ok then return nil, "Tool error: " .. tostring(result) end
+  if not ok then
+    learning.record(name, args, false, tostring(result))
+    return nil, "Tool error: " .. tostring(result)
+  end
+
+  -- 4. Classify the result: tools return { type = "error", error = ... } for
+  --    soft failures (file not found, exit code != 0, etc.). Treat those as
+  --    failures for learning purposes so the repetition guard can fire.
+  local soft_err = nil
+  if type(result) == "table" then
+    if result.type == "error" or result.error then
+      soft_err = result.error or "tool reported error"
+    elseif result.exit_code and result.exit_code ~= 0 then
+      soft_err = "exit " .. tostring(result.exit_code)
+    end
+  end
+  learning.record(name, args, soft_err == nil, soft_err)
+
+  -- 5. Soft hint: when the same call has failed twice already (but not yet
+  --    hit the hard guard), append a one-line warning so the model knows it
+  --    is one more failure away from being blocked.
+  if soft_err then
+    local hint = learning.soft_hint(name, args)
+    if hint and type(result) == "table" then
+      local txt = result.text or result.error or ""
+      result.text = (txt ~= "" and (txt .. "\n\n") or "") .. hint
+    end
+  end
+
   return result
+end
+
+-- ── Session lifecycle ─────────────────────────────────────────────────────────
+
+-- Called by jenova.agent.reset() so a fresh session starts with a clean
+-- repetition guard. Persistent stats remain on disk.
+function M.reset_learning_session()
+  learning.reset_session()
 end
 
 return M

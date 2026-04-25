@@ -772,6 +772,65 @@ local function dispatch_slash(buf, cmd_line)
       { "", "<!-- /debug -->", "```json", encoded, "```", "" })
     scroll_to_bottom(buf)
 
+  elseif cmd == "learning" or cmd == "learn" then
+    -- /learning            — show per-tool aggregate stats from the
+    --                        persistent database
+    -- /learning session    — show only the current session's calls
+    -- /learning reset      — wipe the per-session repetition cache
+    local sub = arg:lower()
+    local lines = { "", "<!-- /learning -->" }
+    local ok, learning = pcall(require, "jenova.agent.learning")
+    if not ok or not learning then
+      table.insert(lines, "  (learning module not available)")
+    elseif sub == "reset" then
+      learning.reset_session()
+      table.insert(lines, "  session repetition cache cleared")
+    elseif sub == "session" then
+      local summary = learning.session_summary()
+      if #summary == 0 then
+        table.insert(lines, "  (no calls in this session yet)")
+      else
+        table.insert(lines, "  this session:")
+        for _, s in ipairs(summary) do
+          table.insert(lines, string.format(
+            "    %-14s ok:%-3d fail:%-3d (last %d)",
+            s.name, s.ok, s.fail, s.recent))
+        end
+      end
+    else
+      local stats = learning.stats()
+      local names = {}
+      for name, _ in pairs(stats or {}) do table.insert(names, name) end
+      table.sort(names)
+      if #names == 0 then
+        table.insert(lines, "  (no recorded tool history)")
+      else
+        table.insert(lines, "  persistent stats:")
+        for _, name in ipairs(names) do
+          local s = stats[name]
+          local total = (s.success or 0) + (s.failure or 0)
+          local rate  = total > 0
+            and string.format("%.0f%%", 100 * (s.success or 0) / total)
+            or "—"
+          local top_err, top_n = nil, 0
+          for k, v in pairs(s.errors or {}) do
+            if v > top_n then top_err, top_n = k, v end
+          end
+          local err_part = top_err
+            and string.format(" top-err:%s(%d)", top_err, top_n) or ""
+          table.insert(lines, string.format(
+            "    %-14s ok:%-4d fail:%-4d rate:%s%s",
+            name, s.success or 0, s.failure or 0, rate, err_part))
+        end
+        table.insert(lines, "")
+        table.insert(lines, "  /learning session  show calls in this chat")
+        table.insert(lines, "  /learning reset    clear repetition cache")
+      end
+    end
+    table.insert(lines, "")
+    vim.api.nvim_buf_set_lines(buf, -1, -1, false, lines)
+    scroll_to_bottom(buf)
+
   elseif cmd == "diag" then
     local diags = vim.diagnostic.get(nil)
     local lines = { "", "<!-- /diag -->",
@@ -879,6 +938,7 @@ local function dispatch_slash(buf, cmd_line)
       "  /history            show message context summary",
       "  /debug              show engine state as JSON",
       "  /diag               show LSP diagnostics summary",
+      "  /learning [session] tool-usage stats; 'reset' clears repetition cache",
       "  /tools [on|off]     list / toggle tool dispatch",
       "  /tool-choice MODE   auto | required | none",
       "  /permissions MODE   default | auto | plan | yolo",

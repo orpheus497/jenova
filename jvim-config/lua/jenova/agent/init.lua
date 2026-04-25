@@ -110,6 +110,13 @@ end
 function M.reset()
   M._engine     = nil
   M._just_reset = true
+  -- Wipe the per-session repetition cache so a fresh conversation starts
+  -- with no held-over "this call just failed" state. Persistent learning
+  -- stats on disk are unaffected.
+  local ok, registry = pcall(require, "jenova.agent.registry")
+  if ok and registry and registry.reset_learning_session then
+    pcall(registry.reset_learning_session)
+  end
 end
 
 -- Signal the engine to stop after the current tool call completes, and kill

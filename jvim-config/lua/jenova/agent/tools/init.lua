@@ -8,6 +8,8 @@ local NATIVE_TOOLS = {
   "jenova.agent.tools.buffer_ls",
   "jenova.agent.tools.buffer_list",
   "jenova.agent.tools.lsp",
+  "jenova.agent.tools.shell",
+  "jenova.agent.tools.vim_cmd",
   "jenova.agent.tools.ask_user",
 }
 
