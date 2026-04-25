@@ -198,12 +198,11 @@ load_jenova_conf() {
 # defined in etc/jenova.conf the same way local mode does.
 load_jenova_conf
 
-# Override Neovim standard paths so jvim uses the in-tree jvim-config directory
-# instead of ~/.config/nvim or /usr/share/nvim. Set unconditionally so both
-# remote and local modes inherit the same editor environment.
-export XDG_CONFIG_HOME="$JENOVA_ROOT"
+# Point Neovim at the deployed jvim config (~/.config/jvim) and in-tree runtime.
+# XDG_CONFIG_HOME is intentionally left at its default so Neovim resolves
+# NVIM_APPNAME="jvim" to ~/.config/jvim (deployed by install.sh / scripts/update.sh).
 export XDG_DATA_HOME="$JENOVA_ROOT/.jenova/share"
-export NVIM_APPNAME="jvim-config"
+export NVIM_APPNAME="jvim"
 export VIMRUNTIME="$JENOVA_ROOT/jvim/runtime"
 
 # --- Remote/LAN client mode: skip backend start, just export env and launch editor ---
