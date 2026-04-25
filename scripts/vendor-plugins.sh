@@ -9,7 +9,7 @@ set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="$ROOT/jvim/runtime/pack/jenova/start"
-LOCK="$ROOT/nvim/lazy-lock.json"
+LOCK="$ROOT/jvim-config/lazy-lock.json"
 
 mkdir -p "$DEST"
 

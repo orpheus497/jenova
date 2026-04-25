@@ -92,6 +92,8 @@ Jenova is designed for laptops. Every profile targets a real laptop form factor:
 
 ## Installation
 
+For Linux-specific instructions (Arch, Debian, Ubuntu), see **[LINUX.md](LINUX.md)**.
+
 ### Required Dependencies
 
 | Dependency | FreeBSD Install | Purpose |
