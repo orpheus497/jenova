@@ -71,10 +71,16 @@ function M:query(user_message, provider)
       self.on_thinking()
     end
 
+    -- System prompt goes in messages[0] (OpenAI format). The proxy detects
+    -- has_system=true and preserves it; llama-server reads it as the system turn.
+    local full_messages = { { role = "system", content = self.system_prompt } }
+    for _, m in ipairs(self.messages) do
+      table.insert(full_messages, m)
+    end
+
     local request = {
       model    = "jenova",
-      messages = self.messages,
-      system   = self.system_prompt,
+      messages = full_messages,
       stream   = true,
       -- Tool schemas are not sent to the API. The model is instructed via
       -- the system prompt to emit tool calls as ```json { "name": ..., "arguments": {...} } ```

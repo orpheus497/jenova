@@ -29,7 +29,7 @@ bin/jenova --check
 ```
 
 ## API Access
-The Jenova Intelligence Proxy provides an OpenAI-compatible endpoint at `http://localhost:8080/v1/chat/completions`. You can use any standard client (like `curl` or an OpenAI SDK) to talk to your local model.
+The Jenova Intelligence Proxy provides an OpenAI-compatible endpoint at `http://localhost:8080/v1/chat/completions`. You can use any standard client (like `curl` or any OpenAI-compatible client library) to talk to your local model.
 
 Example:
 ```sh
