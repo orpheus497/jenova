@@ -53,7 +53,8 @@ function M.call(args, context)
   for _, b in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(b) then
       local name = vim.api.nvim_buf_get_name(b)
-      if vim.startswith(name, target) or target == "." or target == cwd then
+      local in_target = (name == target or name:sub(1, #target + 1) == target .. "/")
+      if in_target or target == "." or target == cwd then
         local matches = match_buffer(b, pattern, insensitive)
         if #matches > 0 then
           seen_files[name] = true
@@ -136,7 +137,7 @@ function M.call(args, context)
   end
 
   if #results == 0 then return { type = "text", text = "No matches found." } end
-  
+
   -- Cap output
   if #results > 500 then
     local total = #results
