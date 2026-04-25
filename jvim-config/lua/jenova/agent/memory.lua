@@ -98,7 +98,10 @@ local function flush_now()
   ensure_dir()
   local ok, encoded = pcall(vim.json.encode, _store)
   if not ok then return end
-  pcall(vim.fn.writefile, { encoded }, STORE_PATH)
+  -- The 's' flag makes writefile do an atomic-style replace (write to a
+  -- temp file, fsync, rename) so an interrupted write can't truncate the
+  -- store and lose every learned fact in the project.
+  pcall(vim.fn.writefile, { encoded }, STORE_PATH, "s")
 end
 
 local function schedule_flush()

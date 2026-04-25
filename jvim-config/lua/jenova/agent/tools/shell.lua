@@ -78,13 +78,115 @@ function M.user_facing_name(input)
   return "Shell"
 end
 
--- Whitespace-tokenise the command line. Argument-aware so legitimate
--- arguments (filenames, paths) that *contain* substrings like "/" or
--- "--no-preserve-root" don't trigger false positives — only standalone
--- tokens count as the dangerous flag/path.
-local function tokenize(command)
-  local out = {}
-  for tok in command:gmatch("%S+") do table.insert(out, tok) end
+-- POSIX-aware shell-word splitter. Handles single-quoted strings (literal,
+-- no escapes), double-quoted strings (with backslash escaping for ", \, $,
+-- `, and newline), and backslash escapes outside quotes. This is what the
+-- safety check needs so that legitimate arguments like `"--no-preserve-root
+-- is fine"` or `'rm -rf /'` (a literal filename or echo argument) don't
+-- get falsely flagged, AND so that `rm\ -rf` (escaped space) IS recognised
+-- as a single token that doesn't form the destructive `rm` invocation.
+local function shell_split(s)
+  local out, cur = {}, {}
+  local i, n = 1, #s
+  local in_single, in_double = false, false
+
+  local function flush()
+    if #cur > 0 then
+      table.insert(out, table.concat(cur))
+      cur = {}
+    end
+  end
+
+  while i <= n do
+    local c = s:sub(i, i)
+    if in_single then
+      if c == "'" then in_single = false
+      else cur[#cur + 1] = c end
+    elseif in_double then
+      if c == "\\" and i < n then
+        local nxt = s:sub(i + 1, i + 1)
+        if nxt == '"' or nxt == "\\" or nxt == "$" or nxt == "`" or nxt == "\n" then
+          cur[#cur + 1] = nxt
+          i = i + 1
+        else
+          cur[#cur + 1] = c
+        end
+      elseif c == '"' then
+        in_double = false
+      else
+        cur[#cur + 1] = c
+      end
+    else
+      if c == "'" then
+        in_single = true
+      elseif c == '"' then
+        in_double = true
+      elseif c == "\\" and i < n then
+        cur[#cur + 1] = s:sub(i + 1, i + 1)
+        i = i + 1
+      elseif c:match("%s") then
+        flush()
+      else
+        cur[#cur + 1] = c
+      end
+    end
+    i = i + 1
+  end
+  flush()
+  return out
+end
+
+-- Split a shell command on statement separators (`;`, `&&`, `||`, `|`, `&`,
+-- newline) while respecting quoting, so the destructive-rm check can be
+-- applied to every individual statement. This catches injection patterns
+-- like `echo ok; rm -rf /` or commands containing literal newlines that the
+-- previous single-statement check would have missed.
+local function split_statements(s)
+  local out, cur = {}, {}
+  local i, n = 1, #s
+  local in_single, in_double = false, false
+
+  local function flush()
+    local stmt = table.concat(cur):gsub("^%s+", ""):gsub("%s+$", "")
+    if #stmt > 0 then table.insert(out, stmt) end
+    cur = {}
+  end
+
+  while i <= n do
+    local c = s:sub(i, i)
+    if in_single then
+      cur[#cur + 1] = c
+      if c == "'" then in_single = false end
+    elseif in_double then
+      cur[#cur + 1] = c
+      if c == "\\" and i < n then
+        cur[#cur + 1] = s:sub(i + 1, i + 1)
+        i = i + 1
+      elseif c == '"' then
+        in_double = false
+      end
+    else
+      if c == "'" then
+        in_single = true; cur[#cur + 1] = c
+      elseif c == '"' then
+        in_double = true; cur[#cur + 1] = c
+      elseif c == "\\" and i < n then
+        cur[#cur + 1] = c; cur[#cur + 1] = s:sub(i + 1, i + 1); i = i + 1
+      elseif c == ";" or c == "\n" then
+        flush()
+      elseif c == "&" and s:sub(i + 1, i + 1) == "&" then
+        flush(); i = i + 1
+      elseif c == "|" and s:sub(i + 1, i + 1) == "|" then
+        flush(); i = i + 1
+      elseif c == "|" or c == "&" then
+        flush()
+      else
+        cur[#cur + 1] = c
+      end
+    end
+    i = i + 1
+  end
+  flush()
   return out
 end
 
@@ -150,13 +252,23 @@ function M.check_permissions(input, _ctx)
     return { allowed = false, reason = "command is required" }
   end
   local cmd = input.command
-  local tokens = tokenize(cmd)
 
-  if is_destructive_rm(tokens) then
-    return { allowed = false, reason = "refusing rm -rf on a system / home root path" }
-  end
   if is_fork_bomb(cmd) then
     return { allowed = false, reason = "refusing fork bomb pattern" }
+  end
+
+  -- Apply the destructive-rm check to every individual statement so injection
+  -- patterns like `echo ok; rm -rf /` or `echo a$'\n'rm -rf /` cannot bypass
+  -- the safety net by hiding behind a benign first statement. Quoting is
+  -- respected so a literal "rm -rf /" inside `echo` is correctly treated as
+  -- a single argument, not a destructive command.
+  for _, stmt in ipairs(split_statements(cmd)) do
+    local tokens = shell_split(stmt)
+    if is_destructive_rm(tokens) then
+      return { allowed = false,
+        reason = "refusing rm -rf on a system / home root path (statement: "
+          .. stmt:sub(1, 80) .. ")" }
+    end
   end
 
   return { allowed = true }

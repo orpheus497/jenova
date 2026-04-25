@@ -62,7 +62,9 @@ local function flush_now()
   ensure_dir()
   local ok, encoded = pcall(vim.json.encode, _store)
   if not ok then return end
-  pcall(vim.fn.writefile, { encoded }, STORE_PATH)
+  -- 's' flag → atomic-style replace via temp file + rename, so a crash
+  -- mid-write can't truncate the persistent learning database.
+  pcall(vim.fn.writefile, { encoded }, STORE_PATH, "s")
 end
 
 local function schedule_flush()
