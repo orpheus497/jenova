@@ -1,162 +1,74 @@
 *help.txt*	jvim
 
 ==============================================================================
-jvim documentation
+jvim: The Jenova Cognitive Editor
 
-If you are new to jvim, see |nvim-intro|. (To go to a help link, move the
-cursor to it and hit CTRL-], or ctrl-click with mouse. Try it here: |bars|.)
+jvim is the professional frontend for the Jenova Cognitive Architecture. 
+It integrates traditional modal editing with a modern, AI-augmented project 
+flow ("pflow"). 
+
+If you are new to the bridge, we recommend starting with the Flight School:
+>vim
+    :Tutor
+<
+For a high-level overview of the system, see |jvim-start|.
+
+(To follow a link, move the cursor to it and hit CTRL-]. Return with CTRL-O.)
 
 ------------------------------------------------------------------------------
-About jvim						*reference_toc* *Q_ct*
+[1] THE JENOVA COGNITIVE ENVIRONMENT		*jenova-help*
 
-- |news|		News since the previous release
-- |nvim|		Getting started with jvim
-- |tutor|		30-minute interactive course for beginners
-- |vim-differences|	jvim compared to Vim
+The Jenova CA provides the "intelligence" of your editor. Here you will find 
+the manuals for monitoring the backend, interacting with the Agent, and 
+managing remote connections.
+
+- |jvim|		The Master Reference for jvim & Jenova CA
+- |JenovaMonitor|	Watch inference metrics and GPU state in real-time
+- |JenovaLanScan|	Discover and connect to remote backends
+- |jvim-commands|	The vocabulary of AI interaction
+- |jvim-env|		Environment variables driving the CA
+
+------------------------------------------------------------------------------
+[2] INTEGRATED EDITING WORKFLOW			*jvim-workflow*
+
+jvim is designed for a multi-panel, high-context workflow. These sections 
+cover how to organize your "Cockpit" and navigate with speed.
+
+- |IDE|			Assemble the standard 3-panel layout
+- |starting|		Launch sequences and initialization
+- |windows|		Mastering splits and cross-panel navigation
+- |terminal|		Integrated shells and Agent terminal management
+- |undo-redo|		Persistent, ZFS-aware history
+- |lsp|			Deep language intelligence and diagnostics
+- |treesitter|		Modern syntax parsing and structural highlighting
+
+------------------------------------------------------------------------------
+[3] ADVANCED SYSTEMS & EXTENSIBILITY		*jvim-reference*
+
+For engineers looking to customize the bridge or build new plugins, jvim 
+retains the full extensibility of the Neovim core.
+
+- |api|			The jvim API (RPC, Lua, Vimscript)
+- |lua-guide|		First-class Lua scripting guide
+- |options|		The master list of system tunables
+- |autocmd|		Wiring into editor events
+- |health|		Diagnostic tools (|checkhealth jenova|)
+
+------------------------------------------------------------------------------
+[4] LEGACY VIM FOUNDATIONS			*legacy-vim*
+
+jvim is built on decades of editing excellence. The standard Vim manuals 
+remain available for deep reference on core text manipulation.
+
+- |user-manual|		The complete Vim User Manual (usr_01.txt ...)
+- |vim-differences|	How jvim has evolved beyond standard Vim
 - |faq|			Frequently Asked Questions
-- |tips|		Various tips
-- |bugs|		Where to send bug reports
-- |support|		Supported platforms
-- |copying|		About copyrights
-
-------------------------------------------------------------------------------
-Usage
-
-- |helphelp|		Using the `:help` files
-- |intro|		Introduction to Vim
-- |quickref|		Overview of common commands
-- |index|		Index of all commands
-- |user-manual|		User manual: How to accomplish editing tasks.
-- |message.txt|		(Error) messages and explanations
-- |Kuwasha|		Helping poor children in Uganda
-
-------------------------------------------------------------------------------
-Basic editing
-
-- |starting|		Starting Vim, Vim command arguments, initialisation
-- |edit-files|		Editing and writing files
-- |motion.txt|		Commands for moving around
-- |scrolling|		Scrolling the text in the window
-- |insert.txt|		Insert and Replace mode
-- |change.txt|		Deleting and replacing text
-- |undo-redo|		Undo and Redo
-- |repeat.txt|		Repeating commands, Vim scripts and debugging
-- |visual-mode|		Using Visual mode (selecting text)
-- |various|		Various other commands
-- |crash-recovery|	Recovering from a crash
-
-------------------------------------------------------------------------------
-Advanced editing
-
-- |cmdline|		Command-line editing
-- |options|		Description of all options
-- |pattern-searches|	Vim regexp patterns and search commands
-- |key-mapping|		Key mapping (shortcuts), abbreviations
-- |tags|		Tags and special searches
-- |windows|		Commands for using windows and buffers
-- |tabpage|		Commands for using tabpages
-- |spell|		Spell checking
-- |diff|		Comparing files
-- |folding|		Hide (fold) ranges of lines
-- |terminal|		Embedded terminal emulator
-
-------------------------------------------------------------------------------
-API (extensibility/scripting/plugins)
-
-- |api|			jvim API via RPC, Lua and Vimscript
-- |ui|			jvim UI protocol
-- |lua-guide|		jvim Lua guide
-- |lua|			Lua API
-- |luaref|		Lua reference manual
-- |luvref|		Luv (|vim.uv|) reference manual
-- |autocmd|		Event handlers
-- |job-control|		Spawn and control multiple processes
-- |channel|		jvim asynchronous IO
-- |vimscript|		Vimscript reference
-- |vimscript-functions|	Vimscript functions
-- |remote-plugin|	jvim remote plugins
-- |health|		Health checking
-
-------------------------------------------------------------------------------
-Programming language support
-
-- |lsp|			Language Server Protocol (LSP)
-- |diagnostic-api|	Diagnostic framework
-- |treesitter|		Incremental syntax parsing
-- |indent.txt|		automatic indenting for C and other languages
-- |syntax|		syntax highlighting
-- |filetype|		Settings for specific types of files
-- |quickfix|		Commands for a quick edit-compile-fix cycle
-- |ft_ada.txt|		Ada filetype plugin
-- |ft_hare.txt|		Filetype plugin for Hare
-- |ft_ps1.txt|		PowerShell filetype plugin
-- |ft_raku.txt|		Raku filetype plugin
-- |ft_rust.txt|		Rust filetype plugin
-- |ft_sql.txt|		SQL filetype plugin
-
-------------------------------------------------------------------------------
-UI
-
-- |tui|			Builtin UI
-- |gui|			External (graphical) UIs
-- |signs|		Signs displayed as window decorations (the "gutter")
-
-------------------------------------------------------------------------------
-Multilingual support
-
-- |digraph|		List of available digraphs
-- |mbyte.txt|		Multibyte text support
-- |mlang.txt|		Non-English language support
-- |rileft.txt|		Right-to-left editing mode
-- |l10n-arabic.txt|	Arabic language support and editing
-- |l10n-hebrew.txt|	Hebrew language support and editing
-- |l10n-russian.txt|	Russian language support and editing
-- |l10n-vietnamese.txt|	Vietnamese language support and editing
-
-------------------------------------------------------------------------------
-Interop
-
-- |provider|		Builtin remote plugin hosts
-- |if_perl|		Perl interface
-- |if_pyth|		Python interface
-- |if_ruby|		Ruby interface
-
-------------------------------------------------------------------------------
-Versions
-
-- |deprecated|		Deprecated features that will be removed
-- |vi-differences|	Differences between Vim and Vi
-
-------------------------------------------------------------------------------
-Developing jvim
-
-- |dev|			Development of jvim
-- |dev-arch|		Internal architecture, modules, data structures
-- |dev-style|		Development style guidelines
-- |dev-test|		Writing and running tests
-- |dev-theme|		Design guidelines (colorschemes etc.)
-- |dev-tools|		Tools and techniques for developing jvim
-- |dev-vimpatch|	Merging patches from Vim
-
-Standard plugins ~
-
-See |standard-plugin-list|.
-
-Local additions ~
-							     *local-additions*
+- |tips|		Workflow optimizations from the community
 
 ------------------------------------------------------------------------------
 Bars example								*bars*
 
 Now that you've jumped here with CTRL-] or a double mouse click, you can use
 CTRL-T, CTRL-O, g<RightMouse>, or <C-RightMouse> to go back to where you were.
-
-Note that tags are within | characters, but when highlighting is enabled these
-characters are hidden (for aesthetics).
-
-You can use CTRL-] on any word (even if it is not within "|") and jvim will
-try to find help for it.  Especially for options in single quotes, e.g.
-'hlsearch'.
-
 
  vim:tw=78:isk=!-~,^*,^\|,^\":ts=8:noet:ft=help:norl:

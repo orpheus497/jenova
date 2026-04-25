@@ -1,7 +1,7 @@
 *usr_toc.txt*	jvim
 
 
-		     VIM USER MANUAL	by Bram Moolenaar
+		    JVIM USER MANUAL
 
 
 			      Table Of Contents		*user-manual* *usr*
@@ -9,19 +9,27 @@
 ==============================================================================
 Overview
 
-Getting Started ~
+The Jenova Environment (AI-Augmented Engineering) ~
+|jvim-start|  Quick Start Guide: Engaging the Bridge
+|jvim-tutor|  Jenova Flight School: The Interactive Path
+
+Foundations of Editing ~
 |usr_01.txt|  About the manuals
-|usr_02.txt|  The first steps in Vim
-|usr_03.txt|  Moving around
-|usr_04.txt|  Making small changes
-|usr_05.txt|  Set your settings
-|usr_06.txt|  Using syntax highlighting
-|usr_07.txt|  Editing more than one file
-|usr_08.txt|  Splitting windows
-|usr_09.txt|  Using the GUI
-|usr_10.txt|  Making big changes
-|usr_11.txt|  Recovering from a crash
-|usr_12.txt|  Clever tricks
+|usr_02.txt|  First Steps: Modal Mechanics
+|usr_03.txt|  The Home Row: Moving with Speed
+|usr_04.txt|  Surgical Edits: Making Small Changes
+|usr_05.txt|  The Config: Tuning your Cockpit
+|usr_06.txt|  Visual Clarity: Treesitter Highlighting
+|usr_07.txt|  The Cargo: Editing multiple files
+|usr_08.txt|  The Bridge Layout: Mastering Splits
+|usr_10.txt|  Heavy Lifting: Making Big Changes
+|usr_11.txt|  Damage Control: Recovering from a crash
+|usr_12.txt|  Tactical Maneuvers: Clever tricks
+
+Jenova Cognitive Architecture ~
+|jvim.txt|           Reference: Backend & Intelligence Layer
+|jvim-commands|      Manual: AI User Commands
+|JenovaMonitor|      Manual: Real-time System Metrics
 
 Editing Effectively ~
 |usr_20.txt|  Typing command-line commands quickly

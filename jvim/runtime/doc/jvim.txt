@@ -1,4 +1,4 @@
-*jvim.txt*    jvim                                      *jvim* *Jvim*
+*jvim.txt*    jvim                                      *jvim* *Jvim* *jvim-start*
 
 
                               JVIM REFERENCE MANUAL
@@ -9,12 +9,21 @@ jvim — the editor frontend of the Jenova Cognitive Architecture.
                                       Type |gO| to see the table of contents.
 
 ==============================================================================
+Quick Start                                             *jvim-quick-start*
+
+If you are new to the Jenova environment:
+
+1. Run `:Tutor` to start the "Jenova Flight School" tutorial.
+2. Run `:IDE` to set up the standard multi-panel layout.
+3. Use `<leader>am` to open the Jenova Monitor.
+4. Use `<leader>ta` to talk to the Jenova Agent.
+
+==============================================================================
 Introduction                                            *jvim-introduction*
 
-jvim is a hard fork of Neovim purpose-built to serve as the dedicated editor
-frontend of the Jenova Cognitive Architecture — a FreeBSD-first, low-latency,
-hardware-aware AI environment built around llama.cpp with dual Vulkan GPU
-offload, LuaJIT, and Optane-backed paging.
+jvim is the dedicated editor frontend of the Jenova Cognitive Architecture — 
+a FreeBSD-first, low-latency, hardware-aware AI environment built around 
+llama.cpp with dual Vulkan GPU offload, LuaJIT, and Optane-backed paging.
 
 The cognitive backend (llama-server, the LuaJIT `proxy.lua` intelligence
 layer, the embedding daemon, and the `jenova-ca` supervisor) lives in the
