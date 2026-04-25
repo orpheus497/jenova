@@ -5,7 +5,7 @@
   },
   "workspace": {
     "library": [
-      "/home/arch/.local/repo/jenova/jvim/runtime/lua"
+      "jvim/runtime/lua"
     ],
     "checkThirdParty": false
   },

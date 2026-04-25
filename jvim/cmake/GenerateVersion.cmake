@@ -1,5 +1,4 @@
-set(NVIM_VERSION
-    "JVIM ${NVIM_VERSION_MAJOR}.${NVIM_VERSION_MINOR}.${NVIM_VERSION_PATCH}${NVIM_VERSION_PRERELEASE}")
+set(NVIM_VERSION "JVIM 0.1.0")
 
 execute_process(
   COMMAND git --git-dir=${NVIM_SOURCE_DIR}/.git --work-tree=${NVIM_SOURCE_DIR} describe --first-parent --dirty --always
