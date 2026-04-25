@@ -58,7 +58,7 @@ upstream Neovim first so that regressions introduced by the jvim fork are
 easy to separate from upstream behavior. See |jvim-bugs|.
 
 ==============================================================================
-Launching via jvim                                      *jvim-launch*
+Launching via jvim                                      *jvim-launch* *IDE*
 
 The editor is designed to be launched through the Jenova project's `bin/jvim`
 wrapper script, which:
@@ -142,7 +142,7 @@ modules from the companion Jenova repository. The commands are always
 defined; their effect degrades gracefully when the Jenova modules are
 absent (standalone install).
 
-                                                        *:JenovaMonitor*
+                                                        *:JenovaMonitor* *JenovaMonitor*
 :JenovaMonitor          Open a floating window showing real-time backend
                         status and inference metrics:
 
@@ -156,7 +156,7 @@ absent (standalone install).
                           `r`       Refresh immediately
                           `q` `<Esc>` Close
 
-                                                        *:JenovaLanScan*
+                                                        *:JenovaLanScan* *JenovaLanScan*
 :JenovaLanScan          Scan the local network for a Jenova CA instance and
                         auto-connect to the first one discovered. Useful when
                         you launched `jvim` directly instead of through
