@@ -7,9 +7,7 @@ local NATIVE_TOOLS = {
   "jenova.agent.tools.buffer_grep",
   "jenova.agent.tools.buffer_ls",
   "jenova.agent.tools.buffer_list",
-  "jenova.agent.tools.buffer_shell",
   "jenova.agent.tools.lsp",
-  "jenova.agent.tools.lsp_diag",
   "jenova.agent.tools.ask_user",
 }
 

@@ -20,30 +20,6 @@ local function git_branch()
   return nil
 end
 
-local function git_status_short()
-  local result = safe(function()
-    return vim.system({ "git", "status", "--porcelain" }, { text = true }):wait()
-  end)
-  if result and result.code == 0 and result.stdout then
-    local lines = vim.split(vim.trim(result.stdout), "\n", { plain = true })
-    local changed = 0
-    for _, l in ipairs(lines) do
-      if l ~= "" then changed = changed + 1 end
-    end
-    return changed
-  end
-  return 0
-end
-
-local function current_file_info()
-  local buf = vim.api.nvim_get_current_buf()
-  local path = vim.api.nvim_buf_get_name(buf)
-  if path == "" then path = "[scratch]" end
-  local ft  = vim.bo[buf].filetype or ""
-  local cursor = vim.api.nvim_win_get_cursor(0)
-  local row, col = cursor[1], cursor[2]
-  return path, ft, row, col + 1
-end
 
 local function open_buffers()
   local bufs = {}
@@ -180,13 +156,13 @@ function M.build_editor_context(chat_buf)
   local diag = ws_buf and lsp_diagnostics_summary(ws_buf) or nil
   local sel = visual_selection()
   local bufs = open_buffers()
-  
+
   -- Metadata from chat
   local metadata = chat_buf and parse_metadata_from_buffer(chat_buf) or {}
 
   local lines = { "## Context" }
   table.insert(lines, "cwd: " .. vim.fn.getcwd())
-  
+
   if ws_buf and path ~= "" then
     table.insert(lines, string.format("file: %s:%d:%d (%s)",
       vim.fn.fnamemodify(path, ":~:."), row, col + 1, ft))
@@ -263,17 +239,17 @@ function M.build_system_prompt(chat_buf)
     "## CORE DIRECTIVES",
     "1. ACTION OVER DISCUSSION: If the user asks for a change, use Edit/MultiEdit immediately.",
     "2. NO HALLUCINATIONS: Do not claim you lack filesystem access. You are integrated into the editor and have the capability to modify files.",
-    "3. PERMISSION LAYER: All tool calls (Shell, Edit, Write, etc.) are intercepted by a permission manager. The user will approve or deny each action. DO NOT ask for permission in text; simply issue the tool call and wait for the result.",
+    "3. PERMISSION LAYER: All tool calls are intercepted by a permission manager. The user will approve or deny each action. DO NOT ask for permission in text; simply issue the tool call and wait for the result.",
     "4. NO PLACEHOLDERS: Implement the full requested logic. Do not use '// ...' or 'rest of code'.",
     "5. MANDATORY TOOL USE: If you output code in a markdown block without calling a tool, you have FAILED the task.",
     "",
     "## Tools (Call with: ```json {\"name\":..,\"arguments\":{..}} ```)",
     "- Read(file_path, start_line?, end_line?): View code with line numbers.",
-    "- LSP(action, file_path?, line?, character?, query?): Diagnostics, definition, references, symbols.",
-    "- Edit(file_path, start_line, end_line, new_string): Replace line range.",
-    "- MultiEdit(file_path, edits[{start_line, end_line, new_string}]): Batch edits.",
-    "- Shell(command): Run tests/build. (Not for diagnostics).",
-    "- Glob(pattern), Grep(pattern, path?), LS(path?): Search files.",
+    "- Write(file_path, content): Create a new file.",
+    "- Edit(file_path, start_line, end_line, new_string): Replace line range. MUST Read first.",
+    "- MultiEdit(file_path, edits[{start_line, end_line, new_string}]): Batch edits. MUST Read first.",
+    "- LSP(action, file_path, line?, character?, query?): ONLY tool for errors, definitions, references, hover, symbols, code_actions, rename_preview.",
+    "- Grep(pattern, path?), Glob(pattern), LS(path?), Buffers(): Search files and buffers.",
     "- AskUserQuestion(question): Prompt user for input.",
     "",
     "## Rules",

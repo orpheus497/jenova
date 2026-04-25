@@ -85,54 +85,48 @@ function M.call(args, context)
     return { type = "text", text = table.concat(results, "\n") }
   end
 
-  if vim.fn.executable("rg") ~= 1 then
-    if #results == 0 then
-      return { type = "error", error = "No matches in loaded buffers and 'rg' is not installed for disk search." }
+  -- Native disk search via vim.fn.globpath + vim.fn.readfile — no subprocess.
+  local ok_regex, regex = pcall(vim.regex, (insensitive and "\\c" or "") .. pattern)
+  if not ok_regex then
+    if #results > 0 then
+      if #results > 500 then
+        local total = #results
+        results = { table.unpack(results, 1, 500) }
+        table.insert(results, string.format("... [truncated %d more matches]", total - 500))
+      end
+      return { type = "text", text = table.concat(results, "\n") }
     end
-    -- Return buffer results; disk search unavailable
-    if #results > 500 then
-      local total = #results
-      results = { table.unpack(results, 1, 500) }
-      table.insert(results, string.format("... [truncated %d more matches]", total - 500))
-    end
-    return { type = "text", text = table.concat(results, "\n") }
+    return { type = "error", error = "Invalid pattern: " .. pattern }
   end
 
-  local rg_cmd = { "rg", "-n", "--no-heading" }
-  if mode == "files_with_matches" then rg_cmd = { "rg", "-l" }
-  elseif mode == "count" then rg_cmd = { "rg", "-c" } end
-  if insensitive then table.insert(rg_cmd, "-i") end
-  if args.glob then table.insert(rg_cmd, "-g"); table.insert(rg_cmd, args.glob) end
-  table.insert(rg_cmd, pattern)
-  table.insert(rg_cmd, target)
+  local glob_pat = args.glob and ("**/" .. args.glob) or "**/*"
+  local disk_files = vim.fn.globpath(target, glob_pat, true, true)
 
-  local co = coroutine.running()
-  local res = nil
-  if co then
-    vim.system(rg_cmd, { text = true, cwd = cwd, timeout = 5000 }, function(out)
-      res = out
-      vim.schedule(function() coroutine.resume(co) end)
-    end)
-    coroutine.yield()
-  else
-    res = vim.system(rg_cmd, { text = true, cwd = cwd }):wait(5000)
-  end
-
-  if not res then return { type = "error", error = "rg did not complete" } end
-
-  if res.code == 0 and res.stdout then
-    for _, line in ipairs(vim.split(res.stdout, "\n", { plain = true })) do
-      if line ~= "" then
-        local fname = line:match("^([^:]+)")
-        local abs = vim.fn.fnamemodify(fname, ":p")
-        if not seen_files[abs] then
-          table.insert(results, line)
+  for _, fpath in ipairs(disk_files) do
+    if #results >= 500 then break end
+    local abs = vim.fn.fnamemodify(fpath, ":p")
+    if vim.fn.isdirectory(abs) == 0 and not seen_files[abs] and not paths.is_restricted(abs) then
+      local rel = vim.fn.fnamemodify(abs, ":~:.")
+      local file_lines = vim.fn.readfile(abs, "", 10000)
+      if type(file_lines) == "table" then
+        local match_count = 0
+        for lnum, line in ipairs(file_lines) do
+          if regex:match_str(line) then
+            match_count = match_count + 1
+            if mode == "content" then
+              table.insert(results, string.format("%s:%d:%s", rel, lnum, line))
+            end
+            if #results >= 500 then break end
+          end
+        end
+        if match_count > 0 then
+          if mode == "files_with_matches" then
+            table.insert(results, rel)
+          elseif mode == "count" then
+            table.insert(results, rel .. ": " .. match_count)
+          end
         end
       end
-    end
-  elseif res.signal ~= 0 or res.code ~= 0 then
-    if res.signal == 15 or res.signal == 9 then
-      return { type = "error", error = "Grep timed out after 5 seconds." }
     end
   end
 
