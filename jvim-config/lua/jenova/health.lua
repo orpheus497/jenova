@@ -17,7 +17,7 @@ local function probe(host, port)
   if not tcp then return nil end
   local connected = false
   local done = false
-  tcp:connect(host, tonumber(port), function(err)
+  tcp:connect(host, math.floor(tonumber(port) or 0), function(err)
     connected = (not err)
     done = true
     pcall(function() tcp:close() end)

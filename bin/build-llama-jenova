@@ -31,47 +31,18 @@ if [ ! -d "$LLAMA_DIR" ]; then
     exit 1
 fi
 
-if command -v nproc >/dev/null 2>&1; then
-    LOGICAL_THREADS="$(nproc)"
-elif command -v sysctl >/dev/null 2>&1; then
-    LOGICAL_THREADS="$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
-else
-    LOGICAL_THREADS=4
-fi
+# Shared OS/hardware detection.
+. "$JENOVA_ROOT/lib/detect-env.sh"
 
-if command -v lscpu >/dev/null 2>&1; then
-    _lscpu_output="$(lscpu 2>/dev/null)"
-    _cores="$(echo "$_lscpu_output" | awk -F: '/Core\(s\) per socket/{gsub(/ /,"",$2); print $2; exit}')"
-    _sockets="$(echo "$_lscpu_output" | awk -F: '/Socket\(s\)/{gsub(/ /,"",$2); print $2; exit}')"
-    if [ -n "${_cores:-}" ] && [ -n "${_sockets:-}" ]; then
-        PHYSICAL_THREADS=$((_cores * _sockets))
-    else
-        PHYSICAL_THREADS="$LOGICAL_THREADS"
-    fi
-else
-    PHYSICAL_THREADS="$LOGICAL_THREADS"
-fi
-
-[ "$PHYSICAL_THREADS" -lt 1 ] && PHYSICAL_THREADS=1
-[ "$LOGICAL_THREADS" -lt 1 ] && LOGICAL_THREADS=1
-
+LOGICAL_THREADS="$JENOVA_CPU_THREADS"
+PHYSICAL_THREADS="$JENOVA_PHYSICAL_THREADS"
 THREADS="${JENOVA_THREADS:-$PHYSICAL_THREADS}"
 THREADS_BATCH="${JENOVA_THREADS_BATCH:-$((PHYSICAL_THREADS + 2))}"
 [ "$THREADS_BATCH" -gt "$LOGICAL_THREADS" ] && THREADS_BATCH="$LOGICAL_THREADS"
 [ "$THREADS_BATCH" -lt "$THREADS" ] && THREADS_BATCH="$THREADS"
 
-if command -v sysctl >/dev/null 2>&1 && sysctl -n hw.physmem >/dev/null 2>&1; then
-    # FreeBSD / macOS: use sysctl for hardware info
-    RAM_GIB="$(sysctl -n hw.physmem 2>/dev/null | awk '{printf "%d", $1/1024/1024/1024}' || echo 0)"
-    SWAP_GIB="$(swapinfo -m 2>/dev/null | awk 'NR>1{s+=$2} END{printf "%d", s/1024}' || echo 0)"
-elif command -v awk >/dev/null 2>&1 && [ -f /proc/meminfo ]; then
-    # Linux: use /proc/meminfo
-    RAM_GIB="$(awk '/^MemTotal:/{printf "%d", $2/1024/1024}' /proc/meminfo 2>/dev/null || echo 0)"
-    SWAP_GIB="$(awk '/^SwapTotal:/{printf "%d", $2/1024/1024}' /proc/meminfo 2>/dev/null || echo 0)"
-else
-    RAM_GIB=0
-    SWAP_GIB=0
-fi
+RAM_GIB="$JENOVA_RAM_GIB"
+SWAP_GIB="$JENOVA_SWAP_GIB"
 
 if [ -z "${JOBS:-}" ]; then
     JOBS="$LOGICAL_THREADS"
@@ -107,13 +78,17 @@ case "$BACKEND" in
         ;;
 esac
 
-if [ "$ENABLE_VULKAN" -eq 1 ] && ! command -v glslc >/dev/null 2>&1; then
+if [ "$ENABLE_VULKAN" -eq 1 ] && [ "$JENOVA_GLSLC_OK" = "0" ]; then
     echo "Error: Vulkan backend requested but glslc was not found." >&2
-    echo "Install Vulkan shader compiler, then rerun:" >&2
-    case "$(uname -s)" in
-        FreeBSD) echo "  sudo pkg install shaderc" >&2 ;;
-        Linux)   echo "  sudo dnf install -y glslc  # or apt install glslc" >&2 ;;
-        *)       echo "  Install the 'glslc' / 'shaderc' package for your OS" >&2 ;;
+    echo "Install the Vulkan shader compiler, then rerun:" >&2
+    case "$JENOVA_PKG_MGR" in
+        pkg)    echo "  sudo pkg install shaderc" >&2 ;;
+        pacman) echo "  sudo pacman -S shaderc" >&2 ;;
+        apt)    echo "  sudo apt install glslc" >&2 ;;
+        dnf)    echo "  sudo dnf install glslc" >&2 ;;
+        zypper) echo "  sudo zypper install shaderc" >&2 ;;
+        brew)   echo "  brew install shaderc" >&2 ;;
+        *)      echo "  Install the 'glslc' / 'shaderc' package for your OS" >&2 ;;
     esac
     exit 1
 fi

@@ -2,6 +2,8 @@
 
 Hardware-specific configuration profiles for Jenova Cognitive Architecture. Each profile sets the model, GPU offload strategy, context size, and thread counts for a given hardware combination. Auto-detection selects the best match at install time; profiles can also be deployed manually.
 
+For more details on hardware optimization and detection scoring, see **[docs/hardware/profiles.md](../docs/hardware/profiles.md)**.
+
 ## Directory Structure
 
 Profiles are organised into a three-level hierarchy:

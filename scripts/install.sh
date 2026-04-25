@@ -38,6 +38,17 @@ JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
 JVIM_CONFIG_SRC="$JENOVA_ROOT/jvim-config"
 JVIM_CONFIG_DST="$HOME/.config/jvim"
 
+# Shared OS/hardware detection — populates JENOVA_OS, JENOVA_DISTRO,
+# JENOVA_PKG_MGR, JENOVA_VULKAN_OK, JENOVA_GH_ARCH_*, etc.
+. "$JENOVA_ROOT/lib/detect-env.sh"
+# Backward-compat alias used by legacy case-statements in this file.
+case "$JENOVA_OS" in
+    freebsd) _OS="FreeBSD" ;;
+    linux)   _OS="Linux" ;;
+    macos)   _OS="Darwin" ;;
+    *)       _OS="$(uname -s)" ;;
+esac
+
 FORCE=0
 LINK=0
 SKIP_NVIM=0
@@ -94,24 +105,26 @@ WARNINGS=0
 # 1. OS Check
 # ---------------------------------------------------------------------------
 info "Checking operating system..."
-_OS=$(uname -s)
-case "$_OS" in
-    FreeBSD)
-        _VER=$(uname -r | cut -d. -f1)
-        if [ "$_VER" -ge 15 ] 2>/dev/null; then
+case "$JENOVA_OS" in
+    freebsd)
+        _VER="$(uname -r | cut -d. -f1)"
+        if [ "${_VER:-0}" -ge 15 ] 2>/dev/null; then
             ok "FreeBSD ${_VER} — fully supported"
         else
             warn "FreeBSD ${_VER} — recommended FreeBSD 15+; some features may differ"
             WARNINGS=$((WARNINGS + 1))
         fi
         ;;
-    Linux)
-        warn "Linux detected — Jenova is optimised for FreeBSD 15. BSD socket constants and Vulkan paths may differ."
-        warn "Replace 'Vulkan0,Vulkan1' device names in etc/jenova.conf with your Vulkan device names."
+    linux)
+        ok "Linux detected — ${JENOVA_DISTRO} / pkg: ${JENOVA_PKG_MGR}"
+        info "Replace 'Vulkan0,Vulkan1' device names in etc/jenova.conf with your Vulkan device names (run: vulkaninfo --summary)"
+        ;;
+    macos)
+        warn "macOS detected — experimental, not regularly tested"
         WARNINGS=$((WARNINGS + 1))
         ;;
     *)
-        warn "Unsupported OS: $_OS — proceeding but results may vary."
+        warn "Unsupported OS: $(uname -s) — proceeding but results may vary"
         WARNINGS=$((WARNINGS + 1))
         ;;
 esac
@@ -217,14 +230,21 @@ else
 fi
 
 # Vulkan loader
-if [ "$_OS" = "FreeBSD" ]; then
-    if [ -f /usr/local/lib/libvulkan.so ] || ldconfig -r 2>/dev/null | grep -q libvulkan; then
-        ok "libvulkan (Vulkan loader)"
-    else
-        warn "libvulkan not found — install: pkg install vulkan-loader"
-        warn "Without Vulkan, llama-server falls back to CPU-only inference."
-        WARNINGS=$((WARNINGS + 1))
-    fi
+if [ "$JENOVA_VULKAN_OK" = "1" ]; then
+    ok "libvulkan (Vulkan loader)"
+else
+    case "$JENOVA_PKG_MGR" in
+        pkg)    _vhint="pkg install vulkan-loader" ;;
+        pacman) _vhint="pacman -S vulkan-icd-loader" ;;
+        apt)    _vhint="apt install libvulkan1" ;;
+        dnf)    _vhint="dnf install vulkan-loader" ;;
+        zypper) _vhint="zypper install libvulkan1" ;;
+        brew)   _vhint="brew install molten-vk" ;;
+        *)      _vhint="install the vulkan-loader package for your OS" ;;
+    esac
+    warn "libvulkan not found — ${_vhint}"
+    warn "Without Vulkan, llama-server falls back to CPU-only inference."
+    WARNINGS=$((WARNINGS + 1))
 fi
 
 # ---------------------------------------------------------------------------
@@ -266,6 +286,18 @@ _pacman_install() {
     $_PRIV pacman -S --noconfirm --needed "$@" >/dev/null 2>&1
 }
 
+_dnf_install() {
+    # Fedora/RHEL/CentOS dnf.
+    _have dnf || return 1
+    $_PRIV dnf install -y -q "$@" >/dev/null 2>&1
+}
+
+_zypper_install() {
+    # openSUSE zypper.
+    _have zypper || return 1
+    $_PRIV zypper install -y --quiet "$@" >/dev/null 2>&1
+}
+
 _npm_install_g() {
     _have npm || return 1
     if [ "$(id -u)" = "0" ]; then
@@ -303,19 +335,21 @@ for _d in "$HOME/.local/bin" "$HOME/.cargo/bin" "$HOME/go/bin" "$HOME/.local/sha
 done
 export PATH
 
-# Install one tool by trying the appropriate manager for this OS first,
-# then falling back. Already-present tools are reported as ok and skipped.
+# Install one tool by trying the appropriate manager for this system first,
+# then falling back through npm/cargo/go/pip. Already-present tools are skipped.
 _install_lsp() {
     _exe="$1"; _label="$2"; _apt="$3"; _pkg="$4"; _npm="$5"; _cargo="$6"; _go="$7"; _pip="$8"; _pacman="$9"
     if _have "$_exe"; then
         ok "$_label ($(command -v "$_exe"))"
         return 0
     fi
-    case "$_OS" in
-        FreeBSD) [ -n "$_pkg" ]    && _pkg_install $_pkg    || true ;;
-        Linux)   [ -n "$_pacman" ] && _pacman_install $_pacman || true
-                 [ -n "$_apt" ]    && _apt_install $_apt    || true ;;
-        *)       [ -n "$_apt" ]    && _apt_install $_apt    || true ;;
+    case "$JENOVA_PKG_MGR" in
+        pkg)    [ -n "$_pkg" ]    && _pkg_install    $_pkg    || true ;;
+        pacman) [ -n "$_pacman" ] && _pacman_install $_pacman || true ;;
+        apt)    [ -n "$_apt" ]    && _apt_install    $_apt    || true ;;
+        dnf)    [ -n "$_apt" ]    && _dnf_install    $_apt    || true ;;
+        zypper) [ -n "$_apt" ]    && _zypper_install $_apt    || true ;;
+        *)      [ -n "$_apt" ]    && _apt_install    $_apt    || true ;;
     esac
     if ! _have "$_exe" && [ -n "$_npm" ];   then _npm_install_g $_npm  || true; fi
     if ! _have "$_exe" && [ -n "$_cargo" ]; then _cargo_install $_cargo || true; fi
@@ -341,10 +375,13 @@ _clangd_present() {
 if _clangd_present; then
     ok "clangd (found as $_CLANGD_BIN)"
 else
-    case "$_OS" in
-        FreeBSD) _pkg_install llvm || true ;;
-        Linux)   _pacman_install clang || _apt_install clangd || true ;;
-        *)       _apt_install clangd || true ;;
+    case "$JENOVA_PKG_MGR" in
+        pkg)    _pkg_install llvm || true ;;
+        pacman) _pacman_install clang || true ;;
+        apt)    _apt_install clangd || true ;;
+        dnf)    _dnf_install clang-tools-extra || true ;;
+        zypper) _zypper_install clang || true ;;
+        *)      _apt_install clangd || true ;;
     esac
     if _clangd_present; then
         ok "clangd installed (as $_CLANGD_BIN)"
@@ -354,12 +391,9 @@ else
     fi
 fi
 
-# Detect cpu arch in the github-release naming convention.
-case "$(uname -m)" in
-    x86_64|amd64)  _GH_ARCH_LLS="x64";   _GH_ARCH_ZLS="x86_64" ;;
-    aarch64|arm64) _GH_ARCH_LLS="arm64"; _GH_ARCH_ZLS="aarch64" ;;
-    *)             _GH_ARCH_LLS="";      _GH_ARCH_ZLS="" ;;
-esac
+# Arch suffixes for GitHub release downloads — from shared detection.
+_GH_ARCH_LLS="$JENOVA_GH_ARCH_LLS"
+_GH_ARCH_ZLS="$JENOVA_GH_ARCH_ZLS"
 
 # Install lua-language-server from upstream github release tarball.
 # Debian/Ubuntu do not package it, npm/cargo do not provide it, and FreeBSD
@@ -448,10 +482,18 @@ elif [ "$SKIP_LLAMA" = "0" ]; then
     fi
 
     # Check for Vulkan SDK components (needed for build)
-    if ! command -v glslc >/dev/null 2>&1; then
-        warn "glslc (Vulkan shader compiler) not found — needed to build llama.cpp with Vulkan"
-        warn "FreeBSD: pkg install shaderc"
-        warn "Linux:   install vulkan-sdk or vulkan-tools package"
+    if [ "$JENOVA_GLSLC_OK" = "0" ]; then
+        case "$JENOVA_PKG_MGR" in
+            pkg)    _glslc_hint="pkg install shaderc" ;;
+            pacman) _glslc_hint="pacman -S shaderc" ;;
+            apt)    _glslc_hint="apt install glslc" ;;
+            dnf)    _glslc_hint="dnf install glslc" ;;
+            zypper) _glslc_hint="zypper install shaderc" ;;
+            brew)   _glslc_hint="brew install shaderc" ;;
+            *)      _glslc_hint="install the shaderc/glslc package for your OS" ;;
+        esac
+        warn "glslc (Vulkan shader compiler) not found — ${_glslc_hint}"
+        warn "Without glslc, llama.cpp cannot be built with Vulkan GPU support."
         WARNINGS=$((WARNINGS + 1))
     fi
 fi

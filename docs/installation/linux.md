@@ -59,7 +59,6 @@ sudo apt install -y \
     ```bash
     make llama
     make jvim
-    make cli-agent
     ```
 
 4.  **Run the installer**:
