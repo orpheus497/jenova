@@ -78,7 +78,7 @@ case "$BACKEND" in
         ;;
 esac
 
-if [ "$ENABLE_VULKAN" -eq 1 ] && [ "${JENOVA_GLSLC_OK:-0}" = "0" ]; then
+if [ "${ENABLE_VULKAN:-0}" -eq 1 ] && [ "${JENOVA_GLSLC_OK:-0}" = "0" ]; then
     echo "Error: Vulkan backend requested but glslc was not found." >&2
     echo "Install the Vulkan shader compiler, then rerun:" >&2
     case "$JENOVA_PKG_MGR" in
