@@ -1,4 +1,4 @@
-*jvim.txt*    jvim                                      *jvim* *Jvim*
+*jvim.txt*    jvim                                      *jvim* *Jvim* *jvim-start*
 
 
                               JVIM REFERENCE MANUAL
@@ -9,12 +9,21 @@ jvim — the editor frontend of the Jenova Cognitive Architecture.
                                       Type |gO| to see the table of contents.
 
 ==============================================================================
+Quick Start                                             *jvim-quick-start*
+
+If you are new to the Jenova environment:
+
+1. Run `:Tutor` to start the "Jenova Flight School" tutorial.
+2. Run `:IDE` to set up the standard multi-panel layout.
+3. Use `<leader>am` to open the Jenova Monitor.
+4. Use `<leader>ta` to talk to the Jenova Agent.
+
+==============================================================================
 Introduction                                            *jvim-introduction*
 
-jvim is a hard fork of Neovim purpose-built to serve as the dedicated editor
-frontend of the Jenova Cognitive Architecture — a FreeBSD-first, low-latency,
-hardware-aware AI environment built around llama.cpp with dual Vulkan GPU
-offload, LuaJIT, and Optane-backed paging.
+jvim is the dedicated editor frontend of the Jenova Cognitive Architecture — 
+a FreeBSD-first, low-latency, hardware-aware AI environment built around 
+llama.cpp with dual Vulkan GPU offload, LuaJIT, and Optane-backed paging.
 
 The cognitive backend (llama-server, the LuaJIT `proxy.lua` intelligence
 layer, the embedding daemon, and the `jenova-ca` supervisor) lives in the
@@ -49,7 +58,7 @@ upstream Neovim first so that regressions introduced by the jvim fork are
 easy to separate from upstream behavior. See |jvim-bugs|.
 
 ==============================================================================
-Launching via jvim                                      *jvim-launch*
+Launching via jvim                                      *jvim-launch* *IDE*
 
 The editor is designed to be launched through the Jenova project's `bin/jvim`
 wrapper script, which:
@@ -133,7 +142,7 @@ modules from the companion Jenova repository. The commands are always
 defined; their effect degrades gracefully when the Jenova modules are
 absent (standalone install).
 
-                                                        *:JenovaMonitor*
+                                                        *:JenovaMonitor* *JenovaMonitor*
 :JenovaMonitor          Open a floating window showing real-time backend
                         status and inference metrics:
 
@@ -147,7 +156,7 @@ absent (standalone install).
                           `r`       Refresh immediately
                           `q` `<Esc>` Close
 
-                                                        *:JenovaLanScan*
+                                                        *:JenovaLanScan* *JenovaLanScan*
 :JenovaLanScan          Scan the local network for a Jenova CA instance and
                         auto-connect to the first one discovered. Useful when
                         you launched `jvim` directly instead of through

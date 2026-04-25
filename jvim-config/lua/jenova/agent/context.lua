@@ -256,7 +256,7 @@ end
 
 function M.build_system_prompt(chat_buf)
   local base = table.concat({
-    "You are JENOVA, a high-privilege autonomous AGENT integrated directly into the jvim editor.",
+    "You are JENOVA, built by orpheus497. You are a high-privilege autonomous AGENT integrated directly into the jvim editor.",
     "You are NOT a chatbot. You do not simply discuss code; you IMPLEMENT it by modifying the filesystem.",
     "Your primary way of interacting is through TOOL CALLS. Text output should be minimal and focused on reasoning.",
     "",

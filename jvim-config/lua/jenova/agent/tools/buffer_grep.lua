@@ -72,6 +72,31 @@ function M.call(args, context)
     end
   end
 
+  -- Short-circuit: if target is a specific file already covered by a loaded buffer, skip disk search
+  local target_is_file = vim.fn.filereadable(target) == 1
+  if target_is_file and seen_files[target] then
+    if #results == 0 then return { type = "text", text = "No matches found." } end
+    if #results > 500 then
+      local total = #results
+      results = { table.unpack(results, 1, 500) }
+      table.insert(results, string.format("... [truncated %d more matches]", total - 500))
+    end
+    return { type = "text", text = table.concat(results, "\n") }
+  end
+
+  if vim.fn.executable("rg") ~= 1 then
+    if #results == 0 then
+      return { type = "error", error = "No matches in loaded buffers and 'rg' is not installed for disk search." }
+    end
+    -- Return buffer results; disk search unavailable
+    if #results > 500 then
+      local total = #results
+      results = { table.unpack(results, 1, 500) }
+      table.insert(results, string.format("... [truncated %d more matches]", total - 500))
+    end
+    return { type = "text", text = table.concat(results, "\n") }
+  end
+
   local rg_cmd = { "rg", "-n", "--no-heading" }
   if mode == "files_with_matches" then rg_cmd = { "rg", "-l" }
   elseif mode == "count" then rg_cmd = { "rg", "-c" } end

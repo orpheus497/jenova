@@ -38,6 +38,17 @@ JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
 JVIM_CONFIG_SRC="$JENOVA_ROOT/jvim-config"
 JVIM_CONFIG_DST="$HOME/.config/jvim"
 
+# Shared OS/hardware detection — populates JENOVA_OS, JENOVA_DISTRO,
+# JENOVA_PKG_MGR, JENOVA_VULKAN_OK, JENOVA_GH_ARCH_*, etc.
+. "$JENOVA_ROOT/lib/detect-env.sh"
+# Backward-compat alias used by legacy case-statements in this file.
+case "$JENOVA_OS" in
+    freebsd) _OS="FreeBSD" ;;
+    linux)   _OS="Linux" ;;
+    macos)   _OS="Darwin" ;;
+    *)       _OS="$(uname -s)" ;;
+esac
+
 FORCE=0
 LINK=0
 SKIP_NVIM=0
@@ -94,24 +105,26 @@ WARNINGS=0
 # 1. OS Check
 # ---------------------------------------------------------------------------
 info "Checking operating system..."
-_OS=$(uname -s)
-case "$_OS" in
-    FreeBSD)
-        _VER=$(uname -r | cut -d. -f1)
-        if [ "$_VER" -ge 15 ] 2>/dev/null; then
+case "$JENOVA_OS" in
+    freebsd)
+        _VER="$(uname -r | cut -d. -f1)"
+        if [ "${_VER:-0}" -ge 15 ] 2>/dev/null; then
             ok "FreeBSD ${_VER} — fully supported"
         else
             warn "FreeBSD ${_VER} — recommended FreeBSD 15+; some features may differ"
             WARNINGS=$((WARNINGS + 1))
         fi
         ;;
-    Linux)
-        warn "Linux detected — Jenova is optimised for FreeBSD 15. BSD socket constants and Vulkan paths may differ."
-        warn "Replace 'Vulkan0,Vulkan1' device names in etc/jenova.conf with your Vulkan device names."
+    linux)
+        ok "Linux detected — ${JENOVA_DISTRO} / pkg: ${JENOVA_PKG_MGR}"
+        info "Replace 'Vulkan0,Vulkan1' device names in etc/jenova.conf with your Vulkan device names (run: vulkaninfo --summary)"
+        ;;
+    macos)
+        warn "macOS detected — experimental, not regularly tested"
         WARNINGS=$((WARNINGS + 1))
         ;;
     *)
-        warn "Unsupported OS: $_OS — proceeding but results may vary."
+        warn "Unsupported OS: $(uname -s) — proceeding but results may vary"
         WARNINGS=$((WARNINGS + 1))
         ;;
 esac
@@ -192,8 +205,12 @@ if [ "$SKIP_NVIM" = "0" ]; then
                 ;;
         esac
     else
-        fail "No editor found. Build the bundled jvim: make jvim"
-        ERRORS=$((ERRORS + 1))
+        if [ "$SKIP_JVIM" = "0" ]; then
+            info "No editor found — will build bundled jvim later in this script"
+        else
+            fail "No editor found. Build the bundled jvim: make jvim"
+            ERRORS=$((ERRORS + 1))
+        fi
     fi
     check_optional "gmake"  "pkg install gmake  (needed for telescope-fzf-native)"
 fi
@@ -213,14 +230,21 @@ else
 fi
 
 # Vulkan loader
-if [ "$_OS" = "FreeBSD" ]; then
-    if [ -f /usr/local/lib/libvulkan.so ] || ldconfig -r 2>/dev/null | grep -q libvulkan; then
-        ok "libvulkan (Vulkan loader)"
-    else
-        warn "libvulkan not found — install: pkg install vulkan-loader"
-        warn "Without Vulkan, llama-server falls back to CPU-only inference."
-        WARNINGS=$((WARNINGS + 1))
-    fi
+if [ "$JENOVA_VULKAN_OK" = "1" ]; then
+    ok "libvulkan (Vulkan loader)"
+else
+    case "$JENOVA_PKG_MGR" in
+        pkg)    _vhint="pkg install vulkan-loader" ;;
+        pacman) _vhint="pacman -S vulkan-icd-loader" ;;
+        apt)    _vhint="apt install libvulkan1" ;;
+        dnf)    _vhint="dnf install vulkan-loader" ;;
+        zypper) _vhint="zypper install libvulkan1" ;;
+        brew)   _vhint="brew install molten-vk" ;;
+        *)      _vhint="install the vulkan-loader package for your OS" ;;
+    esac
+    warn "libvulkan not found — ${_vhint}"
+    warn "Without Vulkan, llama-server falls back to CPU-only inference."
+    WARNINGS=$((WARNINGS + 1))
 fi
 
 # ---------------------------------------------------------------------------
@@ -254,6 +278,24 @@ _pkg_install() {
     # FreeBSD pkg(8). Run unattended; root is required.
     _have pkg || return 1
     $_PRIV pkg install -y "$@" >/dev/null 2>&1
+}
+
+_pacman_install() {
+    # Arch Linux pacman.
+    _have pacman || return 1
+    $_PRIV pacman -S --noconfirm --needed "$@" >/dev/null 2>&1
+}
+
+_dnf_install() {
+    # Fedora/RHEL/CentOS dnf.
+    _have dnf || return 1
+    $_PRIV dnf install -y -q "$@" >/dev/null 2>&1
+}
+
+_zypper_install() {
+    # openSUSE zypper.
+    _have zypper || return 1
+    $_PRIV zypper install -y --quiet "$@" >/dev/null 2>&1
 }
 
 _npm_install_g() {
@@ -293,17 +335,21 @@ for _d in "$HOME/.local/bin" "$HOME/.cargo/bin" "$HOME/go/bin" "$HOME/.local/sha
 done
 export PATH
 
-# Install one tool by trying the appropriate manager for this OS first,
-# then falling back. Already-present tools are reported as ok and skipped.
+# Install one tool by trying the appropriate manager for this system first,
+# then falling back through npm/cargo/go/pip. Already-present tools are skipped.
 _install_lsp() {
-    _exe="$1"; _label="$2"; _apt="$3"; _pkg="$4"; _npm="$5"; _cargo="$6"; _go="$7"; _pip="$8"
+    _exe="$1"; _label="$2"; _apt="$3"; _pkg="$4"; _npm="$5"; _cargo="$6"; _go="$7"; _pip="$8"; _pacman="$9"
     if _have "$_exe"; then
         ok "$_label ($(command -v "$_exe"))"
         return 0
     fi
-    case "$_OS" in
-        FreeBSD) [ -n "$_pkg" ]   && _pkg_install $_pkg   || true ;;
-        *)       [ -n "$_apt" ]   && _apt_install $_apt   || true ;;
+    case "$JENOVA_PKG_MGR" in
+        pkg)    [ -n "$_pkg" ]    && _pkg_install    $_pkg    || true ;;
+        pacman) [ -n "$_pacman" ] && _pacman_install $_pacman || true ;;
+        apt)    [ -n "$_apt" ]    && _apt_install    $_apt    || true ;;
+        dnf)    [ -n "$_apt" ]    && _dnf_install    $_apt    || true ;;
+        zypper) [ -n "$_apt" ]    && _zypper_install $_apt    || true ;;
+        *)      [ -n "$_apt" ]    && _apt_install    $_apt    || true ;;
     esac
     if ! _have "$_exe" && [ -n "$_npm" ];   then _npm_install_g $_npm  || true; fi
     if ! _have "$_exe" && [ -n "$_cargo" ]; then _cargo_install $_cargo || true; fi
@@ -329,9 +375,13 @@ _clangd_present() {
 if _clangd_present; then
     ok "clangd (found as $_CLANGD_BIN)"
 else
-    case "$_OS" in
-        FreeBSD) _pkg_install llvm ;;
-        *)       _apt_install clangd ;;
+    case "$JENOVA_PKG_MGR" in
+        pkg)    _pkg_install llvm || true ;;
+        pacman) _pacman_install clang || true ;;
+        apt)    _apt_install clangd || true ;;
+        dnf)    _dnf_install clang-tools-extra || true ;;
+        zypper) _zypper_install clang || true ;;
+        *)      _apt_install clangd || true ;;
     esac
     if _clangd_present; then
         ok "clangd installed (as $_CLANGD_BIN)"
@@ -341,12 +391,9 @@ else
     fi
 fi
 
-# Detect cpu arch in the github-release naming convention.
-case "$(uname -m)" in
-    x86_64|amd64)  _GH_ARCH_LLS="x64";   _GH_ARCH_ZLS="x86_64" ;;
-    aarch64|arm64) _GH_ARCH_LLS="arm64"; _GH_ARCH_ZLS="aarch64" ;;
-    *)             _GH_ARCH_LLS="";      _GH_ARCH_ZLS="" ;;
-esac
+# Arch suffixes for GitHub release downloads — from shared detection.
+_GH_ARCH_LLS="$JENOVA_GH_ARCH_LLS"
+_GH_ARCH_ZLS="$JENOVA_GH_ARCH_ZLS"
 
 # Install lua-language-server from upstream github release tarball.
 # Debian/Ubuntu do not package it, npm/cargo do not provide it, and FreeBSD
@@ -385,29 +432,29 @@ _install_zls_from_github() {
     _have zls
 }
 
-# args:        exe                    label                apt                    pkg                          npm                          cargo            go                                                          pip
-_install_lsp "rust-analyzer"          "rust-analyzer"       "rust-analyzer"        "rust-analyzer"              ""                           ""               ""                                                          ""
-_install_lsp "lua-language-server"    "lua-language-server" "lua-language-server"  "lua-language-server"        ""                           ""               ""                                                          ""
+# args:        exe                    label                apt                    pkg                          npm                          cargo            go                                                          pip                         pacman
+_install_lsp "rust-analyzer"          "rust-analyzer"       "rust-analyzer"        "rust-analyzer"              ""                           ""               ""                                                          ""                          "rust-analyzer"
+_install_lsp "lua-language-server"    "lua-language-server" "lua-language-server"  "lua-language-server"        ""                           ""               ""                                                          ""                          "lua-language-server"
 if ! _have lua-language-server; then
     _install_lls_from_github && ok "lua-language-server installed ($(command -v lua-language-server))" || warn "lua-language-server could not be installed automatically"
 fi
-_install_lsp "pyright-langserver"     "pyright"             ""                     "py311-pyright"              "pyright"                    ""               ""                                                          ""
-_install_lsp "bash-language-server"   "bash-language-server" ""                    "npm"                        "bash-language-server"       ""               ""                                                          ""
-_install_lsp "gopls"                  "gopls"               "gopls"                "go gopls"                   ""                           ""               "golang.org/x/tools/gopls@latest"                            ""
-_install_lsp "zls"                    "zls"                 ""                     "zig"                        ""                           ""               ""                                                          ""
+_install_lsp "pyright-langserver"     "pyright"             ""                     "py311-pyright"              "pyright"                    ""               ""                                                          ""                          "pyright"
+_install_lsp "bash-language-server"   "bash-language-server" ""                    "npm"                        "bash-language-server"       ""               ""                                                          ""                          "bash-language-server"
+_install_lsp "gopls"                  "gopls"               "gopls"                "go gopls"                   ""                           ""               "golang.org/x/tools/gopls@latest"                            ""                          "gopls"
+_install_lsp "zls"                    "zls"                 ""                     "zig"                        ""                           ""               ""                                                          ""                          "zls"
 if ! _have zls; then
     _install_zls_from_github && ok "zls installed ($(command -v zls))" || warn "zls could not be installed automatically"
 fi
 
 # Linters (used by LSP-equivalents and conform.nvim).
-_install_lsp "shellcheck"             "shellcheck"          "shellcheck"           "shellcheck"                 ""                           ""               ""                                                          ""
+_install_lsp "shellcheck"             "shellcheck"          "shellcheck"           "shellcheck"                 ""                           ""               ""                                                          ""                          "shellcheck"
 
 # Formatters used by conform.nvim (format-on-save).
-_install_lsp "stylua"                 "stylua"              ""                     "stylua"                     ""                           "stylua"         ""                                                          ""
-_install_lsp "shfmt"                  "shfmt"               "shfmt"                "shfmt"                      ""                           ""               "mvdan.cc/sh/v3/cmd/shfmt@latest"                            ""
-_install_lsp "goimports"              "goimports"           ""                     "go"                         ""                           ""               "golang.org/x/tools/cmd/goimports@latest"                    ""
-_install_lsp "black"                  "black"               "black"                "py311-black"                ""                           ""               ""                                                          "black"
-_install_lsp "isort"                  "isort"               "isort"                "py311-isort"                ""                           ""               ""                                                          "isort"
+_install_lsp "stylua"                 "stylua"              ""                     "stylua"                     ""                           "stylua"         ""                                                          ""                          "stylua"
+_install_lsp "shfmt"                  "shfmt"               "shfmt"                "shfmt"                      ""                           ""               "mvdan.cc/sh/v3/cmd/shfmt@latest"                            ""                          "shfmt"
+_install_lsp "goimports"              "goimports"           ""                     "go"                         ""                           ""               "golang.org/x/tools/cmd/goimports@latest"                    ""                          ""
+_install_lsp "black"                  "black"               "black"                "py311-black"                ""                           ""               ""                                                          "black"                     "python-black"
+_install_lsp "isort"                  "isort"               "isort"                "py311-isort"                ""                           ""               ""                                                          "isort"                     "python-isort"
 
 fi  # SKIP_LSP
 
@@ -435,10 +482,18 @@ elif [ "$SKIP_LLAMA" = "0" ]; then
     fi
 
     # Check for Vulkan SDK components (needed for build)
-    if ! command -v glslc >/dev/null 2>&1; then
-        warn "glslc (Vulkan shader compiler) not found — needed to build llama.cpp with Vulkan"
-        warn "FreeBSD: pkg install shaderc"
-        warn "Linux:   install vulkan-sdk or vulkan-tools package"
+    if [ "$JENOVA_GLSLC_OK" = "0" ]; then
+        case "$JENOVA_PKG_MGR" in
+            pkg)    _glslc_hint="pkg install shaderc" ;;
+            pacman) _glslc_hint="pacman -S shaderc" ;;
+            apt)    _glslc_hint="apt install glslc" ;;
+            dnf)    _glslc_hint="dnf install glslc" ;;
+            zypper) _glslc_hint="zypper install shaderc" ;;
+            brew)   _glslc_hint="brew install shaderc" ;;
+            *)      _glslc_hint="install the shaderc/glslc package for your OS" ;;
+        esac
+        warn "glslc (Vulkan shader compiler) not found — ${_glslc_hint}"
+        warn "Without glslc, llama.cpp cannot be built with Vulkan GPU support."
         WARNINGS=$((WARNINGS + 1))
     fi
 fi
@@ -451,26 +506,38 @@ if [ "$SKIP_JVIM" = "0" ] && [ "$CLIENT_ONLY" = "0" ]; then
     if [ ! -f "$JENOVA_ROOT/jvim/CMakeLists.txt" ]; then
         warn "jvim/ source tree missing — skipping jvim build"
         WARNINGS=$((WARNINGS + 1))
-    elif ! command -v cmake >/dev/null 2>&1; then
-        warn "cmake not found — cannot build jvim. Install: pkg install cmake"
-        WARNINGS=$((WARNINGS + 1))
     else
         _JVIM_BIN_OUT="$JENOVA_ROOT/jvim/build/bin/nvim"
         if [ -x "$_JVIM_BIN_OUT" ] && [ "$FORCE" = "0" ]; then
             ok "jvim already built at $_JVIM_BIN_OUT (use --force to rebuild)"
         else
-            _JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
-            (
-                cd "$JENOVA_ROOT/jvim" && \
-                cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-                      -DCMAKE_INSTALL_PREFIX="$JENOVA_ROOT/jvim/install" >/dev/null && \
-                cmake --build build -j"$_JOBS"
-            ) || {
-                fail "jvim build failed — see above. Re-run: make jvim"
-                ERRORS=$((ERRORS + 1))
-            }
-            if [ -x "$_JVIM_BIN_OUT" ]; then
-                ok "jvim built at $_JVIM_BIN_OUT"
+            _MAKE_CMD="make"
+            if [ "$_OS" = "FreeBSD" ]; then
+                if command -v gmake >/dev/null 2>&1; then
+                    _MAKE_CMD="gmake"
+                else
+                    warn "gmake not found — FreeBSD requires gmake to build jvim"
+                    WARNINGS=$((WARNINGS + 1))
+                    _MAKE_CMD=""
+                fi
+            fi
+
+            if [ -z "$_MAKE_CMD" ]; then
+                warn "Skipping jvim build due to missing make tool"
+            else
+                _JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+                (
+                    cd "$JENOVA_ROOT/jvim" && \
+                    "$_MAKE_CMD" CMAKE_BUILD_TYPE=RelWithDebInfo \
+                                 CMAKE_INSTALL_PREFIX="$JENOVA_ROOT/jvim/install" \
+                                 -j"$_JOBS"
+                ) || {
+                    fail "jvim build failed — see above. Re-run: make jvim"
+                    ERRORS=$((ERRORS + 1))
+                }
+                if [ -x "$_JVIM_BIN_OUT" ]; then
+                    ok "jvim built at $_JVIM_BIN_OUT"
+                fi
             fi
         fi
     fi

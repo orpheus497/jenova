@@ -1,0 +1,95 @@
+# Welcome to the jvim Flight School                             *jvim-tutor*
+
+This tutorial is your path to mastering the Jenova Cognitive Architecture. jvim is 
+more than a text editor—it is your command bridge for AI-augmented engineering. 
+We will progress from basic mechanics to advanced intelligence.
+
+# Chapter 1: The Engine (Basic Mechanics)
+
+Before you can command the AI, you must be able to navigate the workspace. 
+In jvim, your fingers never need to leave the home row.
+
+# Lesson 1.1: PRECISION MOVEMENT
+
+** To move the cursor, press the `h`, `j`, `k`, `l` keys. **
+
+          ↑
+          k         Hint: The `h`{normal} key is at the left and moves left.
+     ← h    l →           The `l`{normal} key is at the right and moves right.
+         j                The `j`{normal} key looks like a down arrow.
+         ↓
+
+ 1. Move the cursor around until it feels like an extension of your hand.
+ 2. When you are ready, use the `j`{normal} key to descend to Lesson 1.2.
+
+# Lesson 1.2: SAFELY DEPARTING
+
+** Learning to exit is as important as learning to fly. **
+
+ 1. Press `<Esc>`{normal} to ensure you are in Normal mode (the "neutral" gear).
+ 2. Type `:q!`{vim} and press `<Enter>`{normal}.
+ 3. This command abandons your changes and returns you to the shell. Don't 
+    run it now—we have more to learn!
+
+# Chapter 2: The Cockpit (Integrated Workspace)
+
+Now that you can move, let's look at the instruments. jvim organizes your 
+project into a "Cockpit" layout.
+
+# Lesson 2.1: ACTIVATING THE BRIDGE
+
+** The `:IDE` command transforms jvim into a full engineering station. **
+
+ 1. Run the command: `:IDE`{vim}
+ 2. Observe the transformation. You now have a File Explorer to your left 
+    and the Jenova Intelligence Layer to your right. You are in the center.
+
+# Lesson 2.2: SEAMLESS NAVIGATION
+
+** In a high-speed workflow, we don't use the mouse to change windows. **
+
+ 1. Hold `Ctrl` and press `l` (`<C-l>`) to jump to the right (the AI panel).
+ 2. Hold `Ctrl` and press `h` (`<C-h>`) to jump back to the center.
+ 3. This is how you fluidly move context between your code and the AI.
+
+# Chapter 3: The Intelligence (Jenova CA)
+
+With the cockpit active, you can now engage the Jenova Cognitive Architecture.
+
+# Lesson 3.1: MONITORING THE BIOMETRICS
+
+** The AI backend is a living system. We must monitor its health. **
+
+ 1. Run: `:JenovaMonitor`{vim}
+ 2. This floating overlay shows your model's "heartbeat"—GPU usage, inference 
+    speed, and context levels. 
+ 3. Press `q` to dismiss the monitor when you are finished.
+
+# Lesson 3.2: CONSULTING THE AGENT
+
+** The Jenova Agent is your partner. You talk to it via the Agent Terminal. **
+
+ 1. Press your leader key (usually `<Space>`) then `t` then `a` (`<leader>ta`).
+ 2. This toggles the Agent's presence. Ask it a question, or have it analyze 
+    the code you just navigated to in Chapter 2.
+ 3. Toggle it again to hide it and return to pure focus.
+
+# Chapter 4: The Project Flow (pflow)
+
+# Lesson 4.1: MULTI-TASKING WITH BUFFERS
+
+** Real engineering involves many files. We cycle them with speed. **
+
+ 1. Use `<S-l>` (Shift + l) to cycle "Forward" through your open files.
+ 2. Use `<S-h>` (Shift + h) to cycle "Backward".
+
+# Conclusion
+
+You have graduated from Flight School. You possess the fundamental mechanics 
+to move, the layout to organize, and the intelligence to build.
+
+Your next steps:
+- `|jvim-start|`: Deep dive into the reference manual.
+- `|help.txt|`: The master map of all jvim capabilities.
+
+Go forth and build the future.

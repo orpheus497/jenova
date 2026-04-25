@@ -48,7 +48,7 @@ function M.call(args)
   end
 
   -- Fallback for C files
-  if (#diags == 0) and args.file_path and args.file_path ~= "" then
+  if (#diags == 0) and args.file_path and args.file_path ~= "" and vim.fn.executable("cc") == 1 then
     local ext = args.file_path:match("%.([^.]+)$")
     if ext == "c" or ext == "h" then
       local abs = vim.fn.fnamemodify(args.file_path, ":p")

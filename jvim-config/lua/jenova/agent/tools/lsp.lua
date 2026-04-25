@@ -47,8 +47,7 @@ local function resolve_buf(file_path)
     vim.fn.bufload(bn)
     -- Wait up to 1 second for LSP to attach
     vim.wait(1000, function()
-      local clients = vim.lsp.get_clients and vim.lsp.get_clients({ bufnr = bn })
-        or (vim.lsp.get_active_clients and vim.lsp.get_active_clients({ bufnr = bn })) or {}
+      local clients = vim.lsp.get_clients({ bufnr = bn }) or {}
       return #clients > 0
     end, 50)
     return bn, true
@@ -57,9 +56,7 @@ local function resolve_buf(file_path)
 end
 
 local function buf_has_lsp(buf)
-  local clients = vim.lsp.get_clients and vim.lsp.get_clients({ bufnr = buf })
-    or (vim.lsp.get_active_clients and vim.lsp.get_active_clients({ bufnr = buf }))
-    or {}
+  local clients = vim.lsp.get_clients({ bufnr = buf }) or {}
   return #clients > 0, clients
 end
 
@@ -118,7 +115,7 @@ local function action_diagnostics(args)
   end
 
   -- Fallback: If no diagnostics found and it's a C file, try compiler-based linting
-  if (#diags == 0) and args.file_path then
+  if (#diags == 0) and args.file_path and vim.fn.executable("cc") == 1 then
     local ext = args.file_path:match("%.([^.]+)$")
     if ext == "c" or ext == "h" then
       local abs = vim.fn.fnamemodify(args.file_path, ":p")

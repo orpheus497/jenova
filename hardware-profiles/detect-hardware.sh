@@ -12,6 +12,10 @@
 #   ./hardware-profiles/detect-hardware.sh --apply   # Detect and deploy profile config
 
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
+JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Shared OS/hardware detection.
+. "$JENOVA_ROOT/lib/detect-env.sh"
 
 # Colours
 if [ -t 1 ]; then
@@ -30,15 +34,15 @@ info() { printf "${_B}INFO${_N}  %s\n" "$1"; }
 # =========================================================================
 
 detect_os() {
-    OS_NAME=$(uname -s)
-    OS_RELEASE=$(uname -r)
+    # Populated from shared detection in lib/detect-env.sh.
+    OS_NAME="$(uname -s)"
+    OS_RELEASE="$(uname -r)"
     OS_FULL="${OS_NAME} ${OS_RELEASE}"
 
-    # Try to get pretty name
-    if [ "$OS_NAME" = "FreeBSD" ]; then
+    if [ "$JENOVA_OS" = "freebsd" ]; then
         OS_PRETTY="FreeBSD ${OS_RELEASE}"
     elif [ -f /etc/os-release ]; then
-        OS_PRETTY=$(. /etc/os-release 2>/dev/null && printf '%s\n' "$PRETTY_NAME")
+        OS_PRETTY="$(. /etc/os-release 2>/dev/null && printf '%s\n' "$PRETTY_NAME")"
         [ -z "$OS_PRETTY" ] && OS_PRETTY="$OS_FULL"
     else
         OS_PRETTY="$OS_FULL"
@@ -46,25 +50,10 @@ detect_os() {
 }
 
 detect_cpu() {
-    CPU_MODEL=""
-    CPU_CORES=""
-    CPU_THREADS=""
-
-    if [ "$(uname -s)" = "FreeBSD" ]; then
-        CPU_MODEL=$(sysctl -n hw.model 2>/dev/null || echo "Unknown")
-        CPU_CORES=$(sysctl -n hw.ncpu 2>/dev/null || echo "?")
-        CPU_THREADS="$CPU_CORES"
-    elif [ -f /proc/cpuinfo ]; then
-        CPU_MODEL=$(grep "model name" /proc/cpuinfo 2>/dev/null | head -1 | cut -d: -f2 | sed 's/^ //')
-        [ -z "$CPU_MODEL" ] && CPU_MODEL="Unknown"
-        CPU_THREADS=$(grep -c "^processor" /proc/cpuinfo 2>/dev/null || echo "?")
-        CPU_CORES=$(grep "cpu cores" /proc/cpuinfo 2>/dev/null | head -1 | cut -d: -f2 | sed 's/^ //')
-        [ -z "$CPU_CORES" ] && CPU_CORES="$CPU_THREADS"
-    else
-        CPU_MODEL=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "Unknown")
-        CPU_CORES=$(sysctl -n hw.ncpu 2>/dev/null || echo "?")
-        CPU_THREADS="$CPU_CORES"
-    fi
+    # Populated from shared detection in lib/detect-env.sh.
+    CPU_MODEL="$JENOVA_CPU_MODEL"
+    CPU_THREADS="$JENOVA_CPU_THREADS"
+    CPU_CORES="$JENOVA_PHYSICAL_THREADS"
 }
 
 detect_gpu() {
@@ -95,23 +84,11 @@ detect_gpu() {
 }
 
 detect_memory() {
-    MEM_TOTAL_MB=0
-    SWAP_TOTAL_MB=0
-
-    if [ "$(uname -s)" = "FreeBSD" ]; then
-        _physmem=$(sysctl -n hw.physmem 2>/dev/null) || _physmem=0
-        MEM_TOTAL_MB=$((_physmem / 1024 / 1024))
-        _swapk=$(swapinfo -k 2>/dev/null | tail -1 | awk '{print $2}') || _swapk=0
-        SWAP_TOTAL_MB=$((_swapk / 1024))
-    elif [ -f /proc/meminfo ]; then
-        _memk=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null) || _memk=0
-        MEM_TOTAL_MB=$((_memk / 1024))
-        _swapk=$(awk '/^SwapTotal:/{print $2}' /proc/meminfo 2>/dev/null) || _swapk=0
-        SWAP_TOTAL_MB=$((_swapk / 1024))
-    fi
-
-    MEM_TOTAL_GIB=$((MEM_TOTAL_MB / 1024))
-    SWAP_TOTAL_GIB=$((SWAP_TOTAL_MB / 1024))
+    # Populated from shared detection in lib/detect-env.sh.
+    MEM_TOTAL_GIB="$JENOVA_RAM_GIB"
+    SWAP_TOTAL_GIB="$JENOVA_SWAP_GIB"
+    MEM_TOTAL_MB=$((MEM_TOTAL_GIB * 1024))
+    SWAP_TOTAL_MB=$((SWAP_TOTAL_GIB * 1024))
 }
 
 detect_storage() {

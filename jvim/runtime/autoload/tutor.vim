@@ -155,7 +155,7 @@ function! tutor#TutorCmd(tutor_name)
     endif
 
     if a:tutor_name == ''
-        let l:tutor_name = 'vim-01-beginner.tutor'
+        let l:tutor_name = 'jvim-tutor.tutor'
     else
         let l:tutor_name = a:tutor_name
     endif
