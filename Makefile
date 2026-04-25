@@ -14,6 +14,15 @@
 #   make install    # Run scripts/install.sh (system-aware deploy)
 #   make clean      # Remove build artifacts from both components
 
+# Detect OS to use correct make command (FreeBSD requires gmake for jvim)
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),FreeBSD)
+    GMAKE := $(shell command -v gmake 2>/dev/null)
+    SUBMAKE := $(if $(GMAKE),$(GMAKE),$(MAKE))
+else
+    SUBMAKE := $(MAKE)
+endif
+
 .PHONY: all llama jvim install clean help
 
 all: llama jvim
@@ -30,7 +39,7 @@ jvim:
 	@if [ ! -f jvim/CMakeLists.txt ]; then \
 		echo "ERROR: jvim/ source tree missing." >&2; exit 1; \
 	fi
-	@$(MAKE) -C jvim \
+	@$(SUBMAKE) -C jvim \
 		CMAKE_BUILD_TYPE=RelWithDebInfo \
 		CMAKE_INSTALL_PREFIX="$(CURDIR)/jvim/install"
 	@echo "   jvim built: jvim/build/bin/nvim"

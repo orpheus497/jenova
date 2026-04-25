@@ -102,7 +102,7 @@ ERRORS=0
 WARNINGS=0
 
 # ---------------------------------------------------------------------------
-# 1. OS Check
+# 1. OS Check & Hardware Profile Detection
 # ---------------------------------------------------------------------------
 info "Checking operating system..."
 case "$JENOVA_OS" in
@@ -129,8 +129,32 @@ case "$JENOVA_OS" in
         ;;
 esac
 
+info "Detecting hardware profile..."
+DETECT_SCRIPT="$JENOVA_ROOT/hardware-profiles/detect-hardware.sh"
+_PROFILE=""
+if [ -f "$DETECT_SCRIPT" ] && [ -x "$DETECT_SCRIPT" ]; then
+    _PROFILE=$("$DETECT_SCRIPT" 2>/dev/null) || _PROFILE=""
+    if [ -n "$_PROFILE" ]; then
+        ok "Matched hardware profile: $_PROFILE"
+        # Automatically apply the profile configuration (non-fatal: installer
+        # continues even if the copy fails so the user is not left mid-install)
+        if ! "$DETECT_SCRIPT" --apply; then
+            warn "Failed to apply hardware profile: $_PROFILE"
+            WARNINGS=$((WARNINGS + 1))
+        fi
+        _PROFILE_DIR="$JENOVA_ROOT/hardware-profiles/$_PROFILE"
+    else
+        warn "No hardware profile matched this system."
+        warn "Run: $DETECT_SCRIPT --info  to see detection details."
+        WARNINGS=$((WARNINGS + 1))
+    fi
+else
+    warn "Hardware detection script not found at $DETECT_SCRIPT"
+    WARNINGS=$((WARNINGS + 1))
+fi
+
 # ---------------------------------------------------------------------------
-# 2. Create required runtime directories
+# 2. Create required runtime directories & Permission checks
 # ---------------------------------------------------------------------------
 info "Creating runtime directories..."
 
@@ -151,6 +175,16 @@ else
     warn ".jenova directory exists but may have permission issues"
     warn "Run: chmod -R u+w $JENOVA_ROOT/.jenova"
     WARNINGS=$((WARNINGS + 1))
+fi
+
+# Check for root-owned build artifacts that block regular-user builds
+if [ -d "$JENOVA_ROOT/jvim/build" ] && [ ! -w "$JENOVA_ROOT/jvim/build" ]; then
+    _owner=$(ls -ld "$JENOVA_ROOT/jvim/build" | awk '{print $3}')
+    if [ "$_owner" = "root" ]; then
+        fail "jvim/build is owned by root. This will cause the build to fail."
+        fail "Run: sudo chown -R $(id -u):$(id -g) $JENOVA_ROOT/jvim"
+        ERRORS=$((ERRORS + 1))
+    fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -193,7 +227,7 @@ if [ "$SKIP_NVIM" = "0" ]; then
             *)      warn "in-tree binary $_JVIM_BIN is not jvim ($_NVIM_VLINE)"; WARNINGS=$((WARNINGS + 1)) ;;
         esac
     elif command -v jvim >/dev/null 2>&1; then
-        _NVIM_VLINE=$(nvim --version 2>/dev/null | head -n 1)
+        _NVIM_VLINE=$(jvim --version 2>/dev/null | head -n 1)
         case "$_NVIM_VLINE" in
             *JVIM*)
                 ok "system nvim is jvim ($_NVIM_VLINE) — fully integrated"
@@ -751,45 +785,20 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 9. Hardware profile detection
+# 9. System Tuning Reminders
 # ---------------------------------------------------------------------------
-info "Detecting hardware profile..."
-DETECT_SCRIPT="$JENOVA_ROOT/hardware-profiles/detect-hardware.sh"
-_PROFILE=""
-if [ -f "$DETECT_SCRIPT" ] && [ -x "$DETECT_SCRIPT" ]; then
-    _PROFILE=$("$DETECT_SCRIPT" 2>/dev/null) || _PROFILE=""
-    if [ -n "$_PROFILE" ]; then
-        ok "Matched hardware profile: $_PROFILE"
-        # Automatically apply the profile configuration (non-fatal: installer
-        # continues even if the copy fails so the user is not left mid-install)
-        if ! "$DETECT_SCRIPT" --apply; then
-            warn "Failed to apply hardware profile: $_PROFILE"
-            WARNINGS=$((WARNINGS + 1))
-        fi
-        _PROFILE_DIR="$JENOVA_ROOT/hardware-profiles/$_PROFILE"
-        if [ -f "$_PROFILE_DIR/jenova-setup" ]; then
-            warn "Run 'sudo $_PROFILE_DIR/jenova-setup' once to tune system for this hardware."
-        fi
-    else
-        warn "No hardware profile matched this system."
-        warn "Run: $DETECT_SCRIPT --info  to see detection details."
-        warn "You can create a new profile in hardware-profiles/<Category>/<gpu_type>/<name>/"
-        WARNINGS=$((WARNINGS + 1))
+if [ -n "$_PROFILE" ]; then
+    _PROFILE_DIR="$JENOVA_ROOT/hardware-profiles/$_PROFILE"
+    if [ -f "$_PROFILE_DIR/jenova-setup" ]; then
+        warn "Run 'sudo $_PROFILE_DIR/jenova-setup' once to tune system for this hardware."
     fi
-else
-    warn "Hardware detection script not found at $DETECT_SCRIPT"
-    WARNINGS=$((WARNINGS + 1))
-fi
-
-# ---------------------------------------------------------------------------
-# 9b. jenova-setup (system tuning) reminder — fallback for unmatched profiles
-# ---------------------------------------------------------------------------
-if [ "$_OS" = "FreeBSD" ] && [ -z "$_PROFILE" ]; then
+elif [ "$JENOVA_OS" = "freebsd" ]; then
     info "System tuning..."
     warn "Run 'sudo $JENOVA_ROOT/scripts/jenova-setup' once to tune vm.* sysctls and ZFS ARC"
     warn "for optimal Optane swap / Iris Xe UMA performance."
     WARNINGS=$((WARNINGS + 1))
 fi
+
 
 # ---------------------------------------------------------------------------
 # 10. Summary
