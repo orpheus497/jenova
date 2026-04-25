@@ -206,8 +206,8 @@ local function build_layout(width)
   push("pad", "")
   for _, l in ipairs(jenova_logo) do push("logo", center(l, width)) end
   push("pad", "")
-  push("title", center(jvim_version .. "  •  Cognitive Architecture — IDE", width))
-  push("attr", center(os_info .. "  •  Built for the Jenova project", width))
+  push("title", center(jvim_version .. "  •  Cognitive Architecture Frontend", width))
+  push("attr", center(os_info .. "  •  Unified Interface for the Jenova Cognitive Architecture", width))
   push("attr", center("https://github.com/orpheus497/jenova", width))
 
   local sep_w = math.min(width - 2, 100)

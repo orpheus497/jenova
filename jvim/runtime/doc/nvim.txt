@@ -12,7 +12,7 @@ features, except |Vim9script|) where possible. See |vim-differences| for
 the complete reference.
 
 - If you already use Vim or Neovim, see |nvim-from-vim| for a quickstart.
-- If you have never used Vim, Neovim, or jvim before, see below.
+- If you have never used Vim, Neovim, or jvim before, see |jvim-start|.
 
                                       Type |gO| to see the table of contents.
 
