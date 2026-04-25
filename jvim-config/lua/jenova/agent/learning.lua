@@ -102,6 +102,16 @@ local function is_list_like(value)
   return n > 0
 end
 
+-- Build a sortable, type-distinguishing representation of a key so that
+-- a numeric key 1 and a string key "1" don't collide. Without the type
+-- prefix `tostring(1) == tostring("1") == "1"` and the dedup-by-key
+-- logic in canonical() would drop one of them, producing two different
+-- input tables that both hash to the same signature — and breaking the
+-- repetition guard for any tool whose arguments contain mixed-type keys.
+local function key_repr(k)
+  return type(k) .. "\0" .. tostring(k)
+end
+
 local function canonical(value)
   if type(value) ~= "table" then
     return vim.json.encode(value)
@@ -111,12 +121,18 @@ local function canonical(value)
     for _, v in ipairs(value) do table.insert(parts, canonical(v)) end
     return "[" .. table.concat(parts, ",") .. "]"
   end
-  local keys = {}
-  for k, _ in pairs(value) do table.insert(keys, tostring(k)) end
-  table.sort(keys)
+  -- Collect (sort-key, original-key) pairs. The sort key is type-prefixed
+  -- so "1" (string) and 1 (number) sort to different positions and
+  -- both survive into the output JSON; the original key is what we
+  -- actually emit via vim.json.encode (preserving its real type).
+  local entries = {}
+  for k, _ in pairs(value) do
+    table.insert(entries, { sort = key_repr(k), key = k })
+  end
+  table.sort(entries, function(a, b) return a.sort < b.sort end)
   local parts = {}
-  for _, k in ipairs(keys) do
-    table.insert(parts, vim.json.encode(k) .. ":" .. canonical(value[k]))
+  for _, e in ipairs(entries) do
+    table.insert(parts, vim.json.encode(e.key) .. ":" .. canonical(value[e.key]))
   end
   return "{" .. table.concat(parts, ",") .. "}"
 end

@@ -197,51 +197,119 @@ local function expand_home(tok)
   return tok
 end
 
+-- Paths whose recursive deletion is essentially unrecoverable. Stored
+-- canonically (no trailing slash). is_destructive_rm normalises tokens
+-- (strips trailing slashes, expands ~) before the lookup so variants like
+-- `/etc/`, `/etc//`, `~/`, and `$HOME/` all map to the canonical key.
 local DANGEROUS_RM_TARGETS = {
-  ["/"] = true, ["/*"] = true,
-  ["/bin"] = true, ["/etc"] = true, ["/usr"] = true, ["/var"] = true,
-  ["/lib"] = true, ["/sbin"] = true, ["/boot"] = true, ["/root"] = true,
-  ["/home"] = true, ["/Users"] = true,
+  ["/"]          = true,  ["/*"]         = true,
+  ["/bin"]       = true,  ["/sbin"]      = true,
+  ["/usr"]       = true,  ["/usr/bin"]   = true,
+  ["/usr/sbin"]  = true,  ["/usr/lib"]   = true,
+  ["/usr/local"] = true,
+  ["/etc"]       = true,
+  ["/lib"]       = true,  ["/lib64"]     = true,
+  ["/var"]       = true,  ["/var/log"]   = true,
+  ["/boot"]      = true,
+  ["/root"]      = true,
+  ["/home"]      = true,  ["/Users"]     = true,
+  ["/dev"]       = true,  ["/proc"]      = true,
+  ["/sys"]       = true,  ["/tmp"]       = true,
+  ["/run"]       = true,
+  ["/opt"]       = true,  ["/srv"]       = true,
+  ["/private"]   = true,  ["/private/etc"] = true,  -- macOS
 }
+
+-- Long flags that mean "recursive" / "force" — checked alongside the
+-- bundled short forms (-r, -R, -f). Anything not listed here is ignored
+-- (we only care about flags that modify rm's destructive behaviour).
+local RECURSIVE_LONG_FLAGS = {
+  ["--recursive"]      = true,
+  ["--recursive=true"] = true,
+  ["-r"] = true,
+  ["-R"] = true,
+}
+
+local function strip_trailing_slashes(s)
+  if not s or s == "" or s == "/" then return s end
+  local out = s:gsub("/+$", "")
+  if out == "" then out = "/" end
+  return out
+end
+
+local function canonical_path_token(tok)
+  return strip_trailing_slashes(expand_home(tok))
+end
 
 local function is_destructive_rm(tokens)
   if tokens[1] ~= "rm" then return false end
-  local has_recursive = false
-  local force = false
+  local has_recursive    = false
   local no_preserve_root = false
-  local has_root_arg = false
+  local has_root_arg     = false
 
   for i = 2, #tokens do
     local tok = tokens[i]
     if tok == "--no-preserve-root" then
       no_preserve_root = true
+    elseif RECURSIVE_LONG_FLAGS[tok] then
+      has_recursive = true
     elseif tok:sub(1, 2) == "--" then
-      -- long option, ignore
-    elseif tok:sub(1, 1) == "-" then
+      -- other long option (--force, --interactive, --verbose, …): ignored.
+      -- We deliberately do NOT require --force / -f to block destructive
+      -- recursive deletion of a system path; `rm -r /etc` is just as
+      -- catastrophic as `rm -rf /etc`.
+    elseif tok:sub(1, 1) == "-" and #tok > 1 then
       -- bundled short flags: check each char
       for c in tok:sub(2):gmatch(".") do
         if c == "r" or c == "R" then has_recursive = true end
-        if c == "f" then force = true end
       end
     else
-      local resolved = expand_home(tok)
-      local home = vim.fn.expand("~"):gsub("/+$", "")
-      if DANGEROUS_RM_TARGETS[tok] or DANGEROUS_RM_TARGETS[resolved]
-         or resolved == home or resolved == home .. "/" then
+      -- Positional argument: normalise (expand ~, strip trailing slashes)
+      -- so /etc, /etc/, /etc//, $HOME, ~/ all map to their canonical form
+      -- before the dangerous-target lookup.
+      local canon = canonical_path_token(tok)
+      local home  = strip_trailing_slashes(vim.fn.expand("~"))
+      if DANGEROUS_RM_TARGETS[canon] or canon == home then
         has_root_arg = true
       end
     end
   end
-  -- A destructive rm needs both -r/-R and a dangerous target. -f alone is
-  -- fine; --no-preserve-root with / is unconditional refusal.
+
+  -- --no-preserve-root with anything is unconditional refusal: that flag
+  -- only exists to override the GNU coreutils safety net for `rm -rf /`.
   if no_preserve_root then return true end
-  return has_recursive and has_root_arg and force
+  -- Otherwise: recursive + dangerous target = block. We don't require
+  -- -f / --force because GNU rm without -f still deletes a writable tree
+  -- and only stops to prompt on read-only files; against /etc that prompt
+  -- would still wipe most of the system before tripping.
+  return has_recursive and has_root_arg
 end
 
+-- Best-effort fork-bomb detection. The primary safeguard is the registry's
+-- interactive permission prompt: every Shell call hits "Allow / Deny" before
+-- it runs. This pattern check is defense-in-depth for the obvious classic
+-- bash fork-bomb shape; it is NOT exhaustive and makes no claim to catch
+-- perl/python/while-loop variants. We keep it because the canonical
+-- :(){ :|: & };: pattern is famous enough that catching it cheaply is
+-- worth the extra ten lines.
+local FORK_BOMB_PATTERNS = {
+  -- Whitespace-insensitive ":(){ :|:& };:"  (the canonical bash form).
+  -- `[^}]+` lets the body contain any non-} bytes so variants with extra
+  -- whitespace, comments, or extra commands inside the function still hit.
+  "^:%(%)%s*{[^}]*:%s*|%s*:[^}]*&[^}]*}%s*;%s*:",
+  ":%(%)%s*{[^}]*:%s*|%s*:[^}]*&[^}]*}%s*;%s*:",
+}
+
 local function is_fork_bomb(command)
-  -- Classic shell fork bomb. Whitespace insensitive between the parts.
+  -- Test both with original whitespace and with all whitespace stripped,
+  -- since the canonical form is often pasted as ":(){:|:&};:" with no
+  -- spaces at all.
   local stripped = command:gsub("%s+", "")
-  return stripped:find(":(){:|:&};:", 1, true) ~= nil
+  for _, pat in ipairs(FORK_BOMB_PATTERNS) do
+    if command:find(pat) then return true end
+    if stripped:find(pat) then return true end
+  end
+  return false
 end
 
 function M.check_permissions(input, _ctx)
