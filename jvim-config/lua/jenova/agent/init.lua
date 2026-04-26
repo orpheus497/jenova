@@ -41,13 +41,22 @@ function M.query(prompt, opts, buf, history)
     end
     -- First query in this session (or after a reset): build the full system
     -- prompt with the active buffer content injected.
-    local sys = context.build_system_prompt(buf)
+    local sys = context.build_system_prompt(buf, prompt)
+    -- Pass a builder so the engine can refresh the prompt every turn —
+    -- this is what makes newly-learned memory facts visible mid-session.
+    local function refresh_prompt(user_msg, _engine)
+      local ok_p, fresh = pcall(context.build_system_prompt, buf, user_msg)
+      if ok_p and fresh then return fresh end
+      return sys
+    end
     M._engine = engine_mod.new({
-      system_prompt  = sys,
-      on_text        = opts.on_text,
-      on_tool_use    = opts.on_tool_use,
-      on_tool_result = opts.on_tool_result,
-      on_thinking    = opts.on_thinking,
+      system_prompt    = sys,
+      system_prompt_fn = refresh_prompt,
+      on_text          = opts.on_text,
+      on_tool_use      = opts.on_tool_use,
+      on_tool_result   = opts.on_tool_result,
+      on_thinking      = opts.on_thinking,
+      on_compact       = opts.on_compact,
     })
     -- After a reset we deliberately ignore the caller's history so the
     -- engine starts with a clean slate even though the buffer still contains
@@ -110,6 +119,13 @@ end
 function M.reset()
   M._engine     = nil
   M._just_reset = true
+  -- Wipe the per-session repetition cache so a fresh conversation starts
+  -- with no held-over "this call just failed" state. Persistent learning
+  -- stats on disk are unaffected.
+  local ok, registry = pcall(require, "jenova.agent.registry")
+  if ok and registry and registry.reset_learning_session then
+    pcall(registry.reset_learning_session)
+  end
 end
 
 -- Signal the engine to stop after the current tool call completes, and kill
