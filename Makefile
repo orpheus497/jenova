@@ -15,13 +15,16 @@
 #   make clean      # Remove build artifacts from both components
 
 # Detect OS to use correct make command (FreeBSD requires gmake for jvim)
-UNAME_S := $(shell uname -s)
-ifeq ($(UNAME_S),FreeBSD)
-    GMAKE := $(shell command -v gmake 2>/dev/null)
-    SUBMAKE := $(if $(GMAKE),$(GMAKE),$(MAKE))
-else
-    SUBMAKE := $(MAKE)
-endif
+UNAME_S != uname -s 2>/dev/null || echo unknown
+.if $(UNAME_S) == "FreeBSD"
+GMAKE != command -v gmake 2>/dev/null || echo ""
+.if empty(GMAKE)
+.error "FreeBSD requires 'gmake' to build jvim. Please run 'pkg install gmake'"
+.endif
+SUBMAKE = $(GMAKE)
+.else
+SUBMAKE = $(MAKE)
+.endif
 
 .PHONY: all llama jvim install clean help
 

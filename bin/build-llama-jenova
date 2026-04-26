@@ -41,8 +41,8 @@ THREADS_BATCH="${JENOVA_THREADS_BATCH:-$((PHYSICAL_THREADS + 2))}"
 [ "$THREADS_BATCH" -gt "$LOGICAL_THREADS" ] && THREADS_BATCH="$LOGICAL_THREADS"
 [ "$THREADS_BATCH" -lt "$THREADS" ] && THREADS_BATCH="$THREADS"
 
-RAM_GIB="$JENOVA_RAM_GIB"
-SWAP_GIB="$JENOVA_SWAP_GIB"
+RAM_GIB="${JENOVA_RAM_GIB:-0}"
+SWAP_GIB="${JENOVA_SWAP_GIB:-0}"
 
 if [ -z "${JOBS:-}" ]; then
     JOBS="$LOGICAL_THREADS"
@@ -81,7 +81,7 @@ esac
 if [ "${ENABLE_VULKAN:-0}" -eq 1 ] && [ "${JENOVA_GLSLC_OK:-0}" = "0" ]; then
     echo "Error: Vulkan backend requested but glslc was not found." >&2
     echo "Install the Vulkan shader compiler, then rerun:" >&2
-    case "$JENOVA_PKG_MGR" in
+    case "${JENOVA_PKG_MGR:-none}" in
         pkg)    echo "  sudo pkg install shaderc" >&2 ;;
         pacman) echo "  sudo pacman -S shaderc" >&2 ;;
         apt)    echo "  sudo apt install glslc" >&2 ;;
