@@ -773,7 +773,14 @@ if [ -n "$_BIN_DIR" ]; then
     ln -sf "$JENOVA_ROOT/bin/jvim" "$_BIN_DIR/jvim"
     ln -sf "$JENOVA_ROOT/bin/jenova" "$_BIN_DIR/jenova"
     ln -sf "$JENOVA_ROOT/bin/jenova-ca" "$_BIN_DIR/jenova-ca"
-    ok "Symlinked jvim, jenova, and jenova-ca to $_BIN_DIR"
+    if [ -f "$JENOVA_ROOT/bin/mcsh" ]; then
+        ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/mcsh"
+        ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/tcsh"
+        ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/csh"
+        ok "Symlinked jvim, jenova, jenova-ca, and mcsh to $_BIN_DIR"
+    else
+        ok "Symlinked jvim, jenova, and jenova-ca to $_BIN_DIR"
+    fi
 else
     warn "No writable bin dir found on PATH (~/.local/bin or ~/bin)."
     warn "Add '$JENOVA_ROOT/bin' to your PATH or manually symlink:"

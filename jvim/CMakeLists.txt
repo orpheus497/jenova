@@ -147,6 +147,10 @@ endif()
 
 # If not in a git repo (e.g., a tarball) these tokens define the complete
 # version string, else they are combined with the result of `git describe`.
+set(JVIM_VERSION_MAJOR 0)
+set(JVIM_VERSION_MINOR 1)
+set(JVIM_VERSION_PATCH 0)
+
 set(NVIM_VERSION_MAJOR 0)
 set(NVIM_VERSION_MINOR 13)
 set(NVIM_VERSION_PATCH 0)

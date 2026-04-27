@@ -11,4 +11,6 @@ extern char *longVersion;
 extern char *version_cflags;
 #endif
 
-#include "version.h.generated.h"
+bool has_nvim_version(const char *const version_str);
+bool has_jvim_version(const char *const version_str);
+int min_vim_version(void);

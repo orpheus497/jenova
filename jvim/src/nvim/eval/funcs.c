@@ -2821,6 +2821,10 @@ static void f_has(typval_T *argvars, typval_T *rettv, EvalFuncData fptr)
     x = true;
     // Expect "nvim-x.y.z"
     n = has_nvim_version(name + 5);
+  } else if (STRNICMP(name, "jvim-", 5) == 0) {
+    x = true;
+    // Expect "jvim-x.y.z"
+    n = has_jvim_version(name + 5);
   } else if (STRICMP(name, "vim_starting") == 0) {
     x = true;
     n = (starting != 0);

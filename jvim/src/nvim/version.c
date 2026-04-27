@@ -41,8 +41,8 @@
 
 // for ":version", ":intro", and "jvim --version"
 #ifndef NVIM_VERSION_MEDIUM
-# define NVIM_VERSION_MEDIUM "JVIM " STR(NVIM_VERSION_MAJOR) \
-  "." STR(NVIM_VERSION_MINOR) "." STR(NVIM_VERSION_PATCH) \
+# define NVIM_VERSION_MEDIUM "JVIM " STR(JVIM_VERSION_MAJOR) \
+  "." STR(JVIM_VERSION_MINOR) "." STR(JVIM_VERSION_PATCH) \
   NVIM_VERSION_PRERELEASE
 #endif
 #define NVIM_VERSION_LONG NVIM_VERSION_MEDIUM  // NOLINT(bugprone-suspicious-missing-comma)
@@ -3993,6 +3993,46 @@ bool has_nvim_version(const char *const version_str)
                       && patch <= NVIM_VERSION_PATCH))));
 }
 
+/// Compares a version string to the current JVIM version.
+///
+/// @param version Version string like "0.1.0"
+///
+/// @return true if JVIM is at or above the version.
+bool has_jvim_version(const char *const version_str)
+{
+  const char *p = version_str;
+  int minor = 0;
+  int patch = 0;
+
+  if (!ascii_isdigit(*p)) {
+    return false;
+  }
+  int major = atoi(p);
+  p = strchr(p, '.');
+
+  if (p) {
+    p++;
+    if (!ascii_isdigit(*p)) {
+      return false;
+    }
+    minor = atoi(p);
+    p = strchr(p, '.');
+    if (p) {
+      p++;
+      if (!ascii_isdigit(*p)) {
+        return false;
+      }
+      patch = atoi(p);
+    }
+  }
+
+  return (major < JVIM_VERSION_MAJOR
+          || (major == JVIM_VERSION_MAJOR
+              && (minor < JVIM_VERSION_MINOR
+                  || (minor == JVIM_VERSION_MINOR
+                      && patch <= JVIM_VERSION_PATCH))));
+}
+
 int min_vim_version(void)
   FUNC_ATTR_PURE FUNC_ATTR_WARN_UNUSED_RESULT
 {
@@ -4258,6 +4298,7 @@ void intro_message(bool colon)
     N_(NVIM_VERSION_LONG),
     "────────────────────────────────────────────",
     N_("Built for the Jenova project"),
+    N_("Based on Neovim v0.13.0"),
     "https://github.com/orpheus497/jenova",
     "────────────────────────────────────────────",
     N_("type  :help jvim<Enter>     if you are new! "),

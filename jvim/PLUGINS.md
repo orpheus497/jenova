@@ -50,6 +50,25 @@ The two repositories are designed to be installed together:
 binary is uninstalled separately from this repository's source tree with
 `sudo cmake --build build/ --target uninstall`.
 
+## Gratitude & Inspiration: Native UI Modules
+
+jvim features a **zero-third-party native UI suite**. These modules were built from the ground up to provide a cohesive, high-performance experience that is tightly integrated with the Jenova Cognitive Architecture. 
+
+While these modules are first-party Lua code, their design and functionality were heavily inspired by the incredible work of the Neovim plugin community. We would like to express our deep gratitude to the authors and maintainers of the following projects:
+
+| jvim native module | Inspired by / Built as a tribute to |
+|--------------------|--------------------------------------|
+| `jvim.finder`      | [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) |
+| `jvim.tree`        | [nvim-tree.lua](https://github.com/nvim-tree/nvim-tree.lua) |
+| `jvim.statusline`  | [lualine.nvim](https://github.com/nvim-lualine/lualine.nvim) |
+| `jvim.diagnostics_list` | [trouble.nvim](https://github.com/folke/trouble.nvim) |
+| `jvim.keyhelp`     | [which-key.nvim](https://github.com/folke/which-key.nvim) |
+| `jvim.messages`    | [noice.nvim](https://github.com/folke/noice.nvim) |
+| `jvim.notify`      | [nvim-notify](https://github.com/rcarriga/nvim-notify) |
+| `jvim.icons`       | [mini.icons](https://github.com/echasnovski/mini.icons) and [nvim-web-devicons](https://github.com/nvim-tree/nvim-web-devicons) |
+| `jvim.indent_guides` | [indent-blankline.nvim](https://github.com/lukas-reineke/indent-blankline.nvim) |
+| `jvim.layout`      | [edgy.nvim](https://github.com/folke/edgy.nvim) |
+
 ---
 
 ## Current external plugin dependencies
