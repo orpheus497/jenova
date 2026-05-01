@@ -52,6 +52,7 @@ local state = {
   width = DEFAULT_WIDTH,
   -- Render cache: list of { path, name, depth, kind = "dir"|"file", expanded }
   rows = {},
+  clipboard = nil,   -- { path, name, kind } for cut/paste
 }
 
 local function uv() return vim.uv or vim.loop end
@@ -313,15 +314,32 @@ local function activate(how)
   end
 end
 
+local function go_up_root()
+  local parent = vim.fn.fnamemodify(state.root, ":h")
+  if not parent or parent == state.root then return end  -- already at fs root
+  state.root = parent
+  render()
+end
+
 local function collapse()
   local r = row_at_cursor()
-  if not r then return end
+  -- Header line: go up to the parent of the current root directory.
+  if not r then
+    go_up_root()
+    return
+  end
+  -- Expanded directory: collapse it.
   if r.kind == "dir" and state.expanded[r.path] then
     state.expanded[r.path] = nil
     render()
     return
   end
-  -- Move cursor to parent.
+  -- Root-level item: move cursor to header so the next h goes up.
+  if r.depth == 0 then
+    vim.api.nvim_win_set_cursor(state.win, { 1, 0 })
+    return
+  end
+  -- Deeper item: move cursor to its visible parent in rows.
   local parent = r.path:match("^(.*)/[^/]+$")
   if not parent then return end
   for i, row in ipairs(state.rows) do
@@ -329,6 +347,52 @@ local function collapse()
       vim.api.nvim_win_set_cursor(state.win, { i + 1, 0 })
       return
     end
+  end
+  -- Parent not visible: fall back to header.
+  vim.api.nvim_win_set_cursor(state.win, { 1, 0 })
+end
+
+local function cut_entry()
+  local r = row_at_cursor()
+  if not r then return end
+  state.clipboard = { path = r.path, name = r.name, kind = r.kind }
+  vim.notify("Cut: " .. r.name .. "  →  press p to paste", vim.log.levels.INFO, { title = "jvim.tree" })
+end
+
+local function paste_entry()
+  if not state.clipboard then
+    vim.notify("Nothing to paste (use x to cut first)", vim.log.levels.WARN, { title = "jvim.tree" })
+    return
+  end
+  local r = row_at_cursor()
+  local dest_dir
+  if r then
+    dest_dir = r.kind == "dir" and r.path or (r.path:match("^(.*)/[^/]+$") or state.root)
+  else
+    dest_dir = state.root
+  end
+  local src  = state.clipboard.path
+  local dest = dest_dir .. "/" .. state.clipboard.name
+  if src == dest then
+    vim.notify("Already here", vim.log.levels.WARN, { title = "jvim.tree" })
+    return
+  end
+  local function do_move()
+    local ok, err = pcall(function() uv().fs_rename(src, dest) end)
+    if not ok then
+      vim.notify("Move failed: " .. tostring(err), vim.log.levels.ERROR, { title = "jvim.tree" })
+      return
+    end
+    state.expanded[src] = nil
+    state.clipboard = nil
+    render()
+    vim.notify("Moved → " .. dest, vim.log.levels.INFO, { title = "jvim.tree" })
+  end
+  if uv().fs_stat(dest) then
+    vim.ui.select({ "Yes", "No" }, { prompt = dest .. " already exists. Overwrite?" },
+      function(choice) if choice == "Yes" then do_move() end end)
+  else
+    do_move()
   end
 end
 
@@ -414,11 +478,13 @@ local function help_popup()
     "jvim.tree keymaps",
     "",
     "  <CR> / o / l   open file or toggle directory",
-    "  h              collapse directory or move to parent",
+    "  h              collapse dir / move to parent / go up root",
     "  <C-v>          open in vertical split",
     "  <C-x>          open in horizontal split",
     "  <C-t>          open in new tab",
     "  a              create file (end with / for directory)",
+    "  x              cut entry (file or folder)",
+    "  p              paste (move cut entry here)",
     "  d              delete entry",
     "  r              rename entry",
     "  R              refresh",
@@ -455,6 +521,8 @@ local function setup_buf_keymaps(buf)
   k("<C-x>", function() activate("split")  end, "Open split")
   k("<C-t>", function() activate("tab")    end, "Open tab")
   k("a", create_entry, "Create")
+  k("x", cut_entry,   "Cut")
+  k("p", paste_entry, "Paste")
   k("d", delete_entry, "Delete")
   k("r", rename_entry, "Rename")
   k("R", refresh,      "Refresh")

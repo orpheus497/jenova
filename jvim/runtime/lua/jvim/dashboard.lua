@@ -206,8 +206,8 @@ local function build_layout(width)
   push("pad", "")
   for _, l in ipairs(jenova_logo) do push("logo", center(l, width)) end
   push("pad", "")
-  push("title", center(jvim_version .. "  •  Cognitive Architecture — IDE", width))
-  push("attr", center(os_info .. "  •  Built for the Jenova project", width))
+  push("title", center(jvim_version .. "  •  Cognitive Architecture Frontend", width))
+  push("attr", center(os_info .. "  •  Unified Interface for the Jenova Cognitive Architecture", width))
   push("attr", center("https://github.com/orpheus497/jenova", width))
 
   local sep_w = math.min(width - 2, 100)
@@ -230,10 +230,11 @@ local function build_layout(width)
     },
   }
   local sec_ai = {
-    title = "AI / Jenova",
+    title = "Jenova AI",
     items = {
-      { key = "c", icon = "", label = "AI Chat (Context)",  action = "ai_chat_context" },
-      { key = "t", icon = "", label = "Toggle AI Chat",     action = "ai_toggle" },
+      { key = "c", icon = "", label = "Chat w/ Context",   action = "ai_chat_context" },
+      { key = "t", icon = "", label = "Toggle Chat",        action = "ai_toggle" },
+      { key = "n", icon = "", label = "Fresh Chat",         action = "ai_fresh_chat" },
       { key = "s", icon = "", label = "Web Search",         action = "ai_web_search" },
       { key = "j", icon = "", label = "Jenova Terminal",    action = "jenova_term" },
       { key = "M", icon = "", label = "Backend Monitor",    action = "monitor" },
@@ -270,10 +271,10 @@ local function build_layout(width)
   local sec_backend = {
     title = "Backend Status",
     items = {
-      { key = nil, icon = " ", label = string.format("Proxy : %d", ep.proxy_port) },
-      { key = nil, icon = " ", label = string.format("Llama : %d", ep.llama_port) },
-      { key = nil, icon = " ", label = string.format("Embed : %d", ep.embed_port) },
-      { key = nil, icon = " ", label = "Host  : " .. ep.host },
+      { key = nil, icon = " ", label = string.format("Proxy  : %d", ep.proxy_port) },
+      { key = nil, icon = " ", label = string.format("Llama  : %d", ep.llama_port) },
+      { key = nil, icon = " ", label = string.format("Embed  : %d", ep.embed_port) },
+      { key = nil, icon = " ", label = "Host   : " .. ep.host },
       { key = nil, icon = " ", label = "Profile: " .. (M._profile or "detecting...") },
     },
   }
@@ -382,9 +383,9 @@ local function build_layout(width)
     "SPC w   Save",         "SPC q   Quit",         "Ctrl-h/j/k/l Window Nav", "[d / ]d  Prev/Next Diag",
     "SPC e   File Tree",    "SPC f f Find File",    "SPC t t Toggle Term",     "[h / ]h  Prev/Next Hunk",
     "SPC f g Live Grep",    "SPC f b Buffers",      "SPC t n New Term",        "gd       Definition",
-    "SPC t a Jenova Term",  "Esc Esc Leave Term",   "Shift-H/L Prev/Next Buf", "K        Hover Docs",
+    "SPC t j Jenova Term",  "Esc Esc Leave Term",   "Shift-H/L Prev/Next Buf", "K        Hover Docs",
     "SPC c a Code Action",  "SPC r n Rename",       "SPC c d Diag Float",      "SPC c f  Format",
-    "SPC a m Jenova Mon",   "SPC a h Health",       "SPC a l LAN Scan",        "SPC a j  Jenova Term",
+    "SPC a M Jenova Mon",   "SPC a h Health",       "SPC a l LAN Scan",        "SPC f o Recent Files",
   }
   local CTL_COL_W = 26
   local CTL_GAP = 2
@@ -451,7 +452,7 @@ local function ensure_highlights()
   link("JvimDashboardJvim",     "String")
   link("JvimDashboardTitle",    "String")
   link("JvimDashboardSubtitle", "Comment")
-  link("JvimDashboardAttr",     "Identifier")
+  link("JvimDashboardAttr",     "Comment")
   link("JvimDashboardSep",      "NonText")
   link("JvimDashboardSection",  "Title")
   link("JvimDashboardAction",   "Function")
@@ -516,6 +517,7 @@ local ACTIONS = {
   ide            = function() M.close(); safe_cmd("IDE") end,
   ai_chat_context= function() M.close(); jenova_chat("chat_with_context") end,
   ai_toggle      = function() M.close(); jenova_chat("toggle_chat") end,
+  ai_fresh_chat  = function() M.close(); jenova_chat("fresh_chat") end,
   ai_web_search  = function() M.close(); jenova_chat("web_search") end,
   jenova_term    = function() M.close()
     local ok, term = pcall(require, "jvim.terminal")

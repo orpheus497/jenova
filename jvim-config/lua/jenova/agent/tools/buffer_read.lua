@@ -1,33 +1,21 @@
 -- jenova/agent/tools/buffer_read.lua
 -- jvim-native override for the shared "Read" tool.
 --
--- Critical: the parameter schema MUST match shared/tools/file_read.lua
--- (`file_path`, `offset`, `limit`) because the JSON schema sent to the model
--- is built from whichever tool is registered last under the name "Read",
--- and the model will only ever send the parameters it sees in the schema.
--- The previous version of this file accepted `path`/`start_line`/`end_line`
--- which broke every model-driven Read call ("path is required").
---
--- Output shape also mirrors file_read so QueryEngine's read-dedupe cache
--- works (`text`, `num_lines`, `truncated`, `truncation_hint`).
---
+-- Provides line-numbered output essential for line-range based editing.
 -- When the file is open in a jvim buffer the live buffer content is
--- returned (no stale-file risk). Otherwise we fall back to a disk read.
+-- returned. Otherwise the file is loaded into a hidden buffer.
 
-local paths = require("utils.paths")
+local paths = require("jenova.agent.utils.paths")
 
 local M = {
-  name        = "Read",
-  description = "Read the contents of a file. " ..
-    "When the file is open in a jvim buffer the live buffer content is returned " ..
-    "(unsaved edits included). Otherwise the file is read from disk. " ..
-    "Returns line-numbered output. Supports offset (lines to skip, 0-based) and limit (default 2000).",
-  parameters  = {
+  name = "Read",
+  description = "Read file with line numbers. You MUST Read before Edit/MultiEdit to get exact line numbers.",
+  parameters = {
     type = "object",
     properties = {
-      file_path = { type = "string",  description = "Absolute or workspace-relative path to read" },
-      offset    = { type = "integer", description = "Number of lines to skip from the start (0-based)" },
-      limit     = { type = "integer", description = "Maximum lines to return (default 2000)" },
+      file_path  = { type = "string" },
+      start_line = { type = "integer", description = "1-based start" },
+      end_line   = { type = "integer", description = "1-based end" },
     },
     required = { "file_path" },
   },
@@ -42,103 +30,61 @@ end
 
 function M.check_permissions(_input, _ctx) return { allowed = true } end
 
-local function find_buf_by_path(abs_path)
-  for _, b in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_loaded(b) then
-      local bname = vim.api.nvim_buf_get_name(b)
-      if bname == abs_path then return b end
-    end
-  end
-  return nil
-end
-
-local function format_lines(lines, offset, limit)
-  -- Mirror file_read.lua line numbering: "%d\t%s", 1-based starting after offset.
+local function format_lines(lines, start_line, end_line)
   local out = {}
-  local start_line = (offset or 0) + 1
-  local cap = limit or 2000
+  local sl = start_line or 1
+  local el = end_line or #lines
   local total = #lines
   local truncated = false
+  
+  -- Limit to a max of 2000 lines if end_line isn't provided
+  if not end_line and (total - sl) > 2000 then
+    el = sl + 1999
+    truncated = true
+  end
+
   for i, l in ipairs(lines) do
-    if i >= start_line then
-      if #out < cap then
-        table.insert(out, string.format("%d\t%s", i, l))
-      else
-        truncated = true
-        break
-      end
+    if i >= sl and i <= el then
+      table.insert(out, string.format("%d | %s", i, l))
     end
   end
-  return table.concat(out, "\n"), total, truncated
+  return table.concat(out, "\n"), total, truncated, el
 end
 
 function M.call(args, context)
-  -- Backward-compat: accept legacy `path`/`start_line`/`end_line` from
-  -- callers that pre-date the schema fix, but the canonical parameters
-  -- are file_path/offset/limit.
-  local raw_path = args.file_path or args.path
-  if not raw_path or raw_path == "" then
-    return { type = "error", error = "No file path provided (expected file_path)" }
+  local path = args.file_path or args.path
+  if not path or path == "" then
+    return { type = "error", error = "file_path is required" }
   end
 
-  local offset = args.offset
-  if not offset and args.start_line then
-    offset = math.max(0, args.start_line - 1)
-  end
-  local limit = args.limit
-  if not limit and args.end_line then
-    limit = math.max(1, args.end_line - (offset or 0))
-  end
+  local start_line = args.start_line or (args.offset and args.offset + 1) or 1
+  local end_line = args.end_line or (args.limit and (start_line + args.limit - 1))
 
-  local resolved = paths.resolve(raw_path, context and context.cwd)
+  local resolved = paths.resolve(path, context and context.cwd)
   if paths.is_restricted(resolved) then return paths.restricted_error(resolved) end
 
   local abs = vim.fn.fnamemodify(resolved, ":p")
 
-  -- Try live buffer first
-  local buf = find_buf_by_path(abs)
-  if buf then
-    local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-    local text, total, truncated = format_lines(lines, offset, limit)
-    local hint
-    if truncated then
-      local next_off = (offset or 0) + (limit or 2000)
-      hint = string.format(
-        "[BUFFER TRUNCATED: showing lines %d-%d of %d total. Call Read('%s', offset=%d) to continue.]",
-        (offset or 0) + 1, next_off, total, abs, next_off)
-    end
-    return {
-      type            = "text",
-      text            = text,
-      num_lines       = total,
-      truncated       = truncated,
-      truncation_hint = hint,
-      source          = "buffer",
-    }
+  -- Try to load into buffer. This will handle both open buffers and closed files cleanly.
+  local buf = vim.fn.bufadd(abs)
+  local ok_load, _ = pcall(vim.fn.bufload, buf)
+  
+  -- Check if file exists (empty buffer on non-existent file)
+  local is_new_file = vim.fn.filereadable(abs) == 0
+  local is_empty_buffer = vim.api.nvim_buf_line_count(buf) <= 1 and vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] == ""
+  
+  if is_new_file and is_empty_buffer then
+    return { type = "error", error = "File not found: " .. abs }
   end
 
-  -- Fall back to disk read
-  local f, err = io.open(abs, "r")
-  if not f then
-    return {
-      type  = "error",
-      error = string.format(
-        "Cannot open file: %s — %s. Use Glob to discover available files.",
-        abs, err or "not found"),
-    }
-  end
-
-  local lines = {}
-  for line in f:lines() do table.insert(lines, line) end
-  f:close()
-
-  local text, total, truncated = format_lines(lines, offset, limit)
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local text, total, truncated, last_read = format_lines(lines, start_line, end_line)
+  
   local hint
   if truncated then
-    local next_off = (offset or 0) + (limit or 2000)
     hint = string.format(
-      "[FILE TRUNCATED: showing lines %d-%d of %d total. Call Read('%s', offset=%d) to continue.]",
-      (offset or 0) + 1, next_off, total, abs, next_off)
+      "[TRUNCATED: showing lines %d-%d of %d total. Call Read('%s', start_line=%d) to continue.]",
+      start_line, last_read, total, path, last_read + 1)
   end
 
   return {
@@ -147,7 +93,7 @@ function M.call(args, context)
     num_lines       = total,
     truncated       = truncated,
     truncation_hint = hint,
-    source          = "disk",
+    source          = "buffer",
   }
 end
 

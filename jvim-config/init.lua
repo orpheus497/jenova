@@ -79,8 +79,8 @@ map("n", "<C-l>", "<C-w>l", { desc = "Go to Right Window" })
 map("n", "<S-h>", "<cmd>bprevious<CR>", { desc = "Prev Buffer" })
 map("n", "<S-l>", "<cmd>bnext<CR>",     { desc = "Next Buffer" })
 
-map("n", "[d", vim.diagnostic.goto_prev, { desc = "Prev Diagnostic" })
-map("n", "]d", vim.diagnostic.goto_next, { desc = "Next Diagnostic" })
+map("n", "[d", function() vim.diagnostic.jump({ count = -1 }) end, { desc = "Prev Diagnostic" })
+map("n", "]d", function() vim.diagnostic.jump({ count =  1 }) end, { desc = "Next Diagnostic" })
 
 map("n", "<leader>aj", function()
   require("jvim.terminal").toggle_shell()
@@ -153,7 +153,7 @@ local function _jenova_tcp_probe(callback)
       if not closed then close_handles(); vim.schedule(function() callback(false) end) end
     end)
   end
-  tcp:connect(host, port, function(err)
+  tcp:connect(host, math.floor(port or 8080), function(err)
     if closed then return end
     close_handles()
     vim.schedule(function() callback(not err) end)

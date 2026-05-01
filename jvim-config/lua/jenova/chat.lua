@@ -16,9 +16,10 @@ local CHAT_WIDTH = 60
 -- agent_mode=false → plain streaming direct to proxy (legacy behaviour)
 local agent_mode = true
 
-local active_job  = nil
-local toggle_buf  = nil
-local toggle_win  = nil
+local active_job      = nil
+local toggle_buf      = nil
+local toggle_win      = nil
+local stop_generation  -- forward-declared so BufDelete autocmd can reference it
 
 -- ── Agent activity state (read by statusline) ─────────────────────────────────
 -- These are module-level so jvim.statusline can poll them without requiring
@@ -343,6 +344,20 @@ end
 -- ── Window management ─────────────────────────────────────────────────────────
 
 local function open_chat_split(path)
+  -- Pin the source buffer NOW, before vsplit shifts the current window.
+  -- This is the file the user is actually working on; the agent context
+  -- functions will use it to inject the full file content.
+  do
+    local src = vim.api.nvim_get_current_buf()
+    local src_name = vim.api.nvim_buf_get_name(src)
+    if src_name ~= ""
+      and vim.bo[src].buftype == ""
+      and not src_name:match("/jenova/chats/")
+    then
+      local ok, ctx = pcall(require, "jenova.agent.context")
+      if ok then ctx.set_workspace_buf(src) end
+    end
+  end
   vim.cmd("vsplit")
   local win = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_width(win, CHAT_WIDTH)
@@ -373,6 +388,13 @@ local function open_chat_split(path)
         apply_chat_highlights(buf)
       end,
     })
+    -- Kill any in-flight agent when the buffer is wiped, so it doesn't keep
+    -- running silently in the background writing files and making API calls.
+    vim.api.nvim_create_autocmd({ "BufDelete", "BufWipeout" }, {
+      group = group,
+      buffer = buf,
+      callback = function() stop_generation() end,
+    })
     vim.b[buf]._jenova_chat_autocmd = true
   end
 
@@ -385,7 +407,7 @@ end
 
 -- ── Generation control ────────────────────────────────────────────────────────
 
-local function stop_generation()
+stop_generation = function()
   if active_job then
     active_job:kill(9)
     active_job = nil
@@ -436,157 +458,12 @@ local function append_user_section(buf, msg_text)
   vim.api.nvim_buf_set_lines(buf, -1, -1, false, new_lines)
 end
 
--- ── Plain streaming (conversation mode) ───────────────────────────────────────
-
-local function stream_response(buf, messages, on_done)
-  stop_generation()
-
-  if vim.fn.executable("curl") ~= 1 then
-    vim.notify("curl not found. Install curl to enable chat streaming.", vim.log.levels.ERROR, { title = "Jenova" })
-    return
-  end
-
-  local url = ep().proxy_url()
-  local payload = vim.json.encode({
-    model = MODEL,
-    messages = messages,
-    temperature = TEMPERATURE,
-    top_p = TOP_P,
-    stream = true,
-    max_tokens = 16384,
-  })
-
-  local tmpfile = vim.fn.tempname() .. ".json"
-  if vim.fn.writefile({ payload }, tmpfile) ~= 0 then
-    vim.notify("Failed to create temp file", vim.log.levels.ERROR, { title = "Jenova" })
-    return
-  end
-
-  vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## jenova", "" })
-  local insert_line = vim.api.nvim_buf_line_count(buf)
-  local current_lines = { "" }
-  local got_content = false
-
-  local function append_text(text)
-    vim.schedule(function()
-      if not vim.api.nvim_buf_is_valid(buf) then return end
-      got_content = true
-      local pieces = vim.split(text, "\n", { plain = true })
-      current_lines[#current_lines] = current_lines[#current_lines] .. pieces[1]
-      for i = 2, #pieces do
-        table.insert(current_lines, pieces[i])
-      end
-      local start_idx = insert_line - 1
-      local end_idx = start_idx + #current_lines
-      local buf_total = vim.api.nvim_buf_line_count(buf)
-      if end_idx > buf_total then end_idx = buf_total end
-      pcall(vim.api.nvim_buf_set_lines, buf, start_idx, end_idx, false, current_lines)
-      scroll_to_bottom(buf)
-    end)
-  end
-
-  local sse_buffer = ""
-  local got_error = false
-
-  local function process_sse(data)
-    sse_buffer = sse_buffer .. data
-    while true do
-      local nl = sse_buffer:find("\n")
-      if not nl then break end
-      local line = sse_buffer:sub(1, nl - 1):gsub("\r$", "")
-      sse_buffer = sse_buffer:sub(nl + 1)
-
-      if line == "data: [DONE]" then
-      elseif line:sub(1, 6) == "data: " then
-        local json_str = line:sub(7)
-        local ok, parsed = pcall(vim.json.decode, json_str)
-        if ok and parsed then
-          if parsed.choices and parsed.choices[1] then
-            local delta = parsed.choices[1].delta
-            if delta and type(delta.content) == "string" then
-              append_text(delta.content)
-            end
-          elseif parsed.error then
-            got_error = true
-            local err_msg = parsed.error.message or vim.json.encode(parsed.error)
-            append_text("[Error: " .. err_msg .. "]")
-          end
-        end
-      elseif not got_content and line:match("^HTTP/1%.. %d%d%d") then
-        local code = tonumber(line:match("(%d%d%d)"))
-        if code and code >= 400 then
-          got_error = true
-          append_text("[Backend error: HTTP " .. code .. "]")
-        end
-      end
-    end
-
-    if not got_content and not got_error and #sse_buffer > 200 then
-      local ok, parsed = pcall(vim.json.decode, sse_buffer)
-      if ok and parsed and parsed.error then
-        got_error = true
-        local err_msg = parsed.error.message or vim.json.encode(parsed.error)
-        append_text("[Error: " .. err_msg .. "]")
-        sse_buffer = ""
-      end
-    end
-  end
-
-  active_job = vim.system(
-    {
-      "curl", "--no-buffer", "-s", "-N",
-      "-H", "Content-Type: application/json",
-      "-H", "Authorization: Bearer " .. SECRET,
-      "-d", "@" .. tmpfile,
-      url,
-    },
-    {
-      stdout = function(_, data)
-        if data then
-          process_sse(type(data) == "string" and data or tostring(data))
-        end
-      end,
-      stderr = function(_, data)
-        if data then data = type(data) == "string" and data or tostring(data) end
-        if data and data:match("%S") then
-          vim.schedule(function()
-            if data:find("Could not resolve host") or data:find("Connection refused") then
-              vim.notify("Backend unreachable: " .. vim.trim(data), vim.log.levels.ERROR, { title = "Jenova" })
-            end
-          end)
-        end
-      end,
-    },
-    function(result)
-      vim.schedule(function()
-        active_job = nil
-        pcall(os.remove, tmpfile)
-
-        if vim.api.nvim_buf_is_valid(buf) then
-          if not got_content and not got_error then
-            if result.code ~= 0 then
-              pcall(vim.api.nvim_buf_set_lines, buf, insert_line - 1, insert_line, false,
-                { "[Connection failed — is the Jenova backend running?]" })
-            end
-          end
-
-          vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## user", "" })
-          save_chat(buf)
-          scroll_to_bottom(buf)
-          vim.cmd("startinsert!")
-        end
-        if on_done then on_done() end
-      end)
-    end
-  )
-end
-
 -- ── Agent response (agent mode) ───────────────────────────────────────────────
 
 -- Spinner frames for the thinking indicator
 local SPINNER = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
 
-local function agent_respond(buf, prompt, on_done)
+local function agent_respond(buf, prompt, on_done, history)
   local ok, agent = pcall(require, "jenova.agent")
   if not ok or not agent then
     vim.notify(
@@ -659,6 +536,7 @@ local function agent_respond(buf, prompt, on_done)
     ensure_transient()
     if spinner_timer then return end
     spinner_timer = (vim.uv or vim.loop).new_timer()
+    if not spinner_timer then return end
     spinner_timer:start(0, 100, vim.schedule_wrap(function()
       if not vim.api.nvim_buf_is_valid(buf) then stop_spinner(); return end
       if not transient_lnum then return end
@@ -692,6 +570,7 @@ local function agent_respond(buf, prompt, on_done)
       stream_lines = { "" }
     end
 
+    if not stream_lines then return end
     local pieces = vim.split(text, "\n", { plain = true })
     stream_lines[#stream_lines] = stream_lines[#stream_lines] .. pieces[1]
     for i = 2, #pieces do table.insert(stream_lines, pieces[i]) end
@@ -714,6 +593,19 @@ local function agent_respond(buf, prompt, on_done)
         active_tool = nil
         M._agent_tool = nil
         ensure_transient()
+      end)
+    end,
+
+    on_compact = function(dropped)
+      vim.schedule(function()
+        if not vim.api.nvim_buf_is_valid(buf) then return end
+        commit_stream()
+        clear_transient()
+        buf_append({ string.format(
+          "<!-- compacted %d earlier message(s) into session digest -->",
+          dropped) })
+        ensure_transient()
+        scroll_to_bottom(buf)
       end)
     end,
 
@@ -762,30 +654,6 @@ local function agent_respond(buf, prompt, on_done)
         if row and vim.api.nvim_buf_is_valid(buf) then
           pcall(vim.api.nvim_buf_set_lines, buf, row - 1, row, false,
             { string.format("%s %s%s%s", icon, name, detail, suffix) })
-        end
-        -- Render a short preview of the actual tool output below the badge.
-        -- The model invents <tool_response> blocks when it cannot see the
-        -- real result; surfacing the genuine output here both informs the
-        -- user and (because save_chat persists it into the assistant turn)
-        -- gives the next turn ground truth to anchor on.
-        local preview_text
-        if type(result) == "table" then
-          preview_text = result.text or result.output or result.content
-            or (result.error and ("Error: " .. tostring(result.error)))
-        elseif type(result) == "string" then
-          preview_text = result
-        end
-        if type(preview_text) == "string" and #preview_text > 0 then
-          local lines = vim.split(preview_text, "\n", { plain = true })
-          local kept = {}
-          local MAX_LINES = 8
-          for i = 1, math.min(#lines, MAX_LINES) do
-            table.insert(kept, "  " .. lines[i])
-          end
-          if #lines > MAX_LINES then
-            table.insert(kept, string.format("  … (+%d more lines)", #lines - MAX_LINES))
-          end
-          buf_append(kept)
         end
         if transient_lnum == row then transient_lnum = nil end
         active_tool = nil
@@ -850,7 +718,7 @@ local function agent_respond(buf, prompt, on_done)
         if on_done then on_done() end
       end)
     end,
-  })
+  }, buf, history)
   return true
 end
 
@@ -867,13 +735,22 @@ local function dispatch_slash(buf, cmd_line)
     local ok, agent = pcall(require, "jenova.agent")
     if ok and agent then agent.clear() end
     M._agent_turn = 0
+    -- Physically wipe the buffer from the header down
+    local header_lines = 4
+    vim.api.nvim_buf_set_lines(buf, header_lines, -1, false, { "---", "", "## user", "" })
     vim.notify("Session cleared", vim.log.levels.INFO, { title = "Jenova" })
 
   elseif cmd == "reset" then
+
     local ok, agent = pcall(require, "jenova.agent")
     if ok and agent then agent.reset() end
     M._agent_turn = 0
-    vim.notify("Agent reset — engine will rebuild on next query",
+    -- Wipe the buffer so old turns aren't re-injected as history on the next
+    -- query.  agent.reset() sets _just_reset as a belt-and-suspenders guard,
+    -- but clearing the buffer keeps the visual state consistent too.
+    local header_lines = 4
+    vim.api.nvim_buf_set_lines(buf, header_lines, -1, false, { "---", "", "## user", "" })
+    vim.notify("Agent reset — fresh context on next query",
       vim.log.levels.INFO, { title = "Jenova" })
 
   elseif cmd == "stop" then
@@ -908,6 +785,156 @@ local function dispatch_slash(buf, cmd_line)
       { "", "<!-- /debug -->", "```json", encoded, "```", "" })
     scroll_to_bottom(buf)
 
+  elseif cmd == "memory" or cmd == "mem" then
+    -- /memory                   — show top facts in scope (workspace + global)
+    -- /memory recall <query>    — preview what would be injected for <query>
+    -- /memory forget <id>       — delete a fact
+    -- /memory clear             — wipe workspace facts (keeps global)
+    -- /memory clear all         — wipe everything
+    local sub_word, sub_arg = arg:match("^(%S+)%s*(.*)$")
+    sub_word = sub_word and sub_word:lower() or ""
+    local lines = { "", "<!-- /memory -->" }
+    local ok, memory = pcall(require, "jenova.agent.memory")
+    if not ok or not memory then
+      table.insert(lines, "  (memory module not available)")
+    elseif sub_word == "recall" then
+      local q = sub_arg or ""
+      local facts = memory.recall(q, 10)
+      if #facts == 0 then
+        table.insert(lines, "  (no facts matched: " .. q .. ")")
+      else
+        table.insert(lines, string.format("  recall(\"%s\"):", q))
+        for _, f in ipairs(facts) do
+          table.insert(lines, string.format("    [%s] %s", f.id, f.text))
+        end
+      end
+    elseif sub_word == "forget" then
+      local id = sub_arg
+      if not id or id == "" then
+        table.insert(lines, "  usage: /memory forget <id>")
+      elseif memory.forget(id) then
+        table.insert(lines, "  forgot " .. id)
+      else
+        table.insert(lines, "  no fact with id " .. id)
+      end
+    elseif sub_word == "clear" then
+      if sub_arg == "all" then
+        memory.clear(false)
+        table.insert(lines, "  cleared ALL memory facts (workspace + global)")
+      else
+        memory.clear(true)
+        table.insert(lines, "  cleared workspace memory facts (global preserved)")
+      end
+    else
+      local stats = memory.stats()
+      table.insert(lines, string.format(
+        "  facts: %d total  (%d workspace, %d global)",
+        stats.total, stats.workspace, stats.global))
+      table.insert(lines, "  scope: " .. stats.scope)
+      local facts = memory.list(15)
+      if #facts > 0 then
+        table.insert(lines, "")
+        table.insert(lines, "  most-recent (top 15):")
+        for _, f in ipairs(facts) do
+          local snippet = f.text:gsub("\n", " ")
+          if #snippet > 100 then snippet = snippet:sub(1, 100) .. "…" end
+          table.insert(lines, string.format("    [%s] %s", f.id, snippet))
+        end
+      end
+      table.insert(lines, "")
+      table.insert(lines, "  /memory recall <query>  preview prompt injection")
+      table.insert(lines, "  /memory forget <id>     delete a fact")
+      table.insert(lines, "  /memory clear [all]     wipe workspace [or all]")
+    end
+    table.insert(lines, "")
+    vim.api.nvim_buf_set_lines(buf, -1, -1, false, lines)
+    scroll_to_bottom(buf)
+
+  elseif cmd == "compact" then
+    -- /compact            — force-compact the engine's current message log
+    -- /compact status     — show how many messages are currently held
+    local sub = arg:lower()
+    local lines = { "", "<!-- /compact -->" }
+    local ok_a, agent = pcall(require, "jenova.agent")
+    local ok_c, compactor = pcall(require, "jenova.agent.compactor")
+    if not ok_a or not agent or not agent._engine then
+      table.insert(lines, "  (no active engine — issue a query first)")
+    elseif sub == "status" then
+      local n = #(agent._engine.messages or {})
+      table.insert(lines, string.format("  %d messages currently in context", n))
+    elseif ok_c and compactor then
+      local before = #(agent._engine.messages or {})
+      local new_msgs, dropped = compactor.compact(agent._engine.messages, { keep_recent = 4 })
+      agent._engine.messages = new_msgs
+      table.insert(lines, string.format(
+        "  compacted: %d → %d messages (folded %d into a digest)",
+        before, #new_msgs, dropped))
+    else
+      table.insert(lines, "  (compactor unavailable)")
+    end
+    table.insert(lines, "")
+    vim.api.nvim_buf_set_lines(buf, -1, -1, false, lines)
+    scroll_to_bottom(buf)
+
+  elseif cmd == "learning" or cmd == "learn" then
+    -- /learning            — show per-tool aggregate stats from the
+    --                        persistent database
+    -- /learning session    — show only the current session's calls
+    -- /learning reset      — wipe the per-session repetition cache
+    local sub = arg:lower()
+    local lines = { "", "<!-- /learning -->" }
+    local ok, learning = pcall(require, "jenova.agent.learning")
+    if not ok or not learning then
+      table.insert(lines, "  (learning module not available)")
+    elseif sub == "reset" then
+      learning.reset_session()
+      table.insert(lines, "  session repetition cache cleared")
+    elseif sub == "session" then
+      local summary = learning.session_summary()
+      if #summary == 0 then
+        table.insert(lines, "  (no calls in this session yet)")
+      else
+        table.insert(lines, "  this session:")
+        for _, s in ipairs(summary) do
+          table.insert(lines, string.format(
+            "    %-14s ok:%-3d fail:%-3d (last %d)",
+            s.name, s.ok, s.fail, s.recent))
+        end
+      end
+    else
+      local stats = learning.stats()
+      local names = {}
+      for name, _ in pairs(stats or {}) do table.insert(names, name) end
+      table.sort(names)
+      if #names == 0 then
+        table.insert(lines, "  (no recorded tool history)")
+      else
+        table.insert(lines, "  persistent stats:")
+        for _, name in ipairs(names) do
+          local s = stats[name]
+          local total = (s.success or 0) + (s.failure or 0)
+          local rate  = total > 0
+            and string.format("%.0f%%", 100 * (s.success or 0) / total)
+            or "—"
+          local top_err, top_n = nil, 0
+          for k, v in pairs(s.errors or {}) do
+            if v > top_n then top_err, top_n = k, v end
+          end
+          local err_part = top_err
+            and string.format(" top-err:%s(%d)", top_err, top_n) or ""
+          table.insert(lines, string.format(
+            "    %-14s ok:%-4d fail:%-4d rate:%s%s",
+            name, s.success or 0, s.failure or 0, rate, err_part))
+        end
+        table.insert(lines, "")
+        table.insert(lines, "  /learning session  show calls in this chat")
+        table.insert(lines, "  /learning reset    clear repetition cache")
+      end
+    end
+    table.insert(lines, "")
+    vim.api.nvim_buf_set_lines(buf, -1, -1, false, lines)
+    scroll_to_bottom(buf)
+
   elseif cmd == "diag" then
     local diags = vim.diagnostic.get(nil)
     local lines = { "", "<!-- /diag -->",
@@ -927,45 +954,25 @@ local function dispatch_slash(buf, cmd_line)
     -- /tools status         — show whether tools are currently enabled
     local sub = arg:lower()
     if sub == "on" or sub == "enable" then
-      pcall(function()
-        local s = require("jenova.agent.shared.state.app_state")
-        s.set("tools_enabled", true)
-        local c = require("jenova.agent.shared.config.loader")
-        c.set("tools_enabled", true)
-      end)
+      vim.g.jenova_tools_enabled = true
       info("/tools enabled — model can call tools")
       return
     elseif sub == "off" or sub == "disable" then
-      pcall(function()
-        local s = require("jenova.agent.shared.state.app_state")
-        s.set("tools_enabled", false)
-        local c = require("jenova.agent.shared.config.loader")
-        c.set("tools_enabled", false)
-      end)
+      vim.g.jenova_tools_enabled = false
       info("/tools disabled — replies will be plain chat (no tools)")
       return
     elseif sub == "status" then
-      local enabled = true
-      pcall(function()
-        local s = require("jenova.agent.shared.state.app_state")
-        local v = s.get("tools_enabled")
-        if v ~= nil then enabled = v and true or false end
-      end)
+      local enabled = vim.g.jenova_tools_enabled ~= false
       info("/tools status: " .. (enabled and "enabled" or "disabled"))
       return
     end
-    local ok, reg = pcall(require, "jenova.agent.shared.tools.registry")
-    if not ok then ok, reg = pcall(require, "tools.registry") end
+    local ok, reg = pcall(require, "jenova.agent.registry")
     local lines = { "", "<!-- /tools -->" }
-    if ok and reg and reg.list_tools then
-      for _, t in ipairs(reg.list_tools()) do
+    if ok and reg then
+      for _, name in ipairs(reg.list()) do
+        local tool = reg.get(name)
         table.insert(lines, string.format("  • %s — %s",
-          t.name or "?",
-          (t.description or ""):sub(1, 60)))
-      end
-    elseif ok and reg and reg._tools then
-      for name, _ in pairs(reg._tools) do
-        table.insert(lines, "  • " .. name)
+          name, (tool.description or ""):sub(1, 60)))
       end
     else
       table.insert(lines, "  (registry not available)")
@@ -979,22 +986,17 @@ local function dispatch_slash(buf, cmd_line)
 
   elseif cmd == "permissions" or cmd == "perm" then
     -- /permissions [default|auto|plan|yolo]
-    -- yolo is an alias for bypassPermissions (silently auto-approve everything)
     local sub = arg:lower()
     local mode_map = {
       default = "default",
       ask     = "default",
       auto    = "auto",
       plan    = "plan",
-      yolo    = "bypassPermissions",
-      bypass  = "bypassPermissions",
+      yolo    = "bypass",
+      bypass  = "bypass",
     }
     if sub == "" then
-      local mode = "default"
-      pcall(function()
-        local s = require("jenova.agent.shared.state.app_state")
-        mode = s.get("permission_mode") or mode
-      end)
+      local mode = vim.g.jenova_permission_mode or "default"
       info("permission mode: " .. mode .. "  (use /permissions default|auto|plan|yolo)")
       return
     end
@@ -1003,23 +1005,14 @@ local function dispatch_slash(buf, cmd_line)
       info("unknown mode '" .. sub .. "' (try: default, auto, plan, yolo)")
       return
     end
-    pcall(function()
-      local s = require("jenova.agent.shared.state.app_state")
-      s.set("permission_mode", mode)
-      local c = require("jenova.agent.shared.config.loader")
-      c.set("permission_mode", mode)
-    end)
+    vim.g.jenova_permission_mode = mode
     info("permission mode → " .. mode)
 
   elseif cmd == "tool-choice" or cmd == "toolchoice" then
     -- /tool-choice [auto|required|none]
     local sub = arg:lower()
     if sub == "" then
-      local choice = "auto"
-      pcall(function()
-        local s = require("jenova.agent.shared.state.app_state")
-        choice = s.get("tool_choice") or choice
-      end)
+      local choice = vim.g.jenova_tool_choice or "auto"
       info("tool_choice: " .. choice .. "  (use /tool-choice auto|required)")
       return
     end
@@ -1027,12 +1020,7 @@ local function dispatch_slash(buf, cmd_line)
       info("invalid tool_choice (use: auto, required, none)")
       return
     end
-    pcall(function()
-      local s = require("jenova.agent.shared.state.app_state")
-      s.set("tool_choice", sub)
-      local c = require("jenova.agent.shared.config.loader")
-      c.set("tool_choice", sub)
-    end)
+    vim.g.jenova_tool_choice = sub
     info("tool_choice → " .. sub)
 
   elseif cmd == "model" then
@@ -1054,6 +1042,9 @@ local function dispatch_slash(buf, cmd_line)
       "  /history            show message context summary",
       "  /debug              show engine state as JSON",
       "  /diag               show LSP diagnostics summary",
+      "  /learning [session] tool-usage stats; 'reset' clears repetition cache",
+      "  /memory [recall|forget|clear]  semantic memory inspect / manage",
+      "  /compact [status]   force-compact the engine's message history",
       "  /tools [on|off]     list / toggle tool dispatch",
       "  /tool-choice MODE   auto | required | none",
       "  /permissions MODE   default | auto | plan | yolo",
@@ -1140,10 +1131,12 @@ function M.respond()
 
   -- Extract last user message
   local prompt = ""
-  for i = #messages, 1, -1 do
-    if messages[i].role == "user" then
-      prompt = messages[i].content
-      break
+  local history = {}
+  for i, m in ipairs(messages) do
+    if i == #messages and m.role == "user" then
+      prompt = m.content
+    else
+      table.insert(history, m)
     end
   end
 
@@ -1157,38 +1150,24 @@ function M.respond()
   -- Slash command dispatch
   if prompt:match("^/") then
     dispatch_slash(buf, prompt)
-    -- Remove the slash command line from the buffer and add fresh user section
-    local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-    -- Remove the last user section that contained the slash command
-    local last_user = 0
-    for i = #lines, 1, -1 do
-      if lines[i]:match("^## user%s*$") then last_user = i; break end
-    end
-    if last_user > 0 then
-      vim.api.nvim_buf_set_lines(buf, last_user - 1, -1, false, { "## user", "" })
-    else
-      vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## user", "" })
-    end
+    -- Instead of risky line deletion, just append a fresh user header
+    -- to signal the end of the command processing and readiness for new input.
+    vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## user", "" })
     save_chat(buf)
     scroll_to_bottom(buf)
     vim.cmd("startinsert!")
     return
   end
 
-  if agent_mode and prompt ~= "" then
-    agent_respond(buf, prompt)
-    return
-  end
-
-  -- Fallback: plain streaming (conversation mode or empty prompt).
-  stream_response(buf, messages)
+  agent_respond(buf, prompt, nil, history)
 end
 
 function M.send_message(text, prefix)
   local buf = vim.api.nvim_get_current_buf()
   if not is_chat_buf(buf) then
-    buf = M.toggle_chat()
-    if not buf then return end
+    local chat_buf = M.toggle_chat()
+    if not chat_buf then return end
+    buf = chat_buf --[[@as integer]]
   end
 
   local msg = prefix and (prefix .. text) or text
@@ -1201,16 +1180,14 @@ function M.visual_chat()
   local src_buf = vim.api.nvim_get_current_buf()
   local start_line = vim.fn.line("'<")
   local end_line = vim.fn.line("'>")
-  local lines = vim.api.nvim_buf_get_lines(src_buf, start_line - 1, end_line, false)
-  local selection = table.concat(lines, "\n")
-  local ft = vim.bo[src_buf].filetype or ""
-  local filename = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(src_buf), ":t")
+  local path = vim.api.nvim_buf_get_name(src_buf)
+  local rel = vim.fn.fnamemodify(path, ":~:.")
 
   local buf = open_chat_split()
   if not buf then return end
 
-  local context = string.format("Selected code from %s:\n\n```%s\n%s\n```\n",
-    filename, ft, selection)
+  -- Use metadata. context.lua will extract this range for the prompt.
+  local context = string.format("## Active Selection: %s (lines %d-%d)\n\n", rel, start_line, end_line)
 
   append_user_section(buf, context)
   save_chat(buf)
@@ -1348,18 +1325,15 @@ end
 
 function M.chat_with_context()
   local src_buf = vim.api.nvim_get_current_buf()
-  local lines = vim.api.nvim_buf_get_lines(src_buf, 0, -1, false)
-  local filename = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(src_buf), ":t")
-  local filepath = vim.api.nvim_buf_get_name(src_buf)
-  local content = table.concat(lines, "\n")
+  local path = vim.api.nvim_buf_get_name(src_buf)
+  local rel = vim.fn.fnamemodify(path, ":~:.")
 
   local buf = open_chat_split()
   if not buf then return end
 
-  local context = string.format(
-    "Open File Chat: Working on: %s\nPath: %s\n\n```\n%s\n```\n\n",
-    filename, filepath, content
-  )
+  -- Hardware the context as metadata. The context builder (context.lua)
+  -- will detect this tag and pull the buffer into the system prompt.
+  local context = string.format("## Active Context: %s\n\n", rel)
 
   append_user_section(buf, context)
   save_chat(buf)
@@ -1368,11 +1342,9 @@ function M.chat_with_context()
 end
 
 function M.fresh_chat()
-  ensure_chat_dir()
-  if vim.fn.isdirectory(CHAT_DIR) == 1 then
-    vim.fn.delete(CHAT_DIR, "rf")
-    vim.fn.mkdir(CHAT_DIR, "p")
-  end
+  stop_generation()
+  vim.fn.delete(CHAT_DIR, "rf")
+  vim.fn.mkdir(CHAT_DIR, "p")
   return open_chat_split()
 end
 
@@ -1382,6 +1354,7 @@ function M.delete_chat()
     vim.notify("Not a Jenova chat buffer", vim.log.levels.WARN, { title = "Jenova" })
     return
   end
+  stop_generation()
   local path = chat_filepath(buf)
   if path then
     os.remove(path)
@@ -1415,7 +1388,14 @@ function M.agent_reset()
   local ok, agent = pcall(require, "jenova.agent")
   if ok and agent then
     agent.reset()
-    vim.notify("Agent context reset", vim.log.levels.INFO, { title = "Jenova" })
+    M._agent_turn = 0
+    -- Wipe the active chat buffer so old turns aren't re-injected as history.
+    local buf = vim.api.nvim_get_current_buf()
+    if is_chat_buf(buf) then
+      local header_lines = 4
+      vim.api.nvim_buf_set_lines(buf, header_lines, -1, false, { "---", "", "## user", "" })
+    end
+    vim.notify("Agent reset — fresh context on next query", vim.log.levels.INFO, { title = "Jenova" })
   end
 end
 

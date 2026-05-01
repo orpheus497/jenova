@@ -19,7 +19,7 @@ validate_size() {
     esac
 }
 
-SIZE="${1:-5G}"
+SIZE="${1:-9G}"
 if ! validate_size "$SIZE"; then
     echo "Error: Invalid size format for '$SIZE'. Use format like '8G'." >&2
     exit 1

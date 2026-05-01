@@ -489,21 +489,36 @@ local function proxy_connection(client_fd, conn_fds)
                 local has_tools = type(req_json.tools) == "table" and #req_json.tools > 0
 
                 if intent then
-                    local system_p = prompts[intent] or prompts.freechat
-                    if web_context ~= "" then system_p = system_p .. "\n" .. web_context end
-                    if rag_context ~= "" then system_p = system_p .. "\n" .. rag_context end
                     if intent == "visual" or intent == "websearch" then
                         -- These intents do not benefit from tool calling; strip them.
                         req_json.tools = nil
                         req_json.tool_choice = "none"
                         has_tools = false
                     end
-                    if req_json.messages[1].role == "system" then
-                        -- When the client already has a system prompt (e.g. cli-agent with tool
-                        -- mandate), prepend the intent context so tool instructions are preserved.
-                        req_json.messages[1].content = system_p .. "\n\n" .. req_json.messages[1].content
+
+                    local has_system = req_json.messages[1].role == "system"
+
+                    if has_tools and has_system then
+                        -- The client is an agent with a strict tool-calling mandate.
+                        -- Do NOT prepend the conversational persona, as it overrides tool instructions.
+                        -- Only append the RAG and Web contexts to the existing system prompt.
+                        if web_context ~= "" then
+                            req_json.messages[1].content = req_json.messages[1].content .. "\n" .. web_context
+                        end
+                        if rag_context ~= "" then
+                            req_json.messages[1].content = req_json.messages[1].content .. "\n" .. rag_context
+                        end
                     else
-                        table.insert(req_json.messages, 1, {role = "system", content = system_p})
+                        -- Not an agent (or no existing system prompt). Use the conversational persona.
+                        local system_p = prompts[intent] or prompts.freechat
+                        if web_context ~= "" then system_p = system_p .. "\n" .. web_context end
+                        if rag_context ~= "" then system_p = system_p .. "\n" .. rag_context end
+
+                        if has_system then
+                            req_json.messages[1].content = system_p .. "\n\n" .. req_json.messages[1].content
+                        else
+                            table.insert(req_json.messages, 1, {role = "system", content = system_p})
+                        end
                     end
                 else
                     -- No intent: only inject context if we have RAG, or if there's no existing system prompt.

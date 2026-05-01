@@ -6,43 +6,17 @@
 local M = {}
 
 M.name = "LSP"
-M.description = "Query live language server data inside jvim. This is the ONLY tool you should use to check for errors, unused variables, and linting issues. " ..
-  "CRITICAL: You MUST provide the `file_path` argument to get diagnostics for a specific file. Without a file_path, you will only see errors for files already open in the editor. Actions: " ..
-  "'diagnostics' (errors/warnings), " ..
-  "'definition' (jump targets for symbol at a position), " ..
-  "'references' (all usage sites of a symbol), " ..
-  "'hover' (type/doc for symbol at a position), " ..
-  "'symbols' (all symbols in a file or workspace), " ..
-  "'code_actions' (available fixes at a position), " ..
-  "'rename_preview' (show where a rename would touch)."
+M.description = "ONLY tool for errors, linting, and code navigation. Always provide 'file_path'. Actions: diagnostics, definition, references, hover, symbols, code_actions, rename_preview."
 
 M.parameters = {
   type = "object",
   properties = {
-    action = {
-      type = "string",
-      description = "Action: diagnostics | definition | references | hover | symbols | code_actions | rename_preview",
-    },
-    file_path = {
-      type = "string",
-      description = "Absolute or repo-relative file path (required for most actions)",
-    },
-    line = {
-      type = "integer",
-      description = "1-based line number (required for definition, references, hover, code_actions, rename_preview)",
-    },
-    character = {
-      type = "integer",
-      description = "0-based column (required for definition, references, hover, code_actions, rename_preview)",
-    },
-    query = {
-      type = "string",
-      description = "Symbol name for workspace 'symbols' search",
-    },
-    new_name = {
-      type = "string",
-      description = "New symbol name for rename_preview",
-    },
+    action = { enum = {"diagnostics", "definition", "references", "hover", "symbols", "code_actions", "rename_preview"} },
+    file_path = { type = "string", description = "Target file (required)" },
+    line = { type = "integer", description = "1-based line" },
+    character = { type = "integer", description = "0-based col" },
+    query = { type = "string", description = "Search query" },
+    new_name = { type = "string", description = "New name" },
   },
   required = { "action" },
 }
@@ -73,8 +47,7 @@ local function resolve_buf(file_path)
     vim.fn.bufload(bn)
     -- Wait up to 1 second for LSP to attach
     vim.wait(1000, function()
-      local clients = vim.lsp.get_clients and vim.lsp.get_clients({ bufnr = bn })
-        or (vim.lsp.get_active_clients and vim.lsp.get_active_clients({ bufnr = bn })) or {}
+      local clients = vim.lsp.get_clients({ bufnr = bn }) or {}
       return #clients > 0
     end, 50)
     return bn, true
@@ -83,9 +56,7 @@ local function resolve_buf(file_path)
 end
 
 local function buf_has_lsp(buf)
-  local clients = vim.lsp.get_clients and vim.lsp.get_clients({ bufnr = buf })
-    or (vim.lsp.get_active_clients and vim.lsp.get_active_clients({ bufnr = buf }))
-    or {}
+  local clients = vim.lsp.get_clients({ bufnr = buf }) or {}
   return #clients > 0, clients
 end
 
@@ -129,9 +100,11 @@ end
 -- ── Action: diagnostics ───────────────────────────────────────────────────────
 
 local function action_diagnostics(args)
-  local diags
+  local diags = {}
+  local buf = nil
+  
   if args.file_path and args.file_path ~= "" then
-    local buf = resolve_buf(args.file_path)
+    buf = resolve_buf(args.file_path)
     if buf then
       diags = vim.diagnostic.get(buf)
     else

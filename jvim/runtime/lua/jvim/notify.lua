@@ -79,7 +79,8 @@ end
 local function _config_win(win, lvl)
   local hl = LEVEL_HL[lvl] or "JvimNotifyInfo"
   vim.wo[win].winhighlight = "Normal:JvimNotifyBody,FloatBorder:" .. hl
-  vim.wo[win].wrap = false
+  vim.wo[win].wrap = true
+  vim.wo[win].linebreak = true
   vim.wo[win].cursorline = false
   vim.wo[win].number = false
   vim.wo[win].relativenumber = false

@@ -9,11 +9,7 @@
 
 local M = {
   name        = "Buffers",
-  description = "List all currently open files (buffers/tabs) in jvim. " ..
-    "Use this when the user mentions 'the other files', 'this project', " ..
-    "'related files', or 'open tabs'. Each entry includes the absolute path, " ..
-    "a 'modified' flag for unsaved buffers, and a marker for the active buffer. " ..
-    "After listing, you can pass any path straight to Read.",
+  description = "List all open jvim buffers. Use when user mentions 'other files' or 'this project'. Includes paths and 'modified' status. Read files after listing.",
   parameters  = {
     type = "object",
     properties = {},

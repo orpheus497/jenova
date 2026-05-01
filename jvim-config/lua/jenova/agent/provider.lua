@@ -137,14 +137,22 @@ function M.post_stream(url, headers_str, body, on_chunk)
 
   local co = coroutine.running()
   local buf = {}
+  local sse_buffer = ""
 
+  local agent = package.loaded["jenova.agent"]
   local handle = vim.system(cmd, {
     text = true,
     stdout = function(_, data)
       if data then
         table.insert(buf, data)
         if on_chunk then
-          for line in data:gmatch("[^\n]+") do
+          sse_buffer = sse_buffer .. data
+          while true do
+            local nl = sse_buffer:find("\n")
+            if not nl then break end
+            local line = sse_buffer:sub(1, nl - 1):gsub("\r$", "")
+            sse_buffer = sse_buffer:sub(nl + 1)
+
             if line:sub(1, 6) == "data: " and line ~= "data: [DONE]" then
               local ok2, chunk = pcall(vim.json.decode, line:sub(7))
               if ok2 and chunk and chunk.choices and chunk.choices[1] then
@@ -160,6 +168,8 @@ function M.post_stream(url, headers_str, body, on_chunk)
     end,
   }, function(result)
     if tmpfile then pcall(os.remove, tmpfile) end
+    -- Clear the active job reference now that curl has exited.
+    if agent then agent._active_job = nil end
     local body_str = table.concat(buf)
     if co then
       vim.schedule(function()
@@ -172,6 +182,9 @@ function M.post_stream(url, headers_str, body, on_chunk)
     end
   end)
 
+  -- Register the handle so agent.stop() can kill the process.
+  if agent then agent._active_job = handle end
+
   if co then
     return coroutine.yield()
   end
@@ -182,6 +195,47 @@ function M.post_stream(url, headers_str, body, on_chunk)
     return nil, result.stderr or "curl failed"
   end
   return table.concat(buf), nil
+end
+
+--- Generate a completion, streaming chunks live to on_chunk while accumulating
+--- the full response text for tool-call parsing.
+---
+--- @param request table  Full API request (messages, model, system, etc.)
+--- @param on_chunk function|nil  Called per text delta (for live buffer updates).
+---                               When nil, falls back to a blocking non-streaming POST.
+--- @return string  The complete assembled response text.
+function M.generate_request(request, on_chunk)
+  local url = ep.proxy_url()
+  local body = vim.json.encode(request)
+
+  if on_chunk then
+    -- Streaming path: accumulate text chunks while forwarding each to on_chunk.
+    -- post_stream handles SSE parsing, calls on_chunk(delta) per token via vim.schedule,
+    -- and yields the calling coroutine until streaming completes.
+    local chunks = {}
+    local function collect(delta)
+      table.insert(chunks, delta)
+      on_chunk(delta)
+    end
+    local _, err = M.post_stream(url, nil, body, collect)
+    if err then error("generate_request (stream): " .. err) end
+    return table.concat(chunks)
+  end
+
+  -- Non-streaming fallback (used when called outside a coroutine / no on_chunk).
+  local res, err = M.post_json(url, nil, body)
+  if err then error("generate_request: " .. err) end
+
+  local ok, data = pcall(vim.json.decode, res)
+  if not ok then return res or "" end
+
+  if data.choices and data.choices[1] then
+    local msg = data.choices[1].message or {}
+    return msg.content or ""
+  end
+
+  -- Backend may return a raw string or non-standard envelope.
+  return res or ""
 end
 
 -- ── Endpoint helpers for the jvim context ─────────────────────────────────────

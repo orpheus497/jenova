@@ -16,24 +16,76 @@ local function input(opts, on_confirm)
   local buf = vim.api.nvim_create_buf(false, true)
   vim.bo[buf].buftype = "prompt"
   vim.bo[buf].bufhidden = "wipe"
-  vim.fn.prompt_setprompt(buf, prompt)
-  local W = math.min(80, math.max(40, math.floor(vim.o.columns * 0.5)))
-  local row = math.floor((vim.o.lines - 3) / 2)
+
+  -- If the prompt is long, we split it and render it as text in the buffer
+  -- instead of just the window title.
+  local prompt_lines = {}
+  local display_prompt = prompt:gsub(":%s*$", "")
+  local clean_prompt = prompt
+  local win_height = 1
+
+  if #prompt > 60 then
+    -- Multi-line prompt mode
+    for line in prompt:gmatch("([^\n]*)\n?") do
+      if line ~= "" then table.insert(prompt_lines, " " .. line) end
+    end
+    if #prompt_lines == 0 then table.insert(prompt_lines, " " .. prompt) end
+    
+    -- We'll put the prompt lines at the top of the buffer.
+    -- But since it's a "prompt" buftype, we need to be careful.
+    -- Better strategy: Use a standard buffer and handle input manually?
+    -- Actually, we can just set the lines before setting the prompt.
+    vim.bo[buf].buftype = ""
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, prompt_lines)
+    vim.api.nvim_buf_set_lines(buf, -1, -1, false, { " > " })
+    win_height = #prompt_lines + 1
+    clean_prompt = " > "
+    vim.bo[buf].modifiable = true
+  end
+
+  local W = math.min(80, math.max(40, math.floor(vim.o.columns * 0.6)))
+  local row = math.floor((vim.o.lines - win_height - 2) / 2)
   local col = math.floor((vim.o.columns - W) / 2)
+  
   local win = vim.api.nvim_open_win(buf, true, {
-    relative = "editor", row = row, col = col, width = W, height = 1,
+    relative = "editor", row = row, col = col, width = W, height = win_height,
     style = "minimal", border = "rounded",
-    title = " " .. prompt:gsub(":%s*$", "") .. " ", title_pos = "left",
+    title = " " .. (win_height > 1 and "Jenova Query" or display_prompt) .. " ",
+    title_pos = "left",
   })
+  
+  if win_height > 1 then
+    -- Highlight the question part
+    vim.api.nvim_buf_add_highlight(buf, -1, "JvimNotifyTitle", 0, 0, -1)
+    for i = 1, #prompt_lines - 1 do
+      vim.api.nvim_buf_add_highlight(buf, -1, "NormalFloat", i, 0, -1)
+    end
+    vim.api.nvim_win_set_cursor(win, { win_height, 3 })
+  end
+
   vim.wo[win].winhighlight = "Normal:NormalFloat,FloatBorder:JvimFinderPrompt"
-  vim.fn.prompt_setcallback(buf, function(text)
-    close_floating(win, buf)
-    if on_confirm then on_confirm(text ~= "" and text or nil) end
-  end)
+  
+  if win_height == 1 then
+    vim.fn.prompt_setprompt(buf, clean_prompt)
+    vim.fn.prompt_setcallback(buf, function(text)
+      close_floating(win, buf)
+      if on_confirm then on_confirm(text ~= "" and text or nil) end
+    end)
+  else
+    -- Manual input handling for multi-line display
+    vim.keymap.set("i", "<CR>", function()
+      local lines = vim.api.nvim_buf_get_lines(buf, win_height - 1, win_height, false)
+      local text = lines[1]:sub(4)
+      close_floating(win, buf)
+      if on_confirm then on_confirm(text ~= "" and text or nil) end
+    end, { buffer = buf })
+  end
+
   vim.fn.prompt_setinterrupt(buf, function()
     close_floating(win, buf)
     if on_confirm then on_confirm(nil) end
   end)
+
   if default ~= "" then
     vim.api.nvim_feedkeys(default, "n", false)
   end
