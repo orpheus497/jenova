@@ -7,6 +7,37 @@
 /llama.cpp/bin/
 /mcsh/build/
 /mcsh/autom4te.cache/
+
+# --- Guard: mcsh/tcsh sources belong in /mcsh/, never at repo root ---
+/sh.*
+/tc.*
+/tw.*
+/ed.*
+/mi.*
+/ma.*
+/glob.*
+/dotlock.*
+/gethost.*
+/snames.h
+/pathnames.h
+/patchlevel.h.in
+/host.defs
+/src.desc
+/eight-bit.me
+/csh-mode.el
+/complete.tcsh
+/complete.mcsh
+/dot.login
+/dot.tcshrc
+/dot.mcshrc
+/tcsh.man.in
+/Makefile.in
+/aclocal.m4
+/atlocal.in
+/configure.ac
+/config.h.in
+/config_f.h
+
 /cli-agent/build/
 /cli-agent/build_test/
 # Bundled jvim editor — build & install artifacts
