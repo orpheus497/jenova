@@ -5,17 +5,20 @@ Jenova is primarily developed and optimized for FreeBSD 15.
 ## Quick Install
 
 ```sh
-# 1. Install system dependencies
-pkg install luajit-openresty git cmake vulkan-loader curl lua54 gettext-tools
+# 1. Install system dependencies (gmake is required to build jvim and mcsh)
+pkg install luajit-openresty git gmake cmake vulkan-loader curl lua54 gettext-tools
 
-# 2. Clone (recursive — pulls llama.cpp submodule)
-git clone --recursive https://github.com/orpheus497/jenova
+# 2. Clone the repo (llama.cpp is fetched separately, not a submodule)
+git clone https://github.com/orpheus497/jenova
 cd jenova
 
-# 3. Build everything
+# 3. Pull llama.cpp into ./llama.cpp (idempotent — clones or pulls)
+scripts/llama_dl.sh
+
+# 4. Build everything: llama.cpp (Vulkan) + jvim + mcsh
 make
 
-# 4. Run the installer (hardware-aware)
+# 5. Run the installer (hardware-aware)
 make install
 ```
 
@@ -23,19 +26,23 @@ make install
 
 ### 1. Build Components
 You can build components individually if needed:
-- `make llama`: Build llama.cpp with Vulkan support.
-- `make jvim`: Build the bundled Neovim hard-fork.
+- `make llama` — build `llama.cpp` with Vulkan support (calls `bin/build-llama-jenova`).
+- `make jvim` — build the bundled Neovim hard-fork (`jvim/build/bin/nvim`).
+- `make mcsh` — build the Modern C Shell (`bin/mcsh`).
+- `make clean` — wipe build artifacts from all three subsystems.
+- `make clean-root` — remove leftover artifacts in the repo root.
 
 ### 2. Run the Installer
 `scripts/install.sh` handles the deployment. It supports several flags:
 
 | Flag | Action |
-|---|---|
-| `--force` | Overwrite existing config/symlinks; force jvim rebuild |
-| `--link` | Install nvim config as symlinks (dev workflow) |
-| `--skip-nvim` | Skip deploying config to `~/.config/nvim/` |
-| `--skip-jvim` | Skip building the bundled jvim editor |
-| `--client-only` | LAN client install (no local backend/models) |
+|------|--------|
+| `--force` | Overwrite existing config / symlinks; force jvim rebuild. |
+| `--link` | Install jvim config as symlinks (dev workflow). |
+| `--skip-jvim` | Skip building the bundled jvim editor. |
+| `--skip-llama` | Skip the llama.cpp build check. |
+| `--skip-lsp` | Skip optional LSP server setup. |
+| `--client-only` | LAN client install — implies `--skip-llama --skip-jvim`; talks to a remote backend. |
 
 ### 3. Hardware Profile Deployment
 After the main installation, you must configure your hardware profile:

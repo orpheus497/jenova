@@ -44,26 +44,36 @@ sudo apt install -y \
 
 ## Build Instructions
 
-1.  **Clone the repository recursively**:
+1.  **Clone the repository** (no submodules — `llama.cpp` is fetched separately):
     ```bash
-    git clone --recursive https://github.com/orpheus497/jenova
+    git clone https://github.com/orpheus497/jenova
     cd jenova
     ```
 
-2.  **Initialize llama.cpp** (if not already present):
+2.  **Pull `llama.cpp`** into `./llama.cpp` (idempotent — clones or pulls):
     ```bash
-    git clone https://github.com/ggml-org/llama.cpp.git
+    scripts/llama_dl.sh
     ```
 
-3.  **Build components**:
+3.  **Build everything** (or build subsystems individually):
     ```bash
-    make llama
-    make jvim
+    make            # llama.cpp + jvim + mcsh
+    # or
+    make llama      # just the inference backend
+    make jvim       # just the editor
+    make mcsh       # just the Modern C Shell
     ```
 
 4.  **Run the installer**:
     ```bash
     make install
+    ```
+
+5.  **Apply your hardware profile** and run system tuning:
+    ```bash
+    ./hardware-profiles/detect-hardware.sh --info
+    ./hardware-profiles/detect-hardware.sh --apply
+    sudo scripts/jenova-setup
     ```
 
 ## Post-Installation
@@ -75,7 +85,19 @@ export PATH="$HOME/.local/bin:$PATH"
 ```
 
 ### jvim Configuration
-If you prefer standard Neovim paths, the config lives in `~/.config/jvim/`. The `jvim` launcher is configured to use this path by setting `NVIM_APPNAME=jvim`.
+The deployed config lives at `~/.config/jvim/`. The `jvim` launcher sets
+`NVIM_APPNAME=jvim` and prefers `jvim/build/bin/nvim` (the in-tree fork) over
+any system `nvim` on `PATH`.
+
+### Installing `mcsh` as a login shell (optional)
+After `make install`, the bundled Modern C Shell is at `bin/mcsh`. To use it
+as your login shell:
+```bash
+sudo cp bin/mcsh /usr/local/bin/mcsh
+sudo ln -sf /usr/local/bin/mcsh /usr/local/bin/tcsh   # legacy compat
+echo /usr/local/bin/mcsh | sudo tee -a /etc/shells
+chsh -s /usr/local/bin/mcsh
+```
 
 ## Troubleshooting
 

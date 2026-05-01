@@ -113,3 +113,6 @@ core
 core.*
 *.dmp
 nul
+
+# Conductor working notes
+conductor/
