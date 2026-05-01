@@ -1,0 +1,741 @@
+#!/bin/sh
+
+# jenova-ca: Launch llama-server + Intelligence Proxy
+# Jenova Cognitive Architecture — hardware-profile-aware daemon manager.
+#
+# Loads hardware settings from etc/jenova.conf (or a hardware-profile jenova.conf
+# deployed by install.sh). Supports single-GPU, dual-GPU, and CPU-only modes
+# via the DEVICES / TENSOR_SPLIT / NGL_7B / FIT_TARGET profile variables.
+
+set -e
+
+SCRIPT_DIR=$(dirname "$(realpath "$0")")
+
+# Determine JENOVA_ROOT before loading config
+if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
+    export JENOVA_ROOT="$SCRIPT_DIR"
+    . "$SCRIPT_DIR/etc/jenova.conf"
+elif [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
+    export JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
+    . "$SCRIPT_DIR/../etc/jenova.conf"
+else
+    echo "Error: etc/jenova.conf not found."
+    exit 1
+fi
+
+. "$JENOVA_ROOT/lib/jenova-conf.sh"
+
+# Ensure runtime directories exist with proper permissions
+# Note: Run without sudo to avoid permission issues with lock files
+mkdir -p "$JENOVA_STATE" 2>/dev/null || {
+    echo "Error: Cannot create $JENOVA_STATE directory" >&2
+    echo "       Do not run with sudo — run as regular user instead" >&2
+    exit 1
+}
+mkdir -p "$LOG_DIR" || true
+mkdir -p "$CACHE_DIR" || true
+
+# Check for ownership issues early (detect if directory owned by root from sudo usage)
+if [ -d "$JENOVA_STATE" ] && [ ! -w "$JENOVA_STATE" ]; then
+    echo "Error: $JENOVA_STATE directory is not writable" >&2
+    echo "" >&2
+    _OWNER=$(stat -c '%U' "$JENOVA_STATE" 2>/dev/null || stat -f '%Su' "$JENOVA_STATE" 2>/dev/null || echo "unknown")
+    if [ "$_OWNER" = "root" ]; then
+        echo "Directory is owned by root (likely from running with sudo previously)." >&2
+        echo "Fix with:" >&2
+        echo "  sudo chown -R \$USER:\$USER $JENOVA_STATE" >&2
+        echo "  chmod -R u+w $JENOVA_STATE" >&2
+    else
+        echo "Fix permissions with:" >&2
+        echo "  chmod -R u+w $JENOVA_STATE" >&2
+    fi
+    echo "" >&2
+    exit 1
+fi
+
+# --- Model: 7B only ---
+MODEL_PATH="${JENOVA_MODEL:-$MODEL_7B}"
+
+if [ ! -f "$LLAMA_SERVER" ]; then
+    echo "Error: llama-server not found at $LLAMA_SERVER" >&2
+    echo "" >&2
+    echo "Build llama.cpp first:" >&2
+    echo "  cd $JENOVA_ROOT/llama.cpp" >&2
+    echo "  cmake -B build -DGGML_VULKAN=ON" >&2
+    echo "  cmake --build build -j\$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)" >&2
+    echo "" >&2
+    exit 1
+fi
+if [ ! -f "$MODEL_PATH" ]; then
+    echo "Error: Model not found at $MODEL_PATH" >&2
+    echo "" >&2
+    echo "Download a model file (GGUF format) and place it at:" >&2
+    echo "  $JENOVA_ROOT/models/" >&2
+    echo "" >&2
+    echo "Recommended: Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf" >&2
+    echo "Or set JENOVA_MODEL environment variable to point to your model." >&2
+    echo "" >&2
+    exit 1
+fi
+
+DRAFT_PATH="${JENOVA_DRAFT_PATH:-$MODEL_DRAFT}"
+DRAFT_ARGS=""
+if [ -f "$DRAFT_PATH" ] && [ "${JENOVA_DRAFT:-1}" != "0" ]; then
+    _DEVD=""
+    if [ -n "$DRAFT_DEVICE" ]; then
+        _DEVD="-devd $DRAFT_DEVICE"
+    fi
+    DRAFT_ARGS="-md $DRAFT_PATH $_DEVD -ngld all --draft-max 16 --draft-min 4 --draft-p-min 0.6"
+fi
+
+# --- Find proxy.lua ---
+# Branch 1: SCRIPT_DIR itself contains lib/ (e.g. jenova-ca placed at project root)
+# Branch 2: SCRIPT_DIR is a subdirectory like bin/ (normal installation)
+if [ -f "$SCRIPT_DIR/lib/proxy.lua" ]; then
+    PROXY_SCRIPT="$SCRIPT_DIR/lib/proxy.lua"
+    export JENOVA_ROOT="${JENOVA_ROOT:-$SCRIPT_DIR}"
+elif [ -f "$SCRIPT_DIR/../lib/proxy.lua" ]; then
+    PROXY_SCRIPT="$SCRIPT_DIR/../lib/proxy.lua"
+    export JENOVA_ROOT="${JENOVA_ROOT:-$(dirname "$SCRIPT_DIR")}"
+else
+    echo "Error: proxy.lua not found relative to $SCRIPT_DIR"
+    exit 1
+fi
+
+export JENOVA_LLAMA_URL="http://${HOST}:${LLAMA_PORT}"
+export JENOVA_PROXY_PORT="$PORT"
+export JENOVA_PROXY_HOST="$HOST"
+export JENOVA_CTX="$CTX_SIZE"
+
+# Optional backend memory-fallback tuning from etc/jenova.local.conf.
+[ -n "${GGML_VK_ALLOW_SYSMEM_FALLBACK:-}" ] && export GGML_VK_ALLOW_SYSMEM_FALLBACK
+[ -n "${GGML_VK_PREFER_HOST_MEMORY:-}" ] && export GGML_VK_PREFER_HOST_MEMORY
+
+# --- LD_LIBRARY_PATH for shared libs ---
+LLAMA_LIB_DIR="$JENOVA_ROOT/llama.cpp/build/bin"
+if [ -d "$LLAMA_LIB_DIR" ]; then
+    export LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"
+fi
+
+# --- Build device arguments ---
+DEV_ARGS=""
+if [ -n "$DEVICES" ]; then
+    DEV_ARGS="-dev $DEVICES"
+fi
+
+DEVICE_COUNT=$(count_devices "$DEVICES")
+
+# --- Split mode + layer offload ---
+# NGL_7B="all" (default): use -fitt auto-fit to distribute layers across GPUs.
+#   Best for dual-GPU setups where all layers fit (i5-1135G7 dual-GPU profile).
+# NGL_7B=N (explicit count): use -ngl N for partial offload on limited-VRAM GPUs.
+#   Required for single-GPU UMA setups (e.g., AMD Lucienne Ryzen profile: NGL_7B=18).
+SPLIT_ARGS="-sm layer"
+if [ "$NGL_7B" = "all" ] || [ -z "$NGL_7B" ]; then
+    SPLIT_ARGS="$SPLIT_ARGS -fitt $FIT_TARGET"
+    if [ "$DEVICE_COUNT" -gt 1 ] && [ -n "$TENSOR_SPLIT" ]; then
+        SPLIT_ARGS="$SPLIT_ARGS -ts $TENSOR_SPLIT"
+    fi
+else
+    # Explicit layer count — skip -fitt (they conflict) and any tensor split
+    SPLIT_ARGS="$SPLIT_ARGS -ngl $NGL_7B"
+fi
+
+# --- Batch sizes (controls VRAM pressure during prompt ingestion) ---
+# Respect values already set by jenova.conf; only apply defaults if unset.
+BATCH_SIZE="${BATCH_SIZE:-${JENOVA_BATCH:-2048}}"
+UBATCH_SIZE="${UBATCH_SIZE:-${JENOVA_UBATCH:-512}}"
+
+# --- KV cache quantization (halves KV memory vs f16) ---
+KV_ARGS=""
+if [ -n "$KV_CACHE_TYPE" ]; then
+    KV_ARGS="-ctk $KV_CACHE_TYPE -ctv $KV_CACHE_TYPE"
+fi
+
+# --- Runtime backend args (may be rewritten by fallback logic) ---
+RUN_DEV_ARGS="$DEV_ARGS"
+RUN_SPLIT_ARGS="$SPLIT_ARGS"
+RUN_MAIN_NGL_ARGS=""
+RUN_DRAFT_ARGS="$DRAFT_ARGS"
+RUN_BACKEND_LABEL="configured"
+
+_use_vulkan_fallback() {
+    RUN_DEV_ARGS="-dev Vulkan0"
+    if [ "$NGL_7B" = "all" ] || [ -z "$NGL_7B" ]; then
+        RUN_SPLIT_ARGS="-sm layer -fitt $FIT_TARGET"
+    else
+        RUN_SPLIT_ARGS="-sm layer -ngl $NGL_7B"
+    fi
+    RUN_MAIN_NGL_ARGS=""
+    RUN_DRAFT_ARGS=""
+    RUN_BACKEND_LABEL="vulkan-fallback"
+}
+
+_vulkan_backend_available() {
+    [ -f "$LLAMA_LIB_DIR/libggml-vulkan.so" ] || \
+    [ -f "$LLAMA_LIB_DIR/libggml-vulkan.so.0" ] || \
+    find "$LLAMA_LIB_DIR" -maxdepth 1 -name 'libggml-vulkan.so.*' -print -quit 2>/dev/null | grep -q .
+}
+
+_launch_llama_server_bg() {
+    _ls_log="$1"
+    shift
+
+    "$LLAMA_SERVER" \
+        -m "$MODEL_PATH" \
+        $RUN_DEV_ARGS \
+        $RUN_SPLIT_ARGS \
+        $RUN_MAIN_NGL_ARGS \
+        $KV_ARGS \
+        -c "$CTX_SIZE" \
+        -b "$BATCH_SIZE" \
+        -ub "$UBATCH_SIZE" \
+        -np "$NUM_SLOTS" \
+        -t "$THREADS" \
+        -tb "$THREADS_BATCH" \
+        -fa auto \
+        -cb \
+        --spm-infill \
+        --cache-prompt \
+        --offline \
+        --host "$HOST" \
+        --port "$LLAMA_PORT" \
+        $RUN_DRAFT_ARGS \
+        "$@" > "$_ls_log" 2>&1 9>&- &
+    LLAMA_PID=$!
+}
+
+# --- Control verbs ---
+case "$1" in
+    stop)
+        if [ -f "$PID_FILE" ]; then
+            read OLD_LLAMA_PID OLD_PROXY_PID OLD_EMBED_PID < "$PID_FILE" 2>/dev/null || OLD_LLAMA_PID=$(cat "$PID_FILE")
+            for P in $OLD_LLAMA_PID $OLD_PROXY_PID $OLD_EMBED_PID; do
+                if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
+                    echo "Stopping PID $P..."
+                    kill -- "-$P" 2>/dev/null || kill "$P" 2>/dev/null || true
+                fi
+            done
+            sleep 2
+            for P in $OLD_LLAMA_PID $OLD_PROXY_PID $OLD_EMBED_PID; do
+                if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
+                    echo "Force-killing PID $P..."
+                    kill -9 "$P" 2>/dev/null || true
+                fi
+            done
+            rm -f "$PID_FILE"
+            rm -f "$JENOVA_STATE/llama-embed.pid"
+            rm -f "$JENOVA_STATE/indexer.pid"
+            echo "Stopped."
+        else
+            echo "No PID file found at $PID_FILE"
+        fi
+        pkill -f "llama-server.*--port.*${LLAMA_EMBED_PORT}" 2>/dev/null || true
+        pkill -f "llama-server.*--port.*${LLAMA_PORT}" 2>/dev/null || true
+        exit 0
+        ;;
+    status)
+        if [ -f "$PID_FILE" ]; then
+            read LLAMA_PID PROXY_PID EMBED_PID < "$PID_FILE" 2>/dev/null || LLAMA_PID=$(cat "$PID_FILE")
+            echo "PID file: $PID_FILE"
+            for _N in "llama-server:$LLAMA_PID" "Proxy:$PROXY_PID" "Embed:$EMBED_PID"; do
+                _LABEL=$(echo "$_N" | cut -d: -f1)
+                _PID=$(echo "$_N" | cut -d: -f2)
+                if [ -n "$_PID" ] && kill -0 "$_PID" 2>/dev/null; then
+                    echo "$_LABEL running (PID $_PID)"
+                else
+                    echo "$_LABEL not running"
+                fi
+            done
+        else
+            echo "No PID file found at $PID_FILE"
+        fi
+        exit 0
+        ;;
+    start)
+        shift
+        set -- "--daemon" "$@"
+        ;;
+    restart)
+        "$0" stop 2>/dev/null || true
+        shift || true
+        set -- "--daemon" "$@"
+        ;;
+    watch)
+        shift
+        # Fall through to watchdog loop below
+        _ENTER_WATCHDOG=1
+        ;;
+esac
+
+# =====================================================================
+# _probe_health: shared health probe used by daemon startup and watchdog.
+# Tries luajit healthcheck.lua first (no curl needed), falls back to
+# curl, then plain TCP via nc.  Returns 0 on success, non-zero on failure.
+# Requires CONNECT_HOST and LLAMA_PORT to be set in the calling scope.
+# Optional first argument overrides the luajit timeout (default: 2s).
+# =====================================================================
+_probe_health() {
+    _ph_timeout="${1:-2}"
+    if command -v curl >/dev/null 2>&1; then
+        _url="http://${CONNECT_HOST}:${LLAMA_PORT}/health"
+        if echo "$CONNECT_HOST" | grep -q ":"; then _url="http://[${CONNECT_HOST}]:${LLAMA_PORT}/health"; fi
+        curl -sf -o /dev/null -m "$_ph_timeout" "$_url" 2>/dev/null
+        return $?
+    fi
+
+    if [ -f "$PROXY_SCRIPT" ]; then
+        _HC=$(dirname "$PROXY_SCRIPT")/healthcheck.lua
+    else
+        _HC=""
+    fi
+    if [ -f "$_HC" ]; then
+        luajit "$_HC" "$CONNECT_HOST" "$LLAMA_PORT" "$_ph_timeout" 2>/dev/null
+        return $?
+    else
+        # Last resort: plain TCP probe via nc
+        if command -v nc >/dev/null 2>&1; then
+            nc -z -w "$_ph_timeout" "$CONNECT_HOST" "$LLAMA_PORT" >/dev/null 2>&1
+        else
+            return 1
+        fi
+    fi
+}
+
+# =====================================================================
+# WATCHDOG: Continuous runtime health monitoring with auto-restart
+# =====================================================================
+_watchdog() {
+    WATCH_INTERVAL="${JENOVA_WATCH_INTERVAL:-30}"
+    WATCH_LOG="${LOG_DIR}/jenova-watchdog.log"
+    CONNECT_HOST="${JENOVA_CONNECT_HOST:-127.0.0.1}"
+    _WATCHDOG_RUNNING=true
+    _RESTART_COOLDOWN=60
+    _LAST_RESTART=0
+    _CONSECUTIVE_FAILURES=0
+    _MAX_CONSECUTIVE_FAILURES=3
+
+    _wlog() {
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] $1" >> "$WATCH_LOG"
+        echo "[watchdog] $1"
+    }
+
+    _watchdog_shutdown() {
+        _WATCHDOG_RUNNING=false
+        _wlog "shutdown signal received"
+    }
+    trap _watchdog_shutdown INT TERM
+
+    _wlog "started (interval=${WATCH_INTERVAL}s, cooldown=${_RESTART_COOLDOWN}s)"
+
+    while $_WATCHDOG_RUNNING; do
+        sleep "$WATCH_INTERVAL" &
+        _SLEEP_PID=$!
+        wait $_SLEEP_PID 2>/dev/null || true
+        $_WATCHDOG_RUNNING || break
+
+        if [ ! -f "$PID_FILE" ]; then
+            _wlog "no PID file — services not running"
+            _CONSECUTIVE_FAILURES=$((_CONSECUTIVE_FAILURES + 1))
+            if [ $_CONSECUTIVE_FAILURES -ge $_MAX_CONSECUTIVE_FAILURES ]; then
+                _NOW=$(date +%s)
+                _ELAPSED=$((_NOW - _LAST_RESTART))
+                if [ $_ELAPSED -ge $_RESTART_COOLDOWN ]; then
+                    _wlog "attempting full restart (no PID file for ${_CONSECUTIVE_FAILURES} checks)"
+                    "$0" start >> "$WATCH_LOG" 2>&1
+                    _LAST_RESTART=$_NOW
+                    _CONSECUTIVE_FAILURES=0
+                    sleep 5
+                else
+                    _wlog "restart cooldown active (${_ELAPSED}s/${_RESTART_COOLDOWN}s)"
+                fi
+            fi
+            continue
+        fi
+
+        read _W_LLAMA _W_PROXY _W_EMBED < "$PID_FILE" 2>/dev/null || _W_LLAMA=$(cat "$PID_FILE")
+        _ANY_DEAD=false
+        _DEAD_NAMES=""
+
+        for _ENTRY in "llama-server:$_W_LLAMA" "proxy:$_W_PROXY" "embed:$_W_EMBED"; do
+            _NAME=$(echo "$_ENTRY" | cut -d: -f1)
+            _PID=$(echo "$_ENTRY" | cut -d: -f2)
+            if [ -n "$_PID" ] && ! kill -0 "$_PID" 2>/dev/null; then
+                _ANY_DEAD=true
+                _DEAD_NAMES="$_DEAD_NAMES $_NAME(PID=$_PID)"
+            fi
+        done
+
+        # Health endpoint check (catches hung processes that are alive but unresponsive)
+        _HEALTH_OK=true
+        if [ -n "$_W_LLAMA" ] && kill -0 "$_W_LLAMA" 2>/dev/null; then
+            if ! _probe_health 5; then
+                _HEALTH_OK=false
+            fi
+        fi
+
+        if $_ANY_DEAD || ! $_HEALTH_OK; then
+            if $_ANY_DEAD; then
+                _wlog "DEAD processes detected:$_DEAD_NAMES"
+            fi
+            if ! $_HEALTH_OK; then
+                _wlog "health check FAILED (llama-server unresponsive)"
+            fi
+            _CONSECUTIVE_FAILURES=$((_CONSECUTIVE_FAILURES + 1))
+
+            if [ $_CONSECUTIVE_FAILURES -ge $_MAX_CONSECUTIVE_FAILURES ]; then
+                _NOW=$(date +%s)
+                _ELAPSED=$((_NOW - _LAST_RESTART))
+                if [ $_ELAPSED -ge $_RESTART_COOLDOWN ]; then
+                    _wlog "restarting all services (${_CONSECUTIVE_FAILURES} consecutive failures)"
+                    "$0" stop >> "$WATCH_LOG" 2>&1 || true
+                    sleep 2
+                    "$0" start >> "$WATCH_LOG" 2>&1
+                    _LAST_RESTART=$_NOW
+                    _CONSECUTIVE_FAILURES=0
+                    sleep 10
+                else
+                    _wlog "restart cooldown active (${_ELAPSED}s/${_RESTART_COOLDOWN}s)"
+                fi
+            fi
+        else
+            if [ $_CONSECUTIVE_FAILURES -gt 0 ]; then
+                _wlog "services recovered after ${_CONSECUTIVE_FAILURES} failure(s)"
+            fi
+            _CONSECUTIVE_FAILURES=0
+        fi
+    done
+
+    _wlog "watchdog exiting"
+}
+
+if [ "${_ENTER_WATCHDOG:-0}" = "1" ]; then
+    _watchdog
+    exit 0
+fi
+
+# --- Startup banner ---
+# --lan flag: bind on all interfaces for LAN access
+for _arg in "$@"; do
+    if [ "$_arg" = "--lan" ]; then
+        HOST="0.0.0.0"
+        _INT_HOST="127.0.0.1"
+        API_URL="http://${_INT_HOST}:${PORT}"
+        LLAMA_URL="http://${_INT_HOST}:${LLAMA_PORT}"
+        LLAMA_EMBED_URL="http://${_INT_HOST}:${LLAMA_EMBED_PORT}"
+        break
+    fi
+done
+
+if [ "${JENOVA_FORCE_VULKAN:-0}" = "1" ]; then
+    _use_vulkan_fallback
+fi
+
+echo "Starting Jenova CA..."
+echo "  Bind:      $HOST:$PORT (llama:$LLAMA_PORT embed:$LLAMA_EMBED_PORT)"
+if [ "$HOST" = "127.0.0.1" ]; then
+    echo "             Local only — use 'jenova-ca --daemon --lan' for LAN access"
+fi
+echo "  Model:     $MODEL_PATH"
+echo "  Embed:     $MODEL_EMBED (CPU-only, Vulkan disabled)"
+if [ -n "$RUN_DEV_ARGS" ]; then
+    echo "  Devices:   $(echo "$RUN_DEV_ARGS" | sed 's/^-dev //')"
+else
+    echo "  Devices:   CPU only"
+fi
+echo "  Backend:   $RUN_BACKEND_LABEL"
+if [ "$NGL_7B" = "all" ] || [ -z "$NGL_7B" ]; then
+    if [ "$DEVICE_COUNT" -gt 1 ] && [ -n "$TENSOR_SPLIT" ]; then
+        echo "  GPU:       auto-fit (fitt ${FIT_TARGET} MiB) ts $TENSOR_SPLIT"
+    else
+        echo "  GPU:       auto-fit (fitt ${FIT_TARGET} MiB)"
+    fi
+else
+    echo "  GPU:       ngl ${NGL_7B} layers"
+fi
+echo "  Context:   $CTX_SIZE  Slots: $NUM_SLOTS  KV: ${KV_CACHE_TYPE:-f16}"
+echo ""
+
+# =====================================================================
+# DAEMON MODE
+# =====================================================================
+_WATCH_AFTER_START=false
+for _arg in "$@"; do
+    if [ "$_arg" = "--watch" ]; then _WATCH_AFTER_START=true; fi
+done
+
+if [ "$1" = "--daemon" ]; then
+    shift
+    # Strip --watch from remaining args (it's for post-startup, not llama-server)
+    # Strip jenova-ca-specific flags that aren't for llama-server
+    for _arg; do
+        shift
+        case "$_arg" in
+            --watch|--lan|--daemon) continue ;;
+        esac
+        set -- "$@" "$_arg"
+    done
+
+    # Acquire exclusive lock to prevent concurrent startup (TOCTOU guard)
+    # Use portable locking: flock on Linux/FreeBSD, or fallback to mkdir-based lock
+    LOCK_FILE="${PID_FILE}.lock"
+    _LOCK_FLOCK=0
+
+    if command -v flock >/dev/null 2>&1; then
+        # flock available (Linux, FreeBSD with flock installed)
+        exec 9>"$LOCK_FILE"
+        if ! flock -n 9; then
+            echo "Another instance is starting. Exiting." >&2
+            exit 1
+        fi
+        _LOCK_FLOCK=1
+    else
+        # Open fd 9 to /dev/null so background 9>&- closures don't fail
+        exec 9>/dev/null
+        # Fallback: atomic mkdir-based locking (portable but requires cleanup)
+        if ! mkdir "$LOCK_FILE.d" 2>/dev/null; then
+            if [ -d "$LOCK_FILE.d" ]; then
+                # Check if lock is stale (>2 minutes old)
+                if command -v stat >/dev/null 2>&1; then
+                    _LOCK_AGE=$(($(date +%s) - $(stat -c %Y "$LOCK_FILE.d" 2>/dev/null || stat -f %m "$LOCK_FILE.d" 2>/dev/null || echo 0)))
+                    if [ "$_LOCK_AGE" -gt 120 ]; then
+                        echo "Removing stale lock (${_LOCK_AGE}s old)" >&2
+                        rmdir "$LOCK_FILE.d" 2>/dev/null || true
+                        if ! mkdir "$LOCK_FILE.d" 2>/dev/null; then
+                            echo "Another instance is starting. Exiting." >&2
+                            exit 1
+                        fi
+                    else
+                        echo "Another instance is starting. Exiting." >&2
+                        exit 1
+                    fi
+                else
+                    echo "Another instance is starting. Exiting." >&2
+                    exit 1
+                fi
+            else
+                echo "Cannot create lock at $LOCK_FILE.d" >&2
+                echo "" >&2
+                echo "This usually means .jenova directory has permission issues." >&2
+                echo "Fix with (do NOT use sudo):" >&2
+                echo "  chmod -R u+w $JENOVA_STATE" >&2
+                echo "" >&2
+                echo "If owned by root (from running with sudo previously), fix with:" >&2
+                echo "  sudo chown -R \$USER:\$USER $JENOVA_STATE" >&2
+                echo "  chmod -R u+w $JENOVA_STATE" >&2
+                echo "" >&2
+                exit 1
+            fi
+        fi
+        # Cleanup fallback lock on exit
+        trap 'rmdir "$LOCK_FILE.d" 2>/dev/null || true' EXIT
+    fi
+
+    if [ -f "$PID_FILE" ]; then
+        read OLD_LLAMA_PID OLD_PROXY_PID OLD_EMBED_PID < "$PID_FILE" 2>/dev/null || OLD_LLAMA_PID=$(cat "$PID_FILE")
+        _ALL_ALIVE=true
+        _ANY_ALIVE=false
+        for _P in $OLD_LLAMA_PID $OLD_PROXY_PID; do
+            if [ -n "$_P" ] && kill -0 "$_P" 2>/dev/null; then
+                _ANY_ALIVE=true
+            elif [ -n "$_P" ]; then
+                _ALL_ALIVE=false
+            fi
+        done
+        if $_ALL_ALIVE && $_ANY_ALIVE; then
+            echo "Jenova CA already running (llama=$OLD_LLAMA_PID proxy=$OLD_PROXY_PID embed=${OLD_EMBED_PID:-none})."
+            if [ "$_LOCK_FLOCK" = "1" ]; then exec 9>&-; fi
+            exit 0
+        fi
+        if $_ANY_ALIVE; then
+            echo "Partial failure detected — stopping survivors before restart..."
+            for _P in $OLD_LLAMA_PID $OLD_PROXY_PID $OLD_EMBED_PID; do
+                if [ -n "$_P" ] && kill -0 "$_P" 2>/dev/null; then
+                    kill -- "-$_P" 2>/dev/null || kill "$_P" 2>/dev/null || true
+                fi
+            done
+            sleep 2
+            for _P in $OLD_LLAMA_PID $OLD_PROXY_PID $OLD_EMBED_PID; do
+                if [ -n "$_P" ] && kill -0 "$_P" 2>/dev/null; then
+                    kill -9 "$_P" 2>/dev/null || true
+                fi
+            done
+        fi
+        rm -f "$PID_FILE"
+    fi
+
+    LOG_FILE="${LOG_DIR}/jenova-ca.log"
+    EMBED_LOG="${LOG_DIR}/jenova-embed.log"
+    echo "Daemonizing... Logs at $LOG_FILE"
+
+    _launch_llama_server_bg "$LOG_FILE" "$@"
+
+    EMBED_PID=""
+    if [ -f "$MODEL_EMBED" ]; then
+        GGML_VULKAN_DISABLE=1 "$LLAMA_SERVER" \
+            -m "$MODEL_EMBED" \
+            --embedding \
+            -dev none \
+            -ngl 0 \
+            -c 4096 \
+            -b 512 \
+            -t "$THREADS" \
+            --offline \
+            --host "$HOST" \
+            --port "$LLAMA_EMBED_PORT" \
+            > "$EMBED_LOG" 2>&1 9>&- &
+        EMBED_PID=$!
+    else
+        echo "Warning: embed model not found at $MODEL_EMBED — skipping embed server"
+    fi
+
+    # Poll llama-server /health until ready (replaces fixed sleep)
+    CONNECT_HOST="${JENOVA_CONNECT_HOST:-127.0.0.1}"
+    HEALTH_TIMEOUT="${JENOVA_HEALTH_TIMEOUT:-90}"
+    HEALTH_INTERVAL=2
+    _ELAPSED=0
+
+    echo "Waiting for llama-server to become ready..."
+    while [ "$_ELAPSED" -lt "$HEALTH_TIMEOUT" ]; do
+        if _probe_health; then
+            echo "llama-server ready (${_ELAPSED}s)"
+            break
+        fi
+        if ! kill -0 "$LLAMA_PID" 2>/dev/null; then
+            echo "ERROR: llama-server (PID $LLAMA_PID) died during startup. Check $LOG_FILE" >&2
+            if [ -n "$EMBED_PID" ]; then kill "$EMBED_PID" 2>/dev/null || true; fi
+            if [ "$_LOCK_FLOCK" = "1" ]; then exec 9>&-; fi
+            exit 1
+        fi
+        sleep "$HEALTH_INTERVAL"
+        _ELAPSED=$((_ELAPSED + HEALTH_INTERVAL))
+    done
+    if [ "$_ELAPSED" -ge "$HEALTH_TIMEOUT" ]; then
+        echo "ERROR: llama-server failed to become ready within ${HEALTH_TIMEOUT}s" >&2
+        echo "Check logs at $LOG_FILE" >&2
+        kill "$LLAMA_PID" 2>/dev/null || true
+        if [ -n "$EMBED_PID" ]; then kill "$EMBED_PID" 2>/dev/null || true; fi
+        if [ "$_LOCK_FLOCK" = "1" ]; then exec 9>&-; fi
+        exit 1
+    fi
+
+    luajit "$PROXY_SCRIPT" >> "$LOG_FILE" 2>&1 9>&- &
+    PROXY_PID=$!
+
+    echo "Started: llama-server=$LLAMA_PID proxy=$PROXY_PID embed=${EMBED_PID:-none}"
+
+    # Liveness check — verify all processes survive startup
+    sleep 2
+    _ANY_DEAD=false
+    for _P in $LLAMA_PID $PROXY_PID $EMBED_PID; do
+        if [ -n "$_P" ] && ! kill -0 "$_P" 2>/dev/null; then
+            echo "ERROR: Process $_P died shortly after startup. Check logs at $LOG_FILE" >&2
+            _ANY_DEAD=true
+        fi
+    done
+    # Readiness probe: confirm llama-server still responds after all processes up
+    if ! _probe_health; then
+        echo "ERROR: llama-server health check failed after startup" >&2
+        _ANY_DEAD=true
+    fi
+    if $_ANY_DEAD; then
+        if [ "$_LOCK_FLOCK" = "1" ]; then exec 9>&-; fi
+        exit 1
+    fi
+
+    # Write pidfile only after verified alive (while still holding lock)
+    printf '%s' "$LLAMA_PID $PROXY_PID${EMBED_PID:+ $EMBED_PID}" > "$PID_FILE"
+    echo "" >> "$PID_FILE"
+
+    if [ "$_LOCK_FLOCK" = "1" ]; then exec 9>&-; fi
+
+    if $_WATCH_AFTER_START; then
+        echo "Entering watchdog mode..."
+        _watchdog
+    fi
+    exit 0
+fi
+
+# =====================================================================
+# FOREGROUND MODE
+# =====================================================================
+while [ "$1" = "--daemon" ]; do shift; done
+
+"$LLAMA_SERVER" \
+    -m "$MODEL_PATH" \
+    $RUN_DEV_ARGS \
+    $RUN_SPLIT_ARGS \
+    $RUN_MAIN_NGL_ARGS \
+    $KV_ARGS \
+    -c "$CTX_SIZE" \
+    -b "$BATCH_SIZE" \
+    -ub "$UBATCH_SIZE" \
+    -np "$NUM_SLOTS" \
+    -t "$THREADS" \
+    -tb "$THREADS_BATCH" \
+    -fa auto \
+    -cb \
+    --spm-infill \
+    --cache-prompt \
+    --offline \
+    --host "$HOST" \
+    --port "$LLAMA_PORT" \
+    $RUN_DRAFT_ARGS \
+    "$@" &
+LLAMA_PID=$!
+
+EMBED_PID=""
+if [ -f "$MODEL_EMBED" ]; then
+    echo "Starting embedding server (CPU-only) on port $LLAMA_EMBED_PORT..."
+    GGML_VULKAN_DISABLE=1 "$LLAMA_SERVER" \
+        -m "$MODEL_EMBED" \
+        --embedding \
+        -dev none \
+        -ngl 0 \
+        -c 4096 \
+        -b 512 \
+        -t "$THREADS" \
+        --offline \
+        --host "$HOST" \
+        --port "$LLAMA_EMBED_PORT" \
+        > "${LOG_DIR}/jenova-embed.log" 2>&1 &
+    EMBED_PID=$!
+else
+    echo "Warning: embed model not found at $MODEL_EMBED — skipping embed server"
+fi
+
+cleanup() {
+    echo "Cleaning up..."
+    for P in $LLAMA_PID $PROXY_PID $EMBED_PID; do
+        if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
+            kill "$P" 2>/dev/null || true
+            kill -- "-$P" 2>/dev/null || true
+        fi
+    done
+    sleep 2
+    for P in $LLAMA_PID $PROXY_PID $EMBED_PID; do
+        if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
+            kill -9 "$P" 2>/dev/null || true
+            kill -9 -- "-$P" 2>/dev/null || true
+        fi
+    done
+    wait $LLAMA_PID 2>/dev/null
+    wait $PROXY_PID 2>/dev/null
+    [ -n "$EMBED_PID" ] && wait $EMBED_PID 2>/dev/null
+    pkill -f "llama-server.*--port.*${LLAMA_EMBED_PORT}" 2>/dev/null || true
+    pkill -f "llama-server.*--port.*${LLAMA_PORT}" 2>/dev/null || true
+    rm -f "$PID_FILE"
+    rm -f "$JENOVA_STATE/llama-embed.pid"
+    rm -f "$JENOVA_STATE/indexer.pid"
+}
+trap cleanup EXIT INT TERM
+
+echo "Starting Jenova Intelligence Proxy on port $PORT..."
+luajit "$PROXY_SCRIPT" &
+PROXY_PID=$!
+
+# Write pidfile — never write "0" as a placeholder PID
+printf '%s' "$LLAMA_PID $PROXY_PID${EMBED_PID:+ $EMBED_PID}" > "$PID_FILE"
+echo "" >> "$PID_FILE"
+
+wait $LLAMA_PID $PROXY_PID ${EMBED_PID:+$EMBED_PID}

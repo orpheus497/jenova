@@ -1,0 +1,93 @@
+#!/bin/sh
+
+# jenova-setup: One-time system configuration for Jenova Cognitive Architecture
+# Profile: Intel/dgpu_igpu/i5-1135g7-3b (3B dual-GPU)
+# Run with: sudo ./jenova-setup
+#
+# Configures:
+#   - ZFS ARC cap (2 GiB)
+#   - VM memory policy for smooth inference
+#   - NVMe interrupt coalescing off
+#
+# Hardware context:
+#   Qwen2.5-Coder-3B Q8_0 (~3.1 GiB) fits fully on dual GPU (~11 GiB combined).
+#   No swap-backed model filesystem required.
+
+set -e
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "Error: must run as root (sudo ./jenova-setup)"
+    exit 1
+fi
+
+echo "=== jenova-setup: configuring FreeBSD for Jenova (3B dual-GPU profile) ==="
+echo ""
+
+CHANGED=0
+
+sysctl_persist() {
+    _line="$1"
+    _key=$(echo "$_line" | cut -d= -f1)
+    _esc_key=$(printf '%s' "$_key" | sed 's/[].[*^$\\/]/\\&/g')
+    if grep -q -E "^${_esc_key}[[:space:]]*=" /etc/sysctl.conf 2>/dev/null; then
+        sed -i '' "s|^${_esc_key}[[:space:]]*=.*|${_line}|" /etc/sysctl.conf
+    else
+        echo "$_line" >> /etc/sysctl.conf
+    fi
+}
+
+apply_sysctl() {
+    _key="$1"
+    _val="$2"
+    _desc="$3"
+    _current=$(sysctl -n "$_key" 2>/dev/null || echo "?")
+    if [ "$_current" = "$_val" ]; then
+        echo "[ok]  $_key=$_val ($_desc)"
+    else
+        echo "[fix] $_key: $_current -> $_val ($_desc)"
+        sysctl "$_key=$_val"
+        sysctl_persist "$_key=$_val"
+        CHANGED=1
+    fi
+}
+
+# =========================================================================
+# 1. VM Memory Policy
+# =========================================================================
+echo ""
+echo "--- VM Memory Policy ---"
+
+apply_sysctl vm.panic_on_oom 0 "no kernel panic on OOM"
+apply_sysctl vm.disable_swapspace_pageouts 0 "allow swap pageouts"
+apply_sysctl vm.pageout_oom_seq 8 "OOM kill after 8 failed pageout sequences"
+
+# =========================================================================
+# 2. ZFS ARC Cap
+# =========================================================================
+echo ""
+echo "--- ZFS ARC Cap ---"
+
+# 3B model is fully on GPU; cap ARC at 2 GiB to keep RAM available for OS + KV buffers.
+apply_sysctl vfs.zfs.arc_max 2147483648 "ZFS ARC max 2 GiB"
+
+# =========================================================================
+# 3. NVMe Interrupt Coalescing
+# =========================================================================
+echo ""
+echo "--- NVMe Tuning ---"
+
+for _nvme in 0 1; do
+    if sysctl "dev.nvme.${_nvme}.int_coal_time" > /dev/null 2>&1; then
+        apply_sysctl "dev.nvme.${_nvme}.int_coal_time" 0 "nvme${_nvme} zero coalesce delay"
+    fi
+    if sysctl "dev.nvme.${_nvme}.int_coal_threshold" > /dev/null 2>&1; then
+        apply_sysctl "dev.nvme.${_nvme}.int_coal_threshold" 0 "nvme${_nvme} zero coalesce threshold"
+    fi
+done
+
+echo ""
+if [ "$CHANGED" -eq 1 ]; then
+    echo "Done. Changes applied and persisted to /etc/sysctl.conf."
+else
+    echo "Nothing to change. System already configured."
+fi

@@ -1,44 +1,115 @@
-# Object files and generated build artefacts
-**/*.o
-**/Makefile
-!win32/msg/Makefile
+# --- Jenova CLI (external checkout — downloaded at runtime, not tracked or a submodule) ---
+/jenova-cli/*
+!/jenova-cli/.gitkeep
 
-# autoconf / autotest state
-atconfig
-atlocal
-autom4te.cache/
-config.h
-config.log
-config.status
-config_p.h
-testsuite.dir/
-testsuite.log
-tests/package.m4
-tests/testsuite
+# --- Build Artifacts ---
+/llama.cpp/build/
+/llama.cpp/bin/
+/mcsh/build/
+/mcsh/autom4te.cache/
+/cli-agent/build/
+/cli-agent/build_test/
+# Bundled jvim editor — build & install artifacts
+/jvim/build/
+/jvim/install/
+/jvim/.deps/
+/jvim/cmake-build-*/
+*.o
+*.so
+*.a
+*.dylib
 
-# Generated headers and catalogues
-ed.defns.h
-patchlevel.h
-sh.err.h
-tc.const.h
-tc.defs.c
-nls/*.cat
+# --- Models (never upload multi-GB LLM weights) ---
+*.gguf
+/models/**/*.bin
+*.safetensors
+*.onnx
+*.pt
+*.pth
+*.h5
+*.tflite
+!/models/.gitkeep
+!/models/**/.gitkeep
+!/models/README.md
 
-# Built binary and utilities
-gethost
-tcsh
-mcsh
+# --- Runtime Data ---
+/var/log/**
+/var/cache/**
+!/var/log/.gitkeep
+!/var/cache/.gitkeep
 
-# Distribution tarballs
-tcsh-*.tar.gz
-tcsh-*.tar.gz.asc
-mcsh-*.tar.gz
-mcsh-*.tar.gz.asc
+# --- Jenova Runtime (Private Data) ---
+/.jenova/
 
-# Local clangd config (contributors copy .clangd.example to .clangd)
-.clangd
+# --- Backups (local-only snapshots) ---
+/backups/
 
-# Editor / OS cruft
-*.suo
-*~
+# --- AI Agent / Assistant Data (chat history, session data, dev docs) ---
+.claude/
+.crush/
+.gemini/
+.jenova/
+.cursor/
+.copilot/
+.codeium/
+.aider/
+.continue/
+.tabnine/
+.windsurf/
+
+# --- Environment, Keys & Secrets ---
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.csr
+id_rsa
+id_ed25519
+*.secret
+*_secret*
+*.token
+credentials.json
+secrets.json
+auth.json
+
+# --- System & IDE ---
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.iml
+*~
+*.swp
+*.swo
+\#*\#
+
+# --- Configuration (local overrides) ---
+/etc/jenova.conf.local
+/etc/jenova.conf.bak.*
+/etc/jenova.local.conf
+
+# --- User / Session Data (chat history, memory, training data) ---
+*.sqlite
+*.sqlite3
+*.db
+*.jsonl
+.bash_history
+.zsh_history
+.history
+
+# --- Large / temporary files ---
+*.log
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+*.bak
+*.tmp
+core
+core.*
+*.dmp
+nul

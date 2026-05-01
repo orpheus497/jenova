@@ -1,0 +1,69 @@
+#!/bin/sh
+# jenova-swap-mount: Sets up a swap-backed memory filesystem for LLM models
+# This allows FreeBSD to page mmap'd model weights to a hardware swap partition
+# (like an Optane NVMe drive) instead of dropping them and re-reading from ZFS.
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "Error: must run as root (sudo ./bin/jenova-swap-mount)"
+    exit 1
+fi
+
+MOUNT_DIR="/mnt/jenova-models"
+
+validate_size() {
+    local size="$1"
+    case "$size" in
+    *[!0-9G]*) return 1 ;;
+    [0-9]*G) return 0 ;;
+    *) return 1 ;;
+    esac
+}
+
+SIZE="${1:-9G}"
+if ! validate_size "$SIZE"; then
+    echo "Error: Invalid size format for '$SIZE'. Use format like '8G'." >&2
+    exit 1
+fi
+
+if mount | grep -q "on $MOUNT_DIR "; then
+    _CURRENT_SIZE=$(df -m "$MOUNT_DIR" | tail -1 | awk '{print $2}')
+    _TARGET_MB=$(echo "$SIZE" | sed 's/G//' | awk '{printf "%d", $1 * 1024}')
+    if [ "$_CURRENT_SIZE" -eq "$_TARGET_MB" ] 2>/dev/null; then
+        echo "$MOUNT_DIR already mounted at $SIZE."
+        exit 0
+    fi
+    echo "$MOUNT_DIR mounted but wrong size ($(df -h "$MOUNT_DIR" | tail -1 | awk '{print $2}') != $SIZE)"
+    echo "Backing up model files before resize..."
+    _BACKUP_DIR=$(mktemp -d /tmp/jenova-models-backup.XXXXXX)
+    if [ -n "$(ls -A "$MOUNT_DIR" 2>/dev/null)" ]; then
+        cp -a "$MOUNT_DIR"/* "$_BACKUP_DIR"/
+        echo "Backed up to $_BACKUP_DIR"
+    fi
+    echo "Unmounting old mdmfs..."
+    umount "$MOUNT_DIR"
+    echo "Creating new ${SIZE} mdmfs..."
+    mdmfs -S -s "$SIZE" md "$MOUNT_DIR"
+    chmod 775 "$MOUNT_DIR"
+    if [ -n "$(ls -A "$_BACKUP_DIR" 2>/dev/null)" ]; then
+        echo "Restoring model files..."
+        cp -a "$_BACKUP_DIR"/* "$MOUNT_DIR"/
+        rm -rf "$_BACKUP_DIR"
+        echo "Models restored to resized mount."
+    fi
+    echo "Success! $MOUNT_DIR remounted at $SIZE."
+else
+    echo "Creating swap-backed filesystem at $MOUNT_DIR (Size: $SIZE)..."
+    mkdir -p "$MOUNT_DIR"
+    mdmfs -S -s "$SIZE" md "$MOUNT_DIR"
+    chmod 775 "$MOUNT_DIR"
+    echo "Success! $MOUNT_DIR is now mounted on swap."
+fi
+echo ""
+echo "To use this with Jenova:"
+echo "1. Move or symlink your active .gguf models into $MOUNT_DIR"
+echo "   (e.g., cp models/*.gguf $MOUNT_DIR/)"
+echo "2. Update your JENOVA_MODEL path in etc/jenova.conf, or create a symlink"
+echo "   from $MOUNT_DIR into the models/agent directory."
+echo ""
+echo "To make this mount permanent across reboots, add the following to /etc/fstab:"
+echo "md $MOUNT_DIR mfs rw,-S,-s$SIZE 2 0"

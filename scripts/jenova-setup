@@ -1,0 +1,153 @@
+#!/bin/sh
+
+# jenova-setup: One-time system configuration for Jenova Cognitive Architecture
+# Run with: sudo ./jenova-setup [--profile <name>]
+#
+# This is a hardware-aware dispatcher. It detects your system hardware using
+# detect-hardware.sh and runs the matched profile's jenova-setup script,
+# which applies profile-specific kernel tuning (sysctls, swap, ZFS ARC, etc.)
+#
+# Options:
+#   --profile <name>   Skip auto-detection and use a specific profile
+#   --list             Show available profiles and detection results
+#   --info             Show detected hardware information
+#
+# Hardware profiles are in: hardware-profiles/<Category>/<gpu_type>/<name>/jenova-setup
+
+set -e
+
+SCRIPT_DIR="$(dirname "$(dirname "$(realpath "$0")")")"
+DETECT="$SCRIPT_DIR/hardware-profiles/detect-hardware.sh"
+
+# Colours
+if [ -t 1 ]; then
+    _G="\033[0;32m"; _Y="\033[0;33m"; _R="\033[0;31m"; _B="\033[1;34m"; _N="\033[0m"
+else
+    _G=""; _Y=""; _R=""; _B=""; _N=""
+fi
+
+ok()   { printf "${_G}  OK${_N}  %s\n" "$1"; }
+warn() { printf "${_Y} WARN${_N}  %s\n" "$1"; }
+info() { printf "${_B} INFO${_N}  %s\n" "$1"; }
+fail() { printf "${_R} FAIL${_N}  %s\n" "$1"; }
+
+FORCE_PROFILE=""
+
+# Require a non-empty, non-flag value after an option; exits with a clear message otherwise.
+require_arg() {
+    if [ -z "$2" ] || [ "${2#--}" != "$2" ]; then
+        echo "Error: $1 requires a value" >&2
+        exit 1
+    fi
+}
+
+# Parse arguments
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --profile)
+            shift
+            require_arg "--profile" "$1"
+            FORCE_PROFILE="$1"
+            shift
+            ;;
+        --list)
+            if [ -x "$DETECT" ]; then
+                "$DETECT" --list
+            else
+                echo "Error: detect-hardware.sh not found at $DETECT" >&2
+                exit 1
+            fi
+            exit 0
+            ;;
+        --info)
+            if [ -x "$DETECT" ]; then
+                "$DETECT" --info
+            else
+                echo "Error: detect-hardware.sh not found at $DETECT" >&2
+                exit 1
+            fi
+            exit 0
+            ;;
+        -h|--help)
+            sed -n '2,15p' "$0"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "Error: must run as root (sudo ./jenova-setup)" >&2
+    exit 1
+fi
+
+echo ""
+printf "${_B}╔══════════════════════════════════════════════════════╗${_N}\n"
+printf "${_B}║  Jenova Cognitive Architecture — System Setup        ║${_N}\n"
+printf "${_B}╚══════════════════════════════════════════════════════╝${_N}\n"
+echo ""
+
+# Determine which profile to use
+PROFILE_DIR=""
+PROFILE_NAME=""
+
+if [ -n "$FORCE_PROFILE" ]; then
+    # Reject path traversal in profile name (allow / for nested paths but block ..)
+    case "$FORCE_PROFILE" in
+        /*|..*|.*|*/..*|*/../*) fail "Invalid profile name: '$FORCE_PROFILE' (path traversal not allowed)"; exit 1 ;;
+    esac
+    PROFILE_DIR="$SCRIPT_DIR/hardware-profiles/$FORCE_PROFILE"
+    PROFILE_NAME="$FORCE_PROFILE"
+    if [ ! -d "$PROFILE_DIR" ]; then
+        fail "Profile '$FORCE_PROFILE' not found in hardware-profiles/"
+        info "Available profiles:"
+        for _pc in "$SCRIPT_DIR/hardware-profiles"/*/*/*/profile.conf; do
+            [ -f "$_pc" ] && echo "    ${_pc#"$SCRIPT_DIR/hardware-profiles"/}" | sed 's|/profile.conf||'
+        done
+        exit 1
+    fi
+else
+    # Auto-detect hardware
+    if [ ! -x "$DETECT" ]; then
+        fail "detect-hardware.sh not found or not executable"
+        info "Run: chmod +x $DETECT"
+        exit 1
+    fi
+
+    info "Detecting system hardware..."
+    PROFILE_NAME=$("$DETECT" 2>/dev/null) || true
+
+    if [ -z "$PROFILE_NAME" ] || [ "$PROFILE_NAME" = "unknown" ]; then
+        fail "No matching hardware profile found for this system"
+        echo ""
+        info "Detected hardware:"
+        "$DETECT" --info 2>/dev/null || true
+        echo ""
+        info "Available profiles:"
+        "$DETECT" --list 2>/dev/null || true
+        echo ""
+        info "You can force a profile: sudo ./jenova-setup --profile <name>"
+        exit 1
+    fi
+
+    PROFILE_DIR="$SCRIPT_DIR/hardware-profiles/$PROFILE_NAME"
+fi
+
+PROFILE_SETUP="$PROFILE_DIR/jenova-setup"
+
+if [ ! -f "$PROFILE_SETUP" ]; then
+    fail "Profile '$PROFILE_NAME' has no jenova-setup script"
+    info "Expected: $PROFILE_SETUP"
+    exit 1
+fi
+
+ok "Matched profile: $PROFILE_NAME"
+info "Running profile-specific system setup..."
+echo ""
+
+# Execute the profile's jenova-setup
+# Pass through to the profile script — it handles sysctl, ZFS, driver checks, etc.
+exec sh "$PROFILE_SETUP"

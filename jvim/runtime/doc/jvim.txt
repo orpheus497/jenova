@@ -1,0 +1,205 @@
+*jvim.txt*    jvim                                      *jvim* *Jvim* *jvim-start*
+
+
+                              JVIM REFERENCE MANUAL
+
+
+jvim — the editor frontend of the Jenova Cognitive Architecture.
+
+                                      Type |gO| to see the table of contents.
+
+==============================================================================
+Quick Start                                             *jvim-quick-start*
+
+If you are new to the Jenova environment:
+
+1. Run `:Tutor` to start the "Jenova Flight School" tutorial.
+2. Run `:IDE` to set up the standard multi-panel layout.
+3. Use `<leader>am` to open the Jenova Monitor.
+4. Use `<leader>ta` to talk to the Jenova Agent.
+
+==============================================================================
+Introduction                                            *jvim-introduction*
+
+jvim is the dedicated editor frontend of the Jenova Cognitive Architecture — 
+a FreeBSD-first, low-latency, hardware-aware AI environment built around 
+llama.cpp with dual Vulkan GPU offload, LuaJIT, and Optane-backed paging.
+
+The cognitive backend (llama-server, the LuaJIT `proxy.lua` intelligence
+layer, the embedding daemon, and the `jenova-ca` supervisor) lives in the
+companion repository:
+
+        https://github.com/orpheus497/jenova
+
+That repository also carries the Jenova configuration (under `nvim/`) and the
+`jvim` launcher that drives this editor.
+
+==============================================================================
+Relationship to upstream Neovim                         *jvim-upstream*
+
+jvim tracks upstream Neovim via `vim-patch` merges. The editor core, API,
+runtime library, and the TUI are identical in capability to the corresponding
+Neovim release. The fork changes three surface areas:
+
+1. Branding — version string, intro screen, and reference manual title.
+2. Identity — the Help page you are reading and related cross-references.
+3. Defaults and documentation around Jenova-specific usage patterns.
+
+It does NOT change Lua APIs, the remote API, the plugin host, the editor
+event loop, or any file format. Existing Neovim plugins and configurations
+continue to work unmodified.
+
+Going forward, jvim-native plugins for Jenova will be developed directly in
+this repository (under `runtime/`) instead of relying on external Neovim
+plugins. See `PLUGINS.md` for details.
+
+When reporting core editor bugs, always try to reproduce against a clean
+upstream Neovim first so that regressions introduced by the jvim fork are
+easy to separate from upstream behavior. See |jvim-bugs|.
+
+==============================================================================
+Launching via jvim                                      *jvim-launch* *IDE*
+
+The editor is designed to be launched through the Jenova project's `bin/jvim`
+wrapper script, which:
+
+- Starts the Jenova CA backend if it is not already running (and stops it on
+  exit only if this invocation started it).
+- Exports the environment variables the Jenova plugins read at startup:
+  `JENOVA_CONNECT_HOST`, `JENOVA_PORT`, `JENOVA_LLAMA_PORT`,
+  `JENOVA_LLAMA_EMBED_PORT`, `JENOVA_ROOT`, `JENOVA_API_URL`.
+- Sets `LD_LIBRARY_PATH` so llama.cpp shared libraries are resolved by
+  child processes spawned from inside the editor.
+- Launches the `jvim` binary (this editor) with the full Jenova environment.
+
+Usage: >
+
+        jvim [files...]
+        jvim --remote <host> [--remote-port <p>] [--llama-port <p>]
+             [--embed-port <p>] [files...]
+        jvim --no-backend [files...]
+        jvim --check
+<
+In remote mode, `jvim` does not start a local backend. It exports
+`JENOVA_LAN_MODE=1` and connects to a Jenova CA running on the LAN.
+
+`--embed-port <p>` overrides the embedding server port (`JENOVA_LLAMA_EMBED_PORT`).
+Use this when the embedding daemon is not on the default port 8082 — for
+example when multiple Jenova backends share the same host.
+
+`--no-backend` exports the Jenova environment but skips starting `jenova-ca`,
+which is useful for inspecting state when the daemon is supervised externally.
+
+`--check` prints the resolved `JENOVA_*` environment and the detected editor
+binary version, then exits without launching the editor. The wrapper also
+warns (but does not fail) when the resolved editor binary is not jvim,
+since jvim-specific behaviour will be unavailable.
+
+Set `JVIM_BIN=/path/to/jvim` to point the wrapper at a non-PATH editor build.
+
+                                                        *jvim-direct*
+You can launch `jvim` directly without the Jenova wrapper. When you do, the
+Jenova configuration will fall back to |:JenovaLanScan| to discover a running
+backend. Several RAG features remain unavailable until one is located.
+
+==============================================================================
+Environment variables                                   *jvim-env*
+
+The Jenova plugins and the CA backend both read the same environment
+variables. See the Jenova project README for the full list. The variables the
+editor frontend most commonly cares about are:
+
+*$JENOVA_ROOT*                  Project root directory. Auto-detected by
+                                `jvim` and the backend; rarely needs to be
+                                set by hand.
+*$JENOVA_CONNECT_HOST*          Client connect address. Defaults to
+                                `127.0.0.1`. Wildcard bind addresses are
+                                auto-mapped.
+*$JENOVA_PORT*                  Port for the Jenova intelligence proxy
+                                (default `8080`). Chat completions and RAG
+                                go through this.
+*$JENOVA_LLAMA_PORT*            Port for the llama-server inference endpoint
+                                (default `8081`). FIM / infill completions
+                                go here.
+*$JENOVA_LLAMA_EMBED_PORT*      Port for the CPU-only nomic-embed-text
+                                server (default `8082`). Used by the
+                                monitor and RAG.
+*$JENOVA_API_URL*               Full proxy URL (e.g.
+                                `http://127.0.0.1:8080`) as computed by
+                                `jvim` from the above.
+*$JENOVA_LAN_SCAN*              Set to `0` to disable automatic
+                                |:JenovaLanScan| when launching bare
+                                `jvim`.
+*$JENOVA_LAN_MODE*              Set to `1` by `jvim --remote` to indicate
+                                that no local backend should be started.
+
+==============================================================================
+Commands                                                *jvim-commands*
+
+The following user commands are registered by the shipped jvim runtime
+(`runtime/lua/jvim_ide.lua`) and back onto the optional `jenova.*` Lua
+modules from the companion Jenova repository. The commands are always
+defined; their effect degrades gracefully when the Jenova modules are
+absent (standalone install).
+
+                                                        *:JenovaMonitor* *JenovaMonitor*
+:JenovaMonitor          Open a floating window showing real-time backend
+                        status and inference metrics:
+
+                          Services — `proxy:8080`, `llama:8081`, `embed:8082`
+                          Model    — loaded model name and GPU layer count
+                          Inference — slot utilization, context usage,
+                                      KV cache tokens, predicted tokens
+                          Connection — host, last poll time
+
+                        Inside the monitor window:
+                          `r`       Refresh immediately
+                          `q` `<Esc>` Close
+
+                                                        *:JenovaLanScan* *JenovaLanScan*
+:JenovaLanScan          Scan the local network for a Jenova CA instance and
+                        auto-connect to the first one discovered. Useful when
+                        you launched `jvim` directly instead of through
+                        the `bin/jvim` wrapper, or when the local
+                        backend is not running.
+
+==============================================================================
+Backend architecture (summary)                          *jvim-backend*
+
+When the editor runs under `jvim`, three persistent daemon processes back it:
+
+1. `llama-server` on port 8081 — main inference engine with dual Vulkan GPU
+   auto-fit offload (the `-fitt` flag distributes transformer layers across
+   `Vulkan0` / `Vulkan1`).
+2. `proxy.lua` on port 8080 — LuaJIT non-blocking I/O loop with coroutine
+   connection multiplexing, RAG injection, and intent routing.
+3. `llama-server --embedding` on port 8082 — CPU-only nomic-embed-text server
+   used for semantic search and RAG.
+
+All three processes are managed as a unit by `jenova-ca` with 3-PID tracking.
+The Jenova project README covers hardware profiles, model roles, speculative
+decoding, and tuning in depth.
+
+==============================================================================
+Reporting problems                                      *jvim-bugs*
+
+File issues against the jvim project:
+
+        https://github.com/orpheus497/jvim/issues
+
+Please include:
+
+- Editor version (`:version` or `jvim --version`) so the fork revision is
+  visible.
+- Whether the problem reproduces with `jvim --clean` vs. with the full
+  Jenova configuration.
+- Backend logs if the issue involves inference, RAG, or the monitor:
+  `var/log/jenova-ca.log` and `var/log/jenova-embed.log` in the Jenova repo.
+
+==============================================================================
+See also                                                *jvim-see-also*
+
+|intro.txt|     General introduction and reference entry point
+|news|          Release notes for the editor core
+
+ vim:tw=78:ts=8:sw=4:sts=4:et:ft=help:norl:
