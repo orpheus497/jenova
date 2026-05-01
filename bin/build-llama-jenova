@@ -18,7 +18,13 @@
 set -eu
 
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
-JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
+JENOVA_ROOT="${JENOVA_ROOT:-$(dirname "$SCRIPT_DIR")}"
+
+if [ ! -d "$JENOVA_ROOT" ]; then
+    echo "Error: JENOVA_ROOT ($JENOVA_ROOT) is not a valid directory." >&2
+    exit 1
+fi
+
 LLAMA_DIR="$JENOVA_ROOT/llama.cpp"
 BUILD_DIR="${JENOVA_BUILD_DIR:-$LLAMA_DIR/build}"
 LOCAL_CONF_ETC="$JENOVA_ROOT/etc/jenova.local.conf"

@@ -14,18 +14,6 @@
 #   make install    # Run scripts/install.sh (system-aware deploy)
 #   make clean      # Remove build artifacts from both components
 
-# Detect OS to use correct make command (FreeBSD requires gmake for jvim)
-UNAME_S != uname -s 2>/dev/null || echo unknown
-.if $(UNAME_S) == "FreeBSD"
-GMAKE != command -v gmake 2>/dev/null || echo ""
-.if empty(GMAKE)
-.error "FreeBSD requires 'gmake' to build jvim. Please run 'pkg install gmake'"
-.endif
-SUBMAKE = $(GMAKE)
-.else
-SUBMAKE = $(MAKE)
-.endif
-
 .PHONY: all llama jvim mcsh install clean help clean-root
 
 all: llama jvim mcsh
@@ -42,9 +30,15 @@ jvim:
 	@if [ ! -f jvim/CMakeLists.txt ]; then \
 		echo "ERROR: jvim/ source tree missing." >&2; exit 1; \
 	fi
-	@$(SUBMAKE) -C jvim \
-		CMAKE_BUILD_TYPE=RelWithDebInfo \
-		CMAKE_INSTALL_PREFIX="$(CURDIR)/jvim/install"
+	@if [ "$$(uname -s)" = "FreeBSD" ]; then \
+		if ! command -v gmake >/dev/null 2>&1; then \
+			echo "FreeBSD requires 'gmake' to build jvim. Please run 'pkg install gmake'" >&2; \
+			exit 1; \
+		fi; \
+		gmake -C jvim CMAKE_BUILD_TYPE=RelWithDebInfo CMAKE_INSTALL_PREFIX="$(CURDIR)/jvim/install"; \
+	else \
+		$(MAKE) -C jvim CMAKE_BUILD_TYPE=RelWithDebInfo CMAKE_INSTALL_PREFIX="$(CURDIR)/jvim/install"; \
+	fi
 	@echo "   jvim built: jvim/build/bin/nvim"
 
 mcsh:
@@ -53,7 +47,18 @@ mcsh:
 		echo "ERROR: mcsh/ source tree missing." >&2; exit 1; \
 	fi
 	@mkdir -p mcsh/build
-	@cd mcsh/build && ../configure && $(SUBMAKE)
+	@if [ ! -f mcsh/build/Makefile ]; then \
+		cd mcsh/build && ../configure; \
+	fi
+	@if [ "$$(uname -s)" = "FreeBSD" ]; then \
+		if ! command -v gmake >/dev/null 2>&1; then \
+			echo "FreeBSD requires 'gmake' to build mcsh. Please run 'pkg install gmake'" >&2; \
+			exit 1; \
+		fi; \
+		cd mcsh/build && gmake; \
+	else \
+		cd mcsh/build && $(MAKE); \
+	fi
 	@cp mcsh/build/mcsh bin/mcsh
 	@echo "   mcsh built: bin/mcsh"
 

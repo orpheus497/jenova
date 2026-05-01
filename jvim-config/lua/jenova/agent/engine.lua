@@ -120,7 +120,10 @@ function M:query(user_message, provider)
     -- and simultaneously calls on_chunk (which is self.on_text) per delta.
     local content = provider.generate_request(request, self.on_text)
 
-    local tool_uses = parse_tool_calls(content)
+    local tool_uses = {}
+    if vim.g.jenova_tools_enabled ~= false then
+      tool_uses = parse_tool_calls(content)
+    end
 
     if #tool_uses == 0 then
       -- Pure text response — content was already streamed chunk by chunk via on_text.

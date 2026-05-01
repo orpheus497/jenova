@@ -5,6 +5,8 @@
 # --- Build Artifacts ---
 /llama.cpp/build/
 /llama.cpp/bin/
+/mcsh/build/
+/mcsh/autom4te.cache/
 /cli-agent/build/
 /cli-agent/build_test/
 # Bundled jvim editor — build & install artifacts
