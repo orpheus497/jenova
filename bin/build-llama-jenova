@@ -185,7 +185,7 @@ GENERATED_TENSOR_SPLIT=""
 append_devices() {
     _prefix=$1
     _count=$2
-    [ "$_count" -le 0 ] && _count=1
+    [ "$_count" -le 0 ] && return
     _i=0
     while [ "$_i" -lt "$_count" ]; do
         if [ -n "$DEVICES" ]; then DEVICES="$DEVICES,"; fi
@@ -199,6 +199,8 @@ if [ "$ENABLE_VULKAN" -eq 1 ]; then
     if command -v vulkaninfo >/dev/null 2>&1; then
         _vcount=$(vulkaninfo --summary 2>/dev/null | grep -c "GPU[0-9]:")
     fi
+    # Fallback if ENABLE_VULKAN is set but vulkaninfo finds nothing, assume at least one
+    if [ "$_vcount" -eq 0 ]; then _vcount=1; fi
     append_devices "Vulkan" "$_vcount"
 fi
 
@@ -207,11 +209,9 @@ if [ "$ENABLE_CUDA" -eq 1 ]; then
     if command -v nvidia-smi >/dev/null 2>&1; then
         _ccount=$(nvidia-smi -L 2>/dev/null | grep -c "GPU [0-9]:")
     fi
-    if [ "$_ccount" -eq 0 ] && echo "$DEVICES" | grep -q "CUDA"; then
-        : # Already has CUDA? (unlikely given prefix logic)
-    else
-        append_devices "CUDA" "$_ccount"
-    fi
+    # Fallback if ENABLE_CUDA is set but nvidia-smi finds nothing, assume at least one
+    if [ "$_ccount" -eq 0 ]; then _ccount=1; fi
+    append_devices "CUDA" "$_ccount"
 fi
 
 cat > "$LOCAL_CONF" <<EOF
