@@ -46,7 +46,7 @@ fi
 # jenova-ca performs mandatory checks for LLAMA_SERVER and the model file before
 # reaching the status case; skip on a fresh clone where build artifacts are absent.
 _T4_SERVER="${LLAMA_SERVER:-$ROOT/llama.cpp/build/bin/llama-server}"
-_T4_MODEL="${JENOVA_MODEL:-${MODEL_7B:-}}"
+_T4_MODEL="${JENOVA_MODEL:-${MODEL_AGENT:-}}"
 if [ ! -f "$_T4_SERVER" ] || [ -z "$_T4_MODEL" ] || [ ! -f "$_T4_MODEL" ]; then
     ok "T4: jenova-ca status (SKIPPED — build artifacts not present)"
 elif "$ROOT/bin/jenova-ca" status >/dev/null 2>&1; then
