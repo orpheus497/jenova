@@ -87,7 +87,14 @@ case "$BACKEND" in
         ;;
     auto)
         if [ "$JENOVA_OS" = "macos" ]; then
-            ENABLE_METAL=1
+            if [ "$JENOVA_ARCH" = "aarch64" ]; then
+                ENABLE_METAL=1
+            else
+                # Intel Mac: use Vulkan if available, else CPU
+                if [ "${JENOVA_VULKAN_OK:-0}" = "1" ]; then
+                    ENABLE_VULKAN=1
+                fi
+            fi
         else
             if command -v vulkaninfo >/dev/null 2>&1 && vulkaninfo --summary 2>/dev/null | grep -q "deviceName"; then
                 ENABLE_VULKAN=1
