@@ -582,118 +582,17 @@ fi
 # ---------------------------------------------------------------------------
 if [ "$CLIENT_ONLY" = "1" ]; then
     info "Skipping model checks (--client-only — models live on the remote host)"
-    . "$JENOVA_ROOT/etc/jenova.conf" 2>/dev/null || true
 else
-info "Checking model files..."
-. "$JENOVA_ROOT/etc/jenova.conf" 2>/dev/null || true
-
-# Determine which download tool is available
-_DL_CMD=""
-if command -v curl >/dev/null 2>&1; then
-    _DL_CMD="curl"
-elif command -v fetch >/dev/null 2>&1; then
-    _DL_CMD="fetch"
-fi
-
-# Download a model file if missing. Args: path, name, url, size_hint [, required]
-# Pass required=1 for models that are mandatory; failures increment ERRORS.
-# Optional/recommended models (default) increment WARNINGS on failure so a
-# transient download problem does not mark the whole install as failed.
-download_model() {
-    _path="$1"; _name="$2"; _url="$3"; _size="$4"; _required="${5:-0}"
-    if [ -f "$_path" ]; then
-        ok "$_name ($(basename "$_path"))"
-        return 0
-    fi
-    if [ -z "$_DL_CMD" ]; then
-        warn "$_name not found at $_path"
-        warn "  Install curl or fetch, then re-run install.sh to auto-download"
-        if [ "$_required" = "1" ]; then ERRORS=$((ERRORS + 1)); else WARNINGS=$((WARNINGS + 1)); fi
-        return 0
-    fi
-    warn "$_name not found at $_path"
-    printf "  Download %s (~%s)? [y/N] " "$(basename "$_path")" "$_size"
-    read -r _ans
-    case "$_ans" in
-        y|Y|yes|YES)
-            mkdir -p "$(dirname "$_path")"
-            info "Downloading $(basename "$_path") (~$_size) ..."
-            _tmp=$(mktemp "${_path}.tmp.XXXXXX")
-            _dl_timeout="${JENOVA_DL_TIMEOUT:-14400}"
-            if [ "$_DL_CMD" = "curl" ]; then
-                if ! curl -L --fail --max-time "$_dl_timeout" --connect-timeout 30 --progress-bar -o "$_tmp" "$_url"; then
-                    rm -f "$_tmp"
-                    fail "Download failed for $_name"
-                    if [ "$_required" = "1" ]; then ERRORS=$((ERRORS + 1)); else WARNINGS=$((WARNINGS + 1)); fi
-                    return 0
-                fi
-            else
-                if ! fetch -T "$_dl_timeout" -o "$_tmp" "$_url"; then
-                    rm -f "$_tmp"
-                    fail "Download failed for $_name"
-                    if [ "$_required" = "1" ]; then ERRORS=$((ERRORS + 1)); else WARNINGS=$((WARNINGS + 1)); fi
-                    return 0
-                fi
-            fi
-            if [ -s "$_tmp" ]; then
-                mv "$_tmp" "$_path"
-                ok "$_name downloaded successfully"
-                return 0
-            else
-                rm -f "$_tmp"
-                fail "Download failed for $_name (empty file)"
-                if [ "$_required" = "1" ]; then ERRORS=$((ERRORS + 1)); else WARNINGS=$((WARNINGS + 1)); fi
-                return 0
-            fi
-            ;;
-        *)
-            warn "Skipping $_name download"
-            if [ "$_required" = "1" ]; then ERRORS=$((ERRORS + 1)); else WARNINGS=$((WARNINGS + 1)); fi
-            return 0
-            ;;
-    esac
-}
-
-# Agent model (required) - downloads to models/agent/
-_agent_model="${MODEL_PATH:-${JENOVA_MODEL:-$JENOVA_ROOT/models/agent/Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf}}"
-download_model "$_agent_model" \
-    "Agent model (Qwen2.5-Coder-7B-Instruct)" \
-    "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q5_k_m.gguf" \
-    "5.1GB" \
-    "1"
-
-# Ensure Neovim health check default model path stays in sync.
-# When JENOVA_MODEL is unset, Neovim expects $JENOVA_ROOT/models/jenova.gguf.
-# Create or refresh a symlink pointing to the chosen agent model path.
-if [ -f "$_agent_model" ]; then
-    _jenova_link="$JENOVA_ROOT/models/jenova.gguf"
-    mkdir -p "$(dirname "$_jenova_link")"
-    if [ -L "$_jenova_link" ] || [ ! -e "$_jenova_link" ]; then
-        ln -sf "$_agent_model" "$_jenova_link"
-        ok "Symlinked models/jenova.gguf -> $(basename "$_agent_model")"
+    if [ -x "$JENOVA_ROOT/scripts/model_dl.sh" ]; then
+        "$JENOVA_ROOT/scripts/model_dl.sh" "$_PROFILE" || {
+            warn "Model download process was incomplete or skipped."
+            WARNINGS=$((WARNINGS + 1))
+        }
+    else
+        warn "Model download script not found at scripts/model_dl.sh"
+        WARNINGS=$((WARNINGS + 1))
     fi
 fi
-
-# Embedding model (recommended for RAG) - downloads to models/embed/
-download_model "${MODEL_EMBED:-$JENOVA_ROOT/models/embed/nomic-embed-text-v1.5.Q8_0.gguf}" \
-    "Embedding model (nomic-embed-text-v1.5)" \
-    "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q8_0.gguf" \
-    "134MB"
-
-# Draft model (optional — enables speculative decoding for ~1.5-2x speedup) - downloads to models/draft/
-_draft_path="${MODEL_DRAFT:-$JENOVA_ROOT/models/draft/Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf}"
-if [ -f "$_draft_path" ]; then
-    ok "Draft model — speculative decoding enabled"
-else
-    download_model "$_draft_path" \
-        "Draft model (Qwen2.5-Coder-0.5B)" \
-        "https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q8_0.gguf" \
-        "530MB"
-    if [ ! -f "$_draft_path" ]; then
-        warn "Speculative decoding disabled without draft model (set JENOVA_DRAFT=0 in conf)"
-    fi
-fi
-fi  # CLIENT_ONLY model-checks guard
 
 # ---------------------------------------------------------------------------
 # 7. Neovim config installation
