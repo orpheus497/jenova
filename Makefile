@@ -14,7 +14,7 @@
 #   make install    # Run scripts/install.sh (system-aware deploy)
 #   make clean      # Remove build artifacts from both components
 
-.PHONY: all llama jvim mcsh install clean help clean-root
+.PHONY: all llama llama-hybrid jvim mcsh install clean help clean-root
 
 all: llama jvim mcsh
 	@echo ""
@@ -24,6 +24,10 @@ all: llama jvim mcsh
 llama:
 	@echo "🔨 Building llama.cpp (Vulkan)..."
 	@./bin/build-llama-jenova
+
+llama-hybrid:
+	@echo "🔨 Building llama.cpp (Vulkan + CUDA)..."
+	@./bin/build-llama-hybrid
 
 jvim:
 	@echo "🔨 Building jvim (in-tree editor)..."
@@ -80,6 +84,7 @@ help:
 	@echo ""
 	@echo "  make            Build llama.cpp + jvim + mcsh"
 	@echo "  make llama      Build only llama.cpp (Vulkan)"
+	@echo "  make llama-hybrid Build llama.cpp (Vulkan + CUDA)"
 	@echo "  make jvim       Build only the bundled jvim editor"
 	@echo "  make mcsh       Build only the mcsh shell"
 	@echo "  make clean-root Remove build artifacts from the root directory"

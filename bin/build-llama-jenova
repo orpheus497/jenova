@@ -191,16 +191,17 @@ if [ "$ENABLE_VULKAN" -eq 1 ]; then
                 DEVICES="${DEVICES}Vulkan$i"
                 i=$((i + 1))
             done
-        else
+        elif [ "$_vcount" -eq 1 ]; then
             DEVICES="Vulkan0"
         fi
-    else
-        DEVICES="Vulkan0"
     fi
+    # Fallback if vulkaninfo is missing but library was found
+    if [ -z "$DEVICES" ]; then DEVICES="Vulkan0"; fi
 fi
 
-if [ "$ENABLE_CUDA" -eq 1 ] && [ -z "$DEVICES" ]; then
-    DEVICES="CUDA0"
+if [ "$ENABLE_CUDA" -eq 1 ]; then
+    if [ -n "$DEVICES" ]; then DEVICES="$DEVICES,"; fi
+    DEVICES="${DEVICES}CUDA0"
 fi
 
 cat > "$LOCAL_CONF" <<EOF
