@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # jenova-manager.sh: TUI manager for this monorepo
 #
-# All four components — Jenova Core (backend + scripts), the bundled jvim
-# editor, the cli-agent, and llama.cpp — live inside this repository. This
-# manager dispatches install / update / uninstall actions to the in-tree
+# All components — Jenova Core (backend + scripts), the bundled jvim
+# editor, and llama.cpp — live inside this repository. This manager
+# dispatches install / update / uninstall actions to the in-tree
 # Makefile targets and helper scripts. Nothing is cloned from external repos.
 
 set -e
@@ -35,10 +35,6 @@ check_jvim() {
     # In-tree build is the canonical install; PATH binary is a secondary check.
     [ -x "$JENOVA_ROOT/jvim/build/bin/nvim" ] || \
         ( command -v jvim >/dev/null 2>&1 && jvim --version 2>/dev/null | grep -q 'JVIM' )
-}
-
-check_jenova_cli() {
-    [ -x "$JENOVA_ROOT/cli-agent/build/cli-agent" ] || command -v jenova-cli >/dev/null 2>&1
 }
 
 resolve_llama_server_path() {
@@ -98,12 +94,6 @@ check_jenova_core() {
     [ "$(realpath "$installed_path")" = "$expected_path" ]
 }
 
-# Build the in-tree jenova-cli (sources live under cli-agent/; the user-facing
-# launcher is bin/jenova which execs cli-agent/build/cli-agent).
-_jenova_cli_build() {
-    "$MAKE" -C "$JENOVA_ROOT/cli-agent"
-}
-
 # Temporary file to store dialog selections
 TEMP_FILE=$(mktemp)
 trap 'rm -f "$TEMP_FILE"' EXIT INT TERM
@@ -130,19 +120,16 @@ show_main_menu() {
 show_install_menu() {
     local status_core="on"
     local status_jvim="on"
-    local status_cli="on"
     local status_llama="on"
 
     check_jenova_core && status_core="off"
     check_jvim && status_jvim="off"
-    check_jenova_cli && status_cli="off"
     check_llama && status_llama="off"
 
     if ! $DIALOG --clear --title "Install Jenova Components" \
-        --checklist "Select components to install (already installed items are unchecked):" 15 60 4 \
+        --checklist "Select components to install (already installed items are unchecked):" 15 60 3 \
         "Jenova_Core" "Jenova CA and backend scripts" "$status_core" \
         "jvim" "Editor / IDE (requires sudo)" "$status_jvim" \
-        "jenova-cli" "Terminal agent" "$status_cli" \
         "llama.cpp" "Inference engine" "$status_llama" 2> "$TEMP_FILE"; then
         show_main_menu
         return
@@ -163,7 +150,6 @@ show_install_menu() {
             if case "$item" in
                 "Jenova_Core") install_jenova_core ;;
                 "jvim") install_jvim ;;
-                "jenova-cli") install_jenova_cli ;;
                 "llama.cpp") install_llama ;;
                 *) false ;;
             esac
@@ -183,19 +169,16 @@ show_install_menu() {
 show_update_menu() {
     local status_core="off"
     local status_jvim="off"
-    local status_cli="off"
     local status_llama="off"
 
     check_jenova_core && status_core="on"
     check_jvim && status_jvim="on"
-    check_jenova_cli && status_cli="on"
     check_llama && status_llama="on"
 
     if ! $DIALOG --clear --title "Update Jenova Components" \
-        --checklist "Select components to update:" 15 60 4 \
+        --checklist "Select components to update:" 15 60 3 \
         "Jenova_Core" "Jenova CA and backend scripts" "$status_core" \
         "jvim" "Editor / IDE" "$status_jvim" \
-        "jenova-cli" "Terminal agent" "$status_cli" \
         "llama.cpp" "Inference engine" "$status_llama" 2> "$TEMP_FILE"; then
         show_main_menu
         return
@@ -216,7 +199,6 @@ show_update_menu() {
             if case "$item" in
                 "Jenova_Core") update_jenova_core ;;
                 "jvim") update_jvim ;;
-                "jenova-cli") update_jenova_cli ;;
                 "llama.cpp") update_llama ;;
                 *) false ;;
             esac
@@ -236,19 +218,16 @@ show_update_menu() {
 show_uninstall_menu() {
     local status_core="off"
     local status_jvim="off"
-    local status_cli="off"
     local status_llama="off"
 
     check_jenova_core && status_core="on"
     check_jvim && status_jvim="on"
-    check_jenova_cli && status_cli="on"
     check_llama && status_llama="on"
 
     if ! $DIALOG --clear --title "Uninstall Jenova Components" \
-        --checklist "Select components to uninstall:" 15 60 4 \
+        --checklist "Select components to uninstall:" 15 60 3 \
         "Jenova_Core" "Jenova CA and backend scripts" "$status_core" \
         "jvim" "Editor / IDE" "$status_jvim" \
-        "jenova-cli" "Terminal agent" "$status_cli" \
         "llama.cpp" "Inference engine" "$status_llama" 2> "$TEMP_FILE"; then
         show_main_menu
         return
@@ -269,7 +248,6 @@ show_uninstall_menu() {
             if case "$item" in
                 "Jenova_Core") uninstall_jenova_core ;;
                 "jvim") uninstall_jvim ;;
-                "jenova-cli") uninstall_jenova_cli ;;
                 "llama.cpp") uninstall_llama ;;
                 *) false ;;
             esac
@@ -295,10 +273,6 @@ install_jvim() {
     echo "Building in-tree jvim..."
     "$MAKE" -C "$JENOVA_ROOT" jvim
 }
-install_jenova_cli() {
-    echo "Building in-tree jenova-cli..."
-    _jenova_cli_build
-}
 install_llama() {
     echo "Installing llama.cpp..."
     "$JENOVA_ROOT/bin/build-llama-jenova"
@@ -313,13 +287,6 @@ update_jvim() {
     git -C "$JENOVA_ROOT" pull --ff-only || true
     if $DIALOG --yesno "Rebuild jvim now?" 8 50; then
         "$MAKE" -C "$JENOVA_ROOT" jvim
-    fi
-}
-update_jenova_cli() {
-    echo "Updating jenova-cli (in-tree)..."
-    git -C "$JENOVA_ROOT" pull --ff-only || true
-    if $DIALOG --yesno "Rebuild jenova-cli now?" 8 50; then
-        _jenova_cli_build
     fi
 }
 update_llama() {
@@ -339,11 +306,6 @@ uninstall_jvim() {
     echo "Removing in-tree jvim build artifacts..."
     rm -rf "$JENOVA_ROOT/jvim/build" "$JENOVA_ROOT/jvim/install"
     echo "jvim build artifacts removed."
-}
-uninstall_jenova_cli() {
-    echo "Removing in-tree jenova-cli build artifacts..."
-    rm -rf "$JENOVA_ROOT/cli-agent/build" "$JENOVA_ROOT/cli-agent/build_test"
-    echo "jenova-cli build artifacts removed."
 }
 uninstall_llama() {
     echo "Uninstalling llama.cpp..."
