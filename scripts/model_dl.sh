@@ -10,6 +10,9 @@ set -e
 JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
 export JENOVA_ROOT
 
+# Shared OS/hardware detection and profile loader.
+. "$JENOVA_ROOT/lib/detect-env.sh"
+
 # Colours
 if [ -t 1 ]; then
     _G="\033[0;32m"; _Y="\033[0;33m"; _R="\033[0;31m"; _B="\033[1;34m"; _N="\033[0m"
@@ -49,25 +52,24 @@ DRAFT_URL="https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/
 DRAFT_SIZE="530MB"
 
 # 3. Source Profile Recommendations
-if [ -n "$PROFILE" ] && [ -f "$JENOVA_ROOT/hardware-profiles/$PROFILE/profile.conf" ]; then
-    # Safely extract RECOMMENDED_* variables
+if [ -n "$PROFILE" ]; then
     _P_CONF="$JENOVA_ROOT/hardware-profiles/$PROFILE/profile.conf"
-    _R_AGENT=$(grep "^RECOMMENDED_AGENT_MODEL=" "$_P_CONF" | cut -d'"' -f2 || true)
-    _R_AGENT_URL=$(grep "^RECOMMENDED_AGENT_URL=" "$_P_CONF" | cut -d'"' -f2 || true)
-    _R_EMBED=$(grep "^RECOMMENDED_EMBED_MODEL=" "$_P_CONF" | cut -d'"' -f2 || true)
-    _R_EMBED_URL=$(grep "^RECOMMENDED_EMBED_URL=" "$_P_CONF" | cut -d'"' -f2 || true)
+    if [ -f "$_P_CONF" ]; then
+        # Robustly load profile variables by sourcing after path validation
+        if load_jenova_profile "$_P_CONF"; then
+            [ -n "${RECOMMENDED_AGENT_MODEL:-}" ] && AGENT_FILE="$RECOMMENDED_AGENT_MODEL"
+            [ -n "${RECOMMENDED_AGENT_URL:-}" ] && AGENT_URL="$RECOMMENDED_AGENT_URL"
+            [ -n "${RECOMMENDED_EMBED_MODEL:-}" ] && EMBED_FILE="$RECOMMENDED_EMBED_MODEL"
+            [ -n "${RECOMMENDED_EMBED_URL:-}" ] && EMBED_URL="$RECOMMENDED_EMBED_URL"
+        fi
 
-    [ -n "$_R_AGENT" ] && AGENT_FILE="$_R_AGENT"
-    [ -n "$_R_AGENT_URL" ] && AGENT_URL="$_R_AGENT_URL"
-    [ -n "$_R_EMBED" ] && EMBED_FILE="$_R_EMBED"
-    [ -n "$_R_EMBED_URL" ] && EMBED_URL="$_R_EMBED_URL"
-
-    # Adjust sizes based on known patterns
-    case "$AGENT_FILE" in
-        *9B*) AGENT_SIZE="9.6GB" ;;
-        *4B*) AGENT_SIZE="4.4GB" ;;
-        *3B*) AGENT_SIZE="3.1GB" ;;
-    esac
+        # Adjust sizes based on known patterns
+        case "$AGENT_FILE" in
+            *9B*) AGENT_SIZE="9.6GB" ;;
+            *4B*) AGENT_SIZE="4.4GB" ;;
+            *3B*) AGENT_SIZE="3.1GB" ;;
+        esac
+    fi
 fi
 
 # 4. Download Tool Detection

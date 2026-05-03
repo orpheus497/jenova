@@ -128,7 +128,7 @@ fi
 if [ -n "${JENOVA_NGL_AGENT:-}" ]; then
     NGL_AGENT="$JENOVA_NGL_AGENT"
 else
-    if [ "$ENABLE_VULKAN" -eq 1 ] || [ "$ENABLE_CUDA" -eq 1 ]; then
+    if [ "$ENABLE_VULKAN" -eq 1 ] || [ "$ENABLE_CUDA" -eq 1 ] || [ "$ENABLE_METAL" -eq 1 ]; then
         NGL_AGENT=all
     else
         NGL_AGENT=0
@@ -147,6 +147,8 @@ elif [ "$ENABLE_CUDA" -eq 1 ]; then
     EFFECTIVE_BACKEND="cuda"
 elif [ "$ENABLE_VULKAN" -eq 1 ]; then
     EFFECTIVE_BACKEND="vulkan"
+elif [ "$ENABLE_METAL" -eq 1 ]; then
+    EFFECTIVE_BACKEND="metal"
 else
     EFFECTIVE_BACKEND="cpu"
 fi
@@ -178,6 +180,10 @@ fi
 
 if [ "$ENABLE_CUDA" -eq 1 ]; then
     set -- "$@" -DGGML_CUDA=ON
+fi
+
+if [ "$ENABLE_METAL" -eq 1 ]; then
+    set -- "$@" -DGGML_METAL=ON
 fi
 
 cmake "$@"
@@ -232,6 +238,11 @@ if [ "$ENABLE_CUDA" -eq 1 ]; then
     # Fallback if ENABLE_CUDA is set but nvidia-smi finds nothing, assume at least one
     if [ "$_ccount" -eq 0 ]; then _ccount=1; fi
     append_devices "CUDA" "$_ccount"
+fi
+
+if [ "$ENABLE_METAL" -eq 1 ]; then
+    # On macOS, we typically just use Metal0 for the primary GPU.
+    append_devices "Metal" 1
 fi
 
 # Suggested models for this build type

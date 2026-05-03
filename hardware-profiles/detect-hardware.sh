@@ -107,44 +107,7 @@ detect_storage() {
 # Profile Matching
 # =========================================================================
 
-# load_profile_conf <file> <VAR1> [VAR2 ...]
-# Safely read only simple KEY=VALUE assignments from a profile.conf file
-# without sourcing (executing) it. Only lines matching KEY=VALUE or
-# KEY="VALUE" for an explicitly requested list of variable names are parsed.
-# All other content (shell code, comments, etc.) is ignored.
-load_profile_conf() {
-    _lpc_file="$1"; shift
-    for _lpc_var; do
-        _lpc_val="$(grep -m1 "^${_lpc_var}=" "$_lpc_file" 2>/dev/null | head -n 1)" || true
-        if [ -n "$_lpc_val" ]; then
-            # Strip the KEY= prefix, then strip matching surrounding quotes (single or double)
-            _lpc_val="${_lpc_val#*=}"
-            case "$_lpc_val" in
-                \"*\") _lpc_stripped="${_lpc_val#\"}"
-                       case "$_lpc_stripped" in *\") _lpc_val="${_lpc_stripped%\"}" ;; esac ;;
-                \'*\') _lpc_stripped="${_lpc_val#\'}"
-                       case "$_lpc_stripped" in *\') _lpc_val="${_lpc_stripped%\'}" ;; esac ;;
-            esac
-            # Assign to the named variable via case — avoids eval for security and correctness
-            case "$_lpc_var" in
-                MATCH_CPU)    MATCH_CPU="$_lpc_val" ;;
-                MATCH_GPU_0)  MATCH_GPU_0="$_lpc_val" ;;
-                MATCH_GPU_1)  MATCH_GPU_1="$_lpc_val" ;;
-                MATCH_OS)     MATCH_OS="$_lpc_val" ;;
-                PROFILE_DESC) PROFILE_DESC="$_lpc_val" ;;
-            esac
-        else
-            # Variable not found in config — clear it explicitly
-            case "$_lpc_var" in
-                MATCH_CPU)    MATCH_CPU="" ;;
-                MATCH_GPU_0)  MATCH_GPU_0="" ;;
-                MATCH_GPU_1)  MATCH_GPU_1="" ;;
-                MATCH_OS)     MATCH_OS="" ;;
-                PROFILE_DESC) PROFILE_DESC="" ;;
-            esac
-        fi
-    done
-}
+# load_jenova_profile is provided by lib/detect-env.sh
 
 match_profile() {
     _profile_dir="$1"
@@ -152,18 +115,10 @@ match_profile() {
 
     [ -f "$_profile_conf" ] || return 1
 
-    # Validate that profile.conf is inside our hardware-profiles directory tree
-    # to prevent path traversal or symlink attacks.
-    _real_conf="$(realpath "$_profile_conf" 2>/dev/null)" || return 1
-    case "$_real_conf" in
-        "$SCRIPT_DIR"/*) ;;  # OK — within hardware-profiles/
-        *) printf "WARN: Skipping profile.conf outside expected directory: %s\n" "$_real_conf" >&2; return 1 ;;
-    esac
-
-    # Parse only the known match variables — never source/execute the file.
+    # Robustly load profile variables by sourcing after path validation
+    # (Provided by lib/detect-env.sh)
     MATCH_CPU="" MATCH_GPU_0="" MATCH_GPU_1="" MATCH_OS=""
-    load_profile_conf "$_real_conf" \
-        MATCH_CPU MATCH_GPU_0 MATCH_GPU_1 MATCH_OS
+    load_jenova_profile "$_profile_conf" || return 1
 
     _score=0
 
@@ -258,14 +213,11 @@ print_info() {
         [ -f "$_pconf" ] || continue
         _pdir=$(dirname "$_pconf")
         _pname="${_pdir#"$SCRIPT_DIR"/}"
-        _real_pconf="$(realpath "$_pconf" 2>/dev/null)" || continue
-        case "$_real_pconf" in
-            "$SCRIPT_DIR"/*) ;;
-            *) continue ;;
-        esac
+        
         PROFILE_DESC=""
-        load_profile_conf "$_real_pconf" PROFILE_DESC
+        load_jenova_profile "$_pconf" || continue
         _pdesc="$PROFILE_DESC"
+        
         _pscore=$(match_profile "$_pdir" 2>/dev/null || echo "0")
         if [ "$_pscore" -gt 0 ]; then
             printf "    ${_G}[match: %2d]${_N}  %-40s %s\n" "$_pscore" "$_pname" "$_pdesc"
