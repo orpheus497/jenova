@@ -181,43 +181,36 @@ mkdir -p "$(dirname "$LOCAL_CONF")"
 
 DEVICES=""
 GENERATED_TENSOR_SPLIT=""
+
+append_devices() {
+    _prefix=$1
+    _count=$2
+    [ "$_count" -le 0 ] && _count=1
+    _i=0
+    while [ "$_i" -lt "$_count" ]; do
+        if [ -n "$DEVICES" ]; then DEVICES="$DEVICES,"; fi
+        DEVICES="${DEVICES}${_prefix}${_i}"
+        _i=$((_i + 1))
+    done
+}
+
 if [ "$ENABLE_VULKAN" -eq 1 ]; then
+    _vcount=0
     if command -v vulkaninfo >/dev/null 2>&1; then
         _vcount=$(vulkaninfo --summary 2>/dev/null | grep -c "GPU[0-9]:")
-        if [ "$_vcount" -gt 1 ]; then
-            i=0
-            while [ "$i" -lt "$_vcount" ]; do
-                if [ -n "$DEVICES" ]; then DEVICES="$DEVICES,"; fi
-                DEVICES="${DEVICES}Vulkan$i"
-                i=$((i + 1))
-            done
-        elif [ "$_vcount" -eq 1 ]; then
-            DEVICES="Vulkan0"
-        fi
     fi
-    # Fallback if vulkaninfo is missing but library was found
-    if [ -z "$DEVICES" ]; then DEVICES="Vulkan0"; fi
+    append_devices "Vulkan" "$_vcount"
 fi
 
 if [ "$ENABLE_CUDA" -eq 1 ]; then
+    _ccount=0
     if command -v nvidia-smi >/dev/null 2>&1; then
         _ccount=$(nvidia-smi -L 2>/dev/null | grep -c "GPU [0-9]:")
-        if [ "$_ccount" -gt 1 ]; then
-            i=0
-            while [ "$i" -lt "$_ccount" ]; do
-                if [ -n "$DEVICES" ]; then DEVICES="$DEVICES,"; fi
-                DEVICES="${DEVICES}CUDA$i"
-                i=$((i + 1))
-            done
-        elif [ "$_ccount" -eq 1 ]; then
-            if [ -n "$DEVICES" ]; then DEVICES="$DEVICES,"; fi
-            DEVICES="${DEVICES}CUDA0"
-        fi
     fi
-    # Fallback if nvidia-smi is missing
-    if ! echo "$DEVICES" | grep -q "CUDA"; then
-        if [ -n "$DEVICES" ]; then DEVICES="$DEVICES,"; fi
-        DEVICES="${DEVICES}CUDA0"
+    if [ "$_ccount" -eq 0 ] && echo "$DEVICES" | grep -q "CUDA"; then
+        : # Already has CUDA? (unlikely given prefix logic)
+    else
+        append_devices "CUDA" "$_ccount"
     fi
 fi
 
