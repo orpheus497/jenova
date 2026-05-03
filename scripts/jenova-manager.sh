@@ -153,7 +153,12 @@ show_action_menu() {
 
     clear
     for item in $selected; do
-        local msg="${confirm_msg:-Are you sure you want to $action $item?}"
+        local msg
+        if [ -n "$confirm_msg" ]; then
+            msg=$(printf "$confirm_msg" "$item")
+        else
+            msg="Are you sure you want to $action $item?"
+        fi
         local dialog_args=""
         [ "$action" = "uninstall" ] && dialog_args="--defaultno"
 

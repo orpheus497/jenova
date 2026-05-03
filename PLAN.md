@@ -77,6 +77,7 @@ bin/mcsh        → Modern C Shell (tcsh+etcsh fusion, drop-in replacement)
 - [ ] Buffer-aware `Grep` that prefers open buffers over disk.
 - [ ] LSP tool: code actions + rename.
 
-### 5. mcsh Integration
+### 5. macOS & Platform Support
+- [ ] Accurate macOS Metal backend detection and reporting in build/daemon scripts.
 - [ ] Optional `mcsh` prompt module that surfaces backend health.
 - [ ] Shell completion for `jenova-ca` verbs / flags.
