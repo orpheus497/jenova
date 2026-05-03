@@ -113,7 +113,7 @@ fi
 if [ -n "${JENOVA_NGL_AGENT:-}" ]; then
     NGL_AGENT="$JENOVA_NGL_AGENT"
 else
-    if [ "$ENABLE_VULKAN" -eq 1 ]; then
+    if [ "$ENABLE_VULKAN" -eq 1 ] || [ "$ENABLE_CUDA" -eq 1 ]; then
         NGL_AGENT=all
     else
         NGL_AGENT=0

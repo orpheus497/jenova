@@ -117,19 +117,27 @@ show_main_menu() {
     esac
 }
 
-show_install_menu() {
-    local status_core="on"
-    local status_jvim="on"
-    local status_llama="on"
+show_action_menu() {
+    local action="$1"
+    local title="$2"
+    local checklist_msg="$3"
+    local default_on="$4"
+    local confirm_msg="$5"
 
-    check_jenova_core && status_core="off"
-    check_jvim && status_jvim="off"
-    check_llama && status_llama="off"
+    local status_core="$default_on"
+    local status_jvim="$default_on"
+    local status_llama="$default_on"
 
-    if ! $DIALOG --clear --title "Install Jenova Components" \
-        --checklist "Select components to install (already installed items are unchecked):" 15 60 3 \
+    if [ "$action" = "install" ]; then
+        check_jenova_core && status_core="off"
+        check_jvim && status_jvim="off"
+        check_llama && status_llama="off"
+    fi
+
+    if ! $DIALOG --clear --title "$title" \
+        --checklist "$checklist_msg" 15 65 3 \
         "Jenova_Core" "Jenova CA and backend scripts" "$status_core" \
-        "jvim" "Editor / IDE (requires sudo)" "$status_jvim" \
+        "jvim" "Editor / IDE (bundled)" "$status_jvim" \
         "llama.cpp" "Inference engine" "$status_llama" 2> "$TEMP_FILE"; then
         show_main_menu
         return
@@ -145,123 +153,39 @@ show_install_menu() {
 
     clear
     for item in $selected; do
-        if $DIALOG --yesno "Are you sure you want to install $item?" 8 50; then
-            echo "Installing $item..."
-            if case "$item" in
-                "Jenova_Core") install_jenova_core ;;
-                "jvim") install_jvim ;;
-                "llama.cpp") install_llama ;;
-                *) false ;;
-            esac
-            then
-                echo "Finished installing $item. Press any key to continue."
+        local msg="${confirm_msg:-Are you sure you want to $action $item?}"
+        local dialog_args=""
+        [ "$action" = "uninstall" ] && dialog_args="--defaultno"
+
+        if $DIALOG $dialog_args --yesno "$msg" 10 60; then
+            echo "${action^}ing $item..."
+            if case "$action" in
+                "install")   case "$item" in "Jenova_Core") install_jenova_core ;; "jvim") install_jvim ;; "llama.cpp") install_llama ;; *) false ;; esac ;;
+                "update")    case "$item" in "Jenova_Core") update_jenova_core  ;; "jvim") update_jvim  ;; "llama.cpp") update_llama  ;; *) false ;; esac ;;
+                "uninstall") case "$item" in "Jenova_Core") uninstall_jenova_core ;; "jvim") uninstall_jvim ;; "llama.cpp") uninstall_llama ;; *) false ;; esac ;;
+            esac; then
+                echo "Finished ${action}ing $item. Press any key to continue."
             else
-                echo "Failed to install $item. Press any key to continue."
+                echo "Failed to $action $item. Press any key to continue."
             fi
             read -n 1 -s -r
         else
-            echo "Skipping $item..."
+            echo "Skipping $item $action..."
         fi
     done
     show_main_menu
+}
+
+show_install_menu() {
+    show_action_menu "install" "Install Jenova Components" "Select components to install (already installed items are unchecked):" "on"
 }
 
 show_update_menu() {
-    local status_core="off"
-    local status_jvim="off"
-    local status_llama="off"
-
-    check_jenova_core && status_core="on"
-    check_jvim && status_jvim="on"
-    check_llama && status_llama="on"
-
-    if ! $DIALOG --clear --title "Update Jenova Components" \
-        --checklist "Select components to update:" 15 60 3 \
-        "Jenova_Core" "Jenova CA and backend scripts" "$status_core" \
-        "jvim" "Editor / IDE" "$status_jvim" \
-        "llama.cpp" "Inference engine" "$status_llama" 2> "$TEMP_FILE"; then
-        show_main_menu
-        return
-    fi
-
-    local selected
-    selected=$(tr -d '"' < "$TEMP_FILE")
-    if [ -z "$selected" ]; then
-        $DIALOG --msgbox "No components selected." 8 40
-        show_main_menu
-        return
-    fi
-
-    clear
-    for item in $selected; do
-        if $DIALOG --yesno "Are you sure you want to update $item?" 8 50; then
-            echo "Updating $item..."
-            if case "$item" in
-                "Jenova_Core") update_jenova_core ;;
-                "jvim") update_jvim ;;
-                "llama.cpp") update_llama ;;
-                *) false ;;
-            esac
-            then
-                echo "Finished updating $item. Press any key to continue."
-            else
-                echo "Failed to update $item. Press any key to continue."
-            fi
-            read -n 1 -s -r
-        else
-            echo "Skipping $item update..."
-        fi
-    done
-    show_main_menu
+    show_action_menu "update" "Update Jenova Components" "Select components to update:" "on"
 }
 
 show_uninstall_menu() {
-    local status_core="off"
-    local status_jvim="off"
-    local status_llama="off"
-
-    check_jenova_core && status_core="on"
-    check_jvim && status_jvim="on"
-    check_llama && status_llama="on"
-
-    if ! $DIALOG --clear --title "Uninstall Jenova Components" \
-        --checklist "Select components to uninstall:" 15 60 3 \
-        "Jenova_Core" "Jenova CA and backend scripts" "$status_core" \
-        "jvim" "Editor / IDE" "$status_jvim" \
-        "llama.cpp" "Inference engine" "$status_llama" 2> "$TEMP_FILE"; then
-        show_main_menu
-        return
-    fi
-
-    local selected
-    selected=$(tr -d '"' < "$TEMP_FILE")
-    if [ -z "$selected" ]; then
-        $DIALOG --msgbox "No components selected." 8 40
-        show_main_menu
-        return
-    fi
-
-    clear
-    for item in $selected; do
-        if $DIALOG --defaultno --yesno "Are you absolutely sure you want to uninstall $item? This may remove configuration and binaries." 10 60; then
-            echo "Uninstalling $item..."
-            if case "$item" in
-                "Jenova_Core") uninstall_jenova_core ;;
-                "jvim") uninstall_jvim ;;
-                "llama.cpp") uninstall_llama ;;
-                *) false ;;
-            esac
-            then
-                echo "Finished uninstalling $item. Press any key to continue."
-            else
-                echo "Failed to uninstall $item. Press any key to continue."
-            fi
-            read -n 1 -s -r
-        else
-            echo "Skipping $item uninstall..."
-        fi
-    done
-    show_main_menu
+    show_action_menu "uninstall" "Uninstall Jenova Components" "Select components to uninstall:" "off" "Are you absolutely sure you want to uninstall %s? This may remove configuration and binaries."
 }
 
 # --- Action Implementations ---
