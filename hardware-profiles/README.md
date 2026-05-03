@@ -257,7 +257,7 @@ All profiles respect environment variable overrides:
 ```bash
 export JENOVA_MODEL=/path/to/my-model.gguf
 export JENOVA_DEVICES="Vulkan0"
-export JENOVA_NGL_7B=24
+export JENOVA_NGL_AGENT=24
 export JENOVA_CTX=8192
 export JENOVA_SLOTS=1
 export JENOVA_DRAFT=0

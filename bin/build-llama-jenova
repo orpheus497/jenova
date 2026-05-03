@@ -11,7 +11,7 @@
 #   JENOVA_BUILD_DIR=/custom/path
 #   JENOVA_THREADS=<int>
 #   JENOVA_THREADS_BATCH=<int>
-#   JENOVA_NGL_7B=all|<int>
+#   JENOVA_NGL_AGENT=all|<int>
 #   JENOVA_FITT=<int>
 #   JOBS=<int>
 
