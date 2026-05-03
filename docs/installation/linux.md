@@ -42,6 +42,24 @@ sudo apt install -y \
     glslc
 ```
 
+### Fedora
+Install the following using `dnf`:
+
+```bash
+sudo dnf groupinstall "Development Tools"
+sudo dnf install -y \
+    cmake \
+    git \
+    luajit \
+    lua-devel \
+    libcurl-devel \
+    openssl-devel \
+    gettext \
+    vulkan-loader-devel \
+    vulkan-tools \
+    glslc
+```
+
 ## Build Instructions
 
 1.  **Clone the repository** (no submodules — `llama.cpp` is fetched separately):
@@ -59,10 +77,13 @@ sudo apt install -y \
     ```bash
     make            # llama.cpp + jvim + mcsh
     # or
-    make llama      # just the inference backend
+    make llama      # just the inference backend (Vulkan)
+    make llama-hybrid # build for BOTH Vulkan and CUDA (multi-GPU)
     make jvim       # just the editor
     make mcsh       # just the Modern C Shell
     ```
+
+    *Use `make llama-hybrid` if you have both an NVIDIA and an AMD/Intel GPU, or if you want to switch between backends without rebuilding.*
 
 4.  **Run the installer**:
     ```bash

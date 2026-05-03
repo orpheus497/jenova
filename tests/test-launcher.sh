@@ -27,13 +27,26 @@ else
 fi
 
 # --- T2: Required Lua modules exist ---
-for _mod in agent proxy memory search embed http ui json ffi_defs daemon; do
+for _mod in proxy search embed http json ffi_defs daemon; do
     if [ -f "$ROOT/lib/${_mod}.lua" ]; then
         ok "T2: lib/${_mod}.lua exists"
     else
         fail "T2: lib/${_mod}.lua MISSING"
     fi
 done
+
+# New locations for agent and memory
+if [ -d "$ROOT/jvim-config/lua/jenova/agent" ]; then
+    ok "T2: jvim-config/lua/jenova/agent/ exists"
+else
+    fail "T2: jvim-config/lua/jenova/agent/ MISSING"
+fi
+
+if [ -f "$ROOT/jvim-config/lua/jenova/agent/memory.lua" ]; then
+    ok "T2: jvim-config/lua/jenova/agent/memory.lua exists"
+else
+    fail "T2: jvim-config/lua/jenova/agent/memory.lua MISSING"
+fi
 
 # --- T3: jenova-ca is executable ---
 if [ -x "$ROOT/bin/jenova-ca" ]; then
@@ -46,7 +59,7 @@ fi
 # jenova-ca performs mandatory checks for LLAMA_SERVER and the model file before
 # reaching the status case; skip on a fresh clone where build artifacts are absent.
 _T4_SERVER="${LLAMA_SERVER:-$ROOT/llama.cpp/build/bin/llama-server}"
-_T4_MODEL="${JENOVA_MODEL:-${MODEL_7B:-}}"
+_T4_MODEL="${JENOVA_MODEL:-${MODEL_AGENT:-}}"
 if [ ! -f "$_T4_SERVER" ] || [ -z "$_T4_MODEL" ] || [ ! -f "$_T4_MODEL" ]; then
     ok "T4: jenova-ca status (SKIPPED — build artifacts not present)"
 elif "$ROOT/bin/jenova-ca" status >/dev/null 2>&1; then

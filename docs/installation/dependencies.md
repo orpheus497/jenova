@@ -4,16 +4,16 @@ Jenova requires several system-level dependencies for building and running the c
 
 ## Required Dependencies
 
-| Dependency | FreeBSD Install | Purpose |
-|------------|-----------------|---------|
-| `luajit` (OpenResty) | `pkg install luajit-openresty` | LuaJIT runtime for the intelligence proxy, embedding daemon, agent provider, and all backend Lua modules. |
-| `git` | `pkg install git` | Repository / `llama.cpp` checkout management. |
-| `cmake` | `pkg install cmake` | Building `llama.cpp` and the bundled jvim editor from source. |
-| `gmake` | `pkg install gmake` | **Required on FreeBSD** to build `jvim` and `mcsh` (their build systems are GNU make). |
-| `gettext` | `pkg install gettext-tools` | Required by the jvim build (`msgfmt`). |
-| `vulkan-loader` | `pkg install vulkan-loader` | GPU inference via Vulkan (single- or dual-GPU offload). |
-| `lua54` | `pkg install lua54` | Lua 5.4 runtime (used by jvim plugins). |
-| `curl` | `pkg install curl` | HTTP client (RAG / health / web-search fallback). |
+| Dependency | FreeBSD (`pkg`) | Linux (Arch `pacman`) | Linux (Debian `apt`) | Linux (Fedora `dnf`) | macOS (`brew`) |
+|------------|-----------------|-----------------------|----------------------|----------------------|----------------|
+| `luajit` | `luajit-openresty` | `luajit` | `luajit` | `luajit` | `luajit` |
+| `git` | `git` | `git` | `git` | `git` | `git` |
+| `cmake` | `cmake` | `cmake` | `cmake` | `cmake` | `cmake` |
+| `gmake` | `gmake` | `make` | `make` | `make` | `make` |
+| `gettext` | `gettext-tools` | `gettext` | `gettext` | `gettext` | `gettext` |
+| `vulkan` | `vulkan-loader` | `vulkan-icd-loader` | `libvulkan1` | `vulkan-loader` | `molten-vk` |
+| `lua54` | `lua54` | `lua54` | `liblua5.4-dev` | `lua-devel` | `lua@5.4` |
+| `curl` | `curl` | `curl` | `libcurl4-openssl-dev` | `libcurl-devel` | `curl` |
 
 > The bundled jvim editor (`jvim/`) and Modern C Shell (`mcsh/`) are both built
 > from source as part of `make`. You do **not** need to install `neovim` or
@@ -22,16 +22,9 @@ Jenova requires several system-level dependencies for building and running the c
 
 ## Optional Dependencies
 
-| Dependency | FreeBSD Install | Purpose |
-|------------|-----------------|---------|
-| `dialog` / `whiptail` | `pkg install dialog` | TUI for `scripts/jenova-manager.sh` (only one is needed). |
-| `fetch` | *(FreeBSD base)* | Web-search backend for jvim (`<leader>as`). On Linux, `curl` is used. |
-| `glslc` / `shaderc` | `pkg install shaderc` | Compile Vulkan shaders for `llama.cpp`. |
-| `clangd` | `pkg install llvm` | C / C++ LSP. |
-| `rust-analyzer` | `pkg install rust-analyzer` | Rust LSP. |
-| `lua-language-server` | `pkg install lua-language-server` | Lua LSP. |
-| `pyright` | `pkg install py311-pyright` | Python LSP. |
-| `zls` | `pkg install zig` | Zig LSP. |
-| `bash-language-server` | `npm install -g bash-language-server` | Bash / shell LSP. |
-| `stylua` | `cargo install stylua` | Lua formatter. |
-| `goimports` | `go install golang.org/x/tools/cmd/goimports@latest` | Go import formatter. |
+| Dependency | Purpose | FreeBSD (`pkg`) | Linux (Arch) | Linux (Debian) | Linux (Fedora) | macOS (`brew`) |
+|------------|---------|-----------------|--------------|----------------|----------------|----------------|
+| `glslc` | Vulkan shader compiler | `shaderc` | `shaderc` | `glslc` | `glslc` | `shaderc` |
+| `dialog` | TUI for manager | `dialog` | `dialog` | `dialog` | `dialog` | `dialog` |
+| `clangd` | C / C++ LSP | `llvm` | `clang` | `clangd` | `clang-tools-extra` | `llvm` |
+| `stylua` | Lua formatter | `stylua` | `stylua` | `cargo install stylua` | `cargo install stylua` | `stylua` |

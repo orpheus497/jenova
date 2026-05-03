@@ -9,18 +9,19 @@ editor, an embedded agentic workflow system, and a modernised C-shell.
   context processing happen on your machine.
 - **Hardware-Aware** — the install path detects your GPU(s), CPU and RAM and
   deploys a matching `jenova.conf` overlay from `hardware-profiles/`.
-- **FreeBSD-First** — primary target is FreeBSD 15 (ZFS, Vulkan, swap-backed
-  model storage). Linux (Arch / Debian / Ubuntu) is fully supported.
+- **Platform Support** — Primary target is FreeBSD 15 (ZFS, Vulkan, swap-backed
+  model storage), with first-class support for Linux and macOS.
 
 ## Component Breakdown
 
-| Component | Stack | Role |
-|-----------|-------|------|
-| **Cognitive Backend** | C++ (llama.cpp) + LuaJIT (proxy/embed) | Manages `llama-server`, the embedding daemon, and the RAG-aware proxy. |
-| **`jvim`** | C / Lua | Neovim hard-fork that hosts the agent and the chat / monitor / health UI. |
-| **Agent Engine** | Lua | Plan → Execute → Reflect loop with native buffer / LSP / shell tools. |
-| **`mcsh`** | C | Modernised tcsh+etcsh fusion shell (`bin/mcsh`). |
-| **`jenova-ca`** | POSIX sh | Daemon supervisor for llama-server, proxy, and embedding server. |
+| Component | Role | Stack |
+|-----------|------|-------|
+| **Inference Backend** | GGUF model execution and speculative decoding. | C++ (llama.cpp) |
+| **Intelligence Proxy** | RAG-aware brain, OpenAI-compatible API, and streaming. | LuaJIT (lib/proxy.lua) |
+| **jvim Editor** | Interactive IDE frontend and UI for AI features. | C / Lua |
+| **Unified Agent** | Autonomous coding partner embedded in the editor. | Lua (jvim-config/lua/jenova/agent/) |
+| **mcsh Shell** | Integrated modern C-shell for the terminal IDE. | C (mcsh/) |
+| **Daemon Manager** | Supervisor for inference, proxy, and embedding daemons. | POSIX sh (bin/jenova-ca) |
 
 ## System Flow
 1. **User input** — typed into the `jvim` chat sidebar (`<leader>at`) or piped

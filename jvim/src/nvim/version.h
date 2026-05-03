@@ -1,5 +1,6 @@
 #pragma once
 
+#include "version.h.generated.h"
 #include "nvim/api/private/defs.h"  // IWYU pragma: keep
 #include "nvim/ex_cmds_defs.h"  // IWYU pragma: keep
 #include "nvim/macros_defs.h"

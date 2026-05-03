@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # jenova-manager.sh: TUI manager for this monorepo
 #
-# All four components — Jenova Core (backend + scripts), the bundled jvim
-# editor, the cli-agent, and llama.cpp — live inside this repository. This
-# manager dispatches install / update / uninstall actions to the in-tree
+# All components — Jenova Core (backend + scripts), the bundled jvim
+# editor, and llama.cpp — live inside this repository. This manager
+# dispatches install / update / uninstall actions to the in-tree
 # Makefile targets and helper scripts. Nothing is cloned from external repos.
 
 set -e
@@ -35,10 +35,6 @@ check_jvim() {
     # In-tree build is the canonical install; PATH binary is a secondary check.
     [ -x "$JENOVA_ROOT/jvim/build/bin/nvim" ] || \
         ( command -v jvim >/dev/null 2>&1 && jvim --version 2>/dev/null | grep -q 'JVIM' )
-}
-
-check_jenova_cli() {
-    [ -x "$JENOVA_ROOT/cli-agent/build/cli-agent" ] || command -v jenova-cli >/dev/null 2>&1
 }
 
 resolve_llama_server_path() {
@@ -98,12 +94,6 @@ check_jenova_core() {
     [ "$(realpath "$installed_path")" = "$expected_path" ]
 }
 
-# Build the in-tree jenova-cli (sources live under cli-agent/; the user-facing
-# launcher is bin/jenova which execs cli-agent/build/cli-agent).
-_jenova_cli_build() {
-    "$MAKE" -C "$JENOVA_ROOT/cli-agent"
-}
-
 # Temporary file to store dialog selections
 TEMP_FILE=$(mktemp)
 trap 'rm -f "$TEMP_FILE"' EXIT INT TERM
@@ -127,22 +117,27 @@ show_main_menu() {
     esac
 }
 
-show_install_menu() {
-    local status_core="on"
-    local status_jvim="on"
-    local status_cli="on"
-    local status_llama="on"
+show_action_menu() {
+    local action="$1"
+    local title="$2"
+    local checklist_msg="$3"
+    local default_on="$4"
+    local confirm_msg="$5"
 
-    check_jenova_core && status_core="off"
-    check_jvim && status_jvim="off"
-    check_jenova_cli && status_cli="off"
-    check_llama && status_llama="off"
+    local status_core="$default_on"
+    local status_jvim="$default_on"
+    local status_llama="$default_on"
 
-    if ! $DIALOG --clear --title "Install Jenova Components" \
-        --checklist "Select components to install (already installed items are unchecked):" 15 60 4 \
+    if [ "$action" = "install" ]; then
+        check_jenova_core && status_core="off"
+        check_jvim && status_jvim="off"
+        check_llama && status_llama="off"
+    fi
+
+    if ! $DIALOG --clear --title "$title" \
+        --checklist "$checklist_msg" 15 65 3 \
         "Jenova_Core" "Jenova CA and backend scripts" "$status_core" \
-        "jvim" "Editor / IDE (requires sudo)" "$status_jvim" \
-        "jenova-cli" "Terminal agent" "$status_cli" \
+        "jvim" "Editor / IDE (bundled)" "$status_jvim" \
         "llama.cpp" "Inference engine" "$status_llama" 2> "$TEMP_FILE"; then
         show_main_menu
         return
@@ -158,132 +153,52 @@ show_install_menu() {
 
     clear
     for item in $selected; do
-        if $DIALOG --yesno "Are you sure you want to install $item?" 8 50; then
-            echo "Installing $item..."
-            if case "$item" in
-                "Jenova_Core") install_jenova_core ;;
-                "jvim") install_jvim ;;
-                "jenova-cli") install_jenova_cli ;;
-                "llama.cpp") install_llama ;;
-                *) false ;;
+        local msg
+        if [ -n "$confirm_msg" ]; then
+            msg=$(printf "$confirm_msg" "$item")
+        else
+            msg="Are you sure you want to $action $item?"
+        fi
+        local dialog_args=""
+        [ "$action" = "uninstall" ] && dialog_args="--defaultno"
+
+        if $DIALOG $dialog_args --yesno "$msg" 10 60; then
+            # Portable capitalization for Bash 3.2
+            _cap_action=$(echo "$action" | awk '{print toupper(substr($0,1,1))tolower(substr($0,2))}')
+            echo "${_cap_action}ing $item..."
+
+            # Map component names to function suffixes
+            local suffix
+            case "$item" in
+                "Jenova_Core") suffix="jenova_core" ;;
+                "jvim")        suffix="jvim" ;;
+                "llama.cpp")   suffix="llama" ;;
+                *)             suffix="unknown" ;;
             esac
-            then
-                echo "Finished installing $item. Press any key to continue."
+
+            if [ "$suffix" != "unknown" ] && "${action}_${suffix}"; then
+                echo "Finished ${action}ing $item. Press any key to continue."
             else
-                echo "Failed to install $item. Press any key to continue."
+                echo "Failed to $action $item. Press any key to continue."
             fi
             read -n 1 -s -r
         else
-            echo "Skipping $item..."
+            echo "Skipping $item $action..."
         fi
     done
     show_main_menu
+}
+
+show_install_menu() {
+    show_action_menu "install" "Install Jenova Components" "Select components to install (already installed items are unchecked):" "on"
 }
 
 show_update_menu() {
-    local status_core="off"
-    local status_jvim="off"
-    local status_cli="off"
-    local status_llama="off"
-
-    check_jenova_core && status_core="on"
-    check_jvim && status_jvim="on"
-    check_jenova_cli && status_cli="on"
-    check_llama && status_llama="on"
-
-    if ! $DIALOG --clear --title "Update Jenova Components" \
-        --checklist "Select components to update:" 15 60 4 \
-        "Jenova_Core" "Jenova CA and backend scripts" "$status_core" \
-        "jvim" "Editor / IDE" "$status_jvim" \
-        "jenova-cli" "Terminal agent" "$status_cli" \
-        "llama.cpp" "Inference engine" "$status_llama" 2> "$TEMP_FILE"; then
-        show_main_menu
-        return
-    fi
-
-    local selected
-    selected=$(tr -d '"' < "$TEMP_FILE")
-    if [ -z "$selected" ]; then
-        $DIALOG --msgbox "No components selected." 8 40
-        show_main_menu
-        return
-    fi
-
-    clear
-    for item in $selected; do
-        if $DIALOG --yesno "Are you sure you want to update $item?" 8 50; then
-            echo "Updating $item..."
-            if case "$item" in
-                "Jenova_Core") update_jenova_core ;;
-                "jvim") update_jvim ;;
-                "jenova-cli") update_jenova_cli ;;
-                "llama.cpp") update_llama ;;
-                *) false ;;
-            esac
-            then
-                echo "Finished updating $item. Press any key to continue."
-            else
-                echo "Failed to update $item. Press any key to continue."
-            fi
-            read -n 1 -s -r
-        else
-            echo "Skipping $item update..."
-        fi
-    done
-    show_main_menu
+    show_action_menu "update" "Update Jenova Components" "Select components to update:" "on"
 }
 
 show_uninstall_menu() {
-    local status_core="off"
-    local status_jvim="off"
-    local status_cli="off"
-    local status_llama="off"
-
-    check_jenova_core && status_core="on"
-    check_jvim && status_jvim="on"
-    check_jenova_cli && status_cli="on"
-    check_llama && status_llama="on"
-
-    if ! $DIALOG --clear --title "Uninstall Jenova Components" \
-        --checklist "Select components to uninstall:" 15 60 4 \
-        "Jenova_Core" "Jenova CA and backend scripts" "$status_core" \
-        "jvim" "Editor / IDE" "$status_jvim" \
-        "jenova-cli" "Terminal agent" "$status_cli" \
-        "llama.cpp" "Inference engine" "$status_llama" 2> "$TEMP_FILE"; then
-        show_main_menu
-        return
-    fi
-
-    local selected
-    selected=$(tr -d '"' < "$TEMP_FILE")
-    if [ -z "$selected" ]; then
-        $DIALOG --msgbox "No components selected." 8 40
-        show_main_menu
-        return
-    fi
-
-    clear
-    for item in $selected; do
-        if $DIALOG --defaultno --yesno "Are you absolutely sure you want to uninstall $item? This may remove configuration and binaries." 10 60; then
-            echo "Uninstalling $item..."
-            if case "$item" in
-                "Jenova_Core") uninstall_jenova_core ;;
-                "jvim") uninstall_jvim ;;
-                "jenova-cli") uninstall_jenova_cli ;;
-                "llama.cpp") uninstall_llama ;;
-                *) false ;;
-            esac
-            then
-                echo "Finished uninstalling $item. Press any key to continue."
-            else
-                echo "Failed to uninstall $item. Press any key to continue."
-            fi
-            read -n 1 -s -r
-        else
-            echo "Skipping $item uninstall..."
-        fi
-    done
-    show_main_menu
+    show_action_menu "uninstall" "Uninstall Jenova Components" "Select components to uninstall:" "off" "Are you absolutely sure you want to uninstall %s? This may remove configuration and binaries."
 }
 
 # --- Action Implementations ---
@@ -294,10 +209,6 @@ install_jenova_core() {
 install_jvim() {
     echo "Building in-tree jvim..."
     "$MAKE" -C "$JENOVA_ROOT" jvim
-}
-install_jenova_cli() {
-    echo "Building in-tree jenova-cli..."
-    _jenova_cli_build
 }
 install_llama() {
     echo "Installing llama.cpp..."
@@ -313,13 +224,6 @@ update_jvim() {
     git -C "$JENOVA_ROOT" pull --ff-only || true
     if $DIALOG --yesno "Rebuild jvim now?" 8 50; then
         "$MAKE" -C "$JENOVA_ROOT" jvim
-    fi
-}
-update_jenova_cli() {
-    echo "Updating jenova-cli (in-tree)..."
-    git -C "$JENOVA_ROOT" pull --ff-only || true
-    if $DIALOG --yesno "Rebuild jenova-cli now?" 8 50; then
-        _jenova_cli_build
     fi
 }
 update_llama() {
@@ -339,11 +243,6 @@ uninstall_jvim() {
     echo "Removing in-tree jvim build artifacts..."
     rm -rf "$JENOVA_ROOT/jvim/build" "$JENOVA_ROOT/jvim/install"
     echo "jvim build artifacts removed."
-}
-uninstall_jenova_cli() {
-    echo "Removing in-tree jenova-cli build artifacts..."
-    rm -rf "$JENOVA_ROOT/cli-agent/build" "$JENOVA_ROOT/cli-agent/build_test"
-    echo "jenova-cli build artifacts removed."
 }
 uninstall_llama() {
     echo "Uninstalling llama.cpp..."

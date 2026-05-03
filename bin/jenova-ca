@@ -5,7 +5,7 @@
 #
 # Loads hardware settings from etc/jenova.conf (or a hardware-profile jenova.conf
 # deployed by install.sh). Supports single-GPU, dual-GPU, and CPU-only modes
-# via the DEVICES / TENSOR_SPLIT / NGL_7B / FIT_TARGET profile variables.
+# via the DEVICES / TENSOR_SPLIT / NGL_AGENT / FIT_TARGET profile variables.
 
 set -e
 
@@ -53,8 +53,8 @@ if [ -d "$JENOVA_STATE" ] && [ ! -w "$JENOVA_STATE" ]; then
     exit 1
 fi
 
-# --- Model: 7B only ---
-MODEL_PATH="${JENOVA_MODEL:-$MODEL_7B}"
+# --- Model: Agent ---
+MODEL_PATH="${JENOVA_MODEL:-$MODEL_AGENT}"
 
 if [ ! -f "$LLAMA_SERVER" ]; then
     echo "Error: llama-server not found at $LLAMA_SERVER" >&2
@@ -70,9 +70,9 @@ if [ ! -f "$MODEL_PATH" ]; then
     echo "Error: Model not found at $MODEL_PATH" >&2
     echo "" >&2
     echo "Download a model file (GGUF format) and place it at:" >&2
-    echo "  $JENOVA_ROOT/models/" >&2
+    echo "  $JENOVA_ROOT/models/agent/" >&2
     echo "" >&2
-    echo "Recommended: Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf" >&2
+    echo "Recommended: Qwen3-Instruct-4B-Q8_0.gguf" >&2
     echo "Or set JENOVA_MODEL environment variable to point to your model." >&2
     echo "" >&2
     exit 1
@@ -85,7 +85,8 @@ if [ -f "$DRAFT_PATH" ] && [ "${JENOVA_DRAFT:-1}" != "0" ]; then
     if [ -n "$DRAFT_DEVICE" ]; then
         _DEVD="-devd $DRAFT_DEVICE"
     fi
-    DRAFT_ARGS="-md $DRAFT_PATH $_DEVD -ngld all --draft-max 16 --draft-min 4 --draft-p-min 0.6"
+    _NGLD="${DRAFT_NGL:-all}"
+    DRAFT_ARGS="-md $DRAFT_PATH $_DEVD -ngld $_NGLD --spec-draft-n-max 16 --spec-draft-n-min 4 --spec-draft-p-min 0.6"
 fi
 
 # --- Find proxy.lua ---
@@ -105,11 +106,12 @@ fi
 export JENOVA_LLAMA_URL="http://${HOST}:${LLAMA_PORT}"
 export JENOVA_PROXY_PORT="$PORT"
 export JENOVA_PROXY_HOST="$HOST"
-export JENOVA_CTX="$CTX_SIZE"
+export JENOVA_CTX="${JENOVA_CTX:-$CTX_SIZE}"
 
 # Optional backend memory-fallback tuning from etc/jenova.local.conf.
 [ -n "${GGML_VK_ALLOW_SYSMEM_FALLBACK:-}" ] && export GGML_VK_ALLOW_SYSMEM_FALLBACK
 [ -n "${GGML_VK_PREFER_HOST_MEMORY:-}" ] && export GGML_VK_PREFER_HOST_MEMORY
+[ -n "${GGML_CUDA_DMMV_POOL_SIZE:-}" ] && export GGML_CUDA_DMMV_POOL_SIZE
 
 # --- LD_LIBRARY_PATH for shared libs ---
 LLAMA_LIB_DIR="$JENOVA_ROOT/llama.cpp/build/bin"
@@ -126,19 +128,19 @@ fi
 DEVICE_COUNT=$(count_devices "$DEVICES")
 
 # --- Split mode + layer offload ---
-# NGL_7B="all" (default): use -fitt auto-fit to distribute layers across GPUs.
+# NGL_AGENT="all" (default): use -fitt auto-fit to distribute layers across GPUs.
 #   Best for dual-GPU setups where all layers fit (i5-1135G7 dual-GPU profile).
-# NGL_7B=N (explicit count): use -ngl N for partial offload on limited-VRAM GPUs.
-#   Required for single-GPU UMA setups (e.g., AMD Lucienne Ryzen profile: NGL_7B=18).
+# NGL_AGENT=N (explicit count): use -ngl N for partial offload on limited-VRAM GPUs.
+#   Required for single-GPU UMA setups (e.g., AMD Lucienne Ryzen profile: NGL_AGENT=18).
 SPLIT_ARGS="-sm layer"
-if [ "$NGL_7B" = "all" ] || [ -z "$NGL_7B" ]; then
+if [ "$NGL_AGENT" = "all" ] || [ -z "$NGL_AGENT" ]; then
     SPLIT_ARGS="$SPLIT_ARGS -fitt $FIT_TARGET"
     if [ "$DEVICE_COUNT" -gt 1 ] && [ -n "$TENSOR_SPLIT" ]; then
         SPLIT_ARGS="$SPLIT_ARGS -ts $TENSOR_SPLIT"
     fi
 else
     # Explicit layer count — skip -fitt (they conflict) and any tensor split
-    SPLIT_ARGS="$SPLIT_ARGS -ngl $NGL_7B"
+    SPLIT_ARGS="$SPLIT_ARGS -ngl $NGL_AGENT"
 fi
 
 # --- Batch sizes (controls VRAM pressure during prompt ingestion) ---
@@ -161,10 +163,10 @@ RUN_BACKEND_LABEL="configured"
 
 _use_vulkan_fallback() {
     RUN_DEV_ARGS="-dev Vulkan0"
-    if [ "$NGL_7B" = "all" ] || [ -z "$NGL_7B" ]; then
+    if [ "$NGL_AGENT" = "all" ] || [ -z "$NGL_AGENT" ]; then
         RUN_SPLIT_ARGS="-sm layer -fitt $FIT_TARGET"
     else
-        RUN_SPLIT_ARGS="-sm layer -ngl $NGL_7B"
+        RUN_SPLIT_ARGS="-sm layer -ngl $NGL_AGENT"
     fi
     RUN_MAIN_NGL_ARGS=""
     RUN_DRAFT_ARGS=""
@@ -444,14 +446,14 @@ else
     echo "  Devices:   CPU only"
 fi
 echo "  Backend:   $RUN_BACKEND_LABEL"
-if [ "$NGL_7B" = "all" ] || [ -z "$NGL_7B" ]; then
+if [ "$NGL_AGENT" = "all" ] || [ -z "$NGL_AGENT" ]; then
     if [ "$DEVICE_COUNT" -gt 1 ] && [ -n "$TENSOR_SPLIT" ]; then
         echo "  GPU:       auto-fit (fitt ${FIT_TARGET} MiB) ts $TENSOR_SPLIT"
     else
         echo "  GPU:       auto-fit (fitt ${FIT_TARGET} MiB)"
     fi
 else
-    echo "  GPU:       ngl ${NGL_7B} layers"
+    echo "  GPU:       ngl ${NGL_AGENT} layers"
 fi
 echo "  Context:   $CTX_SIZE  Slots: $NUM_SLOTS  KV: ${KV_CACHE_TYPE:-f16}"
 echo ""

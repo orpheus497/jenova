@@ -1104,6 +1104,7 @@ end
 -- Toggle between agent mode and plain conversation mode.
 function M.toggle_mode()
   agent_mode = not agent_mode
+  vim.g.jenova_tools_enabled = agent_mode
   local label = agent_mode and "Agent mode (tools + context)" or "Conversation mode (plain stream)"
   vim.notify(label, vim.log.levels.INFO, { title = "Jenova" })
 

@@ -203,6 +203,30 @@ case "$JENOVA_ARCH" in
     *)       JENOVA_GH_ARCH_LLS="";      JENOVA_GH_ARCH_ZLS="" ;;
 esac
 
+# ── Profile Loading ──────────────────────────────────────────────────────────
+
+# load_jenova_profile <profile_path>
+# Securely validates and sources a Jenova hardware profile configuration.
+# Path must be within the JENOVA_ROOT/hardware-profiles directory.
+load_jenova_profile() {
+    _ljp_file="$1"
+    [ -f "$_ljp_file" ] || return 1
+
+    _ljp_real="$(realpath "$_ljp_file" 2>/dev/null)" || return 1
+    _ljp_root="$(realpath "$JENOVA_ROOT/hardware-profiles" 2>/dev/null)" || return 1
+
+    case "$_ljp_real" in
+        "$_ljp_root"/*)
+            # shellcheck disable=SC1090
+            . "$_ljp_real"
+            ;;
+        *)
+            printf "Error: Profile path outside expected directory: %s\n" "$_ljp_real" >&2
+            return 1
+            ;;
+    esac
+}
+
 export JENOVA_OS JENOVA_ARCH JENOVA_DISTRO JENOVA_PKG_MGR
 export JENOVA_CPU_MODEL JENOVA_CPU_THREADS JENOVA_PHYSICAL_THREADS
 export JENOVA_RAM_GIB JENOVA_SWAP_GIB

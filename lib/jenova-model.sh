@@ -30,12 +30,16 @@ _find_model() {
 # Agent model (main inference)
 _AGENT_MODEL_AUTO="$(_find_model "$JENOVA_ROOT/models/agent")"
 if [ -n "$_AGENT_MODEL_AUTO" ]; then
-    MODEL_7B="$_AGENT_MODEL_AUTO"
-elif [ -f "$JENOVA_ROOT/models/Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf" ]; then
-    MODEL_7B="$JENOVA_ROOT/models/Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf"
+    MODEL_AGENT="$_AGENT_MODEL_AUTO"
+elif [ -f "$JENOVA_ROOT/models/agent/Qwen3-Instruct-4B-Q8_0.gguf" ]; then
+    MODEL_AGENT="$JENOVA_ROOT/models/agent/Qwen3-Instruct-4B-Q8_0.gguf"
+elif [ -f "$JENOVA_ROOT/models/Qwen3-Instruct-4B-Q8_0.gguf" ]; then
+    MODEL_AGENT="$JENOVA_ROOT/models/Qwen3-Instruct-4B-Q8_0.gguf"
 else
-    MODEL_7B=""
+    MODEL_AGENT=""
 fi
+# Legacy alias for backward compatibility
+MODEL_7B="$MODEL_AGENT"
 
 # Draft model (speculative decoding)
 _DRAFT_MODEL_AUTO="$(_find_model "$JENOVA_ROOT/models/draft")"

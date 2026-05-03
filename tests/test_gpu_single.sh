@@ -13,8 +13,8 @@ if [ ! -x "$LLAMA_CLI" ]; then
     echo "Error: llama-cli not found or not executable at $LLAMA_CLI" >&2
     exit 1
 fi
-if [ ! -f "$MODEL_7B" ]; then
-    echo "Error: MODEL_7B not found at $MODEL_7B" >&2
+if [ ! -f "$MODEL_AGENT" ]; then
+    echo "Error: MODEL_AGENT not found at $MODEL_AGENT" >&2
     exit 1
 fi
 
@@ -22,7 +22,7 @@ fi
 DEV_SINGLE=$(echo "${DEVICES:-Vulkan0}" | cut -d, -f1)
 
 "$LLAMA_CLI" \
-  -m "$MODEL_7B" \
+  -m "$MODEL_AGENT" \
   -dev "$DEV_SINGLE" \
   -ngl all \
   -c 8192 \

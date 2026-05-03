@@ -26,7 +26,7 @@ JENOVA_BIN="$SCRIPT_DIR/../bin/jenova"
 JENOVA_CA="$SCRIPT_DIR/../bin/jenova-ca"
 
 if [ ! -x "$JENOVA_BIN" ]; then
-    echo "SKIP: jenova-cli/jenova not found or not executable at $JENOVA_BIN (run setup first)" >&2
+    echo "SKIP: bin/jenova not found or not executable at $JENOVA_BIN (run setup first)" >&2
     exit 0
 fi
 if [ ! -x "$JENOVA_CA" ]; then
@@ -57,10 +57,11 @@ fi
 
 # Test 3: Agent module exists
 echo "[test 3] Agent module..."
-if [ -f "$SCRIPT_DIR/../jenova-cli/legacy-agent/agent.lua" ]; then
-    echo "  PASS: jenova-cli/legacy-agent/agent.lua exists"
+if [ -d "$SCRIPT_DIR/../jvim-config/lua/jenova/agent" ]; then
+    echo "  PASS: jvim-config/lua/jenova/agent exists"
 else
-    echo "  SKIP: jenova-cli/legacy-agent/agent.lua not found (jenova-cli may not be populated)"
+    echo "  FAIL: jvim-config/lua/jenova/agent not found"
+    EXIT_CODE=1
 fi
 
 # Test 4: Check jenova-ca status verb
@@ -113,8 +114,8 @@ fi
 
 # Test 8: Verify trap is set
 echo "[test 8] EXIT/INT/TERM trap..."
-if grep -q "trap cleanup_agent EXIT INT TERM" "$JENOVA_BIN"; then
-    echo "  PASS: trap cleanup_agent EXIT INT TERM found"
+if grep -q "trap cleanup EXIT INT TERM" "$JENOVA_BIN"; then
+    echo "  PASS: trap cleanup EXIT INT TERM found"
 else
     echo "  FAIL: Missing trap in bin/jenova"
     EXIT_CODE=1
