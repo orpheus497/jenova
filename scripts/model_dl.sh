@@ -122,13 +122,16 @@ echo ""
 info "Checking for model files in $JENOVA_ROOT/models/ ..."
 
 # Agent
-download_model "$JENOVA_ROOT/models/agent/$AGENT_FILE" "Agent" "$AGENT_URL" "$AGENT_SIZE" 1
+download_model "$JENOVA_ROOT/models/agent/$AGENT_FILE" "Agent" "$AGENT_URL" "$AGENT_SIZE" 1 || {
+    fail "Agent model is required for Jenova to function."
+    exit 1
+}
 
 # Embed
-download_model "$JENOVA_ROOT/models/embed/$EMBED_FILE" "Embedding" "$EMBED_URL" "$EMBED_SIZE" 0
+download_model "$JENOVA_ROOT/models/embed/$EMBED_FILE" "Embedding" "$EMBED_URL" "$EMBED_SIZE" 0 || true
 
 # Draft
-download_model "$JENOVA_ROOT/models/draft/$DRAFT_FILE" "Draft" "$DRAFT_URL" "$DRAFT_SIZE" 0
+download_model "$JENOVA_ROOT/models/draft/$DRAFT_FILE" "Draft" "$DRAFT_URL" "$DRAFT_SIZE" 0 || true
 
 # Symlink models/jenova.gguf -> agent model for health checks
 if [ -f "$JENOVA_ROOT/models/agent/$AGENT_FILE" ]; then
