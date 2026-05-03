@@ -67,6 +67,7 @@ fi
 
 ENABLE_VULKAN=0
 ENABLE_CUDA=0
+ENABLE_METAL=0
 
 case "$BACKEND" in
     vulkan)
@@ -75,6 +76,9 @@ case "$BACKEND" in
     cuda)
         ENABLE_CUDA=1
         ;;
+    metal)
+        ENABLE_METAL=1
+        ;;
     hybrid|both)
         ENABLE_VULKAN=1
         ENABLE_CUDA=1
@@ -82,15 +86,19 @@ case "$BACKEND" in
     cpu)
         ;;
     auto)
-        if command -v vulkaninfo >/dev/null 2>&1 && vulkaninfo --summary 2>/dev/null | grep -q "deviceName"; then
-            ENABLE_VULKAN=1
-        fi
-        if command -v nvcc >/dev/null 2>&1; then
-            ENABLE_CUDA=1
+        if [ "$JENOVA_OS" = "macos" ]; then
+            ENABLE_METAL=1
+        else
+            if command -v vulkaninfo >/dev/null 2>&1 && vulkaninfo --summary 2>/dev/null | grep -q "deviceName"; then
+                ENABLE_VULKAN=1
+            fi
+            if command -v nvcc >/dev/null 2>&1; then
+                ENABLE_CUDA=1
+            fi
         fi
         ;;
     *)
-        echo "Error: unsupported JENOVA_BACKEND='$BACKEND' (use auto|vulkan|cuda|hybrid|cpu)" >&2
+        echo "Error: unsupported JENOVA_BACKEND='$BACKEND' (use auto|vulkan|cuda|metal|hybrid|cpu)" >&2
         exit 1
         ;;
 esac

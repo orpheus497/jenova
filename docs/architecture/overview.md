@@ -9,8 +9,8 @@ editor, an embedded agentic workflow system, and a modernised C-shell.
   context processing happen on your machine.
 - **Hardware-Aware** — the install path detects your GPU(s), CPU and RAM and
   deploys a matching `jenova.conf` overlay from `hardware-profiles/`.
-- **FreeBSD-First** — primary target is FreeBSD 15 (ZFS, Vulkan, swap-backed
-  model storage). Linux (Arch / Debian / Ubuntu) is fully supported.
+- **Platform Support** — Primary target is FreeBSD 15 (ZFS, Vulkan, swap-backed
+  model storage), with first-class support for Linux and macOS.
 
 ## Component Breakdown
 

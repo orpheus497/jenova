@@ -2195,7 +2195,7 @@ static bool do_user_initialization(void)
     return do_exrc;
   }
 
-  // --- JVIM ULTIMATE IDE DEFAULT BOOTSTRAP ---
+  // --- Jenova IDE Default Bootstrap ---
   // If we reach here, no user configuration was found.
   // We load the embedded Jenova IDE by default.
   lua_State *const L = get_global_lstate();

@@ -3,7 +3,7 @@
 -- for the Jenova FreeBSD IDE environment.
 
 -- ========================================================================== --
---  ULTIMATE MASTERCRAFTER FREEBSD 15.0 NEOVIM IDE (MODULAR EDITION)
+--  Jenova IDE (Modular Edition)
 -- ========================================================================== --
 
 -- ##Section purpose: PATH RECTIFICATION — Prepend FreeBSD local site directory so
