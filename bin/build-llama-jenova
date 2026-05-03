@@ -200,8 +200,25 @@ if [ "$ENABLE_VULKAN" -eq 1 ]; then
 fi
 
 if [ "$ENABLE_CUDA" -eq 1 ]; then
-    if [ -n "$DEVICES" ]; then DEVICES="$DEVICES,"; fi
-    DEVICES="${DEVICES}CUDA0"
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        _ccount=$(nvidia-smi -L 2>/dev/null | grep -c "GPU [0-9]:")
+        if [ "$_ccount" -gt 1 ]; then
+            i=0
+            while [ "$i" -lt "$_ccount" ]; do
+                if [ -n "$DEVICES" ]; then DEVICES="$DEVICES,"; fi
+                DEVICES="${DEVICES}CUDA$i"
+                i=$((i + 1))
+            done
+        elif [ "$_ccount" -eq 1 ]; then
+            if [ -n "$DEVICES" ]; then DEVICES="$DEVICES,"; fi
+            DEVICES="${DEVICES}CUDA0"
+        fi
+    fi
+    # Fallback if nvidia-smi is missing
+    if ! echo "$DEVICES" | grep -q "CUDA"; then
+        if [ -n "$DEVICES" ]; then DEVICES="$DEVICES,"; fi
+        DEVICES="${DEVICES}CUDA0"
+    fi
 fi
 
 cat > "$LOCAL_CONF" <<EOF
@@ -233,7 +250,7 @@ fi
 if [ "$ENABLE_CUDA" -eq 1 ]; then
 cat >> "$LOCAL_CONF" <<'EOF'
 # CUDA-specific settings
-CUDA_DMMV_POOL_SIZE="${CUDA_DMMV_POOL_SIZE:-512}"
+GGML_CUDA_DMMV_POOL_SIZE="${GGML_CUDA_DMMV_POOL_SIZE:-512}"
 EOF
 fi
 

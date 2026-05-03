@@ -111,6 +111,7 @@ export JENOVA_CTX="$CTX_SIZE"
 # Optional backend memory-fallback tuning from etc/jenova.local.conf.
 [ -n "${GGML_VK_ALLOW_SYSMEM_FALLBACK:-}" ] && export GGML_VK_ALLOW_SYSMEM_FALLBACK
 [ -n "${GGML_VK_PREFER_HOST_MEMORY:-}" ] && export GGML_VK_PREFER_HOST_MEMORY
+[ -n "${GGML_CUDA_DMMV_POOL_SIZE:-}" ] && export GGML_CUDA_DMMV_POOL_SIZE
 
 # --- LD_LIBRARY_PATH for shared libs ---
 LLAMA_LIB_DIR="$JENOVA_ROOT/llama.cpp/build/bin"

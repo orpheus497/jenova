@@ -74,3 +74,7 @@ TENSOR_SPLIT="${JENOVA_TS:-}"
 # Vulkan: Allow system memory fallback under pressure
 # Recommended: 1 (enabled)
 GGML_VK_ALLOW_SYSMEM_FALLBACK="${GGML_VK_ALLOW_SYSMEM_FALLBACK:-1}"
+
+# CUDA: Discrete Multi-Memory Virtual pool size (MiB)
+# Recommended: 512-2048 depending on available VRAM
+GGML_CUDA_DMMV_POOL_SIZE="${GGML_CUDA_DMMV_POOL_SIZE:-512}"
