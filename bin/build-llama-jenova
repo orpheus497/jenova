@@ -169,7 +169,8 @@ set -- \
     -DGGML_OPENMP=ON \
     -DBUILD_SHARED_LIBS=ON \
     -DGGML_CUDA=OFF \
-    -DGGML_VULKAN=OFF
+    -DGGML_VULKAN=OFF \
+    -DGGML_METAL=OFF
 
 if [ "$ENABLE_VULKAN" -eq 1 ]; then
     set -- "$@" -DGGML_VULKAN=ON
