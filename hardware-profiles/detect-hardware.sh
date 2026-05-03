@@ -76,7 +76,7 @@ detect_gpu() {
     fi
 
     if [ -n "$GPU_DEVICES" ]; then
-        GPU_COUNT=$(printf '%s\n' "$GPU_DEVICES" | grep -c "." || true)
+        GPU_COUNT=$(printf '%s\n' "$GPU_DEVICES" | grep "." | wc -l)
     else
         GPU_DEVICES="No GPU detected"
         GPU_COUNT=0

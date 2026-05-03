@@ -201,7 +201,7 @@ append_devices() {
 if [ "$ENABLE_VULKAN" -eq 1 ]; then
     _vcount=0
     if command -v vulkaninfo >/dev/null 2>&1; then
-        _vcount=$(vulkaninfo --summary 2>/dev/null | grep -c "GPU[0-9]:")
+        _vcount=$(vulkaninfo --summary 2>/dev/null | grep "GPU[0-9]:" | wc -l)
     fi
     # Fallback if ENABLE_VULKAN is set but vulkaninfo finds nothing, assume at least one
     if [ "$_vcount" -eq 0 ]; then _vcount=1; fi
@@ -211,7 +211,7 @@ fi
 if [ "$ENABLE_CUDA" -eq 1 ]; then
     _ccount=0
     if command -v nvidia-smi >/dev/null 2>&1; then
-        _ccount=$(nvidia-smi -L 2>/dev/null | grep -c "GPU [0-9]:")
+        _ccount=$(nvidia-smi -L 2>/dev/null | grep "GPU [0-9]:" | wc -l)
     fi
     # Fallback if ENABLE_CUDA is set but nvidia-smi finds nothing, assume at least one
     if [ "$_ccount" -eq 0 ]; then _ccount=1; fi

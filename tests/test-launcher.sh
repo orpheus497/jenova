@@ -27,13 +27,26 @@ else
 fi
 
 # --- T2: Required Lua modules exist ---
-for _mod in agent proxy memory search embed http ui json ffi_defs daemon; do
+for _mod in proxy search embed http json ffi_defs daemon; do
     if [ -f "$ROOT/lib/${_mod}.lua" ]; then
         ok "T2: lib/${_mod}.lua exists"
     else
         fail "T2: lib/${_mod}.lua MISSING"
     fi
 done
+
+# New locations for agent and memory
+if [ -d "$ROOT/jvim-config/lua/jenova/agent" ]; then
+    ok "T2: jvim-config/lua/jenova/agent/ exists"
+else
+    fail "T2: jvim-config/lua/jenova/agent/ MISSING"
+fi
+
+if [ -f "$ROOT/jvim-config/lua/jenova/agent/memory.lua" ]; then
+    ok "T2: jvim-config/lua/jenova/agent/memory.lua exists"
+else
+    fail "T2: jvim-config/lua/jenova/agent/memory.lua MISSING"
+fi
 
 # --- T3: jenova-ca is executable ---
 if [ -x "$ROOT/bin/jenova-ca" ]; then

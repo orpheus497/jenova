@@ -52,10 +52,10 @@ DRAFT_SIZE="530MB"
 if [ -n "$PROFILE" ] && [ -f "$JENOVA_ROOT/hardware-profiles/$PROFILE/profile.conf" ]; then
     # Safely extract RECOMMENDED_* variables
     _P_CONF="$JENOVA_ROOT/hardware-profiles/$PROFILE/profile.conf"
-    _R_AGENT=$(grep "^RECOMMENDED_AGENT_MODEL=" "$_P_CONF" | cut -d'"' -f2)
-    _R_AGENT_URL=$(grep "^RECOMMENDED_AGENT_URL=" "$_P_CONF" | cut -d'"' -f2)
-    _R_EMBED=$(grep "^RECOMMENDED_EMBED_MODEL=" "$_P_CONF" | cut -d'"' -f2)
-    _R_EMBED_URL=$(grep "^RECOMMENDED_EMBED_URL=" "$_P_CONF" | cut -d'"' -f2)
+    _R_AGENT=$(grep "^RECOMMENDED_AGENT_MODEL=" "$_P_CONF" | cut -d'"' -f2 || true)
+    _R_AGENT_URL=$(grep "^RECOMMENDED_AGENT_URL=" "$_P_CONF" | cut -d'"' -f2 || true)
+    _R_EMBED=$(grep "^RECOMMENDED_EMBED_MODEL=" "$_P_CONF" | cut -d'"' -f2 || true)
+    _R_EMBED_URL=$(grep "^RECOMMENDED_EMBED_URL=" "$_P_CONF" | cut -d'"' -f2 || true)
 
     [ -n "$_R_AGENT" ] && AGENT_FILE="$_R_AGENT"
     [ -n "$_R_AGENT_URL" ] && AGENT_URL="$_R_AGENT_URL"

@@ -163,7 +163,9 @@ show_action_menu() {
         [ "$action" = "uninstall" ] && dialog_args="--defaultno"
 
         if $DIALOG $dialog_args --yesno "$msg" 10 60; then
-            echo "${action^}ing $item..."
+            # Portable capitalization for Bash 3.2
+            _cap_action=$(echo "$action" | awk '{print toupper(substr($0,1,1))tolower(substr($0,2))}')
+            echo "${_cap_action}ing $item..."
 
             # Map component names to function suffixes
             local suffix
