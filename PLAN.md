@@ -79,5 +79,6 @@ bin/mcsh        → Modern C Shell (tcsh+etcsh fusion, drop-in replacement)
 
 ### 5. macOS & Platform Support
 - [ ] Accurate macOS Metal backend detection and reporting in build/daemon scripts.
+- [ ] Ensure manager script compatibility with Bash 3.2 (macOS default) by replacing Bash 4.0+ parameter transformations with portable alternatives.
 - [ ] Optional `mcsh` prompt module that surfaces backend health.
 - [ ] Shell completion for `jenova-ca` verbs / flags.

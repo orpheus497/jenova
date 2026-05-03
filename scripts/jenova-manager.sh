@@ -164,11 +164,17 @@ show_action_menu() {
 
         if $DIALOG $dialog_args --yesno "$msg" 10 60; then
             echo "${action^}ing $item..."
-            if case "$action" in
-                "install")   case "$item" in "Jenova_Core") install_jenova_core ;; "jvim") install_jvim ;; "llama.cpp") install_llama ;; *) false ;; esac ;;
-                "update")    case "$item" in "Jenova_Core") update_jenova_core  ;; "jvim") update_jvim  ;; "llama.cpp") update_llama  ;; *) false ;; esac ;;
-                "uninstall") case "$item" in "Jenova_Core") uninstall_jenova_core ;; "jvim") uninstall_jvim ;; "llama.cpp") uninstall_llama ;; *) false ;; esac ;;
-            esac; then
+
+            # Map component names to function suffixes
+            local suffix
+            case "$item" in
+                "Jenova_Core") suffix="jenova_core" ;;
+                "jvim")        suffix="jvim" ;;
+                "llama.cpp")   suffix="llama" ;;
+                *)             suffix="unknown" ;;
+            esac
+
+            if [ "$suffix" != "unknown" ] && "${action}_${suffix}"; then
                 echo "Finished ${action}ing $item. Press any key to continue."
             else
                 echo "Failed to $action $item. Press any key to continue."
