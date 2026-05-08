@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=J-Vim
+Comment=Jenova Cognitive Architecture fork of NeoVim
+# Wrap in 'sh -c' to expand $HOME and find the terminal in $PATH
+Exec=sh -c "x-terminal-emulator -e $HOME/.local/bin/jvim"
+Terminal=false
+Categories=Utility;TextEditor;AI;
+
