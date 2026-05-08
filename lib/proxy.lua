@@ -372,6 +372,38 @@ local function proxy_connection(client_fd, conn_fds)
         return
     end
 
+    -- Static file serving for Web UI
+    if is_get then
+        local path = headers_raw:match("^GET ([^ %?]+)")
+        if path then
+            if path == "/" then path = "/index.html" end
+            -- Security: prevent directory traversal
+            if not path:find("%.%.") then
+                local local_path = root_dir .. "/public" .. path
+                local f = io.open(local_path, "rb")
+                if f then
+                    local content = f:read("*a")
+                    f:close()
+                    local mime = "application/octet-stream"
+                    if path:find("%.html$") then mime = "text/html"
+                    elseif path:find("%.js$") then mime = "application/javascript"
+                    elseif path:find("%.css$") then mime = "text/css"
+                    elseif path:find("%.svg$") then mime = "image/svg+xml"
+                    elseif path:find("%.png$") then mime = "image/png"
+                    elseif path:find("%.jpg$") or path:find("%.jpeg$") then mime = "image/jpeg"
+                    elseif path:find("%.json$") then mime = "application/json"
+                    end
+                    local resp = string.format(
+                        "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
+                        mime, #content)
+                    async_send(client_fd, resp .. content)
+                    safe_close()
+                    return
+                end
+            end
+        end
+    end
+
     if not is_get then
         if content_length > MAX_BODY_SIZE then
             local err_resp = "HTTP/1.1 413 Content Too Large\r\nConnection: close\r\n\r\n"

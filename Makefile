@@ -3,22 +3,24 @@
 # Two components make up Jenova as a single terminal IDE:
 #   1. llama.cpp        — Vulkan-accelerated inference backend
 #   2. jvim             — Neovim-based editor (`jvim` binary, in-tree fork)
+#   3. jca_web          — Web-based UI
 #
 # The agent is embedded inside jvim — it lives at jvim-config/lua/jenova/agent/.
 # There is no separate cli-agent any more.
 #
 # Common usage:
-#   make            # Build everything (llama.cpp + jvim)
+#   make            # Build everything (llama.cpp + jvim + mcsh + web)
 #   make jvim       # Build only the bundled jvim editor
 #   make llama      # Build only llama.cpp
+#   make web        # Build only the Web UI
 #   make install    # Run scripts/install.sh (system-aware deploy)
 #   make clean      # Remove build artifacts from both components
 
-.PHONY: all llama llama-hybrid jvim mcsh install clean help clean-root
+.PHONY: all llama llama-hybrid jvim mcsh web install clean help clean-root
 
-all: llama jvim mcsh
+all: llama jvim mcsh web
 	@echo ""
-	@echo "✅ Jenova build complete (llama.cpp + jvim + mcsh)"
+	@echo "✅ Jenova build complete (llama.cpp + jvim + mcsh + web)"
 	@echo "   Run 'make install' (or scripts/install.sh) to deploy."
 
 llama:
@@ -66,12 +68,20 @@ mcsh:
 	@cp mcsh/build/mcsh bin/mcsh
 	@echo "   mcsh built: bin/mcsh"
 
+web:
+	@echo "🔨 Building JCA Web UI..."
+	@if [ ! -d jca_web ]; then \
+		echo "ERROR: jca_web/ source tree missing." >&2; exit 1; \
+	fi
+	@cd jca_web && npm install && npm run build
+	@echo "   Web UI built: public/"
+
 install:
 	@./scripts/install.sh
 
 clean:
 	@echo "🧹 Cleaning build artifacts..."
-	@rm -rf llama.cpp/build jvim/build jvim/install mcsh/build bin/mcsh
+	@rm -rf llama.cpp/build jvim/build jvim/install mcsh/build bin/mcsh public/ jca_web/node_modules
 
 clean-root:
 	@echo "🧹 Cleaning root directory bloat..."
@@ -82,11 +92,12 @@ clean-root:
 help:
 	@echo "Jenova Cognitive Architecture — build targets"
 	@echo ""
-	@echo "  make            Build llama.cpp + jvim + mcsh"
+	@echo "  make            Build llama.cpp + jvim + mcsh + web"
 	@echo "  make llama      Build only llama.cpp (Vulkan)"
 	@echo "  make llama-hybrid Build llama.cpp (Vulkan + CUDA)"
 	@echo "  make jvim       Build only the bundled jvim editor"
 	@echo "  make mcsh       Build only the mcsh shell"
+	@echo "  make web        Build only the Web UI"
 	@echo "  make clean-root Remove build artifacts from the root directory"
 	@echo "  make install    Run scripts/install.sh"
 	@echo "  make clean      Remove build artifacts"

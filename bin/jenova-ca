@@ -183,6 +183,11 @@ _launch_llama_server_bg() {
     _ls_log="$1"
     shift
 
+    _path_arg=""
+    if [ -d "$JENOVA_ROOT/public" ]; then
+        _path_arg="--path $JENOVA_ROOT/public"
+    fi
+
     "$LLAMA_SERVER" \
         -m "$MODEL_PATH" \
         $RUN_DEV_ARGS \
@@ -202,6 +207,8 @@ _launch_llama_server_bg() {
         --offline \
         --host "$HOST" \
         --port "$LLAMA_PORT" \
+        $_path_arg \
+        --props \
         $RUN_DRAFT_ARGS \
         "$@" > "$_ls_log" 2>&1 9>&- &
     LLAMA_PID=$!
@@ -663,6 +670,11 @@ fi
 # =====================================================================
 while [ "$1" = "--daemon" ]; do shift; done
 
+_path_arg=""
+if [ -d "$JENOVA_ROOT/public" ]; then
+    _path_arg="--path $JENOVA_ROOT/public"
+fi
+
 "$LLAMA_SERVER" \
     -m "$MODEL_PATH" \
     $RUN_DEV_ARGS \
@@ -682,6 +694,8 @@ while [ "$1" = "--daemon" ]; do shift; done
     --offline \
     --host "$HOST" \
     --port "$LLAMA_PORT" \
+    $_path_arg \
+    --props \
     $RUN_DRAFT_ARGS \
     "$@" &
 LLAMA_PID=$!
