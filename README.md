@@ -22,28 +22,33 @@ IDE that runs entirely on your machine.
 
 ## Quick Start
 
-### 1. Clone & Build
+### 1. Pre-flight Check
+```sh
+# Verify all dependencies before building
+./scripts/preflight-check.sh
+```
+
+### 2. Build & Install
 ```sh
 git clone https://github.com/orpheus497/jenova
 cd jenova
 
-# Pull llama.cpp and build the entire stack
-scripts/llama_dl.sh
-make
+# Pull llama.cpp, build, deploy, and verify (all-in-one)
+./scripts/llama_dl.sh && make && make install && ./scripts/verify-install.sh
+
+# Or use the complete workflow:
+./scripts/install-complete.sh
 ```
 
-### 2. Install & Configure
+### 3. Setup & Launch
 ```sh
-# Deploy binaries and configuration
-make install
+# Download AI models
+./scripts/model_dl.sh
 
-# Auto-detect hardware and apply tuning
+# Apply hardware profile and run system tuning
 ./hardware-profiles/detect-hardware.sh --apply
-sudo scripts/jenova-setup
-```
+sudo ./scripts/jenova-setup
 
-### 3. Launch
-```sh
 # Start the backend and open the editor
 jenova
 ```
@@ -53,8 +58,11 @@ jenova
 Detailed documentation lives in `/docs`:
 
 - **Installation**
+    - [Streamlined Installation](docs/installation/STREAMLINED.md) — Complete workflow guide
+    - [Installation Checklist](docs/installation/checklist.md) — Step-by-step checklist
     - [FreeBSD](docs/installation/freebsd.md)
     - [Linux](docs/installation/linux.md)
+    - [macOS](docs/installation/macos.md)
     - [Dependencies](docs/installation/dependencies.md)
 - **Architecture**
     - [Overview](docs/architecture/overview.md)

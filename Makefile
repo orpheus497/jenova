@@ -16,7 +16,7 @@
 #   make install    # Run scripts/install.sh (system-aware deploy)
 #   make clean      # Remove build artifacts from both components
 
-.PHONY: all llama llama-hybrid jvim mcsh web install clean help clean-root
+.PHONY: all llama llama-hybrid jvim mcsh web install preflight verify clean help clean-root
 
 all: llama jvim mcsh web
 	@echo ""
@@ -89,15 +89,28 @@ clean-root:
 	@rm -rf autom4te.cache po/*.gmo nls/*.cat
 	@echo "   Root directory cleaned."
 
+preflight:
+	@./scripts/preflight-check.sh
+
+verify:
+	@./scripts/verify-install.sh --full
+
 help:
 	@echo "Jenova Cognitive Architecture — build targets"
 	@echo ""
-	@echo "  make            Build llama.cpp + jvim + mcsh + web"
-	@echo "  make llama      Build only llama.cpp (Vulkan)"
-	@echo "  make llama-hybrid Build llama.cpp (Vulkan + CUDA)"
-	@echo "  make jvim       Build only the bundled jvim editor"
-	@echo "  make mcsh       Build only the mcsh shell"
-	@echo "  make web        Build only the Web UI"
-	@echo "  make clean-root Remove build artifacts from the root directory"
-	@echo "  make install    Run scripts/install.sh"
-	@echo "  make clean      Remove build artifacts"
+	@echo "  Build targets:"
+	@echo "    make                Build llama.cpp + jvim + mcsh + web"
+	@echo "    make llama          Build only llama.cpp (Vulkan)"
+	@echo "    make llama-hybrid   Build llama.cpp (Vulkan + CUDA)"
+	@echo "    make jvim           Build only the bundled jvim editor"
+	@echo "    make mcsh           Build only the mcsh shell"
+	@echo "    make web            Build only the Web UI"
+	@echo ""
+	@echo "  Installation & verification:"
+	@echo "    make preflight      Check dependencies before building"
+	@echo "    make install        Run scripts/install.sh (deploy to system)"
+	@echo "    make verify         Verify installation succeeded"
+	@echo ""
+	@echo "  Cleanup:"
+	@echo "    make clean          Remove build artifacts"
+	@echo "    make clean-root     Remove root directory artifacts"
