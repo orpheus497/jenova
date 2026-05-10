@@ -24,8 +24,8 @@ async function main() {
 
     // Inline favicon
     if (existsSync(FAVICON_SRC)) {
-        const faviconContent = readFileSync(FAVICON_SRC, 'utf-8');
-        const faviconBase64 = Buffer.from(faviconContent).toString('base64');
+        const faviconContent = readFileSync(FAVICON_SRC);
+        const faviconBase64 = faviconContent.toString('base64');
         const faviconDataUrl = `data:image/svg+xml;base64,${faviconBase64}`;
         content = content.replace(/href="[^"]*favicon\.svg"/g, `href="${faviconDataUrl}"`);
         console.log('✓ Inlined favicon.svg');

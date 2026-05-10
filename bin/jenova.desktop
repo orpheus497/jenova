@@ -4,6 +4,7 @@ Name=Jenova Manager
 Comment=Manage Jenova Cognitive Architecture Backend and Apps
 # Wrap in 'sh -c' to expand $HOME and find the terminal in $PATH
 Exec=sh -c "foot -e $HOME/.local/bin/jenova-tui || kitty -e $HOME/.local/bin/jenova-tui || alacritty -e $HOME/.local/bin/jenova-tui || ghostty -e $HOME/.local/bin/jenova-tui || wezterm start -- $HOME/.local/bin/jenova-tui || x-terminal-emulator -e $HOME/.local/bin/jenova-tui || gnome-terminal -- $HOME/.local/bin/jenova-tui || konsole -e $HOME/.local/bin/jenova-tui || xterm -e $HOME/.local/bin/jenova-tui"
+Icon=jenova
 Terminal=false
 Categories=Utility;TextEditor;AI;
 

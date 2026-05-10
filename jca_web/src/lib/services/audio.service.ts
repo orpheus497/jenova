@@ -12,7 +12,7 @@ export class AudioService {
 		if (document.visibilityState === 'hidden' && 'Notification' in window && Notification.permission === 'granted') {
 			new Notification('Jenova JCA', {
 				body: text.slice(0, 150) + (text.length > 150 ? '...' : ''),
-				icon: '/favicon.svg'
+				icon: '/favicon.png'
 			});
 		}
 	}

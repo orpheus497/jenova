@@ -695,6 +695,16 @@ if [ -n "$_BIN_DIR" ]; then
             cp "$JENOVA_ROOT/bin/jvim.desktop" "$_APP_DIR/jvim.desktop"
         fi
         ok "Installed desktop entries to $_APP_DIR"
+
+        # Install Icons
+        _ICON_DIR="$HOME/.local/share/icons"
+        mkdir -p "$_ICON_DIR"
+        if [ -d "$JENOVA_ROOT/png" ]; then
+            cp "$JENOVA_ROOT/png/jenova.png" "$_ICON_DIR/jenova.png"
+            cp "$JENOVA_ROOT/png/jvim.png" "$_ICON_DIR/jvim.png"
+            cp "$JENOVA_ROOT/png/jca.png" "$_ICON_DIR/jca.png"
+            ok "Installed icons to $_ICON_DIR"
+        fi
     fi
 else
     warn "No writable bin dir found on PATH (~/.local/bin or ~/bin)."

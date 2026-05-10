@@ -1,4 +1,4 @@
-# Jenova Cognitive Architecture
+# <img src="png/jenova.png" width="48" height="48" valign="middle"> Jenova Cognitive Architecture
 
 Jenova is a local-first AI coding environment designed for consumer and professional laptops. It bundles an inference
 backend, a purpose-built editor (`jvim`), a context-aware AI agent embedded
@@ -76,7 +76,7 @@ jenova
 jca
 ```
 
-The Jenova backend automatically saves your chats and workspaces to the `Workspaces/` directory in the project root. This ensures your data is device-specific and accessible even when offline or using the Web UI over the LAN.
+The Jenova backend automatically saves your chats and workspaces to the `~/Workspaces` directory. This ensures your data is device-specific, accessible via standard tools like `jvim`, and remains persistent even when using the Web UI over the LAN.
 
 ## Documentation
 

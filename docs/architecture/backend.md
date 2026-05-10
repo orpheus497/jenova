@@ -49,6 +49,16 @@ A second `llama-server` process running in embedding mode.
 
 State and logs live under `var/` (`var/run/`, `var/log/`, `var/cache/`).
 
+## Persistence & Workspaces
+
+The Intelligence Proxy includes a native **Filesystem API** (`/api/storage`) that allows frontends (like the Web UI) to persist data directly to the host machine.
+
+- **Storage Root**: `~/Workspaces`
+- **Data Format**: Markdown (`.md`) for chats and notes to ensure interoperability with `jvim` and standard Unix tools.
+- **Sync Logic**: The Web UI mirrors its internal state to the filesystem on every significant change (message completion, note edit, folder move).
+
+This architecture ensures that Jenova is "device-first" rather than "browser-first." Your data is not trapped in an IndexedDB silo; it lives in your home directory, organized by Workspace and Folder, ready for editing in `jvim` or backup via standard scripts.
+
 ## Networking
 All internal communication is HTTP/1.1 over localhost (or LAN when
 `--lan` is set). Streaming responses use chunked transfer-encoding so the
