@@ -66,19 +66,17 @@ make install
 
 ### 4. Setup & Launch
 ```sh
-# Download AI models
-./scripts/model_dl.sh
+# Start the Jenova Manager TUI (Status, LAN/LOCAL toggle, App Launching)
+jenova-tui
 
-# Apply hardware profile and run system tuning
-./hardware-profiles/detect-hardware.sh --apply
-sudo ./scripts/jenova-setup
-
-# Start the backend and open the editor
+# Or launch the integrated editor directly
 jenova
 
-# To access the Web UI, start the backend and open http://localhost:8080
-bin/jenova-ca --daemon
+# To access the Web UI directly
+jca
 ```
+
+The Jenova backend automatically saves your chats and workspaces to the `Workspaces/` directory in the project root. This ensures your data is device-specific and accessible even when offline or using the Web UI over the LAN.
 
 ## Documentation
 

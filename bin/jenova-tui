@@ -1,0 +1,185 @@
+#!/bin/sh
+# jenova-tui: Simple TUI for managing Jenova Cognitive Architecture
+# Provides status overview and controls for the jenova-ca backend.
+
+set -e
+
+SCRIPT_DIR=$(dirname "$(realpath "$0")")
+JENOVA_ROOT=$(dirname "$SCRIPT_DIR")
+
+# ── Colors ────────────────────────────────────────────────────────────────────
+if [ -t 1 ]; then
+    BOLD="\033[1m"
+    GREEN="\033[0;32m"
+    YELLOW="\033[0;33m"
+    RED="\033[0;31m"
+    BLUE="\033[0;34m"
+    CYAN="\033[0;36m"
+    NC="\033[0m"
+    CLEAR="\033[H\033[2J"
+else
+    BOLD="" GREEN="" YELLOW="" RED="" BLUE="" CYAN="" NC="" CLEAR=""
+fi
+
+# ── Load Configuration ────────────────────────────────────────────────────────
+JENOVA_CA="$SCRIPT_DIR/jenova-ca"
+CONF_FILE="$JENOVA_ROOT/etc/jenova.conf"
+LOCAL_CONF="$JENOVA_ROOT/etc/jenova.local.conf"
+
+load_config() {
+    if [ -f "$CONF_FILE" ]; then . "$CONF_FILE"; fi
+    if [ -f "$LOCAL_CONF" ]; then . "$LOCAL_CONF"; fi
+    
+    # Defaults
+    HOST="${HOST:-127.0.0.1}"
+    PORT="${PORT:-8080}"
+}
+
+# ── Backend Status ────────────────────────────────────────────────────────────
+get_status() {
+    if "$JENOVA_CA" status | grep -q "running"; then
+        echo "${GREEN}ACTIVE${NC}"
+        return 0
+    else
+        echo "${RED}INACTIVE${NC}"
+        return 1
+    fi
+}
+
+get_mode() {
+    # Check etc/jenova.conf and etc/jenova.local.conf
+    # The truth is determined by the HOST variable used by the backend
+    if [ "$HOST" = "0.0.0.0" ] || [ "$HOST" = "::" ] || [ "$HOST" = "*" ]; then
+        echo "${CYAN}LAN${NC} (Accessible from other devices)"
+    else
+        echo "${YELLOW}LOCAL${NC} (Accessible from this device only)"
+    fi
+}
+
+# ── Menu Actions ──────────────────────────────────────────────────────────────
+start_backend() {
+    echo "Starting Jenova CA backend..."
+    "$JENOVA_CA" start
+    sleep 2
+}
+
+stop_backend() {
+    echo "Stopping Jenova CA backend..."
+    "$JENOVA_CA" stop
+    sleep 1
+}
+
+restart_backend() {
+    echo "Restarting Jenova CA backend..."
+    "$JENOVA_CA" stop 2>/dev/null || true
+    sleep 1
+    "$JENOVA_CA" start
+    sleep 2
+}
+
+toggle_mode() {
+    # Logic: If current is LAN, switch to LOCAL. If current is LOCAL, switch to LAN.
+    if [ "$HOST" = "0.0.0.0" ] || [ "$HOST" = "::" ] || [ "$HOST" = "*" ]; then
+        NEW_HOST="127.0.0.1"
+        MODE_LABEL="LOCAL"
+    else
+        NEW_HOST="0.0.0.0"
+        MODE_LABEL="LAN"
+    fi
+
+    echo "Switching to $MODE_LABEL mode (HOST=$NEW_HOST)..."
+    
+    # Update or create etc/jenova.local.conf
+    if [ -f "$LOCAL_CONF" ] && grep -q "^HOST=" "$LOCAL_CONF"; then
+        sed -i.bak "s/^HOST=.*/HOST=\"$NEW_HOST\"/" "$LOCAL_CONF"
+    else
+        echo "HOST=\"$NEW_HOST\"" >> "$LOCAL_CONF"
+    fi
+    
+    # Reload config for the TUI's internal state
+    load_config
+    
+    # Restart backend to apply changes
+    restart_backend
+}
+
+launch_jvim() {
+    echo "Launching jvim editor..."
+    # Launch in a new terminal window to keep TUI alive
+    sh -c "foot -e $SCRIPT_DIR/jvim --no-backend || kitty -e $SCRIPT_DIR/jvim --no-backend || alacritty -e $SCRIPT_DIR/jvim --no-backend || ghostty -e $SCRIPT_DIR/jvim --no-backend || x-terminal-emulator -e $SCRIPT_DIR/jvim --no-backend || xterm -e $SCRIPT_DIR/jvim --no-backend" &
+}
+
+launch_webui() {
+    # Resolve the IP address if in LAN mode
+    URL="http://localhost:$PORT"
+    if [ "$HOST" = "0.0.0.0" ]; then
+        # Try to find a real IP for LAN access
+        IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+        if [ -n "$IP" ]; then
+            URL="http://$IP:$PORT"
+        fi
+    fi
+    
+    echo "Opening Web UI at $URL..."
+    if command -v xdg-open >/dev/null 2>&1; then
+        xdg-open "$URL" &
+    elif command -v open >/dev/null 2>&1; then
+        open "$URL" &
+    else
+        echo "Please open $URL in your browser."
+        sleep 3
+    fi
+}
+
+# ── Flags ─────────────────────────────────────────────────────────────────────
+if [ "$1" = "--launch-web" ]; then
+    load_config
+    if ! "$JENOVA_CA" status | grep -q "running"; then
+        echo "Starting backend..."
+        "$JENOVA_CA" start
+        sleep 2
+    fi
+    launch_webui
+    exit 0
+fi
+
+# ── Main Loop ─────────────────────────────────────────────────────────────────
+while true; do
+    load_config
+    printf "$CLEAR"
+    echo "${BOLD}${BLUE}╔══════════════════════════════════════════════════════╗${NC}"
+    echo "${BOLD}${BLUE}║           Jenova Cognitive Architecture              ║${NC}"
+    echo "${BOLD}${BLUE}╚══════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo "  ${BOLD}System Status:${NC}"
+    echo "    Backend: $(get_status)"
+    echo "    Mode:    $(get_mode)"
+    echo "    Host:    $HOST"
+    echo "    Port:    $PORT"
+    echo ""
+    echo "  ${BOLD}Backend Operations:${NC}"
+    echo "    1) Start Backend"
+    echo "    2) Stop Backend"
+    echo "    3) Restart Backend"
+    echo "    4) Toggle LAN/LOCAL Mode (Restarts Backend)"
+    echo ""
+    echo "  ${BOLD}Applications:${NC}"
+    echo "    j) Launch jvim Editor"
+    echo "    w) Open Web UI (Browser)"
+    echo ""
+    echo "    q) Quit TUI"
+    echo ""
+    printf "  Selection: "
+    read -r opt
+
+    case "$opt" in
+        1) start_backend ;;
+        2) stop_backend ;;
+        3) restart_backend ;;
+        4) toggle_mode ;;
+        j|J) launch_jvim ;;
+        w|W) launch_webui ;;
+        q|Q) printf "$CLEAR"; break ;;
+        *) echo "Invalid option: $opt"; sleep 1 ;;
+    esac
+done

@@ -674,13 +674,27 @@ if [ -n "$_BIN_DIR" ]; then
     ln -sf "$JENOVA_ROOT/bin/jvim" "$_BIN_DIR/jvim"
     ln -sf "$JENOVA_ROOT/bin/jenova" "$_BIN_DIR/jenova"
     ln -sf "$JENOVA_ROOT/bin/jenova-ca" "$_BIN_DIR/jenova-ca"
+    ln -sf "$JENOVA_ROOT/bin/jenova-tui" "$_BIN_DIR/jenova-tui"
     if [ -f "$JENOVA_ROOT/bin/mcsh" ]; then
         ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/mcsh"
         ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/tcsh"
         ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/csh"
-        ok "Symlinked jvim, jenova, jenova-ca, and mcsh to $_BIN_DIR"
+        ok "Symlinked jvim, jenova, jenova-ca, jenova-tui, and mcsh to $_BIN_DIR"
     else
-        ok "Symlinked jvim, jenova, and jenova-ca to $_BIN_DIR"
+        ok "Symlinked jvim, jenova, jenova-ca, and jenova-tui to $_BIN_DIR"
+    fi
+
+    # Install Desktop Entry
+    if [ "$JENOVA_OS" = "linux" ] || [ "$JENOVA_OS" = "freebsd" ]; then
+        _APP_DIR="$HOME/.local/share/applications"
+        mkdir -p "$_APP_DIR"
+        cp "$JENOVA_ROOT/bin/jenova.desktop" "$_APP_DIR/jenova.desktop"
+        cp "$JENOVA_ROOT/bin/jca.desktop" "$_APP_DIR/jca.desktop"
+        # Also install jvim.desktop if it exists
+        if [ -f "$JENOVA_ROOT/bin/jvim.desktop" ]; then
+            cp "$JENOVA_ROOT/bin/jvim.desktop" "$_APP_DIR/jvim.desktop"
+        fi
+        ok "Installed desktop entries to $_APP_DIR"
     fi
 else
     warn "No writable bin dir found on PATH (~/.local/bin or ~/bin)."

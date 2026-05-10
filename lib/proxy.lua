@@ -441,6 +441,65 @@ local function proxy_connection(client_fd, conn_fds)
     end
 
     local is_chat_completion = headers_raw:find("POST /v1/chat/completions")
+    
+    -- Filesystem API for WebUI persistence
+    local storage_path = headers_raw:match("^POST /api/storage/([^ %?]+)")
+    if storage_path and #body_raw > 0 then
+        local workspaces_dir = root_dir .. "/Workspaces"
+        ffi.C.mkdir(workspaces_dir, 511) -- 0777
+        
+        -- Security: prevent directory traversal
+        if storage_path:find("%.%.") then
+            local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, err); safe_close(); return
+        end
+
+        local full_path = workspaces_dir .. "/" .. storage_path
+        -- Ensure parent directory exists
+        local dir_part = full_path:match("(.+)/[^/]+$")
+        if dir_part then
+            -- Simple recursive mkdir implementation
+            local path_acc = ""
+            for segment in dir_part:gmatch("([^/]+)") do
+                path_acc = path_acc .. "/" .. segment
+                ffi.C.mkdir(path_acc, 511)
+            end
+        end
+
+        local f = io.open(full_path, "wb")
+        if f then
+            f:write(body_raw)
+            f:close()
+            local resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}"
+            async_send(client_fd, resp)
+        else
+            local resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, resp)
+        end
+        safe_close(); return
+    end
+
+    local is_storage_get = is_get and headers_raw:match("^GET /api/storage/([^ %?]+)")
+    if is_storage_get then
+        local workspaces_dir = root_dir .. "/Workspaces"
+        if is_storage_get:find("%.%.") then
+            local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, err); safe_close(); return
+        end
+        local full_path = workspaces_dir .. "/" .. is_storage_get
+        local f = io.open(full_path, "rb")
+        if f then
+            local content = f:read("*a")
+            f:close()
+            local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)
+            async_send(client_fd, resp .. content)
+        else
+            local resp = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, resp)
+        end
+        safe_close(); return
+    end
+
     local intent = headers_raw:match("[Xx]%-Intent:%s*(%w+)")
     headers_raw = headers_raw:gsub("(\r\n[Hh][Oo][Ss][Tt]:%s*)[^\r\n]+", "%1" .. LLAMA_HOST .. ":" .. LLAMA_PORT)
     headers_raw = headers_raw:gsub("\r\n[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]:%s*[^\r\n]*\r\n", "\r\n")

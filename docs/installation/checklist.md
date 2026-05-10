@@ -115,9 +115,12 @@ sudo ./scripts/jenova-setup
 
 ### Step 7: First Run
 ```bash
+# Jenova Manager (Operational TUI)
+jenova-tui
+
 # Full environment (backend daemons + editor)
 jenova
-
+...
 # Or just the editor (no backend management)
 jvim
 

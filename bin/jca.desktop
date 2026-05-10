@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Jenova Web UI
+Comment=Access the Jenova Workstation in your browser
+Exec=sh -c "$HOME/.local/bin/jenova-tui --launch-web"
+Icon=web-browser
+Terminal=false
+Categories=Utility;AI;

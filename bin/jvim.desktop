@@ -3,7 +3,7 @@ Type=Application
 Name=J-Vim
 Comment=Jenova Cognitive Architecture fork of NeoVim
 # Wrap in 'sh -c' to expand $HOME and find the terminal in $PATH
-Exec=sh -c "x-terminal-emulator -e $HOME/.local/bin/jvim"
+Exec=sh -c "foot -e $HOME/.local/bin/jvim --no-backend || kitty -e $HOME/.local/bin/jvim --no-backend || alacritty -e $HOME/.local/bin/jvim --no-backend || ghostty -e $HOME/.local/bin/jvim --no-backend || wezterm start -- $HOME/.local/bin/jvim --no-backend || x-terminal-emulator -e $HOME/.local/bin/jvim --no-backend || gnome-terminal -- $HOME/.local/bin/jvim --no-backend || konsole -e $HOME/.local/bin/jvim --no-backend || xterm -e $HOME/.local/bin/jvim --no-backend"
 Terminal=false
 Categories=Utility;TextEditor;AI;
 

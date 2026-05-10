@@ -120,9 +120,12 @@ tail -f var/log/proxy.log
 
 ### First Run
 ```bash
+# Jenova Manager (TUI) — GUI/Desktop friendly control center
+jenova-tui
+
 # Full environment (backend + editor)
 jenova
-
+...
 # Or just the editor (no daemon management)
 jvim
 
