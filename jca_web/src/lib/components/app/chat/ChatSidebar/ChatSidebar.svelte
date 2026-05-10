@@ -149,10 +149,8 @@
 	<Sidebar.Header class="top-0 z-10 gap-4 bg-sidebar/50 p-4 pb-2 backdrop-blur-lg md:sticky">
 		<a href="#/" onclick={handleMobileSidebarItemClick}>
 			<div class="flex items-center gap-3 px-2">
-                <div class="flex w-8 h-8 rounded-lg bg-gradient-to-br from-brand-purple-light to-brand-crimson items-center justify-center font-mono font-bold text-xs shadow-lg text-white">
-                  JCA
-                </div>
-			    <h1 class="inline-flex items-center gap-1 text-sm font-semibold tracking-tight">Jenova Cognitive Architecture</h1>
+                <img src="/logo.png" alt="Jenova" class="w-8 h-8 rounded-lg shadow-lg" />
+			    <h1 class="inline-flex items-center gap-1 text-sm font-semibold tracking-tight">Jenova</h1>
             </div>
 		</a>
 
