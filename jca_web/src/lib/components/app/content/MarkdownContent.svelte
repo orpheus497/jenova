@@ -4,6 +4,7 @@
 	import remarkGfm from 'remark-gfm';
 	import remarkMath from 'remark-math';
 	import rehypeHighlight from 'rehype-highlight';
+	import rehypeSanitize from 'rehype-sanitize';
 	import remarkRehype from 'remark-rehype';
 	import rehypeKatex from 'rehype-katex';
 	import rehypeStringify from 'rehype-stringify';
@@ -97,6 +98,7 @@
 			.use(rehypeHighlight, {
 				aliases: { [FileTypeText.XML]: [FileTypeText.SVELTE, FileTypeText.VUE] }
 			}) // Add syntax highlighting
+			.use(rehypeSanitize) // Sanitize HTML for security
 			.use(rehypeRestoreTableHtml) // Restore limited HTML (e.g., <br>, <ul>) inside Markdown tables
 			.use(rehypeEnhanceLinks) // Add target="_blank" to links
 			.use(rehypeEnhanceCodeBlocks) // Wrap code blocks with header and actions

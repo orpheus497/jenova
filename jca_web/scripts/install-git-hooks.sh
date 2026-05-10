@@ -13,13 +13,13 @@ cat > "$PRE_COMMIT_HOOK" << 'EOF'
 #!/bin/bash
 
 # Check if there are any changes in the webui directory
-if git diff --cached --name-only | grep -q "^tools/server/webui/"; then
+if git diff --cached --name-only | grep -q "^jca_web/"; then
     REPO_ROOT=$(git rev-parse --show-toplevel)
-    cd "$REPO_ROOT/tools/server/webui"
+    cd "$REPO_ROOT/jca_web"
 
     # Check if package.json exists
     if [ ! -f "package.json" ]; then
-        echo "Error: package.json not found in tools/server/webui"
+        echo "Error: package.json not found in jca_web"
         exit 1
     fi
 
@@ -58,7 +58,7 @@ if git diff --cached --name-only | grep -q "^tools/server/webui/"; then
 
     # Stage the build output alongside the source changes
     cd "$REPO_ROOT"
-    git add tools/server/public/
+    git add public/
 
     echo "✅ Webui built and build output staged"
 fi
@@ -75,7 +75,7 @@ if [ $? -eq 0 ]; then
     echo ""
     echo "The hook will automatically:"
     echo "  • Format, lint and check webui code before commits"
-    echo "  • Build webui and stage tools/server/public/ into the same commit"
+    echo "  • Build webui and stage public/ into the same commit"
 else
     echo "❌ Failed to make hook executable"
     exit 1

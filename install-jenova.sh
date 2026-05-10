@@ -157,11 +157,7 @@ echo ""
 
 # Check disk space
 REQUIRED_SPACE=20  # GB
-if [ "$JENOVA_OS" = "freebsd" ]; then
-    FREE_SPACE=$(df -BG "$JENOVA_ROOT" | tail -1 | awk '{print $4}' | sed 's/G//')
-else
-    FREE_SPACE=$(df -BG "$JENOVA_ROOT" | tail -1 | awk '{print $4}' | sed 's/G//')
-fi
+FREE_SPACE=$(df -k "$JENOVA_ROOT" | awk 'NR==2 {print int($4 / 1048576)}')
 
 if [ "${FREE_SPACE:-0}" -lt "$REQUIRED_SPACE" ]; then
     print_warning "Low disk space: ${FREE_SPACE}GB free (recommended: ${REQUIRED_SPACE}GB+)"
@@ -261,7 +257,7 @@ if [ "$MINIMAL" = "0" ]; then
     else
         if command -v curl >/dev/null 2>&1 || command -v fetch >/dev/null 2>&1; then
             echo "  This may take several minutes..."
-            if "$JENOVA_ROOT/scripts/model_dl.sh" <<< "y" >/dev/null 2>&1; then
+            if echo "y" | "$JENOVA_ROOT/scripts/model_dl.sh" >/dev/null 2>&1; then
                 print_success "AI models downloaded"
             else
                 print_warning "Model download had issues"

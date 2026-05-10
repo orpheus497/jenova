@@ -61,15 +61,15 @@ async function main() {
 
     // Replace paths in index.html
     if (jsBundle) {
-        const jsRegex = new RegExp(`(["'])/_app/immutable/${jsBundle.replace('.', '\\.')}(["'])`, 'g');
+        const jsRegex = new RegExp(`(["'])/_app/immutable/${jsBundle.replaceAll('.', '\\.')}(["'])`, 'g');
         content = content.replaceAll(jsRegex, '$1./bundle.js$2');
         // Handle import() in script
-        const importRegex = new RegExp(`import\\((["'])/_app/immutable/${jsBundle.replace('.', '\\.')}(["'])\\)`, 'g');
+        const importRegex = new RegExp(`import\\((["'])/_app/immutable/${jsBundle.replaceAll('.', '\\.')}(["'])\\)`, 'g');
         content = content.replaceAll(importRegex, 'import($1./bundle.js$2)');
     }
 
     if (cssBundle) {
-        const cssRegex = new RegExp(`(["'])/_app/immutable/assets/${cssBundle.replace('.', '\\.')}(["'])`, 'g');
+        const cssRegex = new RegExp(`(["'])/_app/immutable/assets/${cssBundle.replaceAll('.', '\\.')}(["'])`, 'g');
         content = content.replaceAll(cssRegex, '$1./bundle.css$2');
     }
 
