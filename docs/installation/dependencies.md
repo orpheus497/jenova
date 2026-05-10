@@ -28,3 +28,12 @@ Jenova requires several system-level dependencies for building and running the c
 | `dialog` | TUI for manager | `dialog` | `dialog` | `dialog` | `dialog` | `dialog` |
 | `clangd` | C / C++ LSP | `llvm` | `clang` | `clangd` | `clang-tools-extra` | `llvm` |
 | `stylua` | Lua formatter | `stylua` | `stylua` | `cargo install stylua` | `cargo install stylua` | `stylua` |
+| `node` | Web UI build tooling (optional) | `node` | `nodejs` | `nodejs npm` | `nodejs` | `node` |
+
+> The bundled jvim editor (`jvim/`) and Modern C Shell (`mcsh/`) are both built
+> from source as part of `make`. You do **not** need to install `neovim` or
+> `tcsh` separately — `make jvim` produces `jvim/build/bin/nvim` (used as
+> `bin/jvim`) and `make mcsh` produces `bin/mcsh`.
+>
+> `node` / `npm` is optional and only required for the Web UI build via
+> `make web` or `./scripts/install-complete.sh` if the frontend is enabled.

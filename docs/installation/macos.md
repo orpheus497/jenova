@@ -31,16 +31,30 @@ brew install \
     scripts/llama_dl.sh
     ```
 
-3.  **Build everything**:
+3.  **Run a pre-flight check** before building:
+    ```bash
+    ./scripts/preflight-check.sh --verbose
+    ```
+
+4.  **Build everything**:
     ```bash
     make
     ```
     *Note: On macOS, `make` will build `llama.cpp` with Metal support by default unless Vulkan/MoltenVK is explicitly requested in `bin/build-llama-jenova`.*
 
-4.  **Run the installer**:
+    If you want the optional Web UI, install Node.js/npm and run `make web`.
+
+5.  **Run the installer**:
     ```bash
     ./scripts/install.sh
     ```
+
+    Or use the combined workflow:
+    ```bash
+    ./scripts/install-complete.sh
+    ```
+
+    > Note: `install-complete.sh` skips optional LSP installation by default.
 
 ## Post-Installation
 

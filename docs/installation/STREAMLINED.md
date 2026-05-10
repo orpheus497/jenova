@@ -112,6 +112,10 @@ For a fully automated, end-to-end installation:
 ./scripts/install-complete.sh --force         # Overwrite config
 ```
 
+> Note: `install-complete.sh` deploys the install with `--skip-lsp` by default,
+> so optional language server installation is not performed in the one-command
+> flow.
+
 This is equivalent to:
 1. `./scripts/preflight-check.sh`
 2. `make clean && make`

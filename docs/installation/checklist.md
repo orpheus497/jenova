@@ -74,6 +74,13 @@ make install
 ./scripts/install.sh --client-only    # LAN client (no backend)
 ```
 
+You can also run the full end-to-end workflow:
+```bash
+./scripts/install-complete.sh
+```
+
+> Note: `install-complete.sh` skips optional LSP installation by default.
+
 Installation will:
 - ✓ Check system dependencies
 - ✓ Create runtime directories (~/.jenova, var/log, var/cache)

@@ -25,7 +25,7 @@ IDE that runs entirely on your machine.
 ### 1. Pre-flight Check
 ```sh
 # Verify all dependencies before building
-./scripts/preflight-check.sh
+./scripts/preflight-check.sh --verbose
 ```
 
 ### 2. Build & Install
@@ -33,14 +33,22 @@ IDE that runs entirely on your machine.
 git clone https://github.com/orpheus497/jenova
 cd jenova
 
-# Pull llama.cpp, build, deploy, and verify (all-in-one)
-./scripts/llama_dl.sh && make && make install && ./scripts/verify-install.sh
+# Pull llama.cpp, build, deploy, and verify
+./scripts/llama_dl.sh
+make
+make install
+./scripts/verify-install.sh --full
+```
 
-# Or use the complete workflow:
+### 3. One-Command Install
+```sh
+# All-in-one: preflight → build → deploy → (optional) verify
 ./scripts/install-complete.sh
 ```
 
-### 3. Setup & Launch
+> Note: `install-complete.sh` deploys with `--skip-lsp` by default.
+
+### 4. Setup & Launch
 ```sh
 # Download AI models
 ./scripts/model_dl.sh

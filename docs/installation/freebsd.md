@@ -15,12 +15,26 @@ cd jenova
 # 3. Pull llama.cpp into ./llama.cpp (idempotent — clones or pulls)
 scripts/llama_dl.sh
 
-# 4. Build everything: llama.cpp (Vulkan) + jvim + mcsh
+# 4. Run a pre-flight check before building
+./scripts/preflight-check.sh --verbose
+
+# 5. Build everything: llama.cpp (Vulkan) + jvim + mcsh
 make
 
-# 5. Run the installer (hardware-aware)
+# If you want the optional Web UI, install Node.js/npm and run:
+# make web
+
+# 6. Run the installer (hardware-aware)
 make install
 ```
+
+You can also use the single-command installer workflow:
+
+```sh
+./scripts/install-complete.sh
+```
+
+> Note: `install-complete.sh` skips optional LSP installation by default.
 
 ## Manual Installation Steps
 
