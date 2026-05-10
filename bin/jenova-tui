@@ -151,7 +151,7 @@ fi
 while true; do
     load_config
     IP=$(get_ip)
-    printf "$CLEAR"
+    if command -v clear >/dev/null 2>&1; then clear; else printf "$CLEAR"; fi
     echo "${BOLD}${BLUE}╔══════════════════════════════════════════════════════╗${NC}"
     echo "${BOLD}${BLUE}║           Jenova Cognitive Architecture              ║${NC}"
     echo "${BOLD}${BLUE}╚══════════════════════════════════════════════════════╝${NC}"
@@ -203,4 +203,9 @@ while true; do
                 restart_backend
             fi
             ;;
+        j|J) launch_jvim ;;
+        w|W) launch_webui ;;
+        q|Q) if command -v clear >/dev/null 2>&1; then clear; else printf "$CLEAR"; fi; break ;;
+        *) echo "Invalid option: $opt"; sleep 1 ;;
+    esac
 done
