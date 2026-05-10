@@ -61,12 +61,12 @@ done
 
 # Colors
 if [ -t 1 ]; then
-    BOLD="\033[1m"
-    GREEN="\033[0;32m"
-    YELLOW="\033[0;33m"
-    RED="\033[0;31m"
-    BLUE="\033[0;34m"
-    NC="\033[0m"
+    BOLD=$(printf '\033[1m')
+    GREEN=$(printf '\033[0;32m')
+    YELLOW=$(printf '\033[0;33m')
+    RED=$(printf '\033[0;31m')
+    BLUE=$(printf '\033[0;34m')
+    NC=$(printf '\033[0m')
 else
     BOLD=""
     GREEN=""
@@ -220,12 +220,16 @@ else
         if make "$component" >/dev/null 2>&1; then
             print_success "  $component built successfully"
         else
-            print_error "  Failed to build $component"
-            echo "  Check var/log/ for details"
-            exit 1
+            if [ "$component" = "mcsh" ]; then
+                print_warning "  Failed to build $component (optional, continuing)"
+            else
+                print_error "  Failed to build $component"
+                echo "  Check var/log/ for details"
+                exit 1
+            fi
         fi
     done
-    print_success "All components built"
+    print_success "Component build phase complete"
 fi
 
 echo ""
@@ -250,17 +254,17 @@ echo ""
 
 # Model download (unless minimal)
 if [ "$MINIMAL" = "0" ]; then
-    print_step "Downloading AI models..."
+    print_step "Checking AI models..."
 
     if [ "$DRY_RUN" = "1" ]; then
         print_info "Would download AI models (~5-10GB)"
     else
         if command -v curl >/dev/null 2>&1 || command -v fetch >/dev/null 2>&1; then
-            echo "  This may take several minutes..."
-            if echo "y" | "$JENOVA_ROOT/scripts/model_dl.sh" >/dev/null 2>&1; then
-                print_success "AI models downloaded"
+            # Run model downloader interactively
+            if "$JENOVA_ROOT/scripts/model_dl.sh"; then
+                print_success "Model check complete"
             else
-                print_warning "Model download had issues"
+                print_warning "Model downloader reported issues"
                 echo "  You can re-run: ./scripts/model_dl.sh"
             fi
         else

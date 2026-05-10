@@ -9,14 +9,14 @@ JENOVA_ROOT=$(dirname "$SCRIPT_DIR")
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 if [ -t 1 ]; then
-    BOLD="\033[1m"
-    GREEN="\033[0;32m"
-    YELLOW="\033[0;33m"
-    RED="\033[0;31m"
-    BLUE="\033[0;34m"
-    CYAN="\033[0;36m"
-    NC="\033[0m"
-    CLEAR="\033[H\033[2J"
+    BOLD=$(printf '\033[1m')
+    GREEN=$(printf '\033[0;32m')
+    YELLOW=$(printf '\033[0;33m')
+    RED=$(printf '\033[0;31m')
+    BLUE=$(printf '\033[0;34m')
+    CYAN=$(printf '\033[0;36m')
+    NC=$(printf '\033[0m')
+    CLEAR=$(printf '\033[H\033[2J')
 else
     BOLD="" GREEN="" YELLOW="" RED="" BLUE="" CYAN="" NC="" CLEAR=""
 fi

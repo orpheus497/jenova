@@ -82,7 +82,7 @@ done
 # Colours (disabled if not a terminal)
 # ---------------------------------------------------------------------------
 if [ -t 1 ]; then
-    _G="\033[0;32m"; _Y="\033[0;33m"; _R="\033[0;31m"; _B="\033[1;34m"; _N="\033[0m"
+    _G=$(printf '\033[0;32m'); _Y=$(printf '\033[0;33m'); _R=$(printf '\033[0;31m'); _B=$(printf '\033[1;34m'); _N=$(printf '\033[0m')
 else
     _G=""; _Y=""; _R=""; _B=""; _N=""
 fi
@@ -700,9 +700,17 @@ if [ -n "$_BIN_DIR" ]; then
         _ICON_DIR="$HOME/.local/share/icons"
         mkdir -p "$_ICON_DIR"
         if [ -d "$JENOVA_ROOT/png" ]; then
-            cp "$JENOVA_ROOT/png/jenova.png" "$_ICON_DIR/jenova.png"
-            cp "$JENOVA_ROOT/png/jvim.png" "$_ICON_DIR/jvim.png"
-            cp "$JENOVA_ROOT/png/jca.png" "$_ICON_DIR/jca.png"
+            [ -f "$JENOVA_ROOT/png/jenova.png" ] && cp "$JENOVA_ROOT/png/jenova.png" "$_ICON_DIR/jenova.png"
+            [ -f "$JENOVA_ROOT/png/jca.png" ] && cp "$JENOVA_ROOT/png/jca.png" "$_ICON_DIR/jca.png"
+            
+            # Handle jvim icon (might be .png or .jpg)
+            if [ -f "$JENOVA_ROOT/png/jvim.png" ]; then
+                cp "$JENOVA_ROOT/png/jvim.png" "$_ICON_DIR/jvim.png"
+            elif [ -f "$JENOVA_ROOT/png/jvim.jpg" ]; then
+                cp "$JENOVA_ROOT/png/jvim.jpg" "$_ICON_DIR/jvim.jpg"
+                # If desktop entry expects jvim.png, this might still need a symlink or rename, 
+                # but many DEs will find 'jvim' without extension.
+            fi
             ok "Installed icons to $_ICON_DIR"
         fi
     fi

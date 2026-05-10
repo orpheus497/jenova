@@ -3,6 +3,9 @@
 !/jenova-cli/.gitkeep
 
 # --- Build Artifacts ---
+/public/
+/bin/llama-server
+/bin/mcsh
 /llama.cpp/build/
 /llama.cpp/bin/
 /mcsh/build/

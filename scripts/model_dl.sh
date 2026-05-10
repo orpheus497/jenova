@@ -15,7 +15,7 @@ export JENOVA_ROOT
 
 # Colours
 if [ -t 1 ]; then
-    _G="\033[0;32m"; _Y="\033[0;33m"; _R="\033[0;31m"; _B="\033[1;34m"; _N="\033[0m"
+    _G=$(printf '\033[0;32m'); _Y=$(printf '\033[0;33m'); _R=$(printf '\033[0;31m'); _B=$(printf '\033[1;34m'); _N=$(printf '\033[0m')
 else
     _G=""; _Y=""; _R=""; _B=""; _N=""
 fi
@@ -125,17 +125,16 @@ download_model() {
 echo ""
 info "Checking for model files in $JENOVA_ROOT/models/ ..."
 
-# Agent
+# 1. Agent (Main Inference)
 download_model "$JENOVA_ROOT/models/agent/$AGENT_FILE" "Agent" "$AGENT_URL" "$AGENT_SIZE" 1 || {
-    fail "Agent model is required for Jenova to function."
-    exit 1
+    warn "Agent model not found/downloaded. Jenova will require a model to be fully functional."
 }
 
-# Embed
-download_model "$JENOVA_ROOT/models/embed/$EMBED_FILE" "Embedding" "$EMBED_URL" "$EMBED_SIZE" 0 || true
+# 2. Semantic (Embedding/RAG)
+download_model "$JENOVA_ROOT/models/embed/$EMBED_FILE" "Semantic" "$EMBED_URL" "$EMBED_SIZE" 0 || true
 
-# Draft
-download_model "$JENOVA_ROOT/models/draft/$DRAFT_FILE" "Draft" "$DRAFT_URL" "$DRAFT_SIZE" 0 || true
+# 3. Embedding (Drafting/Speculative)
+download_model "$JENOVA_ROOT/models/draft/$DRAFT_FILE" "Embedding" "$DRAFT_URL" "$DRAFT_SIZE" 0 || true
 
 # Symlink models/jenova.gguf -> agent model for health checks
 if [ -f "$JENOVA_ROOT/models/agent/$AGENT_FILE" ]; then

@@ -19,7 +19,7 @@ JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # Colours
 if [ -t 1 ]; then
-    _G="\033[0;32m"; _Y="\033[0;33m"; _R="\033[0;31m"; _B="\033[1;34m"; _C="\033[0;36m"; _N="\033[0m"
+    _G=$(printf '\033[0;32m'); _Y=$(printf '\033[0;33m'); _R=$(printf '\033[0;31m'); _B=$(printf '\033[1;34m'); _C=$(printf '\033[0;36m'); _N=$(printf '\033[0m')
 else
     _G=""; _Y=""; _R=""; _B=""; _C=""; _N=""
 fi

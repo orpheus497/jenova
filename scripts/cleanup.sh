@@ -55,7 +55,7 @@ done
 
 # Colours
 if [ -t 1 ]; then
-    _G="\033[0;32m"; _Y="\033[0;33m"; _B="\033[1;34m"; _N="\033[0m"
+    _G=$(printf '\033[0;32m'); _Y=$(printf '\033[0;33m'); _B=$(printf '\033[1;34m'); _N=$(printf '\033[0m')
 else
     _G=""; _Y=""; _B=""; _N=""
 fi
