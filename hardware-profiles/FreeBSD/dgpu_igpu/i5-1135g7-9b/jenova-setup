@@ -10,7 +10,7 @@
 #   - NVMe interrupt coalescing off
 #
 # Hardware context:
-#   Qwen2.5-Coder-3B Q8_0 (~3.1 GiB) fits fully on dual GPU (~11 GiB combined).
+#   Qwen2.5-Coder-3B Q8_0 (~3.5 GiB) fits fully on dual GPU (~11 GiB combined).
 #   No swap-backed model filesystem required.
 
 set -e

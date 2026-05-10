@@ -39,17 +39,17 @@ fi
 info "Hardware Profile: $PROFILE"
 
 # 2. Define Model Defaults (Generic/Fallback)
-AGENT_FILE="Qwen2.5-3B-Instruct-Q8_0.gguf"
-AGENT_URL="https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q8_0.gguf"
-AGENT_SIZE="3.2GB"
+AGENT_FILE="Qwen3.5-4B-Q6_K.gguf"
+AGENT_URL="https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q6_K.gguf"
+AGENT_SIZE="3.5GB"
 
-EMBED_FILE="Qwen3.5-0.8B-Instruct-Q8_0.gguf"
-EMBED_URL="https://huggingface.co/Qwen/Qwen3.5-0.8B-Instruct-GGUF/resolve/main/qwen3.5-0.8b-instruct-q8_0.gguf"
-EMBED_SIZE="850MB"
+EMBED_FILE="Qwen3-Embedding-0.6B-Q8_0.gguf"
+EMBED_URL="https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf"
+EMBED_SIZE="650MB"
 
-DRAFT_FILE="Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf"
-DRAFT_URL="https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q8_0.gguf"
-DRAFT_SIZE="530MB"
+DRAFT_FILE="Qwen3.5-0.8B-Q8_0.gguf"
+DRAFT_URL="https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q8_0.gguf"
+DRAFT_SIZE="850MB"
 
 # 3. Source Profile Recommendations
 if [ -n "$PROFILE" ]; then

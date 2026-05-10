@@ -187,8 +187,8 @@ curl -L https://huggingface.co/... -o models/agent/model.gguf
 
 # Or use Hugging Face CLI:
 pip install huggingface-hub
-huggingface-cli download Qwen/Qwen3-4B-GGUF \
-  qwen3-4b-instruct-q8_0.gguf --local-dir models/agent
+huggingface-cli download Qwen/Qwen3.5-4B-GGUF \
+  Qwen3.5-4B-Q6_K.gguf --local-dir models/agent
 ```
 
 ### Build Failures

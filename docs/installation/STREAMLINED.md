@@ -67,8 +67,8 @@ This is equivalent to:
 ./scripts/model_dl.sh
 
 # Or manually download specific models:
-curl -L https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/qwen3-4b-instruct-q8_0.gguf \
-  -o models/agent/Qwen3-Instruct-4B-Q8_0.gguf
+curl -L https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q6_K.gguf \
+  -o models/agent/Qwen3.5-4B-Q6_K.gguf
 
 # Expected downloads: ~5-10 GB total
 # - Agent model (4-9B) → models/agent/
@@ -199,7 +199,7 @@ curl http://localhost:8082/health
 
 # Or use Hugging Face CLI:
 pip install huggingface-hub
-huggingface-cli download Qwen/Qwen3-4B-GGUF qwen3-4b-instruct-q8_0.gguf \
+huggingface-cli download Qwen/Qwen3.5-4B-GGUF Qwen3.5-4B-Q6_K.gguf \
   --local-dir models/agent
 ```
 

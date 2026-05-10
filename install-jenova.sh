@@ -157,7 +157,7 @@ echo ""
 
 # Check disk space
 REQUIRED_SPACE=20  # GB
-FREE_SPACE=$(df -k "$JENOVA_ROOT" | awk 'NR==2 {print int($4 / 1048576)}')
+FREE_SPACE=$(df -kP "$JENOVA_ROOT" | awk 'NR==2 {print int($4 / 1048576)}')
 
 if [ "${FREE_SPACE:-0}" -lt "$REQUIRED_SPACE" ]; then
     print_warning "Low disk space: ${FREE_SPACE}GB free (recommended: ${REQUIRED_SPACE}GB+)"
@@ -217,7 +217,7 @@ if [ "$DRY_RUN" = "1" ]; then
 else
     for component in $COMPONENTS; do
         echo "  Building $component..."
-        if make "$component" >/dev/null 2>&1; then
+        if make "$component"; then
             print_success "  $component built successfully"
         else
             if [ "$component" = "mcsh" ]; then

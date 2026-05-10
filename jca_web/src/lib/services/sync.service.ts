@@ -5,11 +5,62 @@ import { MarkdownService } from './markdown.service';
 import type { DatabaseFolder, DatabaseNote, DatabaseConversation } from '$lib/types/database';
 
 export class SyncService {
-    private static isSyncing = false;
+    private static _isSyncing = false;
+
+    static get isSyncing() {
+        return this._isSyncing;
+    }
+
+    /**
+     * Pushes current IndexedDB state to the backend as a JSON snapshot.
+     */
+    static async push() {
+        if (!browser || this._isSyncing) return;
+        this._isSyncing = true;
+        try {
+            console.log('[Sync] Pushing database snapshot...');
+            const data = await DatabaseService.exportData();
+            const success = await StorageService.save('jenova-snapshot.json', JSON.stringify(data));
+            if (success) {
+                console.log('[Sync] Database snapshot pushed successfully');
+            } else {
+                console.error('[Sync] Failed to push database snapshot');
+            }
+        } catch (error) {
+            console.error('[Sync] Push failed', error);
+        } finally {
+            this._isSyncing = false;
+        }
+    }
+
+    /**
+     * Pulls the latest database snapshot from the backend and restores it.
+     */
+    static async pull() {
+        if (!browser || this._isSyncing) return;
+        this._isSyncing = true;
+        try {
+            console.log('[Sync] Pulling database snapshot...');
+            const raw = await StorageService.get('jenova-snapshot.json');
+            if (raw) {
+                const data = JSON.parse(raw);
+                await DatabaseService.importData(data);
+                console.log('[Sync] Database restored from snapshot');
+                // Reload page to reflect changes in all stores
+                window.location.reload();
+            } else {
+                console.log('[Sync] No remote snapshot found');
+            }
+        } catch (error) {
+            console.error('[Sync] Pull failed', error);
+        } finally {
+            this._isSyncing = false;
+        }
+    }
 
     static async sync() {
-        if (!browser || this.isSyncing) return;
-        this.isSyncing = true;
+        if (!browser || this._isSyncing) return;
+        this._isSyncing = true;
         try {
             console.log('[Sync] Starting filesystem sync...');
             
@@ -39,11 +90,15 @@ export class SyncService {
                 await StorageService.save(path, md);
             }
 
+            // Also push full snapshot
+            const data = await DatabaseService.exportData();
+            await StorageService.save('jenova-snapshot.json', JSON.stringify(data));
+
             console.log('[Sync] Complete');
         } catch (error) {
             console.error('[Sync] Failed', error);
         } finally {
-            this.isSyncing = false;
+            this._isSyncing = false;
         }
     }
 

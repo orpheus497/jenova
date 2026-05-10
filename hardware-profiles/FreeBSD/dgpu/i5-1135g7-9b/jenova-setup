@@ -10,7 +10,7 @@
 #   - Swap-backed mdmfs mount at /mnt/jenova-models for fast model cold-start
 #
 # Hardware context:
-#   3B Q8_0 (~3.1 GiB) + 0.5B drafter (~644 MiB) on GTX 1650 Ti (4 GiB).
+#   3B Q8_0 (~3.5 GiB) + 0.5B drafter (~644 MiB) on GTX 1650 Ti (4 GiB).
 #   Intel Iris Xe iGPU excluded — no UMA contention with system RAM.
 #   Intel Optane NVMe provides ~7 μs swap latency for KV overflow paging.
 

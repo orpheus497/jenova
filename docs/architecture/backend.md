@@ -30,7 +30,7 @@ LuaJIT proxy that fronts `llama-server` and shapes every request.
 
 ## 3. Embedding Server (port 8082)
 A second `llama-server` process running in embedding mode.
-- **Model**: `nomic-embed-text-v1.5` (configurable via `JENOVA_EMBED_MODEL`).
+- **Model**: `Qwen3-Embedding-v1.5` (configurable via `JENOVA_EMBED_MODEL`).
 - **Placement**: CPU by default, preserving VRAM for the main model.
 - **Consumers**: the proxy's RAG pipeline and the codebase indexer
   (`lib/indexer_runner.lua`).

@@ -246,9 +246,9 @@ if [ "$ENABLE_METAL" -eq 1 ]; then
 fi
 
 # Suggested models for this build type
-SUGGESTED_MODEL="Qwen3-Instruct-4B-Q8_0.gguf"
+SUGGESTED_MODEL="Qwen3.5-4B-Q6_K.gguf"
 if [ "$ENABLE_VULKAN" -eq 1 ] && [ "$ENABLE_CUDA" -eq 1 ]; then
-    SUGGESTED_MODEL="Qwen3-Instruct-7B-Q5_K_M.gguf"
+    SUGGESTED_MODEL="Qwen3.5-9B-Q4_K_M.gguf"
 fi
 
 cat > "$LOCAL_CONF" <<EOF

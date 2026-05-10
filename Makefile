@@ -73,7 +73,7 @@ web:
 	@if [ ! -d jca_web ]; then \
 		echo "ERROR: jca_web/ source tree missing." >&2; exit 1; \
 	fi
-	@cd jca_web && npm install && npm run build
+	@cd jca_web && ([ -d node_modules ] || npm install) && npm run build
 	@echo "   Web UI built: public/"
 
 install:

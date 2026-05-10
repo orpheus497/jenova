@@ -23,7 +23,7 @@ hardware-profiles/
 │   │   └── apu/
 │   │       └── ryzen7-5700u-3b/     # 3B Q8_0, Vega 8 partial offload
 │   ├── CPU/                         # CPU-only systems
-│   │   └── generic/                 # Qwen2.5-3B Q8, Ryzen optimization
+│   │   └── generic/                 # Qwen3.5-4B Q6_K, Ryzen optimization
 │   ├── CUDA/                        # NVIDIA CUDA systems
 │   │   └── dgpu/
 │   │       └── nvidia-generic/      # CUDA acceleration
@@ -34,9 +34,9 @@ hardware-profiles/
 │       └── apu/
 ├── macOS/                           # macOS-specific profiles
 │   ├── CPU/                         # CPU-only systems
-│   │   └── generic/                 # Qwen3.5-0.8B Q8, Neural Engine
+│   │   └── generic/                 # Qwen3.5-0.8B Q8_0, Neural Engine
 │   └── Metal/                       # Apple Silicon GPU
-│       └── generic/                 # Qwen2.5-3B Q8_K_M, Metal
+│       └── generic/                 # Qwen3.5-4B Q6_K_K_M, Metal
 └── detect-hardware.sh
 ```
 
@@ -60,7 +60,7 @@ These profiles are optimized for the balance of performance and resource availab
 ### FreeBSD Profiles
 
 #### 1. `FreeBSD/Optane/dgpu/i5-1135g7-9b` — 9B Q4_K_M, dGPU only + Optane swap
-**Model:** Qwen3.5-9B-Instruct-Q4_K_M (~5.5 GiB)
+**Model:** Qwen3.5-9B-Q4_K_M (~5.5 GiB)
 **Hardware:** Intel i5-1135G7 | GTX 1650 Ti 4GB (sole GPU) | 16GB RAM | Intel Optane NVMe
 **OS:** FreeBSD 15
 **Strategy:** Partial offload to single dGPU. High-speed Optane NVMe swap handles the remainder of the context and layers.
@@ -73,7 +73,7 @@ These profiles are optimized for the balance of performance and resource availab
 | `DRAFT` | `0` |
 
 #### 2. `FreeBSD/Optane/dgpu_igpu/i5-1135g7-9b` — 9B Q4_K_M, dual GPU + Optane swap
-**Model:** Qwen3.5-9B-Instruct-Q4_K_M (~5.5 GiB)
+**Model:** Qwen3.5-9B-Q4_K_M (~5.5 GiB)
 **Hardware:** Intel i5-1135G7 | GTX 1650 Ti 4GB + Intel Iris Xe ~7GB UMA | 16GB RAM | Intel Optane NVMe
 **OS:** FreeBSD 15
 **Strategy:** Dual GPU partial offload. Intel Optane NVMe provides high-bandwidth swap for CPU-bound layers.
@@ -88,7 +88,7 @@ These profiles are optimized for the balance of performance and resource availab
 ### Linux Profiles
 
 #### 3. `Linux/CPU/generic` — CPU-only, multi-core optimization
-**Model:** Qwen2.5-3B-Instruct-Q8 (~3.1 GiB)
+**Model:** Qwen3.5-4B-Q8 (~3.5 GiB)
 **Hardware:** Multi-core CPU (Ryzen, Intel) | No GPU
 **OS:** Linux
 **Strategy:** CPU-only inference with optimized threading for modern multi-core processors.
@@ -101,7 +101,7 @@ These profiles are optimized for the balance of performance and resource availab
 | `DRAFT` | `0` |
 
 #### 4. `Linux/AMD/apu/ryzen7-5700u-3b` — 3B Q8, AMD UMA
-**Model:** Qwen2.5-3B-Instruct-Q8 (~3.1 GiB)
+**Model:** Qwen3.5-4B-Q8 (~3.5 GiB)
 **Hardware:** AMD Ryzen 7 5700U 8C/16T | AMD Vega 8 UMA ~2-4GB | 15.28GB RAM
 **OS:** Linux
 **Strategy:** Partial GPU offload — 24 of 36 layers on Vega 8, remainder on CPU
@@ -114,7 +114,7 @@ These profiles are optimized for the balance of performance and resource availab
 | `DRAFT` | `1` |
 
 #### 5. `Linux/Vulkan/dgpu/full-offload-12gb` — 9B Q8, 12GB+ VRAM
-**Model:** Qwen3.5-9B-Instruct-Q8 (~9.5 GiB)
+**Model:** Qwen3.5-9B-Q8 (~9.5 GiB)
 **Hardware:** Any Vulkan-capable GPU with 12GB+ VRAM
 **OS:** Linux
 **Strategy:** Full single-GPU offload — all layers fit in VRAM.
@@ -127,7 +127,7 @@ These profiles are optimized for the balance of performance and resource availab
 | `DRAFT` | `1` |
 
 #### 6. `Linux/CUDA/dgpu/nvidia-generic` — CUDA acceleration
-**Model:** Qwen2.5-3B-Instruct-Q8 (default)
+**Model:** Qwen3.5-4B-Q8 (default)
 **Hardware:** NVIDIA CUDA-capable GPU
 **OS:** Linux
 **Strategy:** Hardware-accelerated inference utilizing CUDA cores.
@@ -141,8 +141,8 @@ These profiles are optimized for the balance of performance and resource availab
 
 ### macOS Profiles
 
-#### 7. `macOS/Metal/generic` — 2.5B Q8_K_M, Apple Silicon Metal
-**Model:** Qwen2.5-3B-Instruct-Q8_K_M (~3.2 GiB)
+#### 7. `macOS/Metal/generic` — 4B Q6_K, Apple Silicon Metal
+**Model:** Qwen3.5-4B-Q8_K_M (~3.5 GiB)
 **Hardware:** Apple Silicon (M1/M2/M3/M4) | Integrated GPU
 **OS:** macOS
 **Strategy:** Full Metal GPU offload using unified memory
@@ -155,7 +155,7 @@ These profiles are optimized for the balance of performance and resource availab
 | `DRAFT` | `1` |
 
 #### 8. `macOS/CPU/generic` — 0.8B Q8, Apple Silicon CPU (half spec)
-**Model:** Qwen3.5-0.8B-Instruct-Q8 (~0.8 GiB)
+**Model:** Qwen3.5-0.8B-Q8 (~0.8 GiB)
 **Hardware:** Apple Silicon (M1/M2/M3/M4) | CPU-only
 **OS:** macOS
 **Strategy:** CPU-only inference. Context size and thread scaling are set to exactly half the footprint of the standard Ryzen configurations to maintain extreme power efficiency on battery.
@@ -175,11 +175,11 @@ These profiles are optimized for the balance of performance and resource availab
 |---|---|---|---|---|---|---|
 | `FreeBSD/Optane/dgpu_igpu/i5-1135g7-9b` | FreeBSD | Qwen3.5-9B | Q4_K_M | ~11 GiB dual | 8K | No |
 | `FreeBSD/Optane/dgpu/i5-1135g7-9b` | FreeBSD | Qwen3.5-9B | Q4_K_M | 4 GiB dGPU | 8K | No |
-| `Linux/CPU/generic` | Linux | Qwen2.5-3B | Q8 | CPU-only | 16K | No |
-| `Linux/AMD/apu/ryzen7-5700u-3b` | Linux | Qwen2.5-3B | Q8 | ~2-4 GiB UMA | 16K | Yes |
-| `Linux/Vulkan/dgpu/full-offload-12gb` | Linux | Qwen3.5-9B | Q8 | 12GB+ | 32K | Yes |
-| `Linux/CUDA/dgpu/nvidia-generic` | Linux | Qwen2.5-3B | Q8 | VRAM-dependent | 16K | Yes |
-| `macOS/Metal/generic` | macOS | Qwen2.5-3B | Q8_K_M | Unified | 16K | Yes |
+| `Linux/CPU/generic` | Linux | Qwen3.5-4B | Q8 | CPU-only | 16K | No |
+| `Linux/AMD/apu/ryzen7-5700u-3b` | Linux | Qwen3.5-4B | Q8 | ~2-4 GiB UMA | 16K | Yes |
+| `Linux/Vulkan/dgpu/full-offload-9b` | Linux | Qwen3.5-9B | Q8_0 | 12GB+ | 32K | Yes |
+| `Linux/CUDA/dgpu/nvidia-generic` | Linux | Qwen3.5-4B | Q8 | VRAM-dependent | 16K | Yes |
+| `macOS/Metal/generic` | macOS | Qwen3.5-4B | Q8_K_M | Unified | 16K | Yes |
 | `macOS/CPU/generic` | macOS | Qwen3.5-0.8B | Q8 | CPU-only | 8K | No |
 
 

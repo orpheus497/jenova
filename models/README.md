@@ -17,8 +17,8 @@ models/
 Place your primary language models here. These are the models that power the main inference engine.
 
 **Recommended models:**
-- **Qwen2.5-3B-Instruct-Q8_0.gguf** (default for CPU/APU, ~3.1GB)
-- **Qwen3.5-4B-Q6_K.gguf** (default for mid-tier GPU, ~3.1GB)
+- **Qwen3.5-4B-Q6_K.gguf** (default for CPU/APU, ~3.5GB)
+- **Qwen3.5-4B-Q6_K.gguf** (default for mid-tier GPU, ~3.5GB)
 - **Qwen3.5-9B-Q4_K_M.gguf** (default for high-end GPU, ~5.5GB)
 
 **Requirements:**
@@ -30,7 +30,7 @@ Place your primary language models here. These are the models that power the mai
 Place your embedding models here for RAG (Retrieval-Augmented Generation) and semantic search.
 
 **Recommended models:**
-- **nomic-embed-text-v1.5.Q8_0.gguf** (default, ~274MB)
+- **Qwen3-Embedding-0.6B-Q8_0.gguf** (default, ~650MB)
 - bge-large-en-v1.5-Q8_0.gguf (~1.2GB)
 - all-MiniLM-L6-v2-Q8_0.gguf (~80MB)
 
@@ -42,7 +42,7 @@ Place your embedding models here for RAG (Retrieval-Augmented Generation) and se
 Place small, fast models here for speculative decoding, which accelerates main model inference.
 
 **Recommended models:**
-- **Qwen3.5-0.8B-Instruct-Q8_0.gguf** (default, ~0.8GB)
+- **Qwen3.5-0.8B-Q8_0.gguf** (default, ~0.8GB)
 - TinyLlama-1.1B-Q8_0.gguf (~1.1GB)
 
 **Requirements:**
@@ -69,9 +69,9 @@ and the `jenova.conf` sourcing chain at startup — before model inference begin
    - Draft: `models/draft/*.gguf`
    - Embed: `models/embed/*.gguf`
 2. **Legacy named file** in the flat `models/` root (specific filenames only, not a glob):
-   - Agent: `models/Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf`
-   - Draft: `models/Qwen3.5-0.8B-Instruct-Q8_0.gguf`
-   - Embed: `models/nomic-embed-text-v1.5.Q8_0.gguf`
+   - Agent: `models/Qwen3.5-4B-Q6_K.gguf`
+   - Draft: `models/Qwen3.5-0.8B-Q8_0.gguf`
+   - Embed: `models/Qwen3-Embedding-0.6B-Q8_0.gguf`
 3. **Environment variable override** — applied in `etc/jenova.conf` after the helper runs,
    so it wins regardless of what the directory scan found:
    - `JENOVA_MODEL` overrides the agent model path
@@ -105,7 +105,7 @@ scripts/model_dl.sh
 
 # Manual download
 cd models/agent
-wget https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q8_0.gguf
+wget https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q6_K.gguf
 ```
 
 ## Model Compatibility

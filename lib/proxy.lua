@@ -36,12 +36,8 @@ if not embed_ok then
 else
   embed_ok = embed_res
 end
-if embed_ok then search.init_embeddings(embed) end
-search.index_dir(".", {
-  "lua","sh","c","h","cpp","py","js","ts","go","rs",
-  "md","txt","json","yaml","yml","toml","conf","cfg",
-  "html","css","Makefile","zig",
-})
+-- Indexing moved to after server listen
+
 
 print("[proxy] Jenova Signal Proxy loaded on port " .. PORT .. ". Embeddings: " .. tostring(embed_ok))
 
@@ -755,6 +751,18 @@ if ffi.C.listen(server_fd, 16) < 0 then
     print("[proxy] Failed to listen: errno=" .. tostring(err) .. " " .. ffi.string(ffi.C.strerror(err)))
     os.exit(1)
 end
+
+-- Perform initial indexing after server is listening to avoid blocking startup health checks
+print("[proxy] Initializing search index in background...")
+coroutine.wrap(function()
+    search.index_dir(".", {
+        "lua","sh","c","h","cpp","py","js","ts","go","rs",
+        "md","txt","json","yaml","yml","toml","conf","cfg",
+        "html","css","Makefile","zig",
+    })
+    if embed_ok then search.init_embeddings(embed) end
+    print("[proxy] Search index ready.")
+end)()
 
 -- Main Select Loop
 -- conn_fds_map: client_fd -> {client=N, llama=N} tracks all fds owned by each connection

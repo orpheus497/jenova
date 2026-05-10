@@ -58,7 +58,7 @@
 		}, 0));
 	}}
 >
-	<div class="flex-column h-full h-screen w-72 bg-background">
+	<div class="flex-col h-full h-screen w-72 bg-background">
 		<ChatSidebar />
 	</div>
 </Story>
@@ -77,7 +77,7 @@
 		userEvent.click(searchTrigger);
 	}}
 >
-	<div class="flex-column h-full h-screen w-72 bg-background">
+	<div class="flex-col h-full h-screen w-72 bg-background">
 		<ChatSidebar />
 	</div>
 </Story>
@@ -91,7 +91,7 @@
 		conversationsStore.conversations = [];
 	}}
 >
-	<div class="flex-column h-full h-screen w-72 bg-background">
+	<div class="flex-col h-full h-screen w-72 bg-background">
 		<ChatSidebar />
 	</div>
 </Story>

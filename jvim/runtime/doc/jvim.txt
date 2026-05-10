@@ -121,7 +121,7 @@ editor frontend most commonly cares about are:
 *$JENOVA_LLAMA_PORT*            Port for the llama-server inference endpoint
                                 (default `8081`). FIM / infill completions
                                 go here.
-*$JENOVA_LLAMA_EMBED_PORT*      Port for the CPU-only nomic-embed-text
+*$JENOVA_LLAMA_EMBED_PORT*      Port for the CPU-only Qwen3-Embedding
                                 server (default `8082`). Used by the
                                 monitor and RAG.
 *$JENOVA_API_URL*               Full proxy URL (e.g.
@@ -173,7 +173,7 @@ When the editor runs under `jvim`, three persistent daemon processes back it:
    `Vulkan0` / `Vulkan1`).
 2. `proxy.lua` on port 8080 — LuaJIT non-blocking I/O loop with coroutine
    connection multiplexing, RAG injection, and intent routing.
-3. `llama-server --embedding` on port 8082 — CPU-only nomic-embed-text server
+3. `llama-server --embedding` on port 8082 — CPU-only Qwen3-Embedding server
    used for semantic search and RAG.
 
 All three processes are managed as a unit by `jenova-ca` with 3-PID tracking.

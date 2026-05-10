@@ -102,7 +102,7 @@
 	let isSpeaking = $state(false);
 
 	function handleSpeak() {
-		if (!browser) return;
+		if (!browser || !window.speechSynthesis) return;
 		const synth = window.speechSynthesis;
 		if (isSpeaking) {
 			synth.cancel();

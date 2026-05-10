@@ -26,36 +26,39 @@
 		if (!uploadedFiles || uploadedFiles.length === 0) return;
 
         isUploading = true;
-		for (let i = 0; i < uploadedFiles.length; i++) {
-			const file = uploadedFiles[i];
-			let content: string | undefined = undefined;
+        try {
+            for (let i = 0; i < uploadedFiles.length; i++) {
+                const file = uploadedFiles[i];
+                let content: string | undefined = undefined;
 
-			if (
-				file.type.startsWith('text/') ||
-				file.name.endsWith('.json') ||
-				file.name.endsWith('.md') ||
-				file.name.endsWith('.csv')
-			) {
-				try {
-					content = await file.text();
-					if (content.length > 2000000) {
-						content = content.slice(0, 2000000) + '\n...[TRUNCATED]';
-					}
-				} catch (e) {
-					console.error('Failed to read text file', e);
-				}
-			}
+                if (
+                    file.type.startsWith('text/') ||
+                    file.name.endsWith('.json') ||
+                    file.name.endsWith('.md') ||
+                    file.name.endsWith('.csv')
+                ) {
+                    try {
+                        content = await file.text();
+                        if (content.length > 2000000) {
+                            content = content.slice(0, 2000000) + '\n...[TRUNCATED]';
+                        }
+                    } catch (e) {
+                        console.error('Failed to read text file', e);
+                    }
+                }
 
-			await workspaceStore.createFileAsset(
-				currentFolderId,
-				file.name,
-				file.size,
-				file.type || 'application/octet-stream',
-				content
-			);
-		}
-        isUploading = false;
-        target.value = '';
+                await workspaceStore.createFileAsset(
+                    currentFolderId,
+                    file.name,
+                    file.size,
+                    file.type || 'application/octet-stream',
+                    content
+                );
+            }
+        } finally {
+            isUploading = false;
+            target.value = '';
+        }
 	}
 
 	function getFileIcon(type: string) {

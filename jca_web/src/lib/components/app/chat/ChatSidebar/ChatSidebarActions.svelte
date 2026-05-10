@@ -1,11 +1,13 @@
 <script lang="ts">
-	import { Search, SquarePen, X, Settings } from '@lucide/svelte';
+	import { Search, SquarePen, X, Settings, RefreshCcw } from '@lucide/svelte';
 	import { KeyboardShortcutInfo } from '$lib/components/app';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { McpLogo } from '$lib/components/app';
 	import { SETTINGS_SECTION_TITLES } from '$lib/constants';
 	import { getChatSettingsDialogContext } from '$lib/contexts';
+	import { SyncService } from '$lib/services/sync.service';
+	import { toast } from 'svelte-sonner';
 
 	interface Props {
 		handleMobileSidebarItemClick: () => void;
@@ -20,12 +22,42 @@
 	}: Props = $props();
 
 	let searchInput: HTMLInputElement | null = $state(null);
+	let isSyncing = $state(false);
 
 	const chatSettingsDialog = getChatSettingsDialogContext();
 
 	function handleSearchModeDeactivate() {
 		isSearchModeActive = false;
 		searchQuery = '';
+	}
+
+	async function handlePush() {
+		if (isSyncing) return;
+		isSyncing = true;
+		try {
+			toast.info('Pushing to server...', { duration: 2000 });
+			await SyncService.sync();
+			toast.success('Push complete');
+		} catch (e) {
+			console.error('Push failed:', e);
+			toast.error('Push failed');
+		} finally {
+			isSyncing = false;
+		}
+	}
+
+	async function handlePull() {
+		if (isSyncing) return;
+		isSyncing = true;
+		try {
+			toast.info('Pulling from server...', { duration: 2000 });
+			await SyncService.pull();
+			// Pull reloads the page on success
+		} catch (e) {
+			console.error('Pull failed:', e);
+			toast.error('Pull failed');
+			isSyncing = false;
+		}
 	}
 
 	$effect(() => {
@@ -102,5 +134,26 @@
                 <span class="text-xs">Settings</span>
             </Button>
         </div>
+
+		<div class="grid grid-cols-2 gap-1 px-2">
+			<Button
+				class="justify-start gap-2 h-9 px-3"
+				onclick={handlePush}
+				variant="ghost"
+				disabled={isSyncing}
+			>
+				<RefreshCcw class="h-4 w-4 {isSyncing ? 'animate-spin' : ''}" />
+				<span class="text-xs">Push</span>
+			</Button>
+			<Button
+				class="justify-start gap-2 h-9 px-3"
+				onclick={handlePull}
+				variant="ghost"
+				disabled={isSyncing}
+			>
+				<RefreshCcw class="h-4 w-4 {isSyncing ? 'animate-spin' : ''} rotate-180" />
+				<span class="text-xs">Pull</span>
+			</Button>
+		</div>
 	{/if}
 </div>

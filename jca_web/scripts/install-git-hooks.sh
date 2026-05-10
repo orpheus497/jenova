@@ -8,11 +8,28 @@ PRE_COMMIT_HOOK="$REPO_ROOT/.git/hooks/pre-commit"
 
 echo "Installing pre-commit hook for webui..."
 
+# Check if hook already exists
+if [ -f "$PRE_COMMIT_HOOK" ]; then
+    echo "Error: $PRE_COMMIT_HOOK already exists."
+    echo "Please merge the following hook logic manually into your existing pre-commit hook:"
+    echo "--------------------------------------------------------------------------------"
+    cat << 'EOF'
+# Check if there are any changes in the jca_web directory
+if git diff --cached --name-only | grep -q "^jca_web/"; then
+    REPO_ROOT=$(git rev-parse --show-toplevel)
+    cd "$REPO_ROOT/jca_web"
+    npm run format && npm run lint && npm run check && npm run build
+fi
+EOF
+    echo "--------------------------------------------------------------------------------"
+    exit 1
+fi
+
 # Create the pre-commit hook
 cat > "$PRE_COMMIT_HOOK" << 'EOF'
 #!/bin/bash
 
-# Check if there are any changes in the webui directory
+# Check if there are any changes in the jca_web directory
 if git diff --cached --name-only | grep -q "^jca_web/"; then
     REPO_ROOT=$(git rev-parse --show-toplevel)
     cd "$REPO_ROOT/jca_web"
@@ -23,44 +40,20 @@ if git diff --cached --name-only | grep -q "^jca_web/"; then
         exit 1
     fi
 
-    echo "Formatting and checking webui code..."
+    echo "Formatting and checking jca_web code..."
 
     # Run the format command
-    npm run format
-    if [ $? -ne 0 ]; then
-        echo "Error: npm run format failed"
-        exit 1
-    fi
+    npm run format || exit 1
+    npm run lint || exit 1
+    npm run check || exit 1
 
-    # Run the lint command
-    npm run lint
-    if [ $? -ne 0 ]; then
-        echo "Error: npm run lint failed"
-        exit 1
-    fi
-
-    # Run the check command
-    npm run check
-    if [ $? -ne 0 ]; then
-        echo "Error: npm run check failed"
-        exit 1
-    fi
-
-    echo "✅ Webui code formatted and checked successfully"
+    echo "✅ jca_web code formatted and checked successfully"
 
     # Build the webui
-    echo "Building webui..."
-    npm run build
-    if [ $? -ne 0 ]; then
-        echo "❌ npm run build failed"
-        exit 1
-    fi
+    echo "Building jca_web..."
+    npm run build || exit 1
 
-    # Stage the build output alongside the source changes
-    cd "$REPO_ROOT"
-    git add public/
-
-    echo "✅ Webui built and build output staged"
+    echo "✅ jca_web built successfully"
 fi
 
 exit 0

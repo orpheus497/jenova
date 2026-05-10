@@ -637,4 +637,74 @@ export class DatabaseService {
 	static async deleteFileAsset(id: string): Promise<void> {
 		await db.fileAssets.delete(id);
 	}
+
+	/**
+	 * Export/Import
+	 */
+	static async exportData(): Promise<any> {
+		const localStorageData: Record<string, string | null> = {};
+		const keys = [
+			'jenova_config',
+			'theme',
+			'jenova_user_overrides',
+			'mcp_default_enabled'
+		];
+		
+		for (const key of keys) {
+			localStorageData[key] = localStorage.getItem(key);
+		}
+
+		return {
+			conversations: await db.conversations.toArray(),
+			messages: await db.messages.toArray(),
+			workspaces: await db.workspaces.toArray(),
+			projects: await db.projects.toArray(),
+			folders: await db.folders.toArray(),
+			notes: await db.notes.toArray(),
+			fileAssets: await db.fileAssets.toArray(),
+			localStorage: localStorageData,
+			timestamp: Date.now()
+		};
+	}
+
+	static async importData(data: any): Promise<void> {
+		if (data.localStorage) {
+			for (const [key, value] of Object.entries(data.localStorage)) {
+				if (value !== null) {
+					localStorage.setItem(key, value as string);
+				}
+			}
+		}
+
+		await db.transaction('rw', [db.conversations, db.messages, db.workspaces, db.projects, db.folders, db.notes, db.fileAssets], async () => {
+			if (data.conversations) {
+				await db.conversations.clear();
+				await db.conversations.bulkAdd(data.conversations);
+			}
+			if (data.messages) {
+				await db.messages.clear();
+				await db.messages.bulkAdd(data.messages);
+			}
+			if (data.workspaces) {
+				await db.workspaces.clear();
+				await db.workspaces.bulkAdd(data.workspaces);
+			}
+			if (data.projects) {
+				await db.projects.clear();
+				await db.projects.bulkAdd(data.projects);
+			}
+			if (data.folders) {
+				await db.folders.clear();
+				await db.folders.bulkAdd(data.folders);
+			}
+			if (data.notes) {
+				await db.notes.clear();
+				await db.notes.bulkAdd(data.notes);
+			}
+			if (data.fileAssets) {
+				await db.fileAssets.clear();
+				await db.fileAssets.bulkAdd(data.fileAssets);
+			}
+		});
+	}
 }

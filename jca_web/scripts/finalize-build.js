@@ -47,7 +47,13 @@ async function main() {
             jsBundle = jsFiles[0];
             copyFileSync(join(immutableDir, jsBundle), join(PUBLIC_DIR, 'bundle.js'));
             console.log(`✓ Copied ${jsBundle} -> bundle.js`);
+        } else {
+            console.error('Error: No JS bundle found in', immutableDir);
+            process.exit(1);
         }
+    } else {
+        console.error('Error: _app/immutable directory not found at', immutableDir);
+        process.exit(1);
     }
 
     if (existsSync(assetsDir)) {
@@ -56,6 +62,8 @@ async function main() {
             cssBundle = cssFiles[0];
             copyFileSync(join(assetsDir, cssBundle), join(PUBLIC_DIR, 'bundle.css'));
             console.log(`✓ Copied ${cssBundle} -> bundle.css`);
+        } else {
+            console.warn('Warning: No CSS bundle found in', assetsDir);
         }
     }
 

@@ -13,6 +13,7 @@
   import {
     conversationsStore,
     activeMessages,
+    conversations
   } from "$lib/stores/conversations.svelte";
   import * as Sidebar from "$lib/components/ui/sidebar/index.js";
   import * as Tooltip from "$lib/components/ui/tooltip";
@@ -28,6 +29,7 @@
   import { KeyboardKey } from "$lib/enums";
   import { IsMobile } from "$lib/hooks/is-mobile.svelte";
   import { setChatSettingsDialogContext } from "$lib/contexts";
+  import { SyncService } from "$lib/services/sync.service";
 
   let { children } = $props();
 
@@ -272,6 +274,17 @@
         });
       },
     );
+  });
+
+  // Auto-pull if empty on load
+  $effect(() => {
+    if (browser && conversationsStore.isInitialized && conversations().length === 0) {
+      const hasPulled = localStorage.getItem('jenova_initial_pull_done');
+      if (!hasPulled) {
+        localStorage.setItem('jenova_initial_pull_done', 'true');
+        SyncService.pull().catch(console.error);
+      }
+    }
   });
 </script>
 

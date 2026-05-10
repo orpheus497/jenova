@@ -72,7 +72,7 @@ if [ ! -f "$MODEL_PATH" ]; then
     echo "Download a model file (GGUF format) and place it at:" >&2
     echo "  $JENOVA_ROOT/models/agent/" >&2
     echo "" >&2
-    echo "Recommended: Qwen3-Instruct-4B-Q8_0.gguf" >&2
+    echo "Recommended: Qwen3.5-4B-Q6_K.gguf" >&2
     echo "Or set JENOVA_MODEL environment variable to point to your model." >&2
     echo "" >&2
     exit 1
@@ -179,14 +179,17 @@ _vulkan_backend_available() {
     find "$LLAMA_LIB_DIR" -maxdepth 1 -name 'libggml-vulkan.so.*' -print -quit 2>/dev/null | grep -q .
 }
 
+_get_path_val() {
+    if [ -d "$JENOVA_ROOT/public" ]; then
+        echo "$JENOVA_ROOT/public"
+    fi
+}
+
 _launch_llama_server_bg() {
     _ls_log="$1"
     shift
 
-    _path_arg=""
-    if [ -d "$JENOVA_ROOT/public" ]; then
-        _path_arg="--path $JENOVA_ROOT/public"
-    fi
+    _path_val=$(_get_path_val)
 
     "$LLAMA_SERVER" \
         -m "$MODEL_PATH" \
@@ -207,8 +210,7 @@ _launch_llama_server_bg() {
         --offline \
         --host "$HOST" \
         --port "$LLAMA_PORT" \
-        $_path_arg \
-        --props \
+        ${_path_val:+--path} ${_path_val:+"$_path_val"} \
         $RUN_DRAFT_ARGS \
         "$@" > "$_ls_log" 2>&1 9>&- &
     LLAMA_PID=$!
@@ -670,10 +672,7 @@ fi
 # =====================================================================
 while [ "$1" = "--daemon" ]; do shift; done
 
-_path_arg=""
-if [ -d "$JENOVA_ROOT/public" ]; then
-    _path_arg="--path $JENOVA_ROOT/public"
-fi
+_path_val=$(_get_path_val)
 
 "$LLAMA_SERVER" \
     -m "$MODEL_PATH" \
@@ -694,8 +693,7 @@ fi
     --offline \
     --host "$HOST" \
     --port "$LLAMA_PORT" \
-    $_path_arg \
-    --props \
+    ${_path_val:+--path} ${_path_val:+"$_path_val"} \
     $RUN_DRAFT_ARGS \
     "$@" &
 LLAMA_PID=$!
