@@ -1,6 +1,6 @@
 # Jenova Cognitive Architecture
 
-Jenova is a local-first AI coding environment for laptops. It bundles an inference
+Jenova is a local-first AI coding environment designed for consumer and professional laptops. It bundles an inference
 backend, a purpose-built editor (`jvim`), a context-aware AI agent embedded
 directly into the editor, and a modern C-shell (`mcsh`) into one unified terminal
 IDE that runs entirely on your machine.
@@ -17,35 +17,67 @@ IDE that runs entirely on your machine.
   workflows: chat sidebar, inline rewrite, inference monitor, and LAN discovery.
 - **mcsh Shell** — A modernised C-shell (tcsh + etcsh fusion) that serves as the
   default environment for the integrated terminal.
+- **Web UI** — A browser-based workstation for chat and remote access over the
+  LAN. It serves as the general chat mode and is accessible from any device
+  on the network when the backend is running.
 - **Daemon Manager (`jenova-ca`)** — Supervises the inference and proxy daemons,
   exposing an OpenAI-compatible API on `http://localhost:8080/v1`.
 
 ## Quick Start
 
-### 1. Clone & Build
+### 🚀 One-Command Installation (Recommended)
 ```sh
 git clone https://github.com/orpheus497/jenova
 cd jenova
 
-# Pull llama.cpp and build the entire stack
-scripts/llama_dl.sh
-make
+# Intelligent installation for all platforms
+./install-jenova.sh
 ```
 
-### 2. Install & Configure
+This automatically detects your OS (FreeBSD, Linux, macOS), installs all dependencies,
+builds all components, deploys to your system, and downloads AI models.
+
+### 🔧 Manual Installation
 ```sh
-# Deploy binaries and configuration
+# Pre-flight check with auto-fix
+./scripts/preflight-check.sh --fix
+
+# Build everything
+make
+
+# Deploy to system
 make install
 
-# Auto-detect hardware and apply tuning
-./hardware-profiles/detect-hardware.sh --apply
-sudo scripts/jenova-setup
+# Download models
+./scripts/model_dl.sh
 ```
 
-### 3. Launch
+### 🧪 Advanced Options
 ```sh
+# Dry run (see what would be installed)
+./install-jenova.sh --dry-run
+
+# Minimal install (no Web UI, no models)
+./install-jenova.sh --minimal
+
+# Full install with everything
+./install-jenova.sh --full
+```
+
+### 4. Setup & Launch
+```sh
+# Download AI models
+./scripts/model_dl.sh
+
+# Apply hardware profile and run system tuning
+./hardware-profiles/detect-hardware.sh --apply
+sudo ./scripts/jenova-setup
+
 # Start the backend and open the editor
 jenova
+
+# To access the Web UI, start the backend and open http://localhost:8080
+bin/jenova-ca --daemon
 ```
 
 ## Documentation
@@ -53,8 +85,11 @@ jenova
 Detailed documentation lives in `/docs`:
 
 - **Installation**
+    - [Streamlined Installation](docs/installation/STREAMLINED.md) — Complete workflow guide
+    - [Installation Checklist](docs/installation/checklist.md) — Step-by-step checklist
     - [FreeBSD](docs/installation/freebsd.md)
     - [Linux](docs/installation/linux.md)
+    - [macOS](docs/installation/macos.md)
     - [Dependencies](docs/installation/dependencies.md)
 - **Architecture**
     - [Overview](docs/architecture/overview.md)

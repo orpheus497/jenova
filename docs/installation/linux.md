@@ -73,7 +73,12 @@ sudo dnf install -y \
     scripts/llama_dl.sh
     ```
 
-3.  **Build everything** (or build subsystems individually):
+3.  **Run a pre-flight check** before building:
+    ```bash
+    ./scripts/preflight-check.sh --verbose
+    ```
+
+4.  **Build everything** (or build subsystems individually):
     ```bash
     make            # llama.cpp + jvim + mcsh
     # or
@@ -83,14 +88,24 @@ sudo dnf install -y \
     make mcsh       # just the Modern C Shell
     ```
 
+    If you want the Web UI, install Node.js/npm and run `make web` separately or
+    use `./scripts/install-complete.sh` with `--skip-web` if node is unavailable.
+
     *Use `make llama-hybrid` if you have both an NVIDIA and an AMD/Intel GPU, or if you want to switch between backends without rebuilding.*
 
-4.  **Run the installer**:
+5.  **Run the installer**:
     ```bash
     make install
     ```
 
-5.  **Apply your hardware profile** and run system tuning:
+    Or use the one-command workflow:
+    ```bash
+    ./scripts/install-complete.sh
+    ```
+
+    > Note: `install-complete.sh` skips optional LSP installation by default.
+
+6.  **Apply your hardware profile** and run system tuning:
     ```bash
     ./hardware-profiles/detect-hardware.sh --info
     ./hardware-profiles/detect-hardware.sh --apply

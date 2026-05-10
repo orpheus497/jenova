@@ -301,12 +301,7 @@
       </Sidebar.Root>
 
       {#if !(alwaysShowSidebarOnDesktop && isDesktop)}
-        <Sidebar.Trigger
-          class="transition-left absolute left-0 z-[900] duration-200 ease-linear {sidebarOpen
-            ? 'md:left-[var(--sidebar-width)]'
-            : 'md:left-0!'}"
-          style="translate: 1rem 1rem;"
-        />
+        <Sidebar.Trigger class="z-[900]" />
       {/if}
 
       <Sidebar.Inset class="flex flex-1 flex-col overflow-hidden">
