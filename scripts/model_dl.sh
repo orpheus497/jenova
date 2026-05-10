@@ -39,13 +39,13 @@ fi
 info "Hardware Profile: $PROFILE"
 
 # 2. Define Model Defaults (Generic/Fallback)
-AGENT_FILE="Qwen3-Instruct-4B-Q8_0.gguf"
-AGENT_URL="https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/qwen3-4b-instruct-q8_0.gguf"
-AGENT_SIZE="4.4GB"
+AGENT_FILE="Qwen2.5-3B-Instruct-Q8_0.gguf"
+AGENT_URL="https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q8_0.gguf"
+AGENT_SIZE="3.2GB"
 
-EMBED_FILE="Qwen3-Embedding-0.6B-Q8_0.gguf"
-EMBED_URL="https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/main/qwen3-embedding-0.6b-q8_0.gguf"
-EMBED_SIZE="650MB"
+EMBED_FILE="Qwen3.5-0.8B-Instruct-Q8_0.gguf"
+EMBED_URL="https://huggingface.co/Qwen/Qwen3.5-0.8B-Instruct-GGUF/resolve/main/qwen3.5-0.8b-instruct-q8_0.gguf"
+EMBED_SIZE="850MB"
 
 DRAFT_FILE="Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf"
 DRAFT_URL="https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q8_0.gguf"
@@ -65,9 +65,11 @@ if [ -n "$PROFILE" ]; then
 
         # Adjust sizes based on known patterns
         case "$AGENT_FILE" in
-            *9B*) AGENT_SIZE="9.6GB" ;;
+            *9B*Q8*) AGENT_SIZE="9.5GB" ;;
+            *9B*Q4*) AGENT_SIZE="5.5GB" ;;
             *4B*) AGENT_SIZE="4.4GB" ;;
             *3B*) AGENT_SIZE="3.1GB" ;;
+            *0.8B*) AGENT_SIZE="800MB" ;;
         esac
     fi
 fi

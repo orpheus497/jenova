@@ -98,6 +98,7 @@ dialog:dialog
 clangd:llvm
 stylua:stylua
 node:node
+npm:npm
 EOF
             ;;
         pacman)
@@ -116,6 +117,7 @@ dialog:dialog
 clang:clang
 stylua:stylua
 nodejs:nodejs
+npm:npm
 EOF
             ;;
         apt)
@@ -172,6 +174,7 @@ dialog:dialog
 llvm:llvm
 stylua:stylua
 node:node
+npm:node
 EOF
             ;;
         *)
@@ -204,10 +207,14 @@ install_package() {
             fi
             ;;
         pacman)
+            local pacman_cmd="sudo pacman"
+            if command -v yay >/dev/null 2>&1; then
+                pacman_cmd="yay"
+            fi
             if [ "$VERBOSE" = "1" ]; then
-                sudo pacman -S --noconfirm "$pkg"
+                $pacman_cmd -S --noconfirm "$pkg"
             else
-                sudo pacman -S --noconfirm "$pkg" >/dev/null 2>&1
+                $pacman_cmd -S --noconfirm "$pkg" >/dev/null 2>&1
             fi
             ;;
         apt)

@@ -1,0 +1,29 @@
+#!/bin/sh
+# jenova-setup: System tuning for FreeBSD Optane NVMe Swap + dual GPU profile
+
+if [ "$(id -u)" != "0" ]; then
+    echo "Error: Must be run as root"
+    exit 1
+fi
+
+echo "Applying FreeBSD system tuning for Optane NVMe Swap and Iris Xe UMA..."
+
+# Aggressively use swap, relying on the Optane NVMe's low latency and high endurance
+sysctl vm.swap_enabled=1
+sysctl vm.swap_idle_enabled=1
+sysctl vm.swap_idle_threshold1=2
+sysctl vm.swap_idle_threshold2=10
+
+# Tune ZFS ARC to leave maximum RAM available for the LLM layers and UMA (Iris Xe)
+# 16GB total RAM -> Cap ARC at 2GB
+if ! grep -q "vfs.zfs.arc_max" /boot/loader.conf.local 2>/dev/null; then
+    echo "vfs.zfs.arc_max=2147483648" >> /boot/loader.conf.local
+fi
+sysctl vfs.zfs.arc_max=2147483648 2>/dev/null || true
+
+# Increase NVMe timeout for heavy swap pressure
+if ! grep -q "hw.nvme.timeout" /boot/loader.conf.local 2>/dev/null; then
+    echo "hw.nvme.timeout=30" >> /boot/loader.conf.local
+fi
+
+echo "System tuning applied. Reboot is recommended for loader.conf changes to take full effect."

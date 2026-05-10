@@ -22,7 +22,7 @@
 #
 # Supported platforms:
 #   • FreeBSD (pkg)
-#   • Linux: Arch (pacman), Debian/Ubuntu (apt), Fedora (dnf)
+#   • Linux: Arch (pacman/yay), Debian/Ubuntu (apt), Fedora/RHEL (dnf)
 #   • macOS (Homebrew)
 
 set -e
@@ -139,7 +139,7 @@ if [ "$JENOVA_PKG_MGR" = "none" ]; then
     echo ""
     echo "Jenova supports:"
     echo "  • FreeBSD (pkg)"
-    echo "  • Linux: Arch (pacman), Debian/Ubuntu (apt), Fedora/RHEL (dnf)"
+    echo "  • Linux: Arch (pacman/yay), Debian/Ubuntu (apt), Fedora/RHEL (dnf)"
     echo "  • macOS (Homebrew)"
     echo ""
     echo "Please install dependencies manually on your host system."
@@ -178,11 +178,15 @@ print_step "Installing system dependencies..."
 if [ "$DRY_RUN" = "1" ]; then
     "$JENOVA_ROOT/scripts/install-dependencies.sh" --dry-run
 else
-    if "$JENOVA_ROOT/scripts/install-dependencies.sh" 2>&1; then
-        print_success "Dependencies installed successfully"
+    set +e
+    "$JENOVA_ROOT/scripts/install-dependencies.sh" 2>&1
+    _dep_status=$?
+    set -e
+    if [ "$_dep_status" = "0" ] || [ "$_dep_status" = "2" ]; then
+        [ "$_dep_status" = "0" ] && print_success "Dependencies installed successfully" || print_warning "Some optional dependencies could not be installed (continuing)"
     else
-        print_warning "Some optional dependencies could not be installed"
-        echo "  This is usually OK - installation will continue"
+        print_error "Critical system dependencies failed to install."
+        exit 1
     fi
 fi
 

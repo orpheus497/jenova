@@ -103,6 +103,19 @@ detect_storage() {
     fi
 }
 
+detect_swap_hardware() {
+    SYSTEM_SWAP_INFO="None"
+    if [ "$JENOVA_OS" = "freebsd" ]; then
+        _sdevs=$(swapinfo 2>/dev/null | awk 'NR>1 {print $1}' | tr '\n' ' ')
+        _ndevs=$(nvmecontrol devlist 2>/dev/null | tr '\n' ' ' || dmesg | grep -i "optane" | head -n 1)
+        [ -n "$_sdevs" ] && SYSTEM_SWAP_INFO="${_sdevs} ${_ndevs}"
+    elif [ "$JENOVA_OS" = "linux" ]; then
+        _sdevs=$(cat /proc/swaps 2>/dev/null | awk 'NR>1 {print $1}' | tr '\n' ' ')
+        _ndevs=$(lsblk -d -o NAME,MODEL 2>/dev/null | grep -iE "nvme|optane" | tr '\n' ' ' || true)
+        [ -n "$_sdevs" ] && SYSTEM_SWAP_INFO="${_sdevs} ${_ndevs}"
+    fi
+}
+
 # =========================================================================
 # Profile Matching
 # =========================================================================
@@ -117,12 +130,22 @@ match_profile() {
 
     # Robustly load profile variables by sourcing after path validation
     # (Provided by lib/detect-env.sh)
-    MATCH_CPU="" MATCH_GPU_0="" MATCH_GPU_1="" MATCH_OS=""
+    MATCH_CPU="" MATCH_GPU_0="" MATCH_GPU_1="" MATCH_OS="" MATCH_SWAP=""
     load_jenova_profile "$_profile_conf" || return 1
 
     _score=0
 
-    # CPU match (most important — worth 10 points)
+    # OS match (highest priority — worth 20 points, required for OS-specific profiles)
+    if [ -n "$MATCH_OS" ]; then
+        if printf '%s\n' "$OS_NAME" | grep -qFi "$MATCH_OS" 2>/dev/null; then
+            _score=$((_score + 20))
+        else
+            # OS mismatch disqualifies OS-specific profiles
+            return 1
+        fi
+    fi
+
+    # CPU match (worth 10 points)
     # Uses -Fi (fixed string, case-insensitive) to avoid regex injection from profile values
     if [ -n "$MATCH_CPU" ]; then
         if printf '%s\n' "$CPU_MODEL" | grep -qFi "$MATCH_CPU" 2>/dev/null; then
@@ -146,8 +169,17 @@ match_profile() {
         fi
     fi
 
-    # OS match (worth 3 points)
-    [ -n "$MATCH_OS" ] && printf '%s\n' "$OS_NAME" | grep -qFi "$MATCH_OS" 2>/dev/null && _score=$((_score + 3))
+    # NVMe Swap match (worth 10 points)
+    if [ -n "$MATCH_SWAP" ]; then
+        if printf '%s\n' "$SYSTEM_SWAP_INFO" | grep -qiE "$MATCH_SWAP" 2>/dev/null; then
+            _score=$((_score + 10))
+        else
+            return 1  # NVMe Swap mismatch is disqualifying
+        fi
+    fi
+
+    # Generic profiles (no OS match) get lower priority
+    [ -z "$MATCH_OS" ] && _score=$((_score - 5))
 
     printf '%d\n' "$_score"
     return 0
@@ -158,19 +190,29 @@ find_best_profile() {
     _best_profile=""
     _best_name=""
 
-    for _pconf in "$SCRIPT_DIR"/*/*/*/profile.conf; do
-        [ -f "$_pconf" ] || continue
+    # Create temporary files for tracking the best profile across subshells
+    _SCORE_FILE=$(mktemp)
+    _NAME_FILE=$(mktemp)
+    _PROFILE_FILE=$(mktemp)
+    echo "0" > "$_SCORE_FILE"
+
+    # Use find to locate all profile.conf files at any depth
+    find "$SCRIPT_DIR" -name "profile.conf" | while IFS= read -r _pconf; do
         _pdir=$(dirname "$_pconf")
         _pname="${_pdir#"$SCRIPT_DIR"/}"
-
         _pscore=$(match_profile "$_pdir" 2>/dev/null || echo "0")
 
-        if [ "${_pscore:-0}" -gt "$_best_score" ]; then
-            _best_score=$_pscore
-            _best_profile="$_pdir"
-            _best_name="$_pname"
+        if [ "${_pscore:-0}" -gt "$(cat "$_SCORE_FILE")" ]; then
+            echo "$_pscore" > "$_SCORE_FILE"
+            echo "$_pname" > "$_NAME_FILE"
+            echo "$_pdir" > "$_PROFILE_FILE"
         fi
     done
+
+    _best_score=$(cat "$_SCORE_FILE")
+    _best_name=$(cat "$_NAME_FILE")
+    _best_profile=$(cat "$_PROFILE_FILE")
+    rm -f "$_SCORE_FILE" "$_NAME_FILE" "$_PROFILE_FILE"
 
     if [ "$_best_score" -gt 0 ]; then
         MATCHED_PROFILE="$_best_name"
@@ -206,25 +248,27 @@ print_info() {
     printf "${_C}  RAM:${_N}      %s GiB\n" "$MEM_TOTAL_GIB"
     printf "${_C}  Swap:${_N}     %s GiB\n" "$SWAP_TOTAL_GIB"
     printf "${_C}  Storage:${_N}  %s\n" "$STORAGE_TYPE"
+    printf "${_C}  Swap Hw:${_N}  %s\n" "$SYSTEM_SWAP_INFO"
     echo ""
 
     echo "  Available profiles:"
-    for _pconf in "$SCRIPT_DIR"/*/*/*/profile.conf; do
-        [ -f "$_pconf" ] || continue
+    find "$SCRIPT_DIR" -name "profile.conf" | sort | while IFS= read -r _pconf; do
         _pdir=$(dirname "$_pconf")
         _pname="${_pdir#"$SCRIPT_DIR"/}"
-        
+
         PROFILE_DESC=""
         load_jenova_profile "$_pconf" || continue
         _pdesc="$PROFILE_DESC"
-        
+
         _pscore=$(match_profile "$_pdir" 2>/dev/null || echo "0")
+
         if [ "$_pscore" -gt 0 ]; then
             printf "    ${_G}[match: %2d]${_N}  %-40s %s\n" "$_pscore" "$_pname" "$_pdesc"
         else
             printf "    ${_R}[no match]${_N}  %-40s %s\n" "$_pname" "$_pdesc"
         fi
     done
+
     echo ""
 }
 
@@ -280,6 +324,7 @@ detect_cpu
 detect_gpu
 detect_memory
 detect_storage
+detect_swap_hardware
 
 ACTION="${1:-}"
 
@@ -319,8 +364,7 @@ case "$ACTION" in
         fi
         ;;
     --list)
-        for _pconf in "$SCRIPT_DIR"/*/*/*/profile.conf; do
-            [ -f "$_pconf" ] || continue
+        find "$SCRIPT_DIR" -name "profile.conf" | sort | while IFS= read -r _pconf; do
             _pdir=$(dirname "$_pconf")
             printf '%s\n' "${_pdir#"$SCRIPT_DIR"/}"
         done

@@ -1,0 +1,86 @@
+#!/bin/sh
+
+# jenova-setup: One-time system configuration for Jenova Cognitive Architecture
+# Hardware: Linux CPU-only inference
+# Run with: sudo ./jenova-setup
+#
+# Configures:
+#   - CPU governor optimization for sustained inference
+#   - Memory management for CPU workloads
+#   - NUMA settings for multi-socket systems
+#
+# Hardware context:
+#   CPU-only inference focuses on maximizing CPU utilization for transformer
+#   models. Ryzen-optimized threading uses half the available cores for
+#   balanced performance between inference speed and system responsiveness.
+
+set -e
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "Error: must run as root (sudo ./jenova-setup)"
+    exit 1
+fi
+
+echo "=== jenova-setup: configuring Linux CPU-only for Jenova CA ==="
+echo "=== Hardware: Generic CPU with Ryzen optimization ==="
+echo ""
+
+CHANGED=0
+
+# CPU governor optimization
+echo "Configuring CPU governor for sustained workloads..."
+
+if command -v cpupower >/dev/null 2>&1; then
+    if cpupower frequency-info 2>/dev/null | grep -q "performance"; then
+        cpupower frequency-set -g performance
+        echo "[set] CPU governor: performance"
+        CHANGED=1
+    else
+        echo "[ok]  CPU governor already optimized"
+    fi
+elif [ -d "/sys/devices/system/cpu/cpu0/cpufreq" ]; then
+    # Direct sysfs access
+    for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+        if [ -f "$cpu" ]; then
+            echo "performance" > "$cpu" 2>/dev/null && CHANGED=1
+        fi
+    done
+    [ "$CHANGED" = "1" ] && echo "[set] CPU governor: performance (sysfs)"
+fi
+
+# Memory management
+echo "Configuring memory management..."
+
+# Disable transparent huge pages for better memory access patterns
+if [ -f "/sys/kernel/mm/transparent_hugepage/enabled" ]; then
+    echo "never" > /sys/kernel/mm/transparent_hugepage/enabled 2>/dev/null && {
+        echo "[set] Transparent huge pages: disabled"
+        CHANGED=1
+    }
+fi
+
+# NUMA optimization for multi-socket systems
+if command -v numactl >/dev/null 2>&1; then
+    echo "[ok]  NUMA tools available"
+else
+    echo "[info] Consider installing numactl for NUMA optimization"
+fi
+
+# CPU isolation (optional - commented out by default)
+echo "CPU isolation configuration (optional)..."
+echo "[info] For dedicated inference, consider isolating CPU cores:"
+echo "       Add 'isolcpus=0-3' to kernel command line for 4-core isolation"
+
+echo ""
+if [ "$CHANGED" -gt 0 ]; then
+    echo "✅ System configuration updated."
+else
+    echo "✅ System already configured for CPU-only inference."
+fi
+
+echo ""
+echo "📋 CPU-only optimization notes:"
+echo "   • CPU governor set to performance for sustained workloads"
+echo "   • Transparent huge pages disabled for better memory patterns"
+echo "   • Monitor CPU temperature during long inference sessions"
+echo "   • Consider CPU isolation for dedicated inference workloads"

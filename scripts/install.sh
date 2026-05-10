@@ -269,8 +269,8 @@ if [ "$JENOVA_VULKAN_OK" = "1" ]; then
 else
     case "$JENOVA_PKG_MGR" in
         pkg)    _vhint="pkg install vulkan-loader" ;;
-        pacman) _vhint="pacman -S vulkan-icd-loader" ;;
-        apt)    _vhint="apt install libvulkan1" ;;
+        pacman) _vhint="pacman -S vulkan-icd-loader (or yay -S vulkan-icd-loader)" ;;
+        apt)    _vhint="apt-get install libvulkan1" ;;
         dnf)    _vhint="dnf install vulkan-loader" ;;
         zypper) _vhint="zypper install libvulkan1" ;;
         brew)   _vhint="brew install molten-vk" ;;
@@ -315,9 +315,14 @@ _pkg_install() {
 }
 
 _pacman_install() {
-    # Arch Linux pacman.
-    _have pacman || return 1
-    $_PRIV pacman -S --noconfirm --needed "$@" >/dev/null 2>&1
+    # Arch Linux pacman or yay.
+    if _have yay; then
+        yay -S --noconfirm --needed "$@" >/dev/null 2>&1
+    elif _have pacman; then
+        $_PRIV pacman -S --noconfirm --needed "$@" >/dev/null 2>&1
+    else
+        return 1
+    fi
 }
 
 _dnf_install() {
@@ -504,14 +509,11 @@ elif [ "$SKIP_LLAMA" = "0" ]; then
     if [ -f "$LLAMA_BIN" ]; then
         ok "llama-server binary found at $LLAMA_BIN"
     else
-        warn "llama-server not found at $LLAMA_BIN"
-        warn "Build llama.cpp with Vulkan support using:"
-        warn "  $JENOVA_ROOT/bin/build-llama-jenova"
-        warn ""
-        warn "Or manually:"
-        warn "  cd $JENOVA_ROOT/llama.cpp"
-        warn "  cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=ON -DGGML_LTO=ON"
-        warn "  cmake --build build --config Release -j\$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+        warn "llama-server not found. Build it using the Makefile:"
+        warn "  make llama"
+        warn "This will build llama.cpp with the appropriate backend (Vulkan, CUDA, Metal)"
+        warn "based on your detected hardware profile."
+        warn "For manual builds, see llama.cpp/docs/build.md"
         WARNINGS=$((WARNINGS + 1))
     fi
 
@@ -519,7 +521,7 @@ elif [ "$SKIP_LLAMA" = "0" ]; then
     if [ "$JENOVA_GLSLC_OK" = "0" ]; then
         case "$JENOVA_PKG_MGR" in
             pkg)    _glslc_hint="pkg install shaderc" ;;
-            pacman) _glslc_hint="pacman -S shaderc" ;;
+            pacman) _glslc_hint="pacman -S shaderc (or yay -S shaderc)" ;;
             apt)    _glslc_hint="apt install glslc" ;;
             dnf)    _glslc_hint="dnf install glslc" ;;
             zypper) _glslc_hint="zypper install shaderc" ;;
@@ -743,10 +745,9 @@ else
     echo "       Embed:  $JENOVA_ROOT/models/embed/"
     echo "       Draft:  $JENOVA_ROOT/models/draft/"
     echo "  2. Build llama.cpp if not done:"
-    echo "       cd llama.cpp && cmake -B build -DGGML_VULKAN=ON && \\"
-    echo "       cmake --build build -j\$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+    echo "       make llama"
     echo "  3. Start the backend:  $JENOVA_ROOT/bin/jenova-ca --daemon"
-    echo "     Or launch agent:    $JENOVA_ROOT/bin/jenova"
+    echo "     Or launch agent:    jenova"
     echo "     Or launch editor:   $JENOVA_ROOT/bin/jvim  (or just: jvim)"
     echo "     LAN client mode:    jvim --remote <host>"
     if [ "$SKIP_NVIM" = "0" ]; then
@@ -760,4 +761,4 @@ else
     echo "    scripts/uninstall.sh          — remove deployed files (preserves models)"
     echo "    bin/jvim --check        — print resolved env without launching editor"
 fi
-echo ""
+echo

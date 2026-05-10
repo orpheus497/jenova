@@ -73,10 +73,15 @@ echo ""
 # ---------------------------------------------------------------------------
 echo ""
 info "[1/6] Installing system dependencies..."
-if "$JENOVA_ROOT/scripts/install-dependencies.sh" >/dev/null 2>&1; then
-    ok "Dependencies installed ($(_elapsed))"
+set +e
+"$JENOVA_ROOT/scripts/install-dependencies.sh" >/dev/null 2>&1
+_dep_status=$?
+set -e
+if [ "$_dep_status" = "0" ] || [ "$_dep_status" = "2" ]; then
+    [ "$_dep_status" = "0" ] && ok "Dependencies installed ($(_elapsed))" || warn "Some optional dependencies failed to install (continuing...)"
 else
-    warn "Some optional dependencies failed to install (continuing...)"
+    fail "Critical dependencies failed to install. Please check manually."
+    exit 1
 fi
 
 # ---------------------------------------------------------------------------

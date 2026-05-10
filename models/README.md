@@ -17,9 +17,9 @@ models/
 Place your primary language models here. These are the models that power the main inference engine.
 
 **Recommended models:**
-- **Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf** (default, ~4.8GB)
-- DeepSeek-Coder-6.7B-Instruct-Q5_K_M.gguf (~4.4GB)
-- CodeLlama-13B-Instruct-Q4_K_M.gguf (~7.4GB)
+- **Qwen2.5-3B-Instruct-Q8_0.gguf** (default for CPU/APU, ~3.1GB)
+- **Qwen3.5-4B-Q6_K.gguf** (default for mid-tier GPU, ~3.1GB)
+- **Qwen3.5-9B-Q4_K_M.gguf** (default for high-end GPU, ~5.5GB)
 
 **Requirements:**
 - GGUF format
@@ -42,8 +42,7 @@ Place your embedding models here for RAG (Retrieval-Augmented Generation) and se
 Place small, fast models here for speculative decoding, which accelerates main model inference.
 
 **Recommended models:**
-- **Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf** (default, ~559MB)
-- DeepSeek-Coder-1.3B-Q8_0.gguf (~1.4GB)
+- **Qwen3.5-0.8B-Instruct-Q8_0.gguf** (default, ~0.8GB)
 - TinyLlama-1.1B-Q8_0.gguf (~1.1GB)
 
 **Requirements:**
@@ -71,9 +70,9 @@ and the `jenova.conf` sourcing chain at startup — before model inference begin
    - Embed: `models/embed/*.gguf`
 2. **Legacy named file** in the flat `models/` root (specific filenames only, not a glob):
    - Agent: `models/Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf`
-   - Draft: `models/Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf`
+   - Draft: `models/Qwen3.5-0.8B-Instruct-Q8_0.gguf`
    - Embed: `models/nomic-embed-text-v1.5.Q8_0.gguf`
-3. **Environment variable override** — applied in `jenova.conf` after the helper runs,
+3. **Environment variable override** — applied in `etc/jenova.conf` after the helper runs,
    so it wins regardless of what the directory scan found:
    - `JENOVA_MODEL` overrides the agent model path
    - `JENOVA_DRAFT_MODEL` overrides the draft model path
@@ -90,7 +89,7 @@ and the `jenova.conf` sourcing chain at startup — before model inference begin
 You can override auto-detected models using environment variables (set in your shell or
 via `etc/jenova.local.conf`):
 
-```sh
+```bash
 export JENOVA_MODEL=/path/to/custom/agent.gguf
 export JENOVA_EMBED_MODEL=/path/to/custom/embed.gguf
 export JENOVA_DRAFT_MODEL=/path/to/custom/draft.gguf
@@ -101,12 +100,12 @@ export JENOVA_DRAFT_MODEL=/path/to/custom/draft.gguf
 Download models using the installer or manually:
 
 ```sh
-# Automatic download (downloads defaults)
-scripts/install.sh
+# Automatic download (interactive script)
+scripts/model_dl.sh
 
 # Manual download
 cd models/agent
-wget https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q5_k_m.gguf
+wget https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q8_0.gguf
 ```
 
 ## Model Compatibility
