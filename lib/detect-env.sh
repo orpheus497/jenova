@@ -56,6 +56,11 @@ if [ "$JENOVA_OS" = "linux" ]; then
     fi
 
     case "${_jenova_id:-}" in
+        org.freedesktop.platform)
+            # Flatpak runtime - try to detect host distro
+            JENOVA_DISTRO="flatpak"
+            # Check for host package managers that might be available
+            ;;
         arch|manjaro|endeavouros|garuda|cachyos) JENOVA_DISTRO="arch" ;;
         debian|raspbian)                         JENOVA_DISTRO="debian" ;;
         ubuntu|linuxmint|pop)                    JENOVA_DISTRO="ubuntu" ;;

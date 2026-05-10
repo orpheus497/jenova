@@ -22,31 +22,44 @@ IDE that runs entirely on your machine.
 
 ## Quick Start
 
-### 1. Pre-flight Check
-```sh
-# Verify all dependencies before building
-./scripts/preflight-check.sh --verbose
-```
-
-### 2. Build & Install
+### 🚀 One-Command Installation (Recommended)
 ```sh
 git clone https://github.com/orpheus497/jenova
 cd jenova
 
-# Pull llama.cpp, build, deploy, and verify
-./scripts/llama_dl.sh
-make
-make install
-./scripts/verify-install.sh --full
+# Intelligent installation for all platforms
+./install-jenova.sh
 ```
 
-### 3. One-Command Install
+This automatically detects your OS (FreeBSD, Linux, macOS), installs all dependencies,
+builds all components, deploys to your system, and downloads AI models.
+
+### 🔧 Manual Installation
 ```sh
-# All-in-one: preflight → build → deploy → (optional) verify
-./scripts/install-complete.sh
+# Pre-flight check with auto-fix
+./scripts/preflight-check.sh --fix
+
+# Build everything
+make
+
+# Deploy to system
+make install
+
+# Download models
+./scripts/model_dl.sh
 ```
 
-> Note: `install-complete.sh` deploys with `--skip-lsp` by default.
+### 🧪 Advanced Options
+```sh
+# Dry run (see what would be installed)
+./install-jenova.sh --dry-run
+
+# Minimal install (no Web UI, no models)
+./install-jenova.sh --minimal
+
+# Full install with everything
+./install-jenova.sh --full
+```
 
 ### 4. Setup & Launch
 ```sh

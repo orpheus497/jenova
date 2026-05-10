@@ -117,13 +117,16 @@ _check_bin() {
             ERRORS=$((ERRORS + 1))
             if [ "$FIX" = "1" ]; then
                 info "  Attempting to install $_name..."
-                case "$JENOVA_PKG_MGR" in
-                    pkg)    sudo pkg install -y "$_pkg" 2>/dev/null && ok "  $_pkg installed" || fail "  Failed to install $_pkg" ;;
-                    pacman) sudo pacman -S --noconfirm "$_pkg" 2>/dev/null && ok "  $_pkg installed" || fail "  Failed to install $_pkg" ;;
-                    apt)    sudo apt-get install -y -q "$_pkg" 2>/dev/null && ok "  $_pkg installed" || fail "  Failed to install $_pkg" ;;
-                    dnf)    sudo dnf install -y -q "$_pkg" 2>/dev/null && ok "  $_pkg installed" || fail "  Failed to install $_pkg" ;;
-                    *)      warn "  Cannot auto-install on this system" ;;
-                esac
+                if "$JENOVA_ROOT/scripts/install-dependencies.sh" --required-only >/dev/null 2>&1; then
+                    ok "  Dependencies installed successfully"
+                    # Re-check after installation
+                    if command -v "$_name" >/dev/null 2>&1; then
+                        ok "  $_name now available"
+                        ERRORS=$((ERRORS - 1))
+                        return 0
+                    fi
+                fi
+                fail "  Failed to install $_name"
             fi
         fi
         return 1

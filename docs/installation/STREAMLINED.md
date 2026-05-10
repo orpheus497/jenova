@@ -4,100 +4,36 @@ This guide walks through the complete installation process with all quality chec
 
 ## Quick Start (5 Steps)
 
-### 1. Pre-flight Check
+### 1. Clone and Install
 ```bash
-# Verify all dependencies before spending time building
-./scripts/preflight-check.sh
-
-# If issues found, attempt auto-fix:
-./scripts/preflight-check.sh --fix
-```
-
-**What it checks:**
-- ✓ Operating system (FreeBSD 15+, Linux, macOS)
-- ✓ Required binaries (git, cmake, luajit, gettext, curl)
-- ✓ Disk space (20GB recommended)
-- ✓ Vulkan support (for GPU acceleration)
-- ✓ Network connectivity (for model downloads)
-- ✓ User permissions
-
-Exit early if critical issues found. Warnings are OK to ignore.
-
-### 2. Fetch Sources
-```bash
-# Clone repository
 git clone https://github.com/orpheus497/jenova
 cd jenova
 
-# Download llama.cpp (separate, not a submodule)
-./scripts/llama_dl.sh
-```
-
-### 3. Build Everything
-```bash
-# Standard build (all components)
-make
-
-# Or build faster without Web UI (if npm unavailable):
-make llama jvim mcsh
-
-# Or build with CUDA support (multi-GPU systems):
-make llama-hybrid jvim mcsh
-
-# Individual builds if needed:
-make llama       # Inference backend
-make jvim        # Editor
-make mcsh        # Modern C Shell
-make web         # Web UI (requires npm)
-```
-
-**⏱️ Expected build times:**
-| Component | Time | Notes |
-|-----------|------|-------|
-| llama.cpp | 10-30m | Depends on CPU cores |
-| jvim | 5-15m | C++/CMake build |
-| mcsh | 2-5m | Autoconf build |
-| web UI | 2-5m | Only if npm available |
-
-### 4. Deploy to System
-```bash
-# Standard installation
-make install
-
-# Or with options:
-./scripts/install.sh --force        # Overwrite existing config
-./scripts/install.sh --link         # Dev workflow (symlinks)
-./scripts/install.sh --skip-lsp     # Skip LSP installation
-./scripts/install.sh --client-only  # LAN client mode (no backend)
+# Intelligent one-command installation
+./install-jenova.sh
 ```
 
 **What it does:**
-- ✓ Verifies dependencies again
-- ✓ Creates runtime directories
-- ✓ Auto-detects and applies hardware profile
-- ✓ Deploys jvim config to `~/.config/jvim/`
-- ✓ Installs symlinks to `~/.local/bin/`
-- ✓ Attempts to install LSP servers/linters/formatters
-- ✓ Shows next steps
+- ✓ Detects your OS and package manager automatically
+- ✓ Installs all required system dependencies
+- ✓ Builds Jenova components (llama.cpp, jvim, mcsh, Web UI)
+- ✓ Deploys to your system (~/.local/bin/, ~/.config/jvim/)
+- ✓ Downloads AI models (~5-10GB)
+- ✓ Verifies everything works
 
-### 5. Verify Installation
+### Advanced Installation Options
 ```bash
-# Quick verification
-./scripts/verify-install.sh
+# Dry run (see what would be installed)
+./install-jenova.sh --dry-run
 
-# Full verification with integration tests
-./scripts/verify-install.sh --full --verbose
+# Minimal install (no Web UI, no models)
+./install-jenova.sh --minimal
+
+# Full install with everything
+./install-jenova.sh --full
 ```
 
-**What it checks:**
-- ✓ Binaries installed and accessible
-- ✓ In-tree builds present
-- ✓ Configuration files deployed
-- ✓ Model files available
-- ✓ Runtime directories created and writable
-- ✓ Basic functionality tests
-
-## Complete Installation Workflow (One Command)
+### Legacy Installation (Manual)
 
 For a fully automated, end-to-end installation:
 

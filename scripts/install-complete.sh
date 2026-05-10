@@ -1,8 +1,9 @@
 #!/bin/sh
 # install-complete.sh: Jenova Complete Installation Workflow
 #
-# One-command installation: pre-flight checks → build → deploy → verify
-# This wraps preflight-check.sh, build steps, install.sh, and verify-install.sh
+# One-command installation: deps → checks → build → deploy → models → verify
+# This wraps install-dependencies.sh, preflight-check.sh, build steps,
+# install.sh, model_dl.sh, and verify-install.sh
 #
 # Usage: ./scripts/install-complete.sh [--skip-web] [--skip-models] [--no-verify]
 #
@@ -68,10 +69,21 @@ printf "${_B}╚═════════════════════�
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 1: Pre-flight Checks
+# Phase 1: Install Dependencies
 # ---------------------------------------------------------------------------
 echo ""
-info "[1/5] Running pre-flight checks..."
+info "[1/6] Installing system dependencies..."
+if "$JENOVA_ROOT/scripts/install-dependencies.sh" >/dev/null 2>&1; then
+    ok "Dependencies installed ($(_elapsed))"
+else
+    warn "Some optional dependencies failed to install (continuing...)"
+fi
+
+# ---------------------------------------------------------------------------
+# Phase 2: Pre-flight Checks
+# ---------------------------------------------------------------------------
+echo ""
+info "[2/6] Running pre-flight checks..."
 if "$JENOVA_ROOT/scripts/preflight-check.sh" --verbose 2>&1 | grep -q "critical issue"; then
     fail "Pre-flight check failed"
     exit 1
@@ -79,10 +91,10 @@ fi
 ok "Pre-flight checks passed ($(_elapsed))"
 
 # ---------------------------------------------------------------------------
-# Phase 2: Build Components
+# Phase 3: Build Components
 # ---------------------------------------------------------------------------
 echo ""
-info "[2/5] Building Jenova components..."
+info "[3/6] Building Jenova components..."
 
 _build_component() {
     _name="$1"; _target="$2"; _cmd="$3"
@@ -140,10 +152,10 @@ fi
 ok "Build phase complete ($(_elapsed))"
 
 # ---------------------------------------------------------------------------
-# Phase 3: Deploy to System
+# Phase 4: Deploy to System
 # ---------------------------------------------------------------------------
 echo ""
-info "[3/5] Deploying to system..."
+info "[4/6] Deploying to system..."
 
 _install_args=""
 [ "$FORCE" = "1" ] && _install_args="--force"
@@ -156,11 +168,11 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Phase 4: Download Models (optional)
+# Phase 5: Download Models (optional)
 # ---------------------------------------------------------------------------
 echo ""
 if [ "$SKIP_MODELS" = "0" ]; then
-    info "[4/5] Downloading AI models..."
+    info "[5/6] Downloading AI models..."
     if command -v curl >/dev/null 2>&1 || command -v fetch >/dev/null 2>&1; then
         if "$JENOVA_ROOT/scripts/model_dl.sh" <<< "y" >/dev/null 2>&1; then
             ok "Models downloaded ($(_elapsed))"
@@ -172,15 +184,15 @@ if [ "$SKIP_MODELS" = "0" ]; then
         warn "Download models manually: ./scripts/model_dl.sh"
     fi
 else
-    info "[4/5] Skipping model download (--skip-models)"
+    info "[5/6] Skipping model download (--skip-models)"
 fi
 
 # ---------------------------------------------------------------------------
-# Phase 5: Verify Installation
+# Phase 6: Verify Installation
 # ---------------------------------------------------------------------------
 echo ""
 if [ "$NO_VERIFY" = "0" ]; then
-    info "[5/5] Verifying installation..."
+    info "[6/6] Verifying installation..."
     if "$JENOVA_ROOT/scripts/verify-install.sh" >/dev/null 2>&1; then
         ok "Installation verified ($(_elapsed))"
     else

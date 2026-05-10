@@ -79,6 +79,9 @@ web:
 install:
 	@./scripts/install.sh
 
+install-jenova:
+	@./install-jenova.sh
+
 clean:
 	@echo "🧹 Cleaning build artifacts..."
 	@rm -rf llama.cpp/build jvim/build jvim/install mcsh/build bin/mcsh public/ jca_web/node_modules
@@ -109,6 +112,7 @@ help:
 	@echo "  Installation & verification:"
 	@echo "    make preflight      Check dependencies before building"
 	@echo "    make install        Run scripts/install.sh (deploy to system)"
+	@echo "    make install-jenova Run streamlined installation for all platforms"
 	@echo "    make verify         Verify installation succeeded"
 	@echo ""
 	@echo "  Cleanup:"
