@@ -13,6 +13,7 @@
 
 import { SvelteMap } from 'svelte/reactivity';
 import { DatabaseService } from '$lib/services/database.service';
+import { SyncService } from '$lib/services/sync.service';
 import { ChatService } from '$lib/services/chat.service';
 import { AudioService } from '$lib/services/audio.service';
 import { conversationsStore } from '$lib/stores/conversations.svelte';
@@ -716,6 +717,8 @@ class ChatStore {
 
 				cleanupStreamingState();
 
+				SyncService.syncEntity('chat', convId);
+
 				AudioService.speak(streamedContent);
 				AudioService.notify(streamedContent);
 
@@ -802,6 +805,8 @@ class ChatStore {
 
 					AudioService.speak(content);
 					AudioService.notify(content);
+
+					SyncService.syncEntity('chat', convId);
 
 					cleanupStreamingState();
 					if (onComplete) await onComplete(content);

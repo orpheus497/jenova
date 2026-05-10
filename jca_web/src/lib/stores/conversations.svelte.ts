@@ -22,6 +22,7 @@ import { goto } from '$app/navigation';
 import { browser } from '$app/environment';
 import { toast } from 'svelte-sonner';
 import { DatabaseService } from '$lib/services/database.service';
+import { SyncService } from '$lib/services/sync.service';
 import { config } from '$lib/stores/settings.svelte';
 import { filterByLeafNodeId, findLeafNode, runLegacyMigration } from '$lib/utils';
 import type { McpServerOverride } from '$lib/types/database';
@@ -444,6 +445,7 @@ class ConversationsStore {
 			if (this.activeConversation?.id === convId) {
 				this.activeConversation = { ...this.activeConversation, name };
 			}
+			SyncService.syncEntity('chat', convId);
 		} catch (error) {
 			console.error('Failed to update conversation name:', error);
 		}
@@ -463,6 +465,7 @@ class ConversationsStore {
 			if (this.activeConversation?.id === convId) {
 				this.activeConversation = { ...this.activeConversation, folderId: folderId ?? undefined };
 			}
+			SyncService.syncEntity('chat', convId);
 		} catch (error) {
 			console.error('Failed to move conversation:', error);
 		}
@@ -524,6 +527,7 @@ class ConversationsStore {
 
 		await DatabaseService.updateCurrentNode(this.activeConversation.id, nodeId);
 		this.activeConversation = { ...this.activeConversation, currNode: nodeId };
+		SyncService.syncEntity('chat', this.activeConversation.id);
 	}
 
 	/**

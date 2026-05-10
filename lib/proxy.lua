@@ -443,10 +443,25 @@ local function proxy_connection(client_fd, conn_fds)
     local is_chat_completion = headers_raw:find("POST /v1/chat/completions")
     
     -- Filesystem API for WebUI persistence
+    local home_dir = os.getenv("HOME") or "/tmp"
+    local workspaces_dir = home_dir .. "/Workspaces"
+
+    local function recursive_mkdir(path)
+        local segments = {}
+        for segment in path:gmatch("[^/]+") do
+            table.insert(segments, segment)
+        end
+        local current = path:sub(1, 1) == "/" and "/" or ""
+        for i, segment in ipairs(segments) do
+            current = current .. segment
+            ffi.C.mkdir(current, 511) -- 0777
+            current = current .. "/"
+        end
+    end
+
     local storage_path = headers_raw:match("^POST /api/storage/([^ %?]+)")
     if storage_path and #body_raw > 0 then
-        local workspaces_dir = root_dir .. "/Workspaces"
-        ffi.C.mkdir(workspaces_dir, 511) -- 0777
+        recursive_mkdir(workspaces_dir)
         
         -- Security: prevent directory traversal
         if storage_path:find("%.%.") then
@@ -455,16 +470,8 @@ local function proxy_connection(client_fd, conn_fds)
         end
 
         local full_path = workspaces_dir .. "/" .. storage_path
-        -- Ensure parent directory exists
         local dir_part = full_path:match("(.+)/[^/]+$")
-        if dir_part then
-            -- Simple recursive mkdir implementation
-            local path_acc = ""
-            for segment in dir_part:gmatch("([^/]+)") do
-                path_acc = path_acc .. "/" .. segment
-                ffi.C.mkdir(path_acc, 511)
-            end
-        end
+        if dir_part then recursive_mkdir(dir_part) end
 
         local f = io.open(full_path, "wb")
         if f then
@@ -479,9 +486,27 @@ local function proxy_connection(client_fd, conn_fds)
         safe_close(); return
     end
 
+    local is_storage_list = is_get and headers_raw:match("^GET /api/storage/([ %?])") or headers_raw:match("^GET /api/storage$")
+    if is_storage_list then
+        recursive_mkdir(workspaces_dir)
+        local files = {}
+        -- Use 'find' or 'ls' via popen as Lua doesn't have native dir listing
+        local p = io.popen("find " .. workspaces_dir .. " -maxdepth 3 -not -path '*/.*'")
+        if p then
+            for line in p:lines() do
+                local rel = line:sub(#workspaces_dir + 2)
+                if #rel > 0 then table.insert(files, "\"" .. rel .. "\"") end
+            end
+            p:close()
+        end
+        local content = "[" .. table.concat(files, ",") .. "]"
+        local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)
+        async_send(client_fd, resp .. content)
+        safe_close(); return
+    end
+
     local is_storage_get = is_get and headers_raw:match("^GET /api/storage/([^ %?]+)")
     if is_storage_get then
-        local workspaces_dir = root_dir .. "/Workspaces"
         if is_storage_get:find("%.%.") then
             local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
             async_send(client_fd, err); safe_close(); return

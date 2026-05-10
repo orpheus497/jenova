@@ -153,6 +153,7 @@ ffi.cdef(socket_struct_defs .. [[
   /* --- Misc --- */
   char *strerror(int errnum);
   int gettimeofday(struct timeval *tv, struct timezone *tz);
+  int mkdir(const char *path, int mode);
 
   /* --- Signals --- */
   typedef void (*sighandler_t)(int);

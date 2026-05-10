@@ -1,5 +1,6 @@
 import { browser } from '$app/environment';
 import { DatabaseService } from '$lib/services/database.service';
+import { SyncService } from '$lib/services/sync.service';
 import type { DatabaseFolder, DatabaseNote, DatabaseFileAsset } from '$lib/types/database';
 
 class WorkspaceStore {
@@ -60,6 +61,7 @@ class WorkspaceStore {
 	async createNote(folderId: string | null, title: string = 'New Note', content: string = '') {
 		const note = await DatabaseService.createNote(folderId, title, content);
 		this.notes = [...this.notes, note];
+		SyncService.syncEntity('note', note.id);
 		return note;
 	}
 
@@ -70,6 +72,7 @@ class WorkspaceStore {
 			this.notes[index] = { ...this.notes[index], ...updates, updatedAt: Date.now() };
 			this.notes = [...this.notes];
 		}
+		SyncService.syncEntity('note', id);
 	}
 
 	async deleteNote(id: string) {

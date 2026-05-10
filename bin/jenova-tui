@@ -103,28 +103,32 @@ toggle_mode() {
     restart_backend
 }
 
+get_ip() {
+    if command -v hostname >/dev/null 2>&1; then
+        hostname -I 2>/dev/null | awk '{print $1}'
+    else
+        ifconfig | grep -E 'inet.[0-9]' | grep -v '127.0.0.1' | awk '{print $2}' | head -n 1
+    fi
+}
+
 launch_jvim() {
     echo "Launching jvim editor..."
-    # Launch in a new terminal window to keep TUI alive
-    sh -c "foot -e $SCRIPT_DIR/jvim --no-backend || kitty -e $SCRIPT_DIR/jvim --no-backend || alacritty -e $SCRIPT_DIR/jvim --no-backend || ghostty -e $SCRIPT_DIR/jvim --no-backend || x-terminal-emulator -e $SCRIPT_DIR/jvim --no-backend || xterm -e $SCRIPT_DIR/jvim --no-backend" &
+    # Launch in current terminal to avoid nesting issues, returns to TUI on exit
+    "$SCRIPT_DIR/jvim" --no-backend "$@"
 }
 
 launch_webui() {
-    # Resolve the IP address if in LAN mode
+    IP=$(get_ip)
     URL="http://localhost:$PORT"
-    if [ "$HOST" = "0.0.0.0" ]; then
-        # Try to find a real IP for LAN access
-        IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-        if [ -n "$IP" ]; then
-            URL="http://$IP:$PORT"
-        fi
+    if [ "$HOST" = "0.0.0.0" ] && [ -n "$IP" ]; then
+        URL="http://$IP:$PORT"
     fi
     
     echo "Opening Web UI at $URL..."
     if command -v xdg-open >/dev/null 2>&1; then
-        xdg-open "$URL" &
+        xdg-open "$URL" >/dev/null 2>&1 &
     elif command -v open >/dev/null 2>&1; then
-        open "$URL" &
+        open "$URL" >/dev/null 2>&1 &
     else
         echo "Please open $URL in your browser."
         sleep 3
@@ -146,6 +150,7 @@ fi
 # ── Main Loop ─────────────────────────────────────────────────────────────────
 while true; do
     load_config
+    IP=$(get_ip)
     printf "$CLEAR"
     echo "${BOLD}${BLUE}╔══════════════════════════════════════════════════════╗${NC}"
     echo "${BOLD}${BLUE}║           Jenova Cognitive Architecture              ║${NC}"
@@ -154,14 +159,19 @@ while true; do
     echo "  ${BOLD}System Status:${NC}"
     echo "    Backend: $(get_status)"
     echo "    Mode:    $(get_mode)"
+    if [ "$HOST" = "0.0.0.0" ] && [ -n "$IP" ]; then
+        echo "    LAN IP:  $IP"
+    fi
     echo "    Host:    $HOST"
     echo "    Port:    $PORT"
+    echo "    Storage: $HOME/Workspaces (Local Device)"
     echo ""
     echo "  ${BOLD}Backend Operations:${NC}"
     echo "    1) Start Backend"
     echo "    2) Stop Backend"
     echo "    3) Restart Backend"
     echo "    4) Toggle LAN/LOCAL Mode (Restarts Backend)"
+    echo "    5) Connect to Remote Server (Proxy Mode)"
     echo ""
     echo "  ${BOLD}Applications:${NC}"
     echo "    j) Launch jvim Editor"
@@ -177,9 +187,20 @@ while true; do
         2) stop_backend ;;
         3) restart_backend ;;
         4) toggle_mode ;;
-        j|J) launch_jvim ;;
-        w|W) launch_webui ;;
-        q|Q) printf "$CLEAR"; break ;;
-        *) echo "Invalid option: $opt"; sleep 1 ;;
-    esac
+        5)
+            echo ""
+            printf "  Enter Remote Server IP: "
+            read -r REMOTE_IP
+            if [ -n "$REMOTE_IP" ]; then
+                echo "Configuring local backend to proxy inference to $REMOTE_IP..."
+                # Update LLAMA_URL to point to remote
+                if [ -f "$LOCAL_CONF" ] && grep -q "^JENOVA_LLAMA_URL=" "$LOCAL_CONF"; then
+                    sed -i.bak "s|^JENOVA_LLAMA_URL=.*|JENOVA_LLAMA_URL=\"http://$REMOTE_IP:8081\"|" "$LOCAL_CONF"
+                else
+                    echo "JENOVA_LLAMA_URL=\"http://$REMOTE_IP:8081\"" >> "$LOCAL_CONF"
+                fi
+                # Also set JENOVA_HOST to 127.0.0.1 for local storage security if needed
+                restart_backend
+            fi
+            ;;
 done
