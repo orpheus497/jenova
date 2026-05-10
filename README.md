@@ -1,6 +1,6 @@
 # Jenova Cognitive Architecture
 
-Jenova is a local-first AI coding environment for laptops. It bundles an inference
+Jenova is a local-first AI coding environment designed for consumer and professional laptops. It bundles an inference
 backend, a purpose-built editor (`jvim`), a context-aware AI agent embedded
 directly into the editor, and a modern C-shell (`mcsh`) into one unified terminal
 IDE that runs entirely on your machine.
@@ -17,6 +17,9 @@ IDE that runs entirely on your machine.
   workflows: chat sidebar, inline rewrite, inference monitor, and LAN discovery.
 - **mcsh Shell** — A modernised C-shell (tcsh + etcsh fusion) that serves as the
   default environment for the integrated terminal.
+- **Web UI** — A browser-based workstation for chat and remote access over the
+  LAN. It serves as the general chat mode and is accessible from any device
+  on the network when the backend is running.
 - **Daemon Manager (`jenova-ca`)** — Supervises the inference and proxy daemons,
   exposing an OpenAI-compatible API on `http://localhost:8080/v1`.
 
@@ -72,6 +75,9 @@ sudo ./scripts/jenova-setup
 
 # Start the backend and open the editor
 jenova
+
+# To access the Web UI, start the backend and open http://localhost:8080
+bin/jenova-ca --daemon
 ```
 
 ## Documentation

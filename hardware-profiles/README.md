@@ -42,6 +42,18 @@ hardware-profiles/
 
 **Note:** Model names in the configuration files act as intelligent defaults and aren't hard-coded. If users wish to change models from what the downloader provides, they can easily override them via environment variables (e.g., `JENOVA_MODEL`).
 
+## Dual-GPU Strategy: The Laptop Advantage
+
+Many modern consumer laptops, particularly those with both an integrated GPU (iGPU) and a discrete GPU (dGPU), can leverage both simultaneously for inference. Jenova's dual-GPU profiles are designed specifically for this common hardware configuration.
+
+**The primary advantage of a dual-GPU setup is the ability to run larger models or use a significantly larger context size** than would be possible with a single, lower-VRAM discrete GPU. By splitting the model layers across both the iGPU and dGPU, the total available VRAM is effectively pooled.
+
+However, there are trade-offs:
+*   **Speed**: Inference speed may be slightly lower compared to running a smaller model on a single, more powerful GPU due to the overhead of coordinating between two devices.
+*   **Thermals and Battery**: On some laptops, using a dual-GPU configuration can result in lower overall thermal load and reduced battery drain compared to maxing out a single dGPU. This is because the workload is distributed, potentially keeping both GPUs out of their highest power states. *This is not a guarantee and depends on many variables, but has been a consistent observation on our test machines.*
+
+These profiles are optimized for the balance of performance and resource availability found in consumer and prosumer laptops, not necessarily high-end gaming rigs with single, high-VRAM GPUs.
+
 
 ## Available Profiles
 

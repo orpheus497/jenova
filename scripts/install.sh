@@ -748,6 +748,7 @@ else
     echo "       make llama"
     echo "  3. Start the backend:  $JENOVA_ROOT/bin/jenova-ca --daemon"
     echo "     Or launch agent:    jenova"
+    echo "     Or use Web UI:      Open http://localhost:8080 in a browser"
     echo "     Or launch editor:   $JENOVA_ROOT/bin/jvim  (or just: jvim)"
     echo "     LAN client mode:    jvim --remote <host>"
     if [ "$SKIP_NVIM" = "0" ]; then
