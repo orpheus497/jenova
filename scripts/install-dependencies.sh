@@ -44,7 +44,11 @@ done
 
 # Colours
 if [ -t 1 ]; then
-    _G=$(printf '\033[0;32m'); _Y=$(printf '\033[0;33m'); _R=$(printf '\033[0;31m'); _B=$(printf '\033[1;34m'); _N=$(printf '\033[0m')
+    _G=$(printf '\033[38;2;118;148;106m')
+    _Y=$(printf '\033[38;2;192;163;110m')
+    _R=$(printf '\033[38;2;195;64;67m')
+    _B=$(printf '\033[38;2;126;156;216m')
+    _N=$(printf '\033[0m')
 else
     _G=""; _Y=""; _R=""; _B=""; _N=""
 fi
@@ -94,7 +98,6 @@ lua54:lua54
 curl:curl
 gmake:gmake
 glslc:shaderc
-dialog:dialog
 clangd:llvm
 stylua:stylua
 node:node
@@ -113,7 +116,6 @@ lua54:lua54
 curl:curl
 make:make
 glslc:glslc
-dialog:dialog
 clang:clang
 stylua:stylua
 nodejs:nodejs
@@ -132,7 +134,6 @@ liblua5.4-dev:liblua5.4-dev
 libcurl4-openssl-dev:libcurl4-openssl-dev
 make:make
 glslc:glslc
-dialog:dialog
 clangd:clangd
 cargo:cargo
 nodejs:nodejs
@@ -151,7 +152,6 @@ lua-devel:lua-devel
 libcurl-devel:libcurl-devel
 make:make
 glslc:glslc
-dialog:dialog
 clang-tools-extra:clang-tools-extra
 cargo:cargo
 nodejs:nodejs
@@ -170,7 +170,6 @@ lua@5.4:lua@5.4
 curl:curl
 make:make
 shaderc:shaderc
-dialog:dialog
 llvm:llvm
 stylua:stylua
 node:node
@@ -189,7 +188,6 @@ lua54-devel:lua54-devel
 libcurl-devel:libcurl-devel
 make:make
 glslc:glslc
-dialog:dialog
 clang:clang-tools
 cargo:cargo
 nodejs:nodejs
@@ -208,7 +206,6 @@ lua54-devel:lua54-devel
 curl-devel:curl-devel
 make:make
 glslc:glslc
-dialog:dialog
 clang:clang
 cargo:cargo
 nodejs:nodejs
@@ -314,7 +311,7 @@ fi
 
 # Required dependencies
 REQUIRED_DEPS="git cmake luajit gettext vulkan lua54 curl"
-OPTIONAL_DEPS="gmake glslc dialog clangd stylua node"
+OPTIONAL_DEPS="gmake glslc clangd stylua node"
 
 if [ "$REQUIRED_ONLY" = "1" ]; then
     info "Installing required dependencies only..."

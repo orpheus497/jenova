@@ -67,10 +67,10 @@ done
 # Colors
 if [ -t 1 ]; then
     BOLD=$(printf '\033[1m')
-    GREEN=$(printf '\033[0;32m')
-    YELLOW=$(printf '\033[0;33m')
-    RED=$(printf '\033[0;31m')
-    BLUE=$(printf '\033[0;34m')
+    GREEN=$(printf '\033[38;2;118;148;106m')
+    YELLOW=$(printf '\033[38;2;192;163;110m')
+    RED=$(printf '\033[38;2;195;64;67m')
+    BLUE=$(printf '\033[38;2;126;156;216m')
     NC=$(printf '\033[0m')
 else
     BOLD=""

@@ -25,7 +25,6 @@ Jenova requires several system-level dependencies for building and running the c
 | Dependency | Purpose | FreeBSD (`pkg`) | Linux (Arch) | Linux (Debian) | Linux (Fedora) | macOS (`brew`) |
 |------------|---------|-----------------|--------------|----------------|----------------|----------------|
 | `glslc` | Vulkan shader compiler | `shaderc` | `shaderc` | `glslc` | `glslc` | `shaderc` |
-| `dialog` | TUI for manager | `dialog` | `dialog` | `dialog` | `dialog` | `dialog` |
 | `clangd` | C / C++ LSP | `llvm` | `clang` | `clangd` | `clang-tools-extra` | `llvm` |
 | `stylua` | Lua formatter | `stylua` | `stylua` | `cargo install stylua` | `cargo install stylua` | `stylua` |
 | `node` | Web UI build tooling (optional) | `node` | `nodejs` | `nodejs npm` | `nodejs` | `node` |

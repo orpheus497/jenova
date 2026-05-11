@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # jenova-tui: Simple TUI for managing Jenova Cognitive Architecture
 # Provides status overview and controls for the jenova-ca backend.
 
@@ -7,19 +7,20 @@ set -e
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 JENOVA_ROOT=$(dirname "$SCRIPT_DIR")
 
-# ── Colors ────────────────────────────────────────────────────────────────────
-if [ -t 1 ]; then
-    BOLD=$(printf '\033[1m')
-    GREEN=$(printf '\033[0;32m')
-    YELLOW=$(printf '\033[0;33m')
-    RED=$(printf '\033[0;31m')
-    BLUE=$(printf '\033[0;34m')
-    CYAN=$(printf '\033[0;36m')
-    NC=$(printf '\033[0m')
-    CLEAR=$(printf '\033[H\033[2J')
-else
-    BOLD="" GREEN="" YELLOW="" RED="" BLUE="" CYAN="" NC="" CLEAR=""
-fi
+# ── Colors (Kanagawa & Royal Purple) ──────────────────────────────────────────
+ESC=$'\e'
+BG="${ESC}[48;2;31;31;40m"
+FG="${ESC}[38;2;220;215;186m"
+SEL_BG="${ESC}[48;2;45;79;103m"
+GREEN="${ESC}[38;2;118;148;106m"
+RED="${ESC}[38;2;195;64;67m"
+BLUE="${ESC}[38;2;126;156;216m"
+YELLOW="${ESC}[38;2;192;163;110m"
+CYAN="${ESC}[38;2;106;149;137m"
+PURPLE="${ESC}[38;2;120;81;169m"
+BOLD="${ESC}[1m"
+RESET="${ESC}[0m"
+CLEAR="${ESC}[H${ESC}[2J${BG}${FG}"
 
 # ── Load Configuration ────────────────────────────────────────────────────────
 JENOVA_CA="$SCRIPT_DIR/jenova-ca"
@@ -38,39 +39,37 @@ load_config() {
 # ── Backend Status ────────────────────────────────────────────────────────────
 get_status() {
     if "$JENOVA_CA" status | grep -q "running"; then
-        echo "${GREEN}ACTIVE${NC}"
+        echo "${GREEN}ACTIVE${FG}"
         return 0
     else
-        echo "${RED}INACTIVE${NC}"
+        echo "${RED}INACTIVE${FG}"
         return 1
     fi
 }
 
 get_mode() {
-    # Check etc/jenova.conf and etc/jenova.local.conf
-    # The truth is determined by the HOST variable used by the backend
     if [ "$HOST" = "0.0.0.0" ] || [ "$HOST" = "::" ] || [ "$HOST" = "*" ]; then
-        echo "${CYAN}LAN${NC} (Accessible from other devices)"
+        echo "${CYAN}LAN${FG} (Accessible from other devices)"
     else
-        echo "${YELLOW}LOCAL${NC} (Accessible from this device only)"
+        echo "${YELLOW}LOCAL${FG} (Accessible from this device only)"
     fi
 }
 
 # ── Menu Actions ──────────────────────────────────────────────────────────────
 start_backend() {
-    echo "Starting Jenova CA backend..."
+    printf "\n%sStarting Jenova CA backend...%s\n" "$GREEN" "$FG"
     "$JENOVA_CA" start
     sleep 2
 }
 
 stop_backend() {
-    echo "Stopping Jenova CA backend..."
+    printf "\n%sStopping Jenova CA backend...%s\n" "$YELLOW" "$FG"
     "$JENOVA_CA" stop
     sleep 1
 }
 
 restart_backend() {
-    echo "Restarting Jenova CA backend..."
+    printf "\n%sRestarting Jenova CA backend...%s\n" "$GREEN" "$FG"
     "$JENOVA_CA" stop 2>/dev/null || true
     sleep 1
     "$JENOVA_CA" start
@@ -78,7 +77,6 @@ restart_backend() {
 }
 
 toggle_mode() {
-    # Logic: If current is LAN, switch to LOCAL. If current is LOCAL, switch to LAN.
     if [ "$HOST" = "0.0.0.0" ] || [ "$HOST" = "::" ] || [ "$HOST" = "*" ]; then
         NEW_HOST="127.0.0.1"
         MODE_LABEL="LOCAL"
@@ -87,19 +85,15 @@ toggle_mode() {
         MODE_LABEL="LAN"
     fi
 
-    echo "Switching to $MODE_LABEL mode (HOST=$NEW_HOST)..."
+    printf "\n%sSwitching to $MODE_LABEL mode (HOST=$NEW_HOST)...%s\n" "$GREEN" "$FG"
     
-    # Update or create etc/jenova.local.conf
     if [ -f "$LOCAL_CONF" ] && grep -q "^HOST=" "$LOCAL_CONF"; then
         sed -i.bak "s/^HOST=.*/HOST=\"$NEW_HOST\"/" "$LOCAL_CONF"
     else
         echo "HOST=\"$NEW_HOST\"" >> "$LOCAL_CONF"
     fi
     
-    # Reload config for the TUI's internal state
     load_config
-    
-    # Restart backend to apply changes
     restart_backend
 }
 
@@ -112,8 +106,7 @@ get_ip() {
 }
 
 launch_jvim() {
-    echo "Launching jvim editor..."
-    # Launch in current terminal to avoid nesting issues, returns to TUI on exit
+    printf "\n%sLaunching jvim editor...%s\n" "$GREEN" "$FG"
     "$SCRIPT_DIR/jvim" --no-backend "$@"
 }
 
@@ -124,7 +117,7 @@ launch_webui() {
         URL="http://$IP:$PORT"
     fi
     
-    echo "Opening Web UI at $URL..."
+    printf "\n%sOpening Web UI at $URL...%s\n" "$GREEN" "$FG"
     if command -v xdg-open >/dev/null 2>&1; then
         xdg-open "$URL" >/dev/null 2>&1 &
     elif command -v open >/dev/null 2>&1; then
@@ -147,65 +140,164 @@ if [ "$1" = "--launch-web" ]; then
     exit 0
 fi
 
+# ── Pure Bash UI Helpers ──────────────────────────────────────────────────────
+enter_alt_screen() { printf "%s[?1049h" "$ESC"; }
+exit_alt_screen() { printf "%s[?1049l" "$ESC"; }
+hide_cursor() { printf "%s[?25l" "$ESC"; }
+show_cursor() { printf "%s[?25h" "$ESC"; }
+
+cleanup() {
+    show_cursor
+    exit_alt_screen
+    printf "%s" "$RESET"
+}
+trap cleanup EXIT INT TERM
+
+get_width() {
+    local w
+    w=$(tput cols 2>/dev/null || echo 80)
+    w=$((w - 4))
+    if [ "$w" -gt 70 ]; then w=70; fi
+    if [ "$w" -lt 40 ]; then w=40; fi
+    echo "$w"
+}
+
+draw_box() {
+    local title="$1"
+    local width="$2"
+    printf "%s╭" "$PURPLE"
+    for ((i=0; i<width-2; i++)); do printf "─"; done
+    printf "╮%s\n" "$FG"
+    printf "%s│%s %-*s %s%s│%s\n" "$PURPLE" "$BOLD$YELLOW" "$((width-4))" "$title" "$RESET$BG" "$PURPLE" "$FG"
+    printf "%s├" "$PURPLE"
+    for ((i=0; i<width-2; i++)); do printf "─"; done
+    printf "┤%s\n" "$FG"
+}
+
+draw_box_bottom() {
+    local width="$1"
+    printf "%s╰" "$PURPLE"
+    for ((i=0; i<width-2; i++)); do printf "─"; done
+    printf "╯%s\n" "$RESET"
+}
+
 # ── Main Loop ─────────────────────────────────────────────────────────────────
+options=(
+    "Start Backend"
+    "Stop Backend"
+    "Restart Backend"
+    "Toggle LAN/LOCAL Mode"
+    "Connect to Remote Server"
+    "Launch jvim Editor"
+    "Open Web UI (Browser)"
+    "Quit TUI"
+)
+
+selected=0
+count=${#options[@]}
+
+enter_alt_screen
+hide_cursor
+
 while true; do
     load_config
     IP=$(get_ip)
-    if command -v clear >/dev/null 2>&1; then clear; else printf "$CLEAR"; fi
-    echo "${BOLD}${BLUE}╔══════════════════════════════════════════════════════╗${NC}"
-    echo "${BOLD}${BLUE}║           Jenova Cognitive Architecture              ║${NC}"
-    echo "${BOLD}${BLUE}╚══════════════════════════════════════════════════════╝${NC}"
+    WIDTH=$(get_width)
+    
+    printf "%s" "$CLEAR"
     echo ""
-    echo "  ${BOLD}System Status:${NC}"
-    echo "    Backend: $(get_status)"
-    echo "    Mode:    $(get_mode)"
-    if [ "$HOST" = "0.0.0.0" ] && [ -n "$IP" ]; then
-        echo "    LAN IP:  $IP"
+    draw_box "Jenova Cognitive Architecture" "$WIDTH"
+    
+    # Status Section
+    # 1(│) + 1( ) + 14(System Status:) + 1( ) + W-19 + 1( ) + 1(│) = W.
+    printf "%s│%s %sSystem Status:%s %-*s %s%s│%s\n" "$PURPLE" "$BG" "$BOLD" "$FG" "$((WIDTH-19))" "" "$RESET$BG" "$PURPLE" "$FG"
+    
+    format_stat() {
+        local lbl="$1"
+        local val="$2"
+        local plain_val="$3"
+        local pad=$((WIDTH - 8 - ${#lbl} - ${#plain_val}))
+        [ "$pad" -lt 0 ] && pad=0
+        # 1(│) + 4(    ) + lbl + plain_val + pad + 1( ) + 1(│) = 7 + len + pad = W - 1. Wait.
+        # let's be exact: 1(│) + 4(    ) + len + pad + 1( ) + 1(│) = 7 + len + pad. If pad = W - 7 - len, then it is W.
+        # Wait, the code below is:
+        # printf "%s│%s    %s%s%*s %s%s│%s\n" 
+        # So 1(│) + 4(    ) + lbl + val + pad(spaces) + 1( ) + 1(│)
+        # Total inside = 4 + len + pad + 1 = 5 + len + pad. + 2 for borders = 7 + len + pad.
+        # We need 7 + len + pad = WIDTH  -> pad = WIDTH - 7 - len.
+        local corrected_pad=$((WIDTH - 7 - ${#lbl} - ${#plain_val}))
+        [ "$corrected_pad" -lt 0 ] && corrected_pad=0
+        printf "%s│%s    %s%s%*s %s%s│%s\n" "$PURPLE" "$BG" "$lbl" "$val" "$corrected_pad" "" "$RESET$BG" "$PURPLE" "$FG"
+    }
+    
+    status_raw=$("$JENOVA_CA" status | grep -q "running" && echo "ACTIVE" || echo "INACTIVE")
+    if [ "$HOST" = "0.0.0.0" ] || [ "$HOST" = "::" ] || [ "$HOST" = "*" ]; then
+        mode_raw="LAN (Accessible from other devices)"
+    else
+        mode_raw="LOCAL (Accessible from this device only)"
     fi
-    echo "    Host:    $HOST"
-    echo "    Port:    $PORT"
-    echo "    Storage: $HOME/Workspaces (Local Device)"
-    echo ""
-    echo "  ${BOLD}Backend Operations:${NC}"
-    echo "    1) Start Backend"
-    echo "    2) Stop Backend"
-    echo "    3) Restart Backend"
-    echo "    4) Toggle LAN/LOCAL Mode (Restarts Backend)"
-    echo "    5) Connect to Remote Server (Proxy Mode)"
-    echo ""
-    echo "  ${BOLD}Applications:${NC}"
-    echo "    j) Launch jvim Editor"
-    echo "    w) Open Web UI (Browser)"
-    echo ""
-    echo "    q) Quit TUI"
-    echo ""
-    printf "  Selection: "
-    read -r opt
-
-    case "$opt" in
-        1) start_backend ;;
-        2) stop_backend ;;
-        3) restart_backend ;;
-        4) toggle_mode ;;
-        5)
-            echo ""
-            printf "  Enter Remote Server IP: "
-            read -r REMOTE_IP
-            if [ -n "$REMOTE_IP" ]; then
-                echo "Configuring local backend to proxy inference to $REMOTE_IP..."
-                # Update LLAMA_URL to point to remote
-                if [ -f "$LOCAL_CONF" ] && grep -q "^JENOVA_LLAMA_URL=" "$LOCAL_CONF"; then
-                    sed -i.bak "s|^JENOVA_LLAMA_URL=.*|JENOVA_LLAMA_URL=\"http://$REMOTE_IP:8081\"|" "$LOCAL_CONF"
-                else
-                    echo "JENOVA_LLAMA_URL=\"http://$REMOTE_IP:8081\"" >> "$LOCAL_CONF"
+    
+    format_stat "Backend: " "$(get_status)" "$status_raw"
+    format_stat "Mode:    " "$(get_mode)" "$mode_raw"
+    if [ "$HOST" = "0.0.0.0" ] && [ -n "$IP" ]; then
+        format_stat "LAN IP:  " "$IP" "$IP"
+    fi
+    format_stat "Host:    " "$HOST" "$HOST"
+    format_stat "Port:    " "$PORT" "$PORT"
+    format_stat "Storage: " "$HOME/Workspaces" "$HOME/Workspaces"
+    printf "%s│%s %-*s %s%s│%s\n" "$PURPLE" "$BG" "$((WIDTH-4))" "" "$RESET$BG" "$PURPLE" "$FG"
+    
+    # Menu Section
+    for ((i=0; i<count; i++)); do
+        if [ $i -eq $selected ]; then
+            printf "%s│%s  > %-*s %s%s│%s\n" "$PURPLE" "$SEL_BG$FG" "$((WIDTH-7))" "${options[$i]}" "$RESET$BG" "$PURPLE" "$FG"
+        else
+            printf "%s│%s    %-*s %s%s│%s\n" "$PURPLE" "$BG$FG" "$((WIDTH-7))" "${options[$i]}" "$RESET$BG" "$PURPLE" "$FG"
+        fi
+    done
+    
+    draw_box_bottom "$WIDTH"
+    
+    read -rsn1 key
+    if [[ $key == "" ]]; then
+        case "$selected" in
+            0) exit_alt_screen; start_backend; enter_alt_screen ;;
+            1) exit_alt_screen; stop_backend; enter_alt_screen ;;
+            2) exit_alt_screen; restart_backend; enter_alt_screen ;;
+            3) exit_alt_screen; toggle_mode; enter_alt_screen ;;
+            4)
+                exit_alt_screen
+                show_cursor
+                echo ""
+                printf "  Enter Remote Server IP: "
+                read -r REMOTE_IP
+                if [ -n "$REMOTE_IP" ]; then
+                    printf "\n%sConfiguring local backend to proxy inference to %s...%s\n" "$GREEN" "$REMOTE_IP" "$FG"
+                    if [ -f "$LOCAL_CONF" ] && grep -q "^JENOVA_LLAMA_URL=" "$LOCAL_CONF"; then
+                        sed -i.bak "s|^JENOVA_LLAMA_URL=.*|JENOVA_LLAMA_URL=\"http://$REMOTE_IP:8081\"|" "$LOCAL_CONF"
+                    else
+                        echo "JENOVA_LLAMA_URL=\"http://$REMOTE_IP:8081\"" >> "$LOCAL_CONF"
+                    fi
+                    restart_backend
                 fi
-                # Also set JENOVA_HOST to 127.0.0.1 for local storage security if needed
-                restart_backend
-            fi
-            ;;
-        j|J) launch_jvim ;;
-        w|W) launch_webui ;;
-        q|Q) if command -v clear >/dev/null 2>&1; then clear; else printf "$CLEAR"; fi; break ;;
-        *) echo "Invalid option: $opt"; sleep 1 ;;
-    esac
+                hide_cursor
+                enter_alt_screen
+                ;;
+            5) exit_alt_screen; launch_jvim; enter_alt_screen ;;
+            6) exit_alt_screen; launch_webui; enter_alt_screen ;;
+            7) exit 0 ;;
+        esac
+    elif [[ $key == $'\x1b' ]]; then
+        read -rsn2 key
+        case $key in
+            '[A')
+                selected=$((selected - 1))
+                if [ $selected -lt 0 ]; then selected=$((count-1)); fi
+                ;;
+            '[B')
+                selected=$((selected + 1))
+                if [ $selected -ge $count ]; then selected=0; fi
+                ;;
+        esac
+    fi
 done
