@@ -21,13 +21,13 @@ _VAL="2147483648"
 if ! grep -q "^${_KEY}=${_VAL}" /boot/loader.conf.local 2>/dev/null; then
     # Remove existing conflicting values
     if [ -f /boot/loader.conf.local ]; then
-        sed -i '' "/^${_KEY}=/d" /boot/loader.conf.local 2>/dev/null || \
-        sed -i "/^${_KEY}=/d" /boot/loader.conf.local 2>/dev/null
+        _tmp=$(mktemp)
+        grep -v "^${_KEY}=" /boot/loader.conf.local > "$_tmp" || true
+        cat "$_tmp" > /boot/loader.conf.local && rm -f "$_tmp"
     fi
     echo "${_KEY}=${_VAL}" >> /boot/loader.conf.local
 fi
 sysctl vfs.zfs.arc_max=2147483648 2>/dev/null || true
-
 # Increase NVMe timeout for heavy swap pressure
 if ! grep -q "hw.nvme.timeout" /boot/loader.conf.local 2>/dev/null; then
     echo "hw.nvme.timeout=30" >> /boot/loader.conf.local
