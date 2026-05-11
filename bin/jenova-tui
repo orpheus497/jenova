@@ -37,14 +37,33 @@ load_config() {
 }
 
 # ── Backend Status ────────────────────────────────────────────────────────────
+# Cache status for 2 seconds to avoid flickering and slow responsiveness
+LAST_STATUS_CHECK=0
+CACHED_STATUS=""
+CACHED_STATUS_LBL=""
+
 get_status() {
-    if "$JENOVA_CA" status | grep -q "running"; then
-        echo "${GREEN}ACTIVE${FG}"
-        return 0
-    else
-        echo "${RED}INACTIVE${FG}"
-        return 1
+    local now
+    now=$(date +%s)
+    if [ $((now - LAST_STATUS_CHECK)) -ge 2 ] || [ -z "$CACHED_STATUS" ]; then
+        if "$JENOVA_CA" status | grep -q "running"; then
+            CACHED_STATUS="${GREEN}ACTIVE${FG}"
+            CACHED_STATUS_LBL="ACTIVE"
+            STATUS_CODE=0
+        else
+            CACHED_STATUS="${RED}INACTIVE${FG}"
+            CACHED_STATUS_LBL="INACTIVE"
+            STATUS_CODE=1
+        fi
+        LAST_STATUS_CHECK=$now
     fi
+    echo "$CACHED_STATUS"
+    return $STATUS_CODE
+}
+
+get_status_lbl() {
+    get_status >/dev/null
+    echo "$CACHED_STATUS_LBL"
 }
 
 get_mode() {
@@ -56,14 +75,26 @@ get_mode() {
 }
 
 # ── Menu Actions ──────────────────────────────────────────────────────────────
-patch_file() {
-    local file="$1"
-    local pattern="$2"
-    local replacement="$3"
+update_config() {
+    local key="$1"
+    local value="$2"
     local tmp
     tmp=$(mktemp)
-    if sed "s|$pattern|$replacement|" "$file" > "$tmp"; then
-        mv "$tmp" "$file"
+    
+    # Touch file if it doesn't exist
+    [ ! -f "$LOCAL_CONF" ] && touch "$LOCAL_CONF"
+    
+    if grep -q "^$key=" "$LOCAL_CONF"; then
+        sed "s|^$key=.*|$key=\"$value\"|" "$LOCAL_CONF" > "$tmp"
+    else
+        cp "$LOCAL_CONF" "$tmp"
+        echo "$key=\"$value\"" >> "$tmp"
+    fi
+    
+    # Atomic-ish move
+    if mv "$tmp" "$LOCAL_CONF"; then
+        load_config
+        return 0
     else
         rm -f "$tmp"
         return 1
@@ -82,12 +113,14 @@ is_valid_ip() {
 start_backend() {
     printf "\n%sStarting Jenova CA backend...%s\n" "$GREEN" "$FG"
     "$JENOVA_CA" start
-    sleep 2
+    LAST_STATUS_CHECK=0 # Invalidate cache
+    sleep 1
 }
 
 stop_backend() {
     printf "\n%sStopping Jenova CA backend...%s\n" "$YELLOW" "$FG"
     "$JENOVA_CA" stop
+    LAST_STATUS_CHECK=0 # Invalidate cache
     sleep 1
 }
 
@@ -96,7 +129,8 @@ restart_backend() {
     "$JENOVA_CA" stop 2>/dev/null || true
     sleep 1
     "$JENOVA_CA" start
-    sleep 2
+    LAST_STATUS_CHECK=0 # Invalidate cache
+    sleep 1
 }
 
 toggle_mode() {
@@ -109,14 +143,7 @@ toggle_mode() {
     fi
 
     printf "\n%sSwitching to $MODE_LABEL mode (HOST=$NEW_HOST)...%s\n" "$GREEN" "$FG"
-    
-    if [ -f "$LOCAL_CONF" ] && grep -q "^HOST=" "$LOCAL_CONF"; then
-        patch_file "$LOCAL_CONF" "^HOST=.*" "HOST=\"$NEW_HOST\""
-    else
-        echo "HOST=\"$NEW_HOST\"" >> "$LOCAL_CONF"
-    fi
-    
-    load_config
+    update_config "HOST" "$NEW_HOST"
     restart_backend
 }
 
@@ -298,11 +325,7 @@ while true; do
                 if [ -n "$REMOTE_IP" ]; then
                     if is_valid_ip "$REMOTE_IP"; then
                         printf "\n%sConfiguring local backend to proxy inference to %s...%s\n" "$GREEN" "$REMOTE_IP" "$FG"
-                        if [ -f "$LOCAL_CONF" ] && grep -q "^JENOVA_LLAMA_URL=" "$LOCAL_CONF"; then
-                            patch_file "$LOCAL_CONF" "^JENOVA_LLAMA_URL=.*" "JENOVA_LLAMA_URL=\"http://$REMOTE_IP:8081\""
-                        else
-                            echo "JENOVA_LLAMA_URL=\"http://$REMOTE_IP:8081\"" >> "$LOCAL_CONF"
-                        fi
+                        update_config "JENOVA_LLAMA_URL" "http://$REMOTE_IP:8081"
                         restart_backend
                     else
                         printf "\n%sError: Invalid IP address format.%s\n" "$RED" "$FG"

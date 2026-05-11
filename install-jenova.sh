@@ -239,8 +239,11 @@ else
         if make "$component"; then
             print_success "  $component built successfully"
         else
-            if [ "$component" = "mcsh" ]; then
+            if [ "$component" = "mcsh" ] || [ "$component" = "web" ]; then
                 print_warning "  Failed to build $component (optional, continuing)"
+                if [ "$component" = "web" ]; then
+                    print_info "  You can try building it later with: make web"
+                fi
             else
                 print_error "  Failed to build $component"
                 echo "  Check var/log/ for details"
