@@ -150,3 +150,10 @@ nul
 
 # Conductor working notes
 conductor/
+
+# --- Installation analysis artifacts ---
+INSTALLATION-AUDIT.md
+INSTALLATION-FINAL-REPORT.md
+test-installation.sh
+test_bin_jenova.log
+debug.log
