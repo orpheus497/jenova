@@ -42,12 +42,13 @@ if git diff --cached --name-only | grep -q "^jca_web/"; then
 
     echo "Formatting and checking jca_web code..."
 
-    # Run the format command
+    # Run the format and build commands
     npm run format || exit 1
     npm run lint || exit 1
     npm run check || exit 1
+    npm run build || exit 1
 
-    echo "✅ jca_web code formatted and checked successfully"
+    echo "✅ jca_web code formatted, checked, and built successfully"
 fi
 
 exit 0

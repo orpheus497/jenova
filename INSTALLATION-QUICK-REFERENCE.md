@@ -81,7 +81,7 @@ install-jenova.sh
 3. **INSTALLATION-VERIFICATION-COMPLETE.md** - Complete flow verification
 4. **INSTALLATION-FINAL-REPORT.md** - Executive summary with metrics
 5. **test-installation.sh** - Automated validation suite
-6. **INSTALLATION-FINAL-REPORT.md** - This summary
+6. **INSTALLATION-QUICK-REFERENCE.md** - This summary
 
 ---
 
