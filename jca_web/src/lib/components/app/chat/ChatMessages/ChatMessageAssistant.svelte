@@ -111,14 +111,10 @@
 			const textToSpeak = messageContent || "";
 			if (!textToSpeak) return;
 
-			const utterance = new SpeechSynthesisUtterance(textToSpeak);
-			utterance.onend = () => {
-				isSpeaking = false;
-			};
-			utterance.onerror = () => {
-				isSpeaking = false;
-			};
-
+			// Split text into smaller chunks to improve reliability of speech synthesis
+			// Splits by common sentence boundaries while keeping the delimiter
+			const chunks = textToSpeak.match(/[^.!?\n]+[.!?\n]*|[^.!?\n]+/g) || [textToSpeak];
+			
 			// Try to find a good voice (heuristic from GAI)
 			const voices = synth.getVoices();
 			const preferredVoice =
@@ -128,12 +124,41 @@
 				voices.find((v) => v.name.includes("Google") && v.name.includes("Female")) ||
 				voices.find((v) => v.name.toLowerCase().includes("female"));
 
-			if (preferredVoice) utterance.voice = preferredVoice;
-			utterance.pitch = 0.85;
-			utterance.rate = 0.95;
-
-			synth.speak(utterance);
+			let currentChunk = 0;
 			isSpeaking = true;
+
+			function speakNextChunk() {
+				if (!isSpeaking || currentChunk >= chunks.length) {
+					isSpeaking = false;
+					return;
+				}
+
+				const chunkText = chunks[currentChunk].trim();
+				if (!chunkText) {
+					currentChunk++;
+					speakNextChunk();
+					return;
+				}
+
+				const utterance = new SpeechSynthesisUtterance(chunkText);
+				if (preferredVoice) utterance.voice = preferredVoice;
+				utterance.pitch = 0.85;
+				utterance.rate = 0.95;
+
+				utterance.onend = () => {
+					currentChunk++;
+					speakNextChunk();
+				};
+				
+				utterance.onerror = (event) => {
+					console.error("SpeechSynthesis error:", event);
+					isSpeaking = false;
+				};
+
+				synth.speak(utterance);
+			}
+
+			speakNextChunk();
 		}
 	}
 

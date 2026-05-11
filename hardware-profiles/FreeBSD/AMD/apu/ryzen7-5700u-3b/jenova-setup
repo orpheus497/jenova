@@ -40,8 +40,8 @@ sysctl_persist() {
         grep -vE "^${_esc_key}[[:space:]]*=" /etc/sysctl.conf > "$_tmp" || true
     fi
     echo "$_line" >> "$_tmp"
-    cat "$_tmp" > /etc/sysctl.conf
-    rm -f "$_tmp"
+    [ -f /etc/sysctl.conf ] && cp /etc/sysctl.conf /etc/sysctl.conf.bak
+    mv "$_tmp" /etc/sysctl.conf
 }
 
 apply_sysctl() {

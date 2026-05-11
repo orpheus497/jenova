@@ -48,7 +48,7 @@ fi
 
 # 2. Check x-terminal-emulator (system default)
 if _have x-terminal-emulator; then
-    _real_term=$(readlink -f "$(command -v x-terminal-emulator)" 2>/dev/null || true)
+    _real_term=$(realpath "$(command -v x-terminal-emulator)" 2>/dev/null || true)
     if [ -n "$_real_term" ]; then
         _t_base=$(basename "$_real_term")
         for _s in $SUPPORTED_TERMS; do
