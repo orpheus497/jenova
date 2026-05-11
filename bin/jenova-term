@@ -5,18 +5,26 @@
 CMD="$@"
 
 if command -v foot >/dev/null 2>&1; then
-    foot sh -c "$CMD"
+    exec foot sh -c "$CMD"
 elif command -v kitty >/dev/null 2>&1; then
-    kitty sh -c "$CMD"
+    exec kitty sh -c "$CMD"
 elif command -v alacritty >/dev/null 2>&1; then
-    alacritty -e sh -c "$CMD"
+    exec alacritty -e sh -c "$CMD"
 elif command -v ghostty >/dev/null 2>&1; then
-    ghostty -e sh -c "$CMD"
+    exec ghostty -e sh -c "$CMD"
 elif command -v gnome-terminal >/dev/null 2>&1; then
-    gnome-terminal -- sh -c "$CMD"
+    exec gnome-terminal -- sh -c "$CMD"
+elif command -v x-terminal-emulator >/dev/null 2>&1; then
+    exec x-terminal-emulator -e sh -c "$CMD"
 elif command -v xterm >/dev/null 2>&1; then
-    xterm -e sh -c "$CMD"
+    exec xterm -e sh -c "$CMD"
 else
-    # Fallback: execute directly in current terminal
-    sh -c "$CMD"
+    # Fallback: If we are in a terminal already, execute. 
+    # Otherwise, this will fail visibly rather than running a TUI in the background.
+    if [ -t 1 ]; then
+        exec sh -c "$CMD"
+    else
+        notify-send "Jenova Error" "No supported terminal emulator found to launch: $CMD" 2>/dev/null || echo "Error: No terminal found" >&2
+        exit 1
+    fi
 fi
