@@ -178,25 +178,35 @@ launch_webui() {
 }
 
 # ── UI Components ─────────────────────────────────────────────────────────────
+# Detect terminal width, fallback to 60
+get_term_width() {
+    local w
+    w=$(tput cols 2>/dev/null || echo 60)
+    [ "$w" -gt 100 ] && w=100
+    [ "$w" -lt 40 ] && w=40
+    echo "$w"
+}
+
 draw_box() {
     local title="$1"
     local width="$2"
     local title_len=${#title}
-    local left_pad=$(((width - title_len - 2) / 2))
-    local right_pad=$((width - title_len - 2 - left_pad))
+    local content_width=$((width - 2))
+    local left_pad=$(((content_width - title_len - 2) / 2))
+    local right_pad=$((content_width - title_len - 2 - left_pad))
     
-    printf "%s╔%s%s%s╗%s\n" "$PURPLE" "$(printf '═%.0s' $(seq 1 $width))" "" "" "$FG"
-    printf "%s║%s%*s %s%s %*s %s%s║%s\n" "$PURPLE" "$BG" "$left_pad" "" "$BOLD$FG" "$title" "$right_pad" "" "$RESET$BG" "$PURPLE" "$FG"
-    printf "%s╠%s%s%s╣%s\n" "$PURPLE" "$(printf '═%.0s' $(seq 1 $width))" "" "" "$FG"
+    printf "%s┌%s┐%s\n" "$PURPLE" "$(printf '─%.0s' $(seq 1 $content_width))" "$FG"
+    printf "%s│%s%*s %s%s %*s %s%s│%s\n" "$PURPLE" "$BG" "$left_pad" "" "$BOLD$FG" "$title" "$right_pad" "" "$RESET$BG" "$PURPLE" "$FG"
+    printf "%s├%s┤%s\n" "$PURPLE" "$(printf '─%.0s' $(seq 1 $content_width))" "$FG"
 }
 
 draw_box_bottom() {
     local width="$1"
-    printf "%s╚%s%s%s╝%s\n" "$PURPLE" "$(printf '═%.0s' $(seq 1 $width))" "" "" "$FG"
+    local content_width=$((width - 2))
+    printf "%s└%s┘%s\n" "$PURPLE" "$(printf '─%.0s' $(seq 1 $content_width))" "$FG"
 }
 
 # ── Main Loop ─────────────────────────────────────────────────────────────────
-WIDTH=60
 selected=0
 options=(
     "Start Backend"
@@ -223,6 +233,7 @@ enter_alt_screen
 hide_cursor
 
 while true; do
+    WIDTH=$(get_term_width)
     IP=$(get_ip)
     printf "%s" "$CLEAR"
     echo ""
@@ -235,7 +246,8 @@ while true; do
         local lbl="$1"
         local val="$2"
         local plain_val="$3"
-        local corrected_pad=$((WIDTH - 7 - ${#lbl} - ${#plain_val}))
+        local content_width=$((WIDTH - 2))
+        local corrected_pad=$((content_width - 5 - ${#lbl} - ${#plain_val}))
         [ "$corrected_pad" -lt 0 ] && corrected_pad=0
         printf "%s│%s    %s%s%*s %s%s│%s\n" "$PURPLE" "$BG" "$lbl" "$val" "$corrected_pad" "" "$RESET$BG" "$PURPLE" "$FG"
     }
@@ -254,14 +266,14 @@ while true; do
     format_stat "Host:    " "$HOST" "$HOST"
     format_stat "Port:    " "$PORT" "$PORT"
     format_stat "Storage: " "$HOME/Workspaces" "$HOME/Workspaces"
-    printf "%s│%s %-*s %s%s│%s\n" "$PURPLE" "$BG" "$((WIDTH-4))" "" "$RESET$BG" "$PURPLE" "$FG"
+    printf "%s│%s %-*s %s%s│%s\n" "$PURPLE" "$BG" "$((WIDTH-2))" "" "$RESET$BG" "$PURPLE" "$FG"
     
     # Menu Section
     for ((i=0; i<count; i++)); do
         if [ $i -eq $selected ]; then
-            printf "%s│%s  > %-*s %s%s│%s\n" "$PURPLE" "$SEL_BG$FG" "$((WIDTH-7))" "${options[$i]}" "$RESET$BG" "$PURPLE" "$FG"
+            printf "%s│%s  > %-*s %s%s│%s\n" "$PURPLE" "$SEL_BG$FG" "$((WIDTH-6))" "${options[$i]}" "$RESET$BG" "$PURPLE" "$FG"
         else
-            printf "%s│%s    %-*s %s%s│%s\n" "$PURPLE" "$BG$FG" "$((WIDTH-7))" "${options[$i]}" "$RESET$BG" "$PURPLE" "$FG"
+            printf "%s│%s    %-*s %s%s│%s\n" "$PURPLE" "$BG$FG" "$((WIDTH-6))" "${options[$i]}" "$RESET$BG" "$PURPLE" "$FG"
         fi
     done
     

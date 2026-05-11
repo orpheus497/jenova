@@ -53,7 +53,7 @@ local EINPROGRESS = _ffi_defs.EINPROGRESS
 
 local MAX_ACTIVE_CONNECTIONS = 6
 local MAX_HEADER_SIZE = 65536
-local MAX_BODY_SIZE = 2 * 1024 * 1024
+local MAX_BODY_SIZE = 100 * 1024 * 1024
 
 local function set_nonblocking(fd)
     local flags = ffi.C.fcntl(fd, _ffi_defs.F_GETFL, 0)
