@@ -276,7 +276,31 @@ if [ "$SKIP_NVIM" = "0" ] && command -v jvim >/dev/null 2>&1 && [ -d "$JVIM_CONF
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Summary
+# 6. Refresh Desktop Entries & Icons (Linux/FreeBSD)
+# ---------------------------------------------------------------------------
+if [ "$JENOVA_OS" = "linux" ] || [ "$JENOVA_OS" = "freebsd" ]; then
+    info "Refreshing desktop entries and icons..."
+    _APP_DIR="$HOME/.local/share/applications"
+    _ICON_DIR="$HOME/.local/share/icons"
+    mkdir -p "$_APP_DIR" "$_ICON_DIR"
+
+    [ -f "$JENOVA_ROOT/bin/jenova.desktop" ] && cp "$JENOVA_ROOT/bin/jenova.desktop" "$_APP_DIR/jenova.desktop"
+    [ -f "$JENOVA_ROOT/bin/jenova-manager.desktop" ] && cp "$JENOVA_ROOT/bin/jenova-manager.desktop" "$_APP_DIR/jenova-manager.desktop"
+    [ -f "$JENOVA_ROOT/bin/jvim.desktop" ] && cp "$JENOVA_ROOT/bin/jvim.desktop" "$_APP_DIR/jvim.desktop"
+
+    if [ -d "$JENOVA_ROOT/png" ]; then
+        [ -f "$JENOVA_ROOT/png/jenova.jpg" ] && cp "$JENOVA_ROOT/png/jenova.jpg" "$_ICON_DIR/jenova.jpg"
+        [ -f "$JENOVA_ROOT/png/jca.jpg" ] && cp "$JENOVA_ROOT/png/jca.jpg" "$_ICON_DIR/jca.jpg"
+        [ -f "$JENOVA_ROOT/png/jvim.jpg" ] && cp "$JENOVA_ROOT/png/jvim.jpg" "$_ICON_DIR/jvim.jpg"
+        ln -sf "$_ICON_DIR/jenova.jpg" "$_ICON_DIR/jenova" 2>/dev/null || true
+        ln -sf "$_ICON_DIR/jca.jpg" "$_ICON_DIR/jca" 2>/dev/null || true
+        ln -sf "$_ICON_DIR/jvim.jpg" "$_ICON_DIR/jvim" 2>/dev/null || true
+    fi
+    ok "Desktop integration refreshed"
+fi
+
+# ---------------------------------------------------------------------------
+# 7. Summary
 # ---------------------------------------------------------------------------
 echo ""
 ok "Update complete."

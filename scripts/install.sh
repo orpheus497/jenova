@@ -711,14 +711,10 @@ if [ -n "$_BIN_DIR" ]; then
     if [ "$JENOVA_OS" = "linux" ] || [ "$JENOVA_OS" = "freebsd" ]; then
         _APP_DIR="$HOME/.local/share/applications"
         mkdir -p "$_APP_DIR"
-        cp "$JENOVA_ROOT/bin/jenova.desktop" "$_APP_DIR/jenova.desktop"
-        cp "$JENOVA_ROOT/bin/jca.desktop" "$_APP_DIR/jca.desktop"
-        # Also install jvim.desktop if it exists
-        if [ -f "$JENOVA_ROOT/bin/jvim.desktop" ]; then
-            cp "$JENOVA_ROOT/bin/jvim.desktop" "$_APP_DIR/jvim.desktop"
-        fi
+        [ -f "$JENOVA_ROOT/bin/jenova.desktop" ] && cp "$JENOVA_ROOT/bin/jenova.desktop" "$_APP_DIR/jenova.desktop"
+        [ -f "$JENOVA_ROOT/bin/jenova-manager.desktop" ] && cp "$JENOVA_ROOT/bin/jenova-manager.desktop" "$_APP_DIR/jenova-manager.desktop"
+        [ -f "$JENOVA_ROOT/bin/jvim.desktop" ] && cp "$JENOVA_ROOT/bin/jvim.desktop" "$_APP_DIR/jvim.desktop"
         ok "Installed desktop entries to $_APP_DIR"
-
         # Install Icons
         _ICON_DIR="$HOME/.local/share/icons"
         mkdir -p "$_ICON_DIR"
