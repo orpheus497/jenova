@@ -18,8 +18,8 @@ local prompts = require("prompts")
 local HOST = os.getenv("JENOVA_PROXY_HOST") or os.getenv("JENOVA_HOST") or "127.0.0.1"
 local PORT = tonumber(os.getenv("JENOVA_PROXY_PORT") or os.getenv("JENOVA_PORT")) or 8080
 local LLAMA_URL = os.getenv("JENOVA_LLAMA_URL") or "http://127.0.0.1:" .. (os.getenv("JENOVA_LLAMA_PORT") or "8081")
-local LLAMA_PORT = tonumber(LLAMA_URL:match(":(%d+)")) or 8081
-local LLAMA_HOST = LLAMA_URL:match("//([^:/]+)") or "127.0.0.1"
+local LLAMA_PORT = tonumber(LLAMA_URL:match(":(%d+)/?$") or LLAMA_URL:match(":(%d+):") or LLAMA_URL:match(":(%d+)")) or 8081
+local LLAMA_HOST = LLAMA_URL:match("//%[([^%]]+)%]") or LLAMA_URL:match("//([^:/]+)") or "127.0.0.1"
 local LLAMA_CONNECT_HOST = LLAMA_HOST
 if LLAMA_CONNECT_HOST == "0.0.0.0" or LLAMA_CONNECT_HOST == "::" or LLAMA_CONNECT_HOST == "*" then
     LLAMA_CONNECT_HOST = "127.0.0.1"

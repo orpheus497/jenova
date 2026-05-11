@@ -148,7 +148,7 @@ toggle_mode() {
 get_ip() {
     if command -v ip >/dev/null 2>&1; then
         # Modern Linux: Get the IP used for the default route to avoid bridge/virtual IPs
-        ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+' || \
+        ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -n 1 || \
         ip -4 addr show scope global | grep -E 'inet ' | grep -v '127.0.0.1' | awk '{print $2}' | cut -d/ -f1 | head -n 1
     elif command -v hostname >/dev/null 2>&1 && hostname -I >/dev/null 2>&1; then
         # Traditional Linux
@@ -297,6 +297,33 @@ while true; do
                         printf "\n%sConfiguring local backend to proxy inference to %s...%s\n" "$GREEN" "$REMOTE_IP" "$FG"
                         update_config "JENOVA_LLAMA_URL" "http://$REMOTE_IP:8081"
                         restart_backend
+                    else
+                        printf "\n%sError: Invalid IP address format.%s\n" "$RED" "$FG"
+                        sleep 2
+                    fi
+                fi
+                hide_cursor
+                enter_alt_screen
+                ;;
+            5) exit_alt_screen; launch_jvim; enter_alt_screen ;;
+            6) exit_alt_screen; launch_webui; enter_alt_screen ;;
+            7) exit 0 ;;
+        esac
+    elif [[ $key == $'\x1b' ]]; then
+        read -rsn2 -t 0.01 key
+        case $key in
+            '[A')
+                selected=$((selected - 1))
+                if [ $selected -lt 0 ]; then selected=$((count-1)); fi
+                ;;
+            '[B')
+                selected=$((selected + 1))
+                if [ $selected -ge $count ]; then selected=0; fi
+                ;;
+        esac
+    fi
+done
+      restart_backend
                     else
                         printf "\n%sError: Invalid IP address format.%s\n" "$RED" "$FG"
                         sleep 2

@@ -169,10 +169,9 @@ export function parseClipboardContent(clipboardText: string): ParsedClipboardCon
 		mcpPromptAttachments: []
 	};
 
-	if (!clipboardText.startsWith('"')) {
-		return defaultResult;
+	if (!clipboardText.startsWith('"') || !clipboardText.includes('\n[')) {
+	        return defaultResult;
 	}
-
 	try {
 		let stringEndIndex = -1;
 		let escaped = false;

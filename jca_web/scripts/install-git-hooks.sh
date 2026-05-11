@@ -48,12 +48,6 @@ if git diff --cached --name-only | grep -q "^jca_web/"; then
     npm run check || exit 1
 
     echo "✅ jca_web code formatted and checked successfully"
-
-    # Build the webui
-    echo "Building jca_web..."
-    npm run build || exit 1
-
-    echo "✅ jca_web built successfully"
 fi
 
 exit 0

@@ -70,12 +70,16 @@ mcsh:
 	@echo "   mcsh built: bin/mcsh"
 
 web:
-	@echo "🔨 Building JCA Web UI..."
-	@if [ ! -d jca_web ]; then \
-		echo "ERROR: jca_web/ source tree missing." >&2; exit 1; \
+	@if [ -f public/bundle.js ] && [ -f public/index.html ]; then \
+		echo "✅ JCA Web UI already built (public/bundle.js found)."; \
+	else \
+		echo "🔨 Building JCA Web UI..."; \
+		if [ ! -d jca_web ]; then \
+			echo "ERROR: jca_web/ source tree missing." >&2; exit 1; \
+		fi; \
+		cd jca_web && ([ -d node_modules ] || npm install) && npm run build; \
+		echo "   Web UI built: public/"; \
 	fi
-	@cd jca_web && ([ -d node_modules ] || npm install) && npm run build
-	@echo "   Web UI built: public/"
 
 install:
 	@./scripts/install.sh

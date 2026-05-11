@@ -11,9 +11,8 @@
 	import { useProcessingState } from '$lib/hooks/use-processing-state.svelte';
 	import { isLoading, isChatStreaming } from '$lib/stores/chat.svelte';
 	import { autoResizeTextarea, copyToClipboard, isIMEComposing } from '$lib/utils';
-	import { tick } from 'svelte';
-	import { fade } from 'svelte/transition';
-	import { Check, X } from '@lucide/svelte';
+	import { onDestroy, tick } from 'svelte';
+	import { fade } from 'svelte/transition';	import { Check, X } from '@lucide/svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { Checkbox } from '$lib/components/ui/checkbox';
 	import { INPUT_CLASSES } from '$lib/constants';
@@ -114,10 +113,10 @@
 			// Split text into smaller chunks to improve reliability of speech synthesis
 			// Splits by common sentence boundaries while keeping the delimiter
 			const chunks = textToSpeak.match(/[^.!?\n]+[.!?\n]*|[^.!?\n]+/g) || [textToSpeak];
-			
+
 			// Try to find a good voice (heuristic from GAI)
 			let preferredVoice: SpeechSynthesisVoice | undefined;
-			
+
 			function findPreferredVoice() {
 				const voices = synth.getVoices();
 				return (
@@ -148,10 +147,10 @@
 				}
 
 				const utterance = new SpeechSynthesisUtterance(chunkText);
-				
+
 				// Re-attempt voice finding if not found yet (async loading)
 				if (!preferredVoice) preferredVoice = findPreferredVoice();
-				
+
 				if (preferredVoice) utterance.voice = preferredVoice;
 				utterance.pitch = 0.85;
 				utterance.rate = 0.95;
@@ -160,7 +159,7 @@
 					currentChunk++;
 					speakNextChunk();
 				};
-				
+
 				utterance.onerror = (event) => {
 					console.error("SpeechSynthesis error:", event);
 					isSpeaking = false;
@@ -173,6 +172,11 @@
 		}
 	}
 
+	onDestroy(() => {
+		if (browser && window.speechSynthesis) {
+			window.speechSynthesis.cancel();
+		}
+	});
 	function getScrollParent(el: HTMLElement): HTMLElement | null {
 		let parent = el.parentElement;
 		while (parent) {

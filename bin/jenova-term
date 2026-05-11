@@ -24,12 +24,12 @@ SUPPORTED_TERMS="foot ptyxis kitty alacritty ghostty wezterm gnome-terminal kons
 _launch() {
     _t="$1"
     shift
-    # Note: Most modern terminals (foot, kitty, alacritty, ghostty) 
-    # handle "-e command args" correctly when passed as separate arguments.
-    case "$_t" in
-        wezterm)        exec wezterm start -- "$@" ;;
-        gnome-terminal) exec gnome-terminal -- "$@" ;;
-        *)              exec "$_t" -e "$@" ;;
+    # Note: Modern terminals (foot, kitty, alacritty, ghostty) 
+    # handle "-e command args" correctly. 
+    # gnome-terminal, wezterm, and ptyxis often prefer "--".
+    case "$(basename "$_t")" in
+        wezterm|gnome-terminal|ptyxis) exec "$_t" -- "$@" ;;
+        *)                             exec "$_t" -e "$@" ;;
     esac
 }
 
