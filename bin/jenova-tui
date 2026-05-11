@@ -77,6 +77,7 @@ update_config() {
     local value="$2"
     local tmp
     tmp=$(mktemp)
+    trap 'rm -f "$tmp"' EXIT INT TERM
     
     # Touch file if it doesn't exist
     [ ! -f "$LOCAL_CONF" ] && touch "$LOCAL_CONF"
@@ -90,10 +91,12 @@ update_config() {
     # Atomic-ish write that preserves symlinks and attributes
     if cat "$tmp" > "$LOCAL_CONF"; then
         rm -f "$tmp"
+        trap - EXIT INT TERM
         load_config
         return 0
     else
         rm -f "$tmp"
+        trap - EXIT INT TERM
         return 1
     fi
 }
@@ -187,6 +190,17 @@ get_term_width() {
     echo "$w"
 }
 
+format_stat() {
+    local lbl="$1"
+    local val="$2"
+    local plain_val="$3"
+    local width="$4"
+    local content_width=$((width - 2))
+    local corrected_pad=$((content_width - 5 - ${#lbl} - ${#plain_val}))
+    [ "$corrected_pad" -lt 0 ] && corrected_pad=0
+    printf "%s│%s    %s%s%*s %s%s│%s\n" "$PURPLE" "$BG" "$lbl" "$val" "$corrected_pad" "" "$RESET$BG" "$PURPLE" "$FG"
+}
+
 draw_box() {
     local title="$1"
     local width="$2"
@@ -242,30 +256,20 @@ while true; do
     # Status Section
     printf "%s│%s %sSystem Status:%s %-*s %s%s│%s\n" "$PURPLE" "$BG" "$BOLD" "$FG" "$((WIDTH-19))" "" "$RESET$BG" "$PURPLE" "$FG"
     
-    format_stat() {
-        local lbl="$1"
-        local val="$2"
-        local plain_val="$3"
-        local content_width=$((WIDTH - 2))
-        local corrected_pad=$((content_width - 5 - ${#lbl} - ${#plain_val}))
-        [ "$corrected_pad" -lt 0 ] && corrected_pad=0
-        printf "%s│%s    %s%s%*s %s%s│%s\n" "$PURPLE" "$BG" "$lbl" "$val" "$corrected_pad" "" "$RESET$BG" "$PURPLE" "$FG"
-    }
-    
     if [ "$HOST" = "0.0.0.0" ] || [ "$HOST" = "::" ] || [ "$HOST" = "*" ]; then
         mode_raw="LAN (Accessible from other devices)"
     else
         mode_raw="LOCAL (Accessible from this device only)"
     fi
     
-    format_stat "Backend: " "$(get_status)" "$(get_status_lbl)"
-    format_stat "Mode:    " "$(get_mode)" "$mode_raw"
+    format_stat "Backend: " "$(get_status)" "$(get_status_lbl)" "$WIDTH"
+    format_stat "Mode:    " "$(get_mode)" "$mode_raw" "$WIDTH"
     if [ "$HOST" = "0.0.0.0" ] && [ -n "$IP" ]; then
-        format_stat "LAN IP:  " "$IP" "$IP"
+        format_stat "LAN IP:  " "$IP" "$IP" "$WIDTH"
     fi
-    format_stat "Host:    " "$HOST" "$HOST"
-    format_stat "Port:    " "$PORT" "$PORT"
-    format_stat "Storage: " "$HOME/Workspaces" "$HOME/Workspaces"
+    format_stat "Host:    " "$HOST" "$HOST" "$WIDTH"
+    format_stat "Port:    " "$PORT" "$PORT" "$WIDTH"
+    format_stat "Storage: " "$HOME/Workspaces" "$HOME/Workspaces" "$WIDTH"
     printf "%s│%s %-*s %s%s│%s\n" "$PURPLE" "$BG" "$((WIDTH-2))" "" "$RESET$BG" "$PURPLE" "$FG"
     
     # Menu Section
@@ -297,33 +301,6 @@ while true; do
                         printf "\n%sConfiguring local backend to proxy inference to %s...%s\n" "$GREEN" "$REMOTE_IP" "$FG"
                         update_config "JENOVA_LLAMA_URL" "http://$REMOTE_IP:8081"
                         restart_backend
-                    else
-                        printf "\n%sError: Invalid IP address format.%s\n" "$RED" "$FG"
-                        sleep 2
-                    fi
-                fi
-                hide_cursor
-                enter_alt_screen
-                ;;
-            5) exit_alt_screen; launch_jvim; enter_alt_screen ;;
-            6) exit_alt_screen; launch_webui; enter_alt_screen ;;
-            7) exit 0 ;;
-        esac
-    elif [[ $key == $'\x1b' ]]; then
-        read -rsn2 -t 0.01 key
-        case $key in
-            '[A')
-                selected=$((selected - 1))
-                if [ $selected -lt 0 ]; then selected=$((count-1)); fi
-                ;;
-            '[B')
-                selected=$((selected + 1))
-                if [ $selected -ge $count ]; then selected=0; fi
-                ;;
-        esac
-    fi
-done
-      restart_backend
                     else
                         printf "\n%sError: Invalid IP address format.%s\n" "$RED" "$FG"
                         sleep 2

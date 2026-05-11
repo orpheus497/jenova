@@ -194,6 +194,7 @@ find_best_profile() {
     _SCORE_FILE=$(mktemp)
     _NAME_FILE=$(mktemp)
     _PROFILE_FILE=$(mktemp)
+    trap "rm -f '$_SCORE_FILE' '$_NAME_FILE' '$_PROFILE_FILE'" EXIT INT TERM
     echo "0" > "$_SCORE_FILE"
 
     # Use find to locate all profile.conf files at any depth
