@@ -84,12 +84,11 @@ update_config() {
     # Touch file if it doesn't exist
     [ ! -f "$LOCAL_CONF" ] && touch "$LOCAL_CONF"
     
-    if grep -q "^$key=" "$LOCAL_CONF"; then
-        sed "s|^$key=.*|$key=\"$value\"|" "$LOCAL_CONF" > "$tmp"
-    else
-        cp "$LOCAL_CONF" "$tmp"
-        echo "$key=\"$value\"" >> "$tmp"
+    # Use grep -v to remove existing key and append new one to avoid sed delimiter issues
+    if [ -f "$LOCAL_CONF" ]; then
+        grep -v "^$key=" "$LOCAL_CONF" > "$tmp" || true
     fi
+    echo "$key=\"$value\"" >> "$tmp"
     
     # Atomic-ish move
     if mv "$tmp" "$LOCAL_CONF"; then
@@ -148,10 +147,14 @@ toggle_mode() {
 }
 
 get_ip() {
-    if command -v hostname >/dev/null 2>&1 && hostname -I >/dev/null 2>&1; then
+    if command -v ip >/dev/null 2>&1; then
+        # Modern Linux
+        ip -4 addr show | grep -E 'inet ' | grep -v '127.0.0.1' | awk '{print $2}' | cut -d/ -f1 | head -n 1
+    elif command -v hostname >/dev/null 2>&1 && hostname -I >/dev/null 2>&1; then
+        # Traditional Linux
         hostname -I | awk '{print $1}'
     else
-        # POSIX-ish fallback (Linux/BSD/macOS)
+        # POSIX-ish fallback (BSD/macOS)
         ifconfig 2>/dev/null | grep -E 'inet ' | grep -v '127.0.0.1' | awk '{print $2}' | head -n 1 | sed 's/addr://'
     fi
 }
