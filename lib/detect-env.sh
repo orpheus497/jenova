@@ -20,6 +20,7 @@
 #   JENOVA_GLSLC_OK      1 if glslc is on PATH, 0 otherwise
 #   JENOVA_GH_ARCH_LLS   GitHub release arch suffix for lua-language-server
 #   JENOVA_GH_ARCH_ZLS   GitHub release arch suffix for zls
+#   JENOVA_WSL           1 if Windows Subsystem for Linux, 0 otherwise
 
 [ "${_JENOVA_ENV_LOADED:-0}" = "1" ] && return 0
 _JENOVA_ENV_LOADED=1
@@ -41,6 +42,11 @@ case "$_jenova_raw_arch" in
     aarch64|arm64) JENOVA_ARCH="aarch64" ;;
     *)             JENOVA_ARCH="unknown" ;;
 esac
+
+JENOVA_WSL=0
+if [ "$JENOVA_OS" = "linux" ] && grep -qEi "(Microsoft|WSL)" /proc/version 2>/dev/null; then
+    JENOVA_WSL=1
+fi
 
 # ── Distro + package manager ──────────────────────────────────────────────────
 
@@ -235,5 +241,5 @@ load_jenova_profile() {
 export JENOVA_OS JENOVA_ARCH JENOVA_DISTRO JENOVA_PKG_MGR
 export JENOVA_CPU_MODEL JENOVA_CPU_THREADS JENOVA_PHYSICAL_THREADS
 export JENOVA_RAM_GIB JENOVA_SWAP_GIB
-export JENOVA_VULKAN_OK JENOVA_GLSLC_OK
+export JENOVA_VULKAN_OK JENOVA_GLSLC_OK JENOVA_WSL
 export JENOVA_GH_ARCH_LLS JENOVA_GH_ARCH_ZLS

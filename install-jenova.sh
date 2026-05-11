@@ -4,13 +4,14 @@
 # Intelligent, end-to-end installation with OS detection, dependency management,
 # graceful skipping, and user-friendly notifications.
 #
-# Usage: ./install-jenova.sh [--help] [--dry-run] [--minimal] [--full]
+# Usage: ./install-jenova.sh [--help] [--dry-run] [--interactive] [--minimal] [--full]
 #
 # Options:
-#   --help      Show this help message
-#   --dry-run   Show what would be installed without making changes
-#   --minimal   Install only essential components (no Web UI, no models)
-#   --full      Install everything including models (default)
+#   --help          Show this help message
+#   --dry-run       Show what would be installed without making changes
+#   --interactive   Prompt for confirmation before major steps
+#   --minimal       Install only essential components (no Web UI, no models)
+#   --full          Install everything including models (default)
 #
 # This script automatically:
 #   ✓ Detects your OS and package manager
@@ -31,6 +32,7 @@ JENOVA_ROOT="$(dirname "$(realpath "$0")")"
 
 # Parse arguments
 DRY_RUN=0
+INTERACTIVE=0
 MINIMAL=0
 FULL=1
 
@@ -42,6 +44,9 @@ for arg in "$@"; do
             ;;
         --dry-run)
             DRY_RUN=1
+            ;;
+        --interactive)
+            INTERACTIVE=1
             ;;
         --minimal)
             MINIMAL=1
@@ -105,6 +110,13 @@ print_info() {
     printf "${BLUE}ℹ${NC} %s\n" "$1"
 }
 
+prompt_continue() {
+    if [ "$INTERACTIVE" = "1" ] && [ "$DRY_RUN" = "0" ]; then
+        printf "\n${YELLOW}Press Enter to proceed with this step, or Ctrl+C to abort...${NC} "
+        read -r _
+    fi
+}
+
 # Check if we're in the right directory
 if [ ! -f "$JENOVA_ROOT/Makefile" ] || [ ! -d "$JENOVA_ROOT/scripts" ]; then
     print_error "Please run this script from the Jenova repository root directory."
@@ -127,6 +139,10 @@ echo "  OS: $JENOVA_OS ($JENOVA_DISTRO)"
 echo "  Package Manager: $JENOVA_PKG_MGR"
 echo "  CPU: $JENOVA_CPU_MODEL ($JENOVA_CPU_THREADS threads)"
 echo "  RAM: ${JENOVA_RAM_GIB}GB"
+if [ "$JENOVA_WSL" = "1" ]; then
+    echo "  Environment: Windows Subsystem for Linux (WSL)"
+    print_warning "WSL detected. Native installation is recommended for full GPU capabilities."
+fi
 echo "  Vulkan: $([ "$JENOVA_VULKAN_OK" = "1" ] && echo "Available" || echo "Not available")"
 
 if [ "$JENOVA_PKG_MGR" = "none" ]; then
@@ -170,6 +186,7 @@ echo ""
 
 # Dependency installation
 print_step "Installing system dependencies..."
+prompt_continue
 
 if [ "$DRY_RUN" = "1" ]; then
     "$JENOVA_ROOT/scripts/install-dependencies.sh" --dry-run
@@ -190,6 +207,7 @@ echo ""
 
 # Pre-flight checks
 print_step "Running pre-flight checks..."
+prompt_continue
 
 if [ "$DRY_RUN" = "1" ]; then
     print_info "Would run: $JENOVA_ROOT/scripts/preflight-check.sh"
@@ -206,6 +224,7 @@ echo ""
 
 # Build components
 print_step "Building Jenova components..."
+prompt_continue
 
 COMPONENTS="llama jvim mcsh"
 if [ "$MINIMAL" = "0" ]; then
@@ -236,11 +255,12 @@ echo ""
 
 # Deploy to system
 print_step "Deploying to system..."
+prompt_continue
 
 if [ "$DRY_RUN" = "1" ]; then
-    print_info "Would run: $JENOVA_ROOT/scripts/install.sh --skip-lsp"
+    print_info "Would run: $JENOVA_ROOT/scripts/install.sh --skip-lsp --skip-jvim --skip-llama --force"
 else
-    if "$JENOVA_ROOT/scripts/install.sh" --skip-lsp >/dev/null 2>&1; then
+    if "$JENOVA_ROOT/scripts/install.sh" --skip-lsp --skip-jvim --skip-llama --force; then
         print_success "Jenova deployed to your system"
         echo "  Binaries: ~/.local/bin/jenova, ~/.local/bin/jvim, ~/.local/bin/jenova-ca"
         echo "  Config: ~/.config/jvim/"
@@ -252,32 +272,9 @@ fi
 
 echo ""
 
-# Model download (unless minimal)
-if [ "$MINIMAL" = "0" ]; then
-    print_step "Checking AI models..."
-
-    if [ "$DRY_RUN" = "1" ]; then
-        print_info "Would download AI models (~5-10GB)"
-    else
-        if command -v curl >/dev/null 2>&1 || command -v fetch >/dev/null 2>&1; then
-            # Run model downloader interactively
-            if "$JENOVA_ROOT/scripts/model_dl.sh"; then
-                print_success "Model check complete"
-            else
-                print_warning "Model downloader reported issues"
-                echo "  You can re-run: ./scripts/model_dl.sh"
-            fi
-        else
-            print_warning "curl/fetch not found - skipping model download"
-            echo "  Download models manually: ./scripts/model_dl.sh"
-        fi
-    fi
-
-    echo ""
-fi
-
 # Verification
 print_step "Verifying installation..."
+prompt_continue
 
 if [ "$DRY_RUN" = "1" ]; then
     print_info "Would run: $JENOVA_ROOT/scripts/verify-install.sh"

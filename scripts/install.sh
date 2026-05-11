@@ -116,7 +116,12 @@ case "$JENOVA_OS" in
         fi
         ;;
     linux)
-        ok "Linux detected — ${JENOVA_DISTRO} / pkg: ${JENOVA_PKG_MGR}"
+        if [ "$JENOVA_WSL" = "1" ]; then
+            ok "Linux (WSL) detected — ${JENOVA_DISTRO} / pkg: ${JENOVA_PKG_MGR}"
+            warn "WSL environment detected. Some native GPU features may require specific drivers."
+        else
+            ok "Linux detected — ${JENOVA_DISTRO} / pkg: ${JENOVA_PKG_MGR}"
+        fi
         info "Replace 'Vulkan0,Vulkan1' device names in etc/jenova.conf with your Vulkan device names (run: vulkaninfo --summary)"
         ;;
     macos)
@@ -273,6 +278,7 @@ else
         apt)    _vhint="apt-get install libvulkan1" ;;
         dnf)    _vhint="dnf install vulkan-loader" ;;
         zypper) _vhint="zypper install libvulkan1" ;;
+        xbps)   _vhint="xbps-install vulkan-loader" ;;
         brew)   _vhint="brew install molten-vk" ;;
         *)      _vhint="install the vulkan-loader package for your OS" ;;
     esac
@@ -297,15 +303,15 @@ info "Installing LSP servers, linters and formatters..."
 _have() { command -v "$1" >/dev/null 2>&1; }
 
 # Try sudo when available and the current user is not root.
-_PRIV=""
-if [ "$(id -u)" != "0" ] && _have sudo; then
-    _PRIV="sudo"
+_PRIV="" 
+if [ "$(id -u)" != "0" ]; then
+    _have sudo && _PRIV="sudo " || { _have doas && _PRIV="doas "; }
 fi
 
 _apt_install() {
     # Quietly install one-or-more apt packages (Debian/Ubuntu/derivatives).
     _have apt-get || return 1
-    $_PRIV apt-get install -y -q "$@" >/dev/null 2>&1
+    $_PRIV DEBIAN_FRONTEND=noninteractive apt-get install -y -q "$@" >/dev/null 2>&1
 }
 
 _pkg_install() {
@@ -335,6 +341,16 @@ _zypper_install() {
     # openSUSE zypper.
     _have zypper || return 1
     $_PRIV zypper install -y --quiet "$@" >/dev/null 2>&1
+}
+
+_xbps_install() {
+    _have xbps-install || return 1
+    $_PRIV xbps-install -y "$@" >/dev/null 2>&1
+}
+
+_brew_install() {
+    _have brew || return 1
+    brew install "$@" >/dev/null 2>&1
 }
 
 _npm_install_g() {
@@ -377,7 +393,7 @@ export PATH
 # Install one tool by trying the appropriate manager for this system first,
 # then falling back through npm/cargo/go/pip. Already-present tools are skipped.
 _install_lsp() {
-    _exe="$1"; _label="$2"; _apt="$3"; _pkg="$4"; _npm="$5"; _cargo="$6"; _go="$7"; _pip="$8"; _pacman="$9"
+    _exe="$1"; _label="$2"; _apt="$3"; _pkg="$4"; _npm="$5"; _cargo="$6"; _go="$7"; _pip="$8"; _pacman="$9"; shift 9; _brew="$1"
     if _have "$_exe"; then
         ok "$_label ($(command -v "$_exe"))"
         return 0
@@ -388,6 +404,8 @@ _install_lsp() {
         apt)    [ -n "$_apt" ]    && _apt_install    $_apt    || true ;;
         dnf)    [ -n "$_apt" ]    && _dnf_install    $_apt    || true ;;
         zypper) [ -n "$_apt" ]    && _zypper_install $_apt    || true ;;
+        xbps)   [ -n "$_apt" ]    && _xbps_install   $_apt    || true ;;
+        brew)   [ -n "$_brew" ]   && _brew_install   $_brew   || true ;;
         *)      [ -n "$_apt" ]    && _apt_install    $_apt    || true ;;
     esac
     if ! _have "$_exe" && [ -n "$_npm" ];   then _npm_install_g $_npm  || true; fi
@@ -420,6 +438,8 @@ else
         apt)    _apt_install clangd || true ;;
         dnf)    _dnf_install clang-tools-extra || true ;;
         zypper) _zypper_install clang || true ;;
+        xbps)   _xbps_install clang-tools-extra || true ;;
+        brew)   _brew_install llvm || true ;;
         *)      _apt_install clangd || true ;;
     esac
     if _clangd_present; then
@@ -471,29 +491,29 @@ _install_zls_from_github() {
     _have zls
 }
 
-# args:        exe                    label                apt                    pkg                          npm                          cargo            go                                                          pip                         pacman
-_install_lsp "rust-analyzer"          "rust-analyzer"       "rust-analyzer"        "rust-analyzer"              ""                           ""               ""                                                          ""                          "rust-analyzer"
-_install_lsp "lua-language-server"    "lua-language-server" "lua-language-server"  "lua-language-server"        ""                           ""               ""                                                          ""                          "lua-language-server"
+# args:        exe                    label                apt                    pkg                          npm                          cargo            go                                                          pip                         pacman                      brew
+_install_lsp "rust-analyzer"          "rust-analyzer"       "rust-analyzer"        "rust-analyzer"              ""                           ""               ""                                                          ""                          "rust-analyzer"             "rust-analyzer"
+_install_lsp "lua-language-server"    "lua-language-server" "lua-language-server"  "lua-language-server"        ""                           ""               ""                                                          ""                          "lua-language-server"       "lua-language-server"
 if ! _have lua-language-server; then
     _install_lls_from_github && ok "lua-language-server installed ($(command -v lua-language-server))" || warn "lua-language-server could not be installed automatically"
 fi
-_install_lsp "pyright-langserver"     "pyright"             ""                     "py311-pyright"              "pyright"                    ""               ""                                                          ""                          "pyright"
-_install_lsp "bash-language-server"   "bash-language-server" ""                    "npm"                        "bash-language-server"       ""               ""                                                          ""                          "bash-language-server"
-_install_lsp "gopls"                  "gopls"               "gopls"                "go gopls"                   ""                           ""               "golang.org/x/tools/gopls@latest"                            ""                          "gopls"
-_install_lsp "zls"                    "zls"                 ""                     "zig"                        ""                           ""               ""                                                          ""                          "zls"
+_install_lsp "pyright-langserver"     "pyright"             "pyright"              "py311-pyright"              "pyright"                    ""               ""                                                          ""                          "pyright"                   "pyright"
+_install_lsp "bash-language-server"   "bash-language-server" ""                    "npm"                        "bash-language-server"       ""               ""                                                          ""                          "bash-language-server"      "bash-language-server"
+_install_lsp "gopls"                  "gopls"               "gopls"                "go gopls"                   ""                           ""               "golang.org/x/tools/gopls@latest"                            ""                          "gopls"                     "go"
+_install_lsp "zls"                    "zls"                 "zls"                  "zig"                        ""                           ""               ""                                                          ""                          "zls"                       "zls"
 if ! _have zls; then
     _install_zls_from_github && ok "zls installed ($(command -v zls))" || warn "zls could not be installed automatically"
 fi
 
 # Linters (used by LSP-equivalents and conform.nvim).
-_install_lsp "shellcheck"             "shellcheck"          "shellcheck"           "shellcheck"                 ""                           ""               ""                                                          ""                          "shellcheck"
+_install_lsp "shellcheck"             "shellcheck"          "shellcheck"           "shellcheck"                 ""                           ""               ""                                                          ""                          "shellcheck"                "shellcheck"
 
 # Formatters used by conform.nvim (format-on-save).
-_install_lsp "stylua"                 "stylua"              ""                     "stylua"                     ""                           "stylua"         ""                                                          ""                          "stylua"
-_install_lsp "shfmt"                  "shfmt"               "shfmt"                "shfmt"                      ""                           ""               "mvdan.cc/sh/v3/cmd/shfmt@latest"                            ""                          "shfmt"
-_install_lsp "goimports"              "goimports"           ""                     "go"                         ""                           ""               "golang.org/x/tools/cmd/goimports@latest"                    ""                          ""
-_install_lsp "black"                  "black"               "black"                "py311-black"                ""                           ""               ""                                                          "black"                     "python-black"
-_install_lsp "isort"                  "isort"               "isort"                "py311-isort"                ""                           ""               ""                                                          "isort"                     "python-isort"
+_install_lsp "stylua"                 "stylua"              ""                     "stylua"                     ""                           "stylua"         ""                                                          ""                          "stylua"                    "stylua"
+_install_lsp "shfmt"                  "shfmt"               "shfmt"                "shfmt"                      ""                           ""               "mvdan.cc/sh/v3/cmd/shfmt@latest"                            ""                          "shfmt"                     "shfmt"
+_install_lsp "goimports"              "goimports"           "goimports"            "go"                         ""                           ""               "golang.org/x/tools/cmd/goimports@latest"                    ""                          ""                          "go"
+_install_lsp "black"                  "black"               "black"                "py311-black"                ""                           ""               ""                                                          "black"                     "python-black"              "black"
+_install_lsp "isort"                  "isort"               "isort"                "py311-isort"                ""                           ""               ""                                                          "isort"                     "python-isort"              "isort"
 
 fi  # SKIP_LSP
 
@@ -525,6 +545,7 @@ elif [ "$SKIP_LLAMA" = "0" ]; then
             apt)    _glslc_hint="apt install glslc" ;;
             dnf)    _glslc_hint="dnf install glslc" ;;
             zypper) _glslc_hint="zypper install shaderc" ;;
+            xbps)   _glslc_hint="xbps-install shaderc" ;;
             brew)   _glslc_hint="brew install shaderc" ;;
             *)      _glslc_hint="install the shaderc/glslc package for your OS" ;;
         esac

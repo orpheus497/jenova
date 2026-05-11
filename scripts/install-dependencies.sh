@@ -177,6 +177,44 @@ node:node
 npm:node
 EOF
             ;;
+        zypper)
+            # openSUSE zypper
+            cat << 'EOF'
+git:git
+cmake:cmake
+luajit:luajit
+gettext:gettext
+libvulkan1:libvulkan1
+lua54-devel:lua54-devel
+libcurl-devel:libcurl-devel
+make:make
+glslc:glslc
+dialog:dialog
+clang:clang-tools
+cargo:cargo
+nodejs:nodejs
+npm:npm
+EOF
+            ;;
+        xbps)
+            # Void Linux xbps
+            cat << 'EOF'
+git:git
+cmake:cmake
+luajit:luajit
+gettext:gettext
+vulkan-loader:vulkan-loader
+lua54-devel:lua54-devel
+curl-devel:curl-devel
+make:make
+glslc:glslc
+dialog:dialog
+clang:clang
+cargo:cargo
+nodejs:nodejs
+npm:npm
+EOF
+            ;;
         *)
             echo ""
             ;;
