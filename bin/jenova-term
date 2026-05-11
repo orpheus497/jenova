@@ -19,7 +19,7 @@ fi
 _have() { command -v "$1" >/dev/null 2>&1; }
 
 # Predesigned/supported terminals
-SUPPORTED_TERMS="foot pytixis kitty alacritty ghostty wezterm gnome-terminal konsole xterm"
+SUPPORTED_TERMS="foot ptyxis kitty alacritty ghostty wezterm gnome-terminal konsole xterm"
 
 _launch() {
     _t="$1"

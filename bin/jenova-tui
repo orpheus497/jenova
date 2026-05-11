@@ -148,14 +148,15 @@ toggle_mode() {
 
 get_ip() {
     if command -v ip >/dev/null 2>&1; then
-        # Modern Linux
-        ip -4 addr show | grep -E 'inet ' | grep -v '127.0.0.1' | awk '{print $2}' | cut -d/ -f1 | head -n 1
+        # Modern Linux: Get the IP used for the default route to avoid bridge/virtual IPs
+        ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+' || \
+        ip -4 addr show scope global | grep -E 'inet ' | grep -v '127.0.0.1' | awk '{print $2}' | cut -d/ -f1 | head -n 1
     elif command -v hostname >/dev/null 2>&1 && hostname -I >/dev/null 2>&1; then
         # Traditional Linux
         hostname -I | awk '{print $1}'
     else
         # POSIX-ish fallback (BSD/macOS)
-        ifconfig 2>/dev/null | grep -E 'inet ' | grep -v '127.0.0.1' | awk '{print $2}' | head -n 1 | sed 's/addr://'
+        ifconfig 2>/dev/null | grep -E 'inet ' | grep -vE '127.0.0.1|docker|vboxnet' | awk '/inet / {print $2}' | head -n 1 | sed 's/addr://'
     fi
 }
 
@@ -343,7 +344,7 @@ while true; do
             7) exit 0 ;;
         esac
     elif [[ $key == $'\x1b' ]]; then
-        read -rsn2 key
+        read -rsn2 -t 0.01 key
         case $key in
             '[A')
                 selected=$((selected - 1))
