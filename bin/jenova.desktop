@@ -5,7 +5,7 @@ Comment=Manage Jenova Cognitive Architecture Backend and Apps
 # Recommended terminal emulator: foot (https://codeberg.org/dnkl/foot)
 # Gracefully falls back to other modern terminals (kitty, alacritty, ghostty, etc.)
 Exec=sh -c "$HOME/.local/bin/jenova-term $HOME/.local/bin/jenova-tui"
-Icon=jenova
+Icon=jca
 Terminal=false
 Categories=Utility;TextEditor;AI;
 

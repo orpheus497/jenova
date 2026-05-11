@@ -116,13 +116,20 @@
 			const chunks = textToSpeak.match(/[^.!?\n]+[.!?\n]*|[^.!?\n]+/g) || [textToSpeak];
 			
 			// Try to find a good voice (heuristic from GAI)
-			const voices = synth.getVoices();
-			const preferredVoice =
-				voices.find((v) => v.name.includes("Aria") && v.name.includes("Natural")) ||
-				voices.find((v) => v.name.includes("Jenny") && v.name.includes("Natural")) ||
-				voices.find((v) => v.name.includes("Sonia") && v.name.includes("Natural")) ||
-				voices.find((v) => v.name.includes("Google") && v.name.includes("Female")) ||
-				voices.find((v) => v.name.toLowerCase().includes("female"));
+			let preferredVoice: SpeechSynthesisVoice | undefined;
+			
+			function findPreferredVoice() {
+				const voices = synth.getVoices();
+				return (
+					voices.find((v) => v.name.includes("Aria") && v.name.includes("Natural")) ||
+					voices.find((v) => v.name.includes("Jenny") && v.name.includes("Natural")) ||
+					voices.find((v) => v.name.includes("Sonia") && v.name.includes("Natural")) ||
+					voices.find((v) => v.name.includes("Google") && v.name.includes("Female")) ||
+					voices.find((v) => v.name.toLowerCase().includes("female"))
+				);
+			}
+
+			preferredVoice = findPreferredVoice();
 
 			let currentChunk = 0;
 			isSpeaking = true;
@@ -141,6 +148,10 @@
 				}
 
 				const utterance = new SpeechSynthesisUtterance(chunkText);
+				
+				// Re-attempt voice finding if not found yet (async loading)
+				if (!preferredVoice) preferredVoice = findPreferredVoice();
+				
 				if (preferredVoice) utterance.voice = preferredVoice;
 				utterance.pitch = 0.85;
 				utterance.rate = 0.95;

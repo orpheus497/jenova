@@ -235,6 +235,10 @@ if [ "$DRY_RUN" = "1" ]; then
     echo "  Would build: $COMPONENTS"
 else
     for component in $COMPONENTS; do
+        if [ "$component" = "web" ] && ! command -v npm >/dev/null 2>&1; then
+            print_warning "  Skipping web component (npm not found)"
+            continue
+        fi
         echo "  Building $component..."
         if make "$component"; then
             print_success "  $component built successfully"

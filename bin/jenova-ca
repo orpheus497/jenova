@@ -179,9 +179,13 @@ _vulkan_backend_available() {
     find "$LLAMA_LIB_DIR" -maxdepth 1 -name 'libggml-vulkan.so.*' -print -quit 2>/dev/null | grep -q .
 }
 
-_get_path_val() {
+_set_path_args() {
     if [ -d "$JENOVA_ROOT/public" ]; then
-        echo "$JENOVA_ROOT/public"
+        PATH_FLAG="--path"
+        PATH_VAL="$JENOVA_ROOT/public"
+    else
+        PATH_FLAG=""
+        PATH_VAL=""
     fi
 }
 
@@ -189,7 +193,7 @@ _launch_llama_server_bg() {
     _ls_log="$1"
     shift
 
-    _path_val=$(_get_path_val)
+    _set_path_args
 
     "$LLAMA_SERVER" \
         -m "$MODEL_PATH" \
@@ -210,7 +214,7 @@ _launch_llama_server_bg() {
         --offline \
         --host "$HOST" \
         --port "$LLAMA_PORT" \
-        ${_path_val:+--path} ${_path_val:+"$_path_val"} \
+        ${PATH_FLAG:+"$PATH_FLAG"} ${PATH_VAL:+"$PATH_VAL"} \
         $RUN_DRAFT_ARGS \
         "$@" > "$_ls_log" 2>&1 9>&- &
     LLAMA_PID=$!
@@ -672,7 +676,7 @@ fi
 # =====================================================================
 while [ "$1" = "--daemon" ]; do shift; done
 
-_path_val=$(_get_path_val)
+_set_path_args
 
 "$LLAMA_SERVER" \
     -m "$MODEL_PATH" \
@@ -693,7 +697,7 @@ _path_val=$(_get_path_val)
     --offline \
     --host "$HOST" \
     --port "$LLAMA_PORT" \
-    ${_path_val:+--path} ${_path_val:+"$_path_val"} \
+    ${PATH_FLAG:+"$PATH_FLAG"} ${PATH_VAL:+"$PATH_VAL"} \
     $RUN_DRAFT_ARGS \
     "$@" &
 LLAMA_PID=$!

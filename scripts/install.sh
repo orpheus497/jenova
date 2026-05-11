@@ -723,17 +723,16 @@ if [ -n "$_BIN_DIR" ]; then
         _ICON_DIR="$HOME/.local/share/icons"
         mkdir -p "$_ICON_DIR"
         if [ -d "$JENOVA_ROOT/png" ]; then
-            [ -f "$JENOVA_ROOT/png/jenova.png" ] && cp "$JENOVA_ROOT/png/jenova.png" "$_ICON_DIR/jenova.png"
-            [ -f "$JENOVA_ROOT/png/jca.png" ] && cp "$JENOVA_ROOT/png/jca.png" "$_ICON_DIR/jca.png"
+            # We use .jpg icons as requested. Many DEs handle them fine.
+            [ -f "$JENOVA_ROOT/png/jenova.jpg" ] && cp "$JENOVA_ROOT/png/jenova.jpg" "$_ICON_DIR/jenova.jpg"
+            [ -f "$JENOVA_ROOT/png/jca.jpg" ] && cp "$JENOVA_ROOT/png/jca.jpg" "$_ICON_DIR/jca.jpg"
+            [ -f "$JENOVA_ROOT/png/jvim.jpg" ] && cp "$JENOVA_ROOT/png/jvim.jpg" "$_ICON_DIR/jvim.jpg"
             
-            # Handle jvim icon (might be .png or .jpg)
-            if [ -f "$JENOVA_ROOT/png/jvim.png" ]; then
-                cp "$JENOVA_ROOT/png/jvim.png" "$_ICON_DIR/jvim.png"
-            elif [ -f "$JENOVA_ROOT/png/jvim.jpg" ]; then
-                cp "$JENOVA_ROOT/png/jvim.jpg" "$_ICON_DIR/jvim.jpg"
-                # If desktop entry expects jvim.png, this might still need a symlink or rename, 
-                # but many DEs will find 'jvim' without extension.
-            fi
+            # Create symlinks without extension to help some desktop environments find them
+            ln -sf "$_ICON_DIR/jenova.jpg" "$_ICON_DIR/jenova"
+            ln -sf "$_ICON_DIR/jca.jpg" "$_ICON_DIR/jca"
+            ln -sf "$_ICON_DIR/jvim.jpg" "$_ICON_DIR/jvim"
+            
             ok "Installed icons to $_ICON_DIR"
         fi
     fi

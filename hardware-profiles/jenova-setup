@@ -16,8 +16,15 @@ sysctl vm.swap_idle_threshold2=10
 
 # Tune ZFS ARC to leave maximum RAM available for the LLM layers and UMA (Iris Xe)
 # 16GB total RAM -> Cap ARC at 2GB
-if ! grep -q "vfs.zfs.arc_max" /boot/loader.conf.local 2>/dev/null; then
-    echo "vfs.zfs.arc_max=2147483648" >> /boot/loader.conf.local
+_KEY="vfs.zfs.arc_max"
+_VAL="2147483648"
+if ! grep -q "^${_KEY}=${_VAL}" /boot/loader.conf.local 2>/dev/null; then
+    # Remove existing conflicting values
+    if [ -f /boot/loader.conf.local ]; then
+        sed -i '' "/^${_KEY}=/d" /boot/loader.conf.local 2>/dev/null || \
+        sed -i "/^${_KEY}=/d" /boot/loader.conf.local 2>/dev/null
+    fi
+    echo "${_KEY}=${_VAL}" >> /boot/loader.conf.local
 fi
 sysctl vfs.zfs.arc_max=2147483648 2>/dev/null || true
 

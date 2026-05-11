@@ -11,8 +11,8 @@ const ASSETS = [
 	'./bundle.js',
 	'./bundle.css',
 	'./manifest.json',
-	'./favicon.png',
-	'./logo.png'
+	'./favicon.jpg',
+	'./logo.jpg'
 ];
 
 self.addEventListener('install', (event) => {

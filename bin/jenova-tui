@@ -265,35 +265,24 @@ while true; do
     draw_box "Jenova Cognitive Architecture" "$WIDTH"
     
     # Status Section
-    # 1(│) + 1( ) + 14(System Status:) + 1( ) + W-19 + 1( ) + 1(│) = W.
     printf "%s│%s %sSystem Status:%s %-*s %s%s│%s\n" "$PURPLE" "$BG" "$BOLD" "$FG" "$((WIDTH-19))" "" "$RESET$BG" "$PURPLE" "$FG"
     
     format_stat() {
         local lbl="$1"
         local val="$2"
         local plain_val="$3"
-        local pad=$((WIDTH - 8 - ${#lbl} - ${#plain_val}))
-        [ "$pad" -lt 0 ] && pad=0
-        # 1(│) + 4(    ) + lbl + plain_val + pad + 1( ) + 1(│) = 7 + len + pad = W - 1. Wait.
-        # let's be exact: 1(│) + 4(    ) + len + pad + 1( ) + 1(│) = 7 + len + pad. If pad = W - 7 - len, then it is W.
-        # Wait, the code below is:
-        # printf "%s│%s    %s%s%*s %s%s│%s\n" 
-        # So 1(│) + 4(    ) + lbl + val + pad(spaces) + 1( ) + 1(│)
-        # Total inside = 4 + len + pad + 1 = 5 + len + pad. + 2 for borders = 7 + len + pad.
-        # We need 7 + len + pad = WIDTH  -> pad = WIDTH - 7 - len.
         local corrected_pad=$((WIDTH - 7 - ${#lbl} - ${#plain_val}))
         [ "$corrected_pad" -lt 0 ] && corrected_pad=0
         printf "%s│%s    %s%s%*s %s%s│%s\n" "$PURPLE" "$BG" "$lbl" "$val" "$corrected_pad" "" "$RESET$BG" "$PURPLE" "$FG"
     }
     
-    status_raw=$("$JENOVA_CA" status | grep -q "running" && echo "ACTIVE" || echo "INACTIVE")
     if [ "$HOST" = "0.0.0.0" ] || [ "$HOST" = "::" ] || [ "$HOST" = "*" ]; then
         mode_raw="LAN (Accessible from other devices)"
     else
         mode_raw="LOCAL (Accessible from this device only)"
     fi
     
-    format_stat "Backend: " "$(get_status)" "$status_raw"
+    format_stat "Backend: " "$(get_status)" "$(get_status_lbl)"
     format_stat "Mode:    " "$(get_mode)" "$mode_raw"
     if [ "$HOST" = "0.0.0.0" ] && [ -n "$IP" ]; then
         format_stat "LAN IP:  " "$IP" "$IP"
@@ -332,6 +321,33 @@ while true; do
                         printf "\n%sConfiguring local backend to proxy inference to %s...%s\n" "$GREEN" "$REMOTE_IP" "$FG"
                         update_config "JENOVA_LLAMA_URL" "http://$REMOTE_IP:8081"
                         restart_backend
+                    else
+                        printf "\n%sError: Invalid IP address format.%s\n" "$RED" "$FG"
+                        sleep 2
+                    fi
+                fi
+                hide_cursor
+                enter_alt_screen
+                ;;
+            5) exit_alt_screen; launch_jvim; enter_alt_screen ;;
+            6) exit_alt_screen; launch_webui; enter_alt_screen ;;
+            7) exit 0 ;;
+        esac
+    elif [[ $key == $'\x1b' ]]; then
+        read -rsn2 -t 0.01 key
+        case $key in
+            '[A')
+                selected=$((selected - 1))
+                if [ $selected -lt 0 ]; then selected=$((count-1)); fi
+                ;;
+            '[B')
+                selected=$((selected + 1))
+                if [ $selected -ge $count ]; then selected=0; fi
+                ;;
+        esac
+    fi
+done
+estart_backend
                     else
                         printf "\n%sError: Invalid IP address format.%s\n" "$RED" "$FG"
                         sleep 2
