@@ -697,13 +697,14 @@ if [ -n "$_BIN_DIR" ]; then
     ln -sf "$JENOVA_ROOT/bin/jenova" "$_BIN_DIR/jenova"
     ln -sf "$JENOVA_ROOT/bin/jenova-ca" "$_BIN_DIR/jenova-ca"
     ln -sf "$JENOVA_ROOT/bin/jenova-tui" "$_BIN_DIR/jenova-tui"
+    ln -sf "$JENOVA_ROOT/bin/jenova-term" "$_BIN_DIR/jenova-term"
     if [ -f "$JENOVA_ROOT/bin/mcsh" ]; then
         ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/mcsh"
         ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/tcsh"
         ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/csh"
-        ok "Symlinked jvim, jenova, jenova-ca, jenova-tui, and mcsh to $_BIN_DIR"
+        ok "Symlinked jvim, jenova, jenova-ca, jenova-tui, jenova-term, and mcsh to $_BIN_DIR"
     else
-        ok "Symlinked jvim, jenova, jenova-ca, and jenova-tui to $_BIN_DIR"
+        ok "Symlinked jvim, jenova, jenova-ca, jenova-tui, and jenova-term to $_BIN_DIR"
     fi
 
     # Install Desktop Entry
