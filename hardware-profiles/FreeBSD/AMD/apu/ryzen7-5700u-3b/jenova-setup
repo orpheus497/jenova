@@ -29,16 +29,19 @@ echo ""
 
 CHANGED=0
 
-# Helper: add to sysctl.conf if not already present
+# Helper: add to sysctl.conf if not already present, avoiding duplicates
 sysctl_persist() {
     _line="$1"
     _key=$(echo "$_line" | cut -d= -f1)
     _esc_key=$(printf '%s' "$_key" | sed 's/[].[*^$\\/]/\\&/g')
-    if grep -q -E "^${_esc_key}[[:space:]]*=" /etc/sysctl.conf 2>/dev/null; then
-        sed -i '' "s|^${_esc_key}[[:space:]]*=.*|${_line}|" /etc/sysctl.conf
-    else
-        echo "$_line" >> /etc/sysctl.conf
+    _tmp=$(mktemp)
+    # Remove all existing instances of this key and append the new value
+    if [ -f /etc/sysctl.conf ]; then
+        grep -vE "^${_esc_key}[[:space:]]*=" /etc/sysctl.conf > "$_tmp" || true
     fi
+    echo "$_line" >> "$_tmp"
+    cat "$_tmp" > /etc/sysctl.conf
+    rm -f "$_tmp"
 }
 
 apply_sysctl() {

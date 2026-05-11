@@ -14,8 +14,6 @@
 #   1 = critical failures found (do not proceed)
 #   2 = warnings found (proceed with caution)
 
-set -e
-
 JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
 
 # Shared OS/hardware detection
@@ -74,12 +72,16 @@ esac
 # 2. Disk Space Check
 # ---------------------------------------------------------------------------
 info "Checking disk space..."
-_free=$(df -BG "$JENOVA_ROOT" | tail -1 | awk '{print $4}' | sed 's/G//')
+# Portable df -k check (POSIX compliant)
+_free_kb=$(df -k "$JENOVA_ROOT" | tail -1 | awk '{
+    if ($4 ~ /%/) { print $3 } else { print $4 }
+}')
+_free_gb=$(( _free_kb / 1024 / 1024 ))
 _needed=20  # conservative estimate: 10GB for builds + 10GB for models
-if [ "${_free:-0}" -ge "$_needed" ]; then
-    ok "Sufficient disk space: ${_free}GB free (need ~${_needed}GB)"
+if [ "$_free_gb" -ge "$_needed" ]; then
+    ok "Sufficient disk space: ${_free_gb}GB free (need ~${_needed}GB)"
 else
-    warn "Low disk space: only ${_free}GB free (recommended: ${_needed}GB minimum)"
+    warn "Low disk space: only ${_free_gb}GB free (recommended: ${_needed}GB minimum)"
     WARNINGS=$((WARNINGS + 1))
 fi
 
@@ -104,7 +106,7 @@ info "Checking required binaries..."
 _check_bin() {
     _name="$1"; _pkg="$2"; _optional="${3:-0}"
     if command -v "$_name" >/dev/null 2>&1; then
-        _ver=$($name --version 2>/dev/null | head -n1 || echo "unknown version")
+        _ver=$("$_name" --version 2>/dev/null | head -n1 || echo "unknown version")
         ok "$_name"
         [ "$VERBOSE" = "1" ] && info "  Path: $(command -v "$_name")"
         return 0
@@ -157,7 +159,7 @@ fi
 info "Checking Node.js (required for Web UI)..."
 if command -v npm >/dev/null 2>&1; then
     _npmver=$(npm --version)
-    ok "npm $($_npmver) detected"
+    ok "npm $_npmver detected"
 else
     warn "npm not found - Web UI build will be skipped"
     warn "Install Node.js to build the Web UI: $(

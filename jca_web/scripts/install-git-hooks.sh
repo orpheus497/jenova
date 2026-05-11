@@ -67,8 +67,8 @@ if [ $? -eq 0 ]; then
     echo "   Pre-commit: $PRE_COMMIT_HOOK"
     echo ""
     echo "The hook will automatically:"
-    echo "  • Format, lint and check webui code before commits"
-    echo "  • Build webui and stage public/ into the same commit"
+    echo "  • Format, lint and check jca_web code before commits"
+    echo "  • Ensure the webui build is successful before allowing a commit"
 else
     echo "❌ Failed to make hook executable"
     exit 1

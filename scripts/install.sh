@@ -482,12 +482,13 @@ _install_zls_from_github() {
     mkdir -p "$HOME/.local/bin"
     _url="https://github.com/zigtools/zls/releases/download/${_ver}/zls-${_GH_ARCH_ZLS}-linux.tar.xz"
     _tmp="$(mktemp)"
+    _outdir="$(mktemp -d)"
+    trap 'rm -f "$_tmp"; rm -rf "$_outdir"' RETURN
     info "Downloading zls $_ver from github..."
-    curl -fsSL "$_url" -o "$_tmp" || { rm -f "$_tmp"; return 1; }
-    tar -xJf "$_tmp" -C /tmp/ zls 2>/dev/null || { rm -f "$_tmp"; return 1; }
-    mv /tmp/zls "$HOME/.local/bin/zls"
+    curl -fsSL "$_url" -o "$_tmp" || return 1
+    tar -xJf "$_tmp" -C "$_outdir" zls 2>/dev/null || return 1
+    mv "$_outdir/zls" "$HOME/.local/bin/zls"
     chmod +x "$HOME/.local/bin/zls"
-    rm -f "$_tmp"
     _have zls
 }
 
