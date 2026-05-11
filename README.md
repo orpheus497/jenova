@@ -7,21 +7,13 @@ IDE that runs entirely on your machine.
 
 ## Core Components
 
-- **Local Inference** — A bundled `llama.cpp` (`llama-server`) with Vulkan offload
-  drives the main model, an embedding model for semantic search, and an optional
-  drafter for speculative decoding.
-- **Unified Agent** — A Plan → Execute → Reflect loop embedded inside the `jvim`
-  editor. Native tools interact directly with Neovim buffers, LSP servers,
-  ex-commands, and the shell.
-- **jvim Editor** — A Neovim hard-fork with a custom runtime designed for AI
-  workflows: chat sidebar, inline rewrite, inference monitor, and LAN discovery.
-- **mcsh Shell** — A modernised C-shell (tcsh + etcsh fusion) that serves as the
-  default environment for the integrated terminal.
-- **Web UI** — A browser-based workstation for chat and remote access over the
-  LAN. It serves as the general chat mode and is accessible from any device
-  on the network when the backend is running.
-- **Daemon Manager (`jenova-ca`)** — Supervises the inference and proxy daemons,
-  exposing an OpenAI-compatible API on `http://localhost:8080/v1`.
+The **Jenova Cognitive Architecture** contains the following integrated subsystems:
+
+- **Jenova Workspace (WebUI)** — A browser-based workstation offering persistent workspaces and a general chat interface.
+- **J Vim (Jenova Vim)** — The Jenova-specific fork of NeoVim. It is a comprehensive IDE (*Interactive Director Environment*) that allows agentic work and autonomous actions through the LSP and plugin extensibility of the jvim architecture.
+- **Server, Shell, and OpenAI API** — The core daemon exposes a standard OpenAI-compatible API, allowing external connections to things like the Leo browser or other custom API integrations. It also bundles `mcsh`, a modernized C-shell for the integrated terminal.
+- **Remote Connections** — The architecture is designed for local network accessibility, allowing users to access their browser-based workspaces seamlessly from their mobile phones or tablets while away from their PC but still on the LAN.
+- **Local Inference** — A bundled `llama.cpp` (`llama-server`) with Vulkan offload driving the agent models, embedding layers, and optional speculative drafters.
 
 ## Quick Start
 

@@ -14,14 +14,16 @@ editor, an embedded agentic workflow system, and a modernised C-shell.
 
 ## Component Breakdown
 
+The **Jenova Cognitive Architecture** is structured around several interconnected pillars:
+
 | Component | Role | Stack |
 |-----------|------|-------|
-| **Inference Backend** | GGUF model execution and speculative decoding. | C++ (llama.cpp) |
-| **Intelligence Proxy** | RAG-aware brain, OpenAI-compatible API, and streaming. | LuaJIT (lib/proxy.lua) |
-| **jvim Editor** | Interactive IDE frontend and UI for AI features. | C / Lua |
-| **Unified Agent** | Autonomous coding partner embedded in the editor. | Lua (jvim-config/lua/jenova/agent/) |
-| **mcsh Shell** | Integrated modern C-shell for the terminal IDE. | C (mcsh/) |
-| **Daemon Manager** | Supervisor for inference, proxy, and embedding daemons. | POSIX sh (bin/jenova-ca) |
+| **Jenova Workspace** | WebUI offering persistent workspaces and a general chat interface. | Vanilla JS / CSS |
+| **J Vim (Jenova Vim)** | A comprehensive *Interactive Director Environment* (IDE). A Jenova-specific fork of NeoVim that enables agentic work and actions through the LSP and plugin extensibility of the jvim architecture. | C / Lua |
+| **Server & OpenAI API**| Exposes an OpenAI-compatible API (`lib/proxy.lua`) allowing external integrations like the Leo browser or other API-driven tools. | LuaJIT / C++ |
+| **mcsh Shell** | Integrated modern C-shell for the terminal IDE. | C (`mcsh/`) |
+| **Remote Connections** | Architecture natively supports LAN bindings, enabling browser-based workspace access from mobile phones or secondary PCs. | POSIX sh / Networking |
+| **Local Inference** | GGUF model execution (llama.cpp) handling agents, RAG embeddings, and speculative decoding. | C++ |
 
 ## System Flow
 1. **User input** — typed into the `jvim` chat sidebar (`<leader>at`) or piped
