@@ -32,13 +32,15 @@ sysctl_persist() {
     _key=$(echo "$_line" | cut -d= -f1)
     _esc_key=$(printf '%s' "$_key" | sed 's/[].[*^$\\/]/\\&/g')
     _tmp=$(mktemp)
+    trap 'rm -f "$_tmp"' EXIT INT TERM
     # Remove all existing instances of this key and append the new value
     if [ -f /etc/sysctl.conf ]; then
         grep -vE "^${_esc_key}[[:space:]]*=" /etc/sysctl.conf > "$_tmp" || true
     fi
     echo "$_line" >> "$_tmp"
     [ -f /etc/sysctl.conf ] && cp /etc/sysctl.conf /etc/sysctl.conf.bak
-    mv "$_tmp" /etc/sysctl.conf
+    cat "$_tmp" > /etc/sysctl.conf && rm -f "$_tmp"
+    trap - EXIT INT TERM
 }
 
 apply_sysctl() {

@@ -100,6 +100,13 @@
 
 	let isSpeaking = $state(false);
 
+	// Cleanup speech synthesis on unmount
+	onDestroy(() => {
+		if (browser && window.speechSynthesis) {
+			window.speechSynthesis.cancel();
+		}
+	});
+
 	function handleSpeak() {
 		if (!browser || !window.speechSynthesis) return;
 		const synth = window.speechSynthesis;
@@ -111,8 +118,23 @@
 			if (!textToSpeak) return;
 
 			// Split text into smaller chunks to improve reliability of speech synthesis
-			// Splits by common sentence boundaries while keeping the delimiter
-			const chunks = textToSpeak.match(/[^.!?\n]+[.!?\n]*|[^.!?\n]+/g) || [textToSpeak];
+			// 1. Splits by common sentence boundaries while keeping the delimiter
+			const initialChunks = textToSpeak.match(/[^.!?\n]+[.!?\n]*|[^.!?\n]+/g) || [textToSpeak];
+			
+			// 2. Further split any chunks that exceed 250 characters to avoid browser synthesis limits
+			const chunks: string[] = [];
+			for (const chunk of initialChunks) {
+				if (chunk.length <= 250) {
+					chunks.push(chunk);
+				} else {
+					// Hard split by character count for very long segments without punctuation
+					let remaining = chunk;
+					while (remaining.length > 0) {
+						chunks.push(remaining.substring(0, 250));
+						remaining = remaining.substring(250);
+					}
+				}
+			}
 
 			// Try to find a good voice (heuristic from GAI)
 			let preferredVoice: SpeechSynthesisVoice | undefined;

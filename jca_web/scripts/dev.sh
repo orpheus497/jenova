@@ -26,5 +26,4 @@ trap cleanup SIGINT SIGTERM
 echo "🚀 Starting development server..."
 echo "📝 Note: Make sure to start your local llamacpp server"
 
-# Use --insecure-http-parser to handle malformed HTTP responses if necessary
-NODE_OPTIONS="--insecure-http-parser" npx vite dev --host 0.0.0.0
+npx vite dev --host 0.0.0.0

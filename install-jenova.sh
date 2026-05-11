@@ -173,7 +173,7 @@ echo ""
 
 # Check disk space
 REQUIRED_SPACE=20  # GB
-FREE_SPACE=$(df -kP "$JENOVA_ROOT" | awk 'NR==2 {print int($4 / 1048576)}')
+FREE_SPACE=$(df -kP "$JENOVA_ROOT" | tail -1 | awk '{print int($4 / 1048576)}')
 
 if [ "${FREE_SPACE:-0}" -lt "$REQUIRED_SPACE" ]; then
     print_warning "Low disk space: ${FREE_SPACE}GB free (recommended: ${REQUIRED_SPACE}GB+)"
@@ -212,7 +212,7 @@ prompt_continue
 if [ "$DRY_RUN" = "1" ]; then
     print_info "Would run: $JENOVA_ROOT/scripts/preflight-check.sh"
 else
-    if "$JENOVA_ROOT/scripts/preflight-check.sh" 2>&1 | grep -q "critical issue"; then
+    if ! "$JENOVA_ROOT/scripts/preflight-check.sh"; then
         print_error "Pre-flight checks failed - please resolve issues above"
         exit 1
     else
@@ -267,7 +267,9 @@ prompt_continue
 if [ "$DRY_RUN" = "1" ]; then
     print_info "Would run: $JENOVA_ROOT/scripts/install.sh --skip-lsp --skip-jvim --skip-llama --force"
 else
-    if "$JENOVA_ROOT/scripts/install.sh" --skip-lsp --skip-jvim --skip-llama --force; then
+    _force_flag=""
+    [ "$INTERACTIVE" = "0" ] && _force_flag="--force"
+    if "$JENOVA_ROOT/scripts/install.sh" --skip-lsp --skip-jvim --skip-llama $_force_flag; then
         print_success "Jenova deployed to your system"
         echo "  Binaries: ~/.local/bin/jenova, ~/.local/bin/jvim, ~/.local/bin/jenova-ca"
         echo "  Config: ~/.config/jvim/"
