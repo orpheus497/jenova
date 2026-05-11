@@ -1,80 +1,22 @@
 #!/bin/sh
-# jenova-term: Gracefully select and launch a terminal emulator for Jenova apps.
-#
-# Logic:
-# 1. If $TERMINAL is set and supported, use it.
-# 2. If x-terminal-emulator is set and points to a supported terminal, use it.
-# 3. Prefer 'foot' (recommended) if available.
-# 4. Fallback through a list of predesigned/supported terminals.
-# 5. Launch in a way that the window closes when the command exits.
+# jenova-term: Launch a command in a modern terminal emulator.
+# Support for foot, kitty, alacritty, ghostty, and GNOME Terminal.
 
-set -e
+CMD="$@"
 
-if [ $# -lt 1 ]; then
-    echo "Usage: jenova-term <command> [args...]"
-    exit 1
+if command -v foot >/dev/null 2>&1; then
+    foot sh -c "$CMD"
+elif command -v kitty >/dev/null 2>&1; then
+    kitty sh -c "$CMD"
+elif command -v alacritty >/dev/null 2>&1; then
+    alacritty -e sh -c "$CMD"
+elif command -v ghostty >/dev/null 2>&1; then
+    ghostty -e sh -c "$CMD"
+elif command -v gnome-terminal >/dev/null 2>&1; then
+    gnome-terminal -- sh -c "$CMD"
+elif command -v xterm >/dev/null 2>&1; then
+    xterm -e sh -c "$CMD"
+else
+    # Fallback: execute directly in current terminal
+    sh -c "$CMD"
 fi
-
-# Helper to check if a command exists
-_have() { command -v "$1" >/dev/null 2>&1; }
-
-# Predesigned/supported terminals
-SUPPORTED_TERMS="foot ptyxis kitty alacritty ghostty wezterm gnome-terminal konsole xterm"
-
-_launch() {
-    _t="$1"
-    shift
-    # Note: Modern terminals (foot, kitty, alacritty, ghostty) 
-    # handle "-e command args" correctly. 
-    # gnome-terminal, wezterm, and ptyxis often prefer "--".
-    case "$(basename "$_t")" in
-        wezterm|gnome-terminal|ptyxis) exec "$_t" -- "$@" ;;
-        *)                             exec "$_t" -e "$@" ;;
-    esac
-}
-
-# 1. Check $TERMINAL
-if [ -n "$TERMINAL" ]; then
-    _t_exe=$(command -v "$TERMINAL" 2>/dev/null || true)
-    if [ -n "$_t_exe" ]; then
-        _t_base=$(basename "$_t_exe")
-        for _s in $SUPPORTED_TERMS; do
-            if [ "$_t_base" = "$_s" ]; then
-                _launch "$_t_exe" "$@"
-            fi
-        done
-    fi
-fi
-
-# 2. Check x-terminal-emulator (system default)
-if _have x-terminal-emulator; then
-    _real_term=$(realpath "$(command -v x-terminal-emulator)" 2>/dev/null || true)
-    if [ -n "$_real_term" ]; then
-        _t_base=$(basename "$_real_term")
-        for _s in $SUPPORTED_TERMS; do
-            if [ "$_t_base" = "$_s" ]; then
-                _launch "x-terminal-emulator" "$@"
-            fi
-        done
-    fi
-fi
-
-# 3. Try foot (Recommended)
-if _have foot; then
-    _launch "foot" "$@"
-fi
-
-# 4. Fallback through the rest of the list
-for _t in $SUPPORTED_TERMS; do
-    if _have "$_t"; then
-        _launch "$_t" "$@"
-    fi
-done
-
-# Last resort: try x-terminal-emulator even if not recognized as "predesigned"
-if _have x-terminal-emulator; then
-    _launch "x-terminal-emulator" "$@"
-fi
-
-echo "Error: No supported terminal emulator found." >&2
-exit 1

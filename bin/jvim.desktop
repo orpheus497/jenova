@@ -1,11 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=J-Vim
-Comment=Jenova Cognitive Architecture fork of NeoVim
-# Recommended terminal emulator: foot (https://codeberg.org/dnkl/foot)
-# Gracefully falls back to other modern terminals (kitty, alacritty, ghostty, etc.)
+Name=jvim
+Comment=Jenova Vim Editor
 Exec=sh -c "$HOME/.local/bin/jenova-term $HOME/.local/bin/jvim --no-backend"
 Icon=jvim
 Terminal=false
 Categories=Utility;TextEditor;AI;
-

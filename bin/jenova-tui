@@ -22,6 +22,23 @@ BOLD="${ESC}[1m"
 RESET="${ESC}[0m"
 CLEAR="${ESC}[H${ESC}[2J${BG}${FG}"
 
+launch_webui() {
+    local URL="http://${HOST}:${PORT}"
+    if [ "$1" != "--silent" ]; then
+        printf "\n%sOpening Web UI at %s...%s\n" "$CYAN" "$URL" "$FG"
+    fi
+    if command -v xdg-open >/dev/null 2>&1; then
+        xdg-open "$URL" >/dev/null 2>&1 &
+    elif command -v open >/dev/null 2>&1; then
+        open "$URL" >/dev/null 2>&1 &
+    else
+        if [ "$1" != "--silent" ]; then
+            echo "Please open $URL in your browser."
+            sleep 3
+        fi
+    fi
+}
+
 # ── Load Configuration ────────────────────────────────────────────────────────
 JENOVA_CA="$SCRIPT_DIR/jenova-ca"
 CONF_FILE="$JENOVA_ROOT/etc/jenova.conf"
@@ -36,6 +53,15 @@ load_config() {
     PORT="${PORT:-8080}"
     JENOVA_LLAMA_URL="${JENOVA_LLAMA_URL:-http://127.0.0.1:8081}"
 }
+
+# ── Argument Handling ─────────────────────────────────────────────────────────
+load_config
+case "$1" in
+    --launch-web)
+        launch_webui --silent
+        exit 0
+        ;;
+esac
 
 # ── Status Logic ──────────────────────────────────────────────────────────────
 # Cache status for 2 seconds to avoid flickering and slow system calls
@@ -167,19 +193,6 @@ launch_jvim() {
     "$JENOVA_ROOT/bin/jvim"
 }
 
-launch_webui() {
-    local URL="http://${HOST}:${PORT}"
-    printf "\n%sOpening Web UI at %s...%s\n" "$CYAN" "$URL" "$FG"
-    if command -v xdg-open >/dev/null 2>&1; then
-        xdg-open "$URL" >/dev/null 2>&1 &
-    elif command -v open >/dev/null 2>&1; then
-        open "$URL" >/dev/null 2>&1 &
-    else
-        echo "Please open $URL in your browser."
-        sleep 3
-    fi
-}
-
 # ── UI Components ─────────────────────────────────────────────────────────────
 # Detect terminal width, fallback to 60
 get_term_width() {
@@ -242,7 +255,6 @@ exit_alt_screen() { printf "\033[?1049l"; }
 
 trap 'show_cursor; exit_alt_screen; exit' INT TERM
 
-load_config
 enter_alt_screen
 hide_cursor
 
