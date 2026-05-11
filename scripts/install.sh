@@ -719,16 +719,30 @@ if [ -n "$_BIN_DIR" ]; then
         _ICON_DIR="$HOME/.local/share/icons"
         mkdir -p "$_ICON_DIR"
         if [ -d "$JENOVA_ROOT/png" ]; then
-            # We use .jpg icons as requested. Many DEs handle them fine.
-            [ -f "$JENOVA_ROOT/png/jenova.jpg" ] && cp "$JENOVA_ROOT/png/jenova.jpg" "$_ICON_DIR/jenova.jpg"
-            [ -f "$JENOVA_ROOT/png/jca.jpg" ] && cp "$JENOVA_ROOT/png/jca.jpg" "$_ICON_DIR/jca.jpg"
-            [ -f "$JENOVA_ROOT/png/jvim.jpg" ] && cp "$JENOVA_ROOT/png/jvim.jpg" "$_ICON_DIR/jvim.jpg"
+            # Convert .jpg icons to .png for better compatibility
+            for icon in jenova jca jvim; do
+                if [ -f "$JENOVA_ROOT/png/$icon.jpg" ]; then
+                    if command -v convert >/dev/null 2>&1; then
+                        convert "$JENOVA_ROOT/png/$icon.jpg" "$_ICON_DIR/$icon.png"
+                    elif command -v magick >/dev/null 2>&1; then
+                        magick "$JENOVA_ROOT/png/$icon.jpg" "$_ICON_DIR/$icon.png"
+                    else
+                        cp "$JENOVA_ROOT/png/$icon.jpg" "$_ICON_DIR/$icon.jpg"
+                    fi
+                fi
+            done
             
-            # Create symlinks without extension to help some desktop environments find them
-            ln -sf "$_ICON_DIR/jenova.jpg" "$_ICON_DIR/jenova"
-            ln -sf "$_ICON_DIR/jca.jpg" "$_ICON_DIR/jca"
-            ln -sf "$_ICON_DIR/jvim.jpg" "$_ICON_DIR/jvim"
+            # Create symlinks without extension
+            for icon in jenova jca jvim; do
+                if [ -f "$_ICON_DIR/$icon.png" ]; then
+                    ln -sf "$_ICON_DIR/$icon.png" "$_ICON_DIR/$icon"
+                elif [ -f "$_ICON_DIR/$icon.jpg" ]; then
+                    ln -sf "$_ICON_DIR/$icon.jpg" "$_ICON_DIR/$icon"
+                fi
+            done
             
+            # Update icon cache
+            gtk-update-icon-cache -f -t "$_ICON_DIR" 2>/dev/null || true
             ok "Installed icons to $_ICON_DIR"
         fi
     fi
