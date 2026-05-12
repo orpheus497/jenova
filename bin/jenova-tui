@@ -1,2 +1,4 @@
 #!/bin/sh
-jenova-ui tui
+# jenova-tui: Wrapper to launch jenova-ui in TUI mode
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec "$SCRIPT_DIR/jenova-ui" tui "$@"

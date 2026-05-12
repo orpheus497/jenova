@@ -9,6 +9,9 @@
 
 set -e
 
+# Path hardening for headless/desktop execution
+export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin${PATH:+:$PATH}"
+
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 
 # Determine JENOVA_ROOT before loading config
@@ -252,18 +255,31 @@ case "$1" in
     status)
         if [ -f "$PID_FILE" ]; then
             read LLAMA_PID PROXY_PID EMBED_PID < "$PID_FILE" 2>/dev/null || LLAMA_PID=$(cat "$PID_FILE")
-            echo "PID file: $PID_FILE"
-            for _N in "llama-server:$LLAMA_PID" "Proxy:$PROXY_PID" "Embed:$EMBED_PID"; do
-                _LABEL=$(echo "$_N" | cut -d: -f1)
-                _PID=$(echo "$_N" | cut -d: -f2)
-                if [ -n "$_PID" ] && kill -0 "$_PID" 2>/dev/null; then
-                    echo "$_LABEL running (PID $_PID)"
+            _LLAMA_ALIVE=false
+            _PROXY_ALIVE=false
+            _EMBED_ALIVE=false
+            
+            if [ -n "$LLAMA_PID" ] && kill -0 "$LLAMA_PID" 2>/dev/null; then _LLAMA_ALIVE=true; fi
+            if [ -n "$PROXY_PID" ] && kill -0 "$PROXY_PID" 2>/dev/null; then _PROXY_ALIVE=true; fi
+            if [ -n "$EMBED_PID" ] && kill -0 "$EMBED_PID" 2>/dev/null; then _EMBED_ALIVE=true; fi
+
+            if $_LLAMA_ALIVE && $_PROXY_ALIVE; then
+                CONNECT_HOST="${JENOVA_CONNECT_HOST:-127.0.0.1}"
+                if _probe_health 2; then
+                    echo "Jenova is ready"
                 else
-                    echo "$_LABEL not running"
+                    echo "Jenova is starting"
                 fi
-            done
+                echo "llama-server: running (PID $LLAMA_PID)"
+                echo "Proxy: running (PID $PROXY_PID)"
+                [ -n "$EMBED_PID" ] && echo "Embed: $(if $_EMBED_ALIVE; then echo "running (PID $EMBED_PID)"; else echo "not running"; fi)"
+            else
+                echo "Jenova is partially running"
+                echo "llama-server: $(if $_LLAMA_ALIVE; then echo "running (PID $LLAMA_PID)"; else echo "not running"; fi)"
+                echo "Proxy: $(if $_PROXY_ALIVE; then echo "running (PID $PROXY_PID)"; else echo "not running"; fi)"
+            fi
         else
-            echo "No PID file found at $PID_FILE"
+            echo "Jenova is stopped"
         fi
         exit 0
         ;;

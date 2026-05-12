@@ -725,7 +725,7 @@ if [ -n "$_BIN_DIR" ]; then
         mkdir -p "$_ICON_DIR"
         if [ -d "$JENOVA_ROOT/png" ]; then
             # Convert .jpg icons to .png for better compatibility
-            for icon in jenova jca jvim; do
+            for icon in jenova jca jca_grey jvim; do
                 if [ -f "$JENOVA_ROOT/png/$icon.jpg" ]; then
                     if command -v convert >/dev/null 2>&1; then
                         convert "$JENOVA_ROOT/png/$icon.jpg" "$_ICON_DIR/$icon.png"
@@ -738,7 +738,7 @@ if [ -n "$_BIN_DIR" ]; then
             done
             
             # Create symlinks without extension
-            for icon in jenova jca jvim; do
+            for icon in jenova jca jca_grey jvim; do
                 if [ -f "$_ICON_DIR/$icon.png" ]; then
                     ln -sf "$_ICON_DIR/$icon.png" "$_ICON_DIR/$icon"
                 elif [ -f "$_ICON_DIR/$icon.jpg" ]; then

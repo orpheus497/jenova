@@ -2,7 +2,7 @@
 Type=Application
 Name=Jenova Manager
 Comment=Manage Jenova Cognitive Architecture Backend and Apps
-Exec=sh -c "$HOME/.local/bin/jenova-term $HOME/.local/bin/jenova-tui"
-Icon=jca
+Exec=sh -c "/home/orpheus/Projects/GitHub/jenova/bin/jenova-term /home/orpheus/Projects/GitHub/jenova/bin/jenova-tui"
+Icon=/home/orpheus/Projects/GitHub/jenova/png/jca.jpg
 Terminal=false
 Categories=Utility;TextEditor;AI;
