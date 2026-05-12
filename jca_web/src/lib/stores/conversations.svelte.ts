@@ -351,8 +351,13 @@ class ConversationsStore {
 					await goto(`?new_chat=true#/`);
 				}
 			}
+			this.dropdownOpen = false;
 		} catch (error) {
 			console.error('Failed to delete conversation:', error);
+			// Show a toast to the user instead of allowing the UI to crash
+			if (typeof toast !== 'undefined') {
+				toast.error('Failed to delete conversation');
+			}
 		}
 	}
 

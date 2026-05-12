@@ -182,7 +182,15 @@
 					{
 						icon: Trash2,
 						label: 'Delete',
-						onclick: handleDelete,
+						onclick: () => {
+							dropdownOpen = false;
+							try {
+								handleDelete();
+							} catch (e) {
+								console.error('Delete failed:', e);
+								toast.error('Failed to delete conversation');
+							}
+						},
 						variant: 'destructive',
 						shortcut: ['shift', 'cmd', 'd'],
 						separator: true
