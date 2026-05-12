@@ -158,3 +158,9 @@ INSTALLATION-FINAL-REPORT.md
 test-installation.sh
 test_bin_jenova.log
 debug.log
+
+/jca_web/node_modules/
+/jca_web/.svelte-kit/
+/jca_web/build/
+/jca_web/src-tauri/target/
+
