@@ -1,5 +1,4 @@
 import { PropsService } from '$lib/services/props.service';
-import { TauriService } from '$lib/services/tauri.service';
 import { ServerRole } from '$lib/enums';
 
 /**
@@ -31,7 +30,6 @@ class ServerStore {
 	loading = $state(false);
 	error = $state<string | null>(null);
 	role = $state<ServerRole | null>(null);
-	status = $state<'stopped' | 'starting' | 'running' | 'unknown'>('unknown');
 	private fetchPromise: Promise<void> | null = null;
 
 	/**
@@ -83,16 +81,10 @@ class ServerStore {
 				const props = await PropsService.fetch();
 				this.props = props;
 				this.error = null;
-				this.status = 'running';
 				this.detectRole(props);
 			} catch (error) {
 				this.error = this.getErrorMessage(error);
 				console.error('Error fetching server properties:', error);
-
-				// If fetch fails, check if we're in Tauri and what the backend status is
-				if (TauriService.isTauri()) {
-					await this.checkStatus();
-				}
 			} finally {
 				this.loading = false;
 				this.fetchPromise = null;
@@ -101,37 +93,6 @@ class ServerStore {
 
 		this.fetchPromise = fetchPromise;
 		await fetchPromise;
-	}
-
-	async checkStatus(): Promise<void> {
-		if (!TauriService.isTauri()) {
-			this.status = 'unknown';
-			return;
-		}
-
-		try {
-			const backendStatus = await TauriService.getBackendStatus();
-			this.status = backendStatus === 'running' ? 'running' : 'stopped';
-		} catch (error) {
-			console.error('Error checking backend status:', error);
-			this.status = 'unknown';
-		}
-	}
-
-	async startBackend(): Promise<void> {
-		if (!TauriService.isTauri()) return;
-
-		this.status = 'starting';
-		try {
-			await TauriService.startBackend();
-			// Wait a bit for the server to actually start before retrying fetch
-			await new Promise((resolve) => setTimeout(resolve, 2000));
-			await this.fetch();
-		} catch (error) {
-			console.error('Error starting backend:', error);
-			this.status = 'stopped';
-			this.error = 'Failed to start backend server';
-		}
 	}
 
 	private getErrorMessage(error: unknown): string {

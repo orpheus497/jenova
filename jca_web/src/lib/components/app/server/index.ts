@@ -78,11 +78,3 @@ export { default as ServerErrorSplash } from './ServerErrorSplash.svelte';
  * ```
  */
 export { default as ServerLoadingSplash } from './ServerLoadingSplash.svelte';
-
-/**
- * **ServerStartupSplash** - Full-screen server startup display
- *
- * Shown when the server is offline or starting up.
- * Provides options to start the server in Tauri environments.
- */
-export { default as ServerStartupSplash } from './ServerStartupSplash.svelte';

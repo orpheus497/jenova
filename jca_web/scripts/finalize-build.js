@@ -1,10 +1,9 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, copyFileSync } from 'fs';
 import { resolve, join } from 'path';
 
-const PUBLIC_DIR = resolve('build');
+const PUBLIC_DIR = resolve('../public');
 const INDEX_PATH = join(PUBLIC_DIR, 'index.html');
 const FAVICON_SRC = resolve('static/favicon.svg');
-const LEGACY_PUBLIC_DIR = resolve('../public');
 
 const GUIDE_FOR_FRONTEND = `
 <!--
@@ -32,18 +31,8 @@ async function main() {
         console.log('✓ Inlined favicon.svg');
     }
 
-    const ERROR_HANDLER = `
-<script>
-  window.addEventListener('error', function(e) {
-    document.body.innerHTML += '<div style="color:red; background:white; position:fixed; top:0; left:0; z-index:9999; padding:20px; font-family:monospace;">' + e.message + '<br>' + e.filename + ':' + e.lineno + '</div>';
-  });
-  window.addEventListener('unhandledrejection', function(e) {
-    document.body.innerHTML += '<div style="color:red; background:white; position:fixed; top:0; left:0; z-index:9999; padding:20px; font-family:monospace;">Unhandled Promise: ' + e.reason + '</div>';
-  });
-</script>
-`;
     content = content.replace(/\r/g, '');
-    content = GUIDE_FOR_FRONTEND + '\n' + ERROR_HANDLER + '\n' + content;
+    content = GUIDE_FOR_FRONTEND + '\n' + content;
 
     // Find and copy bundle files
     const immutableDir = join(PUBLIC_DIR, '_app/immutable');
@@ -94,20 +83,6 @@ async function main() {
 
     writeFileSync(INDEX_PATH, content, 'utf-8');
     console.log('✓ Updated index.html');
-
-    // Mirror to legacy public dir for Python server
-    import('fs').then(fs => {
-        if (!fs.existsSync(LEGACY_PUBLIC_DIR)) fs.mkdirSync(LEGACY_PUBLIC_DIR, { recursive: true });
-        const files = fs.readdirSync(PUBLIC_DIR);
-        for (const file of files) {
-            const src = join(PUBLIC_DIR, file);
-            const dest = join(LEGACY_PUBLIC_DIR, file);
-            if (fs.statSync(src).isFile()) {
-                fs.copyFileSync(src, dest);
-            }
-        }
-        console.log('✓ Mirrored build to ../public for Python server');
-    });
 }
 
 main().catch(console.error);

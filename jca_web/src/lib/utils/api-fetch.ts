@@ -38,14 +38,7 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
 	const headers = { ...baseHeaders, ...customHeaders };
 
 	const serverUrl = settingsStore.config.serverUrl?.toString().trim();
-	const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
-	const effectiveBase = serverUrl
-		? serverUrl.endsWith('/')
-			? serverUrl.slice(0, -1)
-			: serverUrl
-		: isTauri
-			? 'http://127.0.0.1:8080'
-			: base;
+	const effectiveBase = serverUrl ? (serverUrl.endsWith('/') ? serverUrl.slice(0, -1) : serverUrl) : base;
 
 	const url =
 		path.startsWith(UrlProtocol.HTTP) || path.startsWith(UrlProtocol.HTTPS)
@@ -87,14 +80,7 @@ export async function apiFetchWithParams<T>(
 	options: ApiFetchOptions = {}
 ): Promise<T> {
 	const serverUrl = settingsStore.config.serverUrl?.toString().trim();
-	const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
-	const effectiveBase = serverUrl
-		? serverUrl.endsWith('/')
-			? serverUrl.slice(0, -1)
-			: serverUrl
-		: isTauri
-			? 'http://127.0.0.1:8080'
-			: window.location.origin + base;
+	const effectiveBase = serverUrl ? (serverUrl.endsWith('/') ? serverUrl.slice(0, -1) : serverUrl) : window.location.origin + base;
 
 	let urlStr = basePath;
 	if (!basePath.startsWith(UrlProtocol.HTTP) && !basePath.startsWith(UrlProtocol.HTTPS)) {

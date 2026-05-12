@@ -8,7 +8,6 @@
     ChatSidebar,
     DialogConversationTitleUpdate,
     DialogChatSettings,
-    ServerStartupSplash,
   } from "$lib/components/app";
   import { isLoading } from "$lib/stores/chat.svelte";
   import {
@@ -310,21 +309,17 @@
 
   <Sidebar.Provider bind:open={sidebarOpen}>
     <div class="flex h-screen w-full" style:height="{innerHeight}px">
-      {#if !serverStore.props}
-        <ServerStartupSplash />
-      {:else}
-        <Sidebar.Root class="h-full">
-          <ChatSidebar bind:this={chatSidebar} />
-        </Sidebar.Root>
+      <Sidebar.Root class="h-full">
+        <ChatSidebar bind:this={chatSidebar} />
+      </Sidebar.Root>
 
-        {#if !(alwaysShowSidebarOnDesktop && isDesktop)}
-          <Sidebar.Trigger class="z-[900]" />
-        {/if}
-
-        <Sidebar.Inset class="flex flex-1 flex-col overflow-hidden">
-          {@render children?.()}
-        </Sidebar.Inset>
+      {#if !(alwaysShowSidebarOnDesktop && isDesktop)}
+        <Sidebar.Trigger class="z-[900]" />
       {/if}
+
+      <Sidebar.Inset class="flex flex-1 flex-col overflow-hidden">
+        {@render children?.()}
+      </Sidebar.Inset>
     </div>
   </Sidebar.Provider>
 </Tooltip.Provider>
