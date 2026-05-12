@@ -2,7 +2,7 @@
 Type=Application
 Name=jvim
 Comment=Jenova Vim Editor
-Exec=sh -c "$HOME/.local/bin/jenova-term $HOME/.local/bin/jvim --no-backend"
+Exec=sh -c "$HOME/.local/bin/jenova-ui --offline & $HOME/.local/bin/jenova-term $HOME/.local/bin/jvim --no-backend"
 Icon=jvim
 Terminal=false
 Categories=Utility;TextEditor;AI;

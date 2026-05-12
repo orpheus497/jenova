@@ -28,10 +28,10 @@ async fn start_backend(app: tauri::AppHandle) -> Result<String, String> {
     if state.lan_mode.load(Ordering::SeqCst) {
         args.push("--lan".to_string());
     }
-    
+
     let shell = app.shell();
     let output = shell.command("bash").args(&args).output().await.map_err(|e| e.to_string())?;
-    
+
     if output.status.success() { Ok("Backend started".into()) } else { Err(String::from_utf8_lossy(&output.stderr).into()) }
 }
 
@@ -50,15 +50,19 @@ async fn get_backend_status(app: tauri::AppHandle) -> Result<String, String> {
     if stdout.contains("running") { Ok("running".into()) } else { Ok("stopped".into()) }
 }
 
+fn open_browser(app: &tauri::AppHandle) {
+    let _ = app.shell().open("http://127.0.0.1:8080", None);
+}
+
 async fn check_status_and_update_tray(app: tauri::AppHandle) {
     let shell = app.shell();
     let output = shell.command("bash").args([get_jenova_ca_path(), "status".to_string()]).output().await;
 
     let is_running = output.map(|out| String::from_utf8_lossy(&out.stdout).contains("running")).unwrap_or(false);
-    
+
     let state = app.state::<Arc<AppState>>();
     let is_lan = state.lan_mode.load(Ordering::SeqCst);
-    
+
     if let Some(tray) = app.tray_by_id("main") {
         let tooltip = if is_running {
             if is_lan { "Jenova (Active - LAN Mode)" } else { "Jenova (Active - Local Mode)" }
@@ -66,13 +70,13 @@ async fn check_status_and_update_tray(app: tauri::AppHandle) {
             "Jenova (Inactive)"
         };
         let _ = tray.set_tooltip(Some(tooltip));
-        
+
         let icon_bytes = if is_running {
             include_bytes!("../icons/tray.png").to_vec()
         } else {
             include_bytes!("../icons/tray-bw.png").to_vec()
         };
-        
+
         if let Ok(icon) = tauri::image::Image::from_bytes(&icon_bytes) {
             let _ = tray.set_icon(Some(icon));
         }
@@ -89,27 +93,30 @@ pub fn run() {
         .manage(app_state.clone())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if args.iter().any(|arg| arg == "--open-ui") {
+                let app_clone = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = start_backend(app_clone.clone()).await;
+                    open_browser(&app_clone);
+                });
             }
         }))
         .setup(|app| {
-            let show = MenuItemBuilder::with_id("show", "Show Jenova").build(app)?;
+            let open_ui = MenuItemBuilder::with_id("open_ui", "Open Web Interface").build(app)?;
             let start = MenuItemBuilder::with_id("start", "Start Server").build(app)?;
             let stop = MenuItemBuilder::with_id("stop", "Stop Server").build(app)?;
             let reset = MenuItemBuilder::with_id("reset", "Reset Server").build(app)?;
             let toggle_lan = MenuItemBuilder::with_id("toggle_lan", "Switch LAN/LOCAL").build(app)?;
             let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
-            
+
             let menu = MenuBuilder::new(app)
-                .items(&[&show, &start, &stop, &reset, &toggle_lan, &quit])
+                .items(&[&open_ui, &start, &stop, &reset, &toggle_lan, &quit])
                 .build()?;
 
             let initial_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-bw.png")).ok()
                 .or_else(|| app.default_window_icon().cloned());
-                
+
             if let Some(icon) = initial_icon {
                 let _tray = TrayIconBuilder::with_id("main")
                     .icon(icon)
@@ -117,11 +124,12 @@ pub fn run() {
                     .tooltip("Jenova (Inactive)")
                     .on_menu_event(|app, event| match event.id.as_ref() {
                         "quit" => { app.exit(0); }
-                        "show" => {
-                            if let Some(window) = app.get_webview_window("main") {
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
+                        "open_ui" => {
+                            let app_clone = app.clone();
+                            tauri::async_runtime::spawn(async move {
+                                let _ = start_backend(app_clone.clone()).await;
+                                open_browser(&app_clone);
+                            });
                         }
                         "start" => {
                             let app_clone = app.clone();
@@ -143,7 +151,7 @@ pub fn run() {
                             let state = app.state::<Arc<AppState>>();
                             let current = state.lan_mode.load(Ordering::SeqCst);
                             state.lan_mode.store(!current, Ordering::SeqCst);
-                            
+
                             let app_clone = app.clone();
                             tauri::async_runtime::spawn(async move {
                                 let _ = stop_backend(app_clone.clone()).await;
@@ -155,13 +163,24 @@ pub fn run() {
                     })
                     .on_tray_icon_event(|tray, event| {
                         if let TrayIconEvent::Click { .. } = event {
-                            if let Some(window) = tray.app_handle().get_webview_window("main") {
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
+                            let app_handle = tray.app_handle().clone();
+                            tauri::async_runtime::spawn(async move {
+                                let _ = start_backend(app_handle.clone()).await;
+                                open_browser(&app_handle);
+                            });
                         }
                     })
                     .build(app);
+            }
+
+            // Check if we should start backend and open UI based on initial args
+            let args: Vec<String> = std::env::args().collect();
+            if args.iter().any(|arg| arg == "--open-ui") {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = start_backend(app_handle.clone()).await;
+                    open_browser(&app_handle);
+                });
             }
 
             // Start background status poller
@@ -174,12 +193,6 @@ pub fn run() {
             });
 
             Ok(())
-        })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                window.hide().unwrap();
-                api.prevent_close();
-            }
         })
         .invoke_handler(tauri::generate_handler![
             start_backend,

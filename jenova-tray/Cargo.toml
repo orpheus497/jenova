@@ -1,0 +1,19 @@
+[package]
+name = "jenova-tray"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tray-icon = { version = "0.10.0", features = ["ksni", "ayatana"] }
+users = "0.11.0"
+open = "5.0.0"
+fs2 = "0.4.3"
+nix = { version = "0.27.1", features = ["signal"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"

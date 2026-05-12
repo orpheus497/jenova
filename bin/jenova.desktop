@@ -2,7 +2,7 @@
 Type=Application
 Name=Jenova Workstation
 Comment=Jenova Cognitive Architecture and UI
-Exec=sh -c "$HOME/.local/bin/jenova-desktop"
+Exec=sh -c "$HOME/.local/bin/jenova-ui &"
 Icon=jenova
 Terminal=false
 Categories=Utility;AI;

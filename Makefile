@@ -16,12 +16,12 @@
 #   make install    # Run scripts/install.sh (system-aware deploy)
 #   make clean      # Remove build artifacts from both components
 
-.PHONY: all llama llama-hybrid jvim mcsh web install preflight verify clean help clean-root
+.PHONY: all llama llama-hybrid jvim mcsh web jenova-ui install preflight verify clean help clean-root
 
-all: llama jvim mcsh
+all: llama jvim mcsh jenova-ui
 	@if command -v npm >/dev/null 2>&1; then $(MAKE) web; fi
 	@echo ""
-	@echo "✅ Jenova build complete (llama.cpp + jvim + mcsh)"
+	@echo "✅ Jenova build complete (llama.cpp + jvim + mcsh + jenova-ui)"
 	@echo "   Run 'make install' (or scripts/install.sh) to deploy."
 
 llama:
@@ -80,6 +80,12 @@ web:
 		cd jca_web && ([ -d node_modules ] || npm install) && npm run build; \
 		echo "   Web UI built: public/"; \
 	fi
+
+jenova-ui:
+	@echo "🔨 Building jenova-ui..."
+	@$(MAKE) -C jenova-ui
+	@cp jenova-ui/jenova-ui bin/jenova-ui
+	@echo "   jenova-ui built: bin/jenova-ui"
 
 install:
 	@./scripts/install.sh

@@ -212,11 +212,17 @@ prompt_continue
 if [ "$DRY_RUN" = "1" ]; then
     print_info "Would run: $JENOVA_ROOT/scripts/preflight-check.sh"
 else
-    if ! "$JENOVA_ROOT/scripts/preflight-check.sh"; then
+    set +e
+    "$JENOVA_ROOT/scripts/preflight-check.sh"
+    _preflight_status=$?
+    set -e
+    if [ "$_preflight_status" = "0" ]; then
+        print_success "Pre-flight checks passed"
+    elif [ "$_preflight_status" = "2" ]; then
+        print_warning "Pre-flight checks passed with warnings"
+    else
         print_error "Pre-flight checks failed - please resolve issues above"
         exit 1
-    else
-        print_success "Pre-flight checks passed"
     fi
 fi
 
@@ -226,10 +232,7 @@ echo ""
 print_step "Building Jenova components..."
 prompt_continue
 
-COMPONENTS="llama jvim mcsh"
-if [ "$MINIMAL" = "0" ]; then
-    COMPONENTS="$COMPONENTS web"
-fi
+COMPONENTS="jenova-ui"
 
 if [ "$DRY_RUN" = "1" ]; then
     echo "  Would build: $COMPONENTS"

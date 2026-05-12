@@ -1,0 +1,9 @@
+{
+  "identifier": "allow-backend",
+  "description": "Allows custom backend commands",
+  "commands": [
+    "start_backend",
+    "stop_backend",
+    "get_backend_status"
+  ]
+}

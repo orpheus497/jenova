@@ -695,7 +695,7 @@ if [ -n "$_BIN_DIR" ]; then
     mkdir -p "$_BIN_DIR"
     ln -sf "$JENOVA_ROOT/bin/jvim" "$_BIN_DIR/jvim"
     ln -sf "$JENOVA_ROOT/bin/jenova" "$_BIN_DIR/jenova"
-    ln -sf "$JENOVA_ROOT/bin/jenova-desktop" "$_BIN_DIR/jenova-desktop"
+    ln -sf "$JENOVA_ROOT/bin/jenova-ui" "$_BIN_DIR/jenova-ui"
     ln -sf "$JENOVA_ROOT/bin/jenova-ca" "$_BIN_DIR/jenova-ca"
     ln -sf "$JENOVA_ROOT/bin/jenova-tui" "$_BIN_DIR/jenova-tui"
     ln -sf "$JENOVA_ROOT/bin/jenova-term" "$_BIN_DIR/jenova-term"
@@ -703,9 +703,9 @@ if [ -n "$_BIN_DIR" ]; then
         ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/mcsh"
         ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/tcsh"
         ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/csh"
-        ok "Symlinked jvim, jenova, jenova-desktop, jenova-ca, jenova-tui, jenova-term, and mcsh to $_BIN_DIR"
+        ok "Symlinked jvim, jenova, jenova-ui, jenova-ca, jenova-tui, jenova-term, and mcsh to $_BIN_DIR"
     else
-        ok "Symlinked jvim, jenova, jenova-desktop, jenova-ca, jenova-tui, and jenova-term to $_BIN_DIR"
+        ok "Symlinked jvim, jenova, jenova-ui, jenova-ca, jenova-tui, and jenova-term to $_BIN_DIR"
     fi
 
     # Install Desktop Entry

@@ -1,0 +1,16 @@
+{
+  "identifier": "allow-shell",
+  "description": "Allows executing bash for backend management",
+  "commands": [
+    "shell:execute"
+  ],
+  "scope": {
+    "allow": [
+      {
+        "cmd": "bash",
+        "args": true,
+        "name": "bash"
+      }
+    ]
+  }
+}
