@@ -37,9 +37,13 @@
 		}
 	}
 
-	onMount(() => {
-		updateStatus();
-		const interval = setInterval(updateStatus, 5000);
+	onMount(async () => {
+		await updateStatus();
+		if (isTauri && backendStatus !== 'running') {
+			toast.info('Auto-starting Jenova Backend...');
+			handleStart();
+		}
+		const interval = setInterval(updateStatus, 3000);
 		return () => clearInterval(interval);
 	});
 </script>
@@ -107,7 +111,11 @@
 								onclick={handleStart} 
 								disabled={backendStatus === 'running'}
 							>
-								<Play class="w-4 h-4 fill-current" /> Initialize
+								{#if backendStatus !== 'running'}
+									<Play class="w-4 h-4 fill-current" /> Initialize
+								{:else}
+									<Activity class="w-4 h-4 animate-pulse" /> Active
+								{/if}
 							</Button>
 							<Button 
 								variant="outline" 
@@ -118,6 +126,17 @@
 								<Square class="w-4 h-4 fill-current" /> Terminate
 							</Button>
 						</div>
+
+						{#if backendStatus === 'running'}
+							<div class="pt-4">
+								<Button 
+									class="w-full h-12 gap-2 bg-[#7851a9] hover:bg-[#938aa9] text-white font-bold transition-all active:scale-95 shadow-[0_0_15px_rgba(120,81,169,0.4)]" 
+									onclick={() => window.location.hash = '#/'}
+								>
+									<Play class="w-5 h-5 fill-current" /> Enter Workstation
+								</Button>
+							</div>
+						{/if}
 					{/if}
 				</div>
 			</CardContent>
