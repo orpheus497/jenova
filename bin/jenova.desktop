@@ -1,8 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=Jenova
-Comment=Access the Jenova Workstation in your browser
-Exec=sh -c "$HOME/.local/bin/jenova-tui --launch-web"
+Name=Jenova Workstation
+Comment=Jenova Cognitive Architecture and UI
+Exec=sh -c "$HOME/.local/bin/jenova-desktop"
 Icon=jenova
 Terminal=false
 Categories=Utility;AI;
+StartupWMClass=Jenova

@@ -1,9 +1,10 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, copyFileSync } from 'fs';
 import { resolve, join } from 'path';
 
-const PUBLIC_DIR = resolve('../public');
+const PUBLIC_DIR = resolve('build');
 const INDEX_PATH = join(PUBLIC_DIR, 'index.html');
 const FAVICON_SRC = resolve('static/favicon.svg');
+const LEGACY_PUBLIC_DIR = resolve('../public');
 
 const GUIDE_FOR_FRONTEND = `
 <!--
@@ -83,6 +84,20 @@ async function main() {
 
     writeFileSync(INDEX_PATH, content, 'utf-8');
     console.log('✓ Updated index.html');
+
+    // Mirror to legacy public dir for Python server
+    import('fs').then(fs => {
+        if (!fs.existsSync(LEGACY_PUBLIC_DIR)) fs.mkdirSync(LEGACY_PUBLIC_DIR, { recursive: true });
+        const files = fs.readdirSync(PUBLIC_DIR);
+        for (const file of files) {
+            const src = join(PUBLIC_DIR, file);
+            const dest = join(LEGACY_PUBLIC_DIR, file);
+            if (fs.statSync(src).isFile()) {
+                fs.copyFileSync(src, dest);
+            }
+        }
+        console.log('✓ Mirrored build to ../public for Python server');
+    });
 }
 
 main().catch(console.error);

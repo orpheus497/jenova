@@ -695,6 +695,7 @@ if [ -n "$_BIN_DIR" ]; then
     mkdir -p "$_BIN_DIR"
     ln -sf "$JENOVA_ROOT/bin/jvim" "$_BIN_DIR/jvim"
     ln -sf "$JENOVA_ROOT/bin/jenova" "$_BIN_DIR/jenova"
+    ln -sf "$JENOVA_ROOT/bin/jenova-desktop" "$_BIN_DIR/jenova-desktop"
     ln -sf "$JENOVA_ROOT/bin/jenova-ca" "$_BIN_DIR/jenova-ca"
     ln -sf "$JENOVA_ROOT/bin/jenova-tui" "$_BIN_DIR/jenova-tui"
     ln -sf "$JENOVA_ROOT/bin/jenova-term" "$_BIN_DIR/jenova-term"
@@ -702,17 +703,21 @@ if [ -n "$_BIN_DIR" ]; then
         ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/mcsh"
         ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/tcsh"
         ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/csh"
-        ok "Symlinked jvim, jenova, jenova-ca, jenova-tui, jenova-term, and mcsh to $_BIN_DIR"
+        ok "Symlinked jvim, jenova, jenova-desktop, jenova-ca, jenova-tui, jenova-term, and mcsh to $_BIN_DIR"
     else
-        ok "Symlinked jvim, jenova, jenova-ca, jenova-tui, and jenova-term to $_BIN_DIR"
+        ok "Symlinked jvim, jenova, jenova-desktop, jenova-ca, jenova-tui, and jenova-term to $_BIN_DIR"
     fi
 
     # Install Desktop Entry
     if [ "$JENOVA_OS" = "linux" ] || [ "$JENOVA_OS" = "freebsd" ]; then
         _APP_DIR="$HOME/.local/share/applications"
         mkdir -p "$_APP_DIR"
+        
+        # Cleanup old entries to avoid ghost icons
+        rm -f "$_APP_DIR/jenova-manager.desktop"
+        rm -f "$_APP_DIR/jenova.desktop"
+
         [ -f "$JENOVA_ROOT/bin/jenova.desktop" ] && cp "$JENOVA_ROOT/bin/jenova.desktop" "$_APP_DIR/jenova.desktop"
-        [ -f "$JENOVA_ROOT/bin/jenova-manager.desktop" ] && cp "$JENOVA_ROOT/bin/jenova-manager.desktop" "$_APP_DIR/jenova-manager.desktop"
         [ -f "$JENOVA_ROOT/bin/jvim.desktop" ] && cp "$JENOVA_ROOT/bin/jvim.desktop" "$_APP_DIR/jvim.desktop"
         ok "Installed desktop entries to $_APP_DIR"
         # Install Icons

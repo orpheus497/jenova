@@ -14,8 +14,8 @@ const config = {
 		},
 		router: { type: 'hash' },
 		adapter: adapter({
-			pages: '../public',
-			assets: '../public',
+			pages: 'build',
+			assets: 'build',
 			fallback: 'index.html',
 			precompress: false,
 			strict: true

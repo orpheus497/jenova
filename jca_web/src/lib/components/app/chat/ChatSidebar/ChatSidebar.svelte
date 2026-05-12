@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { Trash2, Pencil, Plus, FolderPlus, MessageSquare, FileText, Archive } from '@lucide/svelte';
+	import { Trash2, Pencil, Plus, FolderPlus, MessageSquare, FileText, Archive, Activity } from '@lucide/svelte';
 	import { ChatSidebarConversationItem, DialogConfirmation } from '$lib/components/app';
+	import { Badge } from '$lib/components/ui/badge';
 	import ScrollArea from '$lib/components/ui/scroll-area/scroll-area.svelte';
 	import * as Sidebar from '$lib/components/ui/sidebar';
 	import Input from '$lib/components/ui/input/input.svelte';
@@ -257,17 +258,30 @@
             </div>
 
             <!-- Unassigned Files -->
-            <div class="mb-4">
-                <button 
-                    onclick={() => goto('#/files')}
-                    class={cn("w-full flex items-center justify-between px-2 py-2 rounded-lg text-sm transition-colors", page.route.id?.includes('files') && !page.params.folderId ? "bg-blue-500/20 text-blue-600 font-medium" : "text-foreground/70 hover:bg-sidebar-accent hover:text-foreground")}
-                >
-                    <span class="flex items-center gap-1.5"><Archive size={12}/> Files</span>
-                    <span class="text-[10px] bg-muted px-1.5 border border-border/20 rounded text-muted-foreground">{files().filter((f: any) => !f.folderId).length}</span>
-                </button>
-            </div>
-        </div>
-    </div>
+			<div class="mb-4">
+				<button 
+					onclick={() => goto('#/files')}
+					class={cn("w-full flex items-center justify-between px-2 py-2 rounded-lg text-sm transition-colors", page.route.id?.includes('files') && !page.params.folderId ? "bg-blue-500/20 text-blue-600 font-medium" : "text-foreground/70 hover:bg-sidebar-accent hover:text-foreground")}
+				>
+					<span class="flex items-center gap-1.5"><Archive size={12}/> Files</span>
+					<span class="text-[10px] bg-muted px-1.5 border border-border/20 rounded text-muted-foreground">{files().filter((f: any) => !f.folderId).length}</span>
+				</button>
+			</div>
+
+			<!-- System Manager (Tauri Only) -->
+			{#if typeof window !== 'undefined' && window.__TAURI_INTERNALS__ !== undefined}
+				<div class="mb-4">
+					<button 
+						onclick={() => goto('#/manager')}
+						class={cn("w-full flex items-center justify-between px-2 py-2 rounded-lg text-sm transition-colors", page.route.id === '/manager' ? "bg-purple-500/20 text-purple-600 font-medium" : "text-foreground/70 hover:bg-sidebar-accent hover:text-foreground")}
+					>
+						<span class="flex items-center gap-1.5"><Activity size={12}/> System Manager</span>
+						<Badge variant="outline" class="text-[9px] h-4 px-1 border-purple-500/30 text-purple-500">Tauri</Badge>
+					</button>
+				</div>
+			{/if}
+		</div>
+	</div>
 </ScrollArea>
 
 <DialogConfirmation

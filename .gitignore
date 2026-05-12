@@ -6,6 +6,7 @@
 /public/
 /bin/llama-server
 /bin/mcsh
+/bin/jenova-desktop
 /llama.cpp/build/
 /llama.cpp/bin/
 /mcsh/build/

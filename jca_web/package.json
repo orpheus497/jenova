@@ -4,6 +4,7 @@
 	"version": "1.0.0",
 	"type": "module",
 	"scripts": {
+		"tauri": "tauri",
 		"dev": "bash scripts/dev.sh",
 		"build": "vite build && node scripts/finalize-build.js && ./scripts/post-build.sh",
 		"preview": "vite preview",
@@ -23,6 +24,8 @@
 		"cleanup": "rm -rf .svelte-kit build node_modules test-results"
 	},
 	"devDependencies": {
+		"@tauri-apps/api": "^2.1.0",
+		"@tauri-apps/cli": "^2.1.0",
 		"@chromatic-com/storybook": "^5.0.0",
 		"@eslint/compat": "^1.2.5",
 		"@eslint/js": "^9.18.0",
