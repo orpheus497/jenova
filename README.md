@@ -8,7 +8,7 @@ Jenova is a local-first, hardware-aware AI environment designed for consumer lap
 The absolute foundation of the system. Written in C, Lua, and Bash, the `jenova-ca` daemon handles hardware-aware model loading (automatically adapting to single-GPU, dual-GPU, or CPU-only constraints via Vulkan). It daemonizes the `llama-server` inference engine and the Lua-based intelligence proxy, establishing the local environment.
 
 ### 2. Jenova Workstation (Desktop App)
-A stunning, Kanagawa-themed native Linux desktop application powered by **Tauri (Rust)** and **SvelteKit**. It unifies your fragmented web interfaces and terminal managers into a single, high-performance window.
+A stunning, Kanagawa-themed native Linux desktop application powered by **Tauri (Rust)** and **SvelteKit**. It unifies your fragmented web interfaces and terminal managers into a single, high-performance wiysdow.
 - Features a **System Manager** dashboard for real-time telemetry, memory usage, and backend controls.
 - Serves as the primary graphical gateway to your AI workspaces.
 

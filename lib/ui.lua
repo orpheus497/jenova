@@ -36,12 +36,24 @@ ui.on_action = function(action)
 end
 
 ui.poll_status = function()
-    -- Read status from jenova-ca
-    local f = io.popen(root .. "/bin/jenova-ca status 2>&1", "r")
-    if not f then return "inactive" end
-    local output = f:read("*a")
-    f:close()
-    if output and output:match("is ready") then
+    -- 1. Check if backend pipeline is ready
+    local f1 = io.popen(root .. "/bin/jenova-ca status 2>&1", "r")
+    if not f1 then return "inactive" end
+    local output_backend = f1:read("*a")
+    f1:close()
+    
+    if not (output_backend and output_backend:match("is ready")) then
+        return "inactive"
+    end
+    
+    -- 2. Check if port 8080 is actually accepting connections
+    local cmd = "if curl -s -o /dev/null http://127.0.0.1:8080/; then echo active; elif nc -z -w 1 127.0.0.1 8080 2>/dev/null; then echo active; else echo inactive; fi"
+    local f2 = io.popen(cmd, "r")
+    if not f2 then return "inactive" end
+    local output_port = f2:read("*l")
+    f2:close()
+    
+    if output_port == "active" then
         return "active"
     else
         return "inactive"

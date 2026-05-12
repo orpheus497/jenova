@@ -36,6 +36,11 @@ INTERACTIVE=0
 MINIMAL=0
 FULL=1
 
+if [ $# -eq 0 ] && [ -t 1 ]; then
+    # Launch TUI by default
+    exec "$JENOVA_ROOT/scripts/jenova-manager.sh"
+fi
+
 for arg in "$@"; do
     case "$arg" in
         --help|-h)

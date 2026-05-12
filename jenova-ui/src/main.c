@@ -120,6 +120,7 @@ void init_lua() {
             lua_pushstring(L, get_jenova_root());
             if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
                 fprintf(stderr, "Error calling ui.init: %s\n", lua_tostring(L, -1));
+                lua_pop(L, 1);
             }
         } else {
             lua_pop(L, 1);
@@ -153,6 +154,7 @@ static void on_menu_item_activate(GtkMenuItem *item G_GNUC_UNUSED, gpointer user
     lua_pushstring(L, action);
     if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
         fprintf(stderr, "Error in ui.on_action: %s\n", lua_tostring(L, -1));
+        lua_pop(L, 1);
     }
     lua_pop(L, 1); // pop 'ui' table
 }
@@ -167,7 +169,7 @@ static gboolean update_tray_status(gpointer user_data G_GNUC_UNUSED) {
         const char *status = lua_tostring(L, -1);
         char icon_path[PATH_MAX];
         
-        if (strcmp(status, "active") == 0) {
+        if (status && strcmp(status, "active") == 0) {
             snprintf(icon_path, sizeof(icon_path), "%s/png/jca.jpg", get_jenova_root());
         } else {
             snprintf(icon_path, sizeof(icon_path), "%s/png/jca_grey.jpg", get_jenova_root());
@@ -248,7 +250,7 @@ static void run_tray(int argc, char *argv[]) {
                     if (label && action) {
                         GtkWidget *item = gtk_menu_item_new_with_label(label);
                         char *action_dup = strdup(action);
-                        g_signal_connect(item, "activate", G_CALLBACK(on_menu_item_activate), action_dup);
+                        g_signal_connect_data(item, "activate", G_CALLBACK(on_menu_item_activate), action_dup, (GClosureNotify)free, 0);
                         gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
                     }
                 }
@@ -270,11 +272,17 @@ static void run_tray(int argc, char *argv[]) {
         if (lua_istable(L, -1)) {
             lua_getfield(L, -1, "on_action");
             lua_pushstring(L, "start");
-            lua_pcall(L, 1, 0, 0);
+            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+                fprintf(stderr, "Error starting: %s\n", lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
             
             lua_getfield(L, -1, "on_action");
             lua_pushstring(L, "web");
-            lua_pcall(L, 1, 0, 0);
+            if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+                fprintf(stderr, "Error opening web: %s\n", lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
         }
         lua_pop(L, 1);
     }
@@ -289,24 +297,24 @@ static void run_tray(int argc, char *argv[]) {
 
 static void draw_box_tui(const char* title, int width, int n_options) {
     attron(COLOR_PAIR(1));
-    for(int i = 0; i < width; i++) {
-        mvprintw(0, i, "─");
-        mvprintw(2, i, "─");
-        mvprintw(n_options + 6, i, "─");
+    for(int i = 1; i < width - 1; i++) {
+        mvaddch(0, i, ACS_HLINE);
+        mvaddch(2, i, ACS_HLINE);
+        mvaddch(n_options + 6, i, ACS_HLINE);
     }
-    for(int i = 0; i < n_options + 7; i++) {
-        mvprintw(i, 0, "│");
-        mvprintw(i, width - 1, "│");
+    for(int i = 1; i < n_options + 6; i++) {
+        mvaddch(i, 0, ACS_VLINE);
+        mvaddch(i, width - 1, ACS_VLINE);
     }
-    mvprintw(0, 0, "┌");
-    mvprintw(0, width - 1, "┐");
-    mvprintw(2, 0, "├");
-    mvprintw(2, width - 1, "┤");
-    mvprintw(n_options + 6, 0, "└");
-    mvprintw(n_options + 6, width - 1, "┘");
+    mvaddch(0, 0, ACS_ULCORNER);
+    mvaddch(0, width - 1, ACS_URCORNER);
+    mvaddch(2, 0, ACS_LTEE);
+    mvaddch(2, width - 1, ACS_RTEE);
+    mvaddch(n_options + 6, 0, ACS_LLCORNER);
+    mvaddch(n_options + 6, width - 1, ACS_LRCORNER);
     
     int title_len = strlen(title);
-    mvprintw(1, (width - title_len) / 2, title);
+    mvprintw(1, (width - title_len) / 2, "%s", title);
     attroff(COLOR_PAIR(1));
 }
 
@@ -319,6 +327,7 @@ void run_tui() {
     noecho();
     keypad(stdscr, TRUE);
     curs_set(0);
+    timeout(1000); // 1-second timeout for getch()
     start_color();
 
     init_color(16, 121, 121, 157); // BG
@@ -371,12 +380,19 @@ void run_tui() {
         
         char status[64] = "inactive";
         lua_getglobal(L, "ui");
-        lua_getfield(L, -1, "poll_status");
-        if (lua_pcall(L, 0, 1, 0) == LUA_OK) {
-            strncpy(status, lua_tostring(L, -1), 63);
-            status[63] = '\0';
+        if (lua_istable(L, -1)) {
+            lua_getfield(L, -1, "poll_status");
+            if (lua_pcall(L, 0, 1, 0) == LUA_OK) {
+                const char *s = lua_tostring(L, -1);
+                if (s) {
+                    strncpy(status, s, 63);
+                    status[63] = '\0';
+                }
+            } else {
+                lua_pop(L, 1); // pop error
+            }
         }
-        lua_pop(L, 2);
+        lua_pop(L, 1); // pop ui
         
         attron(COLOR_PAIR(5));
         draw_box_tui("JENOVA COGNITIVE ARCHITECTURE", width, n_options);
@@ -407,30 +423,42 @@ void run_tui() {
         refresh();
 
         key = getch();
-        switch(key) {
-            case KEY_UP:
-                selected--;
-                if (selected < 0) selected = n_options - 1;
-                break;
-            case KEY_DOWN:
-                selected++;
-                if (selected >= n_options) selected = 0;
-                break;
-            case 10: // Enter
-                if (strcmp(actions[selected], "exit_tui") == 0) {
-                    endwin();
-                    return;
-                }
-                
-                lua_getglobal(L, "ui");
-                lua_getfield(L, -1, "on_tui_action");
-                lua_pushstring(L, actions[selected]);
-                lua_pcall(L, 1, 0, 0);
-                lua_pop(L, 1);
-                
-                mvprintw(LINES - 1, 0, "Action executed. Press any key to continue...");
-                getch();
-                break;
+        if (key != ERR) {
+            switch(key) {
+                case KEY_UP:
+                    selected--;
+                    if (selected < 0) selected = n_options - 1;
+                    break;
+                case KEY_DOWN:
+                    selected++;
+                    if (selected >= n_options) selected = 0;
+                    break;
+                case 10: // Enter
+                    if (strcmp(actions[selected], "exit_tui") == 0) {
+                        endwin();
+                        return;
+                    }
+                    
+                    lua_getglobal(L, "ui");
+                    if (lua_istable(L, -1)) {
+                        lua_getfield(L, -1, "on_tui_action");
+                        lua_pushstring(L, actions[selected]);
+                        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+                            fprintf(stderr, "Error in on_tui_action: %s\n", lua_tostring(L, -1));
+                            lua_pop(L, 1); // pop error
+                        }
+                    }
+                    lua_pop(L, 1); // pop 'ui' table
+                    
+                    mvprintw(LINES - 1, 0, "Action executed. Press any key to continue...");
+                    refresh();
+                    
+                    // Wait for keypress ignoring timeout temporarily
+                    timeout(-1);
+                    getch();
+                    timeout(1000);
+                    break;
+            }
         }
     }
 }

@@ -1,18 +1,12 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # jenova-manager.sh: TUI manager for this monorepo
-#
-# Pure-bash implementation using Kanagawa True Color aesthetic.
-# All components — Jenova Core (backend + scripts), the bundled jvim
-# editor, and llama.cpp — live inside this repository. This manager
-# dispatches install / update / uninstall actions to the in-tree
-# Makefile targets and helper scripts. Nothing is cloned from external repos.
+# Pure POSIX shell implementation for maximum compatibility (FreeBSD/Linux/macOS).
 
 set -e
 
-JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
+JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0" 2>/dev/null || (cd "$(dirname "$0")/.." && pwd))")")"
 export JENOVA_ROOT
 
-# Prefer GNU make (gmake) on FreeBSD; falls back to system make.
 if command -v gmake >/dev/null 2>&1; then
     MAKE="gmake"
 else
@@ -20,7 +14,7 @@ else
 fi
 
 # --- Colors (Kanagawa & Royal Purple) ---
-ESC=$'\e'
+ESC=$(printf '\033')
 BG="${ESC}[48;2;31;31;40m"
 FG="${ESC}[38;2;220;215;186m"
 SEL_BG="${ESC}[48;2;45;79;103m"
@@ -34,16 +28,14 @@ RESET="${ESC}[0m"
 CLEAR="${ESC}[H${ESC}[2J${BG}${FG}"
 
 # --- Component detection ---
-
 check_jvim() {
     [ -x "$JENOVA_ROOT/jvim/build/bin/nvim" ] || \
         ( command -v jvim >/dev/null 2>&1 && jvim --version 2>/dev/null | grep -q 'JVIM' )
 }
 
 resolve_llama_server_path() {
-    local config_file
-    local resolved_path="${LLAMA_SERVER:-}"
-    local resolved_build_dir="${JENOVA_BUILD_DIR:-}"
+    resolved_path="${LLAMA_SERVER:-}"
+    resolved_build_dir="${JENOVA_BUILD_DIR:-}"
 
     for config_file in \
         "$JENOVA_ROOT/etc/jenova.local.conf" \
@@ -52,19 +44,19 @@ resolve_llama_server_path() {
         if [ -f "$config_file" ]; then
             if [ -z "$resolved_path" ]; then
                 resolved_path="$(
-                    JENOVA_ROOT="$JENOVA_ROOT" bash -c '
+                    JENOVA_ROOT="$JENOVA_ROOT" sh -c '
                         . "$1" >/dev/null 2>&1 || exit 0
                         printf "%s" "${LLAMA_SERVER:-}"
-                    ' bash "$config_file"
+                    ' sh "$config_file"
                 )"
             fi
 
             if [ -z "$resolved_build_dir" ]; then
                 resolved_build_dir="$(
-                    JENOVA_ROOT="$JENOVA_ROOT" bash -c '
+                    JENOVA_ROOT="$JENOVA_ROOT" sh -c '
                         . "$1" >/dev/null 2>&1 || exit 0
                         printf "%s" "${JENOVA_BUILD_DIR:-}"
-                    ' bash "$config_file"
+                    ' sh "$config_file"
                 )"
             fi
         fi
@@ -80,25 +72,19 @@ resolve_llama_server_path() {
 }
 
 check_llama() {
-    local llama_server
     llama_server="$(resolve_llama_server_path)"
     [ -f "$llama_server" ]
 }
 
 check_jenova_core() {
-    local installed_path
-    local expected_path
-
     installed_path="$(command -v jenova-ca 2>/dev/null)" || return 1
     [ -n "$installed_path" ] || return 1
     [ -x "$JENOVA_ROOT/bin/jenova-ca" ] || return 1
-
-    expected_path="$(realpath "$JENOVA_ROOT/bin/jenova-ca")"
-    [ "$(realpath "$installed_path")" = "$expected_path" ]
+    # Very basic path comparison for POSIX shell compatibility
+    [ "$(basename "$installed_path")" = "jenova-ca" ]
 }
 
-# --- Pure Bash UI Helpers ---
-
+# --- Pure POSIX UI Helpers ---
 enter_alt_screen() { printf "%s[?1049h" "$ESC"; }
 exit_alt_screen() { printf "%s[?1049l" "$ESC"; }
 hide_cursor() { printf "%s[?25l" "$ESC"; }
@@ -108,11 +94,12 @@ cleanup() {
     show_cursor
     exit_alt_screen
     printf "%s" "$RESET"
+    # Restore terminal
+    stty sane 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
 get_width() {
-    local w
     w=$(tput cols 2>/dev/null || echo 80)
     w=$((w - 4))
     if [ "$w" -gt 70 ]; then w=70; fi
@@ -121,106 +108,130 @@ get_width() {
 }
 
 draw_box() {
-    local title="$1"
-    local width="$2"
+    title="$1"
+    width="$2"
     printf "%s╭" "$PURPLE"
-    for ((i=0; i<width-2; i++)); do printf "─"; done
+    i=0; while [ $i -lt $((width-2)) ]; do printf "─"; i=$((i+1)); done
     printf "╮%s\n" "$FG"
     printf "%s│%s %-*s %s%s│%s\n" "$PURPLE" "$BOLD$YELLOW" "$((width-4))" "$title" "$RESET$BG" "$PURPLE" "$FG"
     printf "%s├" "$PURPLE"
-    for ((i=0; i<width-2; i++)); do printf "─"; done
+    i=0; while [ $i -lt $((width-2)) ]; do printf "─"; i=$((i+1)); done
     printf "┤%s\n" "$FG"
 }
 
 draw_box_bottom() {
-    local width="$1"
+    width="$1"
     printf "%s╰" "$PURPLE"
-    for ((i=0; i<width-2; i++)); do printf "─"; done
+    i=0; while [ $i -lt $((width-2)) ]; do printf "─"; i=$((i+1)); done
     printf "╯%s\n" "$RESET"
 }
 
-# Returns 0-based index of selected item in global $MENU_CHOICE
+get_key() {
+    old_tty=$(stty -g)
+    stty -icanon -echo min 1 time 0
+    c1=$(dd bs=1 count=1 2>/dev/null)
+    case "$c1" in
+        "$(printf '\033')")
+            stty min 0 time 1
+            c2=$(dd bs=1 count=1 2>/dev/null)
+            if [ "$c2" = "[" ] || [ "$c2" = "O" ]; then
+                c3=$(dd bs=1 count=1 2>/dev/null)
+                printf "ESC%s%s\n" "$c2" "$c3"
+            else
+                printf "ESC\n"
+            fi
+            ;;
+        *)
+            printf "%s\n" "$c1"
+            ;;
+    esac
+    stty "$old_tty"
+}
+
 interactive_menu() {
-    local title="$1"
+    title="$1"
     shift
-    local options=("$@")
-    local selected=0
-    local count=${#options[@]}
+    
+    count=0
+    for opt in "$@"; do
+        eval "menu_opt_$count=\"\$opt\""
+        count=$((count + 1))
+    done
+    
+    selected=0
     
     hide_cursor
     while true; do
-        local WIDTH=$(get_width)
-        printf "%s" "$CLEAR"
+        WIDTH=$(get_width)
+        printf "%s\n" "$CLEAR"
         echo ""
         draw_box "$title" "$WIDTH"
         
-        for ((i=0; i<count; i++)); do
+        i=0
+        while [ $i -lt $count ]; do
+            eval "opt=\$menu_opt_$i"
             if [ $i -eq $selected ]; then
-                printf "%s│%s  > %-*s %s%s│%s\n" "$PURPLE" "$SEL_BG$FG" "$((WIDTH-7))" "${options[$i]}" "$RESET$BG" "$PURPLE" "$FG"
+                printf "%s│%s  > %-*s %s%s│%s\n" "$PURPLE" "$SEL_BG$FG" "$((WIDTH-7))" "$opt" "$RESET$BG" "$PURPLE" "$FG"
             else
-                printf "%s│%s    %-*s %s%s│%s\n" "$PURPLE" "$BG$FG" "$((WIDTH-7))" "${options[$i]}" "$RESET$BG" "$PURPLE" "$FG"
+                printf "%s│%s    %-*s %s%s│%s\n" "$PURPLE" "$BG$FG" "$((WIDTH-7))" "$opt" "$RESET$BG" "$PURPLE" "$FG"
             fi
+            i=$((i + 1))
         done
         draw_box_bottom "$WIDTH"
         
-        read -rsn1 key
-        if [[ $key == "" ]]; then
-            break # Enter
-        elif [[ $key == $'\x1b' ]]; then
-            read -rsn2 key
-            case $key in
-                '[A')
-                    selected=$((selected - 1))
-                    if [ $selected -lt 0 ]; then selected=$((count-1)); fi
-                    ;;
-                '[B')
-                    selected=$((selected + 1))
-                    if [ $selected -ge $count ]; then selected=0; fi
-                    ;;
-            esac
+        key=$(get_key)
+        if [ "$key" = "" ] || [ "$key" = "$(printf '\r')" ] || [ "$key" = "$(printf '\n')" ]; then
+            break
+        elif [ "$key" = "ESC[A" ]; then
+            selected=$((selected - 1))
+            if [ $selected -lt 0 ]; then selected=$((count-1)); fi
+        elif [ "$key" = "ESC[B" ]; then
+            selected=$((selected + 1))
+            if [ $selected -ge $count ]; then selected=0; fi
         fi
     done
     MENU_CHOICE=$selected
 }
 
-# Returns choices array in global $CHECKLIST_CHOICES
 interactive_checklist() {
-    local title="$1"
-    local desc="$2"
+    title="$1"
+    desc="$2"
     shift 2
     
-    local options=()
-    local states=()
-    local ids=()
-    
+    count=0
     while [ $# -gt 0 ]; do
-        ids+=("$1")
-        options+=("$2")
-        states+=("$3")
+        eval "check_id_$count=\"\$1\""
+        eval "check_lbl_$count=\"\$2\""
+        eval "check_st_$count=\"\$3\""
+        count=$((count + 1))
         shift 3
     done
     
-    local selected=0
-    local count=${#options[@]}
+    selected=0
     
     hide_cursor
     while true; do
-        local WIDTH=$(get_width)
-        printf "%s" "$CLEAR"
+        WIDTH=$(get_width)
+        printf "%s\n" "$CLEAR"
         echo ""
         draw_box "$title" "$WIDTH"
         printf "%s│%s %-*s %s%s│%s\n" "$PURPLE" "$FG" "$((WIDTH-4))" "$desc" "$RESET$BG" "$PURPLE" "$FG"
         printf "%s│%s %-*s %s%s│%s\n" "$PURPLE" "$FG" "$((WIDTH-4))" "" "$RESET$BG" "$PURPLE" "$FG"
         
-        for ((i=0; i<count; i++)); do
-            local mark=" "
-            [ "${states[$i]}" = "on" ] && mark="X"
+        i=0
+        while [ $i -lt $count ]; do
+            eval "lbl=\$check_lbl_$i"
+            eval "st=\$check_st_$i"
+            
+            mark=" "
+            [ "$st" = "on" ] && mark="X"
             
             if [ $i -eq $selected ]; then
-                printf "%s│%s  > [%s] %-*s %s%s│%s\n" "$PURPLE" "$SEL_BG$FG" "$mark" "$((WIDTH-11))" "${options[$i]}" "$RESET$BG" "$PURPLE" "$FG"
+                printf "%s│%s  > [%s] %-*s %s%s│%s\n" "$PURPLE" "$SEL_BG$FG" "$mark" "$((WIDTH-11))" "$lbl" "$RESET$BG" "$PURPLE" "$FG"
             else
-                printf "%s│%s    [%s] %-*s %s%s│%s\n" "$PURPLE" "$BG$FG" "$mark" "$((WIDTH-11))" "${options[$i]}" "$RESET$BG" "$PURPLE" "$FG"
+                printf "%s│%s    [%s] %-*s %s%s│%s\n" "$PURPLE" "$BG$FG" "$mark" "$((WIDTH-11))" "$lbl" "$RESET$BG" "$PURPLE" "$FG"
             fi
+            i=$((i + 1))
         done
         printf "%s│%s %-*s %s%s│%s\n" "$PURPLE" "$FG" "$((WIDTH-4))" "" "$RESET$BG" "$PURPLE" "$FG"
         
@@ -229,6 +240,7 @@ interactive_checklist() {
         else
             printf "%s│%s    [ Confirm ] %-*s %s%s│%s\n" "$PURPLE" "$BG$GREEN" "$((WIDTH-19))" "" "$RESET$BG" "$PURPLE" "$FG"
         fi
+        
         if [ $selected -eq $((count+1)) ]; then
             printf "%s│%s  > [ Cancel ]  %-*s %s%s│%s\n" "$PURPLE" "$SEL_BG$RED" "$((WIDTH-19))" "" "$RESET$BG" "$PURPLE" "$FG"
         else
@@ -237,70 +249,70 @@ interactive_checklist() {
         
         draw_box_bottom "$WIDTH"
         
-        read -rsn1 key
-        if [[ $key == " " ]]; then
+        key=$(get_key)
+        if [ "$key" = " " ]; then
             if [ $selected -lt $count ]; then
-                if [ "${states[$selected]}" = "on" ]; then
-                    states[$selected]="off"
+                eval "st=\$check_st_$selected"
+                if [ "$st" = "on" ]; then
+                    eval "check_st_$selected=off"
                 else
-                    states[$selected]="on"
+                    eval "check_st_$selected=on"
                 fi
             fi
-        elif [[ $key == "" ]]; then
+        elif [ "$key" = "" ] || [ "$key" = "$(printf '\r')" ] || [ "$key" = "$(printf '\n')" ]; then
             if [ $selected -lt $count ]; then
-                if [ "${states[$selected]}" = "on" ]; then
-                    states[$selected]="off"
+                eval "st=\$check_st_$selected"
+                if [ "$st" = "on" ]; then
+                    eval "check_st_$selected=off"
                 else
-                    states[$selected]="on"
+                    eval "check_st_$selected=on"
                 fi
             elif [ $selected -eq $count ]; then
-                # Confirm
-                CHECKLIST_CHOICES=()
-                for ((i=0; i<count; i++)); do
-                    if [ "${states[$i]}" = "on" ]; then
-                        CHECKLIST_CHOICES+=("${ids[$i]}")
+                CHECKLIST_COUNT=0
+                i=0
+                while [ $i -lt $count ]; do
+                    eval "st=\$check_st_$i"
+                    if [ "$st" = "on" ]; then
+                        eval "id=\$check_id_$i"
+                        eval "CHECKLIST_CHOICES_$CHECKLIST_COUNT=\"\$id\""
+                        CHECKLIST_COUNT=$((CHECKLIST_COUNT + 1))
                     fi
+                    i=$((i + 1))
                 done
                 break
             elif [ $selected -eq $((count+1)) ]; then
-                # Cancel
-                CHECKLIST_CHOICES=("CANCEL")
+                eval "CHECKLIST_CHOICES_0=CANCEL"
+                CHECKLIST_COUNT=1
                 break
             fi
-        elif [[ $key == $'\x1b' ]]; then
-            read -rsn2 key
-            case $key in
-                '[A')
-                    selected=$((selected - 1))
-                    if [ $selected -lt 0 ]; then selected=$((count+1)); fi
-                    ;;
-                '[B')
-                    selected=$((selected + 1))
-                    if [ $selected -gt $((count+1)) ]; then selected=0; fi
-                    ;;
-            esac
+        elif [ "$key" = "ESC[A" ]; then
+            selected=$((selected - 1))
+            if [ $selected -lt 0 ]; then selected=$((count+1)); fi
+        elif [ "$key" = "ESC[B" ]; then
+            selected=$((selected + 1))
+            if [ $selected -gt $((count+1)) ]; then selected=0; fi
         fi
     done
 }
 
 confirm_prompt() {
-    local msg="$1"
-    local defaultno="$2"
+    msg="$1"
+    defaultno="$2"
     
-    local sel=0
+    sel=0
     [ "$defaultno" = "1" ] && sel=1
     
     hide_cursor
     while true; do
-        local WIDTH=$(get_width)
+        WIDTH=$(get_width)
         printf "%s\n" "$CLEAR"
         echo ""
         draw_box "Confirmation" "$WIDTH"
         printf "%s│%s %-*s %s%s│%s\n" "$PURPLE" "$FG" "$((WIDTH-4))" "$msg" "$RESET$BG" "$PURPLE" "$FG"
         printf "%s│%s %-*s %s%s│%s\n" "$PURPLE" "$FG" "$((WIDTH-4))" "" "$RESET$BG" "$PURPLE" "$FG"
         
-        local yes_str="   [ Yes ]   "
-        local no_str="   [ No ]    "
+        yes_str="   [ Yes ]   "
+        no_str="   [ No ]    "
         if [ $sel -eq 0 ]; then
             yes_str="$SEL_BG$GREEN > [ Yes ] < $RESET$BG"
             no_str="$BG$RED   [ No ]    $RESET$BG"
@@ -312,16 +324,11 @@ confirm_prompt() {
         printf "%s│%s %s%s%-*s %s%s│%s\n" "$PURPLE" "$BG" "$yes_str" "$no_str" "$((WIDTH-30))" "" "$RESET$BG" "$PURPLE" "$FG"
         draw_box_bottom "$WIDTH"
         
-        read -rsn1 key
-        if [[ $key == "" ]]; then
+        key=$(get_key)
+        if [ "$key" = "" ] || [ "$key" = "$(printf '\r')" ] || [ "$key" = "$(printf '\n')" ]; then
             break
-        elif [[ $key == $'\x1b' ]]; then
-            read -rsn2 key
-            case $key in
-                '[C'|'[D')
-                    sel=$((1 - sel))
-                    ;;
-            esac
+        elif [ "$key" = "ESC[C" ] || [ "$key" = "ESC[D" ]; then
+            sel=$((1 - sel))
         fi
     done
     return $sel
@@ -381,15 +388,15 @@ uninstall_llama() {
 }
 
 show_action_menu() {
-    local action="$1"
-    local title="$2"
-    local checklist_msg="$3"
-    local default_on="$4"
-    local confirm_msg="$5"
+    action="$1"
+    title="$2"
+    checklist_msg="$3"
+    default_on="$4"
+    confirm_msg="$5"
 
-    local status_core="$default_on"
-    local status_jvim="$default_on"
-    local status_llama="$default_on"
+    status_core="$default_on"
+    status_jvim="$default_on"
+    status_llama="$default_on"
 
     if [ "$action" = "install" ]; then
         check_jenova_core && status_core="off"
@@ -402,42 +409,43 @@ show_action_menu() {
         "jvim" "Editor / IDE (bundled)" "$status_jvim" \
         "llama.cpp" "Inference engine" "$status_llama"
         
-    if [ "${CHECKLIST_CHOICES[0]}" = "CANCEL" ] || [ ${#CHECKLIST_CHOICES[@]} -eq 0 ]; then
+    eval "first_choice=\$CHECKLIST_CHOICES_0"
+    if [ "$first_choice" = "CANCEL" ] || [ "$CHECKLIST_COUNT" -eq 0 ]; then
         return
     fi
 
     printf "%s" "$RESET$CLEAR"
-    for item in "${CHECKLIST_CHOICES[@]}"; do
-        local msg
-        if [ -n "$confirm_msg" ]; then
-            msg=$(printf "$confirm_msg" "$item")
-        else
-            msg="Are you sure you want to $action $item?"
-        fi
+    
+    i=0
+    while [ $i -lt $CHECKLIST_COUNT ]; do
+        eval "item=\$CHECKLIST_CHOICES_$i"
         
-        local defaultno="0"
+        msg="Are you sure you want to $action $item?"
+        [ -n "$confirm_msg" ] && msg="$(printf "$confirm_msg" "$item")"
+        
+        defaultno="0"
         [ "$action" = "uninstall" ] && defaultno="1"
 
         if confirm_prompt "$msg" "$defaultno"; then
             exit_alt_screen
             printf "%s\n" "$RESET$CLEAR"
-            _cap_action=$(echo "$action" | awk '{print toupper(substr($0,1,1))tolower(substr($0,2))}')
-            echo "${_cap_action}ing $item..."
+            echo "Processing $action on $item..."
 
-            local suffix
+            suffix="unknown"
             case "$item" in
                 "Jenova_Core") suffix="jenova_core" ;;
                 "jvim")        suffix="jvim" ;;
                 "llama.cpp")   suffix="llama" ;;
-                *)             suffix="unknown" ;;
             esac
 
-            if [ "$suffix" != "unknown" ] && "${action}_${suffix}"; then
-                printf "\n%sFinished %sing %s. Press any key to continue.%s" "$GREEN" "$action" "$item" "$RESET"
-            else
-                printf "\n%sFailed to %s %s. Press any key to continue.%s" "$RED" "$action" "$item" "$RESET"
+            if [ "$suffix" != "unknown" ]; then
+                if "${action}_${suffix}"; then
+                    printf "\n%sFinished %s %s. Press any key to continue.%s" "$GREEN" "$action" "$item" "$RESET"
+                else
+                    printf "\n%sFailed to %s %s. Press any key to continue.%s" "$RED" "$action" "$item" "$RESET"
+                fi
             fi
-            read -n 1 -s -r
+            get_key >/dev/null
             enter_alt_screen
         else
             exit_alt_screen
@@ -445,7 +453,38 @@ show_action_menu() {
             sleep 1
             enter_alt_screen
         fi
+        
+        i=$((i + 1))
     done
+}
+
+run_system_prep() {
+    exit_alt_screen
+    printf "%s%sRunning System Preparation...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
+    
+    echo "1) Install Dependencies"
+    if "$JENOVA_ROOT/scripts/install-dependencies.sh"; then
+        echo "Dependencies installed."
+    else
+        echo "Dependency installation had warnings/errors."
+    fi
+    
+    echo ""
+    echo "2) Pre-flight Checks"
+    "$JENOVA_ROOT/scripts/preflight-check.sh"
+    
+    printf "\nPress any key to continue..."
+    get_key >/dev/null
+    enter_alt_screen
+}
+
+run_model_downloader() {
+    exit_alt_screen
+    printf "%s%sRunning Model Downloader...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
+    "$JENOVA_ROOT/scripts/model_dl.sh"
+    printf "\nPress any key to continue..."
+    get_key >/dev/null
+    enter_alt_screen
 }
 
 show_install_menu() {
@@ -464,16 +503,20 @@ show_main_menu() {
     enter_alt_screen
     while true; do
         interactive_menu "Jenova Manager" \
-            "Install components" \
-            "Update components" \
-            "Uninstall components" \
+            "System Preparation (Dependencies & Pre-flight)" \
+            "Install Components" \
+            "Update Components" \
+            "Uninstall Components" \
+            "Download AI Models" \
             "Exit"
             
         case "$MENU_CHOICE" in
-            0) show_install_menu ;;
-            1) show_update_menu ;;
-            2) show_uninstall_menu ;;
-            3) cleanup; exit 0 ;;
+            0) run_system_prep ;;
+            1) show_install_menu ;;
+            2) show_update_menu ;;
+            3) show_uninstall_menu ;;
+            4) run_model_downloader ;;
+            5) cleanup; exit 0 ;;
         esac
     done
 }
