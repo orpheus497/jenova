@@ -32,8 +32,18 @@ async function main() {
         console.log('✓ Inlined favicon.svg');
     }
 
+    const ERROR_HANDLER = `
+<script>
+  window.addEventListener('error', function(e) {
+    document.body.innerHTML += '<div style="color:red; background:white; position:fixed; top:0; left:0; z-index:9999; padding:20px; font-family:monospace;">' + e.message + '<br>' + e.filename + ':' + e.lineno + '</div>';
+  });
+  window.addEventListener('unhandledrejection', function(e) {
+    document.body.innerHTML += '<div style="color:red; background:white; position:fixed; top:0; left:0; z-index:9999; padding:20px; font-family:monospace;">Unhandled Promise: ' + e.reason + '</div>';
+  });
+</script>
+`;
     content = content.replace(/\r/g, '');
-    content = GUIDE_FOR_FRONTEND + '\n' + content;
+    content = GUIDE_FOR_FRONTEND + '\n' + ERROR_HANDLER + '\n' + content;
 
     // Find and copy bundle files
     const immutableDir = join(PUBLIC_DIR, '_app/immutable');

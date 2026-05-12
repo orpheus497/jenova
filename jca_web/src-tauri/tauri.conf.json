@@ -13,6 +13,7 @@
     "windows": [
       {
         "title": "Jenova Workstation",
+        "url": "index.html",
         "width": 800,
         "height": 600,
         "resizable": true,

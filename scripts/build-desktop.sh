@@ -33,11 +33,14 @@ else
 fi
 
 echo "🏗️ Building Jenova Desktop Application (Tauri)..."
+mv .gitignore .gitignore.bak
+trap "mv .gitignore.bak .gitignore" EXIT
 
 npm run tauri build
 
 echo "✅ Build complete!"
 echo "Copying binary to bin/jenova-desktop..."
+rm -f "../bin/jenova-desktop"
 if [ -f "src-tauri/target/release/jenova" ]; then
     cp "src-tauri/target/release/jenova" "../bin/jenova-desktop"
 elif [ -f "src-tauri/target/release/app" ]; then
