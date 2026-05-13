@@ -97,17 +97,21 @@ char *get_jenova_root(void) {
 /* ---------------------------------------------------------------------------
  * setup_environment: Prepend bin/ directories to PATH and export JENOVA_ROOT.
  * --------------------------------------------------------------------------- */
+/* ---------------------------------------------------------------------------
+ * setup_environment: Prepend bin/ directories to PATH and export JENOVA_ROOT.
+ * --------------------------------------------------------------------------- */
 void setup_environment(void) {
     const char *root = get_jenova_root();
     const char *home = getenv("HOME");
     if (!home) home = "";
     const char *old_path = getenv("PATH");
 
-    char new_path[8192];
-    snprintf(new_path, sizeof(new_path),
-             "%s/bin:%s/.local/bin:/usr/local/bin:/usr/bin:/bin:%s",
-             root, home, old_path ? old_path : "");
-    setenv("PATH", new_path, 1);
+    char *new_path = NULL;
+    if (asprintf(&new_path, "%s/bin:%s/.local/bin:/usr/local/bin:/usr/bin:/bin:%s",
+                 root, home, old_path ? old_path : "") != -1) {
+        setenv("PATH", new_path, 1);
+        free(new_path);
+    }
     setenv("JENOVA_ROOT", root, 1);
 }
 
@@ -126,8 +130,16 @@ static int l_sys_exec_async(lua_State *Ls) {
 
 static int l_sys_exec_sync(lua_State *Ls) {
     const char *cmd = luaL_checkstring(Ls, 1);
-    int ret = system(cmd);
-    lua_pushinteger(Ls, ret);
+    gint exit_status = 0;
+    GError *error = NULL;
+
+    if (g_spawn_command_line_sync(cmd, NULL, NULL, &exit_status, &error)) {
+        lua_pushinteger(Ls, exit_status);
+    } else {
+        fprintf(stderr, "jenova-ui: sync exec error: %s\n", error->message);
+        g_error_free(error);
+        lua_pushinteger(Ls, -1);
+    }
     return 1;
 }
 
@@ -162,12 +174,14 @@ void init_lua(void) {
     lua_getglobal(L, "package");
     lua_getfield(L, -1, "path");
     const char *cur_path = lua_tostring(L, -1);
-    char new_path[8192];
-    snprintf(new_path, sizeof(new_path), "%s;%s/lib/?.lua",
-             cur_path ? cur_path : "", get_jenova_root());
-    lua_pop(L, 1);           /* pop old path string */
-    lua_pushstring(L, new_path);
-    lua_setfield(L, -2, "path");
+    char *new_path = NULL;
+    if (asprintf(&new_path, "%s;%s/lib/?.lua",
+                 cur_path ? cur_path : "", get_jenova_root()) != -1) {
+        lua_pop(L, 1);           /* pop old path string */
+        lua_pushstring(L, new_path);
+        lua_setfield(L, -2, "path");
+        free(new_path);
+    }
     lua_pop(L, 1);           /* pop 'package' table */
 
     /* Load lib/ui.lua */
@@ -297,8 +311,14 @@ static gboolean update_tray_status(gpointer user_data G_GNUC_UNUSED) {
 static void run_tray(int argc, char *argv[]) {
     /* Single-instance lock (per-user) */
     char lock_path[PATH_MAX];
-    snprintf(lock_path, sizeof(lock_path), "/tmp/jenova-ui-%d.lock",
-             (int)getuid());
+    const char *root = get_jenova_root();
+    snprintf(lock_path, sizeof(lock_path), "%s/.jenova/ui.lock", root);
+    
+    /* Ensure .jenova directory exists */
+    char dir_path[PATH_MAX];
+    snprintf(dir_path, sizeof(dir_path), "%s/.jenova", root);
+    g_mkdir_with_parents(dir_path, 0700);
+
     int lock_fd = open(lock_path, O_CREAT | O_RDWR, 0600);
     if (lock_fd == -1) {
         fprintf(stderr, "jenova-ui: cannot open lockfile %s: %s\n",

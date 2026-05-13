@@ -131,26 +131,62 @@ draw_box_bottom() {
     printf "╯%s\n" "$RESET"
 }
 
-get_key() {
-    old_tty=$(stty -g)
+_RAW_MODE=0
+_OLD_TTY=""
+
+setup_tty() {
+    _OLD_TTY=$(stty -g)
     stty -icanon -echo min 1 time 0
-    c1=$(dd bs=1 count=1 2>/dev/null)
-    case "$c1" in
-        "$(printf '\033')")
-            stty min 0 time 1
-            c2=$(dd bs=1 count=1 2>/dev/null)
-            if [ "$c2" = "[" ] || [ "$c2" = "O" ]; then
-                c3=$(dd bs=1 count=1 2>/dev/null)
-                printf "ESC%s%s\n" "$c2" "$c3"
-            else
-                printf "ESC\n"
-            fi
-            ;;
-        *)
-            printf "%s\n" "$c1"
-            ;;
-    esac
-    stty "$old_tty"
+    _RAW_MODE=1
+}
+
+restore_tty() {
+    if [ "$_RAW_MODE" = "1" ]; then
+        stty "$_OLD_TTY"
+        _RAW_MODE=0
+    fi
+}
+
+get_key() {
+    if [ "$_RAW_MODE" = "1" ]; then
+        c1=$(dd bs=1 count=1 2>/dev/null)
+        case "$c1" in
+            "$(printf '\033')")
+                stty min 0 time 1
+                c2=$(dd bs=1 count=1 2>/dev/null)
+                if [ "$c2" = "[" ] || [ "$c2" = "O" ]; then
+                    c3=$(dd bs=1 count=1 2>/dev/null)
+                    printf "ESC%s%s\n" "$c2" "$c3"
+                else
+                    printf "ESC\n"
+                fi
+                stty min 1 time 0
+                ;;
+            *)
+                printf "%s\n" "$c1"
+                ;;
+        esac
+    else
+        old_tty=$(stty -g)
+        stty -icanon -echo min 1 time 0
+        c1=$(dd bs=1 count=1 2>/dev/null)
+        case "$c1" in
+            "$(printf '\033')")
+                stty min 0 time 1
+                c2=$(dd bs=1 count=1 2>/dev/null)
+                if [ "$c2" = "[" ] || [ "$c2" = "O" ]; then
+                    c3=$(dd bs=1 count=1 2>/dev/null)
+                    printf "ESC%s%s\n" "$c2" "$c3"
+                else
+                    printf "ESC\n"
+                fi
+                ;;
+            *)
+                printf "%s\n" "$c1"
+                ;;
+        esac
+        stty "$old_tty"
+    fi
 }
 
 interactive_menu() {
@@ -166,6 +202,7 @@ interactive_menu() {
     selected=0
     
     hide_cursor
+    setup_tty
     while true; do
         WIDTH=$(get_width)
         printf "%s\n" "$CLEAR"
@@ -195,6 +232,7 @@ interactive_menu() {
             if [ $selected -ge $count ]; then selected=0; fi
         fi
     done
+    restore_tty
     MENU_CHOICE=$selected
 }
 
@@ -215,6 +253,7 @@ interactive_checklist() {
     selected=0
     
     hide_cursor
+    setup_tty
     while true; do
         WIDTH=$(get_width)
         printf "%s\n" "$CLEAR"
@@ -298,6 +337,7 @@ interactive_checklist() {
             if [ $selected -gt $((count+1)) ]; then selected=0; fi
         fi
     done
+    restore_tty
 }
 
 confirm_prompt() {
@@ -308,6 +348,7 @@ confirm_prompt() {
     [ "$defaultno" = "1" ] && sel=1
     
     hide_cursor
+    setup_tty
     while true; do
         WIDTH=$(get_width)
         printf "%s\n" "$CLEAR"
@@ -336,6 +377,7 @@ confirm_prompt() {
             sel=$((1 - sel))
         fi
     done
+    restore_tty
     return $sel
 }
 

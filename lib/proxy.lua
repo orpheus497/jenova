@@ -458,7 +458,7 @@ local function proxy_connection(client_fd, conn_fds)
         local current = path:sub(1, 1) == "/" and "/" or ""
         for i, segment in ipairs(segments) do
             current = current .. segment
-            local res = ffi.C.mkdir(current, 511) -- 0777
+            local res = ffi.C.mkdir(current, 493) -- 0755
             if res ~= 0 then
                 local err = ffi.errno()
                 -- EEXIST (17 on many platforms) is fine, others might be worth logging

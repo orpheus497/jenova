@@ -181,7 +181,7 @@ echo ""
 
 # Check disk space
 REQUIRED_SPACE=20  # GB
-FREE_SPACE=$(df -kP "$JENOVA_ROOT" | awk 'NR==2 {print int($4 / 1048576)}')
+FREE_SPACE=$(df -kP "$JENOVA_ROOT" | tail -1 | awk '{print int($4 / 1048576)}')
 
 if [ "${FREE_SPACE:-0}" -lt "$REQUIRED_SPACE" ]; then
     print_warning "Low disk space: ${FREE_SPACE}GB free (recommended: ${REQUIRED_SPACE}GB+)"
