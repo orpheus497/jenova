@@ -10,7 +10,7 @@
 set -e
 
 # Path hardening for headless/desktop execution
-export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin${PATH:+:$PATH}"
+export PATH="$HOME/.local/bin:$JENOVA_ROOT/bin:$PATH"
 
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 

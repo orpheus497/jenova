@@ -263,8 +263,8 @@ is_installed() {
 
 # Install a package using the detected package manager
 install_package() {
-    _ip_pkg="$1"
-    _ip_mgr="$JENOVA_PKG_MGR"
+    local _ip_pkg="$1"
+    local _ip_mgr="$JENOVA_PKG_MGR"
 
     if [ "$DRY_RUN" = "1" ]; then
         echo "Would install: $_ip_pkg (via $_ip_mgr)"
@@ -333,8 +333,8 @@ install_package() {
 
 # Handle special cases (like cargo installs)
 install_special() {
-    _is_bin="$1"
-    _is_pkg="$2"
+    local _is_bin="$1"
+    local _is_pkg="$2"
 
     case "$_is_bin" in
         stylua)

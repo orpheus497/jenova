@@ -311,12 +311,14 @@ static gboolean update_tray_status(gpointer user_data G_GNUC_UNUSED) {
 static void run_tray(int argc, char *argv[]) {
     /* Single-instance lock (per-user) */
     char lock_path[PATH_MAX];
-    const char *root = get_jenova_root();
-    snprintf(lock_path, sizeof(lock_path), "%s/.jenova/ui.lock", root);
+    char dir_path[PATH_MAX];
+    const char *home = getenv("HOME");
+    if (!home) home = "/tmp";
+    
+    snprintf(dir_path, sizeof(dir_path), "%s/.jenova", home);
+    snprintf(lock_path, sizeof(lock_path), "%s/ui.lock", dir_path);
     
     /* Ensure .jenova directory exists */
-    char dir_path[PATH_MAX];
-    snprintf(dir_path, sizeof(dir_path), "%s/.jenova", root);
     g_mkdir_with_parents(dir_path, 0700);
 
     int lock_fd = open(lock_path, O_CREAT | O_RDWR, 0600);
