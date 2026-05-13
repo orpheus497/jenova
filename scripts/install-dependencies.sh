@@ -263,52 +263,66 @@ is_installed() {
 
 # Install a package using the detected package manager
 install_package() {
-    local pkg="$1"
-    local manager="$JENOVA_PKG_MGR"
+    _ip_pkg="$1"
+    _ip_mgr="$JENOVA_PKG_MGR"
 
     if [ "$DRY_RUN" = "1" ]; then
-        echo "Would install: $pkg (via $manager)"
+        echo "Would install: $_ip_pkg (via $_ip_mgr)"
         return 0
     fi
 
-    case "$manager" in
+    case "$_ip_mgr" in
         pkg)
             if [ "$VERBOSE" = "1" ]; then
-                sudo pkg install -y "$pkg"
+                sudo pkg install -y "$_ip_pkg"
             else
-                sudo pkg install -y "$pkg" >/dev/null 2>&1
+                sudo pkg install -y "$_ip_pkg" >/dev/null 2>&1
             fi
             ;;
         pacman)
-            local pacman_cmd="sudo pacman"
+            _ip_pacman="sudo pacman"
             if command -v yay >/dev/null 2>&1; then
-                pacman_cmd="yay"
+                _ip_pacman="yay"
             fi
             if [ "$VERBOSE" = "1" ]; then
-                $pacman_cmd -S --noconfirm "$pkg"
+                $_ip_pacman -S --noconfirm "$_ip_pkg"
             else
-                $pacman_cmd -S --noconfirm "$pkg" >/dev/null 2>&1
+                $_ip_pacman -S --noconfirm "$_ip_pkg" >/dev/null 2>&1
             fi
             ;;
         apt)
             if [ "$VERBOSE" = "1" ]; then
-                sudo apt-get update && sudo apt-get install -y "$pkg"
+                sudo apt-get update && sudo apt-get install -y "$_ip_pkg"
             else
-                sudo apt-get update >/dev/null 2>&1 && sudo apt-get install -y "$pkg" >/dev/null 2>&1
+                sudo apt-get update >/dev/null 2>&1 && sudo apt-get install -y "$_ip_pkg" >/dev/null 2>&1
             fi
             ;;
         dnf)
             if [ "$VERBOSE" = "1" ]; then
-                sudo dnf install -y "$pkg"
+                sudo dnf install -y "$_ip_pkg"
             else
-                sudo dnf install -y "$pkg" >/dev/null 2>&1
+                sudo dnf install -y "$_ip_pkg" >/dev/null 2>&1
+            fi
+            ;;
+        zypper)
+            if [ "$VERBOSE" = "1" ]; then
+                sudo zypper install -y "$_ip_pkg"
+            else
+                sudo zypper install -y "$_ip_pkg" >/dev/null 2>&1
+            fi
+            ;;
+        xbps)
+            if [ "$VERBOSE" = "1" ]; then
+                sudo xbps-install -y "$_ip_pkg"
+            else
+                sudo xbps-install -y "$_ip_pkg" >/dev/null 2>&1
             fi
             ;;
         brew)
             if [ "$VERBOSE" = "1" ]; then
-                brew install "$pkg"
+                brew install "$_ip_pkg"
             else
-                brew install "$pkg" >/dev/null 2>&1
+                brew install "$_ip_pkg" >/dev/null 2>&1
             fi
             ;;
         *)
@@ -319,20 +333,24 @@ install_package() {
 
 # Handle special cases (like cargo installs)
 install_special() {
-    local binary="$1"
-    local pkg="$2"
+    _is_bin="$1"
+    _is_pkg="$2"
 
-    case "$binary" in
+    case "$_is_bin" in
         stylua)
             if [ "$JENOVA_PKG_MGR" = "apt" ] || [ "$JENOVA_PKG_MGR" = "dnf" ]; then
                 if [ "$DRY_RUN" = "1" ]; then
-                    echo "Would install: $binary (via cargo install $pkg)"
+                    echo "Would install: $_is_bin (via cargo install $_is_pkg)"
                     return 0
                 fi
-                if [ "$VERBOSE" = "1" ]; then
-                    cargo install "$pkg"
+                if command -v cargo >/dev/null 2>&1; then
+                    if [ "$VERBOSE" = "1" ]; then
+                        cargo install "$_is_pkg"
+                    else
+                        cargo install "$_is_pkg" >/dev/null 2>&1
+                    fi
                 else
-                    cargo install "$pkg" >/dev/null 2>&1
+                    return 1
                 fi
             fi
             ;;

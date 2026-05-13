@@ -7,15 +7,16 @@ Jenova is a local-first, hardware-aware AI environment designed for consumer lap
 ### 1. Jenova Cognitive Architecture (Core Backend)
 The absolute foundation of the system. Written in C, Lua, and Bash, the `jenova-ca` daemon handles hardware-aware model loading (automatically adapting to single-GPU, dual-GPU, or CPU-only constraints via Vulkan). It daemonizes the `llama-server` inference engine and the Lua-based intelligence proxy, establishing the local environment.
 
-### 2. Jenova Workstation (Desktop App)
-A stunning, Kanagawa-themed native Linux desktop application powered by **Tauri (Rust)** and **SvelteKit**. It unifies your fragmented web interfaces and terminal managers into a single, high-performance wiysdow.
-- Features a **System Manager** dashboard for real-time telemetry, memory usage, and backend controls.
-- Serves as the primary graphical gateway to your AI workspaces.
+### 2. Jenova Desktop Manager (`jenova-ui`)
+A lightweight, Kanagawa-themed native desktop application written in **C** with **GTK3** and **Lua** orchestration. It provides both a system tray icon and an ncurses-based TUI for managing the Jenova backend lifecycle.
+- Features a **System Tray Icon** with real-time health polling and one-click server controls.
+- Includes an **ncurses TUI** for terminal-based management of all Jenova components.
+- Supports **FreeBSD**, Linux, and macOS.
 
 ### 3. J.C.A. Tray Icon & Server Manager
-A persistent, intelligent background controller built directly into your OS taskbar. 
-- **Real-Time Polling**: A background Rust thread actively polls the server's health every 3 seconds. The tray icon displays in **Full-Color** when active and automatically degrades to **Grayscale** when inactive.
-- **Native Context Menu**: Right-click to `Start Server`, `Stop Server`, `Reset Server`, or seamlessly toggle `Switch LAN/LOCAL` modes on the fly.
+A persistent, intelligent background controller built directly into your OS taskbar.
+- **Real-Time Polling**: A GLib timer actively polls the server's health every 3 seconds via Lua. The tray icon displays in **Full-Color** (`jca.jpg`) when active on port 8080 and automatically degrades to **Grayscale** (`jca_grey.jpg`) when inactive.
+- **Native Context Menu**: Right-click to `Start Server`, `Stop Server`, `Restart Server`, or open the Web UI.
 - **Minimize-to-Tray**: The backend engine runs safely in the background even if you close the Workstation window.
 
 ### 4. Jenova Workspaces (WebUI)
