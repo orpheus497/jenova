@@ -20,13 +20,13 @@ update_loader_conf() {
     _key="$1"
     _val="$2"
     if ! grep -q "^${_key}=${_val}" "$LOADER_CONF" 2>/dev/null; then
-        _tmp=$(mktemp)
+        _tmp=$(mktemp "${LOADER_CONF}.XXXXXX")
         if [ -f "$LOADER_CONF" ]; then
             grep -v "^${_key}=" "$LOADER_CONF" > "$_tmp" || true
         fi
         echo "${_key}=${_val}" >> "$_tmp"
-        cat "$_tmp" > "$LOADER_CONF"
-        rm -f "$_tmp"
+        chmod 644 "$_tmp"
+        mv "$_tmp" "$LOADER_CONF"
     fi
 }
 

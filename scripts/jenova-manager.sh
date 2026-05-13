@@ -159,7 +159,7 @@ interactive_menu() {
     
     count=0
     for opt in "$@"; do
-        eval "menu_opt_$count=\"\$opt\""
+        eval "menu_opt_$count='$(printf '%s' "$opt" | sed "s/'/'\\\\''/g")'"
         count=$((count + 1))
     done
     
@@ -174,7 +174,7 @@ interactive_menu() {
         
         i=0
         while [ $i -lt $count ]; do
-            eval "opt=\$menu_opt_$i"
+            eval "opt=\"\$menu_opt_$i\""
             if [ $i -eq $selected ]; then
                 printf "%s│%s  > %-*s %s%s│%s\n" "$PURPLE" "$SEL_BG$FG" "$((WIDTH-7))" "$opt" "$RESET$BG" "$PURPLE" "$FG"
             else
@@ -205,9 +205,9 @@ interactive_checklist() {
     
     count=0
     while [ $# -gt 0 ]; do
-        eval "check_id_$count=\"\$1\""
-        eval "check_lbl_$count=\"\$2\""
-        eval "check_st_$count=\"\$3\""
+        eval "check_id_$count='$(printf '%s' "$1" | sed "s/'/'\\\\''/g")'"
+        eval "check_lbl_$count='$(printf '%s' "$2" | sed "s/'/'\\\\''/g")'"
+        eval "check_st_$count='$(printf '%s' "$3" | sed "s/'/'\\\\''/g")'"
         count=$((count + 1))
         shift 3
     done
@@ -225,8 +225,8 @@ interactive_checklist() {
         
         i=0
         while [ $i -lt $count ]; do
-            eval "lbl=\$check_lbl_$i"
-            eval "st=\$check_st_$i"
+            eval "lbl=\"\$check_lbl_$i\""
+            eval "st=\"\$check_st_$i\""
             
             mark=" "
             [ "$st" = "on" ] && mark="X"
@@ -257,7 +257,7 @@ interactive_checklist() {
         key=$(get_key)
         if [ "$key" = " " ]; then
             if [ $selected -lt $count ]; then
-                eval "st=\$check_st_$selected"
+                eval "st=\"\$check_st_$selected\""
                 if [ "$st" = "on" ]; then
                     eval "check_st_$selected=off"
                 else
@@ -266,7 +266,7 @@ interactive_checklist() {
             fi
         elif [ "$key" = "" ] || [ "$key" = "$(printf '\r')" ] || [ "$key" = "$(printf '\n')" ]; then
             if [ $selected -lt $count ]; then
-                eval "st=\$check_st_$selected"
+                eval "st=\"\$check_st_$selected\""
                 if [ "$st" = "on" ]; then
                     eval "check_st_$selected=off"
                 else
@@ -276,10 +276,10 @@ interactive_checklist() {
                 CHECKLIST_COUNT=0
                 i=0
                 while [ $i -lt $count ]; do
-                    eval "st=\$check_st_$i"
+                    eval "st=\"\$check_st_$i\""
                     if [ "$st" = "on" ]; then
-                        eval "id=\$check_id_$i"
-                        eval "CHECKLIST_CHOICES_$CHECKLIST_COUNT=\"\$id\""
+                        eval "id=\"\$check_id_$i\""
+                        eval "CHECKLIST_CHOICES_$CHECKLIST_COUNT='$(printf '%s' "$id" | sed "s/'/'\\\\''/g")'"
                         CHECKLIST_COUNT=$((CHECKLIST_COUNT + 1))
                     fi
                     i=$((i + 1))
@@ -456,7 +456,7 @@ show_action_menu() {
         "jenova_ui" "Desktop Manager (tray + TUI)" "$status_jenova_ui" \
         "mcsh" "Modern C Shell" "$status_mcsh"
         
-    eval "first_choice=\$CHECKLIST_CHOICES_0"
+    eval "first_choice=\"\$CHECKLIST_CHOICES_0\""
     if [ "$first_choice" = "CANCEL" ] || [ "$CHECKLIST_COUNT" -eq 0 ]; then
         return
     fi
@@ -465,7 +465,7 @@ show_action_menu() {
     
     i=0
     while [ $i -lt $CHECKLIST_COUNT ]; do
-        eval "item=\$CHECKLIST_CHOICES_$i"
+        eval "item=\"\$CHECKLIST_CHOICES_$i\""
         
         # Choice for Build vs Install if action is 'install'
         mode="build"
