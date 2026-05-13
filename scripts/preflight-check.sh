@@ -14,7 +14,9 @@
 #   1 = critical failures found (do not proceed)
 #   2 = warnings found (proceed with caution)
 
-JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
+_REAL_SCRIPT="$(realpath "$0" 2>/dev/null || echo "$0")"
+_SCRIPT_DIR="$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)"
+JENOVA_ROOT="$(cd "$_SCRIPT_DIR/.." && pwd)"
 
 # Shared OS/hardware detection
 . "$JENOVA_ROOT/lib/detect-env.sh"
@@ -41,9 +43,14 @@ done
 
 # Colours
 if [ -t 1 ]; then
-    _G=$(printf '\033[0;32m'); _Y=$(printf '\033[0;33m'); _R=$(printf '\033[0;31m'); _B=$(printf '\033[1;34m'); _N=$(printf '\033[0m')
+    _G=$(printf '\033[38;2;118;148;106m')
+    _Y=$(printf '\033[38;2;192;163;110m')
+    _R=$(printf '\033[38;2;195;64;67m')
+    _B=$(printf '\033[38;2;126;156;216m')
+    _P=$(printf '\033[38;2;120;81;169m')
+    _N=$(printf '\033[0m')
 else
-    _G=""; _Y=""; _R=""; _B=""; _N=""
+    _G=""; _Y=""; _R=""; _B=""; _P=""; _N=""
 fi
 
 ok()   { printf "${_G}✓${_N}  %s\n" "$1"; }
@@ -52,9 +59,9 @@ fail() { printf "${_R}✗${_N}  %s\n" "$1"; }
 info() { printf "${_B}ℹ${_N}  %s\n" "$1"; }
 
 echo ""
-printf "${_B}╔══════════════════════════════════════════════════════╗${_N}\n"
-printf "${_B}║  Jenova — Pre-installation Checks                    ║${_N}\n"
-printf "${_B}╚══════════════════════════════════════════════════════╝${_N}\n"
+printf "${_P}╔══════════════════════════════════════════════════════╗${_N}\n"
+printf "${_P}║  Jenova — Pre-installation Checks                    ║${_N}\n"
+printf "${_P}╚══════════════════════════════════════════════════════╝${_N}\n"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -138,6 +145,7 @@ _check_bin() {
 _check_bin "git"      "git" 0
 _check_bin "cmake"    "cmake" 0
 _check_bin "luajit"   "luajit" 0
+_check_bin "realpath" "coreutils" 0
 _check_bin "curl"     "curl" 1
 _check_bin "gmake"    "gmake" 1
 
@@ -226,7 +234,7 @@ fi
 # 10. Summary
 # ---------------------------------------------------------------------------
 echo ""
-printf "${_B}────────────────────────────────────────────────────────${_N}\n"
+printf "${_P}────────────────────────────────────────────────────────${_N}\n"
 
 if [ "$ERRORS" -eq 0 ] && [ "$WARNINGS" -eq 0 ]; then
     printf "${_G}✓ All checks passed!${_N}\n"

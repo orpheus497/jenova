@@ -1,100 +1,168 @@
 # <img src="png/jenova.png" width="48" height="48" valign="middle"> Jenova Cognitive Architecture
 
-Jenova is a local-first AI coding environment designed for consumer and professional laptops. It bundles an inference
-backend, a purpose-built editor (`jvim`), a context-aware AI agent embedded
-directly into the editor, and a modern C-shell (`mcsh`) into one unified terminal
-IDE that runs entirely on your machine.
+Jenova is a local-first, hardware-aware AI environment designed for consumer laptops, professional workstations, and headless servers. It integrates an inference backend, a purpose-built terminal IDE (`jvim`), a browser-based Workspace UI, a native Desktop Manager, and an intelligent OS-level System Tray into one cohesive, autonomous ecosystem that runs entirely on your hardware.
 
-## Core Components
+## 🌌 The Ecosystem
 
-The **Jenova Cognitive Architecture** contains the following integrated subsystems:
+### Core Backend (`jenova-ca`)
+The foundation of the system. Written in C, Lua, and POSIX shell, the `jenova-ca` daemon handles hardware-aware model loading (automatically adapting to single-GPU, dual-GPU, or CPU-only constraints via Vulkan). It daemonizes the `llama-server` inference engine and the Lua-based intelligence proxy.
 
-- **Jenova Workspace (WebUI)** — A browser-based workstation offering persistent workspaces and a general chat interface.
-- **J Vim (Jenova Vim)** — The Jenova-specific fork of NeoVim. It is a comprehensive IDE (*Interactive Director Environment*) that allows agentic work and autonomous actions through the LSP and plugin extensibility of the jvim architecture.
-- **Server, Shell, and OpenAI API** — The core daemon exposes a standard OpenAI-compatible API, allowing external connections to things like the Leo browser or other custom API integrations. It also bundles `mcsh`, a modernized C-shell for the integrated terminal.
-- **Remote Connections** — The architecture is designed for local network accessibility, allowing users to access their browser-based workspaces seamlessly from their mobile phones or tablets while away from their PC but still on the LAN.
-- **Local Inference** — A bundled `llama.cpp` (`llama-server`) with Vulkan offload driving the agent models, embedding layers, and optional speculative drafters.
+**Ports:**
+- `8080` — Intelligence Proxy (WebUI, RAG, web search, filesystem API)
+- `8081` — llama-server (OpenAI-compatible API for external tools)
+- `8082` — Embedding server (semantic search, RAG indexing)
 
-## Quick Start
+### Desktop Manager (`jenova-ui`)
+A lightweight, Kanagawa-themed native application written in **C** with **GTK3**, **ncurses**, and **Lua** orchestration. Provides two interfaces:
+- **System Tray Icon** — Real-time health polling every 3 seconds. Full-color when active, grayscale when inactive. Right-click context menu for server control and LAN toggle.
+- **ncurses TUI** — Terminal-based management with component-level control, status display, and LAN/LOCAL mode switching.
 
-### 🚀 One-Command Installation (Recommended)
+### Jenova Workspaces (WebUI)
+An elegant, browser-based chat and workspace UI built with SvelteKit. Served directly by the intelligence proxy on port 8080 for seamless native-feel access. Workspaces are tied to your local filesystem, ensuring seamless transition between graphical chat and terminal editing.
+
+### Jenova Vim (`jvim`)
+The Jenova-specific fork of NeoVim. A comprehensive *Interactive Director Environment* (IDE) with deep agentic assistance, FIM inline completions, inline code mathematical grounding, and autonomous LSP-driven actions right inside your terminal.
+
+### Modern C Shell (`mcsh`)
+A heavily modernized and deeply integrated C-shell environment tailored to interface with the Jenova ecosystem.
+
+### Remote Access (LAN Mode)
+Toggle `LAN Mode` via the System Tray or TUI to bind the backend to `0.0.0.0`. Access your Jenova Workspaces from any device on your local network — smartphones, tablets, or other laptops.
+
+---
+
+## 🚀 Quick Start
+
 ```sh
 git clone https://github.com/orpheus497/jenova
 cd jenova
 
-# Intelligent installation for all platforms
+# Interactive TUI — choose what to install, update, or configure
 ./install-jenova.sh
-```
 
-This automatically detects your OS (FreeBSD, Linux, macOS), installs all dependencies,
-builds all components, deploys to your system, and downloads AI models.
-
-### 🔧 Manual Installation
-```sh
-# Pre-flight check with auto-fix
-./scripts/preflight-check.sh --fix
-
-# Build everything
-make
-
-# Deploy to system
-make install
-
-# Download models
-./scripts/model_dl.sh
-```
-
-### 🧪 Advanced Options
-```sh
-# Dry run (see what would be installed)
-./install-jenova.sh --dry-run
-
-# Minimal install (no Web UI, no models)
-./install-jenova.sh --minimal
-
-# Full install with everything
+# Or non-interactive full install:
 ./install-jenova.sh --full
 ```
 
-### 4. Setup & Launch
+The **Jenova Manager TUI** lets you independently install, update, or uninstall each component:
+- Jenova Core (backend scripts, proxy, daemon)
+- jvim (editor / IDE)
+- llama.cpp (inference engine)
+- WebUI (browser-based Workspaces)
+- jenova-ui (Desktop Manager — tray + TUI)
+- mcsh (Modern C Shell)
+
+### Manual Build
+
 ```sh
-# Start the Jenova Manager TUI (Status, LAN/LOCAL toggle, App Launching)
-jenova-tui
-
-# Or launch the integrated editor directly
-jenova
-
-# To access the Web UI directly
-jca
+make              # Build all components
+make install      # Deploy to system
+make preflight    # Check dependencies before building
+make verify       # Verify installation succeeded
 ```
 
-The Jenova backend automatically saves your chats and workspaces to the `~/Workspaces` directory. This ensures your data is device-specific, accessible via standard tools like `jvim`, and remains persistent even when using the Web UI over the LAN.
+Individual components: `make llama`, `make jvim`, `make mcsh`, `make web`, `make jenova-ui`.
 
-## Documentation
+---
 
-Detailed documentation lives in `/docs`:
+## 💻 Command Line Interface
 
-- **Installation**
-    - [Streamlined Installation](docs/installation/STREAMLINED.md) — Complete workflow guide
-    - [Installation Checklist](docs/installation/checklist.md) — Step-by-step checklist
-    - [FreeBSD](docs/installation/freebsd.md)
-    - [Linux](docs/installation/linux.md)
-    - [macOS](docs/installation/macos.md)
-    - [Dependencies](docs/installation/dependencies.md)
-- **Architecture**
-    - [Overview](docs/architecture/overview.md)
-    - [Cognitive Backend](docs/architecture/backend.md)
-    - [Unified Agent System](docs/architecture/agent.md)
-- **Usage**
-    - [jvim (interactive)](docs/usage/jvim.md)
-    - [Headless / CLI](docs/usage/cli.md)
+| Command | Description |
+|---------|-------------|
+| `jenova` | Launch the integrated jvim editor (auto-starts backend) |
+| `jvim [file]` | Launch jvim directly |
+| `jenova-ca start\|stop\|restart\|status` | Control the backend daemon |
+| `jenova-tui` | Kanagawa-themed terminal manager |
+| `jenova-ui` | Desktop Manager (tray icon + TUI) |
+| `jenova-term` | Dedicated terminal with mcsh |
 
-## Acknowledgements
+---
 
-Jenova is built on the foundations of [Neovim](https://neovim.io),
-[llama.cpp](https://github.com/ggml-org/llama.cpp),
-[tcsh](https://github.com/tcsh-org/tcsh), and
-[etcsh](https://github.com/Krush206/etcsh).
+## 🔄 Updating
 
-## License
-AGPL-3.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+```sh
+# Update everything (pulls repo, rebuilds changed components, resyncs plugins)
+scripts/update.sh
+
+# Or use the interactive manager:
+./install-jenova.sh
+
+# Selective updates via CLI flags:
+scripts/update.sh --skip-jvim          # Skip jvim rebuild
+scripts/update.sh --skip-rebuild       # Skip llama.cpp rebuild
+scripts/update.sh --upgrade-plugins    # Move plugins to latest (vs pinned)
+scripts/update.sh --link               # Re-establish config symlinks
+```
+
+---
+
+## 🤖 Advised Models
+
+Jenova is optimized for fast, accurate local reasoning. We recommend **Qwen-2.5** derivatives (such as `Qwen2.5-Coder-7B` or `Qwen2.5-3B`) quantized into GGUF format for optimal VRAM-to-parameter footprint ratios on consumer hardware.
+
+Rule of thumb: **~0.75 GB VRAM per 1B parameters** at Q4_K_M quantization.
+
+---
+
+## 📖 Documentation
+
+Detailed documentation lives in [`docs/`](docs/):
+
+| Topic | Path |
+|-------|------|
+| Architecture Overview | [docs/architecture/overview.md](docs/architecture/overview.md) |
+| System Cohesion | [docs/architecture/cohesion.md](docs/architecture/cohesion.md) |
+| Cognitive Backend | [docs/architecture/backend.md](docs/architecture/backend.md) |
+| Agent System | [docs/architecture/agent.md](docs/architecture/agent.md) |
+| jvim Usage | [docs/usage/jvim.md](docs/usage/jvim.md) |
+| CLI Reference | [docs/usage/cli.md](docs/usage/cli.md) |
+| Installation Guide | [docs/installation/STREAMLINED.md](docs/installation/STREAMLINED.md) |
+| FreeBSD Notes | [docs/installation/freebsd.md](docs/installation/freebsd.md) |
+| Linux Notes | [docs/installation/linux.md](docs/installation/linux.md) |
+| macOS Notes | [docs/installation/macos.md](docs/installation/macos.md) |
+| Hardware Profiles | [hardware-profiles/README.md](hardware-profiles/README.md) |
+
+---
+
+## 🏗️ Repository Structure
+
+```
+jenova/
+├── bin/                    # Entry-point scripts and built binaries
+├── docs/                   # Documentation
+├── etc/                    # Configuration (jenova.conf)
+├── hardware-profiles/      # OS/GPU-specific tuning profiles
+├── jca_web/                # WebUI source (SvelteKit)
+├── jenova-ui/              # Desktop Manager source (C/GTK3)
+├── jvim/                   # jvim editor source (Neovim fork)
+├── jvim-config/            # jvim configuration and plugins
+├── lib/                    # Core Lua modules (proxy, UI, FFI)
+├── llama.cpp/              # Inference engine (independent git repo)
+├── mcsh/                   # Modern C Shell source (independent git repo)
+├── models/                 # Model storage (gitignored — user data)
+├── png/                    # Icons and branding assets
+├── scripts/                # Build, install, update, and management scripts
+├── system/                 # OS-specific system definitions (mcsh)
+├── tests/                  # Test scripts
+└── var/                    # Runtime logs and cache (gitignored)
+```
+
+---
+
+## 🔒 Privacy & Security
+
+Jenova is a **local-first** system. Your data, models, and chat history never leave your hardware.
+
+- **Local Inference**: All AI processing happens on your local GPU/CPU.
+- **Zero Tracking**: No telemetry or data collection.
+- **Data Protection**: Sensitive files (models, logs, history, secrets) are strictly gitignored.
+
+For more details, see [docs/privacy.md](docs/privacy.md).
+
+---
+
+## ⚖️ Acknowledgements & License
+
+Jenova is built on the profound foundations of [Neovim](https://neovim.io), [llama.cpp](https://github.com/ggml-org/llama.cpp), [tcsh](https://github.com/tcsh-org/tcsh), and [etcsh](https://github.com/Krush206/etcsh).
+
+Licensed under AGPL-3.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).

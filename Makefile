@@ -16,12 +16,11 @@
 #   make install    # Run scripts/install.sh (system-aware deploy)
 #   make clean      # Remove build artifacts from both components
 
-.PHONY: all llama llama-hybrid jvim mcsh web install preflight verify clean help clean-root
+.PHONY: all llama llama-hybrid jvim mcsh web jenova-ui install preflight verify clean help clean-root
 
-all: llama jvim mcsh
-	@if command -v npm >/dev/null 2>&1; then $(MAKE) web; fi
+all: llama jvim mcsh jenova-ui web
 	@echo ""
-	@echo "✅ Jenova build complete (llama.cpp + jvim + mcsh)"
+	@echo "✅ Jenova build complete (llama.cpp + jvim + mcsh + jenova-ui + web)"
 	@echo "   Run 'make install' (or scripts/install.sh) to deploy."
 
 llama:
@@ -81,6 +80,12 @@ web:
 		echo "   Web UI built: public/"; \
 	fi
 
+jenova-ui:
+	@echo "🔨 Building jenova-ui..."
+	@$(MAKE) -C jenova-ui
+	@cp jenova-ui/jenova-ui bin/jenova-ui
+	@echo "   jenova-ui built: bin/jenova-ui"
+
 install:
 	@./scripts/install.sh
 
@@ -94,6 +99,8 @@ clean:
 clean-root:
 	@echo "🧹 Cleaning root directory bloat..."
 	@rm -f *.o gethost config.h config.log config.status atconfig atlocal
+	@rm -f shellcheck_report.txt INSTALLATION-AUDIT.md INSTALLATION-FINAL-REPORT.md
+	@rm -f tc.const.h.tmp tc.defs.c.tmp
 	@rm -rf autom4te.cache po/*.gmo nls/*.cat
 	@echo "   Root directory cleaned."
 

@@ -34,7 +34,9 @@
 
 set -e
 
-JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
+_REAL_SCRIPT="$(realpath "$0" 2>/dev/null || echo "$0")"
+_SCRIPT_DIR="$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)"
+JENOVA_ROOT="$(cd "$_SCRIPT_DIR/.." && pwd)"
 JVIM_CONFIG_SRC="$JENOVA_ROOT/jvim-config"
 JVIM_CONFIG_DST="$HOME/.config/jvim"
 
@@ -82,9 +84,14 @@ done
 # Colours (disabled if not a terminal)
 # ---------------------------------------------------------------------------
 if [ -t 1 ]; then
-    _G=$(printf '\033[0;32m'); _Y=$(printf '\033[0;33m'); _R=$(printf '\033[0;31m'); _B=$(printf '\033[1;34m'); _N=$(printf '\033[0m')
+    _G=$(printf '\033[38;2;118;148;106m')
+    _Y=$(printf '\033[38;2;192;163;110m')
+    _R=$(printf '\033[38;2;195;64;67m')
+    _B=$(printf '\033[38;2;126;156;216m')
+    _P=$(printf '\033[38;2;120;81;169m')
+    _N=$(printf '\033[0m')
 else
-    _G=""; _Y=""; _R=""; _B=""; _N=""
+    _G=""; _Y=""; _R=""; _B=""; _P=""; _N=""
 fi
 
 ok()   { printf "${_G}  OK${_N}  %s\n" "$1"; }
@@ -93,9 +100,9 @@ fail() { printf "${_R} FAIL${_N}  %s\n" "$1"; }
 info() { printf "${_B} INFO${_N}  %s\n" "$1"; }
 
 echo ""
-printf "${_B}╔══════════════════════════════════════════════════════╗${_N}\n"
-printf "${_B}║  Jenova Cognitive Architecture — Install             ║${_N}\n"
-printf "${_B}╚══════════════════════════════════════════════════════╝${_N}\n"
+printf "${_P}╔══════════════════════════════════════════════════════╗${_N}\n"
+printf "${_P}║  Jenova Cognitive Architecture — Install             ║${_N}\n"
+printf "${_P}╚══════════════════════════════════════════════════════╝${_N}\n"
 echo ""
 
 ERRORS=0
@@ -108,7 +115,12 @@ info "Checking operating system..."
 case "$JENOVA_OS" in
     freebsd)
         _VER="$(uname -r | cut -d. -f1)"
-        if [ "${_VER:-0}" -ge 15 ] 2>/dev/null; then
+        # Ensure _VER is a valid number for comparison
+        case "$_VER" in
+            ''|*[!0-9]*) _VER_NUM=0 ;;
+            *)           _VER_NUM="$_VER" ;;
+        esac
+        if [ "$_VER_NUM" -ge 15 ]; then
             ok "FreeBSD ${_VER} — fully supported"
         else
             warn "FreeBSD ${_VER} — recommended FreeBSD 15+; some features may differ"
@@ -683,77 +695,83 @@ fi
 # ---------------------------------------------------------------------------
 info "Installing launchers to PATH..."
 
-_BIN_DIR=""
-for _d in "$HOME/.local/bin" "$HOME/bin"; do
-    if echo "$PATH" | grep -q "$_d"; then
-        _BIN_DIR="$_d"
-        break
-    fi
-done
+# Always deploy to ~/.local/bin — create it if needed
+_BIN_DIR="$HOME/.local/bin"
+mkdir -p "$_BIN_DIR"
 
-if [ -n "$_BIN_DIR" ]; then
-    mkdir -p "$_BIN_DIR"
-    ln -sf "$JENOVA_ROOT/bin/jvim" "$_BIN_DIR/jvim"
-    ln -sf "$JENOVA_ROOT/bin/jenova" "$_BIN_DIR/jenova"
-    ln -sf "$JENOVA_ROOT/bin/jenova-ca" "$_BIN_DIR/jenova-ca"
-    ln -sf "$JENOVA_ROOT/bin/jenova-tui" "$_BIN_DIR/jenova-tui"
-    ln -sf "$JENOVA_ROOT/bin/jenova-term" "$_BIN_DIR/jenova-term"
-    if [ -f "$JENOVA_ROOT/bin/mcsh" ]; then
-        ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/mcsh"
-        ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/tcsh"
-        ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/csh"
-        ok "Symlinked jvim, jenova, jenova-ca, jenova-tui, jenova-term, and mcsh to $_BIN_DIR"
-    else
-        ok "Symlinked jvim, jenova, jenova-ca, jenova-tui, and jenova-term to $_BIN_DIR"
-    fi
-
-    # Install Desktop Entry
-    if [ "$JENOVA_OS" = "linux" ] || [ "$JENOVA_OS" = "freebsd" ]; then
-        _APP_DIR="$HOME/.local/share/applications"
-        mkdir -p "$_APP_DIR"
-        [ -f "$JENOVA_ROOT/bin/jenova.desktop" ] && cp "$JENOVA_ROOT/bin/jenova.desktop" "$_APP_DIR/jenova.desktop"
-        [ -f "$JENOVA_ROOT/bin/jenova-manager.desktop" ] && cp "$JENOVA_ROOT/bin/jenova-manager.desktop" "$_APP_DIR/jenova-manager.desktop"
-        [ -f "$JENOVA_ROOT/bin/jvim.desktop" ] && cp "$JENOVA_ROOT/bin/jvim.desktop" "$_APP_DIR/jvim.desktop"
-        ok "Installed desktop entries to $_APP_DIR"
-        # Install Icons
-        _ICON_DIR="$HOME/.local/share/icons"
-        mkdir -p "$_ICON_DIR"
-        if [ -d "$JENOVA_ROOT/png" ]; then
-            # Convert .jpg icons to .png for better compatibility
-            for icon in jenova jca jvim; do
-                if [ -f "$JENOVA_ROOT/png/$icon.jpg" ]; then
-                    if command -v convert >/dev/null 2>&1; then
-                        convert "$JENOVA_ROOT/png/$icon.jpg" "$_ICON_DIR/$icon.png"
-                    elif command -v magick >/dev/null 2>&1; then
-                        magick "$JENOVA_ROOT/png/$icon.jpg" "$_ICON_DIR/$icon.png"
-                    else
-                        cp "$JENOVA_ROOT/png/$icon.jpg" "$_ICON_DIR/$icon.jpg"
-                    fi
-                fi
-            done
-            
-            # Create symlinks without extension
-            for icon in jenova jca jvim; do
-                if [ -f "$_ICON_DIR/$icon.png" ]; then
-                    ln -sf "$_ICON_DIR/$icon.png" "$_ICON_DIR/$icon"
-                elif [ -f "$_ICON_DIR/$icon.jpg" ]; then
-                    ln -sf "$_ICON_DIR/$icon.jpg" "$_ICON_DIR/$icon"
-                fi
-            done
-            
-            # Update icon cache
-            gtk-update-icon-cache -f -t "$_ICON_DIR" 2>/dev/null || true
-            ok "Installed icons to $_ICON_DIR"
-        fi
-    fi
+ln -sf "$JENOVA_ROOT/bin/jvim" "$_BIN_DIR/jvim"
+ln -sf "$JENOVA_ROOT/bin/jenova" "$_BIN_DIR/jenova"
+ln -sf "$JENOVA_ROOT/bin/jenova-ui" "$_BIN_DIR/jenova-ui"
+ln -sf "$JENOVA_ROOT/bin/jenova-ca" "$_BIN_DIR/jenova-ca"
+ln -sf "$JENOVA_ROOT/bin/jenova-tui" "$_BIN_DIR/jenova-tui"
+ln -sf "$JENOVA_ROOT/bin/jenova-term" "$_BIN_DIR/jenova-term"
+if [ -f "$JENOVA_ROOT/bin/mcsh" ]; then
+    ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/mcsh"
+    ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/tcsh"
+    ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/csh"
+    ok "Symlinked jvim, jenova, jenova-ui, jenova-ca, jenova-tui, jenova-term, and mcsh to $_BIN_DIR"
 else
-    warn "No writable bin dir found on PATH (~/.local/bin or ~/bin)."
-    warn "Add '$JENOVA_ROOT/bin' to your PATH or manually symlink:"
-    warn "  mkdir -p ~/.local/bin"
-    warn "  ln -sf $JENOVA_ROOT/bin/jvim ~/.local/bin/jvim"
-    warn "  ln -sf $JENOVA_ROOT/bin/jenova ~/.local/bin/jenova"
-    warn "  ln -sf $JENOVA_ROOT/bin/jenova-ca ~/.local/bin/jenova-ca"
-    warn "  export PATH=\"\$HOME/.local/bin:\$PATH\"  # Add to ~/.bashrc or ~/.zshrc"
+    ok "Symlinked jvim, jenova, jenova-ui, jenova-ca, jenova-tui, and jenova-term to $_BIN_DIR"
+fi
+
+# Warn if ~/.local/bin is not on PATH
+_ON_PATH=0
+for _d in "$HOME/.local/bin" "$HOME/bin"; do
+    echo "$PATH" | grep -q "$_d" && _ON_PATH=1
+done
+if [ "$_ON_PATH" = "0" ]; then
+    warn "$_BIN_DIR is not on your PATH."
+    warn "Add this to your shell rc file (~/.bashrc, ~/.zshrc, etc.):"
+    warn "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+    WARNINGS=$((WARNINGS + 1))
+fi
+
+# Install Desktop Entries & Icons (always — these don't depend on PATH)
+if [ "$JENOVA_OS" = "linux" ] || [ "$JENOVA_OS" = "freebsd" ]; then
+    _APP_DIR="$HOME/.local/share/applications"
+    mkdir -p "$_APP_DIR"
+
+    # Cleanup obsolete entries
+    rm -f "$_APP_DIR/jenova-manager.desktop"
+
+    [ -f "$JENOVA_ROOT/bin/jenova.desktop" ] && cp "$JENOVA_ROOT/bin/jenova.desktop" "$_APP_DIR/jenova.desktop"
+    [ -f "$JENOVA_ROOT/bin/jvim.desktop" ] && cp "$JENOVA_ROOT/bin/jvim.desktop" "$_APP_DIR/jvim.desktop"
+    ok "Installed desktop entries to $_APP_DIR"
+
+    # Install Icons
+    _ICON_DIR="$HOME/.local/share/icons"
+    mkdir -p "$_ICON_DIR"
+    if [ -d "$JENOVA_ROOT/png" ]; then
+        # Copy .png icons directly
+        for icon_file in "$JENOVA_ROOT/png/"*.png; do
+            [ -f "$icon_file" ] && cp "$icon_file" "$_ICON_DIR/"
+        done
+        # Convert .jpg icons to .png for better compatibility
+        for icon in jenova jca jca_grey jvim; do
+            if [ -f "$JENOVA_ROOT/png/$icon.jpg" ] && [ ! -f "$_ICON_DIR/$icon.png" ]; then
+                if command -v convert >/dev/null 2>&1; then
+                    convert "$JENOVA_ROOT/png/$icon.jpg" "$_ICON_DIR/$icon.png"
+                elif command -v magick >/dev/null 2>&1; then
+                    magick "$JENOVA_ROOT/png/$icon.jpg" "$_ICON_DIR/$icon.png"
+                else
+                    cp "$JENOVA_ROOT/png/$icon.jpg" "$_ICON_DIR/$icon.jpg"
+                fi
+            fi
+        done
+
+        # Create symlinks without extension for icon theme lookups
+        for icon in jenova jca jca_grey jvim; do
+            if [ -f "$_ICON_DIR/$icon.png" ]; then
+                ln -sf "$_ICON_DIR/$icon.png" "$_ICON_DIR/$icon"
+            elif [ -f "$_ICON_DIR/$icon.jpg" ]; then
+                ln -sf "$_ICON_DIR/$icon.jpg" "$_ICON_DIR/$icon"
+            fi
+        done
+
+        # Update icon cache
+        gtk-update-icon-cache -f -t "$_ICON_DIR" 2>/dev/null || true
+        ok "Installed icons to $_ICON_DIR"
+    fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -776,9 +794,9 @@ fi
 # 10. Summary
 # ---------------------------------------------------------------------------
 echo ""
-printf "${_B}══════════════════════════════════════════════════════${_N}\n"
-printf "${_B}  Installation Summary${_N}\n"
-printf "${_B}══════════════════════════════════════════════════════${_N}\n"
+printf "${_P}══════════════════════════════════════════════════════${_N}\n"
+printf "${_P}  Installation Summary${_N}\n"
+printf "${_P}══════════════════════════════════════════════════════${_N}\n"
 echo "  Errors:   $ERRORS"
 echo "  Warnings: $WARNINGS"
 echo ""

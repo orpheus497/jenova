@@ -227,20 +227,9 @@ export class ChatService {
       tools: tools && tools.length > 0 ? tools : undefined,
     };
 
-    if (workspaceContext) {
-      const systemIdx = requestBody.messages.findIndex((m: any) => m.role === MessageRole.SYSTEM);
-      const workspaceInfo = `\n\n[CURRENT WORKSPACE ARTIFACTS (Notes & Files)]:\n${workspaceContext}`;
+    // NOTE: Workspace context is already injected above (L193-209) into
+    // normalizedMessages. Do not inject again here to avoid token waste.
 
-      if (systemIdx !== -1) {
-        requestBody.messages[systemIdx].content =
-          (requestBody.messages[systemIdx].content as string) + workspaceInfo;
-      } else {
-        requestBody.messages.unshift({
-          role: MessageRole.SYSTEM,
-          content: WorkspaceService.INITIAL_IDENTITY + workspaceInfo,
-        });
-      }
-    }
 
     // Include model in request if provided (required in ROUTER mode)
     if (options.model) {
@@ -419,8 +408,12 @@ export class ChatService {
 
           throw userFriendlyError;
         }
-        // Wait before retry
+        // Wait before retry, then check if aborted during wait
         await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+        if (signal?.aborted) {
+          console.log("Chat completion request was aborted during retry delay");
+          return;
+        }
       }
     }
   }

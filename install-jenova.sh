@@ -28,13 +28,19 @@
 
 set -e
 
-JENOVA_ROOT="$(dirname "$(realpath "$(command -v "$0")")")"
+_REAL_SCRIPT="$(realpath "$0" 2>/dev/null || echo "$0")"
+JENOVA_ROOT="$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)"
 
 # Parse arguments
 DRY_RUN=0
 INTERACTIVE=0
 MINIMAL=0
 FULL=1
+
+if [ $# -eq 0 ] && [ -t 1 ]; then
+    # Launch TUI by default
+    exec "$JENOVA_ROOT/scripts/jenova-manager.sh"
+fi
 
 for arg in "$@"; do
     case "$arg" in
@@ -71,6 +77,7 @@ if [ -t 1 ]; then
     YELLOW=$(printf '\033[38;2;192;163;110m')
     RED=$(printf '\033[38;2;195;64;67m')
     BLUE=$(printf '\033[38;2;126;156;216m')
+    PURPLE=$(printf '\033[38;2;120;81;169m')
     NC=$(printf '\033[0m')
 else
     BOLD=""
@@ -78,15 +85,16 @@ else
     YELLOW=""
     RED=""
     BLUE=""
+    PURPLE=""
     NC=""
 fi
 
 # Helper functions
 print_header() {
     echo ""
-    echo "${BOLD}${BLUE}╔══════════════════════════════════════════════════════════╗${NC}"
-    printf "${BOLD}${BLUE}║ %-56s ║${NC}\n" "$1"
-    echo "${BOLD}${BLUE}╚══════════════════════════════════════════════════════════╝${NC}"
+    echo "${BOLD}${PURPLE}╔══════════════════════════════════════════════════════════╗${NC}"
+    printf "${BOLD}${PURPLE}║ %-56s ║${NC}\n" "$1"
+    echo "${BOLD}${PURPLE}╚══════════════════════════════════════════════════════════╝${NC}"
     echo ""
 }
 
@@ -212,11 +220,17 @@ prompt_continue
 if [ "$DRY_RUN" = "1" ]; then
     print_info "Would run: $JENOVA_ROOT/scripts/preflight-check.sh"
 else
-    if ! "$JENOVA_ROOT/scripts/preflight-check.sh"; then
+    set +e
+    "$JENOVA_ROOT/scripts/preflight-check.sh"
+    _preflight_status=$?
+    set -e
+    if [ "$_preflight_status" = "0" ]; then
+        print_success "Pre-flight checks passed"
+    elif [ "$_preflight_status" = "2" ]; then
+        print_warning "Pre-flight checks passed with warnings"
+    else
         print_error "Pre-flight checks failed - please resolve issues above"
         exit 1
-    else
-        print_success "Pre-flight checks passed"
     fi
 fi
 
@@ -226,7 +240,13 @@ echo ""
 print_step "Building Jenova components..."
 prompt_continue
 
-COMPONENTS="llama jvim mcsh"
+if command -v gmake >/dev/null 2>&1; then
+    MAKE_CMD="gmake"
+else
+    MAKE_CMD="make"
+fi
+
+COMPONENTS="llama jvim jenova-ui mcsh"
 if [ "$MINIMAL" = "0" ]; then
     COMPONENTS="$COMPONENTS web"
 fi
@@ -235,19 +255,12 @@ if [ "$DRY_RUN" = "1" ]; then
     echo "  Would build: $COMPONENTS"
 else
     for component in $COMPONENTS; do
-        if [ "$component" = "web" ] && ! command -v npm >/dev/null 2>&1; then
-            print_warning "  Skipping web component (npm not found)"
-            continue
-        fi
         echo "  Building $component..."
-        if make "$component"; then
+        if "$MAKE_CMD" "$component"; then
             print_success "  $component built successfully"
         else
-            if [ "$component" = "mcsh" ] || [ "$component" = "web" ]; then
+            if [ "$component" = "mcsh" ]; then
                 print_warning "  Failed to build $component (optional, continuing)"
-                if [ "$component" = "web" ]; then
-                    print_info "  You can try building it later with: make web"
-                fi
             else
                 print_error "  Failed to build $component"
                 echo "  Check var/log/ for details"

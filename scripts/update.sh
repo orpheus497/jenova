@@ -7,6 +7,7 @@
 #
 # Usage: ./update.sh [--upgrade-plugins] [--skip-nvim] [--skip-rebuild]
 #                    [--skip-jvim] [--link] [--apply-profile]
+#                    [--mcsh] [--ui] [--web] [--all]
 #
 #   --upgrade-plugins   Run :Lazy update (move to latest plugin versions).
 #                       Without this flag, runs :Lazy restore (pin to lock file).
@@ -18,6 +19,10 @@
 #   --apply-profile     Re-apply the detected hardware profile (overwrites
 #                       etc/jenova.conf). Skipped by default to preserve any
 #                       manual edits or pinned profile configs.
+#   --mcsh              Force rebuild of mcsh.
+#   --ui                Force rebuild of jenova-ui (Desktop Manager).
+#   --web               Force rebuild of Web UI.
+#   --all               Update and rebuild all components.
 #
 # Steps:
 #   1. git pull (update repo from origin)
@@ -30,9 +35,14 @@
 
 set -e
 
-JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
+_REAL_SCRIPT="$(realpath "$0" 2>/dev/null || echo "$0")"
+_SCRIPT_DIR="$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)"
+JENOVA_ROOT="$(cd "$_SCRIPT_DIR/.." && pwd)"
 JVIM_CONFIG_SRC="$JENOVA_ROOT/jvim-config"
 JVIM_CONFIG_DST="$HOME/.config/jvim"
+
+# Shared OS/hardware detection
+. "$JENOVA_ROOT/lib/detect-env.sh"
 
 UPGRADE_PLUGINS=0
 SKIP_NVIM=0
@@ -49,6 +59,10 @@ for _arg in "$@"; do
         --skip-jvim)       SKIP_JVIM=1 ;;
         --link)            LINK=1 ;;
         --apply-profile)   APPLY_PROFILE=1 ;;
+        --mcsh)            UPDATE_MCSH=1 ;;
+        --ui)              UPDATE_UI=1 ;;
+        --web)             UPDATE_WEB=1 ;;
+        --all)             UPDATE_MCSH=1; UPDATE_UI=1; UPDATE_WEB=1; APPLY_PROFILE=1 ;;
         -h|--help)
             sed -n '2,28p' "$0"
             exit 0
@@ -59,6 +73,11 @@ for _arg in "$@"; do
             ;;
     esac
 done
+
+# Initialize missing variables if not set by flags
+UPDATE_MCSH="${UPDATE_MCSH:-0}"
+UPDATE_UI="${UPDATE_UI:-0}"
+UPDATE_WEB="${UPDATE_WEB:-0}"
 
 # ---------------------------------------------------------------------------
 # Colours
@@ -157,7 +176,7 @@ if [ "$SKIP_REBUILD" = "0" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 3b. jvim rebuild check — rebuild if jvim/ sources changed since last build
+# 3b. jvim rebuild check
 # ---------------------------------------------------------------------------
 if [ "$SKIP_JVIM" = "0" ]; then
     info "Checking bundled jvim editor..."
@@ -168,8 +187,6 @@ if [ "$SKIP_JVIM" = "0" ]; then
     elif ! command -v cmake >/dev/null 2>&1; then
         warn "cmake not found — cannot rebuild jvim"
     else
-        # Rebuild if the binary is missing OR any tracked source under
-        # jvim/src or jvim/runtime is newer than the binary.
         _need_rebuild=0
         if [ ! -x "$JVIM_BIN" ]; then
             _need_rebuild=1
@@ -191,6 +208,76 @@ if [ "$SKIP_JVIM" = "0" ]; then
         else
             ok "jvim up to date"
         fi
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 3c. mcsh rebuild check
+# ---------------------------------------------------------------------------
+if [ "$UPDATE_MCSH" = "1" ] || [ ! -x "$JENOVA_ROOT/bin/mcsh" ]; then
+    info "Checking mcsh for updates..."
+    MCSH_SRC="$JENOVA_ROOT/mcsh"
+    if [ -d "$MCSH_SRC/.git" ]; then
+        cd "$MCSH_SRC"
+        _BEFORE=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+        git pull origin "$(git branch --show-current 2>/dev/null || echo main)" 2>/dev/null || true
+        _AFTER=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+        cd "$JENOVA_ROOT"
+        if [ "$_BEFORE" != "$_AFTER" ] || [ ! -x "$JENOVA_ROOT/bin/mcsh" ]; then
+            warn "mcsh updated — rebuilding..."
+            if make mcsh; then
+                ok "mcsh rebuilt successfully"
+            else
+                warn "mcsh rebuild failed"
+            fi
+        else
+            ok "mcsh up to date"
+        fi
+    elif [ -f "$MCSH_SRC/configure" ]; then
+        info "mcsh source present but not a git repo — rebuilding if missing binary"
+        if [ ! -x "$JENOVA_ROOT/bin/mcsh" ]; then
+             make mcsh && ok "mcsh built" || warn "mcsh build failed"
+        else
+             ok "mcsh up to date"
+        fi
+    else
+        warn "mcsh source missing — skipping"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 3d. jenova-ui rebuild check
+# ---------------------------------------------------------------------------
+if [ "$UPDATE_UI" = "1" ] || [ ! -x "$JENOVA_ROOT/bin/jenova-ui" ]; then
+    info "Updating jenova-ui..."
+    if [ -d "$JENOVA_ROOT/jenova-ui" ]; then
+        if make jenova-ui; then
+            ok "jenova-ui updated"
+        else
+            warn "jenova-ui update failed"
+        fi
+    else
+        warn "jenova-ui source missing — skipping"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 3e. web rebuild check
+# ---------------------------------------------------------------------------
+if [ "$UPDATE_WEB" = "1" ] || [ ! -f "$JENOVA_ROOT/public/bundle.js" ]; then
+    info "Updating Web UI..."
+    if [ -d "$JENOVA_ROOT/jca_web" ]; then
+        if command -v npm >/dev/null 2>&1; then
+            if make web; then
+                ok "Web UI updated"
+            else
+                warn "Web UI update failed"
+            fi
+        else
+            warn "npm not found — cannot update Web UI"
+        fi
+    else
+        warn "jca_web source missing — skipping"
     fi
 fi
 

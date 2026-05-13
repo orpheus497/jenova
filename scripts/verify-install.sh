@@ -16,7 +16,9 @@
 
 set -e
 
-JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
+_REAL_SCRIPT="$(realpath "$0" 2>/dev/null || echo "$0")"
+_SCRIPT_DIR="$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)"
+JENOVA_ROOT="$(cd "$_SCRIPT_DIR/.." && pwd)"
 FULL=0
 VERBOSE=0
 ERRORS=0
@@ -39,9 +41,14 @@ done
 
 # Colours
 if [ -t 1 ]; then
-    _G=$(printf '\033[0;32m'); _Y=$(printf '\033[0;33m'); _R=$(printf '\033[0;31m'); _B=$(printf '\033[1;34m'); _N=$(printf '\033[0m')
+    _G=$(printf '\033[38;2;118;148;106m')
+    _Y=$(printf '\033[38;2;192;163;110m')
+    _R=$(printf '\033[38;2;195;64;67m')
+    _B=$(printf '\033[38;2;126;156;216m')
+    _P=$(printf '\033[38;2;120;81;169m')
+    _N=$(printf '\033[0m')
 else
-    _G=""; _Y=""; _R=""; _B=""; _N=""
+    _G=""; _Y=""; _R=""; _B=""; _P=""; _N=""
 fi
 
 ok()   { printf "${_G}✓${_N}  %s\n" "$1"; }
@@ -50,9 +57,9 @@ fail() { printf "${_R}✗${_N}  %s\n" "$1"; }
 info() { printf "${_B}ℹ${_N}  %s\n" "$1"; }
 
 echo ""
-printf "${_B}╔══════════════════════════════════════════════════════╗${_N}\n"
-printf "${_B}║  Jenova — Post-installation Verification             ║${_N}\n"
-printf "${_B}╚══════════════════════════════════════════════════════╝${_N}\n"
+printf "${_P}╔══════════════════════════════════════════════════════╗${_N}\n"
+printf "${_P}║  Jenova — Post-installation Verification             ║${_N}\n"
+printf "${_P}╚══════════════════════════════════════════════════════╝${_N}\n"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -233,7 +240,7 @@ fi
 # 8. Summary and Next Steps
 # ---------------------------------------------------------------------------
 echo ""
-printf "${_B}────────────────────────────────────────────────────────${_N}\n"
+printf "${_P}────────────────────────────────────────────────────────${_N}\n"
 
 if [ "$ERRORS" -eq 0 ] && [ "$WARNINGS" -eq 0 ]; then
     printf "${_G}✓ Installation verified successfully!${_N}\n"

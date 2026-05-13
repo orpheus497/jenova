@@ -17,7 +17,9 @@
 
 set -e
 
-JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
+_REAL_SCRIPT="$(realpath "$0" 2>/dev/null || echo "$0")"
+_SCRIPT_DIR="$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)"
+JENOVA_ROOT="$(cd "$_SCRIPT_DIR/.." && pwd)"
 
 # Shared OS/hardware detection
 . "$JENOVA_ROOT/lib/detect-env.sh"
@@ -48,9 +50,10 @@ if [ -t 1 ]; then
     _Y=$(printf '\033[38;2;192;163;110m')
     _R=$(printf '\033[38;2;195;64;67m')
     _B=$(printf '\033[38;2;126;156;216m')
+    _P=$(printf '\033[38;2;120;81;169m')
     _N=$(printf '\033[0m')
 else
-    _G=""; _Y=""; _R=""; _B=""; _N=""
+    _G=""; _Y=""; _R=""; _B=""; _P=""; _N=""
 fi
 
 ok()   { printf "${_G}✓${_N}  %s\n" "$1"; }
@@ -59,9 +62,9 @@ fail() { printf "${_R}✗${_N}  %s\n" "$1"; }
 info() { printf "${_B}ℹ${_N}  %s\n" "$1"; }
 
 echo ""
-printf "${_B}╔══════════════════════════════════════════════════════╗${_N}\n"
-printf "${_B}║  Jenova — Dependency Installation                    ║${_N}\n"
-printf "${_B}╚══════════════════════════════════════════════════════╝${_N}\n"
+printf "${_P}╔══════════════════════════════════════════════════════╗${_N}\n"
+printf "${_P}║  Jenova — Dependency Installation                    ║${_N}\n"
+printf "${_P}╚══════════════════════════════════════════════════════╝${_N}\n"
 echo ""
 
 # Detect package manager
@@ -96,12 +99,16 @@ gettext:gettext-tools
 vulkan:vulkan-loader
 lua54:lua54
 curl:curl
+realpath:coreutils
 gmake:gmake
 glslc:shaderc
 clangd:llvm
 stylua:stylua
 node:node
 npm:npm
+pkg-config:pkgconf
+gtk3:gtk3
+appindicator:libappindicator
 EOF
             ;;
         pacman)
@@ -115,11 +122,15 @@ vulkan-icd-loader:vulkan-icd-loader
 lua54:lua54
 curl:curl
 make:make
+realpath:coreutils
 glslc:glslc
 clang:clang
 stylua:stylua
 nodejs:nodejs
 npm:npm
+pkg-config:pkgconf
+gtk3:gtk3
+appindicator:libappindicator-gtk3
 EOF
             ;;
         apt)
@@ -133,11 +144,15 @@ libvulkan1:libvulkan1
 liblua5.4-dev:liblua5.4-dev
 libcurl4-openssl-dev:libcurl4-openssl-dev
 make:make
+realpath:coreutils
 glslc:glslc
 clangd:clangd
 cargo:cargo
 nodejs:nodejs
 npm:npm
+pkg-config:pkg-config
+gtk3:libgtk-3-dev
+appindicator:libappindicator3-dev
 EOF
             ;;
         dnf)
@@ -151,11 +166,15 @@ vulkan-loader:vulkan-loader
 lua-devel:lua-devel
 libcurl-devel:libcurl-devel
 make:make
+realpath:coreutils
 glslc:glslc
 clang-tools-extra:clang-tools-extra
 cargo:cargo
 nodejs:nodejs
 npm:npm
+pkg-config:pkgconf-pkg-config
+gtk3:gtk3-devel
+appindicator:libappindicator-gtk3-devel
 EOF
             ;;
         brew)
@@ -169,11 +188,15 @@ molten-vk:molten-vk
 lua@5.4:lua@5.4
 curl:curl
 make:make
+realpath:coreutils
 shaderc:shaderc
 llvm:llvm
 stylua:stylua
 node:node
 npm:node
+pkg-config:pkg-config
+gtk3:gtk+3
+appindicator:libappindicator
 EOF
             ;;
         zypper)
@@ -187,11 +210,15 @@ libvulkan1:libvulkan1
 lua54-devel:lua54-devel
 libcurl-devel:libcurl-devel
 make:make
+realpath:coreutils
 glslc:glslc
 clang:clang-tools
 cargo:cargo
 nodejs:nodejs
 npm:npm
+pkg-config:pkg-config
+gtk3:gtk3-devel
+appindicator:libappindicator-gtk3-devel
 EOF
             ;;
         xbps)
@@ -205,11 +232,15 @@ vulkan-loader:vulkan-loader
 lua54-devel:lua54-devel
 curl-devel:curl-devel
 make:make
+realpath:coreutils
 glslc:glslc
 clang:clang
 cargo:cargo
 nodejs:nodejs
 npm:npm
+pkg-config:pkg-config
+gtk3:gtk+3-devel
+appindicator:libappindicator-devel
 EOF
             ;;
         *)
@@ -220,57 +251,78 @@ EOF
 
 # Check if a binary is already installed
 is_installed() {
+    if [ "$1" = "gtk3" ]; then
+        command -v pkg-config >/dev/null 2>&1 && pkg-config --exists gtk+-3.0 >/dev/null 2>&1
+        return $?
+    elif [ "$1" = "appindicator" ]; then
+        command -v pkg-config >/dev/null 2>&1 && pkg-config --exists appindicator3-0.1 >/dev/null 2>&1
+        return $?
+    fi
     command -v "$1" >/dev/null 2>&1
 }
 
 # Install a package using the detected package manager
 install_package() {
-    local pkg="$1"
-    local manager="$JENOVA_PKG_MGR"
+    local _ip_pkg="$1"
+    local _ip_mgr="$JENOVA_PKG_MGR"
 
     if [ "$DRY_RUN" = "1" ]; then
-        echo "Would install: $pkg (via $manager)"
+        echo "Would install: $_ip_pkg (via $_ip_mgr)"
         return 0
     fi
 
-    case "$manager" in
+    case "$_ip_mgr" in
         pkg)
             if [ "$VERBOSE" = "1" ]; then
-                sudo pkg install -y "$pkg"
+                sudo pkg install -y "$_ip_pkg"
             else
-                sudo pkg install -y "$pkg" >/dev/null 2>&1
+                sudo pkg install -y "$_ip_pkg" >/dev/null 2>&1
             fi
             ;;
         pacman)
-            local pacman_cmd="sudo pacman"
+            _ip_pacman="sudo pacman"
             if command -v yay >/dev/null 2>&1; then
-                pacman_cmd="yay"
+                _ip_pacman="yay"
             fi
             if [ "$VERBOSE" = "1" ]; then
-                $pacman_cmd -S --noconfirm "$pkg"
+                $_ip_pacman -S --noconfirm "$_ip_pkg"
             else
-                $pacman_cmd -S --noconfirm "$pkg" >/dev/null 2>&1
+                $_ip_pacman -S --noconfirm "$_ip_pkg" >/dev/null 2>&1
             fi
             ;;
         apt)
             if [ "$VERBOSE" = "1" ]; then
-                sudo apt-get update && sudo apt-get install -y "$pkg"
+                sudo apt-get update && sudo apt-get install -y "$_ip_pkg"
             else
-                sudo apt-get update >/dev/null 2>&1 && sudo apt-get install -y "$pkg" >/dev/null 2>&1
+                sudo apt-get update >/dev/null 2>&1 && sudo apt-get install -y "$_ip_pkg" >/dev/null 2>&1
             fi
             ;;
         dnf)
             if [ "$VERBOSE" = "1" ]; then
-                sudo dnf install -y "$pkg"
+                sudo dnf install -y "$_ip_pkg"
             else
-                sudo dnf install -y "$pkg" >/dev/null 2>&1
+                sudo dnf install -y "$_ip_pkg" >/dev/null 2>&1
+            fi
+            ;;
+        zypper)
+            if [ "$VERBOSE" = "1" ]; then
+                sudo zypper install -y "$_ip_pkg"
+            else
+                sudo zypper install -y "$_ip_pkg" >/dev/null 2>&1
+            fi
+            ;;
+        xbps)
+            if [ "$VERBOSE" = "1" ]; then
+                sudo xbps-install -y "$_ip_pkg"
+            else
+                sudo xbps-install -y "$_ip_pkg" >/dev/null 2>&1
             fi
             ;;
         brew)
             if [ "$VERBOSE" = "1" ]; then
-                brew install "$pkg"
+                brew install "$_ip_pkg"
             else
-                brew install "$pkg" >/dev/null 2>&1
+                brew install "$_ip_pkg" >/dev/null 2>&1
             fi
             ;;
         *)
@@ -281,20 +333,24 @@ install_package() {
 
 # Handle special cases (like cargo installs)
 install_special() {
-    local binary="$1"
-    local pkg="$2"
+    local _is_bin="$1"
+    local _is_pkg="$2"
 
-    case "$binary" in
+    case "$_is_bin" in
         stylua)
             if [ "$JENOVA_PKG_MGR" = "apt" ] || [ "$JENOVA_PKG_MGR" = "dnf" ]; then
                 if [ "$DRY_RUN" = "1" ]; then
-                    echo "Would install: $binary (via cargo install $pkg)"
+                    echo "Would install: $_is_bin (via cargo install $_is_pkg)"
                     return 0
                 fi
-                if [ "$VERBOSE" = "1" ]; then
-                    cargo install "$pkg"
+                if command -v cargo >/dev/null 2>&1; then
+                    if [ "$VERBOSE" = "1" ]; then
+                        cargo install "$_is_pkg"
+                    else
+                        cargo install "$_is_pkg" >/dev/null 2>&1
+                    fi
                 else
-                    cargo install "$pkg" >/dev/null 2>&1
+                    return 1
                 fi
             fi
             ;;
@@ -310,7 +366,7 @@ if [ -z "$PACKAGES" ]; then
 fi
 
 # Required dependencies
-REQUIRED_DEPS="git cmake luajit gettext vulkan lua54 curl"
+REQUIRED_DEPS="git cmake luajit gettext vulkan lua54 curl realpath pkg-config gtk3 appindicator"
 OPTIONAL_DEPS="gmake glslc clangd stylua node"
 
 if [ "$REQUIRED_ONLY" = "1" ]; then
@@ -324,7 +380,10 @@ fi
 FAILED_REQUIRED=0
 FAILED_OPTIONAL=0
 
-echo "$PACKAGES" | while IFS=: read -r binary pkg; do
+while IFS=: read -r binary pkg; do
+    # Skip empty lines or comments
+    [ -z "$binary" ] || [ "${binary#\#}" != "$binary" ] && continue
+
     # Skip if not in our list to check
     case " $DEPS_TO_CHECK " in
         *" $binary "*) ;;
@@ -361,7 +420,9 @@ echo "$PACKAGES" | while IFS=: read -r binary pkg; do
             FAILED_OPTIONAL=$((FAILED_OPTIONAL + 1))
         fi
     fi
-done
+done <<EOF
+$PACKAGES
+EOF
 
 echo ""
 if [ "$FAILED_REQUIRED" = "0" ]; then
