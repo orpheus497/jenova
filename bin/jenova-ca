@@ -179,7 +179,8 @@ _use_vulkan_fallback() {
 _vulkan_backend_available() {
     [ -f "$LLAMA_LIB_DIR/libggml-vulkan.so" ] || \
     [ -f "$LLAMA_LIB_DIR/libggml-vulkan.so.0" ] || \
-    find "$LLAMA_LIB_DIR" -maxdepth 1 -name 'libggml-vulkan.so.*' -print -quit 2>/dev/null | grep -q .
+    [ -f "$LLAMA_LIB_DIR/libggml-vulkan.dylib" ] || \
+    find "$LLAMA_LIB_DIR" -maxdepth 1 \( -name 'libggml-vulkan.so.*' -o -name 'libggml-vulkan.dylib' \) -print -quit 2>/dev/null | grep -q .
 }
 
 _set_path_args() {

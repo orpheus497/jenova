@@ -59,6 +59,10 @@ for _arg in "$@"; do
         --skip-jvim)       SKIP_JVIM=1 ;;
         --link)            LINK=1 ;;
         --apply-profile)   APPLY_PROFILE=1 ;;
+        --mcsh)            UPDATE_MCSH=1 ;;
+        --ui)              UPDATE_UI=1 ;;
+        --web)             UPDATE_WEB=1 ;;
+        --all)             UPDATE_MCSH=1; UPDATE_UI=1; UPDATE_WEB=1; APPLY_PROFILE=1 ;;
         -h|--help)
             sed -n '2,28p' "$0"
             exit 0
@@ -69,6 +73,11 @@ for _arg in "$@"; do
             ;;
     esac
 done
+
+# Initialize missing variables if not set by flags
+UPDATE_MCSH="${UPDATE_MCSH:-0}"
+UPDATE_UI="${UPDATE_UI:-0}"
+UPDATE_WEB="${UPDATE_WEB:-0}"
 
 # ---------------------------------------------------------------------------
 # Colours

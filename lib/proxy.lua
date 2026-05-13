@@ -458,7 +458,14 @@ local function proxy_connection(client_fd, conn_fds)
         local current = path:sub(1, 1) == "/" and "/" or ""
         for i, segment in ipairs(segments) do
             current = current .. segment
-            ffi.C.mkdir(current, 511) -- 0777
+            local res = ffi.C.mkdir(current, 511) -- 0777
+            if res ~= 0 then
+                local err = ffi.errno()
+                -- EEXIST (17 on many platforms) is fine, others might be worth logging
+                if err ~= 17 and err ~= 20 then -- 20 is ENOTDIR, also handled by OS
+                    -- Silently continue, as we'll fail later on io.open if it's fatal
+                end
+            end
             current = current .. "/"
         end
     end
