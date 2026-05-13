@@ -100,6 +100,8 @@ clean:
 clean-root:
 	@echo "🧹 Cleaning root directory bloat..."
 	@rm -f *.o gethost config.h config.log config.status atconfig atlocal
+	@rm -f shellcheck_report.txt INSTALLATION-AUDIT.md INSTALLATION-FINAL-REPORT.md
+	@rm -f tc.const.h.tmp tc.defs.c.tmp
 	@rm -rf autom4te.cache po/*.gmo nls/*.cat
 	@echo "   Root directory cleaned."
 

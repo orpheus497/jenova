@@ -9,6 +9,9 @@ _SCRIPT_DIR="$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)"
 JENOVA_ROOT="$(cd "$_SCRIPT_DIR/.." && pwd)"
 export JENOVA_ROOT
 
+# Shared OS/hardware detection
+. "$JENOVA_ROOT/lib/detect-env.sh"
+
 if command -v gmake >/dev/null 2>&1; then
     MAKE="gmake"
 else
@@ -349,6 +352,18 @@ install_llama() {
     printf "%s%sInstalling llama.cpp...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
     "$JENOVA_ROOT/bin/build-llama-jenova"
 }
+install_webui() {
+    printf "%s%sBuilding Web UI...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
+    "$MAKE" -C "$JENOVA_ROOT" web
+}
+install_jenova_ui() {
+    printf "%s%sBuilding jenova-ui (Desktop Manager)...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
+    "$MAKE" -C "$JENOVA_ROOT" jenova-ui
+}
+install_mcsh() {
+    printf "%s%sBuilding mcsh (Modern C Shell)...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
+    "$MAKE" -C "$JENOVA_ROOT" mcsh
+}
 
 update_jenova_core() {
     printf "%s%sUpdating Jenova Core...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
@@ -356,22 +371,23 @@ update_jenova_core() {
 }
 update_jvim() {
     printf "%s%sUpdating jvim (in-tree)...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
-    git -C "$JENOVA_ROOT" pull --ff-only || true
-    if confirm_prompt "Rebuild jvim now?" "0"; then
-        exit_alt_screen
-        "$MAKE" -C "$JENOVA_ROOT" jvim
-        enter_alt_screen
-    fi
+    "$JENOVA_ROOT/scripts/update.sh" --skip-rebuild --skip-nvim
 }
 update_llama() {
-    printf "%s%sUpdating llama.cpp...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
-    cd "$JENOVA_ROOT/llama.cpp" || { echo "Cannot access llama.cpp directory at $JENOVA_ROOT/llama.cpp"; return 1; }
-    git pull --ff-only origin master
-    if confirm_prompt "Do you want to rebuild llama.cpp?" "0"; then
-        exit_alt_screen
-        "$JENOVA_ROOT/bin/build-llama-jenova"
-        enter_alt_screen
-    fi
+    printf "%s%sUpdating llama.cpp (dependency repo)...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
+    "$JENOVA_ROOT/scripts/update.sh" --skip-nvim --skip-jvim
+}
+update_webui() {
+    printf "%s%sUpdating Web UI...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
+    "$JENOVA_ROOT/scripts/update.sh" --web --skip-nvim --skip-rebuild --skip-jvim
+}
+update_jenova_ui() {
+    printf "%s%sUpdating jenova-ui (Desktop Manager)...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
+    "$JENOVA_ROOT/scripts/update.sh" --ui --skip-nvim --skip-rebuild --skip-jvim
+}
+update_mcsh() {
+    printf "%s%sUpdating mcsh (dependency repo)...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
+    "$JENOVA_ROOT/scripts/update.sh" --mcsh --skip-nvim --skip-rebuild --skip-jvim
 }
 
 uninstall_jenova_core() {
@@ -388,6 +404,26 @@ uninstall_llama() {
     rm -rf "$JENOVA_ROOT/llama.cpp/build"
     echo "llama.cpp build removed."
 }
+uninstall_webui() {
+    printf "%s%sRemoving Web UI build artifacts...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
+    rm -rf "$JENOVA_ROOT/public" "$JENOVA_ROOT/jca_web/node_modules"
+    echo "Web UI build artifacts removed."
+}
+uninstall_jenova_ui() {
+    printf "%s%sRemoving jenova-ui build artifacts...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
+    rm -f "$JENOVA_ROOT/jenova-ui/jenova-ui" "$JENOVA_ROOT/bin/jenova-ui"
+    echo "jenova-ui build artifacts removed."
+}
+uninstall_mcsh() {
+    printf "%s%sRemoving mcsh build artifacts...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
+    rm -rf "$JENOVA_ROOT/mcsh/build" "$JENOVA_ROOT/bin/mcsh"
+    echo "mcsh build artifacts removed."
+}
+
+# --- Component detection (extended) ---
+check_webui() { [ -f "$JENOVA_ROOT/public/bundle.js" ]; }
+check_jenova_ui() { [ -x "$JENOVA_ROOT/bin/jenova-ui" ] || [ -x "$JENOVA_ROOT/jenova-ui/jenova-ui" ]; }
+check_mcsh() { [ -x "$JENOVA_ROOT/bin/mcsh" ]; }
 
 show_action_menu() {
     action="$1"
@@ -399,17 +435,26 @@ show_action_menu() {
     status_core="$default_on"
     status_jvim="$default_on"
     status_llama="$default_on"
+    status_webui="$default_on"
+    status_jenova_ui="$default_on"
+    status_mcsh="$default_on"
 
     if [ "$action" = "install" ]; then
         check_jenova_core && status_core="off"
         check_jvim && status_jvim="off"
         check_llama && status_llama="off"
+        check_webui && status_webui="off"
+        check_jenova_ui && status_jenova_ui="off"
+        check_mcsh && status_mcsh="off"
     fi
 
     interactive_checklist "$title" "$checklist_msg" \
         "Jenova_Core" "Jenova CA and backend scripts" "$status_core" \
         "jvim" "Editor / IDE (bundled)" "$status_jvim" \
-        "llama.cpp" "Inference engine" "$status_llama"
+        "llama.cpp" "Inference engine" "$status_llama" \
+        "WebUI" "Browser-based Workspaces UI" "$status_webui" \
+        "jenova_ui" "Desktop Manager (tray + TUI)" "$status_jenova_ui" \
+        "mcsh" "Modern C Shell" "$status_mcsh"
         
     eval "first_choice=\$CHECKLIST_CHOICES_0"
     if [ "$first_choice" = "CANCEL" ] || [ "$CHECKLIST_COUNT" -eq 0 ]; then
@@ -422,7 +467,21 @@ show_action_menu() {
     while [ $i -lt $CHECKLIST_COUNT ]; do
         eval "item=\$CHECKLIST_CHOICES_$i"
         
-        msg="Are you sure you want to $action $item?"
+        # Choice for Build vs Install if action is 'install'
+        mode="build"
+        if [ "$action" = "install" ]; then
+            interactive_menu "Select Mode for $item" \
+                "Build from source (Recommended for your hardware)" \
+                "Quick Install (Deploy existing binaries if present)" \
+                "Skip $item"
+            case "$MENU_CHOICE" in
+                0) mode="build" ;;
+                1) mode="deploy" ;;
+                *) i=$((i+1)); continue ;;
+            esac
+        fi
+
+        msg="Are you sure you want to $action $item ($mode)?"
         [ -n "$confirm_msg" ] && msg="$(printf "$confirm_msg" "$item")"
         
         defaultno="0"
@@ -431,17 +490,35 @@ show_action_menu() {
         if confirm_prompt "$msg" "$defaultno"; then
             exit_alt_screen
             printf "%s\n" "$RESET$CLEAR"
-            echo "Processing $action on $item..."
+            echo "Processing $action ($mode) on $item..."
 
             suffix="unknown"
             case "$item" in
                 "Jenova_Core") suffix="jenova_core" ;;
                 "jvim")        suffix="jvim" ;;
                 "llama.cpp")   suffix="llama" ;;
+                "WebUI")       suffix="webui" ;;
+                "jenova_ui")   suffix="jenova_ui" ;;
+                "mcsh")        suffix="mcsh" ;;
             esac
 
             if [ "$suffix" != "unknown" ]; then
-                if "${action}_${suffix}"; then
+                if [ "$mode" = "deploy" ]; then
+                    # Quick install mode: just run install.sh with appropriate skip flags
+                    # but ensure the component we want is NOT skipped.
+                    case "$suffix" in
+                        "jenova_core") "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama --skip-lsp ;;
+                        "jvim")        "$JENOVA_ROOT/scripts/install.sh" --skip-config --skip-llama --skip-lsp ;;
+                        "llama")       "$JENOVA_ROOT/scripts/install.sh" --skip-config --skip-jvim --skip-lsp ;;
+                        *)             "${action}_${suffix}" ;; # Fallback for components without specific install.sh flags
+                    esac
+                    _ret=$?
+                else
+                    "${action}_${suffix}"
+                    _ret=$?
+                fi
+
+                if [ "$_ret" = "0" ]; then
                     printf "\n%sFinished %s %s. Press any key to continue.%s" "$GREEN" "$action" "$item" "$RESET"
                 else
                     printf "\n%sFailed to %s %s. Press any key to continue.%s" "$RED" "$action" "$item" "$RESET"
