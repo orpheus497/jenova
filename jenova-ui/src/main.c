@@ -8,6 +8,7 @@
 #include <limits.h>
 #include <libgen.h>
 #include <ncurses.h>
+#include <sys/types.h>
 
 #include <gtk/gtk.h>
 #include <libappindicator/app-indicator.h>
@@ -159,6 +160,10 @@ static void on_menu_item_activate(GtkMenuItem *item G_GNUC_UNUSED, gpointer user
     lua_pop(L, 1); // pop 'ui' table
 }
 
+static void free_action_data(gpointer data, GClosure *closure G_GNUC_UNUSED) {
+    free(data);
+}
+
 static gboolean update_tray_status(gpointer user_data G_GNUC_UNUSED) {
     if (!global_indicator) return TRUE;
 
@@ -185,7 +190,9 @@ static gboolean update_tray_status(gpointer user_data G_GNUC_UNUSED) {
 }
 
 static void run_tray(int argc, char *argv[]) {
-    int lock_fd = open("/tmp/jenova-ui.lock", O_CREAT | O_RDWR, 0666);
+    char lock_path[PATH_MAX];
+    snprintf(lock_path, sizeof(lock_path), "/tmp/jenova-ui-%d.lock", getuid());
+    int lock_fd = open(lock_path, O_CREAT | O_RDWR, 0666);
     if (lock_fd == -1) {
         perror("open");
         exit(1);
@@ -250,7 +257,7 @@ static void run_tray(int argc, char *argv[]) {
                     if (label && action) {
                         GtkWidget *item = gtk_menu_item_new_with_label(label);
                         char *action_dup = strdup(action);
-                        g_signal_connect_data(item, "activate", G_CALLBACK(on_menu_item_activate), action_dup, (GClosureNotify)free, 0);
+                        g_signal_connect_data(item, "activate", G_CALLBACK(on_menu_item_activate), action_dup, (GClosureNotify)free_action_data, 0);
                         gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
                     }
                 }

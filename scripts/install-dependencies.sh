@@ -50,9 +50,10 @@ if [ -t 1 ]; then
     _Y=$(printf '\033[38;2;192;163;110m')
     _R=$(printf '\033[38;2;195;64;67m')
     _B=$(printf '\033[38;2;126;156;216m')
+    _P=$(printf '\033[38;2;120;81;169m')
     _N=$(printf '\033[0m')
 else
-    _G=""; _Y=""; _R=""; _B=""; _N=""
+    _G=""; _Y=""; _R=""; _B=""; _P=""; _N=""
 fi
 
 ok()   { printf "${_G}✓${_N}  %s\n" "$1"; }
@@ -61,9 +62,9 @@ fail() { printf "${_R}✗${_N}  %s\n" "$1"; }
 info() { printf "${_B}ℹ${_N}  %s\n" "$1"; }
 
 echo ""
-printf "${_B}╔══════════════════════════════════════════════════════╗${_N}\n"
-printf "${_B}║  Jenova — Dependency Installation                    ║${_N}\n"
-printf "${_B}╚══════════════════════════════════════════════════════╝${_N}\n"
+printf "${_P}╔══════════════════════════════════════════════════════╗${_N}\n"
+printf "${_P}║  Jenova — Dependency Installation                    ║${_N}\n"
+printf "${_P}╚══════════════════════════════════════════════════════╝${_N}\n"
 echo ""
 
 # Detect package manager
@@ -105,6 +106,9 @@ clangd:llvm
 stylua:stylua
 node:node
 npm:npm
+pkg-config:pkgconf
+gtk3:gtk3
+appindicator:libappindicator
 EOF
             ;;
         pacman)
@@ -124,6 +128,9 @@ clang:clang
 stylua:stylua
 nodejs:nodejs
 npm:npm
+pkg-config:pkgconf
+gtk3:gtk3
+appindicator:libappindicator-gtk3
 EOF
             ;;
         apt)
@@ -143,6 +150,9 @@ clangd:clangd
 cargo:cargo
 nodejs:nodejs
 npm:npm
+pkg-config:pkg-config
+gtk3:libgtk-3-dev
+appindicator:libappindicator3-dev
 EOF
             ;;
         dnf)
@@ -162,6 +172,9 @@ clang-tools-extra:clang-tools-extra
 cargo:cargo
 nodejs:nodejs
 npm:npm
+pkg-config:pkgconf-pkg-config
+gtk3:gtk3-devel
+appindicator:libappindicator-gtk3-devel
 EOF
             ;;
         brew)
@@ -181,6 +194,9 @@ llvm:llvm
 stylua:stylua
 node:node
 npm:node
+pkg-config:pkg-config
+gtk3:gtk+3
+appindicator:libappindicator
 EOF
             ;;
         zypper)
@@ -200,6 +216,9 @@ clang:clang-tools
 cargo:cargo
 nodejs:nodejs
 npm:npm
+pkg-config:pkg-config
+gtk3:gtk3-devel
+appindicator:libappindicator-gtk3-devel
 EOF
             ;;
         xbps)
@@ -219,6 +238,9 @@ clang:clang
 cargo:cargo
 nodejs:nodejs
 npm:npm
+pkg-config:pkg-config
+gtk3:gtk+3-devel
+appindicator:libappindicator-devel
 EOF
             ;;
         *)
@@ -229,6 +251,13 @@ EOF
 
 # Check if a binary is already installed
 is_installed() {
+    if [ "$1" = "gtk3" ]; then
+        command -v pkg-config >/dev/null 2>&1 && pkg-config --exists gtk+-3.0 >/dev/null 2>&1
+        return $?
+    elif [ "$1" = "appindicator" ]; then
+        command -v pkg-config >/dev/null 2>&1 && pkg-config --exists appindicator3-0.1 >/dev/null 2>&1
+        return $?
+    fi
     command -v "$1" >/dev/null 2>&1
 }
 
@@ -319,7 +348,7 @@ if [ -z "$PACKAGES" ]; then
 fi
 
 # Required dependencies
-REQUIRED_DEPS="git cmake luajit gettext vulkan lua54 curl realpath"
+REQUIRED_DEPS="git cmake luajit gettext vulkan lua54 curl realpath pkg-config gtk3 appindicator"
 OPTIONAL_DEPS="gmake glslc clangd stylua node"
 
 if [ "$REQUIRED_ONLY" = "1" ]; then

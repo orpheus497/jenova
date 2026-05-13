@@ -77,6 +77,7 @@ if [ -t 1 ]; then
     YELLOW=$(printf '\033[38;2;192;163;110m')
     RED=$(printf '\033[38;2;195;64;67m')
     BLUE=$(printf '\033[38;2;126;156;216m')
+    PURPLE=$(printf '\033[38;2;120;81;169m')
     NC=$(printf '\033[0m')
 else
     BOLD=""
@@ -84,15 +85,16 @@ else
     YELLOW=""
     RED=""
     BLUE=""
+    PURPLE=""
     NC=""
 fi
 
 # Helper functions
 print_header() {
     echo ""
-    echo "${BOLD}${BLUE}╔══════════════════════════════════════════════════════════╗${NC}"
-    printf "${BOLD}${BLUE}║ %-56s ║${NC}\n" "$1"
-    echo "${BOLD}${BLUE}╚══════════════════════════════════════════════════════════╝${NC}"
+    echo "${BOLD}${PURPLE}╔══════════════════════════════════════════════════════════╗${NC}"
+    printf "${BOLD}${PURPLE}║ %-56s ║${NC}\n" "$1"
+    echo "${BOLD}${PURPLE}╚══════════════════════════════════════════════════════════╝${NC}"
     echo ""
 }
 
@@ -238,7 +240,16 @@ echo ""
 print_step "Building Jenova components..."
 prompt_continue
 
-COMPONENTS="jenova-ui"
+if command -v gmake >/dev/null 2>&1; then
+    MAKE_CMD="gmake"
+else
+    MAKE_CMD="make"
+fi
+
+COMPONENTS="llama jvim jenova-ui mcsh"
+if [ "$MINIMAL" = "0" ]; then
+    COMPONENTS="$COMPONENTS web"
+fi
 
 if [ "$DRY_RUN" = "1" ]; then
     echo "  Would build: $COMPONENTS"
@@ -249,7 +260,7 @@ else
             continue
         fi
         echo "  Building $component..."
-        if make "$component"; then
+        if "$MAKE_CMD" "$component"; then
             print_success "  $component built successfully"
         else
             if [ "$component" = "mcsh" ] || [ "$component" = "web" ]; then

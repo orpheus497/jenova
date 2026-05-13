@@ -2,8 +2,8 @@
 Type=Application
 Name=Jenova Workstation
 Comment=Jenova Cognitive Architecture and UI
-Exec=sh -c "/home/orpheus/Projects/GitHub/jenova/bin/jenova-ui &"
-Icon=/home/orpheus/Projects/GitHub/jenova/png/jenova.png
+Exec=sh -c "jenova-ui &"
+Icon=jenova
 Terminal=false
 Categories=Utility;AI;
 StartupWMClass=Jenova
