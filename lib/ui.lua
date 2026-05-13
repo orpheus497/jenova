@@ -1,6 +1,10 @@
 local ui = {}
 local root = ""
 
+local function shell_quote(s)
+    return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
+
 -- LAN mode state file path (resolved after init)
 local function lan_state_file()
     return root .. "/.jenova/lan_mode"
@@ -20,7 +24,7 @@ end
 local function set_lan_state(enabled)
     -- Shell-quote the path to prevent injection via root containing metacharacters
     local dir = root .. "/.jenova"
-    os.execute("mkdir -p '" .. dir:gsub("'", "'\\''") .. "' 2>/dev/null")
+    os.execute("mkdir -p " .. shell_quote(dir) .. " 2>/dev/null")
     local ok, f = pcall(io.open, lan_state_file(), "w")
     if ok and f then
         f:write(enabled and "1" or "0")
@@ -78,41 +82,43 @@ ui.on_action = function(action)
         if os.execute("command -v xdg-open >/dev/null 2>&1") ~= 0 then
             opener = "open" -- macOS / FreeBSD with xdg-utils missing
         end
-        sys_exec_async(opener .. " http://localhost:8080")
+        sys_exec_async(shell_quote(opener) .. " http://localhost:8080")
     elseif action == "tui" then
-        sys_exec_async(root .. "/bin/jenova-term " .. root .. "/bin/jenova-ui tui")
+        local bin_term = shell_quote(root .. "/bin/jenova-term")
+        local bin_ui = shell_quote(root .. "/bin/jenova-ui")
+        sys_exec_async(bin_term .. " " .. bin_ui .. " tui")
     elseif action == "start" then
         if is_lan_enabled() then
-            sys_exec_async(root .. "/bin/jenova-ca start --lan")
+            sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " start --lan")
         else
-            sys_exec_async(root .. "/bin/jenova-ca start")
+            sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " start")
         end
     elseif action == "stop" then
-        sys_exec_async(root .. "/bin/jenova-ca stop")
+        sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " stop")
     elseif action == "restart" then
         if is_lan_enabled() then
-            sys_exec_async(root .. "/bin/jenova-ca restart --lan")
+            sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " restart --lan")
         else
-            sys_exec_async(root .. "/bin/jenova-ca restart")
+            sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " restart")
         end
     elseif action == "toggle_lan" then
         local currently_lan = is_lan_enabled()
         set_lan_state(not currently_lan)
         -- Restart with new mode
         if not currently_lan then
-            sys_exec_async(root .. "/bin/jenova-ca restart --lan")
+            sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " restart --lan")
         else
-            sys_exec_async(root .. "/bin/jenova-ca restart")
+            sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " restart")
         end
     elseif action == "quit" then
-        sys_exec_async(root .. "/bin/jenova-ca stop")
+        sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " stop")
         quit_app()
     end
 end
 
 ui.poll_status = function()
     -- 1. Check if backend pipeline reports ready
-    local f1 = io.popen(root .. "/bin/jenova-ca status 2>&1", "r")
+    local f1 = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " status 2>&1", "r")
     if not f1 then return "inactive" end
     local output_backend = f1:read("*a")
     f1:close()
@@ -189,7 +195,9 @@ ui.on_tui_action = function(action)
     if not action then return end
 
     if action == "jvim" then
-        sys_exec_async(root .. "/bin/jenova-term " .. root .. "/bin/jvim")
+        local bin_term = shell_quote(root .. "/bin/jenova-term")
+        local bin_jvim = shell_quote(root .. "/bin/jvim")
+        sys_exec_async(bin_term .. " " .. bin_jvim)
     elseif action == "exit_tui" then
         -- Handled in C
     else

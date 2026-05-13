@@ -103,7 +103,7 @@ void setup_environment(void) {
     if (!home) home = "";
     const char *old_path = getenv("PATH");
 
-    char new_path[4096];
+    char new_path[8192];
     snprintf(new_path, sizeof(new_path),
              "%s/bin:%s/.local/bin:/usr/local/bin:/usr/bin:/bin:%s",
              root, home, old_path ? old_path : "");
@@ -162,7 +162,7 @@ void init_lua(void) {
     lua_getglobal(L, "package");
     lua_getfield(L, -1, "path");
     const char *cur_path = lua_tostring(L, -1);
-    char new_path[4096];
+    char new_path[8192];
     snprintf(new_path, sizeof(new_path), "%s;%s/lib/?.lua",
              cur_path ? cur_path : "", get_jenova_root());
     lua_pop(L, 1);           /* pop old path string */
@@ -562,7 +562,7 @@ static void run_tui(void) {
     /* Main TUI render loop */
     while (1) {
         clear();
-        int width = 60;
+        int width = (COLS < 60) ? COLS : 60;
 
         /* Poll server status — use get_status_info for extended data */
         char status[64] = "inactive";

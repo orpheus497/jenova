@@ -18,10 +18,9 @@
 
 .PHONY: all llama llama-hybrid jvim mcsh web jenova-ui install preflight verify clean help clean-root
 
-all: llama jvim mcsh jenova-ui
-	@if command -v npm >/dev/null 2>&1; then $(MAKE) web; fi
+all: llama jvim mcsh jenova-ui web
 	@echo ""
-	@echo "✅ Jenova build complete (llama.cpp + jvim + mcsh + jenova-ui)"
+	@echo "✅ Jenova build complete (llama.cpp + jvim + mcsh + jenova-ui + web)"
 	@echo "   Run 'make install' (or scripts/install.sh) to deploy."
 
 llama:

@@ -14,23 +14,28 @@ sysctl vm.swap_idle_enabled=1
 sysctl vm.swap_idle_threshold1=2
 sysctl vm.swap_idle_threshold2=10
 
+LOADER_CONF="/boot/loader.conf.local"
+
+update_loader_conf() {
+    _key="$1"
+    _val="$2"
+    if ! grep -q "^${_key}=${_val}" "$LOADER_CONF" 2>/dev/null; then
+        _tmp=$(mktemp)
+        if [ -f "$LOADER_CONF" ]; then
+            grep -v "^${_key}=" "$LOADER_CONF" > "$_tmp" || true
+        fi
+        echo "${_key}=${_val}" >> "$_tmp"
+        cat "$_tmp" > "$LOADER_CONF"
+        rm -f "$_tmp"
+    fi
+}
+
 # Tune ZFS ARC to leave maximum RAM available for the LLM layers and UMA (Iris Xe)
 # 16GB total RAM -> Cap ARC at 2GB
-_KEY="vfs.zfs.arc_max"
-_VAL="2147483648"
-if ! grep -q "^${_KEY}=${_VAL}" /boot/loader.conf.local 2>/dev/null; then
-    # Remove existing conflicting values
-    if [ -f /boot/loader.conf.local ]; then
-        _tmp=$(mktemp)
-        grep -v "^${_KEY}=" /boot/loader.conf.local > "$_tmp" || true
-        cat "$_tmp" > /boot/loader.conf.local && rm -f "$_tmp"
-    fi
-    echo "${_KEY}=${_VAL}" >> /boot/loader.conf.local
-fi
+update_loader_conf "vfs.zfs.arc_max" "2147483648"
 sysctl vfs.zfs.arc_max=2147483648 2>/dev/null || true
+
 # Increase NVMe timeout for heavy swap pressure
-if ! grep -q "hw.nvme.timeout" /boot/loader.conf.local 2>/dev/null; then
-    echo "hw.nvme.timeout=30" >> /boot/loader.conf.local
-fi
+update_loader_conf "hw.nvme.timeout" "30"
 
 echo "System tuning applied. Reboot is recommended for loader.conf changes to take full effect."
