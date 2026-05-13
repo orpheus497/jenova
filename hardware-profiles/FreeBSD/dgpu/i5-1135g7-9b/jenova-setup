@@ -39,7 +39,8 @@ sysctl_persist() {
     fi
     echo "$_line" >> "$_tmp"
     [ -f /etc/sysctl.conf ] && cp /etc/sysctl.conf /etc/sysctl.conf.bak
-    cat "$_tmp" > /etc/sysctl.conf && rm -f "$_tmp"
+    chmod 644 "$_tmp"
+    mv "$_tmp" /etc/sysctl.conf
     trap - EXIT INT TERM
 }
 
