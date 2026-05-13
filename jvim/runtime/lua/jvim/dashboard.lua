@@ -229,6 +229,15 @@ local function build_layout(width)
       { key = "i", icon = "", label = "Open IDE Panels", action = "ide" },
     },
   }
+  -- FIM state label: read from vim.g to reflect runtime state
+  local fim_on = vim.g.jenova_fim_enabled
+  -- Default to checking llama_config if the global hasn't been set yet
+  if fim_on == nil then
+    local cfg = vim.g.llama_config
+    fim_on = cfg and cfg.auto_fim
+  end
+  local fim_label = fim_on and "FIM Auto [ON]" or "FIM Auto [OFF]"
+
   local sec_ai = {
     title = "Jenova AI",
     items = {
@@ -236,6 +245,7 @@ local function build_layout(width)
       { key = "t", icon = "", label = "Toggle Chat",        action = "ai_toggle" },
       { key = "n", icon = "", label = "Fresh Chat",         action = "ai_fresh_chat" },
       { key = "s", icon = "", label = "Web Search",         action = "ai_web_search" },
+      { key = "A", icon = "", label = fim_label,            action = "toggle_fim" },
       { key = "j", icon = "", label = "Jenova Terminal",    action = "jenova_term" },
       { key = "M", icon = "", label = "Backend Monitor",    action = "monitor" },
     },
@@ -385,7 +395,7 @@ local function build_layout(width)
     "SPC f g Live Grep",    "SPC f b Buffers",      "SPC t n New Term",        "gd       Definition",
     "SPC t j Jenova Term",  "Esc Esc Leave Term",   "Shift-H/L Prev/Next Buf", "K        Hover Docs",
     "SPC c a Code Action",  "SPC r n Rename",       "SPC c d Diag Float",      "SPC c f  Format",
-    "SPC a M Jenova Mon",   "SPC a h Health",       "SPC a l LAN Scan",        "SPC f o Recent Files",
+    "SPC a M Jenova Mon",   "SPC a h Health",       "SPC a l LAN Scan",        "SPC a f  FIM Toggle",
   }
   local CTL_COL_W = 26
   local CTL_GAP = 2
@@ -539,6 +549,20 @@ local ACTIONS = {
   mason          = function() safe_cmd("Mason") end,
   checkhealth    = function() M.close(); safe_cmd("checkhealth") end,
   quit           = function() vim.cmd("confirm qa") end,
+  toggle_fim     = function()
+    local cfg = vim.g.llama_config
+    if not cfg then
+      vim.notify("FIM not configured (llama.vim not loaded)", vim.log.levels.WARN, { title = "jvim" })
+      return
+    end
+    local new_state = not cfg.auto_fim
+    cfg.auto_fim = new_state
+    vim.g.llama_config = cfg
+    vim.g.jenova_fim_enabled = new_state
+    local label = new_state and "ENABLED" or "DISABLED"
+    vim.notify("FIM Autocomplete: " .. label, vim.log.levels.INFO, { title = "Jenova AI" })
+    if M.is_open() then pcall(render) end
+  end,
 }
 
 local function trigger(action_name)

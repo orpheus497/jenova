@@ -35,6 +35,8 @@ return {
         t_max_prompt_ms  = 500,
         t_max_predict_ms = 1000,
       }
+      -- Track FIM enabled state globally for dashboard/toggle/statusline
+      vim.g.jenova_fim_enabled = true
     end,
     -- ##Step purpose: Warn the user — but only once a real UI is attached and
     -- only when the plugin actually loads on InsertEnter — that no Jenova
@@ -51,12 +53,23 @@ return {
       if vim.env.JENOVA_CONNECT_HOST or ep.has_jvim_env() or ep.is_lan_mode() then
         return
       end
+      -- ##Step purpose: When no Jenova environment is detected, disable auto_fim
+      -- to prevent the constant FIM failure notifications that spam the user.
+      -- The user can re-enable via SPC a f or the dashboard [A] toggle.
+      local cfg = vim.g.llama_config
+      if cfg then
+        cfg.auto_fim = false
+        vim.g.llama_config = cfg
+        vim.g.jenova_fim_enabled = false
+      end
       vim.notify(
-        "Jenova environment not detected.\n" ..
-        "Launch via 'jvim' or set JENOVA_CONNECT_HOST for LAN mode.",
+        "Jenova environment not detected — FIM autocomplete disabled.\n" ..
+        "Launch via 'jvim' or set JENOVA_CONNECT_HOST for LAN mode.\n" ..
+        "Re-enable with SPC a f or dashboard [A] toggle.",
         vim.log.levels.WARN,
         { title = "Jenova" }
       )
     end,
   },
 }
+

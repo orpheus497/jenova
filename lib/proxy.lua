@@ -70,6 +70,13 @@ local function set_socket_opts(fd)
     ffi.C.setsockopt(fd, SOL_SOCKET, _ffi_defs.SO_KEEPALIVE, one, ffi.sizeof("int"))
 end
 
+-- Prevent socket fds from leaking into child processes spawned by io.popen
+local function set_cloexec(fd)
+    local flags = ffi.C.fcntl(fd, _ffi_defs.F_GETFD, 0)
+    if flags < 0 then flags = 0 end
+    ffi.C.fcntl(fd, _ffi_defs.F_SETFD, bit.bor(flags, _ffi_defs.FD_CLOEXEC))
+end
+
 local function decode_chunked_body(after_headers)
     local decoded = {}
     local pos = 1
@@ -339,6 +346,7 @@ local function proxy_connection(client_fd, conn_fds)
         local health_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
         local backend_ok = false
         if health_fd >= 0 then
+            set_cloexec(health_fd)
             set_nonblocking(health_fd)
             local h_addr = ffi.new("struct sockaddr_in")
             if not _ffi_defs.IS_LINUX then
@@ -482,12 +490,14 @@ local function proxy_connection(client_fd, conn_fds)
         safe_close(); return
     end
 
-    local is_storage_list = is_get and headers_raw:match("^GET /api/storage/([ %?])") or headers_raw:match("^GET /api/storage$")
+    local is_storage_list = is_get and (headers_raw:match("^GET /api/storage/[ %?]") or headers_raw:match("^GET /api/storage "))
     if is_storage_list then
         recursive_mkdir(workspaces_dir)
         local files = {}
-        -- Use 'find' or 'ls' via popen as Lua doesn't have native dir listing
-        local p = io.popen("find " .. workspaces_dir .. " -maxdepth 3 -not -path '*/.*'")
+        -- Shell-escape the path to prevent injection via HOME containing metacharacters
+        local escaped_dir = workspaces_dir:gsub("'", "'\\''")
+        local pop, perr = pcall(io.popen, "find '" .. escaped_dir .. "' -maxdepth 3 -not -path '*/.*'")
+        local p = pop and perr or nil
         if p then
             for line in p:lines() do
                 local rel = line:sub(#workspaces_dir + 2)
@@ -681,6 +691,7 @@ local function proxy_connection(client_fd, conn_fds)
         return
     end
     conn_fds.llama = llama_fd
+    set_cloexec(llama_fd)
     set_nonblocking(llama_fd)
     set_socket_opts(llama_fd)
 
@@ -727,6 +738,7 @@ if server_fd < 0 then
     print("[proxy] Failed to create socket: errno=" .. tostring(err) .. " " .. ffi.string(ffi.C.strerror(err)))
     os.exit(1)
 end
+set_cloexec(server_fd)
 
 local opt = ffi.new("int[1]", 1)
 ffi.C.setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, opt, ffi.sizeof("int"))

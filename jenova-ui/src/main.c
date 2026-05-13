@@ -35,6 +35,7 @@ static char jenova_root[PATH_MAX] = {0};
 /* Forward declarations */
 static void run_tui(void);
 static void run_tray(int argc, char *argv[]);
+static void rebuild_tray_menu(void);
 
 /* ---------------------------------------------------------------------------
  * get_jenova_root: Resolve the project root from the binary's location.
@@ -234,6 +235,15 @@ static void on_menu_item_activate(GtkMenuItem *item G_GNUC_UNUSED,
         lua_pop(L, 1); /* pop error */
     }
     lua_pop(L, 1); /* pop 'ui' table */
+
+    /* Rebuild menu after state-changing actions so labels stay current
+     * (e.g., "Enable LAN" -> "Disable LAN" after toggle_lan). */
+    if (strcmp(action, "toggle_lan") == 0 ||
+        strcmp(action, "start") == 0 ||
+        strcmp(action, "stop") == 0 ||
+        strcmp(action, "restart") == 0) {
+        rebuild_tray_menu();
+    }
 }
 
 static void free_action_data(gpointer data, GClosure *closure G_GNUC_UNUSED) {
@@ -295,6 +305,8 @@ static void run_tray(int argc, char *argv[]) {
                 lock_path, strerror(errno));
         exit(1);
     }
+    /* Set CLOEXEC so child processes don't inherit the lock fd */
+    fcntl(lock_fd, F_SETFD, FD_CLOEXEC);
     if (flock(lock_fd, LOCK_EX | LOCK_NB) == -1) {
         if (errno == EWOULDBLOCK) {
             fprintf(stderr, "jenova-ui: another instance is already running.\n");
@@ -328,14 +340,65 @@ static void run_tray(int argc, char *argv[]) {
     app_indicator_set_icon_full(global_indicator, default_icon,
                                 "Jenova (Inactive)");
 
-    /* Build context menu from Lua */
+    /* Build initial context menu from Lua */
+    rebuild_tray_menu();
+
+    /* Auto-start server and open Web UI unless --offline */
+    if (!offline_mode) {
+        lua_getglobal(L, "ui");                      /* +1  [ui] */
+        if (lua_istable(L, -1)) {
+            lua_getfield(L, -1, "on_action");        /* +1  [ui, fn] */
+            if (lua_isfunction(L, -1)) {
+                lua_pushstring(L, "start");
+                if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+                    fprintf(stderr, "jenova-ui: error starting backend: %s\n",
+                            lua_tostring(L, -1));
+                    lua_pop(L, 1);
+                }
+            } else {
+                lua_pop(L, 1); /* pop non-function */
+            }
+
+            lua_getfield(L, -1, "on_action");        /* +1  [ui, fn] */
+            if (lua_isfunction(L, -1)) {
+                lua_pushstring(L, "web");
+                if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+                    fprintf(stderr, "jenova-ui: error opening web: %s\n",
+                            lua_tostring(L, -1));
+                    lua_pop(L, 1);
+                }
+            } else {
+                lua_pop(L, 1); /* pop non-function */
+            }
+        }
+        lua_pop(L, 1); /* pop 'ui' table */
+    }
+
+    /* Poll server status every 3 seconds */
+    g_timeout_add_seconds(3, update_tray_status, NULL);
+    update_tray_status(NULL);
+
+    gtk_main();
+}
+
+/* ===========================================================================
+ *  TUI (ncurses)
+ * =========================================================================== */
+
+/* ---------------------------------------------------------------------------
+ * rebuild_tray_menu: (Re)builds the GTK context menu from ui.get_menu().
+ * Called at startup and after state-changing actions (LAN toggle, etc.).
+ * --------------------------------------------------------------------------- */
+static void rebuild_tray_menu(void) {
+    if (!global_indicator) return;
+
     GtkWidget *menu = gtk_menu_new();
 
     lua_getglobal(L, "ui");                          /* +1  [ui] */
     if (!lua_istable(L, -1)) {
         fprintf(stderr, "jenova-ui: fatal: ui table not found in Lua state\n");
         lua_pop(L, 1);
-        exit(1);
+        return;
     }
 
     lua_getfield(L, -1, "get_menu");                 /* +1  [ui, fn] */
@@ -386,66 +449,36 @@ static void run_tray(int argc, char *argv[]) {
 
     gtk_widget_show_all(menu);
     app_indicator_set_menu(global_indicator, GTK_MENU(menu));
-
-    /* Auto-start server and open Web UI unless --offline */
-    if (!offline_mode) {
-        lua_getglobal(L, "ui");                      /* +1  [ui] */
-        if (lua_istable(L, -1)) {
-            lua_getfield(L, -1, "on_action");        /* +1  [ui, fn] */
-            if (lua_isfunction(L, -1)) {
-                lua_pushstring(L, "start");
-                if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-                    fprintf(stderr, "jenova-ui: error starting backend: %s\n",
-                            lua_tostring(L, -1));
-                    lua_pop(L, 1);
-                }
-            } else {
-                lua_pop(L, 1); /* pop non-function */
-            }
-
-            lua_getfield(L, -1, "on_action");        /* +1  [ui, fn] */
-            if (lua_isfunction(L, -1)) {
-                lua_pushstring(L, "web");
-                if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-                    fprintf(stderr, "jenova-ui: error opening web: %s\n",
-                            lua_tostring(L, -1));
-                    lua_pop(L, 1);
-                }
-            } else {
-                lua_pop(L, 1); /* pop non-function */
-            }
-        }
-        lua_pop(L, 1); /* pop 'ui' table */
-    }
-
-    /* Poll server status every 3 seconds */
-    g_timeout_add_seconds(3, update_tray_status, NULL);
-    update_tray_status(NULL);
-
-    gtk_main();
 }
 
-/* ===========================================================================
- *  TUI (ncurses)
- * =========================================================================== */
-
 static void draw_box_tui(const char *title, int width, int n_options) {
+    /* Clamp box height to terminal size to prevent ncurses OOB writes */
+    int max_row = LINES - 1;
+    int bottom = n_options + 6;
+    if (bottom > max_row) bottom = max_row;
+
     attron(COLOR_PAIR(1));
     for (int i = 1; i < width - 1; i++) {
         mvaddch(0, i, ACS_HLINE);
-        mvaddch(2, i, ACS_HLINE);
-        mvaddch(n_options + 6, i, ACS_HLINE);
+        if (2 <= max_row) mvaddch(2, i, ACS_HLINE);
+        if (bottom <= max_row) mvaddch(bottom, i, ACS_HLINE);
     }
-    for (int i = 1; i < n_options + 6; i++) {
-        mvaddch(i, 0, ACS_VLINE);
-        mvaddch(i, width - 1, ACS_VLINE);
+    for (int i = 1; i < bottom; i++) {
+        if (i <= max_row) {
+            mvaddch(i, 0, ACS_VLINE);
+            mvaddch(i, width - 1, ACS_VLINE);
+        }
     }
     mvaddch(0, 0, ACS_ULCORNER);
     mvaddch(0, width - 1, ACS_URCORNER);
-    mvaddch(2, 0, ACS_LTEE);
-    mvaddch(2, width - 1, ACS_RTEE);
-    mvaddch(n_options + 6, 0, ACS_LLCORNER);
-    mvaddch(n_options + 6, width - 1, ACS_LRCORNER);
+    if (2 <= max_row) {
+        mvaddch(2, 0, ACS_LTEE);
+        mvaddch(2, width - 1, ACS_RTEE);
+    }
+    if (bottom <= max_row) {
+        mvaddch(bottom, 0, ACS_LLCORNER);
+        mvaddch(bottom, width - 1, ACS_LRCORNER);
+    }
 
     int title_len = (int)strlen(title);
     mvprintw(1, (width - title_len) / 2, "%s", title);
@@ -480,55 +513,45 @@ static void run_tui(void) {
 
     wbkgd(stdscr, COLOR_PAIR(1));
 
-    /* Load menu items from Lua */
+    /* Load menu items from Lua — extracted into a helper so we can reload
+     * labels after state-changing actions (e.g., LAN toggle). */
     char labels[20][64];
     char actions[20][64];
     int n_options = 0;
 
-    lua_getglobal(L, "ui");                          /* +1  [ui] */
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
-        endwin();
-        fprintf(stderr, "jenova-ui: fatal: ui table missing for TUI\n");
-        exit(1);
-    }
-    lua_getfield(L, -1, "get_tui_menu");             /* +1  [ui, fn] */
-    if (lua_pcall(L, 0, 1, 0) == LUA_OK) {          /* -1 +1  [ui, result] */
-        if (lua_istable(L, -1)) {
-            size_t len = lua_objlen(L, -1);
-            for (size_t i = 1; i <= len && i <= 20; i++) {
-                lua_rawgeti(L, -1, (int)i);
-                if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
+    /* reload_tui_menu: (re)populates labels[] and actions[] from ui.get_tui_menu() */
+    #define reload_tui_menu() do { \
+        n_options = 0; \
+        lua_getglobal(L, "ui"); \
+        if (!lua_istable(L, -1)) { lua_pop(L, 1); break; } \
+        lua_getfield(L, -1, "get_tui_menu"); \
+        if (lua_pcall(L, 0, 1, 0) == LUA_OK) { \
+            if (lua_istable(L, -1)) { \
+                size_t _len = lua_objlen(L, -1); \
+                for (size_t _i = 1; _i <= _len && _i <= 20; _i++) { \
+                    lua_rawgeti(L, -1, (int)_i); \
+                    if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; } \
+                    lua_getfield(L, -1, "label"); \
+                    const char *_lbl = lua_tostring(L, -1); \
+                    if (_lbl) { strncpy(labels[n_options], _lbl, 63); labels[n_options][63] = '\0'; } \
+                    else { strncpy(labels[n_options], "(unknown)", 63); } \
+                    lua_pop(L, 1); \
+                    lua_getfield(L, -1, "action"); \
+                    const char *_act = lua_tostring(L, -1); \
+                    if (_act) { strncpy(actions[n_options], _act, 63); actions[n_options][63] = '\0'; } \
+                    else { strncpy(actions[n_options], "noop", 63); } \
+                    lua_pop(L, 1); \
+                    n_options++; \
+                    lua_pop(L, 1); \
+                } \
+            } \
+        } else { \
+            fprintf(stderr, "jenova-ui: error loading TUI menu: %s\n", lua_tostring(L, -1)); \
+        } \
+        lua_pop(L, 2); \
+    } while(0)
 
-                lua_getfield(L, -1, "label");
-                const char *lbl = lua_tostring(L, -1);
-                if (lbl) {
-                    strncpy(labels[n_options], lbl, 63);
-                    labels[n_options][63] = '\0';
-                } else {
-                    strncpy(labels[n_options], "(unknown)", 63);
-                }
-                lua_pop(L, 1);
-
-                lua_getfield(L, -1, "action");
-                const char *act = lua_tostring(L, -1);
-                if (act) {
-                    strncpy(actions[n_options], act, 63);
-                    actions[n_options][63] = '\0';
-                } else {
-                    strncpy(actions[n_options], "noop", 63);
-                }
-                lua_pop(L, 1);
-
-                n_options++;
-                lua_pop(L, 1); /* pop item table */
-            }
-        }
-    } else {
-        fprintf(stderr, "jenova-ui: error loading TUI menu: %s\n",
-                lua_tostring(L, -1));
-    }
-    lua_pop(L, 2); /* pop result + 'ui' table */
+    reload_tui_menu();
 
     if (n_options == 0) {
         endwin();
@@ -541,19 +564,32 @@ static void run_tui(void) {
         clear();
         int width = 60;
 
-        /* Poll server status */
+        /* Poll server status — use get_status_info for extended data */
         char status[64] = "inactive";
+        char mode[64] = "LOCAL";
         lua_getglobal(L, "ui");                      /* +1 */
         if (lua_istable(L, -1)) {
-            lua_getfield(L, -1, "poll_status");      /* +1 */
+            lua_getfield(L, -1, "get_status_info");  /* +1 */
             if (lua_isfunction(L, -1)) {
                 if (lua_pcall(L, 0, 1, 0) == LUA_OK) {  /* -1 +1 */
-                    const char *s = lua_tostring(L, -1);
-                    if (s) {
-                        strncpy(status, s, 63);
-                        status[63] = '\0';
+                    if (lua_istable(L, -1)) {
+                        lua_getfield(L, -1, "status");
+                        const char *s = lua_tostring(L, -1);
+                        if (s) {
+                            strncpy(status, s, 63);
+                            status[63] = '\0';
+                        }
+                        lua_pop(L, 1); /* pop status */
+
+                        lua_getfield(L, -1, "mode");
+                        const char *m = lua_tostring(L, -1);
+                        if (m) {
+                            strncpy(mode, m, 63);
+                            mode[63] = '\0';
+                        }
+                        lua_pop(L, 1); /* pop mode */
                     }
-                    lua_pop(L, 1); /* pop result */
+                    lua_pop(L, 1); /* pop result table */
                 } else {
                     lua_pop(L, 1); /* pop error */
                 }
@@ -578,6 +614,16 @@ static void run_tui(void) {
             attron(COLOR_PAIR(4));
             mvprintw(5, 4, "INACTIVE");
             attroff(COLOR_PAIR(4));
+        }
+
+        /* Show network mode */
+        mvprintw(4, 14, "Mode:");
+        if (strcmp(mode, "LAN") == 0) {
+            attron(COLOR_PAIR(3));
+            mvprintw(5, 16, "LAN (0.0.0.0)");
+            attroff(COLOR_PAIR(3));
+        } else {
+            mvprintw(5, 16, "LOCAL (127.0.0.1)");
         }
 
         for (int i = 0; i < n_options; i++) {
@@ -628,6 +674,11 @@ static void run_tui(void) {
                     }
                 }
                 lua_pop(L, 1); /* pop 'ui' table */
+
+                /* Reload menu labels (LAN toggle changes label text) */
+                reload_tui_menu();
+                if (selected >= n_options && n_options > 0)
+                    selected = n_options - 1;
 
                 mvprintw(LINES - 1, 0,
                          "Action executed. Press any key to continue...");

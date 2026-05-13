@@ -134,6 +134,19 @@ end, { desc = "Scan LAN for remote Jenova CA" })
 map("n", "<leader>aM", "<cmd>JenovaMonitor<CR>",    { desc = "Jenova Monitor" })
 map("n", "<leader>ah", "<cmd>checkhealth jenova<CR>", { desc = "Jenova Health" })
 map("n", "<leader>al", "<cmd>JenovaLanScan<CR>",    { desc = "Jenova LAN Scan" })
+map("n", "<leader>af", function()
+  local cfg = vim.g.llama_config
+  if not cfg then
+    vim.notify("FIM not configured (llama.vim not loaded)", vim.log.levels.WARN, { title = "jvim" })
+    return
+  end
+  local new_state = not cfg.auto_fim
+  cfg.auto_fim = new_state
+  vim.g.llama_config = cfg
+  vim.g.jenova_fim_enabled = new_state
+  local label = new_state and "ENABLED" or "DISABLED"
+  vim.notify("FIM Autocomplete: " .. label, vim.log.levels.INFO, { title = "Jenova AI" })
+end, { desc = "Toggle FIM Autocomplete" })
 
 --------------------------------------------------------------------------------
 -- [6] JENOVA BACKEND HEALTH CHECK
