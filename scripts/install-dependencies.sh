@@ -17,7 +17,9 @@
 
 set -e
 
-JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
+_REAL_SCRIPT="$(realpath "$0" 2>/dev/null || echo "$0")"
+_SCRIPT_DIR="$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)"
+JENOVA_ROOT="$(cd "$_SCRIPT_DIR/.." && pwd)"
 
 # Shared OS/hardware detection
 . "$JENOVA_ROOT/lib/detect-env.sh"
@@ -96,6 +98,7 @@ gettext:gettext-tools
 vulkan:vulkan-loader
 lua54:lua54
 curl:curl
+realpath:coreutils
 gmake:gmake
 glslc:shaderc
 clangd:llvm
@@ -115,6 +118,7 @@ vulkan-icd-loader:vulkan-icd-loader
 lua54:lua54
 curl:curl
 make:make
+realpath:coreutils
 glslc:glslc
 clang:clang
 stylua:stylua
@@ -133,6 +137,7 @@ libvulkan1:libvulkan1
 liblua5.4-dev:liblua5.4-dev
 libcurl4-openssl-dev:libcurl4-openssl-dev
 make:make
+realpath:coreutils
 glslc:glslc
 clangd:clangd
 cargo:cargo
@@ -151,6 +156,7 @@ vulkan-loader:vulkan-loader
 lua-devel:lua-devel
 libcurl-devel:libcurl-devel
 make:make
+realpath:coreutils
 glslc:glslc
 clang-tools-extra:clang-tools-extra
 cargo:cargo
@@ -169,6 +175,7 @@ molten-vk:molten-vk
 lua@5.4:lua@5.4
 curl:curl
 make:make
+realpath:coreutils
 shaderc:shaderc
 llvm:llvm
 stylua:stylua
@@ -187,6 +194,7 @@ libvulkan1:libvulkan1
 lua54-devel:lua54-devel
 libcurl-devel:libcurl-devel
 make:make
+realpath:coreutils
 glslc:glslc
 clang:clang-tools
 cargo:cargo
@@ -205,6 +213,7 @@ vulkan-loader:vulkan-loader
 lua54-devel:lua54-devel
 curl-devel:curl-devel
 make:make
+realpath:coreutils
 glslc:glslc
 clang:clang
 cargo:cargo
@@ -310,7 +319,7 @@ if [ -z "$PACKAGES" ]; then
 fi
 
 # Required dependencies
-REQUIRED_DEPS="git cmake luajit gettext vulkan lua54 curl"
+REQUIRED_DEPS="git cmake luajit gettext vulkan lua54 curl realpath"
 OPTIONAL_DEPS="gmake glslc clangd stylua node"
 
 if [ "$REQUIRED_ONLY" = "1" ]; then
@@ -324,7 +333,10 @@ fi
 FAILED_REQUIRED=0
 FAILED_OPTIONAL=0
 
-echo "$PACKAGES" | while IFS=: read -r binary pkg; do
+while IFS=: read -r binary pkg; do
+    # Skip empty lines or comments
+    [ -z "$binary" ] || [ "${binary#\#}" != "$binary" ] && continue
+
     # Skip if not in our list to check
     case " $DEPS_TO_CHECK " in
         *" $binary "*) ;;
@@ -361,7 +373,9 @@ echo "$PACKAGES" | while IFS=: read -r binary pkg; do
             FAILED_OPTIONAL=$((FAILED_OPTIONAL + 1))
         fi
     fi
-done
+done <<EOF
+$PACKAGES
+EOF
 
 echo ""
 if [ "$FAILED_REQUIRED" = "0" ]; then

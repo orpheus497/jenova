@@ -14,7 +14,9 @@
 #   1 = critical failures found (do not proceed)
 #   2 = warnings found (proceed with caution)
 
-JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
+_REAL_SCRIPT="$(realpath "$0" 2>/dev/null || echo "$0")"
+_SCRIPT_DIR="$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)"
+JENOVA_ROOT="$(cd "$_SCRIPT_DIR/.." && pwd)"
 
 # Shared OS/hardware detection
 . "$JENOVA_ROOT/lib/detect-env.sh"
@@ -138,6 +140,7 @@ _check_bin() {
 _check_bin "git"      "git" 0
 _check_bin "cmake"    "cmake" 0
 _check_bin "luajit"   "luajit" 0
+_check_bin "realpath" "coreutils" 0
 _check_bin "curl"     "curl" 1
 _check_bin "gmake"    "gmake" 1
 

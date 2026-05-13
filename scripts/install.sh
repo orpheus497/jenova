@@ -34,7 +34,9 @@
 
 set -e
 
-JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
+_REAL_SCRIPT="$(realpath "$0" 2>/dev/null || echo "$0")"
+_SCRIPT_DIR="$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)"
+JENOVA_ROOT="$(cd "$_SCRIPT_DIR/.." && pwd)"
 JVIM_CONFIG_SRC="$JENOVA_ROOT/jvim-config"
 JVIM_CONFIG_DST="$HOME/.config/jvim"
 
@@ -108,7 +110,12 @@ info "Checking operating system..."
 case "$JENOVA_OS" in
     freebsd)
         _VER="$(uname -r | cut -d. -f1)"
-        if [ "${_VER:-0}" -ge 15 ] 2>/dev/null; then
+        # Ensure _VER is a valid number for comparison
+        case "$_VER" in
+            ''|*[!0-9]*) _VER_NUM=0 ;;
+            *)           _VER_NUM="$_VER" ;;
+        esac
+        if [ "$_VER_NUM" -ge 15 ]; then
             ok "FreeBSD ${_VER} — fully supported"
         else
             warn "FreeBSD ${_VER} — recommended FreeBSD 15+; some features may differ"

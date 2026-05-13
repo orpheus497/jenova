@@ -223,19 +223,31 @@ load_jenova_profile() {
     _ljp_file="$1"
     [ -f "$_ljp_file" ] || return 1
 
-    _ljp_real="$(realpath "$_ljp_file" 2>/dev/null)" || return 1
-    _ljp_root="$(realpath "$JENOVA_ROOT/hardware-profiles" 2>/dev/null)" || return 1
+    if command -v realpath >/dev/null 2>&1; then
+        _ljp_real="$(realpath "$_ljp_file" 2>/dev/null)" || return 1
+        _ljp_root="$(realpath "$JENOVA_ROOT/hardware-profiles" 2>/dev/null)" || return 1
 
-    case "$_ljp_real" in
-        "$_ljp_root"/*)
-            # shellcheck disable=SC1090
-            . "$_ljp_real"
-            ;;
-        *)
-            printf "Error: Profile path outside expected directory: %s\n" "$_ljp_real" >&2
-            return 1
-            ;;
-    esac
+        case "$_ljp_real" in
+            "$_ljp_root"/*)
+                # shellcheck disable=SC1090
+                . "$_ljp_real"
+                ;;
+            *)
+                printf "Error: Profile path outside expected directory: %s\n" "$_ljp_real" >&2
+                return 1
+                ;;
+        esac
+    else
+        # Basic validation if realpath is missing
+        case "$_ljp_file" in
+            ../*|*/../*)
+                printf "Error: Profile path contains parent directory reference: %s\n" "$_ljp_file" >&2
+                return 1
+                ;;
+        esac
+        # shellcheck disable=SC1090
+        . "$_ljp_file"
+    fi
 }
 
 export JENOVA_OS JENOVA_ARCH JENOVA_DISTRO JENOVA_PKG_MGR

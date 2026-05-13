@@ -28,7 +28,8 @@
 
 set -e
 
-JENOVA_ROOT="$(dirname "$(realpath "$(command -v "$0")")")"
+_REAL_SCRIPT="$(realpath "$0" 2>/dev/null || echo "$0")"
+JENOVA_ROOT="$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)"
 
 # Parse arguments
 DRY_RUN=0
