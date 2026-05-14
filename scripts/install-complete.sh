@@ -104,7 +104,7 @@ info "[3/6] Building Jenova components..."
 _build_component() {
     _name="$1"; _target="$2"; _cmd="$3"
     info "  Building $_name..."
-    if $"$_cmd"; then
+    if $_cmd; then
         ok "    $_name complete"
         return 0
     else

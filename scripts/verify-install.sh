@@ -90,8 +90,8 @@ _check_bin "mcsh" "mcsh (Modern C Shell)"
 # ---------------------------------------------------------------------------
 info "Verifying in-tree builds..."
 
-if [ -x "$JENOVA_ROOT/jvim/build/bin/nvim" ]; then
-    ok "jvim editor built (jvim/build/bin/nvim)"
+if [ -x "$JENOVA_ROOT/jvim/build/bin/jvim" ] || [ -x "$JENOVA_ROOT/jvim/build/bin/nvim" ]; then
+    ok "jvim editor built"
 else
     warn "jvim editor not built locally (using system nvim)"
     WARNINGS=$((WARNINGS + 1))
