@@ -561,7 +561,14 @@ elif [ "$SKIP_LLAMA" = "0" ]; then
         brew)   _spirv_hint="brew install spirv-headers" ;;
         *)      _spirv_hint="install the spirv-headers package for your OS" ;;
     esac
-    check_optional "spirv-headers" "$_spirv_hint"
+
+    # On FreeBSD, spirv-headers might be missing from the binary repo but 
+    # we have a workaround in install-dependencies.sh using spirv-cross.
+    if [ "$JENOVA_OS" = "freebsd" ] && [ ! -f "/usr/local/include/spirv/unified1/spirv.hpp" ]; then
+        warn "spirv-headers missing — check if install-dependencies.sh was run"
+    else
+        check_optional "spirv-headers" "$_spirv_hint"
+    fi
 
     if [ "$JENOVA_GLSLC_OK" = "0" ]; then
         case "$JENOVA_PKG_MGR" in

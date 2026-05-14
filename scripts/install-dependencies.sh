@@ -431,6 +431,29 @@ done <<EOF
 $PACKAGES
 EOF
 
+# ---------------------------------------------------------------------------
+# FreeBSD-specific "First Class citizen" workarounds
+# ---------------------------------------------------------------------------
+if [ "$JENOVA_OS" = "freebsd" ]; then
+    # Workaround for missing spirv-headers in standard pkg repos
+    # We use headers provided by spirv-cross if the standalone package is missing.
+    _SPIRV_DIR="/usr/local/include/spirv/unified1"
+    if [ ! -f "$_SPIRV_DIR/spirv.hpp" ]; then
+        info "Applying FreeBSD spirv-headers workaround..."
+        if [ -d "/usr/local/include/spirv_cross" ]; then
+            sudo mkdir -p "$_SPIRV_DIR"
+            sudo ln -sf /usr/local/include/spirv_cross/spirv.hpp "$_SPIRV_DIR/spirv.hpp"
+            sudo ln -sf /usr/local/include/spirv_cross/spirv.h "$_SPIRV_DIR/spirv.h"
+            sudo ln -sf /usr/local/include/spirv_cross/GLSL.std.450.h "$_SPIRV_DIR/GLSL.std.450.h"
+            ok "Symlinked spirv-headers from spirv-cross"
+            # If this was the only failure, we can potentially lower the fail count
+            # but for simplicity we just ensure the files exist now.
+        else
+            warn "spirv-cross not found — cannot apply header workaround."
+        fi
+    fi
+fi
+
 echo ""
 if [ "$FAILED_REQUIRED" = "0" ]; then
     ok "All required dependencies installed"
