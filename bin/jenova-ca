@@ -9,9 +9,6 @@
 
 set -e
 
-# Path hardening for headless/desktop execution
-export PATH="$HOME/.local/bin:$JENOVA_ROOT/bin:$PATH"
-
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 
 # Determine JENOVA_ROOT before loading config
@@ -25,6 +22,9 @@ else
     echo "Error: etc/jenova.conf not found."
     exit 1
 fi
+
+# Path hardening for headless/desktop execution
+export PATH="$HOME/.local/bin:$JENOVA_ROOT/bin:$PATH"
 
 . "$JENOVA_ROOT/lib/jenova-conf.sh"
 

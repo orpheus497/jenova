@@ -2,29 +2,27 @@
 # jenova-term: Launch a command in a modern terminal emulator.
 # Support for foot, kitty, alacritty, ghostty, and GNOME Terminal.
 
-CMD="$@"
-
 if command -v foot >/dev/null 2>&1; then
-    exec foot sh -c "$CMD"
+    exec foot "$@"
 elif command -v kitty >/dev/null 2>&1; then
-    exec kitty sh -c "$CMD"
+    exec kitty "$@"
 elif command -v alacritty >/dev/null 2>&1; then
-    exec alacritty -e sh -c "$CMD"
+    exec alacritty -e "$@"
 elif command -v ghostty >/dev/null 2>&1; then
-    exec ghostty -e sh -c "$CMD"
+    exec ghostty -e "$@"
 elif command -v gnome-terminal >/dev/null 2>&1; then
-    exec gnome-terminal -- sh -c "$CMD"
+    exec gnome-terminal -- "$@"
 elif command -v x-terminal-emulator >/dev/null 2>&1; then
-    exec x-terminal-emulator -e sh -c "$CMD"
+    exec x-terminal-emulator -e "$@"
 elif command -v xterm >/dev/null 2>&1; then
-    exec xterm -e sh -c "$CMD"
+    exec xterm -e "$@"
 else
     # Fallback: If we are in a terminal already, execute. 
     # Otherwise, this will fail visibly rather than running a TUI in the background.
     if [ -t 1 ]; then
-        exec sh -c "$CMD"
+        exec "$@"
     else
-        notify-send "Jenova Error" "No supported terminal emulator found to launch: $CMD" 2>/dev/null || echo "Error: No terminal found" >&2
+        notify-send "Jenova Error" "No supported terminal emulator found to launch: $@" 2>/dev/null || echo "Error: No terminal found" >&2
         exit 1
     fi
 fi

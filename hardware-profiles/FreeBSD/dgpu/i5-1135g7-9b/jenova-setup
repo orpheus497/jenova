@@ -30,7 +30,7 @@ CHANGED=0
 sysctl_persist() {
     _line="$1"
     _key=$(echo "$_line" | cut -d= -f1)
-    _esc_key=$(printf '%s' "$_key" | sed 's/[].[*^$\/]/\&/g')
+    _esc_key=$(printf '%s' "$_key" | sed 's|[.[*^$/]|\\&|g')
     _tmp=$(mktemp)
     trap 'rm -f "$_tmp"' EXIT INT TERM
     # Remove all existing instances of this key and append the new value
@@ -41,7 +41,7 @@ sysctl_persist() {
     [ -f /etc/sysctl.conf ] && cp -p /etc/sysctl.conf /etc/sysctl.conf.bak
     
     if [ -f /etc/sysctl.conf ]; then
-        cat "$_tmp" > /etc/sysctl.conf
+        cp "$_tmp" /etc/sysctl.conf
     else
         install -m 644 "$_tmp" /etc/sysctl.conf
     fi
