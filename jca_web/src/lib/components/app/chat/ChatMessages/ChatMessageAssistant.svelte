@@ -12,7 +12,8 @@
 	import { isLoading, isChatStreaming } from '$lib/stores/chat.svelte';
 	import { autoResizeTextarea, copyToClipboard, isIMEComposing } from '$lib/utils';
 	import { onDestroy, tick } from 'svelte';
-	import { fade } from 'svelte/transition';	import { Check, X } from '@lucide/svelte';
+	import { fade } from 'svelte/transition';
+	import { Check, X } from '@lucide/svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { Checkbox } from '$lib/components/ui/checkbox';
 	import { INPUT_CLASSES } from '$lib/constants';

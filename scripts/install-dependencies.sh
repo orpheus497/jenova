@@ -80,7 +80,7 @@ if [ "$JENOVA_PKG_MGR" = "none" ]; then
     echo "  • Package manager is not installed"
     echo ""
     echo "Please install dependencies manually. See docs/installation/dependencies.md"
-    echo "Required: git, cmake, luajit, gettext, vulkan-loader, lua54, curl"
+    echo "Required: git, cmake, luajit, gettext, vulkan-loader, spirv-headers, lua54, curl"
     echo "Optional: glslc, dialog, clangd, stylua, node"
     exit 1
 fi
@@ -96,6 +96,7 @@ git:git
 cmake:cmake
 luajit:luajit-openresty
 gettext:gettext-tools
+spirv-headers:spirv-headers
 vulkan:vulkan-loader
 lua54:lua54
 curl:curl
@@ -118,6 +119,7 @@ git:git
 cmake:cmake
 luajit:luajit
 gettext:gettext
+spirv-headers:spirv-headers
 vulkan-icd-loader:vulkan-icd-loader
 lua54:lua54
 curl:curl
@@ -140,6 +142,7 @@ git:git
 cmake:cmake
 luajit:luajit
 gettext:gettext
+spirv-headers:spirv-headers
 libvulkan1:libvulkan1
 liblua5.4-dev:liblua5.4-dev
 libcurl4-openssl-dev:libcurl4-openssl-dev
@@ -162,6 +165,7 @@ git:git
 cmake:cmake
 luajit:luajit
 gettext:gettext
+spirv-headers:spirv-headers-devel
 vulkan-loader:vulkan-loader
 lua-devel:lua-devel
 libcurl-devel:libcurl-devel
@@ -184,6 +188,7 @@ git:git
 cmake:cmake
 luajit:luajit
 gettext:gettext
+spirv-headers:spirv-headers
 molten-vk:molten-vk
 lua@5.4:lua@5.4
 curl:curl
@@ -206,6 +211,7 @@ git:git
 cmake:cmake
 luajit:luajit
 gettext:gettext
+spirv-headers:spirv-headers
 libvulkan1:libvulkan1
 lua54-devel:lua54-devel
 libcurl-devel:libcurl-devel
@@ -228,6 +234,7 @@ git:git
 cmake:cmake
 luajit:luajit
 gettext:gettext
+spirv-headers:SPIRV-Headers
 vulkan-loader:vulkan-loader
 lua54-devel:lua54-devel
 curl-devel:curl-devel
@@ -366,7 +373,7 @@ if [ -z "$PACKAGES" ]; then
 fi
 
 # Required dependencies
-REQUIRED_DEPS="git cmake luajit gettext vulkan lua54 curl realpath pkg-config gtk3 appindicator"
+REQUIRED_DEPS="git cmake luajit gettext vulkan spirv-headers lua54 curl realpath pkg-config gtk3 appindicator"
 OPTIONAL_DEPS="gmake glslc clangd stylua node"
 
 if [ "$REQUIRED_ONLY" = "1" ]; then

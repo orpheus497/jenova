@@ -551,6 +551,18 @@ elif [ "$SKIP_LLAMA" = "0" ]; then
     fi
 
     # Check for Vulkan SDK components (needed for build)
+    case "$JENOVA_PKG_MGR" in
+        pkg)    _spirv_hint="pkg install spirv-headers" ;;
+        pacman) _spirv_hint="pacman -S spirv-headers" ;;
+        apt)    _spirv_hint="apt-get install spirv-headers" ;;
+        dnf)    _spirv_hint="dnf install spirv-headers-devel" ;;
+        zypper) _spirv_hint="zypper install spirv-headers" ;;
+        xbps)   _spirv_hint="xbps-install SPIRV-Headers" ;;
+        brew)   _spirv_hint="brew install spirv-headers" ;;
+        *)      _spirv_hint="install the spirv-headers package for your OS" ;;
+    esac
+    check_optional "spirv-headers" "$_spirv_hint"
+
     if [ "$JENOVA_GLSLC_OK" = "0" ]; then
         case "$JENOVA_PKG_MGR" in
             pkg)    _glslc_hint="pkg install shaderc" ;;
