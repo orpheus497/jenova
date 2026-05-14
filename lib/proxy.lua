@@ -792,7 +792,8 @@ local read_fds = _ffi_defs.fd_set_new()
 local write_fds = _ffi_defs.fd_set_new()
 
 local running = true
-local function shutdown_handler()
+local function shutdown_handler(sig)
+    io.write("[proxy] received signal " .. tostring(sig) .. ", shutting down...\n")
     running = false
 end
 local shutdown_cb = ffi.cast("sighandler_t", shutdown_handler)

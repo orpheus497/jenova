@@ -37,6 +37,16 @@ static void run_tui(void);
 static void run_tray(int argc, char *argv[]);
 static void rebuild_tray_menu(void);
 
+static int is_tray_supported(void) {
+    const char *desktop = getenv("XDG_CURRENT_DESKTOP");
+    /* Sway/Wayland often lacks X11-style AppIndicator support */
+    if (desktop && (strcasecmp(desktop, "sway") == 0 || strcasecmp(desktop, "Wayland") == 0)) {
+        return 0;
+    }
+    if (!getenv("DISPLAY") && !getenv("WAYLAND_DISPLAY")) return 0;
+    return 1;
+}
+
 /* ---------------------------------------------------------------------------
  * get_jenova_root: Resolve the project root from the binary's location.
  *
@@ -220,7 +230,15 @@ int main(int argc, char *argv[]) {
     setup_environment();
     init_lua();
 
+    int force_tui = 0;
     if (argc > 1 && strcmp(argv[1], "tui") == 0) {
+        force_tui = 1;
+    } else if (!is_tray_supported()) {
+        fprintf(stderr, "jenova-ui: system tray support not detected, falling back to TUI mode.\n");
+        force_tui = 1;
+    }
+
+    if (force_tui) {
         run_tui();
     } else {
         run_tray(argc, argv);
