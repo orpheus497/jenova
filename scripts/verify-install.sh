@@ -97,7 +97,7 @@ else
     WARNINGS=$((WARNINGS + 1))
 fi
 
-if [ -x "$JENOVA_ROOT/llama.cpp/build/bin/llama-server" ] || [ -d "$JENOVA_ROOT/llama.cpp/build" ]; then
+if [ -x "$JENOVA_ROOT/llama.cpp/build/bin/llama-server" ]; then
     ok "llama.cpp backend built"
 else
     warn "llama.cpp backend not built (inference will fail)"

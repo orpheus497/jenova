@@ -161,6 +161,19 @@ echo ""
 
 mkdir -p "$BUILD_DIR"
 
+_cleanup_on_fail() {
+    _ec=$?
+    if [ $_ec -ne 0 ]; then
+        echo "Error: Build failed with exit code $_ec. Cleaning up partial build..." >&2
+        # Only remove the build directory if it doesn't contain a successful binary
+        if [ ! -x "$BUILD_DIR/bin/llama-server" ]; then
+            rm -rf "$BUILD_DIR"
+        fi
+    fi
+    exit $_ec
+}
+trap _cleanup_on_fail EXIT
+
 set -- \
     -G "$GENERATOR" \
     -B "$BUILD_DIR" \

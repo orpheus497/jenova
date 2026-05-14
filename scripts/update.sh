@@ -7,7 +7,7 @@
 #
 # Usage: ./update.sh [--upgrade-plugins] [--skip-nvim] [--skip-rebuild]
 #                    [--skip-jvim] [--link] [--apply-profile]
-#                    [--mcsh] [--ui] [--web] [--all]
+#                    [--mcsh] [--ui] [--web] [--all] [--no-pull]
 #
 #   --upgrade-plugins   Run :Lazy update (move to latest plugin versions).
 #                       Without this flag, runs :Lazy restore (pin to lock file).
@@ -23,12 +23,13 @@
 #   --ui                Force rebuild of jenova-ui (Desktop Manager).
 #   --web               Force rebuild of Web UI.
 #   --all               Update and rebuild all components.
+#   --no-pull           Skip git pull operations.
 #
 # Steps:
-#   1. git pull (update repo from origin)
+#   1. git pull (update repo from origin) - skipped with --no-pull
 #   2. Restart or reload jenova-ca if currently running
-#   3. Rebuild llama.cpp if its checkout moved
-#   4. Rebuild bundled jvim if its sources changed
+#   3. Rebuild llama.cpp if its checkout moved or binary is missing
+#   4. Rebuild bundled jvim if its sources changed or binary is missing
 #   5. Redeploy Jenova nvim config to ~/.config/jvim/
 #   6. Sync nvim plugins (headless :Lazy restore or update)
 #   7. Print changelog summary (last 10 commits)
@@ -50,6 +51,7 @@ SKIP_REBUILD=0
 SKIP_JVIM=0
 LINK=0
 APPLY_PROFILE=0
+NO_PULL=0
 
 for _arg in "$@"; do
     case "$_arg" in
@@ -63,8 +65,9 @@ for _arg in "$@"; do
         --ui)              UPDATE_UI=1 ;;
         --web)             UPDATE_WEB=1 ;;
         --all)             UPDATE_MCSH=1; UPDATE_UI=1; UPDATE_WEB=1; APPLY_PROFILE=1 ;;
+        --no-pull)         NO_PULL=1 ;;
         -h|--help)
-            sed -n '2,28p' "$0"
+            sed -n '2,30p' "$0"
             exit 0
             ;;
         *)
@@ -101,25 +104,29 @@ echo ""
 # ---------------------------------------------------------------------------
 # 1. Git pull
 # ---------------------------------------------------------------------------
-info "Pulling latest changes from origin..."
-cd "$JENOVA_ROOT"
-_branch=$(git branch --show-current 2>/dev/null || echo "main")
-git pull origin "${_branch:-main}" && ok "git pull complete" || {
-    warn "git pull failed — continuing with current code"
-}
+if [ "$NO_PULL" = "0" ]; then
+    info "Pulling latest changes from origin..."
+    cd "$JENOVA_ROOT"
+    _branch=$(git branch --show-current 2>/dev/null || echo "main")
+    git pull origin "${_branch:-main}" && ok "git pull complete" || {
+        warn "git pull failed — continuing with current code"
+    }
 
-# Re-apply hardware profile only when explicitly requested via --apply-profile.
-# By default we skip this to avoid overwriting user-customised etc/jenova.conf.
-DETECT_SCRIPT="$JENOVA_ROOT/hardware-profiles/detect-hardware.sh"
-if [ "$APPLY_PROFILE" = "1" ] && [ -f "$DETECT_SCRIPT" ] && [ -x "$DETECT_SCRIPT" ]; then
-    info "Re-applying hardware profile (--apply-profile)..."
-    "$DETECT_SCRIPT" --apply || warn "Failed to re-apply hardware profile"
+    # Re-apply hardware profile only when explicitly requested via --apply-profile.
+    # By default we skip this to avoid overwriting user-customised etc/jenova.conf.
+    DETECT_SCRIPT="$JENOVA_ROOT/hardware-profiles/detect-hardware.sh"
+    if [ "$APPLY_PROFILE" = "1" ] && [ -f "$DETECT_SCRIPT" ] && [ -x "$DETECT_SCRIPT" ]; then
+        info "Re-applying hardware profile (--apply-profile)..."
+        "$DETECT_SCRIPT" --apply || warn "Failed to re-apply hardware profile"
+    fi
+
+    echo ""
+    info "Recent changes (last 10 commits):"
+    git log --oneline -10 2>/dev/null | sed 's/^/    /'
+    echo ""
+else
+    info "Skipping git pull (--no-pull)"
 fi
-
-echo ""
-info "Recent changes (last 10 commits):"
-git log --oneline -10 2>/dev/null | sed 's/^/    /'
-echo ""
 
 # ---------------------------------------------------------------------------
 # 2. Reload backend if running
@@ -155,23 +162,37 @@ if [ "$SKIP_REBUILD" = "0" ]; then
     LLAMA_BIN="$JENOVA_ROOT/llama.cpp/build/bin/llama-server"
     LLAMA_SRC="$JENOVA_ROOT/llama.cpp"
 
-    if [ -d "$LLAMA_SRC/.git" ]; then
+    _need_rebuild=0
+    if [ ! -x "$LLAMA_BIN" ]; then
+        warn "llama-server binary missing — forcing rebuild"
+        _need_rebuild=1
+    fi
+
+    if [ "$NO_PULL" = "0" ] && [ -d "$LLAMA_SRC/.git" ]; then
         cd "$LLAMA_SRC"
         _BEFORE=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
         git pull origin "$(git branch --show-current 2>/dev/null || echo main)" 2>/dev/null || true
         _AFTER=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
         cd "$JENOVA_ROOT"
 
-        if [ "$_BEFORE" != "$_AFTER" ] && [ -d "$LLAMA_SRC/build" ]; then
-            warn "llama.cpp updated ($(echo "$_BEFORE" | cut -c1-8) → $(echo "$_AFTER" | cut -c1-8)) — rebuilding..."
-            cmake --build "$LLAMA_SRC/build" --config Release -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)" \
+        if [ "$_BEFORE" != "$_AFTER" ]; then
+            warn "llama.cpp source updated ($(echo "$_BEFORE" | cut -c1-8) → $(echo "$_AFTER" | cut -c1-8))"
+            _need_rebuild=1
+        fi
+    fi
+
+    if [ "$_need_rebuild" = "1" ]; then
+        if [ -d "$LLAMA_SRC/build" ]; then
+            info "Rebuilding llama.cpp in existing build directory..."
+            cmake --build "$LLAMA_SRC/build" --config Release -j"${JENOVA_CPU_THREADS:-4}" \
                 && ok "llama.cpp rebuilt successfully" \
                 || warn "llama.cpp rebuild failed — check $LLAMA_SRC/build for errors"
         else
-            ok "llama.cpp unchanged — no rebuild needed"
+            info "No build directory found — running full build script..."
+            "$JENOVA_ROOT/bin/build-llama-jenova" && ok "llama.cpp built successfully" || warn "llama.cpp build failed"
         fi
     else
-        warn "llama.cpp is not a git submodule checkout — skipping rebuild"
+        ok "llama.cpp up to date"
     fi
 fi
 
@@ -197,7 +218,7 @@ if [ "$SKIP_JVIM" = "0" ]; then
         fi
         if [ "$_need_rebuild" = "1" ]; then
             info "jvim sources changed (or no build present) — rebuilding..."
-            _JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+            _JOBS="${JENOVA_CPU_THREADS:-4}"
             (
                 cd "$JVIM_SRC" && \
                 cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo \

@@ -505,6 +505,20 @@ show_action_menu() {
 
     printf "%s" "$RESET$CLEAR"
     
+    # Global setting for this session
+    PULL_MODE="pull"
+    if [ "$action" = "update" ]; then
+        interactive_menu "Update Strategy" \
+            "Update & Rebuild (Fetch latest from origin)" \
+            "Rebuild only (Local sources, ensure binaries match)" \
+            "Cancel"
+        case "$MENU_CHOICE" in
+            0) PULL_MODE="pull" ;;
+            1) PULL_MODE="nopull" ;;
+            *) return ;;
+        esac
+    fi
+
     i=0
     while [ $i -lt $CHECKLIST_COUNT ]; do
         eval "item=\"\$CHECKLIST_CHOICES_$i\""
@@ -532,7 +546,7 @@ show_action_menu() {
         if confirm_prompt "$msg" "$defaultno"; then
             exit_alt_screen
             printf "%s\n" "$RESET$CLEAR"
-            echo "Processing $action ($mode) on $item..."
+            echo "Processing $action ($mode, strategy=$PULL_MODE) on $item..."
 
             suffix="unknown"
             case "$item" in
@@ -545,6 +559,9 @@ show_action_menu() {
             esac
 
             if [ "$suffix" != "unknown" ]; then
+                _extra_flags=""
+                [ "$PULL_MODE" = "nopull" ] && _extra_flags="--no-pull"
+
                 if [ "$mode" = "deploy" ]; then
                     # Quick install mode: just run install.sh with appropriate skip flags
                     # but ensure the component we want is NOT skipped.
@@ -552,11 +569,24 @@ show_action_menu() {
                         "jenova_core") "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama --skip-lsp ;;
                         "jvim")        "$JENOVA_ROOT/scripts/install.sh" --skip-config --skip-llama --skip-lsp ;;
                         "llama")       "$JENOVA_ROOT/scripts/install.sh" --skip-config --skip-jvim --skip-lsp ;;
-                        *)             "${action}_${suffix}" ;; # Fallback for components without specific install.sh flags
+                        *)             "${action}_${suffix}" ;; # Fallback
                     esac
                     _ret=$?
                 else
-                    "${action}_${suffix}"
+                    # Call the action function with potential extra flags
+                    if [ "$action" = "update" ]; then
+                        # Pass _extra_flags to update functions
+                        case "$suffix" in
+                            "jenova_core") "$JENOVA_ROOT/scripts/update.sh" $_extra_flags ;;
+                            "jvim")        "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --skip-rebuild --skip-nvim ;;
+                            "llama")       "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --skip-nvim --skip-jvim ;;
+                            "webui")       "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --web --skip-nvim --skip-rebuild --skip-jvim ;;
+                            "jenova_ui")   "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --ui --skip-nvim --skip-rebuild --skip-jvim ;;
+                            "mcsh")        "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --mcsh --skip-nvim --skip-rebuild --skip-jvim ;;
+                        esac
+                    else
+                        "${action}_${suffix}"
+                    fi
                     _ret=$?
                 fi
 
