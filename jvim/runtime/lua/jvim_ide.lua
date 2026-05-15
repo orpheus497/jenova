@@ -165,10 +165,23 @@ end, { desc = "New Terminal" })
 map("n", "<leader>ta", function()
   require("jvim.terminal").toggle_jenova()
 end, { desc = "Jenova Agent Terminal" })
--- Keep the historical <leader>aj binding pointing at the Jenova terminal.
+-- leader-aj: Toggle FIM Autocomplete
 map("n", "<leader>aj", function()
-  require("jvim.terminal").toggle_jenova()
-end, { desc = "Jenova Agent Terminal" })
+  local cfg = vim.g.llama_config
+  if not cfg then
+    vim.notify("FIM not configured (llama.vim not loaded)", vim.log.levels.WARN, { title = "jvim" })
+    return
+  end
+  local new_state = not cfg.auto_fim
+  cfg.auto_fim = new_state
+  vim.g.llama_config = cfg
+  vim.g.jenova_fim_enabled = new_state
+  pcall(function() vim.fn["llama#setup_autocmds"]() end)
+  local label = new_state and "ENABLED" or "DISABLED"
+  vim.notify("FIM Autocomplete: " .. label, vim.log.levels.INFO, { title = "Jenova AI" })
+  local ok, dash = pcall(require, "jvim.dashboard")
+  if ok and dash.is_open() then pcall(dash.render) end
+end, { desc = "Toggle FIM Autocomplete" })
 
 vim.api.nvim_create_user_command("JvimTerminal", function()
   require("jvim.terminal").toggle_shell()

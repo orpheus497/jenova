@@ -6,8 +6,8 @@ if [ ! -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
 fi
 . "$SCRIPT_DIR/../etc/jenova.conf"
 
-export LD_LIBRARY_PATH="$JENOVA_ROOT/llama.cpp/build/bin:$LD_LIBRARY_PATH"
-LLAMA_CLI="$JENOVA_ROOT/llama.cpp/build/bin/llama-cli"
+export LD_LIBRARY_PATH="$JENOVA_ROOT/external/llama.cpp/build/bin:$LD_LIBRARY_PATH"
+LLAMA_CLI="$JENOVA_ROOT/external/llama.cpp/build/bin/llama-cli"
 
 if [ ! -x "$LLAMA_CLI" ]; then
     echo "Error: llama-cli not found or not executable at $LLAMA_CLI" >&2

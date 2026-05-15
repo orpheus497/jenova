@@ -661,12 +661,12 @@ static void run_tui(void) {
 
         /* Show network mode */
         mvprintw(4, 14, "Mode:");
-        if (strcmp(mode, "LAN") == 0) {
+        if (strncmp(mode, "LAN", 3) == 0) {
             attron(COLOR_PAIR(3));
-            mvprintw(5, 16, "LAN (0.0.0.0)");
+            mvprintw(5, 16, "%s", mode);
             attroff(COLOR_PAIR(3));
         } else {
-            mvprintw(5, 16, "LOCAL (127.0.0.1)");
+            mvprintw(5, 16, "%s", mode);
         }
 
         for (int i = 0; i < n_options; i++) {

@@ -1,7 +1,7 @@
 # Jenova Cognitive Architecture — Unified Build System
 #
 # Two components make up Jenova as a single terminal IDE:
-#   1. llama.cpp        — Vulkan-accelerated inference backend
+#   1. external/llama.cpp        — Vulkan-accelerated inference backend
 #   2. jvim             — Neovim-based editor (`jvim` binary, in-tree fork)
 #   3. jca_web          — Web-based UI
 #
@@ -9,9 +9,9 @@
 # There is no separate cli-agent any more.
 #
 # Common usage:
-#   make            # Build everything (llama.cpp + jvim + mcsh + web)
+#   make            # Build everything (external/llama.cpp + jvim + mcsh + web)
 #   make jvim       # Build only the bundled jvim editor
-#   make llama      # Build only llama.cpp
+#   make llama      # Build only external/llama.cpp
 #   make web        # Build only the Web UI
 #   make install    # Run scripts/install.sh (system-aware deploy)
 #   make clean      # Remove build artifacts from both components
@@ -20,15 +20,15 @@
 
 all: llama jvim mcsh jenova-ui web
 	@echo ""
-	@echo "✅ Jenova build complete (llama.cpp + jvim + mcsh + jenova-ui + web)"
+	@echo "✅ Jenova build complete (external/llama.cpp + jvim + mcsh + jenova-ui + web)"
 	@echo "   Run 'make install' (or scripts/install.sh) to deploy."
 
 llama:
-	@echo "🔨 Building llama.cpp (Vulkan)..."
+	@echo "🔨 Building external/llama.cpp (Vulkan)..."
 	@./bin/build-llama-jenova
 
 llama-hybrid:
-	@echo "🔨 Building llama.cpp (Vulkan + CUDA)..."
+	@echo "🔨 Building external/llama.cpp (Vulkan + CUDA)..."
 	@./bin/build-llama-hybrid
 
 jvim:
@@ -94,7 +94,7 @@ install-jenova:
 
 clean:
 	@echo "🧹 Cleaning build artifacts..."
-	@rm -rf llama.cpp/build jvim/build jvim/install mcsh/build bin/mcsh public/ jca_web/node_modules
+	@rm -rf external/llama.cpp/build jvim/build jvim/install mcsh/build bin/mcsh public/ jca_web/node_modules
 
 clean-root:
 	@echo "🧹 Cleaning root directory bloat..."
@@ -114,9 +114,9 @@ help:
 	@echo "Jenova Cognitive Architecture — build targets"
 	@echo ""
 	@echo "  Build targets:"
-	@echo "    make                Build llama.cpp + jvim + mcsh + web"
-	@echo "    make llama          Build only llama.cpp (Vulkan)"
-	@echo "    make llama-hybrid   Build llama.cpp (Vulkan + CUDA)"
+	@echo "    make                Build external/llama.cpp + jvim + mcsh + web"
+	@echo "    make llama          Build only external/llama.cpp (Vulkan)"
+	@echo "    make llama-hybrid   Build external/llama.cpp (Vulkan + CUDA)"
 	@echo "    make jvim           Build only the bundled jvim editor"
 	@echo "    make mcsh           Build only the mcsh shell"
 	@echo "    make web            Build only the Web UI"

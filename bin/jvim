@@ -12,7 +12,7 @@
 #     JENOVA_LLAMA_EMBED_PORT, JENOVA_ROOT, and JENOVA_API_URL.
 #   - If no backend is reachable on startup, set JENOVA_LAN_SCAN=1 so the
 #     in-editor lan.lua plugin auto-scans the subnet for a running server.
-#   - Set LD_LIBRARY_PATH so llama.cpp shared libraries are visible to any
+#   - Set LD_LIBRARY_PATH so external/llama.cpp shared libraries are visible to any
 #     child process spawned by the editor.
 #   - Detect whether the resolved binary is the jvim fork or upstream Neovim.
 #
@@ -176,14 +176,14 @@ load_jenova_conf() {
 
     _local_candidate="$_real_root/etc/jenova.local.conf"
     if [ ! -f "$_local_candidate" ]; then
-        _local_candidate="$_real_root/llama.cpp/build/jenova.local.conf"
+        _local_candidate="$_real_root/external/llama.cpp/build/jenova.local.conf"
     fi
     if [ -f "$_local_candidate" ]; then
         _real_local=$(realpath "$_local_candidate" 2>/dev/null) || {
             echo "Error: cannot resolve $_local_candidate" >&2; exit 1; }
         case "$_real_local" in
             "$_real_root"/etc/jenova.local.conf|\
-            "$_real_root"/llama.cpp/build/jenova.local.conf) ;;
+            "$_real_root"/external/llama.cpp/build/jenova.local.conf) ;;
             *)
                 echo "Error: refusing to source $_real_local (outside $_real_root)" >&2
                 exit 1
@@ -217,7 +217,7 @@ if [ -n "$REMOTE_HOST" ] || [ "$REMOTE_AUTO_DISCOVER" = "1" ]; then
     export JENOVA_LLAMA_EMBED_PORT="$REMOTE_EMBED_PORT"
     export JENOVA_LAN_MODE="1"
 
-    LLAMA_LIB_DIR="$JENOVA_ROOT/llama.cpp/build/bin"
+    LLAMA_LIB_DIR="$JENOVA_ROOT/external/llama.cpp/build/bin"
     if [ -d "$LLAMA_LIB_DIR" ]; then
         export LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"
     fi
@@ -279,9 +279,9 @@ export JENOVA_LLAMA_EMBED_PORT="${LLAMA_EMBED_PORT:-8082}"
 export JENOVA_ROOT="${JENOVA_ROOT}"
 export JENOVA_API_URL="$API_URL"
 
-# Set LD_LIBRARY_PATH so llama.cpp shared libraries are found by llama-server
+# Set LD_LIBRARY_PATH so external/llama.cpp shared libraries are found by llama-server
 # even when Neovim's child processes inherit the environment.
-LLAMA_LIB_DIR="$JENOVA_ROOT/llama.cpp/build/bin"
+LLAMA_LIB_DIR="$JENOVA_ROOT/external/llama.cpp/build/bin"
 if [ -d "$LLAMA_LIB_DIR" ]; then
     export LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"
 fi

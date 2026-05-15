@@ -699,6 +699,10 @@ endfunction
 " the main FIM call
 " takes local context around the cursor and sends it together with the extra context to the server for completion
 function! llama#fim(pos_x, pos_y, is_auto, prev, use_cache) abort
+    if a:is_auto && !g:llama_config.auto_fim
+        return
+    endif
+
     let l:pos_x = a:pos_x
     let l:pos_y = a:pos_y
 
@@ -942,6 +946,10 @@ function! s:on_move()
     let s:t_last_move = reltime()
 
     call llama#fim_hide()
+
+    if !g:llama_config.auto_fim
+        return
+    endif
 
     let l:pos_x = col('.') - 1
     let l:pos_y = line('.')

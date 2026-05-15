@@ -61,6 +61,7 @@ return {
         cfg.auto_fim = false
         vim.g.llama_config = cfg
         vim.g.jenova_fim_enabled = false
+        pcall(function() vim.fn["llama#setup_autocmds"]() end)
       end
       vim.notify(
         "Jenova environment not detected — FIM autocomplete disabled.\n" ..

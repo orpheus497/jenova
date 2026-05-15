@@ -218,7 +218,7 @@ fi
 # 9. Existing Build Artifacts Check
 # ---------------------------------------------------------------------------
 info "Checking for existing build artifacts..."
-_build_dirs="jvim/build llama.cpp/build mcsh/build public/bundle"
+_build_dirs="jvim/build external/llama.cpp/build mcsh/build public/bundle"
 _clean_needed=0
 for _dir in $_build_dirs; do
     if [ -d "$JENOVA_ROOT/$_dir" ]; then

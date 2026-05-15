@@ -246,7 +246,6 @@ local function build_layout(width)
       { key = "n", icon = "", label = "Fresh Chat",         action = "ai_fresh_chat" },
       { key = "s", icon = "", label = "Web Search",         action = "ai_web_search" },
       { key = "A", icon = "", label = fim_label,            action = "toggle_fim" },
-      { key = "j", icon = "", label = "Jenova Terminal",    action = "jenova_term" },
       { key = "M", icon = "", label = "Backend Monitor",    action = "monitor" },
     },
   }
@@ -559,6 +558,7 @@ local ACTIONS = {
     cfg.auto_fim = new_state
     vim.g.llama_config = cfg
     vim.g.jenova_fim_enabled = new_state
+    pcall(function() vim.fn["llama#setup_autocmds"]() end)
     local label = new_state and "ENABLED" or "DISABLED"
     vim.notify("FIM Autocomplete: " .. label, vim.log.levels.INFO, { title = "Jenova AI" })
     if M.is_open() then pcall(render) end

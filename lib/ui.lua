@@ -117,50 +117,14 @@ ui.on_action = function(action)
 end
 
 ui.poll_status = function()
-    -- 1. Check if backend pipeline reports ready
+    -- 1. Check if backend pipeline reports ready using its own status command
+    -- which correctly respects configured ports and runs internal healthchecks.
     local f1 = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " status 2>&1", "r")
     if not f1 then return "inactive" end
     local output_backend = f1:read("*a")
     f1:close()
 
-    if not output_backend or not output_backend:match("is ready") then
-        return "inactive"
-    end
-
-    -- 2. Check if port 8080 is actually accepting connections.
-    -- Tool is cached at module level — no subprocess spawned for detection.
-    local tool = _cached_probe_tool
-    if not tool then return "inactive" end
-
-    local cmd
-    if tool == "curl" then
-        cmd = "curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:8080/ 2>/dev/null"
-    elseif tool == "nc" then
-        cmd = "nc -z -w 1 127.0.0.1 8080 2>/dev/null && echo active || echo inactive"
-    elseif tool == "fetch" then
-        -- FreeBSD base system has fetch(1)
-        cmd = "fetch -q -o /dev/null -T 2 http://127.0.0.1:8080/ 2>/dev/null && echo active || echo inactive"
-    end
-
-    local f2 = io.popen(cmd, "r")
-    if not f2 then return "inactive" end
-    local output_port = f2:read("*l")
-    f2:close()
-
-    if not output_port then return "inactive" end
-
-    -- curl returns HTTP status code; anything 200-399 is active
-    local http_code = tonumber(output_port)
-    if http_code then
-        if http_code >= 200 and http_code < 400 then
-            return "active"
-        else
-            return "inactive"
-        end
-    end
-
-    -- nc / fetch return "active" or "inactive" string
-    if output_port == "active" then
+    if output_backend and output_backend:match("is ready") then
         return "active"
     end
 
@@ -171,9 +135,39 @@ end
 ui.get_status_info = function()
     local status = ui.poll_status()
     local lan = is_lan_enabled()
+    local mode_str = "LOCAL"
+    
+    if lan then
+        -- Attempt to get the actual LAN IP address
+        local cmd = "ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i==\"src\") print $(i+1)}'"
+        local f = io.popen(cmd, "r")
+        local ip = nil
+        if f then
+            ip = f:read("*l")
+            f:close()
+        end
+        if not ip or ip == "" then
+            -- Fallback for FreeBSD/macOS
+            local cmd_ifconfig = "ifconfig | awk '/inet / && !/127.0.0.1/ {print $2}' | head -n 1"
+            local f2 = io.popen(cmd_ifconfig, "r")
+            if f2 then
+                ip = f2:read("*l")
+                f2:close()
+            end
+        end
+        
+        if ip and ip ~= "" then
+            mode_str = "LAN (" .. ip .. ")"
+        else
+            mode_str = "LAN (0.0.0.0)"
+        end
+    else
+        mode_str = "LOCAL (127.0.0.1)"
+    end
+
     return {
         status = status,
-        mode = lan and "LAN" or "LOCAL",
+        mode = mode_str,
         lan_enabled = lan,
     }
 end

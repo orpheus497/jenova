@@ -240,7 +240,7 @@ function M.check()
 
   -- Check JENOVA_ROOT for llama-server binary
   local jenova_root = vim.env.JENOVA_ROOT or vim.fn.expand("~/Projects/jenova")
-  local llama_bin   = jenova_root .. "/llama.cpp/build/bin/llama-server"
+  local llama_bin   = jenova_root .. "/external/llama.cpp/build/bin/llama-server"
   if vim.fn.filereadable(llama_bin) == 1 then
     h.ok("llama-server binary found at " .. llama_bin)
   else

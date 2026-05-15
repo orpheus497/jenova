@@ -3,7 +3,7 @@
 #
 # Must be sourced AFTER JENOVA_ROOT is exported. Sources the first of:
 #   1. $JENOVA_ROOT/etc/jenova.local.conf
-#   2. $JENOVA_ROOT/llama.cpp/build/jenova.local.conf
+#   2. $JENOVA_ROOT/external/llama.cpp/build/jenova.local.conf
 #
 # The resolved path is validated with realpath to ensure it stays within
 # JENOVA_ROOT, preventing directory-traversal via symlinks or env var injection.
@@ -14,7 +14,7 @@
 
 _jenova_local_candidate="$JENOVA_ROOT/etc/jenova.local.conf"
 if [ ! -f "$_jenova_local_candidate" ]; then
-    _jenova_local_candidate="$JENOVA_ROOT/llama.cpp/build/jenova.local.conf"
+    _jenova_local_candidate="$JENOVA_ROOT/external/llama.cpp/build/jenova.local.conf"
 fi
 
 if [ -f "$_jenova_local_candidate" ]; then
@@ -30,7 +30,7 @@ if [ -f "$_jenova_local_candidate" ]; then
     }
     case "$_jenova_real_local" in
         "$_jenova_real_root"/etc/jenova.local.conf|\
-        "$_jenova_real_root"/llama.cpp/build/jenova.local.conf)
+        "$_jenova_real_root"/external/llama.cpp/build/jenova.local.conf)
             # shellcheck disable=SC1090
             . "$_jenova_real_local"
             ;;

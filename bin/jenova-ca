@@ -62,8 +62,8 @@ MODEL_PATH="${JENOVA_MODEL:-$MODEL_AGENT}"
 if [ ! -f "$LLAMA_SERVER" ]; then
     echo "Error: llama-server not found at $LLAMA_SERVER" >&2
     echo "" >&2
-    echo "Build llama.cpp first:" >&2
-    echo "  cd $JENOVA_ROOT/llama.cpp" >&2
+    echo "Build external/llama.cpp first:" >&2
+    echo "  cd $JENOVA_ROOT/external/llama.cpp" >&2
     echo "  cmake -B build -DGGML_VULKAN=ON" >&2
     echo "  cmake --build build -j\$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)" >&2
     echo "" >&2
@@ -117,7 +117,7 @@ export JENOVA_CTX="${JENOVA_CTX:-$CTX_SIZE}"
 [ -n "${GGML_CUDA_DMMV_POOL_SIZE:-}" ] && export GGML_CUDA_DMMV_POOL_SIZE
 
 # --- LD_LIBRARY_PATH for shared libs ---
-LLAMA_LIB_DIR="$JENOVA_ROOT/llama.cpp/build/bin"
+LLAMA_LIB_DIR="$JENOVA_ROOT/external/llama.cpp/build/bin"
 if [ -d "$LLAMA_LIB_DIR" ]; then
     export LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"
 fi

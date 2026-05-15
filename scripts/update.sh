@@ -159,7 +159,7 @@ fi
 # ---------------------------------------------------------------------------
 if [ "$SKIP_REBUILD" = "0" ]; then
     info "Checking llama.cpp for updates..."
-    LLAMA_BIN="$JENOVA_ROOT/llama.cpp/build/bin/llama-server"
+    LLAMA_BIN="$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server"
     LLAMA_SRC="$JENOVA_ROOT/llama.cpp"
 
     _need_rebuild=0

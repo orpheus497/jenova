@@ -15,7 +15,7 @@
 #                    .jenova/ (PID/lock files), var/log/, var/cache/, and the
 #                    models/jenova.gguf convenience symlink.
 #   --clean-builds   Remove in-tree build outputs: jvim/build/, jvim/install/,
-#                    llama.cpp/build/. Does NOT touch source.
+#                    external/llama.cpp/build/. Does NOT touch source.
 #   --yes            Skip all confirmation prompts (non-interactive mode).
 #
 # What this removes:
@@ -114,7 +114,7 @@ if [ "$YES" = "0" ]; then
         echo "    $JENOVA_ROOT/jvim/build/ (in-tree jvim build — --clean-builds)"
         echo "    $JENOVA_ROOT/jvim/install/ (in-tree jvim install — --clean-builds)"
         echo "    $JENOVA_ROOT/jvim/build/ (jvim build — --clean-builds)"
-        echo "    $JENOVA_ROOT/llama.cpp/build/ (llama.cpp build — --clean-builds)"
+        echo "    $JENOVA_ROOT/external/llama.cpp/build/ (llama.cpp build — --clean-builds)"
     fi
     echo ""
     printf "  Continue? [y/N] "
@@ -267,7 +267,7 @@ if [ "$CLEAN_BUILDS" = "1" ]; then
         "$JENOVA_ROOT/jvim/install" \
         "$JENOVA_ROOT/jvim/build" \
         "$JENOVA_ROOT/jvim/install" \
-        "$JENOVA_ROOT/llama.cpp/build"
+        "$JENOVA_ROOT/external/llama.cpp/build"
     do
         if [ -d "$_bd" ]; then
             rm -rf "$_bd"
@@ -289,7 +289,7 @@ if [ "$CLEAN_RUNTIME" = "0" ]; then
     echo "    $JENOVA_ROOT/var/     (logs, cache — use --clean-runtime to remove)"
 fi
 if [ "$CLEAN_BUILDS" = "0" ]; then
-    echo "    $JENOVA_ROOT/jvim/build/, llama.cpp/build/ (use --clean-builds to remove)"
+    echo "    $JENOVA_ROOT/jvim/build/, external/llama.cpp/build/ (use --clean-builds to remove)"
 fi
 echo "    $JENOVA_ROOT/          (project directory — source, configs, models)"
 echo ""

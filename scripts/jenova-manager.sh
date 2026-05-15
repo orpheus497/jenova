@@ -44,7 +44,7 @@ resolve_llama_server_path() {
 
     for config_file in \
         "$JENOVA_ROOT/etc/jenova.local.conf" \
-        "$JENOVA_ROOT/llama.cpp/build/jenova.local.conf"
+        "$JENOVA_ROOT/external/external/llama.cpp/build/jenova.local.conf"
     do
         if [ -f "$config_file" ]; then
             if [ -z "$resolved_path" ]; then
@@ -72,7 +72,7 @@ resolve_llama_server_path() {
     elif [ -n "$resolved_build_dir" ]; then
         printf '%s\n' "$resolved_build_dir/bin/llama-server"
     else
-        printf '%s\n' "$JENOVA_ROOT/llama.cpp/build/bin/llama-server"
+        printf '%s\n' "$JENOVA_ROOT/external/external/llama.cpp/build/bin/llama-server"
     fi
 }
 
@@ -391,7 +391,7 @@ install_jvim() {
     "$MAKE" -C "$JENOVA_ROOT" jvim
 }
 install_llama() {
-    printf "%s%sInstalling llama.cpp...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
+    printf "%s%sInstalling external/llama.cpp...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
     "$JENOVA_ROOT/bin/build-llama-jenova"
 }
 install_webui() {
@@ -416,7 +416,7 @@ update_jvim() {
     "$JENOVA_ROOT/scripts/update.sh" --skip-rebuild --skip-nvim
 }
 update_llama() {
-    printf "%s%sUpdating llama.cpp (dependency repo)...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
+    printf "%s%sUpdating external/llama.cpp (dependency repo)...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
     "$JENOVA_ROOT/scripts/update.sh" --skip-nvim --skip-jvim
 }
 update_webui() {
@@ -442,9 +442,9 @@ uninstall_jvim() {
     echo "jvim build artifacts removed."
 }
 uninstall_llama() {
-    printf "%s%sUninstalling llama.cpp...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
-    rm -rf "$JENOVA_ROOT/llama.cpp/build"
-    echo "llama.cpp build removed."
+    printf "%s%sUninstalling external/llama.cpp...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
+    rm -rf "$JENOVA_ROOT/external/external/llama.cpp/build"
+    echo "external/llama.cpp build removed."
 }
 uninstall_webui() {
     printf "%s%sRemoving Web UI build artifacts...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
@@ -493,7 +493,7 @@ show_action_menu() {
     interactive_checklist "$title" "$checklist_msg" \
         "Jenova_Core" "Jenova CA and backend scripts" "$status_core" \
         "jvim" "Editor / IDE (bundled)" "$status_jvim" \
-        "llama.cpp" "Inference engine" "$status_llama" \
+        "external/llama.cpp" "Inference engine" "$status_llama" \
         "WebUI" "Browser-based Workspaces UI" "$status_webui" \
         "jenova_ui" "Desktop Manager (tray + TUI)" "$status_jenova_ui" \
         "mcsh" "Modern C Shell" "$status_mcsh"
@@ -552,7 +552,7 @@ show_action_menu() {
             case "$item" in
                 "Jenova_Core") suffix="jenova_core" ;;
                 "jvim")        suffix="jvim" ;;
-                "llama.cpp")   suffix="llama" ;;
+                "external/llama.cpp")   suffix="llama" ;;
                 "WebUI")       suffix="webui" ;;
                 "jenova_ui")   suffix="jenova_ui" ;;
                 "mcsh")        suffix="mcsh" ;;

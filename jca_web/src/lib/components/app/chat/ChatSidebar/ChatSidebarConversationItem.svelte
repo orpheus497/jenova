@@ -79,12 +79,6 @@
 		onSelect?.(conversation.id);
 	}
 
-	$effect(() => {
-		if (!dropdownOpen) {
-			renderActionsDropdown = false;
-		}
-	});
-
 	onMount(() => {
 		document.addEventListener('edit-active-conversation', handleGlobalEditEvent as EventListener);
 

@@ -95,10 +95,6 @@ map("n", "<S-l>", "<cmd>bnext<CR>",     { desc = "Next Buffer" })
 map("n", "[d", function() vim.diagnostic.jump({ count = -1 }) end, { desc = "Prev Diagnostic" })
 map("n", "]d", function() vim.diagnostic.jump({ count =  1 }) end, { desc = "Next Diagnostic" })
 
-map("n", "<leader>aj", function()
-  require("jvim.terminal").toggle_shell()
-end, { desc = "Toggle Terminal Shell" })
-
 --------------------------------------------------------------------------------
 -- [5] IDE COMMAND
 --------------------------------------------------------------------------------
@@ -131,9 +127,7 @@ vim.api.nvim_create_user_command("JenovaLanScan", function()
   end
 end, { desc = "Scan LAN for remote Jenova CA" })
 
-map("n", "<leader>aM", "<cmd>JenovaMonitor<CR>",    { desc = "Jenova Monitor" })
-map("n", "<leader>ah", "<cmd>checkhealth jenova<CR>", { desc = "Jenova Health" })
-map("n", "<leader>al", "<cmd>JenovaLanScan<CR>",    { desc = "Jenova LAN Scan" })
+-- AI Menu Options (<leader>a)
 map("n", "<leader>af", function()
   local cfg = vim.g.llama_config
   if not cfg then
@@ -144,9 +138,14 @@ map("n", "<leader>af", function()
   cfg.auto_fim = new_state
   vim.g.llama_config = cfg
   vim.g.jenova_fim_enabled = new_state
+  pcall(function() vim.fn["llama#setup_autocmds"]() end)
   local label = new_state and "ENABLED" or "DISABLED"
   vim.notify("FIM Autocomplete: " .. label, vim.log.levels.INFO, { title = "Jenova AI" })
 end, { desc = "Toggle FIM Autocomplete" })
+
+map("n", "<leader>aM", "<cmd>JenovaMonitor<CR>",    { desc = "Jenova Monitor" })
+map("n", "<leader>ah", "<cmd>checkhealth jenova<CR>", { desc = "Jenova Health" })
+map("n", "<leader>al", "<cmd>JenovaLanScan<CR>",    { desc = "Jenova LAN Scan" })
 
 --------------------------------------------------------------------------------
 -- [6] JENOVA BACKEND HEALTH CHECK

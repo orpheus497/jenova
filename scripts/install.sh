@@ -538,7 +538,7 @@ if [ "$CLIENT_ONLY" = "1" ]; then
     info "Skipping llama.cpp build check (--client-only)"
 elif [ "$SKIP_LLAMA" = "0" ]; then
     info "Checking llama.cpp build..."
-    LLAMA_BIN="$JENOVA_ROOT/llama.cpp/build/bin/llama-server"
+    LLAMA_BIN="$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server"
     if [ -f "$LLAMA_BIN" ]; then
         ok "llama-server binary found at $LLAMA_BIN"
     else

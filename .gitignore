@@ -9,7 +9,7 @@
 /bin/jenova-desktop
 /bin/jenova-ui
 /jenova-ui/jenova-ui
-/llama.cpp/build/
+/external/llama.cpp/build/
 /llama.cpp/bin/
 /mcsh/build/
 /mcsh/autom4te.cache/
