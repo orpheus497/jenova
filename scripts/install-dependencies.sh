@@ -264,6 +264,9 @@ is_installed() {
     elif [ "$1" = "appindicator" ]; then
         command -v pkg-config >/dev/null 2>&1 && pkg-config --exists appindicator3-0.1 >/dev/null 2>&1
         return $?
+    elif [ "$1" = "spirv-headers" ]; then
+        [ -f "/usr/include/spirv/unified1/spirv.h" ] || [ -f "/usr/local/include/spirv/unified1/spirv.h" ]
+        return $?
     fi
     command -v "$1" >/dev/null 2>&1
 }
