@@ -355,6 +355,7 @@ _watchdog() {
     _watchdog_shutdown() {
         _WATCHDOG_RUNNING=false
         _wlog "shutdown signal received"
+        [ -n "$_SLEEP_PID" ] && kill "$_SLEEP_PID" 2>/dev/null || true
     }
     trap _watchdog_shutdown INT TERM
 
@@ -763,7 +764,8 @@ cleanup() {
     rm -f "$JENOVA_STATE/llama-embed.pid"
     rm -f "$JENOVA_STATE/indexer.pid"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT TERM
 
 echo "Starting Jenova Intelligence Proxy on port $PORT..."
 luajit "$PROXY_SCRIPT" &

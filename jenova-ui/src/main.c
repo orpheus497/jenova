@@ -38,6 +38,9 @@ static void run_tray(int argc, char *argv[]);
 static void rebuild_tray_menu(void);
 
 static int is_tray_supported(void) {
+#if defined(__FreeBSD__)
+    return 0;
+#endif
     const char *desktop = getenv("XDG_CURRENT_DESKTOP");
     /* Sway/Wayland often lacks X11-style AppIndicator support */
     if (desktop && (strcasecmp(desktop, "sway") == 0 || strcasecmp(desktop, "Wayland") == 0)) {

@@ -40,8 +40,8 @@
 		assistantMessages: number;
 		messageTypes: string[];
 	} | null>(null);
-	let editedContent = $derived(message.content);
-	let editedExtras = $derived<DatabaseMessageExtra[]>(message.extra ? [...message.extra] : []);
+	let editedContent = $state(message.content);
+	let editedExtras = $state<DatabaseMessageExtra[]>(message.extra ? [...message.extra] : []);
 	let editedUploadedFiles = $state<ChatUploadedFile[]>([]);
 	let isEditing = $state(false);
 	let showDeleteDialog = $state(false);
@@ -49,6 +49,13 @@
 	let textareaElement: HTMLTextAreaElement | undefined = $state();
 
 	let showSaveOnlyOption = $derived(message.role === MessageRole.USER);
+
+	$effect(() => {
+		if (!isEditing) {
+			editedContent = message.content;
+			editedExtras = message.extra ? [...message.extra] : [];
+		}
+	});
 
 	setMessageEditContext({
 		get isEditing() {

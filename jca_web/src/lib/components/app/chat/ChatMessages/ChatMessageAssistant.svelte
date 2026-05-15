@@ -195,11 +195,6 @@
 		}
 	}
 
-	onDestroy(() => {
-		if (browser && window.speechSynthesis) {
-			window.speechSynthesis.cancel();
-		}
-	});
 	function getScrollParent(el: HTMLElement): HTMLElement | null {
 		let parent = el.parentElement;
 		while (parent) {

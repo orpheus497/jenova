@@ -148,7 +148,8 @@ cleanup() {
         "$JENOVA_CA" stop 2>/dev/null || true
     fi
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT TERM
 
 # ── Daemon-only mode ──────────────────────────────────────────────────────────
 if [ "$DAEMON_ONLY" = "1" ]; then
