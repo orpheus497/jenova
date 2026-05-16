@@ -198,17 +198,21 @@ find_best_profile() {
     echo "0" > "$_SCORE_FILE"
 
     # Use find to locate all profile.conf files at any depth
-    find "$SCRIPT_DIR" -name "profile.conf" | while IFS= read -r _pconf; do
-        _pdir=$(dirname "$_pconf")
-        _pname="${_pdir#"$SCRIPT_DIR"/}"
-        _pscore=$(match_profile "$_pdir" 2>/dev/null || echo "0")
+    find "$SCRIPT_DIR" -name "profile.conf" | (
+        _local_best=0
+        while IFS= read -r _pconf; do
+            _pdir=$(dirname "$_pconf")
+            _pname="${_pdir#"$SCRIPT_DIR"/}"
+            _pscore=$(match_profile "$_pdir" 2>/dev/null || echo "0")
 
-        if [ "${_pscore:-0}" -gt "$(cat "$_SCORE_FILE")" ]; then
-            echo "$_pscore" > "$_SCORE_FILE"
-            echo "$_pname" > "$_NAME_FILE"
-            echo "$_pdir" > "$_PROFILE_FILE"
-        fi
-    done
+            if [ "${_pscore:-0}" -gt "$_local_best" ]; then
+                _local_best=$_pscore
+                echo "$_pscore" > "$_SCORE_FILE"
+                echo "$_pname" > "$_NAME_FILE"
+                echo "$_pdir" > "$_PROFILE_FILE"
+            fi
+        done
+    )
 
     _best_score=$(cat "$_SCORE_FILE")
     _best_name=$(cat "$_NAME_FILE")

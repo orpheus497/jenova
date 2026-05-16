@@ -68,7 +68,12 @@ mcsh:
 	@cp mcsh/build/mcsh bin/mcsh
 	@echo "   mcsh built: bin/mcsh"
 
-web:
+jca_web/node_modules: jca_web/package.json
+	@echo "📦 Installing JCA Web UI dependencies..."
+	@cd jca_web && npm install
+	@touch jca_web/node_modules
+
+web: jca_web/node_modules
 	@if [ -f public/bundle.js ] && [ -f public/index.html ]; then \
 		echo "✅ JCA Web UI already built (public/bundle.js found)."; \
 	else \
@@ -76,7 +81,7 @@ web:
 		if [ ! -d jca_web ]; then \
 			echo "ERROR: jca_web/ source tree missing." >&2; exit 1; \
 		fi; \
-		cd jca_web && ([ -d node_modules ] || npm install) && npm run build; \
+		cd jca_web && npm run build; \
 		echo "   Web UI built: public/"; \
 	fi
 

@@ -375,7 +375,7 @@
 		) {
 			event.preventDefault();
 
-			const textFile = new File([text], 'Pasted', {
+			const textFile = new File([text], 'Pasted_' + Date.now() + '.txt', {
 				type: MimeTypeText.PLAIN
 			});
 

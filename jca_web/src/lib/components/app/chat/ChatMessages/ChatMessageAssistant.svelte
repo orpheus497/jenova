@@ -131,8 +131,13 @@
 					// Hard split by character count for very long segments without punctuation
 					let remaining = chunk;
 					while (remaining.length > 0) {
-						chunks.push(remaining.substring(0, 250));
-						remaining = remaining.substring(250);
+						let splitIndex = 250;
+						if (remaining.length > 250) {
+							const lastSpace = remaining.lastIndexOf(' ', 250);
+							if (lastSpace > 150) splitIndex = lastSpace;
+						}
+						chunks.push(remaining.substring(0, splitIndex).trim());
+						remaining = remaining.substring(splitIndex).trim();
 					}
 				}
 			}
