@@ -94,7 +94,7 @@ install-jenova:
 
 clean:
 	@echo "🧹 Cleaning build artifacts..."
-	@rm -rf external/llama.cpp/build jvim/build jvim/install mcsh/build bin/mcsh public/ jca_web/node_modules
+	@rm -rf external/llama.cpp/build jvim/build jvim/install mcsh/build bin/mcsh public/
 
 clean-root:
 	@echo "🧹 Cleaning root directory bloat..."

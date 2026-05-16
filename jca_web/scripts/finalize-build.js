@@ -43,10 +43,13 @@ async function main() {
 
     if (existsSync(immutableDir)) {
         const jsFiles = readdirSync(immutableDir).filter(f => f.match(/^bundle\..+\.js$/));
-        if (jsFiles.length > 0) {
+        if (jsFiles.length === 1) {
             jsBundle = jsFiles[0];
             copyFileSync(join(immutableDir, jsBundle), join(PUBLIC_DIR, 'bundle.js'));
             console.log(`✓ Copied ${jsBundle} -> bundle.js`);
+        } else if (jsFiles.length > 1) {
+            console.error('Error: Multiple JS bundles found in', immutableDir, '. Please clean the build directory.');
+            process.exit(1);
         } else {
             console.error('Error: No JS bundle found in', immutableDir);
             process.exit(1);

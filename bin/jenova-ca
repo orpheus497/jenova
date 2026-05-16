@@ -24,7 +24,7 @@ else
 fi
 
 # Path hardening for headless/desktop execution
-export PATH="$HOME/.local/bin:$JENOVA_ROOT/bin:$PATH"
+export PATH="${HOME:+$HOME/.local/bin:}$JENOVA_ROOT/bin:$PATH"
 
 . "$JENOVA_ROOT/lib/jenova-conf.sh"
 
@@ -260,9 +260,10 @@ case "$1" in
             _PROXY_ALIVE=false
             _EMBED_ALIVE=false
             
-            if [ -n "$LLAMA_PID" ] && kill -0 "$LLAMA_PID" 2>/dev/null; then _LLAMA_ALIVE=true; fi
-            if [ -n "$PROXY_PID" ] && kill -0 "$PROXY_PID" 2>/dev/null; then _PROXY_ALIVE=true; fi
-            if [ -n "$EMBED_PID" ] && kill -0 "$EMBED_PID" 2>/dev/null; then _EMBED_ALIVE=true; fi
+            _is_alive() { [ -n "$1" ] && kill -0 "$1" 2>/dev/null; }
+            _is_alive "$LLAMA_PID" && _LLAMA_ALIVE=true
+            _is_alive "$PROXY_PID" && _PROXY_ALIVE=true
+            _is_alive "$EMBED_PID" && _EMBED_ALIVE=true
 
             if $_LLAMA_ALIVE && $_PROXY_ALIVE; then
                 CONNECT_HOST="${JENOVA_CONNECT_HOST:-127.0.0.1}"
