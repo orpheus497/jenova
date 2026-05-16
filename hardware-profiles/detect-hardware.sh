@@ -107,7 +107,8 @@ detect_swap_hardware() {
     SYSTEM_SWAP_INFO="None"
     if [ "$JENOVA_OS" = "freebsd" ]; then
         _sdevs=$(swapinfo 2>/dev/null | awk 'NR>1 {print $1}' | tr '\n' ' ')
-        _ndevs=$(nvmecontrol devlist 2>/dev/null | tr '\n' ' ' || dmesg | grep -i "optane" | head -n 1)
+        _ndevs=$(nvmecontrol devlist 2>/dev/null | tr '\n' ' ')
+        [ -z "$_ndevs" ] && _ndevs=$(dmesg | grep -i "optane" | head -n 1)
         [ -n "$_sdevs" ] && SYSTEM_SWAP_INFO="${_sdevs} ${_ndevs}"
     elif [ "$JENOVA_OS" = "linux" ]; then
         _sdevs=$(cat /proc/swaps 2>/dev/null | awk 'NR>1 {print $1}' | tr '\n' ' ')

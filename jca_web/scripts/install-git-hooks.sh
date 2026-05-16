@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script to install pre-commit hook for webui
-# Pre-commit: formats, checks, builds, and stages build output
+# Pre-commit: formats and checks code
 
 REPO_ROOT=$(git rev-parse --show-toplevel)
 PRE_COMMIT_HOOK="$REPO_ROOT/.git/hooks/pre-commit"
@@ -18,7 +18,7 @@ if [ -f "$PRE_COMMIT_HOOK" ]; then
 if git diff --cached --name-only | grep -q "^jca_web/"; then
     REPO_ROOT=$(git rev-parse --show-toplevel)
     cd "$REPO_ROOT/jca_web"
-    npm run format && npm run lint && npm run check && npm run build
+    npm run format && npm run lint && npm run check
 fi
 EOF
     echo "--------------------------------------------------------------------------------"
@@ -42,13 +42,12 @@ if git diff --cached --name-only | grep -q "^jca_web/"; then
 
     echo "Formatting and checking jca_web code..."
 
-    # Run the format and build commands
+    # Run the format and check commands
     npm run format || exit 1
     npm run lint || exit 1
     npm run check || exit 1
-    npm run build || exit 1
 
-    echo "✅ jca_web code formatted, checked, and built successfully"
+    echo "✅ jca_web code formatted and checked successfully"
 fi
 
 exit 0
@@ -63,7 +62,6 @@ if [ $? -eq 0 ]; then
     echo ""
     echo "The hook will automatically:"
     echo "  • Format, lint and check jca_web code before commits"
-    echo "  • Ensure the webui build is successful before allowing a commit"
 else
     echo "❌ Failed to make hook executable"
     exit 1

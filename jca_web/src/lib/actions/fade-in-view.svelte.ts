@@ -27,7 +27,11 @@ export function fadeInView(
 
 	node.style.opacity = '0';
 	node.style.transform = `translateY(${y}px)`;
-	node.style.transition = `opacity ${duration}ms ease-out, transform ${duration}ms ease-out`;
+	const existingTransition = window.getComputedStyle(node).transition;
+	const newTransition = `opacity ${duration}ms ease-out, transform ${duration}ms ease-out`;
+	node.style.transition = existingTransition && existingTransition !== 'all 0s ease 0s' 
+		? `${existingTransition}, ${newTransition}` 
+		: newTransition;
 
 	$effect(() => {
 		const observer = new IntersectionObserver(
