@@ -4,7 +4,8 @@ local function ep()
   return require("jenova.endpoints")
 end
 
-local WORKSPACE_ROOT = vim.env.JENOVA_WORKSPACES or (vim.fn.expand("$HOME") .. "/Workspaces")
+local JENOVA_HOME = vim.env.JENOVA_HOME or (vim.fn.expand("$HOME") .. "/Jenova")
+local WORKSPACE_ROOT = vim.env.JENOVA_WORKSPACES or (JENOVA_HOME .. "/Workspaces")
 local DEFAULT_WORKSPACE = "default"
 local CHAT_DIR = WORKSPACE_ROOT .. "/" .. DEFAULT_WORKSPACE .. "/Chats"
 local MODEL = "jenova"

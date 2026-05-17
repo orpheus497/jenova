@@ -30,27 +30,25 @@ export PATH="${HOME:+$HOME/.local/bin:}$JENOVA_ROOT/bin:$PATH"
 
 # Ensure runtime directories exist with proper permissions
 # Note: Run without sudo to avoid permission issues with lock files
-mkdir -p "$JENOVA_STATE" 2>/dev/null || {
-    echo "Error: Cannot create $JENOVA_STATE directory" >&2
-    echo "       Do not run with sudo — run as regular user instead" >&2
-    exit 1
-}
-mkdir -p "$LOG_DIR" || true
-mkdir -p "$CACHE_DIR" || true
+mkdir -p "$JENOVA_HOME" 2>/dev/null
+mkdir -p "$JENOVA_STATE" 2>/dev/null
+mkdir -p "$LOG_DIR" 2>/dev/null
+mkdir -p "$CACHE_DIR" 2>/dev/null
+mkdir -p "$(dirname "$PID_FILE")" 2>/dev/null
 
 # Check for ownership issues early (detect if directory owned by root from sudo usage)
-if [ -d "$JENOVA_STATE" ] && [ ! -w "$JENOVA_STATE" ]; then
-    echo "Error: $JENOVA_STATE directory is not writable" >&2
+if [ -d "$JENOVA_HOME" ] && [ ! -w "$JENOVA_HOME" ]; then
+    echo "Error: $JENOVA_HOME directory is not writable" >&2
     echo "" >&2
-    _OWNER=$(stat -c '%U' "$JENOVA_STATE" 2>/dev/null || stat -f '%Su' "$JENOVA_STATE" 2>/dev/null || echo "unknown")
+    _OWNER=$(stat -c '%U' "$JENOVA_HOME" 2>/dev/null || stat -f '%Su' "$JENOVA_HOME" 2>/dev/null || echo "unknown")
     if [ "$_OWNER" = "root" ]; then
         echo "Directory is owned by root (likely from running with sudo previously)." >&2
         echo "Fix with:" >&2
-        echo "  sudo chown -R \$USER:\$USER $JENOVA_STATE" >&2
-        echo "  chmod -R u+w $JENOVA_STATE" >&2
+        echo "  sudo chown -R \$USER:\$USER $JENOVA_HOME" >&2
+        echo "  chmod -R u+w $JENOVA_HOME" >&2
     else
         echo "Fix permissions with:" >&2
-        echo "  chmod -R u+w $JENOVA_STATE" >&2
+        echo "  chmod -R u+w $JENOVA_HOME" >&2
     fi
     echo "" >&2
     exit 1
@@ -109,7 +107,8 @@ fi
 export JENOVA_LLAMA_URL="http://${HOST}:${LLAMA_PORT}"
 export JENOVA_PROXY_PORT="$PORT"
 export JENOVA_PROXY_HOST="$HOST"
-export JENOVA_WORKSPACES="${JENOVA_WORKSPACES:-$HOME/Workspaces}"
+export JENOVA_HOME="${JENOVA_HOME:-$HOME/Jenova}"
+export JENOVA_WORKSPACES="${JENOVA_WORKSPACES:-$JENOVA_HOME/Workspaces}"
 export JENOVA_CTX="${JENOVA_CTX:-$CTX_SIZE}"
 
 # Optional backend memory-fallback tuning from etc/jenova.local.conf.

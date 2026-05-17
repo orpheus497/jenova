@@ -11,7 +11,9 @@ end
 -- Prefer JENOVA_ROOT env var (set by bin/jenova and bin/jenova-ca); fall back
 -- to deriving from the script's own location (lib/../).
 local _jenova_root = os.getenv("JENOVA_ROOT") or _dir:match("^(.+)/lib/?$") or _dir .. ".."
-local JENOVA_STATE = _jenova_root .. "/.jenova"
+local _home = os.getenv("HOME") or "/tmp"
+local _jenova_home = os.getenv("JENOVA_HOME") or (_home .. "/Jenova")
+local JENOVA_STATE = os.getenv("JENOVA_STATE") or (_jenova_home .. "/.system")
 
 local json = require("json")
 

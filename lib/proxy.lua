@@ -448,7 +448,8 @@ local function proxy_connection(client_fd, conn_fds)
     
     -- Filesystem API for WebUI persistence
     local home_dir = os.getenv("HOME") or "/tmp"
-    local workspaces_dir = os.getenv("JENOVA_WORKSPACES") or (home_dir .. "/Workspaces")
+    local jenova_home = os.getenv("JENOVA_HOME") or (home_dir .. "/Jenova")
+    local workspaces_dir = os.getenv("JENOVA_WORKSPACES") or (jenova_home .. "/Workspaces")
 
     local function recursive_mkdir(path)
         local segments = {}
