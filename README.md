@@ -84,6 +84,28 @@ scripts/update.sh
 
 Jenova is optimized for fast, accurate local reasoning. We recommend **Qwen-2.5** derivatives (such as `Qwen2.5-Coder-7B` or `Qwen2.5-3B`) quantized into GGUF format for optimal VRAM-to-parameter footprint ratios on consumer hardware.
 
+Rule of thumb: **~0.75 GB VRAM per 1B parameters** at Q4_K_M quantization.
+
+---
+
+## 📖 Documentation
+
+Detailed documentation lives in [`docs/`](docs/):
+
+| Topic | Path |
+|-------|------|
+| Architecture Overview | [docs/architecture/overview.md](docs/architecture/overview.md) |
+| System Cohesion | [docs/architecture/cohesion.md](docs/architecture/cohesion.md) |
+| Cognitive Backend | [docs/architecture/backend.md](docs/architecture/backend.md) |
+| Agent System | [docs/architecture/agent.md](docs/architecture/agent.md) |
+| jvim Usage | [docs/usage/jvim.md](docs/usage/jvim.md) |
+| CLI Reference | [docs/usage/cli.md](docs/usage/cli.md) |
+| Installation Guide | [docs/installation/STREAMLINED.md](docs/installation/STREAMLINED.md) |
+| FreeBSD Notes | [docs/installation/freebsd.md](docs/installation/freebsd.md) |
+| Linux Notes | [docs/installation/linux.md](docs/installation/linux.md) |
+| macOS Notes | [docs/installation/macos.md](docs/installation/macos.md) |
+| Hardware Profiles | [hardware-profiles/README.md](hardware-profiles/README.md) |
+
 ---
 
 ## 🏗️ Repository Structure
@@ -93,7 +115,9 @@ jenova/
 ├── bin/                    # Launcher wrappers and tool scripts
 ├── docs/                   # Documentation
 ├── etc/                    # Configuration templates
-├── external/               # Sub-repositories (llama.cpp, mcsh, SPIRV-Headers)
+├── external/               # Sub-repositories
+│   ├── llama.cpp/          # Inference engine (independent git repo)
+│   └── mcsh/               # Modern C Shell source (independent git repo)
 ├── hardware-profiles/      # OS/GPU-specific tuning profiles
 ├── jca_web/                # WebUI source (SvelteKit)
 ├── jenova-ui/              # Desktop Manager source (C/GTK3)

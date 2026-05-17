@@ -1,6 +1,9 @@
 #!/bin/sh
 # install-jenova.sh: Streamlined Jenova Installation & Management for All Platforms
 #
+# Intelligent, end-to-end installation with OS detection, dependency management,
+# graceful skipping, and user-friendly notifications.
+#
 # Usage: ./install-jenova.sh [command] [options]
 #
 # Commands:
@@ -16,6 +19,19 @@
 #   --full      Install everything including models (default)
 #   --interactive Prompt for confirmation before major steps
 #   --force     Overwrite existing files/configs without prompting
+#
+# This script automatically:
+#   ✓ Detects your OS and package manager
+#   ✓ Installs all required system dependencies
+#   ✓ Builds Jenova components (llama.cpp, jvim, mcsh)
+#   ✓ Deploys to your system
+#   ✓ Downloads AI models (unless --minimal)
+#   ✓ Verifies everything works
+#
+# Supported platforms:
+#   • FreeBSD (pkg)
+#   • Linux: Arch (pacman/yay), Debian/Ubuntu (apt), Fedora/RHEL (dnf)
+#   • macOS (Homebrew)
 
 set -e
 

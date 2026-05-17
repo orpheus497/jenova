@@ -130,12 +130,14 @@ case "$JENOVA_OS" in
     linux)
         if [ "$JENOVA_WSL" = "1" ]; then
             ok "Linux (WSL) — 2nd Class Citizen (Experimental Support)"
+            warn "WSL environment detected. Some native GPU features may require specific drivers."
         else
             ok "Linux — 2nd Class Citizen (Fully Supported)"
         fi
+        info "Replace 'Vulkan0,Vulkan1' device names in etc/jenova.conf with your Vulkan device names (run: vulkaninfo --summary)"
         ;;
     macos)
-        ok "macOS — 3rd Class Citizen (Experimental Support)"
+        warn "macOS detected — experimental, not regularly tested"
         WARNINGS=$((WARNINGS + 1))
         ;;
 esac
@@ -155,7 +157,8 @@ if [ -f "$DETECT_SCRIPT" ] && [ -x "$DETECT_SCRIPT" ]; then
             WARNINGS=$((WARNINGS + 1))
         fi
     else
-        warn "No hardware profile matched this system. Using generic defaults."
+        warn "No hardware profile matched this system."
+        warn "Run: $DETECT_SCRIPT --info  to see detection details."
         WARNINGS=$((WARNINGS + 1))
     fi
 else

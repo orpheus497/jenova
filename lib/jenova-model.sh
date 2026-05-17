@@ -11,6 +11,14 @@
 #   . "$JENOVA_ROOT/lib/jenova-model.sh"
 
 # --- Model Auto-Discovery ---
+# This script handles the automated discovery of model files within the system.
+# It employs an alphabetical scanning fallback logic: it will search the designated
+# directories for .gguf files, sort them alphabetically, and select the first one.
+# This ensures a predictable default if multiple models exist in the same directory.
+#
+# Environment overrides (JENOVA_MODEL, JENOVA_DRAFT_MODEL, JENOVA_EMBED_MODEL)
+# can be set by the user to bypass this discovery and force the use of a specific file.
+#
 # Helper function: find first .gguf file in a directory (alphabetically).
 _find_model() {
     _dir="$1"
@@ -26,11 +34,11 @@ _MODELS_DIR="${JENOVA_HOME}/models"
 
 # Scans each type-specific folder. Overrides can be applied later.
 # Priority:
-#   1. First .gguf in JENOVA_HOME/models/agent|embed|draft/
-#   2. Legacy path under JENOVA_ROOT/models/
+#   1. First .gguf in JENOVA_HOME/models/agent|embed|draft/ (alphabetically)
+#   2. Legacy flat path under JENOVA_ROOT/models/ (alphabetically)
 #   3. Empty string if no model found
 
-# Agent model (main inference)
+# Agent model (main inference) - Fallback to root models/ directory if type-specific folder is empty
 MODEL_AGENT="$(_find_model "$_MODELS_DIR/agent")"
 if [ -z "$MODEL_AGENT" ]; then
     MODEL_AGENT="$(_find_model "$JENOVA_ROOT/models/agent")"
@@ -43,13 +51,13 @@ if [ -z "$MODEL_AGENT" ]; then
     MODEL_AGENT="$(_find_model "$JENOVA_ROOT/models")"
 fi
 
-# Draft model (speculative decoding)
+# Draft model (speculative decoding) - supports JENOVA_DRAFT_MODEL override
 MODEL_DRAFT="${JENOVA_DRAFT_MODEL:-$(_find_model "$_MODELS_DIR/draft")}"
 if [ -z "$MODEL_DRAFT" ]; then
     MODEL_DRAFT="$(_find_model "$JENOVA_ROOT/models/draft")"
 fi
 
-# Embed model (RAG and semantic search)
+# Embed model (RAG and semantic search) - supports JENOVA_EMBED_MODEL override
 MODEL_EMBED="${JENOVA_EMBED_MODEL:-$(_find_model "$_MODELS_DIR/embed")}"
 if [ -z "$MODEL_EMBED" ]; then
     MODEL_EMBED="$(_find_model "$JENOVA_ROOT/models/embed")"

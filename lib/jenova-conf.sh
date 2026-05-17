@@ -1,10 +1,16 @@
 #!/bin/sh
 # lib/jenova-conf.sh: Path resolution and configuration for Jenova.
+# Safely source optional Jenova local configuration overrides.
 #
 # This script detects if Jenova is running from a source repository or a
 # standalone installation and exports absolute paths to critical components.
 #
-# Must be sourced AFTER JENOVA_ROOT is exported.
+# Must be sourced AFTER JENOVA_ROOT is exported. Sources the first of:
+#   1. $JENOVA_ROOT/etc/jenova.local.conf
+#   2. $JENOVA_ROOT/external/llama.cpp/build/jenova.local.conf
+#
+# The resolved path is validated with realpath to ensure it stays within
+# JENOVA_ROOT, preventing directory-traversal via symlinks or env var injection.
 #
 # Exports:
 #   LLAMA_SERVER      Path to the llama-server binary
