@@ -49,23 +49,23 @@ jvim:
 
 mcsh:
 	@echo "🔨 Building mcsh (Modern C Shell)..."
-	@if [ ! -f mcsh/configure ]; then \
-		echo "ERROR: mcsh/ source tree missing." >&2; exit 1; \
+	@if [ ! -f external/mcsh/configure ]; then \
+		echo "ERROR: external/mcsh/ source tree missing." >&2; exit 1; \
 	fi
-	@mkdir -p mcsh/build
-	@if [ ! -f mcsh/build/Makefile ]; then \
-		cd mcsh/build && ../configure; \
+	@mkdir -p external/mcsh/build
+	@if [ ! -f external/mcsh/build/Makefile ]; then \
+		cd external/mcsh/build && ../configure; \
 	fi
 	@if [ "$$(uname -s)" = "FreeBSD" ]; then \
 		if ! command -v gmake >/dev/null 2>&1; then \
 			echo "FreeBSD requires 'gmake' to build mcsh. Please run 'pkg install gmake'" >&2; \
 			exit 1; \
 		fi; \
-		cd mcsh/build && gmake; \
+		cd external/mcsh/build && gmake; \
 	else \
-		cd mcsh/build && $(MAKE); \
+		cd external/mcsh/build && $(MAKE); \
 	fi
-	@cp mcsh/build/mcsh bin/mcsh
+	@cp external/mcsh/build/mcsh bin/mcsh
 	@echo "   mcsh built: bin/mcsh"
 
 jca_web/node_modules: jca_web/package.json
@@ -99,7 +99,7 @@ install-jenova:
 
 clean:
 	@echo "🧹 Cleaning build artifacts..."
-	@rm -rf external/llama.cpp/build jvim/build jvim/install mcsh/build bin/mcsh public/
+	@rm -rf external/llama.cpp/build jvim/build jvim/install external/mcsh/build bin/mcsh public/
 
 clean-root:
 	@echo "🧹 Cleaning root directory bloat..."

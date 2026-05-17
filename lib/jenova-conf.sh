@@ -1,19 +1,49 @@
 #!/bin/sh
-# lib/jenova-conf.sh: Safely source optional Jenova local configuration overrides.
+# lib/jenova-conf.sh: Path resolution and configuration for Jenova.
 #
-# Must be sourced AFTER JENOVA_ROOT is exported. Sources the first of:
-#   1. $JENOVA_ROOT/etc/jenova.local.conf
-#   2. $JENOVA_ROOT/external/llama.cpp/build/jenova.local.conf
+# This script detects if Jenova is running from a source repository or a
+# standalone installation and exports absolute paths to critical components.
 #
-# The resolved path is validated with realpath to ensure it stays within
-# JENOVA_ROOT, preventing directory-traversal via symlinks or env var injection.
+# Must be sourced AFTER JENOVA_ROOT is exported.
 #
-# Usage:
-#   # In any script that has JENOVA_ROOT set:
-#   . "$JENOVA_ROOT/lib/jenova-conf.sh"
+# Exports:
+#   LLAMA_SERVER      Path to the llama-server binary
+#   LLAMA_LIB_DIR     Path to directory containing shared libraries (Vulkan/CUDA)
+#   VIMRUNTIME        Path to the Neovim runtime files (for jvim)
+#   JENOVA_HOME       Path to the user's Jenova directory (models, state)
+#   JENOVA_STATE      Path to the system state directory
+#   LOG_DIR           Path to the log directory
+#   CACHE_DIR         Path to the cache directory
+
+# ── Layout Detection ──────────────────────────────────────────────────────────
+
+if [ -f "$JENOVA_ROOT/bin/llama-server" ] && [ ! -d "$JENOVA_ROOT/external/llama.cpp" ]; then
+    # Standalone Installation Layout
+    export JENOVA_LAYOUT="installed"
+    export LLAMA_SERVER="$JENOVA_ROOT/bin/llama-server"
+    export LLAMA_LIB_DIR="$JENOVA_ROOT/bin"
+    export VIMRUNTIME="$JENOVA_ROOT/jvim/runtime"
+else
+    # Source Repository Layout
+    export JENOVA_LAYOUT="source"
+    export LLAMA_SERVER="${LLAMA_SERVER:-$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server}"
+    export LLAMA_LIB_DIR="$JENOVA_ROOT/external/llama.cpp/build/bin"
+    export VIMRUNTIME="$JENOVA_ROOT/jvim/runtime"
+fi
+
+# ── Defaults ──────────────────────────────────────────────────────────────────
+
+export JENOVA_HOME="${JENOVA_HOME:-$HOME/Jenova}"
+export JENOVA_STATE="${JENOVA_STATE:-$JENOVA_HOME/.system}"
+export JENOVA_WORKSPACES="${JENOVA_WORKSPACES:-$JENOVA_HOME/Workspaces}"
+export LOG_DIR="${LOG_DIR:-$JENOVA_HOME/var/log}"
+export CACHE_DIR="${CACHE_DIR:-$JENOVA_HOME/var/cache}"
+export PID_FILE="${PID_FILE:-$JENOVA_STATE/jenova-ca.pid}"
+
+# ── Local Configuration Overrides ─────────────────────────────────────────────
 
 _jenova_local_candidate="$JENOVA_ROOT/etc/jenova.local.conf"
-if [ ! -f "$_jenova_local_candidate" ]; then
+if [ ! -f "$_jenova_local_candidate" ] && [ "$JENOVA_LAYOUT" = "source" ]; then
     _jenova_local_candidate="$JENOVA_ROOT/external/llama.cpp/build/jenova.local.conf"
 fi
 

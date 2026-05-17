@@ -161,7 +161,9 @@ function M.build_editor_context(chat_buf)
   local metadata = chat_buf and parse_metadata_from_buffer(chat_buf) or {}
 
   local lines = { "## Context" }
-  table.insert(lines, "cwd: " .. vim.fn.getcwd())
+  local cwd = vim.fn.getcwd()
+  table.insert(lines, "cwd: " .. cwd)
+  table.insert(lines, "project_root: " .. cwd)
 
   if ws_buf and path ~= "" then
     table.insert(lines, string.format("file: %s:%d:%d (%s)",

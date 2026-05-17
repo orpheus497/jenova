@@ -44,7 +44,7 @@ resolve_llama_server_path() {
 
     for config_file in \
         "$JENOVA_ROOT/etc/jenova.local.conf" \
-        "$JENOVA_ROOT/external/external/llama.cpp/build/jenova.local.conf"
+        "$JENOVA_ROOT/external/llama.cpp/build/jenova.local.conf"
     do
         if [ -f "$config_file" ]; then
             if [ -z "$resolved_path" ]; then
@@ -72,7 +72,7 @@ resolve_llama_server_path() {
     elif [ -n "$resolved_build_dir" ]; then
         printf '%s\n' "$resolved_build_dir/bin/llama-server"
     else
-        printf '%s\n' "$JENOVA_ROOT/external/external/llama.cpp/build/bin/llama-server"
+        printf '%s\n' "$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server"
     fi
 }
 
@@ -443,7 +443,7 @@ uninstall_jvim() {
 }
 uninstall_llama() {
     printf "%s%sUninstalling external/llama.cpp...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
-    rm -rf "$JENOVA_ROOT/external/external/llama.cpp/build"
+    rm -rf "$JENOVA_ROOT/external/llama.cpp/build"
     echo "external/llama.cpp build removed."
 }
 uninstall_webui() {
@@ -458,7 +458,7 @@ uninstall_jenova_ui() {
 }
 uninstall_mcsh() {
     printf "%s%sRemoving mcsh build artifacts...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
-    rm -rf "$JENOVA_ROOT/mcsh/build" "$JENOVA_ROOT/bin/mcsh"
+    rm -rf "$JENOVA_ROOT/external/mcsh/build" "$JENOVA_ROOT/bin/mcsh"
     echo "mcsh build artifacts removed."
 }
 

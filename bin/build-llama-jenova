@@ -188,8 +188,8 @@ set -- \
 # Use system spirv-headers if available, otherwise fallback to vended
 if [ ! -f "/usr/include/spirv/unified1/spirv.h" ] && [ ! -f "/usr/local/include/spirv/unified1/spirv.h" ]; then
     set -- "$@" \
-        -DCMAKE_C_FLAGS="-I${JENOVA_ROOT}/external/spirv-headers/include" \
-        -DCMAKE_CXX_FLAGS="-I${JENOVA_ROOT}/external/spirv-headers/include"
+        -DCMAKE_C_FLAGS="-I${JENOVA_ROOT}/external/SPIRV-Headers/include" \
+        -DCMAKE_CXX_FLAGS="-I${JENOVA_ROOT}/external/SPIRV-Headers/include"
 fi
 
 if [ "$ENABLE_VULKAN" -eq 1 ]; then

@@ -21,24 +21,39 @@ _find_model() {
 }
 
 # --- Model Discovery ---
+JENOVA_HOME="${JENOVA_HOME:-$HOME/Jenova}"
+_MODELS_DIR="${JENOVA_HOME}/models"
+
 # Scans each type-specific folder. Overrides can be applied later.
 # Priority:
-#   1. First .gguf in models/agent|embed|draft/ (alphabetically)
-#   2. Legacy flat path under models/ (alphabetically)
+#   1. First .gguf in JENOVA_HOME/models/agent|embed|draft/
+#   2. Legacy path under JENOVA_ROOT/models/
 #   3. Empty string if no model found
 
 # Agent model (main inference)
-MODEL_AGENT="$(_find_model "$JENOVA_ROOT/models/agent")"
+MODEL_AGENT="$(_find_model "$_MODELS_DIR/agent")"
 if [ -z "$MODEL_AGENT" ]; then
-    # Fallback to root models/ directory if type-specific folder is empty
+    MODEL_AGENT="$(_find_model "$JENOVA_ROOT/models/agent")"
+fi
+if [ -z "$MODEL_AGENT" ]; then
+    # Fallback to root models/ directory
+    MODEL_AGENT="$(_find_model "$_MODELS_DIR")"
+fi
+if [ -z "$MODEL_AGENT" ]; then
     MODEL_AGENT="$(_find_model "$JENOVA_ROOT/models")"
 fi
 
-# Draft model (speculative decoding) - supports JENOVA_DRAFT_MODEL override
-MODEL_DRAFT="${JENOVA_DRAFT_MODEL:-$(_find_model "$JENOVA_ROOT/models/draft")}"
+# Draft model (speculative decoding)
+MODEL_DRAFT="${JENOVA_DRAFT_MODEL:-$(_find_model "$_MODELS_DIR/draft")}"
+if [ -z "$MODEL_DRAFT" ]; then
+    MODEL_DRAFT="$(_find_model "$JENOVA_ROOT/models/draft")"
+fi
 
-# Embed model (RAG and semantic search) - supports JENOVA_EMBED_MODEL override
-MODEL_EMBED="${JENOVA_EMBED_MODEL:-$(_find_model "$JENOVA_ROOT/models/embed")}"
+# Embed model (RAG and semantic search)
+MODEL_EMBED="${JENOVA_EMBED_MODEL:-$(_find_model "$_MODELS_DIR/embed")}"
+if [ -z "$MODEL_EMBED" ]; then
+    MODEL_EMBED="$(_find_model "$JENOVA_ROOT/models/embed")"
+fi
 
 # Legacy alias for backward compatibility
 MODEL_7B="$MODEL_AGENT"

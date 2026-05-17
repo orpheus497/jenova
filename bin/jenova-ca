@@ -9,34 +9,46 @@
 
 set -e
 
-SCRIPT_DIR=$(dirname "$(realpath "$0")")
+_REAL_EXE=$(realpath "$0" 2>/dev/null || readlink -f "$0")
+_BIN_DIR=$(dirname "$_REAL_EXE")
 
-# Determine JENOVA_ROOT before loading config
-if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
-    export JENOVA_ROOT="$SCRIPT_DIR"
-    . "$SCRIPT_DIR/etc/jenova.conf"
-elif [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
-    export JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
-    . "$SCRIPT_DIR/../etc/jenova.conf"
+if [ -f "$_BIN_DIR/../etc/jenova.conf" ]; then
+    export JENOVA_ROOT="$(cd "$_BIN_DIR/.." && pwd)"
+elif [ -f "$_BIN_DIR/etc/jenova.conf" ]; then
+    export JENOVA_ROOT="$(cd "$_BIN_DIR" && pwd)"
 else
-    echo "Error: etc/jenova.conf not found."
-    exit 1
+    # Fallback
+    SCRIPT_DIR=$(dirname "$(realpath "$0")")
+    if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
+        export JENOVA_ROOT="$SCRIPT_DIR"
+    elif [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
+        export JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
+    else
+        echo "Error: etc/jenova.conf not found."
+        exit 1
+    fi
 fi
+
+# Scrub repository-specific variables
+unset JENOVA_DEV_REPO
 
 # Path hardening for headless/desktop execution
 export PATH="${HOME:+$HOME/.local/bin:}$JENOVA_ROOT/bin:$PATH"
 
+# Load environment and resolve paths
+. "$JENOVA_ROOT/lib/detect-env.sh"
 . "$JENOVA_ROOT/lib/jenova-conf.sh"
+# shellcheck disable=SC1091
+. "$JENOVA_ROOT/etc/jenova.conf"
 
 # Ensure runtime directories exist with proper permissions
-# Note: Run without sudo to avoid permission issues with lock files
 mkdir -p "$JENOVA_HOME" 2>/dev/null
 mkdir -p "$JENOVA_STATE" 2>/dev/null
 mkdir -p "$LOG_DIR" 2>/dev/null
 mkdir -p "$CACHE_DIR" 2>/dev/null
 mkdir -p "$(dirname "$PID_FILE")" 2>/dev/null
 
-# Check for ownership issues early (detect if directory owned by root from sudo usage)
+# Check for ownership issues early
 if [ -d "$JENOVA_HOME" ] && [ ! -w "$JENOVA_HOME" ]; then
     echo "Error: $JENOVA_HOME directory is not writable" >&2
     echo "" >&2
@@ -60,18 +72,21 @@ MODEL_PATH="${JENOVA_MODEL:-$MODEL_AGENT}"
 if [ ! -f "$LLAMA_SERVER" ]; then
     echo "Error: llama-server not found at $LLAMA_SERVER" >&2
     echo "" >&2
-    echo "Build external/llama.cpp first:" >&2
-    echo "  cd $JENOVA_ROOT/external/llama.cpp" >&2
-    echo "  cmake -B build -DGGML_VULKAN=ON" >&2
-    echo "  cmake --build build -j\$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)" >&2
+    if [ "$JENOVA_LAYOUT" = "source" ]; then
+        echo "Build external/llama.cpp first:" >&2
+        echo "  make llama" >&2
+    else
+        echo "Installation is corrupt. Please re-run the installer." >&2
+    fi
     echo "" >&2
     exit 1
 fi
+
 if [ ! -f "$MODEL_PATH" ]; then
     echo "Error: Model not found at $MODEL_PATH" >&2
     echo "" >&2
     echo "Download a model file (GGUF format) and place it at:" >&2
-    echo "  $JENOVA_ROOT/models/agent/" >&2
+    echo "  $JENOVA_HOME/models/agent/" >&2
     echo "" >&2
     echo "Recommended: Qwen3.5-4B-Q6_K.gguf" >&2
     echo "Or set JENOVA_MODEL environment variable to point to your model." >&2
@@ -91,25 +106,17 @@ if [ -f "$DRAFT_PATH" ] && [ "${JENOVA_DRAFT:-1}" != "0" ]; then
 fi
 
 # --- Find proxy.lua ---
-# Branch 1: SCRIPT_DIR itself contains lib/ (e.g. jenova-ca placed at project root)
-# Branch 2: SCRIPT_DIR is a subdirectory like bin/ (normal installation)
-if [ -f "$SCRIPT_DIR/lib/proxy.lua" ]; then
-    PROXY_SCRIPT="$SCRIPT_DIR/lib/proxy.lua"
-    export JENOVA_ROOT="${JENOVA_ROOT:-$SCRIPT_DIR}"
-elif [ -f "$SCRIPT_DIR/../lib/proxy.lua" ]; then
-    PROXY_SCRIPT="$SCRIPT_DIR/../lib/proxy.lua"
-    export JENOVA_ROOT="${JENOVA_ROOT:-$(dirname "$SCRIPT_DIR")}"
+# Branch 1: JENOVA_ROOT contains lib/ (standard)
+if [ -f "$JENOVA_ROOT/lib/proxy.lua" ]; then
+    PROXY_SCRIPT="$JENOVA_ROOT/lib/proxy.lua"
 else
-    echo "Error: proxy.lua not found relative to $SCRIPT_DIR"
+    echo "Error: proxy.lua not found in $JENOVA_ROOT/lib"
     exit 1
 fi
 
 export JENOVA_LLAMA_URL="http://${HOST}:${LLAMA_PORT}"
 export JENOVA_PROXY_PORT="$PORT"
 export JENOVA_PROXY_HOST="$HOST"
-export JENOVA_HOME="${JENOVA_HOME:-$HOME/Jenova}"
-export JENOVA_STATE="${JENOVA_STATE:-$JENOVA_HOME/.system}"
-export JENOVA_WORKSPACES="${JENOVA_WORKSPACES:-$JENOVA_HOME/Workspaces}"
 export JENOVA_CTX="${JENOVA_CTX:-$CTX_SIZE}"
 
 # Optional backend memory-fallback tuning from etc/jenova.local.conf.
@@ -118,7 +125,6 @@ export JENOVA_CTX="${JENOVA_CTX:-$CTX_SIZE}"
 [ -n "${GGML_CUDA_DMMV_POOL_SIZE:-}" ] && export GGML_CUDA_DMMV_POOL_SIZE
 
 # --- LD_LIBRARY_PATH for shared libs ---
-LLAMA_LIB_DIR="$JENOVA_ROOT/external/llama.cpp/build/bin"
 if [ -d "$LLAMA_LIB_DIR" ]; then
     export LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"
 fi

@@ -111,40 +111,36 @@ WARNINGS=0
 # ---------------------------------------------------------------------------
 # 1. OS Check & Hardware Profile Detection
 # ---------------------------------------------------------------------------
-info "Checking operating system..."
+info "Performing system audit..."
+if [ "$JENOVA_OS" = "unknown" ]; then
+    fail "Unsupported Operating System: $(uname -s)"
+    exit 1
+fi
+
 case "$JENOVA_OS" in
     freebsd)
         _VER="$(uname -r | cut -d. -f1)"
-        # Ensure _VER is a valid number for comparison
-        case "$_VER" in
-            ''|*[!0-9]*) _VER_NUM=0 ;;
-            *)           _VER_NUM="$_VER" ;;
-        esac
-        if [ "$_VER_NUM" -ge 15 ]; then
-            ok "FreeBSD ${_VER} — fully supported"
+        if [ "$_VER" -ge 15 ]; then
+            ok "FreeBSD ${_VER} (1st Class Citizen) — fully supported"
         else
-            warn "FreeBSD ${_VER} — recommended FreeBSD 15+; some features may differ"
+            warn "FreeBSD ${_VER} — recommended FreeBSD 15+; proceeding with caution"
             WARNINGS=$((WARNINGS + 1))
         fi
         ;;
     linux)
         if [ "$JENOVA_WSL" = "1" ]; then
-            ok "Linux (WSL) detected — ${JENOVA_DISTRO} / pkg: ${JENOVA_PKG_MGR}"
-            warn "WSL environment detected. Some native GPU features may require specific drivers."
+            ok "Linux (WSL) — 2nd Class Citizen (Experimental Support)"
         else
-            ok "Linux detected — ${JENOVA_DISTRO} / pkg: ${JENOVA_PKG_MGR}"
+            ok "Linux — 2nd Class Citizen (Fully Supported)"
         fi
-        info "Replace 'Vulkan0,Vulkan1' device names in etc/jenova.conf with your Vulkan device names (run: vulkaninfo --summary)"
         ;;
     macos)
-        warn "macOS detected — experimental, not regularly tested"
-        WARNINGS=$((WARNINGS + 1))
-        ;;
-    *)
-        warn "Unsupported OS: $(uname -s) — proceeding but results may vary"
+        ok "macOS — 3rd Class Citizen (Experimental Support)"
         WARNINGS=$((WARNINGS + 1))
         ;;
 esac
+
+info "Hardware: $JENOVA_CPU_MODEL ($JENOVA_CPU_THREADS threads, $JENOVA_RAM_GIB GiB RAM)"
 
 info "Detecting hardware profile..."
 DETECT_SCRIPT="$JENOVA_ROOT/hardware-profiles/detect-hardware.sh"
@@ -153,16 +149,13 @@ if [ -f "$DETECT_SCRIPT" ] && [ -x "$DETECT_SCRIPT" ]; then
     _PROFILE=$("$DETECT_SCRIPT" 2>/dev/null) || _PROFILE=""
     if [ -n "$_PROFILE" ]; then
         ok "Matched hardware profile: $_PROFILE"
-        # Automatically apply the profile configuration (non-fatal: installer
-        # continues even if the copy fails so the user is not left mid-install)
+        # Automatically apply the profile configuration
         if ! "$DETECT_SCRIPT" --apply; then
             warn "Failed to apply hardware profile: $_PROFILE"
             WARNINGS=$((WARNINGS + 1))
         fi
-        _PROFILE_DIR="$JENOVA_ROOT/hardware-profiles/$_PROFILE"
     else
-        warn "No hardware profile matched this system."
-        warn "Run: $DETECT_SCRIPT --info  to see detection details."
+        warn "No hardware profile matched this system. Using generic defaults."
         WARNINGS=$((WARNINGS + 1))
     fi
 else
@@ -173,24 +166,27 @@ fi
 # ---------------------------------------------------------------------------
 # 2. Create required runtime directories & Permission checks
 # ---------------------------------------------------------------------------
-info "Creating runtime directories..."
+JENOVA_HOME="${JENOVA_HOME:-$HOME/Jenova}"
+info "Creating runtime directories in $JENOVA_HOME..."
 
-mkdir -p "$JENOVA_ROOT/.jenova" 2>/dev/null || {
-    fail "Cannot create $JENOVA_ROOT/.jenova directory"
+mkdir -p "$JENOVA_HOME/.system" 2>/dev/null || {
+    fail "Cannot create $JENOVA_HOME/.system directory"
     fail "Do not run install.sh with sudo — run as regular user"
     ERRORS=$((ERRORS + 1))
 }
-mkdir -p "$JENOVA_ROOT/var/log" || true
-mkdir -p "$JENOVA_ROOT/var/cache" || true
-mkdir -p "$JENOVA_ROOT/models/agent" || true
-mkdir -p "$JENOVA_ROOT/models/embed" || true
-mkdir -p "$JENOVA_ROOT/models/draft" || true
+mkdir -p "$JENOVA_HOME/var/log" || true
+mkdir -p "$JENOVA_HOME/var/cache" || true
+mkdir -p "$JENOVA_HOME/var/run" || true
+mkdir -p "$JENOVA_HOME/models/agent" || true
+mkdir -p "$JENOVA_HOME/models/embed" || true
+mkdir -p "$JENOVA_HOME/models/draft" || true
+mkdir -p "$JENOVA_HOME/bin" || true
+mkdir -p "$JENOVA_HOME/etc" || true
 
-if [ -w "$JENOVA_ROOT/.jenova" ]; then
-    ok "Runtime directories created with proper permissions"
+if [ -w "$JENOVA_HOME/.system" ]; then
+    ok "Runtime directories created in $JENOVA_HOME"
 else
-    warn ".jenova directory exists but may have permission issues"
-    warn "Run: chmod -R u+w $JENOVA_ROOT/.jenova"
+    warn "$JENOVA_HOME/.system directory exists but may have permission issues"
     WARNINGS=$((WARNINGS + 1))
 fi
 
@@ -635,8 +631,8 @@ fi
 # ---------------------------------------------------------------------------
 # 6. Model files — check and offer to download missing models
 # ---------------------------------------------------------------------------
-if [ "$CLIENT_ONLY" = "1" ]; then
-    info "Skipping model checks (--client-only — models live on the remote host)"
+if [ "$CLIENT_ONLY" = "1" ] || [ "${JENOVA_SKIP_MODELS:-0}" = "1" ]; then
+    info "Skipping model checks..."
 else
     if [ -x "$JENOVA_ROOT/scripts/model_dl.sh" ]; then
         "$JENOVA_ROOT/scripts/model_dl.sh" "$_PROFILE" || {
@@ -710,28 +706,111 @@ if [ "$SKIP_NVIM" = "0" ] && command -v jvim >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
-# 8. Install launchers to PATH
+# 8. Deploy to JENOVA_HOME (Strict Separation)
 # ---------------------------------------------------------------------------
-info "Installing launchers to PATH..."
+info "Deploying standalone system to $JENOVA_HOME..."
 
-# Always deploy to ~/.local/bin — create it if needed
-_BIN_DIR="$HOME/.local/bin"
-mkdir -p "$_BIN_DIR"
+# 8.1 Create directory structure
+for _d in bin etc lib public share share/jvim/mason var/log var/cache var/run models/agent models/embed models/draft jvim/runtime; do
+    mkdir -p "$JENOVA_HOME/$_d"
+done
 
-ln -sf "$JENOVA_ROOT/bin/jvim" "$_BIN_DIR/jvim"
-ln -sf "$JENOVA_ROOT/bin/jenova" "$_BIN_DIR/jenova"
-ln -sf "$JENOVA_ROOT/bin/jenova-ui" "$_BIN_DIR/jenova-ui"
-ln -sf "$JENOVA_ROOT/bin/jenova-ca" "$_BIN_DIR/jenova-ca"
-ln -sf "$JENOVA_ROOT/bin/jenova-tui" "$_BIN_DIR/jenova-tui"
-ln -sf "$JENOVA_ROOT/bin/jenova-term" "$_BIN_DIR/jenova-term"
-if [ -f "$JENOVA_ROOT/bin/mcsh" ]; then
-    ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/mcsh"
-    ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/tcsh"
-    ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/csh"
-    ok "Symlinked jvim, jenova, jenova-ui, jenova-ca, jenova-tui, jenova-term, and mcsh to $_BIN_DIR"
-else
-    ok "Symlinked jvim, jenova, jenova-ui, jenova-ca, jenova-tui, and jenova-term to $_BIN_DIR"
+# 8.2 Verify and Deploy Binaries
+_verify_and_copy_bin() {
+    _src="$1"; _dst="$2"
+    [ -f "$_src" ] || return 1
+    
+    # OS/Arch verification
+    if command -v file >/dev/null 2>&1; then
+        _file_info=$(file "$_src")
+        case "$JENOVA_OS" in
+            linux)   echo "$_file_info" | grep -qi "ELF.*GNU/Linux" || { warn "Skipping incompatible Linux binary: $(basename "$_src")"; return 1; } ;;
+            freebsd) echo "$_file_info" | grep -qi "ELF.*FreeBSD"   || { warn "Skipping incompatible FreeBSD binary: $(basename "$_src")"; return 1; } ;;
+            macos)   echo "$_file_info" | grep -qi "Mach-O"       || { warn "Skipping incompatible macOS binary: $(basename "$_src")"; return 1; } ;;
+        esac
+    fi
+    
+    # Use 'install' to handle 'Text file busy' and set permissions
+    install -m 755 "$_src" "$_dst"
+    return 0
+}
+
+# wrappers
+for _bin in jvim jenova jenova-ui jenova-ca jenova-tui jenova-term jenova-swap-mount; do
+    if [ -f "$JENOVA_ROOT/bin/$_bin" ]; then
+        install -m 755 "$JENOVA_ROOT/bin/$_bin" "$JENOVA_HOME/bin/$_bin"
+    fi
+done
+
+# Built artifacts (llama-server, mcsh, jenova-ui)
+_LLAMA_BUILD_BIN="$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server"
+if [ -f "$_LLAMA_BUILD_BIN" ]; then
+    _verify_and_copy_bin "$_LLAMA_BUILD_BIN" "$JENOVA_HOME/bin/llama-server"
+    # Copy shared libs if they exist
+    for _lib in "$JENOVA_ROOT/external/llama.cpp/build/bin/"*.so* "$JENOVA_ROOT/external/llama.cpp/build/bin/"*.dylib*; do
+        if [ -f "$_lib" ]; then
+            install -m 755 "$_lib" "$JENOVA_HOME/bin/"
+        fi
+    done
+    ok "Deployed llama.cpp artifacts to $JENOVA_HOME/bin"
 fi
+
+if [ -f "$JENOVA_ROOT/bin/mcsh" ]; then
+    _verify_and_copy_bin "$JENOVA_ROOT/bin/mcsh" "$JENOVA_HOME/bin/mcsh"
+fi
+
+if [ -f "$JENOVA_ROOT/jenova-ui/jenova-ui" ]; then
+    _verify_and_copy_bin "$JENOVA_ROOT/jenova-ui/jenova-ui" "$JENOVA_HOME/bin/jenova-ui"
+fi
+
+# jvim core (nvim)
+_JVIM_CORE="$JENOVA_ROOT/jvim/build/bin/nvim"
+if [ ! -f "$_JVIM_CORE" ]; then _JVIM_CORE="$JENOVA_ROOT/jvim/build/bin/jvim"; fi
+if [ -f "$_JVIM_CORE" ]; then
+    _verify_and_copy_bin "$_JVIM_CORE" "$JENOVA_HOME/bin/jvim-core"
+fi
+
+# 8.3 Deploy Assets and Config
+cp -R "$JENOVA_ROOT/lib/"* "$JENOVA_HOME/lib/"
+cp -R "$JENOVA_ROOT/jvim/runtime/"* "$JENOVA_HOME/jvim/runtime/"
+[ -d "$JENOVA_ROOT/public" ] && cp -R "$JENOVA_ROOT/public/"* "$JENOVA_HOME/public/"
+[ -d "$JENOVA_ROOT/share/jvim/mason" ] && cp -R "$JENOVA_ROOT/share/jvim/mason/"* "$JENOVA_HOME/share/jvim/mason/"
+ok "Deployed libraries, runtime, and web assets"
+
+# 8.4 Generate Path-Locked Config
+cat > "$JENOVA_HOME/etc/jenova.local.conf" <<EOF
+#!/bin/sh
+# Path-locked configuration generated by install.sh on $(date)
+# This ensures the installation is decoupled from the source repository.
+
+JENOVA_ROOT="$JENOVA_HOME"
+LLAMA_SERVER="\$JENOVA_ROOT/bin/llama-server"
+LLAMA_LIB_DIR="\$JENOVA_ROOT/bin"
+VIMRUNTIME="\$JENOVA_ROOT/jvim/runtime"
+EOF
+
+# Copy base config if missing
+if [ ! -f "$JENOVA_HOME/etc/jenova.conf" ]; then
+    cp "$JENOVA_ROOT/etc/jenova.conf" "$JENOVA_HOME/etc/"
+fi
+ok "Deployed path-locked configuration to $JENOVA_HOME/etc"
+
+# 8.5 Symlink to PATH
+_LOCAL_BIN="$HOME/.local/bin"
+mkdir -p "$_LOCAL_BIN"
+
+for _bin in jvim jenova jenova-ui jenova-ca jenova-tui jenova-term jenova-swap-mount; do
+    if [ -f "$JENOVA_HOME/bin/$_bin" ]; then
+        ln -sf "$JENOVA_HOME/bin/$_bin" "$_LOCAL_BIN/$_bin"
+    fi
+done
+
+if [ -f "$JENOVA_HOME/bin/mcsh" ]; then
+    ln -sf "$JENOVA_HOME/bin/mcsh" "$_LOCAL_BIN/mcsh"
+    ln -sf "$JENOVA_HOME/bin/mcsh" "$_LOCAL_BIN/tcsh"
+    ln -sf "$JENOVA_HOME/bin/mcsh" "$_LOCAL_BIN/csh"
+fi
+ok "Symlinked launchers from $JENOVA_HOME/bin to $_LOCAL_BIN"
 
 # Warn if ~/.local/bin is not on PATH
 _ON_PATH=0
@@ -842,15 +921,15 @@ if [ "$CLIENT_ONLY" = "1" ]; then
     echo "  the firewall allows ports 8080, 8081, and 8082 from this host."
 else
     echo "  1. Place model GGUF files in type-specific folders:"
-    echo "       Agent:  $JENOVA_ROOT/models/agent/"
-    echo "       Embed:  $JENOVA_ROOT/models/embed/"
-    echo "       Draft:  $JENOVA_ROOT/models/draft/"
+    echo "       Agent:  $JENOVA_HOME/models/agent/"
+    echo "       Embed:  $JENOVA_HOME/models/embed/"
+    echo "       Draft:  $JENOVA_HOME/models/draft/"
     echo "  2. Build llama.cpp if not done:"
     echo "       make llama"
-    echo "  3. Start the backend:  $JENOVA_ROOT/bin/jenova-ca --daemon"
+    echo "  3. Start the backend:  jenova-ca --daemon"
     echo "     Or launch agent:    jenova"
     echo "     Or use Web UI:      Open http://localhost:8080 in a browser"
-    echo "     Or launch editor:   $JENOVA_ROOT/bin/jvim  (or just: jvim)"
+    echo "     Or launch editor:   jvim"
     echo "     LAN client mode:    jvim --remote <host>"
     if [ "$SKIP_NVIM" = "0" ]; then
         echo "  4. Inside the editor:  :checkhealth jenova"

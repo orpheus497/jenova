@@ -39,6 +39,7 @@ set -e
 _REAL_SCRIPT="$(realpath "$0" 2>/dev/null || echo "$0")"
 _SCRIPT_DIR="$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)"
 JENOVA_ROOT="$(cd "$_SCRIPT_DIR/.." && pwd)"
+JENOVA_HOME="${JENOVA_HOME:-$HOME/Jenova}"
 JVIM_CONFIG_SRC="$JENOVA_ROOT/jvim-config"
 JVIM_CONFIG_DST="$HOME/.config/jvim"
 
@@ -384,6 +385,23 @@ if [ "$SKIP_NVIM" = "0" ] && command -v jvim >/dev/null 2>&1 && [ -d "$JVIM_CONF
 fi
 
 # ---------------------------------------------------------------------------
+# 5. Redeploy binaries to JENOVA_HOME/bin
+# ---------------------------------------------------------------------------
+info "Redeploying updated binaries to $JENOVA_HOME/bin..."
+mkdir -p "$JENOVA_HOME/bin"
+for _bin in jvim jenova jenova-ui jenova-ca jenova-tui jenova-term jenova-swap-mount; do
+    if [ -f "$JENOVA_ROOT/bin/$_bin" ]; then
+        cp "$JENOVA_ROOT/bin/$_bin" "$JENOVA_HOME/bin/$_bin"
+        chmod +x "$JENOVA_HOME/bin/$_bin"
+    fi
+done
+if [ -f "$JENOVA_ROOT/bin/mcsh" ]; then
+    cp "$JENOVA_ROOT/bin/mcsh" "$JENOVA_HOME/bin/mcsh"
+    chmod +x "$JENOVA_HOME/bin/mcsh"
+fi
+ok "Binaries redeployed to $JENOVA_HOME/bin"
+
+# ---------------------------------------------------------------------------
 # 6. Refresh Desktop Entries & Icons (Linux/FreeBSD)
 # ---------------------------------------------------------------------------
 if [ "$JENOVA_OS" = "linux" ] || [ "$JENOVA_OS" = "freebsd" ]; then
@@ -414,9 +432,9 @@ echo ""
 ok "Update complete."
 echo ""
 info "To launch Jenova:"
-echo "    bin/jenova            — CLI agent (auto-starts backend)"
-echo "    bin/jvim [file]       — jvim editor (auto-starts backend)"
-echo "    bin/jvim --remote H   — connect to a remote Jenova CA on host H"
-echo "    bin/jvim --check      — print resolved env without launching editor"
-echo "    bin/jenova-ca status  — check backend daemon status"
+echo "    jenova                — CLI agent (auto-starts backend)"
+echo "    jvim [file]           — jvim editor (auto-starts backend)"
+echo "    jvim --remote H       — connect to a remote Jenova CA on host H"
+echo "    jvim --check          — print resolved env without launching editor"
+echo "    jenova-ca status      — check backend daemon status"
 echo ""

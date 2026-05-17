@@ -188,6 +188,7 @@ end
 vim.api.nvim_create_autocmd("VimEnter", {
   once = true,
   callback = function()
+    -- Increased delay to 2500ms to ensure the UI and Vulkan context are stable
     vim.defer_fn(function()
       _jenova_tcp_probe(function(connected)
         vim.g.jenova_connected = connected
@@ -218,7 +219,7 @@ vim.api.nvim_create_autocmd("VimEnter", {
           end
         end
       end)
-    end, 1500)
+    end, 2500)
   end,
 })
 
@@ -240,6 +241,8 @@ if _jenova_timer then
     once = true,
     callback = function()
       if _jenova_timer then pcall(function() _jenova_timer:close() end) end
+      local ok, monitor = pcall(require, "jenova.monitor")
+      if ok and monitor.stop_polling then monitor.stop_polling() end
     end,
   })
 end

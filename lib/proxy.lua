@@ -590,6 +590,22 @@ local function proxy_connection(client_fd, conn_fds)
                 end
             end
 
+            -- Detect project root for dynamic indexing
+            local project_root = body_raw:match("project_root: ([^\n]+)")
+            if project_root and project_root ~= _G._last_project_root then
+                print("[proxy] Detected project root change: " .. project_root)
+                _G._last_project_root = project_root
+                coroutine.wrap(function()
+                    search.index_dir(project_root, {
+                        "lua","sh","c","h","cpp","py","js","ts","go","rs",
+                        "md","txt","json","yaml","yml","toml","conf","cfg",
+                        "html","css","Makefile","zig",
+                    })
+                    if embed_ok then search.init_embeddings(embed) end
+                    print("[proxy] Search index updated for: " .. project_root)
+                end)()
+            end
+
             -- Intent detection: each entry maps a prefix pattern to an intent name.
             -- The same pattern is used both to detect the intent and to strip the prefix.
             local intent_prefixes = {

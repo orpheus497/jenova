@@ -19,6 +19,7 @@ set -e
 _REAL_SCRIPT="$(realpath "$0" 2>/dev/null || echo "$0")"
 _SCRIPT_DIR="$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)"
 JENOVA_ROOT="$(cd "$_SCRIPT_DIR/.." && pwd)"
+JENOVA_HOME="${JENOVA_HOME:-$HOME/Jenova}"
 FULL=0
 VERBOSE=0
 ERRORS=0
@@ -63,7 +64,29 @@ printf "${_P}╚═════════════════════�
 echo ""
 
 # ---------------------------------------------------------------------------
-# 1. Check Installed Binaries
+# 1. Check Path Resolution
+# ---------------------------------------------------------------------------
+info "Verifying path resolution..."
+# Determine JENOVA_ROOT before loading config
+_ROOT_CANDIDATE=""
+if [ -f "$HOME/.local/bin/jenova" ]; then
+    _EXE=$(readlink -f "$HOME/.local/bin/jenova")
+    _ROOT_CANDIDATE=$(dirname "$(dirname "$_EXE")")
+fi
+
+export JENOVA_ROOT="${_ROOT_CANDIDATE:-$JENOVA_ROOT}"
+
+if [ -f "$JENOVA_ROOT/lib/jenova-conf.sh" ]; then
+    . "$JENOVA_ROOT/lib/detect-env.sh"
+    . "$JENOVA_ROOT/lib/jenova-conf.sh"
+    ok "Path resolution active (Layout: $JENOVA_LAYOUT)"
+else
+    fail "Cannot find lib/jenova-conf.sh in $JENOVA_ROOT"
+    ERRORS=$((ERRORS + 1))
+fi
+
+# ---------------------------------------------------------------------------
+# 2. Check Installed Binaries & Architecture
 # ---------------------------------------------------------------------------
 info "Verifying installed binaries..."
 
@@ -71,7 +94,24 @@ _check_bin() {
     _name="$1"; _desc="$2"
     if command -v "$_name" >/dev/null 2>&1; then
         _path=$(command -v "$_name")
-        ok "$_desc ($_path)"
+        _real_path=$(readlink -f "$_path")
+        
+        # Verify architecture only for ELF/Mach-O binaries
+        if command -v file >/dev/null 2>&1; then
+            _file_info=$(file "$_real_path")
+            if echo "$_file_info" | grep -qiE "ELF|Mach-O"; then
+                case "$JENOVA_OS" in
+                    linux)   echo "$_file_info" | grep -qi "ELF.*GNU/Linux" || { fail "$_name is not a native Linux binary"; ERRORS=$((ERRORS + 1)); } ;;
+                    freebsd) echo "$_file_info" | grep -qi "ELF.*FreeBSD"   || { fail "$_name is not a native FreeBSD binary"; ERRORS=$((ERRORS + 1)); } ;;
+                    macos)   echo "$_file_info" | grep -qi "Mach-O"       || { fail "$_name is not a native macOS binary"; ERRORS=$((ERRORS + 1)); } ;;
+                esac
+            else
+                # It's a script or other non-ELF file
+                if [ "$VERBOSE" = "1" ]; then ok "$_desc is a script (arch check skipped)"; fi
+            fi
+        fi
+        
+        ok "$_desc ($_real_path)"
         return 0
     else
         fail "$_desc not found in PATH"
@@ -86,35 +126,35 @@ _check_bin "jenova-ca" "jenova-ca (daemon manager)"
 _check_bin "mcsh" "mcsh (Modern C Shell)"
 
 # ---------------------------------------------------------------------------
-# 2. Check In-Tree Builds
+# 3. Check Components and Assets
 # ---------------------------------------------------------------------------
-info "Verifying in-tree builds..."
+info "Verifying components and assets..."
 
-if [ -x "$JENOVA_ROOT/jvim/build/bin/jvim" ] || [ -x "$JENOVA_ROOT/jvim/build/bin/nvim" ]; then
-    ok "jvim editor built"
+if [ -f "$LLAMA_SERVER" ] && [ -x "$LLAMA_SERVER" ]; then
+    ok "llama-server reachable at $LLAMA_SERVER"
 else
-    warn "jvim editor not built locally (using system nvim)"
-    WARNINGS=$((WARNINGS + 1))
-fi
-
-if [ -x "$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server" ]; then
-    ok "llama.cpp backend built"
-else
-    warn "llama.cpp backend not built (inference will fail)"
+    fail "llama-server missing or not executable"
     ERRORS=$((ERRORS + 1))
 fi
 
-if [ -f "$JENOVA_ROOT/bin/mcsh" ]; then
-    ok "mcsh shell built"
+if [ -d "$VIMRUNTIME" ]; then
+    ok "jvim runtime found"
 else
-    warn "mcsh shell not built"
-    WARNINGS=$((WARNINGS + 1))
+    fail "jvim runtime missing at $VIMRUNTIME"
+    ERRORS=$((ERRORS + 1))
 fi
 
 if [ -d "$JENOVA_ROOT/public" ] && [ -f "$JENOVA_ROOT/public/index.html" ]; then
-    ok "Web UI built"
+    ok "Web UI found"
 else
-    warn "Web UI not built (optional)"
+    warn "Web UI missing (optional)"
+    WARNINGS=$((WARNINGS + 1))
+fi
+
+if [ -d "$JENOVA_ROOT/share/jvim/mason" ]; then
+    ok "share directory found"
+else
+    warn "share directory missing (LSPs may need re-install)"
     WARNINGS=$((WARNINGS + 1))
 fi
 
@@ -140,18 +180,18 @@ fi
 # ---------------------------------------------------------------------------
 # 4. Check Model Files
 # ---------------------------------------------------------------------------
-info "Verifying model files..."
+info "Verifying model files in $JENOVA_HOME/models..."
 
-_models_dir="$JENOVA_ROOT/models"
+_models_dir="$JENOVA_HOME/models"
 mkdir -p "$_models_dir/agent" "$_models_dir/embed" "$_models_dir/draft" 2>/dev/null || true
 
 _check_model() {
-    _type="$1"; _dir="$_models_dir/$_type"; _pattern="$2"
-    if find "$_dir" -maxdepth 1 -name "$_pattern" 2>/dev/null | grep -q .; then
-        ok "$_type model found"
+    _type="$1"; _dir="$_models_dir/$_type"
+    if find "$_dir" -maxdepth 1 -name "*.gguf" 2>/dev/null | grep -q .; then
+        ok "  $_type model(s) found in $_dir"
         return 0
     else
-        warn "$_type model not found (run: ./scripts/model_dl.sh)"
+        warn "  No $_type model(s) found in $_dir"
         WARNINGS=$((WARNINGS + 1))
         return 1
     fi
