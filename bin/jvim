@@ -27,8 +27,9 @@
 
 # Determine JENOVA_ROOT before loading config
 # We use realpath to validate the path and ensure a malicious symlink cannot
-# redirect us to a file outside the Jenova checkout. Run unconditionally so both
-# remote and local modes inherit the same defaults (model paths, custom ports, etc.).
+# redirect us to a file outside the Jenova checkout (Security Rationale). 
+# Run unconditionally so both remote and local modes inherit the same defaults 
+# (model paths, custom ports, etc.).
 _REAL_EXE=$(realpath "$0" 2>/dev/null || readlink -f "$0")
 _BIN_DIR=$(dirname "$_REAL_EXE")
 
@@ -227,7 +228,10 @@ if [ -n "$REMOTE_HOST" ] || [ "$REMOTE_AUTO_DISCOVER" = "1" ]; then
             fi
         fi
     else
-        # Auto-discover mode: let the Lua plugin (jenova/lan.lua) scan the subnet
+        # Auto-discover mode: let the Lua plugin (jenova/lan.lua) scan the subnet.
+        # This triggers a non-blocking TCP scan on the local network; once a
+        # server is found, the plugin updates JENOVA_CONNECT_HOST and re-configures
+        # all internal jvim endpoints dynamically.
         echo "Jenova LAN auto-discover mode: scanning subnet for Jenova CA..."
         echo "The editor will connect automatically when a server is found."
     fi
@@ -246,12 +250,16 @@ API_URL="$(build_http_url "$CONNECT_HOST" "$PORT")"
 
 # Ensure state dir exists for plugins that may write there
 mkdir -p "$JENOVA_STATE"
+# We intentionally leave XDG_CONFIG_HOME at its default (~/.config) so Neovim
+# correctly resolves the NVIM_APPNAME="jvim" folder to ~/.config/jvim. 
+# Overriding it here would break plugin resolution for user-provided nvim setups.
 mkdir -p "${XDG_DATA_HOME}"
 [ -n "$CACHE_DIR" ] && mkdir -p "$CACHE_DIR"
 
 # Export environment for the jvim editor and Jenova plugins.
 # llama.lua, chat.lua, jenova/monitor.lua, jenova/health.lua all read these.
-# Keep this list in sync with runtime/doc/jvim.txt in the jvim repo.
+# Keep this list in sync with runtime/doc/jvim.txt because these plugins 
+# depend on these specific variable names for endpoint discovery.
 export JENOVA_CONNECT_HOST="$CONNECT_HOST"
 export JENOVA_PORT="$PORT"
 export JENOVA_LLAMA_PORT="$LLAMA_PORT"

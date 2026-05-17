@@ -34,7 +34,7 @@ export class SyncService {
     }
 
     /**
-     * Pulls the latest database snapshot from the backend and restores it.
+     * Pulls the latest database snapshot and individual markdown files from the backend.
      */
     static async pull() {
         if (!browser || this._isSyncing) return;
@@ -46,11 +46,59 @@ export class SyncService {
                 const data = JSON.parse(raw);
                 await DatabaseService.importData(data);
                 console.log('[Sync] Database restored from snapshot');
-                // Reload page to reflect changes in all stores
-                window.location.reload();
-            } else {
-                console.log('[Sync] No remote snapshot found');
             }
+
+            console.log('[Sync] Checking for individual workspace updates...');
+            const files = await StorageService.list();
+            const mdFiles = files.filter(f => f.endsWith('.md'));
+
+            if (mdFiles.length > 0) {
+                const allConvs = await DatabaseService.getAllConversations();
+                const allNotes = await DatabaseService.getAllNotes();
+
+                for (const path of mdFiles) {
+                    const content = await StorageService.get(path);
+                    if (!content) continue;
+
+                    const parts = path.split('/');
+                    const fileName = parts[parts.length - 1].replace('.md', '');
+                    const isNote = path.includes('/Notes/');
+                    const isChat = path.includes('/Chats/');
+
+                    if (isNote) {
+                        const note = allNotes.find(n => n.title === fileName);
+                        if (note) {
+                            if (note.content !== content) {
+                                await DatabaseService.updateNote(note.id, { content, updatedAt: Date.now() });
+                            }
+                        } else {
+                            // Create missing note (resolve folder later or use null)
+                            await DatabaseService.createNote(null, fileName, content);
+                        }
+                    } else if (isChat) {
+                        const { conv: parsedConv, messages: parsedMessages } = MarkdownService.fromMarkdown(content);
+                        const conv = allConvs.find(c => c.name === (parsedConv.name || fileName));
+                        
+                        if (conv) {
+                            // Simple overwrite for now to ensure jvim changes are reflected
+                            await DatabaseService.deleteConversationMessages(conv.id);
+                            for (const msg of parsedMessages) {
+                                await DatabaseService.createMessageBranch({
+                                    role: msg.role as any,
+                                    content: msg.content || '',
+                                    timestamp: msg.timestamp || Date.now(),
+                                    type: 'text',
+                                    toolCalls: ''
+                                }, null); // This is a simplification; a better implementation would reconstruct the tree
+                            }
+                        }
+                    }
+                }
+            }
+
+            console.log('[Sync] Pull complete');
+            // Reload page to reflect changes in all stores
+            window.location.reload();
         } catch (error) {
             console.error('[Sync] Pull failed', error);
         } finally {

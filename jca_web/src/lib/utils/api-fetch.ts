@@ -31,14 +31,24 @@ export interface ApiFetchOptions extends Omit<RequestInit, 'headers'> {
  * const models = await apiFetch<ApiModel[]>('/v1/models');
  * ```
  */
+function getEffectiveBase(defaultBase: string): string {
+	const serverUrl = settingsStore.config.serverUrl?.toString().trim();
+	if (serverUrl) {
+		return serverUrl.endsWith('/') ? serverUrl.slice(0, -1) : serverUrl;
+	}
+	if (typeof window !== 'undefined' && window.location.port === '8081') {
+		return `${window.location.protocol}//${window.location.hostname}:8080${defaultBase}`;
+	}
+	return defaultBase;
+}
+
 export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): Promise<T> {
 	const { authOnly = false, headers: customHeaders, ...fetchOptions } = options;
 
 	const baseHeaders = authOnly ? getAuthHeaders() : getJsonHeaders();
 	const headers = { ...baseHeaders, ...customHeaders };
 
-	const serverUrl = settingsStore.config.serverUrl?.toString().trim();
-	const effectiveBase = serverUrl ? (serverUrl.endsWith('/') ? serverUrl.slice(0, -1) : serverUrl) : base;
+	const effectiveBase = getEffectiveBase(base);
 
 	const url =
 		path.startsWith(UrlProtocol.HTTP) || path.startsWith(UrlProtocol.HTTPS)
@@ -79,8 +89,7 @@ export async function apiFetchWithParams<T>(
 	params: Record<string, string>,
 	options: ApiFetchOptions = {}
 ): Promise<T> {
-	const serverUrl = settingsStore.config.serverUrl?.toString().trim();
-	const effectiveBase = serverUrl ? (serverUrl.endsWith('/') ? serverUrl.slice(0, -1) : serverUrl) : window.location.origin + base;
+	const effectiveBase = getEffectiveBase(typeof window !== 'undefined' ? window.location.origin + base : base);
 
 	let urlStr = basePath;
 	if (!basePath.startsWith(UrlProtocol.HTTP) && !basePath.startsWith(UrlProtocol.HTTPS)) {
