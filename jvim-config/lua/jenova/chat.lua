@@ -4,7 +4,9 @@ local function ep()
   return require("jenova.endpoints")
 end
 
-local CHAT_DIR = vim.fn.stdpath("state") .. "/jenova/chats"
+local WORKSPACE_ROOT = vim.env.JENOVA_WORKSPACES or (vim.fn.expand("$HOME") .. "/Workspaces")
+local DEFAULT_WORKSPACE = "default"
+local CHAT_DIR = WORKSPACE_ROOT .. "/" .. DEFAULT_WORKSPACE .. "/Chats"
 local MODEL = "jenova"
 local SECRET = "jenova-local"
 local TEMPERATURE = 0.7
@@ -178,7 +180,7 @@ end
 
 local function chat_filepath(buf)
   local name = vim.api.nvim_buf_get_name(buf)
-  if name ~= "" and name:find(CHAT_DIR, 1, true) then
+  if name ~= "" and (name:find(CHAT_DIR, 1, true) or name:find(WORKSPACE_ROOT, 1, true)) then
     return name
   end
   return nil
@@ -187,14 +189,13 @@ end
 local function new_chat_filename()
   ensure_chat_dir()
   local pid = vim.fn.getpid()
-  local suffix = string.format("%04x", math.random(0, 0xFFFF))
-  return CHAT_DIR .. "/" .. os.date("%Y%m%d_%H%M%S") .. "_" .. pid .. "_" .. suffix .. ".md"
+  return CHAT_DIR .. "/Chat_" .. os.date("%Y%m%d_%H%M%S") .. ".md"
 end
 
 local function is_chat_buf(buf)
   if not vim.api.nvim_buf_is_valid(buf) then return false end
   local name = vim.api.nvim_buf_get_name(buf)
-  return name:find("/jenova/chats/", 1, true) ~= nil
+  return name:find(WORKSPACE_ROOT, 1, true) ~= nil and name:match("%.md$") ~= nil
 end
 
 -- Languages we want stock vim-markdown fence-syntax injection for as a fallback
@@ -323,13 +324,34 @@ local function save_chat(buf)
   if not is_chat_buf(buf) then return end
   local path = chat_filepath(buf)
   if not path then return end
+
+  -- Resolve the relative path within the Workspace for the Proxy API.
+  -- e.g., /home/user/Workspaces/default/Chats/foo.md -> default/Chats/foo.md
+  local rel_path = path:sub(#WORKSPACE_ROOT + 2)
+  if rel_path == "" then return end
+
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  local ret = vim.fn.writefile(lines, path)
-  if ret == 0 then
-    vim.bo[buf].modified = false
-  else
-    vim.notify("Failed to save chat: " .. path, vim.log.levels.ERROR, { title = "Jenova" })
-  end
+  local content = table.concat(lines, "\n")
+  local url = ep().storage_url(rel_path)
+
+  -- Use vim.system (async) to POST to the Proxy. This ensures the UI doesn't hang
+  -- and the Proxy can trigger RAG re-indexing.
+  vim.system({ "curl", "-s", "-X", "POST", "--data-binary", "@-", url }, {
+    stdin = content,
+    detach = true,
+  }, function(obj)
+    if obj.code ~= 0 then
+      vim.schedule(function()
+        vim.notify("Failed to save chat to Proxy: " .. (obj.stderr or "Unknown error"), vim.log.levels.ERROR, { title = "Jenova" })
+      end)
+    else
+      vim.schedule(function()
+        if vim.api.nvim_buf_is_valid(buf) then
+          vim.bo[buf].modified = false
+        end
+      end)
+    end
+  end)
 end
 
 -- ── Scroll ────────────────────────────────────────────────────────────────────
@@ -1405,6 +1427,22 @@ local _setup_done = false
 function M.setup()
   if _setup_done then return end
   _setup_done = true
+
+  -- Architectural mandate: All chat persistence must flow through the Proxy (8080)
+  -- to ensure structural unification and automated RAG re-indexing.
+  vim.api.nvim_create_autocmd("BufWriteCmd", {
+    pattern = WORKSPACE_ROOT .. "/**/*.md",
+    callback = function(ev)
+      if is_chat_buf(ev.buf) then
+        save_chat(ev.buf)
+      else
+        -- Fallback for non-chat markdown in Workspaces (if any)
+        vim.api.nvim_buf_call(ev.buf, function()
+          vim.cmd("silent! write! " .. vim.fn.fnameescape(ev.file))
+        end)
+      end
+    end,
+  })
 
   vim.api.nvim_create_user_command("JenovaChat",        function() M.toggle_chat() end,   { desc = "Toggle Jenova Chat" })
   vim.api.nvim_create_user_command("JenovaChatNew",     function() M.open_chat() end,     { desc = "New Jenova Chat" })

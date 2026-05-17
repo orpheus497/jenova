@@ -448,7 +448,7 @@ local function proxy_connection(client_fd, conn_fds)
     
     -- Filesystem API for WebUI persistence
     local home_dir = os.getenv("HOME") or "/tmp"
-    local workspaces_dir = home_dir .. "/Workspaces"
+    local workspaces_dir = os.getenv("JENOVA_WORKSPACES") or (home_dir .. "/Workspaces")
 
     local function recursive_mkdir(path)
         local segments = {}
@@ -488,6 +488,19 @@ local function proxy_connection(client_fd, conn_fds)
         if f then
             f:write(body_raw)
             f:close()
+
+            -- Structural trigger: Re-index this file in the background RAG if it's a markdown or text file.
+            -- We use a simple backgrounding trick via '&' (portable to Linux/FreeBSD) or just run it.
+            -- Since reindex_file is fast for BM25, we run it in-proc but wrapped in pcall.
+            if full_path:match("%.md$") or full_path:match("%.txt$") then
+                pcall(function()
+                    local s = require("search")
+                    if s and s.reindex_file then
+                        s.reindex_file(full_path)
+                    end
+                end)
+            end
+
             local resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}"
             async_send(client_fd, resp)
         else
@@ -503,7 +516,7 @@ local function proxy_connection(client_fd, conn_fds)
         local files = {}
         -- Shell-escape the path to prevent injection via HOME containing metacharacters
         local escaped_dir = workspaces_dir:gsub("'", "'\\''")
-        local pop, perr = pcall(io.popen, "find '" .. escaped_dir .. "' -maxdepth 3 -not -path '*/.*'")
+        local pop, perr = pcall(io.popen, "find '" .. escaped_dir .. "' -maxdepth 3 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/build/*'")
         local p = pop and perr or nil
         if p then
             for line in p:lines() do
@@ -513,6 +526,25 @@ local function proxy_connection(client_fd, conn_fds)
             p:close()
         end
         local content = "[" .. table.concat(files, ",") .. "]"
+        local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)
+        async_send(client_fd, resp .. content)
+        safe_close(); return
+    end
+
+    local is_workspaces_list = is_get and headers_raw:match("^GET /api/workspaces")
+    if is_workspaces_list then
+        recursive_mkdir(workspaces_dir)
+        local ws = {}
+        local escaped_dir = workspaces_dir:gsub("'", "'\\''")
+        local p = io.popen("find '" .. escaped_dir .. "' -maxdepth 1 -type d -not -path '*/.*'")
+        if p then
+            for line in p:lines() do
+                local name = line:sub(#workspaces_dir + 2)
+                if #name > 0 then table.insert(ws, "\"" .. name .. "\"") end
+            end
+            p:close()
+        end
+        local content = "[" .. table.concat(ws, ",") .. "]"
         local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)
         async_send(client_fd, resp .. content)
         safe_close(); return

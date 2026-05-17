@@ -109,6 +109,7 @@ fi
 export JENOVA_LLAMA_URL="http://${HOST}:${LLAMA_PORT}"
 export JENOVA_PROXY_PORT="$PORT"
 export JENOVA_PROXY_HOST="$HOST"
+export JENOVA_WORKSPACES="${JENOVA_WORKSPACES:-$HOME/Workspaces}"
 export JENOVA_CTX="${JENOVA_CTX:-$CTX_SIZE}"
 
 # Optional backend memory-fallback tuning from etc/jenova.local.conf.

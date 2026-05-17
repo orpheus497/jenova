@@ -277,6 +277,7 @@ export JENOVA_PORT="$PORT"
 export JENOVA_LLAMA_PORT="$LLAMA_PORT"
 export JENOVA_LLAMA_EMBED_PORT="${LLAMA_EMBED_PORT:-8082}"
 export JENOVA_ROOT="${JENOVA_ROOT}"
+export JENOVA_WORKSPACES="${JENOVA_WORKSPACES:-$HOME/Workspaces}"
 export JENOVA_API_URL="$API_URL"
 
 # Set LD_LIBRARY_PATH so external/llama.cpp shared libraries are found by llama-server
