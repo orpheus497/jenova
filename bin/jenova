@@ -36,12 +36,17 @@ fi
 
 # ── Export environment for child processes ────────────────────────────────────
 export JENOVA_ROOT
+export JENOVA_HOME="${JENOVA_HOME:-${HOME}/Jenova}"
+export JENOVA_STATE="${JENOVA_STATE:-${JENOVA_HOME}/.system}"
+export JENOVA_WORKSPACES="${JENOVA_WORKSPACES:-${JENOVA_HOME}/Workspaces}"
 export JENOVA_CONNECT_HOST="$CONNECT_HOST"
 export JENOVA_PORT="${PORT:-8080}"
 export JENOVA_LLAMA_PORT="${LLAMA_PORT:-8081}"
 export JENOVA_LLAMA_EMBED_PORT="${LLAMA_EMBED_PORT:-8082}"
 export JENOVA_API_URL="http://${CONNECT_HOST}:${JENOVA_PORT}"
 export JENOVA_CWD="$PWD"
+export PID_FILE="${PID_FILE:-${JENOVA_HOME}/var/run/jenova-ca.pid}"
+export LOG_DIR="${LOG_DIR:-${JENOVA_HOME}/var/log}"
 
 LLAMA_LIB_DIR="$JENOVA_ROOT/external/llama.cpp/build/bin"
 if [ -d "$LLAMA_LIB_DIR" ]; then
