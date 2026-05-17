@@ -31,7 +31,7 @@ end
 function M.check_permissions(_i, _c) return { allowed = true } end
 
 local IGNORE = {
-  [".git"] = true, [".jenova"] = true, [".claude"] = true,
+  [".git"] = true, [".jenova"] = true, [".system"] = true, [".claude"] = true,
   ["node_modules"] = true, [".cache"] = true, [".venv"] = true,
   ["__pycache__"] = true, [".pytest_cache"] = true,
   ["target"] = true, ["build"] = true, ["dist"] = true,

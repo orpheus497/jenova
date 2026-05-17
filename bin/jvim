@@ -201,7 +201,7 @@ load_jenova_conf
 # Point Neovim at the deployed jvim config (~/.config/jvim) and in-tree runtime.
 # XDG_CONFIG_HOME is intentionally left at its default so Neovim resolves
 # NVIM_APPNAME="jvim" to ~/.config/jvim (deployed by install.sh / scripts/update.sh).
-export XDG_DATA_HOME="$JENOVA_ROOT/.jenova/share"
+export XDG_DATA_HOME="${JENOVA_HOME:-$HOME/Jenova}/share"
 export NVIM_APPNAME="jvim"
 export VIMRUNTIME="$JENOVA_ROOT/jvim/runtime"
 
@@ -264,9 +264,9 @@ fi
 CONNECT_HOST="${JENOVA_CONNECT_HOST:-127.0.0.1}"
 API_URL="$(build_http_url "$CONNECT_HOST" "$PORT")"
 
-JENOVA_DIR="${JENOVA_STATE:-$JENOVA_ROOT/.jenova}"
 # Ensure state dir exists for plugins that may write there
-mkdir -p "$JENOVA_DIR"
+mkdir -p "$JENOVA_STATE"
+mkdir -p "${XDG_DATA_HOME}"
 [ -n "$CACHE_DIR" ] && mkdir -p "$CACHE_DIR"
 
 # Export environment for the jvim editor and Jenova plugins.

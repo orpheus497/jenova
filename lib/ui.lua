@@ -7,7 +7,8 @@ end
 
 -- LAN mode state file path (resolved after init)
 local function lan_state_file()
-    return root .. "/.jenova/lan_mode"
+    local state_dir = os.getenv("JENOVA_STATE") or (root .. "/.system")
+    return state_dir .. "/lan_mode"
 end
 
 -- Read persisted LAN mode state (pcall-wrapped for I/O safety)
@@ -23,8 +24,8 @@ end
 -- Persist LAN mode state (shell-safe path quoting)
 local function set_lan_state(enabled)
     -- Shell-quote the path to prevent injection via root containing metacharacters
-    local dir = root .. "/.jenova"
-    os.execute("mkdir -p " .. shell_quote(dir) .. " 2>/dev/null")
+    local state_dir = os.getenv("JENOVA_STATE") or (root .. "/.system")
+    os.execute("mkdir -p " .. shell_quote(state_dir) .. " 2>/dev/null")
     local ok, f = pcall(io.open, lan_state_file(), "w")
     if ok and f then
         f:write(enabled and "1" or "0")

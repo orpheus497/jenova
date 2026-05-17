@@ -81,9 +81,6 @@ if [ ! -x "$JENOVA_CA" ]; then
 fi
 
 # ── Health check helper ───────────────────────────────────────────────────────
-JENOVA_DIR="${JENOVA_STATE:-$JENOVA_ROOT/.jenova}"
-PID_FILE="$JENOVA_DIR/jenova-ca.pid"
-
 check_health() {
     if command -v curl >/dev/null 2>&1; then
         curl -sf --max-time 3 --connect-timeout 2 \
@@ -97,7 +94,7 @@ check_health() {
 STARTED_BY_THIS_INVOCATION=0
 
 if [ "$NO_BACKEND" = "0" ]; then
-    mkdir -p "$JENOVA_DIR"
+    mkdir -p "$(dirname "$PID_FILE")"
 
     if check_health; then
         echo "Jenova CA already running at $JENOVA_API_URL"
@@ -125,7 +122,6 @@ if [ "$NO_BACKEND" = "0" ]; then
                 done
                 if ! $_ANY_ALIVE; then
                     echo " failed! (all daemon processes died)"
-                    LOG_DIR="${LOG_DIR:-$JENOVA_DIR}"
                     echo "Check log: $LOG_DIR/jenova-ca.log"
                     exit 1
                 fi

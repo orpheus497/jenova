@@ -51,7 +51,7 @@ function embed.init(opts)
       local args = { embed_bin, '-m', model_path, '--embedding', '--port', port, '--host', host,
                       '-ngl', '0', '-c', '4096', '-b', '512', '--offline' }
 
-      local state_dir = (opts.script_dir and opts.script_dir ~= '') and (opts.script_dir .. "/.jenova") or ".jenova"
+      local state_dir = os.getenv("JENOVA_STATE") or ((opts.script_dir and opts.script_dir ~= '') and (opts.script_dir .. "/.system") or ".system")
       os.execute(string.format('mkdir -p %q', state_dir))
       
       local ok, pid_or_err = daemon.start_background(args, state_dir .. '/llama-embed.log', opts.script_dir or '.', state_dir .. '/llama-embed.pid', {GGML_VULKAN_DISABLE="1", GGML_VK_DEVICE=""})

@@ -518,7 +518,7 @@ function search.index_dir(root_dir, extensions)
 
   -- Use find -exec stat to get mtime and path in one go (Linux + FreeBSD)
   local cmd = string.format(
-    "find %s -type f %s -not -path '*/.git/*' -not -path '*/.jenova/*' -not -path '*/.crush/*' -not -path '*/node_modules/*' -not -path '*/__pycache__/*' -not -path '*/build/*' -not -path '*/backups/*' -not -path '*/llama.cpp/*' -not -name '*.gguf' -not -name '*.bin' -not -name '*.o' -not -name '*.so' -size -100k %s 2>/dev/null | head -500",
+    "find %s -type f %s -not -path '*/.git/*' -not -path '*/.system/*' -not -path '*/.jenova/*' -not -path '*/.crush/*' -not -path '*/node_modules/*' -not -path '*/__pycache__/*' -not -path '*/build/*' -not -path '*/backups/*' -not -path '*/llama.cpp/*' -not -name '*.gguf' -not -name '*.bin' -not -name '*.o' -not -name '*.so' -size -100k %s 2>/dev/null | head -500",
     shell_quote(root_dir), ext_filter, STAT_MTIME_PATH_FMT
   )
   local p = io.popen(cmd)
