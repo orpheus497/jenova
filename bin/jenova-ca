@@ -38,6 +38,7 @@ export PATH="${HOME:+$HOME/.local/bin:}$JENOVA_ROOT/bin:$PATH"
 # Load environment and resolve paths
 . "$JENOVA_ROOT/lib/detect-env.sh"
 . "$JENOVA_ROOT/lib/jenova-conf.sh"
+. "$JENOVA_ROOT/lib/jenova-model.sh"
 # shellcheck disable=SC1091
 . "$JENOVA_ROOT/etc/jenova.conf"
 
