@@ -37,4 +37,53 @@ export class MarkdownService {
 
         return md;
     }
+
+    static fromMarkdown(md: string): { conv: Partial<DatabaseConversation>, messages: Partial<DatabaseMessage>[] } {
+        const lines = md.split('\n');
+        const conv: Partial<DatabaseConversation> = {};
+        const messages: Partial<DatabaseMessage>[] = [];
+        
+        let currentRole: string | null = null;
+        let currentContent: string[] = [];
+        let timestamp = Date.now();
+
+        const flushMessage = () => {
+            if (currentRole && currentContent.length > 0) {
+                messages.push({
+                    role: currentRole === 'jenova' ? 'assistant' : currentRole,
+                    content: currentContent.join('\n').trim(),
+                    timestamp: timestamp++
+                });
+                currentContent = [];
+            }
+        };
+
+        for (const line of lines) {
+            if (line.startsWith('# topic:')) {
+                const match = line.match(/# topic: (.*?) \[agent\]/);
+                if (match) {
+                    conv.name = match[1].trim();
+                } else {
+                    conv.name = line.substring(8).trim();
+                }
+            } else if (line.startsWith('<!-- system:')) {
+                const match = line.match(/<!-- system: (.*?) -->/);
+                if (match) {
+                    messages.push({
+                        role: 'system',
+                        content: match[1].trim(),
+                        timestamp: timestamp++
+                    });
+                }
+            } else if (line.startsWith('## ')) {
+                flushMessage();
+                currentRole = line.substring(3).trim().toLowerCase();
+            } else if (currentRole) {
+                currentContent.push(line);
+            }
+        }
+        flushMessage();
+
+        return { conv, messages };
+    }
 }

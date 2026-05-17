@@ -43,13 +43,14 @@ export PATH="${HOME:+$HOME/.local/bin:}$JENOVA_ROOT/bin:$PATH"
 . "$JENOVA_ROOT/etc/jenova.conf"
 
 # Ensure runtime directories exist with proper permissions
+# Note: Run without sudo to avoid permission issues with lock files
 mkdir -p "$JENOVA_HOME" 2>/dev/null
 mkdir -p "$JENOVA_STATE" 2>/dev/null
 mkdir -p "$LOG_DIR" 2>/dev/null
 mkdir -p "$CACHE_DIR" 2>/dev/null
 mkdir -p "$(dirname "$PID_FILE")" 2>/dev/null
 
-# Check for ownership issues early
+# Check for ownership issues early (detect if directory owned by root from sudo usage)
 if [ -d "$JENOVA_HOME" ] && [ ! -w "$JENOVA_HOME" ]; then
     echo "Error: $JENOVA_HOME directory is not writable" >&2
     echo "" >&2

@@ -26,6 +26,9 @@
 #   -h | --help         Show this help and exit
 
 # Determine JENOVA_ROOT before loading config
+# We use realpath to validate the path and ensure a malicious symlink cannot
+# redirect us to a file outside the Jenova checkout. Run unconditionally so both
+# remote and local modes inherit the same defaults (model paths, custom ports, etc.).
 _REAL_EXE=$(realpath "$0" 2>/dev/null || readlink -f "$0")
 _BIN_DIR=$(dirname "$_REAL_EXE")
 
@@ -178,11 +181,18 @@ print_check_env() {
 }
 
 # Point Neovim at the deployed jvim config (~/.config/jvim) and resolved runtime.
+# XDG_CONFIG_HOME is intentionally left at its default so Neovim resolves
+# NVIM_APPNAME="jvim" to ~/.config/jvim (deployed by install.sh / scripts/update.sh).
 export XDG_DATA_HOME="${JENOVA_HOME}/share"
 export NVIM_APPNAME="jvim"
 export VIMRUNTIME="$VIMRUNTIME"
 
 # --- Remote/LAN client mode: skip backend start, just export env and launch editor ---
+# Two sub-modes:
+#   jvim --remote <host>  — explicit host, connect and health-check immediately
+#   jvim --remote         — LAN auto-discover: set JENOVA_LAN_MODE=1 and let the
+#                           Lua plugin (jenova/lan.lua) scan the subnet for a
+#                           running Jenova CA, then set JENOVA_CONNECT_HOST.
 if [ -n "$REMOTE_HOST" ] || [ "$REMOTE_AUTO_DISCOVER" = "1" ]; then
     export JENOVA_PORT="$REMOTE_PROXY_PORT"
     export JENOVA_LLAMA_PORT="$REMOTE_LLAMA_PORT"
@@ -198,6 +208,28 @@ if [ -n "$REMOTE_HOST" ] || [ "$REMOTE_AUTO_DISCOVER" = "1" ]; then
         export JENOVA_CONNECT_HOST="$REMOTE_HOST"
         export JENOVA_API_URL="$(build_http_url "$REMOTE_HOST" "$REMOTE_PROXY_PORT")"
         echo "Jenova LAN client mode: connecting to $REMOTE_HOST:$REMOTE_PROXY_PORT"
+
+        # Quick health check on the remote
+        if command -v curl >/dev/null 2>&1; then
+            _remote_url="$(build_http_url "$REMOTE_HOST" "$REMOTE_PROXY_PORT")/health"
+            if curl -sf --max-time 3 --connect-timeout 2 "$_remote_url" >/dev/null 2>&1; then
+                echo "Remote Jenova CA is healthy"
+            else
+                echo "Warning: Remote Jenova CA at $REMOTE_HOST:$REMOTE_PROXY_PORT is not responding" >&2
+                echo "" >&2
+                echo "Troubleshooting:" >&2
+                echo "  1. Is jenova-ca running on $REMOTE_HOST?  (ssh $REMOTE_HOST bin/jenova-ca status)" >&2
+                echo "  2. Is it bound to 0.0.0.0?  (JENOVA_HOST=0.0.0.0 in etc/jenova.conf on the server)" >&2
+                echo "     Services bound to 127.0.0.1 reject LAN connections." >&2
+                echo "  3. Firewall blocking port $REMOTE_PROXY_PORT?" >&2
+                echo "" >&2
+                echo "Editor will launch anyway — monitor will retry automatically" >&2
+            fi
+        fi
+    else
+        # Auto-discover mode: let the Lua plugin (jenova/lan.lua) scan the subnet
+        echo "Jenova LAN auto-discover mode: scanning subnet for Jenova CA..."
+        echo "The editor will connect automatically when a server is found."
     fi
 
     if [ "$CHECK_ONLY" = "1" ]; then
@@ -218,6 +250,8 @@ mkdir -p "${XDG_DATA_HOME}"
 [ -n "$CACHE_DIR" ] && mkdir -p "$CACHE_DIR"
 
 # Export environment for the jvim editor and Jenova plugins.
+# llama.lua, chat.lua, jenova/monitor.lua, jenova/health.lua all read these.
+# Keep this list in sync with runtime/doc/jvim.txt in the jvim repo.
 export JENOVA_CONNECT_HOST="$CONNECT_HOST"
 export JENOVA_PORT="$PORT"
 export JENOVA_LLAMA_PORT="$LLAMA_PORT"

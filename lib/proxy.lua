@@ -376,38 +376,6 @@ local function proxy_connection(client_fd, conn_fds)
         return
     end
 
-    -- Static file serving for Web UI
-    if is_get then
-        local path = headers_raw:match("^GET ([^ %?]+)")
-        if path then
-            if path == "/" then path = "/index.html" end
-            -- Security: prevent directory traversal
-            if not path:find("%.%.") then
-                local local_path = root_dir .. "/public" .. path
-                local f = io.open(local_path, "rb")
-                if f then
-                    local content = f:read("*a")
-                    f:close()
-                    local mime = "application/octet-stream"
-                    if path:find("%.html$") then mime = "text/html"
-                    elseif path:find("%.js$") then mime = "application/javascript"
-                    elseif path:find("%.css$") then mime = "text/css"
-                    elseif path:find("%.svg$") then mime = "image/svg+xml"
-                    elseif path:find("%.png$") then mime = "image/png"
-                    elseif path:find("%.jpg$") or path:find("%.jpeg$") then mime = "image/jpeg"
-                    elseif path:find("%.json$") then mime = "application/json"
-                    end
-                    local resp = string.format(
-                        "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
-                        mime, #content)
-                    async_send(client_fd, resp .. content)
-                    safe_close()
-                    return
-                end
-            end
-        end
-    end
-
     if not is_get then
         if content_length > MAX_BODY_SIZE then
             local err_resp = "HTTP/1.1 413 Content Too Large\r\nConnection: close\r\n\r\n"
@@ -571,6 +539,38 @@ local function proxy_connection(client_fd, conn_fds)
         safe_close(); return
     end
 
+    -- Static file serving for Web UI
+    if is_get then
+        local path = headers_raw:match("^GET ([^ %?]+)")
+        if path then
+            if path == "/" then path = "/index.html" end
+            -- Security: prevent directory traversal
+            if not path:find("%.%.") then
+                local local_path = root_dir .. "/public" .. path
+                local f = io.open(local_path, "rb")
+                if f then
+                    local content = f:read("*a")
+                    f:close()
+                    local mime = "application/octet-stream"
+                    if path:find("%.html$") then mime = "text/html"
+                    elseif path:find("%.js$") then mime = "application/javascript"
+                    elseif path:find("%.css$") then mime = "text/css"
+                    elseif path:find("%.svg$") then mime = "image/svg+xml"
+                    elseif path:find("%.png$") then mime = "image/png"
+                    elseif path:find("%.jpg$") or path:find("%.jpeg$") then mime = "image/jpeg"
+                    elseif path:find("%.json$") then mime = "application/json"
+                    end
+                    local resp = string.format(
+                        "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
+                        mime, #content)
+                    async_send(client_fd, resp .. content)
+                    safe_close()
+                    return
+                end
+            end
+        end
+    end
+
     local intent = headers_raw:match("[Xx]%-Intent:%s*(%w+)")
     headers_raw = headers_raw:gsub("(\r\n[Hh][Oo][Ss][Tt]:%s*)[^\r\n]+", "%1" .. LLAMA_HOST .. ":" .. LLAMA_PORT)
     headers_raw = headers_raw:gsub("\r\n[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]:%s*[^\r\n]*\r\n", "\r\n")
@@ -591,19 +591,31 @@ local function proxy_connection(client_fd, conn_fds)
             end
 
             -- Detect project root for dynamic indexing
-            local project_root = body_raw:match("project_root: ([^\n]+)")
-            if project_root and project_root ~= _G._last_project_root then
-                print("[proxy] Detected project root change: " .. project_root)
-                _G._last_project_root = project_root
-                coroutine.wrap(function()
-                    search.index_dir(project_root, {
-                        "lua","sh","c","h","cpp","py","js","ts","go","rs",
-                        "md","txt","json","yaml","yml","toml","conf","cfg",
-                        "html","css","Makefile","zig",
-                    })
-                    if embed_ok then search.init_embeddings(embed) end
-                    print("[proxy] Search index updated for: " .. project_root)
-                end)()
+            local project_root = body_raw:match("project_root: ([^\n\r]+)")
+            if project_root then
+                -- Strip carriage return and JSON quotes if any
+                project_root = project_root:gsub("\r", ""):gsub("\"", ""):gsub("\\n", ""):gsub("\\r", ""):gsub("}$", ""):gsub(",$", ""):match("^%s*(.-)%s*$")
+                
+                -- Handle relative paths (WebUI) or dummy roots
+                if project_root == "web_workspace" then
+                    project_root = workspaces_dir
+                elseif project_root ~= "" and not project_root:match("^/") and not project_root:match("^~") then
+                    project_root = workspaces_dir .. "/" .. project_root
+                end
+
+                if project_root ~= "" and project_root ~= _G._last_project_root then
+                    print("[proxy] Detected project root change: " .. project_root)
+                    _G._last_project_root = project_root
+                    coroutine.wrap(function()
+                        search.index_dir(project_root, {
+                            "lua","sh","c","h","cpp","py","js","ts","go","rs",
+                            "md","txt","json","yaml","yml","toml","conf","cfg",
+                            "html","css","Makefile","zig",
+                        })
+                        if embed_ok then search.init_embeddings(embed) end
+                        print("[proxy] Search index updated for: " .. project_root)
+                    end)()
+                end
             end
 
             -- Intent detection: each entry maps a prefix pattern to an intent name.

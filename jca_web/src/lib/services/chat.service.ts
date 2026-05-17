@@ -197,7 +197,9 @@ export class ChatService {
     const workspaceInfo = workspaceContext
       ? `\n\n[CURRENT WORKSPACE ARTIFACTS (Notes & Files)]:\n${workspaceContext}`
       : "";
-    const jcaContext = thinkInstruction + audioContext + workspaceInfo;
+    const workspaces = await DatabaseService.getAllWorkspaces();
+    const defaultWorkspace = workspaces[0]?.name || 'default';
+    const jcaContext = `\nproject_root: ${defaultWorkspace}\n` + thinkInstruction + audioContext + workspaceInfo;
 
     if (systemMsgIdx !== -1) {
       normalizedMessages[systemMsgIdx].content += jcaContext;
