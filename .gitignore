@@ -10,11 +10,13 @@
 /bin/jenova-ui
 /jenova-ui/jenova-ui
 /external/llama.cpp/build/
-/llama.cpp/bin/
-/mcsh/build/
-/mcsh/autom4te.cache/
+/external/mcsh/build/
+/external/SPIRV-Headers/build/
 
-# --- Guard: mcsh/tcsh sources belong in /mcsh/, never at repo root ---
+# --- Guard: external sources belong in /external/, never at repo root ---
+/mcsh/
+/llama.cpp/
+/SPIRV-Headers/
 /sh.*
 /tc.*
 /tw.*

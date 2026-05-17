@@ -37,27 +37,18 @@ Toggle `LAN Mode` via the System Tray or TUI to bind the backend to `0.0.0.0`. A
 git clone https://github.com/orpheus497/jenova
 cd jenova
 
-# Interactive TUI — choose what to install, update, or configure
-./install-jenova.sh
-
-# Or non-interactive full install:
-./install-jenova.sh --full
+# Full build and installation to ~/Jenova:
+make
+make install
 ```
 
-The **Jenova Manager TUI** lets you independently install, update, or uninstall each component:
-- Jenova Core (backend scripts, proxy, daemon)
-- jvim (editor / IDE)
-- llama.cpp (inference engine)
-- WebUI (browser-based Workspaces)
-- jenova-ui (Desktop Manager — tray + TUI)
-- mcsh (Modern C Shell)
+The system is deployed to **`~/Jenova`**, creating a 100% functional disconnect from the source repository. All binaries, libraries, and configurations are self-contained within this directory.
 
 ### Manual Build
 
 ```sh
-make              # Build all components
-make install      # Deploy to system
-make preflight    # Check dependencies before building
+make              # Build all components in-tree
+make install      # Deploy to ~/Jenova (Standalone)
 make verify       # Verify installation succeeded
 ```
 
@@ -67,11 +58,13 @@ Individual components: `make llama`, `make jvim`, `make mcsh`, `make web`, `make
 
 ## 💻 Command Line Interface
 
+Jenova installs launchers to `~/.local/bin` that point to the standalone installation in `~/Jenova`.
+
 | Command | Description |
 |---------|-------------|
 | `jenova` | Launch the integrated jvim editor (auto-starts backend) |
 | `jvim [file]` | Launch jvim directly |
-| `jenova-ca start\|stop\|restart\|status` | Control the backend daemon |
+| `jenova-ca start|stop|restart|status` | Control the backend daemon |
 | `jenova-tui` | Kanagawa-themed terminal manager |
 | `jenova-ui` | Desktop Manager (tray icon + TUI) |
 | `jenova-term` | Dedicated terminal with mcsh |
@@ -81,17 +74,8 @@ Individual components: `make llama`, `make jvim`, `make mcsh`, `make web`, `make
 ## 🔄 Updating
 
 ```sh
-# Update everything (pulls repo, rebuilds changed components, resyncs plugins)
+# Update everything (pulls repo, rebuilds changed components, redeploys to ~/Jenova)
 scripts/update.sh
-
-# Or use the interactive manager:
-./install-jenova.sh
-
-# Selective updates via CLI flags:
-scripts/update.sh --skip-jvim          # Skip jvim rebuild
-scripts/update.sh --skip-rebuild       # Skip llama.cpp rebuild
-scripts/update.sh --upgrade-plugins    # Move plugins to latest (vs pinned)
-scripts/update.sh --link               # Re-establish config symlinks
 ```
 
 ---
@@ -100,45 +84,22 @@ scripts/update.sh --link               # Re-establish config symlinks
 
 Jenova is optimized for fast, accurate local reasoning. We recommend **Qwen-2.5** derivatives (such as `Qwen2.5-Coder-7B` or `Qwen2.5-3B`) quantized into GGUF format for optimal VRAM-to-parameter footprint ratios on consumer hardware.
 
-Rule of thumb: **~0.75 GB VRAM per 1B parameters** at Q4_K_M quantization.
-
----
-
-## 📖 Documentation
-
-Detailed documentation lives in [`docs/`](docs/):
-
-| Topic | Path |
-|-------|------|
-| Architecture Overview | [docs/architecture/overview.md](docs/architecture/overview.md) |
-| System Cohesion | [docs/architecture/cohesion.md](docs/architecture/cohesion.md) |
-| Cognitive Backend | [docs/architecture/backend.md](docs/architecture/backend.md) |
-| Agent System | [docs/architecture/agent.md](docs/architecture/agent.md) |
-| jvim Usage | [docs/usage/jvim.md](docs/usage/jvim.md) |
-| CLI Reference | [docs/usage/cli.md](docs/usage/cli.md) |
-| Installation Guide | [docs/installation/STREAMLINED.md](docs/installation/STREAMLINED.md) |
-| FreeBSD Notes | [docs/installation/freebsd.md](docs/installation/freebsd.md) |
-| Linux Notes | [docs/installation/linux.md](docs/installation/linux.md) |
-| macOS Notes | [docs/installation/macos.md](docs/installation/macos.md) |
-| Hardware Profiles | [hardware-profiles/README.md](hardware-profiles/README.md) |
-
 ---
 
 ## 🏗️ Repository Structure
 
 ```
 jenova/
-├── bin/                    # Entry-point scripts and built binaries
+├── bin/                    # Launcher wrappers and tool scripts
 ├── docs/                   # Documentation
-├── etc/                    # Configuration (jenova.conf)
+├── etc/                    # Configuration templates
+├── external/               # Sub-repositories (llama.cpp, mcsh, SPIRV-Headers)
 ├── hardware-profiles/      # OS/GPU-specific tuning profiles
 ├── jca_web/                # WebUI source (SvelteKit)
 ├── jenova-ui/              # Desktop Manager source (C/GTK3)
 ├── jvim/                   # jvim editor source (Neovim fork)
 ├── jvim-config/            # jvim configuration and plugins
 ├── lib/                    # Core Lua modules (proxy, UI, FFI)
-├── llama.cpp/              # Inference engine (independent git repo)
-├── mcsh/                   # Modern C Shell source (independent git repo)
 ├── models/                 # Model storage (gitignored — user data)
 ├── png/                    # Icons and branding assets
 ├── scripts/                # Build, install, update, and management scripts

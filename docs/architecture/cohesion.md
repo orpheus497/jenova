@@ -10,8 +10,8 @@ All components (backend, TUI, proxy, and editor) respect the same configuration 
 
 This ensures that when you change a model path or a port in one place, the entire system—from the Svelte WebUI to the C-based Tray Icon—updates its behavior accordingly.
 
-## 2. Shared Runtime State (`.jenova/`)
-Transient state, such as process PIDs, active model metadata, and session tokens, is stored in a hidden `.jenova/` directory.
+## 2. Shared Runtime State (`~/Jenova/.system`)
+Transient state, such as process PIDs, active model metadata, and session tokens, is stored in the hidden `.system` directory within your `JENOVA_HOME` (typically `~/Jenova`).
 - `jenova-ca` (the daemon) writes PIDs here.
 - `jenova-ui` (the TUI/Tray) reads these PIDs to monitor health.
 - `jvim` (the editor) checks these files to auto-start the backend if it's not already running.
