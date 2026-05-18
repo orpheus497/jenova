@@ -10,7 +10,7 @@ set -e
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
 JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
 
-export JENOVA_BACKEND="hybrid"
+JENOVA_BACKEND="hybrid"; export JENOVA_BACKEND
 
 echo "== Jenova Hybrid Build (Vulkan + CUDA) =="
 exec "$SCRIPT_DIR/build-llama-jenova" "$@"

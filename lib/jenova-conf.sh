@@ -25,26 +25,26 @@
 
 if [ -f "$JENOVA_ROOT/bin/llama-server" ] && [ ! -d "$JENOVA_ROOT/external/llama.cpp" ]; then
     # Standalone Installation Layout
-    export JENOVA_LAYOUT="installed"
-    export LLAMA_SERVER="$JENOVA_ROOT/bin/llama-server"
-    export LLAMA_LIB_DIR="$JENOVA_ROOT/bin"
-    export VIMRUNTIME="$JENOVA_ROOT/jvim/runtime"
+    JENOVA_LAYOUT="installed"; export JENOVA_LAYOUT
+    LLAMA_SERVER="$JENOVA_ROOT/bin/llama-server"; export LLAMA_SERVER
+    LLAMA_LIB_DIR="$JENOVA_ROOT/bin"; export LLAMA_LIB_DIR
+    VIMRUNTIME="$JENOVA_ROOT/jvim/runtime"; export VIMRUNTIME
 else
     # Source Repository Layout
-    export JENOVA_LAYOUT="source"
-    export LLAMA_SERVER="${LLAMA_SERVER:-$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server}"
-    export LLAMA_LIB_DIR="$JENOVA_ROOT/external/llama.cpp/build/bin"
-    export VIMRUNTIME="$JENOVA_ROOT/jvim/runtime"
+    JENOVA_LAYOUT="source"; export JENOVA_LAYOUT
+    LLAMA_SERVER="${LLAMA_SERVER:-$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server}"; export LLAMA_SERVER
+    LLAMA_LIB_DIR="$JENOVA_ROOT/external/llama.cpp/build/bin"; export LLAMA_LIB_DIR
+    VIMRUNTIME="$JENOVA_ROOT/jvim/runtime"; export VIMRUNTIME
 fi
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 
-export JENOVA_HOME="${JENOVA_HOME:-$HOME/Jenova}"
-export JENOVA_STATE="${JENOVA_STATE:-$JENOVA_HOME/.system}"
-export JENOVA_WORKSPACES="${JENOVA_WORKSPACES:-$JENOVA_HOME/Workspaces}"
-export LOG_DIR="${LOG_DIR:-$JENOVA_HOME/var/log}"
-export CACHE_DIR="${CACHE_DIR:-$JENOVA_HOME/var/cache}"
-export PID_FILE="${PID_FILE:-$JENOVA_STATE/jenova-ca.pid}"
+JENOVA_HOME="${JENOVA_HOME:-$HOME/Jenova}"; export JENOVA_HOME
+JENOVA_STATE="${JENOVA_STATE:-$JENOVA_HOME/.system}"; export JENOVA_STATE
+JENOVA_WORKSPACES="${JENOVA_WORKSPACES:-$JENOVA_HOME/Workspaces}"; export JENOVA_WORKSPACES
+LOG_DIR="${LOG_DIR:-$JENOVA_HOME/var/log}"; export LOG_DIR
+CACHE_DIR="${CACHE_DIR:-$JENOVA_HOME/var/cache}"; export CACHE_DIR
+PID_FILE="${PID_FILE:-$JENOVA_STATE/jenova-ca.pid}"; export PID_FILE
 
 # ── Local Configuration Overrides ─────────────────────────────────────────────
 

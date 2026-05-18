@@ -48,7 +48,7 @@ else
 fi
 
 # Default JENOVA_HOME if not set
-export JENOVA_HOME="${JENOVA_HOME:-$HOME/Jenova}"
+JENOVA_HOME="${JENOVA_HOME:-$HOME/Jenova}"; export JENOVA_HOME
 
 # Colors
 if [ -t 1 ]; then
@@ -213,7 +213,7 @@ cmd_install() {
         # Currently install.sh doesn't have a direct --skip-models, but we can 
         # pass --client-only if we want a TRULY minimal system (no llama),
         # but here we just want to avoid the interactive prompt.
-        export JENOVA_SKIP_MODELS=1
+        JENOVA_SKIP_MODELS=1; export JENOVA_SKIP_MODELS
     fi
     "$JENOVA_ROOT/scripts/install.sh" $_install_flags
     

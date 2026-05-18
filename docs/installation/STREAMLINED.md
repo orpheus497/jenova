@@ -17,47 +17,34 @@ cd jenova
 - ✓ Detects your OS and package manager automatically
 - ✓ Installs all required system dependencies
 - ✓ Builds Jenova components (llama.cpp, jvim, mcsh, Web UI)
-- ✓ Deploys to your system (~/.local/bin/, ~/.config/jvim/)
+- ✓ Deploys a standalone system to ~/Jenova (bin/, lib/, etc/, public/)
+- ✓ Symlinks launchers to ~/.local/bin/ (jvim, jenova, jenova-ca, etc.)
 - ✓ Downloads AI models (~5-10GB)
 - ✓ Verifies everything works
 
+### Deployment Architecture
+Jenova is designed to be fully decoupled from its source repository. 
+- **Application Home**: `~/Jenova/` contains the entire runtime environment.
+- **Source Repository**: Can be safely deleted after a successful `make install`.
+- **Launchers**: Symlinks in `~/.local/bin/` point directly into `~/Jenova/bin/`.
+- **Path Locking**: The system uses realpath-based discovery to ensure all internal dependencies (scripts, shared libraries, and web assets) are loaded from the installation home, never from the repository or accidental local paths.
+
 ### Advanced Installation Options
 ```bash
-# Dry run (see what would be installed)
-./install-jenova.sh --dry-run
-
 # Minimal install (no Web UI, no models)
 ./install-jenova.sh --minimal
 
-# Full install with everything
+# Full install with everything (default)
 ./install-jenova.sh --full
 ```
 
-### Legacy Installation (Manual)
-
-For a fully automated, end-to-end installation:
-
-```bash
-# All-in-one: checks → build → deploy → verify
-./scripts/install-complete.sh
-
-# With options:
-./scripts/install-complete.sh --skip-web      # Skip Web UI build
-./scripts/install-complete.sh --skip-models   # Skip model downloads
-./scripts/install-complete.sh --no-verify     # Skip verification
-./scripts/install-complete.sh --force         # Overwrite config
-```
-
-> Note: `install-complete.sh` deploys the install with `--skip-lsp` by default,
-> so optional language server installation is not performed in the one-command
-> flow.
-
-This is equivalent to:
+### Manual Installation (Equivalent to ./install-jenova.sh)
 1. `./scripts/preflight-check.sh`
 2. `make clean && make`
 3. `make install`
 4. `./scripts/model_dl.sh`
 5. `./scripts/verify-install.sh --full`
+
 
 ## Post-Installation Setup
 

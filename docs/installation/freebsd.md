@@ -25,16 +25,16 @@ make
 # make web
 
 # 6. Run the installer (hardware-aware)
+# This deploys a standalone system to ~/Jenova and symlinks to ~/.local/bin/
 make install
 ```
 
-You can also use the single-command installer workflow:
+You can also use the streamlined installation script:
 
 ```sh
-./scripts/install-complete.sh
+./install-jenova.sh
 ```
 
-> Note: `install-complete.sh` skips optional LSP installation by default.
 
 ## Manual Installation Steps
 

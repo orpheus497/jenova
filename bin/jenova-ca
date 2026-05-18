@@ -13,16 +13,16 @@ _REAL_EXE=$(realpath "$0" 2>/dev/null || readlink -f "$0")
 _BIN_DIR=$(dirname "$_REAL_EXE")
 
 if [ -f "$_BIN_DIR/../etc/jenova.conf" ]; then
-    export JENOVA_ROOT="$(cd "$_BIN_DIR/.." && pwd)"
+    JENOVA_ROOT="$(cd "$_BIN_DIR/.." && pwd)"; export JENOVA_ROOT
 elif [ -f "$_BIN_DIR/etc/jenova.conf" ]; then
-    export JENOVA_ROOT="$(cd "$_BIN_DIR" && pwd)"
+    JENOVA_ROOT="$(cd "$_BIN_DIR" && pwd)"; export JENOVA_ROOT
 else
     # Fallback
     SCRIPT_DIR=$(dirname "$(realpath "$0")")
     if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
-        export JENOVA_ROOT="$SCRIPT_DIR"
+        JENOVA_ROOT="$SCRIPT_DIR"; export JENOVA_ROOT
     elif [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
-        export JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
+        JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"; export JENOVA_ROOT
     else
         echo "Error: etc/jenova.conf not found."
         exit 1
@@ -33,7 +33,7 @@ fi
 unset JENOVA_DEV_REPO
 
 # Path hardening for headless/desktop execution
-export PATH="${HOME:+$HOME/.local/bin:}$JENOVA_ROOT/bin:$PATH"
+PATH="${HOME:+$HOME/.local/bin:}$JENOVA_ROOT/bin:$PATH"; export PATH
 
 # Load environment and resolve paths
 . "$JENOVA_ROOT/lib/detect-env.sh"
@@ -116,10 +116,10 @@ else
     exit 1
 fi
 
-export JENOVA_LLAMA_URL="http://${HOST}:${LLAMA_PORT}"
-export JENOVA_PROXY_PORT="$PORT"
-export JENOVA_PROXY_HOST="$HOST"
-export JENOVA_CTX="${JENOVA_CTX:-$CTX_SIZE}"
+JENOVA_LLAMA_URL="http://${HOST}:${LLAMA_PORT}"; export JENOVA_LLAMA_URL
+JENOVA_PROXY_PORT="$PORT"; export JENOVA_PROXY_PORT
+JENOVA_PROXY_HOST="$HOST"; export JENOVA_PROXY_HOST
+JENOVA_CTX="${JENOVA_CTX:-$CTX_SIZE}"; export JENOVA_CTX
 
 # Optional backend memory-fallback tuning from etc/jenova.local.conf.
 [ -n "${GGML_VK_ALLOW_SYSMEM_FALLBACK:-}" ] && export GGML_VK_ALLOW_SYSMEM_FALLBACK
@@ -128,7 +128,7 @@ export JENOVA_CTX="${JENOVA_CTX:-$CTX_SIZE}"
 
 # --- LD_LIBRARY_PATH for shared libs ---
 if [ -d "$LLAMA_LIB_DIR" ]; then
-    export LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"
+    LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"; export LD_LIBRARY_PATH
 fi
 
 # --- Build device arguments ---

@@ -21,9 +21,9 @@ SCRIPT_DIR=$(dirname "$(realpath "$0")")
 
 # Determine JENOVA_ROOT before loading config
 if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
-    export JENOVA_ROOT="$SCRIPT_DIR"
+    JENOVA_ROOT="$SCRIPT_DIR"; export JENOVA_ROOT
 elif [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
-    export JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
+    JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"; export JENOVA_ROOT
 else
     echo "Error: etc/jenova.conf not found."
     exit 1
@@ -42,12 +42,12 @@ if [ "$CONNECT_HOST" = "0.0.0.0" ] || [ "$CONNECT_HOST" = "::" ]; then
 fi
 
 # ── Export environment for child processes ────────────────────────────────────
-export JENOVA_CONNECT_HOST="$CONNECT_HOST"
-export JENOVA_API_URL="http://${CONNECT_HOST}:${JENOVA_PORT}"
-export JENOVA_CWD="$PWD"
+JENOVA_CONNECT_HOST="$CONNECT_HOST"; export JENOVA_CONNECT_HOST
+JENOVA_API_URL="http://${CONNECT_HOST}:${JENOVA_PORT}"; export JENOVA_API_URL
+JENOVA_CWD="$PWD"; export JENOVA_CWD
 
 if [ -d "$LLAMA_LIB_DIR" ]; then
-    export LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"
+    LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"; export LD_LIBRARY_PATH
 fi
 
 # ── Parse flags ───────────────────────────────────────────────────────────────

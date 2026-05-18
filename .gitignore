@@ -12,6 +12,7 @@
 /external/llama.cpp/build/
 /external/mcsh/build/
 /external/SPIRV-Headers/build/
+/external/spirv-headers/
 
 # --- Guard: external sources belong in /external/, never at repo root ---
 /mcsh/
@@ -157,11 +158,15 @@ nul
 conductor/
 
 # --- Installation analysis artifacts ---
+/.jenova-tmp-ca-old
+/.jenova-tmp-jvim-old
 /INSTALLATION-AUDIT.md
 /INSTALLATION-FINAL-REPORT.md
 /test-installation.sh
 /test_bin_jenova.log
 /debug.log
+/pr_inline_comments.txt
+/pr_reviews.txt
 
 # --- Dev reports (generated, not source) ---
 /shellcheck_report.txt
