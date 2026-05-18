@@ -240,7 +240,6 @@ if [ "$ERRORS" -eq 0 ] && [ "$WARNINGS" -eq 0 ]; then
     printf "${_G}✓ All checks passed!${_N}\n"
     echo ""
     echo "You're ready to build Jenova. Run:"
-    echo "  scripts/llama_dl.sh   # fetch llama.cpp source"
     echo "  make                  # build everything"
     echo "  make install          # deploy to ~/.local/bin"
     exit 0

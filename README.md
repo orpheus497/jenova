@@ -115,9 +115,10 @@ jenova/
 ├── bin/                    # Launcher wrappers and tool scripts
 ├── docs/                   # Documentation
 ├── etc/                    # Configuration templates
-├── external/               # Sub-repositories
-│   ├── llama.cpp/          # Inference engine (independent git repo)
-│   └── mcsh/               # Modern C Shell source (independent git repo)
+├── external/               # Bundled upstream sources (tracked in-repo)
+│   ├── llama.cpp/          # Inference engine
+│   └── mcsh/               # Modern C Shell source
+│   └── SPIRV-Headers/      # Vulkan SPIR-V headers
 ├── hardware-profiles/      # OS/GPU-specific tuning profiles
 ├── jca_web/                # WebUI source (SvelteKit)
 ├── jenova-ui/              # Desktop Manager source (C/GTK3)

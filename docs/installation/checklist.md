@@ -34,10 +34,9 @@ This verifies:
 # Clone the repository (already done if you're reading this)
 git clone https://github.com/orpheus497/jenova
 cd jenova
-
-# Download llama.cpp source (idempotent, safe to re-run)
-./scripts/llama_dl.sh
 ```
+
+llama.cpp and other dependencies are now bundled in the repository's `external/` directory, so no further downloads are required.
 
 ### Step 4: Build Everything
 ```bash

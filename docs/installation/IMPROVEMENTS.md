@@ -107,7 +107,6 @@ Updated `make help` with clear documentation of all targets.
 ### Traditional Approach (Still Supported)
 ```bash
 ./scripts/preflight-check.sh
-./scripts/llama_dl.sh
 make
 make install
 ./scripts/verify-install.sh
@@ -182,7 +181,6 @@ make install
 ./scripts/install-complete.sh
 
 # Or step-by-step:
-./scripts/llama_dl.sh
 make
 make install
 ./scripts/verify-install.sh
@@ -211,7 +209,6 @@ make install
 ```bash
 # Non-interactive automated installation
 ./scripts/preflight-check.sh || exit 1
-./scripts/llama_dl.sh
 make
 make install
 ./scripts/verify-install.sh --full || exit 1
@@ -258,7 +255,6 @@ make install
 All existing scripts and workflows remain fully functional:
 - `make install` still works
 - `./scripts/install.sh` with all flags still works
-- `./scripts/llama_dl.sh`, `model_dl.sh`, etc. all work unchanged
 - Existing documentation still valid
 
 ## Next Steps for Users
