@@ -714,7 +714,7 @@ fi
 info "Deploying standalone system to $JENOVA_HOME..."
 
 # 8.1 Create directory structure
-for _d in bin etc lib public share share/jvim/mason var/log var/cache var/run models/agent models/embed models/draft jvim/runtime; do
+for _d in bin etc lib public scripts hardware-profiles share share/jvim/mason var/log var/cache var/run models/agent models/embed models/draft jvim/runtime; do
     mkdir -p "$JENOVA_HOME/$_d"
 done
 
@@ -773,12 +773,14 @@ if [ -f "$_JVIM_CORE" ]; then
     _verify_and_copy_bin "$_JVIM_CORE" "$JENOVA_HOME/bin/jvim-core"
 fi
 
-# 8.3 Deploy Assets and Config
+# 8.3 Deploy Assets, Scripts, and Config
 cp -R "$JENOVA_ROOT/lib/"* "$JENOVA_HOME/lib/"
+cp -R "$JENOVA_ROOT/scripts/"* "$JENOVA_HOME/scripts/"
+cp -R "$JENOVA_ROOT/hardware-profiles/"* "$JENOVA_HOME/hardware-profiles/"
 cp -R "$JENOVA_ROOT/jvim/runtime/"* "$JENOVA_HOME/jvim/runtime/"
 [ -d "$JENOVA_ROOT/public" ] && cp -R "$JENOVA_ROOT/public/"* "$JENOVA_HOME/public/"
 [ -d "$JENOVA_ROOT/share/jvim/mason" ] && cp -R "$JENOVA_ROOT/share/jvim/mason/"* "$JENOVA_HOME/share/jvim/mason/"
-ok "Deployed libraries, runtime, and web assets"
+ok "Deployed libraries, scripts, hardware profiles, runtime, and web assets"
 
 # 8.4 Generate Path-Locked Config
 cat > "$JENOVA_HOME/etc/jenova.local.conf" <<EOF
@@ -835,11 +837,27 @@ if [ "$JENOVA_OS" = "linux" ] || [ "$JENOVA_OS" = "freebsd" ]; then
     # Cleanup obsolete entries
     rm -f "$_APP_DIR/jenova-manager.desktop"
 
-    [ -f "$JENOVA_ROOT/bin/jenova.desktop" ] && cp "$JENOVA_ROOT/bin/jenova.desktop" "$_APP_DIR/jenova.desktop"
-    [ -f "$JENOVA_ROOT/bin/jvim.desktop" ] && cp "$JENOVA_ROOT/bin/jvim.desktop" "$_APP_DIR/jvim.desktop"
-    ok "Installed desktop entries to $_APP_DIR"
+    for _dfile in jenova.desktop jvim.desktop; do
+        if [ -f "$JENOVA_ROOT/bin/$_dfile" ]; then
+            # Extract icon name from original file
+            _icon_name=$(grep "^Icon=" "$JENOVA_ROOT/bin/$_dfile" | cut -d= -f2)
+            
+            # Customize the desktop entry to point to the absolute path of the installed binaries and icons.
+            # We path-lock every jenova-* and jvim-* binary mentioned in the Exec line.
+            sed -e "s|jenova-ui|$JENOVA_HOME/bin/jenova-ui|g" \
+                -e "s|jenova-term|$JENOVA_HOME/bin/jenova-term|g" \
+                -e "s|jvim|$JENOVA_HOME/bin/jvim|g" \
+                -e "s|jenova-ca|$JENOVA_HOME/bin/jenova-ca|g" \
+                -e "s|^Icon=.*|Icon=$JENOVA_HOME/png/$_icon_name.png|" \
+                "$JENOVA_ROOT/bin/$_dfile" > "$_APP_DIR/$_dfile"
+        fi
+    done
+    ok "Installed and path-locked desktop entries to $_APP_DIR"
 
-    # Install Icons
+    # Install Icons and PNGs for Desktop entry resolution
+    mkdir -p "$JENOVA_HOME/png"
+    cp "$JENOVA_ROOT/png/"* "$JENOVA_HOME/png/" 2>/dev/null || true
+
     _ICON_DIR="$HOME/.local/share/icons"
     mkdir -p "$_ICON_DIR"
     if [ -d "$JENOVA_ROOT/png" ]; then
@@ -879,13 +897,13 @@ fi
 # 9. System Tuning Reminders
 # ---------------------------------------------------------------------------
 if [ -n "$_PROFILE" ]; then
-    _PROFILE_DIR="$JENOVA_ROOT/hardware-profiles/$_PROFILE"
+    _PROFILE_DIR="$JENOVA_HOME/hardware-profiles/$_PROFILE"
     if [ -f "$_PROFILE_DIR/jenova-setup" ]; then
         warn "Run 'sudo $_PROFILE_DIR/jenova-setup' once to tune system for this hardware."
     fi
 elif [ "$JENOVA_OS" = "freebsd" ]; then
     info "System tuning..."
-    warn "Run 'sudo $JENOVA_ROOT/scripts/jenova-setup' once to tune vm.* sysctls and ZFS ARC"
+    warn "Run 'sudo $JENOVA_HOME/scripts/jenova-setup' once to tune vm.* sysctls and ZFS ARC"
     warn "for optimal Optane swap / Iris Xe UMA performance."
     WARNINGS=$((WARNINGS + 1))
 fi

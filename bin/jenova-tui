@@ -1,4 +1,6 @@
 #!/bin/sh
 # jenova-tui: Wrapper to launch jenova-ui in TUI mode
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Robustly find the binary's actual location even if symlinked.
+_REAL_EXE=$(realpath "$0" 2>/dev/null || readlink -f "$0")
+SCRIPT_DIR=$(dirname "$_REAL_EXE")
 exec "$SCRIPT_DIR/jenova-ui" tui "$@"
