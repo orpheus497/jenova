@@ -35,6 +35,8 @@
 
 set -e
 
+# POSIX-compliant script. No bashisms allowed.
+
 _REAL_SCRIPT="$(realpath "$0" 2>/dev/null || echo "$0")"
 JENOVA_ROOT="$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)"
 export JENOVA_ROOT
@@ -97,35 +99,18 @@ show_help() {
     echo "  --force     Overwrite existing files/configs without prompting"
 }
 
-ensure_external_repos() {
-    print_step "Checking external components..."
-    mkdir -p "$JENOVA_ROOT/external"
-    
-    # llama.cpp
-    if [ ! -d "$JENOVA_ROOT/external/llama.cpp/.git" ]; then
-        print_info "Cloning llama.cpp..."
-        git clone https://github.com/orpheus497/llama.cpp-jca.git "$JENOVA_ROOT/external/llama.cpp"
-    else
-        print_success "llama.cpp found"
-    fi
-
-    # mcsh
-    if [ ! -d "$JENOVA_ROOT/external/mcsh/.git" ]; then
-        print_info "Cloning mcsh..."
-        git clone https://github.com/orpheus497/mcsh.git "$JENOVA_ROOT/external/mcsh"
-    else
-        print_success "mcsh found"
-    fi
-
-    # SPIRV-Headers (FreeBSD)
-    if [ "$JENOVA_OS" = "freebsd" ]; then
-        if [ ! -d "$JENOVA_ROOT/external/SPIRV-Headers/.git" ]; then
-            print_info "Cloning SPIRV-Headers..."
-            git clone https://github.com/orpheus497/SPIRV-Headers.git "$JENOVA_ROOT/external/SPIRV-Headers"
-        else
-            print_success "SPIRV-Headers found"
+# components are now part of the sealed repository unit in external/
+verify_external_components() {
+    print_step "Verifying bundled components..."
+    _missing=0
+    for _comp in "llama.cpp" "mcsh" "SPIRV-Headers"; do
+        if [ ! -d "$JENOVA_ROOT/external/$_comp" ]; then
+            print_error "Missing bundled component: external/$_comp"
+            _missing=1
         fi
-    fi
+    done
+    [ "$_missing" = "1" ] && exit 1
+    print_success "All bundled components present"
 }
 
 cmd_install() {
@@ -152,14 +137,17 @@ cmd_install() {
     
     # Disk space check
     REQUIRED_SPACE=20
-    FREE_SPACE=$(df -kP "$JENOVA_ROOT" | tail -1 | awk '{print int($4 / 1048576)}')
+    FREE_SPACE=$(df -kP "$JENOVA_ROOT" | tail -1 | awk '{
+        if ($4 ~ /%/) { print $3 } else { print $4 }
+    }')
+    FREE_SPACE=$(( FREE_SPACE / 1048576 ))
     if [ "${FREE_SPACE:-0}" -lt "$REQUIRED_SPACE" ]; then
         print_warning "Low disk space: ${FREE_SPACE}GB free (recommended: ${REQUIRED_SPACE}GB+)"
     else
         print_success "Sufficient disk space: ${FREE_SPACE}GB free"
     fi
 
-    ensure_external_repos
+    verify_external_components
     
     # 1. Install dependencies
     print_step "Installing system dependencies..."
@@ -209,10 +197,6 @@ cmd_install() {
     print_step "Deploying to $JENOVA_HOME..."
     _install_flags="$FORCE"
     if [ "$MINIMAL" = "1" ]; then
-        # For minimal, we tell install.sh to skip model downloads if possible
-        # Currently install.sh doesn't have a direct --skip-models, but we can 
-        # pass --client-only if we want a TRULY minimal system (no llama),
-        # but here we just want to avoid the interactive prompt.
         JENOVA_SKIP_MODELS=1; export JENOVA_SKIP_MODELS
     fi
     "$JENOVA_ROOT/scripts/install.sh" $_install_flags
@@ -235,7 +219,7 @@ cmd_uninstall() {
 
 cmd_update() {
     print_header "Updating Jenova"
-    ensure_external_repos
+    verify_external_components
     "$JENOVA_ROOT/scripts/update.sh" "$@"
 }
 
