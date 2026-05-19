@@ -342,12 +342,17 @@ local function proxy_connection(client_fd, conn_fds)
     -- "GET /health?…" while excluding paths like /healthz). Support /v1/health for compatibility.
     local is_health = is_get and (headers_raw:match("^GET /health[ %?]") or headers_raw:match("^GET /v1/health[ %?]"))
     if is_health then
-        -- Non-blocking backend liveness check via async_connect (coroutine-safe, no blocking).
+        -- Use a standard blocking connect with a short timeout for the health check
+        -- to avoid false negatives from the async state machine.
         local health_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
         local backend_ok = false
         if health_fd >= 0 then
             set_cloexec(health_fd)
-            set_nonblocking(health_fd)
+            -- Set a short timeout for health check (1s)
+            local tv = ffi.new("struct timeval", {tv_sec=1, tv_usec=0})
+            ffi.C.setsockopt(health_fd, SOL_SOCKET, _ffi_defs.SO_RCVTIMEO, tv, ffi.sizeof(tv))
+            ffi.C.setsockopt(health_fd, SOL_SOCKET, _ffi_defs.SO_SNDTIMEO, tv, ffi.sizeof(tv))
+            
             local h_addr = ffi.new("struct sockaddr_in")
             if not _ffi_defs.IS_LINUX then
                 h_addr.sin_len = ffi.sizeof(h_addr)
@@ -355,7 +360,9 @@ local function proxy_connection(client_fd, conn_fds)
             h_addr.sin_family = AF_INET
             h_addr.sin_port   = ffi.C.htons(LLAMA_PORT)
             h_addr.sin_addr.s_addr = ffi.C.inet_addr(LLAMA_CONNECT_HOST)
-            backend_ok = (async_connect(health_fd, h_addr) == true)
+            
+            local res = ffi.C.connect(health_fd, ffi.cast("struct sockaddr *", h_addr), ffi.sizeof(h_addr))
+            backend_ok = (res == 0)
             ffi.C.close(health_fd)
         end
         local status_str  = backend_ok and "ok" or "degraded"
@@ -689,20 +696,23 @@ local function proxy_connection(client_fd, conn_fds)
                     end
 
                     local has_system = req_json.messages[1].role == "system"
+                    local persona = prompts.freechat
 
-                    if has_tools and has_system then
-                        -- The client is an agent with a strict tool-calling mandate.
-                        -- Do NOT prepend the conversational persona, as it overrides tool instructions.
-                        -- Only append the RAG and Web contexts to the existing system prompt.
-                        if web_context ~= "" then
-                            req_json.messages[1].content = req_json.messages[1].content .. "\n" .. web_context
+                    if has_tools then
+                        -- Agent mode: Inject concise core mandate to preserve tool-calling reliability.
+                        local agent_persona = "CORE MANDATE: You are Jenova, an autonomous agent. " .. persona
+                        if has_system then
+                            req_json.messages[1].content = agent_persona .. "\n\n" .. req_json.messages[1].content
+                        else
+                            table.insert(req_json.messages, 1, {role = "system", content = agent_persona})
                         end
-                        if rag_context ~= "" then
-                            req_json.messages[1].content = req_json.messages[1].content .. "\n" .. rag_context
-                        end
+                        
+                        -- Add contexts
+                        if web_context ~= "" then req_json.messages[1].content = req_json.messages[1].content .. "\n" .. web_context end
+                        if rag_context ~= "" then req_json.messages[1].content = req_json.messages[1].content .. "\n" .. rag_context end
                     else
-                        -- Not an agent (or no existing system prompt). Use the conversational persona.
-                        local system_p = prompts[intent] or prompts.freechat
+                        -- Conversational mode (WebUI, etc.): Use persona-first system prompt
+                        local system_p = prompts[intent] or persona
                         if web_context ~= "" then system_p = system_p .. "\n" .. web_context end
                         if rag_context ~= "" then system_p = system_p .. "\n" .. rag_context end
 
@@ -713,19 +723,19 @@ local function proxy_connection(client_fd, conn_fds)
                         end
                     end
                 else
-                    -- No intent: only inject context if we have RAG, or if there's no existing system prompt.
-                    -- When the client sent tools, preserve its system prompt verbatim — it contains
-                    -- the tool-use instructions the model needs. Only append RAG context.
+                    -- No intent: Apply persona and RAG to any existing system prompt
                     local has_system = req_json.messages[1].role == "system"
-                    if rag_context ~= "" then
-                        if has_system then
+                    local persona = prompts.freechat
+                    
+                    if has_system then
+                        req_json.messages[1].content = persona .. "\n\n" .. req_json.messages[1].content
+                        if rag_context ~= "" then
                             req_json.messages[1].content = req_json.messages[1].content .. "\n" .. rag_context
-                        else
-                            local system_p = prompts.freechat .. "\n" .. rag_context
-                            table.insert(req_json.messages, 1, {role = "system", content = system_p})
                         end
-                    elseif not has_system and not has_tools then
-                        table.insert(req_json.messages, 1, {role = "system", content = prompts.freechat})
+                    else
+                        local content = persona
+                        if rag_context ~= "" then content = content .. "\n" .. rag_context end
+                        table.insert(req_json.messages, 1, {role = "system", content = content})
                     end
                 end
 
@@ -738,17 +748,31 @@ local function proxy_connection(client_fd, conn_fds)
                 end
 
                 local new_body = json.encode(req_json)
-                local new_headers = headers_raw:gsub("([Cc][Oo][Nn][Tt][Ee][Nn][Tt]%-[Ll][Ee][Nn][Gg][Tt][Hh]:%s*)%d+", "%1" .. #new_body)
-                new_headers = new_headers:gsub("[Tt][Rr][Aa][Nn][Ss][Ff][Ee][Rr]%-[Ee][Nn][Cc][Oo][Dd][Ii][Nn][Gg]:%s*[Cc][Hh][Uu][Nn][Kk][Ee][Dd]\r\n", "")
-                if not new_headers:find("[Cc][Oo][Nn][Tt][Ee][Nn][Tt]%-[Ll][Ee][Nn][Gg][Tt][Hh]:") then
+                
+                -- Robust header update: replace existing Content-Length or append if missing
+                local new_headers = headers_raw
+                local cl_pattern = "(\r\n[Cc][Oo][Nn][Tt][Ee][Nn][Tt]%-[Ll][Ee][Nn][Gg][Tt][Hh]:%s*)%d+"
+                if new_headers:find(cl_pattern) then
+                    new_headers = new_headers:gsub(cl_pattern, "%1" .. #new_body)
+                else
                     new_headers = new_headers:gsub("\r\n\r\n", "\r\nContent-Length: " .. #new_body .. "\r\n\r\n")
                 end
-                proxied_req = new_headers .. new_body
-                if intent then
-                    local detail = #rag .. " files"
-                    if web_context ~= "" then detail = detail .. " + web results" end
-                    print("[proxy] Intent: " .. intent .. " | Injected intelligence (" .. detail .. ")")
+                
+                -- Ensure Connection: close and strip Chunked encoding for llama-server compatibility
+                new_headers = new_headers:gsub("\r\n[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]:%s*[^\r\n]*\r\n", "\r\n")
+                new_headers = new_headers:gsub("[Tt][Rr][Aa][Nn][Ss][Ff][Ee][Rr]%-[Ee][Nn][Cc][Oo][Dd][Ii][Nn][Gg]:%s*[Cc][Hh][Uu][Nn][Kk][Ee][Dd]\r\n", "")
+                if not new_headers:find("\r\n[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]:") then
+                    new_headers = new_headers:gsub("\r\n\r\n", "\r\nConnection: close\r\n\r\n")
                 end
+
+                proxied_req = new_headers .. new_body
+                
+                -- Enhanced logging for dispatch
+                local dispatch_msg = "[proxy] Dispatch: " .. (intent or "freechat")
+                if #rag > 0 then dispatch_msg = dispatch_msg .. " | RAG: " .. #rag .. " hits" end
+                if web_context ~= "" then dispatch_msg = dispatch_msg .. " | Web: OK" end
+                if has_tools then dispatch_msg = dispatch_msg .. " | Tools: " .. #req_json.tools end
+                print(dispatch_msg)
             end
         end
     end
