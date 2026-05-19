@@ -233,6 +233,40 @@ _launch_llama_server_bg() {
     LLAMA_PID=$!
 }
 
+# =====================================================================
+# _probe_health: shared health probe used by daemon startup and watchdog.
+# Tries luajit healthcheck.lua first (no curl needed), falls back to
+# curl, then plain TCP via nc.  Returns 0 on success, non-zero on failure.
+# Requires CONNECT_HOST and LLAMA_PORT to be set in the calling scope.
+# Optional first argument overrides the luajit timeout (default: 2s).
+# =====================================================================
+_probe_health() {
+    _ph_timeout="${1:-2}"
+    if command -v curl >/dev/null 2>&1; then
+        _url="http://${CONNECT_HOST}:${LLAMA_PORT}/health"
+        if echo "$CONNECT_HOST" | grep -q ":"; then _url="http://[${CONNECT_HOST}]:${LLAMA_PORT}/health"; fi
+        curl -sf -o /dev/null -m "$_ph_timeout" "$_url" 2>/dev/null
+        return $?
+    fi
+
+    if [ -f "$PROXY_SCRIPT" ]; then
+        _HC=$(dirname "$PROXY_SCRIPT")/healthcheck.lua
+    else
+        _HC=""
+    fi
+    if [ -f "$_HC" ]; then
+        luajit "$_HC" "$CONNECT_HOST" "$LLAMA_PORT" "$_ph_timeout" 2>/dev/null
+        return $?
+    else
+        # Last resort: plain TCP probe via nc
+        if command -v nc >/dev/null 2>&1; then
+            nc -z -w "$_ph_timeout" "$CONNECT_HOST" "$LLAMA_PORT" >/dev/null 2>&1
+        else
+            return 1
+        fi
+    fi
+}
+
 # --- Control verbs ---
 case "$1" in
     stop)
@@ -309,40 +343,6 @@ case "$1" in
         _ENTER_WATCHDOG=1
         ;;
 esac
-
-# =====================================================================
-# _probe_health: shared health probe used by daemon startup and watchdog.
-# Tries luajit healthcheck.lua first (no curl needed), falls back to
-# curl, then plain TCP via nc.  Returns 0 on success, non-zero on failure.
-# Requires CONNECT_HOST and LLAMA_PORT to be set in the calling scope.
-# Optional first argument overrides the luajit timeout (default: 2s).
-# =====================================================================
-_probe_health() {
-    _ph_timeout="${1:-2}"
-    if command -v curl >/dev/null 2>&1; then
-        _url="http://${CONNECT_HOST}:${LLAMA_PORT}/health"
-        if echo "$CONNECT_HOST" | grep -q ":"; then _url="http://[${CONNECT_HOST}]:${LLAMA_PORT}/health"; fi
-        curl -sf -o /dev/null -m "$_ph_timeout" "$_url" 2>/dev/null
-        return $?
-    fi
-
-    if [ -f "$PROXY_SCRIPT" ]; then
-        _HC=$(dirname "$PROXY_SCRIPT")/healthcheck.lua
-    else
-        _HC=""
-    fi
-    if [ -f "$_HC" ]; then
-        luajit "$_HC" "$CONNECT_HOST" "$LLAMA_PORT" "$_ph_timeout" 2>/dev/null
-        return $?
-    else
-        # Last resort: plain TCP probe via nc
-        if command -v nc >/dev/null 2>&1; then
-            nc -z -w "$_ph_timeout" "$CONNECT_HOST" "$LLAMA_PORT" >/dev/null 2>&1
-        else
-            return 1
-        fi
-    fi
-}
 
 # =====================================================================
 # WATCHDOG: Continuous runtime health monitoring with auto-restart

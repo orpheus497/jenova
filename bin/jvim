@@ -186,7 +186,7 @@ print_check_env() {
 # NVIM_APPNAME="jvim" to ~/.config/jvim (deployed by install.sh / scripts/update.sh).
 XDG_DATA_HOME="${JENOVA_HOME}/share"; export XDG_DATA_HOME
 NVIM_APPNAME="jvim"; export NVIM_APPNAME
-VIMRUNTIME="$VIMRUNTIME"; export VIMRUNTIME
+VIMRUNTIME="$JENOVA_ROOT/jvim/runtime"; export VIMRUNTIME
 
 # --- Remote/LAN client mode: skip backend start, just export env and launch editor ---
 # Two sub-modes:
