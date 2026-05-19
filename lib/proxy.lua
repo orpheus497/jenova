@@ -15,6 +15,11 @@ local search = require("search")
 local embed = require("embed")
 local prompts = require("prompts")
 
+-- Filesystem API for WebUI persistence
+local home_dir = os.getenv("HOME") or "/tmp"
+local jenova_home = os.getenv("JENOVA_HOME") or (home_dir .. "/Jenova")
+local workspaces_dir = os.getenv("JENOVA_WORKSPACES") or (jenova_home .. "/Workspaces")
+
 local HOST = os.getenv("JENOVA_PROXY_HOST") or os.getenv("JENOVA_HOST") or "127.0.0.1"
 local PORT = tonumber(os.getenv("JENOVA_PROXY_PORT") or os.getenv("JENOVA_PORT")) or 8080
 local LLAMA_URL = os.getenv("JENOVA_LLAMA_URL") or "http://127.0.0.1:" .. (os.getenv("JENOVA_LLAMA_PORT") or "8081")
@@ -291,6 +296,26 @@ end
 
 local active_connection_count = 0
 
+local function recursive_mkdir(path)
+    local segments = {}
+    for segment in path:gmatch("[^/]+") do
+        table.insert(segments, segment)
+    end
+    local current = path:sub(1, 1) == "/" and "/" or ""
+    for i, segment in ipairs(segments) do
+        current = current .. segment
+        local res = ffi.C.mkdir(current, 493) -- 0755
+        if res ~= 0 then
+            local err = ffi.errno()
+            -- EEXIST (17 on many platforms) is fine, others might be worth logging
+            if err ~= 17 and err ~= 20 then -- 20 is ENOTDIR, also handled by OS
+                -- Silently continue, as we'll fail later on io.open if it's fatal
+            end
+        end
+        current = current .. "/"
+    end
+end
+
 local function proxy_connection(client_fd, conn_fds)
     set_nonblocking(client_fd)
     set_socket_opts(client_fd)
@@ -422,31 +447,6 @@ local function proxy_connection(client_fd, conn_fds)
     local is_chat_completion = headers_raw:find("POST /v1/chat/completions")
     local is_fim = headers_raw:find("POST /infill")
     
-    -- Filesystem API for WebUI persistence
-    local home_dir = os.getenv("HOME") or "/tmp"
-    local jenova_home = os.getenv("JENOVA_HOME") or (home_dir .. "/Jenova")
-    local workspaces_dir = os.getenv("JENOVA_WORKSPACES") or (jenova_home .. "/Workspaces")
-
-    local function recursive_mkdir(path)
-        local segments = {}
-        for segment in path:gmatch("[^/]+") do
-            table.insert(segments, segment)
-        end
-        local current = path:sub(1, 1) == "/" and "/" or ""
-        for i, segment in ipairs(segments) do
-            current = current .. segment
-            local res = ffi.C.mkdir(current, 493) -- 0755
-            if res ~= 0 then
-                local err = ffi.errno()
-                -- EEXIST (17 on many platforms) is fine, others might be worth logging
-                if err ~= 17 and err ~= 20 then -- 20 is ENOTDIR, also handled by OS
-                    -- Silently continue, as we'll fail later on io.open if it's fatal
-                end
-            end
-            current = current .. "/"
-        end
-    end
-
     local storage_path = headers_raw:match("^POST /api/storage/([^ %?]+)")
     if storage_path and #body_raw > 0 then
         recursive_mkdir(workspaces_dir)
@@ -494,12 +494,14 @@ local function proxy_connection(client_fd, conn_fds)
         local files = {}
         -- Shell-escape the path to prevent injection via HOME containing metacharacters
         local escaped_dir = workspaces_dir:gsub("'", "'\\''")
-        local pop, perr = pcall(io.popen, "find '" .. escaped_dir .. "' -maxdepth 3 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/build/*'")
-        local p = pop and perr or nil
+        local p = io.popen("find '" .. escaped_dir .. "' -maxdepth 3 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/build/*'")
         if p then
-            for line in p:lines() do
+            while true do
+                local line = p:read("*l")
+                if not line then break end
                 local rel = line:sub(#workspaces_dir + 2)
                 if #rel > 0 then table.insert(files, "\"" .. rel .. "\"") end
+                coroutine.yield("read", -1) -- Keep proxy responsive during crawl
             end
             p:close()
         end
@@ -516,9 +518,12 @@ local function proxy_connection(client_fd, conn_fds)
         local escaped_dir = workspaces_dir:gsub("'", "'\\''")
         local p = io.popen("find '" .. escaped_dir .. "' -maxdepth 1 -type d -not -path '*/.*'")
         if p then
-            for line in p:lines() do
+            while true do
+                local line = p:read("*l")
+                if not line then break end
                 local name = line:sub(#workspaces_dir + 2)
                 if #name > 0 then table.insert(ws, "\"" .. name .. "\"") end
+                coroutine.yield("read", -1) -- Keep proxy responsive during crawl
             end
             p:close()
         end
@@ -699,15 +704,15 @@ local function proxy_connection(client_fd, conn_fds)
                     local persona = prompts.freechat
 
                     if has_tools then
-                        -- Agent mode: Inject concise core mandate to preserve tool-calling reliability.
-                        local agent_persona = "CORE MANDATE: You are Jenova, an autonomous agent. " .. persona
-                        if has_system then
-                            req_json.messages[1].content = agent_persona .. "\n\n" .. req_json.messages[1].content
-                        else
+                        -- Agent mode: Do NOT override the client's system prompt if it exists.
+                        -- Only inject the CORE MANDATE if no system prompt is present.
+                        if not has_system then
+                            local agent_persona = "CORE MANDATE: You are Jenova, an autonomous agent. " .. persona
                             table.insert(req_json.messages, 1, {role = "system", content = agent_persona})
+                            has_system = true
                         end
                         
-                        -- Add contexts
+                        -- Append contexts to the system prompt (which is now guaranteed to exist at index 1)
                         if web_context ~= "" then req_json.messages[1].content = req_json.messages[1].content .. "\n" .. web_context end
                         if rag_context ~= "" then req_json.messages[1].content = req_json.messages[1].content .. "\n" .. rag_context end
                     else
@@ -839,10 +844,10 @@ if server_fd < 0 then
     os.exit(1)
 end
 set_cloexec(server_fd)
+set_nonblocking(server_fd)
 
 local opt = ffi.new("int[1]", 1)
 ffi.C.setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, opt, ffi.sizeof("int"))
-set_nonblocking(server_fd)
 
 local addr = ffi.new("struct sockaddr_in")
 if not _ffi_defs.IS_LINUX then
@@ -864,17 +869,9 @@ if ffi.C.listen(server_fd, 16) < 0 then
     os.exit(1)
 end
 
--- Perform initial indexing after server is listening to avoid blocking startup health checks
-print("[proxy] Initializing search index in background...")
-coroutine.wrap(function()
-    search.index_dir(".", {
-        "lua","sh","c","h","cpp","py","js","ts","go","rs",
-        "md","txt","json","yaml","yml","toml","conf","cfg",
-        "html","css","Makefile","zig",
-    })
-    if embed_ok then search.init_embeddings(embed) end
-    print("[proxy] Search index ready.")
-end)()
+-- Perform initial indexing only when a project root is detected.
+-- Disabled for startup to prevent blocking the main loop or indexing the repository itself.
+print("[proxy] Search index deferred until project root is detected.")
 
 -- Main Select Loop
 -- conn_fds_map: client_fd -> {client=N, llama=N} tracks all fds owned by each connection

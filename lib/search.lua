@@ -523,16 +523,28 @@ function search.index_dir(root_dir, extensions)
   )
   local p = io.popen(cmd)
   if not p then return 0 end
-  local ok_read, output = pcall(p.read, p, "*a")
+
+  -- Read the output in chunks to allow other coroutines to run
+  local output_parts = {}
+  while true do
+    local chunk = p:read(4096)
+    if not chunk then break end
+    output_parts[#output_parts + 1] = chunk
+    -- Only yield if we are inside a coroutine
+    if coroutine.running() then
+        coroutine.yield("read", -1) 
+    end
+  end
   p:close()
-  if not ok_read or not output then return 0 end
+  local output = table.concat(output_parts)
+  output_parts = nil
+  if not output or output == "" then return 0 end
 
   -- Reset BM25 index
   bm25_index = {}
   df = {}
   total_docs = 0
   avg_dl = 0
-
   -- Collect files that need vector re-indexing
   local files_to_embed = {}
 
