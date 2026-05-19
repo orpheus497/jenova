@@ -110,6 +110,7 @@ npm:npm
 pkg-config:pkgconf
 gtk3:gtk3
 appindicator:libappindicator
+ncurses:ncurses
 EOF
             ;;
         pacman)
@@ -133,6 +134,7 @@ npm:npm
 pkg-config:pkgconf
 gtk3:gtk3
 appindicator:libappindicator-gtk3
+ncurses:ncurses
 EOF
             ;;
         apt)
@@ -141,6 +143,7 @@ EOF
 git:git
 cmake:cmake
 luajit:luajit
+luajit-dev:libluajit-5.1-dev
 gettext:gettext
 spirv-headers:spirv-headers
 libvulkan1:libvulkan1
@@ -156,6 +159,7 @@ npm:npm
 pkg-config:pkg-config
 gtk3:libgtk-3-dev
 appindicator:libappindicator3-dev
+ncurses:libncurses-dev
 EOF
             ;;
         dnf)
@@ -164,6 +168,7 @@ EOF
 git:git
 cmake:cmake
 luajit:luajit
+luajit-devel:luajit-devel
 gettext:gettext
 spirv-headers:spirv-headers-devel
 vulkan-loader:vulkan-loader
@@ -179,6 +184,7 @@ npm:npm
 pkg-config:pkgconf-pkg-config
 gtk3:gtk3-devel
 appindicator:libappindicator-gtk3-devel
+ncurses:ncurses-devel
 EOF
             ;;
         brew)
@@ -264,6 +270,12 @@ is_installed() {
     elif [ "$1" = "appindicator" ]; then
         command -v pkg-config >/dev/null 2>&1 && pkg-config --exists appindicator3-0.1 >/dev/null 2>&1
         return $?
+    elif [ "$1" = "ncurses" ]; then
+        command -v pkg-config >/dev/null 2>&1 && pkg-config --exists ncurses >/dev/null 2>&1
+        return $?
+    elif [ "$1" = "luajit-dev" ] || [ "$1" = "luajit-devel" ]; then
+        command -v pkg-config >/dev/null 2>&1 && pkg-config --exists luajit >/dev/null 2>&1
+        return $?
     elif [ "$1" = "spirv-headers" ]; then
         [ -f "/usr/include/spirv/unified1/spirv.h" ] || [ -f "/usr/local/include/spirv/unified1/spirv.h" ]
         return $?
@@ -302,9 +314,9 @@ install_package() {
             ;;
         apt)
             if [ "$VERBOSE" = "1" ]; then
-                sudo apt-get update && sudo apt-get install -y "$_ip_pkg"
+                sudo apt-get install -y "$_ip_pkg"
             else
-                sudo apt-get update >/dev/null 2>&1 && sudo apt-get install -y "$_ip_pkg" >/dev/null 2>&1
+                sudo apt-get install -y "$_ip_pkg" >/dev/null 2>&1
             fi
             ;;
         dnf)
@@ -376,8 +388,8 @@ if [ -z "$PACKAGES" ]; then
 fi
 
 # Required dependencies
-REQUIRED_DEPS="git cmake luajit gettext vulkan lua54 curl realpath pkg-config gtk3 appindicator"
-OPTIONAL_DEPS="gmake glslc clangd stylua node spirv-headers"
+REQUIRED_DEPS="git cmake luajit gettext vulkan lua54 curl realpath pkg-config gtk3 appindicator ncurses"
+OPTIONAL_DEPS="gmake glslc clangd stylua node spirv-headers luajit-dev luajit-devel"
 
 if [ "$REQUIRED_ONLY" = "1" ]; then
     info "Installing required dependencies only..."
@@ -389,6 +401,16 @@ fi
 
 FAILED_REQUIRED=0
 FAILED_OPTIONAL=0
+
+# Run package index update once before the install loop (apt-only)
+if [ "$JENOVA_PKG_MGR" = "apt" ] && [ "$DRY_RUN" != "1" ]; then
+    info "Updating package index..."
+    if [ "$VERBOSE" = "1" ]; then
+        sudo apt-get update
+    else
+        sudo apt-get update >/dev/null 2>&1
+    fi
+fi
 
 while IFS=: read -r binary pkg; do
     # Skip empty lines or comments

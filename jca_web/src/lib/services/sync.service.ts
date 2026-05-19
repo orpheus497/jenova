@@ -39,12 +39,14 @@ export class SyncService {
     static async pull() {
         if (!browser || this._isSyncing) return;
         this._isSyncing = true;
+        let changed = false;
         try {
             console.log('[Sync] Pulling database snapshot...');
             const raw = await StorageService.get('jenova-snapshot.json');
             if (raw) {
                 const data = JSON.parse(raw);
                 await DatabaseService.importData(data);
+                changed = true;
                 console.log('[Sync] Database restored from snapshot');
             }
 
@@ -70,35 +72,48 @@ export class SyncService {
                         if (note) {
                             if (note.content !== content) {
                                 await DatabaseService.updateNote(note.id, { content, updatedAt: Date.now() });
+                                changed = true;
                             }
                         } else {
-                            // Create missing note (resolve folder later or use null)
                             await DatabaseService.createNote(null, fileName, content);
+                            changed = true;
                         }
                     } else if (isChat) {
                         const { conv: parsedConv, messages: parsedMessages } = MarkdownService.fromMarkdown(content);
                         const conv = allConvs.find(c => c.name === (parsedConv.name || fileName));
                         
-                        if (conv) {
-                            // Simple overwrite for now to ensure jvim changes are reflected
+                        if (conv && parsedMessages.length > 0) {
+                            // Clear existing messages and reconstruct the tree properly
                             await DatabaseService.deleteConversationMessages(conv.id);
+
+                            // Build a linear chain: root → msg1 → msg2 → ...
+                            // This preserves the conversation order from the markdown file.
+                            const rootId = await DatabaseService.createRootMessage(conv.id);
+                            let parentId: string = rootId;
+
                             for (const msg of parsedMessages) {
-                                await DatabaseService.createMessageBranch({
+                                const created = await DatabaseService.createMessageBranch({
+                                    convId: conv.id,
                                     role: msg.role as any,
                                     content: msg.content || '',
                                     timestamp: msg.timestamp || Date.now(),
                                     type: 'text',
                                     toolCalls: ''
-                                }, null); // This is a simplification; a better implementation would reconstruct the tree
+                                }, parentId);
+                                parentId = created.id;
                             }
+                            changed = true;
                         }
                     }
                 }
             }
 
             console.log('[Sync] Pull complete');
-            // Reload page to reflect changes in all stores
-            window.location.reload();
+            if (changed) {
+                // Signal reactive stores to reload instead of hard page refresh.
+                // This avoids data loss if the user is mid-conversation.
+                window.dispatchEvent(new CustomEvent('jenova-sync-updated'));
+            }
         } catch (error) {
             console.error('[Sync] Pull failed', error);
         } finally {

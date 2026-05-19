@@ -590,14 +590,24 @@ fi
 # 5b. jvim editor — build the in-tree fork unless --skip-jvim was passed
 # ---------------------------------------------------------------------------
 if [ "$SKIP_JVIM" = "0" ] && [ "$CLIENT_ONLY" = "0" ]; then
-    info "Building bundled jvim editor (jvim/)..."
-    if [ ! -f "$JENOVA_ROOT/jvim/CMakeLists.txt" ]; then
-        warn "jvim/ source tree missing — skipping jvim build"
-        WARNINGS=$((WARNINGS + 1))
-    else
+    # ISS-01: If install-jenova.sh already built jvim via 'make jvim',
+    # it sets JENOVA_BUILT_BY_INSTALLER=1 to avoid a redundant rebuild.
+    if [ "${JENOVA_BUILT_BY_INSTALLER:-0}" = "1" ]; then
         _JVIM_BIN_OUT="$JENOVA_ROOT/jvim/build/bin/nvim"
-        if [ -x "$_JVIM_BIN_OUT" ] && [ "$FORCE" = "0" ]; then
-            ok "jvim already built at $_JVIM_BIN_OUT (use --force to rebuild)"
+        if [ -x "$_JVIM_BIN_OUT" ]; then
+            ok "jvim already built by install-jenova.sh at $_JVIM_BIN_OUT"
+        else
+            warn "JENOVA_BUILT_BY_INSTALLER set but jvim binary not found — will attempt build"
+        fi
+    fi
+
+    # Only build if not already present (or --force)
+    _JVIM_BIN_OUT="$JENOVA_ROOT/jvim/build/bin/nvim"
+    if [ ! -x "$_JVIM_BIN_OUT" ] || [ "$FORCE" = "1" ]; then
+        info "Building bundled jvim editor (jvim/)..."
+        if [ ! -f "$JENOVA_ROOT/jvim/CMakeLists.txt" ]; then
+            warn "jvim/ source tree missing — skipping jvim build"
+            WARNINGS=$((WARNINGS + 1))
         else
             _MAKE_CMD="make"
             if [ "$_OS" = "FreeBSD" ]; then
@@ -628,6 +638,8 @@ if [ "$SKIP_JVIM" = "0" ] && [ "$CLIENT_ONLY" = "0" ]; then
                 fi
             fi
         fi
+    else
+        ok "jvim already built at $_JVIM_BIN_OUT (use --force to rebuild)"
     fi
 fi
 
@@ -837,73 +849,81 @@ if [ "$JENOVA_OS" = "linux" ] || [ "$JENOVA_OS" = "freebsd" ]; then
     # Cleanup obsolete entries
     rm -f "$_APP_DIR/jenova-manager.desktop"
 
-    for _dfile in jenova.desktop jvim.desktop; do
-        if [ -f "$JENOVA_ROOT/bin/$_dfile" ]; then
-            # Extract icon name from original file
-            _icon_name=$(grep "^Icon=" "$JENOVA_ROOT/bin/$_dfile" | cut -d= -f2)
-            
-            # Customize the desktop entry to point to the absolute path of the installed binaries and icons.
-            # We path-lock every jenova-* and jvim-* binary mentioned in the Exec line.
-            sed -e "s|jenova-ui|$JENOVA_HOME/bin/jenova-ui|g" \
-                -e "s|jenova-term|$JENOVA_HOME/bin/jenova-term|g" \
-                -e "s|jvim|$JENOVA_HOME/bin/jvim|g" \
-                -e "s|jenova-ca|$JENOVA_HOME/bin/jenova-ca|g" \
-                -e "s|^Icon=.*|Icon=$JENOVA_HOME/png/$_icon_name.png|" \
-                "$JENOVA_ROOT/bin/$_dfile" > "$_APP_DIR/$_dfile"
-        fi
-    done
-    ok "Installed and path-locked desktop entries to $_APP_DIR"
-
-    # Install Icons and PNGs for Desktop entry resolution
+    # Install Icons and PNGs FIRST so desktop entries can reference them
     mkdir -p "$JENOVA_HOME/png"
-    cp "$JENOVA_ROOT/png/"* "$JENOVA_HOME/png/" 2>/dev/null || true
-
     _ICON_DIR="$HOME/.local/share/icons"
     mkdir -p "$_ICON_DIR"
-    if [ -d "$JENOVA_ROOT/png" ]; then
-        # Copy .png icons directly
-        for icon_file in "$JENOVA_ROOT/png/"*.png; do
-            [ -f "$icon_file" ] && cp "$icon_file" "$_ICON_DIR/"
-        done
-        # Convert .jpg icons to .png for better compatibility
-        for icon in jenova jca jca_grey jvim; do
-            if [ -f "$JENOVA_ROOT/png/$icon.jpg" ] && [ ! -f "$_ICON_DIR/$icon.png" ]; then
-                if command -v convert >/dev/null 2>&1; then
-                    convert "$JENOVA_ROOT/png/$icon.jpg" "$_ICON_DIR/$icon.png"
-                    ok "Converted $icon.jpg to $icon.png"
-                elif command -v magick >/dev/null 2>&1; then
-                    magick "$JENOVA_ROOT/png/$icon.jpg" "$_ICON_DIR/$icon.png"
-                    ok "Converted $icon.jpg to $icon.png"
-                else
-                    cp "$JENOVA_ROOT/png/$icon.jpg" "$_ICON_DIR/$icon.jpg"
-                fi
-            fi
-            # Ensure .png target exists in JENOVA_HOME/png for desktop entry locking
-            if [ -f "$JENOVA_ROOT/png/$icon.png" ]; then
-                cp "$JENOVA_ROOT/png/$icon.png" "$JENOVA_HOME/png/$icon.png"
-            elif [ -f "$JENOVA_ROOT/png/$icon.jpg" ]; then
-                cp "$JENOVA_ROOT/png/$icon.jpg" "$JENOVA_HOME/png/$icon.jpg"
-                # If we don't have a png but the desktop entry expects one, 
-                # we might need to update the desktop entry or symlink.
-                if [ ! -f "$JENOVA_HOME/png/$icon.png" ]; then
-                    ln -sf "$icon.jpg" "$JENOVA_HOME/png/$icon.png"
-                fi
-            fi
-        done
 
-        # Create symlinks without extension for icon theme lookups
+    if [ -d "$JENOVA_ROOT/png" ]; then
+        # Copy all source icons to deployment directory
+        cp "$JENOVA_ROOT/png/"* "$JENOVA_HOME/png/" 2>/dev/null || true
+
         for icon in jenova jca jca_grey jvim; do
-            if [ -f "$_ICON_DIR/$icon.png" ]; then
-                ln -sf "$_ICON_DIR/$icon.png" "$_ICON_DIR/$icon"
-            elif [ -f "$_ICON_DIR/$icon.jpg" ]; then
-                ln -sf "$_ICON_DIR/$icon.jpg" "$_ICON_DIR/$icon"
+            # Determine the best available icon format
+            _icon_deployed=""
+            if [ -f "$JENOVA_ROOT/png/$icon.png" ]; then
+                cp "$JENOVA_ROOT/png/$icon.png" "$_ICON_DIR/$icon.png"
+                cp "$JENOVA_ROOT/png/$icon.png" "$JENOVA_HOME/png/$icon.png"
+                _icon_deployed="$icon.png"
+            elif [ -f "$JENOVA_ROOT/png/$icon.jpg" ]; then
+                # Try to convert jpg→png for desktop compatibility
+                if command -v convert >/dev/null 2>&1; then
+                    convert "$JENOVA_ROOT/png/$icon.jpg" "$JENOVA_HOME/png/$icon.png"
+                    cp "$JENOVA_HOME/png/$icon.png" "$_ICON_DIR/$icon.png"
+                    _icon_deployed="$icon.png"
+                elif command -v magick >/dev/null 2>&1; then
+                    magick "$JENOVA_ROOT/png/$icon.jpg" "$JENOVA_HOME/png/$icon.png"
+                    cp "$JENOVA_HOME/png/$icon.png" "$_ICON_DIR/$icon.png"
+                    _icon_deployed="$icon.png"
+                else
+                    # No converter — use jpg directly (most DEs support it)
+                    cp "$JENOVA_ROOT/png/$icon.jpg" "$_ICON_DIR/$icon.jpg"
+                    cp "$JENOVA_ROOT/png/$icon.jpg" "$JENOVA_HOME/png/$icon.jpg"
+                    _icon_deployed="$icon.jpg"
+                fi
+            fi
+
+            # Create extensionless symlink for icon theme lookups
+            if [ -n "$_icon_deployed" ] && [ -f "$_ICON_DIR/$_icon_deployed" ]; then
+                ln -sf "$_ICON_DIR/$_icon_deployed" "$_ICON_DIR/$icon"
             fi
         done
 
         # Update icon cache
         gtk-update-icon-cache -f -t "$_ICON_DIR" 2>/dev/null || true
-        ok "Installed icons to $_ICON_DIR"
+        ok "Installed icons to $_ICON_DIR and $JENOVA_HOME/png"
     fi
+
+    # ISS-08: Rewrite desktop entries with targeted Exec= line replacement
+    # instead of global substring sed which corrupted Name= and Comment= fields.
+    for _dfile in jenova.desktop jvim.desktop; do
+        if [ -f "$JENOVA_ROOT/bin/$_dfile" ]; then
+            _icon_name=$(grep "^Icon=" "$JENOVA_ROOT/bin/$_dfile" | cut -d= -f2)
+
+            # Resolve the actual icon path (prefer .png, fall back to .jpg)
+            if [ -f "$JENOVA_HOME/png/$_icon_name.png" ]; then
+                _icon_path="$JENOVA_HOME/png/$_icon_name.png"
+            elif [ -f "$JENOVA_HOME/png/$_icon_name.jpg" ]; then
+                _icon_path="$JENOVA_HOME/png/$_icon_name.jpg"
+            else
+                _icon_path="$_icon_name"  # Fall back to theme name lookup
+            fi
+
+            # Read original, rewrite only Exec= and Icon= lines
+            # This avoids corrupting Name=, Comment=, or other fields
+            # that happen to contain binary name substrings.
+            _JHBIN="$JENOVA_HOME/bin"
+            sed -e "/^Exec=/{ \
+                s|jenova-term|$_JHBIN/jenova-term|g; \
+                s|jenova-ui|$_JHBIN/jenova-ui|g; \
+                s|jenova-ca|$_JHBIN/jenova-ca|g; \
+                s| jvim | $_JHBIN/jvim |g; \
+            }" \
+                -e "s|^Icon=.*|Icon=$_icon_path|" \
+                "$JENOVA_ROOT/bin/$_dfile" > "$_APP_DIR/$_dfile"
+        fi
+    done
+    ok "Installed and path-locked desktop entries to $_APP_DIR"
 fi
 
 # ---------------------------------------------------------------------------

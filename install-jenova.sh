@@ -199,6 +199,9 @@ cmd_install() {
     if [ "$MINIMAL" = "1" ]; then
         JENOVA_SKIP_MODELS=1; export JENOVA_SKIP_MODELS
     fi
+    # Signal to install.sh that all components were already built by this script,
+    # preventing redundant rebuild of jvim/llama etc. (ISS-01)
+    JENOVA_BUILT_BY_INSTALLER=1; export JENOVA_BUILT_BY_INSTALLER
     "$JENOVA_ROOT/scripts/install.sh" $_install_flags
     
     # 5. Verification

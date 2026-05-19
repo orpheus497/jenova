@@ -501,7 +501,6 @@ local function proxy_connection(client_fd, conn_fds)
                 if not line then break end
                 local rel = line:sub(#workspaces_dir + 2)
                 if #rel > 0 then table.insert(files, "\"" .. rel .. "\"") end
-                coroutine.yield("read", -1) -- Keep proxy responsive during crawl
             end
             p:close()
         end
@@ -523,7 +522,6 @@ local function proxy_connection(client_fd, conn_fds)
                 if not line then break end
                 local name = line:sub(#workspaces_dir + 2)
                 if #name > 0 then table.insert(ws, "\"" .. name .. "\"") end
-                coroutine.yield("read", -1) -- Keep proxy responsive during crawl
             end
             p:close()
         end

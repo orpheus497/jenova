@@ -244,6 +244,16 @@ export class DatabaseService {
 	}
 
 	/**
+	 * Deletes all messages belonging to a conversation without deleting the conversation itself.
+	 * Used by sync operations that need to replace messages wholesale.
+	 *
+	 * @param convId - Conversation ID whose messages should be deleted
+	 */
+	static async deleteConversationMessages(convId: string): Promise<void> {
+		await db.messages.where('convId').equals(convId).delete();
+	}
+
+	/**
 	 * Deletes a message and removes it from its parent's children array.
 	 *
 	 * @param messageId - ID of the message to delete
