@@ -36,9 +36,6 @@ function getEffectiveBase(defaultBase: string): string {
 	if (serverUrl) {
 		return serverUrl.endsWith('/') ? serverUrl.slice(0, -1) : serverUrl;
 	}
-	if (typeof window !== 'undefined' && window.location.port === '8081') {
-		return `${window.location.protocol}//${window.location.hostname}:8080${defaultBase}`;
-	}
 	return defaultBase;
 }
 

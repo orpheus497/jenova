@@ -193,13 +193,9 @@ _vulkan_backend_available() {
 }
 
 _set_path_args() {
-    if [ -d "$JENOVA_ROOT/public" ]; then
-        PATH_FLAG="--path"
-        PATH_VAL="$JENOVA_ROOT/public"
-    else
-        PATH_FLAG=""
-        PATH_VAL=""
-    fi
+    # Path serving is now handled exclusively by the Jenova Intelligence Proxy.
+    PATH_FLAG=""
+    PATH_VAL=""
 }
 
 _launch_llama_server_bg() {
@@ -515,6 +511,9 @@ if [ "$1" = "--daemon" ]; then
         shift
         case "$_arg" in
             --watch|--lan|--daemon) continue ;;
+            --port) shift; PORT="$1"; continue ;;
+            --llama-port) shift; LLAMA_PORT="$1"; continue ;;
+            --embed-port) shift; LLAMA_EMBED_PORT="$1"; continue ;;
         esac
         set -- "$@" "$_arg"
     done
@@ -702,7 +701,16 @@ fi
 # =====================================================================
 # FOREGROUND MODE
 # =====================================================================
-while [ "$1" = "--daemon" ]; do shift; done
+for _arg; do
+    shift
+    case "$_arg" in
+        --daemon|--watch) continue ;;
+        --port) shift; PORT="$1"; continue ;;
+        --llama-port) shift; LLAMA_PORT="$1"; continue ;;
+        --embed-port) shift; LLAMA_EMBED_PORT="$1"; continue ;;
+    esac
+    set -- "$@" "$_arg"
+done
 
 _set_path_args
 

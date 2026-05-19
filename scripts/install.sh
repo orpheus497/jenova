@@ -870,10 +870,23 @@ if [ "$JENOVA_OS" = "linux" ] || [ "$JENOVA_OS" = "freebsd" ]; then
             if [ -f "$JENOVA_ROOT/png/$icon.jpg" ] && [ ! -f "$_ICON_DIR/$icon.png" ]; then
                 if command -v convert >/dev/null 2>&1; then
                     convert "$JENOVA_ROOT/png/$icon.jpg" "$_ICON_DIR/$icon.png"
+                    ok "Converted $icon.jpg to $icon.png"
                 elif command -v magick >/dev/null 2>&1; then
                     magick "$JENOVA_ROOT/png/$icon.jpg" "$_ICON_DIR/$icon.png"
+                    ok "Converted $icon.jpg to $icon.png"
                 else
                     cp "$JENOVA_ROOT/png/$icon.jpg" "$_ICON_DIR/$icon.jpg"
+                fi
+            fi
+            # Ensure .png target exists in JENOVA_HOME/png for desktop entry locking
+            if [ -f "$JENOVA_ROOT/png/$icon.png" ]; then
+                cp "$JENOVA_ROOT/png/$icon.png" "$JENOVA_HOME/png/$icon.png"
+            elif [ -f "$JENOVA_ROOT/png/$icon.jpg" ]; then
+                cp "$JENOVA_ROOT/png/$icon.jpg" "$JENOVA_HOME/png/$icon.jpg"
+                # If we don't have a png but the desktop entry expects one, 
+                # we might need to update the desktop entry or symlink.
+                if [ ! -f "$JENOVA_HOME/png/$icon.png" ]; then
+                    ln -sf "$icon.jpg" "$JENOVA_HOME/png/$icon.png"
                 fi
             fi
         done

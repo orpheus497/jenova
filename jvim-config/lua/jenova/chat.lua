@@ -401,13 +401,28 @@ local function open_chat_split(path)
 
   if not vim.b[buf]._jenova_chat_autocmd then
     local group = vim.api.nvim_create_augroup("JenovaChatAutoSave_" .. buf, { clear = true })
+    local save_timer = nil
+
     vim.api.nvim_create_autocmd({ "TextChanged", "InsertLeave" }, {
       group = group,
       buffer = buf,
       callback = function()
-        if vim.bo[buf].modified then
-          save_chat(buf)
-        end
+        if not vim.bo[buf].modified then return end
+        
+        -- Debounce: wait 1s after last change before saving to Proxy
+        if save_timer then save_timer:stop(); save_timer:close() end
+        save_timer = vim.loop.new_timer()
+        save_timer:start(1000, 0, vim.schedule_wrap(function()
+          if vim.api.nvim_buf_is_valid(buf) and vim.bo[buf].modified then
+            save_chat(buf)
+          end
+          if save_timer then
+            save_timer:stop()
+            save_timer:close()
+            save_timer = nil
+          end
+        end))
+
         apply_chat_highlights(buf)
       end,
     })

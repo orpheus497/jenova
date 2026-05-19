@@ -30,7 +30,7 @@ function M.storage_url(path)
 end
 
 function M.fim_url()
-  return string.format("http://%s:%d/infill", M.host(), M.llama_port())
+  return string.format("http://%s:%d/infill", M.host(), M.proxy_port())
 end
 
 function M.url(port, path)

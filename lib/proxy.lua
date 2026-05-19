@@ -51,7 +51,7 @@ local EAGAIN = _ffi_defs.EAGAIN
 local EWOULDBLOCK = _ffi_defs.EWOULDBLOCK
 local EINPROGRESS = _ffi_defs.EINPROGRESS
 
-local MAX_ACTIVE_CONNECTIONS = 6
+local MAX_ACTIVE_CONNECTIONS = 32
 local MAX_HEADER_SIZE = 65536
 local MAX_BODY_SIZE = 100 * 1024 * 1024
 
@@ -339,8 +339,8 @@ local function proxy_connection(client_fd, conn_fds)
     end
 
     -- Native /health endpoint — exact path match ([ %?] catches both "GET /health HTTP/" and
-    -- "GET /health?…" while excluding paths like /healthz).
-    local is_health = is_get and headers_raw:match("^GET /health[ %?]")
+    -- "GET /health?…" while excluding paths like /healthz). Support /v1/health for compatibility.
+    local is_health = is_get and (headers_raw:match("^GET /health[ %?]") or headers_raw:match("^GET /v1/health[ %?]"))
     if is_health then
         -- Non-blocking backend liveness check via async_connect (coroutine-safe, no blocking).
         local health_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
@@ -413,6 +413,7 @@ local function proxy_connection(client_fd, conn_fds)
     end
 
     local is_chat_completion = headers_raw:find("POST /v1/chat/completions")
+    local is_fim = headers_raw:find("POST /infill")
     
     -- Filesystem API for WebUI persistence
     local home_dir = os.getenv("HOME") or "/tmp"
@@ -459,15 +460,16 @@ local function proxy_connection(client_fd, conn_fds)
             f:close()
 
             -- Structural trigger: Re-index this file in the background RAG if it's a markdown or text file.
-            -- We use a simple backgrounding trick via '&' (portable to Linux/FreeBSD) or just run it.
-            -- Since reindex_file is fast for BM25, we run it in-proc but wrapped in pcall.
+            -- Use coroutine.wrap to ensure this doesn't block the current connection handler.
             if full_path:match("%.md$") or full_path:match("%.txt$") then
-                pcall(function()
-                    local s = require("search")
-                    if s and s.reindex_file then
-                        s.reindex_file(full_path)
-                    end
-                end)
+                coroutine.wrap(function()
+                    pcall(function()
+                        local s = require("search")
+                        if s and s.reindex_file then
+                            s.reindex_file(full_path)
+                        end
+                    end)
+                end)()
             end
 
             local resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}"
@@ -749,6 +751,12 @@ local function proxy_connection(client_fd, conn_fds)
                 end
             end
         end
+    end
+
+    if is_fim and #body_raw > 0 then
+        -- Simply forward FIM requests to llama-server for now.
+        -- In the future, we can inject RAG context here too.
+        proxied_req = headers_raw .. body_raw
     end
 
     local llama_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
