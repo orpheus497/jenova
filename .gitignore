@@ -80,6 +80,13 @@
 
 # --- Jenova Runtime (Private Data) ---
 /.jenova/
+/.system/
+/var/state/
+
+# --- Temporary Search & Discovery Artifacts ---
+/var/cache/find_results.tmp
+/var/cache/workspaces.tmp
+/var/cache/storage.tmp
 
 # --- Backups (local-only snapshots) ---
 /backups/
