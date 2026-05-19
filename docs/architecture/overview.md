@@ -31,12 +31,8 @@ The **Jenova Cognitive Architecture** is structured around several interconnecte
 2. **Agent engine** — `jvim-config/lua/jenova/agent/engine.lua` builds a
    context snapshot (active buffer, project tree, LSP diagnostics, recent
    history, pinned memory facts) and emits a chat-completion request.
-3. **Intelligence proxy (port 8080)** — `lib/proxy.lua` (LuaJIT) injects RAG
-   context (semantic + BM25 hits from the local index) and forwards to
-   `llama-server`.
-4. **Inference (port 8081)** — `llama-server` runs the active GGUF model with
-   Vulkan offload. An optional 0.5B drafter speeds generation via speculative
-   decoding.
+3. **Intelligence proxy (port 8080)** — `lib/proxy.lua` (LuaJIT) provides a **fully asynchronous**, coroutine-based gateway. It injects RAG context (semantic + BM25 hits), handles non-blocking health checks, and performs background directory discovery to keep the editor and WebUI responsive.
+4. **Inference (port 8081)** — `llama-server` runs the active GGUF model with Vulkan offload. Optimized for stability with **socket-level FD isolation (CLOEXEC)** to prevent resource leaks during heavy tool-calling.
 5. **Tool calls** — when the model emits a tool call, the agent runs it locally
    (buffer read / edit / write, glob / grep, LSP, shell, vim ex-command,
    remember, ask_user) and feeds the result back as the next turn.

@@ -13,9 +13,9 @@ The foundation of the system. Written in C, Lua, and POSIX shell, the `jenova-ca
 - `8082` — Embedding server (semantic search, RAG indexing)
 
 ### Desktop Manager (`jenova-ui`)
-A lightweight, Kanagawa-themed native application written in **C** with **GTK3**, **ncurses**, and **Lua** orchestration. Provides two interfaces:
-- **System Tray Icon** — Real-time health polling every 3 seconds. Full-color when active, grayscale when inactive. Right-click context menu for server control and LAN toggle.
-- **ncurses TUI** — Terminal-based management with component-level control, status display, and LAN/LOCAL mode switching.
+A lightweight, Kanagawa-themed native application written in **C** with **GTK3**, **ncurses**, and **Lua** orchestration. Designed with a **FreeBSD-first** philosophy, providing two complementary interfaces:
+- **ncurses TUI** — The **primary management interface** for FreeBSD, Headless servers, and terminal-centric workflows. Offers component-level control, real-time status, and LAN/LOCAL switching without requiring a graphical environment.
+- **System Tray Icon** — A secondary convenience interface for Desktop environments (Linux/macOS). Provides real-time health polling and quick-access server control via a context menu.
 
 ### Jenova Workspaces (WebUI)
 An elegant, browser-based chat and workspace UI built with SvelteKit. Served directly by the intelligence proxy on port 8080 for seamless native-feel access. Workspaces are tied to your local filesystem, ensuring seamless transition between graphical chat and terminal editing.

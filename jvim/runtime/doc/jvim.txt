@@ -171,9 +171,11 @@ When the editor runs under `jvim`, three persistent daemon processes back it:
 1. `llama-server` on port 8081 — main inference engine with dual Vulkan GPU
    auto-fit offload (the `-fitt` flag distributes transformer layers across
    `Vulkan0` / `Vulkan1`).
-2. `proxy.lua` on port 8080 — LuaJIT non-blocking I/O loop with coroutine
-   connection multiplexing, RAG injection, and intent routing.
-3. `llama-server --embedding` on port 8082 — CPU-only Qwen3-Embedding server
+2. `proxy.lua` on port 8080 — LuaJIT **fully asynchronous** non-blocking I/O
+   loop with coroutine connection multiplexing, RAG injection, and intent
+   routing. Hardened with **FD_CLOEXEC security sealing** to prevent port
+   locking and resource leaks.
+3. `llama-server --embedding` on port 8082 — CPU-only embedding server
    used for semantic search and RAG.
 
 All three processes are managed as a unit by `jenova-ca` with 3-PID tracking.

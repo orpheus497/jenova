@@ -18,22 +18,19 @@ The primary GGUF runtime.
 
 ## 2. Intelligence Proxy — RAG Brain (port 8080)
 LuaJIT proxy that fronts `llama-server` and shapes every request.
-- **Stack**: `lib/proxy.lua` (LuaJIT, coroutine-based non-blocking I/O).
-- **API surface**: OpenAI-compatible
-  `POST /v1/chat/completions`, `POST /v1/completions`, `GET /v1/models`,
-  `GET /v1/health`.
-- **RAG pipeline**: Hybrid retrieval over the local index — semantic
-  (embedding-server lookups) + BM25 — injecting the top snippets into the
-  system prompt before forwarding to `llama-server`.
-- **Streaming**: Chunked transfer-encoding pass-through with token-level
-  flushing, keeping latency low for the chat sidebar.
+- **Stack**: `lib/proxy.lua` (LuaJIT, coroutine-based **non-blocking** I/O).
+- **Architecture**: Employs a `select`-based loop with coroutine yielding for all I/O, including:
+    - **Async Health Checks**: Backend liveness is verified via non-blocking TCP probes.
+    - **Background Discovery**: Directory crawling and workspace listing are performed asynchronously to prevent UI/Editor freezes.
+    - **Security Sealing**: All accepted sockets are marked with `FD_CLOEXEC` to prevent child processes (like `find` or `curl`) from inheriting and locking ports.
+- **API surface**: OpenAI-compatible `POST /v1/chat/completions`, `POST /v1/completions`, `GET /v1/models`, `GET /v1/health`.
+- **RAG pipeline**: Hybrid retrieval over the local index — semantic (embedding-server lookups) + BM25 — injecting the top snippets into the system prompt.
 
 ## 3. Embedding Server (port 8082)
 A second `llama-server` process running in embedding mode.
-- **Model**: `Qwen3-Embedding-v1.5` (configurable via `JENOVA_EMBED_MODEL`).
-- **Placement**: CPU by default, preserving VRAM for the main model.
-- **Consumers**: the proxy's RAG pipeline and the codebase indexer
-  (`lib/indexer_runner.lua`).
+- **Model**: Optimized embedding model (e.g., `nomic-embed-text`) quantized for local CPU execution.
+- **Placement**: CPU by default, preserving VRAM for the main inference model.
+- **Consumers**: the proxy's RAG pipeline and the codebase indexer (`lib/indexer_runner.lua`).
 
 ## Process Management — `bin/jenova-ca`
 
