@@ -492,19 +492,6 @@ local function proxy_connection(client_fd, conn_fds)
             f:write(body_raw)
             f:close()
 
-            -- Structural trigger: Re-index this file in the background RAG if it's a markdown or text file.
-            -- Use coroutine.wrap to ensure this doesn't block the current connection handler.
-            if full_path:match("%.md$") or full_path:match("%.txt$") then
-                coroutine.wrap(function()
-                    pcall(function()
-                        local s = require("search")
-                        if s and s.reindex_file then
-                            s.reindex_file(full_path)
-                        end
-                    end)
-                end)()
-            end
-
             local resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}"
             async_send(client_fd, resp)
         else
@@ -628,32 +615,16 @@ local function proxy_connection(client_fd, conn_fds)
                 end
             end
 
-            -- Detect project root for dynamic indexing
+            -- Detect project root (passive only, no auto-indexing in proxy)
             local project_root = body_raw:match("project_root: ([^\n\r]+)")
             if project_root then
-                -- Strip carriage return and JSON quotes if any
                 project_root = project_root:gsub("\r", ""):gsub("\"", ""):gsub("\\n", ""):gsub("\\r", ""):gsub("}$", ""):gsub(",$", ""):match("^%s*(.-)%s*$")
-                
-                -- Handle relative paths (WebUI) or dummy roots
                 if project_root == "web_workspace" then
                     project_root = workspaces_dir
                 elseif project_root ~= "" and not project_root:match("^/") and not project_root:match("^~") then
                     project_root = workspaces_dir .. "/" .. project_root
                 end
-
-                if project_root ~= "" and project_root ~= _G._last_project_root then
-                    print("[proxy] Detected project root change: " .. project_root)
-                    _G._last_project_root = project_root
-                    coroutine.wrap(function()
-                        search.index_dir(project_root, {
-                            "lua","sh","c","h","cpp","py","js","ts","go","rs",
-                            "md","txt","json","yaml","yml","toml","conf","cfg",
-                            "html","css","Makefile","zig",
-                        })
-                        if embed_ok then search.init_embeddings(embed) end
-                        print("[proxy] Search index updated for: " .. project_root)
-                    end)()
-                end
+                _G._last_project_root = project_root
             end
 
             -- Intent detection: each entry maps a prefix pattern to an intent name.
