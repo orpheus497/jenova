@@ -12,7 +12,7 @@
 /external/llama.cpp/build/
 /external/mcsh/build/
 /external/SPIRV-Headers/build/
-/external/spirv-headers/
+/external/SPIRV-Headers/
 
 # --- Guard: external sources belong in /external/, never at repo root ---
 /mcsh/

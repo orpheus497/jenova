@@ -286,7 +286,7 @@ function M.build_system_prompt(chat_buf, user_message)
       "- LSP(action, file_path, line?, character?, query?): ONLY tool for errors, definitions, references, hover, symbols, code_actions, rename_preview.",
       "- Grep(pattern, path?), Glob(pattern), LS(path?), Buffers(): Search files and buffers.",
       "- Shell(command, description, cwd?, timeout?): Run a POSIX sh command (build, test, git, install, scripts). Output is captured. Cancellable via /stop.",
-      "- VimCmd(action, command?, code?): Native editor / plugin access. action=\"ex\" runs an ex-command (`:make`, `:Lazy sync`, `:LspInfo`, any plugin command). action=\"lua\" evaluates a Lua expression in the editor process (read plugin state, call plugin APIs).",
+      "- VimCmd(action, command?, code?): Native editor / plugin access. action=\"ex\" runs an ex-command (`:make`, `:LspInfo`, any plugin command). action=\"lua\" evaluates a Lua expression in the editor process (read plugin state, call plugin APIs).",
       "- Remember(text, tags?, scope?): Pin a durable fact (user preferences, project conventions, build commands the user dictates). Auto-recalled into the system prompt on relevant turns.",
       "- AskUserQuestion(question): Prompt user for input.",
       "",

@@ -1,7 +1,7 @@
 #!/bin/sh
 # vendor-plugins.sh: Clone every Jenova-required nvim plugin into
 # jvim/runtime/pack/jenova/start/<name> at the SHA pinned in
-# nvim/lazy-lock.json, then strip .git so the plugin lives natively
+# nvim/plugins.lock.json, then strip .git so the plugin lives natively
 # inside the jvim runtime tree (discovered by Neovim's packpath at startup).
 #
 # Run once after editing the slug map below; the result is committed.
@@ -9,7 +9,7 @@ set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="$ROOT/jvim/runtime/pack/jenova/start"
-LOCK="$ROOT/jvim-config/lazy-lock.json"
+LOCK="$ROOT/jvim-config/plugins.lock.json"
 
 mkdir -p "$DEST"
 
@@ -33,8 +33,6 @@ llama.vim|ggml-org/llama.vim
 lspkind.nvim|onsails/lspkind.nvim
 lualine.nvim|nvim-lualine/lualine.nvim
 luvit-meta|Bilal2453/luvit-meta
-mason-lspconfig.nvim|williamboman/mason-lspconfig.nvim
-mason.nvim|williamboman/mason.nvim
 mini.nvim|echasnovski/mini.nvim
 neogit|NeogitOrg/neogit
 noice.nvim|folke/noice.nvim
@@ -53,7 +51,7 @@ vim-fugitive|tpope/vim-fugitive
 which-key.nvim|folke/which-key.nvim
 '
 
-# Pull commit SHA out of lazy-lock.json by key (POSIX-portable, no jq).
+# Pull commit SHA out of plugins.lock.json by key (POSIX-portable, no jq).
 sha_for() {
     awk -v key="$1" '
         $0 ~ "\"" key "\"" {

@@ -507,14 +507,16 @@ if [ "$1" = "--daemon" ]; then
     shift
     # Strip --watch from remaining args (it's for post-startup, not llama-server)
     # Strip jenova-ca-specific flags that aren't for llama-server
-    while [ $# -gt 0 ]; do
+    _argc=$#
+    while [ "$_argc" -gt 0 ]; do
         _arg="$1"
         shift
+        _argc=$((_argc - 1))
         case "$_arg" in
             --watch|--lan|--daemon) continue ;;
-            --port) PORT="$1"; shift; continue ;;
-            --llama-port) LLAMA_PORT="$1"; shift; continue ;;
-            --embed-port) LLAMA_EMBED_PORT="$1"; shift; continue ;;
+            --port) PORT="$1"; shift; _argc=$((_argc - 1)); continue ;;
+            --llama-port) LLAMA_PORT="$1"; shift; _argc=$((_argc - 1)); continue ;;
+            --embed-port) LLAMA_EMBED_PORT="$1"; shift; _argc=$((_argc - 1)); continue ;;
         esac
         set -- "$@" "$_arg"
     done
@@ -702,13 +704,16 @@ fi
 # =====================================================================
 # FOREGROUND MODE
 # =====================================================================
-for _arg; do
+_argc=$#
+while [ "$_argc" -gt 0 ]; do
+    _arg="$1"
     shift
+    _argc=$((_argc - 1))
     case "$_arg" in
-        --daemon|--watch) continue ;;
-        --port) shift; PORT="$1"; continue ;;
-        --llama-port) shift; LLAMA_PORT="$1"; continue ;;
-        --embed-port) shift; LLAMA_EMBED_PORT="$1"; continue ;;
+        --daemon|--watch|--lan) continue ;;
+        --port) PORT="$1"; shift; _argc=$((_argc - 1)); continue ;;
+        --llama-port) LLAMA_PORT="$1"; shift; _argc=$((_argc - 1)); continue ;;
+        --embed-port) LLAMA_EMBED_PORT="$1"; shift; _argc=$((_argc - 1)); continue ;;
     esac
     set -- "$@" "$_arg"
 done

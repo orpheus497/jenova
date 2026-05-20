@@ -268,11 +268,9 @@ local function build_layout(width)
   local sec_config = {
     title = "Config",
     items = {
-      { key = "l", icon = "", label = "Lazy",        action = "lazy" },
-      { key = "m", icon = "", label = "Mason",       action = "mason" },
-      { key = "h", icon = "", label = "Checkhealth", action = "checkhealth" },
-      { key = "q", icon = "", label = "Quit",        action = "quit" },
-    },
+      { key = "h", icon = "", label = "Health Check", action = "checkhealth" },
+      { key = "q", icon = "", label = "Quit",         action = "quit" },
+      },
   }
 
   -- ##Subsection: Backend status rendered as its own pseudo-section so it can
@@ -478,18 +476,6 @@ local function notify_missing(what)
   vim.notify(what .. " is not available.", vim.log.levels.WARN, { title = "jvim" })
 end
 
--- Ensure a lazy.nvim-managed plugin is loaded before we try to require its
--- runtime module or invoke its commands. The dashboard runs at startup, so any
--- plugin gated behind `keys = {...}` (telescope.nvim, neogit, diffview.nvim,
--- ...) won't be loaded yet when a dashboard action fires — without this helper
--- the action would fail with a misleading "missing plugin" / "command not
--- found" notification even though the plugin is fully installed.
-local function ensure_lazy_loaded(plugins)
-  local has_lazy, lazy = pcall(require, "lazy")
-  if not has_lazy then return end
-  pcall(lazy.load, { plugins = plugins })
-end
-
 local function safe_cmd(cmd)
   local ok, err = pcall(vim.cmd, cmd)
   if not ok then
@@ -538,14 +524,12 @@ local ACTIONS = {
     if not ok then return notify_missing("jenova.monitor") end
     mon.open_monitor()
   end,
-  neogit         = function() M.close(); ensure_lazy_loaded({ "neogit" }); safe_cmd("Neogit") end,
-  diffview       = function() M.close(); ensure_lazy_loaded({ "diffview.nvim" }); safe_cmd("DiffviewOpen") end,
+  neogit         = function() M.close(); safe_cmd("Neogit") end,
+  diffview       = function() M.close(); safe_cmd("DiffviewOpen") end,
   fugitive       = function() M.close(); safe_cmd("Git") end,
   trouble_diag   = function() M.close(); jvim_diag("workspace") end,
   trouble_sym    = function() M.close(); pcall(vim.lsp.buf.document_symbol) end,
   trouble_lsp    = function() M.close(); pcall(vim.lsp.buf.references) end,
-  lazy           = function() safe_cmd("Lazy") end,
-  mason          = function() safe_cmd("Mason") end,
   checkhealth    = function() M.close(); safe_cmd("checkhealth") end,
   quit           = function() vim.cmd("confirm qa") end,
   toggle_fim     = function()
@@ -759,32 +743,6 @@ local function probe_profile()
   end)
 end
 
--- ##Function purpose: Lazy.nvim startup-time stat for the footer (best-effort).
--- Subscribes to `User LazyDone`, which lazy.nvim itself fires once all plugins
--- have finished loading. We also try to read stats synchronously in case the
--- event has already fired by the time the dashboard opens.
-local function probe_lazy_stats()
-  local ok, lazy = pcall(require, "lazy")
-  if not ok then return end
-
-  local function update_footer()
-    if not (lazy and lazy.stats) then return end
-    local ok_stats, stats = pcall(lazy.stats)
-    if not ok_stats or not stats then return end
-    M._footer = string.format("  %d plugins loaded in %.0f ms",
-      stats.count or 0, stats.startuptime or 0)
-    if M.is_open() then render() end
-  end
-
-  update_footer()
-  vim.api.nvim_create_autocmd("User", {
-    group = vim.api.nvim_create_augroup(AUGROUP .. "Stats", { clear = true }),
-    pattern = "LazyDone",
-    once = true,
-    callback = update_footer,
-  })
-end
-
 -- ##Function purpose: Open the dashboard in the current window. Reuses an
 -- existing dashboard buffer if one is alive.
 function M.open()
@@ -824,7 +782,6 @@ function M.open()
   render()
   bind_action_keymaps(buf, state.actions)
   probe_profile()
-  probe_lazy_stats()
 
   local group = vim.api.nvim_create_augroup(AUGROUP, { clear = true })
   vim.api.nvim_create_autocmd({ "VimResized", "WinResized" }, {
@@ -882,7 +839,7 @@ function M.is_open()
 end
 
 -- Re-render the dashboard if currently open. Used by async probes (macOS
--- product version, profile, lazy stats) to refresh the display once data
+-- product version, profile) to refresh the display once data
 -- becomes available without blocking startup.
 function M.redraw()
   if M.is_open() then pcall(render) end

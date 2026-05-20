@@ -4,7 +4,7 @@
 -- indent-blankline, nvim-notify, noice, edgy) is now provided by
 -- runtime/lua/jvim/*.lua and wired in runtime/plugin/jvim_ui.lua.
 --
--- The shape (`return {}`) is preserved so lazy.nvim's `require("plugins.ui")`
+-- The shape (`return {}`) is preserved so the jvim configuration scanner
 -- import path continues to resolve.
 
 return {}

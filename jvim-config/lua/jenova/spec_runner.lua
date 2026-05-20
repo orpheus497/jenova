@@ -1,19 +1,18 @@
 -- jenova/spec_runner.lua
--- Minimal native runner for lazy.nvim-style plugin spec tables.
+-- Native jvim plugin lifecycle runner.
 --
 -- All plugins live under jvim/runtime/pack/jenova/start/ and are auto-loaded
--- by Neovim's native package system, so we don't need a real plugin manager.
--- We just need to honour each spec's init/config/opts/keys/cmd/event entries.
+-- by Neovim's native package system. This module ensures that each plugin's
+-- init/config/opts/keys/cmd/event hooks are executed at the correct time.
 --
--- Supported keys (subset of lazy.nvim spec):
---   init         function          run before plugin loads (we run it now)
---   config       function|true     run after plugin loads (we run it now)
+-- Supported keys:
+--   init         function          run before plugin loads
+--   config       function|true     run after plugin loads
 --   opts         table             passed to require(name).setup(opts) when
 --                                  config is missing or true
 --   keys         { lhs, rhs, mode, desc } | { lhs, fn, desc }
---   cmd          string|table      user commands that lazily load the plugin
---                                  (we just register a thin wrapper)
---   event        string|table      lazy event triggers (autocmd-based)
+--   cmd          string|table      user commands that deferred-load the plugin
+--   event        string|table      deferred event triggers (autocmd-based)
 --   ft           string|table      filetype triggers
 --   dependencies (ignored — pack/start order handles load order)
 --
@@ -65,7 +64,7 @@ end
 local function apply_event(events, loader)
   if not events or not loader then return end
   if type(events) == "string" then events = { events } end
-  -- Translate lazy.nvim-only synthetic events to real autocmd events.
+  -- Translate synthetic events to real autocmd events.
   local translated = {}
   for _, e in ipairs(events) do
     if e == "VeryLazy" or e == "User VeryLazy" then
@@ -106,14 +105,14 @@ local function run_spec(spec)
   apply_event(spec.event, load_now)
   apply_ft(spec.ft, load_now)
 
-  -- No lazy trigger? Load eagerly.
+  -- No deferred trigger? Load eagerly.
   if not (spec.event or spec.cmd or spec.ft or spec.keys) then
     load_now()
   end
 end
 
--- Run a spec module. The module typically returns a list of specs (lazy
--- syntax) but may also return a single spec table.
+-- Run a spec module. The module typically returns a list of plugin specs
+-- but may also return a single spec table.
 function M.run(mod_name)
   local ok, spec_or_list = pcall(require, mod_name)
   if not ok then
