@@ -63,7 +63,7 @@ end
 local function send_all(fd, data)
   local sent = 0
   while sent < #data do
-    local n = ffi.C.send(fd, data:sub(sent + 1), #data - sent, 0)
+    local n = ffi.C.send(fd, ffi.cast("const char *", data) + sent, #data - sent, 0)
     if n > 0 then
       sent = sent + tonumber(n)
     else
@@ -80,7 +80,6 @@ local function send_all(fd, data)
         end
       else
         return false, "send() failed: " .. get_errstr(err)
-      end
       end
     end
   end
@@ -128,6 +127,7 @@ local function recv_all(fd, buf, buf_size, deadline)
         end
       else
         recv_err = "recv() fatal error: " .. get_errstr(err)
+        break
       end
     end
   end

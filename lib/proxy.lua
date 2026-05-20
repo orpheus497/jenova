@@ -535,14 +535,15 @@ local function proxy_connection(client_fd, conn_fds)
 
             -- Structural trigger: Re-index this file in the background RAG if it's a markdown or text file.
             if full_path:match("%.md$") or full_path:match("%.txt$") then
-                coroutine.wrap(function()
+                local co = coroutine.create(function()
                     pcall(function()
                         local s = require("search")
                         if s and s.reindex_file then
                             s.reindex_file(full_path)
                         end
                     end)
-                end)()
+                end)
+                table.insert(background_tasks, { co = co, created = os.time() })
             end
         else
             local resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
@@ -916,6 +917,7 @@ print("[proxy] Search index deferred until project root is detected.")
 -- Main Select Loop
 -- conn_fds_map: client_fd -> {client=N, llama=N} tracks all fds owned by each connection
 local clients = {}
+local background_tasks = {}
 local conn_fds_map = {}
 local COROUTINE_TIMEOUT = tonumber(os.getenv("JENOVA_CONN_TIMEOUT")) or 600
 local read_fds = _ffi_defs.fd_set_new()
@@ -944,6 +946,18 @@ while running do
             _ffi_defs.FD_SET(info.watch_fd, write_fds)
         end
         if info.watch_fd > max_fd then max_fd = info.watch_fd end
+    end
+
+    -- Add background tasks to select sets
+    for i = #background_tasks, 1, -1 do
+        local task = background_tasks[i]
+        if task.type == "read" then
+            _ffi_defs.FD_SET(task.watch_fd, read_fds)
+            if task.watch_fd > max_fd then max_fd = task.watch_fd end
+        elseif task.type == "write" then
+            _ffi_defs.FD_SET(task.watch_fd, write_fds)
+            if task.watch_fd > max_fd then max_fd = task.watch_fd end
+        end
     end
 
     local tv = ffi.new("struct timeval", {tv_sec=1, tv_usec=0})
@@ -998,6 +1012,29 @@ while running do
                 else
                     info.type = type
                     info.watch_fd = watch_fd
+                end
+            end
+        end
+
+        -- Handle background tasks
+        for i = #background_tasks, 1, -1 do
+            local task = background_tasks[i]
+            local ready = false
+            if task.type == "read" and _ffi_defs.FD_ISSET(task.watch_fd, read_fds) then
+                ready = true
+            elseif task.type == "write" and _ffi_defs.FD_ISSET(task.watch_fd, write_fds) then
+                ready = true
+            elseif task.type == nil then
+                ready = true -- Immediate execution
+            end
+
+            if ready then
+                local ok, type, watch_fd = coroutine.resume(task.co)
+                if coroutine.status(task.co) == "dead" then
+                    table.remove(background_tasks, i)
+                else
+                    task.type = type
+                    task.watch_fd = watch_fd
                 end
             end
         end

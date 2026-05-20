@@ -5,7 +5,7 @@
 sysctl_persist() {
     _line="$1"
     _key=$(echo "$_line" | cut -d= -f1)
-    _esc_key=$(printf '%s' "$_key" | sed 's/[][\\+*?^$(){}|.]/\\&/g')
+    _esc_key=$(printf '%s' "$_key" | sed 's/[][.\\*^$|()+?{}]/\\&/g')
     _tmp=$(mktemp)
     # Remove all existing instances of this key and append the new value
     if [ -f /etc/sysctl.conf ]; then
