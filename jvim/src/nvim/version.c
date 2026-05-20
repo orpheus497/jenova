@@ -3986,11 +3986,11 @@ bool has_nvim_version(const char *const version_str)
     }
   }
 
-  return (major < NVIM_VERSION_MAJOR
-          || (major == NVIM_VERSION_MAJOR
-              && (minor < NVIM_VERSION_MINOR
-                  || (minor == NVIM_VERSION_MINOR
-                      && patch <= NVIM_VERSION_PATCH))));
+  return (major < NVIM_COMPAT_MAJOR
+          || (major == NVIM_COMPAT_MAJOR
+              && (minor < NVIM_COMPAT_MINOR
+                  || (minor == NVIM_COMPAT_MINOR
+                      && patch <= NVIM_COMPAT_PATCH))));
 }
 
 /// Compares a version string to the current JVIM version.
@@ -4036,7 +4036,7 @@ bool has_jvim_version(const char *const version_str)
 int min_vim_version(void)
   FUNC_ATTR_PURE FUNC_ATTR_WARN_UNUSED_RESULT
 {
-  return vim_versions[0];
+  return 900;
 }
 
 int highest_patch(void)
