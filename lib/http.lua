@@ -73,7 +73,8 @@ local function send_all(fd, data)
         if retries > MAX_SEND_RETRIES then
           return false, "send() stalled after " .. retries .. " retries"
         end
-        if coroutine.running() then
+        local _, is_main = coroutine.running()
+        if not is_main then
           coroutine.yield("write", fd)
         else
           local tv_sleep = ffi.new("struct timeval")
@@ -120,7 +121,8 @@ local function recv_all(fd, buf, buf_size, deadline)
       if err == EINTR then
         goto retry
       elseif err == EAGAIN or err == EWOULDBLOCK or err == ETIMEDOUT then
-        if coroutine.running() then
+        local _, is_main = coroutine.running()
+        if not is_main then
           coroutine.yield("read", fd)
         else
           local tv_sleep = ffi.new("struct timeval")
@@ -199,7 +201,8 @@ function http.post(url, body, timeout)
     return 0, "invalid host: " .. host
   end
 
-  if coroutine.running() then
+  local co, is_main = coroutine.running()
+  if co and not is_main then
     local flags = ffi.C.fcntl(fd, ffi_defs.F_GETFL, 0)
     ffi.C.fcntl(fd, ffi_defs.F_SETFL, bit.bor(flags, ffi_defs.O_NONBLOCK))
     local ret = ffi.C.connect(fd, ffi.cast("struct sockaddr *", addr), ffi.sizeof(addr))
@@ -282,7 +285,8 @@ function http.get(url, timeout)
     return 0, "invalid host"
   end
 
-  if coroutine.running() then
+  local co, is_main = coroutine.running()
+  if co and not is_main then
     local flags = ffi.C.fcntl(fd, ffi_defs.F_GETFL, 0)
     ffi.C.fcntl(fd, ffi_defs.F_SETFL, bit.bor(flags, ffi_defs.O_NONBLOCK))
     local ret = ffi.C.connect(fd, ffi.cast("struct sockaddr *", addr), ffi.sizeof(addr))

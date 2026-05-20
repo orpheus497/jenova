@@ -161,4 +161,5 @@ fi
 
 # ── Launch jvim ───────────────────────────────────────────────────────────────
 # Pass --no-backend so jvim does not attempt to start or stop jenova-ca.
-exec "$SCRIPT_DIR/jvim" --no-backend "$@"
+"$SCRIPT_DIR/jvim" --no-backend "$@"
+exit $?
