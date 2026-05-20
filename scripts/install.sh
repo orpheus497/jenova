@@ -8,7 +8,7 @@
 # and symlinks `jvim`, `jenova`, and `jenova-ca` onto your PATH.
 #
 # Usage: ./install.sh [--force] [--link] [--skip-config] [--skip-jvim]
-#                     [--skip-llama] [--skip-lsp] [--client-only]
+#                     [--skip-llama] [--skip-lsp] [--skip-web] [--client-only]
 #
 #   --force        Overwrite existing ~/.config/jvim without prompting and
 #                  force a fresh jvim rebuild even if jvim/build/ exists
@@ -18,19 +18,21 @@
 #   --skip-jvim    Skip building the bundled jvim editor (jvim/)
 #   --skip-llama   Skip llama.cpp build check
 #   --skip-lsp     Skip auto-installing LSP servers / linters / formatters
+#   --skip-web     Skip building the JCA Web UI (jca_web/)
 #   --client-only  LAN client install: skip llama.cpp, skip jvim build,
-#                  skip model downloads. Use when this host will only ever
+#                  skip model downloads, skip web UI. Use when this host will only ever
 #                  connect to a remote Jenova CA via 'jvim --remote <host>'.
 #
 # This script:
 #   1. Verifies required system dependencies
 #   2. Creates required runtime directories (var/log, var/cache, models, .jenova)
 #   3. Checks for llama.cpp build (skipped with --client-only)
-#   4. Downloads required model files (skipped with --client-only)
-#   5. Detects whether the installed nvim is jvim or upstream Neovim
-#   6. Installs the Jenova nvim configuration to ~/.config/jvim/
-#   7. Installs bin/jvim, bin/jenova, bin/jenova-ca symlinks to PATH
-#   8. Prints a summary plus next-step commands
+#   4. Checks for Web UI build (skipped with --client-only or --skip-web)
+#   5. Downloads required model files (skipped with --client-only)
+#   6. Detects whether the installed nvim is jvim or upstream Neovim
+#   7. Installs the Jenova nvim configuration to ~/.config/jvim/
+#   8. Installs bin/jvim, bin/jenova, bin/jenova-ca symlinks to PATH
+#   9. Prints a summary plus next-step commands
 
 set -e
 
@@ -57,6 +59,7 @@ SKIP_NVIM=0
 SKIP_JVIM=0
 SKIP_LLAMA=0
 SKIP_LSP=0
+SKIP_WEB=0
 CLIENT_ONLY=0
 
 for _arg in "$@"; do
@@ -67,7 +70,8 @@ for _arg in "$@"; do
         --skip-jvim)   SKIP_JVIM=1 ;;
         --skip-llama)  SKIP_LLAMA=1 ;;
         --skip-lsp)    SKIP_LSP=1 ;;
-        --client-only) CLIENT_ONLY=1; SKIP_LLAMA=1; SKIP_JVIM=1 ;;
+        --skip-web)    SKIP_WEB=1 ;;
+        --client-only) CLIENT_ONLY=1; SKIP_LLAMA=1; SKIP_JVIM=1; SKIP_WEB=1 ;;
         -h|--help)
             sed -n '2,32p' "$0"
             exit 0
@@ -644,6 +648,38 @@ if [ "$SKIP_JVIM" = "0" ] && [ "$CLIENT_ONLY" = "0" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 5c. Web UI — build the SvelteKit frontend unless --skip-web was passed
+# ---------------------------------------------------------------------------
+if [ "$SKIP_WEB" = "0" ] && [ "$CLIENT_ONLY" = "0" ]; then
+    # Only build if not already present (or --force)
+    if [ ! -f "$JENOVA_ROOT/public/bundle.js" ] || [ "$FORCE" = "1" ]; then
+        info "Building JCA Web UI (jca_web/)..."
+        if [ ! -d "$JENOVA_ROOT/jca_web" ]; then
+            warn "jca_web/ source tree missing — skipping Web UI build"
+            WARNINGS=$((WARNINGS + 1))
+        elif ! command -v npm >/dev/null 2>&1; then
+            warn "npm not found — cannot build Web UI"
+            warn "Install nodejs/npm to enable the Web UI."
+            WARNINGS=$((WARNINGS + 1))
+        else
+            (
+                cd "$JENOVA_ROOT/jca_web" && \
+                npm install --silent && \
+                npm run build --silent
+            ) || {
+                fail "Web UI build failed — see above. Re-run: make web"
+                ERRORS=$((ERRORS + 1))
+            }
+            if [ -f "$JENOVA_ROOT/public/bundle.js" ]; then
+                ok "Web UI built successfully"
+            fi
+        fi
+    else
+        ok "Web UI already built (use --force to rebuild)"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # 6. Model files — check and offer to download missing models
 # ---------------------------------------------------------------------------
 if [ "$CLIENT_ONLY" = "1" ] || [ "${JENOVA_SKIP_MODELS:-0}" = "1" ]; then
@@ -739,9 +775,9 @@ _verify_and_copy_bin() {
     if command -v file >/dev/null 2>&1; then
         _file_info=$(file "$_src")
         case "$JENOVA_OS" in
-            linux)   echo "$_file_info" | grep -qi "ELF.*GNU/Linux" || { warn "Skipping incompatible Linux binary: $(basename "$_src")"; return 1; } ;;
-            freebsd) echo "$_file_info" | grep -qi "ELF.*FreeBSD"   || { warn "Skipping incompatible FreeBSD binary: $(basename "$_src")"; return 1; } ;;
-            macos)   echo "$_file_info" | grep -qi "Mach-O"       || { warn "Skipping incompatible macOS binary: $(basename "$_src")"; return 1; } ;;
+            linux)   echo "$_file_info" | grep -qi "ELF.*GNU/Linux" || { info "Skipping Linux-only binary: $(basename "$_src")"; return 0; } ;;
+            freebsd) echo "$_file_info" | grep -qi "ELF.*FreeBSD"   || { info "Skipping non-FreeBSD binary: $(basename "$_src")"; return 0; } ;;
+            macos)   echo "$_file_info" | grep -qi "Mach-O"       || { info "Skipping non-macOS binary: $(basename "$_src")"; return 0; } ;;
         esac
     fi
     
