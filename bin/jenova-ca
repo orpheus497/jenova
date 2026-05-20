@@ -505,20 +505,27 @@ done
 
 if [ "$1" = "--daemon" ]; then
     shift
-    # Strip --watch from remaining args (it's for post-startup, not llama-server)
-    # Strip jenova-ca-specific flags that aren't for llama-server
-    _argc=$#
-    while [ "$_argc" -gt 0 ]; do
+    # Robust POSIX argument filtering: collect flags for jenova-ca,
+    # and rebuild the positional parameters for llama-server.
+    _ORIG_COUNT=$#
+    _I=0
+    while [ "$_I" -lt "$_ORIG_COUNT" ]; do
         _arg="$1"
         shift
-        _argc=$((_argc - 1))
+        _I=$((_I + 1))
         case "$_arg" in
             --watch|--lan|--daemon) continue ;;
-            --port) PORT="$1"; shift; _argc=$((_argc - 1)); continue ;;
-            --llama-port) LLAMA_PORT="$1"; shift; _argc=$((_argc - 1)); continue ;;
-            --embed-port) LLAMA_EMBED_PORT="$1"; shift; _argc=$((_argc - 1)); continue ;;
+            --port) 
+                [ $# -gt 0 ] || { echo "Error: --port requires a value" >&2; exit 1; }
+                PORT="$1"; shift; _I=$((_I + 1)); continue ;;
+            --llama-port) 
+                [ $# -gt 0 ] || { echo "Error: --llama-port requires a value" >&2; exit 1; }
+                LLAMA_PORT="$1"; shift; _I=$((_I + 1)); continue ;;
+            --embed-port) 
+                [ $# -gt 0 ] || { echo "Error: --embed-port requires a value" >&2; exit 1; }
+                LLAMA_EMBED_PORT="$1"; shift; _I=$((_I + 1)); continue ;;
+            *) set -- "$@" "$_arg" ;;
         esac
-        set -- "$@" "$_arg"
     done
 
     # Acquire exclusive lock to prevent concurrent startup (TOCTOU guard)
@@ -704,18 +711,25 @@ fi
 # =====================================================================
 # FOREGROUND MODE
 # =====================================================================
-_argc=$#
-while [ "$_argc" -gt 0 ]; do
+_ORIG_COUNT=$#
+_I=0
+while [ "$_I" -lt "$_ORIG_COUNT" ]; do
     _arg="$1"
     shift
-    _argc=$((_argc - 1))
+    _I=$((_I + 1))
     case "$_arg" in
         --daemon|--watch|--lan) continue ;;
-        --port) PORT="$1"; shift; _argc=$((_argc - 1)); continue ;;
-        --llama-port) LLAMA_PORT="$1"; shift; _argc=$((_argc - 1)); continue ;;
-        --embed-port) LLAMA_EMBED_PORT="$1"; shift; _argc=$((_argc - 1)); continue ;;
+        --port) 
+            [ $# -gt 0 ] || { echo "Error: --port requires a value" >&2; exit 1; }
+            PORT="$1"; shift; _I=$((_I + 1)); continue ;;
+        --llama-port) 
+            [ $# -gt 0 ] || { echo "Error: --llama-port requires a value" >&2; exit 1; }
+            LLAMA_PORT="$1"; shift; _I=$((_I + 1)); continue ;;
+        --embed-port) 
+            [ $# -gt 0 ] || { echo "Error: --embed-port requires a value" >&2; exit 1; }
+            LLAMA_EMBED_PORT="$1"; shift; _I=$((_I + 1)); continue ;;
+        *) set -- "$@" "$_arg" ;;
     esac
-    set -- "$@" "$_arg"
 done
 
 _set_path_args

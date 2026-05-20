@@ -1,5 +1,8 @@
-#!/usr/bin/env bash
+#!/bin/sh
 set -e
+
+# tools.sh: POSIX-compliant wrapper for llama.cpp tools
+# Optimized for FreeBSD and minimal environments.
 
 # Read the first argument into a variable
 arg1="$1"
@@ -7,29 +10,33 @@ arg1="$1"
 # Shift the arguments to remove the first one
 shift
 
-if [[ "$arg1" == '--convert' || "$arg1" == '-c' ]]; then
+if [ "$arg1" = '--convert' ] || [ "$arg1" = '-c' ]; then
     exec python3 ./convert_hf_to_gguf.py "$@"
-elif [[ "$arg1" == '--quantize' || "$arg1" == '-q' ]]; then
+elif [ "$arg1" = '--quantize' ] || [ "$arg1" = '-q' ]; then
     exec ./llama-quantize "$@"
-elif [[ "$arg1" == '--run' || "$arg1" == '-r' ]]; then
+elif [ "$arg1" = '--run' ] || [ "$arg1" = '-r' ]; then
     exec ./llama-cli "$@"
-elif [[ "$arg1" == '--run-legacy' || "$arg1" == '-l' ]]; then
+elif [ "$arg1" = '--run-legacy' ] || [ "$arg1" = '-l' ]; then
     exec ./llama-completion "$@"
-elif [[ "$arg1" == '--bench' || "$arg1" == '-b' ]]; then
+elif [ "$arg1" = '--bench' ] || [ "$arg1" = '-b' ]; then
     exec ./llama-bench "$@"
-elif [[ "$arg1" == '--perplexity' || "$arg1" == '-p' ]]; then
+elif [ "$arg1" = '--perplexity' ] || [ "$arg1" = '-p' ]; then
     exec ./llama-perplexity "$@"
-elif [[ "$arg1" == '--all-in-one' || "$arg1" == '-a' ]]; then
+elif [ "$arg1" = '--all-in-one' ] || [ "$arg1" = '-a' ]; then
     echo "Converting PTH to GGML..."
-    for i in $(ls $1/$2/ggml-model-f16.bin*); do
-        if [ -f "${i/f16/q4_0}" ]; then
-            echo "Skip model quantization, it already exists: ${i/f16/q4_0}"
+    _dir="$1"
+    _model="$2"
+    # shellcheck disable=SC2010
+    for i in $(ls "$_dir/$_model/ggml-model-f16.bin"* 2>/dev/null); do
+        _target=$(echo "$i" | sed 's/f16/q4_0/')
+        if [ -f "$_target" ]; then
+            echo "Skip model quantization, it already exists: $_target"
         else
-            echo "Converting PTH to GGML: $i into ${i/f16/q4_0}..."
-            exec ./llama-quantize "$i" "${i/f16/q4_0}" q4_0
+            echo "Converting PTH to GGML: $i into $_target..."
+            ./llama-quantize "$i" "$_target" q4_0
         fi
     done
-elif [[ "$arg1" == '--server' || "$arg1" == '-s' ]]; then
+elif [ "$arg1" = '--server' ] || [ "$arg1" = '-s' ]; then
     exec ./llama-server "$@"
 else
     echo "Unknown command: $arg1"

@@ -127,8 +127,9 @@ local function async_send(fd, data)
     return sent
 end
 
-local function async_connect(fd, addr)
-    local ret = ffi.C.connect(fd, ffi.cast("struct sockaddr *", addr), ffi.sizeof(addr))
+local function async_connect(fd, addr, addrlen)
+    addrlen = addrlen or ffi.sizeof(addr)
+    local ret = ffi.C.connect(fd, ffi.cast("struct sockaddr *", addr), addrlen)
     if ret == 0 then return true end
     local err = ffi.errno()
     if err ~= EINPROGRESS then return false, err end
@@ -367,29 +368,26 @@ local function proxy_connection(client_fd, conn_fds)
     -- "GET /health?…" while excluding paths like /healthz). Support /v1/health for compatibility.
     local is_health = is_get and (headers_raw:match("^GET /health[ %?]") or headers_raw:match("^GET /v1/health[ %?]"))
     if is_health then
-        -- Use a standard blocking connect with a short timeout for the health check
-        -- to avoid false negatives from the async state machine.
-        local health_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
         local backend_ok = false
-        if health_fd >= 0 then
-            set_cloexec(health_fd)
-            -- Set a short timeout for health check (1s)
-            local tv = ffi.new("struct timeval", {tv_sec=1, tv_usec=0})
-            ffi.C.setsockopt(health_fd, SOL_SOCKET, _ffi_defs.SO_RCVTIMEO, tv, ffi.sizeof(tv))
-            ffi.C.setsockopt(health_fd, SOL_SOCKET, _ffi_defs.SO_SNDTIMEO, tv, ffi.sizeof(tv))
-            
-            local h_addr = ffi.new("struct sockaddr_in")
-            if not _ffi_defs.IS_LINUX then
-                h_addr.sin_len = ffi.sizeof(h_addr)
+        local hints = ffi.new("struct addrinfo")
+        hints.ai_family = 0 -- AF_UNSPEC
+        hints.ai_socktype = SOCK_STREAM
+        
+        local res = ffi.new("struct addrinfo *[1]")
+        local rc = ffi.C.getaddrinfo(LLAMA_CONNECT_HOST, tostring(LLAMA_PORT), hints, res)
+        if rc == 0 then
+            local ai = res[0]
+            local health_fd = ffi.C.socket(ai.ai_family, ai.ai_socktype, ai.ai_protocol)
+            if health_fd >= 0 then
+                set_cloexec(health_fd)
+                set_nonblocking(health_fd)
+                local ok, err = async_connect(health_fd, ai.ai_addr, ai.ai_addrlen)
+                backend_ok = ok
+                ffi.C.close(health_fd)
             end
-            h_addr.sin_family = AF_INET
-            h_addr.sin_port   = ffi.C.htons(LLAMA_PORT)
-            h_addr.sin_addr.s_addr = ffi.C.inet_addr(LLAMA_CONNECT_HOST)
-            
-            local res = ffi.C.connect(health_fd, ffi.cast("struct sockaddr *", h_addr), ffi.sizeof(h_addr))
-            backend_ok = (res == 0)
-            ffi.C.close(health_fd)
+            ffi.C.freeaddrinfo(ai)
         end
+
         local status_str  = backend_ok and "ok" or "degraded"
         local http_status = backend_ok and "200 OK" or "503 Service Unavailable"
         local health_body = json.encode({
@@ -496,13 +494,19 @@ local function proxy_connection(client_fd, conn_fds)
         local escaped_dir = workspaces_dir:gsub("'", "'\\''")
         local p = io.popen("find '" .. escaped_dir .. "' -maxdepth 3 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/build/*'")
         if p then
+            local output_parts = {}
             while true do
-                local line = p:read("*l")
-                if not line then break end
+                local chunk = p:read(4096)
+                if not chunk then break end
+                output_parts[#output_parts + 1] = chunk
+                coroutine.yield("read", -1)
+            end
+            p:close()
+            local output = table.concat(output_parts)
+            for line in output:gmatch("[^\n]+") do
                 local rel = line:sub(#workspaces_dir + 2)
                 if #rel > 0 then table.insert(files, "\"" .. rel .. "\"") end
             end
-            p:close()
         end
         local content = "[" .. table.concat(files, ",") .. "]"
         local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)
@@ -517,13 +521,19 @@ local function proxy_connection(client_fd, conn_fds)
         local escaped_dir = workspaces_dir:gsub("'", "'\\''")
         local p = io.popen("find '" .. escaped_dir .. "' -maxdepth 1 -type d -not -path '*/.*'")
         if p then
+            local output_parts = {}
             while true do
-                local line = p:read("*l")
-                if not line then break end
+                local chunk = p:read(4096)
+                if not chunk then break end
+                output_parts[#output_parts + 1] = chunk
+                coroutine.yield("read", -1)
+            end
+            p:close()
+            local output = table.concat(output_parts)
+            for line in output:gmatch("[^\n]+") do
                 local name = line:sub(#workspaces_dir + 2)
                 if #name > 0 then table.insert(ws, "\"" .. name .. "\"") end
             end
-            p:close()
         end
         local content = "[" .. table.concat(ws, ",") .. "]"
         local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)
