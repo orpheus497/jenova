@@ -140,6 +140,50 @@ local function async_connect(fd, addr, addrlen)
     if opt[0] == 0 then return true else return false, opt[0] end
 end
 
+local function async_popen_read(cmd)
+    local pipe_fds = ffi.new("int[2]")
+    if ffi.C.pipe(pipe_fds) < 0 then return nil, "pipe failed" end
+    local pid = ffi.C.fork()
+    if pid == 0 then
+        ffi.C.close(pipe_fds[0])
+        ffi.C.dup2(pipe_fds[1], 1)
+        ffi.C.dup2(pipe_fds[1], 2)
+        ffi.C.close(pipe_fds[1])
+        local argv = ffi.new("const char *[4]")
+        argv[0] = "/bin/sh"
+        argv[1] = "-c"
+        argv[2] = cmd
+        argv[3] = nil
+        ffi.C.execvp("/bin/sh", ffi.cast("char *const *", argv))
+        ffi.C._exit(1)
+    end
+    ffi.C.close(pipe_fds[1])
+    local fd = pipe_fds[0]
+    set_nonblocking(fd)
+    set_cloexec(fd)
+    
+    local chunks = {}
+    local buf = ffi.new("char[4096]")
+    while true do
+        local n = ffi.C.read(fd, buf, 4096)
+        if n > 0 then
+            chunks[#chunks + 1] = ffi.string(buf, n)
+        elseif n == 0 then
+            break
+        else
+            local err = ffi.errno()
+            if err == _ffi_defs.EAGAIN or err == _ffi_defs.EWOULDBLOCK then
+                coroutine.yield("read", fd)
+            else
+                break
+            end
+        end
+    end
+    ffi.C.close(fd)
+    ffi.C.waitpid(pid, nil, 0)
+    return table.concat(chunks)
+end
+
 -- Detect available HTTPS-capable command-line tool (once at startup).
 -- FreeBSD: 'fetch' is in base. Linux/other: fall back to 'curl'.
 local HTTPS_CMD
@@ -199,10 +243,7 @@ local function ddg_instant_answer(query)
     local cmd = https_fetch_cmd(url, 5)
     if not cmd then return nil end
 
-    local handle = io.popen(cmd)
-    if not handle then return nil end
-    local raw = handle:read(256 * 1024)
-    handle:close()
+    local raw = async_popen_read(cmd)
     if not raw or #raw < 10 then return nil end
 
     local ok, data = pcall(json.decode, raw)
@@ -245,10 +286,7 @@ local function ddg_html_search(query)
     local cmd = https_fetch_cmd(url, 8)
     if not cmd then return nil end
 
-    local handle = io.popen(cmd)
-    if not handle then return nil end
-    local html = handle:read(256 * 1024)
-    handle:close()
+    local html = async_popen_read(cmd)
     if not html or #html < 100 then return nil end
 
     local titles, snippets = {}, {}
@@ -505,17 +543,14 @@ local function proxy_connection(client_fd, conn_fds)
     if is_storage_list then
         recursive_mkdir(workspaces_dir)
         local files = {}
-        -- Shell-escape the path to prevent injection via HOME containing metacharacters
         local escaped_dir = workspaces_dir:gsub("'", "'\\''")
-        local p = io.popen("find '" .. escaped_dir .. "' -maxdepth 3 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/build/*'")
-        if p then
-            while true do
-                local line = p:read("*l")
-                if not line then break end
+        local cmd = "find '" .. escaped_dir .. "' -maxdepth 3 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/build/*'"
+        local output = async_popen_read(cmd)
+        if output then
+            for line in output:gmatch("[^\r\n]+") do
                 local rel = line:sub(#workspaces_dir + 2)
                 if #rel > 0 then table.insert(files, "\"" .. rel .. "\"") end
             end
-            p:close()
         end
         local content = "[" .. table.concat(files, ",") .. "]"
         local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)
@@ -528,15 +563,13 @@ local function proxy_connection(client_fd, conn_fds)
         recursive_mkdir(workspaces_dir)
         local ws = {}
         local escaped_dir = workspaces_dir:gsub("'", "'\\''")
-        local p = io.popen("find '" .. escaped_dir .. "' -maxdepth 1 -type d -not -path '*/.*'")
-        if p then
-            while true do
-                local line = p:read("*l")
-                if not line then break end
+        local cmd = "find '" .. escaped_dir .. "' -maxdepth 1 -type d -not -path '*/.*'"
+        local output = async_popen_read(cmd)
+        if output then
+            for line in output:gmatch("[^\r\n]+") do
                 local name = line:sub(#workspaces_dir + 2)
                 if #name > 0 then table.insert(ws, "\"" .. name .. "\"") end
             end
-            p:close()
         end
         local content = "[" .. table.concat(ws, ",") .. "]"
         local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)

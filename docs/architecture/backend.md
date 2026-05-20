@@ -21,8 +21,9 @@ LuaJIT proxy that fronts `llama-server` and shapes every request.
 - **Stack**: `lib/proxy.lua` (LuaJIT, coroutine-based **non-blocking** I/O).
 - **Architecture**: Employs a `select`-based loop with coroutine yielding for all I/O, including:
     - **Async Health Checks**: Backend liveness is verified via non-blocking TCP probes.
+    - **Async Sub-processes**: Shell commands (like `find` for file discovery and `fetch`/`curl` for web search) are executed via a non-blocking `fork`/`pipe` mechanism that yields to the scheduler while waiting for output.
     - **Background Discovery**: Directory crawling and workspace listing are performed asynchronously to prevent UI/Editor freezes.
-    - **Security Sealing**: All accepted sockets are marked with `FD_CLOEXEC` to prevent child processes (like `find` or `curl`) from inheriting and locking ports.
+    - **Security Sealing**: All accepted sockets are marked with `FD_CLOEXEC` to prevent child processes from inheriting and locking ports.
 - **API surface**: OpenAI-compatible `POST /v1/chat/completions`, `POST /v1/completions`, `GET /v1/models`, `GET /v1/health`.
 - **RAG pipeline**: Hybrid retrieval over the local index — semantic (embedding-server lookups) + BM25 — injecting the top snippets into the system prompt.
 

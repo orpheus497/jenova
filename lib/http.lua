@@ -199,10 +199,33 @@ function http.post(url, body, timeout)
     return 0, "invalid host: " .. host
   end
 
-  local ret = ffi.C.connect(fd, ffi.cast("struct sockaddr *", addr), ffi.sizeof(addr))
-  if ret < 0 then
-    ffi.C.close(fd)
-    return 0, "connect() failed"
+  if coroutine.running() then
+    local flags = ffi.C.fcntl(fd, ffi_defs.F_GETFL, 0)
+    ffi.C.fcntl(fd, ffi_defs.F_SETFL, bit.bor(flags, ffi_defs.O_NONBLOCK))
+    local ret = ffi.C.connect(fd, ffi.cast("struct sockaddr *", addr), ffi.sizeof(addr))
+    if ret ~= 0 then
+      local err = get_errno()
+      if err == ffi_defs.EINPROGRESS or err == ffi_defs.EAGAIN or err == ffi_defs.EWOULDBLOCK then
+        coroutine.yield("write", fd)
+        local opt = ffi.new("int[1]")
+        local len = ffi.new("socklen_t[1]", ffi.sizeof("int"))
+        ffi.C.getsockopt(fd, SOL_SOCKET, SO_ERROR, opt, len)
+        if opt[0] ~= 0 then
+          ffi.C.close(fd)
+          return 0, "connect() async failed: " .. get_errstr(opt[0])
+        end
+      else
+        ffi.C.close(fd)
+        return 0, "connect() failed: " .. get_errstr(err)
+      end
+    end
+    -- Success or async success: keep it non-blocking for send_all/recv_all
+  else
+    local ret = ffi.C.connect(fd, ffi.cast("struct sockaddr *", addr), ffi.sizeof(addr))
+    if ret < 0 then
+      ffi.C.close(fd)
+      return 0, "connect() failed: " .. get_errstr(get_errno())
+    end
   end
 
   local req = string.format(
@@ -259,10 +282,33 @@ function http.get(url, timeout)
     return 0, "invalid host"
   end
 
-  local ret = ffi.C.connect(fd, ffi.cast("struct sockaddr *", addr), ffi.sizeof(addr))
-  if ret < 0 then
-    ffi.C.close(fd)
-    return 0, "connect() failed"
+  if coroutine.running() then
+    local flags = ffi.C.fcntl(fd, ffi_defs.F_GETFL, 0)
+    ffi.C.fcntl(fd, ffi_defs.F_SETFL, bit.bor(flags, ffi_defs.O_NONBLOCK))
+    local ret = ffi.C.connect(fd, ffi.cast("struct sockaddr *", addr), ffi.sizeof(addr))
+    if ret ~= 0 then
+      local err = get_errno()
+      if err == ffi_defs.EINPROGRESS or err == ffi_defs.EAGAIN or err == ffi_defs.EWOULDBLOCK then
+        coroutine.yield("write", fd)
+        local opt = ffi.new("int[1]")
+        local len = ffi.new("socklen_t[1]", ffi.sizeof("int"))
+        ffi.C.getsockopt(fd, SOL_SOCKET, SO_ERROR, opt, len)
+        if opt[0] ~= 0 then
+          ffi.C.close(fd)
+          return 0, "connect() async failed: " .. get_errstr(opt[0])
+        end
+      else
+        ffi.C.close(fd)
+        return 0, "connect() failed: " .. get_errstr(err)
+      end
+    end
+    -- Success or async success: keep it non-blocking for send_all/recv_all
+  else
+    local ret = ffi.C.connect(fd, ffi.cast("struct sockaddr *", addr), ffi.sizeof(addr))
+    if ret < 0 then
+      ffi.C.close(fd)
+      return 0, "connect() failed: " .. get_errstr(get_errno())
+    end
   end
 
   local req = string.format(
