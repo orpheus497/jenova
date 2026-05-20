@@ -30,6 +30,8 @@ end
 
 local function parse_tool_calls(text)
   local tool_uses = {}
+
+  -- 1. Parse JSON blocks (original format)
   for _, json_str in ipairs(extract_json_blocks(text)) do
     local ok, data = pcall(vim.json.decode, json_str)
     if ok and type(data) == "table" then
@@ -43,6 +45,30 @@ local function parse_tool_calls(text)
       end
     end
   end
+
+  -- 2. Parse Tag-style calls (e.g. <Read file_path="foo.txt">)
+  -- This handles models that hallucinate XML-style tool calls.
+  for tag_name, args_str in text:gmatch("<(%w+)%s+([^>]+)>") do
+    if registry.get(tag_name) then
+      local args = {}
+      for k, v in args_str:gmatch('(%w+)="([^"]*)"') do
+        args[k] = v
+      end
+      -- Also try unquoted or single quoted just in case
+      if next(args) == nil then
+        for k, v in args_str:gmatch("(%w+)=([^%s>]+)") do
+          args[k] = v
+        end
+      end
+      
+      table.insert(tool_uses, {
+        id    = "tc-tag-" .. math.random(1000, 9999),
+        name  = tag_name,
+        input = args,
+      })
+    end
+  end
+
   return tool_uses
 end
 

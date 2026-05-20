@@ -492,6 +492,17 @@ local function strip_fabricated_tags(text)
   for _, tag in ipairs(tags) do
     cleaned = cleaned:gsub(tag, "")
   end
+
+  -- Strip tag-style tool calls: <Read ...>
+  local ok_reg, reg = pcall(require, "jenova.agent.registry")
+  if ok_reg and reg then
+    for tag_name in text:gmatch("<(%w+)[%s>]") do
+      if reg.get(tag_name) then
+        cleaned = cleaned:gsub("<" .. tag_name .. "[^>]*>", "")
+      end
+    end
+  end
+
   -- Also strip naked ```json blocks that were already processed by the engine
   -- so they don't stay in the chat log as raw text.
   cleaned = cleaned:gsub("```json.-```", "")
@@ -593,9 +604,21 @@ local function agent_respond(buf, prompt, on_done, history)
     if not vim.api.nvim_buf_is_valid(buf) or text == "" then return end
 
     -- Filter out internal tags and JSON fences during streaming to prevent UI flickering/leakage.
-    -- We keep enough of the JSON start to detect tool use, but hide the bulk of it.
+    -- We hide tags that look like tool calls (e.g. <Read ...>) if they match a known tool.
     local filtered = text:gsub("<%/?[%w_]+>", "")
     filtered = filtered:gsub("```json.-```", "")
+
+    -- If the text contains a tool call tag, we hide it and stop the stream run.
+    local ok_reg, reg = pcall(require, "jenova.agent.registry")
+    if ok_reg and reg then
+      for tag_name in text:gmatch("<(%w+)[%s>]") do
+        if reg.get(tag_name) then
+          commit_stream()
+          return
+        end
+      end
+    end
+
     if filtered == "" and text:find("```json") then
       -- If it's a tool call, we still want to stop the text stream and wait for the badge.
       commit_stream()
