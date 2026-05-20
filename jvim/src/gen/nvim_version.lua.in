@@ -1,7 +1,7 @@
 return {
-  {"major", ${NVIM_VERSION_MAJOR}},
-  {"minor", ${NVIM_VERSION_MINOR}},
-  {"patch", ${NVIM_VERSION_PATCH}},
+  {"major", ${NVIM_COMPAT_MAJOR}},
+  {"minor", ${NVIM_COMPAT_MINOR}},
+  {"patch", ${NVIM_COMPAT_PATCH}},
   {"prerelease", "${NVIM_VERSION_PRERELEASE}" ~= ""},
-  {"engine", {${NVIM_COMPAT_MAJOR}, ${NVIM_COMPAT_MINOR}, ${NVIM_COMPAT_PATCH}}},
+  {"jvim", {${JVIM_VERSION_MAJOR}, ${JVIM_VERSION_MINOR}, ${JVIM_VERSION_PATCH}}},
 }

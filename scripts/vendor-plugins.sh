@@ -73,7 +73,7 @@ echo "==> Vendoring plugins into $DEST"
 echo "$SPECS" | grep -v '^[[:space:]]*$' | while IFS='|' read -r KEY SLUG; do
     SHA="$(sha_for "$KEY")"
     if [ -z "$SHA" ]; then
-        echo "  ! no SHA for $KEY in lazy-lock.json" >&2
+        echo "  ! no SHA for $KEY in plugins.lock.json" >&2
         continue
     fi
     DIR="$DEST/$KEY"
