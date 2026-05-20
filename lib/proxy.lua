@@ -51,7 +51,7 @@ local EAGAIN = _ffi_defs.EAGAIN
 local EWOULDBLOCK = _ffi_defs.EWOULDBLOCK
 local EINPROGRESS = _ffi_defs.EINPROGRESS
 
-local MAX_ACTIVE_CONNECTIONS = 6
+local MAX_ACTIVE_CONNECTIONS = 32
 local MAX_HEADER_SIZE = 65536
 local MAX_BODY_SIZE = 100 * 1024 * 1024
 
@@ -490,20 +490,20 @@ local function proxy_connection(client_fd, conn_fds)
             f:write(body_raw)
             f:close()
 
-            -- Structural trigger: Re-index this file in the background RAG if it's a markdown or text file.
-            -- We use a simple backgrounding trick via '&' (portable to Linux/FreeBSD) or just run it.
-            -- Since reindex_file is fast for BM25, we run it in-proc but wrapped in pcall.
-            if full_path:match("%.md$") or full_path:match("%.txt$") then
-                pcall(function()
-                    local s = require("search")
-                    if s and s.reindex_file then
-                        s.reindex_file(full_path)
-                    end
-                end)
-            end
-
             local resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}"
             async_send(client_fd, resp)
+
+            -- Structural trigger: Re-index this file in the background RAG if it's a markdown or text file.
+            if full_path:match("%.md$") or full_path:match("%.txt$") then
+                coroutine.wrap(function()
+                    pcall(function()
+                        local s = require("search")
+                        if s and s.reindex_file then
+                            s.reindex_file(full_path)
+                        end
+                    end)
+                end)()
+            end
         else
             local resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
             async_send(client_fd, resp)

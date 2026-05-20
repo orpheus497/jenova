@@ -18,13 +18,11 @@ The primary GGUF runtime.
 
 ## 2. Intelligence Proxy — RAG Brain (port 8080)
 LuaJIT proxy that fronts `llama-server` and shapes every request.
-- **Stack**: `lib/proxy.lua` (LuaJIT, coroutine-based non-blocking I/O).
+- **Stack**: `lib/proxy.lua` (LuaJIT, non-blocking coroutine-based I/O via `lib/http.lua`).
 - **API surface**: OpenAI-compatible
   `POST /v1/chat/completions`, `POST /v1/completions`, `GET /v1/models`,
   `GET /v1/health`.
-- **RAG pipeline**: Hybrid retrieval over the local index — semantic
-  (embedding-server lookups) + BM25 — injecting the top snippets into the
-  system prompt before forwarding to `llama-server`.
+- **RAG pipeline**: Hybrid retrieval over the local index. Inbound storage updates trigger asynchronous background re-indexing to prevent head-of-line blocking on port 8080.
 - **Streaming**: Chunked transfer-encoding pass-through with token-level
   flushing, keeping latency low for the chat sidebar.
 

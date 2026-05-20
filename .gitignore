@@ -79,6 +79,8 @@
 
 # --- Jenova Runtime (Private Data) ---
 /.jenova/
+/.system/
+/.crush/
 
 # --- Backups (local-only snapshots) ---
 /backups/
