@@ -9,6 +9,10 @@
 
 set -e
 
+# Initialize process and port variables
+LLAMA_PID=""; PROXY_PID=""; EMBED_PID=""
+HOST=""; PORT=""; LLAMA_PORT=""; LLAMA_EMBED_PORT=""
+
 _REAL_EXE=$(realpath "$0" 2>/dev/null || readlink -f "$0")
 _BIN_DIR=$(dirname "$_REAL_EXE")
 
