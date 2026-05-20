@@ -56,13 +56,15 @@ pcall(function()
   require("jvim.keyhelp").setup({
     groups = {
       { "<leader>a", group = "AI" },
+      { "<leader>am", group = "AI Management" },
+      { "<leader>at", group = "AI Tools" },
       { "<leader>b", group = "Buffer" },
       { "<leader>c", group = "Code" },
       { "<leader>f", group = "Find" },
       { "<leader>g", group = "Git" },
       { "<leader>r", group = "Rename" },
       { "<leader>t", group = "Terminal" },
-      { "<leader>w", group = "Windows" },
+      { "<leader>W", group = "Windows" },
       { "<leader>x", group = "Diagnostics" },
     },
   })
@@ -149,12 +151,16 @@ vim.keymap.set("n", "<leader>bd", function() buf_remove(false) end,
 vim.keymap.set("n", "<leader>bD", function() buf_remove(true) end,
   { silent = true, desc = "Delete Buffer (Force)" })
 
+-- ##Step: Dashboard keymaps
+vim.keymap.set("n", "<leader>h", "<cmd>JvimDashboard<CR>",
+  { silent = true, desc = "Dashboard / Home" })
+
 -- ##Step: Terminal keymaps (jvim.terminal).
 vim.keymap.set("n", "<leader>tt", function() require("jvim.terminal").toggle_shell() end,
   { silent = true, desc = "Toggle Shell Terminal" })
 vim.keymap.set("n", "<leader>tn", function() require("jvim.terminal").new_shell() end,
   { silent = true, desc = "New Shell Terminal" })
-vim.keymap.set("n", "<leader>tj", function() require("jvim.terminal").toggle_jenova() end,
+vim.keymap.set("n", "<leader>atj", function() require("jvim.terminal").toggle_jenova() end,
   { silent = true, desc = "Toggle Jenova Terminal" })
 vim.keymap.set("n", "<leader>ti", function() require("jvim.layout").open_ide() end,
   { silent = true, desc = "Open IDE layout" })

@@ -143,9 +143,10 @@ map("n", "<leader>af", function()
   vim.notify("FIM Autocomplete: " .. label, vim.log.levels.INFO, { title = "Jenova AI" })
 end, { desc = "Toggle FIM Autocomplete" })
 
-map("n", "<leader>aM", "<cmd>JenovaMonitor<CR>",    { desc = "Jenova Monitor" })
-map("n", "<leader>ah", "<cmd>checkhealth jenova<CR>", { desc = "Jenova Health" })
-map("n", "<leader>al", "<cmd>JenovaLanScan<CR>",    { desc = "Jenova LAN Scan" })
+map("n", "<leader>ah", "<cmd>JvimDashboard<CR>",      { desc = "Dashboard / Home" })
+map("n", "<leader>atm", "<cmd>JenovaMonitor<CR>",     { desc = "Jenova Monitor" })
+map("n", "<leader>ath", "<cmd>checkhealth jenova<CR>", { desc = "Jenova Health" })
+map("n", "<leader>atl", "<cmd>JenovaLanScan<CR>",     { desc = "Jenova LAN Scan" })
 
 --------------------------------------------------------------------------------
 -- [6] JENOVA BACKEND HEALTH CHECK

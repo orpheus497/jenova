@@ -71,7 +71,7 @@ on the Neovim runtime — no out-of-process subprocesses for buffer I/O.
 ## Security & Permissions
 - **Interactive confirmation** — destructive tools (`Shell`, \`BufferWrite\`,
   \`BufferEdit\`, \`BufferMultiEdit\`) require explicit user approval by default.
-- **Plan mode** — a read-only mode (toggled with \`<leader>am\`) where the agent
+- **Plan mode** — a read-only mode (toggled with `<leader>amm`) where the agent
   can investigate but not mutate.
 - **Path validation** — file tools resolve through \`agent/utils/paths.lua\`,
   which rejects escapes outside the project root unless overridden.

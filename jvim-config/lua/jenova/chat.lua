@@ -235,7 +235,7 @@ local function set_chat_buf_options(buf)
 
   -- Treesitter gives us proper syntax for fenced code blocks via injection
   -- queries when the markdown parser is installed. Wrapped in pcall because
-  -- the parser may not yet be loaded (lazy plugin) at first chat open — in
+  -- the parser may not yet be loaded (deferred) at first chat open — in
   -- that case we silently fall back to vim's stock markdown syntax which
   -- honours markdown_fenced_languages.
   pcall(function()
@@ -1479,30 +1479,30 @@ function M.setup()
     local esc = vim.api.nvim_replace_termcodes("<Esc>", true, false, true)
     vim.api.nvim_feedkeys(esc, "x", false)
     M.visual_chat()
-  end, opts("Visual Chat"))
+  end, opts("Visual Chat (Selection)"))
 
+  vim.keymap.set("n", "<leader>aa", function() M.toggle_chat() end, opts("Toggle Chat"))
   vim.keymap.set("n", "<leader>ac", function() M.chat_with_context() end, opts("Chat with Buffer Context"))
-  vim.keymap.set("n", "<leader>aF", function() M.fresh_chat() end, opts("New Chat (Fresh Context)"))
-  vim.keymap.set("n", "<leader>at", function() M.toggle_chat() end, opts("Toggle Chat"))
-  vim.keymap.set("n", "<leader>ar", function() M.respond() end, opts("Chat Respond"))
-  vim.keymap.set("n", "<leader>ad", function() M.delete_chat() end, opts("Delete Chat"))
   vim.keymap.set("n", "<leader>an", function() M.open_chat() end, opts("New Chat"))
-  vim.keymap.set("n", "<leader>am", function() M.toggle_mode() end, opts("Toggle Agent/Conversation Mode"))
-  vim.keymap.set("n", "<leader>aR", function() M.agent_reset() end, opts("Reset Agent Context"))
+  vim.keymap.set("n", "<leader>ar", function() M.respond() end, opts("Chat Respond"))
+
+  -- AI Management Group (<leader>am)
+  vim.keymap.set("n", "<leader>amm", function() M.toggle_mode() end, opts("Toggle Agent/Conversation Mode"))
+  vim.keymap.set("n", "<leader>amr", function() M.agent_reset() end, opts("Reset Agent Context"))
+  vim.keymap.set("n", "<leader>amf", function() M.fresh_chat() end, opts("New Chat (Fresh Context)"))
+  vim.keymap.set("n", "<leader>amd", function() M.delete_chat() end, opts("Delete Chat"))
 
   vim.keymap.set("v", "<leader>aw", function()
     local esc = vim.api.nvim_replace_termcodes("<Esc>", true, false, true)
     vim.api.nvim_feedkeys(esc, "x", false)
     M.visual_rewrite()
-  end, opts("Visual Rewrite"))
+  end, opts("Visual Rewrite (Selection)"))
 
   vim.keymap.set("n", "<leader>as", function() M.web_search() end, opts("Web Search"))
   vim.keymap.set("n", "<leader>ai", function() M.inline_rewrite() end, opts("Inline Rewrite"))
   vim.keymap.set("n", "<leader>ax", function() M.stop() end, opts("Stop Generation"))
 
-  vim.keymap.set("n", "<leader>aa", function() M.toggle_chat() end, opts("Open / focus chat"))
-
-  vim.keymap.set("n", "<leader>af", function()
+  vim.keymap.set("n", "<leader>atd", function()
     local src_buf = vim.api.nvim_get_current_buf()
     local diags = vim.diagnostic.get(src_buf)
     if #diags == 0 then

@@ -26,7 +26,7 @@ The **Jenova Cognitive Architecture** is structured around several interconnecte
 | **Local Inference** | GGUF model execution (llama.cpp) handling agents, RAG embeddings, and speculative decoding. | C++ |
 
 ## System Flow
-1. **User input** — typed into the `jvim` chat sidebar (`<leader>at`) or piped
+1. **User input** — typed into the `jvim` chat sidebar (`<leader>aa`) or piped
    into `bin/jenova` for one-shot use.
 2. **Agent engine** — `jvim-config/lua/jenova/agent/engine.lua` builds a
    context snapshot (active buffer, project tree, LSP diagnostics, recent

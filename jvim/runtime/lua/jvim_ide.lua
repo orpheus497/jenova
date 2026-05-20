@@ -1,4 +1,4 @@
--- ##Script function and purpose: Main Neovim entry point — bootstraps lazy.nvim, sets
+-- ##Script function and purpose: Main Neovim entry point — uses spec_runner, sets
 -- global editor options, loads modular plugin configs, and wires master keybinds
 -- for the Jenova FreeBSD IDE environment.
 
@@ -13,11 +13,8 @@ vim.opt.rtp:prepend(vim.fn.stdpath("data") .. "/site")
 -- ##Section purpose: LIBDIR RESOLUTION — locate the install-tree `lib/jvim`
 -- directory that holds bundled treesitter parsers (parser/<lang>.so). The
 -- libdir is in &runtimepath by default (see runtime.c:get_lib_dir), but
--- lazy.nvim's `performance.rtp.reset = true` strips it during setup, which
--- breaks vim.treesitter.start() in every shipped ftplugin. Ask core for the
--- canonical libdir first (matches runtime.c:get_lib_dir cross-platform path
--- handling) and fall back to manual derivation only if it is unavailable, so
--- we can both early-prepend it and feed it to lazy via rtp.paths below.
+-- we ensure it's explicitly prepended here so bundled assets remain
+-- discoverable via nvim_get_runtime_file().
 local jvim_libdir
 do
   local ok, libdir = pcall(function() return vim.api.nvim__get_lib_dir() end)
@@ -47,14 +44,21 @@ do
 end
 
 --------------------------------------------------------------------------------
--- [2] BOOTSTRAP LAZY.NVIM
+-- [2] BUILTIN DISABLE
 --------------------------------------------------------------------------------
--- ##Section purpose: Auto-install lazy.nvim plugin manager on first launch if absent
-local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
-if not (vim.uv or vim.loop).fs_stat(lazypath) then
-  vim.fn.system({ "git", "clone", "--filter=blob:none", "https://github.com/folke/lazy.nvim.git", lazypath })
+-- ##Section purpose: Disable unused built-in plugins.
+for _, name in ipairs({
+  "gzip",
+  "matchit",
+  "matchparen",
+  "netrwPlugin",
+  "tarPlugin",
+  "tohtml",
+  "tutor",
+  "zipPlugin",
+}) do
+  vim.g["loaded_" .. name] = 1
 end
-vim.opt.rtp:prepend(lazypath)
 
 --------------------------------------------------------------------------------
 -- [3] MASTER EDITOR OPTIONS
@@ -92,41 +96,41 @@ opt.maxmempattern = 2000
 -- ##Section purpose: Load shipped plugin specs from `jvim_plugins/` (renamed
 -- from `plugins/` to avoid colliding with user `~/.config/jvim/lua/plugins/`
 -- — see PLUGINS.md). User plugin specs in `lua/plugins/*.lua` continue to be
--- loaded automatically as a second import root if present.
-local lazy_imports = { { import = "jvim_plugins" } }
+-- loaded automatically via Neovim's plugin directory mechanism.
+local spec_runner = require("jenova.spec_runner")
+for _, mod in ipairs({
+  "jvim_plugins.editor",
+  "jvim_plugins.git",
+  "jvim_plugins.lsp",
+  "jvim_plugins.mini",
+  "jvim_plugins.llama",
+  "jvim_plugins.chat",
+  "jvim_plugins.health",
+  "jvim_plugins.ui",
+  "jvim_plugins.dashboard",
+}) do
+  -- Load standard vendored plugins if they exist
+  pcall(spec_runner.run, mod)
+end
+
 do
   local user_plugins = vim.fn.stdpath("config") .. "/lua/plugins"
   if vim.fn.isdirectory(user_plugins) == 1 then
-    table.insert(lazy_imports, { import = "plugins" })
+    for _, mod in ipairs({
+      "plugins.editor",
+      "plugins.git",
+      "plugins.lsp",
+      "plugins.mini",
+      "plugins.llama",
+      "plugins.chat",
+      "plugins.health",
+      "plugins.ui",
+      "plugins.dashboard",
+    }) do
+      pcall(spec_runner.run, mod)
+    end
   end
 end
-
-require("lazy").setup(lazy_imports, {
-  defaults = { lazy = false },
-  install = { colorscheme = { "jvim" } },
-  rocks = { enabled = false }, -- Fix for FreeBSD libc/rocks conflict
-  ui = { border = "rounded" },
-  performance = {
-    rtp = {
-      reset = true,
-      -- ##Step purpose: Keep the install-tree libdir on &runtimepath after
-      -- lazy's rtp reset so bundled treesitter parsers (parser/<lang>.so) and
-      -- any other lib-resident assets remain discoverable via
-      -- nvim_get_runtime_file().
-      paths = jvim_libdir and { jvim_libdir } or {},
-      disabled_plugins = {
-        "gzip",
-        "matchit",
-        "matchparen",
-        "netrwPlugin",
-        "tarPlugin",
-        "tohtml",
-        "tutor",
-        "zipPlugin",
-      },
-    },
-  },
-})
 
 --------------------------------------------------------------------------------
 -- [5] MASTER KEYBOARD ORCHESTRATION (General)
@@ -162,11 +166,11 @@ end, { desc = "Toggle Terminal" })
 map("n", "<leader>tn", function()
   require("jvim.terminal").new_shell()
 end, { desc = "New Terminal" })
-map("n", "<leader>ta", function()
+map("n", "<leader>atj", function()
   require("jvim.terminal").toggle_jenova()
 end, { desc = "Jenova Agent Terminal" })
--- leader-aj: Toggle FIM Autocomplete
-map("n", "<leader>aj", function()
+-- leader-af: Toggle FIM Autocomplete
+map("n", "<leader>af", function()
   local cfg = vim.g.llama_config
   if not cfg then
     vim.notify("FIM not configured (llama.vim not loaded)", vim.log.levels.WARN, { title = "jvim" })
@@ -401,10 +405,10 @@ vim.api.nvim_create_user_command("JenovaLanScan", function()
   end
 end, { desc = "Scan LAN for remote Jenova CA instances" })
 
--- ##Step purpose: <leader>am — open backend monitor, <leader>ah — run checkhealth, <leader>al — LAN scan
-map("n", "<leader>am", "<cmd>JenovaMonitor<CR>", { desc = "Jenova Monitor" })
-map("n", "<leader>ah", "<cmd>checkhealth jenova<CR>", { desc = "Jenova Health" })
-map("n", "<leader>al", "<cmd>JenovaLanScan<CR>", { desc = "Jenova LAN Scan" })
+-- ##Step purpose: <leader>atm — open backend monitor, <leader>ath — run checkhealth, <leader>atl — LAN scan
+map("n", "<leader>atm", "<cmd>JenovaMonitor<CR>", { desc = "Jenova Monitor" })
+map("n", "<leader>ath", "<cmd>checkhealth jenova<CR>", { desc = "Jenova Health" })
+map("n", "<leader>atl", "<cmd>JenovaLanScan<CR>", { desc = "Jenova LAN Scan" })
 
 vim.api.nvim_create_user_command("IDE", function()
   require("jvim.layout").open_ide()
