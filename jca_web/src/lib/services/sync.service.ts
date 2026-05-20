@@ -137,21 +137,41 @@ export class SyncService {
             
             const defaultWorkspace = workspaces[0]?.name || 'default';
 
+            const queue: (() => Promise<void>)[] = [];
+
             for (const note of allNotes) {
-                const folder = allFolders.find(f => f.id === note.folderId);
-                const folderName = folder?.name || 'Notes';
-                const path = `${defaultWorkspace}/${folderName}/${note.title}.md`;
-                await StorageService.save(path, note.content);
+                queue.push(async () => {
+                    const folder = allFolders.find(f => f.id === note.folderId);
+                    const folderName = folder?.name || 'Notes';
+                    const path = `${defaultWorkspace}/${folderName}/${note.title}.md`;
+                    await StorageService.save(path, note.content);
+                });
             }
 
             for (const conv of allConvs) {
-                const messages = await DatabaseService.getConversationMessages(conv.id);
-                const folder = allFolders.find(f => f.id === conv.folderId);
-                const folderName = folder?.name || 'Chats';
-                const md = MarkdownService.toMarkdown(conv, messages);
-                const path = `${defaultWorkspace}/${folderName}/${conv.name}.md`;
-                await StorageService.save(path, md);
+                queue.push(async () => {
+                    const messages = await DatabaseService.getConversationMessages(conv.id);
+                    const folder = allFolders.find(f => f.id === conv.folderId);
+                    const folderName = folder?.name || 'Chats';
+                    const md = MarkdownService.toMarkdown(conv, messages);
+                    const path = `${defaultWorkspace}/${folderName}/${conv.name}.md`;
+                    await StorageService.save(path, md);
+                });
             }
+
+            // Execute queue with concurrency limit of 3
+            const limit = 3;
+            const active: Promise<void>[] = [];
+            for (const task of queue) {
+                const p = task().then(() => {
+                    active.splice(active.indexOf(p), 1);
+                });
+                active.push(p);
+                if (active.length >= limit) {
+                    await Promise.race(active);
+                }
+            }
+            await Promise.all(active);
 
             // Also push full snapshot
             const data = await DatabaseService.exportData();

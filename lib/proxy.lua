@@ -532,6 +532,18 @@ local function proxy_connection(client_fd, conn_fds)
 
             local resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}"
             async_send(client_fd, resp)
+
+            -- Structural trigger: Re-index this file in the background RAG if it's a markdown or text file.
+            if full_path:match("%.md$") or full_path:match("%.txt$") then
+                coroutine.wrap(function()
+                    pcall(function()
+                        local s = require("search")
+                        if s and s.reindex_file then
+                            s.reindex_file(full_path)
+                        end
+                    end)
+                end)()
+            end
         else
             local resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
             async_send(client_fd, resp)

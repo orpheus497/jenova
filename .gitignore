@@ -81,6 +81,7 @@
 # --- Jenova Runtime (Private Data) ---
 /.jenova/
 /.system/
+/.crush/
 /var/state/
 
 # --- Temporary Search & Discovery Artifacts ---

@@ -62,17 +62,13 @@ end
 
 local function send_all(fd, data)
   local sent = 0
-  local retries = 0
-  local MAX_SEND_RETRIES = 50
   while sent < #data do
     local n = ffi.C.send(fd, data:sub(sent + 1), #data - sent, 0)
-    if n <= 0 then
+    if n > 0 then
+      sent = sent + tonumber(n)
+    else
       local err = get_errno()
       if err == EINTR or err == EAGAIN or err == EWOULDBLOCK then
-        retries = retries + 1
-        if retries > MAX_SEND_RETRIES then
-          return false, "send() stalled after " .. retries .. " retries"
-        end
         local _, is_main = coroutine.running()
         if not is_main then
           coroutine.yield("write", fd)
@@ -82,13 +78,11 @@ local function send_all(fd, data)
           tv_sleep.tv_usec = 50000
           ffi.C.select(0, nil, nil, nil, tv_sleep)
         end
-        goto continue
+      else
+        return false, "send() failed: " .. get_errstr(err)
       end
-      return false, "send() failed: " .. get_errstr(err)
+      end
     end
-    sent = sent + tonumber(n)
-    retries = 0
-    ::continue::
   end
   return true
 end
@@ -97,20 +91,22 @@ local function recv_all(fd, buf, buf_size, deadline)
   local chunks = {}
   local total_recv = 0
   local recv_err = nil
-  local MAX_RECV_SIZE = 10 * 1024 * 1024  -- 10MB cap to prevent memory exhaustion
-  -- Default deadline: 30 seconds from now if none provided
+  local MAX_RECV_SIZE = 10 * 1024 * 1024  -- 10MB cap
+  
+  -- Default deadline: 30 seconds
   deadline = deadline or (os.time() + 30)
+  
   while true do
-    ::retry::
     if os.time() >= deadline then
       recv_err = "recv() timed out"
       break
     end
+    
     local recv_n = ffi.C.recv(fd, buf, buf_size, 0)
     if recv_n > 0 then
       total_recv = total_recv + tonumber(recv_n)
       if total_recv > MAX_RECV_SIZE then
-        recv_err = "response too large (>" .. (MAX_RECV_SIZE/1048576) .. "MB)"
+        recv_err = "response too large"
         break
       end
       chunks[#chunks + 1] = ffi.string(buf, recv_n)
@@ -119,7 +115,7 @@ local function recv_all(fd, buf, buf_size, deadline)
     else
       local err = get_errno()
       if err == EINTR then
-        goto retry
+        -- retry immediately
       elseif err == EAGAIN or err == EWOULDBLOCK or err == ETIMEDOUT then
         local _, is_main = coroutine.running()
         if not is_main then
@@ -131,8 +127,7 @@ local function recv_all(fd, buf, buf_size, deadline)
           ffi.C.select(0, nil, nil, nil, tv_sleep)
         end
       else
-        recv_err = "recv() fatal error: " .. get_errstr(err) .. " (errno=" .. tostring(err) .. ")"
-        break
+        recv_err = "recv() fatal error: " .. get_errstr(err)
       end
     end
   end
@@ -179,6 +174,10 @@ function http.post(url, body, timeout)
 
   local fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
   if fd < 0 then return 0, "socket() failed" end
+
+  -- Set non-blocking to work with coroutine yields
+  local flags = ffi.C.fcntl(fd, ffi_defs.F_GETFL, 0)
+  ffi.C.fcntl(fd, ffi_defs.F_SETFL, bit.bor(flags, ffi_defs.O_NONBLOCK))
 
   local tv = ffi.new("struct timeval")
   tv.tv_sec = timeout
@@ -263,6 +262,10 @@ function http.get(url, timeout)
 
   local fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
   if fd < 0 then return 0, "socket() failed" end
+
+  -- Set non-blocking to work with coroutine yields
+  local flags = ffi.C.fcntl(fd, ffi_defs.F_GETFL, 0)
+  ffi.C.fcntl(fd, ffi_defs.F_SETFL, bit.bor(flags, ffi_defs.O_NONBLOCK))
 
   local tv = ffi.new("struct timeval")
   tv.tv_sec = timeout
