@@ -326,33 +326,13 @@ local function save_chat(buf)
   local path = chat_filepath(buf)
   if not path then return end
 
-  -- Resolve the relative path within the Workspace for the Proxy API.
-  -- e.g., /home/user/Workspaces/default/Chats/foo.md -> default/Chats/foo.md
-  local rel_path = path:sub(#WORKSPACE_ROOT + 2)
-  if rel_path == "" then return end
-
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  local content = table.concat(lines, "\n")
-  local url = ep().storage_url(rel_path)
-
-  -- Use vim.system (async) to POST to the Proxy. This ensures the UI doesn't hang
-  -- and the Proxy can trigger RAG re-indexing.
-  vim.system({ "curl", "-s", "-X", "POST", "--data-binary", "@-", url }, {
-    stdin = content,
-    detach = true,
-  }, function(obj)
-    if obj.code ~= 0 then
-      vim.schedule(function()
-        vim.notify("Failed to save chat to Proxy: " .. (obj.stderr or "Unknown error"), vim.log.levels.ERROR, { title = "Jenova" })
-      end)
-    else
-      vim.schedule(function()
-        if vim.api.nvim_buf_is_valid(buf) then
-          vim.bo[buf].modified = false
-        end
-      end)
-    end
-  end)
+  local ret = vim.fn.writefile(lines, path)
+  if ret == 0 then
+    vim.bo[buf].modified = false
+  else
+    vim.notify("Failed to save chat: " .. path, vim.log.levels.ERROR, { title = "Jenova" })
+  end
 end
 
 -- ── Scroll ────────────────────────────────────────────────────────────────────
@@ -498,6 +478,26 @@ end
 
 -- ── Agent response (agent mode) ───────────────────────────────────────────────
 
+local function strip_fabricated_tags(text)
+  if not text or text == "" then return "" end
+  local cleaned = text
+  -- Strip tool hallucinations and internal tags
+  local tags = {
+    "<tool_response>", "</tool_response>",
+    "<observation>", "</observation>",
+    "<tool_result>", "</tool_result>",
+    "<function_response>", "</function_response>",
+    "<result>", "</result>"
+  }
+  for _, tag in ipairs(tags) do
+    cleaned = cleaned:gsub(tag, "")
+  end
+  -- Also strip naked ```json blocks that were already processed by the engine
+  -- so they don't stay in the chat log as raw text.
+  cleaned = cleaned:gsub("```json.-```", "")
+  return vim.trim(cleaned)
+end
+
 -- Spinner frames for the thinking indicator
 local SPINNER = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
 
@@ -517,7 +517,6 @@ local function agent_respond(buf, prompt, on_done, history)
   -- badges, error rows) is committed ABOVE the transient line. Treating the
   -- transient row as a single in-place slot prevents the mid-stream tearing
   -- and stale "thinking…" lines that the previous renderer left behind.
-
   vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## jenova", "" })
   apply_chat_highlights(buf)
 
@@ -592,10 +591,23 @@ local function agent_respond(buf, prompt, on_done, history)
 
   local function append_text(text)
     if not vim.api.nvim_buf_is_valid(buf) or text == "" then return end
+
+    -- Filter out internal tags and JSON fences during streaming to prevent UI flickering/leakage.
+    -- We keep enough of the JSON start to detect tool use, but hide the bulk of it.
+    local filtered = text:gsub("<%/?[%w_]+>", "")
+    filtered = filtered:gsub("```json.-```", "")
+    if filtered == "" and text:find("```json") then
+      -- If it's a tool call, we still want to stop the text stream and wait for the badge.
+      commit_stream()
+      return
+    end
+    if filtered == "" then return end
+
     -- Replace the transient line with a fresh empty stream row before the
     -- first chunk arrives, so streamed text grows in place where the
     -- spinner used to sit.
     if not stream_start then
+
       if transient_lnum then
         pcall(vim.api.nvim_buf_set_lines, buf,
           transient_lnum - 1, transient_lnum, false, { "" })
@@ -1443,22 +1455,6 @@ local _setup_done = false
 function M.setup()
   if _setup_done then return end
   _setup_done = true
-
-  -- Architectural mandate: All chat persistence must flow through the Proxy (8080)
-  -- to ensure structural unification and automated RAG re-indexing.
-  vim.api.nvim_create_autocmd("BufWriteCmd", {
-    pattern = WORKSPACE_ROOT .. "/**/*.md",
-    callback = function(ev)
-      if is_chat_buf(ev.buf) then
-        save_chat(ev.buf)
-      else
-        -- Fallback for non-chat markdown in Workspaces (if any)
-        vim.api.nvim_buf_call(ev.buf, function()
-          vim.cmd("silent! write! " .. vim.fn.fnameescape(ev.file))
-        end)
-      end
-    end,
-  })
 
   vim.api.nvim_create_user_command("JenovaChat",        function() M.toggle_chat() end,   { desc = "Toggle Jenova Chat" })
   vim.api.nvim_create_user_command("JenovaChatNew",     function() M.open_chat() end,     { desc = "New Jenova Chat" })

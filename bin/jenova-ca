@@ -512,10 +512,8 @@ for _arg in "$@"; do
     if [ "$_arg" = "--watch" ]; then _WATCH_AFTER_START=true; fi
 done
 
-if [ "$1" = "--daemon" ]; then
-    shift
-    # Robust POSIX argument filtering: collect flags for jenova-ca,
-    # and rebuild the positional parameters for llama-server.
+# --- Logic: Argument Parsing ---
+_parse_runtime_args() {
     _ORIG_COUNT=$#
     _I=0
     while [ "$_I" -lt "$_ORIG_COUNT" ]; do
@@ -525,17 +523,26 @@ if [ "$1" = "--daemon" ]; then
         case "$_arg" in
             --watch|--lan|--daemon) continue ;;
             --port) 
-                [ $# -gt 0 ] || { echo "Error: --port requires a value" >&2; exit 1; }
+                case "$1" in ""|-*) echo "Error: --port requires a value" >&2; exit 1 ;; esac
                 PORT="$1"; shift; _I=$((_I + 1)); continue ;;
             --llama-port) 
-                [ $# -gt 0 ] || { echo "Error: --llama-port requires a value" >&2; exit 1; }
+                case "$1" in ""|-*) echo "Error: --llama-port requires a value" >&2; exit 1 ;; esac
                 LLAMA_PORT="$1"; shift; _I=$((_I + 1)); continue ;;
             --embed-port) 
-                [ $# -gt 0 ] || { echo "Error: --embed-port requires a value" >&2; exit 1; }
+                case "$1" in ""|-*) echo "Error: --embed-port requires a value" >&2; exit 1 ;; esac
                 LLAMA_EMBED_PORT="$1"; shift; _I=$((_I + 1)); continue ;;
             *) set -- "$@" "$_arg" ;;
         esac
     done
+}
+
+# --- Arguments: Daemon Mode ---
+if [ "$1" = "--daemon" ]; then
+    shift
+    # Robust POSIX argument filtering: collect flags for jenova-ca,
+    # and rebuild the positional parameters for llama-server.
+    _parse_runtime_args "$@"
+    shift "$_I"
 
     # Acquire exclusive lock to prevent concurrent startup (TOCTOU guard)
     # Use portable locking: flock on Linux/FreeBSD, or fallback to mkdir-based lock
@@ -720,26 +727,8 @@ fi
 # =====================================================================
 # FOREGROUND MODE
 # =====================================================================
-_ORIG_COUNT=$#
-_I=0
-while [ "$_I" -lt "$_ORIG_COUNT" ]; do
-    _arg="$1"
-    shift
-    _I=$((_I + 1))
-    case "$_arg" in
-        --daemon|--watch|--lan) continue ;;
-        --port) 
-            [ $# -gt 0 ] || { echo "Error: --port requires a value" >&2; exit 1; }
-            PORT="$1"; shift; _I=$((_I + 1)); continue ;;
-        --llama-port) 
-            [ $# -gt 0 ] || { echo "Error: --llama-port requires a value" >&2; exit 1; }
-            LLAMA_PORT="$1"; shift; _I=$((_I + 1)); continue ;;
-        --embed-port) 
-            [ $# -gt 0 ] || { echo "Error: --embed-port requires a value" >&2; exit 1; }
-            LLAMA_EMBED_PORT="$1"; shift; _I=$((_I + 1)); continue ;;
-        *) set -- "$@" "$_arg" ;;
-    esac
-done
+_parse_runtime_args "$@"
+shift "$_I"
 
 _set_path_args
 
