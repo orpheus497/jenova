@@ -1,6 +1,6 @@
--- ##Script function and purpose: Configures the full LSP stack — Mason package
--- manager, mason-lspconfig bridge, nvim-lspconfig server setup with FreeBSD binary
--- detection, nvim-cmp completion engine with LSP/buffer/path/snippet sources,
+-- ##Script function and purpose: Configures the full LSP stack —
+-- nvim-lspconfig server setup with FreeBSD binary detection,
+-- nvim-cmp completion engine with LSP/buffer/path/snippet sources,
 -- and lazydev for Neovim Lua API completion.
 
 return {
@@ -15,14 +15,12 @@ return {
       },
     },
   },
-  { "Bilal2453/luvit-meta", lazy = true },
+  { "Bilal2453/luvit-meta" },
 
-  -- ##Section purpose: nvim-lspconfig + Mason — LSP server setup with FreeBSD support
+  -- ##Section purpose: nvim-lspconfig — LSP server setup with FreeBSD support
   {
     "neovim/nvim-lspconfig",
     dependencies = {
-      "williamboman/mason.nvim",
-      "williamboman/mason-lspconfig.nvim",
       "hrsh7th/cmp-nvim-lsp",
     },
     config = function()
@@ -45,27 +43,6 @@ return {
           source = "if_many",
           header = "",
         },
-      })
-
-      -- ##Step purpose: Mason UI setup
-      require("mason").setup({
-        ui = {
-          border = "rounded",
-          icons = {
-            package_installed = "✓",
-            package_pending = "➜",
-            package_uninstalled = "✗",
-          },
-        },
-      })
-
-      -- ##Step purpose: mason-lspconfig bridge — only gopls auto-installed (Go binaries
-      -- are portable). All other servers must be installed via FreeBSD pkg or ports.
-      require("mason-lspconfig").setup({
-        ensure_installed = { "gopls" },
-        -- ##Step purpose: Disable automatic installation — Mason prebuilt binaries
-        -- are Linux-only and fail on FreeBSD
-        automatic_installation = false,
       })
 
       local capabilities = require("cmp_nvim_lsp").default_capabilities()

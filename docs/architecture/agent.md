@@ -69,9 +69,15 @@ on the Neovim runtime — no out-of-process subprocesses for buffer I/O.
 | `AskUser` | Prompt the user for a missing decision before continuing. |
 
 ## Security & Permissions
-- **Interactive confirmation** — destructive tools (`Shell`, `BufferWrite`,
-  `BufferEdit`, `BufferMultiEdit`) require explicit user approval by default.
-- **Plan mode** — a read-only mode (toggled with `<leader>am`) where the agent
+- **Interactive confirmation** — destructive tools (`Shell`, \`BufferWrite\`,
+  \`BufferEdit\`, \`BufferMultiEdit\`) require explicit user approval by default.
+- **Plan mode** — a read-only mode (toggled with `<leader>amm`) where the agent
   can investigate but not mutate.
-- **Path validation** — file tools resolve through `agent/utils/paths.lua`,
+- **Path validation** — file tools resolve through \`agent/utils/paths.lua\`,
   which rejects escapes outside the project root unless overridden.
+
+## Persona Integrity & Prompt Prioritization
+To ensure high reliability for agentic tasks, the Jenova system employs a strict **System Prompt Prioritization** logic at the proxy layer:
+1. **Client Sovereignty**: If a client (like \`jvim\`) provides its own specialized agent system prompt, the proxy **prioritizes** it.
+2. **Mandate Injection**: The "CORE MANDATE" (Identity and Autonomy instructions) is only prepended if no existing system prompt is detected, preventing "identity confusion" and conversational drift.
+3. **Context Merging**: Project-specific contexts (RAG hits, web search results) are cleanly appended to the existing system prompt rather than overwriting it, ensuring the agent retains its core operating instructions while gaining fresh knowledge.

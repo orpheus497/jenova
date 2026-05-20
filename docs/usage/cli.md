@@ -29,12 +29,33 @@ jenova --daemon-only   # start jenova-ca and exit
 jenova --check         # print resolved JENOVA_* environment and exit
 ```
 
-## TUI Manager — `scripts/jenova-manager.sh`
+## Jenova Manager (Operational TUI) — `bin/jenova-tui`
 
-A `dialog` / `whiptail`-based menu over the in-tree Makefile targets and
-helper scripts (install, update, uninstall, build subsystems, hardware
-profile management). All actions stay inside this monorepo — nothing is
-cloned from external repos at runtime.
+The Jenova Manager is the primary operational interface for controlling the
+backend and launching applications. It is what the `jenova.desktop` entry
+connects to.
+
+```sh
+bin/jenova-tui
+```
+
+Features:
+- **Status Monitoring**: Real-time display of backend (active/inactive) and
+  network mode (LAN/LOCAL).
+- **Backend Lifecycle**: Start, Stop, and Restart the `jenova-ca` suite.
+- **Network Toggle**: Switch between LOCAL (127.0.0.1) and LAN (0.0.0.0)
+  access with one command (updates `etc/jenova.local.conf`).
+- **Quick Launch**: One-key shortcuts to launch the `jvim` editor and the
+  Web UI.
+
+## Maintenance Manager — `scripts/jenova-manager.sh`
+
+A `dialog` / `whiptail`-based menu for installation and maintenance tasks.
+Use this for building, updating, or uninstalling components.
+
+```sh
+scripts/jenova-manager.sh
+```
 
 ## Hardware Tooling
 

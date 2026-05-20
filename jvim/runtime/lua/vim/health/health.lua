@@ -58,7 +58,7 @@ local function check_runtime()
         'Found old files in $VIMRUNTIME (this can cause weird behavior):\n%s',
         bad_files_msg
       ),
-      { 'Delete the $VIMRUNTIME directory, then reinstall Nvim.' }
+      { 'Delete the $VIMRUNTIME directory, then reinstall jvim.' }
     )
   end
 end
@@ -91,7 +91,7 @@ local function check_config()
 
   if vim.env.NVIM_TUI_ENABLE_CURSOR_SHAPE then
     ok = false
-    health.warn('$NVIM_TUI_ENABLE_CURSOR_SHAPE is ignored in Nvim 0.2+', {
+    health.warn('$NVIM_TUI_ENABLE_CURSOR_SHAPE is ignored in jvim 0.2+', {
       "Use the 'guicursor' option to configure cursor shape. :help 'guicursor'",
       'https://github.com/orpheus497/jvim/wiki/Following-HEAD#20170402',
     })
@@ -139,7 +139,7 @@ local function check_config()
     or (vim.o.shadafile == 'NONE' and '' or vim.o.shadafile)
   )
   if shadafile ~= '' and vim.fn.glob(shadafile) == '' then
-    -- Since this may be the first time Nvim has been run, try to create a shada file.
+    -- Since this may be the first time jvim has been run, try to create a shada file.
     if not pcall(vim.cmd.wshada) then
       writeable = false
     end
@@ -176,8 +176,8 @@ local function check_performance()
     health.ok(buildtype)
   else
     health.info(buildtype)
-    health.warn('Non-optimized debug build. Nvim will be slower.', {
-      'Install a different Nvim package, or rebuild with `CMAKE_BUILD_TYPE=RelWithDebInfo`.',
+    health.warn('Non-optimized debug build. jvim will be slower.', {
+      'Install a different jvim package, or rebuild with `CMAKE_BUILD_TYPE=RelWithDebInfo`.',
       suggest_faq,
     })
   end

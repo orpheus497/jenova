@@ -11,7 +11,9 @@ end
 -- Prefer JENOVA_ROOT env var (set by bin/jenova and bin/jenova-ca); fall back
 -- to deriving from the script's own location (lib/../).
 local _jenova_root = os.getenv("JENOVA_ROOT") or _dir:match("^(.+)/lib/?$") or _dir .. ".."
-local JENOVA_STATE = _jenova_root .. "/.jenova"
+local _home = os.getenv("HOME") or "/tmp"
+local _jenova_home = os.getenv("JENOVA_HOME") or (_home .. "/Jenova")
+local JENOVA_STATE = os.getenv("JENOVA_STATE") or (_jenova_home .. "/.system")
 
 local json = require("json")
 
@@ -516,21 +518,29 @@ function search.index_dir(root_dir, extensions)
 
   -- Use find -exec stat to get mtime and path in one go (Linux + FreeBSD)
   local cmd = string.format(
-    "find %s -type f %s -not -path '*/.git/*' -not -path '*/.jenova/*' -not -path '*/.crush/*' -not -path '*/node_modules/*' -not -path '*/__pycache__/*' -not -path '*/build/*' -not -path '*/backups/*' -not -path '*/llama.cpp/*' -not -name '*.gguf' -not -name '*.bin' -not -name '*.o' -not -name '*.so' -size -100k %s 2>/dev/null | head -500",
+    "find %s -type f %s -not -path '*/.git/*' -not -path '*/.system/*' -not -path '*/.jenova/*' -not -path '*/.crush/*' -not -path '*/node_modules/*' -not -path '*/__pycache__/*' -not -path '*/build/*' -not -path '*/backups/*' -not -path '*/llama.cpp/*' -not -name '*.gguf' -not -name '*.bin' -not -name '*.o' -not -name '*.so' -size -100k %s 2>/dev/null | head -500",
     shell_quote(root_dir), ext_filter, STAT_MTIME_PATH_FMT
   )
   local p = io.popen(cmd)
   if not p then return 0 end
-  local ok_read, output = pcall(p.read, p, "*a")
+
+  -- Read the output in chunks
+  local output_parts = {}
+  while true do
+    local chunk = p:read(4096)
+    if not chunk then break end
+    output_parts[#output_parts + 1] = chunk
+  end
   p:close()
-  if not ok_read or not output then return 0 end
+  local output = table.concat(output_parts)
+  output_parts = nil
+  if not output or output == "" then return 0 end
 
   -- Reset BM25 index
   bm25_index = {}
   df = {}
   total_docs = 0
   avg_dl = 0
-
   -- Collect files that need vector re-indexing
   local files_to_embed = {}
 

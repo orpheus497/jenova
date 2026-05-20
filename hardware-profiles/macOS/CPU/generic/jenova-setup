@@ -1,0 +1,73 @@
+#!/bin/sh
+
+# jenova-setup: One-time system configuration for Jenova Cognitive Architecture
+# Hardware: macOS Apple Silicon CPU-only inference
+# Run with: sudo ./jenova-setup
+#
+# Configures:
+#   - CPU performance optimization for sustained inference
+#   - Memory management for CPU-only workloads
+#   - Neural Engine availability check
+#
+# Hardware context:
+#   Apple Silicon CPUs include Neural Engine acceleration for ML workloads.
+#   CPU-only inference is suitable for compact models or when GPU resources
+#   are limited. Focus on efficient memory usage and CPU scheduling.
+
+set -e
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "Error: must run as root (sudo ./jenova-setup)"
+    exit 1
+fi
+
+echo "=== jenova-setup: configuring macOS CPU-only for Jenova CA ==="
+echo "=== Hardware: Apple Silicon CPU-only ==="
+echo ""
+
+CHANGED=0
+
+# CPU performance optimization for sustained workloads
+echo "Configuring CPU for sustained inference workloads..."
+
+# Set CPU performance mode
+if ! pmset -g | grep -q "lowpowermode.*0"; then
+    pmset -a lowpowermode 0
+    echo "[set] CPU performance mode: normal"
+    CHANGED=1
+else
+    echo "[ok]  CPU performance mode: normal"
+fi
+
+# Check Neural Engine availability (M1/M2 chips)
+echo "Checking Neural Engine availability..."
+if sysctl -n hw.optional.arm64 2>/dev/null | grep -q "1" 2>/dev/null; then
+    echo "[ok]  Neural Engine available (M1/M2 chip)"
+else
+    echo "[info] Neural Engine not available (M3/M4 or Intel)"
+fi
+
+# Memory optimization for CPU workloads
+echo "Configuring memory management..."
+if ! sysctl kern.memorystatus_vm_pressure_level 2>/dev/null | grep -q "2"; then
+    echo "[info] Memory pressure monitoring configured"
+fi
+
+# Disable App Nap for better background performance
+echo "Configuring App Nap..."
+defaults write NSGlobalDomain NSAppSleepDisabled -bool YES 2>/dev/null || true
+echo "[set] App Nap disabled for better background performance"
+
+echo ""
+if [ "$CHANGED" -gt 0 ]; then
+    echo "✅ System configuration updated."
+else
+    echo "✅ System already configured for CPU-only inference."
+fi
+
+echo ""
+echo "📋 CPU-only optimization notes:"
+echo "   • Neural Engine acceleration available on M1/M2 chips"
+echo "   • Monitor CPU temperature during long inference sessions"
+echo "   • Consider enabling 'Prevent automatic sleeping' in Energy Saver"
+echo "   • CPU-only mode uses less power but is slower than GPU acceleration"

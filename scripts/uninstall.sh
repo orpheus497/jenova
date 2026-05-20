@@ -15,7 +15,7 @@
 #                    .jenova/ (PID/lock files), var/log/, var/cache/, and the
 #                    models/jenova.gguf convenience symlink.
 #   --clean-builds   Remove in-tree build outputs: jvim/build/, jvim/install/,
-#                    llama.cpp/build/. Does NOT touch source.
+#                    external/llama.cpp/build/. Does NOT touch source.
 #   --yes            Skip all confirmation prompts (non-interactive mode).
 #
 # What this removes:
@@ -32,7 +32,10 @@
 
 set -e
 
-JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
+_REAL_SCRIPT="$(realpath "$0" 2>/dev/null || echo "$0")"
+_SCRIPT_DIR="$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)"
+JENOVA_ROOT="$(cd "$_SCRIPT_DIR/.." && pwd)"
+JENOVA_HOME="${JENOVA_HOME:-$HOME/Jenova}"
 JVIM_CONFIG_DST="$HOME/.config/jvim"
 
 PURGE=0
@@ -61,7 +64,7 @@ done
 # Colours
 # ---------------------------------------------------------------------------
 if [ -t 1 ]; then
-    _G="\033[0;32m"; _Y="\033[0;33m"; _R="\033[0;31m"; _B="\033[1;34m"; _N="\033[0m"
+    _G=$(printf '\033[0;32m'); _Y=$(printf '\033[0;33m'); _R=$(printf '\033[0;31m'); _B=$(printf '\033[1;34m'); _N=$(printf '\033[0m')
 else
     _G=""; _Y=""; _R=""; _B=""; _N=""
 fi
@@ -112,7 +115,7 @@ if [ "$YES" = "0" ]; then
         echo "    $JENOVA_ROOT/jvim/build/ (in-tree jvim build — --clean-builds)"
         echo "    $JENOVA_ROOT/jvim/install/ (in-tree jvim install — --clean-builds)"
         echo "    $JENOVA_ROOT/jvim/build/ (jvim build — --clean-builds)"
-        echo "    $JENOVA_ROOT/llama.cpp/build/ (llama.cpp build — --clean-builds)"
+        echo "    $JENOVA_ROOT/external/llama.cpp/build/ (llama.cpp build — --clean-builds)"
     fi
     echo ""
     printf "  Continue? [y/N] "
@@ -180,21 +183,30 @@ fi
 # ---------------------------------------------------------------------------
 # Remove jvim / jenova symlinks from PATH bin dirs
 # ---------------------------------------------------------------------------
-info "Removing launcher symlinks..."
+info "Removing launcher symlinks and binaries..."
 for _d in "$HOME/.local/bin" "$HOME/bin"; do
-    for _bin in jvim jenova jenova-ca; do
+    for _bin in jvim jenova jenova-ca jenova-ui jenova-tui jenova-term jenova-swap-mount mcsh tcsh csh; do
         _sym="$_d/$_bin"
         if [ -L "$_sym" ]; then
             _target=$(readlink "$_sym")
-            if echo "$_target" | grep -qF "$JENOVA_ROOT"; then
+            if echo "$_target" | grep -qF "$JENOVA_HOME" || echo "$_target" | grep -qF "$JENOVA_ROOT"; then
                 rm -f "$_sym"
                 ok "Removed $_sym -> $_target"
-            else
-                warn "Skipping $_sym (points to $_target, not this Jenova install)"
             fi
         fi
     done
 done
+
+# Remove binaries from JENOVA_HOME/bin
+if [ -d "$JENOVA_HOME/bin" ]; then
+    for _bin in jvim jenova jenova-ca jenova-ui jenova-tui jenova-term jenova-swap-mount mcsh; do
+        if [ -f "$JENOVA_HOME/bin/$_bin" ]; then
+            rm -f "$JENOVA_HOME/bin/$_bin"
+            ok "Removed $JENOVA_HOME/bin/$_bin"
+        fi
+    done
+    rmdir "$JENOVA_HOME/bin" 2>/dev/null && ok "Removed empty $JENOVA_HOME/bin dir" || true
+fi
 
 # ---------------------------------------------------------------------------
 # Purge plugin data (--purge only)
@@ -219,39 +231,48 @@ fi
 # Clean runtime artifacts (--clean-runtime only)
 # ---------------------------------------------------------------------------
 if [ "$CLEAN_RUNTIME" = "1" ]; then
-    info "Cleaning runtime artifacts (--clean-runtime)..."
+    info "Cleaning runtime artifacts from $JENOVA_HOME (--clean-runtime)..."
 
     # Remove PID files and locks
+    if [ -d "$JENOVA_HOME/.system" ]; then
+        rm -f "$JENOVA_HOME/.system/"*.pid "$JENOVA_HOME/.system/"*.pid.lock 2>/dev/null
+        ok "Cleared PID/lock files from $JENOVA_HOME/.system/"
+        rmdir "$JENOVA_HOME/.system" 2>/dev/null && ok "Removed empty $JENOVA_HOME/.system dir" || true
+    fi
+
+    # Legacy support
     if [ -d "$JENOVA_ROOT/.jenova" ]; then
-        rm -f "$JENOVA_ROOT/.jenova/"*.pid "$JENOVA_ROOT/.jenova/"*.pid.lock 2>/dev/null
-        ok "Cleared PID/lock files from .jenova/"
-        rmdir "$JENOVA_ROOT/.jenova" 2>/dev/null && ok "Removed empty .jenova/ dir" || true
-    else
-        warn ".jenova/ directory not found (already clean)"
+        rm -rf "$JENOVA_ROOT/.jenova"
+        ok "Removed legacy $JENOVA_ROOT/.jenova"
     fi
 
     # Remove log files
-    if [ -d "$JENOVA_ROOT/var/log" ]; then
-        rm -f "$JENOVA_ROOT/var/log/"*.log 2>/dev/null
-        ok "Cleared log files from var/log/"
-        rmdir "$JENOVA_ROOT/var/log" 2>/dev/null || true
+    if [ -d "$JENOVA_HOME/var/log" ]; then
+        rm -rf "$JENOVA_HOME/var/log"
+        ok "Removed $JENOVA_HOME/var/log"
     fi
 
     # Remove cache
-    if [ -d "$JENOVA_ROOT/var/cache" ]; then
-        rm -rf "$JENOVA_ROOT/var/cache"
-        ok "Removed var/cache/"
+    if [ -d "$JENOVA_HOME/var/cache" ]; then
+        rm -rf "$JENOVA_HOME/var/cache"
+        ok "Removed $JENOVA_HOME/var/cache"
     fi
 
-    # Clean up empty var/ dir
-    if [ -d "$JENOVA_ROOT/var" ]; then
-        rmdir "$JENOVA_ROOT/var" 2>/dev/null && ok "Removed empty var/ dir" || true
+    # Remove run dir
+    if [ -d "$JENOVA_HOME/var/run" ]; then
+        rm -rf "$JENOVA_HOME/var/run"
+        ok "Removed $JENOVA_HOME/var/run"
     fi
 
-    # Remove model convenience symlink (not the actual model files)
-    if [ -L "$JENOVA_ROOT/models/jenova.gguf" ]; then
-        rm -f "$JENOVA_ROOT/models/jenova.gguf"
-        ok "Removed models/jenova.gguf symlink"
+    # Clean up empty JENOVA_HOME/var dir
+    if [ -d "$JENOVA_HOME/var" ]; then
+        rmdir "$JENOVA_HOME/var" 2>/dev/null && ok "Removed empty $JENOVA_HOME/var dir" || true
+    fi
+
+    # Remove model convenience symlink
+    if [ -L "$JENOVA_HOME/models/jenova.gguf" ]; then
+        rm -f "$JENOVA_HOME/models/jenova.gguf"
+        ok "Removed $JENOVA_HOME/models/jenova.gguf symlink"
     fi
 fi
 
@@ -265,7 +286,7 @@ if [ "$CLEAN_BUILDS" = "1" ]; then
         "$JENOVA_ROOT/jvim/install" \
         "$JENOVA_ROOT/jvim/build" \
         "$JENOVA_ROOT/jvim/install" \
-        "$JENOVA_ROOT/llama.cpp/build"
+        "$JENOVA_ROOT/external/llama.cpp/build"
     do
         if [ -d "$_bd" ]; then
             rm -rf "$_bd"
@@ -287,7 +308,7 @@ if [ "$CLEAN_RUNTIME" = "0" ]; then
     echo "    $JENOVA_ROOT/var/     (logs, cache — use --clean-runtime to remove)"
 fi
 if [ "$CLEAN_BUILDS" = "0" ]; then
-    echo "    $JENOVA_ROOT/jvim/build/, llama.cpp/build/ (use --clean-builds to remove)"
+    echo "    $JENOVA_ROOT/jvim/build/, external/llama.cpp/build/ (use --clean-builds to remove)"
 fi
 echo "    $JENOVA_ROOT/          (project directory — source, configs, models)"
 echo ""

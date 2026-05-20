@@ -52,25 +52,40 @@ function M.call(args, context)
   local buf = vim.fn.bufadd(abs)
   pcall(vim.fn.bufload, buf)
 
-  local buf_line_count = vim.api.nvim_buf_line_count(buf)
+  local initial_line_count = vim.api.nvim_buf_line_count(buf)
 
   -- Sort descending so edits don't shift subsequent line numbers.
+  -- Use end_line as a tie-breaker for stable sorting of insertions at the same line.
   local sorted = {}
-  for _, e in ipairs(edits) do table.insert(sorted, e) end
-  table.sort(sorted, function(a, b) return (a.start_line or 0) > (b.start_line or 0) end)
+  for i, e in ipairs(edits) do
+    e._orig_idx = i
+    table.insert(sorted, e)
+  end
+  table.sort(sorted, function(a, b)
+    if a.start_line ~= b.start_line then
+      return (a.start_line or 0) > (b.start_line or 0)
+    end
+    if a.end_line ~= b.end_line then
+      return (a.end_line or 0) > (b.end_line or 0)
+    end
+    return a._orig_idx > b._orig_idx
+  end)
 
   for i, edit in ipairs(sorted) do
     local sl = edit.start_line
     local el = edit.end_line
     local ns = edit.new_string
 
-    if type(sl) ~= "number" or type(el) ~= "number" or not ns then
-      return { type = "error", error = string.format("Edit %d is missing required fields", i) }
+    if type(sl) ~= "number" or type(el) ~= "number" or ns == nil then
+      return { type = "error", error = string.format("Edit at index %d is missing required fields", edit._orig_idx) }
     end
-    if sl < 1 then return { type = "error", error = string.format("Edit %d: start_line must be >= 1", i) } end
-    if el < sl - 1 then return { type = "error", error = string.format("Edit %d: end_line < start_line - 1", i) } end
-    if sl > buf_line_count + 1 then
-      return { type = "error", error = string.format("Edit %d: start_line %d beyond file length %d", i, sl, buf_line_count) }
+    if sl < 1 then return { type = "error", error = string.format("Edit at index %d: start_line must be >= 1", edit._orig_idx) } end
+    if el < sl - 1 then return { type = "error", error = string.format("Edit at index %d: end_line < start_line - 1", edit._orig_idx) } end
+    
+    -- Validate against the INITIAL line count, as descending sort ensures 
+    -- line numbers above the current edit haven't shifted yet.
+    if sl > initial_line_count + 1 then
+      return { type = "error", error = string.format("Edit at index %d: start_line %d beyond file length %d", edit._orig_idx, sl, initial_line_count) }
     end
 
     local new_lines = {}
@@ -81,13 +96,13 @@ function M.call(args, context)
       end
     end
 
+    local current_line_count = vim.api.nvim_buf_line_count(buf)
     local ok, err = pcall(function()
-      vim.api.nvim_buf_set_lines(buf, sl - 1, math.min(el, buf_line_count), false, new_lines)
+      vim.api.nvim_buf_set_lines(buf, sl - 1, math.min(el, current_line_count), false, new_lines)
     end)
     if not ok then
-      return { type = "error", error = string.format("Edit %d failed: %s", i, tostring(err)) }
+      return { type = "error", error = string.format("Edit at index %d failed: %s", edit._orig_idx, tostring(err)) }
     end
-    buf_line_count = vim.api.nvim_buf_line_count(buf)
   end
 
   vim.bo[buf].modified = true

@@ -15,8 +15,8 @@ If you are new to the Jenova environment:
 
 1. Run `:Tutor` to start the "Jenova Flight School" tutorial.
 2. Run `:IDE` to set up the standard multi-panel layout.
-3. Use `<leader>am` to open the Jenova Monitor.
-4. Use `<leader>ta` to talk to the Jenova Agent.
+3. Use `<leader>atm` to open the Jenova Monitor.
+4. Use `<leader>aa` to talk to the Jenova Agent.
 
 ==============================================================================
 Introduction                                            *jvim-introduction*
@@ -121,7 +121,7 @@ editor frontend most commonly cares about are:
 *$JENOVA_LLAMA_PORT*            Port for the llama-server inference endpoint
                                 (default `8081`). FIM / infill completions
                                 go here.
-*$JENOVA_LLAMA_EMBED_PORT*      Port for the CPU-only nomic-embed-text
+*$JENOVA_LLAMA_EMBED_PORT*      Port for the CPU-only Qwen3-Embedding
                                 server (default `8082`). Used by the
                                 monitor and RAG.
 *$JENOVA_API_URL*               Full proxy URL (e.g.
@@ -164,6 +164,42 @@ absent (standalone install).
                         backend is not running.
 
 ==============================================================================
+Default Keymaps                                         *jvim-keymaps*
+
+jvim provides a set of logical, mnemonic keymaps for the Jenova Cognitive 
+Architecture. These are accessible via the `<leader>` key (default is space).
+
+AI CORE ACTIONS:
+  `<leader>aa`     Toggle / focus the AI chat sidebar.
+  `<leader>ac`     Start a chat with the current buffer as context.
+  `<leader>an`     Start a new, empty chat.
+  `<leader>ar`     Respond / send the current chat input.
+  `<leader>ai`     Inline rewrite at the cursor position (Agentic Edit).
+  `<leader>as`     Trigger an AI-driven web search.
+  `<leader>af`     Toggle FIM (Fill-In-the-Middle) inline completions.
+  `<leader>ax`     Emergency stop (cancel active generation).
+  `<leader>ae`     (Visual mode) Send the selection to the chat.
+  `<leader>aw`     (Visual mode) Use selection as a rewrite target.
+
+AI MANAGEMENT (`<leader>am*`):
+  `<leader>amm`    Toggle between Agent mode and Conversation mode.
+  `<leader>amr`    Reset the Agent's internal context and memory.
+  `<leader>amf`    Fresh chat: wipe all history and start clean.
+  `<leader>amd`    Delete the current chat.
+
+AI TOOLS (`<leader>at*`):
+  `<leader>atm`    Launch the Jenova Backend Monitor.
+  `<leader>ath`    Run the Jenova Health Check.
+  `<leader>atl`    Scan the LAN for a Jenova CA instance.
+  `<leader>atd`    Apply AI-driven fixes to LSP diagnostics in the buffer.
+  `<leader>atj`    Toggle the Jenova Agent Terminal.
+
+WINDOWS & NAVIGATION:
+  `<leader>W`      Access the Windows management group (Split, Swap, Resize).
+  `<leader>h`      Return to the Dashboard / Home screen.
+  `<leader>w`      Save the current file (Vim standard).
+
+==============================================================================
 Backend architecture (summary)                          *jvim-backend*
 
 When the editor runs under `jvim`, three persistent daemon processes back it:
@@ -171,9 +207,11 @@ When the editor runs under `jvim`, three persistent daemon processes back it:
 1. `llama-server` on port 8081 — main inference engine with dual Vulkan GPU
    auto-fit offload (the `-fitt` flag distributes transformer layers across
    `Vulkan0` / `Vulkan1`).
-2. `proxy.lua` on port 8080 — LuaJIT non-blocking I/O loop with coroutine
-   connection multiplexing, RAG injection, and intent routing.
-3. `llama-server --embedding` on port 8082 — CPU-only nomic-embed-text server
+2. `proxy.lua` on port 8080 — LuaJIT **fully asynchronous** non-blocking I/O
+   loop with coroutine connection multiplexing, RAG injection, and intent
+   routing. Hardened with **FD_CLOEXEC security sealing** to prevent port
+   locking and resource leaks.
+3. `llama-server --embedding` on port 8082 — CPU-only embedding server
    used for semantic search and RAG.
 
 All three processes are managed as a unit by `jenova-ca` with 3-PID tracking.

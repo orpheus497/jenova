@@ -20,6 +20,7 @@
 #   JENOVA_GLSLC_OK      1 if glslc is on PATH, 0 otherwise
 #   JENOVA_GH_ARCH_LLS   GitHub release arch suffix for lua-language-server
 #   JENOVA_GH_ARCH_ZLS   GitHub release arch suffix for zls
+#   JENOVA_WSL           1 if Windows Subsystem for Linux, 0 otherwise
 
 [ "${_JENOVA_ENV_LOADED:-0}" = "1" ] && return 0
 _JENOVA_ENV_LOADED=1
@@ -42,6 +43,11 @@ case "$_jenova_raw_arch" in
     *)             JENOVA_ARCH="unknown" ;;
 esac
 
+JENOVA_WSL=0
+if [ "$JENOVA_OS" = "linux" ] && grep -qEi "(Microsoft|WSL)" /proc/version 2>/dev/null; then
+    JENOVA_WSL=1
+fi
+
 # ── Distro + package manager ──────────────────────────────────────────────────
 
 JENOVA_DISTRO="unknown"
@@ -56,6 +62,11 @@ if [ "$JENOVA_OS" = "linux" ]; then
     fi
 
     case "${_jenova_id:-}" in
+        org.freedesktop.platform)
+            # Flatpak runtime - try to detect host distro
+            JENOVA_DISTRO="flatpak"
+            # Check for host package managers that might be available
+            ;;
         arch|manjaro|endeavouros|garuda|cachyos) JENOVA_DISTRO="arch" ;;
         debian|raspbian)                         JENOVA_DISTRO="debian" ;;
         ubuntu|linuxmint|pop)                    JENOVA_DISTRO="ubuntu" ;;
@@ -212,23 +223,35 @@ load_jenova_profile() {
     _ljp_file="$1"
     [ -f "$_ljp_file" ] || return 1
 
-    _ljp_real="$(realpath "$_ljp_file" 2>/dev/null)" || return 1
-    _ljp_root="$(realpath "$JENOVA_ROOT/hardware-profiles" 2>/dev/null)" || return 1
+    if command -v realpath >/dev/null 2>&1; then
+        _ljp_real="$(realpath "$_ljp_file" 2>/dev/null)" || return 1
+        _ljp_root="$(realpath "$JENOVA_ROOT/hardware-profiles" 2>/dev/null)" || return 1
 
-    case "$_ljp_real" in
-        "$_ljp_root"/*)
-            # shellcheck disable=SC1090
-            . "$_ljp_real"
-            ;;
-        *)
-            printf "Error: Profile path outside expected directory: %s\n" "$_ljp_real" >&2
-            return 1
-            ;;
-    esac
+        case "$_ljp_real" in
+            "$_ljp_root"/*)
+                # shellcheck disable=SC1090
+                . "$_ljp_real"
+                ;;
+            *)
+                printf "Error: Profile path outside expected directory: %s\n" "$_ljp_real" >&2
+                return 1
+                ;;
+        esac
+    else
+        # Basic validation if realpath is missing
+        case "$_ljp_file" in
+            ../*|*/../*)
+                printf "Error: Profile path contains parent directory reference: %s\n" "$_ljp_file" >&2
+                return 1
+                ;;
+        esac
+        # shellcheck disable=SC1090
+        . "$_ljp_file"
+    fi
 }
 
 export JENOVA_OS JENOVA_ARCH JENOVA_DISTRO JENOVA_PKG_MGR
 export JENOVA_CPU_MODEL JENOVA_CPU_THREADS JENOVA_PHYSICAL_THREADS
 export JENOVA_RAM_GIB JENOVA_SWAP_GIB
-export JENOVA_VULKAN_OK JENOVA_GLSLC_OK
+export JENOVA_VULKAN_OK JENOVA_GLSLC_OK JENOVA_WSL
 export JENOVA_GH_ARCH_LLS JENOVA_GH_ARCH_ZLS

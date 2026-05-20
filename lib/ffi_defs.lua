@@ -25,6 +25,18 @@ if is_linux then
     unsigned char sin_zero[8];
   };
 
+  struct in6_addr {
+    unsigned char s6_addr[16];
+  };
+
+  struct sockaddr_in6 {
+    sa_family_t sin6_family;
+    in_port_t sin6_port;
+    uint32_t sin6_flowinfo;
+    struct in6_addr sin6_addr;
+    uint32_t sin6_scope_id;
+  };
+
   struct sockaddr {
     sa_family_t sa_family;
     char sa_data[14];
@@ -57,6 +69,19 @@ else
     in_port_t sin_port;
     struct in_addr sin_addr;
     char sin_zero[8];
+  };
+
+  struct in6_addr {
+    unsigned char s6_addr[16];
+  };
+
+  struct sockaddr_in6 {
+    uint8_t sin6_len;
+    sa_family_t sin6_family;
+    in_port_t sin6_port;
+    uint32_t sin6_flowinfo;
+    struct in6_addr sin6_addr;
+    uint32_t sin6_scope_id;
   };
 
   struct sockaddr {
@@ -120,6 +145,7 @@ ffi.cdef(socket_struct_defs .. [[
                   const struct addrinfo *hints, struct addrinfo **res);
   void freeaddrinfo(struct addrinfo *res);
   in_addr_t inet_addr(const char *cp);
+  int inet_pton(int af, const char *src, void *dst);
   uint16_t htons(uint16_t hostshort);
 
   /* --- File / process --- */
@@ -153,6 +179,7 @@ ffi.cdef(socket_struct_defs .. [[
   /* --- Misc --- */
   char *strerror(int errnum);
   int gettimeofday(struct timeval *tv, struct timezone *tz);
+  int mkdir(const char *path, int mode);
 
   /* --- Signals --- */
   typedef void (*sighandler_t)(int);
@@ -162,6 +189,9 @@ ffi.cdef(socket_struct_defs .. [[
 local ffi_defs = {}
 
 ffi_defs.IS_LINUX = is_linux
+
+ffi_defs.AF_INET  = 2
+ffi_defs.AF_INET6 = is_linux and 10 or 28 -- FreeBSD AF_INET6 is 28
 
 ffi_defs.F_GETFL    = 3
 ffi_defs.F_SETFL    = 4

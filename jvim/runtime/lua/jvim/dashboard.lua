@@ -229,6 +229,15 @@ local function build_layout(width)
       { key = "i", icon = "", label = "Open IDE Panels", action = "ide" },
     },
   }
+  -- FIM state label: read from vim.g to reflect runtime state
+  local fim_on = vim.g.jenova_fim_enabled
+  -- Default to checking llama_config if the global hasn't been set yet
+  if fim_on == nil then
+    local cfg = vim.g.llama_config
+    fim_on = cfg and cfg.auto_fim
+  end
+  local fim_label = fim_on and "FIM Auto [ON]" or "FIM Auto [OFF]"
+
   local sec_ai = {
     title = "Jenova AI",
     items = {
@@ -236,7 +245,7 @@ local function build_layout(width)
       { key = "t", icon = "", label = "Toggle Chat",        action = "ai_toggle" },
       { key = "n", icon = "", label = "Fresh Chat",         action = "ai_fresh_chat" },
       { key = "s", icon = "", label = "Web Search",         action = "ai_web_search" },
-      { key = "j", icon = "", label = "Jenova Terminal",    action = "jenova_term" },
+      { key = "A", icon = "", label = fim_label,            action = "toggle_fim" },
       { key = "M", icon = "", label = "Backend Monitor",    action = "monitor" },
     },
   }
@@ -259,11 +268,9 @@ local function build_layout(width)
   local sec_config = {
     title = "Config",
     items = {
-      { key = "l", icon = "", label = "Lazy",        action = "lazy" },
-      { key = "m", icon = "", label = "Mason",       action = "mason" },
-      { key = "h", icon = "", label = "Checkhealth", action = "checkhealth" },
-      { key = "q", icon = "", label = "Quit",        action = "quit" },
-    },
+      { key = "h", icon = "", label = "Health Check", action = "checkhealth" },
+      { key = "q", icon = "", label = "Quit",         action = "quit" },
+      },
   }
 
   -- ##Subsection: Backend status rendered as its own pseudo-section so it can
@@ -385,7 +392,7 @@ local function build_layout(width)
     "SPC f g Live Grep",    "SPC f b Buffers",      "SPC t n New Term",        "gd       Definition",
     "SPC t j Jenova Term",  "Esc Esc Leave Term",   "Shift-H/L Prev/Next Buf", "K        Hover Docs",
     "SPC c a Code Action",  "SPC r n Rename",       "SPC c d Diag Float",      "SPC c f  Format",
-    "SPC a M Jenova Mon",   "SPC a h Health",       "SPC a l LAN Scan",        "SPC f o Recent Files",
+    "SPC a M Jenova Mon",   "SPC a h Health",       "SPC a l LAN Scan",        "SPC a f  FIM Toggle",
   }
   local CTL_COL_W = 26
   local CTL_GAP = 2
@@ -469,18 +476,6 @@ local function notify_missing(what)
   vim.notify(what .. " is not available.", vim.log.levels.WARN, { title = "jvim" })
 end
 
--- Ensure a lazy.nvim-managed plugin is loaded before we try to require its
--- runtime module or invoke its commands. The dashboard runs at startup, so any
--- plugin gated behind `keys = {...}` (telescope.nvim, neogit, diffview.nvim,
--- ...) won't be loaded yet when a dashboard action fires — without this helper
--- the action would fail with a misleading "missing plugin" / "command not
--- found" notification even though the plugin is fully installed.
-local function ensure_lazy_loaded(plugins)
-  local has_lazy, lazy = pcall(require, "lazy")
-  if not has_lazy then return end
-  pcall(lazy.load, { plugins = plugins })
-end
-
 local function safe_cmd(cmd)
   local ok, err = pcall(vim.cmd, cmd)
   if not ok then
@@ -529,16 +524,29 @@ local ACTIONS = {
     if not ok then return notify_missing("jenova.monitor") end
     mon.open_monitor()
   end,
-  neogit         = function() M.close(); ensure_lazy_loaded({ "neogit" }); safe_cmd("Neogit") end,
-  diffview       = function() M.close(); ensure_lazy_loaded({ "diffview.nvim" }); safe_cmd("DiffviewOpen") end,
+  neogit         = function() M.close(); safe_cmd("Neogit") end,
+  diffview       = function() M.close(); safe_cmd("DiffviewOpen") end,
   fugitive       = function() M.close(); safe_cmd("Git") end,
   trouble_diag   = function() M.close(); jvim_diag("workspace") end,
   trouble_sym    = function() M.close(); pcall(vim.lsp.buf.document_symbol) end,
   trouble_lsp    = function() M.close(); pcall(vim.lsp.buf.references) end,
-  lazy           = function() safe_cmd("Lazy") end,
-  mason          = function() safe_cmd("Mason") end,
   checkhealth    = function() M.close(); safe_cmd("checkhealth") end,
   quit           = function() vim.cmd("confirm qa") end,
+  toggle_fim     = function()
+    local cfg = vim.g.llama_config
+    if not cfg then
+      vim.notify("FIM not configured (llama.vim not loaded)", vim.log.levels.WARN, { title = "jvim" })
+      return
+    end
+    local new_state = not cfg.auto_fim
+    cfg.auto_fim = new_state
+    vim.g.llama_config = cfg
+    vim.g.jenova_fim_enabled = new_state
+    pcall(function() vim.fn["llama#setup_autocmds"]() end)
+    local label = new_state and "ENABLED" or "DISABLED"
+    vim.notify("FIM Autocomplete: " .. label, vim.log.levels.INFO, { title = "Jenova AI" })
+    if M.is_open() then pcall(render) end
+  end,
 }
 
 local function trigger(action_name)
@@ -735,32 +743,6 @@ local function probe_profile()
   end)
 end
 
--- ##Function purpose: Lazy.nvim startup-time stat for the footer (best-effort).
--- Subscribes to `User LazyDone`, which lazy.nvim itself fires once all plugins
--- have finished loading. We also try to read stats synchronously in case the
--- event has already fired by the time the dashboard opens.
-local function probe_lazy_stats()
-  local ok, lazy = pcall(require, "lazy")
-  if not ok then return end
-
-  local function update_footer()
-    if not (lazy and lazy.stats) then return end
-    local ok_stats, stats = pcall(lazy.stats)
-    if not ok_stats or not stats then return end
-    M._footer = string.format("  %d plugins loaded in %.0f ms",
-      stats.count or 0, stats.startuptime or 0)
-    if M.is_open() then render() end
-  end
-
-  update_footer()
-  vim.api.nvim_create_autocmd("User", {
-    group = vim.api.nvim_create_augroup(AUGROUP .. "Stats", { clear = true }),
-    pattern = "LazyDone",
-    once = true,
-    callback = update_footer,
-  })
-end
-
 -- ##Function purpose: Open the dashboard in the current window. Reuses an
 -- existing dashboard buffer if one is alive.
 function M.open()
@@ -800,7 +782,6 @@ function M.open()
   render()
   bind_action_keymaps(buf, state.actions)
   probe_profile()
-  probe_lazy_stats()
 
   local group = vim.api.nvim_create_augroup(AUGROUP, { clear = true })
   vim.api.nvim_create_autocmd({ "VimResized", "WinResized" }, {
@@ -858,7 +839,7 @@ function M.is_open()
 end
 
 -- Re-render the dashboard if currently open. Used by async probes (macOS
--- product version, profile, lazy stats) to refresh the display once data
+-- product version, profile) to refresh the display once data
 -- becomes available without blocking startup.
 function M.redraw()
   if M.is_open() then pcall(render) end

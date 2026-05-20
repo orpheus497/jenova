@@ -12,7 +12,7 @@
 #     JENOVA_LLAMA_EMBED_PORT, JENOVA_ROOT, and JENOVA_API_URL.
 #   - If no backend is reachable on startup, set JENOVA_LAN_SCAN=1 so the
 #     in-editor lan.lua plugin auto-scans the subnet for a running server.
-#   - Set LD_LIBRARY_PATH so llama.cpp shared libraries are visible to any
+#   - Set LD_LIBRARY_PATH so external/llama.cpp shared libraries are visible to any
 #     child process spawned by the editor.
 #   - Detect whether the resolved binary is the jvim fork or upstream Neovim.
 #
@@ -25,7 +25,39 @@
 #   --check             Print resolved JENOVA_* environment and exit
 #   -h | --help         Show this help and exit
 
-SCRIPT_DIR=$(dirname "$(realpath "$0")")
+# Determine JENOVA_ROOT before loading config
+# We use realpath to validate the path and ensure a malicious symlink cannot
+# redirect us to a file outside the Jenova checkout (Security Rationale). 
+# Run unconditionally so both remote and local modes inherit the same defaults 
+# (model paths, custom ports, etc.).
+_REAL_EXE=$(realpath "$0" 2>/dev/null || readlink -f "$0")
+_BIN_DIR=$(dirname "$_REAL_EXE")
+
+if [ -f "$_BIN_DIR/../etc/jenova.conf" ]; then
+    JENOVA_ROOT="$(cd "$_BIN_DIR/.." && pwd)"; export JENOVA_ROOT
+elif [ -f "$_BIN_DIR/etc/jenova.conf" ]; then
+    JENOVA_ROOT="$(cd "$_BIN_DIR" && pwd)"; export JENOVA_ROOT
+else
+    # Fallback to current behavior if not in a standard layout
+    SCRIPT_DIR=$(dirname "$(realpath "$0")")
+    if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
+        JENOVA_ROOT="$SCRIPT_DIR"; export JENOVA_ROOT
+    elif [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
+        JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"; export JENOVA_ROOT
+    else
+        echo "Error: etc/jenova.conf not found."
+        exit 1
+    fi
+fi
+
+# Scrub repository-specific variables to prevent environment leaks
+unset JENOVA_DEV_REPO
+
+# Load environment and resolve paths
+. "$JENOVA_ROOT/lib/detect-env.sh"
+. "$JENOVA_ROOT/lib/jenova-conf.sh"
+# shellcheck disable=SC1091
+. "$JENOVA_ROOT/etc/jenova.conf"
 
 # --- Parse jvim-specific flags, then pass remaining args to nvim via "$@" ---
 REMOTE_HOST=""
@@ -77,14 +109,16 @@ done
 # --- Resolve the editor binary and verify it is jvim (warn-only) ---
 # Resolution order:
 #   1. $JVIM_BIN               — explicit override
-#   2. $JENOVA_ROOT/jvim/build/bin/nvim — in-tree jvim build (preferred)
-#   3. nvim on PATH            — fallback (may be upstream Neovim)
-# Determining $JENOVA_ROOT here is duplicated below, but we need it before
-# load_jenova_conf runs so the in-tree jvim binary can be discovered first.
-_JENOVA_ROOT_HINT="$(dirname "$SCRIPT_DIR")"
-_INTREE_JVIM="$_JENOVA_ROOT_HINT/jvim/build/bin/jvim"
+#   2. $JENOVA_ROOT/jvim/build/bin/jvim — in-tree jvim build (preferred)
+#   3. $JENOVA_ROOT/bin/jvim-core — deployed jvim build
+#   4. nvim on PATH            — fallback (may be upstream Neovim)
+_INTREE_JVIM="$JENOVA_ROOT/jvim/build/bin/jvim"
 if [ ! -x "$_INTREE_JVIM" ]; then
-    _INTREE_JVIM="$_JENOVA_ROOT_HINT/jvim/build/bin/nvim"
+    _INTREE_JVIM="$JENOVA_ROOT/jvim/build/bin/nvim"
+fi
+# Deployment fallback: look for jvim-core in the same bin directory
+if [ ! -x "$_INTREE_JVIM" ] && [ -x "$JENOVA_ROOT/bin/jvim-core" ]; then
+    _INTREE_JVIM="$JENOVA_ROOT/bin/jvim-core"
 fi
 
 if [ -n "$JVIM_BIN" ]; then
@@ -97,8 +131,11 @@ fi
 
 if ! command -v "$EDITOR_BIN" >/dev/null 2>&1 && [ ! -x "$EDITOR_BIN" ]; then
     echo "Error: editor binary '$EDITOR_BIN' not found." >&2
-    echo "       Build the in-tree jvim with: make jvim" >&2
-    echo "       Or set JVIM_BIN to a jvim binary you have installed." >&2
+    if [ "$JENOVA_LAYOUT" = "source" ]; then
+        echo "       Build the in-tree jvim with: make jvim" >&2
+    else
+        echo "       Installation is corrupt. Please re-run the installer." >&2
+    fi
     exit 1
 fi
 
@@ -113,7 +150,9 @@ case "$_EDITOR_VERSION_LINE" in
         if [ "${JENOVA_QUIET:-0}" != "1" ]; then
             echo "Warning: '$EDITOR_BIN' is not jvim — Jenova plugins will still load," >&2
             echo "         but jvim-specific behaviour is unavailable." >&2
-            echo "         Build the in-tree jvim: make jvim" >&2
+            if [ "$JENOVA_LAYOUT" = "source" ]; then
+                echo "         Build the in-tree jvim: make jvim" >&2
+            fi
         fi
         ;;
 esac
@@ -128,10 +167,10 @@ build_http_url() {
     esac
 }
 
-# Print resolved JENOVA_* environment for --check (single source of truth
-# used by both remote and local mode).
+# Print resolved JENOVA_* environment for --check
 print_check_env() {
     echo "JENOVA_ROOT=$JENOVA_ROOT"
+    echo "JENOVA_LAYOUT=$JENOVA_LAYOUT"
     echo "JENOVA_CONNECT_HOST=$JENOVA_CONNECT_HOST"
     echo "JENOVA_PORT=$JENOVA_PORT"
     echo "JENOVA_LLAMA_PORT=$JENOVA_LLAMA_PORT"
@@ -142,68 +181,12 @@ print_check_env() {
     echo "IS_JVIM=$IS_JVIM"
 }
 
-# Resolve JENOVA_ROOT and source etc/jenova.conf, validating the path with
-# realpath + a case statement so a malicious symlink cannot redirect us to a
-# file outside the Jenova checkout. Run unconditionally so both remote and
-# local modes inherit the same defaults (model paths, custom ports, etc.).
-load_jenova_conf() {
-    _candidate=""
-    if [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
-        _candidate="$SCRIPT_DIR/../etc/jenova.conf"
-        _root="$(dirname "$SCRIPT_DIR")"
-    else
-        echo "Error: etc/jenova.conf not found." >&2
-        exit 1
-    fi
-
-    _real_conf=$(realpath "$_candidate" 2>/dev/null) || {
-        echo "Error: cannot resolve $_candidate" >&2; exit 1; }
-    _real_root=$(realpath "$_root" 2>/dev/null) || {
-        echo "Error: cannot resolve $_root" >&2; exit 1; }
-
-    # Reject any conf path not living under the resolved JENOVA_ROOT.
-    case "$_real_conf" in
-        "$_real_root"/etc/jenova.conf) ;;
-        *)
-            echo "Error: refusing to source $_real_conf (outside $_real_root)" >&2
-            exit 1
-            ;;
-    esac
-
-    export JENOVA_ROOT="$_real_root"
-    # shellcheck disable=SC1090
-    . "$_real_conf"
-
-    _local_candidate="$_real_root/etc/jenova.local.conf"
-    if [ ! -f "$_local_candidate" ]; then
-        _local_candidate="$_real_root/llama.cpp/build/jenova.local.conf"
-    fi
-    if [ -f "$_local_candidate" ]; then
-        _real_local=$(realpath "$_local_candidate" 2>/dev/null) || {
-            echo "Error: cannot resolve $_local_candidate" >&2; exit 1; }
-        case "$_real_local" in
-            "$_real_root"/etc/jenova.local.conf|\
-            "$_real_root"/llama.cpp/build/jenova.local.conf) ;;
-            *)
-                echo "Error: refusing to source $_real_local (outside $_real_root)" >&2
-                exit 1
-                ;;
-        esac
-        # shellcheck disable=SC1090
-        . "$_real_local"
-    fi
-}
-
-# Always load config first so remote mode honours custom ports / model paths
-# defined in etc/jenova.conf the same way local mode does.
-load_jenova_conf
-
-# Point Neovim at the deployed jvim config (~/.config/jvim) and in-tree runtime.
+# Point Neovim at the deployed jvim config (~/.config/jvim) and resolved runtime.
 # XDG_CONFIG_HOME is intentionally left at its default so Neovim resolves
 # NVIM_APPNAME="jvim" to ~/.config/jvim (deployed by install.sh / scripts/update.sh).
-export XDG_DATA_HOME="$JENOVA_ROOT/.jenova/share"
-export NVIM_APPNAME="jvim"
-export VIMRUNTIME="$JENOVA_ROOT/jvim/runtime"
+XDG_DATA_HOME="${JENOVA_HOME}/share"; export XDG_DATA_HOME
+NVIM_APPNAME="jvim"; export NVIM_APPNAME
+VIMRUNTIME="$JENOVA_ROOT/jvim/runtime"; export VIMRUNTIME
 
 # --- Remote/LAN client mode: skip backend start, just export env and launch editor ---
 # Two sub-modes:
@@ -212,20 +195,19 @@ export VIMRUNTIME="$JENOVA_ROOT/jvim/runtime"
 #                           Lua plugin (jenova/lan.lua) scan the subnet for a
 #                           running Jenova CA, then set JENOVA_CONNECT_HOST.
 if [ -n "$REMOTE_HOST" ] || [ "$REMOTE_AUTO_DISCOVER" = "1" ]; then
-    export JENOVA_PORT="$REMOTE_PROXY_PORT"
-    export JENOVA_LLAMA_PORT="$REMOTE_LLAMA_PORT"
-    export JENOVA_LLAMA_EMBED_PORT="$REMOTE_EMBED_PORT"
-    export JENOVA_LAN_MODE="1"
+    JENOVA_PORT="$REMOTE_PROXY_PORT"; export JENOVA_PORT
+    JENOVA_LLAMA_PORT="$REMOTE_LLAMA_PORT"; export JENOVA_LLAMA_PORT
+    JENOVA_LLAMA_EMBED_PORT="$REMOTE_EMBED_PORT"; export JENOVA_LLAMA_EMBED_PORT
+    JENOVA_LAN_MODE="1"; export JENOVA_LAN_MODE
 
-    LLAMA_LIB_DIR="$JENOVA_ROOT/llama.cpp/build/bin"
     if [ -d "$LLAMA_LIB_DIR" ]; then
-        export LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"
+        LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"; export LD_LIBRARY_PATH
     fi
 
     if [ -n "$REMOTE_HOST" ]; then
         # Explicit host mode
-        export JENOVA_CONNECT_HOST="$REMOTE_HOST"
-        export JENOVA_API_URL="$(build_http_url "$REMOTE_HOST" "$REMOTE_PROXY_PORT")"
+        JENOVA_CONNECT_HOST="$REMOTE_HOST"; export JENOVA_CONNECT_HOST
+        JENOVA_API_URL="$(build_http_url "$REMOTE_HOST" "$REMOTE_PROXY_PORT")"; export JENOVA_API_URL
         echo "Jenova LAN client mode: connecting to $REMOTE_HOST:$REMOTE_PROXY_PORT"
 
         # Quick health check on the remote
@@ -246,7 +228,10 @@ if [ -n "$REMOTE_HOST" ] || [ "$REMOTE_AUTO_DISCOVER" = "1" ]; then
             fi
         fi
     else
-        # Auto-discover mode: let the Lua plugin (jenova/lan.lua) scan the subnet
+        # Auto-discover mode: let the Lua plugin (jenova/lan.lua) scan the subnet.
+        # This triggers a non-blocking TCP scan on the local network; once a
+        # server is found, the plugin updates JENOVA_CONNECT_HOST and re-configures
+        # all internal jvim endpoints dynamically.
         echo "Jenova LAN auto-discover mode: scanning subnet for Jenova CA..."
         echo "The editor will connect automatically when a server is found."
     fi
@@ -260,30 +245,30 @@ if [ -n "$REMOTE_HOST" ] || [ "$REMOTE_AUTO_DISCOVER" = "1" ]; then
 fi
 
 # Separate HOST (bind address) from CONNECT_HOST (client connect address).
-# HOST may be 0.0.0.0 (listen on all interfaces), but clients need a real IP.
 CONNECT_HOST="${JENOVA_CONNECT_HOST:-127.0.0.1}"
 API_URL="$(build_http_url "$CONNECT_HOST" "$PORT")"
 
-JENOVA_DIR="${JENOVA_STATE:-$JENOVA_ROOT/.jenova}"
 # Ensure state dir exists for plugins that may write there
-mkdir -p "$JENOVA_DIR"
+mkdir -p "$JENOVA_STATE"
+# We intentionally leave XDG_CONFIG_HOME at its default (~/.config) so Neovim
+# correctly resolves the NVIM_APPNAME="jvim" folder to ~/.config/jvim. 
+# Overriding it here would break plugin resolution for user-provided nvim setups.
+mkdir -p "${XDG_DATA_HOME}"
 [ -n "$CACHE_DIR" ] && mkdir -p "$CACHE_DIR"
 
 # Export environment for the jvim editor and Jenova plugins.
 # llama.lua, chat.lua, jenova/monitor.lua, jenova/health.lua all read these.
-# Keep this list in sync with runtime/doc/jvim.txt in the jvim repo.
-export JENOVA_CONNECT_HOST="$CONNECT_HOST"
-export JENOVA_PORT="$PORT"
-export JENOVA_LLAMA_PORT="$LLAMA_PORT"
-export JENOVA_LLAMA_EMBED_PORT="${LLAMA_EMBED_PORT:-8082}"
-export JENOVA_ROOT="${JENOVA_ROOT}"
-export JENOVA_API_URL="$API_URL"
+# Keep this list in sync with runtime/doc/jvim.txt because these plugins 
+# depend on these specific variable names for endpoint discovery.
+JENOVA_CONNECT_HOST="$CONNECT_HOST"; export JENOVA_CONNECT_HOST
+JENOVA_PORT="$PORT"; export JENOVA_PORT
+JENOVA_LLAMA_PORT="$LLAMA_PORT"; export JENOVA_LLAMA_PORT
+JENOVA_LLAMA_EMBED_PORT="${LLAMA_EMBED_PORT:-8082}"; export JENOVA_LLAMA_EMBED_PORT
+JENOVA_ROOT="${JENOVA_ROOT}"; export JENOVA_ROOT
+JENOVA_API_URL="$API_URL"; export JENOVA_API_URL
 
-# Set LD_LIBRARY_PATH so llama.cpp shared libraries are found by llama-server
-# even when Neovim's child processes inherit the environment.
-LLAMA_LIB_DIR="$JENOVA_ROOT/llama.cpp/build/bin"
 if [ -d "$LLAMA_LIB_DIR" ]; then
-    export LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"
+    LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"; export LD_LIBRARY_PATH
 fi
 
 # --- --check: dump resolved environment and exit ---
@@ -316,7 +301,7 @@ else
     else
         # No local backend found — enable LAN scan so the Lua plugin
         # (jenova/lan.lua) discovers one on the subnet at startup.
-        export JENOVA_LAN_SCAN=1
+        JENOVA_LAN_SCAN=1; export JENOVA_LAN_SCAN
         if [ "${JENOVA_QUIET:-0}" != "1" ]; then
             echo "No local Jenova CA found — LAN scan enabled." >&2
             echo "Start a local backend with: jenova --daemon-only" >&2

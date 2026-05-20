@@ -95,10 +95,6 @@ map("n", "<S-l>", "<cmd>bnext<CR>",     { desc = "Next Buffer" })
 map("n", "[d", function() vim.diagnostic.jump({ count = -1 }) end, { desc = "Prev Diagnostic" })
 map("n", "]d", function() vim.diagnostic.jump({ count =  1 }) end, { desc = "Next Diagnostic" })
 
-map("n", "<leader>aj", function()
-  require("jvim.terminal").toggle_shell()
-end, { desc = "Toggle Terminal Shell" })
-
 --------------------------------------------------------------------------------
 -- [5] IDE COMMAND
 --------------------------------------------------------------------------------
@@ -131,9 +127,26 @@ vim.api.nvim_create_user_command("JenovaLanScan", function()
   end
 end, { desc = "Scan LAN for remote Jenova CA" })
 
-map("n", "<leader>aM", "<cmd>JenovaMonitor<CR>",    { desc = "Jenova Monitor" })
-map("n", "<leader>ah", "<cmd>checkhealth jenova<CR>", { desc = "Jenova Health" })
-map("n", "<leader>al", "<cmd>JenovaLanScan<CR>",    { desc = "Jenova LAN Scan" })
+-- AI Menu Options (<leader>a)
+map("n", "<leader>af", function()
+  local cfg = vim.g.llama_config
+  if not cfg then
+    vim.notify("FIM not configured (llama.vim not loaded)", vim.log.levels.WARN, { title = "jvim" })
+    return
+  end
+  local new_state = not cfg.auto_fim
+  cfg.auto_fim = new_state
+  vim.g.llama_config = cfg
+  vim.g.jenova_fim_enabled = new_state
+  pcall(function() vim.fn["llama#setup_autocmds"]() end)
+  local label = new_state and "ENABLED" or "DISABLED"
+  vim.notify("FIM Autocomplete: " .. label, vim.log.levels.INFO, { title = "Jenova AI" })
+end, { desc = "Toggle FIM Autocomplete" })
+
+map("n", "<leader>ah", "<cmd>JvimDashboard<CR>",      { desc = "Dashboard / Home" })
+map("n", "<leader>atm", "<cmd>JenovaMonitor<CR>",     { desc = "Jenova Monitor" })
+map("n", "<leader>ath", "<cmd>checkhealth jenova<CR>", { desc = "Jenova Health" })
+map("n", "<leader>atl", "<cmd>JenovaLanScan<CR>",     { desc = "Jenova LAN Scan" })
 
 --------------------------------------------------------------------------------
 -- [6] JENOVA BACKEND HEALTH CHECK
@@ -176,6 +189,7 @@ end
 vim.api.nvim_create_autocmd("VimEnter", {
   once = true,
   callback = function()
+    -- Increased delay to 2500ms to ensure the UI and Vulkan context are stable
     vim.defer_fn(function()
       _jenova_tcp_probe(function(connected)
         vim.g.jenova_connected = connected
@@ -206,7 +220,7 @@ vim.api.nvim_create_autocmd("VimEnter", {
           end
         end
       end)
-    end, 1500)
+    end, 2500)
   end,
 })
 
@@ -228,6 +242,8 @@ if _jenova_timer then
     once = true,
     callback = function()
       if _jenova_timer then pcall(function() _jenova_timer:close() end) end
+      local ok, monitor = pcall(require, "jenova.monitor")
+      if ok and monitor.stop_polling then monitor.stop_polling() end
     end,
   })
 end

@@ -1,0 +1,21 @@
+{
+  "name": "Jenova Cognitive Architecture",
+  "short_name": "Jenova",
+  "description": "Web UI for Jenova Cognitive Architecture",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#3b82f6",
+  "icons": [
+    {
+      "src": "favicon.jpg",
+      "sizes": "192x192",
+      "type": "image/jpeg"
+    },
+    {
+      "src": "favicon.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg"
+    }
+  ]
+}

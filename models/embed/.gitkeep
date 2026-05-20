@@ -2,6 +2,6 @@
 # Place your embedding models here for RAG and semantic search
 # Supported formats: GGUF
 # Examples:
-#   - nomic-embed-text-v1.5.Q8_0.gguf
+#   - Qwen3-Embedding-0.6B-Q8_0.gguf
 #   - bge-large-en-v1.5-Q8_0.gguf
 #   - all-MiniLM-L6-v2-Q8_0.gguf

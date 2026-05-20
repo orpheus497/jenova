@@ -8,7 +8,10 @@ local json = require('json')
 local search = require('search')
 local embed = require('embed')
 
-local qfile = arg and arg[1] or '.jenova/index_queue.json'
+local home = os.getenv("HOME") or "/tmp"
+local jenova_home = os.getenv("JENOVA_HOME") or (home .. "/Jenova")
+local state_dir = os.getenv("JENOVA_STATE") or (jenova_home .. "/.system")
+local qfile = arg and arg[1] or (state_dir .. "/index_queue.json")
 local f = io.open(qfile, 'r')
 if not f then
   io.stderr:write('[indexer_runner] queue file not found: ' .. tostring(qfile) .. '\n')

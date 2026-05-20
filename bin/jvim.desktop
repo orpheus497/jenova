@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=jvim
+Comment=Jenova Vim Editor
+Exec=sh -c "jenova-term jenova-ui --offline & jenova-term jvim --no-backend"
+Icon=jvim
+Terminal=false
+Categories=Utility;TextEditor;AI;

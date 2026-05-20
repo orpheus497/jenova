@@ -15,13 +15,18 @@ local search = require("search")
 local embed = require("embed")
 local prompts = require("prompts")
 
+-- Filesystem API for WebUI persistence
+local home_dir = os.getenv("HOME") or "/tmp"
+local jenova_home = os.getenv("JENOVA_HOME") or (home_dir .. "/Jenova")
+local workspaces_dir = os.getenv("JENOVA_WORKSPACES") or (jenova_home .. "/Workspaces")
+
 local HOST = os.getenv("JENOVA_PROXY_HOST") or os.getenv("JENOVA_HOST") or "127.0.0.1"
 local PORT = tonumber(os.getenv("JENOVA_PROXY_PORT") or os.getenv("JENOVA_PORT")) or 8080
 local LLAMA_URL = os.getenv("JENOVA_LLAMA_URL") or "http://127.0.0.1:" .. (os.getenv("JENOVA_LLAMA_PORT") or "8081")
-local LLAMA_PORT = tonumber(LLAMA_URL:match(":(%d+)")) or 8081
-local LLAMA_HOST = LLAMA_URL:match("//([^:/]+)") or "127.0.0.1"
+local LLAMA_PORT = tonumber(LLAMA_URL:match(":(%d+)/?$") or LLAMA_URL:match(":(%d+):") or LLAMA_URL:match(":(%d+)")) or 8081
+local LLAMA_HOST = LLAMA_URL:match("//%[([^%]]+)%]") or LLAMA_URL:match("//([^:/]+)") or "127.0.0.1"
 local LLAMA_CONNECT_HOST = LLAMA_HOST
-if LLAMA_CONNECT_HOST == "0.0.0.0" or LLAMA_CONNECT_HOST == "::" or LLAMA_CONNECT_HOST == "*" then
+if LLAMA_CONNECT_HOST == "0.0.0.0" or LLAMA_CONNECT_HOST == "::" or LLAMA_CONNECT_HOST == "*" or LLAMA_CONNECT_HOST == "localhost" then
     LLAMA_CONNECT_HOST = "127.0.0.1"
 end
 
@@ -36,12 +41,8 @@ if not embed_ok then
 else
   embed_ok = embed_res
 end
-if embed_ok then search.init_embeddings(embed) end
-search.index_dir(".", {
-  "lua","sh","c","h","cpp","py","js","ts","go","rs",
-  "md","txt","json","yaml","yml","toml","conf","cfg",
-  "html","css","Makefile","zig",
-})
+-- Indexing moved to after server listen
+
 
 print("[proxy] Jenova Signal Proxy loaded on port " .. PORT .. ". Embeddings: " .. tostring(embed_ok))
 
@@ -55,9 +56,9 @@ local EAGAIN = _ffi_defs.EAGAIN
 local EWOULDBLOCK = _ffi_defs.EWOULDBLOCK
 local EINPROGRESS = _ffi_defs.EINPROGRESS
 
-local MAX_ACTIVE_CONNECTIONS = 6
+local MAX_ACTIVE_CONNECTIONS = 32
 local MAX_HEADER_SIZE = 65536
-local MAX_BODY_SIZE = 2 * 1024 * 1024
+local MAX_BODY_SIZE = 100 * 1024 * 1024
 
 local function set_nonblocking(fd)
     local flags = ffi.C.fcntl(fd, _ffi_defs.F_GETFL, 0)
@@ -72,6 +73,13 @@ local function set_socket_opts(fd)
     local one = ffi.new("int[1]", 1)
     ffi.C.setsockopt(fd, _ffi_defs.IPPROTO_TCP, _ffi_defs.TCP_NODELAY, one, ffi.sizeof("int"))
     ffi.C.setsockopt(fd, SOL_SOCKET, _ffi_defs.SO_KEEPALIVE, one, ffi.sizeof("int"))
+end
+
+-- Prevent socket fds from leaking into child processes spawned by io.popen
+local function set_cloexec(fd)
+    local flags = ffi.C.fcntl(fd, _ffi_defs.F_GETFD, 0)
+    if flags < 0 then flags = 0 end
+    ffi.C.fcntl(fd, _ffi_defs.F_SETFD, bit.bor(flags, _ffi_defs.FD_CLOEXEC))
 end
 
 local function decode_chunked_body(after_headers)
@@ -119,8 +127,9 @@ local function async_send(fd, data)
     return sent
 end
 
-local function async_connect(fd, addr)
-    local ret = ffi.C.connect(fd, ffi.cast("struct sockaddr *", addr), ffi.sizeof(addr))
+local function async_connect(fd, addr, addrlen)
+    addrlen = addrlen or ffi.sizeof(addr)
+    local ret = ffi.C.connect(fd, ffi.cast("struct sockaddr *", addr), addrlen)
     if ret == 0 then return true end
     local err = ffi.errno()
     if err ~= EINPROGRESS then return false, err end
@@ -129,6 +138,50 @@ local function async_connect(fd, addr)
     local len = ffi.new("socklen_t[1]", ffi.sizeof("int"))
     ffi.C.getsockopt(fd, SOL_SOCKET, SO_ERROR, opt, len)
     if opt[0] == 0 then return true else return false, opt[0] end
+end
+
+local function async_popen_read(cmd)
+    local pipe_fds = ffi.new("int[2]")
+    if ffi.C.pipe(pipe_fds) < 0 then return nil, "pipe failed" end
+    local pid = ffi.C.fork()
+    if pid == 0 then
+        ffi.C.close(pipe_fds[0])
+        ffi.C.dup2(pipe_fds[1], 1)
+        ffi.C.dup2(pipe_fds[1], 2)
+        ffi.C.close(pipe_fds[1])
+        local argv = ffi.new("const char *[4]")
+        argv[0] = "/bin/sh"
+        argv[1] = "-c"
+        argv[2] = cmd
+        argv[3] = nil
+        ffi.C.execvp("/bin/sh", ffi.cast("char *const *", argv))
+        ffi.C._exit(1)
+    end
+    ffi.C.close(pipe_fds[1])
+    local fd = pipe_fds[0]
+    set_nonblocking(fd)
+    set_cloexec(fd)
+    
+    local chunks = {}
+    local buf = ffi.new("char[4096]")
+    while true do
+        local n = ffi.C.read(fd, buf, 4096)
+        if n > 0 then
+            chunks[#chunks + 1] = ffi.string(buf, n)
+        elseif n == 0 then
+            break
+        else
+            local err = ffi.errno()
+            if err == _ffi_defs.EAGAIN or err == _ffi_defs.EWOULDBLOCK then
+                coroutine.yield("read", fd)
+            else
+                break
+            end
+        end
+    end
+    ffi.C.close(fd)
+    ffi.C.waitpid(pid, nil, 0)
+    return table.concat(chunks)
 end
 
 -- Detect available HTTPS-capable command-line tool (once at startup).
@@ -190,10 +243,7 @@ local function ddg_instant_answer(query)
     local cmd = https_fetch_cmd(url, 5)
     if not cmd then return nil end
 
-    local handle = io.popen(cmd)
-    if not handle then return nil end
-    local raw = handle:read(256 * 1024)
-    handle:close()
+    local raw = async_popen_read(cmd)
     if not raw or #raw < 10 then return nil end
 
     local ok, data = pcall(json.decode, raw)
@@ -236,10 +286,7 @@ local function ddg_html_search(query)
     local cmd = https_fetch_cmd(url, 8)
     if not cmd then return nil end
 
-    local handle = io.popen(cmd)
-    if not handle then return nil end
-    local html = handle:read(256 * 1024)
-    handle:close()
+    local html = async_popen_read(cmd)
     if not html or #html < 100 then return nil end
 
     local titles, snippets = {}, {}
@@ -288,7 +335,28 @@ end
 
 local active_connection_count = 0
 
+local function recursive_mkdir(path)
+    local segments = {}
+    for segment in path:gmatch("[^/]+") do
+        table.insert(segments, segment)
+    end
+    local current = path:sub(1, 1) == "/" and "/" or ""
+    for i, segment in ipairs(segments) do
+        current = current .. segment
+        local res = ffi.C.mkdir(current, 493) -- 0755
+        if res ~= 0 then
+            local err = ffi.errno()
+            -- EEXIST (17 on many platforms) is fine, others might be worth logging
+            if err ~= 17 and err ~= 20 then -- 20 is ENOTDIR, also handled by OS
+                -- Silently continue, as we'll fail later on io.open if it's fatal
+            end
+        end
+        current = current .. "/"
+    end
+end
+
 local function proxy_connection(client_fd, conn_fds)
+    local start_time = os.time()
     set_nonblocking(client_fd)
     set_socket_opts(client_fd)
     conn_fds.client = client_fd
@@ -311,8 +379,11 @@ local function proxy_connection(client_fd, conn_fds)
     local is_get = false
 
     while true do
-        local n = async_recv(client_fd, buf, 8192)
-        if n <= 0 then safe_close(); return end
+        local n, err = async_recv(client_fd, buf, 8192)
+        if n <= 0 then 
+            if n < 0 then io.write("[proxy] client recv error: " .. tostring(err) .. "\n") end
+            safe_close(); return 
+        end
         header_chunks[#header_chunks + 1] = ffi.string(buf, n)
         header_total = header_total + n
         if header_total > MAX_HEADER_SIZE then
@@ -333,27 +404,56 @@ local function proxy_connection(client_fd, conn_fds)
             is_get = headers_raw:match("^GET ") ~= nil
             break
         end
+        
+        if os.time() - start_time > 10 then
+            io.write("[proxy] header timeout from client\n")
+            safe_close(); return
+        end
     end
 
-    -- Native /health endpoint — exact path match ([ %?] catches both "GET /health HTTP/" and
-    -- "GET /health?…" while excluding paths like /healthz).
-    local is_health = is_get and headers_raw:match("^GET /health[ %?]")
+    -- Native /health endpoint
+    local is_health = is_get and (headers_raw:match("^GET /health[ %?]") or headers_raw:match("^GET /v1/health[ %?]"))
     if is_health then
-        -- Non-blocking backend liveness check via async_connect (coroutine-safe, no blocking).
-        local health_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
         local backend_ok = false
-        if health_fd >= 0 then
-            set_nonblocking(health_fd)
-            local h_addr = ffi.new("struct sockaddr_in")
-            if not _ffi_defs.IS_LINUX then
-                h_addr.sin_len = ffi.sizeof(h_addr)
+        local health_fd = -1
+        
+        -- Optimized health probe: skip getaddrinfo for 127.0.0.1
+        if LLAMA_CONNECT_HOST == "127.0.0.1" then
+            health_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
+            if health_fd >= 0 then
+                set_cloexec(health_fd)
+                set_nonblocking(health_fd)
+                local h_addr = ffi.new("struct sockaddr_in")
+                if not _ffi_defs.IS_LINUX then h_addr.sin_len = ffi.sizeof(h_addr) end
+                h_addr.sin_family = AF_INET
+                h_addr.sin_port   = ffi.C.htons(LLAMA_PORT)
+                h_addr.sin_addr.s_addr = ffi.C.inet_addr("127.0.0.1")
+                
+                -- Shorter timeout for health connect (5s)
+                local ok, err = async_connect(health_fd, h_addr)
+                backend_ok = ok
+                ffi.C.close(health_fd)
             end
-            h_addr.sin_family = AF_INET
-            h_addr.sin_port   = ffi.C.htons(LLAMA_PORT)
-            h_addr.sin_addr.s_addr = ffi.C.inet_addr(LLAMA_CONNECT_HOST)
-            backend_ok = (async_connect(health_fd, h_addr) == true)
-            ffi.C.close(health_fd)
+        else
+            local hints = ffi.new("struct addrinfo")
+            hints.ai_family = 0 -- AF_UNSPEC
+            hints.ai_socktype = SOCK_STREAM
+            local res = ffi.new("struct addrinfo *[1]")
+            local rc = ffi.C.getaddrinfo(LLAMA_CONNECT_HOST, tostring(LLAMA_PORT), hints, res)
+            if rc == 0 then
+                local ai = res[0]
+                health_fd = ffi.C.socket(ai.ai_family, ai.ai_socktype, ai.ai_protocol)
+                if health_fd >= 0 then
+                    set_cloexec(health_fd)
+                    set_nonblocking(health_fd)
+                    local ok, err = async_connect(health_fd, ai.ai_addr, ai.ai_addrlen)
+                    backend_ok = ok
+                    ffi.C.close(health_fd)
+                end
+                ffi.C.freeaddrinfo(ai)
+            end
         end
+
         local status_str  = backend_ok and "ok" or "degraded"
         local http_status = backend_ok and "200 OK" or "503 Service Unavailable"
         local health_body = json.encode({
@@ -409,6 +509,126 @@ local function proxy_connection(client_fd, conn_fds)
     end
 
     local is_chat_completion = headers_raw:find("POST /v1/chat/completions")
+    local is_fim = headers_raw:find("POST /infill")
+    
+    local storage_path = headers_raw:match("^POST /api/storage/([^ %?]+)")
+    if storage_path and #body_raw > 0 then
+        recursive_mkdir(workspaces_dir)
+        
+        -- Security: prevent directory traversal
+        if storage_path:find("%.%.") then
+            local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, err); safe_close(); return
+        end
+
+        local full_path = workspaces_dir .. "/" .. storage_path
+        local dir_part = full_path:match("(.+)/[^/]+$")
+        if dir_part then recursive_mkdir(dir_part) end
+
+        local f = io.open(full_path, "wb")
+        if f then
+            f:write(body_raw)
+            f:close()
+
+            local resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}"
+            async_send(client_fd, resp)
+        else
+            local resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, resp)
+        end
+        safe_close(); return
+    end
+
+    local is_storage_list = is_get and (headers_raw:match("^GET /api/storage/[ %?]") or headers_raw:match("^GET /api/storage "))
+    if is_storage_list then
+        recursive_mkdir(workspaces_dir)
+        local files = {}
+        local escaped_dir = workspaces_dir:gsub("'", "'\\''")
+        local cmd = "find '" .. escaped_dir .. "' -maxdepth 3 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/build/*'"
+        local output = async_popen_read(cmd)
+        if output then
+            for line in output:gmatch("[^\r\n]+") do
+                local rel = line:sub(#workspaces_dir + 2)
+                if #rel > 0 then table.insert(files, "\"" .. rel .. "\"") end
+            end
+        end
+        local content = "[" .. table.concat(files, ",") .. "]"
+        local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)
+        async_send(client_fd, resp .. content)
+        safe_close(); return
+    end
+
+    local is_workspaces_list = is_get and headers_raw:match("^GET /api/workspaces")
+    if is_workspaces_list then
+        recursive_mkdir(workspaces_dir)
+        local ws = {}
+        local escaped_dir = workspaces_dir:gsub("'", "'\\''")
+        local cmd = "find '" .. escaped_dir .. "' -maxdepth 1 -type d -not -path '*/.*'"
+        local output = async_popen_read(cmd)
+        if output then
+            for line in output:gmatch("[^\r\n]+") do
+                local name = line:sub(#workspaces_dir + 2)
+                if #name > 0 then table.insert(ws, "\"" .. name .. "\"") end
+            end
+        end
+        local content = "[" .. table.concat(ws, ",") .. "]"
+        local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)
+        async_send(client_fd, resp .. content)
+        safe_close(); return
+    end
+
+    local is_storage_get = is_get and headers_raw:match("^GET /api/storage/([^ %?]+)")
+    if is_storage_get then
+        if is_storage_get:find("%.%.") then
+            local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, err); safe_close(); return
+        end
+        local full_path = workspaces_dir .. "/" .. is_storage_get
+        local f = io.open(full_path, "rb")
+        if f then
+            local content = f:read("*a")
+            f:close()
+            local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)
+            async_send(client_fd, resp .. content)
+        else
+            local resp = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, resp)
+        end
+        safe_close(); return
+    end
+
+    -- Static file serving for Web UI
+    if is_get then
+        local path = headers_raw:match("^GET ([^ %?]+)")
+        if path then
+            if path == "/" then path = "/index.html" end
+            -- Security: prevent directory traversal
+            if not path:find("%.%.") then
+                local local_path = root_dir .. "/public" .. path
+                local f = io.open(local_path, "rb")
+                if f then
+                    local content = f:read("*a")
+                    f:close()
+                    local mime = "application/octet-stream"
+                    if path:find("%.html$") then mime = "text/html"
+                    elseif path:find("%.js$") then mime = "application/javascript"
+                    elseif path:find("%.css$") then mime = "text/css"
+                    elseif path:find("%.svg$") then mime = "image/svg+xml"
+                    elseif path:find("%.png$") then mime = "image/png"
+                    elseif path:find("%.jpg$") or path:find("%.jpeg$") then mime = "image/jpeg"
+                    elseif path:find("%.json$") then mime = "application/json"
+                    end
+                    local resp = string.format(
+                        "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
+                        mime, #content)
+                    async_send(client_fd, resp .. content)
+                    safe_close()
+                    return
+                end
+            end
+        end
+    end
+
     local intent = headers_raw:match("[Xx]%-Intent:%s*(%w+)")
     headers_raw = headers_raw:gsub("(\r\n[Hh][Oo][Ss][Tt]:%s*)[^\r\n]+", "%1" .. LLAMA_HOST .. ":" .. LLAMA_PORT)
     headers_raw = headers_raw:gsub("\r\n[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]:%s*[^\r\n]*\r\n", "\r\n")
@@ -426,6 +646,18 @@ local function proxy_connection(client_fd, conn_fds)
                     last_user_idx = i
                     break
                 end
+            end
+
+            -- Detect project root (passive only, no auto-indexing in proxy)
+            local project_root = body_raw:match("project_root: ([^\n\r]+)")
+            if project_root then
+                project_root = project_root:gsub("\r", ""):gsub("\"", ""):gsub("\\n", ""):gsub("\\r", ""):gsub("}$", ""):gsub(",$", ""):match("^%s*(.-)%s*$")
+                if project_root == "web_workspace" then
+                    project_root = workspaces_dir
+                elseif project_root ~= "" and not project_root:match("^/") and not project_root:match("^~") then
+                    project_root = workspaces_dir .. "/" .. project_root
+                end
+                _G._last_project_root = project_root
             end
 
             -- Intent detection: each entry maps a prefix pattern to an intent name.
@@ -497,20 +729,23 @@ local function proxy_connection(client_fd, conn_fds)
                     end
 
                     local has_system = req_json.messages[1].role == "system"
+                    local persona = prompts.freechat
 
-                    if has_tools and has_system then
-                        -- The client is an agent with a strict tool-calling mandate.
-                        -- Do NOT prepend the conversational persona, as it overrides tool instructions.
-                        -- Only append the RAG and Web contexts to the existing system prompt.
-                        if web_context ~= "" then
-                            req_json.messages[1].content = req_json.messages[1].content .. "\n" .. web_context
+                    if has_tools then
+                        -- Agent mode: Do NOT override the client's system prompt if it exists.
+                        -- Only inject the CORE MANDATE if no system prompt is present.
+                        if not has_system then
+                            local agent_persona = "CORE MANDATE: You are Jenova, an autonomous agent. " .. persona
+                            table.insert(req_json.messages, 1, {role = "system", content = agent_persona})
+                            has_system = true
                         end
-                        if rag_context ~= "" then
-                            req_json.messages[1].content = req_json.messages[1].content .. "\n" .. rag_context
-                        end
+                        
+                        -- Append contexts to the system prompt (which is now guaranteed to exist at index 1)
+                        if web_context ~= "" then req_json.messages[1].content = req_json.messages[1].content .. "\n" .. web_context end
+                        if rag_context ~= "" then req_json.messages[1].content = req_json.messages[1].content .. "\n" .. rag_context end
                     else
-                        -- Not an agent (or no existing system prompt). Use the conversational persona.
-                        local system_p = prompts[intent] or prompts.freechat
+                        -- Conversational mode (WebUI, etc.): Use persona-first system prompt
+                        local system_p = prompts[intent] or persona
                         if web_context ~= "" then system_p = system_p .. "\n" .. web_context end
                         if rag_context ~= "" then system_p = system_p .. "\n" .. rag_context end
 
@@ -521,19 +756,19 @@ local function proxy_connection(client_fd, conn_fds)
                         end
                     end
                 else
-                    -- No intent: only inject context if we have RAG, or if there's no existing system prompt.
-                    -- When the client sent tools, preserve its system prompt verbatim — it contains
-                    -- the tool-use instructions the model needs. Only append RAG context.
+                    -- No intent: Apply persona and RAG to any existing system prompt
                     local has_system = req_json.messages[1].role == "system"
-                    if rag_context ~= "" then
-                        if has_system then
+                    local persona = prompts.freechat
+                    
+                    if has_system then
+                        req_json.messages[1].content = persona .. "\n\n" .. req_json.messages[1].content
+                        if rag_context ~= "" then
                             req_json.messages[1].content = req_json.messages[1].content .. "\n" .. rag_context
-                        else
-                            local system_p = prompts.freechat .. "\n" .. rag_context
-                            table.insert(req_json.messages, 1, {role = "system", content = system_p})
                         end
-                    elseif not has_system and not has_tools then
-                        table.insert(req_json.messages, 1, {role = "system", content = prompts.freechat})
+                    else
+                        local content = persona
+                        if rag_context ~= "" then content = content .. "\n" .. rag_context end
+                        table.insert(req_json.messages, 1, {role = "system", content = content})
                     end
                 end
 
@@ -546,19 +781,39 @@ local function proxy_connection(client_fd, conn_fds)
                 end
 
                 local new_body = json.encode(req_json)
-                local new_headers = headers_raw:gsub("([Cc][Oo][Nn][Tt][Ee][Nn][Tt]%-[Ll][Ee][Nn][Gg][Tt][Hh]:%s*)%d+", "%1" .. #new_body)
-                new_headers = new_headers:gsub("[Tt][Rr][Aa][Nn][Ss][Ff][Ee][Rr]%-[Ee][Nn][Cc][Oo][Dd][Ii][Nn][Gg]:%s*[Cc][Hh][Uu][Nn][Kk][Ee][Dd]\r\n", "")
-                if not new_headers:find("[Cc][Oo][Nn][Tt][Ee][Nn][Tt]%-[Ll][Ee][Nn][Gg][Tt][Hh]:") then
+                
+                -- Robust header update: replace existing Content-Length or append if missing
+                local new_headers = headers_raw
+                local cl_pattern = "(\r\n[Cc][Oo][Nn][Tt][Ee][Nn][Tt]%-[Ll][Ee][Nn][Gg][Tt][Hh]:%s*)%d+"
+                if new_headers:find(cl_pattern) then
+                    new_headers = new_headers:gsub(cl_pattern, "%1" .. #new_body)
+                else
                     new_headers = new_headers:gsub("\r\n\r\n", "\r\nContent-Length: " .. #new_body .. "\r\n\r\n")
                 end
-                proxied_req = new_headers .. new_body
-                if intent then
-                    local detail = #rag .. " files"
-                    if web_context ~= "" then detail = detail .. " + web results" end
-                    print("[proxy] Intent: " .. intent .. " | Injected intelligence (" .. detail .. ")")
+                
+                -- Ensure Connection: close and strip Chunked encoding for llama-server compatibility
+                new_headers = new_headers:gsub("\r\n[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]:%s*[^\r\n]*\r\n", "\r\n")
+                new_headers = new_headers:gsub("[Tt][Rr][Aa][Nn][Ss][Ff][Ee][Rr]%-[Ee][Nn][Cc][Oo][Dd][Ii][Nn][Gg]:%s*[Cc][Hh][Uu][Nn][Kk][Ee][Dd]\r\n", "")
+                if not new_headers:find("\r\n[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]:") then
+                    new_headers = new_headers:gsub("\r\n\r\n", "\r\nConnection: close\r\n\r\n")
                 end
+
+                proxied_req = new_headers .. new_body
+                
+                -- Enhanced logging for dispatch
+                local dispatch_msg = "[proxy] Dispatch: " .. (intent or "freechat")
+                if #rag > 0 then dispatch_msg = dispatch_msg .. " | RAG: " .. #rag .. " hits" end
+                if web_context ~= "" then dispatch_msg = dispatch_msg .. " | Web: OK" end
+                if has_tools then dispatch_msg = dispatch_msg .. " | Tools: " .. #req_json.tools end
+                print(dispatch_msg)
             end
         end
+    end
+
+    if is_fim and #body_raw > 0 then
+        -- Simply forward FIM requests to llama-server for now.
+        -- In the future, we can inject RAG context here too.
+        proxied_req = headers_raw .. body_raw
     end
 
     local llama_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
@@ -569,6 +824,7 @@ local function proxy_connection(client_fd, conn_fds)
         return
     end
     conn_fds.llama = llama_fd
+    set_cloexec(llama_fd)
     set_nonblocking(llama_fd)
     set_socket_opts(llama_fd)
 
@@ -615,10 +871,11 @@ if server_fd < 0 then
     print("[proxy] Failed to create socket: errno=" .. tostring(err) .. " " .. ffi.string(ffi.C.strerror(err)))
     os.exit(1)
 end
+set_cloexec(server_fd)
+set_nonblocking(server_fd)
 
 local opt = ffi.new("int[1]", 1)
 ffi.C.setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, opt, ffi.sizeof("int"))
-set_nonblocking(server_fd)
 
 local addr = ffi.new("struct sockaddr_in")
 if not _ffi_defs.IS_LINUX then
@@ -640,16 +897,22 @@ if ffi.C.listen(server_fd, 16) < 0 then
     os.exit(1)
 end
 
+-- Perform initial indexing only when a project root is detected.
+-- Disabled for startup to prevent blocking the main loop or indexing the repository itself.
+print("[proxy] Search index deferred until project root is detected.")
+
 -- Main Select Loop
 -- conn_fds_map: client_fd -> {client=N, llama=N} tracks all fds owned by each connection
 local clients = {}
+local background_tasks = {}
 local conn_fds_map = {}
 local COROUTINE_TIMEOUT = tonumber(os.getenv("JENOVA_CONN_TIMEOUT")) or 600
 local read_fds = _ffi_defs.fd_set_new()
 local write_fds = _ffi_defs.fd_set_new()
 
 local running = true
-local function shutdown_handler()
+local function shutdown_handler(sig)
+    io.write("[proxy] received signal " .. tostring(sig) .. ", shutting down...\n")
     running = false
 end
 local shutdown_cb = ffi.cast("sighandler_t", shutdown_handler)
@@ -670,6 +933,18 @@ while running do
             _ffi_defs.FD_SET(info.watch_fd, write_fds)
         end
         if info.watch_fd > max_fd then max_fd = info.watch_fd end
+    end
+
+    -- Add background tasks to select sets
+    for i = #background_tasks, 1, -1 do
+        local task = background_tasks[i]
+        if task.type == "read" then
+            _ffi_defs.FD_SET(task.watch_fd, read_fds)
+            if task.watch_fd > max_fd then max_fd = task.watch_fd end
+        elseif task.type == "write" then
+            _ffi_defs.FD_SET(task.watch_fd, write_fds)
+            if task.watch_fd > max_fd then max_fd = task.watch_fd end
+        end
     end
 
     local tv = ffi.new("struct timeval", {tv_sec=1, tv_usec=0})
@@ -724,6 +999,29 @@ while running do
                 else
                     info.type = type
                     info.watch_fd = watch_fd
+                end
+            end
+        end
+
+        -- Handle background tasks
+        for i = #background_tasks, 1, -1 do
+            local task = background_tasks[i]
+            local ready = false
+            if task.type == "read" and _ffi_defs.FD_ISSET(task.watch_fd, read_fds) then
+                ready = true
+            elseif task.type == "write" and _ffi_defs.FD_ISSET(task.watch_fd, write_fds) then
+                ready = true
+            elseif task.type == nil then
+                ready = true -- Immediate execution
+            end
+
+            if ready then
+                local ok, type, watch_fd = coroutine.resume(task.co)
+                if coroutine.status(task.co) == "dead" then
+                    table.remove(background_tasks, i)
+                else
+                    task.type = type
+                    task.watch_fd = watch_fd
                 end
             end
         end

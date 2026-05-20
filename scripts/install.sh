@@ -8,7 +8,7 @@
 # and symlinks `jvim`, `jenova`, and `jenova-ca` onto your PATH.
 #
 # Usage: ./install.sh [--force] [--link] [--skip-config] [--skip-jvim]
-#                     [--skip-llama] [--skip-lsp] [--client-only]
+#                     [--skip-llama] [--skip-lsp] [--skip-web] [--client-only]
 #
 #   --force        Overwrite existing ~/.config/jvim without prompting and
 #                  force a fresh jvim rebuild even if jvim/build/ exists
@@ -18,23 +18,27 @@
 #   --skip-jvim    Skip building the bundled jvim editor (jvim/)
 #   --skip-llama   Skip llama.cpp build check
 #   --skip-lsp     Skip auto-installing LSP servers / linters / formatters
+#   --skip-web     Skip building the JCA Web UI (jca_web/)
 #   --client-only  LAN client install: skip llama.cpp, skip jvim build,
-#                  skip model downloads. Use when this host will only ever
+#                  skip model downloads, skip web UI. Use when this host will only ever
 #                  connect to a remote Jenova CA via 'jvim --remote <host>'.
 #
 # This script:
 #   1. Verifies required system dependencies
 #   2. Creates required runtime directories (var/log, var/cache, models, .jenova)
 #   3. Checks for llama.cpp build (skipped with --client-only)
-#   4. Downloads required model files (skipped with --client-only)
-#   5. Detects whether the installed nvim is jvim or upstream Neovim
-#   6. Installs the Jenova nvim configuration to ~/.config/jvim/
-#   7. Installs bin/jvim, bin/jenova, bin/jenova-ca symlinks to PATH
-#   8. Prints a summary plus next-step commands
+#   4. Checks for Web UI build (skipped with --client-only or --skip-web)
+#   5. Downloads required model files (skipped with --client-only)
+#   6. Detects whether the installed nvim is jvim or upstream Neovim
+#   7. Installs the Jenova nvim configuration to ~/.config/jvim/
+#   8. Installs bin/jvim, bin/jenova, bin/jenova-ca symlinks to PATH
+#   9. Prints a summary plus next-step commands
 
 set -e
 
-JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
+_REAL_SCRIPT="$(realpath "$0" 2>/dev/null || echo "$0")"
+_SCRIPT_DIR="$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)"
+JENOVA_ROOT="$(cd "$_SCRIPT_DIR/.." && pwd)"
 JVIM_CONFIG_SRC="$JENOVA_ROOT/jvim-config"
 JVIM_CONFIG_DST="$HOME/.config/jvim"
 
@@ -55,6 +59,7 @@ SKIP_NVIM=0
 SKIP_JVIM=0
 SKIP_LLAMA=0
 SKIP_LSP=0
+SKIP_WEB=0
 CLIENT_ONLY=0
 
 for _arg in "$@"; do
@@ -65,7 +70,8 @@ for _arg in "$@"; do
         --skip-jvim)   SKIP_JVIM=1 ;;
         --skip-llama)  SKIP_LLAMA=1 ;;
         --skip-lsp)    SKIP_LSP=1 ;;
-        --client-only) CLIENT_ONLY=1; SKIP_LLAMA=1; SKIP_JVIM=1 ;;
+        --skip-web)    SKIP_WEB=1 ;;
+        --client-only) CLIENT_ONLY=1; SKIP_LLAMA=1; SKIP_JVIM=1; SKIP_WEB=1 ;;
         -h|--help)
             sed -n '2,32p' "$0"
             exit 0
@@ -82,9 +88,14 @@ done
 # Colours (disabled if not a terminal)
 # ---------------------------------------------------------------------------
 if [ -t 1 ]; then
-    _G="\033[0;32m"; _Y="\033[0;33m"; _R="\033[0;31m"; _B="\033[1;34m"; _N="\033[0m"
+    _G=$(printf '\033[38;2;118;148;106m')
+    _Y=$(printf '\033[38;2;192;163;110m')
+    _R=$(printf '\033[38;2;195;64;67m')
+    _B=$(printf '\033[38;2;126;156;216m')
+    _P=$(printf '\033[38;2;120;81;169m')
+    _N=$(printf '\033[0m')
 else
-    _G=""; _Y=""; _R=""; _B=""; _N=""
+    _G=""; _Y=""; _R=""; _B=""; _P=""; _N=""
 fi
 
 ok()   { printf "${_G}  OK${_N}  %s\n" "$1"; }
@@ -93,9 +104,9 @@ fail() { printf "${_R} FAIL${_N}  %s\n" "$1"; }
 info() { printf "${_B} INFO${_N}  %s\n" "$1"; }
 
 echo ""
-printf "${_B}╔══════════════════════════════════════════════════════╗${_N}\n"
-printf "${_B}║  Jenova Cognitive Architecture — Install             ║${_N}\n"
-printf "${_B}╚══════════════════════════════════════════════════════╝${_N}\n"
+printf "${_P}╔══════════════════════════════════════════════════════╗${_N}\n"
+printf "${_P}║  Jenova Cognitive Architecture — Install             ║${_N}\n"
+printf "${_P}╚══════════════════════════════════════════════════════╝${_N}\n"
 echo ""
 
 ERRORS=0
@@ -104,30 +115,38 @@ WARNINGS=0
 # ---------------------------------------------------------------------------
 # 1. OS Check & Hardware Profile Detection
 # ---------------------------------------------------------------------------
-info "Checking operating system..."
+info "Performing system audit..."
+if [ "$JENOVA_OS" = "unknown" ]; then
+    fail "Unsupported Operating System: $(uname -s)"
+    exit 1
+fi
+
 case "$JENOVA_OS" in
     freebsd)
         _VER="$(uname -r | cut -d. -f1)"
-        if [ "${_VER:-0}" -ge 15 ] 2>/dev/null; then
-            ok "FreeBSD ${_VER} — fully supported"
+        if [ "$_VER" -ge 15 ]; then
+            ok "FreeBSD ${_VER} (1st Class Citizen) — fully supported"
         else
-            warn "FreeBSD ${_VER} — recommended FreeBSD 15+; some features may differ"
+            warn "FreeBSD ${_VER} — recommended FreeBSD 15+; proceeding with caution"
             WARNINGS=$((WARNINGS + 1))
         fi
         ;;
     linux)
-        ok "Linux detected — ${JENOVA_DISTRO} / pkg: ${JENOVA_PKG_MGR}"
+        if [ "$JENOVA_WSL" = "1" ]; then
+            ok "Linux (WSL) — 2nd Class Citizen (Experimental Support)"
+            warn "WSL environment detected. Some native GPU features may require specific drivers."
+        else
+            ok "Linux — 2nd Class Citizen (Fully Supported)"
+        fi
         info "Replace 'Vulkan0,Vulkan1' device names in etc/jenova.conf with your Vulkan device names (run: vulkaninfo --summary)"
         ;;
     macos)
         warn "macOS detected — experimental, not regularly tested"
         WARNINGS=$((WARNINGS + 1))
         ;;
-    *)
-        warn "Unsupported OS: $(uname -s) — proceeding but results may vary"
-        WARNINGS=$((WARNINGS + 1))
-        ;;
 esac
+
+info "Hardware: $JENOVA_CPU_MODEL ($JENOVA_CPU_THREADS threads, $JENOVA_RAM_GIB GiB RAM)"
 
 info "Detecting hardware profile..."
 DETECT_SCRIPT="$JENOVA_ROOT/hardware-profiles/detect-hardware.sh"
@@ -136,13 +155,11 @@ if [ -f "$DETECT_SCRIPT" ] && [ -x "$DETECT_SCRIPT" ]; then
     _PROFILE=$("$DETECT_SCRIPT" 2>/dev/null) || _PROFILE=""
     if [ -n "$_PROFILE" ]; then
         ok "Matched hardware profile: $_PROFILE"
-        # Automatically apply the profile configuration (non-fatal: installer
-        # continues even if the copy fails so the user is not left mid-install)
+        # Automatically apply the profile configuration
         if ! "$DETECT_SCRIPT" --apply; then
             warn "Failed to apply hardware profile: $_PROFILE"
             WARNINGS=$((WARNINGS + 1))
         fi
-        _PROFILE_DIR="$JENOVA_ROOT/hardware-profiles/$_PROFILE"
     else
         warn "No hardware profile matched this system."
         warn "Run: $DETECT_SCRIPT --info  to see detection details."
@@ -156,24 +173,27 @@ fi
 # ---------------------------------------------------------------------------
 # 2. Create required runtime directories & Permission checks
 # ---------------------------------------------------------------------------
-info "Creating runtime directories..."
+JENOVA_HOME="${JENOVA_HOME:-$HOME/Jenova}"
+info "Creating runtime directories in $JENOVA_HOME..."
 
-mkdir -p "$JENOVA_ROOT/.jenova" 2>/dev/null || {
-    fail "Cannot create $JENOVA_ROOT/.jenova directory"
+mkdir -p "$JENOVA_HOME/.system" 2>/dev/null || {
+    fail "Cannot create $JENOVA_HOME/.system directory"
     fail "Do not run install.sh with sudo — run as regular user"
     ERRORS=$((ERRORS + 1))
 }
-mkdir -p "$JENOVA_ROOT/var/log" || true
-mkdir -p "$JENOVA_ROOT/var/cache" || true
-mkdir -p "$JENOVA_ROOT/models/agent" || true
-mkdir -p "$JENOVA_ROOT/models/embed" || true
-mkdir -p "$JENOVA_ROOT/models/draft" || true
+mkdir -p "$JENOVA_HOME/var/log" || true
+mkdir -p "$JENOVA_HOME/var/cache" || true
+mkdir -p "$JENOVA_HOME/var/run" || true
+mkdir -p "$JENOVA_HOME/models/agent" || true
+mkdir -p "$JENOVA_HOME/models/embed" || true
+mkdir -p "$JENOVA_HOME/models/draft" || true
+mkdir -p "$JENOVA_HOME/bin" || true
+mkdir -p "$JENOVA_HOME/etc" || true
 
-if [ -w "$JENOVA_ROOT/.jenova" ]; then
-    ok "Runtime directories created with proper permissions"
+if [ -w "$JENOVA_HOME/.system" ]; then
+    ok "Runtime directories created in $JENOVA_HOME"
 else
-    warn ".jenova directory exists but may have permission issues"
-    warn "Run: chmod -R u+w $JENOVA_ROOT/.jenova"
+    warn "$JENOVA_HOME/.system directory exists but may have permission issues"
     WARNINGS=$((WARNINGS + 1))
 fi
 
@@ -269,10 +289,11 @@ if [ "$JENOVA_VULKAN_OK" = "1" ]; then
 else
     case "$JENOVA_PKG_MGR" in
         pkg)    _vhint="pkg install vulkan-loader" ;;
-        pacman) _vhint="pacman -S vulkan-icd-loader" ;;
-        apt)    _vhint="apt install libvulkan1" ;;
+        pacman) _vhint="pacman -S vulkan-icd-loader (or yay -S vulkan-icd-loader)" ;;
+        apt)    _vhint="apt-get install libvulkan1" ;;
         dnf)    _vhint="dnf install vulkan-loader" ;;
         zypper) _vhint="zypper install libvulkan1" ;;
+        xbps)   _vhint="xbps-install vulkan-loader" ;;
         brew)   _vhint="brew install molten-vk" ;;
         *)      _vhint="install the vulkan-loader package for your OS" ;;
     esac
@@ -297,15 +318,15 @@ info "Installing LSP servers, linters and formatters..."
 _have() { command -v "$1" >/dev/null 2>&1; }
 
 # Try sudo when available and the current user is not root.
-_PRIV=""
-if [ "$(id -u)" != "0" ] && _have sudo; then
-    _PRIV="sudo"
+_PRIV="" 
+if [ "$(id -u)" != "0" ]; then
+    _have sudo && _PRIV="sudo " || { _have doas && _PRIV="doas "; }
 fi
 
 _apt_install() {
     # Quietly install one-or-more apt packages (Debian/Ubuntu/derivatives).
     _have apt-get || return 1
-    $_PRIV apt-get install -y -q "$@" >/dev/null 2>&1
+    $_PRIV DEBIAN_FRONTEND=noninteractive apt-get install -y -q "$@" >/dev/null 2>&1
 }
 
 _pkg_install() {
@@ -315,9 +336,14 @@ _pkg_install() {
 }
 
 _pacman_install() {
-    # Arch Linux pacman.
-    _have pacman || return 1
-    $_PRIV pacman -S --noconfirm --needed "$@" >/dev/null 2>&1
+    # Arch Linux pacman or yay.
+    if _have yay; then
+        yay -S --noconfirm --needed "$@" >/dev/null 2>&1
+    elif _have pacman; then
+        $_PRIV pacman -S --noconfirm --needed "$@" >/dev/null 2>&1
+    else
+        return 1
+    fi
 }
 
 _dnf_install() {
@@ -330,6 +356,16 @@ _zypper_install() {
     # openSUSE zypper.
     _have zypper || return 1
     $_PRIV zypper install -y --quiet "$@" >/dev/null 2>&1
+}
+
+_xbps_install() {
+    _have xbps-install || return 1
+    $_PRIV xbps-install -y "$@" >/dev/null 2>&1
+}
+
+_brew_install() {
+    _have brew || return 1
+    brew install "$@" >/dev/null 2>&1
 }
 
 _npm_install_g() {
@@ -372,7 +408,7 @@ export PATH
 # Install one tool by trying the appropriate manager for this system first,
 # then falling back through npm/cargo/go/pip. Already-present tools are skipped.
 _install_lsp() {
-    _exe="$1"; _label="$2"; _apt="$3"; _pkg="$4"; _npm="$5"; _cargo="$6"; _go="$7"; _pip="$8"; _pacman="$9"
+    _exe="$1"; _label="$2"; _apt="$3"; _pkg="$4"; _npm="$5"; _cargo="$6"; _go="$7"; _pip="$8"; _pacman="$9"; shift 9; _brew="$1"
     if _have "$_exe"; then
         ok "$_label ($(command -v "$_exe"))"
         return 0
@@ -383,6 +419,8 @@ _install_lsp() {
         apt)    [ -n "$_apt" ]    && _apt_install    $_apt    || true ;;
         dnf)    [ -n "$_apt" ]    && _dnf_install    $_apt    || true ;;
         zypper) [ -n "$_apt" ]    && _zypper_install $_apt    || true ;;
+        xbps)   [ -n "$_apt" ]    && _xbps_install   $_apt    || true ;;
+        brew)   [ -n "$_brew" ]   && _brew_install   $_brew   || true ;;
         *)      [ -n "$_apt" ]    && _apt_install    $_apt    || true ;;
     esac
     if ! _have "$_exe" && [ -n "$_npm" ];   then _npm_install_g $_npm  || true; fi
@@ -415,6 +453,8 @@ else
         apt)    _apt_install clangd || true ;;
         dnf)    _dnf_install clang-tools-extra || true ;;
         zypper) _zypper_install clang || true ;;
+        xbps)   _xbps_install clang-tools-extra || true ;;
+        brew)   _brew_install llvm || true ;;
         *)      _apt_install clangd || true ;;
     esac
     if _clangd_present; then
@@ -457,38 +497,39 @@ _install_zls_from_github() {
     mkdir -p "$HOME/.local/bin"
     _url="https://github.com/zigtools/zls/releases/download/${_ver}/zls-${_GH_ARCH_ZLS}-linux.tar.xz"
     _tmp="$(mktemp)"
+    _outdir="$(mktemp -d)"
+    trap 'rm -f "$_tmp"; rm -rf "$_outdir"' RETURN
     info "Downloading zls $_ver from github..."
-    curl -fsSL "$_url" -o "$_tmp" || { rm -f "$_tmp"; return 1; }
-    tar -xJf "$_tmp" -C /tmp/ zls 2>/dev/null || { rm -f "$_tmp"; return 1; }
-    mv /tmp/zls "$HOME/.local/bin/zls"
+    curl -fsSL "$_url" -o "$_tmp" || return 1
+    tar -xJf "$_tmp" -C "$_outdir" zls 2>/dev/null || return 1
+    mv "$_outdir/zls" "$HOME/.local/bin/zls"
     chmod +x "$HOME/.local/bin/zls"
-    rm -f "$_tmp"
     _have zls
 }
 
-# args:        exe                    label                apt                    pkg                          npm                          cargo            go                                                          pip                         pacman
-_install_lsp "rust-analyzer"          "rust-analyzer"       "rust-analyzer"        "rust-analyzer"              ""                           ""               ""                                                          ""                          "rust-analyzer"
-_install_lsp "lua-language-server"    "lua-language-server" "lua-language-server"  "lua-language-server"        ""                           ""               ""                                                          ""                          "lua-language-server"
+# args:        exe                    label                apt                    pkg                          npm                          cargo            go                                                          pip                         pacman                      brew
+_install_lsp "rust-analyzer"          "rust-analyzer"       "rust-analyzer"        "rust-analyzer"              ""                           ""               ""                                                          ""                          "rust-analyzer"             "rust-analyzer"
+_install_lsp "lua-language-server"    "lua-language-server" "lua-language-server"  "lua-language-server"        ""                           ""               ""                                                          ""                          "lua-language-server"       "lua-language-server"
 if ! _have lua-language-server; then
     _install_lls_from_github && ok "lua-language-server installed ($(command -v lua-language-server))" || warn "lua-language-server could not be installed automatically"
 fi
-_install_lsp "pyright-langserver"     "pyright"             ""                     "py311-pyright"              "pyright"                    ""               ""                                                          ""                          "pyright"
-_install_lsp "bash-language-server"   "bash-language-server" ""                    "npm"                        "bash-language-server"       ""               ""                                                          ""                          "bash-language-server"
-_install_lsp "gopls"                  "gopls"               "gopls"                "go gopls"                   ""                           ""               "golang.org/x/tools/gopls@latest"                            ""                          "gopls"
-_install_lsp "zls"                    "zls"                 ""                     "zig"                        ""                           ""               ""                                                          ""                          "zls"
+_install_lsp "pyright-langserver"     "pyright"             "pyright"              "py311-pyright"              "pyright"                    ""               ""                                                          ""                          "pyright"                   "pyright"
+_install_lsp "bash-language-server"   "bash-language-server" ""                    "npm"                        "bash-language-server"       ""               ""                                                          ""                          "bash-language-server"      "bash-language-server"
+_install_lsp "gopls"                  "gopls"               "gopls"                "go gopls"                   ""                           ""               "golang.org/x/tools/gopls@latest"                            ""                          "gopls"                     "go"
+_install_lsp "zls"                    "zls"                 "zls"                  "zig"                        ""                           ""               ""                                                          ""                          "zls"                       "zls"
 if ! _have zls; then
     _install_zls_from_github && ok "zls installed ($(command -v zls))" || warn "zls could not be installed automatically"
 fi
 
 # Linters (used by LSP-equivalents and conform.nvim).
-_install_lsp "shellcheck"             "shellcheck"          "shellcheck"           "shellcheck"                 ""                           ""               ""                                                          ""                          "shellcheck"
+_install_lsp "shellcheck"             "shellcheck"          "shellcheck"           "shellcheck"                 ""                           ""               ""                                                          ""                          "shellcheck"                "shellcheck"
 
 # Formatters used by conform.nvim (format-on-save).
-_install_lsp "stylua"                 "stylua"              ""                     "stylua"                     ""                           "stylua"         ""                                                          ""                          "stylua"
-_install_lsp "shfmt"                  "shfmt"               "shfmt"                "shfmt"                      ""                           ""               "mvdan.cc/sh/v3/cmd/shfmt@latest"                            ""                          "shfmt"
-_install_lsp "goimports"              "goimports"           ""                     "go"                         ""                           ""               "golang.org/x/tools/cmd/goimports@latest"                    ""                          ""
-_install_lsp "black"                  "black"               "black"                "py311-black"                ""                           ""               ""                                                          "black"                     "python-black"
-_install_lsp "isort"                  "isort"               "isort"                "py311-isort"                ""                           ""               ""                                                          "isort"                     "python-isort"
+_install_lsp "stylua"                 "stylua"              ""                     "stylua"                     ""                           "stylua"         ""                                                          ""                          "stylua"                    "stylua"
+_install_lsp "shfmt"                  "shfmt"               "shfmt"                "shfmt"                      ""                           ""               "mvdan.cc/sh/v3/cmd/shfmt@latest"                            ""                          "shfmt"                     "shfmt"
+_install_lsp "goimports"              "goimports"           "goimports"            "go"                         ""                           ""               "golang.org/x/tools/cmd/goimports@latest"                    ""                          ""                          "go"
+_install_lsp "black"                  "black"               "black"                "py311-black"                ""                           ""               ""                                                          "black"                     "python-black"              "black"
+_install_lsp "isort"                  "isort"               "isort"                "py311-isort"                ""                           ""               ""                                                          "isort"                     "python-isort"              "isort"
 
 fi  # SKIP_LSP
 
@@ -500,29 +541,46 @@ if [ "$CLIENT_ONLY" = "1" ]; then
     info "Skipping llama.cpp build check (--client-only)"
 elif [ "$SKIP_LLAMA" = "0" ]; then
     info "Checking llama.cpp build..."
-    LLAMA_BIN="$JENOVA_ROOT/llama.cpp/build/bin/llama-server"
+    LLAMA_BIN="$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server"
     if [ -f "$LLAMA_BIN" ]; then
         ok "llama-server binary found at $LLAMA_BIN"
     else
-        warn "llama-server not found at $LLAMA_BIN"
-        warn "Build llama.cpp with Vulkan support using:"
-        warn "  $JENOVA_ROOT/bin/build-llama-jenova"
-        warn ""
-        warn "Or manually:"
-        warn "  cd $JENOVA_ROOT/llama.cpp"
-        warn "  cmake -B build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=ON -DGGML_LTO=ON"
-        warn "  cmake --build build --config Release -j\$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+        warn "llama-server not found. Build it using the Makefile:"
+        warn "  make llama"
+        warn "This will build llama.cpp with the appropriate backend (Vulkan, CUDA, Metal)"
+        warn "based on your detected hardware profile."
+        warn "For manual builds, see llama.cpp/docs/build.md"
         WARNINGS=$((WARNINGS + 1))
     fi
 
     # Check for Vulkan SDK components (needed for build)
+    case "$JENOVA_PKG_MGR" in
+        pkg)    _spirv_hint="pkg install spirv-headers" ;;
+        pacman) _spirv_hint="pacman -S spirv-headers" ;;
+        apt)    _spirv_hint="apt-get install spirv-headers" ;;
+        dnf)    _spirv_hint="dnf install spirv-headers-devel" ;;
+        zypper) _spirv_hint="zypper install spirv-headers" ;;
+        xbps)   _spirv_hint="xbps-install SPIRV-Headers" ;;
+        brew)   _spirv_hint="brew install spirv-headers" ;;
+        *)      _spirv_hint="install the spirv-headers package for your OS" ;;
+    esac
+
+    # On FreeBSD, spirv-headers might be missing from the binary repo but 
+    # we have a workaround in install-dependencies.sh using spirv-cross.
+    if [ "$JENOVA_OS" = "freebsd" ] && [ ! -f "/usr/local/include/spirv/unified1/spirv.hpp" ]; then
+        warn "spirv-headers missing — check if install-dependencies.sh was run"
+    else
+        check_optional "spirv-headers" "$_spirv_hint"
+    fi
+
     if [ "$JENOVA_GLSLC_OK" = "0" ]; then
         case "$JENOVA_PKG_MGR" in
             pkg)    _glslc_hint="pkg install shaderc" ;;
-            pacman) _glslc_hint="pacman -S shaderc" ;;
+            pacman) _glslc_hint="pacman -S shaderc (or yay -S shaderc)" ;;
             apt)    _glslc_hint="apt install glslc" ;;
             dnf)    _glslc_hint="dnf install glslc" ;;
             zypper) _glslc_hint="zypper install shaderc" ;;
+            xbps)   _glslc_hint="xbps-install shaderc" ;;
             brew)   _glslc_hint="brew install shaderc" ;;
             *)      _glslc_hint="install the shaderc/glslc package for your OS" ;;
         esac
@@ -536,14 +594,24 @@ fi
 # 5b. jvim editor — build the in-tree fork unless --skip-jvim was passed
 # ---------------------------------------------------------------------------
 if [ "$SKIP_JVIM" = "0" ] && [ "$CLIENT_ONLY" = "0" ]; then
-    info "Building bundled jvim editor (jvim/)..."
-    if [ ! -f "$JENOVA_ROOT/jvim/CMakeLists.txt" ]; then
-        warn "jvim/ source tree missing — skipping jvim build"
-        WARNINGS=$((WARNINGS + 1))
-    else
+    # ISS-01: If install-jenova.sh already built jvim via 'make jvim',
+    # it sets JENOVA_BUILT_BY_INSTALLER=1 to avoid a redundant rebuild.
+    if [ "${JENOVA_BUILT_BY_INSTALLER:-0}" = "1" ]; then
         _JVIM_BIN_OUT="$JENOVA_ROOT/jvim/build/bin/nvim"
-        if [ -x "$_JVIM_BIN_OUT" ] && [ "$FORCE" = "0" ]; then
-            ok "jvim already built at $_JVIM_BIN_OUT (use --force to rebuild)"
+        if [ -x "$_JVIM_BIN_OUT" ]; then
+            ok "jvim already built by install-jenova.sh at $_JVIM_BIN_OUT"
+        else
+            warn "JENOVA_BUILT_BY_INSTALLER set but jvim binary not found — will attempt build"
+        fi
+    fi
+
+    # Only build if not already present (or --force)
+    _JVIM_BIN_OUT="$JENOVA_ROOT/jvim/build/bin/nvim"
+    if [ ! -x "$_JVIM_BIN_OUT" ] || [ "$FORCE" = "1" ]; then
+        info "Building bundled jvim editor (jvim/)..."
+        if [ ! -f "$JENOVA_ROOT/jvim/CMakeLists.txt" ]; then
+            warn "jvim/ source tree missing — skipping jvim build"
+            WARNINGS=$((WARNINGS + 1))
         else
             _MAKE_CMD="make"
             if [ "$_OS" = "FreeBSD" ]; then
@@ -574,14 +642,48 @@ if [ "$SKIP_JVIM" = "0" ] && [ "$CLIENT_ONLY" = "0" ]; then
                 fi
             fi
         fi
+    else
+        ok "jvim already built at $_JVIM_BIN_OUT (use --force to rebuild)"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 5c. Web UI — build the SvelteKit frontend unless --skip-web was passed
+# ---------------------------------------------------------------------------
+if [ "$SKIP_WEB" = "0" ] && [ "$CLIENT_ONLY" = "0" ]; then
+    # Only build if not already present (or --force)
+    if [ ! -f "$JENOVA_ROOT/public/bundle.js" ] || [ "$FORCE" = "1" ]; then
+        info "Building JCA Web UI (jca_web/)..."
+        if [ ! -d "$JENOVA_ROOT/jca_web" ]; then
+            warn "jca_web/ source tree missing — skipping Web UI build"
+            WARNINGS=$((WARNINGS + 1))
+        elif ! command -v npm >/dev/null 2>&1; then
+            warn "npm not found — cannot build Web UI"
+            warn "Install nodejs/npm to enable the Web UI."
+            WARNINGS=$((WARNINGS + 1))
+        else
+            (
+                cd "$JENOVA_ROOT/jca_web" && \
+                npm install --silent && \
+                npm run build --silent
+            ) || {
+                fail "Web UI build failed — see above. Re-run: make web"
+                ERRORS=$((ERRORS + 1))
+            }
+            if [ -f "$JENOVA_ROOT/public/bundle.js" ]; then
+                ok "Web UI built successfully"
+            fi
+        fi
+    else
+        ok "Web UI already built (use --force to rebuild)"
     fi
 fi
 
 # ---------------------------------------------------------------------------
 # 6. Model files — check and offer to download missing models
 # ---------------------------------------------------------------------------
-if [ "$CLIENT_ONLY" = "1" ]; then
-    info "Skipping model checks (--client-only — models live on the remote host)"
+if [ "$CLIENT_ONLY" = "1" ] || [ "${JENOVA_SKIP_MODELS:-0}" = "1" ]; then
+    info "Skipping model checks..."
 else
     if [ -x "$JENOVA_ROOT/scripts/model_dl.sh" ]; then
         "$JENOVA_ROOT/scripts/model_dl.sh" "$_PROFILE" || {
@@ -655,52 +757,222 @@ if [ "$SKIP_NVIM" = "0" ] && command -v jvim >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
-# 8. Install launchers to PATH
+# 8. Deploy to JENOVA_HOME (Strict Separation)
 # ---------------------------------------------------------------------------
-info "Installing launchers to PATH..."
+info "Deploying standalone system to $JENOVA_HOME..."
 
-_BIN_DIR=""
-for _d in "$HOME/.local/bin" "$HOME/bin"; do
-    if echo "$PATH" | grep -q "$_d"; then
-        _BIN_DIR="$_d"
-        break
+# 8.1 Create directory structure
+for _d in bin etc lib public scripts hardware-profiles share share/jvim/mason var/log var/cache var/run models/agent models/embed models/draft jvim/runtime; do
+    mkdir -p "$JENOVA_HOME/$_d"
+done
+
+# 8.2 Verify and Deploy Binaries
+_verify_and_copy_bin() {
+    _src="$1"; _dst="$2"
+    [ -f "$_src" ] || return 1
+    
+    # OS/Arch verification
+    if command -v file >/dev/null 2>&1; then
+        _file_info=$(file "$_src")
+        case "$JENOVA_OS" in
+            linux)   echo "$_file_info" | grep -qi "ELF.*GNU/Linux" || { info "Skipping Linux-only binary: $(basename "$_src")"; return 0; } ;;
+            freebsd) echo "$_file_info" | grep -qi "ELF.*FreeBSD"   || { info "Skipping non-FreeBSD binary: $(basename "$_src")"; return 0; } ;;
+            macos)   echo "$_file_info" | grep -qi "Mach-O"       || { info "Skipping non-macOS binary: $(basename "$_src")"; return 0; } ;;
+        esac
+    fi
+    
+    # Use 'install' to handle 'Text file busy' and set permissions
+    install -m 755 "$_src" "$_dst"
+    return 0
+}
+
+# wrappers
+for _bin in jvim jenova jenova-ui jenova-ca jenova-tui jenova-term jenova-swap-mount; do
+    if [ -f "$JENOVA_ROOT/bin/$_bin" ]; then
+        install -m 755 "$JENOVA_ROOT/bin/$_bin" "$JENOVA_HOME/bin/$_bin"
     fi
 done
 
-if [ -n "$_BIN_DIR" ]; then
-    mkdir -p "$_BIN_DIR"
-    ln -sf "$JENOVA_ROOT/bin/jvim" "$_BIN_DIR/jvim"
-    ln -sf "$JENOVA_ROOT/bin/jenova" "$_BIN_DIR/jenova"
-    ln -sf "$JENOVA_ROOT/bin/jenova-ca" "$_BIN_DIR/jenova-ca"
-    if [ -f "$JENOVA_ROOT/bin/mcsh" ]; then
-        ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/mcsh"
-        ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/tcsh"
-        ln -sf "$JENOVA_ROOT/bin/mcsh" "$_BIN_DIR/csh"
-        ok "Symlinked jvim, jenova, jenova-ca, and mcsh to $_BIN_DIR"
-    else
-        ok "Symlinked jvim, jenova, and jenova-ca to $_BIN_DIR"
+# Built artifacts (llama-server, mcsh, jenova-ui)
+_LLAMA_BUILD_BIN="$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server"
+if [ -f "$_LLAMA_BUILD_BIN" ]; then
+    _verify_and_copy_bin "$_LLAMA_BUILD_BIN" "$JENOVA_HOME/bin/llama-server"
+    # Copy shared libs if they exist
+    for _lib in "$JENOVA_ROOT/external/llama.cpp/build/bin/"*.so* "$JENOVA_ROOT/external/llama.cpp/build/bin/"*.dylib*; do
+        if [ -f "$_lib" ]; then
+            install -m 755 "$_lib" "$JENOVA_HOME/bin/"
+        fi
+    done
+    ok "Deployed llama.cpp artifacts to $JENOVA_HOME/bin"
+fi
+
+if [ -f "$JENOVA_ROOT/bin/mcsh" ]; then
+    _verify_and_copy_bin "$JENOVA_ROOT/bin/mcsh" "$JENOVA_HOME/bin/mcsh"
+fi
+
+if [ -f "$JENOVA_ROOT/jenova-ui/jenova-ui" ]; then
+    _verify_and_copy_bin "$JENOVA_ROOT/jenova-ui/jenova-ui" "$JENOVA_HOME/bin/jenova-ui"
+fi
+
+# jvim core (nvim)
+_JVIM_CORE="$JENOVA_ROOT/jvim/build/bin/nvim"
+if [ ! -f "$_JVIM_CORE" ]; then _JVIM_CORE="$JENOVA_ROOT/jvim/build/bin/jvim"; fi
+if [ -f "$_JVIM_CORE" ]; then
+    _verify_and_copy_bin "$_JVIM_CORE" "$JENOVA_HOME/bin/jvim-core"
+fi
+
+# 8.3 Deploy Assets, Scripts, and Config
+cp -R "$JENOVA_ROOT/lib/"* "$JENOVA_HOME/lib/"
+cp -R "$JENOVA_ROOT/scripts/"* "$JENOVA_HOME/scripts/"
+cp -R "$JENOVA_ROOT/hardware-profiles/"* "$JENOVA_HOME/hardware-profiles/"
+cp -R "$JENOVA_ROOT/jvim/runtime/"* "$JENOVA_HOME/jvim/runtime/"
+[ -d "$JENOVA_ROOT/public" ] && cp -R "$JENOVA_ROOT/public/"* "$JENOVA_HOME/public/"
+[ -d "$JENOVA_ROOT/share/jvim/mason" ] && cp -R "$JENOVA_ROOT/share/jvim/mason/"* "$JENOVA_HOME/share/jvim/mason/"
+ok "Deployed libraries, scripts, hardware profiles, runtime, and web assets"
+
+# 8.4 Generate Path-Locked Config
+cat > "$JENOVA_HOME/etc/jenova.local.conf" <<EOF
+#!/bin/sh
+# Path-locked configuration generated by install.sh on $(date)
+# This ensures the installation is decoupled from the source repository.
+
+JENOVA_ROOT="$JENOVA_HOME"
+LLAMA_SERVER="\$JENOVA_ROOT/bin/llama-server"
+LLAMA_LIB_DIR="\$JENOVA_ROOT/bin"
+VIMRUNTIME="\$JENOVA_ROOT/jvim/runtime"
+EOF
+
+# Copy base config if missing
+if [ ! -f "$JENOVA_HOME/etc/jenova.conf" ]; then
+    cp "$JENOVA_ROOT/etc/jenova.conf" "$JENOVA_HOME/etc/"
+fi
+ok "Deployed path-locked configuration to $JENOVA_HOME/etc"
+
+# 8.5 Symlink to PATH
+_LOCAL_BIN="$HOME/.local/bin"
+mkdir -p "$_LOCAL_BIN"
+
+for _bin in jvim jenova jenova-ui jenova-ca jenova-tui jenova-term jenova-swap-mount; do
+    if [ -f "$JENOVA_HOME/bin/$_bin" ]; then
+        ln -sf "$JENOVA_HOME/bin/$_bin" "$_LOCAL_BIN/$_bin"
     fi
-else
-    warn "No writable bin dir found on PATH (~/.local/bin or ~/bin)."
-    warn "Add '$JENOVA_ROOT/bin' to your PATH or manually symlink:"
-    warn "  mkdir -p ~/.local/bin"
-    warn "  ln -sf $JENOVA_ROOT/bin/jvim ~/.local/bin/jvim"
-    warn "  ln -sf $JENOVA_ROOT/bin/jenova ~/.local/bin/jenova"
-    warn "  ln -sf $JENOVA_ROOT/bin/jenova-ca ~/.local/bin/jenova-ca"
-    warn "  export PATH=\"\$HOME/.local/bin:\$PATH\"  # Add to ~/.bashrc or ~/.zshrc"
+done
+
+if [ -f "$JENOVA_HOME/bin/mcsh" ]; then
+    ln -sf "$JENOVA_HOME/bin/mcsh" "$_LOCAL_BIN/mcsh"
+    ln -sf "$JENOVA_HOME/bin/mcsh" "$_LOCAL_BIN/tcsh"
+    ln -sf "$JENOVA_HOME/bin/mcsh" "$_LOCAL_BIN/csh"
+fi
+ok "Symlinked launchers from $JENOVA_HOME/bin to $_LOCAL_BIN"
+
+# Warn if ~/.local/bin is not on PATH
+_ON_PATH=0
+for _d in "$HOME/.local/bin" "$HOME/bin"; do
+    echo "$PATH" | grep -q "$_d" && _ON_PATH=1
+done
+if [ "$_ON_PATH" = "0" ]; then
+    warn "$_BIN_DIR is not on your PATH."
+    warn "Add this to your shell rc file (~/.bashrc, ~/.zshrc, etc.):"
+    warn "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+    WARNINGS=$((WARNINGS + 1))
+fi
+
+# Install Desktop Entries & Icons (always — these don't depend on PATH)
+if [ "$JENOVA_OS" = "linux" ] || [ "$JENOVA_OS" = "freebsd" ]; then
+    _APP_DIR="$HOME/.local/share/applications"
+    mkdir -p "$_APP_DIR"
+
+    # Cleanup obsolete entries
+    rm -f "$_APP_DIR/jenova-manager.desktop"
+
+    # Install Icons and PNGs FIRST so desktop entries can reference them
+    mkdir -p "$JENOVA_HOME/png"
+    _ICON_DIR="$HOME/.local/share/icons"
+    mkdir -p "$_ICON_DIR"
+
+    if [ -d "$JENOVA_ROOT/png" ]; then
+        # Copy all source icons to deployment directory
+        cp "$JENOVA_ROOT/png/"* "$JENOVA_HOME/png/" 2>/dev/null || true
+
+        for icon in jenova jca jca_grey jvim; do
+            # Determine the best available icon format
+            _icon_deployed=""
+            if [ -f "$JENOVA_ROOT/png/$icon.png" ]; then
+                cp "$JENOVA_ROOT/png/$icon.png" "$_ICON_DIR/$icon.png"
+                cp "$JENOVA_ROOT/png/$icon.png" "$JENOVA_HOME/png/$icon.png"
+                _icon_deployed="$icon.png"
+            elif [ -f "$JENOVA_ROOT/png/$icon.jpg" ]; then
+                # Try to convert jpg→png for desktop compatibility
+                if command -v convert >/dev/null 2>&1; then
+                    convert "$JENOVA_ROOT/png/$icon.jpg" "$JENOVA_HOME/png/$icon.png"
+                    cp "$JENOVA_HOME/png/$icon.png" "$_ICON_DIR/$icon.png"
+                    _icon_deployed="$icon.png"
+                elif command -v magick >/dev/null 2>&1; then
+                    magick "$JENOVA_ROOT/png/$icon.jpg" "$JENOVA_HOME/png/$icon.png"
+                    cp "$JENOVA_HOME/png/$icon.png" "$_ICON_DIR/$icon.png"
+                    _icon_deployed="$icon.png"
+                else
+                    # No converter — use jpg directly (most DEs support it)
+                    cp "$JENOVA_ROOT/png/$icon.jpg" "$_ICON_DIR/$icon.jpg"
+                    cp "$JENOVA_ROOT/png/$icon.jpg" "$JENOVA_HOME/png/$icon.jpg"
+                    _icon_deployed="$icon.jpg"
+                fi
+            fi
+
+            # Create extensionless symlink for icon theme lookups
+            if [ -n "$_icon_deployed" ] && [ -f "$_ICON_DIR/$_icon_deployed" ]; then
+                ln -sf "$_ICON_DIR/$_icon_deployed" "$_ICON_DIR/$icon"
+            fi
+        done
+
+        # Update icon cache
+        gtk-update-icon-cache -f -t "$_ICON_DIR" 2>/dev/null || true
+        ok "Installed icons to $_ICON_DIR and $JENOVA_HOME/png"
+    fi
+
+    # ISS-08: Rewrite desktop entries with targeted Exec= line replacement
+    # instead of global substring sed which corrupted Name= and Comment= fields.
+    for _dfile in jenova.desktop jvim.desktop; do
+        if [ -f "$JENOVA_ROOT/bin/$_dfile" ]; then
+            _icon_name=$(grep "^Icon=" "$JENOVA_ROOT/bin/$_dfile" | cut -d= -f2)
+
+            # Resolve the actual icon path (prefer .png, fall back to .jpg)
+            if [ -f "$JENOVA_HOME/png/$_icon_name.png" ]; then
+                _icon_path="$JENOVA_HOME/png/$_icon_name.png"
+            elif [ -f "$JENOVA_HOME/png/$_icon_name.jpg" ]; then
+                _icon_path="$JENOVA_HOME/png/$_icon_name.jpg"
+            else
+                _icon_path="$_icon_name"  # Fall back to theme name lookup
+            fi
+
+            # Read original, rewrite only Exec= and Icon= lines
+            # This avoids corrupting Name=, Comment=, or other fields
+            # that happen to contain binary name substrings.
+            _JHBIN="$JENOVA_HOME/bin"
+            sed -e "/^Exec=/{ \
+                s|jenova-term|$_JHBIN/jenova-term|g; \
+                s|jenova-ui|$_JHBIN/jenova-ui|g; \
+                s|jenova-ca|$_JHBIN/jenova-ca|g; \
+                s| jvim | $_JHBIN/jvim |g; \
+            }" \
+                -e "s|^Icon=.*|Icon=$_icon_path|" \
+                "$JENOVA_ROOT/bin/$_dfile" > "$_APP_DIR/$_dfile"
+        fi
+    done
+    ok "Installed and path-locked desktop entries to $_APP_DIR"
 fi
 
 # ---------------------------------------------------------------------------
 # 9. System Tuning Reminders
 # ---------------------------------------------------------------------------
 if [ -n "$_PROFILE" ]; then
-    _PROFILE_DIR="$JENOVA_ROOT/hardware-profiles/$_PROFILE"
+    _PROFILE_DIR="$JENOVA_HOME/hardware-profiles/$_PROFILE"
     if [ -f "$_PROFILE_DIR/jenova-setup" ]; then
         warn "Run 'sudo $_PROFILE_DIR/jenova-setup' once to tune system for this hardware."
     fi
 elif [ "$JENOVA_OS" = "freebsd" ]; then
     info "System tuning..."
-    warn "Run 'sudo $JENOVA_ROOT/scripts/jenova-setup' once to tune vm.* sysctls and ZFS ARC"
+    warn "Run 'sudo $JENOVA_HOME/scripts/jenova-setup' once to tune vm.* sysctls and ZFS ARC"
     warn "for optimal Optane swap / Iris Xe UMA performance."
     WARNINGS=$((WARNINGS + 1))
 fi
@@ -710,9 +982,9 @@ fi
 # 10. Summary
 # ---------------------------------------------------------------------------
 echo ""
-printf "${_B}══════════════════════════════════════════════════════${_N}\n"
-printf "${_B}  Installation Summary${_N}\n"
-printf "${_B}══════════════════════════════════════════════════════${_N}\n"
+printf "${_P}══════════════════════════════════════════════════════${_N}\n"
+printf "${_P}  Installation Summary${_N}\n"
+printf "${_P}══════════════════════════════════════════════════════${_N}\n"
 echo "  Errors:   $ERRORS"
 echo "  Warnings: $WARNINGS"
 echo ""
@@ -739,15 +1011,15 @@ if [ "$CLIENT_ONLY" = "1" ]; then
     echo "  the firewall allows ports 8080, 8081, and 8082 from this host."
 else
     echo "  1. Place model GGUF files in type-specific folders:"
-    echo "       Agent:  $JENOVA_ROOT/models/agent/"
-    echo "       Embed:  $JENOVA_ROOT/models/embed/"
-    echo "       Draft:  $JENOVA_ROOT/models/draft/"
+    echo "       Agent:  $JENOVA_HOME/models/agent/"
+    echo "       Embed:  $JENOVA_HOME/models/embed/"
+    echo "       Draft:  $JENOVA_HOME/models/draft/"
     echo "  2. Build llama.cpp if not done:"
-    echo "       cd llama.cpp && cmake -B build -DGGML_VULKAN=ON && \\"
-    echo "       cmake --build build -j\$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
-    echo "  3. Start the backend:  $JENOVA_ROOT/bin/jenova-ca --daemon"
-    echo "     Or launch agent:    $JENOVA_ROOT/bin/jenova"
-    echo "     Or launch editor:   $JENOVA_ROOT/bin/jvim  (or just: jvim)"
+    echo "       make llama"
+    echo "  3. Start the backend:  jenova-ca --daemon"
+    echo "     Or launch agent:    jenova"
+    echo "     Or use Web UI:      Open http://localhost:8080 in a browser"
+    echo "     Or launch editor:   jvim"
     echo "     LAN client mode:    jvim --remote <host>"
     if [ "$SKIP_NVIM" = "0" ]; then
         echo "  4. Inside the editor:  :checkhealth jenova"
@@ -760,4 +1032,4 @@ else
     echo "    scripts/uninstall.sh          — remove deployed files (preserves models)"
     echo "    bin/jvim --check        — print resolved env without launching editor"
 fi
-echo ""
+echo

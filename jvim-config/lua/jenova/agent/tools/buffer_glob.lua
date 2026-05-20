@@ -54,7 +54,7 @@ function M.call(args, context)
 
   local files = expand(pattern, root)
 
-  -- Filter: drop directories, .jenova/.claude/.git noise, cap at 500.
+  -- Filter: drop directories, .jenova/.system/.git noise, cap at 500.
   local filtered = {}
   for _, p in ipairs(files) do
     if vim.fn.isdirectory(p) == 0

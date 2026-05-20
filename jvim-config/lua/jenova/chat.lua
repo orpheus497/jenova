@@ -4,7 +4,10 @@ local function ep()
   return require("jenova.endpoints")
 end
 
-local CHAT_DIR = vim.fn.stdpath("state") .. "/jenova/chats"
+local JENOVA_HOME = vim.env.JENOVA_HOME or (vim.fn.expand("$HOME") .. "/Jenova")
+local WORKSPACE_ROOT = vim.env.JENOVA_WORKSPACES or (JENOVA_HOME .. "/Workspaces")
+local DEFAULT_WORKSPACE = "default"
+local CHAT_DIR = WORKSPACE_ROOT .. "/" .. DEFAULT_WORKSPACE .. "/Chats"
 local MODEL = "jenova"
 local SECRET = "jenova-local"
 local TEMPERATURE = 0.7
@@ -178,7 +181,7 @@ end
 
 local function chat_filepath(buf)
   local name = vim.api.nvim_buf_get_name(buf)
-  if name ~= "" and name:find(CHAT_DIR, 1, true) then
+  if name ~= "" and (name:find(CHAT_DIR, 1, true) or name:find(WORKSPACE_ROOT, 1, true)) then
     return name
   end
   return nil
@@ -187,14 +190,13 @@ end
 local function new_chat_filename()
   ensure_chat_dir()
   local pid = vim.fn.getpid()
-  local suffix = string.format("%04x", math.random(0, 0xFFFF))
-  return CHAT_DIR .. "/" .. os.date("%Y%m%d_%H%M%S") .. "_" .. pid .. "_" .. suffix .. ".md"
+  return CHAT_DIR .. "/Chat_" .. os.date("%Y%m%d_%H%M%S") .. ".md"
 end
 
 local function is_chat_buf(buf)
   if not vim.api.nvim_buf_is_valid(buf) then return false end
   local name = vim.api.nvim_buf_get_name(buf)
-  return name:find("/jenova/chats/", 1, true) ~= nil
+  return name:find(WORKSPACE_ROOT, 1, true) ~= nil and name:match("%.md$") ~= nil
 end
 
 -- Languages we want stock vim-markdown fence-syntax injection for as a fallback
@@ -233,7 +235,7 @@ local function set_chat_buf_options(buf)
 
   -- Treesitter gives us proper syntax for fenced code blocks via injection
   -- queries when the markdown parser is installed. Wrapped in pcall because
-  -- the parser may not yet be loaded (lazy plugin) at first chat open — in
+  -- the parser may not yet be loaded (deferred) at first chat open — in
   -- that case we silently fall back to vim's stock markdown syntax which
   -- honours markdown_fenced_languages.
   pcall(function()
@@ -323,6 +325,7 @@ local function save_chat(buf)
   if not is_chat_buf(buf) then return end
   local path = chat_filepath(buf)
   if not path then return end
+
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
   local ret = vim.fn.writefile(lines, path)
   if ret == 0 then
@@ -378,13 +381,28 @@ local function open_chat_split(path)
 
   if not vim.b[buf]._jenova_chat_autocmd then
     local group = vim.api.nvim_create_augroup("JenovaChatAutoSave_" .. buf, { clear = true })
+    local save_timer = nil
+
     vim.api.nvim_create_autocmd({ "TextChanged", "InsertLeave" }, {
       group = group,
       buffer = buf,
       callback = function()
-        if vim.bo[buf].modified then
-          save_chat(buf)
-        end
+        if not vim.bo[buf].modified then return end
+        
+        -- Debounce: wait 1s after last change before saving to Proxy
+        if save_timer then save_timer:stop(); save_timer:close() end
+        save_timer = vim.loop.new_timer()
+        save_timer:start(1000, 0, vim.schedule_wrap(function()
+          if vim.api.nvim_buf_is_valid(buf) and vim.bo[buf].modified then
+            save_chat(buf)
+          end
+          if save_timer then
+            save_timer:stop()
+            save_timer:close()
+            save_timer = nil
+          end
+        end))
+
         apply_chat_highlights(buf)
       end,
     })
@@ -460,6 +478,37 @@ end
 
 -- ── Agent response (agent mode) ───────────────────────────────────────────────
 
+local function strip_fabricated_tags(text)
+  if not text or text == "" then return "" end
+  local cleaned = text
+  -- Strip tool hallucinations and internal tags
+  local tags = {
+    "<tool_response>", "</tool_response>",
+    "<observation>", "</observation>",
+    "<tool_result>", "</tool_result>",
+    "<function_response>", "</function_response>",
+    "<result>", "</result>"
+  }
+  for _, tag in ipairs(tags) do
+    cleaned = cleaned:gsub(tag, "")
+  end
+
+  -- Strip tag-style tool calls: <Read ...>
+  local ok_reg, reg = pcall(require, "jenova.agent.registry")
+  if ok_reg and reg then
+    for tag_name in text:gmatch("<(%w+)[%s>]") do
+      if reg.get(tag_name) then
+        cleaned = cleaned:gsub("<" .. tag_name .. "[^>]*>", "")
+      end
+    end
+  end
+
+  -- Also strip naked ```json blocks that were already processed by the engine
+  -- so they don't stay in the chat log as raw text.
+  cleaned = cleaned:gsub("```json.-```", "")
+  return vim.trim(cleaned)
+end
+
 -- Spinner frames for the thinking indicator
 local SPINNER = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
 
@@ -479,7 +528,6 @@ local function agent_respond(buf, prompt, on_done, history)
   -- badges, error rows) is committed ABOVE the transient line. Treating the
   -- transient row as a single in-place slot prevents the mid-stream tearing
   -- and stale "thinking…" lines that the previous renderer left behind.
-
   vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "## jenova", "" })
   apply_chat_highlights(buf)
 
@@ -554,10 +602,35 @@ local function agent_respond(buf, prompt, on_done, history)
 
   local function append_text(text)
     if not vim.api.nvim_buf_is_valid(buf) or text == "" then return end
+
+    -- Filter out internal tags and JSON fences during streaming to prevent UI flickering/leakage.
+    -- We hide tags that look like tool calls (e.g. <Read ...>) if they match a known tool.
+    local filtered = text:gsub("<%/?[%w_]+>", "")
+    filtered = filtered:gsub("```json.-```", "")
+
+    -- If the text contains a tool call tag, we hide it and stop the stream run.
+    local ok_reg, reg = pcall(require, "jenova.agent.registry")
+    if ok_reg and reg then
+      for tag_name in text:gmatch("<(%w+)[%s>]") do
+        if reg.get(tag_name) then
+          commit_stream()
+          return
+        end
+      end
+    end
+
+    if filtered == "" and text:find("```json") then
+      -- If it's a tool call, we still want to stop the text stream and wait for the badge.
+      commit_stream()
+      return
+    end
+    if filtered == "" then return end
+
     -- Replace the transient line with a fresh empty stream row before the
     -- first chunk arrives, so streamed text grows in place where the
     -- spinner used to sit.
     if not stream_start then
+
       if transient_lnum then
         pcall(vim.api.nvim_buf_set_lines, buf,
           transient_lnum - 1, transient_lnum, false, { "" })
@@ -1425,30 +1498,30 @@ function M.setup()
     local esc = vim.api.nvim_replace_termcodes("<Esc>", true, false, true)
     vim.api.nvim_feedkeys(esc, "x", false)
     M.visual_chat()
-  end, opts("Visual Chat"))
+  end, opts("Visual Chat (Selection)"))
 
+  vim.keymap.set("n", "<leader>aa", function() M.toggle_chat() end, opts("Toggle Chat"))
   vim.keymap.set("n", "<leader>ac", function() M.chat_with_context() end, opts("Chat with Buffer Context"))
-  vim.keymap.set("n", "<leader>aF", function() M.fresh_chat() end, opts("New Chat (Fresh Context)"))
-  vim.keymap.set("n", "<leader>at", function() M.toggle_chat() end, opts("Toggle Chat"))
-  vim.keymap.set("n", "<leader>ar", function() M.respond() end, opts("Chat Respond"))
-  vim.keymap.set("n", "<leader>ad", function() M.delete_chat() end, opts("Delete Chat"))
   vim.keymap.set("n", "<leader>an", function() M.open_chat() end, opts("New Chat"))
-  vim.keymap.set("n", "<leader>am", function() M.toggle_mode() end, opts("Toggle Agent/Conversation Mode"))
-  vim.keymap.set("n", "<leader>aR", function() M.agent_reset() end, opts("Reset Agent Context"))
+  vim.keymap.set("n", "<leader>ar", function() M.respond() end, opts("Chat Respond"))
+
+  -- AI Management Group (<leader>am)
+  vim.keymap.set("n", "<leader>amm", function() M.toggle_mode() end, opts("Toggle Agent/Conversation Mode"))
+  vim.keymap.set("n", "<leader>amr", function() M.agent_reset() end, opts("Reset Agent Context"))
+  vim.keymap.set("n", "<leader>amf", function() M.fresh_chat() end, opts("New Chat (Fresh Context)"))
+  vim.keymap.set("n", "<leader>amd", function() M.delete_chat() end, opts("Delete Chat"))
 
   vim.keymap.set("v", "<leader>aw", function()
     local esc = vim.api.nvim_replace_termcodes("<Esc>", true, false, true)
     vim.api.nvim_feedkeys(esc, "x", false)
     M.visual_rewrite()
-  end, opts("Visual Rewrite"))
+  end, opts("Visual Rewrite (Selection)"))
 
   vim.keymap.set("n", "<leader>as", function() M.web_search() end, opts("Web Search"))
   vim.keymap.set("n", "<leader>ai", function() M.inline_rewrite() end, opts("Inline Rewrite"))
   vim.keymap.set("n", "<leader>ax", function() M.stop() end, opts("Stop Generation"))
 
-  vim.keymap.set("n", "<leader>aa", function() M.toggle_chat() end, opts("Open / focus chat"))
-
-  vim.keymap.set("n", "<leader>af", function()
+  vim.keymap.set("n", "<leader>atd", function()
     local src_buf = vim.api.nvim_get_current_buf()
     local diags = vim.diagnostic.get(src_buf)
     if #diags == 0 then

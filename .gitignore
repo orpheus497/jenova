@@ -3,12 +3,21 @@
 !/jenova-cli/.gitkeep
 
 # --- Build Artifacts ---
-/llama.cpp/build/
-/llama.cpp/bin/
-/mcsh/build/
-/mcsh/autom4te.cache/
+/public/
+/bin/llama-server
+/bin/mcsh
+/bin/jenova-desktop
+/bin/jenova-ui
+/jenova-ui/jenova-ui
+/external/llama.cpp/build/
+/external/mcsh/build/
+/external/SPIRV-Headers/build/
+/external/SPIRV-Headers/
 
-# --- Guard: mcsh/tcsh sources belong in /mcsh/, never at repo root ---
+# --- Guard: external sources belong in /external/, never at repo root ---
+/mcsh/
+/llama.cpp/
+/SPIRV-Headers/
 /sh.*
 /tc.*
 /tw.*
@@ -71,6 +80,14 @@
 
 # --- Jenova Runtime (Private Data) ---
 /.jenova/
+/.system/
+/.crush/
+/var/state/
+
+# --- Temporary Search & Discovery Artifacts ---
+/var/cache/find_results.tmp
+/var/cache/workspaces.tmp
+/var/cache/storage.tmp
 
 # --- Backups (local-only snapshots) ---
 /backups/
@@ -147,3 +164,23 @@ nul
 
 # Conductor working notes
 conductor/
+
+# --- Installation analysis artifacts ---
+/.jenova-tmp-ca-old
+/.jenova-tmp-jvim-old
+/INSTALLATION-AUDIT.md
+/INSTALLATION-FINAL-REPORT.md
+/test-installation.sh
+/test_bin_jenova.log
+/debug.log
+/pr_inline_comments.txt
+/pr_reviews.txt
+
+# --- Dev reports (generated, not source) ---
+/shellcheck_report.txt
+
+/jca_web/node_modules/
+/jca_web/.svelte-kit/
+/jca_web/build/
+/jca_web/src-tauri/target/
+

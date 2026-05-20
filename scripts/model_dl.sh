@@ -8,16 +8,22 @@
 set -e
 
 JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
-export JENOVA_ROOT
+JENOVA_HOME="${JENOVA_HOME:-$HOME/Jenova}"
+export JENOVA_ROOT JENOVA_HOME
 
 # Shared OS/hardware detection and profile loader.
 . "$JENOVA_ROOT/lib/detect-env.sh"
 
 # Colours
 if [ -t 1 ]; then
-    _G="\033[0;32m"; _Y="\033[0;33m"; _R="\033[0;31m"; _B="\033[1;34m"; _N="\033[0m"
+    _G=$(printf '\033[38;2;118;148;106m')
+    _Y=$(printf '\033[38;2;192;163;110m')
+    _R=$(printf '\033[38;2;195;64;67m')
+    _B=$(printf '\033[38;2;126;156;216m')
+    _P=$(printf '\033[38;2;120;81;169m')
+    _N=$(printf '\033[0m')
 else
-    _G=""; _Y=""; _R=""; _B=""; _N=""
+    _G=""; _Y=""; _R=""; _B=""; _P=""; _N=""
 fi
 
 ok()   { printf "${_G}  OK${_N}  %s\n" "$1"; }
@@ -39,17 +45,17 @@ fi
 info "Hardware Profile: $PROFILE"
 
 # 2. Define Model Defaults (Generic/Fallback)
-AGENT_FILE="Qwen3-Instruct-4B-Q8_0.gguf"
-AGENT_URL="https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/qwen3-4b-instruct-q8_0.gguf"
-AGENT_SIZE="4.4GB"
+AGENT_FILE="Qwen3.5-4B-Q6_K.gguf"
+AGENT_URL="https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q6_K.gguf"
+AGENT_SIZE="3.5GB"
 
 EMBED_FILE="Qwen3-Embedding-0.6B-Q8_0.gguf"
-EMBED_URL="https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/main/qwen3-embedding-0.6b-q8_0.gguf"
+EMBED_URL="https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf"
 EMBED_SIZE="650MB"
 
-DRAFT_FILE="Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf"
-DRAFT_URL="https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q8_0.gguf"
-DRAFT_SIZE="530MB"
+DRAFT_FILE="Qwen3.5-0.8B-Q8_0.gguf"
+DRAFT_URL="https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q8_0.gguf"
+DRAFT_SIZE="850MB"
 
 # 3. Source Profile Recommendations
 if [ -n "$PROFILE" ]; then
@@ -65,9 +71,11 @@ if [ -n "$PROFILE" ]; then
 
         # Adjust sizes based on known patterns
         case "$AGENT_FILE" in
-            *9B*) AGENT_SIZE="9.6GB" ;;
+            *9B*Q8*) AGENT_SIZE="9.5GB" ;;
+            *9B*Q4*) AGENT_SIZE="5.5GB" ;;
             *4B*) AGENT_SIZE="4.4GB" ;;
             *3B*) AGENT_SIZE="3.1GB" ;;
+            *0.8B*) AGENT_SIZE="800MB" ;;
         esac
     fi
 fi
@@ -121,23 +129,22 @@ download_model() {
 }
 
 echo ""
-info "Checking for model files in $JENOVA_ROOT/models/ ..."
+info "Checking for model files in $JENOVA_HOME/models/ ..."
 
-# Agent
-download_model "$JENOVA_ROOT/models/agent/$AGENT_FILE" "Agent" "$AGENT_URL" "$AGENT_SIZE" 1 || {
-    fail "Agent model is required for Jenova to function."
-    exit 1
+# 1. Agent (Main Inference)
+download_model "$JENOVA_HOME/models/agent/$AGENT_FILE" "Agent" "$AGENT_URL" "$AGENT_SIZE" 1 || {
+    warn "Agent model not found/downloaded. Jenova will require a model to be fully functional."
 }
 
-# Embed
-download_model "$JENOVA_ROOT/models/embed/$EMBED_FILE" "Embedding" "$EMBED_URL" "$EMBED_SIZE" 0 || true
+# 2. Semantic (Embedding/RAG)
+download_model "$JENOVA_HOME/models/embed/$EMBED_FILE" "Semantic" "$EMBED_URL" "$EMBED_SIZE" 0 || true
 
-# Draft
-download_model "$JENOVA_ROOT/models/draft/$DRAFT_FILE" "Draft" "$DRAFT_URL" "$DRAFT_SIZE" 0 || true
+# 3. Embedding (Drafting/Speculative)
+download_model "$JENOVA_HOME/models/draft/$DRAFT_FILE" "Embedding" "$DRAFT_URL" "$DRAFT_SIZE" 0 || true
 
 # Symlink models/jenova.gguf -> agent model for health checks
-if [ -f "$JENOVA_ROOT/models/agent/$AGENT_FILE" ]; then
-    ln -sf "agent/$AGENT_FILE" "$JENOVA_ROOT/models/jenova.gguf"
+if [ -f "$JENOVA_HOME/models/agent/$AGENT_FILE" ]; then
+    ln -sf "agent/$AGENT_FILE" "$JENOVA_HOME/models/jenova.gguf"
 fi
 
 echo ""

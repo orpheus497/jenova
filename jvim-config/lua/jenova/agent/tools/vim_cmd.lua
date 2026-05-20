@@ -3,7 +3,7 @@
 --
 -- Two actions:
 --   • "ex"   — run a single ex-command line (`:write`, `:make`, `:Telescope …`,
---               `:Lazy sync`, any user command, any registered plugin command).
+--               any user command, any registered plugin command).
 --               Captures the message buffer via :redir so the agent sees what
 --               the command would have printed.
 --   • "lua"  — evaluate a Lua expression in the editor process. Mainly for
@@ -17,7 +17,7 @@
 
 local M = {
   name        = "VimCmd",
-  description = "Run a jvim ex-command or evaluate a Lua expression in the editor process. Use 'ex' for ex-commands and plugin commands (:make, :Lazy, :Telescope, :LspInfo). Use 'lua' to query plugin state or call plugin APIs. Output is captured.",
+  description = "Run a jvim ex-command or evaluate a Lua expression in the editor process. Use 'ex' for ex-commands and plugin commands (:make, :Telescope, :LspInfo). Use 'lua' to query plugin state or call plugin APIs. Output is captured.",
   parameters  = {
     type = "object",
     properties = {
@@ -34,13 +34,12 @@ local M = {
 
 function M.is_enabled() return true end
 
--- Querying plugin state (`:LspInfo`, `:Lazy`, expressions like
+-- Querying plugin state (`:LspInfo`, expressions like
 -- `require('foo').stats()`) is read-only. Anything else (`:write`, `:edit`,
 -- `:Make`, mutating Lua) is treated as write-capable so the registry asks
 -- for permission before running it.
 local READ_ONLY_EX = {
   LspInfo = true, LspLog = true, LspStop = true,
-  Lazy = true, LazyHealth = true, LazySync = false,
   checkhealth = true, messages = true, version = true, help = true,
   ls = true, buffers = true, registers = true, marks = true, jumps = true,
   highlight = true, scriptnames = true, autocmd = true, map = true,
@@ -114,7 +113,7 @@ end
 
 local function run_ex(command)
   -- nvim_exec2 returns the captured ":echo"/":print" output for us when
-  -- output=true, which is exactly what we want for ":LspInfo", ":Lazy",
+  -- output=true, which is exactly what we want for ":LspInfo",
   -- ":messages", etc. Errors are surfaced via pcall.
   local before = snapshot_messages()
   local ok, res = pcall(vim.api.nvim_exec2, command, { output = true })

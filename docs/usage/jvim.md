@@ -20,24 +20,31 @@ bin/jenova --check     # print resolved JENOVA_* environment and exit
 ## Keymaps (`<leader>a*`)
 
 All keymaps are normal-mode unless a different mode is shown. They are
-registered in `jvim-config/lua/jenova/chat.lua`.
+registered in `jvim-config/lua/jenova/chat.lua` and `jvim/runtime/plugin/jvim_ui.lua`.
 
 | Keymap | Mode | Action |
 |--------|------|--------|
-| `<leader>at` | n | Toggle chat sidebar |
-| `<leader>aa` | n | Open / focus chat sidebar |
-| `<leader>an` | n | New chat |
-| `<leader>aF` | n | Fresh chat (wipe history) |
+| `<leader>aa` | n | Toggle / focus chat sidebar |
 | `<leader>ac` | n | Chat with current-buffer context |
+| `<leader>an` | n | New chat |
 | `<leader>ar` | n | Respond / send the current input |
-| `<leader>ad` | n | Delete the current chat |
-| `<leader>ax` | n | Stop generation |
-| `<leader>am` | n | Toggle agent / conversation mode |
 | `<leader>ai` | n | Inline rewrite under cursor |
 | `<leader>as` | n | Web search (uses `fetch` on FreeBSD, `curl` on Linux) |
+| `<leader>af` | n | Toggle FIM Autocomplete |
+| `<leader>ax` | n | Stop generation |
 | `<leader>ae` | v | Send selection to chat (ask about visual range) |
-| `<leader>aw` | v | Apply visual selection as agent target |
-| `<leader>af` | n | Pick a file to attach as context |
+| `<leader>aw` | v | Visual Rewrite (Selection) |
+| **Management** | | **(<leader>am*)** |
+| `<leader>amm` | n | Toggle Agent ↔ Conversation mode |
+| `<leader>amr` | n | Reset Agent Context / Memory |
+| `<leader>amf` | n | New Chat (Fresh Context / Wipe history) |
+| `<leader>amd` | n | Delete current chat |
+| **Tools** | | **(<leader>at*)** |
+| `<leader>atm` | n | Open Jenova Monitor (Performance/Metrics) |
+| `<leader>ath` | n | Run Jenova Health Check |
+| `<leader>atl` | n | Scan LAN for remote Jenova CA |
+| `<leader>atd` | n | Fix LSP diagnostics in current buffer |
+| `<leader>atj` | n | Toggle Jenova Agent Terminal |
 
 ## Commands
 

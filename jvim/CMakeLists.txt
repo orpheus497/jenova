@@ -151,10 +151,16 @@ set(JVIM_VERSION_MAJOR 0)
 set(JVIM_VERSION_MINOR 1)
 set(JVIM_VERSION_PATCH 0)
 
+# Jenova Vim Identity Version
 set(NVIM_VERSION_MAJOR 0)
-set(NVIM_VERSION_MINOR 13)
+set(NVIM_VERSION_MINOR 1)
 set(NVIM_VERSION_PATCH 0)
 set(NVIM_VERSION_PRERELEASE "") # for package maintainers
+
+# Neovim Compatibility Level (for plugin detection)
+set(NVIM_COMPAT_MAJOR 0)
+set(NVIM_COMPAT_MINOR 13)
+set(NVIM_COMPAT_PATCH 0)
 
 # API level
 set(NVIM_API_LEVEL 14)        # Bump this after any API/stdlib change.

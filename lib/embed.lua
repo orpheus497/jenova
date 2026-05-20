@@ -17,8 +17,8 @@ local embed = {}
 -- Config
 -------------------------------------------------------------------------------
 local EMBED_URL = os.getenv("JENOVA_LLAMA_EMBED_URL") or "http://127.0.0.1:8082"
-local DIMS = 768        -- nomic-embed-text-v1.5 dimension
-local CTX_SIZE = 4096   -- nomic context window (max tokens) — must match -c in jenova-ca
+local DIMS = 1024        -- Qwen3-Embedding-0.6B dimension
+local CTX_SIZE = 4096   -- context window (max tokens) — must match -c in jenova-ca
 
 local initialized = false
 
@@ -27,70 +27,55 @@ local initialized = false
 -------------------------------------------------------------------------------
 function embed.init(opts)
   opts = opts or {}
-  initialized = false  -- reset before each attempt
+  initialized = false
   EMBED_URL = opts.embed_url or os.getenv("JENOVA_LLAMA_EMBED_URL") or "http://127.0.0.1:8082"
-  local embed_bin = opts.embed_bin or os.getenv("JENOVA_LLAMA_SERVER") or (opts.script_dir and (opts.script_dir .. "/llama.cpp/build/bin/llama-server"))
-  local model_path = opts.model_path or os.getenv("JENOVA_MODEL_EMBED") or (opts.script_dir and (opts.script_dir .. "/models/nomic-embed-text-v1.5.Q8_0.gguf"))
+  local embed_bin = opts.embed_bin or os.getenv("JENOVA_LLAMA_SERVER") or (opts.script_dir and (opts.script_dir .. "/external/llama.cpp/build/bin/llama-server"))
+  local model_path = opts.model_path or os.getenv("JENOVA_MODEL_EMBED") or (opts.script_dir and (opts.script_dir .. "/models/Qwen3-Embedding-0.6B-Q8_0.gguf"))
 
-  -- Check if llama-server is alive at this URL
-  local status, body = http.get(EMBED_URL .. "/health", 1)
+  -- Quick check if already running
+  local status = http.get(EMBED_URL .. "/health", 1)
   if status == 200 then
     initialized = true
     return true
   end
 
-  -- If not reachable and we have a binary/model, try to start it in background
+  -- Start in background and return immediately.
   if embed_bin and model_path then
     local port = EMBED_URL:match(":(%d+)") or "8082"
     local host = EMBED_URL:match("//([^:]+)") or "127.0.0.1"
 
-    -- Check if binary exists
     local f = io.open(embed_bin, "r")
     if f then
       f:close()
-      -- Use daemon.start_background to start persistent embedding server reliably
       local daemon = require('daemon')
-
       local args = { embed_bin, '-m', model_path, '--embedding', '--port', port, '--host', host,
                       '-ngl', '0', '-c', '4096', '-b', '512', '--offline' }
 
-      -- Resolve state dir to an absolute path so the pidfile and log are written
-      -- correctly regardless of the caller's CWD.
-      local state_dir = (opts.script_dir and opts.script_dir ~= '') and (opts.script_dir .. "/.jenova") or ".jenova"
-      -- Ensure the state directory exists so log/pid files can be created reliably.
-      -- Use mkdir -p semantics so this is safe if the directory already exists.
-      local mkdir_rc = os.execute(string.format('mkdir -p %q', state_dir))
-      if mkdir_rc ~= 0 then
-        io.write('[embed] WARNING: failed to create state directory "' .. tostring(state_dir) .. '" using mkdir -p.\n')
-        initialized = false
-        return false
-      end
+      local home = os.getenv("HOME") or "/tmp"
+      local jenova_home = os.getenv("JENOVA_HOME") or (home .. "/Jenova")
+      local state_dir = os.getenv("JENOVA_STATE") or ((opts.script_dir and opts.script_dir ~= '') and (opts.script_dir .. "/.system") or (jenova_home .. "/.system"))
+      os.execute(string.format('mkdir -p %q', state_dir))
+      
       local ok, pid_or_err = daemon.start_background(args, state_dir .. '/llama-embed.log', opts.script_dir or '.', state_dir .. '/llama-embed.pid', {GGML_VULKAN_DISABLE="1", GGML_VK_DEVICE=""})
-      if not ok then
-        io.write('[embed] WARNING: failed to start embedding binary: ' .. tostring(pid_or_err) .. '\n')
-        initialized = false
-        return false
-      else
-        for _i = 1, 15 do
-          local tv = ffi.new('struct timeval', {tv_sec=1, tv_usec=0})
-          ffi.C.select(0, nil, nil, nil, tv)
-          local hstatus = http.get(EMBED_URL .. '/health', 1)
-          if hstatus == 200 then
-            initialized = true
-            return true
-          end
-        end
+      if ok then
+        return true
       end
     end
   end
 
-  io.write("[embed] WARNING: Embedding server not reachable at " .. EMBED_URL .. "\n")
   initialized = false
   return false
 end
 
 function embed.is_available()
-  return initialized
+  if initialized then return true end
+  -- Lazy check if it's ready now
+  local status = http.get(EMBED_URL .. "/health", 1)
+  if status == 200 then
+    initialized = true
+    return true
+  end
+  return false
 end
 
 function embed.dimensions()

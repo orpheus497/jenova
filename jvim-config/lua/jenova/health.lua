@@ -98,11 +98,11 @@ function M.check()
   if embed_status == nil then
     h.info(string.format("Embedding server probe skipped (vim.uv unavailable) — %s", embed_url))
   elseif embed_status then
-    h.ok(string.format("Embedding server (nomic-embed) reachable at %s", embed_url))
+    h.ok(string.format("Embedding server (Qwen3-Embedding) reachable at %s", embed_url))
   else
     h.warn(
       string.format("Embedding server NOT reachable at %s", embed_url),
-      "RAG/semantic search unavailable. Check models/nomic-embed-text-v1.5.Q8_0.gguf exists."
+      "RAG/semantic search unavailable. Check models/Qwen3-Embedding-0.6B-Q8_0.gguf exists."
     )
   end
 
@@ -240,7 +240,7 @@ function M.check()
 
   -- Check JENOVA_ROOT for llama-server binary
   local jenova_root = vim.env.JENOVA_ROOT or vim.fn.expand("~/Projects/jenova")
-  local llama_bin   = jenova_root .. "/llama.cpp/build/bin/llama-server"
+  local llama_bin   = jenova_root .. "/external/llama.cpp/build/bin/llama-server"
   if vim.fn.filereadable(llama_bin) == 1 then
     h.ok("llama-server binary found at " .. llama_bin)
   else
@@ -262,13 +262,13 @@ function M.check()
       required = true,
     },
     {
-      path = jenova_root .. "/models/nomic-embed-text-v1.5.Q8_0.gguf",
-      label = "Embedding model (nomic-embed-text-v1.5)",
+      path = jenova_root .. "/models/Qwen3-Embedding-0.6B-Q8_0.gguf",
+      label = "Embedding model (Qwen3-Embedding-0.6B)",
       required = true,
     },
     {
-      path = jenova_root .. "/models/Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf",
-      label = "Draft model (Qwen2.5-Coder-0.5B-Instruct) — speculative decoding",
+      path = jenova_root .. "/models/Qwen3.5-0.8B-Q8_0.gguf",
+      label = "Draft model (Qwen3.5-0.8B) — speculative decoding",
       required = false,
     },
   }

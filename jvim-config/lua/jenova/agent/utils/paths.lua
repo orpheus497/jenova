@@ -5,6 +5,7 @@ local M = {}
 
 -- Paths matching these patterns are off-limits for read/write operations.
 local RESTRICTED = {
+  "/%.system/",
   "/%.jenova/",
   "/%.claude/",
   "/%.ssh/",

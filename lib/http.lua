@@ -62,28 +62,26 @@ end
 
 local function send_all(fd, data)
   local sent = 0
-  local retries = 0
-  local MAX_SEND_RETRIES = 50
   while sent < #data do
-    local n = ffi.C.send(fd, data:sub(sent + 1), #data - sent, 0)
-    if n <= 0 then
+    local n = ffi.C.send(fd, ffi.cast("const char *", data) + sent, #data - sent, 0)
+    if n > 0 then
+      sent = sent + tonumber(n)
+    else
       local err = get_errno()
       if err == EINTR or err == EAGAIN or err == EWOULDBLOCK then
-        retries = retries + 1
-        if retries > MAX_SEND_RETRIES then
-          return false, "send() stalled after " .. retries .. " retries"
+        local _, is_main = coroutine.running()
+        if not is_main then
+          coroutine.yield("write", fd)
+        else
+          local tv_sleep = ffi.new("struct timeval")
+          tv_sleep.tv_sec = 0
+          tv_sleep.tv_usec = 50000
+          ffi.C.select(0, nil, nil, nil, tv_sleep)
         end
-        local tv_sleep = ffi.new("struct timeval")
-        tv_sleep.tv_sec = 0
-        tv_sleep.tv_usec = 50000
-        ffi.C.select(0, nil, nil, nil, tv_sleep)
-        goto continue
+      else
+        return false, "send() failed: " .. get_errstr(err)
       end
-      return false, "send() failed: " .. get_errstr(err)
     end
-    sent = sent + tonumber(n)
-    retries = 0
-    ::continue::
   end
   return true
 end
@@ -92,20 +90,22 @@ local function recv_all(fd, buf, buf_size, deadline)
   local chunks = {}
   local total_recv = 0
   local recv_err = nil
-  local MAX_RECV_SIZE = 10 * 1024 * 1024  -- 10MB cap to prevent memory exhaustion
-  -- Default deadline: 30 seconds from now if none provided
+  local MAX_RECV_SIZE = 10 * 1024 * 1024  -- 10MB cap
+  
+  -- Default deadline: 30 seconds
   deadline = deadline or (os.time() + 30)
+  
   while true do
-    ::retry::
     if os.time() >= deadline then
       recv_err = "recv() timed out"
       break
     end
+    
     local recv_n = ffi.C.recv(fd, buf, buf_size, 0)
     if recv_n > 0 then
       total_recv = total_recv + tonumber(recv_n)
       if total_recv > MAX_RECV_SIZE then
-        recv_err = "response too large (>" .. (MAX_RECV_SIZE/1048576) .. "MB)"
+        recv_err = "response too large"
         break
       end
       chunks[#chunks + 1] = ffi.string(buf, recv_n)
@@ -114,14 +114,19 @@ local function recv_all(fd, buf, buf_size, deadline)
     else
       local err = get_errno()
       if err == EINTR then
-        goto retry
+        -- retry immediately
       elseif err == EAGAIN or err == EWOULDBLOCK or err == ETIMEDOUT then
-        local tv_sleep = ffi.new("struct timeval")
-        tv_sleep.tv_sec = 0
-        tv_sleep.tv_usec = 50000
-        ffi.C.select(0, nil, nil, nil, tv_sleep)
+        local _, is_main = coroutine.running()
+        if not is_main then
+          coroutine.yield("read", fd)
+        else
+          local tv_sleep = ffi.new("struct timeval")
+          tv_sleep.tv_sec = 0
+          tv_sleep.tv_usec = 50000
+          ffi.C.select(0, nil, nil, nil, tv_sleep)
+        end
       else
-        recv_err = "recv() fatal error: " .. get_errstr(err) .. " (errno=" .. tostring(err) .. ")"
+        recv_err = "recv() fatal error: " .. get_errstr(err)
         break
       end
     end
@@ -170,6 +175,10 @@ function http.post(url, body, timeout)
   local fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
   if fd < 0 then return 0, "socket() failed" end
 
+  -- Set non-blocking to work with coroutine yields
+  local flags = ffi.C.fcntl(fd, ffi_defs.F_GETFL, 0)
+  ffi.C.fcntl(fd, ffi_defs.F_SETFL, bit.bor(flags, ffi_defs.O_NONBLOCK))
+
   local tv = ffi.new("struct timeval")
   tv.tv_sec = timeout
   tv.tv_usec = 0
@@ -191,10 +200,34 @@ function http.post(url, body, timeout)
     return 0, "invalid host: " .. host
   end
 
-  local ret = ffi.C.connect(fd, ffi.cast("struct sockaddr *", addr), ffi.sizeof(addr))
-  if ret < 0 then
-    ffi.C.close(fd)
-    return 0, "connect() failed"
+  local co, is_main = coroutine.running()
+  if co and not is_main then
+    local flags = ffi.C.fcntl(fd, ffi_defs.F_GETFL, 0)
+    ffi.C.fcntl(fd, ffi_defs.F_SETFL, bit.bor(flags, ffi_defs.O_NONBLOCK))
+    local ret = ffi.C.connect(fd, ffi.cast("struct sockaddr *", addr), ffi.sizeof(addr))
+    if ret ~= 0 then
+      local err = get_errno()
+      if err == ffi_defs.EINPROGRESS or err == ffi_defs.EAGAIN or err == ffi_defs.EWOULDBLOCK then
+        coroutine.yield("write", fd)
+        local opt = ffi.new("int[1]")
+        local len = ffi.new("socklen_t[1]", ffi.sizeof("int"))
+        ffi.C.getsockopt(fd, SOL_SOCKET, SO_ERROR, opt, len)
+        if opt[0] ~= 0 then
+          ffi.C.close(fd)
+          return 0, "connect() async failed: " .. get_errstr(opt[0])
+        end
+      else
+        ffi.C.close(fd)
+        return 0, "connect() failed: " .. get_errstr(err)
+      end
+    end
+    -- Success or async success: keep it non-blocking for send_all/recv_all
+  else
+    local ret = ffi.C.connect(fd, ffi.cast("struct sockaddr *", addr), ffi.sizeof(addr))
+    if ret < 0 then
+      ffi.C.close(fd)
+      return 0, "connect() failed: " .. get_errstr(get_errno())
+    end
   end
 
   local req = string.format(
@@ -230,6 +263,10 @@ function http.get(url, timeout)
   local fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
   if fd < 0 then return 0, "socket() failed" end
 
+  -- Set non-blocking to work with coroutine yields
+  local flags = ffi.C.fcntl(fd, ffi_defs.F_GETFL, 0)
+  ffi.C.fcntl(fd, ffi_defs.F_SETFL, bit.bor(flags, ffi_defs.O_NONBLOCK))
+
   local tv = ffi.new("struct timeval")
   tv.tv_sec = timeout
   tv.tv_usec = 0
@@ -251,10 +288,34 @@ function http.get(url, timeout)
     return 0, "invalid host"
   end
 
-  local ret = ffi.C.connect(fd, ffi.cast("struct sockaddr *", addr), ffi.sizeof(addr))
-  if ret < 0 then
-    ffi.C.close(fd)
-    return 0, "connect() failed"
+  local co, is_main = coroutine.running()
+  if co and not is_main then
+    local flags = ffi.C.fcntl(fd, ffi_defs.F_GETFL, 0)
+    ffi.C.fcntl(fd, ffi_defs.F_SETFL, bit.bor(flags, ffi_defs.O_NONBLOCK))
+    local ret = ffi.C.connect(fd, ffi.cast("struct sockaddr *", addr), ffi.sizeof(addr))
+    if ret ~= 0 then
+      local err = get_errno()
+      if err == ffi_defs.EINPROGRESS or err == ffi_defs.EAGAIN or err == ffi_defs.EWOULDBLOCK then
+        coroutine.yield("write", fd)
+        local opt = ffi.new("int[1]")
+        local len = ffi.new("socklen_t[1]", ffi.sizeof("int"))
+        ffi.C.getsockopt(fd, SOL_SOCKET, SO_ERROR, opt, len)
+        if opt[0] ~= 0 then
+          ffi.C.close(fd)
+          return 0, "connect() async failed: " .. get_errstr(opt[0])
+        end
+      else
+        ffi.C.close(fd)
+        return 0, "connect() failed: " .. get_errstr(err)
+      end
+    end
+    -- Success or async success: keep it non-blocking for send_all/recv_all
+  else
+    local ret = ffi.C.connect(fd, ffi.cast("struct sockaddr *", addr), ffi.sizeof(addr))
+    if ret < 0 then
+      ffi.C.close(fd)
+      return 0, "connect() failed: " .. get_errstr(get_errno())
+    end
   end
 
   local req = string.format(

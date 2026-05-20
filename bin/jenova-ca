@@ -9,45 +9,64 @@
 
 set -e
 
-SCRIPT_DIR=$(dirname "$(realpath "$0")")
+# Initialize process and port variables
+LLAMA_PID=""; PROXY_PID=""; EMBED_PID=""
+HOST=""; PORT=""; LLAMA_PORT=""; LLAMA_EMBED_PORT=""
 
-# Determine JENOVA_ROOT before loading config
-if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
-    export JENOVA_ROOT="$SCRIPT_DIR"
-    . "$SCRIPT_DIR/etc/jenova.conf"
-elif [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
-    export JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
-    . "$SCRIPT_DIR/../etc/jenova.conf"
+_REAL_EXE=$(realpath "$0" 2>/dev/null || readlink -f "$0")
+_BIN_DIR=$(dirname "$_REAL_EXE")
+
+if [ -f "$_BIN_DIR/../etc/jenova.conf" ]; then
+    JENOVA_ROOT="$(cd "$_BIN_DIR/.." && pwd)"; export JENOVA_ROOT
+elif [ -f "$_BIN_DIR/etc/jenova.conf" ]; then
+    JENOVA_ROOT="$(cd "$_BIN_DIR" && pwd)"; export JENOVA_ROOT
 else
-    echo "Error: etc/jenova.conf not found."
-    exit 1
+    # Fallback
+    SCRIPT_DIR=$(dirname "$(realpath "$0")")
+    if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
+        JENOVA_ROOT="$SCRIPT_DIR"; export JENOVA_ROOT
+    elif [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
+        JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"; export JENOVA_ROOT
+    else
+        echo "Error: etc/jenova.conf not found."
+        exit 1
+    fi
 fi
 
+# Scrub repository-specific variables
+unset JENOVA_DEV_REPO
+
+# Path hardening for headless/desktop execution
+PATH="${HOME:+$HOME/.local/bin:}$JENOVA_ROOT/bin:$PATH"; export PATH
+
+# Load environment and resolve paths
+. "$JENOVA_ROOT/lib/detect-env.sh"
 . "$JENOVA_ROOT/lib/jenova-conf.sh"
+. "$JENOVA_ROOT/lib/jenova-model.sh"
+# shellcheck disable=SC1091
+. "$JENOVA_ROOT/etc/jenova.conf"
 
 # Ensure runtime directories exist with proper permissions
 # Note: Run without sudo to avoid permission issues with lock files
-mkdir -p "$JENOVA_STATE" 2>/dev/null || {
-    echo "Error: Cannot create $JENOVA_STATE directory" >&2
-    echo "       Do not run with sudo — run as regular user instead" >&2
-    exit 1
-}
-mkdir -p "$LOG_DIR" || true
-mkdir -p "$CACHE_DIR" || true
+mkdir -p "$JENOVA_HOME" 2>/dev/null
+mkdir -p "$JENOVA_STATE" 2>/dev/null
+mkdir -p "$LOG_DIR" 2>/dev/null
+mkdir -p "$CACHE_DIR" 2>/dev/null
+mkdir -p "$(dirname "$PID_FILE")" 2>/dev/null
 
 # Check for ownership issues early (detect if directory owned by root from sudo usage)
-if [ -d "$JENOVA_STATE" ] && [ ! -w "$JENOVA_STATE" ]; then
-    echo "Error: $JENOVA_STATE directory is not writable" >&2
+if [ -d "$JENOVA_HOME" ] && [ ! -w "$JENOVA_HOME" ]; then
+    echo "Error: $JENOVA_HOME directory is not writable" >&2
     echo "" >&2
-    _OWNER=$(stat -c '%U' "$JENOVA_STATE" 2>/dev/null || stat -f '%Su' "$JENOVA_STATE" 2>/dev/null || echo "unknown")
+    _OWNER=$(stat -c '%U' "$JENOVA_HOME" 2>/dev/null || stat -f '%Su' "$JENOVA_HOME" 2>/dev/null || echo "unknown")
     if [ "$_OWNER" = "root" ]; then
         echo "Directory is owned by root (likely from running with sudo previously)." >&2
         echo "Fix with:" >&2
-        echo "  sudo chown -R \$USER:\$USER $JENOVA_STATE" >&2
-        echo "  chmod -R u+w $JENOVA_STATE" >&2
+        echo "  sudo chown -R \$USER:\$USER $JENOVA_HOME" >&2
+        echo "  chmod -R u+w $JENOVA_HOME" >&2
     else
         echo "Fix permissions with:" >&2
-        echo "  chmod -R u+w $JENOVA_STATE" >&2
+        echo "  chmod -R u+w $JENOVA_HOME" >&2
     fi
     echo "" >&2
     exit 1
@@ -59,20 +78,23 @@ MODEL_PATH="${JENOVA_MODEL:-$MODEL_AGENT}"
 if [ ! -f "$LLAMA_SERVER" ]; then
     echo "Error: llama-server not found at $LLAMA_SERVER" >&2
     echo "" >&2
-    echo "Build llama.cpp first:" >&2
-    echo "  cd $JENOVA_ROOT/llama.cpp" >&2
-    echo "  cmake -B build -DGGML_VULKAN=ON" >&2
-    echo "  cmake --build build -j\$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)" >&2
+    if [ "$JENOVA_LAYOUT" = "source" ]; then
+        echo "Build external/llama.cpp first:" >&2
+        echo "  make llama" >&2
+    else
+        echo "Installation is corrupt. Please re-run the installer." >&2
+    fi
     echo "" >&2
     exit 1
 fi
+
 if [ ! -f "$MODEL_PATH" ]; then
     echo "Error: Model not found at $MODEL_PATH" >&2
     echo "" >&2
     echo "Download a model file (GGUF format) and place it at:" >&2
-    echo "  $JENOVA_ROOT/models/agent/" >&2
+    echo "  $JENOVA_HOME/models/agent/" >&2
     echo "" >&2
-    echo "Recommended: Qwen3-Instruct-4B-Q8_0.gguf" >&2
+    echo "Recommended: Qwen3.5-4B-Q6_K.gguf" >&2
     echo "Or set JENOVA_MODEL environment variable to point to your model." >&2
     echo "" >&2
     exit 1
@@ -90,23 +112,19 @@ if [ -f "$DRAFT_PATH" ] && [ "${JENOVA_DRAFT:-1}" != "0" ]; then
 fi
 
 # --- Find proxy.lua ---
-# Branch 1: SCRIPT_DIR itself contains lib/ (e.g. jenova-ca placed at project root)
-# Branch 2: SCRIPT_DIR is a subdirectory like bin/ (normal installation)
-if [ -f "$SCRIPT_DIR/lib/proxy.lua" ]; then
-    PROXY_SCRIPT="$SCRIPT_DIR/lib/proxy.lua"
-    export JENOVA_ROOT="${JENOVA_ROOT:-$SCRIPT_DIR}"
-elif [ -f "$SCRIPT_DIR/../lib/proxy.lua" ]; then
-    PROXY_SCRIPT="$SCRIPT_DIR/../lib/proxy.lua"
-    export JENOVA_ROOT="${JENOVA_ROOT:-$(dirname "$SCRIPT_DIR")}"
+# Branch 1: JENOVA_ROOT contains lib/ (standard)
+if [ -f "$JENOVA_ROOT/lib/proxy.lua" ]; then
+    PROXY_SCRIPT="$JENOVA_ROOT/lib/proxy.lua"
 else
-    echo "Error: proxy.lua not found relative to $SCRIPT_DIR"
+    echo "Error: proxy.lua not found in $JENOVA_ROOT/lib"
     exit 1
 fi
 
-export JENOVA_LLAMA_URL="http://${HOST}:${LLAMA_PORT}"
-export JENOVA_PROXY_PORT="$PORT"
-export JENOVA_PROXY_HOST="$HOST"
-export JENOVA_CTX="${JENOVA_CTX:-$CTX_SIZE}"
+JENOVA_LLAMA_URL="http://${HOST}:${LLAMA_PORT}"; export JENOVA_LLAMA_URL
+JENOVA_LLAMA_EMBED_URL="http://${HOST}:${LLAMA_EMBED_PORT}"; export JENOVA_LLAMA_EMBED_URL
+JENOVA_PROXY_PORT="$PORT"; export JENOVA_PROXY_PORT
+JENOVA_PROXY_HOST="$HOST"; export JENOVA_PROXY_HOST
+JENOVA_CTX="${JENOVA_CTX:-$CTX_SIZE}"; export JENOVA_CTX
 
 # Optional backend memory-fallback tuning from etc/jenova.local.conf.
 [ -n "${GGML_VK_ALLOW_SYSMEM_FALLBACK:-}" ] && export GGML_VK_ALLOW_SYSMEM_FALLBACK
@@ -114,9 +132,8 @@ export JENOVA_CTX="${JENOVA_CTX:-$CTX_SIZE}"
 [ -n "${GGML_CUDA_DMMV_POOL_SIZE:-}" ] && export GGML_CUDA_DMMV_POOL_SIZE
 
 # --- LD_LIBRARY_PATH for shared libs ---
-LLAMA_LIB_DIR="$JENOVA_ROOT/llama.cpp/build/bin"
 if [ -d "$LLAMA_LIB_DIR" ]; then
-    export LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"
+    LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"; export LD_LIBRARY_PATH
 fi
 
 # --- Build device arguments ---
@@ -176,12 +193,21 @@ _use_vulkan_fallback() {
 _vulkan_backend_available() {
     [ -f "$LLAMA_LIB_DIR/libggml-vulkan.so" ] || \
     [ -f "$LLAMA_LIB_DIR/libggml-vulkan.so.0" ] || \
-    find "$LLAMA_LIB_DIR" -maxdepth 1 -name 'libggml-vulkan.so.*' -print -quit 2>/dev/null | grep -q .
+    [ -f "$LLAMA_LIB_DIR/libggml-vulkan.dylib" ] || \
+    find "$LLAMA_LIB_DIR" -maxdepth 1 \( -name 'libggml-vulkan.so.*' -o -name 'libggml-vulkan.dylib' \) -print -quit 2>/dev/null | grep -q .
+}
+
+_set_path_args() {
+    # Path serving is now handled exclusively by the Jenova Intelligence Proxy.
+    PATH_FLAG=""
+    PATH_VAL=""
 }
 
 _launch_llama_server_bg() {
     _ls_log="$1"
     shift
+
+    _set_path_args
 
     "$LLAMA_SERVER" \
         -m "$MODEL_PATH" \
@@ -202,73 +228,11 @@ _launch_llama_server_bg() {
         --offline \
         --host "$HOST" \
         --port "$LLAMA_PORT" \
+        ${PATH_FLAG:+"$PATH_FLAG"} ${PATH_VAL:+"$PATH_VAL"} \
         $RUN_DRAFT_ARGS \
         "$@" > "$_ls_log" 2>&1 9>&- &
     LLAMA_PID=$!
 }
-
-# --- Control verbs ---
-case "$1" in
-    stop)
-        if [ -f "$PID_FILE" ]; then
-            read OLD_LLAMA_PID OLD_PROXY_PID OLD_EMBED_PID < "$PID_FILE" 2>/dev/null || OLD_LLAMA_PID=$(cat "$PID_FILE")
-            for P in $OLD_LLAMA_PID $OLD_PROXY_PID $OLD_EMBED_PID; do
-                if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
-                    echo "Stopping PID $P..."
-                    kill -- "-$P" 2>/dev/null || kill "$P" 2>/dev/null || true
-                fi
-            done
-            sleep 2
-            for P in $OLD_LLAMA_PID $OLD_PROXY_PID $OLD_EMBED_PID; do
-                if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
-                    echo "Force-killing PID $P..."
-                    kill -9 "$P" 2>/dev/null || true
-                fi
-            done
-            rm -f "$PID_FILE"
-            rm -f "$JENOVA_STATE/llama-embed.pid"
-            rm -f "$JENOVA_STATE/indexer.pid"
-            echo "Stopped."
-        else
-            echo "No PID file found at $PID_FILE"
-        fi
-        pkill -f "llama-server.*--port.*${LLAMA_EMBED_PORT}" 2>/dev/null || true
-        pkill -f "llama-server.*--port.*${LLAMA_PORT}" 2>/dev/null || true
-        exit 0
-        ;;
-    status)
-        if [ -f "$PID_FILE" ]; then
-            read LLAMA_PID PROXY_PID EMBED_PID < "$PID_FILE" 2>/dev/null || LLAMA_PID=$(cat "$PID_FILE")
-            echo "PID file: $PID_FILE"
-            for _N in "llama-server:$LLAMA_PID" "Proxy:$PROXY_PID" "Embed:$EMBED_PID"; do
-                _LABEL=$(echo "$_N" | cut -d: -f1)
-                _PID=$(echo "$_N" | cut -d: -f2)
-                if [ -n "$_PID" ] && kill -0 "$_PID" 2>/dev/null; then
-                    echo "$_LABEL running (PID $_PID)"
-                else
-                    echo "$_LABEL not running"
-                fi
-            done
-        else
-            echo "No PID file found at $PID_FILE"
-        fi
-        exit 0
-        ;;
-    start)
-        shift
-        set -- "--daemon" "$@"
-        ;;
-    restart)
-        "$0" stop 2>/dev/null || true
-        shift || true
-        set -- "--daemon" "$@"
-        ;;
-    watch)
-        shift
-        # Fall through to watchdog loop below
-        _ENTER_WATCHDOG=1
-        ;;
-esac
 
 # =====================================================================
 # _probe_health: shared health probe used by daemon startup and watchdog.
@@ -304,6 +268,83 @@ _probe_health() {
     fi
 }
 
+# --- Control verbs ---
+case "$1" in
+    stop)
+        if [ -f "$PID_FILE" ]; then
+            read OLD_LLAMA_PID OLD_PROXY_PID OLD_EMBED_PID < "$PID_FILE" 2>/dev/null || OLD_LLAMA_PID=$(cat "$PID_FILE")
+            for P in $OLD_LLAMA_PID $OLD_PROXY_PID $OLD_EMBED_PID; do
+                if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
+                    echo "Stopping PID $P..."
+                    kill -- "-$P" 2>/dev/null || kill "$P" 2>/dev/null || true
+                fi
+            done
+            sleep 2
+            for P in $OLD_LLAMA_PID $OLD_PROXY_PID $OLD_EMBED_PID; do
+                if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
+                    echo "Force-killing PID $P..."
+                    kill -9 "$P" 2>/dev/null || true
+                fi
+            done
+            rm -f "$PID_FILE"
+            rm -f "$JENOVA_STATE/llama-embed.pid"
+            rm -f "$JENOVA_STATE/indexer.pid"
+            echo "Stopped."
+        else
+            echo "No PID file found at $PID_FILE"
+        fi
+        pkill -f "llama-server.*--port.*${LLAMA_EMBED_PORT}" 2>/dev/null || true
+        pkill -f "llama-server.*--port.*${LLAMA_PORT}" 2>/dev/null || true
+        exit 0
+        ;;
+    status)
+        if [ -f "$PID_FILE" ]; then
+            read LLAMA_PID PROXY_PID EMBED_PID < "$PID_FILE" 2>/dev/null || LLAMA_PID=$(cat "$PID_FILE")
+            _LLAMA_ALIVE=false
+            _PROXY_ALIVE=false
+            _EMBED_ALIVE=false
+            
+            _is_alive() { [ -n "$1" ] && kill -0 "$1" 2>/dev/null; }
+            _is_alive "$LLAMA_PID" && _LLAMA_ALIVE=true
+            _is_alive "$PROXY_PID" && _PROXY_ALIVE=true
+            _is_alive "$EMBED_PID" && _EMBED_ALIVE=true
+
+            if $_LLAMA_ALIVE && $_PROXY_ALIVE; then
+                CONNECT_HOST="${JENOVA_CONNECT_HOST:-127.0.0.1}"
+                if _probe_health 2; then
+                    echo "Jenova is ready"
+                else
+                    echo "Jenova is starting"
+                fi
+                echo "llama-server: running (PID $LLAMA_PID)"
+                echo "Proxy: running (PID $PROXY_PID)"
+                [ -n "$EMBED_PID" ] && echo "Embed: $(if $_EMBED_ALIVE; then echo "running (PID $EMBED_PID)"; else echo "not running"; fi)"
+            else
+                echo "Jenova is partially running"
+                echo "llama-server: $(if $_LLAMA_ALIVE; then echo "running (PID $LLAMA_PID)"; else echo "not running"; fi)"
+                echo "Proxy: $(if $_PROXY_ALIVE; then echo "running (PID $PROXY_PID)"; else echo "not running"; fi)"
+            fi
+        else
+            echo "Jenova is stopped"
+        fi
+        exit 0
+        ;;
+    start)
+        shift
+        set -- "--daemon" "$@"
+        ;;
+    restart)
+        "$0" stop 2>/dev/null || true
+        shift || true
+        set -- "--daemon" "$@"
+        ;;
+    watch)
+        shift
+        # Fall through to watchdog loop below
+        _ENTER_WATCHDOG=1
+        ;;
+esac
+
 # =====================================================================
 # WATCHDOG: Continuous runtime health monitoring with auto-restart
 # =====================================================================
@@ -325,6 +366,7 @@ _watchdog() {
     _watchdog_shutdown() {
         _WATCHDOG_RUNNING=false
         _wlog "shutdown signal received"
+        [ -n "$_SLEEP_PID" ] && kill "$_SLEEP_PID" 2>/dev/null || true
     }
     trap _watchdog_shutdown INT TERM
 
@@ -423,11 +465,15 @@ for _arg in "$@"; do
         HOST="0.0.0.0"
         _INT_HOST="127.0.0.1"
         API_URL="http://${_INT_HOST}:${PORT}"
-        LLAMA_URL="http://${_INT_HOST}:${LLAMA_PORT}"
-        LLAMA_EMBED_URL="http://${_INT_HOST}:${LLAMA_EMBED_PORT}"
         break
     fi
 done
+
+# --- Finalize internal URLs and Export them ---
+LLAMA_URL="http://${_INT_HOST}:${LLAMA_PORT}"
+LLAMA_EMBED_URL="http://${_INT_HOST}:${LLAMA_EMBED_PORT}"
+JENOVA_LLAMA_URL="$LLAMA_URL"; export JENOVA_LLAMA_URL
+JENOVA_LLAMA_EMBED_URL="$LLAMA_EMBED_URL"; export JENOVA_LLAMA_EMBED_URL
 
 if [ "${JENOVA_FORCE_VULKAN:-0}" = "1" ]; then
     _use_vulkan_fallback
@@ -466,17 +512,37 @@ for _arg in "$@"; do
     if [ "$_arg" = "--watch" ]; then _WATCH_AFTER_START=true; fi
 done
 
-if [ "$1" = "--daemon" ]; then
-    shift
-    # Strip --watch from remaining args (it's for post-startup, not llama-server)
-    # Strip jenova-ca-specific flags that aren't for llama-server
-    for _arg; do
+# --- Logic: Argument Parsing ---
+_parse_runtime_args() {
+    _ORIG_COUNT=$#
+    _I=0
+    while [ "$_I" -lt "$_ORIG_COUNT" ]; do
+        _arg="$1"
         shift
+        _I=$((_I + 1))
         case "$_arg" in
             --watch|--lan|--daemon) continue ;;
+            --port) 
+                case "$1" in ""|-*) echo "Error: --port requires a value" >&2; exit 1 ;; esac
+                PORT="$1"; shift; _I=$((_I + 1)); continue ;;
+            --llama-port) 
+                case "$1" in ""|-*) echo "Error: --llama-port requires a value" >&2; exit 1 ;; esac
+                LLAMA_PORT="$1"; shift; _I=$((_I + 1)); continue ;;
+            --embed-port) 
+                case "$1" in ""|-*) echo "Error: --embed-port requires a value" >&2; exit 1 ;; esac
+                LLAMA_EMBED_PORT="$1"; shift; _I=$((_I + 1)); continue ;;
+            *) set -- "$@" "$_arg" ;;
         esac
-        set -- "$@" "$_arg"
     done
+}
+
+# --- Arguments: Daemon Mode ---
+if [ "$1" = "--daemon" ]; then
+    shift
+    # Robust POSIX argument filtering: collect flags for jenova-ca,
+    # and rebuild the positional parameters for llama-server.
+    _parse_runtime_args "$@"
+    shift "$_I"
 
     # Acquire exclusive lock to prevent concurrent startup (TOCTOU guard)
     # Use portable locking: flock on Linux/FreeBSD, or fallback to mkdir-based lock
@@ -661,7 +727,10 @@ fi
 # =====================================================================
 # FOREGROUND MODE
 # =====================================================================
-while [ "$1" = "--daemon" ]; do shift; done
+_parse_runtime_args "$@"
+shift "$_I"
+
+_set_path_args
 
 "$LLAMA_SERVER" \
     -m "$MODEL_PATH" \
@@ -682,6 +751,7 @@ while [ "$1" = "--daemon" ]; do shift; done
     --offline \
     --host "$HOST" \
     --port "$LLAMA_PORT" \
+    ${PATH_FLAG:+"$PATH_FLAG"} ${PATH_VAL:+"$PATH_VAL"} \
     $RUN_DRAFT_ARGS \
     "$@" &
 LLAMA_PID=$!
@@ -708,29 +778,39 @@ fi
 
 cleanup() {
     echo "Cleaning up..."
+    # 1. First pass: gentle TERM signal to known PIDs and their process groups
     for P in $LLAMA_PID $PROXY_PID $EMBED_PID; do
         if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
             kill "$P" 2>/dev/null || true
             kill -- "-$P" 2>/dev/null || true
         fi
     done
-    sleep 2
+
+    # 2. FreeBSD-specific: Kill any llama-servers still hogging our ports (orphans)
+    [ -n "$LLAMA_PORT" ] && pkill -f "llama-server.*--port.*${LLAMA_PORT}" 2>/dev/null || true
+    [ -n "$LLAMA_EMBED_PORT" ] && pkill -f "llama-server.*--port.*${LLAMA_EMBED_PORT}" 2>/dev/null || true
+
+    sleep 1
+
+    # 3. Final pass: forceful KILL if still alive
     for P in $LLAMA_PID $PROXY_PID $EMBED_PID; do
         if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
             kill -9 "$P" 2>/dev/null || true
             kill -9 -- "-$P" 2>/dev/null || true
         fi
     done
+
     wait $LLAMA_PID 2>/dev/null
     wait $PROXY_PID 2>/dev/null
     [ -n "$EMBED_PID" ] && wait $EMBED_PID 2>/dev/null
-    pkill -f "llama-server.*--port.*${LLAMA_EMBED_PORT}" 2>/dev/null || true
-    pkill -f "llama-server.*--port.*${LLAMA_PORT}" 2>/dev/null || true
+
     rm -f "$PID_FILE"
     rm -f "$JENOVA_STATE/llama-embed.pid"
     rm -f "$JENOVA_STATE/indexer.pid"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'cleanup; trap - EXIT; exit 130' INT
+trap 'cleanup; trap - EXIT; exit 143' TERM
 
 echo "Starting Jenova Intelligence Proxy on port $PORT..."
 luajit "$PROXY_SCRIPT" &

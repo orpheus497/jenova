@@ -69,7 +69,7 @@ With the cockpit active, you can now engage the Jenova Cognitive Architecture.
 
 ** The Jenova Agent is your partner. You talk to it via the Agent Terminal. **
 
- 1. Press your leader key (usually `<Space>`) then `t` then `a` (`<leader>ta`).
+ 1. Press your leader key (usually `<Space>`) then `a` then `t` then `j` (`<leader>atj`).
  2. This toggles the Agent's presence. Ask it a question, or have it analyze 
     the code you just navigated to in Chapter 2.
  3. Toggle it again to hide it and return to pure focus.
