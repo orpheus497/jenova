@@ -117,6 +117,7 @@ else
 fi
 
 JENOVA_LLAMA_URL="http://${HOST}:${LLAMA_PORT}"; export JENOVA_LLAMA_URL
+JENOVA_LLAMA_EMBED_URL="http://${HOST}:${LLAMA_EMBED_PORT}"; export JENOVA_LLAMA_EMBED_URL
 JENOVA_PROXY_PORT="$PORT"; export JENOVA_PROXY_PORT
 JENOVA_PROXY_HOST="$HOST"; export JENOVA_PROXY_HOST
 JENOVA_CTX="${JENOVA_CTX:-$CTX_SIZE}"; export JENOVA_CTX
@@ -461,7 +462,9 @@ for _arg in "$@"; do
         _INT_HOST="127.0.0.1"
         API_URL="http://${_INT_HOST}:${PORT}"
         LLAMA_URL="http://${_INT_HOST}:${LLAMA_PORT}"
+        JENOVA_LLAMA_URL="$LLAMA_URL"; export JENOVA_LLAMA_URL
         LLAMA_EMBED_URL="http://${_INT_HOST}:${LLAMA_EMBED_PORT}"
+        JENOVA_LLAMA_EMBED_URL="$LLAMA_EMBED_URL"; export JENOVA_LLAMA_EMBED_URL
         break
     fi
 done
@@ -802,8 +805,7 @@ cleanup() {
     rm -f "$JENOVA_STATE/llama-embed.pid"
     rm -f "$JENOVA_STATE/indexer.pid"
 }
-trap cleanup EXIT
-trap 'exit 130' INT TERM
+trap cleanup EXIT INT TERM
 
 echo "Starting Jenova Intelligence Proxy on port $PORT..."
 luajit "$PROXY_SCRIPT" &

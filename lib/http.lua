@@ -73,10 +73,14 @@ local function send_all(fd, data)
         if retries > MAX_SEND_RETRIES then
           return false, "send() stalled after " .. retries .. " retries"
         end
-        local tv_sleep = ffi.new("struct timeval")
-        tv_sleep.tv_sec = 0
-        tv_sleep.tv_usec = 50000
-        ffi.C.select(0, nil, nil, nil, tv_sleep)
+        if coroutine.running() then
+          coroutine.yield("write", fd)
+        else
+          local tv_sleep = ffi.new("struct timeval")
+          tv_sleep.tv_sec = 0
+          tv_sleep.tv_usec = 50000
+          ffi.C.select(0, nil, nil, nil, tv_sleep)
+        end
         goto continue
       end
       return false, "send() failed: " .. get_errstr(err)
@@ -116,10 +120,14 @@ local function recv_all(fd, buf, buf_size, deadline)
       if err == EINTR then
         goto retry
       elseif err == EAGAIN or err == EWOULDBLOCK or err == ETIMEDOUT then
-        local tv_sleep = ffi.new("struct timeval")
-        tv_sleep.tv_sec = 0
-        tv_sleep.tv_usec = 50000
-        ffi.C.select(0, nil, nil, nil, tv_sleep)
+        if coroutine.running() then
+          coroutine.yield("read", fd)
+        else
+          local tv_sleep = ffi.new("struct timeval")
+          tv_sleep.tv_sec = 0
+          tv_sleep.tv_usec = 50000
+          ffi.C.select(0, nil, nil, nil, tv_sleep)
+        end
       else
         recv_err = "recv() fatal error: " .. get_errstr(err) .. " (errno=" .. tostring(err) .. ")"
         break
