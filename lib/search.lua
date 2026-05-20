@@ -524,16 +524,12 @@ function search.index_dir(root_dir, extensions)
   local p = io.popen(cmd)
   if not p then return 0 end
 
-  -- Read the output in chunks to allow other coroutines to run
+  -- Read the output in chunks
   local output_parts = {}
   while true do
     local chunk = p:read(4096)
     if not chunk then break end
     output_parts[#output_parts + 1] = chunk
-    -- Only yield if we are inside a coroutine
-    if coroutine.running() then
-        coroutine.yield("read", -1) 
-    end
   end
   p:close()
   local output = table.concat(output_parts)

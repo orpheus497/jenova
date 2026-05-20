@@ -26,7 +26,7 @@ local LLAMA_URL = os.getenv("JENOVA_LLAMA_URL") or "http://127.0.0.1:" .. (os.ge
 local LLAMA_PORT = tonumber(LLAMA_URL:match(":(%d+)/?$") or LLAMA_URL:match(":(%d+):") or LLAMA_URL:match(":(%d+)")) or 8081
 local LLAMA_HOST = LLAMA_URL:match("//%[([^%]]+)%]") or LLAMA_URL:match("//([^:/]+)") or "127.0.0.1"
 local LLAMA_CONNECT_HOST = LLAMA_HOST
-if LLAMA_CONNECT_HOST == "0.0.0.0" or LLAMA_CONNECT_HOST == "::" or LLAMA_CONNECT_HOST == "*" then
+if LLAMA_CONNECT_HOST == "0.0.0.0" or LLAMA_CONNECT_HOST == "::" or LLAMA_CONNECT_HOST == "*" or LLAMA_CONNECT_HOST == "localhost" then
     LLAMA_CONNECT_HOST = "127.0.0.1"
 end
 
@@ -318,6 +318,7 @@ local function recursive_mkdir(path)
 end
 
 local function proxy_connection(client_fd, conn_fds)
+    local start_time = os.time()
     set_nonblocking(client_fd)
     set_socket_opts(client_fd)
     conn_fds.client = client_fd
@@ -340,8 +341,11 @@ local function proxy_connection(client_fd, conn_fds)
     local is_get = false
 
     while true do
-        local n = async_recv(client_fd, buf, 8192)
-        if n <= 0 then safe_close(); return end
+        local n, err = async_recv(client_fd, buf, 8192)
+        if n <= 0 then 
+            if n < 0 then io.write("[proxy] client recv error: " .. tostring(err) .. "\n") end
+            safe_close(); return 
+        end
         header_chunks[#header_chunks + 1] = ffi.string(buf, n)
         header_total = header_total + n
         if header_total > MAX_HEADER_SIZE then
@@ -362,30 +366,54 @@ local function proxy_connection(client_fd, conn_fds)
             is_get = headers_raw:match("^GET ") ~= nil
             break
         end
+        
+        if os.time() - start_time > 10 then
+            io.write("[proxy] header timeout from client\n")
+            safe_close(); return
+        end
     end
 
-    -- Native /health endpoint — exact path match ([ %?] catches both "GET /health HTTP/" and
-    -- "GET /health?…" while excluding paths like /healthz). Support /v1/health for compatibility.
+    -- Native /health endpoint
     local is_health = is_get and (headers_raw:match("^GET /health[ %?]") or headers_raw:match("^GET /v1/health[ %?]"))
     if is_health then
         local backend_ok = false
-        local hints = ffi.new("struct addrinfo")
-        hints.ai_family = 0 -- AF_UNSPEC
-        hints.ai_socktype = SOCK_STREAM
+        local health_fd = -1
         
-        local res = ffi.new("struct addrinfo *[1]")
-        local rc = ffi.C.getaddrinfo(LLAMA_CONNECT_HOST, tostring(LLAMA_PORT), hints, res)
-        if rc == 0 then
-            local ai = res[0]
-            local health_fd = ffi.C.socket(ai.ai_family, ai.ai_socktype, ai.ai_protocol)
+        -- Optimized health probe: skip getaddrinfo for 127.0.0.1
+        if LLAMA_CONNECT_HOST == "127.0.0.1" then
+            health_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
             if health_fd >= 0 then
                 set_cloexec(health_fd)
                 set_nonblocking(health_fd)
-                local ok, err = async_connect(health_fd, ai.ai_addr, ai.ai_addrlen)
+                local h_addr = ffi.new("struct sockaddr_in")
+                if not _ffi_defs.IS_LINUX then h_addr.sin_len = ffi.sizeof(h_addr) end
+                h_addr.sin_family = AF_INET
+                h_addr.sin_port   = ffi.C.htons(LLAMA_PORT)
+                h_addr.sin_addr.s_addr = ffi.C.inet_addr("127.0.0.1")
+                
+                -- Shorter timeout for health connect (5s)
+                local ok, err = async_connect(health_fd, h_addr)
                 backend_ok = ok
                 ffi.C.close(health_fd)
             end
-            ffi.C.freeaddrinfo(ai)
+        else
+            local hints = ffi.new("struct addrinfo")
+            hints.ai_family = 0 -- AF_UNSPEC
+            hints.ai_socktype = SOCK_STREAM
+            local res = ffi.new("struct addrinfo *[1]")
+            local rc = ffi.C.getaddrinfo(LLAMA_CONNECT_HOST, tostring(LLAMA_PORT), hints, res)
+            if rc == 0 then
+                local ai = res[0]
+                health_fd = ffi.C.socket(ai.ai_family, ai.ai_socktype, ai.ai_protocol)
+                if health_fd >= 0 then
+                    set_cloexec(health_fd)
+                    set_nonblocking(health_fd)
+                    local ok, err = async_connect(health_fd, ai.ai_addr, ai.ai_addrlen)
+                    backend_ok = ok
+                    ffi.C.close(health_fd)
+                end
+                ffi.C.freeaddrinfo(ai)
+            end
         end
 
         local status_str  = backend_ok and "ok" or "degraded"
@@ -494,19 +522,13 @@ local function proxy_connection(client_fd, conn_fds)
         local escaped_dir = workspaces_dir:gsub("'", "'\\''")
         local p = io.popen("find '" .. escaped_dir .. "' -maxdepth 3 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/build/*'")
         if p then
-            local output_parts = {}
             while true do
-                local chunk = p:read(4096)
-                if not chunk then break end
-                output_parts[#output_parts + 1] = chunk
-                coroutine.yield("read", -1)
-            end
-            p:close()
-            local output = table.concat(output_parts)
-            for line in output:gmatch("[^\n]+") do
+                local line = p:read("*l")
+                if not line then break end
                 local rel = line:sub(#workspaces_dir + 2)
                 if #rel > 0 then table.insert(files, "\"" .. rel .. "\"") end
             end
+            p:close()
         end
         local content = "[" .. table.concat(files, ",") .. "]"
         local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)
@@ -521,19 +543,13 @@ local function proxy_connection(client_fd, conn_fds)
         local escaped_dir = workspaces_dir:gsub("'", "'\\''")
         local p = io.popen("find '" .. escaped_dir .. "' -maxdepth 1 -type d -not -path '*/.*'")
         if p then
-            local output_parts = {}
             while true do
-                local chunk = p:read(4096)
-                if not chunk then break end
-                output_parts[#output_parts + 1] = chunk
-                coroutine.yield("read", -1)
-            end
-            p:close()
-            local output = table.concat(output_parts)
-            for line in output:gmatch("[^\n]+") do
+                local line = p:read("*l")
+                if not line then break end
                 local name = line:sub(#workspaces_dir + 2)
                 if #name > 0 then table.insert(ws, "\"" .. name .. "\"") end
             end
+            p:close()
         end
         local content = "[" .. table.concat(ws, ",") .. "]"
         local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)
