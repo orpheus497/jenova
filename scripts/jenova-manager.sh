@@ -648,23 +648,70 @@ run_preflight() {
 
 run_hardware_profile() {
     exit_alt_screen
-    printf "%s%sHardware Profile Selection...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
     
-    echo "1. Auto-detect and Apply Hardware Profile"
-    echo "2. View Detection Report"
-    echo "3. Back"
-    printf "Choice: "
-    read -r choice
+    _profiles_str=$("$JENOVA_ROOT/hardware-profiles/detect-hardware.sh" --list || true)
     
-    if [ "$choice" = "1" ]; then
-        "$JENOVA_ROOT/hardware-profiles/detect-hardware.sh" --apply
-    elif [ "$choice" = "2" ]; then
-        "$JENOVA_ROOT/hardware-profiles/detect-hardware.sh" --info
-    fi
+    _count=0
+    for _p in $_profiles_str; do
+        eval "_prof_$_count='$_p'"
+        _count=$((_count + 1))
+    done
     
-    printf "\nPress any key to continue..."
-    get_key >/dev/null
     enter_alt_screen
+    while true; do
+        set -- "Hardware Profile Selection" "Auto-detect and Apply Hardware Profile" "View Detection Report"
+        i=0
+        while [ $i -lt $_count ]; do
+            eval "_p=\"\$_prof_$i\""
+            set -- "$@" "Apply: $_p"
+            i=$((i + 1))
+        done
+        set -- "$@" "Back"
+        
+        interactive_menu "$@"
+        
+        if [ "$MENU_CHOICE" = "0" ]; then
+            exit_alt_screen
+            "$JENOVA_ROOT/hardware-profiles/detect-hardware.sh" --apply
+            printf "\nPress any key to continue..."
+            get_key >/dev/null
+            enter_alt_screen
+        elif [ "$MENU_CHOICE" = "1" ]; then
+            exit_alt_screen
+            "$JENOVA_ROOT/hardware-profiles/detect-hardware.sh" --info
+            printf "\nPress any key to continue..."
+            get_key >/dev/null
+            enter_alt_screen
+        else
+            if [ "$MENU_CHOICE" -eq $((_count + 2)) ]; then
+                break
+            else
+                _prof_idx=$((MENU_CHOICE - 2))
+                eval "_selected_prof=\"\$_prof_$_prof_idx\""
+                exit_alt_screen
+                printf "%s%sDeploying %s...%s\n" "$RESET" "$BOLD$GREEN" "$_selected_prof" "$RESET"
+                "$JENOVA_ROOT/hardware-profiles/detect-hardware.sh" --apply-profile "$_selected_prof"
+                
+                # Check for tuning script and execute if present
+                _tuning_script="$JENOVA_ROOT/hardware-profiles/$_selected_prof/jenova-setup"
+                if [ -f "$_tuning_script" ]; then
+                    printf "\nPress any key to continue to tuning prompt..."
+                    get_key >/dev/null
+                    enter_alt_screen
+                    if confirm_prompt "This profile contains a system tuning script. Run it with sudo?" "0"; then
+                        exit_alt_screen
+                        sudo sh "$_tuning_script"
+                    else
+                        exit_alt_screen
+                    fi
+                fi
+                
+                printf "\nPress any key to continue..."
+                get_key >/dev/null
+                enter_alt_screen
+            fi
+        fi
+    done
 }
 
 run_model_downloader() {

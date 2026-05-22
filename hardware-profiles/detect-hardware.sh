@@ -376,10 +376,24 @@ case "$ACTION" in
             exit 1
         fi
         ;;
+    --apply-profile)
+        shift
+        _requested="$1"
+        if [ -d "$SCRIPT_DIR/$_requested" ]; then
+            MATCHED_PROFILE_DIR="$SCRIPT_DIR/$_requested"
+            MATCHED_PROFILE="$_requested"
+            apply_profile
+        else
+            fail "Profile not found: $_requested"
+            exit 1
+        fi
+        ;;
     --list)
         find "$SCRIPT_DIR" -name "profile.conf" | sort | while IFS= read -r _pconf; do
             _pdir=$(dirname "$_pconf")
-            printf '%s\n' "${_pdir#"$SCRIPT_DIR"/}"
+            if [ "$_pdir" != "$SCRIPT_DIR" ]; then
+                printf '%s\n' "${_pdir#"$SCRIPT_DIR"/}"
+            fi
         done
         ;;
     "")
@@ -391,12 +405,13 @@ case "$ACTION" in
         fi
         ;;
     *)
-        echo "Usage: $0 [--info|--install|--apply|--list]" >&2
+        echo "Usage: $0 [--info|--install|--apply|--apply-profile <name>|--list]" >&2
         echo "" >&2
         echo "  (no args)   Print matched profile name (for scripting)" >&2
         echo "  --info      Print full hardware detection report" >&2
         echo "  --install   Detect hardware and run matched profile installer" >&2
         echo "  --apply     Detect hardware and deploy matched profile config" >&2
+        echo "  --apply-profile <name>  Deploy specific profile config" >&2
         echo "  --list      List available profile names" >&2
         exit 1
         ;;
