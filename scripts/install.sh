@@ -8,7 +8,7 @@
 # and symlinks `jvim`, `jenova`, and `jenova-ca` onto your PATH.
 #
 # Usage: ./install.sh [--force] [--link] [--skip-config] [--skip-jvim]
-#                     [--skip-llama] [--skip-lsp] [--skip-web] [--client-only]
+#                     [--skip-llama] [--skip-web] [--client-only]
 #
 #   --force        Overwrite existing ~/.config/jvim without prompting and
 #                  force a fresh jvim rebuild even if jvim/build/ exists
@@ -17,7 +17,6 @@
 #   --skip-config  Skip the jvim user-config deployment step
 #   --skip-jvim    Skip building the bundled jvim editor (jvim/)
 #   --skip-llama   Skip llama.cpp build check
-#   --skip-lsp     Skip auto-installing LSP servers / linters / formatters
 #   --skip-web     Skip building the JCA Web UI (jca_web/)
 #   --client-only  LAN client install: skip llama.cpp, skip jvim build,
 #                  skip model downloads, skip web UI. Use when this host will only ever
@@ -58,7 +57,6 @@ LINK=0
 SKIP_NVIM=0
 SKIP_JVIM=0
 SKIP_LLAMA=0
-SKIP_LSP=0
 SKIP_WEB=0
 CLIENT_ONLY=0
 
@@ -69,7 +67,6 @@ for _arg in "$@"; do
         --skip-config|--skip-nvim) SKIP_NVIM=1 ;;
         --skip-jvim)   SKIP_JVIM=1 ;;
         --skip-llama)  SKIP_LLAMA=1 ;;
-        --skip-lsp)    SKIP_LSP=1 ;;
         --skip-web)    SKIP_WEB=1 ;;
         --client-only) CLIENT_ONLY=1; SKIP_LLAMA=1; SKIP_JVIM=1; SKIP_WEB=1 ;;
         -h|--help)
@@ -303,235 +300,6 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 4. LSP servers / linters / formatters
-# ---------------------------------------------------------------------------
-# Without LSPs nothing in the editor lints, so we install the ones we can
-# obtain from the local package manager / npm / cargo / go automatically.
-# Anything we cannot install is downgraded to a warning with the manual
-# install hint instead of failing the script.
-if [ "$SKIP_LSP" = "1" ]; then
-    info "Skipping LSP / linter / formatter installation (--skip-lsp)"
-else
-info "Installing LSP servers, linters and formatters..."
-
-# ── helpers ──────────────────────────────────────────────────────────
-_have() { command -v "$1" >/dev/null 2>&1; }
-
-# Try sudo when available and the current user is not root.
-_PRIV="" 
-if [ "$(id -u)" != "0" ]; then
-    _have sudo && _PRIV="sudo " || { _have doas && _PRIV="doas "; }
-fi
-
-_apt_install() {
-    # Quietly install one-or-more apt packages (Debian/Ubuntu/derivatives).
-    _have apt-get || return 1
-    $_PRIV DEBIAN_FRONTEND=noninteractive apt-get install -y -q "$@" >/dev/null 2>&1
-}
-
-_pkg_install() {
-    # FreeBSD pkg(8). Run unattended; root is required.
-    _have pkg || return 1
-    $_PRIV pkg install -y "$@" >/dev/null 2>&1
-}
-
-_pacman_install() {
-    # Arch Linux pacman or yay.
-    if _have yay; then
-        yay -S --noconfirm --needed "$@" >/dev/null 2>&1
-    elif _have pacman; then
-        $_PRIV pacman -S --noconfirm --needed "$@" >/dev/null 2>&1
-    else
-        return 1
-    fi
-}
-
-_dnf_install() {
-    # Fedora/RHEL/CentOS dnf.
-    _have dnf || return 1
-    $_PRIV dnf install -y -q "$@" >/dev/null 2>&1
-}
-
-_zypper_install() {
-    # openSUSE zypper.
-    _have zypper || return 1
-    $_PRIV zypper install -y --quiet "$@" >/dev/null 2>&1
-}
-
-_xbps_install() {
-    _have xbps-install || return 1
-    $_PRIV xbps-install -y "$@" >/dev/null 2>&1
-}
-
-_brew_install() {
-    _have brew || return 1
-    brew install "$@" >/dev/null 2>&1
-}
-
-_npm_install_g() {
-    _have npm || return 1
-    if [ "$(id -u)" = "0" ]; then
-        npm install -g --silent "$@" >/dev/null 2>&1
-    else
-        # User-prefix install avoids needing root.
-        npm install -g --silent --prefix "$HOME/.local" "$@" >/dev/null 2>&1
-    fi
-}
-
-_cargo_install() {
-    _have cargo || return 1
-    cargo install --quiet --locked "$@" >/dev/null 2>&1
-}
-
-_go_install() {
-    _have go || return 1
-    GOBIN="${GOBIN:-$HOME/go/bin}" go install "$@" >/dev/null 2>&1
-}
-
-_pip_install() {
-    if _have pipx; then
-        pipx install --quiet "$@" >/dev/null 2>&1
-    elif _have pip3; then
-        pip3 install --quiet --user "$@" >/dev/null 2>&1
-    else
-        return 1
-    fi
-}
-
-# Ensure the GOBIN / cargo / pipx / npm-prefix bins are on PATH for the
-# rest of this script and any spawned tools.
-for _d in "$HOME/.local/bin" "$HOME/.cargo/bin" "$HOME/go/bin" "$HOME/.local/share/pipx/venvs"; do
-    case ":$PATH:" in *":$_d:"*) : ;; *) PATH="$_d:$PATH" ;; esac
-done
-export PATH
-
-# Install one tool by trying the appropriate manager for this system first,
-# then falling back through npm/cargo/go/pip. Already-present tools are skipped.
-_install_lsp() {
-    _exe="$1"; _label="$2"; _apt="$3"; _pkg="$4"; _npm="$5"; _cargo="$6"; _go="$7"; _pip="$8"; _pacman="$9"; shift 9; _brew="$1"
-    if _have "$_exe"; then
-        ok "$_label ($(command -v "$_exe"))"
-        return 0
-    fi
-    case "$JENOVA_PKG_MGR" in
-        pkg)    [ -n "$_pkg" ]    && _pkg_install    $_pkg    || true ;;
-        pacman) [ -n "$_pacman" ] && _pacman_install $_pacman || true ;;
-        apt)    [ -n "$_apt" ]    && _apt_install    $_apt    || true ;;
-        dnf)    [ -n "$_apt" ]    && _dnf_install    $_apt    || true ;;
-        zypper) [ -n "$_apt" ]    && _zypper_install $_apt    || true ;;
-        xbps)   [ -n "$_apt" ]    && _xbps_install   $_apt    || true ;;
-        brew)   [ -n "$_brew" ]   && _brew_install   $_brew   || true ;;
-        *)      [ -n "$_apt" ]    && _apt_install    $_apt    || true ;;
-    esac
-    if ! _have "$_exe" && [ -n "$_npm" ];   then _npm_install_g $_npm  || true; fi
-    if ! _have "$_exe" && [ -n "$_cargo" ]; then _cargo_install $_cargo || true; fi
-    if ! _have "$_exe" && [ -n "$_go" ];    then _go_install $_go       || true; fi
-    if ! _have "$_exe" && [ -n "$_pip" ];   then _pip_install $_pip     || true; fi
-    if _have "$_exe"; then
-        ok "$_label installed ($(command -v "$_exe"))"
-    else
-        warn "$_label could not be installed automatically"
-        WARNINGS=$((WARNINGS + 1))
-    fi
-    return 0
-}
-
-# clangd: FreeBSD ships versioned binaries (clangd19, clangd18, …) without
-# an unversioned symlink. Probe versioned names first.
-_clangd_present() {
-    for _c in clangd clangd21 clangd19 clangd18 clangd17 clangd16 clangd15; do
-        _have "$_c" && { _CLANGD_BIN="$_c"; return 0; }
-    done
-    return 1
-}
-if _clangd_present; then
-    ok "clangd (found as $_CLANGD_BIN)"
-else
-    case "$JENOVA_PKG_MGR" in
-        pkg)    _pkg_install llvm || true ;;
-        pacman) _pacman_install clang || true ;;
-        apt)    _apt_install clangd || true ;;
-        dnf)    _dnf_install clang-tools-extra || true ;;
-        zypper) _zypper_install clang || true ;;
-        xbps)   _xbps_install clang-tools-extra || true ;;
-        brew)   _brew_install llvm || true ;;
-        *)      _apt_install clangd || true ;;
-    esac
-    if _clangd_present; then
-        ok "clangd installed (as $_CLANGD_BIN)"
-    else
-        warn "clangd could not be installed automatically"
-        WARNINGS=$((WARNINGS + 1))
-    fi
-fi
-
-# Arch suffixes for GitHub release downloads — from shared detection.
-_GH_ARCH_LLS="$JENOVA_GH_ARCH_LLS"
-_GH_ARCH_ZLS="$JENOVA_GH_ARCH_ZLS"
-
-# Install lua-language-server from upstream github release tarball.
-# Debian/Ubuntu do not package it, npm/cargo do not provide it, and FreeBSD
-# only has it via the lua-language-server pkg (handled above).
-_install_lls_from_github() {
-    [ -z "$_GH_ARCH_LLS" ] && return 1
-    _have curl || return 1
-    _ver="3.13.5"
-    _dst="$HOME/.local/share/lua-language-server"
-    info "Downloading lua-language-server $_ver from github..."
-    mkdir -p "$_dst" "$HOME/.local/bin"
-    _url="https://github.com/LuaLS/lua-language-server/releases/download/${_ver}/lua-language-server-${_ver}-linux-${_GH_ARCH_LLS}.tar.gz"
-    _tmp="$(mktemp)"
-    curl -fsSL "$_url" -o "$_tmp" || { rm -f "$_tmp"; return 1; }
-    tar -xzf "$_tmp" -C "$_dst" || { rm -f "$_tmp"; return 1; }
-    rm -f "$_tmp"
-    printf '#!/bin/sh\nexec "%s/bin/lua-language-server" "$@"\n' "$_dst" > "$HOME/.local/bin/lua-language-server"
-    chmod +x "$HOME/.local/bin/lua-language-server"
-    _have lua-language-server
-}
-
-# Install zls from upstream github release tarball as a last resort.
-_install_zls_from_github() {
-    [ -z "$_GH_ARCH_ZLS" ] && return 1
-    _have curl || return 1
-    _ver="0.13.0"
-    mkdir -p "$HOME/.local/bin"
-    _url="https://github.com/zigtools/zls/releases/download/${_ver}/zls-${_GH_ARCH_ZLS}-linux.tar.xz"
-    _tmp="$(mktemp)"
-    _outdir="$(mktemp -d)"
-    trap 'rm -f "$_tmp"; rm -rf "$_outdir"' RETURN
-    info "Downloading zls $_ver from github..."
-    curl -fsSL "$_url" -o "$_tmp" || return 1
-    tar -xJf "$_tmp" -C "$_outdir" zls 2>/dev/null || return 1
-    mv "$_outdir/zls" "$HOME/.local/bin/zls"
-    chmod +x "$HOME/.local/bin/zls"
-    _have zls
-}
-
-# args:        exe                    label                apt                    pkg                          npm                          cargo            go                                                          pip                         pacman                      brew
-_install_lsp "rust-analyzer"          "rust-analyzer"       "rust-analyzer"        "rust-analyzer"              ""                           ""               ""                                                          ""                          "rust-analyzer"             "rust-analyzer"
-_install_lsp "lua-language-server"    "lua-language-server" "lua-language-server"  "lua-language-server"        ""                           ""               ""                                                          ""                          "lua-language-server"       "lua-language-server"
-if ! _have lua-language-server; then
-    _install_lls_from_github && ok "lua-language-server installed ($(command -v lua-language-server))" || warn "lua-language-server could not be installed automatically"
-fi
-_install_lsp "pyright-langserver"     "pyright"             "pyright"              "py311-pyright"              "pyright"                    ""               ""                                                          ""                          "pyright"                   "pyright"
-_install_lsp "bash-language-server"   "bash-language-server" ""                    "npm"                        "bash-language-server"       ""               ""                                                          ""                          "bash-language-server"      "bash-language-server"
-_install_lsp "gopls"                  "gopls"               "gopls"                "go gopls"                   ""                           ""               "golang.org/x/tools/gopls@latest"                            ""                          "gopls"                     "go"
-_install_lsp "zls"                    "zls"                 "zls"                  "zig"                        ""                           ""               ""                                                          ""                          "zls"                       "zls"
-if ! _have zls; then
-    _install_zls_from_github && ok "zls installed ($(command -v zls))" || warn "zls could not be installed automatically"
-fi
-
-# Linters (used by LSP-equivalents and conform.nvim).
-_install_lsp "shellcheck"             "shellcheck"          "shellcheck"           "shellcheck"                 ""                           ""               ""                                                          ""                          "shellcheck"                "shellcheck"
-
-# Formatters used by conform.nvim (format-on-save).
-_install_lsp "stylua"                 "stylua"              ""                     "stylua"                     ""                           "stylua"         ""                                                          ""                          "stylua"                    "stylua"
-_install_lsp "shfmt"                  "shfmt"               "shfmt"                "shfmt"                      ""                           ""               "mvdan.cc/sh/v3/cmd/shfmt@latest"                            ""                          "shfmt"                     "shfmt"
-_install_lsp "goimports"              "goimports"           "goimports"            "go"                         ""                           ""               "golang.org/x/tools/cmd/goimports@latest"                    ""                          ""                          "go"
-_install_lsp "black"                  "black"               "black"                "py311-black"                ""                           ""               ""                                                          "black"                     "python-black"              "black"
-_install_lsp "isort"                  "isort"               "isort"                "py311-isort"                ""                           ""               ""                                                          "isort"                     "python-isort"              "isort"
-
-fi  # SKIP_LSP
 
 
 # ---------------------------------------------------------------------------
@@ -591,93 +359,8 @@ elif [ "$SKIP_LLAMA" = "0" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 5b. jvim editor — build the in-tree fork unless --skip-jvim was passed
-# ---------------------------------------------------------------------------
-if [ "$SKIP_JVIM" = "0" ] && [ "$CLIENT_ONLY" = "0" ]; then
-    # ISS-01: If install-jenova.sh already built jvim via 'make jvim',
-    # it sets JENOVA_BUILT_BY_INSTALLER=1 to avoid a redundant rebuild.
-    if [ "${JENOVA_BUILT_BY_INSTALLER:-0}" = "1" ]; then
-        _JVIM_BIN_OUT="$JENOVA_ROOT/jvim/build/bin/nvim"
-        if [ -x "$_JVIM_BIN_OUT" ]; then
-            ok "jvim already built by install-jenova.sh at $_JVIM_BIN_OUT"
-        else
-            warn "JENOVA_BUILT_BY_INSTALLER set but jvim binary not found — will attempt build"
-        fi
-    fi
 
-    # Only build if not already present (or --force)
-    _JVIM_BIN_OUT="$JENOVA_ROOT/jvim/build/bin/nvim"
-    if [ ! -x "$_JVIM_BIN_OUT" ] || [ "$FORCE" = "1" ]; then
-        info "Building bundled jvim editor (jvim/)..."
-        if [ ! -f "$JENOVA_ROOT/jvim/CMakeLists.txt" ]; then
-            warn "jvim/ source tree missing — skipping jvim build"
-            WARNINGS=$((WARNINGS + 1))
-        else
-            _MAKE_CMD="make"
-            if [ "$_OS" = "FreeBSD" ]; then
-                if command -v gmake >/dev/null 2>&1; then
-                    _MAKE_CMD="gmake"
-                else
-                    warn "gmake not found — FreeBSD requires gmake to build jvim"
-                    WARNINGS=$((WARNINGS + 1))
-                    _MAKE_CMD=""
-                fi
-            fi
 
-            if [ -z "$_MAKE_CMD" ]; then
-                warn "Skipping jvim build due to missing make tool"
-            else
-                _JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
-                (
-                    cd "$JENOVA_ROOT/jvim" && \
-                    "$_MAKE_CMD" CMAKE_BUILD_TYPE=RelWithDebInfo \
-                                 CMAKE_INSTALL_PREFIX="$JENOVA_ROOT/jvim/install" \
-                                 -j"$_JOBS"
-                ) || {
-                    fail "jvim build failed — see above. Re-run: make jvim"
-                    ERRORS=$((ERRORS + 1))
-                }
-                if [ -x "$_JVIM_BIN_OUT" ]; then
-                    ok "jvim built at $_JVIM_BIN_OUT"
-                fi
-            fi
-        fi
-    else
-        ok "jvim already built at $_JVIM_BIN_OUT (use --force to rebuild)"
-    fi
-fi
-
-# ---------------------------------------------------------------------------
-# 5c. Web UI — build the SvelteKit frontend unless --skip-web was passed
-# ---------------------------------------------------------------------------
-if [ "$SKIP_WEB" = "0" ] && [ "$CLIENT_ONLY" = "0" ]; then
-    # Only build if not already present (or --force)
-    if [ ! -f "$JENOVA_ROOT/public/bundle.js" ] || [ "$FORCE" = "1" ]; then
-        info "Building JCA Web UI (jca_web/)..."
-        if [ ! -d "$JENOVA_ROOT/jca_web" ]; then
-            warn "jca_web/ source tree missing — skipping Web UI build"
-            WARNINGS=$((WARNINGS + 1))
-        elif ! command -v npm >/dev/null 2>&1; then
-            warn "npm not found — cannot build Web UI"
-            warn "Install nodejs/npm to enable the Web UI."
-            WARNINGS=$((WARNINGS + 1))
-        else
-            (
-                cd "$JENOVA_ROOT/jca_web" && \
-                npm install --silent && \
-                npm run build --silent
-            ) || {
-                fail "Web UI build failed — see above. Re-run: make web"
-                ERRORS=$((ERRORS + 1))
-            }
-            if [ -f "$JENOVA_ROOT/public/bundle.js" ]; then
-                ok "Web UI built successfully"
-            fi
-        fi
-    else
-        ok "Web UI already built (use --force to rebuild)"
-    fi
-fi
 
 # ---------------------------------------------------------------------------
 # 6. Model files — check and offer to download missing models
