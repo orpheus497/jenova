@@ -174,7 +174,7 @@ else
         case "$JENOVA_PKG_MGR" in
             pkg)    echo "pkg install node npm" ;;
             pacman) echo "pacman -S nodejs npm" ;;
-            apt)    echo "apt install npm" ;;
+            apt)    echo "apt install nodejs npm" ;;
             dnf)    echo "dnf install npm" ;;
             brew)   echo "brew install node" ;;
             *)      echo "https://nodejs.org/" ;;
