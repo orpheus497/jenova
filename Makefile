@@ -54,16 +54,16 @@ mcsh:
 	else \
 		mkdir -p external/mcsh/build; \
 		if [ ! -f external/mcsh/build/Makefile ]; then \
-			cd external/mcsh/build && ../configure; \
+			(cd external/mcsh/build && ../configure); \
 		fi; \
 		if [ "$$(uname -s)" = "FreeBSD" ]; then \
 			if ! command -v gmake >/dev/null 2>&1; then \
 				echo "FreeBSD requires 'gmake' to build mcsh. Please run 'pkg install gmake'" >&2; \
 				exit 1; \
 			fi; \
-			cd external/mcsh/build && gmake; \
+			gmake -C external/mcsh/build; \
 		else \
-			cd external/mcsh/build && $(MAKE); \
+			$(MAKE) -C external/mcsh/build; \
 		fi; \
 		cp external/mcsh/build/mcsh bin/mcsh; \
 		echo "   mcsh built: bin/mcsh"; \
