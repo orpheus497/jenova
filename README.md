@@ -37,9 +37,8 @@ Toggle `LAN Mode` via the System Tray or TUI to bind the backend to `0.0.0.0`. A
 git clone https://github.com/orpheus497/jenova
 cd jenova
 
-# Full build and installation to ~/Jenova:
-make
-make install
+# Streamlined, automated installation to ~/Jenova:
+./install-jenova.sh
 ```
 
 The system is deployed to **`~/Jenova`**, creating a 100% functional disconnect from the source repository. All binaries, libraries, and configurations are self-contained within this directory.
@@ -68,6 +67,9 @@ Jenova installs launchers to `~/.local/bin` that point to the standalone install
 | `jenova-tui` | Kanagawa-themed terminal manager |
 | `jenova-ui` | Desktop Manager (tray icon + TUI) |
 | `jenova-term` | Dedicated terminal with mcsh |
+| `jenova-swap-mount` | Helper to mount Optane/NVMe swap |
+| `build-llama-jenova` | Build script for Vulkan backend |
+| `build-llama-hybrid` | Build script for Vulkan + CUDA hybrid |
 
 ---
 
@@ -75,14 +77,14 @@ Jenova installs launchers to `~/.local/bin` that point to the standalone install
 
 ```sh
 # Update everything (pulls repo, rebuilds changed components, redeploys to ~/Jenova)
-scripts/update.sh
+./install-jenova.sh update
 ```
 
 ---
 
 ## 🤖 Advised Models
 
-Jenova is optimized for fast, accurate local reasoning. We recommend **Qwen-2.5** derivatives (such as `Qwen2.5-Coder-7B` or `Qwen2.5-3B`) quantized into GGUF format for optimal VRAM-to-parameter footprint ratios on consumer hardware.
+Jenova is optimized for fast, accurate local reasoning. We recommend **Qwen-3.5** derivatives (such as `Qwen3.5-9B` or `Qwen3.5-3B`) quantized into GGUF format for optimal VRAM-to-parameter footprint ratios on consumer hardware.
 
 Rule of thumb: **~0.75 GB VRAM per 1B parameters** at Q4_K_M quantization.
 
