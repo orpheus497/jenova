@@ -554,7 +554,7 @@ for _d in "$HOME/.local/bin" "$HOME/bin"; do
     echo "$PATH" | grep -q "$_d" && _ON_PATH=1
 done
 if [ "$_ON_PATH" = "0" ]; then
-    warn "$_BIN_DIR is not on your PATH."
+    warn "$_LOCAL_BIN is not on your PATH."
     warn "Add this to your shell rc file (~/.bashrc, ~/.zshrc, etc.):"
     warn "  export PATH=\"\$HOME/.local/bin:\$PATH\""
     WARNINGS=$((WARNINGS + 1))
