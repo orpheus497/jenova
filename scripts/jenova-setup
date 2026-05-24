@@ -121,6 +121,21 @@ else
     PROFILE_NAME=$("$DETECT" 2>/dev/null) || true
 
     if [ -z "$PROFILE_NAME" ] || [ "$PROFILE_NAME" = "unknown" ]; then
+        # On Linux/Debian, we can apply generic tuning even if no hardware profile matches
+        if [ "$JENOVA_OS" = "linux" ]; then
+            warn "No specific hardware profile found. Applying generic Linux optimizations..."
+            if [ -f "$SCRIPT_DIR/lib/linux-tune.sh" ]; then
+                . "$SCRIPT_DIR/lib/linux-tune.sh"
+                tune_system_performance
+                tune_hugepages
+                tune_gpu_persistence
+                tune_debian_specific
+                echo ""
+                ok "Generic Linux tuning applied."
+                exit 0
+            fi
+        fi
+
         fail "No matching hardware profile found for this system"
         echo ""
         info "Detected hardware:"

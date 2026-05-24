@@ -15,6 +15,26 @@ local search = require("search")
 local embed = require("embed")
 local prompts = require("prompts")
 
+-- MIME types for static file serving
+local MIME_TYPES = {
+    html = "text/html",
+    js = "application/javascript",
+    css = "text/css",
+    svg = "image/svg+xml",
+    png = "image/png",
+    jpg = "image/jpeg",
+    jpeg = "image/jpeg",
+    json = "application/json",
+    pdf = "application/pdf",
+    md = "text/markdown",
+    mp3 = "audio/mpeg",
+    mp4 = "video/mp4",
+    xml = "application/xml",
+    gif = "image/gif",
+    webp = "image/webp",
+    txt = "text/plain"
+}
+
 -- Filesystem API for WebUI persistence
 local home_dir = os.getenv("HOME") or "/tmp"
 local jenova_home = os.getenv("JENOVA_HOME") or (home_dir .. "/Jenova")
@@ -233,6 +253,13 @@ local function url_encode(query)
     end):gsub(" ", "+")
 end
 
+-- URL-decode a string.
+local function url_decode(str)
+    return str:gsub("+", " "):gsub("%%(%x%x)", function(h)
+        return string.char(tonumber(h, 16))
+    end)
+end
+
 -- DuckDuckGo Instant Answer API: returns JSON, no scraping needed.
 -- Good for factual queries (definitions, summaries, related topics).
 -- Does NOT return full web results for every query — supplementary source.
@@ -353,6 +380,56 @@ local function recursive_mkdir(path)
         end
         current = current .. "/"
     end
+end
+
+-- Pure Lua path normalization
+local function normalize_path(path)
+    -- Handle multiple consecutive slashes and trailing slashes explicitly
+    path = path:gsub("//+", "/")
+    if path ~= "/" and path:sub(-1) == "/" then
+        path = path:sub(1, -2)
+    end
+
+    local is_absolute = path:sub(1, 1) == "/"
+    local segments = {}
+    for segment in path:gmatch("[^/]+") do
+        if segment == "." then
+            -- skip
+        elseif segment == ".." then
+            if #segments > 0 and segments[#segments] ~= ".." then
+                table.remove(segments)
+            elseif is_absolute then
+                return nil -- escape attempted on absolute path
+            else
+                table.insert(segments, "..")
+            end
+        else
+            table.insert(segments, segment)
+        end
+    end
+    local res = table.concat(segments, "/")
+    if is_absolute then
+        return "/" .. res
+    end
+    return res == "" and "." or res
+end
+
+-- Resolve a path and verify it stays within the allowed base directory.
+local function resolve_safe_path(base_dir, relative_path)
+    local norm_base = normalize_path(base_dir)
+    if not norm_base then return nil end
+    
+    local candidate = base_dir .. "/" .. relative_path
+    local norm_candidate = normalize_path(candidate)
+    if not norm_candidate then return nil end
+    
+    -- Verify the resolved path starts with the base directory and aligns with a directory boundary
+    if norm_candidate:sub(1, #norm_base) == norm_base then
+        if #norm_candidate == #norm_base or norm_candidate:sub(#norm_base + 1, #norm_base + 1) == "/" then
+            return norm_candidate
+        end
+    end
+    return nil
 end
 
 local function proxy_connection(client_fd, conn_fds)
@@ -513,15 +590,20 @@ local function proxy_connection(client_fd, conn_fds)
     
     local storage_path = headers_raw:match("^POST /api/storage/([^ %?]+)")
     if storage_path and #body_raw > 0 then
+        storage_path = url_decode(storage_path)
         recursive_mkdir(workspaces_dir)
         
-        -- Security: prevent directory traversal
+        -- Security: prevent directory traversal (literal check + canonical validation)
         if storage_path:find("%.%.") then
             local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
             async_send(client_fd, err); safe_close(); return
         end
 
-        local full_path = workspaces_dir .. "/" .. storage_path
+        local full_path = resolve_safe_path(workspaces_dir, storage_path)
+        if not full_path then
+            local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, err); safe_close(); return
+        end
         local dir_part = full_path:match("(.+)/[^/]+$")
         if dir_part then recursive_mkdir(dir_part) end
 
@@ -549,7 +631,7 @@ local function proxy_connection(client_fd, conn_fds)
         if output then
             for line in output:gmatch("[^\r\n]+") do
                 local rel = line:sub(#workspaces_dir + 2)
-                if #rel > 0 then table.insert(files, "\"" .. rel .. "\"") end
+                if #rel > 0 then table.insert(files, json.encode(rel)) end
             end
         end
         local content = "[" .. table.concat(files, ",") .. "]"
@@ -568,7 +650,7 @@ local function proxy_connection(client_fd, conn_fds)
         if output then
             for line in output:gmatch("[^\r\n]+") do
                 local name = line:sub(#workspaces_dir + 2)
-                if #name > 0 then table.insert(ws, "\"" .. name .. "\"") end
+                if #name > 0 then table.insert(ws, json.encode(name)) end
             end
         end
         local content = "[" .. table.concat(ws, ",") .. "]"
@@ -579,17 +661,31 @@ local function proxy_connection(client_fd, conn_fds)
 
     local is_storage_get = is_get and headers_raw:match("^GET /api/storage/([^ %?]+)")
     if is_storage_get then
+        is_storage_get = url_decode(is_storage_get)
         if is_storage_get:find("%.%.") then
             local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
             async_send(client_fd, err); safe_close(); return
         end
-        local full_path = workspaces_dir .. "/" .. is_storage_get
+        local full_path = resolve_safe_path(workspaces_dir, is_storage_get)
+        if not full_path then
+            local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, err); safe_close(); return
+        end
         local f = io.open(full_path, "rb")
         if f then
             local content = f:read("*a")
             f:close()
+            
+            if not content then
+                local resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
+                async_send(client_fd, resp)
+                safe_close()
+                return
+            end
+            
             local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)
-            async_send(client_fd, resp .. content)
+            async_send(client_fd, resp)
+            async_send(client_fd, content)
         else
             local resp = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n"
             async_send(client_fd, resp)
@@ -601,29 +697,41 @@ local function proxy_connection(client_fd, conn_fds)
     if is_get then
         local path = headers_raw:match("^GET ([^ %?]+)")
         if path then
+            path = url_decode(path)
             if path == "/" then path = "/index.html" end
-            -- Security: prevent directory traversal
+            -- Security: prevent directory traversal (literal check + canonical validation)
             if not path:find("%.%.") then
-                local local_path = root_dir .. "/public" .. path
-                local f = io.open(local_path, "rb")
-                if f then
-                    local content = f:read("*a")
-                    f:close()
-                    local mime = "application/octet-stream"
-                    if path:find("%.html$") then mime = "text/html"
-                    elseif path:find("%.js$") then mime = "application/javascript"
-                    elseif path:find("%.css$") then mime = "text/css"
-                    elseif path:find("%.svg$") then mime = "image/svg+xml"
-                    elseif path:find("%.png$") then mime = "image/png"
-                    elseif path:find("%.jpg$") or path:find("%.jpeg$") then mime = "image/jpeg"
-                    elseif path:find("%.json$") then mime = "application/json"
+                local local_path = resolve_safe_path(root_dir .. "/public", path:sub(2))
+                if local_path then
+                    local ext = path:match("%.([^%.]+)$")
+                    local is_static_asset = ext and MIME_TYPES[ext:lower()]
+                    
+                    local f = io.open(local_path, "rb")
+                    if f then
+                        local content = f:read("*a")
+                        f:close()
+                        
+                        if not content then
+                            local resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
+                            async_send(client_fd, resp)
+                            safe_close()
+                            return
+                        end
+                        
+                        local mime = is_static_asset or "application/octet-stream"
+                        local resp = string.format(
+                            "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
+                            mime, #content)
+                        async_send(client_fd, resp)
+                        async_send(client_fd, content)
+                        safe_close()
+                        return
+                    elseif is_static_asset then
+                        local resp = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n"
+                        async_send(client_fd, resp)
+                        safe_close()
+                        return
                     end
-                    local resp = string.format(
-                        "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
-                        mime, #content)
-                    async_send(client_fd, resp .. content)
-                    safe_close()
-                    return
                 end
             end
         end

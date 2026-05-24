@@ -1,7 +1,7 @@
 jvim — a hard fork of Neovim purpose-built for the Jenova Cognitive
 Architecture.
 
-Copyright © 2025 orpheus497.
+Copyright © 2026 orpheus497.
 Licensed under the Apache License, Version 2.0.
 
 New jvim-specific contributions (those not originating from Neovim or Vim) are

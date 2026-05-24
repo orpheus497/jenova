@@ -11,14 +11,14 @@ embedding server) as a single unit.
 ```sh
 bin/jenova-ca --daemon          # start all three daemons in the background
 bin/jenova-ca --daemon --lan    # bind to 0.0.0.0 instead of 127.0.0.1
-bin/jenova-ca --daemon --watch  # foreground (tail logs)
+bin/jenova-ca --daemon --watch  # daemon + health watchdog with auto-restart
 bin/jenova-ca status            # show PID + alive/dead per service
 bin/jenova-ca stop              # stop everything and clean up PID files
 bin/jenova-ca restart           # stop + start
 ```
 
-State / PIDs / logs live under `var/run/` and `var/log/` inside the
-repository.
+PIDs and lock files live under `$JENOVA_HOME/.system/`, logs under
+`$JENOVA_HOME/var/log/`.
 
 ## Top-level launcher — `bin/jenova`
 

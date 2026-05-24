@@ -470,6 +470,12 @@ for _arg in "$@"; do
 done
 
 # --- Finalize internal URLs and Export them ---
+# Ensure HOST has a sensible default before setting _INT_HOST
+HOST="${HOST:-127.0.0.1}"
+
+# Ensure _INT_HOST is always defined — set by etc/jenova.conf or --lan above,
+# but guard against misconfigured profiles that might omit it.
+_INT_HOST="${_INT_HOST:-$HOST}"
 LLAMA_URL="http://${_INT_HOST}:${LLAMA_PORT}"
 LLAMA_EMBED_URL="http://${_INT_HOST}:${LLAMA_EMBED_PORT}"
 JENOVA_LLAMA_URL="$LLAMA_URL"; export JENOVA_LLAMA_URL

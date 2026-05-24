@@ -1,9 +1,10 @@
 # Jenova Cognitive Architecture — Unified Build System
 #
-# Two components make up Jenova as a single terminal IDE:
+# Four components make up Jenova as a single terminal IDE:
 #   1. external/llama.cpp        — Vulkan-accelerated inference backend
-#   2. jvim             — Neovim-based editor (`jvim` binary, in-tree fork)
-#   3. jca_web          — Web-based UI
+#   2. jvim                      — Neovim-based editor (`jvim` binary, in-tree fork)
+#   3. external/mcsh             — Modern C Shell (in-tree fork of tcsh)
+#   4. jca_web                   — Web-based UI
 #
 # The agent is embedded inside jvim — it lives at jvim-config/lua/jenova/agent/.
 # There is no separate cli-agent any more.
@@ -18,7 +19,7 @@
 
 .PHONY: all llama llama-hybrid jvim mcsh web jenova-ui install preflight verify clean help clean-root
 
-all: llama jvim mcsh jenova-ui web
+all: preflight llama jvim mcsh jenova-ui web
 	@echo ""
 	@echo "✅ Jenova build complete (external/llama.cpp + jvim + mcsh + jenova-ui + web)"
 	@echo "   Run 'make install' (or scripts/install.sh) to deploy."
@@ -52,19 +53,21 @@ mcsh:
 	@if [ ! -f external/mcsh/configure ]; then \
 		echo "WARN: external/mcsh/ source tree missing — skipping mcsh build" >&2; \
 	else \
+		set -e; \
 		mkdir -p external/mcsh/build; \
 		if [ ! -f external/mcsh/build/Makefile ]; then \
-			cd external/mcsh/build && ../configure; \
+			(cd external/mcsh/build && ../configure); \
 		fi; \
 		if [ "$$(uname -s)" = "FreeBSD" ]; then \
 			if ! command -v gmake >/dev/null 2>&1; then \
 				echo "FreeBSD requires 'gmake' to build mcsh. Please run 'pkg install gmake'" >&2; \
 				exit 1; \
 			fi; \
-			cd external/mcsh/build && gmake; \
+			gmake -C external/mcsh/build; \
 		else \
-			cd external/mcsh/build && $(MAKE); \
+			$(MAKE) -C external/mcsh/build; \
 		fi; \
+		mkdir -p bin; \
 		cp external/mcsh/build/mcsh bin/mcsh; \
 		echo "   mcsh built: bin/mcsh"; \
 	fi
@@ -89,10 +92,11 @@ web: jca_web/node_modules
 jenova-ui:
 	@echo "🔨 Building jenova-ui..."
 	@$(MAKE) -C jenova-ui
-	@cp jenova-ui/jenova-ui bin/jenova-ui
+	@mkdir -p bin || exit 1
+	@cp jenova-ui/jenova-ui bin/jenova-ui || exit 1
 	@echo "   jenova-ui built: bin/jenova-ui"
 
-install: llama jvim mcsh jenova-ui web
+install: preflight llama jvim mcsh jenova-ui web
 	@./scripts/install.sh
 
 install-jenova:

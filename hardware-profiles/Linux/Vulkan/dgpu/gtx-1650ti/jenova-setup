@@ -1,5 +1,5 @@
 #!/bin/sh
-# jenova-setup: Quick profile deployment for Vulkan Full Offload
+# jenova-setup: Quick profile deployment for GTX 1650 Ti (Vulkan)
 # Symlinks this profile's jenova.conf to $JENOVA_ROOT/etc/jenova.conf
 
 set -e
@@ -9,7 +9,7 @@ JENOVA_ROOT="$(dirname "$(dirname "$(dirname "$(dirname "$(dirname "$PROFILE_DIR
 PROFILE_CONF="$PROFILE_DIR/jenova.conf"
 TARGET_CONF="$JENOVA_ROOT/etc/jenova.conf"
 
-echo "Deploying Vulkan Full Offload profile..."
+echo "Deploying GTX 1650 Ti (Vulkan) profile..."
 
 # Backup existing config if it exists and isn't a symlink
 if [ -f "$TARGET_CONF" ] && [ ! -L "$TARGET_CONF" ]; then
@@ -27,5 +27,5 @@ fi
 ln -s "$PROFILE_CONF" "$TARGET_CONF"
 echo "  Linked: $TARGET_CONF -> $PROFILE_CONF"
 echo ""
-echo "Profile activated: Vulkan Full Offload"
+echo "Profile activated: GTX 1650 Ti (Vulkan)"
 echo "Restart Jenova to apply: bin/jenova-ca restart"

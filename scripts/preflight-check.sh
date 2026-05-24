@@ -80,7 +80,7 @@ esac
 # ---------------------------------------------------------------------------
 info "Checking disk space..."
 # Portable df -k check (POSIX compliant)
-_free_kb=$(df -k "$JENOVA_ROOT" | tail -1 | awk '{
+_free_kb=$(df -kP "$JENOVA_ROOT" | tail -1 | awk '{
     if ($4 ~ /%/) { print $3 } else { print $4 }
 }')
 _free_gb=$(( _free_kb / 1024 / 1024 ))
@@ -146,7 +146,11 @@ _check_bin "git"      "git" 0
 _check_bin "cmake"    "cmake" 0
 _check_bin "luajit"   "luajit" 0
 _check_bin "realpath" "coreutils" 0
-_check_bin "curl"     "curl" 1
+if command -v fetch >/dev/null 2>&1; then
+    _check_bin "fetch" "fetch" 1
+else
+    _check_bin "curl" "curl" 1
+fi
 _check_bin "gmake"    "gmake" 1
 
 # ---------------------------------------------------------------------------
@@ -174,7 +178,7 @@ else
         case "$JENOVA_PKG_MGR" in
             pkg)    echo "pkg install node npm" ;;
             pacman) echo "pacman -S nodejs npm" ;;
-            apt)    echo "apt install npm" ;;
+            apt)    echo "apt install nodejs npm" ;;
             dnf)    echo "dnf install npm" ;;
             brew)   echo "brew install node" ;;
             *)      echo "https://nodejs.org/" ;;

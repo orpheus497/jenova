@@ -2,6 +2,7 @@
 	"name": "jca-webui",
 	"private": true,
 	"version": "1.0.0",
+	"license": "AGPL-3.0",
 	"type": "module",
 	"scripts": {
 		"dev": "bash scripts/dev.sh",

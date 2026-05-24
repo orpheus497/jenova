@@ -1,36 +1,41 @@
 # Hardware Profiles
 
-Jenova is hardware-aware. At install time, it detects your GPU(s) and CPU and recommends a profile that balances model quality with inference speed.
+> **This document has moved.** The canonical reference for Jenova hardware
+> profiles is maintained alongside the profiles themselves.
+>
+> **See: [hardware-profiles/README.md](../../hardware-profiles/README.md)**
 
-## Profile Logic
-Profiles are organized by vendor and GPU configuration:
-- `Intel/dgpu_igpu/`: Dual-GPU setups (e.g., GTX 1650 Ti + Iris Xe).
-- `AMD/apu/`: Integrated graphics only (e.g., Ryzen 5700U / Vega 8).
-- `Vulkan/dgpu/`: Generic high-performance GPU profile.
-- `Optane/`: Specialized profiles for systems with Intel Optane NVMe swap.
+That document covers:
 
-## Key Profiles
+- All available profiles with settings and model details
+- Profile directory structure and detection scoring
+- Manual profile selection and environment overrides
+- How to create new profiles
 
-| Profile | Hardware | Model | Context |
-|---|---|---|---|
-| `Vulkan/dgpu/full-offload-14b` | 8GB+ VRAM GPU | 14B Q4_K_M | 32K |
-| `Intel/dgpu_igpu/i5-1135g7-3b` | i5 + Dual GPU | 3B Q8_0 | 32K |
-| `AMD/apu/ryzen7-5700u-3b` | Ryzen 7 APU | 3B Q8_0 | 16K |
-
-## Deployment
-Profiles are deployed using the `detect-hardware.sh` script:
+## Quick Reference
 
 ```sh
-# Show hardware report
+# Show hardware detection report
 ./hardware-profiles/detect-hardware.sh --info
 
 # Apply recommended profile
 ./hardware-profiles/detect-hardware.sh --apply
+
+# Apply a specific profile
+./hardware-profiles/detect-hardware.sh --apply-profile Linux/Vulkan/dgpu/gtx-1650ti
+
+# List all profiles
+./hardware-profiles/detect-hardware.sh --list
 ```
 
 ## Manual Overrides
-You can manually tune your profile in `etc/jenova.conf`. Key variables include:
-- `DEVICES`: The Vulkan devices to use (e.g., `Vulkan0,Vulkan1`).
-- `NGL`: Number of layers to offload to the GPU (`all` for full offload).
-- `CTX_SIZE`: The size of the context window.
-- `JENOVA_DRAFT`: Enable/disable speculative decoding.
+
+Key variables in `etc/jenova.conf` (all overridable via environment):
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `JENOVA_DEVICES` | Compute devices | `Vulkan0,Vulkan1` |
+| `JENOVA_NGL` | GPU layers (`all` or count) | `all` |
+| `JENOVA_CTX` | Context window size | `16384` |
+| `JENOVA_DRAFT` | Speculative decoding | `1` (enabled) |
+| `JENOVA_MODEL` | Override agent model path | `/path/to/model.gguf` |

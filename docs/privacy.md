@@ -14,6 +14,7 @@ The following directories and files contain user data and are **automatically ig
 | `var/cache/` | Embeddings & RAG Cache | Local semantic index of your files. |
 | `etc/*.local.conf` | Local Config Overrides | May contain local API keys or custom paths. |
 | `*.sqlite`, `*.db` | Databases | Chat history and persistent memory. |
+| Browser IndexedDB | WebUI client-side storage (Dexie) | Conversations, workspaces, cached responses. |
 | `.env`, `*.key` | Secrets | Credentials and encryption keys. |
 
 ## Privacy Guarantee

@@ -85,6 +85,8 @@ if [ "$JENOVA_OS" = "linux" ]; then
             ;;
     esac
 
+    JENOVA_DISTRO_VERSION="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_ID:-}")"
+
     # Confirm package manager by command presence — don't assume from distro alone.
     if   command -v pacman      >/dev/null 2>&1; then JENOVA_PKG_MGR="pacman"
     elif command -v apt-get     >/dev/null 2>&1; then JENOVA_PKG_MGR="apt"

@@ -116,7 +116,7 @@ if [ "${ENABLE_VULKAN:-0}" -eq 1 ] && [ "${JENOVA_GLSLC_OK:-0}" = "0" ]; then
     case "${JENOVA_PKG_MGR:-none}" in
         pkg)    echo "  sudo pkg install shaderc" >&2 ;;
         pacman) echo "  sudo pacman -S shaderc" >&2 ;;
-        apt)    echo "  sudo apt install glslc" >&2 ;;
+        apt)    echo "  sudo apt install google-shaderc" >&2 ;;
         dnf)    echo "  sudo dnf install glslc" >&2 ;;
         zypper) echo "  sudo zypper install shaderc" >&2 ;;
         brew)   echo "  brew install shaderc" >&2 ;;

@@ -11,33 +11,34 @@ Profiles are organised by operating system, then by hardware configuration:
 ```
 hardware-profiles/
 ├── FreeBSD/                         # FreeBSD-specific profiles
+│   ├── AMD/                         # AMD CPU systems
+│   │   └── apu/
+│   │       └── ryzen7-5700u-3b/     # 4B Q6_K, Vega 8 partial offload
 │   ├── dgpu/                        # Discrete GPU only
-│   │   ├── i5-1135g7-3b/            # 3B Q8_0, GTX 1650 Ti only
-│   │   └── i5-1135g7-7b/            # 9B Q4_K_M, partial offload + Optane
-│   ├── dgpu_igpu/                   # Discrete + integrated GPU
-│   │   └── i5-1135g7-3b/            # 3B Q8_0, GTX 1650 Ti + Iris Xe
-│   └── dgpu_igpu/                   # Discrete + integrated GPU (Optane)
-│       └── i5-1135g7-7b/            # 7B, dual GPU + Optane swap
+│   │   └── i5-1135g7-9b/            # 9B Q4_K_M, GTX 1650 Ti + Optane
+│   └── dgpu_igpu/                   # Discrete + integrated GPU
+│       └── i5-1135g7-9b/            # 4B Q8_0, GTX 1650 Ti + Iris Xe
 ├── Linux/                           # Linux-specific profiles
 │   ├── AMD/                         # AMD CPU systems
 │   │   └── apu/
-│   │       └── ryzen7-5700u-3b/     # 3B Q8_0, Vega 8 partial offload
+│   │       └── ryzen7-5700u-3b/     # 4B Q6_K, Vega 8 partial offload
 │   ├── CPU/                         # CPU-only systems
 │   │   └── generic/                 # Qwen3.5-4B Q6_K, Ryzen optimization
 │   ├── CUDA/                        # NVIDIA CUDA systems
 │   │   └── dgpu/
 │   │       └── nvidia-generic/      # CUDA acceleration
 │   └── Vulkan/                      # Generic Vulkan systems
-│       ├── dgpu/
-│       │   ├── full-offload-14b/    # 9B Q8, 12GB+ VRAM
-│       │   └── gtx-1650ti/          # 4B Q8_0, GTX 1650 Ti
-│       └── apu/
+│       └── dgpu/
+│           ├── full-offload-9b/     # 9B Q8_0, 12GB+ VRAM
+│           └── gtx-1650ti/          # 4B Q6_K, GTX 1650 Ti
 ├── macOS/                           # macOS-specific profiles
 │   ├── CPU/                         # CPU-only systems
-│   │   └── generic/                 # Qwen3.5-0.8B Q8_0, Neural Engine
+│   │   └── generic/                 # Qwen3.5-0.8B Q8_0
 │   └── Metal/                       # Apple Silicon GPU
-│       └── generic/                 # Qwen3.5-4B Q6_K_K_M, Metal
-└── detect-hardware.sh
+│       └── generic/                 # Qwen3.5-4B Q6_K, Metal
+├── common-setup.sh
+├── detect-hardware.sh
+└── README.md
 ```
 
 **Note:** Model names in the configuration files act as intelligent defaults and aren't hard-coded. If users wish to change models from what the downloader provides, they can easily override them via environment variables (e.g., `JENOVA_MODEL`).
@@ -59,7 +60,7 @@ These profiles are optimized for the balance of performance and resource availab
 
 ### FreeBSD Profiles
 
-#### 1. `FreeBSD/Optane/dgpu/i5-1135g7-9b` — 9B Q4_K_M, dGPU only + Optane swap
+#### 1. `FreeBSD/dgpu/i5-1135g7-9b` — 9B Q4_K_M, dGPU only + Optane swap
 **Model:** Qwen3.5-9B-Q4_K_M (~5.5 GiB)
 **Hardware:** Intel i5-1135G7 | GTX 1650 Ti 4GB (sole GPU) | 16GB RAM | Intel Optane NVMe
 **OS:** FreeBSD 15
@@ -72,18 +73,18 @@ These profiles are optimized for the balance of performance and resource availab
 | `CTX` | `8192` |
 | `DRAFT` | `0` |
 
-#### 2. `FreeBSD/Optane/dgpu_igpu/i5-1135g7-9b` — 9B Q4_K_M, dual GPU + Optane swap
-**Model:** Qwen3.5-9B-Q4_K_M (~5.5 GiB)
-**Hardware:** Intel i5-1135G7 | GTX 1650 Ti 4GB + Intel Iris Xe ~7GB UMA | 16GB RAM | Intel Optane NVMe
+#### 2. `FreeBSD/dgpu_igpu/i5-1135g7-9b` — Dual GPU, Qwen3.5-4B Q8_0
+**Model:** Qwen3.5-4B-Q8_0 (~3.5 GiB)
+**Hardware:** Intel i5-1135G7 | GTX 1650 Ti 4GB + Intel Iris Xe ~7GB UMA | 16GB RAM
 **OS:** FreeBSD 15
-**Strategy:** Dual GPU partial offload. Intel Optane NVMe provides high-bandwidth swap for CPU-bound layers.
+**Strategy:** Dual GPU full offload. All layers distributed across both Vulkan GPUs.
 
 | Setting | Value |
 |---|---|
 | `DEVICES` | `Vulkan0,Vulkan1` |
-| `NGL` | `24` (partial offload) |
-| `CTX` | `8192` |
-| `DRAFT` | `0` |
+| `NGL` | `all` (full offload) |
+| `CTX` | `32768` |
+| `DRAFT` | `1` |
 
 ### Linux Profiles
 
@@ -113,10 +114,10 @@ These profiles are optimized for the balance of performance and resource availab
 | `CTX` | `16384` |
 | `DRAFT` | `1` |
 
-#### 5. `Linux/Vulkan/dgpu/full-offload-12gb` — 9B Q8, 12GB+ VRAM
-**Model:** Qwen3.5-9B-Q8 (~9.5 GiB)
+#### 5. `Linux/Vulkan/dgpu/full-offload-9b` — 9B Q8_0, 12GB+ VRAM
+**Model:** Qwen3.5-9B-Q8_0 (~9.5 GiB)
 **Hardware:** Any Vulkan-capable GPU with 12GB+ VRAM
-**OS:** Linux
+**OS:** Any (generic fallback)
 **Strategy:** Full single-GPU offload — all layers fit in VRAM.
 
 | Setting | Value |
@@ -173,13 +174,15 @@ These profiles are optimized for the balance of performance and resource availab
 
 | Profile | OS | Model | Quant | GPU Memory | Context | Drafter |
 |---|---|---|---|---|---|---|
-| `FreeBSD/Optane/dgpu_igpu/i5-1135g7-9b` | FreeBSD | Qwen3.5-9B | Q4_K_M | ~11 GiB dual | 8K | No |
-| `FreeBSD/Optane/dgpu/i5-1135g7-9b` | FreeBSD | Qwen3.5-9B | Q4_K_M | 4 GiB dGPU | 8K | No |
-| `Linux/CPU/generic` | Linux | Qwen3.5-4B | Q8 | CPU-only | 16K | No |
-| `Linux/AMD/apu/ryzen7-5700u-3b` | Linux | Qwen3.5-4B | Q8 | ~2-4 GiB UMA | 16K | Yes |
-| `Linux/Vulkan/dgpu/full-offload-9b` | Linux | Qwen3.5-9B | Q8_0 | 12GB+ | 32K | Yes |
-| `Linux/CUDA/dgpu/nvidia-generic` | Linux | Qwen3.5-4B | Q8 | VRAM-dependent | 16K | Yes |
-| `macOS/Metal/generic` | macOS | Qwen3.5-4B | Q8_K_M | Unified | 16K | Yes |
+| `FreeBSD/AMD/apu/ryzen7-5700u-3b` | FreeBSD | Qwen3.5-4B | Q6_K | ~2-4 GiB UMA | 16K | Yes |
+| `FreeBSD/dgpu/i5-1135g7-9b` | FreeBSD | Qwen3.5-9B | Q4_K_M | 4 GiB dGPU | 8K | No |
+| `FreeBSD/dgpu_igpu/i5-1135g7-9b` | FreeBSD | Qwen3.5-4B | Q8_0 | ~11 GiB dual | 32K | Yes |
+| `Linux/AMD/apu/ryzen7-5700u-3b` | Linux | Qwen3.5-4B | Q6_K | ~2-4 GiB UMA | 16K | Yes |
+| `Linux/CPU/generic` | Linux | Qwen3.5-4B | Q6_K | CPU-only | 16K | No |
+| `Linux/CUDA/dgpu/nvidia-generic` | Linux | Qwen3.5-9B | Q8_0 | VRAM-dependent | 16K | Yes |
+| `Linux/Vulkan/dgpu/full-offload-9b` | Any | Qwen3.5-9B | Q8_0 | 12GB+ | 32K | Yes |
+| `Linux/Vulkan/dgpu/gtx-1650ti` | Linux | Qwen3.5-4B | Q6_K | 4 GiB dGPU | 8K | No |
+| `macOS/Metal/generic` | macOS | Qwen3.5-4B | Q6_K | Unified | 16K | Yes |
 | `macOS/CPU/generic` | macOS | Qwen3.5-0.8B | Q8 | CPU-only | 8K | No |
 
 
@@ -201,7 +204,7 @@ Profiles are scored on hardware matches:
 - **GPU match:** +5 points per matching device
 - **Generic profiles** get lower priority (-5 points)
 
-The highest-scoring profile is selected. Generic profiles (like `Vulkan/dgpu/full-offload-14b`) have lower scores and serve as fallbacks. Multi-GPU profiles (`MATCH_GPU_1`) score higher than single-GPU variants.
+The highest-scoring profile is selected. Generic profiles (like `Vulkan/dgpu/full-offload-9b`) have lower scores and serve as fallbacks. Multi-GPU profiles (`MATCH_GPU_1`) score higher than single-GPU variants.
 
 ---
 
@@ -213,7 +216,6 @@ Each profile directory contains:
 Category/gpu_type/profile-name/
 ├── profile.conf        # Detection rules (MATCH_CPU, MATCH_GPU_0, MATCH_GPU_1, MATCH_OS)
 ├── jenova.conf         # Runtime configuration (DEVICES, NGL, CTX, model, etc.)
-├── install.sh          # Profile-specific installer
 └── jenova-setup        # One-time system tuning script (run as root)
 ```
 
@@ -239,17 +241,17 @@ One-time system tuning script. Configures kernel parameters, ZFS ARC cap, and ha
 ## Manual Profile Selection
 
 ```bash
-# Deploy a specific profile
-cp hardware-profiles/Optane/dgpu/i5-1135g7-3b/jenova.conf etc/jenova.conf
+# Deploy a specific profile via detect-hardware.sh
+./hardware-profiles/detect-hardware.sh --apply-profile FreeBSD/dgpu/i5-1135g7-9b
+
+# Or copy manually
+cp hardware-profiles/FreeBSD/dgpu/i5-1135g7-9b/jenova.conf etc/jenova.conf
 
 # Run the profile's system tuning
-sudo hardware-profiles/Optane/dgpu/i5-1135g7-3b/jenova-setup
-
-# Or run the full profile installer
-./hardware-profiles/Optane/dgpu/i5-1135g7-3b/install.sh
+sudo hardware-profiles/FreeBSD/dgpu/i5-1135g7-9b/jenova-setup
 
 # Force a profile via jenova-setup dispatcher
-sudo ./jenova-setup --profile Optane/dgpu/i5-1135g7-3b
+sudo ./scripts/jenova-setup --profile FreeBSD/dgpu/i5-1135g7-9b
 ```
 
 ---
@@ -275,7 +277,7 @@ export JENOVA_HOST=0.0.0.0    # LAN mode
 2. Create a profile directory: `hardware-profiles/<Category>/<gpu_type>/<name>/`
 3. Add `profile.conf` with detection patterns and metadata
 4. Add `jenova.conf` by copying an existing profile and adjusting settings
-5. Add `install.sh` and `jenova-setup` as needed
+5. Add `jenova-setup` for system tuning as needed
 6. Test: `./hardware-profiles/detect-hardware.sh --info`
 
 Profile names should describe the hardware, not the model — model selection can be overridden via environment variables.

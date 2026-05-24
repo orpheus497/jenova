@@ -8,7 +8,7 @@
 # Usage:
 #   ./hardware-profiles/detect-hardware.sh          # Print matched profile name
 #   ./hardware-profiles/detect-hardware.sh --info    # Print full hardware report
-#   ./hardware-profiles/detect-hardware.sh --install  # Detect and run profile installer
+#   ./hardware-profiles/detect-hardware.sh --list     # List all available profiles
 #   ./hardware-profiles/detect-hardware.sh --apply   # Detect and deploy profile config
 
 SCRIPT_DIR="$(dirname "$(realpath "$0")")"
@@ -28,6 +28,49 @@ ok()   { printf "${_G}  OK${_N}  %s\n" "$1"; }
 warn() { printf "${_Y}WARN${_N}  %s\n" "$1"; }
 fail() { printf "${_R}FAIL${_N}  %s\n" "$1"; }
 info() { printf "${_B}INFO${_N}  %s\n" "$1"; }
+
+validate_arg() {
+    _flag="$1"
+    _val="$2"
+    if [ -z "$_val" ]; then
+        fail "Option $_flag requires an argument."
+        exit 1
+    fi
+    case "$_val" in
+        -*)
+            fail "Option $_flag requires a value, not another option: $_val"
+            exit 1
+            ;;
+    esac
+
+    # Ensure the path is within the expected directory tree (prevent path traversal)
+    # Fail closed: if no canonical resolution tool is available, reject the input.
+    _real_val_path=$(realpath -m "$SCRIPT_DIR/$_val" 2>/dev/null || realpath "$SCRIPT_DIR/$_val" 2>/dev/null || readlink -f "$SCRIPT_DIR/$_val" 2>/dev/null) || true
+    if [ -z "$_real_val_path" ]; then
+        # POSIX fallback using cd and pwd for systems without realpath/readlink
+        _dir=$(dirname "$SCRIPT_DIR/$_val")
+        _base=$(basename "$_val")
+        if [ -d "$_dir" ]; then
+            _real_val_path="$(cd "$_dir" 2>/dev/null && pwd)/$_base"
+        else
+            fail "Cannot resolve path for $_flag: $_val (realpath/readlink unavailable and directory not found)"
+            exit 1
+        fi
+    fi
+    case "$_real_val_path" in
+        */../*|*/..|../*|..)
+            fail "Invalid argument for $_flag: $_val (path traversal detected)"
+            exit 1
+            ;;
+        "$SCRIPT_DIR"/*|"$SCRIPT_DIR")
+            # Safe, remains within expected directory tree
+            ;;
+        *)
+            fail "Invalid argument for $_flag: $_val (path traversal detected or outside directory tree)"
+            exit 1
+            ;;
+    esac
+}
 
 # =========================================================================
 # Hardware Detection
@@ -137,8 +180,9 @@ match_profile() {
     _score=0
 
     # OS match (highest priority — worth 20 points, required for OS-specific profiles)
+    # Uses -iE (extended regex) to support alternation (e.g., "Linux|FreeBSD")
     if [ -n "$MATCH_OS" ]; then
-        if printf '%s\n' "$OS_NAME" | grep -qFi "$MATCH_OS" 2>/dev/null; then
+        if printf '%s\n' "$OS_NAME" | grep -qiE "$MATCH_OS" 2>/dev/null; then
             _score=$((_score + 20))
         else
             # OS mismatch disqualifies OS-specific profiles
@@ -311,21 +355,7 @@ apply_profile() {
     fi
 }
 
-run_profile_installer() {
-    if [ -z "$MATCHED_PROFILE_DIR" ]; then
-        fail "No matching profile found for this hardware"
-        return 1
-    fi
 
-    _installer="$MATCHED_PROFILE_DIR/install.sh"
-    if [ -f "$_installer" ] && [ -x "$_installer" ]; then
-        info "Running installer for profile: $MATCHED_PROFILE"
-        exec "$_installer" "$@"
-    else
-        fail "No executable install.sh found in $MATCHED_PROFILE_DIR"
-        return 1
-    fi
-}
 
 # =========================================================================
 # Main
@@ -352,20 +382,7 @@ case "$ACTION" in
         fi
         echo ""
         ;;
-    --install)
-        shift
-        if find_best_profile; then
-            info "Detected hardware matches profile: $MATCHED_PROFILE (score: $MATCHED_SCORE)"
-            run_profile_installer "$@"
-        else
-            print_info
-            fail "No matching hardware profile found."
-            echo ""
-            echo "  Create a new profile in hardware-profiles/<Category>/<gpu_type>/<name>/"
-            echo "  with profile.conf, jenova.conf, jenova-setup, and install.sh"
-            exit 1
-        fi
-        ;;
+
     --apply)
         if find_best_profile; then
             info "Detected hardware matches profile: $MATCHED_PROFILE (score: $MATCHED_SCORE)"
@@ -376,10 +393,25 @@ case "$ACTION" in
             exit 1
         fi
         ;;
+    --apply-profile)
+        shift
+        _requested="${1:-}"
+        validate_arg "--apply-profile" "$_requested"
+        if [ -d "$SCRIPT_DIR/$_requested" ] && [ -f "$SCRIPT_DIR/$_requested/profile.conf" ]; then
+            MATCHED_PROFILE_DIR="$SCRIPT_DIR/$_requested"
+            MATCHED_PROFILE="$_requested"
+            apply_profile
+        else
+            fail "Profile not found: $_requested"
+            exit 1
+        fi
+        ;;
     --list)
         find "$SCRIPT_DIR" -name "profile.conf" | sort | while IFS= read -r _pconf; do
             _pdir=$(dirname "$_pconf")
-            printf '%s\n' "${_pdir#"$SCRIPT_DIR"/}"
+            if [ "$_pdir" != "$SCRIPT_DIR" ]; then
+                printf '%s\n' "${_pdir#"$SCRIPT_DIR"/}"
+            fi
         done
         ;;
     "")
@@ -391,12 +423,12 @@ case "$ACTION" in
         fi
         ;;
     *)
-        echo "Usage: $0 [--info|--install|--apply|--list]" >&2
+        echo "Usage: $0 [--info|--apply|--apply-profile <name>|--list]" >&2
         echo "" >&2
         echo "  (no args)   Print matched profile name (for scripting)" >&2
         echo "  --info      Print full hardware detection report" >&2
-        echo "  --install   Detect hardware and run matched profile installer" >&2
         echo "  --apply     Detect hardware and deploy matched profile config" >&2
+        echo "  --apply-profile <name>  Deploy specific profile config" >&2
         echo "  --list      List available profile names" >&2
         exit 1
         ;;

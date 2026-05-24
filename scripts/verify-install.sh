@@ -224,9 +224,9 @@ _check_dir() {
     fi
 }
 
-_check_dir "$JENOVA_ROOT/.jenova" "Runtime directory (.jenova)" 1
-_check_dir "$JENOVA_ROOT/var/log" "Log directory (var/log)" 1
-_check_dir "$JENOVA_ROOT/var/cache" "Cache directory (var/cache)" 1
+_check_dir "$JENOVA_HOME/.system" "State directory (.system)" 1
+_check_dir "$JENOVA_HOME/var/log" "Log directory (var/log)" 1
+_check_dir "$JENOVA_HOME/var/cache" "Cache directory (var/cache)" 1
 
 # ---------------------------------------------------------------------------
 # 6. Quick Functionality Tests

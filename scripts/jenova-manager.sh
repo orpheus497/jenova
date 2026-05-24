@@ -566,9 +566,9 @@ show_action_menu() {
                     # Quick install mode: just run install.sh with appropriate skip flags
                     # but ensure the component we want is NOT skipped.
                     case "$suffix" in
-                        "jenova_core") "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama --skip-lsp ;;
-                        "jvim")        "$JENOVA_ROOT/scripts/install.sh" --skip-config --skip-llama --skip-lsp ;;
-                        "llama")       "$JENOVA_ROOT/scripts/install.sh" --skip-config --skip-jvim --skip-lsp ;;
+                        "jenova_core") "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama ;;
+                        "jvim")        "$JENOVA_ROOT/scripts/install.sh" --skip-config --skip-llama ;;
+                        "llama")       "$JENOVA_ROOT/scripts/install.sh" --skip-config --skip-jvim ;;
                         *)             "${action}_${suffix}" ;; # Fallback
                     esac
                     _ret=$?
@@ -609,24 +609,109 @@ show_action_menu() {
     done
 }
 
-run_system_prep() {
+run_dependencies() {
     exit_alt_screen
-    printf "%s%sRunning System Preparation...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
+    printf "%s%sInstalling OS Dependencies...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
     
-    echo "1) Install Dependencies"
     if "$JENOVA_ROOT/scripts/install-dependencies.sh"; then
         echo "Dependencies installed."
     else
         echo "Dependency installation had warnings/errors."
     fi
-    
-    echo ""
-    echo "2) Pre-flight Checks"
-    "$JENOVA_ROOT/scripts/preflight-check.sh"
-    
     printf "\nPress any key to continue..."
     get_key >/dev/null
     enter_alt_screen
+}
+
+run_toolchain() {
+    exit_alt_screen
+    printf "%s%sInstalling Toolchain (LSPs, Formatters)...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
+    
+    if "$JENOVA_ROOT/scripts/install-toolchain.sh"; then
+        echo "Toolchain installed."
+    else
+        echo "Toolchain installation had warnings/errors."
+    fi
+    printf "\nPress any key to continue..."
+    get_key >/dev/null
+    enter_alt_screen
+}
+
+run_preflight() {
+    exit_alt_screen
+    printf "%s%sRunning Pre-flight Checks...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
+    "$JENOVA_ROOT/scripts/preflight-check.sh"
+    printf "\nPress any key to continue..."
+    get_key >/dev/null
+    enter_alt_screen
+}
+
+run_hardware_profile() {
+    exit_alt_screen
+    
+    _profiles_str=$("$JENOVA_ROOT/hardware-profiles/detect-hardware.sh" --list || true)
+    
+    _count=0
+    for _p in $_profiles_str; do
+        eval "_prof_$_count='$_p'"
+        _count=$((_count + 1))
+    done
+    
+    enter_alt_screen
+    while true; do
+        set -- "Hardware Profile Selection" "Auto-detect and Apply Hardware Profile" "View Detection Report"
+        i=0
+        while [ $i -lt $_count ]; do
+            eval "_p=\"\$_prof_$i\""
+            set -- "$@" "Apply: $_p"
+            i=$((i + 1))
+        done
+        set -- "$@" "Back"
+        
+        interactive_menu "$@"
+        
+        if [ "$MENU_CHOICE" = "0" ]; then
+            exit_alt_screen
+            "$JENOVA_ROOT/hardware-profiles/detect-hardware.sh" --apply
+            printf "\nPress any key to continue..."
+            get_key >/dev/null
+            enter_alt_screen
+        elif [ "$MENU_CHOICE" = "1" ]; then
+            exit_alt_screen
+            "$JENOVA_ROOT/hardware-profiles/detect-hardware.sh" --info
+            printf "\nPress any key to continue..."
+            get_key >/dev/null
+            enter_alt_screen
+        else
+            if [ "$MENU_CHOICE" -eq $((_count + 2)) ]; then
+                break
+            else
+                _prof_idx=$((MENU_CHOICE - 2))
+                eval "_selected_prof=\"\$_prof_$_prof_idx\""
+                exit_alt_screen
+                printf "%s%sDeploying %s...%s\n" "$RESET" "$BOLD$GREEN" "$_selected_prof" "$RESET"
+                "$JENOVA_ROOT/hardware-profiles/detect-hardware.sh" --apply-profile "$_selected_prof"
+                
+                # Check for tuning script and execute if present
+                _tuning_script="$JENOVA_ROOT/hardware-profiles/$_selected_prof/jenova-setup"
+                if [ -f "$_tuning_script" ]; then
+                    printf "\nPress any key to continue to tuning prompt..."
+                    get_key >/dev/null
+                    enter_alt_screen
+                    if confirm_prompt "This profile contains a system tuning script. Run it with sudo?" "0"; then
+                        exit_alt_screen
+                        sudo sh "$_tuning_script"
+                    else
+                        exit_alt_screen
+                    fi
+                fi
+                
+                printf "\nPress any key to continue..."
+                get_key >/dev/null
+                enter_alt_screen
+            fi
+        fi
+    done
 }
 
 run_model_downloader() {
@@ -654,20 +739,26 @@ show_main_menu() {
     enter_alt_screen
     while true; do
         interactive_menu "Jenova Manager" \
-            "System Preparation (Dependencies & Pre-flight)" \
-            "Install Components" \
+            "Hardware Profile Selection" \
+            "Install Dependencies (OS Packages)" \
+            "Install Toolchain (LSPs, Formatters)" \
+            "Pre-flight Checks" \
+            "Build/Deploy Components" \
             "Update Components" \
             "Uninstall Components" \
             "Download AI Models" \
             "Exit"
             
         case "$MENU_CHOICE" in
-            0) run_system_prep ;;
-            1) show_install_menu ;;
-            2) show_update_menu ;;
-            3) show_uninstall_menu ;;
-            4) run_model_downloader ;;
-            5) cleanup; exit 0 ;;
+            0) run_hardware_profile ;;
+            1) run_dependencies ;;
+            2) run_toolchain ;;
+            3) run_preflight ;;
+            4) show_install_menu ;;
+            5) show_update_menu ;;
+            6) show_uninstall_menu ;;
+            7) run_model_downloader ;;
+            8) cleanup; exit 0 ;;
         esac
     done
 }
