@@ -127,7 +127,7 @@ jvim
 jenova-ca
 
 # Server mode on LAN (listen on all interfaces)
-jenova-ca --host 0.0.0.0
+jenova-ca --daemon --lan
 ```
 
 ## Verification

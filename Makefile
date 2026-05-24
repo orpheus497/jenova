@@ -1,9 +1,10 @@
 # Jenova Cognitive Architecture — Unified Build System
 #
-# Two components make up Jenova as a single terminal IDE:
+# Four components make up Jenova as a single terminal IDE:
 #   1. external/llama.cpp        — Vulkan-accelerated inference backend
-#   2. jvim             — Neovim-based editor (`jvim` binary, in-tree fork)
-#   3. jca_web          — Web-based UI
+#   2. jvim                      — Neovim-based editor (`jvim` binary, in-tree fork)
+#   3. external/mcsh             — Modern C Shell (in-tree fork of tcsh)
+#   4. jca_web                   — Web-based UI
 #
 # The agent is embedded inside jvim — it lives at jvim-config/lua/jenova/agent/.
 # There is no separate cli-agent any more.

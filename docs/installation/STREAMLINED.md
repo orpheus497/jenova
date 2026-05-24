@@ -120,7 +120,7 @@ jvim
 jenova-ca
 
 # Server on LAN (accessible from other hosts)
-jenova-ca --host 0.0.0.0
+jenova-ca --daemon --lan
 ```
 
 ### After First Run

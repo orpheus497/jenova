@@ -18,7 +18,7 @@ The **Jenova Cognitive Architecture** is structured around several interconnecte
 
 | Component | Role | Stack |
 |-----------|------|-------|
-| **Jenova Workspace** | WebUI offering persistent workspaces and a general chat interface. | Vanilla JS / CSS |
+| **Jenova Workspace** | WebUI offering persistent workspaces and a general chat interface. | SvelteKit / Tailwind CSS |
 | **J Vim (Jenova Vim)** | A comprehensive *Interactive Director Environment* (IDE). A Jenova-specific fork of NeoVim that enables agentic work and actions through the LSP and plugin extensibility of the jvim architecture. | C / Lua |
 | **Server & OpenAI API**| Exposes an OpenAI-compatible API (`lib/proxy.lua`) allowing external integrations like the Leo browser or other API-driven tools. | LuaJIT / C++ |
 | **mcsh Shell** | Integrated modern C-shell for the terminal IDE. | C (`mcsh/`) |
@@ -50,3 +50,18 @@ The **Jenova Cognitive Architecture** is structured around several interconnecte
 | `~/.config/jvim/` | Editor config (deployed by `scripts/install.sh`). |
 | `etc/jenova.conf` | Active hardware profile + model paths. |
 | `models/` | Local GGUF storage: `agent/`, `draft/`, `embed/`. |
+
+## External Dependencies
+
+All external code lives in `external/`. The distinction matters for updates:
+
+| Directory | Type | Source | Update method |
+|-----------|------|--------|---------------|
+| `external/llama.cpp` | Vendored copy | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | Manual sync |
+| `external/SPIRV-Headers` | Vendored copy | [KhronosGroup/SPIRV-Headers](https://github.com/KhronosGroup/SPIRV-Headers) | Manual sync |
+| `external/mcsh` | Git submodule | [orpheus497/mcsh](https://github.com/orpheus497/mcsh) | `git submodule update` |
+
+**Vendored** dependencies are full copies committed into the repo — no network
+fetch is needed after clone. **Submodules** are tracked by commit hash in
+`.gitmodules` and require `git submodule update --init` after a fresh clone.
+
