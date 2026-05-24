@@ -355,22 +355,48 @@ local function recursive_mkdir(path)
     end
 end
 
--- Resolve a path and verify it stays within the allowed base directory.
--- Returns the resolved path on success, or nil if the path escapes.
-local function resolve_safe_path(base_dir, relative_path)
-    local candidate = base_dir .. "/" .. relative_path
-    -- Use realpath(1) to canonicalize (resolve symlinks, .., etc.)
-    local h = io.popen(string.format("realpath -m %q 2>/dev/null", candidate))
-    if not h then return nil end
-    local resolved = h:read("*l")
-    h:close()
-    if not resolved or resolved == "" then return nil end
-    -- Verify the resolved path is within the base directory
-    if resolved:sub(1, #base_dir) ~= base_dir or
-       (resolved:sub(#base_dir + 1, #base_dir + 1) ~= "/" and #resolved ~= #base_dir) then
-        return nil
+-- Pure Lua path normalization
+local function normalize_path(path)
+    local is_absolute = path:sub(1, 1) == "/"
+    local segments = {}
+    for segment in path:gmatch("[^/]+") do
+        if segment == "." then
+            -- skip
+        elseif segment == ".." then
+            if #segments > 0 and segments[#segments] ~= ".." then
+                table.remove(segments)
+            elseif is_absolute then
+                return nil -- escape attempted on absolute path
+            else
+                table.insert(segments, "..")
+            end
+        else
+            table.insert(segments, segment)
+        end
     end
-    return resolved
+    local res = table.concat(segments, "/")
+    if is_absolute then
+        return "/" .. res
+    end
+    return res == "" and "." or res
+end
+
+-- Resolve a path and verify it stays within the allowed base directory.
+local function resolve_safe_path(base_dir, relative_path)
+    local norm_base = normalize_path(base_dir)
+    if not norm_base then return nil end
+    
+    local candidate = base_dir .. "/" .. relative_path
+    local norm_candidate = normalize_path(candidate)
+    if not norm_candidate then return nil end
+    
+    -- Verify the resolved path starts with the base directory and aligns with a directory boundary
+    if norm_candidate:sub(1, #norm_base) == norm_base then
+        if #norm_candidate == #norm_base or norm_candidate:sub(#norm_base + 1, #norm_base + 1) == "/" then
+            return norm_candidate
+        end
+    end
+    return nil
 end
 
 local function proxy_connection(client_fd, conn_fds)
