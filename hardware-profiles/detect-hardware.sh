@@ -48,7 +48,12 @@ validate_arg() {
     esac
 
     # Ensure the path is within the expected directory tree (prevent path traversal)
-    _real_val_path=$(realpath -m "$SCRIPT_DIR/$_val" 2>/dev/null || realpath "$SCRIPT_DIR/$_val" 2>/dev/null || readlink -f "$SCRIPT_DIR/$_val" 2>/dev/null || echo "$SCRIPT_DIR/$_val")
+    # Fail closed: if no canonical resolution tool is available, reject the input.
+    _real_val_path=$(realpath -m "$SCRIPT_DIR/$_val" 2>/dev/null || realpath "$SCRIPT_DIR/$_val" 2>/dev/null || readlink -f "$SCRIPT_DIR/$_val" 2>/dev/null) || true
+    if [ -z "$_real_val_path" ]; then
+        fail "Cannot resolve path for $_flag: $_val (realpath/readlink unavailable)"
+        exit 1
+    fi
     case "$_real_val_path" in
         "$SCRIPT_DIR"/*)
             # Safe, remains within expected directory tree

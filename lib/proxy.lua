@@ -355,6 +355,24 @@ local function recursive_mkdir(path)
     end
 end
 
+-- Resolve a path and verify it stays within the allowed base directory.
+-- Returns the resolved path on success, or nil if the path escapes.
+local function resolve_safe_path(base_dir, relative_path)
+    local candidate = base_dir .. "/" .. relative_path
+    -- Use realpath(1) to canonicalize (resolve symlinks, .., etc.)
+    local h = io.popen(string.format("realpath -m %q 2>/dev/null", candidate))
+    if not h then return nil end
+    local resolved = h:read("*l")
+    h:close()
+    if not resolved or resolved == "" then return nil end
+    -- Verify the resolved path is within the base directory
+    if resolved:sub(1, #base_dir) ~= base_dir or
+       (resolved:sub(#base_dir + 1, #base_dir + 1) ~= "/" and #resolved ~= #base_dir) then
+        return nil
+    end
+    return resolved
+end
+
 local function proxy_connection(client_fd, conn_fds)
     local start_time = os.time()
     set_nonblocking(client_fd)
@@ -515,13 +533,17 @@ local function proxy_connection(client_fd, conn_fds)
     if storage_path and #body_raw > 0 then
         recursive_mkdir(workspaces_dir)
         
-        -- Security: prevent directory traversal
+        -- Security: prevent directory traversal (literal check + canonical validation)
         if storage_path:find("%.%.") then
             local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
             async_send(client_fd, err); safe_close(); return
         end
 
-        local full_path = workspaces_dir .. "/" .. storage_path
+        local full_path = resolve_safe_path(workspaces_dir, storage_path)
+        if not full_path then
+            local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, err); safe_close(); return
+        end
         local dir_part = full_path:match("(.+)/[^/]+$")
         if dir_part then recursive_mkdir(dir_part) end
 
@@ -549,7 +571,7 @@ local function proxy_connection(client_fd, conn_fds)
         if output then
             for line in output:gmatch("[^\r\n]+") do
                 local rel = line:sub(#workspaces_dir + 2)
-                if #rel > 0 then table.insert(files, "\"" .. rel .. "\"") end
+                if #rel > 0 then table.insert(files, json.encode(rel)) end
             end
         end
         local content = "[" .. table.concat(files, ",") .. "]"
@@ -568,7 +590,7 @@ local function proxy_connection(client_fd, conn_fds)
         if output then
             for line in output:gmatch("[^\r\n]+") do
                 local name = line:sub(#workspaces_dir + 2)
-                if #name > 0 then table.insert(ws, "\"" .. name .. "\"") end
+                if #name > 0 then table.insert(ws, json.encode(name)) end
             end
         end
         local content = "[" .. table.concat(ws, ",") .. "]"
@@ -583,7 +605,11 @@ local function proxy_connection(client_fd, conn_fds)
             local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
             async_send(client_fd, err); safe_close(); return
         end
-        local full_path = workspaces_dir .. "/" .. is_storage_get
+        local full_path = resolve_safe_path(workspaces_dir, is_storage_get)
+        if not full_path then
+            local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, err); safe_close(); return
+        end
         local f = io.open(full_path, "rb")
         if f then
             local content = f:read("*a")
@@ -602,28 +628,30 @@ local function proxy_connection(client_fd, conn_fds)
         local path = headers_raw:match("^GET ([^ %?]+)")
         if path then
             if path == "/" then path = "/index.html" end
-            -- Security: prevent directory traversal
+            -- Security: prevent directory traversal (literal check + canonical validation)
             if not path:find("%.%.") then
-                local local_path = root_dir .. "/public" .. path
-                local f = io.open(local_path, "rb")
-                if f then
-                    local content = f:read("*a")
-                    f:close()
-                    local mime = "application/octet-stream"
-                    if path:find("%.html$") then mime = "text/html"
-                    elseif path:find("%.js$") then mime = "application/javascript"
-                    elseif path:find("%.css$") then mime = "text/css"
-                    elseif path:find("%.svg$") then mime = "image/svg+xml"
-                    elseif path:find("%.png$") then mime = "image/png"
-                    elseif path:find("%.jpg$") or path:find("%.jpeg$") then mime = "image/jpeg"
-                    elseif path:find("%.json$") then mime = "application/json"
+                local local_path = resolve_safe_path(root_dir .. "/public", path:sub(2))
+                if local_path then
+                    local f = io.open(local_path, "rb")
+                    if f then
+                        local content = f:read("*a")
+                        f:close()
+                        local mime = "application/octet-stream"
+                        if path:find("%.html$") then mime = "text/html"
+                        elseif path:find("%.js$") then mime = "application/javascript"
+                        elseif path:find("%.css$") then mime = "text/css"
+                        elseif path:find("%.svg$") then mime = "image/svg+xml"
+                        elseif path:find("%.png$") then mime = "image/png"
+                        elseif path:find("%.jpg$") or path:find("%.jpeg$") then mime = "image/jpeg"
+                        elseif path:find("%.json$") then mime = "application/json"
+                        end
+                        local resp = string.format(
+                            "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
+                            mime, #content)
+                        async_send(client_fd, resp .. content)
+                        safe_close()
+                        return
                     end
-                    local resp = string.format(
-                        "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
-                        mime, #content)
-                    async_send(client_fd, resp .. content)
-                    safe_close()
-                    return
                 end
             end
         end
