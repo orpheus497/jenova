@@ -36,10 +36,28 @@ validate_arg() {
         fail "Option $_flag requires an argument."
         exit 1
     fi
-    if [ "$_val" = "." ] || [ "$_val" = ".." ]; then
-        fail "Invalid argument for $_flag: $_val"
-        exit 1
-    fi
+    case "$_val" in
+        -*)
+            fail "Option $_flag requires a value, not another option: $_val"
+            exit 1
+            ;;
+        *..*|/*)
+            fail "Invalid argument for $_flag: $_val (path traversal or absolute path detected)"
+            exit 1
+            ;;
+    esac
+
+    # Ensure the path is within the expected directory tree (prevent path traversal)
+    _real_val_path=$(realpath -m "$SCRIPT_DIR/$_val" 2>/dev/null || realpath "$SCRIPT_DIR/$_val" 2>/dev/null || readlink -f "$SCRIPT_DIR/$_val" 2>/dev/null || echo "$SCRIPT_DIR/$_val")
+    case "$_real_val_path" in
+        "$SCRIPT_DIR"/*)
+            # Safe, remains within expected directory tree
+            ;;
+        *)
+            fail "Invalid argument for $_flag: $_val (path traversal detected or outside directory tree)"
+            exit 1
+            ;;
+    esac
 }
 
 # =========================================================================

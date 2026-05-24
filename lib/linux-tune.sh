@@ -47,7 +47,7 @@ apply_sysctl() {
             mkdir -p "$(dirname "$_conf")"
             # Remove old entry if exists
             _safe_key=$(echo "$_key" | sed 's/\./\\./g')
-            [ -f "$_conf" ] && sed -i "/^${_safe_key}=/d" "$_conf"
+            [ -f "$_conf" ] && sed -i "/^[[:space:]]*${_safe_key}[[:space:]]*=/d" "$_conf"
             echo "$_key=$_val" >> "$_conf"
         else
             log_warn "Failed to set $_key (check permissions)"
