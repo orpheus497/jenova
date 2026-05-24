@@ -15,6 +15,26 @@ local search = require("search")
 local embed = require("embed")
 local prompts = require("prompts")
 
+-- MIME types for static file serving
+local MIME_TYPES = {
+    html = "text/html",
+    js = "application/javascript",
+    css = "text/css",
+    svg = "image/svg+xml",
+    png = "image/png",
+    jpg = "image/jpeg",
+    jpeg = "image/jpeg",
+    json = "application/json",
+    pdf = "application/pdf",
+    md = "text/markdown",
+    mp3 = "audio/mpeg",
+    mp4 = "video/mp4",
+    xml = "application/xml",
+    gif = "image/gif",
+    webp = "image/webp",
+    txt = "text/plain"
+}
+
 -- Filesystem API for WebUI persistence
 local home_dir = os.getenv("HOME") or "/tmp"
 local jenova_home = os.getenv("JENOVA_HOME") or (home_dir .. "/Jenova")
@@ -570,6 +590,7 @@ local function proxy_connection(client_fd, conn_fds)
     
     local storage_path = headers_raw:match("^POST /api/storage/([^ %?]+)")
     if storage_path and #body_raw > 0 then
+        storage_path = url_decode(storage_path)
         recursive_mkdir(workspaces_dir)
         
         -- Security: prevent directory traversal (literal check + canonical validation)
@@ -640,6 +661,7 @@ local function proxy_connection(client_fd, conn_fds)
 
     local is_storage_get = is_get and headers_raw:match("^GET /api/storage/([^ %?]+)")
     if is_storage_get then
+        is_storage_get = url_decode(is_storage_get)
         if is_storage_get:find("%.%.") then
             local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
             async_send(client_fd, err); safe_close(); return
@@ -677,25 +699,7 @@ local function proxy_connection(client_fd, conn_fds)
                         local content = f:read("*a")
                         f:close()
                         local ext = path:match("%.([^%.]+)$")
-                        local mime_types = {
-                            html = "text/html",
-                            js = "application/javascript",
-                            css = "text/css",
-                            svg = "image/svg+xml",
-                            png = "image/png",
-                            jpg = "image/jpeg",
-                            jpeg = "image/jpeg",
-                            json = "application/json",
-                            pdf = "application/pdf",
-                            md = "text/markdown",
-                            mp3 = "audio/mpeg",
-                            mp4 = "video/mp4",
-                            xml = "application/xml",
-                            gif = "image/gif",
-                            webp = "image/webp",
-                            txt = "text/plain"
-                        }
-                        local mime = (ext and mime_types[ext:lower()]) or "application/octet-stream"
+                        local mime = (ext and MIME_TYPES[ext:lower()]) or "application/octet-stream"
                         local resp = string.format(
                             "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
                             mime, #content)

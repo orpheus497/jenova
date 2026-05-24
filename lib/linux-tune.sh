@@ -41,23 +41,32 @@ apply_sysctl() {
         log_ok "$_key=$_val ($_desc)"
     else
         log_info "Setting $_key: $_current -> $_val ($_desc)"
-        if sysctl -w "$_key=$_val" >/dev/null 2>&1; then
-            # Persist via sysctl.d
-            _conf="/etc/sysctl.d/99-jenova.conf"
-            mkdir -p "$(dirname "$_conf")"
-            # Remove old entry if exists
-            _safe_key=$(echo "$_key" | sed 's/\./\\./g')
-            if [ -f "$_conf" ]; then
-                _tmp=$(mktemp)
-                sed "/^[[:space:]]*${_safe_key}[[:space:]]*=/d" "$_conf" > "$_tmp"
-                cat "$_tmp" > "$_conf"
-                rm -f "$_tmp"
-            fi
-            echo "$_key=$_val" >> "$_conf"
-        else
+        if ! sysctl -w "$_key=$_val" >/dev/null 2>&1; then
             log_warn "Failed to set $_key (check permissions)"
         fi
     fi
+
+    # Persist via sysctl.d
+    _conf="/etc/sysctl.d/99-jenova.conf"
+    mkdir -p "$(dirname "$_conf")"
+    
+    _safe_key=$(echo "$_key" | sed 's/\./\\./g')
+    
+    # Check if already present and correct
+    if grep -q "^[[:space:]]*${_safe_key}[[:space:]]*=[[:space:]]*${_val}[[:space:]]*$" "$_conf" 2>/dev/null; then
+        return 0
+    fi
+    
+    if [ -f "$_conf" ]; then
+        _tmp=$(mktemp)
+        if sed "/^[[:space:]]*${_safe_key}[[:space:]]*=/d" "$_conf" > "$_tmp"; then
+            cat "$_tmp" > "$_conf"
+        else
+            log_warn "Failed to process $_conf with sed"
+        fi
+        rm -f "$_tmp"
+    fi
+    echo "$_key=$_val" >> "$_conf"
 }
 
 # tune_system_performance: Kernal optimizations for inference
