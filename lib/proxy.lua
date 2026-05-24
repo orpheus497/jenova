@@ -675,8 +675,17 @@ local function proxy_connection(client_fd, conn_fds)
         if f then
             local content = f:read("*a")
             f:close()
+            
+            if not content then
+                local resp = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+                async_send(client_fd, resp)
+                safe_close()
+                return
+            end
+            
             local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)
-            async_send(client_fd, resp .. content)
+            async_send(client_fd, resp)
+            async_send(client_fd, content)
         else
             local resp = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n"
             async_send(client_fd, resp)
@@ -694,17 +703,32 @@ local function proxy_connection(client_fd, conn_fds)
             if not path:find("%.%.") then
                 local local_path = resolve_safe_path(root_dir .. "/public", path:sub(2))
                 if local_path then
+                    local ext = path:match("%.([^%.]+)$")
+                    local is_static_asset = ext and MIME_TYPES[ext:lower()]
+                    
                     local f = io.open(local_path, "rb")
                     if f then
                         local content = f:read("*a")
                         f:close()
-                        local ext = path:match("%.([^%.]+)$")
-                        local mime = (ext and MIME_TYPES[ext:lower()]) or "application/octet-stream"
+                        
+                        if not content then
+                            local resp = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+                            async_send(client_fd, resp)
+                            safe_close()
+                            return
+                        end
+                        
+                        local mime = is_static_asset or "application/octet-stream"
                         local resp = string.format(
                             "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
                             mime, #content)
                         async_send(client_fd, resp)
                         async_send(client_fd, content)
+                        safe_close()
+                        return
+                    elseif is_static_asset then
+                        local resp = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n"
+                        async_send(client_fd, resp)
                         safe_close()
                         return
                     end
