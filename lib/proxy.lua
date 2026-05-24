@@ -364,6 +364,12 @@ end
 
 -- Pure Lua path normalization
 local function normalize_path(path)
+    -- Handle multiple consecutive slashes and trailing slashes explicitly
+    path = path:gsub("//+", "/")
+    if path ~= "/" and path:sub(-1) == "/" then
+        path = path:sub(1, -2)
+    end
+
     local is_absolute = path:sub(1, 1) == "/"
     local segments = {}
     for segment in path:gmatch("[^/]+") do

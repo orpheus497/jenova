@@ -41,18 +41,21 @@ validate_arg() {
             fail "Option $_flag requires a value, not another option: $_val"
             exit 1
             ;;
-        *..*|/*)
-            fail "Invalid argument for $_flag: $_val (path traversal or absolute path detected)"
-            exit 1
-            ;;
     esac
 
     # Ensure the path is within the expected directory tree (prevent path traversal)
     # Fail closed: if no canonical resolution tool is available, reject the input.
     _real_val_path=$(realpath -m "$SCRIPT_DIR/$_val" 2>/dev/null || realpath "$SCRIPT_DIR/$_val" 2>/dev/null || readlink -f "$SCRIPT_DIR/$_val" 2>/dev/null) || true
     if [ -z "$_real_val_path" ]; then
-        fail "Cannot resolve path for $_flag: $_val (realpath/readlink unavailable)"
-        exit 1
+        # POSIX fallback using cd and pwd for systems without realpath/readlink
+        _dir=$(dirname "$SCRIPT_DIR/$_val")
+        _base=$(basename "$_val")
+        if [ -d "$_dir" ]; then
+            _real_val_path="$(cd "$_dir" 2>/dev/null && pwd)/$_base"
+        else
+            fail "Cannot resolve path for $_flag: $_val (realpath/readlink unavailable and directory not found)"
+            exit 1
+        fi
     fi
     case "$_real_val_path" in
         "$SCRIPT_DIR"/*)
