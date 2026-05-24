@@ -29,6 +29,19 @@ warn() { printf "${_Y}WARN${_N}  %s\n" "$1"; }
 fail() { printf "${_R}FAIL${_N}  %s\n" "$1"; }
 info() { printf "${_B}INFO${_N}  %s\n" "$1"; }
 
+validate_arg() {
+    _flag="$1"
+    _val="$2"
+    if [ -z "$_val" ]; then
+        fail "Option $_flag requires an argument."
+        exit 1
+    fi
+    if [ "$_val" = "." ] || [ "$_val" = ".." ]; then
+        fail "Invalid argument for $_flag: $_val"
+        exit 1
+    fi
+}
+
 # =========================================================================
 # Hardware Detection
 # =========================================================================
@@ -378,8 +391,9 @@ case "$ACTION" in
         ;;
     --apply-profile)
         shift
-        _requested="$1"
-        if [ -d "$SCRIPT_DIR/$_requested" ]; then
+        _requested="${1:-}"
+        validate_arg "--apply-profile" "$_requested"
+        if [ -d "$SCRIPT_DIR/$_requested" ] && [ -f "$SCRIPT_DIR/$_requested/profile.conf" ]; then
             MATCHED_PROFILE_DIR="$SCRIPT_DIR/$_requested"
             MATCHED_PROFILE="$_requested"
             apply_profile

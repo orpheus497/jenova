@@ -54,17 +54,18 @@ mcsh:
 	else \
 		mkdir -p external/mcsh/build; \
 		if [ ! -f external/mcsh/build/Makefile ]; then \
-			(cd external/mcsh/build && ../configure); \
+			(cd external/mcsh/build && ../configure) || exit 1; \
 		fi; \
 		if [ "$$(uname -s)" = "FreeBSD" ]; then \
 			if ! command -v gmake >/dev/null 2>&1; then \
 				echo "FreeBSD requires 'gmake' to build mcsh. Please run 'pkg install gmake'" >&2; \
 				exit 1; \
 			fi; \
-			gmake -C external/mcsh/build; \
+			gmake -C external/mcsh/build || exit 1; \
 		else \
-			$(MAKE) -C external/mcsh/build; \
+			$(MAKE) -C external/mcsh/build || exit 1; \
 		fi; \
+		mkdir -p bin; \
 		cp external/mcsh/build/mcsh bin/mcsh; \
 		echo "   mcsh built: bin/mcsh"; \
 	fi
@@ -89,6 +90,7 @@ web: jca_web/node_modules
 jenova-ui:
 	@echo "🔨 Building jenova-ui..."
 	@$(MAKE) -C jenova-ui
+	@mkdir -p bin
 	@cp jenova-ui/jenova-ui bin/jenova-ui
 	@echo "   jenova-ui built: bin/jenova-ui"
 
