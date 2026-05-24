@@ -19,7 +19,7 @@
 
 .PHONY: all llama llama-hybrid jvim mcsh web jenova-ui install preflight verify clean help clean-root
 
-all: llama jvim mcsh jenova-ui web
+all: preflight llama jvim mcsh jenova-ui web
 	@echo ""
 	@echo "✅ Jenova build complete (external/llama.cpp + jvim + mcsh + jenova-ui + web)"
 	@echo "   Run 'make install' (or scripts/install.sh) to deploy."
@@ -67,7 +67,7 @@ mcsh:
 			$(MAKE) -C external/mcsh/build || exit 1; \
 		fi; \
 		mkdir -p bin || exit 1; \
-		cp external/mcsh/build/mcsh bin/mcsh; \
+		cp external/mcsh/build/mcsh bin/mcsh || exit 1; \
 		echo "   mcsh built: bin/mcsh"; \
 	fi
 
@@ -92,10 +92,10 @@ jenova-ui:
 	@echo "🔨 Building jenova-ui..."
 	@$(MAKE) -C jenova-ui
 	@mkdir -p bin || exit 1
-	@cp jenova-ui/jenova-ui bin/jenova-ui
+	@cp jenova-ui/jenova-ui bin/jenova-ui || exit 1
 	@echo "   jenova-ui built: bin/jenova-ui"
 
-install: llama jvim mcsh jenova-ui web
+install: preflight llama jvim mcsh jenova-ui web
 	@./scripts/install.sh
 
 install-jenova:

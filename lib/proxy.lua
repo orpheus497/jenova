@@ -233,6 +233,13 @@ local function url_encode(query)
     end):gsub(" ", "+")
 end
 
+-- URL-decode a string.
+local function url_decode(str)
+    return str:gsub("+", " "):gsub("%%(%x%x)", function(h)
+        return string.char(tonumber(h, 16))
+    end)
+end
+
 -- DuckDuckGo Instant Answer API: returns JSON, no scraping needed.
 -- Good for factual queries (definitions, summaries, related topics).
 -- Does NOT return full web results for every query — supplementary source.
@@ -653,6 +660,7 @@ local function proxy_connection(client_fd, conn_fds)
     if is_get then
         local path = headers_raw:match("^GET ([^ %?]+)")
         if path then
+            path = url_decode(path)
             if path == "/" then path = "/index.html" end
             -- Security: prevent directory traversal (literal check + canonical validation)
             if not path:find("%.%.") then
@@ -662,19 +670,31 @@ local function proxy_connection(client_fd, conn_fds)
                     if f then
                         local content = f:read("*a")
                         f:close()
-                        local mime = "application/octet-stream"
-                        if path:find("%.html$") then mime = "text/html"
-                        elseif path:find("%.js$") then mime = "application/javascript"
-                        elseif path:find("%.css$") then mime = "text/css"
-                        elseif path:find("%.svg$") then mime = "image/svg+xml"
-                        elseif path:find("%.png$") then mime = "image/png"
-                        elseif path:find("%.jpg$") or path:find("%.jpeg$") then mime = "image/jpeg"
-                        elseif path:find("%.json$") then mime = "application/json"
-                        end
+                        local ext = path:match("%.([^%.]+)$")
+                        local mime_types = {
+                            html = "text/html",
+                            js = "application/javascript",
+                            css = "text/css",
+                            svg = "image/svg+xml",
+                            png = "image/png",
+                            jpg = "image/jpeg",
+                            jpeg = "image/jpeg",
+                            json = "application/json",
+                            pdf = "application/pdf",
+                            md = "text/markdown",
+                            mp3 = "audio/mpeg",
+                            mp4 = "video/mp4",
+                            xml = "application/xml",
+                            gif = "image/gif",
+                            webp = "image/webp",
+                            txt = "text/plain"
+                        }
+                        local mime = (ext and mime_types[ext:lower()]) or "application/octet-stream"
                         local resp = string.format(
                             "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
                             mime, #content)
-                        async_send(client_fd, resp .. content)
+                        async_send(client_fd, resp)
+                        async_send(client_fd, content)
                         safe_close()
                         return
                     end
