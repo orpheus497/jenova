@@ -46,7 +46,11 @@ echo "  ✓ gtk+-3.0 found"
 if ! pkg-config --exists appindicator3-0.1 2>/dev/null; then
     echo "❌ Error: AppIndicator library is not installed." >&2
     echo "   FreeBSD: pkg install libappindicator" >&2
-    echo "   Debian/Ubuntu: apt install libappindicator3-dev" >&2
+    if [ "$JENOVA_DISTRO" = "debian" ] && [ "${JENOVA_DISTRO_VERSION:-0}" -ge 12 ] 2>/dev/null; then
+        echo "   Debian/Ubuntu: apt install libayatana-appindicator3-dev" >&2
+    else
+        echo "   Debian/Ubuntu: apt install libappindicator3-dev" >&2
+    fi
     echo "   Arch: pacman -S libappindicator-gtk3" >&2
     exit 1
 fi

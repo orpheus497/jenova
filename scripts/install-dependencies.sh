@@ -121,7 +121,7 @@ cmake:cmake
 luajit:luajit
 gettext:gettext
 spirv-headers:spirv-headers
-vulkan-icd-loader:vulkan-icd-loader
+vulkan:vulkan-icd-loader
 lua54:lua54
 curl:curl
 make:make
@@ -139,26 +139,32 @@ EOF
             ;;
         apt)
             # Debian/Ubuntu
-            cat << 'EOF'
+            _apt_appindicator="libappindicator3-dev"
+            # Debian 12 (Bookworm) and newer use Ayatana
+            if [ "$JENOVA_DISTRO" = "debian" ] && [ "${JENOVA_DISTRO_VERSION:-0}" -ge 12 ] 2>/dev/null; then
+                _apt_appindicator="libayatana-appindicator3-dev"
+            fi
+
+            cat << EOF
 git:git
 cmake:cmake
 luajit:luajit
 luajit-dev:libluajit-5.1-dev
 gettext:gettext
 spirv-headers:spirv-headers
-libvulkan1:libvulkan1
+vulkan:libvulkan-dev
 liblua5.4-dev:liblua5.4-dev
 libcurl4-openssl-dev:libcurl4-openssl-dev
 make:make
 realpath:coreutils
-glslc:glslc
+glslc:google-shaderc
 clangd:clangd
 cargo:cargo
 nodejs:nodejs
 npm:npm
 pkg-config:pkg-config
 gtk3:libgtk-3-dev
-appindicator:libappindicator3-dev
+appindicator:$_apt_appindicator
 ncurses:libncurses-dev
 EOF
             ;;
@@ -171,7 +177,7 @@ luajit:luajit
 luajit-devel:luajit-devel
 gettext:gettext
 spirv-headers:spirv-headers-devel
-vulkan-loader:vulkan-loader
+vulkan:vulkan-loader
 lua-devel:lua-devel
 libcurl-devel:libcurl-devel
 make:make
@@ -195,7 +201,7 @@ cmake:cmake
 luajit:luajit
 gettext:gettext
 spirv-headers:spirv-headers
-molten-vk:molten-vk
+vulkan:molten-vk
 lua@5.4:lua@5.4
 curl:curl
 make:make
@@ -218,7 +224,7 @@ cmake:cmake
 luajit:luajit
 gettext:gettext
 spirv-headers:spirv-headers
-libvulkan1:libvulkan1
+vulkan:libvulkan1
 lua54-devel:lua54-devel
 libcurl-devel:libcurl-devel
 make:make
@@ -241,7 +247,7 @@ cmake:cmake
 luajit:luajit
 gettext:gettext
 spirv-headers:SPIRV-Headers
-vulkan-loader:vulkan-loader
+vulkan:vulkan-loader
 lua54-devel:lua54-devel
 curl-devel:curl-devel
 make:make
@@ -278,6 +284,9 @@ is_installed() {
         return $?
     elif [ "$1" = "spirv-headers" ]; then
         [ -f "/usr/include/spirv/unified1/spirv.h" ] || [ -f "/usr/local/include/spirv/unified1/spirv.h" ]
+        return $?
+    elif [ "$1" = "vulkan" ]; then
+        [ "${JENOVA_VULKAN_OK:-0}" = "1" ]
         return $?
     fi
     command -v "$1" >/dev/null 2>&1

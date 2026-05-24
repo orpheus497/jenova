@@ -287,7 +287,7 @@ else
     case "$JENOVA_PKG_MGR" in
         pkg)    _vhint="pkg install vulkan-loader" ;;
         pacman) _vhint="pacman -S vulkan-icd-loader (or yay -S vulkan-icd-loader)" ;;
-        apt)    _vhint="apt-get install libvulkan1" ;;
+        apt)    _vhint="apt-get install libvulkan-dev" ;;
         dnf)    _vhint="dnf install vulkan-loader" ;;
         zypper) _vhint="zypper install libvulkan1" ;;
         xbps)   _vhint="xbps-install vulkan-loader" ;;
