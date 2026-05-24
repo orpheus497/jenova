@@ -53,7 +53,7 @@ mcsh:
 	@if [ ! -f external/mcsh/configure ]; then \
 		echo "WARN: external/mcsh/ source tree missing — skipping mcsh build" >&2; \
 	else \
-		mkdir -p external/mcsh/build; \
+		mkdir -p external/mcsh/build || exit 1; \
 		if [ ! -f external/mcsh/build/Makefile ]; then \
 			(cd external/mcsh/build && ../configure) || exit 1; \
 		fi; \
@@ -66,7 +66,7 @@ mcsh:
 		else \
 			$(MAKE) -C external/mcsh/build || exit 1; \
 		fi; \
-		mkdir -p bin; \
+		mkdir -p bin || exit 1; \
 		cp external/mcsh/build/mcsh bin/mcsh; \
 		echo "   mcsh built: bin/mcsh"; \
 	fi

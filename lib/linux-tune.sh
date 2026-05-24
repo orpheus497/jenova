@@ -15,6 +15,12 @@ if [ -z "$JENOVA_OS" ]; then
     [ -f "$_SCRIPT_DIR/detect-env.sh" ] && . "$_SCRIPT_DIR/detect-env.sh"
 fi
 
+# Ensure we are running as root
+if [ "$(id -u)" -ne 0 ]; then
+    echo "Error: This script requires root privileges. Please run with sudo." >&2
+    exit 1
+fi
+
 # Colours for output
 if [ -t 1 ]; then
     _G=$(printf '\033[32m'); _Y=$(printf '\033[33m'); _B=$(printf '\033[34m'); _N=$(printf '\033[0m')
@@ -40,7 +46,8 @@ apply_sysctl() {
             _conf="/etc/sysctl.d/99-jenova.conf"
             mkdir -p "$(dirname "$_conf")"
             # Remove old entry if exists
-            [ -f "$_conf" ] && sed -i "/^$_key/d" "$_conf"
+            _safe_key=$(echo "$_key" | sed 's/\./\\./g')
+            [ -f "$_conf" ] && sed -i "/^${_safe_key}=/d" "$_conf"
             echo "$_key=$_val" >> "$_conf"
         else
             log_warn "Failed to set $_key (check permissions)"
