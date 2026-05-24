@@ -53,21 +53,22 @@ mcsh:
 	@if [ ! -f external/mcsh/configure ]; then \
 		echo "WARN: external/mcsh/ source tree missing — skipping mcsh build" >&2; \
 	else \
-		mkdir -p external/mcsh/build || exit 1; \
+		set -e; \
+		mkdir -p external/mcsh/build; \
 		if [ ! -f external/mcsh/build/Makefile ]; then \
-			(cd external/mcsh/build && ../configure) || exit 1; \
+			(cd external/mcsh/build && ../configure); \
 		fi; \
 		if [ "$$(uname -s)" = "FreeBSD" ]; then \
 			if ! command -v gmake >/dev/null 2>&1; then \
 				echo "FreeBSD requires 'gmake' to build mcsh. Please run 'pkg install gmake'" >&2; \
 				exit 1; \
 			fi; \
-			gmake -C external/mcsh/build || exit 1; \
+			gmake -C external/mcsh/build; \
 		else \
-			$(MAKE) -C external/mcsh/build || exit 1; \
+			$(MAKE) -C external/mcsh/build; \
 		fi; \
-		mkdir -p bin || exit 1; \
-		cp external/mcsh/build/mcsh bin/mcsh || exit 1; \
+		mkdir -p bin; \
+		cp external/mcsh/build/mcsh bin/mcsh; \
 		echo "   mcsh built: bin/mcsh"; \
 	fi
 

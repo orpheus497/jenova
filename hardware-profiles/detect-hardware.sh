@@ -58,7 +58,11 @@ validate_arg() {
         fi
     fi
     case "$_real_val_path" in
-        "$SCRIPT_DIR"/*)
+        */../*|*/..|../*|..)
+            fail "Invalid argument for $_flag: $_val (path traversal detected)"
+            exit 1
+            ;;
+        "$SCRIPT_DIR"/*|"$SCRIPT_DIR")
             # Safe, remains within expected directory tree
             ;;
         *)
