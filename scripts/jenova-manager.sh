@@ -584,10 +584,22 @@ show_action_menu() {
                             "jenova_ui")   "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --ui --skip-nvim --skip-rebuild --skip-jvim ;;
                             "mcsh")        "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --mcsh --skip-nvim --skip-rebuild --skip-jvim ;;
                         esac
+                        _ret=$?
                     else
                         "${action}_${suffix}"
+                        _ret=$?
+                        if [ "$_ret" = "0" ] && [ "$action" = "install" ]; then
+                            printf "\nDeploying %s after successful build...\n" "$item"
+                            case "$suffix" in
+                                "jvim")        "$JENOVA_ROOT/scripts/install.sh" --skip-llama ;;
+                                "llama")       "$JENOVA_ROOT/scripts/install.sh" --skip-jvim ;;
+                                "webui")       "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama ;;
+                                "jenova_ui")   "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama ;;
+                                "mcsh")        "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama ;;
+                            esac
+                            _ret=$?
+                        fi
                     fi
-                    _ret=$?
                 fi
 
                 if [ "$_ret" = "0" ]; then

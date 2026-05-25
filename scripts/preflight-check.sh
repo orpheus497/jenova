@@ -168,24 +168,13 @@ fi
 # ---------------------------------------------------------------------------
 # 6. Node.js / npm Check (for Web UI)
 # ---------------------------------------------------------------------------
-info "Checking Node.js (required for Web UI)..."
-if command -v npm >/dev/null 2>&1; then
-    _npmver=$(npm --version)
-    ok "npm $_npmver detected"
-else
-    warn "npm not found - Web UI build will be skipped"
-    warn "Install Node.js to build the Web UI: $(
-        case "$JENOVA_PKG_MGR" in
-            pkg)    echo "pkg install node npm" ;;
-            pacman) echo "pacman -S nodejs npm" ;;
-            apt)    echo "apt install nodejs npm" ;;
-            dnf)    echo "dnf install npm" ;;
-            brew)   echo "brew install node" ;;
-            *)      echo "https://nodejs.org/" ;;
-        esac
-    )"
-    WARNINGS=$((WARNINGS + 1))
-fi
+info "Checking Node.js and npm (required for Web UI)..."
+_node_pkg="node"
+case "$JENOVA_PKG_MGR" in
+    pacman|apt|dnf) _node_pkg="nodejs" ;;
+esac
+_check_bin "node" "$_node_pkg" 0
+_check_bin "npm" "npm" 0
 
 # ---------------------------------------------------------------------------
 # 7. Network Connectivity Check
