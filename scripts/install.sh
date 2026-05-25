@@ -382,7 +382,7 @@ fi
 # ---------------------------------------------------------------------------
 # 7. Neovim config installation
 # ---------------------------------------------------------------------------
-if [ "$SKIP_NVIM" = "0" ] && command -v jvim >/dev/null 2>&1; then
+if [ "$SKIP_NVIM" = "0" ]; then
     info "Installing jvim configuration..."
 
     if [ -d "$JVIM_CONFIG_DST" ] && [ "$FORCE" = "0" ]; then
