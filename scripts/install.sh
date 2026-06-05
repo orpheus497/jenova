@@ -476,7 +476,7 @@ for _bin in jvim jenova jenova-ui jenova-ca jenova-tui jenova-term jenova-swap-m
     fi
 done
 
-# Built artifacts (llama-server, mcsh, jenova-ui)
+# Built artifacts (llama-server, jenova-ui)
 _LLAMA_BUILD_BIN="$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server"
 if [ -f "$_LLAMA_BUILD_BIN" ]; then
     _verify_and_copy_bin "$_LLAMA_BUILD_BIN" "$JENOVA_HOME/bin/llama-server"
@@ -489,9 +489,6 @@ if [ -f "$_LLAMA_BUILD_BIN" ]; then
     ok "Deployed llama.cpp artifacts to $JENOVA_HOME/bin"
 fi
 
-if [ -f "$JENOVA_ROOT/bin/mcsh" ]; then
-    _verify_and_copy_bin "$JENOVA_ROOT/bin/mcsh" "$JENOVA_HOME/bin/mcsh"
-fi
 
 if [ -f "$JENOVA_ROOT/jenova-ui/jenova-ui" ]; then
     _verify_and_copy_bin "$JENOVA_ROOT/jenova-ui/jenova-ui" "$JENOVA_HOME/bin/jenova-ui"
@@ -541,11 +538,7 @@ for _bin in jvim jenova jenova-ui jenova-ca jenova-tui jenova-term jenova-swap-m
     fi
 done
 
-if [ -f "$JENOVA_HOME/bin/mcsh" ]; then
-    ln -sf "$JENOVA_HOME/bin/mcsh" "$_LOCAL_BIN/mcsh"
-    ln -sf "$JENOVA_HOME/bin/mcsh" "$_LOCAL_BIN/tcsh"
-    ln -sf "$JENOVA_HOME/bin/mcsh" "$_LOCAL_BIN/csh"
-fi
+
 ok "Symlinked launchers from $JENOVA_HOME/bin to $_LOCAL_BIN"
 
 # Warn if ~/.local/bin is not on PATH

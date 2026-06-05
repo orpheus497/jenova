@@ -90,15 +90,8 @@ curl http://localhost:8080/v1/chat/completions \
 Any OpenAI-compatible client library works — point its `base_url` at
 `http://<host>:8080/v1` and use any non-empty `api_key`.
 
-## Modern C Shell — `bin/mcsh`
+## Modern C Shell
 
-The bundled shell is built from the in-tree `mcsh/` source by `make mcsh`
-(or `cd mcsh && ./configure && make` for a standalone build). It is a
-drop-in replacement for `tcsh`/`csh`:
-
-- reads `~/.mcshrc` first, then falls back to `~/.tcshrc` / `~/.cshrc`
-- `man mcsh` is canonical; `man tcsh` is a symlink to the same page
-- both `$mcsh` and `$tcsh` are populated, so legacy `if ($?tcsh)` guards
-  keep firing
-
-See `mcsh/README.md` for the full feature matrix.
+mcsh is maintained as a standalone project at [orpheus497/mcsh](https://github.com/orpheus497/mcsh).
+It is a drop-in replacement for `tcsh`/`csh` and can be used with jvim by
+setting `SHELL=/path/to/mcsh` in your environment.

@@ -23,7 +23,7 @@
 # This script automatically:
 #   ✓ Detects your OS and package manager
 #   ✓ Installs all required system dependencies
-#   ✓ Builds Jenova components (llama.cpp, jvim, mcsh)
+#   ✓ Builds Jenova components (llama.cpp, jvim, Web UI)
 #   ✓ Deploys to your system
 #   ✓ Downloads AI models (unless --minimal)
 #   ✓ Verifies everything works
@@ -103,7 +103,7 @@ show_help() {
 verify_external_components() {
     print_step "Verifying bundled components..."
     _missing=0
-    for _comp in "llama.cpp" "mcsh" "SPIRV-Headers"; do
+    for _comp in "llama.cpp" "SPIRV-Headers"; do
         if [ ! -d "$JENOVA_ROOT/external/$_comp" ]; then
             print_error "Missing bundled component: external/$_comp"
             _missing=1
@@ -176,7 +176,7 @@ cmd_install() {
         MAKE_CMD="make"
     fi
     
-    COMPONENTS="llama jvim mcsh jenova-ui"
+    COMPONENTS="llama jvim jenova-ui"
     [ "$MINIMAL" = "0" ] && COMPONENTS="$COMPONENTS web"
     
     for component in $COMPONENTS; do
@@ -184,12 +184,8 @@ cmd_install() {
         if "$MAKE_CMD" "$component"; then
             print_success "$component built successfully"
         else
-            if [ "$component" = "mcsh" ]; then
-                print_warning "Failed to build $component (optional, continuing)"
-            else
-                print_error "Failed to build $component"
-                exit 1
-            fi
+            print_error "Failed to build $component"
+            exit 1
         fi
     done
     

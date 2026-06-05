@@ -123,7 +123,6 @@ _check_bin() {
 _check_bin "jvim" "jvim (bundled editor)"
 _check_bin "jenova" "jenova (launcher)"
 _check_bin "jenova-ca" "jenova-ca (daemon manager)"
-_check_bin "mcsh" "mcsh (Modern C Shell)"
 
 # ---------------------------------------------------------------------------
 # 3. Check Components and Assets

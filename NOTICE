@@ -13,28 +13,18 @@ sources, and to keep the copyright lines visible in one place.
        Copyright (c) 2026, orpheus497
        Licensed under the GNU Affero General Public License v3.0 — see the file `LICENSE`.
 
-2. mcsh / tcsh / etcsh upstream source (bin/mcsh, etc.).
-
-       Copyright (c) 1980, 1991 The Regents of the University of California.
-       Licensed under the BSD 3-Clause License — see the file `UPSTREAM-COPYRIGHT`.
-
-3. llama.cpp (external/llama.cpp).
+2. llama.cpp (external/llama.cpp).
 
        Copyright (c) 2023-2026 The ggml authors.
        Licensed under the MIT License — see the file `UPSTREAM-COPYRIGHT`.
 
-4. SPIRV-Headers (external/SPIRV-Headers).
+3. SPIRV-Headers (external/SPIRV-Headers).
 
        Copyright (c) 2015-2024 The Khronos Group Inc.
        Licensed under the Khronos Free Software License — see the file `UPSTREAM-COPYRIGHT`.
 
-5. Neovim and Vim (jvim).
+4. Neovim and Vim (jvim).
 
        Copyright Neovim contributors.
        Copyright (c) 1988-2026 Bram Moolenaar et al.
        Licensed under the Apache License v2.0 and Vim License — see the file `UPSTREAM-COPYRIGHT`.
-
-6. etcsh (integrated into bin/mcsh).
-
-       Copyright (c) 2024-2026 Krush206.
-       Licensed under the BSD 3-Clause License — see the file `UPSTREAM-COPYRIGHT`.

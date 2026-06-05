@@ -402,10 +402,7 @@ install_jenova_ui() {
     printf "%s%sBuilding jenova-ui (Desktop Manager)...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
     "$MAKE" -C "$JENOVA_ROOT" jenova-ui
 }
-install_mcsh() {
-    printf "%s%sBuilding mcsh (Modern C Shell)...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
-    "$MAKE" -C "$JENOVA_ROOT" mcsh
-}
+
 
 update_jenova_core() {
     printf "%s%sUpdating Jenova Core...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
@@ -427,10 +424,7 @@ update_jenova_ui() {
     printf "%s%sUpdating jenova-ui (Desktop Manager)...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
     "$JENOVA_ROOT/scripts/update.sh" --ui --skip-nvim --skip-rebuild --skip-jvim
 }
-update_mcsh() {
-    printf "%s%sUpdating mcsh (dependency repo)...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
-    "$JENOVA_ROOT/scripts/update.sh" --mcsh --skip-nvim --skip-rebuild --skip-jvim
-}
+
 
 uninstall_jenova_core() {
     printf "%s%sUninstalling Jenova Core...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
@@ -456,16 +450,9 @@ uninstall_jenova_ui() {
     rm -f "$JENOVA_ROOT/jenova-ui/jenova-ui" "$JENOVA_ROOT/bin/jenova-ui"
     echo "jenova-ui build artifacts removed."
 }
-uninstall_mcsh() {
-    printf "%s%sRemoving mcsh build artifacts...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
-    rm -rf "$JENOVA_ROOT/external/mcsh/build" "$JENOVA_ROOT/bin/mcsh"
-    echo "mcsh build artifacts removed."
-}
-
 # --- Component detection (extended) ---
 check_webui() { [ -f "$JENOVA_ROOT/public/bundle.js" ]; }
 check_jenova_ui() { [ -x "$JENOVA_ROOT/bin/jenova-ui" ] || [ -x "$JENOVA_ROOT/jenova-ui/jenova-ui" ]; }
-check_mcsh() { [ -x "$JENOVA_ROOT/bin/mcsh" ]; }
 
 show_action_menu() {
     action="$1"
@@ -479,7 +466,6 @@ show_action_menu() {
     status_llama="$default_on"
     status_webui="$default_on"
     status_jenova_ui="$default_on"
-    status_mcsh="$default_on"
 
     if [ "$action" = "install" ]; then
         check_jenova_core && status_core="off"
@@ -487,7 +473,6 @@ show_action_menu() {
         check_llama && status_llama="off"
         check_webui && status_webui="off"
         check_jenova_ui && status_jenova_ui="off"
-        check_mcsh && status_mcsh="off"
     fi
 
     interactive_checklist "$title" "$checklist_msg" \
@@ -495,8 +480,7 @@ show_action_menu() {
         "jvim" "Editor / IDE (bundled)" "$status_jvim" \
         "external/llama.cpp" "Inference engine" "$status_llama" \
         "WebUI" "Browser-based Workspaces UI" "$status_webui" \
-        "jenova_ui" "Desktop Manager (tray + TUI)" "$status_jenova_ui" \
-        "mcsh" "Modern C Shell" "$status_mcsh"
+        "jenova_ui" "Desktop Manager (tray + TUI)" "$status_jenova_ui"
         
     eval "first_choice=\"\$CHECKLIST_CHOICES_0\""
     if [ "$first_choice" = "CANCEL" ] || [ "$CHECKLIST_COUNT" -eq 0 ]; then
@@ -555,7 +539,6 @@ show_action_menu() {
                 "external/llama.cpp")   suffix="llama" ;;
                 "WebUI")       suffix="webui" ;;
                 "jenova_ui")   suffix="jenova_ui" ;;
-                "mcsh")        suffix="mcsh" ;;
             esac
 
             if [ "$suffix" != "unknown" ]; then
@@ -582,7 +565,6 @@ show_action_menu() {
                             "llama")       "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --skip-nvim --skip-jvim ;;
                             "webui")       "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --web --skip-nvim --skip-rebuild --skip-jvim ;;
                             "jenova_ui")   "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --ui --skip-nvim --skip-rebuild --skip-jvim ;;
-                            "mcsh")        "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --mcsh --skip-nvim --skip-rebuild --skip-jvim ;;
                         esac
                         _ret=$?
                     else
@@ -595,7 +577,6 @@ show_action_menu() {
                                 "llama")       "$JENOVA_ROOT/scripts/install.sh" --skip-jvim ;;
                                 "webui")       "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama ;;
                                 "jenova_ui")   "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama ;;
-                                "mcsh")        "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama ;;
                             esac
                             _ret=$?
                         fi

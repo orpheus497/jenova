@@ -1,9 +1,8 @@
 ## 1. Unified Monorepo & Dependencies
-Jenova is a monorepo that contains almost all its own code. The only external dependency repositories are:
+Jenova is a monorepo that contains almost all its own code. The only external dependency repository is:
 - **llama.cpp**: The high-performance inference engine.
-- **mcsh**: The modernised C-shell.
 
-These are treated as sub-repositories with their own lifecycle, while everything else—including the **jvim** editor, **jenova-ui** desktop manager, and **jca_web**—is built-in and directly wired into the Jenova core.
+This is treated as a sub-repository with its own lifecycle, while everything else—including the **jvim** editor, **jenova-ui** desktop manager, and **jca_web**—is built-in and directly wired into the Jenova core.
 All components (backend, TUI, proxy, and editor) respect the same configuration hierarchy:
 1. `etc/jenova.conf`: The active system profile (auto-generated from `hardware-profiles/`).
 2. `etc/jenova.local.conf`: User overrides (ignored by git, preserved across updates).
