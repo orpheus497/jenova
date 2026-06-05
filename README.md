@@ -23,8 +23,6 @@ An elegant, browser-based chat and workspace UI built with SvelteKit. Served dir
 ### Jenova Vim (`jvim`)
 The Jenova-specific fork of NeoVim. A comprehensive *Interactive Director Environment* (IDE) with deep agentic assistance, FIM inline completions, inline code mathematical grounding, and autonomous LSP-driven actions right inside your terminal.
 
-### Modern C Shell (`mcsh`)
-A heavily modernized and deeply integrated C-shell environment tailored to interface with the Jenova ecosystem.
 
 ### Remote Access (LAN Mode)
 Toggle `LAN Mode` via the System Tray or TUI to bind the backend to `0.0.0.0`. Access your Jenova Workspaces from any device on your local network — smartphones, tablets, or other laptops.
@@ -51,7 +49,7 @@ make install      # Deploy to ~/Jenova (Standalone)
 make verify       # Verify installation succeeded
 ```
 
-Individual components: `make llama`, `make jvim`, `make mcsh`, `make web`, `make jenova-ui`.
+Individual components: `make llama`, `make jvim`, `make web`, `make jenova-ui`.
 
 ---
 
@@ -66,7 +64,7 @@ Jenova installs launchers to `~/.local/bin` that point to the standalone install
 | `jenova-ca start|stop|restart|status` | Control the backend daemon |
 | `jenova-tui` | Kanagawa-themed terminal manager |
 | `jenova-ui` | Desktop Manager (tray icon + TUI) |
-| `jenova-term` | Dedicated terminal with mcsh |
+| `jenova-term` | Dedicated terminal emulator wrapper |
 | `jenova-swap-mount` | Helper to mount Optane/NVMe swap |
 | `build-llama-jenova` | Build script for Vulkan backend |
 | `build-llama-hybrid` | Build script for Vulkan + CUDA hybrid |
@@ -117,9 +115,8 @@ jenova/
 ├── bin/                    # Launcher wrappers and tool scripts
 ├── docs/                   # Documentation
 ├── etc/                    # Configuration templates
-├── external/               # Bundled upstream sources (tracked in-repo)
+├── external/
 │   ├── llama.cpp/          # Inference engine
-│   └── mcsh/               # Modern C Shell source
 │   └── SPIRV-Headers/      # Vulkan SPIR-V headers
 ├── hardware-profiles/      # OS/GPU-specific tuning profiles
 ├── jca_web/                # WebUI source (SvelteKit)
@@ -130,7 +127,6 @@ jenova/
 ├── models/                 # Model storage (gitignored — user data)
 ├── png/                    # Icons and branding assets
 ├── scripts/                # Build, install, update, and management scripts
-├── system/                 # OS-specific system definitions (mcsh)
 ├── tests/                  # Test scripts
 └── var/                    # Runtime logs and cache (gitignored)
 ```
@@ -151,6 +147,6 @@ For more details, see [docs/privacy.md](docs/privacy.md).
 
 ## ⚖️ Acknowledgements & License
 
-Jenova is built on the profound foundations of [Neovim](https://neovim.io), [llama.cpp](https://github.com/ggml-org/llama.cpp), [tcsh](https://github.com/tcsh-org/tcsh), and [etcsh](https://github.com/Krush206/etcsh).
+Jenova is built on the profound foundations of [Neovim](https://neovim.io) and [llama.cpp](https://github.com/ggml-org/llama.cpp).
 
 Licensed under AGPL-3.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).

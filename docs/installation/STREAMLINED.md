@@ -16,7 +16,7 @@ cd jenova
 **What it does:**
 - ✓ Detects your OS and package manager automatically
 - ✓ Installs all required system dependencies
-- ✓ Builds Jenova components (llama.cpp, jvim, mcsh, Web UI)
+- ✓ Builds Jenova components (llama.cpp, jvim, Web UI)
 - ✓ Deploys a standalone system to ~/Jenova (bin/, lib/, etc/, public/)
 - ✓ Symlinks launchers to ~/.local/bin/ (jvim, jenova, jenova-ca, etc.)
 - ✓ Downloads AI models (~5-10GB)
@@ -199,7 +199,6 @@ echo $PATH | grep -q ~/.local/bin && echo "OK" || echo "MISSING"
 
 # Add to shell config:
 export PATH="$HOME/.local/bin:$PATH"  # .bashrc / .zshrc
-setenv PATH "$HOME/.local/bin:$PATH"  # .tcshrc / .mcshrc
 ```
 
 ### Config Locations

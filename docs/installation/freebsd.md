@@ -5,7 +5,7 @@ Jenova is primarily developed and optimized for FreeBSD 15.
 ## Quick Install
 
 ```sh
-# 1. Install system dependencies (gmake is required to build jvim and mcsh)
+# 1. Install system dependencies (gmake is required to build jvim)
 pkg install luajit-openresty git gmake cmake vulkan-loader curl lua54 gettext-tools
 
 # 2. Clone the repo
@@ -15,7 +15,7 @@ cd jenova
 # 3. Run a pre-flight check before building
 ./scripts/preflight-check.sh --verbose
 
-# 4. Build everything: llama.cpp (Vulkan) + jvim + mcsh
+# 4. Build everything: llama.cpp (Vulkan) + jvim
 make
 
 # If you want the optional Web UI, install Node.js/npm and run:
@@ -39,7 +39,6 @@ You can also use the streamlined installation script:
 You can build components individually if needed:
 - `make llama` — build `llama.cpp` with Vulkan support (calls `bin/build-llama-jenova`).
 - `make jvim` — build the bundled Neovim hard-fork (`jvim/build/bin/nvim`).
-- `make mcsh` — build the Modern C Shell (`bin/mcsh`).
 - `make clean` — wipe build artifacts from all three subsystems.
 - `make clean-root` — remove leftover artifacts in the repo root.
 

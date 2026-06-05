@@ -39,18 +39,7 @@ opt.clipboard      = "unnamedplus"
 opt.swapfile       = false
 opt.maxmempattern  = 2000
 
--- Use mcsh (the bundled tcsh-derived shell) for :terminal, :! and the docked
--- jvim terminal toggle. Falls back to the system shell only if mcsh is not on
--- $PATH so headless/dev environments without a built mcsh still work.
-do
-  local mcsh = vim.fn.exepath("mcsh")
-  if mcsh ~= "" then
-    opt.shell = mcsh
-    opt.shellcmdflag = "-c"
-    opt.shellquote = ""
-    opt.shellxquote = ""
-  end
-end
+
 
 --------------------------------------------------------------------------------
 -- [3] PLUGIN CONFIGURATION

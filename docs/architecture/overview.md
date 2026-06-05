@@ -2,7 +2,7 @@
 
 Jenova is a local AI coding environment designed for laptops. It provides a
 complete terminal IDE by integrating an inference backend, a purpose-built
-editor, an embedded agentic workflow system, and a modernised C-shell.
+editor, and an embedded agentic workflow system.
 
 ## Core Philosophy
 - **Local-First** — no cloud dependencies; all inference, retrieval, and
@@ -21,7 +21,6 @@ The **Jenova Cognitive Architecture** is structured around several interconnecte
 | **Jenova Workspace** | WebUI offering persistent workspaces and a general chat interface. | SvelteKit / Tailwind CSS |
 | **J Vim (Jenova Vim)** | A comprehensive *Interactive Director Environment* (IDE). A Jenova-specific fork of NeoVim that enables agentic work and actions through the LSP and plugin extensibility of the jvim architecture. | C / Lua |
 | **Server & OpenAI API**| Exposes an OpenAI-compatible API (`lib/proxy.lua`) allowing external integrations like the Leo browser or other API-driven tools. | LuaJIT / C++ |
-| **mcsh Shell** | Integrated modern C-shell for the terminal IDE. | C (`mcsh/`) |
 | **Remote Connections** | Architecture natively supports LAN bindings, enabling browser-based workspace access from mobile phones or secondary PCs. | POSIX sh / Networking |
 | **Local Inference** | GGUF model execution (llama.cpp) handling agents, RAG embeddings, and speculative decoding. | C++ |
 
@@ -59,9 +58,6 @@ All external code lives in `external/`. The distinction matters for updates:
 |-----------|------|--------|---------------|
 | `external/llama.cpp` | Vendored copy | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | Manual sync |
 | `external/SPIRV-Headers` | Vendored copy | [KhronosGroup/SPIRV-Headers](https://github.com/KhronosGroup/SPIRV-Headers) | Manual sync |
-| `external/mcsh` | Git submodule | [orpheus497/mcsh](https://github.com/orpheus497/mcsh) | `git submodule update` |
 
 **Vendored** dependencies are full copies committed into the repo — no network
-fetch is needed after clone. **Submodules** are tracked by commit hash in
-`.gitmodules` and require `git submodule update --init` after a fresh clone.
-
+fetch is needed after clone.

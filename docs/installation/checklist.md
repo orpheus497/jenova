@@ -40,14 +40,13 @@ llama.cpp and other dependencies are now bundled in the repository's `external/`
 
 ### Step 4: Build Everything
 ```bash
-# Full build: llama.cpp + jvim + mcsh + web UI
+# Full build: llama.cpp + jvim + web UI
 make
 
 # Or build individually:
 make llama              # Inference backend (Vulkan)
 make llama-hybrid       # Vulkan + CUDA (if multi-GPU)
 make jvim               # Editor
-make mcsh               # Modern C Shell
 make web                # Web UI (requires npm/Node.js)
 
 # Clean and rebuild if needed:
@@ -58,7 +57,6 @@ make
 **⏱️ Expected times:**
 - llama.cpp: 10-30 minutes (depends on CPU)
 - jvim: 5-15 minutes
-- mcsh: 2-5 minutes
 - web UI: 2-5 minutes (if npm available)
 
 ### Step 5: Deploy to System
@@ -159,7 +157,6 @@ echo $PATH | grep -q ~/.local/bin && echo "OK" || echo "NOT SET"
 # Add to shell config if needed
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc  # Bash
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # Zsh
-echo 'setenv PATH "$HOME/.local/bin:$PATH"' >> ~/.tcshrc  # tcsh/mcsh
 ```
 
 ### jvim Configuration Location

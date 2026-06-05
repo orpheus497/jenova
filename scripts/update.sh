@@ -2,13 +2,13 @@
 # update.sh: Jenova Cognitive Architecture — Update Script
 #
 # Single-repo update: pulls the latest jenova source (which now includes 
-# llama.cpp, mcsh, and SPIRV-Headers as in-tree components), rebuilds 
+# llama.cpp and SPIRV-Headers as in-tree components), rebuilds 
 # components when sources have moved, restarts jenova-ca, and resyncs 
 # the Neovim plugin set.
 #
 # Usage: ./update.sh [--upgrade-plugins] [--skip-nvim] [--skip-rebuild]
 #                    [--skip-jvim] [--link] [--apply-profile]
-#                    [--mcsh] [--ui] [--web] [--all] [--no-pull]
+#                    [--ui] [--web] [--all] [--no-pull]
 
 set -e
 
@@ -31,7 +31,6 @@ SKIP_JVIM=0
 LINK=0
 APPLY_PROFILE=0
 NO_PULL=0
-UPDATE_MCSH=0
 UPDATE_UI=0
 UPDATE_WEB=0
 
@@ -43,10 +42,9 @@ for _arg in "$@"; do
         --skip-jvim)       SKIP_JVIM=1 ;;
         --link)            LINK=1 ;;
         --apply-profile)   APPLY_PROFILE=1 ;;
-        --mcsh)            UPDATE_MCSH=1 ;;
         --ui)              UPDATE_UI=1 ;;
         --web)             UPDATE_WEB=1 ;;
-        --all)             UPDATE_MCSH=1; UPDATE_UI=1; UPDATE_WEB=1; APPLY_PROFILE=1 ;;
+        --all)             UPDATE_UI=1; UPDATE_WEB=1; APPLY_PROFILE=1 ;;
         --no-pull)         NO_PULL=1 ;;
         -h|--help)
             # Portable head-like behavior with sed
@@ -199,19 +197,7 @@ if [ "$SKIP_JVIM" = "0" ]; then
     fi
 fi
 
-# ---------------------------------------------------------------------------
-# 3c. mcsh rebuild check
-# ---------------------------------------------------------------------------
-if [ "$UPDATE_MCSH" = "1" ] || [ ! -x "$JENOVA_ROOT/bin/mcsh" ]; then
-    info "Checking mcsh..."
-    MCSH_SRC="$JENOVA_ROOT/external/mcsh"
-    if [ -f "$MCSH_SRC/configure" ]; then
-        info "Building mcsh..."
-        make mcsh && ok "mcsh built" || warn "mcsh build failed"
-    else
-        warn "mcsh source missing"
-    fi
-fi
+
 
 # ---------------------------------------------------------------------------
 # 3d. jenova-ui rebuild check
@@ -295,10 +281,7 @@ for _bin in jvim jenova jenova-ui jenova-ca jenova-tui jenova-term jenova-swap-m
         chmod +x "$JENOVA_HOME/bin/$_bin"
     fi
 done
-if [ -f "$JENOVA_ROOT/bin/mcsh" ]; then
-    cp "$JENOVA_ROOT/bin/mcsh" "$JENOVA_HOME/bin/mcsh"
-    chmod +x "$JENOVA_HOME/bin/mcsh"
-fi
+
 ok "Binaries redeployed"
 
 echo ""

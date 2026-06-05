@@ -185,7 +185,7 @@ fi
 # ---------------------------------------------------------------------------
 info "Removing launcher symlinks and binaries..."
 for _d in "$HOME/.local/bin" "$HOME/bin"; do
-    for _bin in jvim jenova jenova-ca jenova-ui jenova-tui jenova-term jenova-swap-mount mcsh tcsh csh; do
+    for _bin in jvim jenova jenova-ca jenova-ui jenova-tui jenova-term jenova-swap-mount; do
         _sym="$_d/$_bin"
         if [ -L "$_sym" ]; then
             _target=$(readlink "$_sym")
@@ -199,7 +199,7 @@ done
 
 # Remove binaries from JENOVA_HOME/bin
 if [ -d "$JENOVA_HOME/bin" ]; then
-    for _bin in jvim jenova jenova-ca jenova-ui jenova-tui jenova-term jenova-swap-mount mcsh; do
+    for _bin in jvim jenova jenova-ca jenova-ui jenova-tui jenova-term jenova-swap-mount; do
         if [ -f "$JENOVA_HOME/bin/$_bin" ]; then
             rm -f "$JENOVA_HOME/bin/$_bin"
             ok "Removed $JENOVA_HOME/bin/$_bin"

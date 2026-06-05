@@ -47,8 +47,8 @@ Features
   assistance.
 - **Backend Monitoring** — Real-time tracking of inference metrics (TPS,
   context usage, GPU offload).
-- **Embedded Terminal** — Scriptable terminal emulator using the bundled
-  `mcsh` shell.
+- **Embedded Terminal** — Scriptable terminal emulator using the system shell
+  (or any shell set via `$SHELL`).
 
 Install from source
 -------------------
@@ -58,7 +58,7 @@ jvim is built as part of the Jenova unified build system.
 ```bash
 # From the Jenova root directory
 make jvim       # build only jvim
-make            # build everything (llama.cpp + jvim + mcsh)
+make            # build everything (llama.cpp + jvim)
 make install    # deploy to ~/.local/bin
 ```
 
