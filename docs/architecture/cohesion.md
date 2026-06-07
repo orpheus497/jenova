@@ -21,10 +21,10 @@ Components interact via a multi-port bridge:
 - **Port 8081 (Inference)**: Raw LLM access via `llama-server`.
 - **Port 8082 (Embeddings)**: Semantic search backend.
 
-## 4. Seamless Installation & Update Path
-The `install-jenova.sh` and `scripts/update.sh` scripts are "cohesion-aware":
-- They don't just pull code; they verify that dependencies for *all* components are met.
-- They handle the complex relationship between `llama.cpp` (inference) and the `jvim` (editor), ensuring they are built with matching hardware optimizations (e.g., Vulkan/CUDA).
+## 4. Seamless Installation & Deployment Path
+The `install-jenova.sh` script is "cohesion-aware":
+- It doesn't just build code; it verifies that dependencies for *all* components are met.
+- It handles the complex relationship between `llama.cpp` (inference) and the `jvim` (editor), ensuring they are built with matching hardware optimizations (e.g., Vulkan/CUDA).
 - The TUI (`jenova-manager.sh`) provides a high-level orchestration layer for these scripts, allowing granular control without breaking system integrity.
 
 ## 5. Security & Privacy by Structure

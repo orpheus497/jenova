@@ -209,32 +209,7 @@ sudo chown -R $(id -u):$(id -g) .git
 make clean && make
 ```
 
-## Updates & Maintenance
 
-### Updating Jenova
-```bash
-# Pull latest changes and rebuild
-./scripts/update.sh
-
-# Or customize the update:
-./scripts/update.sh --upgrade-plugins  # Update Neovim plugins
-./scripts/update.sh --apply-profile    # Re-apply hardware profile
-```
-
-### Uninstalling
-```bash
-# Remove installed files (preserves ~/.local/state/)
-./scripts/uninstall.sh
-
-# Also purge plugin data and Mason LSPs
-./scripts/uninstall.sh --purge
-
-# Also clean runtime artifacts and builds
-./scripts/uninstall.sh --clean-runtime --clean-builds
-
-# Non-interactive (skip confirmations)
-./scripts/uninstall.sh --yes
-```
 
 ## Support & Diagnostics
 

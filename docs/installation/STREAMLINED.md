@@ -223,33 +223,7 @@ cat etc/jenova.conf
 ./scripts/jenova-setup --profile AMD/Ryzen7-5700U
 ```
 
-## Updates & Maintenance
 
-### Updating
-```bash
-# Pull latest code and rebuild
-./scripts/update.sh
-
-# With options:
-./scripts/update.sh --upgrade-plugins   # Update nvim plugins
-./scripts/update.sh --apply-profile     # Re-apply hardware profile
-./scripts/update.sh --skip-rebuild      # Skip llama.cpp rebuild
-```
-
-### Uninstalling
-```bash
-# Remove installed files (preserves user data)
-./scripts/uninstall.sh
-
-# Also purge plugins and Mason LSPs:
-./scripts/uninstall.sh --purge
-
-# Also clean runtime artifacts:
-./scripts/uninstall.sh --clean-runtime --clean-builds
-
-# Non-interactive:
-./scripts/uninstall.sh --yes
-```
 
 ## Need Help?
 

@@ -51,7 +51,7 @@ Features:
 ## Maintenance Manager — `scripts/jenova-manager.sh`
 
 A `dialog` / `whiptail`-based menu for installation and maintenance tasks.
-Use this for building, updating, or uninstalling components.
+Use this for building and deploying components.
 
 ```sh
 scripts/jenova-manager.sh
