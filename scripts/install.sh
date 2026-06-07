@@ -302,6 +302,22 @@ else
     WARNINGS=$((WARNINGS + 1))
 fi
 
+if [ "$JENOVA_GLSLC_OK" = "0" ]; then
+    case "$JENOVA_PKG_MGR" in
+        pkg)    _glslc_hint="pkg install shaderc" ;;
+        pacman) _glslc_hint="pacman -S shaderc (or yay -S shaderc)" ;;
+        apt)    _glslc_hint="apt install glslc" ;;
+        dnf)    _glslc_hint="dnf install glslc" ;;
+        zypper) _glslc_hint="zypper install shaderc" ;;
+        xbps)   _glslc_hint="xbps-install shaderc" ;;
+        brew)   _glslc_hint="brew install shaderc" ;;
+        *)      _glslc_hint="install the shaderc/glslc package for your OS" ;;
+    esac
+    warn "glslc (Vulkan shader compiler) not found — ${_glslc_hint}"
+    warn "Without glslc, llama.cpp cannot be built with Vulkan GPU support."
+    WARNINGS=$((WARNINGS + 1))
+fi
+
 # ---------------------------------------------------------------------------
 
 
@@ -466,6 +482,10 @@ for _bin in jvim jenova jenova-ui jenova-ca jenova-tui jenova-term jenova-swap-m
         install -m 755 "$JENOVA_ROOT/bin/$_bin" "$JENOVA_HOME/bin/$_bin"
     fi
 done
+
+if [ -f "$JENOVA_ROOT/scripts/jenova-setup" ]; then
+    install -m 755 "$JENOVA_ROOT/scripts/jenova-setup" "$JENOVA_HOME/bin/jenova-setup"
+fi
 
 # Built artifacts (llama-server, jenova-ui)
 _LLAMA_BUILD_BIN="$JENOVA_ROOT/bin/llama-server"
@@ -642,7 +662,7 @@ if [ -n "$_PROFILE" ]; then
     fi
 elif [ "$JENOVA_OS" = "freebsd" ]; then
     info "System tuning..."
-    warn "Run 'sudo $JENOVA_ROOT/scripts/jenova-setup' once to tune vm.* sysctls and ZFS ARC"
+    warn "Run 'sudo $JENOVA_HOME/bin/jenova-setup' once to tune vm.* sysctls and ZFS ARC"
     warn "for optimal Optane swap / Iris Xe UMA performance."
     WARNINGS=$((WARNINGS + 1))
 fi
