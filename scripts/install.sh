@@ -317,28 +317,14 @@ elif [ "$SKIP_LLAMA" = "0" ]; then
         warn "llama-server binary not found at $LLAMA_BIN"
         if [ -f "$JENOVA_ROOT/external/llama.cpp/CMakeLists.txt" ]; then
             info "Submodule external/llama.cpp is present. Auto-building..."
-            if "$JENOVA_ROOT/bin/build-llama"; then
+            if (cd "$JENOVA_ROOT" && git submodule update --init external/llama.cpp) && "$JENOVA_ROOT/bin/build-llama"; then
                 cp "$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server" "$LLAMA_BIN"
                 ok "Successfully built and deployed llama-server."
             else
-                fail "Auto-build failed."
+                fail "Failed to build llama-server from source."
                 ERRORS=$((ERRORS + 1))
             fi
         else
-            printf "${_B}  ?${_N} Download pre-built binary from Jenova repo? [y/N] "
-            read -r _ans_dl < /dev/tty || _ans_dl="N"
-            case "$_ans_dl" in
-                y|Y|yes|YES)
-                    info "Downloading pre-built llama-server..."
-                    if curl -L -o "$LLAMA_BIN" "https://github.com/orpheus497/jenova/releases/latest/download/llama-server"; then
-                        chmod +x "$LLAMA_BIN"
-                        ok "Successfully downloaded llama-server."
-                    else
-                        rm -f "$LLAMA_BIN"
-                        fail "Failed to download llama-server."
-                        ERRORS=$((ERRORS + 1))
-                    fi
-                    ;;
                 *)
                     printf "${_B}  ?${_N} Initialize submodule and build from source? [y/N] "
                     read -r _ans_build < /dev/tty || _ans_build="N"

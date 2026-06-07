@@ -392,7 +392,7 @@ install_jvim() {
 }
 install_llama() {
     printf "%s%sInstalling external/llama.cpp...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
-    "$JENOVA_ROOT/bin/build-llama-jenova"
+    "$JENOVA_ROOT/bin/build-llama"
 }
 install_webui() {
     printf "%s%sBuilding Web UI...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
