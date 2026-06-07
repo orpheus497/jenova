@@ -87,7 +87,6 @@ show_help() {
     echo "Commands:"
     echo "  install     Build and deploy Jenova to $JENOVA_HOME"
     echo "  uninstall   Remove Jenova binaries and config (preserves workspaces)"
-    echo "  update      Update source code and rebuild all components"
     echo "  status      Verify installation and system environment"
     echo "  tui         Launch the interactive TUI manager"
     echo "  help        Show this help message"
@@ -103,7 +102,7 @@ show_help() {
 verify_external_components() {
     print_step "Verifying bundled components..."
     _missing=0
-    for _comp in "llama.cpp" "SPIRV-Headers"; do
+    for _comp in "llama.cpp"; do
         if [ ! -d "$JENOVA_ROOT/external/$_comp" ]; then
             print_error "Missing bundled component: external/$_comp"
             _missing=1
@@ -216,12 +215,6 @@ cmd_uninstall() {
     "$JENOVA_ROOT/scripts/uninstall.sh" "$@"
 }
 
-cmd_update() {
-    print_header "Updating Jenova"
-    verify_external_components
-    "$JENOVA_ROOT/scripts/update.sh" "$@"
-}
-
 cmd_status() {
     print_header "Jenova Status"
     "$JENOVA_ROOT/scripts/verify-install.sh" --full
@@ -248,7 +241,6 @@ esac
 case "$COMMAND" in
     install)    cmd_install "$@" ;;
     uninstall)  cmd_uninstall "$@" ;;
-    update)     cmd_update "$@" ;;
     status|verify) cmd_status "$@" ;;
     tui)        exec "$JENOVA_ROOT/scripts/jenova-manager.sh" ;;
     help|--help|-h) show_help ;;

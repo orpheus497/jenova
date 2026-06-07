@@ -9,9 +9,6 @@
 /bin/jenova-ui
 /jenova-ui/jenova-ui
 /external/llama.cpp/build/
-/external/SPIRV-Headers/build/
-/external/SPIRV-Headers/
-
 
 
 /cli-agent/build/

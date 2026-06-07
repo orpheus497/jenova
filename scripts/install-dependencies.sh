@@ -96,7 +96,6 @@ git:git
 cmake:cmake
 luajit:luajit-openresty
 gettext:gettext-tools
-spirv-headers:spirv-headers
 vulkan:vulkan-loader
 lua54:lua54
 curl:curl
@@ -120,7 +119,6 @@ git:git
 cmake:cmake
 luajit:luajit
 gettext:gettext
-spirv-headers:spirv-headers
 vulkan:vulkan-icd-loader
 lua54:lua54
 curl:curl
@@ -151,7 +149,6 @@ cmake:cmake
 luajit:luajit
 luajit-dev:libluajit-5.1-dev
 gettext:gettext
-spirv-headers:spirv-headers
 vulkan:libvulkan-dev
 liblua5.4-dev:liblua5.4-dev
 libcurl4-openssl-dev:libcurl4-openssl-dev
@@ -176,7 +173,6 @@ cmake:cmake
 luajit:luajit
 luajit-devel:luajit-devel
 gettext:gettext
-spirv-headers:spirv-headers-devel
 vulkan:vulkan-loader
 lua-devel:lua-devel
 libcurl-devel:libcurl-devel
@@ -200,7 +196,6 @@ git:git
 cmake:cmake
 luajit:luajit
 gettext:gettext
-spirv-headers:spirv-headers
 vulkan:molten-vk
 lua@5.4:lua@5.4
 curl:curl
@@ -223,7 +218,6 @@ git:git
 cmake:cmake
 luajit:luajit
 gettext:gettext
-spirv-headers:spirv-headers
 vulkan:libvulkan1
 lua54-devel:lua54-devel
 libcurl-devel:libcurl-devel
@@ -246,7 +240,6 @@ git:git
 cmake:cmake
 luajit:luajit
 gettext:gettext
-spirv-headers:SPIRV-Headers
 vulkan:vulkan-loader
 lua54-devel:lua54-devel
 curl-devel:curl-devel
@@ -281,9 +274,6 @@ is_installed() {
         return $?
     elif [ "$1" = "luajit-dev" ] || [ "$1" = "luajit-devel" ]; then
         command -v pkg-config >/dev/null 2>&1 && pkg-config --exists luajit >/dev/null 2>&1
-        return $?
-    elif [ "$1" = "spirv-headers" ]; then
-        [ -f "/usr/include/spirv/unified1/spirv.h" ] || [ -f "/usr/local/include/spirv/unified1/spirv.h" ]
         return $?
     elif [ "$1" = "vulkan" ]; then
         [ "${JENOVA_VULKAN_OK:-0}" = "1" ]
@@ -398,7 +388,7 @@ fi
 
 # Required dependencies
 REQUIRED_DEPS="git cmake luajit gettext vulkan lua54 curl realpath pkg-config gtk3 appindicator ncurses"
-OPTIONAL_DEPS="gmake glslc clangd stylua node spirv-headers luajit-dev luajit-devel"
+OPTIONAL_DEPS="gmake glslc clangd stylua node luajit-dev luajit-devel"
 
 if [ "$REQUIRED_ONLY" = "1" ]; then
     info "Installing required dependencies only..."
@@ -464,15 +454,6 @@ while IFS=: read -r binary pkg; do
 done <<EOF
 $PACKAGES
 EOF
-
-# ---------------------------------------------------------------------------
-# FreeBSD-specific "First Class citizen" workarounds
-# ---------------------------------------------------------------------------
-if [ "$JENOVA_OS" = "freebsd" ]; then
-    # We now bundle spirv-headers in external/spirv-headers and include them
-    # during the build process, so no system-wide symlink workaround is needed.
-    :
-fi
 
 echo ""
 if [ "$FAILED_REQUIRED" = "0" ]; then

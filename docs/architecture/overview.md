@@ -56,8 +56,6 @@ All external code lives in `external/`. The distinction matters for updates:
 
 | Directory | Type | Source | Update method |
 |-----------|------|--------|---------------|
-| `external/llama.cpp` | Vendored copy | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | Manual sync |
-| `external/SPIRV-Headers` | Vendored copy | [KhronosGroup/SPIRV-Headers](https://github.com/KhronosGroup/SPIRV-Headers) | Manual sync |
+| `external/llama.cpp` | Submodule (Advanced) | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | Git submodule update |
 
-**Vendored** dependencies are full copies committed into the repo — no network
-fetch is needed after clone.
+**Note**: By default, Jenova downloads and uses pre-built universal binaries. The `external/llama.cpp` submodule is provided for advanced users who wish to build from source.

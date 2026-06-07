@@ -16,7 +16,7 @@
 #   make install    # Run scripts/install.sh (system-aware deploy)
 #   make clean      # Remove build artifacts from both components
 
-.PHONY: all llama llama-hybrid jvim web jenova-ui install preflight verify clean help clean-root
+.PHONY: all llama jvim web jenova-ui install preflight verify clean help clean-root
 
 all: preflight jvim jenova-ui web
 	@echo ""
@@ -24,12 +24,8 @@ all: preflight jvim jenova-ui web
 	@echo "   Run 'make install' (or scripts/install.sh) to deploy."
 
 llama:
-	@echo "🔨 Building external/llama.cpp (Vulkan)..."
-	@./bin/build-llama-jenova
-
-llama-hybrid:
 	@echo "🔨 Building external/llama.cpp (Vulkan + CUDA)..."
-	@./bin/build-llama-hybrid
+	@./bin/build-llama
 
 jvim:
 	@echo "🔨 Building jvim (in-tree editor)..."
@@ -102,8 +98,7 @@ help:
 	@echo ""
 	@echo "  Build targets:"
 	@echo "    make                Build jvim + web + jenova-ui"
-	@echo "    make llama          Build only external/llama.cpp (Vulkan)"
-	@echo "    make llama-hybrid   Build external/llama.cpp (Vulkan + CUDA)"
+	@echo "    make llama          Build external/llama.cpp (Vulkan + CUDA)"
 	@echo "    make jvim           Build only the bundled jvim editor"
 	@echo "    make web            Build only the Web UI"
 	@echo ""

@@ -66,8 +66,7 @@ Jenova installs launchers to `~/.local/bin` that point to the standalone install
 | `jenova-ui` | Desktop Manager (tray icon + TUI) |
 | `jenova-term` | Dedicated terminal emulator wrapper |
 | `jenova-swap-mount` | Helper to mount Optane/NVMe swap |
-| `build-llama-jenova` | Build script for Vulkan backend |
-| `build-llama-hybrid` | Build script for Vulkan + CUDA hybrid |
+| `build-llama` | Build script for Vulkan + CUDA backend |
 
 ---
 
@@ -116,8 +115,7 @@ jenova/
 ├── docs/                   # Documentation
 ├── etc/                    # Configuration templates
 ├── external/
-│   ├── llama.cpp/          # Inference engine
-│   └── SPIRV-Headers/      # Vulkan SPIR-V headers
+│   └── llama.cpp/          # Inference engine (submodule for source builds)
 ├── hardware-profiles/      # OS/GPU-specific tuning profiles
 ├── jca_web/                # WebUI source (SvelteKit)
 ├── jenova-ui/              # Desktop Manager source (C/GTK3)

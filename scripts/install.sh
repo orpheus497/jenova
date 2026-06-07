@@ -309,18 +309,59 @@ fi
 if [ "$CLIENT_ONLY" = "1" ]; then
     info "Skipping llama.cpp build check (--client-only)"
 elif [ "$SKIP_LLAMA" = "0" ]; then
-    info "Checking llama.cpp pre-built binary..."
+    info "Checking llama-server binary..."
     LLAMA_BIN="$JENOVA_ROOT/bin/llama-server"
     if [ -f "$LLAMA_BIN" ]; then
-        ok "llama-server pre-built binary found at $LLAMA_BIN"
-    elif [ -f "$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server" ]; then
-        LLAMA_BIN="$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server"
-        ok "llama-server custom source build found at $LLAMA_BIN"
+        ok "llama-server binary found at $LLAMA_BIN"
     else
         warn "llama-server binary not found at $LLAMA_BIN"
-        warn "Please ensure you have pulled the pre-built universal binary."
-        warn "Advanced users can build it from source using: make llama"
-        WARNINGS=$((WARNINGS + 1))
+        if [ -f "$JENOVA_ROOT/external/llama.cpp/CMakeLists.txt" ]; then
+            info "Submodule external/llama.cpp is present. Auto-building..."
+            if "$JENOVA_ROOT/bin/build-llama"; then
+                cp "$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server" "$LLAMA_BIN"
+                ok "Successfully built and deployed llama-server."
+            else
+                fail "Auto-build failed."
+                ERRORS=$((ERRORS + 1))
+            fi
+        else
+            printf "${_B}  ?${_N} Download pre-built binary from Jenova repo? [y/N] "
+            read -r _ans_dl < /dev/tty || _ans_dl="N"
+            case "$_ans_dl" in
+                y|Y|yes|YES)
+                    info "Downloading pre-built llama-server..."
+                    if curl -L -o "$LLAMA_BIN" "https://github.com/orpheus497/jenova/releases/latest/download/llama-server"; then
+                        chmod +x "$LLAMA_BIN"
+                        ok "Successfully downloaded llama-server."
+                    else
+                        rm -f "$LLAMA_BIN"
+                        fail "Failed to download llama-server."
+                        ERRORS=$((ERRORS + 1))
+                    fi
+                    ;;
+                *)
+                    printf "${_B}  ?${_N} Initialize submodule and build from source? [y/N] "
+                    read -r _ans_build < /dev/tty || _ans_build="N"
+                    case "$_ans_build" in
+                        y|Y|yes|YES)
+                            info "Initializing submodule and building..."
+                            if (cd "$JENOVA_ROOT" && git submodule update --init external/llama.cpp) && "$JENOVA_ROOT/bin/build-llama"; then
+                                cp "$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server" "$LLAMA_BIN"
+                                ok "Successfully built and deployed llama-server."
+                            else
+                                fail "Failed to build llama-server from source."
+                                ERRORS=$((ERRORS + 1))
+                            fi
+                            ;;
+                        *)
+                            warn "llama-server not found and no action taken."
+                            warn "You must deploy it to $LLAMA_BIN or run installer again."
+                            WARNINGS=$((WARNINGS + 1))
+                            ;;
+                    esac
+                    ;;
+            esac
+        fi
     fi
 fi
 
@@ -411,7 +452,7 @@ fi
 info "Deploying standalone system to $JENOVA_HOME..."
 
 # 8.1 Create directory structure
-for _d in bin etc lib public scripts hardware-profiles share share/jvim/mason var/log var/cache var/run models/agent models/embed models/draft jvim/runtime; do
+for _d in bin etc lib public scripts hardware-profiles share var/log var/cache var/run models/agent models/embed models/draft jvim/runtime; do
     mkdir -p "$JENOVA_HOME/$_d"
 done
 
@@ -477,7 +518,7 @@ cp -R "$JENOVA_ROOT/scripts/"* "$JENOVA_HOME/scripts/"
 cp -R "$JENOVA_ROOT/hardware-profiles/"* "$JENOVA_HOME/hardware-profiles/"
 cp -R "$JENOVA_ROOT/jvim/runtime/"* "$JENOVA_HOME/jvim/runtime/"
 [ -d "$JENOVA_ROOT/public" ] && cp -R "$JENOVA_ROOT/public/"* "$JENOVA_HOME/public/"
-[ -d "$JENOVA_ROOT/share/jvim/mason" ] && cp -R "$JENOVA_ROOT/share/jvim/mason/"* "$JENOVA_HOME/share/jvim/mason/"
+
 ok "Deployed libraries, scripts, hardware profiles, runtime, and web assets"
 
 # 8.4 Generate Path-Locked Config
@@ -673,7 +714,6 @@ else
     fi
     echo ""
     echo "  Maintenance:"
-    echo "    scripts/update.sh             — pull latest jenova + sync nvim config"
     echo "    scripts/cleanup.sh --all      — clear logs and cache"
     echo "    scripts/uninstall.sh          — remove deployed files (preserves models)"
     echo "    bin/jvim --check        — print resolved env without launching editor"
