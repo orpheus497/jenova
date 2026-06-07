@@ -5,7 +5,7 @@ Jenova is a local-first, hardware-aware AI environment designed for consumer lap
 ## 🌌 The Ecosystem
 
 ### Core Backend (`jenova-ca`)
-The foundation of the system. Written in C, Lua, and POSIX shell, the `jenova-ca` daemon handles hardware-aware model loading (automatically adapting to single-GPU, dual-GPU, or CPU-only constraints via Vulkan). It daemonizes the `llama-server` inference engine and the Lua-based intelligence proxy.
+The foundation of the system. Written in C, Lua, and POSIX shell, the `jenova-ca` daemon handles hardware-aware model loading (automatically adapting to single-GPU, dual-GPU, or CPU-only constraints via Vulkan). It daemonizes a pre-built universal `llama-server` hybrid backend (CUDA/Vulkan/CPU) and the Lua-based intelligence proxy.
 
 **Ports:**
 - `8080` — Intelligence Proxy (WebUI, RAG, web search, filesystem API)
@@ -44,12 +44,12 @@ The system is deployed to **`~/Jenova`**, creating a 100% functional disconnect 
 ### Manual Build
 
 ```sh
-make              # Build all components in-tree
-make install      # Deploy to ~/Jenova (Standalone)
+make              # Compile jvim and the UI tools
+make install      # Deploy all components and pre-built binaries to ~/Jenova
 make verify       # Verify installation succeeded
 ```
 
-Individual components: `make llama`, `make jvim`, `make web`, `make jenova-ui`.
+Individual components: `make jvim`, `make web`, `make jenova-ui`. Advanced users can compile the backend via `make llama`.
 
 ---
 

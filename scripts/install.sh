@@ -303,57 +303,23 @@ fi
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # 5. llama.cpp build check
 # ---------------------------------------------------------------------------
 if [ "$CLIENT_ONLY" = "1" ]; then
     info "Skipping llama.cpp build check (--client-only)"
 elif [ "$SKIP_LLAMA" = "0" ]; then
-    info "Checking llama.cpp build..."
-    LLAMA_BIN="$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server"
+    info "Checking llama.cpp pre-built binary..."
+    LLAMA_BIN="$JENOVA_ROOT/bin/llama-server"
     if [ -f "$LLAMA_BIN" ]; then
-        ok "llama-server binary found at $LLAMA_BIN"
+        ok "llama-server pre-built binary found at $LLAMA_BIN"
+    elif [ -f "$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server" ]; then
+        LLAMA_BIN="$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server"
+        ok "llama-server custom source build found at $LLAMA_BIN"
     else
-        warn "llama-server not found. Build it using the Makefile:"
-        warn "  make llama"
-        warn "This will build llama.cpp with the appropriate backend (Vulkan, CUDA, Metal)"
-        warn "based on your detected hardware profile."
-        warn "For manual builds, see llama.cpp/docs/build.md"
-        WARNINGS=$((WARNINGS + 1))
-    fi
-
-    # Check for Vulkan SDK components (needed for build)
-    case "$JENOVA_PKG_MGR" in
-        pkg)    _spirv_hint="pkg install spirv-headers" ;;
-        pacman) _spirv_hint="pacman -S spirv-headers" ;;
-        apt)    _spirv_hint="apt-get install spirv-headers" ;;
-        dnf)    _spirv_hint="dnf install spirv-headers-devel" ;;
-        zypper) _spirv_hint="zypper install spirv-headers" ;;
-        xbps)   _spirv_hint="xbps-install SPIRV-Headers" ;;
-        brew)   _spirv_hint="brew install spirv-headers" ;;
-        *)      _spirv_hint="install the spirv-headers package for your OS" ;;
-    esac
-
-    # On FreeBSD, spirv-headers might be missing from the binary repo but 
-    # we have a workaround in install-dependencies.sh using spirv-cross.
-    if [ "$JENOVA_OS" = "freebsd" ] && [ ! -f "/usr/local/include/spirv/unified1/spirv.hpp" ]; then
-        warn "spirv-headers missing — check if install-dependencies.sh was run"
-    else
-        check_optional "spirv-headers" "$_spirv_hint"
-    fi
-
-    if [ "$JENOVA_GLSLC_OK" = "0" ]; then
-        case "$JENOVA_PKG_MGR" in
-            pkg)    _glslc_hint="pkg install shaderc" ;;
-            pacman) _glslc_hint="pacman -S shaderc (or yay -S shaderc)" ;;
-            apt)    _glslc_hint="apt install glslc" ;;
-            dnf)    _glslc_hint="dnf install glslc" ;;
-            zypper) _glslc_hint="zypper install shaderc" ;;
-            xbps)   _glslc_hint="xbps-install shaderc" ;;
-            brew)   _glslc_hint="brew install shaderc" ;;
-            *)      _glslc_hint="install the shaderc/glslc package for your OS" ;;
-        esac
-        warn "glslc (Vulkan shader compiler) not found — ${_glslc_hint}"
-        warn "Without glslc, llama.cpp cannot be built with Vulkan GPU support."
+        warn "llama-server binary not found at $LLAMA_BIN"
+        warn "Please ensure you have pulled the pre-built universal binary."
+        warn "Advanced users can build it from source using: make llama"
         WARNINGS=$((WARNINGS + 1))
     fi
 fi
@@ -477,16 +443,20 @@ for _bin in jvim jenova jenova-ui jenova-ca jenova-tui jenova-term jenova-swap-m
 done
 
 # Built artifacts (llama-server, jenova-ui)
-_LLAMA_BUILD_BIN="$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server"
+_LLAMA_BUILD_BIN="$JENOVA_ROOT/bin/llama-server"
+if [ ! -f "$_LLAMA_BUILD_BIN" ] && [ -f "$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server" ]; then
+    _LLAMA_BUILD_BIN="$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server"
+fi
+
 if [ -f "$_LLAMA_BUILD_BIN" ]; then
     _verify_and_copy_bin "$_LLAMA_BUILD_BIN" "$JENOVA_HOME/bin/llama-server"
-    # Copy shared libs if they exist
+    # Copy shared libs if they exist (only really applicable for source builds)
     for _lib in "$JENOVA_ROOT/external/llama.cpp/build/bin/"*.so* "$JENOVA_ROOT/external/llama.cpp/build/bin/"*.dylib*; do
         if [ -f "$_lib" ]; then
             install -m 755 "$_lib" "$JENOVA_HOME/bin/"
         fi
     done
-    ok "Deployed llama.cpp artifacts to $JENOVA_HOME/bin"
+    ok "Deployed llama.cpp backend to $JENOVA_HOME/bin"
 fi
 
 

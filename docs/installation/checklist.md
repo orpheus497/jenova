@@ -40,14 +40,17 @@ llama.cpp and other dependencies are now bundled in the repository's `external/`
 
 ### Step 4: Build Everything
 ```bash
-# Full build: llama.cpp + jvim + web UI
+# Full build: jvim + web UI + jenova-ui
 make
 
 # Or build individually:
-make llama              # Inference backend (Vulkan)
-make llama-hybrid       # Vulkan + CUDA (if multi-GPU)
 make jvim               # Editor
 make web                # Web UI (requires npm/Node.js)
+make jenova-ui          # Desktop Manager
+
+# Advanced users can build the backend from source:
+make llama              # Inference backend (Vulkan)
+make llama-hybrid       # Vulkan + CUDA (if multi-GPU)
 
 # Clean and rebuild if needed:
 make clean
@@ -55,7 +58,6 @@ make
 ```
 
 **⏱️ Expected times:**
-- llama.cpp: 10-30 minutes (depends on CPU)
 - jvim: 5-15 minutes
 - web UI: 2-5 minutes (if npm available)
 
@@ -194,10 +196,10 @@ huggingface-cli download Qwen/Qwen3.5-4B-GGUF \
 make clean
 df -h /tmp  # Ensure /tmp has space
 
-# 2. Missing Vulkan headers
-# Ubuntu: sudo apt install vulkan-headers spirv-headers
-# Arch: sudo pacman -S spirv-headers
-# FreeBSD: pkg install spirv-headers
+# 2. Missing Vulkan headers (advanced builds only)
+# Ubuntu: sudo apt install vulkan-headers
+# Arch: sudo pacman -S vulkan-headers
+# FreeBSD: pkg install vulkan-headers
 
 # 3. NPM not found — Web UI build will be skipped (optional)
 # Install Node.js if you want the Web UI
@@ -217,7 +219,6 @@ make clean && make
 # Or customize the update:
 ./scripts/update.sh --upgrade-plugins  # Update Neovim plugins
 ./scripts/update.sh --apply-profile    # Re-apply hardware profile
-./scripts/update.sh --skip-rebuild     # Skip llama.cpp rebuild
 ```
 
 ### Uninstalling

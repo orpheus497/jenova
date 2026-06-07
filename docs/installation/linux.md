@@ -10,14 +10,14 @@ Install required packages for your distribution before building:
 
 ```sh
 sudo pacman -S --needed base-devel cmake luajit gettext vulkan-icd-loader \
-  vulkan-headers spirv-headers lua curl git
+  vulkan-headers lua curl git
 ```
 
 ### Debian / Ubuntu
 
 ```sh
 sudo apt install build-essential cmake luajit gettext libvulkan1 libvulkan-dev \
-  vulkan-headers spirv-headers liblua5.4-dev libcurl4-openssl-dev git
+  vulkan-headers liblua5.4-dev libcurl4-openssl-dev git
 ```
 
 ### Fedora
@@ -25,7 +25,7 @@ sudo apt install build-essential cmake luajit gettext libvulkan1 libvulkan-dev \
 ```sh
 sudo dnf group install 'Development Tools'
 sudo dnf install cmake luajit gettext vulkan-loader vulkan-loader-devel \
-  vulkan-headers spirv-headers lua-devel libcurl-devel git
+  vulkan-headers lua-devel libcurl-devel git
 ```
 
 ### Optional
@@ -45,7 +45,7 @@ cd jenova
 # Verify dependencies
 ./scripts/preflight-check.sh --verbose
 
-# Build everything: llama.cpp (Vulkan) + jvim + web
+# Build everything: jvim + web + jenova-ui
 make
 
 # Deploy to system
@@ -61,10 +61,13 @@ Or use the streamlined one-command installer:
 ## Build Components Individually
 
 ```sh
-make llama          # llama.cpp with Vulkan support
-make llama-hybrid   # llama.cpp with Vulkan + CUDA (NVIDIA multi-GPU)
 make jvim           # Bundled Neovim hard-fork
 make web            # Web UI (requires Node.js)
+make jenova-ui      # Desktop Manager
+
+# Advanced users can compile the backend from source:
+make llama          # llama.cpp with Vulkan support
+make llama-hybrid   # llama.cpp with Vulkan + CUDA (NVIDIA multi-GPU)
 ```
 
 ## NVIDIA GPU (CUDA)

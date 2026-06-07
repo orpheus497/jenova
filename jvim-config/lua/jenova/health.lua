@@ -240,13 +240,22 @@ function M.check()
 
   -- Check JENOVA_ROOT for llama-server binary
   local jenova_root = vim.env.JENOVA_ROOT or vim.fn.expand("~/Projects/jenova")
-  local llama_bin   = jenova_root .. "/external/llama.cpp/build/bin/llama-server"
+  local llama_bin   = jenova_root .. "/bin/llama-server"
+  
+  -- Fallback to advanced source build if pre-built is missing
+  if vim.fn.filereadable(llama_bin) == 0 then
+      local source_bin = jenova_root .. "/external/llama.cpp/build/bin/llama-server"
+      if vim.fn.filereadable(source_bin) == 1 then
+          llama_bin = source_bin
+      end
+  end
+
   if vim.fn.filereadable(llama_bin) == 1 then
     h.ok("llama-server binary found at " .. llama_bin)
   else
     h.error(
       "llama-server not found at " .. llama_bin,
-      "Build llama.cpp: cd " .. jenova_root .. "/llama.cpp && cmake -B build -DGGML_VULKAN=ON && cmake --build build -j$(nproc)"
+      "Run the installer to deploy the pre-built binary, or build it manually: cd " .. jenova_root .. " && make llama"
     )
   end
 

@@ -176,7 +176,7 @@ cmd_install() {
         MAKE_CMD="make"
     fi
     
-    COMPONENTS="llama jvim jenova-ui"
+    COMPONENTS="jvim jenova-ui"
     [ "$MINIMAL" = "0" ] && COMPONENTS="$COMPONENTS web"
     
     for component in $COMPONENTS; do

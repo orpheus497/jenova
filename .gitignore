@@ -4,7 +4,7 @@
 
 # --- Build Artifacts ---
 /public/
-/bin/llama-server
+!/bin/llama-server
 /bin/jenova-desktop
 /bin/jenova-ui
 /jenova-ui/jenova-ui

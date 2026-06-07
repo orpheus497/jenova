@@ -18,9 +18,9 @@
 
 .PHONY: all llama llama-hybrid jvim web jenova-ui install preflight verify clean help clean-root
 
-all: preflight llama jvim jenova-ui web
+all: preflight jvim jenova-ui web
 	@echo ""
-	@echo "✅ Jenova build complete (external/llama.cpp + jvim + jenova-ui + web)"
+	@echo "✅ Jenova build complete (jvim + jenova-ui + web)"
 	@echo "   Run 'make install' (or scripts/install.sh) to deploy."
 
 llama:
@@ -73,7 +73,7 @@ jenova-ui:
 	@cp jenova-ui/jenova-ui bin/jenova-ui || exit 1
 	@echo "   jenova-ui built: bin/jenova-ui"
 
-install: preflight llama jvim jenova-ui web
+install: preflight jvim jenova-ui web
 	@./scripts/install.sh
 
 install-jenova:
@@ -101,7 +101,7 @@ help:
 	@echo "Jenova Cognitive Architecture — build targets"
 	@echo ""
 	@echo "  Build targets:"
-	@echo "    make                Build external/llama.cpp + jvim + web"
+	@echo "    make                Build jvim + web + jenova-ui"
 	@echo "    make llama          Build only external/llama.cpp (Vulkan)"
 	@echo "    make llama-hybrid   Build external/llama.cpp (Vulkan + CUDA)"
 	@echo "    make jvim           Build only the bundled jvim editor"

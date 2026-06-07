@@ -15,8 +15,8 @@ cd jenova
 
 **What it does:**
 - ✓ Detects your OS and package manager automatically
-- ✓ Installs all required system dependencies
-- ✓ Builds Jenova components (llama.cpp, jvim, Web UI)
+- ✓ Installs all required system runtime dependencies
+- ✓ Builds Jenova components (jvim, Web UI) and deploys pre-built llama-server backend
 - ✓ Deploys a standalone system to ~/Jenova (bin/, lib/, etc/, public/)
 - ✓ Symlinks launchers to ~/.local/bin/ (jvim, jenova, jenova-ca, etc.)
 - ✓ Downloads AI models (~5-10GB)

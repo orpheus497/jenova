@@ -80,7 +80,7 @@ if [ "$JENOVA_PKG_MGR" = "none" ]; then
     echo "  • Package manager is not installed"
     echo ""
     echo "Please install dependencies manually. See docs/installation/dependencies.md"
-    echo "Required: git, cmake, luajit, gettext, vulkan-loader, spirv-headers, lua54, curl"
+    echo "Required: git, cmake, luajit, gettext, vulkan-loader, lua54, curl"
     echo "Optional: glslc, dialog, clangd, stylua, node"
     exit 1
 fi
