@@ -491,12 +491,14 @@ show_action_menu() {
                 if [ "$mode" = "deploy" ]; then
                     # Quick install mode: just run install.sh with appropriate skip flags
                     # but ensure the component we want is NOT skipped.
-                    case "$suffix" in
-                        "jenova_core") "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama ;;
-                        "jvim")        "$JENOVA_ROOT/scripts/install.sh" --skip-config --skip-llama ;;
-                        "llama")       "$JENOVA_ROOT/scripts/install.sh" --skip-config --skip-jvim ;;
-                        *)             "${action}_${suffix}" ;; # Fallback
-                    esac
+                        case "$suffix" in
+                            "jenova_core") "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama --skip-ui --skip-web ;;
+                            "jvim")        "$JENOVA_ROOT/scripts/install.sh" --skip-config --skip-llama --skip-ui --skip-web ;;
+                            "llama")       "$JENOVA_ROOT/scripts/install.sh" --skip-config --skip-jvim --skip-ui --skip-web ;;
+                            "webui")       "$JENOVA_ROOT/scripts/install.sh" --skip-config --skip-jvim --skip-llama --skip-ui ;;
+                            "jenova_ui")   "$JENOVA_ROOT/scripts/install.sh" --skip-config --skip-jvim --skip-llama --skip-web ;;
+                            *)             "${action}_${suffix}" ;; # Fallback
+                        esac
                     _ret=$?
                 else
                     # Call the action function with potential extra flags
@@ -505,10 +507,10 @@ show_action_menu() {
                     if [ "$_ret" = "0" ] && [ "$action" = "install" ]; then
                         printf "\nDeploying %s after successful build...\n" "$item"
                         case "$suffix" in
-                            "jvim")        "$JENOVA_ROOT/scripts/install.sh" --skip-llama ;;
-                            "llama")       "$JENOVA_ROOT/scripts/install.sh" --skip-jvim ;;
-                            "webui")       "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama ;;
-                            "jenova_ui")   "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama ;;
+                            "jvim")        "$JENOVA_ROOT/scripts/install.sh" --skip-llama --skip-ui --skip-web ;;
+                            "llama")       "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-ui --skip-web ;;
+                            "webui")       "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama --skip-ui ;;
+                            "jenova_ui")   "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama --skip-web ;;
                         esac
                         _ret=$?
                     fi

@@ -49,8 +49,7 @@ make web                # Web UI (requires npm/Node.js)
 make jenova-ui          # Desktop Manager
 
 # Advanced users can build the backend from source:
-make llama              # Inference backend (Vulkan)
-make llama-hybrid       # Vulkan + CUDA (if multi-GPU)
+make llama              # Inference backend
 
 # Clean and rebuild if needed:
 make clean

@@ -66,8 +66,7 @@ make web            # Web UI (requires Node.js)
 make jenova-ui      # Desktop Manager
 
 # Advanced users can compile the backend from source:
-make llama          # llama.cpp with Vulkan support
-make llama-hybrid   # llama.cpp with Vulkan + CUDA (NVIDIA multi-GPU)
+make llama          # llama.cpp with Vulkan + CUDA (auto-detected)
 ```
 
 ## NVIDIA GPU (CUDA)
@@ -80,8 +79,8 @@ If you have an NVIDIA GPU and want CUDA acceleration alongside Vulkan:
 # Ubuntu: sudo apt install nvidia-cuda-toolkit
 # Fedora: sudo dnf install cuda
 
-# Build with both backends
-make llama-hybrid
+# Build from source
+make llama
 ```
 
 The CUDA profile (`Linux/CUDA/dgpu/nvidia-generic`) will be auto-detected.

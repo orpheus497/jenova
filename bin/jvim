@@ -183,7 +183,7 @@ print_check_env() {
 
 # Point Neovim at the deployed jvim config (~/.config/jvim) and resolved runtime.
 # XDG_CONFIG_HOME is intentionally left at its default so Neovim resolves
-# NVIM_APPNAME="jvim" to ~/.config/jvim (deployed by install.sh / scripts/update.sh).
+# NVIM_APPNAME="jvim" to ~/.config/jvim (deployed by install.sh).
 XDG_DATA_HOME="${JENOVA_HOME}/share"; export XDG_DATA_HOME
 NVIM_APPNAME="jvim"; export NVIM_APPNAME
 VIMRUNTIME="$JENOVA_ROOT/jvim/runtime"; export VIMRUNTIME

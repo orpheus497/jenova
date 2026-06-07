@@ -17,6 +17,7 @@
 #   --skip-config  Skip the jvim user-config deployment step
 #   --skip-jvim    Skip building the bundled jvim editor (jvim/)
 #   --skip-llama   Skip llama.cpp build check
+#   --skip-ui      Skip deploying jenova-ui (Desktop Manager)
 #   --skip-web     Skip building the JCA Web UI (jca_web/)
 #   --client-only  LAN client install: skip llama.cpp, skip jvim build,
 #                  skip model downloads, skip web UI. Use when this host will only ever
@@ -57,6 +58,7 @@ LINK=0
 SKIP_NVIM=0
 SKIP_JVIM=0
 SKIP_LLAMA=0
+SKIP_UI=0
 SKIP_WEB=0
 CLIENT_ONLY=0
 
@@ -67,8 +69,9 @@ for _arg in "$@"; do
         --skip-config|--skip-nvim) SKIP_NVIM=1 ;;
         --skip-jvim)   SKIP_JVIM=1 ;;
         --skip-llama)  SKIP_LLAMA=1 ;;
+        --skip-ui)     SKIP_UI=1 ;;
         --skip-web)    SKIP_WEB=1 ;;
-        --client-only) CLIENT_ONLY=1; SKIP_LLAMA=1; SKIP_JVIM=1; SKIP_WEB=1 ;;
+        --client-only) CLIENT_ONLY=1; SKIP_LLAMA=1; SKIP_JVIM=1; SKIP_UI=1; SKIP_WEB=1 ;;
         -h|--help)
             sed -n '2,32p' "$0"
             exit 0
@@ -257,10 +260,10 @@ if [ "$SKIP_NVIM" = "0" ]; then
         esac
     else
         if [ "$SKIP_JVIM" = "0" ]; then
-            info "No editor found — will build bundled jvim later in this script"
-        else
-            fail "No editor found. Build the bundled jvim: make jvim"
+            fail "No editor found. Build the bundled jvim first: make jvim"
             ERRORS=$((ERRORS + 1))
+        else
+            info "Skipping jvim editor requirement (--skip-jvim)"
         fi
     fi
     check_optional "gmake"  "pkg install gmake  (needed for telescope-fzf-native)"
@@ -325,26 +328,23 @@ elif [ "$SKIP_LLAMA" = "0" ]; then
                 ERRORS=$((ERRORS + 1))
             fi
         else
+            printf "${_B}  ?${_N} Initialize submodule and build from source? [y/N] "
+            read -r _ans_build < /dev/tty || _ans_build="N"
+            case "$_ans_build" in
+                y|Y|yes|YES)
+                    info "Initializing submodule and building..."
+                    if (cd "$JENOVA_ROOT" && git submodule update --init external/llama.cpp) && "$JENOVA_ROOT/bin/build-llama"; then
+                        cp "$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server" "$LLAMA_BIN"
+                        ok "Successfully built and deployed llama-server."
+                    else
+                        fail "Failed to build llama-server from source."
+                        ERRORS=$((ERRORS + 1))
+                    fi
+                    ;;
                 *)
-                    printf "${_B}  ?${_N} Initialize submodule and build from source? [y/N] "
-                    read -r _ans_build < /dev/tty || _ans_build="N"
-                    case "$_ans_build" in
-                        y|Y|yes|YES)
-                            info "Initializing submodule and building..."
-                            if (cd "$JENOVA_ROOT" && git submodule update --init external/llama.cpp) && "$JENOVA_ROOT/bin/build-llama"; then
-                                cp "$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server" "$LLAMA_BIN"
-                                ok "Successfully built and deployed llama-server."
-                            else
-                                fail "Failed to build llama-server from source."
-                                ERRORS=$((ERRORS + 1))
-                            fi
-                            ;;
-                        *)
-                            warn "llama-server not found and no action taken."
-                            warn "You must deploy it to $LLAMA_BIN or run installer again."
-                            WARNINGS=$((WARNINGS + 1))
-                            ;;
-                    esac
+                    warn "llama-server not found and no action taken."
+                    warn "You must deploy it to $LLAMA_BIN or run installer again."
+                    WARNINGS=$((WARNINGS + 1))
                     ;;
             esac
         fi
@@ -429,7 +429,6 @@ fi
         fi
         info "Plugins ship vendored inside jvim/runtime/pack/jenova/start/ — no network fetch required."
     fi
-fi
 
 # ---------------------------------------------------------------------------
 # 8. Deploy to JENOVA_HOME (Strict Separation)
@@ -486,7 +485,7 @@ if [ -f "$_LLAMA_BUILD_BIN" ]; then
 fi
 
 
-if [ -f "$JENOVA_ROOT/jenova-ui/jenova-ui" ]; then
+if [ "$SKIP_UI" = "0" ] && [ -f "$JENOVA_ROOT/jenova-ui/jenova-ui" ]; then
     _verify_and_copy_bin "$JENOVA_ROOT/jenova-ui/jenova-ui" "$JENOVA_HOME/bin/jenova-ui"
 fi
 
@@ -685,8 +684,8 @@ else
     echo "       Agent:  $JENOVA_HOME/models/agent/"
     echo "       Embed:  $JENOVA_HOME/models/embed/"
     echo "       Draft:  $JENOVA_HOME/models/draft/"
-    echo "  2. Build llama.cpp if not done:"
-    echo "       make llama"
+    echo "  2. Ensure llama-server is deployed:"
+    echo "       Check bin/llama-server or build via advanced submodule"
     echo "  3. Start the backend:  jenova-ca --daemon"
     echo "     Or launch agent:    jenova"
     echo "     Or use Web UI:      Open http://localhost:8080 in a browser"

@@ -46,8 +46,7 @@ The two repositories are designed to be installed together:
    If `jvim` detects it is running without the Jenova backend, it operates
    as a standalone editor — Jenova plugins will fall back to LAN scanning.
 
-`./uninstall.sh` in the Jenova repo only removes the Jenova half. The jvim
-binary is uninstalled separately from this repository's source tree with
+The jvim binary is uninstalled separately from this repository's source tree with
 `sudo cmake --build build/ --target uninstall`.
 
 ## Gratitude & Inspiration: Native UI Modules
