@@ -389,7 +389,6 @@ fi
 # ---------------------------------------------------------------------------
 # 7. Neovim config installation
 # ---------------------------------------------------------------------------
-if [ "$SKIP_NVIM" = "0" ]; then
     info "Installing jvim configuration..."
 
     if [ -d "$JVIM_CONFIG_DST" ] && [ "$FORCE" = "0" ]; then
@@ -452,7 +451,7 @@ fi
 info "Deploying standalone system to $JENOVA_HOME..."
 
 # 8.1 Create directory structure
-for _d in bin etc lib public scripts hardware-profiles share var/log var/cache var/run models/agent models/embed models/draft jvim/runtime; do
+for _d in bin etc lib public hardware-profiles share var/log var/cache var/run models/agent models/embed models/draft jvim/runtime; do
     mkdir -p "$JENOVA_HOME/$_d"
 done
 
@@ -514,12 +513,11 @@ fi
 
 # 8.3 Deploy Assets, Scripts, and Config
 cp -R "$JENOVA_ROOT/lib/"* "$JENOVA_HOME/lib/"
-cp -R "$JENOVA_ROOT/scripts/"* "$JENOVA_HOME/scripts/"
 cp -R "$JENOVA_ROOT/hardware-profiles/"* "$JENOVA_HOME/hardware-profiles/"
 cp -R "$JENOVA_ROOT/jvim/runtime/"* "$JENOVA_HOME/jvim/runtime/"
 [ -d "$JENOVA_ROOT/public" ] && cp -R "$JENOVA_ROOT/public/"* "$JENOVA_HOME/public/"
 
-ok "Deployed libraries, scripts, hardware profiles, runtime, and web assets"
+ok "Deployed libraries, hardware profiles, runtime, and web assets"
 
 # 8.4 Generate Path-Locked Config
 cat > "$JENOVA_HOME/etc/jenova.local.conf" <<EOF
@@ -659,7 +657,7 @@ if [ -n "$_PROFILE" ]; then
     fi
 elif [ "$JENOVA_OS" = "freebsd" ]; then
     info "System tuning..."
-    warn "Run 'sudo $JENOVA_HOME/scripts/jenova-setup' once to tune vm.* sysctls and ZFS ARC"
+    warn "Run 'sudo $JENOVA_ROOT/scripts/jenova-setup' once to tune vm.* sysctls and ZFS ARC"
     warn "for optimal Optane swap / Iris Xe UMA performance."
     WARNINGS=$((WARNINGS + 1))
 fi
@@ -714,8 +712,6 @@ else
     fi
     echo ""
     echo "  Maintenance:"
-    echo "    scripts/cleanup.sh --all      — clear logs and cache"
-    echo "    scripts/uninstall.sh          — remove deployed files (preserves models)"
     echo "    bin/jvim --check        — print resolved env without launching editor"
 fi
 echo

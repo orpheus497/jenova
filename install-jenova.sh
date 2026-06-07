@@ -8,8 +8,6 @@
 #
 # Commands:
 #   install     (Default) Build and deploy Jenova to $JENOVA_HOME
-#   uninstall   Remove Jenova binaries and config (preserves workspaces)
-#   update      Update source code and rebuild all components
 #   status      Check system compatibility and installation status
 #   tui         Launch the interactive TUI manager
 #   help        Show this help message
@@ -86,7 +84,6 @@ show_help() {
     echo ""
     echo "Commands:"
     echo "  install     Build and deploy Jenova to $JENOVA_HOME"
-    echo "  uninstall   Remove Jenova binaries and config (preserves workspaces)"
     echo "  status      Verify installation and system environment"
     echo "  tui         Launch the interactive TUI manager"
     echo "  help        Show this help message"
@@ -150,6 +147,7 @@ cmd_install() {
     
     # 1. Install dependencies
     print_step "Installing system dependencies..."
+    print_info "You may be prompted for your sudo password to install OS packages."
     "$JENOVA_ROOT/scripts/install-dependencies.sh"
     
     # 2. Pre-flight checks
@@ -210,11 +208,6 @@ cmd_install() {
     echo "  jvim            # Just the editor"
 }
 
-cmd_uninstall() {
-    print_header "Uninstalling Jenova"
-    "$JENOVA_ROOT/scripts/uninstall.sh" "$@"
-}
-
 cmd_status() {
     print_header "Jenova Status"
     "$JENOVA_ROOT/scripts/verify-install.sh" --full
@@ -240,7 +233,6 @@ esac
 
 case "$COMMAND" in
     install)    cmd_install "$@" ;;
-    uninstall)  cmd_uninstall "$@" ;;
     status|verify) cmd_status "$@" ;;
     tui)        exec "$JENOVA_ROOT/scripts/jenova-manager.sh" ;;
     help|--help|-h) show_help ;;

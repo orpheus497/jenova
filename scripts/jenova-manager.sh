@@ -404,52 +404,7 @@ install_jenova_ui() {
 }
 
 
-update_jenova_core() {
-    printf "%s%sUpdating Jenova Core...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
-    "$JENOVA_ROOT/scripts/update.sh"
-}
-update_jvim() {
-    printf "%s%sUpdating jvim (in-tree)...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
-    "$JENOVA_ROOT/scripts/update.sh" --skip-rebuild --skip-nvim
-}
-update_llama() {
-    printf "%s%sUpdating external/llama.cpp (dependency repo)...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
-    "$JENOVA_ROOT/scripts/update.sh" --skip-nvim --skip-jvim
-}
-update_webui() {
-    printf "%s%sUpdating Web UI...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
-    "$JENOVA_ROOT/scripts/update.sh" --web --skip-nvim --skip-rebuild --skip-jvim
-}
-update_jenova_ui() {
-    printf "%s%sUpdating jenova-ui (Desktop Manager)...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
-    "$JENOVA_ROOT/scripts/update.sh" --ui --skip-nvim --skip-rebuild --skip-jvim
-}
 
-
-uninstall_jenova_core() {
-    printf "%s%sUninstalling Jenova Core...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
-    "$JENOVA_ROOT/scripts/uninstall.sh"
-}
-uninstall_jvim() {
-    printf "%s%sRemoving in-tree jvim build artifacts...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
-    rm -rf "$JENOVA_ROOT/jvim/build" "$JENOVA_ROOT/jvim/install"
-    echo "jvim build artifacts removed."
-}
-uninstall_llama() {
-    printf "%s%sUninstalling external/llama.cpp...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
-    rm -rf "$JENOVA_ROOT/external/llama.cpp/build"
-    echo "external/llama.cpp build removed."
-}
-uninstall_webui() {
-    printf "%s%sRemoving Web UI build artifacts...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
-    rm -rf "$JENOVA_ROOT/public" "$JENOVA_ROOT/jca_web/node_modules"
-    echo "Web UI build artifacts removed."
-}
-uninstall_jenova_ui() {
-    printf "%s%sRemoving jenova-ui build artifacts...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
-    rm -f "$JENOVA_ROOT/jenova-ui/jenova-ui" "$JENOVA_ROOT/bin/jenova-ui"
-    echo "jenova-ui build artifacts removed."
-}
 # --- Component detection (extended) ---
 check_webui() { [ -f "$JENOVA_ROOT/public/bundle.js" ]; }
 check_jenova_ui() { [ -x "$JENOVA_ROOT/bin/jenova-ui" ] || [ -x "$JENOVA_ROOT/jenova-ui/jenova-ui" ]; }
@@ -490,18 +445,7 @@ show_action_menu() {
     printf "%s" "$RESET$CLEAR"
     
     # Global setting for this session
-    PULL_MODE="pull"
-    if [ "$action" = "update" ]; then
-        interactive_menu "Update Strategy" \
-            "Update & Rebuild (Fetch latest from origin)" \
-            "Rebuild only (Local sources, ensure binaries match)" \
-            "Cancel"
-        case "$MENU_CHOICE" in
-            0) PULL_MODE="pull" ;;
-            1) PULL_MODE="nopull" ;;
-            *) return ;;
-        esac
-    fi
+    PULL_MODE="nopull"
 
     i=0
     while [ $i -lt $CHECKLIST_COUNT ]; do
@@ -525,7 +469,6 @@ show_action_menu() {
         [ -n "$confirm_msg" ] && msg="$(printf "$confirm_msg" "$item")"
         
         defaultno="0"
-        [ "$action" = "uninstall" ] && defaultno="1"
 
         if confirm_prompt "$msg" "$defaultno"; then
             exit_alt_screen
@@ -557,29 +500,17 @@ show_action_menu() {
                     _ret=$?
                 else
                     # Call the action function with potential extra flags
-                    if [ "$action" = "update" ]; then
-                        # Pass _extra_flags to update functions
+                    "${action}_${suffix}"
+                    _ret=$?
+                    if [ "$_ret" = "0" ] && [ "$action" = "install" ]; then
+                        printf "\nDeploying %s after successful build...\n" "$item"
                         case "$suffix" in
-                            "jenova_core") "$JENOVA_ROOT/scripts/update.sh" $_extra_flags ;;
-                            "jvim")        "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --skip-rebuild --skip-nvim ;;
-                            "llama")       "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --skip-nvim --skip-jvim ;;
-                            "webui")       "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --web --skip-nvim --skip-rebuild --skip-jvim ;;
-                            "jenova_ui")   "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --ui --skip-nvim --skip-rebuild --skip-jvim ;;
+                            "jvim")        "$JENOVA_ROOT/scripts/install.sh" --skip-llama ;;
+                            "llama")       "$JENOVA_ROOT/scripts/install.sh" --skip-jvim ;;
+                            "webui")       "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama ;;
+                            "jenova_ui")   "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama ;;
                         esac
                         _ret=$?
-                    else
-                        "${action}_${suffix}"
-                        _ret=$?
-                        if [ "$_ret" = "0" ] && [ "$action" = "install" ]; then
-                            printf "\nDeploying %s after successful build...\n" "$item"
-                            case "$suffix" in
-                                "jvim")        "$JENOVA_ROOT/scripts/install.sh" --skip-llama ;;
-                                "llama")       "$JENOVA_ROOT/scripts/install.sh" --skip-jvim ;;
-                                "webui")       "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama ;;
-                                "jenova_ui")   "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama ;;
-                            esac
-                            _ret=$?
-                        fi
                     fi
                 fi
 
@@ -720,13 +651,6 @@ show_install_menu() {
     show_action_menu "install" "Install Jenova Components" "Select components to install (already installed are unchecked):" "on" ""
 }
 
-show_update_menu() {
-    show_action_menu "update" "Update Jenova Components" "Select components to update:" "on" ""
-}
-
-show_uninstall_menu() {
-    show_action_menu "uninstall" "Uninstall Jenova Components" "Select components to uninstall:" "off" "Are you absolutely sure you want to uninstall %s? This may remove configuration and binaries."
-}
 
 show_main_menu() {
     enter_alt_screen
@@ -737,8 +661,6 @@ show_main_menu() {
             "Install Toolchain (LSPs, Formatters)" \
             "Pre-flight Checks" \
             "Build/Deploy Components" \
-            "Update Components" \
-            "Uninstall Components" \
             "Download AI Models" \
             "Exit"
             
@@ -748,10 +670,8 @@ show_main_menu() {
             2) run_toolchain ;;
             3) run_preflight ;;
             4) show_install_menu ;;
-            5) show_update_menu ;;
-            6) show_uninstall_menu ;;
-            7) run_model_downloader ;;
-            8) cleanup; exit 0 ;;
+            5) run_model_downloader ;;
+            6) cleanup; exit 0 ;;
         esac
     done
 }

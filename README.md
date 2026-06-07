@@ -70,14 +70,6 @@ Jenova installs launchers to `~/.local/bin` that point to the standalone install
 
 ---
 
-## 🔄 Updating
-
-```sh
-# Update everything (pulls repo, rebuilds changed components, redeploys to ~/Jenova)
-./install-jenova.sh update
-```
-
----
 
 ## 🤖 Advised Models
 
