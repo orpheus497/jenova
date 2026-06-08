@@ -196,7 +196,7 @@ if [ "$ENABLE_METAL" -eq 1 ]; then
 fi
 
 cmake "$@"
-cmake --build "$BUILD_DIR" --config Release -j "$JOBS"
+cmake --build "$BUILD_DIR" --config Release -j "$JOBS" --target llama-server
 
 LLAMA_SERVER="$BUILD_DIR/bin/llama-server"
 if [ ! -x "$LLAMA_SERVER" ]; then

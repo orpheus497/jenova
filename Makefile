@@ -70,6 +70,7 @@ jenova-ui:
 	@echo "   jenova-ui built: bin/jenova-ui"
 
 install: preflight jvim jenova-ui web
+	@echo "Run './install-jenova.sh' or 'make install-jenova' for the full installation experience."
 	@./scripts/install.sh
 
 install-jenova:

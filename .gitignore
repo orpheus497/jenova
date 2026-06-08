@@ -4,11 +4,19 @@
 
 # --- Build Artifacts ---
 /public/
-!/bin/llama-server
 /bin/jenova-desktop
 /bin/jenova-ui
 /jenova-ui/jenova-ui
 /external/llama.cpp/build/
+
+# Compiled llama.cpp artifacts (platform-specific — always built from source)
+/bin/llama-*
+!/bin/build-llama
+/bin/llama
+/bin/test-*
+/bin/export-graph-ops
+/bin/lib*.so*
+/bin/lib*.dylib*
 
 
 /cli-agent/build/

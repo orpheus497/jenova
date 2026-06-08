@@ -319,11 +319,7 @@ if [ "$JENOVA_GLSLC_OK" = "0" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# 5. llama.cpp build check
+# 4. llama.cpp build check
 # ---------------------------------------------------------------------------
 if [ "$CLIENT_ONLY" = "1" ]; then
     info "Skipping llama.cpp build check (--client-only)"
@@ -372,7 +368,7 @@ fi
 
 
 # ---------------------------------------------------------------------------
-# 6. Model files — check and offer to download missing models
+# 5. Model files — check and offer to download missing models
 # ---------------------------------------------------------------------------
 if [ "$CLIENT_ONLY" = "1" ] || [ "${JENOVA_SKIP_MODELS:-0}" = "1" ]; then
     info "Skipping model checks..."
@@ -389,7 +385,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 7. Neovim config installation
+# 6. Neovim config installation
 # ---------------------------------------------------------------------------
     info "Installing jvim configuration..."
 
@@ -447,7 +443,7 @@ fi
     fi
 
 # ---------------------------------------------------------------------------
-# 8. Deploy to JENOVA_HOME (Strict Separation)
+# 7. Deploy to JENOVA_HOME (Strict Separation)
 # ---------------------------------------------------------------------------
 info "Deploying standalone system to $JENOVA_HOME..."
 
@@ -496,10 +492,14 @@ fi
 if [ -f "$_LLAMA_BUILD_BIN" ]; then
     _verify_and_copy_bin "$_LLAMA_BUILD_BIN" "$JENOVA_HOME/bin/llama-server"
     # Copy shared libs if they exist (only really applicable for source builds)
-    for _lib in "$JENOVA_ROOT/external/llama.cpp/build/bin/"*.so* "$JENOVA_ROOT/external/llama.cpp/build/bin/"*.dylib*; do
-        if [ -f "$_lib" ]; then
-            install -m 755 "$_lib" "$JENOVA_HOME/bin/"
-        fi
+    _REQUIRED_LIBS="libggml-base libggml-cpu libggml-cuda libggml-vulkan libggml libllama-common libllama-server-impl libllama libmtmd"
+    for _libname in $_REQUIRED_LIBS; do
+        for _lib in "$JENOVA_ROOT/external/llama.cpp/build/bin/"${_libname}.so* \
+                    "$JENOVA_ROOT/external/llama.cpp/build/bin/"${_libname}.dylib*; do
+            if [ -f "$_lib" ]; then
+                install -m 755 "$_lib" "$JENOVA_HOME/bin/"
+            fi
+        done
     done
     ok "Deployed llama.cpp backend to $JENOVA_HOME/bin"
 fi
@@ -653,7 +653,7 @@ if [ "$JENOVA_OS" = "linux" ] || [ "$JENOVA_OS" = "freebsd" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 9. System Tuning Reminders
+# 8. System Tuning Reminders
 # ---------------------------------------------------------------------------
 if [ -n "$_PROFILE" ]; then
     _PROFILE_DIR="$JENOVA_HOME/hardware-profiles/$_PROFILE"
