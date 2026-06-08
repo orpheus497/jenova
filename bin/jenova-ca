@@ -32,9 +32,9 @@ fi
 if [ -n "${JENOVA_ROOT:-}" ] && [ -f "$JENOVA_ROOT/etc/jenova.conf" ]; then
     JENOVA_ROOT="$(cd "$JENOVA_ROOT" 2>/dev/null && pwd || echo "$JENOVA_ROOT")"; export JENOVA_ROOT
 elif [ -f "$_script_dir/../etc/jenova.conf" ]; then
-    JENOVA_ROOT="$(cd "${JENOVA_ROOT:-$_script_dir/..}" 2>/dev/null && pwd || echo "${JENOVA_ROOT:-$_script_dir/..}")"; export JENOVA_ROOT
+    JENOVA_ROOT="$(cd "$_script_dir/.." 2>/dev/null && pwd || echo "$_script_dir/..")"; export JENOVA_ROOT
 elif [ -f "$_script_dir/etc/jenova.conf" ]; then
-    JENOVA_ROOT="$(cd "${JENOVA_ROOT:-$_script_dir}" 2>/dev/null && pwd || echo "${JENOVA_ROOT:-$_script_dir}")"; export JENOVA_ROOT
+    JENOVA_ROOT="$(cd "$_script_dir" 2>/dev/null && pwd || echo "$_script_dir")"; export JENOVA_ROOT
 else
     echo "Error: etc/jenova.conf not found."
     exit 1
