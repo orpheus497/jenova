@@ -13,24 +13,29 @@ set -e
 LLAMA_PID=""; PROXY_PID=""; EMBED_PID=""
 HOST=""; PORT=""; LLAMA_PORT=""; LLAMA_EMBED_PORT=""
 
-_REAL_EXE=$(realpath "$0" 2>/dev/null || readlink -f "$0")
-_BIN_DIR=$(dirname "$_REAL_EXE")
-
-if [ -f "$_BIN_DIR/../etc/jenova.conf" ]; then
-    JENOVA_ROOT="$(cd "$_BIN_DIR/.." && pwd)"; export JENOVA_ROOT
-elif [ -f "$_BIN_DIR/etc/jenova.conf" ]; then
-    JENOVA_ROOT="$(cd "$_BIN_DIR" && pwd)"; export JENOVA_ROOT
+_script="$0"
+[ "${_script#*/*}" = "${_script}" ] && _script=$(command -v "$_script" 2>/dev/null || echo "$_script")
+if command -v realpath >/dev/null 2>&1; then
+    _script_dir=$(dirname "$(realpath "$_script")")
 else
-    # Fallback
-    SCRIPT_DIR=$(dirname "$(realpath "$0")")
-    if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
-        JENOVA_ROOT="$SCRIPT_DIR"; export JENOVA_ROOT
-    elif [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
-        JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"; export JENOVA_ROOT
-    else
-        echo "Error: etc/jenova.conf not found."
-        exit 1
-    fi
+    # Fallback to manual symlink resolution if realpath is not available
+    while [ -h "$_script" ]; do
+        _target=$(readlink "$_script")
+        case "$_target" in
+            /*) _script="$_target" ;;
+            *) _script="$(dirname "$_script")/$_target" ;;
+        esac
+    done
+    _script_dir=$(dirname "$_script")
+fi
+
+if [ -f "$_script_dir/../etc/jenova.conf" ]; then
+    JENOVA_ROOT="$(cd "${JENOVA_ROOT:-$_script_dir/..}" 2>/dev/null && pwd || echo "${JENOVA_ROOT:-$_script_dir/..}")"; export JENOVA_ROOT
+elif [ -f "$_script_dir/etc/jenova.conf" ]; then
+    JENOVA_ROOT="$(cd "${JENOVA_ROOT:-$_script_dir}" 2>/dev/null && pwd || echo "${JENOVA_ROOT:-$_script_dir}")"; export JENOVA_ROOT
+else
+    echo "Error: etc/jenova.conf not found."
+    exit 1
 fi
 
 # Scrub repository-specific variables

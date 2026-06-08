@@ -17,13 +17,27 @@
 
 set -e
 
-SCRIPT_DIR=$(dirname "$(realpath "$0")")
+_script="$0"
+[ "${_script#*/*}" = "${_script}" ] && _script=$(command -v "$_script" 2>/dev/null || echo "$_script")
+if command -v realpath >/dev/null 2>&1; then
+    _script_dir=$(dirname "$(realpath "$_script")")
+else
+    # Fallback to manual symlink resolution if realpath is not available
+    while [ -h "$_script" ]; do
+        _target=$(readlink "$_script")
+        case "$_target" in
+            /*) _script="$_target" ;;
+            *) _script="$(dirname "$_script")/$_target" ;;
+        esac
+    done
+    _script_dir=$(dirname "$_script")
+fi
 
 # Determine JENOVA_ROOT before loading config
-if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
-    JENOVA_ROOT="$SCRIPT_DIR"; export JENOVA_ROOT
-elif [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
-    JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"; export JENOVA_ROOT
+if [ -f "$_script_dir/etc/jenova.conf" ]; then
+    JENOVA_ROOT="$(cd "${JENOVA_ROOT:-$_script_dir}" 2>/dev/null && pwd || echo "${JENOVA_ROOT:-$_script_dir}")"; export JENOVA_ROOT
+elif [ -f "$_script_dir/../etc/jenova.conf" ]; then
+    JENOVA_ROOT="$(cd "${JENOVA_ROOT:-$_script_dir/..}" 2>/dev/null && pwd || echo "${JENOVA_ROOT:-$_script_dir/..}")"; export JENOVA_ROOT
 else
     echo "Error: etc/jenova.conf not found."
     exit 1
