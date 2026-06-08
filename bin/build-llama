@@ -164,7 +164,7 @@ _cleanup_on_fail() {
     _ec=$?
     if [ $_ec -ne 0 ]; then
         echo "Error: Build failed with exit code $_ec. Cleaning up partial build..." >&2
-        rm -f "$BUILD_DIR/bin/llama-server"
+        [ -n "$BUILD_DIR" ] && rm -f "$BUILD_DIR/bin/llama-server"
     fi
     trap - EXIT
     exit $_ec
@@ -234,7 +234,7 @@ append_devices() {
 if [ "$ENABLE_VULKAN" -eq 1 ]; then
     _vcount=0
     if command -v vulkaninfo >/dev/null 2>&1; then
-        _vcount=$(vulkaninfo --summary 2>/dev/null | grep -c "GPU[0-9]:")
+        _vcount=$(vulkaninfo --summary 2>/dev/null | grep -c "GPU[0-9]:" || true)
     fi
     if [ "$_vcount" -eq 0 ]; then _vcount=1; fi
     append_devices "Vulkan" "$_vcount"
@@ -243,7 +243,7 @@ fi
 if [ "$ENABLE_CUDA" -eq 1 ]; then
     _ccount=0
     if command -v nvidia-smi >/dev/null 2>&1; then
-        _ccount=$(nvidia-smi -L 2>/dev/null | grep -c "GPU [0-9]:")
+        _ccount=$(nvidia-smi -L 2>/dev/null | grep -c "GPU [0-9]:" || true)
     fi
     if [ "$_ccount" -eq 0 ]; then _ccount=1; fi
     append_devices "CUDA" "$_ccount"
