@@ -259,9 +259,11 @@ if [ "$ENABLE_VULKAN" -eq 1 ] && [ "$ENABLE_CUDA" -eq 1 ]; then
 fi
 
 _llama_server_conf="$LLAMA_SERVER"
-case "$LLAMA_SERVER" in
-    "$JENOVA_ROOT"/*) _llama_server_conf="\$JENOVA_ROOT/${LLAMA_SERVER#"$JENOVA_ROOT"/}" ;;
-esac
+if [ -n "$JENOVA_ROOT" ]; then
+    case "$LLAMA_SERVER" in
+        "$JENOVA_ROOT"/*) _llama_server_conf="\$JENOVA_ROOT/${LLAMA_SERVER#"$JENOVA_ROOT"/}" ;;
+    esac
+fi
 
 cat > "$LOCAL_CONF" <<EOF
 #!/bin/sh
