@@ -34,8 +34,13 @@ else
 fi
 
 # Determine JENOVA_ROOT before loading config
-if [ -n "${JENOVA_ROOT:-}" ] && [ -f "$JENOVA_ROOT/etc/jenova.conf" ]; then
-    JENOVA_ROOT="$(cd "$JENOVA_ROOT" 2>/dev/null && pwd || echo "$JENOVA_ROOT")"; export JENOVA_ROOT
+if [ -n "${JENOVA_ROOT:-}" ]; then
+    if [ -f "$JENOVA_ROOT/etc/jenova.conf" ]; then
+        JENOVA_ROOT="$(cd "$JENOVA_ROOT" 2>/dev/null && pwd || echo "$JENOVA_ROOT")"; export JENOVA_ROOT
+    else
+        echo "Error: JENOVA_ROOT is set to '$JENOVA_ROOT', but '$JENOVA_ROOT/etc/jenova.conf' was not found." >&2
+        exit 1
+    fi
 elif [ -f "$_script_dir/etc/jenova.conf" ]; then
     JENOVA_ROOT="$(cd "$_script_dir" 2>/dev/null && pwd || echo "$_script_dir")"; export JENOVA_ROOT
 elif [ -f "$_script_dir/../etc/jenova.conf" ]; then

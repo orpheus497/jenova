@@ -16,7 +16,7 @@
 #   make install    # Run scripts/install.sh (system-aware deploy)
 #   make clean      # Remove build artifacts from both components
 
-.PHONY: all llama jvim web jenova-ui install preflight verify clean help clean-root
+.PHONY: all llama jvim web jenova-ui install install-jenova preflight verify clean help clean-root
 
 all: preflight jvim jenova-ui web
 	@echo ""
