@@ -178,7 +178,7 @@ _cleanup_on_fail() {
     _ec=$?
     if [ $_ec -ne 0 ]; then
         echo "Error: Build failed with exit code $_ec. Cleaning up partial build..." >&2
-        [ -n "$BUILD_DIR" ] && rm -f "$BUILD_DIR/bin/llama-server"
+        [ -n "${BUILD_DIR:-}" ] && rm -f "${BUILD_DIR:-}/bin/llama-server"
     fi
     trap - EXIT
     exit $_ec
