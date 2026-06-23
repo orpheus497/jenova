@@ -26,11 +26,11 @@ The Jenova installation process has been completely streamlined with comprehensi
 
 ### 2. **Post-Installation Verification** (`scripts/verify-install.sh`)
 - ✅ Verifies all binaries installed and accessible
-- ✅ Checks in-tree builds (jvim, llama.cpp, web UI)
+- ✅ Checks in-tree builds (jenova-ui, llama.cpp, web UI)
 - ✅ Validates configuration files deployed
 - ✅ Confirms model files present
 - ✅ Tests runtime directories created and writable
-- ✅ Quick functionality tests (jvim version, luajit available)
+- ✅ Quick functionality tests (jenova-ui version, luajit available)
 - ✅ Optional `--full` integration tests (daemon startup, etc.)
 
 **Usage:**

@@ -5,9 +5,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
 DETECT_HW="$JENOVA_ROOT/hardware-profiles/detect-hardware.sh"
 
-# Create isolated test environment for JENOVA_HOME to prevent modifying real configs
-export JENOVA_HOME="$(mktemp -d)"
-trap 'rm -rf "$JENOVA_HOME"' EXIT INT TERM
+# Create isolated test environment for JCA_HOME to prevent modifying real configs
+export JCA_HOME="$(mktemp -d)"
+trap 'rm -rf "$JCA_HOME"' EXIT INT TERM
 
 echo "Running detect-hardware.sh validation tests..."
 

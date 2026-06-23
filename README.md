@@ -1,6 +1,6 @@
 # <img src="png/jenova.png" width="48" height="48" valign="middle"> Jenova Cognitive Architecture
 
-Jenova is a local-first, hardware-aware AI environment designed for consumer laptops, professional workstations, and headless servers. It integrates an inference backend, a purpose-built terminal IDE (`jvim`), a browser-based Workspace UI, a native Desktop Manager, and an intelligent OS-level System Tray into one cohesive, autonomous ecosystem that runs entirely on your hardware.
+Jenova is a local-first, hardware-aware AI environment designed for consumer laptops, professional workstations, and headless servers. It integrates an inference backend, a browser-based Workspace UI, a native Desktop Manager, and an intelligent OS-level System Tray into one cohesive, autonomous ecosystem that runs entirely on your hardware.
 
 ## 🌌 The Ecosystem
 
@@ -20,10 +20,6 @@ A lightweight, Kanagawa-themed native application written in **C** with **GTK3**
 ### Jenova Workspaces (WebUI)
 An elegant, browser-based chat and workspace UI built with SvelteKit. Served directly by the intelligence proxy on port 8080 for seamless native-feel access. Workspaces are tied to your local filesystem, ensuring seamless transition between graphical chat and terminal editing.
 
-### Jenova Vim (`jvim`)
-The Jenova-specific fork of NeoVim. A comprehensive *Interactive Director Environment* (IDE) with deep agentic assistance, FIM inline completions, inline code mathematical grounding, and autonomous LSP-driven actions right inside your terminal.
-
-
 ### Remote Access (LAN Mode)
 Toggle `LAN Mode` via the System Tray or TUI to bind the backend to `0.0.0.0`. Access your Jenova Workspaces from any device on your local network — smartphones, tablets, or other laptops.
 
@@ -35,33 +31,32 @@ Toggle `LAN Mode` via the System Tray or TUI to bind the backend to `0.0.0.0`. A
 git clone https://github.com/orpheus497/jenova
 cd jenova
 
-# Streamlined, automated installation to ~/Jenova:
+# Streamlined, automated installation to ~/JCA:
 ./install-jenova.sh
 ```
 
-The system is deployed to **`~/Jenova`**, creating a 100% functional disconnect from the source repository. All binaries, libraries, and configurations are self-contained within this directory.
+The system is deployed to **`~/JCA`**, creating a 100% functional disconnect from the source repository. All binaries, libraries, and configurations are self-contained within this directory.
 
 ### Manual Build
 
 ```sh
 make              # Build all components in-tree
-make install      # Deploy to ~/Jenova (Standalone)
+make install      # Deploy to ~/JCA (Standalone)
 make verify       # Verify installation succeeded
 ```
 
-Individual components: `make llama`, `make jvim`, `make web`, `make jenova-ui`.
+Individual components: `make llama`, `make web`, `make jenova-ui`.
 
 ---
 
 ## 💻 Command Line Interface
 
-Jenova installs launchers to `~/.local/bin` that point to the standalone installation in `~/Jenova`.
+Jenova installs launchers to `~/.local/bin` that point to the standalone installation in `~/JCA`.
 
 | Command | Description |
 |---------|-------------|
-| `jenova` | Launch the integrated jvim editor (auto-starts backend) |
-| `jvim [file]` | Launch jvim directly |
-| `jenova-ca start|stop|restart|status` | Control the backend daemon |
+| `jenova` | Start the Jenova CA proxy and backend |
+| `jenova-ca` | Backend Daemon (headless RAG, embedding, tool execution) |
 | `jenova-tui` | Kanagawa-themed terminal manager |
 | `jenova-ui` | Desktop Manager (tray icon + TUI) |
 | `jenova-term` | Dedicated terminal emulator wrapper |
@@ -74,7 +69,7 @@ Jenova installs launchers to `~/.local/bin` that point to the standalone install
 ## 🔄 Updating
 
 ```sh
-# Update everything (pulls repo, rebuilds changed components, redeploys to ~/Jenova)
+# Update everything (pulls repo, rebuilds changed components, redeploys to ~/JCA)
 ./install-jenova.sh update
 ```
 
@@ -98,8 +93,7 @@ Detailed documentation lives in [`docs/`](docs/):
 | System Cohesion | [docs/architecture/cohesion.md](docs/architecture/cohesion.md) |
 | Cognitive Backend | [docs/architecture/backend.md](docs/architecture/backend.md) |
 | Agent System | [docs/architecture/agent.md](docs/architecture/agent.md) |
-| jvim Usage | [docs/usage/jvim.md](docs/usage/jvim.md) |
-| CLI Reference | [docs/usage/cli.md](docs/usage/cli.md) |
+| Launchers & Scripts | [docs/usage/cli.md](docs/usage/cli.md) |
 | Installation Guide | [docs/installation/STREAMLINED.md](docs/installation/STREAMLINED.md) |
 | FreeBSD Notes | [docs/installation/freebsd.md](docs/installation/freebsd.md) |
 | Linux Notes | [docs/installation/linux.md](docs/installation/linux.md) |
@@ -121,8 +115,6 @@ jenova/
 ├── hardware-profiles/      # OS/GPU-specific tuning profiles
 ├── jca_web/                # WebUI source (SvelteKit)
 ├── jenova-ui/              # Desktop Manager source (C/GTK3)
-├── jvim/                   # jvim editor source (Neovim fork)
-├── jvim-config/            # jvim configuration and plugins
 ├── lib/                    # Core Lua modules (proxy, UI, FFI)
 ├── models/                 # Model storage (gitignored — user data)
 ├── png/                    # Icons and branding assets

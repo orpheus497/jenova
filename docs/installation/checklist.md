@@ -40,13 +40,12 @@ llama.cpp and other dependencies are now bundled in the repository's `external/`
 
 ### Step 4: Build Everything
 ```bash
-# Full build: llama.cpp + jvim + web UI
+# Full build: llama.cpp + web UI
 make
 
 # Or build individually:
 make llama              # Inference backend (Vulkan)
 make llama-hybrid       # Vulkan + CUDA (if multi-GPU)
-make jvim               # Editor
 make web                # Web UI (requires npm/Node.js)
 
 # Clean and rebuild if needed:
@@ -56,7 +55,6 @@ make
 
 **⏱️ Expected times:**
 - llama.cpp: 10-30 minutes (depends on CPU)
-- jvim: 5-15 minutes
 - web UI: 2-5 minutes (if npm available)
 
 ### Step 5: Deploy to System
@@ -82,7 +80,6 @@ Installation will:
 - ✓ Check system dependencies
 - ✓ Create runtime directories (~/.jenova, var/log, var/cache)
 - ✓ Auto-detect and apply hardware profile
-- ✓ Deploy jvim config to ~/.config/jvim/
 - ✓ Install symlinks to PATH (~/.local/bin/)
 - ✓ Attempt to install LSP servers, linters, formatters
 - ✓ Display next-step instructions
@@ -119,7 +116,6 @@ jenova-tui
 jenova
 ...
 # Or just the editor (no backend management)
-jvim
 
 # Or just the backend (headless/server mode)
 jenova-ca
@@ -159,8 +155,6 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc  # Bash
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # Zsh
 ```
 
-### jvim Configuration Location
-- **Config:** `~/.config/jvim/`
 - **Plugins:** `~/.local/share/nvim/lazy/`
 - **State:** `~/.local/state/nvim/` (undo, shada, chat history)
 
@@ -267,12 +261,10 @@ curl -I http://localhost:8080/health
 3. ✓ Run system tuning (`sudo jenova-setup`)
 
 ### Recommended
-1. Set `jvim` as your `$EDITOR`
 2. Configure shell keybindings for Jenova CLI
 3. Set up remote access if using LAN client mode
 
 ### Optional
-1. Install additional LSP servers (`:Mason` in jvim)
-2. Configure `.config/jvim/init.lua` for custom plugins
+1. Install additional LSP servers (`:Mason` in jenova-ui)
 3. Set up GitHub integration (OAuth token in `.jenova/auth`)
 4. Enable web search (API key in `.jenova/config`)

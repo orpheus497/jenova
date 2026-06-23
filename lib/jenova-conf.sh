@@ -14,9 +14,8 @@
 #
 # Exports:
 #   LLAMA_SERVER      Path to the llama-server binary
-#   LLAMA_LIB_DIR     Path to directory containing shared libraries (Vulkan/CUDA)
-#   VIMRUNTIME        Path to the Neovim runtime files (for jvim)
-#   JENOVA_HOME       Path to the user's Jenova directory (models, state)
+#   LLAMA_LIB_DIR     Path to llama.cpp shared libraries
+#   JCA_HOME       Path to the user's Jenova directory (models, state)
 #   JENOVA_STATE      Path to the system state directory
 #   LOG_DIR           Path to the log directory
 #   CACHE_DIR         Path to the cache directory
@@ -28,22 +27,20 @@ if [ -f "$JENOVA_ROOT/bin/llama-server" ] && [ ! -d "$JENOVA_ROOT/external/llama
     JENOVA_LAYOUT="installed"; export JENOVA_LAYOUT
     LLAMA_SERVER="$JENOVA_ROOT/bin/llama-server"; export LLAMA_SERVER
     LLAMA_LIB_DIR="$JENOVA_ROOT/bin"; export LLAMA_LIB_DIR
-    VIMRUNTIME="$JENOVA_ROOT/jvim/runtime"; export VIMRUNTIME
 else
     # Source Repository Layout
     JENOVA_LAYOUT="source"; export JENOVA_LAYOUT
     LLAMA_SERVER="${LLAMA_SERVER:-$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server}"; export LLAMA_SERVER
     LLAMA_LIB_DIR="$JENOVA_ROOT/external/llama.cpp/build/bin"; export LLAMA_LIB_DIR
-    VIMRUNTIME="$JENOVA_ROOT/jvim/runtime"; export VIMRUNTIME
 fi
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 
-JENOVA_HOME="${JENOVA_HOME:-$HOME/Jenova}"; export JENOVA_HOME
-JENOVA_STATE="${JENOVA_STATE:-$JENOVA_HOME/.system}"; export JENOVA_STATE
-JENOVA_WORKSPACES="${JENOVA_WORKSPACES:-$JENOVA_HOME/Workspaces}"; export JENOVA_WORKSPACES
-LOG_DIR="${LOG_DIR:-$JENOVA_HOME/var/log}"; export LOG_DIR
-CACHE_DIR="${CACHE_DIR:-$JENOVA_HOME/var/cache}"; export CACHE_DIR
+JCA_HOME="${JCA_HOME:-$HOME/JCA}"; export JCA_HOME
+JENOVA_STATE="${JENOVA_STATE:-$JCA_HOME/.system}"; export JENOVA_STATE
+JENOVA_WORKSPACES="${JENOVA_WORKSPACES:-$JCA_HOME/Workspaces}"; export JENOVA_WORKSPACES
+LOG_DIR="${LOG_DIR:-$JCA_HOME/var/log}"; export LOG_DIR
+CACHE_DIR="${CACHE_DIR:-$JCA_HOME/var/cache}"; export CACHE_DIR
 PID_FILE="${PID_FILE:-$JENOVA_STATE/jenova-ca.pid}"; export PID_FILE
 
 # ── Local Configuration Overrides ─────────────────────────────────────────────

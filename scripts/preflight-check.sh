@@ -151,7 +151,7 @@ if command -v fetch >/dev/null 2>&1; then
 else
     _check_bin "curl" "curl" 1
 fi
-_check_bin "gmake"    "gmake" 1
+
 
 # ---------------------------------------------------------------------------
 # 5. Vulkan Support Check
@@ -211,7 +211,7 @@ fi
 # 9. Existing Build Artifacts Check
 # ---------------------------------------------------------------------------
 info "Checking for existing build artifacts..."
-_build_dirs="jvim/build external/llama.cpp/build public/bundle"
+_build_dirs="bin/jenova-ui external/llama.cpp/build public/bundle"
 _clean_needed=0
 for _dir in $_build_dirs; do
     if [ -d "$JENOVA_ROOT/$_dir" ]; then
@@ -240,7 +240,7 @@ elif [ "$ERRORS" -eq 0 ]; then
     printf "${_Y}⚠ ${WARNINGS} warning(s) found.${_N}\n"
     echo ""
     echo "Installation will likely succeed, but some features may be unavailable."
-    exit 2
+    exit 0
 else
     printf "${_R}✗ ${ERRORS} critical issue(s) found.${_N}\n"
     echo ""

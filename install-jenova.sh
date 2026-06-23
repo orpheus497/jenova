@@ -7,7 +7,7 @@
 # Usage: ./install-jenova.sh [command] [options]
 #
 # Commands:
-#   install     (Default) Build and deploy Jenova to $JENOVA_HOME
+#   install     (Default) Build and deploy Jenova to $JCA_HOME
 #   uninstall   Remove Jenova binaries and config (preserves workspaces)
 #   update      Update source code and rebuild all components
 #   status      Check system compatibility and installation status
@@ -23,7 +23,7 @@
 # This script automatically:
 #   ✓ Detects your OS and package manager
 #   ✓ Installs all required system dependencies
-#   ✓ Builds Jenova components (llama.cpp, jvim, Web UI)
+#   ✓ Builds Jenova components (llama.cpp, Web UI)
 #   ✓ Deploys to your system
 #   ✓ Downloads AI models (unless --minimal)
 #   ✓ Verifies everything works
@@ -49,8 +49,8 @@ else
     exit 1
 fi
 
-# Default JENOVA_HOME if not set
-JENOVA_HOME="${JENOVA_HOME:-$HOME/Jenova}"; export JENOVA_HOME
+# Default JCA_HOME if not set
+JCA_HOME="${JCA_HOME:-$HOME/JCA}"; export JCA_HOME
 
 # Colors
 if [ -t 1 ]; then
@@ -85,7 +85,7 @@ show_help() {
     echo "Usage: $0 [command] [options]"
     echo ""
     echo "Commands:"
-    echo "  install     Build and deploy Jenova to $JENOVA_HOME"
+    echo "  install     Build and deploy Jenova to $JCA_HOME"
     echo "  uninstall   Remove Jenova binaries and config (preserves workspaces)"
     echo "  update      Update source code and rebuild all components"
     echo "  status      Verify installation and system environment"
@@ -176,7 +176,7 @@ cmd_install() {
         MAKE_CMD="make"
     fi
     
-    COMPONENTS="llama jvim jenova-ui"
+    COMPONENTS="llama jenova-ui"
     [ "$MINIMAL" = "0" ] && COMPONENTS="$COMPONENTS web"
     
     for component in $COMPONENTS; do
@@ -189,14 +189,14 @@ cmd_install() {
         fi
     done
     
-    # 4. Deploy to JENOVA_HOME
-    print_step "Deploying to $JENOVA_HOME..."
+    # 4. Deploy to JCA_HOME
+    print_step "Deploying to $JCA_HOME..."
     _install_flags="$FORCE"
     if [ "$MINIMAL" = "1" ]; then
         JENOVA_SKIP_MODELS=1; export JENOVA_SKIP_MODELS
     fi
     # Signal to install.sh that all components were already built by this script,
-    # preventing redundant rebuild of jvim/llama etc. (ISS-01)
+    # preventing redundant rebuild of llama etc. (ISS-01)
     JENOVA_BUILT_BY_INSTALLER=1; export JENOVA_BUILT_BY_INSTALLER
     "$JENOVA_ROOT/scripts/install.sh" $_install_flags
     
@@ -207,8 +207,7 @@ cmd_install() {
     print_header "Installation Complete!"
     echo "🚀 ${BOLD}Quick Start:${NC}"
     echo "  jenova-tui      # Jenova Manager (Operational TUI)"
-    echo "  jenova          # Full environment (editor + backend)"
-    echo "  jvim            # Just the editor"
+    echo "  jenova          # Full environment"
 }
 
 cmd_uninstall() {

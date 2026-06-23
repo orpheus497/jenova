@@ -29,12 +29,12 @@ _find_model() {
 }
 
 # --- Model Discovery ---
-JENOVA_HOME="${JENOVA_HOME:-$HOME/Jenova}"
-_MODELS_DIR="${JENOVA_HOME}/models"
+JCA_HOME="${JCA_HOME:-$HOME/JCA}"
+_MODELS_DIR="${JCA_HOME}/models"
 
 # Scans each type-specific folder. Overrides can be applied later.
 # Priority:
-#   1. First .gguf in JENOVA_HOME/models/agent|embed|draft/ (alphabetically)
+#   1. First .gguf in JCA_HOME/models/agent|embed|draft/ (alphabetically)
 #   2. Legacy flat path under JENOVA_ROOT/models/ (alphabetically)
 #   3. Empty string if no model found
 

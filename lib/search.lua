@@ -12,8 +12,8 @@ end
 -- to deriving from the script's own location (lib/../).
 local _jenova_root = os.getenv("JENOVA_ROOT") or _dir:match("^(.+)/lib/?$") or _dir .. ".."
 local _home = os.getenv("HOME") or "/tmp"
-local _jenova_home = os.getenv("JENOVA_HOME") or (_home .. "/Jenova")
-local JENOVA_STATE = os.getenv("JENOVA_STATE") or (_jenova_home .. "/.system")
+local _jca_home = os.getenv("JCA_HOME") or (_home .. "/Jenova")
+local JENOVA_STATE = os.getenv("JENOVA_STATE") or (_jca_home .. "/.system")
 
 local json = require("json")
 

@@ -2,50 +2,25 @@
 #
 # Three components make up Jenova as a single terminal IDE:
 #   1. external/llama.cpp        — Vulkan-accelerated inference backend
-#   2. jvim                      — Neovim-based editor (`jvim` binary, in-tree fork)
-#   3. jca_web                   — Web-based UI
-#
-# The agent is embedded inside jvim — it lives at jvim-config/lua/jenova/agent/.
-# There is no separate cli-agent any more.
+#   2. jca_web                   — Web-based UI
 #
 # Common usage:
-#   make            # Build everything (external/llama.cpp + jvim + web)
-#   make jvim       # Build only the bundled jvim editor
+#   make            # Build everything (external/llama.cpp + web)
 #   make llama      # Build only external/llama.cpp
 #   make web        # Build only the Web UI
 #   make install    # Run scripts/install.sh (system-aware deploy)
 #   make clean      # Remove build artifacts from both components
 
-.PHONY: all llama llama-hybrid jvim web jenova-ui install preflight verify clean help clean-root
+.PHONY: all llama llama-hybrid web jenova-ui install preflight verify clean help clean-root
 
-all: preflight llama jvim jenova-ui web
+all: preflight llama jenova-ui web
 	@echo ""
-	@echo "✅ Jenova build complete (external/llama.cpp + jvim + jenova-ui + web)"
+	@echo "✅ Jenova build complete (external/llama.cpp + jenova-ui + web)"
 	@echo "   Run 'make install' (or scripts/install.sh) to deploy."
 
 llama:
-	@echo "🔨 Building external/llama.cpp (Vulkan)..."
-	@./bin/build-llama-jenova
-
-llama-hybrid:
 	@echo "🔨 Building external/llama.cpp (Vulkan + CUDA)..."
 	@./bin/build-llama-hybrid
-
-jvim:
-	@echo "🔨 Building jvim (in-tree editor)..."
-	@if [ ! -f jvim/CMakeLists.txt ]; then \
-		echo "ERROR: jvim/ source tree missing." >&2; exit 1; \
-	fi
-	@if [ "$$(uname -s)" = "FreeBSD" ]; then \
-		if ! command -v gmake >/dev/null 2>&1; then \
-			echo "FreeBSD requires 'gmake' to build jvim. Please run 'pkg install gmake'" >&2; \
-			exit 1; \
-		fi; \
-		gmake -C jvim CMAKE_BUILD_TYPE=RelWithDebInfo CMAKE_INSTALL_PREFIX="$(CURDIR)/jvim/install"; \
-	else \
-		$(MAKE) -C jvim CMAKE_BUILD_TYPE=RelWithDebInfo CMAKE_INSTALL_PREFIX="$(CURDIR)/jvim/install"; \
-	fi
-	@echo "   jvim built: jvim/build/bin/nvim"
 
 
 
@@ -73,7 +48,7 @@ jenova-ui:
 	@cp jenova-ui/jenova-ui bin/jenova-ui || exit 1
 	@echo "   jenova-ui built: bin/jenova-ui"
 
-install: preflight llama jvim jenova-ui web
+install: preflight llama jenova-ui web
 	@./scripts/install.sh
 
 install-jenova:
@@ -81,7 +56,7 @@ install-jenova:
 
 clean:
 	@echo "🧹 Cleaning build artifacts..."
-	@rm -rf external/llama.cpp/build jvim/build jvim/install public/
+	@rm -rf external/llama.cpp/build public/
 
 clean-root:
 	@echo "🧹 Cleaning root directory bloat..."
@@ -101,10 +76,9 @@ help:
 	@echo "Jenova Cognitive Architecture — build targets"
 	@echo ""
 	@echo "  Build targets:"
-	@echo "    make                Build external/llama.cpp + jvim + web"
+	@echo "    make                Build external/llama.cpp + web"
 	@echo "    make llama          Build only external/llama.cpp (Vulkan)"
 	@echo "    make llama-hybrid   Build external/llama.cpp (Vulkan + CUDA)"
-	@echo "    make jvim           Build only the bundled jvim editor"
 	@echo "    make web            Build only the Web UI"
 	@echo ""
 	@echo "  Installation & verification:"

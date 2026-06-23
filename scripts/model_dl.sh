@@ -8,8 +8,8 @@
 set -e
 
 JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
-JENOVA_HOME="${JENOVA_HOME:-$HOME/Jenova}"
-export JENOVA_ROOT JENOVA_HOME
+JCA_HOME="${JCA_HOME:-$HOME/JCA}"
+export JENOVA_ROOT JCA_HOME
 
 # Shared OS/hardware detection and profile loader.
 . "$JENOVA_ROOT/lib/detect-env.sh"
@@ -129,22 +129,22 @@ download_model() {
 }
 
 echo ""
-info "Checking for model files in $JENOVA_HOME/models/ ..."
+info "Checking for model files in $JCA_HOME/models/ ..."
 
 # 1. Agent (Main Inference)
-download_model "$JENOVA_HOME/models/agent/$AGENT_FILE" "Agent" "$AGENT_URL" "$AGENT_SIZE" 1 || {
+download_model "$JCA_HOME/models/agent/$AGENT_FILE" "Agent" "$AGENT_URL" "$AGENT_SIZE" 1 || {
     warn "Agent model not found/downloaded. Jenova will require a model to be fully functional."
 }
 
 # 2. Semantic (Embedding/RAG)
-download_model "$JENOVA_HOME/models/embed/$EMBED_FILE" "Semantic" "$EMBED_URL" "$EMBED_SIZE" 0 || true
+download_model "$JCA_HOME/models/embed/$EMBED_FILE" "Semantic" "$EMBED_URL" "$EMBED_SIZE" 0 || true
 
 # 3. Embedding (Drafting/Speculative)
-download_model "$JENOVA_HOME/models/draft/$DRAFT_FILE" "Embedding" "$DRAFT_URL" "$DRAFT_SIZE" 0 || true
+download_model "$JCA_HOME/models/draft/$DRAFT_FILE" "Embedding" "$DRAFT_URL" "$DRAFT_SIZE" 0 || true
 
 # Symlink models/jenova.gguf -> agent model for health checks
-if [ -f "$JENOVA_HOME/models/agent/$AGENT_FILE" ]; then
-    ln -sf "agent/$AGENT_FILE" "$JENOVA_HOME/models/jenova.gguf"
+if [ -f "$JCA_HOME/models/agent/$AGENT_FILE" ]; then
+    ln -sf "agent/$AGENT_FILE" "$JCA_HOME/models/jenova.gguf"
 fi
 
 echo ""

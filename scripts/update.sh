@@ -7,7 +7,7 @@
 # the Neovim plugin set.
 #
 # Usage: ./update.sh [--upgrade-plugins] [--skip-nvim] [--skip-rebuild]
-#                    [--skip-jvim] [--link] [--apply-profile]
+#                    [] [--link] [--apply-profile]
 #                    [--ui] [--web] [--all] [--no-pull]
 
 set -e
@@ -17,9 +17,9 @@ set -e
 _REAL_SCRIPT=$(realpath "$0" 2>/dev/null || echo "$0")
 _SCRIPT_DIR=$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)
 JENOVA_ROOT=$(cd "$_SCRIPT_DIR/.." && pwd)
-JENOVA_HOME="${JENOVA_HOME:-$HOME/Jenova}"
-JVIM_CONFIG_SRC="$JENOVA_ROOT/jvim-config"
-JVIM_CONFIG_DST="$HOME/.config/jvim"
+JCA_HOME="${JCA_HOME:-$HOME/JCA}"
+JVIM_CONFIG_SRC="$JENOVA_ROOT/jenova-config"
+JVIM_CONFIG_DST="$HOME/.config/jenova"
 
 # Shared OS/hardware detection
 . "$JENOVA_ROOT/lib/detect-env.sh"
@@ -39,7 +39,7 @@ for _arg in "$@"; do
         --upgrade-plugins) UPGRADE_PLUGINS=1 ;;
         --skip-nvim)       SKIP_NVIM=1 ;;
         --skip-rebuild)    SKIP_REBUILD=1 ;;
-        --skip-jvim)       SKIP_JVIM=1 ;;
+        )       SKIP_JVIM=1 ;;
         --link)            LINK=1 ;;
         --apply-profile)   APPLY_PROFILE=1 ;;
         --ui)              UPDATE_UI=1 ;;
@@ -163,14 +163,14 @@ if [ "$SKIP_REBUILD" = "0" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 3b. jvim rebuild check
+# 3b. jenova rebuild check
 # ---------------------------------------------------------------------------
 if [ "$SKIP_JVIM" = "0" ]; then
-    info "Checking bundled jvim editor..."
-    JVIM_SRC="$JENOVA_ROOT/jvim"
+    info "Checking bundled jenova editor..."
+    JVIM_SRC="$JENOVA_ROOT/jenova"
     JVIM_BIN="$JVIM_SRC/build/bin/nvim"
     if [ ! -f "$JVIM_SRC/CMakeLists.txt" ]; then
-        warn "jvim/ source tree missing"
+        warn "jenova/ source tree missing"
     elif ! command -v cmake >/dev/null 2>&1; then
         warn "cmake not found"
     else
@@ -183,16 +183,16 @@ if [ "$SKIP_JVIM" = "0" ]; then
             _need_rebuild=1
         fi
         if [ "$_need_rebuild" = "1" ]; then
-            info "jvim sources changed — rebuilding..."
+            info "jenova sources changed — rebuilding..."
             _JOBS="${JENOVA_CPU_THREADS:-4}"
             (
                 cd "$JVIM_SRC" && \
                 cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo \
                       -DCMAKE_INSTALL_PREFIX="$JVIM_SRC/install" >/dev/null && \
                 cmake --build build -j"$_JOBS"
-            ) && ok "jvim rebuilt" || warn "jvim rebuild failed"
+            ) && ok "jenova rebuilt" || warn "jenova rebuild failed"
         else
-            ok "jvim up to date"
+            ok "jenova up to date"
         fi
     fi
 fi
@@ -224,10 +224,10 @@ fi
 # ---------------------------------------------------------------------------
 # 4. Redeploy Neovim config
 # ---------------------------------------------------------------------------
-if [ "$SKIP_NVIM" = "0" ] && command -v jvim >/dev/null 2>&1; then
-    info "Redeploying jvim configuration..."
+if [ "$SKIP_NVIM" = "0" ] && command -v jenova >/dev/null 2>&1; then
+    info "Redeploying jenova configuration..."
     if [ ! -d "$JVIM_CONFIG_DST" ]; then
-        warn "~/.config/jvim/ not found"
+        warn "~/.config/jenova/ not found"
         SKIP_NVIM=1
     fi
 
@@ -241,7 +241,7 @@ if [ "$SKIP_NVIM" = "0" ] && command -v jvim >/dev/null 2>&1; then
                 done
             done
             ln -sfn "$JVIM_CONFIG_SRC/lua/jenova/agent" "$JVIM_CONFIG_DST/lua/jenova/agent"
-            ok "Symlinked jvim config"
+            ok "Symlinked jenova config"
         elif [ -L "$JVIM_CONFIG_DST/init.lua" ]; then
             ok "Symlink mode active"
         else
@@ -261,24 +261,24 @@ fi
 # ---------------------------------------------------------------------------
 # 5. Sync Neovim plugins
 # ---------------------------------------------------------------------------
-if [ "$SKIP_NVIM" = "0" ] && command -v jvim >/dev/null 2>&1 && [ -d "$JVIM_CONFIG_DST" ]; then
+if [ "$SKIP_NVIM" = "0" ] && command -v jenova >/dev/null 2>&1 && [ -d "$JVIM_CONFIG_DST" ]; then
     info "Syncing Neovim plugins..."
     if [ "$UPGRADE_PLUGINS" = "1" ]; then
-        jvim --headless "+Lazy update" +qa 2>/dev/null && ok "Plugins updated" || warn "Plugin update failed"
+        jenova --headless "+Lazy update" +qa 2>/dev/null && ok "Plugins updated" || warn "Plugin update failed"
     else
-        jvim --headless "+Lazy restore" +qa 2>/dev/null && ok "Plugins restored" || warn "Plugin restore failed"
+        jenova --headless "+Lazy restore" +qa 2>/dev/null && ok "Plugins restored" || warn "Plugin restore failed"
     fi
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Redeploy binaries to JENOVA_HOME/bin
+# 6. Redeploy binaries to JCA_HOME/bin
 # ---------------------------------------------------------------------------
-info "Redeploying binaries to $JENOVA_HOME/bin..."
-mkdir -p "$JENOVA_HOME/bin"
-for _bin in jvim jenova jenova-ui jenova-ca jenova-tui jenova-term jenova-swap-mount; do
+info "Redeploying binaries to $JCA_HOME/bin..."
+mkdir -p "$JCA_HOME/bin"
+for _bin in jenova jenova jenova-ui jenova-ca jenova-tui jenova-term jenova-swap-mount; do
     if [ -f "$JENOVA_ROOT/bin/$_bin" ]; then
-        cp "$JENOVA_ROOT/bin/$_bin" "$JENOVA_HOME/bin/$_bin"
-        chmod +x "$JENOVA_HOME/bin/$_bin"
+        cp "$JENOVA_ROOT/bin/$_bin" "$JCA_HOME/bin/$_bin"
+        chmod +x "$JCA_HOME/bin/$_bin"
     fi
 done
 

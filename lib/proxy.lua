@@ -37,8 +37,8 @@ local MIME_TYPES = {
 
 -- Filesystem API for WebUI persistence
 local home_dir = os.getenv("HOME") or "/tmp"
-local jenova_home = os.getenv("JENOVA_HOME") or (home_dir .. "/Jenova")
-local workspaces_dir = os.getenv("JENOVA_WORKSPACES") or (jenova_home .. "/Workspaces")
+local jca_home = os.getenv("JCA_HOME") or (home_dir .. "/Jenova")
+local workspaces_dir = os.getenv("JENOVA_WORKSPACES") or (jca_home .. "/Workspaces")
 
 local HOST = os.getenv("JENOVA_PROXY_HOST") or os.getenv("JENOVA_HOST") or "127.0.0.1"
 local PORT = tonumber(os.getenv("JENOVA_PROXY_PORT") or os.getenv("JENOVA_PORT")) or 8080

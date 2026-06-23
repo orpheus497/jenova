@@ -16,11 +16,7 @@
 
 /cli-agent/build/
 /cli-agent/build_test/
-# Bundled jvim editor — build & install artifacts
-/jvim/build/
-/jvim/install/
-/jvim/.deps/
-/jvim/cmake-build-*/
+
 *.o
 *.so
 *.a
@@ -134,7 +130,7 @@ conductor/
 
 # --- Installation analysis artifacts ---
 /.jenova-tmp-ca-old
-/.jenova-tmp-jvim-old
+
 /INSTALLATION-AUDIT.md
 /INSTALLATION-FINAL-REPORT.md
 /test-installation.sh

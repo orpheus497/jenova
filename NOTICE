@@ -23,8 +23,4 @@ sources, and to keep the copyright lines visible in one place.
        Copyright (c) 2015-2024 The Khronos Group Inc.
        Licensed under the Khronos Free Software License — see the file `UPSTREAM-COPYRIGHT`.
 
-4. Neovim and Vim (jvim).
 
-       Copyright Neovim contributors.
-       Copyright (c) 1988-2026 Bram Moolenaar et al.
-       Licensed under the Apache License v2.0 and Vim License — see the file `UPSTREAM-COPYRIGHT`.

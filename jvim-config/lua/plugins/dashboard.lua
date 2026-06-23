@@ -1,1 +1,0 @@
--- Dashboard is handled by jvim's native runtime/plugin/jvim_dashboard.lua

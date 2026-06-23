@@ -34,7 +34,7 @@ sudo dnf install cmake luajit gettext vulkan-loader vulkan-loader-devel \
 |---------|------|--------|--------|---------|
 | Node.js | `nodejs npm` | `nodejs npm` | `nodejs` | Web UI build (`make web`) |
 | glslc | `shaderc` | `glslc` | `glslc` | Vulkan shader compiler |
-| clangd | `clang` | `clangd` | `clang-tools-extra` | C/C++ LSP for jvim |
+| clangd | `clang` | `clangd` | `clang-tools-extra` | C/C++ LSP |
 
 ## Quick Install
 
@@ -45,7 +45,7 @@ cd jenova
 # Verify dependencies
 ./scripts/preflight-check.sh --verbose
 
-# Build everything: llama.cpp (Vulkan) + jvim + web
+# Build everything: llama.cpp (Vulkan) + jenova-ui + web
 make
 
 # Deploy to system
@@ -63,7 +63,6 @@ Or use the streamlined one-command installer:
 ```sh
 make llama          # llama.cpp with Vulkan support
 make llama-hybrid   # llama.cpp with Vulkan + CUDA (NVIDIA multi-GPU)
-make jvim           # Bundled Neovim hard-fork
 make web            # Web UI (requires Node.js)
 ```
 

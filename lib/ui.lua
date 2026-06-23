@@ -180,7 +180,7 @@ ui.get_tui_menu = function()
         { label = "Stop Backend", action = "stop" },
         { label = "Restart Backend", action = "restart" },
         { label = lan_label, action = "toggle_lan" },
-        { label = "Launch J-Vim", action = "jvim" },
+
         { label = "Launch Web UI", action = "web" },
         { label = "Exit", action = "exit_tui" }
     }
@@ -189,11 +189,7 @@ end
 ui.on_tui_action = function(action)
     if not action then return end
 
-    if action == "jvim" then
-        local bin_term = shell_quote(root .. "/bin/jenova-term")
-        local bin_jvim = shell_quote(root .. "/bin/jvim")
-        sys_exec_async(bin_term .. " " .. bin_jvim)
-    elseif action == "exit_tui" then
+    if action == "exit_tui" then
         -- Handled in C
     else
         ui.on_action(action)

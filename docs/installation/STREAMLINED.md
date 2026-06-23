@@ -16,17 +16,17 @@ cd jenova
 **What it does:**
 - ✓ Detects your OS and package manager automatically
 - ✓ Installs all required system dependencies
-- ✓ Builds Jenova components (llama.cpp, jvim, Web UI)
-- ✓ Deploys a standalone system to ~/Jenova (bin/, lib/, etc/, public/)
-- ✓ Symlinks launchers to ~/.local/bin/ (jvim, jenova, jenova-ca, etc.)
+- ✓ Builds Jenova components (llama.cpp, Web UI)
+- ✓ Deploys a standalone system to ~/JCA (bin/, lib/, etc/, public/)
+- ✓ Symlinks launchers to ~/.local/bin/ (jenova, jenova-ca, etc.)
 - ✓ Downloads AI models (~5-10GB)
 - ✓ Verifies everything works
 
 ### Deployment Architecture
 Jenova is designed to be fully decoupled from its source repository. 
-- **Application Home**: `~/Jenova/` contains the entire runtime environment.
+- **Application Home**: `~/JCA/` contains the entire runtime environment.
 - **Source Repository**: Can be safely deleted after a successful `make install`.
-- **Launchers**: Symlinks in `~/.local/bin/` point directly into `~/Jenova/bin/`.
+- **Launchers**: Symlinks in `~/.local/bin/` point directly into `~/JCA/bin/`.
 - **Path Locking**: The system uses realpath-based discovery to ensure all internal dependencies (scripts, shared libraries, and web assets) are loaded from the installation home, never from the repository or accidental local paths.
 
 ### Advanced Installation Options
@@ -114,7 +114,6 @@ jenova-tui
 jenova
 ...
 # Or just the editor (no daemon management)
-jvim
 
 # Or just the backend (headless/server)
 jenova-ca
@@ -126,7 +125,6 @@ jenova-ca --daemon --lan
 ### After First Run
 ```bash
 # Check if PATH is correct
-which jvim
 which jenova
 which jenova-ca
 
@@ -204,7 +202,6 @@ export PATH="$HOME/.local/bin:$PATH"  # .bashrc / .zshrc
 ### Config Locations
 | Item | Location |
 |------|----------|
-| **jvim config** | `~/.config/jvim/` |
 | **Plugins** | `~/.local/share/nvim/lazy/` |
 | **User state** | `~/.local/state/nvim/` |
 | **Runtime logs** | `$JENOVA_ROOT/var/log/` |
@@ -264,7 +261,6 @@ cat etc/jenova.conf
 - [ ] Download AI models: `./scripts/model_dl.sh`
 - [ ] Apply hardware profile: `./hardware-profiles/detect-hardware.sh --apply`
 - [ ] Run system tuning: `sudo ./scripts/jenova-setup`
-- [ ] Set jvim as editor: `export EDITOR=jvim`
 - [ ] Launch Jenova: `jenova`
 
 ---

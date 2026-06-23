@@ -3,24 +3,18 @@
 # Supports all Vulkan hardware profiles (auto-detected via detect-hardware.sh)
 #
 # This is the single installer for the whole monorepo: it builds (or verifies)
-# llama.cpp, builds the bundled jvim editor (which contains the embedded
-# Jenova agent), downloads missing model GGUFs, deploys the jvim user config,
-# and symlinks `jvim`, `jenova`, and `jenova-ca` onto your PATH.
+# llama.cpp, downloads missing model GGUFs,
+# and symlinks `jenova`, and `jenova-ca` onto your PATH.
 #
-# Usage: ./install.sh [--force] [--link] [--skip-config] [--skip-jvim]
-#                     [--skip-llama] [--skip-web] [--client-only]
+# Usage: ./install.sh [--force] [--skip-llama] [--skip-web] [--client-only]
 #
-#   --force        Overwrite existing ~/.config/jvim without prompting and
-#                  force a fresh jvim rebuild even if jvim/build/ exists
-#   --link         Install Jenova jvim config as symlinks into ~/.config/jvim
-#                  (development workflow — edits in repo apply immediately)
-#   --skip-config  Skip the jvim user-config deployment step
-#   --skip-jvim    Skip building the bundled jvim editor (jvim/)
+#   --force        Overwrite existing config without prompting
+#   --skip-llama   Skip llama.cpp build check
 #   --skip-llama   Skip llama.cpp build check
 #   --skip-web     Skip building the JCA Web UI (jca_web/)
-#   --client-only  LAN client install: skip llama.cpp, skip jvim build,
-#                  skip model downloads, skip web UI. Use when this host will only ever
-#                  connect to a remote Jenova CA via 'jvim --remote <host>'.
+#   --client-only  LAN client install: skip llama.cpp, skip model downloads,
+#                  skip web UI. Use when this host will only ever
+#                  connect to a remote Jenova CA.
 #
 # This script:
 #   1. Verifies required system dependencies
@@ -28,9 +22,7 @@
 #   3. Checks for llama.cpp build (skipped with --client-only)
 #   4. Checks for Web UI build (skipped with --client-only or --skip-web)
 #   5. Downloads required model files (skipped with --client-only)
-#   6. Detects whether the installed nvim is jvim or upstream Neovim
-#   7. Installs the Jenova nvim configuration to ~/.config/jvim/
-#   8. Installs bin/jvim, bin/jenova, bin/jenova-ca symlinks to PATH
+#   6. Installs bin/jenova, bin/jenova-ca symlinks to PATH
 #   9. Prints a summary plus next-step commands
 
 set -e
@@ -38,8 +30,6 @@ set -e
 _REAL_SCRIPT="$(realpath "$0" 2>/dev/null || echo "$0")"
 _SCRIPT_DIR="$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)"
 JENOVA_ROOT="$(cd "$_SCRIPT_DIR/.." && pwd)"
-JVIM_CONFIG_SRC="$JENOVA_ROOT/jvim-config"
-JVIM_CONFIG_DST="$HOME/.config/jvim"
 
 # Shared OS/hardware detection — populates JENOVA_OS, JENOVA_DISTRO,
 # JENOVA_PKG_MGR, JENOVA_VULKAN_OK, JENOVA_GH_ARCH_*, etc.
@@ -53,9 +43,6 @@ case "$JENOVA_OS" in
 esac
 
 FORCE=0
-LINK=0
-SKIP_NVIM=0
-SKIP_JVIM=0
 SKIP_LLAMA=0
 SKIP_WEB=0
 CLIENT_ONLY=0
@@ -63,12 +50,9 @@ CLIENT_ONLY=0
 for _arg in "$@"; do
     case "$_arg" in
         --force)       FORCE=1 ;;
-        --link)        LINK=1 ;;
-        --skip-config|--skip-nvim) SKIP_NVIM=1 ;;
-        --skip-jvim)   SKIP_JVIM=1 ;;
         --skip-llama)  SKIP_LLAMA=1 ;;
         --skip-web)    SKIP_WEB=1 ;;
-        --client-only) CLIENT_ONLY=1; SKIP_LLAMA=1; SKIP_JVIM=1; SKIP_WEB=1 ;;
+        --client-only) CLIENT_ONLY=1; SKIP_LLAMA=1; SKIP_WEB=1 ;;
         -h|--help)
             sed -n '2,32p' "$0"
             exit 0
@@ -170,39 +154,31 @@ fi
 # ---------------------------------------------------------------------------
 # 2. Create required runtime directories & Permission checks
 # ---------------------------------------------------------------------------
-JENOVA_HOME="${JENOVA_HOME:-$HOME/Jenova}"
-info "Creating runtime directories in $JENOVA_HOME..."
+JCA_HOME="${JCA_HOME:-$HOME/JCA}"
+info "Creating runtime directories in $JCA_HOME..."
 
-mkdir -p "$JENOVA_HOME/.system" 2>/dev/null || {
-    fail "Cannot create $JENOVA_HOME/.system directory"
+mkdir -p "$JCA_HOME/.system" 2>/dev/null || {
+    fail "Cannot create $JCA_HOME/.system directory"
     fail "Do not run install.sh with sudo — run as regular user"
     ERRORS=$((ERRORS + 1))
 }
-mkdir -p "$JENOVA_HOME/var/log" || true
-mkdir -p "$JENOVA_HOME/var/cache" || true
-mkdir -p "$JENOVA_HOME/var/run" || true
-mkdir -p "$JENOVA_HOME/models/agent" || true
-mkdir -p "$JENOVA_HOME/models/embed" || true
-mkdir -p "$JENOVA_HOME/models/draft" || true
-mkdir -p "$JENOVA_HOME/bin" || true
-mkdir -p "$JENOVA_HOME/etc" || true
+mkdir -p "$JCA_HOME/var/log" || true
+mkdir -p "$JCA_HOME/var/cache" || true
+mkdir -p "$JCA_HOME/var/run" || true
+mkdir -p "$JCA_HOME/models/agent" || true
+mkdir -p "$JCA_HOME/models/embed" || true
+mkdir -p "$JCA_HOME/models/draft" || true
+mkdir -p "$JCA_HOME/bin" || true
+mkdir -p "$JCA_HOME/etc" || true
 
-if [ -w "$JENOVA_HOME/.system" ]; then
-    ok "Runtime directories created in $JENOVA_HOME"
+if [ -w "$JCA_HOME/.system" ]; then
+    ok "Runtime directories created in $JCA_HOME"
 else
-    warn "$JENOVA_HOME/.system directory exists but may have permission issues"
+    warn "$JCA_HOME/.system directory exists but may have permission issues"
     WARNINGS=$((WARNINGS + 1))
 fi
 
 # Check for root-owned build artifacts that block regular-user builds
-if [ -d "$JENOVA_ROOT/jvim/build" ] && [ ! -w "$JENOVA_ROOT/jvim/build" ]; then
-    _owner=$(ls -ld "$JENOVA_ROOT/jvim/build" | awk '{print $3}')
-    if [ "$_owner" = "root" ]; then
-        fail "jvim/build is owned by root. This will cause the build to fail."
-        fail "Run: sudo chown -R $(id -u):$(id -g) $JENOVA_ROOT/jvim"
-        ERRORS=$((ERRORS + 1))
-    fi
-fi
 
 # ---------------------------------------------------------------------------
 # 3. Required binaries
@@ -231,40 +207,6 @@ check_optional() {
 
 check_bin  "luajit"  "pkg install luajit-openresty"
 check_bin  "git"     "pkg install git"
-
-if [ "$SKIP_NVIM" = "0" ]; then
-    # Prefer the in-tree jvim build (jvim/build/bin/nvim) which the unified
-    # `make jvim` target produces. Fall back to whatever `nvim` is on PATH
-    # (warn if it's not jvim) and finally fail with a build hint.
-    _JVIM_BIN="$JENOVA_ROOT/jvim/build/bin/nvim"
-    if [ -x "$_JVIM_BIN" ]; then
-        _NVIM_VLINE=$("$_JVIM_BIN" --version 2>/dev/null | head -n 1)
-        case "$_NVIM_VLINE" in
-            *JVIM*) ok "in-tree jvim build ($_NVIM_VLINE) — fully integrated" ;;
-            *)      warn "in-tree binary $_JVIM_BIN is not jvim ($_NVIM_VLINE)"; WARNINGS=$((WARNINGS + 1)) ;;
-        esac
-    elif command -v jvim >/dev/null 2>&1; then
-        _NVIM_VLINE=$(jvim --version 2>/dev/null | head -n 1)
-        case "$_NVIM_VLINE" in
-            *JVIM*)
-                ok "system nvim is jvim ($_NVIM_VLINE) — fully integrated"
-                ;;
-            *)
-                warn "system nvim is upstream Neovim ($_NVIM_VLINE), not jvim."
-                warn "Build the bundled jvim editor: make jvim"
-                WARNINGS=$((WARNINGS + 1))
-                ;;
-        esac
-    else
-        if [ "$SKIP_JVIM" = "0" ]; then
-            info "No editor found — will build bundled jvim later in this script"
-        else
-            fail "No editor found. Build the bundled jvim: make jvim"
-            ERRORS=$((ERRORS + 1))
-        fi
-    fi
-    check_optional "gmake"  "pkg install gmake  (needed for telescope-fzf-native)"
-fi
 
 check_optional "cmake"   "pkg install cmake     (needed to build llama.cpp)"
 check_optional "curl"    "pkg install curl      (used by jenova-ca health probe fallback)"
@@ -380,73 +322,15 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 7. Neovim config installation
-# ---------------------------------------------------------------------------
-if [ "$SKIP_NVIM" = "0" ]; then
-    info "Installing jvim configuration..."
-
-    if [ -d "$JVIM_CONFIG_DST" ] && [ "$FORCE" = "0" ]; then
-        printf "  ~/.config/jvim already exists. Overwrite? [y/N] "
-        read -r _ans
-        case "$_ans" in
-            y|Y|yes|YES) ;;
-            *)
-                warn "Skipping jvim config installation (use --force to override)"
-                SKIP_NVIM=1
-                ;;
-        esac
-    fi
-
-    if [ "$SKIP_NVIM" = "0" ]; then
-        # Backup existing config
-        if [ -d "$JVIM_CONFIG_DST" ]; then
-            _TS=$(date +%Y%m%d_%H%M%S)
-            _BAK="${JVIM_CONFIG_DST}.bak.${_TS}"
-            mv "$JVIM_CONFIG_DST" "$_BAK"
-            ok "Backed up existing config to $_BAK"
-        fi
-
-        mkdir -p "$JVIM_CONFIG_DST/lua/plugins"
-        mkdir -p "$JVIM_CONFIG_DST/lua/jenova"
-
-        if [ "$LINK" = "1" ]; then
-            # Symlink mode — changes in repo instantly reflected in jvim
-            ln -sf "$JVIM_CONFIG_SRC/init.lua" "$JVIM_CONFIG_DST/init.lua"
-            for _f in "$JVIM_CONFIG_SRC/lua/plugins/"*.lua; do
-                [ -f "$_f" ] && ln -sf "$_f" "$JVIM_CONFIG_DST/lua/plugins/$(basename "$_f")"
-            done
-            # jenova/ contains both leaf .lua modules AND the agent/ subtree
-            for _f in "$JVIM_CONFIG_SRC/lua/jenova/"*.lua; do
-                [ -f "$_f" ] && ln -sf "$_f" "$JVIM_CONFIG_DST/lua/jenova/$(basename "$_f")"
-            done
-            ln -sfn "$JVIM_CONFIG_SRC/lua/jenova/agent" \
-                "$JVIM_CONFIG_DST/lua/jenova/agent"
-            ok "Symlinked jvim user config (--link mode, edits in $JVIM_CONFIG_SRC take effect immediately)"
-        else
-            # Copy mode — stable snapshot
-            cp "$JVIM_CONFIG_SRC/init.lua" "$JVIM_CONFIG_DST/init.lua"
-            for _f in "$JVIM_CONFIG_SRC/lua/plugins/"*.lua; do
-                [ -f "$_f" ] && cp "$_f" "$JVIM_CONFIG_DST/lua/plugins/"
-            done
-            for _f in "$JVIM_CONFIG_SRC/lua/jenova/"*.lua; do
-                [ -f "$_f" ] && cp "$_f" "$JVIM_CONFIG_DST/lua/jenova/"
-            done
-            cp -r "$JVIM_CONFIG_SRC/lua/jenova/agent" \
-                "$JVIM_CONFIG_DST/lua/jenova/"
-            ok "Copied jvim user config to $JVIM_CONFIG_DST"
-        fi
-        info "Plugins ship vendored inside jvim/runtime/pack/jenova/start/ — no network fetch required."
-    fi
-fi
 
 # ---------------------------------------------------------------------------
-# 8. Deploy to JENOVA_HOME (Strict Separation)
+# 8. Deploy to JCA_HOME (Strict Separation)
 # ---------------------------------------------------------------------------
-info "Deploying standalone system to $JENOVA_HOME..."
+info "Deploying standalone system to $JCA_HOME..."
 
 # 8.1 Create directory structure
-for _d in bin etc lib public scripts hardware-profiles share share/jvim/mason var/log var/cache var/run models/agent models/embed models/draft jvim/runtime; do
-    mkdir -p "$JENOVA_HOME/$_d"
+for _d in bin etc lib public scripts hardware-profiles share var/log var/cache var/run models/agent models/embed models/draft; do
+    mkdir -p "$JCA_HOME/$_d"
 done
 
 # 8.2 Verify and Deploy Binaries
@@ -470,76 +354,68 @@ _verify_and_copy_bin() {
 }
 
 # wrappers
-for _bin in jvim jenova jenova-ui jenova-ca jenova-tui jenova-term jenova-swap-mount; do
+for _bin in jenova jenova-ui jenova-ca jenova-tui jenova-term jenova-swap-mount; do
     if [ -f "$JENOVA_ROOT/bin/$_bin" ]; then
-        install -m 755 "$JENOVA_ROOT/bin/$_bin" "$JENOVA_HOME/bin/$_bin"
+        install -m 755 "$JENOVA_ROOT/bin/$_bin" "$JCA_HOME/bin/$_bin"
     fi
 done
 
 # Built artifacts (llama-server, jenova-ui)
 _LLAMA_BUILD_BIN="$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server"
 if [ -f "$_LLAMA_BUILD_BIN" ]; then
-    _verify_and_copy_bin "$_LLAMA_BUILD_BIN" "$JENOVA_HOME/bin/llama-server"
+    _verify_and_copy_bin "$_LLAMA_BUILD_BIN" "$JCA_HOME/bin/llama-server"
     # Copy shared libs if they exist
     for _lib in "$JENOVA_ROOT/external/llama.cpp/build/bin/"*.so* "$JENOVA_ROOT/external/llama.cpp/build/bin/"*.dylib*; do
         if [ -f "$_lib" ]; then
-            install -m 755 "$_lib" "$JENOVA_HOME/bin/"
+            install -m 755 "$_lib" "$JCA_HOME/bin/"
         fi
     done
-    ok "Deployed llama.cpp artifacts to $JENOVA_HOME/bin"
+    ok "Deployed llama.cpp artifacts to $JCA_HOME/bin"
 fi
 
 
 if [ -f "$JENOVA_ROOT/jenova-ui/jenova-ui" ]; then
-    _verify_and_copy_bin "$JENOVA_ROOT/jenova-ui/jenova-ui" "$JENOVA_HOME/bin/jenova-ui"
+    _verify_and_copy_bin "$JENOVA_ROOT/jenova-ui/jenova-ui" "$JCA_HOME/bin/jenova-ui"
 fi
 
-# jvim core (nvim)
-_JVIM_CORE="$JENOVA_ROOT/jvim/build/bin/nvim"
-if [ ! -f "$_JVIM_CORE" ]; then _JVIM_CORE="$JENOVA_ROOT/jvim/build/bin/jvim"; fi
-if [ -f "$_JVIM_CORE" ]; then
-    _verify_and_copy_bin "$_JVIM_CORE" "$JENOVA_HOME/bin/jvim-core"
-fi
+
 
 # 8.3 Deploy Assets, Scripts, and Config
-cp -R "$JENOVA_ROOT/lib/"* "$JENOVA_HOME/lib/"
-cp -R "$JENOVA_ROOT/scripts/"* "$JENOVA_HOME/scripts/"
-cp -R "$JENOVA_ROOT/hardware-profiles/"* "$JENOVA_HOME/hardware-profiles/"
-cp -R "$JENOVA_ROOT/jvim/runtime/"* "$JENOVA_HOME/jvim/runtime/"
-[ -d "$JENOVA_ROOT/public" ] && cp -R "$JENOVA_ROOT/public/"* "$JENOVA_HOME/public/"
-[ -d "$JENOVA_ROOT/share/jvim/mason" ] && cp -R "$JENOVA_ROOT/share/jvim/mason/"* "$JENOVA_HOME/share/jvim/mason/"
+cp -R "$JENOVA_ROOT/lib/"* "$JCA_HOME/lib/"
+cp -R "$JENOVA_ROOT/scripts/"* "$JCA_HOME/scripts/"
+cp -R "$JENOVA_ROOT/hardware-profiles/"* "$JCA_HOME/hardware-profiles/"
+[ -d "$JENOVA_ROOT/public" ] && cp -R "$JENOVA_ROOT/public/"* "$JCA_HOME/public/"
 ok "Deployed libraries, scripts, hardware profiles, runtime, and web assets"
 
 # 8.4 Generate Path-Locked Config
-cat > "$JENOVA_HOME/etc/jenova.local.conf" <<EOF
+cat > "$JCA_HOME/etc/jenova.local.conf" <<EOF
 #!/bin/sh
 # Path-locked configuration generated by install.sh on $(date)
 # This ensures the installation is decoupled from the source repository.
 
-JENOVA_ROOT="$JENOVA_HOME"
+JENOVA_ROOT="$JCA_HOME"
 LLAMA_SERVER="\$JENOVA_ROOT/bin/llama-server"
 LLAMA_LIB_DIR="\$JENOVA_ROOT/bin"
-VIMRUNTIME="\$JENOVA_ROOT/jvim/runtime"
 EOF
 
 # Copy base config if missing
-if [ ! -f "$JENOVA_HOME/etc/jenova.conf" ]; then
-    cp "$JENOVA_ROOT/etc/jenova.conf" "$JENOVA_HOME/etc/"
+if [ ! -f "$JCA_HOME/etc/jenova.conf" ]; then
+    cp "$JENOVA_ROOT/etc/jenova.conf" "$JCA_HOME/etc/"
 fi
-ok "Deployed path-locked configuration to $JENOVA_HOME/etc"
+ok "Deployed path-locked configuration to $JCA_HOME/etc"
 
 # 8.5 Symlink to PATH
 _LOCAL_BIN="$HOME/.local/bin"
 mkdir -p "$_LOCAL_BIN"
 
-for _bin in jvim jenova jenova-ui jenova-ca jenova-tui jenova-term jenova-swap-mount; do
-    if [ -f "$JENOVA_HOME/bin/$_bin" ]; then
-        ln -sf "$JENOVA_HOME/bin/$_bin" "$_LOCAL_BIN/$_bin"
+for _bin in jenova jenova-ui jenova-ca jenova-tui jenova-term jenova-swap-mount; do
+    if [ -f "$JCA_HOME/bin/$_bin" ]; then
+        ln -sf "$JCA_HOME/bin/$_bin" "$_LOCAL_BIN/$_bin"
     fi
 done
 
 
-ok "Symlinked launchers from $JENOVA_HOME/bin to $_LOCAL_BIN"
+ok "Symlinked launchers from $JCA_HOME/bin to $_LOCAL_BIN"
 
 # Warn if ~/.local/bin is not on PATH
 _ON_PATH=0
@@ -562,35 +438,35 @@ if [ "$JENOVA_OS" = "linux" ] || [ "$JENOVA_OS" = "freebsd" ]; then
     rm -f "$_APP_DIR/jenova-manager.desktop"
 
     # Install Icons and PNGs FIRST so desktop entries can reference them
-    mkdir -p "$JENOVA_HOME/png"
+    mkdir -p "$JCA_HOME/png"
     _ICON_DIR="$HOME/.local/share/icons"
     mkdir -p "$_ICON_DIR"
 
     if [ -d "$JENOVA_ROOT/png" ]; then
         # Copy all source icons to deployment directory
-        cp "$JENOVA_ROOT/png/"* "$JENOVA_HOME/png/" 2>/dev/null || true
+        cp "$JENOVA_ROOT/png/"* "$JCA_HOME/png/" 2>/dev/null || true
 
-        for icon in jenova jca jca_grey jvim; do
+        for icon in jenova jca jca_grey; do
             # Determine the best available icon format
             _icon_deployed=""
             if [ -f "$JENOVA_ROOT/png/$icon.png" ]; then
                 cp "$JENOVA_ROOT/png/$icon.png" "$_ICON_DIR/$icon.png"
-                cp "$JENOVA_ROOT/png/$icon.png" "$JENOVA_HOME/png/$icon.png"
+                cp "$JENOVA_ROOT/png/$icon.png" "$JCA_HOME/png/$icon.png"
                 _icon_deployed="$icon.png"
             elif [ -f "$JENOVA_ROOT/png/$icon.jpg" ]; then
                 # Try to convert jpg→png for desktop compatibility
                 if command -v convert >/dev/null 2>&1; then
-                    convert "$JENOVA_ROOT/png/$icon.jpg" "$JENOVA_HOME/png/$icon.png"
-                    cp "$JENOVA_HOME/png/$icon.png" "$_ICON_DIR/$icon.png"
+                    convert "$JENOVA_ROOT/png/$icon.jpg" "$JCA_HOME/png/$icon.png"
+                    cp "$JCA_HOME/png/$icon.png" "$_ICON_DIR/$icon.png"
                     _icon_deployed="$icon.png"
                 elif command -v magick >/dev/null 2>&1; then
-                    magick "$JENOVA_ROOT/png/$icon.jpg" "$JENOVA_HOME/png/$icon.png"
-                    cp "$JENOVA_HOME/png/$icon.png" "$_ICON_DIR/$icon.png"
+                    magick "$JENOVA_ROOT/png/$icon.jpg" "$JCA_HOME/png/$icon.png"
+                    cp "$JCA_HOME/png/$icon.png" "$_ICON_DIR/$icon.png"
                     _icon_deployed="$icon.png"
                 else
                     # No converter — use jpg directly (most DEs support it)
                     cp "$JENOVA_ROOT/png/$icon.jpg" "$_ICON_DIR/$icon.jpg"
-                    cp "$JENOVA_ROOT/png/$icon.jpg" "$JENOVA_HOME/png/$icon.jpg"
+                    cp "$JENOVA_ROOT/png/$icon.jpg" "$JCA_HOME/png/$icon.jpg"
                     _icon_deployed="$icon.jpg"
                 fi
             fi
@@ -603,20 +479,20 @@ if [ "$JENOVA_OS" = "linux" ] || [ "$JENOVA_OS" = "freebsd" ]; then
 
         # Update icon cache
         gtk-update-icon-cache -f -t "$_ICON_DIR" 2>/dev/null || true
-        ok "Installed icons to $_ICON_DIR and $JENOVA_HOME/png"
+        ok "Installed icons to $_ICON_DIR and $JCA_HOME/png"
     fi
 
     # ISS-08: Rewrite desktop entries with targeted Exec= line replacement
     # instead of global substring sed which corrupted Name= and Comment= fields.
-    for _dfile in jenova.desktop jvim.desktop; do
+    for _dfile in jenova.desktop; do
         if [ -f "$JENOVA_ROOT/bin/$_dfile" ]; then
             _icon_name=$(grep "^Icon=" "$JENOVA_ROOT/bin/$_dfile" | cut -d= -f2)
 
             # Resolve the actual icon path (prefer .png, fall back to .jpg)
-            if [ -f "$JENOVA_HOME/png/$_icon_name.png" ]; then
-                _icon_path="$JENOVA_HOME/png/$_icon_name.png"
-            elif [ -f "$JENOVA_HOME/png/$_icon_name.jpg" ]; then
-                _icon_path="$JENOVA_HOME/png/$_icon_name.jpg"
+            if [ -f "$JCA_HOME/png/$_icon_name.png" ]; then
+                _icon_path="$JCA_HOME/png/$_icon_name.png"
+            elif [ -f "$JCA_HOME/png/$_icon_name.jpg" ]; then
+                _icon_path="$JCA_HOME/png/$_icon_name.jpg"
             else
                 _icon_path="$_icon_name"  # Fall back to theme name lookup
             fi
@@ -624,12 +500,11 @@ if [ "$JENOVA_OS" = "linux" ] || [ "$JENOVA_OS" = "freebsd" ]; then
             # Read original, rewrite only Exec= and Icon= lines
             # This avoids corrupting Name=, Comment=, or other fields
             # that happen to contain binary name substrings.
-            _JHBIN="$JENOVA_HOME/bin"
+            _JHBIN="$JCA_HOME/bin"
             sed -e "/^Exec=/{ \
                 s|jenova-term|$_JHBIN/jenova-term|g; \
                 s|jenova-ui|$_JHBIN/jenova-ui|g; \
                 s|jenova-ca|$_JHBIN/jenova-ca|g; \
-                s| jvim | $_JHBIN/jvim |g; \
             }" \
                 -e "s|^Icon=.*|Icon=$_icon_path|" \
                 "$JENOVA_ROOT/bin/$_dfile" > "$_APP_DIR/$_dfile"
@@ -642,13 +517,13 @@ fi
 # 9. System Tuning Reminders
 # ---------------------------------------------------------------------------
 if [ -n "$_PROFILE" ]; then
-    _PROFILE_DIR="$JENOVA_HOME/hardware-profiles/$_PROFILE"
+    _PROFILE_DIR="$JCA_HOME/hardware-profiles/$_PROFILE"
     if [ -f "$_PROFILE_DIR/jenova-setup" ]; then
         warn "Run 'sudo $_PROFILE_DIR/jenova-setup' once to tune system for this hardware."
     fi
 elif [ "$JENOVA_OS" = "freebsd" ]; then
     info "System tuning..."
-    warn "Run 'sudo $JENOVA_HOME/scripts/jenova-setup' once to tune vm.* sysctls and ZFS ARC"
+    warn "Run 'sudo $JCA_HOME/scripts/jenova-setup' once to tune vm.* sysctls and ZFS ARC"
     warn "for optimal Optane swap / Iris Xe UMA performance."
     WARNINGS=$((WARNINGS + 1))
 fi
@@ -680,32 +555,23 @@ echo ""
 info "Next steps:"
 if [ "$CLIENT_ONLY" = "1" ]; then
     echo "  This is a LAN-client install. To connect to a remote Jenova CA:"
-    echo "      jvim --remote <server-ip>            # default ports 8080/8081/8082"
-    echo "      jvim --remote <server-ip> --remote-port 8080 --llama-port 8081"
     echo ""
     echo "  Make sure the server has JENOVA_HOST=0.0.0.0 in etc/jenova.conf and"
     echo "  the firewall allows ports 8080, 8081, and 8082 from this host."
 else
     echo "  1. Place model GGUF files in type-specific folders:"
-    echo "       Agent:  $JENOVA_HOME/models/agent/"
-    echo "       Embed:  $JENOVA_HOME/models/embed/"
-    echo "       Draft:  $JENOVA_HOME/models/draft/"
+    echo "       Agent:  $JCA_HOME/models/agent/"
+    echo "       Embed:  $JCA_HOME/models/embed/"
+    echo "       Draft:  $JCA_HOME/models/draft/"
     echo "  2. Build llama.cpp if not done:"
     echo "       make llama"
     echo "  3. Start the backend:  jenova-ca --daemon"
-    echo "     Or launch agent:    jenova"
+    echo "     Or launch manager:  jenova-tui"
     echo "     Or use Web UI:      Open http://localhost:8080 in a browser"
-    echo "     Or launch editor:   jvim"
-    echo "     LAN client mode:    jvim --remote <host>"
-    if [ "$SKIP_NVIM" = "0" ]; then
-        echo "  4. Inside the editor:  :checkhealth jenova"
-        echo "                         (plugins are vendored under jvim/runtime/pack/jenova/start/)"
-    fi
     echo ""
     echo "  Maintenance:"
     echo "    scripts/update.sh             — pull latest jenova + sync nvim config"
     echo "    scripts/cleanup.sh --all      — clear logs and cache"
     echo "    scripts/uninstall.sh          — remove deployed files (preserves models)"
-    echo "    bin/jvim --check        — print resolved env without launching editor"
 fi
 echo

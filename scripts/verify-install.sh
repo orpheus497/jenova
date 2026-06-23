@@ -19,7 +19,7 @@ set -e
 _REAL_SCRIPT="$(realpath "$0" 2>/dev/null || echo "$0")"
 _SCRIPT_DIR="$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)"
 JENOVA_ROOT="$(cd "$_SCRIPT_DIR/.." && pwd)"
-JENOVA_HOME="${JENOVA_HOME:-$HOME/Jenova}"
+JCA_HOME="${JCA_HOME:-$HOME/JCA}"
 FULL=0
 VERBOSE=0
 ERRORS=0
@@ -120,7 +120,7 @@ _check_bin() {
     fi
 }
 
-_check_bin "jvim" "jvim (bundled editor)"
+_check_bin "jenova" "jenova (bundled editor)"
 _check_bin "jenova" "jenova (launcher)"
 _check_bin "jenova-ca" "jenova-ca (daemon manager)"
 
@@ -137,9 +137,9 @@ else
 fi
 
 if [ -d "$VIMRUNTIME" ]; then
-    ok "jvim runtime found"
+    ok "jenova runtime found"
 else
-    fail "jvim runtime missing at $VIMRUNTIME"
+    fail "jenova runtime missing at $VIMRUNTIME"
     ERRORS=$((ERRORS + 1))
 fi
 
@@ -150,7 +150,7 @@ else
     WARNINGS=$((WARNINGS + 1))
 fi
 
-if [ -d "$JENOVA_ROOT/share/jvim/mason" ]; then
+if [ -d "$JENOVA_ROOT/share/jenova/mason" ]; then
     ok "share directory found"
 else
     warn "share directory missing (LSPs may need re-install)"
@@ -162,26 +162,26 @@ fi
 # ---------------------------------------------------------------------------
 info "Verifying configuration..."
 
-_jvim_config="$HOME/.config/jvim"
-if [ -d "$_jvim_config" ]; then
-    ok "jvim config directory exists ($_jvim_config)"
-    if [ -f "$_jvim_config/init.lua" ]; then
+_jenova_config="$HOME/.config/jenova"
+if [ -d "$_jenova_config" ]; then
+    ok "jenova config directory exists ($_jenova_config)"
+    if [ -f "$_jenova_config/init.lua" ]; then
         ok "  init.lua deployed"
     else
         fail "  init.lua missing"
         ERRORS=$((ERRORS + 1))
     fi
 else
-    fail "jvim config directory not found - run 'make install'"
+    fail "jenova config directory not found - run 'make install'"
     ERRORS=$((ERRORS + 1))
 fi
 
 # ---------------------------------------------------------------------------
 # 4. Check Model Files
 # ---------------------------------------------------------------------------
-info "Verifying model files in $JENOVA_HOME/models..."
+info "Verifying model files in $JCA_HOME/models..."
 
-_models_dir="$JENOVA_HOME/models"
+_models_dir="$JCA_HOME/models"
 mkdir -p "$_models_dir/agent" "$_models_dir/embed" "$_models_dir/draft" 2>/dev/null || true
 
 _check_model() {
@@ -223,21 +223,21 @@ _check_dir() {
     fi
 }
 
-_check_dir "$JENOVA_HOME/.system" "State directory (.system)" 1
-_check_dir "$JENOVA_HOME/var/log" "Log directory (var/log)" 1
-_check_dir "$JENOVA_HOME/var/cache" "Cache directory (var/cache)" 1
+_check_dir "$JCA_HOME/.system" "State directory (.system)" 1
+_check_dir "$JCA_HOME/var/log" "Log directory (var/log)" 1
+_check_dir "$JCA_HOME/var/cache" "Cache directory (var/cache)" 1
 
 # ---------------------------------------------------------------------------
 # 6. Quick Functionality Tests
 # ---------------------------------------------------------------------------
 info "Testing basic functionality..."
 
-# Test jvim version
-if command -v jvim >/dev/null 2>&1; then
-    _ver=$(jvim --version 2>/dev/null | head -n1)
+# Test jenova version
+if command -v jenova >/dev/null 2>&1; then
+    _ver=$(jenova --version 2>/dev/null | head -n1)
     case "$_ver" in
-        *JVIM*) ok "jvim version: $_ver" ;;
-        *)      warn "jvim is not the bundled editor: $_ver"; WARNINGS=$((WARNINGS + 1)) ;;
+        *JVIM*) ok "jenova version: $_ver" ;;
+        *)      warn "jenova is not the bundled editor: $_ver"; WARNINGS=$((WARNINGS + 1)) ;;
     esac
 fi
 

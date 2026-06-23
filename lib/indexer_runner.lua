@@ -9,8 +9,8 @@ local search = require('search')
 local embed = require('embed')
 
 local home = os.getenv("HOME") or "/tmp"
-local jenova_home = os.getenv("JENOVA_HOME") or (home .. "/Jenova")
-local state_dir = os.getenv("JENOVA_STATE") or (jenova_home .. "/.system")
+local jca_home = os.getenv("JCA_HOME") or (home .. "/Jenova")
+local state_dir = os.getenv("JENOVA_STATE") or (jca_home .. "/.system")
 local qfile = arg and arg[1] or (state_dir .. "/index_queue.json")
 local f = io.open(qfile, 'r')
 if not f then

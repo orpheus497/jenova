@@ -329,20 +329,20 @@ apply_profile() {
     fi
 
     _jenova_root="$(dirname "$SCRIPT_DIR")"
-    _jenova_home="${JENOVA_HOME:-$HOME/Jenova}"
+    _jca_home="${JCA_HOME:-$HOME/JCA}"
     _profile_conf="$MATCHED_PROFILE_DIR/jenova.conf"
 
     if [ -f "$_profile_conf" ]; then
-        # Backup existing config in JENOVA_HOME/etc
-        if [ -f "$_jenova_home/etc/jenova.conf" ]; then
+        # Backup existing config in JCA_HOME/etc
+        if [ -f "$_jca_home/etc/jenova.conf" ]; then
             _ts=$(date +%Y%m%d_%H%M%S)
-            cp "$_jenova_home/etc/jenova.conf" "$_jenova_home/etc/jenova.conf.bak.${_ts}"
-            ok "Backed up existing config to $_jenova_home/etc/jenova.conf.bak.${_ts}"
+            cp "$_jca_home/etc/jenova.conf" "$_jca_home/etc/jenova.conf.bak.${_ts}"
+            ok "Backed up existing config to $_jca_home/etc/jenova.conf.bak.${_ts}"
         fi
 
-        mkdir -p "$_jenova_home/etc"
-        cp "$_profile_conf" "$_jenova_home/etc/jenova.conf"
-        ok "Deployed $MATCHED_PROFILE configuration to $_jenova_home/etc/jenova.conf"
+        mkdir -p "$_jca_home/etc"
+        cp "$_profile_conf" "$_jca_home/etc/jenova.conf"
+        ok "Deployed $MATCHED_PROFILE configuration to $_jca_home/etc/jenova.conf"
         
         # Also deploy to repo etc/ for compatibility if writable
         if [ -w "$_jenova_root/etc" ]; then
