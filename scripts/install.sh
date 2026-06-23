@@ -497,19 +497,18 @@ if [ "$JENOVA_OS" = "linux" ] || [ "$JENOVA_OS" = "freebsd" ]; then
                 _icon_path="$_icon_name"  # Fall back to theme name lookup
             fi
 
-            # Read original, rewrite only Exec= and Icon= lines
-            # This avoids corrupting Name=, Comment=, or other fields
-            # that happen to contain binary name substrings.
             _JHBIN="$JCA_HOME/bin"
             sed -e "/^Exec=/{ \
                 s|jenova-term|$_JHBIN/jenova-term|g; \
                 s|jenova-ui|$_JHBIN/jenova-ui|g; \
                 s|jenova-ca|$_JHBIN/jenova-ca|g; \
+                s|Exec=jenova|Exec=$_JHBIN/jenova|g; \
             }" \
                 -e "s|^Icon=.*|Icon=$_icon_path|" \
                 "$JENOVA_ROOT/bin/$_dfile" > "$_APP_DIR/$_dfile"
         fi
     done
+    update-desktop-database "$_APP_DIR" 2>/dev/null || true
     ok "Installed and path-locked desktop entries to $_APP_DIR"
 fi
 

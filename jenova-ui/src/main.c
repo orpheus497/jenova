@@ -34,21 +34,8 @@ static char jenova_root[PATH_MAX] = {0};
 
 /* Forward declarations */
 static void run_tui(void);
-static void run_tray(int argc, char *argv[]);
+static gboolean run_tray(int argc, char *argv[]);
 static void rebuild_tray_menu(void);
-
-static int is_tray_supported(void) {
-#if defined(__FreeBSD__)
-    return 0;
-#endif
-    const char *desktop = getenv("XDG_CURRENT_DESKTOP");
-    /* Sway/Wayland often lacks X11-style AppIndicator support */
-    if (desktop && (strcasecmp(desktop, "sway") == 0 || strcasecmp(desktop, "Wayland") == 0)) {
-        return 0;
-    }
-    if (!getenv("DISPLAY") && !getenv("WAYLAND_DISPLAY")) return 0;
-    return 1;
-}
 
 /* ---------------------------------------------------------------------------
  * get_jenova_root: Resolve the project root from the binary's location.
@@ -234,17 +221,28 @@ int main(int argc, char *argv[]) {
     init_lua();
 
     int force_tui = 0;
+    int force_tray = 0;
+
     if (argc > 1 && strcmp(argv[1], "tui") == 0) {
         force_tui = 1;
-    } else if (!is_tray_supported()) {
-        fprintf(stderr, "jenova-ui: system tray support not detected, falling back to TUI mode.\n");
-        force_tui = 1;
+    } else if (argc > 1 && strcmp(argv[1], "tray") == 0) {
+        force_tray = 1;
     }
 
     if (force_tui) {
         run_tui();
     } else {
-        run_tray(argc, argv);
+        if (run_tray(argc, argv)) {
+            // Started successfully (and blocked on gtk_main)
+        } else {
+            if (force_tray) {
+                fprintf(stderr, "jenova-ui: tray mode requested but GTK initialization failed.\n");
+                lua_close(L);
+                return 1;
+            }
+            fprintf(stderr, "jenova-ui: system tray/GTK initialization failed, falling back to TUI mode.\n");
+            run_tui();
+        }
     }
 
     lua_close(L);
@@ -329,7 +327,11 @@ static gboolean update_tray_status(gpointer user_data G_GNUC_UNUSED) {
 /* ---------------------------------------------------------------------------
  * run_tray: Single-instance tray icon with GTK main loop.
  * --------------------------------------------------------------------------- */
-static void run_tray(int argc, char *argv[]) {
+static gboolean run_tray(int argc, char *argv[]) {
+    if (!gtk_init_check(&argc, &argv)) {
+        return FALSE;
+    }
+
     /* Single-instance lock (per-user) */
     char lock_path[PATH_MAX];
     char dir_path[PATH_MAX];
@@ -359,8 +361,6 @@ static void run_tray(int argc, char *argv[]) {
         close(lock_fd);
         exit(1);
     }
-
-    gtk_init(&argc, &argv);
 
     /* Parse --offline flag */
     int offline_mode = 0;
@@ -422,6 +422,7 @@ static void run_tray(int argc, char *argv[]) {
     update_tray_status(NULL);
 
     gtk_main();
+    return TRUE;
 }
 
 /* ===========================================================================
