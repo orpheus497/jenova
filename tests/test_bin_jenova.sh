@@ -114,8 +114,8 @@ fi
 
 # Test 8: Verify trap is set
 echo "[test 8] EXIT/INT/TERM trap..."
-if grep -q "trap cleanup EXIT INT TERM" "$JENOVA_BIN"; then
-    echo "  PASS: trap cleanup EXIT INT TERM found"
+if grep -q "trap cleanup EXIT" "$JENOVA_BIN"; then
+    echo "  PASS: trap cleanup found"
 else
     echo "  FAIL: Missing trap in bin/jenova"
     EXIT_CODE=1

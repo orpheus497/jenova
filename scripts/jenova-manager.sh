@@ -382,27 +382,49 @@ confirm_prompt() {
 }
 
 # --- Action Implementations ---
-install_jenova_core() {
-    printf "%s%sInstalling Jenova Core...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
-    "$JENOVA_ROOT/scripts/install.sh"
+build_jenova_core() {
+    printf "%s%sNothing to build for Jenova Core.%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
 }
-install_jvim() {
+deploy_jenova_core() {
+    printf "%s%sDeploying Jenova Core...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
+    "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama --skip-web
+}
+
+build_jvim() {
     printf "%s%sBuilding in-tree jvim...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
     "$MAKE" -C "$JENOVA_ROOT" jvim
 }
-install_llama() {
-    printf "%s%sInstalling external/llama.cpp...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
+deploy_jvim() {
+    printf "%s%sDeploying jvim...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
+    "$JENOVA_ROOT/scripts/install.sh" --skip-llama --skip-web
+}
+
+build_llama() {
+    printf "%s%sBuilding external/llama.cpp...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
     "$JENOVA_ROOT/bin/build-llama-jenova"
 }
-install_webui() {
+deploy_llama() {
+    printf "%s%sDeploying external/llama.cpp...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
+    "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-web
+}
+
+build_webui() {
     printf "%s%sBuilding Web UI...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
     "$MAKE" -C "$JENOVA_ROOT" web
 }
-install_jenova_ui() {
+deploy_webui() {
+    printf "%s%sDeploying Web UI...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
+    "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama
+}
+
+build_jenova_ui() {
     printf "%s%sBuilding jenova-ui (Desktop Manager)...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
     "$MAKE" -C "$JENOVA_ROOT" jenova-ui
 }
-
+deploy_jenova_ui() {
+    printf "%s%sDeploying jenova-ui...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
+    "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama --skip-web
+}
 
 update_jenova_core() {
     printf "%s%sUpdating Jenova Core...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
@@ -545,42 +567,30 @@ show_action_menu() {
                 _extra_flags=""
                 [ "$PULL_MODE" = "nopull" ] && _extra_flags="--no-pull"
 
-                if [ "$mode" = "deploy" ]; then
-                    # Quick install mode: just run install.sh with appropriate skip flags
-                    # but ensure the component we want is NOT skipped.
-                    case "$suffix" in
-                        "jenova_core") "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama ;;
-                        "jvim")        "$JENOVA_ROOT/scripts/install.sh" --skip-config --skip-llama ;;
-                        "llama")       "$JENOVA_ROOT/scripts/install.sh" --skip-config --skip-jvim ;;
-                        *)             "${action}_${suffix}" ;; # Fallback
-                    esac
-                    _ret=$?
-                else
-                    # Call the action function with potential extra flags
-                    if [ "$action" = "update" ]; then
-                        # Pass _extra_flags to update functions
-                        case "$suffix" in
-                            "jenova_core") "$JENOVA_ROOT/scripts/update.sh" $_extra_flags ;;
-                            "jvim")        "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --skip-rebuild --skip-nvim ;;
-                            "llama")       "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --skip-nvim --skip-jvim ;;
-                            "webui")       "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --web --skip-nvim --skip-rebuild --skip-jvim ;;
-                            "jenova_ui")   "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --ui --skip-nvim --skip-rebuild --skip-jvim ;;
-                        esac
+                if [ "$action" = "install" ]; then
+                    if [ "$mode" = "deploy" ]; then
+                        "deploy_${suffix}"
                         _ret=$?
                     else
-                        "${action}_${suffix}"
+                        "build_${suffix}"
                         _ret=$?
-                        if [ "$_ret" = "0" ] && [ "$action" = "install" ]; then
-                            printf "\nDeploying %s after successful build...\n" "$item"
-                            case "$suffix" in
-                                "jvim")        "$JENOVA_ROOT/scripts/install.sh" --skip-llama ;;
-                                "llama")       "$JENOVA_ROOT/scripts/install.sh" --skip-jvim ;;
-                                "webui")       "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama ;;
-                                "jenova_ui")   "$JENOVA_ROOT/scripts/install.sh" --skip-jvim --skip-llama ;;
-                            esac
+                        if [ "$_ret" = "0" ]; then
+                            "deploy_${suffix}"
                             _ret=$?
                         fi
                     fi
+                elif [ "$action" = "update" ]; then
+                    case "$suffix" in
+                        "jenova_core") "$JENOVA_ROOT/scripts/update.sh" $_extra_flags ;;
+                        "jvim")        "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --skip-rebuild --skip-nvim ;;
+                        "llama")       "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --skip-nvim --skip-jvim ;;
+                        "webui")       "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --web --skip-nvim --skip-rebuild --skip-jvim ;;
+                        "jenova_ui")   "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --ui --skip-nvim --skip-rebuild --skip-jvim ;;
+                    esac
+                    _ret=$?
+                elif [ "$action" = "uninstall" ]; then
+                    "uninstall_${suffix}"
+                    _ret=$?
                 fi
 
                 if [ "$_ret" = "0" ]; then
