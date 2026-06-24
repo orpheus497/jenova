@@ -2,20 +2,20 @@
 export const MODEL_ID_NOT_FOUND = -1;
 
 /** Separates `<org>` from `<model>` in a model ID, e.g. `org/ModelName`. */
-export const MODEL_ID_ORG_SEPARATOR = '/';
+export const MODEL_ID_ORG_SEPARATOR = "/";
 
 /** Separates named segments within the model path, e.g. `ModelName-7B-GGUF`. */
-export const MODEL_ID_SEGMENT_SEPARATOR = '-';
+export const MODEL_ID_SEGMENT_SEPARATOR = "-";
 
 /** Separates the model path from the quantization tag, e.g. `model:Q4_K_M`. */
-export const MODEL_ID_QUANTIZATION_SEPARATOR = ':';
+export const MODEL_ID_QUANTIZATION_SEPARATOR = ":";
 
 /**
  * Matches a quantization/precision segment, e.g. `Q4_K_M`, `IQ4_XS`, `F16`, `BF16`, `MXFP4`.
  * Case-insensitive to handle both uppercase and lowercase inputs.
  */
 export const MODEL_QUANTIZATION_SEGMENT_RE =
-	/^(I?Q\d+(_[A-Z0-9]+)*|F\d+|BF\d+|MXFP\d+(_[A-Z0-9]+)*)$/i;
+  /^(I?Q\d+(_[A-Z0-9]+)*|F\d+|BF\d+|MXFP\d+(_[A-Z0-9]+)*)$/i;
 
 /**
  * Matches prefix for custom quantization types, e.g. `UD-Q8_K_XL`.
@@ -36,4 +36,4 @@ export const MODEL_ACTIVATED_PARAMS_RE = /^[Aa]\d+(\.\d+)?[BbMmKkTt]$/;
 /**
  * Container format segments to exclude from tags (every model uses these).
  */
-export const MODEL_IGNORED_SEGMENTS = new Set(['GGUF', 'GGML']);
+export const MODEL_IGNORED_SEGMENTS = new Set(["GGUF", "GGML"]);

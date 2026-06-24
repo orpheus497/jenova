@@ -1,10 +1,10 @@
 import {
-	MS_PER_SECOND,
-	SECONDS_PER_MINUTE,
-	SECONDS_PER_HOUR,
-	SHORT_DURATION_THRESHOLD,
-	MEDIUM_DURATION_THRESHOLD
-} from '$lib/constants';
+  MS_PER_SECOND,
+  SECONDS_PER_MINUTE,
+  SECONDS_PER_HOUR,
+  SHORT_DURATION_THRESHOLD,
+  MEDIUM_DURATION_THRESHOLD,
+} from "$lib/constants";
 
 /**
  * Formats file size in bytes to human readable format
@@ -14,14 +14,14 @@ import {
  * @returns Formatted file size string
  */
 export function formatFileSize(bytes: number | unknown): string {
-	if (typeof bytes !== 'number') return 'Unknown';
-	if (bytes === 0) return '0 Bytes';
+  if (typeof bytes !== "number") return "Unknown";
+  if (bytes === 0) return "0 Bytes";
 
-	const k = 1024;
-	const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-	const i = Math.floor(Math.log(bytes) / Math.log(k));
+  const k = 1024;
+  const sizes = ["Bytes", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
 
-	return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
 }
 
 /**
@@ -31,21 +31,21 @@ export function formatFileSize(bytes: number | unknown): string {
  * @returns Human-readable parameter count
  */
 export function formatParameters(params: number | unknown): string {
-	if (typeof params !== 'number') return 'Unknown';
+  if (typeof params !== "number") return "Unknown";
 
-	if (params >= 1e9) {
-		return `${(params / 1e9).toFixed(2)}B`;
-	}
+  if (params >= 1e9) {
+    return `${(params / 1e9).toFixed(2)}B`;
+  }
 
-	if (params >= 1e6) {
-		return `${(params / 1e6).toFixed(2)}M`;
-	}
+  if (params >= 1e6) {
+    return `${(params / 1e6).toFixed(2)}M`;
+  }
 
-	if (params >= 1e3) {
-		return `${(params / 1e3).toFixed(2)}K`;
-	}
+  if (params >= 1e3) {
+    return `${(params / 1e3).toFixed(2)}K`;
+  }
 
-	return params.toString();
+  return params.toString();
 }
 
 /**
@@ -55,9 +55,9 @@ export function formatParameters(params: number | unknown): string {
  * @returns Human-readable number
  */
 export function formatNumber(num: number | unknown): string {
-	if (typeof num !== 'number') return 'Unknown';
+  if (typeof num !== "number") return "Unknown";
 
-	return num.toLocaleString();
+  return num.toLocaleString();
 }
 
 /**
@@ -68,12 +68,12 @@ export function formatNumber(num: number | unknown): string {
  * @returns Pretty-printed JSON string or original if invalid
  */
 export function formatJsonPretty(jsonString: string): string {
-	try {
-		const parsed = JSON.parse(jsonString);
-		return JSON.stringify(parsed, null, 2);
-	} catch {
-		return jsonString;
-	}
+  try {
+    const parsed = JSON.parse(jsonString);
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return jsonString;
+  }
 }
 
 /**
@@ -83,12 +83,12 @@ export function formatJsonPretty(jsonString: string): string {
  * @returns Formatted time string (HH:MM:SS)
  */
 export function formatTime(date: Date): string {
-	return date.toLocaleTimeString('en-US', {
-		hour12: false,
-		hour: '2-digit',
-		minute: '2-digit',
-		second: '2-digit'
-	});
+  return date.toLocaleTimeString("en-US", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 /**
@@ -99,37 +99,39 @@ export function formatTime(date: Date): string {
  * @returns Formatted time string
  */
 export function formatPerformanceTime(ms: number): string {
-	if (ms < 0) return '0s';
+  if (ms < 0) return "0s";
 
-	const totalSeconds = ms / MS_PER_SECOND;
+  const totalSeconds = ms / MS_PER_SECOND;
 
-	if (totalSeconds < SHORT_DURATION_THRESHOLD) {
-		return `${totalSeconds.toFixed(1)}s`;
-	}
+  if (totalSeconds < SHORT_DURATION_THRESHOLD) {
+    return `${totalSeconds.toFixed(1)}s`;
+  }
 
-	if (totalSeconds < MEDIUM_DURATION_THRESHOLD) {
-		return `${totalSeconds.toFixed(1)}s`;
-	}
+  if (totalSeconds < MEDIUM_DURATION_THRESHOLD) {
+    return `${totalSeconds.toFixed(1)}s`;
+  }
 
-	const hours = Math.floor(totalSeconds / SECONDS_PER_HOUR);
-	const minutes = Math.floor((totalSeconds % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE);
-	const seconds = Math.floor(totalSeconds % SECONDS_PER_MINUTE);
+  const hours = Math.floor(totalSeconds / SECONDS_PER_HOUR);
+  const minutes = Math.floor(
+    (totalSeconds % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE,
+  );
+  const seconds = Math.floor(totalSeconds % SECONDS_PER_MINUTE);
 
-	const parts: string[] = [];
+  const parts: string[] = [];
 
-	if (hours > 0) {
-		parts.push(`${hours}h`);
-	}
+  if (hours > 0) {
+    parts.push(`${hours}h`);
+  }
 
-	if (minutes > 0) {
-		parts.push(`${minutes}min`);
-	}
+  if (minutes > 0) {
+    parts.push(`${minutes}min`);
+  }
 
-	if (seconds > 0 || parts.length === 0) {
-		parts.push(`${seconds}s`);
-	}
+  if (seconds > 0 || parts.length === 0) {
+    parts.push(`${seconds}s`);
+  }
 
-	return parts.join(' ');
+  return parts.join(" ");
 }
 
 /**
@@ -143,11 +145,11 @@ export function formatPerformanceTime(ms: number): string {
  * @returns Formatted string with header and content
  */
 export function formatAttachmentText(
-	label: string,
-	name: string,
-	content: string,
-	extra?: string
+  label: string,
+  name: string,
+  content: string,
+  extra?: string,
 ): string {
-	const header = extra ? `${name} (${extra})` : name;
-	return `\n\n--- ${label}: ${header} ---\n${content}`;
+  const header = extra ? `${name} (${extra})` : name;
+  return `\n\n--- ${label}: ${header} ---\n${content}`;
 }

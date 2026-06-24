@@ -42,7 +42,7 @@
  * />
  * ```
  */
-export { default as ModelsSelector } from './ModelsSelector.svelte';
+export { default as ModelsSelector } from "./ModelsSelector.svelte";
 
 /**
  * **ModelsSelectorList** - Grouped model options list
@@ -54,7 +54,7 @@ export { default as ModelsSelector } from './ModelsSelector.svelte';
  * Accepts an optional `renderOption` snippet to customize how each option is
  * rendered (e.g., to add keyboard navigation or highlighting).
  */
-export { default as ModelsSelectorList } from './ModelsSelectorList.svelte';
+export { default as ModelsSelectorList } from "./ModelsSelectorList.svelte";
 
 /**
  * **ModelsSelectorOption** - Single model option row
@@ -63,7 +63,7 @@ export { default as ModelsSelectorList } from './ModelsSelectorList.svelte';
  * load/unload actions, status indicators, and an info button.
  * Used inside ModelsSelectorList or directly in custom render snippets.
  */
-export { default as ModelsSelectorOption } from './ModelsSelectorOption.svelte';
+export { default as ModelsSelectorOption } from "./ModelsSelectorOption.svelte";
 
 /**
  * **ModelsSelectorSheet** - Mobile model selection sheet
@@ -72,7 +72,7 @@ export { default as ModelsSelectorOption } from './ModelsSelectorOption.svelte';
  * on mobile devices. Same functionality as ModelsSelector but uses Sheet UI
  * instead of DropdownMenu.
  */
-export { default as ModelsSelectorSheet } from './ModelsSelectorSheet.svelte';
+export { default as ModelsSelectorSheet } from "./ModelsSelectorSheet.svelte";
 
 /**
  * **ModelBadge** - Model name display badge
@@ -100,7 +100,7 @@ export { default as ModelsSelectorSheet } from './ModelsSelectorSheet.svelte';
  * />
  * ```
  */
-export { default as ModelBadge } from './ModelBadge.svelte';
+export { default as ModelBadge } from "./ModelBadge.svelte";
 
 /**
  * **ModelId** - Parsed model identifier display
@@ -109,4 +109,4 @@ export { default as ModelBadge } from './ModelBadge.svelte';
  * aliases, and tags. Supports raw mode to show the unprocessed model name.
  * Respects the user's `showRawModelNames` setting.
  */
-export { default as ModelId } from './ModelId.svelte';
+export { default as ModelId } from "./ModelId.svelte";

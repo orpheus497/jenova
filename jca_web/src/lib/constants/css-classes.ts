@@ -1,5 +1,5 @@
 export const BOX_BORDER =
-	'border border-border/30 focus-within:border-border  dark:border-border/20 dark:focus-within:border-border';
+  "border border-border/30 focus-within:border-border  dark:border-border/20 dark:focus-within:border-border";
 
 export const INPUT_CLASSES = `
     bg-muted/60 dark:bg-muted/75
@@ -16,4 +16,4 @@ export const PANEL_CLASSES = `
     rounded-t-lg!
 `;
 
-export const CHAT_FORM_POPOVER_MAX_HEIGHT = 'max-h-80';
+export const CHAT_FORM_POPOVER_MAX_HEIGHT = "max-h-80";

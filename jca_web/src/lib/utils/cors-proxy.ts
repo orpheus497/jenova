@@ -2,8 +2,8 @@
  * CORS Proxy utility for routing requests through jenova-server's CORS proxy.
  */
 
-import { base } from '$app/paths';
-import { CORS_PROXY_ENDPOINT, CORS_PROXY_URL_PARAM } from '$lib/constants';
+import { base } from "$app/paths";
+import { CORS_PROXY_ENDPOINT, CORS_PROXY_URL_PARAM } from "$lib/constants";
 
 /**
  * Build a proxied URL that routes through jenova-server's CORS proxy.
@@ -11,12 +11,12 @@ import { CORS_PROXY_ENDPOINT, CORS_PROXY_URL_PARAM } from '$lib/constants';
  * @returns URL pointing to the CORS proxy with target encoded
  */
 export function buildProxiedUrl(targetUrl: string): URL {
-	const proxyPath = `${base}${CORS_PROXY_ENDPOINT}`;
-	const proxyUrl = new URL(proxyPath, window.location.origin);
+  const proxyPath = `${base}${CORS_PROXY_ENDPOINT}`;
+  const proxyUrl = new URL(proxyPath, window.location.origin);
 
-	proxyUrl.searchParams.set(CORS_PROXY_URL_PARAM, targetUrl);
+  proxyUrl.searchParams.set(CORS_PROXY_URL_PARAM, targetUrl);
 
-	return proxyUrl;
+  return proxyUrl;
 }
 
 /**
@@ -24,14 +24,16 @@ export function buildProxiedUrl(targetUrl: string): URL {
  * @param headers - The original headers to be proxied to target
  * @returns List of "wrapped" headers to be sent to the CORS proxy
  */
-export function buildProxiedHeaders(headers: Record<string, string>): Record<string, string> {
-	const proxiedHeaders: Record<string, string> = {};
+export function buildProxiedHeaders(
+  headers: Record<string, string>,
+): Record<string, string> {
+  const proxiedHeaders: Record<string, string> = {};
 
-	for (const [key, value] of Object.entries(headers)) {
-		proxiedHeaders[`x-proxy-header-${key}`] = value;
-	}
+  for (const [key, value] of Object.entries(headers)) {
+    proxiedHeaders[`x-proxy-header-${key}`] = value;
+  }
 
-	return proxiedHeaders;
+  return proxiedHeaders;
 }
 
 /**
@@ -40,5 +42,5 @@ export function buildProxiedHeaders(headers: Record<string, string>): Record<str
  * @returns Proxied URL as string
  */
 export function getProxiedUrlString(targetUrl: string): string {
-	return buildProxiedUrl(targetUrl).href;
+  return buildProxiedUrl(targetUrl).href;
 }

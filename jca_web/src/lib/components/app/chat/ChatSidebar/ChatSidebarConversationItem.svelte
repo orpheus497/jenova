@@ -13,6 +13,7 @@
 	import { FORK_TREE_DEPTH_PADDING } from '$lib/constants';
 	import { getAllLoadingChats } from '$lib/stores/chat.svelte';
 	import { conversationsStore } from '$lib/stores/conversations.svelte';
+	import { toast } from 'svelte-sonner';
 	import { onMount } from 'svelte';
 
 	interface Props {
@@ -47,8 +48,8 @@
 		onEdit?.(conversation.id);
 	}
 
-	function handleDelete(event: Event) {
-		event.stopPropagation();
+	function handleDelete(event?: Event) {
+		event?.stopPropagation();
 		onDelete?.(conversation.id);
 	}
 

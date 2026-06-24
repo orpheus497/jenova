@@ -8,28 +8,36 @@
 
 // Audio utilities (MediaRecorder API)
 export {
-	AudioRecorder,
-	convertToWav,
-	createAudioFile,
-	isAudioRecordingSupported
-} from './audio-recording';
+  AudioRecorder,
+  convertToWav,
+  createAudioFile,
+  isAudioRecordingSupported,
+} from "./audio-recording";
 
 // PDF processing utilities (pdfjs-dist with DOMMatrix)
 export {
-	convertPDFToText,
-	convertPDFToImage,
-	isPdfFile as isPdfFileFromFile,
-	isApplicationMimeType
-} from './pdf-processing';
+  convertPDFToText,
+  convertPDFToImage,
+  isPdfFile as isPdfFileFromFile,
+  isApplicationMimeType,
+} from "./pdf-processing";
 
 // File conversion utilities (depends on pdf-processing)
-export { parseFilesToMessageExtras } from './convert-files-to-extra';
+export { parseFilesToMessageExtras } from "./convert-files-to-extra";
 
 // File upload processing utilities (depends on pdf-processing, svg-to-png, webp-to-png)
-export { processFilesToChatUploaded } from './process-uploaded-files';
+export { processFilesToChatUploaded } from "./process-uploaded-files";
 
 // SVG utilities (Canvas/Image API)
-export { svgBase64UrlToPngDataURL, isSvgFile, isSvgMimeType } from './svg-to-png';
+export {
+  svgBase64UrlToPngDataURL,
+  isSvgFile,
+  isSvgMimeType,
+} from "./svg-to-png";
 
 // WebP utilities (Canvas/Image API)
-export { webpBase64UrlToPngDataURL, isWebpFile, isWebpMimeType } from './webp-to-png';
+export {
+  webpBase64UrlToPngDataURL,
+  isWebpFile,
+  isWebpMimeType,
+} from "./webp-to-png";

@@ -29,7 +29,7 @@
  * <ServerStatus showActions />
  * ```
  */
-export { default as ServerStatus } from './ServerStatus.svelte';
+export { default as ServerStatus } from "./ServerStatus.svelte";
 
 /**
  * **ServerErrorSplash** - Full-screen connection error display
@@ -59,7 +59,7 @@ export { default as ServerStatus } from './ServerStatus.svelte';
  * />
  * ```
  */
-export { default as ServerErrorSplash } from './ServerErrorSplash.svelte';
+export { default as ServerErrorSplash } from "./ServerErrorSplash.svelte";
 
 /**
  * **ServerLoadingSplash** - Full-screen loading display
@@ -77,4 +77,4 @@ export { default as ServerErrorSplash } from './ServerErrorSplash.svelte';
  * <ServerLoadingSplash message="Connecting to server..." />
  * ```
  */
-export { default as ServerLoadingSplash } from './ServerLoadingSplash.svelte';
+export { default as ServerLoadingSplash } from "./ServerLoadingSplash.svelte";

@@ -17,4 +17,5 @@ export const KEY_VALUE_PAIR_VALUE_MAX_LENGTH = 8192;
 // eslint-disable-next-line no-control-regex
 export const KEY_VALUE_PAIR_UNSAFE_KEY_RE = /[\x00-\x1F\x7F]/g;
 // eslint-disable-next-line no-control-regex
-export const KEY_VALUE_PAIR_UNSAFE_VALUE_RE = /[\x00-\x08\x0A-\x0D\x0E-\x1F\x7F]/g;
+export const KEY_VALUE_PAIR_UNSAFE_VALUE_RE =
+  /[\x00-\x08\x0A-\x0D\x0E-\x1F\x7F]/g;

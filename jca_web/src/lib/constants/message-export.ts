@@ -9,12 +9,12 @@ export const ISO_TIMESTAMP_SLICE_LENGTH = 19;
 
 // Replacements for making the conversation title filename-friendly
 export const NON_ALPHANUMERIC_REGEX = /[^a-z0-9]/gi;
-export const EXPORT_CONV_NONALNUM_REPLACEMENT = '_';
+export const EXPORT_CONV_NONALNUM_REPLACEMENT = "_";
 export const MULTIPLE_UNDERSCORE_REGEX = /_+/g;
 
 // Replacements to the ISO date for use in the export filename
-export const ISO_DATE_TIME_SEPARATOR = 'T';
-export const ISO_DATE_TIME_SEPARATOR_REPLACEMENT = '_';
+export const ISO_DATE_TIME_SEPARATOR = "T";
+export const ISO_DATE_TIME_SEPARATOR_REPLACEMENT = "_";
 
-export const ISO_TIME_SEPARATOR = ':';
-export const ISO_TIME_SEPARATOR_REPLACEMENT = '-';
+export const ISO_TIME_SEPARATOR = ":";
+export const ISO_TIME_SEPARATOR_REPLACEMENT = "-";

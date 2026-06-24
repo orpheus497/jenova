@@ -2,7 +2,6 @@
 	import { afterNavigate } from '$app/navigation';
 	import {
 		ChatScreenForm,
-		ChatScreenHeader,
 		ChatMessages,
 		ChatScreenProcessingInfo,
 		DialogEmptyFileAlert,
@@ -342,7 +341,7 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<ChatScreenHeader />
+
 
 {#if !isEmpty}
 	<div
@@ -592,7 +591,7 @@
 			right: 0;
 			width: 100%;
 			height: 2.375rem;
-			background-color: var(--background);
+			background-color: transparent;
 		}
 	}
 </style>

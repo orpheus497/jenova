@@ -8,6 +8,7 @@
     ChatSidebar,
     DialogConversationTitleUpdate,
     DialogChatSettings,
+    NeuralCanvas
   } from "$lib/components/app";
   import { isLoading } from "$lib/stores/chat.svelte";
   import {
@@ -30,6 +31,7 @@
   import { IsMobile } from "$lib/hooks/is-mobile.svelte";
   import { setChatSettingsDialogContext } from "$lib/contexts";
   import { SyncService } from "$lib/services/sync.service";
+  import { canvasStore } from "$lib/stores/canvas.svelte";
 
   let { children } = $props();
 
@@ -308,18 +310,24 @@
   />
 
   <Sidebar.Provider bind:open={sidebarOpen}>
-    <div class="flex h-screen w-full" style:height="{innerHeight}px">
-      <Sidebar.Root class="h-full">
-        <ChatSidebar bind:this={chatSidebar} />
-      </Sidebar.Root>
-
-      {#if !(alwaysShowSidebarOnDesktop && isDesktop)}
-        <Sidebar.Trigger class="z-[900]" />
+    <div class="flex h-screen w-full bg-black relative overflow-hidden font-sans text-[15px]" style:height="{innerHeight}px">
+      {#if canvasStore.enabled}
+        <NeuralCanvas />
       {/if}
+      
+      <div class="flex flex-1 relative z-10">
+        <Sidebar.Root class="h-full">
+          <ChatSidebar bind:this={chatSidebar} />
+        </Sidebar.Root>
 
-      <Sidebar.Inset class="flex flex-1 flex-col overflow-hidden">
-        {@render children?.()}
-      </Sidebar.Inset>
+        {#if !(alwaysShowSidebarOnDesktop && isDesktop)}
+          <Sidebar.Trigger class="z-[900]" />
+        {/if}
+
+        <Sidebar.Inset class="flex flex-1 flex-col overflow-hidden relative z-10">
+          {@render children?.()}
+        </Sidebar.Inset>
+      </div>
     </div>
   </Sidebar.Provider>
 </Tooltip.Provider>

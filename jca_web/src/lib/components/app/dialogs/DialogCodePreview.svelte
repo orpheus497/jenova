@@ -17,7 +17,37 @@
 		if (!iframeRef) return;
 
 		if (open) {
-			iframeRef.srcdoc = code;
+            let finalCode = code;
+            const lang = language?.toLowerCase() ?? '';
+            
+            if (['javascript', 'js', 'canvas', 'webgl'].includes(lang)) {
+                finalCode = `
+<!DOCTYPE html>
+<html>
+<head>
+    <style>body { margin: 0; padding: 0; overflow: hidden; background: transparent; }</style>
+</head>
+<body>
+    <canvas id="canvas" style="display: block; width: 100vw; height: 100vh;"></canvas>
+    <script>
+        ${code}
+    <${'/'}script>
+</body>
+</html>`;
+            } else if (lang === 'svg' && !code.includes('<html>')) {
+                finalCode = `
+<!DOCTYPE html>
+<html>
+<head>
+    <style>body { margin: 0; padding: 0; overflow: hidden; background: transparent; display: flex; justify-content: center; align-items: center; height: 100vh; }</style>
+</head>
+<body>
+    ${code}
+</body>
+</html>`;
+            }
+            
+			iframeRef.srcdoc = finalCode;
 		} else {
 			iframeRef.srcdoc = '';
 		}

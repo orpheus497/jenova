@@ -12,7 +12,8 @@
 
 	let { code, language, disabled = false, onPreview }: Props = $props();
 
-	const showPreview = $derived(language?.toLowerCase() === FileTypeText.HTML);
+	const previewableLanguages = [FileTypeText.HTML, 'canvas', 'svg', 'webgl', 'javascript', 'js'];
+	const showPreview = $derived(previewableLanguages.includes(language?.toLowerCase() ?? ''));
 
 	function handlePreview() {
 		if (disabled) return;

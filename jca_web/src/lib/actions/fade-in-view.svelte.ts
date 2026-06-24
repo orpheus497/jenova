@@ -7,52 +7,53 @@
  * during streaming), the fade is skipped entirely to avoid a flash.
  */
 export function fadeInView(
-	node: HTMLElement,
-	options: { duration?: number; y?: number; skipIfVisible?: boolean } = {}
+  node: HTMLElement,
+  options: { duration?: number; y?: number; skipIfVisible?: boolean } = {},
 ) {
-	const { duration = 300, y = 0, skipIfVisible = false } = options;
+  const { duration = 300, y = 0, skipIfVisible = false } = options;
 
-	if (skipIfVisible) {
-		const rect = node.getBoundingClientRect();
-		const isAlreadyVisible =
-			rect.top < window.innerHeight &&
-			rect.bottom > 0 &&
-			rect.left < window.innerWidth &&
-			rect.right > 0;
+  if (skipIfVisible) {
+    const rect = node.getBoundingClientRect();
+    const isAlreadyVisible =
+      rect.top < window.innerHeight &&
+      rect.bottom > 0 &&
+      rect.left < window.innerWidth &&
+      rect.right > 0;
 
-		if (isAlreadyVisible) {
-			return;
-		}
-	}
+    if (isAlreadyVisible) {
+      return;
+    }
+  }
 
-	node.style.opacity = '0';
-	node.style.transform = `translateY(${y}px)`;
-	const existingTransition = window.getComputedStyle(node).transition;
-	const newTransition = `opacity ${duration}ms ease-out, transform ${duration}ms ease-out`;
-	node.style.transition = existingTransition && existingTransition !== 'all 0s ease 0s' 
-		? `${existingTransition}, ${newTransition}` 
-		: newTransition;
+  node.style.opacity = "0";
+  node.style.transform = `translateY(${y}px)`;
+  const existingTransition = window.getComputedStyle(node).transition;
+  const newTransition = `opacity ${duration}ms ease-out, transform ${duration}ms ease-out`;
+  node.style.transition =
+    existingTransition && existingTransition !== "all 0s ease 0s"
+      ? `${existingTransition}, ${newTransition}`
+      : newTransition;
 
-	$effect(() => {
-		const observer = new IntersectionObserver(
-			(entries) => {
-				for (const entry of entries) {
-					if (entry.isIntersecting) {
-						requestAnimationFrame(() => {
-							node.style.opacity = '1';
-							node.style.transform = 'translateY(0)';
-						});
-						observer.disconnect();
-					}
-				}
-			},
-			{ threshold: 0.05 }
-		);
+  $effect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            requestAnimationFrame(() => {
+              node.style.opacity = "1";
+              node.style.transform = "translateY(0)";
+            });
+            observer.disconnect();
+          }
+        }
+      },
+      { threshold: 0.05 },
+    );
 
-		observer.observe(node);
+    observer.observe(node);
 
-		return () => {
-			observer.disconnect();
-		};
-	});
+    return () => {
+      observer.disconnect();
+    };
+  });
 }

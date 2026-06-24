@@ -356,15 +356,17 @@
 		{#if showRawOutput}
 			<pre class="raw-output">{messageContent || ''}</pre>
 		{:else}
-			<ChatMessageAgenticContent
-				{message}
-				{toolMessages}
-				isStreaming={isChatStreaming()}
-				highlightTurns={highlightAgenticTurns}
-			/>
+            <div class="w-full px-6 py-4 rounded-3xl rounded-tl-sm glass-panel text-on-surface text-[15px]">
+			    <ChatMessageAgenticContent
+				    {message}
+				    {toolMessages}
+				    isStreaming={isChatStreaming()}
+				    highlightTurns={highlightAgenticTurns}
+			    />
+            </div>
 		{/if}
 	{:else}
-		<div class="text-sm whitespace-pre-wrap">
+		<div class="w-full px-6 py-4 rounded-3xl rounded-tl-sm glass-panel text-sm whitespace-pre-wrap">
 			{messageContent}
 		</div>
 	{/if}

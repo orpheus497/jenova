@@ -1,9 +1,9 @@
 import {
-	CODE_BLOCK_REGEXP,
-	LATEX_MATH_AND_CODE_PATTERN,
-	LATEX_LINEBREAK_REGEXP,
-	MHCHEM_PATTERN_MAP
-} from '$lib/constants';
+  CODE_BLOCK_REGEXP,
+  LATEX_MATH_AND_CODE_PATTERN,
+  LATEX_LINEBREAK_REGEXP,
+  MHCHEM_PATTERN_MAP,
+} from "$lib/constants";
 
 /**
  * Replaces inline LaTeX expressions enclosed in `$...$` with placeholders, avoiding dollar signs
@@ -18,109 +18,116 @@ import {
  * @param latexExpressions - An array used to collect extracted LaTeX expressions.
  * @returns The processed string with LaTeX replaced by placeholders.
  */
-export function maskInlineLaTeX(content: string, latexExpressions: string[]): string {
-	if (!content.includes('$')) {
-		return content;
-	}
-	return content
-		.split('\n')
-		.map((line) => {
-			if (line.indexOf('$') == -1) {
-				return line;
-			}
+export function maskInlineLaTeX(
+  content: string,
+  latexExpressions: string[],
+): string {
+  if (!content.includes("$")) {
+    return content;
+  }
+  return content
+    .split("\n")
+    .map((line) => {
+      if (line.indexOf("$") == -1) {
+        return line;
+      }
 
-			let processedLine = '';
-			let currentPosition = 0;
+      let processedLine = "";
+      let currentPosition = 0;
 
-			while (currentPosition < line.length) {
-				const openDollarIndex = line.indexOf('$', currentPosition);
+      while (currentPosition < line.length) {
+        const openDollarIndex = line.indexOf("$", currentPosition);
 
-				if (openDollarIndex == -1) {
-					processedLine += line.slice(currentPosition);
-					break;
-				}
+        if (openDollarIndex == -1) {
+          processedLine += line.slice(currentPosition);
+          break;
+        }
 
-				// Is there a next $-sign?
-				const closeDollarIndex = line.indexOf('$', openDollarIndex + 1);
+        // Is there a next $-sign?
+        const closeDollarIndex = line.indexOf("$", openDollarIndex + 1);
 
-				if (closeDollarIndex == -1) {
-					processedLine += line.slice(currentPosition);
-					break;
-				}
+        if (closeDollarIndex == -1) {
+          processedLine += line.slice(currentPosition);
+          break;
+        }
 
-				const charBeforeOpen = openDollarIndex > 0 ? line[openDollarIndex - 1] : '';
-				const charAfterOpen = line[openDollarIndex + 1];
-				const charBeforeClose =
-					openDollarIndex + 1 < closeDollarIndex ? line[closeDollarIndex - 1] : '';
-				const charAfterClose = closeDollarIndex + 1 < line.length ? line[closeDollarIndex + 1] : '';
+        const charBeforeOpen =
+          openDollarIndex > 0 ? line[openDollarIndex - 1] : "";
+        const charAfterOpen = line[openDollarIndex + 1];
+        const charBeforeClose =
+          openDollarIndex + 1 < closeDollarIndex
+            ? line[closeDollarIndex - 1]
+            : "";
+        const charAfterClose =
+          closeDollarIndex + 1 < line.length ? line[closeDollarIndex + 1] : "";
 
-				let shouldSkipAsNonLatex = false;
+        let shouldSkipAsNonLatex = false;
 
-				if (closeDollarIndex == currentPosition + 1) {
-					// No content
-					shouldSkipAsNonLatex = true;
-				}
+        if (closeDollarIndex == currentPosition + 1) {
+          // No content
+          shouldSkipAsNonLatex = true;
+        }
 
-				if (/[A-Za-z0-9_$-]/.test(charBeforeOpen)) {
-					// Character, digit, $, _ or - before first '$', no TeX.
-					shouldSkipAsNonLatex = true;
-				}
+        if (/[A-Za-z0-9_$-]/.test(charBeforeOpen)) {
+          // Character, digit, $, _ or - before first '$', no TeX.
+          shouldSkipAsNonLatex = true;
+        }
 
-				if (
-					/[0-9]/.test(charAfterOpen) &&
-					(/[A-Za-z0-9_$-]/.test(charAfterClose) || ' ' == charBeforeClose)
-				) {
-					// First $ seems to belong to an amount.
-					shouldSkipAsNonLatex = true;
-				}
+        if (
+          /[0-9]/.test(charAfterOpen) &&
+          (/[A-Za-z0-9_$-]/.test(charAfterClose) || " " == charBeforeClose)
+        ) {
+          // First $ seems to belong to an amount.
+          shouldSkipAsNonLatex = true;
+        }
 
-				if (shouldSkipAsNonLatex) {
-					processedLine += line.slice(currentPosition, openDollarIndex + 1);
-					currentPosition = openDollarIndex + 1;
+        if (shouldSkipAsNonLatex) {
+          processedLine += line.slice(currentPosition, openDollarIndex + 1);
+          currentPosition = openDollarIndex + 1;
 
-					continue;
-				}
+          continue;
+        }
 
-				// Treat as LaTeX
-				processedLine += line.slice(currentPosition, openDollarIndex);
-				const latexContent = line.slice(openDollarIndex, closeDollarIndex + 1);
-				latexExpressions.push(latexContent);
-				processedLine += `<<LATEX_${latexExpressions.length - 1}>>`;
-				currentPosition = closeDollarIndex + 1;
-			}
+        // Treat as LaTeX
+        processedLine += line.slice(currentPosition, openDollarIndex);
+        const latexContent = line.slice(openDollarIndex, closeDollarIndex + 1);
+        latexExpressions.push(latexContent);
+        processedLine += `<<LATEX_${latexExpressions.length - 1}>>`;
+        currentPosition = closeDollarIndex + 1;
+      }
 
-			return processedLine;
-		})
-		.join('\n');
+      return processedLine;
+    })
+    .join("\n");
 }
 
 function escapeBrackets(text: string): string {
-	return text.replace(
-		LATEX_MATH_AND_CODE_PATTERN,
-		(
-			match: string,
-			codeBlock: string | undefined,
-			squareBracket: string | undefined,
-			roundBracket: string | undefined
-		): string => {
-			if (codeBlock != null) {
-				return codeBlock;
-			} else if (squareBracket != null) {
-				return `$$${squareBracket}$$`;
-			} else if (roundBracket != null) {
-				return `$${roundBracket}$`;
-			}
+  return text.replace(
+    LATEX_MATH_AND_CODE_PATTERN,
+    (
+      match: string,
+      codeBlock: string | undefined,
+      squareBracket: string | undefined,
+      roundBracket: string | undefined,
+    ): string => {
+      if (codeBlock != null) {
+        return codeBlock;
+      } else if (squareBracket != null) {
+        return `$$${squareBracket}$$`;
+      } else if (roundBracket != null) {
+        return `$${roundBracket}$`;
+      }
 
-			return match;
-		}
-	);
+      return match;
+    },
+  );
 }
 
 // Escape $\\ce{...} → $\\ce{...} but with proper handling
 function escapeMhchem(text: string): string {
-	return MHCHEM_PATTERN_MAP.reduce((result, [pattern, replacement]) => {
-		return result.replace(pattern, replacement);
-	}, text);
+  return MHCHEM_PATTERN_MAP.reduce((result, [pattern, replacement]) => {
+    return result.replace(pattern, replacement);
+  }, text);
 }
 
 const doEscapeMhchem = false;
@@ -145,126 +152,132 @@ const doEscapeMhchem = false;
  * // → "Price: $10. The equation is $x^2$."
  */
 export function preprocessLaTeX(content: string): string {
-	// See also:
-	// https://github.com/danny-avila/LibreChat/blob/main/client/src/utils/latex.ts
+  // See also:
+  // https://github.com/danny-avila/LibreChat/blob/main/client/src/utils/latex.ts
 
-	// Step 0: Temporarily remove blockquote markers (>) to process LaTeX correctly
-	// Store the structure so we can restore it later
-	const blockquoteMarkers: Map<number, string> = new Map();
-	const lines = content.split('\n');
-	const processedLines = lines.map((line, index) => {
-		const match = line.match(/^(>\s*)/);
-		if (match) {
-			blockquoteMarkers.set(index, match[1]);
-			return line.slice(match[1].length);
-		}
-		return line;
-	});
-	content = processedLines.join('\n');
+  // Step 0: Temporarily remove blockquote markers (>) to process LaTeX correctly
+  // Store the structure so we can restore it later
+  const blockquoteMarkers: Map<number, string> = new Map();
+  const lines = content.split("\n");
+  const processedLines = lines.map((line, index) => {
+    const match = line.match(/^(>\s*)/);
+    if (match) {
+      blockquoteMarkers.set(index, match[1]);
+      return line.slice(match[1].length);
+    }
+    return line;
+  });
+  content = processedLines.join("\n");
 
-	// Step 1: Protect code blocks
-	const codeBlocks: string[] = [];
+  // Step 1: Protect code blocks
+  const codeBlocks: string[] = [];
 
-	content = content.replace(CODE_BLOCK_REGEXP, (match) => {
-		codeBlocks.push(match);
+  content = content.replace(CODE_BLOCK_REGEXP, (match) => {
+    codeBlocks.push(match);
 
-		return `<<CODE_BLOCK_${codeBlocks.length - 1}>>`;
-	});
+    return `<<CODE_BLOCK_${codeBlocks.length - 1}>>`;
+  });
 
-	// Step 2: Protect existing LaTeX expressions
-	const latexExpressions: string[] = [];
+  // Step 2: Protect existing LaTeX expressions
+  const latexExpressions: string[] = [];
 
-	// Match \S...\[...\] and protect them and insert a line-break.
-	content = content.replace(/([\S].*?)\\\[([\s\S]*?)\\\](.*)/g, (match, group1, group2, group3) => {
-		// Check if there are characters following the formula (display-formula in a table-cell?)
-		if (group1.endsWith('\\')) {
-			return match; // Backslash before \[, do nothing.
-		}
-		const hasSuffix = /\S/.test(group3);
-		let optBreak;
+  // Match \S...\[...\] and protect them and insert a line-break.
+  content = content.replace(
+    /([\S].*?)\\\[([\s\S]*?)\\\](.*)/g,
+    (match, group1, group2, group3) => {
+      // Check if there are characters following the formula (display-formula in a table-cell?)
+      if (group1.endsWith("\\")) {
+        return match; // Backslash before \[, do nothing.
+      }
+      const hasSuffix = /\S/.test(group3);
+      let optBreak;
 
-		if (hasSuffix) {
-			latexExpressions.push(`\\(${group2.trim()}\\)`); // Convert into inline.
-			optBreak = '';
-		} else {
-			latexExpressions.push(`\\[${group2}\\]`);
-			optBreak = '\n';
-		}
+      if (hasSuffix) {
+        latexExpressions.push(`\\(${group2.trim()}\\)`); // Convert into inline.
+        optBreak = "";
+      } else {
+        latexExpressions.push(`\\[${group2}\\]`);
+        optBreak = "\n";
+      }
 
-		return `${group1}${optBreak}<<LATEX_${latexExpressions.length - 1}>>${optBreak}${group3}`;
-	});
+      return `${group1}${optBreak}<<LATEX_${latexExpressions.length - 1}>>${optBreak}${group3}`;
+    },
+  );
 
-	// Match \(...\), \[...\], $$...$$ and protect them
-	content = content.replace(
-		/(\$\$[\s\S]*?\$\$|(?<!\\)\\\[[\s\S]*?\\\]|(?<!\\)\\\(.*?\\\))/g,
-		(match) => {
-			latexExpressions.push(match);
+  // Match \(...\), \[...\], $$...$$ and protect them
+  content = content.replace(
+    /(\$\$[\s\S]*?\$\$|(?<!\\)\\\[[\s\S]*?\\\]|(?<!\\)\\\(.*?\\\))/g,
+    (match) => {
+      latexExpressions.push(match);
 
-			return `<<LATEX_${latexExpressions.length - 1}>>`;
-		}
-	);
+      return `<<LATEX_${latexExpressions.length - 1}>>`;
+    },
+  );
 
-	// Protect inline $...$ but NOT if it looks like money (e.g., $10, $3.99)
-	content = maskInlineLaTeX(content, latexExpressions);
+  // Protect inline $...$ but NOT if it looks like money (e.g., $10, $3.99)
+  content = maskInlineLaTeX(content, latexExpressions);
 
-	// Step 3: Escape standalone $ before digits (currency like $5 → \$5)
-	// (Now that inline math is protected, this will only escape dollars not already protected)
-	content = content.replace(/\$(?=\d)/g, '\\$');
+  // Step 3: Escape standalone $ before digits (currency like $5 → \$5)
+  // (Now that inline math is protected, this will only escape dollars not already protected)
+  content = content.replace(/\$(?=\d)/g, "\\$");
 
-	// Step 4: Restore protected LaTeX expressions (they are valid)
-	content = content.replace(/<<LATEX_(\d+)>>/g, (_, index) => {
-		let expr = latexExpressions[parseInt(index)];
-		const match = expr.match(LATEX_LINEBREAK_REGEXP);
-		if (match) {
-			// Katex: The $$-delimiters should be in their own line
-			// if there are \\-line-breaks.
-			const formula = match[1];
-			const prefix = formula.startsWith('\n') ? '' : '\n';
-			const suffix = formula.endsWith('\n') ? '' : '\n';
-			expr = '$$' + prefix + formula + suffix + '$$';
-		}
-		return expr;
-	});
+  // Step 4: Restore protected LaTeX expressions (they are valid)
+  content = content.replace(/<<LATEX_(\d+)>>/g, (_, index) => {
+    let expr = latexExpressions[parseInt(index)];
+    const match = expr.match(LATEX_LINEBREAK_REGEXP);
+    if (match) {
+      // Katex: The $$-delimiters should be in their own line
+      // if there are \\-line-breaks.
+      const formula = match[1];
+      const prefix = formula.startsWith("\n") ? "" : "\n";
+      const suffix = formula.endsWith("\n") ? "" : "\n";
+      expr = "$$" + prefix + formula + suffix + "$$";
+    }
+    return expr;
+  });
 
-	// Step 5: Apply additional escaping functions (brackets and mhchem)
-	// This must happen BEFORE restoring code blocks to avoid affecting code content
-	content = escapeBrackets(content);
+  // Step 5: Apply additional escaping functions (brackets and mhchem)
+  // This must happen BEFORE restoring code blocks to avoid affecting code content
+  content = escapeBrackets(content);
 
-	if (doEscapeMhchem && (content.includes('\\ce{') || content.includes('\\pu{'))) {
-		content = escapeMhchem(content);
-	}
+  if (
+    doEscapeMhchem &&
+    (content.includes("\\ce{") || content.includes("\\pu{"))
+  ) {
+    content = escapeMhchem(content);
+  }
 
-	// Step 6: Convert remaining \(...\) → $...$, \[...\] → $$...$$
-	// This must happen BEFORE restoring code blocks to avoid affecting code content
-	content = content
-		// Using the look‑behind pattern `(?<!\\)` we skip matches
-		// that are preceded by a backslash, e.g.
-		// `Definitions\\(also called macros)` (title of chapter 20 in The TeXbook).
-		.replace(/(?<!\\)\\\((.+?)\\\)/g, '$$$1$') // inline
-		.replace(
-			// Using the look‑behind pattern `(?<!\\)` we skip matches
-			// that are preceded by a backslash, e.g. `\\[4pt]`.
-			/(?<!\\)\\\[([\s\S]*?)\\\]/g, // display, see also PR #16599
-			(_, content: string) => {
-				return `$$${content}$$`;
-			}
-		);
+  // Step 6: Convert remaining \(...\) → $...$, \[...\] → $$...$$
+  // This must happen BEFORE restoring code blocks to avoid affecting code content
+  content = content
+    // Using the look‑behind pattern `(?<!\\)` we skip matches
+    // that are preceded by a backslash, e.g.
+    // `Definitions\\(also called macros)` (title of chapter 20 in The TeXbook).
+    .replace(/(?<!\\)\\\((.+?)\\\)/g, "$$$1$") // inline
+    .replace(
+      // Using the look‑behind pattern `(?<!\\)` we skip matches
+      // that are preceded by a backslash, e.g. `\\[4pt]`.
+      /(?<!\\)\\\[([\s\S]*?)\\\]/g, // display, see also PR #16599
+      (_, content: string) => {
+        return `$$${content}$$`;
+      },
+    );
 
-	// Step 7: Restore code blocks
-	// This happens AFTER all LaTeX conversions to preserve code content
-	content = content.replace(/<<CODE_BLOCK_(\d+)>>/g, (_, index) => {
-		return codeBlocks[parseInt(index)];
-	});
+  // Step 7: Restore code blocks
+  // This happens AFTER all LaTeX conversions to preserve code content
+  content = content.replace(/<<CODE_BLOCK_(\d+)>>/g, (_, index) => {
+    return codeBlocks[parseInt(index)];
+  });
 
-	// Step 8: Restore blockquote markers
-	if (blockquoteMarkers.size > 0) {
-		const finalLines = content.split('\n');
-		const restoredLines = finalLines.map((line, index) => {
-			const marker = blockquoteMarkers.get(index);
-			return marker ? marker + line : line;
-		});
-		content = restoredLines.join('\n');
-	}
+  // Step 8: Restore blockquote markers
+  if (blockquoteMarkers.size > 0) {
+    const finalLines = content.split("\n");
+    const restoredLines = finalLines.map((line, index) => {
+      const marker = blockquoteMarkers.get(index);
+      return marker ? marker + line : line;
+    });
+    content = restoredLines.join("\n");
+  }
 
-	return content;
+  return content;
 }

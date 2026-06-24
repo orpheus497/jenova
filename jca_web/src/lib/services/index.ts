@@ -57,7 +57,7 @@
  * @see agenticStore in stores/agentic.svelte.ts — uses ChatService for agentic loop streaming
  * @see conversationsStore in stores/conversations.svelte.ts — provides message context
  */
-export { ChatService } from './chat.service';
+export { ChatService } from "./chat.service";
 
 /**
  * **DatabaseService** - IndexedDB persistence layer via Dexie ORM
@@ -101,7 +101,7 @@ export { ChatService } from './chat.service';
  * @see conversationsStore in stores/conversations.svelte.ts — reactive layer on top of DatabaseService
  * @see chatStore in stores/chat.svelte.ts — uses DatabaseService directly for message CRUD during streaming
  */
-export { DatabaseService } from './database.service';
+export { DatabaseService } from "./database.service";
 
 /**
  * **ModelsService** - Model management API communication
@@ -136,7 +136,7 @@ export { DatabaseService } from './database.service';
  *
  * @see modelsStore in stores/models.svelte.ts — primary consumer for reactive model state
  */
-export { ModelsService } from './models.service';
+export { ModelsService } from "./models.service";
 
 /**
  * **PropsService** - Server properties and capabilities retrieval
@@ -168,7 +168,7 @@ export { ModelsService } from './models.service';
  * @see modelsStore in stores/models.svelte.ts — consumes per-model props for modalities
  * @see settingsStore in stores/settings.svelte.ts — syncs default generation params from props
  */
-export { PropsService } from './props.service';
+export { PropsService } from "./props.service";
 
 /**
  * **ParameterSyncService** - Server defaults and user settings synchronization
@@ -211,7 +211,7 @@ export { PropsService } from './props.service';
  * @see settingsStore in stores/settings.svelte.ts — primary consumer for settings sync
  * @see ChatSettingsParameterSourceIndicator — displays parameter source badges in UI
  */
-export { ParameterSyncService } from './parameter-sync.service';
+export { ParameterSyncService } from "./parameter-sync.service";
 
 /**
  * **MCPService** - Low-level MCP protocol communication layer
@@ -259,4 +259,4 @@ export { ParameterSyncService } from './parameter-sync.service';
  * @see agenticStore in stores/agentic.svelte.ts — uses MCPService (via mcpStore) for tool execution
  * @see MCP Protocol Specification: https://modelcontextprotocol.io/specification/2025-06-18
  */
-export { MCPService } from './mcp.service';
+export { MCPService } from "./mcp.service";

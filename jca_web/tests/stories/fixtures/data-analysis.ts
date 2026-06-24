@@ -6,12 +6,12 @@ export const DATA_ANALYSIS_MD = String.raw`
 
 ## 📊 Key Performance Indicators
 
-${'```'}
+${"```"}
 Daily Active Users (DAU):   1.2M (+65% YoY)
 Monthly Active Users (MAU): 4.5M (+48% YoY)
 User Retention (Day 30):    68% (+12pp YoY)
 Average Session Duration:   24min (+35% YoY)
-${'```'}
+${"```"}
 
 ## 🎯 Product Performance
 
@@ -43,12 +43,12 @@ ${'```'}
 
 ### Customer Acquisition
 
-${'```'}
+${"```"}
 Cost per Acquisition (CAC): $127 (-23% YoY)
 Customer Lifetime Value:    $1,840 (+31% YoY)
 LTV:CAC Ratio:             14.5:1
 Payback Period:            3.2 months
-${'```'}
+${"```"}
 
 ## 🌍 Geographic Performance
 

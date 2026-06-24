@@ -1,2 +1,2 @@
 // Empty state
-export const EMPTY_MD = '';
+export const EMPTY_MD = "";

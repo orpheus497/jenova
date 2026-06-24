@@ -28,7 +28,7 @@ Traditional approaches to memory management:
 
 ### Variable Scope
 
-${'```'}rust
+${"```"}rust
 fn main() {
     let s = String::from("hello");  // s comes into scope
     
@@ -36,11 +36,11 @@ fn main() {
     println!("{}", s);
     
 }  // s goes out of scope and is dropped
-${'```'}
+${"```"}
 
 ### Move Semantics
 
-${'```'}rust
+${"```"}rust
 fn main() {
     let s1 = String::from("hello");
     let s2 = s1;  // s1 is moved to s2
@@ -48,7 +48,7 @@ fn main() {
     // println!("{}", s1);  // ❌ ERROR: s1 is no longer valid
     println!("{}", s2);     // ✅ OK: s2 owns the string
 }
-${'```'}
+${"```"}
 
 ## Borrowing and References
 
@@ -56,7 +56,7 @@ Instead of transferring ownership, you can **borrow** values:
 
 ### Immutable References
 
-${'```'}rust
+${"```"}rust
 fn calculate_length(s: &String) -> usize {
     s.len()  // s is a reference, doesn't own the String
 }
@@ -66,11 +66,11 @@ fn main() {
     let len = calculate_length(&s1);  // Borrow s1
     println!("Length of '{}' is {}", s1, len);  // s1 still valid
 }
-${'```'}
+${"```"}
 
 ### Mutable References
 
-${'```'}rust
+${"```"}rust
 fn main() {
     let mut s = String::from("hello");
     
@@ -80,27 +80,27 @@ fn main() {
     
     // let r2 = &mut s;  // ❌ ERROR: cannot borrow twice
 }
-${'```'}
+${"```"}
 
 ## Common Pitfalls
 
 ### Dangling References
 
-${'```'}rust
+${"```"}rust
 fn dangle() -> &String {  // ❌ ERROR: missing lifetime specifier
     let s = String::from("hello");
     &s  // s will be dropped, leaving a dangling reference
 }
-${'```'}
+${"```"}
 
 ### ✅ Solution
 
-${'```'}rust
+${"```"}rust
 fn no_dangle() -> String {
     let s = String::from("hello");
     s  // Ownership is moved out
 }
-${'```'}
+${"```"}
 
 ## Benefits
 

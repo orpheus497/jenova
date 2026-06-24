@@ -40,7 +40,9 @@
 		createAudioFile,
 		isAudioRecordingSupported
 	} from '$lib/utils/browser-only';
+	import { Lightbulb } from '@lucide/svelte';
 	import { onMount } from 'svelte';
+	import { canvasStore } from '$lib/stores/canvas.svelte';
 
 	interface Props {
 		// Data
@@ -574,7 +576,7 @@
 	/>
 
 	<div
-		class="{INPUT_CLASSES} overflow-hidden rounded-3xl backdrop-blur-md {disabled
+		class="glass-panel p-2 rounded-[32px] flex flex-col border border-primary/20 shadow-[0_0_30px_rgba(75,0,130,0.2)] focus-within:border-primary focus-within:shadow-[0_0_20px_rgba(221,183,255,0.15)] transition-all {disabled
 			? 'cursor-not-allowed opacity-60'
 			: ''}"
 		data-slot="input-area"
@@ -633,6 +635,30 @@
 				onMcpResourcesClick={() => (isResourceDialogOpen = true)}
 			/>
 		</div>
+
+        <!-- Input Footer / Toggles -->
+        <div class="flex justify-between items-center px-6 pb-2 pt-1">
+          <div class="flex items-center gap-4">
+            <!-- Canvas Idea Toggle -->
+            <label class="flex items-center gap-2 cursor-pointer group">
+              <div class="relative">
+                <input bind:checked={canvasStore.enabled} class="sr-only" type="checkbox" />
+                <div class="w-8 h-4 rounded-full border transition-colors {canvasStore.enabled ? 'bg-primary border-primary' : 'bg-surface-variant border-outline'}"></div>
+                <div class="absolute left-[2px] top-[2px] w-3 h-3 rounded-full transition-transform {canvasStore.enabled ? 'shadow-[0_0_5px_rgba(221,183,255,0.5)] bg-on-primary translate-x-4' : 'bg-outline translate-x-0'}"></div>
+              </div>
+              <span class="font-mono text-[12px] transition-colors flex items-center gap-1 {canvasStore.enabled ? 'text-on-surface' : 'text-on-surface-variant'}">
+                <Lightbulb size={14} class={canvasStore.enabled ? 'text-primary animate-pulse' : ''} /> Canvas Idea
+              </span>
+            </label>
+          </div>
+          
+          <div class="font-mono text-[11px] text-outline flex gap-3">
+            <span class="flex items-center gap-1">
+              <span class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span> Local Compute
+            </span>
+            <span>v2.4.1</span>
+          </div>
+        </div>
 	</div>
 </form>
 

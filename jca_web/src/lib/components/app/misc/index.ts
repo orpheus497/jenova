@@ -19,14 +19,14 @@
  * - Message count display per conversation
  * - Mode-specific UI (export vs import)
  */
-export { default as ConversationSelection } from './ConversationSelection.svelte';
+export { default as ConversationSelection } from "./ConversationSelection.svelte";
 
 /**
  * Horizontal scrollable carousel with navigation arrows.
  * Used for displaying items in a horizontally scrollable container
  * with left/right navigation buttons that appear on hover.
  */
-export { default as HorizontalScrollCarousel } from './HorizontalScrollCarousel.svelte';
+export { default as HorizontalScrollCarousel } from "./HorizontalScrollCarousel.svelte";
 
 /**
  * **TruncatedText** - Text with ellipsis and tooltip
@@ -34,7 +34,7 @@ export { default as HorizontalScrollCarousel } from './HorizontalScrollCarousel.
  * Displays text with automatic truncation and full content in tooltip.
  * Useful for long names or paths in constrained spaces.
  */
-export { default as TruncatedText } from './TruncatedText.svelte';
+export { default as TruncatedText } from "./TruncatedText.svelte";
 
 /**
  * **KeyboardShortcutInfo** - Keyboard shortcut hint display
@@ -42,4 +42,4 @@ export { default as TruncatedText } from './TruncatedText.svelte';
  * Displays keyboard shortcut hints (e.g., "⌘ + Enter").
  * Supports special keys like shift, cmd, and custom text.
  */
-export { default as KeyboardShortcutInfo } from './KeyboardShortcutInfo.svelte';
+export { default as KeyboardShortcutInfo } from "./KeyboardShortcutInfo.svelte";

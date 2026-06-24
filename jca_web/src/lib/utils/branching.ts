@@ -15,17 +15,17 @@
  *        └── message 5 (assistant)
  */
 
-import { MessageRole } from '$lib/enums';
+import { MessageRole } from "$lib/enums";
 
 /**
  * Finds a message by its ID in the given messages array.
  */
 export function findMessageById(
-	messages: readonly DatabaseMessage[],
-	id: string | null | undefined
+  messages: readonly DatabaseMessage[],
+  id: string | null | undefined,
 ): DatabaseMessage | undefined {
-	if (!id) return undefined;
-	return messages.find((m) => m.id === id);
+  if (!id) return undefined;
+  return messages.find((m) => m.id === id);
 }
 
 /**
@@ -38,54 +38,56 @@ export function findMessageById(
  * @returns Array of messages from root to leaf, sorted by timestamp
  */
 export function filterByLeafNodeId(
-	messages: readonly DatabaseMessage[],
-	leafNodeId: string,
-	includeRoot: boolean = false
+  messages: readonly DatabaseMessage[],
+  leafNodeId: string,
+  includeRoot: boolean = false,
 ): readonly DatabaseMessage[] {
-	const result: DatabaseMessage[] = [];
-	const nodeMap = new Map<string, DatabaseMessage>();
+  const result: DatabaseMessage[] = [];
+  const nodeMap = new Map<string, DatabaseMessage>();
 
-	// Build node map for quick lookups
-	for (const msg of messages) {
-		nodeMap.set(msg.id, msg);
-	}
+  // Build node map for quick lookups
+  for (const msg of messages) {
+    nodeMap.set(msg.id, msg);
+  }
 
-	// Find the starting node (leaf node or latest if not found)
-	let startNode: DatabaseMessage | undefined = nodeMap.get(leafNodeId);
-	if (!startNode) {
-		// If leaf node not found, use the message with latest timestamp
-		let latestTime = -1;
-		for (const msg of messages) {
-			if (msg.timestamp > latestTime) {
-				startNode = msg;
-				latestTime = msg.timestamp;
-			}
-		}
-	}
+  // Find the starting node (leaf node or latest if not found)
+  let startNode: DatabaseMessage | undefined = nodeMap.get(leafNodeId);
+  if (!startNode) {
+    // If leaf node not found, use the message with latest timestamp
+    let latestTime = -1;
+    for (const msg of messages) {
+      if (msg.timestamp > latestTime) {
+        startNode = msg;
+        latestTime = msg.timestamp;
+      }
+    }
+  }
 
-	// Traverse from leaf to root, collecting messages
-	let currentNode: DatabaseMessage | undefined = startNode;
-	while (currentNode) {
-		// Include message if it's not root, or if we want to include root
-		if (currentNode.type !== 'root' || includeRoot) {
-			result.push(currentNode);
-		}
+  // Traverse from leaf to root, collecting messages
+  let currentNode: DatabaseMessage | undefined = startNode;
+  while (currentNode) {
+    // Include message if it's not root, or if we want to include root
+    if (currentNode.type !== "root" || includeRoot) {
+      result.push(currentNode);
+    }
 
-		// Stop traversal if parent is null (reached root)
-		if (currentNode.parent === null) {
-			break;
-		}
-		currentNode = nodeMap.get(currentNode.parent);
-	}
+    // Stop traversal if parent is null (reached root)
+    if (currentNode.parent === null) {
+      break;
+    }
+    currentNode = nodeMap.get(currentNode.parent);
+  }
 
-	// Sort: system messages first, then by timestamp
-	result.sort((a, b) => {
-		if (a.role === MessageRole.SYSTEM && b.role !== MessageRole.SYSTEM) return -1;
-		if (a.role !== MessageRole.SYSTEM && b.role === MessageRole.SYSTEM) return 1;
+  // Sort: system messages first, then by timestamp
+  result.sort((a, b) => {
+    if (a.role === MessageRole.SYSTEM && b.role !== MessageRole.SYSTEM)
+      return -1;
+    if (a.role !== MessageRole.SYSTEM && b.role === MessageRole.SYSTEM)
+      return 1;
 
-		return a.timestamp - b.timestamp;
-	});
-	return result;
+    return a.timestamp - b.timestamp;
+  });
+  return result;
 }
 
 /**
@@ -96,22 +98,25 @@ export function filterByLeafNodeId(
  * @param messageId - Starting message ID to find leaf for
  * @returns The leaf node ID, or the original messageId if no children
  */
-export function findLeafNode(messages: readonly DatabaseMessage[], messageId: string): string {
-	const nodeMap = new Map<string, DatabaseMessage>();
+export function findLeafNode(
+  messages: readonly DatabaseMessage[],
+  messageId: string,
+): string {
+  const nodeMap = new Map<string, DatabaseMessage>();
 
-	// Build node map for quick lookups
-	for (const msg of messages) {
-		nodeMap.set(msg.id, msg);
-	}
+  // Build node map for quick lookups
+  for (const msg of messages) {
+    nodeMap.set(msg.id, msg);
+  }
 
-	let currentNode: DatabaseMessage | undefined = nodeMap.get(messageId);
-	while (currentNode && currentNode.children.length > 0) {
-		// Follow the last child (most recent branch)
-		const lastChildId = currentNode.children[currentNode.children.length - 1];
-		currentNode = nodeMap.get(lastChildId);
-	}
+  let currentNode: DatabaseMessage | undefined = nodeMap.get(messageId);
+  while (currentNode && currentNode.children.length > 0) {
+    // Follow the last child (most recent branch)
+    const lastChildId = currentNode.children[currentNode.children.length - 1];
+    currentNode = nodeMap.get(lastChildId);
+  }
 
-	return currentNode?.id ?? messageId;
+  return currentNode?.id ?? messageId;
 }
 
 /**
@@ -123,33 +128,33 @@ export function findLeafNode(messages: readonly DatabaseMessage[], messageId: st
  * @returns Array of all descendant message IDs
  */
 export function findDescendantMessages(
-	messages: readonly DatabaseMessage[],
-	messageId: string
+  messages: readonly DatabaseMessage[],
+  messageId: string,
 ): string[] {
-	const nodeMap = new Map<string, DatabaseMessage>();
+  const nodeMap = new Map<string, DatabaseMessage>();
 
-	// Build node map for quick lookups
-	for (const msg of messages) {
-		nodeMap.set(msg.id, msg);
-	}
+  // Build node map for quick lookups
+  for (const msg of messages) {
+    nodeMap.set(msg.id, msg);
+  }
 
-	const descendants: string[] = [];
-	const queue: string[] = [messageId];
+  const descendants: string[] = [];
+  const queue: string[] = [messageId];
 
-	while (queue.length > 0) {
-		const currentId = queue.shift()!;
-		const currentNode = nodeMap.get(currentId);
+  while (queue.length > 0) {
+    const currentId = queue.shift()!;
+    const currentNode = nodeMap.get(currentId);
 
-		if (currentNode) {
-			// Add all children to the queue and descendants list
-			for (const childId of currentNode.children) {
-				descendants.push(childId);
-				queue.push(childId);
-			}
-		}
-	}
+    if (currentNode) {
+      // Add all children to the queue and descendants list
+      for (const childId of currentNode.children) {
+        descendants.push(childId);
+        queue.push(childId);
+      }
+    }
+  }
 
-	return descendants;
+  return descendants;
 }
 
 /**
@@ -161,59 +166,61 @@ export function findDescendantMessages(
  * @returns Sibling information including leaf node IDs for navigation
  */
 export function getMessageSiblings(
-	messages: readonly DatabaseMessage[],
-	messageId: string
+  messages: readonly DatabaseMessage[],
+  messageId: string,
 ): ChatMessageSiblingInfo | null {
-	const nodeMap = new Map<string, DatabaseMessage>();
+  const nodeMap = new Map<string, DatabaseMessage>();
 
-	// Build node map for quick lookups
-	for (const msg of messages) {
-		nodeMap.set(msg.id, msg);
-	}
+  // Build node map for quick lookups
+  for (const msg of messages) {
+    nodeMap.set(msg.id, msg);
+  }
 
-	const message = nodeMap.get(messageId);
-	if (!message) {
-		return null;
-	}
+  const message = nodeMap.get(messageId);
+  if (!message) {
+    return null;
+  }
 
-	// Handle null parent (root message) case
-	if (message.parent === null) {
-		// No parent means this is likely a root node with no siblings
-		return {
-			message,
-			siblingIds: [messageId],
-			currentIndex: 0,
-			totalSiblings: 1
-		};
-	}
+  // Handle null parent (root message) case
+  if (message.parent === null) {
+    // No parent means this is likely a root node with no siblings
+    return {
+      message,
+      siblingIds: [messageId],
+      currentIndex: 0,
+      totalSiblings: 1,
+    };
+  }
 
-	const parentNode = nodeMap.get(message.parent);
-	if (!parentNode) {
-		// Parent not found - treat as single message
-		return {
-			message,
-			siblingIds: [messageId],
-			currentIndex: 0,
-			totalSiblings: 1
-		};
-	}
+  const parentNode = nodeMap.get(message.parent);
+  if (!parentNode) {
+    // Parent not found - treat as single message
+    return {
+      message,
+      siblingIds: [messageId],
+      currentIndex: 0,
+      totalSiblings: 1,
+    };
+  }
 
-	// Get all sibling IDs (including self)
-	const siblingIds = parentNode.children;
+  // Get all sibling IDs (including self)
+  const siblingIds = parentNode.children;
 
-	// Convert sibling message IDs to their corresponding leaf node IDs
-	// This allows navigation between different conversation branches
-	const siblingLeafIds = siblingIds.map((siblingId: string) => findLeafNode(messages, siblingId));
+  // Convert sibling message IDs to their corresponding leaf node IDs
+  // This allows navigation between different conversation branches
+  const siblingLeafIds = siblingIds.map((siblingId: string) =>
+    findLeafNode(messages, siblingId),
+  );
 
-	// Find current message's position among siblings
-	const currentIndex = siblingIds.indexOf(messageId);
+  // Find current message's position among siblings
+  const currentIndex = siblingIds.indexOf(messageId);
 
-	return {
-		message,
-		siblingIds: siblingLeafIds,
-		currentIndex,
-		totalSiblings: siblingIds.length
-	};
+  return {
+    message,
+    siblingIds: siblingLeafIds,
+    currentIndex,
+    totalSiblings: siblingIds.length,
+  };
 }
 
 /**
@@ -225,26 +232,26 @@ export function getMessageSiblings(
  * @returns Array of messages with sibling navigation info
  */
 export function getMessageDisplayList(
-	messages: readonly DatabaseMessage[],
-	leafNodeId: string
+  messages: readonly DatabaseMessage[],
+  leafNodeId: string,
 ): ChatMessageSiblingInfo[] {
-	// Get the current conversation path
-	const currentPath = filterByLeafNodeId(messages, leafNodeId, true);
-	const result: ChatMessageSiblingInfo[] = [];
+  // Get the current conversation path
+  const currentPath = filterByLeafNodeId(messages, leafNodeId, true);
+  const result: ChatMessageSiblingInfo[] = [];
 
-	// Add sibling info for each message in the current path
-	for (const message of currentPath) {
-		if (message.type === 'root') {
-			continue; // Skip root messages in display
-		}
+  // Add sibling info for each message in the current path
+  for (const message of currentPath) {
+    if (message.type === "root") {
+      continue; // Skip root messages in display
+    }
 
-		const siblingInfo = getMessageSiblings(messages, message.id);
-		if (siblingInfo) {
-			result.push(siblingInfo);
-		}
-	}
+    const siblingInfo = getMessageSiblings(messages, message.id);
+    if (siblingInfo) {
+      result.push(siblingInfo);
+    }
+  }
 
-	return result;
+  return result;
 }
 
 /**
@@ -255,11 +262,11 @@ export function getMessageDisplayList(
  * @returns True if the message has siblings
  */
 export function hasMessageSiblings(
-	messages: readonly DatabaseMessage[],
-	messageId: string
+  messages: readonly DatabaseMessage[],
+  messageId: string,
 ): boolean {
-	const siblingInfo = getMessageSiblings(messages, messageId);
-	return siblingInfo ? siblingInfo.totalSiblings > 1 : false;
+  const siblingInfo = getMessageSiblings(messages, messageId);
+  return siblingInfo ? siblingInfo.totalSiblings > 1 : false;
 }
 
 /**
@@ -270,15 +277,18 @@ export function hasMessageSiblings(
  * @returns Next sibling's leaf node ID, or null if at the end
  */
 export function getNextSibling(
-	messages: readonly DatabaseMessage[],
-	messageId: string
+  messages: readonly DatabaseMessage[],
+  messageId: string,
 ): string | null {
-	const siblingInfo = getMessageSiblings(messages, messageId);
-	if (!siblingInfo || siblingInfo.currentIndex >= siblingInfo.totalSiblings - 1) {
-		return null;
-	}
+  const siblingInfo = getMessageSiblings(messages, messageId);
+  if (
+    !siblingInfo ||
+    siblingInfo.currentIndex >= siblingInfo.totalSiblings - 1
+  ) {
+    return null;
+  }
 
-	return siblingInfo.siblingIds[siblingInfo.currentIndex + 1];
+  return siblingInfo.siblingIds[siblingInfo.currentIndex + 1];
 }
 
 /**
@@ -289,13 +299,13 @@ export function getNextSibling(
  * @returns Previous sibling's leaf node ID, or null if at the beginning
  */
 export function getPreviousSibling(
-	messages: readonly DatabaseMessage[],
-	messageId: string
+  messages: readonly DatabaseMessage[],
+  messageId: string,
 ): string | null {
-	const siblingInfo = getMessageSiblings(messages, messageId);
-	if (!siblingInfo || siblingInfo.currentIndex <= 0) {
-		return null;
-	}
+  const siblingInfo = getMessageSiblings(messages, messageId);
+  if (!siblingInfo || siblingInfo.currentIndex <= 0) {
+    return null;
+  }
 
-	return siblingInfo.siblingIds[siblingInfo.currentIndex - 1];
+  return siblingInfo.siblingIds[siblingInfo.currentIndex - 1];
 }

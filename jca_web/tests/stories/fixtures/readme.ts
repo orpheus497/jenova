@@ -22,27 +22,27 @@ export const README_MD = String.raw`
 
 ## 📦 Installation
 
-${'```'}bash
+${"```"}bash
 npm install awesome-framework
 # or
 yarn add awesome-framework
 # or
 pnpm add awesome-framework
-${'```'}
+${"```"}
 
 ## 🚀 Quick Start
 
 ### Create a new project
 
-${'```'}bash
+${"```"}bash
 npx create-awesome-app my-app
 cd my-app
 npm run dev
-${'```'}
+${"```"}
 
 ### Basic Example
 
-${'```'}javascript
+${"```"}javascript
 import { createApp } from 'awesome-framework';
 
 const app = createApp({
@@ -57,7 +57,7 @@ app.get('/', (req, res) => {
 app.listen(() => {
   console.log('Server running on http://localhost:3000');
 });
-${'```'}
+${"```"}
 
 ## 📖 Documentation
 
@@ -86,20 +86,20 @@ ${'```'}
 
 ### Setup
 
-${'```'}bash
+${"```"}bash
 git clone https://github.com/awesome/framework.git
 cd framework
 pnpm install
 pnpm dev
-${'```'}
+${"```"}
 
 ### Testing
 
-${'```'}bash
+${"```"}bash
 pnpm test        # Run unit tests
 pnpm test:e2e    # Run end-to-end tests
 pnpm test:watch  # Run tests in watch mode
-${'```'}
+${"```"}
 
 ## 🤝 Contributing
 

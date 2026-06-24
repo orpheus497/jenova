@@ -1,19 +1,19 @@
-import { getContext, setContext } from 'svelte';
-import type { SettingsSectionTitle } from '$lib/constants';
-import { CONTEXT_KEY_CHAT_SETTINGS_DIALOG } from '$lib/constants';
+import { getContext, setContext } from "svelte";
+import type { SettingsSectionTitle } from "$lib/constants";
+import { CONTEXT_KEY_CHAT_SETTINGS_DIALOG } from "$lib/constants";
 
 export interface ChatSettingsDialogContext {
-	open: (initialSection?: SettingsSectionTitle) => void;
+  open: (initialSection?: SettingsSectionTitle) => void;
 }
 
 const CHAT_SETTINGS_DIALOG_KEY = Symbol.for(CONTEXT_KEY_CHAT_SETTINGS_DIALOG);
 
 export function setChatSettingsDialogContext(
-	ctx: ChatSettingsDialogContext
+  ctx: ChatSettingsDialogContext,
 ): ChatSettingsDialogContext {
-	return setContext(CHAT_SETTINGS_DIALOG_KEY, ctx);
+  return setContext(CHAT_SETTINGS_DIALOG_KEY, ctx);
 }
 
 export function getChatSettingsDialogContext(): ChatSettingsDialogContext {
-	return getContext(CHAT_SETTINGS_DIALOG_KEY);
+  return getContext(CHAT_SETTINGS_DIALOG_KEY);
 }

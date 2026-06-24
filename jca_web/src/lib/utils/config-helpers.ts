@@ -10,24 +10,24 @@
  * Provides better type safety than direct casting to Record
  */
 export function setConfigValue<T extends SettingsConfigType>(
-	config: T,
-	key: string,
-	value: unknown
+  config: T,
+  key: string,
+  value: unknown,
 ): void {
-	if (key in config) {
-		(config as Record<string, unknown>)[key] = value;
-	}
+  if (key in config) {
+    (config as Record<string, unknown>)[key] = value;
+  }
 }
 
 /**
  * Type-safe helper to get config values dynamically
  */
 export function getConfigValue<T extends SettingsConfigType>(
-	config: T,
-	key: string
+  config: T,
+  key: string,
 ): string | number | boolean | undefined {
-	const value = (config as Record<string, unknown>)[key];
-	return value as string | number | boolean | undefined;
+  const value = (config as Record<string, unknown>)[key];
+  return value as string | number | boolean | undefined;
 }
 
 /**
@@ -35,17 +35,17 @@ export function getConfigValue<T extends SettingsConfigType>(
  * Useful for parameter synchronization operations
  */
 export function configToParameterRecord<T extends SettingsConfigType>(
-	config: T,
-	keys: string[]
+  config: T,
+  keys: string[],
 ): Record<string, string | number | boolean> {
-	const record: Record<string, string | number | boolean> = {};
+  const record: Record<string, string | number | boolean> = {};
 
-	for (const key of keys) {
-		const value = getConfigValue(config, key);
-		if (value !== undefined) {
-			record[key] = value;
-		}
-	}
+  for (const key of keys) {
+    const value = getConfigValue(config, key);
+    if (value !== undefined) {
+      record[key] = value;
+    }
+  }
 
-	return record;
+  return record;
 }
