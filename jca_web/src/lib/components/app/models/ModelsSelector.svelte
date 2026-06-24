@@ -280,9 +280,9 @@
 								: isHighlightedCurrentModelActive
 									? 'text-foreground'
 									: 'text-muted-foreground',
-						isOpen ? 'text-foreground' : ''
+						isOpen ? 'text-foreground' : '',
+						className?.includes('w-full') ? 'w-full' : ''
 					)}
-					style="max-width: min(calc(100cqw - 9rem), 20rem)"
 					disabled={disabled || updating}
 				>
 					<Package class="h-3.5 w-3.5" />

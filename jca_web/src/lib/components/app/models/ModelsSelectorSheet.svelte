@@ -225,9 +225,9 @@
 							: isHighlightedCurrentModelActive
 								? 'text-foreground'
 								: 'text-muted-foreground',
-					sheetOpen ? 'text-foreground' : ''
+					sheetOpen ? 'text-foreground' : '',
+					className?.includes('w-full') ? 'w-full' : ''
 				)}
-				style="max-width: min(calc(100cqw - 9rem), 20rem)"
 				disabled={disabled || updating}
 				onclick={() => handleOpenChange(true)}
 			>

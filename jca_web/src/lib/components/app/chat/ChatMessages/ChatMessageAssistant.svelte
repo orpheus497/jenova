@@ -356,7 +356,7 @@
 		{#if showRawOutput}
 			<pre class="raw-output">{messageContent || ''}</pre>
 		{:else}
-            <div class="w-full px-6 py-4 rounded-3xl rounded-tl-sm bg-primary text-primary-foreground text-[15px]">
+            <div class="w-full px-6 py-4 text-primary-foreground text-[15px]">
 			    <ChatMessageAgenticContent
 				    {message}
 				    {toolMessages}
@@ -366,7 +366,7 @@
             </div>
 		{/if}
 	{:else}
-		<div class="w-full px-6 py-4 rounded-3xl rounded-tl-sm bg-primary text-primary-foreground text-sm whitespace-pre-wrap">
+		<div class="w-full px-6 py-4 text-primary-foreground text-sm whitespace-pre-wrap">
 			{messageContent}
 		</div>
 	{/if}

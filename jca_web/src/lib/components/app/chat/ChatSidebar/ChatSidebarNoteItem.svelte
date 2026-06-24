@@ -17,7 +17,7 @@
         onclick={onSelect}
         class={cn(
             "flex-1 flex items-center gap-2 px-2 py-2 rounded-lg text-sm transition-all text-left truncate",
-            isActive ? "bg-yellow-500/20 text-yellow-600 font-medium shadow-sm" : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+            isActive ? "bg-foreground/5 text-accent font-medium shadow-sm" : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
         )}
     >
         <FileText size={14} class="shrink-0" />

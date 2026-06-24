@@ -6,9 +6,10 @@
 		ChatFormFileInputInvisible,
 		ChatFormPromptPicker,
 		ChatFormResourcePicker,
-		ChatFormTextarea
+		ChatFormTextarea,
+		ModelsSelector,
+		ModelsSelectorSheet
 	} from '$lib/components/app';
-	import { DialogMcpResources } from '$lib/components/app/dialogs';
 	import {
 		CLIPBOARD_CONTENT_QUOTE_PREFIX,
 		INPUT_CLASSES,
@@ -40,9 +41,9 @@
 		createAudioFile,
 		isAudioRecordingSupported
 	} from '$lib/utils/browser-only';
-	import { Lightbulb } from '@lucide/svelte';
 	import { onMount } from 'svelte';
-	import { canvasStore } from '$lib/stores/canvas.svelte';
+	import { DialogMcpResources } from '$lib/components/app/dialogs';
+	import { IsMobile } from '$lib/hooks/is-mobile.svelte';
 
 	interface Props {
 		// Data
@@ -67,6 +68,9 @@
 		onUploadedFilesChange?: (files: ChatUploadedFile[]) => void;
 		onValueChange?: (value: string) => void;
 	}
+
+	let selectorModelRef: ModelsSelector | ModelsSelectorSheet | undefined = $state(undefined);
+	let isMobile = new IsMobile();
 
 	let {
 		attachments = [],
@@ -198,7 +202,7 @@
 	}
 
 	export function openModelSelector() {
-		chatFormActionsRef?.openModelSelector();
+		selectorModelRef?.open();
 	}
 
 	/**
@@ -637,27 +641,28 @@
 		</div>
 
         <!-- Input Footer / Toggles -->
-        <div class="flex justify-between items-center px-6 pb-2 pt-1">
-          <div class="flex items-center gap-4">
-            <!-- Canvas Idea Toggle -->
-            <label class="flex items-center gap-2 cursor-pointer group">
-              <div class="relative">
-                <input bind:checked={canvasStore.enabled} class="sr-only" type="checkbox" />
-                <div class="w-8 h-4 rounded-full border transition-colors {canvasStore.enabled ? 'bg-primary border-primary' : 'bg-surface-variant border-outline'}"></div>
-                <div class="absolute left-[2px] top-[2px] w-3 h-3 rounded-full transition-transform {canvasStore.enabled ? 'shadow-[0_0_5px_rgba(221,183,255,0.5)] bg-on-primary translate-x-4' : 'bg-outline translate-x-0'}"></div>
-              </div>
-              <span class="font-mono text-[12px] transition-colors flex items-center gap-1 {canvasStore.enabled ? 'text-on-surface' : 'text-on-surface-variant'}">
-                <Lightbulb size={14} class={canvasStore.enabled ? 'text-primary animate-pulse' : ''} /> Canvas Idea
-              </span>
-            </label>
-          </div>
-          
-          <div class="font-mono text-[11px] text-outline flex gap-3">
-            <span class="flex items-center gap-1">
-              <span class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span> Local Compute
-            </span>
-            <span>v2.4.1</span>
-          </div>
+        <div class="flex justify-center items-center px-6 pb-2 pt-1 w-full">
+			{#if isMobile.current}
+				<div class="w-full">
+					<ModelsSelectorSheet
+						disabled={disabled || !isRouter}
+						bind:this={selectorModelRef}
+						currentModel={conversationModel}
+						forceForegroundText
+						useGlobalSelection
+					/>
+				</div>
+			{:else}
+				<div class="w-full">
+					<ModelsSelector
+						disabled={disabled || !isRouter}
+						bind:this={selectorModelRef}
+						currentModel={conversationModel}
+						forceForegroundText
+						useGlobalSelection
+					/>
+				</div>
+			{/if}
         </div>
 	</div>
 </form>

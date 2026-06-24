@@ -88,7 +88,7 @@
             <User size={20} class="text-outline" />
         </div>
         
-        <div class="flex flex-col items-end gap-2 w-full">
+        <div class="flex flex-col items-end gap-2 max-w-full">
             {#if message.extra && message.extra.length > 0}
                 <div class="mb-2 max-w-full">
                     <ChatAttachmentsList attachments={message.extra} readonly imageHeight="h-80" />
@@ -97,7 +97,7 @@
 
             {#if message.content.trim()}
                 <div
-                    class="w-fit px-6 py-4 rounded-3xl rounded-tr-sm bg-primary text-primary-foreground text-[15px]"
+                    class="w-fit px-6 py-4 rounded-3xl rounded-tr-sm bg-primary/80 backdrop-blur-xl text-primary-foreground text-[15px] shadow-lg shadow-black/20"
                     data-multiline={isMultiline ? '' : undefined}
                     style="overflow-wrap: anywhere; word-break: break-word;"
                 >

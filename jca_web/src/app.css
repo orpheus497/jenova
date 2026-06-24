@@ -65,7 +65,7 @@
   --card-foreground: #f0edf2;
   --popover: #201f1f;
   --popover-foreground: #f0edf2;
-  --primary: #4b2c70; /* Dark Royal Purple */
+  --primary: #2b1e3a; /* Dark Royal Purple */
   --primary-foreground: #f0edf2;
   --secondary: #c96464; /* Crimson */
   --secondary-foreground: #f0edf2;
@@ -76,20 +76,20 @@
   --destructive: #c96464; /* Crimson */
   --border: #5e5966;
   --input: #5e5966;
-  --ring: #4b2c70; /* Dark Royal Purple */
-  --chart-1: #4b2c70; /* Dark Royal Purple */
+  --ring: #2b1e3a; /* Dark Royal Purple */
+  --chart-1: #2b1e3a; /* Dark Royal Purple */
   --chart-2: #c96464; /* Crimson */
   --chart-3: #e4b382; /* Gold */
   --chart-4: #df9f87;
   --chart-5: #aba0d9;
   --sidebar: #131313;
   --sidebar-foreground: #f0edf2;
-  --sidebar-primary: #4b2c70; /* Dark Royal Purple */
+  --sidebar-primary: #2b1e3a; /* Dark Royal Purple */
   --sidebar-primary-foreground: #f0edf2;
   --sidebar-accent: #1c1b1b;
   --sidebar-accent-foreground: #f0edf2;
   --sidebar-border: #5e5966;
-  --sidebar-ring: #4b2c70; /* Dark Royal Purple */
+  --sidebar-ring: #2b1e3a; /* Dark Royal Purple */
   --code-background: #1c1b1b;
   --code-foreground: #e4b382;
 }
