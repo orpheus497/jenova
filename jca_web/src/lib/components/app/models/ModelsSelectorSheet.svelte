@@ -233,7 +233,7 @@
 			>
 				<Package class="h-3.5 w-3.5" />
 
-				<TruncatedText text={selectedOption?.model || 'Select model'} class="min-w-0 font-medium" />
+				<TruncatedText text={selectedOption?.name || selectedOption?.model || 'Select model'} class="min-w-0 font-medium" />
 
 				{#if updating || isLoadingModel}
 					<Loader2 class="h-3 w-3.5 animate-spin" />

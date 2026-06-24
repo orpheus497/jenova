@@ -95,7 +95,7 @@
 <!-- svelte-ignore a11y_mouse_events_have_key_events -->
 <button
 	class="group flex min-h-9 w-full cursor-pointer items-center justify-between space-x-3 rounded-lg py-1.5 text-left transition-colors hover:bg-foreground/10 {isActive
-		? 'bg-foreground/5 text-[#a64d79] font-medium'
+		? 'bg-foreground/5 text-[#7b52ab] font-medium'
 		: ''} px-3"
 	onclick={handleSelect}
 	onmouseover={handleMouseOver}

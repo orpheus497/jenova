@@ -28,7 +28,7 @@
 	} from '$lib/enums';
 	import { config } from '$lib/stores/settings.svelte';
 	import { modelOptions, selectedModelId } from '$lib/stores/models.svelte';
-	import { isRouterMode } from '$lib/stores/server.svelte';
+	import { isRouterMode, serverError } from '$lib/stores/server.svelte';
 	import { chatStore } from '$lib/stores/chat.svelte';
 	import { mcpStore } from '$lib/stores/mcp.svelte';
 	import { mcpHasResourceAttachments } from '$lib/stores/mcp-resources.svelte';
@@ -140,6 +140,7 @@
 
 	// Model Selection Logic
 	let isRouter = $derived(isRouterMode());
+	let isOffline = $derived(!!serverError());
 	let conversationModel = $derived(
 		chatStore.getConversationModel(activeMessages() as DatabaseMessage[])
 	);
@@ -645,7 +646,7 @@
 			{#if isMobile.current}
 				<div class="w-full">
 					<ModelsSelectorSheet
-						disabled={disabled || !isRouter}
+						disabled={disabled || isOffline}
 						bind:this={selectorModelRef}
 						currentModel={conversationModel}
 						forceForegroundText
@@ -655,7 +656,7 @@
 			{:else}
 				<div class="w-full">
 					<ModelsSelector
-						disabled={disabled || !isRouter}
+						disabled={disabled || isOffline}
 						bind:this={selectorModelRef}
 						currentModel={conversationModel}
 						forceForegroundText

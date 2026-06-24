@@ -260,7 +260,7 @@
 			>
 				<Package class="h-3.5 w-3.5" />
 
-				<ModelId modelId={currentModel} class="min-w-0" showOrgName />
+				<ModelId modelId={currentModel} class="min-w-0" />
 			</span>
 		{:else}
 			<p class="text-xs text-muted-foreground">No models available.</p>
@@ -295,7 +295,6 @@
 									<ModelId
 										modelId={selectedOption.model}
 										class="min-w-0 overflow-hidden"
-										showOrgName
 										{...props}
 									/>
 								{/snippet}
@@ -412,7 +411,6 @@
 								<ModelId
 									modelId={selectedOption.model}
 									class="min-w-0 overflow-hidden"
-									showOrgName
 									{...props}
 								/>
 							{/snippet}

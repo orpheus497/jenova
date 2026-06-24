@@ -122,26 +122,7 @@
 							</Table.Row>
 						</Table.Header>
 						<Table.Body>
-							<!-- Model Path -->
-							<Table.Row>
-								<Table.Cell class="h-10 align-middle font-medium">File Path</Table.Cell>
 
-								<Table.Cell
-									class="inline-flex h-10 items-center gap-2 align-middle font-mono text-xs"
-								>
-									<span
-										class="resizable-text-container min-w-0 flex-1 truncate"
-										style:--threshold="14rem"
-									>
-										{serverProps.model_path}
-									</span>
-
-									<ActionIconCopyToClipboard
-										text={serverProps.model_path}
-										ariaLabel="Copy model path to clipboard"
-									/>
-								</Table.Cell>
-							</Table.Row>
 
 							<!-- Context Size -->
 							{#if serverProps?.default_generation_settings?.n_ctx}
