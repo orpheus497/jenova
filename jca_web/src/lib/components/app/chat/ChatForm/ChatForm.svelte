@@ -73,7 +73,7 @@
 		class: className = '',
 		disabled = false,
 		isLoading = false,
-		placeholder = 'Type a message...',
+		placeholder = 'Chat with Jenova...',
 		showMcpPromptButton = false,
 		uploadedFiles = $bindable([]),
 		value = $bindable(''),

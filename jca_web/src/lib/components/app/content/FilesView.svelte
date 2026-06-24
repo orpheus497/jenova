@@ -1,16 +1,16 @@
 <script lang="ts">
-	import { Archive, Plus, Trash2, File, Image as ImageIcon, FileText, Loader2, UploadCloud, DownloadCloud, Database, RefreshCw, HardDrive, CheckCircle } from '@lucide/svelte';
+	import { Archive, Plus, Trash2, File, Image as ImageIcon, FileText, Loader2, UploadCloud, DownloadCloud, Database, RefreshCw, HardDrive, CheckCircle, Folder } from '@lucide/svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { DialogConfirmation } from '$lib/components/app';
-	import { workspaceStore, files, folders } from '$lib/stores/workspace.svelte';
+	import { workspaceStore, files, folders, notes } from '$lib/stores/workspace.svelte';
 	import { cn, formatFileSize } from '$lib/utils';
-	import { SyncService } from '$lib/services/sync.service';
+	import { SyncService, type SyncStats } from '$lib/services/sync.service';
 
 	interface Props {
-		currentFolderId?: string | null;
+		currentFolderId?: string | null | undefined;
 	}
 
-	let { currentFolderId = null }: Props = $props();
+	let { currentFolderId = undefined }: Props = $props();
 
 	let fileInput = $state<HTMLInputElement | null>(null);
 	let showDeleteDialog = $state(false);
@@ -18,17 +18,18 @@
     let isUploading = $state(false);
 
 	let currentFolder = $derived(currentFolderId ? folders().find((f) => f.id === currentFolderId) : null);
-	let contextName = $derived(currentFolder ? currentFolder.name : 'Unassigned');
-	let filteredFiles = $derived(files().filter((f) => f.folderId === currentFolderId));
+	let contextName = $derived(currentFolderId === undefined ? 'All Workspaces' : currentFolder ? currentFolder.name : 'Unassigned Assets');
+	let filteredFiles = $derived(currentFolderId === undefined ? [] : files().filter((f) => f.folderId === currentFolderId));
 
     let syncState = $state<'idle' | 'pushing' | 'pulling' | 'success' | 'error'>('idle');
+    let syncStats = $state<SyncStats | null>(null);
 
     async function handlePush() {
         syncState = 'pushing';
         try {
-            await SyncService.push();
+            syncStats = await SyncService.sync() || null;
             syncState = 'success';
-            setTimeout(() => { syncState = 'idle' }, 3000);
+            setTimeout(() => { syncState = 'idle' }, 5000);
         } catch (e) {
             syncState = 'error';
         }
@@ -37,9 +38,9 @@
     async function handlePull() {
         syncState = 'pulling';
         try {
-            await SyncService.pull();
+            syncStats = await SyncService.pull() || null;
             syncState = 'success';
-            setTimeout(() => { syncState = 'idle' }, 3000);
+            setTimeout(() => { syncState = 'idle' }, 5000);
         } catch (e) {
             syncState = 'error';
         }
@@ -73,7 +74,7 @@
                 }
 
                 await workspaceStore.createFileAsset(
-                    currentFolderId,
+                    currentFolderId ?? null,
                     file.name,
                     file.size,
                     file.type || 'application/octet-stream',
@@ -158,7 +159,14 @@
                     syncState === 'success' ? 'Sync operation completed successfully.' :
                     'Sync operation failed. Check connection.'}
                 </p>
-                <p class="text-xs opacity-70 font-mono mt-1">Target: http://localhost:8000</p>
+                {#if syncStats && syncState === 'success'}
+                    <p class="text-xs font-mono mt-1 flex gap-3">
+                        <span class="text-emerald-400">+{syncStats.created} created</span>
+                        <span class="text-yellow-400">~{syncStats.updated} updated</span>
+                    </p>
+                {:else}
+                    <p class="text-xs opacity-70 font-mono mt-1">Target: http://localhost:8000</p>
+                {/if}
             </div>
         </div>
 
@@ -186,46 +194,107 @@
             </button>
         </div>
 
-        <!-- Files Grid -->
-		{#if filteredFiles.length === 0}
-			<div class="flex h-64 flex-col items-center justify-center text-outline opacity-70 glass-panel rounded-xl mt-4">
-				<Archive size={48} class="mb-4" />
-				<p class="font-mono text-sm">
-					No files in this workspace.
-				</p>
-			</div>
-		{:else}
-			<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
-				{#each filteredFiles as file (file.id)}
-					{@const Icon = getFileIcon(file.type)}
-					<div
-						class="glass-panel p-5 rounded-xl border border-white/10 flex items-center justify-between group hover:border-primary/50 transition-colors"
-					>
-                        <div class="flex items-center gap-4 overflow-hidden">
-                            <div class="w-12 h-12 shrink-0 rounded-lg bg-surface-container flex items-center justify-center text-primary group-hover:bg-primary-container transition-colors">
-                                <Icon size={24} />
-                            </div>
-                            <div class="min-w-0">
-                                <h3 class="font-bold text-lg text-on-surface truncate" title={file.name}>{file.name}</h3>
-                                <p class="text-xs text-outline font-mono flex items-center gap-2 mt-1">
-                                    {formatFileSize(file.size)}
-                                </p>
-                            </div>
-                        </div>
+        {#snippet fileCard(file: any)}
+            {@const Icon = getFileIcon(file.type)}
+            <div class="glass-panel p-5 rounded-xl border border-white/10 flex items-center justify-between group hover:border-secondary/50 transition-colors">
+                <div class="flex items-center gap-4 overflow-hidden">
+                    <div class="w-12 h-12 shrink-0 rounded-lg bg-surface-container flex items-center justify-center text-secondary group-hover:bg-secondary/10 transition-colors">
+                        <Icon size={24} />
+                    </div>
+                    <div class="min-w-0">
+                        <h3 class="font-bold text-lg text-on-surface truncate" title={file.name}>{file.name}</h3>
+                        <p class="text-xs text-outline font-mono flex items-center gap-2 mt-1">
+                            {formatFileSize(file.size)}
+                        </p>
+                    </div>
+                </div>
 
-                        <div class="flex items-center gap-2 shrink-0">
-                            <button
-								class="p-2 rounded-md hover:bg-white/10 text-outline hover:text-error transition-colors"
-								onclick={() => confirmDelete(file.id)}
-                                title="Delete"
-							>
-								<Trash2 size={18} />
-							</button>
+                <div class="flex items-center gap-2 shrink-0">
+                    <button class="p-2 rounded-md hover:bg-white/10 text-outline hover:text-error transition-colors" onclick={() => confirmDelete(file.id)} title="Delete">
+                        <Trash2 size={18} />
+                    </button>
+                </div>
+            </div>
+        {/snippet}
+
+        {#snippet noteCard(note: any)}
+            <div class="glass-panel p-5 rounded-xl border border-white/10 flex items-center justify-between group hover:border-accent/50 transition-colors cursor-pointer" onclick={() => window.location.hash = `#/notes/${note.id}`}>
+                <div class="flex items-center gap-4 overflow-hidden">
+                    <div class="w-12 h-12 shrink-0 rounded-lg bg-surface-container flex items-center justify-center text-accent group-hover:bg-accent/10 transition-colors">
+                        <FileText size={24} />
+                    </div>
+                    <div class="min-w-0">
+                        <h3 class="font-bold text-lg text-on-surface truncate" title={note.title}>{note.title}</h3>
+                        <p class="text-xs text-outline font-mono flex items-center gap-2 mt-1">
+                            Note
+                        </p>
+                    </div>
+                </div>
+            </div>
+        {/snippet}
+
+        <!-- Files & Notes -->
+        {#if currentFolderId === undefined}
+            <div class="space-y-12 mt-4">
+                {#each folders() as folder (folder.id)}
+                    {@const folderFiles = files().filter(f => f.folderId === folder.id)}
+                    {@const folderNotes = notes().filter(n => n.folderId === folder.id)}
+                    {#if folderFiles.length > 0 || folderNotes.length > 0}
+                        <div>
+                            <h3 class="font-bold text-xl text-secondary mb-4 flex items-center gap-2"><Folder size={20} /> {folder.name}</h3>
+                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                {#each folderFiles as file}
+                                    {@render fileCard(file)}
+                                {/each}
+                                {#each folderNotes as note}
+                                    {@render noteCard(note)}
+                                {/each}
+                            </div>
                         </div>
-					</div>
-				{/each}
-			</div>
-		{/if}
+                    {/if}
+                {/each}
+                
+                {#if files().filter((f: any) => !f.folderId).length > 0 || notes().filter((n: any) => !n.folderId).length > 0}
+                    {@const unassignedFiles = files().filter((f: any) => !f.folderId)}
+                    {@const unassignedNotes = notes().filter((n: any) => !n.folderId)}
+                    <div>
+                        <h3 class="font-bold text-xl text-outline mb-4 flex items-center gap-2"><Archive size={20} /> Unassigned Assets</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {#each unassignedFiles as file}
+                                {@render fileCard(file)}
+                            {/each}
+                            {#each unassignedNotes as note}
+                                {@render noteCard(note)}
+                            {/each}
+                        </div>
+                    </div>
+                {/if}
+
+                {#if folders().length === 0 && files().filter(f => !f.folderId).length === 0 && notes().filter(n => !n.folderId).length === 0}
+                    <div class="flex h-64 flex-col items-center justify-center text-outline opacity-70 glass-panel rounded-xl mt-4">
+                        <Archive size={48} class="mb-4" />
+                        <p class="font-mono text-sm">
+                            No workspaces or files found.
+                        </p>
+                    </div>
+                {/if}
+            </div>
+        {:else}
+            {#if filteredFiles.length === 0}
+                <div class="flex h-64 flex-col items-center justify-center text-outline opacity-70 glass-panel rounded-xl mt-4">
+                    <Archive size={48} class="mb-4" />
+                    <p class="font-mono text-sm">
+                        No files in this workspace.
+                    </p>
+                </div>
+            {:else}
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
+                    {#each filteredFiles as file (file.id)}
+                        {@render fileCard(file)}
+                    {/each}
+                </div>
+            {/if}
+        {/if}
 	</div>
 </div>
 

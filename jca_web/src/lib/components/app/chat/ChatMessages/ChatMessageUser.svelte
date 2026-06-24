@@ -97,7 +97,7 @@
 
             {#if message.content.trim()}
                 <div
-                    class="w-full px-6 py-4 rounded-3xl rounded-tr-sm glass-panel text-on-surface text-[15px]"
+                    class="w-fit px-6 py-4 rounded-3xl rounded-tr-sm bg-primary text-primary-foreground text-[15px]"
                     data-multiline={isMultiline ? '' : undefined}
                     style="overflow-wrap: anywhere; word-break: break-word;"
                 >

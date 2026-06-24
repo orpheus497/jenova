@@ -18,7 +18,7 @@
 		onInput,
 		onKeydown,
 		onPaste,
-		placeholder = 'Ask anything...',
+		placeholder = 'Chat with Jenova...',
 		value = $bindable('')
 	}: Props = $props();
 

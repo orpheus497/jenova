@@ -154,14 +154,15 @@
 	<Sidebar.Header class="top-0 z-10 gap-4 bg-transparent p-6 pb-2">
 		<a href="#/" onclick={handleMobileSidebarItemClick} class="block mb-4">
 			<div class="flex items-center gap-4">
-                <div class="w-12 h-12 rounded-lg bg-primary/20 border border-primary/30 flex items-center justify-center shadow-[0_0_15px_rgba(75,0,130,0.4)]">
-                    <Cpu size={24} class="text-primary" />
+                <div class="w-12 h-12 rounded-lg border border-primary/30 flex items-center justify-center shadow-[0_0_15px_rgba(43,30,58,0.4)] overflow-hidden shrink-0">
+                    <img src="/jenova.jpg" alt="Jenova Logo" class="w-full h-full object-cover" />
                 </div>
-			    <div>
-                    <h1 class="font-sans text-2xl text-primary tracking-tight font-bold">Jenova JCA</h1>
-                    <p class="font-mono text-[13px] text-on-surface-variant flex items-center gap-2">
-                        <span class="w-2 h-2 rounded-full bg-secondary-fixed-dim animate-pulse"></span> System Active
-                    </p>
+			    <div class="min-w-0 flex flex-col justify-center">
+                    <h1 class="font-sans text-[15px] tracking-tight font-bold leading-[1.1] uppercase">
+                        <span style="color: #7b52ab;">Jenova</span><br/>
+                        <span style="color: #c96464;">Cognitive</span><br/>
+                        <span style="color: #e4b382;">Architecture</span>
+                    </h1>
                 </div>
             </div>
 		</a>
@@ -170,61 +171,6 @@
 	</Sidebar.Header>
 
 	<div class="flex-1 p-6 pt-2 space-y-6">
-        <!-- Global Nav Tabs -->
-        <nav class="flex flex-col gap-2">
-          {#each [
-            { id: 'mcp', label: 'MCP Services', icon: Cpu, href: '#/mcp' },
-            { id: 'settings', label: 'Settings', icon: Settings, href: '#/settings' }
-          ] as item}
-            <a 
-              href={item.href}
-              class={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 active:scale-95 w-full text-left ${
-                page.route.id?.includes(item.id)
-                  ? 'bg-primary/20 text-on-primary-container font-bold shadow-[4px_0_12px_-2px_rgba(186,126,244,0.3)]' 
-                  : 'text-on-surface-variant hover:text-on-surface hover:bg-white/5'
-              }`}
-            >
-              <svelte:component this={item.icon} size={20} class={page.route.id?.includes(item.id) ? 'fill-current' : ''} />
-              <span>{item.label}</span>
-            </a>
-          {/each}
-        </nav>
-
-        <hr class="border-white/5"/>
-
-        <!-- CHATS -->
-        <div>
-            <button onclick={() => expandedChats = !expandedChats} class="w-full px-2 text-[11px] font-mono text-outline uppercase tracking-widest mb-2 flex items-center justify-between hover:text-primary transition-colors">
-                <span class="flex items-center gap-1">
-                    {#if expandedChats}<ChevronDown size={14}/>{:else}<ChevronRight size={14}/>{/if}
-                    Chats
-                </span>
-            </button>
-            
-            {#if expandedChats}
-            <div class="space-y-1 mb-2">
-                <button 
-                    onclick={() => conversationsStore.createConversation()}
-                    class="w-full py-2 px-3 rounded-lg bg-white/5 text-on-surface-variant text-sm flex items-center gap-2 hover:bg-primary/20 hover:text-primary transition-colors mb-2 border border-white/5"
-                >
-                    <Plus size={16} /> New Chat
-                </button>
-                {#each filteredConversations.filter((c: any) => !c.folderId) as conversation (conversation.id)}
-                    <ChatSidebarConversationItem
-                        {conversation}
-                        depth={0}
-                        {handleMobileSidebarItemClick}
-                        isActive={currentChatId === conversation.id}
-                        onSelect={selectConversation}
-                        onEdit={() => handleEdit('conversation', conversation.id, conversation.name)}
-                        onDelete={() => handleDelete('conversation', conversation.id)}
-                        onStop={handleStopGeneration}
-                    />
-                {/each}
-            </div>
-            {/if}
-        </div>
-
         <!-- WORKSPACES -->
         <div>
             <div class="px-2 text-[11px] font-mono text-outline uppercase tracking-widest mb-2 flex items-center justify-between">
@@ -283,15 +229,44 @@
             {/if}
         </div>
 
-        <!-- UNASSIGNED -->
-        {#if notes().filter((n: any) => !n.folderId).length > 0 || files().filter((f: any) => !f.folderId).length > 0}
+        <!-- CHATS -->
         <div>
-            <button onclick={() => expandedUnassigned = !expandedUnassigned} class="w-full px-2 text-[11px] font-mono text-outline uppercase tracking-widest mb-2 flex items-center justify-between hover:text-primary transition-colors">
+            <button onclick={() => expandedChats = !expandedChats} class="w-full px-2 text-[11px] font-mono text-outline uppercase tracking-widest mb-2 flex items-center justify-between hover:text-primary transition-colors">
                 <span class="flex items-center gap-1">
-                    {#if expandedUnassigned}<ChevronDown size={14}/>{:else}<ChevronRight size={14}/>{/if}
-                    Global Assets
+                    {#if expandedChats}<ChevronDown size={14}/>{:else}<ChevronRight size={14}/>{/if}
+                    Chats
                 </span>
             </button>
+            
+            {#if expandedChats}
+            <div class="space-y-1 mb-2">
+                {#each filteredConversations.filter((c: any) => !c.folderId) as conversation (conversation.id)}
+                    <ChatSidebarConversationItem
+                        {conversation}
+                        depth={0}
+                        {handleMobileSidebarItemClick}
+                        isActive={currentChatId === conversation.id}
+                        onSelect={selectConversation}
+                        onEdit={() => handleEdit('conversation', conversation.id, conversation.name)}
+                        onDelete={() => handleDelete('conversation', conversation.id)}
+                        onStop={handleStopGeneration}
+                    />
+                {/each}
+            </div>
+            {/if}
+        </div>
+
+        <!-- UNASSIGNED -->
+        <div>
+            <div class="px-2 text-[11px] font-mono text-outline uppercase tracking-widest mb-2 flex items-center justify-between">
+                <button onclick={() => expandedUnassigned = !expandedUnassigned} class="flex items-center gap-1 hover:text-primary transition-colors flex-1 text-left">
+                    {#if expandedUnassigned}<ChevronDown size={14}/>{:else}<ChevronRight size={14}/>{/if}
+                    Global Assets
+                </button>
+                <div class="flex gap-2 items-center">
+                    <button onclick={() => workspaceStore.createNote(null).then(n => selectNote(n.id))} class="hover:text-primary transition-colors" title="New Note"><Plus size={14}/></button>
+                </div>
+            </div>
             
             {#if expandedUnassigned}
             <div class="space-y-1">
@@ -303,37 +278,15 @@
                         onDelete={() => handleDelete('note', note.id)}
                     />
                 {/each}
+                
+                <button onclick={() => goto('#/files/unassigned')} class="w-full flex items-center justify-between group/wsfile px-2 py-2 rounded-lg text-sm transition-all text-secondary/70 hover:bg-sidebar-accent hover:text-secondary">
+                    <span class="flex items-center gap-2"><Archive size={12} /> Files</span>
+                </button>
             </div>
             {/if}
         </div>
-        {/if}
-
-        <div class="h-px bg-border/40 mx-2"></div>
 
 
-
-        <!-- MCP Services Status -->
-        <div class="flex flex-col gap-2 pb-8">
-          <div class="flex items-center justify-between text-on-surface-variant px-2 mb-2">
-            <span class="font-mono text-[11px] uppercase tracking-wider text-outline">Sync Engine</span>
-            <span class={`w-2 h-2 rounded-full ${!mcpStore.error && mcpStore.isInitialized ? 'bg-primary' : mcpStore.error ? 'bg-error' : 'bg-secondary-fixed-dim animate-pulse'}`}></span>
-          </div>
-          <div class="flex justify-between items-center bg-white/5 p-3 rounded-lg border border-white/5">
-            <div class="flex flex-col">
-              <span class="font-mono text-[13px] text-on-surface">Data Stream</span>
-              <span class="font-mono text-[10px] text-outline capitalize">{mcpStore.error ? 'Error' : mcpStore.isInitializing ? 'Connecting' : mcpStore.isInitialized ? 'Connected' : 'Idle'}</span>
-            </div>
-            <div class="flex gap-2">
-              <button class="p-1 rounded-md bg-white/5 hover:bg-primary/20 text-on-surface-variant hover:text-on-primary-container transition-colors border border-white/5">
-                <Download size={16} />
-              </button>
-              <button class="p-1 rounded-md bg-white/5 hover:bg-primary/20 text-on-surface-variant hover:text-on-primary-container transition-colors border border-white/5">
-                <Upload size={16} />
-              </button>
-            </div>
-          </div>
-        </div>
-        
     </div>
 </ScrollArea>
 </div>

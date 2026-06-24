@@ -8,6 +8,12 @@ import type {
   DatabaseConversation,
 } from "$lib/types/database";
 
+export interface SyncStats {
+  created: number;
+  updated: number;
+  deleted: number;
+}
+
 export class SyncService {
   private static _isSyncing = false;
 
@@ -43,10 +49,11 @@ export class SyncService {
   /**
    * Pulls the latest database snapshot and individual markdown files from the backend.
    */
-  static async pull() {
+  static async pull(): Promise<SyncStats | void> {
     if (!browser || this._isSyncing) return;
     this._isSyncing = true;
     let changed = false;
+    const stats: SyncStats = { created: 0, updated: 0, deleted: 0 };
     try {
       console.log("[Sync] Pulling database snapshot...");
       const raw = await StorageService.get("jenova-snapshot.json");
@@ -83,10 +90,12 @@ export class SyncService {
                   updatedAt: Date.now(),
                 });
                 changed = true;
+                stats.updated++;
               }
             } else {
               await DatabaseService.createNote(null, fileName, content);
               changed = true;
+              stats.created++;
             }
           } else if (isChat) {
             const { conv: parsedConv, messages: parsedMessages } =
@@ -119,17 +128,19 @@ export class SyncService {
                 parentId = created.id;
               }
               changed = true;
+              stats.updated++;
             }
           }
         }
       }
 
-      console.log("[Sync] Pull complete");
+      console.log("[Sync] Pull complete", stats);
       if (changed) {
         // Signal reactive stores to reload instead of hard page refresh.
         // This avoids data loss if the user is mid-conversation.
         window.dispatchEvent(new CustomEvent("jenova-sync-updated"));
       }
+      return stats;
     } catch (error) {
       console.error("[Sync] Pull failed", error);
     } finally {
@@ -137,9 +148,10 @@ export class SyncService {
     }
   }
 
-  static async sync() {
+  static async sync(): Promise<SyncStats | void> {
     if (!browser || this._isSyncing) return;
     this._isSyncing = true;
+    const stats: SyncStats = { created: 0, updated: 0, deleted: 0 };
     try {
       console.log("[Sync] Starting filesystem sync...");
 
@@ -195,7 +207,9 @@ export class SyncService {
       const data = await DatabaseService.exportData();
       await StorageService.save("jenova-snapshot.json", JSON.stringify(data));
 
-      console.log("[Sync] Complete");
+      stats.updated = queue.length;
+      console.log("[Sync] Complete", stats);
+      return stats;
     } catch (error) {
       console.error("[Sync] Failed", error);
     } finally {
