@@ -186,7 +186,7 @@
             
             {#if expandedWorkspaces}
             <div class="space-y-1">
-                {#each folders().slice(-3) as folder (folder.id)}
+                {#each folders() as folder (folder.id)}
                     {#snippet chatsSnippet()}
                         {#each filteredConversations.filter((c: any) => c.folderId === folder.id) as conversation (conversation.id)}
                             <ChatSidebarConversationItem

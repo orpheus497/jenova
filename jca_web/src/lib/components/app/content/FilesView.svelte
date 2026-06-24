@@ -1,8 +1,9 @@
 <script lang="ts">
-	import { Archive, Plus, Trash2, File, Image as ImageIcon, FileText, Loader2, UploadCloud, DownloadCloud, Database, RefreshCw, HardDrive, CheckCircle, Folder } from '@lucide/svelte';
+	import { Archive, Plus, Trash2, File, Image as ImageIcon, FileText, Loader2, UploadCloud, DownloadCloud, Database, RefreshCw, HardDrive, CheckCircle, Folder, MessageSquare, ArrowRight, ArrowLeft, FolderInput } from '@lucide/svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { DialogConfirmation } from '$lib/components/app';
 	import { workspaceStore, files, folders, notes } from '$lib/stores/workspace.svelte';
+	import { conversations, conversationsStore } from '$lib/stores/conversations.svelte';
 	import { cn, formatFileSize } from '$lib/utils';
 	import { SyncService, type SyncStats } from '$lib/services/sync.service';
 
@@ -17,6 +18,10 @@
 	let showDeleteDialog = $state(false);
 	let deleteFileId = $state<string | null>(null);
     let isUploading = $state(false);
+
+    let showMoveDialog = $state(false);
+    let moveTarget = $state<{ type: 'file' | 'note' | 'chat', id: string } | null>(null);
+    let moveTargetFolderId = $state<string | null>(null);
 
 	let currentFolder = $derived(currentFolderId ? folders().find((f) => f.id === currentFolderId) : null);
 	let contextName = $derived(currentFolderId === undefined ? 'All Workspaces' : currentFolder ? currentFolder.name : 'Unassigned Assets');
@@ -106,6 +111,27 @@
 		}
 		showDeleteDialog = false;
 	}
+
+    function confirmMove(type: 'file' | 'note' | 'chat', id: string, folderId: string | null | undefined) {
+        moveTarget = { type, id };
+        moveTargetFolderId = folderId ?? null;
+        showMoveDialog = true;
+    }
+
+    async function handleMove() {
+        if (!moveTarget) return;
+        
+        if (moveTarget.type === 'file') {
+            await workspaceStore.moveFileAsset(moveTarget.id, moveTargetFolderId);
+        } else if (moveTarget.type === 'note') {
+            await workspaceStore.moveNote(moveTarget.id, moveTargetFolderId);
+        } else if (moveTarget.type === 'chat') {
+            await conversationsStore.moveConversation(moveTarget.id, moveTargetFolderId);
+        }
+        
+        showMoveDialog = false;
+        moveTarget = null;
+    }
 </script>
 
 <div class="flex-1 overflow-y-auto px-6 md:px-margin-desktop pt-10 pb-10 flex flex-col gap-8 w-full max-w-5xl mx-auto custom-scrollbar">
@@ -114,9 +140,16 @@
         <!-- Header & Sync Actions -->
         <div class="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-4 gap-4">
             <div>
-                <h2 class="text-3xl font-bold text-primary tracking-tight">
-                    {#if viewMode === 'notes'}Local Note Architecture{:else}Local File Architecture{/if}
-                </h2>
+                <div class="flex items-center gap-4 mb-2">
+                    {#if currentFolderId !== undefined}
+                        <a href="#/files" class="p-2 rounded-lg bg-surface-container hover:bg-surface-container-high border border-white/10 text-on-surface transition-colors" title="Back to All Workspaces">
+                            <ArrowLeft size={18} />
+                        </a>
+                    {/if}
+                    <h2 class="text-3xl font-bold text-primary tracking-tight">
+                        {#if viewMode === 'notes'}Local Note Architecture{:else}Local File Architecture{/if}
+                    </h2>
+                </div>
                 <p class="text-on-surface-variant mt-2 font-mono text-sm">Git-like push/pull mechanics for local continuity and state persistence. <br/>Viewing: <span class="text-on-surface font-semibold">{contextName}</span></p>
             </div>
             <div class="flex gap-4">
@@ -219,6 +252,9 @@
                 </div>
 
                 <div class="flex items-center gap-2 shrink-0">
+                    <button class="p-2 rounded-md hover:bg-white/10 text-outline hover:text-secondary transition-colors opacity-0 group-hover:opacity-100" onclick={(e) => { e.stopPropagation(); confirmMove('file', file.id, file.folderId); }} title="Move to Workspace">
+                        <FolderInput size={18} />
+                    </button>
                     <button class="p-2 rounded-md hover:bg-white/10 text-outline hover:text-error transition-colors" onclick={() => confirmDelete(file.id)} title="Delete">
                         <Trash2 size={18} />
                     </button>
@@ -239,6 +275,32 @@
                         </p>
                     </div>
                 </div>
+                <div class="flex items-center gap-2 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button class="p-2 rounded-md hover:bg-white/10 text-outline hover:text-secondary transition-colors" onclick={(e) => { e.stopPropagation(); confirmMove('note', note.id, note.folderId); }} title="Move to Workspace">
+                        <FolderInput size={18} />
+                    </button>
+                </div>
+            </div>
+        {/snippet}
+
+        {#snippet chatCard(chat: any)}
+            <div class="glass-panel p-5 rounded-xl border border-white/10 flex items-center justify-between group hover:border-primary/50 transition-colors cursor-pointer" onclick={() => window.location.hash = `#/chat/${chat.id}`}>
+                <div class="flex items-center gap-4 overflow-hidden">
+                    <div class="w-12 h-12 shrink-0 rounded-lg bg-surface-container flex items-center justify-center text-primary group-hover:bg-primary/10 transition-colors">
+                        <MessageSquare size={24} />
+                    </div>
+                    <div class="min-w-0">
+                        <h3 class="font-bold text-lg text-on-surface truncate" title={chat.name}>{chat.name}</h3>
+                        <p class="text-xs text-outline font-mono flex items-center gap-2 mt-1">
+                            Chat
+                        </p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button class="p-2 rounded-md hover:bg-white/10 text-outline hover:text-secondary transition-colors" onclick={(e) => { e.stopPropagation(); confirmMove('chat', chat.id, chat.folderId); }} title="Move to Workspace">
+                        <FolderInput size={18} />
+                    </button>
+                </div>
             </div>
         {/snippet}
 
@@ -248,10 +310,19 @@
                 {#each folders() as folder (folder.id)}
                     {@const folderFiles = files().filter(f => f.folderId === folder.id)}
                     {@const folderNotes = notes().filter(n => n.folderId === folder.id)}
-                    {#if (viewMode !== 'notes' && folderFiles.length > 0) || (viewMode !== 'files' && folderNotes.length > 0)}
+                    {@const folderChats = conversations().filter(c => c.folderId === folder.id)}
+                    {#if (viewMode !== 'notes' && folderFiles.length > 0) || (viewMode !== 'files' && folderNotes.length > 0) || folderChats.length > 0}
                         <div>
-                            <h3 class="font-bold text-xl text-secondary mb-4 flex items-center gap-2"><Folder size={20} /> {folder.name}</h3>
+                            <div class="flex items-center justify-between mb-4">
+                                <h3 class="font-bold text-xl text-secondary flex items-center gap-2"><Folder size={20} /> {folder.name}</h3>
+                                <a href={`#/files/${folder.id}`} class="flex items-center gap-2 px-3 py-1.5 rounded bg-surface-container hover:bg-surface-container-high border border-white/10 text-sm text-secondary transition-colors">
+                                    Enter Workspace <ArrowRight size={14} />
+                                </a>
+                            </div>
                             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                {#each folderChats as chat}
+                                    {@render chatCard(chat)}
+                                {/each}
                                 {#if viewMode !== 'notes'}
                                     {#each folderFiles as file}
                                         {@render fileCard(file)}
@@ -267,12 +338,21 @@
                     {/if}
                 {/each}
                 
-                {#if (viewMode !== 'notes' && files().filter((f: any) => !f.folderId).length > 0) || (viewMode !== 'files' && notes().filter((n: any) => !n.folderId).length > 0)}
+                {#if (viewMode !== 'notes' && files().filter((f: any) => !f.folderId).length > 0) || (viewMode !== 'files' && notes().filter((n: any) => !n.folderId).length > 0) || conversations().filter((c: any) => !c.folderId).length > 0}
                     {@const unassignedFiles = files().filter((f: any) => !f.folderId)}
                     {@const unassignedNotes = notes().filter((n: any) => !n.folderId)}
+                    {@const unassignedChats = conversations().filter((c: any) => !c.folderId)}
                     <div>
-                        <h3 class="font-bold text-xl text-outline mb-4 flex items-center gap-2"><Archive size={20} /> Unassigned Assets</h3>
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="font-bold text-xl text-outline flex items-center gap-2"><Archive size={20} /> Unassigned Assets</h3>
+                            <a href={`#/files/unassigned`} class="flex items-center gap-2 px-3 py-1.5 rounded bg-surface-container hover:bg-surface-container-high border border-white/10 text-sm text-secondary transition-colors">
+                                Enter Workspace <ArrowRight size={14} />
+                            </a>
+                        </div>
                         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {#each unassignedChats as chat}
+                                {@render chatCard(chat)}
+                            {/each}
                             {#if viewMode !== 'notes'}
                                 {#each unassignedFiles as file}
                                     {@render fileCard(file)}
@@ -287,7 +367,7 @@
                     </div>
                 {/if}
 
-                {#if folders().length === 0 && files().filter(f => !f.folderId).length === 0 && notes().filter(n => !n.folderId).length === 0}
+                {#if folders().length === 0 && files().filter(f => !f.folderId).length === 0 && notes().filter(n => !n.folderId).length === 0 && conversations().filter(c => !c.folderId).length === 0}
                     <div class="flex h-64 flex-col items-center justify-center text-outline opacity-70 glass-panel rounded-xl mt-4">
                         <Archive size={48} class="mb-4" />
                         <p class="font-mono text-sm">
@@ -299,15 +379,19 @@
         {:else}
             {@const workspaceFiles = viewMode !== 'notes' ? filteredFiles : []}
             {@const workspaceNotes = viewMode !== 'files' ? notes().filter((n) => n.folderId === currentFolderId) : []}
-            {#if workspaceFiles.length === 0 && workspaceNotes.length === 0}
+            {@const workspaceChats = conversations().filter((c) => c.folderId === currentFolderId)}
+            {#if workspaceFiles.length === 0 && workspaceNotes.length === 0 && workspaceChats.length === 0}
                 <div class="flex h-64 flex-col items-center justify-center text-outline opacity-70 glass-panel rounded-xl mt-4">
                     <Archive size={48} class="mb-4" />
                     <p class="font-mono text-sm">
-                        No {#if viewMode === 'notes'}notes{:else}files{/if} in this workspace.
+                        No assets in this workspace.
                     </p>
                 </div>
             {:else}
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
+                    {#each workspaceChats as chat (chat.id)}
+                        {@render chatCard(chat)}
+                    {/each}
                     {#each workspaceFiles as file (file.id)}
                         {@render fileCard(file)}
                     {/each}
@@ -330,3 +414,28 @@
 	onConfirm={handleDelete}
 	onCancel={() => (showDeleteDialog = false)}
 />
+
+<DialogConfirmation
+	bind:open={showMoveDialog}
+	title="Move Asset"
+	description="Select the destination workspace for this asset."
+	confirmText="Move"
+	variant="default"
+	icon={FolderInput}
+	onConfirm={handleMove}
+	onCancel={() => { showMoveDialog = false; moveTarget = null; }}
+>
+    <div class="mt-4">
+        <label class="text-sm font-medium text-on-surface block mb-2" for="workspace-select">Destination Workspace</label>
+        <select 
+            id="workspace-select" 
+            class="w-full bg-surface-container border border-white/10 rounded-lg px-3 py-2 text-on-surface"
+            bind:value={moveTargetFolderId}
+        >
+            <option value={null}>Unassigned Assets</option>
+            {#each folders() as folder (folder.id)}
+                <option value={folder.id}>{folder.name}</option>
+            {/each}
+        </select>
+    </div>
+</DialogConfirmation>
