@@ -258,18 +258,15 @@
 
         <!-- UNASSIGNED -->
         <div>
-            <div class="px-2 text-[11px] font-mono text-outline uppercase tracking-widest mb-2 flex items-center justify-between">
-                <button onclick={() => expandedUnassigned = !expandedUnassigned} class="flex items-center gap-1 hover:text-primary transition-colors flex-1 text-left">
-                    {#if expandedUnassigned}<ChevronDown size={14}/>{:else}<ChevronRight size={14}/>{/if}
-                    Global Assets
-                </button>
-                <div class="flex gap-2 items-center">
-                    <button onclick={() => workspaceStore.createNote(null).then(n => selectNote(n.id))} class="hover:text-primary transition-colors" title="New Note"><Plus size={14}/></button>
-                </div>
+            <div class="px-2 text-[11px] font-mono uppercase tracking-widest mb-2 flex items-center justify-between text-[#7b52ab] opacity-80">
+                Global Assets
             </div>
             
-            {#if expandedUnassigned}
             <div class="space-y-1">
+                <button onclick={() => workspaceStore.createNote(null).then(n => selectNote(n.id))} class="w-full flex items-center justify-between group/wsnote px-2 py-2 rounded-lg text-sm transition-all text-accent/70 hover:bg-sidebar-accent hover:text-accent">
+                    <span class="flex items-center gap-2"><FileText size={12} /> New Note</span>
+                </button>
+
                 {#each notes().filter((n: any) => !n.folderId) as note (note.id)}
                     <ChatSidebarNoteItem 
                         {note} 
@@ -279,11 +276,15 @@
                     />
                 {/each}
                 
-                <button onclick={() => goto('#/files/unassigned')} class="w-full flex items-center justify-between group/wsfile px-2 py-2 rounded-lg text-sm transition-all text-secondary/70 hover:bg-sidebar-accent hover:text-secondary">
-                    <span class="flex items-center gap-2"><Archive size={12} /> Files</span>
-                </button>
+                <div class="flex items-center gap-1 mt-2">
+                    <button onclick={() => goto('#/notes/unassigned')} class="flex-1 flex items-center justify-center gap-2 group/wsnote px-2 py-2 rounded-lg text-sm transition-all text-accent/70 hover:bg-sidebar-accent hover:text-accent bg-surface-container/30">
+                        <FileText size={12} /> Notes
+                    </button>
+                    <button onclick={() => goto('#/files/unassigned')} class="flex-1 flex items-center justify-center gap-2 group/wsfile px-2 py-2 rounded-lg text-sm transition-all text-secondary/70 hover:bg-sidebar-accent hover:text-secondary bg-surface-container/30">
+                        <Archive size={12} /> Files
+                    </button>
+                </div>
             </div>
-            {/if}
         </div>
 
 

@@ -8,9 +8,10 @@
 
 	interface Props {
 		currentFolderId?: string | null | undefined;
+		viewMode?: 'all' | 'files' | 'notes';
 	}
 
-	let { currentFolderId = undefined }: Props = $props();
+	let { currentFolderId = undefined, viewMode = 'all' }: Props = $props();
 
 	let fileInput = $state<HTMLInputElement | null>(null);
 	let showDeleteDialog = $state(false);
@@ -113,7 +114,9 @@
         <!-- Header & Sync Actions -->
         <div class="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-4 gap-4">
             <div>
-                <h2 class="text-3xl font-bold text-primary tracking-tight">Local File Architecture</h2>
+                <h2 class="text-3xl font-bold text-primary tracking-tight">
+                    {#if viewMode === 'notes'}Local Note Architecture{:else}Local File Architecture{/if}
+                </h2>
                 <p class="text-on-surface-variant mt-2 font-mono text-sm">Git-like push/pull mechanics for local continuity and state persistence. <br/>Viewing: <span class="text-on-surface font-semibold">{contextName}</span></p>
             </div>
             <div class="flex gap-4">
@@ -172,7 +175,13 @@
 
         <!-- Files Actions -->
         <div class="flex justify-between items-center mt-4">
-            <h3 class="font-bold text-lg text-on-surface">Files in {contextName}</h3>
+            <h3 class="font-bold text-lg text-on-surface">
+                {#if currentFolderId === null}
+                    {#if viewMode === 'notes'}Unassigned Notes{:else if viewMode === 'files'}Unassigned Files{:else}Unassigned Assets{/if}
+                {:else}
+                    {#if viewMode === 'notes'}Notes{:else if viewMode === 'files'}Files{:else}Assets{/if} in {contextName}
+                {/if}
+            </h3>
             <input
                 type="file"
                 multiple
@@ -239,33 +248,41 @@
                 {#each folders() as folder (folder.id)}
                     {@const folderFiles = files().filter(f => f.folderId === folder.id)}
                     {@const folderNotes = notes().filter(n => n.folderId === folder.id)}
-                    {#if folderFiles.length > 0 || folderNotes.length > 0}
+                    {#if (viewMode !== 'notes' && folderFiles.length > 0) || (viewMode !== 'files' && folderNotes.length > 0)}
                         <div>
                             <h3 class="font-bold text-xl text-secondary mb-4 flex items-center gap-2"><Folder size={20} /> {folder.name}</h3>
                             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                {#each folderFiles as file}
-                                    {@render fileCard(file)}
-                                {/each}
-                                {#each folderNotes as note}
-                                    {@render noteCard(note)}
-                                {/each}
+                                {#if viewMode !== 'notes'}
+                                    {#each folderFiles as file}
+                                        {@render fileCard(file)}
+                                    {/each}
+                                {/if}
+                                {#if viewMode !== 'files'}
+                                    {#each folderNotes as note}
+                                        {@render noteCard(note)}
+                                    {/each}
+                                {/if}
                             </div>
                         </div>
                     {/if}
                 {/each}
                 
-                {#if files().filter((f: any) => !f.folderId).length > 0 || notes().filter((n: any) => !n.folderId).length > 0}
+                {#if (viewMode !== 'notes' && files().filter((f: any) => !f.folderId).length > 0) || (viewMode !== 'files' && notes().filter((n: any) => !n.folderId).length > 0)}
                     {@const unassignedFiles = files().filter((f: any) => !f.folderId)}
                     {@const unassignedNotes = notes().filter((n: any) => !n.folderId)}
                     <div>
                         <h3 class="font-bold text-xl text-outline mb-4 flex items-center gap-2"><Archive size={20} /> Unassigned Assets</h3>
                         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {#each unassignedFiles as file}
-                                {@render fileCard(file)}
-                            {/each}
-                            {#each unassignedNotes as note}
-                                {@render noteCard(note)}
-                            {/each}
+                            {#if viewMode !== 'notes'}
+                                {#each unassignedFiles as file}
+                                    {@render fileCard(file)}
+                                {/each}
+                            {/if}
+                            {#if viewMode !== 'files'}
+                                {#each unassignedNotes as note}
+                                    {@render noteCard(note)}
+                                {/each}
+                            {/if}
                         </div>
                     </div>
                 {/if}
@@ -280,17 +297,22 @@
                 {/if}
             </div>
         {:else}
-            {#if filteredFiles.length === 0}
+            {@const workspaceFiles = viewMode !== 'notes' ? filteredFiles : []}
+            {@const workspaceNotes = viewMode !== 'files' ? notes().filter((n) => n.folderId === currentFolderId) : []}
+            {#if workspaceFiles.length === 0 && workspaceNotes.length === 0}
                 <div class="flex h-64 flex-col items-center justify-center text-outline opacity-70 glass-panel rounded-xl mt-4">
                     <Archive size={48} class="mb-4" />
                     <p class="font-mono text-sm">
-                        No files in this workspace.
+                        No {#if viewMode === 'notes'}notes{:else}files{/if} in this workspace.
                     </p>
                 </div>
             {:else}
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
-                    {#each filteredFiles as file (file.id)}
+                    {#each workspaceFiles as file (file.id)}
                         {@render fileCard(file)}
+                    {/each}
+                    {#each workspaceNotes as note (note.id)}
+                        {@render noteCard(note)}
                     {/each}
                 </div>
             {/if}

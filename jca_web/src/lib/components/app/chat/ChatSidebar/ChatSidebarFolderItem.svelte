@@ -48,7 +48,7 @@
         
         <!-- Chats in Workspace -->
         <div>
-            <div class="flex items-center justify-between group/wschat px-2 text-[10px] uppercase font-bold text-primary/70 hover:text-primary mb-1">
+            <div class="flex items-center justify-between group/wschat px-2 text-[10px] uppercase font-bold text-[#7b52ab] opacity-80 hover:opacity-100 mb-1">
                 <span>Chats</span>
                 <button onclick={onNewChat} class="opacity-0 group-hover/wschat:opacity-100 p-1 -m-1"><Plus size={10} /></button>
             </div>
