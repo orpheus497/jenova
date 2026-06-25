@@ -11,7 +11,7 @@ SCRIPT_DIR=$(dirname "$(realpath "$0")")
 JENOVA_UI="$SCRIPT_DIR/jenova-ui"
 JENOVA_TUI="$SCRIPT_DIR/jenova-tui"
 
-if [ -x "$JENOVA_UI" ] && { [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ]; }; then
+if [ -x "$JENOVA_UI" ] && { [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ] || [ "$(uname -s)" = "Darwin" ]; }; then
     echo "Starting Jenova UI..."
     exec "$JENOVA_UI" "$@"
 elif [ -x "$JENOVA_TUI" ]; then

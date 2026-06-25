@@ -37,7 +37,7 @@ You can also use the streamlined installation script:
 
 ### 1. Build Components
 You can build components individually if needed:
-- `make llama` — build `llama.cpp` with Vulkan support (calls `bin/build-llama-jenova`).
+- `make llama` — build `llama.cpp` with Vulkan + CUDA support (calls `bin/build-llama-hybrid`).
 - `make clean` — wipe build artifacts from all three subsystems.
 - `make clean-root` — remove leftover artifacts in the repo root.
 

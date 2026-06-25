@@ -217,8 +217,8 @@ EXT_BIN_DIR="$JENOVA_ROOT/external/ext_bin"
 mkdir -p "$EXT_BIN_DIR/bin"
 cp "$LLAMA_SERVER" "$EXT_BIN_DIR/bin/"
 for _lib in "$BUILD_DIR/bin/"*.so* "$BUILD_DIR/bin/"*.dylib*; do
-    if [ -f "$_lib" ]; then
-        cp -a "$_lib" "$EXT_BIN_DIR/bin/"
+    if [ -f "$_lib" ] || [ -L "$_lib" ]; then
+        cp -RPp "$_lib" "$EXT_BIN_DIR/bin/"
     fi
 done
 echo "Copied compiled binaries to $EXT_BIN_DIR/bin"
