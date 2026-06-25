@@ -15,7 +15,7 @@
 #                    .jenova/ (PID/lock files), var/log/, var/cache/, and the
 #                    models/jenova.gguf convenience symlink.
 #   --clean-builds   Remove in-tree build outputs: bin/jenova-ui/, bin/jenova-ui/,
-#                    external/llama.cpp/build/. Does NOT touch source.
+#                    external/ext_bin/. Does NOT touch source.
 #   --yes            Skip all confirmation prompts (non-interactive mode).
 #
 # What this removes:
@@ -105,7 +105,7 @@ if [ "$YES" = "0" ]; then
         echo "    $JENOVA_ROOT/bin/jenova-ui/ (in-tree jenova build — --clean-builds)"
         echo "    $JENOVA_ROOT/bin/jenova-ui/ (in-tree jenova install — --clean-builds)"
         echo "    $JENOVA_ROOT/bin/jenova-ui/ (jenova build — --clean-builds)"
-        echo "    $JENOVA_ROOT/external/llama.cpp/build/ (llama.cpp build — --clean-builds)"
+        echo "    $JENOVA_ROOT/external/ext_bin/ (llama.cpp build — --clean-builds)"
     fi
     echo ""
     printf "  Continue? [y/N] "
@@ -205,7 +205,7 @@ if [ "$CLEAN_BUILDS" = "1" ]; then
     info "Removing in-tree build outputs (--clean-builds)..."
     for _bd in \
         "$JENOVA_ROOT/bin/jenova-ui" \
-        "$JENOVA_ROOT/external/llama.cpp/build"
+        "$JENOVA_ROOT/external/ext_bin"
     do
         if [ -d "$_bd" ]; then
             rm -rf "$_bd"
@@ -227,7 +227,7 @@ if [ "$CLEAN_RUNTIME" = "0" ]; then
     echo "    $JENOVA_ROOT/var/     (logs, cache — use --clean-runtime to remove)"
 fi
 if [ "$CLEAN_BUILDS" = "0" ]; then
-    echo "    $JENOVA_ROOT/bin/jenova-ui/, external/llama.cpp/build/ (use --clean-builds to remove)"
+    echo "    $JENOVA_ROOT/bin/jenova-ui/, external/ext_bin/ (use --clean-builds to remove)"
 fi
 echo "    $JENOVA_ROOT/          (project directory — source, configs, models)"
 echo ""

@@ -32,7 +32,7 @@ elif command -v fetch >/dev/null 2>&1; then
 else
     echo "Error: No download tool available (need curl or fetch)"
     echo "Alternatively, download the draft model from llama-server directly:"
-    echo "  $SCRIPT_DIR/../external/llama.cpp/build/bin/llama-server -hfrd Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF:q8_0"
+    echo "  $SCRIPT_DIR/../external/ext_bin/bin/llama-server -hfrd Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF:q8_0"
     exit 1
 fi
 
