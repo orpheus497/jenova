@@ -41,9 +41,11 @@ web: jca_web/node_modules
 		echo "   Web UI built: public/"; \
 	fi
 
-jenova-ui:
+jenova-ui/jenova-ui:
 	@echo "🔨 Building jenova-ui..."
 	@$(MAKE) -C jenova-ui
+
+jenova-ui: jenova-ui/jenova-ui
 	@mkdir -p bin || exit 1
 	@cp jenova-ui/jenova-ui bin/jenova-ui || exit 1
 	@echo "   jenova-ui built: bin/jenova-ui"
