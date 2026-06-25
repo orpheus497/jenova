@@ -57,11 +57,10 @@ install-jenova:
 clean:
 	@echo "🧹 Cleaning build artifacts..."
 	@if [ -d external/llama.cpp ]; then \
-		rm -rf external/llama.cpp/build public/; \
-		if [ -d external/ext_bin ]; then rm -rf external/ext_bin; fi; \
+		rm -rf -- external/llama.cpp/build public/ external/ext_bin; \
 	else \
 		echo "Warning: external/llama.cpp source not detected. Skipping external/ext_bin deletion."; \
-		rm -rf public/; \
+		rm -rf -- public/; \
 	fi
 
 clean-root:

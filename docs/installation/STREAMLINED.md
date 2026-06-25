@@ -99,8 +99,8 @@ cat etc/jenova.conf
 jenova-ca status
 
 # Monitor logs
-tail -f var/log/llama-server.log
-tail -f var/log/proxy.log
+tail -f ~/JCA/var/log/llama-server.log
+tail -f ~/JCA/var/log/proxy.log
 ```
 
 ## Launch Jenova
@@ -149,7 +149,7 @@ curl http://localhost:8080/v1/models
 ### Installation Issues
 ```bash
 # Check install logs
-tail -f var/log/install.log
+tail -f ~/JCA/var/log/install.log
 
 # Verify individual components
 ./scripts/verify-install.sh --verbose
@@ -164,9 +164,9 @@ tail -f var/log/install.log
 jenova-ca status
 
 # Monitor logs
-tail -f var/log/llama-server.log
-tail -f var/log/proxy.log
-tail -f var/log/jenova-ca.log
+tail -f ~/JCA/var/log/llama-server.log
+tail -f ~/JCA/var/log/proxy.log
+tail -f ~/JCA/var/log/jenova-ca.log
 
 # Test connectivity
 curl http://localhost:8080/health
@@ -248,7 +248,7 @@ cat etc/jenova.conf
 1. **Pre-installation:** Run `./scripts/preflight-check.sh --verbose`
 2. **Post-installation:** Run `./scripts/verify-install.sh --full --verbose`
 3. **Hardware issues:** Run `./hardware-profiles/detect-hardware.sh --info`
-4. **Build failures:** Check `var/log/` and `UPSTREAM-COPYRIGHT` for upstream issues
+4. **Build failures:** Check `~/JCA/var/log/` and `UPSTREAM-COPYRIGHT` for upstream issues
 5. **Runtime problems:** Check daemon logs and `jenova-ca status`
 
 ## Next Steps

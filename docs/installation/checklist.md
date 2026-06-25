@@ -77,7 +77,7 @@ You can also run the full end-to-end workflow:
 
 Installation will:
 - ✓ Check system dependencies
-- ✓ Create runtime directories (~/.jenova, var/log, var/cache)
+- ✓ Create runtime directories (~/JCA/var/log, ~/JCA/var/cache)
 - ✓ Auto-detect and apply hardware profile
 - ✓ Install symlinks to PATH (~/.local/bin/)
 - ✓ Attempt to install LSP servers, linters, formatters
@@ -135,8 +135,8 @@ cat etc/jenova.conf
 jenova-ca status
 
 # View logs
-tail -f var/log/llama-server.log
-tail -f var/log/proxy.log
+tail -f ~/JCA/var/log/llama-server.log
+tail -f ~/JCA/var/log/proxy.log
 ```
 
 ## Configuration & Troubleshooting
@@ -233,7 +233,7 @@ make clean && make
 ./scripts/verify-install.sh --full --verbose
 
 # Check logs
-ls -lh var/log/
+ls -lh ~/JCA/var/log/
 
 # Monitor running processes
 ps aux | grep -E 'jenova-ca|llama-server|proxy'
@@ -244,7 +244,7 @@ curl -I http://localhost:8080/health
 
 ### Getting Help
 - **Installation issues:** Run `./scripts/preflight-check.sh --verbose`
-- **Build failures:** Check `var/log/` and `UPSTREAM-COPYRIGHT`
+- **Build failures:** Check `~/JCA/var/log/` and `UPSTREAM-COPYRIGHT`
 
 - **Hardware profile:** Run `./hardware-profiles/detect-hardware.sh --info`
 
