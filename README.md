@@ -109,15 +109,16 @@ jenova/
 ├── bin/                    # Launcher wrappers and tool scripts
 ├── docs/                   # Documentation
 ├── etc/                    # Configuration templates
-├── external/
-│   ├── llama.cpp/          # Inference engine
-│   └── SPIRV-Headers/      # Vulkan SPIR-V headers
+├── external/               # Third-party submodules and compiled binaries
+│   ├── ext_bin/            # Compiled backend binaries (e.g. llama-server)
+│   └── llama.cpp/          # Inference engine
 ├── hardware-profiles/      # OS/GPU-specific tuning profiles
 ├── jca_web/                # WebUI source (SvelteKit)
 ├── jenova-ui/              # Desktop Manager source (C/GTK3)
-├── lib/                    # Core Lua modules (proxy, UI, FFI)
+├── lib/                    # Core Lua modules and shell libraries
 ├── models/                 # Model storage (gitignored — user data)
 ├── png/                    # Icons and branding assets
+├── public/                 # Compiled WebUI bundle assets
 ├── scripts/                # Build, install, update, and management scripts
 ├── tests/                  # Test scripts
 └── var/                    # Runtime logs and cache (gitignored)

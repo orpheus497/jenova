@@ -56,12 +56,9 @@ install-jenova:
 
 clean:
 	@echo "🧹 Cleaning build artifacts..."
-	@if [ -d external/llama.cpp ]; then \
-		rm -rf -- external/llama.cpp/build public/ external/ext_bin; \
-	else \
-		echo "Warning: external/llama.cpp source not detected. Skipping external/ext_bin deletion."; \
-		rm -rf -- public/; \
-	fi
+	@if [ -d jenova-ui ]; then $(MAKE) -C jenova-ui clean; fi
+	@rm -f bin/jenova-ui
+	@rm -rf -- external/llama.cpp/build public/ external/ext_bin
 
 clean-root:
 	@echo "🧹 Cleaning root directory bloat..."

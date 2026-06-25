@@ -5,11 +5,9 @@
 # --- Build Artifacts ---
 /public/
 /bin/llama-server
+/bin/jenova-ui
+/jenova-ui/jenova-ui
 /external/llama.cpp/
-/external/SPIRV-Headers/build/
-/external/SPIRV-Headers/
-
-
 
 /cli-agent/build/
 /cli-agent/build_test/
