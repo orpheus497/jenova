@@ -54,7 +54,7 @@ All external code lives in `external/`. The distinction matters for updates:
 
 | Directory | Type | Source | Update method |
 |-----------|------|--------|---------------|
-| `external/llama.cpp` | Optional manual checkout (for advanced users) | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | Manual sync |
+| `external/llama.cpp` | Git submodule (managed automatically) | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | `git submodule update` |
 | `external/ext_bin` | Build output | Local script | Stores compiled backend binaries to isolate the final runtime from the raw build tree. |
 
 **Vendored** dependencies are full copies committed into the repo — no network

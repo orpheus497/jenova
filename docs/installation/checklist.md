@@ -36,7 +36,7 @@ git clone https://github.com/orpheus497/jenova
 cd jenova
 ```
 
-llama.cpp and other dependencies are now bundled in the repository's `external/` directory, so no further downloads are required.
+llama.cpp and other dependencies are now bundled or automatically fetched in the repository's `external/` directory via git submodules, so no further manual downloads are required.
 
 ### Step 4: Build Everything
 ```bash

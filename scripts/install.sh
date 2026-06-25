@@ -317,22 +317,7 @@ fi
 
 
 
-# ---------------------------------------------------------------------------
-# 6. Model files — check and offer to download missing models
-# ---------------------------------------------------------------------------
-if [ "$CLIENT_ONLY" = "1" ] || [ "${JENOVA_SKIP_MODELS:-0}" = "1" ]; then
-    info "Skipping model checks..."
-else
-    if [ -x "$JENOVA_ROOT/scripts/model_dl.sh" ]; then
-        "$JENOVA_ROOT/scripts/model_dl.sh" "$_PROFILE" || {
-            warn "Model download process was incomplete or skipped."
-            WARNINGS=$((WARNINGS + 1))
-        }
-    else
-        warn "Model download script not found at scripts/model_dl.sh"
-        WARNINGS=$((WARNINGS + 1))
-    fi
-fi
+
 
 # ---------------------------------------------------------------------------
 

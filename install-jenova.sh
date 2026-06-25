@@ -147,11 +147,15 @@ cmd_install() {
         print_success "Sufficient disk space: ${FREE_SPACE}GB free"
     fi
 
-    verify_external_components
-    
     # 1. Install dependencies
     print_step "Installing system dependencies..."
     "$JENOVA_ROOT/scripts/install-dependencies.sh"
+    
+    # 2. Initialize Git Submodules
+    print_step "Initializing git submodules..."
+    git submodule update --init --recursive external/llama.cpp
+    
+    verify_external_components
     
     # 2. Pre-flight checks
     print_step "Running pre-flight checks..."
@@ -192,9 +196,6 @@ cmd_install() {
     # 4. Deploy to JCA_HOME
     print_step "Deploying to $JCA_HOME..."
     _install_flags="$FORCE"
-    if [ "$MINIMAL" = "1" ]; then
-        JENOVA_SKIP_MODELS=1; export JENOVA_SKIP_MODELS
-    fi
     # Signal to install.sh that all components were already built by this script,
     # preventing redundant rebuild of llama etc. (ISS-01)
     JENOVA_BUILT_BY_INSTALLER=1; export JENOVA_BUILT_BY_INSTALLER
@@ -203,6 +204,24 @@ cmd_install() {
     # 5. Verification
     print_step "Verifying installation..."
     "$JENOVA_ROOT/scripts/verify-install.sh" --full
+    
+    # 6. Model Download (unless minimal)
+    if [ "$MINIMAL" = "0" ]; then
+        print_step "Downloading AI Models..."
+        _PROFILE=""
+        if [ -f "$JENOVA_ROOT/hardware-profiles/detect-hardware.sh" ]; then
+            _PROFILE=$("$JENOVA_ROOT/hardware-profiles/detect-hardware.sh" 2>/dev/null) || _PROFILE=""
+        fi
+        if [ -x "$JENOVA_ROOT/scripts/model_dl.sh" ]; then
+            "$JENOVA_ROOT/scripts/model_dl.sh" "$_PROFILE" || {
+                print_warning "Model download process was incomplete or skipped."
+            }
+        else
+            print_warning "Model download script not found at scripts/model_dl.sh"
+        fi
+    else
+        print_info "Skipping model checks (--minimal)"
+    fi
     
     print_header "Installation Complete!"
     echo "🚀 ${BOLD}Quick Start:${NC}"

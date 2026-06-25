@@ -7,7 +7,7 @@
 /bin/llama-server
 /bin/jenova-ui
 /jenova-ui/jenova-ui
-/external/llama.cpp/
+/external/ext_bin/
 
 /cli-agent/build/
 /cli-agent/build_test/
