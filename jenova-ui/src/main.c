@@ -386,36 +386,7 @@ static gboolean run_tray(int argc, char *argv[]) {
     /* Build initial context menu from Lua */
     rebuild_tray_menu();
 
-    /* Auto-start server and open Web UI unless --offline */
-    if (!offline_mode) {
-        lua_getglobal(L, "ui");                      /* +1  [ui] */
-        if (lua_istable(L, -1)) {
-            lua_getfield(L, -1, "on_action");        /* +1  [ui, fn] */
-            if (lua_isfunction(L, -1)) {
-                lua_pushstring(L, "start");
-                if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-                    fprintf(stderr, "jenova-ui: error starting backend: %s\n",
-                            lua_tostring(L, -1));
-                    lua_pop(L, 1);
-                }
-            } else {
-                lua_pop(L, 1); /* pop non-function */
-            }
-
-            lua_getfield(L, -1, "on_action");        /* +1  [ui, fn] */
-            if (lua_isfunction(L, -1)) {
-                lua_pushstring(L, "web");
-                if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
-                    fprintf(stderr, "jenova-ui: error opening web: %s\n",
-                            lua_tostring(L, -1));
-                    lua_pop(L, 1);
-                }
-            } else {
-                lua_pop(L, 1); /* pop non-function */
-            }
-        }
-        lua_pop(L, 1); /* pop 'ui' table */
-    }
+    /* Removed: Auto-start server and open Web UI (user requested tray to start silently) */
 
     /* Poll server status every 3 seconds */
     g_timeout_add_seconds(3, update_tray_status, NULL);

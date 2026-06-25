@@ -251,9 +251,22 @@ if [ "$CLIENT_ONLY" = "1" ]; then
     info "Skipping llama.cpp build check (--client-only)"
 elif [ "$SKIP_LLAMA" = "0" ]; then
     info "Checking llama.cpp build..."
-    LLAMA_BIN="$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server"
+    LLAMA_BIN="$JENOVA_ROOT/external/ext_bin/bin/llama-server"
     if [ -f "$LLAMA_BIN" ]; then
-        ok "llama-server binary found at $LLAMA_BIN"
+        if "$LLAMA_BIN" --help >/dev/null 2>&1; then
+            ok "llama-server binary is present and compatible."
+        else
+            warn "The vendored llama-server binary is incompatible with your system."
+            printf "Would you like to compile it from source now? [Y/n] "
+            read -r _ans
+            if [ -z "$_ans" ] || [ "$_ans" = "y" ] || [ "$_ans" = "Y" ]; then
+                info "Compiling llama.cpp from source..."
+                make -C "$JENOVA_ROOT" llama || { fail "Failed to compile llama.cpp."; exit 1; }
+            else
+                warn "Skipping llama.cpp build. You may need to run 'make llama' later."
+                WARNINGS=$((WARNINGS + 1))
+            fi
+        fi
     else
         warn "llama-server not found. Build it using the Makefile:"
         warn "  make llama"
@@ -354,18 +367,18 @@ _verify_and_copy_bin() {
 }
 
 # wrappers
-for _bin in jenova jenova-ui jenova-ca jenova-tui jenova-term jenova-swap-mount; do
+for _bin in jenova jenova-ui jenova-ca jenova-tui jenova-swap-mount; do
     if [ -f "$JENOVA_ROOT/bin/$_bin" ]; then
         install -m 755 "$JENOVA_ROOT/bin/$_bin" "$JCA_HOME/bin/$_bin"
     fi
 done
 
 # Built artifacts (llama-server, jenova-ui)
-_LLAMA_BUILD_BIN="$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server"
+_LLAMA_BUILD_BIN="$JENOVA_ROOT/external/ext_bin/bin/llama-server"
 if [ -f "$_LLAMA_BUILD_BIN" ]; then
     _verify_and_copy_bin "$_LLAMA_BUILD_BIN" "$JCA_HOME/bin/llama-server"
     # Copy shared libs if they exist
-    for _lib in "$JENOVA_ROOT/external/llama.cpp/build/bin/"*.so* "$JENOVA_ROOT/external/llama.cpp/build/bin/"*.dylib*; do
+    for _lib in "$JENOVA_ROOT/external/ext_bin/bin/"*.so* "$JENOVA_ROOT/external/ext_bin/bin/"*.dylib*; do
         if [ -f "$_lib" ]; then
             install -m 755 "$_lib" "$JCA_HOME/bin/"
         fi
@@ -408,7 +421,7 @@ ok "Deployed path-locked configuration to $JCA_HOME/etc"
 _LOCAL_BIN="$HOME/.local/bin"
 mkdir -p "$_LOCAL_BIN"
 
-for _bin in jenova jenova-ui jenova-ca jenova-tui jenova-term jenova-swap-mount; do
+for _bin in jenova jenova-ui jenova-ca jenova-tui jenova-swap-mount; do
     if [ -f "$JCA_HOME/bin/$_bin" ]; then
         ln -sf "$JCA_HOME/bin/$_bin" "$_LOCAL_BIN/$_bin"
     fi
@@ -499,7 +512,6 @@ if [ "$JENOVA_OS" = "linux" ] || [ "$JENOVA_OS" = "freebsd" ]; then
 
             _JHBIN="$JCA_HOME/bin"
             sed -e "/^Exec=/{ \
-                s|jenova-term|$_JHBIN/jenova-term|g; \
                 s|jenova-ui|$_JHBIN/jenova-ui|g; \
                 s|jenova-ca|$_JHBIN/jenova-ca|g; \
                 s|Exec=jenova|Exec=$_JHBIN/jenova|g; \

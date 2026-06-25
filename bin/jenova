@@ -1,169 +1,23 @@
 #!/bin/sh
 
-# jenova: Full-environment launcher — start Jenova CA backend.
-# FreeBSD 15 | Jenova Cognitive Architecture
+# jenova: Full-environment launcher — start Jenova UI.
 #
-# This is the canonical entry point for starting the Jenova CA proxy and backend.
-#
-# Usage: jenova [options]
-#   --daemon-only       Start jenova-ca in daemon mode and exit
-#   --check             Print resolved JENOVA_* environment and exit
-#   -h | --help         Show this help and exit
+# This is the canonical entry point for starting the Jenova UI tray/manager.
 
 set -e
 
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
 
-# Determine JENOVA_ROOT before loading config
-if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
-    JENOVA_ROOT="$SCRIPT_DIR"; export JENOVA_ROOT
-elif [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
-    JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"; export JENOVA_ROOT
-else
-    echo "Error: etc/jenova.conf not found."
-    exit 1
-fi
-
-# Load environment and resolve paths
-. "$JENOVA_ROOT/lib/detect-env.sh"
-. "$JENOVA_ROOT/lib/jenova-conf.sh"
-# shellcheck disable=SC1091
-. "$JENOVA_ROOT/etc/jenova.conf"
-
-# ── Resolve connect host ──────────────────────────────────────────────────────
-CONNECT_HOST="${JENOVA_CONNECT_HOST:-${HOST:-127.0.0.1}}"
-if [ "$CONNECT_HOST" = "0.0.0.0" ] || [ "$CONNECT_HOST" = "::" ]; then
-    CONNECT_HOST="127.0.0.1"
-fi
-
-# ── Export environment for child processes ────────────────────────────────────
-JENOVA_PORT="${JENOVA_PORT:-$PORT}"; export JENOVA_PORT
-JENOVA_LLAMA_PORT="${JENOVA_LLAMA_PORT:-$LLAMA_PORT}"; export JENOVA_LLAMA_PORT
-JENOVA_LLAMA_EMBED_PORT="${JENOVA_LLAMA_EMBED_PORT:-$LLAMA_EMBED_PORT}"; export JENOVA_LLAMA_EMBED_PORT
-
-JENOVA_CONNECT_HOST="$CONNECT_HOST"; export JENOVA_CONNECT_HOST
-JENOVA_API_URL="http://${CONNECT_HOST}:${JENOVA_PORT}"; export JENOVA_API_URL
-JENOVA_CWD="$PWD"; export JENOVA_CWD
-
-if [ -d "$LLAMA_LIB_DIR" ]; then
-    LD_LIBRARY_PATH="$LLAMA_LIB_DIR${LD_LIBRARY_PATH:+:}$LD_LIBRARY_PATH"; export LD_LIBRARY_PATH
-fi
-
-# ── Parse flags ───────────────────────────────────────────────────────────────
-NO_BACKEND=0
-DAEMON_ONLY=0
-
-while [ $# -gt 0 ]; do
-    case "$1" in
-        --daemon-only) DAEMON_ONLY=1; shift ;;
-        --check)
-            echo "JENOVA_ROOT=$JENOVA_ROOT"
-            echo "JENOVA_LAYOUT=$JENOVA_LAYOUT"
-            echo "JENOVA_CONNECT_HOST=$JENOVA_CONNECT_HOST"
-            echo "JENOVA_PORT=$JENOVA_PORT"
-            echo "JENOVA_LLAMA_PORT=$JENOVA_LLAMA_PORT"
-            echo "JENOVA_LLAMA_EMBED_PORT=$JENOVA_LLAMA_EMBED_PORT"
-            echo "JENOVA_API_URL=$JENOVA_API_URL"
-            exit 0
-            ;;
-        -h|--help)
-            sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
-            exit 0
-            ;;
-        *) break ;;
-    esac
-done
-
-# ── Locate jenova-ca ──────────────────────────────────────────────────────────
-JENOVA_CA="$SCRIPT_DIR/jenova-ca"
-if [ ! -x "$JENOVA_CA" ]; then
-    echo "Error: jenova-ca not found at $JENOVA_CA" >&2
-    exit 1
-fi
-
-# ── Health check helper ───────────────────────────────────────────────────────
-check_health() {
-    if command -v curl >/dev/null 2>&1; then
-        curl -sf --max-time 3 --connect-timeout 2 \
-             "http://${CONNECT_HOST}:${JENOVA_PORT}/v1/health" >/dev/null 2>&1
-    else
-        return 1
-    fi
-}
-
-# ── Start backend ─────────────────────────────────────────────────────────────
-STARTED_BY_THIS_INVOCATION=0
-
-mkdir -p "$(dirname "$PID_FILE")"
-
-if check_health; then
-    echo "Jenova CA already running at $JENOVA_API_URL"
-else
-    echo "Starting Jenova CA in background..."
-    if "$JENOVA_CA" --daemon; then
-        STARTED_BY_THIS_INVOCATION=1
-    else
-        echo "Error: jenova-ca failed to start" >&2
-        exit 1
-    fi
-
-    printf "Waiting for Jenova CA"
-    i=0
-    while [ $i -lt 120 ]; do
-        if check_health; then
-            echo " ready!"
-            break
-        fi
-        if [ -f "$PID_FILE" ]; then
-            read -r _LP _PP _EP < "$PID_FILE" 2>/dev/null || true
-            _ANY_ALIVE=false
-            for _P in $_LP $_PP $_EP; do
-                [ -n "$_P" ] && kill -0 "$_P" 2>/dev/null && _ANY_ALIVE=true
-            done
-            if ! $_ANY_ALIVE; then
-                echo " failed! (all daemon processes died)"
-                echo "Check log: $LOG_DIR/jenova-ca.log"
-                exit 1
-            fi
-        fi
-        printf "."
-        sleep 1
-        i=$((i + 1))
-        if [ "$i" -eq 120 ]; then
-            echo " timeout!"
-            exit 1
-        fi
-    done
-    echo "Jenova CA is running."
-fi
-
-# ── Cleanup trap ──────────────────────────────────────────────────────────────
-cleanup() {
-    if [ "$STARTED_BY_THIS_INVOCATION" = "1" ] && [ -f "$PID_FILE" ]; then
-        echo "Stopping Jenova CA..."
-        "$JENOVA_CA" stop 2>/dev/null || true
-    fi
-}
-trap cleanup EXIT
-trap 'cleanup; trap - EXIT; exit 130' INT
-trap 'cleanup; trap - EXIT; exit 143' TERM
-
-# ── Start UI (or exit if daemon-only) ─────────────────────────────────────────
-if [ "$DAEMON_ONLY" = "1" ]; then
-    echo "Jenova CA is running. Exiting (--daemon-only)."
-    # Don't trigger the cleanup trap.
-    trap - EXIT INT TERM
-    exit 0
-fi
-
 JENOVA_UI="$SCRIPT_DIR/jenova-ui"
-if [ -x "$JENOVA_UI" ]; then
+JENOVA_TUI="$SCRIPT_DIR/jenova-tui"
+
+if [ -x "$JENOVA_UI" ] && [ -n "$DISPLAY" ]; then
     echo "Starting Jenova UI..."
-    "$JENOVA_UI" "$@"
-    # The trap will clean up jenova-ca automatically on exit.
-    exit 0
+    exec "$JENOVA_UI" "$@"
+elif [ -x "$JENOVA_TUI" ]; then
+    echo "Starting Jenova TUI..."
+    exec "$JENOVA_TUI" "$@"
 else
-    echo "Backend started successfully. (jenova-ui not found)"
-    trap - EXIT INT TERM
-    exit 0
+    echo "jenova-ui and jenova-tui not found or not executable."
+    exit 1
 fi

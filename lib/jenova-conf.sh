@@ -7,7 +7,7 @@
 #
 # Must be sourced AFTER JENOVA_ROOT is exported. Sources the first of:
 #   1. $JENOVA_ROOT/etc/jenova.local.conf
-#   2. $JENOVA_ROOT/external/llama.cpp/build/jenova.local.conf
+#   2. $JENOVA_ROOT/external/ext_bin/jenova.local.conf
 #
 # The resolved path is validated with realpath to ensure it stays within
 # JENOVA_ROOT, preventing directory-traversal via symlinks or env var injection.
@@ -30,8 +30,8 @@ if [ -f "$JENOVA_ROOT/bin/llama-server" ] && [ ! -d "$JENOVA_ROOT/external/llama
 else
     # Source Repository Layout
     JENOVA_LAYOUT="source"; export JENOVA_LAYOUT
-    LLAMA_SERVER="${LLAMA_SERVER:-$JENOVA_ROOT/external/llama.cpp/build/bin/llama-server}"; export LLAMA_SERVER
-    LLAMA_LIB_DIR="$JENOVA_ROOT/external/llama.cpp/build/bin"; export LLAMA_LIB_DIR
+    LLAMA_SERVER="${LLAMA_SERVER:-$JENOVA_ROOT/external/ext_bin/bin/llama-server}"; export LLAMA_SERVER
+    LLAMA_LIB_DIR="$JENOVA_ROOT/external/ext_bin/bin"; export LLAMA_LIB_DIR
 fi
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
@@ -47,7 +47,7 @@ PID_FILE="${PID_FILE:-$JENOVA_STATE/jenova-ca.pid}"; export PID_FILE
 
 _jenova_local_candidate="$JENOVA_ROOT/etc/jenova.local.conf"
 if [ ! -f "$_jenova_local_candidate" ] && [ "$JENOVA_LAYOUT" = "source" ]; then
-    _jenova_local_candidate="$JENOVA_ROOT/external/llama.cpp/build/jenova.local.conf"
+    _jenova_local_candidate="$JENOVA_ROOT/external/ext_bin/jenova.local.conf"
 fi
 
 if [ -f "$_jenova_local_candidate" ]; then
@@ -63,7 +63,7 @@ if [ -f "$_jenova_local_candidate" ]; then
     }
     case "$_jenova_real_local" in
         "$_jenova_real_root"/etc/jenova.local.conf|\
-        "$_jenova_real_root"/external/llama.cpp/build/jenova.local.conf)
+        "$_jenova_real_root"/external/ext_bin/jenova.local.conf)
             # shellcheck disable=SC1090
             . "$_jenova_real_local"
             ;;
