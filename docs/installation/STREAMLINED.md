@@ -110,7 +110,7 @@ tail -f ~/JCA/var/log/proxy.log
 # Jenova Manager (TUI) — GUI/Desktop friendly control center
 jenova-tui
 
-# Full environment (backend + editor)
+# Start the Jenova Desktop Manager or TUI
 jenova
 
 # Or just the backend (headless/server)

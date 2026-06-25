@@ -111,7 +111,7 @@ sudo ./scripts/jenova-setup
 # Jenova Manager (Operational TUI)
 jenova-tui
 
-# Full environment (backend daemons + editor)
+# Start the Jenova Desktop Manager or TUI
 jenova
 
 # Or just the backend (headless/server mode)
