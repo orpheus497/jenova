@@ -20,7 +20,7 @@ all: preflight llama jenova-ui web
 
 llama:
 	@echo "🔨 Building external/llama.cpp (Vulkan + CUDA)..."
-	@./bin/build-llama-hybrid
+	@./bin/build-llama-jenova
 
 
 

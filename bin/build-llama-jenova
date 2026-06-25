@@ -30,7 +30,7 @@ BUILD_DIR="${JENOVA_BUILD_DIR:-$LLAMA_DIR/build}"
 LOCAL_CONF_ETC="$JENOVA_ROOT/etc/jenova.local.conf"
 LOCAL_CONF_BUILD="$JENOVA_ROOT/external/ext_bin/jenova.local.conf"
 LOCAL_CONF="$LOCAL_CONF_ETC"
-BACKEND="${JENOVA_BACKEND:-vulkan}"
+BACKEND="${JENOVA_BACKEND:-auto}"
 
 if [ ! -d "$LLAMA_DIR" ]; then
     echo "Error: external/llama.cpp directory not found at $LLAMA_DIR" >&2
