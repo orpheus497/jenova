@@ -67,9 +67,16 @@ for _dir in "$JCA_HOME" "$JENOVA_STATE" "$LOG_DIR" "$CACHE_DIR" "$_pid_dir"; do
         _OWNER=$(stat -c '%U' "$_dir" 2>/dev/null || stat -f '%Su' "$_dir" 2>/dev/null || echo "unknown")
         if [ "$_OWNER" = "root" ]; then
             echo "Directory is owned by root (likely from running with sudo previously)." >&2
-            echo "Fix with:" >&2
-            echo "  sudo chown -R \$(id -u):\$(id -g) \"$_dir\"" >&2
-            echo "  chmod -R u+w \"$_dir\"" >&2
+            case "$_dir" in
+                "$JCA_HOME"*)
+                    echo "Fix with:" >&2
+                    echo "  sudo chown -R \$(id -u):\$(id -g) \"$_dir\"" >&2
+                    echo "  chmod -R u+w \"$_dir\"" >&2
+                    ;;
+                *)
+                    echo "Please check your configuration or run with appropriate privileges." >&2
+                    ;;
+            esac
         else
             echo "Fix permissions with:" >&2
             echo "  chmod -R u+w \"$_dir\"" >&2
