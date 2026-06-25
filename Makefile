@@ -56,7 +56,17 @@ install-jenova:
 
 clean:
 	@echo "🧹 Cleaning build artifacts..."
-	@rm -rf external/llama.cpp/build public/
+	@if [ -d external/llama.cpp ]; then \
+		rm -rf external/llama.cpp/build public/; \
+		if [ -d external/ext_bin ]; then rm -rf external/ext_bin; fi; \
+	else \
+		echo "Warning: external/llama.cpp source not detected."; \
+		read -p "Do you want to delete compiled binaries in external/ext_bin? [y/N] " ans; \
+		if [ "$$ans" = "y" ] || [ "$$ans" = "Y" ]; then \
+			rm -rf external/ext_bin; \
+		fi; \
+		rm -rf public/; \
+	fi
 
 clean-root:
 	@echo "🧹 Cleaning root directory bloat..."

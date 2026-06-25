@@ -199,7 +199,6 @@ export PATH="$HOME/.local/bin:$PATH"  # .bashrc / .zshrc
 ### Config Locations
 | Item | Location |
 |------|----------|
-
 | **Runtime logs** | `$JCA_HOME/var/log/` |
 | **Models** | `$JENOVA_ROOT/models/` |
 | **Project config** | `$JENOVA_ROOT/etc/jenova.conf` |

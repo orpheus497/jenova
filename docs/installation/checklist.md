@@ -205,7 +205,6 @@ make clean && make
 ./scripts/update.sh
 
 # Or customize the update:
-./scripts/update.sh --upgrade-plugins  # Update Neovim plugins
 ./scripts/update.sh --apply-profile    # Re-apply hardware profile
 ./scripts/update.sh --skip-rebuild     # Skip llama.cpp rebuild
 ```

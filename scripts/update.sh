@@ -6,7 +6,6 @@
 # components when sources have moved, restarts jenova-ca, and resyncs 
 # the Neovim plugin set.
 #
-# Usage: ./update.sh [--upgrade-plugins] [--skip-nvim] [--skip-rebuild]
 #                    [] [--link] [--apply-profile]
 #                    [--ui] [--web] [--all] [--no-pull]
 
@@ -25,7 +24,6 @@ JVIM_CONFIG_DST="$HOME/.config/jenova"
 . "$JENOVA_ROOT/lib/detect-env.sh"
 
 UPGRADE_PLUGINS=0
-SKIP_NVIM=0
 SKIP_REBUILD=0
 SKIP_JVIM=0
 LINK=0
@@ -36,8 +34,6 @@ UPDATE_WEB=0
 
 for _arg in "$@"; do
     case "$_arg" in
-        --upgrade-plugins) UPGRADE_PLUGINS=1 ;;
-        --skip-nvim)       SKIP_NVIM=1 ;;
         --skip-rebuild)    SKIP_REBUILD=1 ;;
         )       SKIP_JVIM=1 ;;
         --link)            LINK=1 ;;
@@ -224,14 +220,11 @@ fi
 # ---------------------------------------------------------------------------
 # 4. Redeploy Neovim config
 # ---------------------------------------------------------------------------
-if [ "$SKIP_NVIM" = "0" ] && command -v jenova >/dev/null 2>&1; then
     info "Redeploying jenova configuration..."
     if [ ! -d "$JVIM_CONFIG_DST" ]; then
         warn "~/.config/jenova/ not found"
-        SKIP_NVIM=1
     fi
 
-    if [ "$SKIP_NVIM" = "0" ]; then
         if [ "$LINK" = "1" ]; then
             mkdir -p "$JVIM_CONFIG_DST/lua/plugins" "$JVIM_CONFIG_DST/lua/jenova"
             ln -sf "$JVIM_CONFIG_SRC/init.lua" "$JVIM_CONFIG_DST/init.lua"
@@ -261,7 +254,6 @@ fi
 # ---------------------------------------------------------------------------
 # 5. Sync Neovim plugins
 # ---------------------------------------------------------------------------
-if [ "$SKIP_NVIM" = "0" ] && command -v jenova >/dev/null 2>&1 && [ -d "$JVIM_CONFIG_DST" ]; then
     info "Syncing Neovim plugins..."
     if [ "$UPGRADE_PLUGINS" = "1" ]; then
         jenova --headless "+Lazy update" +qa 2>/dev/null && ok "Plugins updated" || warn "Plugin update failed"

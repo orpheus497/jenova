@@ -55,14 +55,13 @@ Jenova installs launchers to `~/.local/bin` that point to the standalone install
 
 | Command | Description |
 |---------|-------------|
-| `jenova` | Start the Jenova CA proxy and backend |
+| `jenova` | Start the Jenova UI |
 | `jenova-ca` | Backend Daemon (headless RAG, embedding, tool execution) |
 | `jenova-tui` | Kanagawa-themed terminal manager |
 | `jenova-ui` | Desktop Manager (tray icon + TUI) |
-| `jenova-term` | Dedicated terminal emulator wrapper |
+
 | `jenova-swap-mount` | Helper to mount Optane/NVMe swap |
-| `build-llama-jenova` | Build script for Vulkan backend |
-| `build-llama-hybrid` | Build script for Vulkan + CUDA hybrid |
+| `build-llama-jenova` | Build script for Vulkan + CUDA backend |
 
 ---
 
@@ -92,7 +91,7 @@ Detailed documentation lives in [`docs/`](docs/):
 | Architecture Overview | [docs/architecture/overview.md](docs/architecture/overview.md) |
 | System Cohesion | [docs/architecture/cohesion.md](docs/architecture/cohesion.md) |
 | Cognitive Backend | [docs/architecture/backend.md](docs/architecture/backend.md) |
-| Agent System | [docs/architecture/agent.md](docs/architecture/agent.md) |
+| Web UI Architecture | [docs/architecture/webui.md](docs/architecture/webui.md) |
 | Launchers & Scripts | [docs/usage/cli.md](docs/usage/cli.md) |
 | Installation Guide | [docs/installation/STREAMLINED.md](docs/installation/STREAMLINED.md) |
 | FreeBSD Notes | [docs/installation/freebsd.md](docs/installation/freebsd.md) |
@@ -139,6 +138,6 @@ For more details, see [docs/privacy.md](docs/privacy.md).
 
 ## ⚖️ Acknowledgements & License
 
-Jenova is built on the profound foundations of [Neovim](https://neovim.io) and [llama.cpp](https://github.com/ggml-org/llama.cpp).
+Jenova is built on the profound foundations of [llama.cpp](https://github.com/ggml-org/llama.cpp).
 
 Licensed under AGPL-3.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
