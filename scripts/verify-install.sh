@@ -303,6 +303,6 @@ else
     echo "Fix the errors above:"
     echo "  • Run preflight checks: ./scripts/preflight-check.sh"
     echo "  • Re-run installation: make install"
-    echo "  • Check logs: cat $JENOVA_ROOT/var/log/*.log"
+    echo "  • Check logs: cat $JCA_HOME/var/log/*.log"
     exit 1
 fi

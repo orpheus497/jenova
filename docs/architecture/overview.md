@@ -56,6 +56,7 @@ All external code lives in `external/`. The distinction matters for updates:
 |-----------|------|--------|---------------|
 | `external/llama.cpp` | Vendored copy | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | Manual sync |
 | `external/SPIRV-Headers` | Vendored copy | [KhronosGroup/SPIRV-Headers](https://github.com/KhronosGroup/SPIRV-Headers) | Manual sync |
+| `external/ext_bin` | Build output | Local script | Stores compiled backend binaries to isolate the final runtime from the raw build tree. |
 
 **Vendored** dependencies are full copies committed into the repo — no network
 fetch is needed after clone.

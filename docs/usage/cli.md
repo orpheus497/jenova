@@ -16,8 +16,8 @@ bin/jenova-ca stop              # stop everything and clean up PID files
 bin/jenova-ca restart           # stop + start
 ```
 
-PIDs and lock files live under `$JCA_HOME/.system/`, logs under
-`$JCA_HOME/var/log/`.
+State lives under `$JCA_HOME/.system/` (PIDs, lock files), with logs in
+`$JCA_HOME/var/log/` and caches in `$JCA_HOME/var/cache/`.
 
 ## Top-level launcher — `bin/jenova`
 
@@ -41,8 +41,7 @@ Features:
 - **Backend Lifecycle**: Start, Stop, and Restart the `jenova-ca` suite.
 - **Network Toggle**: Switch between LOCAL (127.0.0.1) and LAN (0.0.0.0)
   access with one command (updates `etc/jenova.local.conf`).
-- **Quick Launch**: One-key shortcuts to launch the Web UI and the
-  Web UI.
+- **Quick Launch**: One-key shortcut to launch the Web UI.
 
 ## Maintenance Manager — `scripts/jenova-manager.sh`
 
