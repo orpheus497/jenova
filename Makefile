@@ -58,7 +58,7 @@ clean:
 	@echo "🧹 Cleaning build artifacts..."
 	@if [ -d jenova-ui ]; then $(MAKE) -C jenova-ui clean; fi
 	@rm -f bin/jenova-ui
-	@rm -rf -- external/llama.cpp/build public/
+	@rm -rf -- external/llama.cpp/build external/ext_bin/ public/
 
 clean-root:
 	@echo "🧹 Cleaning root directory bloat..."

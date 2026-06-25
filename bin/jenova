@@ -12,7 +12,7 @@ SCRIPT_DIR=$(dirname "$_REAL_PATH")
 JENOVA_UI="$SCRIPT_DIR/jenova-ui"
 JENOVA_TUI="$SCRIPT_DIR/jenova-tui"
 
-if [ -x "$JENOVA_UI" ] && { [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ] || [ "$(uname -s)" = "Darwin" ]; }; then
+if [ -x "$JENOVA_UI" ] && { [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ] || { [ "$(uname -s)" = "Darwin" ] && [ -z "$SSH_CLIENT" ] && [ -z "$SSH_TTY" ]; }; }; then
     echo "Starting Jenova UI..."
     exec "$JENOVA_UI" "$@"
 elif [ -x "$JENOVA_TUI" ]; then
