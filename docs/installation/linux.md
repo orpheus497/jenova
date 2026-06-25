@@ -61,7 +61,7 @@ Or use the streamlined one-command installer:
 ## Build Components Individually
 
 ```sh
-make llama          # llama.cpp with Vulkan + CUDA
+make llama          # llama.cpp (auto)
 make web            # Web UI (requires Node.js)
 ```
 

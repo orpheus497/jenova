@@ -44,7 +44,7 @@ llama.cpp and other dependencies are now bundled in the repository's `external/`
 make
 
 # Or build individually:
-make llama              # Inference backend (Vulkan + CUDA)
+make llama              # Inference backend (auto)
 make web                # Web UI (requires npm/Node.js)
 
 # Clean and rebuild if needed:

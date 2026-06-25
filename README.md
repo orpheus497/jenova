@@ -61,7 +61,7 @@ Jenova installs launchers to `~/.local/bin` that point to the standalone install
 | `jenova-ui` | Desktop Manager (tray icon + TUI) |
 
 | `jenova-swap-mount` | Helper to mount Optane/NVMe swap |
-| `build-llama-jenova` | Build script for Vulkan + CUDA backend |
+| `build-llama-jenova` | Build script for auto-detected backend (Vulkan/CUDA/Metal) |
 
 ---
 

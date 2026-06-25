@@ -19,7 +19,7 @@ all: preflight llama jenova-ui web
 	@echo "   Run 'make install' (or scripts/install.sh) to deploy."
 
 llama:
-	@echo "🔨 Building external/llama.cpp (Vulkan + CUDA)..."
+	@echo "🔨 Building external/llama.cpp (auto)..."
 	@./bin/build-llama-jenova
 
 
@@ -60,14 +60,7 @@ clean:
 		rm -rf external/llama.cpp/build public/; \
 		if [ -d external/ext_bin ]; then rm -rf external/ext_bin; fi; \
 	else \
-		echo "Warning: external/llama.cpp source not detected."; \
-		if [ -t 0 ]; then \
-			printf "Do you want to delete compiled binaries in external/ext_bin? [y/N] "; \
-			read ans; \
-			if [ "$$ans" = "y" ] || [ "$$ans" = "Y" ]; then \
-				rm -rf external/ext_bin; \
-			fi; \
-		fi; \
+		echo "Warning: external/llama.cpp source not detected. Skipping external/ext_bin deletion."; \
 		rm -rf public/; \
 	fi
 
@@ -90,7 +83,7 @@ help:
 	@echo ""
 	@echo "  Build targets:"
 	@echo "    make                Build external/llama.cpp + web"
-	@echo "    make llama          Build external/llama.cpp (Vulkan + CUDA)"
+	@echo "    make llama          Build external/llama.cpp (auto)"
 	@echo "    make web            Build only the Web UI"
 	@echo ""
 	@echo "  Installation & verification:"

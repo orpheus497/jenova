@@ -17,15 +17,11 @@ _REAL_SCRIPT=$(realpath "$0" 2>/dev/null || echo "$0")
 _SCRIPT_DIR=$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)
 JENOVA_ROOT=$(cd "$_SCRIPT_DIR/.." && pwd)
 JCA_HOME="${JCA_HOME:-$HOME/JCA}"
-JVIM_CONFIG_SRC="$JENOVA_ROOT/jenova-config"
-JVIM_CONFIG_DST="$HOME/.config/jenova"
 
 # Shared OS/hardware detection
 . "$JENOVA_ROOT/lib/detect-env.sh"
 
-UPGRADE_PLUGINS=0
 SKIP_REBUILD=0
-SKIP_JVIM=0
 LINK=0
 APPLY_PROFILE=0
 NO_PULL=0
@@ -35,7 +31,6 @@ UPDATE_WEB=0
 for _arg in "$@"; do
     case "$_arg" in
         --skip-rebuild)    SKIP_REBUILD=1 ;;
-        )       SKIP_JVIM=1 ;;
         --link)            LINK=1 ;;
         --apply-profile)   APPLY_PROFILE=1 ;;
         --ui)              UPDATE_UI=1 ;;
@@ -218,56 +213,11 @@ if [ "$UPDATE_WEB" = "1" ] || [ ! -f "$JENOVA_ROOT/public/bundle.js" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Redeploy Neovim config
-# ---------------------------------------------------------------------------
-    info "Redeploying jenova configuration..."
-    if [ ! -d "$JVIM_CONFIG_DST" ]; then
-        warn "~/.config/jenova/ not found"
-    fi
-
-        if [ "$LINK" = "1" ]; then
-            mkdir -p "$JVIM_CONFIG_DST/lua/plugins" "$JVIM_CONFIG_DST/lua/jenova"
-            ln -sf "$JVIM_CONFIG_SRC/init.lua" "$JVIM_CONFIG_DST/init.lua"
-            for _dir in plugins jenova; do
-                for _f in "$JVIM_CONFIG_SRC/lua/$_dir/"*.lua; do
-                    [ -f "$_f" ] && ln -sf "$_f" "$JVIM_CONFIG_DST/lua/$_dir/$(basename "$_f")"
-                done
-            done
-            ln -sfn "$JVIM_CONFIG_SRC/lua/jenova/agent" "$JVIM_CONFIG_DST/lua/jenova/agent"
-            ok "Symlinked jenova config"
-        elif [ -L "$JVIM_CONFIG_DST/init.lua" ]; then
-            ok "Symlink mode active"
-        else
-            mkdir -p "$JVIM_CONFIG_DST/lua/plugins" "$JVIM_CONFIG_DST/lua/jenova"
-            cp "$JVIM_CONFIG_SRC/init.lua" "$JVIM_CONFIG_DST/init.lua"
-            cp "$JVIM_CONFIG_SRC/lua/plugins/"*.lua "$JVIM_CONFIG_DST/lua/plugins/"
-            for _f in "$JVIM_CONFIG_SRC/lua/jenova/"*.lua; do
-                [ -f "$_f" ] && cp "$_f" "$JVIM_CONFIG_DST/lua/jenova/"
-            done
-            rm -rf "$JVIM_CONFIG_DST/lua/jenova/agent"
-            cp -r "$JVIM_CONFIG_SRC/lua/jenova/agent" "$JVIM_CONFIG_DST/lua/jenova/"
-            ok "Config redeployed"
-        fi
-    fi
-fi
-
-# ---------------------------------------------------------------------------
-# 5. Sync Neovim plugins
-# ---------------------------------------------------------------------------
-    info "Syncing Neovim plugins..."
-    if [ "$UPGRADE_PLUGINS" = "1" ]; then
-        jenova --headless "+Lazy update" +qa 2>/dev/null && ok "Plugins updated" || warn "Plugin update failed"
-    else
-        jenova --headless "+Lazy restore" +qa 2>/dev/null && ok "Plugins restored" || warn "Plugin restore failed"
-    fi
-fi
-
-# ---------------------------------------------------------------------------
 # 6. Redeploy binaries to JCA_HOME/bin
 # ---------------------------------------------------------------------------
 info "Redeploying binaries to $JCA_HOME/bin..."
 mkdir -p "$JCA_HOME/bin"
-for _bin in jenova jenova jenova-ui jenova-ca jenova-tui jenova-term jenova-swap-mount; do
+for _bin in jenova jenova-ui jenova-ca jenova-tui jenova-swap-mount; do
     if [ -f "$JENOVA_ROOT/bin/$_bin" ]; then
         cp "$JENOVA_ROOT/bin/$_bin" "$JCA_HOME/bin/$_bin"
         chmod +x "$JCA_HOME/bin/$_bin"

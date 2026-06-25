@@ -33,11 +33,6 @@ RESET="${ESC}[0m"
 CLEAR="${ESC}[H${ESC}[2J${BG}${FG}"
 
 # --- Component detection ---
-true() {
-    [ -x "$JENOVA_ROOT/bin/jenova-ui" ] || \
-        ( command -v jenova >/dev/null 2>&1 && jenova --version 2>/dev/null | grep -q 'JVIM' )
-}
-
 resolve_llama_server_path() {
     resolved_path="${LLAMA_SERVER:-}"
     resolved_build_dir="${JENOVA_BUILD_DIR:-}"
@@ -386,10 +381,6 @@ install_jenova_core() {
     printf "%s%sInstalling Jenova Core...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
     "$JENOVA_ROOT/scripts/install.sh"
 }
-install_jenova() {
-    printf "%s%sBuilding in-tree jenova...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
-    "$MAKE" -C "$JENOVA_ROOT" jenova
-}
 install_llama() {
     printf "%s%sInstalling external/llama.cpp...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
     "$JENOVA_ROOT/bin/build-llama-jenova"
@@ -408,10 +399,6 @@ update_jenova_core() {
     printf "%s%sUpdating Jenova Core...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
     "$JENOVA_ROOT/scripts/update.sh"
 }
-update_jenova() {
-    printf "%s%sUpdating jenova (in-tree)...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
-    "$JENOVA_ROOT/scripts/update.sh" --skip-rebuild --skip-nvim
-}
 update_llama() {
     printf "%s%sUpdating external/llama.cpp (dependency repo)...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
     "$JENOVA_ROOT/scripts/update.sh" --skip-nvim 
@@ -429,12 +416,6 @@ update_jenova_ui() {
 uninstall_jenova_core() {
     printf "%s%sUninstalling Jenova Core...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
     "$JENOVA_ROOT/scripts/uninstall.sh"
-}
-uninstall_jenova() {
-    printf "%s%sRemoving in-tree jenova build artifacts...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
-    rm -rf "$JENOVA_ROOT/bin/jenova-ui" "$JENOVA_ROOT/bin/jenova-ui"
-    echo "jenova build artifacts removed."
-}
 uninstall_llama() {
     printf "%s%sUninstalling external/llama.cpp...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
     rm -rf "$JENOVA_ROOT/external/ext_bin"
@@ -469,7 +450,6 @@ show_action_menu() {
 
     if [ "$action" = "install" ]; then
         check_jenova_core && status_core="off"
-        true && status_jenova="off"
         check_llama && status_llama="off"
         check_webui && status_webui="off"
         check_jenova_ui && status_jenova_ui="off"
@@ -477,7 +457,6 @@ show_action_menu() {
 
     interactive_checklist "$title" "$checklist_msg" \
         "Jenova_Core" "Jenova CA and backend scripts" "$status_core" \
-        "jenova" "Editor / IDE (bundled)" "$status_jenova" \
         "external/llama.cpp" "Inference engine" "$status_llama" \
         "WebUI" "Browser-based Workspaces UI" "$status_webui" \
         "jenova_ui" "Desktop Manager (tray + TUI)" "$status_jenova_ui"
@@ -535,7 +514,6 @@ show_action_menu() {
             suffix="unknown"
             case "$item" in
                 "Jenova_Core") suffix="jenova_core" ;;
-                "jenova")        suffix="jenova" ;;
                 "external/llama.cpp")   suffix="llama" ;;
                 "WebUI")       suffix="webui" ;;
                 "jenova_ui")   suffix="jenova_ui" ;;
@@ -561,10 +539,9 @@ show_action_menu() {
                         # Pass _extra_flags to update functions
                         case "$suffix" in
                             "jenova_core") "$JENOVA_ROOT/scripts/update.sh" $_extra_flags ;;
-                            "jenova")        "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --skip-rebuild --skip-nvim ;;
-                            "llama")       "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --skip-nvim  ;;
-                            "webui")       "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --web --skip-nvim --skip-rebuild  ;;
-                            "jenova_ui")   "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --ui --skip-nvim --skip-rebuild  ;;
+                            "llama")       "$JENOVA_ROOT/scripts/update.sh" $_extra_flags ;;
+                            "webui")       "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --web --skip-rebuild ;;
+                            "jenova_ui")   "$JENOVA_ROOT/scripts/update.sh" $_extra_flags --ui --skip-rebuild ;;
                         esac
                         _ret=$?
                     else

@@ -36,16 +36,13 @@ _REAL_SCRIPT="$(realpath "$0" 2>/dev/null || echo "$0")"
 _SCRIPT_DIR="$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)"
 JENOVA_ROOT="$(cd "$_SCRIPT_DIR/.." && pwd)"
 JCA_HOME="${JCA_HOME:-$HOME/JCA}"
-JVIM_CONFIG_DST="$HOME/.config/jenova"
 
-PURGE=0
 CLEAN_RUNTIME=0
 CLEAN_BUILDS=0
 YES=0
 
 for _arg in "$@"; do
     case "$_arg" in
-        --purge)         PURGE=1 ;;
         --clean-runtime) CLEAN_RUNTIME=1 ;;
         --clean-builds)  CLEAN_BUILDS=1 ;;
         --yes)           YES=1 ;;
@@ -96,15 +93,8 @@ fi
 if [ "$YES" = "0" ]; then
     echo ""
     warn "This will remove:"
-    echo "    $JVIM_CONFIG_DST/init.lua"
-    echo "    $JVIM_CONFIG_DST/lua/plugins/*.lua"
-    echo "    $JVIM_CONFIG_DST/lazy-lock.json"
-    echo "    ~/.local/bin/jenova, ~/.local/bin/jenova, ~/.local/bin/jenova-ca (symlinks)"
-    echo "    ~/bin/jenova, ~/bin/jenova, ~/bin/jenova-ca (symlinks)"
-    if [ "$PURGE" = "1" ]; then
-        echo "    ~/.local/share/nvim/lazy/ (plugin data — --purge)"
-        echo "    ~/.local/share/nvim/mason/ (Mason data — --purge)"
-    fi
+    echo "    ~/.local/bin/jenova, ~/.local/bin/jenova-ca (symlinks)"
+    echo "    ~/bin/jenova, ~/bin/jenova-ca (symlinks)"
     if [ "$CLEAN_RUNTIME" = "1" ]; then
         echo "    $JENOVA_ROOT/.jenova/ (PID files, locks — --clean-runtime)"
         echo "    $JCA_HOME/var/log/ (log files — --clean-runtime)"
@@ -129,63 +119,13 @@ if [ "$YES" = "0" ]; then
     esac
 fi
 
-# ---------------------------------------------------------------------------
-# Remove Neovim config files
-# ---------------------------------------------------------------------------
-info "Removing Neovim configuration files..."
-
-_removed=0
-for _f in \
-    "$JVIM_CONFIG_DST/init.lua" \
-    "$JVIM_CONFIG_DST/lazy-lock.json"
-do
-    if [ -e "$_f" ] || [ -L "$_f" ]; then
-        rm -f "$_f"
-        ok "Removed $_f"
-        _removed=$((_removed + 1))
-    fi
-done
-
-if [ -d "$JVIM_CONFIG_DST/lua/plugins" ]; then
-    for _f in "$JVIM_CONFIG_DST/lua/plugins/"*.lua; do
-        [ -e "$_f" ] || [ -L "$_f" ] || continue
-        rm -f "$_f"
-        ok "Removed $_f"
-        _removed=$((_removed + 1))
-    done
-    rmdir "$JVIM_CONFIG_DST/lua/plugins" 2>/dev/null && ok "Removed empty plugins/ dir" || true
-fi
-if [ -d "$JVIM_CONFIG_DST/lua/jenova" ]; then
-    for _f in "$JVIM_CONFIG_DST/lua/jenova/"*.lua; do
-        [ -e "$_f" ] || [ -L "$_f" ] || continue
-        rm -f "$_f"
-        ok "Removed $_f"
-        _removed=$((_removed + 1))
-    done
-    rmdir "$JVIM_CONFIG_DST/lua/jenova" 2>/dev/null && ok "Removed empty jenova/ dir" || true
-fi
-if [ -d "$JVIM_CONFIG_DST/lua/jenova/agent" ]; then
-    rm -rf "$JVIM_CONFIG_DST/lua/jenova/agent"
-    ok "Removed embedded agent tree"
-    _removed=$((_removed + 1))
-fi
-if [ -d "$JVIM_CONFIG_DST/lua" ]; then
-    rmdir "$JVIM_CONFIG_DST/lua" 2>/dev/null && ok "Removed empty lua/ dir" || true
-fi
-if [ -d "$JVIM_CONFIG_DST" ]; then
-    rmdir "$JVIM_CONFIG_DST" 2>/dev/null && ok "Removed empty ~/.config/jenova/ dir" || true
-fi
-
-if [ "$_removed" = "0" ]; then
-    warn "No jenova config files found to remove (already clean)"
-fi
 
 # ---------------------------------------------------------------------------
 # Remove jenova / jenova symlinks from PATH bin dirs
 # ---------------------------------------------------------------------------
 info "Removing launcher symlinks and binaries..."
 for _d in "$HOME/.local/bin" "$HOME/bin"; do
-    for _bin in jenova jenova jenova-ca jenova-ui jenova-tui jenova-term jenova-swap-mount; do
+    for _bin in jenova jenova-ca jenova-ui jenova-tui jenova-swap-mount; do
         _sym="$_d/$_bin"
         if [ -L "$_sym" ]; then
             _target=$(readlink "$_sym")
@@ -199,7 +139,7 @@ done
 
 # Remove binaries from JCA_HOME/bin
 if [ -d "$JCA_HOME/bin" ]; then
-    for _bin in jenova jenova jenova-ca jenova-ui jenova-tui jenova-term jenova-swap-mount; do
+    for _bin in jenova jenova-ca jenova-ui jenova-tui jenova-swap-mount; do
         if [ -f "$JCA_HOME/bin/$_bin" ]; then
             rm -f "$JCA_HOME/bin/$_bin"
             ok "Removed $JCA_HOME/bin/$_bin"
@@ -208,24 +148,6 @@ if [ -d "$JCA_HOME/bin" ]; then
     rmdir "$JCA_HOME/bin" 2>/dev/null && ok "Removed empty $JCA_HOME/bin dir" || true
 fi
 
-# ---------------------------------------------------------------------------
-# Purge plugin data (--purge only)
-# ---------------------------------------------------------------------------
-if [ "$PURGE" = "1" ]; then
-    info "Purging plugin data (--purge)..."
-
-    for _d in \
-        "$HOME/.local/share/nvim/lazy" \
-        "$HOME/.local/share/nvim/mason"
-    do
-        if [ -d "$_d" ]; then
-            rm -rf "$_d"
-            ok "Removed $_d"
-        else
-            warn "$_d not found (already clean)"
-        fi
-    done
-fi
 
 # ---------------------------------------------------------------------------
 # Clean runtime artifacts (--clean-runtime only)
@@ -282,9 +204,6 @@ fi
 if [ "$CLEAN_BUILDS" = "1" ]; then
     info "Removing in-tree build outputs (--clean-builds)..."
     for _bd in \
-        "$JENOVA_ROOT/bin/jenova-ui" \
-        "$JENOVA_ROOT/bin/jenova-ui" \
-        "$JENOVA_ROOT/bin/jenova-ui" \
         "$JENOVA_ROOT/bin/jenova-ui" \
         "$JENOVA_ROOT/external/llama.cpp/build"
     do
