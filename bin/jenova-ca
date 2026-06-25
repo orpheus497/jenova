@@ -56,25 +56,27 @@ mkdir -p "$CACHE_DIR" 2>/dev/null
 mkdir -p "$(dirname "$PID_FILE")" 2>/dev/null
 
 # Check for ownership issues early (detect if directory owned by root from sudo usage)
-if [ ! -d "$JCA_HOME" ]; then
-    echo "Error: $JCA_HOME directory does not exist and could not be created." >&2
-    exit 1
-elif [ ! -w "$JCA_HOME" ]; then
-    echo "Error: $JCA_HOME directory is not writable" >&2
-    echo "" >&2
-    _OWNER=$(stat -c '%U' "$JCA_HOME" 2>/dev/null || stat -f '%Su' "$JCA_HOME" 2>/dev/null || echo "unknown")
-    if [ "$_OWNER" = "root" ]; then
-        echo "Directory is owned by root (likely from running with sudo previously)." >&2
-        echo "Fix with:" >&2
-        echo "  sudo chown -R \$USER:\$USER $JCA_HOME" >&2
-        echo "  chmod -R u+w $JCA_HOME" >&2
-    else
-        echo "Fix permissions with:" >&2
-        echo "  chmod -R u+w $JCA_HOME" >&2
+for _dir in "$JCA_HOME" "$JENOVA_STATE" "$LOG_DIR" "$CACHE_DIR"; do
+    if [ ! -d "$_dir" ]; then
+        echo "Error: $_dir directory does not exist and could not be created." >&2
+        exit 1
+    elif [ ! -w "$_dir" ]; then
+        echo "Error: $_dir directory is not writable" >&2
+        echo "" >&2
+        _OWNER=$(stat -c '%U' "$_dir" 2>/dev/null || stat -f '%Su' "$_dir" 2>/dev/null || echo "unknown")
+        if [ "$_OWNER" = "root" ]; then
+            echo "Directory is owned by root (likely from running with sudo previously)." >&2
+            echo "Fix with:" >&2
+            echo "  sudo chown -R \$USER $JCA_HOME" >&2
+            echo "  chmod -R u+w $JCA_HOME" >&2
+        else
+            echo "Fix permissions with:" >&2
+            echo "  chmod -R u+w $JCA_HOME" >&2
+        fi
+        echo "" >&2
+        exit 1
     fi
-    echo "" >&2
-    exit 1
-fi
+done
 
 # --- Model: Agent ---
 MODEL_PATH="${JENOVA_MODEL:-$MODEL_AGENT}"
@@ -599,7 +601,7 @@ if [ "$1" = "--daemon" ]; then
                 echo "  chmod -R u+w $JENOVA_STATE" >&2
                 echo "" >&2
                 echo "If owned by root (from running with sudo previously), fix with:" >&2
-                echo "  sudo chown -R \$USER:\$USER $JENOVA_STATE" >&2
+                echo "  sudo chown -R \$USER $JENOVA_STATE" >&2
                 echo "  chmod -R u+w $JENOVA_STATE" >&2
                 echo "" >&2
                 exit 1

@@ -47,7 +47,7 @@ PID_FILE="${PID_FILE:-$JENOVA_STATE/jenova-ca.pid}"; export PID_FILE
 
 _jenova_local_candidate="$JENOVA_ROOT/etc/jenova.local.conf"
 if [ ! -f "$_jenova_local_candidate" ] && [ "$JENOVA_LAYOUT" = "source" ]; then
-    _jenova_local_candidate="$JENOVA_ROOT/external/ext_bin/jenova.local.conf"
+    _jenova_local_candidate="$JENOVA_ROOT/bin/jenova.local.conf"
 fi
 
 if [ -f "$_jenova_local_candidate" ]; then
@@ -63,7 +63,7 @@ if [ -f "$_jenova_local_candidate" ]; then
     }
     case "$_jenova_real_local" in
         "$_jenova_real_root"/etc/jenova.local.conf|\
-        "$_jenova_real_root"/external/ext_bin/jenova.local.conf)
+        "$_jenova_real_root"/bin/jenova.local.conf)
             # shellcheck disable=SC1090
             . "$_jenova_real_local"
             ;;

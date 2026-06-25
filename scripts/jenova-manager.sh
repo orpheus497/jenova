@@ -39,7 +39,7 @@ resolve_llama_server_path() {
 
     for config_file in \
         "$JENOVA_ROOT/etc/jenova.local.conf" \
-        "$JENOVA_ROOT/external/ext_bin/jenova.local.conf"
+        "$JENOVA_ROOT/bin/jenova.local.conf"
     do
         if [ -f "$config_file" ]; then
             if [ -z "$resolved_path" ]; then
