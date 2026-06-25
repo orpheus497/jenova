@@ -1,6 +1,6 @@
 # Headless & CLI Usage
 
-Jenova supports headless execution and one-shot agentic tasks via the `bin/jenova` wrapper.s, CI, and LAN setups.
+Jenova supports starting the graphical or terminal-based user interface via the `bin/jenova` launcher.
 
 ## Backend Supervisor — `bin/jenova-ca`
 
@@ -22,9 +22,7 @@ PIDs and lock files live under `$JCA_HOME/.system/`, logs under
 ## Top-level launcher — `bin/jenova`
 
 ```sh
-jenova                 # start backend (if not running)
-jenova --daemon-only   # start jenova-ca and exit
-jenova --check         # print resolved JENOVA_* environment and exit
+jenova                 # start Jenova UI
 ```
 
 ## Jenova Manager (Operational TUI) — `bin/jenova-tui`

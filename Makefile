@@ -11,7 +11,7 @@
 #   make install    # Run scripts/install.sh (system-aware deploy)
 #   make clean      # Remove build artifacts from both components
 
-.PHONY: all llama llama-hybrid web jenova-ui install preflight verify clean help clean-root
+.PHONY: all llama web jenova-ui install preflight verify clean help clean-root
 
 all: preflight llama jenova-ui web
 	@echo ""
@@ -77,8 +77,7 @@ help:
 	@echo ""
 	@echo "  Build targets:"
 	@echo "    make                Build external/llama.cpp + web"
-	@echo "    make llama          Build only external/llama.cpp (Vulkan)"
-	@echo "    make llama-hybrid   Build external/llama.cpp (Vulkan + CUDA)"
+	@echo "    make llama          Build external/llama.cpp (Vulkan + CUDA)"
 	@echo "    make web            Build only the Web UI"
 	@echo ""
 	@echo "  Installation & verification:"

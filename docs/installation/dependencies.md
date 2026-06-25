@@ -15,8 +15,6 @@ Jenova requires several system-level dependencies for building and running the c
 | `lua54` | `lua54` | `lua54` | `liblua5.4-dev` | `lua-devel` | `lua@5.4` |
 | `curl` | `curl` | `curl` | `libcurl4-openssl-dev` | `libcurl-devel` | `curl` |
 
-> The bundled jenova-ui editor (`jenova-ui/`) is built from source as part of `make`.
-> `jenova-ui/build/bin/nvim` (used as `bin/jenova-ui`).
 
 ## Optional Dependencies
 
@@ -27,8 +25,6 @@ Jenova requires several system-level dependencies for building and running the c
 | `stylua` | Lua formatter | `stylua` | `stylua` | `cargo install stylua` | `cargo install stylua` | `stylua` |
 | `node` | Web UI build tooling (optional) | `node` | `nodejs` | `nodejs npm` | `nodejs` | `node` |
 
-> The bundled jenova-ui editor (`jenova-ui/`) is built from source as part of `make`.
-> `jenova-ui/build/bin/nvim` (used as `bin/jenova-ui`).
->
+
 > `node` / `npm` is optional and only required for the Web UI build via
 > `make web` or `./scripts/install-complete.sh` if the frontend is enabled.

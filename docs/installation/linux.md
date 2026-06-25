@@ -61,8 +61,7 @@ Or use the streamlined one-command installer:
 ## Build Components Individually
 
 ```sh
-make llama          # llama.cpp with Vulkan support
-make llama-hybrid   # llama.cpp with Vulkan + CUDA (NVIDIA multi-GPU)
+make llama          # llama.cpp with Vulkan + CUDA
 make web            # Web UI (requires Node.js)
 ```
 
@@ -77,7 +76,7 @@ If you have an NVIDIA GPU and want CUDA acceleration alongside Vulkan:
 # Fedora: sudo dnf install cuda
 
 # Build with both backends
-make llama-hybrid
+make llama
 ```
 
 The CUDA profile (`Linux/CUDA/dgpu/nvidia-generic`) will be auto-detected.

@@ -25,8 +25,7 @@ The **Jenova Cognitive Architecture** is structured around several interconnecte
 | **Local Inference** | GGUF model execution (llama.cpp) handling agents, RAG embeddings, and speculative decoding. | C++ |
 
 ## System Flow
-1. **User input** — typed into the Web UI or piped
-   to the CLI proxy. `bin/jenova` for one-shot use.
+1. **User input** — typed into the Web UI.
 2. **Agent engine** — The proxy builds a
    multi-turn context (including search hits, active context, LSP diagnostics, recent
    history, pinned memory facts) and emits a chat-completion request.

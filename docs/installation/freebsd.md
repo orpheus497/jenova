@@ -47,7 +47,7 @@ You can build components individually if needed:
 | Flag | Action |
 |------|--------|
 | `--force` | Overwrite existing config / symlinks; force jenova-ui rebuild. |
-| `--skip-jenova-ui` | Skip building the bundled jenova-ui editor. |
+| `--skip-jenova-ui` | Skip building the bundled jenova-ui desktop manager. |
 | `--skip-llama` | Skip the llama.cpp build check. |
 | `--skip-lsp` | Skip optional LSP server setup. |
 | `--client-only` | LAN client install — implies `--skip-llama --skip-jenova-ui`; talks to a remote backend. |

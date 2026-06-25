@@ -44,8 +44,7 @@ llama.cpp and other dependencies are now bundled in the repository's `external/`
 make
 
 # Or build individually:
-make llama              # Inference backend (Vulkan)
-make llama-hybrid       # Vulkan + CUDA (if multi-GPU)
+make llama              # Inference backend (Vulkan + CUDA)
 make web                # Web UI (requires npm/Node.js)
 
 # Clean and rebuild if needed:
@@ -114,8 +113,6 @@ jenova-tui
 
 # Full environment (backend daemons + editor)
 jenova
-...
-# Or just the editor (no backend management)
 
 # Or just the backend (headless/server mode)
 jenova-ca
@@ -155,8 +152,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc  # Bash
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # Zsh
 ```
 
-- **Plugins:** `~/.local/share/nvim/lazy/`
-- **State:** `~/.local/state/nvim/` (undo, shada, chat history)
+
 
 ### Hardware Profile Issues
 ```bash
@@ -250,7 +246,7 @@ curl -I http://localhost:8080/health
 ### Getting Help
 - **Installation issues:** Run `./scripts/preflight-check.sh --verbose`
 - **Build failures:** Check `var/log/` and `UPSTREAM-COPYRIGHT`
-- **Runtime issues:** Check `~/.local/state/nvim/` for chat history
+
 - **Hardware profile:** Run `./hardware-profiles/detect-hardware.sh --info`
 
 ## Next Steps After Installation
@@ -265,6 +261,6 @@ curl -I http://localhost:8080/health
 3. Set up remote access if using LAN client mode
 
 ### Optional
-1. Install additional LSP servers (`:Mason` in jenova-ui)
+1. Install additional LSP servers in your editor
 3. Set up GitHub integration (OAuth token in `.jenova/auth`)
 4. Enable web search (API key in `.jenova/config`)

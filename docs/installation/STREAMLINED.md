@@ -112,8 +112,6 @@ jenova-tui
 
 # Full environment (backend + editor)
 jenova
-...
-# Or just the editor (no daemon management)
 
 # Or just the backend (headless/server)
 jenova-ca
@@ -131,8 +129,7 @@ which jenova-ca
 # Verify backend status
 curl http://localhost:8080/v1/models
 
-# View chat history and state
-~/.local/state/nvim/
+
 ```
 
 ## Troubleshooting
@@ -202,8 +199,7 @@ export PATH="$HOME/.local/bin:$PATH"  # .bashrc / .zshrc
 ### Config Locations
 | Item | Location |
 |------|----------|
-| **Plugins** | `~/.local/share/nvim/lazy/` |
-| **User state** | `~/.local/state/nvim/` |
+
 | **Runtime logs** | `$JENOVA_ROOT/var/log/` |
 | **Models** | `$JENOVA_ROOT/models/` |
 | **Project config** | `$JENOVA_ROOT/etc/jenova.conf` |
@@ -228,7 +224,7 @@ cat etc/jenova.conf
 ./scripts/update.sh
 
 # With options:
-./scripts/update.sh --upgrade-plugins   # Update nvim plugins
+
 ./scripts/update.sh --apply-profile     # Re-apply hardware profile
 ./scripts/update.sh --skip-rebuild      # Skip llama.cpp rebuild
 ```
