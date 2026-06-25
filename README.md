@@ -2,10 +2,12 @@
 
 Jenova is a local-first, hardware-aware AI environment designed for consumer laptops, professional workstations, and headless servers. It integrates an inference backend, a browser-based Workspace UI, a native Desktop Manager, and an intelligent OS-level System Tray into one cohesive, autonomous ecosystem that runs entirely on your hardware.
 
-## 🌌 The Ecosystem
+Jenova is designed with a FreeBSD-first philosophy but fully supports Linux and macOS (experimental).
+
+## The Ecosystem
 
 ### Core Backend (`jenova-ca`)
-The foundation of the system. Written in C, Lua, and POSIX shell, the `jenova-ca` daemon handles hardware-aware model loading (automatically adapting to single-GPU, dual-GPU, or CPU-only constraints via Vulkan). It daemonizes the `llama-server` inference engine and the Lua-based intelligence proxy.
+The foundation of the system. Written in C, Lua, and POSIX shell, the `jenova-ca` daemon handles hardware-aware model loading (automatically adapting to single-GPU, dual-GPU, or CPU-only constraints via auto-detected Vulkan/CUDA backends). It daemonizes the `llama-server` inference engine and the Lua-based intelligence proxy.
 
 **Ports:**
 - `8080` — Intelligence Proxy (WebUI, RAG, web search, filesystem API)
@@ -13,19 +15,19 @@ The foundation of the system. Written in C, Lua, and POSIX shell, the `jenova-ca
 - `8082` — Embedding server (semantic search, RAG indexing)
 
 ### Desktop Manager (`jenova-ui`)
-A lightweight, Kanagawa-themed native application written in **C** with **GTK3**, **ncurses**, and **Lua** orchestration. Designed with a **FreeBSD-first** philosophy, providing two complementary interfaces:
-- **ncurses TUI** — The **primary management interface** for FreeBSD, Headless servers, and terminal-centric workflows. Offers component-level control, real-time status, and LAN/LOCAL switching without requiring a graphical environment.
-- **System Tray Icon** — A secondary convenience interface for Desktop environments (Linux/macOS). Provides real-time health polling and quick-access server control via a context menu.
+A lightweight, Kanagawa-themed native application written in C with GTK3, ncurses, and Lua orchestration, providing two complementary interfaces:
+- **ncurses TUI** — The primary management interface for FreeBSD, Headless servers, and terminal-centric workflows. Offers component-level control, real-time status, and LAN/LOCAL switching without requiring a graphical environment.
+- **System Tray Icon** — A secondary convenience interface for Desktop environments. Provides real-time health polling and quick-access server control via a context menu.
 
 ### Jenova Workspaces (WebUI)
-An elegant, browser-based chat and workspace UI built with SvelteKit. Served directly by the intelligence proxy on port 8080 for seamless native-feel access. Workspaces are tied to your local filesystem, ensuring seamless transition between graphical chat and terminal editing.
+An elegant, browser-based chat and workspace UI built with SvelteKit. Served directly by the intelligence proxy on port 8080 for seamless native-feel access. Workspaces are tied to your local filesystem, ensuring seamless transition between graphical chat and terminal usage.
 
 ### Remote Access (LAN Mode)
-Toggle `LAN Mode` via the System Tray or TUI to bind the backend to `0.0.0.0`. Access your Jenova Workspaces from any device on your local network — smartphones, tablets, or other laptops.
+Toggle `LAN Mode` via the System Tray or TUI to bind the backend to `0.0.0.0`. Access your Jenova Workspaces from any device on your local network.
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ```sh
 git clone https://github.com/orpheus497/jenova
@@ -35,7 +37,7 @@ cd jenova
 ./install-jenova.sh
 ```
 
-The system is deployed to **`~/JCA`**, creating a 100% functional disconnect from the source repository. All binaries, libraries, and configurations are self-contained within this directory.
+The system is deployed to `~/JCA`, creating a 100% functional disconnect from the source repository. All binaries, libraries, and configurations are self-contained within this directory.
 
 ### Manual Build
 
@@ -49,23 +51,22 @@ Individual components: `make llama`, `make web`, `make jenova-ui`.
 
 ---
 
-## 💻 Command Line Interface
+## Command Line Interface
 
 Jenova installs launchers to `~/.local/bin` that point to the standalone installation in `~/JCA`.
 
 | Command | Description |
 |---------|-------------|
-| `jenova` | Start the Jenova UI |
+| `jenova` | Start the Jenova Desktop Manager or TUI |
 | `jenova-ca` | Backend Daemon (headless RAG, embedding, tool execution) |
 | `jenova-tui` | Kanagawa-themed terminal manager |
 | `jenova-ui` | Desktop Manager (tray icon + TUI) |
-
 | `jenova-swap-mount` | Helper to mount Optane/NVMe swap |
 | `build-llama-jenova` | Build script for auto-detected backend (Vulkan/CUDA/Metal) |
 
 ---
 
-## 🔄 Updating
+## Updating
 
 ```sh
 # Update everything (pulls repo, rebuilds changed components, redeploys to ~/JCA)
@@ -74,17 +75,17 @@ Jenova installs launchers to `~/.local/bin` that point to the standalone install
 
 ---
 
-## 🤖 Advised Models
+## Advised Models
 
-Jenova is optimized for fast, accurate local reasoning. We recommend **Qwen-3.5** derivatives (such as `Qwen3.5-9B` or `Qwen3.5-3B`) quantized into GGUF format for optimal VRAM-to-parameter footprint ratios on consumer hardware.
+Jenova is optimized for fast, accurate local reasoning. We recommend Qwen-3.5 derivatives (such as `Qwen3.5-9B` or `Qwen3.5-3B`) quantized into GGUF format for optimal VRAM-to-parameter footprint ratios on consumer hardware.
 
 Rule of thumb: **~0.75 GB VRAM per 1B parameters** at Q4_K_M quantization.
 
 ---
 
-## 📖 Documentation
+## Documentation
 
-Detailed documentation lives in [`docs/`](docs/):
+Detailed documentation lives in `docs/`:
 
 | Topic | Path |
 |-------|------|
@@ -101,7 +102,7 @@ Detailed documentation lives in [`docs/`](docs/):
 
 ---
 
-## 🏗️ Repository Structure
+## Repository Structure
 
 ```
 jenova/
@@ -124,9 +125,9 @@ jenova/
 
 ---
 
-## 🔒 Privacy & Security
+## Privacy & Security
 
-Jenova is a **local-first** system. Your data, models, and chat history never leave your hardware.
+Jenova is a local-first system. Your data, models, and chat history never leave your hardware.
 
 - **Local Inference**: All AI processing happens on your local GPU/CPU.
 - **Zero Tracking**: No telemetry or data collection.
@@ -136,7 +137,7 @@ For more details, see [docs/privacy.md](docs/privacy.md).
 
 ---
 
-## ⚖️ Acknowledgements & License
+## Acknowledgements & License
 
 Jenova is built on the profound foundations of [llama.cpp](https://github.com/ggml-org/llama.cpp).
 
