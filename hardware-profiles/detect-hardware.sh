@@ -11,7 +11,8 @@
 #   ./hardware-profiles/detect-hardware.sh --list     # List all available profiles
 #   ./hardware-profiles/detect-hardware.sh --apply   # Detect and deploy profile config
 
-SCRIPT_DIR="$(dirname "$(realpath "$0")")"
+_REAL_PATH=$(realpath "$0" 2>/dev/null || readlink -f "$0" 2>/dev/null || echo "$0")
+SCRIPT_DIR="$(dirname "$_REAL_PATH")"
 JENOVA_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # Shared OS/hardware detection.

@@ -43,11 +43,7 @@ web: jca_web/node_modules
 
 jenova-ui/jenova-ui:
 	@echo "🔨 Building jenova-ui..."
-	@if [ "$$(uname -s)" = "FreeBSD" ]; then \
-		gmake -C jenova-ui; \
-	else \
-		$(MAKE) -C jenova-ui; \
-	fi
+	@$(MAKE) -C jenova-ui
 
 jenova-ui: jenova-ui/jenova-ui
 	@mkdir -p bin || exit 1
@@ -62,11 +58,7 @@ install-jenova:
 
 clean:
 	@echo "🧹 Cleaning build artifacts..."
-	@if [ "$$(uname -s)" = "FreeBSD" ]; then \
-		if [ -d jenova-ui ]; then gmake -C jenova-ui clean; fi; \
-	else \
-		if [ -d jenova-ui ]; then $(MAKE) -C jenova-ui clean; fi; \
-	fi
+	@if [ -d jenova-ui ]; then $(MAKE) -C jenova-ui clean; fi
 	@rm -f bin/jenova-ui
 	@rm -rf -- external/llama.cpp/build public/ external/ext_bin
 

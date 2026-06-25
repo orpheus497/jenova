@@ -17,8 +17,7 @@ $JCA_HOME/models/
 Place your primary language models here. These are the models that power the main inference engine.
 
 **Recommended models:**
-- **Qwen3.5-4B-Q6_K.gguf** (default for CPU/APU, ~3.5GB)
-- **Qwen3.5-4B-Q6_K.gguf** (default for mid-tier GPU, ~3.5GB)
+- **Qwen3.5-4B-Q6_K.gguf** (default for CPU/APU and mid-tier GPU, ~3.5GB)
 - **Qwen3.5-9B-Q4_K_M.gguf** (default for high-end GPU, ~5.5GB)
 
 **Requirements:**

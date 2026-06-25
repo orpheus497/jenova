@@ -23,7 +23,7 @@ gmake
 
 # 5. Run the installer (hardware-aware)
 # This deploys a standalone system to ~/JCA and symlinks to ~/.local/bin/
-make install
+gmake install
 ```
 
 You can also use the streamlined installation script:
@@ -37,9 +37,9 @@ You can also use the streamlined installation script:
 
 ### 1. Build Components
 You can build components individually if needed:
-- `make llama` — build `llama.cpp` with auto-detected hardware support (calls `bin/build-llama-jenova`).
-- `make clean` — wipe build artifacts from all three subsystems.
-- `make clean-root` — remove leftover artifacts in the repo root.
+- `gmake llama` — build `llama.cpp` with auto-detected hardware support (calls `bin/build-llama-jenova`).
+- `gmake clean` — wipe build artifacts from all three subsystems.
+- `gmake clean-root` — remove leftover artifacts in the repo root.
 
 ### 2. Run the Installer
 `scripts/install.sh` handles the deployment. It supports several flags:

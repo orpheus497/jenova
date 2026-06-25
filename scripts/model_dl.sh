@@ -104,6 +104,14 @@ download_model() {
     case "$_ans" in
         y|Y|yes|YES)
             mkdir -p "$(dirname "$_path")"
+            
+            # Auto-correct common Hugging Face non-raw URLs
+            case "$_url" in
+                *huggingface.co*)
+                    _url=$(echo "$_url" | sed -e 's|?show_file_info=|/resolve/main/|g' -e 's|/blob/|/resolve/|g')
+                    ;;
+            esac
+            
             info "Downloading $(basename "$_path") ..."
             _tmp=$(mktemp "${_path}.tmp.XXXXXX")
             _dl_timeout="${JENOVA_DL_TIMEOUT:-14400}"
@@ -113,8 +121,15 @@ download_model() {
                 fetch -T "$_dl_timeout" -o "$_tmp" "$_url"
             fi
             if [ -s "$_tmp" ]; then
-                mv "$_tmp" "$_path"
-                ok "$_name downloaded successfully"
+                # Validate it's actually a GGUF file (first 4 bytes)
+                if head -c 4 "$_tmp" | grep -q "^GGUF"; then
+                    mv "$_tmp" "$_path"
+                    ok "$_name downloaded successfully"
+                else
+                    rm -f "$_tmp"
+                    fail "Downloaded file is not a valid GGUF (HTML page downloaded instead?). URL: $_url"
+                    return 1
+                fi
             else
                 rm -f "$_tmp"
                 fail "Download failed for $_name"

@@ -22,7 +22,8 @@ elif [ -f "$_BIN_DIR/etc/jenova.conf" ]; then
     JENOVA_ROOT="$(cd "$_BIN_DIR" && pwd)"; export JENOVA_ROOT
 else
     # Fallback
-    SCRIPT_DIR=$(dirname "$(realpath "$0")")
+    _REAL_PATH=$(realpath "$0" 2>/dev/null || readlink -f "$0" 2>/dev/null || echo "$0")
+    SCRIPT_DIR=$(dirname "$_REAL_PATH")
     if [ -f "$SCRIPT_DIR/etc/jenova.conf" ]; then
         JENOVA_ROOT="$SCRIPT_DIR"; export JENOVA_ROOT
     elif [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
