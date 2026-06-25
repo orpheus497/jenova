@@ -33,8 +33,9 @@ LOCAL_CONF_BUILD="$JENOVA_ROOT/bin/jenova.local.conf"
 LOCAL_CONF="$LOCAL_CONF_ETC"
 BACKEND="${JENOVA_BACKEND:-auto}"
 
-if [ ! -d "$LLAMA_DIR" ]; then
-    echo "Error: external/llama.cpp directory not found at $LLAMA_DIR" >&2
+if [ ! -f "$LLAMA_DIR/CMakeLists.txt" ]; then
+    echo "Error: external/llama.cpp submodule is not initialized." >&2
+    echo "Run: git submodule update --init --recursive" >&2
     exit 1
 fi
 
