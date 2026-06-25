@@ -1,7 +1,0 @@
-# Agent models directory
-# Place your main inference models here (e.g., 7B-32B parameter models)
-# Supported formats: GGUF
-# Examples:
-#   - Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf
-#   - deepseek-coder-6.7b-instruct.Q5_K_M.gguf
-#   - codestral-22B-v0.1-Q4_K_M.gguf

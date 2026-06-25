@@ -55,7 +55,7 @@ mkdir -p "$CACHE_DIR" 2>/dev/null
 mkdir -p "$(dirname "$PID_FILE")" 2>/dev/null
 
 # Check for ownership issues early (detect if directory owned by root from sudo usage)
-if [ -d "$JCA_HOME" ] && [ ! -w "$JCA_HOME" ]; then
+if [ ! -d "$JCA_HOME" ] || [ ! -w "$JCA_HOME" ]; then
     echo "Error: $JCA_HOME directory is not writable" >&2
     echo "" >&2
     _OWNER=$(stat -c '%U' "$JCA_HOME" 2>/dev/null || stat -f '%Su' "$JCA_HOME" 2>/dev/null || echo "unknown")

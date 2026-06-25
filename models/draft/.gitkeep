@@ -1,8 +1,0 @@
-# Draft models directory
-# Place your speculative decoding draft models here (small, fast models)
-# Supported formats: GGUF
-# Draft models accelerate main model inference via speculative decoding
-# Examples:
-#   - Qwen2.5-Coder-0.5B-Instruct-Q8_0.gguf
-#   - deepseek-coder-1.3b-Q8_0.gguf
-#   - tinyllama-1.1b-Q8_0.gguf

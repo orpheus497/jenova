@@ -5,7 +5,7 @@ This directory contains the LLM models used by Jenova. Models are organized into
 ## Directory Structure
 
 ```
-models/
+$JCA_HOME/models/
 ├── agent/    # Main inference models (7B-32B parameters)
 ├── embed/    # Embedding models for RAG and semantic search
 └── draft/    # Small draft models for speculative decoding
@@ -65,13 +65,13 @@ For each model type, Jenova uses the following priority (evaluated by `lib/jenov
 and the `jenova.conf` sourcing chain at startup — before model inference begins):
 
 1. **First `.gguf` file** in the corresponding typed subdirectory (alphabetically):
-   - Agent: `models/agent/*.gguf`
-   - Draft: `models/draft/*.gguf`
-   - Embed: `models/embed/*.gguf`
-2. **Legacy named file** in the flat `models/` root (specific filenames only, not a glob):
-   - Agent: `models/Qwen3.5-4B-Q6_K.gguf`
-   - Draft: `models/Qwen3.5-0.8B-Q8_0.gguf`
-   - Embed: `models/Qwen3-Embedding-0.6B-Q8_0.gguf`
+   - Agent: `$JCA_HOME/models/agent/*.gguf`
+   - Draft: `$JCA_HOME/models/draft/*.gguf`
+   - Embed: `$JCA_HOME/models/embed/*.gguf`
+2. **Legacy named file** in the flat `$JCA_HOME/models/` root (specific filenames only, not a glob):
+   - Agent: `$JCA_HOME/models/Qwen3.5-4B-Q6_K.gguf`
+   - Draft: `$JCA_HOME/models/Qwen3.5-0.8B-Q8_0.gguf`
+   - Embed: `$JCA_HOME/models/Qwen3-Embedding-0.6B-Q8_0.gguf`
 3. **Environment variable override** — applied in `etc/jenova.conf` after the helper runs,
    so it wins regardless of what the directory scan found:
    - `JENOVA_MODEL` overrides the agent model path
@@ -79,7 +79,7 @@ and the `jenova.conf` sourcing chain at startup — before model inference begin
    - `JENOVA_EMBED_MODEL` overrides the embed model path
 4. **Empty string / error** if no model is found and no override is set
 
-> **Note:** There is no generic `models/*.gguf` glob fallback. Only the specific legacy
+> **Note:** There is no generic `$JCA_HOME/models/*.gguf` glob fallback. Only the specific legacy
 > filenames listed above are checked when the typed subdirectories are empty. Place new
 > models in the appropriate subdirectory (`agent/`, `embed/`, or `draft/`) to ensure
 > auto-discovery works correctly.
@@ -104,7 +104,7 @@ Download models using the installer or manually:
 scripts/model_dl.sh
 
 # Manual download
-cd models/agent
+cd $JCA_HOME/models/agent
 wget https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q6_K.gguf
 ```
 

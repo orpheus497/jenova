@@ -16,7 +16,7 @@ cd jenova
 ./scripts/preflight-check.sh --verbose
 
 # 4. Build everything: llama.cpp (Vulkan) + jenova-ui
-make
+gmake
 
 # If you want the optional Web UI, install Node.js/npm and run:
 # make web

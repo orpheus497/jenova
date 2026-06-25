@@ -200,7 +200,7 @@ export PATH="$HOME/.local/bin:$PATH"  # .bashrc / .zshrc
 | Item | Location |
 |------|----------|
 | **Runtime logs** | `$JCA_HOME/var/log/` |
-| **Models** | `$JENOVA_ROOT/models/` |
+| **Models** | `$JCA_HOME/models/` |
 | **Project config** | `$JENOVA_ROOT/etc/jenova.conf` |
 
 ### Hardware Profile

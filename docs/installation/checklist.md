@@ -70,10 +70,10 @@ make install
 
 You can also run the full end-to-end workflow:
 ```bash
-./scripts/install-complete.sh
+./install-jenova.sh
 ```
 
-> Note: `install-complete.sh` skips optional LSP installation by default.
+> Note: `install-jenova.sh` skips optional LSP installation by default.
 
 Installation will:
 - ✓ Check system dependencies

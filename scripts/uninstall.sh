@@ -27,7 +27,7 @@
 #
 # What this preserves (user data, never touched by install/update):
 #   - ~/.local/state/nvim/ (undo files, shada, jenova chat history)
-#   - $JENOVA_ROOT/models/*.gguf (actual GGUF files; only the symlink is removed)
+#   - $JCA_HOME/models/*.gguf (actual GGUF files; only the symlink is removed)
 #   - The Jenova project directory itself (source code, configs, models)
 
 set -e
@@ -99,7 +99,7 @@ if [ "$YES" = "0" ]; then
         echo "    $JENOVA_ROOT/.jenova/ (PID files, locks — --clean-runtime)"
         echo "    $JCA_HOME/var/log/ (log files — --clean-runtime)"
         echo "    $JCA_HOME/var/cache/ (cache — --clean-runtime)"
-        echo "    $JENOVA_ROOT/models/jenova.gguf (symlink — --clean-runtime)"
+        echo "    $JCA_HOME/models/jenova.gguf (symlink — --clean-runtime)"
     fi
     if [ "$CLEAN_BUILDS" = "1" ]; then
         echo "    $JENOVA_ROOT/bin/jenova-ui/ (in-tree jenova build — --clean-builds)"

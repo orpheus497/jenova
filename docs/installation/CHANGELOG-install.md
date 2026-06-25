@@ -40,7 +40,7 @@ The Jenova installation process has been completely streamlined with comprehensi
 ./scripts/verify-install.sh --verbose # Detailed output
 ```
 
-### 3. **Complete Installation Workflow** (`scripts/install-complete.sh`)
+### 3. **Complete Installation Workflow** (`./install-jenova.sh`)
 One-command installation combining:
 1. Pre-flight checks
 2. Building all components
@@ -57,11 +57,11 @@ One-command installation combining:
 
 **Usage:**
 ```bash
-./scripts/install-complete.sh                # Standard install
-./scripts/install-complete.sh --skip-web     # Skip Web UI
-./scripts/install-complete.sh --skip-models  # Skip model downloads
-./scripts/install-complete.sh --no-verify    # Skip verification
-./scripts/install-complete.sh --force        # Overwrite config
+./install-jenova.sh                # Standard install
+./install-jenova.sh --skip-web     # Skip Web UI
+./install-jenova.sh --skip-models  # Skip model downloads
+./install-jenova.sh --no-verify    # Skip verification
+./install-jenova.sh --force        # Overwrite config
 ```
 
 ### 4. **Installation Checklists** (Documentation)
@@ -114,7 +114,7 @@ make install
 
 ### New Streamlined Approach
 ```bash
-./scripts/install-complete.sh
+./install-jenova.sh
 ```
 
 ## Quality Assurances
@@ -178,7 +178,7 @@ make install
 ./scripts/preflight-check.sh
 
 # Install everything (automated)
-./scripts/install-complete.sh
+./install-jenova.sh
 
 # Or step-by-step:
 make
@@ -189,10 +189,10 @@ make install
 ### Example 2: Installation with Options
 ```bash
 # Skip Web UI build and model downloads
-./scripts/install-complete.sh --skip-web --skip-models
+./install-jenova.sh --skip-web --skip-models
 
 # Overwrite existing configuration
-./scripts/install-complete.sh --force
+./install-jenova.sh --force
 ```
 
 ### Example 3: Troubleshooting
@@ -259,7 +259,7 @@ All existing scripts and workflows remain fully functional:
 
 ## Next Steps for Users
 
-1. **First-time install:** Use `./scripts/install-complete.sh`
+1. **First-time install:** Use `./install-jenova.sh`
 2. **Troubleshooting:** Run `./scripts/preflight-check.sh --verbose`
 3. **Verification:** Run `./scripts/verify-install.sh --full`
 4. **Reference:** Check `docs/installation/STREAMLINED.md`
@@ -289,7 +289,7 @@ All existing scripts and workflows remain fully functional:
 ### New Scripts
 - ✅ `scripts/preflight-check.sh` (9.3 KB)
 - ✅ `scripts/verify-install.sh` (8.6 KB)
-- ✅ `scripts/install-complete.sh` (6.8 KB)
+- ✅ `./install-jenova.sh` (6.8 KB)
 
 ### New Documentation
 - ✅ `docs/installation/checklist.md`

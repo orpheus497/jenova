@@ -27,4 +27,4 @@ Jenova requires several system-level dependencies for building and running the c
 
 
 > `node` / `npm` is optional and only required for the Web UI build via
-> `make web` or `./scripts/install-complete.sh` if the frontend is enabled.
+> `make web` or `./install-jenova.sh` if the frontend is enabled.
