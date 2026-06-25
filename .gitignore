@@ -5,7 +5,7 @@
 # --- Build Artifacts ---
 /public/
 /bin/llama-server
-/external/llama.cpp/build/
+/external/llama.cpp/
 /external/SPIRV-Headers/build/
 /external/SPIRV-Headers/
 
