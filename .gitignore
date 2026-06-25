@@ -123,6 +123,8 @@ core.*
 nul
 
 # Conductor working notes
+/.kdev4
+*.kdev4
 conductor/
 
 # --- Installation analysis artifacts ---
