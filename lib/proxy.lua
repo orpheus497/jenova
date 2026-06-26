@@ -187,6 +187,15 @@ local function async_popen_read(cmd)
     while true do
         local n = ffi.C.read(fd, buf, 4096)
         if n > 0 then
+        if watch_stdin and _ffi_defs.FD_ISSET(0, read_fds) then
+            local tmp_buf = ffi.new("char[1]")
+            local r = ffi.C.read(0, tmp_buf, 1)
+            if r <= 0 then
+                print("[proxy] EOF on stdin, parent process died. Shutting down...")
+                running = false
+                break
+            end
+        end
             chunks[#chunks + 1] = ffi.string(buf, n)
         elseif n == 0 then
             break
@@ -1019,6 +1028,13 @@ local read_fds = _ffi_defs.fd_set_new()
 local write_fds = _ffi_defs.fd_set_new()
 
 local running = true
+local watch_stdin = false
+for _, v in ipairs(arg or {}) do
+    if v == "--watch-stdin" then
+        watch_stdin = true
+        break
+    end
+end
 local function shutdown_handler(sig)
     io.write("[proxy] received signal " .. tostring(sig) .. ", shutting down...\n")
     running = false
@@ -1034,6 +1050,10 @@ while running do
     _ffi_defs.FD_SET(server_fd, read_fds)
 
     local max_fd = server_fd
+
+    if watch_stdin then
+        _ffi_defs.FD_SET(0, read_fds)
+    end
     for _fd, info in pairs(clients) do
         if info.type == "read" then
             _ffi_defs.FD_SET(info.watch_fd, read_fds)
@@ -1059,6 +1079,15 @@ while running do
     local n = ffi.C.select(max_fd + 1, read_fds, write_fds, nil, tv)
 
     if n > 0 then
+        if watch_stdin and _ffi_defs.FD_ISSET(0, read_fds) then
+            local tmp_buf = ffi.new("char[1]")
+            local r = ffi.C.read(0, tmp_buf, 1)
+            if r <= 0 then
+                print("[proxy] EOF on stdin, parent process died. Shutting down...")
+                running = false
+                break
+            end
+        end
         if _ffi_defs.FD_ISSET(server_fd, read_fds) then
             local client_addr = ffi.new("struct sockaddr_in")
             local addrlen = ffi.new("socklen_t[1]", ffi.sizeof(client_addr))

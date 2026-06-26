@@ -58,6 +58,7 @@ mkdir -p "$(dirname "$PID_FILE")" 2>/dev/null
 # Check for ownership issues early (detect if directory owned by root from sudo usage)
 _pid_dir=$(dirname "$PID_FILE")
 for _dir in "$JCA_HOME" "$JENOVA_STATE" "$LOG_DIR" "$CACHE_DIR" "$_pid_dir"; do
+    [ -z "$_dir" ] && continue
     if [ ! -d "$_dir" ]; then
         echo "Error: $_dir directory does not exist and could not be created." >&2
         exit 1
@@ -134,11 +135,6 @@ else
     exit 1
 fi
 
-JENOVA_LLAMA_URL="http://${HOST}:${LLAMA_PORT}"; export JENOVA_LLAMA_URL
-JENOVA_LLAMA_EMBED_URL="http://${HOST}:${LLAMA_EMBED_PORT}"; export JENOVA_LLAMA_EMBED_URL
-JENOVA_PROXY_PORT="$PORT"; export JENOVA_PROXY_PORT
-JENOVA_PROXY_HOST="$HOST"; export JENOVA_PROXY_HOST
-JENOVA_CTX="${JENOVA_CTX:-$CTX_SIZE}"; export JENOVA_CTX
 
 # Optional backend memory-fallback tuning from etc/jenova.local.conf.
 [ -n "${GGML_VK_ALLOW_SYSMEM_FALLBACK:-}" ] && export GGML_VK_ALLOW_SYSMEM_FALLBACK
@@ -282,19 +278,61 @@ _probe_health() {
     fi
 }
 
+# --- Logic: Argument Parsing ---
+_WATCH_AFTER_START=false
+ORIG_ARGS=""
+for _a in "$@"; do
+    ORIG_ARGS="$ORIG_ARGS \"$_a\""
+done
+
+_REMAINING_ARGS=""
+_ORIG_COUNT=$#
+_I=0
+while [ "$_I" -lt "$_ORIG_COUNT" ]; do
+    _arg="$1"
+    shift
+    _I=$((_I + 1))
+    case "$_arg" in
+        --watch) _WATCH_AFTER_START=true; continue ;;
+        --daemon|--lan) 
+            if [ "$_arg" = "--lan" ]; then
+                HOST="0.0.0.0"
+                _INT_HOST="127.0.0.1"
+                API_URL="http://${_INT_HOST}:${PORT}"
+                export JENOVA_HOST="0.0.0.0"
+            fi
+            continue 
+            ;;
+        --port) 
+            case "$1" in ""|-*) echo "Error: --port requires a value" >&2; exit 1 ;; esac
+            PORT="$1"; shift; _I=$((_I + 1)); export JENOVA_PORT="$PORT"; export JENOVA_PROXY_PORT="$PORT"; continue ;;
+        --llama-port) 
+            case "$1" in ""|-*) echo "Error: --llama-port requires a value" >&2; exit 1 ;; esac
+            LLAMA_PORT="$1"; shift; _I=$((_I + 1)); export JENOVA_LLAMA_PORT="$LLAMA_PORT"; continue ;;
+        --embed-port) 
+            case "$1" in ""|-*) echo "Error: --embed-port requires a value" >&2; exit 1 ;; esac
+            LLAMA_EMBED_PORT="$1"; shift; _I=$((_I + 1)); export JENOVA_LLAMA_EMBED_PORT="$LLAMA_EMBED_PORT"; continue ;;
+        *) 
+            _REMAINING_ARGS="$_REMAINING_ARGS '$_arg'"
+            ;;
+    esac
+done
+
+eval "set -- $_REMAINING_ARGS"
+
 # --- Control verbs ---
 case "$1" in
     stop)
         if [ -f "$PID_FILE" ]; then
-            read OLD_LLAMA_PID OLD_PROXY_PID OLD_EMBED_PID < "$PID_FILE" 2>/dev/null || OLD_LLAMA_PID=$(cat "$PID_FILE")
-            for P in $OLD_LLAMA_PID $OLD_PROXY_PID $OLD_EMBED_PID; do
+            read OLD_LLAMA_PID OLD_EMBED_PID < "$PID_FILE" 2>/dev/null || OLD_LLAMA_PID=$(cat "$PID_FILE")
+            for P in $OLD_LLAMA_PID $OLD_EMBED_PID; do
                 if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
                     echo "Stopping PID $P..."
                     kill -- "-$P" 2>/dev/null || kill "$P" 2>/dev/null || true
                 fi
             done
             sleep 2
-            for P in $OLD_LLAMA_PID $OLD_PROXY_PID $OLD_EMBED_PID; do
+            for P in $OLD_LLAMA_PID $OLD_EMBED_PID; do
                 if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
                     echo "Force-killing PID $P..."
                     kill -9 "$P" 2>/dev/null || true
@@ -313,17 +351,15 @@ case "$1" in
         ;;
     status)
         if [ -f "$PID_FILE" ]; then
-            read LLAMA_PID PROXY_PID EMBED_PID < "$PID_FILE" 2>/dev/null || LLAMA_PID=$(cat "$PID_FILE")
+            read LLAMA_PID EMBED_PID < "$PID_FILE" 2>/dev/null || LLAMA_PID=$(cat "$PID_FILE")
             _LLAMA_ALIVE=false
-            _PROXY_ALIVE=false
             _EMBED_ALIVE=false
             
             _is_alive() { [ -n "$1" ] && kill -0 "$1" 2>/dev/null; }
             _is_alive "$LLAMA_PID" && _LLAMA_ALIVE=true
-            _is_alive "$PROXY_PID" && _PROXY_ALIVE=true
             _is_alive "$EMBED_PID" && _EMBED_ALIVE=true
 
-            if $_LLAMA_ALIVE && $_PROXY_ALIVE; then
+            if $_LLAMA_ALIVE; then
                 CONNECT_HOST="${JENOVA_CONNECT_HOST:-127.0.0.1}"
                 if _probe_health 2; then
                     echo "Jenova is ready"
@@ -331,12 +367,10 @@ case "$1" in
                     echo "Jenova is starting"
                 fi
                 echo "llama-server: running (PID $LLAMA_PID)"
-                echo "Proxy: running (PID $PROXY_PID)"
                 [ -n "$EMBED_PID" ] && echo "Embed: $(if $_EMBED_ALIVE; then echo "running (PID $EMBED_PID)"; else echo "not running"; fi)"
             else
                 echo "Jenova is partially running"
                 echo "llama-server: $(if $_LLAMA_ALIVE; then echo "running (PID $LLAMA_PID)"; else echo "not running"; fi)"
-                echo "Proxy: $(if $_PROXY_ALIVE; then echo "running (PID $PROXY_PID)"; else echo "not running"; fi)"
             fi
         else
             echo "Jenova is stopped"
@@ -351,6 +385,15 @@ case "$1" in
         "$0" stop 2>/dev/null || true
         shift || true
         set -- "--daemon" "$@"
+        ;;
+    proxy-serve)
+        shift
+        # Parse --lan and export JENOVA_HOST="0.0.0.0"
+        if [ "$1" = "--lan" ]; then
+            export JENOVA_HOST="0.0.0.0"
+            shift
+        fi
+        exec luajit "$PROXY_SCRIPT" --watch-stdin "$@"
         ;;
     watch)
         shift
@@ -400,7 +443,7 @@ _watchdog() {
                 _ELAPSED=$((_NOW - _LAST_RESTART))
                 if [ $_ELAPSED -ge $_RESTART_COOLDOWN ]; then
                     _wlog "attempting full restart (no PID file for ${_CONSECUTIVE_FAILURES} checks)"
-                    "$0" start >> "$WATCH_LOG" 2>&1
+                    eval "\"$0\" start $ORIG_ARGS >> \"$WATCH_LOG\" 2>&1"
                     _LAST_RESTART=$_NOW
                     _CONSECUTIVE_FAILURES=0
                     sleep 5
@@ -411,11 +454,11 @@ _watchdog() {
             continue
         fi
 
-        read _W_LLAMA _W_PROXY _W_EMBED < "$PID_FILE" 2>/dev/null || _W_LLAMA=$(cat "$PID_FILE")
+        read _W_LLAMA _W_EMBED < "$PID_FILE" 2>/dev/null || _W_LLAMA=$(cat "$PID_FILE")
         _ANY_DEAD=false
         _DEAD_NAMES=""
 
-        for _ENTRY in "llama-server:$_W_LLAMA" "proxy:$_W_PROXY" "embed:$_W_EMBED"; do
+        for _ENTRY in "llama-server:$_W_LLAMA" "embed:$_W_EMBED"; do
             _NAME=$(echo "$_ENTRY" | cut -d: -f1)
             _PID=$(echo "$_ENTRY" | cut -d: -f2)
             if [ -n "$_PID" ] && ! kill -0 "$_PID" 2>/dev/null; then
@@ -448,7 +491,7 @@ _watchdog() {
                     _wlog "restarting all services (${_CONSECUTIVE_FAILURES} consecutive failures)"
                     "$0" stop >> "$WATCH_LOG" 2>&1 || true
                     sleep 2
-                    "$0" start >> "$WATCH_LOG" 2>&1
+                    eval "\"$0\" start $ORIG_ARGS >> \"$WATCH_LOG\" 2>&1"
                     _LAST_RESTART=$_NOW
                     _CONSECUTIVE_FAILURES=0
                     sleep 10
@@ -473,16 +516,6 @@ if [ "${_ENTER_WATCHDOG:-0}" = "1" ]; then
 fi
 
 # --- Startup banner ---
-# --lan flag: bind on all interfaces for LAN access
-for _arg in "$@"; do
-    if [ "$_arg" = "--lan" ]; then
-        HOST="0.0.0.0"
-        _INT_HOST="127.0.0.1"
-        API_URL="http://${_INT_HOST}:${PORT}"
-        break
-    fi
-done
-
 # --- Finalize internal URLs and Export them ---
 # Ensure HOST has a sensible default before setting _INT_HOST
 HOST="${HOST:-127.0.0.1}"
@@ -527,42 +560,13 @@ echo ""
 # =====================================================================
 # DAEMON MODE
 # =====================================================================
-_WATCH_AFTER_START=false
-for _arg in "$@"; do
-    if [ "$_arg" = "--watch" ]; then _WATCH_AFTER_START=true; fi
-done
 
-# --- Logic: Argument Parsing ---
-_parse_runtime_args() {
-    _ORIG_COUNT=$#
-    _I=0
-    while [ "$_I" -lt "$_ORIG_COUNT" ]; do
-        _arg="$1"
-        shift
-        _I=$((_I + 1))
-        case "$_arg" in
-            --watch|--lan|--daemon) continue ;;
-            --port) 
-                case "$1" in ""|-*) echo "Error: --port requires a value" >&2; exit 1 ;; esac
-                PORT="$1"; shift; _I=$((_I + 1)); continue ;;
-            --llama-port) 
-                case "$1" in ""|-*) echo "Error: --llama-port requires a value" >&2; exit 1 ;; esac
-                LLAMA_PORT="$1"; shift; _I=$((_I + 1)); continue ;;
-            --embed-port) 
-                case "$1" in ""|-*) echo "Error: --embed-port requires a value" >&2; exit 1 ;; esac
-                LLAMA_EMBED_PORT="$1"; shift; _I=$((_I + 1)); continue ;;
-            *) set -- "$@" "$_arg" ;;
-        esac
-    done
-}
 
 # --- Arguments: Daemon Mode ---
 if [ "$1" = "--daemon" ]; then
     shift
     # Robust POSIX argument filtering: collect flags for jenova-ca,
     # and rebuild the positional parameters for llama-server.
-    _parse_runtime_args "$@"
-    shift "$_I"
 
     # Acquire exclusive lock to prevent concurrent startup (TOCTOU guard)
     # Use portable locking: flock on Linux/FreeBSD, or fallback to mkdir-based lock
@@ -620,10 +624,10 @@ if [ "$1" = "--daemon" ]; then
     fi
 
     if [ -f "$PID_FILE" ]; then
-        read OLD_LLAMA_PID OLD_PROXY_PID OLD_EMBED_PID < "$PID_FILE" 2>/dev/null || OLD_LLAMA_PID=$(cat "$PID_FILE")
+        read OLD_LLAMA_PID OLD_EMBED_PID < "$PID_FILE" 2>/dev/null || OLD_LLAMA_PID=$(cat "$PID_FILE")
         _ALL_ALIVE=true
         _ANY_ALIVE=false
-        for _P in $OLD_LLAMA_PID $OLD_PROXY_PID; do
+        for _P in $OLD_LLAMA_PID; do
             if [ -n "$_P" ] && kill -0 "$_P" 2>/dev/null; then
                 _ANY_ALIVE=true
             elif [ -n "$_P" ]; then
@@ -637,13 +641,13 @@ if [ "$1" = "--daemon" ]; then
         fi
         if $_ANY_ALIVE; then
             echo "Partial failure detected — stopping survivors before restart..."
-            for _P in $OLD_LLAMA_PID $OLD_PROXY_PID $OLD_EMBED_PID; do
+            for _P in $OLD_LLAMA_PID $OLD_EMBED_PID; do
                 if [ -n "$_P" ] && kill -0 "$_P" 2>/dev/null; then
                     kill -- "-$_P" 2>/dev/null || kill "$_P" 2>/dev/null || true
                 fi
             done
             sleep 2
-            for _P in $OLD_LLAMA_PID $OLD_PROXY_PID $OLD_EMBED_PID; do
+            for _P in $OLD_LLAMA_PID $OLD_EMBED_PID; do
                 if [ -n "$_P" ] && kill -0 "$_P" 2>/dev/null; then
                     kill -9 "$_P" 2>/dev/null || true
                 fi
@@ -707,15 +711,13 @@ if [ "$1" = "--daemon" ]; then
         exit 1
     fi
 
-    luajit "$PROXY_SCRIPT" >> "$LOG_FILE" 2>&1 9>&- &
-    PROXY_PID=$!
 
-    echo "Started: llama-server=$LLAMA_PID proxy=$PROXY_PID embed=${EMBED_PID:-none}"
+    echo "Started: llama-server=$LLAMA_PID embed=${EMBED_PID:-none}"
 
     # Liveness check — verify all processes survive startup
     sleep 2
     _ANY_DEAD=false
-    for _P in $LLAMA_PID $PROXY_PID $EMBED_PID; do
+    for _P in $LLAMA_PID $EMBED_PID; do
         if [ -n "$_P" ] && ! kill -0 "$_P" 2>/dev/null; then
             echo "ERROR: Process $_P died shortly after startup. Check logs at $LOG_FILE" >&2
             _ANY_DEAD=true
@@ -732,7 +734,7 @@ if [ "$1" = "--daemon" ]; then
     fi
 
     # Write pidfile only after verified alive (while still holding lock)
-    printf '%s' "$LLAMA_PID $PROXY_PID${EMBED_PID:+ $EMBED_PID}" > "$PID_FILE"
+    printf '%s' "$LLAMA_PID${EMBED_PID:+ $EMBED_PID}" > "$PID_FILE"
     echo "" >> "$PID_FILE"
 
     if [ "$_LOCK_FLOCK" = "1" ]; then exec 9>&-; fi
@@ -747,8 +749,6 @@ fi
 # =====================================================================
 # FOREGROUND MODE
 # =====================================================================
-_parse_runtime_args "$@"
-shift "$_I"
 
 _set_path_args
 
@@ -799,7 +799,7 @@ fi
 cleanup() {
     echo "Cleaning up..."
     # 1. First pass: gentle TERM signal to known PIDs and their process groups
-    for P in $LLAMA_PID $PROXY_PID $EMBED_PID; do
+    for P in $LLAMA_PID $EMBED_PID; do
         if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
             kill "$P" 2>/dev/null || true
             kill -- "-$P" 2>/dev/null || true
@@ -813,7 +813,7 @@ cleanup() {
     sleep 1
 
     # 3. Final pass: forceful KILL if still alive
-    for P in $LLAMA_PID $PROXY_PID $EMBED_PID; do
+    for P in $LLAMA_PID $EMBED_PID; do
         if [ -n "$P" ] && kill -0 "$P" 2>/dev/null; then
             kill -9 "$P" 2>/dev/null || true
             kill -9 -- "-$P" 2>/dev/null || true
@@ -821,7 +821,6 @@ cleanup() {
     done
 
     wait $LLAMA_PID 2>/dev/null
-    wait $PROXY_PID 2>/dev/null
     [ -n "$EMBED_PID" ] && wait $EMBED_PID 2>/dev/null
 
     rm -f "$PID_FILE"
@@ -832,12 +831,9 @@ trap cleanup EXIT
 trap 'cleanup; trap - EXIT; exit 130' INT
 trap 'cleanup; trap - EXIT; exit 143' TERM
 
-echo "Starting Jenova Intelligence Proxy on port $PORT..."
-luajit "$PROXY_SCRIPT" &
-PROXY_PID=$!
 
 # Write pidfile — never write "0" as a placeholder PID
-printf '%s' "$LLAMA_PID $PROXY_PID${EMBED_PID:+ $EMBED_PID}" > "$PID_FILE"
+    printf '%s' "$LLAMA_PID${EMBED_PID:+ $EMBED_PID}" > "$PID_FILE"
 echo "" >> "$PID_FILE"
 
-wait $LLAMA_PID $PROXY_PID ${EMBED_PID:+$EMBED_PID}
+wait $LLAMA_PID ${EMBED_PID:+$EMBED_PID}

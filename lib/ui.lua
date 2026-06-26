@@ -52,10 +52,16 @@ local function detect_probe_tool()
     return _cached_probe_tool
 end
 
+local last_lan_state = nil
+
 ui.init = function(root_path)
     root = root_path or ""
     -- Pre-cache probe tool on init so first poll_status is fast
     detect_probe_tool()
+    last_lan_state = is_lan_enabled()
+    local lan_arg = last_lan_state and "--lan" or ""
+    if ui._proxy_handle then pcall(function() ui._proxy_handle:close() end) end
+    ui._proxy_handle = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " proxy-serve " .. lan_arg, "w")
 end
 
 ui.get_menu = function()
@@ -103,21 +109,33 @@ ui.on_action = function(action)
             sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " restart")
         end
     elseif action == "toggle_lan" then
+        if ui._proxy_handle then pcall(function() ui._proxy_handle:close() end) end
+        ui._proxy_handle = nil
         local currently_lan = is_lan_enabled()
         set_lan_state(not currently_lan)
-        -- Restart with new mode
+        last_lan_state = not currently_lan
+        local lan_arg = (not currently_lan) and "--lan" or ""
+        ui._proxy_handle = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " proxy-serve " .. lan_arg, "w")
         if not currently_lan then
             sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " restart --lan")
         else
             sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " restart")
         end
     elseif action == "quit" then
+        if ui._proxy_handle then pcall(function() ui._proxy_handle:close() end) end
         sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " stop")
         quit_app()
     end
 end
 
 ui.poll_status = function()
+    local current_lan_state = is_lan_enabled()
+    if last_lan_state ~= nil and current_lan_state ~= last_lan_state then
+        last_lan_state = current_lan_state
+        if ui._proxy_handle then pcall(function() ui._proxy_handle:close() end) end
+        local lan_arg = current_lan_state and "--lan" or ""
+        ui._proxy_handle = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " proxy-serve " .. lan_arg, "w")
+    end
     -- 1. Check if backend pipeline reports ready using its own status command
     -- which correctly respects configured ports and runs internal healthchecks.
     local f1 = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " status 2>&1", "r")
