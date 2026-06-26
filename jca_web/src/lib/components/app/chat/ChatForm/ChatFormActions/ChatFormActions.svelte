@@ -1,14 +1,12 @@
 <script lang="ts">
-	import { Square } from '@lucide/svelte';
+	import { Square, Lightbulb } from '@lucide/svelte';
 	import { Button } from '$lib/components/ui/button';
 	import {
 		ChatFormActionAttachmentsDropdown,
 		ChatFormActionAttachmentsSheet,
 		ChatFormActionRecord,
 		ChatFormActionSubmit,
-		McpServersSelector,
-		ModelsSelector,
-		ModelsSelectorSheet
+		McpServersSelector
 	} from '$lib/components/app';
 	import { SETTINGS_SECTION_TITLES } from '$lib/constants';
 	import { mcpStore } from '$lib/stores/mcp.svelte';
@@ -21,6 +19,7 @@
 	import { chatStore } from '$lib/stores/chat.svelte';
 	import { activeMessages, conversationsStore } from '$lib/stores/conversations.svelte';
 	import { IsMobile } from '$lib/hooks/is-mobile.svelte';
+	import { canvasStore } from '$lib/stores/canvas.svelte';
 
 	interface Props {
 		canSend?: boolean;
@@ -161,12 +160,10 @@
 		return '';
 	});
 
-	let selectorModelRef: ModelsSelector | ModelsSelectorSheet | undefined = $state(undefined);
-
 	let isMobile = new IsMobile();
 
 	export function openModelSelector() {
-		selectorModelRef?.open();
+		// Handled by ChatForm directly
 	}
 
 	const chatSettingsDialog = getChatSettingsDialogContext();
@@ -214,6 +211,18 @@
 			/>
 		{/if}
 
+		<!-- Canvas Idea Toggle -->
+		<label class="flex items-center gap-2 cursor-pointer group ml-1 mr-1">
+			<div class="relative">
+				<input bind:checked={canvasStore.enabled} class="sr-only" type="checkbox" />
+				<div class="w-8 h-4 rounded-full border transition-colors {canvasStore.enabled ? 'bg-primary border-primary' : 'bg-surface-variant border-outline'}"></div>
+				<div class="absolute left-[2px] top-[2px] w-3 h-3 rounded-full transition-transform {canvasStore.enabled ? 'shadow-[0_0_5px_rgba(221,183,255,0.5)] bg-on-primary translate-x-4' : 'bg-outline translate-x-0'}"></div>
+			</div>
+			<span class="font-mono text-[12px] transition-colors flex items-center gap-1 {canvasStore.enabled ? 'text-on-surface' : 'text-on-surface-variant'}">
+				<Lightbulb size={14} class={canvasStore.enabled ? 'text-primary animate-pulse' : ''} /> Canvas Idea
+			</span>
+		</label>
+
 		<McpServersSelector
 			{disabled}
 			onSettingsClick={() => chatSettingsDialog.open(SETTINGS_SECTION_TITLES.MCP)}
@@ -221,23 +230,6 @@
 	</div>
 
 	<div class="ml-auto flex items-center gap-1.5">
-		{#if isMobile.current}
-			<ModelsSelectorSheet
-				disabled={disabled || isOffline}
-				bind:this={selectorModelRef}
-				currentModel={conversationModel}
-				forceForegroundText
-				useGlobalSelection
-			/>
-		{:else}
-			<ModelsSelector
-				disabled={disabled || isOffline}
-				bind:this={selectorModelRef}
-				currentModel={conversationModel}
-				forceForegroundText
-				useGlobalSelection
-			/>
-		{/if}
 	</div>
 
 	{#if isLoading}

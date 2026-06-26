@@ -1,7 +1,7 @@
 /**
  * Utility functions for conversation data manipulation
  */
-import type { DatabaseMessage } from '$lib/types';
+import type { DatabaseMessage } from "$lib/types";
 
 /**
  * Creates a map of conversation IDs to their message counts from exported conversation data
@@ -9,15 +9,18 @@ import type { DatabaseMessage } from '$lib/types';
  * @returns Map of conversation ID to message count
  */
 export function createMessageCountMap(
-	exportedData: Array<{ conv: DatabaseConversation; messages: DatabaseMessage[] }>
+  exportedData: Array<{
+    conv: DatabaseConversation;
+    messages: DatabaseMessage[];
+  }>,
 ): Map<string, number> {
-	const countMap = new Map<string, number>();
+  const countMap = new Map<string, number>();
 
-	for (const item of exportedData) {
-		countMap.set(item.conv.id, item.messages.length);
-	}
+  for (const item of exportedData) {
+    countMap.set(item.conv.id, item.messages.length);
+  }
 
-	return countMap;
+  return countMap;
 }
 
 /**
@@ -26,6 +29,9 @@ export function createMessageCountMap(
  * @param countMap - Map of conversation IDs to message counts
  * @returns The message count, or 0 if not found
  */
-export function getMessageCount(conversationId: string, countMap: Map<string, number>): number {
-	return countMap.get(conversationId) ?? 0;
+export function getMessageCount(
+  conversationId: string,
+  countMap: Map<string, number>,
+): number {
+  return countMap.get(conversationId) ?? 0;
 }

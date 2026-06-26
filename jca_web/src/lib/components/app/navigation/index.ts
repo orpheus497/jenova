@@ -35,7 +35,7 @@
  * </DropdownMenu.Root>
  * ```
  */
-export { default as DropdownMenuSearchable } from './DropdownMenuSearchable.svelte';
+export { default as DropdownMenuSearchable } from "./DropdownMenuSearchable.svelte";
 
 /**
  * **DropdownMenuActions** - Multi-action dropdown menu
@@ -62,4 +62,4 @@ export { default as DropdownMenuSearchable } from './DropdownMenuSearchable.svel
  * />
  * ```
  */
-export { default as DropdownMenuActions } from './DropdownMenuActions.svelte';
+export { default as DropdownMenuActions } from "./DropdownMenuActions.svelte";

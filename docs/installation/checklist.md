@@ -36,17 +36,15 @@ git clone https://github.com/orpheus497/jenova
 cd jenova
 ```
 
-llama.cpp and other dependencies are now bundled in the repository's `external/` directory, so no further downloads are required.
+llama.cpp and other dependencies are now bundled or automatically fetched in the repository's `external/` directory via git submodules, so no further manual downloads are required.
 
 ### Step 4: Build Everything
 ```bash
-# Full build: llama.cpp + jvim + web UI
+# Full build: llama.cpp + web UI
 make
 
 # Or build individually:
-make llama              # Inference backend (Vulkan)
-make llama-hybrid       # Vulkan + CUDA (if multi-GPU)
-make jvim               # Editor
+make llama              # Inference backend (auto)
 make web                # Web UI (requires npm/Node.js)
 
 # Clean and rebuild if needed:
@@ -56,7 +54,6 @@ make
 
 **⏱️ Expected times:**
 - llama.cpp: 10-30 minutes (depends on CPU)
-- jvim: 5-15 minutes
 - web UI: 2-5 minutes (if npm available)
 
 ### Step 5: Deploy to System
@@ -73,16 +70,15 @@ make install
 
 You can also run the full end-to-end workflow:
 ```bash
-./scripts/install-complete.sh
+./install-jenova.sh
 ```
 
-> Note: `install-complete.sh` skips optional LSP installation by default.
+> Note: `install-jenova.sh` skips optional LSP installation by default.
 
 Installation will:
 - ✓ Check system dependencies
-- ✓ Create runtime directories (~/.jenova, var/log, var/cache)
+- ✓ Create runtime directories (~/JCA/var/log, ~/JCA/var/cache)
 - ✓ Auto-detect and apply hardware profile
-- ✓ Deploy jvim config to ~/.config/jvim/
 - ✓ Install symlinks to PATH (~/.local/bin/)
 - ✓ Attempt to install LSP servers, linters, formatters
 - ✓ Display next-step instructions
@@ -115,11 +111,8 @@ sudo ./scripts/jenova-setup
 # Jenova Manager (Operational TUI)
 jenova-tui
 
-# Full environment (backend daemons + editor)
+# Start the Jenova Desktop Manager or TUI
 jenova
-...
-# Or just the editor (no backend management)
-jvim
 
 # Or just the backend (headless/server mode)
 jenova-ca
@@ -142,8 +135,8 @@ cat etc/jenova.conf
 jenova-ca status
 
 # View logs
-tail -f var/log/llama-server.log
-tail -f var/log/proxy.log
+tail -f ~/JCA/var/log/llama-server.log
+tail -f ~/JCA/var/log/proxy.log
 ```
 
 ## Configuration & Troubleshooting
@@ -159,10 +152,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc  # Bash
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # Zsh
 ```
 
-### jvim Configuration Location
-- **Config:** `~/.config/jvim/`
-- **Plugins:** `~/.local/share/nvim/lazy/`
-- **State:** `~/.local/state/nvim/` (undo, shada, chat history)
+
 
 ### Hardware Profile Issues
 ```bash
@@ -215,7 +205,6 @@ make clean && make
 ./scripts/update.sh
 
 # Or customize the update:
-./scripts/update.sh --upgrade-plugins  # Update Neovim plugins
 ./scripts/update.sh --apply-profile    # Re-apply hardware profile
 ./scripts/update.sh --skip-rebuild     # Skip llama.cpp rebuild
 ```
@@ -244,7 +233,7 @@ make clean && make
 ./scripts/verify-install.sh --full --verbose
 
 # Check logs
-ls -lh var/log/
+ls -lh ~/JCA/var/log/
 
 # Monitor running processes
 ps aux | grep -E 'jenova-ca|llama-server|proxy'
@@ -255,8 +244,8 @@ curl -I http://localhost:8080/health
 
 ### Getting Help
 - **Installation issues:** Run `./scripts/preflight-check.sh --verbose`
-- **Build failures:** Check `var/log/` and `UPSTREAM-COPYRIGHT`
-- **Runtime issues:** Check `~/.local/state/nvim/` for chat history
+- **Build failures:** Check `~/JCA/var/log/` and `UPSTREAM-COPYRIGHT`
+
 - **Hardware profile:** Run `./hardware-profiles/detect-hardware.sh --info`
 
 ## Next Steps After Installation
@@ -267,12 +256,10 @@ curl -I http://localhost:8080/health
 3. ✓ Run system tuning (`sudo jenova-setup`)
 
 ### Recommended
-1. Set `jvim` as your `$EDITOR`
 2. Configure shell keybindings for Jenova CLI
 3. Set up remote access if using LAN client mode
 
 ### Optional
-1. Install additional LSP servers (`:Mason` in jvim)
-2. Configure `.config/jvim/init.lua` for custom plugins
+1. Install additional LSP servers in your editor
 3. Set up GitHub integration (OAuth token in `.jenova/auth`)
 4. Enable web search (API key in `.jenova/config`)

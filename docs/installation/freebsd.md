@@ -5,7 +5,7 @@ Jenova is primarily developed and optimized for FreeBSD 15.
 ## Quick Install
 
 ```sh
-# 1. Install system dependencies (gmake is required to build jvim)
+# 1. Install system dependencies (gmake is required to build jenova-ui)
 pkg install luajit-openresty git gmake cmake vulkan-loader curl lua54 gettext-tools
 
 # 2. Clone the repo
@@ -15,15 +15,15 @@ cd jenova
 # 3. Run a pre-flight check before building
 ./scripts/preflight-check.sh --verbose
 
-# 4. Build everything: llama.cpp (Vulkan) + jvim
-make
+# 4. Build everything: llama.cpp (Vulkan) + jenova-ui
+gmake
 
 # If you want the optional Web UI, install Node.js/npm and run:
 # make web
 
 # 5. Run the installer (hardware-aware)
-# This deploys a standalone system to ~/Jenova and symlinks to ~/.local/bin/
-make install
+# This deploys a standalone system to ~/JCA and symlinks to ~/.local/bin/
+gmake install
 ```
 
 You can also use the streamlined installation script:
@@ -37,22 +37,20 @@ You can also use the streamlined installation script:
 
 ### 1. Build Components
 You can build components individually if needed:
-- `make llama` — build `llama.cpp` with Vulkan support (calls `bin/build-llama-jenova`).
-- `make jvim` — build the bundled Neovim hard-fork (`jvim/build/bin/nvim`).
-- `make clean` — wipe build artifacts from all three subsystems.
-- `make clean-root` — remove leftover artifacts in the repo root.
+- `gmake llama` — build `llama.cpp` with auto-detected hardware support (calls `bin/build-llama-jenova`).
+- `gmake clean` — wipe build artifacts from all three subsystems.
+- `gmake clean-root` — remove leftover artifacts in the repo root.
 
 ### 2. Run the Installer
 `scripts/install.sh` handles the deployment. It supports several flags:
 
 | Flag | Action |
 |------|--------|
-| `--force` | Overwrite existing config / symlinks; force jvim rebuild. |
-| `--link` | Install jvim config as symlinks (dev workflow). |
-| `--skip-jvim` | Skip building the bundled jvim editor. |
+| `--force` | Overwrite existing config / symlinks; force jenova-ui rebuild. |
+| `--skip-jenova-ui` | Skip building the bundled jenova-ui desktop manager. |
 | `--skip-llama` | Skip the llama.cpp build check. |
 | `--skip-lsp` | Skip optional LSP server setup. |
-| `--client-only` | LAN client install — implies `--skip-llama --skip-jvim`; talks to a remote backend. |
+| `--client-only` | LAN client install — implies `--skip-llama --skip-jenova-ui`; talks to a remote backend. |
 
 ### 3. Hardware Profile Deployment
 After the main installation, you must configure your hardware profile:

@@ -22,9 +22,9 @@
  * ```
  */
 export function throwIfAborted(signal?: AbortSignal): void {
-	if (signal?.aborted) {
-		throw new DOMException('Operation was aborted', 'AbortError');
-	}
+  if (signal?.aborted) {
+    throw new DOMException("Operation was aborted", "AbortError");
+  }
 }
 
 /**
@@ -48,13 +48,13 @@ export function throwIfAborted(signal?: AbortSignal): void {
  * ```
  */
 export function isAbortError(error: unknown): boolean {
-	if (error instanceof DOMException && error.name === 'AbortError') {
-		return true;
-	}
-	if (error instanceof Error && error.name === 'AbortError') {
-		return true;
-	}
-	return false;
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return true;
+  }
+  if (error instanceof Error && error.name === "AbortError") {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -74,23 +74,27 @@ export function isAbortError(error: unknown): boolean {
  * await fetch(url, { signal: linked.signal });
  * ```
  */
-export function createLinkedController(...signals: (AbortSignal | undefined)[]): AbortController {
-	const controller = new AbortController();
+export function createLinkedController(
+  ...signals: (AbortSignal | undefined)[]
+): AbortController {
+  const controller = new AbortController();
 
-	for (const signal of signals) {
-		if (!signal) continue;
+  for (const signal of signals) {
+    if (!signal) continue;
 
-		// If already aborted, abort immediately
-		if (signal.aborted) {
-			controller.abort(signal.reason);
-			return controller;
-		}
+    // If already aborted, abort immediately
+    if (signal.aborted) {
+      controller.abort(signal.reason);
+      return controller;
+    }
 
-		// Link to parent signal
-		signal.addEventListener('abort', () => controller.abort(signal.reason), { once: true });
-	}
+    // Link to parent signal
+    signal.addEventListener("abort", () => controller.abort(signal.reason), {
+      once: true,
+    });
+  }
 
-	return controller;
+  return controller;
 }
 
 /**
@@ -106,7 +110,7 @@ export function createLinkedController(...signals: (AbortSignal | undefined)[]):
  * ```
  */
 export function createTimeoutSignal(ms: number): AbortSignal {
-	return AbortSignal.timeout(ms);
+  return AbortSignal.timeout(ms);
 }
 
 /**
@@ -126,26 +130,29 @@ export function createTimeoutSignal(ms: number): AbortSignal {
  * );
  * ```
  */
-export async function withAbortSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
-	if (!signal) return promise;
+export async function withAbortSignal<T>(
+  promise: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (!signal) return promise;
 
-	throwIfAborted(signal);
+  throwIfAborted(signal);
 
-	return new Promise<T>((resolve, reject) => {
-		const abortHandler = () => {
-			reject(new DOMException('Operation was aborted', 'AbortError'));
-		};
+  return new Promise<T>((resolve, reject) => {
+    const abortHandler = () => {
+      reject(new DOMException("Operation was aborted", "AbortError"));
+    };
 
-		signal.addEventListener('abort', abortHandler, { once: true });
+    signal.addEventListener("abort", abortHandler, { once: true });
 
-		promise
-			.then((value) => {
-				signal.removeEventListener('abort', abortHandler);
-				resolve(value);
-			})
-			.catch((error) => {
-				signal.removeEventListener('abort', abortHandler);
-				reject(error);
-			});
-	});
+    promise
+      .then((value) => {
+        signal.removeEventListener("abort", abortHandler);
+        resolve(value);
+      })
+      .catch((error) => {
+        signal.removeEventListener("abort", abortHandler);
+        reject(error);
+      });
+  });
 }

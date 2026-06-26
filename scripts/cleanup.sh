@@ -21,8 +21,8 @@ _REAL_SCRIPT="$(realpath "$0" 2>/dev/null || echo "$0")"
 _SCRIPT_DIR="$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)"
 JENOVA_ROOT="$(cd "$_SCRIPT_DIR/.." && pwd)"
 JENOVA_DIR="${JENOVA_STATE:-$JENOVA_ROOT/.jenova}"
-LOG_DIR="$JENOVA_ROOT/var/log"
-CACHE_DIR="$JENOVA_ROOT/var/cache"
+LOG_DIR="$JCA_HOME/var/log"
+CACHE_DIR="$JCA_HOME/var/cache"
 PID_FILE="$JENOVA_DIR/jenova-ca.pid"
 
 DO_LOGS=0

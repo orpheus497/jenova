@@ -90,7 +90,7 @@
 	{:else}
 		<div class="grid grid-cols-2 gap-1 px-2">
             <Button
-                class="justify-start gap-2 h-9 px-3"
+                class="justify-start gap-2 h-9 px-3 hover:text-[#7b52ab]"
                 href="?new_chat=true#/"
                 onclick={handleMobileSidebarItemClick}
                 variant="ghost"
@@ -100,7 +100,7 @@
             </Button>
 
             <Button
-                class="justify-start gap-2 h-9 px-3"
+                class="justify-start gap-2 h-9 px-3 hover:text-[#7b52ab]"
                 onclick={() => {
                     isSearchModeActive = true;
                 }}
@@ -113,7 +113,7 @@
         
         <div class="grid grid-cols-2 gap-1 px-2">
             <Button
-                class="justify-start gap-2 h-9 px-3"
+                class="justify-start gap-2 h-9 px-3 hover:text-[#7b52ab]"
                 onclick={() => {
                     chatSettingsDialog.open(SETTINGS_SECTION_TITLES.MCP);
                 }}
@@ -124,7 +124,7 @@
             </Button>
 
             <Button
-                class="justify-start gap-2 h-9 px-3"
+                class="justify-start gap-2 h-9 px-3 hover:text-[#7b52ab]"
                 onclick={() => {
                     chatSettingsDialog.open(SETTINGS_SECTION_TITLES.GENERAL);
                 }}
@@ -137,7 +137,7 @@
 
 		<div class="grid grid-cols-2 gap-1 px-2">
 			<Button
-				class="justify-start gap-2 h-9 px-3"
+				class="justify-start gap-2 h-9 px-3 hover:text-[#7b52ab]"
 				onclick={handlePush}
 				variant="ghost"
 				disabled={isSyncing}
@@ -146,7 +146,7 @@
 				<span class="text-xs">Push</span>
 			</Button>
 			<Button
-				class="justify-start gap-2 h-9 px-3"
+				class="justify-start gap-2 h-9 px-3 hover:text-[#7b52ab]"
 				onclick={handlePull}
 				variant="ghost"
 				disabled={isSyncing}

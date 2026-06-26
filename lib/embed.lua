@@ -29,7 +29,7 @@ function embed.init(opts)
   opts = opts or {}
   initialized = false
   EMBED_URL = opts.embed_url or os.getenv("JENOVA_LLAMA_EMBED_URL") or "http://127.0.0.1:8082"
-  local embed_bin = opts.embed_bin or os.getenv("JENOVA_LLAMA_SERVER") or (opts.script_dir and (opts.script_dir .. "/external/llama.cpp/build/bin/llama-server"))
+  local embed_bin = opts.embed_bin or os.getenv("JENOVA_LLAMA_SERVER") or (opts.script_dir and (opts.script_dir .. "/external/ext_bin/bin/llama-server"))
   local model_path = opts.model_path or os.getenv("JENOVA_EMBED_MODEL") or (opts.script_dir and (opts.script_dir .. "/models/Qwen3-Embedding-0.6B-Q8_0.gguf"))
 
   -- Quick check if already running
@@ -52,8 +52,8 @@ function embed.init(opts)
                       '-ngl', '0', '-c', '4096', '-b', '512', '--offline' }
 
       local home = os.getenv("HOME") or "/tmp"
-      local jenova_home = os.getenv("JENOVA_HOME") or (home .. "/Jenova")
-      local state_dir = os.getenv("JENOVA_STATE") or ((opts.script_dir and opts.script_dir ~= '') and (opts.script_dir .. "/.system") or (jenova_home .. "/.system"))
+      local jca_home = os.getenv("JCA_HOME") or (home .. "/Jenova")
+      local state_dir = os.getenv("JENOVA_STATE") or ((opts.script_dir and opts.script_dir ~= '') and (opts.script_dir .. "/.system") or (jca_home .. "/.system"))
       os.execute(string.format('mkdir -p %q', state_dir))
       
       local ok, pid_or_err = daemon.start_background(args, state_dir .. '/llama-embed.log', opts.script_dir or '.', state_dir .. '/llama-embed.pid', {GGML_VULKAN_DISABLE="1", GGML_VK_DEVICE=""})

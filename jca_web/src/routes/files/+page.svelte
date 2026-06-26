@@ -2,4 +2,4 @@
     import FilesView from '$lib/components/app/content/FilesView.svelte';
 </script>
 
-<FilesView currentFolderId={null} />
+<FilesView currentFolderId={undefined} />

@@ -16,17 +16,17 @@ cd jenova
 **What it does:**
 - ✓ Detects your OS and package manager automatically
 - ✓ Installs all required system dependencies
-- ✓ Builds Jenova components (llama.cpp, jvim, Web UI)
-- ✓ Deploys a standalone system to ~/Jenova (bin/, lib/, etc/, public/)
-- ✓ Symlinks launchers to ~/.local/bin/ (jvim, jenova, jenova-ca, etc.)
+- ✓ Builds Jenova components (llama.cpp, Web UI)
+- ✓ Deploys a standalone system to ~/JCA (bin/, lib/, etc/, public/)
+- ✓ Symlinks launchers to ~/.local/bin/ (jenova, jenova-ca, etc.)
 - ✓ Downloads AI models (~5-10GB)
 - ✓ Verifies everything works
 
 ### Deployment Architecture
 Jenova is designed to be fully decoupled from its source repository. 
-- **Application Home**: `~/Jenova/` contains the entire runtime environment.
+- **Application Home**: `~/JCA/` contains the entire runtime environment.
 - **Source Repository**: Can be safely deleted after a successful `make install`.
-- **Launchers**: Symlinks in `~/.local/bin/` point directly into `~/Jenova/bin/`.
+- **Launchers**: Symlinks in `~/.local/bin/` point directly into `~/JCA/bin/`.
 - **Path Locking**: The system uses realpath-based discovery to ensure all internal dependencies (scripts, shared libraries, and web assets) are loaded from the installation home, never from the repository or accidental local paths.
 
 ### Advanced Installation Options
@@ -99,8 +99,8 @@ cat etc/jenova.conf
 jenova-ca status
 
 # Monitor logs
-tail -f var/log/llama-server.log
-tail -f var/log/proxy.log
+tail -f ~/JCA/var/log/llama-server.log
+tail -f ~/JCA/var/log/proxy.log
 ```
 
 ## Launch Jenova
@@ -110,11 +110,8 @@ tail -f var/log/proxy.log
 # Jenova Manager (TUI) — GUI/Desktop friendly control center
 jenova-tui
 
-# Full environment (backend + editor)
+# Start the Jenova Desktop Manager or TUI
 jenova
-...
-# Or just the editor (no daemon management)
-jvim
 
 # Or just the backend (headless/server)
 jenova-ca
@@ -126,15 +123,13 @@ jenova-ca --daemon --lan
 ### After First Run
 ```bash
 # Check if PATH is correct
-which jvim
 which jenova
 which jenova-ca
 
 # Verify backend status
 curl http://localhost:8080/v1/models
 
-# View chat history and state
-~/.local/state/nvim/
+
 ```
 
 ## Troubleshooting
@@ -154,7 +149,7 @@ curl http://localhost:8080/v1/models
 ### Installation Issues
 ```bash
 # Check install logs
-tail -f var/log/install.log
+tail -f ~/JCA/var/log/install.log
 
 # Verify individual components
 ./scripts/verify-install.sh --verbose
@@ -169,9 +164,9 @@ tail -f var/log/install.log
 jenova-ca status
 
 # Monitor logs
-tail -f var/log/llama-server.log
-tail -f var/log/proxy.log
-tail -f var/log/jenova-ca.log
+tail -f ~/JCA/var/log/llama-server.log
+tail -f ~/JCA/var/log/proxy.log
+tail -f ~/JCA/var/log/jenova-ca.log
 
 # Test connectivity
 curl http://localhost:8080/health
@@ -204,11 +199,8 @@ export PATH="$HOME/.local/bin:$PATH"  # .bashrc / .zshrc
 ### Config Locations
 | Item | Location |
 |------|----------|
-| **jvim config** | `~/.config/jvim/` |
-| **Plugins** | `~/.local/share/nvim/lazy/` |
-| **User state** | `~/.local/state/nvim/` |
-| **Runtime logs** | `$JENOVA_ROOT/var/log/` |
-| **Models** | `$JENOVA_ROOT/models/` |
+| **Runtime logs** | `$JCA_HOME/var/log/` |
+| **Models** | `$JCA_HOME/models/` |
 | **Project config** | `$JENOVA_ROOT/etc/jenova.conf` |
 
 ### Hardware Profile
@@ -231,7 +223,7 @@ cat etc/jenova.conf
 ./scripts/update.sh
 
 # With options:
-./scripts/update.sh --upgrade-plugins   # Update nvim plugins
+
 ./scripts/update.sh --apply-profile     # Re-apply hardware profile
 ./scripts/update.sh --skip-rebuild      # Skip llama.cpp rebuild
 ```
@@ -256,7 +248,7 @@ cat etc/jenova.conf
 1. **Pre-installation:** Run `./scripts/preflight-check.sh --verbose`
 2. **Post-installation:** Run `./scripts/verify-install.sh --full --verbose`
 3. **Hardware issues:** Run `./hardware-profiles/detect-hardware.sh --info`
-4. **Build failures:** Check `var/log/` and `UPSTREAM-COPYRIGHT` for upstream issues
+4. **Build failures:** Check `~/JCA/var/log/` and `UPSTREAM-COPYRIGHT` for upstream issues
 5. **Runtime problems:** Check daemon logs and `jenova-ca status`
 
 ## Next Steps
@@ -264,7 +256,6 @@ cat etc/jenova.conf
 - [ ] Download AI models: `./scripts/model_dl.sh`
 - [ ] Apply hardware profile: `./hardware-profiles/detect-hardware.sh --apply`
 - [ ] Run system tuning: `sudo ./scripts/jenova-setup`
-- [ ] Set jvim as editor: `export EDITOR=jvim`
 - [ ] Launch Jenova: `jenova`
 
 ---

@@ -5,22 +5,13 @@
 # --- Build Artifacts ---
 /public/
 /bin/llama-server
-/bin/jenova-desktop
 /bin/jenova-ui
 /jenova-ui/jenova-ui
-/external/llama.cpp/build/
-/external/SPIRV-Headers/build/
-/external/SPIRV-Headers/
-
-
+/external/ext_bin/
 
 /cli-agent/build/
 /cli-agent/build_test/
-# Bundled jvim editor — build & install artifacts
-/jvim/build/
-/jvim/install/
-/jvim/.deps/
-/jvim/cmake-build-*/
+
 *.o
 *.so
 *.a
@@ -130,11 +121,13 @@ core.*
 nul
 
 # Conductor working notes
+/.kdev4
+*.kdev4
 conductor/
 
 # --- Installation analysis artifacts ---
 /.jenova-tmp-ca-old
-/.jenova-tmp-jvim-old
+
 /INSTALLATION-AUDIT.md
 /INSTALLATION-FINAL-REPORT.md
 /test-installation.sh

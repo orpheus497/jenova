@@ -1,4 +1,4 @@
-import { MimeTypeImage } from '$lib/enums';
+import { MimeTypeImage } from "$lib/enums";
 
 /**
  * Convert an SVG base64 data URL to a PNG data URL
@@ -7,49 +7,51 @@ import { MimeTypeImage } from '$lib/enums';
  * @returns Promise resolving to PNG data URL
  */
 export function svgBase64UrlToPngDataURL(
-	base64UrlSvg: string,
-	backgroundColor: string = 'white'
+  base64UrlSvg: string,
+  backgroundColor: string = "white",
 ): Promise<string> {
-	return new Promise((resolve, reject) => {
-		try {
-			const img = new Image();
+  return new Promise((resolve, reject) => {
+    try {
+      const img = new Image();
 
-			img.onload = () => {
-				const canvas = document.createElement('canvas');
-				const ctx = canvas.getContext('2d');
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
 
-				if (!ctx) {
-					reject(new Error('Failed to get 2D canvas context.'));
-					return;
-				}
+        if (!ctx) {
+          reject(new Error("Failed to get 2D canvas context."));
+          return;
+        }
 
-				const targetWidth = img.naturalWidth || 300;
-				const targetHeight = img.naturalHeight || 300;
+        const targetWidth = img.naturalWidth || 300;
+        const targetHeight = img.naturalHeight || 300;
 
-				canvas.width = targetWidth;
-				canvas.height = targetHeight;
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
 
-				if (backgroundColor) {
-					ctx.fillStyle = backgroundColor;
-					ctx.fillRect(0, 0, canvas.width, canvas.height);
-				}
-				ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+        if (backgroundColor) {
+          ctx.fillStyle = backgroundColor;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+        ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
 
-				resolve(canvas.toDataURL(MimeTypeImage.PNG));
-			};
+        resolve(canvas.toDataURL(MimeTypeImage.PNG));
+      };
 
-			img.onerror = () => {
-				reject(new Error('Failed to load SVG image. Ensure the SVG data is valid.'));
-			};
+      img.onerror = () => {
+        reject(
+          new Error("Failed to load SVG image. Ensure the SVG data is valid."),
+        );
+      };
 
-			img.src = base64UrlSvg;
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			const errorMessage = `Error converting SVG to PNG: ${message}`;
-			console.error(errorMessage, error);
-			reject(new Error(errorMessage));
-		}
-	});
+      img.src = base64UrlSvg;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const errorMessage = `Error converting SVG to PNG: ${message}`;
+      console.error(errorMessage, error);
+      reject(new Error(errorMessage));
+    }
+  });
 }
 
 /**
@@ -58,7 +60,7 @@ export function svgBase64UrlToPngDataURL(
  * @returns True if the file is an SVG
  */
 export function isSvgFile(file: File): boolean {
-	return file.type === MimeTypeImage.SVG;
+  return file.type === MimeTypeImage.SVG;
 }
 
 /**
@@ -67,5 +69,5 @@ export function isSvgFile(file: File): boolean {
  * @returns True if the MIME type is image/svg+xml
  */
 export function isSvgMimeType(mimeType: string): boolean {
-	return mimeType === MimeTypeImage.SVG;
+  return mimeType === MimeTypeImage.SVG;
 }

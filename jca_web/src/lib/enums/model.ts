@@ -1,5 +1,5 @@
 export enum ModelModality {
-	TEXT = 'TEXT',
-	AUDIO = 'AUDIO',
-	VISION = 'VISION'
+  TEXT = "TEXT",
+  AUDIO = "AUDIO",
+  VISION = "VISION",
 }

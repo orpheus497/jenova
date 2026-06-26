@@ -1,4 +1,0 @@
-std = "selene/globals"
-
-[rules]
-shadowing = "allow"

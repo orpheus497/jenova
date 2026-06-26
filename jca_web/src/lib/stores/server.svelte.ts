@@ -1,5 +1,5 @@
-import { PropsService } from '$lib/services/props.service';
-import { ServerRole } from '$lib/enums';
+import { PropsService } from "$lib/services/props.service";
+import { ServerRole } from "$lib/enums";
 
 /**
  * serverStore - Server connection state, configuration, and role detection
@@ -18,132 +18,137 @@ import { ServerRole } from '$lib/enums';
  * - **Default Params**: Server-wide generation defaults
  */
 class ServerStore {
-	/**
-	 *
-	 *
-	 * State
-	 *
-	 *
-	 */
+  /**
+   *
+   *
+   * State
+   *
+   *
+   */
 
-	props = $state<ApiJenovaCppServerProps | null>(null);
-	loading = $state(false);
-	error = $state<string | null>(null);
-	role = $state<ServerRole | null>(null);
-	private fetchPromise: Promise<void> | null = null;
+  props = $state<ApiJenovaCppServerProps | null>(null);
+  loading = $state(false);
+  error = $state<string | null>(null);
+  role = $state<ServerRole | null>(null);
+  private fetchPromise: Promise<void> | null = null;
 
-	/**
-	 *
-	 *
-	 * Getters
-	 *
-	 *
-	 */
+  /**
+   *
+   *
+   * Getters
+   *
+   *
+   */
 
-	get defaultParams(): ApiJenovaCppServerProps['default_generation_settings']['params'] | null {
-		return this.props?.default_generation_settings?.params || null;
-	}
+  get defaultParams():
+    | ApiJenovaCppServerProps["default_generation_settings"]["params"]
+    | null {
+    return this.props?.default_generation_settings?.params || null;
+  }
 
-	get contextSize(): number | null {
-		const nCtx = this.props?.default_generation_settings?.n_ctx;
+  get contextSize(): number | null {
+    const nCtx = this.props?.default_generation_settings?.n_ctx;
 
-		return typeof nCtx === 'number' ? nCtx : null;
-	}
+    return typeof nCtx === "number" ? nCtx : null;
+  }
 
-	get webuiSettings(): Record<string, string | number | boolean> | undefined {
-		return this.props?.webui_settings;
-	}
+  get webuiSettings(): Record<string, string | number | boolean> | undefined {
+    return this.props?.webui_settings;
+  }
 
-	get isRouterMode(): boolean {
-		return this.role === ServerRole.ROUTER;
-	}
+  get isRouterMode(): boolean {
+    return this.role === ServerRole.ROUTER;
+  }
 
-	get isModelMode(): boolean {
-		return this.role === ServerRole.MODEL;
-	}
+  get isModelMode(): boolean {
+    return this.role === ServerRole.MODEL;
+  }
 
-	/**
-	 *
-	 *
-	 * Data Handling
-	 *
-	 *
-	 */
+  /**
+   *
+   *
+   * Data Handling
+   *
+   *
+   */
 
-	async fetch(): Promise<void> {
-		if (this.fetchPromise) return this.fetchPromise;
+  async fetch(): Promise<void> {
+    if (this.fetchPromise) return this.fetchPromise;
 
-		this.loading = true;
-		this.error = null;
+    this.loading = true;
+    this.error = null;
 
-		const fetchPromise = (async () => {
-			try {
-				const props = await PropsService.fetch();
-				this.props = props;
-				this.error = null;
-				this.detectRole(props);
-			} catch (error) {
-				this.error = this.getErrorMessage(error);
-				console.error('Error fetching server properties:', error);
-			} finally {
-				this.loading = false;
-				this.fetchPromise = null;
-			}
-		})();
+    const fetchPromise = (async () => {
+      try {
+        const props = await PropsService.fetch();
+        this.props = props;
+        this.error = null;
+        this.detectRole(props);
+      } catch (error) {
+        this.error = this.getErrorMessage(error);
+        console.error("Error fetching server properties:", error);
+      } finally {
+        this.loading = false;
+        this.fetchPromise = null;
+      }
+    })();
 
-		this.fetchPromise = fetchPromise;
-		await fetchPromise;
-	}
+    this.fetchPromise = fetchPromise;
+    await fetchPromise;
+  }
 
-	private getErrorMessage(error: unknown): string {
-		if (error instanceof Error) {
-			const message = error.message || '';
+  private getErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      const message = error.message || "";
 
-			if (error.name === 'TypeError' && message.includes('fetch')) {
-				return 'Server is not running or unreachable';
-			} else if (message.includes('ECONNREFUSED')) {
-				return 'Connection refused - server may be offline';
-			} else if (message.includes('ENOTFOUND')) {
-				return 'Server not found - check server address';
-			} else if (message.includes('ETIMEDOUT')) {
-				return 'Request timed out';
-			} else if (message.includes('503')) {
-				return 'Server temporarily unavailable';
-			} else if (message.includes('500')) {
-				return 'Server error - check server logs';
-			} else if (message.includes('404')) {
-				return 'Server endpoint not found';
-			} else if (message.includes('403') || message.includes('401')) {
-				return 'Access denied';
-			}
-		}
+      if (error.name === "TypeError" && message.includes("fetch")) {
+        return "Server is not running or unreachable";
+      } else if (message.includes("ECONNREFUSED")) {
+        return "Connection refused - server may be offline";
+      } else if (message.includes("ENOTFOUND")) {
+        return "Server not found - check server address";
+      } else if (message.includes("ETIMEDOUT")) {
+        return "Request timed out";
+      } else if (message.includes("503")) {
+        return "Server temporarily unavailable";
+      } else if (message.includes("500")) {
+        return "Server error - check server logs";
+      } else if (message.includes("404")) {
+        return "Server endpoint not found";
+      } else if (message.includes("403") || message.includes("401")) {
+        return "Access denied";
+      }
+    }
 
-		return 'Failed to connect to server';
-	}
+    return "Failed to connect to server";
+  }
 
-	clear(): void {
-		this.props = null;
-		this.error = null;
-		this.loading = false;
-		this.role = null;
-		this.fetchPromise = null;
-	}
+  clear(): void {
+    this.props = null;
+    this.error = null;
+    this.loading = false;
+    this.role = null;
+    this.fetchPromise = null;
+  }
 
-	/**
-	 *
-	 *
-	 * Utilities
-	 *
-	 *
-	 */
+  /**
+   *
+   *
+   * Utilities
+   *
+   *
+   */
 
-	private detectRole(props: ApiJenovaCppServerProps): void {
-		const newRole = props?.role === ServerRole.ROUTER ? ServerRole.ROUTER : ServerRole.MODEL;
-		if (this.role !== newRole) {
-			this.role = newRole;
-			console.info(`Server running in ${newRole === ServerRole.ROUTER ? 'ROUTER' : 'MODEL'} mode`);
-		}
-	}
+  private detectRole(props: ApiJenovaCppServerProps): void {
+    const newRole =
+      props?.role === ServerRole.ROUTER ? ServerRole.ROUTER : ServerRole.MODEL;
+    if (this.role !== newRole) {
+      this.role = newRole;
+      console.info(
+        `Server running in ${newRole === ServerRole.ROUTER ? "ROUTER" : "MODEL"} mode`,
+      );
+    }
+  }
 }
 
 export const serverStore = new ServerStore();

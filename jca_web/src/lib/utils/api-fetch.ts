@@ -1,7 +1,7 @@
-import { base } from '$app/paths';
-import { settingsStore } from '$lib/stores/settings.svelte';
-import { getJsonHeaders, getAuthHeaders } from './api-headers';
-import { UrlProtocol } from '$lib/enums';
+import { base } from "$app/paths";
+import { settingsStore } from "$lib/stores/settings.svelte";
+import { getJsonHeaders, getAuthHeaders } from "./api-headers";
+import { UrlProtocol } from "$lib/enums";
 
 /**
  * API Fetch Utilities
@@ -12,9 +12,9 @@ import { UrlProtocol } from '$lib/enums';
  * - Base path resolution
  */
 
-export interface ApiFetchOptions extends Omit<RequestInit, 'headers'> {
-	authOnly?: boolean;
-	headers?: Record<string, string>;
+export interface ApiFetchOptions extends Omit<RequestInit, "headers"> {
+  authOnly?: boolean;
+  headers?: Record<string, string>;
 }
 
 /**
@@ -32,37 +32,40 @@ export interface ApiFetchOptions extends Omit<RequestInit, 'headers'> {
  * ```
  */
 function getEffectiveBase(defaultBase: string): string {
-	const serverUrl = settingsStore.config.serverUrl?.toString().trim();
-	if (serverUrl) {
-		return serverUrl.endsWith('/') ? serverUrl.slice(0, -1) : serverUrl;
-	}
-	return defaultBase;
+  const serverUrl = settingsStore.config.serverUrl?.toString().trim();
+  if (serverUrl) {
+    return serverUrl.endsWith("/") ? serverUrl.slice(0, -1) : serverUrl;
+  }
+  return defaultBase;
 }
 
-export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): Promise<T> {
-	const { authOnly = false, headers: customHeaders, ...fetchOptions } = options;
+export async function apiFetch<T>(
+  path: string,
+  options: ApiFetchOptions = {},
+): Promise<T> {
+  const { authOnly = false, headers: customHeaders, ...fetchOptions } = options;
 
-	const baseHeaders = authOnly ? getAuthHeaders() : getJsonHeaders();
-	const headers = { ...baseHeaders, ...customHeaders };
+  const baseHeaders = authOnly ? getAuthHeaders() : getJsonHeaders();
+  const headers = { ...baseHeaders, ...customHeaders };
 
-	const effectiveBase = getEffectiveBase(base);
+  const effectiveBase = getEffectiveBase(base);
 
-	const url =
-		path.startsWith(UrlProtocol.HTTP) || path.startsWith(UrlProtocol.HTTPS)
-			? path
-			: `${effectiveBase}${path.startsWith('/') ? '' : '/'}${path}`;
+  const url =
+    path.startsWith(UrlProtocol.HTTP) || path.startsWith(UrlProtocol.HTTPS)
+      ? path
+      : `${effectiveBase}${path.startsWith("/") ? "" : "/"}${path}`;
 
-	const response = await fetch(url, {
-		...fetchOptions,
-		headers
-	});
+  const response = await fetch(url, {
+    ...fetchOptions,
+    headers,
+  });
 
-	if (!response.ok) {
-		const errorMessage = await parseErrorMessage(response);
-		throw new Error(errorMessage);
-	}
+  if (!response.ok) {
+    const errorMessage = await parseErrorMessage(response);
+    throw new Error(errorMessage);
+  }
 
-	return response.json() as Promise<T>;
+  return response.json() as Promise<T>;
 }
 
 /**
@@ -82,41 +85,46 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
  * ```
  */
 export async function apiFetchWithParams<T>(
-	basePath: string,
-	params: Record<string, string>,
-	options: ApiFetchOptions = {}
+  basePath: string,
+  params: Record<string, string>,
+  options: ApiFetchOptions = {},
 ): Promise<T> {
-	const effectiveBase = getEffectiveBase(typeof window !== 'undefined' ? window.location.origin + base : base);
+  const effectiveBase = getEffectiveBase(
+    typeof window !== "undefined" ? window.location.origin + base : base,
+  );
 
-	let urlStr = basePath;
-	if (!basePath.startsWith(UrlProtocol.HTTP) && !basePath.startsWith(UrlProtocol.HTTPS)) {
-		urlStr = `${effectiveBase}${basePath.startsWith('/') ? '' : '/'}${basePath}`;
-	}
-	
-	const url = new URL(urlStr, window.location.href);
+  let urlStr = basePath;
+  if (
+    !basePath.startsWith(UrlProtocol.HTTP) &&
+    !basePath.startsWith(UrlProtocol.HTTPS)
+  ) {
+    urlStr = `${effectiveBase}${basePath.startsWith("/") ? "" : "/"}${basePath}`;
+  }
 
-	for (const [key, value] of Object.entries(params)) {
-		if (value !== undefined && value !== null) {
-			url.searchParams.set(key, value);
-		}
-	}
+  const url = new URL(urlStr, window.location.href);
 
-	const { authOnly = false, headers: customHeaders, ...fetchOptions } = options;
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null) {
+      url.searchParams.set(key, value);
+    }
+  }
 
-	const baseHeaders = authOnly ? getAuthHeaders() : getJsonHeaders();
-	const headers = { ...baseHeaders, ...customHeaders };
+  const { authOnly = false, headers: customHeaders, ...fetchOptions } = options;
 
-	const response = await fetch(url.toString(), {
-		...fetchOptions,
-		headers
-	});
+  const baseHeaders = authOnly ? getAuthHeaders() : getJsonHeaders();
+  const headers = { ...baseHeaders, ...customHeaders };
 
-	if (!response.ok) {
-		const errorMessage = await parseErrorMessage(response);
-		throw new Error(errorMessage);
-	}
+  const response = await fetch(url.toString(), {
+    ...fetchOptions,
+    headers,
+  });
 
-	return response.json() as Promise<T>;
+  if (!response.ok) {
+    const errorMessage = await parseErrorMessage(response);
+    throw new Error(errorMessage);
+  }
+
+  return response.json() as Promise<T>;
 }
 
 /**
@@ -128,15 +136,15 @@ export async function apiFetchWithParams<T>(
  * @returns Parsed JSON response
  */
 export async function apiPost<T, B = unknown>(
-	path: string,
-	body: B,
-	options: ApiFetchOptions = {}
+  path: string,
+  body: B,
+  options: ApiFetchOptions = {},
 ): Promise<T> {
-	return apiFetch<T>(path, {
-		method: 'POST',
-		body: JSON.stringify(body),
-		...options
-	});
+  return apiFetch<T>(path, {
+    method: "POST",
+    body: JSON.stringify(body),
+    ...options,
+  });
 }
 
 /**
@@ -144,20 +152,20 @@ export async function apiPost<T, B = unknown>(
  * Tries to extract error message from JSON body, falls back to status text.
  */
 async function parseErrorMessage(response: Response): Promise<string> {
-	try {
-		const errorData = await response.json();
-		if (errorData?.error?.message) {
-			return errorData.error.message;
-		}
-		if (errorData?.error && typeof errorData.error === 'string') {
-			return errorData.error;
-		}
-		if (errorData?.message) {
-			return errorData.message;
-		}
-	} catch {
-		// JSON parsing failed, use status text
-	}
+  try {
+    const errorData = await response.json();
+    if (errorData?.error?.message) {
+      return errorData.error.message;
+    }
+    if (errorData?.error && typeof errorData.error === "string") {
+      return errorData.error;
+    }
+    if (errorData?.message) {
+      return errorData.message;
+    }
+  } catch {
+    // JSON parsing failed, use status text
+  }
 
-	return `Request failed: ${response.status} ${response.statusText}`;
+  return `Request failed: ${response.status} ${response.statusText}`;
 }

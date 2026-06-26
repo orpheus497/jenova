@@ -29,7 +29,7 @@
  * <MarkdownContent content={message.content} attachments={message.extra} />
  * ```
  */
-export { default as MarkdownContent } from './MarkdownContent.svelte';
+export { default as MarkdownContent } from "./MarkdownContent.svelte";
 
 /**
  * **SyntaxHighlightedCode** - Code syntax highlighting
@@ -49,7 +49,7 @@ export { default as MarkdownContent } from './MarkdownContent.svelte';
  * <SyntaxHighlightedCode code={jsonString} language="json" />
  * ```
  */
-export { default as SyntaxHighlightedCode } from './SyntaxHighlightedCode.svelte';
+export { default as SyntaxHighlightedCode } from "./SyntaxHighlightedCode.svelte";
 
 /**
  * **CollapsibleContentBlock** - Expandable content card
@@ -76,9 +76,9 @@ export { default as SyntaxHighlightedCode } from './SyntaxHighlightedCode.svelte
  * </CollapsibleContentBlock>
  * ```
  */
-export { default as CollapsibleContentBlock } from './CollapsibleContentBlock.svelte';
+export { default as CollapsibleContentBlock } from "./CollapsibleContentBlock.svelte";
 
 /**
  * **FilesView** - Workspace files browser
  */
-export { default as FilesView } from './FilesView.svelte';
+export { default as FilesView } from "./FilesView.svelte";

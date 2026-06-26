@@ -1,7 +1,6 @@
 # Headless & CLI Usage
 
-While the canonical interactive experience is `jvim`, Jenova also supports
-headless and scripted workflows for servers, CI, and LAN setups.
+Jenova supports starting the graphical or terminal-based user interface via the `bin/jenova` launcher.
 
 ## Backend Supervisor — `bin/jenova-ca`
 
@@ -17,16 +16,13 @@ bin/jenova-ca stop              # stop everything and clean up PID files
 bin/jenova-ca restart           # stop + start
 ```
 
-PIDs and lock files live under `$JENOVA_HOME/.system/`, logs under
-`$JENOVA_HOME/var/log/`.
+State lives under `$JCA_HOME/.system/` (PIDs, lock files), with logs in
+`$JCA_HOME/var/log/` and caches in `$JCA_HOME/var/cache/`.
 
 ## Top-level launcher — `bin/jenova`
 
 ```sh
-jenova [files...]      # start backend (if not running) and open jvim
-jenova --no-backend    # just open jvim, assume backend is already up
-jenova --daemon-only   # start jenova-ca and exit
-jenova --check         # print resolved JENOVA_* environment and exit
+jenova                 # start Jenova UI
 ```
 
 ## Jenova Manager (Operational TUI) — `bin/jenova-tui`
@@ -45,8 +41,7 @@ Features:
 - **Backend Lifecycle**: Start, Stop, and Restart the `jenova-ca` suite.
 - **Network Toggle**: Switch between LOCAL (127.0.0.1) and LAN (0.0.0.0)
   access with one command (updates `etc/jenova.local.conf`).
-- **Quick Launch**: One-key shortcuts to launch the `jvim` editor and the
-  Web UI.
+- **Quick Launch**: One-key shortcut to launch the Web UI.
 
 ## Maintenance Manager — `scripts/jenova-manager.sh`
 
@@ -93,5 +88,5 @@ Any OpenAI-compatible client library works — point its `base_url` at
 ## Modern C Shell
 
 mcsh is maintained as a standalone project at [orpheus497/mcsh](https://github.com/orpheus497/mcsh).
-It is a drop-in replacement for `tcsh`/`csh` and can be used with jvim by
+It is a drop-in replacement for `tcsh`/`csh` and can be used with standard editors by
 setting `SHELL=/path/to/mcsh` in your environment.

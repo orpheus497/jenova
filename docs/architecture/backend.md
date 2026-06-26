@@ -46,22 +46,22 @@ A second `llama-server` process running in embedding mode.
 | `--lan` | Bind to `0.0.0.0` instead of `127.0.0.1` (LAN mode). |
 | `--watch` | Continuous health monitoring with auto-restart on failure. |
 | `start [...]` | Alias for `--daemon`. |
-| `stop` | Read `$JENOVA_HOME/.system/jenova-ca.pid`, signal each tracked PID, clean up. |
+| `stop` | Read `$JCA_HOME/.system/jenova-ca.pid`, signal each tracked PID, clean up. |
 | `restart` | `stop` + `start`. |
 | `status` | Report PID + alive/dead per service. |
 
-State lives under `$JENOVA_HOME/.system/` (PIDs, lock files), with logs in
-`$JENOVA_HOME/var/log/` and caches in `$JENOVA_HOME/var/cache/`.
+State lives under `$JCA_HOME/.system/` (PIDs, lock files), with logs in
+`$JCA_HOME/var/log/` and caches in `$JCA_HOME/var/cache/`.
 
 ## Persistence & Workspaces
 
 The Intelligence Proxy includes a native **Filesystem API** (`/api/storage`) that allows frontends (like the Web UI) to persist data directly to the host machine.
 
-- **Storage Root**: `$JENOVA_HOME/Workspaces` (default `~/Jenova/Workspaces`)
-- **Data Format**: Markdown (`.md`) for chats and notes to ensure interoperability with `jvim` and standard Unix tools.
+- **Storage Root**: `$JCA_HOME/Workspaces` (default `~/JCA/Workspaces`)
+- **Data Format**: Markdown (`.md`) for chats and notes to ensure interoperability with standard editors and Unix tools.
 - **Sync Logic**: The Web UI mirrors its internal state to the filesystem on every significant change (message completion, note edit, folder move).
 
-This architecture ensures that Jenova is "device-first" rather than "browser-first." Your data is not trapped in an IndexedDB silo; it lives in your home directory, organized by Workspace and Folder, ready for editing in `jvim` or backup via standard scripts.
+This architecture ensures that Jenova is "device-first" rather than "browser-first." Your data is not trapped in an IndexedDB silo; it lives in your home directory, organized by Workspace and Folder, ready for editing in any text editor or backup via standard scripts.
 
 ## Networking
 All internal communication is HTTP/1.1 over localhost (or LAN when

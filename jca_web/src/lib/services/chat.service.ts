@@ -31,19 +31,21 @@ export class ChatService {
 
   private static generateCacheKey(messages: ApiChatMessageData[]): string {
     const last3 = messages.slice(-3);
-    const fingerprint = last3.map(m => {
-      let text = '';
-      if (typeof m.content === 'string') text = m.content;
-      else if (Array.isArray(m.content))
-        text = m.content
-          .map((c: ApiChatMessageContentPart) => c.text || "")
-          .join("");
-      return `${m.role}:${text.substring(0, 100)}`;
-    }).join('|');
-    
+    const fingerprint = last3
+      .map((m) => {
+        let text = "";
+        if (typeof m.content === "string") text = m.content;
+        else if (Array.isArray(m.content))
+          text = m.content
+            .map((c: ApiChatMessageContentPart) => c.text || "")
+            .join("");
+        return `${m.role}:${text.substring(0, 100)}`;
+      })
+      .join("|");
+
     return JSON.stringify({
       messagesLen: messages.length,
-      fingerprint
+      fingerprint,
     });
   }
 
@@ -198,8 +200,12 @@ export class ChatService {
       ? `\n\n[CURRENT WORKSPACE ARTIFACTS (Notes & Files)]:\n${workspaceContext}`
       : "";
     const workspaces = await DatabaseService.getAllWorkspaces();
-    const defaultWorkspace = workspaces[0]?.name || 'default';
-    const jcaContext = `\nproject_root: ${defaultWorkspace}\n` + thinkInstruction + audioContext + workspaceInfo;
+    const defaultWorkspace = workspaces[0]?.name || "default";
+    const jcaContext =
+      `\nproject_root: ${defaultWorkspace}\n` +
+      thinkInstruction +
+      audioContext +
+      workspaceInfo;
 
     if (systemMsgIdx !== -1) {
       normalizedMessages[systemMsgIdx].content += jcaContext;
@@ -231,7 +237,6 @@ export class ChatService {
 
     // NOTE: Workspace context is already injected above (L193-209) into
     // normalizedMessages. Do not inject again here to avoid token waste.
-
 
     // Include model in request if provided (required in ROUTER mode)
     if (options.model) {

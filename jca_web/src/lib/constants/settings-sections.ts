@@ -5,15 +5,15 @@
  * Used for both sidebar navigation and mobile horizontal scroll menu.
  */
 export const SETTINGS_SECTION_TITLES = {
-	GENERAL: 'General',
-	DISPLAY: 'Display',
-	SAMPLING: 'Sampling',
-	PENALTIES: 'Penalties',
-	IMPORT_EXPORT: 'Import/Export',
-	MCP: 'MCP',
-	DEVELOPER: 'Developer'
+  GENERAL: "General",
+  DISPLAY: "Display",
+  SAMPLING: "Sampling",
+  PENALTIES: "Penalties",
+  IMPORT_EXPORT: "Import/Export",
+  MCP: "MCP",
+  DEVELOPER: "Developer",
 } as const;
 
 /** Type for settings section titles */
 export type SettingsSectionTitle =
-	(typeof SETTINGS_SECTION_TITLES)[keyof typeof SETTINGS_SECTION_TITLES];
+  (typeof SETTINGS_SECTION_TITLES)[keyof typeof SETTINGS_SECTION_TITLES];

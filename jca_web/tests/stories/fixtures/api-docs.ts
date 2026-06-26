@@ -6,12 +6,12 @@ export const API_DOCS_MD = String.raw`
 
 All API requests require authentication using **Bearer tokens**. Include your API key in the Authorization header:
 
-${'```'}http
+${"```"}http
 GET /api/v1/users
 Host: api.example.com
 Authorization: Bearer YOUR_API_KEY
 Content-Type: application/json
-${'```'}
+${"```"}
 
 ## 📍 Endpoints
 
@@ -32,7 +32,7 @@ Retrieve a paginated list of users.
 
 **Response:** 200 OK
 
-${'```'}json
+${"```"}json
 {
   "data": [
     {
@@ -50,7 +50,7 @@ ${'```'}json
     "pages": 8
   }
 }
-${'```'}
+${"```"}
 
 #### **POST** /api/v1/users
 
@@ -58,18 +58,18 @@ Create a new user account.
 
 **Request Body:**
 
-${'```'}json
+${"```"}json
 {
   "email": "newuser@example.com",
   "password": "SecurePassword123!",
   "name": "Jane Smith",
   "role": "user"
 }
-${'```'}
+${"```"}
 
 **Response:** 201 Created
 
-${'```'}json
+${"```"}json
 {
   "id": "usr_9876543210",
   "email": "newuser@example.com",
@@ -77,13 +77,13 @@ ${'```'}json
   "role": "user",
   "created_at": "2024-01-21T09:15:00Z"
 }
-${'```'}
+${"```"}
 
 ### Error Responses
 
 The API returns errors in a consistent format:
 
-${'```'}json
+${"```"}json
 {
   "error": {
     "code": "VALIDATION_ERROR",
@@ -96,7 +96,7 @@ ${'```'}json
     ]
   }
 }
-${'```'}
+${"```"}
 
 ### Rate Limiting
 
@@ -115,7 +115,7 @@ ${'```'}
 
 Configure webhooks to receive real-time events:
 
-${'```'}javascript
+${"```"}javascript
 // Webhook payload
 {
   "event": "user.created",
@@ -126,13 +126,13 @@ ${'```'}javascript
   },
   "signature": "sha256=abcd1234..."
 }
-${'```'}
+${"```"}
 
 ### SDK Examples
 
 **JavaScript/TypeScript:**
 
-${'```'}typescript
+${"```"}typescript
 import { ApiClient } from '@example/api-sdk';
 
 const client = new ApiClient({
@@ -143,16 +143,16 @@ const users = await client.users.list({
   page: 1,
   limit: 20
 });
-${'```'}
+${"```"}
 
 **Python:**
 
-${'```'}python
+${"```"}python
 from example_api import Client
 
 client = Client(api_key=os.environ['API_KEY'])
 users = client.users.list(page=1, limit=20)
-${'```'}
+${"```"}
 
 ---
 

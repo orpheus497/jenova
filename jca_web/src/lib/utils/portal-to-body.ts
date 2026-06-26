@@ -1,20 +1,20 @@
 export function portalToBody(node: HTMLElement) {
-	if (typeof document === 'undefined') {
-		return;
-	}
+  if (typeof document === "undefined") {
+    return;
+  }
 
-	const target = document.body;
-	if (!target) {
-		return;
-	}
+  const target = document.body;
+  if (!target) {
+    return;
+  }
 
-	target.appendChild(node);
+  target.appendChild(node);
 
-	return {
-		destroy() {
-			if (node.parentNode === target) {
-				target.removeChild(node);
-			}
-		}
-	};
+  return {
+    destroy() {
+      if (node.parentNode === target) {
+        target.removeChild(node);
+      }
+    },
+  };
 }

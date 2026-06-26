@@ -8,18 +8,18 @@ I'll help you create a **production-ready chat application** using SvelteKit, Ty
 
 First, let's set up the project:
 
-${'```'}bash
+${"```"}bash
 npm create svelte@latest chat-app
 cd chat-app
 npm install
 npm install socket.io socket.io-client
 npm install @prisma/client prisma
 npm run dev
-${'```'}
+${"```"}
 
 ## 📁 Project Structure
 
-${'```'}
+${"```"}
 chat-app/
 ├── src/
 │   ├── routes/
@@ -37,13 +37,13 @@ chat-app/
 ├── prisma/
 │   └── schema.prisma
 └── package.json
-${'```'}
+${"```"}
 
 ## 💻 Implementation
 
 ### WebSocket Server
 
-${'```'}typescript
+${"```"}typescript
 // src/lib/server/socket.ts
 import { Server } from 'socket.io';
 import type { ViteDevServer } from 'vite';
@@ -76,11 +76,11 @@ export function initializeSocketIO(server: ViteDevServer) {
 
     return io;
 }
-${'```'}
+${"```"}
 
 ### Client Store
 
-${'```'}typescript
+${"```"}typescript
 // src/lib/stores/chat.ts
 import { writable } from 'svelte/store';
 import io from 'socket.io-client';
@@ -114,7 +114,7 @@ function createChatStore() {
 }
 
 export const chatStore = createChatStore();
-${'```'}
+${"```"}
 
 ## 🎯 Key Features
 
@@ -137,17 +137,17 @@ ${'```'}
 
 ### Environment Variables
 
-${'```'}env
+${"```"}env
 DATABASE_URL="postgresql://user:password@localhost:5432/chat"
 JWT_SECRET="your-secret-key"
 REDIS_URL="redis://localhost:6379"
-${'```'}
+${"```"}
 
 ## 🚢 Deployment
 
 Deploy to production using Docker:
 
-${'```'}dockerfile
+${"```"}dockerfile
 FROM node:20-alpine
 WORKDIR /app
 COPY package*.json ./
@@ -156,7 +156,7 @@ COPY . .
 RUN npm run build
 EXPOSE 3000
 CMD ["node", "build"]
-${'```'}
+${"```"}
 
 ---
 

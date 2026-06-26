@@ -42,7 +42,6 @@ Or use the streamlined one-command installer:
 
 ```sh
 make llama          # llama.cpp with Metal support
-make jvim           # Bundled Neovim hard-fork
 make web            # Web UI (requires Node.js)
 ```
 

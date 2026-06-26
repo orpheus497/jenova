@@ -1,3 +1,0 @@
-char *default_vim_dir = "${CMAKE_INSTALL_FULL_DATAROOTDIR}/jvim";
-char *default_vimruntime_dir = "";
-char *default_lib_dir = "${CMAKE_INSTALL_FULL_LIBDIR}/jvim";

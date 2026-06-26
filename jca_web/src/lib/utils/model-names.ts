@@ -18,31 +18,31 @@
  * normalizeModelName('') // Returns: ''
  */
 export function normalizeModelName(modelName: string): string {
-	const trimmed = modelName.trim();
+  const trimmed = modelName.trim();
 
-	if (!trimmed) {
-		return '';
-	}
+  if (!trimmed) {
+    return "";
+  }
 
-	const segments = trimmed.split(/[\\/]/);
+  const segments = trimmed.split(/[\\/]/);
 
-	// If we have exactly 2 segments (one slash), treat it as Hugging Face repo format
-	// and preserve the full "org/model" format
-	if (segments.length === 2) {
-		const [org, model] = segments;
-		const trimmedOrg = org?.trim();
-		const trimmedModel = model?.trim();
+  // If we have exactly 2 segments (one slash), treat it as Hugging Face repo format
+  // and preserve the full "org/model" format
+  if (segments.length === 2) {
+    const [org, model] = segments;
+    const trimmedOrg = org?.trim();
+    const trimmedModel = model?.trim();
 
-		if (trimmedOrg && trimmedModel) {
-			return `${trimmedOrg}/${trimmedModel}`;
-		}
-	}
+    if (trimmedOrg && trimmedModel) {
+      return `${trimmedOrg}/${trimmedModel}`;
+    }
+  }
 
-	// For other cases (no slash, or multiple slashes), extract just the filename
-	const candidate = segments.pop();
-	const normalized = candidate?.trim();
+  // For other cases (no slash, or multiple slashes), extract just the filename
+  const candidate = segments.pop();
+  const normalized = candidate?.trim();
 
-	return normalized && normalized.length > 0 ? normalized : trimmed;
+  return normalized && normalized.length > 0 ? normalized : trimmed;
 }
 
 /**
@@ -52,5 +52,5 @@ export function normalizeModelName(modelName: string): string {
  * @returns true if valid, false otherwise
  */
 export function isValidModelName(modelName: string): boolean {
-	return normalizeModelName(modelName).length > 0;
+  return normalizeModelName(modelName).length > 0;
 }

@@ -260,7 +260,7 @@
 			>
 				<Package class="h-3.5 w-3.5" />
 
-				<ModelId modelId={currentModel} class="min-w-0" showOrgName />
+				<ModelId modelId={currentModel} class="min-w-0" />
 			</span>
 		{:else}
 			<p class="text-xs text-muted-foreground">No models available.</p>
@@ -280,9 +280,9 @@
 								: isHighlightedCurrentModelActive
 									? 'text-foreground'
 									: 'text-muted-foreground',
-						isOpen ? 'text-foreground' : ''
+						isOpen ? 'text-foreground' : '',
+						className?.includes('w-full') ? 'w-full' : ''
 					)}
-					style="max-width: min(calc(100cqw - 9rem), 20rem)"
 					disabled={disabled || updating}
 				>
 					<Package class="h-3.5 w-3.5" />
@@ -295,7 +295,6 @@
 									<ModelId
 										modelId={selectedOption.model}
 										class="min-w-0 overflow-hidden"
-										showOrgName
 										{...props}
 									/>
 								{/snippet}
@@ -412,7 +411,6 @@
 								<ModelId
 									modelId={selectedOption.model}
 									class="min-w-0 overflow-hidden"
-									showOrgName
 									{...props}
 								/>
 							{/snippet}

@@ -13,6 +13,7 @@
 	import { FORK_TREE_DEPTH_PADDING } from '$lib/constants';
 	import { getAllLoadingChats } from '$lib/stores/chat.svelte';
 	import { conversationsStore } from '$lib/stores/conversations.svelte';
+	import { toast } from 'svelte-sonner';
 	import { onMount } from 'svelte';
 
 	interface Props {
@@ -47,8 +48,8 @@
 		onEdit?.(conversation.id);
 	}
 
-	function handleDelete(event: Event) {
-		event.stopPropagation();
+	function handleDelete(event?: Event) {
+		event?.stopPropagation();
 		onDelete?.(conversation.id);
 	}
 
@@ -94,7 +95,7 @@
 <!-- svelte-ignore a11y_mouse_events_have_key_events -->
 <button
 	class="group flex min-h-9 w-full cursor-pointer items-center justify-between space-x-3 rounded-lg py-1.5 text-left transition-colors hover:bg-foreground/10 {isActive
-		? 'bg-foreground/5 text-accent-foreground'
+		? 'bg-foreground/5 text-[#7b52ab] font-medium'
 		: ''} px-3"
 	onclick={handleSelect}
 	onmouseover={handleMouseOver}

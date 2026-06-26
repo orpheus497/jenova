@@ -6,9 +6,10 @@
 		ChatFormFileInputInvisible,
 		ChatFormPromptPicker,
 		ChatFormResourcePicker,
-		ChatFormTextarea
+		ChatFormTextarea,
+		ModelsSelector,
+		ModelsSelectorSheet
 	} from '$lib/components/app';
-	import { DialogMcpResources } from '$lib/components/app/dialogs';
 	import {
 		CLIPBOARD_CONTENT_QUOTE_PREFIX,
 		INPUT_CLASSES,
@@ -27,7 +28,7 @@
 	} from '$lib/enums';
 	import { config } from '$lib/stores/settings.svelte';
 	import { modelOptions, selectedModelId } from '$lib/stores/models.svelte';
-	import { isRouterMode } from '$lib/stores/server.svelte';
+	import { isRouterMode, serverError } from '$lib/stores/server.svelte';
 	import { chatStore } from '$lib/stores/chat.svelte';
 	import { mcpStore } from '$lib/stores/mcp.svelte';
 	import { mcpHasResourceAttachments } from '$lib/stores/mcp-resources.svelte';
@@ -41,6 +42,8 @@
 		isAudioRecordingSupported
 	} from '$lib/utils/browser-only';
 	import { onMount } from 'svelte';
+	import { DialogMcpResources } from '$lib/components/app/dialogs';
+	import { IsMobile } from '$lib/hooks/is-mobile.svelte';
 
 	interface Props {
 		// Data
@@ -66,12 +69,15 @@
 		onValueChange?: (value: string) => void;
 	}
 
+	let selectorModelRef: ModelsSelector | ModelsSelectorSheet | undefined = $state(undefined);
+	let isMobile = new IsMobile();
+
 	let {
 		attachments = [],
 		class: className = '',
 		disabled = false,
 		isLoading = false,
-		placeholder = 'Type a message...',
+		placeholder = 'Chat with Jenova...',
 		showMcpPromptButton = false,
 		uploadedFiles = $bindable([]),
 		value = $bindable(''),
@@ -134,6 +140,7 @@
 
 	// Model Selection Logic
 	let isRouter = $derived(isRouterMode());
+	let isOffline = $derived(!!serverError());
 	let conversationModel = $derived(
 		chatStore.getConversationModel(activeMessages() as DatabaseMessage[])
 	);
@@ -196,7 +203,7 @@
 	}
 
 	export function openModelSelector() {
-		chatFormActionsRef?.openModelSelector();
+		selectorModelRef?.open();
 	}
 
 	/**
@@ -574,7 +581,7 @@
 	/>
 
 	<div
-		class="{INPUT_CLASSES} overflow-hidden rounded-3xl backdrop-blur-md {disabled
+		class="glass-panel p-2 rounded-[32px] flex flex-col border border-primary/20 shadow-[0_0_30px_rgba(75,0,130,0.2)] focus-within:border-primary focus-within:shadow-[0_0_20px_rgba(221,183,255,0.15)] transition-all {disabled
 			? 'cursor-not-allowed opacity-60'
 			: ''}"
 		data-slot="input-area"
@@ -633,6 +640,31 @@
 				onMcpResourcesClick={() => (isResourceDialogOpen = true)}
 			/>
 		</div>
+
+        <!-- Input Footer / Toggles -->
+        <div class="flex justify-center items-center px-6 pb-2 pt-1 w-full">
+			{#if isMobile.current}
+				<div class="w-full">
+					<ModelsSelectorSheet
+						disabled={disabled || isOffline}
+						bind:this={selectorModelRef}
+						currentModel={conversationModel}
+						forceForegroundText
+						useGlobalSelection
+					/>
+				</div>
+			{:else}
+				<div class="w-full">
+					<ModelsSelector
+						disabled={disabled || isOffline}
+						bind:this={selectorModelRef}
+						currentModel={conversationModel}
+						forceForegroundText
+						useGlobalSelection
+					/>
+				</div>
+			{/if}
+        </div>
 	</div>
 </form>
 

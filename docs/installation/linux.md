@@ -34,7 +34,7 @@ sudo dnf install cmake luajit gettext vulkan-loader vulkan-loader-devel \
 |---------|------|--------|--------|---------|
 | Node.js | `nodejs npm` | `nodejs npm` | `nodejs` | Web UI build (`make web`) |
 | glslc | `shaderc` | `glslc` | `glslc` | Vulkan shader compiler |
-| clangd | `clang` | `clangd` | `clang-tools-extra` | C/C++ LSP for jvim |
+| clangd | `clang` | `clangd` | `clang-tools-extra` | C/C++ LSP |
 
 ## Quick Install
 
@@ -45,7 +45,7 @@ cd jenova
 # Verify dependencies
 ./scripts/preflight-check.sh --verbose
 
-# Build everything: llama.cpp (Vulkan) + jvim + web
+# Build everything: llama.cpp (Vulkan) + jenova-ui + web
 make
 
 # Deploy to system
@@ -61,9 +61,7 @@ Or use the streamlined one-command installer:
 ## Build Components Individually
 
 ```sh
-make llama          # llama.cpp with Vulkan support
-make llama-hybrid   # llama.cpp with Vulkan + CUDA (NVIDIA multi-GPU)
-make jvim           # Bundled Neovim hard-fork
+make llama          # llama.cpp (auto)
 make web            # Web UI (requires Node.js)
 ```
 
@@ -78,7 +76,7 @@ If you have an NVIDIA GPU and want CUDA acceleration alongside Vulkan:
 # Fedora: sudo dnf install cuda
 
 # Build with both backends
-make llama-hybrid
+make llama
 ```
 
 The CUDA profile (`Linux/CUDA/dgpu/nvidia-generic`) will be auto-detected.

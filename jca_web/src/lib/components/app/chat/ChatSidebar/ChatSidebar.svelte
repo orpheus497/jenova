@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { Trash2, Pencil, Plus, FolderPlus, MessageSquare, FileText, Archive } from '@lucide/svelte';
+	import { Trash2, Pencil, Plus, FolderPlus, MessageSquare, FileText, Archive, Settings, LayoutDashboard, Cpu, Download, Upload, Network, ChevronDown, ChevronRight } from '@lucide/svelte';
 	import { ChatSidebarConversationItem, DialogConfirmation } from '$lib/components/app';
 	import ScrollArea from '$lib/components/ui/scroll-area/scroll-area.svelte';
 	import * as Sidebar from '$lib/components/ui/sidebar';
@@ -16,6 +16,7 @@
 	import ChatSidebarActions from './ChatSidebarActions.svelte';
     import ChatSidebarFolderItem from './ChatSidebarFolderItem.svelte';
     import ChatSidebarNoteItem from './ChatSidebarNoteItem.svelte';
+	import { mcpStore } from '$lib/stores/mcp.svelte';
 
 	const sidebar = Sidebar.useSidebar();
 
@@ -35,6 +36,9 @@
 	let editedName = $state('');
 
     let expandedFolders = $state<Record<string, boolean>>({});
+    let expandedChats = $state(true);
+    let expandedWorkspaces = $state(true);
+    let expandedUnassigned = $state(false);
 
 	let filteredConversations = $derived.by(() => {
 		if (searchQuery.trim().length > 0) {
@@ -145,26 +149,42 @@
     }
 </script>
 
-<ScrollArea class="h-[100vh]">
-	<Sidebar.Header class="top-0 z-10 gap-4 bg-sidebar/50 p-4 pb-2 backdrop-blur-lg md:sticky">
-		<a href="#/" onclick={handleMobileSidebarItemClick}>
-			<div class="flex items-center gap-3 px-2">
-                <img src="/logo.jpg" alt="Jenova" class="w-8 h-8 rounded-lg shadow-lg" />
-			    <h1 class="inline-flex items-center gap-1 text-sm font-semibold tracking-tight">Jenova</h1>
+<div class="h-full glass-panel rounded-r-[24px] overflow-hidden flex flex-col font-sans text-[15px]">
+<ScrollArea class="h-full custom-scrollbar">
+	<Sidebar.Header class="top-0 z-10 gap-4 bg-transparent p-6 pb-2">
+		<a href="#/" onclick={handleMobileSidebarItemClick} class="block mb-4">
+			<div class="flex items-center gap-4">
+                <div class="w-12 h-12 rounded-lg border border-primary/30 flex items-center justify-center shadow-[0_0_15px_rgba(43,30,58,0.4)] overflow-hidden shrink-0">
+                    <img src="/jenova.jpg" alt="Jenova Logo" class="w-full h-full object-cover" />
+                </div>
+			    <div class="min-w-0 flex flex-col justify-center">
+                    <h1 class="font-sans text-[15px] tracking-tight font-bold leading-[1.1] uppercase">
+                        <span style="color: #7b52ab;">Jenova</span><br/>
+                        <span style="color: #c96464;">Cognitive</span><br/>
+                        <span style="color: #e4b382;">Architecture</span>
+                    </h1>
+                </div>
             </div>
 		</a>
 
 		<ChatSidebarActions {handleMobileSidebarItemClick} bind:isSearchModeActive bind:searchQuery />
 	</Sidebar.Header>
 
-	<div class="flex-1 overflow-y-auto p-3 space-y-6">
+	<div class="flex-1 p-6 pt-2 space-y-6">
         <!-- WORKSPACES -->
         <div>
-            <div class="px-2 text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3 flex items-center justify-between">
-                <span>Workspaces</span>
-                <button onclick={handleCreateFolder} class="hover:text-foreground" title="New Workspace"><FolderPlus size={14}/></button>
+            <div class="px-2 text-[11px] font-mono text-outline uppercase tracking-widest mb-2 flex items-center justify-between">
+                <button onclick={() => expandedWorkspaces = !expandedWorkspaces} class="flex items-center gap-1 hover:text-primary transition-colors flex-1 text-left">
+                    {#if expandedWorkspaces}<ChevronDown size={14}/>{:else}<ChevronRight size={14}/>{/if}
+                    Workspaces
+                </button>
+                <div class="flex gap-2 items-center">
+                    <a href="#/files" class="hover:text-primary transition-colors" title="View All Workspaces"><LayoutDashboard size={14}/></a>
+                    <button onclick={handleCreateFolder} class="hover:text-primary transition-colors" title="New Workspace"><FolderPlus size={14}/></button>
+                </div>
             </div>
             
+            {#if expandedWorkspaces}
             <div class="space-y-1">
                 {#each folders() as folder (folder.id)}
                     {#snippet chatsSnippet()}
@@ -206,69 +226,71 @@
                     />
                 {/each}
             </div>
+            {/if}
         </div>
 
-        <div class="h-px bg-border/40 mx-2"></div>
+        <!-- CHATS -->
+        <div>
+            <button onclick={() => expandedChats = !expandedChats} class="w-full px-2 text-[11px] font-mono text-outline uppercase tracking-widest mb-2 flex items-center justify-between hover:text-primary transition-colors">
+                <span class="flex items-center gap-1">
+                    {#if expandedChats}<ChevronDown size={14}/>{:else}<ChevronRight size={14}/>{/if}
+                    Chats
+                </span>
+            </button>
+            
+            {#if expandedChats}
+            <div class="space-y-1 mb-2">
+                {#each filteredConversations.filter((c: any) => !c.folderId) as conversation (conversation.id)}
+                    <ChatSidebarConversationItem
+                        {conversation}
+                        depth={0}
+                        {handleMobileSidebarItemClick}
+                        isActive={currentChatId === conversation.id}
+                        onSelect={selectConversation}
+                        onEdit={() => handleEdit('conversation', conversation.id, conversation.name)}
+                        onDelete={() => handleDelete('conversation', conversation.id)}
+                        onStop={handleStopGeneration}
+                    />
+                {/each}
+            </div>
+            {/if}
+        </div>
 
         <!-- UNASSIGNED -->
         <div>
-            <div class="px-2 text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-3">
-                Unassigned
+            <div class="px-2 text-[11px] font-mono uppercase tracking-widest mb-2 flex items-center justify-between text-[#7b52ab] opacity-80">
+                Global Assets
             </div>
-
-            <!-- Unassigned Chats -->
-            <div class="mb-4">
-                <div class="flex items-center justify-between group/uachat px-2 text-[11px] uppercase font-bold text-foreground/70 mb-1">
-                    <span class="flex items-center gap-1.5 ml-2"><MessageSquare size={12}/> Chats</span>
-                    <button onclick={() => conversationsStore.createConversation()} class="opacity-0 group-hover/uachat:opacity-100 hover:text-foreground mr-2 p-1 -m-1"><Plus size={12} /></button>
-                </div>
-                <div class="space-y-1">
-                    {#each filteredConversations.filter((c: any) => !c.folderId) as conversation (conversation.id)}
-                        <ChatSidebarConversationItem
-                            {conversation}
-                            depth={0}
-                            {handleMobileSidebarItemClick}
-                            isActive={currentChatId === conversation.id}
-                            onSelect={selectConversation}
-                            onEdit={() => handleEdit('conversation', conversation.id, conversation.name)}
-                            onDelete={() => handleDelete('conversation', conversation.id)}
-                            onStop={handleStopGeneration}
-                        />
-                    {/each}
-                </div>
-            </div>
-
-            <!-- Unassigned Notes -->
-            <div class="mb-4">
-                <div class="flex items-center justify-between group/uanote px-2 text-[11px] uppercase font-bold text-foreground/70 mb-1">
-                    <span class="flex items-center gap-1.5"><FileText size={12}/> Notes</span>
-                    <button onclick={() => workspaceStore.createNote(null).then(n => selectNote(n.id))} class="opacity-0 group-hover/uanote:opacity-100 hover:text-foreground p-1 -m-1"><Plus size={12} /></button>
-                </div>
-                <div class="space-y-1">
-                    {#each notes().filter((n: any) => !n.folderId) as note (note.id)}
-                        <ChatSidebarNoteItem 
-                            {note} 
-                            isActive={currentNoteId === note.id}
-                            onSelect={() => selectNote(note.id)}
-                            onDelete={() => handleDelete('note', note.id)}
-                        />
-                    {/each}
-                </div>
-            </div>
-
-            <!-- Unassigned Files -->
-            <div class="mb-4">
-                <button 
-                    onclick={() => goto('#/files')}
-                    class={cn("w-full flex items-center justify-between px-2 py-2 rounded-lg text-sm transition-colors", page.route.id?.includes('files') && !page.params.folderId ? "bg-blue-500/20 text-blue-600 font-medium" : "text-foreground/70 hover:bg-sidebar-accent hover:text-foreground")}
-                >
-                    <span class="flex items-center gap-1.5"><Archive size={12}/> Files</span>
-                    <span class="text-[10px] bg-muted px-1.5 border border-border/20 rounded text-muted-foreground">{files().filter((f: any) => !f.folderId).length}</span>
+            
+            <div class="space-y-1">
+                <button onclick={() => workspaceStore.createNote(null).then(n => selectNote(n.id))} class="w-full flex items-center justify-between group/wsnote px-2 py-2 rounded-lg text-sm transition-all text-accent/70 hover:bg-sidebar-accent hover:text-accent">
+                    <span class="flex items-center gap-2"><FileText size={12} /> New Note</span>
                 </button>
+
+                {#each notes().filter((n: any) => !n.folderId) as note (note.id)}
+                    <ChatSidebarNoteItem 
+                        {note} 
+                        isActive={currentNoteId === note.id}
+                        onSelect={() => selectNote(note.id)}
+                        onDelete={() => handleDelete('note', note.id)}
+                    />
+                {/each}
+                
+                <div class="flex items-center gap-1 mt-2">
+                    <button onclick={() => goto('#/notes/unassigned')} class="flex-1 flex items-center justify-center gap-2 group/wsnote px-2 py-2 rounded-lg text-sm transition-all text-accent/70 hover:bg-sidebar-accent hover:text-accent bg-surface-container/30">
+                        <FileText size={12} /> Notes
+                    </button>
+                    <button onclick={() => goto('#/files/unassigned')} class="flex-1 flex items-center justify-center gap-2 group/wsfile px-2 py-2 rounded-lg text-sm transition-all text-secondary/70 hover:bg-sidebar-accent hover:text-secondary bg-surface-container/30">
+                        <Archive size={12} /> Files
+                    </button>
+                </div>
             </div>
         </div>
+
+
     </div>
 </ScrollArea>
+</div>
 
 <DialogConfirmation
 	bind:open={showDeleteDialog}

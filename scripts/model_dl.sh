@@ -8,8 +8,8 @@
 set -e
 
 JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
-JENOVA_HOME="${JENOVA_HOME:-$HOME/Jenova}"
-export JENOVA_ROOT JENOVA_HOME
+JCA_HOME="${JCA_HOME:-$HOME/JCA}"
+export JENOVA_ROOT JCA_HOME
 
 # Shared OS/hardware detection and profile loader.
 . "$JENOVA_ROOT/lib/detect-env.sh"
@@ -104,6 +104,14 @@ download_model() {
     case "$_ans" in
         y|Y|yes|YES)
             mkdir -p "$(dirname "$_path")"
+            
+            # Auto-correct common Hugging Face non-raw URLs
+            case "$_url" in
+                *huggingface.co*)
+                    _url=$(echo "$_url" | sed -e 's|?show_file_info=|/resolve/main/|g' -e 's|/blob/|/resolve/|g')
+                    ;;
+            esac
+            
             info "Downloading $(basename "$_path") ..."
             _tmp=$(mktemp "${_path}.tmp.XXXXXX")
             _dl_timeout="${JENOVA_DL_TIMEOUT:-14400}"
@@ -113,8 +121,15 @@ download_model() {
                 fetch -T "$_dl_timeout" -o "$_tmp" "$_url"
             fi
             if [ -s "$_tmp" ]; then
-                mv "$_tmp" "$_path"
-                ok "$_name downloaded successfully"
+                # Validate it's actually a GGUF file (first 4 bytes)
+                if head -c 4 "$_tmp" | grep -q "^GGUF"; then
+                    mv "$_tmp" "$_path"
+                    ok "$_name downloaded successfully"
+                else
+                    rm -f "$_tmp"
+                    fail "Downloaded file is not a valid GGUF (HTML page downloaded instead?). URL: $_url"
+                    return 1
+                fi
             else
                 rm -f "$_tmp"
                 fail "Download failed for $_name"
@@ -129,22 +144,22 @@ download_model() {
 }
 
 echo ""
-info "Checking for model files in $JENOVA_HOME/models/ ..."
+info "Checking for model files in $JCA_HOME/models/ ..."
 
 # 1. Agent (Main Inference)
-download_model "$JENOVA_HOME/models/agent/$AGENT_FILE" "Agent" "$AGENT_URL" "$AGENT_SIZE" 1 || {
+download_model "$JCA_HOME/models/agent/$AGENT_FILE" "Agent" "$AGENT_URL" "$AGENT_SIZE" 1 || {
     warn "Agent model not found/downloaded. Jenova will require a model to be fully functional."
 }
 
 # 2. Semantic (Embedding/RAG)
-download_model "$JENOVA_HOME/models/embed/$EMBED_FILE" "Semantic" "$EMBED_URL" "$EMBED_SIZE" 0 || true
+download_model "$JCA_HOME/models/embed/$EMBED_FILE" "Semantic" "$EMBED_URL" "$EMBED_SIZE" 0 || true
 
 # 3. Embedding (Drafting/Speculative)
-download_model "$JENOVA_HOME/models/draft/$DRAFT_FILE" "Embedding" "$DRAFT_URL" "$DRAFT_SIZE" 0 || true
+download_model "$JCA_HOME/models/draft/$DRAFT_FILE" "Embedding" "$DRAFT_URL" "$DRAFT_SIZE" 0 || true
 
 # Symlink models/jenova.gguf -> agent model for health checks
-if [ -f "$JENOVA_HOME/models/agent/$AGENT_FILE" ]; then
-    ln -sf "agent/$AGENT_FILE" "$JENOVA_HOME/models/jenova.gguf"
+if [ -f "$JCA_HOME/models/agent/$AGENT_FILE" ]; then
+    ln -sf "agent/$AGENT_FILE" "$JCA_HOME/models/jenova.gguf"
 fi
 
 echo ""
