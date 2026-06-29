@@ -846,32 +846,14 @@ export class ChatService {
 
     const textFiles = message.extra.filter(
       (extra: DatabaseMessageExtra): extra is DatabaseMessageExtraTextFile =>
-        extra.type === AttachmentType.TEXT,
+        extra.type === AttachmentType.TEXT ||
+        extra.type === AttachmentType.LEGACY_CONTEXT,
     );
 
     for (const textFile of textFiles) {
       contentParts.push({
         type: ContentPartType.TEXT,
         text: formatAttachmentText("File", textFile.name, textFile.content),
-      });
-    }
-
-    // Handle legacy 'context' type from old webui (pasted content)
-    const legacyContextFiles = message.extra.filter(
-      (
-        extra: DatabaseMessageExtra,
-      ): extra is DatabaseMessageExtraLegacyContext =>
-        extra.type === AttachmentType.LEGACY_CONTEXT,
-    );
-
-    for (const legacyContextFile of legacyContextFiles) {
-      contentParts.push({
-        type: ContentPartType.TEXT,
-        text: formatAttachmentText(
-          "File",
-          legacyContextFile.name,
-          legacyContextFile.content,
-        ),
       });
     }
 
