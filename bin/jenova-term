@@ -4,7 +4,7 @@
 cmd="$*"
 
 if [ "$(uname -s)" = "Darwin" ]; then
-    exec osascript -e "tell application \"Terminal\" to do script \"$cmd\""
+    exec osascript -e 'on run argv' -e 'tell application "Terminal" to do script (item 1 of argv)' -e 'end run' -- "$*"
 fi
 
 if command -v x-terminal-emulator >/dev/null 2>&1; then
@@ -15,6 +15,8 @@ for term in alacritty kitty wezterm gnome-terminal konsole xfce4-terminal mate-t
     if command -v "$term" >/dev/null 2>&1; then
         if [ "$term" = "gnome-terminal" ]; then
             exec "$term" -- "$@"
+        elif [ "$term" = "wezterm" ]; then
+            exec "$term" start -- "$@"
         else
             exec "$term" -e "$@"
         fi
