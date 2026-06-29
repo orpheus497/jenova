@@ -539,8 +539,11 @@ class ModelsStore {
       await ModelsService.load(modelId);
       await this.fetchRouterModels();
 
-      await this.updateModelModalities(modelId);
-      toast.success(`Model loaded: ${this.toDisplayName(modelId)}`);
+      if (!this.isModelLoaded(modelId)) {
+        throw new Error('Model failed to load');
+      }
+
+      toast.success('Model loaded: ' + this.toDisplayName(modelId));
     } catch (error) {
       this.error =
         error instanceof Error ? error.message : "Failed to load model";
@@ -569,7 +572,11 @@ class ModelsStore {
       await ModelsService.unload(modelId);
 
       await this.fetchRouterModels();
-      toast.info(`Model unloaded: ${this.toDisplayName(modelId)}`);
+
+      if (this.isModelLoaded(modelId)) {
+        throw new Error('Model failed to unload');
+      }
+      toast.info('Model unloaded: ' + this.toDisplayName(modelId));
     } catch (error) {
       this.error =
         error instanceof Error ? error.message : "Failed to unload model";
