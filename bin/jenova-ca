@@ -282,7 +282,8 @@ _probe_health() {
 _WATCH_AFTER_START=false
 ORIG_ARGS=""
 for _a in "$@"; do
-    ORIG_ARGS="$ORIG_ARGS \"$_a\""
+    _escaped=$(printf '%s\n' "$_a" | sed "s/'/'\\\\''/g")
+    ORIG_ARGS="$ORIG_ARGS '$_escaped'"
 done
 
 _REMAINING_ARGS=""
