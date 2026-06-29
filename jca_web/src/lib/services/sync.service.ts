@@ -72,6 +72,16 @@ export class SyncService {
         const allConvs = await DatabaseService.getAllConversations();
         const allNotes = await DatabaseService.getAllNotes();
 
+        const notesMap = new Map();
+        for (const note of allNotes) {
+          notesMap.set(note.title, note);
+        }
+
+        const convsMap = new Map();
+        for (const conv of allConvs) {
+          convsMap.set(conv.name, conv);
+        }
+
         for (const path of mdFiles) {
           const content = await StorageService.get(path);
           if (!content) continue;
@@ -82,7 +92,7 @@ export class SyncService {
           const isChat = path.includes("/Chats/");
 
           if (isNote) {
-            const note = allNotes.find((n) => n.title === fileName);
+            const note = notesMap.get(fileName);
             if (note) {
               if (note.content !== content) {
                 await DatabaseService.updateNote(note.id, {
@@ -100,9 +110,7 @@ export class SyncService {
           } else if (isChat) {
             const { conv: parsedConv, messages: parsedMessages } =
               MarkdownService.fromMarkdown(content);
-            const conv = allConvs.find(
-              (c) => c.name === (parsedConv.name || fileName),
-            );
+            const conv = convsMap.get(parsedConv.name || fileName);
 
             if (conv && parsedMessages.length > 0) {
               // Clear existing messages and reconstruct the tree properly
