@@ -521,66 +521,7 @@ class ModelsStore {
    *
    */
 
-  /**
-   * WORKAROUND: Polling for model status after load/unload operations.
-   *
-   * Currently, the `/models/load` and `/models/unload` endpoints return success
-   * before the operation actually completes on the server. This means an immediate
-   * request to `/models` returns stale status (e.g., "loading" after load request,
-   * "loaded" after unload request).
-   *
-   * TODO: Remove this polling once jenova-server properly waits for the operation
-   * to complete before returning success from `/load` and `/unload` endpoints.
-   * At that point, a single `fetchRouterModels()` call after the operation will
-   * be sufficient to get the correct status.
-   */
-
-  /** Polling interval in ms for checking model status */
-  private static readonly STATUS_POLL_INTERVAL = 500;
-
-  /**
-   * Poll for expected model status after load/unload operation.
-   * Keeps polling indefinitely until the model reaches the expected status or fails.
-   *
-   * @param modelId - Model identifier to check
-   * @param expectedStatus - Expected status to wait for
-   * @throws Error if model reaches FAILED status
-   */
-  private async pollForModelStatus(
-    modelId: string,
-    expectedStatus: ServerModelStatus,
-  ): Promise<void> {
-    let attempt = 0;
-    while (true) {
-      await this.fetchRouterModels();
-
-      const currentStatus = this.getModelStatus(modelId);
-      if (currentStatus === expectedStatus) {
-        return;
-      }
-
-      if (currentStatus === ServerModelStatus.FAILED) {
-        throw new Error(
-          `Model failed to ${expectedStatus === ServerModelStatus.LOADED ? "load" : "unload"}`,
-        );
-      }
-
-      if (
-        expectedStatus === ServerModelStatus.LOADED &&
-        currentStatus === ServerModelStatus.UNLOADED &&
-        attempt > 2
-      ) {
-        throw new Error("Model was unloaded unexpectedly during loading");
-      }
-
-      attempt++;
-      await new Promise((resolve) =>
-        setTimeout(resolve, ModelsStore.STATUS_POLL_INTERVAL),
-      );
-    }
-  }
-
-  /**
+    /**
    * Load a model (ROUTER mode)
    * @param modelId - Model identifier to load
    */
@@ -596,7 +537,7 @@ class ModelsStore {
 
     try {
       await ModelsService.load(modelId);
-      await this.pollForModelStatus(modelId, ServerModelStatus.LOADED);
+      await this.fetchRouterModels();
 
       await this.updateModelModalities(modelId);
       toast.success(`Model loaded: ${this.toDisplayName(modelId)}`);
@@ -627,7 +568,7 @@ class ModelsStore {
     try {
       await ModelsService.unload(modelId);
 
-      await this.pollForModelStatus(modelId, ServerModelStatus.UNLOADED);
+      await this.fetchRouterModels();
       toast.info(`Model unloaded: ${this.toDisplayName(modelId)}`);
     } catch (error) {
       this.error =
