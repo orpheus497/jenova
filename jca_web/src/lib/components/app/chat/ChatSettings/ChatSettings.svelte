@@ -327,17 +327,20 @@
 				{
 					key: SETTINGS_KEYS.PY_INTERPRETER_ENABLED,
 					label: 'Enable Python interpreter',
-					type: SettingsFieldType.CHECKBOX
+					type: SettingsFieldType.CHECKBOX,
+					isExperimental: true
 				},
 				{
 					key: SETTINGS_KEYS.USE_THINKING,
 					label: 'Use Thinking',
-					type: SettingsFieldType.CHECKBOX
+					type: SettingsFieldType.CHECKBOX,
+					isExperimental: true
 				},
 				{
 					key: SETTINGS_KEYS.USE_AUDIO_VOICE,
 					label: 'Use Audio Voice',
-					type: SettingsFieldType.CHECKBOX
+					type: SettingsFieldType.CHECKBOX,
+					isExperimental: true
 				}
 			]
 		}
