@@ -144,3 +144,4 @@ conductor/
 /jca_web/build/
 /jca_web/src-tauri/target/
 
+*.py
