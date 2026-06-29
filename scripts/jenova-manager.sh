@@ -1,6 +1,6 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # jenova-manager.sh: TUI manager for this monorepo
-# Bash implementation.
+# Pure POSIX shell implementation for maximum compatibility (FreeBSD/Linux/macOS).
 
 set -e
 
@@ -621,17 +621,20 @@ run_hardware_profile() {
     
     _profiles_str=$("$JENOVA_ROOT/hardware-profiles/detect-hardware.sh" --list || true)
     
-    _prof=()
-    while IFS= read -r _p; do
-        [[ -n "$_p" ]] && _prof+=("$_p")
-    done <<< "$_profiles_str"
-    _count=${#_prof[@]}
+    _count=0
+    for _p in $_profiles_str; do
+        eval "_prof_$_count='$_p'"
+        _count=$((_count + 1))
+    done
     
     enter_alt_screen
     while true; do
         set -- "Hardware Profile Selection" "Auto-detect and Apply Hardware Profile" "View Detection Report"
-        for _p in "${_prof[@]}"; do
+        i=0
+        while [ $i -lt $_count ]; do
+            eval "_p=\"\$_prof_$i\""
             set -- "$@" "Apply: $_p"
+            i=$((i + 1))
         done
         set -- "$@" "Back"
         
@@ -654,7 +657,7 @@ run_hardware_profile() {
                 break
             else
                 _prof_idx=$((MENU_CHOICE - 2))
-                _selected_prof="${_prof[$_prof_idx]}"
+                eval "_selected_prof=\"\$_prof_$_prof_idx\""
                 exit_alt_screen
                 printf "%s%sDeploying %s...%s\n" "$RESET" "$BOLD$GREEN" "$_selected_prof" "$RESET"
                 "$JENOVA_ROOT/hardware-profiles/detect-hardware.sh" --apply-profile "$_selected_prof"
