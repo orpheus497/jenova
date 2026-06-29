@@ -622,9 +622,9 @@ run_hardware_profile() {
     _profiles_str=$("$JENOVA_ROOT/hardware-profiles/detect-hardware.sh" --list || true)
     
     _prof=()
-    for _p in $_profiles_str; do
-        _prof+=("$_p")
-    done
+    while IFS= read -r _p; do
+        [[ -n "$_p" ]] && _prof+=("$_p")
+    done <<< "$_profiles_str"
     _count=${#_prof[@]}
     
     enter_alt_screen
