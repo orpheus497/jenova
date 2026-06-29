@@ -177,7 +177,9 @@ export class SyncService {
 
       const defaultWorkspace = workspaces[0]?.name || "default";
 
-      const foldersById = new Map(allFolders.map((f) => [f.id, f]));
+      const foldersById = new Map<string, DatabaseFolder>(
+        allFolders.map((f) => [f.id, f]),
+      );
 
       const queue: (() => Promise<void>)[] = [];
 
