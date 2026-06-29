@@ -278,6 +278,17 @@ _probe_health() {
     fi
 }
 
+validate_arg() {
+    _flag="$1"
+    _val="$2"
+    case "$_val" in
+        ""|-*)
+            echo "Error: $_flag requires a value" >&2
+            exit 1
+            ;;
+    esac
+}
+
 # --- Logic: Argument Parsing ---
 _WATCH_AFTER_START=false
 
@@ -326,17 +337,17 @@ while [ "$_I" -lt "$_ORIG_COUNT" ]; do
             continue 
             ;;
         --port) 
-            case "$1" in ""|-*) echo "Error: --port requires a value" >&2; exit 1 ;; esac
+            validate_arg "--port" "$1"
             PORT="$1"; shift; _I=$((_I + 1)); export JENOVA_PORT="$PORT"; export JENOVA_PROXY_PORT="$PORT"; continue ;;
         --llama-port) 
-            case "$1" in ""|-*) echo "Error: --llama-port requires a value" >&2; exit 1 ;; esac
+            validate_arg "--llama-port" "$1"
             LLAMA_PORT="$1"; shift; _I=$((_I + 1)); export JENOVA_LLAMA_PORT="$LLAMA_PORT"; continue ;;
         --embed-port) 
-            case "$1" in ""|-*) echo "Error: --embed-port requires a value" >&2; exit 1 ;; esac
+            validate_arg "--embed-port" "$1"
             LLAMA_EMBED_PORT="$1"; shift; _I=$((_I + 1)); export JENOVA_LLAMA_EMBED_PORT="$LLAMA_EMBED_PORT"; continue ;;
         *) 
-            _escape_val "$_arg"
-            _REMAINING_ARGS="$_REMAINING_ARGS '$_escaped'"
+            _escaped=$(printf '%s\n' "$_arg" | sed "s/'/'\\\\''/g" && printf 'x')
+            _REMAINING_ARGS="$_REMAINING_ARGS '${_escaped%?x}'"
             ;;
     esac
 done
