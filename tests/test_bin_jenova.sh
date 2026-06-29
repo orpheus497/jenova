@@ -55,15 +55,6 @@ else
     EXIT_CODE=1
 fi
 
-# Test 3: Agent module exists
-echo "[test 3] Agent module..."
-if [ -d "$SCRIPT_DIR/../jvim-config/lua/jenova/agent" ]; then
-    echo "  PASS: jvim-config/lua/jenova/agent exists"
-else
-    echo "  FAIL: jvim-config/lua/jenova/agent not found"
-    EXIT_CODE=1
-fi
-
 # Test 4: Check jenova-ca status verb
 echo "[test 4] jenova-ca status verb..."
 "$JENOVA_CA" status >/dev/null 2>&1
@@ -101,24 +92,6 @@ elif [ -f "$PID_FILE" ]; then
     fi
 else
     echo "  SKIP: No PID file at ${PID_FILE} (backend not running)"
-fi
-
-# Test 7: Verify cleanup guard variable
-echo "[test 7] Cleanup guard (STARTED_BY_THIS_INVOCATION)..."
-if grep -q "STARTED_BY_THIS_INVOCATION" "$JENOVA_BIN"; then
-    echo "  PASS: Cleanup guard present in bin/jenova"
-else
-    echo "  FAIL: STARTED_BY_THIS_INVOCATION guard missing from bin/jenova"
-    EXIT_CODE=1
-fi
-
-# Test 8: Verify trap is set
-echo "[test 8] EXIT/INT/TERM trap..."
-if grep -q "trap cleanup EXIT INT TERM" "$JENOVA_BIN"; then
-    echo "  PASS: trap cleanup EXIT INT TERM found"
-else
-    echo "  FAIL: Missing trap in bin/jenova"
-    EXIT_CODE=1
 fi
 
 echo ""

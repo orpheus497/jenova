@@ -1,0 +1,25 @@
+#!/bin/sh
+# jenova-term: helper to launch a command in a terminal emulator
+
+cmd="$*"
+
+if [ "$(uname -s)" = "Darwin" ]; then
+    exec osascript -e "tell application \"Terminal\" to do script \"$cmd\""
+fi
+
+if command -v x-terminal-emulator >/dev/null 2>&1; then
+    exec x-terminal-emulator -e "$@"
+fi
+
+for term in alacritty kitty wezterm gnome-terminal konsole xfce4-terminal mate-terminal lxterminal xterm; do
+    if command -v "$term" >/dev/null 2>&1; then
+        if [ "$term" = "gnome-terminal" ]; then
+            exec "$term" -- "$@"
+        else
+            exec "$term" -e "$@"
+        fi
+    fi
+done
+
+echo "No terminal emulator found." >&2
+exit 1
