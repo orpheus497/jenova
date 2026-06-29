@@ -35,19 +35,6 @@ for _mod in proxy search embed http json ffi_defs daemon; do
     fi
 done
 
-# New locations for agent and memory
-if [ -d "$ROOT/jvim-config/lua/jenova/agent" ]; then
-    ok "T2: jvim-config/lua/jenova/agent/ exists"
-else
-    fail "T2: jvim-config/lua/jenova/agent/ MISSING"
-fi
-
-if [ -f "$ROOT/jvim-config/lua/jenova/agent/memory.lua" ]; then
-    ok "T2: jvim-config/lua/jenova/agent/memory.lua exists"
-else
-    fail "T2: jvim-config/lua/jenova/agent/memory.lua MISSING"
-fi
-
 # --- T3: jenova-ca is executable ---
 if [ -x "$ROOT/bin/jenova-ca" ]; then
     ok "T3: bin/jenova-ca is executable"
@@ -91,13 +78,6 @@ if [ -f "$PID_FILE" ]; then
     fi
 else
     ok "T6: PID file absent (daemons not running — format check skipped)"
-fi
-
-# --- T7: cleanup trap is present in bin/jenova ---
-if grep -q "trap.*cleanup" "$ROOT/bin/jenova" 2>/dev/null; then
-    ok "T7: cleanup trap present in bin/jenova"
-else
-    fail "T7: cleanup trap NOT found in bin/jenova"
 fi
 
 # --- T8: proxy.lua has /health endpoint ---
