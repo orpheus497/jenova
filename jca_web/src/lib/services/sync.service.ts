@@ -72,14 +72,18 @@ export class SyncService {
         const allConvs = await DatabaseService.getAllConversations();
         const allNotes = await DatabaseService.getAllNotes();
 
-        const notesMap = new Map();
+        const notesMap = new Map<string, DatabaseNote>();
         for (const note of allNotes) {
-          notesMap.set(note.title, note);
+          if (!notesMap.has(note.title)) {
+            notesMap.set(note.title, note);
+          }
         }
 
-        const convsMap = new Map();
+        const convsMap = new Map<string, DatabaseConversation>();
         for (const conv of allConvs) {
-          convsMap.set(conv.name, conv);
+          if (!convsMap.has(conv.name)) {
+            convsMap.set(conv.name, conv);
+          }
         }
 
         for (const path of mdFiles) {
