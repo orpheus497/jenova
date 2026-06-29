@@ -432,30 +432,6 @@ class ModelsStore {
   }
 
   /**
-   * Update modalities for a specific model
-   * Called when a model is loaded or when we need fresh modality data
-   */
-  async updateModelModalities(modelId: string): Promise<void> {
-    try {
-      const props = await this.fetchModelProps(modelId);
-      if (!props?.modalities) return;
-
-      const modalities: ModelModalities = {
-        vision: props.modalities.vision ?? false,
-        audio: props.modalities.audio ?? false,
-      };
-
-      this.models = this.models.map((model) =>
-        model.model === modelId ? { ...model, modalities } : model,
-      );
-
-      this.propsCacheVersion++;
-    } catch (error) {
-      console.warn(`Failed to update modalities for model ${modelId}:`, error);
-    }
-  }
-
-  /**
    *
    *
    * Model Selection
@@ -539,7 +515,6 @@ class ModelsStore {
       await ModelsService.load(modelId);
       await this.fetchRouterModels();
 
-      await this.updateModelModalities(modelId);
       toast.success(`Model loaded: ${this.toDisplayName(modelId)}`);
     } catch (error) {
       this.error =
