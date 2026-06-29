@@ -12,6 +12,7 @@ export const SETTINGS_SECTION_TITLES = {
   IMPORT_EXPORT: "Import/Export",
   MCP: "MCP",
   DEVELOPER: "Developer",
+  EXPERIMENTAL: "Experimental",
 } as const;
 
 /** Type for settings section titles */
