@@ -313,7 +313,8 @@ while [ "$_I" -lt "$_ORIG_COUNT" ]; do
             case "$1" in ""|-*) echo "Error: --embed-port requires a value" >&2; exit 1 ;; esac
             LLAMA_EMBED_PORT="$1"; shift; _I=$((_I + 1)); export JENOVA_LLAMA_EMBED_PORT="$LLAMA_EMBED_PORT"; continue ;;
         *) 
-            _REMAINING_ARGS="$_REMAINING_ARGS '$_arg'"
+            _escaped=$(printf '%s\n' "$_arg" | sed "s/'/'\\\\''/g")
+            _REMAINING_ARGS="$_REMAINING_ARGS '$_escaped'"
             ;;
     esac
 done
