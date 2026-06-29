@@ -278,14 +278,43 @@ _probe_health() {
     fi
 }
 
+validate_arg() {
+    _flag="$1"
+    _val="$2"
+    case "$_val" in
+        ""|-*)
+            echo "Error: $_flag requires a value" >&2
+            exit 1
+            ;;
+    esac
+}
+
 # --- Logic: Argument Parsing ---
 _WATCH_AFTER_START=false
+
+_escape_val() {
+    _rest=$1
+    _escaped=""
+    while [ -n "$_rest" ]; do
+        case "$_rest" in
+            *\'*)
+                _escaped="$_escaped${_rest%%\'*}\'\\''"
+                _rest=${_rest#*\'}
+                ;;
+            *)
+                _escaped="$_escaped$_rest"
+                _rest=""
+                ;;
+        esac
+    done
+}
+
 ORIG_ARGS=""
 for _a in "$@"; do
-    ORIG_ARGS="$ORIG_ARGS \"$_a\""
+    _escape_val "$_a"
+    ORIG_ARGS="$ORIG_ARGS '$_escaped'"
 done
 
-_REMAINING_ARGS=""
 _ORIG_COUNT=$#
 _I=0
 while [ "$_I" -lt "$_ORIG_COUNT" ]; do
@@ -295,6 +324,9 @@ while [ "$_I" -lt "$_ORIG_COUNT" ]; do
     case "$_arg" in
         --watch) _WATCH_AFTER_START=true; continue ;;
         --daemon|--lan) 
+            if [ "$_arg" = "--daemon" ]; then
+                _IS_DAEMON=true
+            fi
             if [ "$_arg" = "--lan" ]; then
                 HOST="0.0.0.0"
                 _INT_HOST="127.0.0.1"
@@ -304,21 +336,19 @@ while [ "$_I" -lt "$_ORIG_COUNT" ]; do
             continue 
             ;;
         --port) 
-            case "$1" in ""|-*) echo "Error: --port requires a value" >&2; exit 1 ;; esac
+            validate_arg "--port" "$1"
             PORT="$1"; shift; _I=$((_I + 1)); export JENOVA_PORT="$PORT"; export JENOVA_PROXY_PORT="$PORT"; continue ;;
         --llama-port) 
-            case "$1" in ""|-*) echo "Error: --llama-port requires a value" >&2; exit 1 ;; esac
+            validate_arg "--llama-port" "$1"
             LLAMA_PORT="$1"; shift; _I=$((_I + 1)); export JENOVA_LLAMA_PORT="$LLAMA_PORT"; continue ;;
         --embed-port) 
-            case "$1" in ""|-*) echo "Error: --embed-port requires a value" >&2; exit 1 ;; esac
+            validate_arg "--embed-port" "$1"
             LLAMA_EMBED_PORT="$1"; shift; _I=$((_I + 1)); export JENOVA_LLAMA_EMBED_PORT="$LLAMA_EMBED_PORT"; continue ;;
         *) 
-            _REMAINING_ARGS="$_REMAINING_ARGS '$_arg'"
+            set -- "$@" "$_arg"
             ;;
     esac
 done
-
-eval "set -- $_REMAINING_ARGS"
 
 # --- Control verbs ---
 case "$1" in
@@ -563,8 +593,10 @@ echo ""
 
 
 # --- Arguments: Daemon Mode ---
-if [ "$1" = "--daemon" ]; then
-    shift
+if [ "$1" = "--daemon" ] || [ "$_IS_DAEMON" = "true" ]; then
+    if [ "$1" = "--daemon" ]; then
+        shift
+    fi
     # Robust POSIX argument filtering: collect flags for jenova-ca,
     # and rebuild the positional parameters for llama-server.
 
