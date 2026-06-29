@@ -72,8 +72,19 @@ export class SyncService {
         const allConvs = await DatabaseService.getAllConversations();
         const allNotes = await DatabaseService.getAllNotes();
 
-        const notesByTitle = new Map(allNotes.map((n) => [n.title, n]));
-        const convsByName = new Map(allConvs.map((c) => [c.name, c]));
+        const notesByTitle = new Map<string, DatabaseNote>();
+        for (const n of allNotes) {
+          if (!notesByTitle.has(n.title)) {
+            notesByTitle.set(n.title, n);
+          }
+        }
+
+        const convsByName = new Map<string, DatabaseConversation>();
+        for (const c of allConvs) {
+          if (!convsByName.has(c.name)) {
+            convsByName.set(c.name, c);
+          }
+        }
 
         for (const path of mdFiles) {
           const content = await StorageService.get(path);
@@ -227,13 +238,11 @@ export class SyncService {
       const defaultWorkspace = workspaces[0]?.name || "default";
       const allFolders = await DatabaseService.getProjectFolders(null);
 
-      const foldersById = new Map(allFolders.map((f) => [f.id, f]));
-
       if (type === "note") {
         const notes = await DatabaseService.getAllNotes();
         const note = notes.find((n) => n.id === id);
         if (note) {
-          const folder = foldersById.get(note.folderId || "");
+          const folder = allFolders.find((f) => f.id === note.folderId);
           const folderName = folder?.name || "Notes";
           const path = `${defaultWorkspace}/${folderName}/${note.title}.md`;
           await StorageService.save(path, note.content);
@@ -242,7 +251,7 @@ export class SyncService {
         const conv = await DatabaseService.getConversation(id);
         if (conv) {
           const messages = await DatabaseService.getConversationMessages(id);
-          const folder = foldersById.get(conv.folderId || "");
+          const folder = allFolders.find((f) => f.id === conv.folderId);
           const folderName = folder?.name || "Chats";
           const md = MarkdownService.toMarkdown(conv, messages);
           const path = `${defaultWorkspace}/${folderName}/${conv.name}.md`;
