@@ -166,11 +166,13 @@ export class SyncService {
 
       const defaultWorkspace = workspaces[0]?.name || "default";
 
+      const folderMap = new Map(allFolders.map((f) => [f.id, f]));
+
       const queue: (() => Promise<void>)[] = [];
 
       for (const note of allNotes) {
         queue.push(async () => {
-          const folder = allFolders.find((f) => f.id === note.folderId);
+          const folder = folderMap.get(note.folderId || "");
           const folderName = folder?.name || "Notes";
           const path = `${defaultWorkspace}/${folderName}/${note.title}.md`;
           await StorageService.save(path, note.content);
@@ -182,7 +184,7 @@ export class SyncService {
           const messages = await DatabaseService.getConversationMessages(
             conv.id,
           );
-          const folder = allFolders.find((f) => f.id === conv.folderId);
+          const folder = folderMap.get(conv.folderId || "");
           const folderName = folder?.name || "Chats";
           const md = MarkdownService.toMarkdown(conv, messages);
           const path = `${defaultWorkspace}/${folderName}/${conv.name}.md`;
