@@ -291,9 +291,28 @@ validate_arg() {
 
 # --- Logic: Argument Parsing ---
 _WATCH_AFTER_START=false
+
+_escape_val() {
+    _rest=$1
+    _escaped=""
+    while [ -n "$_rest" ]; do
+        case "$_rest" in
+            *\'*)
+                _escaped="$_escaped${_rest%%\'*}\'\\''"
+                _rest=${_rest#*\'}
+                ;;
+            *)
+                _escaped="$_escaped$_rest"
+                _rest=""
+                ;;
+        esac
+    done
+}
+
 ORIG_ARGS=""
 for _a in "$@"; do
-    ORIG_ARGS="$ORIG_ARGS \"$_a\""
+    _escape_val "$_a"
+    ORIG_ARGS="$ORIG_ARGS '$_escaped'"
 done
 
 _REMAINING_ARGS=""
@@ -306,6 +325,9 @@ while [ "$_I" -lt "$_ORIG_COUNT" ]; do
     case "$_arg" in
         --watch) _WATCH_AFTER_START=true; continue ;;
         --daemon|--lan) 
+            if [ "$_arg" = "--daemon" ]; then
+                _IS_DAEMON=true
+            fi
             if [ "$_arg" = "--lan" ]; then
                 HOST="0.0.0.0"
                 _INT_HOST="127.0.0.1"
@@ -575,8 +597,10 @@ echo ""
 
 
 # --- Arguments: Daemon Mode ---
-if [ "$1" = "--daemon" ]; then
-    shift
+if [ "$1" = "--daemon" ] || [ "$_IS_DAEMON" = "true" ]; then
+    if [ "$1" = "--daemon" ]; then
+        shift
+    fi
     # Robust POSIX argument filtering: collect flags for jenova-ca,
     # and rebuild the positional parameters for llama-server.
 
