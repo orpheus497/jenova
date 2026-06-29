@@ -3,8 +3,15 @@
  * Displays a centered message with a link to open the image in a new tab.
  */
 export function getImageErrorFallbackHtml(src: string): string {
+  const escapedSrc = src
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+
   return `<div class="image-error-content">
 		<span>Image cannot be displayed</span>
-		<a href="${src}" target="_blank" rel="noopener noreferrer">(open link)</a>
+		<a href="${escapedSrc}" target="_blank" rel="noopener noreferrer">(open link)</a>
 	</div>`;
 }
