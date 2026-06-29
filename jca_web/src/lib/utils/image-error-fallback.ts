@@ -3,7 +3,10 @@
  * Displays a centered message with a link to open the image in a new tab.
  */
 export function getImageErrorFallbackHtml(src: string): string {
-  const escapedSrc = src
+  const trimmedSrc = src.trim();
+  const hasUnsafeProtocol = /^(javascript|vbscript):/i.test(trimmedSrc);
+  const safeSrc = hasUnsafeProtocol ? "#" : trimmedSrc;
+  const escapedSrc = safeSrc
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
