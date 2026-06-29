@@ -72,6 +72,9 @@ export class SyncService {
         const allConvs = await DatabaseService.getAllConversations();
         const allNotes = await DatabaseService.getAllNotes();
 
+        const notesByTitle = new Map(allNotes.map((n) => [n.title, n]));
+        const convsByName = new Map(allConvs.map((c) => [c.name, c]));
+
         for (const path of mdFiles) {
           const content = await StorageService.get(path);
           if (!content) continue;
@@ -82,7 +85,7 @@ export class SyncService {
           const isChat = path.includes("/Chats/");
 
           if (isNote) {
-            const note = allNotes.find((n) => n.title === fileName);
+            const note = notesByTitle.get(fileName);
             if (note) {
               if (note.content !== content) {
                 await DatabaseService.updateNote(note.id, {
@@ -100,9 +103,7 @@ export class SyncService {
           } else if (isChat) {
             const { conv: parsedConv, messages: parsedMessages } =
               MarkdownService.fromMarkdown(content);
-            const conv = allConvs.find(
-              (c) => c.name === (parsedConv.name || fileName),
-            );
+            const conv = convsByName.get(parsedConv.name || fileName);
 
             if (conv && parsedMessages.length > 0) {
               // Clear existing messages and reconstruct the tree properly
@@ -165,11 +166,13 @@ export class SyncService {
 
       const defaultWorkspace = workspaces[0]?.name || "default";
 
+      const foldersById = new Map(allFolders.map((f) => [f.id, f]));
+
       const queue: (() => Promise<void>)[] = [];
 
       for (const note of allNotes) {
         queue.push(async () => {
-          const folder = allFolders.find((f) => f.id === note.folderId);
+          const folder = foldersById.get(note.folderId || "");
           const folderName = folder?.name || "Notes";
           const path = `${defaultWorkspace}/${folderName}/${note.title}.md`;
           await StorageService.save(path, note.content);
@@ -181,7 +184,7 @@ export class SyncService {
           const messages = await DatabaseService.getConversationMessages(
             conv.id,
           );
-          const folder = allFolders.find((f) => f.id === conv.folderId);
+          const folder = foldersById.get(conv.folderId || "");
           const folderName = folder?.name || "Chats";
           const md = MarkdownService.toMarkdown(conv, messages);
           const path = `${defaultWorkspace}/${folderName}/${conv.name}.md`;
@@ -224,11 +227,13 @@ export class SyncService {
       const defaultWorkspace = workspaces[0]?.name || "default";
       const allFolders = await DatabaseService.getProjectFolders(null);
 
+      const foldersById = new Map(allFolders.map((f) => [f.id, f]));
+
       if (type === "note") {
         const notes = await DatabaseService.getAllNotes();
         const note = notes.find((n) => n.id === id);
         if (note) {
-          const folder = allFolders.find((f) => f.id === note.folderId);
+          const folder = foldersById.get(note.folderId || "");
           const folderName = folder?.name || "Notes";
           const path = `${defaultWorkspace}/${folderName}/${note.title}.md`;
           await StorageService.save(path, note.content);
@@ -237,7 +242,7 @@ export class SyncService {
         const conv = await DatabaseService.getConversation(id);
         if (conv) {
           const messages = await DatabaseService.getConversationMessages(id);
-          const folder = allFolders.find((f) => f.id === conv.folderId);
+          const folder = foldersById.get(conv.folderId || "");
           const folderName = folder?.name || "Chats";
           const md = MarkdownService.toMarkdown(conv, messages);
           const path = `${defaultWorkspace}/${folderName}/${conv.name}.md`;
