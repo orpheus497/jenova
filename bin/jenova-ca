@@ -285,7 +285,6 @@ for _a in "$@"; do
     ORIG_ARGS="$ORIG_ARGS \"$_a\""
 done
 
-_REMAINING_ARGS=""
 _ORIG_COUNT=$#
 _I=0
 while [ "$_I" -lt "$_ORIG_COUNT" ]; do
@@ -313,13 +312,10 @@ while [ "$_I" -lt "$_ORIG_COUNT" ]; do
             case "$1" in ""|-*) echo "Error: --embed-port requires a value" >&2; exit 1 ;; esac
             LLAMA_EMBED_PORT="$1"; shift; _I=$((_I + 1)); export JENOVA_LLAMA_EMBED_PORT="$LLAMA_EMBED_PORT"; continue ;;
         *) 
-            _escaped=$(printf '%s\n' "$_arg" | sed "s/'/'\\\\''/g")
-            _REMAINING_ARGS="$_REMAINING_ARGS '$_escaped'"
+            set -- "$@" "$_arg"
             ;;
     esac
 done
-
-eval "set -- $_REMAINING_ARGS"
 
 # --- Control verbs ---
 case "$1" in
