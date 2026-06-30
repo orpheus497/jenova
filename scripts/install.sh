@@ -382,7 +382,10 @@ fi
 cp -R "$JENOVA_ROOT/lib/"* "$JCA_HOME/lib/"
 cp -R "$JENOVA_ROOT/scripts/"* "$JCA_HOME/scripts/"
 cp -R "$JENOVA_ROOT/hardware-profiles/"* "$JCA_HOME/hardware-profiles/"
-[ -d "$JENOVA_ROOT/public" ] && cp -R "$JENOVA_ROOT/public/"* "$JCA_HOME/public/"
+if [ -d "$JENOVA_ROOT/public" ]; then
+    rm -rf "$JCA_HOME/public/"*
+    cp -R "$JENOVA_ROOT/public/"* "$JCA_HOME/public/"
+fi
 ok "Deployed libraries, scripts, hardware profiles, runtime, and web assets"
 
 # 8.4 Generate Path-Locked Config

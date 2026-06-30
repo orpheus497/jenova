@@ -187,15 +187,6 @@ local function async_popen_read(cmd)
     while true do
         local n = ffi.C.read(fd, buf, 4096)
         if n > 0 then
-        if watch_stdin and _ffi_defs.FD_ISSET(0, read_fds) then
-            local tmp_buf = ffi.new("char[1]")
-            local r = ffi.C.read(0, tmp_buf, 1)
-            if r <= 0 then
-                print("[proxy] EOF on stdin, parent process died. Shutting down...")
-                running = false
-                break
-            end
-        end
             chunks[#chunks + 1] = ffi.string(buf, n)
         elseif n == 0 then
             break
@@ -501,7 +492,7 @@ local function proxy_connection(client_fd, conn_fds)
         local origin = headers_raw:match("\r\n[Oo][Rr][Ii][Gg][Ii][Nn]:%s*([^\r\n]+)")
         local allow_origin = origin or "http://localhost:8080"
         if origin then
-            local is_safe = origin == "null" or origin:match("^file://") or origin:match("^https?://127%.0%.0%.1(:%d+)?$") or origin:match("^https?://localhost(:%d+)?$")
+            local is_safe = origin == "null" or origin:match("^file://") or origin:match("^https?://127%.0%.0%.1$") or origin:match("^https?://127%.0%.0%.1:%d+$") or origin:match("^https?://localhost$") or origin:match("^https?://localhost:%d+$")
             if not is_safe then
                 local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
                 async_send(client_fd, err); safe_close(); return
