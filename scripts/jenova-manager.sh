@@ -416,6 +416,7 @@ update_jenova_ui() {
 uninstall_jenova_core() {
     printf "%s%sUninstalling Jenova Core...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
     "$JENOVA_ROOT/scripts/uninstall.sh"
+}
 uninstall_llama() {
     printf "%s%sUninstalling external/llama.cpp...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
     rm -rf "$JENOVA_ROOT/external/ext_bin"
@@ -622,10 +623,14 @@ run_hardware_profile() {
     _profiles_str=$("$JENOVA_ROOT/hardware-profiles/detect-hardware.sh" --list || true)
     
     _count=0
-    for _p in $_profiles_str; do
-        eval "_prof_$_count='$_p'"
+    while IFS= read -r _p; do
+        [ -n "$_p" ] || continue
+        _escaped=$(printf '%s\n' "$_p" | sed "s/'/'\\\\''/g")
+        eval "_prof_$_count='$_escaped'"
         _count=$((_count + 1))
-    done
+    done <<EOF
+$_profiles_str
+EOF
     
     enter_alt_screen
     while true; do

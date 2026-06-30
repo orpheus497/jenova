@@ -446,7 +446,9 @@ class ModelsStore {
       };
 
       this.models = this.models.map((model) =>
-        model.model === modelId ? { ...model, modalities } : model,
+        model.model === modelId || model.id === modelId
+          ? { ...model, modalities }
+          : model,
       );
 
       this.propsCacheVersion++;
@@ -551,15 +553,21 @@ class ModelsStore {
     expectedStatus: ServerModelStatus,
   ): Promise<void> {
     let attempt = 0;
-    while (true) {
+    const maxAttempts = 120; // 60s timeout (120 * 500ms)
+    while (attempt < maxAttempts) {
       await this.fetchRouterModels();
 
       const currentStatus = this.getModelStatus(modelId);
-      if (currentStatus === expectedStatus) {
+      if (
+        currentStatus === expectedStatus ||
+        (expectedStatus === ServerModelStatus.LOADED &&
+          currentStatus === ServerModelStatus.SLEEPING)
+      ) {
         return;
       }
 
       if (currentStatus === ServerModelStatus.FAILED) {
+        this.modelLoadingStates.delete(modelId);
         throw new Error(
           `Model failed to ${expectedStatus === ServerModelStatus.LOADED ? "load" : "unload"}`,
         );
@@ -570,6 +578,7 @@ class ModelsStore {
         currentStatus === ServerModelStatus.UNLOADED &&
         attempt > 2
       ) {
+        this.modelLoadingStates.delete(modelId);
         throw new Error("Model was unloaded unexpectedly during loading");
       }
 
@@ -578,6 +587,11 @@ class ModelsStore {
         setTimeout(resolve, ModelsStore.STATUS_POLL_INTERVAL),
       );
     }
+
+    this.modelLoadingStates.delete(modelId);
+    throw new Error(
+      `Timeout waiting for model to ${expectedStatus === ServerModelStatus.LOADED ? "load" : "unload"}`,
+    );
   }
 
   /**
