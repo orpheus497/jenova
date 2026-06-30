@@ -69,6 +69,16 @@ export interface DatabaseMessageExtraImageFile {
   base64Url: string;
 }
 
+/**
+ * Legacy format from old webui - pasted content was stored as "context" type
+ * @deprecated Use DatabaseMessageExtraTextFile instead
+ */
+export interface DatabaseMessageExtraLegacyContext {
+  type: AttachmentType.LEGACY_CONTEXT;
+  name: string;
+  content: string;
+}
+
 export interface DatabaseMessageExtraPdfFile {
   type: AttachmentType.PDF;
   base64Data: string;
@@ -79,7 +89,7 @@ export interface DatabaseMessageExtraPdfFile {
 }
 
 export interface DatabaseMessageExtraTextFile {
-  type: AttachmentType.TEXT | AttachmentType.LEGACY_CONTEXT;
+  type: AttachmentType.TEXT;
   name: string;
   content: string;
 }
@@ -108,7 +118,8 @@ export type DatabaseMessageExtra =
   | DatabaseMessageExtraAudioFile
   | DatabaseMessageExtraPdfFile
   | DatabaseMessageExtraMcpPrompt
-  | DatabaseMessageExtraMcpResource;
+  | DatabaseMessageExtraMcpResource
+  | DatabaseMessageExtraLegacyContext;
 
 export interface DatabaseMessage {
   id: string;

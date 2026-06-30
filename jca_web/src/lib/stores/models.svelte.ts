@@ -337,7 +337,7 @@ class ModelsStore {
    * Fetch router models with full metadata (ROUTER mode only)
    * This fetches the /models endpoint which returns status info for each model
    */
-  async fetchRouterModels(): Promise<void> {
+  async fetchRouterModels(): Promise<boolean> {
     try {
       const response = await ModelsService.listRouter();
       this.routerModels = response.data;
@@ -352,9 +352,11 @@ class ModelsStore {
       if (o.length === 1 && this.isModelLoaded(o[0].model)) {
         this.selectModelById(o[0].id);
       }
+      return true;
     } catch (error) {
       console.warn("Failed to fetch router models:", error);
       this.routerModels = [];
+      return false;
     }
   }
 
@@ -432,6 +434,30 @@ class ModelsStore {
   }
 
   /**
+   * Update modalities for a specific model
+   * Called when a model is loaded or when we need fresh modality data
+   */
+  async updateModelModalities(modelId: string): Promise<void> {
+    try {
+      const props = await this.fetchModelProps(modelId);
+      if (!props?.modalities) return;
+
+      const modalities: ModelModalities = {
+        vision: props.modalities.vision ?? false,
+        audio: props.modalities.audio ?? false,
+      };
+
+      this.models = this.models.map((model) =>
+        model.model === modelId ? { ...model, modalities } : model,
+      );
+
+      this.propsCacheVersion++;
+    } catch (error) {
+      console.warn(`Failed to update modalities for model ${modelId}:`, error);
+    }
+  }
+
+  /**
    *
    *
    * Model Selection
@@ -497,7 +523,7 @@ class ModelsStore {
    *
    */
 
-  /**
+    /**
    * Load a model (ROUTER mode)
    * @param modelId - Model identifier to load
    */
@@ -513,7 +539,11 @@ class ModelsStore {
 
     try {
       await ModelsService.load(modelId);
-      await this.fetchRouterModels();
+      const fetchSuccess = await this.fetchRouterModels();
+
+      if (fetchSuccess && !this.isModelLoaded(modelId)) {
+        throw new Error(`Model failed to load: ${modelId}`);
+      }
 
       toast.success(`Model loaded: ${this.toDisplayName(modelId)}`);
     } catch (error) {
@@ -543,7 +573,11 @@ class ModelsStore {
     try {
       await ModelsService.unload(modelId);
 
-      await this.fetchRouterModels();
+      const fetchSuccess = await this.fetchRouterModels();
+
+      if (fetchSuccess && this.isModelLoaded(modelId)) {
+        throw new Error(`Model failed to unload: ${modelId}`);
+      }
       toast.info(`Model unloaded: ${this.toDisplayName(modelId)}`);
     } catch (error) {
       this.error =

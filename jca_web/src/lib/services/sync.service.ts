@@ -72,9 +72,6 @@ export class SyncService {
         const allConvs = await DatabaseService.getAllConversations();
         const allNotes = await DatabaseService.getAllNotes();
 
-        const convsMap = new Map(allConvs.map((c) => [c.name, c]));
-        const notesMap = new Map(allNotes.map((n) => [n.title, n]));
-
         for (const path of mdFiles) {
           const content = await StorageService.get(path);
           if (!content) continue;
@@ -85,7 +82,7 @@ export class SyncService {
           const isChat = path.includes("/Chats/");
 
           if (isNote) {
-            const note = notesMap.get(fileName);
+            const note = allNotes.find((n) => n.title === fileName);
             if (note) {
               if (note.content !== content) {
                 await DatabaseService.updateNote(note.id, {
@@ -103,7 +100,9 @@ export class SyncService {
           } else if (isChat) {
             const { conv: parsedConv, messages: parsedMessages } =
               MarkdownService.fromMarkdown(content);
-            const conv = convsMap.get(parsedConv.name || fileName);
+            const conv = allConvs.find(
+              (c) => c.name === (parsedConv.name || fileName),
+            );
 
             if (conv && parsedMessages.length > 0) {
               // Clear existing messages and reconstruct the tree properly
@@ -166,13 +165,11 @@ export class SyncService {
 
       const defaultWorkspace = workspaces[0]?.name || "default";
 
-      const folderMap = new Map(allFolders.map((f) => [f.id, f]));
-
       const queue: (() => Promise<void>)[] = [];
 
       for (const note of allNotes) {
         queue.push(async () => {
-          const folder = folderMap.get(note.folderId || "");
+          const folder = allFolders.find((f) => f.id === note.folderId);
           const folderName = folder?.name || "Notes";
           const path = `${defaultWorkspace}/${folderName}/${note.title}.md`;
           await StorageService.save(path, note.content);
@@ -184,7 +181,7 @@ export class SyncService {
           const messages = await DatabaseService.getConversationMessages(
             conv.id,
           );
-          const folder = folderMap.get(conv.folderId || "");
+          const folder = allFolders.find((f) => f.id === conv.folderId);
           const folderName = folder?.name || "Chats";
           const md = MarkdownService.toMarkdown(conv, messages);
           const path = `${defaultWorkspace}/${folderName}/${conv.name}.md`;

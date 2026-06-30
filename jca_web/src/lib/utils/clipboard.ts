@@ -3,6 +3,7 @@ import { AttachmentType } from "$lib/enums";
 import type {
   DatabaseMessageExtra,
   DatabaseMessageExtraTextFile,
+  DatabaseMessageExtraLegacyContext,
   DatabaseMessageExtraMcpPrompt,
   DatabaseMessageExtraMcpResource,
   ClipboardTextAttachment,
@@ -111,6 +112,7 @@ export function formatMessageForClipboard(
         extra,
       ): extra is
         | DatabaseMessageExtraTextFile
+        | DatabaseMessageExtraLegacyContext
         | DatabaseMessageExtraMcpPrompt
         | DatabaseMessageExtraMcpResource =>
         extra.type === AttachmentType.TEXT ||
