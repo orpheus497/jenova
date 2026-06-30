@@ -337,7 +337,7 @@ class ModelsStore {
    * Fetch router models with full metadata (ROUTER mode only)
    * This fetches the /models endpoint which returns status info for each model
    */
-  async fetchRouterModels(): Promise<void> {
+  async fetchRouterModels(): Promise<boolean> {
     try {
       const response = await ModelsService.listRouter();
       this.routerModels = response.data;
@@ -352,9 +352,11 @@ class ModelsStore {
       if (o.length === 1 && this.isModelLoaded(o[0].model)) {
         this.selectModelById(o[0].id);
       }
+      return true;
     } catch (error) {
       console.warn("Failed to fetch router models:", error);
       this.routerModels = [];
+      return false;
     }
   }
 
@@ -613,6 +615,7 @@ class ModelsStore {
       await this.pollForModelStatus(modelId, ServerModelStatus.LOADED);
 
       await this.updateModelModalities(modelId);
+
       toast.success(`Model loaded: ${this.toDisplayName(modelId)}`);
     } catch (error) {
       this.error =
@@ -640,7 +643,6 @@ class ModelsStore {
 
     try {
       await ModelsService.unload(modelId);
-
       await this.pollForModelStatus(modelId, ServerModelStatus.UNLOADED);
       toast.info(`Model unloaded: ${this.toDisplayName(modelId)}`);
     } catch (error) {
