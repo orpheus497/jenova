@@ -491,15 +491,21 @@ local function proxy_connection(client_fd, conn_fds)
             break
         end
         
-        if os.time() - start_time > 10 then
-            io.write("[proxy] header timeout from client\n")
-            safe_close(); return
-        end
     end
 
 
+        local origin = headers_raw:match("\r\n[Oo][Rr][Ii][Gg][Ii][Nn]:%s*([^\r\n]+)")
+        local allow_origin = origin or "http://localhost:8080"
+        if origin then
+            local is_safe = origin == "null" or origin:match("^file://") or origin:match("^https?://127%.0%.0%.1") or origin:match("^https?://localhost")
+            if not is_safe then
+                local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+                async_send(client_fd, err); safe_close(); return
+            end
+        end
+
         if headers_raw:match("^OPTIONS ") then
-            local cors_resp = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE\r\nAccess-Control-Allow-Headers: *\r\nConnection: close\r\n\r\n"
+            local cors_resp = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE\r\nAccess-Control-Allow-Headers: *\r\nConnection: close\r\n\r\n"
             async_send(client_fd, cors_resp)
             safe_close(); return
         end
@@ -610,13 +616,13 @@ local function proxy_connection(client_fd, conn_fds)
         
         -- Security: prevent directory traversal (literal check + canonical validation)
         if storage_path:find("%.%.") then
-            local err = "HTTP/1.1 403 Forbidden\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
+            local err = "HTTP/1.1 403 Forbidden\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n"
             async_send(client_fd, err); safe_close(); return
         end
 
         local full_path = resolve_safe_path(workspaces_dir, storage_path)
         if not full_path then
-            local err = "HTTP/1.1 403 Forbidden\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
+            local err = "HTTP/1.1 403 Forbidden\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n"
             async_send(client_fd, err); safe_close(); return
         end
         local dir_part = full_path:match("(.+)/[^/]+$")
@@ -627,10 +633,10 @@ local function proxy_connection(client_fd, conn_fds)
             f:write(body_raw)
             f:close()
 
-            local resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}"
+            local resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}"
             async_send(client_fd, resp)
         else
-            local resp = "HTTP/1.1 500 Internal Server Error\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
+            local resp = "HTTP/1.1 500 Internal Server Error\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n"
             async_send(client_fd, resp)
         end
         safe_close(); return
@@ -650,7 +656,7 @@ local function proxy_connection(client_fd, conn_fds)
             end
         end
         local content = "[" .. table.concat(files, ",") .. "]"
-        local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n", #content)
+        local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nAccess-Control-Allow-Origin: %s\r\nVary: Origin\r\nConnection: close\r\n\r\n", #content, allow_origin)
         async_send(client_fd, resp .. content)
         safe_close(); return
     end
@@ -669,7 +675,7 @@ local function proxy_connection(client_fd, conn_fds)
             end
         end
         local content = "[" .. table.concat(ws, ",") .. "]"
-        local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n", #content)
+        local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nAccess-Control-Allow-Origin: %s\r\nVary: Origin\r\nConnection: close\r\n\r\n", #content, allow_origin)
         async_send(client_fd, resp .. content)
         safe_close(); return
     end
@@ -678,12 +684,12 @@ local function proxy_connection(client_fd, conn_fds)
     if is_storage_get then
         is_storage_get = url_decode(is_storage_get)
         if is_storage_get:find("%.%.") then
-            local err = "HTTP/1.1 403 Forbidden\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
+            local err = "HTTP/1.1 403 Forbidden\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n"
             async_send(client_fd, err); safe_close(); return
         end
         local full_path = resolve_safe_path(workspaces_dir, is_storage_get)
         if not full_path then
-            local err = "HTTP/1.1 403 Forbidden\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
+            local err = "HTTP/1.1 403 Forbidden\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n"
             async_send(client_fd, err); safe_close(); return
         end
         local f = io.open(full_path, "rb")
@@ -692,17 +698,17 @@ local function proxy_connection(client_fd, conn_fds)
             f:close()
             
             if not content then
-                local resp = "HTTP/1.1 500 Internal Server Error\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
+                local resp = "HTTP/1.1 500 Internal Server Error\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n"
                 async_send(client_fd, resp)
                 safe_close()
                 return
             end
             
-            local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %d\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n", #content)
+            local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %d\r\nAccess-Control-Allow-Origin: %s\r\nVary: Origin\r\nConnection: close\r\n\r\n", #content, allow_origin)
             async_send(client_fd, resp)
             async_send(client_fd, content)
         else
-            local resp = "HTTP/1.1 404 Not Found\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
+            local resp = "HTTP/1.1 404 Not Found\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n"
             async_send(client_fd, resp)
         end
         safe_close(); return

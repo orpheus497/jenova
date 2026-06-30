@@ -137,9 +137,16 @@ void setup_environment(void) {
     
     const char *old_ld = getenv("LD_LIBRARY_PATH");
     char *new_ld = NULL;
-    if (asprintf(&new_ld, "%s/external/ext_bin/bin:%s", root, old_ld ? old_ld : "") != -1) {
-        setenv("LD_LIBRARY_PATH", new_ld, 1);
-        free(new_ld);
+    if (old_ld && *old_ld != '\0') {
+        if (asprintf(&new_ld, "%s/external/ext_bin/bin:%s", root, old_ld) != -1) {
+            setenv("LD_LIBRARY_PATH", new_ld, 1);
+            free(new_ld);
+        }
+    } else {
+        if (asprintf(&new_ld, "%s/external/ext_bin/bin", root) != -1) {
+            setenv("LD_LIBRARY_PATH", new_ld, 1);
+            free(new_ld);
+        }
     }
     
     setenv("JENOVA_ROOT", root, 1);
@@ -255,11 +262,6 @@ static void init_gui(void) {
     /* TAB 1: WebKit WebUI Container */
     g_ui_state.webview = webkit_web_view_new();
     
-    /* Allow WebKit to load file:// URLs and make fetch requests to http://localhost:8080 (Bypass CORS) */
-    WebKitSettings *settings = webkit_web_view_get_settings(WEBKIT_WEB_VIEW(g_ui_state.webview));
-    webkit_settings_set_allow_file_access_from_file_urls(settings, TRUE);
-    webkit_settings_set_allow_universal_access_from_file_urls(settings, TRUE);
-    
     char file_uri[PATH_MAX];
     snprintf(file_uri, sizeof(file_uri), "http://127.0.0.1:8080/");
     webkit_web_view_load_uri(WEBKIT_WEB_VIEW(g_ui_state.webview), file_uri);
@@ -279,9 +281,15 @@ static void init_gui(void) {
     GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file(img_path, NULL);
     GtkWidget *image = gtk_image_new();
     if (pixbuf) {
-        GdkPixbuf *scaled = gdk_pixbuf_scale_simple(pixbuf, 50, (int)(gdk_pixbuf_get_height(pixbuf) * (50.0/gdk_pixbuf_get_width(pixbuf))), GDK_INTERP_BILINEAR);
-        gtk_image_set_from_pixbuf(GTK_IMAGE(image), scaled);
-        g_object_unref(scaled);
+        int w = gdk_pixbuf_get_width(pixbuf);
+        int h = gdk_pixbuf_get_height(pixbuf);
+        if (w > 0) {
+            GdkPixbuf *scaled = gdk_pixbuf_scale_simple(pixbuf, 50, (int)(h * (50.0 / w)), GDK_INTERP_BILINEAR);
+            if (scaled) {
+                gtk_image_set_from_pixbuf(GTK_IMAGE(image), scaled);
+                g_object_unref(scaled);
+            }
+        }
         g_object_unref(pixbuf);
     }
     gtk_box_pack_start(GTK_BOX(sidebar_vbox), image, FALSE, FALSE, 0);
@@ -553,16 +561,19 @@ static gboolean run_tray(int argc, char *argv[]) {
     const char *home = getenv("HOME");
     if (!home) home = "/tmp";
     
-    snprintf(dir_path, sizeof(dir_path), "%s/.jenova", home);
-    snprintf(lock_path, sizeof(lock_path), "%s/ui.lock", dir_path);
-    
-    /* Ensure .jenova directory exists */
-    g_mkdir_with_parents(dir_path, 0700);
+    int lock_fd = -1;
+    int n1 = snprintf(dir_path, sizeof(dir_path), "%s/.jenova", home);
+    if (n1 >= 0 && n1 < (int)sizeof(dir_path)) {
+        int n2 = snprintf(lock_path, sizeof(lock_path), "%s/ui.lock", dir_path);
+        if (n2 >= 0 && n2 < (int)sizeof(lock_path)) {
+            /* Ensure .jenova directory exists */
+            g_mkdir_with_parents(dir_path, 0700);
+            lock_fd = open(lock_path, O_CREAT | O_RDWR, 0600);
+        }
+    }
 
-    int lock_fd = open(lock_path, O_CREAT | O_RDWR, 0600);
     if (lock_fd == -1) {
-        fprintf(stderr, "jenova-ui: cannot open lockfile %s: %s\n",
-                lock_path, strerror(errno));
+        fprintf(stderr, "jenova-ui: cannot safely create or open lockfile\n");
         exit(1);
     }
     /* Set CLOEXEC so child processes don't inherit the lock fd */
@@ -611,6 +622,12 @@ static gboolean run_tray(int argc, char *argv[]) {
  * rebuild_tray_menu: (Re)builds the GTK context menu from ui.get_menu().
  * Called at startup and after state-changing actions (LAN toggle, etc.).
  * --------------------------------------------------------------------------- */
+static void present_main_window(GtkWidget *win) {
+    gtk_widget_show_all(win);
+    gtk_window_present(GTK_WINDOW(win));
+    g_ui_state.is_visible = 1;
+}
+
 static void rebuild_tray_menu(void) {
     if (!global_indicator) return;
 
@@ -650,7 +667,7 @@ static void rebuild_tray_menu(void) {
                     if (label && action) {
                         if (strcmp(action, "open_gui") == 0) {
                             GtkWidget *item = gtk_menu_item_new_with_label("Open Window");
-                            g_signal_connect_swapped(item, "activate", G_CALLBACK(gtk_widget_show_all), g_ui_state.main_window);
+                            g_signal_connect_swapped(item, "activate", G_CALLBACK(present_main_window), g_ui_state.main_window);
                             gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
                             lua_pop(L, 1);
                             continue;

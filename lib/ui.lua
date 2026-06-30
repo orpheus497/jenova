@@ -110,7 +110,8 @@ ui.on_action = function(action)
             sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " restart")
         end
     elseif action == "open_workspaces" then
-        local jca_home = os.getenv("JCA_HOME") or (os.getenv("HOME") .. "/JCA")
+        local home_dir = os.getenv("HOME")
+        local jca_home = os.getenv("JCA_HOME") or ((home_dir or "/tmp") .. "/JCA")
         local workspaces_dir = os.getenv("JENOVA_WORKSPACES") or (jca_home .. "/Workspaces")
         local ws_path = shell_quote(workspaces_dir)
         os.execute("mkdir -p " .. ws_path .. " 2>/dev/null")
