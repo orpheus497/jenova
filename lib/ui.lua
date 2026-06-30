@@ -42,12 +42,19 @@ local function detect_probe_tool()
     if _probe_tool_checked then return _cached_probe_tool end
     _probe_tool_checked = true
 
-    if os.execute("command -v curl >/dev/null 2>&1") == 0 then
+    local res_curl = os.execute("command -v curl >/dev/null 2>&1")
+    if res_curl == 0 or res_curl == true then
         _cached_probe_tool = "curl"
-    elseif os.execute("command -v nc >/dev/null 2>&1") == 0 then
-        _cached_probe_tool = "nc"
-    elseif os.execute("command -v fetch >/dev/null 2>&1") == 0 then
-        _cached_probe_tool = "fetch"   -- FreeBSD base system
+    else
+        local res_nc = os.execute("command -v nc >/dev/null 2>&1")
+        if res_nc == 0 or res_nc == true then
+            _cached_probe_tool = "nc"
+        else
+            local res_fetch = os.execute("command -v fetch >/dev/null 2>&1")
+            if res_fetch == 0 or res_fetch == true then
+                _cached_probe_tool = "fetch"   -- FreeBSD base system
+            end
+        end
     end
     return _cached_probe_tool
 end
@@ -87,7 +94,8 @@ ui.on_action = function(action)
     if action == "web" then
         -- FreeBSD: use xdg-open if present, fall back to open(1)
         local opener = "xdg-open"
-        if os.execute("command -v xdg-open >/dev/null 2>&1") ~= 0 then
+        local res = os.execute("command -v xdg-open >/dev/null 2>&1")
+        if res ~= 0 and res ~= true then
             opener = "open" -- macOS / FreeBSD with xdg-utils missing
         end
         sys_exec_async(shell_quote(opener) .. " http://localhost:8080")
@@ -116,14 +124,16 @@ ui.on_action = function(action)
         local ws_path = shell_quote(workspaces_dir)
         os.execute("mkdir -p " .. ws_path .. " 2>/dev/null")
         local opener = "xdg-open"
-        if os.execute("command -v xdg-open >/dev/null 2>&1") ~= 0 then
+        local res = os.execute("command -v xdg-open >/dev/null 2>&1")
+        if res ~= 0 and res ~= true then
             opener = "open"
         end
         sys_exec_async(shell_quote(opener) .. " " .. ws_path)
     elseif action == "edit_config" then
         local conf_path = shell_quote(root .. "/etc/jenova.conf")
         local editor_cmd = "nvim"
-        if os.execute("command -v nvim >/dev/null 2>&1") ~= 0 then
+        local res = os.execute("command -v nvim >/dev/null 2>&1")
+        if res ~= 0 and res ~= true then
             editor_cmd = "vim"
         end
         local bin_term = shell_quote(root .. "/bin/jenova-term")
