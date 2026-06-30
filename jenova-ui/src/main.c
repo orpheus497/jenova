@@ -135,48 +135,58 @@ void setup_environment(void) {
         free(new_path);
     }
     
-    const char *old_ld = getenv("LD_LIBRARY_PATH");
-    char *new_ld = NULL;
-    if (old_ld && *old_ld != '\0') {
-        if (asprintf(&new_ld, "%s/external/ext_bin/bin:%s", root, old_ld) != -1) {
-            setenv("LD_LIBRARY_PATH", new_ld, 1);
-            free(new_ld);
-        }
-    } else {
-        if (asprintf(&new_ld, "%s/external/ext_bin/bin", root) != -1) {
-            setenv("LD_LIBRARY_PATH", new_ld, 1);
-            free(new_ld);
-        }
-    }
-    
     setenv("JENOVA_ROOT", root, 1);
 }
 
 /* ---------------------------------------------------------------------------
  * Lua C API functions exposed as globals to the Lua layer.
  * --------------------------------------------------------------------------- */
+static char *wrap_jenova_cmd(const char *cmd) {
+    if (strstr(cmd, "jenova-ca") || strstr(cmd, "jenova-term") || strstr(cmd, "jenova-ui")) {
+        const char *old_ld = getenv("LD_LIBRARY_PATH");
+        const char *root = getenv("JENOVA_ROOT");
+        char *new_ld = NULL;
+        if (old_ld && *old_ld != '\0') {
+            if (asprintf(&new_ld, "%s/external/ext_bin/bin:%s", root ? root : ".", old_ld) == -1) new_ld = NULL;
+        } else {
+            if (asprintf(&new_ld, "%s/external/ext_bin/bin", root ? root : ".") == -1) new_ld = NULL;
+        }
+        char *wrapped = NULL;
+        if (new_ld) {
+            if (asprintf(&wrapped, "env LD_LIBRARY_PATH='%s' %s", new_ld, cmd) == -1) wrapped = NULL;
+            free(new_ld);
+        }
+        return wrapped ? wrapped : strdup(cmd);
+    }
+    return strdup(cmd);
+}
+
 static int l_sys_exec_async(lua_State *Ls) {
     const char *cmd = luaL_checkstring(Ls, 1);
+    char *wrapped_cmd = wrap_jenova_cmd(cmd);
     GError *error = NULL;
-    if (!g_spawn_command_line_async(cmd, &error)) {
+    if (!g_spawn_command_line_async(wrapped_cmd, &error)) {
         fprintf(stderr, "jenova-ui: async exec error: %s\n", error->message);
         g_error_free(error);
     }
+    free(wrapped_cmd);
     return 0;
 }
 
 static int l_sys_exec_sync(lua_State *Ls) {
     const char *cmd = luaL_checkstring(Ls, 1);
+    char *wrapped_cmd = wrap_jenova_cmd(cmd);
     gint exit_status = 0;
     GError *error = NULL;
 
-    if (g_spawn_command_line_sync(cmd, NULL, NULL, &exit_status, &error)) {
+    if (g_spawn_command_line_sync(wrapped_cmd, NULL, NULL, &exit_status, &error)) {
         lua_pushinteger(Ls, exit_status);
     } else {
         fprintf(stderr, "jenova-ui: sync exec error: %s\n", error->message);
         g_error_free(error);
         lua_pushinteger(Ls, -1);
     }
+    free(wrapped_cmd);
     return 1;
 }
 
@@ -514,7 +524,10 @@ static gboolean update_tray_status(gpointer user_data G_GNUC_UNUSED) {
         const char *status = lua_tostring(L, -1);
         char icon_path[PATH_MAX];
 
-        if (status && strcmp(status, "active") == 0) {
+        int is_active = (status && strcmp(status, "active") == 0);
+        int was_active = (strcmp(g_ui_state.current_status, "active") == 0);
+
+        if (is_active) {
             snprintf(icon_path, sizeof(icon_path), "%s/png/jca.jpg",
                      get_jenova_root());
             if (g_ui_state.status_label) {
@@ -523,6 +536,10 @@ static gboolean update_tray_status(gpointer user_data G_GNUC_UNUSED) {
                 gtk_style_context_remove_class(ctx, "status-inactive");
                 gtk_style_context_add_class(ctx, "status-active");
             }
+            if (!was_active && g_ui_state.webview) {
+                webkit_web_view_reload(WEBKIT_WEB_VIEW(g_ui_state.webview));
+            }
+            strncpy(g_ui_state.current_status, "active", sizeof(g_ui_state.current_status)-1);
         } else {
             snprintf(icon_path, sizeof(icon_path), "%s/png/jca_grey.jpg",
                      get_jenova_root());
@@ -532,6 +549,7 @@ static gboolean update_tray_status(gpointer user_data G_GNUC_UNUSED) {
                 gtk_style_context_remove_class(ctx, "status-active");
                 gtk_style_context_add_class(ctx, "status-inactive");
             }
+            strncpy(g_ui_state.current_status, "inactive", sizeof(g_ui_state.current_status)-1);
         }
 
         app_indicator_set_icon_full(global_indicator, icon_path, "Jenova Status");

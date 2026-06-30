@@ -497,7 +497,7 @@ local function proxy_connection(client_fd, conn_fds)
         local origin = headers_raw:match("\r\n[Oo][Rr][Ii][Gg][Ii][Nn]:%s*([^\r\n]+)")
         local allow_origin = origin or "http://localhost:8080"
         if origin then
-            local is_safe = origin == "null" or origin:match("^file://") or origin:match("^https?://127%.0%.0%.1") or origin:match("^https?://localhost")
+            local is_safe = origin == "null" or origin:match("^file://") or origin:match("^https?://127%.0%.0%.1(:%d+)?$") or origin:match("^https?://localhost(:%d+)?$")
             if not is_safe then
                 local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
                 async_send(client_fd, err); safe_close(); return
