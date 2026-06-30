@@ -7,7 +7,8 @@
 		Monitor,
 		ChevronLeft,
 		ChevronRight,
-		Database
+		Database,
+		Beaker
 	} from '@lucide/svelte';
 	import {
 		ChatSettingsFooter,
@@ -318,20 +319,31 @@
 					type: SettingsFieldType.TEXTAREA
 				}
 			]
+		},
+		{
+			title: SETTINGS_SECTION_TITLES.EXPERIMENTAL,
+			icon: Beaker,
+			fields: [
+				{
+					key: SETTINGS_KEYS.PY_INTERPRETER_ENABLED,
+					label: 'Enable Python interpreter',
+					type: SettingsFieldType.CHECKBOX,
+					isExperimental: true
+				},
+				{
+					key: SETTINGS_KEYS.USE_THINKING,
+					label: 'Use Thinking',
+					type: SettingsFieldType.CHECKBOX,
+					isExperimental: true
+				},
+				{
+					key: SETTINGS_KEYS.USE_AUDIO_VOICE,
+					label: 'Use Audio Voice',
+					type: SettingsFieldType.CHECKBOX,
+					isExperimental: true
+				}
+			]
 		}
-		// TODO: Experimental features section will be implemented after initial release
-		// This includes Python interpreter (Pyodide integration) and other experimental features
-		// {
-		// 	title: 'Experimental',
-		// 	icon: Beaker,
-		// 	fields: [
-		// 		{
-		// 			key: 'pyInterpreterEnabled',
-		// 			label: 'Enable Python interpreter',
-		// 			type: 'checkbox'
-		// 		}
-		// 	]
-		// }
 	];
 
 	let activeSection = $derived<SettingsSectionTitle>(
