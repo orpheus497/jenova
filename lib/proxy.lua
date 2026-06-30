@@ -470,6 +470,10 @@ local function proxy_connection(client_fd, conn_fds)
             if n < 0 then io.write("[proxy] client recv error: " .. tostring(err) .. "\n") end
             safe_close(); return 
         end
+        if os.time() - start_time > 10 then
+            io.write("[proxy] header timeout from client\n")
+            safe_close(); return
+        end
         header_chunks[#header_chunks + 1] = ffi.string(buf, n)
         header_total = header_total + n
         if header_total > MAX_HEADER_SIZE then
@@ -497,7 +501,7 @@ local function proxy_connection(client_fd, conn_fds)
         local origin = headers_raw:match("\r\n[Oo][Rr][Ii][Gg][Ii][Nn]:%s*([^\r\n]+)")
         local allow_origin = origin or "http://localhost:8080"
         if origin then
-            local is_safe = origin:match("^file://") or origin:match("^https?://127%.0%.0%.1(:%d+)?$") or origin:match("^https?://localhost(:%d+)?$")
+            local is_safe = origin == "null" or origin:match("^file://") or origin:match("^https?://127%.0%.0%.1(:%d+)?$") or origin:match("^https?://localhost(:%d+)?$")
             if not is_safe then
                 local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
                 async_send(client_fd, err); safe_close(); return

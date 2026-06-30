@@ -272,8 +272,16 @@ static void init_gui(void) {
     /* TAB 1: WebKit WebUI Container */
     g_ui_state.webview = webkit_web_view_new();
     
+    WebKitSettings *settings = webkit_web_view_get_settings(WEBKIT_WEB_VIEW(g_ui_state.webview));
+    webkit_settings_set_enable_webgl(settings, TRUE);
+    webkit_settings_set_enable_developer_extras(settings, TRUE);
+
+    const char *proxy_port = getenv("JENOVA_PROXY_PORT");
+    if (!proxy_port) proxy_port = getenv("JENOVA_PORT");
+    if (!proxy_port) proxy_port = "8080";
+
     char file_uri[PATH_MAX];
-    snprintf(file_uri, sizeof(file_uri), "http://127.0.0.1:8080/");
+    snprintf(file_uri, sizeof(file_uri), "http://127.0.0.1:%s/", proxy_port);
     webkit_web_view_load_uri(WEBKIT_WEB_VIEW(g_ui_state.webview), file_uri);
     
     GtkWidget *tab1_label = gtk_label_new("Jenova AI");

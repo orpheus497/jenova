@@ -98,7 +98,8 @@ ui.on_action = function(action)
         if res ~= 0 and res ~= true then
             opener = "open" -- macOS / FreeBSD with xdg-utils missing
         end
-        sys_exec_async(shell_quote(opener) .. " http://localhost:8080")
+        local port = os.getenv("JENOVA_PROXY_PORT") or os.getenv("JENOVA_PORT") or "8080"
+        sys_exec_async(shell_quote(opener) .. " " .. shell_quote("http://localhost:" .. port))
     elseif action == "tui" then
         local bin_term = shell_quote(root .. "/bin/jenova-term")
         local bin_ui = shell_quote(root .. "/bin/jenova-ui")
