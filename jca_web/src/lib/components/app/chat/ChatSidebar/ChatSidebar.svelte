@@ -155,7 +155,7 @@
 		<a href="#/" onclick={handleMobileSidebarItemClick} class="block mb-4">
 			<div class="flex items-center gap-4">
                 <div class="w-12 h-12 rounded-lg border border-primary/30 flex items-center justify-center shadow-[0_0_15px_rgba(43,30,58,0.4)] overflow-hidden shrink-0">
-                    <img src="/jenova.jpg" alt="Jenova Logo" class="w-full h-full object-cover" />
+                    <img src="jenova.jpg" alt="Jenova Logo" class="w-full h-full object-cover" />
                 </div>
 			    <div class="min-w-0 flex flex-col justify-center">
                     <h1 class="font-sans text-[15px] tracking-tight font-bold leading-[1.1] uppercase">

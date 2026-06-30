@@ -67,6 +67,7 @@ end
 ui.get_menu = function()
     local lan_label = is_lan_enabled() and "Disable LAN (switch to Local)" or "Enable LAN (allow network access)"
     return {
+        { label = "Open Window", action = "open_gui" },
         { label = "Open Web UI", action = "web" },
         { label = "System Control", action = "tui" },
         { separator = true },
@@ -213,6 +214,7 @@ ui.on_tui_action = function(action)
         ui.on_action(action)
     end
 end
+
 
 _G.ui = ui
 return ui

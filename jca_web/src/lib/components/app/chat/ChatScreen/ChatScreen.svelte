@@ -427,7 +427,7 @@
 		<div class="w-full max-w-[48rem] px-4">
 			<div class="mb-10 text-center" in:fade={{ duration: 300 }}>
 				<div class="flex justify-center mb-6">
-                    <img src="/logo.jpg" alt="Jenova" class="w-16 h-16 rounded-2xl shadow-2xl" />
+                    <img src="logo.jpg" alt="Jenova" class="w-16 h-16 rounded-2xl shadow-2xl" />
                 </div>
 				<h1 class="mb-2 text-2xl font-semibold tracking-tight md:text-4xl text-foreground">Jenova</h1>
 

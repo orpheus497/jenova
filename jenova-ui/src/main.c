@@ -28,11 +28,33 @@
 #include <lualib.h>
 #include <lauxlib.h>
 
+#include <webkit2/webkit2.h>
+
 static lua_State *L = NULL;
 static AppIndicator *global_indicator = NULL;
 static char jenova_root[PATH_MAX] = {0};
 
 /* Forward declarations */
+typedef struct {
+    GtkWidget *main_window;
+    GtkWidget *sidebar_list;
+    GtkWidget *webview;
+    GtkWidget *status_label;
+    GtkWidget *mode_label;
+    GtkWidget *btn_start;
+    GtkWidget *btn_stop;
+    GtkWidget *btn_restart;
+    GtkWidget *btn_lan;
+    GtkWidget *btn_web;
+    char current_status[32];
+    char current_mode[64];
+    char current_conv_id[64];
+    int is_visible;
+    int is_streaming;
+} GUIState;
+
+static GUIState g_ui_state = {0};
+
 static void run_tui(void);
 static gboolean run_tray(int argc, char *argv[]);
 static void rebuild_tray_menu(void);
@@ -112,6 +134,14 @@ void setup_environment(void) {
         setenv("PATH", new_path, 1);
         free(new_path);
     }
+    
+    const char *old_ld = getenv("LD_LIBRARY_PATH");
+    char *new_ld = NULL;
+    if (asprintf(&new_ld, "%s/external/ext_bin/bin:%s", root, old_ld ? old_ld : "") != -1) {
+        setenv("LD_LIBRARY_PATH", new_ld, 1);
+        free(new_ld);
+    }
+    
     setenv("JENOVA_ROOT", root, 1);
 }
 
@@ -149,6 +179,159 @@ static int l_quit_app(lua_State *Ls) {
     return 0;
 }
 
+/* Chat GUI functions replaced by WebKit embedded WebUI */
+static gboolean on_window_delete_event(GtkWidget *widget, GdkEvent *event G_GNUC_UNUSED, gpointer data G_GNUC_UNUSED) {
+    gtk_widget_hide(widget);
+    g_ui_state.is_visible = 0;
+    return TRUE; // Prevent destruction
+}
+
+static void on_gui_button_clicked(GtkWidget *widget G_GNUC_UNUSED, gpointer data) {
+    const char *action = (const char *)data;
+    lua_getglobal(L, "ui");
+    if (!lua_istable(L, -1)) { lua_pop(L, 1); return; }
+    lua_getfield(L, -1, "on_action");
+    if (lua_isfunction(L, -1)) {
+        lua_pushstring(L, action);
+        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+            fprintf(stderr, "jenova-ui: error in ui.on_action: %s\n", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+}
+
+static void load_css(void) {
+    GtkCssProvider *provider = gtk_css_provider_new();
+    const char *css = 
+        "window.jenova-window { background-color: #131313; }\n"
+        /* GtkNotebook styling */
+        "notebook { background-color: #131313; }\n"
+        "notebook header { background-color: #1c1b1b; border-bottom: 1px solid #5e5966; }\n"
+        "notebook tab { background-color: transparent; border: none; padding: 10px 20px; box-shadow: none; }\n"
+        "notebook tab label { color: #9fa0a6; font-weight: 600; }\n"
+        "notebook tab:hover label { color: #f0edf2; }\n"
+        "notebook tab:checked { background-color: #2b1e3a; border-bottom: 2px solid #e4b382; }\n"
+        "notebook tab:checked label { color: #e4b382; }\n"
+        /* Glass Panel */
+        ".glass-panel { background-color: rgba(28, 27, 27, 0.6); border: 1px solid #5e5966; border-radius: 10px; }\n"
+        /* Labels */
+        "label { color: #f0edf2; font-family: 'Inter', sans-serif; }\n"
+        "label.title { font-weight: bold; font-size: 18px; color: #e4b382; }\n"
+        "label.status-active { color: #a3e635; font-weight: bold; }\n"
+        "label.status-inactive { color: #c96464; font-weight: bold; }\n"
+        "label.mode-label { color: #aba0d9; font-weight: bold; }\n"
+        /* Buttons */
+        "button { background-color: #2b1e3a; color: #f0edf2; border: 1px solid #5e5966; border-radius: 10px; padding: 10px 20px; font-weight: bold; }\n"
+        "button:hover { background-color: #4b2c70; border-color: #8e7cc3; }\n"
+        "button.stop-btn:hover { background-color: #c96464; border-color: #ffb3b3; }\n"
+        ;
+    gtk_css_provider_load_from_data(provider, css, -1, NULL);
+    gtk_style_context_add_provider_for_screen(gdk_screen_get_default(),
+                                              GTK_STYLE_PROVIDER(provider),
+                                              GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_unref(provider);
+}
+
+static void init_gui(void) {
+    load_css();
+    g_ui_state.main_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_window_set_title(GTK_WINDOW(g_ui_state.main_window), "JENOVA AI - Native UI");
+    gtk_window_set_default_size(GTK_WINDOW(g_ui_state.main_window), 900, 600);
+    gtk_window_set_position(GTK_WINDOW(g_ui_state.main_window), GTK_WIN_POS_CENTER);
+    
+    GtkStyleContext *ctx = gtk_widget_get_style_context(g_ui_state.main_window);
+    gtk_style_context_add_class(ctx, "jenova-window");
+    g_signal_connect(g_ui_state.main_window, "delete-event", G_CALLBACK(on_window_delete_event), NULL);
+
+    GtkWidget *notebook = gtk_notebook_new();
+    gtk_notebook_set_tab_pos(GTK_NOTEBOOK(notebook), GTK_POS_TOP);
+    gtk_container_add(GTK_CONTAINER(g_ui_state.main_window), notebook);
+
+    /* TAB 1: WebKit WebUI Container */
+    g_ui_state.webview = webkit_web_view_new();
+    
+    /* Allow WebKit to load file:// URLs and make fetch requests to http://localhost:8080 (Bypass CORS) */
+    WebKitSettings *settings = webkit_web_view_get_settings(WEBKIT_WEB_VIEW(g_ui_state.webview));
+    webkit_settings_set_allow_file_access_from_file_urls(settings, TRUE);
+    webkit_settings_set_allow_universal_access_from_file_urls(settings, TRUE);
+    
+    char file_uri[PATH_MAX];
+    snprintf(file_uri, sizeof(file_uri), "file://%s/public/index.html", get_jenova_root());
+    webkit_web_view_load_uri(WEBKIT_WEB_VIEW(g_ui_state.webview), file_uri);
+    
+    GtkWidget *tab1_label = gtk_label_new("Jenova AI");
+    gtk_notebook_append_page(GTK_NOTEBOOK(notebook), g_ui_state.webview, tab1_label);
+
+    /* TAB 2: Switchboard (Controls & Info) */
+    GtkWidget *sidebar_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
+    gtk_widget_set_margin_top(sidebar_vbox, 16);
+    gtk_widget_set_margin_bottom(sidebar_vbox, 16);
+    gtk_widget_set_margin_start(sidebar_vbox, 16);
+    gtk_widget_set_margin_end(sidebar_vbox, 16);
+    
+    char img_path[PATH_MAX];
+    snprintf(img_path, sizeof(img_path), "%s/png/jenova.jpg", get_jenova_root());
+    GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file(img_path, NULL);
+    GtkWidget *image = gtk_image_new();
+    if (pixbuf) {
+        GdkPixbuf *scaled = gdk_pixbuf_scale_simple(pixbuf, 200, (int)(gdk_pixbuf_get_height(pixbuf) * (200.0/gdk_pixbuf_get_width(pixbuf))), GDK_INTERP_BILINEAR);
+        gtk_image_set_from_pixbuf(GTK_IMAGE(image), scaled);
+        g_object_unref(scaled);
+        g_object_unref(pixbuf);
+    }
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), image, FALSE, FALSE, 0);
+
+    GtkWidget *title_lbl = gtk_label_new("JENOVA AI");
+    gtk_style_context_add_class(gtk_widget_get_style_context(title_lbl), "title");
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), title_lbl, FALSE, FALSE, 0);
+
+    GtkWidget *status_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_style_context_add_class(gtk_widget_get_style_context(status_box), "glass-panel");
+    gtk_widget_set_margin_top(status_box, 10);
+    gtk_widget_set_margin_bottom(status_box, 10);
+    
+    GtkWidget *status_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    gtk_widget_set_halign(status_hbox, GTK_ALIGN_CENTER);
+    gtk_widget_set_margin_top(status_hbox, 16);
+    GtkWidget *status_title = gtk_label_new("Status:");
+    g_ui_state.status_label = gtk_label_new("INACTIVE");
+    gtk_style_context_add_class(gtk_widget_get_style_context(g_ui_state.status_label), "status-inactive");
+    gtk_box_pack_start(GTK_BOX(status_hbox), status_title, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(status_hbox), g_ui_state.status_label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(status_box), status_hbox, FALSE, FALSE, 0);
+
+    GtkWidget *mode_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    gtk_widget_set_halign(mode_hbox, GTK_ALIGN_CENTER);
+    gtk_widget_set_margin_bottom(mode_hbox, 16);
+    GtkWidget *mode_title = gtk_label_new("Mode:");
+    g_ui_state.mode_label = gtk_label_new("LOCAL");
+    gtk_style_context_add_class(gtk_widget_get_style_context(g_ui_state.mode_label), "mode-label");
+    gtk_box_pack_start(GTK_BOX(mode_hbox), mode_title, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(mode_hbox), g_ui_state.mode_label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(status_box), mode_hbox, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), status_box, FALSE, FALSE, 0);
+
+    g_ui_state.btn_start = gtk_button_new_with_label("Start Server");
+    g_ui_state.btn_stop = gtk_button_new_with_label("Stop Server");
+    gtk_style_context_add_class(gtk_widget_get_style_context(g_ui_state.btn_stop), "stop-btn");
+    g_ui_state.btn_lan = gtk_button_new_with_label("Toggle LAN");
+    g_signal_connect(g_ui_state.btn_start, "clicked", G_CALLBACK(on_gui_button_clicked), "start");
+    g_signal_connect(g_ui_state.btn_stop, "clicked", G_CALLBACK(on_gui_button_clicked), "stop");
+    g_signal_connect(g_ui_state.btn_lan, "clicked", G_CALLBACK(on_gui_button_clicked), "toggle_lan");
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), g_ui_state.btn_start, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), g_ui_state.btn_stop, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), g_ui_state.btn_lan, FALSE, FALSE, 0);
+    
+    GtkWidget *tab2_label = gtk_label_new("Control Panel");
+    gtk_notebook_append_page(GTK_NOTEBOOK(notebook), sidebar_vbox, tab2_label);
+
+    gtk_widget_show_all(g_ui_state.main_window);
+    g_ui_state.is_visible = 1;
+}
+
 /* ---------------------------------------------------------------------------
  * init_lua: Create the Lua state, register C functions, load ui.lua, and
  * call ui.init(jenova_root).
@@ -169,6 +352,8 @@ void init_lua(void) {
 
     lua_pushcfunction(L, l_quit_app);
     lua_setglobal(L, "quit_app");
+
+    /* Native Chat functions removed */
 
     /* Add lib/ to package.path so ui.lua can require siblings */
     lua_getglobal(L, "package");
@@ -306,9 +491,21 @@ static gboolean update_tray_status(gpointer user_data G_GNUC_UNUSED) {
         if (status && strcmp(status, "active") == 0) {
             snprintf(icon_path, sizeof(icon_path), "%s/png/jca.jpg",
                      get_jenova_root());
+            if (g_ui_state.status_label) {
+                gtk_label_set_text(GTK_LABEL(g_ui_state.status_label), "ACTIVE");
+                GtkStyleContext *ctx = gtk_widget_get_style_context(g_ui_state.status_label);
+                gtk_style_context_remove_class(ctx, "status-inactive");
+                gtk_style_context_add_class(ctx, "status-active");
+            }
         } else {
             snprintf(icon_path, sizeof(icon_path), "%s/png/jca_grey.jpg",
                      get_jenova_root());
+            if (g_ui_state.status_label) {
+                gtk_label_set_text(GTK_LABEL(g_ui_state.status_label), "INACTIVE");
+                GtkStyleContext *ctx = gtk_widget_get_style_context(g_ui_state.status_label);
+                gtk_style_context_remove_class(ctx, "status-active");
+                gtk_style_context_add_class(ctx, "status-inactive");
+            }
         }
 
         app_indicator_set_icon_full(global_indicator, icon_path, "Jenova Status");
@@ -383,10 +580,11 @@ static gboolean run_tray(int argc, char *argv[]) {
     app_indicator_set_icon_full(global_indicator, default_icon,
                                 "Jenova (Inactive)");
 
+    /* Initialize Chat GUI Window */
+    init_gui();
+
     /* Build initial context menu from Lua */
     rebuild_tray_menu();
-
-    /* Removed: Auto-start server and open Web UI (user requested tray to start silently) */
 
     /* Poll server status every 3 seconds */
     g_timeout_add_seconds(3, update_tray_status, NULL);
@@ -441,6 +639,13 @@ static void rebuild_tray_menu(void) {
                     lua_pop(L, 1);
 
                     if (label && action) {
+                        if (strcmp(action, "open_gui") == 0) {
+                            GtkWidget *item = gtk_menu_item_new_with_label("Open Window");
+                            g_signal_connect_swapped(item, "activate", G_CALLBACK(gtk_widget_show_all), g_ui_state.main_window);
+                            gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+                            lua_pop(L, 1);
+                            continue;
+                        }
                         GtkWidget *item = gtk_menu_item_new_with_label(label);
                         char *action_dup = strdup(action);
                         if (action_dup) {
