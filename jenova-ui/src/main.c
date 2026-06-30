@@ -209,24 +209,26 @@ static void load_css(void) {
         "window.jenova-window { background-color: #131313; }\n"
         /* GtkNotebook styling */
         "notebook { background-color: #131313; }\n"
-        "notebook header { background-color: #1c1b1b; border-bottom: 1px solid #5e5966; }\n"
-        "notebook tab { background-color: transparent; border: none; padding: 10px 20px; box-shadow: none; }\n"
-        "notebook tab label { color: #9fa0a6; font-weight: 600; }\n"
+        "notebook header { background-color: #131313; border-bottom: 2px solid #2b1e3a; padding-top: 5px; }\n"
+        "notebook tab { background-color: transparent; border: none; padding: 2px 12px; box-shadow: none; transition: all 0.2s ease-in-out; margin: 0 4px; border-radius: 8px 8px 0 0; }\n"
+        "notebook tab label { color: #5e5966; font-family: 'Inter', 'Segoe UI', sans-serif; font-weight: 600; font-size: 14px; }\n"
+        "notebook tab:hover { background-color: #1c1b1b; }\n"
         "notebook tab:hover label { color: #f0edf2; }\n"
-        "notebook tab:checked { background-color: #2b1e3a; border-bottom: 2px solid #e4b382; }\n"
+        "notebook tab:checked { background-color: #2b1e3a; border-bottom: none; box-shadow: inset 0 -3px 0 0 #e4b382; }\n"
         "notebook tab:checked label { color: #e4b382; }\n"
         /* Glass Panel */
-        ".glass-panel { background-color: rgba(28, 27, 27, 0.6); border: 1px solid #5e5966; border-radius: 10px; }\n"
+        ".glass-panel { background-color: rgba(43, 30, 58, 0.4); border: 1px solid rgba(228, 179, 130, 0.1); border-radius: 12px; padding: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }\n"
         /* Labels */
-        "label { color: #f0edf2; font-family: 'Inter', sans-serif; }\n"
-        "label.title { font-weight: bold; font-size: 18px; color: #e4b382; }\n"
-        "label.status-active { color: #a3e635; font-weight: bold; }\n"
-        "label.status-inactive { color: #c96464; font-weight: bold; }\n"
-        "label.mode-label { color: #aba0d9; font-weight: bold; }\n"
+        "label { color: #f0edf2; font-family: 'Inter', 'Segoe UI', sans-serif; }\n"
+        "label.title { font-weight: 800; font-size: 24px; color: #e4b382; letter-spacing: 1px; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }\n"
+        "label.status-active { color: #a3e635; font-weight: 700; font-size: 14px; }\n"
+        "label.status-inactive { color: #c96464; font-weight: 700; font-size: 14px; }\n"
+        "label.mode-label { color: #aba0d9; font-weight: 700; font-size: 14px; }\n"
         /* Buttons */
-        "button { background-color: #2b1e3a; color: #f0edf2; border: 1px solid #5e5966; border-radius: 10px; padding: 10px 20px; font-weight: bold; }\n"
-        "button:hover { background-color: #4b2c70; border-color: #8e7cc3; }\n"
-        "button.stop-btn:hover { background-color: #c96464; border-color: #ffb3b3; }\n"
+        "button { background-image: none; background-color: #2b1e3a; color: #f0edf2; border: 1px solid rgba(228, 179, 130, 0.2); border-radius: 8px; padding: 4px 10px; font-weight: 600; font-size: 12px; font-family: 'Inter', 'Segoe UI', sans-serif; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: all 0.2s ease; }\n"
+        "button:hover { background-color: #3d2b52; border-color: rgba(228, 179, 130, 0.4); box-shadow: 0 4px 8px rgba(0,0,0,0.4); }\n"
+        "button:active { background-color: #1a1223; box-shadow: none; }\n"
+        "button.stop-btn:hover { background-color: #c96464; border-color: #ffb3b3; color: #ffffff; }\n"
         ;
     gtk_css_provider_load_from_data(provider, css, -1, NULL);
     gtk_style_context_add_provider_for_screen(gdk_screen_get_default(),
@@ -259,7 +261,7 @@ static void init_gui(void) {
     webkit_settings_set_allow_universal_access_from_file_urls(settings, TRUE);
     
     char file_uri[PATH_MAX];
-    snprintf(file_uri, sizeof(file_uri), "file://%s/public/index.html", get_jenova_root());
+    snprintf(file_uri, sizeof(file_uri), "http://127.0.0.1:8080/");
     webkit_web_view_load_uri(WEBKIT_WEB_VIEW(g_ui_state.webview), file_uri);
     
     GtkWidget *tab1_label = gtk_label_new("Jenova AI");
@@ -277,7 +279,7 @@ static void init_gui(void) {
     GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file(img_path, NULL);
     GtkWidget *image = gtk_image_new();
     if (pixbuf) {
-        GdkPixbuf *scaled = gdk_pixbuf_scale_simple(pixbuf, 200, (int)(gdk_pixbuf_get_height(pixbuf) * (200.0/gdk_pixbuf_get_width(pixbuf))), GDK_INTERP_BILINEAR);
+        GdkPixbuf *scaled = gdk_pixbuf_scale_simple(pixbuf, 50, (int)(gdk_pixbuf_get_height(pixbuf) * (50.0/gdk_pixbuf_get_width(pixbuf))), GDK_INTERP_BILINEAR);
         gtk_image_set_from_pixbuf(GTK_IMAGE(image), scaled);
         g_object_unref(scaled);
         g_object_unref(pixbuf);
@@ -318,12 +320,28 @@ static void init_gui(void) {
     g_ui_state.btn_stop = gtk_button_new_with_label("Stop Server");
     gtk_style_context_add_class(gtk_widget_get_style_context(g_ui_state.btn_stop), "stop-btn");
     g_ui_state.btn_lan = gtk_button_new_with_label("Toggle LAN");
+    
+    GtkWidget *btn_workspaces = gtk_button_new_with_label("Open Workspaces");
+    GtkWidget *btn_config = gtk_button_new_with_label("Edit Config");
+
     g_signal_connect(g_ui_state.btn_start, "clicked", G_CALLBACK(on_gui_button_clicked), "start");
     g_signal_connect(g_ui_state.btn_stop, "clicked", G_CALLBACK(on_gui_button_clicked), "stop");
     g_signal_connect(g_ui_state.btn_lan, "clicked", G_CALLBACK(on_gui_button_clicked), "toggle_lan");
+    g_signal_connect(btn_workspaces, "clicked", G_CALLBACK(on_gui_button_clicked), "open_workspaces");
+    g_signal_connect(btn_config, "clicked", G_CALLBACK(on_gui_button_clicked), "edit_config");
+
     gtk_box_pack_start(GTK_BOX(sidebar_vbox), g_ui_state.btn_start, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(sidebar_vbox), g_ui_state.btn_stop, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(sidebar_vbox), g_ui_state.btn_lan, FALSE, FALSE, 0);
+    
+    /* Add a small separator line before utilities */
+    GtkWidget *separator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_widget_set_margin_top(separator, 10);
+    gtk_widget_set_margin_bottom(separator, 10);
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), separator, FALSE, FALSE, 0);
+    
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), btn_workspaces, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), btn_config, FALSE, FALSE, 0);
     
     GtkWidget *tab2_label = gtk_label_new("Control Panel");
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook), sidebar_vbox, tab2_label);
@@ -531,7 +549,7 @@ static gboolean run_tray(int argc, char *argv[]) {
 
     /* Single-instance lock (per-user) */
     char lock_path[PATH_MAX];
-    char dir_path[PATH_MAX];
+    char dir_path[PATH_MAX - 32];
     const char *home = getenv("HOME");
     if (!home) home = "/tmp";
     
@@ -557,15 +575,6 @@ static gboolean run_tray(int argc, char *argv[]) {
         }
         close(lock_fd);
         exit(1);
-    }
-
-    /* Parse --offline flag */
-    int offline_mode = 0;
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--offline") == 0) {
-            offline_mode = 1;
-            break;
-        }
     }
 
     /* Create indicator with grey (inactive) icon as default */

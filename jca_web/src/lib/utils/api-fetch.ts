@@ -36,6 +36,9 @@ function getEffectiveBase(defaultBase: string): string {
   if (serverUrl) {
     return serverUrl.endsWith("/") ? serverUrl.slice(0, -1) : serverUrl;
   }
+  if (typeof window !== "undefined" && window.location.protocol === "file:") {
+    return "http://localhost:8080";
+  }
   return defaultBase;
 }
 

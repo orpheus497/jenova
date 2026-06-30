@@ -109,6 +109,24 @@ ui.on_action = function(action)
         else
             sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " restart")
         end
+    elseif action == "open_workspaces" then
+        local jca_home = os.getenv("JCA_HOME") or (os.getenv("HOME") .. "/JCA")
+        local workspaces_dir = os.getenv("JENOVA_WORKSPACES") or (jca_home .. "/Workspaces")
+        local ws_path = shell_quote(workspaces_dir)
+        os.execute("mkdir -p " .. ws_path .. " 2>/dev/null")
+        local opener = "xdg-open"
+        if os.execute("command -v xdg-open >/dev/null 2>&1") ~= 0 then
+            opener = "open"
+        end
+        sys_exec_async(shell_quote(opener) .. " " .. ws_path)
+    elseif action == "edit_config" then
+        local conf_path = shell_quote(root .. "/etc/jenova.conf")
+        local editor_cmd = "nvim"
+        if os.execute("command -v nvim >/dev/null 2>&1") ~= 0 then
+            editor_cmd = "vim"
+        end
+        local bin_term = shell_quote(root .. "/bin/jenova-term")
+        sys_exec_async(bin_term .. " " .. editor_cmd .. " " .. conf_path)
     elseif action == "toggle_lan" then
         if ui._proxy_handle then pcall(function() ui._proxy_handle:close() end) end
         ui._proxy_handle = nil

@@ -473,7 +473,7 @@ local function proxy_connection(client_fd, conn_fds)
         header_chunks[#header_chunks + 1] = ffi.string(buf, n)
         header_total = header_total + n
         if header_total > MAX_HEADER_SIZE then
-            local err_resp = "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n"
+            local err_resp = "HTTP/1.1 431 Request Header Fields Too Large\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
             async_send(client_fd, err_resp)
             safe_close(); return
         end
@@ -497,6 +497,12 @@ local function proxy_connection(client_fd, conn_fds)
         end
     end
 
+
+        if headers_raw:match("^OPTIONS ") then
+            local cors_resp = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE\r\nAccess-Control-Allow-Headers: *\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, cors_resp)
+            safe_close(); return
+        end
     -- Native /health endpoint
     local is_health = is_get and (headers_raw:match("^GET /health[ %?]") or headers_raw:match("^GET /v1/health[ %?]"))
     if is_health then
@@ -551,7 +557,7 @@ local function proxy_connection(client_fd, conn_fds)
             jenova     = true,
         })
         local health_resp = string.format(
-            "HTTP/1.1 %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
+            "HTTP/1.1 %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n%s",
             http_status, #health_body, health_body)
         async_send(client_fd, health_resp)
         safe_close()
@@ -560,7 +566,7 @@ local function proxy_connection(client_fd, conn_fds)
 
     if not is_get then
         if content_length > MAX_BODY_SIZE then
-            local err_resp = "HTTP/1.1 413 Content Too Large\r\nConnection: close\r\n\r\n"
+            local err_resp = "HTTP/1.1 413 Content Too Large\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
             async_send(client_fd, err_resp)
             safe_close(); return
         end
@@ -604,13 +610,13 @@ local function proxy_connection(client_fd, conn_fds)
         
         -- Security: prevent directory traversal (literal check + canonical validation)
         if storage_path:find("%.%.") then
-            local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+            local err = "HTTP/1.1 403 Forbidden\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
             async_send(client_fd, err); safe_close(); return
         end
 
         local full_path = resolve_safe_path(workspaces_dir, storage_path)
         if not full_path then
-            local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+            local err = "HTTP/1.1 403 Forbidden\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
             async_send(client_fd, err); safe_close(); return
         end
         local dir_part = full_path:match("(.+)/[^/]+$")
@@ -621,10 +627,10 @@ local function proxy_connection(client_fd, conn_fds)
             f:write(body_raw)
             f:close()
 
-            local resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}"
+            local resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}"
             async_send(client_fd, resp)
         else
-            local resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
+            local resp = "HTTP/1.1 500 Internal Server Error\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
             async_send(client_fd, resp)
         end
         safe_close(); return
@@ -644,7 +650,7 @@ local function proxy_connection(client_fd, conn_fds)
             end
         end
         local content = "[" .. table.concat(files, ",") .. "]"
-        local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)
+        local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n", #content)
         async_send(client_fd, resp .. content)
         safe_close(); return
     end
@@ -663,7 +669,7 @@ local function proxy_connection(client_fd, conn_fds)
             end
         end
         local content = "[" .. table.concat(ws, ",") .. "]"
-        local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)
+        local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n", #content)
         async_send(client_fd, resp .. content)
         safe_close(); return
     end
@@ -672,12 +678,12 @@ local function proxy_connection(client_fd, conn_fds)
     if is_storage_get then
         is_storage_get = url_decode(is_storage_get)
         if is_storage_get:find("%.%.") then
-            local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+            local err = "HTTP/1.1 403 Forbidden\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
             async_send(client_fd, err); safe_close(); return
         end
         local full_path = resolve_safe_path(workspaces_dir, is_storage_get)
         if not full_path then
-            local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+            local err = "HTTP/1.1 403 Forbidden\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
             async_send(client_fd, err); safe_close(); return
         end
         local f = io.open(full_path, "rb")
@@ -686,17 +692,17 @@ local function proxy_connection(client_fd, conn_fds)
             f:close()
             
             if not content then
-                local resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
+                local resp = "HTTP/1.1 500 Internal Server Error\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
                 async_send(client_fd, resp)
                 safe_close()
                 return
             end
             
-            local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)
+            local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %d\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n", #content)
             async_send(client_fd, resp)
             async_send(client_fd, content)
         else
-            local resp = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n"
+            local resp = "HTTP/1.1 404 Not Found\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
             async_send(client_fd, resp)
         end
         safe_close(); return
@@ -721,7 +727,7 @@ local function proxy_connection(client_fd, conn_fds)
                         f:close()
                         
                         if not content then
-                            local resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
+                            local resp = "HTTP/1.1 500 Internal Server Error\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
                             async_send(client_fd, resp)
                             safe_close()
                             return
@@ -729,14 +735,14 @@ local function proxy_connection(client_fd, conn_fds)
                         
                         local mime = is_static_asset or "application/octet-stream"
                         local resp = string.format(
-                            "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
+                            "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %d\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
                             mime, #content)
                         async_send(client_fd, resp)
                         async_send(client_fd, content)
                         safe_close()
                         return
                     elseif is_static_asset then
-                        local resp = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n"
+                        local resp = "HTTP/1.1 404 Not Found\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
                         async_send(client_fd, resp)
                         safe_close()
                         return
@@ -935,7 +941,7 @@ local function proxy_connection(client_fd, conn_fds)
 
     local llama_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
     if llama_fd < 0 then
-        local err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
+        local err_resp = "HTTP/1.1 500 Internal Server Error\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
         async_send(client_fd, err_resp)
         safe_close()
         return
@@ -956,7 +962,7 @@ local function proxy_connection(client_fd, conn_fds)
     local connected, conn_err = async_connect(llama_fd, l_addr)
     if not connected then
         print("[proxy] ERROR: C++ llama-server backend is down on " .. LLAMA_CONNECT_HOST .. ":" .. LLAMA_PORT .. " (err: " .. tostring(conn_err) .. ")")
-        local err_resp = "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"
+        local err_resp = "HTTP/1.1 502 Bad Gateway\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
         async_send(client_fd, err_resp)
         safe_close()
         return
@@ -1094,7 +1100,7 @@ while running do
             local client_fd = ffi.C.accept(server_fd, ffi.cast("struct sockaddr *", client_addr), addrlen)
             if client_fd >= 0 then
                 if active_connection_count >= MAX_ACTIVE_CONNECTIONS then
-                    local err_resp = "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 5\r\nConnection: close\r\n\r\n"
+                    local err_resp = "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 5\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
                     ffi.C.send(client_fd, err_resp, #err_resp, 0)
                     ffi.C.close(client_fd)
                 else
