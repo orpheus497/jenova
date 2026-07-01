@@ -40,8 +40,12 @@ static gboolean on_draw_canvas(GtkWidget *widget, cairo_t *cr, gpointer data G_G
         p_sys.x[i] += p_sys.vx[i];
         p_sys.y[i] += p_sys.vy[i];
 
-        if (p_sys.x[i] < 0 || p_sys.x[i] > width) p_sys.vx[i] *= -1;
-        if (p_sys.y[i] < 0 || p_sys.y[i] > height) p_sys.vy[i] *= -1;
+        if ((p_sys.x[i] < 0 && p_sys.vx[i] < 0) || (p_sys.x[i] > width && p_sys.vx[i] > 0)) {
+            p_sys.vx[i] *= -1;
+        }
+        if ((p_sys.y[i] < 0 && p_sys.vy[i] < 0) || (p_sys.y[i] > height && p_sys.vy[i] > 0)) {
+            p_sys.vy[i] *= -1;
+        }
     }
 
     /* Screen blend mode mimicking HTML mix-blend-mode: screen */
@@ -84,10 +88,15 @@ static gboolean on_animate(GtkWidget *widget) {
     return G_SOURCE_CONTINUE; /* Continue timer */
 }
 
+static void on_destroy_canvas(GtkWidget *widget G_GNUC_UNUSED, gpointer data) {
+    g_source_remove(GPOINTER_TO_UINT(data));
+}
+
 GtkWidget* create_neural_canvas(void) {
     GtkWidget *da = gtk_drawing_area_new();
     g_signal_connect(da, "draw", G_CALLBACK(on_draw_canvas), NULL);
     /* Approx 60 FPS (1000ms / 60 = 16.6ms) */
-    g_timeout_add(16, (GSourceFunc)on_animate, da);
+    guint timeout_id = g_timeout_add(16, (GSourceFunc)on_animate, da);
+    g_signal_connect(da, "destroy", G_CALLBACK(on_destroy_canvas), GUINT_TO_POINTER(timeout_id));
     return da;
 }

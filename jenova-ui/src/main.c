@@ -600,7 +600,10 @@ static gboolean on_status_output_read(GIOChannel *source, GIOCondition condition
 
         g_string_free(status_output, TRUE);
         status_output = NULL;
-        status_pid = 0;
+        if (status_pid != 0) {
+            g_spawn_close_pid(status_pid);
+            status_pid = 0;
+        }
         return FALSE; /* Stop listening */
     }
     return TRUE;
