@@ -169,7 +169,13 @@ ui.poll_status = function()
     end
     -- 1. Check if backend pipeline reports ready using its own status command
     -- which correctly respects configured ports and runs internal healthchecks.
-    local f1 = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " status 2>&1", "r")
+    local tmp_file = os.getenv("JENOVA_STATE") or (root .. "/.system")
+    os.execute("mkdir -p " .. shell_quote(tmp_file) .. " 2>/dev/null")
+    tmp_file = tmp_file .. "/status.out"
+    local shell_cmd = shell_quote(root .. "/bin/jenova-ca") .. " status > " .. shell_quote(tmp_file) .. " 2>&1"
+    sys_exec_sync("sh -c " .. shell_quote(shell_cmd))
+
+    local f1 = io.open(tmp_file, "r")
     if not f1 then return "inactive" end
     local output_backend = f1:read("*a")
     f1:close()
