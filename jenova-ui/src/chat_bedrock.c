@@ -6,11 +6,13 @@ static GtkWidget *g_chat_listbox = NULL;
 static GtkWidget *g_chat_input = NULL;
 static lua_State *g_lua_state = NULL;
 static GHashTable *g_message_labels = NULL;
+static GHashTable *g_message_spinners = NULL;
 static int g_message_id_counter = 0;
 
 void chat_bedrock_init(GtkWidget *chat_vbox) {
     g_chat_vbox = chat_vbox;
     g_message_labels = g_hash_table_new(g_direct_hash, g_direct_equal);
+    g_message_spinners = g_hash_table_new(g_direct_hash, g_direct_equal);
 }
 
 void chat_bedrock_load_css(void) {
@@ -125,7 +127,8 @@ static int l_bedrock_create_message_bubble(lua_State *L) {
     gtk_widget_set_valign(avatar, GTK_ALIGN_START);
     gtk_style_context_add_class(gtk_widget_get_style_context(avatar), "chat-avatar");
     
-    GtkWidget *msg_label = gtk_label_new(text);
+    GtkWidget *msg_label = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(msg_label), text);
     gtk_label_set_line_wrap(GTK_LABEL(msg_label), TRUE);
     gtk_label_set_selectable(GTK_LABEL(msg_label), TRUE);
     gtk_label_set_xalign(GTK_LABEL(msg_label), 0.0);
@@ -139,6 +142,11 @@ static int l_bedrock_create_message_bubble(lua_State *L) {
     }
     
     gtk_box_pack_start(GTK_BOX(box), avatar, FALSE, FALSE, 0);
+    
+    GtkWidget *spinner = gtk_spinner_new();
+    gtk_box_pack_start(GTK_BOX(box), spinner, FALSE, FALSE, 0);
+    // Spinner is intentionally not shown yet
+    
     gtk_box_pack_start(GTK_BOX(box), msg_label, TRUE, TRUE, 0);
     gtk_container_add(GTK_CONTAINER(row), box);
     
@@ -147,6 +155,7 @@ static int l_bedrock_create_message_bubble(lua_State *L) {
     
     int id = ++g_message_id_counter;
     g_hash_table_insert(g_message_labels, GINT_TO_POINTER(id), msg_label);
+    g_hash_table_insert(g_message_spinners, GINT_TO_POINTER(id), spinner);
     
     scroll_to_bottom();
     
@@ -154,17 +163,44 @@ static int l_bedrock_create_message_bubble(lua_State *L) {
     return 1;
 }
 
-static int l_bedrock_append_message_chunk(lua_State *L) {
+static int l_bedrock_set_message_markup(lua_State *L) {
     int id = luaL_checkinteger(L, 1);
     const char *text = luaL_checkstring(L, 2);
     
     GtkWidget *msg_label = g_hash_table_lookup(g_message_labels, GINT_TO_POINTER(id));
     if (msg_label && GTK_IS_LABEL(msg_label)) {
-        const char *current = gtk_label_get_text(GTK_LABEL(msg_label));
-        char *new_text = g_strdup_printf("%s%s", current, text);
-        gtk_label_set_text(GTK_LABEL(msg_label), new_text);
-        g_free(new_text);
+        gtk_label_set_markup(GTK_LABEL(msg_label), text);
         scroll_to_bottom();
+    }
+    return 0;
+}
+
+static int l_bedrock_set_message_loading(lua_State *L) {
+    int id = luaL_checkinteger(L, 1);
+    gboolean is_loading = lua_toboolean(L, 2);
+    
+    GtkWidget *spinner = g_hash_table_lookup(g_message_spinners, GINT_TO_POINTER(id));
+    if (spinner && GTK_IS_SPINNER(spinner)) {
+        if (is_loading) {
+            gtk_widget_show(spinner);
+            gtk_spinner_start(GTK_SPINNER(spinner));
+        } else {
+            gtk_spinner_stop(GTK_SPINNER(spinner));
+            gtk_widget_hide(spinner);
+        }
+    }
+    return 0;
+}
+
+static int l_bedrock_show_error(lua_State *L) {
+    int id = luaL_checkinteger(L, 1);
+    const char *err_text = luaL_checkstring(L, 2);
+    
+    GtkWidget *msg_label = g_hash_table_lookup(g_message_labels, GINT_TO_POINTER(id));
+    if (msg_label && GTK_IS_LABEL(msg_label)) {
+        char *markup = g_strdup_printf("<span foreground=\"#ff5555\"><b>Error:</b> %s</span>", err_text);
+        gtk_label_set_markup(GTK_LABEL(msg_label), markup);
+        g_free(markup);
     }
     return 0;
 }
@@ -181,6 +217,15 @@ void chat_bedrock_register_lua(lua_State *L) {
     lua_pushcfunction(L, l_bedrock_create_message_bubble);
     lua_setglobal(L, "bedrock_create_message_bubble");
     
-    lua_pushcfunction(L, l_bedrock_append_message_chunk);
-    lua_setglobal(L, "bedrock_append_message_chunk");
+     
+     
+
+    lua_pushcfunction(L, l_bedrock_set_message_markup);
+    lua_setglobal(L, "bedrock_set_message_markup");
+
+    lua_pushcfunction(L, l_bedrock_set_message_loading);
+    lua_setglobal(L, "bedrock_set_message_loading");
+
+    lua_pushcfunction(L, l_bedrock_show_error);
+    lua_setglobal(L, "bedrock_show_error");
 }

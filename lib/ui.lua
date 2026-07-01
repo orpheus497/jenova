@@ -70,8 +70,10 @@ ui.init = function(root_path)
     local lan_arg = last_lan_state and "--lan" or ""
     if ui._proxy_handle then pcall(function() ui._proxy_handle:close() end) end
     ui._proxy_handle = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " proxy-serve " .. lan_arg, "w")
-    
-    -- Initialize the Chat Presentation layer
+end
+
+ui.on_gui_ready = function()
+    -- Initialize the Chat Presentation layer once GTK is fully laid out
     chat_ui.init()
 end
 
@@ -252,20 +254,55 @@ ui.on_tui_action = function(action)
     end
 end
 
+local function md_to_pango(md)
+    if not md then return "" end
+    local res = md:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
+    res = res:gsub("%*%*(.-)%*%*", "<b>%1</b>")
+    res = res:gsub("`(.-)`", "<span font_family=\"monospace\" background=\"#1e1e1e\" foreground=\"#e4b382\"> %1 </span>")
+    
+    -- Close unclosed ** during streaming
+    local _, bcount = md:gsub("%*%*", "")
+    if bcount % 2 == 1 then
+        res = res:gsub("%*%*(.*)$", "<b>%1</b>")
+    end
+    return res
+end
+
+local chat_store = require("chat_store")
+local chat_service = require("chat_service")
+
 ui.on_chat_submit = function(text)
     if not text or text == "" then return end
     
-    -- 1. Display the user's message natively via C Bedrock
     _G.bedrock_create_message_bubble("user", text)
-    
-    -- 2. Create the AI's response bubble
     local msg_id = _G.bedrock_create_message_bubble("assistant", "")
     
-    -- 3. Simulate processing/streaming a response
-    -- (In the future, this will hook into actual HTTP requests to the Llama backend)
-    _G.bedrock_append_message_chunk(msg_id, "I received your message: ")
-    _G.bedrock_append_message_chunk(msg_id, text)
-    _G.bedrock_append_message_chunk(msg_id, "\n\nThis is a native C response rendered via Lua presentation logic!")
+    local msg_buffer = ""
+    local reasoning_buffer = ""
+    local conv_id = "default_conversation"
+    
+    chat_service.sendMessage(text, msg_id, conv_id, chat_store, 
+        -- on_chunk callback
+        function(chunk_text)
+            msg_buffer = msg_buffer .. chunk_text
+            local pango = md_to_pango(msg_buffer)
+            if reasoning_buffer ~= "" then
+                pango = "<span foreground='#888888'><i>" .. md_to_pango(reasoning_buffer) .. "</i></span>\n\n" .. pango
+            end
+            _G.bedrock_set_message_markup(msg_id, pango)
+        end,
+        -- on_reasoning_chunk callback
+        function(chunk_text)
+            reasoning_buffer = reasoning_buffer .. chunk_text
+            local pango = md_to_pango(msg_buffer)
+            local r_pango = "<span foreground='#888888'><i>" .. md_to_pango(reasoning_buffer) .. "</i></span>\n\n"
+            _G.bedrock_set_message_markup(msg_id, r_pango .. pango)
+        end,
+        -- on_complete callback
+        function()
+            -- Do any finalization if needed
+        end
+    )
 end
 
 

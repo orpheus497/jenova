@@ -177,6 +177,85 @@ static int l_sys_exec_async(lua_State *Ls) {
     return 0;
 }
 
+typedef struct {
+    lua_State *L;
+    int callback_ref;
+    GPid pid;
+} StreamState;
+
+static gboolean on_stream_read(GIOChannel *source, GIOCondition condition, gpointer data) {
+    StreamState *state = (StreamState *)data;
+    gchar buf[4096];
+    gsize bytes_read;
+    
+    GIOStatus status = g_io_channel_read_chars(source, buf, sizeof(buf) - 1, &bytes_read, NULL);
+    if (status == G_IO_STATUS_NORMAL && bytes_read > 0) {
+        buf[bytes_read] = '\0';
+        
+        lua_rawgeti(state->L, LUA_REGISTRYINDEX, state->callback_ref);
+        lua_pushstring(state->L, buf);
+        if (lua_pcall(state->L, 1, 0, 0) != LUA_OK) {
+            g_printerr("Lua stream callback error: %s\n", lua_tostring(state->L, -1));
+            lua_pop(state->L, 1);
+        }
+        return TRUE;
+    }
+    
+    if (status == G_IO_STATUS_EOF || (condition & (G_IO_ERR | G_IO_HUP))) {
+        lua_rawgeti(state->L, LUA_REGISTRYINDEX, state->callback_ref);
+        lua_pushnil(state->L);
+        if (lua_pcall(state->L, 1, 0, 0) != LUA_OK) {
+            g_printerr("Lua stream EOF callback error: %s\n", lua_tostring(state->L, -1));
+            lua_pop(state->L, 1);
+        }
+        luaL_unref(state->L, LUA_REGISTRYINDEX, state->callback_ref);
+        g_spawn_close_pid(state->pid);
+        g_free(state);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static int l_sys_exec_stream(lua_State *Ls) {
+    const char *cmd = luaL_checkstring(Ls, 1);
+    if (!lua_isfunction(Ls, 2)) {
+        luaL_error(Ls, "Expected callback function as 2nd argument");
+        return 0;
+    }
+    
+    lua_pushvalue(Ls, 2);
+    int ref = luaL_ref(Ls, LUA_REGISTRYINDEX);
+    
+    char *wrapped_cmd = wrap_jenova_cmd(cmd);
+    gint out_fd;
+    GPid pid;
+    GError *error = NULL;
+    gchar **argv = NULL;
+    
+    if (g_shell_parse_argv(wrapped_cmd, NULL, &argv, &error) &&
+        g_spawn_async_with_pipes(NULL, argv, NULL, G_SPAWN_SEARCH_PATH | G_SPAWN_DO_NOT_REAP_CHILD, NULL, NULL, &pid, NULL, &out_fd, NULL, &error)) {
+        
+        StreamState *state = g_new(StreamState, 1);
+        state->L = Ls;
+        state->callback_ref = ref;
+        state->pid = pid;
+        
+        GIOChannel *channel = g_io_channel_unix_new(out_fd);
+        g_io_channel_set_encoding(channel, NULL, NULL);
+        g_io_channel_set_flags(channel, G_IO_FLAG_NONBLOCK, NULL);
+        g_io_add_watch(channel, G_IO_IN | G_IO_HUP | G_IO_ERR, on_stream_read, state);
+        g_io_channel_unref(channel);
+    } else {
+        g_printerr("sys_exec_stream error: %s\n", error->message);
+        g_error_free(error);
+        luaL_unref(Ls, LUA_REGISTRYINDEX, ref);
+    }
+    
+    if (argv) g_strfreev(argv);
+    free(wrapped_cmd);
+    return 0;
+}
+
 static int l_sys_exec_sync(lua_State *Ls) {
     const char *cmd = luaL_checkstring(Ls, 1);
     char *wrapped_cmd = wrap_jenova_cmd(cmd);
@@ -452,6 +531,23 @@ static void init_gui(void) {
 
     gtk_widget_show_all(g_ui_state.main_window);
     g_ui_state.is_visible = 1;
+    
+    // Notify Lua that GUI is ready
+    if (L) {
+        lua_getglobal(L, "ui");
+        if (lua_istable(L, -1)) {
+            lua_getfield(L, -1, "on_gui_ready");
+            if (lua_isfunction(L, -1)) {
+                if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+                    g_printerr("Error calling ui.on_gui_ready: %s\n", lua_tostring(L, -1));
+                    lua_pop(L, 1);
+                }
+            } else {
+                lua_pop(L, 1);
+            }
+        }
+        lua_pop(L, 1);
+    }
 }
 
 /* ---------------------------------------------------------------------------
@@ -468,6 +564,9 @@ void init_lua(void) {
 
     lua_pushcfunction(L, l_sys_exec_async);
     lua_setglobal(L, "sys_exec_async");
+
+    lua_pushcfunction(L, l_sys_exec_stream);
+    lua_setglobal(L, "sys_exec_stream");
 
     lua_pushcfunction(L, l_sys_exec_sync);
     lua_setglobal(L, "sys_exec_sync");
