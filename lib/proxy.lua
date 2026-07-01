@@ -120,14 +120,15 @@ local function decode_chunked_body(after_headers)
 end
 
 local EINTR = 4
-local function async_recv(fd, buf, len)
+local function async_recv(fd, buf, len, deadline)
     while true do
         local n = ffi.C.recv(fd, buf, len, 0)
         if n >= 0 then return tonumber(n) end
         local err = ffi.errno()
         if err == EINTR then goto retry end
         if err ~= EAGAIN and err ~= EWOULDBLOCK then return -1, err end
-        coroutine.yield("read", fd)
+        if deadline and os.time() > deadline then return -2, "timeout" end
+        coroutine.yield("read", fd, deadline)
         ::retry::
     end
 end
@@ -456,15 +457,16 @@ local function proxy_connection(client_fd, conn_fds)
     local is_get = false
 
     while true do
-        local n, err = async_recv(client_fd, buf, 8192)
+        local n, err = async_recv(client_fd, buf, 8192, start_time + 10)
         if n <= 0 then 
-            if n < 0 then io.write("[proxy] client recv error: " .. tostring(err) .. "\n") end
+            if err == "timeout" or os.time() - start_time > 10 then
+                io.write("[proxy] header timeout from client\n")
+            elseif n < 0 then 
+                io.write("[proxy] client recv error: " .. tostring(err) .. "\n") 
+            end
             safe_close(); return 
         end
-        if os.time() - start_time > 10 then
-            io.write("[proxy] header timeout from client\n")
-            safe_close(); return
-        end
+
         header_chunks[#header_chunks + 1] = ffi.string(buf, n)
         header_total = header_total + n
         if header_total > MAX_HEADER_SIZE then
