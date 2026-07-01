@@ -60,6 +60,7 @@ local function detect_probe_tool()
 end
 
 local last_lan_state = nil
+local chat_ui = require("chat_presentation")
 
 ui.init = function(root_path)
     root = root_path or ""
@@ -69,6 +70,9 @@ ui.init = function(root_path)
     local lan_arg = last_lan_state and "--lan" or ""
     if ui._proxy_handle then pcall(function() ui._proxy_handle:close() end) end
     ui._proxy_handle = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " proxy-serve " .. lan_arg, "w")
+    
+    -- Initialize the Chat Presentation layer
+    chat_ui.init()
 end
 
 ui.get_menu = function()
@@ -246,6 +250,22 @@ ui.on_tui_action = function(action)
     else
         ui.on_action(action)
     end
+end
+
+ui.on_chat_submit = function(text)
+    if not text or text == "" then return end
+    
+    -- 1. Display the user's message natively via C Bedrock
+    _G.bedrock_create_message_bubble("user", text)
+    
+    -- 2. Create the AI's response bubble
+    local msg_id = _G.bedrock_create_message_bubble("assistant", "")
+    
+    -- 3. Simulate processing/streaming a response
+    -- (In the future, this will hook into actual HTTP requests to the Llama backend)
+    _G.bedrock_append_message_chunk(msg_id, "I received your message: ")
+    _G.bedrock_append_message_chunk(msg_id, text)
+    _G.bedrock_append_message_chunk(msg_id, "\n\nThis is a native C response rendered via Lua presentation logic!")
 end
 
 

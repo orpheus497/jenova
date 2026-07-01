@@ -24,6 +24,7 @@
 #include <gtk/gtk.h>
 #include <libappindicator/app-indicator.h>
 #include "canvas.h"
+#include "chat_bedrock.h"
 
 #include <lua.h>
 #include <lualib.h>
@@ -271,6 +272,8 @@ static void load_css(void) {
                                               GTK_STYLE_PROVIDER(provider),
                                               GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     g_object_unref(provider);
+    
+    chat_bedrock_load_css();
 }
 
 static void on_toggle_panel_clicked(GtkWidget *widget G_GNUC_UNUSED, gpointer data) {
@@ -345,17 +348,9 @@ static void init_gui(void) {
     gtk_box_pack_start(GTK_BOX(top_bar), btn_toggle_panel, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(chat_vbox), top_bar, FALSE, FALSE, 0);
 
-    // Chat messages area (placeholder)
-    GtkWidget *chat_scroll = gtk_scrolled_window_new(NULL, NULL);
-    gtk_widget_set_vexpand(chat_scroll, TRUE);
-    gtk_widget_set_hexpand(chat_scroll, TRUE);
-    gtk_style_context_add_class(gtk_widget_get_style_context(chat_scroll), "glass-panel");
-    gtk_box_pack_start(GTK_BOX(chat_vbox), chat_scroll, TRUE, TRUE, 0);
-
-    // Chat input area
-    GtkWidget *chat_input = gtk_entry_new();
-    gtk_entry_set_placeholder_text(GTK_ENTRY(chat_input), "Type a message...");
-    gtk_box_pack_start(GTK_BOX(chat_vbox), chat_input, FALSE, FALSE, 0);
+    /* Initialize Chat Bedrock with the empty chat_vbox container.
+     * Lua will populate this via bedrock_create_chat_feed and bedrock_create_chat_input */
+    chat_bedrock_init(chat_vbox);
 
     gtk_box_pack_start(GTK_BOX(workstation_hbox), chat_vbox, TRUE, TRUE, 0);
 
@@ -483,7 +478,8 @@ void init_lua(void) {
     lua_pushcfunction(L, l_quit_app);
     lua_setglobal(L, "quit_app");
 
-    /* Native Chat functions removed */
+    /* Register the Native Chat Bedrock functions */
+    chat_bedrock_register_lua(L);
 
     /* Add lib/ to package.path so ui.lua can require siblings */
     lua_getglobal(L, "package");
