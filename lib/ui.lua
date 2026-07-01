@@ -160,7 +160,7 @@ ui.on_action = function(action)
     end
 end
 
-ui.poll_status = function()
+ui.update_proxy_state = function()
     local current_lan_state = is_lan_enabled()
     if last_lan_state ~= nil and current_lan_state ~= last_lan_state then
         last_lan_state = current_lan_state
@@ -168,18 +168,14 @@ ui.poll_status = function()
         local lan_arg = current_lan_state and "--lan" or ""
         ui._proxy_handle = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " proxy-serve " .. lan_arg, "w")
     end
+end
+
+ui.poll_status = function()
+    ui.update_proxy_state()
     -- 1. Check if backend pipeline reports ready using its own status command
     -- which correctly respects configured ports and runs internal healthchecks.
-    local tmp_file = os.getenv("JENOVA_STATE") or (root .. "/.system")
-    os.execute("mkdir -p " .. shell_quote(tmp_file) .. " 2>/dev/null")
-    tmp_file = tmp_file .. "/status.out"
-    local shell_cmd = shell_quote(root .. "/bin/jenova-ca") .. " status > " .. shell_quote(tmp_file) .. " 2>&1"
-    sys_exec_sync("sh -c " .. shell_quote(shell_cmd))
-
-    local f1 = io.open(tmp_file, "r")
-    if not f1 then return "inactive" end
-    local output_backend = f1:read("*a")
-    f1:close()
+    local shell_cmd = shell_quote(root .. "/bin/jenova-ca") .. " status 2>&1"
+    local output_backend = sys_exec_read("sh -c " .. shell_quote(shell_cmd))
 
     if output_backend and output_backend:match("is ready") then
         return "active"

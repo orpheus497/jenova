@@ -190,6 +190,22 @@ static int l_sys_exec_sync(lua_State *Ls) {
     return 1;
 }
 
+static int l_sys_exec_read(lua_State *Ls) {
+    const char *cmd = luaL_checkstring(Ls, 1);
+    char *wrapped_cmd = wrap_jenova_cmd(cmd);
+    gchar *stdout_str = NULL;
+    gint exit_status = 0;
+
+    if (g_spawn_command_line_sync(wrapped_cmd, &stdout_str, NULL, &exit_status, NULL)) {
+        lua_pushstring(Ls, stdout_str ? stdout_str : "");
+        g_free(stdout_str);
+    } else {
+        lua_pushnil(Ls);
+    }
+    free(wrapped_cmd);
+    return 1;
+}
+
 static int l_quit_app(lua_State *Ls) {
     (void)Ls;
     gtk_main_quit();
@@ -310,7 +326,9 @@ static void init_gui(void) {
         int w = gdk_pixbuf_get_width(pixbuf);
         int h = gdk_pixbuf_get_height(pixbuf);
         if (w > 0) {
-            GdkPixbuf *scaled = gdk_pixbuf_scale_simple(pixbuf, 50, (int)(h * (50.0 / w)), GDK_INTERP_BILINEAR);
+            int dest_h = (int)(h * (50.0 / w));
+            if (dest_h <= 0) dest_h = 1;
+            GdkPixbuf *scaled = gdk_pixbuf_scale_simple(pixbuf, 50, dest_h, GDK_INTERP_BILINEAR);
             if (scaled) {
                 gtk_image_set_from_pixbuf(GTK_IMAGE(image), scaled);
                 g_object_unref(scaled);
@@ -401,6 +419,9 @@ void init_lua(void) {
 
     lua_pushcfunction(L, l_sys_exec_sync);
     lua_setglobal(L, "sys_exec_sync");
+
+    lua_pushcfunction(L, l_sys_exec_read);
+    lua_setglobal(L, "sys_exec_read");
 
     lua_pushcfunction(L, l_quit_app);
     lua_setglobal(L, "quit_app");
@@ -520,32 +541,29 @@ static void free_action_data(gpointer data, GClosure *closure G_GNUC_UNUSED) {
     free(data);
 }
 
-/* ---------------------------------------------------------------------------
- * update_tray_status: Polled every 3 seconds by GLib.  Calls ui.poll_status()
- * and swaps the tray icon between jca.jpg (active) and jca_grey.jpg (inactive).
- *
- * Lua stack discipline: push ui table, push+call poll_status, pop result,
- * pop ui table.  Both success and error paths must leave the stack clean.
- * --------------------------------------------------------------------------- */
-static gboolean update_tray_status(gpointer user_data G_GNUC_UNUSED) {
-    if (!global_indicator) return TRUE;
+static GPid status_pid = 0;
+static GString *status_output = NULL;
 
-    lua_getglobal(L, "ui");                          /* +1  [ui] */
-    if (!lua_istable(L, -1)) { lua_pop(L, 1); return TRUE; }
+static gboolean on_status_output_read(GIOChannel *source, GIOCondition condition, gpointer data G_GNUC_UNUSED) {
+    if (condition & G_IO_IN) {
+        gchar buf[512];
+        gsize bytes_read = 0;
+        GError *error = NULL;
+        if (g_io_channel_read_chars(source, buf, sizeof(buf) - 1, &bytes_read, &error) == G_IO_STATUS_NORMAL) {
+            buf[bytes_read] = '\0';
+            g_string_append(status_output, buf);
+        } else if (error) {
+            g_error_free(error);
+        }
+    }
 
-    lua_getfield(L, -1, "poll_status");              /* +1  [ui, fn] */
-    if (!lua_isfunction(L, -1)) { lua_pop(L, 2); return TRUE; }
-
-    if (lua_pcall(L, 0, 1, 0) == LUA_OK) {          /* -1 +1  [ui, result] */
-        const char *status = lua_tostring(L, -1);
+    if (condition & (G_IO_ERR | G_IO_HUP)) {
+        int is_active = (status_output->str && strstr(status_output->str, "is ready") != NULL);
         char icon_path[PATH_MAX];
-
-        int is_active = (status && strcmp(status, "active") == 0);
         int was_active = (strcmp(g_ui_state.current_status, "active") == 0);
 
         if (is_active) {
-            snprintf(icon_path, sizeof(icon_path), "%s/png/jca.jpg",
-                     get_jenova_root());
+            snprintf(icon_path, sizeof(icon_path), "%s/png/jca.jpg", get_jenova_root());
             if (g_ui_state.status_label) {
                 gtk_label_set_text(GTK_LABEL(g_ui_state.status_label), "ACTIVE");
                 GtkStyleContext *ctx = gtk_widget_get_style_context(g_ui_state.status_label);
@@ -557,8 +575,7 @@ static gboolean update_tray_status(gpointer user_data G_GNUC_UNUSED) {
             }
             strncpy(g_ui_state.current_status, "active", sizeof(g_ui_state.current_status)-1);
         } else {
-            snprintf(icon_path, sizeof(icon_path), "%s/png/jca_grey.jpg",
-                     get_jenova_root());
+            snprintf(icon_path, sizeof(icon_path), "%s/png/jca_grey.jpg", get_jenova_root());
             if (g_ui_state.status_label) {
                 gtk_label_set_text(GTK_LABEL(g_ui_state.status_label), "INACTIVE");
                 GtkStyleContext *ctx = gtk_widget_get_style_context(g_ui_state.status_label);
@@ -568,16 +585,59 @@ static gboolean update_tray_status(gpointer user_data G_GNUC_UNUSED) {
             strncpy(g_ui_state.current_status, "inactive", sizeof(g_ui_state.current_status)-1);
         }
 
-        app_indicator_set_icon_full(global_indicator, icon_path, "Jenova Status");
-        lua_pop(L, 1); /* pop result */
-    } else {
-        /* pcall error: error message is on stack */
-        fprintf(stderr, "jenova-ui: error in ui.poll_status: %s\n",
-                lua_tostring(L, -1));
-        lua_pop(L, 1); /* pop error */
-    }
+        if (global_indicator) {
+            app_indicator_set_icon_full(global_indicator, icon_path, "Jenova Status");
+        }
 
-    lua_pop(L, 1); /* pop 'ui' table */
+        g_string_free(status_output, TRUE);
+        status_output = NULL;
+        status_pid = 0;
+        return FALSE; /* Stop listening */
+    }
+    return TRUE;
+}
+
+static gboolean update_tray_status(gpointer user_data G_GNUC_UNUSED) {
+    if (!global_indicator) return TRUE;
+
+    /* Update proxy state non-blockingly via Lua */
+    lua_getglobal(L, "ui");
+    if (lua_istable(L, -1)) {
+        lua_getfield(L, -1, "update_proxy_state");
+        if (lua_isfunction(L, -1)) {
+            if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+                fprintf(stderr, "jenova-ui: error in ui.update_proxy_state: %s\n", lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
+        } else {
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1);
+
+    /* If an async check is already running, skip this cycle */
+    if (status_pid != 0) return TRUE;
+
+    char *wrapped_cmd = wrap_jenova_cmd("jenova-ca status");
+    gchar **argv;
+    GError *error = NULL;
+    if (g_shell_parse_argv(wrapped_cmd, NULL, &argv, &error)) {
+        gint status_out_fd = -1;
+        if (g_spawn_async_with_pipes(NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, &status_pid, NULL, &status_out_fd, NULL, &error)) {
+            status_output = g_string_new("");
+            GIOChannel *channel = g_io_channel_unix_new(status_out_fd);
+            g_io_channel_set_encoding(channel, NULL, NULL);
+            g_io_add_watch(channel, G_IO_IN | G_IO_ERR | G_IO_HUP, on_status_output_read, NULL);
+            g_io_channel_unref(channel);
+        } else {
+            g_error_free(error);
+        }
+        g_strfreev(argv);
+    } else {
+        g_error_free(error);
+    }
+    free(wrapped_cmd);
+
     return TRUE;
 }
 
