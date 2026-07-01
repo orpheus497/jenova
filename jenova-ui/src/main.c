@@ -153,7 +153,9 @@ static char *wrap_jenova_cmd(const char *cmd) {
         }
         char *wrapped = NULL;
         if (new_ld) {
-            if (asprintf(&wrapped, "env LD_LIBRARY_PATH='%s' %s", new_ld, cmd) == -1) wrapped = NULL;
+            char *quoted_ld = g_shell_quote(new_ld);
+            if (asprintf(&wrapped, "env LD_LIBRARY_PATH=%s %s", quoted_ld, cmd) == -1) wrapped = NULL;
+            g_free(quoted_ld);
             free(new_ld);
         }
         return wrapped ? wrapped : strdup(cmd);
@@ -627,6 +629,7 @@ static gboolean update_tray_status(gpointer user_data G_GNUC_UNUSED) {
             status_output = g_string_new("");
             GIOChannel *channel = g_io_channel_unix_new(status_out_fd);
             g_io_channel_set_encoding(channel, NULL, NULL);
+            g_io_channel_set_close_on_unref(channel, TRUE);
             g_io_add_watch(channel, G_IO_IN | G_IO_ERR | G_IO_HUP, on_status_output_read, NULL);
             g_io_channel_unref(channel);
         } else {

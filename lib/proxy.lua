@@ -578,7 +578,7 @@ local function proxy_connection(client_fd, conn_fds)
             body_total = #body_raw
             local tail = body_raw:sub(-5)
             while tail ~= "0\r\n\r\n" do
-                local n = async_recv(client_fd, buf, 8192)
+                local n = async_recv(client_fd, buf, 8192, os.time() + 10)
                 if n <= 0 then break end
                 local chunk = ffi.string(buf, n)
                 body_chunks[#body_chunks + 1] = chunk
@@ -593,7 +593,7 @@ local function proxy_connection(client_fd, conn_fds)
             body_chunks[1] = body_raw
             body_total = #body_raw
             while body_total < content_length do
-                local n = async_recv(client_fd, buf, 8192)
+                local n = async_recv(client_fd, buf, 8192, os.time() + 10)
                 if n <= 0 then break end
                 body_chunks[#body_chunks + 1] = ffi.string(buf, n)
                 body_total = body_total + n
