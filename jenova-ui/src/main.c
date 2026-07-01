@@ -547,19 +547,19 @@ static GPid status_pid = 0;
 static GString *status_output = NULL;
 
 static gboolean on_status_output_read(GIOChannel *source, GIOCondition condition, gpointer data G_GNUC_UNUSED) {
-    if (condition & G_IO_IN) {
-        gchar buf[512];
-        gsize bytes_read = 0;
-        GError *error = NULL;
-        if (g_io_channel_read_chars(source, buf, sizeof(buf) - 1, &bytes_read, &error) == G_IO_STATUS_NORMAL) {
-            buf[bytes_read] = '\0';
-            g_string_append(status_output, buf);
-        } else if (error) {
-            g_error_free(error);
-        }
+    gchar buf[512];
+    gsize bytes_read = 0;
+    GError *error = NULL;
+    GIOStatus status = g_io_channel_read_chars(source, buf, sizeof(buf) - 1, &bytes_read, &error);
+
+    if (status == G_IO_STATUS_NORMAL) {
+        buf[bytes_read] = '\0';
+        g_string_append(status_output, buf);
+    } else if (status == G_IO_STATUS_ERROR && error) {
+        g_error_free(error);
     }
 
-    if (condition & (G_IO_ERR | G_IO_HUP)) {
+    if (status == G_IO_STATUS_EOF || (condition & G_IO_ERR)) {
         int is_active = (status_output->str && strstr(status_output->str, "is ready") != NULL);
         char icon_path[PATH_MAX];
         int was_active = (strcmp(g_ui_state.current_status, "active") == 0);
