@@ -40,11 +40,16 @@ static gboolean on_draw_canvas(GtkWidget *widget, cairo_t *cr, gpointer data G_G
         p_sys.x[i] += p_sys.vx[i];
         p_sys.y[i] += p_sys.vy[i];
 
-        if ((p_sys.x[i] < 0 && p_sys.vx[i] < 0) || (p_sys.x[i] > width && p_sys.vx[i] > 0)) {
-            p_sys.vx[i] *= -1;
+        if (p_sys.x[i] < 0) {
+            p_sys.x[i] = width;
+        } else if (p_sys.x[i] > width) {
+            p_sys.x[i] = fmod(p_sys.x[i], (double)width);
         }
-        if ((p_sys.y[i] < 0 && p_sys.vy[i] < 0) || (p_sys.y[i] > height && p_sys.vy[i] > 0)) {
-            p_sys.vy[i] *= -1;
+        
+        if (p_sys.y[i] < 0) {
+            p_sys.y[i] = height;
+        } else if (p_sys.y[i] > height) {
+            p_sys.y[i] = fmod(p_sys.y[i], (double)height);
         }
     }
 

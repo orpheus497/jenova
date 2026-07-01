@@ -273,6 +273,12 @@ static void load_css(void) {
     g_object_unref(provider);
 }
 
+static void on_toggle_panel_clicked(GtkWidget *widget G_GNUC_UNUSED, gpointer data) {
+    GtkRevealer *revealer = GTK_REVEALER(data);
+    gboolean is_revealed = gtk_revealer_get_reveal_child(revealer);
+    gtk_revealer_set_reveal_child(revealer, !is_revealed);
+}
+
 static void init_gui(void) {
     load_css();
     g_ui_state.main_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
@@ -320,7 +326,46 @@ static void init_gui(void) {
     GtkWidget *tab1_label = gtk_label_new("Jenova AI");
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook), g_ui_state.webview, tab1_label);
 
-    /* TAB 2: Switchboard (Controls & Info) */
+    /* TAB 2: Workstation (Native GUI Build) */
+    GtkWidget *workstation_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+
+    /* Left side: Chat UI Groundwork */
+    GtkWidget *chat_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_top(chat_vbox, 16);
+    gtk_widget_set_margin_bottom(chat_vbox, 16);
+    gtk_widget_set_margin_start(chat_vbox, 16);
+    gtk_widget_set_margin_end(chat_vbox, 16);
+    
+    // Top bar for toggle button
+    GtkWidget *top_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *spacer = gtk_label_new(""); 
+    gtk_widget_set_hexpand(spacer, TRUE);
+    GtkWidget *btn_toggle_panel = gtk_button_new_with_label("Toggle Control Panel");
+    gtk_box_pack_start(GTK_BOX(top_bar), spacer, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(top_bar), btn_toggle_panel, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(chat_vbox), top_bar, FALSE, FALSE, 0);
+
+    // Chat messages area (placeholder)
+    GtkWidget *chat_scroll = gtk_scrolled_window_new(NULL, NULL);
+    gtk_widget_set_vexpand(chat_scroll, TRUE);
+    gtk_widget_set_hexpand(chat_scroll, TRUE);
+    gtk_style_context_add_class(gtk_widget_get_style_context(chat_scroll), "glass-panel");
+    gtk_box_pack_start(GTK_BOX(chat_vbox), chat_scroll, TRUE, TRUE, 0);
+
+    // Chat input area
+    GtkWidget *chat_input = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(chat_input), "Type a message...");
+    gtk_box_pack_start(GTK_BOX(chat_vbox), chat_input, FALSE, FALSE, 0);
+
+    gtk_box_pack_start(GTK_BOX(workstation_hbox), chat_vbox, TRUE, TRUE, 0);
+
+    /* Right side: Control Panel (Hideable) */
+    GtkWidget *revealer = gtk_revealer_new();
+    gtk_revealer_set_transition_type(GTK_REVEALER(revealer), GTK_REVEALER_TRANSITION_TYPE_SLIDE_LEFT);
+    gtk_revealer_set_reveal_child(GTK_REVEALER(revealer), TRUE);
+
+    g_signal_connect(btn_toggle_panel, "clicked", G_CALLBACK(on_toggle_panel_clicked), revealer);
+
     GtkWidget *sidebar_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
     gtk_widget_set_margin_top(sidebar_vbox, 16);
     gtk_widget_set_margin_bottom(sidebar_vbox, 16);
@@ -404,8 +449,11 @@ static void init_gui(void) {
     gtk_box_pack_start(GTK_BOX(sidebar_vbox), btn_workspaces, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(sidebar_vbox), btn_config, FALSE, FALSE, 0);
     
-    GtkWidget *tab2_label = gtk_label_new("Control Panel");
-    gtk_notebook_append_page(GTK_NOTEBOOK(notebook), sidebar_vbox, tab2_label);
+    gtk_container_add(GTK_CONTAINER(revealer), sidebar_vbox);
+    gtk_box_pack_end(GTK_BOX(workstation_hbox), revealer, FALSE, FALSE, 0);
+
+    GtkWidget *tab2_label = gtk_label_new("Workstation");
+    gtk_notebook_append_page(GTK_NOTEBOOK(notebook), workstation_hbox, tab2_label);
 
     gtk_widget_show_all(g_ui_state.main_window);
     g_ui_state.is_visible = 1;
