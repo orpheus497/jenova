@@ -23,6 +23,7 @@
 
 #include <gtk/gtk.h>
 #include <libappindicator/app-indicator.h>
+#include "canvas.h"
 
 #include <lua.h>
 #include <lualib.h>
@@ -241,10 +242,10 @@ static void on_gui_button_clicked(GtkWidget *widget G_GNUC_UNUSED, gpointer data
 static void load_css(void) {
     GtkCssProvider *provider = gtk_css_provider_new();
     const char *css = 
-        "window.jenova-window { background-color: #131313; }\n"
+        "window.jenova-window { background-color: transparent; }\n"
         /* GtkNotebook styling */
-        "notebook { background-color: #131313; }\n"
-        "notebook header { background-color: #131313; border-bottom: 2px solid #2b1e3a; padding-top: 5px; }\n"
+        "notebook { background-color: transparent; }\n"
+        "notebook header { background-color: transparent; border-bottom: 2px solid rgba(43, 30, 58, 0.5); padding-top: 5px; }\n"
         "notebook tab { background-color: transparent; border: none; padding: 2px 12px; box-shadow: none; transition: all 0.2s ease-in-out; margin: 0 4px; border-radius: 8px 8px 0 0; }\n"
         "notebook tab label { color: #5e5966; font-family: 'Inter', 'Segoe UI', sans-serif; font-weight: 600; font-size: 14px; }\n"
         "notebook tab:hover { background-color: #1c1b1b; }\n"
@@ -283,9 +284,15 @@ static void init_gui(void) {
     gtk_style_context_add_class(ctx, "jenova-window");
     g_signal_connect(g_ui_state.main_window, "delete-event", G_CALLBACK(on_window_delete_event), NULL);
 
+    GtkWidget *overlay = gtk_overlay_new();
+    gtk_container_add(GTK_CONTAINER(g_ui_state.main_window), overlay);
+
+    GtkWidget *bg_canvas = create_neural_canvas();
+    gtk_container_add(GTK_CONTAINER(overlay), bg_canvas);
+
     GtkWidget *notebook = gtk_notebook_new();
     gtk_notebook_set_tab_pos(GTK_NOTEBOOK(notebook), GTK_POS_TOP);
-    gtk_container_add(GTK_CONTAINER(g_ui_state.main_window), notebook);
+    gtk_overlay_add_overlay(GTK_OVERLAY(overlay), notebook);
 
     /* TAB 1: WebKit WebUI Container */
     g_ui_state.webview = webkit_web_view_new();
