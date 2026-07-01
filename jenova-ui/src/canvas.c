@@ -18,6 +18,7 @@ static gboolean initialized = FALSE;
 static gboolean on_draw_canvas(GtkWidget *widget, cairo_t *cr, gpointer data G_GNUC_UNUSED) {
     int width = gtk_widget_get_allocated_width(widget);
     int height = gtk_widget_get_allocated_height(widget);
+    if (width <= 0 || height <= 0) return FALSE;
 
     /* Solid background (#131313) */
     cairo_set_source_rgb(cr, 0x13 / 255.0, 0x13 / 255.0, 0x13 / 255.0);

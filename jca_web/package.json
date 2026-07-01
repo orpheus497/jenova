@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "bash scripts/dev.sh",
-    "build": "vite build && node scripts/finalize-build.js && ./scripts/post-build.sh && rm -rf ../public && mkdir -p ../public && cp -r build/. ../public/",
+    "build": "vite build && node scripts/finalize-build.js && ./scripts/post-build.sh && rm -rf ../public.tmp && cp -r build/. ../public.tmp/ && rm -rf ../public && mv ../public.tmp ../public",
     "preview": "vite preview",
     "prepare": "svelte-kit sync || echo ''",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
