@@ -278,11 +278,14 @@ static void init_gui(void) {
 
     const char *proxy_port_str = getenv("JENOVA_PROXY_PORT");
     if (!proxy_port_str) proxy_port_str = getenv("JENOVA_PORT");
-    if (!proxy_port_str) proxy_port_str = "8080";
 
-    long port = strtol(proxy_port_str, NULL, 10);
-    if (port <= 0 || port > 65535) {
-        port = 8080;
+    long port = 8080;
+    if (proxy_port_str) {
+        char *endptr;
+        long p = strtol(proxy_port_str, &endptr, 10);
+        if (*proxy_port_str != '\0' && *endptr == '\0' && p > 0 && p <= 65535) {
+            port = p;
+        }
     }
 
     char file_uri[PATH_MAX];

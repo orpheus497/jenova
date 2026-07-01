@@ -1119,9 +1119,9 @@ while running do
                         end
                         active_connection_count = active_connection_count - 1
                     end)
-                    local _ok, type, watch_fd = coroutine.resume(co)
+                    local _ok, type, watch_fd, deadline = coroutine.resume(co)
                     if coroutine.status(co) ~= "dead" then
-                        clients[client_fd] = {co = co, type = type, watch_fd = watch_fd, created = os.time()}
+                        clients[client_fd] = {co = co, type = type, watch_fd = watch_fd, deadline = deadline, created = os.time()}
                     else
                         conn_fds_map[client_fd] = nil
                     end
@@ -1135,16 +1135,19 @@ while running do
                 ready = true
             elseif info.type == "write" and _ffi_defs.FD_ISSET(info.watch_fd, write_fds) then
                 ready = true
+            elseif info.deadline and os.time() > info.deadline then
+                ready = true
             end
 
             if ready then
-                local _ok, type, watch_fd = coroutine.resume(info.co)
+                local _ok, type, watch_fd, deadline = coroutine.resume(info.co)
                 if coroutine.status(info.co) == "dead" then
                     clients[cfd] = nil
                     conn_fds_map[cfd] = nil
                 else
                     info.type = type
                     info.watch_fd = watch_fd
+                    info.deadline = deadline
                 end
             end
         end
