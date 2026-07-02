@@ -33,6 +33,7 @@ void chat_bedrock_load_css(void) {
 }
 
 static int l_bedrock_create_chat_feed(lua_State *L) {
+    (void)L;
     if (!g_chat_vbox) return 0;
     
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
@@ -78,6 +79,7 @@ static void on_chat_input_activated(GtkWidget *widget G_GNUC_UNUSED, gpointer da
 }
 
 static int l_bedrock_create_chat_input(lua_State *L) {
+    (void)L;
     if (!g_chat_vbox) return 0;
     
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
@@ -128,7 +130,7 @@ static int l_bedrock_create_message_bubble(lua_State *L) {
     gtk_style_context_add_class(gtk_widget_get_style_context(avatar), "chat-avatar");
     
     GtkWidget *msg_label = gtk_label_new(NULL);
-    gtk_label_set_markup(GTK_LABEL(msg_label), text);
+    gtk_label_set_text(GTK_LABEL(msg_label), text);
     gtk_label_set_line_wrap(GTK_LABEL(msg_label), TRUE);
     gtk_label_set_selectable(GTK_LABEL(msg_label), TRUE);
     gtk_label_set_xalign(GTK_LABEL(msg_label), 0.0);
@@ -144,6 +146,7 @@ static int l_bedrock_create_message_bubble(lua_State *L) {
     gtk_box_pack_start(GTK_BOX(box), avatar, FALSE, FALSE, 0);
     
     GtkWidget *spinner = gtk_spinner_new();
+    gtk_widget_set_no_show_all(spinner, TRUE);
     gtk_box_pack_start(GTK_BOX(box), spinner, FALSE, FALSE, 0);
     // Spinner is intentionally not shown yet
     
@@ -198,10 +201,22 @@ static int l_bedrock_show_error(lua_State *L) {
     
     GtkWidget *msg_label = g_hash_table_lookup(g_message_labels, GINT_TO_POINTER(id));
     if (msg_label && GTK_IS_LABEL(msg_label)) {
-        char *markup = g_strdup_printf("<span foreground=\"#ff5555\"><b>Error:</b> %s</span>", err_text);
+        char *escaped_err = g_markup_escape_text(err_text, -1);
+        char *markup = g_strdup_printf("<span foreground=\"#ff5555\"><b>Error:</b> %s</span>", escaped_err);
         gtk_label_set_markup(GTK_LABEL(msg_label), markup);
         g_free(markup);
+        g_free(escaped_err);
     }
+    return 0;
+}
+
+static int l_bedrock_clear_chat_feed(lua_State *L) {
+    if (!g_chat_listbox) return 0;
+    GList *children = gtk_container_get_children(GTK_CONTAINER(g_chat_listbox));
+    for (GList *iter = children; iter != NULL; iter = g_list_next(iter)) {
+        gtk_widget_destroy(GTK_WIDGET(iter->data));
+    }
+    g_list_free(children);
     return 0;
 }
 
@@ -228,4 +243,7 @@ void chat_bedrock_register_lua(lua_State *L) {
 
     lua_pushcfunction(L, l_bedrock_show_error);
     lua_setglobal(L, "bedrock_show_error");
+
+    lua_pushcfunction(L, l_bedrock_clear_chat_feed);
+    lua_setglobal(L, "bedrock_clear_chat_feed");
 }

@@ -40,6 +40,7 @@ static char jenova_root[PATH_MAX] = {0};
 typedef struct {
     GtkWidget *main_window;
     GtkWidget *sidebar_list;
+    GtkWidget *chats_list;
     GtkWidget *webview;
     GtkWidget *status_label;
     GtkWidget *mode_label;
@@ -183,6 +184,10 @@ typedef struct {
     GPid pid;
 } StreamState;
 
+static void on_stream_child_exit(GPid pid, gint status G_GNUC_UNUSED, gpointer data G_GNUC_UNUSED) {
+    g_spawn_close_pid(pid);
+}
+
 static gboolean on_stream_read(GIOChannel *source, GIOCondition condition, gpointer data) {
     StreamState *state = (StreamState *)data;
     gchar buf[4096];
@@ -209,7 +214,6 @@ static gboolean on_stream_read(GIOChannel *source, GIOCondition condition, gpoin
             lua_pop(state->L, 1);
         }
         luaL_unref(state->L, LUA_REGISTRYINDEX, state->callback_ref);
-        g_spawn_close_pid(state->pid);
         g_free(state);
         return FALSE;
     }
@@ -240,7 +244,10 @@ static int l_sys_exec_stream(lua_State *Ls) {
         state->callback_ref = ref;
         state->pid = pid;
         
+        g_child_watch_add(pid, on_stream_child_exit, NULL);
+        
         GIOChannel *channel = g_io_channel_unix_new(out_fd);
+        g_io_channel_set_close_on_unref(channel, TRUE);
         g_io_channel_set_encoding(channel, NULL, NULL);
         g_io_channel_set_flags(channel, G_IO_FLAG_NONBLOCK, NULL);
         g_io_add_watch(channel, G_IO_IN | G_IO_HUP | G_IO_ERR, on_stream_read, state);
@@ -302,8 +309,185 @@ static gboolean on_window_delete_event(GtkWidget *widget, GdkEvent *event G_GNUC
     return TRUE; // Prevent destruction
 }
 
+static void on_detect_hardware_clicked(GtkWidget *widget G_GNUC_UNUSED, gpointer data) {
+    GtkWidget *dialog = (GtkWidget *)data;
+    
+    lua_getglobal(L, "require");
+    lua_pushstring(L, "settings");
+    if (lua_pcall(L, 1, 1, 0) == LUA_OK) {
+        lua_getfield(L, -1, "detect_hardware");
+        lua_pushstring(L, get_jenova_root());
+        if (lua_pcall(L, 1, 1, 0) == LUA_OK) {
+            const char *res = lua_tostring(L, -1);
+            
+            GtkWidget *msg = gtk_message_dialog_new(GTK_WINDOW(dialog),
+                                                    GTK_DIALOG_DESTROY_WITH_PARENT,
+                                                    GTK_MESSAGE_INFO,
+                                                    GTK_BUTTONS_OK,
+                                                    "Hardware Detection Result:\n%s", res ? res : "No result");
+            gtk_dialog_run(GTK_DIALOG(msg));
+            gtk_widget_destroy(msg);
+            
+            lua_pop(L, 1);
+        } else {
+            g_printerr("detect_hardware failed: %s\n", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+    }
+}
+
+static void show_settings_dialog(void) {
+    GtkWidget *dialog = gtk_dialog_new_with_buttons("Settings & Configuration",
+                                                    GTK_WINDOW(g_ui_state.main_window),
+                                                    GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+                                                    "Cancel", GTK_RESPONSE_CANCEL,
+                                                    "Save", GTK_RESPONSE_ACCEPT,
+                                                    NULL);
+    gtk_window_set_default_size(GTK_WINDOW(dialog), 400, 300);
+    GtkWidget *content_area = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    gtk_container_set_border_width(GTK_CONTAINER(content_area), 16);
+    gtk_box_set_spacing(GTK_BOX(content_area), 8);
+
+    lua_getglobal(L, "require");
+    lua_pushstring(L, "settings");
+    if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
+        g_printerr("Failed to require settings: %s\n", lua_tostring(L, -1));
+        lua_pop(L, 1);
+        gtk_widget_destroy(dialog);
+        return;
+    }
+    
+    char conf_path[PATH_MAX];
+    snprintf(conf_path, sizeof(conf_path), "%s/etc/jenova.conf", get_jenova_root());
+    
+    lua_getfield(L, -1, "parse_config");
+    lua_pushstring(L, conf_path);
+    
+    char ctx_size[64] = "8192";
+    char backend[64] = "Vulkan0";
+    char spec_decode[64] = "0";
+
+    if (lua_pcall(L, 1, 1, 0) == LUA_OK) {
+        if (lua_istable(L, -1)) {
+            lua_getfield(L, -1, "map");
+            if (lua_istable(L, -1)) {
+                lua_getfield(L, -1, "CTX_SIZE");
+                if (lua_isstring(L, -1)) strncpy(ctx_size, lua_tostring(L, -1), sizeof(ctx_size)-1);
+                lua_pop(L, 1);
+                
+                lua_getfield(L, -1, "DEVICES");
+                if (lua_isstring(L, -1)) strncpy(backend, lua_tostring(L, -1), sizeof(backend)-1);
+                lua_pop(L, 1);
+
+                lua_getfield(L, -1, "JENOVA_DRAFT");
+                if (lua_isstring(L, -1)) strncpy(spec_decode, lua_tostring(L, -1), sizeof(spec_decode)-1);
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+    } else {
+        g_printerr("Failed to parse config: %s\n", lua_tostring(L, -1));
+        lua_pop(L, 1);
+    }
+    
+    GtkWidget *grid = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 12);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 16);
+    gtk_box_pack_start(GTK_BOX(content_area), grid, TRUE, TRUE, 0);
+    
+    GtkWidget *lbl_ctx = gtk_label_new("Context Size:");
+    gtk_widget_set_halign(lbl_ctx, GTK_ALIGN_END);
+    GtkWidget *entry_ctx = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(entry_ctx), ctx_size);
+    gtk_grid_attach(GTK_GRID(grid), lbl_ctx, 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), entry_ctx, 1, 0, 1, 1);
+    
+    GtkWidget *lbl_backend = gtk_label_new("Backend Device:");
+    gtk_widget_set_halign(lbl_backend, GTK_ALIGN_END);
+    GtkWidget *entry_backend = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(entry_backend), backend);
+    gtk_grid_attach(GTK_GRID(grid), lbl_backend, 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), entry_backend, 1, 1, 1, 1);
+
+    GtkWidget *lbl_spec = gtk_label_new("Speculative Decoding:");
+    gtk_widget_set_halign(lbl_spec, GTK_ALIGN_END);
+    GtkWidget *switch_spec = gtk_switch_new();
+    gtk_switch_set_active(GTK_SWITCH(switch_spec), strcmp(spec_decode, "1") == 0);
+    gtk_widget_set_halign(switch_spec, GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid), lbl_spec, 0, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), switch_spec, 1, 2, 1, 1);
+
+    GtkWidget *btn_detect = gtk_button_new_with_label("Auto-Detect Hardware");
+    g_signal_connect(btn_detect, "clicked", G_CALLBACK(on_detect_hardware_clicked), dialog);
+    gtk_grid_attach(GTK_GRID(grid), btn_detect, 0, 3, 2, 1);
+    
+    gtk_widget_show_all(dialog);
+    gint response = gtk_dialog_run(GTK_DIALOG(dialog));
+    
+    if (response == GTK_RESPONSE_ACCEPT) {
+        const gchar *new_ctx = gtk_entry_get_text(GTK_ENTRY(entry_ctx));
+        const gchar *new_backend = gtk_entry_get_text(GTK_ENTRY(entry_backend));
+        gboolean new_spec = gtk_switch_get_active(GTK_SWITCH(switch_spec));
+        
+        lua_getfield(L, -1, "parse_config");
+        lua_pushstring(L, conf_path);
+        if (lua_pcall(L, 1, 1, 0) == LUA_OK) {
+            lua_getfield(L, -2, "save_config");
+            lua_pushstring(L, conf_path);
+            lua_pushvalue(L, -3);
+            
+            lua_newtable(L);
+            lua_pushstring(L, "CTX_SIZE"); lua_pushstring(L, new_ctx); lua_settable(L, -3);
+            lua_pushstring(L, "DEVICES"); lua_pushstring(L, new_backend); lua_settable(L, -3);
+            lua_pushstring(L, "JENOVA_DRAFT"); lua_pushstring(L, new_spec ? "1" : "0"); lua_settable(L, -3);
+            
+            if (lua_pcall(L, 3, 1, 0) != LUA_OK) {
+                g_printerr("Failed to save config: %s\n", lua_tostring(L, -1));
+                lua_pop(L, 1);
+            } else {
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1);
+        } else {
+            lua_pop(L, 1);
+        }
+    }
+    
+    lua_pop(L, 1); // pop settings_module
+    gtk_widget_destroy(dialog);
+}
+
+static void on_chats_list_row_activated(GtkListBox *box G_GNUC_UNUSED, GtkListBoxRow *row, gpointer data G_GNUC_UNUSED) {
+    const gchar *conv_id = g_object_get_data(G_OBJECT(row), "conv_id");
+    if (!conv_id) return;
+    
+    lua_getglobal(L, "ui");
+    if (lua_istable(L, -1)) {
+        lua_getfield(L, -1, "on_action");
+        if (lua_isfunction(L, -1)) {
+            lua_pushstring(L, "switch_chat");
+            lua_pushstring(L, conv_id);
+            if (lua_pcall(L, 2, 0, 0) != LUA_OK) {
+                g_printerr("error in on_action: %s\n", lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
+        } else {
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1);
+}
+
 static void on_gui_button_clicked(GtkWidget *widget G_GNUC_UNUSED, gpointer data) {
     const char *action = (const char *)data;
+    
+    if (strcmp(action, "settings") == 0) {
+        show_settings_dialog();
+        return;
+    }
+
     lua_getglobal(L, "ui");
     if (!lua_istable(L, -1)) { lua_pop(L, 1); return; }
     lua_getfield(L, -1, "on_action");
@@ -355,17 +539,12 @@ static void load_css(void) {
     chat_bedrock_load_css();
 }
 
-static void on_toggle_panel_clicked(GtkWidget *widget G_GNUC_UNUSED, gpointer data) {
-    GtkRevealer *revealer = GTK_REVEALER(data);
-    gboolean is_revealed = gtk_revealer_get_reveal_child(revealer);
-    gtk_revealer_set_reveal_child(revealer, !is_revealed);
-}
 
 static void init_gui(void) {
     load_css();
     g_ui_state.main_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(g_ui_state.main_window), "JENOVA AI - Native UI");
-    gtk_window_set_default_size(GTK_WINDOW(g_ui_state.main_window), 900, 600);
+    gtk_window_set_default_size(GTK_WINDOW(g_ui_state.main_window), 1000, 700);
     gtk_window_set_position(GTK_WINDOW(g_ui_state.main_window), GTK_WIN_POS_CENTER);
     
     GtkStyleContext *ctx = gtk_widget_get_style_context(g_ui_state.main_window);
@@ -378,73 +557,15 @@ static void init_gui(void) {
     GtkWidget *bg_canvas = create_neural_canvas();
     gtk_container_add(GTK_CONTAINER(overlay), bg_canvas);
 
-    GtkWidget *notebook = gtk_notebook_new();
-    gtk_notebook_set_tab_pos(GTK_NOTEBOOK(notebook), GTK_POS_TOP);
-    gtk_overlay_add_overlay(GTK_OVERLAY(overlay), notebook);
-
-    /* TAB 1: WebKit WebUI Container */
-    g_ui_state.webview = webkit_web_view_new();
+    GtkWidget *main_paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
     
-    WebKitSettings *settings = webkit_web_view_get_settings(WEBKIT_WEB_VIEW(g_ui_state.webview));
-    webkit_settings_set_enable_webgl(settings, TRUE);
-    webkit_settings_set_enable_developer_extras(settings, TRUE);
-
-    const char *proxy_port_str = getenv("JENOVA_PROXY_PORT");
-    if (!proxy_port_str) proxy_port_str = getenv("JENOVA_PORT");
-
-    long port = 8080;
-    if (proxy_port_str) {
-        char *endptr;
-        long p = strtol(proxy_port_str, &endptr, 10);
-        if (*proxy_port_str != '\0' && *endptr == '\0' && p > 0 && p <= 65535) {
-            port = p;
-        }
-    }
-
-    char file_uri[PATH_MAX];
-    snprintf(file_uri, sizeof(file_uri), "http://127.0.0.1:%ld/", port);
-    webkit_web_view_load_uri(WEBKIT_WEB_VIEW(g_ui_state.webview), file_uri);
-    
-    GtkWidget *tab1_label = gtk_label_new("Jenova AI");
-    gtk_notebook_append_page(GTK_NOTEBOOK(notebook), g_ui_state.webview, tab1_label);
-
-    /* TAB 2: Workstation (Native GUI Build) */
-    GtkWidget *workstation_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-
-    /* Left side: Chat UI Groundwork */
-    GtkWidget *chat_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-    gtk_widget_set_margin_top(chat_vbox, 16);
-    gtk_widget_set_margin_bottom(chat_vbox, 16);
-    gtk_widget_set_margin_start(chat_vbox, 16);
-    gtk_widget_set_margin_end(chat_vbox, 16);
-    
-    // Top bar for toggle button
-    GtkWidget *top_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    GtkWidget *spacer = gtk_label_new(""); 
-    gtk_widget_set_hexpand(spacer, TRUE);
-    GtkWidget *btn_toggle_panel = gtk_button_new_with_label("Toggle Control Panel");
-    gtk_box_pack_start(GTK_BOX(top_bar), spacer, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(top_bar), btn_toggle_panel, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(chat_vbox), top_bar, FALSE, FALSE, 0);
-
-    /* Initialize Chat Bedrock with the empty chat_vbox container.
-     * Lua will populate this via bedrock_create_chat_feed and bedrock_create_chat_input */
-    chat_bedrock_init(chat_vbox);
-
-    gtk_box_pack_start(GTK_BOX(workstation_hbox), chat_vbox, TRUE, TRUE, 0);
-
-    /* Right side: Control Panel (Hideable) */
-    GtkWidget *revealer = gtk_revealer_new();
-    gtk_revealer_set_transition_type(GTK_REVEALER(revealer), GTK_REVEALER_TRANSITION_TYPE_SLIDE_LEFT);
-    gtk_revealer_set_reveal_child(GTK_REVEALER(revealer), TRUE);
-
-    g_signal_connect(btn_toggle_panel, "clicked", G_CALLBACK(on_toggle_panel_clicked), revealer);
-
-    GtkWidget *sidebar_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
+    /* LEFT SIDEPANEL */
+    GtkWidget *sidebar_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_widget_set_margin_top(sidebar_vbox, 16);
     gtk_widget_set_margin_bottom(sidebar_vbox, 16);
     gtk_widget_set_margin_start(sidebar_vbox, 16);
     gtk_widget_set_margin_end(sidebar_vbox, 16);
+    gtk_widget_set_size_request(sidebar_vbox, 250, -1);
     
     char img_path[PATH_MAX];
     snprintf(img_path, sizeof(img_path), "%s/png/jenova.jpg", get_jenova_root());
@@ -469,65 +590,129 @@ static void init_gui(void) {
     GtkWidget *title_lbl = gtk_label_new("JENOVA AI");
     gtk_style_context_add_class(gtk_widget_get_style_context(title_lbl), "title");
     gtk_box_pack_start(GTK_BOX(sidebar_vbox), title_lbl, FALSE, FALSE, 0);
-
-    GtkWidget *status_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-    gtk_style_context_add_class(gtk_widget_get_style_context(status_box), "glass-panel");
-    gtk_widget_set_margin_top(status_box, 10);
-    gtk_widget_set_margin_bottom(status_box, 10);
     
+    GtkWidget *status_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    gtk_style_context_add_class(gtk_widget_get_style_context(status_box), "glass-panel");
     GtkWidget *status_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     gtk_widget_set_halign(status_hbox, GTK_ALIGN_CENTER);
-    gtk_widget_set_margin_top(status_hbox, 16);
     GtkWidget *status_title = gtk_label_new("Status:");
     g_ui_state.status_label = gtk_label_new("INACTIVE");
     gtk_style_context_add_class(gtk_widget_get_style_context(g_ui_state.status_label), "status-inactive");
     gtk_box_pack_start(GTK_BOX(status_hbox), status_title, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(status_hbox), g_ui_state.status_label, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(status_box), status_hbox, FALSE, FALSE, 0);
-
-    GtkWidget *mode_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    gtk_widget_set_halign(mode_hbox, GTK_ALIGN_CENTER);
-    gtk_widget_set_margin_bottom(mode_hbox, 16);
-    GtkWidget *mode_title = gtk_label_new("Mode:");
-    g_ui_state.mode_label = gtk_label_new("LOCAL");
-    gtk_style_context_add_class(gtk_widget_get_style_context(g_ui_state.mode_label), "mode-label");
-    gtk_box_pack_start(GTK_BOX(mode_hbox), mode_title, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(mode_hbox), g_ui_state.mode_label, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(status_box), mode_hbox, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(sidebar_vbox), status_box, FALSE, FALSE, 0);
 
-    g_ui_state.btn_start = gtk_button_new_with_label("Start Server");
-    g_ui_state.btn_stop = gtk_button_new_with_label("Stop Server");
-    gtk_style_context_add_class(gtk_widget_get_style_context(g_ui_state.btn_stop), "stop-btn");
-    g_ui_state.btn_lan = gtk_button_new_with_label("Toggle LAN");
-    
-    GtkWidget *btn_workspaces = gtk_button_new_with_label("Open Workspaces");
-    GtkWidget *btn_config = gtk_button_new_with_label("Edit Config");
+    // Accordions
+    GtkWidget *exp_files = gtk_expander_new("Files");
+    GtkWidget *files_scroll = gtk_scrolled_window_new(NULL, NULL);
+    GtkWidget *files_tree = gtk_tree_view_new(); // Stub for file explorer
+    GtkCellRenderer *renderer = gtk_cell_renderer_text_new();
+    GtkTreeViewColumn *column = gtk_tree_view_column_new_with_attributes("Filename", renderer, "text", 0, NULL);
+    gtk_tree_view_append_column(GTK_TREE_VIEW(files_tree), column);
+    gtk_container_add(GTK_CONTAINER(files_scroll), files_tree);
+    gtk_widget_set_size_request(files_scroll, -1, 150);
+    gtk_container_add(GTK_CONTAINER(exp_files), files_scroll);
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), exp_files, FALSE, FALSE, 0);
 
-    g_signal_connect(g_ui_state.btn_start, "clicked", G_CALLBACK(on_gui_button_clicked), "start");
-    g_signal_connect(g_ui_state.btn_stop, "clicked", G_CALLBACK(on_gui_button_clicked), "stop");
-    g_signal_connect(g_ui_state.btn_lan, "clicked", G_CALLBACK(on_gui_button_clicked), "toggle_lan");
-    g_signal_connect(btn_workspaces, "clicked", G_CALLBACK(on_gui_button_clicked), "open_workspaces");
-    g_signal_connect(btn_config, "clicked", G_CALLBACK(on_gui_button_clicked), "edit_config");
+    GtkWidget *exp_notes = gtk_expander_new("Notes");
+    GtkWidget *notes_view = gtk_text_view_new();
+    GtkWidget *notes_scroll = gtk_scrolled_window_new(NULL, NULL);
+    gtk_container_add(GTK_CONTAINER(notes_scroll), notes_view);
+    gtk_widget_set_size_request(notes_scroll, -1, 150);
+    gtk_container_add(GTK_CONTAINER(exp_notes), notes_scroll);
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), exp_notes, FALSE, FALSE, 0);
 
-    gtk_box_pack_start(GTK_BOX(sidebar_vbox), g_ui_state.btn_start, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(sidebar_vbox), g_ui_state.btn_stop, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(sidebar_vbox), g_ui_state.btn_lan, FALSE, FALSE, 0);
-    
-    /* Add a small separator line before utilities */
-    GtkWidget *separator = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_widget_set_margin_top(separator, 10);
-    gtk_widget_set_margin_bottom(separator, 10);
-    gtk_box_pack_start(GTK_BOX(sidebar_vbox), separator, FALSE, FALSE, 0);
-    
-    gtk_box_pack_start(GTK_BOX(sidebar_vbox), btn_workspaces, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(sidebar_vbox), btn_config, FALSE, FALSE, 0);
-    
-    gtk_container_add(GTK_CONTAINER(revealer), sidebar_vbox);
-    gtk_box_pack_end(GTK_BOX(workstation_hbox), revealer, FALSE, FALSE, 0);
+    GtkWidget *exp_chats = gtk_expander_new("Chats");
+    GtkWidget *chats_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    GtkWidget *btn_new_chat = gtk_button_new_with_label("+ New Chat");
+    gtk_box_pack_start(GTK_BOX(chats_vbox), btn_new_chat, FALSE, FALSE, 0);
+    GtkWidget *chats_scroll = gtk_scrolled_window_new(NULL, NULL);
+    GtkWidget *chats_list = gtk_list_box_new(); // Stub for chat sessions
+    g_ui_state.chats_list = chats_list;
+    g_signal_connect(btn_new_chat, "clicked", G_CALLBACK(on_gui_button_clicked), "new_chat");
+    g_signal_connect(chats_list, "row-activated", G_CALLBACK(on_chats_list_row_activated), NULL);
+    gtk_container_add(GTK_CONTAINER(chats_scroll), chats_list);
+    gtk_widget_set_size_request(chats_scroll, -1, 150);
+    gtk_box_pack_start(GTK_BOX(chats_vbox), chats_scroll, TRUE, TRUE, 0);
+    gtk_container_add(GTK_CONTAINER(exp_chats), chats_vbox);
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), exp_chats, FALSE, FALSE, 0);
 
-    GtkWidget *tab2_label = gtk_label_new("Workstation");
-    gtk_notebook_append_page(GTK_NOTEBOOK(notebook), workstation_hbox, tab2_label);
+    GtkWidget *spacer = gtk_label_new(""); 
+    gtk_widget_set_vexpand(spacer, TRUE);
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), spacer, TRUE, TRUE, 0);
+
+    GtkWidget *btn_settings = gtk_button_new_with_label("⚙ Settings");
+    g_signal_connect(btn_settings, "clicked", G_CALLBACK(on_gui_button_clicked), "settings");
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), btn_settings, FALSE, FALSE, 0);
+    
+    gtk_paned_pack1(GTK_PANED(main_paned), sidebar_vbox, FALSE, FALSE);
+
+    /* RIGHT SIDE: Notebook */
+    GtkWidget *notebook = gtk_notebook_new();
+    gtk_notebook_set_tab_pos(GTK_NOTEBOOK(notebook), GTK_POS_TOP);
+
+    /* TAB 1: Chat Bedrock */
+    GtkWidget *chat_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_top(chat_vbox, 16);
+    gtk_widget_set_margin_bottom(chat_vbox, 16);
+    gtk_widget_set_margin_start(chat_vbox, 16);
+    gtk_widget_set_margin_end(chat_vbox, 16);
+    
+    chat_bedrock_init(chat_vbox);
+
+    GtkWidget *tab1_label = gtk_label_new("Chat");
+    gtk_notebook_append_page(GTK_NOTEBOOK(notebook), chat_vbox, tab1_label);
+    
+    /* TAB 2: Workspace Organizer */
+    GtkWidget *organizer_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_top(organizer_vbox, 16);
+    gtk_widget_set_margin_bottom(organizer_vbox, 16);
+    gtk_widget_set_margin_start(organizer_vbox, 16);
+    gtk_widget_set_margin_end(organizer_vbox, 16);
+    
+    // Organizer toolbar
+    GtkWidget *org_toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *org_title = gtk_label_new("Workspace Organizer");
+    gtk_style_context_add_class(gtk_widget_get_style_context(org_title), "title");
+    GtkWidget *btn_new_ws = gtk_button_new_with_label("+ New Workspace");
+    gtk_box_pack_start(GTK_BOX(org_toolbar), org_title, FALSE, FALSE, 0);
+    GtkWidget *org_spacer = gtk_label_new("");
+    gtk_widget_set_hexpand(org_spacer, TRUE);
+    gtk_box_pack_start(GTK_BOX(org_toolbar), org_spacer, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(org_toolbar), btn_new_ws, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(organizer_vbox), org_toolbar, FALSE, FALSE, 0);
+
+    // Organizer split view
+    GtkWidget *org_paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+    
+    // Left: Workspaces List
+    GtkWidget *ws_scroll = gtk_scrolled_window_new(NULL, NULL);
+    GtkWidget *ws_list = gtk_list_box_new(); // Stub for workspaces
+    gtk_container_add(GTK_CONTAINER(ws_scroll), ws_list);
+    gtk_widget_set_size_request(ws_scroll, 200, -1);
+    gtk_paned_pack1(GTK_PANED(org_paned), ws_scroll, FALSE, FALSE);
+    
+    // Right: Content Grid (Files/Chats)
+    GtkWidget *content_scroll = gtk_scrolled_window_new(NULL, NULL);
+    GtkWidget *content_tree = gtk_tree_view_new(); // Stub for workspace contents
+    GtkCellRenderer *cr = gtk_cell_renderer_text_new();
+    GtkTreeViewColumn *c1 = gtk_tree_view_column_new_with_attributes("Item Name", cr, "text", 0, NULL);
+    GtkTreeViewColumn *c2 = gtk_tree_view_column_new_with_attributes("Type", cr, "text", 1, NULL);
+    gtk_tree_view_append_column(GTK_TREE_VIEW(content_tree), c1);
+    gtk_tree_view_append_column(GTK_TREE_VIEW(content_tree), c2);
+    gtk_container_add(GTK_CONTAINER(content_scroll), content_tree);
+    gtk_paned_pack2(GTK_PANED(org_paned), content_scroll, TRUE, FALSE);
+    
+    gtk_box_pack_start(GTK_BOX(organizer_vbox), org_paned, TRUE, TRUE, 0);
+
+    GtkWidget *tab2_label = gtk_label_new("Organizer");
+    gtk_notebook_append_page(GTK_NOTEBOOK(notebook), organizer_vbox, tab2_label);
+
+    gtk_paned_pack2(GTK_PANED(main_paned), notebook, TRUE, FALSE);
+    gtk_paned_set_position(GTK_PANED(main_paned), 250);
+
+    gtk_overlay_add_overlay(GTK_OVERLAY(overlay), main_paned);
 
     gtk_widget_show_all(g_ui_state.main_window);
     g_ui_state.is_visible = 1;
@@ -548,6 +733,39 @@ static void init_gui(void) {
         }
         lua_pop(L, 1);
     }
+}
+
+static int l_bedrock_clear_chat_list(lua_State *L G_GNUC_UNUSED) {
+    if (!g_ui_state.chats_list) return 0;
+    GList *children = gtk_container_get_children(GTK_CONTAINER(g_ui_state.chats_list));
+    for (GList *iter = children; iter != NULL; iter = g_list_next(iter)) {
+        gtk_widget_destroy(GTK_WIDGET(iter->data));
+    }
+    g_list_free(children);
+    return 0;
+}
+
+static int l_bedrock_add_chat_list_item(lua_State *L) {
+    if (!g_ui_state.chats_list) return 0;
+    const char *conv_id = luaL_checkstring(L, 1);
+    const char *title = luaL_checkstring(L, 2);
+    
+    GtkWidget *row = gtk_list_box_row_new();
+    GtkWidget *label = gtk_label_new(title);
+    gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_widget_set_margin_start(label, 8);
+    gtk_widget_set_margin_end(label, 8);
+    gtk_widget_set_margin_top(label, 4);
+    gtk_widget_set_margin_bottom(label, 4);
+    gtk_container_add(GTK_CONTAINER(row), label);
+    
+    g_object_set_data_full(G_OBJECT(row), "conv_id", g_strdup(conv_id), g_free);
+    
+    gtk_list_box_insert(GTK_LIST_BOX(g_ui_state.chats_list), row, -1);
+    gtk_widget_show_all(row);
+    
+    return 0;
 }
 
 /* ---------------------------------------------------------------------------
@@ -576,6 +794,12 @@ void init_lua(void) {
 
     lua_pushcfunction(L, l_quit_app);
     lua_setglobal(L, "quit_app");
+
+    lua_pushcfunction(L, l_bedrock_clear_chat_list);
+    lua_setglobal(L, "bedrock_clear_chat_list");
+
+    lua_pushcfunction(L, l_bedrock_add_chat_list_item);
+    lua_setglobal(L, "bedrock_add_chat_list_item");
 
     /* Register the Native Chat Bedrock functions */
     chat_bedrock_register_lua(L);

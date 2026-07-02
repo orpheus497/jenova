@@ -1,9 +1,11 @@
 # Voice Model Architecture (Qwen3-TTS)
 
 ## 1. Overview
+
 This document outlines the architectural strategy for integrating a Voice Model (specifically **Qwen3-TTS-1.7B-CustomVoice-GGUF**) into the Jenova platform. The design completely replaces any speculative decoding mechanisms with a highly optimized voice generation subsystem capable of running concurrently with the main reasoning agent.
 
 ## 2. Hardware Allocation Strategy (iGPU Offloading)
+
 To ensure zero performance degradation to the core reasoning engine, the Voice model is strictly offloaded to the Integrated GPU (iGPU).
 
 *   **VRAM Preservation**: The primary Agent model requires high-bandwidth, fast GDDR6 VRAM of the dedicated GPU (dGPU) for deep reasoning and fast token generation. 
@@ -11,12 +13,14 @@ To ensure zero performance degradation to the core reasoning engine, the Voice m
 *   **Parallel Generation**: Because the Agent and Voice models sit on entirely separate hardware buses, they operate in perfect parallel. The Agent streams text out, and the Voice model instantly ingests and synthesizes it without causing GPU context-switching bottlenecks.
 
 ## 3. Subsystem Lifecycle & Isolation
+
 The integration does not require an entirely new external server application, but rather leverages `jenova-ca` to orchestrate a separate companion process.
 
 *   **Process Isolation (`llama.cpp`)**: The `-md` argument in `llama.cpp` shares the exact same vocabulary and thread loop as the main text model. Because Qwen3-TTS outputs audio tokens, it structurally cannot share a thread loop with the standard text Agent. Therefore, it is launched as a specialized companion background process (`PID`), allowing specific targeting of the iGPU.
 *   **Daemon Orchestration (`jenova-ca`)**: The old speculative logic (`DRAFT_ARGS`) is removed. In its place, the Qwen3-TTS model is directly managed, started, and stopped by the Jenova daemon exactly like the embedding model.
 
 ## 4. Dual-Layer Toggle Architecture
+
 The system supports strict resource-efficiency through a dual-layer toggle system:
 
 1.  **Config Level (`jenova.conf`)**: 
@@ -25,5 +29,6 @@ The system supports strict resource-efficiency through a dual-layer toggle syste
     Using the `/v1/models` endpoint, a UI toggle dynamically unloads the Voice model during "Silent Mode", and dynamically reloads it into the iGPU when voice is requested. This guarantees aggressive resource optimization when audio synthesis is not required.
 
 ## 5. Next Steps
+
 * Update `jenova-ca` process orchestration logic to spawn the secondary iGPU process.
 * Map the new routing logic in `proxy.lua` to properly bridge text streams to the Voice proxy port.

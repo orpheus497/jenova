@@ -62,6 +62,58 @@ end
 local last_lan_state = nil
 local chat_ui = require("chat_presentation")
 
+local database = require("services.database")
+local json = require("json")
+
+ui.current_conv_id = "default_conversation"
+
+local function generate_uuid()
+    local template ='xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'
+    math.randomseed(os.time())
+    return string.gsub(template, '[xy]', function (c)
+        local v = (c == 'x') and math.random(0, 0xf) or math.random(8, 0xb)
+        return string.format('%x', v)
+    end)
+end
+
+ui.refresh_chat_list = function()
+    if _G.bedrock_clear_chat_list then
+        _G.bedrock_clear_chat_list()
+    end
+    
+    local path = database.get_default_workspace() .. "/chats"
+    local p = io.popen("ls " .. shell_quote(path) .. "/*.json 2>/dev/null")
+    if not p then return end
+    
+    for file_path in p:lines() do
+        local conv_id = file_path:match("([^/]+)%.json$")
+        local title = conv_id
+        
+        local file = io.open(file_path, "r")
+        if file then
+            local content = file:read("*a")
+            file:close()
+            local ok, parsed = pcall(json.decode, content)
+            if ok and parsed and type(parsed) == "table" then
+                for _, msg in ipairs(parsed) do
+                    if msg.role == "user" and type(msg.content) == "string" then
+                        title = msg.content:sub(1, 30)
+                        if #msg.content > 30 then title = title .. "..." end
+                        break
+                    end
+                end
+            end
+        end
+        
+        title = title:gsub("\n", " ")
+        
+        if _G.bedrock_add_chat_list_item then
+            _G.bedrock_add_chat_list_item(conv_id, title)
+        end
+    end
+    p:close()
+end
+
 ui.init = function(root_path)
     root = root_path or ""
     -- Pre-cache probe tool on init so first poll_status is fast
@@ -75,6 +127,7 @@ end
 ui.on_gui_ready = function()
     -- Initialize the Chat Presentation layer once GTK is fully laid out
     chat_ui.init()
+    ui.refresh_chat_list()
 end
 
 ui.get_menu = function()
@@ -94,7 +147,21 @@ ui.get_menu = function()
     }
 end
 
-ui.on_action = function(action)
+local function md_to_pango(md)
+    if not md then return "" end
+    local res = md:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
+    res = res:gsub("%*%*(.-)%*%*", "<b>%1</b>")
+    res = res:gsub("`(.-)`", "<span font_family=\"monospace\" background=\"#1e1e1e\" foreground=\"#e4b382\"> %1 </span>")
+    
+    -- Close unclosed ** during streaming
+    local _, bcount = md:gsub("%*%*", "")
+    if bcount % 2 == 1 then
+        res = res:gsub("%*%*(.*)$", "<b>%1</b>")
+    end
+    return res
+end
+
+ui.on_action = function(action, arg)
     if not action then return end
 
     if action == "web" then
@@ -118,12 +185,12 @@ ui.on_action = function(action)
             sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " start")
         end
     elseif action == "stop" then
-        sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " stop")
+        sys_exec_sync(shell_quote(root .. "/bin/jenova-ca") .. " stop")
     elseif action == "restart" then
         if is_lan_enabled() then
-            sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " restart --lan")
+            sys_exec_sync(shell_quote(root .. "/bin/jenova-ca") .. " restart --lan")
         else
-            sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " restart")
+            sys_exec_sync(shell_quote(root .. "/bin/jenova-ca") .. " restart")
         end
     elseif action == "open_workspaces" then
         local home_dir = os.getenv("HOME")
@@ -155,14 +222,33 @@ ui.on_action = function(action)
         local lan_arg = (not currently_lan) and "--lan" or ""
         ui._proxy_handle = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " proxy-serve " .. lan_arg, "w")
         if not currently_lan then
-            sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " restart --lan")
+            sys_exec_sync(shell_quote(root .. "/bin/jenova-ca") .. " restart --lan")
         else
-            sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " restart")
+            sys_exec_sync(shell_quote(root .. "/bin/jenova-ca") .. " restart")
         end
     elseif action == "quit" then
         if ui._proxy_handle then pcall(function() ui._proxy_handle:close() end) end
-        sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " stop")
+        sys_exec_sync(shell_quote(root .. "/bin/jenova-ca") .. " stop")
         quit_app()
+    elseif action == "new_chat" then
+        ui.current_conv_id = generate_uuid()
+        if _G.bedrock_clear_chat_feed then _G.bedrock_clear_chat_feed() end
+        _G.bedrock_create_message_bubble("assistant", "Hello! I am Jenova, your local Cognitive Architecture. How can I assist you today?")
+        ui.refresh_chat_list()
+    elseif action == "switch_chat" and arg then
+        ui.current_conv_id = arg
+        if _G.bedrock_clear_chat_feed then _G.bedrock_clear_chat_feed() end
+        
+        local history = database.load_conversation(arg)
+        if #history == 0 then
+            _G.bedrock_create_message_bubble("assistant", "Hello! I am Jenova, your local Cognitive Architecture. How can I assist you today?")
+        else
+            for _, msg in ipairs(history) do
+                local msg_id = _G.bedrock_create_message_bubble(msg.role, "")
+                local pango = md_to_pango(msg.content)
+                _G.bedrock_set_message_markup(msg_id, pango)
+            end
+        end
     end
 end
 
@@ -254,32 +340,19 @@ ui.on_tui_action = function(action)
     end
 end
 
-local function md_to_pango(md)
-    if not md then return "" end
-    local res = md:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
-    res = res:gsub("%*%*(.-)%*%*", "<b>%1</b>")
-    res = res:gsub("`(.-)`", "<span font_family=\"monospace\" background=\"#1e1e1e\" foreground=\"#e4b382\"> %1 </span>")
-    
-    -- Close unclosed ** during streaming
-    local _, bcount = md:gsub("%*%*", "")
-    if bcount % 2 == 1 then
-        res = res:gsub("%*%*(.*)$", "<b>%1</b>")
-    end
-    return res
-end
-
 local chat_store = require("chat_store")
 local chat_service = require("chat_service")
 
 ui.on_chat_submit = function(text)
     if not text or text == "" then return end
+    if chat_store.isStreamingActive then return end
     
     _G.bedrock_create_message_bubble("user", text)
     local msg_id = _G.bedrock_create_message_bubble("assistant", "")
     
     local msg_buffer = ""
     local reasoning_buffer = ""
-    local conv_id = "default_conversation"
+    local conv_id = ui.current_conv_id
     
     chat_service.sendMessage(text, msg_id, conv_id, chat_store, 
         -- on_chunk callback

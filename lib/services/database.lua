@@ -3,7 +3,15 @@ local json = require("json")
 
 -- In a native environment, we use the JENOVA_WORKSPACES directory as the root.
 function database.get_workspace_path()
-    local path = os.getenv("JENOVA_WORKSPACES") or (os.getenv("HOME") .. "/JCA/Workspaces")
+    local path = os.getenv("JENOVA_WORKSPACES")
+    if not path then
+        local home = os.getenv("HOME")
+        if home then
+            path = home .. "/JCA/Workspaces"
+        else
+            path = "/tmp/JCA/Workspaces"
+        end
+    end
     os.execute("mkdir -p " .. string.format("%q", path))
     return path
 end

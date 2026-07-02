@@ -30,9 +30,13 @@ function chat_service.sendMessage(text, msg_id, conv_id, store, on_chunk, on_rea
     local has_received_data = false
     local assistant_reply = ""
     local is_thinking = false
+    local is_finished = false
     
     sys_exec_stream(cmd, function(chunk)
+        if is_finished then return end
+        
         if not chunk then
+            is_finished = true
             if not has_received_data then
                 store.setError(msg_id, "Connection Refused: Ensure Jenova Server is running (Port 8080).")
             else
@@ -63,6 +67,7 @@ function chat_service.sendMessage(text, msg_id, conv_id, store, on_chunk, on_rea
             if line:match("^data: ") then
                 local data = line:sub(7)
                 if data:match("%[DONE%]") then
+                    is_finished = true
                     store.isStreamingActive = false
                     table.insert(messages, { role = "assistant", content = assistant_reply })
                     database.save_conversation(conv_id, messages)
