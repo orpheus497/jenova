@@ -35,16 +35,24 @@ function settings.save_config(path, config_obj, updates)
     local file = io.open(path, "w")
     if not file then return false end
 
+    local function shell_escape(s)
+        return tostring(s):gsub('[$`"\\\\]', '\\%1')
+    end
+
     for _, line in ipairs(config_obj.lines) do
         -- Try to replace VAR="${ENV_VAR:-DEFAULT}"
         local k1 = line:match("^([A-Z_]+)=\"%${[A-Z_]+:-.-}\"")
         if k1 and updates[k1] then
-            line = line:gsub("^("..k1.."=\"%${[A-Z_]+:-).-(}\")", "%1" .. updates[k1] .. "%2")
+            line = line:gsub("^("..k1.."=\"%${[A-Z_]+:-).-(}\")", function(prefix, suffix)
+                return prefix .. shell_escape(updates[k1]) .. suffix
+            end)
         else
             -- Try to replace VAR="VALUE"
             local k2 = line:match("^([A-Z_]+)=\".-\"")
             if k2 and updates[k2] then
-                line = line:gsub("^("..k2.."=\").-(\")", "%1" .. updates[k2] .. "%2")
+                line = line:gsub("^("..k2.."=\").-(\")", function(prefix, suffix)
+                    return prefix .. shell_escape(updates[k2]) .. suffix
+                end)
             end
         end
         file:write(line .. "\n")
@@ -53,9 +61,13 @@ function settings.save_config(path, config_obj, updates)
     return true
 end
 
+local function shell_quote(s)
+    return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
+
 -- Invokes the hardware detection script
 function settings.detect_hardware(root)
-    local cmd = root .. "/hardware-profiles/detect-hardware.sh"
+    local cmd = shell_quote(root .. "/hardware-profiles/detect-hardware.sh")
     local f = io.popen(cmd, "r")
     if not f then return nil end
     local output = f:read("*a")

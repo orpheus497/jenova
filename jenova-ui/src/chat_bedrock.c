@@ -217,6 +217,8 @@ static int l_bedrock_clear_chat_feed(lua_State *L) {
         gtk_widget_destroy(GTK_WIDGET(iter->data));
     }
     g_list_free(children);
+    g_hash_table_remove_all(g_message_labels);
+    g_hash_table_remove_all(g_message_spinners);
     return 0;
 }
 

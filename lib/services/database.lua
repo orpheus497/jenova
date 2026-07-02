@@ -1,6 +1,10 @@
 local database = {}
 local json = require("json")
 
+local function shell_quote(s)
+    return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
+
 -- In a native environment, we use the JENOVA_WORKSPACES directory as the root.
 function database.get_workspace_path()
     local path = os.getenv("JENOVA_WORKSPACES")
@@ -12,14 +16,14 @@ function database.get_workspace_path()
             path = "/tmp/JCA/Workspaces"
         end
     end
-    os.execute("mkdir -p " .. string.format("%q", path))
+    os.execute("mkdir -p " .. shell_quote(path))
     return path
 end
 
 function database.get_default_workspace()
     local path = database.get_workspace_path() .. "/default"
-    os.execute("mkdir -p " .. string.format("%q", path))
-    os.execute("mkdir -p " .. string.format("%q", path .. "/chats"))
+    os.execute("mkdir -p " .. shell_quote(path))
+    os.execute("mkdir -p " .. shell_quote(path .. "/chats"))
     return path
 end
 

@@ -334,6 +334,9 @@ static void on_detect_hardware_clicked(GtkWidget *widget G_GNUC_UNUSED, gpointer
             lua_pop(L, 1);
         }
         lua_pop(L, 1);
+    } else {
+        g_printerr("Failed to require settings: %s\n", lua_tostring(L, -1));
+        lua_pop(L, 1);
     }
 }
 
@@ -373,15 +376,24 @@ static void show_settings_dialog(void) {
             lua_getfield(L, -1, "map");
             if (lua_istable(L, -1)) {
                 lua_getfield(L, -1, "CTX_SIZE");
-                if (lua_isstring(L, -1)) strncpy(ctx_size, lua_tostring(L, -1), sizeof(ctx_size)-1);
+                if (lua_isstring(L, -1)) {
+                    strncpy(ctx_size, lua_tostring(L, -1), sizeof(ctx_size)-1);
+                    ctx_size[sizeof(ctx_size)-1] = '\0';
+                }
                 lua_pop(L, 1);
                 
                 lua_getfield(L, -1, "DEVICES");
-                if (lua_isstring(L, -1)) strncpy(backend, lua_tostring(L, -1), sizeof(backend)-1);
+                if (lua_isstring(L, -1)) {
+                    strncpy(backend, lua_tostring(L, -1), sizeof(backend)-1);
+                    backend[sizeof(backend)-1] = '\0';
+                }
                 lua_pop(L, 1);
 
                 lua_getfield(L, -1, "JENOVA_DRAFT");
-                if (lua_isstring(L, -1)) strncpy(spec_decode, lua_tostring(L, -1), sizeof(spec_decode)-1);
+                if (lua_isstring(L, -1)) {
+                    strncpy(spec_decode, lua_tostring(L, -1), sizeof(spec_decode)-1);
+                    spec_decode[sizeof(spec_decode)-1] = '\0';
+                }
                 lua_pop(L, 1);
             }
             lua_pop(L, 1);

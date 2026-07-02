@@ -494,8 +494,7 @@ local function proxy_connection(client_fd, conn_fds)
         local origin = headers_raw:match("\r\n[Oo][Rr][Ii][Gg][Ii][Nn]:%s*([^\r\n]+)")
         local allow_origin = origin or "http://localhost:8080"
         if origin then
-            local is_safe = origin:match("^file://") or origin:match("^https?://127%.0%.0%.1$") or origin:match("^https?://127%.0%.0%.1:%d+$") or origin:match("^https?://localhost$") or origin:match("^https?://localhost:%d+$")
-            if HOST == "0.0.0.0" then is_safe = true end
+            local is_safe = origin == "null" or origin:match("^file://") or origin:match("^https?://127%.0%.0%.1$") or origin:match("^https?://127%.0%.0%.1:%d+$") or origin:match("^https?://localhost$") or origin:match("^https?://localhost:%d+$")
             if not is_safe then
                 local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
                 async_send(client_fd, err); safe_close(); return
@@ -575,11 +574,12 @@ local function proxy_connection(client_fd, conn_fds)
             safe_close(); return
         end
         if is_chunked then
+            local deadline = os.time() + 10
             body_chunks[1] = body_raw
             body_total = #body_raw
             local tail = body_raw:sub(-5)
             while tail ~= "0\r\n\r\n" do
-                local n = async_recv(client_fd, buf, 8192, os.time() + 10)
+                local n = async_recv(client_fd, buf, 8192, deadline)
                 if n <= 0 then safe_close(); return end
                 local chunk = ffi.string(buf, n)
                 body_chunks[#body_chunks + 1] = chunk
@@ -591,10 +591,11 @@ local function proxy_connection(client_fd, conn_fds)
             body_raw = decode_chunked_body(table.concat(body_chunks))
             body_chunks = nil
         else
+            local deadline = os.time() + 10
             body_chunks[1] = body_raw
             body_total = #body_raw
             while body_total < content_length do
-                local n = async_recv(client_fd, buf, 8192, os.time() + 10)
+                local n = async_recv(client_fd, buf, 8192, deadline)
                 if n <= 0 then safe_close(); return end
                 body_chunks[#body_chunks + 1] = ffi.string(buf, n)
                 body_total = body_total + n

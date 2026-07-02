@@ -66,10 +66,10 @@ local database = require("services.database")
 local json = require("json")
 
 ui.current_conv_id = "default_conversation"
+math.randomseed(os.time())
 
 local function generate_uuid()
     local template ='xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'
-    math.randomseed(os.time())
     return string.gsub(template, '[xy]', function (c)
         local v = (c == 'x') and math.random(0, 0xf) or math.random(8, 0xb)
         return string.format('%x', v)
@@ -185,12 +185,12 @@ ui.on_action = function(action, arg)
             sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " start")
         end
     elseif action == "stop" then
-        sys_exec_sync(shell_quote(root .. "/bin/jenova-ca") .. " stop")
+        sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " stop")
     elseif action == "restart" then
         if is_lan_enabled() then
-            sys_exec_sync(shell_quote(root .. "/bin/jenova-ca") .. " restart --lan")
+            sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " restart --lan")
         else
-            sys_exec_sync(shell_quote(root .. "/bin/jenova-ca") .. " restart")
+            sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " restart")
         end
     elseif action == "open_workspaces" then
         local home_dir = os.getenv("HOME")
@@ -222,9 +222,9 @@ ui.on_action = function(action, arg)
         local lan_arg = (not currently_lan) and "--lan" or ""
         ui._proxy_handle = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " proxy-serve " .. lan_arg, "w")
         if not currently_lan then
-            sys_exec_sync(shell_quote(root .. "/bin/jenova-ca") .. " restart --lan")
+            sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " restart --lan")
         else
-            sys_exec_sync(shell_quote(root .. "/bin/jenova-ca") .. " restart")
+            sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " restart")
         end
     elseif action == "quit" then
         if ui._proxy_handle then pcall(function() ui._proxy_handle:close() end) end
