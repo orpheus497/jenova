@@ -537,18 +537,18 @@ static void load_css(void) {
         ".glass-panel { background-color: rgba(43, 30, 58, 0.4); border: 1px solid rgba(228, 179, 130, 0.1); border-radius: 12px; padding: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }\n"
         ".sidebar-panel { background-color: #131313; border-right: 1px solid rgba(228, 179, 130, 0.05); border-radius: 0 24px 24px 0; padding: 16px; box-shadow: 4px 0 15px rgba(0,0,0,0.5); }\n"
         /* Labels */
-        "label { color: #f0edf2; font-family: 'Inter', 'Segoe UI', sans-serif; }\n"
+        "label { color: #f0edf2; font-family: 'DejaVuSansM Nerd Font', 'DejaVu Sans Mono', monospace; font-size: 12pt; }\n"
         "label.title { font-weight: 800; font-size: 24px; color: #e4b382; letter-spacing: 1px; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }\n"
         "label.status-active { color: #a3e635; font-weight: 700; font-size: 14px; }\n"
         "label.status-inactive { color: #c96464; font-weight: 700; font-size: 14px; }\n"
         "label.mode-label { color: #aba0d9; font-weight: 700; font-size: 14px; }\n"
         /* Buttons */
-        "button { background-image: none; background-color: #2b1e3a; color: #f0edf2; border: 1px solid rgba(228, 179, 130, 0.2); border-radius: 8px; padding: 4px 10px; font-weight: 600; font-size: 12px; font-family: 'Inter', 'Segoe UI', sans-serif; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: all 0.2s ease; }\n"
+        "button { background-image: none; background-color: #2b1e3a; color: #f0edf2; border: 1px solid rgba(228, 179, 130, 0.2); border-radius: 8px; padding: 4px 10px; font-weight: 600; font-size: 12px; font-family: 'DejaVuSansM Nerd Font', 'DejaVu Sans Mono', monospace; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: all 0.2s ease; }\n"
         "button:hover { background-color: #3d2b52; border-color: rgba(228, 179, 130, 0.4); box-shadow: 0 4px 8px rgba(0,0,0,0.4); }\n"
         "button:active { background-color: #1a1223; box-shadow: none; }\n"
         "button.stop-btn:hover { background-color: #c96464; border-color: #ffb3b3; color: #ffffff; }\n"
         /* Sidebar Elements */
-        ".logo-box { border: 1px solid rgba(43, 30, 58, 0.3); border-radius: 8px; box-shadow: 0 0 15px rgba(43, 30, 58, 0.4); }\n"
+        ".logo-box { border: 1px solid rgba(43, 30, 58, 0.3); border-radius: 12px; box-shadow: 0 0 15px rgba(43, 30, 58, 0.4); overflow: hidden; }\n"
         ".sidebar-btn { background-color: transparent; border: none; box-shadow: none; border-radius: 8px; padding: 8px 12px; font-weight: 400; font-size: 13px; }\n"
         ".sidebar-btn:hover { background-color: rgba(255, 255, 255, 0.05); color: #7b52ab; }\n"
         ".section-header { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; color: #9fa0a6; letter-spacing: 2px; text-transform: uppercase; background-color: transparent; border: none; box-shadow: none; padding: 4px 8px; }\n"
@@ -617,6 +617,9 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                             strncpy(name_no_ext, cent->d_name, sizeof(name_no_ext));
                             char *dot = strrchr(name_no_ext, '.');
                             if (dot) *dot = '\0';
+                            if (strlen(name_no_ext) > 27) {
+                                name_no_ext[27] = '.'; name_no_ext[28] = '.'; name_no_ext[29] = '.'; name_no_ext[30] = '\0';
+                            }
                             
                             GtkWidget *btn = gtk_button_new_with_label(name_no_ext);
                             gtk_label_set_xalign(GTK_LABEL(gtk_bin_get_child(GTK_BIN(btn))), 0.0);
@@ -642,6 +645,9 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                             strncpy(name_no_ext, nent->d_name, sizeof(name_no_ext));
                             char *dot = strrchr(name_no_ext, '.');
                             if (dot) *dot = '\0';
+                            if (strlen(name_no_ext) > 27) {
+                                name_no_ext[27] = '.'; name_no_ext[28] = '.'; name_no_ext[29] = '.'; name_no_ext[30] = '\0';
+                            }
                             
                             GtkWidget *btn = gtk_button_new();
                             gtk_style_context_add_class(gtk_widget_get_style_context(btn), "tree-item");
@@ -674,7 +680,12 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                         gtk_style_context_add_class(gtk_widget_get_style_context(btn), "tree-item");
                         GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
                         GtkWidget *icon = gtk_image_new_from_icon_name("text-x-generic-symbolic", GTK_ICON_SIZE_BUTTON);
-                        GtkWidget *lbl = gtk_label_new(fent->d_name);
+                        char short_name[256];
+                        strncpy(short_name, fent->d_name, sizeof(short_name));
+                        if (strlen(short_name) > 27) {
+                            short_name[27] = '.'; short_name[28] = '.'; short_name[29] = '.'; short_name[30] = '\0';
+                        }
+                        GtkWidget *lbl = gtk_label_new(short_name);
                         gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_END);
                         gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
                         gtk_box_pack_start(GTK_BOX(btn_box), icon, FALSE, FALSE, 0);
@@ -722,6 +733,9 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                             strncpy(name_no_ext, cent->d_name, sizeof(name_no_ext));
                             char *dot = strrchr(name_no_ext, '.');
                             if (dot) *dot = '\0';
+                            if (strlen(name_no_ext) > 27) {
+                                name_no_ext[27] = '.'; name_no_ext[28] = '.'; name_no_ext[29] = '.'; name_no_ext[30] = '\0';
+                            }
                             
                             GtkWidget *btn = gtk_button_new();
                             gtk_style_context_add_class(gtk_widget_get_style_context(btn), "tree-item");
@@ -758,6 +772,9 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                             strncpy(name_no_ext, nent->d_name, sizeof(name_no_ext));
                             char *dot = strrchr(name_no_ext, '.');
                             if (dot) *dot = '\0';
+                            if (strlen(name_no_ext) > 27) {
+                                name_no_ext[27] = '.'; name_no_ext[28] = '.'; name_no_ext[29] = '.'; name_no_ext[30] = '\0';
+                            }
                             
                             GtkWidget *btn = gtk_button_new();
                             gtk_style_context_add_class(gtk_widget_get_style_context(btn), "tree-item");
@@ -901,6 +918,14 @@ static void init_gui(void) {
     }
     gtk_box_pack_start(GTK_BOX(sidebar_vbox), action_grid, FALSE, FALSE, 8);
     
+    GtkWidget *sidebar_scroll_win = gtk_scrolled_window_new(NULL, NULL);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sidebar_scroll_win), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_widget_set_vexpand(sidebar_scroll_win, TRUE);
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), sidebar_scroll_win, TRUE, TRUE, 0);
+
+    GtkWidget *sidebar_scroll_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_container_add(GTK_CONTAINER(sidebar_scroll_win), sidebar_scroll_vbox);
+
     // Workspaces
     GtkWidget *ws_exp = gtk_expander_new(NULL);
     GtkWidget *ws_hdr_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
@@ -917,7 +942,7 @@ static void init_gui(void) {
     gtk_expander_set_expanded(GTK_EXPANDER(ws_exp), FALSE);
     GtkWidget *ws_container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
     gtk_container_add(GTK_CONTAINER(ws_exp), ws_container);
-    gtk_box_pack_start(GTK_BOX(sidebar_vbox), ws_exp, FALSE, FALSE, 4);
+    gtk_box_pack_start(GTK_BOX(sidebar_scroll_vbox), ws_exp, FALSE, FALSE, 4);
     
     // CHATS
     GtkWidget *chats_exp = gtk_expander_new(NULL);
@@ -927,7 +952,7 @@ static void init_gui(void) {
     gtk_expander_set_expanded(GTK_EXPANDER(chats_exp), FALSE);
     GtkWidget *chats_container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
     gtk_container_add(GTK_CONTAINER(chats_exp), chats_container);
-    gtk_box_pack_start(GTK_BOX(sidebar_vbox), chats_exp, FALSE, FALSE, 4);
+    gtk_box_pack_start(GTK_BOX(sidebar_scroll_vbox), chats_exp, FALSE, FALSE, 4);
     
     // GLOBAL ASSETS
     GtkWidget *ga_lbl = gtk_label_new(NULL);
@@ -935,7 +960,7 @@ static void init_gui(void) {
     gtk_label_set_xalign(GTK_LABEL(ga_lbl), 0.0);
     gtk_widget_set_margin_top(ga_lbl, 8);
     gtk_widget_set_margin_bottom(ga_lbl, 4);
-    gtk_box_pack_start(GTK_BOX(sidebar_vbox), ga_lbl, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(sidebar_scroll_vbox), ga_lbl, FALSE, FALSE, 0);
     
     // New Note Button
     GtkWidget *btn_new_note = gtk_button_new();
@@ -946,15 +971,15 @@ static void init_gui(void) {
     gtk_box_pack_start(GTK_BOX(nn_box), nn_icon, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(nn_box), nn_lbl, FALSE, FALSE, 0);
     gtk_container_add(GTK_CONTAINER(btn_new_note), nn_box);
-    gtk_box_pack_start(GTK_BOX(sidebar_vbox), btn_new_note, FALSE, FALSE, 2);
+    gtk_box_pack_start(GTK_BOX(sidebar_scroll_vbox), btn_new_note, FALSE, FALSE, 2);
     
     // Notes Container (for unassigned notes)
     GtkWidget *notes_container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-    gtk_box_pack_start(GTK_BOX(sidebar_vbox), notes_container, FALSE, FALSE, 2);
+    gtk_box_pack_start(GTK_BOX(sidebar_scroll_vbox), notes_container, FALSE, FALSE, 2);
     
     // Files Container (for unassigned files)
     GtkWidget *files_container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-    gtk_box_pack_start(GTK_BOX(sidebar_vbox), files_container, FALSE, FALSE, 2);
+    gtk_box_pack_start(GTK_BOX(sidebar_scroll_vbox), files_container, FALSE, FALSE, 2);
     
     // Notes & Files row
     GtkWidget *nf_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
@@ -982,7 +1007,7 @@ static void init_gui(void) {
     
     gtk_box_pack_start(GTK_BOX(nf_hbox), btn_notes, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(nf_hbox), btn_files, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(sidebar_vbox), nf_hbox, FALSE, FALSE, 2);
+    gtk_box_pack_start(GTK_BOX(sidebar_scroll_vbox), nf_hbox, FALSE, FALSE, 2);
     
     // Dynamic list reference (to keep compilation happy if referenced elsewhere)
     g_ui_state.chats_list = NULL; 

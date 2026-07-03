@@ -1,30 +1,82 @@
 #include "chat_bedrock.h"
 #include <string.h>
+#include <stdlib.h>
+#include <webkit2/webkit2.h>
 
 static GtkWidget *g_chat_vbox = NULL;
-static GtkWidget *g_chat_listbox = NULL;
+static GtkWidget *g_webview = NULL;
 static GtkWidget *g_chat_input = NULL;
 static lua_State *g_lua_state = NULL;
-static GHashTable *g_message_labels = NULL;
-static GHashTable *g_message_spinners = NULL;
 static int g_message_id_counter = 0;
+
+static const char *HTML_TEMPLATE = 
+"<!DOCTYPE html>"
+"<html><head><meta charset='utf-8'>"
+"<script src='https://cdn.jsdelivr.net/npm/marked/marked.min.js'></script>"
+"<link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/atom-one-dark.min.css'>"
+"<script src='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js'></script>"
+"<style>"
+"body { background: transparent; color: #f0edf2; font-family: 'DejaVuSansM Nerd Font', 'DejaVu Sans Mono', monospace; font-size: 12pt; padding: 16px; margin: 0; }"
+".bubble-container { display: flex; flex-direction: column; margin-bottom: 24px; }"
+".bubble-user { align-items: flex-end; }"
+".bubble-ai { align-items: flex-start; }"
+".avatar { font-weight: 800; color: #e4b382; margin-bottom: 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }"
+".bubble { max-width: 85%; padding: 16px; }"
+".bubble-user .bubble { background-color: #2b1e3a; border-radius: 12px 12px 0 12px; }"
+".bubble-ai .bubble { background-color: rgba(43, 30, 58, 0.4); border: 1px solid rgba(228, 179, 130, 0.2); border-radius: 12px 12px 12px 0; }"
+"pre { background: #1e1e1e; padding: 12px; border-radius: 8px; overflow-x: auto; border: 1px solid #333; }"
+"code { font-family: 'DejaVuSansM Nerd Font', 'DejaVu Sans Mono', monospace; }"
+"p { margin: 0 0 12px 0; line-height: 1.6; }"
+"p:last-child { margin-bottom: 0; }"
+".thinking { color: #888; font-style: italic; font-size: 0.9em; }"
+"</style>"
+"<script>"
+"marked.setOptions({"
+"  highlight: function(code, lang) {"
+"    const language = hljs.getLanguage(lang) ? lang : 'plaintext';"
+"    return hljs.highlight(code, { language }).value;"
+"  }"
+"});"
+"function escapeHtml(text) {"
+"  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');"
+"}"
+"function createBubble(id, role, text) {"
+"  const container = document.createElement('div');"
+"  container.id = 'msg-' + id;"
+"  container.className = 'bubble-container ' + (role === 'user' ? 'bubble-user' : 'bubble-ai');"
+"  const avatar = document.createElement('div');"
+"  avatar.className = 'avatar';"
+"  avatar.innerText = role === 'user' ? 'USER' : 'JENOVA';"
+"  const bubble = document.createElement('div');"
+"  bubble.className = 'bubble';"
+"  bubble.innerHTML = role === 'user' ? escapeHtml(text).replace(/\\n/g, '<br>') : marked.parse(text);"
+"  container.appendChild(avatar);"
+"  container.appendChild(bubble);"
+"  document.body.appendChild(container);"
+"  window.scrollTo(0, document.body.scrollHeight);"
+"}"
+"function updateBubble(id, text) {"
+"  const container = document.getElementById('msg-' + id);"
+"  if(container) {"
+"    const bubble = container.querySelector('.bubble');"
+"    bubble.innerHTML = marked.parse(text);"
+"    window.scrollTo(0, document.body.scrollHeight);"
+"  }"
+"}"
+"function clearFeed() {"
+"  document.body.innerHTML = '';"
+"}"
+"</script>"
+"</head><body></body></html>";
 
 void chat_bedrock_init(GtkWidget *chat_vbox) {
     g_chat_vbox = chat_vbox;
-    g_message_labels = g_hash_table_new(g_direct_hash, g_direct_equal);
-    g_message_spinners = g_hash_table_new(g_direct_hash, g_direct_equal);
 }
 
 void chat_bedrock_load_css(void) {
     GtkCssProvider *provider = gtk_css_provider_new();
     const char *css = 
-        ".chat-msg-user { background-color: #2b1e3a; color: #f0edf2; padding: 12px 16px; border-radius: 12px; margin: 4px 8px; }\n"
-        ".chat-msg-ai { background-color: transparent; color: #f0edf2; padding: 12px 16px; margin: 4px 8px; }\n"
-        ".chat-avatar { font-weight: 800; color: #e4b382; margin-right: 8px; font-size: 11px; }\n"
-        ".chat-input-box { border-top: 1px solid rgba(228, 179, 130, 0.2); padding-top: 8px; margin-top: 8px; }\n"
-        ".chat-list-box { background: transparent; }\n"
-        ".chat-list-row { background: transparent; border: none; }\n"
-        ".chat-list-row:hover { background: transparent; }\n";
+        ".chat-input-box { border-top: 1px solid rgba(228, 179, 130, 0.2); padding-top: 8px; margin-top: 8px; }\n";
     gtk_css_provider_load_from_data(provider, css, -1, NULL);
     gtk_style_context_add_provider_for_screen(gdk_screen_get_default(),
                                               GTK_STYLE_PROVIDER(provider),
@@ -32,27 +84,44 @@ void chat_bedrock_load_css(void) {
     g_object_unref(provider);
 }
 
+static void escape_js_string(const char *src, char *dst) {
+    while (*src) {
+        if (*src == '\\' || *src == '"' || *src == '\'') {
+            *dst++ = '\\';
+        } else if (*src == '\n') {
+            *dst++ = '\\'; *dst++ = 'n';
+            src++; continue;
+        } else if (*src == '\r') {
+            *dst++ = '\\'; *dst++ = 'r';
+            src++; continue;
+        }
+        *dst++ = *src++;
+    }
+    *dst = '\0';
+}
+
 static int l_bedrock_create_chat_feed(lua_State *L) {
     (void)L;
     if (!g_chat_vbox) return 0;
     
-    GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
-    gtk_widget_set_vexpand(scroll, TRUE);
-    gtk_widget_set_hexpand(scroll, TRUE);
-    gtk_style_context_add_class(gtk_widget_get_style_context(scroll), "glass-panel");
-
-    g_chat_listbox = gtk_list_box_new();
-    gtk_style_context_add_class(gtk_widget_get_style_context(g_chat_listbox), "chat-list-box");
-    gtk_list_box_set_selection_mode(GTK_LIST_BOX(g_chat_listbox), GTK_SELECTION_NONE);
+    g_webview = webkit_web_view_new();
+    WebKitSettings *settings = webkit_web_view_get_settings(WEBKIT_WEB_VIEW(g_webview));
+    webkit_settings_set_enable_javascript(settings, TRUE);
     
-    gtk_container_add(GTK_CONTAINER(scroll), g_chat_listbox);
-    gtk_box_pack_start(GTK_BOX(g_chat_vbox), scroll, TRUE, TRUE, 0);
-    gtk_widget_show_all(scroll);
+    webkit_web_view_load_html(WEBKIT_WEB_VIEW(g_webview), HTML_TEMPLATE, NULL);
+    
+    GdkRGBA transparent = {0, 0, 0, 0};
+    webkit_web_view_set_background_color(WEBKIT_WEB_VIEW(g_webview), &transparent);
+    
+    gtk_widget_set_vexpand(g_webview, TRUE);
+    gtk_widget_set_hexpand(g_webview, TRUE);
+    
+    gtk_box_pack_start(GTK_BOX(g_chat_vbox), g_webview, TRUE, TRUE, 0);
+    gtk_widget_show_all(g_webview);
     
     return 0;
 }
 
-/* Callback for when user hits Enter or clicks Send */
 static void on_chat_input_activated(GtkWidget *widget G_GNUC_UNUSED, gpointer data G_GNUC_UNUSED) {
     if (!g_chat_input) return;
     const char *text = gtk_entry_get_text(GTK_ENTRY(g_chat_input));
@@ -102,123 +171,69 @@ static int l_bedrock_create_chat_input(lua_State *L) {
     return 0;
 }
 
-static void scroll_to_bottom() {
-    if (!g_chat_listbox) return;
-    GtkWidget *parent = gtk_widget_get_parent(g_chat_listbox);
-    if (GTK_IS_VIEWPORT(parent)) {
-        parent = gtk_widget_get_parent(parent);
-    }
-    if (GTK_IS_SCROLLED_WINDOW(parent)) {
-        GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(parent));
-        gtk_adjustment_set_value(adj, gtk_adjustment_get_upper(adj) - gtk_adjustment_get_page_size(adj));
-    }
-}
-
 static int l_bedrock_create_message_bubble(lua_State *L) {
-    if (!g_chat_listbox) return 0;
+    if (!g_webview) return 0;
     
     const char *role = luaL_checkstring(L, 1);
     const char *text = luaL_checkstring(L, 2);
     
-    GtkWidget *row = gtk_list_box_row_new();
-    gtk_style_context_add_class(gtk_widget_get_style_context(row), "chat-list-row");
-    
-    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    
-    GtkWidget *avatar = gtk_label_new(g_strcmp0(role, "user") == 0 ? "USER" : "JENOVA");
-    gtk_widget_set_valign(avatar, GTK_ALIGN_START);
-    gtk_style_context_add_class(gtk_widget_get_style_context(avatar), "chat-avatar");
-    
-    GtkWidget *msg_label = gtk_label_new(NULL);
-    gtk_label_set_text(GTK_LABEL(msg_label), text);
-    gtk_label_set_line_wrap(GTK_LABEL(msg_label), TRUE);
-    gtk_label_set_selectable(GTK_LABEL(msg_label), TRUE);
-    gtk_label_set_xalign(GTK_LABEL(msg_label), 0.0);
-    
-    if (g_strcmp0(role, "user") == 0) {
-        gtk_style_context_add_class(gtk_widget_get_style_context(box), "chat-msg-user");
-        gtk_widget_set_halign(box, GTK_ALIGN_END);
-    } else {
-        gtk_style_context_add_class(gtk_widget_get_style_context(box), "chat-msg-ai");
-        gtk_widget_set_halign(box, GTK_ALIGN_START);
-    }
-    
-    gtk_box_pack_start(GTK_BOX(box), avatar, FALSE, FALSE, 0);
-    
-    GtkWidget *spinner = gtk_spinner_new();
-    gtk_widget_set_no_show_all(spinner, TRUE);
-    gtk_box_pack_start(GTK_BOX(box), spinner, FALSE, FALSE, 0);
-    // Spinner is intentionally not shown yet
-    
-    gtk_box_pack_start(GTK_BOX(box), msg_label, TRUE, TRUE, 0);
-    gtk_container_add(GTK_CONTAINER(row), box);
-    
-    gtk_widget_show_all(row);
-    gtk_list_box_insert(GTK_LIST_BOX(g_chat_listbox), row, -1);
-    
     int id = ++g_message_id_counter;
-    g_hash_table_insert(g_message_labels, GINT_TO_POINTER(id), msg_label);
-    g_hash_table_insert(g_message_spinners, GINT_TO_POINTER(id), spinner);
     
-    scroll_to_bottom();
+    char *escaped_text = malloc(strlen(text) * 2 + 1);
+    escape_js_string(text, escaped_text);
+    
+    char script[8192];
+    snprintf(script, sizeof(script), "createBubble('%d', '%s', '%s');", id, role, escaped_text);
+    webkit_web_view_run_javascript(WEBKIT_WEB_VIEW(g_webview), script, NULL, NULL, NULL);
+    
+    free(escaped_text);
     
     lua_pushinteger(L, id);
     return 1;
 }
 
 static int l_bedrock_set_message_markup(lua_State *L) {
+    if (!g_webview) return 0;
+    
     int id = luaL_checkinteger(L, 1);
     const char *text = luaL_checkstring(L, 2);
     
-    GtkWidget *msg_label = g_hash_table_lookup(g_message_labels, GINT_TO_POINTER(id));
-    if (msg_label && GTK_IS_LABEL(msg_label)) {
-        gtk_label_set_markup(GTK_LABEL(msg_label), text);
-        scroll_to_bottom();
-    }
+    char *escaped_text = malloc(strlen(text) * 2 + 1);
+    escape_js_string(text, escaped_text);
+    
+    char script[8192];
+    snprintf(script, sizeof(script), "updateBubble('%d', '%s');", id, escaped_text);
+    webkit_web_view_run_javascript(WEBKIT_WEB_VIEW(g_webview), script, NULL, NULL, NULL);
+    
+    free(escaped_text);
     return 0;
 }
 
 static int l_bedrock_set_message_loading(lua_State *L) {
-    int id = luaL_checkinteger(L, 1);
-    gboolean is_loading = lua_toboolean(L, 2);
-    
-    GtkWidget *spinner = g_hash_table_lookup(g_message_spinners, GINT_TO_POINTER(id));
-    if (spinner && GTK_IS_SPINNER(spinner)) {
-        if (is_loading) {
-            gtk_widget_show(spinner);
-            gtk_spinner_start(GTK_SPINNER(spinner));
-        } else {
-            gtk_spinner_stop(GTK_SPINNER(spinner));
-            gtk_widget_hide(spinner);
-        }
-    }
-    return 0;
+    (void)L;
+    return 0; // Handled by CSS/JS if needed later
 }
 
 static int l_bedrock_show_error(lua_State *L) {
-    int id = luaL_checkinteger(L, 1);
-    const char *err_text = luaL_checkstring(L, 2);
+    if (!g_webview) return 0;
     
-    GtkWidget *msg_label = g_hash_table_lookup(g_message_labels, GINT_TO_POINTER(id));
-    if (msg_label && GTK_IS_LABEL(msg_label)) {
-        char *escaped_err = g_markup_escape_text(err_text, -1);
-        char *markup = g_strdup_printf("<span foreground=\"#ff5555\"><b>Error:</b> %s</span>", escaped_err);
-        gtk_label_set_markup(GTK_LABEL(msg_label), markup);
-        g_free(markup);
-        g_free(escaped_err);
-    }
+    int id = luaL_checkinteger(L, 1);
+    const char *text = luaL_checkstring(L, 2);
+    
+    char *escaped_text = malloc(strlen(text) * 2 + 1);
+    escape_js_string(text, escaped_text);
+    
+    char script[8192];
+    snprintf(script, sizeof(script), "updateBubble('%d', '<span style=\"color:#ff5555\"><b>Error:</b> %s</span>');", id, escaped_text);
+    webkit_web_view_run_javascript(WEBKIT_WEB_VIEW(g_webview), script, NULL, NULL, NULL);
+    
+    free(escaped_text);
     return 0;
 }
 
 static int l_bedrock_clear_chat_feed(lua_State *L) {
-    if (!g_chat_listbox) return 0;
-    GList *children = gtk_container_get_children(GTK_CONTAINER(g_chat_listbox));
-    for (GList *iter = children; iter != NULL; iter = g_list_next(iter)) {
-        gtk_widget_destroy(GTK_WIDGET(iter->data));
-    }
-    g_list_free(children);
-    g_hash_table_remove_all(g_message_labels);
-    g_hash_table_remove_all(g_message_spinners);
+    if (!g_webview) return 0;
+    webkit_web_view_run_javascript(WEBKIT_WEB_VIEW(g_webview), "clearFeed();", NULL, NULL, NULL);
     return 0;
 }
 
@@ -234,9 +249,6 @@ void chat_bedrock_register_lua(lua_State *L) {
     lua_pushcfunction(L, l_bedrock_create_message_bubble);
     lua_setglobal(L, "bedrock_create_message_bubble");
     
-     
-     
-
     lua_pushcfunction(L, l_bedrock_set_message_markup);
     lua_setglobal(L, "bedrock_set_message_markup");
 

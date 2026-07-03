@@ -244,9 +244,7 @@ ui.on_action = function(action, arg)
             _G.bedrock_create_message_bubble("assistant", "Hello! I am Jenova, your local Cognitive Architecture. How can I assist you today?")
         else
             for _, msg in ipairs(history) do
-                local msg_id = _G.bedrock_create_message_bubble(msg.role, "")
-                local pango = md_to_pango(msg.content)
-                _G.bedrock_set_message_markup(msg_id, pango)
+                _G.bedrock_create_message_bubble(msg.role, msg.content)
             end
         end
     end
@@ -275,9 +273,7 @@ ui.on_file_clicked = function(filepath)
             if role_match then
                 if current_role and #current_msg > 0 then
                     local mapped_role = (current_role == "jenova") and "assistant" or current_role
-                    local msg_id = _G.bedrock_create_message_bubble(mapped_role, "")
-                    local pango = md_to_pango(table.concat(current_msg, "\n"))
-                    _G.bedrock_set_message_markup(msg_id, pango)
+                    _G.bedrock_create_message_bubble(mapped_role, table.concat(current_msg, "\n"))
                 end
                 current_role = role_match
                 current_msg = {}
@@ -288,9 +284,7 @@ ui.on_file_clicked = function(filepath)
         
         if current_role and #current_msg > 0 then
             local mapped_role = (current_role == "jenova") and "assistant" or current_role
-            local msg_id = _G.bedrock_create_message_bubble(mapped_role, "")
-            local pango = md_to_pango(table.concat(current_msg, "\n"))
-            _G.bedrock_set_message_markup(msg_id, pango)
+            _G.bedrock_create_message_bubble(mapped_role, table.concat(current_msg, "\n"))
         end
         
         -- Switch to Chat tab
@@ -410,18 +404,18 @@ ui.on_chat_submit = function(text)
         -- on_chunk callback
         function(chunk_text)
             msg_buffer = msg_buffer .. chunk_text
-            local pango = md_to_pango(msg_buffer)
+            local md = msg_buffer
             if reasoning_buffer ~= "" then
-                pango = "<span foreground='#888888'><i>" .. md_to_pango(reasoning_buffer) .. "</i></span>\n\n" .. pango
+                md = "<div class='thinking'>" .. reasoning_buffer .. "</div>\n\n" .. md
             end
-            _G.bedrock_set_message_markup(msg_id, pango)
+            _G.bedrock_set_message_markup(msg_id, md)
         end,
         -- on_reasoning_chunk callback
         function(chunk_text)
             reasoning_buffer = reasoning_buffer .. chunk_text
-            local pango = md_to_pango(msg_buffer)
-            local r_pango = "<span foreground='#888888'><i>" .. md_to_pango(reasoning_buffer) .. "</i></span>\n\n"
-            _G.bedrock_set_message_markup(msg_id, r_pango .. pango)
+            local md = msg_buffer
+            local r_md = "<div class='thinking'>" .. reasoning_buffer .. "</div>\n\n"
+            _G.bedrock_set_message_markup(msg_id, r_md .. md)
         end,
         -- on_complete callback
         function()
