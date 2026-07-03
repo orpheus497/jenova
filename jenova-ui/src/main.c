@@ -525,8 +525,8 @@ static void load_css(void) {
     const char *css = 
         "window.jenova-window { background-color: transparent; }\n"
         /* GtkNotebook styling */
-        "notebook { background-color: transparent; }\n"
-        "notebook header { background-color: transparent; border-bottom: 2px solid rgba(43, 30, 58, 0.5); padding-top: 5px; }\n"
+        "notebook, notebook stack { background-color: transparent; border: none; box-shadow: none; }\n"
+        "notebook header { background-color: transparent; border: none; box-shadow: none; border-bottom: 2px solid rgba(43, 30, 58, 0.5); padding-top: 5px; }\n"
         "notebook tab { background-color: transparent; border: none; padding: 2px 12px; box-shadow: none; transition: all 0.2s ease-in-out; margin: 0 4px; border-radius: 8px 8px 0 0; }\n"
         "notebook tab label { color: #5e5966; font-family: 'Inter', 'Segoe UI', sans-serif; font-weight: 600; font-size: 14px; }\n"
         "notebook tab:hover { background-color: #1c1b1b; }\n"
@@ -535,7 +535,7 @@ static void load_css(void) {
         "notebook tab:checked label { color: #e4b382; }\n"
         /* Glass Panel */
         ".glass-panel { background-color: rgba(43, 30, 58, 0.4); border: 1px solid rgba(228, 179, 130, 0.1); border-radius: 12px; padding: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }\n"
-        ".sidebar-panel { background-color: rgba(19, 19, 19, 0.7); border-right: 1px solid rgba(228, 179, 130, 0.05); border-radius: 0 24px 24px 0; padding: 16px; box-shadow: 4px 0 15px rgba(0,0,0,0.5); }\n"
+        ".sidebar-panel { background-color: rgba(19, 19, 19, 0.7); border: none; border-radius: 0 24px 24px 0; padding: 16px; box-shadow: 4px 0 15px rgba(0,0,0,0.5); }\n"
         /* Labels */
         "label { color: #f0edf2; font-family: 'DejaVuSansM Nerd Font', 'DejaVu Sans Mono', monospace; font-size: 12pt; }\n"
         "label.title { font-weight: 800; font-size: 24px; color: #e4b382; letter-spacing: 1px; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }\n"
@@ -833,6 +833,11 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
     if (files_container) gtk_widget_show_all(files_container);
 }
 
+static void on_toggle_sidebar_clicked(GtkButton *btn, gpointer revealer) {
+    (void)btn;
+    gboolean is_revealed = gtk_revealer_get_reveal_child(GTK_REVEALER(revealer));
+    gtk_revealer_set_reveal_child(GTK_REVEALER(revealer), !is_revealed);
+}
 
 static void init_gui(void) {
     load_css();
@@ -851,7 +856,12 @@ static void init_gui(void) {
     GtkWidget *bg_canvas = create_neural_canvas();
     gtk_container_add(GTK_CONTAINER(overlay), bg_canvas);
 
-    GtkWidget *main_paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+    GtkWidget *main_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    
+    GtkWidget *sidebar_revealer = gtk_revealer_new();
+    gtk_revealer_set_transition_type(GTK_REVEALER(sidebar_revealer), GTK_REVEALER_TRANSITION_TYPE_SLIDE_RIGHT);
+    gtk_revealer_set_transition_duration(GTK_REVEALER(sidebar_revealer), 250);
+    gtk_revealer_set_reveal_child(GTK_REVEALER(sidebar_revealer), TRUE);
     
     /* LEFT SIDEPANEL */
     GtkWidget *sidebar_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
@@ -1024,11 +1034,20 @@ static void init_gui(void) {
     gtk_widget_set_vexpand(spacer, TRUE);
     gtk_box_pack_start(GTK_BOX(sidebar_vbox), spacer, TRUE, TRUE, 0);
     
-    gtk_paned_pack1(GTK_PANED(main_paned), sidebar_vbox, FALSE, FALSE);
+    gtk_container_add(GTK_CONTAINER(sidebar_revealer), sidebar_vbox);
+    gtk_box_pack_start(GTK_BOX(main_hbox), sidebar_revealer, FALSE, FALSE, 0);
 
     /* RIGHT SIDE: Notebook */
     GtkWidget *notebook = gtk_notebook_new();
     gtk_notebook_set_tab_pos(GTK_NOTEBOOK(notebook), GTK_POS_TOP);
+    
+    GtkWidget *btn_toggle_sidebar = gtk_button_new_from_icon_name("sidebar-show-symbolic", GTK_ICON_SIZE_BUTTON);
+    gtk_style_context_add_class(gtk_widget_get_style_context(btn_toggle_sidebar), "sidebar-btn");
+    gtk_widget_set_margin_start(btn_toggle_sidebar, 8);
+    gtk_widget_set_margin_end(btn_toggle_sidebar, 8);
+    g_signal_connect(btn_toggle_sidebar, "clicked", G_CALLBACK(on_toggle_sidebar_clicked), sidebar_revealer);
+    gtk_notebook_set_action_widget(GTK_NOTEBOOK(notebook), btn_toggle_sidebar, GTK_PACK_START);
+    gtk_widget_show_all(btn_toggle_sidebar);
 
     /* TAB 1: Chat Bedrock */
     GtkWidget *chat_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
@@ -1123,10 +1142,9 @@ static void init_gui(void) {
     GtkWidget *tab3_label = gtk_label_new("Editor");
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook), editor_vbox, tab3_label);
 
-    gtk_paned_pack2(GTK_PANED(main_paned), notebook, TRUE, FALSE);
-    gtk_paned_set_position(GTK_PANED(main_paned), 250);
+    gtk_box_pack_start(GTK_BOX(main_hbox), notebook, TRUE, TRUE, 0);
 
-    gtk_overlay_add_overlay(GTK_OVERLAY(overlay), main_paned);
+    gtk_overlay_add_overlay(GTK_OVERLAY(overlay), main_hbox);
 
     populate_sidebar_dynamic(ws_container, chats_container, notes_container, files_container);
 
