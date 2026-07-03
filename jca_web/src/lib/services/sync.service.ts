@@ -71,9 +71,11 @@ export class SyncService {
       if (mdFiles.length > 0) {
         const allConvs = await DatabaseService.getAllConversations();
         const allNotes = await DatabaseService.getAllNotes();
+        const allFolders = await DatabaseService.getProjectFolders(null);
 
         const convsMap = new Map(allConvs.map((c) => [c.name, c]));
         const notesMap = new Map(allNotes.map((n) => [n.title, n]));
+        const folderNameToId = new Map(allFolders.map((f) => [f.name, f.id]));
 
         for (const path of mdFiles) {
           const content = await StorageService.get(path);
@@ -96,7 +98,12 @@ export class SyncService {
                 stats.updated++;
               }
             } else {
-              await DatabaseService.createNote(null, fileName, content);
+              let folderId = null;
+              if (parts.length >= 4) {
+                 const folderName = parts[parts.length - 3];
+                 folderId = folderNameToId.get(folderName) || null;
+              }
+              await DatabaseService.createNote(folderId, fileName, content);
               changed = true;
               stats.created++;
             }
@@ -173,8 +180,7 @@ export class SyncService {
       for (const note of allNotes) {
         queue.push(async () => {
           const folder = folderMap.get(note.folderId || "");
-          const folderName = folder?.name || "Notes";
-          const path = `${defaultWorkspace}/${folderName}/${note.title}.md`;
+          const path = folder?.name ? `${defaultWorkspace}/${folder.name}/Notes/${note.title}.md` : `${defaultWorkspace}/Notes/${note.title}.md`;
           await StorageService.save(path, note.content);
         });
       }
@@ -185,9 +191,8 @@ export class SyncService {
             conv.id,
           );
           const folder = folderMap.get(conv.folderId || "");
-          const folderName = folder?.name || "Chats";
           const md = MarkdownService.toMarkdown(conv, messages);
-          const path = `${defaultWorkspace}/${folderName}/${conv.name}.md`;
+          const path = folder?.name ? `${defaultWorkspace}/${folder.name}/Chats/${conv.name}.md` : `${defaultWorkspace}/Chats/${conv.name}.md`;
           await StorageService.save(path, md);
         });
       }
@@ -232,8 +237,7 @@ export class SyncService {
         const note = notes.find((n) => n.id === id);
         if (note) {
           const folder = allFolders.find((f) => f.id === note.folderId);
-          const folderName = folder?.name || "Notes";
-          const path = `${defaultWorkspace}/${folderName}/${note.title}.md`;
+          const path = folder?.name ? `${defaultWorkspace}/${folder.name}/Notes/${note.title}.md` : `${defaultWorkspace}/Notes/${note.title}.md`;
           await StorageService.save(path, note.content);
         }
       } else {
@@ -241,9 +245,8 @@ export class SyncService {
         if (conv) {
           const messages = await DatabaseService.getConversationMessages(id);
           const folder = allFolders.find((f) => f.id === conv.folderId);
-          const folderName = folder?.name || "Chats";
           const md = MarkdownService.toMarkdown(conv, messages);
-          const path = `${defaultWorkspace}/${folderName}/${conv.name}.md`;
+          const path = folder?.name ? `${defaultWorkspace}/${folder.name}/Chats/${conv.name}.md` : `${defaultWorkspace}/Chats/${conv.name}.md`;
           await StorageService.save(path, md);
         }
       }

@@ -27,26 +27,66 @@ function database.get_default_workspace()
     return path
 end
 
--- Simulating the Dexie database for conversation history
 function database.save_conversation(conv_id, messages)
-    local path = database.get_default_workspace() .. "/chats/" .. conv_id .. ".json"
+    local path = database.get_default_workspace() .. "/Chats/" .. conv_id .. ".md"
     local file = io.open(path, "w")
     if file then
-        file:write(json.encode(messages))
+        file:write("# topic: " .. conv_id .. " [agent]\n")
+        file:write("- model: jenova\n")
+        file:write("- temperature: 0.7\n")
+        file:write("- top_p: 0.9\n")
+        file:write("---\n\n")
+        
+        for _, msg in ipairs(messages) do
+            if msg.role == "system" then
+                if msg.content and msg.content ~= "" then
+                    file:write("<!-- system: " .. msg.content:gsub("\n", " ") .. " -->\n\n")
+                end
+            else
+                local role = (msg.role == "assistant") and "jenova" or msg.role
+                file:write("## " .. role .. "\n\n")
+                file:write(msg.content .. "\n\n")
+            end
+        end
         file:close()
     end
 end
 
 function database.load_conversation(conv_id)
-    local path = database.get_default_workspace() .. "/chats/" .. conv_id .. ".json"
+    local path = database.get_default_workspace() .. "/Chats/" .. conv_id .. ".md"
     local file = io.open(path, "r")
     if file then
         local content = file:read("*a")
         file:close()
-        local ok, parsed = pcall(json.decode, content)
-        if ok and parsed then
-            return parsed
+        
+        local messages = {}
+        local current_role = nil
+        local current_msg = {}
+        
+        for line in content:gmatch("([^\n]*)\n?") do
+            if line:match("^<!-- system: (.*) -->") then
+                local sys_content = line:match("^<!-- system: (.*) -->")
+                table.insert(messages, {role = "system", content = sys_content})
+            elseif line:match("^##%s+(%w+)$") then
+                if current_role and #current_msg > 0 then
+                    local mapped_role = (current_role == "jenova") and "assistant" or current_role
+                    table.insert(messages, {role = mapped_role, content = table.concat(current_msg, "\n")})
+                end
+                current_role = line:match("^##%s+(%w+)$")
+                current_msg = {}
+            elseif current_role then
+                if line ~= "" or #current_msg > 0 then
+                    table.insert(current_msg, line)
+                end
+            end
         end
+        
+        if current_role and #current_msg > 0 then
+            local mapped_role = (current_role == "jenova") and "assistant" or current_role
+            table.insert(messages, {role = mapped_role, content = table.concat(current_msg, "\n")})
+        end
+        
+        return messages
     end
     return {}
 end

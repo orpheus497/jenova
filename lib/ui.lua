@@ -81,26 +81,26 @@ ui.refresh_chat_list = function()
         _G.bedrock_clear_chat_list()
     end
     
-    local path = database.get_default_workspace() .. "/chats"
-    local p = io.popen("ls " .. shell_quote(path) .. "/*.json 2>/dev/null")
+    local path = database.get_default_workspace() .. "/Chats"
+    local p = io.popen("ls " .. shell_quote(path) .. "/*.md 2>/dev/null")
     if not p then return end
     
     for file_path in p:lines() do
-        local conv_id = file_path:match("([^/]+)%.json$")
+        local conv_id = file_path:match("([^/]+)%.md$")
         local title = conv_id
         
         local file = io.open(file_path, "r")
         if file then
-            local content = file:read("*a")
+            local first_line = file:read("*l")
             file:close()
-            local ok, parsed = pcall(json.decode, content)
-            if ok and parsed and type(parsed) == "table" then
-                for _, msg in ipairs(parsed) do
-                    if msg.role == "user" and type(msg.content) == "string" then
-                        title = msg.content:sub(1, 30)
-                        if #msg.content > 30 then title = title .. "..." end
-                        break
-                    end
+            
+            if first_line and first_line:match("^# topic:") then
+                local topic = first_line:match("^# topic: (.*) %[agent%]")
+                if not topic then
+                    topic = first_line:sub(9) -- Strip "# topic: "
+                end
+                if topic and topic ~= "" then
+                    title = topic
                 end
             end
         end
@@ -248,6 +248,58 @@ ui.on_action = function(action, arg)
                 local pango = md_to_pango(msg.content)
                 _G.bedrock_set_message_markup(msg_id, pango)
             end
+        end
+    end
+end
+
+ui.on_file_clicked = function(filepath)
+    if not filepath then return end
+    
+    local file = io.open(filepath, "r")
+    if not file then
+        print("jenova-ui: failed to open " .. filepath)
+        return
+    end
+    
+    local content = file:read("*a")
+    file:close()
+    
+    if filepath:match("/Chats/") then
+        if _G.bedrock_clear_chat_feed then _G.bedrock_clear_chat_feed() end
+        
+        local current_role = nil
+        local current_msg = {}
+        
+        for line in content:gmatch("([^\n]*)\n?") do
+            local role_match = line:match("^##%s+(%w+)$")
+            if role_match then
+                if current_role and #current_msg > 0 then
+                    local mapped_role = (current_role == "jenova") and "assistant" or current_role
+                    local msg_id = _G.bedrock_create_message_bubble(mapped_role, "")
+                    local pango = md_to_pango(table.concat(current_msg, "\n"))
+                    _G.bedrock_set_message_markup(msg_id, pango)
+                end
+                current_role = role_match
+                current_msg = {}
+            elseif current_role then
+                table.insert(current_msg, line)
+            end
+        end
+        
+        if current_role and #current_msg > 0 then
+            local mapped_role = (current_role == "jenova") and "assistant" or current_role
+            local msg_id = _G.bedrock_create_message_bubble(mapped_role, "")
+            local pango = md_to_pango(table.concat(current_msg, "\n"))
+            _G.bedrock_set_message_markup(msg_id, pango)
+        end
+        
+        -- Switch to Chat tab
+        if _G.bedrock_set_active_tab then
+            _G.bedrock_set_active_tab(0)
+        end
+    else
+        if _G.bedrock_set_editor_content then
+            _G.bedrock_set_editor_content(filepath, content)
         end
     end
 end
