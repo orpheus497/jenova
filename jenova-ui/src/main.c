@@ -535,13 +535,17 @@ static void load_css(void) {
         "notebook tab:checked label { color: #e4b382; }\n"
         /* Glass Panel */
         ".glass-panel { background-color: rgba(43, 30, 58, 0.4); border: 1px solid rgba(228, 179, 130, 0.1); border-radius: 12px; padding: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }\n"
-        ".sidebar-panel { background-color: #131313; border-right: 1px solid rgba(228, 179, 130, 0.05); border-radius: 0 24px 24px 0; padding: 16px; box-shadow: 4px 0 15px rgba(0,0,0,0.5); }\n"
+        ".sidebar-panel { background-color: rgba(19, 19, 19, 0.7); border-right: 1px solid rgba(228, 179, 130, 0.05); border-radius: 0 24px 24px 0; padding: 16px; box-shadow: 4px 0 15px rgba(0,0,0,0.5); }\n"
         /* Labels */
         "label { color: #f0edf2; font-family: 'DejaVuSansM Nerd Font', 'DejaVu Sans Mono', monospace; font-size: 12pt; }\n"
         "label.title { font-weight: 800; font-size: 24px; color: #e4b382; letter-spacing: 1px; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }\n"
         "label.status-active { color: #a3e635; font-weight: 700; font-size: 14px; }\n"
         "label.status-inactive { color: #c96464; font-weight: 700; font-size: 14px; }\n"
         "label.mode-label { color: #aba0d9; font-weight: 700; font-size: 14px; }\n"
+        ".color-note { color: #e4b382; }\n"
+        ".color-file { color: #c96464; }\n"
+        ".color-chat { color: #7b52ab; }\n"
+        ".color-chat:hover, .color-note:hover, .color-file:hover { color: #f0edf2; }\n"
         /* Buttons */
         "button { background-image: none; background-color: #2b1e3a; color: #f0edf2; border: 1px solid rgba(228, 179, 130, 0.2); border-radius: 8px; padding: 4px 10px; font-weight: 600; font-size: 12px; font-family: 'DejaVuSansM Nerd Font', 'DejaVu Sans Mono', monospace; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: all 0.2s ease; }\n"
         "button:hover { background-color: #3d2b52; border-color: rgba(228, 179, 130, 0.4); box-shadow: 0 4px 8px rgba(0,0,0,0.4); }\n"
@@ -801,6 +805,7 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                 // Files Button
                 GtkWidget *btn_files = gtk_button_new();
                 gtk_style_context_add_class(gtk_widget_get_style_context(btn_files), "tree-item");
+                gtk_style_context_add_class(gtk_widget_get_style_context(btn_files), "color-file");
                 GtkWidget *f_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
                 GtkWidget *f_icon = gtk_image_new_from_icon_name("folder-symbolic", GTK_ICON_SIZE_BUTTON);
                 GtkWidget *f_lbl = gtk_label_new("Files");
@@ -965,6 +970,7 @@ static void init_gui(void) {
     // New Note Button
     GtkWidget *btn_new_note = gtk_button_new();
     gtk_style_context_add_class(gtk_widget_get_style_context(btn_new_note), "tree-item");
+    gtk_style_context_add_class(gtk_widget_get_style_context(btn_new_note), "color-note");
     GtkWidget *nn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     GtkWidget *nn_icon = gtk_image_new_from_icon_name("text-x-generic-symbolic", GTK_ICON_SIZE_BUTTON);
     GtkWidget *nn_lbl = gtk_label_new("New Note");
@@ -987,6 +993,7 @@ static void init_gui(void) {
     
     GtkWidget *btn_notes = gtk_button_new();
     gtk_style_context_add_class(gtk_widget_get_style_context(btn_notes), "tree-item");
+    gtk_style_context_add_class(gtk_widget_get_style_context(btn_notes), "color-note");
     GtkWidget *bn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_widget_set_halign(bn_box, GTK_ALIGN_CENTER);
     GtkWidget *bn_icon = gtk_image_new_from_icon_name("text-x-generic-symbolic", GTK_ICON_SIZE_BUTTON);
@@ -997,6 +1004,7 @@ static void init_gui(void) {
     
     GtkWidget *btn_files = gtk_button_new();
     gtk_style_context_add_class(gtk_widget_get_style_context(btn_files), "tree-item");
+    gtk_style_context_add_class(gtk_widget_get_style_context(btn_files), "color-file");
     GtkWidget *bf_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     gtk_widget_set_halign(bf_box, GTK_ALIGN_CENTER);
     GtkWidget *bf_icon = gtk_image_new_from_icon_name("folder-symbolic", GTK_ICON_SIZE_BUTTON);
