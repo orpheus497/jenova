@@ -182,10 +182,12 @@ static int l_bedrock_create_message_bubble(lua_State *L) {
     char *escaped_text = malloc(strlen(text) * 2 + 1);
     escape_js_string(text, escaped_text);
     
-    char script[8192];
-    snprintf(script, sizeof(script), "createBubble('%d', '%s', '%s');", id, role, escaped_text);
+    size_t script_len = strlen(escaped_text) + 256;
+    char *script = malloc(script_len);
+    snprintf(script, script_len, "createBubble('%d', '%s', '%s');", id, role, escaped_text);
     webkit_web_view_run_javascript(WEBKIT_WEB_VIEW(g_webview), script, NULL, NULL, NULL);
     
+    free(script);
     free(escaped_text);
     
     lua_pushinteger(L, id);
@@ -201,10 +203,12 @@ static int l_bedrock_set_message_markup(lua_State *L) {
     char *escaped_text = malloc(strlen(text) * 2 + 1);
     escape_js_string(text, escaped_text);
     
-    char script[8192];
-    snprintf(script, sizeof(script), "updateBubble('%d', '%s');", id, escaped_text);
+    size_t script_len = strlen(escaped_text) + 256;
+    char *script = malloc(script_len);
+    snprintf(script, script_len, "updateBubble('%d', '%s');", id, escaped_text);
     webkit_web_view_run_javascript(WEBKIT_WEB_VIEW(g_webview), script, NULL, NULL, NULL);
     
+    free(script);
     free(escaped_text);
     return 0;
 }
@@ -223,10 +227,12 @@ static int l_bedrock_show_error(lua_State *L) {
     char *escaped_text = malloc(strlen(text) * 2 + 1);
     escape_js_string(text, escaped_text);
     
-    char script[8192];
-    snprintf(script, sizeof(script), "updateBubble('%d', '<span style=\"color:#ff5555\"><b>Error:</b> %s</span>');", id, escaped_text);
+    size_t script_len = strlen(escaped_text) + 256;
+    char *script = malloc(script_len);
+    snprintf(script, script_len, "updateBubble('%d', '<span style=\"color:#ff5555\"><b>Error:</b> %s</span>');", id, escaped_text);
     webkit_web_view_run_javascript(WEBKIT_WEB_VIEW(g_webview), script, NULL, NULL, NULL);
     
+    free(script);
     free(escaped_text);
     return 0;
 }
