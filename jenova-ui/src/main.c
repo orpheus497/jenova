@@ -82,6 +82,17 @@ static void rebuild_tray_menu(void);
 char *get_jenova_root(void) {
     if (jenova_root[0] != '\0') return jenova_root;
 
+    const char *env_root = getenv("JENOVA_ROOT");
+    if (env_root && env_root[0] != '\0') {
+        if (realpath(env_root, jenova_root) != NULL) {
+            return jenova_root;
+        } else {
+            strncpy(jenova_root, env_root, sizeof(jenova_root) - 1);
+            jenova_root[sizeof(jenova_root) - 1] = '\0';
+            return jenova_root;
+        }
+    }
+
     char exe_path[PATH_MAX];
     int found = 0;
 

@@ -228,7 +228,7 @@ ui.on_action = function(action, arg)
         end
     elseif action == "quit" then
         if ui._proxy_handle then pcall(function() ui._proxy_handle:close() end) end
-        sys_exec_sync(shell_quote(root .. "/bin/jenova-ca") .. " stop")
+        sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " stop")
         quit_app()
     elseif action == "new_chat" then
         ui.current_conv_id = generate_uuid()
