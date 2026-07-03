@@ -537,7 +537,8 @@ static void load_css(void) {
         "notebook tab:checked label { color: #e4b382; }\n"
         /* Glass Panel */
         ".glass-panel { background-color: rgba(43, 30, 58, 0.4); border: 1px solid rgba(228, 179, 130, 0.1); border-radius: 12px; padding: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }\n"
-        ".sidebar-panel { background-color: rgba(19, 19, 19, 0.7); border: none; border-radius: 0 24px 24px 0; padding: 16px 2px 16px 16px; box-shadow: 4px 0 15px rgba(0,0,0,0.5); }\n"
+        ".sidebar-panel { background-image: linear-gradient(135deg, rgba(43, 30, 58, 0.7), rgba(15, 10, 20, 0.85)); border: 1px solid rgba(228, 179, 130, 0.15); border-left: none; border-radius: 0 24px 24px 0; padding: 16px 16px 16px 0px; box-shadow: 12px 0 40px rgba(0,0,0,0.9); }\n"
+        ".sidebar-scroll { background-color: transparent; }\n"
         /* Labels */
         "label { color: #f0edf2; font-family: 'DejaVuSansM Nerd Font', 'DejaVu Sans Mono', monospace; font-size: 12pt; }\n"
         "label.title { font-weight: 800; font-size: 24px; color: #e4b382; letter-spacing: 1px; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }\n"
@@ -871,19 +872,8 @@ static void on_toggle_sidebar_clicked(GtkButton *btn, gpointer revealer) {
     gtk_revealer_set_reveal_child(GTK_REVEALER(revealer), !is_revealed);
 }
 
-static void on_main_window_size_allocate(GtkWidget *widget G_GNUC_UNUSED, GdkRectangle *allocation, gpointer data G_GNUC_UNUSED) {
-    if (g_ui_state.sidebar_vbox) {
-        int target_width = allocation->width * 0.25;
-        if (target_width < 220) target_width = 220;
-        if (target_width > 400) target_width = 400;
-        
-        int current_width, current_height;
-        gtk_widget_get_size_request(g_ui_state.sidebar_vbox, &current_width, &current_height);
-        
-        if (current_width != target_width) {
-            gtk_widget_set_size_request(g_ui_state.sidebar_vbox, target_width, -1);
-        }
-    }
+static void on_main_window_size_allocate(GtkWidget *widget G_GNUC_UNUSED, GdkRectangle *allocation G_GNUC_UNUSED, gpointer data G_GNUC_UNUSED) {
+    // Left empty intentionally, layout is now managed by overlay
 }
 
 static void init_gui(void) {
@@ -912,8 +902,24 @@ static void init_gui(void) {
     gtk_revealer_set_reveal_child(GTK_REVEALER(sidebar_revealer), TRUE);
     
     /* LEFT SIDEPANEL */
+    GtkWidget *sidebar_layer_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_style_context_add_class(gtk_widget_get_style_context(sidebar_layer_box), "sidebar-panel");
+    
+    GtkWidget *sidebar_scroll_win = gtk_scrolled_window_new(NULL, NULL);
+    gtk_style_context_add_class(gtk_widget_get_style_context(sidebar_scroll_win), "sidebar-scroll");
+    gtk_scrolled_window_set_placement(GTK_SCROLLED_WINDOW(sidebar_scroll_win), GTK_CORNER_TOP_RIGHT);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sidebar_scroll_win), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(sidebar_scroll_win), GTK_SHADOW_NONE);
+    gtk_scrolled_window_set_overlay_scrolling(GTK_SCROLLED_WINDOW(sidebar_scroll_win), TRUE);
+    gtk_widget_set_size_request(sidebar_layer_box, 320, -1);
+    
+    gtk_box_pack_start(GTK_BOX(sidebar_layer_box), sidebar_scroll_win, TRUE, TRUE, 0);
+    
     GtkWidget *sidebar_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
-    gtk_style_context_add_class(gtk_widget_get_style_context(sidebar_vbox), "sidebar-panel");
+    gtk_widget_set_margin_start(sidebar_vbox, 16); // Padding for the content, leaving scrollbar flush left
+    gtk_container_add(GTK_CONTAINER(sidebar_scroll_win), sidebar_vbox);
+    
+    g_ui_state.sidebar_scroll_win = sidebar_scroll_win;
     g_ui_state.sidebar_vbox = sidebar_vbox;
     
     // Header Logo & Title
@@ -946,6 +952,13 @@ static void init_gui(void) {
     gtk_label_set_justify(GTK_LABEL(title_lbl), GTK_JUSTIFY_LEFT);
     gtk_label_set_xalign(GTK_LABEL(title_lbl), 0.0);
     gtk_box_pack_start(GTK_BOX(header_hbox), title_lbl, TRUE, TRUE, 0);
+    
+    GtkWidget *btn_close_sidebar = gtk_button_new_from_icon_name("sidebar-collapse-symbolic", GTK_ICON_SIZE_BUTTON);
+    gtk_style_context_add_class(gtk_widget_get_style_context(btn_close_sidebar), "sidebar-btn");
+    g_signal_connect(btn_close_sidebar, "clicked", G_CALLBACK(on_toggle_sidebar_clicked), sidebar_revealer);
+    gtk_widget_set_valign(btn_close_sidebar, GTK_ALIGN_CENTER);
+    gtk_box_pack_start(GTK_BOX(header_hbox), btn_close_sidebar, FALSE, FALSE, 0);
+    
     gtk_box_pack_start(GTK_BOX(sidebar_vbox), header_hbox, FALSE, FALSE, 8);
     
     // Action Grid
@@ -1077,8 +1090,9 @@ static void init_gui(void) {
     gtk_widget_set_vexpand(spacer, TRUE);
     gtk_box_pack_start(GTK_BOX(sidebar_vbox), spacer, TRUE, TRUE, 0);
     
-    gtk_container_add(GTK_CONTAINER(sidebar_revealer), sidebar_vbox);
-    gtk_box_pack_start(GTK_BOX(main_hbox), sidebar_revealer, FALSE, FALSE, 0);
+    gtk_container_add(GTK_CONTAINER(sidebar_revealer), sidebar_layer_box);
+    gtk_widget_set_halign(sidebar_revealer, GTK_ALIGN_START);
+    // DO NOT ADD TO OVERLAY HERE - WAIT UNTIL CHAT IS ADDED SO IT SITS ON TOP
 
     /* RIGHT SIDE: Notebook */
     GtkWidget *notebook = gtk_notebook_new();
@@ -1188,7 +1202,11 @@ static void init_gui(void) {
 
     gtk_box_pack_start(GTK_BOX(main_hbox), notebook, TRUE, TRUE, 0);
 
+    // 1. Add Chat window to overlay (Bottom Layer)
     gtk_overlay_add_overlay(GTK_OVERLAY(overlay), main_hbox);
+    
+    // 2. Add Sidebar to overlay (Top Layer - sits OVER chat)
+    gtk_overlay_add_overlay(GTK_OVERLAY(overlay), sidebar_revealer);
 
     populate_sidebar_dynamic(ws_container, chats_container, notes_container, files_container);
 
