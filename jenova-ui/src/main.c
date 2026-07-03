@@ -530,6 +530,7 @@ static void load_css(void) {
         "notebook tab:checked label { color: #e4b382; }\n"
         /* Glass Panel */
         ".glass-panel { background-color: rgba(43, 30, 58, 0.4); border: 1px solid rgba(228, 179, 130, 0.1); border-radius: 12px; padding: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }\n"
+        ".sidebar-panel { background-color: #131313; border-right: 1px solid rgba(228, 179, 130, 0.05); border-radius: 0 24px 24px 0; padding: 16px; box-shadow: 4px 0 15px rgba(0,0,0,0.5); }\n"
         /* Labels */
         "label { color: #f0edf2; font-family: 'Inter', 'Segoe UI', sans-serif; }\n"
         "label.title { font-weight: 800; font-size: 24px; color: #e4b382; letter-spacing: 1px; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }\n"
@@ -541,6 +542,15 @@ static void load_css(void) {
         "button:hover { background-color: #3d2b52; border-color: rgba(228, 179, 130, 0.4); box-shadow: 0 4px 8px rgba(0,0,0,0.4); }\n"
         "button:active { background-color: #1a1223; box-shadow: none; }\n"
         "button.stop-btn:hover { background-color: #c96464; border-color: #ffb3b3; color: #ffffff; }\n"
+        /* Sidebar Elements */
+        ".logo-box { border: 1px solid rgba(43, 30, 58, 0.3); border-radius: 8px; box-shadow: 0 0 15px rgba(43, 30, 58, 0.4); }\n"
+        ".sidebar-btn { background-color: transparent; border: none; box-shadow: none; border-radius: 8px; padding: 8px 12px; font-weight: 400; font-size: 13px; }\n"
+        ".sidebar-btn:hover { background-color: rgba(255, 255, 255, 0.05); color: #7b52ab; }\n"
+        ".section-header { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; color: #9fa0a6; letter-spacing: 2px; text-transform: uppercase; background-color: transparent; border: none; box-shadow: none; padding: 4px 8px; }\n"
+        ".section-header:hover { color: #f0edf2; background-color: transparent; }\n"
+        ".tree-item { background-color: transparent; color: #f0edf2; border: none; box-shadow: none; border-radius: 6px; padding: 6px 12px; font-size: 13px; font-weight: 400; }\n"
+        ".tree-item:hover { background-color: rgba(255, 255, 255, 0.05); }\n"
+        ".tree-header { font-size: 10px; font-weight: 700; color: #7b52ab; letter-spacing: 1px; text-transform: uppercase; margin-top: 8px; margin-bottom: 4px; }\n"
         ;
     gtk_css_provider_load_from_data(provider, css, -1, NULL);
     gtk_style_context_add_provider_for_screen(gdk_screen_get_default(),
@@ -572,91 +582,156 @@ static void init_gui(void) {
     GtkWidget *main_paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
     
     /* LEFT SIDEPANEL */
-    GtkWidget *sidebar_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-    gtk_widget_set_margin_top(sidebar_vbox, 16);
-    gtk_widget_set_margin_bottom(sidebar_vbox, 16);
-    gtk_widget_set_margin_start(sidebar_vbox, 16);
-    gtk_widget_set_margin_end(sidebar_vbox, 16);
-    gtk_widget_set_size_request(sidebar_vbox, 250, -1);
+    GtkWidget *sidebar_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
+    gtk_style_context_add_class(gtk_widget_get_style_context(sidebar_vbox), "sidebar-panel");
+    gtk_widget_set_size_request(sidebar_vbox, 280, -1);
     
+    // Header Logo & Title
+    GtkWidget *header_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
+    
+    GtkWidget *logo_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_style_context_add_class(gtk_widget_get_style_context(logo_box), "logo-box");
     char img_path[PATH_MAX];
     snprintf(img_path, sizeof(img_path), "%s/png/jenova.jpg", get_jenova_root());
     GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file(img_path, NULL);
     GtkWidget *image = gtk_image_new();
     if (pixbuf) {
-        int w = gdk_pixbuf_get_width(pixbuf);
-        int h = gdk_pixbuf_get_height(pixbuf);
-        if (w > 0) {
-            int dest_h = (int)(h * (50.0 / w));
-            if (dest_h <= 0) dest_h = 1;
-            GdkPixbuf *scaled = gdk_pixbuf_scale_simple(pixbuf, 50, dest_h, GDK_INTERP_BILINEAR);
-            if (scaled) {
-                gtk_image_set_from_pixbuf(GTK_IMAGE(image), scaled);
-                g_object_unref(scaled);
-            }
+        GdkPixbuf *scaled = gdk_pixbuf_scale_simple(pixbuf, 48, 48, GDK_INTERP_BILINEAR);
+        if (scaled) {
+            gtk_image_set_from_pixbuf(GTK_IMAGE(image), scaled);
+            g_object_unref(scaled);
         }
         g_object_unref(pixbuf);
     }
-    gtk_box_pack_start(GTK_BOX(sidebar_vbox), image, FALSE, FALSE, 0);
-
-    GtkWidget *title_lbl = gtk_label_new("JENOVA AI");
-    gtk_style_context_add_class(gtk_widget_get_style_context(title_lbl), "title");
-    gtk_box_pack_start(GTK_BOX(sidebar_vbox), title_lbl, FALSE, FALSE, 0);
+    gtk_container_add(GTK_CONTAINER(logo_box), image);
+    gtk_box_pack_start(GTK_BOX(header_hbox), logo_box, FALSE, FALSE, 0);
     
-    GtkWidget *status_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
-    gtk_style_context_add_class(gtk_widget_get_style_context(status_box), "glass-panel");
-    GtkWidget *status_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    gtk_widget_set_halign(status_hbox, GTK_ALIGN_CENTER);
-    GtkWidget *status_title = gtk_label_new("Status:");
-    g_ui_state.status_label = gtk_label_new("INACTIVE");
-    gtk_style_context_add_class(gtk_widget_get_style_context(g_ui_state.status_label), "status-inactive");
-    gtk_box_pack_start(GTK_BOX(status_hbox), status_title, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(status_hbox), g_ui_state.status_label, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(status_box), status_hbox, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(sidebar_vbox), status_box, FALSE, FALSE, 0);
-
-    // Accordions
-    GtkWidget *exp_files = gtk_expander_new("Files");
-    GtkWidget *files_scroll = gtk_scrolled_window_new(NULL, NULL);
-    GtkWidget *files_tree = gtk_tree_view_new(); // Stub for file explorer
-    GtkCellRenderer *renderer = gtk_cell_renderer_text_new();
-    GtkTreeViewColumn *column = gtk_tree_view_column_new_with_attributes("Filename", renderer, "text", 0, NULL);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(files_tree), column);
-    gtk_container_add(GTK_CONTAINER(files_scroll), files_tree);
-    gtk_widget_set_size_request(files_scroll, -1, 150);
-    gtk_container_add(GTK_CONTAINER(exp_files), files_scroll);
-    gtk_box_pack_start(GTK_BOX(sidebar_vbox), exp_files, FALSE, FALSE, 0);
-
-    GtkWidget *exp_notes = gtk_expander_new("Notes");
-    GtkWidget *notes_view = gtk_text_view_new();
-    GtkWidget *notes_scroll = gtk_scrolled_window_new(NULL, NULL);
-    gtk_container_add(GTK_CONTAINER(notes_scroll), notes_view);
-    gtk_widget_set_size_request(notes_scroll, -1, 150);
-    gtk_container_add(GTK_CONTAINER(exp_notes), notes_scroll);
-    gtk_box_pack_start(GTK_BOX(sidebar_vbox), exp_notes, FALSE, FALSE, 0);
-
-    GtkWidget *exp_chats = gtk_expander_new("Chats");
-    GtkWidget *chats_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
-    GtkWidget *btn_new_chat = gtk_button_new_with_label("+ New Chat");
-    gtk_box_pack_start(GTK_BOX(chats_vbox), btn_new_chat, FALSE, FALSE, 0);
-    GtkWidget *chats_scroll = gtk_scrolled_window_new(NULL, NULL);
-    GtkWidget *chats_list = gtk_list_box_new(); // Stub for chat sessions
-    g_ui_state.chats_list = chats_list;
-    g_signal_connect(btn_new_chat, "clicked", G_CALLBACK(on_gui_button_clicked), "new_chat");
-    g_signal_connect(chats_list, "row-activated", G_CALLBACK(on_chats_list_row_activated), NULL);
-    gtk_container_add(GTK_CONTAINER(chats_scroll), chats_list);
-    gtk_widget_set_size_request(chats_scroll, -1, 150);
-    gtk_box_pack_start(GTK_BOX(chats_vbox), chats_scroll, TRUE, TRUE, 0);
-    gtk_container_add(GTK_CONTAINER(exp_chats), chats_vbox);
-    gtk_box_pack_start(GTK_BOX(sidebar_vbox), exp_chats, FALSE, FALSE, 0);
-
+    GtkWidget *title_lbl = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(title_lbl), 
+        "<span font_desc='Inter Bold 11' letter_spacing='-500'>"
+        "<span color='#7b52ab'>JENOVA</span>\n"
+        "<span color='#c96464'>COGNITIVE</span>\n"
+        "<span color='#e4b382'>ARCHITECTURE</span>"
+        "</span>");
+    gtk_label_set_justify(GTK_LABEL(title_lbl), GTK_JUSTIFY_LEFT);
+    gtk_label_set_xalign(GTK_LABEL(title_lbl), 0.0);
+    gtk_box_pack_start(GTK_BOX(header_hbox), title_lbl, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), header_hbox, FALSE, FALSE, 8);
+    
+    // Action Grid
+    GtkWidget *action_grid = gtk_grid_new();
+    gtk_grid_set_column_spacing(GTK_GRID(action_grid), 4);
+    gtk_grid_set_row_spacing(GTK_GRID(action_grid), 4);
+    gtk_grid_set_column_homogeneous(GTK_GRID(action_grid), TRUE);
+    
+    struct {
+        const char *label; const char *icon_name; const char *action; int col; int row;
+    } actions[] = {
+        {"New chat", "document-new-symbolic", "new_chat", 0, 0},
+        {"Search", "system-search-symbolic", "search", 1, 0},
+        {"MCP Ser...", "network-server-symbolic", "mcp", 0, 1},
+        {"Settings", "preferences-system-symbolic", "settings", 1, 1}
+    };
+    
+    for (int i=0; i<4; i++) {
+        GtkWidget *btn = gtk_button_new();
+        gtk_style_context_add_class(gtk_widget_get_style_context(btn), "sidebar-btn");
+        
+        GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+        GtkWidget *icon = gtk_image_new_from_icon_name(actions[i].icon_name, GTK_ICON_SIZE_BUTTON);
+        GtkWidget *lbl = gtk_label_new(actions[i].label);
+        gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
+        
+        gtk_box_pack_start(GTK_BOX(btn_box), icon, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(btn_box), lbl, TRUE, TRUE, 0);
+        gtk_container_add(GTK_CONTAINER(btn), btn_box);
+        
+        g_signal_connect(btn, "clicked", G_CALLBACK(on_gui_button_clicked), (gpointer)actions[i].action);
+        gtk_grid_attach(GTK_GRID(action_grid), btn, actions[i].col, actions[i].row, 1, 1);
+    }
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), action_grid, FALSE, FALSE, 8);
+    
+    // Workspaces
+    GtkWidget *ws_exp = gtk_expander_new(NULL);
+    GtkWidget *ws_hdr_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    GtkWidget *ws_lbl = gtk_label_new("WORKSPACES");
+    gtk_style_context_add_class(gtk_widget_get_style_context(ws_lbl), "section-header");
+    gtk_box_pack_start(GTK_BOX(ws_hdr_box), ws_lbl, TRUE, TRUE, 0);
+    
+    GtkWidget *icon_grid = gtk_image_new_from_icon_name("view-grid-symbolic", GTK_ICON_SIZE_MENU);
+    GtkWidget *icon_folder = gtk_image_new_from_icon_name("folder-new-symbolic", GTK_ICON_SIZE_MENU);
+    gtk_box_pack_start(GTK_BOX(ws_hdr_box), icon_grid, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(ws_hdr_box), icon_folder, FALSE, FALSE, 0);
+    
+    gtk_expander_set_label_widget(GTK_EXPANDER(ws_exp), ws_hdr_box);
+    gtk_expander_set_expanded(GTK_EXPANDER(ws_exp), FALSE);
+    GtkWidget *ws_container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_container_add(GTK_CONTAINER(ws_exp), ws_container);
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), ws_exp, FALSE, FALSE, 4);
+    
+    // CHATS
+    GtkWidget *chats_exp = gtk_expander_new(NULL);
+    GtkWidget *chats_lbl = gtk_label_new("CHATS");
+    gtk_style_context_add_class(gtk_widget_get_style_context(chats_lbl), "section-header");
+    gtk_expander_set_label_widget(GTK_EXPANDER(chats_exp), chats_lbl);
+    gtk_expander_set_expanded(GTK_EXPANDER(chats_exp), FALSE);
+    GtkWidget *chats_container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_container_add(GTK_CONTAINER(chats_exp), chats_container);
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), chats_exp, FALSE, FALSE, 4);
+    
+    // GLOBAL ASSETS
+    GtkWidget *ga_lbl = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(ga_lbl), "<span color='#7b52ab' font_desc='JetBrains Mono 10' letter_spacing='1000'>GLOBAL ASSETS</span>");
+    gtk_label_set_xalign(GTK_LABEL(ga_lbl), 0.0);
+    gtk_widget_set_margin_top(ga_lbl, 8);
+    gtk_widget_set_margin_bottom(ga_lbl, 4);
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), ga_lbl, FALSE, FALSE, 0);
+    
+    // New Note Button
+    GtkWidget *btn_new_note = gtk_button_new();
+    gtk_style_context_add_class(gtk_widget_get_style_context(btn_new_note), "tree-item");
+    GtkWidget *nn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *nn_icon = gtk_image_new_from_icon_name("text-x-generic-symbolic", GTK_ICON_SIZE_BUTTON);
+    GtkWidget *nn_lbl = gtk_label_new("New Note");
+    gtk_box_pack_start(GTK_BOX(nn_box), nn_icon, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(nn_box), nn_lbl, FALSE, FALSE, 0);
+    gtk_container_add(GTK_CONTAINER(btn_new_note), nn_box);
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), btn_new_note, FALSE, FALSE, 2);
+    
+    // Notes & Files row
+    GtkWidget *nf_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_box_set_homogeneous(GTK_BOX(nf_hbox), TRUE);
+    
+    GtkWidget *btn_notes = gtk_button_new();
+    gtk_style_context_add_class(gtk_widget_get_style_context(btn_notes), "tree-item");
+    GtkWidget *bn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_set_halign(bn_box, GTK_ALIGN_CENTER);
+    GtkWidget *bn_icon = gtk_image_new_from_icon_name("text-x-generic-symbolic", GTK_ICON_SIZE_BUTTON);
+    GtkWidget *bn_lbl = gtk_label_new("Notes");
+    gtk_box_pack_start(GTK_BOX(bn_box), bn_icon, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(bn_box), bn_lbl, FALSE, FALSE, 0);
+    gtk_container_add(GTK_CONTAINER(btn_notes), bn_box);
+    
+    GtkWidget *btn_files = gtk_button_new();
+    gtk_style_context_add_class(gtk_widget_get_style_context(btn_files), "tree-item");
+    GtkWidget *bf_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_set_halign(bf_box, GTK_ALIGN_CENTER);
+    GtkWidget *bf_icon = gtk_image_new_from_icon_name("folder-symbolic", GTK_ICON_SIZE_BUTTON);
+    GtkWidget *bf_lbl = gtk_label_new("Files");
+    gtk_box_pack_start(GTK_BOX(bf_box), bf_icon, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(bf_box), bf_lbl, FALSE, FALSE, 0);
+    gtk_container_add(GTK_CONTAINER(btn_files), bf_box);
+    
+    gtk_box_pack_start(GTK_BOX(nf_hbox), btn_notes, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(nf_hbox), btn_files, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), nf_hbox, FALSE, FALSE, 2);
+    
+    // Dynamic list reference (to keep compilation happy if referenced elsewhere)
+    g_ui_state.chats_list = NULL; 
+    
     GtkWidget *spacer = gtk_label_new(""); 
     gtk_widget_set_vexpand(spacer, TRUE);
     gtk_box_pack_start(GTK_BOX(sidebar_vbox), spacer, TRUE, TRUE, 0);
-
-    GtkWidget *btn_settings = gtk_button_new_with_label("⚙ Settings");
-    g_signal_connect(btn_settings, "clicked", G_CALLBACK(on_gui_button_clicked), "settings");
-    gtk_box_pack_start(GTK_BOX(sidebar_vbox), btn_settings, FALSE, FALSE, 0);
     
     gtk_paned_pack1(GTK_PANED(main_paned), sidebar_vbox, FALSE, FALSE);
 
