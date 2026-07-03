@@ -590,13 +590,66 @@ static void on_sidebar_item_clicked(GtkButton *btn, gpointer user_data G_GNUC_UN
     lua_pop(L, 1);
 }
 
+static GtkWidget* create_tree_item_button(const char *label_text, const char *icon_name, const char *filepath, GCallback click_cb) {
+    GtkWidget *btn = gtk_button_new();
+    gtk_style_context_add_class(gtk_widget_get_style_context(btn), "tree-item");
+    GtkWidget *lbl = gtk_label_new(label_text);
+    gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_END);
+    gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
+    
+    if (icon_name) {
+        GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+        GtkWidget *icon = gtk_image_new_from_icon_name(icon_name, GTK_ICON_SIZE_BUTTON);
+        gtk_box_pack_start(GTK_BOX(btn_box), icon, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(btn_box), lbl, TRUE, TRUE, 0);
+        gtk_container_add(GTK_CONTAINER(btn), btn_box);
+    } else {
+        gtk_container_add(GTK_CONTAINER(btn), lbl);
+    }
+    
+    if (filepath) {
+        g_object_set_data_full(G_OBJECT(btn), "filepath", g_strdup(filepath), g_free);
+    }
+    if (click_cb) {
+        g_signal_connect(btn, "clicked", click_cb, NULL);
+    }
+    return btn;
+}
+
+static void populate_container_from_dir(const char *dir_path, GtkWidget *container, const char *icon_name, gboolean only_md, GCallback click_cb) {
+    if (!container) return;
+    DIR *dir = opendir(dir_path);
+    if (!dir) return;
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL) {
+        if (ent->d_name[0] == '.') continue;
+        if (only_md && !strstr(ent->d_name, ".md")) continue;
+        
+        char name_no_ext[256];
+        snprintf(name_no_ext, sizeof(name_no_ext), "%s", ent->d_name);
+        if (only_md) {
+            char *dot = strrchr(name_no_ext, '.');
+            if (dot) *dot = '\0';
+        }
+        if (strlen(name_no_ext) > 27) {
+            name_no_ext[27] = '.'; name_no_ext[28] = '.'; name_no_ext[29] = '.'; name_no_ext[30] = '\0';
+        }
+        char abs_path[PATH_MAX];
+        snprintf(abs_path, sizeof(abs_path), "%s/%s", dir_path, ent->d_name);
+        GtkWidget *btn = create_tree_item_button(name_no_ext, icon_name, abs_path, click_cb);
+        gtk_box_pack_start(GTK_BOX(container), btn, FALSE, FALSE, 0);
+    }
+    closedir(dir);
+}
+
 static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_container, GtkWidget *notes_container, GtkWidget *files_container) {
     char default_ws_path[PATH_MAX];
     const char *jca_env = getenv("JENOVA_WORKSPACES");
     if (jca_env) {
         snprintf(default_ws_path, sizeof(default_ws_path), "%s/default", jca_env);
     } else {
-        snprintf(default_ws_path, sizeof(default_ws_path), "%s/JCA/Workspaces/default", getenv("HOME"));
+        const char *home = getenv("HOME");
+        snprintf(default_ws_path, sizeof(default_ws_path), "%s/JCA/Workspaces/default", home ? home : "/tmp");
     }
     
     DIR *dir = opendir(default_ws_path);
@@ -675,38 +728,7 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                     closedir(ndir);
                 }
             } else if (strcmp(ent->d_name, "Files") == 0) {
-                DIR *fdir = opendir(full_path);
-                if (fdir) {
-                    struct dirent *fent;
-                    while ((fent = readdir(fdir)) != NULL) {
-                        if (fent->d_name[0] == '.') continue;
-                        GtkWidget *btn = gtk_button_new();
-                        gtk_style_context_add_class(gtk_widget_get_style_context(btn), "tree-item");
-                        GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-                        GtkWidget *icon = gtk_image_new_from_icon_name("text-x-generic-symbolic", GTK_ICON_SIZE_BUTTON);
-                        char short_name[256];
-                        strncpy(short_name, fent->d_name, sizeof(short_name));
-                        if (strlen(short_name) > 27) {
-                            short_name[27] = '.'; short_name[28] = '.'; short_name[29] = '.'; short_name[30] = '\0';
-                        }
-                        GtkWidget *lbl = gtk_label_new(short_name);
-                        gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_END);
-                        gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
-                        gtk_box_pack_start(GTK_BOX(btn_box), icon, FALSE, FALSE, 0);
-                        gtk_box_pack_start(GTK_BOX(btn_box), lbl, TRUE, TRUE, 0);
-                        gtk_container_add(GTK_CONTAINER(btn), btn_box);
-                        
-                        char abs_path[PATH_MAX];
-                        snprintf(abs_path, sizeof(abs_path), "%s/%s", full_path, fent->d_name);
-                        g_object_set_data_full(G_OBJECT(btn), "filepath", g_strdup(abs_path), g_free);
-                        g_signal_connect(btn, "clicked", G_CALLBACK(on_sidebar_item_clicked), NULL);
-                        
-                        if (files_container) {
-                            gtk_box_pack_start(GTK_BOX(files_container), btn, FALSE, FALSE, 0);
-                        }
-                    }
-                    closedir(fdir);
-                }
+                populate_container_from_dir(full_path, files_container, "text-x-generic-symbolic", FALSE, G_CALLBACK(on_sidebar_item_clicked));
             } else {
                 GtkWidget *exp = gtk_expander_new(NULL);
                 GtkWidget *hdr_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
@@ -831,6 +853,22 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
     gtk_widget_show_all(chats_container);
     gtk_widget_show_all(notes_container);
     if (files_container) gtk_widget_show_all(files_container);
+}
+
+static void on_editor_save_clicked(GtkWidget *widget G_GNUC_UNUSED, gpointer data G_GNUC_UNUSED) {
+    if (!g_ui_state.editor_path_label || !g_ui_state.editor_textview) return;
+    const char *path = gtk_label_get_text(GTK_LABEL(g_ui_state.editor_path_label));
+    if (!path || strcmp(path, "No file loaded") == 0) return;
+    GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(g_ui_state.editor_textview));
+    GtkTextIter start, end;
+    gtk_text_buffer_get_bounds(buf, &start, &end);
+    char *text = gtk_text_buffer_get_text(buf, &start, &end, FALSE);
+    FILE *f = fopen(path, "w");
+    if (f) {
+        fputs(text, f);
+        fclose(f);
+    }
+    g_free(text);
 }
 
 static void on_toggle_sidebar_clicked(GtkButton *btn, gpointer revealer) {
@@ -1114,6 +1152,7 @@ static void init_gui(void) {
     gtk_widget_set_margin_start(editor_toolbar, 12);
     gtk_widget_set_margin_end(editor_toolbar, 12);
     GtkWidget *btn_save = gtk_button_new_with_label("Save");
+    g_signal_connect(btn_save, "clicked", G_CALLBACK(on_editor_save_clicked), NULL);
     gtk_style_context_add_class(gtk_widget_get_style_context(btn_save), "suggest-btn");
     GtkWidget *editor_path_lbl = gtk_label_new("No file loaded");
     gtk_label_set_xalign(GTK_LABEL(editor_path_lbl), 0.0);

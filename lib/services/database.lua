@@ -23,12 +23,11 @@ end
 function database.get_default_workspace()
     local path = database.get_workspace_path() .. "/default"
     os.execute("mkdir -p " .. shell_quote(path))
-    os.execute("mkdir -p " .. shell_quote(path .. "/chats"))
+    os.execute("mkdir -p " .. shell_quote(path .. "/Chats"))
     return path
 end
 
-function database.save_conversation(conv_id, messages)
-    local path = database.get_default_workspace() .. "/Chats/" .. conv_id .. ".md"
+function database.save_conversation_to_path(path, conv_id, messages)
     local file = io.open(path, "w")
     if file then
         file:write("# topic: " .. conv_id .. " [agent]\n")
@@ -45,48 +44,56 @@ function database.save_conversation(conv_id, messages)
             else
                 local role = (msg.role == "assistant") and "jenova" or msg.role
                 file:write("## " .. role .. "\n\n")
-                file:write(msg.content .. "\n\n")
+                file:write((msg.content or "") .. "\n\n")
             end
         end
         file:close()
     end
 end
 
-function database.load_conversation(conv_id)
-    local path = database.get_default_workspace() .. "/Chats/" .. conv_id .. ".md"
-    local file = io.open(path, "r")
-    if file then
-        local content = file:read("*a")
-        file:close()
-        
-        local messages = {}
-        local current_role = nil
-        local current_msg = {}
-        
-        for line in content:gmatch("([^\n]*)\n?") do
-            if line:match("^<!-- system: (.*) -->") then
-                local sys_content = line:match("^<!-- system: (.*) -->")
-                table.insert(messages, {role = "system", content = sys_content})
-            elseif line:match("^##%s+(%w+)$") then
+function database.parse_conversation_content(content)
+    local messages = {}
+    if not content or content == "" then return messages end
+    
+    local current_role = nil
+    local current_msg = {}
+    
+    for line in content:gmatch("([^\n]*)\n?") do
+        local sys_content = line:match("^<!-- system: (.*) -->")
+        if sys_content then
+            table.insert(messages, {role = "system", content = sys_content})
+        else
+            local r = line:match("^##%s+(%w+)%s*$")
+            if r then r = r:lower() end
+            if r == "user" or r == "jenova" or r == "assistant" then
                 if current_role and #current_msg > 0 then
                     local mapped_role = (current_role == "jenova") and "assistant" or current_role
                     table.insert(messages, {role = mapped_role, content = table.concat(current_msg, "\n")})
                 end
-                current_role = line:match("^##%s+(%w+)$")
+                current_role = r
                 current_msg = {}
             elseif current_role then
-                if line ~= "" or #current_msg > 0 then
-                    table.insert(current_msg, line)
-                end
+            if line ~= "" or #current_msg > 0 then
+                table.insert(current_msg, line)
             end
         end
-        
-        if current_role and #current_msg > 0 then
-            local mapped_role = (current_role == "jenova") and "assistant" or current_role
-            table.insert(messages, {role = mapped_role, content = table.concat(current_msg, "\n")})
         end
-        
-        return messages
+    end
+    
+    if current_role and #current_msg > 0 then
+        local mapped_role = (current_role == "jenova") and "assistant" or current_role
+        table.insert(messages, {role = mapped_role, content = table.concat(current_msg, "\n")})
+    end
+    
+    return messages
+end
+
+function database.load_conversation_from_path(path)
+    local file = io.open(path, "r")
+    if file then
+        local content = file:read("*a")
+        file:close()
+        return database.parse_conversation_content(content or "")
     end
     return {}
 end

@@ -232,14 +232,16 @@ ui.on_action = function(action, arg)
         quit_app()
     elseif action == "new_chat" then
         ui.current_conv_id = generate_uuid()
+        ui.current_chat_path = database.get_default_workspace() .. "/Chats/" .. ui.current_conv_id .. ".md"
         if _G.bedrock_clear_chat_feed then _G.bedrock_clear_chat_feed() end
         _G.bedrock_create_message_bubble("assistant", "Hello! I am Jenova, your local Cognitive Architecture. How can I assist you today?")
         ui.refresh_chat_list()
     elseif action == "switch_chat" and arg then
         ui.current_conv_id = arg
+        ui.current_chat_path = database.get_default_workspace() .. "/Chats/" .. arg .. ".md"
         if _G.bedrock_clear_chat_feed then _G.bedrock_clear_chat_feed() end
         
-        local history = database.load_conversation(arg)
+        local history = database.load_conversation_from_path(ui.current_chat_path)
         if #history == 0 then
             _G.bedrock_create_message_bubble("assistant", "Hello! I am Jenova, your local Cognitive Architecture. How can I assist you today?")
         else
@@ -259,32 +261,25 @@ ui.on_file_clicked = function(filepath)
         return
     end
     
-    local content = file:read("*a")
+    local content = file:read("*a") or ""
     file:close()
     
     if filepath:match("/Chats/") then
         if _G.bedrock_clear_chat_feed then _G.bedrock_clear_chat_feed() end
         
-        local current_role = nil
-        local current_msg = {}
-        
-        for line in content:gmatch("([^\n]*)\n?") do
-            local role_match = line:match("^##%s+(%w+)$")
-            if role_match then
-                if current_role and #current_msg > 0 then
-                    local mapped_role = (current_role == "jenova") and "assistant" or current_role
-                    _G.bedrock_create_message_bubble(mapped_role, table.concat(current_msg, "\n"))
+        local conv_id = filepath:match("([^/]+)%.md$")
+        if conv_id then
+            ui.current_conv_id = conv_id
+            ui.current_chat_path = filepath
+            local history = database.parse_conversation_content(content)
+            if history and #history > 0 then
+                for _, msg in ipairs(history) do
+                    if msg.role ~= "system" then
+                        local mapped_role = (msg.role == "jenova") and "assistant" or msg.role
+                        _G.bedrock_create_message_bubble(mapped_role, msg.content)
+                    end
                 end
-                current_role = role_match
-                current_msg = {}
-            elseif current_role then
-                table.insert(current_msg, line)
             end
-        end
-        
-        if current_role and #current_msg > 0 then
-            local mapped_role = (current_role == "jenova") and "assistant" or current_role
-            _G.bedrock_create_message_bubble(mapped_role, table.concat(current_msg, "\n"))
         end
         
         -- Switch to Chat tab
@@ -399,8 +394,9 @@ ui.on_chat_submit = function(text)
     local msg_buffer = ""
     local reasoning_buffer = ""
     local conv_id = ui.current_conv_id
+    local chat_path = ui.current_chat_path
     
-    chat_service.sendMessage(text, msg_id, conv_id, chat_store, 
+    chat_service.sendMessage(text, msg_id, conv_id, chat_path, chat_store, 
         -- on_chunk callback
         function(chunk_text)
             msg_buffer = msg_buffer .. chunk_text

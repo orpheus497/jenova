@@ -4,10 +4,10 @@ local workspace = require("services.workspace")
 
 local chat_service = {}
 
-function chat_service.sendMessage(text, msg_id, conv_id, store, on_chunk, on_reasoning_chunk, on_complete)
+function chat_service.sendMessage(text, msg_id, conv_id, chat_path, store, on_chunk, on_reasoning_chunk, on_complete)
     store.setLoading(msg_id, true)
     
-    local messages = database.load_conversation(conv_id)
+    local messages = database.load_conversation_from_path(chat_path)
     table.insert(messages, { role = "user", content = text })
     
     local context = workspace.get_workspace_context()
@@ -43,7 +43,7 @@ function chat_service.sendMessage(text, msg_id, conv_id, store, on_chunk, on_rea
             else
                 store.isStreamingActive = false
                 table.insert(messages, { role = "assistant", content = assistant_reply })
-                database.save_conversation(conv_id, messages)
+                database.save_conversation_to_path(chat_path, conv_id, messages)
                 if on_complete then on_complete() end
             end
             return
