@@ -10,6 +10,8 @@
 #include <libgen.h>
 #include <ncurses.h>
 #include <sys/types.h>
+#include <dirent.h>
+#include <sys/stat.h>
 
 /* FreeBSD: sysctl for executable path */
 #if defined(__FreeBSD__)
@@ -562,6 +564,115 @@ static void load_css(void) {
 }
 
 
+static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_container, GtkWidget *notes_container) {
+    char default_ws_path[PATH_MAX];
+    const char *jca_env = getenv("JENOVA_WORKSPACES");
+    if (jca_env) {
+        snprintf(default_ws_path, sizeof(default_ws_path), "%s/default", jca_env);
+    } else {
+        snprintf(default_ws_path, sizeof(default_ws_path), "%s/JCA/Workspaces/default", getenv("HOME"));
+    }
+    
+    DIR *dir = opendir(default_ws_path);
+    if (!dir) return;
+    
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL) {
+        if (ent->d_name[0] == '.') continue;
+        
+        char full_path[PATH_MAX];
+        snprintf(full_path, sizeof(full_path), "%s/%s", default_ws_path, ent->d_name);
+        
+        struct stat st;
+        if (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+            if (strcmp(ent->d_name, "Chats") == 0) {
+                DIR *cdir = opendir(full_path);
+                if (cdir) {
+                    struct dirent *cent;
+                    while ((cent = readdir(cdir)) != NULL) {
+                        if (strstr(cent->d_name, ".md")) {
+                            char name_no_ext[256];
+                            strncpy(name_no_ext, cent->d_name, sizeof(name_no_ext));
+                            char *dot = strrchr(name_no_ext, '.');
+                            if (dot) *dot = '\0';
+                            
+                            GtkWidget *btn = gtk_button_new_with_label(name_no_ext);
+                            gtk_label_set_xalign(GTK_LABEL(gtk_bin_get_child(GTK_BIN(btn))), 0.0);
+                            gtk_style_context_add_class(gtk_widget_get_style_context(btn), "tree-item");
+                            // g_signal_connect(btn, "clicked", G_CALLBACK(on_sidebar_item_clicked), path); // Future hook
+                            gtk_box_pack_start(GTK_BOX(chats_container), btn, FALSE, FALSE, 0);
+                        }
+                    }
+                    closedir(cdir);
+                }
+            } else if (strcmp(ent->d_name, "Notes") == 0) {
+                DIR *ndir = opendir(full_path);
+                if (ndir) {
+                    struct dirent *nent;
+                    while ((nent = readdir(ndir)) != NULL) {
+                        if (strstr(nent->d_name, ".md")) {
+                            char name_no_ext[256];
+                            strncpy(name_no_ext, nent->d_name, sizeof(name_no_ext));
+                            char *dot = strrchr(name_no_ext, '.');
+                            if (dot) *dot = '\0';
+                            
+                            GtkWidget *btn = gtk_button_new();
+                            gtk_style_context_add_class(gtk_widget_get_style_context(btn), "tree-item");
+                            GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+                            GtkWidget *icon = gtk_image_new_from_icon_name("text-x-generic-symbolic", GTK_ICON_SIZE_BUTTON);
+                            GtkWidget *lbl = gtk_label_new(name_no_ext);
+                            gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
+                            gtk_box_pack_start(GTK_BOX(btn_box), icon, FALSE, FALSE, 0);
+                            gtk_box_pack_start(GTK_BOX(btn_box), lbl, TRUE, TRUE, 0);
+                            gtk_container_add(GTK_CONTAINER(btn), btn_box);
+                            gtk_box_pack_start(GTK_BOX(notes_container), btn, FALSE, FALSE, 0);
+                        }
+                    }
+                    closedir(ndir);
+                }
+            } else {
+                GtkWidget *exp = gtk_expander_new(NULL);
+                GtkWidget *hdr_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+                GtkWidget *icon = gtk_image_new_from_icon_name("folder-symbolic", GTK_ICON_SIZE_MENU);
+                GtkWidget *lbl = gtk_label_new(ent->d_name);
+                gtk_box_pack_start(GTK_BOX(hdr_box), icon, FALSE, FALSE, 0);
+                gtk_box_pack_start(GTK_BOX(hdr_box), lbl, TRUE, TRUE, 0);
+                gtk_expander_set_label_widget(GTK_EXPANDER(exp), hdr_box);
+                
+                GtkWidget *inner_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+                gtk_container_add(GTK_CONTAINER(exp), inner_vbox);
+                
+                DIR *fdir = opendir(full_path);
+                if (fdir) {
+                    struct dirent *fent;
+                    while ((fent = readdir(fdir)) != NULL) {
+                        if (strstr(fent->d_name, ".md")) {
+                            char name_no_ext[256];
+                            strncpy(name_no_ext, fent->d_name, sizeof(name_no_ext));
+                            char *dot = strrchr(name_no_ext, '.');
+                            if (dot) *dot = '\0';
+                            
+                            GtkWidget *btn = gtk_button_new_with_label(name_no_ext);
+                            gtk_label_set_xalign(GTK_LABEL(gtk_bin_get_child(GTK_BIN(btn))), 0.0);
+                            gtk_style_context_add_class(gtk_widget_get_style_context(btn), "tree-item");
+                            gtk_box_pack_start(GTK_BOX(inner_vbox), btn, FALSE, FALSE, 0);
+                        }
+                    }
+                    closedir(fdir);
+                }
+                
+                gtk_box_pack_start(GTK_BOX(ws_container), exp, FALSE, FALSE, 2);
+            }
+        }
+    }
+    closedir(dir);
+    
+    gtk_widget_show_all(ws_container);
+    gtk_widget_show_all(chats_container);
+    gtk_widget_show_all(notes_container);
+}
+
+
 static void init_gui(void) {
     load_css();
     g_ui_state.main_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
@@ -698,6 +809,10 @@ static void init_gui(void) {
     gtk_container_add(GTK_CONTAINER(btn_new_note), nn_box);
     gtk_box_pack_start(GTK_BOX(sidebar_vbox), btn_new_note, FALSE, FALSE, 2);
     
+    // Notes Container (for unassigned notes)
+    GtkWidget *notes_container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), notes_container, FALSE, FALSE, 2);
+    
     // Notes & Files row
     GtkWidget *nf_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
     gtk_box_set_homogeneous(GTK_BOX(nf_hbox), TRUE);
@@ -800,6 +915,8 @@ static void init_gui(void) {
     gtk_paned_set_position(GTK_PANED(main_paned), 250);
 
     gtk_overlay_add_overlay(GTK_OVERLAY(overlay), main_paned);
+
+    populate_sidebar_dynamic(ws_container, chats_container, notes_container);
 
     gtk_widget_show_all(g_ui_state.main_window);
     g_ui_state.is_visible = 1;
