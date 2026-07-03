@@ -376,6 +376,13 @@ if [ -f "$JENOVA_ROOT/jenova-ui/jenova-ui" ]; then
     _verify_and_copy_bin "$JENOVA_ROOT/jenova-ui/jenova-ui" "$JCA_HOME/bin/jenova-ui"
 fi
 
+# Deploy jenova-ui WebKit assets (markdown rendering dependencies)
+if [ -d "$JENOVA_ROOT/jenova-ui/assets" ]; then
+    mkdir -p "$JCA_HOME/share/jenova-ui"
+    cp -R "$JENOVA_ROOT/jenova-ui/assets" "$JCA_HOME/share/jenova-ui/"
+    ok "Deployed jenova-ui rendering assets to $JCA_HOME/share/jenova-ui/assets"
+fi
+
 
 
 # 8.3 Deploy Assets, Scripts, and Config

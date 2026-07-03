@@ -1,6 +1,7 @@
 #include "chat_bedrock.h"
 #include <string.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 #include <webkit2/webkit2.h>
 
 static GtkWidget *g_chat_vbox = NULL;
@@ -76,14 +77,23 @@ static int l_bedrock_create_chat_feed(lua_State *L) {
     extern char *get_jenova_root(void);
     const char *jenova_root = get_jenova_root();
 
+    /* Resolve assets directory: prefer deployed share/ path, fall back to source tree */
+    char assets_dir[4096];
+    snprintf(assets_dir, sizeof(assets_dir), "%s/share/jenova-ui/assets", jenova_root);
+    struct stat ast;
+    if (stat(assets_dir, &ast) != 0 || !S_ISDIR(ast.st_mode)) {
+        /* Fallback: source tree layout (dev builds) */
+        snprintf(assets_dir, sizeof(assets_dir), "%s/jenova-ui/assets", jenova_root);
+    }
+
     char *html_template;
     asprintf(&html_template, 
         "<!DOCTYPE html>"
         "<html><head><meta charset='utf-8'>"
-        "<script src='file://%s/jenova-ui/assets/marked.min.js'></script>"
-        "<script src='file://%s/jenova-ui/assets/purify.min.js'></script>"
-        "<link rel='stylesheet' href='file://%s/jenova-ui/assets/atom-one-dark.min.css'>"
-        "<script src='file://%s/jenova-ui/assets/highlight.min.js'></script>"
+        "<script src='file://%s/marked.min.js'></script>"
+        "<script src='file://%s/purify.min.js'></script>"
+        "<link rel='stylesheet' href='file://%s/atom-one-dark.min.css'>"
+        "<script src='file://%s/highlight.min.js'></script>"
         "<style>"
         "body { background: transparent; color: #f0edf2; font-family: 'DejaVuSansM Nerd Font', 'DejaVu Sans Mono', monospace; font-size: 12pt; padding: 16px; margin: 0; }"
         ".bubble-container { display: flex; flex-direction: column; margin-bottom: 24px; }"
@@ -136,7 +146,7 @@ static int l_bedrock_create_chat_feed(lua_State *L) {
         "  document.body.innerHTML = '';"
         "}"
         "</script>"
-        "</head><body></body></html>", jenova_root, jenova_root, jenova_root, jenova_root);
+        "</head><body></body></html>", assets_dir, assets_dir, assets_dir, assets_dir);
     
     webkit_web_view_load_html(WEBKIT_WEB_VIEW(g_webview), html_template, "file:///");
     free(html_template);
