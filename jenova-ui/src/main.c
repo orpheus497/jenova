@@ -59,6 +59,8 @@ typedef struct {
     GtkWidget *notebook;
     GtkWidget *editor_textview;
     GtkWidget *editor_path_label;
+    GtkWidget *sidebar_vbox;
+    GtkWidget *sidebar_scroll_win;
 } GUIState;
 
 static GUIState g_ui_state = {0};
@@ -535,7 +537,7 @@ static void load_css(void) {
         "notebook tab:checked label { color: #e4b382; }\n"
         /* Glass Panel */
         ".glass-panel { background-color: rgba(43, 30, 58, 0.4); border: 1px solid rgba(228, 179, 130, 0.1); border-radius: 12px; padding: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }\n"
-        ".sidebar-panel { background-color: rgba(19, 19, 19, 0.7); border: none; border-radius: 0 24px 24px 0; padding: 16px; box-shadow: 4px 0 15px rgba(0,0,0,0.5); }\n"
+        ".sidebar-panel { background-color: rgba(19, 19, 19, 0.7); border: none; border-radius: 0 24px 24px 0; padding: 16px 2px 16px 16px; box-shadow: 4px 0 15px rgba(0,0,0,0.5); }\n"
         /* Labels */
         "label { color: #f0edf2; font-family: 'DejaVuSansM Nerd Font', 'DejaVu Sans Mono', monospace; font-size: 12pt; }\n"
         "label.title { font-weight: 800; font-size: 24px; color: #e4b382; letter-spacing: 1px; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }\n"
@@ -595,6 +597,7 @@ static GtkWidget* create_tree_item_button(const char *label_text, const char *ic
     gtk_style_context_add_class(gtk_widget_get_style_context(btn), "tree-item");
     GtkWidget *lbl = gtk_label_new(label_text);
     gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_END);
+    gtk_label_set_max_width_chars(GTK_LABEL(lbl), 1);
     gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
     
     if (icon_name) {
@@ -630,9 +633,6 @@ static void populate_container_from_dir(const char *dir_path, GtkWidget *contain
         if (only_md) {
             char *dot = strrchr(name_no_ext, '.');
             if (dot) *dot = '\0';
-        }
-        if (strlen(name_no_ext) > 27) {
-            name_no_ext[27] = '.'; name_no_ext[28] = '.'; name_no_ext[29] = '.'; name_no_ext[30] = '\0';
         }
         char abs_path[PATH_MAX];
         snprintf(abs_path, sizeof(abs_path), "%s/%s", dir_path, ent->d_name);
@@ -674,12 +674,12 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                             strncpy(name_no_ext, cent->d_name, sizeof(name_no_ext));
                             char *dot = strrchr(name_no_ext, '.');
                             if (dot) *dot = '\0';
-                            if (strlen(name_no_ext) > 27) {
-                                name_no_ext[27] = '.'; name_no_ext[28] = '.'; name_no_ext[29] = '.'; name_no_ext[30] = '\0';
-                            }
                             
                             GtkWidget *btn = gtk_button_new_with_label(name_no_ext);
-                            gtk_label_set_xalign(GTK_LABEL(gtk_bin_get_child(GTK_BIN(btn))), 0.0);
+                            GtkWidget *lbl = gtk_bin_get_child(GTK_BIN(btn));
+                            gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
+                            gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_END);
+                            gtk_label_set_max_width_chars(GTK_LABEL(lbl), 1);
                             gtk_style_context_add_class(gtk_widget_get_style_context(btn), "tree-item");
                             
                             char abs_path[PATH_MAX];
@@ -702,9 +702,6 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                             strncpy(name_no_ext, nent->d_name, sizeof(name_no_ext));
                             char *dot = strrchr(name_no_ext, '.');
                             if (dot) *dot = '\0';
-                            if (strlen(name_no_ext) > 27) {
-                                name_no_ext[27] = '.'; name_no_ext[28] = '.'; name_no_ext[29] = '.'; name_no_ext[30] = '\0';
-                            }
                             
                             GtkWidget *btn = gtk_button_new();
                             gtk_style_context_add_class(gtk_widget_get_style_context(btn), "tree-item");
@@ -712,6 +709,7 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                             GtkWidget *icon = gtk_image_new_from_icon_name("text-x-generic-symbolic", GTK_ICON_SIZE_BUTTON);
                             GtkWidget *lbl = gtk_label_new(name_no_ext);
                             gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_END);
+                            gtk_label_set_max_width_chars(GTK_LABEL(lbl), 1);
                             gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
                             gtk_box_pack_start(GTK_BOX(btn_box), icon, FALSE, FALSE, 0);
                             gtk_box_pack_start(GTK_BOX(btn_box), lbl, TRUE, TRUE, 0);
@@ -738,7 +736,7 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                 gtk_box_pack_start(GTK_BOX(hdr_box), lbl, TRUE, TRUE, 0);
                 gtk_expander_set_label_widget(GTK_EXPANDER(exp), hdr_box);
                 
-                GtkWidget *inner_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+                GtkWidget *inner_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
                 gtk_container_add(GTK_CONTAINER(exp), inner_vbox);
                 
                 // Parse Chats
@@ -759,14 +757,12 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                             strncpy(name_no_ext, cent->d_name, sizeof(name_no_ext));
                             char *dot = strrchr(name_no_ext, '.');
                             if (dot) *dot = '\0';
-                            if (strlen(name_no_ext) > 27) {
-                                name_no_ext[27] = '.'; name_no_ext[28] = '.'; name_no_ext[29] = '.'; name_no_ext[30] = '\0';
-                            }
                             
                             GtkWidget *btn = gtk_button_new();
                             gtk_style_context_add_class(gtk_widget_get_style_context(btn), "tree-item");
                             GtkWidget *lbl = gtk_label_new(name_no_ext);
                             gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_END);
+                            gtk_label_set_max_width_chars(GTK_LABEL(lbl), 1);
                             gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
                             gtk_container_add(GTK_CONTAINER(btn), lbl);
                             
@@ -798,9 +794,6 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                             strncpy(name_no_ext, nent->d_name, sizeof(name_no_ext));
                             char *dot = strrchr(name_no_ext, '.');
                             if (dot) *dot = '\0';
-                            if (strlen(name_no_ext) > 27) {
-                                name_no_ext[27] = '.'; name_no_ext[28] = '.'; name_no_ext[29] = '.'; name_no_ext[30] = '\0';
-                            }
                             
                             GtkWidget *btn = gtk_button_new();
                             gtk_style_context_add_class(gtk_widget_get_style_context(btn), "tree-item");
@@ -808,6 +801,7 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                             GtkWidget *bicon = gtk_image_new_from_icon_name("text-x-generic-symbolic", GTK_ICON_SIZE_BUTTON);
                             GtkWidget *blbl = gtk_label_new(name_no_ext);
                             gtk_label_set_ellipsize(GTK_LABEL(blbl), PANGO_ELLIPSIZE_END);
+                            gtk_label_set_max_width_chars(GTK_LABEL(blbl), 1);
                             gtk_label_set_xalign(GTK_LABEL(blbl), 0.0);
                             gtk_box_pack_start(GTK_BOX(btn_box), bicon, FALSE, FALSE, 0);
                             gtk_box_pack_start(GTK_BOX(btn_box), blbl, TRUE, TRUE, 0);
@@ -877,6 +871,21 @@ static void on_toggle_sidebar_clicked(GtkButton *btn, gpointer revealer) {
     gtk_revealer_set_reveal_child(GTK_REVEALER(revealer), !is_revealed);
 }
 
+static void on_main_window_size_allocate(GtkWidget *widget G_GNUC_UNUSED, GdkRectangle *allocation, gpointer data G_GNUC_UNUSED) {
+    if (g_ui_state.sidebar_vbox) {
+        int target_width = allocation->width * 0.25;
+        if (target_width < 220) target_width = 220;
+        if (target_width > 400) target_width = 400;
+        
+        int current_width, current_height;
+        gtk_widget_get_size_request(g_ui_state.sidebar_vbox, &current_width, &current_height);
+        
+        if (current_width != target_width) {
+            gtk_widget_set_size_request(g_ui_state.sidebar_vbox, target_width, -1);
+        }
+    }
+}
+
 static void init_gui(void) {
     load_css();
     g_ui_state.main_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
@@ -887,6 +896,7 @@ static void init_gui(void) {
     GtkStyleContext *ctx = gtk_widget_get_style_context(g_ui_state.main_window);
     gtk_style_context_add_class(ctx, "jenova-window");
     g_signal_connect(g_ui_state.main_window, "delete-event", G_CALLBACK(on_window_delete_event), NULL);
+    g_signal_connect(g_ui_state.main_window, "size-allocate", G_CALLBACK(on_main_window_size_allocate), NULL);
 
     GtkWidget *overlay = gtk_overlay_new();
     gtk_container_add(GTK_CONTAINER(g_ui_state.main_window), overlay);
@@ -904,7 +914,7 @@ static void init_gui(void) {
     /* LEFT SIDEPANEL */
     GtkWidget *sidebar_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
     gtk_style_context_add_class(gtk_widget_get_style_context(sidebar_vbox), "sidebar-panel");
-    gtk_widget_set_size_request(sidebar_vbox, 280, -1);
+    g_ui_state.sidebar_vbox = sidebar_vbox;
     
     // Header Logo & Title
     GtkWidget *header_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
@@ -971,13 +981,8 @@ static void init_gui(void) {
     }
     gtk_box_pack_start(GTK_BOX(sidebar_vbox), action_grid, FALSE, FALSE, 8);
     
-    GtkWidget *sidebar_scroll_win = gtk_scrolled_window_new(NULL, NULL);
-    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sidebar_scroll_win), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
-    gtk_widget_set_vexpand(sidebar_scroll_win, TRUE);
-    gtk_box_pack_start(GTK_BOX(sidebar_vbox), sidebar_scroll_win, TRUE, TRUE, 0);
-
-    GtkWidget *sidebar_scroll_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_container_add(GTK_CONTAINER(sidebar_scroll_win), sidebar_scroll_vbox);
+    GtkWidget *sidebar_scroll_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), sidebar_scroll_vbox, TRUE, TRUE, 0);
 
     // Workspaces
     GtkWidget *ws_exp = gtk_expander_new(NULL);
