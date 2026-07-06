@@ -138,8 +138,8 @@ ${"```"}
 ### Environment Variables
 
 ${"```"}env
-DATABASE_URL="postgresql://user:password@localhost:5432/chat"
-JWT_SECRET="your-secret-key"
+DATABASE_URL="postgresql://<username>:<password>@localhost:5432/<database>"
+JWT_SECRET="<your-jwt-secret-key>"
 REDIS_URL="redis://localhost:6379"
 ${"```"}
 
