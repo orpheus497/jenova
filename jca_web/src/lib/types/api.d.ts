@@ -257,7 +257,8 @@ export interface ApiChatCompletionToolCallDelta {
   function?: ApiChatCompletionToolCallFunctionDelta;
 }
 
-export interface ApiChatCompletionToolCall extends ApiChatCompletionToolCallDelta {
+export interface ApiChatCompletionToolCall
+  extends ApiChatCompletionToolCallDelta {
   function?: ApiChatCompletionToolCallFunctionDelta & { arguments?: string };
 }
 

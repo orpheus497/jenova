@@ -125,8 +125,8 @@ class ConversationsStore {
    * Registered by chatStore to enable cross-store updates without circular dependency.
    */
   private messageUpdateCallback:
-    ((messageId: string, updates: Partial<DatabaseMessage>) => void) | null =
-    null;
+    | ((messageId: string, updates: Partial<DatabaseMessage>) => void)
+    | null = null;
 
   /**
    *

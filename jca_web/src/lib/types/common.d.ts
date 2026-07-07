@@ -54,7 +54,8 @@ export interface ClipboardMcpPromptAttachment {
  * Union type for all clipboard attachment types
  */
 export type ClipboardAttachment =
-  ClipboardTextAttachment | ClipboardMcpPromptAttachment;
+  | ClipboardTextAttachment
+  | ClipboardMcpPromptAttachment;
 
 /**
  * Parsed result from clipboard content
@@ -66,4 +67,7 @@ export interface ParsedClipboardContent {
 }
 
 export type MimeTypeUnion =
-  MimeTypeAudio | MimeTypeImage | MimeTypeApplication | MimeTypeText;
+  | MimeTypeAudio
+  | MimeTypeImage
+  | MimeTypeApplication
+  | MimeTypeText;

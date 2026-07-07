@@ -523,7 +523,7 @@ class ModelsStore {
    *
    */
 
-  /**
+    /**
    * Load a model (ROUTER mode)
    * @param modelId - Model identifier to load
    */

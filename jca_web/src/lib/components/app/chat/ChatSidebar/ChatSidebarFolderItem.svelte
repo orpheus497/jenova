@@ -35,7 +35,7 @@
         <span class="truncate">{folder.name}</span>
     </button>
     <button 
-        aria-label="Delete folder"
+        aria-label="Delete {folder.name}"
         onclick={(e) => { e.stopPropagation(); onDelete(); }}
         class="opacity-0 group-hover:opacity-100 p-1.5 text-muted-foreground hover:text-destructive transition-opacity"
     >
@@ -51,7 +51,7 @@
         <div>
             <div class="flex items-center justify-between group/wschat px-2 text-[10px] uppercase font-bold text-[#7b52ab] opacity-80 hover:opacity-100 mb-1">
                 <span>Chats</span>
-                <button aria-label="New chat in folder" onclick={onNewChat} class="opacity-0 group-hover/wschat:opacity-100 p-1 -m-1"><Plus size={10} /></button>
+                <button aria-label="New chat in {folder.name}" onclick={onNewChat} class="opacity-0 group-hover/wschat:opacity-100 p-1 -m-1"><Plus size={10} /></button>
             </div>
             {#if chats}
                 {@render chats()}
@@ -62,7 +62,7 @@
         <div>
             <div class="flex items-center justify-between group/wsnote px-2 text-[10px] uppercase font-bold text-accent/70 hover:text-accent mb-1">
                 <span>Notes</span>
-                <button aria-label="New note in folder" onclick={onNewNote} class="opacity-0 group-hover/wsnote:opacity-100 p-1 -m-1"><Plus size={10} /></button>
+                <button aria-label="New note in {folder.name}" onclick={onNewNote} class="opacity-0 group-hover/wsnote:opacity-100 p-1 -m-1"><Plus size={10} /></button>
             </div>
             {#if notes}
                 {@render notes()}
