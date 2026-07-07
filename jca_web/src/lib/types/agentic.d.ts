@@ -148,8 +148,7 @@ export interface AgenticFlowOptions {
 export interface AgenticFlowParams {
   conversationId: string;
   messages: (
-    | ApiChatMessageData
-    | (DatabaseMessage & { extra?: DatabaseMessageExtra[] })
+    ApiChatMessageData | (DatabaseMessage & { extra?: DatabaseMessageExtra[] })
   )[];
   options?: AgenticFlowOptions;
   callbacks: AgenticFlowCallbacks;

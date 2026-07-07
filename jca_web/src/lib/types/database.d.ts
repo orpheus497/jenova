@@ -151,5 +151,4 @@ export type ExportedConversation = {
 };
 
 export type ExportedConversations =
-  | ExportedConversation
-  | ExportedConversation[];
+  ExportedConversation | ExportedConversation[];
