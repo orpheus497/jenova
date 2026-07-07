@@ -16,7 +16,7 @@ function escapeHtml(unsafe: string): string {
 function isSafeUrl(url: string): boolean {
   try {
     const parsed = new URL(url, "http://localhost");
-    return ["http:", "https:", "data:", "blob:"].includes(parsed.protocol);
+    return ["http:", "https:"].includes(parsed.protocol);
   } catch {
     return false;
   }
