@@ -416,6 +416,7 @@ update_jenova_ui() {
 uninstall_jenova_core() {
     printf "%s%sUninstalling Jenova Core...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
     "$JENOVA_ROOT/scripts/uninstall.sh"
+}
 uninstall_llama() {
     printf "%s%sUninstalling external/llama.cpp...%s\n" "$RESET" "$BOLD$GREEN" "$RESET"
     rm -rf "$JENOVA_ROOT/external/ext_bin"
