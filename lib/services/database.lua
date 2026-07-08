@@ -113,8 +113,12 @@ function database.get_folder_notes()
             if file then
                 local content = file:read("*a")
                 file:close()
-                local name = file_path:match("([^/]+)$")
-                table.insert(notes, { title = name, content = content })
+                if content then
+                    if #content > 16384 then content = content:sub(1, 16384) .. "\n... (truncated)" end
+                    local name = file_path:match("([^/]+)$")
+                    table.insert(notes, { title = name, content = content })
+                    if #notes >= 15 then break end
+                end
             end
         end
         p:close()

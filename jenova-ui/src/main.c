@@ -691,32 +691,7 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
         struct stat st;
         if (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode)) {
             if (strcmp(ent->d_name, "Chats") == 0) {
-                DIR *cdir = opendir(full_path);
-                if (cdir) {
-                    struct dirent *cent;
-                    while ((cent = readdir(cdir)) != NULL) {
-                        if (strstr(cent->d_name, ".md")) {
-                            char name_no_ext[256];
-                            snprintf(name_no_ext, sizeof(name_no_ext), "%s", cent->d_name);
-                            char *dot = strrchr(name_no_ext, '.');
-                            if (dot) *dot = '\0';
-                            
-                            GtkWidget *btn = gtk_button_new_with_label(name_no_ext);
-                            GtkWidget *lbl = gtk_bin_get_child(GTK_BIN(btn));
-                            gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
-                            gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_END);
-                            gtk_style_context_add_class(gtk_widget_get_style_context(btn), "tree-item");
-                            
-                            char abs_path[PATH_MAX];
-                            snprintf(abs_path, sizeof(abs_path), "%s/%s", full_path, cent->d_name);
-                            g_object_set_data_full(G_OBJECT(btn), "filepath", g_strdup(abs_path), g_free);
-                            g_signal_connect(btn, "clicked", G_CALLBACK(on_sidebar_item_clicked), NULL);
-                            
-                            gtk_box_pack_start(GTK_BOX(chats_container), btn, FALSE, FALSE, 0);
-                        }
-                    }
-                    closedir(cdir);
-                }
+                // Handled by bedrock_add_chat_list_item
             } else if (strcmp(ent->d_name, "Notes") == 0) {
                 DIR *ndir = opendir(full_path);
                 if (ndir) {
@@ -1106,6 +1081,7 @@ static void init_gui(void) {
     
     // Dynamic list reference 
     g_ui_state.chats_list = gtk_list_box_new(); 
+    g_signal_connect(g_ui_state.chats_list, "row-activated", G_CALLBACK(on_chats_list_row_activated), NULL);
     gtk_style_context_add_class(gtk_widget_get_style_context(g_ui_state.chats_list), "sidebar-scroll");
     gtk_box_pack_start(GTK_BOX(chats_container), g_ui_state.chats_list, TRUE, TRUE, 0);
     

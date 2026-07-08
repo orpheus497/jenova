@@ -79,7 +79,7 @@ export class SyncService {
         const allNotes = await DatabaseService.getAllNotes();
         const allFolders = await DatabaseService.getProjectFolders(null);
 
-        const convsMap = new Map(allConvs.map((c) => [c.name, c]));
+        const convsMap = new Map(allConvs.map((c) => [`${c.folderId || 'null'}_${c.name}`, c]));
         const notesMap = new Map(allNotes.map((n) => [`${n.folderId || 'null'}_${n.title}`, n]));
         const folderIdMap = new Map<string, string>(allFolders.map((f) => [f.id, f.id]));
 
@@ -114,9 +114,15 @@ export class SyncService {
               stats.created++;
             }
           } else if (isChat) {
+              let folderId = null;
+              if (parts.length >= 4) {
+                 const folderIdPart = parts[parts.length - 3];
+                 folderId = folderIdMap.get(folderIdPart) || null;
+              }
             const { conv: parsedConv, messages: parsedMessages } =
               MarkdownService.fromMarkdown(content);
-            const conv = convsMap.get(parsedConv.name || fileName);
+            const convName = parsedConv.name || fileName;
+            const conv = convsMap.get(`${folderId || 'null'}_${convName}`);
 
             if (conv && parsedMessages.length > 0) {
               // Clear existing messages and reconstruct the tree properly

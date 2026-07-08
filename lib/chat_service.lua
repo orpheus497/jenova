@@ -75,22 +75,30 @@ function chat_service.sendMessage(text, msg_id, conv_id, chat_path, store, on_ch
                     if on_complete then on_complete() end
                 else
                     local ok, parsed = pcall(json.decode, data)
-                    if ok and parsed and parsed.choices and parsed.choices[1] and parsed.choices[1].delta then
-                        local content = parsed.choices[1].delta.content or ""
-                        local reasoning = parsed.choices[1].delta.reasoning_content or ""
-                        
-                        if reasoning ~= "" then
-                            on_reasoning_chunk(reasoning)
-                        else
-                            -- Fallback parsing if model outputs <think> inline
-                            if content:match("<think>") then is_thinking = true; content = content:gsub("<think>", "") end
-                            if content:match("</think>") then is_thinking = false; content = content:gsub("</think>", "") end
+                    if ok and parsed then
+                        if parsed.error then
+                            is_finished = true
+                            store.isStreamingActive = false
+                            local err_msg = type(parsed.error) == "string" and parsed.error or (parsed.error.message or json.encode(parsed.error))
+                            store.setError(msg_id, "API Error: " .. err_msg)
+                            if on_complete then on_complete() end
+                        elseif parsed.choices and parsed.choices[1] and parsed.choices[1].delta then
+                            local content = parsed.choices[1].delta.content or ""
+                            local reasoning = parsed.choices[1].delta.reasoning_content or ""
                             
-                            if is_thinking then
-                                on_reasoning_chunk(content)
+                            if reasoning ~= "" then
+                                on_reasoning_chunk(reasoning)
                             else
-                                assistant_reply = assistant_reply .. content
-                                on_chunk(content)
+                                -- Fallback parsing if model outputs <think> inline
+                                if content:match("<think>") then is_thinking = true; content = content:gsub("<think>", "") end
+                                if content:match("</think>") then is_thinking = false; content = content:gsub("</think>", "") end
+                                
+                                if is_thinking then
+                                    on_reasoning_chunk(content)
+                                else
+                                    assistant_reply = assistant_reply .. content
+                                    on_chunk(content)
+                                end
                             end
                         end
                     end

@@ -11,7 +11,12 @@ function workspace.get_workspace_context()
     if #notes > 0 then
         context = context .. "--- NOTES & FILES ---\n"
         for _, note in ipairs(notes) do
-            context = context .. "Title: " .. note.title .. "\nContent:\n" .. note.content .. "\n\n"
+            local next_part = "Title: " .. note.title .. "\nContent:\n" .. note.content .. "\n\n"
+            if #context + #next_part > 100000 then
+                context = context .. "\n... (workspace context truncated)\n"
+                break
+            end
+            context = context .. next_part
         end
     end
     
