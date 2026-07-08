@@ -458,13 +458,13 @@ local function proxy_connection(client_fd, conn_fds)
 
     while true do
         local n, err = async_recv(client_fd, buf, 8192, start_time + 10)
-        if n <= 0 then 
+        if n <= 0 then
             if err == "timeout" or os.time() - start_time > 10 then
                 io.write("[proxy] header timeout from client\n")
-            elseif n < 0 then 
-                io.write("[proxy] client recv error: " .. tostring(err) .. "\n") 
+            elseif n < 0 then
+                io.write("[proxy] client recv error: " .. tostring(err) .. "\n")
             end
-            safe_close(); return 
+            safe_close(); return
         end
 
         header_chunks[#header_chunks + 1] = ffi.string(buf, n)
@@ -597,7 +597,6 @@ local function proxy_connection(client_fd, conn_fds)
                 end
             end
             body_raw = decode_chunked_body(table.concat(body_chunks))
-            body_chunks = nil
         else
             local deadline = os.time() + 10
             body_chunks[1] = body_raw
@@ -609,7 +608,6 @@ local function proxy_connection(client_fd, conn_fds)
                 body_total = body_total + n
             end
             body_raw = table.concat(body_chunks)
-            body_chunks = nil
         end
     end
 
@@ -1147,9 +1145,14 @@ while running do
                         end
                         active_connection_count = active_connection_count - 1
                     end)
-                    local _ok, type, watch_fd, deadline = coroutine.resume(co)
-                    if coroutine.status(co) ~= "dead" then
-                        clients[client_fd] = {co = co, type = type, watch_fd = watch_fd, deadline = deadline, created = os.time()}
+                    local ok, err_or_type, watch_fd, deadline = coroutine.resume(co)
+                    if not ok then
+                        io.write("[proxy] coroutine resume failed for new client " .. client_fd .. ": " .. tostring(err_or_type) .. "\n")
+                        if conn_fds.llama >= 0 then pcall(ffi.C.close, conn_fds.llama); conn_fds.llama = -1 end
+                        if conn_fds.client >= 0 then pcall(ffi.C.close, conn_fds.client); conn_fds.client = -1 end
+                        conn_fds_map[client_fd] = nil
+                    elseif coroutine.status(co) ~= "dead" then
+                        clients[client_fd] = {co = co, type = err_or_type, watch_fd = watch_fd, deadline = deadline, created = os.time()}
                     else
                         conn_fds_map[client_fd] = nil
                     end
@@ -1168,12 +1171,21 @@ while running do
             end
 
             if ready then
-                local _ok, type, watch_fd, deadline = coroutine.resume(info.co)
-                if coroutine.status(info.co) == "dead" then
+                local ok, err_or_type, watch_fd, deadline = coroutine.resume(info.co)
+                if not ok then
+                    io.write("[proxy] coroutine resume failed for client " .. cfd .. ": " .. tostring(err_or_type) .. "\n")
+                    local fds = conn_fds_map[cfd]
+                    if fds then
+                        if fds.llama >= 0 then pcall(ffi.C.close, fds.llama); fds.llama = -1 end
+                        if fds.client >= 0 then pcall(ffi.C.close, fds.client); fds.client = -1 end
+                    end
+                    clients[cfd] = nil
+                    conn_fds_map[cfd] = nil
+                elseif coroutine.status(info.co) == "dead" then
                     clients[cfd] = nil
                     conn_fds_map[cfd] = nil
                 else
-                    info.type = type
+                    info.type = err_or_type
                     info.watch_fd = watch_fd
                     info.deadline = deadline
                 end

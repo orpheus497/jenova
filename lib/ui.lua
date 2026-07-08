@@ -127,6 +127,9 @@ end
 ui.on_gui_ready = function()
     -- Initialize the Chat Presentation layer once GTK is fully laid out
     chat_ui.init()
+    
+    ui.current_chat_path = database.get_default_workspace() .. "/Chats/" .. ui.current_conv_id .. ".md"
+    
     ui.refresh_chat_list()
 end
 
@@ -147,19 +150,7 @@ ui.get_menu = function()
     }
 end
 
-local function md_to_pango(md)
-    if not md then return "" end
-    local res = md:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
-    res = res:gsub("%*%*(.-)%*%*", "<b>%1</b>")
-    res = res:gsub("`(.-)`", "<span font_family=\"monospace\" background=\"#1e1e1e\" foreground=\"#e4b382\"> %1 </span>")
-    
-    -- Close unclosed ** during streaming
-    local _, bcount = md:gsub("%*%*", "")
-    if bcount % 2 == 1 then
-        res = res:gsub("%*%*(.*)$", "<b>%1</b>")
-    end
-    return res
-end
+
 
 ui.on_action = function(action, arg)
     if not action then return end
@@ -390,7 +381,7 @@ local chat_service = require("chat_service")
 ui.on_chat_submit = function(text)
     if not ui.current_chat_path then return end
     if not text or text == "" then return end
-    if chat_store.isStreamingActive then return end
+    if chat_store.isStreamingActive or chat_store.isLoading then return end
     
     _G.bedrock_create_message_bubble("user", text)
     local msg_id = _G.bedrock_create_message_bubble("assistant", "")

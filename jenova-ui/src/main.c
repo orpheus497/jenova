@@ -226,7 +226,7 @@ static gboolean on_stream_read(GIOChannel *source, GIOCondition condition, gpoin
         return TRUE;
     }
     
-    if (status == G_IO_STATUS_EOF || (condition & (G_IO_ERR | G_IO_HUP))) {
+    if (status == G_IO_STATUS_EOF || status == G_IO_STATUS_ERROR || (condition & (G_IO_ERR | G_IO_HUP))) {
         lua_rawgeti(L, LUA_REGISTRYINDEX, state->callback_ref);
         lua_pushnil(L);
         if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
@@ -372,6 +372,15 @@ static void on_detect_hardware_clicked(GtkWidget *widget G_GNUC_UNUSED, gpointer
     }
 }
 
+static void lua_table_get_cstring(lua_State *L, const char *key, char *out, size_t out_len) {
+    lua_getfield(L, -1, key);
+    if (lua_isstring(L, -1)) {
+        strncpy(out, lua_tostring(L, -1), out_len - 1);
+        out[out_len - 1] = '\0';
+    }
+    lua_pop(L, 1);
+}
+
 static void show_settings_dialog(void) {
     GtkWidget *dialog = gtk_dialog_new_with_buttons("Settings & Configuration",
                                                     GTK_WINDOW(g_ui_state.main_window),
@@ -407,26 +416,9 @@ static void show_settings_dialog(void) {
         if (lua_istable(L, -1)) {
             lua_getfield(L, -1, "map");
             if (lua_istable(L, -1)) {
-                lua_getfield(L, -1, "CTX_SIZE");
-                if (lua_isstring(L, -1)) {
-                    strncpy(ctx_size, lua_tostring(L, -1), sizeof(ctx_size)-1);
-                    ctx_size[sizeof(ctx_size)-1] = '\0';
-                }
-                lua_pop(L, 1);
-                
-                lua_getfield(L, -1, "DEVICES");
-                if (lua_isstring(L, -1)) {
-                    strncpy(backend, lua_tostring(L, -1), sizeof(backend)-1);
-                    backend[sizeof(backend)-1] = '\0';
-                }
-                lua_pop(L, 1);
-
-                lua_getfield(L, -1, "JENOVA_DRAFT");
-                if (lua_isstring(L, -1)) {
-                    strncpy(spec_decode, lua_tostring(L, -1), sizeof(spec_decode)-1);
-                    spec_decode[sizeof(spec_decode)-1] = '\0';
-                }
-                lua_pop(L, 1);
+                lua_table_get_cstring(L, "CTX_SIZE", ctx_size, sizeof(ctx_size));
+                lua_table_get_cstring(L, "DEVICES", backend, sizeof(backend));
+                lua_table_get_cstring(L, "JENOVA_DRAFT", spec_decode, sizeof(spec_decode));
             }
             lua_pop(L, 1);
         }
@@ -703,22 +695,9 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                             char *dot = strrchr(name_no_ext, '.');
                             if (dot) *dot = '\0';
                             
-                            GtkWidget *btn = gtk_button_new();
-                            gtk_style_context_add_class(gtk_widget_get_style_context(btn), "tree-item");
-                            GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-                            GtkWidget *icon = gtk_image_new_from_icon_name("text-x-generic-symbolic", GTK_ICON_SIZE_BUTTON);
-                            GtkWidget *lbl = gtk_label_new(name_no_ext);
-                            gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_END);
-                            gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
-                            gtk_box_pack_start(GTK_BOX(btn_box), icon, FALSE, FALSE, 0);
-                            gtk_box_pack_start(GTK_BOX(btn_box), lbl, TRUE, TRUE, 0);
-                            gtk_container_add(GTK_CONTAINER(btn), btn_box);
-                            
                             char abs_path[PATH_MAX];
                             snprintf(abs_path, sizeof(abs_path), "%s/%s", full_path, nent->d_name);
-                            g_object_set_data_full(G_OBJECT(btn), "filepath", g_strdup(abs_path), g_free);
-                            g_signal_connect(btn, "clicked", G_CALLBACK(on_sidebar_item_clicked), NULL);
-                            
+                            GtkWidget *btn = create_tree_item_button(name_no_ext, "text-x-generic-symbolic", abs_path, G_CALLBACK(on_sidebar_item_clicked));
                             gtk_box_pack_start(GTK_BOX(notes_container), btn, FALSE, FALSE, 0);
                         }
                     }
@@ -757,18 +736,9 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                             char *dot = strrchr(name_no_ext, '.');
                             if (dot) *dot = '\0';
                             
-                            GtkWidget *btn = gtk_button_new();
-                            gtk_style_context_add_class(gtk_widget_get_style_context(btn), "tree-item");
-                            GtkWidget *lbl = gtk_label_new(name_no_ext);
-                            gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_END);
-                            gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
-                            gtk_container_add(GTK_CONTAINER(btn), lbl);
-                            
                             char abs_path[PATH_MAX];
                             snprintf(abs_path, sizeof(abs_path), "%s/%s", sub_path, cent->d_name);
-                            g_object_set_data_full(G_OBJECT(btn), "filepath", g_strdup(abs_path), g_free);
-                            g_signal_connect(btn, "clicked", G_CALLBACK(on_sidebar_item_clicked), NULL);
-                            
+                            GtkWidget *btn = create_tree_item_button(name_no_ext, NULL, abs_path, G_CALLBACK(on_sidebar_item_clicked));
                             gtk_box_pack_start(GTK_BOX(inner_vbox), btn, FALSE, FALSE, 0);
                         }
                     }
@@ -793,22 +763,9 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                             char *dot = strrchr(name_no_ext, '.');
                             if (dot) *dot = '\0';
                             
-                            GtkWidget *btn = gtk_button_new();
-                            gtk_style_context_add_class(gtk_widget_get_style_context(btn), "tree-item");
-                            GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-                            GtkWidget *bicon = gtk_image_new_from_icon_name("text-x-generic-symbolic", GTK_ICON_SIZE_BUTTON);
-                            GtkWidget *blbl = gtk_label_new(name_no_ext);
-                            gtk_label_set_ellipsize(GTK_LABEL(blbl), PANGO_ELLIPSIZE_END);
-                            gtk_label_set_xalign(GTK_LABEL(blbl), 0.0);
-                            gtk_box_pack_start(GTK_BOX(btn_box), bicon, FALSE, FALSE, 0);
-                            gtk_box_pack_start(GTK_BOX(btn_box), blbl, TRUE, TRUE, 0);
-                            gtk_container_add(GTK_CONTAINER(btn), btn_box);
-                            
                             char abs_path[PATH_MAX];
                             snprintf(abs_path, sizeof(abs_path), "%s/%s", sub_path, nent->d_name);
-                            g_object_set_data_full(G_OBJECT(btn), "filepath", g_strdup(abs_path), g_free);
-                            g_signal_connect(btn, "clicked", G_CALLBACK(on_sidebar_item_clicked), NULL);
-                            
+                            GtkWidget *btn = create_tree_item_button(name_no_ext, "text-x-generic-symbolic", abs_path, G_CALLBACK(on_sidebar_item_clicked));
                             gtk_box_pack_start(GTK_BOX(inner_vbox), btn, FALSE, FALSE, 0);
                         }
                     }
@@ -1520,7 +1477,16 @@ static gboolean update_tray_status(gpointer user_data G_GNUC_UNUSED) {
     lua_pop(L, 1);
 
     /* If an async check is already running, skip this cycle */
-    if (status_pid != 0) return TRUE;
+    if (status_pid != 0) {
+        kill(status_pid, SIGKILL);
+        g_spawn_close_pid(status_pid);
+        status_pid = 0;
+        if (status_output) {
+            g_string_free(status_output, TRUE);
+            status_output = NULL;
+        }
+        return TRUE;
+    }
 
     char *wrapped_cmd = wrap_jenova_cmd("jenova-ca status");
     gchar **argv;

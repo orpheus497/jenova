@@ -59,7 +59,7 @@ function database.parse_conversation_content(content)
     local current_msg = {}
     
     for line in content:gmatch("([^\n]*)\n?") do
-        local sys_content = line:match("^<!-- system: (.*) -->")
+        local sys_content = line:match("^<!%-%-%s*system:%s*(.*)%s*%-%->")
         if sys_content then
             table.insert(messages, {role = "system", content = sys_content})
         else

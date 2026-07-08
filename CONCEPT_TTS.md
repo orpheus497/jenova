@@ -16,7 +16,7 @@ To ensure zero performance degradation to the core reasoning engine, the Voice m
 
 The integration does not require an entirely new external server application, but rather leverages `jenova-ca` to orchestrate a separate companion process.
 
-*   **Process Isolation (`llama.cpp`)**: The `-md` argument in `llama.cpp` shares the exact same vocabulary and thread loop as the main text model. Because Qwen3-TTS outputs audio tokens, it structurally cannot share a thread loop with the standard text Agent. Therefore, it is launched as a specialized companion background process (`PID`), allowing specific targeting of the iGPU.
+*   **Process Isolation (`llama.cpp`)**: Because Qwen3-TTS outputs audio tokens, it structurally cannot share a thread loop with the standard text Agent. Therefore, it is launched as a specialized companion background process (`PID`), allowing specific targeting of the iGPU.
 *   **Daemon Orchestration (`jenova-ca`)**: The old speculative logic (`DRAFT_ARGS`) is removed. In its place, the Qwen3-TTS model is directly managed, started, and stopped by the Jenova daemon exactly like the embedding model.
 
 ## 4. Dual-Layer Toggle Architecture

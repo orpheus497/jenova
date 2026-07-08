@@ -75,7 +75,7 @@ static int l_bedrock_create_chat_feed(lua_State *L) {
     g_webview = webkit_web_view_new();
     WebKitSettings *settings = webkit_web_view_get_settings(WEBKIT_WEB_VIEW(g_webview));
     webkit_settings_set_enable_javascript(settings, TRUE);
-    webkit_settings_set_allow_file_access_from_file_urls(settings, TRUE);
+    webkit_settings_set_allow_file_access_from_file_urls(settings, FALSE);
     g_signal_connect(g_webview, "load-changed", G_CALLBACK(on_webview_load_changed), NULL);
 
     extern char *get_jenova_root(void);
