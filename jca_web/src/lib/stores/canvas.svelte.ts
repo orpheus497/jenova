@@ -1,3 +1,3 @@
 export const canvasStore = $state({
-  enabled: true
+  enabled: true,
 });
