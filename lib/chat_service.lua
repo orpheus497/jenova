@@ -39,7 +39,7 @@ function chat_service.sendMessage(text, msg_id, conv_id, chat_path, store, on_ch
         if not chunk then
             is_finished = true
             if not has_received_data then
-                store.setError(msg_id, "Connection Refused: Ensure Jenova Server is running (Port 8080).")
+                store.setError(msg_id, "Connection Refused: Ensure Jenova Server is running (Port " .. port .. ").")
             else
                 store.isStreamingActive = false
                 table.insert(messages, { role = "assistant", content = assistant_reply })
@@ -71,7 +71,7 @@ function chat_service.sendMessage(text, msg_id, conv_id, chat_path, store, on_ch
                     is_finished = true
                     store.isStreamingActive = false
                     table.insert(messages, { role = "assistant", content = assistant_reply })
-                    database.save_conversation(conv_id, messages)
+                    database.save_conversation_to_path(chat_path, conv_id, messages)
                     if on_complete then on_complete() end
                 else
                     local ok, parsed = pcall(json.decode, data)

@@ -378,6 +378,7 @@ fi
 
 # Deploy jenova-ui WebKit assets (markdown rendering dependencies)
 if [ -d "$JENOVA_ROOT/jenova-ui/assets" ]; then
+    rm -rf "$JCA_HOME/share/jenova-ui/assets"
     mkdir -p "$JCA_HOME/share/jenova-ui"
     cp -R "$JENOVA_ROOT/jenova-ui/assets" "$JCA_HOME/share/jenova-ui/"
     ok "Deployed jenova-ui rendering assets to $JCA_HOME/share/jenova-ui/assets"

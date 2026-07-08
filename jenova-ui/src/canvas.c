@@ -12,9 +12,6 @@ typedef struct {
     double vy[NUM_PARTICLES];
 } ParticleSystem;
 
-static ParticleSystem p_sys;
-static gboolean initialized = FALSE;
-
 static gboolean on_draw_canvas(GtkWidget *widget, cairo_t *cr, gpointer data G_GNUC_UNUSED) {
     int width = gtk_widget_get_allocated_width(widget);
     int height = gtk_widget_get_allocated_height(widget);
@@ -24,33 +21,35 @@ static gboolean on_draw_canvas(GtkWidget *widget, cairo_t *cr, gpointer data G_G
     cairo_set_source_rgb(cr, 0x13 / 255.0, 0x13 / 255.0, 0x13 / 255.0);
     cairo_paint(cr);
 
-    if (!initialized) {
+    ParticleSystem *p_sys = g_object_get_data(G_OBJECT(widget), "particle_sys");
+    if (!p_sys) {
+        p_sys = g_malloc0(sizeof(ParticleSystem));
         int w = width > 1 ? width : 900;
         int h = height > 1 ? height : 600;
         for (int i = 0; i < NUM_PARTICLES; i++) {
-            p_sys.x[i] = g_random_double_range(0, w);
-            p_sys.y[i] = g_random_double_range(0, h);
-            p_sys.vx[i] = g_random_double_range(-0.25, 0.25);
-            p_sys.vy[i] = g_random_double_range(-0.25, 0.25);
+            p_sys->x[i] = g_random_double_range(0, w);
+            p_sys->y[i] = g_random_double_range(0, h);
+            p_sys->vx[i] = g_random_double_range(-0.25, 0.25);
+            p_sys->vy[i] = g_random_double_range(-0.25, 0.25);
         }
-        initialized = TRUE;
+        g_object_set_data_full(G_OBJECT(widget), "particle_sys", p_sys, g_free);
     }
 
     /* Update Phase */
     for (int i = 0; i < NUM_PARTICLES; i++) {
-        p_sys.x[i] += p_sys.vx[i];
-        p_sys.y[i] += p_sys.vy[i];
+        p_sys->x[i] += p_sys->vx[i];
+        p_sys->y[i] += p_sys->vy[i];
 
-        if (p_sys.x[i] < 0) {
-            p_sys.x[i] = width;
-        } else if (p_sys.x[i] > width) {
-            p_sys.x[i] = fmod(p_sys.x[i], (double)width);
+        if (p_sys->x[i] < 0) {
+            p_sys->x[i] = width;
+        } else if (p_sys->x[i] > width) {
+            p_sys->x[i] = fmod(p_sys->x[i], (double)width);
         }
         
-        if (p_sys.y[i] < 0) {
-            p_sys.y[i] = height;
-        } else if (p_sys.y[i] > height) {
-            p_sys.y[i] = fmod(p_sys.y[i], (double)height);
+        if (p_sys->y[i] < 0) {
+            p_sys->y[i] = height;
+        } else if (p_sys->y[i] > height) {
+            p_sys->y[i] = fmod(p_sys->y[i], (double)height);
         }
     }
 
@@ -60,7 +59,7 @@ static gboolean on_draw_canvas(GtkWidget *widget, cairo_t *cr, gpointer data G_G
 
     /* Draw Phase: Particles */
     for (int i = 0; i < NUM_PARTICLES; i++) {
-        cairo_arc(cr, p_sys.x[i], p_sys.y[i], 1.5, 0, 2 * G_PI);
+        cairo_arc(cr, p_sys->x[i], p_sys->y[i], 1.5, 0, 2 * G_PI);
         /* 0.4 fill * 0.3 overall opacity = 0.12 */
         cairo_set_source_rgba(cr, 221/255.0, 183/255.0, 255/255.0, 0.4 * 0.3);
         cairo_fill(cr);
@@ -68,17 +67,17 @@ static gboolean on_draw_canvas(GtkWidget *widget, cairo_t *cr, gpointer data G_G
 
     /* Draw Phase: Connections */
     for (int i = 0; i < NUM_PARTICLES; i++) {
-        double px = p_sys.x[i];
-        double py = p_sys.y[i];
+        double px = p_sys->x[i];
+        double py = p_sys->y[i];
         for (int j = i + 1; j < NUM_PARTICLES; j++) {
-            double dx = px - p_sys.x[j];
-            double dy = py - p_sys.y[j];
+            double dx = px - p_sys->x[j];
+            double dy = py - p_sys->y[j];
             double dist_sq = dx * dx + dy * dy;
 
             if (dist_sq < 150.0 * 150.0) {
                 double dist = sqrt(dist_sq);
                 cairo_move_to(cr, px, py);
-                cairo_line_to(cr, p_sys.x[j], p_sys.y[j]);
+                cairo_line_to(cr, p_sys->x[j], p_sys->y[j]);
                 /* (1 - dist/150) * 0.3 opacity */
                 cairo_set_source_rgba(cr, 185/255.0, 199/255.0, 228/255.0, (1.0 - dist / 150.0) * 0.3);
                 cairo_stroke(cr);
@@ -90,7 +89,9 @@ static gboolean on_draw_canvas(GtkWidget *widget, cairo_t *cr, gpointer data G_G
 }
 
 static gboolean on_animate(GtkWidget *widget) {
-    gtk_widget_queue_draw(widget);
+    if (gtk_widget_get_mapped(widget)) {
+        gtk_widget_queue_draw(widget);
+    }
     return G_SOURCE_CONTINUE; /* Continue timer */
 }
 

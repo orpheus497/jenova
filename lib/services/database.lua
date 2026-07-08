@@ -103,7 +103,10 @@ function database.get_folder_notes()
     local path = database.get_default_workspace()
     local notes = {}
     -- Naive scan of .md files in the workspace root
-    local p = io.popen("find " .. string.format("%q", path) .. " -maxdepth 1 -name '*.md' -o -name '*.txt'")
+    if path:find("[\r\n]") then
+        error("Command injection attempt detected")
+    end
+    local p = io.popen("find " .. shell_quote(path) .. " -maxdepth 1 -name '*.md' -o -name '*.txt'")
     if p then
         for file_path in p:lines() do
             local file = io.open(file_path, "r")

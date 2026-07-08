@@ -1,3 +1,6 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include "chat_bedrock.h"
 #include <string.h>
 #include <stdlib.h>
@@ -87,7 +90,7 @@ static int l_bedrock_create_chat_feed(lua_State *L) {
     }
 
     char *html_template;
-    asprintf(&html_template, 
+    if (asprintf(&html_template, 
         "<!DOCTYPE html>"
         "<html><head><meta charset='utf-8'>"
         "<script src='file://%s/marked.min.js'></script>"
@@ -146,10 +149,11 @@ static int l_bedrock_create_chat_feed(lua_State *L) {
         "  document.body.innerHTML = '';"
         "}"
         "</script>"
-        "</head><body></body></html>", assets_dir, assets_dir, assets_dir, assets_dir);
+        "</head><body></body></html>", assets_dir, assets_dir, assets_dir, assets_dir) != -1) {
     
-    webkit_web_view_load_html(WEBKIT_WEB_VIEW(g_webview), html_template, "file:///");
-    free(html_template);
+        webkit_web_view_load_html(WEBKIT_WEB_VIEW(g_webview), html_template, "file:///");
+        free(html_template);
+    }
     
     GdkRGBA transparent = {0, 0, 0, 0};
     webkit_web_view_set_background_color(WEBKIT_WEB_VIEW(g_webview), &transparent);

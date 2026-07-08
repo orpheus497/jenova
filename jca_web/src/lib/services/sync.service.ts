@@ -80,7 +80,7 @@ export class SyncService {
         const allFolders = await DatabaseService.getProjectFolders(null);
 
         const convsMap = new Map(allConvs.map((c) => [c.name, c]));
-        const notesMap = new Map(allNotes.map((n) => [n.title, n]));
+        const notesMap = new Map(allNotes.map((n) => [`${n.folderId || 'null'}_${n.title}`, n]));
         const folderIdMap = new Map<string, string>(allFolders.map((f) => [f.id, f.id]));
 
         for (const path of mdFiles) {
@@ -93,7 +93,12 @@ export class SyncService {
           const isChat = path.includes("/Chats/");
 
           if (isNote) {
-            const note = notesMap.get(fileName);
+              let folderId = null;
+              if (parts.length >= 4) {
+                 const folderIdPart = parts[parts.length - 3];
+                 folderId = folderIdMap.get(folderIdPart) || null;
+              }
+            const note = notesMap.get(`${folderId || 'null'}_${fileName}`);
             if (note) {
               if (note.content !== content) {
                 await DatabaseService.updateNote(note.id, {
@@ -104,11 +109,6 @@ export class SyncService {
                 stats.updated++;
               }
             } else {
-              let folderId = null;
-              if (parts.length >= 4) {
-                 const folderIdPart = parts[parts.length - 3];
-                 folderId = folderIdMap.get(folderIdPart) || null;
-              }
               await DatabaseService.createNote(folderId, fileName, content);
               changed = true;
               stats.created++;

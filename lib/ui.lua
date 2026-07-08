@@ -121,7 +121,7 @@ ui.init = function(root_path)
     last_lan_state = is_lan_enabled()
     local lan_arg = last_lan_state and "--lan" or ""
     if ui._proxy_handle then pcall(function() ui._proxy_handle:close() end) end
-    ui._proxy_handle = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " proxy-serve " .. lan_arg, "w")
+    ui._proxy_handle = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " proxy-serve " .. lan_arg .. " --watch-stdin", "w")
 end
 
 ui.on_gui_ready = function()
@@ -220,7 +220,7 @@ ui.on_action = function(action, arg)
         set_lan_state(not currently_lan)
         last_lan_state = not currently_lan
         local lan_arg = (not currently_lan) and "--lan" or ""
-        ui._proxy_handle = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " proxy-serve " .. lan_arg, "w")
+        ui._proxy_handle = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " proxy-serve " .. lan_arg .. " --watch-stdin", "w")
         if not currently_lan then
             sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " restart --lan")
         else
@@ -246,7 +246,10 @@ ui.on_action = function(action, arg)
             _G.bedrock_create_message_bubble("assistant", "Hello! I am Jenova, your local Cognitive Architecture. How can I assist you today?")
         else
             for _, msg in ipairs(history) do
-                _G.bedrock_create_message_bubble(msg.role, msg.content)
+                if msg.role ~= "system" then
+                    local mapped_role = (msg.role == "jenova") and "assistant" or msg.role
+                    _G.bedrock_create_message_bubble(mapped_role, msg.content)
+                end
             end
         end
     end
@@ -299,7 +302,7 @@ ui.update_proxy_state = function()
         last_lan_state = current_lan_state
         if ui._proxy_handle then pcall(function() ui._proxy_handle:close() end) end
         local lan_arg = current_lan_state and "--lan" or ""
-        ui._proxy_handle = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " proxy-serve " .. lan_arg, "w")
+        ui._proxy_handle = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " proxy-serve " .. lan_arg .. " --watch-stdin", "w")
     end
 end
 
@@ -385,6 +388,7 @@ local chat_store = require("chat_store")
 local chat_service = require("chat_service")
 
 ui.on_chat_submit = function(text)
+    if not ui.current_chat_path then return end
     if not text or text == "" then return end
     if chat_store.isStreamingActive then return end
     

@@ -1,12 +1,14 @@
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/file.h>
 #include <errno.h>
 #include <limits.h>
+#include <string.h>
 #include <libgen.h>
 #include <ncurses.h>
 #include <sys/types.h>
@@ -273,6 +275,14 @@ static int l_sys_exec_stream(lua_State *Ls) {
     } else {
         g_printerr("sys_exec_stream error: %s\n", error->message);
         g_error_free(error);
+        
+        lua_rawgeti(Ls, LUA_REGISTRYINDEX, ref);
+        lua_pushnil(Ls);
+        if (lua_pcall(Ls, 1, 0, 0) != LUA_OK) {
+            g_printerr("Lua stream EOF callback error: %s\n", lua_tostring(Ls, -1));
+            lua_pop(Ls, 1);
+        }
+        
         luaL_unref(Ls, LUA_REGISTRYINDEX, ref);
     }
     
@@ -288,7 +298,11 @@ static int l_sys_exec_sync(lua_State *Ls) {
     GError *error = NULL;
 
     if (g_spawn_command_line_sync(wrapped_cmd, NULL, NULL, &exit_status, &error)) {
-        lua_pushinteger(Ls, exit_status);
+        if (WIFEXITED(exit_status)) {
+            lua_pushinteger(Ls, WEXITSTATUS(exit_status));
+        } else {
+            lua_pushinteger(Ls, -1);
+        }
     } else {
         fprintf(stderr, "jenova-ui: sync exec error: %s\n", error->message);
         g_error_free(error);
@@ -683,7 +697,7 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                     while ((cent = readdir(cdir)) != NULL) {
                         if (strstr(cent->d_name, ".md")) {
                             char name_no_ext[256];
-                            strncpy(name_no_ext, cent->d_name, sizeof(name_no_ext));
+                            snprintf(name_no_ext, sizeof(name_no_ext), "%s", cent->d_name);
                             char *dot = strrchr(name_no_ext, '.');
                             if (dot) *dot = '\0';
                             
@@ -691,7 +705,6 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                             GtkWidget *lbl = gtk_bin_get_child(GTK_BIN(btn));
                             gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
                             gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_END);
-                            gtk_label_set_max_width_chars(GTK_LABEL(lbl), 1);
                             gtk_style_context_add_class(gtk_widget_get_style_context(btn), "tree-item");
                             
                             char abs_path[PATH_MAX];
@@ -711,7 +724,7 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                     while ((nent = readdir(ndir)) != NULL) {
                         if (strstr(nent->d_name, ".md")) {
                             char name_no_ext[256];
-                            strncpy(name_no_ext, nent->d_name, sizeof(name_no_ext));
+                            snprintf(name_no_ext, sizeof(name_no_ext), "%s", nent->d_name);
                             char *dot = strrchr(name_no_ext, '.');
                             if (dot) *dot = '\0';
                             
@@ -721,7 +734,6 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                             GtkWidget *icon = gtk_image_new_from_icon_name("text-x-generic-symbolic", GTK_ICON_SIZE_BUTTON);
                             GtkWidget *lbl = gtk_label_new(name_no_ext);
                             gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_END);
-                            gtk_label_set_max_width_chars(GTK_LABEL(lbl), 1);
                             gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
                             gtk_box_pack_start(GTK_BOX(btn_box), icon, FALSE, FALSE, 0);
                             gtk_box_pack_start(GTK_BOX(btn_box), lbl, TRUE, TRUE, 0);
@@ -766,7 +778,7 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                     while ((cent = readdir(cdir)) != NULL) {
                         if (strstr(cent->d_name, ".md")) {
                             char name_no_ext[256];
-                            strncpy(name_no_ext, cent->d_name, sizeof(name_no_ext));
+                            snprintf(name_no_ext, sizeof(name_no_ext), "%s", cent->d_name);
                             char *dot = strrchr(name_no_ext, '.');
                             if (dot) *dot = '\0';
                             
@@ -774,7 +786,6 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                             gtk_style_context_add_class(gtk_widget_get_style_context(btn), "tree-item");
                             GtkWidget *lbl = gtk_label_new(name_no_ext);
                             gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_END);
-                            gtk_label_set_max_width_chars(GTK_LABEL(lbl), 1);
                             gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
                             gtk_container_add(GTK_CONTAINER(btn), lbl);
                             
@@ -803,7 +814,7 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                     while ((nent = readdir(ndir)) != NULL) {
                         if (strstr(nent->d_name, ".md")) {
                             char name_no_ext[256];
-                            strncpy(name_no_ext, nent->d_name, sizeof(name_no_ext));
+                            snprintf(name_no_ext, sizeof(name_no_ext), "%s", nent->d_name);
                             char *dot = strrchr(name_no_ext, '.');
                             if (dot) *dot = '\0';
                             
@@ -813,7 +824,6 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                             GtkWidget *bicon = gtk_image_new_from_icon_name("text-x-generic-symbolic", GTK_ICON_SIZE_BUTTON);
                             GtkWidget *blbl = gtk_label_new(name_no_ext);
                             gtk_label_set_ellipsize(GTK_LABEL(blbl), PANGO_ELLIPSIZE_END);
-                            gtk_label_set_max_width_chars(GTK_LABEL(blbl), 1);
                             gtk_label_set_xalign(GTK_LABEL(blbl), 0.0);
                             gtk_box_pack_start(GTK_BOX(btn_box), bicon, FALSE, FALSE, 0);
                             gtk_box_pack_start(GTK_BOX(btn_box), blbl, TRUE, TRUE, 0);
@@ -1094,8 +1104,10 @@ static void init_gui(void) {
     gtk_box_pack_start(GTK_BOX(nf_hbox), btn_files, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(sidebar_scroll_vbox), nf_hbox, FALSE, FALSE, 2);
     
-    // Dynamic list reference (to keep compilation happy if referenced elsewhere)
-    g_ui_state.chats_list = NULL; 
+    // Dynamic list reference 
+    g_ui_state.chats_list = gtk_list_box_new(); 
+    gtk_style_context_add_class(gtk_widget_get_style_context(g_ui_state.chats_list), "sidebar-scroll");
+    gtk_box_pack_start(GTK_BOX(chats_container), g_ui_state.chats_list, TRUE, TRUE, 0);
     
     GtkWidget *spacer = gtk_label_new(""); 
     gtk_widget_set_vexpand(spacer, TRUE);

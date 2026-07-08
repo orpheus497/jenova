@@ -48,6 +48,7 @@ int main(int argc, char *argv[]) {
     
     gtk_widget_show_all(win);
     
+    while (gtk_events_pending()) gtk_main_iteration();
     GtkAllocation alloc;
     gtk_widget_get_allocation(sw, &alloc);
     g_print("SW allocated width: %d\n", alloc.width);

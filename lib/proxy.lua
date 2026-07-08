@@ -584,7 +584,11 @@ local function proxy_connection(client_fd, conn_fds)
                 local chunk = ffi.string(buf, n)
                 body_chunks[#body_chunks + 1] = chunk
                 body_total = body_total + n
-                if body_total > MAX_BODY_SIZE then break end
+                if body_total > MAX_BODY_SIZE then 
+                    local err_resp = "HTTP/1.1 413 Content Too Large\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
+                    async_send(client_fd, err_resp)
+                    safe_close(); return
+                end
                 local combined = table.concat(body_chunks)
                 tail = combined:sub(-5)
             end

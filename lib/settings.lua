@@ -10,7 +10,7 @@ function settings.parse_config(path)
     for line in file:lines() do
         table.insert(lines, line)
         -- Match: VAR="${ENV_VAR:-DEFAULT}"
-        local k, default_val = line:match("^([A-Z_]+)=\"%${[A-Z_]+:-(.-)}\"")
+        local k, default_val = line:match("^([A-Z_]+)=\"%${[A-Z_]+:%-(.-)}\"")
         if k then
             config[k] = default_val
         else
@@ -41,9 +41,9 @@ function settings.save_config(path, config_obj, updates)
 
     for _, line in ipairs(config_obj.lines) do
         -- Try to replace VAR="${ENV_VAR:-DEFAULT}"
-        local k1 = line:match("^([A-Z_]+)=\"%${[A-Z_]+:-.-}\"")
+        local k1 = line:match("^([A-Z_]+)=\"%${[A-Z_]+:%-.-}\"")
         if k1 and updates[k1] then
-            line = line:gsub("^("..k1.."=\"%${[A-Z_]+:-).-(}\")", function(prefix, suffix)
+            line = line:gsub("^("..k1.."=\"%${[A-Z_]+:%-).-(}\")", function(prefix, suffix)
                 return prefix .. shell_escape(updates[k1]) .. suffix
             end)
         else
