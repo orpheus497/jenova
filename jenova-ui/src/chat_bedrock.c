@@ -16,7 +16,9 @@ static gboolean g_webview_loaded = FALSE;
 static GList *g_pending_scripts = NULL;
 
 static void on_webview_load_changed(WebKitWebView *web_view, WebKitLoadEvent load_event, gpointer user_data G_GNUC_UNUSED) {
-    if (load_event == WEBKIT_LOAD_FINISHED) {
+    if (load_event == WEBKIT_LOAD_STARTED) {
+        g_webview_loaded = FALSE;
+    } else if (load_event == WEBKIT_LOAD_FINISHED) {
         g_webview_loaded = TRUE;
         for (GList *l = g_pending_scripts; l != NULL; l = l->next) {
             webkit_web_view_run_javascript(web_view, (const char *)l->data, NULL, NULL, NULL);

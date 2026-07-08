@@ -106,7 +106,7 @@ function database.get_folder_notes()
     if path:find("[\r\n]") then
         error("Command injection attempt detected")
     end
-    local p = io.popen("find " .. shell_quote(path) .. " " .. shell_quote(path .. "/Notes") .. " " .. shell_quote(path .. "/Files") .. " " .. shell_quote(path .. "/Chats") .. " -maxdepth 1 -name '*.md' -o -name '*.txt' 2>/dev/null")
+    local p = io.popen("find " .. shell_quote(path) .. " " .. shell_quote(path .. "/Notes") .. " " .. shell_quote(path .. "/Files") .. " " .. shell_quote(path .. "/Chats") .. " -maxdepth 1 \\( -name '*.md' -o -name '*.txt' \\) 2>/dev/null")
     if p then
         for file_path in p:lines() do
             local file = io.open(file_path, "r")

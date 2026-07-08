@@ -75,7 +75,7 @@ function chat_service.sendMessage(text, msg_id, conv_id, chat_path, store, on_ch
                     if on_complete then on_complete() end
                 else
                     local ok, parsed = pcall(json.decode, data)
-                    if ok and parsed then
+                    if ok and type(parsed) == "table" then
                         if parsed.error then
                             is_finished = true
                             store.isStreamingActive = false

@@ -217,23 +217,23 @@ static gboolean on_stream_read(GIOChannel *source, GIOCondition condition, gpoin
     if (status == G_IO_STATUS_NORMAL && bytes_read > 0) {
         buf[bytes_read] = '\0';
         
-        lua_rawgeti(state->L, LUA_REGISTRYINDEX, state->callback_ref);
-        lua_pushstring(state->L, buf);
-        if (lua_pcall(state->L, 1, 0, 0) != LUA_OK) {
-            g_printerr("Lua stream callback error: %s\n", lua_tostring(state->L, -1));
-            lua_pop(state->L, 1);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, state->callback_ref);
+        lua_pushstring(L, buf);
+        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+            g_printerr("Lua stream callback error: %s\n", lua_tostring(L, -1));
+            lua_pop(L, 1);
         }
         return TRUE;
     }
     
     if (status == G_IO_STATUS_EOF || (condition & (G_IO_ERR | G_IO_HUP))) {
-        lua_rawgeti(state->L, LUA_REGISTRYINDEX, state->callback_ref);
-        lua_pushnil(state->L);
-        if (lua_pcall(state->L, 1, 0, 0) != LUA_OK) {
-            g_printerr("Lua stream EOF callback error: %s\n", lua_tostring(state->L, -1));
-            lua_pop(state->L, 1);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, state->callback_ref);
+        lua_pushnil(L);
+        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+            g_printerr("Lua stream EOF callback error: %s\n", lua_tostring(L, -1));
+            lua_pop(L, 1);
         }
-        luaL_unref(state->L, LUA_REGISTRYINDEX, state->callback_ref);
+        luaL_unref(L, LUA_REGISTRYINDEX, state->callback_ref);
         g_free(state);
         return FALSE;
     }

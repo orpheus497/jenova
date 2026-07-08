@@ -18,9 +18,9 @@ export class SyncService {
   private static _isSyncing = false;
 
   private static buildSyncPath(workspace: string, folderId: string | null | undefined, type: "Notes" | "Chats", entityName: string): string {
-    const safeName = (entityName || "Untitled").replace(/[/\\]/g, "_");
-    const safeFolderId = folderId ? folderId.replace(/[/\\]/g, "_") : null;
-    return safeFolderId ? `${workspace}/${safeFolderId}/${type}/${safeName}.md` : `${workspace}/${type}/${safeName}.md`;
+    const safeName = (entityName || "Untitled").replace(/[\/\\]/g, "_").replace(/\.\./g, "__");
+    const safeFolderId = folderId ? folderId.replace(/[\/\\]/g, "_").replace(/\.\./g, "__") : null;
+    return safeFolderId ? workspace + "/" + safeFolderId + "/" + type + "/" + safeName + ".md" : workspace + "/" + type + "/" + safeName + ".md";
   }
 
   private static resolveFolderIdFromPath(parts: string[], folderIdMap: Map<string, string>): string | null {
@@ -87,6 +87,10 @@ export class SyncService {
         const allNotes = await DatabaseService.getAllNotes();
         const allFolders = await DatabaseService.getAllFolders();
 
+        const folderIdMap = new Map<string, string>(allFolders.map(f => [f.name, f.id]));
+        const convsMap = new Map<string, typeof allConvs[number]>(allConvs.map((c) => [(c.folderId || "null") + "_" + c.name, c]));
+        const notesMap = new Map<string, typeof allNotes[number]>(allNotes.map((n) => [(n.folderId || "null") + "_" + n.title, n]));
+
         const limit = 5;
         const active: Promise<void>[] = [];
         const queue = mdFiles.map((path) => async () => {
@@ -99,12 +103,8 @@ export class SyncService {
           const isChat = path.includes("/Chats/");
 
           if (isNote) {
-<<<<<<< Updated upstream
-            const note = allNotes.find((n) => n.title === fileName);
-=======
-              const folderId = SyncService.resolveFolderIdFromPath(parts, folderIdMap);
+            const folderId = SyncService.resolveFolderIdFromPath(parts, folderIdMap);
             const note = notesMap.get(`${folderId || 'null'}_${fileName}`);
->>>>>>> Stashed changes
             if (note) {
               if (note.content !== content) {
                 await DatabaseService.updateNote(note.id, {
@@ -120,12 +120,10 @@ export class SyncService {
               stats.created++;
             }
           } else if (isChat) {
-              const folderId = SyncService.resolveFolderIdFromPath(parts, folderIdMap);
+            const folderId = SyncService.resolveFolderIdFromPath(parts, folderIdMap);
             const { conv: parsedConv, messages: parsedMessages } =
               MarkdownService.fromMarkdown(content);
-            const conv = allConvs.find(
-              (c) => c.name === (parsedConv.name || fileName),
-            );
+            const conv = convsMap.get(`${folderId || 'null'}_${parsedConv.name || fileName}`);
 
             if (conv && parsedMessages.length > 0) {
               // Clear existing messages and reconstruct the tree properly
@@ -207,6 +205,8 @@ export class SyncService {
       const allFolders = await DatabaseService.getAllFolders();
       const allConvs = await DatabaseService.getAllConversations();
 
+      const folderMap = new Map(allFolders.map((f) => [f.id, f]));
+
       // Hierarchy: Workspace / Project / Folder
       // For now, if no workspace/project, use "default"
 
@@ -216,17 +216,11 @@ export class SyncService {
 
       for (const note of allNotes) {
         queue.push(async () => {
-<<<<<<< Updated upstream
-          const folder = allFolders.find((f) => f.id === note.folderId);
-          const folderName = folder?.name || "Notes";
-          const path = `${defaultWorkspace}/${folderName}/${note.title}.md`;
-=======
           const folder = folderMap.get(note.folderId || "");
           const path = SyncService.buildSyncPath(defaultWorkspace, folder?.id, "Notes", note.title);
           if (note.syncPath && note.syncPath !== path) {
             await StorageService.delete(note.syncPath);
           }
->>>>>>> Stashed changes
           await StorageService.save(path, note.content);
           if (note.syncPath !== path) {
             await DatabaseService.updateNote(note.id, { syncPath: path });

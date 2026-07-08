@@ -577,8 +577,8 @@ local function proxy_connection(client_fd, conn_fds)
             local deadline = os.time() + 10
             body_chunks[1] = body_raw
             body_total = #body_raw
-            local rolling_tail = body_raw:sub(-5)
-            while rolling_tail ~= "0\r\n\r\n" do
+            local tail = body_raw:sub(-5)
+            while tail ~= "0\r\n\r\n" do
                 local n = async_recv(client_fd, buf, 8192, deadline)
                 if n <= 0 then safe_close(); return end
                 local chunk = ffi.string(buf, n)
@@ -589,10 +589,11 @@ local function proxy_connection(client_fd, conn_fds)
                     async_send(client_fd, err_resp)
                     safe_close(); return
                 end
-                if n >= 5 then
-                    rolling_tail = chunk:sub(-5)
+                if #chunk >= 5 then
+                    tail = chunk:sub(-5)
                 else
-                    rolling_tail = (rolling_tail .. chunk):sub(-5)
+                    local prev = body_chunks[#body_chunks - 1] or ""
+                    tail = (prev .. chunk):sub(-5)
                 end
             end
             body_raw = decode_chunked_body(table.concat(body_chunks))
