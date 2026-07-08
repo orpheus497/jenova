@@ -138,9 +138,9 @@ ${"```"}
 ### Environment Variables
 
 ${"```"}env
-DATABASE_URL="postgresql://<username>:<password>@localhost:5432/<database>"
-JWT_SECRET="<your-jwt-secret-key>"
-REDIS_URL="redis://localhost:6379"
+DATABASE_URL="postgresql://<db-user>:<db-password>@<db-host>:<db-port>/<db-name>"
+JWT_SECRET="<replace-with-secure-generated-secret>"
+REDIS_URL="redis://<redis-host>:<redis-port>"
 ${"```"}
 
 ## 🚢 Deployment
