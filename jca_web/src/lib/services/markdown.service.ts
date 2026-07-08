@@ -26,7 +26,7 @@ export class MarkdownService {
       }
 
       const role = msg.role === "assistant" ? "jenova" : msg.role;
-      md += `## ${role}\n\n`;
+      md += `<!-- role: ${role} -->\n\n`;
       md += msg.content + "\n\n";
 
       if (msg.toolCalls) {
@@ -84,9 +84,12 @@ export class MarkdownService {
             timestamp: timestamp++,
           });
         }
-      } else if (line.startsWith("## ")) {
-        flushMessage();
-        currentRole = line.substring(3).trim().toLowerCase();
+      } else if (line.startsWith("<!-- role:")) {
+        const match = line.match(/<!-- role: (.*?) -->/);
+        if (match) {
+          flushMessage();
+          currentRole = match[1].trim().toLowerCase();
+        }
       } else if (currentRole) {
         currentContent.push(line);
       }

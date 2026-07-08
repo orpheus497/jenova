@@ -67,7 +67,7 @@ function chat_service.sendMessage(text, msg_id, conv_id, chat_path, store, on_ch
             
             if line:match("^data: ") then
                 local data = line:sub(7)
-                if data:match("%[DONE%]") then
+                if data == "[DONE]" then
                     is_finished = true
                     store.isStreamingActive = false
                     table.insert(messages, { role = "assistant", content = assistant_reply })

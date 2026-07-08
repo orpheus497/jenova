@@ -19,6 +19,7 @@ export interface DatabaseConversation {
   forkedFromConversationId?: string;
   folderId?: string;
   projectId?: string;
+  syncPath?: string;
 }
 
 export interface DatabaseWorkspace {
@@ -44,6 +45,7 @@ export interface DatabaseNote {
   title: string;
   content: string;
   updatedAt: number;
+  syncPath?: string;
 }
 
 export interface DatabaseFileAsset {

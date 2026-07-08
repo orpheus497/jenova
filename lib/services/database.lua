@@ -43,7 +43,7 @@ function database.save_conversation_to_path(path, conv_id, messages)
                 end
             else
                 local role = (msg.role == "assistant") and "jenova" or msg.role
-                file:write("## " .. role .. "\n\n")
+                file:write("<!-- role: " .. role .. " -->\n\n")
                 file:write((msg.content or "") .. "\n\n")
             end
         end
@@ -63,7 +63,7 @@ function database.parse_conversation_content(content)
         if sys_content then
             table.insert(messages, {role = "system", content = sys_content})
         else
-            local r = line:match("^##%s+(%w+)%s*$")
+            local r = line:match("^<!%-%-%s*role:%s*(%w+)%s*%-%->")
             if r then r = r:lower() end
             if r == "user" or r == "jenova" or r == "assistant" then
                 if current_role and #current_msg > 0 then
@@ -106,12 +106,12 @@ function database.get_folder_notes()
     if path:find("[\r\n]") then
         error("Command injection attempt detected")
     end
-    local p = io.popen("find " .. shell_quote(path) .. " -maxdepth 1 -name '*.md' -o -name '*.txt'")
+    local p = io.popen("find " .. shell_quote(path) .. " " .. shell_quote(path .. "/Notes") .. " " .. shell_quote(path .. "/Files") .. " " .. shell_quote(path .. "/Chats") .. " -maxdepth 1 -name '*.md' -o -name '*.txt' 2>/dev/null")
     if p then
         for file_path in p:lines() do
             local file = io.open(file_path, "r")
             if file then
-                local content = file:read("*a")
+                local content = file:read(16385)
                 file:close()
                 if content then
                     if #content > 16384 then content = content:sub(1, 16384) .. "\n... (truncated)" end

@@ -577,8 +577,8 @@ local function proxy_connection(client_fd, conn_fds)
             local deadline = os.time() + 10
             body_chunks[1] = body_raw
             body_total = #body_raw
-            local tail = body_raw:sub(-5)
-            while tail ~= "0\r\n\r\n" do
+            local rolling_tail = body_raw:sub(-5)
+            while rolling_tail ~= "0\r\n\r\n" do
                 local n = async_recv(client_fd, buf, 8192, deadline)
                 if n <= 0 then safe_close(); return end
                 local chunk = ffi.string(buf, n)
@@ -589,8 +589,11 @@ local function proxy_connection(client_fd, conn_fds)
                     async_send(client_fd, err_resp)
                     safe_close(); return
                 end
-                local combined = table.concat(body_chunks)
-                tail = combined:sub(-5)
+                if n >= 5 then
+                    rolling_tail = chunk:sub(-5)
+                else
+                    rolling_tail = (rolling_tail .. chunk):sub(-5)
+                end
             end
             body_raw = decode_chunked_body(table.concat(body_chunks))
             body_chunks = nil
@@ -642,6 +645,24 @@ local function proxy_connection(client_fd, conn_fds)
             local resp = "HTTP/1.1 500 Internal Server Error\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n"
             async_send(client_fd, resp)
         end
+        safe_close(); return
+    end
+
+    local delete_storage_path = headers_raw:match("^DELETE /api/storage/([^ %?]+)")
+    if delete_storage_path then
+        delete_storage_path = url_decode(delete_storage_path)
+        if delete_storage_path:find("%.%.") then
+            local err = "HTTP/1.1 403 Forbidden\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, err); safe_close(); return
+        end
+        local full_path = resolve_safe_path(workspaces_dir, delete_storage_path)
+        if not full_path then
+            local err = "HTTP/1.1 403 Forbidden\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, err); safe_close(); return
+        end
+        os.remove(full_path)
+        local resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}"
+        async_send(client_fd, resp)
         safe_close(); return
     end
 
