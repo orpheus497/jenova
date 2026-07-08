@@ -72,9 +72,11 @@ export class SyncService {
         const allConvs = await DatabaseService.getAllConversations();
         const allNotes = await DatabaseService.getAllNotes();
 
-        for (const path of mdFiles) {
+        const limit = 5;
+        const active: Promise<void>[] = [];
+        const queue = mdFiles.map((path) => async () => {
           const content = await StorageService.get(path);
-          if (!content) continue;
+          if (!content) return;
 
           const parts = path.split("/");
           const fileName = parts[parts.length - 1].replace(".md", "");
@@ -131,7 +133,31 @@ export class SyncService {
               stats.updated++;
             }
           }
+        });
+
+        // Execute queue with concurrency limit of 5
+        for (const task of queue) {
+          const p = (async () => {
+            try {
+              await task();
+            } catch (err) {
+              console.error("[Sync] Task failed", err);
+            }
+          })();
+
+          const activePromise = p.finally(() => {
+            const index = active.indexOf(activePromise);
+            if (index !== -1) {
+              active.splice(index, 1);
+            }
+          });
+          active.push(activePromise);
+
+          if (active.length >= limit) {
+            await Promise.race(active);
+          }
         }
+        await Promise.all(active);
       }
 
       console.log("[Sync] Pull complete", stats);
@@ -193,10 +219,22 @@ export class SyncService {
       const limit = 3;
       const active: Promise<void>[] = [];
       for (const task of queue) {
-        const p = task().then(() => {
-          active.splice(active.indexOf(p), 1);
+        const p = (async () => {
+          try {
+            await task();
+          } catch (err) {
+            console.error("[Sync] Task failed", err);
+          }
+        })();
+
+        const activePromise = p.finally(() => {
+          const index = active.indexOf(activePromise);
+          if (index !== -1) {
+            active.splice(index, 1);
+          }
         });
-        active.push(p);
+        active.push(activePromise);
+
         if (active.length >= limit) {
           await Promise.race(active);
         }
