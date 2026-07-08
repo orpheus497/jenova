@@ -659,7 +659,11 @@ local function proxy_connection(client_fd, conn_fds)
             local err = "HTTP/1.1 403 Forbidden\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n"
             async_send(client_fd, err); safe_close(); return
         end
-        os.remove(full_path)
+        local ok, err_msg = os.remove(full_path)
+        if not ok and err_msg and not err_msg:match("No such file") then
+            local err = "HTTP/1.1 500 Internal Server Error\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, err); safe_close(); return
+        end
         local resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}"
         async_send(client_fd, resp)
         safe_close(); return

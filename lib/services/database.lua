@@ -67,6 +67,7 @@ function database.parse_conversation_content(content)
             if r then r = r:lower() end
             if r == "user" or r == "jenova" or r == "assistant" then
                 if current_role and #current_msg > 0 then
+                    while #current_msg > 0 and current_msg[#current_msg] == "" do table.remove(current_msg) end
                     local mapped_role = (current_role == "jenova") and "assistant" or current_role
                     table.insert(messages, {role = mapped_role, content = table.concat(current_msg, "\n")})
                 end
@@ -81,6 +82,7 @@ function database.parse_conversation_content(content)
     end
     
     if current_role and #current_msg > 0 then
+        while #current_msg > 0 and current_msg[#current_msg] == "" do table.remove(current_msg) end
         local mapped_role = (current_role == "jenova") and "assistant" or current_role
         table.insert(messages, {role = mapped_role, content = table.concat(current_msg, "\n")})
     end

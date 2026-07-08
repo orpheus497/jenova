@@ -23,9 +23,14 @@ function chat_service.sendMessage(text, msg_id, conv_id, chat_path, store, on_ch
     
     local payload_obj = { messages = api_messages, stream = true }
     local payload_json = json.encode(payload_obj)
-    local shell_payload = payload_json:gsub("'", "'\\''")
+    local tmp_file = "/tmp/jenova_payload_" .. os.time() .. "_" .. tostring(math.random(10000, 99999)) .. ".json"
+    local f = io.open(tmp_file, "w")
+    if f then
+        f:write(payload_json)
+        f:close()
+    end
     local port = tonumber(os.getenv("JENOVA_PROXY_PORT") or os.getenv("JENOVA_PORT")) or 8080
-    local cmd = "curl -N -s --connect-timeout 2 -X POST http://127.0.0.1:" .. port .. "/v1/chat/completions -H 'Content-Type: application/json' -d '" .. shell_payload .. "'"
+    local cmd = "curl -N -s --connect-timeout 2 --max-time 3600 -X POST http://127.0.0.1:" .. port .. "/v1/chat/completions -H 'Content-Type: application/json' -d @" .. tmp_file .. "; rm -f " .. tmp_file
     
     local buffer = ""
     local has_received_data = false

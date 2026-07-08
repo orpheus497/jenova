@@ -97,7 +97,7 @@ export class SyncService {
         const allNotes = await DatabaseService.getAllNotes();
         const allFolders = await DatabaseService.getAllFolders();
 
-        const folderIdMap = new Map<string, string>(allFolders.map(f => [f.name, f.id]));
+        const folderIdMap = new Map<string, string>(allFolders.map(f => [f.id, f.id]));
         const convsMap = new Map<string, typeof allConvs[number]>(allConvs.map((c) => [(c.folderId || "null") + "_" + c.name, c]));
         const notesMap = new Map<string, typeof allNotes[number]>(allNotes.map((n) => [(n.folderId || "null") + "_" + n.title, n]));
 
