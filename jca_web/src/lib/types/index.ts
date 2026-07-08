@@ -57,6 +57,7 @@ export type {
   DatabaseConversation,
   DatabaseMessageExtraAudioFile,
   DatabaseMessageExtraImageFile,
+  DatabaseMessageExtraLegacyContext,
   DatabaseMessageExtraMcpPrompt,
   DatabaseMessageExtraMcpResource,
   DatabaseMessageExtraPdfFile,

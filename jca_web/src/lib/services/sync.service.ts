@@ -79,13 +79,11 @@ export class SyncService {
         const allNotes = await DatabaseService.getAllNotes();
         const allFolders = await DatabaseService.getProjectFolders(null);
 
-        const convsMap = new Map(allConvs.map((c) => [`${c.folderId || 'null'}_${c.name}`, c]));
-        const notesMap = new Map(allNotes.map((n) => [`${n.folderId || 'null'}_${n.title}`, n]));
-        const folderIdMap = new Map<string, string>(allFolders.map((f) => [f.id, f.id]));
-
-        for (const path of mdFiles) {
+        const limit = 5;
+        const active: Promise<void>[] = [];
+        const queue = mdFiles.map((path) => async () => {
           const content = await StorageService.get(path);
-          if (!content) continue;
+          if (!content) return;
 
           const parts = path.split("/");
           const fileName = parts[parts.length - 1].replace(".md", "");
@@ -93,12 +91,7 @@ export class SyncService {
           const isChat = path.includes("/Chats/");
 
           if (isNote) {
-              let folderId = null;
-              if (parts.length >= 4) {
-                 const folderIdPart = parts[parts.length - 3];
-                 folderId = folderIdMap.get(folderIdPart) || null;
-              }
-            const note = notesMap.get(`${folderId || 'null'}_${fileName}`);
+            const note = allNotes.find((n) => n.title === fileName);
             if (note) {
               if (note.content !== content) {
                 await DatabaseService.updateNote(note.id, {
@@ -121,8 +114,9 @@ export class SyncService {
               }
             const { conv: parsedConv, messages: parsedMessages } =
               MarkdownService.fromMarkdown(content);
-            const convName = parsedConv.name || fileName;
-            const conv = convsMap.get(`${folderId || 'null'}_${convName}`);
+            const conv = allConvs.find(
+              (c) => c.name === (parsedConv.name || fileName),
+            );
 
             if (conv && parsedMessages.length > 0) {
               // Clear existing messages and reconstruct the tree properly
@@ -151,7 +145,31 @@ export class SyncService {
               stats.updated++;
             }
           }
+        });
+
+        // Execute queue with concurrency limit of 5
+        for (const task of queue) {
+          const p = (async () => {
+            try {
+              await task();
+            } catch (err) {
+              console.error("[Sync] Task failed", err);
+            }
+          })();
+
+          const activePromise = p.finally(() => {
+            const index = active.indexOf(activePromise);
+            if (index !== -1) {
+              active.splice(index, 1);
+            }
+          });
+          active.push(activePromise);
+
+          if (active.length >= limit) {
+            await Promise.race(active);
+          }
         }
+        await Promise.all(active);
       }
 
       console.log("[Sync] Pull complete", stats);
@@ -185,14 +203,13 @@ export class SyncService {
 
       const defaultWorkspace = workspaces[0]?.name || "default";
 
-      const folderMap = new Map(allFolders.map((f) => [f.id, f]));
-
       const queue: (() => Promise<void>)[] = [];
 
       for (const note of allNotes) {
         queue.push(async () => {
-          const folder = folderMap.get(note.folderId || "");
-          const path = SyncService.buildSyncPath(defaultWorkspace, folder?.id, "Notes", note.title);
+          const folder = allFolders.find((f) => f.id === note.folderId);
+          const folderName = folder?.name || "Notes";
+          const path = `${defaultWorkspace}/${folderName}/${note.title}.md`;
           await StorageService.save(path, note.content);
         });
       }
@@ -202,7 +219,8 @@ export class SyncService {
           const messages = await DatabaseService.getConversationMessages(
             conv.id,
           );
-          const folder = folderMap.get(conv.folderId || "");
+          const folder = allFolders.find((f) => f.id === conv.folderId);
+          const folderName = folder?.name || "Chats";
           const md = MarkdownService.toMarkdown(conv, messages);
           const path = SyncService.buildSyncPath(defaultWorkspace, folder?.id, "Chats", conv.name);
           await StorageService.save(path, md);
@@ -213,10 +231,22 @@ export class SyncService {
       const limit = 3;
       const active: Promise<void>[] = [];
       for (const task of queue) {
-        const p = task().then(() => {
-          active.splice(active.indexOf(p), 1);
+        const p = (async () => {
+          try {
+            await task();
+          } catch (err) {
+            console.error("[Sync] Task failed", err);
+          }
+        })();
+
+        const activePromise = p.finally(() => {
+          const index = active.indexOf(activePromise);
+          if (index !== -1) {
+            active.splice(index, 1);
+          }
         });
-        active.push(p);
+        active.push(activePromise);
+
         if (active.length >= limit) {
           await Promise.race(active);
         }

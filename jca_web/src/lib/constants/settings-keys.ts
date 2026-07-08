@@ -58,8 +58,4 @@ export const SETTINGS_KEYS = {
   EXCLUDE_REASONING_FROM_CONTEXT: "excludeReasoningFromContext",
   SHOW_RAW_OUTPUT_SWITCH: "showRawOutputSwitch",
   CUSTOM: "custom",
-  // Experimental
-  PY_INTERPRETER_ENABLED: "pyInterpreterEnabled",
-  USE_THINKING: "useThinking",
-  USE_AUDIO_VOICE: "useAudioVoice",
 } as const;
