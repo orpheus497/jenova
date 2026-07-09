@@ -6,11 +6,11 @@ This document outlines the architectural strategy for integrating a Voice Model 
 
 ## 2. Hardware Allocation Strategy (iGPU Offloading)
 
-To ensure zero performance degradation to the core reasoning engine, the Voice model is strictly offloaded to the Integrated GPU (iGPU).
+To minimize performance degradation to the core reasoning engine, the Voice model can be targeted toward the Integrated GPU (iGPU) as a best-effort strategy.
 
 *   **VRAM Preservation**: The primary Agent model requires high-bandwidth, fast GDDR6 VRAM of the dedicated GPU (dGPU) for deep reasoning and fast token generation. 
-*   **iGPU UMA Utilization**: The Qwen3-TTS 1.7B model is highly compact (~1.8GB). By binding its background process explicitly to the iGPU (e.g., `-dev Vulkan1`), it seamlessly utilizes shared system RAM (UMA). It does not compete for compute or memory bandwidth with the Agent model.
-*   **Parallel Generation**: Because the Agent and Voice models sit on entirely separate hardware buses, they operate in perfect parallel. The Agent streams text out, and the Voice model instantly ingests and synthesizes it without causing GPU context-switching bottlenecks.
+*   **iGPU UMA Utilization**: The Qwen3-TTS 1.7B model is highly compact (~1.8GB). By attempting to bind its background process explicitly to the iGPU (e.g., via `-dev Vulkan1`), it can utilize shared system RAM (UMA). While this aims to reduce competition for compute or memory bandwidth with the Agent model, actual hardware isolation depends on the underlying system topology and driver support.
+*   **Parallel Generation**: By aiming to distribute the workloads, the system seeks to operate them in parallel. The Agent streams text out, and the Voice model ingests and synthesizes it, ideally avoiding severe GPU context-switching bottlenecks that would occur if both models shared the same device.
 
 ## 3. Subsystem Lifecycle & Isolation
 

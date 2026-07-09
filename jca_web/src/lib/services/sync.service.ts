@@ -121,8 +121,8 @@ export class SyncService {
 
           const parts = path.split("/");
           const fileName = parts[parts.length - 1].replace(".md", "");
-          const isNote = path.includes("/Notes/");
-          const isChat = path.includes("/Chats/");
+          const isNote = parts.length >= 2 && parts[parts.length - 2] === "Notes";
+          const isChat = parts.length >= 2 && parts[parts.length - 2] === "Chats";
 
           if (isNote) {
             const folderId = SyncService.resolveFolderIdFromPath(parts);
@@ -196,6 +196,29 @@ export class SyncService {
                 changed = true;
                 stats.updated++;
               }
+            } else if (parsedMessages.length > 0) {
+              const newConv = await DatabaseService.createConversation(parsedConv.name || cleanFileName);
+              await DatabaseService.updateConversation(newConv.id, { syncPath: path, folderId: folderId });
+              
+              const rootId = await DatabaseService.createRootMessage(newConv.id);
+              let parentId: string = rootId;
+
+              for (const msg of parsedMessages) {
+                const created = await DatabaseService.createMessageBranch(
+                  {
+                    convId: newConv.id,
+                    role: msg.role as any,
+                    content: msg.content || "",
+                    timestamp: msg.timestamp || Date.now(),
+                    type: "text",
+                    toolCalls: "",
+                  },
+                  parentId,
+                );
+                parentId = created.id;
+              }
+              changed = true;
+              stats.created++;
             }
           }
         });
