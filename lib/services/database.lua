@@ -67,9 +67,9 @@ function database.parse_conversation_content(content)
         if sys_content then
             table.insert(messages, {role = "system", content = sys_content})
         else
-            local r = line:match("^<!%-%-%s*role:%s*(%w+)%s*%-%->")
+            local r = line:match("^<!%-%-%s*role:%s*(.-)%s*%-%->")
             if r then r = r:lower() end
-            if r == "user" or r == "jenova" or r == "assistant" then
+            if r then
                 if current_role and #current_msg > 0 then
                     while #current_msg > 0 and current_msg[#current_msg] == "" do table.remove(current_msg) end
                     local mapped_role = (current_role == "jenova") and "assistant" or current_role

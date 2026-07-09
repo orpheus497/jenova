@@ -258,7 +258,7 @@ ui.on_file_clicked = function(filepath)
     local content = file:read("*a") or ""
     file:close()
     
-    if filepath:match("/Chats/") then
+    if filepath:match("/Chats/[^/]+%.md$") then
         if _G.bedrock_clear_chat_feed then _G.bedrock_clear_chat_feed() end
         
         local conv_id = filepath:match("([^/]+)%.md$")
@@ -272,6 +272,11 @@ ui.on_file_clicked = function(filepath)
                         local mapped_role = (msg.role == "jenova") and "assistant" or msg.role
                         _G.bedrock_create_message_bubble(mapped_role, msg.content)
                     end
+                end
+            else
+                -- Fallback for raw markdown files without format tags
+                if content and #content > 0 then
+                    _G.bedrock_create_message_bubble("assistant", content)
                 end
             end
         end
