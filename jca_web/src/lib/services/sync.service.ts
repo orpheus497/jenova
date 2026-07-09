@@ -146,37 +146,45 @@ export class SyncService {
               MarkdownService.fromMarkdown(content);
             let conv = convsBySyncPath.get(path);
             if (!conv) {
-              conv = convsMap.get(`${folderId || 'null'}_${parsedConv.name || fileName}`) || convsMap.get(`${folderId || 'null'}_${parsedConv.name || cleanFileName}`);
+              conv = convsMap.get(`${folderId || 'null'}_${parsedConv.name || fileName}`);
+              if (!conv && !parsedConv.name) {
+                conv = convsMap.get(`${folderId || 'null'}_${cleanFileName}`);
+              }
             }
 
             if (conv && parsedMessages.length > 0) {
               if (conv.syncPath !== path) {
                 await DatabaseService.updateConversation(conv.id, { syncPath: path });
               }
-              // Clear existing messages and reconstruct the tree properly
-              await DatabaseService.deleteConversationMessages(conv.id);
+              const existingMessages = await DatabaseService.getConversationMessages(conv.id);
+              const existingMd = MarkdownService.toMarkdown(conv, existingMessages);
 
-              // Build a linear chain: root → msg1 → msg2 → ...
-              // This preserves the conversation order from the markdown file.
-              const rootId = await DatabaseService.createRootMessage(conv.id);
-              let parentId: string = rootId;
+              if (existingMd !== content) {
+                // Clear existing messages and reconstruct the tree properly
+                await DatabaseService.deleteConversationMessages(conv.id);
 
-              for (const msg of parsedMessages) {
-                const created = await DatabaseService.createMessageBranch(
-                  {
-                    convId: conv.id,
-                    role: msg.role as any,
-                    content: msg.content || "",
-                    timestamp: msg.timestamp || Date.now(),
-                    type: "text",
-                    toolCalls: "",
-                  },
-                  parentId,
-                );
-                parentId = created.id;
+                // Build a linear chain: root → msg1 → msg2 → ...
+                // This preserves the conversation order from the markdown file.
+                const rootId = await DatabaseService.createRootMessage(conv.id);
+                let parentId: string = rootId;
+
+                for (const msg of parsedMessages) {
+                  const created = await DatabaseService.createMessageBranch(
+                    {
+                      convId: conv.id,
+                      role: msg.role as any,
+                      content: msg.content || "",
+                      timestamp: msg.timestamp || Date.now(),
+                      type: "text",
+                      toolCalls: "",
+                    },
+                    parentId,
+                  );
+                  parentId = created.id;
+                }
+                changed = true;
+                stats.updated++;
               }
-              changed = true;
-              stats.updated++;
             }
           }
         });

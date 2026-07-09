@@ -146,7 +146,7 @@ function database.get_folder_notes()
             os.execute("mkdir -p " .. shell_quote(trash_dir))
             
             local function sweep_dir(subdir)
-                local p = io.popen("find " .. shell_quote(path .. "/" .. subdir) .. " -maxdepth 1 -type f -name '*.md' 2>/dev/null")
+                local p = io.popen("find " .. shell_quote(path .. "/" .. subdir) .. " -maxdepth 1 -type f -name '*.md' ! -newer " .. shell_quote(snapshot_path) .. " 2>/dev/null")
                 if p then
                     for file_path in p:lines() do
                         if not valid_paths[file_path] then

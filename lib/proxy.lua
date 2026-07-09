@@ -493,6 +493,13 @@ local function proxy_connection(client_fd, conn_fds)
 
         local origin = headers_raw:match("\r\n[Oo][Rr][Ii][Gg][Ii][Nn]:%s*([^\r\n]+)")
         local allow_origin = origin or "http://localhost:8080"
+        
+        local is_mutating = not (is_get or headers_raw:match("^OPTIONS ") or headers_raw:match("^HEAD "))
+        if is_mutating and not origin then
+            local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, err); safe_close(); return
+        end
+
         if origin then
             local is_safe = origin == "null" or origin:match("^file://") or origin:match("^https?://127%.0%.0%.1$") or origin:match("^https?://127%.0%.0%.1:%d+$") or origin:match("^https?://localhost$") or origin:match("^https?://localhost:%d+$") or origin:match("^https?://%[%:%:1%]$") or origin:match("^https?://%[%:%:1%]:%d+$")
             if not is_safe then
@@ -575,23 +582,54 @@ local function proxy_connection(client_fd, conn_fds)
         end
         if is_chunked then
             local deadline = os.time() + 10
-            body_chunks[1] = body_raw
-            body_total = #body_raw
-            local tail = body_raw:sub(-5)
-            while tail ~= "0\r\n\r\n" do
-                local n = async_recv(client_fd, buf, 8192, deadline)
-                if n <= 0 then safe_close(); return end
-                local chunk = ffi.string(buf, n)
-                body_chunks[#body_chunks + 1] = chunk
-                body_total = body_total + n
-                if body_total > MAX_BODY_SIZE then 
+            local chunk_buffer = body_raw
+            local assembled_body = {}
+            local assembled_total = 0
+            
+            while true do
+                local len_end = chunk_buffer:find("\r\n", 1, true)
+                while not len_end do
+                    local n = async_recv(client_fd, buf, 8192, deadline)
+                    if n <= 0 then break end
+                    chunk_buffer = chunk_buffer .. ffi.string(buf, n)
+                    len_end = chunk_buffer:find("\r\n", 1, true)
+                end
+                if not len_end then break end
+                
+                local hex_str = chunk_buffer:sub(1, len_end - 1):match("^([0-9a-fA-F]+)")
+                if not hex_str then break end
+                local chunk_len = tonumber(hex_str, 16)
+                
+                if chunk_len == 0 then
+                    while not chunk_buffer:find("\r\n\r\n", len_end + 1, true) do
+                        local n = async_recv(client_fd, buf, 8192, deadline)
+                        if n <= 0 then break end
+                        chunk_buffer = chunk_buffer .. ffi.string(buf, n)
+                    end
+                    break
+                end
+                
+                local needed = len_end + chunk_len + 2
+                while #chunk_buffer < needed do
+                    local n = async_recv(client_fd, buf, 8192, deadline)
+                    if n <= 0 then break end
+                    chunk_buffer = chunk_buffer .. ffi.string(buf, n)
+                    if #chunk_buffer > MAX_BODY_SIZE + 8192 then break end
+                end
+                if #chunk_buffer < needed then break end
+                
+                local data = chunk_buffer:sub(len_end + 1, len_end + chunk_len)
+                table.insert(assembled_body, data)
+                assembled_total = assembled_total + #data
+                if assembled_total > MAX_BODY_SIZE then
                     local err_resp = "HTTP/1.1 413 Content Too Large\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
                     async_send(client_fd, err_resp)
                     safe_close(); return
                 end
-                tail = (tail .. chunk):sub(-5)
+                
+                chunk_buffer = chunk_buffer:sub(needed + 1)
             end
-            body_raw = decode_chunked_body(table.concat(body_chunks))
+            body_raw = table.concat(assembled_body)
         else
             local deadline = os.time() + 10
             body_chunks[1] = body_raw
