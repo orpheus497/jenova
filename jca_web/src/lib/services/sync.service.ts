@@ -17,10 +17,10 @@ export interface SyncStats {
 export class SyncService {
   private static _isSyncing = false;
 
-  private static buildSyncPath(workspace: string, folderId: string | null | undefined, type: "Notes" | "Chats", entityName: string): string {
+  private static buildSyncPath(workspace: string, folderId: string | null | undefined, type: "Notes" | "Chats", entityName: string, entityId: string): string {
     const safeName = (entityName || "Untitled").replace(/[\/\\]/g, "_").replace(/\.\./g, "__");
     const safeFolderId = folderId ? folderId.replace(/[\/\\]/g, "_").replace(/\.\./g, "__") : null;
-    return safeFolderId ? workspace + "/" + safeFolderId + "/" + type + "/" + safeName + ".md" : workspace + "/" + type + "/" + safeName + ".md";
+    return safeFolderId ? workspace + "/" + safeFolderId + "/" + type + "/" + safeName + "_" + entityId + ".md" : workspace + "/" + type + "/" + safeName + "_" + entityId + ".md";
   }
 
   private static resolveFolderIdFromPath(parts: string[], folderIdMap: Map<string, string>): string | null {
@@ -32,11 +32,11 @@ export class SyncService {
   }
 
   private static async updateEntitySync(oldSyncPath: string | null | undefined, newSyncPath: string, content: string, updateDbCallback: () => Promise<void>) {
-    if (oldSyncPath && oldSyncPath !== newSyncPath) {
-      await StorageService.delete(oldSyncPath);
-    }
     const success = await StorageService.save(newSyncPath, content);
     if (success && oldSyncPath !== newSyncPath) {
+      if (oldSyncPath) {
+        await StorageService.delete(oldSyncPath);
+      }
       await updateDbCallback();
     }
   }
@@ -100,6 +100,8 @@ export class SyncService {
         const folderIdMap = new Map<string, string>(allFolders.map(f => [f.id, f.id]));
         const convsMap = new Map<string, typeof allConvs[number]>(allConvs.map((c) => [(c.folderId || "null") + "_" + c.name, c]));
         const notesMap = new Map<string, typeof allNotes[number]>(allNotes.map((n) => [(n.folderId || "null") + "_" + n.title, n]));
+        const convsBySyncPath = new Map<string, typeof allConvs[number]>(allConvs.filter(c => c.syncPath).map(c => [c.syncPath!, c]));
+        const notesBySyncPath = new Map<string, typeof allNotes[number]>(allNotes.filter(n => n.syncPath).map(n => [n.syncPath!, n]));
 
         const limit = 5;
         const active: Promise<void>[] = [];
@@ -113,8 +115,11 @@ export class SyncService {
           const isChat = path.includes("/Chats/");
 
           if (isNote) {
-            const folderId = SyncService.resolveFolderIdFromPath(parts, folderIdMap);
-            const note = notesMap.get(`${folderId || 'null'}_${fileName}`);
+            let note = notesBySyncPath.get(path);
+            if (!note) {
+              const folderId = SyncService.resolveFolderIdFromPath(parts, folderIdMap);
+              note = notesMap.get(`${folderId || 'null'}_${fileName}`);
+            }
             if (note) {
               if (note.content !== content) {
                 await DatabaseService.updateNote(note.id, {
@@ -133,7 +138,10 @@ export class SyncService {
             const folderId = SyncService.resolveFolderIdFromPath(parts, folderIdMap);
             const { conv: parsedConv, messages: parsedMessages } =
               MarkdownService.fromMarkdown(content);
-            const conv = convsMap.get(`${folderId || 'null'}_${parsedConv.name || fileName}`);
+            let conv = convsBySyncPath.get(path);
+            if (!conv) {
+              conv = convsMap.get(`${folderId || 'null'}_${parsedConv.name || fileName}`);
+            }
 
             if (conv && parsedMessages.length > 0) {
               // Clear existing messages and reconstruct the tree properly
@@ -227,7 +235,7 @@ export class SyncService {
       for (const note of allNotes) {
         queue.push(async () => {
           const folder = folderMap.get(note.folderId || "");
-          const path = SyncService.buildSyncPath(defaultWorkspace, folder?.id, "Notes", note.title);
+          const path = SyncService.buildSyncPath(defaultWorkspace, folder?.id, "Notes", note.title, note.id);
           await SyncService.updateEntitySync(note.syncPath, path, note.content, async () => {
             await DatabaseService.updateNote(note.id, { syncPath: path });
           });
@@ -242,7 +250,7 @@ export class SyncService {
           const folder = allFolders.find((f) => f.id === conv.folderId);
           const folderName = folder?.name || "Chats";
           const md = MarkdownService.toMarkdown(conv, messages);
-          const path = SyncService.buildSyncPath(defaultWorkspace, folder?.id, "Chats", conv.name);
+          const path = SyncService.buildSyncPath(defaultWorkspace, folder?.id, "Chats", conv.name, conv.id);
           await SyncService.updateEntitySync(conv.syncPath, path, md, async () => {
             await DatabaseService.updateConversation(conv.id, { syncPath: path });
           });
@@ -301,7 +309,7 @@ export class SyncService {
         const note = notes.find((n) => n.id === id);
         if (note) {
           const folder = allFolders.find((f) => f.id === note.folderId);
-          const path = SyncService.buildSyncPath(defaultWorkspace, folder?.id, "Notes", note.title);
+          const path = SyncService.buildSyncPath(defaultWorkspace, folder?.id, "Notes", note.title, note.id);
           await SyncService.updateEntitySync(note.syncPath, path, note.content, async () => {
             await DatabaseService.updateNote(note.id, { syncPath: path });
           });
@@ -312,7 +320,7 @@ export class SyncService {
           const messages = await DatabaseService.getConversationMessages(id);
           const folder = allFolders.find((f) => f.id === conv.folderId);
           const md = MarkdownService.toMarkdown(conv, messages);
-          const path = SyncService.buildSyncPath(defaultWorkspace, folder?.id, "Chats", conv.name);
+          const path = SyncService.buildSyncPath(defaultWorkspace, folder?.id, "Chats", conv.name, conv.id);
           await SyncService.updateEntitySync(conv.syncPath, path, md, async () => {
             await DatabaseService.updateConversation(conv.id, { syncPath: path });
           });

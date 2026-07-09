@@ -1401,6 +1401,7 @@ static void free_action_data(gpointer data, GClosure *closure G_GNUC_UNUSED) {
 
 static GPid status_pid = 0;
 static GString *status_output = NULL;
+static guint status_watch_id = 0;
 
 static gboolean on_status_output_read(GIOChannel *source, GIOCondition condition, gpointer data G_GNUC_UNUSED) {
     gchar buf[512];
@@ -1453,6 +1454,7 @@ static gboolean on_status_output_read(GIOChannel *source, GIOCondition condition
             g_spawn_close_pid(status_pid);
             status_pid = 0;
         }
+        status_watch_id = 0;
         return FALSE; /* Stop listening */
     }
     return TRUE;
@@ -1481,6 +1483,10 @@ static gboolean update_tray_status(gpointer user_data G_GNUC_UNUSED) {
         kill(status_pid, SIGKILL);
         g_spawn_close_pid(status_pid);
         status_pid = 0;
+        if (status_watch_id != 0) {
+            g_source_remove(status_watch_id);
+            status_watch_id = 0;
+        }
         if (status_output) {
             g_string_free(status_output, TRUE);
             status_output = NULL;
@@ -1498,7 +1504,7 @@ static gboolean update_tray_status(gpointer user_data G_GNUC_UNUSED) {
             GIOChannel *channel = g_io_channel_unix_new(status_out_fd);
             g_io_channel_set_encoding(channel, NULL, NULL);
             g_io_channel_set_close_on_unref(channel, TRUE);
-            g_io_add_watch(channel, G_IO_IN | G_IO_ERR | G_IO_HUP, on_status_output_read, NULL);
+            status_watch_id = g_io_add_watch(channel, G_IO_IN | G_IO_ERR | G_IO_HUP, on_status_output_read, NULL);
             g_io_channel_unref(channel);
         } else {
             g_error_free(error);

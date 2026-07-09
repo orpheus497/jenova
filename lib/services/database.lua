@@ -44,7 +44,11 @@ function database.save_conversation_to_path(path, conv_id, messages)
             else
                 local role = (msg.role == "assistant") and "jenova" or msg.role
                 file:write("<!-- role: " .. role .. " -->\n\n")
-                file:write((msg.content or "") .. "\n\n")
+                local escaped_content = (msg.content or ""):gsub("\n<!%-%-", "\n\\<!--")
+                if escaped_content:sub(1, 4) == "<!--" then
+                    escaped_content = "\\<!--" .. escaped_content:sub(5)
+                end
+                file:write(escaped_content .. "\n\n")
             end
         end
         file:close()
@@ -74,10 +78,11 @@ function database.parse_conversation_content(content)
                 current_role = r
                 current_msg = {}
             elseif current_role then
-            if line ~= "" or #current_msg > 0 then
-                table.insert(current_msg, line)
+                local unescaped = line:gsub("^\\<!%-%-", "<!--")
+                if unescaped ~= "" or #current_msg > 0 then
+                    table.insert(current_msg, unescaped)
+                end
             end
-        end
         end
     end
     

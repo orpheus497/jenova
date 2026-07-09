@@ -23,14 +23,18 @@ function chat_service.sendMessage(text, msg_id, conv_id, chat_path, store, on_ch
     
     local payload_obj = { messages = api_messages, stream = true }
     local payload_json = json.encode(payload_obj)
-    local tmp_file = "/tmp/jenova_payload_" .. os.time() .. "_" .. tostring(math.random(10000, 99999)) .. ".json"
-    local f = io.open(tmp_file, "w")
-    if f then
-        f:write(payload_json)
-        f:close()
-    end
     local port = tonumber(os.getenv("JENOVA_PROXY_PORT") or os.getenv("JENOVA_PORT")) or 8080
-    local cmd = "curl -N -s --connect-timeout 2 --max-time 3600 -X POST http://127.0.0.1:" .. port .. "/v1/chat/completions -H 'Content-Type: application/json' -d @" .. tmp_file .. "; rm -f " .. tmp_file
+    local tmp_file = os.tmpname()
+    local f = io.open(tmp_file, "w")
+    if not f then
+        store.setError(msg_id, "Failed to write payload file")
+        if on_complete then on_complete() end
+        return
+    end
+    os.execute("chmod 600 '" .. tmp_file .. "'")
+    f:write(payload_json)
+    f:close()
+    local cmd = "curl -N -s --connect-timeout 2 --max-time 3600 -X POST http://127.0.0.1:" .. port .. "/v1/chat/completions -H 'Content-Type: application/json' -d @" .. tmp_file
     
     local buffer = ""
     local has_received_data = false
@@ -43,6 +47,7 @@ function chat_service.sendMessage(text, msg_id, conv_id, chat_path, store, on_ch
         
         if not chunk then
             is_finished = true
+            os.remove(tmp_file)
             if not has_received_data then
                 store.setError(msg_id, "Connection Refused: Ensure Jenova Server is running (Port " .. port .. ").")
             else
@@ -74,6 +79,7 @@ function chat_service.sendMessage(text, msg_id, conv_id, chat_path, store, on_ch
                 local data = line:sub(7)
                 if data == "[DONE]" then
                     is_finished = true
+                    os.remove(tmp_file)
                     store.isStreamingActive = false
                     table.insert(messages, { role = "assistant", content = assistant_reply })
                     database.save_conversation_to_path(chat_path, conv_id, messages)
@@ -83,6 +89,7 @@ function chat_service.sendMessage(text, msg_id, conv_id, chat_path, store, on_ch
                     if ok and type(parsed) == "table" then
                         if parsed.error then
                             is_finished = true
+                            os.remove(tmp_file)
                             store.isStreamingActive = false
                             local err_msg = type(parsed.error) == "string" and parsed.error or (parsed.error.message or json.encode(parsed.error))
                             store.setError(msg_id, "API Error: " .. err_msg)
@@ -94,15 +101,39 @@ function chat_service.sendMessage(text, msg_id, conv_id, chat_path, store, on_ch
                             if reasoning ~= "" then
                                 on_reasoning_chunk(reasoning)
                             else
-                                -- Fallback parsing if model outputs <think> inline
-                                if content:match("<think>") then is_thinking = true; content = content:gsub("<think>", "") end
-                                if content:match("</think>") then is_thinking = false; content = content:gsub("</think>", "") end
-                                
-                                if is_thinking then
-                                    on_reasoning_chunk(content)
-                                else
-                                    assistant_reply = assistant_reply .. content
-                                    on_chunk(content)
+                                local i = 1
+                                while i <= #content do
+                                    if not is_thinking then
+                                        local start_idx = content:find("<think>", i, true)
+                                        if start_idx then
+                                            local text = content:sub(i, start_idx - 1)
+                                            if text ~= "" then
+                                                assistant_reply = assistant_reply .. text
+                                                on_chunk(text)
+                                            end
+                                            is_thinking = true
+                                            i = start_idx + 7
+                                        else
+                                            local text = content:sub(i)
+                                            assistant_reply = assistant_reply .. text
+                                            on_chunk(text)
+                                            break
+                                        end
+                                    else
+                                        local end_idx = content:find("</think>", i, true)
+                                        if end_idx then
+                                            local text = content:sub(i, end_idx - 1)
+                                            if text ~= "" then
+                                                on_reasoning_chunk(text)
+                                            end
+                                            is_thinking = false
+                                            i = end_idx + 8
+                                        else
+                                            local text = content:sub(i)
+                                            on_reasoning_chunk(text)
+                                            break
+                                        end
+                                    end
                                 end
                             end
                         end

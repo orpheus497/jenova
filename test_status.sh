@@ -12,11 +12,11 @@ time "$JENOVA_ROOT"/bin/jenova-ca status
 # Case 2: Healthy (mock a quick response)
 echo -e "\nHealthy state:"
 echo "$$" > "$PID_FILE"
-( echo -e "HTTP/1.1 200 OK\r\n\r\n" | { nc -l 8080 2>/dev/null || nc -l -p 8080 2>/dev/null; } ) &
+( echo -e "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n" | { nc -l 8080 2>/dev/null || nc -l -p 8080 2>/dev/null; } ) &
 NC_PID=$!
 sleep 0.5
 time "$JENOVA_ROOT"/bin/jenova-ca status
-if kill -0 $NC_PID 2>/dev/null; then kill $NC_PID; fi
+if kill -0 $NC_PID 2>/dev/null; then kill $NC_PID 2>/dev/null; pkill -P $NC_PID 2>/dev/null; fi
 
 # Case 3: Hung (listen but don't respond, forcing curl to timeout)
 echo -e "\nHung state:"
@@ -24,4 +24,4 @@ echo -e "\nHung state:"
 NC_PID=$!
 sleep 0.5
 time "$JENOVA_ROOT"/bin/jenova-ca status
-if kill -0 $NC_PID 2>/dev/null; then kill $NC_PID; fi
+if kill -0 $NC_PID 2>/dev/null; then kill $NC_PID 2>/dev/null; pkill -P $NC_PID 2>/dev/null; fi

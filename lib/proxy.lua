@@ -1010,8 +1010,12 @@ local function proxy_connection(client_fd, conn_fds)
     end
 
     while true do
-        local n = async_recv(llama_fd, buf, 8192)
-        if n <= 0 then break end
+        local deadline = os.time() + 60
+        local n, err = async_recv(llama_fd, buf, 8192, deadline)
+        if n <= 0 then
+            if err == "timeout" then print("[proxy] Timeout waiting for backend response") end
+            break
+        end
         local to_send = ffi.string(buf, n)
         if async_send(client_fd, to_send) < 0 then break end
     end
