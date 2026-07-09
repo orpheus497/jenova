@@ -378,9 +378,9 @@ static void populate_workspaces() {
                 
                 gchar *clean_name = g_strdup(file_name);
                 gchar *ext = g_strrstr(clean_name, ".md");
-                if (ext) *ext = ' ';
+                if (ext) *ext = '\0';
                 gchar *uuid_sep = g_strrstr(clean_name, "_");
-                if (uuid_sep && strlen(uuid_sep) > 10) *uuid_sep = ' ';
+                if (uuid_sep && strlen(uuid_sep) > 10) *uuid_sep = '\0';
                 
                 GtkWidget *item_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
                 GtkWidget *file_icon = gtk_label_new(g_strcmp0(subdirs[i], "Chats") == 0 ? "💬" : "📝");
@@ -455,9 +455,9 @@ static void populate_workspaces() {
                             
                             gchar *clean_name = g_strdup(file_name);
                             gchar *ext = g_strrstr(clean_name, ".md");
-                            if (ext) *ext = ' ';
+                            if (ext) *ext = '\0';
                             gchar *uuid_sep = g_strrstr(clean_name, "_");
-                            if (uuid_sep && strlen(uuid_sep) > 10) *uuid_sep = ' ';
+                            if (uuid_sep && strlen(uuid_sep) > 10) *uuid_sep = '\0';
                             
                             GtkWidget *item_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
                             GtkWidget *file_icon = gtk_label_new(g_strcmp0(subdirs[i], "Chats") == 0 ? "💬" : "📝");
