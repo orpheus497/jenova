@@ -17,17 +17,21 @@ export interface SyncStats {
 export class SyncService {
   private static _isSyncing = false;
 
-  private static buildSyncPath(workspace: string, folderId: string | null | undefined, type: "Notes" | "Chats", entityName: string, entityId: string): string {
-    const safeWorkspace = (workspace || "default").replace(/[\/\\]/g, "_").replace(/\.\./g, "__");
+  private static buildSyncPath(folderName: string | null | undefined, type: "Notes" | "Chats", entityName: string, entityId: string): string {
     const safeName = (entityName || "Untitled").replace(/[\/\\]/g, "_").replace(/\.\./g, "__");
-    const safeFolderId = folderId ? folderId.replace(/[\/\\]/g, "_").replace(/\.\./g, "__") : null;
-    return safeFolderId ? safeWorkspace + "/" + safeFolderId + "/" + type + "/" + safeName + "_" + entityId + ".md" : safeWorkspace + "/" + type + "/" + safeName + "_" + entityId + ".md";
+    const safeFolderName = folderName ? folderName.replace(/[\/\\]/g, "_").replace(/\.\./g, "__") : null;
+    
+    if (safeFolderName) {
+      return `Spaces/${safeFolderName}/${type}/${safeName}_${entityId}.md`;
+    } else {
+      return `${type}/${safeName}_${entityId}.md`;
+    }
   }
 
-  private static resolveFolderIdFromPath(parts: string[], folderIdMap: Map<string, string>): string | null {
-    if (parts.length >= 4) {
-      const folderIdPart = parts[parts.length - 3];
-      return folderIdMap.get(folderIdPart) || null;
+  private static resolveFolderIdFromPath(parts: string[], folderNameMap: Map<string, string>): string | null {
+    if (parts.length >= 4 && parts[0] === "Spaces") {
+      const folderName = parts[1];
+      return folderNameMap.get(folderName) || null;
     }
     return null;
   }
@@ -101,7 +105,7 @@ export class SyncService {
         const allNotes = await DatabaseService.getAllNotes();
         const allFolders = await DatabaseService.getAllFolders();
 
-        const folderIdMap = new Map<string, string>(allFolders.map(f => [f.id, f.id]));
+        const folderNameMap = new Map<string, string>(allFolders.map(f => [f.name, f.id]));
         const convsMap = new Map<string, typeof allConvs[number]>(allConvs.map((c) => [(c.folderId || "null") + "_" + c.name, c]));
         const notesMap = new Map<string, typeof allNotes[number]>(allNotes.map((n) => [(n.folderId || "null") + "_" + n.title, n]));
         const convsBySyncPath = new Map<string, typeof allConvs[number]>(allConvs.filter(c => c.syncPath).map(c => [c.syncPath!, c]));
@@ -119,7 +123,7 @@ export class SyncService {
           const isChat = path.includes("/Chats/");
 
           if (isNote) {
-            const folderId = SyncService.resolveFolderIdFromPath(parts, folderIdMap);
+            const folderId = SyncService.resolveFolderIdFromPath(parts, folderNameMap);
             const cleanFileName = fileName.replace(/_[^_]+$/, "");
             let note = notesBySyncPath.get(path);
             if (!note) {
@@ -130,7 +134,7 @@ export class SyncService {
                 await DatabaseService.updateNote(note.id, {
                   content,
                   syncPath: path,
-                  folderId: folderId || undefined,
+                  folderId: folderId,
                   updatedAt: Date.now(),
                 });
                 if (note.content !== content) {
@@ -145,7 +149,7 @@ export class SyncService {
               stats.created++;
             }
           } else if (isChat) {
-            const folderId = SyncService.resolveFolderIdFromPath(parts, folderIdMap);
+            const folderId = SyncService.resolveFolderIdFromPath(parts, folderNameMap);
             const cleanFileName = fileName.replace(/_[^_]+$/, "");
             const { conv: parsedConv, messages: parsedMessages } =
               MarkdownService.fromMarkdown(content);
@@ -158,8 +162,8 @@ export class SyncService {
             }
 
             if (conv && parsedMessages.length > 0) {
-              if (conv.syncPath !== path) {
-                await DatabaseService.updateConversation(conv.id, { syncPath: path });
+              if (conv.syncPath !== path || conv.folderId !== folderId) {
+                await DatabaseService.updateConversation(conv.id, { syncPath: path, folderId: folderId });
               }
               const existingMessages = await DatabaseService.getConversationMessages(conv.id);
               const existingMd = MarkdownService.toMarkdown(conv, existingMessages);
@@ -262,7 +266,7 @@ export class SyncService {
       for (const note of allNotes) {
         queue.push(async () => {
           const folder = folderMap.get(note.folderId || "");
-          const path = SyncService.buildSyncPath(defaultWorkspace, folder?.id, "Notes", note.title, note.id);
+          const path = SyncService.buildSyncPath(folder?.name, "Notes", note.title, note.id);
           await SyncService.updateEntitySync(note.syncPath, path, note.content, async () => {
             await DatabaseService.updateNote(note.id, { syncPath: path });
           });
@@ -275,9 +279,8 @@ export class SyncService {
             conv.id,
           );
           const folder = folderMap.get(conv.folderId || "");
-          const folderName = folder?.name || "Chats";
           const md = MarkdownService.toMarkdown(conv, messages);
-          const path = SyncService.buildSyncPath(defaultWorkspace, folder?.id, "Chats", conv.name, conv.id);
+          const path = SyncService.buildSyncPath(folder?.name, "Chats", conv.name, conv.id);
           await SyncService.updateEntitySync(conv.syncPath, path, md, async () => {
             await DatabaseService.updateConversation(conv.id, { syncPath: path });
           });
@@ -336,7 +339,7 @@ export class SyncService {
         const note = notes.find((n) => n.id === id);
         if (note) {
           const folder = allFolders.find((f) => f.id === note.folderId);
-          const path = SyncService.buildSyncPath(defaultWorkspace, folder?.id, "Notes", note.title, note.id);
+          const path = SyncService.buildSyncPath(folder?.name, "Notes", note.title, note.id);
           await SyncService.updateEntitySync(note.syncPath, path, note.content, async () => {
             await DatabaseService.updateNote(note.id, { syncPath: path });
           });
@@ -347,7 +350,7 @@ export class SyncService {
           const messages = await DatabaseService.getConversationMessages(id);
           const folder = allFolders.find((f) => f.id === conv.folderId);
           const md = MarkdownService.toMarkdown(conv, messages);
-          const path = SyncService.buildSyncPath(defaultWorkspace, folder?.id, "Chats", conv.name, conv.id);
+          const path = SyncService.buildSyncPath(folder?.name, "Chats", conv.name, conv.id);
           await SyncService.updateEntitySync(conv.syncPath, path, md, async () => {
             await DatabaseService.updateConversation(conv.id, { syncPath: path });
           });

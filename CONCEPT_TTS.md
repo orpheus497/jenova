@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-This document outlines the architectural strategy for integrating a Voice Model (specifically **Qwen3-TTS-1.7B-CustomVoice-GGUF**) into the Jenova platform. The design completely replaces any speculative decoding mechanisms with a highly optimized voice generation subsystem capable of running concurrently with the main reasoning agent.
+This document outlines the architectural strategy for integrating a Voice Model (specifically **Qwen3-TTS-1.7B-CustomVoice-GGUF**) into the Jenova platform. While this design introduces a highly optimized voice generation subsystem capable of running concurrently with the main reasoning agent, **speculative decoding remains in scope and active**. The daemon orchestration change to completely replace speculative decoding is pending; thus, the current integration strategy runs the separate TTS process without removing existing speculative logic.
 
 ## 2. Hardware Allocation Strategy (iGPU Offloading)
 
@@ -17,7 +17,7 @@ To ensure zero performance degradation to the core reasoning engine, the Voice m
 The integration does not require an entirely new external server application, but rather leverages `jenova-ca` to orchestrate a separate companion process.
 
 *   **Process Isolation (`llama.cpp`)**: Because Qwen3-TTS outputs audio tokens, it structurally cannot share a thread loop with the standard text Agent. Therefore, it is launched as a specialized companion background process (`PID`), allowing specific targeting of the iGPU. *(Note: Mainline llama.cpp compatibility with Qwen3-TTS audio-token output and GGUF encapsulation must be verified. If unsupported, a dedicated TTS runtime or a custom Qwen Audio runner will be substituted for this companion process without altering the orchestration layer.)*
-*   **Daemon Orchestration (`jenova-ca`)**: The old speculative logic (`DRAFT_ARGS`) is removed. In its place, the Qwen3-TTS model is directly managed, started, and stopped by the Jenova daemon exactly like the embedding model.
+*   **Daemon Orchestration (`jenova-ca`)**: The Qwen3-TTS model is directly managed, started, and stopped by the Jenova daemon exactly like the embedding model. **Note**: The daemon still constructs and passes `DRAFT_ARGS` into `llama-server` to preserve speculative decoding capabilities until the code path is fully migrated in the future.
 
 ## 4. Dual-Layer Toggle Architecture
 

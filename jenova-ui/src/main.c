@@ -665,51 +665,59 @@ static void populate_container_from_dir(const char *dir_path, GtkWidget *contain
 }
 
 static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_container, GtkWidget *notes_container, GtkWidget *files_container) {
-    char default_ws_path[PATH_MAX];
+    char root_path[PATH_MAX];
     const char *jca_env = getenv("JENOVA_WORKSPACES");
     if (jca_env) {
-        snprintf(default_ws_path, sizeof(default_ws_path), "%s/default", jca_env);
+        snprintf(root_path, sizeof(root_path), "%s", jca_env);
     } else {
         const char *home = getenv("HOME");
-        snprintf(default_ws_path, sizeof(default_ws_path), "%s/JCA/Workspaces/default", home ? home : "/tmp");
+        snprintf(root_path, sizeof(root_path), "%s/JCA/Workspaces", home ? home : "/tmp");
     }
     
-    DIR *dir = opendir(default_ws_path);
-    if (!dir) return;
+    // Globals
+    char global_notes[PATH_MAX], global_files[PATH_MAX];
+    snprintf(global_notes, sizeof(global_notes), "%s/Notes", root_path);
+    snprintf(global_files, sizeof(global_files), "%s/Files", root_path);
     
-    struct dirent *ent;
-    while ((ent = readdir(dir)) != NULL) {
-        if (ent->d_name[0] == '.') continue;
-        
-        char full_path[PATH_MAX];
-        snprintf(full_path, sizeof(full_path), "%s/%s", default_ws_path, ent->d_name);
-        
-        struct stat st;
-        if (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode)) {
-            if (strcmp(ent->d_name, "Chats") == 0) {
-                // Handled by bedrock_add_chat_list_item
-            } else if (strcmp(ent->d_name, "Notes") == 0) {
-                DIR *ndir = opendir(full_path);
-                if (ndir) {
-                    struct dirent *nent;
-                    while ((nent = readdir(ndir)) != NULL) {
-                        if (strstr(nent->d_name, ".md")) {
-                            char name_no_ext[256];
-                            snprintf(name_no_ext, sizeof(name_no_ext), "%s", nent->d_name);
-                            char *dot = strrchr(name_no_ext, '.');
-                            if (dot) *dot = '\0';
-                            
-                            char abs_path[PATH_MAX];
-                            snprintf(abs_path, sizeof(abs_path), "%s/%s", full_path, nent->d_name);
-                            GtkWidget *btn = create_tree_item_button(name_no_ext, "text-x-generic-symbolic", abs_path, G_CALLBACK(on_sidebar_item_clicked));
-                            gtk_box_pack_start(GTK_BOX(notes_container), btn, FALSE, FALSE, 0);
-                        }
-                    }
-                    closedir(ndir);
-                }
-            } else if (strcmp(ent->d_name, "Files") == 0) {
-                populate_container_from_dir(full_path, files_container, "text-x-generic-symbolic", FALSE, G_CALLBACK(on_sidebar_item_clicked));
-            } else {
+    // Notes Global
+    DIR *ndir = opendir(global_notes);
+    if (ndir) {
+        struct dirent *nent;
+        while ((nent = readdir(ndir)) != NULL) {
+            if (strstr(nent->d_name, ".md")) {
+                char name_no_ext[256];
+                snprintf(name_no_ext, sizeof(name_no_ext), "%s", nent->d_name);
+                char *dot = strrchr(name_no_ext, '.');
+                if (dot) *dot = '\0';
+                
+                char abs_path[PATH_MAX];
+                snprintf(abs_path, sizeof(abs_path), "%s/%s", global_notes, nent->d_name);
+                GtkWidget *btn = create_tree_item_button(name_no_ext, "text-x-generic-symbolic", abs_path, G_CALLBACK(on_sidebar_item_clicked));
+                gtk_box_pack_start(GTK_BOX(notes_container), btn, FALSE, FALSE, 0);
+            }
+        }
+        closedir(ndir);
+    }
+    
+    // Files Global
+    if (files_container) {
+        populate_container_from_dir(global_files, files_container, "text-x-generic-symbolic", FALSE, G_CALLBACK(on_sidebar_item_clicked));
+    }
+    
+    // Workspaces
+    char spaces_path[PATH_MAX];
+    snprintf(spaces_path, sizeof(spaces_path), "%s/Spaces", root_path);
+    DIR *sdir = opendir(spaces_path);
+    if (sdir) {
+        struct dirent *ent;
+        while ((ent = readdir(sdir)) != NULL) {
+            if (ent->d_name[0] == '.') continue;
+            
+            char full_path[PATH_MAX];
+            snprintf(full_path, sizeof(full_path), "%s/%s", spaces_path, ent->d_name);
+            
+            struct stat st;
+            if (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode)) {
                 GtkWidget *exp = gtk_expander_new(NULL);
                 GtkWidget *hdr_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
                 GtkWidget *icon = gtk_image_new_from_icon_name("folder-symbolic", GTK_ICON_SIZE_MENU);
@@ -751,8 +759,8 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
 
                 // Parse Notes
                 snprintf(sub_path, sizeof(sub_path), "%s/Notes", full_path);
-                DIR *ndir = opendir(sub_path);
-                if (ndir) {
+                DIR *ndir2 = opendir(sub_path);
+                if (ndir2) {
                     GtkWidget *n_hdr = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
                     GtkWidget *n_lbl = gtk_label_new(NULL);
                     gtk_label_set_markup(GTK_LABEL(n_lbl), "<span color='#e4b382' font_desc='JetBrains Mono Bold 10' letter_spacing='500'>NOTES</span>");
@@ -760,7 +768,7 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                     gtk_box_pack_start(GTK_BOX(inner_vbox), n_hdr, FALSE, FALSE, 4);
                     
                     struct dirent *nent;
-                    while ((nent = readdir(ndir)) != NULL) {
+                    while ((nent = readdir(ndir2)) != NULL) {
                         if (strstr(nent->d_name, ".md")) {
                             char name_no_ext[256];
                             snprintf(name_no_ext, sizeof(name_no_ext), "%s", nent->d_name);
@@ -773,7 +781,7 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                             gtk_box_pack_start(GTK_BOX(inner_vbox), btn, FALSE, FALSE, 0);
                         }
                     }
-                    closedir(ndir);
+                    closedir(ndir2);
                 }
 
                 // Files Button
@@ -798,8 +806,8 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                 gtk_box_pack_start(GTK_BOX(ws_container), exp, FALSE, FALSE, 2);
             }
         }
+        closedir(sdir);
     }
-    closedir(dir);
     
     gtk_widget_show_all(ws_container);
     gtk_widget_show_all(chats_container);

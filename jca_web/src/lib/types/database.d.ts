@@ -17,7 +17,7 @@ export interface DatabaseConversation {
   name: string;
   mcpServerOverrides?: McpServerOverride[];
   forkedFromConversationId?: string;
-  folderId?: string;
+  folderId?: string | null;
   projectId?: string;
   syncPath?: string;
 }
