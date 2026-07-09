@@ -28,12 +28,13 @@ export class SyncService {
     }
   }
 
-  private static resolveFolderIdFromPath(parts: string[]): string | null {
+  private static resolveFolderIdFromPath(parts: string[], validFolderIds: Set<string>): string | null {
     if (parts.length >= 4 && parts[0] === "Spaces") {
       const folderKey = parts[1];
       const lastUnderscore = folderKey.lastIndexOf("_");
       if (lastUnderscore !== -1) {
-        return folderKey.substring(lastUnderscore + 1);
+        const id = folderKey.substring(lastUnderscore + 1);
+        if (validFolderIds.has(id)) return id;
       }
     }
     return null;
@@ -108,6 +109,7 @@ export class SyncService {
         const allNotes = await DatabaseService.getAllNotes();
         const allFolders = await DatabaseService.getAllFolders();
 
+        const validFolderIds = new Set<string>(allFolders.map(f => f.id));
         const convsMap = new Map<string, typeof allConvs[number]>(allConvs.map((c) => [(c.folderId || "null") + "_" + c.name, c]));
         const notesMap = new Map<string, typeof allNotes[number]>(allNotes.map((n) => [(n.folderId || "null") + "_" + n.title, n]));
         const convsBySyncPath = new Map<string, typeof allConvs[number]>(allConvs.filter(c => c.syncPath).map(c => [c.syncPath!, c]));
@@ -125,8 +127,8 @@ export class SyncService {
           const isChat = parts.length >= 2 && parts[parts.length - 2] === "Chats";
 
           if (isNote) {
-            const folderId = SyncService.resolveFolderIdFromPath(parts);
-            const cleanFileName = fileName.replace(/_[^_]+$/, "");
+            const folderId = SyncService.resolveFolderIdFromPath(parts, validFolderIds);
+            const cleanFileName = fileName.replace(/_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/, "");
             let note = notesBySyncPath.get(path);
             if (!note) {
               note = notesMap.get(`${folderId || 'null'}_${fileName}`) || notesMap.get(`${folderId || 'null'}_${cleanFileName}`);
@@ -139,8 +141,8 @@ export class SyncService {
                   folderId: folderId,
                   updatedAt: Date.now(),
                 });
+                changed = true;
                 if (note.content !== content) {
-                  changed = true;
                   stats.updated++;
                 }
               }
@@ -151,8 +153,8 @@ export class SyncService {
               stats.created++;
             }
           } else if (isChat) {
-            const folderId = SyncService.resolveFolderIdFromPath(parts);
-            const cleanFileName = fileName.replace(/_[^_]+$/, "");
+            const folderId = SyncService.resolveFolderIdFromPath(parts, validFolderIds);
+            const cleanFileName = fileName.replace(/_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/, "");
             const { conv: parsedConv, messages: parsedMessages } =
               MarkdownService.fromMarkdown(content);
             let conv = convsBySyncPath.get(path);
@@ -164,8 +166,14 @@ export class SyncService {
             }
 
             if (conv && parsedMessages.length > 0) {
+              if (parsedConv.name && conv.name !== parsedConv.name) {
+                conv.name = parsedConv.name;
+                await DatabaseService.updateConversation(conv.id, { name: parsedConv.name });
+                changed = true;
+              }
               if (conv.syncPath !== path || conv.folderId !== folderId) {
                 await DatabaseService.updateConversation(conv.id, { syncPath: path, folderId: folderId });
+                changed = true;
               }
               const existingMessages = await DatabaseService.getConversationMessages(conv.id);
               const existingMd = MarkdownService.toMarkdown(conv, existingMessages);
