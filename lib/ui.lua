@@ -273,6 +273,11 @@ ui.on_file_clicked = function(filepath)
                         _G.bedrock_create_message_bubble(mapped_role, msg.content)
                     end
                 end
+            else
+                -- Fallback for raw markdown files without format tags
+                if content and #content > 0 then
+                    _G.bedrock_create_message_bubble("user", content)
+                end
             end
         end
         

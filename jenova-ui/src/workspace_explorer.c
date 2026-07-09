@@ -36,23 +36,191 @@ static void on_push_clicked(GtkButton *btn, gpointer data) {
 
 static void on_file_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data) {
     (void)box; (void)user_data;
-    GtkWidget *child = gtk_bin_get_child(GTK_BIN(row));
-    if (child) {
-        const gchar *filepath = g_object_get_data(G_OBJECT(child), "filepath");
-        if (filepath) {
-            main_open_file(filepath);
+    GtkWidget *event_box = gtk_bin_get_child(GTK_BIN(row));
+    if (event_box) {
+        GtkWidget *child = gtk_bin_get_child(GTK_BIN(event_box));
+        if (child) {
+            const gchar *filepath = g_object_get_data(G_OBJECT(child), "filepath");
+            if (filepath) {
+                main_open_file(filepath);
+            }
         }
     }
+}
+
+static gchar *current_workspace_view = NULL;
+
+static void populate_workspaces(void);
+
+static void do_rename(const gchar *old_path, const gchar *new_name) {
+    if (!old_path || !new_name || strlen(new_name) == 0) return;
+    gchar *dir = g_path_get_dirname(old_path);
+    gchar *new_path = g_build_filename(dir, new_name, NULL);
+    rename(old_path, new_path);
+    g_free(dir);
+    g_free(new_path);
+    workspace_explorer_push_local();
+    populate_workspaces();
+}
+
+static void on_rename_activated(GtkMenuItem *item, gpointer user_data) {
+    const gchar *path = (const gchar *)user_data;
+    
+    GtkWidget *dialog = gtk_dialog_new_with_buttons("Rename", NULL, GTK_DIALOG_MODAL, "Cancel", GTK_RESPONSE_CANCEL, "Rename", GTK_RESPONSE_ACCEPT, NULL);
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    GtkWidget *entry = gtk_entry_new();
+    gchar *basename = g_path_get_basename(path);
+    gtk_entry_set_text(GTK_ENTRY(entry), basename);
+    gtk_box_pack_start(GTK_BOX(content), entry, TRUE, TRUE, 10);
+    gtk_widget_show_all(dialog);
+    
+    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+        do_rename(path, gtk_entry_get_text(GTK_ENTRY(entry)));
+    }
+    g_free(basename);
+    gtk_widget_destroy(dialog);
+}
+
+static void do_delete(const gchar *path) {
+    if (!path) return;
+    // For simplicity, just remove it. In reality this might need recursive remove if it's a directory.
+    // For files, remove() works. For dirs, rmdir() works if empty.
+    // We'll use a simple system command for robust recursive deletion if it's a dir, or just remove for files.
+    if (g_file_test(path, G_FILE_TEST_IS_DIR)) {
+        gchar *cmd = g_strdup_printf("rm -rf \"%s\"", path);
+        system(cmd);
+        g_free(cmd);
+    } else {
+        remove(path);
+    }
+    workspace_explorer_push_local();
+    populate_workspaces();
+}
+
+static void on_delete_activated(GtkMenuItem *item, gpointer user_data) {
+    const gchar *path = (const gchar *)user_data;
+    GtkWidget *dialog = gtk_message_dialog_new(NULL, GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING, GTK_BUTTONS_YES_NO, "Are you sure you want to delete '%s'?", g_path_get_basename(path));
+    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_YES) {
+        do_delete(path);
+    }
+    gtk_widget_destroy(dialog);
+}
+
+// Global list for Move dropdown
+static GList *get_all_workspace_folders() {
+    GList *list = NULL;
+    gchar *root = get_workspaces_root();
+    GDir *dir = g_dir_open(root, 0, NULL);
+    if (dir) {
+        const gchar *ws;
+        while ((ws = g_dir_read_name(dir)) != NULL) {
+            if (ws[0] == '.') continue;
+            gchar *ws_path = g_build_filename(root, ws, NULL);
+            if (g_file_test(ws_path, G_FILE_TEST_IS_DIR)) {
+                GDir *fdir = g_dir_open(ws_path, 0, NULL);
+                if (fdir) {
+                    const gchar *folder;
+                    while ((folder = g_dir_read_name(fdir)) != NULL) {
+                        if (folder[0] == '.') continue;
+                        if (g_strcmp0(folder, "Chats") == 0 || g_strcmp0(folder, "Notes") == 0 || g_strcmp0(folder, "Files") == 0) continue;
+                        gchar *fpath = g_build_filename(ws_path, folder, NULL);
+                        if (g_file_test(fpath, G_FILE_TEST_IS_DIR)) {
+                            list = g_list_append(list, g_strdup_printf("%s/%s", ws, folder));
+                        }
+                        g_free(fpath);
+                    }
+                    g_dir_close(fdir);
+                }
+            }
+            g_free(ws_path);
+        }
+        g_dir_close(dir);
+    }
+    g_free(root);
+    return list;
+}
+
+static void on_move_activated(GtkMenuItem *item, gpointer user_data) {
+    const gchar *path = (const gchar *)user_data;
+    GtkWidget *dialog = gtk_dialog_new_with_buttons("Move to...", NULL, GTK_DIALOG_MODAL, "Cancel", GTK_RESPONSE_CANCEL, "Move", GTK_RESPONSE_ACCEPT, NULL);
+    GtkWidget *content = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    
+    GtkWidget *combo = gtk_combo_box_text_new();
+    GList *folders = get_all_workspace_folders();
+    for (GList *l = folders; l != NULL; l = l->next) {
+        gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(combo), (const gchar *)l->data);
+    }
+    gtk_combo_box_set_active(GTK_COMBO_BOX(combo), 0);
+    gtk_box_pack_start(GTK_BOX(content), combo, TRUE, TRUE, 10);
+    gtk_widget_show_all(dialog);
+    
+    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
+        gchar *selected = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(combo));
+        if (selected) {
+            gchar *root = get_workspaces_root();
+            // Determine if it's a chat or note based on current path
+            const gchar *subdir = "Files";
+            if (strstr(path, "/Chats/")) subdir = "Chats";
+            else if (strstr(path, "/Notes/")) subdir = "Notes";
+            
+            gchar *dest_dir = g_build_filename(root, selected, subdir, NULL);
+            g_mkdir_with_parents(dest_dir, 0755);
+            gchar *dest_path = g_build_filename(dest_dir, g_path_get_basename(path), NULL);
+            rename(path, dest_path);
+            
+            g_free(dest_path);
+            g_free(dest_dir);
+            g_free(root);
+            g_free(selected);
+            workspace_explorer_push_local();
+            populate_workspaces();
+        }
+    }
+    
+    for (GList *l = folders; l != NULL; l = l->next) g_free(l->data);
+    g_list_free(folders);
+    gtk_widget_destroy(dialog);
+}
+
+static gboolean on_file_button_press(GtkWidget *widget, GdkEventButton *event, gpointer user_data) {
+    if (event->type == GDK_BUTTON_PRESS && event->button == 3) { // Right click
+        const gchar *path = (const gchar *)user_data;
+        GtkWidget *menu = gtk_menu_new();
+        
+        GtkWidget *mi_rename = gtk_menu_item_new_with_label("Rename");
+        g_signal_connect(mi_rename, "activate", G_CALLBACK(on_rename_activated), (gpointer)path);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), mi_rename);
+        
+        GtkWidget *mi_move = gtk_menu_item_new_with_label("Move");
+        g_signal_connect(mi_move, "activate", G_CALLBACK(on_move_activated), (gpointer)path);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), mi_move);
+        
+        GtkWidget *mi_del = gtk_menu_item_new_with_label("Delete");
+        g_signal_connect(mi_del, "activate", G_CALLBACK(on_delete_activated), (gpointer)path);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu), mi_del);
+        
+        gtk_widget_show_all(menu);
+        gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent*)event);
+        return TRUE;
+    }
+    return FALSE;
 }
 
 static void on_enter_workspace_clicked(GtkButton *btn, gpointer user_data) {
     (void)user_data;
     const gchar *path = g_object_get_data(G_OBJECT(btn), "workspace_path");
     if (path) {
-        gchar *cmd = g_strdup_printf("xdg-open \"%s\"", path);
-        system(cmd);
-        g_free(cmd);
+        g_free(current_workspace_view);
+        current_workspace_view = g_strdup(path);
+        populate_workspaces();
     }
+}
+
+static void on_back_clicked(GtkButton *btn, gpointer user_data) {
+    (void)btn; (void)user_data;
+    g_free(current_workspace_view);
+    current_workspace_view = NULL;
+    populate_workspaces();
 }
 
 static void generate_uuid(gchar *uuid_str) {
@@ -75,6 +243,74 @@ static void populate_workspaces() {
     for(iter = children; iter != NULL; iter = g_list_next(iter))
         gtk_widget_destroy(GTK_WIDGET(iter->data));
     g_list_free(children);
+
+    if (current_workspace_view != NULL) {
+        // Back button
+        GtkWidget *back_btn = gtk_button_new_with_label("← Back to Overview");
+        gtk_widget_set_margin_bottom(back_btn, 12);
+        g_signal_connect(back_btn, "clicked", G_CALLBACK(on_back_clicked), NULL);
+        gtk_flow_box_insert(GTK_FLOW_BOX(flowbox), back_btn, -1);
+
+        const gchar *subdirs[] = {"Chats", "Notes", "Files", NULL};
+        for (int i = 0; subdirs[i] != NULL; i++) {
+            GtkWidget *card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+            gtk_style_context_add_class(gtk_widget_get_style_context(card), "glass-panel");
+            gtk_widget_set_size_request(card, 400, 300);
+            
+            GtkWidget *lbl = gtk_label_new(subdirs[i]);
+            gtk_style_context_add_class(gtk_widget_get_style_context(lbl), "title");
+            gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
+            gtk_box_pack_start(GTK_BOX(card), lbl, FALSE, FALSE, 0);
+            
+            GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
+            gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+            gtk_widget_set_vexpand(scroll, TRUE);
+            
+            GtkWidget *list_box = gtk_list_box_new();
+            gtk_style_context_add_class(gtk_widget_get_style_context(list_box), "sidebar-scroll");
+            g_signal_connect(list_box, "row-activated", G_CALLBACK(on_file_row_activated), NULL);
+            gtk_container_add(GTK_CONTAINER(scroll), list_box);
+            gtk_box_pack_start(GTK_BOX(card), scroll, TRUE, TRUE, 0);
+            
+            gchar *subdir_full = g_build_filename(current_workspace_view, subdirs[i], NULL);
+            GDir *inner_dir = g_dir_open(subdir_full, 0, NULL);
+            if (inner_dir) {
+                const gchar *file_name;
+                while ((file_name = g_dir_read_name(inner_dir)) != NULL) {
+                    if (file_name[0] == '.') continue;
+                    
+                    gchar *clean_name = g_strdup(file_name);
+                    gchar *ext = g_strrstr(clean_name, ".md");
+                    if (ext) *ext = '\0';
+                    gchar *uuid_sep = g_strrstr(clean_name, "_");
+                    if (uuid_sep && strlen(uuid_sep) > 10) *uuid_sep = '\0';
+                    
+                    GtkWidget *item_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+                    GtkWidget *file_icon = gtk_label_new(g_strcmp0(subdirs[i], "Chats") == 0 ? "💬" : "📝");
+                    GtkWidget *file_lbl = gtk_label_new(clean_name);
+                    gtk_label_set_xalign(GTK_LABEL(file_lbl), 0.0);
+                    gtk_label_set_ellipsize(GTK_LABEL(file_lbl), PANGO_ELLIPSIZE_END);
+                    gtk_box_pack_start(GTK_BOX(item_box), file_icon, FALSE, FALSE, 0);
+                    gtk_box_pack_start(GTK_BOX(item_box), file_lbl, TRUE, TRUE, 0);
+                    
+                    g_object_set_data_full(G_OBJECT(item_box), "filepath", g_build_filename(subdir_full, file_name, NULL), g_free);
+                    
+                    GtkWidget *event_box = gtk_event_box_new();
+                    gtk_container_add(GTK_CONTAINER(event_box), item_box);
+                    g_signal_connect(event_box, "button-press-event", G_CALLBACK(on_file_button_press), (gpointer)g_object_get_data(G_OBJECT(item_box), "filepath"));
+                    
+                    gtk_list_box_insert(GTK_LIST_BOX(list_box), event_box, -1);
+                    g_free(clean_name);
+                }
+                g_dir_close(inner_dir);
+            }
+            g_free(subdir_full);
+            
+            gtk_flow_box_insert(GTK_FLOW_BOX(flowbox), card, -1);
+        }
+        gtk_widget_show_all(flowbox);
+        return;
+    }
 
     gchar *root = get_workspaces_root();
     g_mkdir_with_parents(root, 0755);
@@ -148,7 +384,11 @@ static void populate_workspaces() {
                                         
                                         g_object_set_data_full(G_OBJECT(item_box), "filepath", g_build_filename(subdir_full, file_name, NULL), g_free);
                                         
-                                        gtk_list_box_insert(GTK_LIST_BOX(list_box), item_box, -1);
+                                        GtkWidget *event_box = gtk_event_box_new();
+                                        gtk_container_add(GTK_CONTAINER(event_box), item_box);
+                                        g_signal_connect(event_box, "button-press-event", G_CALLBACK(on_file_button_press), (gpointer)g_object_get_data(G_OBJECT(item_box), "filepath"));
+                                        
+                                        gtk_list_box_insert(GTK_LIST_BOX(list_box), event_box, -1);
                                         g_free(clean_name);
                                         count++;
                                     }
