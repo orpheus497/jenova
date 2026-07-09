@@ -27,9 +27,32 @@ static void on_pull_clicked(GtkButton *btn, gpointer data) {
     workspace_explorer_pull_origin();
 }
 
+extern void main_open_file(const char *filepath);
+
 static void on_push_clicked(GtkButton *btn, gpointer data) {
     (void)btn; (void)data;
     workspace_explorer_push_local();
+}
+
+static void on_file_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data) {
+    (void)box; (void)user_data;
+    GtkWidget *child = gtk_bin_get_child(GTK_BIN(row));
+    if (child) {
+        const gchar *filepath = g_object_get_data(G_OBJECT(child), "filepath");
+        if (filepath) {
+            main_open_file(filepath);
+        }
+    }
+}
+
+static void on_enter_workspace_clicked(GtkButton *btn, gpointer user_data) {
+    (void)user_data;
+    const gchar *path = g_object_get_data(G_OBJECT(btn), "workspace_path");
+    if (path) {
+        gchar *cmd = g_strdup_printf("xdg-open \"%s\"", path);
+        system(cmd);
+        g_free(cmd);
+    }
 }
 
 static void generate_uuid(gchar *uuid_str) {
@@ -94,7 +117,7 @@ static void populate_workspaces() {
                             // Add ListBox for files
                             GtkWidget *list_box = gtk_list_box_new();
                             gtk_style_context_add_class(gtk_widget_get_style_context(list_box), "sidebar-scroll");
-                            gtk_list_box_set_selection_mode(GTK_LIST_BOX(list_box), GTK_SELECTION_NONE);
+                            g_signal_connect(list_box, "row-activated", G_CALLBACK(on_file_row_activated), NULL);
                             
                             int count = 0;
                             // Helper array of subdirectories to check
@@ -123,6 +146,8 @@ static void populate_workspaces() {
                                         gtk_box_pack_start(GTK_BOX(item_box), file_icon, FALSE, FALSE, 0);
                                         gtk_box_pack_start(GTK_BOX(item_box), file_lbl, TRUE, TRUE, 0);
                                         
+                                        g_object_set_data_full(G_OBJECT(item_box), "filepath", g_build_filename(subdir_full, file_name, NULL), g_free);
+                                        
                                         gtk_list_box_insert(GTK_LIST_BOX(list_box), item_box, -1);
                                         g_free(clean_name);
                                         count++;
@@ -138,6 +163,9 @@ static void populate_workspaces() {
                             gtk_widget_set_halign(btn_enter, GTK_ALIGN_END);
                             gtk_widget_set_valign(btn_enter, GTK_ALIGN_END);
                             gtk_widget_set_vexpand(btn_enter, FALSE);
+                            // We can use g_object_set_data to store the folder path if we decide to implement "Enter Workspace" later.
+                            g_object_set_data_full(G_OBJECT(btn_enter), "workspace_path", g_strdup(folder_full), g_free);
+                            g_signal_connect(btn_enter, "clicked", G_CALLBACK(on_enter_workspace_clicked), NULL);
                             gtk_box_pack_end(GTK_BOX(card), btn_enter, FALSE, FALSE, 0);
                             
                             gtk_flow_box_insert(GTK_FLOW_BOX(flowbox), card, -1);

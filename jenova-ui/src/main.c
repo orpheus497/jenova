@@ -592,8 +592,7 @@ static void load_css(void) {
 }
 
 
-static void on_sidebar_item_clicked(GtkButton *btn, gpointer user_data G_GNUC_UNUSED) {
-    const char *filepath = g_object_get_data(G_OBJECT(btn), "filepath");
+void main_open_file(const char *filepath) {
     if (!filepath) return;
     
     lua_getglobal(L, "ui");
@@ -609,6 +608,11 @@ static void on_sidebar_item_clicked(GtkButton *btn, gpointer user_data G_GNUC_UN
         lua_pop(L, 1);
     }
     lua_pop(L, 1);
+}
+
+static void on_sidebar_item_clicked(GtkButton *btn, gpointer user_data G_GNUC_UNUSED) {
+    const char *filepath = g_object_get_data(G_OBJECT(btn), "filepath");
+    main_open_file(filepath);
 }
 
 static GtkWidget* create_tree_item_button(const char *label_text, const char *icon_name, const char *filepath, GCallback click_cb) {
