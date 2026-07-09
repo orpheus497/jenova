@@ -18,9 +18,10 @@ export class SyncService {
   private static _isSyncing = false;
 
   private static buildSyncPath(workspace: string, folderId: string | null | undefined, type: "Notes" | "Chats", entityName: string, entityId: string): string {
+    const safeWorkspace = (workspace || "default").replace(/[\/\\]/g, "_").replace(/\.\./g, "__");
     const safeName = (entityName || "Untitled").replace(/[\/\\]/g, "_").replace(/\.\./g, "__");
     const safeFolderId = folderId ? folderId.replace(/[\/\\]/g, "_").replace(/\.\./g, "__") : null;
-    return safeFolderId ? workspace + "/" + safeFolderId + "/" + type + "/" + safeName + "_" + entityId + ".md" : workspace + "/" + type + "/" + safeName + "_" + entityId + ".md";
+    return safeFolderId ? safeWorkspace + "/" + safeFolderId + "/" + type + "/" + safeName + "_" + entityId + ".md" : safeWorkspace + "/" + type + "/" + safeName + "_" + entityId + ".md";
   }
 
   private static resolveFolderIdFromPath(parts: string[], folderIdMap: Map<string, string>): string | null {
@@ -115,35 +116,43 @@ export class SyncService {
           const isChat = path.includes("/Chats/");
 
           if (isNote) {
+            const folderId = SyncService.resolveFolderIdFromPath(parts, folderIdMap);
+            const cleanFileName = fileName.replace(/_[^_]+$/, "");
             let note = notesBySyncPath.get(path);
             if (!note) {
-              const folderId = SyncService.resolveFolderIdFromPath(parts, folderIdMap);
-              note = notesMap.get(`${folderId || 'null'}_${fileName}`);
+              note = notesMap.get(`${folderId || 'null'}_${fileName}`) || notesMap.get(`${folderId || 'null'}_${cleanFileName}`);
             }
             if (note) {
-              if (note.content !== content) {
+              if (note.content !== content || note.syncPath !== path) {
                 await DatabaseService.updateNote(note.id, {
                   content,
+                  syncPath: path,
                   updatedAt: Date.now(),
                 });
-                changed = true;
-                stats.updated++;
+                if (note.content !== content) {
+                  changed = true;
+                  stats.updated++;
+                }
               }
             } else {
-              await DatabaseService.createNote(folderId, fileName, content);
+              await DatabaseService.createNote(folderId, cleanFileName, content);
               changed = true;
               stats.created++;
             }
           } else if (isChat) {
             const folderId = SyncService.resolveFolderIdFromPath(parts, folderIdMap);
+            const cleanFileName = fileName.replace(/_[^_]+$/, "");
             const { conv: parsedConv, messages: parsedMessages } =
               MarkdownService.fromMarkdown(content);
             let conv = convsBySyncPath.get(path);
             if (!conv) {
-              conv = convsMap.get(`${folderId || 'null'}_${parsedConv.name || fileName}`);
+              conv = convsMap.get(`${folderId || 'null'}_${parsedConv.name || fileName}`) || convsMap.get(`${folderId || 'null'}_${parsedConv.name || cleanFileName}`);
             }
 
             if (conv && parsedMessages.length > 0) {
+              if (conv.syncPath !== path) {
+                await DatabaseService.updateConversation(conv.id, { syncPath: path });
+              }
               // Clear existing messages and reconstruct the tree properly
               await DatabaseService.deleteConversationMessages(conv.id);
 

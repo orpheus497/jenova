@@ -27,6 +27,7 @@ function chat_service.sendMessage(text, msg_id, conv_id, chat_path, store, on_ch
     local tmp_file = os.tmpname()
     local f = io.open(tmp_file, "w")
     if not f then
+        store.setLoading(msg_id, false)
         store.setError(msg_id, "Failed to write payload file")
         if on_complete then on_complete() end
         return
@@ -41,21 +42,31 @@ function chat_service.sendMessage(text, msg_id, conv_id, chat_path, store, on_ch
     local assistant_reply = ""
     local is_thinking = false
     local is_finished = false
+    local think_buffer = ""
     
     sys_exec_stream(cmd, function(chunk)
         if is_finished then return end
         
         if not chunk then
+            if think_buffer ~= "" then
+                if is_thinking then on_reasoning_chunk(think_buffer)
+                else 
+                    assistant_reply = assistant_reply .. think_buffer
+                    on_chunk(think_buffer) 
+                end
+                think_buffer = ""
+            end
             is_finished = true
             os.remove(tmp_file)
             if not has_received_data then
+                store.setLoading(msg_id, false)
                 store.setError(msg_id, "Connection Refused: Ensure Jenova Server is running (Port " .. port .. ").")
             else
                 store.isStreamingActive = false
                 table.insert(messages, { role = "assistant", content = assistant_reply })
                 database.save_conversation_to_path(chat_path, conv_id, messages)
-                if on_complete then on_complete() end
             end
+            if on_complete then on_complete() end
             return
         end
         
@@ -78,6 +89,14 @@ function chat_service.sendMessage(text, msg_id, conv_id, chat_path, store, on_ch
             if line:match("^data: ") then
                 local data = line:sub(7)
                 if data == "[DONE]" then
+                    if think_buffer ~= "" then
+                        if is_thinking then on_reasoning_chunk(think_buffer)
+                        else 
+                            assistant_reply = assistant_reply .. think_buffer
+                            on_chunk(think_buffer) 
+                        end
+                        think_buffer = ""
+                    end
                     is_finished = true
                     os.remove(tmp_file)
                     store.isStreamingActive = false
@@ -101,12 +120,14 @@ function chat_service.sendMessage(text, msg_id, conv_id, chat_path, store, on_ch
                             if reasoning ~= "" then
                                 on_reasoning_chunk(reasoning)
                             else
+                                local content_to_process = think_buffer .. content
+                                think_buffer = ""
                                 local i = 1
-                                while i <= #content do
+                                while i <= #content_to_process do
                                     if not is_thinking then
-                                        local start_idx = content:find("<think>", i, true)
+                                        local start_idx = content_to_process:find("<think>", i, true)
                                         if start_idx then
-                                            local text = content:sub(i, start_idx - 1)
+                                            local text = content_to_process:sub(i, start_idx - 1)
                                             if text ~= "" then
                                                 assistant_reply = assistant_reply .. text
                                                 on_chunk(text)
@@ -114,23 +135,41 @@ function chat_service.sendMessage(text, msg_id, conv_id, chat_path, store, on_ch
                                             is_thinking = true
                                             i = start_idx + 7
                                         else
-                                            local text = content:sub(i)
-                                            assistant_reply = assistant_reply .. text
-                                            on_chunk(text)
+                                            local text = content_to_process:sub(i)
+                                            for p = 1, 6 do
+                                                if text:sub(-p) == ("<think>"):sub(1, p) then
+                                                    think_buffer = text:sub(-p)
+                                                    text = text:sub(1, -(p + 1))
+                                                    break
+                                                end
+                                            end
+                                            if text ~= "" then
+                                                assistant_reply = assistant_reply .. text
+                                                on_chunk(text)
+                                            end
                                             break
                                         end
                                     else
-                                        local end_idx = content:find("</think>", i, true)
+                                        local end_idx = content_to_process:find("</think>", i, true)
                                         if end_idx then
-                                            local text = content:sub(i, end_idx - 1)
+                                            local text = content_to_process:sub(i, end_idx - 1)
                                             if text ~= "" then
                                                 on_reasoning_chunk(text)
                                             end
                                             is_thinking = false
                                             i = end_idx + 8
                                         else
-                                            local text = content:sub(i)
-                                            on_reasoning_chunk(text)
+                                            local text = content_to_process:sub(i)
+                                            for p = 1, 7 do
+                                                if text:sub(-p) == ("</think>"):sub(1, p) then
+                                                    think_buffer = text:sub(-p)
+                                                    text = text:sub(1, -(p + 1))
+                                                    break
+                                                end
+                                            end
+                                            if text ~= "" then
+                                                on_reasoning_chunk(text)
+                                            end
                                             break
                                         end
                                     end

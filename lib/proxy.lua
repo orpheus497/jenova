@@ -589,12 +589,7 @@ local function proxy_connection(client_fd, conn_fds)
                     async_send(client_fd, err_resp)
                     safe_close(); return
                 end
-                if #chunk >= 5 then
-                    tail = chunk:sub(-5)
-                else
-                    local prev = body_chunks[#body_chunks - 1] or ""
-                    tail = (prev .. chunk):sub(-5)
-                end
+                tail = (tail .. chunk):sub(-5)
             end
             body_raw = decode_chunked_body(table.concat(body_chunks))
         else

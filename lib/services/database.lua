@@ -107,13 +107,70 @@ end
 
 -- Scan the workspace for notes/files to inject into context
 function database.get_folder_notes()
+    local workspace_root = database.get_workspace_path()
     local path = database.get_default_workspace()
     local notes = {}
+    local valid_paths = {}
+    
+    local snapshot_path = workspace_root .. "/jenova-snapshot.json"
+    local f = io.open(snapshot_path, "r")
+    if f then
+        local content = f:read("*a")
+        f:close()
+        local ok, data = pcall(json.decode, content)
+        if ok and data and data.notes then
+            for _, note in ipairs(data.notes) do
+                if note.syncPath then
+                    local full_path = workspace_root .. "/" .. note.syncPath
+                    valid_paths[full_path] = true
+                    
+                    local file = io.open(full_path, "r")
+                    if file then
+                        local content = file:read(16385)
+                        file:close()
+                        if content then
+                            if #content > 16384 then content = content:sub(1, 16384) .. "\n... (truncated)" end
+                            table.insert(notes, { title = note.title, content = content })
+                        end
+                    end
+                end
+            end
+            
+            for _, conv in ipairs(data.conversations or {}) do
+                if conv.syncPath then
+                    valid_paths[workspace_root .. "/" .. conv.syncPath] = true
+                end
+            end
+            
+            local trash_dir = path .. "/.trash"
+            os.execute("mkdir -p " .. shell_quote(trash_dir))
+            
+            local function sweep_dir(subdir)
+                local p = io.popen("find " .. shell_quote(path .. "/" .. subdir) .. " -maxdepth 1 -type f -name '*.md' 2>/dev/null")
+                if p then
+                    for file_path in p:lines() do
+                        if not valid_paths[file_path] then
+                            local filename = file_path:match("([^/]+)$")
+                            local dest = trash_dir .. "/" .. os.time() .. "_" .. filename
+                            os.rename(file_path, dest)
+                        end
+                    end
+                    p:close()
+                end
+            end
+            
+            sweep_dir("Notes")
+            sweep_dir("Chats")
+            
+            return notes
+        end
+    end
+
     -- Naive scan of .md files in the workspace root
     if path:find("[\r\n]") then
         error("Command injection attempt detected")
     end
-    local p = io.popen("find " .. shell_quote(path) .. " " .. shell_quote(path .. "/Notes") .. " " .. shell_quote(path .. "/Files") .. " " .. shell_quote(path .. "/Chats") .. " -maxdepth 1 \\( -name '*.md' -o -name '*.txt' \\) 2>/dev/null")
+    local p = io.popen("find " .. shell_quote(path) .. " " .. shell_quote(path .. "/Notes") .. " " .. shell_quote(path .. "/Files") .. " -maxdepth 1 \\( -name '*.md' -o -name '*.txt' \\) 2>/dev/null")
     if p then
         for file_path in p:lines() do
             local file = io.open(file_path, "r")
