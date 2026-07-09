@@ -98,6 +98,9 @@ static int l_bedrock_create_chat_feed(lua_State *L) {
         "<script src='file://%s/purify.min.js'></script>"
         "<link rel='stylesheet' href='file://%s/atom-one-dark.min.css'>"
         "<script src='file://%s/highlight.min.js'></script>"
+        "<link rel='stylesheet' href='file://%s/katex.min.css'>"
+        "<script src='file://%s/katex.min.js'></script>"
+        "<script src='file://%s/marked-katex-extension.js'></script>"
         "<style>"
         "body { background: transparent; color: #f0edf2; font-family: 'DejaVuSansM Nerd Font', 'DejaVu Sans Mono', monospace; font-size: 12pt; padding: 16px; margin: 0; }"
         ".bubble-container { display: flex; flex-direction: column; margin-bottom: 24px; }"
@@ -111,15 +114,24 @@ static int l_bedrock_create_chat_feed(lua_State *L) {
         "code { font-family: 'DejaVuSansM Nerd Font', 'DejaVu Sans Mono', monospace; }"
         "p { margin: 0 0 12px 0; line-height: 1.6; }"
         "p:last-child { margin-bottom: 0; }"
+        "table { border-collapse: collapse; width: 100%%; margin-bottom: 12px; }"
+        "th, td { border: 1px solid rgba(255, 255, 255, 0.2); padding: 8px; text-align: left; }"
+        "th { background-color: rgba(255, 255, 255, 0.1); }"
+        "a { color: #8bb8e8; text-decoration: none; }"
+        "a:hover { text-decoration: underline; }"
+        "blockquote { border-left: 4px solid #e4b382; margin: 0; padding-left: 12px; color: #ccc; }"
         ".thinking { color: #888; font-style: italic; font-size: 0.9em; }"
         "</style>"
         "<script>"
         "marked.setOptions({"
+        "  breaks: true,"
+        "  gfm: true,"
         "  highlight: function(code, lang) {"
         "    const language = hljs.getLanguage(lang) ? lang : 'plaintext';"
         "    return hljs.highlight(code, { language }).value;"
         "  }"
         "});"
+        "marked.use(markedKatex({ throwOnError: false }));"
         "function escapeHtml(text) {"
         "  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');"
         "}"
@@ -150,7 +162,7 @@ static int l_bedrock_create_chat_feed(lua_State *L) {
         "  document.body.innerHTML = '';"
         "}"
         "</script>"
-        "</head><body></body></html>", assets_dir, assets_dir, assets_dir, assets_dir) != -1) {
+        "</head><body></body></html>", assets_dir, assets_dir, assets_dir, assets_dir, assets_dir, assets_dir, assets_dir) != -1) {
     
         webkit_web_view_load_html(WEBKIT_WEB_VIEW(g_webview), html_template, "file:///");
         free(html_template);
