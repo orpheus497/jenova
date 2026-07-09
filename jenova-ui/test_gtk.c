@@ -17,6 +17,7 @@ int main(int argc, char *argv[]) {
     GtkCssProvider *p = gtk_css_provider_new();
     gtk_css_provider_load_from_data(p, "box { background-color: blue; padding: 16px 2px 16px 16px; }", -1, NULL);
     gtk_style_context_add_provider(gtk_widget_get_style_context(sidebar), GTK_STYLE_PROVIDER(p), GTK_STYLE_PROVIDER_PRIORITY_USER);
+    g_object_unref(p);
     
     gtk_box_pack_start(GTK_BOX(hbox), sidebar, FALSE, FALSE, 0);
 
@@ -31,6 +32,7 @@ int main(int argc, char *argv[]) {
     GtkCssProvider *p3 = gtk_css_provider_new();
     gtk_css_provider_load_from_data(p3, "scrolledwindow { background-color: yellow; }", -1, NULL);
     gtk_style_context_add_provider(gtk_widget_get_style_context(sw), GTK_STYLE_PROVIDER(p3), GTK_STYLE_PROVIDER_PRIORITY_USER);
+    g_object_unref(p3);
 
     gtk_box_pack_start(GTK_BOX(sidebar), sw, TRUE, TRUE, 0);
 

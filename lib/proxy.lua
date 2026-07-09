@@ -501,7 +501,7 @@ local function proxy_connection(client_fd, conn_fds)
         end
 
         if origin then
-            local is_safe = origin == "null" or origin:match("^file://") or origin:match("^https?://127%.0%.0%.1$") or origin:match("^https?://127%.0%.0%.1:%d+$") or origin:match("^https?://localhost$") or origin:match("^https?://localhost:%d+$") or origin:match("^https?://%[%:%:1%]$") or origin:match("^https?://%[%:%:1%]:%d+$")
+            local is_safe = origin == "app://jenova" or origin:match("^https?://127%.0%.0%.1:%d+$") or origin:match("^https?://localhost:%d+$")
             if not is_safe then
                 local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
                 async_send(client_fd, err); safe_close(); return
@@ -614,16 +614,20 @@ local function proxy_connection(client_fd, conn_fds)
                     break
                 end
                 
-                local needed = len_end + chunk_len + 2
+                local needed = len_end + 1 + chunk_len + 2
                 while #chunk_buffer < needed do
                     local n = async_recv(client_fd, buf, 8192, deadline)
                     if n <= 0 then break end
                     chunk_buffer = chunk_buffer .. ffi.string(buf, n)
                     if #chunk_buffer > MAX_BODY_SIZE + 8192 then break end
                 end
-                if #chunk_buffer < needed then break end
+                if #chunk_buffer < needed then
+                    local err_resp = "HTTP/1.1 400 Bad Request\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
+                    async_send(client_fd, err_resp)
+                    safe_close(); return
+                end
                 
-                local data = chunk_buffer:sub(len_end + 1, len_end + chunk_len)
+                local data = chunk_buffer:sub(len_end + 2, len_end + 1 + chunk_len)
                 table.insert(assembled_body, data)
                 assembled_total = assembled_total + #data
                 if assembled_total > MAX_BODY_SIZE then

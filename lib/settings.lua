@@ -42,14 +42,14 @@ function settings.save_config(path, config_obj, updates)
     for _, line in ipairs(config_obj.lines) do
         -- Try to replace VAR="${ENV_VAR:-DEFAULT}"
         local k1 = line:match("^([A-Z_]+)=\"%${[A-Z_]+:%-.-}\"")
-        if k1 and updates[k1] then
+        if k1 and updates[k1] ~= nil then
             line = line:gsub("^("..k1.."=\"%${[A-Z_]+:%-).-(}\")", function(prefix, suffix)
                 return prefix .. shell_escape(updates[k1]) .. suffix
             end)
         else
             -- Try to replace VAR="VALUE"
             local k2 = line:match("^([A-Z_]+)=\".-\"")
-            if k2 and updates[k2] then
+            if k2 and updates[k2] ~= nil then
                 line = line:gsub("^("..k2.."=\").-(\")", function(prefix, suffix)
                     return prefix .. shell_escape(updates[k2]) .. suffix
                 end)

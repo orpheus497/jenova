@@ -620,7 +620,6 @@ static GtkWidget* create_tree_item_button(const char *label_text, const char *ic
     gtk_style_context_add_class(gtk_widget_get_style_context(btn), "tree-item");
     GtkWidget *lbl = gtk_label_new(label_text);
     gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_END);
-    gtk_label_set_max_width_chars(GTK_LABEL(lbl), 1);
     gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
     
     if (icon_name) {
@@ -818,8 +817,14 @@ static void on_editor_save_clicked(GtkWidget *widget G_GNUC_UNUSED, gpointer dat
     char *text = gtk_text_buffer_get_text(buf, &start, &end, FALSE);
     FILE *f = fopen(path, "w");
     if (f) {
-        fputs(text, f);
-        fclose(f);
+        if (fputs(text, f) == EOF) {
+            fprintf(stderr, "jenova-ui: error writing to %s\n", path);
+        }
+        if (fclose(f) != 0) {
+            fprintf(stderr, "jenova-ui: error closing %s\n", path);
+        }
+    } else {
+        fprintf(stderr, "jenova-ui: error opening %s for writing\n", path);
     }
     g_free(text);
 }
@@ -1388,7 +1393,7 @@ static gboolean on_status_output_read(GIOChannel *source, GIOCondition condition
         g_error_free(error);
     }
 
-    if (status == G_IO_STATUS_EOF || (condition & G_IO_ERR)) {
+    if (status == G_IO_STATUS_EOF || (condition & (G_IO_ERR | G_IO_HUP))) {
         int is_active = (status_output->str && strstr(status_output->str, "is ready") != NULL);
         char icon_path[PATH_MAX];
         int was_active = (strcmp(g_ui_state.current_status, "active") == 0);

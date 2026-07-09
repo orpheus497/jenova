@@ -120,7 +120,7 @@ function database.get_folder_notes()
         local ok, data = pcall(json.decode, content)
         if ok and data and data.notes then
             for _, note in ipairs(data.notes) do
-                if note.syncPath then
+                if note.syncPath and note.syncPath ~= "" and not note.syncPath:match("^/") and not note.syncPath:match("%.%.") then
                     local full_path = workspace_root .. "/" .. note.syncPath
                     valid_paths[full_path] = true
                     
@@ -141,26 +141,6 @@ function database.get_folder_notes()
                     valid_paths[workspace_root .. "/" .. conv.syncPath] = true
                 end
             end
-            
-            local trash_dir = path .. "/.trash"
-            os.execute("mkdir -p " .. shell_quote(trash_dir))
-            
-            local function sweep_dir(subdir)
-                local p = io.popen("find " .. shell_quote(path .. "/" .. subdir) .. " -maxdepth 1 -type f -name '*.md' ! -newer " .. shell_quote(snapshot_path) .. " 2>/dev/null")
-                if p then
-                    for file_path in p:lines() do
-                        if not valid_paths[file_path] then
-                            local filename = file_path:match("([^/]+)$")
-                            local dest = trash_dir .. "/" .. os.time() .. "_" .. filename
-                            os.rename(file_path, dest)
-                        end
-                    end
-                    p:close()
-                end
-            end
-            
-            sweep_dir("Notes")
-            sweep_dir("Chats")
             
             return notes
         end

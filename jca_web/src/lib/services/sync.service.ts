@@ -39,6 +39,9 @@ export class SyncService {
         await StorageService.delete(oldSyncPath);
       }
       await updateDbCallback();
+    } else if (!success) {
+      console.error(`[Sync] Failed to save entity to ${newSyncPath}`);
+      throw new Error(`Failed to save to ${newSyncPath}`);
     }
   }
 
@@ -123,10 +126,11 @@ export class SyncService {
               note = notesMap.get(`${folderId || 'null'}_${fileName}`) || notesMap.get(`${folderId || 'null'}_${cleanFileName}`);
             }
             if (note) {
-              if (note.content !== content || note.syncPath !== path) {
+              if (note.content !== content || note.syncPath !== path || note.folderId !== folderId) {
                 await DatabaseService.updateNote(note.id, {
                   content,
                   syncPath: path,
+                  folderId: folderId || undefined,
                   updatedAt: Date.now(),
                 });
                 if (note.content !== content) {
@@ -135,7 +139,8 @@ export class SyncService {
                 }
               }
             } else {
-              await DatabaseService.createNote(folderId, cleanFileName, content);
+              const newNote = await DatabaseService.createNote(folderId, cleanFileName, content);
+              await DatabaseService.updateNote(newNote.id, { syncPath: path });
               changed = true;
               stats.created++;
             }

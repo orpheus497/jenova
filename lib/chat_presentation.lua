@@ -2,7 +2,7 @@ local chat = {}
 
 chat.init = function()
     -- Initialize the native C bedrock components
-    if _G.bedrock_create_chat_feed then
+    if _G.bedrock_create_chat_feed and _G.bedrock_create_chat_input and _G.bedrock_create_message_bubble then
         _G.bedrock_create_chat_feed()
         _G.bedrock_create_chat_input()
         
