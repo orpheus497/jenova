@@ -274,8 +274,10 @@ ui.on_file_clicked = function(filepath)
                     end
                 end
             else
-                -- Fallback for empty chats or raw markdown files
-                _G.bedrock_create_message_bubble("assistant", "Hello! I am Jenova, your local Cognitive Architecture. How can I assist you today?")
+                -- Fallback for raw markdown files without format tags
+                if content and #content > 0 then
+                    _G.bedrock_create_message_bubble("assistant", content)
+                end
             end
         end
         

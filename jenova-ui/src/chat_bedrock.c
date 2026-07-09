@@ -132,7 +132,7 @@ static int l_bedrock_create_chat_feed(lua_State *L) {
         "  avatar.innerText = role === 'user' ? 'USER' : role.toUpperCase();"
         "  const bubble = document.createElement('div');"
         "  bubble.className = 'bubble';"
-        "  bubble.innerHTML = role === 'user' ? escapeHtml(text).replace(/\\n/g, '<br>') : DOMPurify.sanitize(marked.parse(text));"
+        "  bubble.innerHTML = DOMPurify.sanitize(marked.parse(text));"
         "  container.appendChild(avatar);"
         "  container.appendChild(bubble);"
         "  document.body.appendChild(container);"
