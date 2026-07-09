@@ -7,7 +7,7 @@
 #include <gtk/gtk.h>
 #include <glib.h>
 #include <json-glib/json-glib.h>
-
+#include <glib/gstdio.h>
 static GtkWidget *flowbox = NULL;
 static GtkWidget *status_label = NULL;
 static guint status_timeout_id = 0;
@@ -56,11 +56,14 @@ static void do_rename(const gchar *old_path, const gchar *new_name) {
     if (!old_path || !new_name || strlen(new_name) == 0) return;
     gchar *dir = g_path_get_dirname(old_path);
     gchar *new_path = g_build_filename(dir, new_name, NULL);
-    rename(old_path, new_path);
+    if (rename(old_path, new_path) == 0) {
+        workspace_explorer_push_local();
+        populate_workspaces();
+    } else {
+        g_printerr("Failed to rename %s to %s\n", old_path, new_path);
+    }
     g_free(dir);
     g_free(new_path);
-    workspace_explorer_push_local();
-    populate_workspaces();
 }
 
 static void on_rename_activated(GtkMenuItem *item, gpointer user_data) {
@@ -81,29 +84,40 @@ static void on_rename_activated(GtkMenuItem *item, gpointer user_data) {
     gtk_widget_destroy(dialog);
 }
 
+static void remove_recursive(const gchar *path) {
+    if (g_file_test(path, G_FILE_TEST_IS_DIR)) {
+        GDir *dir = g_dir_open(path, 0, NULL);
+        if (dir) {
+            const gchar *name;
+            while ((name = g_dir_read_name(dir)) != NULL) {
+                gchar *child = g_build_filename(path, name, NULL);
+                remove_recursive(child);
+                g_free(child);
+            }
+            g_dir_close(dir);
+        }
+        g_rmdir(path);
+    } else {
+        g_remove(path);
+    }
+}
+
 static void do_delete(const gchar *path) {
     if (!path) return;
-    // For simplicity, just remove it. In reality this might need recursive remove if it's a directory.
-    // For files, remove() works. For dirs, rmdir() works if empty.
-    // We'll use a simple system command for robust recursive deletion if it's a dir, or just remove for files.
-    if (g_file_test(path, G_FILE_TEST_IS_DIR)) {
-        gchar *cmd = g_strdup_printf("rm -rf \"%s\"", path);
-        system(cmd);
-        g_free(cmd);
-    } else {
-        remove(path);
-    }
+    remove_recursive(path);
     workspace_explorer_push_local();
     populate_workspaces();
 }
 
 static void on_delete_activated(GtkMenuItem *item, gpointer user_data) {
     const gchar *path = (const gchar *)user_data;
-    GtkWidget *dialog = gtk_message_dialog_new(NULL, GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING, GTK_BUTTONS_YES_NO, "Are you sure you want to delete '%s'?", g_path_get_basename(path));
+    gchar *basename = g_path_get_basename(path);
+    GtkWidget *dialog = gtk_message_dialog_new(NULL, GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING, GTK_BUTTONS_YES_NO, "Are you sure you want to delete '%s'?", basename);
     if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_YES) {
         do_delete(path);
     }
     gtk_widget_destroy(dialog);
+    g_free(basename);
 }
 
 // Global list for Move dropdown
@@ -165,15 +179,21 @@ static void on_move_activated(GtkMenuItem *item, gpointer user_data) {
             
             gchar *dest_dir = g_build_filename(root, selected, subdir, NULL);
             g_mkdir_with_parents(dest_dir, 0755);
-            gchar *dest_path = g_build_filename(dest_dir, g_path_get_basename(path), NULL);
-            rename(path, dest_path);
+            gchar *basename = g_path_get_basename(path);
+            gchar *dest_path = g_build_filename(dest_dir, basename, NULL);
+            g_free(basename);
+            
+            if (rename(path, dest_path) == 0) {
+                workspace_explorer_push_local();
+                populate_workspaces();
+            } else {
+                g_printerr("Failed to move %s to %s\n", path, dest_path);
+            }
             
             g_free(dest_path);
             g_free(dest_dir);
             g_free(root);
             g_free(selected);
-            workspace_explorer_push_local();
-            populate_workspaces();
         }
     }
     
@@ -186,6 +206,7 @@ static gboolean on_file_button_press(GtkWidget *widget, GdkEventButton *event, g
     if (event->type == GDK_BUTTON_PRESS && event->button == 3) { // Right click
         const gchar *path = (const gchar *)user_data;
         GtkWidget *menu = gtk_menu_new();
+        g_object_ref_sink(menu);
         
         GtkWidget *mi_rename = gtk_menu_item_new_with_label("Rename");
         g_signal_connect(mi_rename, "activate", G_CALLBACK(on_rename_activated), (gpointer)path);
@@ -200,6 +221,8 @@ static gboolean on_file_button_press(GtkWidget *widget, GdkEventButton *event, g
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), mi_del);
         
         gtk_widget_show_all(menu);
+        g_signal_connect(menu, "selection-done", G_CALLBACK(gtk_widget_destroy), NULL);
+        g_signal_connect(menu, "destroy", G_CALLBACK(g_object_unref), NULL);
         gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent*)event);
         return TRUE;
     }
@@ -596,7 +619,21 @@ void workspace_explorer_push_local(void) {
                                 JsonObject *new_f = json_object_new();
                                 gchar uuid[37]; generate_uuid(uuid);
                                 json_object_set_string_member(new_f, "id", uuid);
-                                json_object_set_null_member(new_f, "projectId");
+                                
+                                const gchar *ws_id = NULL;
+                                for (guint k = 0; k < json_array_get_length(ws_array); k++) {
+                                    JsonObject *w = json_array_get_object_element(ws_array, k);
+                                    if (g_strcmp0(json_object_get_string_member(w, "name"), ws_name) == 0) {
+                                        ws_id = json_object_get_string_member(w, "id");
+                                        break;
+                                    }
+                                }
+                                if (ws_id) {
+                                    json_object_set_string_member(new_f, "workspaceId", ws_id);
+                                    json_object_set_string_member(new_f, "projectId", ws_id);
+                                } else {
+                                    json_object_set_null_member(new_f, "projectId");
+                                }
                                 json_object_set_string_member(new_f, "name", f_name);
                                 json_array_add_object_element(folders_array, new_f);
                             }
@@ -652,17 +689,30 @@ void workspace_explorer_pull_origin(void) {
                 for (guint i = 0; i < json_array_get_length(ws_array); i++) {
                     JsonObject *wo = json_array_get_object_element(ws_array, i);
                     const gchar *wname = json_object_get_string_member(wo, "name");
+                    const gchar *wid = NULL;
+                    if (json_object_has_member(wo, "id")) {
+                        wid = json_object_get_string_member(wo, "id");
+                    }
                     if (wname) {
                         gchar *wpath = g_build_filename(root_path, wname, NULL);
                         g_mkdir_with_parents(wpath, 0755);
                         
                         for (guint j = 0; j < json_array_get_length(folders_array); j++) {
                             JsonObject *fo = json_array_get_object_element(folders_array, j);
-                            const gchar *fname = json_object_get_string_member(fo, "name");
-                            if (fname) {
-                                gchar *fpath = g_build_filename(wpath, fname, NULL);
-                                g_mkdir_with_parents(fpath, 0755);
-                                g_free(fpath);
+                            const gchar *f_ws_id = NULL;
+                            if (json_object_has_member(fo, "workspaceId") && JSON_NODE_HOLDS_VALUE(json_object_get_member(fo, "workspaceId"))) {
+                                f_ws_id = json_object_get_string_member(fo, "workspaceId");
+                            } else if (json_object_has_member(fo, "projectId") && JSON_NODE_HOLDS_VALUE(json_object_get_member(fo, "projectId"))) {
+                                f_ws_id = json_object_get_string_member(fo, "projectId");
+                            }
+                            
+                            if (f_ws_id && wid && g_strcmp0(f_ws_id, wid) == 0) {
+                                const gchar *fname = json_object_get_string_member(fo, "name");
+                                if (fname) {
+                                    gchar *fpath = g_build_filename(wpath, fname, NULL);
+                                    g_mkdir_with_parents(fpath, 0755);
+                                    g_free(fpath);
+                                }
                             }
                         }
                         g_free(wpath);
