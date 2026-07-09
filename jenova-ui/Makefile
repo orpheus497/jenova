@@ -2,10 +2,10 @@
 # Supports FreeBSD (cc/clang), Linux (gcc/cc), and macOS (cc/clang).
 
 CC ?= cc
-CFLAGS=-Wall -Wextra -std=c99 `pkg-config --cflags gtk+-3.0 appindicator3-0.1 ncurses luajit webkit2gtk-4.1`
-LDFLAGS=`pkg-config --libs gtk+-3.0 appindicator3-0.1 ncurses luajit webkit2gtk-4.1` -Wl,-E -lm
+CFLAGS=-Wall -Wextra -std=c99 `pkg-config --cflags gtk+-3.0 appindicator3-0.1 ncurses luajit webkit2gtk-4.1 json-glib-1.0`
+LDFLAGS=`pkg-config --libs gtk+-3.0 appindicator3-0.1 ncurses luajit webkit2gtk-4.1 json-glib-1.0` -Wl,-E -lm
 TARGET=jenova-ui
-SRC=src/main.c src/canvas.c src/chat_bedrock.c
+SRC=src/main.c src/canvas.c src/chat_bedrock.c src/workspace_explorer.c
 
 .PHONY: all clean
 

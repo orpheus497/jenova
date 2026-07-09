@@ -14,6 +14,7 @@
 #include <sys/types.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include "workspace_explorer.h"
 
 /* FreeBSD: sysctl for executable path */
 #if defined(__FreeBSD__)
@@ -1074,49 +1075,16 @@ static void init_gui(void) {
     GtkWidget *tab1_label = gtk_label_new("Chat");
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook), chat_vbox, tab1_label);
     
-    /* TAB 2: Workspace Organizer */
+    /* TAB 2: Workspaces */
     GtkWidget *organizer_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
     gtk_widget_set_margin_top(organizer_vbox, 16);
     gtk_widget_set_margin_bottom(organizer_vbox, 16);
     gtk_widget_set_margin_start(organizer_vbox, 16);
     gtk_widget_set_margin_end(organizer_vbox, 16);
     
-    // Organizer toolbar
-    GtkWidget *org_toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    GtkWidget *org_title = gtk_label_new("Workspace Organizer");
-    gtk_style_context_add_class(gtk_widget_get_style_context(org_title), "title");
-    GtkWidget *btn_new_ws = gtk_button_new_with_label("+ New Workspace");
-    gtk_box_pack_start(GTK_BOX(org_toolbar), org_title, FALSE, FALSE, 0);
-    GtkWidget *org_spacer = gtk_label_new("");
-    gtk_widget_set_hexpand(org_spacer, TRUE);
-    gtk_box_pack_start(GTK_BOX(org_toolbar), org_spacer, TRUE, TRUE, 0);
-    gtk_box_pack_start(GTK_BOX(org_toolbar), btn_new_ws, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(organizer_vbox), org_toolbar, FALSE, FALSE, 0);
+    workspace_explorer_init(organizer_vbox);
 
-    // Organizer split view
-    GtkWidget *org_paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
-    
-    // Left: Workspaces List
-    GtkWidget *ws_scroll = gtk_scrolled_window_new(NULL, NULL);
-    GtkWidget *ws_list = gtk_list_box_new(); // Stub for workspaces
-    gtk_container_add(GTK_CONTAINER(ws_scroll), ws_list);
-    gtk_widget_set_size_request(ws_scroll, 200, -1);
-    gtk_paned_pack1(GTK_PANED(org_paned), ws_scroll, FALSE, FALSE);
-    
-    // Right: Content Grid (Files/Chats)
-    GtkWidget *content_scroll = gtk_scrolled_window_new(NULL, NULL);
-    GtkWidget *content_tree = gtk_tree_view_new(); // Stub for workspace contents
-    GtkCellRenderer *cr = gtk_cell_renderer_text_new();
-    GtkTreeViewColumn *c1 = gtk_tree_view_column_new_with_attributes("Item Name", cr, "text", 0, NULL);
-    GtkTreeViewColumn *c2 = gtk_tree_view_column_new_with_attributes("Type", cr, "text", 1, NULL);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(content_tree), c1);
-    gtk_tree_view_append_column(GTK_TREE_VIEW(content_tree), c2);
-    gtk_container_add(GTK_CONTAINER(content_scroll), content_tree);
-    gtk_paned_pack2(GTK_PANED(org_paned), content_scroll, TRUE, FALSE);
-    
-    gtk_box_pack_start(GTK_BOX(organizer_vbox), org_paned, TRUE, TRUE, 0);
-
-    GtkWidget *tab2_label = gtk_label_new("Organizer");
+    GtkWidget *tab2_label = gtk_label_new("Workspaces");
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook), organizer_vbox, tab2_label);
     
     // Tab 3: Text Editor
