@@ -240,7 +240,12 @@ export class SyncService {
       const allFolders = await DatabaseService.getAllFolders();
       const allConvs = await DatabaseService.getAllConversations();
 
-      const folderMap = new Map(allFolders.map((f) => [f.id, f]));
+      const folderMap = new Map<string, typeof allFolders[number]>();
+      for (const f of allFolders) {
+        if (!folderMap.has(f.id)) {
+          folderMap.set(f.id, f);
+        }
+      }
 
       // Hierarchy: Workspace / Project / Folder
       // For now, if no workspace/project, use "default"
@@ -264,7 +269,7 @@ export class SyncService {
           const messages = await DatabaseService.getConversationMessages(
             conv.id,
           );
-          const folder = allFolders.find((f) => f.id === conv.folderId);
+          const folder = folderMap.get(conv.folderId || "");
           const folderName = folder?.name || "Chats";
           const md = MarkdownService.toMarkdown(conv, messages);
           const path = SyncService.buildSyncPath(defaultWorkspace, folder?.id, "Chats", conv.name, conv.id);

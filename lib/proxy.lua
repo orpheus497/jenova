@@ -589,6 +589,11 @@ local function proxy_connection(client_fd, conn_fds)
             while true do
                 local len_end = chunk_buffer:find("\r\n", 1, true)
                 while not len_end do
+                    if #chunk_buffer > 1024 then
+                        local err_resp = "HTTP/1.1 400 Bad Request\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
+                        async_send(client_fd, err_resp)
+                        safe_close(); return
+                    end
                     local n = async_recv(client_fd, buf, 8192, deadline)
                     if n <= 0 then break end
                     chunk_buffer = chunk_buffer .. ffi.string(buf, n)

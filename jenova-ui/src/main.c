@@ -1452,17 +1452,6 @@ static gboolean update_tray_status(gpointer user_data G_GNUC_UNUSED) {
 
     /* If an async check is already running, skip this cycle */
     if (status_pid != 0) {
-        kill(status_pid, SIGKILL);
-        g_spawn_close_pid(status_pid);
-        status_pid = 0;
-        if (status_watch_id != 0) {
-            g_source_remove(status_watch_id);
-            status_watch_id = 0;
-        }
-        if (status_output) {
-            g_string_free(status_output, TRUE);
-            status_output = NULL;
-        }
         return TRUE;
     }
 
