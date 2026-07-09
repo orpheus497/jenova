@@ -276,7 +276,7 @@ ui.on_file_clicked = function(filepath)
             else
                 -- Fallback for raw markdown files without format tags
                 if content and #content > 0 then
-                    _G.bedrock_create_message_bubble("user", content)
+                    _G.bedrock_create_message_bubble("assistant", content)
                 end
             end
         end
