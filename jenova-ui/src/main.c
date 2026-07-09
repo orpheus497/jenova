@@ -684,7 +684,7 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
     if (ndir) {
         struct dirent *nent;
         while ((nent = readdir(ndir)) != NULL) {
-            if (strstr(nent->d_name, ".md")) {
+            if (g_str_has_suffix(nent->d_name, ".md")) {
                 char name_no_ext[256];
                 snprintf(name_no_ext, sizeof(name_no_ext), "%s", nent->d_name);
                 char *dot = strrchr(name_no_ext, '.');
@@ -742,7 +742,7 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                     
                     struct dirent *cent;
                     while ((cent = readdir(cdir)) != NULL) {
-                        if (strstr(cent->d_name, ".md")) {
+                        if (g_str_has_suffix(cent->d_name, ".md")) {
                             char name_no_ext[256];
                             snprintf(name_no_ext, sizeof(name_no_ext), "%s", cent->d_name);
                             char *dot = strrchr(name_no_ext, '.');
@@ -769,7 +769,7 @@ static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_c
                     
                     struct dirent *nent;
                     while ((nent = readdir(ndir2)) != NULL) {
-                        if (strstr(nent->d_name, ".md")) {
+                        if (g_str_has_suffix(nent->d_name, ".md")) {
                             char name_no_ext[256];
                             snprintf(name_no_ext, sizeof(name_no_ext), "%s", nent->d_name);
                             char *dot = strrchr(name_no_ext, '.');

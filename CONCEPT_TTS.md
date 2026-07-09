@@ -26,7 +26,7 @@ The system supports strict resource-efficiency through a dual-layer toggle syste
 1.  **Config Level (`jenova.conf`)**: 
     A `JENOVA_VOICE=1` flag and a `VOICE_DEVICE="Vulkan1"` setting dictate the initialization behavior. When the daemon boots, if the flag is disabled, it completely skips initializing the Voice process.
 2.  **Web UI Level (Dynamic Lifecycle)**: 
-    Using the lifecycle endpoints used by the UI contract, specifically the load/unload flow handled by `/models/load` and `/models/unload`, a UI toggle dynamically unloads the Voice model during "Silent Mode", and dynamically reloads it into the iGPU when voice is requested. This guarantees aggressive resource optimization when audio synthesis is not required, while keeping `/v1/models` reserved for listing models only.
+    Using the lifecycle endpoints used by the UI contract, specifically the load/unload flow handled by `/models/load` and `/models/unload`, a UI toggle requests the Voice model to unload during "Silent Mode", and requests it to reload into the iGPU when voice is requested. It is important to note that these endpoints are **asynchronous** and return before the model transition completes. The UI must use polling or another readiness check against `/v1/models` before treating the model as fully ready or unloaded. This guarantees aggressive resource optimization when audio synthesis is not required, while keeping `/v1/models` reserved for listing models only.
 
 ## 5. Next Steps
 

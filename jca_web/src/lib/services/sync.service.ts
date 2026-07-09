@@ -17,21 +17,24 @@ export interface SyncStats {
 export class SyncService {
   private static _isSyncing = false;
 
-  private static buildSyncPath(folderName: string | null | undefined, type: "Notes" | "Chats", entityName: string, entityId: string): string {
+  private static buildSyncPath(folderName: string | null | undefined, folderId: string | null | undefined, type: "Notes" | "Chats", entityName: string, entityId: string): string {
     const safeName = (entityName || "Untitled").replace(/[\/\\]/g, "_").replace(/\.\./g, "__");
     const safeFolderName = folderName ? folderName.replace(/[\/\\]/g, "_").replace(/\.\./g, "__") : null;
     
-    if (safeFolderName) {
-      return `Spaces/${safeFolderName}/${type}/${safeName}_${entityId}.md`;
+    if (safeFolderName && folderId) {
+      return `Spaces/${safeFolderName}_${folderId}/${type}/${safeName}_${entityId}.md`;
     } else {
       return `${type}/${safeName}_${entityId}.md`;
     }
   }
 
-  private static resolveFolderIdFromPath(parts: string[], folderNameMap: Map<string, string>): string | null {
+  private static resolveFolderIdFromPath(parts: string[]): string | null {
     if (parts.length >= 4 && parts[0] === "Spaces") {
-      const folderName = parts[1];
-      return folderNameMap.get(folderName) || null;
+      const folderKey = parts[1];
+      const lastUnderscore = folderKey.lastIndexOf("_");
+      if (lastUnderscore !== -1) {
+        return folderKey.substring(lastUnderscore + 1);
+      }
     }
     return null;
   }
@@ -105,7 +108,6 @@ export class SyncService {
         const allNotes = await DatabaseService.getAllNotes();
         const allFolders = await DatabaseService.getAllFolders();
 
-        const folderNameMap = new Map<string, string>(allFolders.map(f => [f.name, f.id]));
         const convsMap = new Map<string, typeof allConvs[number]>(allConvs.map((c) => [(c.folderId || "null") + "_" + c.name, c]));
         const notesMap = new Map<string, typeof allNotes[number]>(allNotes.map((n) => [(n.folderId || "null") + "_" + n.title, n]));
         const convsBySyncPath = new Map<string, typeof allConvs[number]>(allConvs.filter(c => c.syncPath).map(c => [c.syncPath!, c]));
@@ -123,7 +125,7 @@ export class SyncService {
           const isChat = path.includes("/Chats/");
 
           if (isNote) {
-            const folderId = SyncService.resolveFolderIdFromPath(parts, folderNameMap);
+            const folderId = SyncService.resolveFolderIdFromPath(parts);
             const cleanFileName = fileName.replace(/_[^_]+$/, "");
             let note = notesBySyncPath.get(path);
             if (!note) {
@@ -149,7 +151,7 @@ export class SyncService {
               stats.created++;
             }
           } else if (isChat) {
-            const folderId = SyncService.resolveFolderIdFromPath(parts, folderNameMap);
+            const folderId = SyncService.resolveFolderIdFromPath(parts);
             const cleanFileName = fileName.replace(/_[^_]+$/, "");
             const { conv: parsedConv, messages: parsedMessages } =
               MarkdownService.fromMarkdown(content);
@@ -266,7 +268,7 @@ export class SyncService {
       for (const note of allNotes) {
         queue.push(async () => {
           const folder = folderMap.get(note.folderId || "");
-          const path = SyncService.buildSyncPath(folder?.name, "Notes", note.title, note.id);
+          const path = SyncService.buildSyncPath(folder?.name, folder?.id, "Notes", note.title, note.id);
           await SyncService.updateEntitySync(note.syncPath, path, note.content, async () => {
             await DatabaseService.updateNote(note.id, { syncPath: path });
           });
@@ -280,7 +282,7 @@ export class SyncService {
           );
           const folder = folderMap.get(conv.folderId || "");
           const md = MarkdownService.toMarkdown(conv, messages);
-          const path = SyncService.buildSyncPath(folder?.name, "Chats", conv.name, conv.id);
+          const path = SyncService.buildSyncPath(folder?.name, folder?.id, "Chats", conv.name, conv.id);
           await SyncService.updateEntitySync(conv.syncPath, path, md, async () => {
             await DatabaseService.updateConversation(conv.id, { syncPath: path });
           });
@@ -339,7 +341,7 @@ export class SyncService {
         const note = notes.find((n) => n.id === id);
         if (note) {
           const folder = allFolders.find((f) => f.id === note.folderId);
-          const path = SyncService.buildSyncPath(folder?.name, "Notes", note.title, note.id);
+          const path = SyncService.buildSyncPath(folder?.name, folder?.id, "Notes", note.title, note.id);
           await SyncService.updateEntitySync(note.syncPath, path, note.content, async () => {
             await DatabaseService.updateNote(note.id, { syncPath: path });
           });
@@ -350,7 +352,7 @@ export class SyncService {
           const messages = await DatabaseService.getConversationMessages(id);
           const folder = allFolders.find((f) => f.id === conv.folderId);
           const md = MarkdownService.toMarkdown(conv, messages);
-          const path = SyncService.buildSyncPath(folder?.name, "Chats", conv.name, conv.id);
+          const path = SyncService.buildSyncPath(folder?.name, folder?.id, "Chats", conv.name, conv.id);
           await SyncService.updateEntitySync(conv.syncPath, path, md, async () => {
             await DatabaseService.updateConversation(conv.id, { syncPath: path });
           });

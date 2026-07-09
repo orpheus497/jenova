@@ -40,7 +40,9 @@ new_get_all_workspace_folders = """static GList *get_all_workspace_folders() {
     g_free(root);
     return list;
 }"""
-code = re.sub(r'static GList \*get_all_workspace_folders\(\) \{.*?\n\}', new_get_all_workspace_folders, code, flags=re.DOTALL)
+code, count = re.subn(r'static GList \*get_all_workspace_folders\(\) \{.*?\n\}', new_get_all_workspace_folders, code, flags=re.DOTALL)
+if count == 0:
+    raise RuntimeError("Failed to patch get_all_workspace_folders")
 
 # 2. Update on_move_activated
 old_move = """            gchar *dest_dir = g_build_filename(root, selected, subdir, NULL);"""
@@ -50,6 +52,8 @@ new_move = """            gchar *dest_dir = NULL;
             } else {
                 dest_dir = g_build_filename(root, selected, subdir, NULL);
             }"""
+if old_move not in code:
+    raise RuntimeError("old_move not found in source")
 code = code.replace(old_move, new_move)
 
 # 3. Update workspace_explorer_push_local
@@ -66,6 +70,8 @@ new_push_scan = """    gchar *spaces_dir = g_build_filename(root_path, "Spaces",
         while ((ws_name = g_dir_read_name(dir)) != NULL) {
             if (ws_name[0] == '.') continue;
             gchar *ws_full = g_build_filename(spaces_dir, ws_name, NULL);"""
+if old_push_scan not in code:
+    raise RuntimeError("old_push_scan not found in source")
 code = code.replace(old_push_scan, new_push_scan)
 
 old_push_end = """        g_dir_close(dir);
@@ -77,6 +83,8 @@ new_push_end = """        g_dir_close(dir);
     g_free(spaces_dir);
     
     // Save JSON"""
+if old_push_end not in code:
+    raise RuntimeError("old_push_end not found in source")
 code = code.replace(old_push_end, new_push_end)
 
 # 4. Update workspace_explorer_pull_origin
@@ -87,6 +95,8 @@ new_pull_scan = """                        gchar *wpath = NULL;
                         } else {
                             wpath = g_build_filename(root_path, "Spaces", wname, NULL);
                         }"""
+if old_pull_scan not in code:
+    raise RuntimeError("old_pull_scan not found in source")
 code = code.replace(old_pull_scan, new_pull_scan)
 
 # 5. Rewrite populate_workspaces inside current_workspace_view == NULL
@@ -249,7 +259,9 @@ new_pop = """    gchar *root = get_workspaces_root();
     gtk_widget_show_all(flowbox);
 }"""
 
-code = re.sub(r'    gchar \*root = get_workspaces_root\(\);\n    g_mkdir_with_parents\(root, 0755\);\n\n    GDir \*dir = g_dir_open\(root, 0, NULL\);.*?\n}', new_pop, code, flags=re.DOTALL)
+code, count = re.subn(r'    gchar \*root = get_workspaces_root\(\);\n    g_mkdir_with_parents\(root, 0755\);\n\n    GDir \*dir = g_dir_open\(root, 0, NULL\);.*?\n}', lambda m: new_pop, code, flags=re.DOTALL)
+if count == 0:
+    raise RuntimeError("Failed to patch populate_workspaces")
 
 with open("jenova-ui/src/workspace_explorer.c", "w") as f:
     f.write(code)
