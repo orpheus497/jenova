@@ -645,6 +645,10 @@ export class DatabaseService {
     return await db.folders.where("projectId").equals(projectId).toArray();
   }
 
+  static async getAllFolders(): Promise<DatabaseFolder[]> {
+    return await db.folders.toArray();
+  }
+
   static async deleteFolder(id: string): Promise<void> {
     await db.transaction(
       "rw",

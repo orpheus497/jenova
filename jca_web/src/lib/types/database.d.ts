@@ -17,8 +17,9 @@ export interface DatabaseConversation {
   name: string;
   mcpServerOverrides?: McpServerOverride[];
   forkedFromConversationId?: string;
-  folderId?: string;
+  folderId?: string | null;
   projectId?: string;
+  syncPath?: string;
 }
 
 export interface DatabaseWorkspace {
@@ -44,6 +45,7 @@ export interface DatabaseNote {
   title: string;
   content: string;
   updatedAt: number;
+  syncPath?: string;
 }
 
 export interface DatabaseFileAsset {

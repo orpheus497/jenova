@@ -31,10 +31,15 @@ export interface ApiFetchOptions extends Omit<RequestInit, "headers"> {
  * const models = await apiFetch<ApiModel[]>('/v1/models');
  * ```
  */
+const DEFAULT_LOCAL_API = "http://localhost:8080";
+
 function getEffectiveBase(defaultBase: string): string {
   const serverUrl = settingsStore.config.serverUrl?.toString().trim();
   if (serverUrl) {
     return serverUrl.endsWith("/") ? serverUrl.slice(0, -1) : serverUrl;
+  }
+  if (typeof window !== "undefined" && window.location.protocol === "file:") {
+    return DEFAULT_LOCAL_API;
   }
   return defaultBase;
 }

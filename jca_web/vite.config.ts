@@ -28,6 +28,12 @@ export default defineConfig({
     assetsInlineLimit: MAX_ASSET_SIZE,
     chunkSizeWarningLimit: 3072,
     minify: ENABLE_JS_MINIFICATION,
+    rollupOptions: {
+      output: {
+        manualChunks: undefined,
+        inlineDynamicImports: true,
+      },
+    },
   },
   css: {
     preprocessorOptions: {

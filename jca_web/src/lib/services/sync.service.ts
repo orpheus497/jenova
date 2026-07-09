@@ -17,6 +17,42 @@ export interface SyncStats {
 export class SyncService {
   private static _isSyncing = false;
 
+  private static buildSyncPath(folderName: string | null | undefined, folderId: string | null | undefined, type: "Notes" | "Chats", entityName: string, entityId: string): string {
+    const safeName = (entityName || "Untitled").replace(/[\/\\]/g, "_").replace(/\.\./g, "__");
+    const safeFolderName = folderName ? folderName.replace(/[\/\\]/g, "_").replace(/\.\./g, "__") : null;
+    
+    if (safeFolderName && folderId) {
+      return `Spaces/${safeFolderName}_${folderId}/${type}/${safeName}_${entityId}.md`;
+    } else {
+      return `${type}/${safeName}_${entityId}.md`;
+    }
+  }
+
+  private static resolveFolderIdFromPath(parts: string[], validFolderIds: Set<string>): string | null {
+    if (parts.length >= 4 && parts[0] === "Spaces") {
+      const folderKey = parts[1];
+      const lastUnderscore = folderKey.lastIndexOf("_");
+      if (lastUnderscore !== -1) {
+        const id = folderKey.substring(lastUnderscore + 1);
+        if (validFolderIds.has(id)) return id;
+      }
+    }
+    return null;
+  }
+
+  private static async updateEntitySync(oldSyncPath: string | null | undefined, newSyncPath: string, content: string, updateDbCallback: () => Promise<void>) {
+    const success = await StorageService.save(newSyncPath, content);
+    if (success && oldSyncPath !== newSyncPath) {
+      if (oldSyncPath) {
+        await StorageService.delete(oldSyncPath);
+      }
+      await updateDbCallback();
+    } else if (!success) {
+      console.error(`[Sync] Failed to save entity to ${newSyncPath}`);
+      throw new Error(`Failed to save to ${newSyncPath}`);
+    }
+  }
+
   static get isSyncing() {
     return this._isSyncing;
   }
@@ -71,6 +107,13 @@ export class SyncService {
       if (mdFiles.length > 0) {
         const allConvs = await DatabaseService.getAllConversations();
         const allNotes = await DatabaseService.getAllNotes();
+        const allFolders = await DatabaseService.getAllFolders();
+
+        const validFolderIds = new Set<string>(allFolders.map(f => f.id));
+        const convsMap = new Map<string, typeof allConvs[number]>(allConvs.map((c) => [(c.folderId || "null") + "_" + c.name, c]));
+        const notesMap = new Map<string, typeof allNotes[number]>(allNotes.map((n) => [(n.folderId || "null") + "_" + n.title, n]));
+        const convsBySyncPath = new Map<string, typeof allConvs[number]>(allConvs.filter(c => c.syncPath).map(c => [c.syncPath!, c]));
+        const notesBySyncPath = new Map<string, typeof allNotes[number]>(allNotes.filter(n => n.syncPath).map(n => [n.syncPath!, n]));
 
         const limit = 5;
         const active: Promise<void>[] = [];
@@ -80,45 +123,98 @@ export class SyncService {
 
           const parts = path.split("/");
           const fileName = parts[parts.length - 1].replace(".md", "");
-          const isNote = path.includes("/Notes/");
-          const isChat = path.includes("/Chats/");
+          const isNote = parts.length >= 2 && parts[parts.length - 2] === "Notes";
+          const isChat = parts.length >= 2 && parts[parts.length - 2] === "Chats";
 
           if (isNote) {
-            const note = allNotes.find((n) => n.title === fileName);
+            const folderId = SyncService.resolveFolderIdFromPath(parts, validFolderIds);
+            const cleanFileName = fileName.replace(/_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/, "");
+            let note = notesBySyncPath.get(path);
+            if (!note) {
+              note = notesMap.get(`${folderId || 'null'}_${fileName}`) || notesMap.get(`${folderId || 'null'}_${cleanFileName}`);
+            }
             if (note) {
-              if (note.content !== content) {
+              if (note.content !== content || note.syncPath !== path || note.folderId !== folderId) {
                 await DatabaseService.updateNote(note.id, {
                   content,
+                  syncPath: path,
+                  folderId: folderId,
                   updatedAt: Date.now(),
                 });
                 changed = true;
-                stats.updated++;
+                if (note.content !== content) {
+                  stats.updated++;
+                }
               }
             } else {
-              await DatabaseService.createNote(null, fileName, content);
+              const newNote = await DatabaseService.createNote(folderId, cleanFileName, content);
+              await DatabaseService.updateNote(newNote.id, { syncPath: path });
               changed = true;
               stats.created++;
             }
           } else if (isChat) {
+            const folderId = SyncService.resolveFolderIdFromPath(parts, validFolderIds);
+            const cleanFileName = fileName.replace(/_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/, "");
             const { conv: parsedConv, messages: parsedMessages } =
               MarkdownService.fromMarkdown(content);
-            const conv = allConvs.find(
-              (c) => c.name === (parsedConv.name || fileName),
-            );
+            let conv = convsBySyncPath.get(path);
+            if (!conv) {
+              conv = convsMap.get(`${folderId || 'null'}_${parsedConv.name || fileName}`);
+              if (!conv && !parsedConv.name) {
+                conv = convsMap.get(`${folderId || 'null'}_${cleanFileName}`);
+              }
+            }
 
             if (conv && parsedMessages.length > 0) {
-              // Clear existing messages and reconstruct the tree properly
-              await DatabaseService.deleteConversationMessages(conv.id);
+              if (parsedConv.name && conv.name !== parsedConv.name) {
+                conv.name = parsedConv.name;
+                await DatabaseService.updateConversation(conv.id, { name: parsedConv.name });
+                changed = true;
+              }
+              if (conv.syncPath !== path || conv.folderId !== folderId) {
+                await DatabaseService.updateConversation(conv.id, { syncPath: path, folderId: folderId });
+                changed = true;
+              }
+              const existingMessages = await DatabaseService.getConversationMessages(conv.id);
+              const existingMd = MarkdownService.toMarkdown(conv, existingMessages);
 
-              // Build a linear chain: root → msg1 → msg2 → ...
-              // This preserves the conversation order from the markdown file.
-              const rootId = await DatabaseService.createRootMessage(conv.id);
+              if (existingMd !== content) {
+                // Clear existing messages and reconstruct the tree properly
+                await DatabaseService.deleteConversationMessages(conv.id);
+
+                // Build a linear chain: root → msg1 → msg2 → ...
+                // This preserves the conversation order from the markdown file.
+                const rootId = await DatabaseService.createRootMessage(conv.id);
+                let parentId: string = rootId;
+
+                for (const msg of parsedMessages) {
+                  const created = await DatabaseService.createMessageBranch(
+                    {
+                      convId: conv.id,
+                      role: msg.role as any,
+                      content: msg.content || "",
+                      timestamp: msg.timestamp || Date.now(),
+                      type: "text",
+                      toolCalls: "",
+                    },
+                    parentId,
+                  );
+                  parentId = created.id;
+                }
+                changed = true;
+                stats.updated++;
+              }
+            } else if (parsedMessages.length > 0) {
+              const newConv = await DatabaseService.createConversation(parsedConv.name || cleanFileName);
+              await DatabaseService.updateConversation(newConv.id, { syncPath: path, folderId: folderId });
+              
+              const rootId = await DatabaseService.createRootMessage(newConv.id);
               let parentId: string = rootId;
 
               for (const msg of parsedMessages) {
                 const created = await DatabaseService.createMessageBranch(
                   {
-                    convId: conv.id,
+                    convId: newConv.id,
                     role: msg.role as any,
                     content: msg.content || "",
                     timestamp: msg.timestamp || Date.now(),
@@ -130,7 +226,7 @@ export class SyncService {
                 parentId = created.id;
               }
               changed = true;
-              stats.updated++;
+              stats.created++;
             }
           }
         });
@@ -183,8 +279,15 @@ export class SyncService {
 
       const workspaces = await DatabaseService.getAllWorkspaces();
       const allNotes = await DatabaseService.getAllNotes();
-      const allFolders = await DatabaseService.getProjectFolders(null);
+      const allFolders = await DatabaseService.getAllFolders();
       const allConvs = await DatabaseService.getAllConversations();
+
+      const folderMap = new Map<string, typeof allFolders[number]>();
+      for (const f of allFolders) {
+        if (!folderMap.has(f.id)) {
+          folderMap.set(f.id, f);
+        }
+      }
 
       // Hierarchy: Workspace / Project / Folder
       // For now, if no workspace/project, use "default"
@@ -195,10 +298,11 @@ export class SyncService {
 
       for (const note of allNotes) {
         queue.push(async () => {
-          const folder = allFolders.find((f) => f.id === note.folderId);
-          const folderName = folder?.name || "Notes";
-          const path = `${defaultWorkspace}/${folderName}/${note.title}.md`;
-          await StorageService.save(path, note.content);
+          const folder = folderMap.get(note.folderId || "");
+          const path = SyncService.buildSyncPath(folder?.name, folder?.id, "Notes", note.title, note.id);
+          await SyncService.updateEntitySync(note.syncPath, path, note.content, async () => {
+            await DatabaseService.updateNote(note.id, { syncPath: path });
+          });
         });
       }
 
@@ -207,11 +311,12 @@ export class SyncService {
           const messages = await DatabaseService.getConversationMessages(
             conv.id,
           );
-          const folder = allFolders.find((f) => f.id === conv.folderId);
-          const folderName = folder?.name || "Chats";
+          const folder = folderMap.get(conv.folderId || "");
           const md = MarkdownService.toMarkdown(conv, messages);
-          const path = `${defaultWorkspace}/${folderName}/${conv.name}.md`;
-          await StorageService.save(path, md);
+          const path = SyncService.buildSyncPath(folder?.name, folder?.id, "Chats", conv.name, conv.id);
+          await SyncService.updateEntitySync(conv.syncPath, path, md, async () => {
+            await DatabaseService.updateConversation(conv.id, { syncPath: path });
+          });
         });
       }
 
@@ -260,26 +365,28 @@ export class SyncService {
     try {
       const workspaces = await DatabaseService.getAllWorkspaces();
       const defaultWorkspace = workspaces[0]?.name || "default";
-      const allFolders = await DatabaseService.getProjectFolders(null);
+      const allFolders = await DatabaseService.getAllFolders();
 
       if (type === "note") {
         const notes = await DatabaseService.getAllNotes();
         const note = notes.find((n) => n.id === id);
         if (note) {
           const folder = allFolders.find((f) => f.id === note.folderId);
-          const folderName = folder?.name || "Notes";
-          const path = `${defaultWorkspace}/${folderName}/${note.title}.md`;
-          await StorageService.save(path, note.content);
+          const path = SyncService.buildSyncPath(folder?.name, folder?.id, "Notes", note.title, note.id);
+          await SyncService.updateEntitySync(note.syncPath, path, note.content, async () => {
+            await DatabaseService.updateNote(note.id, { syncPath: path });
+          });
         }
       } else {
         const conv = await DatabaseService.getConversation(id);
         if (conv) {
           const messages = await DatabaseService.getConversationMessages(id);
           const folder = allFolders.find((f) => f.id === conv.folderId);
-          const folderName = folder?.name || "Chats";
           const md = MarkdownService.toMarkdown(conv, messages);
-          const path = `${defaultWorkspace}/${folderName}/${conv.name}.md`;
-          await StorageService.save(path, md);
+          const path = SyncService.buildSyncPath(folder?.name, folder?.id, "Chats", conv.name, conv.id);
+          await SyncService.updateEntitySync(conv.syncPath, path, md, async () => {
+            await DatabaseService.updateConversation(conv.id, { syncPath: path });
+          });
         }
       }
     } catch (e) {

@@ -7,7 +7,7 @@ import {
 } from "fs";
 import { resolve, join } from "path";
 
-const PUBLIC_DIR = resolve("../public");
+const PUBLIC_DIR = resolve("build");
 const INDEX_PATH = join(PUBLIC_DIR, "index.html");
 const FAVICON_SRC = resolve("static/favicon.svg");
 

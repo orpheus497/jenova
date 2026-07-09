@@ -42,17 +42,77 @@ local function detect_probe_tool()
     if _probe_tool_checked then return _cached_probe_tool end
     _probe_tool_checked = true
 
-    if os.execute("command -v curl >/dev/null 2>&1") == 0 then
+    local res_curl = os.execute("command -v curl >/dev/null 2>&1")
+    if res_curl == 0 or res_curl == true then
         _cached_probe_tool = "curl"
-    elseif os.execute("command -v nc >/dev/null 2>&1") == 0 then
-        _cached_probe_tool = "nc"
-    elseif os.execute("command -v fetch >/dev/null 2>&1") == 0 then
-        _cached_probe_tool = "fetch"   -- FreeBSD base system
+    else
+        local res_nc = os.execute("command -v nc >/dev/null 2>&1")
+        if res_nc == 0 or res_nc == true then
+            _cached_probe_tool = "nc"
+        else
+            local res_fetch = os.execute("command -v fetch >/dev/null 2>&1")
+            if res_fetch == 0 or res_fetch == true then
+                _cached_probe_tool = "fetch"   -- FreeBSD base system
+            end
+        end
     end
     return _cached_probe_tool
 end
 
 local last_lan_state = nil
+local chat_ui = require("chat_presentation")
+
+local database = require("services.database")
+local json = require("json")
+
+ui.current_conv_id = "default_conversation"
+math.randomseed(os.time())
+
+local function generate_uuid()
+    local template ='xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'
+    return string.gsub(template, '[xy]', function (c)
+        local v = (c == 'x') and math.random(0, 0xf) or math.random(8, 0xb)
+        return string.format('%x', v)
+    end)
+end
+
+ui.refresh_chat_list = function()
+    if _G.bedrock_clear_chat_list then
+        _G.bedrock_clear_chat_list()
+    end
+    
+    local path = database.get_default_workspace() .. "/Chats"
+    local p = io.popen("ls " .. shell_quote(path) .. "/*.md 2>/dev/null")
+    if not p then return end
+    
+    for file_path in p:lines() do
+        local conv_id = file_path:match("([^/]+)%.md$")
+        local title = conv_id
+        
+        local file = io.open(file_path, "r")
+        if file then
+            local first_line = file:read("*l")
+            file:close()
+            
+            if first_line and first_line:match("^# topic:") then
+                local topic = first_line:match("^# topic: (.*) %[agent%]")
+                if not topic then
+                    topic = first_line:sub(9) -- Strip "# topic: "
+                end
+                if topic and topic ~= "" then
+                    title = topic
+                end
+            end
+        end
+        
+        title = title:gsub("\n", " ")
+        
+        if _G.bedrock_add_chat_list_item then
+            _G.bedrock_add_chat_list_item(conv_id, title)
+        end
+    end
+    p:close()
+end
 
 ui.init = function(root_path)
     root = root_path or ""
@@ -61,12 +121,22 @@ ui.init = function(root_path)
     last_lan_state = is_lan_enabled()
     local lan_arg = last_lan_state and "--lan" or ""
     if ui._proxy_handle then pcall(function() ui._proxy_handle:close() end) end
-    ui._proxy_handle = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " proxy-serve " .. lan_arg, "w")
+    ui._proxy_handle = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " proxy-serve " .. lan_arg .. " --watch-stdin", "w")
+end
+
+ui.on_gui_ready = function()
+    -- Initialize the Chat Presentation layer once GTK is fully laid out
+    chat_ui.init()
+    
+    ui.current_chat_path = database.get_default_workspace() .. "/Chats/" .. ui.current_conv_id .. ".md"
+    
+    ui.refresh_chat_list()
 end
 
 ui.get_menu = function()
     local lan_label = is_lan_enabled() and "Disable LAN (switch to Local)" or "Enable LAN (allow network access)"
     return {
+        { label = "Open Window", action = "open_gui" },
         { label = "Open Web UI", action = "web" },
         { label = "System Control", action = "tui" },
         { separator = true },
@@ -80,16 +150,21 @@ ui.get_menu = function()
     }
 end
 
-ui.on_action = function(action)
+
+
+ui.on_action = function(action, arg)
     if not action then return end
 
     if action == "web" then
         -- FreeBSD: use xdg-open if present, fall back to open(1)
         local opener = "xdg-open"
-        if os.execute("command -v xdg-open >/dev/null 2>&1") ~= 0 then
+        local res = os.execute("command -v xdg-open >/dev/null 2>&1")
+        if res ~= 0 and res ~= true then
             opener = "open" -- macOS / FreeBSD with xdg-utils missing
         end
-        sys_exec_async(shell_quote(opener) .. " http://localhost:8080")
+        local port = tonumber(os.getenv("JENOVA_PROXY_PORT") or os.getenv("JENOVA_PORT"))
+        if not port or port <= 0 or port > 65535 then port = 8080 end
+        sys_exec_async(shell_quote(opener) .. " " .. shell_quote("http://localhost:" .. port))
     elseif action == "tui" then
         local bin_term = shell_quote(root .. "/bin/jenova-term")
         local bin_ui = shell_quote(root .. "/bin/jenova-ui")
@@ -108,6 +183,27 @@ ui.on_action = function(action)
         else
             sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " restart")
         end
+    elseif action == "open_workspaces" then
+        local home_dir = os.getenv("HOME")
+        local jca_home = os.getenv("JCA_HOME") or ((home_dir or "/tmp") .. "/JCA")
+        local workspaces_dir = os.getenv("JENOVA_WORKSPACES") or (jca_home .. "/Workspaces")
+        local ws_path = shell_quote(workspaces_dir)
+        os.execute("mkdir -p " .. ws_path .. " 2>/dev/null")
+        local opener = "xdg-open"
+        local res = os.execute("command -v xdg-open >/dev/null 2>&1")
+        if res ~= 0 and res ~= true then
+            opener = "open"
+        end
+        sys_exec_async(shell_quote(opener) .. " " .. ws_path)
+    elseif action == "edit_config" then
+        local conf_path = shell_quote(root .. "/etc/jenova.conf")
+        local editor_cmd = "nvim"
+        local res = os.execute("command -v nvim >/dev/null 2>&1")
+        if res ~= 0 and res ~= true then
+            editor_cmd = "vim"
+        end
+        local bin_term = shell_quote(root .. "/bin/jenova-term")
+        sys_exec_async(bin_term .. " " .. editor_cmd .. " " .. conf_path)
     elseif action == "toggle_lan" then
         if ui._proxy_handle then pcall(function() ui._proxy_handle:close() end) end
         ui._proxy_handle = nil
@@ -115,7 +211,7 @@ ui.on_action = function(action)
         set_lan_state(not currently_lan)
         last_lan_state = not currently_lan
         local lan_arg = (not currently_lan) and "--lan" or ""
-        ui._proxy_handle = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " proxy-serve " .. lan_arg, "w")
+        ui._proxy_handle = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " proxy-serve " .. lan_arg .. " --watch-stdin", "w")
         if not currently_lan then
             sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " restart --lan")
         else
@@ -125,23 +221,93 @@ ui.on_action = function(action)
         if ui._proxy_handle then pcall(function() ui._proxy_handle:close() end) end
         sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " stop")
         quit_app()
+    elseif action == "new_chat" then
+        ui.current_conv_id = generate_uuid()
+        ui.current_chat_path = database.get_default_workspace() .. "/Chats/" .. ui.current_conv_id .. ".md"
+        if _G.bedrock_clear_chat_feed then _G.bedrock_clear_chat_feed() end
+        _G.bedrock_create_message_bubble("assistant", "Hello! I am Jenova, your local Cognitive Architecture. How can I assist you today?")
+        ui.refresh_chat_list()
+    elseif action == "switch_chat" and arg then
+        ui.current_conv_id = arg
+        ui.current_chat_path = database.get_default_workspace() .. "/Chats/" .. arg .. ".md"
+        if _G.bedrock_clear_chat_feed then _G.bedrock_clear_chat_feed() end
+        
+        local history = database.load_conversation_from_path(ui.current_chat_path)
+        if #history == 0 then
+            _G.bedrock_create_message_bubble("assistant", "Hello! I am Jenova, your local Cognitive Architecture. How can I assist you today?")
+        else
+            for _, msg in ipairs(history) do
+                if msg.role ~= "system" then
+                    local mapped_role = (msg.role == "jenova") and "assistant" or msg.role
+                    _G.bedrock_create_message_bubble(mapped_role, msg.content)
+                end
+            end
+        end
     end
 end
 
-ui.poll_status = function()
+ui.on_file_clicked = function(filepath)
+    if not filepath then return end
+    
+    local file = io.open(filepath, "r")
+    if not file then
+        print("jenova-ui: failed to open " .. filepath)
+        return
+    end
+    
+    local content = file:read("*a") or ""
+    file:close()
+    
+    if filepath:match("/Chats/[^/]+%.md$") then
+        if _G.bedrock_clear_chat_feed then _G.bedrock_clear_chat_feed() end
+        
+        local conv_id = filepath:match("([^/]+)%.md$")
+        if conv_id then
+            ui.current_conv_id = conv_id
+            ui.current_chat_path = filepath
+            local history = database.parse_conversation_content(content)
+            if history and #history > 0 then
+                for _, msg in ipairs(history) do
+                    if msg.role ~= "system" then
+                        local mapped_role = (msg.role == "jenova") and "assistant" or msg.role
+                        _G.bedrock_create_message_bubble(mapped_role, msg.content)
+                    end
+                end
+            else
+                -- Fallback for raw markdown files without format tags
+                if content and #content > 0 then
+                    _G.bedrock_create_message_bubble("assistant", content)
+                end
+            end
+        end
+        
+        -- Switch to Chat tab
+        if _G.bedrock_set_active_tab then
+            _G.bedrock_set_active_tab(0)
+        end
+    else
+        if _G.bedrock_set_editor_content then
+            _G.bedrock_set_editor_content(filepath, content)
+        end
+    end
+end
+
+ui.update_proxy_state = function()
     local current_lan_state = is_lan_enabled()
     if last_lan_state ~= nil and current_lan_state ~= last_lan_state then
         last_lan_state = current_lan_state
         if ui._proxy_handle then pcall(function() ui._proxy_handle:close() end) end
         local lan_arg = current_lan_state and "--lan" or ""
-        ui._proxy_handle = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " proxy-serve " .. lan_arg, "w")
+        ui._proxy_handle = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " proxy-serve " .. lan_arg .. " --watch-stdin", "w")
     end
+end
+
+ui.poll_status = function()
+    ui.update_proxy_state()
     -- 1. Check if backend pipeline reports ready using its own status command
     -- which correctly respects configured ports and runs internal healthchecks.
-    local f1 = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " status 2>&1", "r")
-    if not f1 then return "inactive" end
-    local output_backend = f1:read("*a")
-    f1:close()
+    local shell_cmd = shell_quote(root .. "/bin/jenova-ca") .. " status 2>&1"
+    local output_backend = sys_exec_read("sh -c " .. shell_quote(shell_cmd))
 
     if output_backend and output_backend:match("is ready") then
         return "active"
@@ -213,6 +379,47 @@ ui.on_tui_action = function(action)
         ui.on_action(action)
     end
 end
+
+local chat_store = require("chat_store")
+local chat_service = require("chat_service")
+
+ui.on_chat_submit = function(text)
+    if not ui.current_chat_path then return end
+    if not text or text == "" then return end
+    if chat_store.isStreamingActive or chat_store.isLoading then return end
+    
+    _G.bedrock_create_message_bubble("user", text)
+    local msg_id = _G.bedrock_create_message_bubble("assistant", "")
+    
+    local msg_buffer = ""
+    local reasoning_buffer = ""
+    local conv_id = ui.current_conv_id
+    local chat_path = ui.current_chat_path
+    
+    chat_service.sendMessage(text, msg_id, conv_id, chat_path, chat_store, 
+        -- on_chunk callback
+        function(chunk_text)
+            msg_buffer = msg_buffer .. chunk_text
+            local md = msg_buffer
+            if reasoning_buffer ~= "" then
+                md = "<div class='thinking'>" .. reasoning_buffer .. "</div>\n\n" .. md
+            end
+            _G.bedrock_set_message_markup(msg_id, md)
+        end,
+        -- on_reasoning_chunk callback
+        function(chunk_text)
+            reasoning_buffer = reasoning_buffer .. chunk_text
+            local md = msg_buffer
+            local r_md = "<div class='thinking'>" .. reasoning_buffer .. "</div>\n\n"
+            _G.bedrock_set_message_markup(msg_id, r_md .. md)
+        end,
+        -- on_complete callback
+        function()
+            -- Do any finalization if needed
+        end
+    )
+end
+
 
 _G.ui = ui
 return ui

@@ -1,15 +1,20 @@
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/file.h>
 #include <errno.h>
 #include <limits.h>
+#include <string.h>
 #include <libgen.h>
 #include <ncurses.h>
 #include <sys/types.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include "workspace_explorer.h"
 
 /* FreeBSD: sysctl for executable path */
 #if defined(__FreeBSD__)
@@ -23,16 +28,46 @@
 
 #include <gtk/gtk.h>
 #include <libappindicator/app-indicator.h>
+#include "canvas.h"
+#include "chat_bedrock.h"
 
 #include <lua.h>
 #include <lualib.h>
 #include <lauxlib.h>
+
+#include <webkit2/webkit2.h>
 
 static lua_State *L = NULL;
 static AppIndicator *global_indicator = NULL;
 static char jenova_root[PATH_MAX] = {0};
 
 /* Forward declarations */
+typedef struct {
+    GtkWidget *main_window;
+    GtkWidget *sidebar_list;
+    GtkWidget *chats_list;
+    GtkWidget *webview;
+    GtkWidget *status_label;
+    GtkWidget *mode_label;
+    GtkWidget *btn_start;
+    GtkWidget *btn_stop;
+    GtkWidget *btn_restart;
+    GtkWidget *btn_lan;
+    GtkWidget *btn_web;
+    char current_status[32];
+    char current_mode[64];
+    char current_conv_id[64];
+    int is_visible;
+    int is_streaming;
+    GtkWidget *notebook;
+    GtkWidget *editor_textview;
+    GtkWidget *editor_path_label;
+    GtkWidget *sidebar_vbox;
+    GtkWidget *sidebar_scroll_win;
+} GUIState;
+
+static GUIState g_ui_state = {0};
+
 static void run_tui(void);
 static gboolean run_tray(int argc, char *argv[]);
 static void rebuild_tray_menu(void);
@@ -49,6 +84,17 @@ static void rebuild_tray_menu(void);
  * --------------------------------------------------------------------------- */
 char *get_jenova_root(void) {
     if (jenova_root[0] != '\0') return jenova_root;
+
+    const char *env_root = getenv("JENOVA_ROOT");
+    if (env_root && env_root[0] != '\0') {
+        if (realpath(env_root, jenova_root) != NULL) {
+            return jenova_root;
+        } else {
+            strncpy(jenova_root, env_root, sizeof(jenova_root) - 1);
+            jenova_root[sizeof(jenova_root) - 1] = '\0';
+            return jenova_root;
+        }
+    }
 
     char exe_path[PATH_MAX];
     int found = 0;
@@ -112,40 +158,1074 @@ void setup_environment(void) {
         setenv("PATH", new_path, 1);
         free(new_path);
     }
+    
     setenv("JENOVA_ROOT", root, 1);
 }
 
 /* ---------------------------------------------------------------------------
  * Lua C API functions exposed as globals to the Lua layer.
  * --------------------------------------------------------------------------- */
+static char *wrap_jenova_cmd(const char *cmd) {
+    if (strstr(cmd, "jenova-ca") || strstr(cmd, "jenova-term") || strstr(cmd, "jenova-ui")) {
+        const char *old_ld = getenv("LD_LIBRARY_PATH");
+        const char *root = getenv("JENOVA_ROOT");
+        char *new_ld = NULL;
+        if (old_ld && *old_ld != '\0') {
+            if (asprintf(&new_ld, "%s/external/ext_bin/bin:%s", root ? root : ".", old_ld) == -1) new_ld = NULL;
+        } else {
+            if (asprintf(&new_ld, "%s/external/ext_bin/bin", root ? root : ".") == -1) new_ld = NULL;
+        }
+        char *wrapped = NULL;
+        if (new_ld) {
+            char *quoted_ld = g_shell_quote(new_ld);
+            if (asprintf(&wrapped, "env LD_LIBRARY_PATH=%s %s", quoted_ld, cmd) == -1) wrapped = NULL;
+            g_free(quoted_ld);
+            free(new_ld);
+        }
+        return wrapped ? wrapped : strdup(cmd);
+    }
+    return strdup(cmd);
+}
+
 static int l_sys_exec_async(lua_State *Ls) {
     const char *cmd = luaL_checkstring(Ls, 1);
+    char *wrapped_cmd = wrap_jenova_cmd(cmd);
     GError *error = NULL;
-    if (!g_spawn_command_line_async(cmd, &error)) {
+    if (!g_spawn_command_line_async(wrapped_cmd, &error)) {
         fprintf(stderr, "jenova-ui: async exec error: %s\n", error->message);
         g_error_free(error);
     }
+    free(wrapped_cmd);
+    return 0;
+}
+
+typedef struct {
+    lua_State *L;
+    int callback_ref;
+    GPid pid;
+} StreamState;
+
+static void on_stream_child_exit(GPid pid, gint status G_GNUC_UNUSED, gpointer data G_GNUC_UNUSED) {
+    g_spawn_close_pid(pid);
+}
+
+static gboolean on_stream_read(GIOChannel *source, GIOCondition condition, gpointer data) {
+    StreamState *state = (StreamState *)data;
+    gchar buf[4096];
+    gsize bytes_read;
+    
+    GIOStatus status = g_io_channel_read_chars(source, buf, sizeof(buf) - 1, &bytes_read, NULL);
+    if (status == G_IO_STATUS_NORMAL && bytes_read > 0) {
+        buf[bytes_read] = '\0';
+        
+        lua_rawgeti(L, LUA_REGISTRYINDEX, state->callback_ref);
+        lua_pushstring(L, buf);
+        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+            g_printerr("Lua stream callback error: %s\n", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+        return TRUE;
+    }
+    
+    if (status == G_IO_STATUS_EOF || status == G_IO_STATUS_ERROR || (condition & (G_IO_ERR | G_IO_HUP))) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, state->callback_ref);
+        lua_pushnil(L);
+        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+            g_printerr("Lua stream EOF callback error: %s\n", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+        luaL_unref(L, LUA_REGISTRYINDEX, state->callback_ref);
+        g_free(state);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static int l_sys_exec_stream(lua_State *Ls) {
+    const char *cmd = luaL_checkstring(Ls, 1);
+    if (!lua_isfunction(Ls, 2)) {
+        luaL_error(Ls, "Expected callback function as 2nd argument");
+        return 0;
+    }
+    
+    lua_pushvalue(Ls, 2);
+    int ref = luaL_ref(Ls, LUA_REGISTRYINDEX);
+    
+    char *wrapped_cmd = wrap_jenova_cmd(cmd);
+    gint out_fd;
+    GPid pid;
+    GError *error = NULL;
+    gchar **argv = NULL;
+    
+    if (g_shell_parse_argv(wrapped_cmd, NULL, &argv, &error) &&
+        g_spawn_async_with_pipes(NULL, argv, NULL, G_SPAWN_SEARCH_PATH | G_SPAWN_DO_NOT_REAP_CHILD, NULL, NULL, &pid, NULL, &out_fd, NULL, &error)) {
+        
+        StreamState *state = g_new(StreamState, 1);
+        state->L = Ls;
+        state->callback_ref = ref;
+        state->pid = pid;
+        
+        g_child_watch_add(pid, on_stream_child_exit, NULL);
+        
+        GIOChannel *channel = g_io_channel_unix_new(out_fd);
+        g_io_channel_set_close_on_unref(channel, TRUE);
+        g_io_channel_set_encoding(channel, NULL, NULL);
+        g_io_channel_set_flags(channel, G_IO_FLAG_NONBLOCK, NULL);
+        g_io_add_watch(channel, G_IO_IN | G_IO_HUP | G_IO_ERR, on_stream_read, state);
+        g_io_channel_unref(channel);
+    } else {
+        g_printerr("sys_exec_stream error: %s\n", error->message);
+        g_error_free(error);
+        
+        lua_rawgeti(Ls, LUA_REGISTRYINDEX, ref);
+        lua_pushnil(Ls);
+        if (lua_pcall(Ls, 1, 0, 0) != LUA_OK) {
+            g_printerr("Lua stream EOF callback error: %s\n", lua_tostring(Ls, -1));
+            lua_pop(Ls, 1);
+        }
+        
+        luaL_unref(Ls, LUA_REGISTRYINDEX, ref);
+    }
+    
+    if (argv) g_strfreev(argv);
+    free(wrapped_cmd);
     return 0;
 }
 
 static int l_sys_exec_sync(lua_State *Ls) {
     const char *cmd = luaL_checkstring(Ls, 1);
+    char *wrapped_cmd = wrap_jenova_cmd(cmd);
     gint exit_status = 0;
     GError *error = NULL;
 
-    if (g_spawn_command_line_sync(cmd, NULL, NULL, &exit_status, &error)) {
-        lua_pushinteger(Ls, exit_status);
+    if (g_spawn_command_line_sync(wrapped_cmd, NULL, NULL, &exit_status, &error)) {
+        if (WIFEXITED(exit_status)) {
+            lua_pushinteger(Ls, WEXITSTATUS(exit_status));
+        } else {
+            lua_pushinteger(Ls, -1);
+        }
     } else {
         fprintf(stderr, "jenova-ui: sync exec error: %s\n", error->message);
         g_error_free(error);
         lua_pushinteger(Ls, -1);
     }
+    free(wrapped_cmd);
+    return 1;
+}
+
+static int l_sys_exec_read(lua_State *Ls) {
+    const char *cmd = luaL_checkstring(Ls, 1);
+    char *wrapped_cmd = wrap_jenova_cmd(cmd);
+    gchar *stdout_str = NULL;
+    gint exit_status = 0;
+
+    if (g_spawn_command_line_sync(wrapped_cmd, &stdout_str, NULL, &exit_status, NULL)) {
+        lua_pushstring(Ls, stdout_str ? stdout_str : "");
+        g_free(stdout_str);
+    } else {
+        lua_pushnil(Ls);
+    }
+    free(wrapped_cmd);
     return 1;
 }
 
 static int l_quit_app(lua_State *Ls) {
     (void)Ls;
     gtk_main_quit();
+    return 0;
+}
+
+/* Chat GUI functions replaced by WebKit embedded WebUI */
+static gboolean on_window_delete_event(GtkWidget *widget, GdkEvent *event G_GNUC_UNUSED, gpointer data G_GNUC_UNUSED) {
+    gtk_widget_hide(widget);
+    g_ui_state.is_visible = 0;
+    return TRUE; // Prevent destruction
+}
+
+static void on_detect_hardware_clicked(GtkWidget *widget G_GNUC_UNUSED, gpointer data) {
+    GtkWidget *dialog = (GtkWidget *)data;
+    
+    lua_getglobal(L, "require");
+    lua_pushstring(L, "settings");
+    if (lua_pcall(L, 1, 1, 0) == LUA_OK) {
+        lua_getfield(L, -1, "detect_hardware");
+        lua_pushstring(L, get_jenova_root());
+        if (lua_pcall(L, 1, 1, 0) == LUA_OK) {
+            const char *res = lua_tostring(L, -1);
+            
+            GtkWidget *msg = gtk_message_dialog_new(GTK_WINDOW(dialog),
+                                                    GTK_DIALOG_DESTROY_WITH_PARENT,
+                                                    GTK_MESSAGE_INFO,
+                                                    GTK_BUTTONS_OK,
+                                                    "Hardware Detection Result:\n%s", res ? res : "No result");
+            gtk_dialog_run(GTK_DIALOG(msg));
+            gtk_widget_destroy(msg);
+            
+            lua_pop(L, 1);
+        } else {
+            g_printerr("detect_hardware failed: %s\n", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+    } else {
+        g_printerr("Failed to require settings: %s\n", lua_tostring(L, -1));
+        lua_pop(L, 1);
+    }
+}
+
+static void lua_table_get_cstring(lua_State *L, const char *key, char *out, size_t out_len) {
+    lua_getfield(L, -1, key);
+    if (lua_isstring(L, -1)) {
+        strncpy(out, lua_tostring(L, -1), out_len - 1);
+        out[out_len - 1] = '\0';
+    }
+    lua_pop(L, 1);
+}
+
+static void show_settings_dialog(void) {
+    GtkWidget *dialog = gtk_dialog_new_with_buttons("Settings & Configuration",
+                                                    GTK_WINDOW(g_ui_state.main_window),
+                                                    GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+                                                    "Cancel", GTK_RESPONSE_CANCEL,
+                                                    "Save", GTK_RESPONSE_ACCEPT,
+                                                    NULL);
+    gtk_window_set_default_size(GTK_WINDOW(dialog), 400, 300);
+    GtkWidget *content_area = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    gtk_container_set_border_width(GTK_CONTAINER(content_area), 16);
+    gtk_box_set_spacing(GTK_BOX(content_area), 8);
+
+    lua_getglobal(L, "require");
+    lua_pushstring(L, "settings");
+    if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
+        g_printerr("Failed to require settings: %s\n", lua_tostring(L, -1));
+        lua_pop(L, 1);
+        gtk_widget_destroy(dialog);
+        return;
+    }
+    
+    char conf_path[PATH_MAX];
+    snprintf(conf_path, sizeof(conf_path), "%s/etc/jenova.conf", get_jenova_root());
+    
+    lua_getfield(L, -1, "parse_config");
+    lua_pushstring(L, conf_path);
+    
+    char ctx_size[64] = "8192";
+    char backend[64] = "Vulkan0";
+    char spec_decode[64] = "0";
+
+    if (lua_pcall(L, 1, 1, 0) == LUA_OK) {
+        if (lua_istable(L, -1)) {
+            lua_getfield(L, -1, "map");
+            if (lua_istable(L, -1)) {
+                lua_table_get_cstring(L, "CTX_SIZE", ctx_size, sizeof(ctx_size));
+                lua_table_get_cstring(L, "DEVICES", backend, sizeof(backend));
+                lua_table_get_cstring(L, "JENOVA_DRAFT", spec_decode, sizeof(spec_decode));
+            }
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+    } else {
+        g_printerr("Failed to parse config: %s\n", lua_tostring(L, -1));
+        lua_pop(L, 1);
+    }
+    
+    GtkWidget *grid = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 12);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 16);
+    gtk_box_pack_start(GTK_BOX(content_area), grid, TRUE, TRUE, 0);
+    
+    GtkWidget *lbl_ctx = gtk_label_new("Context Size:");
+    gtk_widget_set_halign(lbl_ctx, GTK_ALIGN_END);
+    GtkWidget *entry_ctx = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(entry_ctx), ctx_size);
+    gtk_grid_attach(GTK_GRID(grid), lbl_ctx, 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), entry_ctx, 1, 0, 1, 1);
+    
+    GtkWidget *lbl_backend = gtk_label_new("Backend Device:");
+    gtk_widget_set_halign(lbl_backend, GTK_ALIGN_END);
+    GtkWidget *entry_backend = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(entry_backend), backend);
+    gtk_grid_attach(GTK_GRID(grid), lbl_backend, 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), entry_backend, 1, 1, 1, 1);
+
+    GtkWidget *lbl_spec = gtk_label_new("Speculative Decoding:");
+    gtk_widget_set_halign(lbl_spec, GTK_ALIGN_END);
+    GtkWidget *switch_spec = gtk_switch_new();
+    gtk_switch_set_active(GTK_SWITCH(switch_spec), strcmp(spec_decode, "1") == 0);
+    gtk_widget_set_halign(switch_spec, GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(grid), lbl_spec, 0, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), switch_spec, 1, 2, 1, 1);
+
+    GtkWidget *btn_detect = gtk_button_new_with_label("Auto-Detect Hardware");
+    g_signal_connect(btn_detect, "clicked", G_CALLBACK(on_detect_hardware_clicked), dialog);
+    gtk_grid_attach(GTK_GRID(grid), btn_detect, 0, 3, 2, 1);
+    
+    gtk_widget_show_all(dialog);
+    gint response = gtk_dialog_run(GTK_DIALOG(dialog));
+    
+    if (response == GTK_RESPONSE_ACCEPT) {
+        const gchar *new_ctx = gtk_entry_get_text(GTK_ENTRY(entry_ctx));
+        const gchar *new_backend = gtk_entry_get_text(GTK_ENTRY(entry_backend));
+        gboolean new_spec = gtk_switch_get_active(GTK_SWITCH(switch_spec));
+        
+        lua_getfield(L, -1, "parse_config");
+        lua_pushstring(L, conf_path);
+        if (lua_pcall(L, 1, 1, 0) == LUA_OK) {
+            lua_getfield(L, -2, "save_config");
+            lua_pushstring(L, conf_path);
+            lua_pushvalue(L, -3);
+            
+            lua_newtable(L);
+            lua_pushstring(L, "CTX_SIZE"); lua_pushstring(L, new_ctx); lua_settable(L, -3);
+            lua_pushstring(L, "DEVICES"); lua_pushstring(L, new_backend); lua_settable(L, -3);
+            lua_pushstring(L, "JENOVA_DRAFT"); lua_pushstring(L, new_spec ? "1" : "0"); lua_settable(L, -3);
+            
+            if (lua_pcall(L, 3, 1, 0) != LUA_OK) {
+                g_printerr("Failed to save config: %s\n", lua_tostring(L, -1));
+                lua_pop(L, 1);
+            } else {
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1);
+        } else {
+            lua_pop(L, 1);
+        }
+    }
+    
+    lua_pop(L, 1); // pop settings_module
+    gtk_widget_destroy(dialog);
+}
+
+static void on_chats_list_row_activated(GtkListBox *box G_GNUC_UNUSED, GtkListBoxRow *row, gpointer data G_GNUC_UNUSED) {
+    const gchar *conv_id = g_object_get_data(G_OBJECT(row), "conv_id");
+    if (!conv_id) return;
+    
+    lua_getglobal(L, "ui");
+    if (lua_istable(L, -1)) {
+        lua_getfield(L, -1, "on_action");
+        if (lua_isfunction(L, -1)) {
+            lua_pushstring(L, "switch_chat");
+            lua_pushstring(L, conv_id);
+            if (lua_pcall(L, 2, 0, 0) != LUA_OK) {
+                g_printerr("error in on_action: %s\n", lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
+        } else {
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1);
+}
+
+static void on_gui_button_clicked(GtkWidget *widget G_GNUC_UNUSED, gpointer data) {
+    const char *action = (const char *)data;
+    
+    if (strcmp(action, "settings") == 0) {
+        show_settings_dialog();
+        return;
+    }
+
+    lua_getglobal(L, "ui");
+    if (!lua_istable(L, -1)) { lua_pop(L, 1); return; }
+    lua_getfield(L, -1, "on_action");
+    if (lua_isfunction(L, -1)) {
+        lua_pushstring(L, action);
+        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+            fprintf(stderr, "jenova-ui: error in ui.on_action: %s\n", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+}
+
+static void load_css(void) {
+    GtkCssProvider *provider = gtk_css_provider_new();
+    const char *css = 
+        "window.jenova-window { background-color: transparent; }\n"
+        /* GtkNotebook styling */
+        "notebook, notebook stack { background-color: transparent; border: none; box-shadow: none; }\n"
+        "notebook header { background-color: transparent; border: none; box-shadow: none; border-bottom: 2px solid rgba(43, 30, 58, 0.5); padding-top: 5px; }\n"
+        "notebook tab { background-color: transparent; border: none; padding: 2px 12px; box-shadow: none; transition: all 0.2s ease-in-out; margin: 0 4px; border-radius: 8px 8px 0 0; }\n"
+        "notebook tab label { color: #5e5966; font-family: 'Inter', 'Segoe UI', sans-serif; font-weight: 600; font-size: 14px; }\n"
+        "notebook tab:hover { background-color: #1c1b1b; }\n"
+        "notebook tab:hover label { color: #f0edf2; }\n"
+        "notebook tab:checked { background-color: #2b1e3a; border-bottom: none; box-shadow: inset 0 -3px 0 0 #e4b382; }\n"
+        "notebook tab:checked label { color: #e4b382; }\n"
+        /* Glass Panel */
+        ".glass-panel { background-color: rgba(43, 30, 58, 0.4); border: 1px solid rgba(228, 179, 130, 0.1); border-radius: 12px; padding: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }\n"
+        ".sidebar-panel { background-image: linear-gradient(135deg, rgba(43, 30, 58, 0.7), rgba(15, 10, 20, 0.85)); border: 1px solid rgba(228, 179, 130, 0.15); border-left: none; border-radius: 0 24px 24px 0; padding: 16px 16px 16px 0px; box-shadow: 12px 0 40px rgba(0,0,0,0.9); }\n"
+        ".sidebar-scroll { background-color: transparent; }\n"
+        /* Labels */
+        "label { color: #f0edf2; font-family: 'DejaVuSansM Nerd Font', 'DejaVu Sans Mono', monospace; font-size: 12pt; }\n"
+        "label.title { font-weight: 800; font-size: 24px; color: #e4b382; letter-spacing: 1px; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }\n"
+        "label.status-active { color: #a3e635; font-weight: 700; font-size: 14px; }\n"
+        "label.status-inactive { color: #c96464; font-weight: 700; font-size: 14px; }\n"
+        "label.mode-label { color: #aba0d9; font-weight: 700; font-size: 14px; }\n"
+        ".color-note { color: #e4b382; }\n"
+        ".color-file { color: #c96464; }\n"
+        ".color-chat { color: #7b52ab; }\n"
+        ".color-chat:hover, .color-note:hover, .color-file:hover { color: #f0edf2; }\n"
+        /* Buttons */
+        "button { background-image: none; background-color: #2b1e3a; color: #f0edf2; border: 1px solid rgba(228, 179, 130, 0.2); border-radius: 8px; padding: 4px 10px; font-weight: 600; font-size: 12px; font-family: 'DejaVuSansM Nerd Font', 'DejaVu Sans Mono', monospace; box-shadow: 0 2px 4px rgba(0,0,0,0.2); transition: all 0.2s ease; }\n"
+        "button:hover { background-color: #3d2b52; border-color: rgba(228, 179, 130, 0.4); box-shadow: 0 4px 8px rgba(0,0,0,0.4); }\n"
+        "button:active { background-color: #1a1223; box-shadow: none; }\n"
+        "button.stop-btn:hover { background-color: #c96464; border-color: #ffb3b3; color: #ffffff; }\n"
+        /* Sidebar Elements */
+        ".logo-box { border: 1px solid rgba(43, 30, 58, 0.3); border-radius: 12px; box-shadow: 0 0 15px rgba(43, 30, 58, 0.4); overflow: hidden; }\n"
+        ".sidebar-btn { background-color: transparent; border: none; box-shadow: none; border-radius: 8px; padding: 8px 12px; font-weight: 400; font-size: 13px; }\n"
+        ".sidebar-btn:hover { background-color: rgba(255, 255, 255, 0.05); color: #7b52ab; }\n"
+        ".section-header { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; color: #9fa0a6; letter-spacing: 2px; text-transform: uppercase; background-color: transparent; border: none; box-shadow: none; padding: 4px 8px; }\n"
+        ".section-header:hover { color: #f0edf2; background-color: transparent; }\n"
+        ".tree-item { background-color: transparent; color: #f0edf2; border: none; box-shadow: none; border-radius: 6px; padding: 6px 12px; font-size: 13px; font-weight: 400; }\n"
+        ".tree-item:hover { background-color: rgba(255, 255, 255, 0.05); }\n"
+        ".tree-header { font-size: 10px; font-weight: 700; color: #7b52ab; letter-spacing: 1px; text-transform: uppercase; margin-top: 8px; margin-bottom: 4px; }\n"
+        ;
+    gtk_css_provider_load_from_data(provider, css, -1, NULL);
+    gtk_style_context_add_provider_for_screen(gdk_screen_get_default(),
+                                              GTK_STYLE_PROVIDER(provider),
+                                              GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_unref(provider);
+    
+    chat_bedrock_load_css();
+}
+
+
+void main_open_file(const char *filepath) {
+    if (!filepath) return;
+    
+    lua_getglobal(L, "ui");
+    if (!lua_istable(L, -1)) { lua_pop(L, 1); return; }
+    lua_getfield(L, -1, "on_file_clicked");
+    if (lua_isfunction(L, -1)) {
+        lua_pushstring(L, filepath);
+        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+            fprintf(stderr, "jenova-ui: error in ui.on_file_clicked: %s\n", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+}
+
+static void on_sidebar_item_clicked(GtkButton *btn, gpointer user_data G_GNUC_UNUSED) {
+    const char *filepath = g_object_get_data(G_OBJECT(btn), "filepath");
+    main_open_file(filepath);
+}
+
+static GtkWidget* create_tree_item_button(const char *label_text, const char *icon_name, const char *filepath, GCallback click_cb) {
+    GtkWidget *btn = gtk_button_new();
+    gtk_style_context_add_class(gtk_widget_get_style_context(btn), "tree-item");
+    GtkWidget *lbl = gtk_label_new(label_text);
+    gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_END);
+    gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
+    
+    if (icon_name) {
+        GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+        GtkWidget *icon = gtk_image_new_from_icon_name(icon_name, GTK_ICON_SIZE_BUTTON);
+        gtk_box_pack_start(GTK_BOX(btn_box), icon, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(btn_box), lbl, TRUE, TRUE, 0);
+        gtk_container_add(GTK_CONTAINER(btn), btn_box);
+    } else {
+        gtk_container_add(GTK_CONTAINER(btn), lbl);
+    }
+    
+    if (filepath) {
+        g_object_set_data_full(G_OBJECT(btn), "filepath", g_strdup(filepath), g_free);
+    }
+    if (click_cb) {
+        g_signal_connect(btn, "clicked", click_cb, NULL);
+    }
+    return btn;
+}
+
+static void populate_container_from_dir(const char *dir_path, GtkWidget *container, const char *icon_name, gboolean only_md, GCallback click_cb) {
+    if (!container) return;
+    DIR *dir = opendir(dir_path);
+    if (!dir) return;
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL) {
+        if (ent->d_name[0] == '.') continue;
+        if (only_md && !strstr(ent->d_name, ".md")) continue;
+        
+        char name_no_ext[256];
+        snprintf(name_no_ext, sizeof(name_no_ext), "%s", ent->d_name);
+        if (only_md) {
+            char *dot = strrchr(name_no_ext, '.');
+            if (dot) *dot = '\0';
+        }
+        char abs_path[PATH_MAX];
+        snprintf(abs_path, sizeof(abs_path), "%s/%s", dir_path, ent->d_name);
+        GtkWidget *btn = create_tree_item_button(name_no_ext, icon_name, abs_path, click_cb);
+        gtk_box_pack_start(GTK_BOX(container), btn, FALSE, FALSE, 0);
+    }
+    closedir(dir);
+}
+
+static void populate_sidebar_dynamic(GtkWidget *ws_container, GtkWidget *chats_container, GtkWidget *notes_container, GtkWidget *files_container) {
+    char root_path[PATH_MAX];
+    const char *jca_env = getenv("JENOVA_WORKSPACES");
+    if (jca_env) {
+        snprintf(root_path, sizeof(root_path), "%s", jca_env);
+    } else {
+        const char *home = getenv("HOME");
+        snprintf(root_path, sizeof(root_path), "%s/JCA/Workspaces", home ? home : "/tmp");
+    }
+    
+    // Globals
+    char global_notes[PATH_MAX], global_files[PATH_MAX];
+    snprintf(global_notes, sizeof(global_notes), "%s/Notes", root_path);
+    snprintf(global_files, sizeof(global_files), "%s/Files", root_path);
+    
+    // Notes Global
+    DIR *ndir = opendir(global_notes);
+    if (ndir) {
+        struct dirent *nent;
+        while ((nent = readdir(ndir)) != NULL) {
+            if (g_str_has_suffix(nent->d_name, ".md")) {
+                char name_no_ext[256];
+                snprintf(name_no_ext, sizeof(name_no_ext), "%s", nent->d_name);
+                char *dot = strrchr(name_no_ext, '.');
+                if (dot) *dot = '\0';
+                
+                char abs_path[PATH_MAX];
+                snprintf(abs_path, sizeof(abs_path), "%s/%s", global_notes, nent->d_name);
+                GtkWidget *btn = create_tree_item_button(name_no_ext, "text-x-generic-symbolic", abs_path, G_CALLBACK(on_sidebar_item_clicked));
+                gtk_box_pack_start(GTK_BOX(notes_container), btn, FALSE, FALSE, 0);
+            }
+        }
+        closedir(ndir);
+    }
+    
+    // Files Global
+    if (files_container) {
+        populate_container_from_dir(global_files, files_container, "text-x-generic-symbolic", FALSE, G_CALLBACK(on_sidebar_item_clicked));
+    }
+    
+    // Workspaces
+    char spaces_path[PATH_MAX];
+    snprintf(spaces_path, sizeof(spaces_path), "%s/Spaces", root_path);
+    DIR *sdir = opendir(spaces_path);
+    if (sdir) {
+        struct dirent *ent;
+        while ((ent = readdir(sdir)) != NULL) {
+            if (ent->d_name[0] == '.') continue;
+            
+            char full_path[PATH_MAX];
+            snprintf(full_path, sizeof(full_path), "%s/%s", spaces_path, ent->d_name);
+            
+            struct stat st;
+            if (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+                GtkWidget *exp = gtk_expander_new(NULL);
+                GtkWidget *hdr_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+                GtkWidget *icon = gtk_image_new_from_icon_name("folder-symbolic", GTK_ICON_SIZE_MENU);
+                GtkWidget *lbl = gtk_label_new(ent->d_name);
+                gtk_box_pack_start(GTK_BOX(hdr_box), icon, FALSE, FALSE, 0);
+                gtk_box_pack_start(GTK_BOX(hdr_box), lbl, TRUE, TRUE, 0);
+                gtk_expander_set_label_widget(GTK_EXPANDER(exp), hdr_box);
+                
+                GtkWidget *inner_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+                gtk_container_add(GTK_CONTAINER(exp), inner_vbox);
+                
+                // Parse Chats
+                char sub_path[PATH_MAX];
+                snprintf(sub_path, sizeof(sub_path), "%s/Chats", full_path);
+                DIR *cdir = opendir(sub_path);
+                if (cdir) {
+                    GtkWidget *c_hdr = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+                    GtkWidget *c_lbl = gtk_label_new(NULL);
+                    gtk_label_set_markup(GTK_LABEL(c_lbl), "<span color='#7b52ab' font_desc='JetBrains Mono Bold 10' letter_spacing='500'>CHATS</span>");
+                    gtk_box_pack_start(GTK_BOX(c_hdr), c_lbl, TRUE, TRUE, 4);
+                    gtk_box_pack_start(GTK_BOX(inner_vbox), c_hdr, FALSE, FALSE, 4);
+                    
+                    struct dirent *cent;
+                    while ((cent = readdir(cdir)) != NULL) {
+                        if (g_str_has_suffix(cent->d_name, ".md")) {
+                            char name_no_ext[256];
+                            snprintf(name_no_ext, sizeof(name_no_ext), "%s", cent->d_name);
+                            char *dot = strrchr(name_no_ext, '.');
+                            if (dot) *dot = '\0';
+                            
+                            char abs_path[PATH_MAX];
+                            snprintf(abs_path, sizeof(abs_path), "%s/%s", sub_path, cent->d_name);
+                            GtkWidget *btn = create_tree_item_button(name_no_ext, NULL, abs_path, G_CALLBACK(on_sidebar_item_clicked));
+                            gtk_box_pack_start(GTK_BOX(inner_vbox), btn, FALSE, FALSE, 0);
+                        }
+                    }
+                    closedir(cdir);
+                }
+
+                // Parse Notes
+                snprintf(sub_path, sizeof(sub_path), "%s/Notes", full_path);
+                DIR *ndir2 = opendir(sub_path);
+                if (ndir2) {
+                    GtkWidget *n_hdr = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+                    GtkWidget *n_lbl = gtk_label_new(NULL);
+                    gtk_label_set_markup(GTK_LABEL(n_lbl), "<span color='#e4b382' font_desc='JetBrains Mono Bold 10' letter_spacing='500'>NOTES</span>");
+                    gtk_box_pack_start(GTK_BOX(n_hdr), n_lbl, TRUE, TRUE, 4);
+                    gtk_box_pack_start(GTK_BOX(inner_vbox), n_hdr, FALSE, FALSE, 4);
+                    
+                    struct dirent *nent;
+                    while ((nent = readdir(ndir2)) != NULL) {
+                        if (g_str_has_suffix(nent->d_name, ".md")) {
+                            char name_no_ext[256];
+                            snprintf(name_no_ext, sizeof(name_no_ext), "%s", nent->d_name);
+                            char *dot = strrchr(name_no_ext, '.');
+                            if (dot) *dot = '\0';
+                            
+                            char abs_path[PATH_MAX];
+                            snprintf(abs_path, sizeof(abs_path), "%s/%s", sub_path, nent->d_name);
+                            GtkWidget *btn = create_tree_item_button(name_no_ext, "text-x-generic-symbolic", abs_path, G_CALLBACK(on_sidebar_item_clicked));
+                            gtk_box_pack_start(GTK_BOX(inner_vbox), btn, FALSE, FALSE, 0);
+                        }
+                    }
+                    closedir(ndir2);
+                }
+
+                // Files Button
+                GtkWidget *btn_files = gtk_button_new();
+                gtk_style_context_add_class(gtk_widget_get_style_context(btn_files), "tree-item");
+                gtk_style_context_add_class(gtk_widget_get_style_context(btn_files), "color-file");
+                GtkWidget *f_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+                GtkWidget *f_icon = gtk_image_new_from_icon_name("folder-symbolic", GTK_ICON_SIZE_BUTTON);
+                GtkWidget *f_lbl = gtk_label_new("Files");
+                gtk_box_pack_start(GTK_BOX(f_box), f_icon, FALSE, FALSE, 0);
+                gtk_box_pack_start(GTK_BOX(f_box), f_lbl, FALSE, FALSE, 0);
+                gtk_container_add(GTK_CONTAINER(btn_files), f_box);
+                gtk_widget_set_margin_top(btn_files, 4);
+                
+                char abs_path[PATH_MAX];
+                snprintf(abs_path, sizeof(abs_path), "%s/Files", full_path);
+                g_object_set_data_full(G_OBJECT(btn_files), "filepath", g_strdup(abs_path), g_free);
+                g_signal_connect(btn_files, "clicked", G_CALLBACK(on_sidebar_item_clicked), NULL);
+                
+                gtk_box_pack_start(GTK_BOX(inner_vbox), btn_files, FALSE, FALSE, 2);
+                
+                gtk_box_pack_start(GTK_BOX(ws_container), exp, FALSE, FALSE, 2);
+            }
+        }
+        closedir(sdir);
+    }
+    
+    gtk_widget_show_all(ws_container);
+    gtk_widget_show_all(chats_container);
+    gtk_widget_show_all(notes_container);
+    if (files_container) gtk_widget_show_all(files_container);
+}
+
+static void on_editor_save_clicked(GtkWidget *widget G_GNUC_UNUSED, gpointer data G_GNUC_UNUSED) {
+    if (!g_ui_state.editor_path_label || !g_ui_state.editor_textview) return;
+    const char *path = gtk_label_get_text(GTK_LABEL(g_ui_state.editor_path_label));
+    if (!path || strcmp(path, "No file loaded") == 0) return;
+    GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(g_ui_state.editor_textview));
+    GtkTextIter start, end;
+    gtk_text_buffer_get_bounds(buf, &start, &end);
+    char *text = gtk_text_buffer_get_text(buf, &start, &end, FALSE);
+    FILE *f = fopen(path, "w");
+    if (f) {
+        if (fputs(text, f) == EOF) {
+            fprintf(stderr, "jenova-ui: error writing to %s\n", path);
+        }
+        if (fclose(f) != 0) {
+            fprintf(stderr, "jenova-ui: error closing %s\n", path);
+        }
+    } else {
+        fprintf(stderr, "jenova-ui: error opening %s for writing\n", path);
+    }
+    g_free(text);
+}
+
+static void on_toggle_sidebar_clicked(GtkButton *btn, gpointer revealer) {
+    (void)btn;
+    gboolean is_revealed = gtk_revealer_get_reveal_child(GTK_REVEALER(revealer));
+    gtk_revealer_set_reveal_child(GTK_REVEALER(revealer), !is_revealed);
+}
+
+static void on_main_window_size_allocate(GtkWidget *widget G_GNUC_UNUSED, GdkRectangle *allocation G_GNUC_UNUSED, gpointer data G_GNUC_UNUSED) {
+    // Left empty intentionally, layout is now managed by overlay
+}
+
+static void init_gui(void) {
+    load_css();
+    g_ui_state.main_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_window_set_title(GTK_WINDOW(g_ui_state.main_window), "JENOVA AI - Native UI");
+    gtk_window_set_default_size(GTK_WINDOW(g_ui_state.main_window), 1000, 700);
+    gtk_window_set_position(GTK_WINDOW(g_ui_state.main_window), GTK_WIN_POS_CENTER);
+    
+    GtkStyleContext *ctx = gtk_widget_get_style_context(g_ui_state.main_window);
+    gtk_style_context_add_class(ctx, "jenova-window");
+    g_signal_connect(g_ui_state.main_window, "delete-event", G_CALLBACK(on_window_delete_event), NULL);
+    g_signal_connect(g_ui_state.main_window, "size-allocate", G_CALLBACK(on_main_window_size_allocate), NULL);
+
+    GtkWidget *overlay = gtk_overlay_new();
+    gtk_container_add(GTK_CONTAINER(g_ui_state.main_window), overlay);
+
+    GtkWidget *bg_canvas = create_neural_canvas();
+    gtk_container_add(GTK_CONTAINER(overlay), bg_canvas);
+
+    GtkWidget *main_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    
+    GtkWidget *sidebar_revealer = gtk_revealer_new();
+    gtk_revealer_set_transition_type(GTK_REVEALER(sidebar_revealer), GTK_REVEALER_TRANSITION_TYPE_SLIDE_RIGHT);
+    gtk_revealer_set_transition_duration(GTK_REVEALER(sidebar_revealer), 250);
+    gtk_revealer_set_reveal_child(GTK_REVEALER(sidebar_revealer), TRUE);
+    
+    /* LEFT SIDEPANEL */
+    GtkWidget *sidebar_layer_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_style_context_add_class(gtk_widget_get_style_context(sidebar_layer_box), "sidebar-panel");
+    
+    GtkWidget *sidebar_scroll_win = gtk_scrolled_window_new(NULL, NULL);
+    gtk_style_context_add_class(gtk_widget_get_style_context(sidebar_scroll_win), "sidebar-scroll");
+    gtk_scrolled_window_set_placement(GTK_SCROLLED_WINDOW(sidebar_scroll_win), GTK_CORNER_TOP_RIGHT);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sidebar_scroll_win), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(sidebar_scroll_win), GTK_SHADOW_NONE);
+    gtk_scrolled_window_set_overlay_scrolling(GTK_SCROLLED_WINDOW(sidebar_scroll_win), TRUE);
+    gtk_widget_set_size_request(sidebar_layer_box, 320, -1);
+    
+    gtk_box_pack_start(GTK_BOX(sidebar_layer_box), sidebar_scroll_win, TRUE, TRUE, 0);
+    
+    GtkWidget *sidebar_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
+    gtk_widget_set_margin_start(sidebar_vbox, 16); // Padding for the content, leaving scrollbar flush left
+    gtk_container_add(GTK_CONTAINER(sidebar_scroll_win), sidebar_vbox);
+    
+    g_ui_state.sidebar_scroll_win = sidebar_scroll_win;
+    g_ui_state.sidebar_vbox = sidebar_vbox;
+    
+    // Header Logo & Title
+    GtkWidget *header_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
+    
+    GtkWidget *logo_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_style_context_add_class(gtk_widget_get_style_context(logo_box), "logo-box");
+    char img_path[PATH_MAX];
+    snprintf(img_path, sizeof(img_path), "%s/png/jenova.jpg", get_jenova_root());
+    GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file(img_path, NULL);
+    GtkWidget *image = gtk_image_new();
+    if (pixbuf) {
+        GdkPixbuf *scaled = gdk_pixbuf_scale_simple(pixbuf, 48, 48, GDK_INTERP_BILINEAR);
+        if (scaled) {
+            gtk_image_set_from_pixbuf(GTK_IMAGE(image), scaled);
+            g_object_unref(scaled);
+        }
+        g_object_unref(pixbuf);
+    }
+    gtk_container_add(GTK_CONTAINER(logo_box), image);
+    gtk_box_pack_start(GTK_BOX(header_hbox), logo_box, FALSE, FALSE, 0);
+    
+    GtkWidget *title_lbl = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(title_lbl), 
+        "<span font_desc='Inter Bold 11' letter_spacing='-500'>"
+        "<span color='#7b52ab'>JENOVA</span>\n"
+        "<span color='#c96464'>COGNITIVE</span>\n"
+        "<span color='#e4b382'>ARCHITECTURE</span>"
+        "</span>");
+    gtk_label_set_justify(GTK_LABEL(title_lbl), GTK_JUSTIFY_LEFT);
+    gtk_label_set_xalign(GTK_LABEL(title_lbl), 0.0);
+    gtk_box_pack_start(GTK_BOX(header_hbox), title_lbl, TRUE, TRUE, 0);
+    
+    GtkWidget *btn_close_sidebar = gtk_button_new_from_icon_name("sidebar-collapse-symbolic", GTK_ICON_SIZE_BUTTON);
+    gtk_style_context_add_class(gtk_widget_get_style_context(btn_close_sidebar), "sidebar-btn");
+    g_signal_connect(btn_close_sidebar, "clicked", G_CALLBACK(on_toggle_sidebar_clicked), sidebar_revealer);
+    gtk_widget_set_valign(btn_close_sidebar, GTK_ALIGN_CENTER);
+    gtk_box_pack_start(GTK_BOX(header_hbox), btn_close_sidebar, FALSE, FALSE, 0);
+    
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), header_hbox, FALSE, FALSE, 8);
+    
+    // Action Grid
+    GtkWidget *action_grid = gtk_grid_new();
+    gtk_grid_set_column_spacing(GTK_GRID(action_grid), 4);
+    gtk_grid_set_row_spacing(GTK_GRID(action_grid), 4);
+    gtk_grid_set_column_homogeneous(GTK_GRID(action_grid), TRUE);
+    
+    struct {
+        const char *label; const char *icon_name; const char *action; int col; int row;
+    } actions[] = {
+        {"New chat", "document-new-symbolic", "new_chat", 0, 0},
+        {"Search", "system-search-symbolic", "search", 1, 0},
+        {"MCP Ser...", "network-server-symbolic", "mcp", 0, 1},
+        {"Settings", "preferences-system-symbolic", "settings", 1, 1}
+    };
+    
+    for (int i=0; i<4; i++) {
+        GtkWidget *btn = gtk_button_new();
+        gtk_style_context_add_class(gtk_widget_get_style_context(btn), "sidebar-btn");
+        
+        GtkWidget *btn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+        GtkWidget *icon = gtk_image_new_from_icon_name(actions[i].icon_name, GTK_ICON_SIZE_BUTTON);
+        GtkWidget *lbl = gtk_label_new(actions[i].label);
+        gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
+        
+        gtk_box_pack_start(GTK_BOX(btn_box), icon, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(btn_box), lbl, TRUE, TRUE, 0);
+        gtk_container_add(GTK_CONTAINER(btn), btn_box);
+        
+        g_signal_connect(btn, "clicked", G_CALLBACK(on_gui_button_clicked), (gpointer)actions[i].action);
+        gtk_grid_attach(GTK_GRID(action_grid), btn, actions[i].col, actions[i].row, 1, 1);
+    }
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), action_grid, FALSE, FALSE, 8);
+    
+    GtkWidget *sidebar_scroll_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), sidebar_scroll_vbox, TRUE, TRUE, 0);
+
+    // Workspaces
+    GtkWidget *ws_exp = gtk_expander_new(NULL);
+    GtkWidget *ws_hdr_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    GtkWidget *ws_lbl = gtk_label_new("WORKSPACES");
+    gtk_style_context_add_class(gtk_widget_get_style_context(ws_lbl), "section-header");
+    gtk_box_pack_start(GTK_BOX(ws_hdr_box), ws_lbl, TRUE, TRUE, 0);
+    
+    GtkWidget *icon_grid = gtk_image_new_from_icon_name("view-grid-symbolic", GTK_ICON_SIZE_MENU);
+    GtkWidget *icon_folder = gtk_image_new_from_icon_name("folder-new-symbolic", GTK_ICON_SIZE_MENU);
+    gtk_box_pack_start(GTK_BOX(ws_hdr_box), icon_grid, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(ws_hdr_box), icon_folder, FALSE, FALSE, 0);
+    
+    gtk_expander_set_label_widget(GTK_EXPANDER(ws_exp), ws_hdr_box);
+    gtk_expander_set_expanded(GTK_EXPANDER(ws_exp), FALSE);
+    GtkWidget *ws_container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_container_add(GTK_CONTAINER(ws_exp), ws_container);
+    gtk_box_pack_start(GTK_BOX(sidebar_scroll_vbox), ws_exp, FALSE, FALSE, 4);
+    
+    // CHATS
+    GtkWidget *chats_exp = gtk_expander_new(NULL);
+    GtkWidget *chats_lbl = gtk_label_new("CHATS");
+    gtk_style_context_add_class(gtk_widget_get_style_context(chats_lbl), "section-header");
+    gtk_expander_set_label_widget(GTK_EXPANDER(chats_exp), chats_lbl);
+    gtk_expander_set_expanded(GTK_EXPANDER(chats_exp), FALSE);
+    GtkWidget *chats_container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_container_add(GTK_CONTAINER(chats_exp), chats_container);
+    gtk_box_pack_start(GTK_BOX(sidebar_scroll_vbox), chats_exp, FALSE, FALSE, 4);
+    
+    // GLOBAL ASSETS
+    GtkWidget *ga_lbl = gtk_label_new(NULL);
+    gtk_label_set_markup(GTK_LABEL(ga_lbl), "<span color='#7b52ab' font_desc='JetBrains Mono 10' letter_spacing='1000'>GLOBAL ASSETS</span>");
+    gtk_label_set_xalign(GTK_LABEL(ga_lbl), 0.0);
+    gtk_widget_set_margin_top(ga_lbl, 8);
+    gtk_widget_set_margin_bottom(ga_lbl, 4);
+    gtk_box_pack_start(GTK_BOX(sidebar_scroll_vbox), ga_lbl, FALSE, FALSE, 0);
+    
+    // New Note Button
+    GtkWidget *btn_new_note = gtk_button_new();
+    gtk_style_context_add_class(gtk_widget_get_style_context(btn_new_note), "tree-item");
+    gtk_style_context_add_class(gtk_widget_get_style_context(btn_new_note), "color-note");
+    GtkWidget *nn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *nn_icon = gtk_image_new_from_icon_name("text-x-generic-symbolic", GTK_ICON_SIZE_BUTTON);
+    GtkWidget *nn_lbl = gtk_label_new("New Note");
+    gtk_box_pack_start(GTK_BOX(nn_box), nn_icon, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(nn_box), nn_lbl, FALSE, FALSE, 0);
+    gtk_container_add(GTK_CONTAINER(btn_new_note), nn_box);
+    gtk_box_pack_start(GTK_BOX(sidebar_scroll_vbox), btn_new_note, FALSE, FALSE, 2);
+    
+    // Notes Container (for unassigned notes)
+    GtkWidget *notes_container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_box_pack_start(GTK_BOX(sidebar_scroll_vbox), notes_container, FALSE, FALSE, 2);
+    
+    // Files Container (for unassigned files)
+    GtkWidget *files_container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_box_pack_start(GTK_BOX(sidebar_scroll_vbox), files_container, FALSE, FALSE, 2);
+    
+    // Notes & Files row
+    GtkWidget *nf_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_box_set_homogeneous(GTK_BOX(nf_hbox), TRUE);
+    
+    GtkWidget *btn_notes = gtk_button_new();
+    gtk_style_context_add_class(gtk_widget_get_style_context(btn_notes), "tree-item");
+    gtk_style_context_add_class(gtk_widget_get_style_context(btn_notes), "color-note");
+    GtkWidget *bn_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_set_halign(bn_box, GTK_ALIGN_CENTER);
+    GtkWidget *bn_icon = gtk_image_new_from_icon_name("text-x-generic-symbolic", GTK_ICON_SIZE_BUTTON);
+    GtkWidget *bn_lbl = gtk_label_new("Notes");
+    gtk_box_pack_start(GTK_BOX(bn_box), bn_icon, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(bn_box), bn_lbl, FALSE, FALSE, 0);
+    gtk_container_add(GTK_CONTAINER(btn_notes), bn_box);
+    
+    GtkWidget *btn_files = gtk_button_new();
+    gtk_style_context_add_class(gtk_widget_get_style_context(btn_files), "tree-item");
+    gtk_style_context_add_class(gtk_widget_get_style_context(btn_files), "color-file");
+    GtkWidget *bf_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_set_halign(bf_box, GTK_ALIGN_CENTER);
+    GtkWidget *bf_icon = gtk_image_new_from_icon_name("folder-symbolic", GTK_ICON_SIZE_BUTTON);
+    GtkWidget *bf_lbl = gtk_label_new("Files");
+    gtk_box_pack_start(GTK_BOX(bf_box), bf_icon, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(bf_box), bf_lbl, FALSE, FALSE, 0);
+    gtk_container_add(GTK_CONTAINER(btn_files), bf_box);
+    
+    gtk_box_pack_start(GTK_BOX(nf_hbox), btn_notes, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(nf_hbox), btn_files, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(sidebar_scroll_vbox), nf_hbox, FALSE, FALSE, 2);
+    
+    // Dynamic list reference 
+    g_ui_state.chats_list = gtk_list_box_new(); 
+    g_signal_connect(g_ui_state.chats_list, "row-activated", G_CALLBACK(on_chats_list_row_activated), NULL);
+    gtk_style_context_add_class(gtk_widget_get_style_context(g_ui_state.chats_list), "sidebar-scroll");
+    gtk_box_pack_start(GTK_BOX(chats_container), g_ui_state.chats_list, TRUE, TRUE, 0);
+    
+    GtkWidget *spacer = gtk_label_new(""); 
+    gtk_widget_set_vexpand(spacer, TRUE);
+    gtk_box_pack_start(GTK_BOX(sidebar_vbox), spacer, TRUE, TRUE, 0);
+    
+    gtk_container_add(GTK_CONTAINER(sidebar_revealer), sidebar_layer_box);
+    gtk_widget_set_halign(sidebar_revealer, GTK_ALIGN_START);
+    // DO NOT ADD TO OVERLAY HERE - WAIT UNTIL CHAT IS ADDED SO IT SITS ON TOP
+
+    /* RIGHT SIDE: Notebook */
+    GtkWidget *notebook = gtk_notebook_new();
+    gtk_notebook_set_tab_pos(GTK_NOTEBOOK(notebook), GTK_POS_TOP);
+    
+    GtkWidget *btn_toggle_sidebar = gtk_button_new_from_icon_name("sidebar-show-symbolic", GTK_ICON_SIZE_BUTTON);
+    gtk_style_context_add_class(gtk_widget_get_style_context(btn_toggle_sidebar), "sidebar-btn");
+    gtk_widget_set_margin_start(btn_toggle_sidebar, 8);
+    gtk_widget_set_margin_end(btn_toggle_sidebar, 8);
+    g_signal_connect(btn_toggle_sidebar, "clicked", G_CALLBACK(on_toggle_sidebar_clicked), sidebar_revealer);
+    gtk_notebook_set_action_widget(GTK_NOTEBOOK(notebook), btn_toggle_sidebar, GTK_PACK_START);
+    gtk_widget_show_all(btn_toggle_sidebar);
+
+    /* TAB 1: Chat Bedrock */
+    GtkWidget *chat_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_top(chat_vbox, 16);
+    gtk_widget_set_margin_bottom(chat_vbox, 16);
+    gtk_widget_set_margin_start(chat_vbox, 16);
+    gtk_widget_set_margin_end(chat_vbox, 16);
+    
+    chat_bedrock_init(chat_vbox);
+
+    GtkWidget *tab1_label = gtk_label_new("Chat");
+    gtk_notebook_append_page(GTK_NOTEBOOK(notebook), chat_vbox, tab1_label);
+    
+    /* TAB 2: Workspaces */
+    GtkWidget *organizer_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_top(organizer_vbox, 16);
+    gtk_widget_set_margin_bottom(organizer_vbox, 16);
+    gtk_widget_set_margin_start(organizer_vbox, 16);
+    gtk_widget_set_margin_end(organizer_vbox, 16);
+    
+    workspace_explorer_init(organizer_vbox);
+
+    GtkWidget *tab2_label = gtk_label_new("Workspaces");
+    gtk_notebook_append_page(GTK_NOTEBOOK(notebook), organizer_vbox, tab2_label);
+    
+    // Tab 3: Text Editor
+    GtkWidget *editor_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    GtkWidget *editor_toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_set_margin_top(editor_toolbar, 6);
+    gtk_widget_set_margin_bottom(editor_toolbar, 6);
+    gtk_widget_set_margin_start(editor_toolbar, 12);
+    gtk_widget_set_margin_end(editor_toolbar, 12);
+    GtkWidget *btn_save = gtk_button_new_with_label("Save");
+    g_signal_connect(btn_save, "clicked", G_CALLBACK(on_editor_save_clicked), NULL);
+    gtk_style_context_add_class(gtk_widget_get_style_context(btn_save), "suggest-btn");
+    GtkWidget *editor_path_lbl = gtk_label_new("No file loaded");
+    gtk_label_set_xalign(GTK_LABEL(editor_path_lbl), 0.0);
+    gtk_widget_set_hexpand(editor_path_lbl, TRUE);
+    gtk_box_pack_start(GTK_BOX(editor_toolbar), editor_path_lbl, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(editor_toolbar), btn_save, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(editor_vbox), editor_toolbar, FALSE, FALSE, 0);
+    
+    GtkWidget *editor_scroll = gtk_scrolled_window_new(NULL, NULL);
+    GtkWidget *text_view = gtk_text_view_new();
+    gtk_text_view_set_monospace(GTK_TEXT_VIEW(text_view), TRUE);
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(text_view), GTK_WRAP_WORD_CHAR);
+    gtk_text_view_set_pixels_above_lines(GTK_TEXT_VIEW(text_view), 2);
+    gtk_text_view_set_pixels_below_lines(GTK_TEXT_VIEW(text_view), 2);
+    gtk_text_view_set_left_margin(GTK_TEXT_VIEW(text_view), 8);
+    gtk_text_view_set_right_margin(GTK_TEXT_VIEW(text_view), 8);
+    gtk_text_view_set_top_margin(GTK_TEXT_VIEW(text_view), 8);
+    gtk_text_view_set_bottom_margin(GTK_TEXT_VIEW(text_view), 8);
+    gtk_container_add(GTK_CONTAINER(editor_scroll), text_view);
+    gtk_box_pack_start(GTK_BOX(editor_vbox), editor_scroll, TRUE, TRUE, 0);
+    
+    g_ui_state.editor_textview = text_view;
+    g_ui_state.editor_path_label = editor_path_lbl;
+    g_ui_state.notebook = notebook;
+    
+    GtkWidget *tab3_label = gtk_label_new("Editor");
+    gtk_notebook_append_page(GTK_NOTEBOOK(notebook), editor_vbox, tab3_label);
+
+    gtk_box_pack_start(GTK_BOX(main_hbox), notebook, TRUE, TRUE, 0);
+
+    // 1. Add Chat window to overlay (Bottom Layer)
+    gtk_overlay_add_overlay(GTK_OVERLAY(overlay), main_hbox);
+    
+    // 2. Add Sidebar to overlay (Top Layer - sits OVER chat)
+    gtk_overlay_add_overlay(GTK_OVERLAY(overlay), sidebar_revealer);
+
+    populate_sidebar_dynamic(ws_container, chats_container, notes_container, files_container);
+
+    gtk_widget_show_all(g_ui_state.main_window);
+    g_ui_state.is_visible = 1;
+    
+    // Notify Lua that GUI is ready
+    if (L) {
+        lua_getglobal(L, "ui");
+        if (lua_istable(L, -1)) {
+            lua_getfield(L, -1, "on_gui_ready");
+            if (lua_isfunction(L, -1)) {
+                if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+                    g_printerr("Error calling ui.on_gui_ready: %s\n", lua_tostring(L, -1));
+                    lua_pop(L, 1);
+                }
+            } else {
+                lua_pop(L, 1);
+            }
+        }
+        lua_pop(L, 1);
+    }
+}
+
+static int l_bedrock_clear_chat_list(lua_State *L G_GNUC_UNUSED) {
+    if (!g_ui_state.chats_list) return 0;
+    GList *children = gtk_container_get_children(GTK_CONTAINER(g_ui_state.chats_list));
+    for (GList *iter = children; iter != NULL; iter = g_list_next(iter)) {
+        gtk_widget_destroy(GTK_WIDGET(iter->data));
+    }
+    g_list_free(children);
+    return 0;
+}
+
+static int l_bedrock_add_chat_list_item(lua_State *L) {
+    if (!g_ui_state.chats_list) return 0;
+    const char *conv_id = luaL_checkstring(L, 1);
+    const char *title = luaL_checkstring(L, 2);
+    
+    GtkWidget *row = gtk_list_box_row_new();
+    GtkWidget *label = gtk_label_new(title);
+    gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_widget_set_margin_start(label, 8);
+    gtk_widget_set_margin_end(label, 8);
+    gtk_widget_set_margin_top(label, 4);
+    gtk_widget_set_margin_bottom(label, 4);
+    gtk_container_add(GTK_CONTAINER(row), label);
+    
+    g_object_set_data_full(G_OBJECT(row), "conv_id", g_strdup(conv_id), g_free);
+    
+    gtk_list_box_insert(GTK_LIST_BOX(g_ui_state.chats_list), row, -1);
+    gtk_widget_show_all(row);
+    
+    return 0;
+}
+
+static int l_bedrock_set_editor_content(lua_State *L) {
+    const char *filepath = luaL_checkstring(L, 1);
+    const char *content = luaL_checkstring(L, 2);
+    if (g_ui_state.editor_path_label) {
+        gtk_label_set_text(GTK_LABEL(g_ui_state.editor_path_label), filepath);
+    }
+    if (g_ui_state.editor_textview) {
+        GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(g_ui_state.editor_textview));
+        gtk_text_buffer_set_text(buf, content, -1);
+    }
+    if (g_ui_state.notebook) {
+        gtk_notebook_set_current_page(GTK_NOTEBOOK(g_ui_state.notebook), 2);
+    }
+    return 0;
+}
+
+static int l_bedrock_set_active_tab(lua_State *L) {
+    int page_num = luaL_checkinteger(L, 1);
+    if (g_ui_state.notebook) {
+        gtk_notebook_set_current_page(GTK_NOTEBOOK(g_ui_state.notebook), page_num);
+    }
     return 0;
 }
 
@@ -164,11 +1244,32 @@ void init_lua(void) {
     lua_pushcfunction(L, l_sys_exec_async);
     lua_setglobal(L, "sys_exec_async");
 
+    lua_pushcfunction(L, l_sys_exec_stream);
+    lua_setglobal(L, "sys_exec_stream");
+
     lua_pushcfunction(L, l_sys_exec_sync);
     lua_setglobal(L, "sys_exec_sync");
 
+    lua_pushcfunction(L, l_sys_exec_read);
+    lua_setglobal(L, "sys_exec_read");
+
     lua_pushcfunction(L, l_quit_app);
     lua_setglobal(L, "quit_app");
+
+    lua_pushcfunction(L, l_bedrock_clear_chat_list);
+    lua_setglobal(L, "bedrock_clear_chat_list");
+
+    lua_pushcfunction(L, l_bedrock_add_chat_list_item);
+    lua_setglobal(L, "bedrock_add_chat_list_item");
+    
+    lua_pushcfunction(L, l_bedrock_set_editor_content);
+    lua_setglobal(L, "bedrock_set_editor_content");
+
+    lua_pushcfunction(L, l_bedrock_set_active_tab);
+    lua_setglobal(L, "bedrock_set_active_tab");
+
+    /* Register the Native Chat Bedrock functions */
+    chat_bedrock_register_lua(L);
 
     /* Add lib/ to package.path so ui.lua can require siblings */
     lua_getglobal(L, "package");
@@ -283,44 +1384,111 @@ static void free_action_data(gpointer data, GClosure *closure G_GNUC_UNUSED) {
     free(data);
 }
 
-/* ---------------------------------------------------------------------------
- * update_tray_status: Polled every 3 seconds by GLib.  Calls ui.poll_status()
- * and swaps the tray icon between jca.jpg (active) and jca_grey.jpg (inactive).
- *
- * Lua stack discipline: push ui table, push+call poll_status, pop result,
- * pop ui table.  Both success and error paths must leave the stack clean.
- * --------------------------------------------------------------------------- */
+static GPid status_pid = 0;
+static GString *status_output = NULL;
+static guint status_watch_id = 0;
+
+static gboolean on_status_output_read(GIOChannel *source, GIOCondition condition, gpointer data G_GNUC_UNUSED) {
+    gchar buf[512];
+    gsize bytes_read = 0;
+    GError *error = NULL;
+    GIOStatus status = g_io_channel_read_chars(source, buf, sizeof(buf) - 1, &bytes_read, &error);
+
+    if (status == G_IO_STATUS_NORMAL) {
+        buf[bytes_read] = '\0';
+        g_string_append(status_output, buf);
+    } else if (status == G_IO_STATUS_ERROR && error) {
+        g_error_free(error);
+    }
+
+    if (status == G_IO_STATUS_EOF || (condition & (G_IO_ERR | G_IO_HUP))) {
+        int is_active = (status_output->str && strstr(status_output->str, "is ready") != NULL);
+        char icon_path[PATH_MAX];
+        int was_active = (strcmp(g_ui_state.current_status, "active") == 0);
+
+        if (is_active) {
+            snprintf(icon_path, sizeof(icon_path), "%s/png/jca.jpg", get_jenova_root());
+            if (g_ui_state.status_label) {
+                gtk_label_set_text(GTK_LABEL(g_ui_state.status_label), "ACTIVE");
+                GtkStyleContext *ctx = gtk_widget_get_style_context(g_ui_state.status_label);
+                gtk_style_context_remove_class(ctx, "status-inactive");
+                gtk_style_context_add_class(ctx, "status-active");
+            }
+            if (!was_active && g_ui_state.webview) {
+                webkit_web_view_reload(WEBKIT_WEB_VIEW(g_ui_state.webview));
+            }
+            strncpy(g_ui_state.current_status, "active", sizeof(g_ui_state.current_status)-1);
+        } else {
+            snprintf(icon_path, sizeof(icon_path), "%s/png/jca_grey.jpg", get_jenova_root());
+            if (g_ui_state.status_label) {
+                gtk_label_set_text(GTK_LABEL(g_ui_state.status_label), "INACTIVE");
+                GtkStyleContext *ctx = gtk_widget_get_style_context(g_ui_state.status_label);
+                gtk_style_context_remove_class(ctx, "status-active");
+                gtk_style_context_add_class(ctx, "status-inactive");
+            }
+            strncpy(g_ui_state.current_status, "inactive", sizeof(g_ui_state.current_status)-1);
+        }
+
+        if (global_indicator) {
+            app_indicator_set_icon_full(global_indicator, icon_path, "Jenova Status");
+        }
+
+        g_string_free(status_output, TRUE);
+        status_output = NULL;
+        if (status_pid != 0) {
+            g_spawn_close_pid(status_pid);
+            status_pid = 0;
+        }
+        status_watch_id = 0;
+        return FALSE; /* Stop listening */
+    }
+    return TRUE;
+}
+
 static gboolean update_tray_status(gpointer user_data G_GNUC_UNUSED) {
     if (!global_indicator) return TRUE;
 
-    lua_getglobal(L, "ui");                          /* +1  [ui] */
-    if (!lua_istable(L, -1)) { lua_pop(L, 1); return TRUE; }
-
-    lua_getfield(L, -1, "poll_status");              /* +1  [ui, fn] */
-    if (!lua_isfunction(L, -1)) { lua_pop(L, 2); return TRUE; }
-
-    if (lua_pcall(L, 0, 1, 0) == LUA_OK) {          /* -1 +1  [ui, result] */
-        const char *status = lua_tostring(L, -1);
-        char icon_path[PATH_MAX];
-
-        if (status && strcmp(status, "active") == 0) {
-            snprintf(icon_path, sizeof(icon_path), "%s/png/jca.jpg",
-                     get_jenova_root());
+    /* Update proxy state non-blockingly via Lua */
+    lua_getglobal(L, "ui");
+    if (lua_istable(L, -1)) {
+        lua_getfield(L, -1, "update_proxy_state");
+        if (lua_isfunction(L, -1)) {
+            if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+                fprintf(stderr, "jenova-ui: error in ui.update_proxy_state: %s\n", lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
         } else {
-            snprintf(icon_path, sizeof(icon_path), "%s/png/jca_grey.jpg",
-                     get_jenova_root());
+            lua_pop(L, 1);
         }
+    }
+    lua_pop(L, 1);
 
-        app_indicator_set_icon_full(global_indicator, icon_path, "Jenova Status");
-        lua_pop(L, 1); /* pop result */
-    } else {
-        /* pcall error: error message is on stack */
-        fprintf(stderr, "jenova-ui: error in ui.poll_status: %s\n",
-                lua_tostring(L, -1));
-        lua_pop(L, 1); /* pop error */
+    /* If an async check is already running, skip this cycle */
+    if (status_pid != 0) {
+        return TRUE;
     }
 
-    lua_pop(L, 1); /* pop 'ui' table */
+    char *wrapped_cmd = wrap_jenova_cmd("jenova-ca status");
+    gchar **argv;
+    GError *error = NULL;
+    if (g_shell_parse_argv(wrapped_cmd, NULL, &argv, &error)) {
+        gint status_out_fd = -1;
+        if (g_spawn_async_with_pipes(NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, &status_pid, NULL, &status_out_fd, NULL, &error)) {
+            status_output = g_string_new("");
+            GIOChannel *channel = g_io_channel_unix_new(status_out_fd);
+            g_io_channel_set_encoding(channel, NULL, NULL);
+            g_io_channel_set_close_on_unref(channel, TRUE);
+            status_watch_id = g_io_add_watch(channel, G_IO_IN | G_IO_ERR | G_IO_HUP, on_status_output_read, NULL);
+            g_io_channel_unref(channel);
+        } else {
+            g_error_free(error);
+        }
+        g_strfreev(argv);
+    } else {
+        g_error_free(error);
+    }
+    free(wrapped_cmd);
+
     return TRUE;
 }
 
@@ -334,20 +1502,23 @@ static gboolean run_tray(int argc, char *argv[]) {
 
     /* Single-instance lock (per-user) */
     char lock_path[PATH_MAX];
-    char dir_path[PATH_MAX];
+    char dir_path[PATH_MAX - 32];
     const char *home = getenv("HOME");
     if (!home) home = "/tmp";
     
-    snprintf(dir_path, sizeof(dir_path), "%s/.jenova", home);
-    snprintf(lock_path, sizeof(lock_path), "%s/ui.lock", dir_path);
-    
-    /* Ensure .jenova directory exists */
-    g_mkdir_with_parents(dir_path, 0700);
+    int lock_fd = -1;
+    int n1 = snprintf(dir_path, sizeof(dir_path), "%s/.jenova", home);
+    if (n1 >= 0 && n1 < (int)sizeof(dir_path)) {
+        int n2 = snprintf(lock_path, sizeof(lock_path), "%s/ui.lock", dir_path);
+        if (n2 >= 0 && n2 < (int)sizeof(lock_path)) {
+            /* Ensure .jenova directory exists */
+            g_mkdir_with_parents(dir_path, 0700);
+            lock_fd = open(lock_path, O_CREAT | O_RDWR, 0600);
+        }
+    }
 
-    int lock_fd = open(lock_path, O_CREAT | O_RDWR, 0600);
     if (lock_fd == -1) {
-        fprintf(stderr, "jenova-ui: cannot open lockfile %s: %s\n",
-                lock_path, strerror(errno));
+        fprintf(stderr, "jenova-ui: cannot safely create or open lockfile\n");
         exit(1);
     }
     /* Set CLOEXEC so child processes don't inherit the lock fd */
@@ -362,15 +1533,6 @@ static gboolean run_tray(int argc, char *argv[]) {
         exit(1);
     }
 
-    /* Parse --offline flag */
-    int offline_mode = 0;
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--offline") == 0) {
-            offline_mode = 1;
-            break;
-        }
-    }
-
     /* Create indicator with grey (inactive) icon as default */
     char default_icon[PATH_MAX];
     snprintf(default_icon, sizeof(default_icon), "%s/png/jca_grey.jpg",
@@ -383,10 +1545,11 @@ static gboolean run_tray(int argc, char *argv[]) {
     app_indicator_set_icon_full(global_indicator, default_icon,
                                 "Jenova (Inactive)");
 
+    /* Initialize Chat GUI Window */
+    init_gui();
+
     /* Build initial context menu from Lua */
     rebuild_tray_menu();
-
-    /* Removed: Auto-start server and open Web UI (user requested tray to start silently) */
 
     /* Poll server status every 3 seconds */
     g_timeout_add_seconds(3, update_tray_status, NULL);
@@ -404,6 +1567,12 @@ static gboolean run_tray(int argc, char *argv[]) {
  * rebuild_tray_menu: (Re)builds the GTK context menu from ui.get_menu().
  * Called at startup and after state-changing actions (LAN toggle, etc.).
  * --------------------------------------------------------------------------- */
+static void present_main_window(GtkWidget *win) {
+    gtk_widget_show_all(win);
+    gtk_window_present(GTK_WINDOW(win));
+    g_ui_state.is_visible = 1;
+}
+
 static void rebuild_tray_menu(void) {
     if (!global_indicator) return;
 
@@ -441,6 +1610,13 @@ static void rebuild_tray_menu(void) {
                     lua_pop(L, 1);
 
                     if (label && action) {
+                        if (strcmp(action, "open_gui") == 0) {
+                            GtkWidget *item = gtk_menu_item_new_with_label("Open Window");
+                            g_signal_connect_swapped(item, "activate", G_CALLBACK(present_main_window), g_ui_state.main_window);
+                            gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+                            lua_pop(L, 1);
+                            continue;
+                        }
                         GtkWidget *item = gtk_menu_item_new_with_label(label);
                         char *action_dup = strdup(action);
                         if (action_dup) {

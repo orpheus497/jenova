@@ -376,13 +376,24 @@ if [ -f "$JENOVA_ROOT/jenova-ui/jenova-ui" ]; then
     _verify_and_copy_bin "$JENOVA_ROOT/jenova-ui/jenova-ui" "$JCA_HOME/bin/jenova-ui"
 fi
 
+# Deploy jenova-ui WebKit assets (markdown rendering dependencies)
+if [ -d "$JENOVA_ROOT/jenova-ui/assets" ]; then
+    rm -rf "$JCA_HOME/share/jenova-ui/assets"
+    mkdir -p "$JCA_HOME/share/jenova-ui"
+    cp -R "$JENOVA_ROOT/jenova-ui/assets" "$JCA_HOME/share/jenova-ui/"
+    ok "Deployed jenova-ui rendering assets to $JCA_HOME/share/jenova-ui/assets"
+fi
+
 
 
 # 8.3 Deploy Assets, Scripts, and Config
 cp -R "$JENOVA_ROOT/lib/"* "$JCA_HOME/lib/"
 cp -R "$JENOVA_ROOT/scripts/"* "$JCA_HOME/scripts/"
 cp -R "$JENOVA_ROOT/hardware-profiles/"* "$JCA_HOME/hardware-profiles/"
-[ -d "$JENOVA_ROOT/public" ] && cp -R "$JENOVA_ROOT/public/"* "$JCA_HOME/public/"
+if [ -d "$JENOVA_ROOT/public" ]; then
+    rm -rf "$JCA_HOME/public"
+    cp -R "$JENOVA_ROOT/public" "$JCA_HOME/public"
+fi
 ok "Deployed libraries, scripts, hardware profiles, runtime, and web assets"
 
 # 8.4 Generate Path-Locked Config

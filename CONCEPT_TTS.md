@@ -1,0 +1,34 @@
+# Voice Model Architecture (Qwen3-TTS)
+
+## 1. Overview
+
+This document outlines the architectural strategy for integrating a Voice Model (specifically **Qwen3-TTS-1.7B-CustomVoice-GGUF**) into the Jenova platform. While this design introduces a highly optimized voice generation subsystem capable of running concurrently with the main reasoning agent, **speculative decoding remains in scope and active**. The daemon orchestration change to completely replace speculative decoding is pending; thus, the current integration strategy runs the separate TTS process without removing existing speculative logic.
+
+## 2. Hardware Allocation Strategy (iGPU Offloading)
+
+To minimize performance degradation to the core reasoning engine, the Voice model can be targeted toward the Integrated GPU (iGPU) as a best-effort strategy.
+
+*   **VRAM Preservation**: The primary Agent model requires high-bandwidth, fast GDDR6 VRAM of the dedicated GPU (dGPU) for deep reasoning and fast token generation. 
+*   **iGPU UMA Utilization**: The Qwen3-TTS 1.7B model is highly compact (~1.8GB). By attempting to bind its background process explicitly to the iGPU (e.g., via `-dev Vulkan1`), it can utilize shared system RAM (UMA). While this aims to reduce competition for compute or memory bandwidth with the Agent model, actual hardware isolation depends on the underlying system topology and driver support.
+*   **Parallel Generation**: By aiming to distribute the workloads, the system seeks to operate them in parallel. The Agent streams text out, and the Voice model ingests and synthesizes it, ideally avoiding severe GPU context-switching bottlenecks that would occur if both models shared the same device.
+
+## 3. Subsystem Lifecycle & Isolation
+
+The integration does not require an entirely new external server application, but rather leverages `jenova-ca` to orchestrate a separate companion process.
+
+*   **Process Isolation (`llama.cpp`)**: Because Qwen3-TTS outputs audio tokens, it structurally cannot share a thread loop with the standard text Agent. Therefore, it is launched as a specialized companion background process (`PID`), allowing specific targeting of the iGPU. *(Note: Mainline llama.cpp compatibility with Qwen3-TTS audio-token output and GGUF encapsulation must be verified. If unsupported, a dedicated TTS runtime or a custom Qwen Audio runner will be substituted for this companion process without altering the orchestration layer.)*
+*   **Daemon Orchestration (`jenova-ca`)**: The Qwen3-TTS model is directly managed, started, and stopped by the Jenova daemon exactly like the embedding model. **Note**: The daemon still constructs and passes `DRAFT_ARGS` into `llama-server` to preserve speculative decoding capabilities until the code path is fully migrated in the future.
+
+## 4. Dual-Layer Toggle Architecture
+
+The system supports strict resource-efficiency through a dual-layer toggle system:
+
+1.  **Config Level (`jenova.conf`)**: 
+    A `JENOVA_VOICE=1` flag and a `VOICE_DEVICE="Vulkan1"` setting dictate the initialization behavior. When the daemon boots, if the flag is disabled, it completely skips initializing the Voice process.
+2.  **Web UI Level (Dynamic Lifecycle)**: 
+    Using the lifecycle endpoints used by the UI contract, specifically the load/unload flow handled by `/models/load` and `/models/unload`, a UI toggle requests the Voice model to unload during "Silent Mode", and requests it to reload into the iGPU when voice is requested. It is important to note that these endpoints are **asynchronous** and return before the model transition completes. The UI must use polling or another readiness check against `/v1/models` before treating the model as fully ready or unloaded. This guarantees aggressive resource optimization when audio synthesis is not required, while keeping `/v1/models` reserved for listing models only.
+
+## 5. Next Steps
+
+* Update `jenova-ca` process orchestration logic to spawn the secondary iGPU process.
+* Map the new routing logic in `proxy.lua` to properly bridge text streams to the Voice proxy port.

@@ -120,14 +120,15 @@ local function decode_chunked_body(after_headers)
 end
 
 local EINTR = 4
-local function async_recv(fd, buf, len)
+local function async_recv(fd, buf, len, deadline)
     while true do
         local n = ffi.C.recv(fd, buf, len, 0)
         if n >= 0 then return tonumber(n) end
         local err = ffi.errno()
         if err == EINTR then goto retry end
         if err ~= EAGAIN and err ~= EWOULDBLOCK then return -1, err end
-        coroutine.yield("read", fd)
+        if deadline and os.time() > deadline then return -2, "timeout" end
+        coroutine.yield("read", fd, deadline)
         ::retry::
     end
 end
@@ -187,15 +188,6 @@ local function async_popen_read(cmd)
     while true do
         local n = ffi.C.read(fd, buf, 4096)
         if n > 0 then
-        if watch_stdin and _ffi_defs.FD_ISSET(0, read_fds) then
-            local tmp_buf = ffi.new("char[1]")
-            local r = ffi.C.read(0, tmp_buf, 1)
-            if r <= 0 then
-                print("[proxy] EOF on stdin, parent process died. Shutting down...")
-                running = false
-                break
-            end
-        end
             chunks[#chunks + 1] = ffi.string(buf, n)
         elseif n == 0 then
             break
@@ -465,15 +457,20 @@ local function proxy_connection(client_fd, conn_fds)
     local is_get = false
 
     while true do
-        local n, err = async_recv(client_fd, buf, 8192)
-        if n <= 0 then 
-            if n < 0 then io.write("[proxy] client recv error: " .. tostring(err) .. "\n") end
-            safe_close(); return 
+        local n, err = async_recv(client_fd, buf, 8192, start_time + 10)
+        if n <= 0 then
+            if err == "timeout" or os.time() - start_time > 10 then
+                io.write("[proxy] header timeout from client\n")
+            elseif n < 0 then
+                io.write("[proxy] client recv error: " .. tostring(err) .. "\n")
+            end
+            safe_close(); return
         end
+
         header_chunks[#header_chunks + 1] = ffi.string(buf, n)
         header_total = header_total + n
         if header_total > MAX_HEADER_SIZE then
-            local err_resp = "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n"
+            local err_resp = "HTTP/1.1 431 Request Header Fields Too Large\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
             async_send(client_fd, err_resp)
             safe_close(); return
         end
@@ -491,12 +488,31 @@ local function proxy_connection(client_fd, conn_fds)
             break
         end
         
-        if os.time() - start_time > 10 then
-            io.write("[proxy] header timeout from client\n")
-            safe_close(); return
-        end
     end
 
+
+        local origin = headers_raw:match("\r\n[Oo][Rr][Ii][Gg][Ii][Nn]:%s*([^\r\n]+)")
+        local allow_origin = origin or "http://localhost:8080"
+        
+        local is_mutating = not (is_get or headers_raw:match("^OPTIONS ") or headers_raw:match("^HEAD "))
+        if is_mutating and not origin then
+            local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, err); safe_close(); return
+        end
+
+        if origin then
+            local is_safe = origin == "app://jenova" or origin:match("^https?://127%.0%.0%.1:%d+$") or origin:match("^https?://localhost:%d+$")
+            if not is_safe then
+                local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+                async_send(client_fd, err); safe_close(); return
+            end
+        end
+
+        if headers_raw:match("^OPTIONS ") then
+            local cors_resp = "HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS, PUT, DELETE\r\nAccess-Control-Allow-Headers: *\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, cors_resp)
+            safe_close(); return
+        end
     -- Native /health endpoint
     local is_health = is_get and (headers_raw:match("^GET /health[ %?]") or headers_raw:match("^GET /v1/health[ %?]"))
     if is_health then
@@ -551,7 +567,7 @@ local function proxy_connection(client_fd, conn_fds)
             jenova     = true,
         })
         local health_resp = string.format(
-            "HTTP/1.1 %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
+            "HTTP/1.1 %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n%s",
             http_status, #health_body, health_body)
         async_send(client_fd, health_resp)
         safe_close()
@@ -560,37 +576,80 @@ local function proxy_connection(client_fd, conn_fds)
 
     if not is_get then
         if content_length > MAX_BODY_SIZE then
-            local err_resp = "HTTP/1.1 413 Content Too Large\r\nConnection: close\r\n\r\n"
+            local err_resp = "HTTP/1.1 413 Content Too Large\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
             async_send(client_fd, err_resp)
             safe_close(); return
         end
         if is_chunked then
-            body_chunks[1] = body_raw
-            body_total = #body_raw
-            local tail = body_raw:sub(-5)
-            while tail ~= "0\r\n\r\n" do
-                local n = async_recv(client_fd, buf, 8192)
-                if n <= 0 then break end
-                local chunk = ffi.string(buf, n)
-                body_chunks[#body_chunks + 1] = chunk
-                body_total = body_total + n
-                if body_total > MAX_BODY_SIZE then break end
-                local combined = table.concat(body_chunks)
-                tail = combined:sub(-5)
+            local deadline = os.time() + 10
+            local chunk_buffer = body_raw
+            local assembled_body = {}
+            local assembled_total = 0
+            
+            while true do
+                local len_end = chunk_buffer:find("\r\n", 1, true)
+                while not len_end do
+                    if #chunk_buffer > 1024 then
+                        local err_resp = "HTTP/1.1 400 Bad Request\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
+                        async_send(client_fd, err_resp)
+                        safe_close(); return
+                    end
+                    local n = async_recv(client_fd, buf, 8192, deadline)
+                    if n <= 0 then break end
+                    chunk_buffer = chunk_buffer .. ffi.string(buf, n)
+                    len_end = chunk_buffer:find("\r\n", 1, true)
+                end
+                if not len_end then break end
+                
+                local hex_str = chunk_buffer:sub(1, len_end - 1):match("^([0-9a-fA-F]+)")
+                if not hex_str then break end
+                local chunk_len = tonumber(hex_str, 16)
+                
+                if chunk_len == 0 then
+                    while not chunk_buffer:find("\r\n\r\n", len_end + 1, true) do
+                        local n = async_recv(client_fd, buf, 8192, deadline)
+                        if n <= 0 then break end
+                        chunk_buffer = chunk_buffer .. ffi.string(buf, n)
+                    end
+                    break
+                end
+                
+                local needed = len_end + 1 + chunk_len + 2
+                while #chunk_buffer < needed do
+                    local n = async_recv(client_fd, buf, 8192, deadline)
+                    if n <= 0 then break end
+                    chunk_buffer = chunk_buffer .. ffi.string(buf, n)
+                    if #chunk_buffer > MAX_BODY_SIZE + 8192 then break end
+                end
+                if #chunk_buffer < needed then
+                    local err_resp = "HTTP/1.1 400 Bad Request\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
+                    async_send(client_fd, err_resp)
+                    safe_close(); return
+                end
+                
+                local data = chunk_buffer:sub(len_end + 2, len_end + 1 + chunk_len)
+                table.insert(assembled_body, data)
+                assembled_total = assembled_total + #data
+                if assembled_total > MAX_BODY_SIZE then
+                    local err_resp = "HTTP/1.1 413 Content Too Large\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
+                    async_send(client_fd, err_resp)
+                    safe_close(); return
+                end
+                
+                chunk_buffer = chunk_buffer:sub(needed + 1)
             end
-            body_raw = decode_chunked_body(table.concat(body_chunks))
-            body_chunks = nil
+            body_raw = table.concat(assembled_body)
         else
+            local deadline = os.time() + 10
             body_chunks[1] = body_raw
             body_total = #body_raw
             while body_total < content_length do
-                local n = async_recv(client_fd, buf, 8192)
-                if n <= 0 then break end
+                local n = async_recv(client_fd, buf, 8192, deadline)
+                if n <= 0 then safe_close(); return end
                 body_chunks[#body_chunks + 1] = ffi.string(buf, n)
                 body_total = body_total + n
             end
             body_raw = table.concat(body_chunks)
-            body_chunks = nil
         end
     end
 
@@ -604,13 +663,13 @@ local function proxy_connection(client_fd, conn_fds)
         
         -- Security: prevent directory traversal (literal check + canonical validation)
         if storage_path:find("%.%.") then
-            local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+            local err = "HTTP/1.1 403 Forbidden\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n"
             async_send(client_fd, err); safe_close(); return
         end
 
         local full_path = resolve_safe_path(workspaces_dir, storage_path)
         if not full_path then
-            local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+            local err = "HTTP/1.1 403 Forbidden\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n"
             async_send(client_fd, err); safe_close(); return
         end
         local dir_part = full_path:match("(.+)/[^/]+$")
@@ -621,12 +680,34 @@ local function proxy_connection(client_fd, conn_fds)
             f:write(body_raw)
             f:close()
 
-            local resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}"
+            local resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}"
             async_send(client_fd, resp)
         else
-            local resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
+            local resp = "HTTP/1.1 500 Internal Server Error\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n"
             async_send(client_fd, resp)
         end
+        safe_close(); return
+    end
+
+    local delete_storage_path = headers_raw:match("^DELETE /api/storage/([^ %?]+)")
+    if delete_storage_path then
+        delete_storage_path = url_decode(delete_storage_path)
+        if delete_storage_path:find("%.%.") then
+            local err = "HTTP/1.1 403 Forbidden\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, err); safe_close(); return
+        end
+        local full_path = resolve_safe_path(workspaces_dir, delete_storage_path)
+        if not full_path then
+            local err = "HTTP/1.1 403 Forbidden\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, err); safe_close(); return
+        end
+        local ok, err_msg = os.remove(full_path)
+        if not ok and err_msg and not err_msg:match("No such file") then
+            local err = "HTTP/1.1 500 Internal Server Error\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, err); safe_close(); return
+        end
+        local resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}"
+        async_send(client_fd, resp)
         safe_close(); return
     end
 
@@ -644,7 +725,7 @@ local function proxy_connection(client_fd, conn_fds)
             end
         end
         local content = "[" .. table.concat(files, ",") .. "]"
-        local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)
+        local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nAccess-Control-Allow-Origin: %s\r\nVary: Origin\r\nConnection: close\r\n\r\n", #content, allow_origin)
         async_send(client_fd, resp .. content)
         safe_close(); return
     end
@@ -663,7 +744,7 @@ local function proxy_connection(client_fd, conn_fds)
             end
         end
         local content = "[" .. table.concat(ws, ",") .. "]"
-        local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)
+        local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nAccess-Control-Allow-Origin: %s\r\nVary: Origin\r\nConnection: close\r\n\r\n", #content, allow_origin)
         async_send(client_fd, resp .. content)
         safe_close(); return
     end
@@ -672,12 +753,12 @@ local function proxy_connection(client_fd, conn_fds)
     if is_storage_get then
         is_storage_get = url_decode(is_storage_get)
         if is_storage_get:find("%.%.") then
-            local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+            local err = "HTTP/1.1 403 Forbidden\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n"
             async_send(client_fd, err); safe_close(); return
         end
         local full_path = resolve_safe_path(workspaces_dir, is_storage_get)
         if not full_path then
-            local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+            local err = "HTTP/1.1 403 Forbidden\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n"
             async_send(client_fd, err); safe_close(); return
         end
         local f = io.open(full_path, "rb")
@@ -686,17 +767,17 @@ local function proxy_connection(client_fd, conn_fds)
             f:close()
             
             if not content then
-                local resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
+                local resp = "HTTP/1.1 500 Internal Server Error\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n"
                 async_send(client_fd, resp)
                 safe_close()
                 return
             end
             
-            local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)
+            local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %d\r\nAccess-Control-Allow-Origin: %s\r\nVary: Origin\r\nConnection: close\r\n\r\n", #content, allow_origin)
             async_send(client_fd, resp)
             async_send(client_fd, content)
         else
-            local resp = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n"
+            local resp = "HTTP/1.1 404 Not Found\r\nAccess-Control-Allow-Origin: " .. allow_origin .. "\r\nVary: Origin\r\nConnection: close\r\n\r\n"
             async_send(client_fd, resp)
         end
         safe_close(); return
@@ -721,7 +802,7 @@ local function proxy_connection(client_fd, conn_fds)
                         f:close()
                         
                         if not content then
-                            local resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
+                            local resp = "HTTP/1.1 500 Internal Server Error\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
                             async_send(client_fd, resp)
                             safe_close()
                             return
@@ -729,14 +810,14 @@ local function proxy_connection(client_fd, conn_fds)
                         
                         local mime = is_static_asset or "application/octet-stream"
                         local resp = string.format(
-                            "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n",
+                            "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %d\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
                             mime, #content)
                         async_send(client_fd, resp)
                         async_send(client_fd, content)
                         safe_close()
                         return
                     elseif is_static_asset then
-                        local resp = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n"
+                        local resp = "HTTP/1.1 404 Not Found\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
                         async_send(client_fd, resp)
                         safe_close()
                         return
@@ -935,7 +1016,7 @@ local function proxy_connection(client_fd, conn_fds)
 
     local llama_fd = ffi.C.socket(AF_INET, SOCK_STREAM, 0)
     if llama_fd < 0 then
-        local err_resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
+        local err_resp = "HTTP/1.1 500 Internal Server Error\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
         async_send(client_fd, err_resp)
         safe_close()
         return
@@ -956,7 +1037,7 @@ local function proxy_connection(client_fd, conn_fds)
     local connected, conn_err = async_connect(llama_fd, l_addr)
     if not connected then
         print("[proxy] ERROR: C++ llama-server backend is down on " .. LLAMA_CONNECT_HOST .. ":" .. LLAMA_PORT .. " (err: " .. tostring(conn_err) .. ")")
-        local err_resp = "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"
+        local err_resp = "HTTP/1.1 502 Bad Gateway\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
         async_send(client_fd, err_resp)
         safe_close()
         return
@@ -971,8 +1052,12 @@ local function proxy_connection(client_fd, conn_fds)
     end
 
     while true do
-        local n = async_recv(llama_fd, buf, 8192)
-        if n <= 0 then break end
+        local deadline = os.time() + 60
+        local n, err = async_recv(llama_fd, buf, 8192, deadline)
+        if n <= 0 then
+            if err == "timeout" then print("[proxy] Timeout waiting for backend response") end
+            break
+        end
         local to_send = ffi.string(buf, n)
         if async_send(client_fd, to_send) < 0 then break end
     end
@@ -1094,7 +1179,7 @@ while running do
             local client_fd = ffi.C.accept(server_fd, ffi.cast("struct sockaddr *", client_addr), addrlen)
             if client_fd >= 0 then
                 if active_connection_count >= MAX_ACTIVE_CONNECTIONS then
-                    local err_resp = "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 5\r\nConnection: close\r\n\r\n"
+                    local err_resp = "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 5\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
                     ffi.C.send(client_fd, err_resp, #err_resp, 0)
                     ffi.C.close(client_fd)
                 else
@@ -1110,9 +1195,14 @@ while running do
                         end
                         active_connection_count = active_connection_count - 1
                     end)
-                    local _ok, type, watch_fd = coroutine.resume(co)
-                    if coroutine.status(co) ~= "dead" then
-                        clients[client_fd] = {co = co, type = type, watch_fd = watch_fd, created = os.time()}
+                    local ok, err_or_type, watch_fd, deadline = coroutine.resume(co)
+                    if not ok then
+                        io.write("[proxy] coroutine resume failed for new client " .. client_fd .. ": " .. tostring(err_or_type) .. "\n")
+                        if conn_fds.llama >= 0 then pcall(ffi.C.close, conn_fds.llama); conn_fds.llama = -1 end
+                        if conn_fds.client >= 0 then pcall(ffi.C.close, conn_fds.client); conn_fds.client = -1 end
+                        conn_fds_map[client_fd] = nil
+                    elseif coroutine.status(co) ~= "dead" then
+                        clients[client_fd] = {co = co, type = err_or_type, watch_fd = watch_fd, deadline = deadline, created = os.time()}
                     else
                         conn_fds_map[client_fd] = nil
                     end
@@ -1126,16 +1216,28 @@ while running do
                 ready = true
             elseif info.type == "write" and _ffi_defs.FD_ISSET(info.watch_fd, write_fds) then
                 ready = true
+            elseif info.deadline and os.time() > info.deadline then
+                ready = true
             end
 
             if ready then
-                local _ok, type, watch_fd = coroutine.resume(info.co)
-                if coroutine.status(info.co) == "dead" then
+                local ok, err_or_type, watch_fd, deadline = coroutine.resume(info.co)
+                if not ok then
+                    io.write("[proxy] coroutine resume failed for client " .. cfd .. ": " .. tostring(err_or_type) .. "\n")
+                    local fds = conn_fds_map[cfd]
+                    if fds then
+                        if fds.llama >= 0 then pcall(ffi.C.close, fds.llama); fds.llama = -1 end
+                        if fds.client >= 0 then pcall(ffi.C.close, fds.client); fds.client = -1 end
+                    end
+                    clients[cfd] = nil
+                    conn_fds_map[cfd] = nil
+                elseif coroutine.status(info.co) == "dead" then
                     clients[cfd] = nil
                     conn_fds_map[cfd] = nil
                 else
-                    info.type = type
+                    info.type = err_or_type
                     info.watch_fd = watch_fd
+                    info.deadline = deadline
                 end
             end
         end
