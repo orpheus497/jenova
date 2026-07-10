@@ -44,7 +44,11 @@ export class SyncService {
     const success = await StorageService.save(newSyncPath, content);
     if (success && oldSyncPath !== newSyncPath) {
       if (oldSyncPath) {
-        await StorageService.delete(oldSyncPath);
+        const delSuccess = await StorageService.delete(oldSyncPath);
+        if (!delSuccess) {
+          console.error(`[Sync] Failed to delete old sync path ${oldSyncPath}`);
+          throw new Error(`Failed to delete ${oldSyncPath}`);
+        }
       }
       await updateDbCallback();
     } else if (!success) {
@@ -300,6 +304,10 @@ export class SyncService {
         queue.push(async () => {
           const folder = folderMap.get(note.folderId || "");
           const path = SyncService.buildSyncPath(folder?.name, folder?.id, "Notes", note.title, note.id);
+          
+          const currentContent = await StorageService.get(path);
+          if (currentContent === note.content && note.syncPath === path) return;
+
           await SyncService.updateEntitySync(note.syncPath, path, note.content, async () => {
             await DatabaseService.updateNote(note.id, { syncPath: path });
           });
@@ -314,6 +322,10 @@ export class SyncService {
           const folder = folderMap.get(conv.folderId || "");
           const md = MarkdownService.toMarkdown(conv, messages);
           const path = SyncService.buildSyncPath(folder?.name, folder?.id, "Chats", conv.name, conv.id);
+          
+          const currentContent = await StorageService.get(path);
+          if (currentContent === md && conv.syncPath === path) return;
+
           await SyncService.updateEntitySync(conv.syncPath, path, md, async () => {
             await DatabaseService.updateConversation(conv.id, { syncPath: path });
           });

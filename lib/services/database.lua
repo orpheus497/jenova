@@ -28,7 +28,8 @@ function database.get_default_workspace()
 end
 
 function database.save_conversation_to_path(path, conv_id, messages)
-    local file = io.open(path, "w")
+    local tmp_path = path .. ".tmp"
+    local file = io.open(tmp_path, "w")
     if file then
         file:write("# topic: " .. conv_id .. " [agent]\n")
         file:write("- model: jenova\n")
@@ -52,6 +53,7 @@ function database.save_conversation_to_path(path, conv_id, messages)
             end
         end
         file:close()
+        os.rename(tmp_path, path)
     end
 end
 
@@ -131,6 +133,7 @@ function database.get_folder_notes()
                         if content then
                             if #content > 16384 then content = content:sub(1, 16384) .. "\n... (truncated)" end
                             table.insert(notes, { title = note.title, content = content })
+                            if #notes >= 15 then break end
                         end
                     end
                 end

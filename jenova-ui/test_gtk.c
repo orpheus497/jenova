@@ -50,13 +50,29 @@ int main(int argc, char *argv[]) {
     
     gtk_widget_show_all(win);
     
-    while (gtk_events_pending()) {
-        gtk_main_iteration();
+    gint64 start_time = g_get_monotonic_time();
+    while (g_get_monotonic_time() - start_time < 500000) {
+        while (gtk_events_pending()) {
+            gtk_main_iteration();
+        }
+        GtkAllocation alloc;
+        gtk_widget_get_allocation(sw, &alloc);
+        if (alloc.width > 0) break;
+        g_usleep(10000);
     }
+    
     GtkAllocation alloc;
     gtk_widget_get_allocation(sw, &alloc);
     g_print("SW allocated width: %d\n", alloc.width);
     if (alloc.width <= 0) {
+        return 1;
+    }
+
+    GtkAllocation btn_alloc;
+    gtk_widget_get_allocation(btn, &btn_alloc);
+    g_print("Btn allocated width: %d\n", btn_alloc.width);
+    if (btn_alloc.width <= 0 || btn_alloc.width > alloc.width) {
+        g_print("Error: Invalid btn width (%d) relative to SW width (%d)\n", btn_alloc.width, alloc.width);
         return 1;
     }
 

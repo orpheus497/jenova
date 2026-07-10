@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <webkit2/webkit2.h>
+#include "main.h"
 
 static GtkWidget *g_chat_vbox = NULL;
 static GtkWidget *g_webview = NULL;
@@ -15,13 +16,22 @@ static int g_message_id_counter = 0;
 static gboolean g_webview_loaded = FALSE;
 static GList *g_pending_scripts = NULL;
 
+static void on_script_finished(GObject *object, GAsyncResult *result, gpointer user_data G_GNUC_UNUSED) {
+    GError *error = NULL;
+    webkit_web_view_run_javascript_finish(WEBKIT_WEB_VIEW(object), result, &error);
+    if (error) {
+        g_warning("JavaScript error: %s", error->message);
+        g_error_free(error);
+    }
+}
+
 static void on_webview_load_changed(WebKitWebView *web_view, WebKitLoadEvent load_event, gpointer user_data G_GNUC_UNUSED) {
     if (load_event == WEBKIT_LOAD_STARTED) {
         g_webview_loaded = FALSE;
     } else if (load_event == WEBKIT_LOAD_FINISHED) {
         g_webview_loaded = TRUE;
         for (GList *l = g_pending_scripts; l != NULL; l = l->next) {
-            webkit_web_view_run_javascript(web_view, (const char *)l->data, NULL, NULL, NULL);
+            webkit_web_view_run_javascript(web_view, (const char *)l->data, NULL, on_script_finished, NULL);
             free(l->data);
         }
         g_list_free(g_pending_scripts);
@@ -31,7 +41,7 @@ static void on_webview_load_changed(WebKitWebView *web_view, WebKitLoadEvent loa
 
 static void run_script(const char *script) {
     if (g_webview_loaded) {
-        webkit_web_view_run_javascript(WEBKIT_WEB_VIEW(g_webview), script, NULL, NULL, NULL);
+        webkit_web_view_run_javascript(WEBKIT_WEB_VIEW(g_webview), script, NULL, on_script_finished, NULL);
     } else {
         g_pending_scripts = g_list_append(g_pending_scripts, strdup(script));
     }
@@ -68,6 +78,28 @@ static void escape_js_string(const char *src, char *dst) {
     *dst = '\0';
 }
 
+static void execute_bedrock_script(const char *text, const char *format_str, int id, const char *role) {
+    char *escaped_text = malloc(strlen(text) * 2 + 1);
+    if (!escaped_text) return;
+    escape_js_string(text, escaped_text);
+    
+    size_t script_len = strlen(escaped_text) + 256;
+    char *script = malloc(script_len);
+    if (!script) {
+        free(escaped_text);
+        return;
+    }
+    if (role) {
+        snprintf(script, script_len, format_str, id, role, escaped_text);
+    } else {
+        snprintf(script, script_len, format_str, id, escaped_text);
+    }
+    run_script(script);
+    
+    free(script);
+    free(escaped_text);
+}
+
 static int l_bedrock_create_chat_feed(lua_State *L) {
     (void)L;
     if (!g_chat_vbox) return 0;
@@ -78,8 +110,11 @@ static int l_bedrock_create_chat_feed(lua_State *L) {
     webkit_settings_set_allow_file_access_from_file_urls(settings, FALSE);
     g_signal_connect(g_webview, "load-changed", G_CALLBACK(on_webview_load_changed), NULL);
 
-    extern char *get_jenova_root(void);
     const char *jenova_root = get_jenova_root();
+    if (!jenova_root) {
+        g_warning("jenova_root is NULL, cannot load assets");
+        return 0;
+    }
 
     /* Resolve assets directory: prefer deployed share/ path, fall back to source tree */
     char assets_dir[4096];
@@ -240,22 +275,7 @@ static int l_bedrock_create_message_bubble(lua_State *L) {
     }
     
     int id = ++g_message_id_counter;
-    
-    char *escaped_text = malloc(strlen(text) * 2 + 1);
-    if (!escaped_text) return 0;
-    escape_js_string(text, escaped_text);
-    
-    size_t script_len = strlen(escaped_text) + 256;
-    char *script = malloc(script_len);
-    if (!script) {
-        free(escaped_text);
-        return 0;
-    }
-    snprintf(script, script_len, "createBubble('%d', '%s', '%s');", id, role, escaped_text);
-    run_script(script);
-    
-    free(script);
-    free(escaped_text);
+    execute_bedrock_script(text, "createBubble('%d', '%s', '%s');", id, role);
     
     lua_pushinteger(L, id);
     return 1;
@@ -267,21 +287,7 @@ static int l_bedrock_set_message_markup(lua_State *L) {
     int id = luaL_checkinteger(L, 1);
     const char *text = luaL_checkstring(L, 2);
     
-    char *escaped_text = malloc(strlen(text) * 2 + 1);
-    if (!escaped_text) return 0;
-    escape_js_string(text, escaped_text);
-    
-    size_t script_len = strlen(escaped_text) + 256;
-    char *script = malloc(script_len);
-    if (!script) {
-        free(escaped_text);
-        return 0;
-    }
-    snprintf(script, script_len, "updateBubble('%d', '%s');", id, escaped_text);
-    run_script(script);
-    
-    free(script);
-    free(escaped_text);
+    execute_bedrock_script(text, "updateBubble('%d', '%s');", id, NULL);
     return 0;
 }
 
@@ -296,21 +302,7 @@ static int l_bedrock_show_error(lua_State *L) {
     int id = luaL_checkinteger(L, 1);
     const char *text = luaL_checkstring(L, 2);
     
-    char *escaped_text = malloc(strlen(text) * 2 + 1);
-    if (!escaped_text) return 0;
-    escape_js_string(text, escaped_text);
-    
-    size_t script_len = strlen(escaped_text) + 256;
-    char *script = malloc(script_len);
-    if (!script) {
-        free(escaped_text);
-        return 0;
-    }
-    snprintf(script, script_len, "updateBubble('%d', '<span style=\"color:#ff5555\"><b>Error:</b> %s</span>');", id, escaped_text);
-    run_script(script);
-    
-    free(script);
-    free(escaped_text);
+    execute_bedrock_script(text, "updateBubble('%d', '<span style=\"color:#ff5555\"><b>Error:</b> %s</span>');", id, NULL);
     return 0;
 }
 

@@ -554,6 +554,7 @@ void workspace_explorer_init(GtkWidget *parent_vbox) {
     GtkWidget *assets_lbl = gtk_label_new("Assets in All Workspaces");
     gtk_style_context_add_class(gtk_widget_get_style_context(assets_lbl), "title");
     GtkWidget *btn_upload = gtk_button_new_with_label("+ Upload File");
+    gtk_widget_set_sensitive(btn_upload, FALSE);
     
     GtkWidget *spacer2 = gtk_label_new("");
     gtk_widget_set_hexpand(spacer2, TRUE);
@@ -626,10 +627,21 @@ void workspace_explorer_push_local(void) {
         json_object_set_array_member(root_obj, "fileAssets", json_array_new());
     }
     
-    JsonArray *ws_array = json_object_get_array_member(root_obj, "workspaces");
-    JsonArray *folders_array = json_object_get_array_member(root_obj, "folders");
-    if (!ws_array) { ws_array = json_array_new(); json_object_set_array_member(root_obj, "workspaces", ws_array); }
-    if (!folders_array) { folders_array = json_array_new(); json_object_set_array_member(root_obj, "folders", folders_array); }
+    JsonArray *old_ws_array = NULL;
+    JsonArray *old_folders_array = NULL;
+    if (json_object_has_member(root_obj, "workspaces")) {
+        old_ws_array = json_object_get_array_member(root_obj, "workspaces");
+        if (old_ws_array) json_array_ref(old_ws_array);
+    }
+    if (json_object_has_member(root_obj, "folders")) {
+        old_folders_array = json_object_get_array_member(root_obj, "folders");
+        if (old_folders_array) json_array_ref(old_folders_array);
+    }
+    
+    JsonArray *ws_array = json_array_new();
+    JsonArray *folders_array = json_array_new();
+    json_object_set_array_member(root_obj, "workspaces", ws_array);
+    json_object_set_array_member(root_obj, "folders", folders_array);
     
     gchar *spaces_dir = g_build_filename(root_path, "Spaces", NULL);
     GDir *dir = g_dir_open(spaces_dir, 0, NULL);
@@ -639,23 +651,26 @@ void workspace_explorer_push_local(void) {
             if (ws_name[0] == '.') continue;
             gchar *ws_full = g_build_filename(spaces_dir, ws_name, NULL);
             if (g_file_test(ws_full, G_FILE_TEST_IS_DIR)) {
-                // Check if workspace exists
-                gboolean found = FALSE;
-                for (guint i = 0; i < json_array_get_length(ws_array); i++) {
-                    JsonObject *wo = json_array_get_object_element(ws_array, i);
-                    if (g_strcmp0(json_object_get_string_member(wo, "name"), ws_name) == 0) {
-                        found = TRUE; break;
+                const gchar *existing_ws_id = NULL;
+                if (old_ws_array) {
+                    for (guint i = 0; i < json_array_get_length(old_ws_array); i++) {
+                        JsonObject *wo = json_array_get_object_element(old_ws_array, i);
+                        if (g_strcmp0(json_object_get_string_member(wo, "name"), ws_name) == 0) {
+                            existing_ws_id = json_object_get_string_member(wo, "id");
+                            break;
+                        }
                     }
                 }
-                if (!found) {
-                    JsonObject *new_ws = json_object_new();
+                JsonObject *new_ws = json_object_new();
+                if (existing_ws_id) {
+                    json_object_set_string_member(new_ws, "id", existing_ws_id);
+                } else {
                     gchar uuid[37]; generate_uuid(uuid);
                     json_object_set_string_member(new_ws, "id", uuid);
-                    json_object_set_string_member(new_ws, "name", ws_name);
-                    json_array_add_object_element(ws_array, new_ws);
                 }
+                json_object_set_string_member(new_ws, "name", ws_name);
+                json_array_add_object_element(ws_array, new_ws);
                 
-                // Scan for folders
                 GDir *fdir = g_dir_open(ws_full, 0, NULL);
                 if (fdir) {
                     const gchar *f_name;
@@ -665,35 +680,36 @@ void workspace_explorer_push_local(void) {
                         
                         gchar *f_full = g_build_filename(ws_full, f_name, NULL);
                         if (g_file_test(f_full, G_FILE_TEST_IS_DIR)) {
-                            gboolean f_found = FALSE;
-                            for (guint j = 0; j < json_array_get_length(folders_array); j++) {
-                                JsonObject *fo = json_array_get_object_element(folders_array, j);
-                                if (g_strcmp0(json_object_get_string_member(fo, "name"), f_name) == 0) {
-                                    f_found = TRUE; break;
-                                }
-                            }
-                            if (!f_found) {
-                                JsonObject *new_f = json_object_new();
-                                gchar uuid[37]; generate_uuid(uuid);
-                                json_object_set_string_member(new_f, "id", uuid);
-                                
-                                const gchar *ws_id = NULL;
-                                for (guint k = 0; k < json_array_get_length(ws_array); k++) {
-                                    JsonObject *w = json_array_get_object_element(ws_array, k);
-                                    if (g_strcmp0(json_object_get_string_member(w, "name"), ws_name) == 0) {
-                                        ws_id = json_object_get_string_member(w, "id");
-                                        break;
+                            const gchar *ws_id = json_object_get_string_member(new_ws, "id");
+                            const gchar *existing_f_id = NULL;
+                            if (old_folders_array) {
+                                for (guint j = 0; j < json_array_get_length(old_folders_array); j++) {
+                                    JsonObject *fo = json_array_get_object_element(old_folders_array, j);
+                                    if (g_strcmp0(json_object_get_string_member(fo, "name"), f_name) == 0) {
+                                        const gchar *f_ws_id = NULL;
+                                        if (json_object_has_member(fo, "workspaceId") && JSON_NODE_HOLDS_VALUE(json_object_get_member(fo, "workspaceId"))) {
+                                            f_ws_id = json_object_get_string_member(fo, "workspaceId");
+                                        } else if (json_object_has_member(fo, "projectId") && JSON_NODE_HOLDS_VALUE(json_object_get_member(fo, "projectId"))) {
+                                            f_ws_id = json_object_get_string_member(fo, "projectId");
+                                        }
+                                        if (g_strcmp0(f_ws_id, ws_id) == 0) {
+                                            existing_f_id = json_object_get_string_member(fo, "id");
+                                            break;
+                                        }
                                     }
                                 }
-                                if (ws_id) {
-                                    json_object_set_string_member(new_f, "workspaceId", ws_id);
-                                    json_object_set_string_member(new_f, "projectId", ws_id);
-                                } else {
-                                    json_object_set_null_member(new_f, "projectId");
-                                }
-                                json_object_set_string_member(new_f, "name", f_name);
-                                json_array_add_object_element(folders_array, new_f);
                             }
+                            JsonObject *new_f = json_object_new();
+                            if (existing_f_id) {
+                                json_object_set_string_member(new_f, "id", existing_f_id);
+                            } else {
+                                gchar uuid[37]; generate_uuid(uuid);
+                                json_object_set_string_member(new_f, "id", uuid);
+                            }
+                            json_object_set_string_member(new_f, "workspaceId", ws_id);
+                            json_object_set_string_member(new_f, "projectId", ws_id);
+                            json_object_set_string_member(new_f, "name", f_name);
+                            json_array_add_object_element(folders_array, new_f);
                         }
                         g_free(f_full);
                     }
@@ -706,21 +722,35 @@ void workspace_explorer_push_local(void) {
     }
     g_free(spaces_dir);
     
+    if (old_ws_array) json_array_unref(old_ws_array);
+    if (old_folders_array) json_array_unref(old_folders_array);
+    
     // Save JSON
     JsonNode *out_node = json_node_new(JSON_NODE_OBJECT);
     json_node_set_object(out_node, root_obj);
     JsonGenerator *gen = json_generator_new();
     json_generator_set_root(gen, out_node);
     json_generator_to_file(gen, json_path, &error);
-    if (error) g_clear_error(&error);
+    if (error) {
+        if (status_label) {
+            gchar *err_msg = g_strdup_printf("Error saving: %s", error->message);
+            gtk_label_set_text(GTK_LABEL(status_label), err_msg);
+            g_free(err_msg);
+        }
+        g_clear_error(&error);
+        if (status_timeout_id > 0) {
+            g_source_remove(status_timeout_id);
+            status_timeout_id = 0;
+        }
+    } else {
+        status_timeout_id = g_timeout_add(1500, reset_status, NULL);
+    }
     
     g_object_unref(gen);
     json_node_free(out_node);
     // Note: root_obj is freed when out_node is freed
     g_free(json_path);
-    g_free(root_path);
-    
-    status_timeout_id = g_timeout_add(1500, reset_status, NULL); 
+    g_free(root_path); 
 }
 
 void workspace_explorer_pull_origin(void) {
@@ -747,6 +777,9 @@ void workspace_explorer_pull_origin(void) {
                 for (guint i = 0; i < json_array_get_length(ws_array); i++) {
                     JsonObject *wo = json_array_get_object_element(ws_array, i);
                     const gchar *wname = json_object_get_string_member(wo, "name");
+                    if (wname && (strchr(wname, '/') != NULL || strchr(wname, '\\') != NULL || strstr(wname, "..") != NULL)) {
+                        continue;
+                    }
                     const gchar *wid = NULL;
                     if (json_object_has_member(wo, "id")) {
                         wid = json_object_get_string_member(wo, "id");
@@ -771,6 +804,9 @@ void workspace_explorer_pull_origin(void) {
                             
                             if (f_ws_id && wid && g_strcmp0(f_ws_id, wid) == 0) {
                                 const gchar *fname = json_object_get_string_member(fo, "name");
+                                if (fname && (strchr(fname, '/') != NULL || strchr(fname, '\\') != NULL || strstr(fname, "..") != NULL)) {
+                                    continue;
+                                }
                                 if (fname) {
                                     gchar *fpath = g_build_filename(wpath, fname, NULL);
                                     g_mkdir_with_parents(fpath, 0755);
@@ -784,15 +820,26 @@ void workspace_explorer_pull_origin(void) {
             }
         }
     } else {
+        if (status_label) {
+            gchar *err_msg = g_strdup_printf("Error loading: %s", error->message);
+            gtk_label_set_text(GTK_LABEL(status_label), err_msg);
+            g_free(err_msg);
+        }
         g_clear_error(&error);
+        if (status_timeout_id > 0) {
+            g_source_remove(status_timeout_id);
+            status_timeout_id = 0;
+        }
     }
     g_object_unref(parser);
     g_free(json_path);
     g_free(root_path);
 
     populate_workspaces();
-    if (status_timeout_id > 0) {
-        g_source_remove(status_timeout_id);
+    if (error == NULL) {
+        if (status_timeout_id > 0) {
+            g_source_remove(status_timeout_id);
+        }
+        status_timeout_id = g_timeout_add(1500, reset_status, NULL);
     }
-    status_timeout_id = g_timeout_add(1500, reset_status, NULL);
 }

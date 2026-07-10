@@ -17,10 +17,10 @@ $(TARGET): $(SRC)
 	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LDFLAGS)
 
 $(TEST_TARGET): $(TEST_SRC)
-	$(CC) $(CFLAGS) -o $(TEST_TARGET) $(TEST_SRC) $(LDFLAGS)
+	$(CC) -Wall -Wextra -std=c99 `pkg-config --cflags gtk+-3.0` -o $(TEST_TARGET) $(TEST_SRC) `pkg-config --libs gtk+-3.0` -lm
 
 test: $(TEST_TARGET)
-	./$(TEST_TARGET)
+	xvfb-run -a ./$(TEST_TARGET)
 
 clean:
 	rm -f $(TARGET) $(TEST_TARGET)

@@ -29,10 +29,15 @@ end
 function settings.save_config(path, config_obj, updates)
     -- Apply updates to the map
     for k, v in pairs(updates) do
-        config_obj.map[k] = tostring(v)
+        local val_str = tostring(v)
+        if val_str:find("[\r\n]") then
+            return false, "Config values cannot contain newlines"
+        end
+        config_obj.map[k] = val_str
     end
 
-    local file = io.open(path, "w")
+    local tmp_path = path .. ".tmp"
+    local file = io.open(tmp_path, "w")
     if not file then return false end
 
     local function shell_escape(s)
@@ -58,6 +63,7 @@ function settings.save_config(path, config_obj, updates)
         file:write(line .. "\n")
     end
     file:close()
+    os.rename(tmp_path, path)
     return true
 end
 

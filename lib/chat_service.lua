@@ -9,6 +9,7 @@ function chat_service.sendMessage(text, msg_id, conv_id, chat_path, store, on_ch
     
     local messages = database.load_conversation_from_path(chat_path)
     table.insert(messages, { role = "user", content = text })
+    database.save_conversation_to_path(chat_path, conv_id, messages)
     
     local context = workspace.get_workspace_context()
     local system_prompt = workspace.INITIAL_IDENTITY
@@ -56,25 +57,26 @@ function chat_service.sendMessage(text, msg_id, conv_id, chat_path, store, on_ch
         if is_finished then return end
         
         if not chunk then
-            if think_buffer ~= "" then
-                if is_thinking then on_reasoning_chunk(think_buffer)
-                else 
-                    assistant_reply = assistant_reply .. think_buffer
-                    on_chunk(think_buffer) 
+            if not is_finished then
+                if think_buffer ~= "" then
+                    if is_thinking then on_reasoning_chunk(think_buffer)
+                    else 
+                        assistant_reply = assistant_reply .. think_buffer
+                        on_chunk(think_buffer) 
+                    end
+                    think_buffer = ""
                 end
-                think_buffer = ""
+                is_finished = true
+                os.remove(tmp_file)
+                if not has_received_data then
+                    store.setLoading(msg_id, false)
+                    store.setError(msg_id, "Connection Refused: Ensure Jenova Server is running (Port " .. port .. ").")
+                else
+                    store.isStreamingActive = false
+                    store.setError(msg_id, "Stream disconnected unexpectedly before completion.")
+                end
+                if on_complete then on_complete() end
             end
-            is_finished = true
-            os.remove(tmp_file)
-            if not has_received_data then
-                store.setLoading(msg_id, false)
-                store.setError(msg_id, "Connection Refused: Ensure Jenova Server is running (Port " .. port .. ").")
-            else
-                store.isStreamingActive = false
-                table.insert(messages, { role = "assistant", content = assistant_reply })
-                database.save_conversation_to_path(chat_path, conv_id, messages)
-            end
-            if on_complete then on_complete() end
             return
         end
         

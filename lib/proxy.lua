@@ -602,13 +602,21 @@ local function proxy_connection(client_fd, conn_fds)
                 if not len_end then break end
                 
                 local hex_str = chunk_buffer:sub(1, len_end - 1):match("^([0-9a-fA-F]+)")
-                if not hex_str then break end
+                if not hex_str then
+                    local err_resp = "HTTP/1.1 400 Bad Request\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
+                    async_send(client_fd, err_resp)
+                    safe_close(); return
+                end
                 local chunk_len = tonumber(hex_str, 16)
                 
                 if chunk_len == 0 then
-                    while not chunk_buffer:find("\r\n\r\n", len_end + 1, true) do
+                    while not chunk_buffer:find("\r\n\r\n", 1, true) do
                         local n = async_recv(client_fd, buf, 8192, deadline)
-                        if n <= 0 then break end
+                        if n <= 0 then
+                            local err_resp = "HTTP/1.1 400 Bad Request\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
+                            async_send(client_fd, err_resp)
+                            safe_close(); return
+                        end
                         chunk_buffer = chunk_buffer .. ffi.string(buf, n)
                     end
                     break
@@ -830,6 +838,11 @@ local function proxy_connection(client_fd, conn_fds)
     local intent = headers_raw:match("[Xx]%-Intent:%s*(%w+)")
     headers_raw = headers_raw:gsub("(\r\n[Hh][Oo][Ss][Tt]:%s*)[^\r\n]+", "%1" .. LLAMA_HOST .. ":" .. LLAMA_PORT)
     headers_raw = headers_raw:gsub("\r\n[Cc][Oo][Nn][Nn][Ee][Cc][Tt][Ii][Oo][Nn]:%s*[^\r\n]*\r\n", "\r\n")
+    if is_chunked then
+        headers_raw = headers_raw:gsub("\r\n[Tt][Rr][Aa][Nn][Ss][Ff][Ee][Rr]%-[Ee][Nn][Cc][Oo][Dd][Ii][Nn][Gg]:%s*[Cc][Hh][Uu][Nn][Kk][Ee][Dd][^\r\n]*", "")
+        headers_raw = headers_raw:gsub("\r\n[Cc][Oo][Nn][Tt][Ee][Nn][Tt]%-[Ll][Ee][Nn][Gg][Tt][Hh]:%s*[^\r\n]*", "")
+        headers_raw = headers_raw:gsub("\r\n\r\n", "\r\nContent-Length: " .. tostring(#body_raw) .. "\r\n\r\n")
+    end
     headers_raw = headers_raw:gsub("\r\n\r\n", "\r\nConnection: close\r\n\r\n")
     local proxied_req = headers_raw .. body_raw
 

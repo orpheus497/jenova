@@ -823,17 +823,26 @@ static void on_editor_save_clicked(GtkWidget *widget G_GNUC_UNUSED, gpointer dat
     GtkTextIter start, end;
     gtk_text_buffer_get_bounds(buf, &start, &end);
     char *text = gtk_text_buffer_get_text(buf, &start, &end, FALSE);
-    FILE *f = fopen(path, "w");
+    
+    char *temp_path = g_strdup_printf("%s.tmp", path);
+    FILE *f = fopen(temp_path, "w");
     if (f) {
         if (fputs(text, f) == EOF) {
-            fprintf(stderr, "jenova-ui: error writing to %s\n", path);
+            fprintf(stderr, "jenova-ui: error writing to %s\n", temp_path);
         }
+        fflush(f);
+        fsync(fileno(f));
         if (fclose(f) != 0) {
-            fprintf(stderr, "jenova-ui: error closing %s\n", path);
+            fprintf(stderr, "jenova-ui: error closing %s\n", temp_path);
+        } else {
+            if (rename(temp_path, path) != 0) {
+                fprintf(stderr, "jenova-ui: error renaming %s to %s\n", temp_path, path);
+            }
         }
     } else {
-        fprintf(stderr, "jenova-ui: error opening %s for writing\n", path);
+        fprintf(stderr, "jenova-ui: error opening %s for writing\n", temp_path);
     }
+    g_free(temp_path);
     g_free(text);
 }
 
@@ -1387,6 +1396,25 @@ static void free_action_data(gpointer data, GClosure *closure G_GNUC_UNUSED) {
 static GPid status_pid = 0;
 static GString *status_output = NULL;
 static guint status_watch_id = 0;
+static guint status_timeout_id = 0;
+
+static gboolean on_status_timeout(gpointer data G_GNUC_UNUSED) {
+    if (status_pid != 0) {
+        kill(status_pid, SIGKILL);
+        g_spawn_close_pid(status_pid);
+        status_pid = 0;
+    }
+    if (status_watch_id != 0) {
+        g_source_remove(status_watch_id);
+        status_watch_id = 0;
+    }
+    if (status_output) {
+        g_string_free(status_output, TRUE);
+        status_output = NULL;
+    }
+    status_timeout_id = 0;
+    return G_SOURCE_REMOVE;
+}
 
 static gboolean on_status_output_read(GIOChannel *source, GIOCondition condition, gpointer data G_GNUC_UNUSED) {
     gchar buf[512];
@@ -1440,6 +1468,10 @@ static gboolean on_status_output_read(GIOChannel *source, GIOCondition condition
             status_pid = 0;
         }
         status_watch_id = 0;
+        if (status_timeout_id != 0) {
+            g_source_remove(status_timeout_id);
+            status_timeout_id = 0;
+        }
         return FALSE; /* Stop listening */
     }
     return TRUE;
@@ -1480,6 +1512,7 @@ static gboolean update_tray_status(gpointer user_data G_GNUC_UNUSED) {
             g_io_channel_set_close_on_unref(channel, TRUE);
             status_watch_id = g_io_add_watch(channel, G_IO_IN | G_IO_ERR | G_IO_HUP, on_status_output_read, NULL);
             g_io_channel_unref(channel);
+            status_timeout_id = g_timeout_add(2000, on_status_timeout, NULL);
         } else {
             g_error_free(error);
         }
