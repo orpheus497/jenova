@@ -365,7 +365,7 @@ if [ -f "$_LLAMA_BUILD_BIN" ]; then
     # Copy shared libs if they exist
     for _lib in "$JENOVA_ROOT/external/ext_bin/bin/"*.so* "$JENOVA_ROOT/external/ext_bin/bin/"*.dylib*; do
         if [ -f "$_lib" ] || [ -L "$_lib" ]; then
-            cp -a "$_lib" "$JCA_HOME/bin/"
+            cp -L "$_lib" "$JCA_HOME/bin/"
         fi
     done
     ok "Deployed llama.cpp artifacts to $JCA_HOME/bin"
