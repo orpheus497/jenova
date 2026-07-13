@@ -72,8 +72,15 @@ export class SyncService {
         const allConvs = await DatabaseService.getAllConversations();
         const allNotes = await DatabaseService.getAllNotes();
 
-        const convMap = new Map(allConvs.map((c) => [c.name, c]));
-        const noteMap = new Map(allNotes.map((n) => [n.title, n]));
+        const convMap = new Map<string, DatabaseConversation>();
+        for (const c of allConvs) {
+          if (!convMap.has(c.name)) convMap.set(c.name, c);
+        }
+
+        const noteMap = new Map<string, DatabaseNote>();
+        for (const n of allNotes) {
+          if (!noteMap.has(n.title)) noteMap.set(n.title, n);
+        }
 
         const limit = 5;
         const active: Promise<void>[] = [];
