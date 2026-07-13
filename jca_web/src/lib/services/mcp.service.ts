@@ -289,9 +289,11 @@ export class MCPService {
     // Setup WebSocket reconnection handler
     if (transportType === MCPTransportType.WEBSOCKET) {
       transport.onclose = () => {
-        console.log(
-          `[MCPService][${serverName}] WebSocket closed, notifying for reconnection`,
-        );
+        if (import.meta.env.DEV) {
+          console.log(
+            `[MCPService][${serverName}] WebSocket closed, notifying for reconnection`,
+          );
+        }
         onPhase?.(
           MCPConnectionPhase.DISCONNECTED,
           this.createLog(
@@ -332,7 +334,9 @@ export class MCPService {
       ),
     );
 
-    console.log(`[MCPService][${serverName}] Connecting to server...`);
+    if (import.meta.env.DEV) {
+      console.log(`[MCPService][${serverName}] Connecting to server...`);
+    }
     await client.connect(transport);
 
     const serverVersion = client.getServerVersion();
@@ -369,7 +373,9 @@ export class MCPService {
       ),
     );
 
-    console.log(`[MCPService][${serverName}] Connected, listing tools...`);
+    if (import.meta.env.DEV) {
+      console.log(`[MCPService][${serverName}] Connected, listing tools...`);
+    }
     const tools = await this.listTools({
       client,
       transport,
@@ -390,9 +396,11 @@ export class MCPService {
       ),
     );
 
-    console.log(
-      `[MCPService][${serverName}] Initialization complete with ${tools.length} tools in ${connectionTimeMs}ms`,
-    );
+    if (import.meta.env.DEV) {
+      console.log(
+        `[MCPService][${serverName}] Initialization complete with ${tools.length} tools in ${connectionTimeMs}ms`,
+      );
+    }
 
     return {
       client,
@@ -416,7 +424,9 @@ export class MCPService {
    * @param connection - The active MCP connection to close
    */
   static async disconnect(connection: MCPConnection): Promise<void> {
-    console.log(`[MCPService][${connection.serverName}] Disconnecting...`);
+    if (import.meta.env.DEV) {
+      console.log(`[MCPService][${connection.serverName}] Disconnecting...`);
+    }
     try {
       // Prevent reconnection on voluntary disconnect
       if (connection.transport.onclose) {
@@ -803,9 +813,11 @@ export class MCPService {
     try {
       await connection.client.subscribeResource({ uri });
 
-      console.log(
-        `[MCPService][${connection.serverName}] Subscribed to resource: ${uri}`,
-      );
+      if (import.meta.env.DEV) {
+        console.log(
+          `[MCPService][${connection.serverName}] Subscribed to resource: ${uri}`,
+        );
+      }
     } catch (error) {
       console.error(
         `[MCPService][${connection.serverName}] Failed to subscribe to resource:`,
@@ -828,9 +840,11 @@ export class MCPService {
     try {
       await connection.client.unsubscribeResource({ uri });
 
-      console.log(
-        `[MCPService][${connection.serverName}] Unsubscribed from resource: ${uri}`,
-      );
+      if (import.meta.env.DEV) {
+        console.log(
+          `[MCPService][${connection.serverName}] Unsubscribed from resource: ${uri}`,
+        );
+      }
     } catch (error) {
       console.error(
         `[MCPService][${connection.serverName}] Failed to unsubscribe from resource:`,
