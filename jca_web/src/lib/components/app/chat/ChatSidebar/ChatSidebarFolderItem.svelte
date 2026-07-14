@@ -23,7 +23,8 @@
 <div class="group flex items-center">
     <button 
         onclick={onToggle}
-        class="flex-1 flex items-center gap-2 px-2 py-2 rounded-lg text-sm text-foreground font-medium hover:bg-sidebar-accent transition-all text-left"
+        aria-expanded={isExpanded}
+        class="flex-1 flex items-center gap-2 px-2 py-2 rounded-lg text-sm text-foreground font-medium hover:bg-sidebar-accent transition-all text-left focus-visible:ring-2 focus-visible:ring-ring outline-none"
     >
         {#if isExpanded}
             <ChevronDown size={14} class="text-muted-foreground" />
