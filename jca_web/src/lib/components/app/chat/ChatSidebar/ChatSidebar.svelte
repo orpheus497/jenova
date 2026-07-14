@@ -49,6 +49,43 @@
 		return conversations();
 	});
 
+	// O(n) grouping to avoid O(n²) nested loop lookups during render
+	let conversationsByFolder = $derived.by(() => {
+		const map = new SvelteMap<string, any[]>();
+		const unassigned: any[] = [];
+		for (const c of filteredConversations) {
+			if (c.folderId) {
+				let list = map.get(c.folderId);
+				if (!list) {
+					list = [];
+					map.set(c.folderId, list);
+				}
+				list.push(c);
+			} else {
+				unassigned.push(c);
+			}
+		}
+		return { map, unassigned };
+	});
+
+	let notesByFolder = $derived.by(() => {
+		const map = new SvelteMap<string, any[]>();
+		const unassigned: any[] = [];
+		for (const n of notes()) {
+			if (n.folderId) {
+				let list = map.get(n.folderId);
+				if (!list) {
+					list = [];
+					map.set(n.folderId, list);
+				}
+				list.push(n);
+			} else {
+				unassigned.push(n);
+			}
+		}
+		return { map, unassigned };
+	});
+
 	async function handleDelete(type: 'conversation' | 'folder' | 'note' | 'file', id: string) {
         deleteTarget = { type, id };
         deleteWithForks = false;
@@ -188,7 +225,7 @@
             <div class="space-y-1">
                 {#each folders() as folder (folder.id)}
                     {#snippet chatsSnippet()}
-                        {#each filteredConversations.filter((c: any) => c.folderId === folder.id) as conversation (conversation.id)}
+                        {#each conversationsByFolder.map.get(folder.id) || [] as conversation (conversation.id)}
                             <ChatSidebarConversationItem
                                 {conversation}
                                 depth={0}
@@ -203,7 +240,7 @@
                     {/snippet}
 
                     {#snippet notesSnippet()}
-                        {#each notes().filter((n: any) => n.folderId === folder.id) as note (note.id)}
+                        {#each notesByFolder.map.get(folder.id) || [] as note (note.id)}
                             <ChatSidebarNoteItem 
                                 {note} 
                                 isActive={currentNoteId === note.id}
@@ -240,7 +277,7 @@
             
             {#if expandedChats}
             <div class="space-y-1 mb-2">
-                {#each filteredConversations.filter((c: any) => !c.folderId) as conversation (conversation.id)}
+                {#each conversationsByFolder.unassigned as conversation (conversation.id)}
                     <ChatSidebarConversationItem
                         {conversation}
                         depth={0}
@@ -267,7 +304,7 @@
                     <span class="flex items-center gap-2"><FileText size={12} /> New Note</span>
                 </button>
 
-                {#each notes().filter((n: any) => !n.folderId) as note (note.id)}
+                {#each notesByFolder.unassigned as note (note.id)}
                     <ChatSidebarNoteItem 
                         {note} 
                         isActive={currentNoteId === note.id}
