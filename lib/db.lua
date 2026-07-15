@@ -194,7 +194,7 @@ local function execute_query(sql, params)
                 elseif ctype == SQLITE_BLOB then
                     local bytes = sql3.sqlite3_column_bytes(stmt[0], i)
                     local blob = sql3.sqlite3_column_blob(stmt[0], i)
-                    row[name] = blob ~= nil and ffi.string(blob, bytes) or ""
+                    row[name] = blob ~= ffi.NULL and ffi.string(blob, bytes) or ""
                 elseif ctype == SQLITE_NULL then
                     row[name] = nil
                 end
@@ -272,9 +272,17 @@ end
 
 function db.delete_conversation(id)
     execute_query("BEGIN TRANSACTION")
-    execute_query("UPDATE conversations SET is_deleted = 1 WHERE id = ?", {id})
-    execute_query("UPDATE messages SET is_deleted = 1 WHERE convId = ?", {id})
-    execute_query("COMMIT")
+    local _, err1 = execute_query("UPDATE conversations SET is_deleted = 1 WHERE id = ?", {id})
+    local _, err2 = execute_query("UPDATE messages SET is_deleted = 1 WHERE convId = ?", {id})
+    if err1 or err2 then
+        execute_query("ROLLBACK")
+        return false, err1 or err2
+    end
+    local _, err3 = execute_query("COMMIT")
+    if err3 then
+        execute_query("ROLLBACK")
+        return false, err3
+    end
     return true
 end
 
@@ -372,9 +380,17 @@ function db.delete_messages_bulk(ids)
     if not ids or #ids == 0 then return true end
     execute_query("BEGIN TRANSACTION")
     for _, id in ipairs(ids) do
-        execute_query("UPDATE messages SET is_deleted = 1 WHERE id = ?", {id})
+        local _, err = execute_query("UPDATE messages SET is_deleted = 1 WHERE id = ?", {id})
+        if err then
+            execute_query("ROLLBACK")
+            return false, err
+        end
     end
-    execute_query("COMMIT")
+    local _, err3 = execute_query("COMMIT")
+    if err3 then
+        execute_query("ROLLBACK")
+        return false, err3
+    end
     return true
 end
 
@@ -392,12 +408,20 @@ end
 
 function db.delete_workspace(id)
     execute_query("BEGIN TRANSACTION")
-    execute_query("UPDATE workspaces SET is_deleted = 1 WHERE id = ?", {id})
-    execute_query("UPDATE projects SET is_deleted = 1 WHERE workspaceId = ?", {id})
-    execute_query("UPDATE folders SET is_deleted = 1 WHERE projectId IN (SELECT id FROM projects WHERE workspaceId = ?)", {id})
-    execute_query("UPDATE notes SET is_deleted = 1 WHERE folderId IN (SELECT id FROM folders WHERE projectId IN (SELECT id FROM projects WHERE workspaceId = ?))", {id})
-    execute_query("UPDATE fileAssets SET is_deleted = 1 WHERE folderId IN (SELECT id FROM folders WHERE projectId IN (SELECT id FROM projects WHERE workspaceId = ?))", {id})
-    execute_query("COMMIT")
+    local _, err1 = execute_query("UPDATE workspaces SET is_deleted = 1 WHERE id = ?", {id})
+    local _, err2 = execute_query("UPDATE projects SET is_deleted = 1 WHERE workspaceId = ?", {id})
+    local _, err3 = execute_query("UPDATE folders SET is_deleted = 1 WHERE projectId IN (SELECT id FROM projects WHERE workspaceId = ?)", {id})
+    local _, err4 = execute_query("UPDATE notes SET is_deleted = 1 WHERE folderId IN (SELECT id FROM folders WHERE projectId IN (SELECT id FROM projects WHERE workspaceId = ?))", {id})
+    local _, err5 = execute_query("UPDATE fileAssets SET is_deleted = 1 WHERE folderId IN (SELECT id FROM folders WHERE projectId IN (SELECT id FROM projects WHERE workspaceId = ?))", {id})
+    if err1 or err2 or err3 or err4 or err5 then
+        execute_query("ROLLBACK")
+        return false, err1 or err2 or err3 or err4 or err5
+    end
+    local _, err6 = execute_query("COMMIT")
+    if err6 then
+        execute_query("ROLLBACK")
+        return false, err6
+    end
     return true
 end
 
@@ -422,11 +446,19 @@ end
 
 function db.delete_project(id)
     execute_query("BEGIN TRANSACTION")
-    execute_query("UPDATE projects SET is_deleted = 1 WHERE id = ?", {id})
-    execute_query("UPDATE folders SET is_deleted = 1 WHERE projectId = ?", {id})
-    execute_query("UPDATE notes SET is_deleted = 1 WHERE folderId IN (SELECT id FROM folders WHERE projectId = ?)", {id})
-    execute_query("UPDATE fileAssets SET is_deleted = 1 WHERE folderId IN (SELECT id FROM folders WHERE projectId = ?)", {id})
-    execute_query("COMMIT")
+    local _, err1 = execute_query("UPDATE projects SET is_deleted = 1 WHERE id = ?", {id})
+    local _, err2 = execute_query("UPDATE folders SET is_deleted = 1 WHERE projectId = ?", {id})
+    local _, err3 = execute_query("UPDATE notes SET is_deleted = 1 WHERE folderId IN (SELECT id FROM folders WHERE projectId = ?)", {id})
+    local _, err4 = execute_query("UPDATE fileAssets SET is_deleted = 1 WHERE folderId IN (SELECT id FROM folders WHERE projectId = ?)", {id})
+    if err1 or err2 or err3 or err4 then
+        execute_query("ROLLBACK")
+        return false, err1 or err2 or err3 or err4
+    end
+    local _, err5 = execute_query("COMMIT")
+    if err5 then
+        execute_query("ROLLBACK")
+        return false, err5
+    end
     return true
 end
 
@@ -464,10 +496,18 @@ end
 
 function db.delete_folder(id)
     execute_query("BEGIN TRANSACTION")
-    execute_query("UPDATE folders SET is_deleted = 1 WHERE id = ?", {id})
-    execute_query("UPDATE notes SET is_deleted = 1 WHERE folderId = ?", {id})
-    execute_query("UPDATE fileAssets SET is_deleted = 1 WHERE folderId = ?", {id})
-    execute_query("COMMIT")
+    local _, err1 = execute_query("UPDATE folders SET is_deleted = 1 WHERE id = ?", {id})
+    local _, err2 = execute_query("UPDATE notes SET is_deleted = 1 WHERE folderId = ?", {id})
+    local _, err3 = execute_query("UPDATE fileAssets SET is_deleted = 1 WHERE folderId = ?", {id})
+    if err1 or err2 or err3 then
+        execute_query("ROLLBACK")
+        return false, err1 or err2 or err3
+    end
+    local _, err4 = execute_query("COMMIT")
+    if err4 then
+        execute_query("ROLLBACK")
+        return false, err4
+    end
     return true
 end
 
@@ -587,14 +627,25 @@ end
 
 function db.import_data(data)
     execute_query("BEGIN TRANSACTION")
-    if data.conversations then for _, v in ipairs(data.conversations) do db.insert_conversation(v) end end
-    if data.messages then for _, v in ipairs(data.messages) do db.insert_message(v) end end
-    if data.workspaces then for _, v in ipairs(data.workspaces) do db.insert_workspace(v) end end
-    if data.projects then for _, v in ipairs(data.projects) do db.insert_project(v) end end
-    if data.folders then for _, v in ipairs(data.folders) do db.insert_folder(v) end end
-    if data.notes then for _, v in ipairs(data.notes) do db.insert_note(v) end end
-    if data.fileAssets then for _, v in ipairs(data.fileAssets) do db.insert_fileAsset(v) end end
-    execute_query("COMMIT")
+    local function check(ok, err) if not ok then error(err) end end
+    local ok, final_err = pcall(function()
+        if data.conversations then for _, v in ipairs(data.conversations) do check(db.insert_conversation(v)) end end
+        if data.messages then for _, v in ipairs(data.messages) do check(db.insert_message(v)) end end
+        if data.workspaces then for _, v in ipairs(data.workspaces) do check(db.insert_workspace(v)) end end
+        if data.projects then for _, v in ipairs(data.projects) do check(db.insert_project(v)) end end
+        if data.folders then for _, v in ipairs(data.folders) do check(db.insert_folder(v)) end end
+        if data.notes then for _, v in ipairs(data.notes) do check(db.insert_note(v)) end end
+        if data.fileAssets then for _, v in ipairs(data.fileAssets) do check(db.insert_fileAsset(v)) end end
+    end)
+    if not ok then
+        execute_query("ROLLBACK")
+        return false, final_err
+    end
+    local _, err3 = execute_query("COMMIT")
+    if err3 then
+        execute_query("ROLLBACK")
+        return false, err3
+    end
     return true
 end
 

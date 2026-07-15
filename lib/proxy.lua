@@ -675,9 +675,15 @@ local function proxy_connection(client_fd, conn_fds)
         elseif not is_get and headers_raw:match("^DELETE /api/db/workspaces/([^ %?\r\n]+)") then
             local id = headers_raw:match("^DELETE /api/db/workspaces/([^ %?\r\n]+)")
             local workspaces = db.get_workspaces()
-            for _, w in ipairs(workspaces or {}) do if w.id == id then fs_sync.trash_workspace(w) break end end
+            local target_w = nil
+            for _, w in ipairs(workspaces or {}) do if w.id == id then target_w = w break end end
             local ok = db.delete_workspace(id)
-            if ok then resp_body = '{"status":"ok"}' else status = "500" end
+            if ok then
+                if target_w then fs_sync.trash_workspace(target_w) end
+                resp_body = '{"status":"ok"}'
+            else
+                status = "500"
+            end
         -- PROJECTS
         elseif is_get and db_route == "projects/all" then
             local items = db.get_all_projects()
@@ -740,9 +746,13 @@ local function proxy_connection(client_fd, conn_fds)
         elseif not is_get and headers_raw:match("^DELETE /api/db/notes/([^ %?\r\n]+)") then
             local id = headers_raw:match("^DELETE /api/db/notes/([^ %?\r\n]+)")
             local note = db.get_note(id)
-            if note then fs_sync.trash_note(note) end
             local ok = db.delete_note(id)
-            if ok then resp_body = '{"status":"ok"}' else status = "500" end
+            if ok then
+                if note then fs_sync.trash_note(note) end
+                resp_body = '{"status":"ok"}'
+            else
+                status = "500"
+            end
         -- FILEASSETS
         elseif is_get and db_route == "fileAssets/all" then
             local items = db.get_all_fileAssets()
@@ -769,9 +779,13 @@ local function proxy_connection(client_fd, conn_fds)
         elseif not is_get and headers_raw:match("^DELETE /api/db/fileAssets/([^ %?\r\n]+)") then
             local id = headers_raw:match("^DELETE /api/db/fileAssets/([^ %?\r\n]+)")
             local asset = db.get_fileAsset(id)
-            if asset then fs_sync.trash_fileAsset(asset) end
             local ok = db.delete_fileAsset(id)
-            if ok then resp_body = '{"status":"ok"}' else status = "500" end
+            if ok then
+                if asset then fs_sync.trash_fileAsset(asset) end
+                resp_body = '{"status":"ok"}'
+            else
+                status = "500"
+            end
         -- IMPORT
         elseif not is_get and headers_raw:match("^POST /api/db/import") then
             local data = json.decode(body_raw)
@@ -1198,18 +1212,40 @@ local function proxy_connection(client_fd, conn_fds)
     end
 
     local resp_buffer = {}
+    local send_success = true
     while true do
         local n = async_recv(llama_fd, buf, 8192)
         if n <= 0 then break end
         local to_send = ffi.string(buf, n)
         if req_cache_key then resp_buffer[#resp_buffer+1] = to_send end
-        if async_send(client_fd, to_send) < 0 then break end
+        if async_send(client_fd, to_send) < 0 then
+            send_success = false
+            break
+        end
     end
 
-    if req_cache_key and #resp_buffer > 0 then
+    if req_cache_key and send_success and #resp_buffer > 0 then
         local full_resp = table.concat(resp_buffer)
-        db.set_cache(req_cache_key, full_resp)
-        print("[proxy] Cached response for " .. req_cache_key)
+        local is_complete = false
+        if full_resp:find("Transfer%-Encoding:%s*chunked") then
+            if full_resp:match("0\r\n\r\n$") then is_complete = true end
+        else
+            local cl = full_resp:match("Content%-Length:%s*(%d+)")
+            if cl then
+                local header_end = full_resp:find("\r\n\r\n")
+                if header_end then
+                    local body = full_resp:sub(header_end + 4)
+                    if #body == tonumber(cl) then is_complete = true end
+                end
+            end
+        end
+
+        if is_complete then
+            db.set_cache(req_cache_key, full_resp)
+            print("[proxy] Cached response for " .. req_cache_key)
+        else
+            print("[proxy] WARNING: Incomplete backend response, skipping cache for " .. req_cache_key)
+        end
     end
 
     safe_close()

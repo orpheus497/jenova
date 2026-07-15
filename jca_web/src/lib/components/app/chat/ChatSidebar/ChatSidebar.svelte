@@ -43,9 +43,10 @@
 
 	let filteredConversations = $derived.by(() => {
 		if (searchQuery.trim().length > 0) {
-			return conversations().filter((conversation: DatabaseConversation) =>
-				conversation.name.toLowerCase().includes(searchQuery.toLowerCase())
-			);
+			return conversations().filter((conversation: DatabaseConversation) => {
+				const name = conversation.name || 'Untitled conversation';
+				return name.toLowerCase().includes(searchQuery.toLowerCase());
+			});
 		}
 		return conversations();
 	});

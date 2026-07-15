@@ -39,10 +39,13 @@ local function base64_decode(data)
     local len = #data
     local i = 1
     while i <= len do
-        local c1 = b64dec[data:byte(i)] or 0
-        local c2 = b64dec[data:byte(i+1)] or 0
-        local c3 = b64dec[data:byte(i+2)]
-        local c4 = b64dec[data:byte(i+3)]
+        local b1_val, b2_val = data:byte(i), data:byte(i+1)
+        local c1 = b1_val and b64dec[b1_val] or 0
+        local c2 = b2_val and b64dec[b2_val] or 0
+        local b3_val = data:byte(i+2)
+        local c3 = b3_val and b64dec[b3_val] or nil
+        local b4_val = data:byte(i+3)
+        local c4 = b4_val and b64dec[b4_val] or nil
         
         local b1 = bit.bor(bit.lshift(c1, 2), bit.rshift(c2, 4))
         table.insert(res, string.char(b1))
@@ -137,14 +140,21 @@ function fs_sync.sync_fileAsset(asset)
     local path, ws_name = get_physical_path_for_asset(asset)
     if not path then return false end
     
+    local out_content = asset.content or ""
+    local b64 = out_content:match("^data:.-;base64,(.*)")
+    if b64 then
+        local clean = b64:gsub("[^A-Za-z0-9+/=]", "")
+        if #clean % 4 ~= 0 then return false end
+        local ok, decoded = pcall(base64_decode, clean)
+        if not ok then return false end
+        out_content = decoded
+    end
+    
     local dir = path:match("(.+)/[^/]+$")
     recursive_mkdir(dir)
     
     local f = io.open(path, "wb")
     if f then
-        local out_content = asset.content or ""
-        local b64 = out_content:match("^data:.-;base64,(.*)")
-        if b64 then out_content = base64_decode(b64) end
         f:write(out_content)
         f:close()
         git.add(workspaces_dir .. "/" .. ws_name, path)
