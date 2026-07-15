@@ -114,7 +114,8 @@ local function get_workspace_trash(workspace_name)
 end
 
 function fs_sync.sync_workspace(workspace)
-    local path = workspaces_dir .. "/" .. workspace.name
+    local safe_workspace = sanitize(workspace.name)
+    local path = workspaces_dir .. "/" .. safe_workspace
     recursive_mkdir(path)
     git.init(path)
 end
@@ -179,8 +180,9 @@ function fs_sync.trash_fileAsset(asset)
 end
 
 function fs_sync.trash_workspace(workspace)
-    local path = workspaces_dir .. "/" .. workspace.name
-    local trash_path = global_trash .. "/" .. os.time() .. "_" .. workspace.name
+    local safe_workspace = sanitize(workspace.name)
+    local path = workspaces_dir .. "/" .. safe_workspace
+    local trash_path = global_trash .. "/" .. os.time() .. "_" .. safe_workspace
     os.rename(path, trash_path)
     return true
 end

@@ -510,7 +510,7 @@ export class ChatService {
 
             try {
               const parsed: ApiChatCompletionStreamChunk = JSON.parse(data);
-              const content = parsed.choices[0]?.delta?.content;
+              let content = parsed.choices[0]?.delta?.content;
               const reasoningContent =
                 parsed.choices[0]?.delta?.reasoning_content;
               const toolCalls = parsed.choices[0]?.delta?.tool_calls;

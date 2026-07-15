@@ -2,8 +2,10 @@
 	import { FileText, Trash2 } from '@lucide/svelte';
 	import { cn } from '$lib/utils';
 
+	import type { DatabaseNote } from '$lib/types/database';
+
 	interface Props {
-		note: any;
+		note: DatabaseNote;
 		isActive?: boolean;
 		onSelect: () => void;
 		onDelete: () => void;

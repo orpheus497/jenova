@@ -1,6 +1,5 @@
 import { findDescendantMessages, uuid, filterByLeafNodeId } from "$lib/utils";
 import type {
-  McpServerOverride,
   DatabaseWorkspace,
   DatabaseProject,
   DatabaseFolder,
@@ -10,6 +9,17 @@ import type {
   DatabaseMessage,
 } from "$lib/types/database";
 import { MessageRole } from "$lib/enums";
+
+export interface ExportData {
+  conversations: DatabaseConversation[];
+  workspaces: DatabaseWorkspace[];
+  projects: DatabaseProject[];
+  folders: DatabaseFolder[];
+  notes: DatabaseNote[];
+  fileAssets: DatabaseFileAsset[];
+  localStorage: Record<string, string | null>;
+  timestamp: number;
+}
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`/api/db/${path}`, options);
@@ -161,7 +171,7 @@ export class DatabaseService {
     }
   }
 
-  static async createMessageBranch(message: any, parentId: string | null): Promise<DatabaseMessage> {
+  static async createMessageBranch(message: Omit<DatabaseMessage, "id" | "parent" | "children" | "toolCalls"> & { toolCalls?: string }, parentId: string | null): Promise<DatabaseMessage> {
     const newMessage: DatabaseMessage = {
       ...message,
       id: uuid(),
@@ -362,7 +372,7 @@ export class DatabaseService {
   /**
    * Export/Import
    */
-  static async exportData(): Promise<any> {
+  static async exportData(): Promise<ExportData> {
     const localStorageData: Record<string, string | null> = {};
     const keys = ["jenova_config", "theme", "jenova_user_overrides", "mcp_default_enabled"];
     for (const key of keys) localStorageData[key] = localStorage.getItem(key);
@@ -379,7 +389,7 @@ export class DatabaseService {
     };
   }
 
-  static async importData(data: any): Promise<void> {
+  static async importData(data: ExportData): Promise<void> {
     if (data.localStorage) {
       for (const [key, value] of Object.entries(data.localStorage)) {
         if (value !== null) localStorage.setItem(key, value as string);
@@ -390,7 +400,7 @@ export class DatabaseService {
 
   static async getCache(key: string): Promise<string | null> {
     try {
-      const res = await apiFetch<any>(`cache?key=${encodeURIComponent(key)}`);
+      const res = await apiFetch<{ response: string }>(`cache?key=${encodeURIComponent(key)}`);
       return res.response || null;
     } catch {
       return null;
