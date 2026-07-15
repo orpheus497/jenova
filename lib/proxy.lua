@@ -626,6 +626,10 @@ local function proxy_connection(client_fd, conn_fds)
             local id = headers_raw:match("^DELETE /api/db/conversations/([^ %?\r\n]+)")
             local ok = db.delete_conversation(id)
             if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
+        elseif is_get and db_route:match("^message%?") then
+            local id = headers_raw:match("id=([^ %&\r\n]+)")
+            local msg = db.get_message(id)
+            if msg then resp_body = json.encode(msg) else status = "404 Not Found" end
         elseif is_get and db_route == "messages" then
             local convId = headers_raw:match("convId=([^ %&\r\n]+)")
             local msgs = db.get_messages(convId)
@@ -644,6 +648,14 @@ local function proxy_connection(client_fd, conn_fds)
             local id = headers_raw:match("^DELETE /api/db/messages/([^ %?\r\n]+)")
             local ok = db.delete_message(id)
             if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
+        elseif not is_get and headers_raw:match("^POST /api/db/messages/bulk%-delete") then
+            local data = json.decode(body_raw)
+            if data and data.ids then
+                local ok = db.delete_messages_bulk(data.ids)
+                if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
+            else
+                status = "400 Bad Request"
+            end
         -- WORKSPACES
         elseif is_get and db_route == "workspaces" then
             local items = db.get_workspaces()
@@ -661,6 +673,9 @@ local function proxy_connection(client_fd, conn_fds)
             local ok = db.delete_workspace(id)
             if ok then resp_body = '{"status":"ok"}' else status = "500" end
         -- PROJECTS
+        elseif is_get and db_route == "projects/all" then
+            local items = db.get_all_projects()
+            if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
         elseif is_get and db_route == "projects" then
             local wid = headers_raw:match("workspaceId=([^ %&\r\n]+)")
             local items = db.get_projects(wid)
@@ -676,6 +691,9 @@ local function proxy_connection(client_fd, conn_fds)
             local ok = db.delete_project(id)
             if ok then resp_body = '{"status":"ok"}' else status = "500" end
         -- FOLDERS
+        elseif is_get and db_route == "folders/all" then
+            local items = db.get_all_folders()
+            if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
         elseif is_get and db_route == "folders" then
             local pid = headers_raw:match("projectId=([^ %&\r\n]+)")
             local items = db.get_folders(pid)
@@ -738,6 +756,15 @@ local function proxy_connection(client_fd, conn_fds)
             if asset then fs_sync.trash_fileAsset(asset) end
             local ok = db.delete_fileAsset(id)
             if ok then resp_body = '{"status":"ok"}' else status = "500" end
+        -- IMPORT
+        elseif not is_get and headers_raw:match("^POST /api/db/import") then
+            local data = json.decode(body_raw)
+            if data then
+                local ok = db.import_data(data)
+                if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
+            else
+                status = "400 Bad Request"
+            end
         -- CACHE
         elseif is_get and db_route:match("^cache%?") then
             local key = url_decode(headers_raw:match("key=([^ %&\r\n]+)"))

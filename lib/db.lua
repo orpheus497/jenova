@@ -260,9 +260,11 @@ function db.update_conversation(c)
 end
 
 function db.delete_conversation(id)
-    local sql = "UPDATE conversations SET is_deleted = 1 WHERE id = ?"
-    local _, err = execute_query(sql, {id})
-    return err == nil, err
+    execute_query("BEGIN TRANSACTION")
+    execute_query("UPDATE conversations SET is_deleted = 1 WHERE id = ?", {id})
+    execute_query("UPDATE messages SET is_deleted = 1 WHERE convId = ?", {id})
+    execute_query("COMMIT")
+    return true
 end
 
 function db.get_messages(convId)
@@ -331,6 +333,40 @@ function db.delete_message(id)
     return err == nil, err
 end
 
+function db.get_message(id)
+    local sql = "SELECT * FROM messages WHERE id = ? AND is_deleted = 0"
+    local rows, err = execute_query(sql, {id})
+    if err or not rows or #rows == 0 then return nil, err end
+    
+    local row = rows[1]
+    if row.children and row.children ~= "" then
+        local ok, parsed = pcall(json.decode, row.children)
+        row.children = ok and parsed or {}
+    else
+        row.children = {}
+    end
+    if row.toolCalls and row.toolCalls ~= "" then row.toolCalls = row.toolCalls else row.toolCalls = nil end
+    if row.extra and row.extra ~= "" then
+        local ok, parsed = pcall(json.decode, row.extra)
+        row.extra = ok and parsed or nil
+    end
+    if row.timings and row.timings ~= "" then
+        local ok, parsed = pcall(json.decode, row.timings)
+        row.timings = ok and parsed or nil
+    end
+    return row
+end
+
+function db.delete_messages_bulk(ids)
+    if not ids or #ids == 0 then return true end
+    execute_query("BEGIN TRANSACTION")
+    for _, id in ipairs(ids) do
+        execute_query("UPDATE messages SET is_deleted = 1 WHERE id = ?", {id})
+    end
+    execute_query("COMMIT")
+    return true
+end
+
 function db.get_workspaces()
     local sql = "SELECT * FROM workspaces WHERE is_deleted = 0"
     local rows, err = execute_query(sql)
@@ -344,9 +380,14 @@ function db.insert_workspace(w)
 end
 
 function db.delete_workspace(id)
-    local sql = "UPDATE workspaces SET is_deleted = 1 WHERE id = ?"
-    local _, err = execute_query(sql, {id})
-    return err == nil, err
+    execute_query("BEGIN TRANSACTION")
+    execute_query("UPDATE workspaces SET is_deleted = 1 WHERE id = ?", {id})
+    execute_query("UPDATE projects SET is_deleted = 1 WHERE workspaceId = ?", {id})
+    execute_query("UPDATE folders SET is_deleted = 1 WHERE projectId IN (SELECT id FROM projects WHERE workspaceId = ?)", {id})
+    execute_query("UPDATE notes SET is_deleted = 1 WHERE folderId IN (SELECT id FROM folders WHERE projectId IN (SELECT id FROM projects WHERE workspaceId = ?))", {id})
+    execute_query("UPDATE fileAssets SET is_deleted = 1 WHERE folderId IN (SELECT id FROM folders WHERE projectId IN (SELECT id FROM projects WHERE workspaceId = ?))", {id})
+    execute_query("COMMIT")
+    return true
 end
 
 function db.get_projects(workspaceId)
@@ -362,9 +403,19 @@ function db.insert_project(p)
 end
 
 function db.delete_project(id)
-    local sql = "UPDATE projects SET is_deleted = 1 WHERE id = ?"
-    local _, err = execute_query(sql, {id})
-    return err == nil, err
+    execute_query("BEGIN TRANSACTION")
+    execute_query("UPDATE projects SET is_deleted = 1 WHERE id = ?", {id})
+    execute_query("UPDATE folders SET is_deleted = 1 WHERE projectId = ?", {id})
+    execute_query("UPDATE notes SET is_deleted = 1 WHERE folderId IN (SELECT id FROM folders WHERE projectId = ?)", {id})
+    execute_query("UPDATE fileAssets SET is_deleted = 1 WHERE folderId IN (SELECT id FROM folders WHERE projectId = ?)", {id})
+    execute_query("COMMIT")
+    return true
+end
+
+function db.get_all_projects()
+    local sql = "SELECT * FROM projects WHERE is_deleted = 0"
+    local rows, err = execute_query(sql)
+    return rows, err
 end
 
 function db.get_folders(projectId)
@@ -387,9 +438,18 @@ function db.insert_folder(f)
 end
 
 function db.delete_folder(id)
-    local sql = "UPDATE folders SET is_deleted = 1 WHERE id = ?"
-    local _, err = execute_query(sql, {id})
-    return err == nil, err
+    execute_query("BEGIN TRANSACTION")
+    execute_query("UPDATE folders SET is_deleted = 1 WHERE id = ?", {id})
+    execute_query("UPDATE notes SET is_deleted = 1 WHERE folderId = ?", {id})
+    execute_query("UPDATE fileAssets SET is_deleted = 1 WHERE folderId = ?", {id})
+    execute_query("COMMIT")
+    return true
+end
+
+function db.get_all_folders()
+    local sql = "SELECT * FROM folders WHERE is_deleted = 0"
+    local rows, err = execute_query(sql)
+    return rows, err
 end
 
 function db.get_notes(folderId)
@@ -490,7 +550,27 @@ end
 function db.set_cache(key, response)
     local sql = "INSERT OR REPLACE INTO llm_cache (cache_key, response, timestamp) VALUES (?, ?, ?)"
     local _, err = execute_query(sql, {key, response, os.time()})
+    
+    local count_sql = "SELECT COUNT(*) as c FROM llm_cache"
+    local count_rows = execute_query(count_sql)
+    if count_rows and count_rows[1] and count_rows[1].c > 20 then
+        local del_sql = "DELETE FROM llm_cache WHERE cache_key IN (SELECT cache_key FROM llm_cache ORDER BY timestamp ASC LIMIT ?)"
+        execute_query(del_sql, {count_rows[1].c - 20})
+    end
     return err == nil, err
+end
+
+function db.import_data(data)
+    execute_query("BEGIN TRANSACTION")
+    if data.conversations then for _, v in ipairs(data.conversations) do db.insert_conversation(v) end end
+    if data.messages then for _, v in ipairs(data.messages) do db.insert_message(v) end end
+    if data.workspaces then for _, v in ipairs(data.workspaces) do db.insert_workspace(v) end end
+    if data.projects then for _, v in ipairs(data.projects) do db.insert_project(v) end end
+    if data.folders then for _, v in ipairs(data.folders) do db.insert_folder(v) end end
+    if data.notes then for _, v in ipairs(data.notes) do db.insert_note(v) end end
+    if data.fileAssets then for _, v in ipairs(data.fileAssets) do db.insert_fileAsset(v) end end
+    execute_query("COMMIT")
+    return true
 end
 
 return db

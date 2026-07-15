@@ -94,13 +94,17 @@ export class DatabaseService {
     let imported = 0;
     let skipped = 0;
     const all = await this.getAllConversations();
+    const payload = { conversations: [] as DatabaseConversation[], messages: [] as DatabaseMessage[] };
+    
     for (const item of data) {
       if (all.find(c => c.id === item.conv.id)) { skipped++; continue; }
-      await apiFetch("conversations", { method: "POST", body: JSON.stringify(item.conv) });
-      for (const m of item.messages) {
-        await apiFetch("messages", { method: "POST", body: JSON.stringify(m) });
-      }
+      payload.conversations.push(item.conv);
+      payload.messages.push(...item.messages);
       imported++;
+    }
+    
+    if (payload.conversations.length > 0) {
+      await apiFetch("import", { method: "POST", body: JSON.stringify(payload) });
     }
     return { imported, skipped };
   }
@@ -132,10 +136,7 @@ export class DatabaseService {
       forkedFromConversationId: sourceConvId,
       mcpServerOverrides: sourceConv.mcpServerOverrides,
     };
-    await apiFetch("conversations", { method: "POST", body: JSON.stringify(newConv) });
-    for (const m of clonedMessages) {
-      await apiFetch("messages", { method: "POST", body: JSON.stringify(m) });
-    }
+    await apiFetch("import", { method: "POST", body: JSON.stringify({ conversations: [newConv], messages: clonedMessages }) });
     return newConv;
   }
 
@@ -144,6 +145,15 @@ export class DatabaseService {
    */
   static async getConversationMessages(convId: string): Promise<DatabaseMessage[]> {
     return await apiFetch<DatabaseMessage[]>(`messages?convId=${convId}`);
+  }
+
+  static async getMessage(id: string): Promise<DatabaseMessage | undefined> {
+    try {
+      const res = await apiFetch<DatabaseMessage>(`message?id=${id}`);
+      return Object.keys(res).length > 0 ? res : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   static async createMessageBranch(message: any, parentId: string | null): Promise<DatabaseMessage> {
@@ -206,33 +216,21 @@ export class DatabaseService {
   }
 
   static async updateMessage(id: string, updates: Partial<Omit<DatabaseMessage, "id">>): Promise<void> {
-    const allConvs = await this.getAllConversations();
-    let msg: DatabaseMessage | undefined;
-    for (const c of allConvs) {
-      const msgs = await this.getConversationMessages(c.id);
-      msg = msgs.find(m => m.id === id);
-      if (msg) break;
-    }
+    const msg = await this.getMessage(id);
     if (msg) {
       await apiFetch("messages", { method: "POST", body: JSON.stringify({ ...msg, ...updates }) });
     }
   }
 
   static async deleteMessage(id: string): Promise<void> {
-    const allConvs = await this.getAllConversations();
-    let msg: DatabaseMessage | undefined;
-    for (const c of allConvs) {
-      const msgs = await this.getConversationMessages(c.id);
-      msg = msgs.find(m => m.id === id);
-      if (msg) {
-        if (msg.parent) {
-           const parent = msgs.find(m => m.id === msg!.parent);
-           if (parent) {
-             parent.children = parent.children.filter(x => x !== id);
-             await apiFetch("messages", { method: "POST", body: JSON.stringify(parent) });
-           }
-        }
-        break;
+    const msg = await this.getMessage(id);
+    if (msg) {
+      if (msg.parent) {
+         const parent = await this.getMessage(msg.parent);
+         if (parent) {
+           parent.children = parent.children.filter((x: string) => x !== id);
+           await apiFetch("messages", { method: "POST", body: JSON.stringify(parent) });
+         }
       }
     }
     await apiFetch(`messages/${id}`, { method: "DELETE" });
@@ -251,9 +249,7 @@ export class DatabaseService {
         await apiFetch("messages", { method: "POST", body: JSON.stringify(parent) });
       }
     }
-    for (const id of allToDelete) {
-      await apiFetch(`messages/${id}`, { method: "DELETE" });
-    }
+    await apiFetch("messages/bulk-delete", { method: "POST", body: JSON.stringify({ ids: allToDelete }) });
     return allToDelete;
   }
 
@@ -363,8 +359,8 @@ export class DatabaseService {
     return {
       conversations: await this.getAllConversations(),
       workspaces: await this.getAllWorkspaces(),
-      projects: [],
-      folders: [],
+      projects: await apiFetch<DatabaseProject[]>("projects/all"),
+      folders: await apiFetch<DatabaseFolder[]>("folders/all"),
       notes: await this.getAllNotes(),
       fileAssets: await this.getAllFileAssets(),
       localStorage: localStorageData,
@@ -378,7 +374,7 @@ export class DatabaseService {
         if (value !== null) localStorage.setItem(key, value as string);
       }
     }
-    console.warn("Import via UI replaced with server persistence");
+    await apiFetch("import", { method: "POST", body: JSON.stringify(data) });
   }
 
   static async getCache(key: string): Promise<string | null> {
