@@ -6,6 +6,8 @@ local bit = require("bit")
 
 ffi.cdef[[
     int mkdir(const char *pathname, int mode);
+    int access(const char *pathname, int mode);
+    int rmdir(const char *pathname);
 ]]
 
 local home_dir = os.getenv("HOME") or "/tmp"
@@ -112,7 +114,11 @@ function fs_sync.sync_workspace(workspace)
     local safe_workspace = sanitize(workspace.name)
     local path = workspaces_dir .. "/" .. safe_workspace
     recursive_mkdir(path)
-    return git.init(path)
+    local ok, out = git.init(path)
+    if not ok then
+        ffi.C.rmdir(path)
+    end
+    return ok, out
 end
 
 function fs_sync.sync_note(note)
@@ -195,6 +201,7 @@ function fs_sync.trash_project(project)
     local safe_workspace = sanitize(workspace.name)
     local safe_project = sanitize(project.name)
     local path = workspaces_dir .. "/" .. safe_workspace .. "/" .. safe_project
+    if ffi.C.access(path, 0) ~= 0 then return true, nil, path end
     local trash_dir = get_workspace_trash(safe_workspace)
     local trash_path = trash_dir .. "/" .. os.time() .. "_" .. safe_project
     local ok, err = os.rename(path, trash_path)
@@ -210,6 +217,7 @@ function fs_sync.trash_folder(folder)
     local safe_project = sanitize(project.name)
     local safe_folder = sanitize(folder.name)
     local path = workspaces_dir .. "/" .. safe_workspace .. "/" .. safe_project .. "/" .. safe_folder
+    if ffi.C.access(path, 0) ~= 0 then return true, nil, path end
     local trash_dir = get_workspace_trash(safe_workspace)
     local trash_path = trash_dir .. "/" .. os.time() .. "_" .. safe_folder
     local ok, err = os.rename(path, trash_path)
