@@ -27,6 +27,9 @@ ffi.cdef[[
     int64_t sqlite3_column_int64(sqlite3_stmt*, int iCol);
     double sqlite3_column_double(sqlite3_stmt*, int iCol);
     const unsigned char *sqlite3_column_text(sqlite3_stmt*, int iCol);
+    int sqlite3_column_bytes(sqlite3_stmt*, int iCol);
+    const void *sqlite3_column_blob(sqlite3_stmt*, int iCol);
+    int sqlite3_bind_blob(sqlite3_stmt*, int, const void*, int n, void(*)(void*));
     
     void sqlite3_free(void*);
 ]]
@@ -182,8 +185,13 @@ local function execute_query(sql, params)
                 elseif ctype == SQLITE_FLOAT then
                     row[name] = tonumber(sql3.sqlite3_column_double(stmt[0], i))
                 elseif ctype == SQLITE_TEXT then
+                    local bytes = sql3.sqlite3_column_bytes(stmt[0], i)
                     local text = sql3.sqlite3_column_text(stmt[0], i)
-                    row[name] = text ~= nil and ffi.string(text) or ""
+                    row[name] = text ~= nil and ffi.string(text, bytes) or ""
+                elseif ctype == SQLITE_BLOB then
+                    local bytes = sql3.sqlite3_column_bytes(stmt[0], i)
+                    local blob = sql3.sqlite3_column_blob(stmt[0], i)
+                    row[name] = blob ~= nil and ffi.string(blob, bytes) or ""
                 elseif ctype == SQLITE_NULL then
                     row[name] = nil
                 end

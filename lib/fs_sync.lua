@@ -2,6 +2,11 @@ local fs_sync = {}
 local db = require("db")
 local git = require("git")
 local ffi = require("ffi")
+local bit = require("bit")
+
+ffi.cdef[[
+    int mkdir(const char *pathname, int mode);
+]]
 
 local home_dir = os.getenv("HOME") or "/tmp"
 local jca_home = os.getenv("JCA_HOME") or (home_dir .. "/Jenova")
@@ -24,6 +29,37 @@ local function sanitize(str)
     return str:gsub("[/\\]", "_"):gsub("^%.+", "")
 end
 
+local b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+local b64dec = {}
+for i = 1, 64 do b64dec[b64chars:byte(i)] = i - 1 end
+
+local function base64_decode(data)
+    data = data:gsub("[^A-Za-z0-9+/=]", "")
+    local res = {}
+    local len = #data
+    local i = 1
+    while i <= len do
+        local c1 = b64dec[data:byte(i)] or 0
+        local c2 = b64dec[data:byte(i+1)] or 0
+        local c3 = b64dec[data:byte(i+2)]
+        local c4 = b64dec[data:byte(i+3)]
+        
+        local b1 = bit.bor(bit.lshift(c1, 2), bit.rshift(c2, 4))
+        table.insert(res, string.char(b1))
+        
+        if c3 then
+            local b2 = bit.bor(bit.lshift(bit.band(c2, 15), 4), bit.rshift(c3, 2))
+            table.insert(res, string.char(b2))
+            if c4 then
+                local b3 = bit.bor(bit.lshift(bit.band(c3, 3), 6), c4)
+                table.insert(res, string.char(b3))
+            end
+        end
+        i = i + 4
+    end
+    return table.concat(res)
+end
+
 recursive_mkdir(global_trash)
 
 -- Traverse db to construct physical path
@@ -42,8 +78,11 @@ local function get_physical_path_for_note(note)
     for _, w in ipairs(workspaces) do if w.id == project.workspaceId then workspace = w break end end
     if not workspace then return nil end
     
+    local safe_workspace = sanitize(workspace.name)
+    local safe_project = sanitize(project.name)
+    local safe_folder = sanitize(folder.name)
     local safe_title = sanitize(note.title)
-    return string.format("%s/%s/%s/%s/%s.md", workspaces_dir, workspace.name, project.name, folder.name, safe_title), workspace.name
+    return string.format("%s/%s/%s/%s/%s.md", workspaces_dir, safe_workspace, safe_project, safe_folder, safe_title), safe_workspace
 end
 
 local function get_physical_path_for_asset(asset)
@@ -61,8 +100,11 @@ local function get_physical_path_for_asset(asset)
     for _, w in ipairs(workspaces) do if w.id == project.workspaceId then workspace = w break end end
     if not workspace then return nil end
     
+    local safe_workspace = sanitize(workspace.name)
+    local safe_project = sanitize(project.name)
+    local safe_folder = sanitize(folder.name)
     local safe_name = sanitize(asset.name)
-    return string.format("%s/%s/%s/%s/%s", workspaces_dir, workspace.name, project.name, folder.name, safe_name), workspace.name
+    return string.format("%s/%s/%s/%s/%s", workspaces_dir, safe_workspace, safe_project, safe_folder, safe_name), safe_workspace
 end
 
 local function get_workspace_trash(workspace_name)
@@ -103,9 +145,10 @@ function fs_sync.sync_fileAsset(asset)
     
     local f = io.open(path, "wb")
     if f then
-        -- Decode base64 if needed? Assuming content is raw or base64 from UI.
-        -- We will just write it.
-        f:write(asset.content or "")
+        local out_content = asset.content or ""
+        local b64 = out_content:match("^data:.-;base64,(.*)")
+        if b64 then out_content = base64_decode(b64) end
+        f:write(out_content)
         f:close()
         git.add(workspaces_dir .. "/" .. ws_name, path)
         return true

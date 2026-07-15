@@ -443,6 +443,9 @@ export class ChatService {
       hasOpenToolCallBatch = false;
     };
 
+    let isFirstChunk = true;
+    const isCacheHit = response.headers.get("X-Cache") === "HIT";
+
     const processToolCallDelta = (
       toolCalls?: ApiChatCompletionToolCallDelta[],
     ) => {
@@ -530,6 +533,10 @@ export class ChatService {
               }
 
               if (content) {
+                if (isFirstChunk && isCacheHit) {
+                  content = "*(Cache AG hit)*\n\n" + content;
+                  isFirstChunk = false;
+                }
                 finalizeOpenToolCallBatch();
                 aggregatedContent += content;
                 if (!abortSignal?.aborted) {
@@ -623,7 +630,7 @@ export class ChatService {
         onModel?.(responseModel);
       }
 
-      const content = data.choices[0]?.message?.content || "";
+      let content = data.choices[0]?.message?.content || "";
       const reasoningContent = data.choices[0]?.message?.reasoning_content;
       const toolCalls = data.choices[0]?.message?.tool_calls;
 
@@ -646,6 +653,11 @@ export class ChatService {
         );
 
         throw noResponseError;
+      }
+
+      const isCacheHit = response.headers.get("X-Cache") === "HIT";
+      if (isCacheHit && content) {
+        content = "*(Cache AG hit)*\n\n" + content;
       }
 
       onComplete?.(content, reasoningContent, undefined, serializedToolCalls);

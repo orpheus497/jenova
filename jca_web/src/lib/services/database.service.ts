@@ -40,8 +40,12 @@ export class DatabaseService {
   }
 
   static async getConversation(id: string): Promise<DatabaseConversation | undefined> {
-    const all = await this.getAllConversations();
-    return all.find((c) => c.id === id);
+    try {
+      const res = await apiFetch<DatabaseConversation>(`conversations?id=${id}`);
+      return Object.keys(res).length > 0 ? res : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   static async updateConversation(id: string, updates: Partial<Omit<DatabaseConversation, "id">>): Promise<void> {
@@ -81,8 +85,9 @@ export class DatabaseService {
 
   static async deleteConversationMessages(convId: string): Promise<void> {
     const msgs = await this.getConversationMessages(convId);
-    for (const m of msgs) {
-      await apiFetch(`messages/${m.id}`, { method: "DELETE" });
+    const ids = msgs.map(m => m.id);
+    if (ids.length > 0) {
+      await apiFetch("messages/bulk-delete", { method: "POST", body: JSON.stringify({ ids }) });
     }
   }
 
@@ -313,10 +318,13 @@ export class DatabaseService {
     return await apiFetch<DatabaseNote[]>("notes/all");
   }
   static async updateNote(id: string, updates: Partial<Omit<DatabaseNote, "id">>): Promise<void> {
-    const all = await this.getAllNotes();
-    const note = all.find(n => n.id === id);
-    if (note) {
-      await apiFetch("notes", { method: "POST", body: JSON.stringify({ ...note, ...updates, updatedAt: Date.now() }) });
+    try {
+      const note = await apiFetch<DatabaseNote>(`notes?id=${id}`);
+      if (note && Object.keys(note).length > 0) {
+        await apiFetch("notes", { method: "POST", body: JSON.stringify({ ...note, ...updates, updatedAt: Date.now() }) });
+      }
+    } catch (e) {
+      console.error(e);
     }
   }
   static async deleteNote(id: string): Promise<void> {
@@ -338,10 +346,13 @@ export class DatabaseService {
     return await apiFetch<DatabaseFileAsset[]>("fileAssets/all");
   }
   static async updateFileAsset(id: string, updates: Partial<Omit<DatabaseFileAsset, "id">>): Promise<void> {
-    const all = await this.getAllFileAssets();
-    const asset = all.find(a => a.id === id);
-    if (asset) {
-      await apiFetch("fileAssets", { method: "POST", body: JSON.stringify({ ...asset, ...updates }) });
+    try {
+      const asset = await apiFetch<DatabaseFileAsset>(`fileAssets?id=${id}`);
+      if (asset && Object.keys(asset).length > 0) {
+        await apiFetch("fileAssets", { method: "POST", body: JSON.stringify({ ...asset, ...updates }) });
+      }
+    } catch (e) {
+      console.error(e);
     }
   }
   static async deleteFileAsset(id: string): Promise<void> {

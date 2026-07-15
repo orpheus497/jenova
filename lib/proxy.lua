@@ -612,8 +612,14 @@ local function proxy_connection(client_fd, conn_fds)
         local status = "200 OK"
         
         if is_get and db_route == "conversations" then
-            local convs = db.get_conversations()
-            if convs then resp_body = json.encode(convs) else status = "500 Internal Server Error" end
+            local id = headers_raw:match("id=([^ %&\r\n]+)")
+            if id then
+                local conv = db.get_conversation(id)
+                if conv then resp_body = json.encode(conv) else status = "404 Not Found" end
+            else
+                local convs = db.get_conversations()
+                if convs then resp_body = json.encode(convs) else status = "500 Internal Server Error" end
+            end
         elseif not is_get and headers_raw:match("^POST /api/db/conversations") then
             local c = json.decode(body_raw)
             if c then
@@ -637,9 +643,8 @@ local function proxy_connection(client_fd, conn_fds)
         elseif not is_get and headers_raw:match("^POST /api/db/messages") then
             local m = json.decode(body_raw)
             if m then
-                local msgs = db.get_messages(m.convId)
-                local exists = false
-                for _, msg in ipairs(msgs or {}) do if msg.id == m.id then exists = true break end end
+                local msg = db.get_message(m.id)
+                local exists = msg ~= nil
                 local ok, err
                 if exists then ok, err = db.update_message(m) else ok, err = db.insert_message(m) end
                 if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
@@ -713,15 +718,20 @@ local function proxy_connection(client_fd, conn_fds)
             local items = db.get_all_notes()
             if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
         elseif is_get and db_route == "notes" then
+            local id = headers_raw:match("id=([^ %&\r\n]+)")
             local fid = headers_raw:match("folderId=([^ %&\r\n]+)")
-            local items = db.get_notes(fid)
-            if items then resp_body = json.encode(items) else status = "500" end
+            if id then
+                local item = db.get_note(id)
+                if item then resp_body = json.encode(item) else status = "404 Not Found" end
+            else
+                local items = db.get_notes(fid)
+                if items then resp_body = json.encode(items) else status = "500" end
+            end
         elseif not is_get and headers_raw:match("^POST /api/db/notes") then
             local item = json.decode(body_raw)
             if item then
-                local items = db.get_notes(item.folderId)
-                local exists = false
-                for _, n in ipairs(items or {}) do if n.id == item.id then exists = true break end end
+                local note = db.get_note(item.id)
+                local exists = note ~= nil
                 local ok = false
                 if exists then ok = db.update_note(item) else ok = db.insert_note(item) end
                 if ok then fs_sync.sync_note(item); resp_body = '{"status":"ok"}' else status = "500" end
@@ -737,15 +747,20 @@ local function proxy_connection(client_fd, conn_fds)
             local items = db.get_all_fileAssets()
             if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
         elseif is_get and db_route == "fileAssets" then
+            local id = headers_raw:match("id=([^ %&\r\n]+)")
             local fid = headers_raw:match("folderId=([^ %&\r\n]+)")
-            local items = db.get_fileAssets(fid)
-            if items then resp_body = json.encode(items) else status = "500" end
+            if id then
+                local item = db.get_fileAsset(id)
+                if item then resp_body = json.encode(item) else status = "404 Not Found" end
+            else
+                local items = db.get_fileAssets(fid)
+                if items then resp_body = json.encode(items) else status = "500" end
+            end
         elseif not is_get and headers_raw:match("^POST /api/db/fileAssets") then
             local item = json.decode(body_raw)
             if item then
-                local items = db.get_fileAssets(item.folderId)
-                local exists = false
-                for _, f in ipairs(items or {}) do if f.id == item.id then exists = true break end end
+                local asset = db.get_fileAsset(item.id)
+                local exists = asset ~= nil
                 local ok = false
                 if exists then ok = db.update_fileAsset(item) else ok = db.insert_fileAsset(item) end
                 if ok then fs_sync.sync_fileAsset(item); resp_body = '{"status":"ok"}' else status = "500" end
@@ -1123,7 +1138,12 @@ local function proxy_connection(client_fd, conn_fds)
                     local cached = db.get_cache(key)
                     if cached and cached.response then
                         print("[proxy] Cache AG hit for " .. key)
-                        async_send(client_fd, cached.response)
+                        local resp = cached.response
+                        local header_end = resp:find("\r\n\r\n")
+                        if header_end then
+                            resp = resp:sub(1, header_end - 1) .. "\r\nX-Cache: HIT" .. resp:sub(header_end)
+                        end
+                        async_send(client_fd, resp)
                         safe_close()
                         return
                     end
@@ -1326,7 +1346,7 @@ while running do
                     end)
                     local _ok, type, watch_fd = coroutine.resume(co)
                     if coroutine.status(co) ~= "dead" then
-                        clients[client_fd] = {co = co, type = type, watch_fd = watch_fd, created = os.time()}
+                        clients[client_fd] = {co = co, type = type, watch_fd = watch_fd, created = os.time(), last_active = os.time()}
                     else
                         conn_fds_map[client_fd] = nil
                     end
@@ -1340,9 +1360,12 @@ while running do
                 ready = true
             elseif info.type == "write" and _ffi_defs.FD_ISSET(info.watch_fd, write_fds) then
                 ready = true
+            elseif not ready and info.last_active and (os.time() - info.last_active > 15) then
+                ready = true
             end
 
             if ready then
+                info.last_active = os.time()
                 local _ok, type, watch_fd = coroutine.resume(info.co)
                 if coroutine.status(info.co) == "dead" then
                     clients[cfd] = nil
