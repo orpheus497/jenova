@@ -17,6 +17,7 @@ ffi.cdef[[
     
     int sqlite3_bind_int(sqlite3_stmt*, int, int);
     int sqlite3_bind_int64(sqlite3_stmt*, int, int64_t);
+    int sqlite3_bind_double(sqlite3_stmt*, int, double);
     int sqlite3_bind_text(sqlite3_stmt*, int, const char*, int, void(*)(void*));
     int sqlite3_bind_null(sqlite3_stmt*, int);
     
@@ -89,6 +90,10 @@ function db.init(db_path)
             is_deleted INTEGER DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS idx_messages_convId ON messages(convId);
+        CREATE INDEX IF NOT EXISTS idx_projects_workspaceId ON projects(workspaceId);
+        CREATE INDEX IF NOT EXISTS idx_folders_projectId ON folders(projectId);
+        CREATE INDEX IF NOT EXISTS idx_notes_folderId ON notes(folderId);
+        CREATE INDEX IF NOT EXISTS idx_fileAssets_folderId ON fileAssets(folderId);
         CREATE TABLE IF NOT EXISTS workspaces (
             id TEXT PRIMARY KEY,
             name TEXT,
@@ -161,7 +166,11 @@ local function execute_query(sql, params)
         for i = 1, param_count do
             local v = params[i]
             if type(v) == "number" then
-                sql3.sqlite3_bind_int64(stmt[0], i, v)
+                if math.floor(v) == v then
+                    sql3.sqlite3_bind_int64(stmt[0], i, v)
+                else
+                    sql3.sqlite3_bind_double(stmt[0], i, v)
+                end
             elseif type(v) == "string" then
                 sql3.sqlite3_bind_text(stmt[0], i, v, #v, ffi.cast("void(*)(void*)", -1)) -- SQLITE_TRANSIENT
             elseif v == nil or v == json.null then
@@ -188,12 +197,12 @@ local function execute_query(sql, params)
                 elseif ctype == SQLITE_FLOAT then
                     row[name] = tonumber(sql3.sqlite3_column_double(stmt[0], i))
                 elseif ctype == SQLITE_TEXT then
-                    local bytes = sql3.sqlite3_column_bytes(stmt[0], i)
                     local text = sql3.sqlite3_column_text(stmt[0], i)
+                    local bytes = sql3.sqlite3_column_bytes(stmt[0], i)
                     row[name] = text ~= nil and ffi.string(text, bytes) or ""
                 elseif ctype == SQLITE_BLOB then
-                    local bytes = sql3.sqlite3_column_bytes(stmt[0], i)
                     local blob = sql3.sqlite3_column_blob(stmt[0], i)
+                    local bytes = sql3.sqlite3_column_bytes(stmt[0], i)
                     row[name] = blob ~= ffi.NULL and ffi.string(blob, bytes) or ""
                 elseif ctype == SQLITE_NULL then
                     row[name] = nil
@@ -400,6 +409,13 @@ function db.get_workspaces()
     return rows, err
 end
 
+function db.get_workspace(id)
+    local sql = "SELECT * FROM workspaces WHERE id = ? AND is_deleted = 0"
+    local rows, err = execute_query(sql, {id})
+    if err or not rows or #rows == 0 then return nil, err end
+    return rows[1]
+end
+
 function db.insert_workspace(w)
     local sql = "INSERT INTO workspaces (id, name, is_deleted) VALUES (?, ?, 0)"
     local _, err = execute_query(sql, {w.id, w.name})
@@ -471,7 +487,7 @@ end
 function db.get_folders(projectId)
     local sql = ""
     local params = {}
-    if projectId == nil or projectId == "" then
+    if projectId == nil or projectId == "" or projectId == json.null then
         sql = "SELECT * FROM folders WHERE projectId IS NULL AND is_deleted = 0"
     else
         sql = "SELECT * FROM folders WHERE projectId = ? AND is_deleted = 0"

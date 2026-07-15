@@ -533,10 +533,6 @@ export class ChatService {
               }
 
               if (content) {
-                if (isFirstChunk && isCacheHit) {
-                  content = "*(Cache AG hit)*\n\n" + content;
-                  isFirstChunk = false;
-                }
                 finalizeOpenToolCallBatch();
                 aggregatedContent += content;
                 if (!abortSignal?.aborted) {
@@ -656,9 +652,6 @@ export class ChatService {
       }
 
       const isCacheHit = response.headers.get("X-Cache") === "HIT";
-      if (isCacheHit && content) {
-        content = "*(Cache AG hit)*\n\n" + content;
-      }
 
       onComplete?.(content, reasoningContent, undefined, serializedToolCalls);
 

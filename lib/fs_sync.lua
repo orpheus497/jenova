@@ -74,16 +74,14 @@ local function get_physical_path_for_note(note)
     local project = db.get_project(folder.projectId)
     if not project then return nil end
     
-    local workspace = nil
-    local workspaces, _ = db.get_workspaces()
-    for _, w in ipairs(workspaces) do if w.id == project.workspaceId then workspace = w break end end
+    local workspace = db.get_workspace(project.workspaceId)
     if not workspace then return nil end
     
     local safe_workspace = sanitize(workspace.name)
     local safe_project = sanitize(project.name)
     local safe_folder = sanitize(folder.name)
     local safe_title = sanitize(note.title)
-    return string.format("%s/%s/%s/%s/%s.md", workspaces_dir, safe_workspace, safe_project, safe_folder, safe_title), safe_workspace
+    return string.format("%s/%s/%s/%s/%s_%s.md", workspaces_dir, safe_workspace, safe_project, safe_folder, safe_title, note.id), safe_workspace
 end
 
 local function get_physical_path_for_asset(asset)
@@ -94,16 +92,14 @@ local function get_physical_path_for_asset(asset)
     local project = db.get_project(folder.projectId)
     if not project then return nil end
     
-    local workspace = nil
-    local workspaces, _ = db.get_workspaces()
-    for _, w in ipairs(workspaces) do if w.id == project.workspaceId then workspace = w break end end
+    local workspace = db.get_workspace(project.workspaceId)
     if not workspace then return nil end
     
     local safe_workspace = sanitize(workspace.name)
     local safe_project = sanitize(project.name)
     local safe_folder = sanitize(folder.name)
     local safe_name = sanitize(asset.name)
-    return string.format("%s/%s/%s/%s/%s", workspaces_dir, safe_workspace, safe_project, safe_folder, safe_name), safe_workspace
+    return string.format("%s/%s/%s/%s/%s_%s", workspaces_dir, safe_workspace, safe_project, safe_folder, safe_name, asset.id), safe_workspace
 end
 
 local function get_workspace_trash(workspace_name)
@@ -170,8 +166,8 @@ function fs_sync.trash_note(note)
     local trash_dir = get_workspace_trash(ws_name)
     local filename = path:match("([^/]+)$")
     local trash_path = trash_dir .. "/" .. os.time() .. "_" .. filename
-    os.rename(path, trash_path)
-    return true
+    local ok, err = os.rename(path, trash_path)
+    return ok ~= nil
 end
 
 function fs_sync.trash_fileAsset(asset)
@@ -181,16 +177,16 @@ function fs_sync.trash_fileAsset(asset)
     local trash_dir = get_workspace_trash(ws_name)
     local filename = path:match("([^/]+)$")
     local trash_path = trash_dir .. "/" .. os.time() .. "_" .. filename
-    os.rename(path, trash_path)
-    return true
+    local ok, err = os.rename(path, trash_path)
+    return ok ~= nil
 end
 
 function fs_sync.trash_workspace(workspace)
     local safe_workspace = sanitize(workspace.name)
     local path = workspaces_dir .. "/" .. safe_workspace
     local trash_path = global_trash .. "/" .. os.time() .. "_" .. safe_workspace
-    os.rename(path, trash_path)
-    return true
+    local ok, err = os.rename(path, trash_path)
+    return ok ~= nil
 end
 
 return fs_sync

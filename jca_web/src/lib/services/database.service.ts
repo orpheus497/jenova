@@ -17,6 +17,7 @@ export interface ExportData {
   folders: DatabaseFolder[];
   notes: DatabaseNote[];
   fileAssets: DatabaseFileAsset[];
+  messages: DatabaseMessage[];
   localStorage: Record<string, string | null>;
   timestamp: number;
 }
@@ -24,10 +25,11 @@ export interface ExportData {
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`/api/db/${path}`, options);
   if (!res.ok) throw new Error(`API error: ${res.status}`);
-  if (res.headers.get("content-type")?.includes("application/json")) {
+  const contentType = res.headers.get("content-type");
+  if (contentType && contentType.includes("application/json")) {
     return await res.json();
   }
-  return {} as T;
+  throw new Error("Response is not JSON");
 }
 
 export class DatabaseService {
@@ -53,8 +55,9 @@ export class DatabaseService {
     try {
       const res = await apiFetch<DatabaseConversation>(`conversations?id=${id}`);
       return Object.keys(res).length > 0 ? res : undefined;
-    } catch {
-      return undefined;
+    } catch (e: any) {
+      if (e.message && e.message.includes("404")) return undefined;
+      throw e;
     }
   }
 
@@ -66,31 +69,8 @@ export class DatabaseService {
   }
 
   static async deleteConversation(id: string, options?: { deleteWithForks?: boolean }): Promise<void> {
-    if (options?.deleteWithForks) {
-      const allConvs = await this.getAllConversations();
-      const idsToDelete: string[] = [];
-      const queue = [id];
-      while (queue.length > 0) {
-        const parentId = queue.pop()!;
-        const children = allConvs.filter(c => c.forkedFromConversationId === parentId);
-        for (const child of children) {
-          idsToDelete.push(child.id);
-          queue.push(child.id);
-        }
-      }
-      for (const forkId of idsToDelete) {
-        await apiFetch(`conversations/${forkId}`, { method: "DELETE" });
-      }
-    } else {
-      const allConvs = await this.getAllConversations();
-      const conv = allConvs.find(c => c.id === id);
-      const newParent = conv?.forkedFromConversationId;
-      const children = allConvs.filter(c => c.forkedFromConversationId === id);
-      for (const child of children) {
-        await this.updateConversation(child.id, { forkedFromConversationId: newParent });
-      }
-    }
-    await apiFetch(`conversations/${id}`, { method: "DELETE" });
+    const query = options?.deleteWithForks ? "?deleteWithForks=true" : "";
+    await apiFetch(`conversations/${id}${query}`, { method: "DELETE" });
   }
 
   static async deleteConversationMessages(convId: string): Promise<void> {
@@ -169,8 +149,9 @@ export class DatabaseService {
     try {
       const res = await apiFetch<DatabaseMessage>(`message?id=${id}`);
       return Object.keys(res).length > 0 ? res : undefined;
-    } catch {
-      return undefined;
+    } catch (e: any) {
+      if (e.message && e.message.includes("404")) return undefined;
+      throw e;
     }
   }
 
@@ -186,10 +167,11 @@ export class DatabaseService {
     if (parentId !== null) {
       const msgs = await this.getConversationMessages(message.convId);
       const parent = msgs.find(m => m.id === parentId);
-      if (parent) {
-        parent.children.push(newMessage.id);
-        await apiFetch("messages", { method: "POST", body: JSON.stringify(parent) });
+      if (!parent) {
+        throw new Error(`Parent message ${parentId} not found`);
       }
+      parent.children.push(newMessage.id);
+      await apiFetch("messages", { method: "POST", body: JSON.stringify(parent) });
     }
     await apiFetch("messages", { method: "POST", body: JSON.stringify(newMessage) });
     await this.updateConversation(message.convId, { currNode: newMessage.id });
@@ -336,8 +318,9 @@ export class DatabaseService {
       if (note && Object.keys(note).length > 0) {
         await apiFetch("notes", { method: "POST", body: JSON.stringify({ ...note, ...updates, updatedAt: Date.now() }) });
       }
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      if (e.message && e.message.includes("404")) return;
+      throw e;
     }
   }
   static async deleteNote(id: string): Promise<void> {
@@ -364,8 +347,9 @@ export class DatabaseService {
       if (asset && Object.keys(asset).length > 0) {
         await apiFetch("fileAssets", { method: "POST", body: JSON.stringify({ ...asset, ...updates }) });
       }
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      if (e.message && e.message.includes("404")) return;
+      throw e;
     }
   }
   static async deleteFileAsset(id: string): Promise<void> {
@@ -387,6 +371,7 @@ export class DatabaseService {
       folders: await apiFetch<DatabaseFolder[]>("folders/all"),
       notes: await this.getAllNotes(),
       fileAssets: await this.getAllFileAssets(),
+      messages: await apiFetch<DatabaseMessage[]>("messages/all"),
       localStorage: localStorageData,
       timestamp: Date.now(),
     };

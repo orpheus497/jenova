@@ -35,13 +35,17 @@ end
 function git.push(workspace_path, remote, branch)
     remote = remote or "origin"
     branch = branch or "main"
-    return run_cmd("git push " .. remote .. " " .. branch, workspace_path)
+    local safe_remote = remote:gsub("'", "'\\''")
+    local safe_branch = branch:gsub("'", "'\\''")
+    return run_cmd("git push '" .. safe_remote .. "' '" .. safe_branch .. "'", workspace_path)
 end
 
 function git.pull(workspace_path, remote, branch)
     remote = remote or "origin"
     branch = branch or "main"
-    return run_cmd("git pull " .. remote .. " " .. branch, workspace_path)
+    local safe_remote = remote:gsub("'", "'\\''")
+    local safe_branch = branch:gsub("'", "'\\''")
+    return run_cmd("git pull '" .. safe_remote .. "' '" .. safe_branch .. "'", workspace_path)
 end
 
 return git
