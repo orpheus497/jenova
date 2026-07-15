@@ -90,10 +90,6 @@ function db.init(db_path)
             is_deleted INTEGER DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS idx_messages_convId ON messages(convId);
-        CREATE INDEX IF NOT EXISTS idx_projects_workspaceId ON projects(workspaceId);
-        CREATE INDEX IF NOT EXISTS idx_folders_projectId ON folders(projectId);
-        CREATE INDEX IF NOT EXISTS idx_notes_folderId ON notes(folderId);
-        CREATE INDEX IF NOT EXISTS idx_fileAssets_folderId ON fileAssets(folderId);
         CREATE TABLE IF NOT EXISTS workspaces (
             id TEXT PRIMARY KEY,
             name TEXT,
@@ -129,6 +125,10 @@ function db.init(db_path)
             content TEXT,
             is_deleted INTEGER DEFAULT 0
         );
+        CREATE INDEX IF NOT EXISTS idx_projects_workspaceId ON projects(workspaceId);
+        CREATE INDEX IF NOT EXISTS idx_folders_projectId ON folders(projectId);
+        CREATE INDEX IF NOT EXISTS idx_notes_folderId ON notes(folderId);
+        CREATE INDEX IF NOT EXISTS idx_fileAssets_folderId ON fileAssets(folderId);
         CREATE TABLE IF NOT EXISTS llm_cache (
             cache_key TEXT PRIMARY KEY,
             response TEXT,
@@ -212,8 +212,10 @@ local function execute_query(sql, params)
         elseif rc == SQLITE_DONE then
             break
         else
-            print("[db] Step error: " .. ffi.string(sql3.sqlite3_errmsg(db_ptr[0])))
-            break
+            local step_err = ffi.string(sql3.sqlite3_errmsg(db_ptr[0]))
+            print("[db] Step error: " .. step_err)
+            sql3.sqlite3_finalize(stmt[0])
+            return nil, step_err
         end
     end
     
@@ -340,7 +342,12 @@ function db.get_messages(convId)
         else
             row.children = {}
         end
-        if row.toolCalls and row.toolCalls ~= "" then row.toolCalls = row.toolCalls else row.toolCalls = nil end
+        if row.toolCalls and row.toolCalls ~= "" then
+            local ok, parsed = pcall(json.decode, row.toolCalls)
+            row.toolCalls = ok and parsed or nil
+        else
+            row.toolCalls = nil
+        end
         if row.extra and row.extra ~= "" then
             local ok, parsed = pcall(json.decode, row.extra)
             row.extra = ok and parsed or nil
@@ -365,7 +372,12 @@ function db.get_all_messages()
         else
             row.children = {}
         end
-        if row.toolCalls and row.toolCalls ~= "" then row.toolCalls = row.toolCalls else row.toolCalls = nil end
+        if row.toolCalls and row.toolCalls ~= "" then
+            local ok, parsed = pcall(json.decode, row.toolCalls)
+            row.toolCalls = ok and parsed or nil
+        else
+            row.toolCalls = nil
+        end
         if row.extra and row.extra ~= "" then
             local ok, parsed = pcall(json.decode, row.extra)
             row.extra = ok and parsed or nil
@@ -431,7 +443,12 @@ function db.get_message(id)
     else
         row.children = {}
     end
-    if row.toolCalls and row.toolCalls ~= "" then row.toolCalls = row.toolCalls else row.toolCalls = nil end
+    if row.toolCalls and row.toolCalls ~= "" then
+        local ok, parsed = pcall(json.decode, row.toolCalls)
+        row.toolCalls = ok and parsed or nil
+    else
+        row.toolCalls = nil
+    end
     if row.extra and row.extra ~= "" then
         local ok, parsed = pcall(json.decode, row.extra)
         row.extra = ok and parsed or nil

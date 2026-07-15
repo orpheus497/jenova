@@ -201,6 +201,8 @@ local function async_popen_read(cmd)
     while true do
         if os.time() - start_time > 15 then
             ffi.C.kill(pid, 9)
+            ffi.C.close(fd)
+            ffi.C.waitpid(pid, nil, 0)
             print("[proxy] async_popen_read timeout for pid " .. tostring(pid))
             return nil, "timeout"
         end
@@ -220,8 +222,9 @@ local function async_popen_read(cmd)
         end
     end
     ffi.C.close(fd)
-    ffi.C.waitpid(pid, nil, 0)
-    return table.concat(chunks)
+    local status_buf = ffi.new("int[1]")
+    ffi.C.waitpid(pid, status_buf, 0)
+    return table.concat(chunks), status_buf[0]
 end
 _G.async_popen_read = async_popen_read
 
@@ -676,8 +679,8 @@ local function proxy_connection(client_fd, conn_fds)
             local items = db.get_workspaces()
             if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
         elseif not is_get and headers_raw:match("^POST /api/db/workspaces") then
-            local item = json.decode(body_raw)
-            if item then
+            local ok_j, item = pcall(json.decode, body_raw)
+            if ok_j and type(item) == "table" and item.id and item.name then
                 local ok = db.insert_workspace(item)
                 if ok then 
                     local fs_ok = fs_sync.sync_workspace(item)
@@ -690,6 +693,8 @@ local function proxy_connection(client_fd, conn_fds)
                 else 
                     status = "500 Internal Server Error" 
                 end
+            else
+                status = "400 Bad Request"
             end
         elseif not is_get and headers_raw:match("^DELETE /api/db/workspaces/([^ %?\r\n]+)") then
             local id = headers_raw:match("^DELETE /api/db/workspaces/([^ %?\r\n]+)")
@@ -720,15 +725,32 @@ local function proxy_connection(client_fd, conn_fds)
             local items = db.get_projects(wid)
             if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
         elseif not is_get and headers_raw:match("^POST /api/db/projects") then
-            local item = json.decode(body_raw)
-            if item then
+            local ok_j, item = pcall(json.decode, body_raw)
+            if ok_j and type(item) == "table" and item.id and item.name then
                 local ok = db.insert_project(item)
                 if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
+            else
+                status = "400 Bad Request"
             end
         elseif not is_get and headers_raw:match("^DELETE /api/db/projects/([^ %?\r\n]+)") then
             local id = headers_raw:match("^DELETE /api/db/projects/([^ %?\r\n]+)")
-            local ok = db.delete_project(id)
-            if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
+            local p = db.get_project(id)
+            if not p then
+                status = "404 Not Found"
+            else
+                local fs_ok, trash_path, path = fs_sync.trash_project(p)
+                if not fs_ok then
+                    status = "500 Internal Server Error"
+                else
+                    local ok = db.delete_project(id)
+                    if ok then
+                        resp_body = '{"status":"ok"}'
+                    else
+                        if trash_path and path then os.rename(trash_path, path) end
+                        status = "500 Internal Server Error"
+                    end
+                end
+            end
         -- FOLDERS
         elseif is_get and db_route == "folders/all" then
             local items = db.get_all_folders()
@@ -738,15 +760,32 @@ local function proxy_connection(client_fd, conn_fds)
             local items = db.get_folders(pid)
             if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
         elseif not is_get and headers_raw:match("^POST /api/db/folders") then
-            local item = json.decode(body_raw)
-            if item then
+            local ok_j, item = pcall(json.decode, body_raw)
+            if ok_j and type(item) == "table" and item.id and item.name then
                 local ok = db.insert_folder(item)
                 if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
+            else
+                status = "400 Bad Request"
             end
         elseif not is_get and headers_raw:match("^DELETE /api/db/folders/([^ %?\r\n]+)") then
             local id = headers_raw:match("^DELETE /api/db/folders/([^ %?\r\n]+)")
-            local ok = db.delete_folder(id)
-            if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
+            local f = db.get_folder(id)
+            if not f then
+                status = "404 Not Found"
+            else
+                local fs_ok, trash_path, path = fs_sync.trash_folder(f)
+                if not fs_ok then
+                    status = "500 Internal Server Error"
+                else
+                    local ok = db.delete_folder(id)
+                    if ok then
+                        resp_body = '{"status":"ok"}'
+                    else
+                        if trash_path and path then os.rename(trash_path, path) end
+                        status = "500 Internal Server Error"
+                    end
+                end
+            end
         -- NOTES
         elseif is_get and db_route == "notes/all" then
             local items = db.get_all_notes()
@@ -762,8 +801,8 @@ local function proxy_connection(client_fd, conn_fds)
                 if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
             end
         elseif not is_get and headers_raw:match("^POST /api/db/notes") then
-            local item = json.decode(body_raw)
-            if item then
+            local ok_j, item = pcall(json.decode, body_raw)
+            if ok_j and type(item) == "table" and item.id and item.title then
                 local note = db.get_note(item.id)
                 local exists = note ~= nil
                 local ok = false
@@ -774,11 +813,16 @@ local function proxy_connection(client_fd, conn_fds)
                         if not exists then db.delete_note(item.id) else db.update_note(note) end
                         status = "500 Internal Server Error"
                     else
+                        if exists and (note.folderId ~= item.folderId or note.title ~= item.title) then
+                            fs_sync.trash_note(note)
+                        end
                         resp_body = '{"status":"ok"}' 
                     end
                 else 
                     status = "500 Internal Server Error" 
                 end
+            else
+                status = "400 Bad Request"
             end
         elseif not is_get and headers_raw:match("^DELETE /api/db/notes/([^ %?\r\n]+)") then
             local id = headers_raw:match("^DELETE /api/db/notes/([^ %?\r\n]+)")
@@ -805,8 +849,8 @@ local function proxy_connection(client_fd, conn_fds)
                 if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
             end
         elseif not is_get and headers_raw:match("^POST /api/db/fileAssets") then
-            local item = json.decode(body_raw)
-            if item then
+            local ok_j, item = pcall(json.decode, body_raw)
+            if ok_j and type(item) == "table" and item.id and item.name then
                 local asset = db.get_fileAsset(item.id)
                 local exists = asset ~= nil
                 local ok = false
@@ -817,11 +861,16 @@ local function proxy_connection(client_fd, conn_fds)
                         if not exists then db.delete_fileAsset(item.id) else db.update_fileAsset(asset) end
                         status = "500 Internal Server Error"
                     else
+                        if exists and (asset.folderId ~= item.folderId or asset.name ~= item.name) then
+                            fs_sync.trash_fileAsset(asset)
+                        end
                         resp_body = '{"status":"ok"}' 
                     end
                 else 
                     status = "500 Internal Server Error" 
                 end
+            else
+                status = "400 Bad Request"
             end
         elseif not is_get and headers_raw:match("^DELETE /api/db/fileAssets/([^ %?\r\n]+)") then
             local id = headers_raw:match("^DELETE /api/db/fileAssets/([^ %?\r\n]+)")

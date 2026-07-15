@@ -112,7 +112,7 @@ function fs_sync.sync_workspace(workspace)
     local safe_workspace = sanitize(workspace.name)
     local path = workspaces_dir .. "/" .. safe_workspace
     recursive_mkdir(path)
-    git.init(path)
+    return git.init(path)
 end
 
 function fs_sync.sync_note(note)
@@ -187,6 +187,33 @@ function fs_sync.trash_workspace(workspace)
     local trash_path = global_trash .. "/" .. os.time() .. "_" .. safe_workspace
     local ok, err = os.rename(path, trash_path)
     return ok ~= nil
+end
+
+function fs_sync.trash_project(project)
+    local workspace = db.get_workspace(project.workspaceId)
+    if not workspace then return false end
+    local safe_workspace = sanitize(workspace.name)
+    local safe_project = sanitize(project.name)
+    local path = workspaces_dir .. "/" .. safe_workspace .. "/" .. safe_project
+    local trash_dir = get_workspace_trash(safe_workspace)
+    local trash_path = trash_dir .. "/" .. os.time() .. "_" .. safe_project
+    local ok, err = os.rename(path, trash_path)
+    return ok ~= nil, trash_path, path
+end
+
+function fs_sync.trash_folder(folder)
+    local project = db.get_project(folder.projectId)
+    if not project then return false end
+    local workspace = db.get_workspace(project.workspaceId)
+    if not workspace then return false end
+    local safe_workspace = sanitize(workspace.name)
+    local safe_project = sanitize(project.name)
+    local safe_folder = sanitize(folder.name)
+    local path = workspaces_dir .. "/" .. safe_workspace .. "/" .. safe_project .. "/" .. safe_folder
+    local trash_dir = get_workspace_trash(safe_workspace)
+    local trash_path = trash_dir .. "/" .. os.time() .. "_" .. safe_folder
+    local ok, err = os.rename(path, trash_path)
+    return ok ~= nil, trash_path, path
 end
 
 return fs_sync

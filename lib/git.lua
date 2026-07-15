@@ -4,8 +4,11 @@ local os = require("os")
 local function run_cmd(cmd, cwd)
     local full_cmd = "cd '" .. cwd:gsub("'", "'\\''") .. "' && " .. cmd .. " 2>&1"
     if _G.async_popen_read then
-        local output, err = _G.async_popen_read(full_cmd)
-        if err then return false, err end
+        local output, status = _G.async_popen_read(full_cmd)
+        if not output then return false, status end
+        -- Check exit code via waitpid status (success is usually 0)
+        -- waitpid status is WIFEXITED && WEXITSTATUS. On POSIX, status 0 means success.
+        if status ~= 0 then return false, output end
         return true, output
     else
         local f = io.popen(full_cmd)
