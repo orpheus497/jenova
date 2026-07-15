@@ -27,27 +27,7 @@ import { WorkspaceService } from "./workspace.service";
 import { DatabaseService } from "./database.service";
 
 export class ChatService {
-  private static responseCache: Map<string, string> = new Map();
-
-  private static generateCacheKey(messages: ApiChatMessageData[]): string {
-    const last3 = messages.slice(-3);
-    const fingerprint = last3
-      .map((m) => {
-        let text = "";
-        if (typeof m.content === "string") text = m.content;
-        else if (Array.isArray(m.content))
-          text = m.content
-            .map((c: ApiChatMessageContentPart) => c.text || "")
-            .join("");
-        return `${m.role}:${text.substring(0, 100)}`;
-      })
-      .join("|");
-
-    return JSON.stringify({
-      messagesLen: messages.length,
-      fingerprint,
-    });
-  }
+  // Cache functionality delegated to proxy backend
 
   /**
    *
@@ -304,33 +284,7 @@ export class ChatService {
       }
     }
 
-    // Cache AG Check
-    const cacheKey = ChatService.generateCacheKey(normalizedMessages);
-    if (ChatService.responseCache.has(cacheKey)) {
-      const cachedResponse = ChatService.responseCache.get(cacheKey)!;
-      const fullText = "*(Cache AG hit)* \n\n" + cachedResponse;
-      if (stream && onChunk) onChunk(fullText);
-      if (onComplete) onComplete(fullText);
-      return stream ? undefined : fullText;
-    }
-
-    const originalOnComplete = onComplete;
-    const cachingOnComplete = (
-      responseStr: string,
-      reasoningContent?: string,
-      timings?: ChatMessageTimings,
-      toolCalls?: string,
-    ) => {
-      if (responseStr && responseStr.length > 10 && !signal?.aborted) {
-        ChatService.responseCache.set(cacheKey, responseStr);
-        if (ChatService.responseCache.size > 20) {
-          const firstKey = ChatService.responseCache.keys().next().value;
-          if (firstKey) ChatService.responseCache.delete(firstKey);
-        }
-      }
-      if (originalOnComplete)
-        originalOnComplete(responseStr, reasoningContent, timings, toolCalls);
-    };
+    const cachingOnComplete = onComplete;
 
     let attempt = 0;
     while (attempt < 3) {

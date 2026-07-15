@@ -8,8 +8,21 @@ local jca_home = os.getenv("JCA_HOME") or (home_dir .. "/Jenova")
 local workspaces_dir = os.getenv("JENOVA_WORKSPACES") or (jca_home .. "/Workspaces")
 local global_trash = jca_home .. "/.trash"
 
+local function run_os(cmd)
+    if _G.async_popen_read then
+        _G.async_popen_read(cmd)
+    else
+        os.execute(cmd)
+    end
+end
+
 local function recursive_mkdir(path)
-    os.execute("mkdir -p '" .. path:gsub("'", "'\\''") .. "'")
+    run_os("mkdir -p '" .. path:gsub("'", "'\\''") .. "'")
+end
+
+local function sanitize(str)
+    if not str then return "" end
+    return str:gsub("[/\\]", "_"):gsub("^%.+", "")
 end
 
 recursive_mkdir(global_trash)
@@ -30,7 +43,8 @@ local function get_physical_path_for_note(note)
     for _, w in ipairs(workspaces) do if w.id == project.workspaceId then workspace = w break end end
     if not workspace then return nil end
     
-    return string.format("%s/%s/%s/%s/%s.md", workspaces_dir, workspace.name, project.name, folder.name, note.title), workspace.name
+    local safe_title = sanitize(note.title)
+    return string.format("%s/%s/%s/%s/%s.md", workspaces_dir, workspace.name, project.name, folder.name, safe_title), workspace.name
 end
 
 local function get_physical_path_for_asset(asset)
@@ -48,7 +62,8 @@ local function get_physical_path_for_asset(asset)
     for _, w in ipairs(workspaces) do if w.id == project.workspaceId then workspace = w break end end
     if not workspace then return nil end
     
-    return string.format("%s/%s/%s/%s/%s", workspaces_dir, workspace.name, project.name, folder.name, asset.name), workspace.name
+    local safe_name = sanitize(asset.name)
+    return string.format("%s/%s/%s/%s/%s", workspaces_dir, workspace.name, project.name, folder.name, safe_name), workspace.name
 end
 
 local function get_workspace_trash(workspace_name)
@@ -106,7 +121,7 @@ function fs_sync.trash_note(note)
     local trash_dir = get_workspace_trash(ws_name)
     local filename = path:match("([^/]+)$")
     local trash_path = trash_dir .. "/" .. os.time() .. "_" .. filename
-    os.execute("mv '" .. path:gsub("'", "'\\''") .. "' '" .. trash_path:gsub("'", "'\\''") .. "' 2>/dev/null")
+    run_os("mv '" .. path:gsub("'", "'\\''") .. "' '" .. trash_path:gsub("'", "'\\''") .. "' 2>/dev/null")
     return true
 end
 
@@ -117,14 +132,14 @@ function fs_sync.trash_fileAsset(asset)
     local trash_dir = get_workspace_trash(ws_name)
     local filename = path:match("([^/]+)$")
     local trash_path = trash_dir .. "/" .. os.time() .. "_" .. filename
-    os.execute("mv '" .. path:gsub("'", "'\\''") .. "' '" .. trash_path:gsub("'", "'\\''") .. "' 2>/dev/null")
+    run_os("mv '" .. path:gsub("'", "'\\''") .. "' '" .. trash_path:gsub("'", "'\\''") .. "' 2>/dev/null")
     return true
 end
 
 function fs_sync.trash_workspace(workspace)
     local path = workspaces_dir .. "/" .. workspace.name
     local trash_path = global_trash .. "/" .. os.time() .. "_" .. workspace.name
-    os.execute("mv '" .. path:gsub("'", "'\\''") .. "' '" .. trash_path:gsub("'", "'\\''") .. "' 2>/dev/null")
+    run_os("mv '" .. path:gsub("'", "'\\''") .. "' '" .. trash_path:gsub("'", "'\\''") .. "' 2>/dev/null")
     return true
 end
 

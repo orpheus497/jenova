@@ -314,26 +314,7 @@ export class DatabaseService {
     return await apiFetch<DatabaseNote[]>(`notes?folderId=${folderId || ""}`);
   }
   static async getAllNotes(): Promise<DatabaseNote[]> {
-    const notes: DatabaseNote[] = [];
-    const workspaces = await this.getAllWorkspaces();
-    for (const w of workspaces) {
-      const projs = await this.getWorkspaceProjects(w.id);
-      for (const p of projs) {
-        const folds = await this.getProjectFolders(p.id);
-        for (const f of folds) {
-           const n = await this.getFolderNotes(f.id);
-           notes.push(...n);
-        }
-      }
-    }
-    const rootFolds = await this.getProjectFolders(null);
-    for (const f of rootFolds) {
-        const n = await this.getFolderNotes(f.id);
-        notes.push(...n);
-    }
-    const rootNotes = await this.getFolderNotes(null);
-    notes.push(...rootNotes);
-    return notes;
+    return await apiFetch<DatabaseNote[]>("notes/all");
   }
   static async updateNote(id: string, updates: Partial<Omit<DatabaseNote, "id">>): Promise<void> {
     const all = await this.getAllNotes();
@@ -358,21 +339,7 @@ export class DatabaseService {
     return await apiFetch<DatabaseFileAsset[]>(`fileAssets?folderId=${folderId || ""}`);
   }
   static async getAllFileAssets(): Promise<DatabaseFileAsset[]> {
-    const assets: DatabaseFileAsset[] = [];
-    const rootAssets = await this.getFolderFileAssets(null);
-    assets.push(...rootAssets);
-    const workspaces = await this.getAllWorkspaces();
-    for (const w of workspaces) {
-      const projs = await this.getWorkspaceProjects(w.id);
-      for (const p of projs) {
-        const folds = await this.getProjectFolders(p.id);
-        for (const f of folds) {
-           const a = await this.getFolderFileAssets(f.id);
-           assets.push(...a);
-        }
-      }
-    }
-    return assets;
+    return await apiFetch<DatabaseFileAsset[]>("fileAssets/all");
   }
   static async updateFileAsset(id: string, updates: Partial<Omit<DatabaseFileAsset, "id">>): Promise<void> {
     const all = await this.getAllFileAssets();
@@ -412,5 +379,22 @@ export class DatabaseService {
       }
     }
     console.warn("Import via UI replaced with server persistence");
+  }
+
+  static async getCache(key: string): Promise<string | null> {
+    try {
+      const res = await apiFetch<any>(`cache?key=${encodeURIComponent(key)}`);
+      return res.response || null;
+    } catch {
+      return null;
+    }
+  }
+
+  static async setCache(key: string, response: string): Promise<void> {
+    try {
+      await apiFetch("cache", { method: "POST", body: JSON.stringify({ key, response }) });
+    } catch (e) {
+      console.error("[Cache] Failed to save", e);
+    }
   }
 }

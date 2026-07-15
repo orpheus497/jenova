@@ -2,12 +2,17 @@ local git = {}
 local os = require("os")
 
 local function run_cmd(cmd, cwd)
-    local full_cmd = "cd '" .. cwd:gsub("'", "'\\''") .. "' && " .. cmd
-    local f = io.popen(full_cmd .. " 2>&1")
-    if not f then return false, "failed to run command" end
-    local output = f:read("*a")
-    local success = {f:close()}
-    return success[1], output
+    local full_cmd = "cd '" .. cwd:gsub("'", "'\\''") .. "' && " .. cmd .. " 2>&1"
+    if _G.async_popen_read then
+        local output = _G.async_popen_read(full_cmd)
+        return true, output
+    else
+        local f = io.popen(full_cmd)
+        if not f then return false, "failed to run command" end
+        local output = f:read("*a")
+        local success = {f:close()}
+        return success[1], output
+    end
 end
 
 function git.init(workspace_path)

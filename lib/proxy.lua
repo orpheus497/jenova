@@ -191,18 +191,15 @@ local function async_popen_read(cmd)
     
     local chunks = {}
     local buf = ffi.new("char[4096]")
+    local start_time = os.time()
     while true do
+        if os.time() - start_time > 15 then
+            ffi.C.kill(pid, 9)
+            print("[proxy] async_popen_read timeout for pid " .. tostring(pid))
+            break
+        end
         local n = ffi.C.read(fd, buf, 4096)
         if n > 0 then
-        if watch_stdin and _ffi_defs.FD_ISSET(0, read_fds) then
-            local tmp_buf = ffi.new("char[1]")
-            local r = ffi.C.read(0, tmp_buf, 1)
-            if r <= 0 then
-                print("[proxy] EOF on stdin, parent process died. Shutting down...")
-                running = false
-                break
-            end
-        end
             chunks[#chunks + 1] = ffi.string(buf, n)
         elseif n == 0 then
             break
@@ -219,6 +216,7 @@ local function async_popen_read(cmd)
     ffi.C.waitpid(pid, nil, 0)
     return table.concat(chunks)
 end
+_G.async_popen_read = async_popen_read
 
 -- Detect available HTTPS-capable command-line tool (once at startup).
 -- FreeBSD: 'fetch' is in base. Linux/other: fall back to 'curl'.
@@ -452,9 +450,9 @@ local function proxy_connection(client_fd, conn_fds)
     local start_time = os.time()
     set_nonblocking(client_fd)
     set_socket_opts(client_fd)
-    conn_fds.client = client_fd
-    conn_fds.llama = -1
-
+    local conn_fds = {}
+    local req_cache_key = nil
+    
     local function safe_close()
         if conn_fds.llama >= 0 then pcall(ffi.C.close, conn_fds.llama); conn_fds.llama = -1 end
         if conn_fds.client >= 0 then pcall(ffi.C.close, conn_fds.client); conn_fds.client = -1 end
@@ -692,6 +690,9 @@ local function proxy_connection(client_fd, conn_fds)
             local ok = db.delete_folder(id)
             if ok then resp_body = '{"status":"ok"}' else status = "500" end
         -- NOTES
+        elseif is_get and db_route == "notes/all" then
+            local items = db.get_all_notes()
+            if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
         elseif is_get and db_route == "notes" then
             local fid = headers_raw:match("folderId=([^ %&\r\n]+)")
             local items = db.get_notes(fid)
@@ -708,12 +709,14 @@ local function proxy_connection(client_fd, conn_fds)
             end
         elseif not is_get and headers_raw:match("^DELETE /api/db/notes/([^ %?\r\n]+)") then
             local id = headers_raw:match("^DELETE /api/db/notes/([^ %?\r\n]+)")
-            -- In real logic, we'd find the note and trash it. Let's do it simply by fetching all for now.
-            -- Actually, db.get_notes needs folderId. Since we don't have it, we might need a general get_note(id).
-            -- We'll skip physical trashing for notes deleted here for simplicity, or we add db.get_note_by_id(id).
+            local note = db.get_note(id)
+            if note then fs_sync.trash_note(note) end
             local ok = db.delete_note(id)
             if ok then resp_body = '{"status":"ok"}' else status = "500" end
         -- FILEASSETS
+        elseif is_get and db_route == "fileAssets/all" then
+            local items = db.get_all_fileAssets()
+            if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
         elseif is_get and db_route == "fileAssets" then
             local fid = headers_raw:match("folderId=([^ %&\r\n]+)")
             local items = db.get_fileAssets(fid)
@@ -730,8 +733,27 @@ local function proxy_connection(client_fd, conn_fds)
             end
         elseif not is_get and headers_raw:match("^DELETE /api/db/fileAssets/([^ %?\r\n]+)") then
             local id = headers_raw:match("^DELETE /api/db/fileAssets/([^ %?\r\n]+)")
+            local asset = db.get_fileAsset(id)
+            if asset then fs_sync.trash_fileAsset(asset) end
             local ok = db.delete_fileAsset(id)
             if ok then resp_body = '{"status":"ok"}' else status = "500" end
+        -- CACHE
+        elseif is_get and db_route:match("^cache%?") then
+            local key = url_decode(headers_raw:match("key=([^ %&\r\n]+)"))
+            if key then
+                local row = db.get_cache(key)
+                if row then resp_body = json.encode(row) else status = "404 Not Found" end
+            else
+                status = "400 Bad Request"
+            end
+        elseif not is_get and headers_raw:match("^POST /api/db/cache") then
+            local item = json.decode(body_raw)
+            if item and item.key and item.response then
+                local ok = db.set_cache(item.key, item.response)
+                if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
+            else
+                status = "400 Bad Request"
+            end
         else
             status = "404 Not Found"
         end
@@ -1066,6 +1088,27 @@ local function proxy_connection(client_fd, conn_fds)
                 if web_context ~= "" then dispatch_msg = dispatch_msg .. " | Web: OK" end
                 if has_tools then dispatch_msg = dispatch_msg .. " | Tools: " .. #req_json.tools end
                 print(dispatch_msg)
+
+                -- Cache Intercept
+                local tmp = "/tmp/jca_hash_" .. os.time() .. "_" .. math.random(100000)
+                local f = io.open(tmp, "wb")
+                if f then
+                    f:write(new_body)
+                    f:close()
+                    local hash_out = async_popen_read("sha256sum " .. tmp .. " 2>/dev/null") or ""
+                    os.remove(tmp)
+                    local key = hash_out:match("^(%w+)")
+                    if key then
+                        local cached = db.get_cache(key)
+                        if cached and cached.response then
+                            print("[proxy] Cache AG hit for " .. key)
+                            async_send(client_fd, cached.response)
+                            safe_close()
+                            return
+                        end
+                        req_cache_key = key
+                    end
+                end
             end
         end
     end
@@ -1113,11 +1156,19 @@ local function proxy_connection(client_fd, conn_fds)
         return
     end
 
+    local resp_buffer = {}
     while true do
         local n = async_recv(llama_fd, buf, 8192)
         if n <= 0 then break end
         local to_send = ffi.string(buf, n)
+        if req_cache_key then resp_buffer[#resp_buffer+1] = to_send end
         if async_send(client_fd, to_send) < 0 then break end
+    end
+
+    if req_cache_key and #resp_buffer > 0 then
+        local full_resp = table.concat(resp_buffer)
+        db.set_cache(req_cache_key, full_resp)
+        print("[proxy] Cached response for " .. req_cache_key)
     end
 
     safe_close()

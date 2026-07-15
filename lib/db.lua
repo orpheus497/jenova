@@ -25,6 +25,7 @@ ffi.cdef[[
     int sqlite3_column_type(sqlite3_stmt*, int iCol);
     int sqlite3_column_int(sqlite3_stmt*, int iCol);
     int64_t sqlite3_column_int64(sqlite3_stmt*, int iCol);
+    double sqlite3_column_double(sqlite3_stmt*, int iCol);
     const unsigned char *sqlite3_column_text(sqlite3_stmt*, int iCol);
     
     void sqlite3_free(void*);
@@ -119,6 +120,11 @@ function db.init(db_path)
             content TEXT,
             is_deleted INTEGER DEFAULT 0
         );
+        CREATE TABLE IF NOT EXISTS llm_cache (
+            cache_key TEXT PRIMARY KEY,
+            response TEXT,
+            timestamp INTEGER
+        );
     ]]
     
     local errmsg = ffi.new("char*[1]")
@@ -152,7 +158,7 @@ local function execute_query(sql, params)
                 sql3.sqlite3_bind_int64(stmt[0], i, v)
             elseif type(v) == "string" then
                 sql3.sqlite3_bind_text(stmt[0], i, v, #v, ffi.cast("void(*)(void*)", 0)) -- SQLITE_STATIC
-            elseif v == nil then
+            elseif v == nil or v == json.null then
                 sql3.sqlite3_bind_null(stmt[0], i)
             else
                 local str_v = tostring(v)
@@ -174,7 +180,7 @@ local function execute_query(sql, params)
                 if ctype == SQLITE_INTEGER then
                     row[name] = tonumber(sql3.sqlite3_column_int64(stmt[0], i))
                 elseif ctype == SQLITE_FLOAT then
-                    row[name] = tonumber(sql3.sqlite3_column_int64(stmt[0], i))
+                    row[name] = tonumber(sql3.sqlite3_column_double(stmt[0], i))
                 elseif ctype == SQLITE_TEXT then
                     local text = sql3.sqlite3_column_text(stmt[0], i)
                     row[name] = text ~= nil and ffi.string(text) or ""
@@ -389,13 +395,26 @@ end
 function db.get_notes(folderId)
     local sql = ""
     local params = {}
-    if folderId == nil or folderId == "" then
+    if folderId == nil or folderId == "" or folderId == json.null then
         sql = "SELECT * FROM notes WHERE folderId IS NULL AND is_deleted = 0"
     else
         sql = "SELECT * FROM notes WHERE folderId = ? AND is_deleted = 0"
         params = {folderId}
     end
     local rows, err = execute_query(sql, params)
+    return rows, err
+end
+
+function db.get_note(id)
+    local sql = "SELECT * FROM notes WHERE id = ? AND is_deleted = 0"
+    local rows, err = execute_query(sql, {id})
+    if err or not rows or #rows == 0 then return nil, err end
+    return rows[1]
+end
+
+function db.get_all_notes()
+    local sql = "SELECT * FROM notes WHERE is_deleted = 0"
+    local rows, err = execute_query(sql)
     return rows, err
 end
 
@@ -420,13 +439,26 @@ end
 function db.get_fileAssets(folderId)
     local sql = ""
     local params = {}
-    if folderId == nil or folderId == "" then
+    if folderId == nil or folderId == "" or folderId == json.null then
         sql = "SELECT * FROM fileAssets WHERE folderId IS NULL AND is_deleted = 0"
     else
         sql = "SELECT * FROM fileAssets WHERE folderId = ? AND is_deleted = 0"
         params = {folderId}
     end
     local rows, err = execute_query(sql, params)
+    return rows, err
+end
+
+function db.get_fileAsset(id)
+    local sql = "SELECT * FROM fileAssets WHERE id = ? AND is_deleted = 0"
+    local rows, err = execute_query(sql, {id})
+    if err or not rows or #rows == 0 then return nil, err end
+    return rows[1]
+end
+
+function db.get_all_fileAssets()
+    local sql = "SELECT * FROM fileAssets WHERE is_deleted = 0"
+    local rows, err = execute_query(sql)
     return rows, err
 end
 
@@ -445,6 +477,19 @@ end
 function db.delete_fileAsset(id)
     local sql = "UPDATE fileAssets SET is_deleted = 1 WHERE id = ?"
     local _, err = execute_query(sql, {id})
+    return err == nil, err
+end
+
+function db.get_cache(key)
+    local sql = "SELECT * FROM llm_cache WHERE cache_key = ?"
+    local rows, err = execute_query(sql, {key})
+    if err or not rows or #rows == 0 then return nil, err end
+    return rows[1]
+end
+
+function db.set_cache(key, response)
+    local sql = "INSERT OR REPLACE INTO llm_cache (cache_key, response, timestamp) VALUES (?, ?, ?)"
+    local _, err = execute_query(sql, {key, response, os.time()})
     return err == nil, err
 end
 
