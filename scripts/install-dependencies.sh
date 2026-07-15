@@ -92,6 +92,7 @@ get_packages_for_manager() {
         pkg)
             # FreeBSD
             cat << 'EOF'
+sqlite3:sqlite3
 git:git
 cmake:cmake
 luajit:luajit-openresty
@@ -116,6 +117,7 @@ EOF
         pacman)
             # Arch Linux
             cat << 'EOF'
+sqlite3:sqlite
 git:git
 cmake:cmake
 luajit:luajit
@@ -146,6 +148,7 @@ EOF
             fi
 
             cat << EOF
+sqlite3:sqlite3
 git:git
 cmake:cmake
 luajit:luajit
@@ -171,6 +174,7 @@ EOF
         dnf)
             # Fedora/RHEL
             cat << 'EOF'
+sqlite3:sqlite
 git:git
 cmake:cmake
 luajit:luajit
@@ -196,6 +200,7 @@ EOF
         brew)
             # macOS Homebrew
             cat << 'EOF'
+sqlite3:sqlite
 git:git
 cmake:cmake
 luajit:luajit
@@ -219,6 +224,7 @@ EOF
         zypper)
             # openSUSE zypper
             cat << 'EOF'
+sqlite3:sqlite3
 git:git
 cmake:cmake
 luajit:luajit
@@ -242,6 +248,7 @@ EOF
         xbps)
             # Void Linux xbps
             cat << 'EOF'
+sqlite3:sqlite
 git:git
 cmake:cmake
 luajit:luajit
@@ -397,7 +404,7 @@ if [ -z "$PACKAGES" ]; then
 fi
 
 # Required dependencies
-REQUIRED_DEPS="git cmake luajit gettext vulkan lua54 curl realpath pkg-config gtk3 appindicator ncurses"
+REQUIRED_DEPS="git cmake sqlite3 luajit gettext vulkan lua54 curl realpath pkg-config gtk3 appindicator ncurses"
 OPTIONAL_DEPS="gmake glslc clangd stylua node spirv-headers luajit-dev luajit-devel"
 
 if [ "$REQUIRED_ONLY" = "1" ]; then
