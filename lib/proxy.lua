@@ -201,30 +201,18 @@ local function async_popen_read(cmd)
             break
         end
         
-        local readfds = _ffi_defs.fd_set_new()
-        _ffi_defs.FD_ZERO(readfds)
-        _ffi_defs.FD_SET(fd, readfds)
-        local tv = ffi.new("struct timeval", {tv_sec=0, tv_usec=100000}) -- 100ms
-        local res = ffi.C.select(fd + 1, readfds, nil, nil, tv)
-        
-        if res > 0 then
-            local n = ffi.C.read(fd, buf, 4096)
-            if n > 0 then
-                chunks[#chunks + 1] = ffi.string(buf, n)
-            elseif n == 0 then
-                break
-            else
-                local err = ffi.errno()
-                if err == _ffi_defs.EAGAIN or err == _ffi_defs.EWOULDBLOCK then
-                    coroutine.yield("read", fd)
-                else
-                    break
-                end
-            end
-        elseif res == 0 then
-            coroutine.yield("read", fd)
-        else
+        local n = ffi.C.read(fd, buf, 4096)
+        if n > 0 then
+            chunks[#chunks + 1] = ffi.string(buf, n)
+        elseif n == 0 then
             break
+        else
+            local err = ffi.errno()
+            if err == _ffi_defs.EAGAIN or err == _ffi_defs.EWOULDBLOCK then
+                coroutine.yield("read", fd)
+            else
+                break
+            end
         end
     end
     ffi.C.close(fd)
@@ -465,7 +453,6 @@ local function proxy_connection(client_fd, conn_fds)
     local start_time = os.time()
     set_nonblocking(client_fd)
     set_socket_opts(client_fd)
-    local conn_fds = { client = client_fd, llama = -1 }
     local req_cache_key = nil
     
     local function safe_close()
