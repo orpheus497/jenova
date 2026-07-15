@@ -8,16 +8,15 @@ local jca_home = os.getenv("JCA_HOME") or (home_dir .. "/Jenova")
 local workspaces_dir = os.getenv("JENOVA_WORKSPACES") or (jca_home .. "/Workspaces")
 local global_trash = jca_home .. "/.trash"
 
-local function run_os(cmd)
-    if _G.async_popen_read then
-        _G.async_popen_read(cmd)
-    else
-        os.execute(cmd)
-    end
-end
-
 local function recursive_mkdir(path)
-    run_os("mkdir -p '" .. path:gsub("'", "'\\''") .. "'")
+    local p = ""
+    if path:sub(1,1) == "/" then
+        p = "/"
+    end
+    for dir in path:gmatch("[^/]+") do
+        if p == "/" then p = p .. dir else p = p .. "/" .. dir end
+        ffi.C.mkdir(p, 511) -- 0777 octal is 511 decimal
+    end
 end
 
 local function sanitize(str)
@@ -121,7 +120,7 @@ function fs_sync.trash_note(note)
     local trash_dir = get_workspace_trash(ws_name)
     local filename = path:match("([^/]+)$")
     local trash_path = trash_dir .. "/" .. os.time() .. "_" .. filename
-    run_os("mv '" .. path:gsub("'", "'\\''") .. "' '" .. trash_path:gsub("'", "'\\''") .. "' 2>/dev/null")
+    os.rename(path, trash_path)
     return true
 end
 
@@ -132,14 +131,14 @@ function fs_sync.trash_fileAsset(asset)
     local trash_dir = get_workspace_trash(ws_name)
     local filename = path:match("([^/]+)$")
     local trash_path = trash_dir .. "/" .. os.time() .. "_" .. filename
-    run_os("mv '" .. path:gsub("'", "'\\''") .. "' '" .. trash_path:gsub("'", "'\\''") .. "' 2>/dev/null")
+    os.rename(path, trash_path)
     return true
 end
 
 function fs_sync.trash_workspace(workspace)
     local path = workspaces_dir .. "/" .. workspace.name
     local trash_path = global_trash .. "/" .. os.time() .. "_" .. workspace.name
-    run_os("mv '" .. path:gsub("'", "'\\''") .. "' '" .. trash_path:gsub("'", "'\\''") .. "' 2>/dev/null")
+    os.rename(path, trash_path)
     return true
 end
 

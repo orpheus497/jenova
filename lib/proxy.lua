@@ -16,6 +16,7 @@ local embed = require("embed")
 local prompts = require("prompts")
 local db = require("db")
 local fs_sync = require("fs_sync")
+local sha256 = require("sha256")
 
 -- MIME types for static file serving
 local MIME_TYPES = {
@@ -1090,24 +1091,16 @@ local function proxy_connection(client_fd, conn_fds)
                 print(dispatch_msg)
 
                 -- Cache Intercept
-                local tmp = "/tmp/jca_hash_" .. os.time() .. "_" .. math.random(100000)
-                local f = io.open(tmp, "wb")
-                if f then
-                    f:write(new_body)
-                    f:close()
-                    local hash_out = async_popen_read("sha256sum " .. tmp .. " 2>/dev/null") or ""
-                    os.remove(tmp)
-                    local key = hash_out:match("^(%w+)")
-                    if key then
-                        local cached = db.get_cache(key)
-                        if cached and cached.response then
-                            print("[proxy] Cache AG hit for " .. key)
-                            async_send(client_fd, cached.response)
-                            safe_close()
-                            return
-                        end
-                        req_cache_key = key
+                local key = sha256.sha256(new_body)
+                if key then
+                    local cached = db.get_cache(key)
+                    if cached and cached.response then
+                        print("[proxy] Cache AG hit for " .. key)
+                        async_send(client_fd, cached.response)
+                        safe_close()
+                        return
                     end
+                    req_cache_key = key
                 end
             end
         end

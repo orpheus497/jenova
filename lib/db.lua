@@ -157,12 +157,12 @@ local function execute_query(sql, params)
             if type(v) == "number" then
                 sql3.sqlite3_bind_int64(stmt[0], i, v)
             elseif type(v) == "string" then
-                sql3.sqlite3_bind_text(stmt[0], i, v, #v, ffi.cast("void(*)(void*)", 0)) -- SQLITE_STATIC
+                sql3.sqlite3_bind_text(stmt[0], i, v, #v, ffi.cast("void(*)(void*)", -1)) -- SQLITE_TRANSIENT
             elseif v == nil or v == json.null then
                 sql3.sqlite3_bind_null(stmt[0], i)
             else
                 local str_v = tostring(v)
-                sql3.sqlite3_bind_text(stmt[0], i, str_v, #str_v, ffi.cast("void(*)(void*)", 0))
+                sql3.sqlite3_bind_text(stmt[0], i, str_v, #str_v, ffi.cast("void(*)(void*)", -1)) -- SQLITE_TRANSIENT
             end
         end
     end
