@@ -129,6 +129,9 @@ export class DatabaseService {
     if (!sourceConv) throw new Error("Not found");
     const allMessages = await this.getConversationMessages(sourceConvId);
     const pathMessages = filterByLeafNodeId(allMessages, atMessageId, true) as DatabaseMessage[];
+    if (pathMessages.length === 0) {
+      throw new Error(`Could not resolve message path to ${atMessageId}`);
+    }
     
     const idMap = new Map<string, string>();
     for (const msg of pathMessages) idMap.set(msg.id, uuid());

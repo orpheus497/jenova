@@ -193,24 +193,38 @@ local function async_popen_read(cmd)
     local chunks = {}
     local buf = ffi.new("char[4096]")
     local start_time = os.time()
+    
     while true do
         if os.time() - start_time > 15 then
             ffi.C.kill(pid, 9)
             print("[proxy] async_popen_read timeout for pid " .. tostring(pid))
             break
         end
-        local n = ffi.C.read(fd, buf, 4096)
-        if n > 0 then
-            chunks[#chunks + 1] = ffi.string(buf, n)
-        elseif n == 0 then
-            break
-        else
-            local err = ffi.errno()
-            if err == _ffi_defs.EAGAIN or err == _ffi_defs.EWOULDBLOCK then
-                coroutine.yield("read", fd)
-            else
+        
+        local readfds = _ffi_defs.fd_set_new()
+        _ffi_defs.FD_ZERO(readfds)
+        _ffi_defs.FD_SET(fd, readfds)
+        local tv = ffi.new("struct timeval", {tv_sec=0, tv_usec=100000}) -- 100ms
+        local res = ffi.C.select(fd + 1, readfds, nil, nil, tv)
+        
+        if res > 0 then
+            local n = ffi.C.read(fd, buf, 4096)
+            if n > 0 then
+                chunks[#chunks + 1] = ffi.string(buf, n)
+            elseif n == 0 then
                 break
+            else
+                local err = ffi.errno()
+                if err == _ffi_defs.EAGAIN or err == _ffi_defs.EWOULDBLOCK then
+                    coroutine.yield("read", fd)
+                else
+                    break
+                end
             end
+        elseif res == 0 then
+            coroutine.yield("read", fd)
+        else
+            break
         end
     end
     ffi.C.close(fd)
@@ -451,7 +465,7 @@ local function proxy_connection(client_fd, conn_fds)
     local start_time = os.time()
     set_nonblocking(client_fd)
     set_socket_opts(client_fd)
-    local conn_fds = {}
+    local conn_fds = { client = client_fd, llama = -1 }
     local req_cache_key = nil
     
     local function safe_close()
@@ -632,7 +646,7 @@ local function proxy_connection(client_fd, conn_fds)
             local id = headers_raw:match("^DELETE /api/db/conversations/([^ %?\r\n]+)")
             local ok = db.delete_conversation(id)
             if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
-        elseif is_get and db_route:match("^message%?") then
+        elseif is_get and db_route == "message" then
             local id = headers_raw:match("id=([^ %&\r\n]+)")
             local msg = db.get_message(id)
             if msg then resp_body = json.encode(msg) else status = "404 Not Found" end
@@ -781,7 +795,7 @@ local function proxy_connection(client_fd, conn_fds)
                 status = "400 Bad Request"
             end
         -- CACHE
-        elseif is_get and db_route:match("^cache%?") then
+        elseif is_get and db_route == "cache" then
             local key = url_decode(headers_raw:match("key=([^ %&\r\n]+)"))
             if key then
                 local row = db.get_cache(key)

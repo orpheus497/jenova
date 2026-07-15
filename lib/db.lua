@@ -30,6 +30,7 @@ ffi.cdef[[
     int sqlite3_column_bytes(sqlite3_stmt*, int iCol);
     const void *sqlite3_column_blob(sqlite3_stmt*, int iCol);
     int sqlite3_bind_blob(sqlite3_stmt*, int, const void*, int n, void(*)(void*));
+    int sqlite3_bind_parameter_count(sqlite3_stmt*);
     
     void sqlite3_free(void*);
 ]]
@@ -156,7 +157,9 @@ local function execute_query(sql, params)
     end
 
     if params then
-        for i, v in ipairs(params) do
+        local param_count = sql3.sqlite3_bind_parameter_count(stmt[0])
+        for i = 1, param_count do
+            local v = params[i]
             if type(v) == "number" then
                 sql3.sqlite3_bind_int64(stmt[0], i, v)
             elseif type(v) == "string" then
@@ -404,6 +407,13 @@ function db.get_projects(workspaceId)
     return rows, err
 end
 
+function db.get_project(id)
+    local sql = "SELECT * FROM projects WHERE id = ? AND is_deleted = 0"
+    local rows, err = execute_query(sql, {id})
+    if err or not rows or #rows == 0 then return nil, err end
+    return rows[1]
+end
+
 function db.insert_project(p)
     local sql = "INSERT INTO projects (id, workspaceId, name, is_deleted) VALUES (?, ?, ?, 0)"
     local _, err = execute_query(sql, {p.id, p.workspaceId, p.name})
@@ -437,6 +447,13 @@ function db.get_folders(projectId)
     end
     local rows, err = execute_query(sql, params)
     return rows, err
+end
+
+function db.get_folder(id)
+    local sql = "SELECT * FROM folders WHERE id = ? AND is_deleted = 0"
+    local rows, err = execute_query(sql, {id})
+    if err or not rows or #rows == 0 then return nil, err end
+    return rows[1]
 end
 
 function db.insert_folder(f)

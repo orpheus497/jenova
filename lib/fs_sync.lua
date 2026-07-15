@@ -65,13 +65,11 @@ recursive_mkdir(global_trash)
 -- Traverse db to construct physical path
 local function get_physical_path_for_note(note)
     if not note.folderId or note.folderId == "" then return nil end
-    local folder = nil
-    local folders, _ = db.get_folders(note.folderId)
-    if folders and #folders > 0 then folder = folders[1] else return nil end
+    local folder = db.get_folder(note.folderId)
+    if not folder then return nil end
     
-    local project = nil
-    local projects, _ = db.get_projects(folder.projectId)
-    if projects and #projects > 0 then project = projects[1] else return nil end
+    local project = db.get_project(folder.projectId)
+    if not project then return nil end
     
     local workspace = nil
     local workspaces, _ = db.get_workspaces()
@@ -87,13 +85,11 @@ end
 
 local function get_physical_path_for_asset(asset)
     if not asset.folderId or asset.folderId == "" then return nil end
-    local folder = nil
-    local folders, _ = db.get_folders(asset.folderId)
-    if folders and #folders > 0 then folder = folders[1] else return nil end
+    local folder = db.get_folder(asset.folderId)
+    if not folder then return nil end
     
-    local project = nil
-    local projects, _ = db.get_projects(folder.projectId)
-    if projects and #projects > 0 then project = projects[1] else return nil end
+    local project = db.get_project(folder.projectId)
+    if not project then return nil end
     
     local workspace = nil
     local workspaces, _ = db.get_workspaces()
