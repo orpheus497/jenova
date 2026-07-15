@@ -636,12 +636,16 @@ local function proxy_connection(client_fd, conn_fds)
             end
         elseif not is_get and headers_raw:match("^DELETE /api/db/conversations/([^ %?\r\n]+)") then
             local id = headers_raw:match("^DELETE /api/db/conversations/([^ %?\r\n]+)")
-            local ok = db.delete_conversation(id)
+            local delete_with_forks = request_line:match("deleteWithForks=true") ~= nil
+            local ok = db.delete_conversation(id, delete_with_forks)
             if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
         elseif is_get and db_route == "message" then
             local id = request_line:match("id=([^ %&\r\n]+)")
             local msg = db.get_message(id)
             if msg then resp_body = json.encode(msg) else status = "404 Not Found" end
+        elseif is_get and db_route == "messages/all" then
+            local msgs = db.get_all_messages()
+            if msgs then resp_body = json.encode(msgs) else status = "500 Internal Server Error" end
         elseif is_get and db_route == "messages" then
             local convId = request_line:match("convId=([^ %&\r\n]+)")
             local msgs = db.get_messages(convId)
@@ -670,7 +674,7 @@ local function proxy_connection(client_fd, conn_fds)
         -- WORKSPACES
         elseif is_get and db_route == "workspaces" then
             local items = db.get_workspaces()
-            if items then resp_body = json.encode(items) else status = "500" end
+            if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
         elseif not is_get and headers_raw:match("^POST /api/db/workspaces") then
             local item = json.decode(body_raw)
             if item then
@@ -692,12 +696,20 @@ local function proxy_connection(client_fd, conn_fds)
             local workspaces = db.get_workspaces()
             local target_w = nil
             for _, w in ipairs(workspaces or {}) do if w.id == id then target_w = w break end end
-            local ok = db.delete_workspace(id)
-            if ok then
-                if target_w then fs_sync.trash_workspace(target_w) end
-                resp_body = '{"status":"ok"}'
+            if not target_w then
+                status = "404 Not Found"
             else
-                status = "500 Internal Server Error"
+                local fs_ok = fs_sync.trash_workspace(target_w)
+                if not fs_ok then
+                    status = "500 Internal Server Error"
+                else
+                    local ok = db.delete_workspace(id)
+                    if ok then
+                        resp_body = '{"status":"ok"}'
+                    else
+                        status = "500 Internal Server Error"
+                    end
+                end
             end
         -- PROJECTS
         elseif is_get and db_route == "projects/all" then

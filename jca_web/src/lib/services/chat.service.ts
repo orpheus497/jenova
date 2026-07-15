@@ -406,6 +406,7 @@ export class ChatService {
       reasoningContent?: string,
       timings?: ChatMessageTimings,
       toolCalls?: string,
+      isCacheHit?: boolean,
     ) => void,
     onError?: (error: Error) => void,
     onReasoningChunk?: (chunk: string) => void,
@@ -573,6 +574,7 @@ export class ChatService {
           fullReasoningContent || undefined,
           lastTimings,
           finalToolCalls,
+          isCacheHit,
         );
       }
     } catch (error) {
@@ -603,6 +605,7 @@ export class ChatService {
       reasoningContent?: string,
       timings?: ChatMessageTimings,
       toolCalls?: string,
+      isCacheHit?: boolean,
     ) => void,
     onError?: (error: Error) => void,
     onToolCallChunk?: (chunk: string) => void,
@@ -653,7 +656,7 @@ export class ChatService {
 
       const isCacheHit = response.headers.get("X-Cache") === "HIT";
 
-      onComplete?.(content, reasoningContent, undefined, serializedToolCalls);
+      onComplete?.(content, reasoningContent, undefined, serializedToolCalls, isCacheHit);
 
       return content;
     } catch (error) {

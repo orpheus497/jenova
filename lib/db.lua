@@ -279,14 +279,47 @@ function db.update_conversation(c)
     return err == nil, err
 end
 
-function db.delete_conversation(id)
+function db.delete_conversation(id, delete_with_forks)
     execute_query("BEGIN TRANSACTION")
-    local _, err1 = execute_query("UPDATE conversations SET is_deleted = 1 WHERE id = ?", {id})
-    local _, err2 = execute_query("UPDATE messages SET is_deleted = 1 WHERE convId = ?", {id})
-    if err1 or err2 then
-        execute_query("ROLLBACK")
-        return false, err1 or err2
+    
+    if delete_with_forks then
+        local sql_descendants = [[
+            WITH RECURSIVE descendants AS (
+                SELECT id FROM conversations WHERE id = ?
+                UNION ALL
+                SELECT c.id FROM conversations c
+                INNER JOIN descendants d ON c.forkedFromConversationId = d.id
+            )
+            UPDATE conversations SET is_deleted = 1 WHERE id IN descendants
+        ]]
+        local _, err1 = execute_query(sql_descendants, {id})
+        
+        local sql_messages = [[
+            WITH RECURSIVE descendants AS (
+                SELECT id FROM conversations WHERE id = ?
+                UNION ALL
+                SELECT c.id FROM conversations c
+                INNER JOIN descendants d ON c.forkedFromConversationId = d.id
+            )
+            UPDATE messages SET is_deleted = 1 WHERE convId IN descendants
+        ]]
+        local _, err2 = execute_query(sql_messages, {id})
+        
+        if err1 or err2 then
+            execute_query("ROLLBACK")
+            return false, err1 or err2
+        end
+    else
+        local sql_reparent = "UPDATE conversations SET forkedFromConversationId = (SELECT forkedFromConversationId FROM conversations WHERE id = ?) WHERE forkedFromConversationId = ?"
+        local _, err0 = execute_query(sql_reparent, {id, id})
+        local _, err1 = execute_query("UPDATE conversations SET is_deleted = 1 WHERE id = ?", {id})
+        local _, err2 = execute_query("UPDATE messages SET is_deleted = 1 WHERE convId = ?", {id})
+        if err0 or err1 or err2 then
+            execute_query("ROLLBACK")
+            return false, err0 or err1 or err2
+        end
     end
+    
     local _, err3 = execute_query("COMMIT")
     if err3 then
         execute_query("ROLLBACK")
@@ -298,6 +331,31 @@ end
 function db.get_messages(convId)
     local sql = "SELECT * FROM messages WHERE convId = ? AND is_deleted = 0 ORDER BY timestamp ASC"
     local rows, err = execute_query(sql, {convId})
+    if err then return nil, err end
+    
+    for _, row in ipairs(rows) do
+        if row.children and row.children ~= "" then
+            local ok, parsed = pcall(json.decode, row.children)
+            row.children = ok and parsed or {}
+        else
+            row.children = {}
+        end
+        if row.toolCalls and row.toolCalls ~= "" then row.toolCalls = row.toolCalls else row.toolCalls = nil end
+        if row.extra and row.extra ~= "" then
+            local ok, parsed = pcall(json.decode, row.extra)
+            row.extra = ok and parsed or nil
+        end
+        if row.timings and row.timings ~= "" then
+            local ok, parsed = pcall(json.decode, row.timings)
+            row.timings = ok and parsed or nil
+        end
+    end
+    return rows
+end
+
+function db.get_all_messages()
+    local sql = "SELECT * FROM messages WHERE is_deleted = 0"
+    local rows, err = execute_query(sql)
     if err then return nil, err end
     
     for _, row in ipairs(rows) do

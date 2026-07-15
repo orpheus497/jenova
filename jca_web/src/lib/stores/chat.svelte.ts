@@ -900,6 +900,7 @@ class ChatStore {
           reasoningContent?: string,
           timings?: ChatMessageTimings,
           toolCalls?: string,
+          isCacheHit?: boolean,
         ) => {
           const content = streamedContent || finalContent || "";
           const reasoning = streamedReasoningContent || reasoningContent;
@@ -909,10 +910,19 @@ class ChatStore {
             toolCalls: toolCalls || "",
             timings,
           };
+          
+          const idx = conversationsStore.findMessageIndex(currentMessageId);
+          let updatedExtras: import("$lib/types").DatabaseMessageExtra[] | undefined;
+          
+          if (isCacheHit) {
+            const currentMsg = conversationsStore.activeMessages[idx];
+            updatedExtras = [...(currentMsg?.extra || []), { type: "cache_hit" }];
+            updateData.extra = updatedExtras;
+          }
+          
           if (resolvedModel && !modelPersisted)
             updateData.model = resolvedModel;
           await DatabaseService.updateMessage(currentMessageId, updateData);
-          const idx = conversationsStore.findMessageIndex(currentMessageId);
           const uiUpdate: Partial<DatabaseMessage> = {
             content,
             reasoningContent: reasoning || undefined,
@@ -920,6 +930,7 @@ class ChatStore {
           };
           if (timings) uiUpdate.timings = timings;
           if (resolvedModel) uiUpdate.model = resolvedModel;
+          if (updatedExtras) uiUpdate.extra = updatedExtras;
           conversationsStore.updateMessageAtIndex(idx, uiUpdate);
           await conversationsStore.updateCurrentNode(currentMessageId);
 

@@ -90,6 +90,9 @@
 	}
 
 	const isAgentic = $derived(hasAgenticContent(message, toolMessages));
+	const isCacheHit = $derived(
+		message.extra?.some((e: any) => e.type === 'cache_hit') ?? false
+	);
 	const hasReasoning = $derived(!!message.reasoningContent);
 	const processingState = useProcessingState();
 
@@ -417,6 +420,7 @@
 						predictedMs={agentic ? agentic.llm.predicted_ms : message.timings.predicted_ms}
 						agenticTimings={agentic}
 						onActiveViewChange={handleStatsViewChange}
+						{isCacheHit}
 					/>
 				{:else if isLoading() && currentConfig.showMessageStats}
 					{@const liveStats = processingState.getLiveProcessingStats()}

@@ -18,6 +18,7 @@
 		agenticTimings?: ChatMessageAgenticTimings;
 		onActiveViewChange?: (view: ChatMessageStatsView) => void;
 		hideSummary?: boolean;
+		isCacheHit?: boolean;
 	}
 
 	let {
@@ -30,7 +31,8 @@
 		initialView = ChatMessageStatsView.GENERATION,
 		agenticTimings,
 		onActiveViewChange,
-		hideSummary = false
+		hideSummary = false,
+		isCacheHit = false,
 	}: Props = $props();
 
 	let activeView: ChatMessageStatsView = $derived(initialView);
@@ -235,6 +237,15 @@
 				value="{tokensPerSecond.toFixed(2)} t/s"
 				tooltipLabel="Generation speed"
 			/>
+			
+			{#if isCacheHit}
+				<BadgeChatStatistic
+					class="bg-transparent !text-green-500"
+					icon={Sparkles}
+					value="Cache Hit"
+					tooltipLabel="Response was served from cache"
+				/>
+			{/if}
 		{:else if activeView === ChatMessageStatsView.TOOLS && hasAgenticStats}
 			<BadgeChatStatistic
 				class="bg-transparent"

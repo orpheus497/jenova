@@ -4,7 +4,8 @@ local os = require("os")
 local function run_cmd(cmd, cwd)
     local full_cmd = "cd '" .. cwd:gsub("'", "'\\''") .. "' && " .. cmd .. " 2>&1"
     if _G.async_popen_read then
-        local output = _G.async_popen_read(full_cmd)
+        local output, err = _G.async_popen_read(full_cmd)
+        if err then return false, err end
         return true, output
     else
         local f = io.popen(full_cmd)
