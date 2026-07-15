@@ -1,0 +1,451 @@
+local ffi = require("ffi")
+local json = require("json")
+
+ffi.cdef[[
+    typedef struct sqlite3 sqlite3;
+    typedef struct sqlite3_stmt sqlite3_stmt;
+    
+    int sqlite3_open(const char *filename, sqlite3 **ppDb);
+    int sqlite3_close(sqlite3*);
+    int sqlite3_exec(sqlite3*, const char *sql, int (*callback)(void*,int,char**,char**), void *, char **errmsg);
+    const char *sqlite3_errmsg(sqlite3*);
+    
+    int sqlite3_prepare_v2(sqlite3 *db, const char *zSql, int nByte, sqlite3_stmt **ppStmt, const char **pzTail);
+    int sqlite3_step(sqlite3_stmt*);
+    int sqlite3_finalize(sqlite3_stmt *pStmt);
+    int sqlite3_reset(sqlite3_stmt *pStmt);
+    
+    int sqlite3_bind_int(sqlite3_stmt*, int, int);
+    int sqlite3_bind_int64(sqlite3_stmt*, int, int64_t);
+    int sqlite3_bind_text(sqlite3_stmt*, int, const char*, int, void(*)(void*));
+    int sqlite3_bind_null(sqlite3_stmt*, int);
+    
+    int sqlite3_column_count(sqlite3_stmt *pStmt);
+    const char *sqlite3_column_name(sqlite3_stmt*, int N);
+    int sqlite3_column_type(sqlite3_stmt*, int iCol);
+    int sqlite3_column_int(sqlite3_stmt*, int iCol);
+    int64_t sqlite3_column_int64(sqlite3_stmt*, int iCol);
+    const unsigned char *sqlite3_column_text(sqlite3_stmt*, int iCol);
+    
+    void sqlite3_free(void*);
+]]
+
+local sql3 = ffi.load("sqlite3")
+
+local SQLITE_OK = 0
+local SQLITE_ROW = 100
+local SQLITE_DONE = 101
+
+local SQLITE_INTEGER = 1
+local SQLITE_FLOAT = 2
+local SQLITE_TEXT = 3
+local SQLITE_BLOB = 4
+local SQLITE_NULL = 5
+
+local db = {}
+local db_ptr = ffi.new("sqlite3*[1]")
+
+function db.init(db_path)
+    local rc = sql3.sqlite3_open(db_path, db_ptr)
+    if rc ~= SQLITE_OK then
+        local err = ffi.string(sql3.sqlite3_errmsg(db_ptr[0]))
+        print("[db] Failed to open database: " .. err)
+        return false
+    end
+    print("[db] Connected to SQLite database at " .. db_path)
+
+    -- Create Tables
+    local schema = [[
+        CREATE TABLE IF NOT EXISTS conversations (
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            lastModified INTEGER,
+            currNode TEXT,
+            folderId TEXT,
+            projectId TEXT,
+            forkedFromConversationId TEXT,
+            mcpServerOverrides TEXT,
+            is_deleted INTEGER DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS messages (
+            id TEXT PRIMARY KEY,
+            convId TEXT,
+            type TEXT,
+            role TEXT,
+            timestamp INTEGER,
+            parent TEXT,
+            children TEXT,
+            content TEXT,
+            thinking TEXT,
+            toolCalls TEXT,
+            extra TEXT,
+            model TEXT,
+            timings TEXT,
+            is_deleted INTEGER DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_messages_convId ON messages(convId);
+        CREATE TABLE IF NOT EXISTS workspaces (
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            is_deleted INTEGER DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS projects (
+            id TEXT PRIMARY KEY,
+            workspaceId TEXT,
+            name TEXT,
+            is_deleted INTEGER DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS folders (
+            id TEXT PRIMARY KEY,
+            projectId TEXT,
+            name TEXT,
+            is_deleted INTEGER DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS notes (
+            id TEXT PRIMARY KEY,
+            folderId TEXT,
+            title TEXT,
+            content TEXT,
+            updatedAt INTEGER,
+            is_deleted INTEGER DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS fileAssets (
+            id TEXT PRIMARY KEY,
+            folderId TEXT,
+            name TEXT,
+            size INTEGER,
+            type TEXT,
+            uploadDate INTEGER,
+            content TEXT,
+            is_deleted INTEGER DEFAULT 0
+        );
+    ]]
+    
+    local errmsg = ffi.new("char*[1]")
+    rc = sql3.sqlite3_exec(db_ptr[0], schema, nil, nil, errmsg)
+    if rc ~= SQLITE_OK then
+        print("[db] Schema creation failed: " .. ffi.string(errmsg[0]))
+        sql3.sqlite3_free(errmsg[0])
+        return false
+    end
+    return true
+end
+
+function db.close()
+    if db_ptr[0] ~= nil then
+        sql3.sqlite3_close(db_ptr[0])
+        db_ptr[0] = nil
+    end
+end
+
+local function execute_query(sql, params)
+    local stmt = ffi.new("sqlite3_stmt*[1]")
+    local rc = sql3.sqlite3_prepare_v2(db_ptr[0], sql, -1, stmt, nil)
+    if rc ~= SQLITE_OK then
+        print("[db] Prepare error: " .. ffi.string(sql3.sqlite3_errmsg(db_ptr[0])) .. " | SQL: " .. sql)
+        return nil, ffi.string(sql3.sqlite3_errmsg(db_ptr[0]))
+    end
+
+    if params then
+        for i, v in ipairs(params) do
+            if type(v) == "number" then
+                sql3.sqlite3_bind_int64(stmt[0], i, v)
+            elseif type(v) == "string" then
+                sql3.sqlite3_bind_text(stmt[0], i, v, #v, ffi.cast("void(*)(void*)", 0)) -- SQLITE_STATIC
+            elseif v == nil then
+                sql3.sqlite3_bind_null(stmt[0], i)
+            else
+                local str_v = tostring(v)
+                sql3.sqlite3_bind_text(stmt[0], i, str_v, #str_v, ffi.cast("void(*)(void*)", 0))
+            end
+        end
+    end
+
+    local results = {}
+    local cols = sql3.sqlite3_column_count(stmt[0])
+    
+    while true do
+        rc = sql3.sqlite3_step(stmt[0])
+        if rc == SQLITE_ROW then
+            local row = {}
+            for i = 0, cols - 1 do
+                local name = ffi.string(sql3.sqlite3_column_name(stmt[0], i))
+                local ctype = sql3.sqlite3_column_type(stmt[0], i)
+                if ctype == SQLITE_INTEGER then
+                    row[name] = tonumber(sql3.sqlite3_column_int64(stmt[0], i))
+                elseif ctype == SQLITE_FLOAT then
+                    row[name] = tonumber(sql3.sqlite3_column_int64(stmt[0], i))
+                elseif ctype == SQLITE_TEXT then
+                    local text = sql3.sqlite3_column_text(stmt[0], i)
+                    row[name] = text ~= nil and ffi.string(text) or ""
+                elseif ctype == SQLITE_NULL then
+                    row[name] = nil
+                end
+            end
+            table.insert(results, row)
+        elseif rc == SQLITE_DONE then
+            break
+        else
+            print("[db] Step error: " .. ffi.string(sql3.sqlite3_errmsg(db_ptr[0])))
+            break
+        end
+    end
+    
+    sql3.sqlite3_finalize(stmt[0])
+    return results, nil
+end
+
+function db.get_conversations()
+    local sql = "SELECT * FROM conversations WHERE is_deleted = 0 ORDER BY lastModified DESC"
+    local rows, err = execute_query(sql)
+    if err then return nil, err end
+    
+    for _, row in ipairs(rows) do
+        if row.mcpServerOverrides and row.mcpServerOverrides ~= "" then
+            local ok, parsed = pcall(json.decode, row.mcpServerOverrides)
+            row.mcpServerOverrides = ok and parsed or nil
+        else
+            row.mcpServerOverrides = nil
+        end
+    end
+    return rows
+end
+
+function db.get_conversation(id)
+    local sql = "SELECT * FROM conversations WHERE id = ? AND is_deleted = 0"
+    local rows, err = execute_query(sql, {id})
+    if err or not rows or #rows == 0 then return nil, err end
+    
+    local row = rows[1]
+    if row.mcpServerOverrides and row.mcpServerOverrides ~= "" then
+        local ok, parsed = pcall(json.decode, row.mcpServerOverrides)
+        row.mcpServerOverrides = ok and parsed or nil
+    else
+        row.mcpServerOverrides = nil
+    end
+    return row
+end
+
+function db.insert_conversation(c)
+    local sql = [[
+        INSERT INTO conversations (id, name, lastModified, currNode, folderId, projectId, forkedFromConversationId, mcpServerOverrides, is_deleted)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+    ]]
+    local overrides = c.mcpServerOverrides and json.encode(c.mcpServerOverrides) or nil
+    local params = {
+        c.id, c.name, c.lastModified, c.currNode, c.folderId, c.projectId, c.forkedFromConversationId, overrides
+    }
+    local _, err = execute_query(sql, params)
+    return err == nil, err
+end
+
+function db.update_conversation(c)
+    local sql = [[
+        UPDATE conversations SET 
+            name = ?, lastModified = ?, currNode = ?, folderId = ?, projectId = ?, forkedFromConversationId = ?, mcpServerOverrides = ?
+        WHERE id = ?
+    ]]
+    local overrides = c.mcpServerOverrides and json.encode(c.mcpServerOverrides) or nil
+    local params = {
+        c.name, c.lastModified, c.currNode, c.folderId, c.projectId, c.forkedFromConversationId, overrides, c.id
+    }
+    local _, err = execute_query(sql, params)
+    return err == nil, err
+end
+
+function db.delete_conversation(id)
+    local sql = "UPDATE conversations SET is_deleted = 1 WHERE id = ?"
+    local _, err = execute_query(sql, {id})
+    return err == nil, err
+end
+
+function db.get_messages(convId)
+    local sql = "SELECT * FROM messages WHERE convId = ? AND is_deleted = 0 ORDER BY timestamp ASC"
+    local rows, err = execute_query(sql, {convId})
+    if err then return nil, err end
+    
+    for _, row in ipairs(rows) do
+        if row.children and row.children ~= "" then
+            local ok, parsed = pcall(json.decode, row.children)
+            row.children = ok and parsed or {}
+        else
+            row.children = {}
+        end
+        if row.toolCalls and row.toolCalls ~= "" then row.toolCalls = row.toolCalls else row.toolCalls = nil end
+        if row.extra and row.extra ~= "" then
+            local ok, parsed = pcall(json.decode, row.extra)
+            row.extra = ok and parsed or nil
+        end
+        if row.timings and row.timings ~= "" then
+            local ok, parsed = pcall(json.decode, row.timings)
+            row.timings = ok and parsed or nil
+        end
+    end
+    return rows
+end
+
+function db.insert_message(m)
+    local sql = [[
+        INSERT INTO messages (id, convId, type, role, timestamp, parent, children, content, thinking, toolCalls, extra, model, timings, is_deleted)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+    ]]
+    local children = m.children and json.encode(m.children) or "[]"
+    local extra = m.extra and json.encode(m.extra) or nil
+    local timings = m.timings and json.encode(m.timings) or nil
+    local toolCalls = type(m.toolCalls) == "table" and json.encode(m.toolCalls) or m.toolCalls
+    
+    local params = {
+        m.id, m.convId, m.type, m.role, m.timestamp, m.parent, children, m.content, m.thinking, toolCalls, extra, m.model, timings
+    }
+    local _, err = execute_query(sql, params)
+    return err == nil, err
+end
+
+function db.update_message(m)
+    local sql = [[
+        UPDATE messages SET 
+            type = ?, role = ?, timestamp = ?, parent = ?, children = ?, content = ?, thinking = ?, toolCalls = ?, extra = ?, model = ?, timings = ?
+        WHERE id = ?
+    ]]
+    local children = m.children and json.encode(m.children) or "[]"
+    local extra = m.extra and json.encode(m.extra) or nil
+    local timings = m.timings and json.encode(m.timings) or nil
+    local toolCalls = type(m.toolCalls) == "table" and json.encode(m.toolCalls) or m.toolCalls
+    
+    local params = {
+        m.type, m.role, m.timestamp, m.parent, children, m.content, m.thinking, toolCalls, extra, m.model, timings, m.id
+    }
+    local _, err = execute_query(sql, params)
+    return err == nil, err
+end
+
+function db.delete_message(id)
+    local sql = "UPDATE messages SET is_deleted = 1 WHERE id = ?"
+    local _, err = execute_query(sql, {id})
+    return err == nil, err
+end
+
+function db.get_workspaces()
+    local sql = "SELECT * FROM workspaces WHERE is_deleted = 0"
+    local rows, err = execute_query(sql)
+    return rows, err
+end
+
+function db.insert_workspace(w)
+    local sql = "INSERT INTO workspaces (id, name, is_deleted) VALUES (?, ?, 0)"
+    local _, err = execute_query(sql, {w.id, w.name})
+    return err == nil, err
+end
+
+function db.delete_workspace(id)
+    local sql = "UPDATE workspaces SET is_deleted = 1 WHERE id = ?"
+    local _, err = execute_query(sql, {id})
+    return err == nil, err
+end
+
+function db.get_projects(workspaceId)
+    local sql = "SELECT * FROM projects WHERE workspaceId = ? AND is_deleted = 0"
+    local rows, err = execute_query(sql, {workspaceId})
+    return rows, err
+end
+
+function db.insert_project(p)
+    local sql = "INSERT INTO projects (id, workspaceId, name, is_deleted) VALUES (?, ?, ?, 0)"
+    local _, err = execute_query(sql, {p.id, p.workspaceId, p.name})
+    return err == nil, err
+end
+
+function db.delete_project(id)
+    local sql = "UPDATE projects SET is_deleted = 1 WHERE id = ?"
+    local _, err = execute_query(sql, {id})
+    return err == nil, err
+end
+
+function db.get_folders(projectId)
+    local sql = ""
+    local params = {}
+    if projectId == nil or projectId == "" then
+        sql = "SELECT * FROM folders WHERE projectId IS NULL AND is_deleted = 0"
+    else
+        sql = "SELECT * FROM folders WHERE projectId = ? AND is_deleted = 0"
+        params = {projectId}
+    end
+    local rows, err = execute_query(sql, params)
+    return rows, err
+end
+
+function db.insert_folder(f)
+    local sql = "INSERT INTO folders (id, projectId, name, is_deleted) VALUES (?, ?, ?, 0)"
+    local _, err = execute_query(sql, {f.id, f.projectId, f.name})
+    return err == nil, err
+end
+
+function db.delete_folder(id)
+    local sql = "UPDATE folders SET is_deleted = 1 WHERE id = ?"
+    local _, err = execute_query(sql, {id})
+    return err == nil, err
+end
+
+function db.get_notes(folderId)
+    local sql = ""
+    local params = {}
+    if folderId == nil or folderId == "" then
+        sql = "SELECT * FROM notes WHERE folderId IS NULL AND is_deleted = 0"
+    else
+        sql = "SELECT * FROM notes WHERE folderId = ? AND is_deleted = 0"
+        params = {folderId}
+    end
+    local rows, err = execute_query(sql, params)
+    return rows, err
+end
+
+function db.insert_note(n)
+    local sql = "INSERT INTO notes (id, folderId, title, content, updatedAt, is_deleted) VALUES (?, ?, ?, ?, ?, 0)"
+    local _, err = execute_query(sql, {n.id, n.folderId, n.title, n.content, n.updatedAt})
+    return err == nil, err
+end
+
+function db.update_note(n)
+    local sql = "UPDATE notes SET folderId = ?, title = ?, content = ?, updatedAt = ? WHERE id = ?"
+    local _, err = execute_query(sql, {n.folderId, n.title, n.content, n.updatedAt, n.id})
+    return err == nil, err
+end
+
+function db.delete_note(id)
+    local sql = "UPDATE notes SET is_deleted = 1 WHERE id = ?"
+    local _, err = execute_query(sql, {id})
+    return err == nil, err
+end
+
+function db.get_fileAssets(folderId)
+    local sql = ""
+    local params = {}
+    if folderId == nil or folderId == "" then
+        sql = "SELECT * FROM fileAssets WHERE folderId IS NULL AND is_deleted = 0"
+    else
+        sql = "SELECT * FROM fileAssets WHERE folderId = ? AND is_deleted = 0"
+        params = {folderId}
+    end
+    local rows, err = execute_query(sql, params)
+    return rows, err
+end
+
+function db.insert_fileAsset(f)
+    local sql = "INSERT INTO fileAssets (id, folderId, name, size, type, uploadDate, content, is_deleted) VALUES (?, ?, ?, ?, ?, ?, ?, 0)"
+    local _, err = execute_query(sql, {f.id, f.folderId, f.name, f.size, f.type, f.uploadDate, f.content})
+    return err == nil, err
+end
+
+function db.update_fileAsset(f)
+    local sql = "UPDATE fileAssets SET folderId = ?, name = ?, size = ?, type = ?, uploadDate = ?, content = ? WHERE id = ?"
+    local _, err = execute_query(sql, {f.folderId, f.name, f.size, f.type, f.uploadDate, f.content, f.id})
+    return err == nil, err
+end
+
+function db.delete_fileAsset(id)
+    local sql = "UPDATE fileAssets SET is_deleted = 1 WHERE id = ?"
+    local _, err = execute_query(sql, {id})
+    return err == nil, err
+end
+
+return db
