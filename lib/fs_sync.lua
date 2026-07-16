@@ -201,7 +201,11 @@ function fs_sync.trash_project(project)
     local safe_workspace = sanitize(workspace.name)
     local safe_project = sanitize(project.name)
     local path = workspaces_dir .. "/" .. safe_workspace .. "/" .. safe_project
-    if ffi.C.access(path, 0) ~= 0 then return true, nil, path end
+    if ffi.C.access(path, 0) ~= 0 then
+        local err = ffi.errno()
+        if err == 2 then return true, nil, path end -- ENOENT
+        return false, "access error: " .. tostring(err), path
+    end
     local trash_dir = get_workspace_trash(safe_workspace)
     local trash_path = trash_dir .. "/" .. os.time() .. "_" .. safe_project
     local ok, err = os.rename(path, trash_path)
@@ -217,7 +221,11 @@ function fs_sync.trash_folder(folder)
     local safe_project = sanitize(project.name)
     local safe_folder = sanitize(folder.name)
     local path = workspaces_dir .. "/" .. safe_workspace .. "/" .. safe_project .. "/" .. safe_folder
-    if ffi.C.access(path, 0) ~= 0 then return true, nil, path end
+    if ffi.C.access(path, 0) ~= 0 then
+        local err = ffi.errno()
+        if err == 2 then return true, nil, path end -- ENOENT
+        return false, "access error: " .. tostring(err), path
+    end
     local trash_dir = get_workspace_trash(safe_workspace)
     local trash_path = trash_dir .. "/" .. os.time() .. "_" .. safe_folder
     local ok, err = os.rename(path, trash_path)
