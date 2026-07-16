@@ -71,6 +71,7 @@ export class SyncService {
       if (mdFiles.length > 0) {
         const allConvs = await DatabaseService.getAllConversations();
         const allNotes = await DatabaseService.getAllNotes();
+        const allFolders = await DatabaseService.getProjectFolders(null);
 
         const limit = 5;
         const active: Promise<void>[] = [];
@@ -84,7 +85,15 @@ export class SyncService {
           const isChat = path.includes("/Chats/");
 
           if (isNote) {
-            const note = allNotes.find((n) => n.title === fileName);
+            const lastUnderscore = fileName.lastIndexOf("_");
+            let noteId = "";
+            let title = fileName;
+            if (lastUnderscore !== -1) {
+              title = fileName.substring(0, lastUnderscore);
+              noteId = fileName.substring(lastUnderscore + 1);
+            }
+            
+            const note = allNotes.find((n) => n.id === noteId) || allNotes.find((n) => n.title === title);
             if (note) {
               if (note.content !== content) {
                 await DatabaseService.updateNote(note.id, {
@@ -95,7 +104,13 @@ export class SyncService {
                 stats.updated++;
               }
             } else {
-              await DatabaseService.createNote(null, fileName, content);
+              const notesIndex = parts.indexOf("Notes");
+              let parsedFolderName: string | null = null;
+              if (notesIndex !== -1 && parts.length > notesIndex + 2) {
+                parsedFolderName = parts.slice(notesIndex + 1, parts.length - 1).join("/");
+              }
+              const folder = parsedFolderName ? allFolders.find(f => f.name === parsedFolderName) : null;
+              await DatabaseService.createNote(folder ? folder.id : null, title, content);
               changed = true;
               stats.created++;
             }
@@ -199,7 +214,7 @@ export class SyncService {
         queue.push(async () => {
           const folder = allFolders.find((f) => f.id === note.folderId);
           const folderName = folder?.name ? `Notes/${folder.name}` : "Notes";
-          const path = `${defaultWorkspace}/${folderName}/${note.title}.md`;
+          const path = `${defaultWorkspace}/${folderName}/${note.title}_${note.id}.md`;
           await StorageService.save(path, note.content || "");
         });
       }
@@ -270,7 +285,7 @@ export class SyncService {
         if (note) {
           const folder = allFolders.find((f) => f.id === note.folderId);
           const folderName = folder?.name ? `Notes/${folder.name}` : "Notes";
-          const path = `${defaultWorkspace}/${folderName}/${note.title}.md`;
+          const path = `${defaultWorkspace}/${folderName}/${note.title}_${note.id}.md`;
           await StorageService.save(path, note.content || "");
         }
       } else if (type === "chat") {
