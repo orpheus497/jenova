@@ -242,4 +242,16 @@ function fs_sync.trash_folder(folder)
     return ok ~= nil, trash_path, path
 end
 
+function fs_sync.trash_path(base_dir, relative_path)
+    local path = base_dir .. "/" .. relative_path
+    local trash_dir = base_dir .. "/.trash"
+    local trash_path = trash_dir .. "/" .. os.time() .. "/" .. relative_path
+    
+    local dir_part = trash_path:match("(.+)/[^/]+$")
+    if dir_part then recursive_mkdir(dir_part) end
+    
+    local ok, err = os.rename(path, trash_path)
+    return ok ~= nil, trash_path, path
+end
+
 return fs_sync

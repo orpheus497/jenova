@@ -119,15 +119,16 @@ export class SyncService {
                 title = fileName;
               }
               note = allNotes.find((n) => n.title === title && n.folderId === parsedFolderId);
-              if (!note) {
-                title = fileName;
-              }
             }
 
             if (note) {
               let needsUpdate = false;
               const updates: any = { updatedAt: Date.now() };
 
+              if (note.title !== title) {
+                updates.title = title;
+                needsUpdate = true;
+              }
               if (note.content !== content) {
                 updates.content = content;
                 needsUpdate = true;
