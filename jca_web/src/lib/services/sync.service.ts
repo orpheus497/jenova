@@ -198,7 +198,7 @@ export class SyncService {
       for (const note of allNotes) {
         queue.push(async () => {
           const folder = allFolders.find((f) => f.id === note.folderId);
-          const folderName = folder?.name || "Notes";
+          const folderName = folder?.name ? `Notes/${folder.name}` : "Notes";
           const path = `${defaultWorkspace}/${folderName}/${note.title}.md`;
           await StorageService.save(path, note.content || "");
         });
@@ -264,7 +264,16 @@ export class SyncService {
       const defaultWorkspace = workspaces[0]?.name || "default";
       const allFolders = await DatabaseService.getProjectFolders(null);
 
-      if (type === "chat") {
+      if (type === "note") {
+        const notes = await DatabaseService.getAllNotes();
+        const note = notes.find((n) => n.id === id);
+        if (note) {
+          const folder = allFolders.find((f) => f.id === note.folderId);
+          const folderName = folder?.name ? `Notes/${folder.name}` : "Notes";
+          const path = `${defaultWorkspace}/${folderName}/${note.title}.md`;
+          await StorageService.save(path, note.content || "");
+        }
+      } else if (type === "chat") {
         const conv = await DatabaseService.getConversation(id);
         if (conv) {
           const messages = await DatabaseService.getConversationMessages(id);
