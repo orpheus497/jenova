@@ -194,6 +194,15 @@ export class SyncService {
       const queue: (() => Promise<void>)[] = [];
 
       // Notes are synced automatically by the backend via proxy.lua -> fs_sync.lua
+      // We retain a frontend fallback here until backend persistence supports every note shape (e.g., unassigned).
+      for (const note of allNotes) {
+        queue.push(async () => {
+          const folder = allFolders.find((f) => f.id === note.folderId);
+          const folderName = folder?.name || "Notes";
+          const path = `${defaultWorkspace}/${folderName}/${note.title}.md`;
+          await StorageService.save(path, note.content || "");
+        });
+      }
 
       for (const conv of allConvs) {
         queue.push(async () => {

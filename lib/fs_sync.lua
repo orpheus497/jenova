@@ -124,7 +124,6 @@ end
 function fs_sync.sync_note(note)
     local path, ws_name = get_physical_path_for_note(note)
     if not path then 
-        if ws_name == "unassigned" then return true end
         return false 
     end
     
@@ -144,7 +143,6 @@ end
 function fs_sync.sync_fileAsset(asset)
     local path, ws_name = get_physical_path_for_asset(asset)
     if not path then
-        if ws_name == "unassigned" then return true end
         return false
     end
     

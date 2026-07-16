@@ -155,8 +155,20 @@ function db.init(db_path)
         "ALTER TABLE fileAssets ADD COLUMN is_deleted INTEGER DEFAULT 0;"
     }
     for _, mig in ipairs(migrations) do
-        -- Ignore errors (e.g. if column already exists)
-        sql3.sqlite3_exec(db_ptr[0], mig, nil, nil, nil)
+        local mig_errmsg = ffi.new("char*[1]")
+        local rc = sql3.sqlite3_exec(db_ptr[0], mig, nil, nil, mig_errmsg)
+        if rc ~= SQLITE_OK then
+            local err_str = ffi.string(mig_errmsg[0])
+            sql3.sqlite3_free(mig_errmsg[0])
+            if not string.match(err_str, "duplicate column name") then
+                print("[db] Migration failed: " .. err_str .. " | SQL: " .. mig)
+                if db_ptr[0] ~= nil then
+                    sql3.sqlite3_close(db_ptr[0])
+                    db_ptr[0] = nil
+                end
+                return false
+            end
+        end
     end
 
     return true
@@ -304,7 +316,7 @@ function db.delete_conversation(id, delete_with_forks)
         local sql_descendants = [[
             WITH RECURSIVE descendants AS (
                 SELECT id FROM conversations WHERE id = ?
-                UNION ALL
+                UNION
                 SELECT c.id FROM conversations c
                 INNER JOIN descendants d ON c.forkedFromConversationId = d.id
             )
@@ -315,7 +327,7 @@ function db.delete_conversation(id, delete_with_forks)
         local sql_messages = [[
             WITH RECURSIVE descendants AS (
                 SELECT id FROM conversations WHERE id = ?
-                UNION ALL
+                UNION
                 SELECT c.id FROM conversations c
                 INNER JOIN descendants d ON c.forkedFromConversationId = d.id
             )
