@@ -112,6 +112,10 @@ export interface DatabaseMessageExtraMcpResource {
   mimeType?: string;
 }
 
+export interface DatabaseMessageExtraCacheHit {
+  type: "cache_hit";
+}
+
 export type DatabaseMessageExtra =
   | DatabaseMessageExtraImageFile
   | DatabaseMessageExtraTextFile
@@ -119,7 +123,8 @@ export type DatabaseMessageExtra =
   | DatabaseMessageExtraPdfFile
   | DatabaseMessageExtraMcpPrompt
   | DatabaseMessageExtraMcpResource
-  | DatabaseMessageExtraLegacyContext;
+  | DatabaseMessageExtraLegacyContext
+  | DatabaseMessageExtraCacheHit;
 
 export interface DatabaseMessage {
   id: string;

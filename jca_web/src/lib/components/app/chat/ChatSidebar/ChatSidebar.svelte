@@ -17,6 +17,7 @@
     import ChatSidebarFolderItem from './ChatSidebarFolderItem.svelte';
     import ChatSidebarNoteItem from './ChatSidebarNoteItem.svelte';
 	import { mcpStore } from '$lib/stores/mcp.svelte';
+	import type { DatabaseConversation, DatabaseNote } from '$lib/types/database';
 
 	const sidebar = Sidebar.useSidebar();
 
@@ -42,9 +43,10 @@
 
 	let filteredConversations = $derived.by(() => {
 		if (searchQuery.trim().length > 0) {
-			return conversations().filter((conversation: any) =>
-				conversation.name.toLowerCase().includes(searchQuery.toLowerCase())
-			);
+			return conversations().filter((conversation: DatabaseConversation) => {
+				const name = conversation.name || 'Untitled conversation';
+				return name.toLowerCase().includes(searchQuery.toLowerCase());
+			});
 		}
 		return conversations();
 	});
@@ -105,7 +107,7 @@
 
 	export function editActiveConversation() {
 		if (currentChatId) {
-			const activeConversation = conversations().find((conv: any) => conv.id === currentChatId);
+			const activeConversation = conversations().find((conv: DatabaseConversation) => conv.id === currentChatId);
 			if (activeConversation) {
 				handleEdit('conversation', currentChatId, activeConversation.name);
 			}
@@ -188,7 +190,7 @@
             <div class="space-y-1">
                 {#each folders() as folder (folder.id)}
                     {#snippet chatsSnippet()}
-                        {#each filteredConversations.filter((c: any) => c.folderId === folder.id) as conversation (conversation.id)}
+                        {#each filteredConversations.filter((c: DatabaseConversation) => c.folderId === folder.id) as conversation (conversation.id)}
                             <ChatSidebarConversationItem
                                 {conversation}
                                 depth={0}
@@ -203,7 +205,7 @@
                     {/snippet}
 
                     {#snippet notesSnippet()}
-                        {#each notes().filter((n: any) => n.folderId === folder.id) as note (note.id)}
+                        {#each notes().filter((n: DatabaseNote) => n.folderId === folder.id) as note (note.id)}
                             <ChatSidebarNoteItem 
                                 {note} 
                                 isActive={currentNoteId === note.id}
@@ -240,7 +242,7 @@
             
             {#if expandedChats}
             <div class="space-y-1 mb-2">
-                {#each filteredConversations.filter((c: any) => !c.folderId) as conversation (conversation.id)}
+                {#each filteredConversations.filter((c: DatabaseConversation) => !c.folderId) as conversation (conversation.id)}
                     <ChatSidebarConversationItem
                         {conversation}
                         depth={0}
@@ -267,7 +269,7 @@
                     <span class="flex items-center gap-2"><FileText size={12} /> New Note</span>
                 </button>
 
-                {#each notes().filter((n: any) => !n.folderId) as note (note.id)}
+                {#each notes().filter((n: DatabaseNote) => !n.folderId) as note (note.id)}
                     <ChatSidebarNoteItem 
                         {note} 
                         isActive={currentNoteId === note.id}

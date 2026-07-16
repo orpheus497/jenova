@@ -44,6 +44,7 @@ import type {
   DatabaseMessageExtraTextFile,
   DatabaseMessageExtraPdfFile,
   DatabaseMessageExtraLegacyContext,
+  DatabaseMessageExtraCacheHit,
   ExportedConversation,
   ExportedConversations,
   // Model types
@@ -108,6 +109,7 @@ declare global {
     DatabaseMessageExtraTextFile,
     DatabaseMessageExtraPdfFile,
     DatabaseMessageExtraLegacyContext,
+    DatabaseMessageExtraCacheHit,
     ExportedConversation,
     ExportedConversations,
     // Enum types

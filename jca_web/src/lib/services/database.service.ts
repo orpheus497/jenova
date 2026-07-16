@@ -1,7 +1,5 @@
-import Dexie, { type EntityTable } from "dexie";
 import { findDescendantMessages, uuid, filterByLeafNodeId } from "$lib/utils";
 import type {
-  McpServerOverride,
   DatabaseWorkspace,
   DatabaseProject,
   DatabaseFolder,
@@ -10,52 +8,33 @@ import type {
   DatabaseConversation,
   DatabaseMessage,
 } from "$lib/types/database";
+import { MessageRole } from "$lib/enums";
 
-class JenovacppDatabase extends Dexie {
-  conversations!: EntityTable<DatabaseConversation, "id">;
-  messages!: EntityTable<DatabaseMessage, "id">;
-  workspaces!: EntityTable<DatabaseWorkspace, "id">;
-  projects!: EntityTable<DatabaseProject, "id">;
-  folders!: EntityTable<DatabaseFolder, "id">;
-  notes!: EntityTable<DatabaseNote, "id">;
-  fileAssets!: EntityTable<DatabaseFileAsset, "id">;
-
-  constructor() {
-    super("JenovacppWebui");
-
-    this.version(1).stores({
-      conversations: "id, lastModified, currNode, name",
-      messages: "id, convId, type, role, timestamp, parent, children",
-    });
-
-    this.version(2).stores({
-      conversations: "id, lastModified, currNode, name, folderId, projectId",
-      workspaces: "id, name",
-      projects: "id, workspaceId, name",
-      folders: "id, projectId, name",
-      notes: "id, folderId, updatedAt",
-      fileAssets: "id, folderId, uploadDate",
-    });
-  }
+export interface ExportData {
+  conversations: DatabaseConversation[];
+  workspaces: DatabaseWorkspace[];
+  projects: DatabaseProject[];
+  folders: DatabaseFolder[];
+  notes: DatabaseNote[];
+  fileAssets: DatabaseFileAsset[];
+  messages: DatabaseMessage[];
+  localStorage: Record<string, string | null>;
+  timestamp: number;
 }
 
-const db = new JenovacppDatabase();
-import { MessageRole } from "$lib/enums";
+async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`/api/db/${path}`, options);
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  const contentType = res.headers.get("content-type");
+  if (contentType && contentType.includes("application/json")) {
+    return await res.json();
+  }
+  throw new Error("Response is not JSON");
+}
 
 export class DatabaseService {
   /**
-   *
-   *
    * Conversations
-   *
-   *
-   */
-
-  /**
-   * Creates a new conversation.
-   *
-   * @param name - Name of the conversation
-   * @returns The created conversation
    */
   static async createConversation(name: string): Promise<DatabaseConversation> {
     const conversation: DatabaseConversation = {
@@ -64,81 +43,141 @@ export class DatabaseService {
       lastModified: Date.now(),
       currNode: "",
     };
-
-    await db.conversations.add(conversation);
+    await apiFetch("conversations", { method: "POST", body: JSON.stringify(conversation) });
     return conversation;
   }
 
-  /**
-   *
-   *
-   * Messages
-   *
-   *
-   */
+  static async getAllConversations(): Promise<DatabaseConversation[]> {
+    return await apiFetch<DatabaseConversation[]>("conversations");
+  }
 
-  /**
-   * Creates a new message branch by adding a message and updating parent/child relationships.
-   * Also updates the conversation's currNode to point to the new message.
-   *
-   * @param message - Message to add (without id)
-   * @param parentId - Parent message ID to attach to
-   * @returns The created message
-   */
-  static async createMessageBranch(
-    message: Omit<DatabaseMessage, "id" | "parent" | "children"> & {
-      children?: string[];
-    },
-    parentId: string | null,
-  ): Promise<DatabaseMessage> {
-    return await db.transaction(
-      "rw",
-      [db.conversations, db.messages],
-      async () => {
-        // Handle null parent (root message case)
-        if (parentId !== null) {
-          const parentMessage = await db.messages.get(parentId);
-          if (!parentMessage) {
-            throw new Error(`Parent message ${parentId} not found`);
-          }
-        }
+  static async getConversation(id: string): Promise<DatabaseConversation | undefined> {
+    try {
+      const res = await apiFetch<DatabaseConversation>(`conversations?id=${id}`);
+      return res && Object.keys(res).length > 0 ? res : undefined;
+    } catch (e: any) {
+      if (e.message && e.message.includes("404")) return undefined;
+      throw e;
+    }
+  }
 
-        const newMessage: DatabaseMessage = {
-          ...message,
-          id: uuid(),
-          parent: parentId,
-          toolCalls: message.toolCalls ?? "",
-          children: [],
-        };
+  static async updateConversation(id: string, updates: Partial<Omit<DatabaseConversation, "id">>): Promise<void> {
+    const current = await this.getConversation(id);
+    if (!current) return;
+    const updated = { ...current, ...updates, lastModified: Date.now() };
+    await apiFetch("conversations", { method: "POST", body: JSON.stringify(updated) });
+  }
 
-        await db.messages.add(newMessage);
+  static async deleteConversation(id: string, options?: { deleteWithForks?: boolean }): Promise<void> {
+    const query = options?.deleteWithForks ? "?deleteWithForks=true" : "";
+    await apiFetch(`conversations/${id}${query}`, { method: "DELETE" });
+  }
 
-        // Update parent's children array if parent exists
-        if (parentId !== null) {
-          const parentMessage = await db.messages.get(parentId);
-          if (parentMessage) {
-            await db.messages.update(parentId, {
-              children: [...parentMessage.children, newMessage.id],
-            });
-          }
-        }
+  static async deleteConversationMessages(convId: string): Promise<void> {
+    const msgs = await this.getConversationMessages(convId);
+    const ids = msgs.map(m => m.id);
+    if (ids.length > 0) {
+      await apiFetch("messages/bulk-delete", { method: "POST", body: JSON.stringify({ ids }) });
+    }
+  }
 
-        await this.updateConversation(message.convId, {
-          currNode: newMessage.id,
-        });
+  static async updateCurrentNode(convId: string, nodeId: string): Promise<void> {
+    await this.updateConversation(convId, { currNode: nodeId });
+  }
 
-        return newMessage;
-      },
-    );
+  static async importConversations(data: { conv: DatabaseConversation; messages: DatabaseMessage[] }[]): Promise<{ imported: number; skipped: number }> {
+    let imported = 0;
+    let skipped = 0;
+    const all = await this.getAllConversations();
+    const payload = { conversations: [] as DatabaseConversation[], messages: [] as DatabaseMessage[] };
+    
+    for (const item of data) {
+      if (all.find(c => c.id === item.conv.id)) { skipped++; continue; }
+      payload.conversations.push(item.conv);
+      payload.messages.push(...item.messages);
+      imported++;
+    }
+    
+    if (payload.conversations.length > 0) {
+      await apiFetch("import", { method: "POST", body: JSON.stringify(payload) });
+    }
+    return { imported, skipped };
+  }
+
+  static async forkConversation(sourceConvId: string, atMessageId: string, options: { name: string; includeAttachments: boolean }): Promise<DatabaseConversation> {
+    const sourceConv = await this.getConversation(sourceConvId);
+    if (!sourceConv) throw new Error("Not found");
+    const allMessages = await this.getConversationMessages(sourceConvId);
+    const pathMessages = filterByLeafNodeId(allMessages, atMessageId, true) as DatabaseMessage[];
+    if (pathMessages.length === 0) {
+      throw new Error(`Could not resolve message path to ${atMessageId}`);
+    }
+    
+    const idMap = new Map<string, string>();
+    for (const msg of pathMessages) idMap.set(msg.id, uuid());
+    
+    const newConvId = uuid();
+    const clonedMessages = pathMessages.map(msg => ({
+      ...msg,
+      id: idMap.get(msg.id)!,
+      convId: newConvId,
+      parent: msg.parent ? (idMap.get(msg.parent) ?? null) : null,
+      children: msg.children.filter((childId: string) => idMap.has(childId)).map((childId: string) => idMap.get(childId)!),
+      extra: options.includeAttachments ? msg.extra : undefined,
+    }));
+    
+    const newConv: DatabaseConversation = {
+      id: newConvId,
+      name: options.name,
+      lastModified: Date.now(),
+      currNode: clonedMessages[clonedMessages.length - 1].id,
+      forkedFromConversationId: sourceConvId,
+      mcpServerOverrides: sourceConv.mcpServerOverrides,
+    };
+    await apiFetch("import", { method: "POST", body: JSON.stringify({ conversations: [newConv], messages: clonedMessages }) });
+    return newConv;
   }
 
   /**
-   * Creates a root message for a new conversation.
-   * Root messages are not displayed but serve as the tree root for branching.
-   *
-   * @param convId - Conversation ID
-   * @returns The created root message
+   * Messages
    */
+  static async getConversationMessages(convId: string): Promise<DatabaseMessage[]> {
+    return await apiFetch<DatabaseMessage[]>(`messages?convId=${convId}`);
+  }
+
+  static async getMessage(id: string): Promise<DatabaseMessage | undefined> {
+    try {
+      const res = await apiFetch<DatabaseMessage>(`message?id=${id}`);
+      return res && Object.keys(res).length > 0 ? res : undefined;
+    } catch (e: any) {
+      if (e.message && e.message.includes("404")) return undefined;
+      throw e;
+    }
+  }
+
+  static async createMessageBranch(message: Omit<DatabaseMessage, "id" | "parent" | "children" | "toolCalls"> & { toolCalls?: string }, parentId: string | null): Promise<DatabaseMessage> {
+    const newMessage: DatabaseMessage = {
+      ...message,
+      id: uuid(),
+      parent: parentId,
+      toolCalls: message.toolCalls ?? "",
+      children: [],
+    };
+    
+    if (parentId !== null) {
+      const msgs = await this.getConversationMessages(message.convId);
+      const parent = msgs.find(m => m.id === parentId);
+      if (!parent) {
+        throw new Error(`Parent message ${parentId} not found`);
+      }
+      parent.children.push(newMessage.id);
+      await apiFetch("messages", { method: "POST", body: JSON.stringify(parent) });
+    }
+    await apiFetch("messages", { method: "POST", body: JSON.stringify(newMessage) });
+    await this.updateConversation(message.convId, { currNode: newMessage.id });
+    return newMessage;
+  }
+
   static async createRootMessage(convId: string): Promise<string> {
     const rootMessage: DatabaseMessage = {
       id: uuid(),
@@ -151,681 +190,216 @@ export class DatabaseService {
       toolCalls: "",
       children: [],
     };
-
-    await db.messages.add(rootMessage);
+    await apiFetch("messages", { method: "POST", body: JSON.stringify(rootMessage) });
     return rootMessage.id;
   }
 
-  /**
-   * Creates a system prompt message for a conversation.
-   *
-   * @param convId - Conversation ID
-   * @param systemPrompt - The system prompt content (must be non-empty)
-   * @param parentId - Parent message ID (typically the root message)
-   * @returns The created system message
-   * @throws Error if systemPrompt is empty
-   */
-  static async createSystemMessage(
-    convId: string,
-    systemPrompt: string,
-    parentId: string,
-  ): Promise<DatabaseMessage> {
-    const trimmedPrompt = systemPrompt.trim();
-    if (!trimmedPrompt) {
-      throw new Error("Cannot create system message with empty content");
-    }
-
+  static async createSystemMessage(convId: string, systemPrompt: string, parentId: string): Promise<DatabaseMessage> {
     const systemMessage: DatabaseMessage = {
       id: uuid(),
       convId,
       type: MessageRole.SYSTEM,
       timestamp: Date.now(),
       role: MessageRole.SYSTEM,
-      content: trimmedPrompt,
+      content: systemPrompt.trim(),
       parent: parentId,
       children: [],
     };
-
-    await db.messages.add(systemMessage);
-
-    const parentMessage = await db.messages.get(parentId);
-    if (parentMessage) {
-      await db.messages.update(parentId, {
-        children: [...parentMessage.children, systemMessage.id],
-      });
+    await apiFetch("messages", { method: "POST", body: JSON.stringify(systemMessage) });
+    const msgs = await this.getConversationMessages(convId);
+    const parent = msgs.find(m => m.id === parentId);
+    if (parent) {
+      parent.children.push(systemMessage.id);
+      await apiFetch("messages", { method: "POST", body: JSON.stringify(parent) });
     }
-
     return systemMessage;
   }
 
-  /**
-   * Deletes a conversation and all its messages.
-   *
-   * @param id - Conversation ID
-   */
-  static async deleteConversation(
-    id: string,
-    options?: { deleteWithForks?: boolean },
-  ): Promise<void> {
-    await db.transaction("rw", [db.conversations, db.messages], async () => {
-      if (options?.deleteWithForks) {
-        // Recursively collect all descendant IDs
-        const idsToDelete: string[] = [];
-        const queue = [id];
+  static async updateMessage(id: string, updates: Partial<Omit<DatabaseMessage, "id">>): Promise<void> {
+    const msg = await this.getMessage(id);
+    if (msg) {
+      await apiFetch("messages", { method: "POST", body: JSON.stringify({ ...msg, ...updates }) });
+    }
+  }
 
-        while (queue.length > 0) {
-          const parentId = queue.pop()!;
-          const children = await db.conversations
-            .filter((c) => c.forkedFromConversationId === parentId)
-            .toArray();
-
-          for (const child of children) {
-            idsToDelete.push(child.id);
-            queue.push(child.id);
-          }
-        }
-
-        for (const forkId of idsToDelete) {
-          await db.conversations.delete(forkId);
-          await db.messages.where("convId").equals(forkId).delete();
-        }
-      } else {
-        // Reparent direct children to deleted conv's parent
-        const conv = await db.conversations.get(id);
-        const newParent = conv?.forkedFromConversationId;
-        const directChildren = await db.conversations
-          .filter((c) => c.forkedFromConversationId === id)
-          .toArray();
-
-        for (const child of directChildren) {
-          await db.conversations.update(child.id, {
-            forkedFromConversationId: newParent ?? undefined,
-          });
-        }
+  static async deleteMessage(id: string): Promise<void> {
+    const msg = await this.getMessage(id);
+    if (msg) {
+      if (msg.parent) {
+         const parent = await this.getMessage(msg.parent);
+         if (parent) {
+           parent.children = parent.children.filter((x: string) => x !== id);
+           await apiFetch("messages", { method: "POST", body: JSON.stringify(parent) });
+         }
       }
-
-      await db.conversations.delete(id);
-      await db.messages.where("convId").equals(id).delete();
-    });
+    }
+    await apiFetch(`messages/${id}`, { method: "DELETE" });
   }
 
-  /**
-   * Deletes all messages belonging to a conversation without deleting the conversation itself.
-   * Used by sync operations that need to replace messages wholesale.
-   *
-   * @param convId - Conversation ID whose messages should be deleted
-   */
-  static async deleteConversationMessages(convId: string): Promise<void> {
-    await db.messages.where("convId").equals(convId).delete();
-  }
-
-  /**
-   * Deletes a message and removes it from its parent's children array.
-   *
-   * @param messageId - ID of the message to delete
-   */
-  static async deleteMessage(messageId: string): Promise<void> {
-    await db.transaction("rw", db.messages, async () => {
-      const message = await db.messages.get(messageId);
-      if (!message) return;
-
-      // Remove this message from its parent's children array
-      if (message.parent) {
-        const parent = await db.messages.get(message.parent);
-        if (parent) {
-          parent.children = parent.children.filter(
-            (childId: string) => childId !== messageId,
-          );
-          await db.messages.put(parent);
-        }
+  static async deleteMessageCascading(conversationId: string, messageId: string): Promise<string[]> {
+    const allMessages = await this.getConversationMessages(conversationId);
+    const descendants = findDescendantMessages(allMessages, messageId);
+    const allToDelete = [messageId, ...descendants];
+    
+    const message = allMessages.find(m => m.id === messageId);
+    if (message && message.parent) {
+      const parent = allMessages.find(m => m.id === message.parent);
+      if (parent) {
+        parent.children = parent.children.filter(x => x !== messageId);
+        await apiFetch("messages", { method: "POST", body: JSON.stringify(parent) });
       }
-
-      // Delete the message
-      await db.messages.delete(messageId);
-    });
-  }
-
-  /**
-   * Deletes a message and all its descendant messages (cascading deletion).
-   * This removes the entire branch starting from the specified message.
-   *
-   * @param conversationId - ID of the conversation containing the message
-   * @param messageId - ID of the root message to delete (along with all descendants)
-   * @returns Array of all deleted message IDs
-   */
-  static async deleteMessageCascading(
-    conversationId: string,
-    messageId: string,
-  ): Promise<string[]> {
-    return await db.transaction("rw", db.messages, async () => {
-      // Get all messages in the conversation to find descendants
-      const allMessages = await db.messages
-        .where("convId")
-        .equals(conversationId)
-        .toArray();
-
-      // Find all descendant messages
-      const descendants = findDescendantMessages(allMessages, messageId);
-      const allToDelete = [messageId, ...descendants];
-
-      // Get the message to delete for parent cleanup
-      const message = await db.messages.get(messageId);
-      if (message && message.parent) {
-        const parent = await db.messages.get(message.parent);
-        if (parent) {
-          parent.children = parent.children.filter(
-            (childId: string) => childId !== messageId,
-          );
-          await db.messages.put(parent);
-        }
-      }
-
-      // Delete all messages in the branch
-      await db.messages.bulkDelete(allToDelete);
-
-      return allToDelete;
-    });
-  }
-
-  /**
-   * Gets all conversations, sorted by last modified time (newest first).
-   *
-   * @returns Array of conversations
-   */
-  static async getAllConversations(): Promise<DatabaseConversation[]> {
-    return await db.conversations.orderBy("lastModified").reverse().toArray();
-  }
-
-  /**
-   * Gets a conversation by ID.
-   *
-   * @param id - Conversation ID
-   * @returns The conversation if found, otherwise undefined
-   */
-  static async getConversation(
-    id: string,
-  ): Promise<DatabaseConversation | undefined> {
-    return await db.conversations.get(id);
-  }
-
-  /**
-   * Gets all messages in a conversation, sorted by timestamp (oldest first).
-   *
-   * @param convId - Conversation ID
-   * @returns Array of messages in the conversation
-   */
-  static async getConversationMessages(
-    convId: string,
-  ): Promise<DatabaseMessage[]> {
-    return await db.messages.where("convId").equals(convId).sortBy("timestamp");
-  }
-
-  /**
-   * Updates a conversation.
-   *
-   * @param id - Conversation ID
-   * @param updates - Partial updates to apply
-   * @returns Promise that resolves when the conversation is updated
-   */
-  static async updateConversation(
-    id: string,
-    updates: Partial<Omit<DatabaseConversation, "id">>,
-  ): Promise<void> {
-    await db.conversations.update(id, {
-      ...updates,
-      lastModified: Date.now(),
-    });
-  }
-
-  /**
-   *
-   *
-   * Navigation
-   *
-   *
-   */
-
-  /**
-   * Updates the conversation's current node (active branch).
-   * This determines which conversation path is currently being viewed.
-   *
-   * @param convId - Conversation ID
-   * @param nodeId - Message ID to set as current node
-   */
-  static async updateCurrentNode(
-    convId: string,
-    nodeId: string,
-  ): Promise<void> {
-    await this.updateConversation(convId, {
-      currNode: nodeId,
-    });
-  }
-
-  /**
-   * Updates a message.
-   *
-   * @param id - Message ID
-   * @param updates - Partial updates to apply
-   * @returns Promise that resolves when the message is updated
-   */
-  static async updateMessage(
-    id: string,
-    updates: Partial<Omit<DatabaseMessage, "id">>,
-  ): Promise<void> {
-    await db.messages.update(id, updates);
-  }
-
-  /**
-   *
-   *
-   * Import
-   *
-   *
-   */
-
-  /**
-   * Imports multiple conversations and their messages.
-   * Skips conversations that already exist.
-   *
-   * @param data - Array of { conv, messages } objects
-   */
-  static async importConversations(
-    data: { conv: DatabaseConversation; messages: DatabaseMessage[] }[],
-  ): Promise<{ imported: number; skipped: number }> {
-    let importedCount = 0;
-    let skippedCount = 0;
-
-    return await db.transaction(
-      "rw",
-      [db.conversations, db.messages],
-      async () => {
-        for (const item of data) {
-          const { conv, messages } = item;
-
-          const existing = await db.conversations.get(conv.id);
-          if (existing) {
-            console.warn(
-              `Conversation "${conv.name}" already exists, skipping...`,
-            );
-            skippedCount++;
-            continue;
-          }
-
-          await db.conversations.add(conv);
-          for (const msg of messages) {
-            await db.messages.put(msg);
-          }
-
-          importedCount++;
-        }
-
-        return { imported: importedCount, skipped: skippedCount };
-      },
-    );
-  }
-
-  /**
-   *
-   *
-   * Forking
-   *
-   *
-   */
-
-  /**
-   * Forks a conversation at a specific message, creating a new conversation
-   * containing all messages from the root up to (and including) the target message.
-   *
-   * @param sourceConvId - The source conversation ID
-   * @param atMessageId - The message ID to fork at (the new conversation ends here)
-   * @param options - Fork options (name and whether to include attachments)
-   * @returns The newly created conversation
-   */
-  static async forkConversation(
-    sourceConvId: string,
-    atMessageId: string,
-    options: { name: string; includeAttachments: boolean },
-  ): Promise<DatabaseConversation> {
-    return await db.transaction(
-      "rw",
-      [db.conversations, db.messages],
-      async () => {
-        const sourceConv = await db.conversations.get(sourceConvId);
-        if (!sourceConv) {
-          throw new Error(`Source conversation ${sourceConvId} not found`);
-        }
-
-        const allMessages = await db.messages
-          .where("convId")
-          .equals(sourceConvId)
-          .toArray();
-
-        const pathMessages = filterByLeafNodeId(
-          allMessages,
-          atMessageId,
-          true,
-        ) as DatabaseMessage[];
-        if (pathMessages.length === 0) {
-          throw new Error(`Could not resolve message path to ${atMessageId}`);
-        }
-
-        const idMap = new Map<string, string>();
-
-        for (const msg of pathMessages) {
-          idMap.set(msg.id, uuid());
-        }
-
-        const newConvId = uuid();
-        const clonedMessages: DatabaseMessage[] = pathMessages.map((msg) => {
-          const newId = idMap.get(msg.id)!;
-          const newParent = msg.parent ? (idMap.get(msg.parent) ?? null) : null;
-          const newChildren = msg.children
-            .filter((childId: string) => idMap.has(childId))
-            .map((childId: string) => idMap.get(childId)!);
-
-          return {
-            ...msg,
-            id: newId,
-            convId: newConvId,
-            parent: newParent,
-            children: newChildren,
-            extra: options.includeAttachments ? msg.extra : undefined,
-          };
-        });
-
-        const lastClonedMessage = clonedMessages[clonedMessages.length - 1];
-        const newConv: DatabaseConversation = {
-          id: newConvId,
-          name: options.name,
-          lastModified: Date.now(),
-          currNode: lastClonedMessage.id,
-          forkedFromConversationId: sourceConvId,
-          mcpServerOverrides: sourceConv.mcpServerOverrides
-            ? sourceConv.mcpServerOverrides.map((o: McpServerOverride) => ({
-                serverId: o.serverId,
-                enabled: o.enabled,
-              }))
-            : undefined,
-        };
-
-        await db.conversations.add(newConv);
-
-        for (const msg of clonedMessages) {
-          await db.messages.add(msg);
-        }
-
-        return newConv;
-      },
-    );
+    }
+    await apiFetch("messages/bulk-delete", { method: "POST", body: JSON.stringify({ ids: allToDelete }) });
+    return allToDelete;
   }
 
   /**
    * Workspaces
    */
   static async createWorkspace(name: string): Promise<DatabaseWorkspace> {
-    const workspace: DatabaseWorkspace = { id: uuid(), name };
-    await db.workspaces.add(workspace);
+    const workspace = { id: uuid(), name };
+    await apiFetch("workspaces", { method: "POST", body: JSON.stringify(workspace) });
     return workspace;
   }
-
   static async getAllWorkspaces(): Promise<DatabaseWorkspace[]> {
-    return await db.workspaces.toArray();
+    return await apiFetch<DatabaseWorkspace[]>("workspaces");
   }
-
   static async deleteWorkspace(id: string): Promise<void> {
-    await db.transaction(
-      "rw",
-      [db.workspaces, db.projects, db.folders, db.notes, db.fileAssets],
-      async () => {
-        const projects = await db.projects
-          .where("workspaceId")
-          .equals(id)
-          .toArray();
-        for (const p of projects) {
-          await this.deleteProject(p.id);
-        }
-        await db.workspaces.delete(id);
-      },
-    );
+    await apiFetch(`workspaces/${id}`, { method: "DELETE" });
   }
 
   /**
    * Projects
    */
-  static async createProject(
-    workspaceId: string,
-    name: string,
-  ): Promise<DatabaseProject> {
-    const project: DatabaseProject = { id: uuid(), workspaceId, name };
-    await db.projects.add(project);
+  static async createProject(workspaceId: string, name: string): Promise<DatabaseProject> {
+    const project = { id: uuid(), workspaceId, name };
+    await apiFetch("projects", { method: "POST", body: JSON.stringify(project) });
     return project;
   }
-
-  static async getWorkspaceProjects(
-    workspaceId: string,
-  ): Promise<DatabaseProject[]> {
-    return await db.projects.where("workspaceId").equals(workspaceId).toArray();
+  static async getWorkspaceProjects(workspaceId: string): Promise<DatabaseProject[]> {
+    return await apiFetch<DatabaseProject[]>(`projects?workspaceId=${workspaceId}`);
   }
-
   static async deleteProject(id: string): Promise<void> {
-    await db.transaction(
-      "rw",
-      [db.projects, db.folders, db.notes, db.fileAssets],
-      async () => {
-        const folders = await db.folders
-          .where("projectId")
-          .equals(id)
-          .toArray();
-        for (const f of folders) {
-          await this.deleteFolder(f.id);
-        }
-        await db.projects.delete(id);
-      },
-    );
+    await apiFetch(`projects/${id}`, { method: "DELETE" });
   }
 
   /**
    * Folders
    */
-  static async createFolder(
-    projectId: string | null,
-    name: string,
-  ): Promise<DatabaseFolder> {
-    const folder: DatabaseFolder = { id: uuid(), projectId, name };
-    await db.folders.add(folder);
+  static async createFolder(projectId: string | null, name: string): Promise<DatabaseFolder> {
+    const folder = { id: uuid(), projectId, name };
+    await apiFetch("folders", { method: "POST", body: JSON.stringify(folder) });
     return folder;
   }
-
-  static async getProjectFolders(
-    projectId: string | null,
-  ): Promise<DatabaseFolder[]> {
-    if (projectId === null) {
-      return await db.folders.filter((f) => f.projectId === null).toArray();
-    }
-    return await db.folders.where("projectId").equals(projectId).toArray();
+  static async getProjectFolders(projectId: string | null): Promise<DatabaseFolder[]> {
+    return await apiFetch<DatabaseFolder[]>(`folders?projectId=${projectId || ""}`);
   }
-
   static async deleteFolder(id: string): Promise<void> {
-    await db.transaction(
-      "rw",
-      [db.folders, db.notes, db.fileAssets],
-      async () => {
-        await db.notes.where("folderId").equals(id).delete();
-        await db.fileAssets.where("folderId").equals(id).delete();
-        await db.folders.delete(id);
-      },
-    );
+    await apiFetch(`folders/${id}`, { method: "DELETE" });
   }
 
   /**
    * Notes
    */
-  static async createNote(
-    folderId: string | null,
-    title: string,
-    content: string,
-  ): Promise<DatabaseNote> {
-    const note: DatabaseNote = {
-      id: uuid(),
-      folderId,
-      title,
-      content,
-      updatedAt: Date.now(),
-    };
-    await db.notes.add(note);
+  static async createNote(folderId: string | null, title: string, content: string): Promise<DatabaseNote> {
+    const note = { id: uuid(), folderId, title, content, updatedAt: Date.now() };
+    await apiFetch("notes", { method: "POST", body: JSON.stringify(note) });
     return note;
   }
-
-  static async getFolderNotes(
-    folderId: string | null,
-  ): Promise<DatabaseNote[]> {
-    if (folderId === null) {
-      return await db.notes.filter((n) => n.folderId === null).toArray();
-    }
-    return await db.notes.where("folderId").equals(folderId).toArray();
+  static async getFolderNotes(folderId: string | null): Promise<DatabaseNote[]> {
+    return await apiFetch<DatabaseNote[]>(`notes?folderId=${folderId || ""}`);
   }
-
   static async getAllNotes(): Promise<DatabaseNote[]> {
-    return await db.notes.toArray();
+    return await apiFetch<DatabaseNote[]>("notes/all");
   }
-
-  static async updateNote(
-    id: string,
-    updates: Partial<Omit<DatabaseNote, "id">>,
-  ): Promise<void> {
-    await db.notes.update(id, { ...updates, updatedAt: Date.now() });
+  static async updateNote(id: string, updates: Partial<Omit<DatabaseNote, "id">>): Promise<void> {
+    try {
+      const note = await apiFetch<DatabaseNote>(`notes?id=${id}`);
+      if (note && Object.keys(note).length > 0) {
+        await apiFetch("notes", { method: "POST", body: JSON.stringify({ ...note, ...updates, updatedAt: Date.now() }) });
+      }
+    } catch (e: any) {
+      if (e.message && e.message.includes("404")) return;
+      throw e;
+    }
   }
-
   static async deleteNote(id: string): Promise<void> {
-    await db.notes.delete(id);
+    await apiFetch(`notes/${id}`, { method: "DELETE" });
   }
 
   /**
    * File Assets
    */
-  static async createFileAsset(
-    folderId: string | null,
-    name: string,
-    size: number,
-    type: string,
-    content?: string,
-  ): Promise<DatabaseFileAsset> {
-    const fileAsset: DatabaseFileAsset = {
-      id: uuid(),
-      folderId,
-      name,
-      size,
-      type,
-      uploadDate: Date.now(),
-      content,
-    };
-    await db.fileAssets.add(fileAsset);
-    return fileAsset;
+  static async createFileAsset(folderId: string | null, name: string, size: number, type: string, content?: string): Promise<DatabaseFileAsset> {
+    const asset = { id: uuid(), folderId, name, size, type, uploadDate: Date.now(), content };
+    await apiFetch("fileAssets", { method: "POST", body: JSON.stringify(asset) });
+    return asset;
   }
-
-  static async getFolderFileAssets(
-    folderId: string | null,
-  ): Promise<DatabaseFileAsset[]> {
-    if (folderId === null) {
-      return await db.fileAssets.filter((f) => f.folderId === null).toArray();
-    }
-    return await db.fileAssets.where("folderId").equals(folderId).toArray();
+  static async getFolderFileAssets(folderId: string | null): Promise<DatabaseFileAsset[]> {
+    return await apiFetch<DatabaseFileAsset[]>(`fileAssets?folderId=${folderId || ""}`);
   }
-
   static async getAllFileAssets(): Promise<DatabaseFileAsset[]> {
-    return await db.fileAssets.toArray();
+    return await apiFetch<DatabaseFileAsset[]>("fileAssets/all");
   }
-
-  static async updateFileAsset(
-    id: string,
-    updates: Partial<Omit<DatabaseFileAsset, "id">>,
-  ): Promise<void> {
-    await db.fileAssets.update(id, updates);
+  static async updateFileAsset(id: string, updates: Partial<Omit<DatabaseFileAsset, "id">>): Promise<void> {
+    try {
+      const asset = await apiFetch<DatabaseFileAsset>(`fileAssets?id=${id}`);
+      if (asset && Object.keys(asset).length > 0) {
+        await apiFetch("fileAssets", { method: "POST", body: JSON.stringify({ ...asset, ...updates }) });
+      }
+    } catch (e: any) {
+      if (e.message && e.message.includes("404")) return;
+      throw e;
+    }
   }
-
   static async deleteFileAsset(id: string): Promise<void> {
-    await db.fileAssets.delete(id);
+    await apiFetch(`fileAssets/${id}`, { method: "DELETE" });
   }
 
   /**
    * Export/Import
    */
-  static async exportData(): Promise<any> {
+  static async exportData(): Promise<ExportData> {
     const localStorageData: Record<string, string | null> = {};
-    const keys = [
-      "jenova_config",
-      "theme",
-      "jenova_user_overrides",
-      "mcp_default_enabled",
-    ];
-
-    for (const key of keys) {
-      localStorageData[key] = localStorage.getItem(key);
-    }
-
+    const keys = ["jenova_config", "theme", "jenova_user_overrides", "mcp_default_enabled"];
+    for (const key of keys) localStorageData[key] = localStorage.getItem(key);
+    
     return {
-      conversations: await db.conversations.toArray(),
-      messages: await db.messages.toArray(),
-      workspaces: await db.workspaces.toArray(),
-      projects: await db.projects.toArray(),
-      folders: await db.folders.toArray(),
-      notes: await db.notes.toArray(),
-      fileAssets: await db.fileAssets.toArray(),
+      conversations: await this.getAllConversations(),
+      workspaces: await this.getAllWorkspaces(),
+      projects: await apiFetch<DatabaseProject[]>("projects/all"),
+      folders: await apiFetch<DatabaseFolder[]>("folders/all"),
+      notes: await this.getAllNotes(),
+      fileAssets: await this.getAllFileAssets(),
+      messages: await apiFetch<DatabaseMessage[]>("messages/all"),
       localStorage: localStorageData,
       timestamp: Date.now(),
     };
   }
 
-  static async importData(data: any): Promise<void> {
+  static async importData(data: ExportData): Promise<void> {
     if (data.localStorage) {
       for (const [key, value] of Object.entries(data.localStorage)) {
-        if (value !== null) {
-          localStorage.setItem(key, value as string);
-        }
+        if (value !== null) localStorage.setItem(key, value as string);
       }
     }
+    await apiFetch("import", { method: "POST", body: JSON.stringify(data) });
+  }
 
-    await db.transaction(
-      "rw",
-      [
-        db.conversations,
-        db.messages,
-        db.workspaces,
-        db.projects,
-        db.folders,
-        db.notes,
-        db.fileAssets,
-      ],
-      async () => {
-        if (data.conversations) {
-          await db.conversations.clear();
-          await db.conversations.bulkAdd(data.conversations);
-        }
-        if (data.messages) {
-          await db.messages.clear();
-          await db.messages.bulkAdd(data.messages);
-        }
-        if (data.workspaces) {
-          await db.workspaces.clear();
-          await db.workspaces.bulkAdd(data.workspaces);
-        }
-        if (data.projects) {
-          await db.projects.clear();
-          await db.projects.bulkAdd(data.projects);
-        }
-        if (data.folders) {
-          await db.folders.clear();
-          await db.folders.bulkAdd(data.folders);
-        }
-        if (data.notes) {
-          await db.notes.clear();
-          await db.notes.bulkAdd(data.notes);
-        }
-        if (data.fileAssets) {
-          await db.fileAssets.clear();
-          await db.fileAssets.bulkAdd(data.fileAssets);
-        }
-      },
-    );
+  static async getCache(key: string): Promise<string | null> {
+    try {
+      const res = await apiFetch<{ response: string }>(`cache?key=${encodeURIComponent(key)}`);
+      return res.response || null;
+    } catch {
+      return null;
+    }
+  }
+
+  static async setCache(key: string, response: string): Promise<void> {
+    try {
+      await apiFetch("cache", { method: "POST", body: JSON.stringify({ key, response }) });
+    } catch (e) {
+      console.error("[Cache] Failed to save", e);
+    }
   }
 }

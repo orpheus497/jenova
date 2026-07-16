@@ -71,6 +71,7 @@ export class SyncService {
       if (mdFiles.length > 0) {
         const allConvs = await DatabaseService.getAllConversations();
         const allNotes = await DatabaseService.getAllNotes();
+        const allFolders = await DatabaseService.getProjectFolders(null);
 
         const limit = 5;
         const active: Promise<void>[] = [];
@@ -84,18 +85,66 @@ export class SyncService {
           const isChat = path.includes("/Chats/");
 
           if (isNote) {
-            const note = allNotes.find((n) => n.title === fileName);
+            const lastUnderscore = fileName.lastIndexOf("_");
+            let noteId = "";
+            let title = fileName;
+            let note: any;
+
+            if (lastUnderscore !== -1) {
+              const potentialId = fileName.substring(lastUnderscore + 1);
+              note = allNotes.find((n) => n.id === potentialId);
+              if (note) {
+                try {
+                  title = decodeURIComponent(fileName.substring(0, lastUnderscore));
+                } catch {
+                  title = fileName.substring(0, lastUnderscore);
+                }
+                noteId = potentialId;
+              }
+            }
+
+            const notesIndex = parts.indexOf("Notes");
+            let parsedFolderName: string | null = null;
+            if (notesIndex !== -1 && parts.length > notesIndex + 2) {
+              parsedFolderName = parts.slice(notesIndex + 1, parts.length - 1).join("/");
+              parsedFolderName = parsedFolderName.split("/").map(decodeURIComponent).join("/");
+            }
+            const folder = parsedFolderName ? allFolders.find(f => f.name === parsedFolderName) : null;
+            const parsedFolderId = folder ? folder.id : null;
+
+            if (!note) {
+              try {
+                title = decodeURIComponent(fileName);
+              } catch {
+                title = fileName;
+              }
+              note = allNotes.find((n) => n.title === title && n.folderId === parsedFolderId);
+            }
+
             if (note) {
+              let needsUpdate = false;
+              const updates: any = { updatedAt: Date.now() };
+
+              if (note.title !== title) {
+                updates.title = title;
+                needsUpdate = true;
+              }
               if (note.content !== content) {
-                await DatabaseService.updateNote(note.id, {
-                  content,
-                  updatedAt: Date.now(),
-                });
+                updates.content = content;
+                needsUpdate = true;
+              }
+              if (note.folderId !== parsedFolderId) {
+                updates.folderId = parsedFolderId;
+                needsUpdate = true;
+              }
+
+              if (needsUpdate) {
+                await DatabaseService.updateNote(note.id, updates);
                 changed = true;
                 stats.updated++;
               }
             } else {
-              await DatabaseService.createNote(null, fileName, content);
+              await DatabaseService.createNote(parsedFolderId, title, content);
               changed = true;
               stats.created++;
             }
@@ -185,6 +234,9 @@ export class SyncService {
       const allNotes = await DatabaseService.getAllNotes();
       const allFolders = await DatabaseService.getProjectFolders(null);
       const allConvs = await DatabaseService.getAllConversations();
+      
+      const files = await StorageService.list();
+      const mdFiles = files.filter((f) => f.endsWith(".md"));
 
       // Hierarchy: Workspace / Project / Folder
       // For now, if no workspace/project, use "default"
@@ -193,12 +245,19 @@ export class SyncService {
 
       const queue: (() => Promise<void>)[] = [];
 
+      // Notes are synced automatically by the backend via proxy.lua -> fs_sync.lua
+      // We retain a frontend fallback here until backend persistence supports every note shape (e.g., unassigned).
       for (const note of allNotes) {
         queue.push(async () => {
           const folder = allFolders.find((f) => f.id === note.folderId);
-          const folderName = folder?.name || "Notes";
-          const path = `${defaultWorkspace}/${folderName}/${note.title}.md`;
-          await StorageService.save(path, note.content);
+          const folderSegment = folder?.name ? `Notes/${folder.name.split("/").map(encodeURIComponent).join("/")}` : "Notes";
+          const path = `${encodeURIComponent(defaultWorkspace)}/${folderSegment}/${encodeURIComponent(note.title)}_${note.id}.md`;
+          
+          const oldPath = mdFiles.find(p => p.includes(`_${note.id}.md`));
+          if (oldPath && oldPath !== path) {
+            await StorageService.delete(oldPath.split("/").map(encodeURIComponent).join("/"));
+          }
+          await StorageService.save(path, note.content || "");
         });
       }
 
@@ -267,11 +326,17 @@ export class SyncService {
         const note = notes.find((n) => n.id === id);
         if (note) {
           const folder = allFolders.find((f) => f.id === note.folderId);
-          const folderName = folder?.name || "Notes";
-          const path = `${defaultWorkspace}/${folderName}/${note.title}.md`;
-          await StorageService.save(path, note.content);
+          const folderSegment = folder?.name ? `Notes/${folder.name.split("/").map(encodeURIComponent).join("/")}` : "Notes";
+          const path = `${encodeURIComponent(defaultWorkspace)}/${folderSegment}/${encodeURIComponent(note.title)}_${note.id}.md`;
+          
+          const files = await StorageService.list();
+          const oldPath = files.find(p => p.includes(`_${note.id}.md`));
+          if (oldPath && oldPath !== path) {
+            await StorageService.delete(oldPath.split("/").map(encodeURIComponent).join("/"));
+          }
+          await StorageService.save(path, note.content || "");
         }
-      } else {
+      } else if (type === "chat") {
         const conv = await DatabaseService.getConversation(id);
         if (conv) {
           const messages = await DatabaseService.getConversationMessages(id);

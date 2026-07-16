@@ -2,8 +2,10 @@
 	import { Folder, FolderOpen, ChevronRight, ChevronDown, Trash2, Plus, Archive } from '@lucide/svelte';
     import type { Snippet } from 'svelte';
 
+	import type { DatabaseFolder } from '$lib/types/database';
+
 	interface Props {
-		folder: any;
+		folder: DatabaseFolder;
 		isExpanded: boolean;
 		onToggle: () => void;
 		onDelete: () => void;

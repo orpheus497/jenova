@@ -42,4 +42,17 @@ export class StorageService {
       return [];
     }
   }
+
+  static async delete(path: string): Promise<boolean> {
+    if (!browser) return false;
+    try {
+      const response = await fetch(`./api/storage/${path}`, {
+        method: "DELETE",
+      });
+      return response.ok;
+    } catch (error) {
+      console.error(`Failed to delete from storage: ${path}`, error);
+      return false;
+    }
+  }
 }

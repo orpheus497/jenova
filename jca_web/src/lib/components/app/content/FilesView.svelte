@@ -6,6 +6,7 @@
 	import { conversations, conversationsStore } from '$lib/stores/conversations.svelte';
 	import { cn, formatFileSize } from '$lib/utils';
 	import { SyncService, type SyncStats } from '$lib/services/sync.service';
+	import type { DatabaseConversation, DatabaseNote, DatabaseFileAsset } from '$lib/types/database';
 
 	interface Props {
 		currentFolderId?: string | null | undefined;
@@ -236,7 +237,7 @@
             </button>
         </div>
 
-        {#snippet fileCard(file: any)}
+        {#snippet fileCard(file: DatabaseFileAsset)}
             {@const Icon = getFileIcon(file.type)}
             <div class="glass-panel p-5 rounded-xl border border-white/10 flex items-center justify-between group hover:border-secondary/50 transition-colors">
                 <div class="flex items-center gap-4 overflow-hidden">
@@ -262,7 +263,7 @@
             </div>
         {/snippet}
 
-        {#snippet noteCard(note: any)}
+        {#snippet noteCard(note: DatabaseNote)}
             <div class="glass-panel p-5 rounded-xl border border-white/10 flex items-center justify-between group hover:border-accent/50 transition-colors cursor-pointer" onclick={() => window.location.hash = `#/notes/${note.id}`}>
                 <div class="flex items-center gap-4 overflow-hidden">
                     <div class="w-12 h-12 shrink-0 rounded-lg bg-surface-container flex items-center justify-center text-accent group-hover:bg-accent/10 transition-colors">
@@ -283,7 +284,7 @@
             </div>
         {/snippet}
 
-        {#snippet chatCard(chat: any)}
+        {#snippet chatCard(chat: DatabaseConversation)}
             <div class="glass-panel p-5 rounded-xl border border-white/10 flex items-center justify-between group hover:border-primary/50 transition-colors cursor-pointer" onclick={() => window.location.hash = `#/chat/${chat.id}`}>
                 <div class="flex items-center gap-4 overflow-hidden">
                     <div class="w-12 h-12 shrink-0 rounded-lg bg-surface-container flex items-center justify-center text-primary group-hover:bg-primary/10 transition-colors">
@@ -338,10 +339,10 @@
                     {/if}
                 {/each}
                 
-                {#if (viewMode !== 'notes' && files().filter((f: any) => !f.folderId).length > 0) || (viewMode !== 'files' && notes().filter((n: any) => !n.folderId).length > 0) || conversations().filter((c: any) => !c.folderId).length > 0}
-                    {@const unassignedFiles = files().filter((f: any) => !f.folderId)}
-                    {@const unassignedNotes = notes().filter((n: any) => !n.folderId)}
-                    {@const unassignedChats = conversations().filter((c: any) => !c.folderId)}
+                {#if (viewMode !== 'notes' && files().filter((f: DatabaseFileAsset) => !f.folderId).length > 0) || (viewMode !== 'files' && notes().filter((n: DatabaseNote) => !n.folderId).length > 0) || conversations().filter((c: DatabaseConversation) => !c.folderId).length > 0}
+                    {@const unassignedFiles = files().filter((f: DatabaseFileAsset) => !f.folderId)}
+                    {@const unassignedNotes = notes().filter((n: DatabaseNote) => !n.folderId)}
+                    {@const unassignedChats = conversations().filter((c: DatabaseConversation) => !c.folderId)}
                     <div>
                         <div class="flex items-center justify-between mb-4">
                             <h3 class="font-bold text-xl text-outline flex items-center gap-2"><Archive size={20} /> Unassigned Assets</h3>
