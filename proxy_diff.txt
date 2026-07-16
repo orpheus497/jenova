@@ -1,0 +1,500 @@
+diff --git a/lib/proxy.lua b/lib/proxy.lua
+index 6b47b1f..f1dda88 100644
+--- a/lib/proxy.lua
++++ b/lib/proxy.lua
+@@ -14,6 +14,9 @@ local json = require("json")
+ local search = require("search")
+ local embed = require("embed")
+ local prompts = require("prompts")
++local db = require("db")
++local fs_sync = require("fs_sync")
++local sha256 = require("sha256")
+ 
+ -- MIME types for static file serving
+ local MIME_TYPES = {
+@@ -63,6 +66,15 @@ else
+ end
+ -- Indexing moved to after server listen
+ 
++os.execute("mkdir -p '" .. jca_home .. "/var'")
++local db_path = os.getenv("JENOVA_DB_PATH") or (jca_home .. "/var/jenova.db")
++local db_ok = db.init(db_path)
++if not db_ok then
++    print("[proxy] ERROR: Database initialization failed. Exiting.")
++    os.exit(1)
++end
++print("[proxy] Jenova Database initialized: " .. tostring(db_ok))
++
+ 
+ print("[proxy] Jenova Signal Proxy loaded on port " .. PORT .. ". Embeddings: " .. tostring(embed_ok))
+ 
+@@ -184,18 +196,19 @@ local function async_popen_read(cmd)
+     
+     local chunks = {}
+     local buf = ffi.new("char[4096]")
++    local start_time = os.time()
++    
+     while true do
++        if os.time() - start_time > 15 then
++            ffi.C.kill(pid, 9)
++            ffi.C.close(fd)
++            ffi.C.waitpid(pid, nil, 0)
++            print("[proxy] async_popen_read timeout for pid " .. tostring(pid))
++            return nil, "timeout"
++        end
++        
+         local n = ffi.C.read(fd, buf, 4096)
+         if n > 0 then
+-        if watch_stdin and _ffi_defs.FD_ISSET(0, read_fds) then
+-            local tmp_buf = ffi.new("char[1]")
+-            local r = ffi.C.read(0, tmp_buf, 1)
+-            if r <= 0 then
+-                print("[proxy] EOF on stdin, parent process died. Shutting down...")
+-                running = false
+-                break
+-            end
+-        end
+             chunks[#chunks + 1] = ffi.string(buf, n)
+         elseif n == 0 then
+             break
+@@ -209,9 +222,11 @@ local function async_popen_read(cmd)
+         end
+     end
+     ffi.C.close(fd)
+-    ffi.C.waitpid(pid, nil, 0)
+-    return table.concat(chunks)
++    local status_buf = ffi.new("int[1]")
++    ffi.C.waitpid(pid, status_buf, 0)
++    return table.concat(chunks), status_buf[0]
+ end
++_G.async_popen_read = async_popen_read
+ 
+ -- Detect available HTTPS-capable command-line tool (once at startup).
+ -- FreeBSD: 'fetch' is in base. Linux/other: fall back to 'curl'.
+@@ -445,9 +460,8 @@ local function proxy_connection(client_fd, conn_fds)
+     local start_time = os.time()
+     set_nonblocking(client_fd)
+     set_socket_opts(client_fd)
+-    conn_fds.client = client_fd
+-    conn_fds.llama = -1
+-
++    local req_cache_key = nil
++    
+     local function safe_close()
+         if conn_fds.llama >= 0 then pcall(ffi.C.close, conn_fds.llama); conn_fds.llama = -1 end
+         if conn_fds.client >= 0 then pcall(ffi.C.close, conn_fds.client); conn_fds.client = -1 end
+@@ -598,6 +612,312 @@ local function proxy_connection(client_fd, conn_fds)
+     local is_fim = headers_raw:find("POST /infill")
+     
+     local storage_path = headers_raw:match("^POST /api/storage/([^ %?]+)")
++    
++    -- Database API Routes
++    local request_line = headers_raw:match("^([^\r\n]+)")
++    local db_route = request_line and request_line:match("^[A-Z]+ /api/db/([^ %?\r\n]+)")
++    if db_route then
++        local resp_body = ""
++        local status = "200 OK"
++        
++        if is_get and db_route == "conversations" then
++            local id = request_line:match("id=([^ %&\r\n]+)")
++            if id then
++                local conv = db.get_conversation(id)
++                if conv then resp_body = json.encode(conv) else status = "404 Not Found" end
++            else
++                local convs = db.get_conversations()
++                if convs then resp_body = json.encode(convs) else status = "500 Internal Server Error" end
++            end
++        elseif not is_get and headers_raw:match("^POST /api/db/conversations") then
++            local c = json.decode(body_raw)
++            if c then
++                local existing = db.get_conversation(c.id)
++                local ok, err
++                if existing then ok, err = db.update_conversation(c) else ok, err = db.insert_conversation(c) end
++                if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
++            end
++        elseif not is_get and headers_raw:match("^DELETE /api/db/conversations/([^ %?\r\n]+)") then
++            local id = headers_raw:match("^DELETE /api/db/conversations/([^ %?\r\n]+)")
++            local delete_with_forks = request_line:match("deleteWithForks=true") ~= nil
++            local ok = db.delete_conversation(id, delete_with_forks)
++            if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
++        elseif is_get and db_route == "message" then
++            local id = request_line:match("id=([^ %&\r\n]+)")
++            local msg = db.get_message(id)
++            if msg then resp_body = json.encode(msg) else status = "404 Not Found" end
++        elseif is_get and db_route == "messages/all" then
++            local msgs = db.get_all_messages()
++            if msgs then resp_body = json.encode(msgs) else status = "500 Internal Server Error" end
++        elseif is_get and db_route == "messages" then
++            local convId = request_line:match("convId=([^ %&\r\n]+)")
++            local msgs = db.get_messages(convId)
++            if msgs then resp_body = json.encode(msgs) else status = "500 Internal Server Error" end
++        elseif not is_get and headers_raw:match("^POST /api/db/messages/bulk%-delete") then
++            local data = json.decode(body_raw)
++            if data and data.ids then
++                local ok = db.delete_messages_bulk(data.ids)
++                if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
++            else
++                status = "400 Bad Request"
++            end
++        elseif not is_get and headers_raw:match("^POST /api/db/messages") then
++            local m = json.decode(body_raw)
++            if m then
++                local msg = db.get_message(m.id)
++                local exists = msg ~= nil
++                local ok, err
++                if exists then ok, err = db.update_message(m) else ok, err = db.insert_message(m) end
++                if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
++            end
++        elseif not is_get and headers_raw:match("^DELETE /api/db/messages/([^ %?\r\n]+)") then
++            local id = headers_raw:match("^DELETE /api/db/messages/([^ %?\r\n]+)")
++            local ok = db.delete_message(id)
++            if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
++        -- WORKSPACES
++        elseif is_get and db_route == "workspaces" then
++            local items = db.get_workspaces()
++            if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
++        elseif not is_get and headers_raw:match("^POST /api/db/workspaces") then
++            local ok_j, item = pcall(json.decode, body_raw)
++            if ok_j and type(item) == "table" and item.id and item.name then
++                local ok = db.insert_workspace(item)
++                if ok then 
++                    local fs_ok = fs_sync.sync_workspace(item)
++                    if fs_ok == false then
++                        db.delete_workspace(item.id)
++                        status = "500 Internal Server Error"
++                    else
++                        resp_body = '{"status":"ok"}' 
++                    end
++                else 
++                    status = "500 Internal Server Error" 
++                end
++            else
++                status = "400 Bad Request"
++            end
++        elseif not is_get and headers_raw:match("^DELETE /api/db/workspaces/([^ %?\r\n]+)") then
++            local id = headers_raw:match("^DELETE /api/db/workspaces/([^ %?\r\n]+)")
++            local workspaces = db.get_workspaces()
++            local target_w = nil
++            for _, w in ipairs(workspaces or {}) do if w.id == id then target_w = w break end end
++            if not target_w then
++                status = "404 Not Found"
++            else
++                local fs_ok = fs_sync.trash_workspace(target_w)
++                if not fs_ok then
++                    status = "500 Internal Server Error"
++                else
++                    local ok = db.delete_workspace(id)
++                    if ok then
++                        resp_body = '{"status":"ok"}'
++                    else
++                        status = "500 Internal Server Error"
++                    end
++                end
++            end
++        -- PROJECTS
++        elseif is_get and db_route == "projects/all" then
++            local items = db.get_all_projects()
++            if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
++        elseif is_get and db_route == "projects" then
++            local wid = request_line:match("workspaceId=([^ %&\r\n]+)")
++            local items = db.get_projects(wid)
++            if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
++        elseif not is_get and headers_raw:match("^POST /api/db/projects") then
++            local ok_j, item = pcall(json.decode, body_raw)
++            if ok_j and type(item) == "table" and item.id and item.name then
++                local ok = db.insert_project(item)
++                if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
++            else
++                status = "400 Bad Request"
++            end
++        elseif not is_get and headers_raw:match("^DELETE /api/db/projects/([^ %?\r\n]+)") then
++            local id = headers_raw:match("^DELETE /api/db/projects/([^ %?\r\n]+)")
++            local p = db.get_project(id)
++            if not p then
++                status = "404 Not Found"
++            else
++                local fs_ok, trash_path, path = fs_sync.trash_project(p)
++                if not fs_ok then
++                    status = "500 Internal Server Error"
++                else
++                    local ok = db.delete_project(id)
++                    if ok then
++                        resp_body = '{"status":"ok"}'
++                    else
++                        if trash_path and path then os.rename(trash_path, path) end
++                        status = "500 Internal Server Error"
++                    end
++                end
++            end
++        -- FOLDERS
++        elseif is_get and db_route == "folders/all" then
++            local items = db.get_all_folders()
++            if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
++        elseif is_get and db_route == "folders" then
++            local pid = request_line:match("projectId=([^ %&\r\n]+)")
++            local items = db.get_folders(pid)
++            if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
++        elseif not is_get and headers_raw:match("^POST /api/db/folders") then
++            local ok_j, item = pcall(json.decode, body_raw)
++            if ok_j and type(item) == "table" and item.id and item.name then
++                local ok = db.insert_folder(item)
++                if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
++            else
++                status = "400 Bad Request"
++            end
++        elseif not is_get and headers_raw:match("^DELETE /api/db/folders/([^ %?\r\n]+)") then
++            local id = headers_raw:match("^DELETE /api/db/folders/([^ %?\r\n]+)")
++            local f = db.get_folder(id)
++            if not f then
++                status = "404 Not Found"
++            else
++                local fs_ok, trash_path, path = fs_sync.trash_folder(f)
++                if not fs_ok then
++                    status = "500 Internal Server Error"
++                else
++                    local ok = db.delete_folder(id)
++                    if ok then
++                        resp_body = '{"status":"ok"}'
++                    else
++                        if trash_path and path then os.rename(trash_path, path) end
++                        status = "500 Internal Server Error"
++                    end
++                end
++            end
++        -- NOTES
++        elseif is_get and db_route == "notes/all" then
++            local items = db.get_all_notes()
++            if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
++        elseif is_get and db_route == "notes" then
++            local id = request_line:match("id=([^ %&\r\n]+)")
++            local fid = request_line:match("folderId=([^ %&\r\n]+)")
++            if id then
++                local item = db.get_note(id)
++                if item then resp_body = json.encode(item) else status = "404 Not Found" end
++            else
++                local items = db.get_notes(fid)
++                if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
++            end
++        elseif not is_get and headers_raw:match("^POST /api/db/notes") then
++            local ok_j, item = pcall(json.decode, body_raw)
++            if ok_j and type(item) == "table" and item.id and item.title then
++                local note = db.get_note(item.id)
++                local exists = note ~= nil
++                local ok = false
++                if exists then ok = db.update_note(item) else ok = db.insert_note(item) end
++                if ok then 
++                    local fs_ok = fs_sync.sync_note(item)
++                    if fs_ok == false then
++                        if not exists then db.delete_note(item.id) else db.update_note(note) end
++                        status = "500 Internal Server Error"
++                    else
++                        if exists and (note.folderId ~= item.folderId or note.title ~= item.title) then
++                            fs_sync.trash_note(note)
++                        end
++                        resp_body = '{"status":"ok"}' 
++                    end
++                else 
++                    status = "500 Internal Server Error" 
++                end
++            else
++                status = "400 Bad Request"
++            end
++        elseif not is_get and headers_raw:match("^DELETE /api/db/notes/([^ %?\r\n]+)") then
++            local id = headers_raw:match("^DELETE /api/db/notes/([^ %?\r\n]+)")
++            local note = db.get_note(id)
++            local ok = db.delete_note(id)
++            if ok then
++                if note then fs_sync.trash_note(note) end
++                resp_body = '{"status":"ok"}'
++            else
++                status = "500 Internal Server Error"
++            end
++        -- FILEASSETS
++        elseif is_get and db_route == "fileAssets/all" then
++            local items = db.get_all_fileAssets()
++            if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
++        elseif is_get and db_route == "fileAssets" then
++            local id = request_line:match("id=([^ %&\r\n]+)")
++            local fid = request_line:match("folderId=([^ %&\r\n]+)")
++            if id then
++                local item = db.get_fileAsset(id)
++                if item then resp_body = json.encode(item) else status = "404 Not Found" end
++            else
++                local items = db.get_fileAssets(fid)
++                if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
++            end
++        elseif not is_get and headers_raw:match("^POST /api/db/fileAssets") then
++            local ok_j, item = pcall(json.decode, body_raw)
++            if ok_j and type(item) == "table" and item.id and item.name then
++                local asset = db.get_fileAsset(item.id)
++                local exists = asset ~= nil
++                local ok = false
++                if exists then ok = db.update_fileAsset(item) else ok = db.insert_fileAsset(item) end
++                if ok then 
++                    local fs_ok = fs_sync.sync_fileAsset(item)
++                    if fs_ok == false then
++                        if not exists then db.delete_fileAsset(item.id) else db.update_fileAsset(asset) end
++                        status = "500 Internal Server Error"
++                    else
++                        if exists and (asset.folderId ~= item.folderId or asset.name ~= item.name) then
++                            fs_sync.trash_fileAsset(asset)
++                        end
++                        resp_body = '{"status":"ok"}' 
++                    end
++                else 
++                    status = "500 Internal Server Error" 
++                end
++            else
++                status = "400 Bad Request"
++            end
++        elseif not is_get and headers_raw:match("^DELETE /api/db/fileAssets/([^ %?\r\n]+)") then
++            local id = headers_raw:match("^DELETE /api/db/fileAssets/([^ %?\r\n]+)")
++            local asset = db.get_fileAsset(id)
++            local ok = db.delete_fileAsset(id)
++            if ok then
++                if asset then fs_sync.trash_fileAsset(asset) end
++                resp_body = '{"status":"ok"}'
++            else
++                status = "500 Internal Server Error"
++            end
++        -- IMPORT
++        elseif not is_get and headers_raw:match("^POST /api/db/import") then
++            local data = json.decode(body_raw)
++            if data then
++                local ok = db.import_data(data)
++                if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
++            else
++                status = "400 Bad Request"
++            end
++        -- CACHE
++        elseif is_get and db_route == "cache" then
++            local raw_key = request_line:match("key=([^ %&\r\n]+)")
++            if raw_key then
++                local key = url_decode(raw_key)
++                local row = db.get_cache(key)
++                if row then resp_body = json.encode(row) else status = "404 Not Found" end
++            else
++                status = "400 Bad Request"
++            end
++        elseif not is_get and headers_raw:match("^POST /api/db/cache") then
++            local item = json.decode(body_raw)
++            if item and item.key and item.response then
++                local ok = db.set_cache(item.key, item.response)
++                if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
++            else
++                status = "400 Bad Request"
++            end
++        else
++            status = "404 Not Found"
++        end
++
++        local resp = string.format("HTTP/1.1 %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", status, #resp_body, resp_body)
++        async_send(client_fd, resp)
++        safe_close(); return
++    end
++
+     if storage_path and #body_raw > 0 then
+         storage_path = url_decode(storage_path)
+         recursive_mkdir(workspaces_dir)
+@@ -923,6 +1243,24 @@ local function proxy_connection(client_fd, conn_fds)
+                 if web_context ~= "" then dispatch_msg = dispatch_msg .. " | Web: OK" end
+                 if has_tools then dispatch_msg = dispatch_msg .. " | Tools: " .. #req_json.tools end
+                 print(dispatch_msg)
++
++                -- Cache Intercept
++                local key = sha256.sha256(new_body)
++                if key then
++                    local cached = db.get_cache(key)
++                    if cached and cached.response then
++                        print("[proxy] Cache AG hit for " .. key)
++                        local resp = cached.response
++                        local header_end = resp:find("\r\n\r\n")
++                        if header_end then
++                            resp = resp:sub(1, header_end - 1) .. "\r\nX-Cache: HIT" .. resp:sub(header_end)
++                        end
++                        async_send(client_fd, resp)
++                        safe_close()
++                        return
++                    end
++                    req_cache_key = key
++                end
+             end
+         end
+     end
+@@ -970,11 +1308,53 @@ local function proxy_connection(client_fd, conn_fds)
+         return
+     end
+ 
++    local resp_buffer = {}
++    local send_success = true
++    local max_cache_size = 50 * 1024 * 1024
++    local current_cache_size = 0
+     while true do
+         local n = async_recv(llama_fd, buf, 8192)
+         if n <= 0 then break end
+         local to_send = ffi.string(buf, n)
+-        if async_send(client_fd, to_send) < 0 then break end
++        if req_cache_key then 
++            if current_cache_size + #to_send <= max_cache_size then
++                resp_buffer[#resp_buffer+1] = to_send 
++                current_cache_size = current_cache_size + #to_send
++            else
++                req_cache_key = nil
++            end
++        end
++        if async_send(client_fd, to_send) < 0 then
++            send_success = false
++            break
++        end
++    end
++
++    if req_cache_key and send_success and #resp_buffer > 0 then
++        local full_resp = table.concat(resp_buffer)
++        local is_complete = false
++        if full_resp:match("^HTTP/1%.[01] 200 OK") then
++            local header_end = full_resp:find("\r\n\r\n")
++            if header_end then
++                local headers_only = full_resp:sub(1, header_end + 3):lower()
++                if headers_only:find("transfer%-encoding:%s*chunked") then
++                    if full_resp:match("0\r\n\r\n$") then is_complete = true end
++                else
++                    local cl = headers_only:match("content%-length:%s*(%d+)")
++                    if cl then
++                        local body = full_resp:sub(header_end + 4)
++                        if #body == tonumber(cl) then is_complete = true end
++                    end
++                end
++            end
++        end
++
++        if is_complete then
++            db.set_cache(req_cache_key, full_resp)
++            print("[proxy] Cached response for " .. req_cache_key)
++        else
++            print("[proxy] WARNING: Incomplete backend response, skipping cache for " .. req_cache_key)
++        end
+     end
+ 
+     safe_close()
+@@ -1112,7 +1492,7 @@ while running do
+                     end)
+                     local _ok, type, watch_fd = coroutine.resume(co)
+                     if coroutine.status(co) ~= "dead" then
+-                        clients[client_fd] = {co = co, type = type, watch_fd = watch_fd, created = os.time()}
++                        clients[client_fd] = {co = co, type = type, watch_fd = watch_fd, created = os.time(), last_active = os.time()}
+                     else
+                         conn_fds_map[client_fd] = nil
+                     end
+@@ -1126,9 +1506,12 @@ while running do
+                 ready = true
+             elseif info.type == "write" and _ffi_defs.FD_ISSET(info.watch_fd, write_fds) then
+                 ready = true
++            elseif not ready and info.last_active and (os.time() - info.last_active > 15) then
++                ready = true
+             end
+ 
+             if ready then
++                info.last_active = os.time()
+                 local _ok, type, watch_fd = coroutine.resume(info.co)
+                 if coroutine.status(info.co) == "dead" then
+                     clients[cfd] = nil

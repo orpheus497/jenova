@@ -69,15 +69,15 @@ recursive_mkdir(global_trash)
 
 -- Traverse db to construct physical path
 local function get_physical_path_for_note(note)
-    if not note.folderId or note.folderId == "" then return nil end
+    if not note.folderId or note.folderId == "" then return nil, "unassigned" end
     local folder = db.get_folder(note.folderId)
-    if not folder then return nil end
+    if not folder then return nil, "unassigned" end
     
     local project = db.get_project(folder.projectId)
-    if not project then return nil end
+    if not project then return nil, "unassigned" end
     
     local workspace = db.get_workspace(project.workspaceId)
-    if not workspace then return nil end
+    if not workspace then return nil, "unassigned" end
     
     local safe_workspace = sanitize(workspace.name)
     local safe_project = sanitize(project.name)
@@ -87,15 +87,15 @@ local function get_physical_path_for_note(note)
 end
 
 local function get_physical_path_for_asset(asset)
-    if not asset.folderId or asset.folderId == "" then return nil end
+    if not asset.folderId or asset.folderId == "" then return nil, "unassigned" end
     local folder = db.get_folder(asset.folderId)
-    if not folder then return nil end
+    if not folder then return nil, "unassigned" end
     
     local project = db.get_project(folder.projectId)
-    if not project then return nil end
+    if not project then return nil, "unassigned" end
     
     local workspace = db.get_workspace(project.workspaceId)
-    if not workspace then return nil end
+    if not workspace then return nil, "unassigned" end
     
     local safe_workspace = sanitize(workspace.name)
     local safe_project = sanitize(project.name)
@@ -123,7 +123,10 @@ end
 
 function fs_sync.sync_note(note)
     local path, ws_name = get_physical_path_for_note(note)
-    if not path then return false end
+    if not path then 
+        if ws_name == "unassigned" then return true end
+        return false 
+    end
     
     local dir = path:match("(.+)/[^/]+$")
     recursive_mkdir(dir)
@@ -140,7 +143,10 @@ end
 
 function fs_sync.sync_fileAsset(asset)
     local path, ws_name = get_physical_path_for_asset(asset)
-    if not path then return false end
+    if not path then
+        if ws_name == "unassigned" then return true end
+        return false
+    end
     
     local out_content = asset.content or ""
     local b64 = out_content:match("^data:.-;base64,(.*)")
@@ -167,7 +173,10 @@ end
 
 function fs_sync.trash_note(note)
     local path, ws_name = get_physical_path_for_note(note)
-    if not path then return false end
+    if not path then
+        if ws_name == "unassigned" then return true end
+        return false
+    end
     
     local trash_dir = get_workspace_trash(ws_name)
     local filename = path:match("([^/]+)$")
@@ -178,7 +187,10 @@ end
 
 function fs_sync.trash_fileAsset(asset)
     local path, ws_name = get_physical_path_for_asset(asset)
-    if not path then return false end
+    if not path then
+        if ws_name == "unassigned" then return true end
+        return false
+    end
     
     local trash_dir = get_workspace_trash(ws_name)
     local filename = path:match("([^/]+)$")

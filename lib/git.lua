@@ -8,7 +8,10 @@ local function run_cmd(cmd, cwd)
         if not output then return false, status end
         -- Check exit code via waitpid status (success is usually 0)
         -- waitpid status is WIFEXITED && WEXITSTATUS. On POSIX, status 0 means success.
-        if status ~= 0 then return false, output end
+        local bit = require("bit")
+        local wifexited = bit.band(status, 0x7f) == 0
+        local wexitstatus = bit.rshift(bit.band(status, 0xff00), 8)
+        if not wifexited or wexitstatus ~= 0 then return false, output end
         return true, output
     else
         local f = io.popen(full_cmd)

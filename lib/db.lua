@@ -143,6 +143,22 @@ function db.init(db_path)
         sql3.sqlite3_free(errmsg[0])
         return false
     end
+
+    -- Migrations: add is_deleted column to existing tables if missing
+    local migrations = {
+        "ALTER TABLE conversations ADD COLUMN is_deleted INTEGER DEFAULT 0;",
+        "ALTER TABLE messages ADD COLUMN is_deleted INTEGER DEFAULT 0;",
+        "ALTER TABLE workspaces ADD COLUMN is_deleted INTEGER DEFAULT 0;",
+        "ALTER TABLE projects ADD COLUMN is_deleted INTEGER DEFAULT 0;",
+        "ALTER TABLE folders ADD COLUMN is_deleted INTEGER DEFAULT 0;",
+        "ALTER TABLE notes ADD COLUMN is_deleted INTEGER DEFAULT 0;",
+        "ALTER TABLE fileAssets ADD COLUMN is_deleted INTEGER DEFAULT 0;"
+    }
+    for _, mig in ipairs(migrations) do
+        -- Ignore errors (e.g. if column already exists)
+        sql3.sqlite3_exec(db_ptr[0], mig, nil, nil, nil)
+    end
+
     return true
 end
 
