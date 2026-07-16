@@ -88,29 +88,51 @@ export class SyncService {
             const lastUnderscore = fileName.lastIndexOf("_");
             let noteId = "";
             let title = fileName;
+            let note: any;
+
             if (lastUnderscore !== -1) {
-              title = fileName.substring(0, lastUnderscore);
-              noteId = fileName.substring(lastUnderscore + 1);
+              const potentialId = fileName.substring(lastUnderscore + 1);
+              note = allNotes.find((n) => n.id === potentialId);
+              if (note) {
+                title = fileName.substring(0, lastUnderscore);
+                noteId = potentialId;
+              }
             }
-            
-            const note = allNotes.find((n) => n.id === noteId) || allNotes.find((n) => n.title === title);
+
+            const notesIndex = parts.indexOf("Notes");
+            let parsedFolderName: string | null = null;
+            if (notesIndex !== -1 && parts.length > notesIndex + 2) {
+              parsedFolderName = parts.slice(notesIndex + 1, parts.length - 1).join("/");
+              parsedFolderName = parsedFolderName.split("/").map(decodeURIComponent).join("/");
+            }
+            const folder = parsedFolderName ? allFolders.find(f => f.name === parsedFolderName) : null;
+            const parsedFolderId = folder ? folder.id : null;
+
+            if (!note) {
+              title = fileName;
+              note = allNotes.find((n) => n.title === title && n.folderId === parsedFolderId);
+            }
+
             if (note) {
+              let needsUpdate = false;
+              const updates: any = { updatedAt: Date.now() };
+
               if (note.content !== content) {
-                await DatabaseService.updateNote(note.id, {
-                  content,
-                  updatedAt: Date.now(),
-                });
+                updates.content = content;
+                needsUpdate = true;
+              }
+              if (note.folderId !== parsedFolderId) {
+                updates.folderId = parsedFolderId;
+                needsUpdate = true;
+              }
+
+              if (needsUpdate) {
+                await DatabaseService.updateNote(note.id, updates);
                 changed = true;
                 stats.updated++;
               }
             } else {
-              const notesIndex = parts.indexOf("Notes");
-              let parsedFolderName: string | null = null;
-              if (notesIndex !== -1 && parts.length > notesIndex + 2) {
-                parsedFolderName = parts.slice(notesIndex + 1, parts.length - 1).join("/");
-              }
-              const folder = parsedFolderName ? allFolders.find(f => f.name === parsedFolderName) : null;
-              await DatabaseService.createNote(folder ? folder.id : null, title, content);
+              await DatabaseService.createNote(parsedFolderId, title, content);
               changed = true;
               stats.created++;
             }
@@ -213,8 +235,13 @@ export class SyncService {
       for (const note of allNotes) {
         queue.push(async () => {
           const folder = allFolders.find((f) => f.id === note.folderId);
-          const folderName = folder?.name ? `Notes/${folder.name}` : "Notes";
-          const path = `${defaultWorkspace}/${folderName}/${note.title}_${note.id}.md`;
+          const folderSegment = folder?.name ? `Notes/${folder.name.split("/").map(encodeURIComponent).join("/")}` : "Notes";
+          const path = `${encodeURIComponent(defaultWorkspace)}/${folderSegment}/${encodeURIComponent(note.title)}_${note.id}.md`;
+          
+          const oldPath = mdFiles.find(p => p.includes(`_${note.id}.md`));
+          if (oldPath && oldPath !== path) {
+            await StorageService.delete(oldPath.split("/").map(encodeURIComponent).join("/"));
+          }
           await StorageService.save(path, note.content || "");
         });
       }
@@ -284,8 +311,14 @@ export class SyncService {
         const note = notes.find((n) => n.id === id);
         if (note) {
           const folder = allFolders.find((f) => f.id === note.folderId);
-          const folderName = folder?.name ? `Notes/${folder.name}` : "Notes";
-          const path = `${defaultWorkspace}/${folderName}/${note.title}_${note.id}.md`;
+          const folderSegment = folder?.name ? `Notes/${folder.name.split("/").map(encodeURIComponent).join("/")}` : "Notes";
+          const path = `${encodeURIComponent(defaultWorkspace)}/${folderSegment}/${encodeURIComponent(note.title)}_${note.id}.md`;
+          
+          const files = await StorageService.list();
+          const oldPath = files.find(p => p.includes(`_${note.id}.md`));
+          if (oldPath && oldPath !== path) {
+            await StorageService.delete(oldPath.split("/").map(encodeURIComponent).join("/"));
+          }
           await StorageService.save(path, note.content || "");
         }
       } else if (type === "chat") {

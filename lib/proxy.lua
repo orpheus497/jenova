@@ -955,6 +955,32 @@ local function proxy_connection(client_fd, conn_fds)
         safe_close(); return
     end
 
+    local is_storage_delete = not is_get and headers_raw:match("^DELETE /api/storage/([^ %?]+)")
+    if is_storage_delete then
+        is_storage_delete = url_decode(is_storage_delete)
+        if is_storage_delete:find("%.%.") then
+            local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, err); safe_close(); return
+        end
+        local full_path = resolve_safe_path(workspaces_dir, is_storage_delete)
+        if not full_path then
+            local err = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, err); safe_close(); return
+        end
+        
+        local os = require("os")
+        local ok = os.remove(full_path)
+        
+        if ok then
+            local resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}"
+            async_send(client_fd, resp)
+        else
+            local resp = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, resp)
+        end
+        safe_close(); return
+    end
+
     local is_storage_list = is_get and (headers_raw:match("^GET /api/storage/[ %?]") or headers_raw:match("^GET /api/storage "))
     if is_storage_list then
         recursive_mkdir(workspaces_dir)
