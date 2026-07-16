@@ -969,11 +969,19 @@ local function proxy_connection(client_fd, conn_fds)
         end
         
         local os = require("os")
-        local ok = os.remove(full_path)
+        local global_trash = workspaces_dir .. "/.trash"
+        local trash_path = global_trash .. "/" .. os.time() .. "/" .. is_storage_delete
+        
+        local dir_part = trash_path:match("(.+)/[^/]+$")
+        if dir_part then recursive_mkdir(dir_part) end
+        
+        local ok = os.rename(full_path, trash_path)
         
         if ok then
             local resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}"
-            async_send(client_fd, resp)
+            if async_send(client_fd, resp) == -1 then
+                os.rename(trash_path, full_path)
+            end
         else
             local resp = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n"
             async_send(client_fd, resp)

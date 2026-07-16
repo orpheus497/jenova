@@ -94,7 +94,11 @@ export class SyncService {
               const potentialId = fileName.substring(lastUnderscore + 1);
               note = allNotes.find((n) => n.id === potentialId);
               if (note) {
-                title = fileName.substring(0, lastUnderscore);
+                try {
+                  title = decodeURIComponent(fileName.substring(0, lastUnderscore));
+                } catch {
+                  title = fileName.substring(0, lastUnderscore);
+                }
                 noteId = potentialId;
               }
             }
@@ -109,8 +113,15 @@ export class SyncService {
             const parsedFolderId = folder ? folder.id : null;
 
             if (!note) {
-              title = fileName;
+              try {
+                title = decodeURIComponent(fileName);
+              } catch {
+                title = fileName;
+              }
               note = allNotes.find((n) => n.title === title && n.folderId === parsedFolderId);
+              if (!note) {
+                title = fileName;
+              }
             }
 
             if (note) {
@@ -222,6 +233,9 @@ export class SyncService {
       const allNotes = await DatabaseService.getAllNotes();
       const allFolders = await DatabaseService.getProjectFolders(null);
       const allConvs = await DatabaseService.getAllConversations();
+      
+      const files = await StorageService.list();
+      const mdFiles = files.filter((f) => f.endsWith(".md"));
 
       // Hierarchy: Workspace / Project / Folder
       // For now, if no workspace/project, use "default"
