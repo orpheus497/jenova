@@ -206,18 +206,23 @@ local function async_popen_read(cmd)
             print("[proxy] async_popen_read timeout for pid " .. tostring(pid))
             return nil, "timeout"
         end
-        
-        local n = ffi.C.read(fd, buf, 4096)
-        if n > 0 then
-            chunks[#chunks + 1] = ffi.string(buf, n)
-        elseif n == 0 then
-            break
-        else
-            local err = ffi.errno()
-            if err == _ffi_defs.EAGAIN or err == _ffi_defs.EWOULDBLOCK then
-                coroutine.yield("read", fd)
-            else
+        local rfds = ffi.new("fd_set")
+        _ffi_defs.FD_ZERO(rfds)
+        _ffi_defs.FD_SET(fd, rfds)
+        local tv = ffi.new("struct timeval", {tv_sec=0, tv_usec=100000})
+        local sel = ffi.C.select(fd + 1, rfds, nil, nil, tv)
+
+        if sel > 0 then
+            local n = ffi.C.read(fd, buf, 4096)
+            if n > 0 then
+                chunks[#chunks + 1] = ffi.string(buf, n)
+            elseif n == 0 then
                 break
+            else
+                local err = ffi.errno()
+                if err ~= _ffi_defs.EAGAIN and err ~= _ffi_defs.EWOULDBLOCK then
+                    break
+                end
             end
         end
     end

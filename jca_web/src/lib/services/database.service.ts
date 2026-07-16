@@ -54,7 +54,7 @@ export class DatabaseService {
   static async getConversation(id: string): Promise<DatabaseConversation | undefined> {
     try {
       const res = await apiFetch<DatabaseConversation>(`conversations?id=${id}`);
-      return Object.keys(res).length > 0 ? res : undefined;
+      return res && Object.keys(res).length > 0 ? res : undefined;
     } catch (e: any) {
       if (e.message && e.message.includes("404")) return undefined;
       throw e;
@@ -148,7 +148,7 @@ export class DatabaseService {
   static async getMessage(id: string): Promise<DatabaseMessage | undefined> {
     try {
       const res = await apiFetch<DatabaseMessage>(`message?id=${id}`);
-      return Object.keys(res).length > 0 ? res : undefined;
+      return res && Object.keys(res).length > 0 ? res : undefined;
     } catch (e: any) {
       if (e.message && e.message.includes("404")) return undefined;
       throw e;

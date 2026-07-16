@@ -308,7 +308,7 @@ function db.delete_conversation(id, delete_with_forks)
                 SELECT c.id FROM conversations c
                 INNER JOIN descendants d ON c.forkedFromConversationId = d.id
             )
-            UPDATE conversations SET is_deleted = 1 WHERE id IN descendants
+            UPDATE conversations SET is_deleted = 1 WHERE id IN (SELECT id FROM descendants)
         ]]
         local _, err1 = execute_query(sql_descendants, {id})
         
@@ -319,7 +319,7 @@ function db.delete_conversation(id, delete_with_forks)
                 SELECT c.id FROM conversations c
                 INNER JOIN descendants d ON c.forkedFromConversationId = d.id
             )
-            UPDATE messages SET is_deleted = 1 WHERE convId IN descendants
+            UPDATE messages SET is_deleted = 1 WHERE convId IN (SELECT id FROM descendants)
         ]]
         local _, err2 = execute_query(sql_messages, {id})
         
