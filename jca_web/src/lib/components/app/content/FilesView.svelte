@@ -32,17 +32,12 @@
 	let syncState = $state<'idle' | 'pushing' | 'pulling' | 'success' | 'error'>('idle');
 	let syncStats = $state<SyncStats | null>(null);
 
-	// Reactive Hash router parsing
+	// Reactive search parameter parsing
 	let hashParams = $derived.by(() => {
-		const hash = page.url.hash || '';
-		const qIndex = hash.indexOf('?');
-		if (qIndex === -1) return { workspaceId: null, projectId: null, folderId: null };
-		const search = hash.substring(qIndex + 1);
-		const params = new URLSearchParams(search);
 		return {
-			workspaceId: params.get('workspaceId'),
-			projectId: params.get('projectId'),
-			folderId: params.get('folderId')
+			workspaceId: page.url.searchParams.get('workspaceId'),
+			projectId: page.url.searchParams.get('projectId'),
+			folderId: page.url.searchParams.get('folderId')
 		};
 	});
 

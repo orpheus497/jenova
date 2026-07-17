@@ -56,13 +56,8 @@ class WorkspaceStore {
   }
 
   async moveConversation(id: string, folderId: string | null, projectId: string | null = null, workspaceId: string | null = null) {
-    // Pass null (not undefined) so cleared fields are serialized to JSON null → SQL NULL.
-    // undefined would be omitted from the spread and leave the old value unchanged.
-    await DatabaseService.updateConversation(id, {
-      folderId: folderId as string | undefined,
-      projectId: projectId as string | undefined,
-      workspaceId: workspaceId as string | undefined,
-    });
+    const { conversationsStore } = await import("./conversations.svelte");
+    await conversationsStore.moveConversation(id, folderId, projectId, workspaceId);
   }
 
   async moveNote(id: string, folderId: string | null, projectId: string | null = null, workspaceId: string | null = null) {

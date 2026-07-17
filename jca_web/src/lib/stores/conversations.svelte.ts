@@ -498,23 +498,31 @@ class ConversationsStore {
   async moveConversation(
     convId: string,
     folderId: string | null,
+    projectId: string | null = null,
+    workspaceId: string | null = null,
   ): Promise<void> {
     try {
       await DatabaseService.updateConversation(convId, {
-        folderId: folderId ?? undefined,
+        folderId: folderId as string | undefined,
+        projectId: projectId as string | undefined,
+        workspaceId: workspaceId as string | undefined,
       });
 
       const convIndex = this.conversations.findIndex((c) => c.id === convId);
 
       if (convIndex !== -1) {
-        this.conversations[convIndex].folderId = folderId ?? undefined;
+        this.conversations[convIndex].folderId = folderId as string | undefined;
+        this.conversations[convIndex].projectId = projectId as string | undefined;
+        this.conversations[convIndex].workspaceId = workspaceId as string | undefined;
         this.conversations = [...this.conversations];
       }
 
       if (this.activeConversation?.id === convId) {
         this.activeConversation = {
           ...this.activeConversation,
-          folderId: folderId ?? undefined,
+          folderId: folderId as string | undefined,
+          projectId: projectId as string | undefined,
+          workspaceId: workspaceId as string | undefined,
         };
       }
       SyncService.syncEntity("chat", convId);

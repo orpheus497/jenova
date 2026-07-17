@@ -201,17 +201,7 @@
 					<span class="flex items-center gap-2"><FileText size={12} /> New Note</span>
 				</button>
 
-				<!-- Unassigned conversations -->
-				{#each filteredConversations.filter((c: DatabaseConversation) => !c.folderId && !c.projectId && !c.workspaceId) as conversation (conversation.id)}
-					<ChatSidebarConversationItem
-						{conversation} depth={0} {handleMobileSidebarItemClick}
-						isActive={currentChatId === conversation.id}
-						onSelect={selectConversation}
-						onEdit={() => handleEdit('conversation', conversation.id, conversation.name)}
-						onDelete={() => handleDelete('conversation', conversation.id)}
-						onStop={handleStopGeneration}
-					/>
-				{/each}
+
 
 				<!-- Unassigned notes -->
 				{#each notes().filter((n: DatabaseNote) => !n.folderId && !n.projectId && !n.workspaceId) as note (note.id)}
