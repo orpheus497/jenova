@@ -19,6 +19,7 @@ export interface DatabaseConversation {
   forkedFromConversationId?: string;
   folderId?: string;
   projectId?: string;
+  workspaceId?: string;
 }
 
 export interface DatabaseWorkspace {
@@ -41,6 +42,8 @@ export interface DatabaseFolder {
 export interface DatabaseNote {
   id: string;
   folderId: string | null;
+  projectId?: string | null;
+  workspaceId?: string | null;
   title: string;
   content: string;
   updatedAt: number;
@@ -49,6 +52,8 @@ export interface DatabaseNote {
 export interface DatabaseFileAsset {
   id: string;
   folderId: string | null;
+  projectId?: string | null;
+  workspaceId?: string | null;
   name: string;
   size: number;
   type: string;

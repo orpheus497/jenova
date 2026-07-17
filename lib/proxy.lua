@@ -798,11 +798,13 @@ local function proxy_connection(client_fd, conn_fds)
         elseif is_get and db_route == "notes" then
             local id = request_line:match("id=([^ %&\r\n]+)")
             local fid = request_line:match("folderId=([^ %&\r\n]+)")
+            local pid = request_line:match("projectId=([^ %&\r\n]+)")
+            local wid = request_line:match("workspaceId=([^ %&\r\n]+)")
             if id then
                 local item = db.get_note(id)
                 if item then resp_body = json.encode(item) else status = "404 Not Found" end
             else
-                local items = db.get_notes(fid)
+                local items = db.get_notes(fid, pid, wid)
                 if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
             end
         elseif not is_get and headers_raw:match("^POST /api/db/notes") then
@@ -818,7 +820,7 @@ local function proxy_connection(client_fd, conn_fds)
                         if not exists then db.delete_note(item.id) else db.update_note(note) end
                         status = "500 Internal Server Error"
                     else
-                        if exists and (note.folderId ~= item.folderId or note.title ~= item.title) then
+                        if exists and (note.folderId ~= item.folderId or note.projectId ~= item.projectId or note.workspaceId ~= item.workspaceId or note.title ~= item.title) then
                             fs_sync.trash_note(note)
                         end
                         resp_body = '{"status":"ok"}' 
@@ -846,11 +848,13 @@ local function proxy_connection(client_fd, conn_fds)
         elseif is_get and db_route == "fileAssets" then
             local id = request_line:match("id=([^ %&\r\n]+)")
             local fid = request_line:match("folderId=([^ %&\r\n]+)")
+            local pid = request_line:match("projectId=([^ %&\r\n]+)")
+            local wid = request_line:match("workspaceId=([^ %&\r\n]+)")
             if id then
                 local item = db.get_fileAsset(id)
                 if item then resp_body = json.encode(item) else status = "404 Not Found" end
             else
-                local items = db.get_fileAssets(fid)
+                local items = db.get_fileAssets(fid, pid, wid)
                 if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
             end
         elseif not is_get and headers_raw:match("^POST /api/db/fileAssets") then
@@ -866,7 +870,7 @@ local function proxy_connection(client_fd, conn_fds)
                         if not exists then db.delete_fileAsset(item.id) else db.update_fileAsset(asset) end
                         status = "500 Internal Server Error"
                     else
-                        if exists and (asset.folderId ~= item.folderId or asset.name ~= item.name) then
+                        if exists and (asset.folderId ~= item.folderId or asset.projectId ~= item.projectId or asset.workspaceId ~= item.workspaceId or asset.name ~= item.name) then
                             fs_sync.trash_fileAsset(asset)
                         end
                         resp_body = '{"status":"ok"}' 

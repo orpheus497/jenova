@@ -276,8 +276,11 @@ export class DatabaseService {
     await apiFetch("projects", { method: "POST", body: JSON.stringify(project) });
     return project;
   }
-  static async getWorkspaceProjects(workspaceId: string): Promise<DatabaseProject[]> {
-    return await apiFetch<DatabaseProject[]>(`projects?workspaceId=${workspaceId}`);
+  static async getWorkspaceProjects(workspaceId: string | null): Promise<DatabaseProject[]> {
+    return await apiFetch<DatabaseProject[]>(`projects?workspaceId=${workspaceId || ""}`);
+  }
+  static async getAllProjects(): Promise<DatabaseProject[]> {
+    return await apiFetch<DatabaseProject[]>("projects/all");
   }
   static async deleteProject(id: string): Promise<void> {
     await apiFetch(`projects/${id}`, { method: "DELETE" });
@@ -294,6 +297,9 @@ export class DatabaseService {
   static async getProjectFolders(projectId: string | null): Promise<DatabaseFolder[]> {
     return await apiFetch<DatabaseFolder[]>(`folders?projectId=${projectId || ""}`);
   }
+  static async getAllFolders(): Promise<DatabaseFolder[]> {
+    return await apiFetch<DatabaseFolder[]>("folders/all");
+  }
   static async deleteFolder(id: string): Promise<void> {
     await apiFetch(`folders/${id}`, { method: "DELETE" });
   }
@@ -301,13 +307,17 @@ export class DatabaseService {
   /**
    * Notes
    */
-  static async createNote(folderId: string | null, title: string, content: string): Promise<DatabaseNote> {
-    const note = { id: uuid(), folderId, title, content, updatedAt: Date.now() };
+  static async createNote(folderId: string | null, projectId: string | null, workspaceId: string | null, title: string, content: string): Promise<DatabaseNote> {
+    const note = { id: uuid(), folderId, projectId, workspaceId, title, content, updatedAt: Date.now() };
     await apiFetch("notes", { method: "POST", body: JSON.stringify(note) });
     return note;
   }
-  static async getFolderNotes(folderId: string | null): Promise<DatabaseNote[]> {
-    return await apiFetch<DatabaseNote[]>(`notes?folderId=${folderId || ""}`);
+  static async getNotes(folderId: string | null = null, projectId: string | null = null, workspaceId: string | null = null): Promise<DatabaseNote[]> {
+    const params = new URLSearchParams();
+    if (folderId) params.append("folderId", folderId);
+    if (projectId) params.append("projectId", projectId);
+    if (workspaceId) params.append("workspaceId", workspaceId);
+    return await apiFetch<DatabaseNote[]>(`notes?${params.toString()}`);
   }
   static async getAllNotes(): Promise<DatabaseNote[]> {
     return await apiFetch<DatabaseNote[]>("notes/all");
@@ -330,13 +340,17 @@ export class DatabaseService {
   /**
    * File Assets
    */
-  static async createFileAsset(folderId: string | null, name: string, size: number, type: string, content?: string): Promise<DatabaseFileAsset> {
-    const asset = { id: uuid(), folderId, name, size, type, uploadDate: Date.now(), content };
+  static async createFileAsset(folderId: string | null, projectId: string | null, workspaceId: string | null, name: string, size: number, type: string, content?: string): Promise<DatabaseFileAsset> {
+    const asset = { id: uuid(), folderId, projectId, workspaceId, name, size, type, uploadDate: Date.now(), content };
     await apiFetch("fileAssets", { method: "POST", body: JSON.stringify(asset) });
     return asset;
   }
-  static async getFolderFileAssets(folderId: string | null): Promise<DatabaseFileAsset[]> {
-    return await apiFetch<DatabaseFileAsset[]>(`fileAssets?folderId=${folderId || ""}`);
+  static async getFileAssets(folderId: string | null = null, projectId: string | null = null, workspaceId: string | null = null): Promise<DatabaseFileAsset[]> {
+    const params = new URLSearchParams();
+    if (folderId) params.append("folderId", folderId);
+    if (projectId) params.append("projectId", projectId);
+    if (workspaceId) params.append("workspaceId", workspaceId);
+    return await apiFetch<DatabaseFileAsset[]>(`fileAssets?${params.toString()}`);
   }
   static async getAllFileAssets(): Promise<DatabaseFileAsset[]> {
     return await apiFetch<DatabaseFileAsset[]>("fileAssets/all");

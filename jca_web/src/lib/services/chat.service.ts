@@ -108,6 +108,8 @@ export class ChatService {
           await DatabaseService.getConversation(conversationId);
         workspaceContext = await WorkspaceService.getWorkspaceContext(
           conversation?.folderId || null,
+          conversation?.projectId || null,
+          conversation?.workspaceId || null,
         );
       } catch (e) {
         console.warn("[ChatService] Failed to load workspace context:", e);

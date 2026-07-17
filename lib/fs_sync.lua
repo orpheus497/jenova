@@ -69,39 +69,51 @@ recursive_mkdir(global_trash)
 
 -- Traverse db to construct physical path
 local function get_physical_path_for_note(note)
-    if not note.folderId or note.folderId == "" then return nil, "unassigned" end
-    local folder = db.get_folder(note.folderId)
-    if not folder then return nil, "unassigned" end
-    
-    local project = db.get_project(folder.projectId)
-    if not project then return nil, "unassigned" end
-    
-    local workspace = db.get_workspace(project.workspaceId)
-    if not workspace then return nil, "unassigned" end
-    
-    local safe_workspace = sanitize(workspace.name)
-    local safe_project = sanitize(project.name)
-    local safe_folder = sanitize(folder.name)
     local safe_title = sanitize(note.title)
-    return string.format("%s/%s/%s/%s/%s_%s.md", workspaces_dir, safe_workspace, safe_project, safe_folder, safe_title, note.id), safe_workspace
+    if note.folderId and type(note.folderId) == "string" and note.folderId ~= "" and note.folderId ~= "null" then
+        local folder = db.get_folder(note.folderId)
+        local project = folder and db.get_project(folder.projectId)
+        local workspace = project and db.get_workspace(project.workspaceId)
+        if workspace then
+            return string.format("%s/%s/%s/%s/%s_%s.md", workspaces_dir, sanitize(workspace.name), sanitize(project.name), sanitize(folder.name), safe_title, note.id), sanitize(workspace.name)
+        end
+    elseif note.projectId and type(note.projectId) == "string" and note.projectId ~= "" and note.projectId ~= "null" then
+        local project = db.get_project(note.projectId)
+        local workspace = project and db.get_workspace(project.workspaceId)
+        if workspace then
+            return string.format("%s/%s/%s/%s_%s.md", workspaces_dir, sanitize(workspace.name), sanitize(project.name), safe_title, note.id), sanitize(workspace.name)
+        end
+    elseif note.workspaceId and type(note.workspaceId) == "string" and note.workspaceId ~= "" and note.workspaceId ~= "null" then
+        local workspace = db.get_workspace(note.workspaceId)
+        if workspace then
+            return string.format("%s/%s/%s_%s.md", workspaces_dir, sanitize(workspace.name), safe_title, note.id), sanitize(workspace.name)
+        end
+    end
+    return string.format("%s/unassigned/%s_%s.md", workspaces_dir, safe_title, note.id), "unassigned"
 end
 
 local function get_physical_path_for_asset(asset)
-    if not asset.folderId or asset.folderId == "" then return nil, "unassigned" end
-    local folder = db.get_folder(asset.folderId)
-    if not folder then return nil, "unassigned" end
-    
-    local project = db.get_project(folder.projectId)
-    if not project then return nil, "unassigned" end
-    
-    local workspace = db.get_workspace(project.workspaceId)
-    if not workspace then return nil, "unassigned" end
-    
-    local safe_workspace = sanitize(workspace.name)
-    local safe_project = sanitize(project.name)
-    local safe_folder = sanitize(folder.name)
     local safe_name = sanitize(asset.name)
-    return string.format("%s/%s/%s/%s/%s_%s", workspaces_dir, safe_workspace, safe_project, safe_folder, safe_name, asset.id), safe_workspace
+    if asset.folderId and type(asset.folderId) == "string" and asset.folderId ~= "" and asset.folderId ~= "null" then
+        local folder = db.get_folder(asset.folderId)
+        local project = folder and db.get_project(folder.projectId)
+        local workspace = project and db.get_workspace(project.workspaceId)
+        if workspace then
+            return string.format("%s/%s/%s/%s/%s_%s", workspaces_dir, sanitize(workspace.name), sanitize(project.name), sanitize(folder.name), safe_name, asset.id), sanitize(workspace.name)
+        end
+    elseif asset.projectId and type(asset.projectId) == "string" and asset.projectId ~= "" and asset.projectId ~= "null" then
+        local project = db.get_project(asset.projectId)
+        local workspace = project and db.get_workspace(project.workspaceId)
+        if workspace then
+            return string.format("%s/%s/%s/%s_%s", workspaces_dir, sanitize(workspace.name), sanitize(project.name), safe_name, asset.id), sanitize(workspace.name)
+        end
+    elseif asset.workspaceId and type(asset.workspaceId) == "string" and asset.workspaceId ~= "" and asset.workspaceId ~= "null" then
+        local workspace = db.get_workspace(asset.workspaceId)
+        if workspace then
+            return string.format("%s/%s/%s_%s", workspaces_dir, sanitize(workspace.name), safe_name, asset.id), sanitize(workspace.name)
+        end
+    end
+    return string.format("%s/unassigned/%s_%s", workspaces_dir, safe_name, asset.id), "unassigned"
 end
 
 local function get_workspace_trash(workspace_name)

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { Trash2, Pencil, Plus, FolderPlus, MessageSquare, FileText, Archive, Settings, LayoutDashboard, Cpu, Download, Upload, Network, ChevronDown, ChevronRight } from '@lucide/svelte';
+	import { Trash2, Pencil, Plus, FolderPlus, MessageSquare, FileText, Archive, Settings, LayoutDashboard, Cpu, Download, Upload, Network, ChevronDown, ChevronRight, Layers, LayoutGrid, Folder } from '@lucide/svelte';
 	import { ChatSidebarConversationItem, DialogConfirmation } from '$lib/components/app';
 	import ScrollArea from '$lib/components/ui/scroll-area/scroll-area.svelte';
 	import * as Sidebar from '$lib/components/ui/sidebar';
@@ -10,14 +10,14 @@
 		conversationsStore,
 		conversations
 	} from '$lib/stores/conversations.svelte';
-    import { workspaceStore, folders, notes, files } from '$lib/stores/workspace.svelte';
+    import { workspaceStore, workspaces, projects, folders, notes, files } from '$lib/stores/workspace.svelte';
 	import { chatStore } from '$lib/stores/chat.svelte';
     import { cn } from '$lib/utils';
 	import ChatSidebarActions from './ChatSidebarActions.svelte';
-    import ChatSidebarFolderItem from './ChatSidebarFolderItem.svelte';
     import ChatSidebarNoteItem from './ChatSidebarNoteItem.svelte';
 	import { mcpStore } from '$lib/stores/mcp.svelte';
 	import type { DatabaseConversation, DatabaseNote } from '$lib/types/database';
+    import { slide } from 'svelte/transition';
 
 	const sidebar = Sidebar.useSidebar();
 
@@ -33,13 +33,14 @@
 	let deleteWithForks = $state(false);
     
 	let showEditDialog = $state(false);
-    let editTarget = $state<{ type: 'conversation' | 'folder' | 'note', id: string } | null>(null);
+    let editTarget = $state<{ type: 'conversation' | 'folder' | 'note' | 'workspace' | 'project', id: string } | null>(null);
 	let editedName = $state('');
 
+    let expandedWorkspaces = $state<Record<string, boolean>>({});
+    let expandedProjects = $state<Record<string, boolean>>({});
     let expandedFolders = $state<Record<string, boolean>>({});
-    let expandedChats = $state(true);
-    let expandedWorkspaces = $state(true);
-    let expandedUnassigned = $state(false);
+    
+    let expandedGlobal = $state(true);
 
 	let filteredConversations = $derived.by(() => {
 		if (searchQuery.trim().length > 0) {
@@ -76,7 +77,7 @@
 		}
 	}
 
-	async function handleEdit(type: 'conversation' | 'folder' | 'note', id: string, initialName: string) {
+	async function handleEdit(type: 'conversation' | 'folder' | 'note' | 'workspace' | 'project', id: string, initialName: string) {
         editTarget = { type, id };
         editedName = initialName;
         showEditDialog = true;
@@ -130,19 +131,15 @@
 		chatStore.stopGenerationForChat(id);
 	}
 
-    function toggleFolder(id: string) {
-        expandedFolders[id] = !expandedFolders[id];
-    }
-
-    async function handleCreateFolder() {
-        editTarget = { type: 'folder', id: 'new' };
+    async function handleCreateWorkspace() {
+        editTarget = { type: 'workspace', id: 'new' };
         editedName = 'New Workspace';
         showEditDialog = true;
     }
     
     function handleConfirmEditExtended() {
-        if (editTarget?.type === 'folder' && editTarget.id === 'new') {
-            workspaceStore.createFolder(editedName);
+        if (editTarget?.type === 'workspace' && editTarget.id === 'new') {
+            workspaceStore.createWorkspace(editedName);
             showEditDialog = false;
             editTarget = null;
             return;
@@ -173,122 +170,135 @@
 	</Sidebar.Header>
 
 	<div class="flex-1 p-6 pt-2 space-y-6">
-        <!-- WORKSPACES -->
+        
+        <!-- GLOBAL UNASSIGNED -->
         <div>
-            <div class="px-2 text-[11px] font-mono text-outline uppercase tracking-widest mb-2 flex items-center justify-between">
-                <button onclick={() => expandedWorkspaces = !expandedWorkspaces} class="flex items-center gap-1 hover:text-primary transition-colors flex-1 text-left">
-                    {#if expandedWorkspaces}<ChevronDown size={14}/>{:else}<ChevronRight size={14}/>{/if}
-                    Workspaces
-                </button>
+            <div class="px-2 text-[11px] font-mono uppercase tracking-widest mb-2 flex items-center justify-between text-[#7b52ab] opacity-80 cursor-pointer hover:opacity-100" onclick={() => expandedGlobal = !expandedGlobal}>
+                <span class="flex items-center gap-1">
+                    {#if expandedGlobal}<ChevronDown size={14}/>{:else}<ChevronRight size={14}/>{/if}
+                    Global Assets
+                </span>
                 <div class="flex gap-2 items-center">
-                    <a href="#/files" class="hover:text-primary transition-colors" title="View All Workspaces"><LayoutDashboard size={14}/></a>
-                    <button onclick={handleCreateFolder} class="hover:text-primary transition-colors" title="New Workspace"><FolderPlus size={14}/></button>
+                    <a href="#/files/unassigned" class="hover:text-primary transition-colors" title="View Global Files"><Archive size={14}/></a>
                 </div>
             </div>
             
-            {#if expandedWorkspaces}
-            <div class="space-y-1">
-                {#each folders() as folder (folder.id)}
-                    {#snippet chatsSnippet()}
-                        {#each filteredConversations.filter((c: DatabaseConversation) => c.folderId === folder.id) as conversation (conversation.id)}
-                            <ChatSidebarConversationItem
-                                {conversation}
-                                depth={0}
-                                {handleMobileSidebarItemClick}
-                                isActive={currentChatId === conversation.id}
-                                onSelect={selectConversation}
-                                onEdit={() => handleEdit('conversation', conversation.id, conversation.name)}
-                                onDelete={() => handleDelete('conversation', conversation.id)}
-                                onStop={handleStopGeneration}
-                            />
-                        {/each}
-                    {/snippet}
-
-                    {#snippet notesSnippet()}
-                        {#each notes().filter((n: DatabaseNote) => n.folderId === folder.id) as note (note.id)}
-                            <ChatSidebarNoteItem 
-                                {note} 
-                                isActive={currentNoteId === note.id}
-                                onSelect={() => selectNote(note.id)}
-                                onDelete={() => handleDelete('note', note.id)}
-                            />
-                        {/each}
-                    {/snippet}
-
-                    <ChatSidebarFolderItem 
-                        {folder} 
-                        isExpanded={!!expandedFolders[folder.id]} 
-                        onToggle={() => toggleFolder(folder.id)}
-                        onDelete={() => handleDelete('folder', folder.id)}
-                        onNewChat={() => conversationsStore.createConversation(`Chat in ${folder.name}`).then(id => conversationsStore.moveConversation(id, folder.id))}
-                        onNewNote={() => workspaceStore.createNote(folder.id).then(n => selectNote(n.id))}
-                        onViewFiles={() => goto(`#/files/${folder.id}`)}
-                        chats={chatsSnippet}
-                        notes={notesSnippet}
-                    />
-                {/each}
-            </div>
-            {/if}
-        </div>
-
-        <!-- CHATS -->
-        <div>
-            <button onclick={() => expandedChats = !expandedChats} class="w-full px-2 text-[11px] font-mono text-outline uppercase tracking-widest mb-2 flex items-center justify-between hover:text-primary transition-colors">
-                <span class="flex items-center gap-1">
-                    {#if expandedChats}<ChevronDown size={14}/>{:else}<ChevronRight size={14}/>{/if}
-                    Chats
-                </span>
-            </button>
-            
-            {#if expandedChats}
-            <div class="space-y-1 mb-2">
-                {#each filteredConversations.filter((c: DatabaseConversation) => !c.folderId) as conversation (conversation.id)}
-                    <ChatSidebarConversationItem
-                        {conversation}
-                        depth={0}
-                        {handleMobileSidebarItemClick}
-                        isActive={currentChatId === conversation.id}
-                        onSelect={selectConversation}
-                        onEdit={() => handleEdit('conversation', conversation.id, conversation.name)}
-                        onDelete={() => handleDelete('conversation', conversation.id)}
-                        onStop={handleStopGeneration}
-                    />
-                {/each}
-            </div>
-            {/if}
-        </div>
-
-        <!-- UNASSIGNED -->
-        <div>
-            <div class="px-2 text-[11px] font-mono uppercase tracking-widest mb-2 flex items-center justify-between text-[#7b52ab] opacity-80">
-                Global Assets
-            </div>
-            
-            <div class="space-y-1">
-                <button onclick={() => workspaceStore.createNote(null).then(n => selectNote(n.id))} class="w-full flex items-center justify-between group/wsnote px-2 py-2 rounded-lg text-sm transition-all text-accent/70 hover:bg-sidebar-accent hover:text-accent">
+            {#if expandedGlobal}
+            <div class="space-y-1" transition:slide>
+                <button onclick={() => workspaceStore.createNote(null, null, null).then(n => selectNote(n.id))} class="w-full flex items-center justify-between group/wsnote px-2 py-2 rounded-lg text-sm transition-all text-accent/70 hover:bg-sidebar-accent hover:text-accent">
                     <span class="flex items-center gap-2"><FileText size={12} /> New Note</span>
                 </button>
 
-                {#each notes().filter((n: DatabaseNote) => !n.folderId) as note (note.id)}
-                    <ChatSidebarNoteItem 
-                        {note} 
-                        isActive={currentNoteId === note.id}
-                        onSelect={() => selectNote(note.id)}
-                        onDelete={() => handleDelete('note', note.id)}
+                {#each filteredConversations.filter(c => !c.folderId && !c.projectId && !c.workspaceId) as conversation (conversation.id)}
+                    <ChatSidebarConversationItem
+                        {conversation} depth={0} {handleMobileSidebarItemClick} isActive={currentChatId === conversation.id}
+                        onSelect={selectConversation} onEdit={() => handleEdit('conversation', conversation.id, conversation.name)}
+                        onDelete={() => handleDelete('conversation', conversation.id)} onStop={handleStopGeneration}
                     />
                 {/each}
-                
-                <div class="flex items-center gap-1 mt-2">
-                    <button onclick={() => goto('#/notes/unassigned')} class="flex-1 flex items-center justify-center gap-2 group/wsnote px-2 py-2 rounded-lg text-sm transition-all text-accent/70 hover:bg-sidebar-accent hover:text-accent bg-surface-container/30">
-                        <FileText size={12} /> Notes
-                    </button>
-                    <button onclick={() => goto('#/files/unassigned')} class="flex-1 flex items-center justify-center gap-2 group/wsfile px-2 py-2 rounded-lg text-sm transition-all text-secondary/70 hover:bg-sidebar-accent hover:text-secondary bg-surface-container/30">
-                        <Archive size={12} /> Files
-                    </button>
-                </div>
+
+                {#each notes().filter((n: DatabaseNote) => !n.folderId && !n.projectId && !n.workspaceId) as note (note.id)}
+                    <ChatSidebarNoteItem 
+                        {note} isActive={currentNoteId === note.id}
+                        onSelect={() => selectNote(note.id)} onDelete={() => handleDelete('note', note.id)}
+                    />
+                {/each}
             </div>
+            {/if}
         </div>
 
+        <!-- WORKSPACES TREE -->
+        <div>
+            <div class="px-2 text-[11px] font-mono text-outline uppercase tracking-widest mb-2 flex items-center justify-between">
+                <span>Architecture</span>
+                <div class="flex gap-2 items-center">
+                    <a href="#/files" class="hover:text-primary transition-colors" title="View All Files"><LayoutDashboard size={14}/></a>
+                    <button onclick={handleCreateWorkspace} class="hover:text-primary transition-colors" title="New Workspace"><FolderPlus size={14}/></button>
+                </div>
+            </div>
+            
+            <div class="space-y-2">
+                {#each workspaces() as workspace (workspace.id)}
+                    <div class="rounded-lg border border-white/5 bg-surface/20">
+                        <div class="flex items-center justify-between p-2 hover:bg-sidebar-accent cursor-pointer transition-colors" onclick={() => expandedWorkspaces[workspace.id] = !expandedWorkspaces[workspace.id]}>
+                            <div class="flex items-center gap-2">
+                                {#if expandedWorkspaces[workspace.id]}<ChevronDown size={14} class="text-secondary" />{:else}<ChevronRight size={14} class="text-secondary" />{/if}
+                                <Layers size={14} class="text-secondary" />
+                                <h4 class="font-medium text-sm text-foreground truncate">{workspace.name}</h4>
+                            </div>
+                            <button class="opacity-0 group-hover:opacity-100 p-1 hover:text-primary" onclick={(e) => { e.stopPropagation(); conversationsStore.createConversation(`Chat in ${workspace.name}`).then(id => workspaceStore.moveConversation(id, null, null, workspace.id)); }}><Plus size={12}/></button>
+                        </div>
+                        
+                        {#if expandedWorkspaces[workspace.id]}
+                            <div class="pl-4 pr-1 pb-2 space-y-1 relative" transition:slide>
+                                <div class="absolute left-3 top-0 bottom-0 w-px bg-border/40"></div>
+                                
+                                <!-- Workspace Assets -->
+                                {#each filteredConversations.filter(c => c.workspaceId === workspace.id && !c.projectId && !c.folderId) as conversation (conversation.id)}
+                                    <ChatSidebarConversationItem {conversation} depth={0} {handleMobileSidebarItemClick} isActive={currentChatId === conversation.id} onSelect={selectConversation} onEdit={() => handleEdit('conversation', conversation.id, conversation.name)} onDelete={() => handleDelete('conversation', conversation.id)} onStop={handleStopGeneration} />
+                                {/each}
+                                {#each notes().filter(n => n.workspaceId === workspace.id && !n.projectId && !n.folderId) as note (note.id)}
+                                    <ChatSidebarNoteItem {note} isActive={currentNoteId === note.id} onSelect={() => selectNote(note.id)} onDelete={() => handleDelete('note', note.id)} />
+                                {/each}
+
+                                <!-- Projects -->
+                                {#each projects().filter(p => p.workspaceId === workspace.id) as project (project.id)}
+                                    <div class="rounded-lg border border-white/5 bg-surface/30 mt-1">
+                                        <div class="flex items-center justify-between p-2 hover:bg-sidebar-accent cursor-pointer transition-colors" onclick={() => expandedProjects[project.id] = !expandedProjects[project.id]}>
+                                            <div class="flex items-center gap-2">
+                                                {#if expandedProjects[project.id]}<ChevronDown size={14} class="text-primary" />{:else}<ChevronRight size={14} class="text-primary" />{/if}
+                                                <LayoutGrid size={14} class="text-primary" />
+                                                <h5 class="font-medium text-xs text-foreground truncate">{project.name}</h5>
+                                            </div>
+                                        </div>
+                                        
+                                        {#if expandedProjects[project.id]}
+                                            <div class="pl-4 pr-1 pb-2 space-y-1 relative" transition:slide>
+                                                <div class="absolute left-3 top-0 bottom-0 w-px bg-border/40"></div>
+                                                
+                                                <!-- Project Assets -->
+                                                {#each filteredConversations.filter(c => c.projectId === project.id && !c.folderId) as conversation (conversation.id)}
+                                                    <ChatSidebarConversationItem {conversation} depth={0} {handleMobileSidebarItemClick} isActive={currentChatId === conversation.id} onSelect={selectConversation} onEdit={() => handleEdit('conversation', conversation.id, conversation.name)} onDelete={() => handleDelete('conversation', conversation.id)} onStop={handleStopGeneration} />
+                                                {/each}
+                                                {#each notes().filter(n => n.projectId === project.id && !n.folderId) as note (note.id)}
+                                                    <ChatSidebarNoteItem {note} isActive={currentNoteId === note.id} onSelect={() => selectNote(note.id)} onDelete={() => handleDelete('note', note.id)} />
+                                                {/each}
+
+                                                <!-- Folders -->
+                                                {#each folders().filter(f => f.projectId === project.id) as folder (folder.id)}
+                                                    <div class="rounded-lg border border-white/5 bg-surface/40 mt-1">
+                                                        <div class="flex items-center justify-between p-2 hover:bg-sidebar-accent cursor-pointer transition-colors" onclick={() => expandedFolders[folder.id] = !expandedFolders[folder.id]}>
+                                                            <div class="flex items-center gap-2">
+                                                                {#if expandedFolders[folder.id]}<ChevronDown size={14} class="text-accent" />{:else}<ChevronRight size={14} class="text-accent" />{/if}
+                                                                <Folder size={14} class="text-accent" />
+                                                                <h6 class="font-medium text-xs text-foreground truncate">{folder.name}</h6>
+                                                            </div>
+                                                        </div>
+
+                                                        {#if expandedFolders[folder.id]}
+                                                            <div class="pl-4 pr-1 pb-1 space-y-1 relative" transition:slide>
+                                                                <div class="absolute left-3 top-0 bottom-0 w-px bg-border/40"></div>
+                                                                <!-- Folder Assets -->
+                                                                {#each filteredConversations.filter(c => c.folderId === folder.id) as conversation (conversation.id)}
+                                                                    <ChatSidebarConversationItem {conversation} depth={0} {handleMobileSidebarItemClick} isActive={currentChatId === conversation.id} onSelect={selectConversation} onEdit={() => handleEdit('conversation', conversation.id, conversation.name)} onDelete={() => handleDelete('conversation', conversation.id)} onStop={handleStopGeneration} />
+                                                                {/each}
+                                                                {#each notes().filter(n => n.folderId === folder.id) as note (note.id)}
+                                                                    <ChatSidebarNoteItem {note} isActive={currentNoteId === note.id} onSelect={() => selectNote(note.id)} onDelete={() => handleDelete('note', note.id)} />
+                                                                {/each}
+                                                            </div>
+                                                        {/if}
+                                                    </div>
+                                                {/each}
+                                            </div>
+                                        {/if}
+                                    </div>
+                                {/each}
+                            </div>
+                        {/if}
+                    </div>
+                {/each}
+            </div>
+        </div>
 
     </div>
 </ScrollArea>

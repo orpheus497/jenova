@@ -144,7 +144,7 @@ export class SyncService {
                 stats.updated++;
               }
             } else {
-              await DatabaseService.createNote(parsedFolderId, title, content);
+              await DatabaseService.createNote(parsedFolderId, null, null, title, content);
               changed = true;
               stats.created++;
             }
