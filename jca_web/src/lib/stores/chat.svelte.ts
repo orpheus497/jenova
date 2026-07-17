@@ -694,6 +694,7 @@ class ChatStore {
     };
 
     const cleanupStreamingState = () => {
+      rafPending = false; // Cancel any pending RAF to prevent zombie state
       this.setStreamingActive(false);
       this.setChatLoading(convId, false);
       this.clearChatStreaming(convId);
@@ -931,52 +932,57 @@ class ChatStore {
           toolCalls?: string,
           isCacheHit?: boolean,
         ) => {
-          const content = streamedContent || finalContent || "";
-          const reasoning = streamedReasoningContent || reasoningContent;
-          const updateData: Record<string, unknown> = {
-            content,
-            reasoningContent: reasoning || undefined,
-            toolCalls: toolCalls || "",
-            timings,
-          };
+          try {
+            const content = streamedContent || finalContent || "";
+            const reasoning = streamedReasoningContent || reasoningContent;
+            const updateData: Record<string, unknown> = {
+              content,
+              reasoningContent: reasoning || undefined,
+              toolCalls: toolCalls || "",
+              timings,
+            };
 
-          const idx = conversationsStore.findMessageIndex(currentMessageId);
-          let updatedExtras:
-            | import("$lib/types").DatabaseMessageExtra[]
-            | undefined;
+            const idx = conversationsStore.findMessageIndex(currentMessageId);
+            let updatedExtras:
+              | import("$lib/types").DatabaseMessageExtra[]
+              | undefined;
 
-          if (isCacheHit) {
-            const currentMsg = conversationsStore.activeMessages[idx];
-            updatedExtras = [
-              ...(currentMsg?.extra || []),
-              { type: "cache_hit" },
-            ];
-            updateData.extra = updatedExtras;
+            if (isCacheHit) {
+              const currentMsg = conversationsStore.activeMessages[idx];
+              updatedExtras = [
+                ...(currentMsg?.extra || []),
+                { type: "cache_hit" },
+              ];
+              updateData.extra = updatedExtras;
+            }
+
+            if (resolvedModel && !modelPersisted)
+              updateData.model = resolvedModel;
+            await DatabaseService.updateMessage(currentMessageId, updateData);
+            const uiUpdate: Partial<DatabaseMessage> = {
+              content,
+              reasoningContent: reasoning || undefined,
+              toolCalls: toolCalls || "",
+            };
+            if (timings) uiUpdate.timings = timings;
+            if (resolvedModel) uiUpdate.model = resolvedModel;
+            if (updatedExtras) uiUpdate.extra = updatedExtras;
+            conversationsStore.updateMessageAtIndex(idx, uiUpdate);
+            await conversationsStore.updateCurrentNode(currentMessageId);
+
+            AudioService.speak(content);
+            AudioService.notify(content);
+
+            this.debouncedSyncEntity("chat", convId);
+
+            if (onComplete) await onComplete(content);
+            if (isRouterMode())
+              modelsStore.fetchRouterModels().catch(console.error);
+          } catch (err) {
+            console.error("Stream completion handler error:", err);
+          } finally {
+            cleanupStreamingState();
           }
-
-          if (resolvedModel && !modelPersisted)
-            updateData.model = resolvedModel;
-          await DatabaseService.updateMessage(currentMessageId, updateData);
-          const uiUpdate: Partial<DatabaseMessage> = {
-            content,
-            reasoningContent: reasoning || undefined,
-            toolCalls: toolCalls || "",
-          };
-          if (timings) uiUpdate.timings = timings;
-          if (resolvedModel) uiUpdate.model = resolvedModel;
-          if (updatedExtras) uiUpdate.extra = updatedExtras;
-          conversationsStore.updateMessageAtIndex(idx, uiUpdate);
-          await conversationsStore.updateCurrentNode(currentMessageId);
-
-          AudioService.speak(content);
-          AudioService.notify(content);
-
-          this.debouncedSyncEntity("chat", convId);
-
-          cleanupStreamingState();
-          if (onComplete) await onComplete(content);
-          if (isRouterMode())
-            modelsStore.fetchRouterModels().catch(console.error);
         },
         onError: streamCallbacks.onError,
       },

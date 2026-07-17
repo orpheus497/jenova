@@ -493,17 +493,25 @@ function db.update_message(m)
 end
 
 function db.partial_update_message(id, updates)
-    local allowed = {type=1, role=1, timestamp=1, parent=1, children=1, content=1, thinking=1, toolCalls=1, extra=1, model=1, timings=1, reasoningContent=1, toolCallId=1}
+    -- Map frontend field names to SQLite column names
+    local field_map = {
+        type=true, role=true, timestamp=true, parent=true, children=true,
+        content=true, thinking=true, toolCalls=true, extra=true, model=true,
+        timings=true, reasoningContent="thinking"
+    }
     local fields = {}
     local params = {}
     for k, v in pairs(updates) do
-        if allowed[k] then
+        local col = field_map[k]
+        if col then
+            -- col is either true (same name) or a string (mapped name)
+            local col_name = (col == true) and k or col
             if k == "children" and type(v) == "table" then v = json.encode(v)
             elseif k == "extra" and type(v) == "table" then v = json.encode(v)
             elseif k == "timings" and type(v) == "table" then v = json.encode(v)
             elseif k == "toolCalls" and type(v) == "table" then v = json.encode(v)
             end
-            table.insert(fields, k .. " = ?")
+            table.insert(fields, col_name .. " = ?")
             table.insert(params, v)
         end
     end
