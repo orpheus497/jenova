@@ -116,6 +116,7 @@ function db.init(db_path)
             title TEXT,
             content TEXT,
             updatedAt INTEGER,
+            isFocusNote INTEGER DEFAULT 0,
             is_deleted INTEGER DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS fileAssets (
@@ -163,7 +164,8 @@ function db.init(db_path)
         "ALTER TABLE notes ADD COLUMN projectId TEXT;",
         "ALTER TABLE notes ADD COLUMN workspaceId TEXT;",
         "ALTER TABLE fileAssets ADD COLUMN projectId TEXT;",
-        "ALTER TABLE fileAssets ADD COLUMN workspaceId TEXT;"
+        "ALTER TABLE fileAssets ADD COLUMN workspaceId TEXT;",
+        "ALTER TABLE notes ADD COLUMN isFocusNote INTEGER DEFAULT 0;"
     }
     for _, mig in ipairs(migrations) do
         local mig_errmsg = ffi.new("char*[1]")
@@ -734,14 +736,14 @@ function db.get_all_notes()
 end
 
 function db.insert_note(n)
-    local sql = "INSERT INTO notes (id, folderId, projectId, workspaceId, title, content, updatedAt, is_deleted) VALUES (?, ?, ?, ?, ?, ?, ?, 0)"
-    local _, err = execute_query(sql, {n.id, n.folderId, n.projectId, n.workspaceId, n.title, n.content, n.updatedAt})
+    local sql = "INSERT INTO notes (id, folderId, projectId, workspaceId, title, content, updatedAt, isFocusNote, is_deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)"
+    local _, err = execute_query(sql, {n.id, n.folderId, n.projectId, n.workspaceId, n.title, n.content, n.updatedAt, n.isFocusNote or 0})
     return err == nil, err
 end
 
 function db.update_note(n)
-    local sql = "UPDATE notes SET folderId = ?, projectId = ?, workspaceId = ?, title = ?, content = ?, updatedAt = ? WHERE id = ?"
-    local _, err = execute_query(sql, {n.folderId, n.projectId, n.workspaceId, n.title, n.content, n.updatedAt, n.id})
+    local sql = "UPDATE notes SET folderId = ?, projectId = ?, workspaceId = ?, title = ?, content = ?, updatedAt = ?, isFocusNote = ? WHERE id = ?"
+    local _, err = execute_query(sql, {n.folderId, n.projectId, n.workspaceId, n.title, n.content, n.updatedAt, n.isFocusNote or 0, n.id})
     return err == nil, err
 end
 

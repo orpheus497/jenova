@@ -47,6 +47,7 @@ export interface DatabaseNote {
   title: string;
   content: string;
   updatedAt: number;
+  isFocusNote?: boolean;
 }
 
 export interface DatabaseFileAsset {

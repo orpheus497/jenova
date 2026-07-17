@@ -233,7 +233,7 @@
 						{/snippet}
 
 						{#snippet notes()}
-							{#each allNotes().filter((n: DatabaseNote) => n.workspaceId === workspace.id && !n.projectId && !n.folderId) as note (note.id)}
+							{#each allNotes().filter((n: DatabaseNote) => n.workspaceId === workspace.id && !n.projectId && !n.folderId).sort((a, b) => (b.isFocusNote ? 1 : 0) - (a.isFocusNote ? 1 : 0)) as note (note.id)}
 								<ChatSidebarNoteItem
 									{note} isActive={currentNoteId === note.id}
 									onSelect={() => selectNote(note.id)}
@@ -267,7 +267,7 @@
 									{/snippet}
 
 									{#snippet notes()}
-										{#each allNotes().filter((n: DatabaseNote) => n.projectId === project.id && !n.folderId) as note (note.id)}
+										{#each allNotes().filter((n: DatabaseNote) => n.projectId === project.id && !n.folderId).sort((a, b) => (b.isFocusNote ? 1 : 0) - (a.isFocusNote ? 1 : 0)) as note (note.id)}
 											<ChatSidebarNoteItem
 												{note} isActive={currentNoteId === note.id}
 												onSelect={() => selectNote(note.id)}
@@ -302,7 +302,7 @@
 												{/snippet}
 
 												{#snippet notes()}
-													{#each allNotes().filter((n: DatabaseNote) => n.folderId === folder.id) as note (note.id)}
+													{#each allNotes().filter((n: DatabaseNote) => n.folderId === folder.id).sort((a, b) => (b.isFocusNote ? 1 : 0) - (a.isFocusNote ? 1 : 0)) as note (note.id)}
 														<ChatSidebarNoteItem
 															{note} isActive={currentNoteId === note.id}
 															onSelect={() => selectNote(note.id)}

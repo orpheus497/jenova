@@ -435,8 +435,9 @@ export class DatabaseService {
     workspaceId: string | null,
     title: string,
     content: string,
+    isFocusNote: boolean = false,
   ): Promise<DatabaseNote> {
-    const note = {
+    const note: DatabaseNote = {
       id: uuid(),
       folderId,
       projectId,
@@ -444,6 +445,7 @@ export class DatabaseService {
       title,
       content,
       updatedAt: Date.now(),
+      isFocusNote,
     };
     await apiFetch("notes", { method: "POST", body: JSON.stringify(note) });
     return note;

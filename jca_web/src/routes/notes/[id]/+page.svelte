@@ -1,6 +1,6 @@
 <script lang="ts">
     import { page } from '$app/state';
-    import { FileText, Edit3, X, Check, Trash2 } from '@lucide/svelte';
+    import { FileText, Edit3, X, Check, Trash2, Pin } from '@lucide/svelte';
     import { workspaceStore, notes } from '$lib/stores/workspace.svelte';
     import { MarkdownContent } from '$lib/components/app';
     import { Button } from '$lib/components/ui/button';
@@ -47,8 +47,12 @@
                 />
             {:else}
                 <h1 class="text-lg font-bold text-foreground flex items-center gap-3">
-                    <FileText size={18} class="text-yellow-500" />
-                    {selectedNote.title}
+                    {#if selectedNote.isFocusNote}
+                        <Pin size={18} class="text-red-500" />
+                    {:else}
+                        <FileText size={18} class="text-yellow-500" />
+                    {/if}
+                    <span class={selectedNote.isFocusNote ? 'text-red-400' : ''}>{selectedNote.title}</span>
                 </h1>
             {/if}
             <div class="flex items-center gap-2">
@@ -63,9 +67,11 @@
                     <Button variant="ghost" size="sm" onclick={() => isEditing = true} class="text-yellow-500 hover:text-yellow-600 hover:bg-yellow-500/10 gap-2">
                         <Edit3 size={16} /> Edit
                     </Button>
-                    <Button variant="ghost" size="icon" onclick={() => showDeleteDialog = true} class="text-muted-foreground hover:text-destructive hover:bg-destructive/10">
-                        <Trash2 size={16} />
-                    </Button>
+                    {#if !selectedNote.isFocusNote}
+                        <Button variant="ghost" size="icon" onclick={() => showDeleteDialog = true} class="text-muted-foreground hover:text-destructive hover:bg-destructive/10">
+                            <Trash2 size={16} />
+                        </Button>
+                    {/if}
                 {/if}
             </div>
         </div>

@@ -24,6 +24,8 @@ class WorkspaceStore {
     try {
       await this.loadAll();
       this.isInitialized = true;
+      // Ensure all containers have FOCUS notes (migration for existing data)
+      this.ensureFocusNotes().catch(console.error);
     } catch (error) {
       console.error("Failed to initialize workspace store:", error);
     }
@@ -67,6 +69,8 @@ class WorkspaceStore {
   async createWorkspace(name: string) {
     const ws = await DatabaseService.createWorkspace(name);
     this.workspaces = [...this.workspaces, ws];
+    // Auto-create FOCUS note for the workspace
+    await this.createFocusNote(null, null, ws.id);
     return ws;
   }
 
@@ -95,6 +99,8 @@ class WorkspaceStore {
   async createProject(workspaceId: string, name: string) {
     const p = await DatabaseService.createProject(workspaceId, name);
     this.projects = [...this.projects, p];
+    // Auto-create FOCUS note for the project
+    await this.createFocusNote(null, p.id, workspaceId);
     return p;
   }
 
@@ -116,6 +122,11 @@ class WorkspaceStore {
   async createFolder(projectId: string | null, name: string) {
     const folder = await DatabaseService.createFolder(projectId, name);
     this.folders = [...this.folders, folder];
+    // Auto-create FOCUS note for the folder
+    if (projectId) {
+      const project = this.projects.find(p => p.id === projectId);
+      await this.createFocusNote(folder.id, projectId, project?.workspaceId ?? null);
+    }
     return folder;
   }
 
@@ -140,6 +151,8 @@ class WorkspaceStore {
     projectId: string | null = null,
     workspaceId: string | null = null,
   ) {
+    const note = this.notes.find(n => n.id === id);
+    if (note?.isFocusNote) return; // Cannot move FOCUS notes
     await this.updateNote(id, { folderId, projectId, workspaceId });
   }
 
@@ -213,6 +226,8 @@ class WorkspaceStore {
   }
 
   async deleteNote(id: string) {
+    const note = this.notes.find(n => n.id === id);
+    if (note?.isFocusNote) return; // Cannot delete FOCUS notes
     await DatabaseService.deleteNote(id);
     this.notes = this.notes.filter((n) => n.id !== id);
   }
@@ -242,6 +257,56 @@ class WorkspaceStore {
   async deleteFileAsset(id: string) {
     await DatabaseService.deleteFileAsset(id);
     this.files = this.files.filter((f) => f.id !== id);
+  }
+
+  /**
+   * Creates a pinned FOCUS/RULES note for a container (workspace, project, or folder).
+   * These notes cannot be moved or deleted and are injected across the workspace tree.
+   */
+  private async createFocusNote(
+    folderId: string | null,
+    projectId: string | null,
+    workspaceId: string | null,
+  ) {
+    try {
+      const note = await DatabaseService.createNote(
+        folderId,
+        projectId,
+        workspaceId,
+        "FOCUS / RULES",
+        "",
+        true, // isFocusNote
+      );
+      this.notes = [...this.notes, note];
+      SyncService.syncEntity("note", note.id);
+    } catch (error) {
+      console.error("Failed to create FOCUS note:", error);
+    }
+  }
+
+  /**
+   * Ensures every workspace, project, and folder has a FOCUS note.
+   * Called once after init() to handle containers created before this feature.
+   */
+  private async ensureFocusNotes() {
+    const focusNotes = this.notes.filter(n => n.isFocusNote);
+
+    for (const ws of this.workspaces) {
+      if (!focusNotes.some(n => n.workspaceId === ws.id && !n.projectId && !n.folderId)) {
+        await this.createFocusNote(null, null, ws.id);
+      }
+    }
+    for (const proj of this.projects) {
+      if (!focusNotes.some(n => n.projectId === proj.id && !n.folderId)) {
+        await this.createFocusNote(null, proj.id, proj.workspaceId);
+      }
+    }
+    for (const folder of this.folders) {
+      if (!focusNotes.some(n => n.folderId === folder.id)) {
+        const project = this.projects.find(p => p.id === folder.projectId);
+        await this.createFocusNote(folder.id, folder.projectId, project?.workspaceId ?? null);
+      }
+    }
   }
 }
 
