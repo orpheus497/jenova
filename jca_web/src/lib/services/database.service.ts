@@ -237,6 +237,11 @@ export class DatabaseService {
       if (!parent) {
         throw new Error(`Parent message ${parentId} not found`);
       }
+      if (parent.convId !== message.convId) {
+        throw new Error(
+          `Parent message ${parentId} belongs to conversation ${parent.convId}, expected ${message.convId}`,
+        );
+      }
       parent.children.push(newMessage.id);
       await apiFetch("messages", {
         method: "POST",
@@ -291,6 +296,11 @@ export class DatabaseService {
     });
     const parent = await this.getMessage(parentId);
     if (parent) {
+      if (parent.convId !== convId) {
+        throw new Error(
+          `Parent message ${parentId} belongs to conversation ${parent.convId}, expected ${convId}`,
+        );
+      }
       parent.children.push(systemMessage.id);
       await apiFetch("messages", {
         method: "POST",

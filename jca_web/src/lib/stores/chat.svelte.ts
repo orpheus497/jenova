@@ -83,6 +83,7 @@ class ChatStore {
   private _pendingDraftMessage = $state<string>("");
   private _pendingDraftFiles = $state<ChatUploadedFile[]>([]);
   private syncDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private streamingFlushCallbacks = new Map<string, () => void>();
 
   private debouncedSyncEntity(type: "note" | "chat", id: string) {
     const key = `${type}:${id}`;
@@ -695,12 +696,27 @@ class ChatStore {
       });
     };
 
+    // Flush any pending RAF update synchronously so the streaming state map
+    // reflects the latest chunks before a snapshot is captured on abort.
+    const flushPendingUpdate = () => {
+      if (rafPending) {
+        if (rafHandle !== null) {
+          cancelAnimationFrame(rafHandle);
+          rafHandle = null;
+        }
+        rafPending = false;
+        updateStreamingUI();
+      }
+    };
+    this.streamingFlushCallbacks.set(convId, flushPendingUpdate);
+
     const cleanupStreamingState = () => {
       if (rafHandle !== null) {
         cancelAnimationFrame(rafHandle);
         rafHandle = null;
       }
       rafPending = false;
+      this.streamingFlushCallbacks.delete(convId);
       this.setStreamingActive(false);
       this.setChatLoading(convId, false);
       this.clearChatStreaming(convId);
@@ -1003,11 +1019,15 @@ class ChatStore {
     await this.stopGenerationForChat(activeConv.id);
   }
   async stopGenerationForChat(convId: string): Promise<void> {
+    // Flush any pending RAF update so the streaming state map has the latest chunks
+    const flushFn = this.streamingFlushCallbacks.get(convId);
+    if (flushFn) flushFn();
     // Capture streaming state BEFORE clearing for partial save
     const streamingSnapshot = this.getChatStreaming(convId);
     const processingSnapshot = this.getProcessingState(convId);
     // Abort the request FIRST for immediate responsiveness
     this.abortRequest(convId);
+    this.streamingFlushCallbacks.delete(convId);
     this.setStreamingActive(false);
     this.setChatLoading(convId, false);
     this.clearChatStreaming(convId);
@@ -1027,8 +1047,10 @@ class ChatStore {
         ? conversationsStore.activeMessages
         : await conversationsStore.getConversationMessages(conversationId);
     if (!messages.length) return;
-    const lastMessage = messages[messages.length - 1];
-    if (lastMessage?.role === MessageRole.ASSISTANT) {
+    const targetMessage = messages.find(
+      (m) => m.id === streamingState.messageId,
+    ) ?? messages[messages.length - 1];
+    if (targetMessage?.role === MessageRole.ASSISTANT) {
       try {
         const updateData: { content: string; timings?: ChatMessageTimings } = {
           content: streamingState.response,
@@ -1048,11 +1070,11 @@ class ChatStore {
                 : undefined,
           };
         }
-        await DatabaseService.updateMessage(lastMessage.id, updateData);
-        lastMessage.content = streamingState.response;
-        if (updateData.timings) lastMessage.timings = updateData.timings;
+        await DatabaseService.updateMessage(targetMessage.id, updateData);
+        targetMessage.content = streamingState.response;
+        if (updateData.timings) targetMessage.timings = updateData.timings;
       } catch (error) {
-        lastMessage.content = streamingState.response;
+        targetMessage.content = streamingState.response;
         console.error("Failed to save partial response:", error);
       }
     }
@@ -1068,8 +1090,10 @@ class ChatStore {
         ? conversationsStore.activeMessages
         : await conversationsStore.getConversationMessages(convId);
     if (!messages.length) return;
-    const lastMessage = messages[messages.length - 1];
-    if (lastMessage?.role === MessageRole.ASSISTANT) {
+    const targetMessage = messages.find(
+      (m) => m.id === streamingSnapshot.messageId,
+    ) ?? messages[messages.length - 1];
+    if (targetMessage?.role === MessageRole.ASSISTANT) {
       try {
         const updateData: { content: string; timings?: ChatMessageTimings } = {
           content: streamingSnapshot.response,
@@ -1088,11 +1112,11 @@ class ChatStore {
                 : undefined,
           };
         }
-        await DatabaseService.updateMessage(lastMessage.id, updateData);
-        lastMessage.content = streamingSnapshot.response;
-        if (updateData.timings) lastMessage.timings = updateData.timings;
+        await DatabaseService.updateMessage(targetMessage.id, updateData);
+        targetMessage.content = streamingSnapshot.response;
+        if (updateData.timings) targetMessage.timings = updateData.timings;
       } catch (error) {
-        lastMessage.content = streamingSnapshot.response;
+        targetMessage.content = streamingSnapshot.response;
         console.error("Failed to save partial response:", error);
       }
     }
