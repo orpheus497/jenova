@@ -559,9 +559,18 @@ function db.delete_workspace(id)
            OR projectId IN (SELECT id FROM projects WHERE workspaceId = ?)
            OR workspaceId = ?
     ]], {id, id, id})
-    if err1 or err2 or err3 or err4 or err5 or err6 then
+    local _, err_msg = execute_query([[
+        UPDATE messages SET is_deleted = 1 
+        WHERE convId IN (
+            SELECT id FROM conversations 
+            WHERE folderId IN (SELECT id FROM folders WHERE projectId IN (SELECT id FROM projects WHERE workspaceId = ?))
+               OR projectId IN (SELECT id FROM projects WHERE workspaceId = ?)
+               OR workspaceId = ?
+        )
+    ]], {id, id, id})
+    if err1 or err2 or err3 or err4 or err5 or err6 or err_msg then
         execute_query("ROLLBACK")
-        return false, err1 or err2 or err3 or err4 or err5 or err6
+        return false, err1 or err2 or err3 or err4 or err5 or err6 or err_msg
     end
     local _, err7 = execute_query("COMMIT")
     if err7 then
@@ -597,9 +606,16 @@ function db.delete_project(id)
     local _, err3 = execute_query("UPDATE notes SET is_deleted = 1 WHERE folderId IN (SELECT id FROM folders WHERE projectId = ?) OR projectId = ?", {id, id})
     local _, err4 = execute_query("UPDATE fileAssets SET is_deleted = 1 WHERE folderId IN (SELECT id FROM folders WHERE projectId = ?) OR projectId = ?", {id, id})
     local _, err5 = execute_query("UPDATE conversations SET is_deleted = 1 WHERE folderId IN (SELECT id FROM folders WHERE projectId = ?) OR projectId = ?", {id, id})
-    if err1 or err2 or err3 or err4 or err5 then
+    local _, err_msg = execute_query([[
+        UPDATE messages SET is_deleted = 1 
+        WHERE convId IN (
+            SELECT id FROM conversations 
+            WHERE folderId IN (SELECT id FROM folders WHERE projectId = ?) OR projectId = ?
+        )
+    ]], {id, id})
+    if err1 or err2 or err3 or err4 or err5 or err_msg then
         execute_query("ROLLBACK")
-        return false, err1 or err2 or err3 or err4 or err5
+        return false, err1 or err2 or err3 or err4 or err5 or err_msg
     end
     local _, err6 = execute_query("COMMIT")
     if err6 then
@@ -647,9 +663,10 @@ function db.delete_folder(id)
     local _, err2 = execute_query("UPDATE notes SET is_deleted = 1 WHERE folderId = ?", {id})
     local _, err3 = execute_query("UPDATE fileAssets SET is_deleted = 1 WHERE folderId = ?", {id})
     local _, err4 = execute_query("UPDATE conversations SET is_deleted = 1 WHERE folderId = ?", {id})
-    if err1 or err2 or err3 or err4 then
+    local _, err_msg = execute_query("UPDATE messages SET is_deleted = 1 WHERE convId IN (SELECT id FROM conversations WHERE folderId = ?)", {id})
+    if err1 or err2 or err3 or err4 or err_msg then
         execute_query("ROLLBACK")
-        return false, err1 or err2 or err3 or err4
+        return false, err1 or err2 or err3 or err4 or err_msg
     end
     local _, err5 = execute_query("COMMIT")
     if err5 then

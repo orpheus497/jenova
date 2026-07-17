@@ -991,7 +991,7 @@ local function proxy_connection(client_fd, conn_fds)
         recursive_mkdir(workspaces_dir)
         local files = {}
         local escaped_dir = workspaces_dir:gsub("'", "'\\''")
-        local cmd = "find '" .. escaped_dir .. "' -maxdepth 3 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/build/*'"
+        local cmd = "find '" .. escaped_dir .. "' -maxdepth 4 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/build/*'"
         local output = async_popen_read(cmd)
         if output then
             for line in output:gmatch("[^\r\n]+") do
