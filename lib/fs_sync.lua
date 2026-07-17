@@ -181,6 +181,14 @@ function fs_sync.sync_fileAsset(asset)
     return false
 end
 
+local function write_trash_metadata(trash_path, table_name, id, original_path)
+    local f = io.open(trash_path .. ".metadata.json", "w")
+    if f then
+        f:write(string.format('{"type": "%s", "id": "%s", "original_path": "%s"}', table_name, id, original_path))
+        f:close()
+    end
+end
+
 function fs_sync.trash_note(note)
     local path, ws_name = get_physical_path_for_note(note)
     if not path then
@@ -192,6 +200,7 @@ function fs_sync.trash_note(note)
     local filename = path:match("([^/]+)$")
     local trash_path = trash_dir .. "/" .. os.time() .. "_" .. filename
     local ok, err = os.rename(path, trash_path)
+    if ok then write_trash_metadata(trash_path, "notes", note.id, path) end
     return ok ~= nil
 end
 
@@ -206,6 +215,7 @@ function fs_sync.trash_fileAsset(asset)
     local filename = path:match("([^/]+)$")
     local trash_path = trash_dir .. "/" .. os.time() .. "_" .. filename
     local ok, err = os.rename(path, trash_path)
+    if ok then write_trash_metadata(trash_path, "fileAssets", asset.id, path) end
     return ok ~= nil
 end
 
@@ -214,6 +224,7 @@ function fs_sync.trash_workspace(workspace)
     local path = workspaces_dir .. "/" .. safe_workspace
     local trash_path = global_trash .. "/" .. os.time() .. "_" .. safe_workspace
     local ok, err = os.rename(path, trash_path)
+    if ok then write_trash_metadata(trash_path, "workspaces", workspace.id, path) end
     return ok ~= nil
 end
 
@@ -231,6 +242,7 @@ function fs_sync.trash_project(project)
     local trash_dir = get_workspace_trash(safe_workspace)
     local trash_path = trash_dir .. "/" .. os.time() .. "_" .. safe_project
     local ok, err = os.rename(path, trash_path)
+    if ok then write_trash_metadata(trash_path, "projects", project.id, path) end
     return ok ~= nil, trash_path, path
 end
 
@@ -251,6 +263,7 @@ function fs_sync.trash_folder(folder)
     local trash_dir = get_workspace_trash(safe_workspace)
     local trash_path = trash_dir .. "/" .. os.time() .. "_" .. safe_folder
     local ok, err = os.rename(path, trash_path)
+    if ok then write_trash_metadata(trash_path, "folders", folder.id, path) end
     return ok ~= nil, trash_path, path
 end
 
@@ -264,6 +277,110 @@ function fs_sync.trash_path(base_dir, relative_path)
     
     local ok, err = os.rename(path, trash_path)
     return ok ~= nil, trash_path, path
+end
+
+local function list_dir_recursive(dir)
+    local items = {}
+    local p = io.popen('find "' .. dir .. '" -mindepth 1 2>/dev/null')
+    if p then
+        for line in p:lines() do
+            -- check if it's a file or directory. To keep it simple, we just list files and directories
+            table.insert(items, line)
+        end
+        p:close()
+    end
+    return items
+end
+
+function fs_sync.get_trash()
+    local trashed = {}
+    
+    -- Global trash
+    local global_items = list_dir_recursive(global_trash)
+    for _, path in ipairs(global_items) do
+        if not path:match("%.metadata%.json$") then
+            table.insert(trashed, { path = path, type = "global", name = path:match("([^/]+)$") })
+        end
+    end
+    
+    -- Workspace trashes
+    local p = io.popen('find "' .. workspaces_dir .. '" -maxdepth 2 -type d -name ".trash" 2>/dev/null')
+    if p then
+        for trash_dir in p:lines() do
+            local ws_name = trash_dir:match(workspaces_dir:gsub("%-", "%%-") .. "/([^/]+)/%.trash")
+            if ws_name then
+                local items = list_dir_recursive(trash_dir)
+                for _, path in ipairs(items) do
+                    if not path:match("%.metadata%.json$") then
+                        table.insert(trashed, { path = path, type = "workspace", workspace = ws_name, name = path:match("([^/]+)$") })
+                    end
+                end
+            end
+        end
+        p:close()
+    end
+    return trashed
+end
+
+function fs_sync.restore_trash(trash_path, original_path)
+    if not trash_path or not original_path then return false end
+    
+    local metadata = nil
+    local f = io.open(trash_path .. ".metadata.json", "r")
+    if f then
+        local json_str = f:read("*a")
+        f:close()
+        local json = require("json")
+        local ok_j, decoded = pcall(json.decode, json_str)
+        if ok_j and type(decoded) == "table" then
+            metadata = decoded
+        end
+    end
+
+    if metadata and metadata.original_path then
+        original_path = metadata.original_path
+    end
+
+    local dir_part = original_path:match("(.+)/[^/]+$")
+    if dir_part then recursive_mkdir(dir_part) end
+    
+    local ok, err = os.rename(trash_path, original_path)
+    if ok then
+        if metadata and metadata.type and metadata.id then
+            local db = require("db")
+            db.restore_item(metadata.type, metadata.id)
+        end
+        os.remove(trash_path .. ".metadata.json")
+    end
+    return ok ~= nil
+end
+
+function fs_sync.empty_trash()
+    os.execute('rm -rf "' .. global_trash .. '"/*')
+    local p = io.popen('find "' .. workspaces_dir .. '" -maxdepth 2 -type d -name ".trash" 2>/dev/null')
+    if p then
+        for trash_dir in p:lines() do
+            os.execute('rm -rf "' .. trash_dir .. '"/*')
+        end
+        p:close()
+    end
+    return true
+end
+
+function fs_sync.get_fs_tree()
+    local tree = {}
+    -- Skip .trash and .git
+    local p = io.popen('find "' .. workspaces_dir .. '" -mindepth 1 -not -path "*/.trash*" -not -path "*/.git*" 2>/dev/null')
+    if p then
+        for line in p:lines() do
+            local rel_path = line:sub(#workspaces_dir + 2)
+            -- Determine if directory via a quick check (find -type d could be used but it's two passes)
+            local is_dir = os.execute('test -d "' .. line .. '"') == 0
+            table.insert(tree, { path = rel_path, full_path = line, isDir = is_dir })
+        end
+        p:close()
+    end
+    return tree
 end
 
 return fs_sync

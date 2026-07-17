@@ -1,7 +1,8 @@
 <script lang="ts">
-	import { Archive, Plus, Trash2, File, Image as ImageIcon, FileText, Loader2, UploadCloud, DownloadCloud, Database, RefreshCw, CheckCircle, Folder, MessageSquare, ArrowRight, ArrowLeft, FolderInput, ChevronDown, ChevronRight, Layers, LayoutGrid, Globe, FolderOpen } from '@lucide/svelte';
+	import { Archive, Plus, Trash2, File, Image as ImageIcon, FileText, Loader2, UploadCloud, DownloadCloud, Database, RefreshCw, CheckCircle, Folder, MessageSquare, ArrowRight, ArrowLeft, FolderInput, ChevronDown, ChevronRight, Layers, LayoutGrid, Globe, FolderOpen, HardDrive } from '@lucide/svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { DialogConfirmation } from '$lib/components/app';
+	import VFSExplorer from '$lib/components/app/content/VFSExplorer.svelte';
 	import { workspaceStore, files, folders, notes, workspaces, projects } from '$lib/stores/workspace.svelte';
 	import { conversations, conversationsStore } from '$lib/stores/conversations.svelte';
 	import { cn, formatFileSize } from '$lib/utils';
@@ -22,6 +23,7 @@
 	let showDeleteDialog = $state(false);
 	let deleteFileId = $state<string | null>(null);
 	let isUploading = $state(false);
+	let showVFS = $state(false);
 
 	let expandedWorkspaces = $state<Record<string, boolean>>({});
 	let expandedProjects = $state<Record<string, boolean>>({});
@@ -204,6 +206,12 @@
 			</div>
 			<div class="flex gap-4">
 				<button 
+					onclick={() => showVFS = !showVFS}
+					class="px-4 py-2 rounded-lg {showVFS ? 'bg-accent/20 text-accent' : 'bg-surface-variant hover:bg-surface-container-high text-on-surface'} border border-white/10 flex items-center gap-2 transition-colors"
+				>
+					<HardDrive size={18} /> {showVFS ? 'Hide VFS' : 'Show VFS'}
+				</button>
+				<button 
 					onclick={handlePull}
 					disabled={syncState !== 'idle'}
 					class="px-4 py-2 rounded-lg bg-surface-variant hover:bg-surface-container-high border border-white/10 text-on-surface flex items-center gap-2 transition-colors disabled:opacity-50"
@@ -254,6 +262,9 @@
 			</div>
 		</div>
 
+		{#if showVFS}
+			<VFSExplorer />
+		{:else}
 		<!-- Breadcrumbs & Explorer Header -->
 		<div class="flex flex-col gap-2 mt-6 border-b border-white/10 pb-4">
 			<div class="flex items-center gap-2 text-xs font-mono text-outline uppercase tracking-wider mb-2">
@@ -311,7 +322,7 @@
 									</div>
 									<div class="min-w-0">
 										<h3 class="font-semibold text-sm text-on-surface truncate" title={item.data.name}>{item.data.name}</h3>
-										<p class="text-[10px] text-outline font-mono mt-0.5">{formatFileSize(item.data.size)}</p>
+										<p class="text-[10px] text-outline font-mono mt-0.5">{formatFileSize(item.data.size)} &bull; {item.data.createdAt ? new Date(item.data.createdAt).toLocaleDateString() : 'Unknown date'}</p>
 									</div>
 								</div>
 								<button class="p-1.5 rounded-md hover:bg-error/20 text-outline hover:text-error transition-colors opacity-0 group-hover:opacity-100" onclick={() => confirmDelete(item.data.id)} title="Delete">
@@ -328,7 +339,7 @@
 									</div>
 									<div class="min-w-0">
 										<h3 class="font-semibold text-sm text-on-surface truncate" title={item.data.title}>{item.data.title}</h3>
-										<p class="text-[10px] text-outline font-mono mt-0.5">Note</p>
+										<p class="text-[10px] text-outline font-mono mt-0.5">Note &bull; {item.data.updatedAt ? new Date(item.data.updatedAt).toLocaleDateString() : 'Unknown date'}</p>
 									</div>
 								</div>
 							</div>
@@ -342,7 +353,7 @@
 									</div>
 									<div class="min-w-0">
 										<h3 class="font-semibold text-sm text-on-surface truncate" title={item.data.name}>{item.data.name}</h3>
-										<p class="text-[10px] text-outline font-mono mt-0.5">Chat</p>
+										<p class="text-[10px] text-outline font-mono mt-0.5">Chat &bull; {item.data.updatedAt ? new Date(item.data.updatedAt).toLocaleDateString() : 'Unknown date'}</p>
 									</div>
 								</div>
 							</div>
@@ -536,6 +547,7 @@
 				</div>
 			{/each}
 		</div>
+		{/if}
 	</div>
 </div>
 

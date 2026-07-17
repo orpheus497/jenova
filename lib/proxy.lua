@@ -618,6 +618,40 @@ local function proxy_connection(client_fd, conn_fds)
     
     local storage_path = headers_raw:match("^POST /api/storage/([^ %?]+)")
     
+    -- File System API Routes
+    local fs_route = request_line and request_line:match("^[A-Z]+ /api/fs/([^ %?\r\n]+)")
+    if fs_route then
+        local resp_body = ""
+        local status = "200 OK"
+        if is_get and fs_route == "trash" then
+            local trashed = fs_sync.get_trash()
+            resp_body = json.encode(trashed or {})
+        elseif not is_get and headers_raw:match("^POST /api/fs/trash/restore") then
+            local req = json.decode(body_raw)
+            if req and req.trash_path and req.original_path then
+                local ok = fs_sync.restore_trash(req.trash_path, req.original_path)
+                if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
+            else
+                status = "400 Bad Request"
+            end
+        elseif not is_get and headers_raw:match("^DELETE /api/fs/trash/empty") then
+            local ok = fs_sync.empty_trash()
+            if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
+        elseif is_get and fs_route == "tree" then
+            local tree = fs_sync.get_fs_tree()
+            resp_body = json.encode(tree or {})
+        else
+            status = "404 Not Found"
+        end
+
+        local resp = string.format(
+            "HTTP/1.1 %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
+            status, #resp_body, resp_body)
+        async_send(client_fd, resp)
+        safe_close()
+        return
+    end
+    
     -- Database API Routes
     local request_line = headers_raw:match("^([^\r\n]+)")
     local db_route = request_line and request_line:match("^[A-Z]+ /api/db/([^ %?\r\n]+)")

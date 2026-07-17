@@ -212,6 +212,7 @@
             <div class="px-2 text-[11px] font-mono text-outline uppercase tracking-widest mb-2 flex items-center justify-between">
                 <span>Architecture</span>
                 <div class="flex gap-2 items-center">
+                    <a href="#/trash" class="hover:text-error transition-colors" title="Trash Bin"><Trash2 size={14}/></a>
                     <a href="#/files" class="hover:text-primary transition-colors" title="View All Files"><LayoutDashboard size={14}/></a>
                     <button onclick={handleCreateWorkspace} class="hover:text-primary transition-colors" title="New Workspace"><FolderPlus size={14}/></button>
                 </div>

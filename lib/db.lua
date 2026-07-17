@@ -838,4 +838,39 @@ function db.import_data(data)
     return true
 end
 
+function db.restore_item(table_name, id)
+    local allowed_tables = {
+        workspaces = true, projects = true, folders = true,
+        notes = true, conversations = true, fileAssets = true
+    }
+    if not allowed_tables[table_name] then return false, "Invalid table" end
+
+    -- Fetch the item to cascade restore parents
+    local sql = string.format("SELECT * FROM %s WHERE id = ?", table_name)
+    local rows, err = execute_query(sql, {id})
+    if not rows or #rows == 0 then return false, "Item not found" end
+    local item = rows[1]
+
+    -- Cascade restore parents
+    if item.folderId and item.folderId ~= "" and item.folderId ~= "null" then
+        db.restore_item("folders", item.folderId)
+    end
+    if item.projectId and item.projectId ~= "" and item.projectId ~= "null" then
+        db.restore_item("projects", item.projectId)
+    end
+    if item.workspaceId and item.workspaceId ~= "" and item.workspaceId ~= "null" then
+        db.restore_item("workspaces", item.workspaceId)
+    end
+
+    -- Restore the item itself
+    local update_sql = string.format("UPDATE %s SET is_deleted = 0 WHERE id = ?", table_name)
+    local _, u_err = execute_query(update_sql, {id})
+
+    if table_name == "conversations" then
+        execute_query("UPDATE messages SET is_deleted = 0 WHERE convId = ?", {id})
+    end
+
+    return u_err == nil, u_err
+end
+
 return db
