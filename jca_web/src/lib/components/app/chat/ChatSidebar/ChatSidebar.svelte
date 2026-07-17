@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { Trash2, Pencil, Plus, FolderPlus, MessageSquare, FileText, Archive, Settings, LayoutDashboard, Cpu, Download, Upload, Network, ChevronDown, ChevronRight, Layers, LayoutGrid, Folder } from '@lucide/svelte';
+	import { Trash2, Pencil, Plus, FolderPlus, MessageSquare, FileText, Archive, Settings, LayoutDashboard, Cpu, Download, Upload, Network, ChevronDown, ChevronRight, Layers, LayoutGrid, Folder, FolderOpen } from '@lucide/svelte';
 	import { ChatSidebarConversationItem, DialogConfirmation } from '$lib/components/app';
 	import ScrollArea from '$lib/components/ui/scroll-area/scroll-area.svelte';
 	import * as Sidebar from '$lib/components/ui/sidebar';
@@ -220,13 +220,16 @@
             <div class="space-y-2">
                 {#each workspaces() as workspace (workspace.id)}
                     <div class="rounded-lg border border-white/5 bg-surface/20">
-                        <div class="flex items-center justify-between p-2 hover:bg-sidebar-accent cursor-pointer transition-colors" onclick={() => expandedWorkspaces[workspace.id] = !expandedWorkspaces[workspace.id]}>
-                            <div class="flex items-center gap-2">
-                                {#if expandedWorkspaces[workspace.id]}<ChevronDown size={14} class="text-secondary" />{:else}<ChevronRight size={14} class="text-secondary" />{/if}
-                                <Layers size={14} class="text-secondary" />
+                        <div class="flex items-center justify-between p-2 hover:bg-sidebar-accent cursor-pointer transition-colors group" onclick={() => expandedWorkspaces[workspace.id] = !expandedWorkspaces[workspace.id]}>
+                            <div class="flex items-center gap-2 min-w-0">
+                                {#if expandedWorkspaces[workspace.id]}<ChevronDown size={14} class="text-secondary shrink-0" />{:else}<ChevronRight size={14} class="text-secondary shrink-0" />{/if}
+                                <Layers size={14} class="text-secondary shrink-0" />
                                 <h4 class="font-medium text-sm text-foreground truncate">{workspace.name}</h4>
                             </div>
-                            <button class="opacity-0 group-hover:opacity-100 p-1 hover:text-primary" onclick={(e) => { e.stopPropagation(); conversationsStore.createConversation(`Chat in ${workspace.name}`).then(id => workspaceStore.moveConversation(id, null, null, workspace.id)); }}><Plus size={12}/></button>
+                            <div class="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <a href={`#/files?workspaceId=${workspace.id}`} class="p-1 hover:text-primary text-outline" onclick={(e) => e.stopPropagation()} title="Explore Workspace"><FolderOpen size={12}/></a>
+                                <button class="p-1 hover:text-primary text-outline" onclick={(e) => { e.stopPropagation(); conversationsStore.createConversation(`Chat in ${workspace.name}`).then(id => workspaceStore.moveConversation(id, null, null, workspace.id)); }} title="New Chat"><Plus size={12}/></button>
+                            </div>
                         </div>
                         
                         {#if expandedWorkspaces[workspace.id]}
@@ -244,11 +247,15 @@
                                 <!-- Projects -->
                                 {#each projects().filter(p => p.workspaceId === workspace.id) as project (project.id)}
                                     <div class="rounded-lg border border-white/5 bg-surface/30 mt-1">
-                                        <div class="flex items-center justify-between p-2 hover:bg-sidebar-accent cursor-pointer transition-colors" onclick={() => expandedProjects[project.id] = !expandedProjects[project.id]}>
-                                            <div class="flex items-center gap-2">
-                                                {#if expandedProjects[project.id]}<ChevronDown size={14} class="text-primary" />{:else}<ChevronRight size={14} class="text-primary" />{/if}
-                                                <LayoutGrid size={14} class="text-primary" />
+                                        <div class="flex items-center justify-between p-2 hover:bg-sidebar-accent cursor-pointer transition-colors group" onclick={() => expandedProjects[project.id] = !expandedProjects[project.id]}>
+                                            <div class="flex items-center gap-2 min-w-0">
+                                                {#if expandedProjects[project.id]}<ChevronDown size={14} class="text-primary shrink-0" />{:else}<ChevronRight size={14} class="text-primary shrink-0" />{/if}
+                                                <LayoutGrid size={14} class="text-primary shrink-0" />
                                                 <h5 class="font-medium text-xs text-foreground truncate">{project.name}</h5>
+                                            </div>
+                                            <div class="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <a href={`#/files?workspaceId=${workspace.id}&projectId=${project.id}`} class="p-1 hover:text-primary text-outline" onclick={(e) => e.stopPropagation()} title="Explore Project"><FolderOpen size={12}/></a>
+                                                <button class="p-1 hover:text-primary text-outline" onclick={(e) => { e.stopPropagation(); conversationsStore.createConversation(`Chat in ${project.name}`).then(id => workspaceStore.moveConversation(id, null, project.id, workspace.id)); }} title="New Chat"><Plus size={12}/></button>
                                             </div>
                                         </div>
                                         
@@ -267,11 +274,15 @@
                                                 <!-- Folders -->
                                                 {#each folders().filter(f => f.projectId === project.id) as folder (folder.id)}
                                                     <div class="rounded-lg border border-white/5 bg-surface/40 mt-1">
-                                                        <div class="flex items-center justify-between p-2 hover:bg-sidebar-accent cursor-pointer transition-colors" onclick={() => expandedFolders[folder.id] = !expandedFolders[folder.id]}>
-                                                            <div class="flex items-center gap-2">
-                                                                {#if expandedFolders[folder.id]}<ChevronDown size={14} class="text-accent" />{:else}<ChevronRight size={14} class="text-accent" />{/if}
-                                                                <Folder size={14} class="text-accent" />
+                                                        <div class="flex items-center justify-between p-2 hover:bg-sidebar-accent cursor-pointer transition-colors group" onclick={() => expandedFolders[folder.id] = !expandedFolders[folder.id]}>
+                                                            <div class="flex items-center gap-2 min-w-0">
+                                                                {#if expandedFolders[folder.id]}<ChevronDown size={14} class="text-accent shrink-0" />{:else}<ChevronRight size={14} class="text-accent shrink-0" />{/if}
+                                                                <Folder size={14} class="text-accent shrink-0" />
                                                                 <h6 class="font-medium text-xs text-foreground truncate">{folder.name}</h6>
+                                                            </div>
+                                                            <div class="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                <a href={`#/files?workspaceId=${workspace.id}&projectId=${project.id}&folderId=${folder.id}`} class="p-1 hover:text-primary text-outline" onclick={(e) => e.stopPropagation()} title="Explore Folder"><FolderOpen size={12}/></a>
+                                                                <button class="p-1 hover:text-primary text-outline" onclick={(e) => { e.stopPropagation(); conversationsStore.createConversation(`Chat in ${folder.name}`).then(id => workspaceStore.moveConversation(id, folder.id, project.id, workspace.id)); }} title="New Chat"><Plus size={12}/></button>
                                                             </div>
                                                         </div>
 

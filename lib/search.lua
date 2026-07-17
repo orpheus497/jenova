@@ -518,7 +518,7 @@ function search.index_dir(root_dir, extensions)
 
   -- Use find -exec stat to get mtime and path in one go (Linux + FreeBSD)
   local cmd = string.format(
-    "find %s -type f %s -not -path '*/.git/*' -not -path '*/.system/*' -not -path '*/.jenova/*' -not -path '*/.crush/*' -not -path '*/node_modules/*' -not -path '*/__pycache__/*' -not -path '*/build/*' -not -path '*/backups/*' -not -path '*/llama.cpp/*' -not -name '*.gguf' -not -name '*.bin' -not -name '*.o' -not -name '*.so' -size -100k %s 2>/dev/null | head -500",
+    "find %s -type f %s -not -path '*/.git/*' -not -path '*/.system/*' -not -path '*/.trash/*' -not -path '*/.jenova/*' -not -path '*/.crush/*' -not -path '*/node_modules/*' -not -path '*/__pycache__/*' -not -path '*/build/*' -not -path '*/backups/*' -not -path '*/llama.cpp/*' -not -name '*.gguf' -not -name '*.bin' -not -name '*.o' -not -name '*.so' -size -100k %s 2>/dev/null | head -500",
     shell_quote(root_dir), ext_filter, STAT_MTIME_PATH_FMT
   )
   local p = io.popen(cmd)
@@ -751,7 +751,7 @@ end
 -- Hybrid query: BM25 + semantic search
 -- Scores normalized and combined with configurable weights
 -------------------------------------------------------------------------------
-function search.query(query_str, top_k, with_snippets)
+function search.query(query_str, top_k, with_snippets, path_filter)
   top_k = top_k or 5
   if total_docs == 0 then return {} end
 
@@ -785,19 +785,20 @@ function search.query(query_str, top_k, with_snippets)
   end
 
   for filepath, _ in pairs(all_files) do
-    local bm = 0
-    local doc = bm25_index[filepath]
-    if doc then
-      bm = bm25_score(doc, query_terms)
-    end
+    if not path_filter or filepath:sub(1, #path_filter) == path_filter then
+      local bm = 0
+      local doc = bm25_index[filepath]
+      if doc then
+        bm = bm25_score(doc, query_terms)
+      end
 
-    local sem = 0
-    local best_chunk = nil
-    if query_vec then
-      sem, best_chunk = semantic_score(filepath, query_vec)
-    end
+      local sem = 0
+      local best_chunk = nil
+      if query_vec then
+        sem, best_chunk = semantic_score(filepath, query_vec)
+      end
 
-    if bm > 0 or sem > 0.3 then
+      if bm > 0 or sem > 0.3 then
       raw_results[#raw_results + 1] = {
         path = filepath,
         bm25 = bm,

@@ -181,10 +181,47 @@ export class ChatService {
     const workspaceInfo = workspaceContext
       ? `\n\n[CURRENT WORKSPACE ARTIFACTS (Notes & Files)]:\n${workspaceContext}`
       : "";
-    const workspaces = await DatabaseService.getAllWorkspaces();
-    const defaultWorkspace = workspaces[0]?.name || "default";
+    let relativeRoot = "unassigned";
+    if (conversationId) {
+      try {
+        const conv = await DatabaseService.getConversation(conversationId);
+        if (conv) {
+          if (conv.folderId) {
+            const folders = await DatabaseService.getAllFolders();
+            const projects = await DatabaseService.getAllProjects();
+            const workspaces = await DatabaseService.getAllWorkspaces();
+            
+            const folder = folders.find(f => f.id === conv.folderId);
+            const project = folder ? projects.find(p => p.id === folder.projectId) : null;
+            const workspace = project ? workspaces.find(w => w.id === project.workspaceId) : null;
+            
+            if (workspace && project && folder) {
+              relativeRoot = `${workspace.name}/${project.name}/${folder.name}`;
+            }
+          } else if (conv.projectId) {
+            const projects = await DatabaseService.getAllProjects();
+            const workspaces = await DatabaseService.getAllWorkspaces();
+            
+            const project = projects.find(p => p.id === conv.projectId);
+            const workspace = project ? workspaces.find(w => w.id === project.workspaceId) : null;
+            
+            if (workspace && project) {
+              relativeRoot = `${workspace.name}/${project.name}`;
+            }
+          } else if (conv.workspaceId) {
+            const workspaces = await DatabaseService.getAllWorkspaces();
+            const workspace = workspaces.find(w => w.id === conv.workspaceId);
+            if (workspace) {
+              relativeRoot = workspace.name;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("[ChatService] Failed to resolve conversation path for project_root:", e);
+      }
+    }
     const jcaContext =
-      `\nproject_root: ${defaultWorkspace}\n` +
+      `\nproject_root: ${relativeRoot}\n` +
       thinkInstruction +
       audioContext +
       workspaceInfo;

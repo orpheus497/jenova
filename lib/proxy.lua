@@ -1164,7 +1164,7 @@ local function proxy_connection(client_fd, conn_fds)
                     end
                     rag_limit = 5
                 end
-                local rag = search.query(rag_query, rag_limit, true)
+                local rag = search.query(rag_query, rag_limit, true, _G._last_project_root)
                 local rag_context = ""
 
                 if #rag > 0 then
