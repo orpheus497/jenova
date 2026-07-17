@@ -134,9 +134,8 @@ export async function convertToWav(audioBlob: Blob): Promise<Blob> {
     const arrayBuffer = await audioBlob.arrayBuffer();
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const audioContext = new (
-      window.AudioContext || (window as any).webkitAudioContext
-    )();
+    const audioContext = new (window.AudioContext ||
+      (window as any).webkitAudioContext)();
 
     const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 

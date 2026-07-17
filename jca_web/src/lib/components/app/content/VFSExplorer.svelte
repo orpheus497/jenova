@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { FolderOpen, FileText, ChevronRight, ChevronDown, HardDrive, RefreshCw, Loader2 } from '@lucide/svelte';
-	import { FileSystemService, type FsTreeItem } from '$lib/services/filesystem.service';
+	import { FolderOpen, FileText, ChevronRight, ChevronDown, HardDrive, RefreshCw, Loader2, MessageSquare, File } from '@lucide/svelte';
+	import { FileSystemService } from '$lib/services/filesystem.service';
+	import { conversations } from '$lib/stores/conversations.svelte';
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { slide } from 'svelte/transition';
 
-	let treeItems = $state<FsTreeItem[]>([]);
 	let isLoading = $state(true);
 	let expandedPaths = $state<Record<string, boolean>>({});
 
@@ -18,15 +19,65 @@
 	}
 	let treeRoot = $state<TreeNode>({ name: 'root', path: '', full_path: '', isDir: true, children: {} });
 
+	function getFileTypeAndId(node: TreeNode) {
+		if (node.isDir) return null;
+		
+		// 1. Note check: ends with _[uuid].md
+		const noteMatch = node.name.match(/_([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\.md$/i);
+		if (noteMatch) {
+			return { type: 'note' as const, id: noteMatch[1] };
+		}
+		
+		// 2. Chat check: ends with .md (not note)
+		if (node.name.endsWith('.md')) {
+			const chatName = node.name.slice(0, -3); // remove .md
+			const conv = conversations().find(c => c.name === chatName || encodeURIComponent(c.name) === chatName || c.name.replace(/[/\\]/g, "_") === chatName);
+			if (conv) {
+				return { type: 'chat' as const, id: conv.id };
+			}
+		}
+		
+		// 3. Asset check: ends with _[uuid]
+		const assetMatch = node.name.match(/_([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/i);
+		if (assetMatch) {
+			return { type: 'file' as const, id: assetMatch[1] };
+		}
+		
+		return null;
+	}
+
+	function openItem(node: TreeNode) {
+		if (node.isDir) {
+			togglePath(node.path);
+			return;
+		}
+		const info = getFileTypeAndId(node);
+		if (!info) return;
+		if (info.type === 'note') {
+			goto(`#/notes/${info.id}`);
+		} else if (info.type === 'chat') {
+			goto(`#/chat/${info.id}`);
+		}
+	}
+
 	async function loadTree() {
 		isLoading = true;
 		try {
 			const items = await FileSystemService.getTree() || [];
-			treeItems = items;
+			
+			// Filter out internal snapshot/metadata and other unrecognized files
+			const filtered = items.filter(item => {
+				if (item.isDir) return true;
+				const name = item.path.split('/').pop() || '';
+				const isNote = name.match(/_([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\.md$/i) !== null;
+				const isChat = name.endsWith('.md') && !isNote;
+				const isAsset = name.match(/_([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/i) !== null;
+				return isNote || isChat || isAsset;
+			});
 			
 			// Rebuild tree
 			let newRoot: TreeNode = { name: 'root', path: '', full_path: '', isDir: true, children: {} };
-			for (const item of items) {
+			for (const item of filtered) {
 				const parts = item.path.split('/').filter(p => p.length > 0);
 				let current = newRoot;
 				let currentPath = '';
@@ -87,10 +138,20 @@
 		{:else}
 			{#snippet renderNode(node: TreeNode, depth: number)}
 				<div class="select-none">
+					<!-- svelte-ignore a11y_click_events_have_key_events -->
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<div 
-						class="flex items-center gap-2 py-1.5 px-2 hover:bg-white/5 rounded cursor-pointer transition-colors"
+						class="flex items-center gap-2 py-1.5 px-2 hover:bg-white/5 rounded cursor-pointer transition-colors {!node.isDir && getFileTypeAndId(node) ? 'cursor-grab' : ''}"
 						style="padding-left: {depth * 1.5 + 0.5}rem"
-						onclick={() => node.isDir && togglePath(node.path)}
+						onclick={() => openItem(node)}
+						draggable={!node.isDir && getFileTypeAndId(node) !== null}
+						ondragstart={(e) => {
+							const info = getFileTypeAndId(node);
+							if (info && e.dataTransfer) {
+								e.dataTransfer.setData('application/json', JSON.stringify({ type: info.type, id: info.id }));
+								e.dataTransfer.effectAllowed = 'move';
+							}
+						}}
 					>
 						{#if node.isDir}
 							{#if expandedPaths[node.path]}
@@ -101,7 +162,14 @@
 							<FolderOpen size={16} class="text-secondary shrink-0" />
 						{:else}
 							<div class="w-3 shrink-0"></div> <!-- spacing for no chevron -->
-							<FileText size={16} class="text-primary shrink-0" />
+							{@const fileInfo = getFileTypeAndId(node)}
+							{#if fileInfo?.type === 'note'}
+								<FileText size={16} class="text-accent shrink-0" />
+							{:else if fileInfo?.type === 'chat'}
+								<MessageSquare size={16} class="text-primary shrink-0" />
+							{:else}
+								<File size={16} class="text-secondary shrink-0" />
+							{/if}
 						{/if}
 						<span class="text-sm font-mono truncate {node.isDir ? 'text-foreground font-semibold' : 'text-on-surface-variant'}">{node.name}</span>
 					</div>
@@ -112,7 +180,7 @@
 								if (a.isDir && !b.isDir) return -1;
 								if (!a.isDir && b.isDir) return 1;
 								return a.name.localeCompare(b.name);
-							}) as child}
+							}) as child (child.path)}
 								{@render renderNode(child, depth + 1)}
 							{/each}
 						</div>
@@ -125,7 +193,7 @@
 					if (a.isDir && !b.isDir) return -1;
 					if (!a.isDir && b.isDir) return 1;
 					return a.name.localeCompare(b.name);
-				}) as child}
+				}) as child (child.path)}
 					{@render renderNode(child, 0)}
 				{/each}
 			</div>

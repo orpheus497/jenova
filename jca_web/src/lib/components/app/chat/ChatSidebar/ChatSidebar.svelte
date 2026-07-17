@@ -10,14 +10,13 @@
 	import * as Sidebar from '$lib/components/ui/sidebar';
 	import Input from '$lib/components/ui/input/input.svelte';
 	import { conversationsStore, conversations } from '$lib/stores/conversations.svelte';
-	import { workspaceStore, workspaces, projects, folders, notes } from '$lib/stores/workspace.svelte';
+	import { workspaceStore, workspaces, projects as allProjects, folders as allFolders, notes as allNotes } from '$lib/stores/workspace.svelte';
 	import { chatStore } from '$lib/stores/chat.svelte';
 	import ChatSidebarActions from './ChatSidebarActions.svelte';
 	import ChatSidebarNoteItem from './ChatSidebarNoteItem.svelte';
 	import ChatSidebarFolderItem from './ChatSidebarFolderItem.svelte';
 	import ChatSidebarProjectItem from './ChatSidebarProjectItem.svelte';
 	import ChatSidebarWorkspaceItem from './ChatSidebarWorkspaceItem.svelte';
-	import { mcpStore } from '$lib/stores/mcp.svelte';
 	import type { DatabaseConversation, DatabaseNote } from '$lib/types/database';
 	import { slide } from 'svelte/transition';
 
@@ -142,9 +141,9 @@
 	// ── Helpers ───────────────────────────────────────────────────────────────
 	function newChatIn(workspaceId: string | null, projectId: string | null, folderId: string | null) {
 		const label = folderId
-			? (folders().find(f => f.id === folderId)?.name ?? 'Folder')
+			? (allFolders().find(f => f.id === folderId)?.name ?? 'Folder')
 			: projectId
-				? (projects().find(p => p.id === projectId)?.name ?? 'Project')
+				? (allProjects().find(p => p.id === projectId)?.name ?? 'Project')
 				: (workspaces().find(w => w.id === workspaceId)?.name ?? 'Workspace');
 		conversationsStore.createConversation(`Chat in ${label}`)
 			.then(id => workspaceStore.moveConversation(id, folderId, projectId, workspaceId));
@@ -176,89 +175,6 @@
 	</Sidebar.Header>
 
 	<div class="flex-1 p-6 pt-2 space-y-6">
-
-		<!-- ── GLOBAL ASSETS ──────────────────────────────────────────────── -->
-		<div>
-			<!-- Header: collapsible label + inline action links -->
-			<div class="px-2 text-[11px] font-mono uppercase tracking-widest mb-2 flex items-center justify-between text-[#7b52ab] opacity-80">
-				<button
-					class="flex items-center gap-1 hover:opacity-100 transition-opacity text-left"
-					aria-expanded={expandedGlobal}
-					onclick={() => expandedGlobal = !expandedGlobal}
-				>
-					{#if expandedGlobal}<ChevronDown size={14}/>{:else}<ChevronRight size={14}/>{/if}
-					Global Assets
-				</button>
-			</div>
-
-			{#if expandedGlobal}
-			<div class="space-y-1" transition:slide>
-				<!-- Quick: new unassigned note -->
-				<button
-					onclick={() => newNoteIn(null, null, null)}
-					class="w-full flex items-center justify-between group/wsnote px-2 py-2 rounded-lg text-sm transition-all text-accent/70 hover:bg-sidebar-accent hover:text-accent"
-				>
-					<span class="flex items-center gap-2"><FileText size={12} /> New Note</span>
-				</button>
-
-
-
-				<!-- Unassigned notes -->
-				{#each notes().filter((n: DatabaseNote) => !n.folderId && !n.projectId && !n.workspaceId) as note (note.id)}
-					<ChatSidebarNoteItem
-						{note} isActive={currentNoteId === note.id}
-						onSelect={() => selectNote(note.id)}
-						onDelete={() => handleDelete('note', note.id)}
-					/>
-				{/each}
-
-				<!-- Quick-nav buttons: Notes view + Files view -->
-				<div class="flex items-center gap-1 mt-2">
-					<button
-						onclick={() => goto('#/notes/unassigned')}
-						class="flex-1 flex items-center justify-center gap-2 px-2 py-2 rounded-lg text-sm transition-all text-accent/70 hover:bg-sidebar-accent hover:text-accent bg-surface-container/30"
-					>
-						<FileText size={12} /> Notes
-					</button>
-					<button
-						onclick={() => goto('#/files/unassigned')}
-						class="flex-1 flex items-center justify-center gap-2 px-2 py-2 rounded-lg text-sm transition-all text-secondary/70 hover:bg-sidebar-accent hover:text-secondary bg-surface-container/30"
-					>
-						<Archive size={12} /> Files
-					</button>
-				</div>
-			</div>
-			{/if}
-		</div>
-
-		<!-- ── UNASSIGNED CHATS ───────────────────────────────────────────── -->
-		<div>
-			<button
-				onclick={() => expandedChats = !expandedChats}
-				class="w-full px-2 text-[11px] font-mono text-outline uppercase tracking-widest mb-2 flex items-center justify-between hover:text-primary transition-colors"
-				aria-expanded={expandedChats}
-			>
-				<span class="flex items-center gap-1">
-					{#if expandedChats}<ChevronDown size={14}/>{:else}<ChevronRight size={14}/>{/if}
-					Chats
-				</span>
-			</button>
-
-			{#if expandedChats}
-			<div class="space-y-1 mb-2" transition:slide>
-				{#each filteredConversations.filter((c: DatabaseConversation) => !c.folderId && !c.projectId && !c.workspaceId) as conversation (conversation.id)}
-					<ChatSidebarConversationItem
-						{conversation} depth={0} {handleMobileSidebarItemClick}
-						isActive={currentChatId === conversation.id}
-						onSelect={selectConversation}
-						onEdit={() => handleEdit('conversation', conversation.id, conversation.name)}
-						onDelete={() => handleDelete('conversation', conversation.id)}
-						onStop={handleStopGeneration}
-					/>
-				{/each}
-			</div>
-			{/if}
-		</div>
 
 		<!-- ── WORKSPACES ─────────────────────────────────────────────────── -->
 		<div>
@@ -295,7 +211,7 @@
 						{/snippet}
 
 						{#snippet notes()}
-							{#each notes().filter((n: DatabaseNote) => n.workspaceId === workspace.id && !n.projectId && !n.folderId) as note (note.id)}
+							{#each allNotes().filter((n: DatabaseNote) => n.workspaceId === workspace.id && !n.projectId && !n.folderId) as note (note.id)}
 								<ChatSidebarNoteItem
 									{note} isActive={currentNoteId === note.id}
 									onSelect={() => selectNote(note.id)}
@@ -305,7 +221,7 @@
 						{/snippet}
 
 						{#snippet projects()}
-							{#each projects().filter(p => p.workspaceId === workspace.id) as project (project.id)}
+							{#each allProjects().filter(p => p.workspaceId === workspace.id) as project (project.id)}
 								<ChatSidebarProjectItem
 									{project} workspaceId={workspace.id}
 									isExpanded={!!expandedProjects[project.id]}
@@ -327,7 +243,7 @@
 									{/snippet}
 
 									{#snippet notes()}
-										{#each notes().filter((n: DatabaseNote) => n.projectId === project.id && !n.folderId) as note (note.id)}
+										{#each allNotes().filter((n: DatabaseNote) => n.projectId === project.id && !n.folderId) as note (note.id)}
 											<ChatSidebarNoteItem
 												{note} isActive={currentNoteId === note.id}
 												onSelect={() => selectNote(note.id)}
@@ -337,7 +253,7 @@
 									{/snippet}
 
 									{#snippet folders()}
-										{#each folders().filter(f => f.projectId === project.id) as folder (folder.id)}
+										{#each allFolders().filter(f => f.projectId === project.id) as folder (folder.id)}
 											<ChatSidebarFolderItem
 												{folder}
 												workspaceId={workspace.id}
@@ -362,7 +278,7 @@
 												{/snippet}
 
 												{#snippet notes()}
-													{#each notes().filter((n: DatabaseNote) => n.folderId === folder.id) as note (note.id)}
+													{#each allNotes().filter((n: DatabaseNote) => n.folderId === folder.id) as note (note.id)}
 														<ChatSidebarNoteItem
 															{note} isActive={currentNoteId === note.id}
 															onSelect={() => selectNote(note.id)}
@@ -379,6 +295,97 @@
 					</ChatSidebarWorkspaceItem>
 				{/each}
 			</div>
+		</div>
+
+		<!-- ── UNASSIGNED CHATS ───────────────────────────────────────────── -->
+		<div>
+			<button
+				onclick={() => expandedChats = !expandedChats}
+				class="w-full px-2 text-[11px] font-mono text-outline uppercase tracking-widest mb-2 flex items-center justify-between hover:text-primary transition-colors"
+				aria-expanded={expandedChats}
+			>
+				<span class="flex items-center gap-1">
+					{#if expandedChats}<ChevronDown size={14}/>{:else}<ChevronRight size={14}/>{/if}
+					Chats
+				</span>
+			</button>
+
+			{#if expandedChats}
+			<div class="space-y-1 mb-2" transition:slide>
+				<!-- Quick: new unassigned chat -->
+				<button
+					onclick={() => conversationsStore.createConversation('New Chat').then(id => selectConversation(id))}
+					class="w-full flex items-center justify-between group/wschat px-2 py-2 rounded-lg text-sm transition-all text-accent/70 hover:bg-sidebar-accent hover:text-accent"
+				>
+					<span class="flex items-center gap-2"><Plus size={12} /> New Chat</span>
+				</button>
+
+				{#each filteredConversations.filter((c: DatabaseConversation) => !c.folderId && !c.projectId && !c.workspaceId) as conversation (conversation.id)}
+					<ChatSidebarConversationItem
+						{conversation} depth={0} {handleMobileSidebarItemClick}
+						isActive={currentChatId === conversation.id}
+						onSelect={selectConversation}
+						onEdit={() => handleEdit('conversation', conversation.id, conversation.name)}
+						onDelete={() => handleDelete('conversation', conversation.id)}
+						onStop={handleStopGeneration}
+					/>
+				{/each}
+			</div>
+			{/if}
+		</div>
+
+		<!-- ── GLOBAL ASSETS ──────────────────────────────────────────────── -->
+		<div>
+			<!-- Header: collapsible label + inline action links -->
+			<div class="px-2 text-[11px] font-mono uppercase tracking-widest mb-2 flex items-center justify-between text-[#7b52ab] opacity-80">
+				<button
+					class="flex items-center gap-1 hover:opacity-100 transition-opacity text-left"
+					aria-expanded={expandedGlobal}
+					onclick={() => expandedGlobal = !expandedGlobal}
+				>
+					{#if expandedGlobal}<ChevronDown size={14}/>{:else}<ChevronRight size={14}/>{/if}
+					Global Assets
+				</button>
+			</div>
+
+			{#if expandedGlobal}
+			<div class="space-y-1" transition:slide>
+				<!-- Quick: new unassigned note -->
+				<button
+					onclick={() => newNoteIn(null, null, null)}
+					class="w-full flex items-center justify-between group/wsnote px-2 py-2 rounded-lg text-sm transition-all text-accent/70 hover:bg-sidebar-accent hover:text-accent"
+				>
+					<span class="flex items-center gap-2"><FileText size={12} /> New Note</span>
+				</button>
+
+
+
+				<!-- Unassigned notes -->
+				{#each allNotes().filter((n: DatabaseNote) => !n.folderId && !n.projectId && !n.workspaceId) as note (note.id)}
+					<ChatSidebarNoteItem
+						{note} isActive={currentNoteId === note.id}
+						onSelect={() => selectNote(note.id)}
+						onDelete={() => handleDelete('note', note.id)}
+					/>
+				{/each}
+
+				<!-- Quick-nav buttons: Notes view + Files view -->
+				<div class="flex items-center gap-1 mt-2">
+					<button
+						onclick={() => goto('#/notes/unassigned')}
+						class="flex-1 flex items-center justify-center gap-2 px-2 py-2 rounded-lg text-sm transition-all text-accent/70 hover:bg-sidebar-accent hover:text-accent bg-surface-container/30"
+					>
+						<FileText size={12} /> Notes
+					</button>
+					<button
+						onclick={() => goto('#/files/unassigned')}
+						class="flex-1 flex items-center justify-center gap-2 px-2 py-2 rounded-lg text-sm transition-all text-secondary/70 hover:bg-sidebar-accent hover:text-secondary bg-surface-container/30"
+					>
+						<Archive size={12} /> Files
+					</button>
+				</div>
+			</div>
+			{/if}
 		</div>
 
 	</div>

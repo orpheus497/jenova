@@ -40,18 +40,18 @@
 			<h5 class="font-medium text-xs text-foreground truncate">{project.name}</h5>
 		</button>
 
-		<div class="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+		<div class="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
 			<a
 				href={`#/files?workspaceId=${workspaceId}&projectId=${project.id}`}
 				onclick={(e) => e.stopPropagation()}
-				class="p-1 hover:text-primary text-outline"
+				class="p-1 hover:text-primary text-outline focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-primary rounded transition-all"
 				title="Explore Project Files"
 			>
 				<FolderOpen size={12} />
 			</a>
 			<button
 				onclick={(e) => { e.stopPropagation(); onNewChat(); }}
-				class="p-1 hover:text-primary text-outline"
+				class="p-1 hover:text-primary text-outline focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-primary rounded transition-all"
 				title="New Chat in Project"
 			>
 				<Plus size={12} />
@@ -59,7 +59,7 @@
 			{#if onDelete}
 				<button
 					onclick={(e) => { e.stopPropagation(); onDelete!(); }}
-					class="p-1 hover:text-error text-outline"
+					class="p-1 hover:text-error text-outline focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-error rounded transition-all"
 					title="Delete Project"
 				>
 					<Trash2 size={12} />

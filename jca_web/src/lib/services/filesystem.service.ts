@@ -26,10 +26,16 @@ export class FileSystemService {
     return await apiFetch<TrashedItem[]>("trash");
   }
 
-  static async restoreTrash(trashPath: string, originalPath: string): Promise<void> {
+  static async restoreTrash(
+    trashPath: string,
+    originalPath: string,
+  ): Promise<void> {
     await apiFetch("trash/restore", {
       method: "POST",
-      body: JSON.stringify({ trash_path: trashPath, original_path: originalPath }),
+      body: JSON.stringify({
+        trash_path: trashPath,
+        original_path: originalPath,
+      }),
     });
   }
 

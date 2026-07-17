@@ -317,7 +317,8 @@ export class ParameterSyncService {
    */
   static extractServerDefaults(
     serverParams:
-      ApiJenovaCppServerProps["default_generation_settings"]["params"] | null,
+      | ApiJenovaCppServerProps["default_generation_settings"]["params"]
+      | null,
     webuiSettings?: Record<string, string | number | boolean>,
   ): ParameterRecord {
     const extracted: ParameterRecord = {};

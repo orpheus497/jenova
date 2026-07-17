@@ -190,34 +190,43 @@ export class ChatService {
             const folders = await DatabaseService.getAllFolders();
             const projects = await DatabaseService.getAllProjects();
             const workspaces = await DatabaseService.getAllWorkspaces();
-            
-            const folder = folders.find(f => f.id === conv.folderId);
-            const project = folder ? projects.find(p => p.id === folder.projectId) : null;
-            const workspace = project ? workspaces.find(w => w.id === project.workspaceId) : null;
-            
+
+            const folder = folders.find((f) => f.id === conv.folderId);
+            const project = folder
+              ? projects.find((p) => p.id === folder.projectId)
+              : null;
+            const workspace = project
+              ? workspaces.find((w) => w.id === project.workspaceId)
+              : null;
+
             if (workspace && project && folder) {
               relativeRoot = `${workspace.name}/${project.name}/${folder.name}`;
             }
           } else if (conv.projectId) {
             const projects = await DatabaseService.getAllProjects();
             const workspaces = await DatabaseService.getAllWorkspaces();
-            
-            const project = projects.find(p => p.id === conv.projectId);
-            const workspace = project ? workspaces.find(w => w.id === project.workspaceId) : null;
-            
+
+            const project = projects.find((p) => p.id === conv.projectId);
+            const workspace = project
+              ? workspaces.find((w) => w.id === project.workspaceId)
+              : null;
+
             if (workspace && project) {
               relativeRoot = `${workspace.name}/${project.name}`;
             }
           } else if (conv.workspaceId) {
             const workspaces = await DatabaseService.getAllWorkspaces();
-            const workspace = workspaces.find(w => w.id === conv.workspaceId);
+            const workspace = workspaces.find((w) => w.id === conv.workspaceId);
             if (workspace) {
               relativeRoot = workspace.name;
             }
           }
         }
       } catch (e) {
-        console.warn("[ChatService] Failed to resolve conversation path for project_root:", e);
+        console.warn(
+          "[ChatService] Failed to resolve conversation path for project_root:",
+          e,
+        );
       }
     }
     const jcaContext =
@@ -695,7 +704,13 @@ export class ChatService {
 
       const isCacheHit = response.headers.get("X-Cache") === "HIT";
 
-      onComplete?.(content, reasoningContent, undefined, serializedToolCalls, isCacheHit);
+      onComplete?.(
+        content,
+        reasoningContent,
+        undefined,
+        serializedToolCalls,
+        isCacheHit,
+      );
 
       return content;
     } catch (error) {

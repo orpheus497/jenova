@@ -51,14 +51,14 @@
 			<span class="font-medium text-xs text-foreground truncate">{folder.name}</span>
 		</button>
 
-		<div class="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-			<button onclick={(e) => { e.stopPropagation(); goToFiles(); }} class="p-1 hover:text-primary text-outline" title="View Folder Files">
+		<div class="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+			<button onclick={(e) => { e.stopPropagation(); goToFiles(); }} class="p-1 hover:text-primary text-outline focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-primary rounded transition-all" title="View Folder Files">
 				<Archive size={12} />
 			</button>
-			<button onclick={(e) => { e.stopPropagation(); onNewChat(); }} class="p-1 hover:text-primary text-outline" title="New Chat">
+			<button onclick={(e) => { e.stopPropagation(); onNewChat(); }} class="p-1 hover:text-primary text-outline focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-primary rounded transition-all" title="New Chat">
 				<Plus size={12} />
 			</button>
-			<button onclick={(e) => { e.stopPropagation(); onDelete(); }} class="p-1 hover:text-error text-outline" title="Delete Folder">
+			<button onclick={(e) => { e.stopPropagation(); onDelete(); }} class="p-1 hover:text-error text-outline focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-error rounded transition-all" title="Delete Folder">
 				<Trash2 size={12} />
 			</button>
 		</div>

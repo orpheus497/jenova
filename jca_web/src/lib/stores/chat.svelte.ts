@@ -78,8 +78,8 @@ class ChatStore {
   private addFilesHandler: ((files: File[]) => void) | null = $state(null);
   pendingEditMessageId = $state<string | null>(null);
   private messageUpdateCallback:
-    ((messageId: string, updates: Partial<DatabaseMessage>) => void) | null =
-    null;
+    | ((messageId: string, updates: Partial<DatabaseMessage>) => void)
+    | null = null;
   private _pendingDraftMessage = $state<string>("");
   private _pendingDraftFiles = $state<ChatUploadedFile[]>([]);
 
@@ -741,7 +741,8 @@ class ChatStore {
         reasoningContent: string | undefined,
         timings: ChatMessageTimings | undefined,
         toolCalls:
-          import("$lib/types/api").ApiChatCompletionToolCall[] | undefined,
+          | import("$lib/types/api").ApiChatCompletionToolCall[]
+          | undefined,
       ) => {
         const updateData: Record<string, unknown> = {
           content,
@@ -910,16 +911,21 @@ class ChatStore {
             toolCalls: toolCalls || "",
             timings,
           };
-          
+
           const idx = conversationsStore.findMessageIndex(currentMessageId);
-          let updatedExtras: import("$lib/types").DatabaseMessageExtra[] | undefined;
-          
+          let updatedExtras:
+            | import("$lib/types").DatabaseMessageExtra[]
+            | undefined;
+
           if (isCacheHit) {
             const currentMsg = conversationsStore.activeMessages[idx];
-            updatedExtras = [...(currentMsg?.extra || []), { type: "cache_hit" }];
+            updatedExtras = [
+              ...(currentMsg?.extra || []),
+              { type: "cache_hit" },
+            ];
             updateData.extra = updatedExtras;
           }
-          
+
           if (resolvedModel && !modelPersisted)
             updateData.model = resolvedModel;
           await DatabaseService.updateMessage(currentMessageId, updateData);

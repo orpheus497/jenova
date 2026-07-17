@@ -43,7 +43,10 @@ export class DatabaseService {
       lastModified: Date.now(),
       currNode: "",
     };
-    await apiFetch("conversations", { method: "POST", body: JSON.stringify(conversation) });
+    await apiFetch("conversations", {
+      method: "POST",
+      body: JSON.stringify(conversation),
+    });
     return conversation;
   }
 
@@ -51,9 +54,13 @@ export class DatabaseService {
     return await apiFetch<DatabaseConversation[]>("conversations");
   }
 
-  static async getConversation(id: string): Promise<DatabaseConversation | undefined> {
+  static async getConversation(
+    id: string,
+  ): Promise<DatabaseConversation | undefined> {
     try {
-      const res = await apiFetch<DatabaseConversation>(`conversations?id=${id}`);
+      const res = await apiFetch<DatabaseConversation>(
+        `conversations?id=${id}`,
+      );
       return res && Object.keys(res).length > 0 ? res : undefined;
     } catch (e: any) {
       if (e.message && e.message.includes("404")) return undefined;
@@ -61,71 +68,107 @@ export class DatabaseService {
     }
   }
 
-  static async updateConversation(id: string, updates: Partial<Omit<DatabaseConversation, "id">>): Promise<void> {
+  static async updateConversation(
+    id: string,
+    updates: Partial<Omit<DatabaseConversation, "id">>,
+  ): Promise<void> {
     const current = await this.getConversation(id);
     if (!current) return;
     const updated = { ...current, ...updates, lastModified: Date.now() };
-    await apiFetch("conversations", { method: "POST", body: JSON.stringify(updated) });
+    await apiFetch("conversations", {
+      method: "POST",
+      body: JSON.stringify(updated),
+    });
   }
 
-  static async deleteConversation(id: string, options?: { deleteWithForks?: boolean }): Promise<void> {
+  static async deleteConversation(
+    id: string,
+    options?: { deleteWithForks?: boolean },
+  ): Promise<void> {
     const query = options?.deleteWithForks ? "?deleteWithForks=true" : "";
     await apiFetch(`conversations/${id}${query}`, { method: "DELETE" });
   }
 
   static async deleteConversationMessages(convId: string): Promise<void> {
     const msgs = await this.getConversationMessages(convId);
-    const ids = msgs.map(m => m.id);
+    const ids = msgs.map((m) => m.id);
     if (ids.length > 0) {
-      await apiFetch("messages/bulk-delete", { method: "POST", body: JSON.stringify({ ids }) });
+      await apiFetch("messages/bulk-delete", {
+        method: "POST",
+        body: JSON.stringify({ ids }),
+      });
     }
   }
 
-  static async updateCurrentNode(convId: string, nodeId: string): Promise<void> {
+  static async updateCurrentNode(
+    convId: string,
+    nodeId: string,
+  ): Promise<void> {
     await this.updateConversation(convId, { currNode: nodeId });
   }
 
-  static async importConversations(data: { conv: DatabaseConversation; messages: DatabaseMessage[] }[]): Promise<{ imported: number; skipped: number }> {
+  static async importConversations(
+    data: { conv: DatabaseConversation; messages: DatabaseMessage[] }[],
+  ): Promise<{ imported: number; skipped: number }> {
     let imported = 0;
     let skipped = 0;
     const all = await this.getAllConversations();
-    const payload = { conversations: [] as DatabaseConversation[], messages: [] as DatabaseMessage[] };
-    
+    const payload = {
+      conversations: [] as DatabaseConversation[],
+      messages: [] as DatabaseMessage[],
+    };
+
     for (const item of data) {
-      if (all.find(c => c.id === item.conv.id)) { skipped++; continue; }
+      if (all.find((c) => c.id === item.conv.id)) {
+        skipped++;
+        continue;
+      }
       payload.conversations.push(item.conv);
       payload.messages.push(...item.messages);
       imported++;
     }
-    
+
     if (payload.conversations.length > 0) {
-      await apiFetch("import", { method: "POST", body: JSON.stringify(payload) });
+      await apiFetch("import", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
     }
     return { imported, skipped };
   }
 
-  static async forkConversation(sourceConvId: string, atMessageId: string, options: { name: string; includeAttachments: boolean }): Promise<DatabaseConversation> {
+  static async forkConversation(
+    sourceConvId: string,
+    atMessageId: string,
+    options: { name: string; includeAttachments: boolean },
+  ): Promise<DatabaseConversation> {
     const sourceConv = await this.getConversation(sourceConvId);
     if (!sourceConv) throw new Error("Not found");
     const allMessages = await this.getConversationMessages(sourceConvId);
-    const pathMessages = filterByLeafNodeId(allMessages, atMessageId, true) as DatabaseMessage[];
+    const pathMessages = filterByLeafNodeId(
+      allMessages,
+      atMessageId,
+      true,
+    ) as DatabaseMessage[];
     if (pathMessages.length === 0) {
       throw new Error(`Could not resolve message path to ${atMessageId}`);
     }
-    
+
     const idMap = new Map<string, string>();
     for (const msg of pathMessages) idMap.set(msg.id, uuid());
-    
+
     const newConvId = uuid();
-    const clonedMessages = pathMessages.map(msg => ({
+    const clonedMessages = pathMessages.map((msg) => ({
       ...msg,
       id: idMap.get(msg.id)!,
       convId: newConvId,
       parent: msg.parent ? (idMap.get(msg.parent) ?? null) : null,
-      children: msg.children.filter((childId: string) => idMap.has(childId)).map((childId: string) => idMap.get(childId)!),
+      children: msg.children
+        .filter((childId: string) => idMap.has(childId))
+        .map((childId: string) => idMap.get(childId)!),
       extra: options.includeAttachments ? msg.extra : undefined,
     }));
-    
+
     const newConv: DatabaseConversation = {
       id: newConvId,
       name: options.name,
@@ -134,14 +177,22 @@ export class DatabaseService {
       forkedFromConversationId: sourceConvId,
       mcpServerOverrides: sourceConv.mcpServerOverrides,
     };
-    await apiFetch("import", { method: "POST", body: JSON.stringify({ conversations: [newConv], messages: clonedMessages }) });
+    await apiFetch("import", {
+      method: "POST",
+      body: JSON.stringify({
+        conversations: [newConv],
+        messages: clonedMessages,
+      }),
+    });
     return newConv;
   }
 
   /**
    * Messages
    */
-  static async getConversationMessages(convId: string): Promise<DatabaseMessage[]> {
+  static async getConversationMessages(
+    convId: string,
+  ): Promise<DatabaseMessage[]> {
     return await apiFetch<DatabaseMessage[]>(`messages?convId=${convId}`);
   }
 
@@ -155,7 +206,13 @@ export class DatabaseService {
     }
   }
 
-  static async createMessageBranch(message: Omit<DatabaseMessage, "id" | "parent" | "children" | "toolCalls"> & { toolCalls?: string }, parentId: string | null): Promise<DatabaseMessage> {
+  static async createMessageBranch(
+    message: Omit<
+      DatabaseMessage,
+      "id" | "parent" | "children" | "toolCalls"
+    > & { toolCalls?: string },
+    parentId: string | null,
+  ): Promise<DatabaseMessage> {
     const newMessage: DatabaseMessage = {
       ...message,
       id: uuid(),
@@ -163,17 +220,23 @@ export class DatabaseService {
       toolCalls: message.toolCalls ?? "",
       children: [],
     };
-    
+
     if (parentId !== null) {
       const msgs = await this.getConversationMessages(message.convId);
-      const parent = msgs.find(m => m.id === parentId);
+      const parent = msgs.find((m) => m.id === parentId);
       if (!parent) {
         throw new Error(`Parent message ${parentId} not found`);
       }
       parent.children.push(newMessage.id);
-      await apiFetch("messages", { method: "POST", body: JSON.stringify(parent) });
+      await apiFetch("messages", {
+        method: "POST",
+        body: JSON.stringify(parent),
+      });
     }
-    await apiFetch("messages", { method: "POST", body: JSON.stringify(newMessage) });
+    await apiFetch("messages", {
+      method: "POST",
+      body: JSON.stringify(newMessage),
+    });
     await this.updateConversation(message.convId, { currNode: newMessage.id });
     return newMessage;
   }
@@ -190,11 +253,18 @@ export class DatabaseService {
       toolCalls: "",
       children: [],
     };
-    await apiFetch("messages", { method: "POST", body: JSON.stringify(rootMessage) });
+    await apiFetch("messages", {
+      method: "POST",
+      body: JSON.stringify(rootMessage),
+    });
     return rootMessage.id;
   }
 
-  static async createSystemMessage(convId: string, systemPrompt: string, parentId: string): Promise<DatabaseMessage> {
+  static async createSystemMessage(
+    convId: string,
+    systemPrompt: string,
+    parentId: string,
+  ): Promise<DatabaseMessage> {
     const systemMessage: DatabaseMessage = {
       id: uuid(),
       convId,
@@ -205,20 +275,32 @@ export class DatabaseService {
       parent: parentId,
       children: [],
     };
-    await apiFetch("messages", { method: "POST", body: JSON.stringify(systemMessage) });
+    await apiFetch("messages", {
+      method: "POST",
+      body: JSON.stringify(systemMessage),
+    });
     const msgs = await this.getConversationMessages(convId);
-    const parent = msgs.find(m => m.id === parentId);
+    const parent = msgs.find((m) => m.id === parentId);
     if (parent) {
       parent.children.push(systemMessage.id);
-      await apiFetch("messages", { method: "POST", body: JSON.stringify(parent) });
+      await apiFetch("messages", {
+        method: "POST",
+        body: JSON.stringify(parent),
+      });
     }
     return systemMessage;
   }
 
-  static async updateMessage(id: string, updates: Partial<Omit<DatabaseMessage, "id">>): Promise<void> {
+  static async updateMessage(
+    id: string,
+    updates: Partial<Omit<DatabaseMessage, "id">>,
+  ): Promise<void> {
     const msg = await this.getMessage(id);
     if (msg) {
-      await apiFetch("messages", { method: "POST", body: JSON.stringify({ ...msg, ...updates }) });
+      await apiFetch("messages", {
+        method: "POST",
+        body: JSON.stringify({ ...msg, ...updates }),
+      });
     }
   }
 
@@ -226,30 +308,42 @@ export class DatabaseService {
     const msg = await this.getMessage(id);
     if (msg) {
       if (msg.parent) {
-         const parent = await this.getMessage(msg.parent);
-         if (parent) {
-           parent.children = parent.children.filter((x: string) => x !== id);
-           await apiFetch("messages", { method: "POST", body: JSON.stringify(parent) });
-         }
+        const parent = await this.getMessage(msg.parent);
+        if (parent) {
+          parent.children = parent.children.filter((x: string) => x !== id);
+          await apiFetch("messages", {
+            method: "POST",
+            body: JSON.stringify(parent),
+          });
+        }
       }
     }
     await apiFetch(`messages/${id}`, { method: "DELETE" });
   }
 
-  static async deleteMessageCascading(conversationId: string, messageId: string): Promise<string[]> {
+  static async deleteMessageCascading(
+    conversationId: string,
+    messageId: string,
+  ): Promise<string[]> {
     const allMessages = await this.getConversationMessages(conversationId);
     const descendants = findDescendantMessages(allMessages, messageId);
     const allToDelete = [messageId, ...descendants];
-    
-    const message = allMessages.find(m => m.id === messageId);
+
+    const message = allMessages.find((m) => m.id === messageId);
     if (message && message.parent) {
-      const parent = allMessages.find(m => m.id === message.parent);
+      const parent = allMessages.find((m) => m.id === message.parent);
       if (parent) {
-        parent.children = parent.children.filter(x => x !== messageId);
-        await apiFetch("messages", { method: "POST", body: JSON.stringify(parent) });
+        parent.children = parent.children.filter((x) => x !== messageId);
+        await apiFetch("messages", {
+          method: "POST",
+          body: JSON.stringify(parent),
+        });
       }
     }
-    await apiFetch("messages/bulk-delete", { method: "POST", body: JSON.stringify({ ids: allToDelete }) });
+    await apiFetch("messages/bulk-delete", {
+      method: "POST",
+      body: JSON.stringify({ ids: allToDelete }),
+    });
     return allToDelete;
   }
 
@@ -258,7 +352,10 @@ export class DatabaseService {
    */
   static async createWorkspace(name: string): Promise<DatabaseWorkspace> {
     const workspace = { id: uuid(), name };
-    await apiFetch("workspaces", { method: "POST", body: JSON.stringify(workspace) });
+    await apiFetch("workspaces", {
+      method: "POST",
+      body: JSON.stringify(workspace),
+    });
     return workspace;
   }
   static async getAllWorkspaces(): Promise<DatabaseWorkspace[]> {
@@ -271,13 +368,23 @@ export class DatabaseService {
   /**
    * Projects
    */
-  static async createProject(workspaceId: string, name: string): Promise<DatabaseProject> {
+  static async createProject(
+    workspaceId: string,
+    name: string,
+  ): Promise<DatabaseProject> {
     const project = { id: uuid(), workspaceId, name };
-    await apiFetch("projects", { method: "POST", body: JSON.stringify(project) });
+    await apiFetch("projects", {
+      method: "POST",
+      body: JSON.stringify(project),
+    });
     return project;
   }
-  static async getWorkspaceProjects(workspaceId: string | null): Promise<DatabaseProject[]> {
-    return await apiFetch<DatabaseProject[]>(`projects?workspaceId=${workspaceId || ""}`);
+  static async getWorkspaceProjects(
+    workspaceId: string | null,
+  ): Promise<DatabaseProject[]> {
+    return await apiFetch<DatabaseProject[]>(
+      `projects?workspaceId=${workspaceId || ""}`,
+    );
   }
   static async getAllProjects(): Promise<DatabaseProject[]> {
     return await apiFetch<DatabaseProject[]>("projects/all");
@@ -289,13 +396,20 @@ export class DatabaseService {
   /**
    * Folders
    */
-  static async createFolder(projectId: string | null, name: string): Promise<DatabaseFolder> {
+  static async createFolder(
+    projectId: string | null,
+    name: string,
+  ): Promise<DatabaseFolder> {
     const folder = { id: uuid(), projectId, name };
     await apiFetch("folders", { method: "POST", body: JSON.stringify(folder) });
     return folder;
   }
-  static async getProjectFolders(projectId: string | null): Promise<DatabaseFolder[]> {
-    return await apiFetch<DatabaseFolder[]>(`folders?projectId=${projectId || ""}`);
+  static async getProjectFolders(
+    projectId: string | null,
+  ): Promise<DatabaseFolder[]> {
+    return await apiFetch<DatabaseFolder[]>(
+      `folders?projectId=${projectId || ""}`,
+    );
   }
   static async getAllFolders(): Promise<DatabaseFolder[]> {
     return await apiFetch<DatabaseFolder[]>("folders/all");
@@ -307,12 +421,30 @@ export class DatabaseService {
   /**
    * Notes
    */
-  static async createNote(folderId: string | null, projectId: string | null, workspaceId: string | null, title: string, content: string): Promise<DatabaseNote> {
-    const note = { id: uuid(), folderId, projectId, workspaceId, title, content, updatedAt: Date.now() };
+  static async createNote(
+    folderId: string | null,
+    projectId: string | null,
+    workspaceId: string | null,
+    title: string,
+    content: string,
+  ): Promise<DatabaseNote> {
+    const note = {
+      id: uuid(),
+      folderId,
+      projectId,
+      workspaceId,
+      title,
+      content,
+      updatedAt: Date.now(),
+    };
     await apiFetch("notes", { method: "POST", body: JSON.stringify(note) });
     return note;
   }
-  static async getNotes(folderId: string | null = null, projectId: string | null = null, workspaceId: string | null = null): Promise<DatabaseNote[]> {
+  static async getNotes(
+    folderId: string | null = null,
+    projectId: string | null = null,
+    workspaceId: string | null = null,
+  ): Promise<DatabaseNote[]> {
     const params = new URLSearchParams();
     if (folderId) params.append("folderId", folderId);
     if (projectId) params.append("projectId", projectId);
@@ -322,11 +454,17 @@ export class DatabaseService {
   static async getAllNotes(): Promise<DatabaseNote[]> {
     return await apiFetch<DatabaseNote[]>("notes/all");
   }
-  static async updateNote(id: string, updates: Partial<Omit<DatabaseNote, "id">>): Promise<void> {
+  static async updateNote(
+    id: string,
+    updates: Partial<Omit<DatabaseNote, "id">>,
+  ): Promise<void> {
     try {
       const note = await apiFetch<DatabaseNote>(`notes?id=${id}`);
       if (note && Object.keys(note).length > 0) {
-        await apiFetch("notes", { method: "POST", body: JSON.stringify({ ...note, ...updates, updatedAt: Date.now() }) });
+        await apiFetch("notes", {
+          method: "POST",
+          body: JSON.stringify({ ...note, ...updates, updatedAt: Date.now() }),
+        });
       }
     } catch (e: any) {
       if (e.message && e.message.includes("404")) return;
@@ -340,26 +478,59 @@ export class DatabaseService {
   /**
    * File Assets
    */
-  static async createFileAsset(folderId: string | null, projectId: string | null, workspaceId: string | null, name: string, size: number, type: string, content?: string): Promise<DatabaseFileAsset> {
-    const asset = { id: uuid(), folderId, projectId, workspaceId, name, size, type, uploadDate: Date.now(), content };
-    await apiFetch("fileAssets", { method: "POST", body: JSON.stringify(asset) });
+  static async createFileAsset(
+    folderId: string | null,
+    projectId: string | null,
+    workspaceId: string | null,
+    name: string,
+    size: number,
+    type: string,
+    content?: string,
+  ): Promise<DatabaseFileAsset> {
+    const asset = {
+      id: uuid(),
+      folderId,
+      projectId,
+      workspaceId,
+      name,
+      size,
+      type,
+      uploadDate: Date.now(),
+      content,
+    };
+    await apiFetch("fileAssets", {
+      method: "POST",
+      body: JSON.stringify(asset),
+    });
     return asset;
   }
-  static async getFileAssets(folderId: string | null = null, projectId: string | null = null, workspaceId: string | null = null): Promise<DatabaseFileAsset[]> {
+  static async getFileAssets(
+    folderId: string | null = null,
+    projectId: string | null = null,
+    workspaceId: string | null = null,
+  ): Promise<DatabaseFileAsset[]> {
     const params = new URLSearchParams();
     if (folderId) params.append("folderId", folderId);
     if (projectId) params.append("projectId", projectId);
     if (workspaceId) params.append("workspaceId", workspaceId);
-    return await apiFetch<DatabaseFileAsset[]>(`fileAssets?${params.toString()}`);
+    return await apiFetch<DatabaseFileAsset[]>(
+      `fileAssets?${params.toString()}`,
+    );
   }
   static async getAllFileAssets(): Promise<DatabaseFileAsset[]> {
     return await apiFetch<DatabaseFileAsset[]>("fileAssets/all");
   }
-  static async updateFileAsset(id: string, updates: Partial<Omit<DatabaseFileAsset, "id">>): Promise<void> {
+  static async updateFileAsset(
+    id: string,
+    updates: Partial<Omit<DatabaseFileAsset, "id">>,
+  ): Promise<void> {
     try {
       const asset = await apiFetch<DatabaseFileAsset>(`fileAssets?id=${id}`);
       if (asset && Object.keys(asset).length > 0) {
-        await apiFetch("fileAssets", { method: "POST", body: JSON.stringify({ ...asset, ...updates }) });
+        await apiFetch("fileAssets", {
+          method: "POST",
+          body: JSON.stringify({ ...asset, ...updates }),
+        });
       }
     } catch (e: any) {
       if (e.message && e.message.includes("404")) return;
@@ -375,9 +546,14 @@ export class DatabaseService {
    */
   static async exportData(): Promise<ExportData> {
     const localStorageData: Record<string, string | null> = {};
-    const keys = ["jenova_config", "theme", "jenova_user_overrides", "mcp_default_enabled"];
+    const keys = [
+      "jenova_config",
+      "theme",
+      "jenova_user_overrides",
+      "mcp_default_enabled",
+    ];
     for (const key of keys) localStorageData[key] = localStorage.getItem(key);
-    
+
     return {
       conversations: await this.getAllConversations(),
       workspaces: await this.getAllWorkspaces(),
@@ -402,7 +578,9 @@ export class DatabaseService {
 
   static async getCache(key: string): Promise<string | null> {
     try {
-      const res = await apiFetch<{ response: string }>(`cache?key=${encodeURIComponent(key)}`);
+      const res = await apiFetch<{ response: string }>(
+        `cache?key=${encodeURIComponent(key)}`,
+      );
       return res.response || null;
     } catch {
       return null;
@@ -411,7 +589,10 @@ export class DatabaseService {
 
   static async setCache(key: string, response: string): Promise<void> {
     try {
-      await apiFetch("cache", { method: "POST", body: JSON.stringify({ key, response }) });
+      await apiFetch("cache", {
+        method: "POST",
+        body: JSON.stringify({ key, response }),
+      });
     } catch (e) {
       console.error("[Cache] Failed to save", e);
     }

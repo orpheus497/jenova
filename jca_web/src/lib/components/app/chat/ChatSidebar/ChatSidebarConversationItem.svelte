@@ -78,6 +78,7 @@
 
 	function handleSelect() {
 		onSelect?.(conversation.id);
+		handleMobileSidebarItemClick?.();
 	}
 
 	onMount(() => {

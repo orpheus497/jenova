@@ -343,7 +343,8 @@ export interface MCPBlobResourceContent {
  * Union type for resource content
  */
 export type MCPResourceContent =
-  MCPTextResourceContent | MCPBlobResourceContent;
+  | MCPTextResourceContent
+  | MCPBlobResourceContent;
 
 /**
  * Result from reading a resource

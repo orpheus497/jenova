@@ -1158,6 +1158,7 @@ local function proxy_connection(client_fd, conn_fds)
             end
 
             -- Detect project root (passive only, no auto-indexing in proxy)
+            local local_project_root = nil
             local project_root = body_raw:match("project_root: ([^\n\r]+)")
             if project_root then
                 project_root = project_root:gsub("\r", ""):gsub("\"", ""):gsub("\\n", ""):gsub("\\r", ""):gsub("}$", ""):gsub(",$", ""):match("^%s*(.-)%s*$")
@@ -1166,6 +1167,7 @@ local function proxy_connection(client_fd, conn_fds)
                 elseif project_root ~= "" and not project_root:match("^/") and not project_root:match("^~") then
                     project_root = workspaces_dir .. "/" .. project_root
                 end
+                local_project_root = project_root
                 _G._last_project_root = project_root
             end
 
@@ -1200,7 +1202,7 @@ local function proxy_connection(client_fd, conn_fds)
                     end
                     rag_limit = 5
                 end
-                local rag = search.query(rag_query, rag_limit, true, _G._last_project_root)
+                local rag = search.query(rag_query, rag_limit, true, local_project_root)
                 local rag_context = ""
 
                 if #rag > 0 then

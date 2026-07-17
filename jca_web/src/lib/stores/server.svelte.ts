@@ -41,7 +41,8 @@ class ServerStore {
    */
 
   get defaultParams():
-    ApiJenovaCppServerProps["default_generation_settings"]["params"] | null {
+    | ApiJenovaCppServerProps["default_generation_settings"]["params"]
+    | null {
     return this.props?.default_generation_settings?.params || null;
   }
 

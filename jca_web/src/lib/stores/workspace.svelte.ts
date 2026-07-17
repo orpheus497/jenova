@@ -55,20 +55,49 @@ class WorkspaceStore {
     return folder;
   }
 
-  async moveConversation(id: string, folderId: string | null, projectId: string | null = null, workspaceId: string | null = null) {
+  async moveConversation(
+    id: string,
+    folderId: string | null,
+    projectId: string | null = null,
+    workspaceId: string | null = null,
+  ) {
     const { conversationsStore } = await import("./conversations.svelte");
-    await conversationsStore.moveConversation(id, folderId, projectId, workspaceId);
+    await conversationsStore.moveConversation(
+      id,
+      folderId,
+      projectId,
+      workspaceId,
+    );
   }
 
-  async moveNote(id: string, folderId: string | null, projectId: string | null = null, workspaceId: string | null = null) {
+  async moveNote(
+    id: string,
+    folderId: string | null,
+    projectId: string | null = null,
+    workspaceId: string | null = null,
+  ) {
     await this.updateNote(id, { folderId, projectId, workspaceId });
   }
 
-  async moveFileAsset(id: string, folderId: string | null, projectId: string | null = null, workspaceId: string | null = null) {
-    await DatabaseService.updateFileAsset(id, { folderId, projectId, workspaceId });
+  async moveFileAsset(
+    id: string,
+    folderId: string | null,
+    projectId: string | null = null,
+    workspaceId: string | null = null,
+  ) {
+    await DatabaseService.updateFileAsset(id, {
+      folderId,
+      projectId,
+      workspaceId,
+    });
     const index = this.files.findIndex((f) => f.id === id);
     if (index !== -1) {
-      this.files[index] = { ...this.files[index], folderId, projectId, workspaceId };
+      this.files[index] = {
+        ...this.files[index],
+        folderId,
+        projectId,
+        workspaceId,
+      };
       this.files = [...this.files];
     }
   }
@@ -89,7 +118,13 @@ class WorkspaceStore {
     title: string = "New Note",
     content: string = "",
   ) {
-    const note = await DatabaseService.createNote(folderId, projectId, workspaceId, title, content);
+    const note = await DatabaseService.createNote(
+      folderId,
+      projectId,
+      workspaceId,
+      title,
+      content,
+    );
     this.notes = [...this.notes, note];
     SyncService.syncEntity("note", note.id);
     return note;

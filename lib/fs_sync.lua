@@ -67,8 +67,16 @@ end
 
 recursive_mkdir(global_trash)
 
+local function is_valid_uuid(id)
+    if type(id) ~= "string" then return false end
+    return string.match(id, "^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$") ~= nil
+end
+
 -- Traverse db to construct physical path
 local function get_physical_path_for_note(note)
+    if not is_valid_uuid(note.id) then
+        return nil, nil
+    end
     local safe_title = sanitize(note.title)
     if note.folderId and type(note.folderId) == "string" and note.folderId ~= "" and note.folderId ~= "null" then
         local folder = db.get_folder(note.folderId)
@@ -93,6 +101,9 @@ local function get_physical_path_for_note(note)
 end
 
 local function get_physical_path_for_asset(asset)
+    if not is_valid_uuid(asset.id) then
+        return nil, nil
+    end
     local safe_name = sanitize(asset.name)
     if asset.folderId and type(asset.folderId) == "string" and asset.folderId ~= "" and asset.folderId ~= "null" then
         local folder = db.get_folder(asset.folderId)
@@ -362,18 +373,39 @@ end
 function fs_sync.empty_trash()
     -- Use single-quote escaping to prevent shell injection from workspace names
     local function sq(s) return "'" .. s:gsub("'", "'\\''") .. "'" end
-    os.execute('rm -rf ' .. sq(global_trash) .. '/*')
+    
+    local ok1 = os.execute('rm -rf ' .. sq(global_trash) .. '/*')
+    if not ok1 then
+        return false
+    end
+    
     local ws_quoted = sq(workspaces_dir)
     local p = io.popen('find ' .. ws_quoted .. ' -maxdepth 2 -type d -name ".trash" 2>/dev/null')
-    if p then
-        for trash_dir in p:lines() do
-            -- Block newlines which could inject additional shell commands
-            if not trash_dir:match('[\r\n]') then
-                os.execute('rm -rf ' .. sq(trash_dir) .. '/*')
+    if not p then
+        return false
+    end
+    
+    local loop_ok = true
+    for trash_dir in p:lines() do
+        -- Block newlines which could inject additional shell commands
+        if not trash_dir:match('[\r\n]') then
+            local ok = os.execute('rm -rf ' .. sq(trash_dir) .. '/*')
+            if not ok then
+                loop_ok = false
             end
         end
-        p:close()
     end
+    
+    local close_ok, close_reason, close_code = p:close()
+    
+    if not loop_ok then
+        return false
+    end
+    
+    if not close_ok then
+        return false
+    end
+    
     return true
 end
 

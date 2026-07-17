@@ -125,8 +125,8 @@ class ConversationsStore {
    * Registered by chatStore to enable cross-store updates without circular dependency.
    */
   private messageUpdateCallback:
-    ((messageId: string, updates: Partial<DatabaseMessage>) => void) | null =
-    null;
+    | ((messageId: string, updates: Partial<DatabaseMessage>) => void)
+    | null = null;
 
   /**
    *
@@ -512,8 +512,12 @@ class ConversationsStore {
 
       if (convIndex !== -1) {
         this.conversations[convIndex].folderId = folderId as string | undefined;
-        this.conversations[convIndex].projectId = projectId as string | undefined;
-        this.conversations[convIndex].workspaceId = workspaceId as string | undefined;
+        this.conversations[convIndex].projectId = projectId as
+          | string
+          | undefined;
+        this.conversations[convIndex].workspaceId = workspaceId as
+          | string
+          | undefined;
         this.conversations = [...this.conversations];
       }
 
