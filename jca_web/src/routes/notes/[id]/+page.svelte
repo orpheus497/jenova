@@ -5,7 +5,6 @@
     import { MarkdownContent } from '$lib/components/app';
     import { Button } from '$lib/components/ui/button';
     import { DialogConfirmation } from '$lib/components/app';
-    import { cn } from '$lib/utils';
     import { goto } from '$app/navigation';
 
     let id = $derived(page.params.id);

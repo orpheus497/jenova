@@ -101,15 +101,16 @@ export class ChatService {
     } = options;
 
     let workspaceContext = providedWorkspaceContext;
+    let resolvedConversation: Awaited<ReturnType<typeof DatabaseService.getConversation>> | undefined;
 
     if (!workspaceContext && conversationId) {
       try {
-        const conversation =
+        resolvedConversation =
           await DatabaseService.getConversation(conversationId);
         workspaceContext = await WorkspaceService.getWorkspaceContext(
-          conversation?.folderId || null,
-          conversation?.projectId || null,
-          conversation?.workspaceId || null,
+          resolvedConversation?.folderId || null,
+          resolvedConversation?.projectId || null,
+          resolvedConversation?.workspaceId || null,
         );
       } catch (e) {
         console.warn("[ChatService] Failed to load workspace context:", e);
@@ -184,7 +185,7 @@ export class ChatService {
     let relativeRoot = "unassigned";
     if (conversationId) {
       try {
-        const conv = await DatabaseService.getConversation(conversationId);
+        const conv = resolvedConversation ?? await DatabaseService.getConversation(conversationId);
         if (conv) {
           if (conv.folderId) {
             const folders = await DatabaseService.getAllFolders();
@@ -492,7 +493,6 @@ export class ChatService {
       hasOpenToolCallBatch = false;
     };
 
-    let isFirstChunk = true;
     const isCacheHit = response.headers.get("X-Cache") === "HIT";
 
     const processToolCallDelta = (
@@ -559,7 +559,7 @@ export class ChatService {
 
             try {
               const parsed: ApiChatCompletionStreamChunk = JSON.parse(data);
-              let content = parsed.choices[0]?.delta?.content;
+              const content = parsed.choices[0]?.delta?.content;
               const reasoningContent =
                 parsed.choices[0]?.delta?.reasoning_content;
               const toolCalls = parsed.choices[0]?.delta?.tool_calls;
@@ -677,7 +677,7 @@ export class ChatService {
         onModel?.(responseModel);
       }
 
-      let content = data.choices[0]?.message?.content || "";
+      const content = data.choices[0]?.message?.content || "";
       const reasoningContent = data.choices[0]?.message?.reasoning_content;
       const toolCalls = data.choices[0]?.message?.tool_calls;
 

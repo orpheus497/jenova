@@ -1,16 +1,13 @@
 <script lang="ts">
-	import { Archive, Plus, Trash2, File, Image as ImageIcon, FileText, Loader2, UploadCloud, DownloadCloud, Database, RefreshCw, CheckCircle, Folder, MessageSquare, ArrowRight, ArrowLeft, FolderInput, ChevronDown, ChevronRight, Layers, LayoutGrid, Globe, FolderOpen, HardDrive } from '@lucide/svelte';
-	import { Button } from '$lib/components/ui/button';
+	import { Plus, Trash2, File, Image as ImageIcon, FileText, Loader2, UploadCloud, DownloadCloud, Database, RefreshCw, CheckCircle, Folder, MessageSquare, ArrowRight, ChevronDown, ChevronRight, Layers, LayoutGrid, Globe, HardDrive } from '@lucide/svelte';
 	import { DialogConfirmation } from '$lib/components/app';
 	import VFSExplorer from '$lib/components/app/content/VFSExplorer.svelte';
 	import { workspaceStore, files, folders, notes, workspaces, projects } from '$lib/stores/workspace.svelte';
-	import { conversations, conversationsStore } from '$lib/stores/conversations.svelte';
-	import { cn, formatFileSize } from '$lib/utils';
+	import { conversations } from '$lib/stores/conversations.svelte';
+	import { formatFileSize } from '$lib/utils';
 	import { SyncService, type SyncStats } from '$lib/services/sync.service';
-	import type { DatabaseConversation, DatabaseNote, DatabaseFileAsset, DatabaseFolder, DatabaseProject, DatabaseWorkspace } from '$lib/types/database';
-	import { slide, fade } from 'svelte/transition';
+	import { slide } from 'svelte/transition';
 	import { page } from '$app/state';
-	import { browser } from '$app/environment';
 
 	interface Props {
 		currentFolderId?: string | null | undefined;
@@ -108,7 +105,7 @@
 			syncStats = await SyncService.sync() || null;
 			syncState = 'success';
 			setTimeout(() => { syncState = 'idle' }, 5000);
-		} catch (e) {
+		} catch {
 			syncState = 'error';
 			setTimeout(() => { syncState = 'idle'; }, 3000);
 		}
@@ -120,7 +117,7 @@
 			syncStats = await SyncService.pull() || null;
 			syncState = 'success';
 			setTimeout(() => { syncState = 'idle' }, 5000);
-		} catch (e) {
+		} catch {
 			syncState = 'error';
 			setTimeout(() => { syncState = 'idle'; }, 3000);
 		}
@@ -305,6 +302,7 @@
 			</div>
 		</div>
 
+		<!-- eslint-disable @typescript-eslint/no-explicit-any -- dynamic template snippet accessing heterogeneous data types -->
 		{#snippet assetGrid(items: {type: 'file'|'note'|'chat', data: any}[])}
 			{#if items.length > 0}
 				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4 bg-black/10 rounded-xl" transition:slide>
@@ -373,9 +371,9 @@
 			{@const containerNotes = notes().filter(n => n.folderId === (activeFolderId || null) && n.projectId === (activeProjectId || null) && n.workspaceId === (activeWorkspaceId || null))}
 			{@const containerChats = conversations().filter(c => c.folderId === (activeFolderId || null) && c.projectId === (activeProjectId || null) && c.workspaceId === (activeWorkspaceId || null))}
 			{@const allContainer = [
-				...containerFiles.map(f => ({ type: 'file' as const, data: f })),
-				...containerNotes.map(n => ({ type: 'note' as const, data: n })),
-				...containerChats.map(c => ({ type: 'chat' as const, data: c }))
+				...(viewMode === 'notes' ? [] : containerFiles.map(f => ({ type: 'file' as const, data: f }))),
+				...(viewMode === 'files' ? [] : containerNotes.map(n => ({ type: 'note' as const, data: n }))),
+				...(viewMode === 'notes' || viewMode === 'files' ? [] : containerChats.map(c => ({ type: 'chat' as const, data: c })))
 			]}
 			{@render assetGrid(allContainer)}
 			{#if allContainer.length === 0}
@@ -388,7 +386,7 @@
 		{#if !activeWorkspaceId}
 			<div class="flex items-center gap-2 text-sm text-outline mt-4 mb-2 font-mono">Workspaces:</div>
 			<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-				{#each workspaces() as workspace}
+				{#each workspaces() as workspace (workspace.id)}
 					<a href={`#/files?workspaceId=${workspace.id}`} class="p-4 rounded-xl border border-white/5 bg-surface/20 hover:bg-surface-container-high transition-all flex items-center justify-between group">
 						<div class="flex items-center gap-3">
 							<Layers size={18} class="text-secondary" />
@@ -401,7 +399,7 @@
 		{:else if activeWorkspaceId && !activeProjectId}
 			<div class="flex items-center gap-2 text-sm text-outline mt-4 mb-2 font-mono">Projects:</div>
 			<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-				{#each projects().filter(p => p.workspaceId === activeWorkspaceId) as project}
+				{#each projects().filter(p => p.workspaceId === activeWorkspaceId) as project (project.id)}
 					<a href={`#/files?workspaceId=${activeWorkspaceId}&projectId=${project.id}`} class="p-4 rounded-xl border border-white/5 bg-surface/20 hover:bg-surface-container-high transition-all flex items-center justify-between group">
 						<div class="flex items-center gap-3">
 							<LayoutGrid size={18} class="text-primary" />
@@ -417,7 +415,7 @@
 		{:else if activeProjectId && !activeFolderId}
 			<div class="flex items-center gap-2 text-sm text-outline mt-4 mb-2 font-mono">Folders:</div>
 			<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-				{#each folders().filter(f => f.projectId === activeProjectId) as folder}
+				{#each folders().filter(f => f.projectId === activeProjectId) as folder (folder.id)}
 					<a href={`#/files?workspaceId=${activeWorkspaceId}&projectId=${activeProjectId}&folderId=${folder.id}`} class="p-4 rounded-xl border border-white/5 bg-surface/20 hover:bg-surface-container-high transition-all flex items-center justify-between group">
 						<div class="flex items-center gap-3">
 							<Folder size={18} class="text-accent" />

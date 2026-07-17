@@ -2,6 +2,7 @@ import { browser } from "$app/environment";
 import { StorageService } from "./storage.service";
 import { DatabaseService } from "./database.service";
 import { MarkdownService } from "./markdown.service";
+import { MessageRole } from "$lib/enums";
 import type {
   DatabaseWorkspace,
   DatabaseProject,
@@ -218,7 +219,7 @@ export class SyncService {
 
             if (note) {
               let needsUpdate = false;
-              const updates: any = { updatedAt: Date.now() };
+              const updates: Partial<DatabaseNote> = { updatedAt: Date.now() };
 
               if (note.title !== title) {
                 updates.title = title;
@@ -274,11 +275,13 @@ export class SyncService {
               const rootId = await DatabaseService.createRootMessage(conv.id);
               let parentId: string = rootId;
 
+              const validRoles = new Set<string>(Object.values(MessageRole));
               for (const msg of parsedMessages) {
+                const role = validRoles.has(msg.role) ? (msg.role as MessageRole) : MessageRole.USER;
                 const created = await DatabaseService.createMessageBranch(
                   {
                     convId: conv.id,
-                    role: msg.role as any,
+                    role,
                     content: msg.content || "",
                     timestamp: msg.timestamp || Date.now(),
                     type: "text",

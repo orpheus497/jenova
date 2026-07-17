@@ -35,7 +35,7 @@ export class MarkdownService {
           for (const call of calls) {
             md += `> call: ${call.name}(${JSON.stringify(call.arguments)})\n\n`;
           }
-        } catch (e) {
+        } catch {
           // Ignore malformed tool calls
         }
       }

@@ -25,6 +25,7 @@
 
 	function goToFiles() {
 		if (onViewFiles) { onViewFiles(); return; }
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- imperative handler, not reactive state
 		const params = new URLSearchParams();
 		if (workspaceId) params.set('workspaceId', workspaceId);
 		if (projectId)   params.set('projectId', projectId);

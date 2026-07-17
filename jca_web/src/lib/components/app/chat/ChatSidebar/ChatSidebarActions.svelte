@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { Search, SquarePen, X, Settings, RefreshCcw } from '@lucide/svelte';
-	import { KeyboardShortcutInfo } from '$lib/components/app';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { McpLogo } from '$lib/components/app';

@@ -34,11 +34,11 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(deleteOldCaches());
 });
 
+// TODO: Investigate routing API requests (/v1/, /api/) directly to network (bypass cache)
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
   async function respond() {
-    const url = new URL(event.request.url);
     const cache = await caches.open(CACHE);
 
     // Try the cache first

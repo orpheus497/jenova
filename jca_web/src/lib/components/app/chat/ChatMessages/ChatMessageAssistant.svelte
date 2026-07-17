@@ -25,6 +25,7 @@
 	import { ServerModelStatus } from '$lib/enums';
 
 	import { hasAgenticContent } from '$lib/utils';
+	import type { DatabaseMessageExtra } from '$lib/types/database';
 
 	interface Props {
 		class?: string;
@@ -91,7 +92,7 @@
 
 	const isAgentic = $derived(hasAgenticContent(message, toolMessages));
 	const isCacheHit = $derived(
-		message.extra?.some((e: any) => e.type === 'cache_hit') ?? false
+		message.extra?.some((e: DatabaseMessageExtra) => e.type === 'cache_hit') ?? false
 	);
 	const hasReasoning = $derived(!!message.reasoningContent);
 	const processingState = useProcessingState();
@@ -450,6 +451,7 @@
 			justify="start"
 			actionsPosition="left"
 			{siblingInfo}
+			{onNavigateToSibling}
 			{showDeleteDialog}
 			{deletionInfo}
 			{onCopy}

@@ -62,8 +62,8 @@ export class DatabaseService {
         `conversations?id=${id}`,
       );
       return res && Object.keys(res).length > 0 ? res : undefined;
-    } catch (e: any) {
-      if (e.message && e.message.includes("404")) return undefined;
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message.includes("404")) return undefined;
       throw e;
     }
   }
@@ -208,8 +208,8 @@ export class DatabaseService {
     try {
       const res = await apiFetch<DatabaseMessage>(`message?id=${id}`);
       return res && Object.keys(res).length > 0 ? res : undefined;
-    } catch (e: any) {
-      if (e.message && e.message.includes("404")) return undefined;
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message.includes("404")) return undefined;
       throw e;
     }
   }
@@ -474,8 +474,8 @@ export class DatabaseService {
           body: JSON.stringify({ ...note, ...updates, updatedAt: Date.now() }),
         });
       }
-    } catch (e: any) {
-      if (e.message && e.message.includes("404")) return;
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message.includes("404")) return;
       throw e;
     }
   }
@@ -540,8 +540,8 @@ export class DatabaseService {
           body: JSON.stringify({ ...asset, ...updates }),
         });
       }
-    } catch (e: any) {
-      if (e.message && e.message.includes("404")) return;
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message.includes("404")) return;
       throw e;
     }
   }

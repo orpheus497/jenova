@@ -296,7 +296,7 @@ local function list_dir_recursive(dir)
     if not dir or dir:match("[\r\n]") then return items end
     -- Use single-quote escaping (POSIX sh): replace ' with '\'' inside the path
     local quoted = "'" .. dir:gsub("'", "'\\''" ) .. "'"
-    local p = io.popen('find ' .. quoted .. ' -mindepth 1 2>/dev/null')
+    local p = io.popen('find ' .. quoted .. ' -mindepth 1 -not -path "*/.git/*" -not -name ".git" -not -path "*/.system/*" 2>/dev/null')
     if p then
         for line in p:lines() do
             -- check if it's a file or directory. To keep it simple, we just list files and directories

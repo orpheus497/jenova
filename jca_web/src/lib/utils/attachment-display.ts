@@ -82,7 +82,7 @@ export function getAttachmentDisplayItems(
 
     items.push({
       id: `attachment-${index}`,
-      name: (attachment as any).name || "",
+      name: 'name' in attachment ? String(attachment.name) : "",
       preview:
         isImage && "base64Url" in attachment ? attachment.base64Url : undefined,
       isImage,

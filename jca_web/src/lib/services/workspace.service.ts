@@ -1,7 +1,5 @@
 import { DatabaseService } from "./database.service";
 import type {
-  DatabaseFolder,
-  DatabaseProject,
   DatabaseNote,
   DatabaseFileAsset,
 } from "$lib/types/database";
@@ -21,6 +19,7 @@ export class WorkspaceService {
     projectId: string | null = null,
     workspaceId: string | null = null,
   ): Promise<string> {
+    // TODO: Consider implementing a token budget for workspace context injection to prevent context overflow
     const allNotes = await DatabaseService.getAllNotes();
     const allFiles = await DatabaseService.getAllFileAssets();
     const allFolders = await DatabaseService.getAllFolders();

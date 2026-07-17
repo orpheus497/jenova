@@ -1215,6 +1215,7 @@ local function proxy_connection(client_fd, conn_fds)
                 local rag = search.query(rag_query, rag_limit, true, local_project_root)
                 local rag_context = ""
 
+                -- TODO: Investigate deduplication with WebUI workspace context (approach B: check if incoming system prompt already contains this content)
                 if #rag > 0 then
                     local parts = { "\n--- REPOSITORY CONTEXT ---" }
                     for i, r in ipairs(rag) do

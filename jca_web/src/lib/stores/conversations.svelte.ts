@@ -341,6 +341,7 @@ class ConversationsStore {
 
       if (options?.deleteWithForks) {
         // Collect all descendants recursively
+        // eslint-disable-next-line svelte/prefer-svelte-reactivity
         const idsToRemove = new Set([convId]);
         const queue = [convId];
         while (queue.length > 0) {
