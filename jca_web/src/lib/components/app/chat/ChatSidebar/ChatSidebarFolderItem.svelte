@@ -16,11 +16,12 @@
 		onViewFiles?: () => void;
 		chats?: Snippet;
 		notes?: Snippet;
+		focusNote?: Snippet;
 	}
 
 	let {
 		folder, workspaceId, projectId, isExpanded, onToggle,
-		onDelete, onNewChat, onNewNote, onViewFiles, chats, notes
+		onDelete, onNewChat, onNewNote, onViewFiles, chats, notes, focusNote
 	}: Props = $props();
 
 	function goToFiles() {
@@ -68,6 +69,11 @@
 	{#if isExpanded}
 		<div class="pl-2 mt-1 pb-2 space-y-3 relative" transition:slide>
 			<div class="absolute left-1.5 top-0 bottom-2 w-px bg-border/40"></div>
+
+			<!-- FOCUS / RULES note (always first) -->
+			{#if focusNote}
+				{@render focusNote()}
+			{/if}
 
 			<!-- Chats in Folder -->
 			<div>

@@ -232,8 +232,18 @@
 							{/each}
 						{/snippet}
 
+						{#snippet focusNote()}
+							{#each allNotes().filter((n: DatabaseNote) => n.workspaceId === workspace.id && !n.projectId && !n.folderId && n.isFocusNote) as note (note.id)}
+								<ChatSidebarNoteItem
+									{note} isActive={currentNoteId === note.id}
+									onSelect={() => selectNote(note.id)}
+									onDelete={() => handleDelete('note', note.id)}
+								/>
+							{/each}
+						{/snippet}
+
 						{#snippet notes()}
-							{#each allNotes().filter((n: DatabaseNote) => n.workspaceId === workspace.id && !n.projectId && !n.folderId).sort((a, b) => (b.isFocusNote ? 1 : 0) - (a.isFocusNote ? 1 : 0)) as note (note.id)}
+							{#each allNotes().filter((n: DatabaseNote) => n.workspaceId === workspace.id && !n.projectId && !n.folderId && !n.isFocusNote) as note (note.id)}
 								<ChatSidebarNoteItem
 									{note} isActive={currentNoteId === note.id}
 									onSelect={() => selectNote(note.id)}
@@ -266,8 +276,18 @@
 										{/each}
 									{/snippet}
 
+									{#snippet focusNote()}
+										{#each allNotes().filter((n: DatabaseNote) => n.projectId === project.id && !n.folderId && n.isFocusNote) as note (note.id)}
+											<ChatSidebarNoteItem
+												{note} isActive={currentNoteId === note.id}
+												onSelect={() => selectNote(note.id)}
+												onDelete={() => handleDelete('note', note.id)}
+											/>
+										{/each}
+									{/snippet}
+
 									{#snippet notes()}
-										{#each allNotes().filter((n: DatabaseNote) => n.projectId === project.id && !n.folderId).sort((a, b) => (b.isFocusNote ? 1 : 0) - (a.isFocusNote ? 1 : 0)) as note (note.id)}
+										{#each allNotes().filter((n: DatabaseNote) => n.projectId === project.id && !n.folderId && !n.isFocusNote) as note (note.id)}
 											<ChatSidebarNoteItem
 												{note} isActive={currentNoteId === note.id}
 												onSelect={() => selectNote(note.id)}
@@ -301,8 +321,18 @@
 													{/each}
 												{/snippet}
 
+												{#snippet focusNote()}
+													{#each allNotes().filter((n: DatabaseNote) => n.folderId === folder.id && n.isFocusNote) as note (note.id)}
+														<ChatSidebarNoteItem
+															{note} isActive={currentNoteId === note.id}
+															onSelect={() => selectNote(note.id)}
+															onDelete={() => handleDelete('note', note.id)}
+														/>
+													{/each}
+												{/snippet}
+
 												{#snippet notes()}
-													{#each allNotes().filter((n: DatabaseNote) => n.folderId === folder.id).sort((a, b) => (b.isFocusNote ? 1 : 0) - (a.isFocusNote ? 1 : 0)) as note (note.id)}
+													{#each allNotes().filter((n: DatabaseNote) => n.folderId === folder.id && !n.isFocusNote) as note (note.id)}
 														<ChatSidebarNoteItem
 															{note} isActive={currentNoteId === note.id}
 															onSelect={() => selectNote(note.id)}

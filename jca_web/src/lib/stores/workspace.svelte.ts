@@ -47,16 +47,22 @@ class WorkspaceStore {
   async refreshIfChanged() {
     if (!browser || !this.isInitialized) return;
     try {
-      const freshWorkspaces = await DatabaseService.getAllWorkspaces();
-      const freshProjects = await DatabaseService.getAllProjects();
-      const freshFolders = await DatabaseService.getAllFolders();
-      const freshNotes = await DatabaseService.getAllNotes();
-      const freshFiles = await DatabaseService.getAllFileAssets();
-
       const key = (arr: { id: string; updatedAt?: number }[]) =>
         arr.map(x => `${x.id}:${x.updatedAt ?? 0}`).join('|');
 
-      if (key(freshWorkspaces) !== key(this.workspaces)) this.workspaces = freshWorkspaces;
+      // Quick check: fetch lightest table first and exit early if unchanged
+      const freshWorkspaces = await DatabaseService.getAllWorkspaces();
+      if (key(freshWorkspaces) === key(this.workspaces)) return;
+
+      // Something changed — fetch the rest
+      this.workspaces = freshWorkspaces;
+      const [freshProjects, freshFolders, freshNotes, freshFiles] = await Promise.all([
+        DatabaseService.getAllProjects(),
+        DatabaseService.getAllFolders(),
+        DatabaseService.getAllNotes(),
+        DatabaseService.getAllFileAssets(),
+      ]);
+
       if (key(freshProjects) !== key(this.projects)) this.projects = freshProjects;
       if (key(freshFolders) !== key(this.folders)) this.folders = freshFolders;
       if (key(freshNotes) !== key(this.notes)) this.notes = freshNotes;
@@ -287,24 +293,49 @@ class WorkspaceStore {
   /**
    * Ensures every workspace, project, and folder has a FOCUS note.
    * Called once after init() to handle containers created before this feature.
+   * Batches all creation to avoid sequential API hammering.
    */
   private async ensureFocusNotes() {
     const focusNotes = this.notes.filter(n => n.isFocusNote);
 
+    // Collect all missing FOCUS note creation params
+    const missing: Array<{ folderId: string | null; projectId: string | null; workspaceId: string | null }> = [];
+
     for (const ws of this.workspaces) {
       if (!focusNotes.some(n => n.workspaceId === ws.id && !n.projectId && !n.folderId)) {
-        await this.createFocusNote(null, null, ws.id);
+        missing.push({ folderId: null, projectId: null, workspaceId: ws.id });
       }
     }
     for (const proj of this.projects) {
       if (!focusNotes.some(n => n.projectId === proj.id && !n.folderId)) {
-        await this.createFocusNote(null, proj.id, proj.workspaceId);
+        missing.push({ folderId: null, projectId: proj.id, workspaceId: proj.workspaceId });
       }
     }
     for (const folder of this.folders) {
       if (!focusNotes.some(n => n.folderId === folder.id)) {
         const project = this.projects.find(p => p.id === folder.projectId);
-        await this.createFocusNote(folder.id, folder.projectId, project?.workspaceId ?? null);
+        missing.push({ folderId: folder.id, projectId: folder.projectId, workspaceId: project?.workspaceId ?? null });
+      }
+    }
+
+    if (missing.length === 0) return;
+
+    // Create all missing FOCUS notes in parallel, update state once
+    const results = await Promise.allSettled(
+      missing.map(({ folderId, projectId, workspaceId }) =>
+        DatabaseService.createNote(folderId, projectId, workspaceId, "FOCUS / RULES", "", true)
+      ),
+    );
+
+    const newNotes = results
+      .filter((r): r is PromiseFulfilledResult<DatabaseNote> => r.status === "fulfilled")
+      .map(r => r.value);
+
+    if (newNotes.length > 0) {
+      this.notes = [...this.notes, ...newNotes];
+      // Sync all at once
+      for (const note of newNotes) {
+        SyncService.syncEntity("note", note.id);
       }
     }
   }

@@ -230,8 +230,7 @@ export class DatabaseService {
     };
 
     if (parentId !== null) {
-      const msgs = await this.getConversationMessages(message.convId);
-      const parent = msgs.find((m) => m.id === parentId);
+      const parent = await this.getMessage(parentId);
       if (!parent) {
         throw new Error(`Parent message ${parentId} not found`);
       }
@@ -303,13 +302,10 @@ export class DatabaseService {
     id: string,
     updates: Partial<Omit<DatabaseMessage, "id">>,
   ): Promise<void> {
-    const msg = await this.getMessage(id);
-    if (msg) {
-      await apiFetch("messages", {
-        method: "POST",
-        body: JSON.stringify({ ...msg, ...updates }),
-      });
-    }
+    await apiFetch("messages/update", {
+      method: "POST",
+      body: JSON.stringify({ id, ...updates }),
+    });
   }
 
   static async deleteMessage(id: string): Promise<void> {

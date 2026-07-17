@@ -60,6 +60,19 @@ function db.init(db_path)
     end
     print("[db] Connected to SQLite database at " .. db_path)
 
+    -- Performance pragmas
+    local pragmas = {
+        "PRAGMA journal_mode=WAL;",
+        "PRAGMA synchronous=NORMAL;",
+        "PRAGMA busy_timeout=5000;",
+        "PRAGMA cache_size=-8000;",
+        "PRAGMA mmap_size=67108864;",
+    }
+    for _, pragma in ipairs(pragmas) do
+        local p_errmsg = ffi.new("char*[1]")
+        sql3.sqlite3_exec(db_ptr[0], pragma, nil, nil, p_errmsg)
+    end
+
     -- Create Tables
     local schema = [[
         CREATE TABLE IF NOT EXISTS conversations (
@@ -475,6 +488,28 @@ function db.update_message(m)
     local params = {
         m.type, m.role, m.timestamp, m.parent, children, m.content, m.thinking, toolCalls, extra, m.model, timings, m.id
     }
+    local _, err = execute_query(sql, params)
+    return err == nil, err
+end
+
+function db.partial_update_message(id, updates)
+    local allowed = {type=1, role=1, timestamp=1, parent=1, children=1, content=1, thinking=1, toolCalls=1, extra=1, model=1, timings=1, reasoningContent=1, toolCallId=1}
+    local fields = {}
+    local params = {}
+    for k, v in pairs(updates) do
+        if allowed[k] then
+            if k == "children" and type(v) == "table" then v = json.encode(v)
+            elseif k == "extra" and type(v) == "table" then v = json.encode(v)
+            elseif k == "timings" and type(v) == "table" then v = json.encode(v)
+            elseif k == "toolCalls" and type(v) == "table" then v = json.encode(v)
+            end
+            table.insert(fields, k .. " = ?")
+            table.insert(params, v)
+        end
+    end
+    if #fields == 0 then return true end
+    table.insert(params, id)
+    local sql = "UPDATE messages SET " .. table.concat(fields, ", ") .. " WHERE id = ? AND is_deleted = 0"
     local _, err = execute_query(sql, params)
     return err == nil, err
 end

@@ -712,6 +712,14 @@ local function proxy_connection(client_fd, conn_fds)
             else
                 status = "400 Bad Request"
             end
+        elseif not is_get and headers_raw:match("^POST /api/db/messages/update") then
+            local data = json.decode(body_raw)
+            if data and data.id then
+                local ok, err = db.partial_update_message(data.id, data)
+                if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
+            else
+                status = "400 Bad Request"
+            end
         elseif not is_get and headers_raw:match("^POST /api/db/messages") then
             local m = json.decode(body_raw)
             if m then
@@ -1397,11 +1405,12 @@ local function proxy_connection(client_fd, conn_fds)
     local send_success = true
     local max_cache_size = 50 * 1024 * 1024
     local current_cache_size = 0
+    local is_streaming_req = body_raw and body_raw:match('"stream"%s*:%s*true')
     while true do
         local n = async_recv(llama_fd, buf, 8192)
         if n <= 0 then break end
         local to_send = ffi.string(buf, n)
-        if req_cache_key then 
+        if req_cache_key and not is_streaming_req then 
             if current_cache_size + #to_send <= max_cache_size then
                 resp_buffer[#resp_buffer+1] = to_send 
                 current_cache_size = current_cache_size + #to_send
@@ -1634,7 +1643,7 @@ while running do
 
     local now = os.time()
     for fd, info in pairs(clients) do
-        if now - (info.created or now) > COROUTINE_TIMEOUT then
+        if now - (info.last_active or info.created or now) > COROUTINE_TIMEOUT then
             local age = now - (info.created or now)
             io.write(string.format("[proxy] timeout: closing fd=%d age=%ds (limit=%ds)\n",
                 fd, age, COROUTINE_TIMEOUT))

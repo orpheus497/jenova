@@ -15,11 +15,12 @@
 		chats?: Snippet;
 		notes?: Snippet;
 		projects?: Snippet;
+		focusNote?: Snippet;
 	}
 
 	let {
 		workspace, isExpanded, onToggle, onDelete,
-		onNewChat, onNewNote, onNewProject, chats, notes, projects
+		onNewChat, onNewNote, onNewProject, chats, notes, projects, focusNote
 	}: Props = $props();
 </script>
 
@@ -81,6 +82,11 @@
 	{#if isExpanded}
 		<div class="pl-2 pr-1 pb-2 space-y-2 relative" transition:slide>
 			<div class="absolute left-1.5 top-0 bottom-0 w-px bg-border/40"></div>
+
+			<!-- FOCUS / RULES note (always first) -->
+			{#if focusNote}
+				{@render focusNote()}
+			{/if}
 
 			<!-- Direct workspace chats -->
 			{#if chats}

@@ -420,12 +420,32 @@ export class SyncService {
     }
   }
 
+  private static _hierarchyCache: {
+    workspaces: DatabaseWorkspace[];
+    projects: DatabaseProject[];
+    folders: DatabaseFolder[];
+    timestamp: number;
+  } | null = null;
+
+  private static async getHierarchy() {
+    const now = Date.now();
+    if (this._hierarchyCache && now - this._hierarchyCache.timestamp < 10000) {
+      return this._hierarchyCache;
+    }
+    const [workspaces, projects, folders] = await Promise.all([
+      DatabaseService.getAllWorkspaces(),
+      DatabaseService.getAllProjects(),
+      DatabaseService.getAllFolders(),
+    ]);
+    this._hierarchyCache = { workspaces, projects, folders, timestamp: now };
+    return this._hierarchyCache;
+  }
+
   static async syncEntity(type: "note" | "chat", id: string) {
     if (!browser) return;
     try {
-      const workspaces = await DatabaseService.getAllWorkspaces();
-      const projects = await DatabaseService.getAllProjects();
-      const allFolders = await DatabaseService.getAllFolders();
+      const { workspaces, projects, folders: allFolders } =
+        await this.getHierarchy();
 
       if (type === "note") {
         const notes = await DatabaseService.getAllNotes();

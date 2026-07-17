@@ -82,6 +82,20 @@ class ChatStore {
     | null = null;
   private _pendingDraftMessage = $state<string>("");
   private _pendingDraftFiles = $state<ChatUploadedFile[]>([]);
+  private syncDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  private debouncedSyncEntity(type: "note" | "chat", id: string) {
+    const key = `${type}:${id}`;
+    const existing = this.syncDebounceTimers.get(key);
+    if (existing) clearTimeout(existing);
+    this.syncDebounceTimers.set(
+      key,
+      setTimeout(() => {
+        this.syncDebounceTimers.delete(key);
+        SyncService.syncEntity(type, id);
+      }, 3000),
+    );
+  }
 
   private setChatLoading(convId: string, loading: boolean): void {
     this.touchConversationState(convId);
@@ -659,11 +673,23 @@ class ChatStore {
       }
     };
 
+    let rafPending = false;
+
     const updateStreamingUI = () => {
       this.setChatStreaming(convId, streamedContent, currentMessageId);
       const idx = conversationsStore.findMessageIndex(currentMessageId);
       conversationsStore.updateMessageAtIndex(idx, {
         content: streamedContent,
+        reasoningContent: streamedReasoningContent || undefined,
+      });
+    };
+
+    const scheduleUIUpdate = () => {
+      if (rafPending) return;
+      rafPending = true;
+      requestAnimationFrame(() => {
+        rafPending = false;
+        updateStreamingUI();
       });
     };
 
@@ -678,18 +704,16 @@ class ChatStore {
     this.setActiveProcessingConversation(convId);
     const abortController = this.getOrCreateAbortController(convId);
 
+    let lastTimingsUpdate = 0;
+
     const streamCallbacks: ChatStreamCallbacks = {
       onChunk: (chunk: string) => {
         streamedContent += chunk;
-        updateStreamingUI();
+        scheduleUIUpdate();
       },
       onReasoningChunk: (chunk: string) => {
         streamedReasoningContent += chunk;
-        // Update UI to show reasoning is being received
-        const idx = conversationsStore.findMessageIndex(currentMessageId);
-        conversationsStore.updateMessageAtIndex(idx, {
-          reasoningContent: streamedReasoningContent,
-        });
+        scheduleUIUpdate();
       },
       onToolCallsStreaming: (toolCalls) => {
         const idx = conversationsStore.findMessageIndex(currentMessageId);
@@ -720,6 +744,10 @@ class ChatStore {
         timings?: ChatMessageTimings,
         promptProgress?: ChatMessagePromptProgress,
       ) => {
+        // Throttle timing updates to max 2/sec to reduce reactive churn
+        const now = performance.now();
+        if (now - lastTimingsUpdate < 500) return;
+        lastTimingsUpdate = now;
         const tokensPerSecond =
           timings?.predicted_ms && timings?.predicted_n
             ? (timings.predicted_n / timings.predicted_ms) * 1000
@@ -824,7 +852,7 @@ class ChatStore {
 
         cleanupStreamingState();
 
-        SyncService.syncEntity("chat", convId);
+        this.debouncedSyncEntity("chat", convId);
 
         AudioService.speak(streamedContent);
         AudioService.notify(streamedContent);
@@ -943,7 +971,7 @@ class ChatStore {
           AudioService.speak(content);
           AudioService.notify(content);
 
-          SyncService.syncEntity("chat", convId);
+          this.debouncedSyncEntity("chat", convId);
 
           cleanupStreamingState();
           if (onComplete) await onComplete(content);
@@ -963,12 +991,14 @@ class ChatStore {
     await this.stopGenerationForChat(activeConv.id);
   }
   async stopGenerationForChat(convId: string): Promise<void> {
-    await this.savePartialResponseIfNeeded(convId);
-    this.setStreamingActive(false);
+    // Abort the request FIRST for immediate responsiveness
     this.abortRequest(convId);
+    this.setStreamingActive(false);
     this.setChatLoading(convId, false);
     this.clearChatStreaming(convId);
     this.setProcessingState(convId, null);
+    // Save partial response AFTER abort (fire-and-forget)
+    this.savePartialResponseIfNeeded(convId).catch(console.error);
   }
   private async savePartialResponseIfNeeded(convId?: string): Promise<void> {
     const conversationId = convId || conversationsStore.activeConversation?.id;
