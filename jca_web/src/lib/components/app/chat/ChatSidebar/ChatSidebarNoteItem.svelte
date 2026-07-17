@@ -18,7 +18,7 @@
     <button
         onclick={onSelect}
         class={cn(
-            "flex-1 flex items-center gap-2 px-2 py-2 rounded-lg text-sm transition-all text-left truncate",
+            "flex-1 flex items-center gap-2 px-2 py-2 rounded-lg text-[10px] transition-all text-left truncate",
             note.isFocusNote
                 ? "text-red-400 font-medium hover:bg-red-500/10"
                 : isActive
