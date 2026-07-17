@@ -799,17 +799,18 @@ function search.query(query_str, top_k, with_snippets, path_filter)
       end
 
       if bm > 0 or sem > 0.3 then
-      raw_results[#raw_results + 1] = {
-        path = filepath,
-        bm25 = bm,
-        semantic = sem,
-        best_chunk = best_chunk,
-        size = doc and doc.size or 0,
-      }
-      if bm > max_bm25 then max_bm25 = bm end
-      if sem > max_sem then max_sem = sem end
-    end
-  end
+        raw_results[#raw_results + 1] = {
+          path = filepath,
+          bm25 = bm,
+          semantic = sem,
+          best_chunk = best_chunk,
+          size = doc and doc.size or 0,
+        }
+        if bm > max_bm25 then max_bm25 = bm end
+        if sem > max_sem then max_sem = sem end
+      end
+    end  -- if not path_filter
+  end  -- for filepath
 
   -- Normalize and combine scores
   for _, r in ipairs(raw_results) do
