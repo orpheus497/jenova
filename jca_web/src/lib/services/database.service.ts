@@ -89,6 +89,14 @@ export class DatabaseService {
     await apiFetch(`conversations/${id}${query}`, { method: "DELETE" });
   }
 
+  static async getDeletedConversations(): Promise<DatabaseConversation[]> {
+    return apiFetch<DatabaseConversation[]>("conversations/deleted");
+  }
+
+  static async restoreConversation(id: string): Promise<void> {
+    await apiFetch(`conversations/${id}/restore`, { method: "POST" });
+  }
+
   static async deleteConversationMessages(convId: string): Promise<void> {
     const msgs = await this.getConversationMessages(convId);
     const ids = msgs.map((m) => m.id);

@@ -409,14 +409,24 @@ function fs_sync.empty_trash()
     return true
 end
 
-function fs_sync.get_fs_tree()
+function fs_sync.get_fs_tree(scope_workspace, scope_project, scope_folder)
     local tree = {}
+    -- Build the search root from optional scope params
+    local search_root = workspaces_dir
+    if scope_workspace and scope_workspace ~= "" then
+        search_root = workspaces_dir .. "/" .. scope_workspace
+        if scope_project and scope_project ~= "" then
+            search_root = search_root .. "/" .. scope_project
+            if scope_folder and scope_folder ~= "" then
+                search_root = search_root .. "/" .. scope_folder
+            end
+        end
+    end
     -- Skip .trash and .git
-    local p = io.popen('find "' .. workspaces_dir .. '" -mindepth 1 -not -path "*/.trash*" -not -path "*/.git*" 2>/dev/null')
+    local p = io.popen('find "' .. search_root .. '" -mindepth 1 -not -path "*/.trash*" -not -path "*/.git*" 2>/dev/null')
     if p then
         for line in p:lines() do
             local rel_path = line:sub(#workspaces_dir + 2)
-            -- Determine if directory via a quick check (find -type d could be used but it's two passes)
             local is_dir = os.execute('test -d "' .. line .. '"') == 0
             table.insert(tree, { path = rel_path, full_path = line, isDir = is_dir })
         end

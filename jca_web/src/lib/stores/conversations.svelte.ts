@@ -503,30 +503,26 @@ class ConversationsStore {
   ): Promise<void> {
     try {
       await DatabaseService.updateConversation(convId, {
-        folderId: folderId as string | undefined,
-        projectId: projectId as string | undefined,
-        workspaceId: workspaceId as string | undefined,
+        folderId,
+        projectId,
+        workspaceId,
       });
 
       const convIndex = this.conversations.findIndex((c) => c.id === convId);
 
       if (convIndex !== -1) {
-        this.conversations[convIndex].folderId = folderId as string | undefined;
-        this.conversations[convIndex].projectId = projectId as
-          | string
-          | undefined;
-        this.conversations[convIndex].workspaceId = workspaceId as
-          | string
-          | undefined;
+        this.conversations[convIndex].folderId = folderId;
+        this.conversations[convIndex].projectId = projectId;
+        this.conversations[convIndex].workspaceId = workspaceId;
         this.conversations = [...this.conversations];
       }
 
       if (this.activeConversation?.id === convId) {
         this.activeConversation = {
           ...this.activeConversation,
-          folderId: folderId as string | undefined,
-          projectId: projectId as string | undefined,
-          workspaceId: workspaceId as string | undefined,
+          folderId,
+          projectId,
+          workspaceId,
         };
       }
       SyncService.syncEntity("chat", convId);

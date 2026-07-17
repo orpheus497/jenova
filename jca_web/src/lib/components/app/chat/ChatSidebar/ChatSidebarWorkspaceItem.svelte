@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { FolderOpen, Plus, Trash2, ChevronDown, ChevronRight, Layers } from '@lucide/svelte';
+	import { FolderOpen, Plus, Trash2, ChevronDown, ChevronRight, Layers, LayoutGrid } from '@lucide/svelte';
 	import type { Snippet } from 'svelte';
 	import type { DatabaseWorkspace } from '$lib/types/database';
 	import { slide } from 'svelte/transition';
@@ -11,6 +11,7 @@
 		onDelete?: () => void;
 		onNewChat: () => void;
 		onNewNote: () => void;
+		onNewProject?: () => void;
 		chats?: Snippet;
 		notes?: Snippet;
 		projects?: Snippet;
@@ -18,7 +19,7 @@
 
 	let {
 		workspace, isExpanded, onToggle, onDelete,
-		onNewChat, onNewNote, chats, notes, projects
+		onNewChat, onNewNote, onNewProject, chats, notes, projects
 	}: Props = $props();
 </script>
 
@@ -48,6 +49,15 @@
 			>
 				<FolderOpen size={12} />
 			</a>
+			{#if onNewProject}
+				<button
+					onclick={(e) => { e.stopPropagation(); onNewProject!(); }}
+					class="p-1 hover:text-accent text-outline focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-accent rounded transition-all"
+					title="New Project in Workspace"
+				>
+					<LayoutGrid size={12} />
+				</button>
+			{/if}
 			<button
 				onclick={(e) => { e.stopPropagation(); onNewChat(); }}
 				class="p-1 hover:text-primary text-outline focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-primary rounded transition-all"

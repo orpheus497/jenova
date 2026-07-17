@@ -641,7 +641,10 @@ local function proxy_connection(client_fd, conn_fds)
             local ok = fs_sync.empty_trash()
             if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
         elseif is_get and fs_route == "tree" then
-            local tree = fs_sync.get_fs_tree()
+            local ws_name = request_line:match("[?&]workspace=([^& \r\n]+)")
+            local proj_name = request_line:match("[?&]project=([^& \r\n]+)")
+            local fold_name = request_line:match("[?&]folder=([^& \r\n]+)")
+            local tree = fs_sync.get_fs_tree(ws_name, proj_name, fold_name)
             resp_body = json.encode(tree or {})
         else
             status = "404 Not Found"
@@ -682,6 +685,13 @@ local function proxy_connection(client_fd, conn_fds)
             local id = headers_raw:match("^DELETE /api/db/conversations/([^ %?\r\n]+)")
             local delete_with_forks = request_line:match("deleteWithForks=true") ~= nil
             local ok = db.delete_conversation(id, delete_with_forks)
+            if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
+        elseif is_get and db_route == "conversations/deleted" then
+            local items = db.get_deleted_conversations()
+            if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
+        elseif not is_get and headers_raw:match("^POST /api/db/conversations/([^ %?/\r\n]+)/restore") then
+            local id = headers_raw:match("^POST /api/db/conversations/([^ %?/\r\n]+)/restore")
+            local ok, err = db.restore_item("conversations", id)
             if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
         elseif is_get and db_route == "message" then
             local id = request_line:match("id=([^ %&\r\n]+)")

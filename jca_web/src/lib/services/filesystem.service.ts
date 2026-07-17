@@ -43,7 +43,16 @@ export class FileSystemService {
     await apiFetch("trash/empty", { method: "DELETE" });
   }
 
-  static async getTree(): Promise<FsTreeItem[]> {
-    return await apiFetch<FsTreeItem[]>("tree");
+  static async getTree(scope?: {
+    workspace?: string;
+    project?: string;
+    folder?: string;
+  }): Promise<FsTreeItem[]> {
+    const params = new URLSearchParams();
+    if (scope?.workspace) params.set("workspace", scope.workspace);
+    if (scope?.project) params.set("project", scope.project);
+    if (scope?.folder) params.set("folder", scope.folder);
+    const qs = params.toString();
+    return await apiFetch<FsTreeItem[]>(qs ? `tree?${qs}` : "tree");
   }
 }

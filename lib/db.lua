@@ -369,6 +369,19 @@ function db.delete_conversation(id, delete_with_forks)
     return true
 end
 
+function db.get_deleted_conversations()
+    local sql = "SELECT * FROM conversations WHERE is_deleted = 1 ORDER BY lastModified DESC"
+    local rows, err = execute_query(sql)
+    if err then return nil, err end
+    for _, row in ipairs(rows or {}) do
+        if row.mcpServerOverrides and row.mcpServerOverrides ~= "" then
+            local ok, decoded = pcall(json.decode, row.mcpServerOverrides)
+            if ok then row.mcpServerOverrides = decoded end
+        end
+    end
+    return rows or {}
+end
+
 function db.get_messages(convId)
     local sql = "SELECT * FROM messages WHERE convId = ? AND is_deleted = 0 ORDER BY timestamp ASC"
     local rows, err = execute_query(sql, {convId})

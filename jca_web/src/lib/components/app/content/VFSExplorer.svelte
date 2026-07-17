@@ -6,7 +6,16 @@
 	import { onMount } from 'svelte';
 	import { slide } from 'svelte/transition';
 
+	interface Props {
+		workspace?: string;
+		project?: string;
+		folder?: string;
+	}
+
+	let { workspace, project, folder }: Props = $props();
+
 	let isLoading = $state(true);
+
 	let expandedPaths = $state<Record<string, boolean>>({});
 
 	// Build a nested structure from the flat list of paths
@@ -29,8 +38,15 @@
 		}
 		
 		// 2. Chat check: ends with .md (not note)
+		// Try ID-based resolution first: filename may contain _[uuid].md via topic marker
 		if (node.name.endsWith('.md')) {
-			const chatName = node.name.slice(0, -3); // remove .md
+			const chatIdMatch = node.name.match(/_([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\.md$/i);
+			if (chatIdMatch) {
+				const convById = conversations().find(c => c.id === chatIdMatch[1]);
+				if (convById) return { type: 'chat' as const, id: convById.id };
+			}
+			// Fallback: title matching
+			const chatName = node.name.slice(0, -3);
 			const conv = conversations().find(c => c.name === chatName || encodeURIComponent(c.name) === chatName || c.name.replace(/[/\\]/g, "_") === chatName);
 			if (conv) {
 				return { type: 'chat' as const, id: conv.id };
@@ -63,7 +79,7 @@
 	async function loadTree() {
 		isLoading = true;
 		try {
-			const items = await FileSystemService.getTree() || [];
+			const items = await FileSystemService.getTree({ workspace, project, folder }) || [];
 			
 			// Filter out internal snapshot/metadata and other unrecognized files
 			const filtered = items.filter(item => {
@@ -138,10 +154,8 @@
 		{:else}
 			{#snippet renderNode(node: TreeNode, depth: number)}
 				<div class="select-none">
-					<!-- svelte-ignore a11y_click_events_have_key_events -->
-					<!-- svelte-ignore a11y_no_static_element_interactions -->
-					<div 
-						class="flex items-center gap-2 py-1.5 px-2 hover:bg-white/5 rounded cursor-pointer transition-colors {!node.isDir && getFileTypeAndId(node) ? 'cursor-grab' : ''}"
+					<button 
+						class="w-full flex items-center gap-2 py-1.5 px-2 hover:bg-white/5 rounded cursor-pointer transition-colors text-left {!node.isDir && getFileTypeAndId(node) ? 'cursor-grab' : ''}"
 						style="padding-left: {depth * 1.5 + 0.5}rem"
 						onclick={() => openItem(node)}
 						draggable={!node.isDir && getFileTypeAndId(node) !== null}
@@ -172,7 +186,7 @@
 							{/if}
 						{/if}
 						<span class="text-sm font-mono truncate {node.isDir ? 'text-foreground font-semibold' : 'text-on-surface-variant'}">{node.name}</span>
-					</div>
+					</button>
 
 					{#if node.isDir && expandedPaths[node.path]}
 						<div transition:slide={{ duration: 150 }}>

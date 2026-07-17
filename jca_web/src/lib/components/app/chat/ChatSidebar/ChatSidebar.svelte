@@ -30,7 +30,7 @@
 
 	// Dialog state
 	let showDeleteDialog = $state(false);
-	let deleteTarget     = $state<{ type: 'conversation' | 'folder' | 'note' | 'file', id: string } | null>(null);
+	let deleteTarget     = $state<{ type: 'conversation' | 'folder' | 'note' | 'file' | 'workspace' | 'project', id: string } | null>(null);
 	let deleteWithForks  = $state(false);
 
 	let showEditDialog = $state(false);
@@ -54,7 +54,7 @@
 	});
 
 	// ── Delete ────────────────────────────────────────────────────────────────
-	async function handleDelete(type: 'conversation' | 'folder' | 'note' | 'file', id: string) {
+	async function handleDelete(type: 'conversation' | 'folder' | 'note' | 'file' | 'workspace' | 'project', id: string) {
 		deleteTarget = { type, id };
 		deleteWithForks = false;
 		showDeleteDialog = true;
@@ -69,6 +69,8 @@
 			else if (type === 'folder')       workspaceStore.deleteFolder(id);
 			else if (type === 'note')         workspaceStore.deleteNote(id);
 			else if (type === 'file')         workspaceStore.deleteFileAsset(id);
+			else if (type === 'workspace')    workspaceStore.deleteWorkspace(id);
+			else if (type === 'project')      workspaceStore.deleteProject(id);
 		}, 100);
 	}
 
@@ -96,6 +98,12 @@
 
 		if (editTarget.type === 'workspace' && editTarget.id === 'new') {
 			workspaceStore.createWorkspace(trimmed);
+		} else if (editTarget.type === 'project' && editTarget.id.startsWith('new:')) {
+			const workspaceId = editTarget.id.slice(4);
+			workspaceStore.createProject(workspaceId, trimmed);
+		} else if (editTarget.type === 'folder' && editTarget.id.startsWith('new:')) {
+			const projectId = editTarget.id.slice(4);
+			workspaceStore.createFolder(projectId || null, trimmed);
 		} else {
 			handleConfirmEdit();
 			return;
@@ -152,6 +160,18 @@
 	function newNoteIn(workspaceId: string | null, projectId: string | null, folderId: string | null) {
 		workspaceStore.createNote(folderId, projectId, workspaceId).then(n => selectNote(n.id));
 	}
+
+	function newProjectIn(workspaceId: string) {
+		editTarget = { type: 'project', id: `new:${workspaceId}` };
+		editedName = 'New Project';
+		showEditDialog = true;
+	}
+
+	function newFolderIn(projectId: string) {
+		editTarget = { type: 'folder', id: `new:${projectId}` };
+		editedName = 'New Folder';
+		showEditDialog = true;
+	}
 </script>
 
 <div class="h-full glass-panel rounded-r-[24px] overflow-hidden flex flex-col font-sans text-[15px]">
@@ -196,6 +216,8 @@
 						onToggle={() => expandedWorkspaces[workspace.id] = !expandedWorkspaces[workspace.id]}
 						onNewChat={() => newChatIn(workspace.id, null, null)}
 						onNewNote={() => newNoteIn(workspace.id, null, null)}
+						onNewProject={() => newProjectIn(workspace.id)}
+						onDelete={() => handleDelete('workspace', workspace.id)}
 					>
 						{#snippet chats()}
 							{#each filteredConversations.filter((c: DatabaseConversation) => c.workspaceId === workspace.id && !c.projectId && !c.folderId) as conversation (conversation.id)}
@@ -228,6 +250,8 @@
 									onToggle={() => expandedProjects[project.id] = !expandedProjects[project.id]}
 									onNewChat={() => newChatIn(workspace.id, project.id, null)}
 									onNewNote={() => newNoteIn(workspace.id, project.id, null)}
+									onNewFolder={() => newFolderIn(project.id)}
+									onDelete={() => handleDelete('project', project.id)}
 								>
 									{#snippet chats()}
 										{#each filteredConversations.filter((c: DatabaseConversation) => c.projectId === project.id && !c.folderId) as conversation (conversation.id)}

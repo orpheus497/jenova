@@ -17,9 +17,9 @@ export interface DatabaseConversation {
   name: string;
   mcpServerOverrides?: McpServerOverride[];
   forkedFromConversationId?: string;
-  folderId?: string;
-  projectId?: string;
-  workspaceId?: string;
+  folderId?: string | null;
+  projectId?: string | null;
+  workspaceId?: string | null;
 }
 
 export interface DatabaseWorkspace {

@@ -43,10 +43,47 @@ class WorkspaceStore {
     return ws;
   }
 
+  async deleteWorkspace(id: string) {
+    await DatabaseService.deleteWorkspace(id);
+    this.workspaces = this.workspaces.filter((w) => w.id !== id);
+    // Also remove child entities from local state
+    const childProjectIds = this.projects
+      .filter((p) => p.workspaceId === id)
+      .map((p) => p.id);
+    const childFolderIds = this.folders
+      .filter((f) => childProjectIds.includes(f.projectId ?? ""))
+      .map((f) => f.id);
+    this.projects = this.projects.filter((p) => p.workspaceId !== id);
+    this.folders = this.folders.filter(
+      (f) => !childProjectIds.includes(f.projectId ?? ""),
+    );
+    this.notes = this.notes.filter(
+      (n) => n.workspaceId !== id && !childFolderIds.includes(n.folderId ?? ""),
+    );
+    this.files = this.files.filter(
+      (f) => f.workspaceId !== id && !childFolderIds.includes(f.folderId ?? ""),
+    );
+  }
+
   async createProject(workspaceId: string, name: string) {
     const p = await DatabaseService.createProject(workspaceId, name);
     this.projects = [...this.projects, p];
     return p;
+  }
+
+  async deleteProject(id: string) {
+    await DatabaseService.deleteProject(id);
+    const childFolderIds = this.folders
+      .filter((f) => f.projectId === id)
+      .map((f) => f.id);
+    this.projects = this.projects.filter((p) => p.id !== id);
+    this.folders = this.folders.filter((f) => f.projectId !== id);
+    this.notes = this.notes.filter(
+      (n) => n.projectId !== id && !childFolderIds.includes(n.folderId ?? ""),
+    );
+    this.files = this.files.filter(
+      (f) => f.projectId !== id && !childFolderIds.includes(f.folderId ?? ""),
+    );
   }
 
   async createFolder(projectId: string | null, name: string) {
@@ -100,6 +137,10 @@ class WorkspaceStore {
       };
       this.files = [...this.files];
     }
+    // Trigger filesystem sync so the file is moved to the new workspace path.
+    // File assets are synced via the backend (proxy → fs_sync.sync_fileAsset) which
+    // is already invoked when DatabaseService.updateFileAsset POSTs to the API.
+    // A full entity push is not needed here — the DB update above is sufficient.
   }
 
   async deleteFolder(id: string) {
