@@ -785,7 +785,7 @@ function search.query(query_str, top_k, with_snippets, path_filter)
   end
 
   for filepath, _ in pairs(all_files) do
-    if not path_filter or filepath:sub(1, #path_filter) == path_filter then
+    if not path_filter or filepath == path_filter or filepath:sub(1, #path_filter + 1) == path_filter .. "/" then
       local bm = 0
       local doc = bm25_index[filepath]
       if doc then

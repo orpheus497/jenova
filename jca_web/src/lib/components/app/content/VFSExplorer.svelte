@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { FolderOpen, FileText, ChevronRight, ChevronDown, HardDrive, RefreshCw, Loader2 } from 'lucide-svelte';
+	import { FolderOpen, FileText, ChevronRight, ChevronDown, HardDrive, RefreshCw, Loader2 } from '@lucide/svelte';
 	import { FileSystemService, type FsTreeItem } from '$lib/services/filesystem.service';
 	import { onMount } from 'svelte';
 	import { slide } from 'svelte/transition';

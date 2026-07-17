@@ -88,6 +88,7 @@
 
 	async function handleDrop(e: DragEvent, target: { folderId?: string | null, projectId?: string | null, workspaceId?: string | null }) {
 		e.preventDefault();
+		e.stopPropagation();
 		if (!e.dataTransfer) return;
 		const dataStr = e.dataTransfer.getData('application/json');
 		if (!dataStr) return;
@@ -114,6 +115,7 @@
 			setTimeout(() => { syncState = 'idle' }, 5000);
 		} catch (e) {
 			syncState = 'error';
+			setTimeout(() => { syncState = 'idle'; }, 3000);
 		}
 	}
 
@@ -125,6 +127,7 @@
 			setTimeout(() => { syncState = 'idle' }, 5000);
 		} catch (e) {
 			syncState = 'error';
+			setTimeout(() => { syncState = 'idle'; }, 3000);
 		}
 	}
 
@@ -322,7 +325,7 @@
 									</div>
 									<div class="min-w-0">
 										<h3 class="font-semibold text-sm text-on-surface truncate" title={item.data.name}>{item.data.name}</h3>
-										<p class="text-[10px] text-outline font-mono mt-0.5">{formatFileSize(item.data.size)} &bull; {item.data.createdAt ? new Date(item.data.createdAt).toLocaleDateString() : 'Unknown date'}</p>
+										<p class="text-[10px] text-outline font-mono mt-0.5">{formatFileSize(item.data.size)} &bull; {item.data.uploadDate ? new Date(item.data.uploadDate).toLocaleDateString() : 'Unknown date'}</p>
 									</div>
 								</div>
 								<button class="p-1.5 rounded-md hover:bg-error/20 text-outline hover:text-error transition-colors opacity-0 group-hover:opacity-100" onclick={() => confirmDelete(item.data.id)} title="Delete">
@@ -353,7 +356,7 @@
 									</div>
 									<div class="min-w-0">
 										<h3 class="font-semibold text-sm text-on-surface truncate" title={item.data.name}>{item.data.name}</h3>
-										<p class="text-[10px] text-outline font-mono mt-0.5">Chat &bull; {item.data.updatedAt ? new Date(item.data.updatedAt).toLocaleDateString() : 'Unknown date'}</p>
+										<p class="text-[10px] text-outline font-mono mt-0.5">Chat &bull; {item.data.lastModified ? new Date(item.data.lastModified).toLocaleDateString() : 'Unknown date'}</p>
 									</div>
 								</div>
 							</div>

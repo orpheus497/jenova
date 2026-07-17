@@ -71,9 +71,8 @@ export class WorkspaceService {
           (f.folderId && folderIds.includes(f.folderId)),
       );
     } else {
-      // 4. Global scope
-      targetNotes = allNotes;
-      targetFiles = allFiles;
+      // 4. No scope resolved — return empty context rather than leaking the entire database
+      return "";
     }
 
     let context = "";

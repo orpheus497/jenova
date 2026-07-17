@@ -281,7 +281,11 @@ end
 
 local function list_dir_recursive(dir)
     local items = {}
-    local p = io.popen('find "' .. dir .. '" -mindepth 1 2>/dev/null')
+    -- Block newlines which would allow command injection via io.popen
+    if not dir or dir:match("[\r\n]") then return items end
+    -- Use single-quote escaping (POSIX sh): replace ' with '\'' inside the path
+    local quoted = "'" .. dir:gsub("'", "'\\''" ) .. "'"
+    local p = io.popen('find ' .. quoted .. ' -mindepth 1 2>/dev/null')
     if p then
         for line in p:lines() do
             -- check if it's a file or directory. To keep it simple, we just list files and directories
@@ -356,11 +360,17 @@ function fs_sync.restore_trash(trash_path, original_path)
 end
 
 function fs_sync.empty_trash()
-    os.execute('rm -rf "' .. global_trash .. '"/*')
-    local p = io.popen('find "' .. workspaces_dir .. '" -maxdepth 2 -type d -name ".trash" 2>/dev/null')
+    -- Use single-quote escaping to prevent shell injection from workspace names
+    local function sq(s) return "'" .. s:gsub("'", "'\\''") .. "'" end
+    os.execute('rm -rf ' .. sq(global_trash) .. '/*')
+    local ws_quoted = sq(workspaces_dir)
+    local p = io.popen('find ' .. ws_quoted .. ' -maxdepth 2 -type d -name ".trash" 2>/dev/null')
     if p then
         for trash_dir in p:lines() do
-            os.execute('rm -rf "' .. trash_dir .. '"/*')
+            -- Block newlines which could inject additional shell commands
+            if not trash_dir:match('[\r\n]') then
+                os.execute('rm -rf ' .. sq(trash_dir) .. '/*')
+            end
         end
         p:close()
     end

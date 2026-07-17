@@ -618,6 +618,9 @@ local function proxy_connection(client_fd, conn_fds)
     
     local storage_path = headers_raw:match("^POST /api/storage/([^ %?]+)")
     
+    -- Declare request_line early so both the FS and DB route blocks can use it.
+    local request_line = headers_raw:match("^([^\r\n]+)")
+
     -- File System API Routes
     local fs_route = request_line and request_line:match("^[A-Z]+ /api/fs/([^ %?\r\n]+)")
     if fs_route then
@@ -627,8 +630,8 @@ local function proxy_connection(client_fd, conn_fds)
             local trashed = fs_sync.get_trash()
             resp_body = json.encode(trashed or {})
         elseif not is_get and headers_raw:match("^POST /api/fs/trash/restore") then
-            local req = json.decode(body_raw)
-            if req and req.trash_path and req.original_path then
+            local ok_j, req = pcall(json.decode, body_raw)
+            if ok_j and req and req.trash_path and req.original_path then
                 local ok = fs_sync.restore_trash(req.trash_path, req.original_path)
                 if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
             else
@@ -652,8 +655,7 @@ local function proxy_connection(client_fd, conn_fds)
         return
     end
     
-    -- Database API Routes
-    local request_line = headers_raw:match("^([^\r\n]+)")
+    -- Database API Routes (request_line already declared above)
     local db_route = request_line and request_line:match("^[A-Z]+ /api/db/([^ %?\r\n]+)")
     if db_route then
         local resp_body = ""

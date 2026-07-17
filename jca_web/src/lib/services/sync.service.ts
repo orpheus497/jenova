@@ -137,7 +137,10 @@ export class SyncService {
           const noteIdRegex = /_([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\.md$/i;
           const noteMatch = rawFileName.match(noteIdRegex);
           const isNote = noteMatch !== null;
-          const isChat = !isNote;
+          // A file is only treated as a chat if it's in a workspace-scoped path (≥2 segments)
+          // and not identified as a note. This prevents stray Markdown files from being
+          // incorrectly loaded as conversation histories.
+          const isChat = !isNote && parts.length >= 2 && parts[0] !== 'unassigned';
 
           let workspaceId: string | null = null;
           let projectId: string | null = null;

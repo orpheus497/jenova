@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { ArchiveRestore, Trash2, RefreshCw, AlertTriangle, Layers, File, Loader2 } from 'lucide-svelte';
+	import { ArchiveRestore, Trash2, RefreshCw, AlertTriangle, Layers, File, Loader2 } from '@lucide/svelte';
 	import { FileSystemService, type TrashedItem } from '$lib/services/filesystem.service';
 	import { DialogConfirmation } from '$lib/components/app';
 	import { onMount } from 'svelte';
@@ -32,12 +32,7 @@
 			// Extract original path from trash path.
 			// Format is .../.trash/1784240000_filename
 			// We'll restore it to its original workspace/folder by replacing the .trash/timestamp_ part.
-			let original_path = "";
-			if (item.type === "global") {
-			    original_path = item.path.replace(/\/\.trash\/[0-9]+_/, "/");
-			} else {
-			    original_path = item.path.replace(/\/\.trash\/[0-9]+_/, "/");
-			}
+			const original_path = item.path.replace(/\/\.trash\/[0-9]+_/, "/");
 			await FileSystemService.restoreTrash(item.path, original_path);
 			await loadTrash();
 		} catch (e) {

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { FileText, Plus, Search, Calendar, Folder, Layers, LayoutGrid } from 'lucide-svelte';
+	import { FileText, Plus, Search, Calendar, Folder, Layers, LayoutGrid } from '@lucide/svelte';
 	import { notes, workspaces, projects, folders, workspaceStore } from '$lib/stores/workspace.svelte';
 	import { goto } from '$app/navigation';
 	import { slide } from 'svelte/transition';
@@ -12,7 +12,7 @@
 			const q = searchQuery.toLowerCase();
 			n = n.filter(note => note.title.toLowerCase().includes(q));
 		}
-		return n.sort((a, b) => b.updatedAt - a.updatedAt); // newest first
+		return [...n].sort((a, b) => b.updatedAt - a.updatedAt); // newest first
 	});
 
 	function getWorkspaceName(id: string | null) {
@@ -76,11 +76,9 @@
 		{:else}
 			<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4" transition:slide>
 				{#each filteredNotes as note (note.id)}
-					<!-- svelte-ignore a11y_click_events_have_key_events -->
-					<!-- svelte-ignore a11y_no_static_element_interactions -->
-					<div 
-						onclick={() => goto(`#/notes/${note.id}`)}
-						class="glass-panel p-4 rounded-xl border border-white/10 flex flex-col gap-3 group hover:border-accent/50 hover:bg-accent/5 transition-all cursor-pointer shadow-md h-36"
+					<a
+						href={`#/notes/${note.id}`}
+						class="glass-panel p-4 rounded-xl border border-white/10 flex flex-col gap-3 group hover:border-accent/50 hover:bg-accent/5 transition-all cursor-pointer shadow-md h-36 no-underline"
 					>
 						<div class="flex items-start justify-between">
 							<div class="w-8 h-8 rounded bg-accent/10 flex items-center justify-center text-accent shrink-0">
@@ -108,7 +106,7 @@
 								<span class="px-1.5 py-0.5 rounded text-[9px] font-mono bg-white/5 text-outline border border-white/10">Global</span>
 							{/if}
 						</div>
-					</div>
+					</a>
 				{/each}
 			</div>
 		{/if}

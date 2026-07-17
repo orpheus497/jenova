@@ -139,7 +139,9 @@
     
     function handleConfirmEditExtended() {
         if (editTarget?.type === 'workspace' && editTarget.id === 'new') {
-            workspaceStore.createWorkspace(editedName);
+            const trimmed = editedName.trim();
+            if (!trimmed) return;
+            workspaceStore.createWorkspace(trimmed);
             showEditDialog = false;
             editTarget = null;
             return;
@@ -173,14 +175,18 @@
         
         <!-- GLOBAL UNASSIGNED -->
         <div>
-            <div class="px-2 text-[11px] font-mono uppercase tracking-widest mb-2 flex items-center justify-between text-[#7b52ab] opacity-80 cursor-pointer hover:opacity-100" onclick={() => expandedGlobal = !expandedGlobal}>
+            <button
+                class="px-2 text-[11px] font-mono uppercase tracking-widest mb-2 flex items-center justify-between text-[#7b52ab] opacity-80 hover:opacity-100 w-full text-left"
+                aria-expanded={expandedGlobal}
+                onclick={() => expandedGlobal = !expandedGlobal}
+            >
                 <span class="flex items-center gap-1">
                     {#if expandedGlobal}<ChevronDown size={14}/>{:else}<ChevronRight size={14}/>{/if}
                     Global Assets
                 </span>
-                <div class="flex gap-2 items-center">
-                    <a href="#/files/unassigned" class="hover:text-primary transition-colors" title="View Global Files"><Archive size={14}/></a>
-                </div>
+            </button>
+            <div class="flex gap-2 items-center px-2 mb-2">
+                <a href="#/files/unassigned" class="hover:text-primary transition-colors" title="View Global Files"><Archive size={14}/></a>
             </div>
             
             {#if expandedGlobal}

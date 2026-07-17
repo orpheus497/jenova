@@ -56,10 +56,12 @@ class WorkspaceStore {
   }
 
   async moveConversation(id: string, folderId: string | null, projectId: string | null = null, workspaceId: string | null = null) {
+    // Pass null (not undefined) so cleared fields are serialized to JSON null → SQL NULL.
+    // undefined would be omitted from the spread and leave the old value unchanged.
     await DatabaseService.updateConversation(id, {
-      folderId: folderId ?? undefined,
-      projectId: projectId ?? undefined,
-      workspaceId: workspaceId ?? undefined,
+      folderId: folderId as string | undefined,
+      projectId: projectId as string | undefined,
+      workspaceId: workspaceId as string | undefined,
     });
   }
 
@@ -79,6 +81,10 @@ class WorkspaceStore {
   async deleteFolder(id: string) {
     await DatabaseService.deleteFolder(id);
     this.folders = this.folders.filter((f) => f.id !== id);
+    // Remove notes and file assets that were inside this folder from local reactive state.
+    // This prevents orphaned UI entries after deletion.
+    this.notes = this.notes.filter((n) => n.folderId !== id);
+    this.files = this.files.filter((f) => f.folderId !== id);
   }
 
   async createNote(
