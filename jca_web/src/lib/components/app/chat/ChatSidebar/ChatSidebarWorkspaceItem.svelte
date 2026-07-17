@@ -79,8 +79,8 @@
 
 	<!-- Expanded content -->
 	{#if isExpanded}
-		<div class="pl-4 pr-1 pb-2 space-y-2 relative" transition:slide>
-			<div class="absolute left-3 top-0 bottom-0 w-px bg-border/40"></div>
+		<div class="pl-2 pr-1 pb-2 space-y-2 relative" transition:slide>
+			<div class="absolute left-1.5 top-0 bottom-0 w-px bg-border/40"></div>
 
 			<!-- Direct workspace chats -->
 			{#if chats}

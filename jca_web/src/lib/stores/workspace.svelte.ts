@@ -37,6 +37,33 @@ class WorkspaceStore {
     this.files = await DatabaseService.getAllFileAssets();
   }
 
+  /**
+   * Refreshes data from the database, but only updates reactive state
+   * if the data has actually changed. This avoids unnecessary re-renders
+   * when called on a polling interval.
+   */
+  async refreshIfChanged() {
+    if (!browser || !this.isInitialized) return;
+    try {
+      const freshWorkspaces = await DatabaseService.getAllWorkspaces();
+      const freshProjects = await DatabaseService.getAllProjects();
+      const freshFolders = await DatabaseService.getAllFolders();
+      const freshNotes = await DatabaseService.getAllNotes();
+      const freshFiles = await DatabaseService.getAllFileAssets();
+
+      const key = (arr: { id: string; updatedAt?: number }[]) =>
+        arr.map(x => `${x.id}:${x.updatedAt ?? 0}`).join('|');
+
+      if (key(freshWorkspaces) !== key(this.workspaces)) this.workspaces = freshWorkspaces;
+      if (key(freshProjects) !== key(this.projects)) this.projects = freshProjects;
+      if (key(freshFolders) !== key(this.folders)) this.folders = freshFolders;
+      if (key(freshNotes) !== key(this.notes)) this.notes = freshNotes;
+      if (key(freshFiles) !== key(this.files)) this.files = freshFiles;
+    } catch (error) {
+      console.error("Failed to refresh workspace data:", error);
+    }
+  }
+
   async createWorkspace(name: string) {
     const ws = await DatabaseService.createWorkspace(name);
     this.workspaces = [...this.workspaces, ws];

@@ -31,6 +31,7 @@
   import { IsMobile } from "$lib/hooks/is-mobile.svelte";
   import { setChatSettingsDialogContext } from "$lib/contexts";
   import { SyncService } from "$lib/services/sync.service";
+  import { workspaceStore } from "$lib/stores/workspace.svelte";
   import { canvasStore } from "$lib/stores/canvas.svelte";
 
   let { children } = $props();
@@ -287,6 +288,51 @@
         SyncService.pull().catch(console.error);
       }
     }
+  });
+
+  // Live reactivity: poll for store updates and listen for sync events
+  $effect(() => {
+    if (!browser) return;
+    // Only start polling once both stores are initialized
+    if (!conversationsStore.isInitialized || !workspaceStore.isInitialized) return;
+
+    const POLL_INTERVAL_MS = 5_000;
+    let intervalId: ReturnType<typeof setInterval> | undefined;
+
+    async function refreshStores() {
+      // Don't refresh if the tab is hidden (save resources)
+      if (document.visibilityState !== 'visible') return;
+      try {
+        await Promise.all([
+          workspaceStore.refreshIfChanged(),
+          conversationsStore.refresh(),
+        ]);
+      } catch (e) {
+        console.warn('[layout] Store refresh failed:', e);
+      }
+    }
+
+    // Immediate sync event handler
+    const handleSyncUpdated = () => {
+      refreshStores();
+    };
+
+    // Also refresh when tab becomes visible again after being hidden
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        refreshStores();
+      }
+    };
+
+    window.addEventListener('jenova-sync-updated', handleSyncUpdated);
+    document.addEventListener('visibilitychange', handleVisibility);
+    intervalId = setInterval(refreshStores, POLL_INTERVAL_MS);
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+      window.removeEventListener('jenova-sync-updated', handleSyncUpdated);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   });
 </script>
 

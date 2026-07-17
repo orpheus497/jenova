@@ -176,7 +176,7 @@
 
 <div class="h-full glass-panel rounded-r-[24px] overflow-hidden flex flex-col font-sans text-[15px]">
 <ScrollArea class="h-full custom-scrollbar">
-	<Sidebar.Header class="top-0 z-10 gap-4 bg-transparent p-6 pb-2">
+	<Sidebar.Header class="top-0 z-10 gap-4 bg-transparent p-4 pb-2">
 		<a href="#/" onclick={handleMobileSidebarItemClick} class="block mb-4">
 			<div class="flex items-center gap-4">
 				<div class="w-12 h-12 rounded-lg border border-primary/30 flex items-center justify-center shadow-[0_0_15px_rgba(43,30,58,0.4)] overflow-hidden shrink-0">
@@ -194,7 +194,7 @@
 		<ChatSidebarActions {handleMobileSidebarItemClick} bind:isSearchModeActive bind:searchQuery />
 	</Sidebar.Header>
 
-	<div class="flex-1 p-6 pt-2 space-y-6">
+	<div class="flex-1 p-3 pt-2 space-y-6">
 
 		<!-- ── WORKSPACES ─────────────────────────────────────────────────── -->
 		<div>

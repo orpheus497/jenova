@@ -1,11 +1,15 @@
 <script lang="ts">
+	import { browser } from '$app/environment';
 	import { cn, type WithElementRef } from '$lib/components/ui/utils.js';
 	import type { HTMLAttributes } from 'svelte/elements';
 	import {
 		SIDEBAR_COOKIE_MAX_AGE,
 		SIDEBAR_COOKIE_NAME,
 		SIDEBAR_WIDTH,
-		SIDEBAR_WIDTH_ICON
+		SIDEBAR_WIDTH_ICON,
+		SIDEBAR_WIDTH_MIN_PX,
+		SIDEBAR_WIDTH_MAX_PX,
+		SIDEBAR_WIDTH_STORAGE_KEY
 	} from './constants.js';
 	import { setSidebar } from './context.svelte.js';
 
@@ -21,6 +25,42 @@
 		open?: boolean;
 		onOpenChange?: (open: boolean) => void;
 	} = $props();
+
+	// Resizable sidebar width – read persisted value from localStorage
+	let sidebarWidthPx = $state(
+		browser
+			? parseInt(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY) || '', 10) || 288
+			: 288
+	);
+	let sidebarWidth = $derived(`${sidebarWidthPx}px`);
+	let isResizing = $state(false);
+
+	function handleResizeStart(e: MouseEvent) {
+		e.preventDefault();
+		isResizing = true;
+
+		const onMouseMove = (e: MouseEvent) => {
+			const newWidth = Math.min(
+				SIDEBAR_WIDTH_MAX_PX,
+				Math.max(SIDEBAR_WIDTH_MIN_PX, e.clientX)
+			);
+			sidebarWidthPx = newWidth;
+		};
+
+		const onMouseUp = () => {
+			isResizing = false;
+			document.removeEventListener('mousemove', onMouseMove);
+			document.removeEventListener('mouseup', onMouseUp);
+			document.body.style.cursor = '';
+			document.body.style.userSelect = '';
+			localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidthPx));
+		};
+
+		document.body.style.cursor = 'col-resize';
+		document.body.style.userSelect = 'none';
+		document.addEventListener('mousemove', onMouseMove);
+		document.addEventListener('mouseup', onMouseUp);
+	}
 
 	const sidebar = setSidebar({
 		open: () => open,
@@ -38,7 +78,7 @@
 
 <div
 	data-slot="sidebar-wrapper"
-	style="--sidebar-width: {SIDEBAR_WIDTH}; --sidebar-width-icon: {SIDEBAR_WIDTH_ICON}; {style}"
+	style="--sidebar-width: {sidebarWidth}; --sidebar-width-icon: {SIDEBAR_WIDTH_ICON}; {style}"
 	class={cn(
 		'group/sidebar-wrapper flex min-h-svh w-full has-data-[variant=inset]:bg-transparent',
 		className
@@ -47,4 +87,17 @@
 	{...restProps}
 >
 	{@render children?.()}
+
+	<!-- Resize handle -->
+	{#if open && !sidebar.isMobile}
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			class="fixed top-0 bottom-0 z-50 w-1 cursor-col-resize transition-colors duration-150 hover:bg-brand-purple/40 active:bg-brand-purple/60 {isResizing ? 'bg-brand-purple/40' : ''}"
+			style="left: {sidebarWidthPx}px;"
+			onmousedown={handleResizeStart}
+			role="separator"
+			aria-orientation="vertical"
+			aria-label="Resize sidebar"
+		></div>
+	{/if}
 </div>

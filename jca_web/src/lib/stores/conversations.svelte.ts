@@ -250,6 +250,26 @@ class ConversationsStore {
   }
 
   /**
+   * Refreshes the conversation list from the database.
+   * Unlike loadConversations(), this preserves the active conversation state
+   * and only updates if the data has actually changed.
+   */
+  async refresh(): Promise<void> {
+    if (!browser || !this.isInitialized) return;
+    try {
+      const freshConversations = await DatabaseService.getAllConversations();
+      // Only update if the data has actually changed (compare by serialized IDs + names + timestamps)
+      const currentKey = this.conversations.map(c => `${c.id}:${c.name}:${c.lastModified}`).join('|');
+      const freshKey = freshConversations.map(c => `${c.id}:${c.name}:${c.lastModified}`).join('|');
+      if (currentKey !== freshKey) {
+        this.conversations = freshConversations;
+      }
+    } catch (error) {
+      console.error("Failed to refresh conversations:", error);
+    }
+  }
+
+  /**
    * Creates a new conversation and navigates to it
    * @param name - Optional name for the conversation
    * @returns The ID of the created conversation

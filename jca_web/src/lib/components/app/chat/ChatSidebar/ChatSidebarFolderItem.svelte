@@ -66,8 +66,8 @@
 	</div>
 
 	{#if isExpanded}
-		<div class="pl-6 mt-1 pb-2 space-y-3 relative" transition:slide>
-			<div class="absolute left-4 top-0 bottom-2 w-px bg-border/40"></div>
+		<div class="pl-2 mt-1 pb-2 space-y-3 relative" transition:slide>
+			<div class="absolute left-1.5 top-0 bottom-2 w-px bg-border/40"></div>
 
 			<!-- Chats in Folder -->
 			<div>
