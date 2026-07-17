@@ -280,6 +280,15 @@ export class DatabaseService {
     systemPrompt: string,
     parentId: string,
   ): Promise<DatabaseMessage> {
+    const parent = await this.getMessage(parentId);
+    if (!parent) {
+      throw new Error(`Parent message ${parentId} not found`);
+    }
+    if (parent.convId !== convId) {
+      throw new Error(
+        `Parent message ${parentId} belongs to conversation ${parent.convId}, expected ${convId}`,
+      );
+    }
     const systemMessage: DatabaseMessage = {
       id: uuid(),
       convId,
@@ -294,19 +303,11 @@ export class DatabaseService {
       method: "POST",
       body: JSON.stringify(systemMessage),
     });
-    const parent = await this.getMessage(parentId);
-    if (parent) {
-      if (parent.convId !== convId) {
-        throw new Error(
-          `Parent message ${parentId} belongs to conversation ${parent.convId}, expected ${convId}`,
-        );
-      }
-      parent.children.push(systemMessage.id);
-      await apiFetch("messages", {
-        method: "POST",
-        body: JSON.stringify(parent),
-      });
-    }
+    parent.children.push(systemMessage.id);
+    await apiFetch("messages", {
+      method: "POST",
+      body: JSON.stringify(parent),
+    });
     return systemMessage;
   }
 
