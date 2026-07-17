@@ -674,6 +674,7 @@ class ChatStore {
     };
 
     let rafPending = false;
+    let rafHandle: number | null = null;
 
     const updateStreamingUI = () => {
       this.setChatStreaming(convId, streamedContent, currentMessageId);
@@ -687,14 +688,19 @@ class ChatStore {
     const scheduleUIUpdate = () => {
       if (rafPending) return;
       rafPending = true;
-      requestAnimationFrame(() => {
+      rafHandle = requestAnimationFrame(() => {
         rafPending = false;
+        rafHandle = null;
         updateStreamingUI();
       });
     };
 
     const cleanupStreamingState = () => {
-      rafPending = false; // Cancel any pending RAF to prevent zombie state
+      if (rafHandle !== null) {
+        cancelAnimationFrame(rafHandle);
+        rafHandle = null;
+      }
+      rafPending = false;
       this.setStreamingActive(false);
       this.setChatLoading(convId, false);
       this.clearChatStreaming(convId);
@@ -997,14 +1003,19 @@ class ChatStore {
     await this.stopGenerationForChat(activeConv.id);
   }
   async stopGenerationForChat(convId: string): Promise<void> {
+    // Capture streaming state BEFORE clearing for partial save
+    const streamingSnapshot = this.getChatStreaming(convId);
+    const processingSnapshot = this.getProcessingState(convId);
     // Abort the request FIRST for immediate responsiveness
     this.abortRequest(convId);
     this.setStreamingActive(false);
     this.setChatLoading(convId, false);
     this.clearChatStreaming(convId);
     this.setProcessingState(convId, null);
-    // Save partial response AFTER abort (fire-and-forget)
-    this.savePartialResponseIfNeeded(convId).catch(console.error);
+    // Save partial response AFTER abort using captured snapshot (fire-and-forget)
+    if (streamingSnapshot && streamingSnapshot.response.trim()) {
+      this.savePartialResponseFromSnapshot(convId, streamingSnapshot, processingSnapshot).catch(console.error);
+    }
   }
   private async savePartialResponseIfNeeded(convId?: string): Promise<void> {
     const conversationId = convId || conversationsStore.activeConversation?.id;
@@ -1042,6 +1053,46 @@ class ChatStore {
         if (updateData.timings) lastMessage.timings = updateData.timings;
       } catch (error) {
         lastMessage.content = streamingState.response;
+        console.error("Failed to save partial response:", error);
+      }
+    }
+  }
+
+  private async savePartialResponseFromSnapshot(
+    convId: string,
+    streamingSnapshot: { response: string; messageId: string },
+    processingSnapshot: ApiProcessingState | null,
+  ): Promise<void> {
+    const messages =
+      convId === conversationsStore.activeConversation?.id
+        ? conversationsStore.activeMessages
+        : await conversationsStore.getConversationMessages(convId);
+    if (!messages.length) return;
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage?.role === MessageRole.ASSISTANT) {
+      try {
+        const updateData: { content: string; timings?: ChatMessageTimings } = {
+          content: streamingSnapshot.response,
+        };
+        if (processingSnapshot) {
+          updateData.timings = {
+            prompt_n: processingSnapshot.promptTokens || 0,
+            prompt_ms: processingSnapshot.promptMs,
+            predicted_n: processingSnapshot.tokensDecoded || 0,
+            cache_n: processingSnapshot.cacheTokens || 0,
+            predicted_ms:
+              processingSnapshot.tokensPerSecond && processingSnapshot.tokensDecoded
+                ? (processingSnapshot.tokensDecoded /
+                    processingSnapshot.tokensPerSecond) *
+                  1000
+                : undefined,
+          };
+        }
+        await DatabaseService.updateMessage(lastMessage.id, updateData);
+        lastMessage.content = streamingSnapshot.response;
+        if (updateData.timings) lastMessage.timings = updateData.timings;
+      } catch (error) {
+        lastMessage.content = streamingSnapshot.response;
         console.error("Failed to save partial response:", error);
       }
     }

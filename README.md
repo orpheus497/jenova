@@ -1,10 +1,10 @@
-<img src="png/splash_top.png" width="100%">
-
 # Jenova Cognitive Architecture
+
+<img src="png/splash_top.png" width="100%" alt="Jenova Cognitive Architecture banner">
 
 The Jenova Cognitive Architecture (JCA) is a Human Cognition Enhancement Project. It is designed to help a single user think more clearly, explore ideas more deeply, and do more with their own creativity and knowledge. Jenova does not replace the user's thinking — it amplifies it.
 
-JCA runs entirely on your laptop. It requires no cloud account, no subscription, and no internet connection after setup. Everything happens on your hardware, under your control.
+JCA runs entirely on your laptop. It requires no cloud account, no subscription, and no background telemetry. Core inference, retrieval, and workspace features work fully offline; optional web search requires network access. Everything happens on your hardware, under your control.
 
 ---
 
@@ -49,7 +49,7 @@ Port assignments:
 
 ### Jenova Workspaces (WebUI)
 
-A browser-based workspace and chat interface built with SvelteKit. Served directly by the intelligence proxy at port 8080. Workspaces are persistent and tied to your local filesystem — your data lives in `~/JCA/Workspaces` as plain Markdown files, readable and editable with any text editor.
+A browser-based workspace and chat interface built with SvelteKit. Served directly by the intelligence proxy at port 8080. Workspace, project, and folder metadata is stored in a local SQLite database managed by the intelligence proxy. Conversations and notes are additionally synced to `~/JCA/Workspaces` as plain Markdown files, readable and editable with any text editor. Physical file assets are stored separately on the local filesystem.
 
 Features include persistent multi-workspace organisation, branching conversation history, real-time token streaming, deep reasoning chain-of-thought support, and a full markdown and LaTeX rendering pipeline.
 
@@ -204,4 +204,4 @@ Licensed under AGPL-3.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 ---
 
-<img src="png/splash_bottom.png" width="100%">
+<img src="png/splash_bottom.png" width="100%" alt="Jenova Cognitive Architecture footer">

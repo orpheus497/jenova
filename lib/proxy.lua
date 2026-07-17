@@ -644,6 +644,9 @@ local function proxy_connection(client_fd, conn_fds)
             local ws_name = request_line:match("[?&]workspace=([^& \r\n]+)")
             local proj_name = request_line:match("[?&]project=([^& \r\n]+)")
             local fold_name = request_line:match("[?&]folder=([^& \r\n]+)")
+            ws_name = ws_name and url_decode(ws_name) or nil
+            proj_name = proj_name and url_decode(proj_name) or nil
+            fold_name = fold_name and url_decode(fold_name) or nil
             local tree = fs_sync.get_fs_tree(ws_name, proj_name, fold_name)
             resp_body = json.encode(tree or {})
         else
@@ -713,8 +716,8 @@ local function proxy_connection(client_fd, conn_fds)
                 status = "400 Bad Request"
             end
         elseif not is_get and headers_raw:match("^POST /api/db/messages/update") then
-            local data = json.decode(body_raw)
-            if data and data.id then
+            local ok_j, data = pcall(json.decode, body_raw)
+            if ok_j and data and data.id then
                 local ok, err = db.partial_update_message(data.id, data)
                 if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
             else

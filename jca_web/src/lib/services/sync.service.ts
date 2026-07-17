@@ -376,6 +376,12 @@ export class SyncService {
             projects,
             workspaces,
           );
+          const oldPath = mdFiles.find((p) => p.includes(`_${conv.id}.md`));
+          if (oldPath && oldPath !== path) {
+            await StorageService.delete(
+              oldPath.split("/").map(encodeURIComponent).join("/"),
+            );
+          }
           await StorageService.save(path, md);
         });
       }
@@ -441,6 +447,10 @@ export class SyncService {
     return this._hierarchyCache;
   }
 
+  static invalidateHierarchyCache(): void {
+    this._hierarchyCache = null;
+  }
+
   static async syncEntity(type: "note" | "chat", id: string) {
     if (!browser) return;
     try {
@@ -472,6 +482,13 @@ export class SyncService {
             projects,
             workspaces,
           );
+          const files = await StorageService.list();
+          const oldPath = files.find((p) => p.includes(`_${conv.id}.md`));
+          if (oldPath && oldPath !== path) {
+            await StorageService.delete(
+              oldPath.split("/").map(encodeURIComponent).join("/"),
+            );
+          }
           await StorageService.save(path, md);
         }
       }

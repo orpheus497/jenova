@@ -112,8 +112,7 @@ function embed.encode(text, task)
   if DIMS == 0 then
     DIMS = #vec
   elseif #vec ~= DIMS then
-    io.write(string.format("[embed] WARNING: Dimension mismatch! Expected %d, got %d. Updating DIMS.\n", DIMS, #vec))
-    DIMS = #vec
+    return nil, string.format("Dimension mismatch: expected %d, got %d. Reinitialize or reindex to change dimensions.", DIMS, #vec)
   end
   return vec, nil
 end
@@ -122,7 +121,6 @@ end
 -- Encode multiple texts in one call
 -------------------------------------------------------------------------------
 function embed.batch_encode(texts, task)
-  -- TODO: Investigate concurrent batch encoding with concurrency limit of 4 for performance improvement
   if not initialized then return nil, "not initialized" end
   if not texts or #texts == 0 then return nil, "empty text list" end
 

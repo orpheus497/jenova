@@ -39,7 +39,7 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(event.request.url);
   const isApiRequest =
-    url.pathname.startsWith("/v1/") || url.pathname.startsWith("/api/");
+    url.pathname.startsWith("/v1/") || url.pathname.startsWith("/api/") || url.pathname === "/props";
 
   async function respond() {
     // API requests: network-only, never cache

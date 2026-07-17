@@ -29,7 +29,9 @@
 	// Resizable sidebar width – read persisted value from localStorage
 	let sidebarWidthPx = $state(
 		browser
-			? parseInt(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY) || '', 10) || 288
+			? Math.min(SIDEBAR_WIDTH_MAX_PX, Math.max(SIDEBAR_WIDTH_MIN_PX,
+					parseInt(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY) || '', 10) || 288
+				))
 			: 288
 	);
 	let sidebarWidth = $derived(`${sidebarWidthPx}px`);
@@ -62,6 +64,19 @@
 		document.addEventListener('mouseup', onMouseUp);
 	}
 
+	function handleResizeKeydown(e: KeyboardEvent) {
+		const step = 10;
+		if (e.key === 'ArrowLeft') {
+			e.preventDefault();
+			sidebarWidthPx = Math.max(SIDEBAR_WIDTH_MIN_PX, sidebarWidthPx - step);
+			localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidthPx));
+		} else if (e.key === 'ArrowRight') {
+			e.preventDefault();
+			sidebarWidthPx = Math.min(SIDEBAR_WIDTH_MAX_PX, sidebarWidthPx + step);
+			localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidthPx));
+		}
+	}
+
 	const sidebar = setSidebar({
 		open: () => open,
 		setOpen: (value: boolean) => {
@@ -90,14 +105,18 @@
 
 	<!-- Resize handle -->
 	{#if open && !sidebar.isMobile}
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			class="fixed top-0 bottom-0 z-50 w-1 cursor-col-resize transition-colors duration-150 hover:bg-brand-purple/40 active:bg-brand-purple/60 {isResizing ? 'bg-brand-purple/40' : ''}"
 			style="left: {sidebarWidthPx}px;"
 			onmousedown={handleResizeStart}
+			onkeydown={handleResizeKeydown}
 			role="separator"
 			aria-orientation="vertical"
 			aria-label="Resize sidebar"
+			aria-valuenow={sidebarWidthPx}
+			aria-valuemin={SIDEBAR_WIDTH_MIN_PX}
+			aria-valuemax={SIDEBAR_WIDTH_MAX_PX}
+			tabindex="0"
 		></div>
 	{/if}
 </div>

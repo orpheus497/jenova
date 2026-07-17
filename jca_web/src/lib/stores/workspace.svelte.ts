@@ -50,19 +50,15 @@ class WorkspaceStore {
       const key = (arr: { id: string; updatedAt?: number }[]) =>
         arr.map(x => `${x.id}:${x.updatedAt ?? 0}`).join('|');
 
-      // Quick check: fetch lightest table first and exit early if unchanged
-      const freshWorkspaces = await DatabaseService.getAllWorkspaces();
-      if (key(freshWorkspaces) === key(this.workspaces)) return;
-
-      // Something changed — fetch the rest
-      this.workspaces = freshWorkspaces;
-      const [freshProjects, freshFolders, freshNotes, freshFiles] = await Promise.all([
+      const [freshWorkspaces, freshProjects, freshFolders, freshNotes, freshFiles] = await Promise.all([
+        DatabaseService.getAllWorkspaces(),
         DatabaseService.getAllProjects(),
         DatabaseService.getAllFolders(),
         DatabaseService.getAllNotes(),
         DatabaseService.getAllFileAssets(),
       ]);
 
+      if (key(freshWorkspaces) !== key(this.workspaces)) this.workspaces = freshWorkspaces;
       if (key(freshProjects) !== key(this.projects)) this.projects = freshProjects;
       if (key(freshFolders) !== key(this.folders)) this.folders = freshFolders;
       if (key(freshNotes) !== key(this.notes)) this.notes = freshNotes;
@@ -75,6 +71,7 @@ class WorkspaceStore {
   async createWorkspace(name: string) {
     const ws = await DatabaseService.createWorkspace(name);
     this.workspaces = [...this.workspaces, ws];
+    SyncService.invalidateHierarchyCache();
     // Auto-create FOCUS note for the workspace
     await this.createFocusNote(null, null, ws.id);
     return ws;
@@ -82,6 +79,7 @@ class WorkspaceStore {
 
   async deleteWorkspace(id: string) {
     await DatabaseService.deleteWorkspace(id);
+    SyncService.invalidateHierarchyCache();
     this.workspaces = this.workspaces.filter((w) => w.id !== id);
     // Also remove child entities from local state
     const childProjectIds = this.projects
@@ -105,6 +103,7 @@ class WorkspaceStore {
   async createProject(workspaceId: string, name: string) {
     const p = await DatabaseService.createProject(workspaceId, name);
     this.projects = [...this.projects, p];
+    SyncService.invalidateHierarchyCache();
     // Auto-create FOCUS note for the project
     await this.createFocusNote(null, p.id, workspaceId);
     return p;
@@ -112,6 +111,7 @@ class WorkspaceStore {
 
   async deleteProject(id: string) {
     await DatabaseService.deleteProject(id);
+    SyncService.invalidateHierarchyCache();
     const childFolderIds = this.folders
       .filter((f) => f.projectId === id)
       .map((f) => f.id);
@@ -128,6 +128,7 @@ class WorkspaceStore {
   async createFolder(projectId: string | null, name: string) {
     const folder = await DatabaseService.createFolder(projectId, name);
     this.folders = [...this.folders, folder];
+    SyncService.invalidateHierarchyCache();
     // Auto-create FOCUS note for the folder
     if (projectId) {
       const project = this.projects.find(p => p.id === projectId);
@@ -191,6 +192,7 @@ class WorkspaceStore {
 
   async deleteFolder(id: string) {
     await DatabaseService.deleteFolder(id);
+    SyncService.invalidateHierarchyCache();
     this.folders = this.folders.filter((f) => f.id !== id);
     // Remove notes and file assets that were inside this folder from local reactive state.
     // This prevents orphaned UI entries after deletion.

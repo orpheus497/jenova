@@ -184,6 +184,9 @@ export class DatabaseService {
       currNode: clonedMessages[clonedMessages.length - 1].id,
       forkedFromConversationId: sourceConvId,
       mcpServerOverrides: sourceConv.mcpServerOverrides,
+      folderId: sourceConv.folderId,
+      projectId: sourceConv.projectId,
+      workspaceId: sourceConv.workspaceId,
     };
     await apiFetch("import", {
       method: "POST",
@@ -286,8 +289,7 @@ export class DatabaseService {
       method: "POST",
       body: JSON.stringify(systemMessage),
     });
-    const msgs = await this.getConversationMessages(convId);
-    const parent = msgs.find((m) => m.id === parentId);
+    const parent = await this.getMessage(parentId);
     if (parent) {
       parent.children.push(systemMessage.id);
       await apiFetch("messages", {

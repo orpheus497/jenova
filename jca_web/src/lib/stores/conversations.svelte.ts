@@ -258,11 +258,22 @@ class ConversationsStore {
     if (!browser || !this.isInitialized) return;
     try {
       const freshConversations = await DatabaseService.getAllConversations();
-      // Only update if the data has actually changed (compare by serialized IDs + names + timestamps)
-      const currentKey = this.conversations.map(c => `${c.id}:${c.name}:${c.lastModified}`).join('|');
-      const freshKey = freshConversations.map(c => `${c.id}:${c.name}:${c.lastModified}`).join('|');
+      // Only update if the data has actually changed (compare by serialized IDs + names + timestamps + placement)
+      const fingerprint = (c: DatabaseConversation) =>
+        `${c.id}:${c.name}:${c.lastModified}:${c.folderId ?? ''}:${c.projectId ?? ''}:${c.workspaceId ?? ''}`;
+      const currentKey = this.conversations.map(fingerprint).join('|');
+      const freshKey = freshConversations.map(fingerprint).join('|');
       if (currentKey !== freshKey) {
         this.conversations = freshConversations;
+      }
+      // Update active conversation from fresh data
+      if (this.activeConversation) {
+        const freshActive = freshConversations.find(c => c.id === this.activeConversation!.id);
+        if (freshActive) {
+          this.activeConversation = freshActive;
+        } else {
+          this.activeConversation = null;
+        }
       }
     } catch (error) {
       console.error("Failed to refresh conversations:", error);

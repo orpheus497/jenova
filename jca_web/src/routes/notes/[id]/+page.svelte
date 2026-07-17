@@ -68,7 +68,7 @@
                         <Edit3 size={16} /> Edit
                     </Button>
                     {#if !selectedNote.isFocusNote}
-                        <Button variant="ghost" size="icon" onclick={() => showDeleteDialog = true} class="text-muted-foreground hover:text-destructive hover:bg-destructive/10">
+                        <Button variant="ghost" size="icon" onclick={() => showDeleteDialog = true} aria-label="Delete note" class="text-muted-foreground hover:text-destructive hover:bg-destructive/10">
                             <Trash2 size={16} />
                         </Button>
                     {/if}
