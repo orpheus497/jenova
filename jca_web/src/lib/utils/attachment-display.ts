@@ -74,15 +74,15 @@ export function getAttachmentDisplayItems(
 
   // Add stored attachments (ChatMessage)
   for (const [index, attachment] of attachments.entries()) {
-    if (attachment.type === 'cache_hit') continue;
-    
+    if (attachment.type === "cache_hit") continue;
+
     const isImage = isImageFile(attachment);
     const isMcpPrompt = isMcpPromptAttachment(attachment);
     const isMcpResource = isMcpResourceAttachment(attachment);
 
     items.push({
       id: `attachment-${index}`,
-      name: (attachment as any).name || '',
+      name: 'name' in attachment && attachment.name != null ? String(attachment.name) : "",
       preview:
         isImage && "base64Url" in attachment ? attachment.base64Url : undefined,
       isImage,

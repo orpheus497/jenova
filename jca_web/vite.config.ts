@@ -92,6 +92,7 @@ export default defineConfig({
       "/v1": "http://localhost:8080",
       "/api/storage": "http://localhost:8080",
       "/api/workspaces": "http://localhost:8080",
+      "/api/db": "http://localhost:8080",
       "/props": "http://localhost:8080",
       "/models": "http://localhost:8080",
       "/cors-proxy": "http://localhost:8080",

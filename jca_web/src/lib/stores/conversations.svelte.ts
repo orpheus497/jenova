@@ -125,8 +125,8 @@ class ConversationsStore {
    * Registered by chatStore to enable cross-store updates without circular dependency.
    */
   private messageUpdateCallback:
-    ((messageId: string, updates: Partial<DatabaseMessage>) => void) | null =
-    null;
+    | ((messageId: string, updates: Partial<DatabaseMessage>) => void)
+    | null = null;
 
   /**
    *
@@ -250,6 +250,37 @@ class ConversationsStore {
   }
 
   /**
+   * Refreshes the conversation list from the database.
+   * Unlike loadConversations(), this preserves the active conversation state
+   * and only updates if the data has actually changed.
+   */
+  async refresh(): Promise<void> {
+    if (!browser || !this.isInitialized) return;
+    try {
+      const freshConversations = await DatabaseService.getAllConversations();
+      // Only update if the data has actually changed (compare by serialized IDs + names + timestamps + placement)
+      const fingerprint = (c: DatabaseConversation) =>
+        `${c.id}:${c.name}:${c.lastModified}:${c.folderId ?? ''}:${c.projectId ?? ''}:${c.workspaceId ?? ''}`;
+      const currentKey = this.conversations.map(fingerprint).join('|');
+      const freshKey = freshConversations.map(fingerprint).join('|');
+      if (currentKey !== freshKey) {
+        this.conversations = freshConversations;
+      }
+      // Update active conversation from fresh data
+      if (this.activeConversation) {
+        const freshActive = freshConversations.find(c => c.id === this.activeConversation!.id);
+        if (freshActive) {
+          this.activeConversation = freshActive;
+        } else {
+          this.activeConversation = null;
+        }
+      }
+    } catch (error) {
+      console.error("Failed to refresh conversations:", error);
+    }
+  }
+
+  /**
    * Creates a new conversation and navigates to it
    * @param name - Optional name for the conversation
    * @returns The ID of the created conversation
@@ -341,6 +372,7 @@ class ConversationsStore {
 
       if (options?.deleteWithForks) {
         // Collect all descendants recursively
+        // eslint-disable-next-line svelte/prefer-svelte-reactivity
         const idsToRemove = new Set([convId]);
         const queue = [convId];
         while (queue.length > 0) {
@@ -498,23 +530,31 @@ class ConversationsStore {
   async moveConversation(
     convId: string,
     folderId: string | null,
+    projectId: string | null = null,
+    workspaceId: string | null = null,
   ): Promise<void> {
     try {
       await DatabaseService.updateConversation(convId, {
-        folderId: folderId ?? undefined,
+        folderId,
+        projectId,
+        workspaceId,
       });
 
       const convIndex = this.conversations.findIndex((c) => c.id === convId);
 
       if (convIndex !== -1) {
-        this.conversations[convIndex].folderId = folderId ?? undefined;
+        this.conversations[convIndex].folderId = folderId;
+        this.conversations[convIndex].projectId = projectId;
+        this.conversations[convIndex].workspaceId = workspaceId;
         this.conversations = [...this.conversations];
       }
 
       if (this.activeConversation?.id === convId) {
         this.activeConversation = {
           ...this.activeConversation,
-          folderId: folderId ?? undefined,
+          folderId,
+          projectId,
+          workspaceId,
         };
       }
       SyncService.syncEntity("chat", convId);

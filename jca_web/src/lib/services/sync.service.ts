@@ -2,7 +2,10 @@ import { browser } from "$app/environment";
 import { StorageService } from "./storage.service";
 import { DatabaseService } from "./database.service";
 import { MarkdownService } from "./markdown.service";
+import { MessageRole } from "$lib/enums";
 import type {
+  DatabaseWorkspace,
+  DatabaseProject,
   DatabaseFolder,
   DatabaseNote,
   DatabaseConversation,
@@ -12,6 +15,78 @@ export interface SyncStats {
   created: number;
   updated: number;
   deleted: number;
+}
+
+const sanitizeSegment = (s: string) =>
+  s.replace(/[/\\]/g, "_").replace(/^\.+/, "");
+const encodeSegment = (s: string) => encodeURIComponent(sanitizeSegment(s));
+
+function getNotePath(
+  note: DatabaseNote,
+  folders: DatabaseFolder[],
+  projects: DatabaseProject[],
+  workspaces: DatabaseWorkspace[],
+) {
+  if (note.folderId) {
+    const folder = folders.find((f) => f.id === note.folderId);
+    const project = folder
+      ? projects.find((p) => p.id === folder.projectId)
+      : null;
+    const workspace = project
+      ? workspaces.find((w) => w.id === project.workspaceId)
+      : null;
+    if (workspace && project && folder) {
+      return `${encodeSegment(workspace.name)}/${encodeSegment(project.name)}/${encodeSegment(folder.name)}/${encodeSegment(note.title)}_${note.id}.md`;
+    }
+  } else if (note.projectId) {
+    const project = projects.find((p) => p.id === note.projectId);
+    const workspace = project
+      ? workspaces.find((w) => w.id === project.workspaceId)
+      : null;
+    if (workspace && project) {
+      return `${encodeSegment(workspace.name)}/${encodeSegment(project.name)}/${encodeSegment(note.title)}_${note.id}.md`;
+    }
+  } else if (note.workspaceId) {
+    const workspace = workspaces.find((w) => w.id === note.workspaceId);
+    if (workspace) {
+      return `${encodeSegment(workspace.name)}/${encodeSegment(note.title)}_${note.id}.md`;
+    }
+  }
+  return `unassigned/${encodeSegment(note.title)}_${note.id}.md`;
+}
+
+function getConversationPath(
+  conv: DatabaseConversation,
+  folders: DatabaseFolder[],
+  projects: DatabaseProject[],
+  workspaces: DatabaseWorkspace[],
+) {
+  if (conv.folderId) {
+    const folder = folders.find((f) => f.id === conv.folderId);
+    const project = folder
+      ? projects.find((p) => p.id === folder.projectId)
+      : null;
+    const workspace = project
+      ? workspaces.find((w) => w.id === project.workspaceId)
+      : null;
+    if (workspace && project && folder) {
+      return `${encodeSegment(workspace.name)}/${encodeSegment(project.name)}/${encodeSegment(folder.name)}/${encodeSegment(conv.name)}.md`;
+    }
+  } else if (conv.projectId) {
+    const project = projects.find((p) => p.id === conv.projectId);
+    const workspace = project
+      ? workspaces.find((w) => w.id === project.workspaceId)
+      : null;
+    if (workspace && project) {
+      return `${encodeSegment(workspace.name)}/${encodeSegment(project.name)}/${encodeSegment(conv.name)}.md`;
+    }
+  } else if (conv.workspaceId) {
+    const workspace = workspaces.find((w) => w.id === conv.workspaceId);
+    if (workspace) {
+      return `${encodeSegment(workspace.name)}/${encodeSegment(conv.name)}.md`;
+    }
+  }
+  return `unassigned/${encodeSegment(conv.name)}.md`;
 }
 
 export class SyncService {
@@ -71,7 +146,9 @@ export class SyncService {
       if (mdFiles.length > 0) {
         const allConvs = await DatabaseService.getAllConversations();
         const allNotes = await DatabaseService.getAllNotes();
-        const allFolders = await DatabaseService.getProjectFolders(null);
+        const allFolders = await DatabaseService.getAllFolders();
+        const allProjects = await DatabaseService.getAllProjects();
+        const allWorkspaces = await DatabaseService.getAllWorkspaces();
 
         const limit = 5;
         const active: Promise<void>[] = [];
@@ -79,51 +156,70 @@ export class SyncService {
           const content = await StorageService.get(path);
           if (!content) return;
 
-          const parts = path.split("/");
-          const fileName = parts[parts.length - 1].replace(".md", "");
-          const isNote = path.includes("/Notes/");
-          const isChat = path.includes("/Chats/");
+          const parts = path.split("/").map(decodeURIComponent);
+          const rawFileName = parts[parts.length - 1];
+          const noteIdRegex =
+            /_([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\.md$/i;
+          const noteMatch = rawFileName.match(noteIdRegex);
+          const isNote = noteMatch !== null;
+          // A file is only treated as a chat if it's in a workspace-scoped path (≥2 segments)
+          // and not identified as a note. This prevents stray Markdown files from being
+          // incorrectly loaded as conversation histories.
+          const isChat = !isNote && content.trim().startsWith("# topic:");
+
+          let workspaceId: string | null = null;
+          let projectId: string | null = null;
+          let folderId: string | null = null;
+
+          if (parts.length === 4) {
+            const ws = allWorkspaces.find((w) => w.name === parts[0]);
+            if (ws) {
+              workspaceId = ws.id;
+              const proj = allProjects.find(
+                (p) => p.name === parts[1] && p.workspaceId === ws.id,
+              );
+              if (proj) {
+                projectId = proj.id;
+                const fold = allFolders.find(
+                  (f) => f.name === parts[2] && f.projectId === proj.id,
+                );
+                if (fold) folderId = fold.id;
+              }
+            }
+          } else if (parts.length === 3) {
+            const ws = allWorkspaces.find((w) => w.name === parts[0]);
+            if (ws) {
+              workspaceId = ws.id;
+              const proj = allProjects.find(
+                (p) => p.name === parts[1] && p.workspaceId === ws.id,
+              );
+              if (proj) projectId = proj.id;
+            }
+          } else if (parts.length === 2) {
+            if (parts[0] !== "unassigned") {
+              const ws = allWorkspaces.find((w) => w.name === parts[0]);
+              if (ws) workspaceId = ws.id;
+            }
+          }
 
           if (isNote) {
-            const lastUnderscore = fileName.lastIndexOf("_");
-            let noteId = "";
-            let title = fileName;
-            let note: any;
-
-            if (lastUnderscore !== -1) {
-              const potentialId = fileName.substring(lastUnderscore + 1);
-              note = allNotes.find((n) => n.id === potentialId);
-              if (note) {
-                try {
-                  title = decodeURIComponent(fileName.substring(0, lastUnderscore));
-                } catch {
-                  title = fileName.substring(0, lastUnderscore);
-                }
-                noteId = potentialId;
-              }
-            }
-
-            const notesIndex = parts.indexOf("Notes");
-            let parsedFolderName: string | null = null;
-            if (notesIndex !== -1 && parts.length > notesIndex + 2) {
-              parsedFolderName = parts.slice(notesIndex + 1, parts.length - 1).join("/");
-              parsedFolderName = parsedFolderName.split("/").map(decodeURIComponent).join("/");
-            }
-            const folder = parsedFolderName ? allFolders.find(f => f.name === parsedFolderName) : null;
-            const parsedFolderId = folder ? folder.id : null;
+            const noteId = noteMatch[1];
+            const title = rawFileName.replace(noteIdRegex, "");
+            let note = allNotes.find((n) => n.id === noteId);
 
             if (!note) {
-              try {
-                title = decodeURIComponent(fileName);
-              } catch {
-                title = fileName;
-              }
-              note = allNotes.find((n) => n.title === title && n.folderId === parsedFolderId);
+              note = allNotes.find(
+                (n) =>
+                  n.title === title &&
+                  n.folderId === folderId &&
+                  n.projectId === projectId &&
+                  n.workspaceId === workspaceId,
+              );
             }
 
             if (note) {
               let needsUpdate = false;
-              const updates: any = { updatedAt: Date.now() };
+              const updates: Partial<DatabaseNote> = { updatedAt: Date.now() };
 
               if (note.title !== title) {
                 updates.title = title;
@@ -133,8 +229,16 @@ export class SyncService {
                 updates.content = content;
                 needsUpdate = true;
               }
-              if (note.folderId !== parsedFolderId) {
-                updates.folderId = parsedFolderId;
+              if (note.folderId !== folderId) {
+                updates.folderId = folderId;
+                needsUpdate = true;
+              }
+              if (note.projectId !== projectId) {
+                updates.projectId = projectId;
+                needsUpdate = true;
+              }
+              if (note.workspaceId !== workspaceId) {
+                updates.workspaceId = workspaceId;
                 needsUpdate = true;
               }
 
@@ -144,31 +248,40 @@ export class SyncService {
                 stats.updated++;
               }
             } else {
-              await DatabaseService.createNote(parsedFolderId, title, content);
+              await DatabaseService.createNote(
+                folderId,
+                projectId,
+                workspaceId,
+                title,
+                content,
+              );
               changed = true;
               stats.created++;
             }
           } else if (isChat) {
+            const chatName = rawFileName.replace(/\.md$/, "");
             const { conv: parsedConv, messages: parsedMessages } =
               MarkdownService.fromMarkdown(content);
             const conv = allConvs.find(
-              (c) => c.name === (parsedConv.name || fileName),
+              (c) =>
+                c.name === (parsedConv.name || chatName) &&
+                c.folderId === folderId &&
+                c.projectId === projectId &&
+                c.workspaceId === workspaceId,
             );
 
             if (conv && parsedMessages.length > 0) {
-              // Clear existing messages and reconstruct the tree properly
               await DatabaseService.deleteConversationMessages(conv.id);
-
-              // Build a linear chain: root → msg1 → msg2 → ...
-              // This preserves the conversation order from the markdown file.
               const rootId = await DatabaseService.createRootMessage(conv.id);
               let parentId: string = rootId;
 
+              const validRoles = new Set<string>(Object.values(MessageRole));
               for (const msg of parsedMessages) {
+                const role = validRoles.has(msg.role) ? (msg.role as MessageRole) : MessageRole.USER;
                 const created = await DatabaseService.createMessageBranch(
                   {
                     convId: conv.id,
-                    role: msg.role as any,
+                    role,
                     content: msg.content || "",
                     timestamp: msg.timestamp || Date.now(),
                     type: "text",
@@ -184,7 +297,6 @@ export class SyncService {
           }
         });
 
-        // Execute queue with concurrency limit of 5
         for (const task of queue) {
           const p = (async () => {
             try {
@@ -211,8 +323,6 @@ export class SyncService {
 
       console.log("[Sync] Pull complete", stats);
       if (changed) {
-        // Signal reactive stores to reload instead of hard page refresh.
-        // This avoids data loss if the user is mid-conversation.
         window.dispatchEvent(new CustomEvent("jenova-sync-updated"));
       }
       return stats;
@@ -231,31 +341,24 @@ export class SyncService {
       console.log("[Sync] Starting filesystem sync...");
 
       const workspaces = await DatabaseService.getAllWorkspaces();
+      const projects = await DatabaseService.getAllProjects();
+      const allFolders = await DatabaseService.getAllFolders();
       const allNotes = await DatabaseService.getAllNotes();
-      const allFolders = await DatabaseService.getProjectFolders(null);
       const allConvs = await DatabaseService.getAllConversations();
-      
+
       const files = await StorageService.list();
       const mdFiles = files.filter((f) => f.endsWith(".md"));
 
-      // Hierarchy: Workspace / Project / Folder
-      // For now, if no workspace/project, use "default"
-
-      const defaultWorkspace = workspaces[0]?.name || "default";
-
       const queue: (() => Promise<void>)[] = [];
 
-      // Notes are synced automatically by the backend via proxy.lua -> fs_sync.lua
-      // We retain a frontend fallback here until backend persistence supports every note shape (e.g., unassigned).
       for (const note of allNotes) {
         queue.push(async () => {
-          const folder = allFolders.find((f) => f.id === note.folderId);
-          const folderSegment = folder?.name ? `Notes/${folder.name.split("/").map(encodeURIComponent).join("/")}` : "Notes";
-          const path = `${encodeURIComponent(defaultWorkspace)}/${folderSegment}/${encodeURIComponent(note.title)}_${note.id}.md`;
-          
-          const oldPath = mdFiles.find(p => p.includes(`_${note.id}.md`));
+          const path = getNotePath(note, allFolders, projects, workspaces);
+          const oldPath = mdFiles.find((p) => p.includes(`_${note.id}.md`));
           if (oldPath && oldPath !== path) {
-            await StorageService.delete(oldPath.split("/").map(encodeURIComponent).join("/"));
+            await StorageService.delete(
+              oldPath.split("/").map(encodeURIComponent).join("/"),
+            );
           }
           await StorageService.save(path, note.content || "");
         });
@@ -266,10 +369,19 @@ export class SyncService {
           const messages = await DatabaseService.getConversationMessages(
             conv.id,
           );
-          const folder = allFolders.find((f) => f.id === conv.folderId);
-          const folderName = folder?.name || "Chats";
           const md = MarkdownService.toMarkdown(conv, messages);
-          const path = `${defaultWorkspace}/${folderName}/${conv.name}.md`;
+          const path = getConversationPath(
+            conv,
+            allFolders,
+            projects,
+            workspaces,
+          );
+          const oldPath = mdFiles.find((p) => p.includes(`_${conv.id}.md`));
+          if (oldPath && oldPath !== path) {
+            await StorageService.delete(
+              oldPath.split("/").map(encodeURIComponent).join("/"),
+            );
+          }
           await StorageService.save(path, md);
         });
       }
@@ -314,25 +426,48 @@ export class SyncService {
     }
   }
 
+  private static _hierarchyCache: {
+    workspaces: DatabaseWorkspace[];
+    projects: DatabaseProject[];
+    folders: DatabaseFolder[];
+    timestamp: number;
+  } | null = null;
+
+  private static async getHierarchy() {
+    const now = Date.now();
+    if (this._hierarchyCache && now - this._hierarchyCache.timestamp < 10000) {
+      return this._hierarchyCache;
+    }
+    const [workspaces, projects, folders] = await Promise.all([
+      DatabaseService.getAllWorkspaces(),
+      DatabaseService.getAllProjects(),
+      DatabaseService.getAllFolders(),
+    ]);
+    this._hierarchyCache = { workspaces, projects, folders, timestamp: now };
+    return this._hierarchyCache;
+  }
+
+  static invalidateHierarchyCache(): void {
+    this._hierarchyCache = null;
+  }
+
   static async syncEntity(type: "note" | "chat", id: string) {
     if (!browser) return;
     try {
-      const workspaces = await DatabaseService.getAllWorkspaces();
-      const defaultWorkspace = workspaces[0]?.name || "default";
-      const allFolders = await DatabaseService.getProjectFolders(null);
+      const { workspaces, projects, folders: allFolders } =
+        await this.getHierarchy();
 
       if (type === "note") {
         const notes = await DatabaseService.getAllNotes();
         const note = notes.find((n) => n.id === id);
         if (note) {
-          const folder = allFolders.find((f) => f.id === note.folderId);
-          const folderSegment = folder?.name ? `Notes/${folder.name.split("/").map(encodeURIComponent).join("/")}` : "Notes";
-          const path = `${encodeURIComponent(defaultWorkspace)}/${folderSegment}/${encodeURIComponent(note.title)}_${note.id}.md`;
-          
+          const path = getNotePath(note, allFolders, projects, workspaces);
           const files = await StorageService.list();
-          const oldPath = files.find(p => p.includes(`_${note.id}.md`));
+          const oldPath = files.find((p) => p.includes(`_${note.id}.md`));
           if (oldPath && oldPath !== path) {
-            await StorageService.delete(oldPath.split("/").map(encodeURIComponent).join("/"));
+            await StorageService.delete(
+              oldPath.split("/").map(encodeURIComponent).join("/"),
+            );
           }
           await StorageService.save(path, note.content || "");
         }
@@ -340,10 +475,20 @@ export class SyncService {
         const conv = await DatabaseService.getConversation(id);
         if (conv) {
           const messages = await DatabaseService.getConversationMessages(id);
-          const folder = allFolders.find((f) => f.id === conv.folderId);
-          const folderName = folder?.name || "Chats";
           const md = MarkdownService.toMarkdown(conv, messages);
-          const path = `${defaultWorkspace}/${folderName}/${conv.name}.md`;
+          const path = getConversationPath(
+            conv,
+            allFolders,
+            projects,
+            workspaces,
+          );
+          const files = await StorageService.list();
+          const oldPath = files.find((p) => p.includes(`_${conv.id}.md`));
+          if (oldPath && oldPath !== path) {
+            await StorageService.delete(
+              oldPath.split("/").map(encodeURIComponent).join("/"),
+            );
+          }
           await StorageService.save(path, md);
         }
       }

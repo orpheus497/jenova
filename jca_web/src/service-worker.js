@@ -37,15 +37,22 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
+  const url = new URL(event.request.url);
+  const isApiRequest =
+    url.pathname.startsWith("/v1/") || url.pathname.startsWith("/api/") || url.pathname === "/props";
+
   async function respond() {
-    const url = new URL(event.request.url);
+    // API requests: network-only, never cache
+    if (isApiRequest) {
+      return fetch(event.request);
+    }
+
+    // Non-API requests: cache-first
     const cache = await caches.open(CACHE);
 
-    // Try the cache first
     const cachedResponse = await cache.match(event.request);
     if (cachedResponse) return cachedResponse;
 
-    // Fallback to network
     try {
       const response = await fetch(event.request);
 
@@ -55,7 +62,6 @@ self.addEventListener("fetch", (event) => {
 
       return response;
     } catch {
-      // If network fails and we have it in cache (should be handled by match above)
       return cachedResponse || new Response("Offline", { status: 503 });
     }
   }

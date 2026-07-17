@@ -292,8 +292,14 @@ elif [ "$SKIP_LLAMA" = "0" ]; then
     # we have a workaround in install-dependencies.sh using spirv-cross.
     if [ "$JENOVA_OS" = "freebsd" ] && [ ! -f "/usr/local/include/spirv/unified1/spirv.hpp" ]; then
         warn "spirv-headers missing — check if install-dependencies.sh was run"
+    elif [ "$JENOVA_OS" != "freebsd" ] && \
+         [ ! -f "/usr/include/spirv/unified1/spirv.hpp" ] && \
+         [ ! -f "/opt/homebrew/include/spirv/unified1/spirv.hpp" ] && \
+         [ ! -f "/usr/local/include/spirv/unified1/spirv.hpp" ]; then
+        warn "spirv-headers not found (optional) — install: $_spirv_hint"
+        WARNINGS=$((WARNINGS + 1))
     else
-        check_optional "spirv-headers" "$_spirv_hint"
+        ok "spirv-headers (optional)"
     fi
 
     if [ "$JENOVA_GLSLC_OK" = "0" ]; then

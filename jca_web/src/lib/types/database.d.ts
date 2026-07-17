@@ -17,8 +17,9 @@ export interface DatabaseConversation {
   name: string;
   mcpServerOverrides?: McpServerOverride[];
   forkedFromConversationId?: string;
-  folderId?: string;
-  projectId?: string;
+  folderId?: string | null;
+  projectId?: string | null;
+  workspaceId?: string | null;
 }
 
 export interface DatabaseWorkspace {
@@ -41,14 +42,19 @@ export interface DatabaseFolder {
 export interface DatabaseNote {
   id: string;
   folderId: string | null;
+  projectId?: string | null;
+  workspaceId?: string | null;
   title: string;
   content: string;
   updatedAt: number;
+  isFocusNote?: boolean;
 }
 
 export interface DatabaseFileAsset {
   id: string;
   folderId: string | null;
+  projectId?: string | null;
+  workspaceId?: string | null;
   name: string;
   size: number;
   type: string;
@@ -156,4 +162,5 @@ export type ExportedConversation = {
 };
 
 export type ExportedConversations =
-  ExportedConversation | ExportedConversation[];
+  | ExportedConversation
+  | ExportedConversation[];

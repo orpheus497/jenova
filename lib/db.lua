@@ -60,6 +60,19 @@ function db.init(db_path)
     end
     print("[db] Connected to SQLite database at " .. db_path)
 
+    -- Performance pragmas
+    local pragmas = {
+        "PRAGMA journal_mode=WAL;",
+        "PRAGMA synchronous=NORMAL;",
+        "PRAGMA busy_timeout=5000;",
+        "PRAGMA cache_size=-8000;",
+        "PRAGMA mmap_size=67108864;",
+    }
+    for _, pragma in ipairs(pragmas) do
+        local p_errmsg = ffi.new("char*[1]")
+        sql3.sqlite3_exec(db_ptr[0], pragma, nil, nil, p_errmsg)
+    end
+
     -- Create Tables
     local schema = [[
         CREATE TABLE IF NOT EXISTS conversations (
@@ -69,6 +82,7 @@ function db.init(db_path)
             currNode TEXT,
             folderId TEXT,
             projectId TEXT,
+            workspaceId TEXT,
             forkedFromConversationId TEXT,
             mcpServerOverrides TEXT,
             is_deleted INTEGER DEFAULT 0
@@ -110,14 +124,19 @@ function db.init(db_path)
         CREATE TABLE IF NOT EXISTS notes (
             id TEXT PRIMARY KEY,
             folderId TEXT,
+            projectId TEXT,
+            workspaceId TEXT,
             title TEXT,
             content TEXT,
             updatedAt INTEGER,
+            isFocusNote INTEGER DEFAULT 0,
             is_deleted INTEGER DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS fileAssets (
             id TEXT PRIMARY KEY,
             folderId TEXT,
+            projectId TEXT,
+            workspaceId TEXT,
             name TEXT,
             size INTEGER,
             type TEXT,
@@ -135,6 +154,7 @@ function db.init(db_path)
             timestamp INTEGER
         );
     ]]
+
     
     local errmsg = ffi.new("char*[1]")
     rc = sql3.sqlite3_exec(db_ptr[0], schema, nil, nil, errmsg)
@@ -152,7 +172,13 @@ function db.init(db_path)
         "ALTER TABLE projects ADD COLUMN is_deleted INTEGER DEFAULT 0;",
         "ALTER TABLE folders ADD COLUMN is_deleted INTEGER DEFAULT 0;",
         "ALTER TABLE notes ADD COLUMN is_deleted INTEGER DEFAULT 0;",
-        "ALTER TABLE fileAssets ADD COLUMN is_deleted INTEGER DEFAULT 0;"
+        "ALTER TABLE fileAssets ADD COLUMN is_deleted INTEGER DEFAULT 0;",
+        "ALTER TABLE conversations ADD COLUMN workspaceId TEXT;",
+        "ALTER TABLE notes ADD COLUMN projectId TEXT;",
+        "ALTER TABLE notes ADD COLUMN workspaceId TEXT;",
+        "ALTER TABLE fileAssets ADD COLUMN projectId TEXT;",
+        "ALTER TABLE fileAssets ADD COLUMN workspaceId TEXT;",
+        "ALTER TABLE notes ADD COLUMN isFocusNote INTEGER DEFAULT 0;"
     }
     for _, mig in ipairs(migrations) do
         local mig_errmsg = ffi.new("char*[1]")
@@ -284,12 +310,12 @@ end
 
 function db.insert_conversation(c)
     local sql = [[
-        INSERT INTO conversations (id, name, lastModified, currNode, folderId, projectId, forkedFromConversationId, mcpServerOverrides, is_deleted)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+        INSERT INTO conversations (id, name, lastModified, currNode, folderId, projectId, workspaceId, forkedFromConversationId, mcpServerOverrides, is_deleted)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
     ]]
     local overrides = c.mcpServerOverrides and json.encode(c.mcpServerOverrides) or nil
     local params = {
-        c.id, c.name, c.lastModified, c.currNode, c.folderId, c.projectId, c.forkedFromConversationId, overrides
+        c.id, c.name, c.lastModified, c.currNode, c.folderId, c.projectId, c.workspaceId, c.forkedFromConversationId, overrides
     }
     local _, err = execute_query(sql, params)
     return err == nil, err
@@ -298,12 +324,12 @@ end
 function db.update_conversation(c)
     local sql = [[
         UPDATE conversations SET 
-            name = ?, lastModified = ?, currNode = ?, folderId = ?, projectId = ?, forkedFromConversationId = ?, mcpServerOverrides = ?
+            name = ?, lastModified = ?, currNode = ?, folderId = ?, projectId = ?, workspaceId = ?, forkedFromConversationId = ?, mcpServerOverrides = ?
         WHERE id = ?
     ]]
     local overrides = c.mcpServerOverrides and json.encode(c.mcpServerOverrides) or nil
     local params = {
-        c.name, c.lastModified, c.currNode, c.folderId, c.projectId, c.forkedFromConversationId, overrides, c.id
+        c.name, c.lastModified, c.currNode, c.folderId, c.projectId, c.workspaceId, c.forkedFromConversationId, overrides, c.id
     }
     local _, err = execute_query(sql, params)
     return err == nil, err
@@ -356,6 +382,19 @@ function db.delete_conversation(id, delete_with_forks)
         return false, err3
     end
     return true
+end
+
+function db.get_deleted_conversations()
+    local sql = "SELECT * FROM conversations WHERE is_deleted = 1 ORDER BY lastModified DESC"
+    local rows, err = execute_query(sql)
+    if err then return nil, err end
+    for _, row in ipairs(rows or {}) do
+        if row.mcpServerOverrides and row.mcpServerOverrides ~= "" then
+            local ok, decoded = pcall(json.decode, row.mcpServerOverrides)
+            if ok then row.mcpServerOverrides = decoded end
+        end
+    end
+    return rows or {}
 end
 
 function db.get_messages(convId)
@@ -453,6 +492,36 @@ function db.update_message(m)
     return err == nil, err
 end
 
+function db.partial_update_message(id, updates)
+    -- Map frontend field names to SQLite column names
+    local field_map = {
+        type=true, role=true, timestamp=true, parent=true, children=true,
+        content=true, thinking=true, toolCalls=true, extra=true, model=true,
+        timings=true, reasoningContent="thinking"
+    }
+    local fields = {}
+    local params = {}
+    for k, v in pairs(updates) do
+        local col = field_map[k]
+        if col then
+            -- col is either true (same name) or a string (mapped name)
+            local col_name = (col == true) and k or col
+            if k == "children" and type(v) == "table" then v = json.encode(v)
+            elseif k == "extra" and type(v) == "table" then v = json.encode(v)
+            elseif k == "timings" and type(v) == "table" then v = json.encode(v)
+            elseif k == "toolCalls" and type(v) == "table" then v = json.encode(v)
+            end
+            table.insert(fields, col_name .. " = ?")
+            table.insert(params, v)
+        end
+    end
+    if #fields == 0 then return true end
+    table.insert(params, id)
+    local sql = "UPDATE messages SET " .. table.concat(fields, ", ") .. " WHERE id = ? AND is_deleted = 0"
+    local _, err = execute_query(sql, params)
+    return err == nil, err
+end
+
 function db.delete_message(id)
     local sql = "UPDATE messages SET is_deleted = 1 WHERE id = ?"
     local _, err = execute_query(sql, {id})
@@ -530,16 +599,41 @@ function db.delete_workspace(id)
     local _, err1 = execute_query("UPDATE workspaces SET is_deleted = 1 WHERE id = ?", {id})
     local _, err2 = execute_query("UPDATE projects SET is_deleted = 1 WHERE workspaceId = ?", {id})
     local _, err3 = execute_query("UPDATE folders SET is_deleted = 1 WHERE projectId IN (SELECT id FROM projects WHERE workspaceId = ?)", {id})
-    local _, err4 = execute_query("UPDATE notes SET is_deleted = 1 WHERE folderId IN (SELECT id FROM folders WHERE projectId IN (SELECT id FROM projects WHERE workspaceId = ?))", {id})
-    local _, err5 = execute_query("UPDATE fileAssets SET is_deleted = 1 WHERE folderId IN (SELECT id FROM folders WHERE projectId IN (SELECT id FROM projects WHERE workspaceId = ?))", {id})
-    if err1 or err2 or err3 or err4 or err5 then
+    local _, err4 = execute_query([[
+        UPDATE notes SET is_deleted = 1 
+        WHERE folderId IN (SELECT id FROM folders WHERE projectId IN (SELECT id FROM projects WHERE workspaceId = ?))
+           OR projectId IN (SELECT id FROM projects WHERE workspaceId = ?)
+           OR workspaceId = ?
+    ]], {id, id, id})
+    local _, err5 = execute_query([[
+        UPDATE fileAssets SET is_deleted = 1 
+        WHERE folderId IN (SELECT id FROM folders WHERE projectId IN (SELECT id FROM projects WHERE workspaceId = ?))
+           OR projectId IN (SELECT id FROM projects WHERE workspaceId = ?)
+           OR workspaceId = ?
+    ]], {id, id, id})
+    local _, err6 = execute_query([[
+        UPDATE conversations SET is_deleted = 1 
+        WHERE folderId IN (SELECT id FROM folders WHERE projectId IN (SELECT id FROM projects WHERE workspaceId = ?))
+           OR projectId IN (SELECT id FROM projects WHERE workspaceId = ?)
+           OR workspaceId = ?
+    ]], {id, id, id})
+    local _, err_msg = execute_query([[
+        UPDATE messages SET is_deleted = 1 
+        WHERE convId IN (
+            SELECT id FROM conversations 
+            WHERE folderId IN (SELECT id FROM folders WHERE projectId IN (SELECT id FROM projects WHERE workspaceId = ?))
+               OR projectId IN (SELECT id FROM projects WHERE workspaceId = ?)
+               OR workspaceId = ?
+        )
+    ]], {id, id, id})
+    if err1 or err2 or err3 or err4 or err5 or err6 or err_msg then
         execute_query("ROLLBACK")
-        return false, err1 or err2 or err3 or err4 or err5
+        return false, err1 or err2 or err3 or err4 or err5 or err6 or err_msg
     end
-    local _, err6 = execute_query("COMMIT")
-    if err6 then
+    local _, err7 = execute_query("COMMIT")
+    if err7 then
         execute_query("ROLLBACK")
-        return false, err6
+        return false, err7
     end
     return true
 end
@@ -567,16 +661,24 @@ function db.delete_project(id)
     execute_query("BEGIN TRANSACTION")
     local _, err1 = execute_query("UPDATE projects SET is_deleted = 1 WHERE id = ?", {id})
     local _, err2 = execute_query("UPDATE folders SET is_deleted = 1 WHERE projectId = ?", {id})
-    local _, err3 = execute_query("UPDATE notes SET is_deleted = 1 WHERE folderId IN (SELECT id FROM folders WHERE projectId = ?)", {id})
-    local _, err4 = execute_query("UPDATE fileAssets SET is_deleted = 1 WHERE folderId IN (SELECT id FROM folders WHERE projectId = ?)", {id})
-    if err1 or err2 or err3 or err4 then
+    local _, err3 = execute_query("UPDATE notes SET is_deleted = 1 WHERE folderId IN (SELECT id FROM folders WHERE projectId = ?) OR projectId = ?", {id, id})
+    local _, err4 = execute_query("UPDATE fileAssets SET is_deleted = 1 WHERE folderId IN (SELECT id FROM folders WHERE projectId = ?) OR projectId = ?", {id, id})
+    local _, err5 = execute_query("UPDATE conversations SET is_deleted = 1 WHERE folderId IN (SELECT id FROM folders WHERE projectId = ?) OR projectId = ?", {id, id})
+    local _, err_msg = execute_query([[
+        UPDATE messages SET is_deleted = 1 
+        WHERE convId IN (
+            SELECT id FROM conversations 
+            WHERE folderId IN (SELECT id FROM folders WHERE projectId = ?) OR projectId = ?
+        )
+    ]], {id, id})
+    if err1 or err2 or err3 or err4 or err5 or err_msg then
         execute_query("ROLLBACK")
-        return false, err1 or err2 or err3 or err4
+        return false, err1 or err2 or err3 or err4 or err5 or err_msg
     end
-    local _, err5 = execute_query("COMMIT")
-    if err5 then
+    local _, err6 = execute_query("COMMIT")
+    if err6 then
         execute_query("ROLLBACK")
-        return false, err5
+        return false, err6
     end
     return true
 end
@@ -618,14 +720,16 @@ function db.delete_folder(id)
     local _, err1 = execute_query("UPDATE folders SET is_deleted = 1 WHERE id = ?", {id})
     local _, err2 = execute_query("UPDATE notes SET is_deleted = 1 WHERE folderId = ?", {id})
     local _, err3 = execute_query("UPDATE fileAssets SET is_deleted = 1 WHERE folderId = ?", {id})
-    if err1 or err2 or err3 then
+    local _, err4 = execute_query("UPDATE conversations SET is_deleted = 1 WHERE folderId = ?", {id})
+    local _, err_msg = execute_query("UPDATE messages SET is_deleted = 1 WHERE convId IN (SELECT id FROM conversations WHERE folderId = ?)", {id})
+    if err1 or err2 or err3 or err4 or err_msg then
         execute_query("ROLLBACK")
-        return false, err1 or err2 or err3
+        return false, err1 or err2 or err3 or err4 or err_msg
     end
-    local _, err4 = execute_query("COMMIT")
-    if err4 then
+    local _, err5 = execute_query("COMMIT")
+    if err5 then
         execute_query("ROLLBACK")
-        return false, err4
+        return false, err5
     end
     return true
 end
@@ -636,14 +740,26 @@ function db.get_all_folders()
     return rows, err
 end
 
-function db.get_notes(folderId)
-    local sql = ""
+function db.get_notes(folderId, projectId, workspaceId)
+    local sql = "SELECT * FROM notes WHERE is_deleted = 0"
     local params = {}
-    if folderId == nil or folderId == "" or folderId == json.null then
-        sql = "SELECT * FROM notes WHERE folderId IS NULL AND is_deleted = 0"
+    if folderId and folderId ~= "" and folderId ~= json.null then
+        sql = sql .. " AND folderId = ?"
+        table.insert(params, folderId)
     else
-        sql = "SELECT * FROM notes WHERE folderId = ? AND is_deleted = 0"
-        params = {folderId}
+        sql = sql .. " AND folderId IS NULL"
+    end
+    if projectId and projectId ~= "" and projectId ~= json.null then
+        sql = sql .. " AND projectId = ?"
+        table.insert(params, projectId)
+    else
+        sql = sql .. " AND projectId IS NULL"
+    end
+    if workspaceId and workspaceId ~= "" and workspaceId ~= json.null then
+        sql = sql .. " AND workspaceId = ?"
+        table.insert(params, workspaceId)
+    else
+        sql = sql .. " AND workspaceId IS NULL"
     end
     local rows, err = execute_query(sql, params)
     return rows, err
@@ -663,14 +779,14 @@ function db.get_all_notes()
 end
 
 function db.insert_note(n)
-    local sql = "INSERT INTO notes (id, folderId, title, content, updatedAt, is_deleted) VALUES (?, ?, ?, ?, ?, 0)"
-    local _, err = execute_query(sql, {n.id, n.folderId, n.title, n.content, n.updatedAt})
+    local sql = "INSERT INTO notes (id, folderId, projectId, workspaceId, title, content, updatedAt, isFocusNote, is_deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)"
+    local _, err = execute_query(sql, {n.id, n.folderId, n.projectId, n.workspaceId, n.title, n.content, n.updatedAt, n.isFocusNote or 0})
     return err == nil, err
 end
 
 function db.update_note(n)
-    local sql = "UPDATE notes SET folderId = ?, title = ?, content = ?, updatedAt = ? WHERE id = ?"
-    local _, err = execute_query(sql, {n.folderId, n.title, n.content, n.updatedAt, n.id})
+    local sql = "UPDATE notes SET folderId = ?, projectId = ?, workspaceId = ?, title = ?, content = ?, updatedAt = ?, isFocusNote = ? WHERE id = ?"
+    local _, err = execute_query(sql, {n.folderId, n.projectId, n.workspaceId, n.title, n.content, n.updatedAt, n.isFocusNote or 0, n.id})
     return err == nil, err
 end
 
@@ -680,14 +796,26 @@ function db.delete_note(id)
     return err == nil, err
 end
 
-function db.get_fileAssets(folderId)
-    local sql = ""
+function db.get_fileAssets(folderId, projectId, workspaceId)
+    local sql = "SELECT * FROM fileAssets WHERE is_deleted = 0"
     local params = {}
-    if folderId == nil or folderId == "" or folderId == json.null then
-        sql = "SELECT * FROM fileAssets WHERE folderId IS NULL AND is_deleted = 0"
+    if folderId and folderId ~= "" and folderId ~= json.null then
+        sql = sql .. " AND folderId = ?"
+        table.insert(params, folderId)
     else
-        sql = "SELECT * FROM fileAssets WHERE folderId = ? AND is_deleted = 0"
-        params = {folderId}
+        sql = sql .. " AND folderId IS NULL"
+    end
+    if projectId and projectId ~= "" and projectId ~= json.null then
+        sql = sql .. " AND projectId = ?"
+        table.insert(params, projectId)
+    else
+        sql = sql .. " AND projectId IS NULL"
+    end
+    if workspaceId and workspaceId ~= "" and workspaceId ~= json.null then
+        sql = sql .. " AND workspaceId = ?"
+        table.insert(params, workspaceId)
+    else
+        sql = sql .. " AND workspaceId IS NULL"
     end
     local rows, err = execute_query(sql, params)
     return rows, err
@@ -707,14 +835,14 @@ function db.get_all_fileAssets()
 end
 
 function db.insert_fileAsset(f)
-    local sql = "INSERT INTO fileAssets (id, folderId, name, size, type, uploadDate, content, is_deleted) VALUES (?, ?, ?, ?, ?, ?, ?, 0)"
-    local _, err = execute_query(sql, {f.id, f.folderId, f.name, f.size, f.type, f.uploadDate, f.content})
+    local sql = "INSERT INTO fileAssets (id, folderId, projectId, workspaceId, name, size, type, uploadDate, content, is_deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)"
+    local _, err = execute_query(sql, {f.id, f.folderId, f.projectId, f.workspaceId, f.name, f.size, f.type, f.uploadDate, f.content})
     return err == nil, err
 end
 
 function db.update_fileAsset(f)
-    local sql = "UPDATE fileAssets SET folderId = ?, name = ?, size = ?, type = ?, uploadDate = ?, content = ? WHERE id = ?"
-    local _, err = execute_query(sql, {f.folderId, f.name, f.size, f.type, f.uploadDate, f.content, f.id})
+    local sql = "UPDATE fileAssets SET folderId = ?, projectId = ?, workspaceId = ?, name = ?, size = ?, type = ?, uploadDate = ?, content = ? WHERE id = ?"
+    local _, err = execute_query(sql, {f.folderId, f.projectId, f.workspaceId, f.name, f.size, f.type, f.uploadDate, f.content, f.id})
     return err == nil, err
 end
 
@@ -766,6 +894,41 @@ function db.import_data(data)
         return false, err3
     end
     return true
+end
+
+function db.restore_item(table_name, id)
+    local allowed_tables = {
+        workspaces = true, projects = true, folders = true,
+        notes = true, conversations = true, fileAssets = true
+    }
+    if not allowed_tables[table_name] then return false, "Invalid table" end
+
+    -- Fetch the item to cascade restore parents
+    local sql = string.format("SELECT * FROM %s WHERE id = ?", table_name)
+    local rows, err = execute_query(sql, {id})
+    if not rows or #rows == 0 then return false, "Item not found" end
+    local item = rows[1]
+
+    -- Cascade restore parents
+    if item.folderId and item.folderId ~= "" and item.folderId ~= "null" then
+        db.restore_item("folders", item.folderId)
+    end
+    if item.projectId and item.projectId ~= "" and item.projectId ~= "null" then
+        db.restore_item("projects", item.projectId)
+    end
+    if item.workspaceId and item.workspaceId ~= "" and item.workspaceId ~= "null" then
+        db.restore_item("workspaces", item.workspaceId)
+    end
+
+    -- Restore the item itself
+    local update_sql = string.format("UPDATE %s SET is_deleted = 0 WHERE id = ?", table_name)
+    local _, u_err = execute_query(update_sql, {id})
+
+    if table_name == "conversations" then
+        execute_query("UPDATE messages SET is_deleted = 0 WHERE convId = ?", {id})
+    end
+
+    return u_err == nil, u_err
 end
 
 return db

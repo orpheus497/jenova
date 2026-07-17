@@ -12,7 +12,6 @@
 	} from '$lib/components/app';
 	import {
 		CLIPBOARD_CONTENT_QUOTE_PREFIX,
-		INPUT_CLASSES,
 		SETTING_CONFIG_DEFAULT,
 		INITIAL_FILE_SIZE,
 		PROMPT_CONTENT_SEPARATOR,
@@ -312,81 +311,85 @@
 	function handlePaste(event: ClipboardEvent) {
 		if (!event.clipboardData) return;
 
-		const files = Array.from(event.clipboardData.items)
-			.filter((item) => item.kind === 'file')
-			.map((item) => item.getAsFile())
-			.filter((file): file is File => file !== null);
+		try {
+			const files = Array.from(event.clipboardData.items)
+				.filter((item) => item.kind === 'file')
+				.map((item) => item.getAsFile())
+				.filter((file): file is File => file !== null);
 
-		if (files.length > 0) {
-			event.preventDefault();
-			onFilesAdd?.(files);
-			return;
-		}
-
-		const text = event.clipboardData.getData(MimeTypeText.PLAIN);
-
-		if (text.startsWith(CLIPBOARD_CONTENT_QUOTE_PREFIX)) {
-			const parsed = parseClipboardContent(text);
-
-			if (parsed.textAttachments.length > 0 || parsed.mcpPromptAttachments.length > 0) {
+			if (files.length > 0) {
 				event.preventDefault();
-				value = parsed.message;
-				onValueChange?.(parsed.message);
-
-				// Handle text attachments as files
-				if (parsed.textAttachments.length > 0) {
-					const attachmentFiles = parsed.textAttachments.map(
-						(att) =>
-							new File([att.content], att.name, {
-								type: MimeTypeText.PLAIN
-							})
-					);
-					onFilesAdd?.(attachmentFiles);
-				}
-
-				// Handle MCP prompt attachments as ChatUploadedFile with mcpPrompt data
-				if (parsed.mcpPromptAttachments.length > 0) {
-					const mcpPromptFiles: ChatUploadedFile[] = parsed.mcpPromptAttachments.map((att) => ({
-						id: uuid(),
-						name: att.name,
-						size: att.content.length,
-						type: SpecialFileType.MCP_PROMPT,
-						file: new File([att.content], `${att.name}${FileExtensionText.TXT}`, {
-							type: MimeTypeText.PLAIN
-						}),
-						isLoading: false,
-						textContent: att.content,
-						mcpPrompt: {
-							serverName: att.serverName,
-							promptName: att.promptName,
-							arguments: att.arguments
-						}
-					}));
-
-					uploadedFiles = [...uploadedFiles, ...mcpPromptFiles];
-					onUploadedFilesChange?.(uploadedFiles);
-				}
-
-				setTimeout(() => {
-					textareaRef?.focus();
-				}, 10);
-
+				onFilesAdd?.(files);
 				return;
 			}
-		}
 
-		if (
-			text.length > 0 &&
-			pasteLongTextToFileLength > 0 &&
-			text.length > pasteLongTextToFileLength
-		) {
-			event.preventDefault();
+			const text = event.clipboardData.getData(MimeTypeText.PLAIN);
 
-			const textFile = new File([text], 'Pasted_' + Date.now() + '.txt', {
-				type: MimeTypeText.PLAIN
-			});
+			if (text.startsWith(CLIPBOARD_CONTENT_QUOTE_PREFIX)) {
+				const parsed = parseClipboardContent(text);
 
-			onFilesAdd?.([textFile]);
+				if (parsed.textAttachments.length > 0 || parsed.mcpPromptAttachments.length > 0) {
+					event.preventDefault();
+					value = parsed.message;
+					onValueChange?.(parsed.message);
+
+					// Handle text attachments as files
+					if (parsed.textAttachments.length > 0) {
+						const attachmentFiles = parsed.textAttachments.map(
+							(att) =>
+								new File([att.content], att.name, {
+									type: MimeTypeText.PLAIN
+								})
+						);
+						onFilesAdd?.(attachmentFiles);
+					}
+
+					// Handle MCP prompt attachments as ChatUploadedFile with mcpPrompt data
+					if (parsed.mcpPromptAttachments.length > 0) {
+						const mcpPromptFiles: ChatUploadedFile[] = parsed.mcpPromptAttachments.map((att) => ({
+							id: uuid(),
+							name: att.name,
+							size: att.content.length,
+							type: SpecialFileType.MCP_PROMPT,
+							file: new File([att.content], `${att.name}${FileExtensionText.TXT}`, {
+								type: MimeTypeText.PLAIN
+							}),
+							isLoading: false,
+							textContent: att.content,
+							mcpPrompt: {
+								serverName: att.serverName,
+								promptName: att.promptName,
+								arguments: att.arguments
+							}
+						}));
+
+						uploadedFiles = [...uploadedFiles, ...mcpPromptFiles];
+						onUploadedFilesChange?.(uploadedFiles);
+					}
+
+					setTimeout(() => {
+						textareaRef?.focus();
+					}, 10);
+
+					return;
+				}
+			}
+
+			if (
+				text.length > 0 &&
+				pasteLongTextToFileLength > 0 &&
+				text.length > pasteLongTextToFileLength
+			) {
+				event.preventDefault();
+
+				const textFile = new File([text], 'Pasted_' + Date.now() + '.txt', {
+					type: MimeTypeText.PLAIN
+				});
+
+				onFilesAdd?.([textFile]);
+			}
+		} catch (e) {
+			console.error('[ChatForm] Paste handling error:', e);
 		}
 	}
 

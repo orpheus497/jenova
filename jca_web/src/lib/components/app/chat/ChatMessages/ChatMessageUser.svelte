@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { Card } from '$lib/components/ui/card';
 	import { ChatAttachmentsList, MarkdownContent } from '$lib/components/app';
 	import { getMessageEditContext } from '$lib/contexts';
 	import { config } from '$lib/stores/settings.svelte';

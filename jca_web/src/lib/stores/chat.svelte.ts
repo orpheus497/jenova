@@ -78,10 +78,25 @@ class ChatStore {
   private addFilesHandler: ((files: File[]) => void) | null = $state(null);
   pendingEditMessageId = $state<string | null>(null);
   private messageUpdateCallback:
-    ((messageId: string, updates: Partial<DatabaseMessage>) => void) | null =
-    null;
+    | ((messageId: string, updates: Partial<DatabaseMessage>) => void)
+    | null = null;
   private _pendingDraftMessage = $state<string>("");
   private _pendingDraftFiles = $state<ChatUploadedFile[]>([]);
+  private syncDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private streamingFlushCallbacks = new Map<string, () => void>();
+
+  private debouncedSyncEntity(type: "note" | "chat", id: string) {
+    const key = `${type}:${id}`;
+    const existing = this.syncDebounceTimers.get(key);
+    if (existing) clearTimeout(existing);
+    this.syncDebounceTimers.set(
+      key,
+      setTimeout(() => {
+        this.syncDebounceTimers.delete(key);
+        SyncService.syncEntity(type, id);
+      }, 3000),
+    );
+  }
 
   private setChatLoading(convId: string, loading: boolean): void {
     this.touchConversationState(convId);
@@ -659,15 +674,49 @@ class ChatStore {
       }
     };
 
+    let rafPending = false;
+    let rafHandle: number | null = null;
+
     const updateStreamingUI = () => {
       this.setChatStreaming(convId, streamedContent, currentMessageId);
       const idx = conversationsStore.findMessageIndex(currentMessageId);
       conversationsStore.updateMessageAtIndex(idx, {
         content: streamedContent,
+        reasoningContent: streamedReasoningContent || undefined,
       });
     };
 
+    const scheduleUIUpdate = () => {
+      if (rafPending) return;
+      rafPending = true;
+      rafHandle = requestAnimationFrame(() => {
+        rafPending = false;
+        rafHandle = null;
+        updateStreamingUI();
+      });
+    };
+
+    // Flush any pending RAF update synchronously so the streaming state map
+    // reflects the latest chunks before a snapshot is captured on abort.
+    const flushPendingUpdate = () => {
+      if (rafPending) {
+        if (rafHandle !== null) {
+          cancelAnimationFrame(rafHandle);
+          rafHandle = null;
+        }
+        rafPending = false;
+        updateStreamingUI();
+      }
+    };
+    this.streamingFlushCallbacks.set(convId, flushPendingUpdate);
+
     const cleanupStreamingState = () => {
+      if (rafHandle !== null) {
+        cancelAnimationFrame(rafHandle);
+        rafHandle = null;
+      }
+      rafPending = false;
+      this.streamingFlushCallbacks.delete(convId);
       this.setStreamingActive(false);
       this.setChatLoading(convId, false);
       this.clearChatStreaming(convId);
@@ -678,18 +727,16 @@ class ChatStore {
     this.setActiveProcessingConversation(convId);
     const abortController = this.getOrCreateAbortController(convId);
 
+    let lastTimingsUpdate = 0;
+
     const streamCallbacks: ChatStreamCallbacks = {
       onChunk: (chunk: string) => {
         streamedContent += chunk;
-        updateStreamingUI();
+        scheduleUIUpdate();
       },
       onReasoningChunk: (chunk: string) => {
         streamedReasoningContent += chunk;
-        // Update UI to show reasoning is being received
-        const idx = conversationsStore.findMessageIndex(currentMessageId);
-        conversationsStore.updateMessageAtIndex(idx, {
-          reasoningContent: streamedReasoningContent,
-        });
+        scheduleUIUpdate();
       },
       onToolCallsStreaming: (toolCalls) => {
         const idx = conversationsStore.findMessageIndex(currentMessageId);
@@ -720,6 +767,10 @@ class ChatStore {
         timings?: ChatMessageTimings,
         promptProgress?: ChatMessagePromptProgress,
       ) => {
+        // Throttle timing updates to max 2/sec to reduce reactive churn
+        const now = performance.now();
+        if (now - lastTimingsUpdate < 500) return;
+        lastTimingsUpdate = now;
         const tokensPerSecond =
           timings?.predicted_ms && timings?.predicted_n
             ? (timings.predicted_n / timings.predicted_ms) * 1000
@@ -741,7 +792,8 @@ class ChatStore {
         reasoningContent: string | undefined,
         timings: ChatMessageTimings | undefined,
         toolCalls:
-          import("$lib/types/api").ApiChatCompletionToolCall[] | undefined,
+          | import("$lib/types/api").ApiChatCompletionToolCall[]
+          | undefined,
       ) => {
         const updateData: Record<string, unknown> = {
           content,
@@ -823,7 +875,7 @@ class ChatStore {
 
         cleanupStreamingState();
 
-        SyncService.syncEntity("chat", convId);
+        this.debouncedSyncEntity("chat", convId);
 
         AudioService.speak(streamedContent);
         AudioService.notify(streamedContent);
@@ -902,47 +954,57 @@ class ChatStore {
           toolCalls?: string,
           isCacheHit?: boolean,
         ) => {
-          const content = streamedContent || finalContent || "";
-          const reasoning = streamedReasoningContent || reasoningContent;
-          const updateData: Record<string, unknown> = {
-            content,
-            reasoningContent: reasoning || undefined,
-            toolCalls: toolCalls || "",
-            timings,
-          };
-          
-          const idx = conversationsStore.findMessageIndex(currentMessageId);
-          let updatedExtras: import("$lib/types").DatabaseMessageExtra[] | undefined;
-          
-          if (isCacheHit) {
-            const currentMsg = conversationsStore.activeMessages[idx];
-            updatedExtras = [...(currentMsg?.extra || []), { type: "cache_hit" }];
-            updateData.extra = updatedExtras;
+          try {
+            const content = streamedContent || finalContent || "";
+            const reasoning = streamedReasoningContent || reasoningContent;
+            const updateData: Record<string, unknown> = {
+              content,
+              reasoningContent: reasoning || undefined,
+              toolCalls: toolCalls || "",
+              timings,
+            };
+
+            const idx = conversationsStore.findMessageIndex(currentMessageId);
+            let updatedExtras:
+              | import("$lib/types").DatabaseMessageExtra[]
+              | undefined;
+
+            if (isCacheHit) {
+              const currentMsg = conversationsStore.activeMessages[idx];
+              updatedExtras = [
+                ...(currentMsg?.extra || []),
+                { type: "cache_hit" },
+              ];
+              updateData.extra = updatedExtras;
+            }
+
+            if (resolvedModel && !modelPersisted)
+              updateData.model = resolvedModel;
+            await DatabaseService.updateMessage(currentMessageId, updateData);
+            const uiUpdate: Partial<DatabaseMessage> = {
+              content,
+              reasoningContent: reasoning || undefined,
+              toolCalls: toolCalls || "",
+            };
+            if (timings) uiUpdate.timings = timings;
+            if (resolvedModel) uiUpdate.model = resolvedModel;
+            if (updatedExtras) uiUpdate.extra = updatedExtras;
+            conversationsStore.updateMessageAtIndex(idx, uiUpdate);
+            await conversationsStore.updateCurrentNode(currentMessageId);
+
+            AudioService.speak(content);
+            AudioService.notify(content);
+
+            this.debouncedSyncEntity("chat", convId);
+
+            if (onComplete) await onComplete(content);
+            if (isRouterMode())
+              modelsStore.fetchRouterModels().catch(console.error);
+          } catch (err) {
+            console.error("Stream completion handler error:", err);
+          } finally {
+            cleanupStreamingState();
           }
-          
-          if (resolvedModel && !modelPersisted)
-            updateData.model = resolvedModel;
-          await DatabaseService.updateMessage(currentMessageId, updateData);
-          const uiUpdate: Partial<DatabaseMessage> = {
-            content,
-            reasoningContent: reasoning || undefined,
-            toolCalls: toolCalls || "",
-          };
-          if (timings) uiUpdate.timings = timings;
-          if (resolvedModel) uiUpdate.model = resolvedModel;
-          if (updatedExtras) uiUpdate.extra = updatedExtras;
-          conversationsStore.updateMessageAtIndex(idx, uiUpdate);
-          await conversationsStore.updateCurrentNode(currentMessageId);
-
-          AudioService.speak(content);
-          AudioService.notify(content);
-
-          SyncService.syncEntity("chat", convId);
-
-          cleanupStreamingState();
-          if (onComplete) await onComplete(content);
-          if (isRouterMode())
-            modelsStore.fetchRouterModels().catch(console.error);
         },
         onError: streamCallbacks.onError,
       },
@@ -957,12 +1019,23 @@ class ChatStore {
     await this.stopGenerationForChat(activeConv.id);
   }
   async stopGenerationForChat(convId: string): Promise<void> {
-    await this.savePartialResponseIfNeeded(convId);
-    this.setStreamingActive(false);
+    // Flush any pending RAF update so the streaming state map has the latest chunks
+    const flushFn = this.streamingFlushCallbacks.get(convId);
+    if (flushFn) flushFn();
+    // Capture streaming state BEFORE clearing for partial save
+    const streamingSnapshot = this.getChatStreaming(convId);
+    const processingSnapshot = this.getProcessingState(convId);
+    // Abort the request FIRST for immediate responsiveness
     this.abortRequest(convId);
+    this.streamingFlushCallbacks.delete(convId);
+    this.setStreamingActive(false);
     this.setChatLoading(convId, false);
     this.clearChatStreaming(convId);
     this.setProcessingState(convId, null);
+    // Save partial response AFTER abort using captured snapshot (fire-and-forget)
+    if (streamingSnapshot && streamingSnapshot.response.trim()) {
+      this.savePartialResponseFromSnapshot(convId, streamingSnapshot, processingSnapshot).catch(console.error);
+    }
   }
   private async savePartialResponseIfNeeded(convId?: string): Promise<void> {
     const conversationId = convId || conversationsStore.activeConversation?.id;
@@ -974,8 +1047,10 @@ class ChatStore {
         ? conversationsStore.activeMessages
         : await conversationsStore.getConversationMessages(conversationId);
     if (!messages.length) return;
-    const lastMessage = messages[messages.length - 1];
-    if (lastMessage?.role === MessageRole.ASSISTANT) {
+    const targetMessage = messages.find(
+      (m) => m.id === streamingState.messageId,
+    ) ?? messages[messages.length - 1];
+    if (targetMessage?.role === MessageRole.ASSISTANT) {
       try {
         const updateData: { content: string; timings?: ChatMessageTimings } = {
           content: streamingState.response,
@@ -995,11 +1070,53 @@ class ChatStore {
                 : undefined,
           };
         }
-        await DatabaseService.updateMessage(lastMessage.id, updateData);
-        lastMessage.content = streamingState.response;
-        if (updateData.timings) lastMessage.timings = updateData.timings;
+        await DatabaseService.updateMessage(targetMessage.id, updateData);
+        targetMessage.content = streamingState.response;
+        if (updateData.timings) targetMessage.timings = updateData.timings;
       } catch (error) {
-        lastMessage.content = streamingState.response;
+        targetMessage.content = streamingState.response;
+        console.error("Failed to save partial response:", error);
+      }
+    }
+  }
+
+  private async savePartialResponseFromSnapshot(
+    convId: string,
+    streamingSnapshot: { response: string; messageId: string },
+    processingSnapshot: ApiProcessingState | null,
+  ): Promise<void> {
+    const messages =
+      convId === conversationsStore.activeConversation?.id
+        ? conversationsStore.activeMessages
+        : await conversationsStore.getConversationMessages(convId);
+    if (!messages.length) return;
+    const targetMessage = messages.find(
+      (m) => m.id === streamingSnapshot.messageId,
+    ) ?? messages[messages.length - 1];
+    if (targetMessage?.role === MessageRole.ASSISTANT) {
+      try {
+        const updateData: { content: string; timings?: ChatMessageTimings } = {
+          content: streamingSnapshot.response,
+        };
+        if (processingSnapshot) {
+          updateData.timings = {
+            prompt_n: processingSnapshot.promptTokens || 0,
+            prompt_ms: processingSnapshot.promptMs,
+            predicted_n: processingSnapshot.tokensDecoded || 0,
+            cache_n: processingSnapshot.cacheTokens || 0,
+            predicted_ms:
+              processingSnapshot.tokensPerSecond && processingSnapshot.tokensDecoded
+                ? (processingSnapshot.tokensDecoded /
+                    processingSnapshot.tokensPerSecond) *
+                  1000
+                : undefined,
+          };
+        }
+        await DatabaseService.updateMessage(targetMessage.id, updateData);
+        targetMessage.content = streamingSnapshot.response;
+        if (updateData.timings) targetMessage.timings = updateData.timings;
+      } catch (error) {
+        targetMessage.content = streamingSnapshot.response;
         console.error("Failed to save partial response:", error);
       }
     }

@@ -109,7 +109,11 @@ function embed.encode(text, task)
   local vec = data.embedding
   if not vec or #vec == 0 then return nil, "empty embedding vector in response" end
 
-  if not DIMS or DIMS == 0 then DIMS = #vec end
+  if DIMS == 0 then
+    DIMS = #vec
+  elseif #vec ~= DIMS then
+    return nil, string.format("Dimension mismatch: expected %d, got %d. Reinitialize or reindex to change dimensions.", DIMS, #vec)
+  end
   return vec, nil
 end
 

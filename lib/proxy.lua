@@ -618,8 +618,50 @@ local function proxy_connection(client_fd, conn_fds)
     
     local storage_path = headers_raw:match("^POST /api/storage/([^ %?]+)")
     
-    -- Database API Routes
+    -- Declare request_line early so both the FS and DB route blocks can use it.
     local request_line = headers_raw:match("^([^\r\n]+)")
+
+    -- File System API Routes
+    local fs_route = request_line and request_line:match("^[A-Z]+ /api/fs/([^ %?\r\n]+)")
+    if fs_route then
+        local resp_body = ""
+        local status = "200 OK"
+        if is_get and fs_route == "trash" then
+            local trashed = fs_sync.get_trash()
+            resp_body = json.encode(trashed or {})
+        elseif not is_get and headers_raw:match("^POST /api/fs/trash/restore") then
+            local ok_j, req = pcall(json.decode, body_raw)
+            if ok_j and req and req.trash_path and req.original_path then
+                local ok = fs_sync.restore_trash(req.trash_path, req.original_path)
+                if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
+            else
+                status = "400 Bad Request"
+            end
+        elseif not is_get and headers_raw:match("^DELETE /api/fs/trash/empty") then
+            local ok = fs_sync.empty_trash()
+            if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
+        elseif is_get and fs_route == "tree" then
+            local ws_name = request_line:match("[?&]workspace=([^& \r\n]+)")
+            local proj_name = request_line:match("[?&]project=([^& \r\n]+)")
+            local fold_name = request_line:match("[?&]folder=([^& \r\n]+)")
+            ws_name = ws_name and url_decode(ws_name) or nil
+            proj_name = proj_name and url_decode(proj_name) or nil
+            fold_name = fold_name and url_decode(fold_name) or nil
+            local tree = fs_sync.get_fs_tree(ws_name, proj_name, fold_name)
+            resp_body = json.encode(tree or {})
+        else
+            status = "404 Not Found"
+        end
+
+        local resp = string.format(
+            "HTTP/1.1 %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
+            status, #resp_body, resp_body)
+        async_send(client_fd, resp)
+        safe_close()
+        return
+    end
+    
+    -- Database API Routes (request_line already declared above)
     local db_route = request_line and request_line:match("^[A-Z]+ /api/db/([^ %?\r\n]+)")
     if db_route then
         local resp_body = ""
@@ -647,6 +689,13 @@ local function proxy_connection(client_fd, conn_fds)
             local delete_with_forks = request_line:match("deleteWithForks=true") ~= nil
             local ok = db.delete_conversation(id, delete_with_forks)
             if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
+        elseif is_get and db_route == "conversations/deleted" then
+            local items = db.get_deleted_conversations()
+            if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
+        elseif not is_get and headers_raw:match("^POST /api/db/conversations/([^ %?/\r\n]+)/restore") then
+            local id = headers_raw:match("^POST /api/db/conversations/([^ %?/\r\n]+)/restore")
+            local ok, err = db.restore_item("conversations", id)
+            if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
         elseif is_get and db_route == "message" then
             local id = request_line:match("id=([^ %&\r\n]+)")
             local msg = db.get_message(id)
@@ -662,6 +711,14 @@ local function proxy_connection(client_fd, conn_fds)
             local data = json.decode(body_raw)
             if data and data.ids then
                 local ok = db.delete_messages_bulk(data.ids)
+                if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
+            else
+                status = "400 Bad Request"
+            end
+        elseif not is_get and headers_raw:match("^POST /api/db/messages/update") then
+            local ok_j, data = pcall(json.decode, body_raw)
+            if ok_j and data and data.id then
+                local ok, err = db.partial_update_message(data.id, data)
                 if ok then resp_body = '{"status":"ok"}' else status = "500 Internal Server Error" end
             else
                 status = "400 Bad Request"
@@ -798,11 +855,13 @@ local function proxy_connection(client_fd, conn_fds)
         elseif is_get and db_route == "notes" then
             local id = request_line:match("id=([^ %&\r\n]+)")
             local fid = request_line:match("folderId=([^ %&\r\n]+)")
+            local pid = request_line:match("projectId=([^ %&\r\n]+)")
+            local wid = request_line:match("workspaceId=([^ %&\r\n]+)")
             if id then
                 local item = db.get_note(id)
                 if item then resp_body = json.encode(item) else status = "404 Not Found" end
             else
-                local items = db.get_notes(fid)
+                local items = db.get_notes(fid, pid, wid)
                 if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
             end
         elseif not is_get and headers_raw:match("^POST /api/db/notes") then
@@ -818,7 +877,7 @@ local function proxy_connection(client_fd, conn_fds)
                         if not exists then db.delete_note(item.id) else db.update_note(note) end
                         status = "500 Internal Server Error"
                     else
-                        if exists and (note.folderId ~= item.folderId or note.title ~= item.title) then
+                        if exists and (note.folderId ~= item.folderId or note.projectId ~= item.projectId or note.workspaceId ~= item.workspaceId or note.title ~= item.title) then
                             fs_sync.trash_note(note)
                         end
                         resp_body = '{"status":"ok"}' 
@@ -846,11 +905,13 @@ local function proxy_connection(client_fd, conn_fds)
         elseif is_get and db_route == "fileAssets" then
             local id = request_line:match("id=([^ %&\r\n]+)")
             local fid = request_line:match("folderId=([^ %&\r\n]+)")
+            local pid = request_line:match("projectId=([^ %&\r\n]+)")
+            local wid = request_line:match("workspaceId=([^ %&\r\n]+)")
             if id then
                 local item = db.get_fileAsset(id)
                 if item then resp_body = json.encode(item) else status = "404 Not Found" end
             else
-                local items = db.get_fileAssets(fid)
+                local items = db.get_fileAssets(fid, pid, wid)
                 if items then resp_body = json.encode(items) else status = "500 Internal Server Error" end
             end
         elseif not is_get and headers_raw:match("^POST /api/db/fileAssets") then
@@ -866,7 +927,7 @@ local function proxy_connection(client_fd, conn_fds)
                         if not exists then db.delete_fileAsset(item.id) else db.update_fileAsset(asset) end
                         status = "500 Internal Server Error"
                     else
-                        if exists and (asset.folderId ~= item.folderId or asset.name ~= item.name) then
+                        if exists and (asset.folderId ~= item.folderId or asset.projectId ~= item.projectId or asset.workspaceId ~= item.workspaceId or asset.name ~= item.name) then
                             fs_sync.trash_fileAsset(asset)
                         end
                         resp_body = '{"status":"ok"}' 
@@ -987,7 +1048,7 @@ local function proxy_connection(client_fd, conn_fds)
         recursive_mkdir(workspaces_dir)
         local files = {}
         local escaped_dir = workspaces_dir:gsub("'", "'\\''")
-        local cmd = "find '" .. escaped_dir .. "' -maxdepth 3 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/build/*'"
+        local cmd = "find '" .. escaped_dir .. "' -maxdepth 4 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/build/*'"
         local output = async_popen_read(cmd)
         if output then
             for line in output:gmatch("[^\r\n]+") do
@@ -1118,6 +1179,7 @@ local function proxy_connection(client_fd, conn_fds)
             end
 
             -- Detect project root (passive only, no auto-indexing in proxy)
+            local local_project_root = nil
             local project_root = body_raw:match("project_root: ([^\n\r]+)")
             if project_root then
                 project_root = project_root:gsub("\r", ""):gsub("\"", ""):gsub("\\n", ""):gsub("\\r", ""):gsub("}$", ""):gsub(",$", ""):match("^%s*(.-)%s*$")
@@ -1126,6 +1188,7 @@ local function proxy_connection(client_fd, conn_fds)
                 elseif project_root ~= "" and not project_root:match("^/") and not project_root:match("^~") then
                     project_root = workspaces_dir .. "/" .. project_root
                 end
+                local_project_root = project_root
                 _G._last_project_root = project_root
             end
 
@@ -1160,9 +1223,10 @@ local function proxy_connection(client_fd, conn_fds)
                     end
                     rag_limit = 5
                 end
-                local rag = search.query(rag_query, rag_limit, true)
+                local rag = search.query(rag_query, rag_limit, true, local_project_root)
                 local rag_context = ""
 
+                -- TODO: Investigate deduplication with WebUI workspace context (approach B: check if incoming system prompt already contains this content)
                 if #rag > 0 then
                     local parts = { "\n--- REPOSITORY CONTEXT ---" }
                     for i, r in ipairs(rag) do
@@ -1344,11 +1408,12 @@ local function proxy_connection(client_fd, conn_fds)
     local send_success = true
     local max_cache_size = 50 * 1024 * 1024
     local current_cache_size = 0
+    local is_streaming_req = body_raw and body_raw:match('"stream"%s*:%s*true')
     while true do
         local n = async_recv(llama_fd, buf, 8192)
         if n <= 0 then break end
         local to_send = ffi.string(buf, n)
-        if req_cache_key then 
+        if req_cache_key and not is_streaming_req then 
             if current_cache_size + #to_send <= max_cache_size then
                 resp_buffer[#resp_buffer+1] = to_send 
                 current_cache_size = current_cache_size + #to_send
@@ -1581,7 +1646,7 @@ while running do
 
     local now = os.time()
     for fd, info in pairs(clients) do
-        if now - (info.created or now) > COROUTINE_TIMEOUT then
+        if now - (info.last_active or info.created or now) > COROUTINE_TIMEOUT then
             local age = now - (info.created or now)
             io.write(string.format("[proxy] timeout: closing fd=%d age=%ds (limit=%ds)\n",
                 fd, age, COROUTINE_TIMEOUT))
