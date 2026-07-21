@@ -61,7 +61,6 @@ export const SETTING_CONFIG_DEFAULT: Record<
   max_tokens: undefined,
   custom: "", // custom json-stringified object
   // experimental features
-  pyInterpreterEnabled: false,
   enableContinueGeneration: false,
   useThinking: false,
   useAudioVoice: false,
@@ -161,8 +160,6 @@ export const SETTING_CONFIG_INFO: Record<string, string> = {
     "Number of lines shown in tool output previews (last N lines). Only these previews and the final LLM response persist after the agentic loop completes.",
   showToolCallInProgress:
     "Automatically expand tool call details while executing and keep them expanded after completion.",
-  pyInterpreterEnabled:
-    "Enable Python interpreter using Pyodide. Allows running Python code in markdown code blocks.",
   enableContinueGeneration:
     'Enable "Continue" button for assistant messages. Currently works only with non-reasoning models.',
 };
