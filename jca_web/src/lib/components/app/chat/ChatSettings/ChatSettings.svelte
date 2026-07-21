@@ -320,18 +320,6 @@
 			]
 		}
 		// TODO: Experimental features section will be implemented after initial release
-		// This includes Python interpreter (Pyodide integration) and other experimental features
-		// {
-		// 	title: 'Experimental',
-		// 	icon: Beaker,
-		// 	fields: [
-		// 		{
-		// 			key: 'pyInterpreterEnabled',
-		// 			label: 'Enable Python interpreter',
-		// 			type: 'checkbox'
-		// 		}
-		// 	]
-		// }
 	];
 
 	let activeSection = $derived<SettingsSectionTitle>(
