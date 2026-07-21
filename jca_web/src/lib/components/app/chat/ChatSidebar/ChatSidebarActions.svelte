@@ -79,9 +79,12 @@
 				class="pl-8"
 			/>
 
-			<button 
+			<button
+                type="button"
                 class="absolute top-2.5 right-4 h-4 w-4 text-muted-foreground hover:text-foreground"
                 onclick={handleSearchModeDeactivate}
+                aria-label="Close search"
+                title="Close search"
             >
                 <X size={14} />
             </button>
@@ -109,7 +112,7 @@
                 <span class="text-xs">Search</span>
             </Button>
         </div>
-        
+
         <div class="grid grid-cols-2 gap-1 px-2">
             <Button
                 class="justify-start gap-2 h-9 px-3 hover:text-[#7b52ab]"
