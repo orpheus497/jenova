@@ -33,7 +33,7 @@ You can quickly swap the active agent model between specialized capabilities usi
 - `"Switch to Instruct Model"`
 - `"Switch to Thinking Model"`
 
-For this feature to work, place your specialized `.gguf` models in the `models/instruct/` and `models/thinking/` directories.
+For this feature to work, place your specialized `.gguf` models in the `models/instruct/` and `models/thinking/` directories. If a directory contains multiple valid `.gguf` model files, the utility automatically selects the alphabetically first one.
 
 When you trigger a switch, Jenova will:
 1. Power down the inference backend.

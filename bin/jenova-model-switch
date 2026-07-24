@@ -35,8 +35,10 @@ mkdir -p "$AGENT_DIR"
 # Find target model (ignoring .old files) using null-delimited discovery
 TARGET_MODEL=""
 while IFS= read -r -d '' file; do
-    TARGET_MODEL="$file"
-    break
+    if [ -f "$file" ]; then
+        TARGET_MODEL="$file"
+        break
+    fi
 done < <(find "$TARGET_DIR" -maxdepth 1 -name "*.gguf" ! -name "*.old" -print0 2>/dev/null | sort -z)
 
 if [ -z "$TARGET_MODEL" ] || [ ! -f "$TARGET_MODEL" ]; then
@@ -80,8 +82,20 @@ for entry in "${EXISTING_ENTRIES[@]}"; do
             rm -f "$entry"
         else
             # Paths differ, preserve active model by renaming to .old
+            DEST="${entry}.old"
+            if [ -e "$DEST" ] || [ -h "$DEST" ]; then
+                COUNTER=1
+                while [ -e "${entry}.old.${COUNTER}" ] || [ -h "${entry}.old.${COUNTER}" ]; do
+                    COUNTER=$((COUNTER + 1))
+                done
+                DEST="${entry}.old.${COUNTER}"
+            fi
+            if [ -e "$DEST" ] || [ -h "$DEST" ]; then
+                echo "Error: Cannot preserve active model $entry: destination $DEST already exists" >&2
+                exit 1
+            fi
             echo "Preserving active model as .old: $entry"
-            mv "$entry" "${entry}.old"
+            mv "$entry" "$DEST"
         fi
     fi
 done

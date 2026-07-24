@@ -114,12 +114,14 @@ ui.on_action = function(action)
     elseif action == "switch_instruct" or action == "switch_thinking" then
         local target = action == "switch_instruct" and "instruct" or "thinking"
         local stop_status = sys_exec_sync(shell_quote(root .. "/bin/jenova-ca") .. " stop")
-        local switch_status = sys_exec_sync("bash " .. shell_quote(root .. "/bin/jenova-model-switch") .. " " .. target)
-        if stop_status == 0 and switch_status == 0 then
-            if is_lan_enabled() then
-                sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " start --lan")
-            else
-                sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " start")
+        if stop_status == 0 then
+            local switch_status = sys_exec_sync("bash " .. shell_quote(root .. "/bin/jenova-model-switch") .. " " .. target)
+            if switch_status == 0 then
+                if is_lan_enabled() then
+                    sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " start --lan")
+                else
+                    sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " start")
+                end
             end
         end
     elseif action == "toggle_lan" then
