@@ -38,7 +38,7 @@ For this feature to work, place your specialized `.gguf` models in the `models/i
 When you trigger a switch, Jenova will:
 1. Power down the inference backend.
 2. Check your active model in `models/agent/`.
-3. If the active model differs from the target model, Jenova preserves it by renaming it to `.gguf.old`.
+3. If the active model differs from the target model, Jenova preserves it by renaming it with a `.old` suffix (or a numbered `.old.<n>` suffix if that backup name already exists).
 4. It then instantly symlinks the target model into `models/agent/` (saving disk space) and restarts the backend.
 
 ### `embed/` - Embedding Models
