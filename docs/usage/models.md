@@ -28,6 +28,7 @@ Place your primary language models here. These are the models that power the mai
 - Recommended: Q4_K_M or Q5_K_M quantization
 
 ### Dynamic Model Switching (`instruct/` and `thinking/`)
+
 You can quickly swap the active agent model between specialized capabilities using the system tray or TUI:
 - `"Switch to Instruct Model"`
 - `"Switch to Thinking Model"`
