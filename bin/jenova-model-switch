@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# jenova-model-switch - Switch the active agent model using symlinks
+# Usage: jenova-model-switch [instruct|thinking]
+
+set -e
+
+if [ "$#" -ne 1 ]; then
+    echo "Usage: jenova-model-switch [instruct|thinking]" >&2
+    exit 1
+fi
+
+TARGET="$1"
+if [ "$TARGET" != "instruct" ] && [ "$TARGET" != "thinking" ]; then
+    echo "Error: Target must be 'instruct' or 'thinking'" >&2
+    exit 1
+fi
+
+# Resolve directories
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+JENOVA_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# Ensure we use JCA_HOME if defined, else default
+JCA_HOME="${JCA_HOME:-$JENOVA_ROOT}"
+
+MODELS_DIR="${JCA_HOME}/models"
+AGENT_DIR="${MODELS_DIR}/agent"
+TARGET_DIR="${MODELS_DIR}/${TARGET}"
+
+if [ ! -d "$TARGET_DIR" ]; then
+    echo "Error: Target directory does not exist: $TARGET_DIR" >&2
+    exit 1
+fi
+mkdir -p "$AGENT_DIR"
+
+# Find target model (ignoring .old files) using null-delimited discovery
+TARGET_MODEL=""
+while IFS= read -r -d '' file; do
+    if [ -f "$file" ]; then
+        TARGET_MODEL="$file"
+        break
+    fi
+done < <(find "$TARGET_DIR" -maxdepth 1 -name "*.gguf" ! -name "*.old" -print0 2>/dev/null | sort -z)
+
+if [ -z "$TARGET_MODEL" ] || [ ! -f "$TARGET_MODEL" ]; then
+    echo "Error: No .gguf model found in $TARGET_DIR" >&2
+    exit 1
+fi
+TARGET_NAME=$(basename "$TARGET_MODEL")
+TARGET_REALPATH=$(realpath "$TARGET_MODEL" 2>/dev/null || readlink -f "$TARGET_MODEL")
+
+# Find all existing active models in agent/ (ignoring .old files)
+EXISTING_ENTRIES=()
+while IFS= read -r -d '' file; do
+    [ -n "$file" ] && EXISTING_ENTRIES+=("$file")
+done < <(find "$AGENT_DIR" -maxdepth 1 -name "*.gguf" ! -name "*.old" -print0 2>/dev/null | sort -z)
+
+TMP_LINK="${AGENT_DIR}/.${TARGET_NAME}.tmp.$$"
+cleanup_tmp() {
+    [ -f "$TMP_LINK" ] || [ -h "$TMP_LINK" ] && rm -f "$TMP_LINK"
+}
+trap cleanup_tmp EXIT
+
+echo "Symlinking $TARGET_NAME from $TARGET to agent"
+
+# Create replacement symlink first (using relative path from models/agent/ to models/<target>/)
+(cd "$AGENT_DIR" && ln -sf "../${TARGET}/${TARGET_NAME}" "$(basename "$TMP_LINK")")
+
+# Validate the replacement symlink before replacing any active entry
+TMP_REALPATH=$(realpath "$TMP_LINK" 2>/dev/null || readlink -f "$TMP_LINK")
+if [ ! -f "$TMP_LINK" ] || [ "$TMP_REALPATH" != "$TARGET_REALPATH" ]; then
+    echo "Error: Failed to create or validate replacement symlink for $TARGET_NAME" >&2
+    exit 1
+fi
+
+# Remove or move aside every existing active entry in models/agent/
+for entry in "${EXISTING_ENTRIES[@]}"; do
+    if [ -e "$entry" ] || [ -h "$entry" ]; then
+        ENTRY_REALPATH=$(realpath "$entry" 2>/dev/null || readlink -f "$entry" 2>/dev/null || true)
+        if [ "$ENTRY_REALPATH" == "$TARGET_REALPATH" ]; then
+            # Paths resolve to the same real file, safely remove old active entry
+            echo "Removing identical active model: $entry"
+            rm -f "$entry"
+        else
+            # Paths differ, preserve active model by renaming to .old
+            DEST="${entry}.old"
+            if [ -e "$DEST" ] || [ -h "$DEST" ]; then
+                COUNTER=1
+                while [ -e "${entry}.old.${COUNTER}" ] || [ -h "${entry}.old.${COUNTER}" ]; do
+                    COUNTER=$((COUNTER + 1))
+                done
+                DEST="${entry}.old.${COUNTER}"
+            fi
+            if [ -e "$DEST" ] || [ -h "$DEST" ]; then
+                echo "Error: Cannot preserve active model $entry: destination $DEST already exists" >&2
+                exit 1
+            fi
+            echo "Preserving active model as .old: $entry"
+            mv "$entry" "$DEST"
+        fi
+    fi
+done
+
+# Atomically swap replacement symlink into place
+mv -f "$TMP_LINK" "${AGENT_DIR}/${TARGET_NAME}"
+
+echo "Successfully switched to $TARGET model: $TARGET_NAME"

@@ -7,6 +7,8 @@ This directory contains the LLM models used by Jenova. Models are organized into
 ```
 $JCA_HOME/models/
 ├── agent/    # Main inference models (7B-32B parameters)
+├── instruct/ # Specialized instruct models for dynamic switching
+├── thinking/ # Specialized thinking models for dynamic switching
 ├── embed/    # Embedding models for RAG and semantic search
 └── draft/    # Small draft models for speculative decoding
 ```
@@ -24,6 +26,20 @@ Place your primary language models here. These are the models that power the mai
 - GGUF format
 - Recommended: 7B-13B parameters for dual-GPU setup
 - Recommended: Q4_K_M or Q5_K_M quantization
+
+### Dynamic Model Switching (`instruct/` and `thinking/`)
+
+You can quickly swap the active agent model between specialized capabilities using the system tray or TUI:
+- `"Switch to Instruct Model"`
+- `"Switch to Thinking Model"`
+
+For this feature to work, place your specialized `.gguf` models in the `models/instruct/` and `models/thinking/` directories. If a directory contains multiple valid `.gguf` model files, the utility automatically selects the alphabetically first one.
+
+When you trigger a switch, Jenova will:
+1. Power down the inference backend.
+2. Check your active model in `models/agent/`.
+3. If the active model differs from the target model, Jenova preserves it by renaming it with a `.old` suffix (or a numbered `.old.<n>` suffix if that backup name already exists).
+4. It then instantly symlinks the target model into `models/agent/` (saving disk space) and restarts the backend.
 
 ### `embed/` - Embedding Models
 Place your embedding models here for RAG (Retrieval-Augmented Generation) and semantic search.

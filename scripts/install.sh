@@ -358,7 +358,7 @@ _verify_and_copy_bin() {
 }
 
 # wrappers
-for _bin in jenova jenova-ui jenova-ca jenova-tui jenova-swap-mount; do
+for _bin in jenova jenova-ui jenova-ca jenova-tui jenova-swap-mount jenova-model-switch; do
     if [ -f "$JENOVA_ROOT/bin/$_bin" ]; then
         install -m 755 "$JENOVA_ROOT/bin/$_bin" "$JCA_HOME/bin/$_bin"
     fi
@@ -412,7 +412,7 @@ ok "Deployed path-locked configuration to $JCA_HOME/etc"
 _LOCAL_BIN="$HOME/.local/bin"
 mkdir -p "$_LOCAL_BIN"
 
-for _bin in jenova jenova-ui jenova-ca jenova-tui jenova-swap-mount; do
+for _bin in jenova jenova-ui jenova-ca jenova-tui jenova-swap-mount jenova-model-switch; do
     if [ -f "$JCA_HOME/bin/$_bin" ]; then
         ln -sf "$JCA_HOME/bin/$_bin" "$_LOCAL_BIN/$_bin"
     fi
