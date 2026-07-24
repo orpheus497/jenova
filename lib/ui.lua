@@ -74,6 +74,9 @@ ui.get_menu = function()
         { label = "Stop Server", action = "stop" },
         { label = "Restart Server", action = "restart" },
         { separator = true },
+        { label = "Switch to Instruct Model", action = "switch_instruct" },
+        { label = "Switch to Thinking Model", action = "switch_thinking" },
+        { separator = true },
         { label = lan_label, action = "toggle_lan" },
         { separator = true },
         { label = "Quit", action = "quit" }
@@ -107,6 +110,15 @@ ui.on_action = function(action)
             sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " restart --lan")
         else
             sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " restart")
+        end
+    elseif action == "switch_instruct" or action == "switch_thinking" then
+        local target = action == "switch_instruct" and "instruct" or "thinking"
+        sys_exec_sync(shell_quote(root .. "/bin/jenova-ca") .. " stop")
+        sys_exec_sync("bash " .. shell_quote(root .. "/bin/jenova-model-switch") .. " " .. target)
+        if is_lan_enabled() then
+            sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " start --lan")
+        else
+            sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " start")
         end
     elseif action == "toggle_lan" then
         if ui._proxy_handle then pcall(function() ui._proxy_handle:close() end) end
@@ -197,6 +209,8 @@ ui.get_tui_menu = function()
         { label = "Start Backend", action = "start" },
         { label = "Stop Backend", action = "stop" },
         { label = "Restart Backend", action = "restart" },
+        { label = "Switch to Instruct Model", action = "switch_instruct" },
+        { label = "Switch to Thinking Model", action = "switch_thinking" },
         { label = lan_label, action = "toggle_lan" },
 
         { label = "Launch Web UI", action = "web" },

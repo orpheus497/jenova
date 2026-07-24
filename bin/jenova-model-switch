@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# jenova-model-switch - Switch the active agent model using symlinks
+# Usage: jenova-model-switch [instruct|thinking]
+
+set -e
+
+if [ -z "$1" ]; then
+    echo "Usage: jenova-model-switch [instruct|thinking]" >&2
+    exit 1
+fi
+
+TARGET="$1"
+if [ "$TARGET" != "instruct" ] && [ "$TARGET" != "thinking" ]; then
+    echo "Error: Target must be 'instruct' or 'thinking'" >&2
+    exit 1
+fi
+
+# Resolve directories
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+JENOVA_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# Ensure we use JCA_HOME if defined, else default
+JCA_HOME="${JCA_HOME:-$JENOVA_ROOT}"
+
+MODELS_DIR="${JCA_HOME}/models"
+AGENT_DIR="${MODELS_DIR}/agent"
+TARGET_DIR="${MODELS_DIR}/${TARGET}"
+
+if [ ! -d "$TARGET_DIR" ]; then
+    echo "Error: Target directory does not exist: $TARGET_DIR" >&2
+    exit 1
+fi
+mkdir -p "$AGENT_DIR"
+
+# Find current model (ignoring .old files)
+CURRENT_MODEL=$(ls "$AGENT_DIR"/*.gguf 2>/dev/null | grep -v "\.old$" | head -n 1 || true)
+CURRENT_NAME=""
+if [ -n "$CURRENT_MODEL" ] && { [ -f "$CURRENT_MODEL" ] || [ -h "$CURRENT_MODEL" ]; }; then
+    CURRENT_NAME=$(basename "$CURRENT_MODEL")
+else
+    CURRENT_MODEL=""
+fi
+
+# Find target model
+TARGET_MODEL=$(ls "$TARGET_DIR"/*.gguf 2>/dev/null | grep -v "\.old$" | head -n 1 || true)
+if [ -z "$TARGET_MODEL" ] || [ ! -e "$TARGET_MODEL" ]; then
+    echo "Error: No .gguf model found in $TARGET_DIR" >&2
+    exit 1
+fi
+TARGET_NAME=$(basename "$TARGET_MODEL")
+
+if [ -n "$CURRENT_MODEL" ]; then
+    if [ "$CURRENT_NAME" == "$TARGET_NAME" ]; then
+        # Names are identical, safely remove the old symlink or file
+        echo "Removing identical active model: $CURRENT_MODEL"
+        rm -f "$CURRENT_MODEL"
+    else
+        # Names differ, preserve the old model by renaming to .gguf.old
+        echo "Preserving active model as .old: $CURRENT_MODEL"
+        mv "$CURRENT_MODEL" "${CURRENT_MODEL}.old"
+    fi
+fi
+
+# Create symlink
+# Use relative symlink from models/agent/ to models/<target>/
+echo "Symlinking $TARGET_NAME from $TARGET to agent"
+cd "$AGENT_DIR"
+ln -sf "../${TARGET}/${TARGET_NAME}" "${TARGET_NAME}"
+
+echo "Successfully switched to $TARGET model: $TARGET_NAME"
