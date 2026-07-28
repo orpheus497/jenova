@@ -10,7 +10,8 @@
 		copyToClipboard,
 		formatMessageForClipboard,
 		getMessageSiblings,
-		hasAgenticContent
+		hasAgenticContent,
+		buildNodeMap
 	} from '$lib/utils';
 
 	interface Props {
@@ -124,6 +125,8 @@
 			? messages
 			: messages.filter((msg) => msg.type !== MessageRole.SYSTEM);
 
+		const precomputedNodeMap = buildNodeMap(allConversationMessages);
+
 		// Build display entries, grouping agentic sessions into single entries.
 		// An agentic session = assistant(with tool_calls) → tool → assistant → tool → ... → assistant(final)
 		const result: Array<{
@@ -169,7 +172,7 @@
 				}
 			}
 
-			const siblingInfo = getMessageSiblings(allConversationMessages, msg.id);
+			const siblingInfo = getMessageSiblings(allConversationMessages, msg.id, precomputedNodeMap);
 
 			result.push({
 				message: msg,

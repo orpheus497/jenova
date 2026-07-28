@@ -40,6 +40,7 @@ export {
   hasMessageSiblings,
   getNextSibling,
   getPreviousSibling,
+  buildNodeMap,
 } from "./branching";
 
 // Code
