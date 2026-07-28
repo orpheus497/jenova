@@ -410,6 +410,11 @@ function fs_sync.empty_trash()
 end
 
 function fs_sync.get_fs_tree(scope_workspace, scope_project, scope_folder)
+    -- Block newlines which could inject additional shell commands
+    if scope_workspace and scope_workspace:match("[\r\n]") then return {} end
+    if scope_project and scope_project:match("[\r\n]") then return {} end
+    if scope_folder and scope_folder:match("[\r\n]") then return {} end
+
     local tree = {}
     -- Build the search root from optional scope params
     local search_root = workspaces_dir
@@ -422,13 +427,18 @@ function fs_sync.get_fs_tree(scope_workspace, scope_project, scope_folder)
             end
         end
     end
+
+    local function sq(s) return "'" .. s:gsub("'", "'\\''") .. "'" end
+
     -- Skip .trash and .git
-    local p = io.popen('find "' .. search_root .. '" -mindepth 1 -not -path "*/.trash*" -not -path "*/.git*" 2>/dev/null')
+    local p = io.popen('find ' .. sq(search_root) .. ' -mindepth 1 -not -path "*/.trash*" -not -path "*/.git*" 2>/dev/null')
     if p then
         for line in p:lines() do
-            local rel_path = line:sub(#workspaces_dir + 2)
-            local is_dir = os.execute('test -d "' .. line .. '"') == 0
-            table.insert(tree, { path = rel_path, full_path = line, isDir = is_dir })
+            if not line:match("[\r\n]") then
+                local rel_path = line:sub(#workspaces_dir + 2)
+                local is_dir = os.execute('test -d ' .. sq(line)) == 0
+                table.insert(tree, { path = rel_path, full_path = line, isDir = is_dir })
+            end
         end
         p:close()
     end
