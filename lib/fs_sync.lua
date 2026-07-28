@@ -319,7 +319,8 @@ function fs_sync.get_trash()
     end
     
     -- Workspace trashes
-    local p = io.popen('find "' .. workspaces_dir .. '" -maxdepth 2 -type d -name ".trash" 2>/dev/null')
+    local function sq(s) return "'" .. s:gsub("'", "'\\''") .. "'" end
+    local p = io.popen('find ' .. sq(workspaces_dir) .. ' -maxdepth 2 -type d -name ".trash" 2>/dev/null')
     if p then
         for trash_dir in p:lines() do
             local ws_name = trash_dir:match(workspaces_dir:gsub("%-", "%%-") .. "/([^/]+)/%.trash")
