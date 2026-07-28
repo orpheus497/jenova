@@ -123,7 +123,7 @@
 								<p class="text-[10px] text-outline font-mono mt-0.5">Chat · {new Date(conv.lastModified).toLocaleDateString()}</p>
 							</div>
 						</div>
-						<button disabled={isActioning} class="p-1.5 rounded-md bg-surface-container hover:bg-primary/20 text-outline hover:text-primary transition-colors" onclick={() => handleRestoreConversation(conv)} title="Restore">
+						<button disabled={isActioning} class="p-1.5 rounded-md bg-surface-container hover:bg-primary/20 text-outline hover:text-primary transition-colors" onclick={() => handleRestoreConversation(conv)} title="Restore" aria-label="Restore item">
 							<ArchiveRestore size={16} />
 						</button>
 					</div>
@@ -144,7 +144,7 @@
 								<p class="text-[10px] text-outline font-mono mt-0.5">{item.workspace || 'Global'}</p>
 							</div>
 						</div>
-						<button disabled={isActioning} class="p-1.5 rounded-md bg-surface-container hover:bg-primary/20 text-outline hover:text-primary transition-colors" onclick={() => handleRestore(item)} title="Restore">
+						<button disabled={isActioning} class="p-1.5 rounded-md bg-surface-container hover:bg-primary/20 text-outline hover:text-primary transition-colors" onclick={() => handleRestore(item)} title="Restore" aria-label="Restore item">
 							<ArchiveRestore size={16} />
 						</button>
 					</div>

@@ -139,7 +139,7 @@
 			<HardDrive size={20} class="text-accent" />
 			<h3 class="font-bold text-lg text-on-surface">Virtual File System Explorer</h3>
 		</div>
-		<button onclick={loadTree} disabled={isLoading} class="p-2 hover:bg-surface-variant rounded text-outline hover:text-primary transition-colors disabled:opacity-50" title="Refresh">
+		<button onclick={loadTree} disabled={isLoading} class="p-2 hover:bg-surface-variant rounded text-outline hover:text-primary transition-colors disabled:opacity-50" title="Refresh" aria-label="Refresh file system">
 			<RefreshCw size={16} class={isLoading ? 'animate-spin' : ''} />
 		</button>
 	</div>
