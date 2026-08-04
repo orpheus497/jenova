@@ -18,6 +18,13 @@ local db = require("db")
 local fs_sync = require("fs_sync")
 local sha256 = require("sha256")
 
+local function shell_quote(s)
+    if not s or tostring(s):match("[\r\n]") then
+        return "''"
+    end
+    return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
+
 -- MIME types for static file serving
 local MIME_TYPES = {
     html = "text/html",
@@ -66,7 +73,7 @@ else
 end
 -- Indexing moved to after server listen
 
-os.execute("mkdir -p '" .. jca_home .. "/var'")
+os.execute("mkdir -p " .. shell_quote(jca_home .. "/var"))
 local db_path = os.getenv("JENOVA_DB_PATH") or (jca_home .. "/var/jenova.db")
 local db_ok = db.init(db_path)
 if not db_ok then
@@ -1047,8 +1054,7 @@ local function proxy_connection(client_fd, conn_fds)
     if is_storage_list then
         recursive_mkdir(workspaces_dir)
         local files = {}
-        local escaped_dir = workspaces_dir:gsub("'", "'\\''")
-        local cmd = "find '" .. escaped_dir .. "' -maxdepth 4 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/build/*'"
+        local cmd = "find " .. shell_quote(workspaces_dir) .. " -maxdepth 4 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/build/*'"
         local output = async_popen_read(cmd)
         if output then
             for line in output:gmatch("[^\r\n]+") do
@@ -1066,8 +1072,7 @@ local function proxy_connection(client_fd, conn_fds)
     if is_workspaces_list then
         recursive_mkdir(workspaces_dir)
         local ws = {}
-        local escaped_dir = workspaces_dir:gsub("'", "'\\''")
-        local cmd = "find '" .. escaped_dir .. "' -maxdepth 1 -type d -not -path '*/.*'"
+        local cmd = "find " .. shell_quote(workspaces_dir) .. " -maxdepth 1 -type d -not -path '*/.*'"
         local output = async_popen_read(cmd)
         if output then
             for line in output:gmatch("[^\r\n]+") do

@@ -2,6 +2,9 @@ local ui = {}
 local root = ""
 
 local function shell_quote(s)
+    if not s or tostring(s):match("[\r\n]") then
+        return "''"
+    end
     return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
 end
 

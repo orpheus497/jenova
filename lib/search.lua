@@ -133,6 +133,9 @@ local function chunk_text(content)
 end
 
 local function shell_quote(s)
+  if not s or tostring(s):match("[\r\n]") then
+      return "''"
+  end
   return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
 end
 
@@ -572,7 +575,7 @@ function search.index_dir(root_dir, extensions)
     math.randomseed(os.time() + math.floor(os.clock() * 1000000))
     local tmp_list = string.format("%s/index_queue_%d_%d.json", JENOVA_STATE, os.time(), math.random(100000))
     -- Use os.execute return value directly; pcall won't detect non-zero exit.
-    local rc_mkdir = os.execute("mkdir -p " .. JENOVA_STATE)
+    local rc_mkdir = os.execute("mkdir -p " .. shell_quote(JENOVA_STATE))
     if rc_mkdir ~= 0 then io.write("[search] warning: failed to create state dir: " .. JENOVA_STATE .. "\n") end
     local f = io.open(tmp_list, "w")
     if f then
