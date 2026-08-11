@@ -1052,13 +1052,19 @@ local function proxy_connection(client_fd, conn_fds)
 
     local is_storage_list = is_get and (headers_raw:match("^GET /api/storage/[ %?]") or headers_raw:match("^GET /api/storage "))
     if is_storage_list then
+        local safe_dir = resolve_safe_path(workspaces_dir, "")
+        if not safe_dir or safe_dir:sub(1, 1) == "-" then
+            local resp = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, resp)
+            safe_close(); return
+        end
         recursive_mkdir(workspaces_dir)
         local files = {}
-        local cmd = "find " .. shell_quote(workspaces_dir) .. " -maxdepth 4 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/build/*'"
-        local output = async_popen_read(cmd)
-        if output then
-            for line in output:gmatch("[^\r\n]+") do
-                local rel = line:sub(#workspaces_dir + 2)
+        local cmd = "find -- " .. shell_quote(safe_dir) .. " -maxdepth 4 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/build/*' -print0"
+        local output, status = async_popen_read(cmd)
+        if output and status == 0 then
+            for item in output:gmatch("%Z+") do
+                local rel = item:sub(#safe_dir + 2)
                 if #rel > 0 then table.insert(files, json.encode(rel)) end
             end
         end
@@ -1070,13 +1076,19 @@ local function proxy_connection(client_fd, conn_fds)
 
     local is_workspaces_list = is_get and headers_raw:match("^GET /api/workspaces")
     if is_workspaces_list then
+        local safe_dir = resolve_safe_path(workspaces_dir, "")
+        if not safe_dir or safe_dir:sub(1, 1) == "-" then
+            local resp = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, resp)
+            safe_close(); return
+        end
         recursive_mkdir(workspaces_dir)
         local ws = {}
-        local cmd = "find " .. shell_quote(workspaces_dir) .. " -maxdepth 1 -type d -not -path '*/.*'"
-        local output = async_popen_read(cmd)
-        if output then
-            for line in output:gmatch("[^\r\n]+") do
-                local name = line:sub(#workspaces_dir + 2)
+        local cmd = "find -- " .. shell_quote(safe_dir) .. " -maxdepth 1 -type d -not -path '*/.*' -print0"
+        local output, status = async_popen_read(cmd)
+        if output and status == 0 then
+            for item in output:gmatch("%Z+") do
+                local name = item:sub(#safe_dir + 2)
                 if #name > 0 then table.insert(ws, json.encode(name)) end
             end
         end
