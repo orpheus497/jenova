@@ -18,6 +18,13 @@ local db = require("db")
 local fs_sync = require("fs_sync")
 local sha256 = require("sha256")
 
+local function shell_quote(s)
+    if not s or tostring(s):match("[\r\n]") then
+        return "''"
+    end
+    return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
+
 -- MIME types for static file serving
 local MIME_TYPES = {
     html = "text/html",
@@ -66,7 +73,7 @@ else
 end
 -- Indexing moved to after server listen
 
-os.execute("mkdir -p '" .. jca_home .. "/var'")
+os.execute("mkdir -p " .. shell_quote(jca_home .. "/var"))
 local db_path = os.getenv("JENOVA_DB_PATH") or (jca_home .. "/var/jenova.db")
 local db_ok = db.init(db_path)
 if not db_ok then
@@ -1045,16 +1052,26 @@ local function proxy_connection(client_fd, conn_fds)
 
     local is_storage_list = is_get and (headers_raw:match("^GET /api/storage/[ %?]") or headers_raw:match("^GET /api/storage "))
     if is_storage_list then
+        local safe_dir = resolve_safe_path(workspaces_dir, "")
+        if not safe_dir then
+            local resp = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, resp)
+            safe_close(); return
+        end
+        local find_root = safe_dir:sub(1, 1) == "/" and safe_dir or ("./" .. safe_dir)
         recursive_mkdir(workspaces_dir)
         local files = {}
-        local escaped_dir = workspaces_dir:gsub("'", "'\\''")
-        local cmd = "find '" .. escaped_dir .. "' -maxdepth 4 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/build/*'"
-        local output = async_popen_read(cmd)
-        if output then
-            for line in output:gmatch("[^\r\n]+") do
-                local rel = line:sub(#workspaces_dir + 2)
-                if #rel > 0 then table.insert(files, json.encode(rel)) end
-            end
+        local cmd = "find -- " .. shell_quote(find_root) .. " -maxdepth 4 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/build/*' -print0 2>/dev/null"
+        local output, status = async_popen_read(cmd)
+        if not output or status ~= 0 then
+            local resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, resp)
+            safe_close(); return
+        end
+        local prefix_len = find_root == "/" and 2 or (#find_root + 2)
+        for item in output:gmatch("%Z+") do
+            local rel = item:sub(prefix_len)
+            if #rel > 0 then table.insert(files, json.encode(rel)) end
         end
         local content = "[" .. table.concat(files, ",") .. "]"
         local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)
@@ -1064,16 +1081,26 @@ local function proxy_connection(client_fd, conn_fds)
 
     local is_workspaces_list = is_get and headers_raw:match("^GET /api/workspaces")
     if is_workspaces_list then
+        local safe_dir = resolve_safe_path(workspaces_dir, "")
+        if not safe_dir then
+            local resp = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, resp)
+            safe_close(); return
+        end
+        local find_root = safe_dir:sub(1, 1) == "/" and safe_dir or ("./" .. safe_dir)
         recursive_mkdir(workspaces_dir)
         local ws = {}
-        local escaped_dir = workspaces_dir:gsub("'", "'\\''")
-        local cmd = "find '" .. escaped_dir .. "' -maxdepth 1 -type d -not -path '*/.*'"
-        local output = async_popen_read(cmd)
-        if output then
-            for line in output:gmatch("[^\r\n]+") do
-                local name = line:sub(#workspaces_dir + 2)
-                if #name > 0 then table.insert(ws, json.encode(name)) end
-            end
+        local cmd = "find -- " .. shell_quote(find_root) .. " -maxdepth 1 -type d -not -path '*/.*' -print0 2>/dev/null"
+        local output, status = async_popen_read(cmd)
+        if not output or status ~= 0 then
+            local resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, resp)
+            safe_close(); return
+        end
+        local prefix_len = find_root == "/" and 2 or (#find_root + 2)
+        for item in output:gmatch("%Z+") do
+            local name = item:sub(prefix_len)
+            if #name > 0 then table.insert(ws, json.encode(name)) end
         end
         local content = "[" .. table.concat(ws, ",") .. "]"
         local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)

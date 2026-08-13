@@ -13,6 +13,13 @@ local ffi = require("ffi")
 
 local embed = {}
 
+local function shell_quote(s)
+  if not s or tostring(s):match("[\r\n]") then
+      return "''"
+  end
+  return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
+end
+
 -------------------------------------------------------------------------------
 -- Config
 -------------------------------------------------------------------------------
@@ -54,7 +61,7 @@ function embed.init(opts)
       local home = os.getenv("HOME") or "/tmp"
       local jca_home = os.getenv("JCA_HOME") or (home .. "/Jenova")
       local state_dir = os.getenv("JENOVA_STATE") or ((opts.script_dir and opts.script_dir ~= '') and (opts.script_dir .. "/.system") or (jca_home .. "/.system"))
-      os.execute(string.format('mkdir -p %q', state_dir))
+      os.execute("mkdir -p " .. shell_quote(state_dir))
       
       local ok, pid_or_err = daemon.start_background(args, state_dir .. '/llama-embed.log', opts.script_dir or '.', state_dir .. '/llama-embed.pid', {GGML_VULKAN_DISABLE="1", GGML_VK_DEVICE=""})
       if ok then
