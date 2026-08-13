@@ -1053,21 +1053,22 @@ local function proxy_connection(client_fd, conn_fds)
     local is_storage_list = is_get and (headers_raw:match("^GET /api/storage/[ %?]") or headers_raw:match("^GET /api/storage "))
     if is_storage_list then
         local safe_dir = resolve_safe_path(workspaces_dir, "")
-        if not safe_dir or safe_dir:sub(1, 1) == "-" then
-            local resp = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"
+        if not safe_dir then
+            local resp = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
             async_send(client_fd, resp)
             safe_close(); return
         end
+        local find_root = safe_dir:sub(1, 1) == "/" and safe_dir or ("./" .. safe_dir)
         recursive_mkdir(workspaces_dir)
         local files = {}
-        local cmd = "find -- " .. shell_quote(safe_dir) .. " -maxdepth 4 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/build/*' -print0 2>/dev/null"
+        local cmd = "find -- " .. shell_quote(find_root) .. " -maxdepth 4 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/build/*' -print0 2>/dev/null"
         local output, status = async_popen_read(cmd)
         if not output or status ~= 0 then
             local resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
             async_send(client_fd, resp)
             safe_close(); return
         end
-        local prefix_len = safe_dir == "/" and 2 or (#safe_dir + 2)
+        local prefix_len = find_root == "/" and 2 or (#find_root + 2)
         for item in output:gmatch("%Z+") do
             local rel = item:sub(prefix_len)
             if #rel > 0 then table.insert(files, json.encode(rel)) end
@@ -1081,21 +1082,22 @@ local function proxy_connection(client_fd, conn_fds)
     local is_workspaces_list = is_get and headers_raw:match("^GET /api/workspaces")
     if is_workspaces_list then
         local safe_dir = resolve_safe_path(workspaces_dir, "")
-        if not safe_dir or safe_dir:sub(1, 1) == "-" then
-            local resp = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"
+        if not safe_dir then
+            local resp = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n"
             async_send(client_fd, resp)
             safe_close(); return
         end
+        local find_root = safe_dir:sub(1, 1) == "/" and safe_dir or ("./" .. safe_dir)
         recursive_mkdir(workspaces_dir)
         local ws = {}
-        local cmd = "find -- " .. shell_quote(safe_dir) .. " -maxdepth 1 -type d -not -path '*/.*' -print0 2>/dev/null"
+        local cmd = "find -- " .. shell_quote(find_root) .. " -maxdepth 1 -type d -not -path '*/.*' -print0 2>/dev/null"
         local output, status = async_popen_read(cmd)
         if not output or status ~= 0 then
             local resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
             async_send(client_fd, resp)
             safe_close(); return
         end
-        local prefix_len = safe_dir == "/" and 2 or (#safe_dir + 2)
+        local prefix_len = find_root == "/" and 2 or (#find_root + 2)
         for item in output:gmatch("%Z+") do
             local name = item:sub(prefix_len)
             if #name > 0 then table.insert(ws, json.encode(name)) end
