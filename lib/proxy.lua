@@ -1060,13 +1060,17 @@ local function proxy_connection(client_fd, conn_fds)
         end
         recursive_mkdir(workspaces_dir)
         local files = {}
-        local cmd = "find -- " .. shell_quote(safe_dir) .. " -maxdepth 4 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/build/*' -print0"
+        local cmd = "find -- " .. shell_quote(safe_dir) .. " -maxdepth 4 -not -path '*/.*' -not -path '*/node_modules/*' -not -path '*/build/*' -print0 2>/dev/null"
         local output, status = async_popen_read(cmd)
-        if output and status == 0 then
-            for item in output:gmatch("%Z+") do
-                local rel = item:sub(#safe_dir + 2)
-                if #rel > 0 then table.insert(files, json.encode(rel)) end
-            end
+        if not output or status ~= 0 then
+            local resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, resp)
+            safe_close(); return
+        end
+        local prefix_len = safe_dir == "/" and 2 or (#safe_dir + 2)
+        for item in output:gmatch("%Z+") do
+            local rel = item:sub(prefix_len)
+            if #rel > 0 then table.insert(files, json.encode(rel)) end
         end
         local content = "[" .. table.concat(files, ",") .. "]"
         local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)
@@ -1084,13 +1088,17 @@ local function proxy_connection(client_fd, conn_fds)
         end
         recursive_mkdir(workspaces_dir)
         local ws = {}
-        local cmd = "find -- " .. shell_quote(safe_dir) .. " -maxdepth 1 -type d -not -path '*/.*' -print0"
+        local cmd = "find -- " .. shell_quote(safe_dir) .. " -maxdepth 1 -type d -not -path '*/.*' -print0 2>/dev/null"
         local output, status = async_popen_read(cmd)
-        if output and status == 0 then
-            for item in output:gmatch("%Z+") do
-                local name = item:sub(#safe_dir + 2)
-                if #name > 0 then table.insert(ws, json.encode(name)) end
-            end
+        if not output or status ~= 0 then
+            local resp = "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
+            async_send(client_fd, resp)
+            safe_close(); return
+        end
+        local prefix_len = safe_dir == "/" and 2 or (#safe_dir + 2)
+        for item in output:gmatch("%Z+") do
+            local name = item:sub(prefix_len)
+            if #name > 0 then table.insert(ws, json.encode(name)) end
         end
         local content = "[" .. table.concat(ws, ",") .. "]"
         local resp = string.format("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", #content)
