@@ -1,377 +1,425 @@
-# Concurrency Analysis: Proxy, Server, and the Single-Endpoint Bottleneck
+# Server / Proxy Topology and Concurrency Analysis
 
-Investigation of the request path through `lib/proxy.lua`, `bin/jenova-ca`, and the
-supporting libraries, prompted by stalls attributed to "the single-threaded nature of
-everything being passed through one endpoint."
+Second pass. The first version of this document analysed the proxy's *internals* and
+missed the topology — which is where the actual problem lives. This version maps every
+moving part in the server/proxy system, compares the implemented topology against the
+intended one, and traces the observed stalls to a specific causal chain.
 
-**Verdict: the design is the problem, not Lua.** A Nim (or C, or Rust) rewrite of the
-proxy would fix roughly 2% of the observed stall time. The stalls are seconds long; the
-language-attributable cost is tens of milliseconds. Details and measurements below.
-
----
-
-## 1. How the wiring actually works
-
-```
-browser ──► :8080  lib/proxy.lua  (LuaJIT, single process, single OS thread)
-                     │
-                     ├─ /health                 answered locally
-                     ├─ /api/fs/*               fs_sync.lua   → find(1), test(1), rename
-                     ├─ /api/db/*               db.lua        → SQLite via FFI
-                     ├─ /api/storage/*          io.open / find(1)
-                     ├─ /api/workspaces         find(1)
-                     ├─ GET /<static>           public/ off disk
-                     └─ everything else ───────► :8081  llama-server (C++)
-                                                  └─ RAG hook → :8082 llama-server --embedding
-```
-
-`lib/proxy.lua:1551` is one `select(2)` loop. Each accepted connection becomes a Lua
-coroutine (`lib/proxy.lua:1608`). The coroutine yields `("read"|"write", fd)` and the loop
-re-arms it when that fd is ready. This is a correct, ordinary single-threaded reactor —
-and for pure socket relaying it is genuinely fine.
-
-The problem is what runs *between* the yields.
-
-**Every request is a fresh TCP connection.** The proxy sets `Connection: close` on its own
-responses and rewrites the upstream request to `Connection: close`
-(`lib/proxy.lua:1191-1192`, `1355-1358`). No keep-alive anywhere. The frontend
-(`jca_web/src/lib/services/database.service.ts`) makes many small sequential calls —
-`updateConversation` does a `GET` then a `POST`, `deleteMessageCascading` issues one
-request per message — so a single UI action can mean dozens of connect/parse/teardown
-cycles.
-
-**`MAX_ACTIVE_CONNECTIONS = 32`** (`lib/proxy.lua:98`). Past that the proxy returns
-`503 Service Unavailable` with `Retry-After: 5` (`lib/proxy.lua:1601`). When the loop is
-blocked (see §2) connections queue and this ceiling is reached quickly. If you are seeing
-sporadic 503s, this is where they come from.
+**Headline: the intended design is a single front door on :8080 with :8081 and :8082
+behind it. That is not what is built.** :8082 is not proxied at all, and the proxy is not
+a supervised service — it is a child process of the desktop tray app. Almost every
+symptom follows from those two facts.
 
 ---
 
-## 2. The real serialization points, ranked
+## 1. Intended vs. actual topology
 
-### 2.1 `NUM_SLOTS=1` — the single inference slot
+### Intended
 
-`etc/jenova.conf:88` and `hardware-profiles/Linux/Vulkan/dgpu/gtx-1650ti/jenova.conf:88`:
+```
+                    ┌──────────────────────────────┐
+  clients ─────────►│  :8080  Intelligence Proxy   │
+  (WebUI, API,      │  single front door           │
+   Leo, LAN)        └───────┬──────────────┬───────┘
+                            │              │
+                   ┌────────▼──────┐  ┌────▼─────────────┐
+                   │ :8081 llama   │  │ :8082 embed/RAG  │
+                   │ (chat/infill) │  │ (vectors)        │
+                   └───────────────┘  └──────────────────┘
+                     bound to loopback only, never reachable directly
+```
+
+### Actual
+
+```
+  browser ──────────► :8080  proxy.lua ──────────► :8081  llama-server
+                        ▲         │
+                        │         └──(in-process client, lib/embed.lua)──┐
+                        │                                                │
+  spawned by io.popen   │                                                ▼
+  from lib/ui.lua ──────┘                                        :8082  embed server
+                                                                        ▲
+  jenova-ca --daemon ───────────────────────────────────────────────────┘
+     (also starts one; two owners, one port)
+
+  LAN mode: :8080, :8081 AND :8082 all bind 0.0.0.0, no auth on any of them.
+```
+
+The gap between these two diagrams is the report.
+
+---
+
+## 2. The moving parts, in full
+
+| Component | What it is | Who starts it | Who supervises it |
+|---|---|---|---|
+| `:8081` llama-server | C++ chat/infill backend | `jenova-ca --daemon` | watchdog (PID + `/health`) |
+| `:8082` llama-server `--embedding` | C++ embedding backend | `jenova-ca --daemon` **and/or** `lib/embed.lua` | watchdog, *only* if jenova-ca started it |
+| `:8080` `lib/proxy.lua` | LuaJIT front door | `lib/ui.lua` via `io.popen(... proxy-serve, "w")` | **nobody** |
+| `jenova-ui` / `jenova-tui` | GTK tray / ncurses TUI (C + Lua) | user | — |
+| `lib/indexer_runner.lua` | background embedder | `search.index_dir` (never called in proxy) | pidfile only |
+| `jca_web` | SvelteKit UI | browser | — |
+
+### 2.1 The proxy is not a daemon
+
+`bin/jenova-ca --daemon` starts llama-server (`_launch_llama_server_bg`, `:216`) and the
+embed server (`:694-710`), polls `/health`, then writes the pidfile:
 
 ```sh
-NUM_SLOTS="${JENOVA_SLOTS:-1}"
+printf '%s' "$LLAMA_PID${EMBED_PID:+ $EMBED_PID}" > "$PID_FILE"
 ```
 
-Passed to llama-server as `-np 1` (`bin/jenova-ca:231`, `:796`). **llama-server processes
-exactly one request at a time.** Concurrency in the proxy is irrelevant to inference
-latency: two chats, or a chat plus a title generation, or a chat plus an embedding call,
-serialize at the backend regardless of what language the proxy is written in.
+`PROXY_PID` is declared at `bin/jenova-ca:13` and never assigned. `OLD_PROXY_PID` is
+printed at `:670` and never read. **`jenova-ca --daemon` never starts the proxy.**
 
-This is the single largest contributor to "it feels single-threaded," and it is a
-one-character config change.
-
-Caveat: llama.cpp divides the context window among slots (`n_ctx_slot = n_ctx /
-n_parallel`). Going from `-np 1 -c 8192` to `-np 2 -c 8192` halves per-conversation
-context to 4096. To keep 8k per slot you need `-c 16384`, which costs VRAM for KV cache.
-With `q8_0` KV on a 3B model that is roughly +128 MiB — affordable on the 4 GiB profile,
-which currently reserves 512 MiB of headroom.
-
-The embedding server on :8082 is started with no `-np` at all
-(`bin/jenova-ca:700-710`, `:817-826`), so it is also one slot, CPU-only, and shares
-`-t $THREADS` with the main model.
-
-### 2.2 `get_fs_tree` forks a process **per file**
-
-`lib/fs_sync.lua:435-448`:
+The proxy is started only by `lib/ui.lua:67`:
 
 ```lua
-local p = io.popen('find ' .. sq(search_root) .. ' -mindepth 1 ... -print0')
-local output = p:read("*a")          -- blocking read, no yield
-...
-for line in output:gmatch(...) do
-    local is_dir = os.execute('test -d ' .. sq(line)) == 0   -- fork+exec PER ENTRY
+ui._proxy_handle = io.popen(shell_quote(root .. "/bin/jenova-ca") .. " proxy-serve " .. lan_arg, "w")
 ```
 
-Measured on this (fast, idle) container: **320 entries → 470 ms wall**. On a laptop with
-llama-server holding 4–8 threads on the CPU, expect 1.5–3 s for a few hundred files.
+`proxy-serve` (`bin/jenova-ca:419-427`) `exec`s `luajit proxy.lua --watch-stdin`. The
+`--watch-stdin` flag exists precisely because the proxy's lifetime is bound to that pipe:
+`lib/proxy.lua:1586-1593` shuts down on stdin EOF ("parent process died").
 
-This is a hard freeze of the entire event loop. Nothing else is serviced — not the health
-check, not `/api/db`, and not an in-flight token stream. `GET /api/fs/tree` is a routine
-UI call.
+Consequences, all of them load-bearing:
 
-The `io.popen` is also the blocking Lua one, not the async variant, and `fs_sync.get_trash`
-(`lib/fs_sync.lua:299`, `:323`) and `fs_sync.empty_trash` (`:384`) have the same problem.
+1. **Headless = no proxy.** Running `jenova-ca start` over SSH brings up :8081 and :8082
+   and nothing on :8080.
+2. **`jenova-ca status` does not report the proxy.** It reports llama-server and embed
+   (`:385-404`). The "ACTIVE" light in the tray/TUI means llama-server is up.
+3. **`jenova-ca stop` does not stop the proxy.** It kills the pidfile PIDs and `pkill`s
+   llama-server by port. :8080 stays bound, now 502-ing.
+4. **The watchdog does not watch the proxy.** `bin/jenova-ca:491` iterates
+   `"llama-server:$_W_LLAMA" "embed:$_W_EMBED"` only, and its health probe is:
 
-### 2.3 `async_popen_read` is not async
+   ```sh
+   _url="http://${CONNECT_HOST}:${LLAMA_PORT}/health"   # :8081, not :8080
+   ```
 
-`lib/proxy.lua:182-240`. Despite the name, it forks and then runs its **own** `select()`
-loop with a 100 ms tick and a 15 s deadline. It never calls `coroutine.yield`. The fd is
-set non-blocking and CLOEXEC — everything is in place to yield — but it doesn't.
+   **If the proxy wedges — which is the reported symptom — every health signal in the
+   system still reads green, and nothing restarts it.** This is why a stall feels like it
+   has no cause: nothing is looking at the component that stalled.
+5. **The UI polls by forking.** `jenova-ui/src/main.c:392` — `g_timeout_add_seconds(3, ...)`
+   → `ui.poll_status()` → `io.popen("jenova-ca status")`, a shell script that sources four
+   config files and forks `curl`. In the TUI the same call sits inside the render loop with
+   `timeout(1000)` (`main.c:512`), so it runs **once per second**. Plus `ip route` /
+   `ifconfig` forks when LAN mode is on (`lib/ui.lua:170-190`).
 
-Reachable from:
+### 2.2 :8082 is not behind the proxy
 
-- `GET /api/storage` directory listing (`lib/proxy.lua:1065`)
-- `GET /api/workspaces` (`lib/proxy.lua:1094`)
-- web search, via `ddg_html_search` (8 s timeout) then `ddg_instant_answer`
-  (5 s timeout) — `lib/proxy.lua:381-397`
+`lib/proxy.lua` has exactly one upstream. `LLAMA_PORT` (`:56`) is a scalar, used at `:1414`
+for the only outbound connect. There is no route, no upstream table, and no
+`/v1/embeddings` endpoint.
 
-The comment at `lib/proxy.lua:379-380` acknowledges this ("Blocks the calling coroutine
-for up to ~13 seconds worst case. Acceptable: single-user system"). It does not block the
-calling coroutine — it blocks *every* coroutine, including live token streams. **A web
-search freezes the whole proxy for up to 13 seconds.**
-
-### 2.4 Synchronous SQLite on the loop thread
-
-`lib/db.lua` is a direct FFI binding, all calls synchronous. Every `/api/db/*` request
-blocks the loop for the duration of the query plus JSON marshalling.
-
-`execute_query` (`lib/db.lua:210`) prepares and finalizes a statement on every call — no
-prepared-statement cache — and calls `sqlite3_column_name` + `ffi.string` **per row, per
-column**. `db.get_all_messages()` (`lib/db.lua:430`) does `SELECT * FROM messages` with no
-limit: for 5,000 messages that is 70,000 needless string allocations before any JSON is
-produced.
-
-Measured `lib/json.lua` throughput: a 0.36 MB conversation payload takes **27 ms to
-encode, 16 ms to decode** here; 3–5× that on a loaded laptop.
-
-### 2.5 The SHA-256 cache intercept buys nothing and costs on every request
-
-`lib/proxy.lua:1371-1386` hashes the entire rewritten chat body with the pure-Lua SHA-256
-in `lib/sha256.lua`, then does a SQLite lookup, on **every** `/v1/chat/completions`.
-
-Measured throughput of `lib/sha256.lua`: **16–26 MB/s** (1.0 ms @ 16 KB, 15 ms @ 256 KB,
-43 ms @ 1 MB). `str2blk` (`lib/sha256.lua:25-44`) builds a Lua table one byte at a time
-with a `math.floor` per byte, which is most of the cost.
-
-And the cache can essentially never hit: `db.set_cache` (`lib/db.lua:862`) keeps **20
-entries**, and every turn of a growing conversation produces a different body. Meanwhile
-`set_cache` runs a `COUNT(*)` and a `DELETE` on every write, and stores up to 50 MB of
-response blob in SQLite (`lib/proxy.lua:1436`).
-
-This is pure overhead on the hot path. It should be deleted, not optimized.
-
-### 2.6 `async_send` is O(n²)
-
-`lib/proxy.lua:157`:
+The proxy reaches :8082 as an ordinary HTTP *client*, from inside its own process:
 
 ```lua
-local n = ffi.C.send(fd, data:sub(sent + 1), #data - sent, 0)
+-- lib/embed.lua:26
+local EMBED_URL = os.getenv("JENOVA_LLAMA_EMBED_URL") or "http://127.0.0.1:8082"
+-- lib/embed.lua:107
+local status, body = http.post(EMBED_URL .. "/embedding", payload, 30)
 ```
 
-`data:sub(sent + 1)` copies the entire remainder of the string on every partial send.
-Simulated with 8 KB partial sends: a 1 MB body copies **64 MB**; a 4 MB body copies
-**1 GB**. It only triggers when the socket buffer fills, so streaming (8 KB chunks) is
-safe, but large static assets, `/api/storage` file reads, and `messages/all` responses hit
-it. Fix is a `const char*` pointer plus offset — no copy.
+So the embedding backend is a *dependency* of the proxy, not a *service behind* it. Nothing
+outside the proxy process can reach embeddings through :8080. `POST /v1/embeddings` to
+:8080 is forwarded to :8081 — the chat model, loaded without `--embedding` — and errors.
 
-### 2.7 Blocking `getaddrinfo` on the non-loopback health path
+`scripts/install.sh:562` makes the drift explicit:
 
-`lib/proxy.lua:550-566`. The `127.0.0.1` fast path is fine; any other
-`LLAMA_CONNECT_HOST` calls `getaddrinfo` synchronously on the loop thread. Minor, but it
-is a DNS timeout waiting to happen on LAN-bound setups.
+> the firewall allows ports 8080, 8081, and 8082 from this host.
+
+That instruction is only necessary *because* the front door isn't one.
+
+### 2.3 Two owners for :8082
+
+`lib/proxy.lua:63` calls `embed.init()` at startup. `lib/embed.lua:43` probes
+`:8082/health` with a **1-second** timeout; on failure it spawns its own embedding server
+via `daemon.start_background` with pidfile `$JENOVA_STATE/llama-embed.pid`
+(`lib/embed.lua:66`) — a different pidfile from the `EMBED_PID` that `jenova-ca` tracks.
+
+The embed model takes several seconds to load. If the proxy starts during that window —
+which is the normal case, since the tray app starts the proxy immediately — the 1 s probe
+fails and a **second** `llama-server --embedding` is spawned against an already-claimed
+port. The loser fails to bind and dies, but `daemon.start_background` writes its pidfile on
+successful `fork`, not on successful bind, so the pidfile is written either way.
+
+`jenova-ca stop` deletes `llama-embed.pid` (`:372`) without killing that PID; the trailing
+`pkill -f "llama-server.*--port.*${LLAMA_EMBED_PORT}"` (`:378`) is what actually cleans up —
+a blunt instrument that would kill any llama-server on that port.
+
+### 2.4 The embedding path is inert, and `/health` lies about it
+
+Three independent breaks, any one of which is sufficient:
+
+- `embed.init()` returns `true` after *starting* a server but never sets
+  `initialized = true` (`lib/embed.lua:66-69`), so `embed.encode` returns
+  `"not initialized"` forever on that path.
+- `search.init_embeddings` is only called from `lib/indexer_runner.lua:34`, so the
+  module-local `embed` in `search.lua` is `nil` inside the proxy.
+- `search.index_dir` is never called from the proxy (deliberately deferred,
+  `lib/proxy.lua:1521-1523`), so `total_docs == 0` and `search.query` returns `{}` at
+  `lib/search.lua:759` before doing anything.
+
+And `/health` reports `embed = embed_ok`, where `embed_ok` is the return of `embed.init()` —
+i.e. "I started a process", not "embeddings work". **The health endpoint reports the RAG
+subsystem as healthy while it is completely non-functional.**
+
+### 2.5 No auth, no CORS, on any of the three ports
+
+`grep -i "access-control\|authorization\|bearer" lib/proxy.lua` → nothing. `--lan` sets
+`HOST=0.0.0.0` (`bin/jenova-ca:331`) and `--host "$HOST"` is passed to **both** llama-server
+and the embed server. In LAN mode all three ports are open to the network with no
+authentication and no rate limiting, and :8081/:8082 bypass the proxy's persona, RAG, and
+path-traversal checks entirely.
+
+The missing CORS headers also mean the Jenova-native endpoints (`/api/db`, `/api/fs`,
+`/api/storage`) only work same-origin — so the "external integrations such as the Leo
+browser" described in `docs/architecture/overview.md` can reach the OpenAI surface but not
+the workspace surface.
 
 ---
 
-## 3. Functional defects found along the way
+## 3. The causal chain behind the stalls
 
-These are not performance issues but they materially change what the system does.
+This is the specific sequence, and it explains why it feels like "everything goes through
+one endpoint and blocks."
 
-### 3.1 RAG is dead in the proxy
+**`SyncService.syncEntity("chat", convId)` runs on every message completion**
+(`jca_web/src/lib/stores/conversations.svelte.ts:524`, `:560`, `:630`). Inside it
+(`sync.service.ts:453-494`):
 
-`lib/proxy.lua:1253` calls `search.query(...)`. But `search.query` returns `{}`
-immediately when `total_docs == 0` (`lib/search.lua:759`), and `total_docs` is only ever
-incremented by `bm25_index_file`, which is only reached via `search.index_dir` or
-`search.reindex_file`. **Neither is called anywhere in `lib/proxy.lua`** — indexing was
-deliberately deferred (`lib/proxy.lua:1521-1523`) and never re-enabled.
+```ts
+const conv     = await DatabaseService.getConversation(id);        // GET  /api/db/conversations
+const messages = await DatabaseService.getConversationMessages(id);// GET  /api/db/messages
+const files    = await StorageService.list();                      // GET  /api/storage/   ◄── blocks
+await StorageService.save(path, md);                               // POST /api/storage/...
+```
 
-`search.init_embeddings` is likewise only called from `lib/indexer_runner.lua:34`, so the
-module-level `embed` in `search.lua` is `nil` in the proxy process and the semantic half
-never runs either.
+`GET /api/storage/` lands on `lib/proxy.lua:1053-1080`, which calls `async_popen_read` — a
+function that, despite its name, **forks and then runs its own private `select()` loop and
+never calls `coroutine.yield`** (`lib/proxy.lua:182-240`). For the whole duration of that
+`find`, the single event loop is frozen: no accepts, no other coroutines, and no token
+relaying for any in-flight stream.
 
-Net effect: the proxy starts the embedding server on :8082, holds it in memory, and never
-sends it a request. Every "REPOSITORY CONTEXT" injection documented in
-`docs/architecture/overview.md` §3 is a no-op. This is worth knowing *before* optimizing
-the RAG path — there is currently no RAG path to optimize.
+Measured on a 2,000-file workspace tree, warm cache, idle container:
 
-### 3.2 Three hardware profiles pass empty arguments to llama-server
-
-`bin/jenova-ca` reads `CTX_SIZE`, `NUM_SLOTS`, `THREADS`, `THREADS_BATCH`, `NGL_AGENT`,
-`DEVICES`. These profiles set `JENOVA_`-prefixed names instead and never assign the
-unprefixed ones:
-
-| Profile | Sets | jenova-ca reads |
+| Endpoint | Entries | Wall time, loop frozen |
 |---|---|---|
-| `Linux/CPU/generic` | `JENOVA_CTX_SIZE`, `JENOVA_NUM_SLOTS`, `JENOVA_THREADS`, `JENOVA_NGL`, `JENOVA_DEVICES` | `CTX_SIZE`, `NUM_SLOTS`, `THREADS`, `NGL_AGENT`, `DEVICES` |
-| `macOS/CPU/generic` | same | same |
-| `macOS/Metal/generic` | same | same |
+| `GET /api/storage/` | 2,125 | **14–17 ms** |
+| `GET /api/fs/tree` | 2,125 | **2,872 ms** (2,125 `fork`+`exec`) |
 
-`detect-hardware.sh:345` copies the matched profile over `etc/jenova.conf`, so on those
-three platforms llama-server is launched as `-c "" -np "" -t "" -tb ""`. Only
-`BATCH_SIZE`/`UBATCH_SIZE` have fallbacks in `jenova-ca` (`:175-176`).
+Then stack the rest on top:
 
-### 3.3 `/cors-proxy` has no handler
+- **Every request is a new TCP connection.** The proxy forces `Connection: close` on its
+  own responses and rewrites the upstream request the same way (`lib/proxy.lua:1191-1192`,
+  `1355-1358`). One `syncEntity` = ~5 connect/parse/teardown cycles.
+- **The accept path takes one connection per event-loop pass** (`lib/proxy.lua:1595`), and
+  the listen backlog is 16 (`:1515`), against `MAX_ACTIVE_CONNECTIONS = 32` (`:98`). A
+  burst plus a frozen loop overflows the accept queue; the browser sees resets, and past
+  32 it sees `503 Retry-After: 5` (`:1601`).
+- **`-np 1`.** `etc/jenova.conf:88` → `NUM_SLOTS=1` → `bin/jenova-ca:231` passes `-np 1`.
+  llama-server processes one request at a time. Even after the loop unfreezes, a second
+  chat, a title generation, or an embedding call queues behind the first.
+- **Nothing notices.** Per §2.1, the watchdog is probing :8081 and sees green throughout.
 
-`jca_web/vite.config.ts:98` proxies `/cors-proxy` to :8080 and
-`jca_web/src/lib/stores/mcp.svelte.ts:114` calls it, but `lib/proxy.lua` has no route for
-it. The request falls through to the generic llama-server forward and 404s.
+So: message completes → sync fires → `find` freezes the front door → queued connections
+pile up behind a 16-deep backlog → the loop resumes → requests hit a backend with one slot
+→ health checks report everything fine.
 
-### 3.4 `/api/fs` is missing from the dev proxy
+`GET /api/fs/tree` (the file explorer) is the same story with a 2.9-second freeze instead
+of a 15 ms one, because `fs_sync.get_fs_tree` forks `test -d` **per entry**
+(`lib/fs_sync.lua:445`) on top of a blocking `io.popen`. `fs_sync.get_trash` (`:299`,
+`:323`) and `empty_trash` (`:384`) use blocking `io.popen` too.
 
-`jca_web/vite.config.ts:91-99` lists `/v1`, `/api/storage`, `/api/workspaces`, `/api/db`,
-`/props`, `/models`, `/cors-proxy` — but not `/api/fs`. Trash and file-tree calls do not
-reach the backend under `vite dev`.
+### Secondary costs on the same thread
 
-### 3.5 Dead scaffolding
+Real, but an order of magnitude smaller than the above:
 
-`background_tasks` (`lib/proxy.lua:1528`) is declared, added to the select sets, and
-iterated — but nothing ever inserts into it. The mechanism for off-loop work exists and is
-unused; §5 proposes using it.
+- **SHA-256 on every chat request** (`lib/proxy.lua:1371`), measured at **16–26 MB/s**
+  (15 ms @ 256 KB, 43 ms @ 1 MB) — feeding a cache that holds 20 entries
+  (`lib/db.lua:862`) and can never hit for a growing conversation.
+- **Synchronous SQLite** with no prepared-statement cache, re-preparing on every call and
+  calling `sqlite3_column_name` + `ffi.string` per row per column (`lib/db.lua:210-275`).
+  `db.get_all_messages()` (`:430`) is an unbounded `SELECT *`, reached from
+  `DatabaseService.exportData()` → `SyncService.push()`.
+- **Pure-Lua JSON**: 0.36 MB payload = **27 ms encode / 16 ms decode**.
+- **`async_send` is O(n²)** — `data:sub(sent + 1)` copies the remainder on every partial
+  send (`lib/proxy.lua:157`). A 1 MB body copies 64 MB; a 4 MB body copies 1 GB.
 
 ---
 
-## 4. Answering the question directly
+## 4. Is Lua the cause? Does Nim fix it?
 
-### Is Lua the cause?
+### Is Lua the cause — no, and the reason is sharper than "Lua is fast enough"
 
-No. Break the stall budget down:
+The system has **one process, one thread, one event loop, one upstream, and no
+supervision** — and that process is owned by a GUI application. Every stall traces to that
+topology:
 
-| Cost | Source | Language-attributable? |
-|---|---|---|
-| ∞ (serialized) | `-np 1` at llama-server | **No** — C++ backend config |
-| 0.5–3 s | fork-per-file in `get_fs_tree` | **No** — algorithm |
-| up to 13 s | `async_popen_read` not yielding | **No** — it is 4 lines from being correct |
-| 10–200 ms | SQLite + JSON on the loop thread | Partly — but the fix is off-loop, not faster |
-| 15–40 ms | SHA-256 per chat request | Yes — and the code should be *deleted* |
-| 1–60 ms | `async_send` O(n²) | **No** — algorithm |
+- A blocking `find` freezes the front door because there is only one loop *and nowhere
+  else to put the work*.
+- Inference serializes because there is one slot.
+- Nothing recovers because the only supervisor is watching a different port.
+- The embedding backend can't be reached through the front door because the proxy has one
+  hardcoded upstream.
 
-LuaJIT's actual weaknesses show up in exactly two places: `sha256.lua` (16–26 MB/s vs
-~500 MB/s in C, ~2 GB/s with hardware SHA) and `json.lua` (13–23 MB/s vs 1–3 GB/s for a
-tuned C parser). Both are 20–100× penalties in the abstract. In practice they are worth
-tens of milliseconds per request against stalls measured in seconds.
+None of these are properties of LuaJIT. `async_popen_read` is four lines from being
+correct — the fd is already non-blocking and CLOEXEC, it simply needs `coroutine.yield`
+instead of its own `select`. That is a bug, not a language limit.
 
-Everything else in the hot path is FFI syscalls and `memcpy` on 8 KB buffers. That code
-runs at the same speed in any language, because it *is* the same code — LuaJIT is calling
-`recv`/`send` directly.
+### Does Nim fix it — not by itself, and the honest case for it is different
 
-### Does replacing Lua with Nim solve it?
-
-Not on its own, and a rewrite would probably reproduce the same bugs. Nim gives you real
-threads and `async`/`await`, which is genuinely nicer than hand-rolled coroutine yields —
-but:
+Nim's real advantage here is threads: you could put SQLite and filesystem walks on a
+worker pool instead of the reactor. That is genuinely relevant. But:
 
 - `-np 1` is untouched. Inference stays serialized.
-- `os.execute` per file is still `os.execute` per file unless you also fix the algorithm.
+- `os.execute` per file is still per file unless you also fix the algorithm.
 - A blocking call inside an `async` proc blocks Nim's dispatcher exactly as it blocks
-  LuaJIT's `select` loop. Nim's default `asyncdispatch` is single-threaded too.
-- You would be rewriting ~3,500 lines of working, security-audited code (two CVE fixes
-  landed in the last five commits) to buy ~40 ms per request.
+  LuaJIT's loop. Default `asyncdispatch` is single-threaded.
+- The topology problems — proxy owned by the tray app, watchdog probing the wrong port,
+  no upstream routing table, no auth — are all *outside* the proxy's language.
+- You would rewrite ~3,500 lines of working, recently security-audited code (two command
+  injection fixes in the last five commits) to buy ~40 ms per request.
 
-The honest case *for* Nim is different from the one implied by the question: it is not
-"Lua is slow," it is "hand-rolled coroutine plumbing is error-prone and a language with
-real threads plus a mature async library is easier to keep correct." That is a legitimate
-argument, but it is a 2–4 week project and it should be made after the design is fixed,
-not instead of fixing it — otherwise you port the bugs.
+**The multi-threading you actually want can be had without a rewrite**, because the fix is
+process topology, not concurrency primitives: put slow work in worker processes and talk to
+them over `socketpair(2)`, whose fds drop straight into the existing `select` sets. The
+scaffolding for this already exists and is unused — `background_tasks` (`lib/proxy.lua:1528`)
+is declared, added to the select sets, iterated, and never populated.
 
-### Is there a smaller, simpler fix?
+If after §5 the remaining hot spots are genuinely JSON and hashing, replace *those
+functions* with a C or Nim shared library through LuaJIT's FFI — a couple of hundred lines.
+`lib/db.lua` already demonstrates the pattern with SQLite.
 
-Yes. See below. Tiers 0 and 1 are a few hours and address the seconds-scale stalls.
-
----
-
-## 5. Proposed plan
-
-Staged so each tier is independently shippable and measurable. **Nothing here has been
-implemented — this document is the deliverable for review.**
-
-### Tier 0 — config only (minutes, no code)
-
-1. Raise `NUM_SLOTS` to 2–4 across profiles, raising `CTX_SIZE` proportionally where VRAM
-   allows. This alone unblocks concurrent chat + title-gen + embedding.
-2. Give the embedding server its own `-np 2` so RAG lookups stop head-of-line-blocking
-   each other.
-3. Fix the `JENOVA_*` variable-name mismatch in the three broken profiles (§3.2), or add
-   `CTX_SIZE="${CTX_SIZE:-${JENOVA_CTX_SIZE:-8192}}"`-style fallbacks in `jenova-ca` so
-   the naming drift cannot silently produce empty flags again.
-
-**Expected effect: the largest single win, for the least work.**
-
-### Tier 1 — unblock the event loop (~200 LOC, low risk)
-
-4. **`get_fs_tree`: one fork instead of N.** Replace the `os.execute('test -d')` loop with
-   a single `find ... -printf '%y\t%p\0'` (GNU) / `find ... -type d` two-pass or
-   `-exec stat` (BSD) — the codebase already detects stat flavour in
-   `lib/search.lua:147-164` and can reuse that. 470 ms → ~5 ms.
-5. **Make `async_popen_read` actually yield.** Delete its private `select()` loop; the fd
-   is already non-blocking, so `coroutine.yield("read", fd)` on `EAGAIN` hands control back
-   to the main loop. Keep the 15 s deadline as a wall-clock check. This turns the 13-second
-   web-search freeze into a background wait. ~15 lines.
-6. **Route `fs_sync`'s three `io.popen` sites through the now-async helper** so trash
-   listing and emptying stop blocking.
-7. **Delete the SHA-256 / `llm_cache` intercept** on the chat path (`lib/proxy.lua:1371-1386`,
-   `1434-1482`). It cannot hit for a growing conversation, and it costs 15–40 ms plus two
-   SQLite round-trips per request. If response caching is wanted later, key it on something
-   that can actually repeat and put it behind a config flag.
-8. **Fix `async_send`** to advance a `const char*` pointer instead of `data:sub(sent+1)`.
-   ~5 lines.
-9. **Bound `get_all_messages`** — add `LIMIT`/pagination, or drop the endpoint if the UI
-   can use `messages?convId=`.
-
-**Expected effect: no single request can freeze the loop for more than ~50 ms.**
-
-### Tier 2 — structural, addresses "one endpoint" directly (~1 day)
-
-10. **Split the control plane from the data plane.** The DB/FS API and inference proxying
-    have completely different latency profiles and share nothing but a port number. Two
-    options:
-    - *Simplest:* run a second `proxy.lua` instance on :8083 handling only `/api/db` and
-      `/api/fs`, and point the frontend at it. UI metadata traffic then physically cannot
-      stall a token stream. ~30 lines of routing plus a vite proxy entry.
-    - *Better:* keep one port, but hand slow work (SQLite, filesystem walks) to a small
-      pool of worker processes over `socketpair(2)`. The main loop stays pure I/O and the
-      worker fds slot straight into the existing `select` sets. **This is what the unused
-      `background_tasks` table (§3.5) was scaffolded for.**
-11. **Add HTTP keep-alive.** Removing the forced `Connection: close` eliminates a
-    connect/teardown per UI call and takes pressure off the 32-connection ceiling.
-12. **Raise `MAX_ACTIVE_CONNECTIONS`** once the loop no longer stalls, and replace
-    `select()` with `poll()` (or `epoll`/`kqueue`) — `select` is capped at `FD_SETSIZE`
-    and rebuilds its fd sets on every iteration.
-
-### Tier 3 — decide about RAG (scope call needed)
-
-13. §3.1 means RAG currently does nothing. Before any optimization, decide: wire
-    `search.index_dir` into the proxy as a background task (now possible after Tier 2),
-    or remove the dead path and stop launching the embedding server. **Either is fine;
-    the current state — starting a model server and never querying it — is the worst
-    option.** If it is re-enabled, note that `embed.cosine` (`lib/embed.lua:159`)
-    recomputes both norms on every call despite vectors being pre-normalized, which is 3×
-    the necessary work over up to 600 files' worth of 1024-dim chunks.
-
-### Tier 4 — targeted native code, only if measurement demands it (~200 LOC)
-
-14. If, after Tiers 0–2, profiling still shows JSON or hashing dominating, replace **those
-    specific functions** with a small C or Nim shared library loaded through LuaJIT's FFI —
-    which is what the FFI is for. `lib/db.lua` already demonstrates the pattern with
-    SQLite. That is a couple of hundred lines against a full rewrite, and it keeps the
-    audited request-handling logic intact.
-
-A full Nim rewrite belongs in a separate conversation, justified by maintainability rather
-than throughput, and only after the above establishes what the real numbers are.
-
-### Also worth fixing (small, independent)
-
-15. `/cors-proxy` handler (§3.3) and the missing `/api/fs` vite proxy entry (§3.4).
-16. `getaddrinfo` on the health path (§2.7) — move it behind the same async helper.
+A full Nim rewrite is a legitimate conversation, justified by maintainability rather than
+throughput, and it should happen after the topology is right — otherwise you port the bugs.
 
 ---
 
-## 6. Measurement notes
+## 5. Plan
 
-All figures produced with LuaJIT 2.1.1703358377 against the repo's own modules, on an
-idle container. A loaded laptop running llama-server should be assumed 3–5× slower.
+Ordered by ratio of symptom relief to risk. Nothing here is implemented; this document is
+the deliverable for review.
+
+### Tier 0 — stop the bleeding (config + a few lines)
+
+1. **`NUM_SLOTS` 1 → 2–4**, raising `CTX_SIZE` proportionally where VRAM allows. Note
+   llama.cpp divides context among slots (`n_ctx_slot = n_ctx / n_parallel`), so `-np 2 -c 8192`
+   halves per-conversation context; `-c 16384` keeps 8k per slot at roughly +128 MiB KV on
+   the 3B/`q8_0` profile, which has 512 MiB of reserve.
+2. **Give the embed server `-np 2`** so RAG lookups stop head-of-line-blocking each other.
+3. **Cache `StorageService.list()`** in `sync.service.ts` the way `getHierarchy()` is
+   already cached (10 s TTL, `sync.service.ts:437`). It is called only to find a stale path
+   for a rename. This removes the per-message `find` immediately, from the client side,
+   without touching the proxy.
+4. **Fix the hardware-profile variable-name drift.** `Linux/CPU/generic`,
+   `macOS/CPU/generic` and `macOS/Metal/generic` set `JENOVA_CTX_SIZE` / `JENOVA_NUM_SLOTS` /
+   `JENOVA_THREADS` / `JENOVA_NGL`, while `jenova-ca` reads `CTX_SIZE` / `NUM_SLOTS` /
+   `THREADS` / `NGL_AGENT`. `detect-hardware.sh:345` copies the profile over
+   `etc/jenova.conf`, so on those three platforms llama-server is launched with
+   `-c "" -np "" -t ""`. Only `BATCH_SIZE`/`UBATCH_SIZE` have fallbacks (`jenova-ca:175`).
+
+### Tier 1 — make the event loop non-blocking (~200 LOC)
+
+5. **Make `async_popen_read` actually yield.** Delete its private `select()` loop; on
+   `EAGAIN`, `coroutine.yield("read", fd)`. Keep the 15 s wall-clock deadline. ~15 lines,
+   and it fixes `/api/storage/`, `/api/workspaces`, and the 13-second web-search freeze at
+   once.
+6. **`get_fs_tree`: one fork instead of N.** Replace the per-entry `os.execute('test -d')`
+   with a single `find -printf '%y\t%p\0'` (GNU) or `-type d` two-pass (BSD). The stat
+   flavour is already detected at `lib/search.lua:147-164`. 2.87 s → ~10 ms.
+7. **Route `fs_sync`'s blocking `io.popen` calls through the fixed async helper.**
+8. **Delete the SHA-256 / `llm_cache` intercept** (`lib/proxy.lua:1371-1386`, `1434-1482`).
+9. **Fix `async_send`** to advance a `const char*` offset instead of `data:sub`.
+10. **Bound `get_all_messages`**, or drop it in favour of `messages?convId=`.
+11. **Accept in a loop until `EAGAIN`**, and raise the listen backlog from 16.
+
+### Tier 2 — fix the topology (this is the real answer to the question)
+
+12. **Give the proxy a real upstream routing table.** Replace the scalar `LLAMA_PORT` with
+    a map, so `/v1/chat/completions`, `/infill`, `/props`, `/v1/models` → :8081 and
+    `/v1/embeddings`, `/embedding` → :8082. Then bind :8081 and :8082 to loopback
+    unconditionally, even under `--lan`, and drop them from the firewall instructions in
+    `scripts/install.sh:562`. This is what makes :8080 an actual front door, and it is a
+    precondition for adding auth in one place.
+13. **Make the proxy a supervised daemon.** Start it from `jenova-ca --daemon`, record
+    `PROXY_PID` in the pidfile (the variable already exists), report it in `status`, stop it
+    in `stop`, and — critically — **point `_probe_health` at :8080 instead of :8081**, so
+    the watchdog is probing the front door. Keep `proxy-serve` for the UI-attached case, but
+    have `ui.init` attach to a running daemon rather than owning one. Fixes headless
+    operation, "nothing noticed the stall", and the tray's misleading ACTIVE light.
+14. **Single owner for the embed server.** Remove the spawn path in `lib/embed.lua:50-71`;
+    let `jenova-ca` own :8082, and have the proxy retry the health probe with backoff instead
+    of racing to start its own.
+15. **Split the control plane from the data plane.** `/api/db` + `/api/fs` and inference
+    proxying share nothing but a port number and have opposite latency profiles. Either give
+    the DB/FS API its own listener, or — better — hand SQLite and filesystem work to worker
+    processes over `socketpair(2)` and populate the existing `background_tasks` queue. The
+    main loop then stays pure I/O, which is the multi-threading benefit without the rewrite.
+16. **HTTP keep-alive**, and replace `select()` with `poll()`/`epoll`/`kqueue`.
+17. **Cut the UI's fork-per-poll.** `ui.poll_status` shelling out to `jenova-ca status`
+    every 1–3 seconds should become a single `GET :8080/health`, which the proxy already
+    answers natively and cheaply (`lib/proxy.lua:527-585`) — and which, unlike the current
+    probe, actually tests the front door.
+
+### Tier 3 — decide about RAG
+
+18. §2.4 means the embedding server is loaded, held in RAM, reported healthy, and never
+    queried. Decide: wire `search.index_dir` in as a background task (possible once Tier 2
+    lands), or remove the path and stop launching :8082. Either is defensible; the current
+    state is the worst of both. If re-enabled, fix `embed.init` to set `initialized`, make
+    `/health` report actual embedding availability rather than "a process was started", and
+    note that `embed.cosine` (`lib/embed.lua:159`) recomputes both norms on every call
+    despite the vectors being pre-normalised.
+
+### Tier 4 — targeted native code, only if measurement demands it
+
+19. Swap specific hot functions (JSON, hashing, vector math) for a small C/Nim FFI library.
+    Not a rewrite.
+
+### Smaller independent fixes
+
+20. **`/cors-proxy` has no handler.** `jca_web/vite.config.ts:98` proxies it and
+    `mcp.svelte.ts:114` probes it with `HEAD`; the proxy has no route and no HEAD handling,
+    so it falls through to :8081 and 404s. MCP-over-CORS-proxy is permanently unavailable.
+21. **`/api/fs` is missing from the vite dev proxy** (`vite.config.ts:91-99`), so trash and
+    file-tree calls don't reach the backend under `vite dev`.
+22. **Model switching is disconnected.** `bin/jenova-model-switch` swaps a symlink and
+    requires a full llama-server restart, while the WebUI calls llama.cpp ROUTER-mode
+    `/models/load` and `/models/unload` (`models.service.ts:57-88`) against a server launched
+    in single-model mode. Neither half knows about the other.
+
+---
+
+## 6. Measurements
+
+LuaJIT 2.1.1703358377, repo modules, idle container, warm page cache. A laptop running
+llama-server should be assumed 3–5× slower.
 
 | Measurement | Result |
 |---|---|
-| `sha256.lua` throughput | 15.6 MB/s @16 KB, 16.7 MB/s @256 KB, 23.5 MB/s @1 MB |
-| `json.lua`, 0.36 MB payload | encode 27.1 ms, decode 15.7 ms |
-| `get_fs_tree` pattern, 320 entries | 470 ms wall, 320 forks |
-| `async_send` copy amplification | 1 MB body → 64 MB copied; 4 MB body → 1 GB copied |
+| `GET /api/fs/tree`, 2,125 entries | **2,872 ms** wall, 2,125 forks, loop frozen |
+| `GET /api/storage/`, 2,125 entries | **14–17 ms** wall, loop frozen |
+| `sha256.lua` | 15.6 MB/s @16 KB · 16.7 MB/s @256 KB · 23.5 MB/s @1 MB |
+| `json.lua`, 0.36 MB | encode 27.1 ms · decode 15.7 ms |
+| `async_send` amplification | 1 MB body → 64 MB copied; 4 MB → 1 GB |
 
-Before implementing, it is worth capturing a baseline from a real session — the proxy
-already logs dispatch lines (`lib/proxy.lua:1364-1368`), and adding elapsed-time logging
-around each route handler would confirm the ranking above against your actual workload
-rather than these synthetic numbers.
+Before implementing Tier 1, it is worth adding elapsed-time logging around each route
+handler in `proxy_connection` — the dispatch logging at `lib/proxy.lua:1364-1368` is the
+natural place — to confirm this ranking against a real session rather than synthetic trees.
+
+---
+
+## 7. Documentation drift
+
+`docs/architecture/backend.md` describes the intended design as though it were built. Four
+claims are false against the current code, and they are worth correcting so the docs stop
+masking the gaps:
+
+| Claim | Reality |
+|---|---|
+| "Async Sub-processes … yields to the scheduler while waiting for output" | `async_popen_read` never yields (`lib/proxy.lua:182`) |
+| "Background Discovery: directory crawling and workspace listing are performed asynchronously" | both block the loop (§3) |
+| "Inbound storage updates trigger asynchronous background re-indexing" | no reindex trigger exists in the proxy |
+| "Consumers [of :8082]: the proxy's RAG pipeline and the codebase indexer" | the proxy's RAG pipeline never issues a request (§2.4) |
