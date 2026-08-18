@@ -4,6 +4,10 @@ Execution plan for the defects in `concurrency-analysis.md`. Work packages are o
 dependency; each has an explicit acceptance test. Nothing here is speculative — every
 defect referenced has been reproduced.
 
+> **Status: Phase 1 (WP-1, WP-2, WP-3) is implemented and verified.**
+> `sh tests/proxy-concurrency/all.sh` passes on the fix and fails on the pre-fix tree.
+> Phases 2–4 are not started.
+
 **Critical sequencing note:** WP-1 makes code live that has *never executed* in the history
 of this codebase. Two latent bugs in that code are proven (WP-2, WP-3) and **must ship in
 the same change**, or WP-1 converts an immediate failure into a slow resource leak. Do not
@@ -11,7 +15,7 @@ ship WP-1 alone.
 
 ---
 
-## Phase 1 — Restore correctness (must ship together)
+## Phase 1 — Restore correctness (must ship together)  ✅ DONE
 
 Total diff: roughly 30 lines across 3 files. This is the whole fix for the reported symptom.
 
@@ -92,10 +96,30 @@ if ready then
     info.last_active = os.time()      -- proxy.lua:1638  refreshes liveness
 ```
 
-The reaper then tests `now - info.last_active > COROUTINE_TIMEOUT` (`:1676`), which can never
-be true while the stall-breaker keeps refreshing it. **Verified**: with
-`JENOVA_CONN_TIMEOUT=5`, a half-open connection held for 25 s was never reaped —
-`"timeout: closing"` appeared 0 times.
+The reaper then tests `now - info.last_active > COROUTINE_TIMEOUT` (`:1676`), which cannot
+be true while the stall-breaker keeps refreshing it.
+
+**Two preconditions are required to observe this, and both are the normal case.** An earlier
+draft of this plan claimed the reaper "never fires", verified with `JENOVA_CONN_TIMEOUT=5`.
+That verification was wrong twice over — the proxy's log writes are buffered and were lost to
+`kill -9`, and a 5 s timeout fires *before* the 15 s stall-breaker ever runs. The correct
+statement:
+
+1. The proxy must be **under load**. The stall-breaker lives inside `if n > 0`, so on an idle
+   proxy `select()` times out, the stall-breaker never runs, and the reaper works correctly.
+2. `COROUTINE_TIMEOUT` must exceed the 15 s stall-breaker interval. The shipped default is
+   600 s, so this always holds in production.
+
+**Verified under those conditions** (`JENOVA_CONN_TIMEOUT=20`, connection held 45 s, three
+threads generating background traffic):
+
+| | reaper events |
+|---|---|
+| without the WP-3 fix | **0** — the connection is never reaped |
+| with the WP-3 fix | **1** — reaped at the timeout |
+
+`tests/proxy-concurrency/test_reaper.sh` encodes exactly this scenario. Getting either
+precondition wrong makes the test pass against broken code.
 
 Today this is masked, because the synchronous proxy never leaves connections in `clients`
 across loop iterations. After WP-1 it becomes live: every abandoned connection (closed
@@ -125,11 +149,22 @@ Two related holes in the same area, worth closing in the same pass:
 - **`accept()` once per loop pass** (`lib/proxy.lua:1595`) against a listen backlog of 16
   (`:1515`). Accept in a loop until `EAGAIN`, and raise the backlog.
 
+**Also shipped in WP-3.** The accept path took one connection per loop pass against a listen
+backlog of 16; it now drains up to `MAX_ACCEPTS_PER_PASS` (16) per pass, and the backlog is
+128. Note this loop is only safe *because* WP-1 made the listening socket genuinely
+non-blocking — otherwise the accept following the last pending connection would block the
+whole proxy. That dependency is commented in the source.
+
+**Deferred.** The unreachable header timeout is not fixed: making it reachable requires a
+deadline parameter threaded through `async_recv`, which is a change to the async primitives
+rather than a two-line fix. With the reaper working, such connections are now bounded by
+`COROUTINE_TIMEOUT` (600 s default) instead of being held forever, which is the behaviour the
+code was always intended to have. Worth revisiting in Phase 2.
+
 **Risk: low.** Small, local, and directly testable.
 
-**Acceptance.** With `JENOVA_CONN_TIMEOUT=5`, a half-open connection is reaped within ~10 s
-and `active_connection_count` returns to its prior value. 40 abandoned connections do not
-leave the proxy permanently 503-ing.
+**Acceptance.** `tests/proxy-concurrency/test_reaper.sh` — an abandoned connection is reaped
+under load. Verified to fail against a tree with only WP-1 and WP-2 applied.
 
 ---
 

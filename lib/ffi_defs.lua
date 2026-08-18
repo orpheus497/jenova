@@ -150,12 +150,16 @@ ffi.cdef(socket_struct_defs .. [[
 
   /* --- File / process --- */
   int close(int fd);
-  int open(const char *path, int oflag, ...);
+  /* NOTE: declared non-variadic on purpose. LuaJIT promotes a Lua number passed
+     in a variadic slot to a double (SSE register); the kernel reads the integer
+     register and receives garbage, silently discarding the argument. Every call
+     site passes exactly three arguments. Do not restore the `...` form. */
+  int open(const char *path, int oflag, int mode);
   int dup2(int oldfd, int newfd);
-  int fcntl(int fd, int cmd, ...);
+  int fcntl(int fd, int cmd, int arg);   /* non-variadic: see note on open() above */
   int select(int nfds, void *readfds, void *writefds, void *exceptfds,
              struct timeval *timeout);
-  int ioctl(int fd, unsigned long request, ...);
+  int ioctl(int fd, unsigned long request, void *arg);  /* non-variadic: see note on open() above */
   int isatty(int fd);
   int chdir(const char *path);
   int pipe(int pipefd[2]);

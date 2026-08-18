@@ -9,19 +9,20 @@ neither earlier pass could see by reading:
 > yields, so the `select`-based event loop is decorative. The proxy processes exactly one
 > request at a time, and always has.
 
-This is not a design opinion. It is measured, and a three-line fix doubles throughput in a
-controlled A/B:
+This is not a design opinion. It is measured, and a small fix doubles throughput in a
+controlled A/B. **Fixed in Phase 1** (see `remediation-plan.md`); the figures below are the
+before/after from `tests/proxy-concurrency/`:
 
 | Two concurrent 1-second streams, backend with 4 free slots | Wall time | |
 |---|---|---|
 | Direct to backend (control) | 1017 ms | concurrent |
 | **Through the proxy, as shipped** | **2023 ms** | **serialized** |
-| **Through the proxy, 3-line fix** | **1022 ms** | **concurrent** |
+| **Through the proxy, after Phase 1** | **1010 ms** | **concurrent** |
 
 | `GET /api/storage/` on a 2,125-file workspace | Result |
 |---|---|
 | **As shipped** | **hangs forever** (0 bytes after 20 s), leaks 1 pipe fd + 2 processes |
-| **3-line fix** | HTTP 200, 88,699 bytes, **0.03 s**, no leaks |
+| **After Phase 1** | HTTP 200, 88,599 bytes, **0.03 s**, no leaks |
 
 `GET /api/storage/` is called on **every message completion**. Reproduction harness:
 `tests/proxy-concurrency/`.
