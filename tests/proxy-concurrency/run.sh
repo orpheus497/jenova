@@ -53,9 +53,9 @@ echo "$OUT" | grep -q CONCURRENT && pass "proxy overlaps concurrent streams" \
                                  || fail "proxy serializes concurrent streams"
 
 echo
-echo "[3] WP-2: GET /api/storage/ must return, and must not leak"
+echo "[3] WP-2: GET /api/storage/ must return"
 CH0=$(pgrep -P $PX 2>/dev/null | wc -l)
-FD0=$(ls /proc/$PX/fd 2>/dev/null | wc -l)
+FD0=$(find /proc/$PX/fd -mindepth 1 2>/dev/null | wc -l)
 RES=$(python3 - "$PPORT" <<'PY'
 import socket, sys, time
 p = int(sys.argv[1]); t0 = time.time()
@@ -80,16 +80,19 @@ case "$RES" in
 esac
 
 echo
-echo "[4] WP-1/2/3: fd and child counts must be flat across 100 requests"
-i=0; while [ $i -lt 100 ]; do
-  curl -s -m 5 "http://127.0.0.1:$PPORT/health" >/dev/null 2>&1
+echo "[4] WP-1/2/3: fd and child counts must be flat across a forking workload"
+# The workload must hit /api/storage/, not /health: only /api/storage/ reaches
+# async_popen_read, which is where the pipe descriptors and child processes leaked.
+# /health forks nothing, so a loop over it would pass with the defect still present.
+i=0; while [ $i -lt 50 ]; do
+  curl -s -m 3 "http://127.0.0.1:$PPORT/api/storage/" >/dev/null 2>&1
   i=$((i+1))
 done
 sleep 1
-FD1=$(ls /proc/$PX/fd 2>/dev/null | wc -l)
+FD1=$(find /proc/$PX/fd -mindepth 1 2>/dev/null | wc -l)
 CH1=$(pgrep -P $PX 2>/dev/null | wc -l)
-echo "  fds: $FD0 -> $FD1     children: $CH0 -> $CH1"
-[ "$FD1" -le "$((FD0 + 2))" ] && pass "fd count stable across 100 requests" \
+echo "  fds: $FD0 -> $FD1     children: $CH0 -> $CH1   (over 51 forking requests)"
+[ "$FD1" -le "$((FD0 + 2))" ] && pass "fd count stable across forking workload" \
                               || fail "fd leak: $FD0 -> $FD1"
 [ "$CH1" -le "$((CH0 + 1))" ] && pass "child process count stable" \
                               || fail "process leak: $CH0 -> $CH1"

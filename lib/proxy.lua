@@ -185,6 +185,17 @@ local function async_popen_read(cmd)
     local pipe_fds = ffi.new("int[2]")
     if ffi.C.pipe(pipe_fds) < 0 then return nil, "pipe failed" end
     local pid = ffi.C.fork()
+    if pid < 0 then
+        -- fork() failed (EAGAIN/ENOMEM under resource pressure). Bail out before the
+        -- parent path runs with pid == -1, where waitpid(pid, ...) becomes
+        -- waitpid(-1, ...) and blocks on an unrelated child, and kill(pid, 9) on the
+        -- timeout path becomes kill(-1, 9) -- a signal to every process this user can
+        -- signal. Matches the convention in daemon.start_background.
+        local err = ffi.errno()
+        ffi.C.close(pipe_fds[0])
+        ffi.C.close(pipe_fds[1])
+        return nil, "fork failed: " .. tostring(err)
+    end
     if pid == 0 then
         ffi.C.close(pipe_fds[0])
         ffi.C.dup2(pipe_fds[1], 1)
