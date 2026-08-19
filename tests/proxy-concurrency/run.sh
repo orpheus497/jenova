@@ -85,7 +85,11 @@ echo "[4] WP-1/2/3: fd and child counts must be flat across a forking workload"
 # async_popen_read, which is where the pipe descriptors and child processes leaked.
 # /health forks nothing, so a loop over it would pass with the defect still present.
 i=0; while [ $i -lt 50 ]; do
-  curl -s -m 3 "http://127.0.0.1:$PPORT/api/storage/" >/dev/null 2>&1
+  status=$(curl -sS -m 3 -o /dev/null -w '%{http_code}' \
+    "http://127.0.0.1:$PPORT/api/storage/") || status=000
+  if [ "$status" != "200" ]; then
+    fail "storage workload request $((i + 1)) returned HTTP $status"
+  fi
   i=$((i+1))
 done
 sleep 1
