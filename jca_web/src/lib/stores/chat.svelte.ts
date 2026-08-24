@@ -78,8 +78,8 @@ class ChatStore {
   private addFilesHandler: ((files: File[]) => void) | null = $state(null);
   pendingEditMessageId = $state<string | null>(null);
   private messageUpdateCallback:
-    | ((messageId: string, updates: Partial<DatabaseMessage>) => void)
-    | null = null;
+    ((messageId: string, updates: Partial<DatabaseMessage>) => void) | null =
+    null;
   private _pendingDraftMessage = $state<string>("");
   private _pendingDraftFiles = $state<ChatUploadedFile[]>([]);
   private syncDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -792,8 +792,7 @@ class ChatStore {
         reasoningContent: string | undefined,
         timings: ChatMessageTimings | undefined,
         toolCalls:
-          | import("$lib/types/api").ApiChatCompletionToolCall[]
-          | undefined,
+          import("$lib/types/api").ApiChatCompletionToolCall[] | undefined,
       ) => {
         const updateData: Record<string, unknown> = {
           content,
@@ -966,8 +965,7 @@ class ChatStore {
 
             const idx = conversationsStore.findMessageIndex(currentMessageId);
             let updatedExtras:
-              | import("$lib/types").DatabaseMessageExtra[]
-              | undefined;
+              import("$lib/types").DatabaseMessageExtra[] | undefined;
 
             if (isCacheHit) {
               const currentMsg = conversationsStore.activeMessages[idx];
@@ -1034,7 +1032,11 @@ class ChatStore {
     this.setProcessingState(convId, null);
     // Save partial response AFTER abort using captured snapshot (fire-and-forget)
     if (streamingSnapshot && streamingSnapshot.response.trim()) {
-      this.savePartialResponseFromSnapshot(convId, streamingSnapshot, processingSnapshot).catch(console.error);
+      this.savePartialResponseFromSnapshot(
+        convId,
+        streamingSnapshot,
+        processingSnapshot,
+      ).catch(console.error);
     }
   }
   private async savePartialResponseIfNeeded(convId?: string): Promise<void> {
@@ -1047,9 +1049,9 @@ class ChatStore {
         ? conversationsStore.activeMessages
         : await conversationsStore.getConversationMessages(conversationId);
     if (!messages.length) return;
-    const targetMessage = messages.find(
-      (m) => m.id === streamingState.messageId,
-    ) ?? messages[messages.length - 1];
+    const targetMessage =
+      messages.find((m) => m.id === streamingState.messageId) ??
+      messages[messages.length - 1];
     if (targetMessage?.role === MessageRole.ASSISTANT) {
       try {
         const updateData: { content: string; timings?: ChatMessageTimings } = {
@@ -1090,9 +1092,9 @@ class ChatStore {
         ? conversationsStore.activeMessages
         : await conversationsStore.getConversationMessages(convId);
     if (!messages.length) return;
-    const targetMessage = messages.find(
-      (m) => m.id === streamingSnapshot.messageId,
-    ) ?? messages[messages.length - 1];
+    const targetMessage =
+      messages.find((m) => m.id === streamingSnapshot.messageId) ??
+      messages[messages.length - 1];
     if (targetMessage?.role === MessageRole.ASSISTANT) {
       try {
         const updateData: { content: string; timings?: ChatMessageTimings } = {
@@ -1105,7 +1107,8 @@ class ChatStore {
             predicted_n: processingSnapshot.tokensDecoded || 0,
             cache_n: processingSnapshot.cacheTokens || 0,
             predicted_ms:
-              processingSnapshot.tokensPerSecond && processingSnapshot.tokensDecoded
+              processingSnapshot.tokensPerSecond &&
+              processingSnapshot.tokensDecoded
                 ? (processingSnapshot.tokensDecoded /
                     processingSnapshot.tokensPerSecond) *
                   1000
@@ -1312,9 +1315,9 @@ class ChatStore {
     }
 
     const descendants = findDescendantMessages(allMessages, messageId);
-    const allToDelete = [messageId, ...descendants];
+    const allToDeleteSet = new Set([messageId, ...descendants]);
     const messagesToDelete = allMessages.filter((m) =>
-      allToDelete.includes(m.id),
+      allToDeleteSet.has(m.id),
     );
     let userMessages = 0,
       assistantMessages = 0;
@@ -1333,7 +1336,7 @@ class ChatStore {
     }
 
     return {
-      totalCount: allToDelete.length,
+      totalCount: allToDeleteSet.size,
       userMessages,
       assistantMessages,
       messageTypes,
