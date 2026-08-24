@@ -96,6 +96,8 @@ local EWOULDBLOCK = _ffi_defs.EWOULDBLOCK
 local EINPROGRESS = _ffi_defs.EINPROGRESS
 
 local MAX_ACTIVE_CONNECTIONS = 32
+local MAX_ACCEPTS_PER_PASS = 16
+local STALL_POKE_INTERVAL = 15
 local MAX_HEADER_SIZE = 65536
 local MAX_BODY_SIZE = 100 * 1024 * 1024
 
@@ -183,6 +185,17 @@ local function async_popen_read(cmd)
     local pipe_fds = ffi.new("int[2]")
     if ffi.C.pipe(pipe_fds) < 0 then return nil, "pipe failed" end
     local pid = ffi.C.fork()
+    if pid < 0 then
+        -- fork() failed (EAGAIN/ENOMEM under resource pressure). Bail out before the
+        -- parent path runs with pid == -1, where waitpid(pid, ...) becomes
+        -- waitpid(-1, ...) and blocks on an unrelated child, and kill(pid, 9) on the
+        -- timeout path becomes kill(-1, 9) -- a signal to every process this user can
+        -- signal. Matches the convention in daemon.start_background.
+        local err = ffi.errno()
+        ffi.C.close(pipe_fds[0])
+        ffi.C.close(pipe_fds[1])
+        return nil, "fork failed: " .. tostring(err)
+    end
     if pid == 0 then
         ffi.C.close(pipe_fds[0])
         ffi.C.dup2(pipe_fds[1], 1)
@@ -213,7 +226,7 @@ local function async_popen_read(cmd)
             print("[proxy] async_popen_read timeout for pid " .. tostring(pid))
             return nil, "timeout"
         end
-        local rfds = ffi.new("fd_set")
+        local rfds = _ffi_defs.fd_set_new()
         _ffi_defs.FD_ZERO(rfds)
         _ffi_defs.FD_SET(fd, rfds)
         local tv = ffi.new("struct timeval", {tv_sec=0, tv_usec=100000})
@@ -471,6 +484,7 @@ end
 local function proxy_connection(client_fd, conn_fds)
     local start_time = os.time()
     set_nonblocking(client_fd)
+    set_cloexec(client_fd)
     set_socket_opts(client_fd)
     local req_cache_key = nil
     
@@ -1512,7 +1526,7 @@ if ffi.C.bind(server_fd, ffi.cast("struct sockaddr *", addr), ffi.sizeof(addr)) 
     os.exit(1)
 end
 
-if ffi.C.listen(server_fd, 16) < 0 then
+if ffi.C.listen(server_fd, 128) < 0 then
     local err = ffi.errno()
     print("[proxy] Failed to listen: errno=" .. tostring(err) .. " " .. ffi.string(ffi.C.strerror(err)))
     os.exit(1)
@@ -1593,49 +1607,70 @@ while running do
             end
         end
         if _ffi_defs.FD_ISSET(server_fd, read_fds) then
+          -- Drain the accept queue. Accepting one connection per loop pass lets the
+          -- listen backlog overflow under bursts, which the kernel answers with RST.
+          -- This loop relies on server_fd being genuinely non-blocking so that the
+          -- accept() following the last pending connection returns EAGAIN instead of
+          -- blocking the whole proxy. See the ABI note in ffi_defs.lua on fcntl().
+          local accepted = 0
+          while accepted < MAX_ACCEPTS_PER_PASS do
             local client_addr = ffi.new("struct sockaddr_in")
             local addrlen = ffi.new("socklen_t[1]", ffi.sizeof(client_addr))
             local client_fd = ffi.C.accept(server_fd, ffi.cast("struct sockaddr *", client_addr), addrlen)
-            if client_fd >= 0 then
-                if active_connection_count >= MAX_ACTIVE_CONNECTIONS then
-                    local err_resp = "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 5\r\nConnection: close\r\n\r\n"
-                    ffi.C.send(client_fd, err_resp, #err_resp, 0)
-                    ffi.C.close(client_fd)
-                else
-                    active_connection_count = active_connection_count + 1
-                    local conn_fds = { client = client_fd, llama = -1 }
-                    conn_fds_map[client_fd] = conn_fds
-                    local co = coroutine.create(function()
-                        local ok, err = pcall(proxy_connection, client_fd, conn_fds)
-                        if not ok then
-                            io.write("[proxy] connection error: " .. tostring(err) .. "\n")
-                            if conn_fds.llama >= 0 then pcall(ffi.C.close, conn_fds.llama); conn_fds.llama = -1 end
-                            if conn_fds.client >= 0 then pcall(ffi.C.close, conn_fds.client); conn_fds.client = -1 end
-                        end
-                        active_connection_count = active_connection_count - 1
-                    end)
-                    local _ok, type, watch_fd = coroutine.resume(co)
-                    if coroutine.status(co) ~= "dead" then
-                        clients[client_fd] = {co = co, type = type, watch_fd = watch_fd, created = os.time(), last_active = os.time()}
-                    else
-                        conn_fds_map[client_fd] = nil
+            if client_fd < 0 then break end
+            accepted = accepted + 1
+
+            if active_connection_count >= MAX_ACTIVE_CONNECTIONS then
+                local err_resp = "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 5\r\nConnection: close\r\n\r\n"
+                ffi.C.send(client_fd, err_resp, #err_resp, 0)
+                ffi.C.close(client_fd)
+            else
+                active_connection_count = active_connection_count + 1
+                local conn_fds = { client = client_fd, llama = -1 }
+                conn_fds_map[client_fd] = conn_fds
+                local co = coroutine.create(function()
+                    local ok, err = pcall(proxy_connection, client_fd, conn_fds)
+                    if not ok then
+                        io.write("[proxy] connection error: " .. tostring(err) .. "\n")
+                        if conn_fds.llama >= 0 then pcall(ffi.C.close, conn_fds.llama); conn_fds.llama = -1 end
+                        if conn_fds.client >= 0 then pcall(ffi.C.close, conn_fds.client); conn_fds.client = -1 end
                     end
+                    active_connection_count = active_connection_count - 1
+                end)
+                local _ok, type, watch_fd = coroutine.resume(co)
+                if coroutine.status(co) ~= "dead" then
+                    clients[client_fd] = {co = co, type = type, watch_fd = watch_fd, created = os.time(), last_active = os.time()}
+                else
+                    conn_fds_map[client_fd] = nil
                 end
             end
+          end
         end
 
         for cfd, info in pairs(clients) do
             local ready = false
+            local stalled = false
             if info.type == "read" and _ffi_defs.FD_ISSET(info.watch_fd, read_fds) then
                 ready = true
             elseif info.type == "write" and _ffi_defs.FD_ISSET(info.watch_fd, write_fds) then
                 ready = true
-            elseif not ready and info.last_active and (os.time() - info.last_active > 15) then
+            elseif info.last_active and
+                   (os.time() - (info.last_poke or info.last_active) > STALL_POKE_INTERVAL) then
+                -- Stall-breaker: resume even though the watched fd is not ready, in case
+                -- the coroutine can progress without it. This must NOT count as liveness:
+                -- refreshing last_active here would make the COROUTINE_TIMEOUT sweep below
+                -- unreachable, so abandoned connections would hold their slot forever.
                 ready = true
+                stalled = true
             end
 
             if ready then
-                info.last_active = os.time()
+                if stalled then
+                    info.last_poke = os.time()
+                else
+                    info.last_active = os.time()
+                    info.last_poke = nil
+                end
                 local _ok, type, watch_fd = coroutine.resume(info.co)
                 if coroutine.status(info.co) == "dead" then
                     clients[cfd] = nil

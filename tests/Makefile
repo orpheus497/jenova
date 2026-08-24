@@ -7,6 +7,7 @@ all: check
 check:
 	@sh test-health.sh
 	@sh test-launcher.sh
+	@sh proxy-concurrency/all.sh
 
 clean:
 	@echo "Nothing to clean."
