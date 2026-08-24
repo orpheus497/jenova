@@ -174,18 +174,31 @@ _cleanup_on_fail() {
 }
 trap _cleanup_on_fail EXIT
 
+# GGML_LTO stays OFF: monolithic LTO on the Vulkan backend never terminates.
+# mul_mm.comp.cpp alone is ~28 MB of bitcode, and full LTO merges all 134
+# shader modules into one module optimised on a single thread. Gains are
+# negligible here anyway -- the hot paths are hand-written kernels and SPIR-V.
+# Tests/examples and the embedded llama.cpp Web UI are skipped; Jenova ships
+# its own UI, and LLAMA_USE_PREBUILT_UI would fetch assets over the network
+# mid-build.
 set -- \
     -G "$GENERATOR" \
     -B "$BUILD_DIR" \
     -S "$LLAMA_DIR" \
     -DCMAKE_BUILD_TYPE=Release \
     -DGGML_NATIVE=ON \
-    -DGGML_LTO=ON \
+    -DGGML_LTO=OFF \
     -DGGML_OPENMP=ON \
     -DBUILD_SHARED_LIBS=ON \
     -DGGML_CUDA=OFF \
     -DGGML_VULKAN=OFF \
-    -DGGML_METAL=OFF
+    -DGGML_METAL=OFF \
+    -DLLAMA_BUILD_TESTS=OFF \
+    -DLLAMA_BUILD_EXAMPLES=OFF \
+    -DLLAMA_BUILD_TOOLS=ON \
+    -DLLAMA_BUILD_SERVER=ON \
+    -DLLAMA_BUILD_UI=OFF \
+    -DLLAMA_USE_PREBUILT_UI=OFF
 
 # Use system spirv-headers if available, otherwise fallback to vended
 if [ ! -f "/usr/include/spirv/unified1/spirv.h" ] && [ ! -f "/usr/local/include/spirv/unified1/spirv.h" ]; then
