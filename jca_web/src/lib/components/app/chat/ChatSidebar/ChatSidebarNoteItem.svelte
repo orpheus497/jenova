@@ -18,7 +18,7 @@
     <button
         onclick={onSelect}
         class={cn(
-            "flex-1 flex items-center gap-2 px-2 py-2 rounded-lg text-[10px] transition-all text-left truncate",
+            "flex-1 flex items-center gap-2 px-2 py-2 rounded-lg text-[10px] transition-all text-left truncate focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-primary",
             note.isFocusNote
                 ? "text-red-400 font-medium hover:bg-red-500/10"
                 : isActive
@@ -35,8 +35,10 @@
     </button>
     {#if !note.isFocusNote}
         <button 
+            aria-label="Delete note {note.title}"
+            title="Delete note"
             onclick={(e) => { e.stopPropagation(); onDelete(); }}
-            class="absolute right-2 opacity-0 group-hover/item:opacity-100 p-1 hover:text-destructive transition-opacity"
+            class="absolute right-2 opacity-0 group-hover/item:opacity-100 focus-visible:opacity-100 p-1 hover:text-destructive transition-opacity focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-destructive rounded"
         >
             <Trash2 size={12} />
         </button>
