@@ -1,6 +1,7 @@
 #!/bin/sh
 # Quick smoke test: verify Jenova server starts and responds
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
+JENOVA_ROOT="${JENOVA_ROOT:-$(dirname "$SCRIPT_DIR")}"; export JENOVA_ROOT
 # Load jenova.conf
 if [ -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
     . "$SCRIPT_DIR/../etc/jenova.conf"
