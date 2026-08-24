@@ -8,6 +8,7 @@
 #   - jenova-ca must be reachable (either already running or startable)
 
 SCRIPT_DIR=$(dirname "$(realpath "$0")")
+JENOVA_ROOT="${JENOVA_ROOT:-$(dirname "$SCRIPT_DIR")}"; export JENOVA_ROOT
 if [ ! -f "$SCRIPT_DIR/../etc/jenova.conf" ]; then
     echo "Error: jenova.conf not found at $SCRIPT_DIR/../etc/jenova.conf" >&2
     exit 1

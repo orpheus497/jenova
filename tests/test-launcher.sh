@@ -19,11 +19,23 @@ fail() {
     printf "  FAIL  %s\n" "$1"
 }
 
-# --- T1: etc/jenova.conf loads without error ---
-if . "$ROOT/etc/jenova.conf" 2>/dev/null && [ -n "$JENOVA_ROOT" ]; then
-    ok "T1: etc/jenova.conf loads and sets JENOVA_ROOT"
+# --- T1: etc/jenova.conf loads and populates runtime vars ---
+# jenova.conf *requires* JENOVA_ROOT; it never sets it. Provide it the way a
+# launcher would, then assert the conf actually populated the runtime values.
+JENOVA_ROOT="${JENOVA_ROOT:-$ROOT}"; export JENOVA_ROOT
+if . "$ROOT/etc/jenova.conf" 2>/dev/null && [ -n "$HOST" ] && [ -n "$PORT" ]; then
+    ok "T1: etc/jenova.conf loads and populates HOST/PORT"
 else
-    fail "T1: etc/jenova.conf failed to load or JENOVA_ROOT not set"
+    fail "T1: etc/jenova.conf failed to load or left HOST/PORT unset"
+fi
+
+# --- T1b: the JENOVA_ROOT guard actually refuses to load ---
+# Regression guard: when sourced without JENOVA_ROOT the conf must fail, so
+# callers cannot silently continue with unset HOST/PORT.
+if ( unset JENOVA_ROOT; . "$ROOT/etc/jenova.conf" ) >/dev/null 2>&1; then
+    fail "T1b: etc/jenova.conf loaded without JENOVA_ROOT (guard broken)"
+else
+    ok "T1b: etc/jenova.conf refuses to load without JENOVA_ROOT"
 fi
 
 # --- T2: Required Lua modules exist ---
