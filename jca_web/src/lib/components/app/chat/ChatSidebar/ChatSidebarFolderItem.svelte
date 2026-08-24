@@ -54,13 +54,13 @@
 		</button>
 
 		<div class="flex items-center gap-1.5 shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
-			<button onclick={(e) => { e.stopPropagation(); goToFiles(); }} class="p-1 hover:text-primary text-outline focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-primary rounded transition-all" title="View Folder Files">
+			<button onclick={(e) => { e.stopPropagation(); goToFiles(); }} class="p-1 hover:text-primary text-outline focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-primary rounded transition-all" title="View Folder Files" aria-label="Explore files in {folder.name}">
 				<Archive size={12} />
 			</button>
-			<button onclick={(e) => { e.stopPropagation(); onNewChat(); }} class="p-1 hover:text-primary text-outline focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-primary rounded transition-all" title="New Chat">
+			<button onclick={(e) => { e.stopPropagation(); onNewChat(); }} class="p-1 hover:text-primary text-outline focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-primary rounded transition-all" title="New Chat" aria-label="New chat in {folder.name}">
 				<Plus size={12} />
 			</button>
-			<button onclick={(e) => { e.stopPropagation(); onDelete(); }} class="p-1 hover:text-error text-outline focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-error rounded transition-all" title="Delete Folder">
+			<button onclick={(e) => { e.stopPropagation(); onDelete(); }} class="p-1 hover:text-error text-outline focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-error rounded transition-all" title="Delete Folder" aria-label="Delete folder {folder.name}">
 				<Trash2 size={12} />
 			</button>
 		</div>
@@ -105,6 +105,7 @@
 			<button
 				onclick={goToFiles}
 				class="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs transition-all text-secondary/70 hover:bg-sidebar-accent hover:text-secondary"
+				aria-label="Explore files in {folder.name}"
 			>
 				<Archive size={11} /> Files
 			</button>

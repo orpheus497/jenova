@@ -47,6 +47,7 @@
 				onclick={(e) => e.stopPropagation()}
 				class="p-1 hover:text-primary text-outline focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-primary rounded transition-all"
 				title="Explore Workspace Files"
+				aria-label="Explore files in {workspace.name}"
 			>
 				<FolderOpen size={12} />
 			</a>
@@ -55,6 +56,7 @@
 					onclick={(e) => { e.stopPropagation(); onNewProject!(); }}
 					class="p-1 hover:text-accent text-outline focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-accent rounded transition-all"
 					title="New Project in Workspace"
+					aria-label="New project in {workspace.name}"
 				>
 					<LayoutGrid size={12} />
 				</button>
@@ -63,6 +65,7 @@
 				onclick={(e) => { e.stopPropagation(); onNewChat(); }}
 				class="p-1 hover:text-primary text-outline focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-primary rounded transition-all"
 				title="New Chat in Workspace"
+				aria-label="New chat in {workspace.name}"
 			>
 				<Plus size={12} />
 			</button>
@@ -71,6 +74,7 @@
 					onclick={(e) => { e.stopPropagation(); onDelete!(); }}
 					class="p-1 hover:text-error text-outline focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-error rounded transition-all"
 					title="Delete Workspace"
+					aria-label="Delete workspace {workspace.name}"
 				>
 					<Trash2 size={12} />
 				</button>
@@ -123,6 +127,7 @@
 			<button
 				onclick={(e) => { e.stopPropagation(); window.location.hash = `#/files?workspaceId=${workspace.id}`; }}
 				class="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs transition-all text-secondary/70 hover:bg-sidebar-accent hover:text-secondary"
+				aria-label="Explore files in {workspace.name}"
 			>
 				<FolderOpen size={11} /> Files
 			</button>
