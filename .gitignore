@@ -6,6 +6,8 @@
 /public/
 /bin/llama-server
 /bin/jenova-ui
+/bin/jenova-core
+nimcache/
 /jenova-ui/jenova-ui
 /external/ext_bin/
 
@@ -51,7 +53,6 @@
 /backups/
 
 # --- AI Agent / Assistant Data (chat history, session data, dev docs) ---
-/.devdocs/
 .claude/
 .crush/
 .gemini/

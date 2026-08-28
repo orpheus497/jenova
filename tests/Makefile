@@ -8,6 +8,7 @@ check:
 	@sh test-health.sh
 	@sh test-launcher.sh
 	@sh proxy-concurrency/all.sh
+	@sh test_api_db.sh
 
 clean:
 	@echo "Nothing to clean."
