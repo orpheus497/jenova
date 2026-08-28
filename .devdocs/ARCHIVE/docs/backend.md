@@ -64,6 +64,14 @@ The Intelligence Proxy includes a native **Filesystem API** (`/api/storage`) tha
 This architecture ensures that Jenova is "device-first" rather than "browser-first." Your data is not trapped in an IndexedDB silo; it lives in your home directory, organized by Workspace and Folder, ready for editing in any text editor or backup via standard scripts.
 
 ## Networking
-All internal communication is HTTP/1.1 over localhost (or LAN when
-`--lan` is set). Streaming responses use chunked transfer-encoding so the
-chat buffer can render tokens as they arrive.
+
+**Only `:8080` is client-facing.** `--lan` moves the proxy's bind address to `0.0.0.0`; the
+inference server (`:8081`) and embedding server (`:8082`) always bind `127.0.0.1`, because
+nothing outside the host addresses them. `bin/jenova-ca` launches both with
+`--host "$BACKEND_BIND_HOST"`, which is loopback regardless of `--lan`.
+
+Open **only 8080** in the firewall for a LAN client. Exposing 8081 or 8082 would publish
+unauthenticated inference endpoints.
+
+All internal communication is HTTP/1.1 over loopback. Streaming responses use chunked
+transfer-encoding so the chat buffer can render tokens as they arrive.

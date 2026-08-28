@@ -1,5 +1,5 @@
 #!/bin/sh
-# build-llama-jenova: Vulkan external/llama.cpp build + Jenova runtime tuning.
+# build-llama.sh: Vulkan external/llama.cpp build + Jenova runtime tuning.
 #
 # Defaults:
 #   - backend: Vulkan
@@ -7,7 +7,7 @@
 #   - config override: <jenova>/etc/jenova.local.conf
 #
 # Env overrides:
-#   JENOVA_BACKEND=auto|vulkan|cpu
+#   JENOVA_BACKEND=auto|vulkan|cuda|hybrid|cpu   (auto never selects cuda)
 #   JENOVA_BUILD_DIR=/custom/path
 #   JENOVA_THREADS=<int>
 #   JENOVA_THREADS_BATCH=<int>
@@ -19,7 +19,7 @@ set -eu
 
 _REAL_PATH=$(realpath "$0" 2>/dev/null || readlink -f "$0" 2>/dev/null || echo "$0")
 SCRIPT_DIR="$(dirname "$_REAL_PATH")"
-JENOVA_ROOT="${JENOVA_ROOT:-$(dirname "$SCRIPT_DIR")}"
+JENOVA_ROOT="${JENOVA_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
 if [ ! -d "$JENOVA_ROOT" ]; then
     echo "Error: JENOVA_ROOT ($JENOVA_ROOT) is not a valid directory." >&2
@@ -69,17 +69,17 @@ fi
 
 ENABLE_VULKAN=0
 ENABLE_CUDA=0
-ENABLE_METAL=0
 
+# Action purpose: Vulkan is the default GPU backend on FreeBSD. CUDA is opt-in
+# only -- it is never enabled by auto-detection, even when nvcc happens to be
+# present, because NVIDIA hardware is driven through Vulkan here. Ask for it
+# explicitly with JENOVA_BACKEND=cuda (or =hybrid).
 case "$BACKEND" in
     vulkan)
         ENABLE_VULKAN=1
         ;;
     cuda)
         ENABLE_CUDA=1
-        ;;
-    metal)
-        ENABLE_METAL=1
         ;;
     hybrid|both)
         ENABLE_VULKAN=1
@@ -88,49 +88,28 @@ case "$BACKEND" in
     cpu)
         ;;
     auto)
-        if [ "$JENOVA_OS" = "macos" ]; then
-            if [ "$JENOVA_ARCH" = "aarch64" ]; then
-                ENABLE_METAL=1
-            else
-                # Intel Mac: use Vulkan if available, else CPU
-                if [ "${JENOVA_VULKAN_OK:-0}" = "1" ]; then
-                    ENABLE_VULKAN=1
-                fi
-            fi
-        else
-            if command -v vulkaninfo >/dev/null 2>&1 && vulkaninfo --summary 2>/dev/null | grep -q "deviceName"; then
-                ENABLE_VULKAN=1
-            fi
-            if command -v nvcc >/dev/null 2>&1; then
-                ENABLE_CUDA=1
-            fi
+        if command -v vulkaninfo >/dev/null 2>&1 && vulkaninfo --summary 2>/dev/null | grep -q "deviceName"; then
+            ENABLE_VULKAN=1
         fi
         ;;
     *)
-        echo "Error: unsupported JENOVA_BACKEND='$BACKEND' (use auto|vulkan|cuda|metal|hybrid|cpu)" >&2
+        echo "Error: unsupported JENOVA_BACKEND='$BACKEND' (use auto|vulkan|cuda|hybrid|cpu)" >&2
         exit 1
         ;;
 esac
 
-if [ "${ENABLE_VULKAN:-0}" -eq 1 ] && [ "${JENOVA_GLSLC_OK:-0}" = "0" ]; then
-    echo "Error: Vulkan backend requested but glslc was not found." >&2
-    echo "Install the Vulkan shader compiler, then rerun:" >&2
-    case "${JENOVA_PKG_MGR:-none}" in
-        pkg)    echo "  sudo pkg install shaderc" >&2 ;;
-        pacman) echo "  sudo pacman -S shaderc" >&2 ;;
-        apt)    echo "  sudo apt install google-shaderc" >&2 ;;
-        dnf)    echo "  sudo dnf install glslc" >&2 ;;
-        zypper) echo "  sudo zypper install shaderc" >&2 ;;
-        brew)   echo "  brew install shaderc" >&2 ;;
-        *)      echo "  Install the 'glslc' / 'shaderc' package for your OS" >&2 ;;
-    esac
+if [ "${JENOVA_GLSLC_OK:-0}" = "0" ]; then
+    echo "Error: glslc was not found." >&2
+    echo "Vulkan is Jenova's default inference backend and needs the shader" >&2
+    echo "compiler. Install it, then rerun:" >&2
+    echo "  sudo pkg install shaderc" >&2
     exit 1
 fi
 
 if [ -n "${JENOVA_NGL_AGENT:-}" ]; then
     NGL_AGENT="$JENOVA_NGL_AGENT"
 else
-    if [ "$ENABLE_VULKAN" -eq 1 ] || [ "$ENABLE_CUDA" -eq 1 ] || [ "$ENABLE_METAL" -eq 1 ]; then
+    if [ "$ENABLE_VULKAN" -eq 1 ] || [ "$ENABLE_CUDA" -eq 1 ]; then
         NGL_AGENT=all
     else
         NGL_AGENT=0
@@ -149,8 +128,6 @@ elif [ "$ENABLE_CUDA" -eq 1 ]; then
     EFFECTIVE_BACKEND="cuda"
 elif [ "$ENABLE_VULKAN" -eq 1 ]; then
     EFFECTIVE_BACKEND="vulkan"
-elif [ "$ENABLE_METAL" -eq 1 ]; then
-    EFFECTIVE_BACKEND="metal"
 else
     EFFECTIVE_BACKEND="cpu"
 fi
@@ -192,7 +169,6 @@ set -- \
     -DBUILD_SHARED_LIBS=ON \
     -DGGML_CUDA=OFF \
     -DGGML_VULKAN=OFF \
-    -DGGML_METAL=OFF \
     -DLLAMA_BUILD_TESTS=OFF \
     -DLLAMA_BUILD_EXAMPLES=OFF \
     -DLLAMA_BUILD_TOOLS=ON \
@@ -200,8 +176,8 @@ set -- \
     -DLLAMA_BUILD_UI=OFF \
     -DLLAMA_USE_PREBUILT_UI=OFF
 
-# Use system spirv-headers if available, otherwise fallback to vended
-if [ ! -f "/usr/include/spirv/unified1/spirv.h" ] && [ ! -f "/usr/local/include/spirv/unified1/spirv.h" ]; then
+# Use the spirv-headers package if installed, otherwise fall back to the vendored copy.
+if [ ! -f "/usr/local/include/spirv/unified1/spirv.h" ]; then
     set -- "$@" \
         -DCMAKE_C_FLAGS="-I${JENOVA_ROOT}/external/SPIRV-Headers/include" \
         -DCMAKE_CXX_FLAGS="-I${JENOVA_ROOT}/external/SPIRV-Headers/include"
@@ -213,10 +189,6 @@ fi
 
 if [ "$ENABLE_CUDA" -eq 1 ]; then
     set -- "$@" -DGGML_CUDA=ON
-fi
-
-if [ "$ENABLE_METAL" -eq 1 ]; then
-    set -- "$@" -DGGML_METAL=ON
 fi
 
 cmake "$@"
@@ -231,7 +203,7 @@ fi
 EXT_BIN_DIR="$JENOVA_ROOT/external/ext_bin"
 mkdir -p "$EXT_BIN_DIR/bin"
 cp "$LLAMA_SERVER" "$EXT_BIN_DIR/bin/"
-for _lib in "$BUILD_DIR/bin/"*.so* "$BUILD_DIR/bin/"*.dylib*; do
+for _lib in "$BUILD_DIR/bin/"*.so*; do
     if [ -f "$_lib" ] || [ -L "$_lib" ]; then
         cp -RPp "$_lib" "$EXT_BIN_DIR/bin/"
     fi
@@ -283,11 +255,6 @@ if [ "$ENABLE_CUDA" -eq 1 ]; then
     append_devices "CUDA" "$_ccount"
 fi
 
-if [ "$ENABLE_METAL" -eq 1 ]; then
-    # On macOS, we typically just use Metal0 for the primary GPU.
-    append_devices "Metal" 1
-fi
-
 # Suggested models for this build type
 SUGGESTED_MODEL="Qwen3.5-4B-Q6_K.gguf"
 if [ "$ENABLE_VULKAN" -eq 1 ] && [ "$ENABLE_CUDA" -eq 1 ]; then
@@ -296,7 +263,7 @@ fi
 
 cat > "$LOCAL_CONF" <<EOF
 #!/bin/sh
-# Auto-generated by bin/build-llama-jenova — host-specific overrides for Jenova.
+# Auto-generated by scripts/build-llama.sh — host-specific overrides for Jenova.
 # Suggested model for this $([ "$ENABLE_VULKAN" -eq 1 ] && [ "$ENABLE_CUDA" -eq 1 ] && echo "dual-GPU " || echo "")build: $SUGGESTED_MODEL
 
 LLAMA_SERVER="\$JENOVA_ROOT/external/ext_bin/bin/llama-server"

@@ -78,19 +78,14 @@ validate_arg() {
 # =========================================================================
 
 detect_os() {
-    # Populated from shared detection in lib/detect-env.sh.
-    OS_NAME="$(uname -s)"
-    OS_RELEASE="$(uname -r)"
+    # Action purpose: OS_NAME is matched against a profile's MATCH_OS pattern.
+    # It must come from the kernel, not `uname -s` — under the FreeBSD
+    # Linuxulator `uname -s` answers "Linux", which previously caused this
+    # script to select a Linux profile on a FreeBSD host.
+    OS_NAME="FreeBSD"
+    OS_RELEASE="$JENOVA_OS_RELEASE"
     OS_FULL="${OS_NAME} ${OS_RELEASE}"
-
-    if [ "$JENOVA_OS" = "freebsd" ]; then
-        OS_PRETTY="FreeBSD ${OS_RELEASE}"
-    elif [ -f /etc/os-release ]; then
-        OS_PRETTY="$(. /etc/os-release 2>/dev/null && printf '%s\n' "$PRETTY_NAME")"
-        [ -z "$OS_PRETTY" ] && OS_PRETTY="$OS_FULL"
-    else
-        OS_PRETTY="$OS_FULL"
-    fi
+    OS_PRETTY="FreeBSD ${OS_RELEASE}"
 }
 
 detect_cpu() {
@@ -109,14 +104,9 @@ detect_gpu() {
         GPU_DEVICES=$(vulkaninfo --summary 2>/dev/null | grep "deviceName" | sed 's/.*= //' || true)
     fi
 
-    # Method 2: pciconf (FreeBSD)
+    # Method 2: pciconf
     if [ -z "$GPU_DEVICES" ] && command -v pciconf >/dev/null 2>&1; then
         GPU_DEVICES=$(pciconf -lv 2>/dev/null | grep -A2 "class.*display" | grep "device" | sed 's/.*device.*= //' || true)
-    fi
-
-    # Method 3: lspci (Linux)
-    if [ -z "$GPU_DEVICES" ] && command -v lspci >/dev/null 2>&1; then
-        GPU_DEVICES=$(lspci 2>/dev/null | grep -i "vga\|3d\|display" | sed 's/.*: //' || true)
     fi
 
     if [ -n "$GPU_DEVICES" ]; then
@@ -136,29 +126,19 @@ detect_memory() {
 }
 
 detect_storage() {
-    STORAGE_TYPE="unknown"
-    if [ "$(uname -s)" = "FreeBSD" ]; then
-        if zpool list >/dev/null 2>&1; then STORAGE_TYPE="ZFS"
-        else STORAGE_TYPE="UFS"; fi
-    elif [ -f /proc/mounts ]; then
-        if grep -q " zfs " /proc/mounts 2>/dev/null; then STORAGE_TYPE="ZFS"
-        elif grep -q " btrfs " /proc/mounts 2>/dev/null; then STORAGE_TYPE="btrfs"
-        else STORAGE_TYPE="ext4/xfs"; fi
+    if zpool list >/dev/null 2>&1; then
+        STORAGE_TYPE="ZFS"
+    else
+        STORAGE_TYPE="UFS"
     fi
 }
 
 detect_swap_hardware() {
     SYSTEM_SWAP_INFO="None"
-    if [ "$JENOVA_OS" = "freebsd" ]; then
-        _sdevs=$(swapinfo 2>/dev/null | awk 'NR>1 {print $1}' | tr '\n' ' ')
-        _ndevs=$(nvmecontrol devlist 2>/dev/null | tr '\n' ' ')
-        [ -z "$_ndevs" ] && _ndevs=$(dmesg | grep -i "optane" | head -n 1)
-        [ -n "$_sdevs" ] && SYSTEM_SWAP_INFO="${_sdevs} ${_ndevs}"
-    elif [ "$JENOVA_OS" = "linux" ]; then
-        _sdevs=$(cat /proc/swaps 2>/dev/null | awk 'NR>1 {print $1}' | tr '\n' ' ')
-        _ndevs=$(lsblk -d -o NAME,MODEL 2>/dev/null | grep -iE "nvme|optane" | tr '\n' ' ' || true)
-        [ -n "$_sdevs" ] && SYSTEM_SWAP_INFO="${_sdevs} ${_ndevs}"
-    fi
+    _sdevs=$(swapinfo 2>/dev/null | awk 'NR>1 {print $1}' | tr '\n' ' ')
+    _ndevs=$(nvmecontrol devlist 2>/dev/null | tr '\n' ' ')
+    [ -z "$_ndevs" ] && _ndevs=$(dmesg 2>/dev/null | grep -i "optane" | head -n 1)
+    [ -n "$_sdevs" ] && SYSTEM_SWAP_INFO="${_sdevs} ${_ndevs}"
 }
 
 # =========================================================================
@@ -176,12 +156,22 @@ match_profile() {
     # Robustly load profile variables by sourcing after path validation
     # (Provided by lib/detect-env.sh)
     MATCH_CPU="" MATCH_GPU_0="" MATCH_GPU_1="" MATCH_OS="" MATCH_SWAP=""
+    PROFILE_OPT_IN=""
     load_jenova_profile "$_profile_conf" || return 1
+
+    # Action purpose: A profile marked PROFILE_OPT_IN is never auto-selected,
+    # however well its patterns match. It remains deployable by name through
+    # --apply-profile. CUDA uses this: NVIDIA hardware defaults to Vulkan here,
+    # so a broad NVIDIA GPU pattern must not be allowed to win detection.
+    if [ -n "$PROFILE_OPT_IN" ] && [ "$PROFILE_OPT_IN" != "0" ]; then
+        return 1
+    fi
 
     _score=0
 
-    # OS match (highest priority — worth 20 points, required for OS-specific profiles)
-    # Uses -iE (extended regex) to support alternation (e.g., "Linux|FreeBSD")
+    # OS match (highest priority — worth 20 points, required for OS-specific profiles).
+    # OS_NAME is always "FreeBSD"; a profile omits MATCH_OS only when it is a
+    # deliberate last-resort fallback that should take the -5 generic penalty.
     if [ -n "$MATCH_OS" ]; then
         if printf '%s\n' "$OS_NAME" | grep -qiE "$MATCH_OS" 2>/dev/null; then
             _score=$((_score + 20))

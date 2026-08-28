@@ -12,12 +12,19 @@
 #   --list             Show available profiles and detection results
 #   --info             Show detected hardware information
 #
-# Hardware profiles are in: hardware-profiles/<Category>/<gpu_type>/<name>/jenova-setup
+# Hardware profiles are in: hardware-profiles/<backend>/<config>/jenova-setup
 
 set -e
 
 SCRIPT_DIR="$(dirname "$(dirname "$(realpath "$0")")")"
 DETECT="$SCRIPT_DIR/hardware-profiles/detect-hardware.sh"
+
+# Action purpose: This script writes kernel tunables as root. Sourcing the
+# shared detection makes it refuse outright on a non-FreeBSD kernel, rather
+# than dispatching FreeBSD sysctls at whatever it happens to be running on.
+JENOVA_ROOT="$SCRIPT_DIR"; export JENOVA_ROOT
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/lib/detect-env.sh"
 
 # Colours
 if [ -t 1 ]; then
@@ -104,8 +111,13 @@ if [ -n "$FORCE_PROFILE" ]; then
     if [ ! -d "$PROFILE_DIR" ]; then
         fail "Profile '$FORCE_PROFILE' not found in hardware-profiles/"
         info "Available profiles:"
-        for _pc in "$SCRIPT_DIR/hardware-profiles"/*/*/*/profile.conf; do
-            [ -f "$_pc" ] && echo "    ${_pc#"$SCRIPT_DIR/hardware-profiles"/}" | sed 's|/profile.conf||'
+        # Action purpose: `find` rather than a fixed-depth glob. The previous
+        # */*/*/profile.conf pattern matched only three-level profiles and
+        # silently omitted every deeper one from this listing.
+        find "$SCRIPT_DIR/hardware-profiles" -name profile.conf 2>/dev/null | sort |
+        while IFS= read -r _pc; do
+            _pd=$(dirname "$_pc")
+            echo "    ${_pd#"$SCRIPT_DIR/hardware-profiles"/}"
         done
         exit 1
     fi
@@ -121,21 +133,6 @@ else
     PROFILE_NAME=$("$DETECT" 2>/dev/null) || true
 
     if [ -z "$PROFILE_NAME" ] || [ "$PROFILE_NAME" = "unknown" ]; then
-        # On Linux/Debian, we can apply generic tuning even if no hardware profile matches
-        if [ "$JENOVA_OS" = "linux" ]; then
-            warn "No specific hardware profile found. Applying generic Linux optimizations..."
-            if [ -f "$SCRIPT_DIR/lib/linux-tune.sh" ]; then
-                . "$SCRIPT_DIR/lib/linux-tune.sh"
-                tune_system_performance
-                tune_hugepages
-                tune_gpu_persistence
-                tune_debian_specific
-                echo ""
-                ok "Generic Linux tuning applied."
-                exit 0
-            fi
-        fi
-
         fail "No matching hardware profile found for this system"
         echo ""
         info "Detected hardware:"

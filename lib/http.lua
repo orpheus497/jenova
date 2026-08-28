@@ -186,9 +186,7 @@ function http.post(url, body, timeout)
   ffi.C.setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, tv, ffi.sizeof(tv))
 
   local addr = ffi.new("struct sockaddr_in")
-  if not ffi_defs.IS_LINUX then
-    addr.sin_len = ffi.sizeof(addr)
-  end
+  addr.sin_len = ffi.sizeof(addr)
   addr.sin_family = AF_INET
   addr.sin_port = ffi.C.htons(port)
 
@@ -274,9 +272,7 @@ function http.get(url, timeout)
   ffi.C.setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, tv, ffi.sizeof(tv))
 
   local addr = ffi.new("struct sockaddr_in")
-  if not ffi_defs.IS_LINUX then
-    addr.sin_len = ffi.sizeof(addr)
-  end
+  addr.sin_len = ffi.sizeof(addr)
   addr.sin_family = AF_INET
   addr.sin_port = ffi.C.htons(port)
 

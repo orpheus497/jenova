@@ -1,6 +1,6 @@
 #!/bin/sh
 # jenova-manager.sh: TUI manager for this monorepo
-# Pure POSIX shell implementation for maximum compatibility (FreeBSD/Linux/macOS).
+# Pure POSIX shell implementation, targeting FreeBSD.
 
 set -e
 

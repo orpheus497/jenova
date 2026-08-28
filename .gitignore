@@ -51,6 +51,7 @@
 /backups/
 
 # --- AI Agent / Assistant Data (chat history, session data, dev docs) ---
+/.devdocs/
 .claude/
 .crush/
 .gemini/

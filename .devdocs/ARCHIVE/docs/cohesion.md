@@ -22,10 +22,10 @@ Components interact via a multi-port bridge:
 - **Port 8082 (Embeddings)**: Semantic search backend.
 
 ## 4. Seamless Installation & Update Path
-The `install-jenova.sh` and `scripts/update.sh` scripts are "cohesion-aware":
-- They don't just pull code; they verify that dependencies for *all* components are met.
-- They handle the complex relationship between `llama.cpp` (inference) and the Web UI, ensuring they are built with matching hardware optimizations (e.g., Vulkan/CUDA).
-- The TUI (`jenova-manager.sh`) provides a high-level orchestration layer for these scripts, allowing granular control without breaking system integrity.
+The `Makefile` and `scripts/update.sh` are "cohesion-aware":
+- Every build target depends on `deps`, so dependencies for *all* components are installed before anything is built. There is no optional tier — a missing package stops the build.
+- They handle the relationship between `llama.cpp` (inference) and the Web UI, ensuring they are built with matching hardware optimisations.
+- `bin/jenova-tui` provides the operational interface for the running system, and `scripts/update.sh` handles source updates and rebuilds.
 
 ## 5. Security & Privacy by Structure
 Cohesion is also maintained in what we *don't* share. The `.gitignore` at the repository root acts as a master guard, ensuring that while the code is a monorepo, the data (models, chat history, secrets) is strictly localized and never intermingled with the source control.

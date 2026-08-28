@@ -28,10 +28,8 @@
 #   ✓ Downloads AI models (unless --minimal)
 #   ✓ Verifies everything works
 #
-# Supported platforms:
-#   • FreeBSD (pkg)
-#   • Linux: Arch (pacman/yay), Debian/Ubuntu (apt), Fedora/RHEL (dnf)
-#   • macOS (Homebrew)
+# Supported platform:
+#   • FreeBSD 15+ (pkg) — the only one
 
 set -e
 

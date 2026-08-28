@@ -43,13 +43,25 @@ Features:
   access with one command (updates `etc/jenova.local.conf`).
 - **Quick Launch**: One-key shortcut to launch the Web UI.
 
-## Maintenance Manager — `scripts/jenova-manager.sh`
+## Build and maintenance — `make`
 
-A `dialog` / `whiptail`-based menu for installation and maintenance tasks.
-Use this for building, updating, or uninstalling components.
+The Makefile is the single entry point for building, deploying and verifying.
 
 ```sh
-scripts/jenova-manager.sh
+make              # install dependencies, then build everything
+make deps         # dependencies only
+make install      # build and deploy to $JCA_HOME
+make verify       # verify a deployed installation
+make clean        # remove build artifacts
+```
+
+Maintenance scripts that are not build steps:
+
+```sh
+scripts/update.sh              # pull latest source and rebuild
+scripts/cleanup.sh --all       # clear logs and cache
+scripts/uninstall.sh           # remove deployed files (preserves models)
+scripts/model_dl.sh            # profile-aware model downloader
 ```
 
 ## Hardware Tooling

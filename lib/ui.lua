@@ -45,12 +45,14 @@ local function detect_probe_tool()
     if _probe_tool_checked then return _cached_probe_tool end
     _probe_tool_checked = true
 
-    if os.execute("command -v curl >/dev/null 2>&1") == 0 then
-        _cached_probe_tool = "curl"
+    -- Base-system tools first: fetch(1) and nc(1) always exist on FreeBSD,
+    -- whereas curl is an optional package.
+    if os.execute("command -v fetch >/dev/null 2>&1") == 0 then
+        _cached_probe_tool = "fetch"
     elseif os.execute("command -v nc >/dev/null 2>&1") == 0 then
         _cached_probe_tool = "nc"
-    elseif os.execute("command -v fetch >/dev/null 2>&1") == 0 then
-        _cached_probe_tool = "fetch"   -- FreeBSD base system
+    elseif os.execute("command -v curl >/dev/null 2>&1") == 0 then
+        _cached_probe_tool = "curl"
     end
     return _cached_probe_tool
 end
@@ -90,12 +92,14 @@ ui.on_action = function(action)
     if not action then return end
 
     if action == "web" then
-        -- FreeBSD: use xdg-open if present, fall back to open(1)
-        local opener = "xdg-open"
-        if os.execute("command -v xdg-open >/dev/null 2>&1") ~= 0 then
-            opener = "open" -- macOS / FreeBSD with xdg-utils missing
+        -- xdg-open comes from the xdg-utils package; without it there is no
+        -- desktop-agnostic way to hand a URL to the user's browser.
+        if os.execute("command -v xdg-open >/dev/null 2>&1") == 0 then
+            sys_exec_async("xdg-open http://localhost:8080")
+        else
+            io.stderr:write("[jenova-ui] xdg-open not found. Install it with "
+                .. "'pkg install xdg-utils', or open http://localhost:8080 manually.\n")
         end
-        sys_exec_async(shell_quote(opener) .. " http://localhost:8080")
     elseif action == "tui" then
         local bin_term = shell_quote(root .. "/bin/jenova-term")
         local bin_ui = shell_quote(root .. "/bin/jenova-ui")
@@ -118,7 +122,7 @@ ui.on_action = function(action)
         local target = action == "switch_instruct" and "instruct" or "thinking"
         local stop_status = sys_exec_sync(shell_quote(root .. "/bin/jenova-ca") .. " stop")
         if stop_status == 0 then
-            local switch_status = sys_exec_sync("bash " .. shell_quote(root .. "/bin/jenova-model-switch") .. " " .. target)
+            local switch_status = sys_exec_sync(shell_quote(root .. "/bin/jenova-model-switch") .. " " .. target)
             if switch_status == 0 then
                 if is_lan_enabled() then
                     sys_exec_async(shell_quote(root .. "/bin/jenova-ca") .. " start --lan")
@@ -176,21 +180,35 @@ ui.get_status_info = function()
     local mode_str = "LOCAL"
     
     if lan then
-        -- Attempt to get the actual LAN IP address
-        local cmd = "ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i==\"src\") print $(i+1)}'"
+        -- Find the address on the default-route interface. This previously ran
+        -- `ip route get`, an iproute2 command that does not exist on FreeBSD, so
+        -- it always failed through to the ifconfig fallback.
+        local cmd = "route -n get default 2>/dev/null | awk '/interface:/{print $2}'"
         local f = io.popen(cmd, "r")
-        local ip = nil
+        local iface = nil
         if f then
-            ip = f:read("*l")
+            iface = f:read("*l")
             f:close()
         end
-        if not ip or ip == "" then
-            -- Fallback for FreeBSD/macOS
-            local cmd_ifconfig = "ifconfig | awk '/inet / && !/127.0.0.1/ {print $2}' | head -n 1"
-            local f2 = io.popen(cmd_ifconfig, "r")
+
+        local ip = nil
+        if iface and iface ~= "" then
+            local cmd_if = "ifconfig " .. shell_quote(iface)
+                .. " 2>/dev/null | awk '/inet /{print $2; exit}'"
+            local f2 = io.popen(cmd_if, "r")
             if f2 then
                 ip = f2:read("*l")
                 f2:close()
+            end
+        end
+
+        if not ip or ip == "" then
+            -- No default route resolved; take the first non-loopback address.
+            local cmd_any = "ifconfig 2>/dev/null | awk '/inet / && !/127\\.0\\.0\\.1/ {print $2; exit}'"
+            local f3 = io.popen(cmd_any, "r")
+            if f3 then
+                ip = f3:read("*l")
+                f3:close()
             end
         end
         

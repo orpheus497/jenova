@@ -6,7 +6,7 @@ This directory contains the LLM models used by Jenova. Models are organized into
 
 ```
 $JCA_HOME/models/
-├── agent/    # Main inference models (7B-32B parameters)
+├── agent/    # Main inference models (3B-9B parameters)
 ├── instruct/ # Specialized instruct models for dynamic switching
 ├── thinking/ # Specialized thinking models for dynamic switching
 ├── embed/    # Embedding models for RAG and semantic search
@@ -24,8 +24,8 @@ Place your primary language models here. These are the models that power the mai
 
 **Requirements:**
 - GGUF format
-- Recommended: 7B-13B parameters for dual-GPU setup
-- Recommended: Q4_K_M or Q5_K_M quantization
+- 4B Q8_0 for the dual-GPU profile; 9B Q4_K_M for single dGPU; 4B Q6_K for APU and CPU
+- Q4_K_M, Q6_K or Q8_0 depending on available VRAM
 
 ### Dynamic Model Switching (`instruct/` and `thinking/`)
 

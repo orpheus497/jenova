@@ -254,7 +254,8 @@ end
 _G.async_popen_read = async_popen_read
 
 -- Detect available HTTPS-capable command-line tool (once at startup).
--- FreeBSD: 'fetch' is in base. Linux/other: fall back to 'curl'.
+-- fetch(1) is in the FreeBSD base system; curl is an optional package kept as a
+-- fallback because the two differ in TLS and proxy behaviour.
 local HTTPS_CMD
 do
     local function cmd_exists(name)
@@ -550,7 +551,7 @@ local function proxy_connection(client_fd, conn_fds)
                 set_cloexec(health_fd)
                 set_nonblocking(health_fd)
                 local h_addr = ffi.new("struct sockaddr_in")
-                if not _ffi_defs.IS_LINUX then h_addr.sin_len = ffi.sizeof(h_addr) end
+                h_addr.sin_len = ffi.sizeof(h_addr)
                 h_addr.sin_family = AF_INET
                 h_addr.sin_port   = ffi.C.htons(LLAMA_PORT)
                 h_addr.sin_addr.s_addr = ffi.C.inet_addr("127.0.0.1")
@@ -1421,9 +1422,7 @@ local function proxy_connection(client_fd, conn_fds)
     set_socket_opts(llama_fd)
 
     local l_addr = ffi.new("struct sockaddr_in")
-    if not _ffi_defs.IS_LINUX then
-        l_addr.sin_len = ffi.sizeof(l_addr)
-    end
+    l_addr.sin_len = ffi.sizeof(l_addr)
     l_addr.sin_family = AF_INET
     l_addr.sin_port = ffi.C.htons(LLAMA_PORT)
     l_addr.sin_addr.s_addr = ffi.C.inet_addr(LLAMA_CONNECT_HOST)
@@ -1513,9 +1512,7 @@ local opt = ffi.new("int[1]", 1)
 ffi.C.setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, opt, ffi.sizeof("int"))
 
 local addr = ffi.new("struct sockaddr_in")
-if not _ffi_defs.IS_LINUX then
-    addr.sin_len = ffi.sizeof(addr)
-end
+addr.sin_len = ffi.sizeof(addr)
 addr.sin_family = AF_INET
 addr.sin_port = ffi.C.htons(PORT)
 addr.sin_addr.s_addr = ffi.C.inet_addr(HOST)

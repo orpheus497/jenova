@@ -51,7 +51,7 @@ assert_fail "../bin"
 assert_fail "/etc"
 assert_fail "/etc/passwd"
 assert_fail "/etc/../../etc/passwd"
-assert_fail "Linux/Vulkan/dgpu/gtx-1650ti/../../../../etc/passwd"
+assert_fail "Vulkan/dgpu-i5-1135g7/../../../../etc/passwd"
 assert_fail "/../etc"
 
 # Test 3: Prevent dot/dot-dot directories (resolves to SCRIPT_DIR or parent, not a subdirectory)
@@ -59,7 +59,7 @@ assert_fail "."
 assert_fail ".."
 
 # Test 4: Verify valid profiles pass validation (though they might fail later if not existing, they should not trigger validation access denied/unexpected option error)
-assert_pass "Linux/Vulkan/dgpu/gtx-1650ti"
+assert_pass "Vulkan/dgpu-i5-1135g7"
 assert_pass "nonexistent-profile-name" # This will fail with "Profile not found: nonexistent-profile-name" but it should PASS validation itself.
 
 echo "All detect-hardware.sh validation tests passed."

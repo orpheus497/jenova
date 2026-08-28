@@ -99,12 +99,11 @@ _check_bin() {
         # Verify architecture only for ELF/Mach-O binaries
         if command -v file >/dev/null 2>&1; then
             _file_info=$(file "$_real_path")
-            if echo "$_file_info" | grep -qiE "ELF|Mach-O"; then
-                case "$JENOVA_OS" in
-                    linux)   echo "$_file_info" | grep -qi "ELF.*GNU/Linux" || { fail "$_name is not a native Linux binary"; ERRORS=$((ERRORS + 1)); } ;;
-                    freebsd) echo "$_file_info" | grep -qi "ELF.*FreeBSD"   || { fail "$_name is not a native FreeBSD binary"; ERRORS=$((ERRORS + 1)); } ;;
-                    macos)   echo "$_file_info" | grep -qi "Mach-O"       || { fail "$_name is not a native macOS binary"; ERRORS=$((ERRORS + 1)); } ;;
-                esac
+            if echo "$_file_info" | grep -qi "ELF"; then
+                echo "$_file_info" | grep -qi "ELF.*FreeBSD" || {
+                    fail "$_name is not a native FreeBSD binary"
+                    ERRORS=$((ERRORS + 1))
+                }
             else
                 # It's a script or other non-ELF file
                 if [ "$VERBOSE" = "1" ]; then ok "$_desc is a script (arch check skipped)"; fi
@@ -301,7 +300,7 @@ else
     printf "${_R}✗ Installation verification failed (${ERRORS} error(s)).${_N}\n"
     echo ""
     echo "Fix the errors above:"
-    echo "  • Run preflight checks: ./scripts/preflight-check.sh"
+    echo "  • Reinstall dependencies: ./scripts/install-dependencies.sh"
     echo "  • Re-run installation: make install"
     echo "  • Check logs: cat $JCA_HOME/var/log/*.log"
     exit 1

@@ -147,7 +147,7 @@ if [ "$SKIP_REBUILD" = "0" ]; then
 
     if [ "$_need_rebuild" = "1" ]; then
         info "Building llama.cpp..."
-        "$JENOVA_ROOT/bin/build-llama-jenova" && ok "llama.cpp built" || warn "llama.cpp build failed"
+        "$JENOVA_ROOT/scripts/build-llama.sh" && ok "llama.cpp built" || warn "llama.cpp build failed"
     else
         ok "llama.cpp up to date"
     fi

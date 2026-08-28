@@ -68,12 +68,14 @@ echo ""
 # 1. Operating System Check
 # ---------------------------------------------------------------------------
 info "Checking operating system..."
-case "$JENOVA_OS" in
-    freebsd) ok "FreeBSD $(uname -r)" ;;
-    linux)   ok "Linux - ${JENOVA_DISTRO:-Unknown} / pkg: ${JENOVA_PKG_MGR:-Unknown}" ;;
-    macos)   warn "macOS $(uname -r) - experimental, use with caution"; WARNINGS=$((WARNINGS + 1)) ;;
-    *)       fail "Unsupported OS: $(uname -s)"; ERRORS=$((ERRORS + 1)) ;;
-esac
+# lib/detect-env.sh has already refused to load on anything but FreeBSD, so
+# reaching this point means the kernel is correct; only the version matters.
+ok "FreeBSD ${JENOVA_OS_RELEASE} (${JENOVA_ARCH})"
+_MAJOR="$(printf '%s' "$JENOVA_OS_RELEASE" | cut -d. -f1)"
+if [ "${_MAJOR:-0}" -lt 15 ] 2>/dev/null; then
+    warn "FreeBSD 15+ is recommended; found ${JENOVA_OS_RELEASE}"
+    WARNINGS=$((WARNINGS + 1))
+fi
 
 # ---------------------------------------------------------------------------
 # 2. Disk Space Check
@@ -142,14 +144,17 @@ _check_bin() {
     fi
 }
 
-_check_bin "git"      "git" 0
-_check_bin "cmake"    "cmake" 0
-_check_bin "luajit"   "luajit" 0
-_check_bin "realpath" "coreutils" 0
+_check_bin "git"      "pkg install git" 0
+_check_bin "cmake"    "pkg install cmake" 0
+_check_bin "gmake"    "pkg install gmake" 0
+_check_bin "luajit"   "pkg install luajit-openresty" 0
+_check_bin "sqlite3"  "pkg install sqlite3" 0
+
+# fetch(1) is in the FreeBSD base system; curl is only a fallback.
 if command -v fetch >/dev/null 2>&1; then
-    _check_bin "fetch" "fetch" 1
+    ok "fetch (base system)"
 else
-    _check_bin "curl" "curl" 1
+    _check_bin "curl" "pkg install curl" 1
 fi
 
 
@@ -162,25 +167,32 @@ if [ "$JENOVA_VULKAN_OK" = "1" ]; then
 else
     warn "Vulkan loader not found - CPU-only fallback will be used"
     WARNINGS=$((WARNINGS + 1))
-    [ "$VERBOSE" = "1" ] && info "  Install vulkan-loader to enable GPU acceleration"
+    [ "$VERBOSE" = "1" ] && info "  pkg install vulkan-loader to enable GPU acceleration"
 fi
 
 # ---------------------------------------------------------------------------
 # 6. Node.js / npm Check (for Web UI)
 # ---------------------------------------------------------------------------
-info "Checking Node.js and npm (required for Web UI)..."
-_node_pkg="node"
-case "$JENOVA_PKG_MGR" in
-    pacman|apt|dnf) _node_pkg="nodejs" ;;
-esac
-_check_bin "node" "$_node_pkg" 0
-_check_bin "npm" "npm" 0
+# Required, not optional: the proxy serves the Web UI from public/, and public/
+# is produced by the jca_web build.
+info "Checking Node.js and npm (required for the Web UI)..."
+_check_bin "node" "pkg install node" 0
+_check_bin "npm"  "pkg install npm" 0
 
 # ---------------------------------------------------------------------------
 # 7. Network Connectivity Check
 # ---------------------------------------------------------------------------
+# Action purpose: Prefer fetch(1) — it is in the FreeBSD base system, so this
+# check runs even before curl is installed.
 info "Checking network connectivity..."
-if command -v curl >/dev/null 2>&1; then
+if command -v fetch >/dev/null 2>&1; then
+    if fetch -T 3 -qo /dev/null https://huggingface.co 2>/dev/null; then
+        ok "Network connectivity to model hub confirmed"
+    else
+        warn "Cannot reach model hub (huggingface.co) - model downloads will fail"
+        WARNINGS=$((WARNINGS + 1))
+    fi
+elif command -v curl >/dev/null 2>&1; then
     if curl -s -m 3 https://huggingface.co > /dev/null 2>&1; then
         ok "Network connectivity to model hub confirmed"
     else
@@ -188,7 +200,7 @@ if command -v curl >/dev/null 2>&1; then
         WARNINGS=$((WARNINGS + 1))
     fi
 else
-    info "Skipping network check (curl not available)"
+    info "Skipping network check (neither fetch nor curl available)"
 fi
 
 # ---------------------------------------------------------------------------

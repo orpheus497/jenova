@@ -1,19 +1,16 @@
 #!/bin/sh
-# install-dependencies.sh: Intelligent dependency installer for Jenova
+# Script function and purpose: Install every Jenova dependency from FreeBSD
+# pkg(8). There are no tiers -- every package listed here is required to build
+# and run Jenova. Anything that cannot be installed is a failure.
 #
-# Automatically detects OS and package manager, installs required and optional
-# dependencies with graceful skipping and user notification.
+# Usage: ./scripts/install-dependencies.sh [--dry-run] [--verbose]
 #
-# Usage: ./scripts/install-dependencies.sh [--required-only] [--dry-run] [--verbose]
-#
-#   --required-only  Install only required dependencies (skip optional ones)
-#   --dry-run        Show what would be installed without actually installing
-#   --verbose        Show detailed installation progress
+#   --dry-run   Show what would be installed without installing
+#   --verbose   Show detailed pkg output
 #
 # Exit codes:
-#   0 = all dependencies installed successfully
-#   1 = critical failure (some required dependencies failed)
-#   2 = partial success (some optional dependencies failed)
+#   0 = every dependency is present
+#   1 = one or more dependencies are missing
 
 set -e
 
@@ -21,20 +18,17 @@ _REAL_SCRIPT="$(realpath "$0" 2>/dev/null || echo "$0")"
 _SCRIPT_DIR="$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)"
 JENOVA_ROOT="$(cd "$_SCRIPT_DIR/.." && pwd)"
 
-# Shared OS/hardware detection
 . "$JENOVA_ROOT/lib/detect-env.sh"
 
-REQUIRED_ONLY=0
 DRY_RUN=0
 VERBOSE=0
 
 for _arg in "$@"; do
     case "$_arg" in
-        --required-only) REQUIRED_ONLY=1 ;;
-        --dry-run)       DRY_RUN=1 ;;
-        --verbose)       VERBOSE=1 ;;
+        --dry-run) DRY_RUN=1 ;;
+        --verbose) VERBOSE=1 ;;
         -h|--help)
-            sed -n '2,20p' "$0"
+            sed -n '2,14p' "$0"
             exit 0
             ;;
         *)
@@ -44,7 +38,6 @@ for _arg in "$@"; do
     esac
 done
 
-# Colours
 if [ -t 1 ]; then
     _G=$(printf '\033[38;2;118;148;106m')
     _Y=$(printf '\033[38;2;192;163;110m')
@@ -57,443 +50,148 @@ else
 fi
 
 ok()   { printf "${_G}✓${_N}  %s\n" "$1"; }
-warn() { printf "${_Y}⚠${_N}  %s\n" "$1"; }
 fail() { printf "${_R}✗${_N}  %s\n" "$1"; }
 info() { printf "${_B}ℹ${_N}  %s\n" "$1"; }
 
 echo ""
 printf "${_P}╔══════════════════════════════════════════════════════╗${_N}\n"
-printf "${_P}║  Jenova — Dependency Installation                    ║${_N}\n"
+printf "${_P}║  Jenova — Dependencies                               ║${_N}\n"
 printf "${_P}╚══════════════════════════════════════════════════════╝${_N}\n"
 echo ""
 
-# Detect package manager
-info "Detected OS: $JENOVA_OS ($JENOVA_DISTRO)"
-info "Package manager: $JENOVA_PKG_MGR"
+info "FreeBSD ${JENOVA_OS_RELEASE} (${JENOVA_ARCH})"
 
-if [ "$JENOVA_PKG_MGR" = "none" ]; then
-    fail "No supported package manager detected"
+if [ "$JENOVA_PKG_MGR" != "pkg" ]; then
+    fail "pkg(8) not found"
     echo ""
-    echo "This could mean:"
-    echo "  • You're running in a container/sandboxed environment (Flatpak, Docker, etc.)"
-    echo "  • Your Linux distribution is not supported"
-    echo "  • Package manager is not installed"
-    echo ""
-    echo "Please install dependencies manually. See docs/installation/dependencies.md"
-    echo "Required: git, cmake, luajit, gettext, vulkan-loader, spirv-headers, lua54, curl"
-    echo "Optional: glslc, dialog, clangd, stylua, node"
+    echo "Bootstrap it with:  /usr/sbin/pkg bootstrap"
     exit 1
 fi
 
-# Package mapping for different managers
-# Format: binary_name:package_name
-get_packages_for_manager() {
-    case "$1" in
-        pkg)
-            # FreeBSD
-            cat << 'EOF'
-sqlite3:sqlite3
+# Every dependency, in probe:package form. There is no optional tier.
+#
+# make(1), cc(1), realpath(1), fetch(1), sysctl(8), swapinfo(8), pciconf(8),
+# nvmecontrol(8), zpool(8), ifconfig(8), route(8), mdmfs(8), nc(1) and stat(1)
+# are in the FreeBSD base system and are deliberately absent -- they are never
+# packages. In particular Jenova builds with the base make(1); GNU make is not a
+# dependency.
+#
+# cmake is listed because external/llama.cpp uses it as its build system. That
+# is upstream's choice, not Jenova's -- nothing in this repository is built with
+# cmake directly.
+# pkgconf MUST be first: the probes for lua54, gtk3, appindicator and ncurses
+# call pkg-config, so on a bare system every one of them would misreport until
+# it is installed.
+DEPS=$(cat <<'EOF'
+pkg-config:pkgconf
 git:git
 cmake:cmake
+sqlite3:sqlite3
 luajit:luajit-openresty
-gettext:gettext-tools
-spirv-headers:spirv-headers
-vulkan:vulkan-loader
 lua54:lua54
-curl:curl
-realpath:coreutils
-gmake:gmake
+gettext:gettext-tools
+vulkan:vulkan-loader
 glslc:shaderc
+spirv-headers:spirv-headers
+gtk3:gtk3
+appindicator:libappindicator
+ncurses:ncurses
+node:node
+npm:npm
+curl:curl
+xdg-open:xdg-utils
 clangd:llvm
 stylua:stylua
-node:node
-npm:npm
-pkg-config:pkgconf
-gtk3:gtk3
-appindicator:libappindicator
-ncurses:ncurses
 EOF
-            ;;
-        pacman)
-            # Arch Linux
-            cat << 'EOF'
-sqlite3:sqlite
-git:git
-cmake:cmake
-luajit:luajit
-gettext:gettext
-spirv-headers:spirv-headers
-vulkan:vulkan-icd-loader
-lua54:lua54
-curl:curl
-make:make
-realpath:coreutils
-glslc:glslc
-clang:clang
-stylua:stylua
-nodejs:nodejs
-npm:npm
-pkg-config:pkgconf
-gtk3:gtk3
-appindicator:libappindicator-gtk3
-ncurses:ncurses
-EOF
-            ;;
-        apt)
-            # Debian/Ubuntu
-            _apt_appindicator="libappindicator3-dev"
-            # Debian 12 (Bookworm) and newer use Ayatana
-            if [ "$JENOVA_DISTRO" = "debian" ] && [ "${JENOVA_DISTRO_VERSION:-0}" -ge 12 ] 2>/dev/null; then
-                _apt_appindicator="libayatana-appindicator3-dev"
-            fi
+)
 
-            cat << EOF
-sqlite3:sqlite3
-git:git
-cmake:cmake
-luajit:luajit
-luajit-dev:libluajit-5.1-dev
-gettext:gettext
-spirv-headers:spirv-headers
-vulkan:libvulkan-dev
-liblua5.4-dev:liblua5.4-dev
-libcurl4-openssl-dev:libcurl4-openssl-dev
-make:make
-realpath:coreutils
-glslc:google-shaderc
-clangd:clangd
-cargo:cargo
-nodejs:nodejs
-npm:npm
-pkg-config:pkg-config
-gtk3:libgtk-3-dev
-appindicator:$_apt_appindicator
-ncurses:libncurses-dev
-EOF
+# Function purpose: Decide whether a dependency is satisfied. Several entries are
+# libraries with no command of their own, so they are probed through pkg-config
+# or a known header path rather than command -v.
+is_installed() {
+    case "$1" in
+        gtk3)
+            pkg-config --exists gtk+-3.0 2>/dev/null
             ;;
-        dnf)
-            # Fedora/RHEL
-            cat << 'EOF'
-sqlite3:sqlite
-git:git
-cmake:cmake
-luajit:luajit
-luajit-devel:luajit-devel
-gettext:gettext
-spirv-headers:spirv-headers-devel
-vulkan:vulkan-loader
-lua-devel:lua-devel
-libcurl-devel:libcurl-devel
-make:make
-realpath:coreutils
-glslc:glslc
-clang-tools-extra:clang-tools-extra
-cargo:cargo
-nodejs:nodejs
-npm:npm
-pkg-config:pkgconf-pkg-config
-gtk3:gtk3-devel
-appindicator:libappindicator-gtk3-devel
-ncurses:ncurses-devel
-EOF
+        appindicator)
+            # FreeBSD ships both libappindicator and the ayatana fork;
+            # jenova-ui builds against whichever is present.
+            pkg-config --exists appindicator3-0.1 2>/dev/null ||
+            pkg-config --exists ayatana-appindicator3-0.1 2>/dev/null
             ;;
-        brew)
-            # macOS Homebrew
-            cat << 'EOF'
-sqlite3:sqlite
-git:git
-cmake:cmake
-luajit:luajit
-gettext:gettext
-spirv-headers:spirv-headers
-vulkan:molten-vk
-lua@5.4:lua@5.4
-curl:curl
-make:make
-realpath:coreutils
-shaderc:shaderc
-llvm:llvm
-stylua:stylua
-node:node
-npm:node
-pkg-config:pkg-config
-gtk3:gtk+3
-appindicator:libappindicator
-EOF
+        ncurses)
+            pkg-config --exists ncurses 2>/dev/null
             ;;
-        zypper)
-            # openSUSE zypper
-            cat << 'EOF'
-sqlite3:sqlite3
-git:git
-cmake:cmake
-luajit:luajit
-gettext:gettext
-spirv-headers:spirv-headers
-vulkan:libvulkan1
-lua54-devel:lua54-devel
-libcurl-devel:libcurl-devel
-make:make
-realpath:coreutils
-glslc:glslc
-clang:clang-tools
-cargo:cargo
-nodejs:nodejs
-npm:npm
-pkg-config:pkg-config
-gtk3:gtk3-devel
-appindicator:libappindicator-gtk3-devel
-EOF
+        lua54)
+            pkg-config --exists lua-5.4 2>/dev/null
             ;;
-        xbps)
-            # Void Linux xbps
-            cat << 'EOF'
-sqlite3:sqlite
-git:git
-cmake:cmake
-luajit:luajit
-gettext:gettext
-spirv-headers:SPIRV-Headers
-vulkan:vulkan-loader
-lua54-devel:lua54-devel
-curl-devel:curl-devel
-make:make
-realpath:coreutils
-glslc:glslc
-clang:clang
-cargo:cargo
-nodejs:nodejs
-npm:npm
-pkg-config:pkg-config
-gtk3:gtk+3-devel
-appindicator:libappindicator-devel
-EOF
+        spirv-headers)
+            [ -f /usr/local/include/spirv/unified1/spirv.h ]
+            ;;
+        vulkan)
+            # Probe the filesystem, not $JENOVA_VULKAN_OK — that was computed
+            # once when detect-env.sh was sourced and would still read 0 on the
+            # re-check immediately after vulkan-loader is installed.
+            [ -f /usr/local/lib/libvulkan.so ] ||
+            [ -f /usr/local/lib/libvulkan.so.1 ] ||
+            ldconfig -r 2>/dev/null | grep -q libvulkan
+            ;;
+        clangd)
+            # The llvm port installs versioned binaries (clangd19, ...), so an
+            # unversioned `command -v clangd` fails even on a good install.
+            # Ask pkg whether the package itself is present.
+            pkg info -e llvm 2>/dev/null
             ;;
         *)
-            echo ""
+            command -v "$1" >/dev/null 2>&1
             ;;
     esac
 }
 
-# Check if a binary is already installed
-is_installed() {
-    if [ "$1" = "gtk3" ]; then
-        command -v pkg-config >/dev/null 2>&1 && pkg-config --exists gtk+-3.0 >/dev/null 2>&1
-        return $?
-    elif [ "$1" = "appindicator" ]; then
-        command -v pkg-config >/dev/null 2>&1 && pkg-config --exists appindicator3-0.1 >/dev/null 2>&1
-        return $?
-    elif [ "$1" = "ncurses" ]; then
-        command -v pkg-config >/dev/null 2>&1 && pkg-config --exists ncurses >/dev/null 2>&1
-        return $?
-    elif [ "$1" = "luajit-dev" ] || [ "$1" = "luajit-devel" ]; then
-        command -v pkg-config >/dev/null 2>&1 && pkg-config --exists luajit >/dev/null 2>&1
-        return $?
-    elif [ "$1" = "spirv-headers" ]; then
-        [ -f "/usr/include/spirv/unified1/spirv.h" ] || [ -f "/usr/local/include/spirv/unified1/spirv.h" ]
-        return $?
-    elif [ "$1" = "vulkan" ]; then
-        [ "${JENOVA_VULKAN_OK:-0}" = "1" ]
-        return $?
-    fi
-    command -v "$1" >/dev/null 2>&1
-}
-
-# Install a package using the detected package manager
 install_package() {
-    _ip_pkg="$1"
-    _ip_mgr="$JENOVA_PKG_MGR"
-
     if [ "$DRY_RUN" = "1" ]; then
-        echo "Would install: $_ip_pkg (via $_ip_mgr)"
+        echo "    would install: $1"
         return 0
     fi
-
-    case "$_ip_mgr" in
-        pkg)
-            if [ "$VERBOSE" = "1" ]; then
-                sudo pkg install -y "$_ip_pkg"
-            else
-                sudo pkg install -y "$_ip_pkg" >/dev/null 2>&1
-            fi
-            ;;
-        pacman)
-            _ip_pacman="sudo pacman"
-            if command -v yay >/dev/null 2>&1; then
-                _ip_pacman="yay"
-            fi
-            if [ "$VERBOSE" = "1" ]; then
-                $_ip_pacman -S --noconfirm "$_ip_pkg"
-            else
-                $_ip_pacman -S --noconfirm "$_ip_pkg" >/dev/null 2>&1
-            fi
-            ;;
-        apt)
-            if [ "$VERBOSE" = "1" ]; then
-                sudo apt-get install -y "$_ip_pkg"
-            else
-                sudo apt-get install -y "$_ip_pkg" >/dev/null 2>&1
-            fi
-            ;;
-        dnf)
-            if [ "$VERBOSE" = "1" ]; then
-                sudo dnf install -y "$_ip_pkg"
-            else
-                sudo dnf install -y "$_ip_pkg" >/dev/null 2>&1
-            fi
-            ;;
-        zypper)
-            if [ "$VERBOSE" = "1" ]; then
-                sudo zypper install -y "$_ip_pkg"
-            else
-                sudo zypper install -y "$_ip_pkg" >/dev/null 2>&1
-            fi
-            ;;
-        xbps)
-            if [ "$VERBOSE" = "1" ]; then
-                sudo xbps-install -y "$_ip_pkg"
-            else
-                sudo xbps-install -y "$_ip_pkg" >/dev/null 2>&1
-            fi
-            ;;
-        brew)
-            if [ "$VERBOSE" = "1" ]; then
-                brew install "$_ip_pkg"
-            else
-                brew install "$_ip_pkg" >/dev/null 2>&1
-            fi
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-}
-
-# Handle special cases (like cargo installs)
-install_special() {
-    _is_bin="$1"
-    _is_pkg="$2"
-
-    case "$_is_bin" in
-        stylua)
-            if [ "$JENOVA_PKG_MGR" = "apt" ] || [ "$JENOVA_PKG_MGR" = "dnf" ]; then
-                if [ "$DRY_RUN" = "1" ]; then
-                    echo "Would install: $_is_bin (via cargo install $_is_pkg)"
-                    return 0
-                fi
-                if command -v cargo >/dev/null 2>&1; then
-                    if [ "$VERBOSE" = "1" ]; then
-                        cargo install "$_is_pkg"
-                    else
-                        cargo install "$_is_pkg" >/dev/null 2>&1
-                    fi
-                else
-                    return 1
-                fi
-            fi
-            ;;
-    esac
-}
-
-# Main installation logic
-PACKAGES="$(get_packages_for_manager "$JENOVA_PKG_MGR")"
-
-if [ -z "$PACKAGES" ]; then
-    fail "No package mapping available for $JENOVA_PKG_MGR"
-    exit 1
-fi
-
-# Required dependencies
-REQUIRED_DEPS="git cmake sqlite3 luajit gettext vulkan lua54 curl realpath pkg-config gtk3 appindicator ncurses"
-OPTIONAL_DEPS="gmake glslc clangd stylua node spirv-headers luajit-dev luajit-devel"
-
-if [ "$REQUIRED_ONLY" = "1" ]; then
-    info "Installing required dependencies only..."
-    DEPS_TO_CHECK="$REQUIRED_DEPS"
-else
-    info "Installing required and optional dependencies..."
-    DEPS_TO_CHECK="$REQUIRED_DEPS $OPTIONAL_DEPS"
-fi
-
-FAILED_REQUIRED=0
-FAILED_OPTIONAL=0
-
-# Run package index update once before the install loop (apt-only)
-if [ "$JENOVA_PKG_MGR" = "apt" ] && [ "$DRY_RUN" != "1" ]; then
-    info "Updating package index..."
     if [ "$VERBOSE" = "1" ]; then
-        sudo apt-get update
+        sudo pkg install -y "$1"
     else
-        sudo apt-get update >/dev/null 2>&1
+        sudo pkg install -y "$1" >/dev/null 2>&1
     fi
-fi
+}
 
-while IFS=: read -r binary pkg; do
-    # Skip empty lines or comments
-    [ -z "$binary" ] || [ "${binary#\#}" != "$binary" ] && continue
+_MISSING_FILE="${TMPDIR:-/tmp}/.jenova-deps-missing.$$"
+rm -f "$_MISSING_FILE"
 
-    # Skip if not in our list to check
-    case " $DEPS_TO_CHECK " in
-        *" $binary "*) ;;
-        *) continue ;;
-    esac
+echo "$DEPS" | while IFS=: read -r probe pkgname; do
+    [ -n "$probe" ] || continue
 
-    if is_installed "$binary"; then
-        ok "$binary already installed"
+    if is_installed "$probe"; then
+        ok "$probe"
         continue
     fi
 
-    # Check if it's required
-    case " $REQUIRED_DEPS " in
-        *" $binary "*)
-            is_required=1
-            ;;
-        *)
-            is_required=0
-            ;;
-    esac
-
-    info "Installing $binary ($pkg)..."
-
-    if install_package "$pkg"; then
-        ok "$binary installed successfully"
-    elif install_special "$binary" "$pkg"; then
-        ok "$binary installed successfully (via special method)"
+    info "installing $pkgname"
+    if install_package "$pkgname" && { [ "$DRY_RUN" = "1" ] || is_installed "$probe"; }; then
+        ok "$probe"
     else
-        if [ "$is_required" = "1" ]; then
-            fail "Failed to install required dependency: $binary"
-            FAILED_REQUIRED=$((FAILED_REQUIRED + 1))
-        else
-            warn "Failed to install optional dependency: $binary (skipping)"
-            FAILED_OPTIONAL=$((FAILED_OPTIONAL + 1))
-        fi
+        fail "$probe — pkg install $pkgname failed"
+        echo "$pkgname" >> "$_MISSING_FILE"
     fi
-done <<EOF
-$PACKAGES
-EOF
+done
 
-# ---------------------------------------------------------------------------
-# FreeBSD-specific "First Class citizen" workarounds
-# ---------------------------------------------------------------------------
-if [ "$JENOVA_OS" = "freebsd" ]; then
-    # We now bundle spirv-headers in external/spirv-headers and include them
-    # during the build process, so no system-wide symlink workaround is needed.
-    :
-fi
-
+# The loop above runs in a subshell, so failures are recorded in a scratch file
+# and tallied once the pipeline has finished.
 echo ""
-if [ "$FAILED_REQUIRED" = "0" ]; then
-    ok "All required dependencies installed"
-    if [ "$FAILED_OPTIONAL" = "0" ]; then
-        ok "All optional dependencies installed"
-        exit 0
-    else
-        warn "$FAILED_OPTIONAL optional dependencies failed (but installation can proceed)"
-        exit 2
-    fi
-else
-    fail "$FAILED_REQUIRED required dependencies failed"
+if [ -f "$_MISSING_FILE" ]; then
+    _COUNT=$(wc -l < "$_MISSING_FILE" | tr -d ' ')
+    fail "$_COUNT dependencies could not be installed:"
+    sed 's/^/    /' "$_MISSING_FILE"
+    rm -f "$_MISSING_FILE"
     echo ""
-    echo "Please install missing dependencies manually. See docs/installation/dependencies.md"
+    echo "Install them manually, then re-run. See docs/install.md"
     exit 1
 fi
+
+ok "All dependencies present"
+exit 0

@@ -1,4 +1,7 @@
-#define _GNU_SOURCE
+#if !defined(__FreeBSD__)
+#error "Jenova targets FreeBSD only. jenova-ui uses FreeBSD interfaces (sysctl KERN_PROC_PATHNAME) and has no fallback."
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,19 +13,16 @@
 #include <libgen.h>
 #include <ncurses.h>
 #include <sys/types.h>
-
-/* FreeBSD: sysctl for executable path */
-#if defined(__FreeBSD__)
 #include <sys/sysctl.h>
-#endif
-
-/* macOS: _NSGetExecutablePath */
-#if defined(__APPLE__)
-#include <mach-o/dyld.h>
-#endif
 
 #include <gtk/gtk.h>
+
+/* Header path follows whichever indicator library the Makefile found. */
+#if defined(JENOVA_AYATANA_APPINDICATOR)
+#include <libayatana-appindicator/app-indicator.h>
+#else
 #include <libappindicator/app-indicator.h>
+#endif
 
 #include <lua.h>
 #include <lualib.h>
@@ -40,12 +40,9 @@ static void rebuild_tray_menu(void);
 /* ---------------------------------------------------------------------------
  * get_jenova_root: Resolve the project root from the binary's location.
  *
- * Strategy: find the directory containing the running executable, go up one
- * level (bin/ -> root).  The executable lookup is OS-specific:
- *   FreeBSD  — sysctl KERN_PROC_PATHNAME
- *   Linux    — readlink /proc/self/exe
- *   macOS    — _NSGetExecutablePath
- * Falls back to "." if all methods fail.
+ * Strategy: find the directory containing the running executable via
+ * sysctl KERN_PROC_PATHNAME, then go up one level (bin/ -> root).
+ * Falls back to "." if the lookup fails.
  * --------------------------------------------------------------------------- */
 char *get_jenova_root(void) {
     if (jenova_root[0] != '\0') return jenova_root;
@@ -53,25 +50,11 @@ char *get_jenova_root(void) {
     char exe_path[PATH_MAX];
     int found = 0;
 
-#if defined(__FreeBSD__)
     int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1 };
     size_t len = sizeof(exe_path);
     if (sysctl(mib, 4, exe_path, &len, NULL, 0) == 0) {
         found = 1;
     }
-#elif defined(__APPLE__)
-    uint32_t bufsize = sizeof(exe_path);
-    if (_NSGetExecutablePath(exe_path, &bufsize) == 0) {
-        found = 1;
-    }
-#else
-    /* Linux */
-    ssize_t count = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
-    if (count != -1) {
-        exe_path[count] = '\0';
-        found = 1;
-    }
-#endif
 
     if (found) {
         /* dirname may modify its argument — work on a copy */

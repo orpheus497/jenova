@@ -7,7 +7,7 @@ Jenova is a local Human Cognition Enhancement system designed for consumer lapto
 - **Human-first** — Jenova amplifies the user's own thinking, creativity, and judgment. It does not replace the user's reasoning or do the creative work on their behalf. The goal is to help the user become better at whatever they are trying to do.
 - **Local-first** — no cloud dependencies; all inference, retrieval, and context processing happen on your machine.
 - **Hardware-aware** — the install path detects your GPU(s), CPU, and RAM and deploys a matching `jenova.conf` overlay from `hardware-profiles/`. Model size selection (3B–4B vs 7B–9B) is driven by this detection.
-- **Platform support** — first-class support for FreeBSD (ZFS, Vulkan, swap-backed model storage), Linux, and macOS (experimental).
+- **FreeBSD-native** — the only supported platform. ZFS, Vulkan, `mdmfs` swap-backed model storage, and `sysctl`-based hardware detection. The source contains no other platform.
 
 ## Component Breakdown
 
@@ -20,6 +20,18 @@ The **Jenova Cognitive Architecture** is structured around several interconnecte
 | **Server and OpenAI API** | Exposes an OpenAI-compatible API (`lib/proxy.lua`) allowing external integrations such as the Leo browser or other API-driven tools. | LuaJIT / C++ |
 | **Remote Connections** | Architecture natively supports LAN bindings, enabling browser-based workspace access from mobile devices or secondary PCs. | POSIX sh / Networking |
 | **Local Inference** | GGUF model execution (llama.cpp) handling chat, RAG embeddings, and speculative decoding. | C++ |
+
+## Ports — one front door
+
+**`:8080` is the port.** `:8081` and `:8082` are internal backends, reached only by the proxy,
+and they bind loopback unconditionally — including under `--lan`. No client, browser or LAN
+peer addresses them directly, and the firewall should never expose them.
+
+| Port | Reached by | How |
+|---|---|---|
+| **8080** | clients, WebUI, LAN | the proxy's own listener (`lib/proxy.lua:53-54,1523`) |
+| 8081 | the proxy only | forwarded, with the Host header rewritten (`lib/proxy.lua:1204,1428`) |
+| 8082 | the proxy only | an **in-process** call — `lib/embed.lua` is loaded inside the proxy and posts to `127.0.0.1:8082` itself (`lib/embed.lua:26,107`). Embeddings never traverse the proxy's HTTP surface. |
 
 ## System Flow
 

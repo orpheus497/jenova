@@ -1,6 +1,6 @@
 # Proxy regression checks
 
-Reproduces and guards the defects in `docs/architecture/concurrency-analysis.md`.
+Reproduces and guards the defects in `.devdocs/CONCURRENCY_ANALYSIS.md`.
 No GPU, model, or llama.cpp build required. Needs `luajit`, `python3`, `libsqlite3`, `curl`.
 
 ```sh

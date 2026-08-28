@@ -1,35 +1,53 @@
 # Jenova Cognitive Architecture — Unified Build System
 #
-# Three components make up Jenova as a single terminal IDE:
-#   1. external/llama.cpp        — Vulkan-accelerated inference backend
-#   2. jca_web                   — Web-based UI
+# FreeBSD only. Builds with the base system make(1). GNU make is not used and is
+# not a dependency.
+#
+# This Makefile is the single entry point. Every build target depends on `deps`,
+# so dependencies are always installed before anything is built.
 #
 # Common usage:
-#   make            # Build everything (external/llama.cpp + web)
-#   make llama      # Build only external/llama.cpp
-#   make web        # Build only the Web UI
-#   make install    # Run scripts/install.sh (system-aware deploy)
-#   make clean      # Remove build artifacts from both components
+#   make            # Install dependencies, then build everything
+#   make deps       # Install dependencies only
+#   make llama      # Build external/llama.cpp
+#   make jenova-ui  # Build the desktop manager
+#   make web        # Build the Web UI
+#   make install    # Build everything and deploy to $JCA_HOME
+#   make verify     # Verify a deployed installation
+#   make clean      # Remove build artifacts
 
-.PHONY: all llama web jenova-ui install preflight verify clean help clean-root
+.PHONY: all deps llama web jenova-ui install verify clean clean-root help
 
-all: preflight llama jenova-ui web
+# The build is serial by design: `deps` must complete before any other target
+# runs, or a rule can invoke a tool that is not installed yet. Declaring that
+# here is safer than giving every target a `deps` prerequisite — doing so on
+# the file target jca_web/node_modules would make it depend on a .PHONY target,
+# which is never up to date, forcing `npm install` on every single build.
+.NOTPARALLEL:
+
+all: deps llama jenova-ui web
 	@echo ""
-	@echo "✅ Jenova build complete (external/llama.cpp + jenova-ui + web)"
-	@echo "   Run 'make install' (or scripts/install.sh) to deploy."
+	@echo "✅ Jenova build complete (llama.cpp + jenova-ui + web)"
+	@echo "   Run 'make install' to deploy."
 
-llama:
-	@echo "🔨 Building external/llama.cpp (auto)..."
-	@./bin/build-llama-jenova
+# Install every dependency. Idempotent — packages already present are skipped,
+# so this is a fast no-op on a configured machine. There is no optional tier:
+# if a dependency cannot be installed, the build stops here.
+deps:
+	@./scripts/install-dependencies.sh
 
+llama: deps
+	@echo "🔨 Building external/llama.cpp..."
+	@./scripts/build-llama.sh
 
-
+# Prerequisite is package.json alone, so npm install re-runs only when the
+# manifest changes. .NOTPARALLEL above guarantees deps has already run.
 jca_web/node_modules: jca_web/package.json
 	@echo "📦 Installing JCA Web UI dependencies..."
 	@cd jca_web && npm install
 	@touch jca_web/node_modules
 
-web: jca_web/node_modules
+web: deps jca_web/node_modules
 	@echo "🔨 Building JCA Web UI..."
 	@if [ ! -d jca_web ]; then \
 		echo "ERROR: jca_web/ source tree missing." >&2; exit 1; \
@@ -37,18 +55,18 @@ web: jca_web/node_modules
 	@cd jca_web && npm run build
 	@echo "   Web UI built: public/"
 
-jenova-ui:
+jenova-ui: deps
 	@echo "🔨 Building jenova-ui..."
 	@$(MAKE) -C jenova-ui
 	@mkdir -p bin || exit 1
 	@cp jenova-ui/jenova-ui bin/jenova-ui || exit 1
 	@echo "   jenova-ui built: bin/jenova-ui"
 
-install: preflight llama jenova-ui web
+install: all
 	@./scripts/install.sh
 
-install-jenova:
-	@./install-jenova.sh
+verify:
+	@./scripts/verify-install.sh --full
 
 clean:
 	@echo "🧹 Cleaning build artifacts..."
@@ -64,26 +82,20 @@ clean-root:
 	@rm -rf autom4te.cache po/*.gmo nls/*.cat
 	@echo "   Root directory cleaned."
 
-preflight:
-	@./scripts/preflight-check.sh
-
-verify:
-	@./scripts/verify-install.sh --full
-
 help:
-	@echo "Jenova Cognitive Architecture — build targets"
+	@echo "Jenova Cognitive Architecture — build targets (FreeBSD, make)"
 	@echo ""
-	@echo "  Build targets:"
-	@echo "    make                Build external/llama.cpp + web"
-	@echo "    make llama          Build external/llama.cpp (auto)"
-	@echo "    make web            Build only the Web UI"
+	@echo "  Build:"
+	@echo "    make               Install dependencies, then build everything"
+	@echo "    make deps          Install all dependencies (no optional tier)"
+	@echo "    make llama         Build external/llama.cpp"
+	@echo "    make jenova-ui     Build the desktop manager"
+	@echo "    make web           Build the Web UI"
 	@echo ""
-	@echo "  Installation & verification:"
-	@echo "    make preflight      Check dependencies before building"
-	@echo "    make install        Run scripts/install.sh (deploy to system)"
-	@echo "    make install-jenova Run streamlined installation for all platforms"
-	@echo "    make verify         Verify installation succeeded"
+	@echo "  Deploy:"
+	@echo "    make install       Build everything and deploy to \$$JCA_HOME"
+	@echo "    make verify        Verify a deployed installation"
 	@echo ""
 	@echo "  Cleanup:"
-	@echo "    make clean          Remove build artifacts"
-	@echo "    make clean-root     Remove root directory artifacts"
+	@echo "    make clean         Remove build artifacts"
+	@echo "    make clean-root    Remove root directory artifacts"

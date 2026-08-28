@@ -242,13 +242,18 @@ it is documented to be.
 
 ### WP-8 — Give the proxy an upstream routing table
 
-Replace the scalar `LLAMA_PORT` (`lib/proxy.lua:56`, used at `:1414`) with a route map:
-`/v1/chat/completions`, `/infill`, `/props`, `/v1/models` → :8081; `/v1/embeddings`,
-`/embedding` → :8082. Then bind :8081 and :8082 to loopback **unconditionally**, including
-under `--lan`, and remove them from the firewall instructions at `scripts/install.sh:562`.
+**Binding half: DONE** in the FreeBSD-only migration. `bin/jenova-ca` now launches both backends
+with `--host "$BACKEND_BIND_HOST"` (always `127.0.0.1`), so :8081 and :8082 bind loopback
+unconditionally including under `--lan`, and the firewall instructions at
+`scripts/install.sh` name only :8080.
 
-This is what makes :8080 an actual front door, and it is the precondition for adding
-authentication in one place rather than three.
+**Routing half: not needed.** This work package assumed `/v1/embeddings` had to be routed to
+:8082. It does not — `lib/embed.lua` is `require`d *inside* the proxy (`lib/proxy.lua:15,63-72`)
+and posts to `127.0.0.1:8082` itself (`lib/embed.lua:26,107`). Embeddings never traverse the
+proxy's HTTP surface, so the scalar `LLAMA_PORT` is sufficient for the single upstream that does.
+
+:8080 is now an actual front door, which remains the precondition for adding authentication in
+one place rather than three.
 
 ### WP-9 — Make the proxy a supervised service
 
@@ -294,11 +299,12 @@ declared, iterated, and never populated), or remove the path and stop launching 
 
 ### WP-13 — Configuration and small breakages
 
-- **Hardware-profile variable drift.** `Linux/CPU/generic`, `macOS/CPU/generic` and
-  `macOS/Metal/generic` set `JENOVA_CTX_SIZE` / `JENOVA_NUM_SLOTS` / `JENOVA_THREADS`, while
-  `jenova-ca` reads `CTX_SIZE` / `NUM_SLOTS` / `THREADS`. `detect-hardware.sh:345` copies the
-  profile over `etc/jenova.conf`, so on those three platforms llama-server launches with
-  `-c "" -np "" -t ""`. Add fallbacks in `jenova-ca` so the naming can't silently drift again.
+- ~~**Hardware-profile variable drift.**~~ **DONE** in the FreeBSD-only migration. The two
+  macOS profiles were deleted; `Linux/CPU/generic` was relocated to `CPU/generic` with its
+  `JENOVA_CTX_SIZE` / `JENOVA_NUM_SLOTS` / `JENOVA_THREADS` corrected to the `CTX_SIZE` /
+  `NUM_SLOTS` / `THREADS` names `jenova-ca` actually reads. All six surviving profiles were
+  verified to set the correct names. Adding fallbacks in `jenova-ca` is still worth doing so the
+  naming cannot silently drift again.
 - **`NUM_SLOTS` 1 → 2–4**, but only *after* Phase 1 and only with `CTX_SIZE` raised
   proportionally — llama.cpp splits context per slot (`n_ctx_slot = n_ctx / n_parallel`), so
   `-np 2 -c 8192` halves per-conversation context.
@@ -321,7 +327,20 @@ and should be corrected or removed, since they actively hid these defects:
 | "All accepted sockets are marked `FD_CLOEXEC`" | no-op, and never called on them (WP-1) |
 | "Consumers [of :8082]: the proxy's RAG pipeline" | never issues a request (WP-12) |
 
-### WP-15 — Revisit Lua vs Nim, with real numbers
+### WP-15 — ~~Revisit Lua vs Nim~~ — **DECIDED: Nim**
+
+> The USER has decided this. The long-term target is a Nim-native backend and desktop app
+> replacing `proxy.lua`, `db.lua`, `search.lua`, `embed.lua`, the shell orchestrators and the
+> GTK3 tray — `asyncdispatch` over kqueue, isolated thread pools for inference / network /
+> workers, direct `libllama` linkage, ports unified behind one router. The design is
+> `jenova_refactor_analysis.md` on the `develop/nim` branch.
+>
+> The recommendation below (a C shim as a middle path) is therefore moot. **The diagnosis is
+> not:** the FreeBSD-only migration acted on it directly by deleting the Linux arm of
+> `lib/ffi_defs.lua`, halving the hand-maintained kernel-ABI surface — including a `struct
+> addrinfo` whose field order differed between the two arms.
+>
+> The original analysis is retained below for the reasoning.
 
 Only meaningful after Phase 2. The honest framing:
 

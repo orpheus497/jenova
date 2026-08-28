@@ -19,11 +19,21 @@ set -e
 
 _REAL_SCRIPT="$(realpath "$0" 2>/dev/null || echo "$0")"
 _SCRIPT_DIR="$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)"
-JENOVA_ROOT="$(cd "$_SCRIPT_DIR/.." && pwd)"
-JENOVA_DIR="${JENOVA_STATE:-$JENOVA_ROOT/.jenova}"
-LOG_DIR="$JCA_HOME/var/log"
-CACHE_DIR="$JCA_HOME/var/cache"
-PID_FILE="$JENOVA_DIR/jenova-ca.pid"
+JENOVA_ROOT="$(cd "$_SCRIPT_DIR/.." && pwd)"; export JENOVA_ROOT
+
+# Action purpose: lib/jenova-conf.sh is the single owner of JCA_HOME, JENOVA_STATE,
+# LOG_DIR, CACHE_DIR and PID_FILE. Deriving them here instead left JCA_HOME unset,
+# resolving LOG_DIR/CACHE_DIR to /var/log and /var/cache — and --cache runs
+# rm -rf "$CACHE_DIR". Without these paths there is nothing safe to clean, so a
+# missing conf is a hard failure rather than a fallback.
+if [ -f "$JENOVA_ROOT/lib/jenova-conf.sh" ]; then
+    . "$JENOVA_ROOT/lib/jenova-conf.sh"
+else
+    echo "Error: cannot find lib/jenova-conf.sh in $JENOVA_ROOT" >&2
+    exit 1
+fi
+
+JENOVA_DIR="$JENOVA_STATE"
 
 DO_LOGS=0
 DO_CACHE=0

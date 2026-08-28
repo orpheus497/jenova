@@ -5,56 +5,18 @@
 local ffi = require("ffi")
 local jit = require("jit")
 
-local is_linux = jit.os == "Linux"
+-- Action purpose: Jenova is FreeBSD-only. Every struct layout and kernel
+-- constant below is taken from FreeBSD headers, and several are silently
+-- wrong elsewhere -- struct addrinfo orders ai_canonname before ai_addr where
+-- Linux reverses them, and sa_family_t is one byte here and two there. Loading
+-- on another kernel would not fail; it would corrupt. Refuse instead.
+if jit.os ~= "BSD" then
+  error("Jenova requires FreeBSD. LuaJIT reports jit.os = '" .. tostring(jit.os)
+        .. "'; the FFI definitions in lib/ffi_defs.lua are FreeBSD-specific "
+        .. "and are not safe to use on this kernel.", 0)
+end
 
-local socket_struct_defs
-if is_linux then
-  socket_struct_defs = [[
-  typedef unsigned int socklen_t;
-  typedef unsigned short sa_family_t;
-  typedef unsigned short in_port_t;
-
-  struct in_addr {
-    uint32_t s_addr;
-  };
-
-  struct sockaddr_in {
-    sa_family_t sin_family;
-    in_port_t sin_port;
-    struct in_addr sin_addr;
-    unsigned char sin_zero[8];
-  };
-
-  struct in6_addr {
-    unsigned char s6_addr[16];
-  };
-
-  struct sockaddr_in6 {
-    sa_family_t sin6_family;
-    in_port_t sin6_port;
-    uint32_t sin6_flowinfo;
-    struct in6_addr sin6_addr;
-    uint32_t sin6_scope_id;
-  };
-
-  struct sockaddr {
-    sa_family_t sa_family;
-    char sa_data[14];
-  };
-
-  struct addrinfo {
-    int ai_flags;
-    int ai_family;
-    int ai_socktype;
-    int ai_protocol;
-    socklen_t ai_addrlen;
-    struct sockaddr *ai_addr;
-    char *ai_canonname;
-    struct addrinfo *ai_next;
-  };
-]]
-else
-  socket_struct_defs = [[
+local socket_struct_defs = [[
   typedef unsigned int socklen_t;
   typedef uint8_t sa_family_t;
   typedef unsigned short in_port_t;
@@ -101,7 +63,6 @@ else
     struct addrinfo *ai_next;
   };
 ]]
-end
 
 ffi.cdef(socket_struct_defs .. [[
   typedef long ssize_t;
@@ -192,10 +153,8 @@ ffi.cdef(socket_struct_defs .. [[
 
 local ffi_defs = {}
 
-ffi_defs.IS_LINUX = is_linux
-
 ffi_defs.AF_INET  = 2
-ffi_defs.AF_INET6 = is_linux and 10 or 28 -- FreeBSD AF_INET6 is 28
+ffi_defs.AF_INET6 = 28
 
 ffi_defs.F_GETFL    = 3
 ffi_defs.F_SETFL    = 4
@@ -207,60 +166,33 @@ ffi_defs.O_WRONLY   = 1
 ffi_defs.O_RDWR     = 2
 ffi_defs.WNOHANG    = 1
 
--- Platform-specific socket and errno constants are hardcoded here because
--- LuaJIT FFI cannot call cpp-style '#include <errno.h>' at runtime.
--- Values are taken directly from the FreeBSD and Linux kernel headers:
---   FreeBSD: /usr/include/sys/socket.h, /usr/include/errno.h
---   Linux:   /usr/include/asm-generic/socket.h, /usr/include/asm-generic/errno-base.h
-if is_linux then
-  ffi_defs.O_NONBLOCK   = 0x0800
-  ffi_defs.FIONBIO      = 0x5421
-  ffi_defs.O_CREAT      = 0x0040
-  ffi_defs.O_APPEND     = 0x0400
-  ffi_defs.O_TRUNC      = 0x0200
-  ffi_defs.SOL_SOCKET   = 1
-  ffi_defs.SO_REUSEADDR = 2
-  ffi_defs.SO_ERROR     = 4
-  ffi_defs.SO_RCVTIMEO  = 20
-  ffi_defs.SO_SNDTIMEO  = 21
-  ffi_defs.SO_KEEPALIVE = 9
-  ffi_defs.IPPROTO_TCP  = 6
-  ffi_defs.TCP_NODELAY  = 1
-  ffi_defs.TCP_KEEPIDLE = 4   -- seconds before first keepalive probe
-  ffi_defs.TCP_KEEPINTVL = 5  -- interval between subsequent keepalive probes
-  ffi_defs.TCP_KEEPCNT = 6    -- number of unacknowledged probes before connection is dead
-  ffi_defs.EAGAIN       = 11
-  ffi_defs.EWOULDBLOCK  = 11
-  ffi_defs.EINPROGRESS  = 115
-  ffi_defs.ETIMEDOUT    = 110
-  ffi_defs.EINTR        = 4
-  ffi_defs.MSG_PEEK     = 2
-  ffi_defs.MSG_DONTWAIT = 0x40
-else
-  ffi_defs.O_NONBLOCK   = 0x0004
-  ffi_defs.FIONBIO      = 0x8004667e
-  ffi_defs.O_CREAT      = 0x0200
-  ffi_defs.O_APPEND     = 0x0008
-  ffi_defs.O_TRUNC      = 0x0400
-  ffi_defs.SOL_SOCKET   = 0xffff
-  ffi_defs.SO_REUSEADDR = 0x0004
-  ffi_defs.SO_ERROR     = 0x1007
-  ffi_defs.SO_RCVTIMEO  = 0x1006
-  ffi_defs.SO_SNDTIMEO  = 0x1005
-  ffi_defs.SO_KEEPALIVE = 0x0008
-  ffi_defs.IPPROTO_TCP  = 6
-  ffi_defs.TCP_NODELAY  = 1
-  ffi_defs.TCP_KEEPIDLE = 0x10   -- FreeBSD TCP_KEEPIDLE (seconds before first probe)
-  ffi_defs.TCP_KEEPINTVL = 0x200 -- FreeBSD TCP_KEEPINTVL (interval between probes)
-  ffi_defs.TCP_KEEPCNT = 0x400   -- FreeBSD TCP_KEEPCNT (max probes before dead)
-  ffi_defs.EAGAIN       = 35
-  ffi_defs.EWOULDBLOCK  = 35
-  ffi_defs.EINPROGRESS  = 36
-  ffi_defs.ETIMEDOUT    = 60
-  ffi_defs.EINTR        = 4
-  ffi_defs.MSG_PEEK     = 0x02
-  ffi_defs.MSG_DONTWAIT = 0x80
-end
+-- Socket and errno constants are hardcoded because LuaJIT's FFI cannot
+-- '#include <errno.h>' at runtime. Values come from the FreeBSD headers:
+--   /usr/include/sys/socket.h, /usr/include/netinet/tcp.h,
+--   /usr/include/sys/fcntl.h, /usr/include/errno.h
+ffi_defs.O_NONBLOCK   = 0x0004
+ffi_defs.FIONBIO      = 0x8004667e
+ffi_defs.O_CREAT      = 0x0200
+ffi_defs.O_APPEND     = 0x0008
+ffi_defs.O_TRUNC      = 0x0400
+ffi_defs.SOL_SOCKET   = 0xffff
+ffi_defs.SO_REUSEADDR = 0x0004
+ffi_defs.SO_ERROR     = 0x1007
+ffi_defs.SO_RCVTIMEO  = 0x1006
+ffi_defs.SO_SNDTIMEO  = 0x1005
+ffi_defs.SO_KEEPALIVE = 0x0008
+ffi_defs.IPPROTO_TCP  = 6
+ffi_defs.TCP_NODELAY  = 1
+ffi_defs.TCP_KEEPIDLE = 0x10   -- seconds before first keepalive probe
+ffi_defs.TCP_KEEPINTVL = 0x200 -- interval between subsequent probes
+ffi_defs.TCP_KEEPCNT = 0x400   -- unacknowledged probes before the connection is dead
+ffi_defs.EAGAIN       = 35
+ffi_defs.EWOULDBLOCK  = 35
+ffi_defs.EINPROGRESS  = 36
+ffi_defs.ETIMEDOUT    = 60
+ffi_defs.EINTR        = 4
+ffi_defs.MSG_PEEK     = 0x02
+ffi_defs.MSG_DONTWAIT = 0x80
 
 -- FreeBSD signal numbers
 ffi_defs.SIGINT  = 2

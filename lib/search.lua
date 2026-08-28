@@ -140,28 +140,12 @@ local function shell_quote(s)
 end
 
 -------------------------------------------------------------------------------
--- Detect stat flavor once at module load (GNU vs FreeBSD/macOS)
--- GNU stat: stat -c '%Y' (Linux)
--- BSD stat:  stat -f '%m' (FreeBSD, macOS)
+-- stat(1) format strings. FreeBSD's stat takes -f with %m for mtime and %p for
+-- the path. This used to probe for GNU stat first and fall back, which cost a
+-- fork on every module load to discover something that cannot vary here.
 -------------------------------------------------------------------------------
-local STAT_MTIME_FMT, STAT_MTIME_PATH_FMT
-do
-  local p = io.popen("stat -c '%Y' /dev/null 2>/dev/null")
-  if p then
-    local out = p:read("*l")
-    p:close()
-    if out and tonumber(out) then
-      -- GNU stat works
-      STAT_MTIME_FMT = "stat -c '%%Y' %s 2>/dev/null"
-      STAT_MTIME_PATH_FMT = "-exec stat -c '%%Y %%n' {} +"
-    end
-  end
-  if not STAT_MTIME_FMT then
-    -- Fall back to BSD stat
-    STAT_MTIME_FMT = "stat -f '%%m' %s 2>/dev/null"
-    STAT_MTIME_PATH_FMT = "-exec stat -f '%%m %%p' {} +"
-  end
-end
+local STAT_MTIME_FMT      = "stat -f '%%m' %s 2>/dev/null"
+local STAT_MTIME_PATH_FMT = "-exec stat -f '%%m %%p' {} +"
 
 -------------------------------------------------------------------------------
 -- Get file mtime
@@ -519,7 +503,7 @@ function search.index_dir(root_dir, extensions)
     ext_filter = "\\( " .. table.concat(parts, " -o ") .. " \\)"
   end
 
-  -- Use find -exec stat to get mtime and path in one go (Linux + FreeBSD)
+  -- Use find -exec stat to get mtime and path in one go
   local cmd = string.format(
     "find %s -type f %s -not -path '*/.git/*' -not -path '*/.system/*' -not -path '*/.trash/*' -not -path '*/.jenova/*' -not -path '*/.crush/*' -not -path '*/node_modules/*' -not -path '*/__pycache__/*' -not -path '*/build/*' -not -path '*/backups/*' -not -path '*/llama.cpp/*' -not -name '*.gguf' -not -name '*.bin' -not -name '*.o' -not -name '*.so' -size -100k %s 2>/dev/null | head -500",
     shell_quote(root_dir), ext_filter, STAT_MTIME_PATH_FMT

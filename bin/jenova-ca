@@ -65,7 +65,7 @@ for _dir in "$JCA_HOME" "$JENOVA_STATE" "$LOG_DIR" "$CACHE_DIR" "$_pid_dir"; do
     elif [ ! -w "$_dir" ]; then
         echo "Error: $_dir directory is not writable" >&2
         echo "" >&2
-        _OWNER=$(stat -c '%U' "$_dir" 2>/dev/null || stat -f '%Su' "$_dir" 2>/dev/null || echo "unknown")
+        _OWNER=$(stat -f '%Su' "$_dir" 2>/dev/null || echo "unknown")
         if [ "$_OWNER" = "root" ]; then
             echo "Directory is owned by root (likely from running with sudo previously)." >&2
             case "$_dir" in
@@ -203,8 +203,7 @@ _use_vulkan_fallback() {
 _vulkan_backend_available() {
     [ -f "$LLAMA_LIB_DIR/libggml-vulkan.so" ] || \
     [ -f "$LLAMA_LIB_DIR/libggml-vulkan.so.0" ] || \
-    [ -f "$LLAMA_LIB_DIR/libggml-vulkan.dylib" ] || \
-    find "$LLAMA_LIB_DIR" -maxdepth 1 \( -name 'libggml-vulkan.so.*' -o -name 'libggml-vulkan.dylib' \) -print -quit 2>/dev/null | grep -q .
+    find "$LLAMA_LIB_DIR" -maxdepth 1 -name 'libggml-vulkan.so.*' -print -quit 2>/dev/null | grep -q .
 }
 
 _set_path_args() {
@@ -236,7 +235,7 @@ _launch_llama_server_bg() {
         --spm-infill \
         --cache-prompt \
         --offline \
-        --host "$HOST" \
+        --host "$BACKEND_BIND_HOST" \
         --port "$LLAMA_PORT" \
         ${PATH_FLAG:+"$PATH_FLAG"} ${PATH_VAL:+"$PATH_VAL"} \
         $RUN_DRAFT_ARGS \
@@ -246,18 +245,22 @@ _launch_llama_server_bg() {
 
 # =====================================================================
 # _probe_health: shared health probe used by daemon startup and watchdog.
-# Tries luajit healthcheck.lua first (no curl needed), falls back to
-# curl, then plain TCP via nc.  Returns 0 on success, non-zero on failure.
-# Requires CONNECT_HOST and LLAMA_PORT to be set in the calling scope.
-# Optional first argument overrides the luajit timeout (default: 2s).
+# Returns 0 on success, non-zero on failure. Requires CONNECT_HOST and
+# LLAMA_PORT in the calling scope. Optional first argument overrides the
+# timeout (default: 2s).
+#
+# Action purpose: Probe order is bundled-first, then base system, then package.
+# healthcheck.lua ships with Jenova and needs only the LuaJIT that is already a
+# hard dependency; fetch(1) is in the FreeBSD base system; curl is an optional
+# package. The previous order tried curl first, so the probe depended on a
+# package that need not be installed.
 # =====================================================================
 _probe_health() {
     _ph_timeout="${1:-2}"
-    if command -v curl >/dev/null 2>&1; then
-        _url="http://${CONNECT_HOST}:${LLAMA_PORT}/health"
-        if echo "$CONNECT_HOST" | grep -q ":"; then _url="http://[${CONNECT_HOST}]:${LLAMA_PORT}/health"; fi
-        curl -sf -o /dev/null -m "$_ph_timeout" "$_url" 2>/dev/null
-        return $?
+
+    _url="http://${CONNECT_HOST}:${LLAMA_PORT}/health"
+    if echo "$CONNECT_HOST" | grep -q ":"; then
+        _url="http://[${CONNECT_HOST}]:${LLAMA_PORT}/health"
     fi
 
     if [ -f "$PROXY_SCRIPT" ]; then
@@ -265,17 +268,29 @@ _probe_health() {
     else
         _HC=""
     fi
-    if [ -f "$_HC" ]; then
+
+    if [ -n "$_HC" ] && [ -f "$_HC" ] && command -v luajit >/dev/null 2>&1; then
         luajit "$_HC" "$CONNECT_HOST" "$LLAMA_PORT" "$_ph_timeout" 2>/dev/null
         return $?
-    else
-        # Last resort: plain TCP probe via nc
-        if command -v nc >/dev/null 2>&1; then
-            nc -z -w "$_ph_timeout" "$CONNECT_HOST" "$LLAMA_PORT" >/dev/null 2>&1
-        else
-            return 1
-        fi
     fi
+
+    if command -v fetch >/dev/null 2>&1; then
+        fetch -T "$_ph_timeout" -qo /dev/null "$_url" 2>/dev/null
+        return $?
+    fi
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -sf -o /dev/null -m "$_ph_timeout" "$_url" 2>/dev/null
+        return $?
+    fi
+
+    # Last resort: plain TCP probe via nc(1), which is in the base system.
+    if command -v nc >/dev/null 2>&1; then
+        nc -z -w "$_ph_timeout" "$CONNECT_HOST" "$LLAMA_PORT" >/dev/null 2>&1
+        return $?
+    fi
+
+    return 1
 }
 
 validate_arg() {
@@ -550,9 +565,18 @@ fi
 # Ensure HOST has a sensible default before setting _INT_HOST
 HOST="${HOST:-127.0.0.1}"
 
-# Ensure _INT_HOST is always defined — set by etc/jenova.conf or --lan above,
-# but guard against misconfigured profiles that might omit it.
-_INT_HOST="${_INT_HOST:-$HOST}"
+# Action purpose: The Intelligence Proxy on $PORT is the only client-facing
+# listener. llama-server ($LLAMA_PORT) and the embedding server
+# ($LLAMA_EMBED_PORT) are internal backends: the proxy forwards to the former
+# and calls the latter in-process via lib/embed.lua. Nothing outside this host
+# ever addresses them, so they bind loopback unconditionally — including under
+# --lan, which would otherwise publish two unauthenticated inference endpoints
+# to the network. Only $HOST (the proxy) follows --lan.
+BACKEND_BIND_HOST="127.0.0.1"
+
+# _INT_HOST is the address the proxy uses to reach those backends; it must
+# match where they actually bind.
+_INT_HOST="$BACKEND_BIND_HOST"
 LLAMA_URL="http://${_INT_HOST}:${LLAMA_PORT}"
 LLAMA_EMBED_URL="http://${_INT_HOST}:${LLAMA_EMBED_PORT}"
 JENOVA_LLAMA_URL="$LLAMA_URL"; export JENOVA_LLAMA_URL
@@ -563,7 +587,8 @@ if [ "${JENOVA_FORCE_VULKAN:-0}" = "1" ]; then
 fi
 
 echo "Starting Jenova CA..."
-echo "  Bind:      $HOST:$PORT (llama:$LLAMA_PORT embed:$LLAMA_EMBED_PORT)"
+echo "  Bind:      $HOST:$PORT (proxy — the only client-facing port)"
+echo "             internal: llama $BACKEND_BIND_HOST:$LLAMA_PORT, embed $BACKEND_BIND_HOST:$LLAMA_EMBED_PORT"
 if [ "$HOST" = "127.0.0.1" ]; then
     echo "             Local only — use 'jenova-ca --daemon --lan' for LAN access"
 fi
@@ -600,60 +625,47 @@ if [ "$1" = "--daemon" ] || [ "$_IS_DAEMON" = "true" ]; then
     # Robust POSIX argument filtering: collect flags for jenova-ca,
     # and rebuild the positional parameters for llama-server.
 
-    # Acquire exclusive lock to prevent concurrent startup (TOCTOU guard)
-    # Use portable locking: flock on Linux/FreeBSD, or fallback to mkdir-based lock
+    # Action purpose: Serialise concurrent startup (TOCTOU guard) with an atomic
+    # mkdir. The previous code probed for flock(1) first, but flock is not in the
+    # FreeBSD base system, so that probe always failed here and this path ran
+    # anyway. mkdir(2) is atomic on every filesystem and needs no extra package.
     LOCK_FILE="${PID_FILE}.lock"
-    _LOCK_FLOCK=0
 
-    if command -v flock >/dev/null 2>&1; then
-        # flock available (Linux, FreeBSD with flock installed)
-        exec 9>"$LOCK_FILE"
-        if ! flock -n 9; then
-            echo "Another instance is starting. Exiting." >&2
-            exit 1
-        fi
-        _LOCK_FLOCK=1
-    else
-        # Open fd 9 to /dev/null so background 9>&- closures don't fail
-        exec 9>/dev/null
-        # Fallback: atomic mkdir-based locking (portable but requires cleanup)
-        if ! mkdir "$LOCK_FILE.d" 2>/dev/null; then
-            if [ -d "$LOCK_FILE.d" ]; then
-                # Check if lock is stale (>2 minutes old)
-                if command -v stat >/dev/null 2>&1; then
-                    _LOCK_AGE=$(($(date +%s) - $(stat -c %Y "$LOCK_FILE.d" 2>/dev/null || stat -f %m "$LOCK_FILE.d" 2>/dev/null || echo 0)))
-                    if [ "$_LOCK_AGE" -gt 120 ]; then
-                        echo "Removing stale lock (${_LOCK_AGE}s old)" >&2
-                        rmdir "$LOCK_FILE.d" 2>/dev/null || true
-                        if ! mkdir "$LOCK_FILE.d" 2>/dev/null; then
-                            echo "Another instance is starting. Exiting." >&2
-                            exit 1
-                        fi
-                    else
-                        echo "Another instance is starting. Exiting." >&2
-                        exit 1
-                    fi
-                else
+    # Open fd 9 to /dev/null so the `9>&-` closures on background launches below
+    # have a descriptor to close.
+    exec 9>/dev/null
+
+    if ! mkdir "$LOCK_FILE.d" 2>/dev/null; then
+        if [ -d "$LOCK_FILE.d" ]; then
+            # Treat a lock older than two minutes as abandoned.
+            _LOCK_MTIME=$(stat -f %m "$LOCK_FILE.d" 2>/dev/null || echo 0)
+            _LOCK_AGE=$(( $(date +%s) - _LOCK_MTIME ))
+            if [ "$_LOCK_AGE" -gt 120 ]; then
+                echo "Removing stale lock (${_LOCK_AGE}s old)" >&2
+                rmdir "$LOCK_FILE.d" 2>/dev/null || true
+                if ! mkdir "$LOCK_FILE.d" 2>/dev/null; then
                     echo "Another instance is starting. Exiting." >&2
                     exit 1
                 fi
             else
-                echo "Cannot create lock at $LOCK_FILE.d" >&2
-                echo "" >&2
-                echo "This usually means .jenova directory has permission issues." >&2
-                echo "Fix with (do NOT use sudo):" >&2
-                echo "  chmod -R u+w $JENOVA_STATE" >&2
-                echo "" >&2
-                echo "If owned by root (from running with sudo previously), fix with:" >&2
-                echo "  sudo chown -R \$(id -u):\$(id -g) $JENOVA_STATE" >&2
-                echo "  chmod -R u+w $JENOVA_STATE" >&2
-                echo "" >&2
+                echo "Another instance is starting. Exiting." >&2
                 exit 1
             fi
+        else
+            echo "Cannot create lock at $LOCK_FILE.d" >&2
+            echo "" >&2
+            echo "This usually means $JENOVA_STATE has permission issues." >&2
+            echo "Fix with (do NOT use sudo):" >&2
+            echo "  chmod -R u+w $JENOVA_STATE" >&2
+            echo "" >&2
+            echo "If owned by root (from running with sudo previously), fix with:" >&2
+            echo "  sudo chown -R \$(id -u):\$(id -g) $JENOVA_STATE" >&2
+            echo "  chmod -R u+w $JENOVA_STATE" >&2
+            echo "" >&2
+            exit 1
         fi
-        # Cleanup fallback lock on exit
-        trap 'rmdir "$LOCK_FILE.d" 2>/dev/null || true' EXIT
     fi
+    trap 'rmdir "$LOCK_FILE.d" 2>/dev/null || true' EXIT
 
     if [ -f "$PID_FILE" ]; then
         read OLD_LLAMA_PID OLD_EMBED_PID < "$PID_FILE" 2>/dev/null || OLD_LLAMA_PID=$(cat "$PID_FILE")
@@ -667,8 +679,7 @@ if [ "$1" = "--daemon" ] || [ "$_IS_DAEMON" = "true" ]; then
             fi
         done
         if $_ALL_ALIVE && $_ANY_ALIVE; then
-            echo "Jenova CA already running (llama=$OLD_LLAMA_PID proxy=$OLD_PROXY_PID embed=${OLD_EMBED_PID:-none})."
-            if [ "$_LOCK_FLOCK" = "1" ]; then exec 9>&-; fi
+            echo "Jenova CA already running (llama=$OLD_LLAMA_PID embed=${OLD_EMBED_PID:-none})."
             exit 0
         fi
         if $_ANY_ALIVE; then
@@ -705,7 +716,7 @@ if [ "$1" = "--daemon" ] || [ "$_IS_DAEMON" = "true" ]; then
             -b 512 \
             -t "$THREADS" \
             --offline \
-            --host "$HOST" \
+            --host "$BACKEND_BIND_HOST" \
             --port "$LLAMA_EMBED_PORT" \
             > "$EMBED_LOG" 2>&1 9>&- &
         EMBED_PID=$!
@@ -728,7 +739,6 @@ if [ "$1" = "--daemon" ] || [ "$_IS_DAEMON" = "true" ]; then
         if ! kill -0 "$LLAMA_PID" 2>/dev/null; then
             echo "ERROR: llama-server (PID $LLAMA_PID) died during startup. Check $LOG_FILE" >&2
             if [ -n "$EMBED_PID" ]; then kill "$EMBED_PID" 2>/dev/null || true; fi
-            if [ "$_LOCK_FLOCK" = "1" ]; then exec 9>&-; fi
             exit 1
         fi
         sleep "$HEALTH_INTERVAL"
@@ -739,7 +749,6 @@ if [ "$1" = "--daemon" ] || [ "$_IS_DAEMON" = "true" ]; then
         echo "Check logs at $LOG_FILE" >&2
         kill "$LLAMA_PID" 2>/dev/null || true
         if [ -n "$EMBED_PID" ]; then kill "$EMBED_PID" 2>/dev/null || true; fi
-        if [ "$_LOCK_FLOCK" = "1" ]; then exec 9>&-; fi
         exit 1
     fi
 
@@ -761,7 +770,6 @@ if [ "$1" = "--daemon" ] || [ "$_IS_DAEMON" = "true" ]; then
         _ANY_DEAD=true
     fi
     if $_ANY_DEAD; then
-        if [ "$_LOCK_FLOCK" = "1" ]; then exec 9>&-; fi
         exit 1
     fi
 
@@ -769,7 +777,6 @@ if [ "$1" = "--daemon" ] || [ "$_IS_DAEMON" = "true" ]; then
     printf '%s' "$LLAMA_PID${EMBED_PID:+ $EMBED_PID}" > "$PID_FILE"
     echo "" >> "$PID_FILE"
 
-    if [ "$_LOCK_FLOCK" = "1" ]; then exec 9>&-; fi
 
     if $_WATCH_AFTER_START; then
         echo "Entering watchdog mode..."
@@ -801,7 +808,7 @@ _set_path_args
     --spm-infill \
     --cache-prompt \
     --offline \
-    --host "$HOST" \
+    --host "$BACKEND_BIND_HOST" \
     --port "$LLAMA_PORT" \
     ${PATH_FLAG:+"$PATH_FLAG"} ${PATH_VAL:+"$PATH_VAL"} \
     $RUN_DRAFT_ARGS \
@@ -820,7 +827,7 @@ if [ -f "$MODEL_EMBED" ]; then
         -b 512 \
         -t "$THREADS" \
         --offline \
-        --host "$HOST" \
+        --host "$BACKEND_BIND_HOST" \
         --port "$LLAMA_EMBED_PORT" \
         > "${LOG_DIR}/jenova-embed.log" 2>&1 &
     EMBED_PID=$!
