@@ -13,10 +13,9 @@
 #   make jenova-ui  # Build the desktop manager
 #   make web        # Build the Web UI
 #   make install    # Build everything and deploy to $JCA_HOME
-#   make verify     # Verify a deployed installation
 #   make clean      # Remove build artifacts
 
-.PHONY: all deps llama web jenova-ui core install verify clean clean-root help
+.PHONY: all deps llama web jenova-ui core install clean clean-root help
 
 # The FreeBSD lang/nim port installs the compiler to /usr/local/nim/bin, which is
 # not on the default PATH. Probe PATH first so a user-installed compiler wins.
@@ -87,9 +86,6 @@ core:
 install: all
 	@./scripts/install.sh
 
-verify:
-	@./scripts/verify-install.sh --full
-
 clean:
 	@echo "🧹 Cleaning build artifacts..."
 	@if [ -d jenova-ui ]; then $(MAKE) -C jenova-ui clean; fi
@@ -117,7 +113,6 @@ help:
 	@echo ""
 	@echo "  Deploy:"
 	@echo "    make install       Build everything and deploy to \$$JCA_HOME"
-	@echo "    make verify        Verify a deployed installation"
 	@echo ""
 	@echo "  Cleanup:"
 	@echo "    make clean         Remove build artifacts"

@@ -14,9 +14,10 @@
 ## Deletes are soft throughout: rows are flagged, never removed, which is what
 ## makes the trash view and restore possible.
 
-import std/[json, strutils, tables]
+import std/[json, strutils, tables, os]
 import ./db
 import ./http
+import ./fssync
 
 type
   Column = object
@@ -120,23 +121,110 @@ proc getOne(e: Entity, id: string): ApiResult =
                       " WHERE id=? AND is_deleted=0", id)
   if rows.len == 0: err(404, "not found") else: ok($rowToJson(e, rows[0]))
 
-## Function purpose: insert-or-replace from a JSON body. Missing fields become
-## empty rather than failing, matching what `proxy.lua` accepted — the Web UI
-## posts partial objects for several entities.
-proc upsert(e: Entity, node: JsonNode): ApiResult =
-  if node.kind != JObject or not node.hasKey("id"):
-    return err(400, "body must be an object with an id")
+## Function purpose: read one row as a name→value table, for the cases that need
+## the *previous* state of a row before overwriting it — a note that moved has to
+## have its old file trashed, and that old path can only be built from the old
+## row.
+proc rowFields(e: Entity, id: string): Table[string, string] =
+  let rows = db.query("SELECT " & e.colList & " FROM " & e.name & " WHERE id=?", id)
+  if rows.len == 0: return
+  for idx, col in e.cols:
+    if idx >= rows[0].len: break
+    result[col.name] = rows[0][idx]
+
+proc f(node: JsonNode, name: string): string =
+  if node.hasKey(name) and node[name].kind != JNull:
+    let v = node[name]
+    (if v.kind == JString: v.getStr else: $v)
+  else:
+    ""
+
+proc field(t: Table[string, string], name: string): string =
+  if t.hasKey(name): t[name] else: ""
+
+## Function purpose: mirror an upserted row onto disk, reproducing the ten
+## `fs_sync` call sites in `lib/proxy.lua`'s `/api/db/*` handlers (N-27).
+##
+## Two behaviours here are easy to miss and both are load-bearing:
+##
+## * **A failed filesystem write rolls the database back.** `proxy.lua` deletes a
+##   newly inserted row, or rewrites the previous one, and answers 500. Letting
+##   the row stand while the file is missing is what produces a workspace the UI
+##   lists and the disk does not have.
+## * **A note or asset that moved has its old file trashed.** When `folderId`,
+##   `projectId`, `workspaceId` or the title/name changes, the new path is
+##   written first and the *old* path is then trashed — otherwise a rename leaves
+##   the previous copy behind and the RAG index sees the file twice.
+proc mirrorUpsert(e: Entity, node: JsonNode, prior: Table[string, string],
+                  existed: bool): bool =
+  case e.name
+  of "workspaces":
+    fssync.syncWorkspace(node.f "name")
+  of "notes":
+    let okFs = fssync.syncNote(node.f "id", node.f "title", node.f "content",
+                               node.f "folderId", node.f "projectId",
+                               node.f "workspaceId")
+    if okFs and existed and
+       (prior.field("folderId") != node.f("folderId") or
+        prior.field("projectId") != node.f("projectId") or
+        prior.field("workspaceId") != node.f("workspaceId") or
+        prior.field("title") != node.f("title")):
+      discard fssync.trashNote(prior.field("id"), prior.field("title"),
+                               prior.field("folderId"), prior.field("projectId"),
+                               prior.field("workspaceId"))
+    okFs
+  of "fileAssets":
+    let okFs = fssync.syncFileAsset(node.f "id", node.f "name", node.f "content",
+                                    node.f "folderId", node.f "projectId",
+                                    node.f "workspaceId")
+    if okFs and existed and
+       (prior.field("folderId") != node.f("folderId") or
+        prior.field("projectId") != node.f("projectId") or
+        prior.field("workspaceId") != node.f("workspaceId") or
+        prior.field("name") != node.f("name")):
+      discard fssync.trashFileAsset(prior.field("id"), prior.field("name"),
+                                    prior.field("folderId"),
+                                    prior.field("projectId"),
+                                    prior.field("workspaceId"))
+    okFs
+  else:
+    true
+
+proc writeRow(e: Entity, node: JsonNode) =
   var placeholders: seq[string]
   var values: seq[string]
   for col in e.cols:
     placeholders.add "?"
-    if node.hasKey(col.name) and node[col.name].kind != JNull:
-      let v = node[col.name]
-      values.add (if v.kind == JString: v.getStr else: $v)
-    else:
-      values.add ""
+    values.add node.f(col.name)
   db.exec("INSERT OR REPLACE INTO " & e.name & " (" & e.colList & ", is_deleted) VALUES (" &
           placeholders.join(", ") & ", 0)", values)
+
+## Function purpose: insert-or-replace from a JSON body. Missing fields become
+## empty rather than failing, matching what `proxy.lua` accepted — the Web UI
+## posts partial objects for several entities.
+##
+## `mirror` is false for bulk import, which is the one path in the original that
+## writes rows without touching the filesystem (`db.import_data`).
+proc upsert(e: Entity, node: JsonNode, mirror = true): ApiResult =
+  if node.kind != JObject or not node.hasKey("id"):
+    return err(400, "body must be an object with an id")
+  let id = node.f "id"
+  let prior = if mirror: rowFields(e, id) else: initTable[string, string]()
+  let existed = prior.len > 0
+
+  writeRow(e, node)
+
+  if mirror and not mirrorUpsert(e, node, prior, existed):
+    # Restore the previous state rather than leaving a row with no file.
+    if existed:
+      var restoreNode = newJObject()
+      for col in e.cols:
+        restoreNode[col.name] = %prior.field(col.name)
+      writeRow(e, restoreNode)
+    else:
+      db.exec("DELETE FROM " & e.name & " WHERE id=?", id)
+    return err(500, "filesystem sync failed for " & e.name)
+
   ok("""{"status":"ok"}""")
 
 const DescendantsCte = """
@@ -177,13 +265,81 @@ proc deleteConversation(id: string, withForks: bool): ApiResult =
     return err(500, "delete failed: " & getCurrentExceptionMsg())
   ok("""{"status":"ok"}""")
 
-proc softDelete(e: Entity, id: string, withForks = false): ApiResult =
-  if e.name == "conversations":
-    return deleteConversation(id, withForks)
+proc dbSoftDelete(e: Entity, id: string) =
   db.exec("UPDATE " & e.name & " SET is_deleted=1 WHERE id=?", id)
   if Cascades.hasKey(e.name):
     for sql in Cascades[e.name]:
       db.exec(sql, id)
+
+## Action purpose: deletion mirrors to the trash tree, and **the order differs by
+## entity because `proxy.lua`'s does** — this is reproduced, not tidied.
+##
+## * **Workspaces, projects, folders:** the filesystem move happens *first*. If it
+##   fails, the row is left alone and the request 500s, so the database never
+##   claims a deletion the disk did not perform. For projects and folders, if the
+##   database step then fails, **the directory is moved back out of the trash** —
+##   a compensating undo, and the only place in the contract that has one.
+## * **Notes and file assets:** the row is flagged first and the file trashed
+##   after, because the old path is rebuilt from the row that is still readable
+##   (soft delete leaves it in place).
+##
+## Tidying these into one order would be a silent behaviour change to a contract
+## the frozen client depends on (D-Z).
+proc softDelete(e: Entity, id: string, withForks = false): ApiResult =
+  if e.name == "conversations":
+    return deleteConversation(id, withForks)
+
+  let prior = rowFields(e, id)
+  if prior.len == 0 and e.name in ["workspaces", "projects", "folders"]:
+    return err(404, "not found")
+
+  case e.name
+  of "workspaces":
+    if not fssync.trashWorkspace(id, prior.field "name"):
+      return err(500, "filesystem trash failed for workspace")
+    dbSoftDelete(e, id)
+
+  of "projects":
+    let r = fssync.trashProject(id, prior.field "workspaceId", prior.field "name")
+    if not r.ok:
+      return err(500, "filesystem trash failed for project")
+    try:
+      dbSoftDelete(e, id)
+    except CatchableError:
+      if r.path.len > 0 and r.original.len > 0:
+        try: moveDir(r.path, r.original)
+        except OSError: discard
+      return err(500, "delete failed: " & getCurrentExceptionMsg())
+
+  of "folders":
+    let r = fssync.trashFolder(id, prior.field "projectId", prior.field "name")
+    if not r.ok:
+      return err(500, "filesystem trash failed for folder")
+    try:
+      dbSoftDelete(e, id)
+    except CatchableError:
+      if r.path.len > 0 and r.original.len > 0:
+        try: moveDir(r.path, r.original)
+        except OSError: discard
+      return err(500, "delete failed: " & getCurrentExceptionMsg())
+
+  of "notes":
+    dbSoftDelete(e, id)
+    if prior.len > 0:
+      discard fssync.trashNote(id, prior.field "title", prior.field "folderId",
+                               prior.field "projectId", prior.field "workspaceId")
+
+  of "fileAssets":
+    dbSoftDelete(e, id)
+    if prior.len > 0:
+      discard fssync.trashFileAsset(id, prior.field "name",
+                                    prior.field "folderId",
+                                    prior.field "projectId",
+                                    prior.field "workspaceId")
+
+  else:
+    dbSoftDelete(e, id)
+
   ok("""{"status":"ok"}""")
 
 ## Action purpose: restoring cascades *upward* as well as down. Reviving a note
@@ -237,7 +393,10 @@ proc importData(node: JsonNode): ApiResult =
     for name in order:
       if node.hasKey(name) and node[name].kind == JArray:
         for item in node[name]:
-          let r = upsert(Entities[name], item)
+          # mirror = false: `db.import_data` writes rows only. A bulk import of
+          # thousands of notes must not run a git add per row, and the files are
+          # expected to arrive with the dump.
+          let r = upsert(Entities[name], item, mirror = false)
           if r.status != 200:
             db.rollback()
             return err(500, "import failed in " & name)
@@ -246,6 +405,37 @@ proc importData(node: JsonNode): ApiResult =
     db.rollback()
     return err(500, "import failed: " & getCurrentExceptionMsg())
   ok("""{"status":"ok"}""")
+
+## Function purpose: route one `/api/fs/*` request — the last surface `lib/proxy.lua`
+## still served (N-20). Four routes, reproduced from `proxy.lua:647-672`.
+proc handleFs*(req: Request): ApiResult =
+  if not req.path.startsWith("/api/fs/"):
+    return err(404, "not found")
+  let route = req.path[8 .. ^1]
+  let isGet = req.meth == "GET"
+
+  if isGet and route == "trash":
+    return ok($fssync.toJson(fssync.getTrash()))
+
+  if isGet and route == "tree":
+    return ok($fssync.toJson(fssync.getFsTree(req.queryStr("workspace"),
+                                              req.queryStr("project"),
+                                              req.queryStr("folder"))))
+
+  if req.meth == "POST" and route == "trash/restore":
+    let node = parseBodyJson(req.body)
+    if node.isNil or not node.hasKey("trash_path") or not node.hasKey("original_path"):
+      return err(400, "trash_path and original_path required")
+    if fssync.restoreTrash(node["trash_path"].getStr, node["original_path"].getStr):
+      return ok("""{"status":"ok"}""")
+    return err(500, "restore failed")
+
+  if req.meth == "DELETE" and route == "trash/empty":
+    if fssync.emptyTrash():
+      return ok("""{"status":"ok"}""")
+    return err(500, "empty trash failed")
+
+  err(404, "not found")
 
 ## Function purpose: route one /api/db/* request. Returns a status and body; the
 ## caller writes the response, so this stays independent of the socket layer and

@@ -38,6 +38,8 @@ import ./db
 import ./routes
 import ./upstream
 import ./api
+import ./inference
+import std/json
 
 type
   AcceptorArg = object
@@ -77,6 +79,9 @@ var
   llamaPort: int
   embedPort: int
   debugEndpoints: bool
+  # When false the completion classes proxy to llama-server as before, so the
+  # server still works on a host where the model cannot be loaded in-process.
+  inferenceEnabled: bool
   running: bool
 
   queues: array[RouteClass, Channel[SocketHandle]]
@@ -147,7 +152,12 @@ proc serveStatic(client: Socket, req: Request) =
     return
   client.sendResponse(200, http.contentTypeFor(full), readFile(full))
 
-proc handle(client: Socket, class: RouteClass, workerId: int) =
+## Function purpose: serve one request. Returns true when the connection has been
+## handed to another owner (the inference thread) and this worker must **not**
+## close it — closing a socket another thread is streaming on would truncate a
+## generation mid-token.
+proc handle(client: Socket, class: RouteClass, workerId: int): bool =
+  result = false
   let req = http.parseRequest(client)
 
   case class
@@ -157,6 +167,34 @@ proc handle(client: Socket, class: RouteClass, workerId: int) =
       &""""journal_mode":"{jsonEscape(db.journalMode())}"}}""")
 
   of rcCompletion:
+    # Action purpose: generation is handed to the inference thread, which takes
+    # ownership of the socket and writes the response itself. That frees this
+    # worker immediately: under D-W generations are serial, so making a
+    # completion thread sit through one would waste a thread on waiting.
+    if inferenceEnabled:
+      var body: JsonNode
+      try: body = parseJson(if req.body.len > 0: req.body else: "{}")
+      except CatchableError:
+        client.sendResponse(400, "application/json", """{"error":"invalid JSON body"}""")
+        return false
+
+      let stream = body{"stream"}.getBool(false)
+      let maxTokens = body{"max_tokens"}.getInt(body{"n_predict"}.getInt(256))
+      let isChat = body.hasKey("messages")
+      let payload = if isChat: $body["messages"]
+                    else: body{"prompt"}.getStr("")
+
+      if payload.len == 0:
+        client.sendResponse(400, "application/json",
+          """{"error":"expected 'messages' (chat) or 'prompt'"}""")
+        return false
+
+      if inference.submit(client.getFd(), payload, maxTokens, stream, isChat):
+        return true      # socket ownership transferred; do not close it here
+      client.sendResponse(503, "application/json",
+        """{"error":"inference worker unavailable"}""")
+      return false
+
     discard upstream.forward(client, req, llamaHostS.get(), llamaPort)
 
   of rcEmbed:
@@ -179,10 +217,12 @@ proc handle(client: Socket, class: RouteClass, workerId: int) =
       let r = api.handleDb(req)
       client.sendResponse(r.status, "application/json", r.body)
       return
-    # /api/fs/* is still served by lib/proxy.lua and is not yet ported.
-    client.sendResponse(501, "application/json",
-      &"""{{"error":"not implemented","path":"{jsonEscape(req.path)}",""" &
-      &""""stage":"N-S3b"}}""")
+    if req.path.startsWith("/api/fs/"):
+      let r = api.handleFs(req)
+      client.sendResponse(r.status, "application/json", r.body)
+      return
+    client.sendResponse(404, "application/json",
+      &"""{{"error":"not found","path":"{jsonEscape(req.path)}"}}""")
 
   of rcDebug:
     if not debugEndpoints:
@@ -225,14 +265,16 @@ proc classWorker(arg: ClassWorkerArg) {.thread.} =
       break
     let client = newSocket(fd, Domain.AF_INET, SockType.SOCK_STREAM,
                            Protocol.IPPROTO_TCP, buffered = false)
+    var handedOff = false
     try:
-      handle(client, arg.class, arg.id)
+      handedOff = handle(client, arg.class, arg.id)
     except CatchableError:
       try:
         client.sendResponse(500, "text/plain", getCurrentExceptionMsg())
       except CatchableError:
         discard
-    try: client.close() except CatchableError: discard
+    if not handedOff:
+      try: client.close() except CatchableError: discard
   db.closeConn()
 
 ## Function purpose: accept and classify only. Handlers never run here, so no
@@ -257,7 +299,9 @@ proc acceptor(arg: AcceptorArg) {.thread.} =
 proc start*(host: string, port: int, root: string,
             llamaHost = "127.0.0.1", llamaPortArg = 8081,
             embedHost = "127.0.0.1", embedPortArg = 8082,
-            acceptors = 2, enableDebug = false): SocketHandle =
+            acceptors = 2, enableDebug = false,
+            useInProcessInference = false): SocketHandle =
+  inferenceEnabled = useInProcessInference
   staticRootS.set(root)
   llamaHostS.set(llamaHost)
   embedHostS.set(embedHost)

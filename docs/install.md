@@ -34,7 +34,6 @@ export PATH="$HOME/.local/bin:$PATH"
 | `make jenova-ui` | The GTK3 tray / ncurses TUI |
 | `make web` | The SvelteKit Web UI into `public/` |
 | `make install` | Build everything, then `scripts/install.sh` |
-| `make verify` | `scripts/verify-install.sh --full` against a deployed installation |
 | `make clean` | Remove build artifacts |
 | `make clean-root` | Remove stray artifacts in the repository root |
 
@@ -212,11 +211,9 @@ sockstat -4l | grep -E '8080|8081|8082'
 
 ---
 
-## Verifying, updating, removing
+## Updating and removing
 
 ```sh
-make verify                       # or: scripts/verify-install.sh --full [--verbose]
-
 scripts/update.sh --all           # pull, rebuild UI and Web UI, re-apply the profile
 scripts/update.sh --no-pull       # rebuild without pulling
 scripts/update.sh --skip-rebuild  # pull only

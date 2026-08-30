@@ -1,8 +1,9 @@
 ## Script function and purpose: Entry point for jenova-core, the native FreeBSD
 ## binary that replaces the Lua proxy, the shell orchestrators and the GTK3 tray
-## (`.devdocs/PLANS.md` Plan B, ruling D-L). At stage N-S1 it resolves paths and
-## configuration; no server, database, inference or GUI subsystem exists yet, and
-## it does not pretend otherwise.
+## (`.devdocs/PLANS.md` Plan B, ruling D-L). At stage N-S4b it resolves paths and
+## configuration, serves HTTP with per-class thread pools, owns the database, and
+## generates in-process through libllama. **No GUI, RAG or CLI subsystem exists
+## yet**, and it does not pretend otherwise.
 
 ## Action purpose: refuse to compile anywhere but FreeBSD. Plan A spent seven
 ## stages removing the pretence that this project is portable; the Nim core
@@ -12,11 +13,11 @@ when not defined(freebsd):
   {.error: "jenova-core targets FreeBSD only — see .devdocs/PLANS.md Plan B.".}
 
 import std/[os, strformat]
-import jenova/[paths, config, db, dbselftest, server, serverselftest, llama]
+import jenova/[paths, config, db, dbselftest, server, serverselftest, llama, inference]
 
 const
   Version = "0.1.0"
-  Stage = "N-S3 — threaded HTTP server"
+  Stage = "N-S4b — in-process inference"
 
 proc usage() =
   echo &"jenova-core {Version} ({Stage})"
@@ -27,13 +28,15 @@ proc usage() =
   echo "  config        Resolve and print configuration under the full precedence rule"
   echo "  db-init       Create the database and schema"
   echo "  db-selftest   Prove the database layer runs concurrently, with measurements"
-  echo "  serve         Run the threaded HTTP server"
+  echo "  serve         Run the threaded HTTP server with in-process inference"
   echo "  serve-selftest  Prove a stream holds its cadence while other connections block"
+  echo "  llama-selftest  Load the model and generate, bypassing the server"
   echo "  version       Print version and stage"
   echo ""
   echo "Precedence: builtin default < etc/jenova.conf < etc/jenova.local.conf < environment"
+  echo "Set JENOVA_INPROC=0 to proxy completions to llama-server instead."
   echo ""
-  echo "No server, inference or GUI subsystem is implemented yet."
+  echo "No GUI, RAG or CLI subsystem is implemented yet."
   echo "See .devdocs/PLANS.md Plan B for the stage order."
 
 proc main() =
@@ -68,11 +71,36 @@ proc main() =
       let host = c.get("HOST", "127.0.0.1")
       let port = c.getInt("PORT", 8080)
       db.initDb(p.state / "jenova.db")
+
+      # In-process inference is opt-in for now: with JENOVA_INPROC=0 the
+      # completion routes proxy to llama-server exactly as before, so a host
+      # where the model cannot be loaded still serves.
+      let inProc = c.getInt("JENOVA_INPROC", 1) != 0
+      if inProc:
+        let ngl = if c.get("NGL_AGENT", "all") == "all": -1'i32
+                  else: c.getInt("NGL_AGENT", 0).int32
+        inference.configure(llama.LoadSpec(
+          modelPath: c.get("MODEL_PATH"),
+          devices: c.get("DEVICES"),
+          tensorSplit: c.get("TENSOR_SPLIT"),
+          nCtx: c.getInt("CTX_SIZE", 4096).uint32,
+          nBatch: c.getInt("BATCH_SIZE", 0).uint32,
+          nUbatch: c.getInt("UBATCH_SIZE", 0).uint32,
+          nSeqMax: c.getInt("NUM_SLOTS", 0).uint32,
+          nGpuLayers: ngl,
+          nThreads: c.getInt("THREADS", 4).int32,
+          nThreadsBatch: c.getInt("THREADS_BATCH", 4).int32,
+          kvCacheType: c.get("KV_CACHE_TYPE", "f16")))
+        inference.start()
+
       discard server.start(
         host, port, p.root / "public",
         llamaHost = "127.0.0.1", llamaPortArg = c.getInt("LLAMA_PORT", 8081),
-        embedHost = "127.0.0.1", embedPortArg = c.getInt("LLAMA_EMBED_PORT", 8082))
+        embedHost = "127.0.0.1", embedPortArg = c.getInt("LLAMA_EMBED_PORT", 8082),
+        useInProcessInference = inProc)
       echo &"jenova-core serving on {host}:{port}"
+      echo "  inference: ", (if inProc: "in-process (model loads on first request)"
+                             else: "proxied to llama-server")
       echo "  ", server.describe()
       echo "  upstreams: llama 127.0.0.1:", c.getInt("LLAMA_PORT", 8081),
            "  embed 127.0.0.1:", c.getInt("LLAMA_EMBED_PORT", 8082)

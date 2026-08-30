@@ -5,6 +5,185 @@ resolution. Most recent entries at the top.
 
 ---
 
+## 2026-08-31 09:08 — USER rulings: Q-10, Q-11, Q-24, Q-25 answered; N-S5a approved
+
+### Q-10 — ANSWERED: **B, delete.** *(BINDING — closes B-08)*
+
+`scripts/verify-install.sh` deleted, the `verify` target removed from the `Makefile`, and every
+reference removed from `README.md`, `docs/install.md` and `docs/usage.md`. Rewriting a verifier for
+an install path scheduled for deletion is bloat; the Nim core ships its own at N-S6. **B-08 is
+closed by deletion, not by fix.**
+
+### Q-11 — ANSWERED: **A, delete both.** *(BINDING — closes B-09)*
+
+`Vulkan/dgpu-generic-12gb/jenova-setup` and `CUDA/dgpu-generic/jenova-setup` deleted. Neither
+tuned anything: they symlinked a config, duplicating `detect-hardware.sh --apply-profile` by a
+worse mechanism, from a root computed five `dirname` calls too high. **Profile deployment now has
+exactly one owner.**
+
+**Follow-through, and it is a behaviour change worth stating.** `scripts/jenova-setup:153` treated
+a missing profile `jenova-setup` as a hard error, `exit 1`. **That is now wrong** — a profile with
+no tuning script is the normal state for a generic fallback, not a failure. It reports the profile,
+says no tuning is defined, points at `--apply-profile` for config deployment, and **exits 0**.
+
+**B-10 is explicitly NOT covered by this ruling.** `CPU/generic/jenova-setup` is a different case:
+it is a *broken* tuning script (entirely Linux — `cpupower`, `/sys`, `numactl`, `isolcpus`), not a
+symlinker. Deleting it and *writing real FreeBSD tuning* are different decisions and neither has
+been made. **It remains open and is the only CPU-only profile.**
+
+### Q-24 — ANSWERED: **A, SQLite for both indexes.** *(BINDING — gates N-S5b)*
+
+BM25 via FTS5, vectors in a BLOB table. One store, one lifecycle, already per-thread and concurrent
+from N-S2. **This kills all three `search.lua` storage defects and the GC-safety problem in one
+move:** no restart loss of the BM25 index, no 20 MB merge cap, and chunk text persists so snippets
+survive a restart.
+
+**One contingency, and it is a check rather than an assumption (D-AB):** FTS5 must be present in
+the `libsqlite3` the native build links. **It will be verified by compiling and running the probe
+on FreeBSD, not inferred from anything on the Linux side of this container.** If FTS5 is absent,
+fall back to Q-24 option B (SQLite vectors, in-memory BM25 rebuilt at startup) and report it.
+
+### Q-25 — ANSWERED: **C, in-process and CPU-only for embeddings.** *(BINDING — gates N-S5b)*
+
+A second `llama_context` for the embedding model, loaded in-process with **no GPU offload**.
+
+**Why this is the right shape.** It keeps the single-binary direction of D-N — no `:8082`, no HTTP
+hop, no subprocess for N-S6 to supervise — while costing **zero VRAM** on a 4 GB GTX 1650 Ti that
+is already running the agent model at `CTX_SIZE=32768` across Vulkan0 and Vulkan1. Embedding is
+throughput-tolerant background work, so CPU latency is the cheapest thing being traded.
+
+**Corroboration, offered as a hint and not as evidence:** `lib/embed.lua:66` already launches the
+embed server with `GGML_VULKAN_DISABLE=1`, so the existing deployment reached the same conclusion.
+That is one line read in passing, not a measurement.
+
+**Implementation consequence:** `llama.LoadSpec` currently carries one set of backend values for
+one context. **It needs a per-context device override** so the embedding context can request CPU
+while the agent context keeps `DEVICES=Vulkan0,Vulkan1`. This is the change C-14 warns about —
+a new binding path that must honour every configured value rather than silently defaulting.
+
+### N-S5a — APPROVED in full
+
+Port all 13 `fs_sync` functions, the four `/api/fs/*` routes, and the ten mirroring call sites into
+`api.nim`. **Build the differential filesystem test first, run it against `lib/proxy.lua` to
+capture the real contract, then against the Nim core.** This closes N-27 and N-20 and retires
+`lib/proxy.lua`.
+
+---
+
+## 2026-08-31 09:08 — USER rulings D-X … D-AB. Four recurring disputes closed permanently.
+
+These close questions that have been re-litigated across multiple sessions. **They are not to be
+reopened, and no session may raise them again as an open item.**
+
+### D-X — The licence is settled: AGPL-3.0. Copyleft dependencies are permitted. *(BINDING — closes Q-4 permanently)*
+
+> "this project is a gpl licensed project - i am getting tired of this coming up every single
+> session when the license is infront of you to check"
+
+**Verified first-hand this session, for the last time:** `LICENSE` is the GNU Affero General
+Public License v3 in full; `NOTICE` names it for Jenova's own material; `jenova_core.nimble:13`
+declares `AGPL-3.0-or-later`; `README.md:200` agrees. GTK, Qt, FLTK, libappindicator and any
+other GPL/LGPL dependency are permissible.
+
+**Why it kept recurring, and the actual fix.** The licence was never the problem. Dead text in
+this workspace was: `BLUEPRINT.md` carried GNU coreutils and bash as *"rule-2 violation"* rows and
+libappindicator as *"beyond the stated exception — Q-4"*, and `PLANS.md` carried "no GPL
+dependency" as a migration objective. Each session read those rows and re-derived a conflict that
+does not exist. **All such rows are purged this session.** The removal of bash and coreutils was
+correct on its own merits — FreeBSD base already provides `sh` and `realpath`, so those were
+subtractions of unnecessary dependencies, not licence compliance.
+
+`AGENTS.md` Directive 2 still reads *"permissive, non-copyleft"*. Its operative and enforceable
+clause is **"Zero proprietary dependencies"**, which this project satisfies. **The copyleft clause
+is inoperative against an AGPL project and is to be read as dead letter.** Governance is the
+USER's file; this is recorded as the reading in force, not as a request to amend.
+
+### D-Y — Deployment, build and install testing is deferred until the rewrite is complete. *(BINDING — supersedes blocker B-1 and gates V-1 … V-6)*
+
+> "you are not going to test the deployment - as that will overwrite my currently working version
+> — you are focussing on the rewrite - the build testing happens AFTER all refactoring has been
+> completed"
+
+`make install`, `make verify`, `jenova-ca --daemon` and any command that writes into the deployed
+`~/JCA` tree are **prohibited** for the duration of the rewrite. The USER is running a working
+deployment from this tree; an install would overwrite it.
+
+**Consequence for the trackers.** `B-1` is **not a blocker** and never was one for the rewrite —
+it was gating the wrong phase. `V-1 … V-6` move out of `TODOS.md` **Active** into a
+post-refactor acceptance phase. The three test-surface defects that block them — **B-08, B-23,
+B-24** — drop out of the near-term path with them; they are prerequisites for a gate that is not
+yet due.
+
+**Still permitted, because they touch nothing deployed:** `make core`, `bin/jenova-core` and all
+of its self-test subcommands against scratch databases, `sh -n`, and read-only inspection.
+
+### D-Z — `jca_web/` is frozen. Not to be touched, edited or damaged. *(BINDING — supersedes D-L's "retained but deprecated")*
+
+> "there is no need to read jca web as we will be superceding it with a native desktop application
+> for freebsd - the web page is only for the interim and lan mode - i dont want it touched or
+> damaged at all"
+
+`jca_web/` is a **working interim client for LAN mode** and stays working, untouched, until the
+native GUI (N-S7) reaches parity and N-S9 retires it. **No edits of any kind**, including
+one-line fixes.
+
+**Consequences:**
+
+- **The full read of `jca_web/src/`, outstanding since Session 003, is cancelled.** It is not
+  needed and is removed from every tracker.
+- **B-01** (the Google Fonts webfont leak in `jca_web/src/app.css:3`) **cannot be fixed without
+  editing a frozen tree.** It is therefore *not* one of the D-O survivors. Reclassified as
+  **deferred to N-S9** — it disappears when `jca_web/` is retired. Flagged to the USER; the
+  privacy leak is real and live until then.
+- **B-03 and B-04** (stale Dexie comments; two impossible Mermaid diagrams) are likewise deferred
+  to N-S9. They are comments and documents inside the frozen tree.
+- The `/api/db/*` contract in `api.nim` is **load-bearing** — it is what keeps the frozen client
+  working. "Identical, not sensible" remains the standard.
+
+### D-AB — This workspace is a Linuxulator container. Detection results are suspect by default. *(BINDING — refines C-8 and C-12)*
+
+> "this is a freebsd specific program - and you are in vscode in a linuxulator - there will be
+> some issues here with your detections"
+
+C-12 corrected the over-strict rule that *nothing* here is evidence. **D-AB puts the burden back
+in the right place:** a detection result is not evidence **until its mechanism has been shown not
+to route through the emulation layer.**
+
+| Trustworthy | Not trustworthy without checking |
+|---|---|
+| Reading files in this tree | `uname -s` (returns `Linux`) |
+| `sysctl kern.ostype` (returns FreeBSD) | `/proc` (not mounted natively — B-23 exactly) |
+| Native FreeBSD ELF binaries built and run here | Any Linux-emulated syscall or Linux-side library |
+| `git`, `grep`, `find` over this tree | Which `libsqlite3` / `libllama` a *Linux* process resolves |
+
+**Standing obligation:** state the mechanism alongside any detection claim, so the reader can
+judge it. A claim reported without its mechanism is to be treated as unverified.
+
+### N-8 — CLOSED. It was substantially wrong, and the error was mine.
+
+> "n8 - are you sure or just making things up the dbsc and other project references should have
+> been removed already"
+
+**The USER is correct.** `AGENTS.md` as it stands contains **four** numbered directives:
+Permission-Gated Action, FOSS Compliance, Total Feature Retention, Separation of Concerns.
+**There is no Directive 7, no `.dbc`, no cartridge and no `test_roms/` anywhere in the file** —
+they were removed before this session. I reported N-8 from `TODOS.md` without checking it against
+the governance file I had read in full minutes earlier. That is the exact failure the trackers
+exist to prevent.
+
+**A larger defect surfaced by the same check.** The devdocs cite directives against a superseded
+numbering: **`Directive 6` is referenced 14 times and does not exist.** It is the directive the
+entire "Codebase Integrity Standard" apparatus (`D-J`, `C-10`, the mandated per-session integrity
+pass) was built on. `Directive 7` is referenced 6 times and does not exist. `Directive 2`'s
+15 references are to a clause D-X has now ruled dead letter.
+
+**Resolution.** The Codebase Integrity Standard in `PLANS.md` is **retained on its merits** — it
+is a good standard and it caught real defects — but it is no longer claimed to be mandated by a
+directive. It stands as workspace practice, not governance. All stale directive citations are
+corrected. **N-8 is closed and removed from the blocker list.**
+
+---
+
 ## 2026-08-28 22:40 — Q-23 answered; a false claim of mine retracted
 
 ### D-W — Inference is serial for now: one context, one generation at a time. *(BINDING — answers Q-23)*
@@ -582,6 +761,23 @@ verification work (V-1 … V-6), all block the fixes for `TODOS.md` B-07 … B-1
 
 ### Q-9 — The configuration hierarchy is inverted. Which way should it be fixed?
 
+> **Reframed 2026-08-31. Status: OPEN, but the question has changed and the recommendation has
+> reversed to "do nothing in the shell path."**
+>
+> **Option A is already implemented in the Nim core.** `src/jenova/config.nim` resolves
+> builtin < `etc/jenova.conf` < `etc/jenova.local.conf` < environment, demonstrated live at N-S1.
+> The shell path keeps the inverted order only until `bin/jenova-ca` is deleted at N-S6.
+>
+> **And fixing the shell path now would break the USER's running deployment.** `etc/jenova.local.conf`
+> declares `DEVICES="Vulkan0,Vulkan1,Vulkan2"`; **there is no Vulkan2 on this machine** (N-24). That
+> value is harmless *only because* B-12 discards it. Make the hierarchy correct in `bin/jenova-ca`
+> and the next launch resolves a device that does not exist. Under **D-Y** the USER is running a
+> working deployment from this tree, so this is a live hazard, not a theoretical one.
+>
+> **Revised recommendation: take no action on `bin/jenova-ca`.** Let N-S6 delete it. Fix the bad
+> `Vulkan2` value (N-24) separately and on its own merits, because the Nim core reads it correctly
+> and will fail loudly on it.
+
 **Status: OPEN. Blocks B-12.** Architecture recorded in `BLUEPRINT.md §2.2`.
 
 `etc/jenova.local.conf` is sourced *before* `etc/jenova.conf`, and the profile conf assigns every
@@ -605,6 +801,21 @@ will need one config precedence rule that is actually true.
 
 ### Q-10 — `scripts/verify-install.sh` verifies a product that does not exist. Rewrite or remove?
 
+> **Reframed 2026-08-31. Recommendation reversed from A to B.**
+>
+> > "q10 - I thought we were streamlining everything why would we keep a million scripts if the
+> > goal was to reduce bloat"
+>
+> The original recommendation (A — rewrite it) was made before **D-L** and **D-Y**. Both change it:
+> the shell install path is being replaced wholesale by the Nim core, and deployment testing is
+> deferred until after the rewrite. **Rewriting a verifier for an install path that is scheduled
+> for deletion is bloat by definition**, and it is exactly the subtraction principle of D-D.
+>
+> **Revised recommendation: B — delete `scripts/verify-install.sh`, drop the `verify` target from
+> the Makefile, and remove the references in `docs/install.md`.** The Nim core ships its own
+> verification at N-S6 as part of lifecycle parity. **Awaiting the USER's confirmation before any
+> deletion**, per Directive 1 — this is a file deletion, which is gated.
+
 **Status: OPEN. Blocks B-08 and verification step V-3.**
 
 The script checks `$VIMRUNTIME` (never set), `~/.config/jenova/init.lua`, `share/jenova/mason`, and
@@ -625,6 +836,13 @@ if the Nim cut-over will ship its own verifier.
 ---
 
 ### Q-11 — Two `jenova-setup` scripts are config-symlinkers, not tuning scripts. Delete?
+
+> **Reaffirmed 2026-08-31, and it survives the rewrite.** `hardware-profiles/` is data, not shell
+> plumbing (`BLUEPRINT.md §10`); the Nim core at N-S6 consumes it. So unlike Q-10, this is *not*
+> work on a doomed path — these three broken scripts are still broken after the rewrite.
+> Recommendation **A** stands and aligns with the same streamlining principle as Q-10: profile
+> deployment already has one correct owner in `detect-hardware.sh --apply-profile`; these two add
+> a second, worse mechanism. **Awaiting the USER — deletion is Directive 1 gated.**
 
 **Status: OPEN. Blocks B-09.**
 
@@ -647,6 +865,12 @@ separate question of *writing* FreeBSD tuning rather than removing wrong tuning.
 ---
 
 ### Q-12 — `CUDA/dgpu-generic` recommends a third-party "Uncensored / Aggressive" model. Intended?
+
+> **Unchanged 2026-08-31 and still the USER's alone.** This is the one open question the rewrite
+> does not touch: it is product identity, not architecture, and `hardware-profiles/` data survives.
+> Re-verified in source this session — `profile.conf:47` still points at
+> `HauhauCS/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive`. I will not change a shipped default on my
+> own judgement.
 
 **Status: OPEN. Blocks B-21.**
 

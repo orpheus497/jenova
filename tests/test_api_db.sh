@@ -16,11 +16,22 @@ set -u
 PORT=${1:-18719}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 CORE="$ROOT/bin/jenova-core"
-DB="${JCA_HOME:-$HOME/JCA}/.system/jenova.db"
 FAILED=0
 
 [ -x "$CORE" ] || { echo "SKIP: $CORE not built (run: make core)"; exit 0; }
 command -v nc >/dev/null 2>&1 || { echo "SKIP: nc not available"; exit 0; }
+
+# Action purpose: run entirely inside a scratch JCA_HOME, and never touch the
+# real one. This script previously derived the database path as
+# "${JCA_HOME:-$HOME/JCA}/.system/jenova.db" and rm'd it — so on any machine with
+# a live deployment, running the suite DELETED THE USER'S CONVERSATION DATABASE.
+# That is the B-22 defect class with real data at stake. The isolation below is
+# the fix: every path the core resolves derives from JCA_HOME (see
+# src/jenova/paths.nim), so overriding it here contains the whole test.
+JCA_HOME=$(mktemp -d "${TMPDIR:-/tmp}/jenova-apidb.XXXXXX") || exit 1
+export JCA_HOME
+mkdir -p "$JCA_HOME/.system" "$JCA_HOME/Workspaces"
+DB="$JCA_HOME/.system/jenova.db"
 
 req() { # method path body
     printf '%s %s HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s' \
@@ -55,7 +66,15 @@ check_absent() { # label unwanted-substring actual
 rm -f "$DB" "$DB-wal" "$DB-shm"
 JENOVA_PORT="$PORT" "$CORE" serve >/dev/null 2>&1 &
 SRV=$!
-trap 'kill $SRV 2>/dev/null' EXIT INT TERM
+# The scratch tree is removed on exit; the guard is belt-and-braces against the
+# mktemp having failed and JCA_HOME pointing somewhere real.
+cleanup() {
+    kill $SRV 2>/dev/null
+    case "$JCA_HOME" in
+        */jenova-apidb.*) rm -rf "$JCA_HOME" ;;
+    esac
+}
+trap cleanup EXIT INT TERM
 sleep 1
 
 echo "test_api_db: port $PORT"
@@ -99,14 +118,21 @@ check "deleteWithForks removes nested descendants" \
       'null\|^\[\]\|not found' "$(get '/api/db/conversations?id=grand')"
 
 # --- restore cascades upward to ancestors ----------------------------------
+# The note id must be a real UUID. fs_sync.lua:70 refuses to mirror a row whose
+# id is not one, and proxy.lua:899 then deletes the row and answers 500 — so a
+# short id like "n2" is rejected by the real system. This assertion passed
+# before the filesystem mirror existed (N-27) precisely because nothing checked.
+N2="99999999-9999-9999-9999-999999999999"
 req POST /api/db/workspaces '{"id":"w2","name":"W"}' >/dev/null
 req POST /api/db/projects '{"id":"p2","workspaceId":"w2","name":"P"}' >/dev/null
-req POST /api/db/notes '{"id":"n2","projectId":"p2","workspaceId":"w2","title":"T","content":"C"}' >/dev/null
+req POST /api/db/notes "{\"id\":\"$N2\",\"projectId\":\"p2\",\"workspaceId\":\"w2\",\"title\":\"T\",\"content\":\"C\"}" >/dev/null
 req DELETE /api/db/workspaces/w2 '' >/dev/null
 # Scoped to p2: other workspaces' projects are still live, so an empty-list
 # assertion here would be wrong rather than strict.
 check_absent "workspace delete cascades to its project" '"id":"p2"' "$(get /api/db/projects/all)"
-req POST /api/db/notes/n2/restore '' >/dev/null
+check "note with a non-UUID id is rejected" 'filesystem sync failed' \
+      "$(req POST /api/db/notes '{"id":"n-short","projectId":"p2","title":"T"}')"
+req POST "/api/db/notes/$N2/restore" '' >/dev/null
 check "restoring a note revives its workspace" '"id":"w2"' "$(get /api/db/workspaces)"
 check "restoring a note revives its project"   '"id":"p2"' "$(get /api/db/projects/all)"
 

@@ -86,6 +86,11 @@ type
   Batch* {.importc: "struct llama_batch", header: "llama.h", bycopy.} = object
     n_tokens* {.importc: "n_tokens".}: int32
 
+  ChatMessage* {.importc: "llama_chat_message", header: "llama.h",
+                 bycopy.} = object
+    role* {.importc: "role".}: cstring
+    content* {.importc: "content".}: cstring
+
 {.push importc, header: "ggml-backend.h", cdecl.}
 proc ggml_backend_dev_count*(): csize_t
 proc ggml_backend_dev_get*(index: csize_t): BackendDev
@@ -122,6 +127,10 @@ proc llama_sampler_init_temp*(t: float32): LlamaSampler
 proc llama_sampler_sample*(s: LlamaSampler, ctx: LlamaContext, idx: int32): LlamaToken
 proc llama_sampler_accept*(s: LlamaSampler, token: LlamaToken)
 proc llama_sampler_free*(s: LlamaSampler)
+proc llama_model_chat_template*(m: LlamaModel, name: cstring): cstring
+proc llama_chat_apply_template*(tmpl: cstring, chat: ptr ChatMessage,
+                                n_msg: csize_t, add_ass: bool,
+                                buf: cstring, length: int32): int32
 {.pop.}
 
 type LlamaError* = object of CatchableError
@@ -286,6 +295,41 @@ proc free*(h: var ModelHandle) =
     llama_model_free(h.model)
     h.model = LlamaModel(nil)
 
+## Function purpose: format a chat exchange with **the model's own template**,
+## fetched from the GGUF rather than assembled here. Every model family marks
+## turns differently, and a hand-rolled format produces output that looks almost
+## right while degrading quality in ways that are hard to attribute. If the model
+## carries no template, that is reported rather than papered over with a guess.
+proc applyChatTemplate*(h: ModelHandle, roles, contents: seq[string],
+                        addAssistant = true): string =
+  if roles.len != contents.len or roles.len == 0:
+    raise newException(LlamaError, "chat template needs matching roles and contents")
+  let tmpl = llama_model_chat_template(h.model, nil)
+  if tmpl.isNil:
+    raise newException(LlamaError,
+      "model has no built-in chat template; /v1/chat/completions cannot be " &
+      "formatted for it — use /completion with a raw prompt")
+
+  var msgs = newSeq[ChatMessage](roles.len)
+  # The cstrings must outlive the call, so the Nim strings stay in scope here.
+  for i in 0 ..< roles.len:
+    msgs[i] = ChatMessage(role: roles[i].cstring, content: contents[i].cstring)
+
+  var size = 0
+  for c in contents: size += c.len
+  size = max(size * 2 + 1024, 4096)
+  var buf = newString(size)
+  var n = llama_chat_apply_template(tmpl, addr msgs[0], msgs.len.csize_t,
+                                    addAssistant, buf.cstring, buf.len.int32)
+  if n > buf.len.int32:
+    buf = newString(n)
+    n = llama_chat_apply_template(tmpl, addr msgs[0], msgs.len.csize_t,
+                                  addAssistant, buf.cstring, buf.len.int32)
+  if n < 0:
+    raise newException(LlamaError, "chat template application failed")
+  buf.setLen(n)
+  buf
+
 proc tokenize*(h: ModelHandle, text: string, addSpecial = true): seq[LlamaToken] =
   # A negative return is the required buffer size; llama.cpp reports it that way
   # rather than failing, so the first call sizes and the second fills.
@@ -318,7 +362,8 @@ proc piece*(h: ModelHandle, tok: LlamaToken): string =
 ## Returning false from `onToken` stops generation, so a disconnected client
 ## cancels the work instead of leaving it running to completion.
 proc generate*(h: var ModelHandle, prompt: string, maxTokens: int,
-               onToken: proc(piece: string): bool {.closure.}): int =
+               onToken: proc(piece: string): bool {.closure, gcsafe.}): int
+              {.gcsafe.} =
   var toks = h.tokenize(prompt)
   if toks.len == 0:
     raise newException(LlamaError, "prompt tokenized to nothing")

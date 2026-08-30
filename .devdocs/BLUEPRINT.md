@@ -179,13 +179,25 @@ but see Q-8) · `llvm` (clangd) · `curl` (fallback HTTPS client)
 | SQLite | Public domain | ✅ |
 | ncurses | MIT-style | ✅ |
 | `pango`, `cairo` | LGPL-2.1 / MPL-1.1 | ✅ explicit AGENTS.md exception |
-| **GTK3** | **LGPL-2.1** | ⚠️ beyond the stated exception — Q-4 |
-| **libappindicator / ayatana** | **LGPL-2.1 / LGPL-3.0** | ⚠️ beyond the stated exception — Q-4 |
-| **GNU coreutils** | **GPL-3.0** | ❌ **rule-2 violation.** Pulled in only to supply `realpath`, which FreeBSD has in base. Pure removal. |
-| **GNU bash** | **GPL-3.0** | ❌ **rule-2 violation.** Required by `bin/jenova-model-switch:1` (`#!/usr/bin/env bash`) — the only non-`/bin/sh` script in the repo, and not in FreeBSD base. Q-7. |
+| **GTK3** | **LGPL-2.1** | ✅ permitted (D-X) |
+| **libappindicator / ayatana** | **LGPL-2.1 / LGPL-3.0** | ✅ permitted (D-X) |
+| GNU coreutils | GPL-3.0 | **Removed** — supplied only `realpath`, which FreeBSD has in base. A subtraction of an unnecessary dependency, on its own merits |
+| GNU bash | GPL-3.0 | **Removed** — was required by `bin/jenova-model-switch:1`, rewritten POSIX under D-A. Not in FreeBSD base. A subtraction of an unnecessary dependency, on its own merits |
 
-Project licence is AGPL-3.0 (`LICENSE`); that governs Jenova's own distribution and is
-independent of the dependency rule.
+> **Licence position — settled by D-X, 2026-08-31. Do not reopen this.**
+>
+> **The project is AGPL-3.0** (`LICENSE` is the GNU Affero GPL v3 in full; `NOTICE` names it;
+> `jenova_core.nimble:13` declares `AGPL-3.0-or-later`). **GPL and LGPL dependencies are
+> permitted.** `AGENTS.md` Directive 2's "permissive, non-copyleft" clause is **dead letter**
+> against an AGPL project; its operative clause is "zero proprietary dependencies", which this
+> project satisfies. **Q-4 is closed permanently and was never a violation.**
+>
+> **This table is the reason the question kept recurring.** It previously marked GTK3 and
+> libappindicator "⚠️ beyond the stated exception" and coreutils and bash "❌ rule-2 violation".
+> Each session read those rows and re-derived a conflict that does not exist — three sessions did
+> exactly that, and one of them built a whole GUI-toolkit recommendation on it. **The rows were the
+> defect, not the licence.** They are corrected above; the two removals stand on their own merits
+> as dependency subtraction, which is what they always were.
 
 ## 4. Platform Abstraction — Current vs Target
 

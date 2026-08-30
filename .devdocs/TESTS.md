@@ -22,13 +22,16 @@ scripts are the exception: they test the text, not the kernel. Anything touching
 
 ## 2. The automated suite
 
-`tests/Makefile` `check` target — **runs 3 of the 8 test scripts present**:
+`tests/Makefile` `check` target — **runs 4 of the 9 test scripts present**. *(Corrected
+2026-08-31; this section said "3 of 8" from before `test_api_db.sh` was added at N-S3b. The four
+orphans below are unchanged, so B-25 stands — only the count was wrong.)*
 
 | Script | Spec | Status |
 |---|---|---|
 | `test-health.sh` | Smoke test: the server starts and responds | **Cannot run on a clean machine** — requires `python3`, which `make deps` does not install (B-24). Also cannot pass on a headless start: `--daemon` brings up no `:8080` (B-13) |
-| `test-launcher.sh` | Config loading, module existence, `jenova-ca` verbs, health check, cleanup guard | Not executed this session |
+| `test-launcher.sh` | Config loading, module existence, `jenova-ca` verbs, health check, cleanup guard | Not executed |
 | `proxy-concurrency/all.sh` | Every proxy regression check — **the S-1 acceptance gate (V-4)** | See §3 |
+| `test_api_db.sh` | The `/api/db/*` contract against the Nim core, 22 assertions on a scratch database | **PASS 22/22** (2026-08-28). **Incomplete in one dimension — N-27:** every assertion checks database state over HTTP and none checks the filesystem, so it cannot see that `api.nim` omits `proxy.lua`'s ten `fs_sync` mirroring calls. See §5b |
 
 ### Orphaned — present but never invoked (B-25)
 
@@ -72,9 +75,25 @@ isolation covers `JCA_HOME` but **not the repository mirror** (B-22).
 **This is the true origin of commit `eee557e` "Revert hand-edit of etc/jenova.conf" — no hand
 edit ever occurred.** Do not run this script against a working tree until it is isolated.
 
-## 5. Verification gates — V-1 … V-6
+## 5. Verification gates — V-1 … V-6 — **DEFERRED to post-refactor by D-Y**
 
-Outstanding in full. **None has been executed on native FreeBSD** (blocker B-1).
+> **Ruling D-Y, 2026-08-31.** *"you are not going to test the deployment - as that will overwrite
+> my currently working version — you are focussing on the rewrite - the build testing happens
+> AFTER all refactoring has been completed."*
+>
+> **`make install`, `make verify` and `jenova-ca --daemon` are prohibited for the duration of the
+> rewrite.** The USER runs a working deployment from this tree; an install would overwrite it.
+>
+> **B-1 is not a blocker and never was one for this phase** — it was gating the wrong work.
+> V-1 … V-6 form a post-refactor acceptance phase, and the three test-surface defects that block
+> them — **B-08, B-23, B-24** — are prerequisites for a gate that is not yet due. They leave the
+> near-term path with the gates.
+>
+> **Still permitted, because they touch nothing deployed:** `make core`; `bin/jenova-core` and all
+> of its self-test subcommands against scratch databases; `sh -n`; read-only inspection. This is
+> the entire N-S* acceptance surface in §5a, which is unaffected by D-Y.
+
+The table below is retained as the specification of that future phase, not as current work.
 
 | ID | Gate | Blocked by |
 |---|---|---|
@@ -222,6 +241,91 @@ the fields supplied, soft deletes populate the trash listing, and import runs tr
 > asserted `projects/all` was empty, but a *different* workspace's project was legitimately still
 > alive — the cascade was right and the test was wrong. Rewritten to check the specific row. An
 > assertion that only passes because unrelated state happens to be empty is not a test.
+
+### N-S4 — in-process inference
+
+**`./bin/jenova-core llama-selftest [prompt]`** loads the model from config and generates,
+bypassing the server. Use it to separate a model/backend problem from a serving problem.
+
+**Recorded result, 2026-08-28** at the full deployed configuration — `devices=Vulkan0,Vulkan1`,
+`ctx=32768`, `slots=2`, `kv=q8_0`, `ngl=-1`, `threads=8`: loads (Vulkan0 152.85 MiB, Vulkan1
+381.11 MiB) and generates 48 tokens.
+
+**Serving, and the property that matters.** With `serve` running, issue a long generation and time
+other classes *while it runs*:
+
+```sh
+# long generation in the background
+printf 'POST /completion ... {"prompt":"...","max_tokens":180}' | nc 127.0.0.1 $PORT &
+# then, concurrently:
+GET /health            GET /api/db/workspaces            GET /
+```
+
+**Recorded result, 2026-08-28:** `/health` 3–4 ms, `/api/db/workspaces` 6 ms, `/` 3 ms, while the
+generation ran to all 180 tokens. **This is precisely the scenario in which `proxy.lua` froze
+every other client.** Warm the model with a one-token request first, or the timing measures model
+loading rather than serving.
+
+Streaming shape: `POST /v1/chat/completions` with `"stream":true` returns
+`Content-Type: text/event-stream` and `chat.completion.chunk` records terminated by
+`data: [DONE]`.
+
+> **Not covered by any test yet:** sampling parameters are ignored (N-25) and client disconnect
+> does not cancel a generation (N-26). Neither should be assumed working because these checks pass.
+
+## 5c. `tests/test_api_fs.sh` — the filesystem contract (N-S5a, 2026-08-31)
+
+**31 assertions, PASS.** Covers what §5b said was missing: physical path layout, the git repo per
+workspace, base64 `data:` decoding, rename-then-trash-the-old-path, the `<epoch>_<name>` trash
+naming, the `.metadata.json` sidecar, all four `/api/fs/*` routes, per-entity delete ordering, and
+that bulk import does *not* mirror.
+
+**Both API suites now run inside a `mktemp` `JCA_HOME` and delete only a directory matching their
+own prefix.** This is not hygiene — `test_api_db.sh` previously derived its database path as
+`"${JCA_HOME:-$HOME/JCA}/.system/jenova.db"` and `rm -f`'d it, **so `make check` deleted the live
+conversation database on any machine with a real deployment.**
+
+> **A vacuous run, caught before it was believed.** The first execution reported `ok` on eight
+> checks while the server was listening on a different port — every one an absence check, and an
+> absence check passes when the entire system is unreachable. **A `/health` liveness gate now runs
+> before any assertion.** Same lesson as the N-S3 phase-2 overlap collapse: an assertion that
+> cannot fail is not evidence.
+
+> **An over-strict assertion, corrected rather than accommodated.** It pinned the sidecar's byte
+> spacing — `fs_sync.lua` writes `{"type": "notes", …}`, the Nim core emits compact JSON. Only
+> those two components read the file and both parse it as JSON, so the formats are interchangeable
+> in both directions. **The fields are the contract; the spacing is incidental.**
+
+**And a fidelity finding that only appeared because the port broke an existing test.**
+`test_api_db.sh`'s restore-cascade assertions began failing. Not a regression: **`fs_sync.lua:70`
+refuses to mirror a row whose `id` is not a UUID, and `proxy.lua:899` deletes the row and answers
+500.** The test used `"n2"`, and had passed only because `api.nim` had no mirroring to reject it —
+**the test was encoding the gap rather than the contract.** Real UUIDs now, plus an assertion
+pinning the rejection.
+
+## 5b. N-27 — the dimension the contract test did not cover *(CLOSED 2026-08-31 by §5c)*
+
+Recorded 2026-08-31. **`test_api_db.sh` passes 22/22 and is not wrong. It is incomplete.**
+
+`lib/proxy.lua` calls `fs_sync` at **ten sites inside the `/api/db/*` routes** —
+`sync_workspace`, `sync_note`, `sync_fileAsset`, `trash_workspace`, `trash_project`,
+`trash_folder`, `trash_note`, `trash_fileAsset` — so creating a workspace makes a directory and
+deleting a note moves the file into a trash tree. `src/jenova/api.nim` performs none of it.
+
+**Why no assertion caught it:** all 22 issue HTTP requests and inspect the JSON that comes back.
+The filesystem is never examined, so the suite has no assertion that *could* fail on this. It is
+C-9's lesson in a new place — **a check that cannot fail in a dimension is not evidence about that
+dimension**, and a green suite says nothing about what it does not look at.
+
+**Required of the N-S5a acceptance test**, so this cannot recur:
+
+| Assertion | Why |
+|---|---|
+| Creating a workspace/project/folder through `/api/db/*` **creates the directory on disk** | The mirroring contract, in the dimension the current suite omits |
+| Deleting a note **moves the file into the trash tree**, and `GET /api/fs/trash` lists it | Pins delete-side mirroring and the `/api/fs/*` port together |
+| `POST /api/fs/trash/restore` **returns the file to its original path** | Restore is the half most likely to be quietly wrong |
+| `GET /api/fs/tree` matches the real directory contents | The route N-20 must reproduce |
+| **Run against the existing `proxy.lua` first, then the Nim core, and compare** | "Identical, not sensible" — `jca_web` is frozen under D-Z and must keep working unchanged |
 
 ## 6. What has actually been verified, and how
 

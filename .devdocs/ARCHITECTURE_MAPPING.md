@@ -37,11 +37,13 @@ New tree, created 2026-08-28 at stage N-S0. Grows as `lib/`, `bin/` and `scripts
 
 | Path | Role |
 |---|---|
-| `src/jenova_core.nim` | Entry point for `jenova-core`. Carries the FreeBSD-only compile guard (`{.error.}` when `freebsd` is undefined), mirroring the `#error` in `main.c`. Subcommands `paths`, `config`, `version`. States plainly which subsystems do not exist yet |
+| `src/jenova_core.nim` | Entry point for `jenova-core`. Carries the FreeBSD-only compile guard (`{.error.}` when `freebsd` is undefined), mirroring the `#error` in `main.c`. **Eight subcommands** (corrected 2026-08-31, was listed as three): `version`, `paths`, `config`, `db-init`, `db-selftest`, `serve`, `llama-selftest`, `serve-selftest`. `JENOVA_INPROC=0` reverts completions to proxying `llama-server` |
 | `src/jenova/paths.nim` | Layout detection and runtime path resolution — replaces the path half of `lib/jenova-conf.sh`. Every path derives from one place, so no module re-derives one from a possibly-unset variable (the B-07 defect class) |
 | `src/jenova/server.nim` | The HTTP server, replacing `lib/proxy.lua`. **A fixed pool of worker threads each block in `accept(2)` on one shared listening socket**; each connection is served start-to-finish on its own thread. No shared event loop exists to stall. `/debug/*` endpoints are off unless explicitly enabled |
+| `src/jenova/inference.nim` | The inference worker — **one dedicated thread that owns the llama context and is the only thread that ever touches it** (D-W: serial). Takes ownership of the client socket so the HTTP worker is freed immediately rather than sitting through a generation. Chat templating happens here, because it needs the loaded model |
 | `src/jenova/llama.nim` | Direct binding to `libllama`, replacing the `llama-server` subprocess. **Bound through `llama.h` itself, not by mirroring the ABI** — Nim compiles to C, so the C compiler owns every struct layout and a moved field is a compile error rather than a wrong pointer. This is the defect class S-1 deleted `ffi_defs.lua`'s Linux arm to remove |
-| `src/jenova/api.nim` | The `/api/db/*` routes, replacing `lib/proxy.lua:687-1005`. Seven entity tables described **as data** and served by generic handlers, rather than twenty hand-written routes. Soft deletes throughout; set-based cascades; declared integer columns so timestamps stay JSON numbers. The entity table is `const`, not `let`, because a shared refcounted global is not GC-safe across worker threads |
+| `src/jenova/api.nim` | The `/api/db/*` routes, replacing `lib/proxy.lua:687-1005`. Seven entity tables described **as data** and served by generic handlers, rather than twenty hand-written routes. Soft deletes throughout; set-based cascades; declared integer columns so timestamps stay JSON numbers. The entity table is `const`, not `let`, because a shared refcounted global is not GC-safe across worker threads. **Incomplete — see N-27 (2026-08-31):** `proxy.lua` calls `fs_sync` at ten sites *inside these same routes* to mirror creates and deletes onto the filesystem and a trash tree; `api.nim` has none of it. **Closed 2026-08-31 at N-S5a** — the ten mirroring call sites and the four `/api/fs/*` routes are now here, covered by `tests/test_api_fs.sh` |
+| `src/jenova/fssync.nim` | The filesystem mirror behind `/api/db/*` and the `/api/fs/*` routes, replacing `lib/fs_sync.lua`. Every workspace, project, folder, note and asset has a real counterpart under `$JENOVA_WORKSPACES`; deletes move into a trash tree beside a `.metadata.json` sidecar rather than unlinking, which is what makes restore possible. **This is the half of the contract `api.nim` was missing (N-27)** — and it is load-bearing for RAG, which indexes these files. Path layout, `<epoch>_<name>` trash naming and sidecar shape are reproduced exactly, because the frozen client reads them. Three `find`/`test -d`/`rm -rf` fork storms replaced with native walks (B-16, B-17); `git` takes an argument vector, not a quoted shell string |
 | `src/jenova/routes.nim` | Route classification and the per-class thread table. Six classes — static, health, api, completion, embed, debug — each with its own queue and threads. **Sized for a two-device personal product (D-T), 14 handler threads total** |
 | `src/jenova/upstream.nim` | Streaming reverse proxy to `llama-server` (:8081) and the embedding server (:8082), replacing the forwarding half of `lib/proxy.lua`. Verbatim byte relay with partial-write handling, so SSE reaches the client as the model produces it |
 | `src/jenova/http.nim` | HTTP/1.1 request parsing and response writing over blocking sockets, replacing `lib/http.lua`. Blocking is deliberate — one connection per thread. Includes SSE framing and static-path containment |
@@ -110,7 +112,6 @@ Shell modules are sourced; Lua modules run under LuaJIT.
 | `install.sh` | System installation. Sets `JENOVA_ROOT="$JCA_HOME"` (`:279`), deploys six launchers, icons, `lib/`, `scripts/`, profiles, `public/` |
 | `install-dependencies.sh` | Single FreeBSD `pkg` dependency list. **Omits `python3`** (B-24) |
 | `build-llama.sh` | Vulkan `external/llama.cpp` build + runtime tuning. Generates `jenova.local.conf` using names the hierarchy discards (B-12) |
-| `verify-install.sh` | Post-install verification. **Verifies a bundled Neovim distribution that does not exist** — cannot pass (B-08, Q-10) |
 | `update.sh` | Update/redeploy. Gates on `$SKIP_JVIM`, never set (B-28) |
 | `uninstall.sh` | Removal. Documents a `--purge` flag it does not parse (B-27) |
 | `cleanup.sh` | Runtime artifact cleanup. **Fixed 2026-08-28** — now sources `jenova-conf.sh` instead of deriving paths (B-07) |
@@ -119,16 +120,18 @@ Shell modules are sourced; Lua modules run under LuaJIT.
 
 ## 5. `hardware-profiles/` — 6 profiles, uniform depth 2
 
-Layout `<backend>/<config>` per ruling D-F. Each directory holds `jenova-setup`, `jenova.conf`
-(consumed by `jenova-ca`, unprefixed names) and `profile.conf` (metadata + match scores).
+Layout `<backend>/<config>` per ruling D-F. Each directory holds `jenova.conf` (consumed by
+`jenova-ca`, unprefixed names), `profile.conf` (metadata + match scores), and **optionally** a
+`jenova-setup` kernel-tuning script — absent for the two generic fallbacks since Q-11, which is a
+supported state, not a defect.
 
 | Profile | Tuning status |
 |---|---|
 | `Vulkan/dgpu-igpu-i5-1135g7` | Real FreeBSD sysctls ✅ |
 | `Vulkan/apu-ryzen7-5700u` | Real FreeBSD sysctls ✅ |
 | `Vulkan/dgpu-i5-1135g7` | Real sysctls, but `:94` resolves one level too deep post-S-6 |
-| `Vulkan/dgpu-generic-12gb` | **Not a tuning script** — config symlinker, root five `dirname` calls too high (B-09). This is the GPU fallback |
-| `CUDA/dgpu-generic` | Same defect (B-09). Opt-in only via `PROFILE_OPT_IN` (D-B) |
+| `Vulkan/dgpu-generic-12gb` | **No tuning script — deleted 2026-08-31 (Q-11).** It was a config symlinker with a root five `dirname` calls too high, not a tuning script. Data files only; `scripts/jenova-setup` reports "no tuning defined" and exits 0. This is the GPU fallback |
+| `CUDA/dgpu-generic` | Same — script deleted 2026-08-31 (Q-11). Opt-in only via `PROFILE_OPT_IN` (D-B) |
 | `CPU/generic` | **Entirely Linux** — `cpupower`, `/sys`, `numactl` (B-10). The only CPU-only profile |
 
 Supporting: `detect-hardware.sh` (scoring ladder + `--apply-profile`), `common-setup.sh`,
@@ -154,9 +157,10 @@ Links GTK3 / libappindicator (LGPL) — the open Q-4 licence exposure, deferred 
 ## 8. `tests/`
 
 Specs and status live in `TESTS.md`. Files: `Makefile`, `test-health.sh`, `test-launcher.sh`,
-`test_bin_jenova.sh`, `test_validate_arg.sh`, `test_gpu.sh`, `test_gpu_single.sh`,
-`download-draft-model.sh`, and `proxy-concurrency/` (`all.sh`, `run.sh`, `test_reaper.sh`,
-`stub_backend.py`, `probe_streams.py`, `test_ffi_flags.lua`, `README.md`).
+`test_api_db.sh` (added at N-S3b), `test_bin_jenova.sh`, `test_validate_arg.sh`, `test_gpu.sh`,
+`test_gpu_single.sh`, `download-draft-model.sh`, and `proxy-concurrency/` (`all.sh`, `run.sh`,
+`test_reaper.sh`, `stub_backend.py`, `probe_streams.py`, `test_ffi_flags.lua`, `README.md`).
+**Nine scripts; `make check` runs four** — corrected 2026-08-31 from a stale "3 of 8".
 
 ## 9. `jca_web/` — SvelteKit Web UI
 
@@ -176,4 +180,4 @@ Vite / Svelte / Playwright / ESLint / TS configs. Zero OS coupling (C-5).
 | `external/` | Submodules — `llama.cpp` and `ext_bin`. **Untouched by policy** |
 | `var/` | Runtime logs/cache within the source tree |
 | `docs/` | User-facing documentation, consolidated to 8 files in Session 002. Empty `architecture/`, `installation/`, `usage/` directories remain (B-38) |
-| `.devdocs/` | This workspace. Trackers + `ARCHIVE/` (pre-consolidation reference, retained until V-1…V-6 pass). **Split tracking, by design:** `.gitignore:54` ignores `/.devdocs/`, so the trackers are local-only — but `ARCHIVE/`, `CONCURRENCY_ANALYSIS.md` and `REMEDIATION_PLAN.md` are staged and tracked, having arrived by `git mv` from `docs/`. The process record is private; the engineering documents that came out of `docs/` stay in history |
+| `.devdocs/` | This workspace. Trackers + `ARCHIVE/` (pre-consolidation reference). **Fully tracked in git — corrected 2026-08-31.** This entry previously claimed `.gitignore:54` ignores `/.devdocs/` and that the trackers were therefore local-only. **That was false in both halves:** `.gitignore` contains no `devdocs` entry at all, and `git ls-files .devdocs/` lists the entire tree. **The process record is committed and public in repository history.** `PROGRESS.md`'s 2026-08-28 16:29 entry carries the same false claim and is corrected there |

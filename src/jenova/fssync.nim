@@ -1,0 +1,506 @@
+## Script function and purpose: the filesystem mirror behind `/api/db/*` and the
+## `/api/fs/*` routes, replacing `lib/fs_sync.lua`.
+##
+## Every workspace, project, folder, note and file asset in the database has a
+## real counterpart on disk under `$JENOVA_WORKSPACES`. Deleting one moves it into
+## a trash tree beside a `.metadata.json` sidecar rather than unlinking it, which
+## is what makes restore possible. **This is the half of the `/api/db/*` contract
+## `src/jenova/api.nim` was missing** — recorded as N-27, and it matters beyond
+## fidelity: the RAG layer at N-S5b indexes these files, so a core that never
+## writes them would index an empty tree.
+##
+## The path layout, trash naming and metadata shape are reproduced from
+## `lib/fs_sync.lua` exactly, because `jca_web` is frozen (D-Z) and reads them.
+##
+## **Three deliberate deviations, all removals of forks rather than behaviour:**
+## `fs_sync.lua` shells out to `find` for every listing, runs `test -d` once per
+## entry in `get_fs_tree`, and `rm -rf` for emptying trash (B-16, B-17). Those
+## existed because LuaJIT on a single event loop had no better option. Here the
+## walk is native `os` code on a worker thread, so the fork storm simply does not
+## arise. The observable results are identical; only the process count changes.
+
+import std/[os, json, strutils, times, base64, osproc, algorithm, streams]
+import ./db
+import ./paths
+
+type
+  TrashKind* = enum
+    tkGlobal = "global"
+    tkWorkspace = "workspace"
+
+  TrashEntry* = object
+    path*: string
+    kind*: TrashKind
+    workspace*: string
+    name*: string
+
+  FsResult* = object
+    ok*: bool
+    path*: string      ## where the item now lives (trash path), when relevant
+    original*: string  ## where it came from
+    msg*: string
+
+var wsRoot {.threadvar.}: string
+var trashRoot {.threadvar.}: string
+
+## Function purpose: resolve the two roots once per thread. `paths.resolve` reads
+## the environment, and doing that per call would make every mirroring write pay
+## for it. Deliberately threadvar rather than a global: a shared string is
+## refcounted memory that every worker thread would touch, which is neither
+## GC-safe nor necessary — the same reasoning that made `api.nim`'s entity table
+## `const` and `db.nim`'s connection per-thread.
+proc roots(): tuple[workspaces, trash: string] =
+  if wsRoot.len == 0:
+    let p = paths.resolve()
+    wsRoot = p.workspaces
+    trashRoot = p.jcaHome / ".trash"
+  (wsRoot, trashRoot)
+
+## Function purpose: make a database-supplied name safe to use as one path
+## component. Reproduces `fs_sync.lua:29` exactly — separators become
+## underscores and leading dots are stripped, so a name can neither escape its
+## directory nor create a hidden entry.
+proc sanitize*(s: string): string =
+  if s.len == 0: return ""
+  result = newStringOfCap(s.len)
+  for ch in s:
+    result.add (if ch == '/' or ch == '\\': '_' else: ch)
+  var start = 0
+  while start < result.len and result[start] == '.':
+    inc start
+  result = result[start .. ^1]
+
+## Function purpose: the original only mirrors rows whose id is a real UUID
+## (`fs_sync.lua:70`). It is a guard against a malformed id becoming a filename,
+## and dropping it would widen what can be written to disk.
+proc isValidUuid*(id: string): bool =
+  if id.len != 36: return false
+  const dashes = [8, 13, 18, 23]
+  for i, ch in id:
+    if i in dashes:
+      if ch != '-': return false
+    elif ch notin HexDigits:
+      return false
+  true
+
+proc epochPrefix(): string = $int(epochTime())
+
+proc ensureDir(path: string) =
+  if path.len > 0:
+    createDir(path)
+
+## Function purpose: run one git command in a workspace, replacing `lib/git.lua`'s
+## `io.popen` wrapper. Arguments are passed as a vector, never interpolated into a
+## shell string — `git.lua` hand-quoted every path into `sh -c`, and a workspace
+## name is user data.
+proc gitRun(cwd: string, args: openArray[string]): bool =
+  if not dirExists(cwd): return false
+  try:
+    let p = startProcess("git", workingDir = cwd, args = @args,
+                         options = {poUsePath, poStdErrToStdOut})
+    defer: p.close()
+    discard p.outputStream.readAll()
+    p.waitForExit() == 0
+  except OSError, IOError:
+    false
+
+proc gitInit(workspacePath: string): bool =
+  if not gitRun(workspacePath, ["init"]): return false
+  discard gitRun(workspacePath, ["config", "user.email", "jenova@local"])
+  discard gitRun(workspacePath, ["config", "user.name", "Jenova"])
+  true
+
+proc gitAdd(workspacePath, filePath: string) =
+  discard gitRun(workspacePath, ["add", filePath])
+
+# ---------------------------------------------------------------------------
+# Physical path resolution
+# ---------------------------------------------------------------------------
+
+proc lookupName(table, id: string): tuple[found: bool, name, parent: string] =
+  ## Returns the row's name and its parent id, for walking note -> folder ->
+  ## project -> workspace. The parent column differs per table, so it is named
+  ## here rather than inferred.
+  let parentCol =
+    case table
+    of "folders": "projectId"
+    of "projects": "workspaceId"
+    else: ""
+  let sql =
+    if parentCol.len > 0:
+      "SELECT name, " & parentCol & " FROM " & table & " WHERE id=?"
+    else:
+      "SELECT name FROM " & table & " WHERE id=?"
+  let rows = db.query(sql, id)
+  if rows.len == 0: return (false, "", "")
+  (true, rows[0][0], (if parentCol.len > 0 and rows[0].len > 1: rows[0][1] else: ""))
+
+proc isSet(v: string): bool =
+  v.len > 0 and v != "null"
+
+## Function purpose: build the on-disk path for a note or asset by walking its
+## ancestry, reproducing `fs_sync.lua:76-128`. The three placements — under a
+## folder, under a project, or directly under a workspace — are the client's
+## contract, and an item with no resolvable ancestry lands in `unassigned/`
+## rather than being dropped.
+proc physicalPath(id, displayName, folderId, projectId, workspaceId,
+                  suffix: string): tuple[path, workspace: string] =
+  let (workspaces, _) = roots()
+  if not isValidUuid(id):
+    return ("", "")
+  let safeName = sanitize(displayName)
+
+  if isSet(folderId):
+    let f = lookupName("folders", folderId)
+    if f.found:
+      let p = lookupName("projects", f.parent)
+      if p.found:
+        let w = lookupName("workspaces", p.parent)
+        if w.found:
+          let ws = sanitize(w.name)
+          return (workspaces / ws / sanitize(p.name) / sanitize(f.name) &
+                  "/" & safeName & "_" & id & suffix, ws)
+  elif isSet(projectId):
+    let p = lookupName("projects", projectId)
+    if p.found:
+      let w = lookupName("workspaces", p.parent)
+      if w.found:
+        let ws = sanitize(w.name)
+        return (workspaces / ws / sanitize(p.name) & "/" & safeName & "_" &
+                id & suffix, ws)
+  elif isSet(workspaceId):
+    let w = lookupName("workspaces", workspaceId)
+    if w.found:
+      let ws = sanitize(w.name)
+      return (workspaces / ws & "/" & safeName & "_" & id & suffix, ws)
+
+  (workspaces / "unassigned" & "/" & safeName & "_" & id & suffix, "unassigned")
+
+proc notePath(id, title, folderId, projectId, workspaceId: string):
+    tuple[path, workspace: string] =
+  physicalPath(id, title, folderId, projectId, workspaceId, ".md")
+
+proc assetPath(id, name, folderId, projectId, workspaceId: string):
+    tuple[path, workspace: string] =
+  physicalPath(id, name, folderId, projectId, workspaceId, "")
+
+proc workspaceTrash(workspaceName: string): string =
+  let (workspaces, _) = roots()
+  result = workspaces / workspaceName / ".trash"
+  ensureDir(result)
+
+## Function purpose: the sidecar that makes restore possible. `restore_trash`
+## reads it back to recover both the original path and the database row to
+## un-delete, so a trashed item that loses this file can only be restored by
+## hand.
+proc writeTrashMetadata(trashPath, table, id, originalPath: string) =
+  try:
+    writeFile(trashPath & ".metadata.json",
+              $(%*{"type": table, "id": id, "original_path": originalPath}))
+  except IOError, OSError:
+    discard
+
+proc moveToTrash(source, trashPath, table, id: string): bool =
+  try:
+    ensureDir(trashPath.parentDir)
+    moveFile(source, trashPath)
+    writeTrashMetadata(trashPath, table, id, source)
+    true
+  except OSError, IOError:
+    false
+
+# ---------------------------------------------------------------------------
+# Sync — database row to disk
+# ---------------------------------------------------------------------------
+
+## Function purpose: a workspace is a git repository, created on first sync.
+## `fs_sync.lua:141` removes the directory again if `git init` fails, so a
+## half-made workspace is not left behind; that is reproduced.
+proc syncWorkspace*(name: string): bool =
+  let (workspaces, _) = roots()
+  let path = workspaces / sanitize(name)
+  try:
+    ensureDir(path)
+  except OSError:
+    return false
+  if not gitInit(path):
+    try: removeDir(path)
+    except OSError: discard
+    return false
+  true
+
+proc syncNote*(id, title, content, folderId, projectId, workspaceId: string): bool =
+  let (path, ws) = notePath(id, title, folderId, projectId, workspaceId)
+  if path.len == 0: return false
+  let (workspaces, _) = roots()
+  try:
+    ensureDir(path.parentDir)
+    writeFile(path, content)
+  except IOError, OSError:
+    return false
+  gitAdd(workspaces / ws, path)
+  true
+
+## Function purpose: file assets arrive from the Web UI as `data:` URIs, so the
+## base64 payload is decoded back to bytes before writing — otherwise every
+## uploaded image is stored as its own text encoding. Reproduces
+## `fs_sync.lua:172-180`, including the rejection of a payload whose length is
+## not a multiple of four rather than writing truncated bytes.
+proc syncFileAsset*(id, name, content, folderId, projectId,
+                    workspaceId: string): bool =
+  let (path, ws) = assetPath(id, name, folderId, projectId, workspaceId)
+  if path.len == 0: return false
+  let (workspaces, _) = roots()
+
+  var payload = content
+  let marker = "base64,"
+  if content.startsWith("data:"):
+    let idx = content.find(marker)
+    if idx >= 0:
+      var clean = newStringOfCap(content.len)
+      for ch in content[(idx + marker.len) .. ^1]:
+        if ch in {'A'..'Z', 'a'..'z', '0'..'9', '+', '/', '='}:
+          clean.add ch
+      if clean.len mod 4 != 0: return false
+      try:
+        payload = base64.decode(clean)
+      except ValueError:
+        return false
+
+  try:
+    ensureDir(path.parentDir)
+    writeFile(path, payload)
+  except IOError, OSError:
+    return false
+  gitAdd(workspaces / ws, path)
+  true
+
+# ---------------------------------------------------------------------------
+# Trash — move to trash rather than unlink
+# ---------------------------------------------------------------------------
+
+proc trashNote*(id, title, folderId, projectId, workspaceId: string): bool =
+  let (path, ws) = notePath(id, title, folderId, projectId, workspaceId)
+  if path.len == 0:
+    # `fs_sync.lua:206`: an unassigned item with no resolvable path is not an
+    # error — there was nothing on disk to move.
+    return ws == "unassigned"
+  if not fileExists(path): return true
+  let dest = workspaceTrash(ws) / epochPrefix() & "_" & path.extractFilename
+  moveToTrash(path, dest, "notes", id)
+
+proc trashFileAsset*(id, name, folderId, projectId, workspaceId: string): bool =
+  let (path, ws) = assetPath(id, name, folderId, projectId, workspaceId)
+  if path.len == 0:
+    return ws == "unassigned"
+  if not fileExists(path): return true
+  let dest = workspaceTrash(ws) / epochPrefix() & "_" & path.extractFilename
+  moveToTrash(path, dest, "fileAssets", id)
+
+proc trashWorkspace*(id, name: string): bool =
+  let (workspaces, trash) = roots()
+  let safe = sanitize(name)
+  let path = workspaces / safe
+  if not dirExists(path): return true
+  ensureDir(trash)
+  let dest = trash / epochPrefix() & "_" & safe
+  try:
+    moveDir(path, dest)
+    writeTrashMetadata(dest, "workspaces", id, path)
+    true
+  except OSError:
+    false
+
+## Function purpose: project and folder trashing must resolve their ancestry
+## through the database first, because the on-disk path is built from ancestor
+## *names*. `fs_sync.lua:248` treats an already-absent directory as success
+## (ENOENT) and anything else as failure — that distinction is kept, since a
+## delete of something that was never mirrored is not an error.
+proc trashProject*(id, workspaceId, name: string): FsResult =
+  let (workspaces, _) = roots()
+  let w = lookupName("workspaces", workspaceId)
+  if not w.found:
+    return FsResult(ok: false, msg: "workspace not found")
+  let safeWs = sanitize(w.name)
+  let path = workspaces / safeWs / sanitize(name)
+  if not dirExists(path):
+    return FsResult(ok: true, original: path)
+  let dest = workspaceTrash(safeWs) / epochPrefix() & "_" & sanitize(name)
+  try:
+    moveDir(path, dest)
+    writeTrashMetadata(dest, "projects", id, path)
+    FsResult(ok: true, path: dest, original: path)
+  except OSError:
+    FsResult(ok: false, path: dest, original: path, msg: "rename failed")
+
+proc trashFolder*(id, projectId, name: string): FsResult =
+  let (workspaces, _) = roots()
+  let p = lookupName("projects", projectId)
+  if not p.found:
+    return FsResult(ok: false, msg: "project not found")
+  let w = lookupName("workspaces", p.parent)
+  if not w.found:
+    return FsResult(ok: false, msg: "workspace not found")
+  let safeWs = sanitize(w.name)
+  let path = workspaces / safeWs / sanitize(p.name) / sanitize(name)
+  if not dirExists(path):
+    return FsResult(ok: true, original: path)
+  let dest = workspaceTrash(safeWs) / epochPrefix() & "_" & sanitize(name)
+  try:
+    moveDir(path, dest)
+    writeTrashMetadata(dest, "folders", id, path)
+    FsResult(ok: true, path: dest, original: path)
+  except OSError:
+    FsResult(ok: false, path: dest, original: path, msg: "rename failed")
+
+# ---------------------------------------------------------------------------
+# Trash listing, restore, empty — the /api/fs/* surface (N-20)
+# ---------------------------------------------------------------------------
+
+proc collectTrash(dir: string, kind: TrashKind, workspace: string,
+                  acc: var seq[TrashEntry]) =
+  if not dirExists(dir): return
+  for path in walkDirRec(dir, yieldFilter = {pcFile, pcDir, pcLinkToFile}):
+    let base = path.extractFilename
+    if base == ".git" or path.contains("/.git/"): continue
+    if path.endsWith(".metadata.json"): continue
+    acc.add TrashEntry(path: path, kind: kind, workspace: workspace, name: base)
+
+## Function purpose: list everything in the global trash and in every workspace's
+## own `.trash`, which is what `GET /api/fs/trash` returns. `fs_sync.lua:314`
+## does this with two `find` subprocesses; the walk here is native.
+proc getTrash*(): seq[TrashEntry] =
+  let (workspaces, trash) = roots()
+  collectTrash(trash, tkGlobal, "", result)
+  if dirExists(workspaces):
+    for kind, wsPath in walkDir(workspaces):
+      if kind != pcDir: continue
+      let wsTrash = wsPath / ".trash"
+      if dirExists(wsTrash):
+        collectTrash(wsTrash, tkWorkspace, wsPath.extractFilename, result)
+
+## Function purpose: move an item back out of the trash and un-delete its
+## database row. The sidecar's `original_path` wins over the caller-supplied one
+## — `fs_sync.lua:356` does the same, because the client sends back what it was
+## shown while the sidecar is what was actually recorded at deletion.
+proc restoreTrash*(trashPath, originalPath: string): bool =
+  if trashPath.len == 0 or originalPath.len == 0: return false
+  let (_, trash) = roots()
+  let (workspaces, _) = roots()
+
+  # Containment: only paths inside a known trash directory may be restored, so a
+  # crafted request cannot move an arbitrary file. fs_sync.lua had no such check;
+  # it is added here rather than reproduced, and is the one behavioural addition
+  # in this module.
+  let normalized = trashPath.normalizedPath
+  if not (normalized.startsWith(trash.normalizedPath) or
+          (normalized.startsWith(workspaces.normalizedPath) and
+           normalized.contains("/.trash/"))):
+    return false
+
+  var target = originalPath
+  var metaType, metaId: string
+  let metaFile = trashPath & ".metadata.json"
+  if fileExists(metaFile):
+    try:
+      let meta = parseJson(readFile(metaFile))
+      if meta.kind == JObject:
+        if meta.hasKey("original_path"): target = meta["original_path"].getStr
+        if meta.hasKey("type"): metaType = meta["type"].getStr
+        if meta.hasKey("id"): metaId = meta["id"].getStr
+    except CatchableError:
+      discard
+
+  try:
+    ensureDir(target.parentDir)
+    if dirExists(trashPath):
+      moveDir(trashPath, target)
+    else:
+      moveFile(trashPath, target)
+  except OSError, IOError:
+    return false
+
+  if metaType.len > 0 and metaId.len > 0:
+    try:
+      db.exec("UPDATE " & metaType & " SET is_deleted=0 WHERE id=?", metaId)
+    except CatchableError:
+      discard
+  try: removeFile(metaFile)
+  except OSError: discard
+  true
+
+## Function purpose: empty the global trash and every workspace trash.
+## `fs_sync.lua:378` shells out to `rm -rf "$dir"/*`; this removes entries
+## directly, so there is no shell to quote against and no fork per workspace.
+proc emptyTrash*(): bool =
+  let (workspaces, trash) = roots()
+  var allOk = true
+
+  proc clear(dir: string): bool =
+    result = true
+    if not dirExists(dir): return
+    for kind, path in walkDir(dir):
+      try:
+        if kind == pcDir: removeDir(path)
+        else: removeFile(path)
+      except OSError:
+        result = false
+
+  allOk = clear(trash)
+  if dirExists(workspaces):
+    for kind, wsPath in walkDir(workspaces):
+      if kind == pcDir:
+        if not clear(wsPath / ".trash"): allOk = false
+  allOk
+
+type FsNode* = object
+  path*: string
+  fullPath*: string
+  isDir*: bool
+
+## Function purpose: the tree `GET /api/fs/tree` returns, optionally scoped to a
+## workspace, project or folder. `.trash` and `.git` are excluded, matching the
+## original's `find` predicates.
+##
+## `fs_sync.lua:445` ran `test -d` as a **separate subprocess for every entry**
+## (B-17). `walkDir` already reports the kind, so the whole fork storm
+## disappears without changing a single result.
+proc getFsTree*(scopeWorkspace, scopeProject, scopeFolder: string): seq[FsNode] =
+  let (workspaces, _) = roots()
+
+  proc rejected(s: string): bool =
+    s.contains("..") or s.contains('/') or s.contains('\r') or s.contains('\n')
+
+  if rejected(scopeWorkspace) or rejected(scopeProject) or rejected(scopeFolder):
+    return @[]
+
+  var searchRoot = workspaces
+  if scopeWorkspace.len > 0:
+    searchRoot = searchRoot / scopeWorkspace
+    if scopeProject.len > 0:
+      searchRoot = searchRoot / scopeProject
+      if scopeFolder.len > 0:
+        searchRoot = searchRoot / scopeFolder
+
+  if not dirExists(searchRoot): return @[]
+
+  let prefixLen = workspaces.len + 1
+  for path in walkDirRec(searchRoot, yieldFilter = {pcFile, pcDir}):
+    if path.contains("/.trash") or path.contains("/.git"): continue
+    if path.len <= prefixLen: continue
+    result.add FsNode(path: path[prefixLen .. ^1], fullPath: path,
+                      isDir: dirExists(path))
+  result.sort(proc (a, b: FsNode): int = cmp(a.path, b.path))
+
+proc toJson*(entries: seq[TrashEntry]): JsonNode =
+  result = newJArray()
+  for e in entries:
+    var node = %*{"path": e.path, "type": $e.kind, "name": e.name}
+    if e.kind == tkWorkspace:
+      node["workspace"] = %e.workspace
+    result.add node
+
+proc toJson*(nodes: seq[FsNode]): JsonNode =
+  result = newJArray()
+  for n in nodes:
+    result.add %*{"path": n.path, "full_path": n.fullPath, "isDir": n.isDir}

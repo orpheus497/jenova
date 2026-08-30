@@ -150,10 +150,16 @@ fi
 
 PROFILE_SETUP="$PROFILE_DIR/jenova-setup"
 
+# Action purpose: a profile with no jenova-setup defines no kernel tuning, which is a
+# legitimate state — the generic fallback profiles deliberately have none. Treat it as a
+# normal outcome and exit 0, so `sudo jenova-setup` on a fallback profile is not a failure.
+# It was a hard error until ruling Q-11 deleted the two scripts that only symlinked a config.
 if [ ! -f "$PROFILE_SETUP" ]; then
-    fail "Profile '$PROFILE_NAME' has no jenova-setup script"
-    info "Expected: $PROFILE_SETUP"
-    exit 1
+    ok "Matched profile: $PROFILE_NAME"
+    info "No system tuning is defined for this profile; nothing to apply."
+    info "Profile configuration is deployed separately:"
+    info "  ./hardware-profiles/detect-hardware.sh --apply-profile $PROFILE_NAME"
+    exit 0
 fi
 
 ok "Matched profile: $PROFILE_NAME"

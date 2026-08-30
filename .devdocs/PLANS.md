@@ -2,11 +2,19 @@
 
 Forward-looking strategy for implementations that are scoped but not yet built.
 
-**Last updated:** 2026-08-28 19:49 — Codebase Integrity Standard added (Session 004)
+**Last updated:** 2026-08-31 09:08 — N-S5 scoped; Q-24…Q-26 raised; licence text corrected per D-X
 
 ---
 
 ## Codebase Integrity Standard
+
+> **Provenance corrected 2026-08-31.** This section was authored under the belief that
+> `AGENTS.md` **Directive 6** mandated a per-session pass against it. **There is no Directive 6.**
+> `AGENTS.md` has four directives, and the devdocs cite a superseded numbering in 14 places. The
+> standard is **retained on its merits** — it caught B-35 … B-38 and the `chatPrompt` stub before
+> either shipped — but it stands as **workspace practice, not governance**. `D-J` and `C-10`, which
+> were built on the same false premise, are qualified by this note. Read every "Directive 6"
+> reference below as "this standard".
 
 **Referenced by `AGENTS.md` Directive 6, which mandates a pass every session, proportional to
 the area touched.** The directive pointed at this file from the outset; the section did not
@@ -102,7 +110,8 @@ shrink as stages land. Matches Directive 4 and keeps the two eras visibly separa
 | **N-S2** | `jca_db.nim` — SQLite against the existing schema, so `jca_web` keeps working through `/api/db/*` | `lib/db.lua` | medium |
 | **N-S3** | Async HTTP server + SSE; serve `jca_web` static; unify the three ports behind one router; basic daemon lifecycle | `lib/proxy.lua`, `lib/http.lua`, `lib/json.lua`. **Fixes B-19, B-13** | **high** — the concurrency-sensitive core |
 | **N-S4** | Direct `libllama` linkage; inference isolated on its own thread (N-7) | the `llama-server` subprocess | high |
-| **N-S5** | `jca_rag.nim` — embeddings and search, wired to the ingest path | `lib/embed.lua`, `lib/search.lua`. **Fixes B-14, B-15** | medium |
+| **N-S5a** | **Reordered in 2026-08-31.** `fs_sync` port + the four `/api/fs/*` routes | `lib/fs_sync.lua`, and **the last of `lib/proxy.lua`**. **Fixes N-27, N-20** | medium |
+| **N-S5b** | `jca_rag.nim` — embeddings and search, wired to the ingest path | `lib/embed.lua`, `lib/search.lua`. **Fixes B-14, B-15** | medium |
 | **N-S6** | Full lifecycle parity: `start`/`stop`/`status`, LAN mode without the GUI (Directive 3), `hardware-profiles/` consumption | `bin/jenova-ca` and the shell orchestrators | medium |
 | **N-S7** | **GUI** — owlkettle window, chat view, streaming, GtkSourceView code blocks, tray on StatusNotifierItem | `jenova-ui/src/main.c`, `lib/ui.lua`, the GTK3 dependency | **high** — owlkettle risk lands here, late |
 | **N-S8** | `jenova-cli` — terminal agentic loop with tool execution | — | medium |
@@ -116,6 +125,94 @@ dependency change in the near term is whatever `jca_db.nim` needs at N-S2.
 toolkit surprises arrive after the backend is committed. If that proves uncomfortable, the
 mitigation is a throwaway spike at any point before N-S7 — cheap, and it does not disturb the
 order.
+
+---
+
+## N-S5 — scoped 2026-08-31. **Three design questions gate it.**
+
+Read first-hand this session: `lib/search.lua` (871 lines), `lib/embed.lua` (202),
+`lib/fs_sync.lua` (454), and the `/api/fs/*` and `/api/db/*` route bodies in `lib/proxy.lua`.
+
+### N-S5a — `fs_sync` and `/api/fs/*`, before RAG
+
+**Why it moved ahead of RAG.** N-27: `api.nim` reproduces only the database half of `/api/db/*`.
+`proxy.lua` calls `fs_sync` at ten sites inside those routes to mirror creates and deletes onto
+real directories and a trash tree. **RAG indexes files, and these are the files.** Porting the
+retrieval layer onto a core that never writes them would index an empty tree — a more elaborate
+version of the B-15 defect N-S5 exists to fix. It is also the same module `/api/fs/*` needs, so
+N-20 and N-27 are one stage.
+
+**Surface, enumerated:** 13 `fs_sync` functions; 4 routes (`GET /api/fs/trash`,
+`POST /api/fs/trash/restore`, `DELETE /api/fs/trash/empty`, `GET /api/fs/tree`); 10 call sites
+inside `/api/db/*`. **This retires `lib/proxy.lua` completely** — it is the last thing holding it
+alive.
+
+**Two defects not to reproduce**, both already recorded: `get_fs_tree` forks `test -d` per entry
+(B-16/B-17 — Nim stats directly, no fork), and three blocking `io.popen` sites in `fs_sync` exist
+only because Lua had no threads (B-16 — the worker pool makes them ordinary blocking calls).
+
+**Acceptance:** the filesystem assertions specified in `TESTS.md §5b`, **run against `proxy.lua`
+first and then the Nim core, and compared.** `jca_web` is frozen under D-Z and must keep working
+unchanged, so the standard is identical, not sensible.
+
+### N-S5b — RAG. What the Lua implementation actually does
+
+`search.lua` is a hybrid retriever: BM25 (`k1=1.5`, `b=0.75`) weighted **0.4**, cosine similarity
+over embeddings weighted **0.6**, chunked at **300 words with 50-word overlap**, embedded in
+batches of 8. `embed.lua` talks HTTP to a `llama-server --embedding` subprocess on **:8082**.
+
+**Three structural defects in that design, found by reading it rather than by reading the
+trackers.** These are why N-S5b is a redesign, not a transcription:
+
+| # | Defect | Consequence |
+|---|---|---|
+| 1 | **The BM25 index is process-global memory only** — `bm25_index`, `df`, `total_docs`, `avg_dl` are module-level Lua tables, and **nothing persists them** | Every restart loses the entire keyword index. This is *why* B-15's `total_docs == 0` is so total: even with callers wired up, the index would not survive a restart |
+| 2 | **The vector index is one JSON blob** at `$JENOVA_STATE/vectors.json`, read whole into memory, merged under a hard **20 MB** cap | Above the cap it silently stops merging. It is a whole-file rewrite on every save |
+| 3 | **Chunk text is not persisted** — `load_vectors` sets `text = ""` with the comment *"text not persisted"* | After a restart, semantic hits can be scored but **cannot produce a snippet**. Retrieval half-works in a way that looks like a ranking problem |
+
+**And the concurrency constraint that decides the design.** Both indexes are mutable shared state.
+Under D-S there is no event loop — there are 14 worker threads. **Shared refcounted globals are not
+GC-safe in Nim across threads**, which is exactly what bit `api.nim` at N-S3b (`let` → `const`) and
+what the N-S2 write-once path buffer exists to avoid. A direct transcription would not compile, and
+if forced to compile with `{.gcsafe.}` it would be a data race. **This is the reason the storage
+question below must be answered before any code is written, not during.**
+
+### The three questions — all USER decisions
+
+**Q-24 — Where do the two indexes live?**
+
+| | Option | For | Against |
+|---|---|---|---|
+| **A** | **SQLite, both** — BM25 via FTS5, vectors in a BLOB table | One store, one lifecycle, already per-thread and concurrent (N-S2), survives restart, no cap, snippets recoverable. Kills defects 1–3 **and** the GC-safety problem in one move | Needs FTS5 in the linked `libsqlite3` — **unverified, and under D-AB I will not assert it from a Linux-side check**; must be confirmed by the native build |
+| **B** | **SQLite for vectors, in-memory BM25 rebuilt at startup** | No FTS5 dependency | Startup cost proportional to corpus; keeps defect 1's rebuild; still needs a thread-safe in-memory structure |
+| **C** | **Port the files as-is** (`vectors.json` + in-memory BM25) | Smallest diff, bit-identical behaviour | Carries all three defects forward and hits the GC-safety wall immediately |
+
+**Recommendation: A**, contingent on FTS5 being present in the native build — which is a check, not
+an assumption. Fallback to B if absent.
+
+**Q-25 — Do embeddings run in-process, or stay a subprocess?**
+
+N-S4 proved direct `libllama` linkage, so the `:8082` subprocess is no longer forced.
+
+| | Option | For | Against |
+|---|---|---|---|
+| **A** | **Second in-process `llama_context` for the embedding model** | One process (D-N), no HTTP hop, no port, no lifecycle to supervise; `upstream.nim`'s embed path and the whole `:8082` surface disappear | **VRAM.** This is a 4 GB GTX 1650 Ti already running the agent model at `CTX_SIZE=32768` across Vulkan0+Vulkan1. Two contexts may not fit |
+| **B** | **Keep `llama-server --embedding` on :8082**, proxied as today | Known-working; embedding memory is a separate process the OS can page | Contradicts the single-binary direction; keeps a subprocess N-S6 must supervise |
+| **C** | **In-process, CPU-only for embeddings** | No VRAM cost at all; embedding is throughput-tolerant background work | Slower; needs a per-context device override the `LoadSpec` does not currently carry |
+
+**No recommendation — this is a hardware judgement about your machine, and C-14 is the standing
+reminder of what happens when I guess at its limits.** C looks attractive on paper because
+`embed.lua` already disables Vulkan for the embed server (`GGML_VULKAN_DISABLE=1`), which suggests
+the existing deployment reached the same conclusion — but that is inference from one line, not
+evidence, and it is your call.
+
+**Q-26 — Does the ingest path index automatically, or on demand?**
+
+B-15's root cause is that `index_dir` and `reindex_file` have **zero callers repo-wide**. Wiring
+them up is the fix, but *where* is a product decision: index on every `fs_sync` write (fresh, but
+embedding work on the write path), on an explicit request, or on a periodic sweep. **Recommendation:
+index on write, queued to a background worker thread** — never on the inference thread (C-13) and
+never inline in the request. But the trade-off is yours.
 
 ### What this plan does not do
 
@@ -246,8 +343,11 @@ Two sites, both required — fixing one alone leaves the dependency:
 Then confirm the repository holds exactly zero non-`/bin/sh` shebangs outside the three
 intentional `#!/usr/bin/env luajit` files.
 
-**Why early.** It is self-contained, it removes a GPL-3.0 dependency (AGENTS.md rule 2), and it
-removes an unstated `pkg install bash` that no install path mentions.
+**Why early.** It is self-contained, and it removes an unstated `pkg install bash` that no install
+path mentions — a dependency FreeBSD base makes unnecessary. *(Corrected 2026-08-31: this
+previously read "removes a GPL-3.0 dependency (AGENTS.md rule 2)". **D-X** rules that clause dead
+letter — the project is AGPL-3.0 and copyleft is permitted. The removal was always justified as
+subtraction of an unnecessary dependency, never as licence compliance.)*
 
 **Risk: low**, but it is a behavioural rewrite of a working script — verify model switching
 still works before moving on.

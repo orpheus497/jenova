@@ -50,7 +50,6 @@ The `jenova.desktop` entry launches `jenova`.
 scripts/update.sh --all        # pull, rebuild jenova-ui and the Web UI, re-apply the profile
 scripts/cleanup.sh --all       # clear logs, cache, stale PID and lock files
 scripts/uninstall.sh           # remove deployed files; models are preserved
-scripts/verify-install.sh --full
 ```
 
 ```sh

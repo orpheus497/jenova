@@ -30,7 +30,7 @@ are not dependencies — every script here is POSIX `/bin/sh`.
 Dependencies install themselves: every build target runs `scripts/install-dependencies.sh` first,
 and a package that cannot be installed stops the build. There is no optional tier.
 
-Individual targets: `make deps`, `make llama`, `make jenova-ui`, `make web`, `make verify`.
+Individual targets: `make deps`, `make llama`, `make jenova-ui`, `make web`, `make core`.
 
 ---
 

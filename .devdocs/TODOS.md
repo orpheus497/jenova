@@ -2,7 +2,19 @@
 
 Granular task list. Completed items move to the `BLUEPRINT.md` implementation registry.
 
-**Last updated:** 2026-08-28 19:49
+**Last updated:** 2026-08-31 09:08
+
+---
+
+## Rulings in force — 2026-08-31, closed permanently
+
+| Ruling | Effect |
+|---|---|
+| **D-X** | **Licence is AGPL-3.0; copyleft dependencies permitted. Q-4 closed permanently.** `AGENTS.md` Directive 2's copyleft clause is dead letter; its operative clause is "zero proprietary dependencies". **Not to be raised again by any session** |
+| **D-Y** | **No deployment/build/install testing until the rewrite is complete.** `make install`, `make verify`, `jenova-ca --daemon` **prohibited**. B-1 superseded; V-1 … V-6 move to a post-refactor phase, taking B-08, B-23, B-24 off the near path |
+| **D-Z** | **`jca_web/` frozen — not touched, edited or damaged.** The `jca_web/src/` full read is **cancelled**. B-01, B-03, B-04 deferred to N-S9 |
+| **D-AB** | **Linuxulator: a detection is not evidence until its mechanism is shown not to route through the emulation layer.** State the mechanism with the claim |
+| **N-8** | **CLOSED — substantially wrong, my error.** `AGENTS.md` has four directives; no Directive 7, `.dbc` or `test_roms/`. Separately, **`Directive 6` is cited 14× across these docs and does not exist** — the Codebase Integrity Standard is retained as practice, not governance |
 
 ---
 
@@ -40,11 +52,14 @@ Granular task list. Completed items move to the `BLUEPRINT.md` implementation re
 | ~~N-S3a~~ | **Complete 2026-08-28** — threaded HTTP server, static serving, SSE. D-R satisfied and measured. See `PROGRESS.md` |
 | ~~N-S3b~~ | **Complete 2026-08-28** — `/api/db/*` reproduced with a 22-assertion contract test; completion/embed proxying in place. See `PROGRESS.md` |
 | ~~N-S4a~~ | **Complete 2026-08-28** — direct `libllama` linkage verified generating on Vulkan0. See `PROGRESS.md` |
-| **N-S4b** | **Blocked on Q-23.** Inference thread(s) + wiring `/v1/*` to in-process generation instead of the upstream proxy. The concurrency shape depends on the slots ruling |
+| ~~N-S4b~~ | **Complete 2026-08-28** — in-process generation, streaming, model's own chat template; other classes verified responsive during generation. See `PROGRESS.md` |
+| ~~N-S5a~~ | **Complete 2026-08-31** — `fssync.nim`, the ten mirroring call sites, the four `/api/fs/*` routes, and `tests/test_api_fs.sh` (31 assertions, PASS). N-27 and N-20 closed. See `PROGRESS.md` |
+| **N-S5b** | RAG — embeddings and search wired to the ingest path (fixes B-14, B-15). Runs on worker threads, never the inference thread (C-13). **Two design questions are open and gate all of it** — index storage, and in-process vs subprocess embeddings. See `PLANS.md` |
+| **N-25** | **`/completion` and `/v1/*` accept only a subset of parameters** — `prompt`/`messages`, `stream`, `max_tokens`/`n_predict`. Sampling parameters (`temperature`, `top_p`, `top_k`, `repeat_penalty`, `stop`) are parsed by neither and silently ignored. The sampler chain is built once at load from config, not per request |
+| **N-26** | **No cancellation on client disconnect.** `generate` supports it — returning false from the callback stops it — but a closed socket is not currently detected, so an abandoned generation runs to `max_tokens`. Wasteful on a serial worker, where it delays the next request |
 | ~~N-22~~ | **RETRACTED 2026-08-28 — the claim was false and the fault was mine.** `CTX_SIZE=32768` serves fine on this hardware, as the USER stated. My binding ignored `DEVICES` (so the whole model went to Vulkan0 alone instead of splitting across Vulkan0+Vulkan1) and ignored `KV_CACHE_TYPE` (so the KV cache was f16, twice the size of the configured `q8_0`). Verified after the fix: ctx=32768, slots=2, kv=q8_0, Vulkan0 152 MiB + Vulkan1 381 MiB, generation succeeds |
 | **N-24** | **`etc/jenova.local.conf` names a device that does not exist** — `DEVICES="Vulkan0,Vulkan1,Vulkan2"`, but this machine has only `Vulkan0`, `Vulkan1` and `CPU`. Harmless until now **only because B-12 meant the shell discarded the local conf entirely**; the Nim core honours it and so is the first thing to read the bad value. `scripts/build-llama.sh` generated it. **Fixing B-12 exposed a latent bad configuration that had been invisible for as long as it has existed** |
 | **N-23** | The llama rpath is absolute to `external/ext_bin/bin`, correct for a source tree. An installed binary needs the deployed lib directory instead — resolve before N-S6 |
-| **N-20** | **`/api/fs/*` is not ported.** `lib/proxy.lua` still serves it, so the Lua proxy cannot be retired yet. Required before N-S6 |
 | **N-21** | **Restoring a conversation revives every message, including ones deleted individually beforehand.** Faithful to `db.restore_item` and therefore correct for now — but it is a latent defect in the contract, and the GUI (N-S7) need not inherit it |
 | **N-16** | **No HTTP keep-alive** — every response is `Connection: close`, so a page with many assets opens a connection per asset. Acceptable now; revisit before the Web UI is served in anger, since connections beyond the worker count queue in the accept backlog |
 | ~~N-17~~ | **Withdrawn by D-T.** It framed bounded concurrency as a capacity limit needing documentation. For a two-device personal product the bound is the specification, not a limitation |
@@ -61,10 +76,10 @@ Granular task list. Completed items move to the `BLUEPRINT.md` implementation re
 | **N-10** | **Tray rebuild on StatusNotifierItem.** GTK4 drops `libappindicator`; the tray is an existing feature and is retained (Directive 3) |
 | ~~N-3~~ | **Closed by D-N** — single binary, GUI links the core in-process; `llama.cpp` linked directly |
 | **N-4** | `jca_web/` deprecation policy: no new features, what "retained" means in practice, and what replaces `/api/db/*` when it goes |
-| ~~N-5~~ | **Closed by D-O** — triage adopted. Survivors to fix: B-05, B-09, B-10, B-20, B-21, B-22, B-01 |
+| ~~N-5~~ | **Closed by D-O** — triage adopted. Survivors were B-05, B-09, B-10, B-20, B-21, B-22, B-01. **Updated 2026-08-31:** B-09 closed by deletion (Q-11); B-01 deferred to N-S9 (D-Z). Remaining: B-05, B-10, B-20, B-21, B-22 |
 | ~~N-6~~ | **Withdrawn by C-11** — commit boundaries are the USER's. Noted only: the working tree still has none |
 | **N-7** | **D-N follow-through:** a single binary must still serve LAN mode without the GUI running (Directive 3), and must isolate inference so a GUI fault cannot kill a generation |
-| **N-8** | **USER governance action:** amend `AGENTS.md` Directive 2 (copyleft ban contradicts the AGPL-3.0 licence) and review Directive 7, which governs `.dbc` cartridges and `test_roms/` that do not exist in this repository |
+| ~~N-8~~ | **CLOSED 2026-08-31 — substantially wrong, and the error was mine.** `AGENTS.md` contains **four** directives and **no Directive 7, no `.dbc`, no cartridge, no `test_roms/`** — they were removed before this session. I reported this item out of this file without checking it against the governance file I had read in full minutes earlier. Directive 2's copyleft clause is ruled dead letter by **D-X**, not amended. **The real defect the check found:** the devdocs cite a superseded numbering — **`Directive 6` appears 14× and does not exist**, and it is what `D-J`, `C-10` and the mandated per-session integrity pass were built on; `Directive 7` appears 6×. The Codebase Integrity Standard is retained on its merits as workspace practice and is no longer claimed to be mandated by a directive |
 
 **Migration questions Q-1 … Q-8: closed, and they stay closed.**
 
@@ -89,7 +104,7 @@ Active only with a `PLANS.md` entry.
 | Severity | Items | Meaning |
 |---|---|---|
 | **S1 destructive** | — | **Empty. B-07 fixed 2026-08-28** — see `PROGRESS.md` |
-| **S2 documented step fails** | B-08 … B-11 | A command the docs tell users to run cannot succeed |
+| **S2 documented step fails** | B-10, B-11 | A command the docs tell users to run cannot succeed. **B-08 and B-09 closed by deletion 2026-08-31 (Q-10, Q-11) — see `PROGRESS.md`** |
 | **S3 architectural** | B-12, B-13 | The system does not behave as its own design states |
 | **S4 remediation-plan carry-over** | B-14 … B-19 | Phase 2–4 work, plus two items worse than the plan records |
 | **S5 data contradiction** | B-05, B-20, B-21 | Shipped data files disagree with each other |
@@ -107,8 +122,6 @@ Active only with a `PLANS.md` entry.
 
 | ID | Defect | Evidence |
 |---|---|---|
-| **B-08** | **`make verify` can never pass.** `verify-install.sh` still verifies a bundled Neovim distribution this repository does not contain. `[ -d "$VIMRUNTIME" ]` — a variable never set anywhere — fails and increments `ERRORS`; the required `~/.config/jenova/init.lua` does not exist and fails again; `jenova --version` is expected to print `JVIM`; `share/jenova/mason` is checked. It exits 1 on a perfect install. **This is verification step V-3.** Needs rewriting against what the repo actually installs | `scripts/verify-install.sh:122-123,138-143,152-157,164-176,236-240` |
-| **B-09** | **`sudo scripts/jenova-setup` is broken for three of six profiles.** `Vulkan/dgpu-generic-12gb` and `CUDA/dgpu-generic` are not tuning scripts at all — they symlink a config (duplicating `--apply-profile`, differently and worse), and compute `JENOVA_ROOT` with **five** `dirname` calls from a directory only three levels below the root, landing on `$HOME`. `ln -s` into a non-existent `etc/` then fails under `set -e`. Neither applies a single sysctl. **`dgpu-generic-12gb` is the GPU fallback**, i.e. what most unrecognised hardware selects | `hardware-profiles/{Vulkan/dgpu-generic-12gb,CUDA/dgpu-generic}/jenova-setup:8` |
 | **B-10** | **`CPU/generic/jenova-setup` is entirely Linux.** `cpupower frequency-set`, `/sys/devices/system/cpu/*/cpufreq/scaling_governor`, `/sys/kernel/mm/transparent_hugepage/enabled`, `numactl`, `isolcpus=`. It never sources `common-setup.sh`, defines no `apply_sysctl`, and applies zero FreeBSD tunables. This is the **only CPU-only profile**, so it is exactly what a FreeBSD host with no working Vulkan gets. **`PROGRESS.md` asserts these six scripts were audited clean — that claim is false** (see the correction entry in `PROGRESS.md`) | `hardware-profiles/CPU/generic/jenova-setup` (whole file) |
 | **B-11** | **`bin/jenova-term` is never deployed.** `install.sh` deploys and symlinks six binaries; `jenova-term` is not among them. But `lib/ui.lua:104` invokes `$root/bin/jenova-term` for the tray's **"System Control"** menu item. In an installed deployment that path does not exist and the menu item silently does nothing. `update.sh:220` omits both `jenova-term` and `jenova-model-switch` from its redeploy loop | `scripts/install.sh:240,294`; `lib/ui.lua:104`; `scripts/update.sh:220` |
 
@@ -144,7 +157,7 @@ Active only with a `PLANS.md` entry.
 | **B-22** | **`tests/test_validate_arg.sh` rewrites the repository's `etc/jenova.conf`.** `assert_pass "Vulkan/dgpu-i5-1135g7"` genuinely invokes `--apply-profile`, and `apply_profile` mirrors the profile into `$JENOVA_ROOT/etc/jenova.conf` when that directory is writable. The test's `JCA_HOME` mktemp isolation does not cover the repo mirror. **This is the origin of commit `eee557e` "Revert hand-edit of etc/jenova.conf" — it was not a hand-edit** | `tests/test_validate_arg.sh:62`; `hardware-profiles/detect-hardware.sh:339-342` |
 | **B-23** | **The fd-leak assertion is vacuous on FreeBSD.** `run.sh` counts descriptors with `find /proc/$PX/fd`. `/proc` is not mounted on stock FreeBSD, so both counts are 0 and `[ 0 -le 2 ]` passes regardless of a leak. The check only ever worked under the Linuxulator, where it was written. **V-4, the S-1 acceptance gate, is partly vacuous on the target platform.** FreeBSD needs `procstat -f` | `tests/proxy-concurrency/run.sh:58,96` |
 | **B-24** | **`python3` is an undeclared dependency.** Required by `tests/test-health.sh` and the entire `proxy-concurrency` harness (`stub_backend.py`, `probe_streams.py`, inline heredocs). Absent from the `DEPS` list, so `make deps` does not install it and V-4 cannot run on a clean machine | `scripts/install-dependencies.sh` DEPS; `tests/test-health.sh:14`; `tests/proxy-concurrency/run.sh:27,46` |
-| **B-25** | **`tests/Makefile` runs 3 of 8 test scripts.** `test_bin_jenova.sh`, `test_validate_arg.sh`, `test_gpu.sh`, `test_gpu_single.sh` are orphaned. Both GPU tests additionally require `external/ext_bin/bin/llama-cli`, which `build-llama.sh` never copies (it copies `llama-server` and `*.so*` only), so they fail unconditionally | `tests/Makefile:7-10`; `scripts/build-llama.sh:205-210` |
+| **B-25** | **`tests/Makefile` runs 4 of the 9 test scripts** *(count corrected 2026-08-31; was "3 of 8" before `test_api_db.sh` was added at N-S3b — the defect stands, only the number was stale)*. `test_bin_jenova.sh`, `test_validate_arg.sh`, `test_gpu.sh`, `test_gpu_single.sh` are orphaned. Both GPU tests additionally require `external/ext_bin/bin/llama-cli`, which `build-llama.sh` never copies (it copies `llama-server` and `*.so*` only), so they fail unconditionally | `tests/Makefile:7-10`; `scripts/build-llama.sh:205-210` |
 | **B-26** | **`download-draft-model.sh` writes to the wrong directory and fetches the wrong model.** It targets the repository's `models/`, not `$JCA_HOME/models/draft/`, so discovery never finds the result; and it downloads Qwen2.5-Coder-0.5B while `model_dl.sh` downloads Qwen3.5-0.8B. Its closing message claims speculative decoding will be enabled automatically — `JENOVA_DRAFT` is 0 in the deployed profile | `tests/download-draft-model.sh:8,10-11,44` |
 
 ### S7 — documented but absent
@@ -161,7 +174,7 @@ Active only with a `PLANS.md` entry.
 
 | ID | Defect | Evidence |
 |---|---|---|
-| **B-01** | **The Web UI fetches webfonts from Google on every page load.** A browser with network access contacts `fonts.googleapis.com` and `fonts.gstatic.com` every time the UI opens, exposing the user's IP and the fact they run Jenova. Contradicts the local-first claim. Fix by self-hosting Inter and JetBrains Mono | `jca_web/src/app.css:3` |
+| **B-01** | **DEFERRED to N-S9 by D-Z, 2026-08-31 — it leaves the D-O survivor list.** The Web UI fetches webfonts from Google on every page load: a browser with network access contacts `fonts.googleapis.com` and `fonts.gstatic.com` every time the UI opens, exposing the user's IP and the fact they run Jenova. Contradicts the local-first claim. **The fix — self-hosting Inter and JetBrains Mono — requires editing `jca_web/`, which D-Z freezes.** Re-verified still present in source 2026-08-31. **The leak is live until `jca_web/` is retired at N-S9**; this is flagged, not quietly reclassified | `jca_web/src/app.css:3` |
 | **B-02** | **Four spellings of the runtime state directory.** Real state is `$JCA_HOME/.system`. `.jenova/` appears as a dead fallback in `update.sh` and `uninstall.sh`, as the live (broken) value in `cleanup.sh` (see B-07), and as the tray lock directory in `main.c`. Only the `cleanup.sh` instance is load-bearing | `scripts/update.sh:105`; `scripts/uninstall.sh:99,226`; `scripts/cleanup.sh:23`; `jenova-ui/src/main.c:324` |
 | **B-03** | **Stale Dexie/IndexedDB comments in the Web UI.** `DatabaseService` is documented in-source as an "IndexedDB persistence layer via Dexie ORM". Dexie is not a dependency; the service is a `fetch` wrapper over `/api/db/*` backed by SQLite. This comment is the origin of the same false claim in three documents | `jca_web/src/lib/services/index.ts:63,71` |
 | **B-04** | **Two Mermaid diagrams depict a path that cannot work.** `data-flow-simplified-router-mode.md` and `models-flow.md` show llama.cpp ROUTER-mode `/models/load` and `/models/unload`. `jenova-ca` launches `llama-server` in single-model mode; switching goes through `bin/jenova-model-switch` and a restart | `jca_web/docs/flows/` |
@@ -206,10 +219,17 @@ Recorded per Directive 6; these are errors in the consolidated docs, not in the 
 
 ---
 
-## Active — verification, on native FreeBSD only
+## Deferred to post-refactor — verification gates V-1 … V-6 *(moved out of Active by D-Y, 2026-08-31)*
 
-The editing environment is a Linux container on a FreeBSD host. Nothing run there is evidence.
-Every item below must be run on the native system.
+> **D-Y: deployment, build and install testing happens AFTER all refactoring is complete.** The
+> USER runs a working deployment from this tree; `make install` would overwrite it. `make install`,
+> `make verify` and `jenova-ca --daemon` are **prohibited** until then.
+>
+> **B-1 is not a blocker** — it was gating the wrong phase. **B-08, B-23 and B-24 leave the
+> near-term path with these gates**; they are prerequisites for work that is not yet due.
+>
+> The rule from C-12/D-AB still applies when these are finally run: a detection is not evidence
+> until its mechanism is shown not to route through the Linuxulator.
 
 | ID | Task | Notes |
 |---|---|---|
