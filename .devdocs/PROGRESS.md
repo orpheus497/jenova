@@ -2,11 +2,51 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-08-31 14:13
+**Last updated:** 2026-08-31 15:39
 
 ---
 
 ## Completed
+
+### 2026-08-31 — **The build is nimble. The shell tree is gone. The app runs.**
+
+**Verified by running it, not by reading:** `bin/jenova` opens the window, registers the tray icon,
+starts the HTTP server and both backends itself, and exits cleanly with both worker threads joined.
+
+**`Vulkan2` was the blocker and it was in the config, not the code.** `etc/jenova.local.conf` set
+`DEVICES="Vulkan0,Vulkan1,Vulkan2"`; `llama-server` rejects the whole `-dev` argument on an unknown
+device and exits before loading anything, so the agent backend had a pidfile and no process and every
+chat would have 502'd. Removed on the USER's instruction. The agent backend now starts.
+
+**Deleted, not deferred: `llama.nim` and `inference.nim`.** 639 lines duplicating what `llama-server`
+already does, plus the `JENOVA_INPROC` path through `server.nim` and `jenova_core.nim`. Duplicating
+the engine is the opposite of being a harness for it.
+
+**Deleted: the hand-rolled parsers in `gui.nim`.** An HTTP client, SSE parser, JSON escape decoder
+and JSON serialiser had been written while `std/json` was already imported three modules away.
+Replaced with `parseJson` and `%*`. This removed the `\uXXXX` and `\r` defects by deleting the code
+that had them rather than fixing it.
+
+**Threading rebuilt.** Was: `createThread` per message, never joined, control actions inline on the
+GTK loop. Now: two persistent workers — `stream` (one generation at a time) and `control`
+(supervision) — started once, joined at shutdown, results funnelled through one channel. Separate so
+a stop is not queued behind a generation. Also fixed: nil-`Socket` close (a SIGSEGV that
+`except CatchableError` does not catch, proven by running it), and `waitForExit` on spawned
+processes.
+
+**`bin/jenova` starts its own server.** It had been rebuilt to require `jenova-core serve`
+separately — the two-command split the USER killed at N-S6.
+
+**Conversations persist.** Saved to the existing `conversations`/`messages` tables on send and on
+stream completion; the last conversation reloads at startup. The GUI had been storing nothing.
+
+**Build is `nimble`.** Tasks in `jenova_core.nimble`. **Archived to `.devdocs/ARCHIVE/`:**
+`Makefile`, `tests/Makefile`, eight `scripts/*.sh`, two `lib/*.sh`, `proxy.log`, four orphaned test
+scripts, `bin/jenova-swap-mount`.
+
+**Known broken, disclosed:** a SIGBUS in owlkettle's widget diff, traced to conditionally-present
+sibling widgets in `view`. Fix built, **not yet run**.
+
 
 ### 2026-08-31 — **N-S7. The desktop application is Nim. Total conversion reached.**
 

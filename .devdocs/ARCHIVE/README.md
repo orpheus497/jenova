@@ -9,6 +9,32 @@ below was moved on the USER's instruction after its replacement was built and te
 
 ---
 
+## 2026-08-31 — the build system and the shell tree (D-AM)
+
+> "a nim program doesnt have shell scripts or a make file"
+> "anything not in use goes into the archive folder in devdocs - move it from the root"
+
+**Build is `nimble`.** Tasks in `jenova_core.nimble`: `core`, `gui`, `suites`, `llama`, `web`,
+`clean`.
+
+| Archived | Was |
+|---|---|
+| `root/Makefile`, `tests/Makefile` | The build system |
+| `scripts/` — 8 files | install, update, uninstall, cleanup, build-llama, install-dependencies, model_dl, jenova-setup |
+| `lib/detect-env.sh`, `lib/jenova-conf.sh` | Shell env/path resolution. Never referenced by any `.nim` file — `paths.nim` replaced them |
+| `root/proxy.log` | Runtime artifact the archived Lua proxy wrote into the source root |
+| `tests/test_gpu.sh`, `test_gpu_single.sh`, `test_validate_arg.sh`, `download-draft-model.sh` | Orphaned; wired into nothing. `test_validate_arg.sh` rewrote `etc/jenova.conf` as a side effect |
+| `bin/jenova-swap-mount` | Shell launcher, no caller |
+
+## 2026-08-31 — the in-process inference path
+
+`src/llama.nim` and `src/inference.nim`, plus the `JENOVA_INPROC` branch through `server.nim` and
+`jenova_core.nim`. **639 lines duplicating `llama-server`**, which is the engine (D-AF).
+Duplicating it is the opposite of being a harness for it. Deleted rather than retained as an
+option, on the USER's instruction.
+
+---
+
 ## 2026-08-31 — the C tray, the Lua UI and the last shell scripts (N-S7)
 
 **This move completes the total conversion (D-AI): no Lua, no C, and no project
@@ -50,10 +76,8 @@ something happened to be listening. `jenova-core` covers health in-binary
 
 ### What stayed, and why
 
-`lib/detect-env.sh` and `lib/jenova-conf.sh` remain — **not because the core
-needs them**, which was the long-standing and incorrect claim, but because
-`scripts/*.sh` and `hardware-profiles/detect-hardware.sh` still call them. They
-are setup-time tooling and go with that tree at N-S9.
+*(Superseded: `lib/detect-env.sh` and `lib/jenova-conf.sh` were archived with the rest of the shell
+tree later the same day — see the D-AM entry at the top.)*
 
 ---
 
@@ -131,25 +155,10 @@ Replaced by `test_api_db.sh` (23), `test_api_fs.sh` (46), `test_routes.sh` (13),
 
 ---
 
-## Known dangling references — **disclosed, not hidden**
+## Known dangling references
 
-Moving these leaves references behind. None affects `jenova-core`, which builds and passes every
-suite with `lib/` reduced to four files. **None affects the USER's deployment either**, which runs
-from its own copy under `~/JCA` (D-AE).
-
-| Site | Effect |
-|---|---|
-| `lib/ui.lua:69,109,111` | The tray spawns `bin/jenova-ca`. **The GTK3 tray path is now inert in the source tree** until N-S7 replaces it |
-| `scripts/install.sh:240` | Deploys `jenova-ca` in its symlink loop — will not find it. **The install path needs updating to deploy `jenova-core`**, which is N-S6 follow-through not yet done |
-| `scripts/{update,uninstall,cleanup,build-llama}.sh` | Reference it in restart hints, symlink cleanup and warnings |
-| `lib/jenova-conf.sh:44` | `PID_FILE` still named `jenova-ca.pid`. Harmless — a filename |
-| `tests/test_gpu.sh` | Orphaned already (B-25) |
-
-**The install path being broken is the one that matters.** It is recorded rather than patched
-because rewiring `install.sh` to deploy the Nim core is its own change, and D-Y prohibits exercising
-the install path during the rewrite anyway.
-
----
+*(Resolved 2026-08-31: every file that held one — the shell installer, updater, uninstaller and
+cleanup script — is archived. Nothing in the product tree references `jenova-ca`.)*
 
 ## Earlier archive (2026-08-28, Session 002)
 

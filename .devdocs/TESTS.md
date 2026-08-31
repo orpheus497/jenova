@@ -6,74 +6,36 @@ Test specifications, validation criteria and expected outcomes. Mandated by `AGE
 **Created:** 2026-08-28 (Session 004). Mandated from the outset; absent for Sessions 001–003.
 See `DECISIONS_LOG.md` C-10.
 
-> **Provenance.** Every file below was enumerated on disk this session and its purpose taken
-> from its own header. Pass/fail *status* is carried from the Session 003 audit with its
-> `file:line` citations, and is labelled as such — **no suite below has been executed on native
-> FreeBSD**, which is the whole content of blocker B-1.
+> **§5a onward are stage acceptance records** — what each stage had to prove and how. They are
+> history, kept for the reasoning. **§0 is the current suite.**
 
 ---
 
 ## 0. Current suite — 2026-08-31
 
-**`make -C tests check`** runs five scripts. *(Invocation corrected 2026-08-31 13:07: this said
-`make check`, and the **root `Makefile` has no `check` target** — `.PHONY: all deps llama web
-jenova-ui core install clean clean-root help`. From the repository root `make check` fails. **B-42**.)*
+**`nimble suites`** builds both binaries then runs five scripts. Each runs in a scratch `JCA_HOME`
+and none spawns a backend.
 
-**Four of the five target the Nim core**, all in a scratch `JCA_HOME`, none spawning a backend. The
-fifth, `test-health.sh`, is the exception in every respect — see the note below the table:
+| Script | Covers |
+|---|---|
+| `test_api_db.sh` | The `/api/db/*` contract — cascades, fork reparenting, upward restore |
+| `test_api_fs.sh` | The filesystem mirror, `/api/fs/*`, `/api/storage/*` and its containment |
+| `test_routes.sh` | The route inventory, incl. the pipeline reaching the upstream |
+| `test_lifecycle.sh` | The `llama-server` argument vector, `--lan`, port flags, refusal paths |
+| `test_models.sh` | Model discovery and switching (§5h) |
 
-| Script | Assertions | Covers |
-|---|---|---|
-| `test_api_db.sh` | 23 | The `/api/db/*` contract — cascades, fork reparenting, upward restore |
-| `test_api_fs.sh` | 46 | The filesystem mirror, `/api/fs/*`, `/api/storage/*` and its containment |
-| `test_routes.sh` | 13 | The standing route inventory, incl. the pipeline reaching the upstream |
-| `test_lifecycle.sh` | 31 | The `llama-server` argument vector, `--lan`, port flags, refusal paths |
-| `test_models.sh` | 15 | Model discovery and switching (N-36, N-37) — see §5h |
-| ~~`test-health.sh`~~ | — | **ARCHIVED 2026-08-31 (D-AH).** See the note below |
+Plus the core's own subcommands: `db-selftest`, `serve-selftest`, `rag-selftest`,
+`pipeline-selftest`, `sha256-selftest`, `db-capabilities`.
 
-> **RESOLVED 2026-08-31 by archiving it (D-AH). B-24 closed by subtraction.** The USER's question
-> settled it — *"why is python in use at all, this should never have been the case"* — and it is
-> sharper than my recommendation had been: I proposed rewriting the script on base `fetch(1)`, which
-> still keeps a shell health test for a proxy that no longer exists. **`jenova-core` covers health
-> in-binary**: `backends health` probes the port (not the pid, which is the B-14/B-13 distinction),
-> and five self-test subcommands cover the rest. The script is in `.devdocs/ARCHIVE/tests/`.
->
-> The two defects are kept below because they are why it went, and because the second is a pattern
-> worth recognising in any suite.
->
-> **`test-health.sh` was the first line of the `check` target and could not pass unattended
-> (B-40).** Two independent defects, both verified 2026-08-31 13:07:
->
-> 1. **It still requires `python3`** (`:14`), and `python3` is still absent from
->    `install-dependencies.sh`'s 18-entry `DEPS` list. **B-24 is therefore NOT closed.**
->    `TODOS.md §1` and `.devdocs/ARCHIVE/README.md` both record it as dying with the
->    `proxy-concurrency` harness; that is true of the harness's copy and false of this one. B-24's
->    original evidence named `tests/test-health.sh:14` **and** the harness — archiving one half
->    closed half a defect.
-> 2. **It starts no server.** The whole script is 29 lines: source `etc/jenova.conf`, then probe
->    `$HOST:$PORT/health` and exit 1 on any exception. Every other suite starts its own
->    `jenova-core` on a scratch home and stops it on exit. So `make -C tests check` aborts on its
->    first line unless something is already listening — which is also why "all suites pass" has only
->    ever been observed by running them individually.
->
-> **Superseded recommendation, kept visible:** *"rewrite it on base `fetch(1)`, starting and
-> stopping its own server."* That would have worked and was still the wrong answer — it preserves a
-> test whose subject is gone. **Deleting it was the right move**, and the USER saw that a step
-> earlier than I did.
+**There is no Makefile.** `make check` and `make -C tests check` no longer exist (D-AM).
 
-Plus the core's own subcommands: `db-selftest`, `serve-selftest`, `rag-selftest` (7),
-`pipeline-selftest` (15), `sha256-selftest` (4), `llama-selftest`, `db-capabilities`.
+**Archived 2026-08-31:** `test_gpu.sh`, `test_gpu_single.sh`, `test_validate_arg.sh`,
+`download-draft-model.sh` — orphaned, wired into nothing. `test-health.sh` went earlier: it shelled
+to `python3` and started no server.
 
-**Archived 2026-08-31** to `.devdocs/ARCHIVE/tests/`: `test-launcher.sh` and `test_bin_jenova.sh`
-(both tested `bin/jenova-ca`) and the whole `proxy-concurrency/` harness (the acceptance gate for
-`proxy.lua`'s event loop). **B-23 and B-24 die with that harness** — the vacuous `/proc` fd
-assertion and the undeclared `python3` dependency both lived there.
-
-**Still orphaned (B-25):** `test_validate_arg.sh` — **and it still rewrites `etc/jenova.conf`**
-(B-22, `:62`), which is the highest-value cheap fix left in the suite — plus `test_gpu.sh` and
-`test_gpu_single.sh`, which need a `llama-cli` that `build-llama.sh` never copies.
-
-**§3 and §5 below describe the archived `proxy-concurrency` gate and are retained as history.**
+**A new suite must be proven able to fail.** Two suites in this project have reported PASS while
+asserting nothing. `test_models.sh` was verified by corrupting what its assertions read and
+confirming it goes red.
 
 ## 1. Standing rule
 
@@ -81,103 +43,6 @@ The editing environment is a Linux container on a FreeBSD host (the Linuxulator)
 there is evidence for FreeBSD behaviour.** Static checks (`sh -n`, `luajit -bl`) and pure-logic
 scripts are the exception: they test the text, not the kernel. Anything touching sysctls,
 `/proc`, procstat, GPU or the network stack must be run natively before it counts.
-
-## 2. The automated suite
-
-`tests/Makefile` `check` target — **runs 5 of the 9 scripts in `tests/`.** *(Count corrected three
-times on 2026-08-31, the last at 13:07 by enumerating the directory: "3 of 8" from before
-`test_api_db.sh` landed at N-S3b, then "4 of 9", then "6 entry points … plus
-`proxy-concurrency/all.sh`" — **which was already false when written, because that harness had been
-archived hours earlier**. The orphan set shrank by one with `test_bin_jenova.sh`'s archival, so
-**B-25 now has three instances, not four**; the defect stands.)*
-
-**§2's table below is retained as the record of the pre-archive suite and is not current.**
-`test-launcher.sh`, `proxy-concurrency/all.sh` and `test_bin_jenova.sh` are in
-`.devdocs/ARCHIVE/tests/`. **§0 above is the current suite.**
-
-| Script | Spec | Status |
-|---|---|---|
-| `test-health.sh` | Smoke test: the server starts and responds | **Cannot run on a clean machine** — requires `python3`, which `make deps` does not install (B-24). Also cannot pass on a headless start: `--daemon` brings up no `:8080` (B-13) |
-| `test-launcher.sh` | Config loading, module existence, `jenova-ca` verbs, health check, cleanup guard | Not executed |
-| `proxy-concurrency/all.sh` | Every proxy regression check — **the S-1 acceptance gate (V-4)** | See §3 |
-| `test_api_db.sh` | The `/api/db/*` contract against the Nim core, 22 assertions on a scratch database | **PASS 22/22** (2026-08-28). **Incomplete in one dimension — N-27:** every assertion checks database state over HTTP and none checks the filesystem, so it cannot see that `api.nim` omits `proxy.lua`'s ten `fs_sync` mirroring calls. See §5b |
-
-### Orphaned — present but never invoked (B-25)
-
-| Script | Spec | Why it is not wired in |
-|---|---|---|
-| `test_bin_jenova.sh` | Validates `bin/jenova` against a running `jenova-ca` backend | Orphaned |
-| `test_validate_arg.sh` | `detect-hardware.sh` argument validation | Orphaned **and destructive to the tree** — see §4 |
-| `test_gpu.sh` | GPU path | Orphaned; also requires `external/ext_bin/bin/llama-cli`, which `build-llama.sh` never copies (it copies `llama-server` and `*.so*` only) — **fails unconditionally** |
-| `test_gpu_single.sh` | Single-GPU path | Same |
-
-`download-draft-model.sh` is a utility, not a test. It writes to the repository's `models/`
-rather than `$JCA_HOME/models/draft/`, fetches Qwen2.5-Coder-0.5B where `model_dl.sh` fetches
-Qwen3.5-0.8B, and claims speculative decoding will switch on automatically when `JENOVA_DRAFT`
-is 0 in the deployed profile (B-26).
-
-## 3. `proxy-concurrency/` — the acceptance gate
-
-| File | Role |
-|---|---|
-| `all.sh` | Runs every check in the directory |
-| `run.sh` | Acceptance suite for the concurrency / fd-leak defects |
-| `test_reaper.sh` | Connection-reaper regression (remediation-plan WP-3) |
-| `stub_backend.py`, `probe_streams.py` | Python harness support |
-| `test_ffi_flags.lua` | FFI flag constants — **5/5 verified live on FreeBSD in Session 001** |
-
-**The fd-leak assertion is vacuous on the target platform (B-23).** `run.sh:58,96` counts
-descriptors with `find /proc/$PX/fd`. `/proc` is not mounted on stock FreeBSD, so both counts
-are `0` and `[ 0 -le 2 ]` passes whether or not descriptors leaked. The check only ever
-functioned under the Linuxulator, where it was written. **FreeBSD needs `procstat -f`.**
-
-Consequence: **V-4 is a partial gate until B-23 is fixed.** Treating a green `all.sh` as proof
-of no fd leak would be a Directive 6 violation.
-
-## 4. A test that damages the repository
-
-`test_validate_arg.sh:62` calls `assert_pass "Vulkan/dgpu-i5-1135g7"`, which genuinely invokes
-`--apply-profile`; `detect-hardware.sh:339-342` then mirrors the profile into
-`$JENOVA_ROOT/etc/jenova.conf` whenever that directory is writable. The test's `mktemp`
-isolation covers `JCA_HOME` but **not the repository mirror** (B-22).
-
-**This is the true origin of commit `eee557e` "Revert hand-edit of etc/jenova.conf" — no hand
-edit ever occurred.** Do not run this script against a working tree until it is isolated.
-
-## 5. Verification gates — V-1 … V-6 — **DEFERRED to post-refactor by D-Y**
-
-> **Ruling D-Y, 2026-08-31.** *"you are not going to test the deployment - as that will overwrite
-> my currently working version — you are focussing on the rewrite - the build testing happens
-> AFTER all refactoring has been completed."*
->
-> **`make install`, `make verify` and `jenova-ca --daemon` are prohibited for the duration of the
-> rewrite.** The USER runs a working deployment from this tree; an install would overwrite it.
->
-> **B-1 is not a blocker and never was one for this phase** — it was gating the wrong work.
-> V-1 … V-6 form a post-refactor acceptance phase, and the three test-surface defects that block
-> them — **B-08, B-23, B-24** — are prerequisites for a gate that is not yet due. They leave the
-> near-term path with the gates.
->
-> **Still permitted, because they touch nothing deployed:** `make core`; `bin/jenova-core` and all
-> of its self-test subcommands against scratch databases; `sh -n`; read-only inspection. This is
-> the entire N-S* acceptance surface in §5a, which is unaffected by D-Y.
-
-The table below is retained as the specification of that future phase, not as current work.
-
-| ID | Gate | Blocked by |
-|---|---|---|
-| V-1 | `make deps` — all packages resolve, incl. the appindicator FreeBSD provides | B-24 (`python3` missing from the list) |
-| V-2 | `make` — full build. Watch `jenova-ui`: the `#error` guard and the indicator-library probe | — |
-| V-3 | `make install` → `make verify` | **B-08 — `verify-install.sh` cannot pass.** Q-10 open |
-| V-4 | `sh tests/proxy-concurrency/all.sh` — the S-1 acceptance gate | B-23 (vacuous fd check), B-24 |
-| V-5 | `jenova-ca --daemon --lan`, then `sockstat -4l`: `:8080` on `0.0.0.0`, `:8081`/`:8082` on `127.0.0.1` | B-13 — `--daemon` starts no `:8080` |
-| V-6 | Streaming completion end-to-end in the WebUI; `lsof` flat across a session | — |
-
-**Three of six gates are blocked by defects in the test surface itself, not by the product.**
-Fixing B-08, B-23 and B-24 is prerequisite work, not optional polish.
-
-`TODOS.md` V-1…V-3 still spell the command `gmake`; the `make`→`gmake` change was reverted and
-the Makefile builds with base `make(1)` (B-06).
 
 ## 5a. Plan B stage acceptance
 

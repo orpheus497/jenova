@@ -1,19 +1,48 @@
-# Package metadata and dependency declaration for jenova-core.
-#
-# The Makefile is this project's single build entry point (`make core`); this
-# file exists so nimble can resolve dependencies and so the package carries its
-# licence and version. namedBin keeps nimble's output path identical to the
-# Makefile's, so the two never produce differently-named binaries.
-
-import std/tables
+import std/[os, tables]
 
 version       = "0.1.0"
 author        = "orpheus497"
-description   = "Jenova Cognitive Architecture - native FreeBSD core"
+description   = "Jenova Cognitive Architecture - native FreeBSD desktop application"
 license       = "AGPL-3.0-or-later"
 srcDir        = "src"
-bin           = @["jenova_core"]
 binDir        = "bin"
-namedBin      = {"jenova_core": "jenova-core"}.toTable
+bin           = @["jenova_core", "jenova_gui"]
+namedBin      = {"jenova_core": "jenova-core", "jenova_gui": "jenova"}.toTable
 
 requires "nim >= 2.2.10"
+requires "owlkettle >= 3.0.0"
+
+const NimFlags = "-d:release --hints:off --path:src"
+
+task core, "Build the headless server (bin/jenova-core)":
+  exec "nim c " & NimFlags & " --out:bin/jenova-core src/jenova_core.nim"
+
+task gui, "Build the desktop application (bin/jenova)":
+  exec "nim c " & NimFlags & " --out:bin/jenova src/jenova_gui.nim"
+
+task suites, "Build both binaries and run the test suites":
+  coreTask()
+  guiTask()
+  for f in ["test_api_db.sh", "test_api_fs.sh", "test_routes.sh",
+            "test_lifecycle.sh", "test_models.sh"]:
+    exec "sh tests/" & f
+
+task llama, "Build the llama.cpp backend into external/ext_bin":
+  let build = "external" / "llama.cpp" / "build"
+  exec "cmake -S external/llama.cpp -B " & build &
+       " -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON -DLLAMA_CURL=OFF"
+  exec "cmake --build " & build & " --config Release -j"
+  mkDir "external" / "ext_bin" / "bin"
+  for f in listFiles(build / "bin"):
+    if f.endsWith("llama-server") or f.contains(".so"):
+      cpFile(f, "external" / "ext_bin" / "bin" / f.extractFilename)
+
+task web, "Build the Web UI into public/":
+  withDir "jca_web":
+    exec "npm install"
+    exec "npm run build"
+
+task clean, "Remove build artifacts":
+  rmFile "bin/jenova-core"
+  rmFile "bin/jenova"
+  rmDir "nimcache"

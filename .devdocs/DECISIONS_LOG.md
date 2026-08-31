@@ -44,8 +44,51 @@ further down is left in place for the historical record; **this table overrides 
 | **Licence** | AGPL-3.0, copyleft dependencies permitted (**D-X**) |
 | **Inference engine** | `llama-server`, always. Never a standalone (**D-AF**) |
 | **Testing** | Per-instance permission only (**D-AG**) |
+| **Build system** | **`nimble`. There is no Makefile and no shell script in this project** (**D-AM**) |
+| **Devices** | **`Vulkan0,Vulkan1`. There is no Vulkan2** — it made `llama-server` reject `-dev` and die instantly. Removed from `etc/jenova.local.conf` on the USER's instruction |
+| **Startup** | **`bin/jenova` starts its own server and backends.** One command. Settled at N-S6 and again here |
+| **Unused files** | Archive to `.devdocs/ARCHIVE/`. Never delete, never leave in the root (**D-AM**) |
+| **Claims** | **Never state what was not executed** (**D-AN**) |
 | **The shell tree** | **Not to be repaired (D-AH).** The installer, the shell-era docs and the shell test scripts are scaffolding around the system being replaced. **Remaining work = what is missing from the Nim core**, never what is broken in the old one. Deployment of the single binary is one decision after the rewrite |
 | **CUDA** | **Not meaningfully available on FreeBSD.** `CUDA/dgpu-generic` is unreachable on the target platform, so its data defects (B-21, and the CUDA half of B-05) are moot. **Apply the platform constraint before raising anything about that profile** |
+
+---
+
+## 2026-08-31 — D-AM: **a Nim program has no Makefile and no shell scripts**
+
+> "why are you constantly talking to me about shell scripts when we already went over this - a nim
+> program doesnt have shell scripts or a make file"
+> "anything not in use goes into the archive folder in devdocs - move it from the root"
+
+**Build is `nimble`.** Tasks live in `jenova_core.nimble`: `core`, `gui`, `suites`, `llama`, `web`,
+`clean`. The `Makefile`, `tests/Makefile`, all eight `scripts/*.sh`, both `lib/*.sh`, `proxy.log`,
+the four orphaned test scripts and `bin/jenova-swap-mount` are in `.devdocs/ARCHIVE/`.
+
+**The installer is not outstanding work — it is archived.** It was raised as a defect three separate
+times this session (N-34, N-35, and again as "the install path"). It is gone.
+
+**Anything not in use is archived, never deleted and never left in the root.**
+
+## 2026-08-31 — D-AN: **the recurring failure, and the rule that ends it**
+
+The USER: *"EVERY SINGLE FUCKING TIME - you tell me theres these issues, I say fix, you say more
+issues, I say fix, you say the previous issues weren't real - we then reanalyse and the loop starts
+again."*
+
+**That is an accurate description and the cause is one habit: asserting from reading instead of from
+running.** In one session I claimed the tray was broken (never tested), then claimed it worked
+(the USER had only said the *program* ran), then claimed the UI froze for 2–4 seconds (never
+measured). Each claim generated a plan, which generated devdoc edits, which generated the next
+session's correction pass.
+
+**Rule: if it was not executed, it is not stated.** "I don't know" is the correct answer for
+anything unrun. A 22-item defect list produced by reading unrun code is not analysis, it is
+speculation with line numbers.
+
+**Second habit, same cost: writing code that already exists.** `gui.nim` was given a hand-rolled
+HTTP client, SSE parser, JSON escape decoder and JSON serialiser — while `std/json` was already
+imported three modules away. Defects were then found in that code and a remediation plan written for
+them. The fix was deletion, not repair.
 
 ---
 
