@@ -180,6 +180,75 @@ them. **No consumer acts on them** — they are surfaced, not used. The defect s
 
 ---
 
+## CODE AUDIT — 2026-08-31, all 25 Nim modules (7,152 lines)
+
+**Directed by the USER: memory management, undefined behaviour, use-after-free, logic errors,
+incorrect implementations, stubs and placeholders. Nothing may proceed until these are addressed.**
+
+**Method:** every module read; targeted greps for allocation, threading, unbounded reads, dynamic
+SQL and casts; a strict recompile (`--warnings:on --styleCheck:hint`) which came back clean; and
+**three claims tested by execution rather than reported from reading** — two of which changed the
+finding.
+
+**Two things I nearly reported and did not, because the test contradicted me:**
+
+- **`createThread` payloads are NOT shared across threads under ORC.** I was going to report
+  `StreamJob`/`Lifecycle` crossing a thread boundary as a refcount race. Measured: the string buffer
+  address differs in the worker, so the payload is deep-copied. **No race. Withdrawn before it was
+  written down.**
+- The strict compile surfaced **zero** additional warnings beyond unused imports, which are fixed.
+
+### S1 — will misbehave in normal use. **These block calling N-S7 done.**
+
+| ID | Defect | Evidence |
+|---|---|---|
+| **B-44** | **Process-killing crash: `sock.close()` on a nil `Socket`.** `streamWorker`'s `finally` closes a socket that `newSocket()` may never have assigned. **`Socket` is a `ref`, so this is a nil dereference — and `except CatchableError` does not catch it.** **Verified by execution: SIGSEGV in both debug and `-d:release`.** Any failure to allocate the socket takes the whole GUI down | `gui.nim:105,180` |
+| **B-45** | **`createThread` on a thread that may still be running — undefined behaviour.** `streamBusy` is cleared when `StreamDone` is *drained*, but the worker sends that sentinel in `finally` and only then returns. A user sending again in that window calls `createThread` on a live `Thread` object. **And `joinThread` is never called at all** — every generation leaks a thread handle and stack. **`gui.nim` is the only module in the codebase that creates a thread without joining it**; `server.nim`, `inference.nim`, `dbselftest.nim` and `serverselftest.nim` all join | `gui.nim:78,428` |
+| **B-46** | **`streamChan.close()` can race a live worker.** `run`'s `defer` closes the channel when the window closes; a worker mid-generation then sends into a closed channel | `gui.nim:~560` |
+| **B-47** | **The GUI freezes on every control action — the exact defect class the rewrite exists to remove.** Actions run inline on the GTK main loop: `stopAll` waits up to `graceMs` per backend (**~4 s for restart**), and the 3 s status timer calls `healthy(timeoutMs = 300)`, blocking the loop up to 300 ms *every tick*. `proxy.lua` froze every client during generation; this freezes the window during supervision | `gui.nim:311-379`; `lifecycle.nim:276,304` |
+| **B-48** | **D-Bus protocol violation: `Properties.Get` returns a dict.** `/MenuBar`'s handler answers **both** `Get` and `GetAll` with `a{sv}`. `org.freedesktop.DBus.Properties.Get` must return a **variant** (`v`). A panel reading `Version` gets a malformed reply | `tray.nim:288-295` |
+| **B-49** | **The tray may not render on some panels.** No `org.freedesktop.DBus.Introspectable.Introspect`, and dbusmenu's `GetGroupProperties`/`GetProperty` are unimplemented — both return `NOT_YET_HANDLED`, so the caller gets an error. Many panels introspect first or use `GetGroupProperties` exclusively. Also `GetLayout` ignores `parentId` and always returns the root | `tray.nim:262-297` |
+| **B-50** | **The tray icon starts in the wrong state and stays there.** `tray.start` hardcodes `status: tsActive`, and `setStatus` is only called from **inside** the `if newStatus != st.status` branch. On a cold start with the backend down, nothing changes, so the icon claims "Active" indefinitely | `tray.nim:~340`; `gui.nim:318-326` |
+
+### S2 — unbounded / resource growth
+
+| ID | Defect | Evidence |
+|---|---|---|
+| **B-51** | **Client-triggerable unbounded prepared-statement cache.** `db.prepared` caches by SQL text with **no eviction and no bound**, and `api.nim`'s message update builds its `SET` clause from whichever fields the client supplies. `messages` has 12 updatable columns → **up to 4,095 distinct SQL strings**, each a permanently retained `sqlite3_stmt`, per thread. *(Not injection — the column names come from a `const` table. It is pure growth.)* | `db.nim:165-175`; `api.nim:569-578` |
+| **B-52** | **Conversation history is unbounded and resent whole every turn.** `app.messages` never trims and `send` serialises all of it, so request size grows linearly and cumulative bytes grow O(N²). No context-window management anywhere in the GUI | `gui.nim:287,418-426` |
+| **B-53** | **Zombie processes.** `runCapture` calls `p.close()` but never `waitForExit`, so every `xdg-open`, `route` and `ifconfig` leaves a zombie until the GUI exits | `gui.nim:205-215` |
+| **B-54** | **Static files are read entirely into memory with no size cap**, per request and per concurrent request. `public/` is small today, so this is latent rather than live | `server.nim:154` |
+
+### S3 — incorrect implementation
+
+| ID | Defect | Evidence |
+|---|---|---|
+| **B-55** | **`\uXXXX` escapes are passed through literally.** The SSE token parser copies the escape text verbatim instead of decoding it, so any non-ASCII the model emits renders as `é` in the chat view | `gui.nim:164-166` |
+| **B-56** | **`\r` is silently discarded** from streamed content (`of 'r': discard`) rather than decoded | `gui.nim:161` |
+| **B-57** | **`streamBusy` latches on failure.** It is set `true` *before* `createThread`; if that throws, nothing ever clears it and the UI refuses to send for the rest of the session | `gui.nim:416-428` |
+| **B-58** | **A failed switch leaves a stray dotfile.** `bin/jenova-model-switch` had `trap cleanup_tmp EXIT`; the Nim port removes the temporary symlink on the validation path but **not** if `moveFile` fails | `models.nim:154-190` |
+| **B-59** | **`targetModel` accepts broken symlinks where the shell rejected them.** The original guarded with `[ -f "$_f" ]`, which excludes a dangling link; `walkDir`'s `pcLinkToFile` includes it. A dangling link would be selected as the switch target | `models.nim:~115` |
+| **B-60** | **Storage containment has a symlinked-parent hole, and a symlinked root false-negative.** `resolveStoragePath` only does its `expandFilename` check when the path **already exists**, so a *new* file written through a symlinked parent directory escapes the tree. Conversely, if `$JENOVA_WORKSPACES` is itself a symlink, `expandFilename` returns the real path, which fails the lexical `normBase` prefix test and **rejects legitimate files** | `fssync.nim:539-565` |
+
+### S4 — integrity standard: doc/code contradiction and dead code
+
+| ID | Defect | Evidence |
+|---|---|---|
+| **B-61** | **`dbus.nim`'s header contradicts its own code.** It states the binding is *"through the real headers … never by mirroring the ABI in Nim"* and cites that as the `ffi_defs.lua` lesson — while `DBusMessageIter` is declared with **14 hand-written dummy fields mirroring the C layout**. `importc`+`header` means the C compiler owns the layout so it is not *unsafe*, but **the claim is false and the fields are dead.** Codebase Integrity Standard classes 2 and 6 | `dbus.nim:41-55` |
+| **B-62** | **`lanAddress`'s comment contradicts its implementation.** The doc says arguments are passed *"as an argument vector, never a shell string"* and that this removes the quoting question — the code runs `sh -c` with an interpolated pipeline | `gui.nim:198-233` |
+| **B-63** | **Dead code.** `dbus_message_new_error`, `dbus_message_get_interface` and `dbus_message_get_member` are imported and never called; `appendItemProps` declares `val` and only `discard`s it | `dbus.nim:99,102-103`; `tray.nim:~150` |
+| **B-64** | **The watchdog `Thread` is a stack local and is never joined.** `var watcher: Thread[Lifecycle]` lives in a `case` branch while the thread outlives it. Safe in practice only because `main` never returns; it is not safe by construction | `jenova_core.nim:564-575` |
+| **B-65** | **Queued in-process inference jobs leak their prompt allocation** if `stop()`'s sentinel is processed before them. `allocShared` in `submit` is freed only by `runWorker`. Optional path under D-AF, so latent | `inference.nim:151,242` |
+
+**No stubs, placeholders or simulated implementations were found in the shipped paths.** The
+completion cache, which the docs describe most elaborately, is genuinely implemented end to end
+(`pipeline.cacheLookup`/`cacheStore` → `server.nim:214-218` → the `llm_cache` table). `http.nim` is
+correctly bounded (`MaxHeadBytes` 64 KB, `MaxBodyBytes` 32 MB, both enforced). Path containment is
+otherwise sound. **The concentration of defects is in `gui.nim` and `tray.nim` — the two modules
+written today and never executed.**
+
+---
+
 ## N-S7 — **COMPLETE 2026-08-31. Total conversion reached.**
 
 **Order was N-S7 → N-S7b → GATE → N-S9 → N-S8 (D-AI). The first three are done.**
