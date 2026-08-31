@@ -62,6 +62,45 @@ const
   CanvasParticle* = (0.867, 0.718, 1.0)   ## rgb(221,183,255)
   CanvasLink* = (0.725, 0.780, 0.894)     ## rgb(185,199,228)
 
+  ## The same particle colour as hex, because `.glow-text` glows in it
+  ## (`app.css:270-271`, `text-shadow: 0 0 8px rgba(221,183,255,0.4)`). One
+  ## definition, two consumers: the canvas paints it and the stylesheet glows in
+  ## it, and they drifted apart in the Web UI precisely because it had two.
+  ColGlow* = "#ddb7ff"
+
+## Action purpose: the sixteen ANSI slots VTE hands to `nvim`, derived from the
+## brand rather than left at VTE's built-in xterm palette — which is what made
+## the Neovim page look like a different application pasted into the window.
+##
+## **The brand has four hues and a terminal needs six.** Purple, gold, crimson
+## and the light brand blue map directly; green has no brand equivalent and is
+## the one invented value, kept deliberately low-saturation so it does not fight
+## the purples it sits beside. Blue is served by `ColBrandPurpleLight` rather
+## than an actual blue, because a true blue is the thing that reads as "not this
+## application".
+##
+## **This governs only what `nvim` draws through ANSI.** A configuration that
+## sets `termguicolors` emits 24-bit escapes and bypasses the palette entirely;
+## that case is the USER's own colourscheme and is out of scope by D-AT.
+const TerminalPalette* = [
+  "#131313",  ##  0 black          — the window ground
+  "#c96464",  ##  1 red            — ColSecondary, crimson
+  "#8fb48a",  ##  2 green          — the one invented hue, desaturated on purpose
+  "#e4b382",  ##  3 yellow         — ColAccent, gold
+  "#8e7cc3",  ##  4 blue           — ColBrandPurpleLight standing in for blue
+  "#7b52ab",  ##  5 magenta        — ColBrandPurpleHead
+  "#aba0d9",  ##  6 cyan           — ColBrandBlue
+  "#f0edf2",  ##  7 white          — ColForeground
+  "#5e5966",  ##  8 bright black   — ColBorder
+  "#dd8888",  ##  9 bright red
+  "#a9c9a4",  ## 10 bright green
+  "#f0cba3",  ## 11 bright yellow
+  "#ab9ce0",  ## 12 bright blue
+  "#9d6fd4",  ## 13 bright magenta
+  "#c4bce8",  ## 14 bright cyan
+  "#ffffff",  ## 15 bright white
+]
+
 ## Function purpose: the stylesheet, built as one string so the palette constants
 ## above are the only place a colour is written down.
 ##
@@ -87,6 +126,42 @@ proc css*(): string =
 @define-color jenova_code_fg """ & ColCodeForeground & """;
 @define-color jenova_purple_head """ & ColBrandPurpleHead & """;
 @define-color jenova_purple_deep """ & ColBrandPurple & """;
+@define-color jenova_purple_light """ & ColBrandPurpleLight & """;
+@define-color jenova_blue """ & ColBrandBlue & """;
+@define-color jenova_glow """ & ColGlow & """;
+
+/* ── Selection ────────────────────────────────────────────────────────────
+   This sheet carried NO selection rule at all until 2026-08-31, so every
+   selected run of text in the application — the message draft, the note body,
+   a rename field, a code block — was painted in **the system accent**, which on
+   a stock desktop is Adwaita blue. One unbranded colour, in the one place the
+   user's eye is guaranteed to be.
+
+   GTK4 puts selection on a subnode of whatever draws the text, and the node
+   differs per widget (`text` under an entry, `text` under a textview, directly
+   under a label), so the specific selectors are listed rather than relying on
+   the bare `selection` node to inherit everywhere. */
+selection,
+label selection,
+entry > text > selection,
+textview > text > selection {
+  background-color: @jenova_primary;
+  color: @jenova_fg;
+}
+
+/* A selected row — the workspace tree and any list. Purple wash rather than the
+   accent fill, so it reads as the same family as `.conv-active`'s left bar. */
+row:selected,
+list > row:selected {
+  background-color: alpha(@jenova_purple_head, 0.35);
+  color: @jenova_fg;
+}
+
+/* `app.css:270-271`. The one purely decorative rule ported, and it is what makes
+   the wordmark and the active chat read as lit rather than merely coloured. */
+.glow-text {
+  text-shadow: 0 0 8px alpha(@jenova_glow, 0.4);
+}
 
 /* The window is the ground the canvas is painted on. Near-black, matching the
    Web UI's `bg-black` wrapper at `+layout.svelte`.
@@ -142,21 +217,39 @@ headerbar .subtitle {
   box-shadow: 0 8px 32px alpha(#000000, 0.37);
 }
 
-/* The Neovim terminal. VTE paints its own opaque background unless
+/* The Neovim page. VTE paints its own opaque background unless
    `set_clear_background(false)` is called, which is why an alpha in
    `vte_terminal_set_colors` alone left it a solid slab. With that off, the
-   background is this rule's, so the tab sits in the same glass as everything
-   else instead of looking pasted on. */
+   background is this rule's.
+
+   **No radius, no drop shadow, no light edge** — those are `.glass-panel`'s, and
+   carrying them made the editor read as a card floating over the window rather
+   than as a page (G-24). The transcript's ScrolledWindow has none of them
+   either; this is the same surface, so it gets the same treatment. The padding
+   stays, because terminal text against a hard edge is unreadable. */
 .nvim-term,
 .nvim-term > vte-terminal,
 vte-terminal.nvim-term {
   background-color: alpha(@jenova_bg, 0.35);
-  border-top: 1px solid alpha(#ffffff, 0.1);
-  border-left: 1px solid alpha(#ffffff, 0.1);
-  border-radius: 10px;
-  box-shadow: 0 8px 32px alpha(#000000, 0.37);
   padding: 8px;
 }
+
+/* The document panel (G-25). One left border and nothing else: it is a second
+   pane of the same window, not a card on top of it, so it gets the divider a
+   split needs and none of `.glass-panel`'s floating cues. Empty when the panel
+   is closed, which is why the rule may not paint a fill — a closed panel would
+   otherwise leave a coloured sliver at the window edge. */
+.doc-panel {
+  border-left: 1px solid alpha(@jenova_border, 0.55);
+}
+
+/* GtkPaned's drag handle. Invisible at rest and brand-coloured under the
+   pointer, the same way the scrollbars behave. */
+paned > separator {
+  background-color: alpha(@jenova_border, 0.35);
+  min-width: 1px;
+}
+paned > separator:hover { background-color: @jenova_purple_head; }
 
 /* ── Sidebar ──────────────────────────────────────────────────────────────
    owlkettle's Flap adds GTK's `.background` class to the flap child
@@ -185,6 +278,7 @@ vte-terminal.nvim-term {
 .brand {
   font-weight: bold;
   letter-spacing: 0.02em;
+  text-shadow: 0 0 8px alpha(@jenova_glow, 0.4);
 }
 .brand-purple  { color: @jenova_purple_head; }
 .brand-crimson { color: @jenova_secondary; }
@@ -201,9 +295,29 @@ vte-terminal.nvim-term {
   padding: 2px 4px;
 }
 
+/* The container's own title and disclosure arrow. `.tree-node` styled the card
+   and left the text inside it at the inherited foreground, so a workspace name
+   and a chat title were the same weight and colour and the tree read flat.
+
+   **The node is `expander-widget`, not `expander`.** GTK3 named the widget
+   `expander`; GTK4 renamed it and gave the *arrow* that name, so the
+   `expander` entry in the transparency block above has been matching the
+   triangle this whole time and never the widget. Both names are present in
+   `libgtk-4.so`, which is how this was settled rather than guessed. The tree is
+   `expander-widget > box > title > {expander, label}`, so `title` is addressed
+   as a descendant and the arrow inherits `color` from it. */
+expander-widget { background-color: transparent; }
+expander-widget title {
+  color: @jenova_purple_light;
+  font-weight: bold;
+}
+expander-widget title:hover { color: @jenova_fg; }
+
 .section-label {
-  color: @jenova_muted_fg;
+  color: @jenova_accent;
   font-size: 0.8em;
+  font-weight: bold;
+  letter-spacing: 0.08em;
   margin: 6px 4px 2px 4px;
 }
 
@@ -220,11 +334,21 @@ vte-terminal.nvim-term {
   box-shadow: none;
 }
 .row-btn:hover { background-color: alpha(@jenova_sidebar_accent, 0.9); }
+
+/* The rename / delete / new-child icons beside every row. A symbolic icon is
+   painted in the widget's `color`, and `.row-btn` set none — so they inherited
+   the full-strength foreground and every secondary action in the tree was as
+   loud as the row it acted on. Muted at rest, brand on hover, and delete is the
+   one that announces itself. */
+.row-btn image { color: alpha(@jenova_muted_fg, 0.75); }
+.row-btn:hover image { color: @jenova_purple_light; }
+
 .conv-idle   { color: alpha(@jenova_fg, 0.72); }
 .conv-active {
   background-color: alpha(@jenova_sidebar_accent, 0.95);
   color: @jenova_fg;
   box-shadow: inset 2px 0 0 @jenova_purple_head;
+  text-shadow: 0 0 8px alpha(@jenova_glow, 0.4);
 }
 
 /* Message cards. The Web UI frames each turn; the role tint is what makes a

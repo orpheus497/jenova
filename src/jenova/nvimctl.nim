@@ -30,6 +30,10 @@ import ./paths
 
 const
   SocketName = "nvim.sock"
+  ## The document panel's editor is a second `nvim`, so it needs a second socket.
+  ## Kept as short as the first for the same measured reason: FreeBSD's
+  ## `sun_path` is about 104 bytes and `--listen` fails outright above it.
+  DocSocketName = "nvim-doc.sock"
   ## Long enough that a slow editor still answers, short enough that a hung one
   ## does not stall the chat turn that asked.
   QueryTimeoutMs = 2000
@@ -50,6 +54,12 @@ type
 ## sites so the spawn (G-19) and the reader agree by construction.
 proc socketPath*(p: Paths): string =
   p.state / SocketName
+
+## Function purpose: where the document panel's editor listens. Separate from
+## `socketPath` so the two instances cannot collide, and so `Editor:` can be
+## pointed at whichever of them the user is actually working in.
+proc docSocketPath*(p: Paths): string =
+  p.state / DocSocketName
 
 ## Function purpose: drain a child's stdout until EOF or the deadline, whichever
 ## comes first. `complete` is false only on the deadline, so the caller can tell

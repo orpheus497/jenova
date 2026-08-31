@@ -7,8 +7,9 @@ resolution. Most recent entries at the top.
 
 ## QUESTION STATUS — read this before asking the USER anything
 
-**NO QUESTIONS ARE OPEN.** Every question in this file is answered. Q-12, the last one, was closed
-by the USER on 2026-08-31.
+**NO QUESTIONS ARE OPEN.** Q-29 and Q-30 were raised 2026-08-31 23:05 and **answered the same day
+by the USER's *"proceed"***, which authorised the recommendations attached to them. Both are
+recorded below with the answer taken and the reasoning, so neither is re-raised.
 
 **This index exists because the body of this file carried ELEVEN `AWAITING USER DECISION` markers
 on 2026-08-31, of which ten were stale.** Any session reading the file saw eleven open questions
@@ -18,6 +19,8 @@ further down is left in place for the historical record; **this table overrides 
 
 | Question | Status |
 |---|---|
+| **Q-29 — what is a right-panel "document"?** | **ANSWERED 23:28 — a plain project file.** A `notes` row that Neovim edits on disk (which makes nvim a second writer against an authoritative database, and therefore *is* taking **T-11**), or a plain file under the project directory (no two-writer problem, not in the workspace tree). Taken as recommended: **the plain file**, because it does not require settling **T-11**, which the USER has deliberately left open. Implemented as `.md` files in the chat's project directory, with `fssync`'s note mirrors excluded from the switcher so no file has two writers |
+| **Q-30 — with two Neovim instances, which one does `Editor:` read?** | **ANSWERED 23:28 — the panel, while it is open.** `pipeline.configureEditor` takes one socket. The panel document is the one "directly connected to the chat", but the full-page editor is where the user is working. Taken: **the panel wins while open**, falling back to the page editor when it closes, because the panel document is the one the USER described as connected to the chat — the page editor is a workspace, not a subject. `pipeline.configureEditor` is re-aimed on both transitions |
 | Q-12 — the CUDA profile's model default | **CLOSED 2026-08-31 — no action, and the question should never have been put.** *"Cuda doesn't exist on freebsd so why are you even asking — who cares it's insignificant and there's nothing you have to do regarding it."* **This project is FreeBSD-only (Plan A, S-0…S-7), and CUDA is not meaningfully available on FreeBSD**, so `CUDA/dgpu-generic` can never be selected on the target platform — it is opt-in only (D-B) and the opt-in leads nowhere. **B-21 is moot for the same reason**, as is the CUDA half of B-05. I should have applied the project's own platform constraint before raising it |
 | Q-1 profile tree layout | Answered — **D-F** |
 | Q-3 `JENOVA_DISTRO`/`WSL` | Answered — **D-G** |
@@ -52,6 +55,73 @@ further down is left in place for the historical record; **this table overrides 
 | **The shell tree** | **Not to be repaired (D-AH).** The installer, the shell-era docs and the shell test scripts are scaffolding around the system being replaced. **Remaining work = what is missing from the Nim core**, never what is broken in the old one. Deployment of the single binary is one decision after the rewrite |
 | **CUDA** | **Not meaningfully available on FreeBSD.** `CUDA/dgpu-generic` is unreachable on the target platform, so its data defects (B-21, and the CUDA half of B-05) are moot. **Apply the platform constraint before raising anything about that profile** |
 
+
+---
+
+---
+
+---
+
+## D-AX — the Neovim page's opacity was Neovim's, not GTK's — 2026-08-31 23:28
+
+**G-23 cost three failed attempts because every one of them worked on the wrong side of the
+boundary**: an alpha in `vte_terminal_set_colors`, then `set_clear_background(false)`, then a
+`.nvim-term` glass rule. All three are correct and none of them could have worked.
+
+**A colourscheme sets `Normal` with a background.** Neovim emits that as a per-cell background
+attribute, and VTE renders exactly what it is told. A cell the application explicitly filled is
+opaque, and no CSS rule and no VTE setting can see through it.
+
+**Established by running the USER's own configuration, not by reading it.** `hi Normal` reports
+`guifg=#f4c5ba guibg=#14131a` under a plain `nvim`, and `guifg=#f4c5ba` — no background — under the
+same `nvim` started with the override. That is the whole diagnosis, and it took one command.
+
+The fix lives in the argument vector (`vte.TransparentBackground`, passed as `--cmd`), so it applies
+**only to the instance embedded in this window**; a `nvim` the USER starts from a terminal is
+untouched. `--cmd` runs before their configuration, which registers the autocommand early enough to
+catch the colourscheme that loads after it, and `ColorScheme` catches every later change.
+
+**The general lesson, and it is the same one T-1 taught.** Three hypotheses died because the
+question asked was *"what is painting this widget?"* when the answer was *"the program inside it"*.
+The diagnostic that settled it was cheaper than any of the three attempts.
+
+---
+
+## D-AY — `termguicolors` bounds what the brand palette can reach — 2026-08-31 23:28
+
+The VTE palette was nil, so Neovim rendered in stock xterm 16; it is now sixteen brand-derived
+slots (`theme.TerminalPalette`). **This is correct and it will change nothing the USER sees**, and
+that is stated here rather than discovered later: their `init.lua` sets `termguicolors = true`,
+which makes Neovim emit 24-bit escapes and bypass the palette entirely.
+
+It is kept because it is right for anyone who turns `termguicolors` off, and because a nil palette
+was simply a gap. **The colours inside the Neovim page are the USER's colourscheme**, which is the
+boundary **D-AT** drew when it settled that they keep their own editor — and their `jvim` scheme is
+already built on the brand hues, so there is nothing to reconcile.
+
+---
+
+## D-AW — no virtual file explorer is built; the Neovim page is the browser — 2026-08-31 23:05
+
+USER: *"due to the integration of the neovim page - we do not need to create a virtual file
+explorer - as long as everything is correctly in sync - this is because the ability to open a page
+with the users full neovim set to the workspaces folder - operates almost as an entire IDE for the
+user (depending on their config)."*
+
+**This cancels G-16** (`FilesView.svelte` / `VFSExplorer.svelte` parity) and retires the
+`fileAssets` rows from the GUI tree, which G-25 replaces. The premise already holds in code:
+`vte.nim:90` spawns `nvim` with its working directory at `$JCA_HOME/Workspaces`.
+
+**The `/api/storage/*` surface is NOT removed.** It is the LAN client's, it is asserted by
+`test_api_fs.sh`, and D-Z freezes that contract. What is cancelled is a *GUI view* over it. Same
+for the `fileAssets` table and its mirror.
+
+**The conditional in the USER's sentence is the whole risk, and it is recorded rather than
+assumed:** *"as long as everything is correctly in sync."* **T-14** — a workspace, project or folder
+rename orphans everything beneath it on disk, because `physicalPath` derives every path from
+ancestor *names* while `mirrorUpsert` does nothing for containers — is precisely the defect that
+makes a filesystem-first view lie to the user. D-AW does not close T-14; **it promotes it**, because
+the mirror stops being a convenience and becomes the interface.
 
 ---
 

@@ -11,7 +11,7 @@
 ## `libgtksourceview-5.so` as a GResource, so nothing has to be installed beside
 ## the binary and no data path has to be configured.
 
-import std/[strutils, tables]
+import std/[os, strutils, tables]
 import owlkettle/bindings/gtk
 
 {.passC: staticExec("pkg-config --cflags gtksourceview-5").}
@@ -38,6 +38,8 @@ proc gtk_source_language_manager_get_language(m: GtkSourceLanguageManager,
 proc gtk_source_style_scheme_manager_get_default(): GtkSourceStyleSchemeManager
 proc gtk_source_style_scheme_manager_get_scheme(m: GtkSourceStyleSchemeManager,
                                                 id: cstring): GtkSourceStyleScheme
+proc gtk_source_style_scheme_manager_append_search_path(
+  m: GtkSourceStyleSchemeManager, path: cstring)
 {.pop.}
 
 # The GtkTextView setters are declared with Nim-side names and an explicit
@@ -86,8 +88,105 @@ proc ensureSourceInit() =
 ## ships is not guaranteed — an unavailable id returns nil rather than failing,
 ## so the fallback costs nothing and a missing scheme degrades to the default
 ## rather than to an unreadable light block.
-const SchemePreference = ["Adwaita-dark", "classic-dark", "solarized-dark",
-                          "oblivion", "cobalt"]
+const SchemePreference = ["jenova-dark", "Adwaita-dark", "classic-dark",
+                          "solarized-dark", "oblivion", "cobalt"]
+
+## Action purpose: the Jenova scheme, embedded in the binary rather than shipped
+## as a data file. GtkSourceView loads schemes only from a directory on its
+## search path, so the XML is written out once at startup and that directory
+## appended — which keeps the application a single file with no data dependency
+## to install, deploy or lose.
+##
+## **Why a scheme at all.** Without one, `SchemePreference` fell through to
+## `Adwaita-dark`, which a probe against the installed GtkSourceView 5.18
+## confirms resolves — so every code block in the transcript was painted in
+## GNOME's palette: blue keywords, red strings, nothing from the brand. The
+## twelve ids that library offers contain no dark scheme built on purple and
+## gold, so one has to be supplied.
+##
+## The mapping is the same reasoning as `theme.TerminalPalette`: keyword to the
+## heading purple, string to gold, comment to the muted grey, number and constant
+## to the brand blue, error to crimson. `def:` styles are GtkSourceView's own
+## cross-language abstractions, so colouring those covers every language the
+## library ships rather than one per fence label.
+const SchemeXml = """<?xml version="1.0" encoding="UTF-8"?>
+<style-scheme id="jenova-dark" name="Jenova Dark" version="1.0">
+  <author>Jenova Cognitive Architecture</author>
+  <description>Jenova brand palette — purple, gold, crimson on near-black.</description>
+
+  <color name="bg"           value="#1c1b1b"/>
+  <color name="fg"           value="#f0edf2"/>
+  <color name="muted"        value="#9fa0a6"/>
+  <color name="border"       value="#5e5966"/>
+  <color name="purple_head"  value="#7b52ab"/>
+  <color name="purple_light" value="#8e7cc3"/>
+  <color name="purple_deep"  value="#4b2c70"/>
+  <color name="gold"         value="#e4b382"/>
+  <color name="crimson"      value="#c96464"/>
+  <color name="blue"         value="#aba0d9"/>
+
+  <style name="text"                        foreground="fg" background="bg"/>
+  <style name="selection"                   foreground="fg" background="purple_deep"/>
+  <style name="cursor"                      foreground="gold"/>
+  <style name="current-line"                background="#232122"/>
+  <style name="draw-spaces"                 foreground="border"/>
+  <style name="background-pattern"          background="bg"/>
+
+  <style name="bracket-match"               foreground="gold" bold="true"/>
+  <style name="bracket-mismatch"            foreground="crimson" bold="true"/>
+  <style name="search-match"                foreground="bg" background="gold"/>
+
+  <style name="def:comment"                 foreground="muted" italic="true"/>
+  <style name="def:shebang"                 foreground="muted" italic="true"/>
+  <style name="def:doc-comment-element"     foreground="muted" italic="true"/>
+
+  <style name="def:constant"                foreground="blue"/>
+  <style name="def:string"                  foreground="gold"/>
+  <style name="def:special-char"            foreground="crimson"/>
+  <style name="def:number"                  foreground="blue"/>
+  <style name="def:floating-point"          foreground="blue"/>
+  <style name="def:boolean"                 foreground="blue" bold="true"/>
+  <style name="def:character"               foreground="gold"/>
+
+  <style name="def:identifier"              foreground="fg"/>
+  <style name="def:function"                foreground="gold" bold="true"/>
+  <style name="def:builtin"                 foreground="purple_light"/>
+
+  <style name="def:statement"               foreground="purple_head" bold="true"/>
+  <style name="def:keyword"                 foreground="purple_head" bold="true"/>
+  <style name="def:operator"                foreground="purple_light"/>
+  <style name="def:type"                    foreground="purple_light" bold="true"/>
+  <style name="def:preprocessor"            foreground="crimson"/>
+
+  <style name="def:error"                   foreground="crimson" bold="true" underline="single"/>
+  <style name="def:warning"                 foreground="gold" underline="single"/>
+  <style name="def:note"                    foreground="blue" bold="true"/>
+  <style name="def:deletion"                foreground="crimson" strikethrough="true"/>
+  <style name="def:heading"                 foreground="purple_head" bold="true"/>
+  <style name="def:link-destination"        foreground="blue" underline="single"/>
+  <style name="def:emphasis"                italic="true"/>
+  <style name="def:strong-emphasis"         foreground="gold" bold="true"/>
+  <style name="def:inline-code"             foreground="gold"/>
+</style-scheme>
+"""
+
+## Function purpose: make the Jenova scheme available, given a directory this
+## process may write to. Called once from the application entry point before any
+## buffer is built, because `applyScheme` asks for `jenova-dark` first and a
+## search path appended afterwards would be too late for the blocks already on
+## screen. Failure is survivable and silent by design: an unwritable directory
+## means the scheme is absent, `SchemePreference` falls through to `Adwaita-dark`
+## as it did before, and code blocks are off-brand rather than missing.
+proc installScheme*(dir: string) =
+  try:
+    createDir(dir)
+    let path = dir / "jenova-dark.xml"
+    if not fileExists(path) or readFile(path) != SchemeXml:
+      writeFile(path, SchemeXml)
+    gtk_source_style_scheme_manager_append_search_path(
+      gtk_source_style_scheme_manager_get_default(), dir.cstring)
+  except OSError, IOError:
+    discard
 
 proc applyScheme(buffer: GtkSourceBuffer) =
   let mgr = gtk_source_style_scheme_manager_get_default()

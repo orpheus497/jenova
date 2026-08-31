@@ -5,7 +5,7 @@ Reverse-chronological. **Keep entries short.** Sessions 001-005 are in
 
 ---
 
-## Session 012 — 2026-08-31 22:51
+## Session 012 — 2026-08-31 23:28
 
 **Instruction:** a batch of externally supplied review findings across the Nim core, the test
 suites, the hardware profiles, the Web UI and the documentation. Verify each against current code,
@@ -64,8 +64,82 @@ a Makefile and `scripts/*.sh` — every one archived. `README.md`, `docs/archite
 **This is D-AO's failure mode again** — the trackers were current, but the user-facing docs had
 drifted a whole architecture behind and would have sent a reader to files that do not exist.
 
+
+### Second instruction — USER direction, 23:05: four asks, investigated and scoped, nothing built
+
+Per Directive 1 this was investigation and planning only. Scoped in `PLANS.md`
+("G-24 … G-27"), added to `TODOS.md` Backlog, one ruling in `DECISIONS_LOG.md` (**D-AW**), two
+questions opened (**Q-29**, **Q-30**).
+
+**What the investigation actually changed about the asks:**
+
+- **The Neovim tab is already a page**, not a floating window — `gui.nim:1242` swaps the main area
+  exactly as notes do. What makes it *read* as floating is `margin = 12` plus `.nvim-term`'s radius
+  and `0 8px 32px` shadow, and — the part nothing had noticed — **the bottom action row still shows
+  the chat `Entry` and Send button while the editor is open**, because it branches on
+  `app.openNote` and not on `app.editorOpen`. So there is no Close on the editor page. G-24 is a
+  framing fix, not a restructure.
+- **There is no right panel at all**, and `Flap` cannot become one — owlkettle does not expose
+  AdwFlap's `flap-position`. `Paned` is the widget. Two design questions block it, both recorded
+  rather than guessed.
+- **The colour work is four unrelated defects, three confirmed by running something**, not one CSS
+  pass. `theme.nim` has **no selection rule whatsoever**, so every text selection is Adwaita blue.
+  Code blocks resolve to **`Adwaita-dark`** — verified with a probe compiled against the installed
+  GtkSourceView 5.18, which offers twelve schemes and no Jenova one. `vte.nim:77` passes a **nil
+  palette of size 0**, so Neovim renders in stock xterm 16. And `.glow-text` was never ported.
+- **The "no file explorer" ask is a scope reduction that promotes a defect.** Its premise already
+  holds (`vte.nim:90` roots nvim at `$JCA_HOME/Workspaces`), but its stated condition — *"as long
+  as everything is correctly in sync"* — is exactly **T-14**, which is open. Recorded in D-AW.
+
+**Recommended order, and the reason it is not the order the asks were given in:** G-27 first
+(entirely additive, and its VTE half is a prerequisite for the Neovim page looking right whatever
+frame it is in), then **G-23** — which still wants `GTK_DEBUG=interactive` and **not a fourth value
+change** — then G-24, then G-25 once Q-29 and Q-30 are answered.
+
+
+### Third instruction — *"proceed"*, 23:05: G-27, G-23, G-24 and G-25 built
+
+All four implemented, both binaries built, every suite and self-test passing. **None of it has been
+seen on screen** — that is the whole of what is outstanding.
+
+**G-23 is the one worth reading.** It was never a GTK problem, which is why three attempts on that
+side failed: **Neovim paints the background.** A colourscheme sets `Normal` with a `guibg`, Neovim
+emits it as a per-cell attribute, and VTE renders what it is told — no CSS rule and no
+`set_clear_background` call can see through a cell the application filled. Settled by **running the
+USER's own config**: `hi Normal` gives `guibg=#14131a` normally and no background under the
+override. One command, after three value changes. Recorded as **D-AX**.
+
+**G-27 was four unrelated defects, not one CSS pass.** No selection rule existed at all (so every
+selection was Adwaita blue); code blocks resolved to `Adwaita-dark` and now use an embedded
+`jenova-dark` scheme, **verified to load by a probe**; the VTE palette was nil and is now sixteen
+brand slots — **which will change nothing the USER sees, because their `init.lua` sets
+`termguicolors` (D-AY), and that is stated rather than left to be found**; and `.glow-text` was
+never ported. Along the way: **`expander > title` is not a GTK4 selector** — the node is
+`expander-widget`, settled from the strings in `libgtk-4.so`, which means the transparency rule in
+that sheet has been matching the disclosure triangle all along.
+
+**A probe now loads `theme.css()` through a real `GtkCssProvider`** and reports every parse error
+GTK raises. Zero. That is worth keeping as a habit — a bad selector in this sheet is otherwise
+silent.
+
+**G-24 turned out to be small**, because the editor was already a page. What made it read as
+floating was a margin, a card shadow, and a bottom action row that branched on `app.openNote` — so
+the editor page showed a chat input and had no Close.
+
+**G-25** is a `Paned` that is **always in the tree**; building it on toggle would rebuild the
+subtree and kill the page editor's `nvim`. Documents are plain `.md` files in the chat's project
+directory via the new `fssync.scopeDir`, edited by a second `nvim`; note mirrors are excluded so no
+file gets two writers.
+
+**Two bugs I wrote and caught before building:** a `sizeRequest` set inside the `if app.panelOpen`
+branch would have persisted after the panel closed — owlkettle updates a property only when the
+widget carries it — holding 420 px of dead space at the window edge; and the same for the panel's
+border. Both are now set unconditionally.
+
 ### Next steps
 
+0. **Run it and look at the five things `PLANS.md` lists** — that is the only claim still open on this work.
+1. ~~Answer Q-29 and Q-30~~ — answered by *"proceed"* — they gate G-25, the largest of the four new items.
 1. **T-16** — decide how `detect-hardware.sh` gets its environment back, or whether selection moves
    into the core. It gates every hardware-profile fix made today.
 2. **T-17** — decide what an indexer walks and on what trigger. The retrieval machinery is done.

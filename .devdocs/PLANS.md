@@ -2,7 +2,7 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-08-31 21:42
+**Last updated:** 2026-08-31 23:28
 
 ---
 
@@ -55,6 +55,138 @@ Sizing APIs (`min-width`, `sizeRequest`, flap `width`) are **minimums** — chec
 reaching for one.
 
 **LAN gets no further investment.** Built, works, retained under Directive 3.
+
+---
+
+## G-24 … G-27 — the USER's direction of 2026-08-31 23:05 — **BUILT 23:28, UNRUN on screen**
+
+> **All four are implemented in source and compiled.** Q-29 and Q-30 were answered by the USER's
+> *"proceed"* (see `DECISIONS_LOG.md`), and **G-23 was diagnosed and fixed along the way — it was
+> Neovim painting `Normal`, not GTK (D-AX)**. What remains is the one thing this plan cannot do:
+> **look at it.** The section below is kept as the record of what was decided and why, and the
+> order it was done in.
+>
+> **What to check on the first run**, in this order — each is a distinct mechanism, and lumping them
+> into "does it look right" is how three G-23 attempts were spent:
+> 1. **Neovim page translucency.** The particle canvas should show through the editor. If it does
+>    not, the override is not reaching the instance — check `hi Normal` inside it before changing
+>    any value.
+> 2. **Text selection.** Select in the message box and in a note: purple, not blue.
+> 3. **Code-block colours.** A fenced block in a reply should be purple keywords and gold strings,
+>    not Adwaita's blues.
+> 4. **The document panel.** Toggle it on a chat; the page editor's `nvim` must survive the toggle.
+> 5. **The editor page's bottom row.** Close and fullscreen, not a message box.
+
+Four asks given together. They are **not** four independent tickets: G-26 removes work, G-24 and
+G-25 both hang off the Neovim integration, and G-27 is the only one that can be done in isolation.
+**Do them in the order below**, because G-25 is the one with an unanswered design question and
+starting there stalls the other three.
+
+### Order, and why
+
+| Step | Item | Blocked by | Why here |
+|---|---|---|---|
+| 1 | **G-27** — palette completion | nothing | Entirely additive, touches `theme.nim`/`sourceview.nim`/`vte.nim` only, and **its VTE half is a prerequisite for G-24 and G-25 looking right** — a Neovim page in stock ANSI is off-scheme however it is framed |
+| 2 | **G-23** — the Neovim tab's opacity | nothing, but needs the diagnostic | Still open, still wants `GTK_DEBUG=interactive`, **still not a fourth value change**. G-24 restyles the same widget, so resolving this first stops a fifth guess being folded into a layout change |
+| 3 | **G-24** — Neovim as a page | 2 | Small once 2 is known: it is a margin, an action row and a style class |
+| 4 | **G-26** — cancel the file explorer | nothing | Already recorded; the work is *not doing* G-16. Its real cost is **T-14** moving up |
+| 5 | **G-25** — the right-hand document panel | a USER decision (below) | The largest, and the only one that cannot start today |
+
+---
+
+### G-27 — finish the palette *(actionable now)*
+
+Four separate defects with four separate fixes. **Do not treat this as one CSS pass.**
+
+1. **Selection colours.** `theme.nim` has no selection rule, so GTK4 uses the system accent —
+   Adwaita blue — everywhere text is selected. Add `selection`, `entry > text > selection` and
+   `textview text selection` on `@jenova_primary` with `@jenova_fg`, and a `:selected` rule for any
+   list row. This is the single most visible item and the cheapest.
+2. **A Jenova GtkSourceView scheme.** `sourceview.nim:89` asks for `Adwaita-dark` first, and a probe
+   compiled against the installed library **confirms it resolves** — so every code block in chat is
+   GNOME's palette. GtkSourceView schemes are XML and merge from
+   `gtk_source_style_scheme_manager_append_search_path()`. **Ship the scheme inside the binary**
+   (`staticRead`, written to `$JCA_HOME/.system/styles/` at startup, path appended before the first
+   buffer is built) so the application stays one file with no data dependency. Map keyword →
+   `@jenova_purple_head`, string → `@jenova_accent` gold, comment → `@jenova_muted_fg`, number and
+   constant → `ColBrandBlue`, error → `@jenova_secondary` crimson. Keep `SchemePreference` as the
+   fallback chain beneath it.
+3. **The VTE palette.** `vte.nim:77` passes a nil palette of size 0, so Neovim renders in VTE's
+   built-in xterm 16 — this is why the Neovim page looks like a different application. Build a
+   16-entry `array[16, GdkRGBA]` from the brand constants and pass `paletteSize = 16`. **The eight
+   bright slots matter more than the eight normal ones** for a Neovim colourscheme, and this only
+   fixes what nvim draws through ANSI: a user whose config sets `termguicolors` bypasses the
+   palette entirely and needs a Neovim colourscheme instead — which is theirs, not ours, and is
+   the boundary D-AT drew. **State that limit in the code rather than discovering it later.**
+4. **Glows and the missing borders.** `app.css:270` is `text-shadow: 0 0 8px rgba(221,183,255,0.4)`
+   (`.glow-text`) and `:227` a crimson `box-shadow: 0 0 20px`; neither was ported and GTK4 supports
+   both. Apply the text glow to `.brand` and the active conversation row, not globally.
+
+**Also audit, because the USER named "some text in the side panel and buttons":** every widget in
+`leafRow`, `nodeTools` and `topBar` carries `ButtonFlat` + `.row-btn`, which sets no colour — so
+icon buttons inherit the theme's, not the brand's. `Expander`'s own title and disclosure arrow are
+likewise unstyled. Enumerate them against the running window before writing rules; **a colour
+audit done by reading is how three G-23 attempts died.**
+
+---
+
+### G-24 — the Neovim tab becomes a page *(after G-23)*
+
+`gui.nim:1242` already swaps the main area, so this is framing, not restructuring:
+
+1. Drop `margin = 12` and the `.nvim-term` radius/shadow so the editor fills the column edge to
+   edge, the way the transcript's `ScrolledWindow` does.
+2. **Branch the bottom action row on `app.editorOpen`, not only on `app.openNote`.** Today the
+   editor page shows the chat `Entry` and Send button, and has no Close — the note page gets
+   Save/Close and the editor should get the same shape (Close, plus `fullscreenButton`).
+3. Hide the `notice` label while the editor is open; it is chat feedback.
+4. **Keep the three-children-same-types invariant** the comment at `gui.nim:1238` records. That is
+   what stops owlkettle's positional diff swapping a widget out from under it, and it is the
+   discipline that survived T-1.
+
+---
+
+### G-25 — the right-hand document panel *(needs one USER decision first)*
+
+**What is settled:** it is a `Paned` (`owlkettle/widgets.nim:1344` — `orient`, `initialPosition`,
+`first`, `second`), not a `Flap`, because owlkettle does not expose AdwFlap's `flap-position`. It is
+toggled per chat from the top bar, and it hosts a real `nvim` in a second VTE, not a text view.
+
+**What is not settled, and must not be guessed — two questions for the USER:**
+
+- **Q-29: what is a "document"?**
+  - **(a) A `notes` row that Neovim edits on disk.** `fssync` already writes every note to
+    `Workspaces/<ws>/<project>/<folder>/<title>_<id>.md`, so the file exists and the sidebar already
+    lists it. **But the database is authoritative and nvim would be a second writer** — save in
+    nvim and the row is stale; save in the GUI and nvim's buffer is. That is **T-11** (filesystem as
+    source of truth), which is recorded as undecided, so option (a) *is* taking T-11.
+  - **(b) A plain file under the project directory**, outside the `notes` table. No two-writer
+    problem, no T-11 entanglement, and "multiple can be saved" is just files in a directory. The
+    cost is that these documents are not in the workspace tree unless the panel lists them itself
+    — which G-26 says is acceptable, because Neovim is the browser.
+  - **Recommendation: (b)**, and it can be revisited if T-11 later lands. It is the option that
+    does not require a settled answer to a question the USER has explicitly left open.
+
+- **Q-30: with two Neovim instances, which one does `Editor:` read?** `pipeline.configureEditor`
+  takes one socket (`gui.nim:1337`) and `nvimctl` reads whatever buffer that instance has focused.
+  The panel document is the one "directly connected to the chat", so **the panel's socket is the
+  likelier answer** — but the full-page editor is where the user is actually working. Candidates:
+  the panel always wins; the most recently focused wins; or `Editor:` gains a suffix. **Not a
+  decision to take silently — it changes what the model is shown.**
+
+**The work, once those are answered:**
+
+1. `vte.nim` — replace the module-level `sockPath`/`spawnCwd` pair with per-widget spawn arguments,
+   so two terminals can carry different sockets and working directories. `newNvimTerminal` reads
+   globals at build time today because `beforeBuild` sees no field values; the `renderable` will
+   need `{.private, onlyState.}` fields set the way `SourceCode` sets its buffer.
+2. `nvimctl.nim` — `socketPath` becomes a function of a role, not a constant. **Keep it short:** the
+   104-byte `sun_path` limit is measured, not assumed, and two sockets under `.system/` stay inside
+   it.
+3. `gui.nim` — `Paned` around the chat column; `panelOpen` and `panelDoc` state; a document switcher
+   in the panel header; the top-bar toggle.
+4. **Retire the `fileAssets` rows from the tree** — G-25 replaces them. The `fileAssets` table,
+   `/api/db/fileAssets` and the mirror stay for the LAN client (D-Z), so this is a GUI removal only.
 
 ---
 

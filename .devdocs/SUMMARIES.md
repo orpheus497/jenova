@@ -20,7 +20,24 @@ went to the USER — the Google Fonts import — who chose removal without self-
 items, all executed rather than read: **T-16, `detect-hardware.sh` cannot run at all** because
 `lib/detect-env.sh` was archived out from under it; **T-17**, nothing calls `rag.indexContent`
 outside the self-test, so retrieval's index is always empty; **T-18**, the Optane profile resolves
-an archived helper. Detail in `SESSION_HANDOFF.md` Session 012.
+an archived helper. Then took a second instruction — four asks about the GUI — and **investigated and scoped them
+without building anything**, per Directive 1. The investigation moved three of the four: the Neovim
+tab **is already a page** and only reads as floating because of a margin, a card shadow and a bottom
+action row that still shows the chat input while the editor is open; there is **no right panel at
+all** and `Flap` cannot become one, so `Paned` is the widget and two design questions (**Q-29**,
+**Q-30**) gate it; and the colour complaint is **four separate defects, three confirmed by running
+something** — `theme.nim` has no selection rule at all, code blocks resolve to `Adwaita-dark`
+(probe-confirmed against the installed GtkSourceView), VTE gets a nil palette so Neovim is stock
+ANSI, and `.glow-text` was never ported. The fourth ask cancels G-16 (**D-AW**) and, because its
+condition is *"as long as everything is correctly in sync"*, promotes **T-14**. Scoped as G-24 … G-27 in
+`PLANS.md`, then **built on the USER's *"proceed"*** — all four implemented, both binaries compiling,
+every suite and self-test passing, **and none of it seen on screen**, which is the only outstanding
+claim. **G-23 fell out along the way and it was never a GTK problem**: Neovim paints `Normal` with a
+background and VTE renders what it is told, so no CSS could ever have seen through it — three
+attempts had all worked on the wrong side of the boundary, and one command against the USER's own
+config settled it (**D-AX**). Two limits are stated rather than left to be discovered: their
+`termguicolors = true` bypasses the new VTE palette entirely (**D-AY**), and `expander > title` was
+never a GTK4 selector. Detail in `SESSION_HANDOFF.md` Session 012.
 
 ---
 

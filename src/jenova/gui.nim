@@ -35,7 +35,7 @@
 ## shells to base `fetch(1)`: this project has spent seven stages removing
 ## dependencies, and a localhost request needs no TLS stack.
 
-import std/[json, net, os, oids, osproc, streams, strutils, tables, times]
+import std/[algorithm, json, net, os, oids, osproc, streams, strutils, tables, times]
 import owlkettle
 import owlkettle/adw
 import owlkettle/cairo
@@ -403,6 +403,16 @@ viewable App:
   search: string
   sidebarOpen: bool = true
   editorOpen: bool
+  ## The right-hand document panel (G-25). A chat's documents are plain `.md`
+  ## files in that chat's own project directory, edited by a second `nvim` — not
+  ## `notes` rows, so nothing here is a second writer against the database
+  ## (ruling Q-29). `panelDocs` is cached for the same reason `convs` is: `view`
+  ## runs on every canvas frame and a directory walk per frame is defect B-17
+  ## with a filesystem behind it.
+  panelOpen: bool
+  panelDoc: string
+  panelDir: string
+  panelDocs: seq[string]
   ## Bound to the Window's `fullscreened`, which the application had never set —
   ## so nothing in the program could leave fullscreen once the compositor put it
   ## there. owlkettle exposes no window-state event, so this cannot *observe* a
@@ -681,6 +691,84 @@ proc commitRename(app: AppState, entity, id: string) =
 ## filtered by the search box. Case-insensitive substring, matching
 ## `ChatSidebarSearch`'s behaviour rather than inventing a ranking nobody asked
 ## for.
+## Function purpose: is this filename one of `fssync`'s note mirrors rather than
+## a panel document? A mirrored note is `<title>_<uuid>.md`, and listing those
+## beside real documents would offer the user two ways to edit one note — the
+## note editor and Neovim — writing to the same file with no reconciliation.
+## That is precisely the two-writer problem Q-29 chose the plain-file model to
+## avoid, so the mirrors are excluded rather than merely deprioritised.
+proc isNoteMirror(name: string): bool =
+  if not name.endsWith(".md"): return false
+  let stem = name[0 ..< ^3]
+  stem.len > 37 and stem[^37] == '_' and fssync.isValidUuid(stem[^36 .. ^1])
+
+## Function purpose: the directory the active chat's documents live in. Resolved
+## through `fssync.scopeDir` so the panel and the note mirror agree about where a
+## project is on disk, rather than each deriving it.
+proc docDir(app: AppState): string =
+  for c in app.convs:
+    if c.id == app.convId:
+      return fssync.scopeDir(c.folderId, c.projectId, c.workspaceId)
+  app.p.workspaces / "unassigned"
+
+proc refreshDocs(app: AppState) =
+  app.panelDir = app.docDir()
+  app.panelDocs = @[]
+  if not dirExists(app.panelDir): return
+  for kind, path in walkDir(app.panelDir):
+    if kind notin {pcFile, pcLinkToFile}: continue
+    let name = path.extractFilename
+    if not name.endsWith(".md") or name.startsWith(".") or isNoteMirror(name):
+      continue
+    app.panelDocs.add name
+  app.panelDocs.sort()
+
+## Function purpose: open one document in the panel. The spawn arguments are set
+## before `panelOpen` flips, because the widget is built on the redraw that flag
+## causes and `beforeBuild` reads them then.
+##
+## `pipeline.configureEditor` is re-aimed here, which is the answer to Q-30: with
+## two editors running, `Editor:` reads the **panel** one, because the panel
+## document is the one the USER described as connected to the chat. The page
+## editor is a workspace, not a subject.
+proc openDoc(app: AppState, name: string) =
+  app.refreshDocs()
+  try:
+    createDir(app.panelDir)
+  except OSError:
+    app.notice = "Cannot create " & app.panelDir
+    return
+  let full = app.panelDir / name
+  vte.configureDoc(nvimctl.docSocketPath(app.p), app.panelDir, full)
+  pipeline.configureEditor(nvimctl.docSocketPath(app.p))
+  app.panelDoc = name
+  app.panelOpen = true
+
+## Function purpose: a new, uniquely named document beside the chat's notes.
+## The file is created empty rather than left to Neovim's `:w`, so it appears in
+## the switcher immediately and a user who closes the panel without saving has
+## not lost the entry they just made.
+proc newDoc(app: AppState) =
+  app.refreshDocs()
+  var n = 1
+  var name = "document.md"
+  while name in app.panelDocs:
+    inc n
+    name = "document-" & $n & ".md"
+  try:
+    createDir(app.panelDir)
+    writeFile(app.panelDir / name, "")
+  except IOError, OSError:
+    app.notice = "Cannot write into " & app.panelDir
+    return
+  app.openDoc(name)
+
+proc closePanel(app: AppState) =
+  app.panelOpen = false
+  app.panelDoc = ""
+  # Back to the page editor, so `Editor:` follows the surface that is still open.
+  pipeline.configureEditor(nvimctl.socketPath(app.p))
+
 proc visibleConvs(app: AppState): seq[ConvItem] =
   let q = app.search.strip.toLowerAscii
   if q.len == 0: return app.convs
@@ -766,6 +854,15 @@ renderable NvimTerminal of BaseWidget:
   hooks:
     beforeBuild:
       state.internalWidget = vte.newNvimTerminal()
+
+## The document panel's editor (G-25). A separate renderable rather than a field
+## on `NvimTerminal`, because `beforeBuild` sees no field values — the spawn
+## arguments come from `vte.configureDoc`, set by the click that opens the
+## document. Two renderables is the honest expression of "two processes".
+renderable DocTerminal of BaseWidget:
+  hooks:
+    beforeBuild:
+      state.internalWidget = vte.newDocTerminal()
 
 ## A read-only, syntax-highlighted code block (G-7). Declared here rather than in
 ## `sourceview.nim` because owlkettle's `renderable` emits an unexported type;
@@ -954,6 +1051,123 @@ proc nodeTools(app: AppState, entity, id: string, ws, pr, fd: string,
         style = [ButtonFlat, StyleClass("row-btn")]
         proc clicked() = app.deleteNode(entity, id)
 
+## Function purpose: the main area of the chat column — the Neovim page, the note
+## editor, or the transcript. Extracted from `view` so the `Paned` that G-25 adds
+## can take it as one child without reindenting the whole transcript, and so the
+## editor/transcript switch has one place rather than being read out of a deeply
+## nested tree.
+proc mainArea(app: AppState): Widget =
+  if app.editorOpen:
+    # No margin: the editor is a *page*, filling its side of the split the way
+    # the transcript's ScrolledWindow does. A margin plus `.nvim-term`'s former
+    # radius and drop shadow is what made it read as a floating card rather than
+    # a view you navigated to (G-24).
+    gui:
+      NvimTerminal:
+        style = [StyleClass("nvim-term")]
+  else:
+    gui:
+      ScrolledWindow:
+        Box(orient = OrientY, spacing = 12, margin = 16):
+          if app.openNote.len > 0:
+            Entry {.expand: false.}:
+              text = app.noteTitle
+              placeholder = "Note title"
+              proc changed(text: string) = app.noteTitle = text
+            # A TextView owns a TextBuffer rather than a string, so it is
+            # driven from `app.noteBuffer` and read back on save — it
+            # cannot be bound to state per redraw the way an Entry is.
+            TextView:
+              buffer = app.noteBuffer
+          # Every child here is `expand: false`, and the annotations are
+          # the whole point. **`Box`'s adder defaults to `expand: true`**,
+          # which in a *vertical* Box sets `vexpand` — so an unannotated
+          # message card stretches to take an equal share of the viewport
+          # height, and two replies in a tall window each become half a
+          # screen. That is the "weirdly huge" bubbles. A transcript sizes
+          # to its content and scrolls; it never divides the space up.
+          Label {.expand: false.}:
+            text = (if app.openNote.len > 0: ""
+                    elif app.messages.len == 0: "Ask Jenova something."
+                    else: "")
+            style = [StyleClass("dim-note")]
+          for m in (if app.openNote.len > 0: @[] else: app.messages):
+            Frame {.expand: false.}:
+              style = [StyleClass("msg-card"),
+                       StyleClass(if m.role == rUser: "msg-user" else: "msg-agent")]
+              Box(orient = OrientY, spacing = 4, margin = 10):
+                Label {.expand: false.}:
+                  text = (if m.role == rUser: "YOU" else: "JENOVA")
+                  xAlign = 0.0
+                  style = [StyleClass("msg-role"),
+                           StyleClass(if m.role == rUser: "msg-role-user"
+                                      else: "msg-role-agent")]
+                insert(app.messageBody(m)) {.expand: false.}
+
+## Function purpose: the right-hand document panel (G-25) — a second Neovim,
+## editing one plain `.md` file in the active chat's own project directory.
+##
+## **It is always in the tree, and empty when closed.** Its children come and go;
+## the Box does not. A Box with no children requests no width, so a closed panel
+## costs a handle at the window edge and nothing else — and the page editor on
+## the other side of the Paned is never rebuilt by a toggle, which would kill the
+## `nvim` running in it.
+##
+## The switcher lists `.md` files in that directory, excluding `fssync`'s note
+## mirrors: a mirrored note is already editable in the note editor, and offering
+## a second writer for the same file is exactly what Q-29 chose this model to
+## avoid.
+proc docPanel(app: AppState): Widget =
+  gui:
+    Box(orient = OrientY):
+      # Both properties are set on **every** redraw, not only when the panel is
+      # open. owlkettle updates a property only when the widget carries it, so a
+      # `sizeRequest` assigned inside the `if` would persist after the panel
+      # closed and hold 420 px of dead space at the window edge — and the border
+      # would draw as a stray line there. The closed class deliberately has no
+      # rules of its own.
+      style = [StyleClass(if app.panelOpen: "doc-panel" else: "doc-panel-closed")]
+      sizeRequest = ((if app.panelOpen: 420 else: 0), -1)
+      if app.panelOpen:
+        Box(orient = OrientX, spacing = 4, margin = 6) {.expand: false.}:
+          MenuButton {.expand: false.}:
+            icon = "document-open-symbolic"
+            tooltip = "Switch document"
+            style = [ButtonFlat]
+            Popover:
+              Box(orient = OrientY, spacing = 2, margin = 8):
+                Label {.expand: false.}:
+                  text = (if app.panelDocs.len == 0: "No documents yet." else: "")
+                  style = [StyleClass("dim-note")]
+                for d in app.panelDocs:
+                  Button {.expand: false.}:
+                    text = d
+                    style = [ButtonFlat, StyleClass("row-btn"),
+                             StyleClass(if d == app.panelDoc: "conv-active"
+                                        else: "conv-idle")]
+                    proc clicked() = app.openDoc(d)
+
+          Label {.expand: true.}:
+            text = app.panelDoc
+            xAlign = 0.0
+            ellipsize = EllipsizeStart
+            style = [StyleClass("section-label")]
+
+          Button {.expand: false.}:
+            icon = "document-new-symbolic"
+            tooltip = "New document"
+            style = [ButtonFlat, StyleClass("row-btn")]
+            proc clicked() = app.newDoc()
+
+          Button {.expand: false.}:
+            icon = "window-close-symbolic"
+            tooltip = "Close panel"
+            style = [ButtonFlat, StyleClass("row-btn")]
+            proc clicked() = app.closePanel()
+
+        DocTerminal {.expand: true.}:
+          style = [StyleClass("nvim-term")]
+
 ## Function purpose: the top bar, and **it is a body widget, not a titlebar.**
 ## It was `HeaderBar {.addTitlebar.}` on a `Window`, which meant
 ## `gtk_window_set_titlebar` — and **GTK4 hides that while the window is
@@ -1008,6 +1222,23 @@ proc topBar(app: AppState): Widget =
         style = [ButtonFlat]
         proc clicked() =
           app.editorOpen = not app.editorOpen
+
+      # The document panel, available on every chat (G-25). Enabled only when a
+      # conversation is selected, because a document belongs to that chat's
+      # project and there is no project to resolve without one.
+      Button {.addRight.}:
+        icon = "view-dual-symbolic"
+        tooltip = (if app.panelOpen: "Close document panel"
+                   else: "Open document panel")
+        sensitive = app.convId.len > 0
+        style = [ButtonFlat]
+        proc clicked() =
+          if app.panelOpen:
+            app.closePanel()
+          else:
+            app.refreshDocs()
+            if app.panelDocs.len > 0: app.openDoc(app.panelDocs[0])
+            else: app.newDoc()
 
       MenuButton {.addRight.}:
         icon = "open-menu-symbolic"
@@ -1239,56 +1470,44 @@ method view(app: AppState): Widget =
             # the same order whether a note or the transcript is open, so
             # owlkettle's positional matching never swaps a widget out from under
             # the diff; only what is inside them changes.
-            if app.editorOpen:
-              NvimTerminal {.expand: true.}:
-                margin = 12
-                style = [StyleClass("nvim-term")]
-            else:
-             ScrolledWindow {.expand: true.}:
-              Box(orient = OrientY, spacing = 12, margin = 16):
-                if app.openNote.len > 0:
-                  Entry {.expand: false.}:
-                    text = app.noteTitle
-                    placeholder = "Note title"
-                    proc changed(text: string) = app.noteTitle = text
-                  # A TextView owns a TextBuffer rather than a string, so it is
-                  # driven from `app.noteBuffer` and read back on save — it
-                  # cannot be bound to state per redraw the way an Entry is.
-                  TextView:
-                    buffer = app.noteBuffer
-                # Every child here is `expand: false`, and the annotations are
-                # the whole point. **`Box`'s adder defaults to `expand: true`**,
-                # which in a *vertical* Box sets `vexpand` — so an unannotated
-                # message card stretches to take an equal share of the viewport
-                # height, and two replies in a tall window each become half a
-                # screen. That is the "weirdly huge" bubbles. A transcript sizes
-                # to its content and scrolls; it never divides the space up.
-                Label {.expand: false.}:
-                  text = (if app.openNote.len > 0: ""
-                          elif app.messages.len == 0: "Ask Jenova something."
-                          else: "")
-                  style = [StyleClass("dim-note")]
-                for m in (if app.openNote.len > 0: @[] else: app.messages):
-                  Frame {.expand: false.}:
-                    style = [StyleClass("msg-card"),
-                             StyleClass(if m.role == rUser: "msg-user" else: "msg-agent")]
-                    Box(orient = OrientY, spacing = 4, margin = 10):
-                      Label {.expand: false.}:
-                        text = (if m.role == rUser: "YOU" else: "JENOVA")
-                        xAlign = 0.0
-                        style = [StyleClass("msg-role"),
-                                 StyleClass(if m.role == rUser: "msg-role-user"
-                                            else: "msg-role-agent")]
-                      insert(app.messageBody(m)) {.expand: false.}
-
+            #
+            # **The Paned is always here, open panel or not** (G-25). Building it
+            # only when the panel opens would rebuild this whole subtree on every
+            # toggle — which destroys the page editor's `NvimTerminal` and kills
+            # the `nvim` running in it. Keeping the Paned constant means only its
+            # end child comes and goes.
+            Paned {.expand: true.}:
+              orient = OrientX
+              insert(app.mainArea()) {.resize: true, shrink: true.}
+              insert(app.docPanel()) {.resize: false, shrink: false.}
             Label {.expand: false.}:
-              text = app.notice
-              margin = (if app.notice.len > 0: 8 else: 0)
+              # The notice is chat feedback — "backend restarted", "note saved".
+              # It has nothing to say about the editor page and a stale line
+              # under a full-screen editor reads as an error in it.
+              text = (if app.editorOpen: "" else: app.notice)
+              margin = (if app.notice.len > 0 and not app.editorOpen: 8 else: 0)
               wrap = true
               style = [StyleClass("dim-note")]
 
             Box(orient = OrientX, spacing = 8, margin = 12) {.expand: false.}:
-              if app.openNote.len > 0:
+              # Action purpose: three branches, not two. This tested only
+              # `app.openNote`, so the editor page fell through to the *chat*
+              # row and showed a message box and a Send button under Neovim —
+              # with no way to leave except the top-bar icon. A page gets the
+              # controls of the page it is, which is the shape the note editor
+              # already had (G-24).
+              if app.editorOpen:
+                Label {.expand: true.}:
+                  text = "Neovim — " & app.p.workspaces
+                  xAlign = 0.0
+                  ellipsize = EllipsizeStart
+                  style = [StyleClass("dim-note")]
+                Button {.expand: false.}:
+                  text = "Close"
+                  style = [ButtonFlat]
+                  proc clicked() = app.editorOpen = false
+                insert(app.fullscreenButton()) {.expand: false.}
+              elif app.openNote.len > 0:
                 Button {.expand: false.}:
                   text = "Save note"
                   style = [ButtonSuggested]
@@ -1336,6 +1555,10 @@ proc run*(withTray = true) =
   # costs nothing on a host with no Neovim running.
   pipeline.configureEditor(nvimctl.socketPath(p))
   vte.configure(nvimctl.socketPath(p), p.workspaces)
+  # Before the window exists, because `applyScheme` asks for `jenova-dark` first
+  # and a search path appended later would be too late for the blocks already on
+  # screen. Silent on failure by design — see `installScheme`.
+  sourceview.installScheme(p.state / "styles")
   discard lc.startAll()
   discard server.start(
     host, port, p.root / "public",

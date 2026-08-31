@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-08-31 22:51
+**Last updated:** 2026-08-31 23:28
 **Branch:** `bsd`
 
 ---
@@ -55,6 +55,25 @@ survive again)*:
 - The agent `llama-server` comes up on `:8081` **now that `Vulkan2` is out of `etc/jenova.local.conf`** — it was rejecting the whole `-dev` argument and dying instantly.
 - Conversations persist to the `conversations`/`messages` tables and reload at startup.
 - Clean exit: both worker threads join, no hang.
+
+## 2b. Built 2026-08-31 23:28, NOT seen on screen
+
+**G-23, G-24, G-25 and G-27 are all implemented and compiled.** Every suite and self-test passes.
+**None of them has been looked at**, and that is the only outstanding claim. `PLANS.md` lists the
+five things to check on the first run, in order and by mechanism.
+
+**G-23 was the interesting one: it was never a GTK problem.** Neovim paints `Normal` with a
+background, VTE renders what it is told, and no CSS could see through it — three attempts had all
+worked on the wrong side of the boundary (**D-AX**). Established by running the USER's own config,
+which took one command.
+
+**Two limits stated rather than left to be discovered:** `termguicolors = true` in the USER's
+`init.lua` bypasses the new VTE palette entirely (**D-AY**), and `expander > title` was never a
+GTK4 selector — the node is `expander-widget`.
+
+**G-26 cancelled G-16** — no virtual file explorer; the Neovim page rooted at
+`$JCA_HOME/Workspaces` is the browser (**D-AW**). Its condition is *"as long as everything is
+correctly in sync"*, which promotes **T-14** — still open, and now load-bearing.
 
 ## 3. Known broken
 

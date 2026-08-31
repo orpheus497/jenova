@@ -2,11 +2,76 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-08-31 22:51
+**Last updated:** 2026-08-31 23:28
 
 ---
 
 ## Completed
+
+### 2026-08-31 23:28 — **G-27, G-23, G-24 and G-25 implemented. Both binaries build; every suite and self-test passes. UNRUN on screen.**
+
+**G-23 — the Neovim page's opacity, and it was never a GTK problem.** Three previous attempts all
+worked on this side of the boundary and all failed. **Neovim paints the background**: a colourscheme
+sets `Normal` with a `guibg`, Neovim emits it as a per-cell attribute, and VTE renders exactly what
+it is told — no CSS rule and no `set_clear_background` call can see through a cell the application
+filled. **Confirmed by running the USER's own config:** `hi Normal` reports
+`guifg=#f4c5ba guibg=#14131a` normally, and `guifg=#f4c5ba` with no background once the embedded
+instance is spawned with an override. `vte.TransparentBackground` is that override, passed as
+`--cmd` so it registers before the user's configuration loads and catches every later
+`ColorScheme`. **It applies only to the instance inside this window.**
+
+**G-27 — the palette, four separate defects:**
+
+- `theme.nim` had **no selection rule at all**, so every text selection in the application was
+  painted in the system accent (Adwaita blue). Added for `selection`, labels, entries and text
+  views, plus `row:selected`.
+- Code blocks resolved to **`Adwaita-dark`** — probe-confirmed. A `jenova-dark` GtkSourceView scheme
+  is now embedded in the binary as XML, written to `$JCA_HOME/.system/styles/` at startup and the
+  directory appended to the manager's search path. **Verified by a probe that loads it and resolves
+  every `def:` style it defines.** Keyword → purple, string → gold, comment → muted, number →
+  brand blue, error → crimson.
+- `vte_terminal_set_colors` was passing a **nil palette of size 0**, leaving Neovim on stock xterm
+  16. Now given `theme.TerminalPalette`, sixteen brand-derived slots. **Stated limit:** the USER's
+  `init.lua` sets `termguicolors = true`, which emits 24-bit escapes and bypasses the palette
+  entirely — so this changes nothing they will see, and is correct for anyone who turns it off.
+- `.glow-text` (`app.css:270`) was never ported. Added, and applied to the wordmark and the active
+  conversation row.
+- Also: `expander > title` **does not exist in GTK4** — the widget node is `expander-widget` and
+  `expander` is the arrow, which means the transparency rule in this sheet has been matching the
+  triangle and never the widget. Settled from the strings in `libgtk-4.so`. Tree titles are now
+  purple and bold; row icons are muted at rest and brand on hover.
+- **The whole stylesheet is verified to parse**: a probe loads `theme.css()` through a real
+  `GtkCssProvider` and reports every error GTK raises. Zero.
+
+**G-24 — the Neovim tab is a page.** It already swapped the main area; what made it read as a
+floating window was the `margin = 12` plus `.nvim-term`'s radius and drop shadow, and — the part
+nothing had noticed — **the bottom action row still showed the chat `Entry` and Send button**,
+because it branched on `app.openNote` and not on `app.editorOpen`, leaving the editor page with a
+message box under it and no Close. Three branches now, and the editor gets the shape the note page
+already had.
+
+**G-25 — the right-hand document panel.** A `Paned` around the main area, **always present** so a
+toggle cannot rebuild the subtree and kill the page editor's `nvim`; the panel is its empty end
+child when closed. Documents are **plain `.md` files in the chat's own project directory**, resolved
+through the new `fssync.scopeDir`, edited by a second `nvim` on its own socket
+(`nvimctl.docSocketPath`). Note mirrors are excluded from the switcher, because offering a second
+writer for a file the note editor already owns is the two-writer problem Q-29 chose this model to
+avoid. `pipeline.configureEditor` is re-aimed at the panel while it is open (Q-30).
+
+**Answered by proceeding, per the USER's instruction:** Q-29 → plain project file; Q-30 → the panel
+wins while open.
+
+### 2026-08-31 23:05 — **USER direction investigated and scoped: G-24 … G-27, D-AW, Q-29/Q-30. No code written.**
+
+Four asks (Neovim as a page, a right-hand document panel, no file explorer, palette completion)
+read against the source before planning. Three findings changed what the work is: the Neovim tab
+is **already** a main-view swap and only reads as floating because of a margin, a card shadow and
+an action row still branching on `app.openNote`; there is **no right panel** and `Flap` cannot be
+one (owlkettle exposes no `flap-position`), so `Paned` is the widget; and the colour ask is four
+unrelated defects — no selection rule in `theme.nim` at all, `Adwaita-dark` resolving for code
+blocks (**probe-confirmed** against the installed GtkSourceView 5.18), a nil VTE palette leaving
+Neovim on stock xterm 16, and `.glow-text` never ported. Scope reduction recorded as **D-AW**
+(cancels G-16, promotes T-14). Plan in `PLANS.md`.
 
 ### 2026-08-31 22:51 — **Review-finding sweep: 23 code fixes, 4 test fixes, 7 documents realigned.** Both binaries build; all six suites and all four self-tests pass.
 

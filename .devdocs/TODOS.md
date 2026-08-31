@@ -1,6 +1,6 @@
 # TODOS
 
-**Last updated:** 2026-08-31 22:51
+**Last updated:** 2026-08-31 23:28
 
 Only what is actually outstanding. Everything closed lives in `PROGRESS.md`; everything retired
 lives in `.devdocs/ARCHIVE/`. **Do not re-add defects about archived files** — that loop cost a day.
@@ -18,11 +18,24 @@ lives in `.devdocs/ARCHIVE/`. **Do not re-add defects about archived files** —
 
 ---
 
+## USER direction 2026-08-31 23:05 — all four implemented 23:28, none seen on screen
+
+Four asks, given together, scoped in `PLANS.md` and built on the USER's *"proceed"*. **Every one is
+compiled and unrun**, which is the only claim being made about them. G-26 was a scope reduction and
+took no code.
+
+| ID | Item |
+|---|---|
+| ~~**G-24**~~ | **DONE in source 23:28 — compiled, UNRUN on screen.** The margin, the card radius and the drop shadow are gone, and the bottom action row has a third branch so the editor page gets Close + fullscreen instead of the chat input. `PROGRESS.md` 23:28 |
+| ~~**G-25**~~ | **DONE in source 23:28 — compiled, UNRUN on screen.** `Paned` around the main area, always present so a toggle cannot rebuild the page editor's `nvim`. Documents are plain `.md` files in the chat's project directory (**Q-29 → plain file**), edited by a second `nvim` on `nvimctl.docSocketPath`; `Editor:` follows the panel while it is open (**Q-30 → panel wins**). `PROGRESS.md` 23:28 |
+| **G-26** | **CANCELS G-16. No virtual file explorer is to be built.** USER: *"due to the integration of the neovim page - we do not need to create a virtual file explorer - as long as everything is correctly in sync - this is because the ability to open a page with the users full neovim set to the workspaces folder - operates almost as an entire IDE for the user (depending on their config)."*<br><br>`vte.nim:90` already spawns `nvim` with its cwd at `p.workspaces`, so the premise holds today. **The load-bearing clause is "as long as everything is correctly in sync"** — and it is not, yet: **T-14** (a container rename orphans everything under it on disk) is exactly the sync defect that makes a filesystem-first view lie. G-26 does not close T-14; it raises its priority, because the file tree stops being a mirror and becomes the interface |
+| ~~**G-27**~~ | **DONE in source 23:28 — compiled, UNRUN on screen.** Selection rules, a `jenova-dark` GtkSourceView scheme embedded in the binary, the sixteen-slot VTE palette, the `.glow-text` port, and the GTK4 `expander-widget` correction. Stylesheet verified to parse through a real `GtkCssProvider`; scheme verified to load. **One stated limit:** `termguicolors = true` in the USER's `init.lua` bypasses the VTE palette entirely. `PROGRESS.md` 23:28 |
+
 ## Open — observed on screen, not resolved
 
 | ID | Item |
 |---|---|
-| **G-23** | **The Neovim tab renders opaque and visually disconnected from the rest of the window.** USER, 2026-08-31: *"still opaque mostly - barely have opacity - its still looking extremely out of place."* **Three consecutive attempts failed and none was evidence-led** — an alpha in `vte_terminal_set_colors` (overpainted), then `set_clear_background(false)` plus a `.nvim-term` glass rule (unconfirmed).<br><br>**Verified, so do not re-check:** the `.nvim-term` rule **is** in the generated stylesheet (`theme.css()` dumped and read); owlkettle applies `style` on **build**, not only update (`widgets.nim:69-71`); `vte_terminal_set_clear_background` is linked and **not** deprecated in VTE 0.80 (`vteterminal.h:588`).<br><br>**Unknown:** whether the 21:36 binary was the one run, and what GTK matches at the `vte-terminal` node.<br><br>**Next step is evidence, not a fourth value change:** `GTK_DEBUG=interactive ./bin/jenova`, select the `vte-terminal` node, read which rules match and what paints the background. A CSS parse error would also print to stderr at startup. **This is the same trap as T-1** — five hypotheses died there because cores were read for *where* rather than *when*; here three died because the widget was styled without looking at what GTK was doing with it |
+| ~~**G-23**~~ | **DIAGNOSED AND FIXED 2026-08-31 23:28 — and it was never a GTK problem, which is why three attempts on that side failed.** **Neovim paints the background**: a colourscheme sets `Normal` with a `guibg` (`jvim` uses `#14131A`), Neovim emits it per cell, and VTE renders what it is told — no CSS rule and no `set_clear_background` call can see through a cell the application filled. **Established by running the USER's own config**, not by reading: `hi Normal` reports `guibg=#14131a` normally and no background under the override. `vte.TransparentBackground` clears it via `--cmd`, for the embedded instance only. **UNRUN on screen** — the mechanism is proven, the appearance is not |
 
 ## Watch — same shape as a fixed bug, not observed
 
@@ -113,7 +126,7 @@ yet — defer to the future."*
 
 | ID | Item | Backend state |
 |---|---|---|
-| **G-16** | **Filesystem view and browser.** `FilesView.svelte`, `VFSExplorer.svelte` | `/api/storage/*` exists and is tested. **GUI work only** |
+| ~~**G-16**~~ | **CANCELLED 2026-08-31 23:05 by the USER — see G-26.** The Neovim page rooted at `$JCA_HOME/Workspaces` is the file browser. **Do not build `FilesView`/`VFSExplorer` equivalents.** The `/api/storage/*` surface stays — it is the LAN client's and is asserted by `test_api_fs.sh` — but no GUI view is built on it |
 | **G-17** | **The writer and editor.** The note editor exists (G-4) and is the seed; this is making it an actual writing surface rather than a `TextView` with Save/Close | `putEntity` path exists. **GUI work only** |
 | **G-18** | **File awareness — the AI can read the active document.** The model is given the open file's content as context | `pipeline.nim` already injects RAG and persona context; this is another injection source. **Small backend + GUI** |
 | **G-19** | **Neovim in a tab.** **Decided (D-AT): a `vte4` terminal widget hosts a real `nvim --listen <socket>`, and a small msgpack-RPC client in Nim reads the active buffer** (`nvim_get_current_buf`, `nvim_buf_get_lines`). The USER keeps their own Neovim and their own config; file awareness becomes a socket query. **New dependency: `vte4`** (LGPL — permitted under D-X). FFI shape follows `sourceview.nim` | **Nothing exists.** `/infill` is already asserted as "the USER's Neovim dependency" (`test_routes.sh:82`), so the engine half is partly there |

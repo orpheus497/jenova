@@ -207,6 +207,36 @@ proc physicalPath(id, displayName, folderId, projectId, workspaceId,
 
   (workspaces / "unassigned" & "/" & safeName & "_" & id & suffix, "unassigned")
 
+## Function purpose: the directory an item with this ancestry lives in — the same
+## walk `physicalPath` does, stopping at the directory instead of naming a file.
+##
+## The GUI's document panel (G-25) needs it: a chat's documents are plain files
+## beside that chat's notes, so the panel has to resolve the same folder →
+## project → workspace chain from ids to sanitized names. Reproducing that walk
+## in `gui.nim` would be two definitions of one layout, and they would drift the
+## first time a name is sanitized differently.
+proc scopeDir*(folderId, projectId, workspaceId: string): string =
+  let (workspaces, _) = roots()
+  if isSet(folderId):
+    let f = lookupName("folders", folderId)
+    if f.found:
+      let p = lookupName("projects", f.parent)
+      if p.found:
+        let w = lookupName("workspaces", p.parent)
+        if w.found:
+          return workspaces / sanitize(w.name) / sanitize(p.name) / sanitize(f.name)
+  elif isSet(projectId):
+    let p = lookupName("projects", projectId)
+    if p.found:
+      let w = lookupName("workspaces", p.parent)
+      if w.found:
+        return workspaces / sanitize(w.name) / sanitize(p.name)
+  elif isSet(workspaceId):
+    let w = lookupName("workspaces", workspaceId)
+    if w.found:
+      return workspaces / sanitize(w.name)
+  workspaces / "unassigned"
+
 proc notePath(id, title, folderId, projectId, workspaceId: string):
     tuple[path, workspace: string] =
   physicalPath(id, title, folderId, projectId, workspaceId, ".md")
