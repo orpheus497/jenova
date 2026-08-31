@@ -275,6 +275,29 @@ Streaming shape: `POST /v1/chat/completions` with `"stream":true` returns
 > **Not covered by any test yet:** sampling parameters are ignored (N-25) and client disconnect
 > does not cancel a generation (N-26). Neither should be assumed working because these checks pass.
 
+## 5e. `jenova-core rag-selftest` — retrieval (N-S5b, 2026-08-31)
+
+**7 assertions, PASS.** Indexes a three-document scratch corpus, then asserts a keyword hit ranks
+the right file, that a snippet survives storage (**the property `search.lua` lost on every
+restart**), and that a path filter confines results.
+
+**The vector half is asserted without an embedding server, deliberately.** Endianness, the BLOB
+round-trip and the dot product are where a silent error would live, and waiting for a server to be
+running to find out is how unverified logic ships. `rag.nim` exposes `vectorRoundTrip`,
+`similarity` and `storeChunkVector` so the test can pin them directly: a float32 vector survives
+byte-exact, identical vectors score 1.0, orthogonal score 0.0, and a stored vector reads back
+through the same `queryBlob` path the query itself uses.
+
+**`chunks with vectors: 0` in the output is not a failure** — it is the embedding server being
+absent, and keyword-only retrieval is a supported degraded mode that `search.lua` had too.
+
+**What this does NOT cover, recorded as N-31:** the HTTP request and response shape against a live
+embedding server on :8082. That is the one part of the semantic path still unproven.
+
+**`jenova-core db-capabilities`** reports what the linked libsqlite3 can actually do —
+threadsafety, journal mode and FTS5 — because Q-24's index choice was contingent on a fact that had
+been assumed rather than checked (D-AB). Result on this host: `fts5: available`.
+
 ## 5d. The route inventory — **now a test**, `tests/test_routes.sh` (2026-08-31)
 
 **9 assertions, PASS.** Wired into `tests/Makefile check`. Runs in a scratch `JCA_HOME` (D-AE).
@@ -308,7 +331,8 @@ the finding.** Reading the handler list is not a substitute; that is what produc
 
 ## 5c. `tests/test_api_fs.sh` — the filesystem contract (N-S5a, 2026-08-31)
 
-**31 assertions, PASS.** Covers what §5b said was missing: physical path layout, the git repo per
+**46 assertions, PASS** (31 at N-S5a, 15 more for `/api/storage/*`). Covers what §5b said was
+missing: physical path layout, the git repo per
 workspace, base64 `data:` decoding, rename-then-trash-the-old-path, the `<epoch>_<name>` trash
 naming, the `.metadata.json` sidecar, all four `/api/fs/*` routes, per-entity delete ordering, and
 that bulk import does *not* mirror.
@@ -328,6 +352,14 @@ conversation database on any machine with a real deployment.**
 > spacing — `fs_sync.lua` writes `{"type": "notes", …}`, the Nim core emits compact JSON. Only
 > those two components read the file and both parse it as JSON, so the formats are interchangeable
 > in both directions. **The fields are the contract; the spacing is incidental.**
+
+**The `/api/storage/*` assertions are about containment, because that is the risk.** These four
+routes take a client-supplied path and read, write and delete with it. Asserted: three traversal
+forms all refused with **403 and not 404** (a 404 would disclose whether a path outside the root
+exists), an absent file inside the root answering 404, the trash preserving the original relative
+path, and — after a defect of mine — **a stored file beginning with `[` being served as its own
+content rather than mistaken for the JSON listing.** The first wiring picked the content type with
+`not body.startsWith("[")`; `ApiResult` now carries `contentType` explicitly.
 
 **And a fidelity finding that only appeared because the port broke an existing test.**
 `test_api_db.sh`'s restore-cascade assertions began failing. Not a regression: **`fs_sync.lua:70`

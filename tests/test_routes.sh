@@ -69,6 +69,8 @@ expect GET /health              200 "health"
 expect GET /api/db/workspaces   200 "database surface"
 expect GET /api/fs/trash        200 "filesystem surface"
 expect GET /api/db/nope         404 "unknown collection is an honest 404"
+expect GET /api/storage/        200 "storage listing"
+expect GET /api/storage/../../etc/passwd 403 "storage traversal refused"
 
 # --- classified to a proxied class (D-AF) -----------------------------------
 # 502 proves classification reached upstream.forward and found no llama-server.

@@ -492,6 +492,147 @@ proc getFsTree*(scopeWorkspace, scopeProject, scopeFolder: string): seq[FsNode] 
                       isDir: dirExists(path))
   result.sort(proc (a, b: FsNode): int = cmp(a.path, b.path))
 
+# ---------------------------------------------------------------------------
+# /api/storage/* — raw file access under the workspaces root (N-29)
+# ---------------------------------------------------------------------------
+
+## Function purpose: lexical path normalisation, reproducing
+## `lib/proxy.lua:normalize_path`. Collapses `//`, drops `.`, resolves `..`, and
+## **returns empty when an absolute path tries to escape its own root** rather
+## than clamping at `/` — the distinction matters, because clamping would turn
+## an escape attempt into a valid path.
+proc normalizePathLexical(path: string): string =
+  var p = path
+  while p.contains("//"):
+    p = p.replace("//", "/")
+  if p.len > 1 and p.endsWith("/"):
+    p = p[0 ..< ^1]
+  let isAbsolute = p.startsWith("/")
+  var segments: seq[string]
+  for segment in p.split('/'):
+    if segment.len == 0 or segment == ".":
+      continue
+    elif segment == "..":
+      if segments.len > 0 and segments[^1] != "..":
+        discard segments.pop()
+      elif isAbsolute:
+        return ""            # escape attempted on an absolute path
+      else:
+        segments.add ".."
+    else:
+      segments.add segment
+  result = (if isAbsolute: "/" else: "") & segments.join("/")
+
+## Function purpose: resolve a client-supplied relative path against the
+## workspaces root and refuse anything that lands outside it. Reproduces
+## `proxy.lua:resolve_safe_path`, including **the directory-boundary check** —
+## a prefix match alone would accept `/Workspaces-evil` for the root
+## `/Workspaces`, so the character after the prefix must be `/` or the paths must
+## be equal. Returns an empty string on refusal.
+##
+## Two guards the original does not have are added, and are asserted:
+## a literal `..` rejection before normalisation (the original does this at the
+## call site, so it is centralised here instead of repeated four times), and a
+## symlink check — lexical normalisation cannot see that a component is a link
+## pointing out of the tree, which is the one way the original's containment can
+## still be walked past.
+proc resolveStoragePath*(relative: string): string =
+  if relative.len == 0 or relative.contains(".."):
+    return ""
+  if relative.contains('\0') or relative.contains('\r') or relative.contains('\n'):
+    return ""
+  let (workspaces, _) = roots()
+  let normBase = normalizePathLexical(workspaces)
+  if normBase.len == 0:
+    return ""
+  let candidate = normalizePathLexical(workspaces & "/" & relative)
+  if candidate.len == 0:
+    return ""
+  if not candidate.startsWith(normBase):
+    return ""
+  if candidate.len != normBase.len and candidate[normBase.len] != '/':
+    return ""
+
+  # A symlinked component can point outside the tree while every lexical check
+  # above still passes. Only meaningful for a path that exists.
+  if fileExists(candidate) or dirExists(candidate):
+    try:
+      let real = expandFilename(candidate)
+      if not (real == normBase or real.startsWith(normBase & "/")):
+        return ""
+    except OSError:
+      return ""
+  candidate
+
+## Function purpose: `POST /api/storage/<path>` — write a file verbatim,
+## creating parent directories. The body is written as bytes, not text: the Web
+## UI stores binary assets through this route.
+proc storageSave*(relative, content: string): bool =
+  let path = resolveStoragePath(relative)
+  if path.len == 0: return false
+  try:
+    ensureDir(path.parentDir)
+    writeFile(path, content)
+    true
+  except IOError, OSError:
+    false
+
+## Function purpose: `GET /api/storage/<path>` — read a file. Empty result and a
+## false flag distinguish "not found" from "found but empty", which a bare string
+## return could not.
+proc storageGet*(relative: string): tuple[found: bool, content: string] =
+  let path = resolveStoragePath(relative)
+  if path.len == 0 or not fileExists(path):
+    return (false, "")
+  try:
+    (true, readFile(path))
+  except IOError, OSError:
+    (false, "")
+
+## Function purpose: `GET /api/storage/` — list every file under the workspaces
+## root as paths relative to it. Reproduces the original's `find -maxdepth 4`
+## with its three exclusions: dotfiles and dot-directories, `node_modules`, and
+## `build`. Depth is counted from the root, matching `find`'s semantics.
+proc storageList*(): seq[string] =
+  let (workspaces, _) = roots()
+  if not dirExists(workspaces): return @[]
+  let baseLen = workspaces.len + 1
+
+  proc walk(dir: string, depth: int, acc: var seq[string]) =
+    if depth > 4: return
+    for kind, path in walkDir(dir):
+      let name = path.extractFilename
+      if name.startsWith("."): continue
+      if name == "node_modules" or name == "build": continue
+      if path.len > baseLen:
+        acc.add path[baseLen .. ^1]
+      if kind == pcDir:
+        walk(path, depth + 1, acc)
+
+  walk(workspaces, 1, result)
+  result.sort()
+
+## Function purpose: `DELETE /api/storage/<path>` — move a file into the
+## workspaces trash rather than unlinking it, reproducing `fs_sync.trash_path`
+## (`fs_sync.lua:281`), the thirteenth function and the last one unported. The
+## trash layout is `<root>/.trash/<epoch>/<original relative path>`, which
+## preserves the directory structure so a restore has somewhere to put it back.
+proc storageTrash*(relative: string): FsResult =
+  let path = resolveStoragePath(relative)
+  if path.len == 0:
+    return FsResult(ok: false, msg: "path refused")
+  if not (fileExists(path) or dirExists(path)):
+    return FsResult(ok: false, msg: "not found")
+  let (workspaces, _) = roots()
+  let dest = workspaces / ".trash" / epochPrefix() / relative
+  try:
+    ensureDir(dest.parentDir)
+    if dirExists(path): moveDir(path, dest)
+    else: moveFile(path, dest)
+    FsResult(ok: true, path: dest, original: path)
+  except OSError, IOError:
+    FsResult(ok: false, path: dest, original: path, msg: "rename failed")
+
 proc toJson*(entries: seq[TrashEntry]): JsonNode =
   result = newJArray()
   for e in entries:

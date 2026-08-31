@@ -198,6 +198,63 @@ Proxy**, and it reframes N-S5b: RAG is one input to the pipeline, not the stage.
 **Verified with no gap:** all 46 `db.lua` public functions are reachable through `api.nim`'s
 generic handlers.
 
+### 5n. N-S5b — RAG, with FTS5 confirmed rather than assumed
+
+`jenova-core db-capabilities` was added first and answered the question Q-24 rode on:
+**`fts5: available`**. Option A shipped; the fallback was written and not needed.
+
+`src/jenova/rag.nim` is a redesign of `lib/search.lua`, because **all three of its defects were
+storage defects** — the BM25 index existed only in process memory and was lost on every restart,
+the vector index was a single JSON blob with a hard 20 MB merge cap, and chunk text was never
+persisted, so after a restart a semantic hit scored but produced no snippet. A direct port would
+have carried all three, plus a GC-safety hazard: those module globals are shared refcounted memory
+and there are 14 worker threads.
+
+Fidelity kept where it matters — 300-word chunks with 50 overlap, batches of 8, 0.4/0.6 weighting,
+the 0.3 semantic floor, max-normalisation within the result set, prefix path filtering.
+**One deviation stated rather than buried:** keyword scoring uses FTS5's own `bm25()` instead of the
+hand-rolled k1/b loop. It is a correct BM25 over a persisted index, and since both families are
+max-normalised before mixing only the ordering matters. FTS5 scores negatively for better matches,
+so it is negated — a sign error there inverts the ranking in silence.
+
+**`db.nim` gained `execBlob`/`queryBlob`.** Text binding would corrupt an embedding the moment a
+float's bytes contained a NUL, which for normalised float32 vectors is the common case.
+`execBlob` takes an explicit `blobIndex` because an UPDATE needs the blob first and an INSERT last;
+**a first version assumed "last" and produced two contradictory statements**, caught before it built.
+
+**The vector path is verified with no embedding server running**, which is the part worth keeping:
+round-trip byte-exactness, identical-vectors-score-1, orthogonal-score-0, and a stored vector read
+back through the query's own `queryBlob` path.
+
+**N-31 recorded as the honest limit:** the `:8082` HTTP call is written and has never run against a
+live embedder. Keyword-only is a supported degraded mode, so it does not block N-S5c.
+
+### 5m. N-S5a completed — `lib/proxy.lua` superseded for serving
+
+The four `/api/storage/*` routes and `fs_sync.trash_path`, the thirteenth function. **N-29 closed,
+and with N-27 and N-20 that is the whole serving surface.** Probed: every route `proxy.lua` answers
+is now answered by the core, except `/api/workspaces`, which has no caller in `jca_web/src` and
+which `tests/proxy-concurrency/README.md:34` records as never having worked — subtracted under D-D.
+
+**Containment was the work, not the routes.** `resolveStoragePath` reproduces
+`proxy.lua:resolve_safe_path`: lexical normalisation that **fails rather than clamps** when an
+absolute path tries to escape, plus the directory-boundary check without which `/Workspaces-evil`
+matches the root `/Workspaces`. Two guards the original lacks are added and asserted — the literal
+`..` rejection centralised instead of repeated at four call sites, and **a symlink check**, since
+lexical rules cannot see a component that links out of the tree. **Refusals are 403, absences 404**,
+deliberately: a 404 on a refused path would disclose what exists outside the root.
+
+**A defect of mine caught before it shipped.** The first wiring chose the response content type with
+`not body.startsWith("[")` to tell a download from the listing, so **any stored file whose first
+byte is `[` would have been served as JSON.** `ApiResult` now carries `contentType` explicitly, and
+a test stores `[1,2,3]` and asserts it comes back as itself.
+
+`test_api_fs.sh` 46 assertions · `test_routes.sh` 11 · `test_api_db.sh` 23. All PASS, all in a
+scratch `JCA_HOME`.
+
+**`lib/proxy.lua` is superseded for serving but not yet removable:** `:1225-1400` still holds the
+completion pipeline (N-30), which is stage N-S5c.
+
 ### 5l. N-S4c executed — D-AF made real
 
 Small, and it removed work rather than adding it. `JENOVA_INPROC` now defaults to **0**: the core
@@ -248,8 +305,9 @@ the `DT_RUNPATH` findings and C-14's configuration lesson. Superseded: D-W's ser
 the socket handoff, chat templating.
 
 **The ruling deletes work rather than adding it:** N-25, N-26, D-W and half of N-7 close without
-being built, and FIM collapses to route classification. **Q-25 is reopened as Q-28** — it was
-answered assuming in-process inference.
+being built, and FIM collapses to route classification. I reopened Q-25 as Q-28 here; **both were
+then withdrawn** — D-E settled the ports and `server.nim:200-201` already forwarded `/embed*` to
+:8082, so neither was ever an open question.
 
 **Three instances of one failure this session** — the D-Y clause, N-8, and now D-N's linkage
 sentence. Each was a decision I made, written into the ledger in the USER's voice, then acted on.

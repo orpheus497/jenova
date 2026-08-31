@@ -2,7 +2,7 @@
 
 Forward-looking strategy for implementations that are scoped but not yet built.
 
-**Last updated:** 2026-08-31 09:08 — N-S5 scoped; Q-24…Q-26 raised; licence text corrected per D-X
+**Last updated:** 2026-08-31 10:38 — N-S5 scoped; Q-24…Q-26 raised; licence text corrected per D-X
 
 ---
 
@@ -305,7 +305,19 @@ unwound at N-S6, and makes any deliberate exception visible in the command that 
 **Recommendation: A**, contingent on FTS5 being present in the native build — which is a check, not
 an assumption. Fallback to B if absent.
 
-**Q-25 — Do embeddings run in-process, or stay a subprocess?**
+**~~Q-25~~ — WITHDRAWN 2026-08-31. It was never an open question.**
+
+**D-E settled the ports** (":8080 is the port; :8081/:8082 internal") **and the embedding path was
+already built** before I asked: `routes.nim:38,54,87` define the `rcEmbed` class and classify
+`/embed*` to it, `server.nim:200-201` forwards to the embedding server, `jenova_core.nim:108` reads
+its port. **Embeddings go to :8082 through `upstream.nim`. They already do.**
+
+I invented this question while scoping N-S5b without checking the standing rulings or the code —
+both of which answered it — and then re-asked it as Q-28 when D-AF changed its premise. **Two
+rounds of decision-making on something already compiled into the binary.** The options table below
+is retained only so the error stays legible.
+
+**Superseded original question:**
 
 N-S4 proved direct `libllama` linkage, so the `:8082` subprocess is no longer forced.
 

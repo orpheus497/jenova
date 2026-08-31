@@ -83,6 +83,10 @@ const Cascades = {
 type ApiResult* = object
   status*: int
   body*: string
+  ## Empty means application/json, which every route but a storage download
+  ## returns. Carried explicitly rather than inferred from the body: a stored
+  ## file whose first byte is `[` would otherwise be mistaken for a JSON array.
+  contentType*: string
 
 proc ok(body: string): ApiResult = ApiResult(status: 200, body: body)
 proc err(status: int, msg: string): ApiResult =
@@ -436,6 +440,67 @@ proc handleFs*(req: Request): ApiResult =
     return err(500, "empty trash failed")
 
   err(404, "not found")
+
+## Function purpose: route one `/api/storage/*` request — raw file access under
+## the workspaces root, reproducing `lib/proxy.lua:1009,1041,1068,1126`.
+##
+## This is the one surface that takes a client-supplied path and reads, writes
+## and deletes with it, so containment is the whole risk. Every path goes through
+## `fssync.resolveStoragePath`, which refuses on a literal `..`, on lexical
+## escape, on a directory-boundary mismatch, and on a symlinked component
+## pointing out of the tree. **A refusal is a 403, never a 404** — a 404 would
+## tell a caller whether a path outside the root exists.
+##
+## `storage.service.ts` in the frozen Web UI calls all four verbs (D-Z), so the
+## response shapes are matched rather than improved.
+proc handleStorage*(req: Request): ApiResult =
+  if not req.path.startsWith("/api/storage"):
+    return err(404, "not found")
+
+  var rel = ""
+  if req.path.len > 13:            # "/api/storage/" is 13 characters
+    rel = urlDecode(req.path[13 .. ^1])
+
+  # GET /api/storage or /api/storage/ — the listing
+  if req.meth == "GET" and rel.len == 0:
+    var arr = newJArray()
+    for p in fssync.storageList():
+      arr.add %p
+    return ok($arr)
+
+  if rel.len == 0:
+    return err(400, "path required")
+
+  case req.meth
+  of "GET":
+    let (found, content) = fssync.storageGet(rel)
+    if not found:
+      # Distinguish refusal from absence: a refused path must not reveal
+      # whether anything exists there.
+      if fssync.resolveStoragePath(rel).len == 0:
+        return err(403, "forbidden")
+      return err(404, "not found")
+    return ApiResult(status: 200, body: content,
+                     contentType: "application/octet-stream")
+  of "POST":
+    if fssync.resolveStoragePath(rel).len == 0:
+      return err(403, "forbidden")
+    if req.body.len == 0:
+      return err(400, "empty body")
+    if fssync.storageSave(rel, req.body):
+      return ok("""{"status":"ok"}""")
+    return err(500, "write failed")
+  of "DELETE":
+    if fssync.resolveStoragePath(rel).len == 0:
+      return err(403, "forbidden")
+    let r = fssync.storageTrash(rel)
+    if r.ok:
+      return ok("""{"status":"ok"}""")
+    if r.msg == "not found":
+      return err(404, "not found")
+    return err(500, "delete failed")
+  else:
+    return err(405, "method not allowed")
 
 ## Function purpose: route one /api/db/* request. Returns a status and body; the
 ## caller writes the response, so this stays independent of the socket layer and

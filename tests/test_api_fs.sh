@@ -199,6 +199,47 @@ req POST /api/db/import "{\"workspaces\":[{\"id\":\"$IWID\",\"name\":\"Imported\
 assert_match  "import inserts the row"            "\"id\":\"$IWID\"" "$(get /api/db/workspaces)"
 assert_absent "import does not create a directory" "$WS/Imported"
 
+# --- /api/storage/* (N-29) --------------------------------------------------
+# storage.service.ts calls all four verbs; jca_web is frozen (D-Z) so the shapes
+# are matched, not improved.
+req POST /api/storage/notes/a.txt 'hello storage' >/dev/null
+assert_file    "storage POST writes the file"      "$WS/notes/a.txt"
+assert_content "storage POST writes bytes verbatim" "$WS/notes/a.txt" "hello storage"
+assert_match   "storage GET returns the content"   'hello storage' "$(get /api/storage/notes/a.txt)"
+assert_match   "storage list includes the file"    'notes/a.txt'   "$(get /api/storage/)"
+assert_match   "storage list is a JSON array"      '^\[' "$(get /api/storage/)"
+
+# Containment is the whole risk on this surface: it takes a client-supplied path
+# and reads, writes and deletes with it. A refusal must be 403, never 404 — a 404
+# would disclose whether a path outside the root exists.
+code() { printf '%s %s HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n' "$1" "$2" \
+         | nc 127.0.0.1 "$PORT" | head -1 | sed 's/^HTTP\/1.1 \([0-9]*\).*/\1/'; }
+for p in "/api/storage/../../etc/passwd" "/api/storage/..%2f..%2fetc%2fpasswd" "/api/storage/notes/../../../escape"; do
+    got=$(code GET "$p")
+    if [ "$got" = "403" ]; then pass "traversal refused 403: $p"
+    else fail "traversal refused 403: $p" "expected 403, got ${got:-<none>}"; fi
+done
+
+# A file that starts with '[' must not be mistaken for a JSON listing.
+req POST /api/storage/notes/arr.json '[1,2,3]' >/dev/null
+assert_match "a file beginning with [ is served as its own content" '\[1,2,3\]' \
+             "$(get /api/storage/notes/arr.json)"
+
+# DELETE trashes rather than unlinks, preserving the relative structure.
+req DELETE /api/storage/notes/a.txt '' >/dev/null
+assert_absent "storage DELETE removes the live file" "$WS/notes/a.txt"
+STRASH=$(find "$WS/.trash" -name 'a.txt' 2>/dev/null | head -1)
+if [ -n "$STRASH" ]; then pass "storage DELETE moves the file to the workspaces trash"
+else fail "storage DELETE moves the file to the workspaces trash" "nothing named a.txt under $WS/.trash"; fi
+case "$STRASH" in
+    */notes/a.txt) pass "trash preserves the original relative path" ;;
+    *) fail "trash preserves the original relative path" "got: $STRASH" ;;
+esac
+
+got=$(code GET /api/storage/notes/gone.txt)
+if [ "$got" = "404" ]; then pass "a missing file inside the root is 404, not 403"
+else fail "a missing file inside the root is 404, not 403" "expected 404, got ${got:-<none>}"; fi
+
 echo ""
 if [ "$FAILED" -eq 0 ]; then
     echo "test_api_fs: PASS"

@@ -76,6 +76,10 @@ proc sqlite3_finalize(s: StmtHandle): cint
 proc sqlite3_bind_text(s: StmtHandle, idx: cint, value: cstring, n: cint,
                        destructor: pointer): cint
 proc sqlite3_bind_null(s: StmtHandle, idx: cint): cint
+proc sqlite3_bind_blob(s: StmtHandle, idx: cint, value: pointer, n: cint,
+                       destructor: pointer): cint
+proc sqlite3_column_blob(s: StmtHandle, col: cint): pointer
+proc sqlite3_column_bytes(s: StmtHandle, col: cint): cint
 proc sqlite3_column_count(s: StmtHandle): cint
 proc sqlite3_column_text(s: StmtHandle, col: cint): ptr uint8
 proc sqlite3_column_name(s: StmtHandle, col: cint): cstring
@@ -174,6 +178,65 @@ proc bindParams(s: StmtHandle, params: openArray[string]) =
   for i, p in params:
     discard sqlite3_bind_text(s, (i + 1).cint, p.cstring, p.len.cint,
                               SQLITE_TRANSIENT)
+
+## Function purpose: write a row whose last column is binary, for the RAG
+## vector store (Q-24 puts embeddings in a BLOB). Text binding would corrupt an
+## embedding the moment a float's byte pattern contained a NUL — which for
+## normalised float32 vectors is not an edge case but the common case, so this
+## is a correctness requirement rather than an optimisation.
+## `blobIndex` is the 1-based position of the binary parameter in the statement.
+## It defaults to last, which suits an INSERT, but an UPDATE needs `SET vec=?`
+## first with the WHERE predicates after it — so the position is a parameter
+## rather than an assumption. Getting this wrong binds a blob where a path
+## belongs and fails at runtime, not at compile time.
+proc execBlob*(sql: string, textParams: openArray[string], blob: string,
+               blobIndex = 0) =
+  let c = conn()
+  let s = c.prepared(sql)
+  let bIdx = if blobIndex > 0: blobIndex else: textParams.len + 1
+  var textPos = 1
+  for p in textParams:
+    if textPos == bIdx: inc textPos
+    discard sqlite3_bind_text(s, textPos.cint, p.cstring, p.len.cint,
+                              SQLITE_TRANSIENT)
+    inc textPos
+  if blob.len == 0:
+    discard sqlite3_bind_null(s, bIdx.cint)
+  else:
+    discard sqlite3_bind_blob(s, bIdx.cint, unsafeAddr blob[0], blob.len.cint,
+                              SQLITE_TRANSIENT)
+  let rc = sqlite3_step(s)
+  if rc != SQLITE_DONE and rc != SQLITE_ROW:
+    raise newException(DbError, "execBlob failed: " & $sqlite3_errmsg(c.h) &
+                       " [" & sql & "]")
+  discard sqlite3_reset(s)
+
+## Function purpose: read rows whose final column is binary. Every other column
+## comes back as text exactly as `query` returns it; only the last is raw bytes.
+proc queryBlob*(sql: string, params: varargs[string]):
+    seq[tuple[cols: seq[string], blob: string]] =
+  let c = conn()
+  let s = c.prepared(sql)
+  for i, p in params:
+    discard sqlite3_bind_text(s, (i + 1).cint, p.cstring, p.len.cint,
+                              SQLITE_TRANSIENT)
+  let nCols = sqlite3_column_count(s)
+  while true:
+    let rc = sqlite3_step(s)
+    if rc != SQLITE_ROW: break
+    var cols: seq[string]
+    for i in 0 ..< nCols - 1:
+      let t = sqlite3_column_text(s, i.cint)
+      cols.add (if t.isNil: "" else: $cast[cstring](t))
+    var blob = ""
+    let n = sqlite3_column_bytes(s, nCols - 1)
+    if n > 0:
+      let p = sqlite3_column_blob(s, nCols - 1)
+      if not p.isNil:
+        blob = newString(n)
+        copyMem(addr blob[0], p, n)
+    result.add (cols, blob)
+  discard sqlite3_reset(s)
 
 ## Function purpose: run a statement that returns no rows.
 proc exec*(sql: string, params: varargs[string]) =
@@ -292,6 +355,20 @@ proc commit*() = execScript("COMMIT;")
 proc rollback*() =
   try: execScript("ROLLBACK;")
   except DbError: discard   # already rolled back, or no transaction open
+
+## Function purpose: report whether this libsqlite3 has the FTS5 extension.
+## Ruling Q-24 puts the BM25 keyword index in FTS5, and that choice is
+## **contingent on the extension actually being present in the linked library**
+## — which cannot be assumed from the Linux side of this container (D-AB), so it
+## is compiled and asked. The RAG layer falls back to an in-memory keyword index
+## when this returns false, rather than failing to start.
+proc hasFts5*(): bool =
+  try:
+    execScript("CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_probe USING fts5(x);")
+    execScript("DROP TABLE IF EXISTS _fts5_probe;")
+    true
+  except DbError:
+    false
 
 proc threadsafeMode*(): int = sqlite3_threadsafe().int
 

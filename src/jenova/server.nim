@@ -221,6 +221,14 @@ proc handle(client: Socket, class: RouteClass, workerId: int): bool =
       let r = api.handleFs(req)
       client.sendResponse(r.status, "application/json", r.body)
       return
+    if req.path.startsWith("/api/storage"):
+      let r = api.handleStorage(req)
+      # A storage download returns file bytes, not JSON, and says so itself.
+      # `proxy.lua:1150` serves these as application/octet-stream.
+      client.sendResponse(r.status,
+        (if r.contentType.len > 0: r.contentType else: "application/json"),
+        r.body)
+      return
     client.sendResponse(404, "application/json",
       &"""{{"error":"not found","path":"{jsonEscape(req.path)}"}}""")
 

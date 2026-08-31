@@ -2,11 +2,104 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-08-31 10:19
+**Last updated:** 2026-08-31 10:38
 
 ---
 
 ## Completed
+
+### 2026-08-31 — N-S5b: **the RAG layer, and FTS5 confirmed by probe**
+
+`src/jenova/rag.nim` replaces `lib/search.lua`. `jenova-core rag-selftest` — 7 assertions, PASS.
+`db-capabilities` added, because Q-24's choice was contingent on a fact nobody had checked.
+
+**The FTS5 probe, run rather than assumed (D-AB):**
+
+```
+sqlite3_threadsafe: 1     journal_mode: wal     fts5: available
+```
+
+**Q-24 option A is therefore viable and is what shipped:** BM25 in FTS5, vectors in a BLOB column,
+chunk text stored beside them. The fallback to option B was written but is not needed here.
+
+**This is a redesign, not a transcription, and the reason is storage.** `search.lua`'s three
+defects were all storage defects and a direct port would have carried every one:
+
+| `search.lua` | `rag.nim` |
+|---|---|
+| BM25 index in **process memory only** — nothing persisted `bm25_index`, `df` or `total_docs`, so every restart lost the keyword index | FTS5 table; survives restart |
+| Vector index one **JSON blob** read whole into memory, merged under a hard 20 MB cap above which it silently stopped | One row per chunk, no cap, no whole-file rewrite |
+| **Chunk text not persisted** (`load_vectors` set `text = ""`) — after a restart a semantic hit could be scored but produced no snippet | `rag_chunks.text` stored; asserted by the self-test |
+
+It also removes a concurrency hazard that never had to exist: those module globals are shared
+refcounted memory, and under D-S there are 14 worker threads and no event loop. `db.nim` already
+gives each thread its own connection, so the index inherits that.
+
+**Fidelity kept where it matters:** chunking at 300 words with 50 overlap, batches of 8, weights
+0.4 keyword / 0.6 semantic, the `sem > 0.3` floor, max-normalisation of both score families within
+the result set before mixing, and path filtering by exact match or directory prefix — all as
+`search.lua` had them.
+
+**One deliberate deviation, stated rather than buried:** the keyword score comes from FTS5's own
+`bm25()` rather than the hand-rolled k1=1.5/b=0.75 loop. It is a correct BM25 over a persisted
+index instead of an approximation over an in-memory one, and because both score families are
+max-normalised before mixing, only the ordering matters. FTS5 returns a more negative score for a
+better match, so it is negated — a sign error there would invert the ranking silently.
+
+**The vector half is verified without an embedding server**, which is the part worth noting.
+Endianness, the BLOB round-trip and the dot product are where a silent error would live, and
+waiting for a server to be up to discover it is how unverified logic ships. `storeChunkVector`,
+`similarity` and `vectorRoundTrip` exist so the self-test can assert them directly: a float32
+vector survives the round-trip byte-exact, identical vectors score 1.0, orthogonal score 0.0, and a
+stored vector reads back through the same `queryBlob` path the query uses.
+
+**`db.nim` gained blob support** — `execBlob` and `queryBlob`. Text binding would corrupt an
+embedding the moment a float's byte pattern contained a NUL, which for normalised float32 vectors
+is the common case, not an edge case. **`execBlob` takes an explicit `blobIndex`** because an
+`UPDATE ... SET vec=? WHERE ...` needs the blob first while an INSERT needs it last; a first
+version assumed "last" and produced two contradictory statements before the assumption was caught.
+
+**Not verified here, and it is the honest limit:** the HTTP call to the embedding server on :8082.
+`chunks with vectors: 0` in the self-test output is the server being absent, and the degraded
+keyword-only mode is a supported state — `search.lua` scored BM25 alone when no embedder was set
+too. B-14 and B-15 are fixed by construction in this module, but **B-15's "zero callers" root cause
+is only truly closed when the pipeline calls `query` — that is N-S5c.**
+
+### 2026-08-31 10:19 — N-S5a-2 complete: **`/api/storage/*` ported; `lib/proxy.lua` is superseded**
+
+The four `/api/storage/*` routes and `fs_sync.trash_path` — the thirteenth function and the last
+one unported. **N-29 closed.** `tests/test_api_fs.sh` now holds 46 assertions, `test_routes.sh` 11,
+`test_api_db.sh` 23; all pass.
+
+**Every route `lib/proxy.lua` serves is now answered by the core**, verified by probe:
+
+```
+/health 200 · /v1/health 200 · /api/db/* 200 · /api/fs/* 200
+/api/storage/ 200 (list) · /api/storage/<p> 404 (absent) · POST 400 (empty body) · DELETE 404
+/v1/chat/completions 502 · /completion 502 · /infill 502   (proxied; no llama-server running)
+/api/workspaces 404 — deliberately not ported
+```
+
+**`/api/workspaces` is dropped, not missed.** No caller exists in `jca_web/src`, and
+`tests/proxy-concurrency/README.md:34` records that it never worked. Subtraction under D-D.
+
+**Containment was the whole risk and is where the work went.** This surface takes a client-supplied
+path and reads, writes and deletes with it. `resolveStoragePath` reproduces
+`proxy.lua:resolve_safe_path` — lexical normalisation that **returns empty on an absolute-path
+escape rather than clamping at `/`**, plus the **directory-boundary check** without which
+`/Workspaces-evil` matches the root `/Workspaces`. Two guards the original lacks were added and are
+asserted: the literal `..` rejection is centralised here instead of being repeated at four call
+sites, and **a symlink check** — lexical normalisation cannot see a component that is a link
+pointing out of the tree, which is the one way the original's containment can still be walked past.
+
+**A refusal is 403 and an absence is 404, deliberately.** Answering 404 for a refused path would
+disclose whether something exists outside the root. Both are asserted.
+
+**A defect of my own, caught before it shipped.** The first wiring chose the response content type
+with `not body.startsWith("[")` to tell a file download from the JSON listing — **so any stored file
+whose first byte is `[` would have been served as JSON.** `ApiResult` now carries `contentType`
+explicitly and the handler sets it. There is a test storing `[1,2,3]` and asserting it comes back
+as its own content.
 
 ### 2026-08-31 10:19 — N-S4c complete: the inference default inverted (D-AF)
 
@@ -80,7 +173,9 @@ socket-ownership handoff, and chat templating.
 **Work items closed by the ruling rather than built:** N-25 (sampling parameters), N-26
 (cancellation), D-W (serial inference), and the second half of N-7 (a GUI fault killing inference —
 now solved by process separation). **FIM collapses** from an in-process implementation to route
-classification. **Q-25 is reopened as Q-28**, because it was answered assuming in-process inference.
+classification. I reopened Q-25 as Q-28 here; **both were then withdrawn** — D-E settled the ports
+and `server.nim:200-201` already forwarded `/embed*` to :8082. Neither was ever an open question,
+and asking twice was the error, not the answer.
 
 ### 2026-08-31 — Full route-and-symbol inventory (USER-directed). **N-30 found: the completion pipeline is unported.**
 
