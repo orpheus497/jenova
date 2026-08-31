@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-08-31 20:58
+**Last updated:** 2026-08-31 21:03
 **Branch:** `bsd`
 
 ---

@@ -1,6 +1,6 @@
 # TODOS
 
-**Last updated:** 2026-08-31 20:58
+**Last updated:** 2026-08-31 21:03
 
 Only what is actually outstanding. Everything closed lives in `PROGRESS.md`; everything retired
 lives in `.devdocs/ARCHIVE/`. **Do not re-add defects about archived files** — that loop cost a day.

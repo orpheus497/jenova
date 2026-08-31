@@ -28,7 +28,7 @@ for Sessions 001–003 — including Session 001, which moved or deleted 31 file
 | `AGENTS.md` | Governance |
 | `src/` | The whole program. `jenova_core.nim` and `jenova_gui.nim` are the two entry points; `src/jenova/` holds the modules |
 | `bin/` | `jenova` (desktop app) and `jenova-core` (headless server), both build artifacts, plus `jenova.desktop` |
-| `tests/` | Five shell suites driven by `nimble suites` |
+| `tests/` | Shell suites driven by `nimble suites`, plus `nvimctl_check.nim` — the one suite that needs a compiled caller |
 | `etc/` | `jenova.conf` (applied profile) and `jenova.local.conf` (**the USER's file — never edited by a session**) |
 | `hardware-profiles/` | Profile data plus `detect-hardware.sh`, the setup-time selection tool. Data outlives the rewrite |
 | `jca_web/` | The SvelteKit Web UI. Still holds the workspace side — workspaces, projects, folders, notes, fileAssets — which the native GUI does not have |
@@ -53,6 +53,14 @@ on the next commit and re-deriving the drift is what consumed whole sessions (se
 | `jenova/` | The modules — server, routing, database, filesystem mirror, RAG, completion pipeline, backend lifecycle, model discovery, GUI, tray, D-Bus, **theme, canvas** |
 
 **Added 2026-08-31 (G-1 … G-5, ruling D-AP):** `theme.nim`, `canvas.nim`, `markdown.nim`.
+
+**Added 2026-08-31 (G-7, G-18):** `sourceview.nim` and `nvimctl.nim`.
+
+- **`nvimctl.nim`** reads the document open in Neovim — path, buffer, cursor, dirty flag, filetype —
+  through `nvim --server <sock> --remote-expr`. **It is deliberately not an RPC client:** Neovim
+  ships the expression evaluator, so msgpack framing would re-implement what exists (Directive 3),
+  and the program already drives `wl-copy`, `git`, `fetch` and `xdg-open` the same way. The buffer,
+  not the file on disk, is the point — unsaved work is what the USER is looking at.
 
 - **`markdown.nim`** splits an assistant reply into text and fenced-code blocks and converts inline
   markdown to Pango markup. An unterminated fence renders as code so a block appears while it is
@@ -111,7 +119,7 @@ Supporting: `detect-hardware.sh` (scoring ladder + `--apply-profile`), `common-s
 
 ## 5. `tests/`
 
-Five suites, run by **`nimble suites`** (which builds both binaries first). Each runs in a scratch
+**Six** suites, run by **`nimble suites`** (which builds both binaries first). Each runs in a scratch
 `JCA_HOME` and none spawns a backend. Specs are in `TESTS.md`.
 
 **Archived 2026-08-31:** `test_gpu.sh`, `test_gpu_single.sh`, `test_validate_arg.sh` (which rewrote

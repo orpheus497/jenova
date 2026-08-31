@@ -49,8 +49,11 @@ task gui, "Build the desktop application (bin/jenova)":
 task suites, "Build both binaries and run the test suites":
   coreTask()
   guiTask()
+  # `test_nvimctl.sh` compiles its own driver and spawns a headless `nvim`; it
+  # skips cleanly when nvim is not installed, so it costs nothing on a host
+  # without it.
   for f in ["test_api_db.sh", "test_api_fs.sh", "test_routes.sh",
-            "test_lifecycle.sh", "test_models.sh"]:
+            "test_lifecycle.sh", "test_models.sh", "test_nvimctl.sh"]:
     exec "sh tests/" & f
 
 task llama, "Build the llama.cpp backend into external/ext_bin":

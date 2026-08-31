@@ -2,11 +2,43 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-08-31 20:58
+**Last updated:** 2026-08-31 21:03
 
 ---
 
 ## Completed
+
+### 2026-08-31 21:03 — **G-18 step 18.1: `nvimctl.nim` — the AI can read the active Neovim document. RUN, and the suite is proven able to fail.**
+
+**New `src/jenova/nvimctl.nim`**, and **new `tests/test_nvimctl.sh` + `tests/nvimctl_check.nim`**,
+wired into `nimble suites`. **Ran the suite: 5 passed, 0 failed**, 13 assertions per pass.
+
+**It is five Vimscript expressions and a subprocess, not an RPC layer.** `nvim --server <sock>
+--remote-expr` evaluates in the running editor and prints to stdout, so msgpack framing would
+re-implement what Neovim ships (Directive 3) — and the program already drives `wl-copy`, `git`,
+`fetch` and `xdg-open` exactly this way. `Document` carries path, buffer text, filetype, cursor line
+and the dirty flag; `asPromptContext` renders it as a fenced block whose tag is `&filetype`, **the
+same string `sourceview.resolveLanguage` maps, so the GUI highlights what the model was shown**.
+
+**The absent editor is an ordinary state, not an error.** No socket, no editor, no file open and no
+`nvim` on PATH all return `found: false`; nothing raises. That is the state the program is in most
+of the time.
+
+**The suite was proven able to go red, which is the part that matters** (BRIEFING: a suite reporting
+PASS while asserting nothing has shipped here twice). It runs the same assertions twice — once
+clean, then again after `setline(2,…)` edits the buffer **without saving**. On the interim run the
+text and `modified` checks failed and the driver exited 1; the file on disk was verified unchanged.
+**That is simultaneously the proof the checks are real and the proof of G-18's whole claim: the
+reader returns the buffer, not the file.** A disk-reading implementation would pass every clean test
+and be exactly wrong for the feature.
+
+**Measured, not read:** `nvim --listen` rejects a socket path near **104 bytes** (FreeBSD
+`sun_path`), so the suite uses `/tmp/jenova-test-nvim.$$.sock` and the product will use
+`$HOME/Jenova/state/`. The suite **skips cleanly** with no `nvim` installed.
+
+**18.1 was deliberately built before the terminal widget (19.1)** — it works against any
+`nvim --listen`, including one the USER already has running, so the feature is provable before its
+riskiest dependency exists.
 
 ### 2026-08-31 20:58 — **G-19/G-18 scoped into `PLANS.md`, and the mechanism was proven by running it — no msgpack client needed.**
 

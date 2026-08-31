@@ -2,7 +2,7 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-08-31 20:58
+**Last updated:** 2026-08-31 21:03
 
 ---
 
@@ -97,7 +97,7 @@ machine" here is this.
 | **19.1** | **`vte.nim` — the terminal widget** | Hand-written `vte-2.91-gtk4` FFI, **exactly the shape of `sourceview.nim`**: flags from `staticExec("pkg-config …")`, a small Nim surface, and the `renderable` declared in `gui.nim` because owlkettle's macro emits an unexported type. **`vte-2.91-gtk4 0.80.5` is installed — checked, not assumed.** LGPL, permitted under D-X | `nm -u bin/jenova` shows the `vte_*` symbols and the link resolves |
 | **19.2** | **Spawn `nvim` in it** | `vte_terminal_spawn_async` with `nvim --listen $JENOVA_STATE/nvim.sock`. **Short path — see above.** The USER's own config and plugins load, which is the entire reason for hosting a real `nvim` rather than rendering a UI ourselves | The tab shows a working Neovim the USER can edit in |
 | **19.3** | **The tab itself** | A new pane in the chat column beside the transcript and the note editor. **Child types stay stable** — that constraint is already recorded for this column | Switching tabs does not disturb the transcript |
-| **18.1** | **`nvimctl` — the four queries** | One small module wrapping `startProcess("nvim", ["--server", sock, "--remote-expr", expr])`. **Not a general RPC layer** — four expressions, above. Absent socket or dead server returns "no active document" rather than raising | A unit check against a headless `nvim`, the way it was proven above |
+| ~~**18.1**~~ | **DONE 21:03, RUN.** `src/jenova/nvimctl.nim`, with `tests/test_nvimctl.sh` + `tests/nvimctl_check.nim` wired into `nimble suites`. **5 passed, 0 failed.** The suite runs its assertions twice — clean, then after editing the buffer **without saving** — and **the interim run went red**, which proves both that the checks assert something and that the reader returns the *buffer*, not the file on disk | **Done.** Skips cleanly with no `nvim` installed |
 | **18.2** | **Feed it to the model** | `pipeline.nim` already injects RAG and persona context; the active document is another source, **gated on the USER asking for it** rather than silently attached to every turn. `&filetype` labels the fenced block so `sourceview` highlights it | A turn that references the open file; a turn that does not, when the tab is closed |
 
 **Sequencing:** 19.1 is the only risky step (a new C dependency and the program's second FFI). 18.1
