@@ -601,7 +601,12 @@ proc main() =
     else:
       stderr.writeLine &"jenova-core: unknown command '{args[0]}'"
       quit(1)
-  except PathError, ConfigError:
+  # ModelError is raised by `models.switchModel` for a bad target, a missing
+  # directory or a symlink that would not validate, and OSError by the file
+  # operations underneath it and under `db-init`. Both reached the top uncaught
+  # and printed a Nim traceback where the other failure modes here print one
+  # line.
+  except PathError, ConfigError, ModelError, OSError:
     stderr.writeLine "jenova-core: " & getCurrentExceptionMsg()
     quit(1)
 

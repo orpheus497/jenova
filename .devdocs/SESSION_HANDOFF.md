@@ -5,6 +5,75 @@ Reverse-chronological. **Keep entries short.** Sessions 001-005 are in
 
 ---
 
+## Session 012 — 2026-08-31 22:51
+
+**Instruction:** a batch of externally supplied review findings across the Nim core, the test
+suites, the hardware profiles, the Web UI and the documentation. Verify each against current code,
+fix what is still valid, skip the rest with a reason, keep changes minimal, validate. Adhere to
+`AGENTS.md`.
+
+### What was done
+
+Full list in `PROGRESS.md` (2026-08-31 22:51). In short: **23 code fixes across 13 modules, 4 test
+fixes, 6 hardware-profile fixes, 8 documents realigned.** Both binaries build. All six suites pass,
+all four self-tests pass, and `npm run build` produces a bundle with no Google Fonts reference.
+
+The fixes worth naming because they were live faults rather than tidying: `/api/storage` accepted
+`/api/storagefoo` and decoded a path from it; a failed upsert's rollback resurrected soft-deleted
+rows; `restoreTrash` validated its source but not its destination, and passed the sidecar's `type`
+field straight into an UPDATE; `resolveStatic` would serve a sibling directory named `public-old`;
+`fssync`'s UUID RNG was one `Rand` mutated by every worker thread; `upstream` could block a worker
+forever and answered an upstream that closed early with an empty reply; and `rag`'s embedding
+batches could shift vectors against chunks.
+
+### Two findings rejected, with reasons
+
+- **`paths.nim` / `~/JCA`** — a finding asked to drop the `PathError` guard. That guard is **D-AC**
+  reinforced by **D-AE**. Rejected; recorded as **D-AV**.
+- **`test_routes` / T-12** — before recording it as fixed, HEAD was rebuilt into a scratch tree with
+  `git archive` and the suite run against it. **The baseline passes 13/13 too.** So it was not fixed
+  here and is not in the baseline. T-12 stays open with that noted; a defect that stops reproducing
+  without a fix has an unknown trigger.
+
+### One decision put to the USER
+
+The Google Fonts `@import` in `jca_web/src/app.css` is a real outbound call on every page load, but
+self-hosting means adding OFL-licensed binaries — a dependency-shaped change, gated by Directive 1
+and touching Directive 2. Asked; the USER chose **remove the import, no self-hosting**. Done, with
+the font stacks widened to system fallbacks, and `docs/privacy.md` rewritten — it now lists three
+outbound paths, all deliberate, instead of four with one flagged as a defect.
+
+### Three new items, all executed rather than read
+
+**T-16, and it is the significant one:** `hardware-profiles/detect-hardware.sh` **cannot run at
+all**. Line 19 sources `lib/detect-env.sh`, archived with the shell tree, so every mode aborts
+there. Confirmed by running it. Two findings this session were fixes *inside* that script — both
+correct, both unexercised. **T-17:** nothing calls `rag.indexContent` outside `rag-selftest`, so
+retrieval's query path is complete and its index is always empty — B-15 carried across the rewrite.
+**T-18:** the Optane profile's setup script resolves `bin/jenova-swap-mount`, which is archived.
+
+### Documentation
+
+The docs described the LuaJIT proxy, the C/GTK3 `jenova-ui`, `bin/jenova-ca`, `lib/jenova-model.sh`,
+a Makefile and `scripts/*.sh` — every one archived. `README.md`, `docs/architecture.md`,
+`docs/install.md`, `docs/usage.md`, `docs/privacy.md`, `hardware-profiles/README.md` and
+`jca_web/README.md` were brought to the tree, and `docs/context-and-retrieval.md` rewritten around
+`rag.nim` and `pipeline.nim`. The database path was wrong in four documents
+(`var/jenova.db` → `.system/jenova.db`).
+
+**This is D-AO's failure mode again** — the trackers were current, but the user-facing docs had
+drifted a whole architecture behind and would have sent a reader to files that do not exist.
+
+### Next steps
+
+1. **T-16** — decide how `detect-hardware.sh` gets its environment back, or whether selection moves
+   into the core. It gates every hardware-profile fix made today.
+2. **T-17** — decide what an indexer walks and on what trigger. The retrieval machinery is done.
+3. **G-23** — unchanged; still wants `GTK_DEBUG=interactive`, not a fourth value change.
+4. **T-10** — three profiles still contradict their own `profile.conf`.
+
+---
+
 ## Session 011 — 2026-08-31 21:42
 
 **Instruction:** read `AGENTS.md`, read the devdocs, cross-reference against the codebase, report.

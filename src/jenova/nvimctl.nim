@@ -25,7 +25,7 @@
 ## * **`getline(1,"$")` returns the buffer, not the file.** That is the whole
 ##   point: unsaved edits are what the USER is looking at.
 
-import std/[os, osproc, streams, strutils]
+import std/[os, osproc, posix, strutils, times]
 import ./paths
 
 const
@@ -51,6 +51,28 @@ type
 proc socketPath*(p: Paths): string =
   p.state / SocketName
 
+## Function purpose: drain a child's stdout until EOF or the deadline, whichever
+## comes first. `complete` is false only on the deadline, so the caller can tell
+## a slow editor from a finished one and kill the former.
+proc readUntilDeadline(fd: FileHandle, timeoutMs: int):
+    tuple[data: string, complete: bool] =
+  var buf = newString(4096)
+  let deadline = epochTime() + timeoutMs.float / 1000.0
+  while true:
+    let remaining = int((deadline - epochTime()) * 1000.0)
+    if remaining <= 0:
+      return (result.data, false)
+    var pfd = TPollfd(fd: fd.cint, events: POLLIN, revents: 0)
+    let ready = poll(addr pfd, 1.Tnfds, remaining.cint)
+    if ready < 0:
+      return (result.data, false)
+    if ready == 0:
+      return (result.data, false)          # deadline expired with nothing to read
+    let n = posix.read(fd.cint, addr buf[0], buf.len)
+    if n <= 0:
+      return (result.data, true)           # EOF: the child is done writing
+    result.data.add buf[0 ..< n]
+
 ## Function purpose: evaluate one Vimscript expression in the running editor.
 ## Returns `("", false)` rather than raising when there is no editor: an absent
 ## socket is the normal state, not an error.
@@ -66,7 +88,16 @@ proc query*(sock, expression: string): tuple[value: string, ok: bool] =
                          args = ["--server", sock, "--remote-expr", expression],
                          options = {poUsePath})
     defer: p.close()
-    let output = p.outputStream.readAll()
+    # Action purpose: read against the deadline rather than reading first and
+    # timing the wait afterwards. `readAll` blocks until the child closes its
+    # stdout, so a wedged editor held the caller indefinitely and `QueryTimeoutMs`
+    # never applied — and `getline(1,"$")` on a large buffer exceeds the pipe, so
+    # simply waiting without reading would deadlock the child instead.
+    let (output, complete) = readUntilDeadline(p.outputHandle, QueryTimeoutMs)
+    if not complete:
+      p.terminate()
+      discard p.waitForExit(200)
+      return ("", false)
     if p.waitForExit(QueryTimeoutMs) != 0:
       # `--remote-expr` prints `E247: Failed to connect` on stderr and exits
       # non-zero when the server is gone. That is the stale-socket path.

@@ -83,7 +83,12 @@ detect_os() {
     # Linuxulator `uname -s` answers "Linux", which previously caused this
     # script to select a Linux profile on a FreeBSD host.
     OS_NAME="FreeBSD"
-    OS_RELEASE="$JENOVA_OS_RELEASE"
+    # Action purpose: read the release from the kernel. This took
+    # $JENOVA_OS_RELEASE directly, and nothing in the tree exports that any more,
+    # so OS_FULL and OS_PRETTY reported a bare "FreeBSD " with the version blank
+    # on every --info run. An explicitly exported override still wins.
+    OS_RELEASE="${JENOVA_OS_RELEASE:-$(sysctl -n kern.osrelease 2>/dev/null)}"
+    [ -n "$OS_RELEASE" ] || OS_RELEASE="unknown"
     OS_FULL="${OS_NAME} ${OS_RELEASE}"
     OS_PRETTY="FreeBSD ${OS_RELEASE}"
 }

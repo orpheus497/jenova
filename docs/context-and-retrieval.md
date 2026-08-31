@@ -1,285 +1,249 @@
 # Context and Retrieval
 
-How content reaches the model. Verified against the source tree, August 2026, with `file:line`
-citations throughout.
+How content reaches the model. Verified against the source tree on 2026-08-31.
 
-**There are two distinct systems, and only one of them currently supplies anything.** They are
-routinely confused, including in this repository's own documentation and commit history, so this
-document exists to keep them apart.
+This document was written against the Lua proxy and its `lib/search.lua` retriever. Both are gone —
+the retrieval path is `src/jenova/rag.nim` and the injection path is `src/jenova/pipeline.nim`.
+Every claim below has been re-checked against those two files. Where a mechanism is implemented but
+not reached in normal operation, it says so rather than describing intent as behaviour.
 
-| | Client-side workspace context | Lua BM25 + vector retriever |
-|---|---|---|
-| Implementation | `jca_web/src/lib/services/workspace.service.ts:21-194` | `lib/search.lua` → `lib/proxy.lua:1267` |
-| Status | **Live.** Fires on every send with a `conversationId` | **Wired but inert** — no indexer call |
-| Method | Scope-based bulk inclusion + FOCUS/RULES tree propagation | Hybrid BM25 keyword + cosine similarity |
-| Covers | Notes and uploaded file assets | Source code on disk |
-| Injects | Full text of everything in scope | Top-N ranked snippets |
-| Lands in | System message, `chat.service.ts:239-246` | System message, `lib/proxy.lua:1319/1324/1339/1344` |
+## What supplies context
 
-They are **complementary by design, not redundant** — one covers workspace artefacts by scope, the
-other covers a codebase by relevance. The `TODO` at `lib/proxy.lua:1269` flags the deduplication
-question that arises once both are live.
+| # | Mechanism | Owner | State |
+|---|---|---|---|
+| 1 | Server-side retrieval (BM25 + vectors) | `src/jenova/rag.nim` | **Query path live, index never populated** — see §1 |
+| 2 | Persona and context injection | `src/jenova/pipeline.nim` | Live on every chat completion |
+| 3 | Editor context | `src/jenova/nvimctl.nim` | Live, and **only** for the `Editor:` intent |
+| 4 | Web search | `src/jenova/websearch.nim` | Live, and only for the `Web Search:` intent |
+| 5 | Client-side workspace context | `jca_web` | Live in the Web UI only |
+| 6 | Per-message attachments | `jca_web` | Live in the Web UI only |
+| 7 | MCP tools | `jca_web` | Web UI only, off by default |
+| 8 | Conversation history | client | Sent whole, never trimmed |
+
+Mechanisms 1–4 are server-side and apply to **every** client — the desktop window, the Web UI and
+any OpenAI-compatible client pointed at `:8080`. Mechanisms 5–7 exist only in the Web UI.
 
 ---
 
-## 1. Client-side workspace context — the one that works
+## 1. Server-side retrieval — `src/jenova/rag.nim`
 
-`WorkspaceService.getWorkspaceContext(folderId, projectId, workspaceId)`.
+### Storage
 
-### What it gathers
+Both indexes live in SQLite, alongside the workspace database, so they survive a restart and every
+thread gets its own connection:
 
-**Everything**, then filters by scope: `DatabaseService.getAllNotes()` and `getAllFileAssets()`
-(`workspace.service.ts:27-30`), which hit `/api/db/notes/all` and `/api/db/fileAssets/all`
-(`database.service.ts:473-475`, `:539-541`) → `lib/proxy.lua:873`, `:923` → SQLite.
+| Table | Holds |
+|---|---|
+| `rag_documents` | one row per indexed path, with `mtime`, `size` and the time it was indexed |
+| `rag_chunks` | chunk text, its starting line, and its embedding as a float32 little-endian `BLOB` |
+| `rag_fts` | an FTS5 virtual table over the full document body, tokenised `unicode61` |
 
-### How it selects
+This is the part that is a redesign rather than a port. `lib/search.lua` kept its BM25 index in
+process memory and lost it on every restart, wrote its vectors to one whole-file `vectors.json`
+under a 20 MB cap above which merging silently stopped, and stored chunk text as `""` — so after a
+restart a semantic hit could be scored but could not produce a snippet.
 
-Not semantic retrieval — **scope-based inclusion**, with one deliberate exception. Notes are split
-into FOCUS and regular at `workspace.service.ts:33-34`, then four mutually exclusive branches:
+**FTS5 is checked, not assumed.** `jenova-core db-capabilities` reports whether the linked
+`libsqlite3` has it; when it does not, `initSchema` records that and retrieval runs vector-only.
+
+### Chunking
+
+300 words per chunk with 50 words of overlap, tracking the line each chunk starts on so a hit can
+cite a location. The overlap exists so a passage spanning a boundary is still retrievable whole
+from one chunk.
+
+### Embeddings
+
+`rag.embed` posts to `/v1/embeddings` on the embedding server (`127.0.0.1:8082`) in batches of 8,
+and unit-normalises each vector so similarity is a plain dot product. An unreachable server returns
+an empty result, which is a **supported** state: chunks are stored without vectors, keyword search
+still works, and every chunk still carries its text for snippets.
+
+Each batch contributes exactly one vector slot per chunk it was given, padding with an empty vector
+where the server returned fewer than it was asked for. Without that padding the vectors shifted
+against the chunks and each remaining chunk was stored with a different chunk's embedding.
+
+### Query
+
+`rag.query(queryStr, topK, withSnippets, pathFilter)`:
+
+1. **Keyword.** The query is tokenised, each term quoted and the terms OR'd into an FTS5 `MATCH`,
+   scored by FTS5's own `bm25()`. FTS5 returns a *more negative* score for a better match, so it is
+   negated. This is a correct BM25 over a persisted index rather than the hand-rolled
+   k1=1.5/b=0.75 loop `search.lua` ran over an in-memory one.
+2. **Semantic.** Every chunk with a vector is scored by dot product against the query embedding.
+   A chunk at or below `SemanticFloor` (0.3) is not a hit at all. The best chunk per path wins, and
+   its start line becomes the hit's line.
+3. **Mix.** Both families are normalised **by the maximum within this result set** and weighted
+   0.4 keyword / 0.6 semantic. Normalising against the set rather than an absolute scale is what
+   makes BM25 and cosine comparable, since they share no range. With no embedder available the
+   score is the normalised keyword score alone.
+4. **Filter.** `pathFilter` matches a path exactly or as a directory prefix.
+5. **Snippets.** The chunk at the hit's start line, truncated at 1000 characters; the file's first
+   chunk if that lookup finds nothing.
+
+### Why it returns nothing today
+
+**`rag.query` short-circuits on an empty index** — `if documentCount() == 0: return @[]` — and
+nothing in the running product ever fills it. `indexContent` and `indexFile` are exported and
+correct, and their only callers repo-wide are `jenova-core rag-selftest`.
+
+This is the same defect the Lua retriever had, carried across the rewrite: a complete query path
+with no indexer wired to it. The consequence is that the `--- REPOSITORY CONTEXT ---` block never
+appears in a real request, and `Prepared.ragHits` is always 0.
+
+What is *not* the same is the reason. In Lua three independent breaks each caused it — a deleted
+`index_dir` call, an embedder that was never handed to the search module, and a dead-store ignition
+hook. Here there is one: no caller. `jenova-core rag-selftest` indexes a scratch corpus and proves
+keyword ranking, the path filter, snippet survival, the float32 BLOB round-trip and the similarity
+maths, so the machinery is verified — only its trigger is missing.
+
+---
+
+## 2. The completion pipeline — `src/jenova/pipeline.nim`
+
+`pipeline.prepare` runs on every `POST /v1/chat/completions`, and **the order is part of the
+contract**:
+
+1. **Intent detection.** A prefix on the last user message, stripped after matching so the model
+   never sees the marker.
+2. **Retrieval** at a per-intent result limit, with a rewritten query for large file-chat payloads.
+3. **RAG injection** as a `--- REPOSITORY CONTEXT ---` block.
+4. **Web search**, for the websearch intent only.
+5. **Editor context**, for the `Editor:` intent only.
+6. **Persona injection**, in one of three modes.
+7. **Tool stripping**, for the two intents that gain nothing from tools.
+8. **Cache key** — SHA-256 of the **rewritten** body.
+
+The cache key must stay last: hashing the client's original body would produce a different key and
+orphan every entry already written.
+
+A body with no `messages` passes through untouched, so `/completion` and `/infill` — the Neovim FIM
+path — reach `llama-server` byte for byte.
+
+### Intents
+
+| Prefix | Intent | Effect |
+|---|---|---|
+| `Visual Rewrite:` | visual | 1 retrieval hit; tools stripped and `tool_choice` forced to `none` |
+| `Open File Chat:`, `Chatbot:` | filechat | 3 hits, or 5 for a large payload |
+| `Web Search:` | websearch | 0 retrieval hits — its context comes from the web; tools stripped |
+| `Editor:` | editor | 3 hits, plus the live Neovim buffer |
+| *(none)* | none | 3 hits, freechat persona |
+
+**Nothing in this repository sets these prefixes for you.** They are typed literally into the
+message. In ordinary use the no-intent branch runs.
+
+A message that already contains `--- REPOSITORY CONTEXT ---` is a follow-up turn and skips
+retrieval, web search and editor context entirely — which is what stops the same block stacking
+down a conversation.
+
+### Large-payload query rewriting
+
+Above 2000 characters, a message carrying a `Path:` marker is mostly file content, and searching on
+all of it retrieves noise. The query becomes the file's basename plus whatever prose follows the
+closing code fence — the user's actual question.
+
+### Persona injection — three modes, not interchangeable
+
+| Mode | Condition | Behaviour |
+|---|---|---|
+| Agent | the request carries a non-empty `tools[]` | The client's own system prompt is **never overridden**. A `CORE MANDATE` is inserted only when no system message exists; contexts are **appended** to it |
+| Conversational | an intent was detected | The intent's persona and the contexts are **prepended** above any existing system message |
+| No intent | the normal case | `prompts.FreeChat` prepended, RAG appended |
+
+### Response cache
+
+Keyed on the SHA-256 of the rewritten body, stored in the `llm_cache` table. A hit is returned with
+an `X-Cache: HIT` header. `jenova-core sha256-selftest` asserts the digest against the published
+FIPS 180-4 vectors, because a wrong hash does not fail loudly — it produces plausible digests that
+silently orphan every existing entry.
+
+---
+
+## 3. Editor context — `src/jenova/nvimctl.nim`
+
+For the `Editor:` intent only, the pipeline reads the document open in a running Neovim through
+`nvim --server <sock> --remote-expr` and appends it as a fenced block tagged with the buffer's
+`&filetype`, naming the path, the cursor line and whether there are unsaved changes.
+
+`getline(1,"$")` returns the **buffer**, not the file, which is the entire point: unsaved edits are
+what the user is looking at. An unnamed scratch buffer has no path and is not treated as a
+document.
+
+**It is never attached to a turn that did not ask for it.** It is the largest block the pipeline can
+inject, and silently including it would make every unrelated question carry whatever file happened
+to be open. With no editor running the intent degrades to a plain answer rather than failing.
+
+Each query is bounded by a 2 s deadline and the child is terminated if it expires, so a wedged
+editor cannot stall the chat turn that asked.
+
+---
+
+## 4. Web search — works, no button
+
+`websearch.search` queries DuckDuckGo's HTML endpoint and falls back to its instant-answer API,
+injecting the results as `--- WEB SEARCH RESULTS ---`. It requires base `fetch(1)` or `curl` on
+`PATH`.
+
+**Triggered only by typing `Web Search:`.** There is no button anywhere. It is the one genuine
+outbound network path in the system — see [privacy.md](privacy.md).
+
+---
+
+## 5. Client-side workspace context — the Web UI only
+
+`WorkspaceService.getWorkspaceContext` in `jca_web` gathers every note and file asset over
+`/api/db/*` and filters them **by scope**, not by relevance:
 
 | Conversation scope | Regular notes and files | FOCUS notes |
 |---|---|---|
-| Folder (`:40-73`) | that folder only | **entire workspace tree** (`:59-71`) |
-| Project (`:74-112`) | project root + all its folders | **entire workspace tree** (`:102-111`) |
-| Workspace (`:113-144`) | workspace + all projects + all folders | same scope (`:137-144`) |
-| Global / unassigned (`:145-155`) | only unassigned items | none (`:154`) |
+| Folder | that folder only | the entire workspace tree |
+| Project | project root plus all its folders | the entire workspace tree |
+| Workspace | workspace plus all projects and folders | same scope |
+| Global / unassigned | only unassigned items | none |
 
-**FOCUS notes traverse the whole tree regardless of the conversation's scope.** That is the
-distinguishing behaviour of this system and it is intentional — see §2.
+**FOCUS / RULES notes traverse the whole tree regardless of the conversation's scope.** That is the
+distinguishing behaviour of this system and it is deliberate: one pinned, auto-created, immutable
+note per container, emitted first, which is the mechanism for persistent instructions that follow
+the user everywhere in a workspace. An empty one is skipped, so a user who has never typed into one
+sees nothing injected — correct, but it reads as a broken feature.
 
-### How it formats
+The result is three plain-text sections — `--- FOCUS / RULES ---`, `--- NOTES ---`,
+`--- FILES ---` — appended to the system message with **no truncation, no ranking and no token
+budget**. It is attached only when a `conversationId` is supplied, so client paths that omit one
+send no workspace context at all.
 
-Three plain-text sections (`workspace.service.ts:157-193`), with **no truncation, no ranking and no
-token budget** — the `TODO` at `:26` acknowledges this:
-
-```
---- FOCUS / RULES ---
-[Workspace|Project|Folder] <title>
-<content>
-
---- NOTES ---
-Title: <title>
-Content: <content>
-
---- FILES ---
-File: <name> (Type: <type>)
-Content:
-<content>
-```
-
-Empty FOCUS notes are skipped (`:163`). Binary files emit
-`(Binary file, content not available for direct reading)` (`:188`).
-
-### How it is attached
-
-`chat.service.ts:106-118` calls it when `options.workspaceContext` was not supplied **and
-`conversationId` is truthy**. It is wrapped at `:182-184`, combined with `project_root`, thinking
-directives (`:120-122`) and audio directives (`:123-125`) into `jcaContext` at `:233-237`, then
-appended to the existing system message — or a new one is unshifted at index 0 — at `:239-246`.
-
-### Known defects
-
-| Defect | Site | Effect |
-|---|---|---|
-| Agentic path passes `conversationId: undefined` | `agentic.svelte.ts:436` | **No notes, no files, `project_root` stays `"unassigned"` for every agentic turn.** Masked today because agentic mode bails without MCP tools (`:237-242`) and `mcpServers` defaults to `"[]"` — but connecting any MCP server silently removes workspace context |
-| "Continue generation" passes no `conversationId` | `chat.svelte.ts:1442` | Same loss |
-| Text-file detection is MIME-based | `FilesView.svelte:137-141` | A `.ts`, `.py`, `.lua`, `.rs`, `.c` or `.h` file dragged from a file manager usually reports an empty MIME type, so its content is never stored. **The likely cause of "my files aren't in context"** |
-| Whole payload polled every 30 s to compare `id:updatedAt` | `workspace.svelte.ts:47-68` | Full note bodies and base64 file contents transferred, then discarded |
-| `fileAssets` has no `updatedAt` column | `lib/db.lua:135-146` | Every file keys as `id:0`, so in-place edits never trigger a refresh |
-
-All five are remediation-plan Stage 0 and 1 items.
+The desktop application has its own workspace tree and does not use this path.
 
 ---
 
-## 2. FOCUS / RULES notes
+## 6. Per-message attachments — the Web UI only
 
-A pinned, auto-created, immutable note per container — the mechanism for persistent instructions
-that follow the user everywhere in a workspace.
-
-- **Schema:** `isFocusNote INTEGER DEFAULT 0` (`lib/db.lua:132`), migration at `:181`, persisted at
-  `:782-789`.
-- **Creation:** `workspace.svelte.ts:274-293` creates one titled `FOCUS / RULES` with empty content
-  for every workspace, project and folder; `ensureFocusNotes()` (`:300-330`) backfills after init.
-- **Immutability:** cannot be moved (`workspace.svelte.ts:162`) or deleted (`:238`).
-- **Presentation:** pinned above regular notes in the sidebar (`ChatSidebar.svelte:235-236`,
-  `:279-280`, `:324-325`), styled distinctly (`ChatSidebarNoteItem.svelte:22-36`).
-- **Prompt effect:** emitted first, under `--- FOCUS / RULES ---`, and propagated across the whole
-  workspace tree.
-
-> Because empty FOCUS notes are skipped (`workspace.service.ts:163`), a user who has never typed
-> into one sees nothing injected. That is correct behaviour, but it reads as a broken feature.
+Files attached to an individual message are expanded into multimodal content parts: images, text
+files, pasted context, audio, PDFs as text or page images, and MCP prompts and resources. **These
+land in the user message, not the system message.** Images are stripped when the model has no
+vision support.
 
 ---
 
-## 3. The Lua retriever — wired, not fed
+## 7. MCP tools — the Web UI only
 
-### The call site is complete
-
-`lib/proxy.lua:1267` calls `search.query(rag_query, rag_limit, true, local_project_root)`;
-`:1271-1278` builds the `--- REPOSITORY CONTEXT ---` block; all four injection sites exist
-(`:1319` agent mode, `:1324` conversational-with-intent, `:1339` and `:1344` no-intent). **None of
-this is speculative code.**
-
-### Why it returns nothing
-
-The `index_dir` call was **deleted in commit `9d8bc08`**:
-
-```diff
--if embed_ok then search.init_embeddings(embed) end
--search.index_dir(".", { "lua","sh","c","h","cpp","py","js","ts","go","rs", ... })
-+-- Indexing moved to after server listen
-```
-
-That `+` line is `lib/proxy.lua:74` today. The intended destination, `lib/proxy.lua:1537`, contains
-only:
-
-```lua
-print("[proxy] Search index deferred until project root is detected.")
-```
-
-**The move never completed.** Three independent breaks result, each individually sufficient:
-
-1. **No indexer call.** `search.index_dir` (`lib/search.lua:511`) and `search.reindex_file` (`:458`)
-   have **zero callers repo-wide**. `total_docs` is incremented only at `lib/search.lua:260`, inside
-   `bm25_index_file`, reachable only from those two. So `search.query` returns `{}` at
-   `lib/search.lua:759` before tokenising or embedding anything.
-2. **`search.init_embeddings(embed)` is never called from the proxy.** `lib/proxy.lua:15` requires
-   the module and `:63` initialises it successfully, but never hands it over — so `lib/search.lua`'s
-   `embed` upvalue (`:36`) stays `nil`, and `search.load_vectors()` (whose only caller is
-   `init_embeddings` at `:449`) never runs. The startup log at `lib/proxy.lua:86` prints
-   `Embeddings: true` regardless.
-3. **The ignition hook is a dead store.** `lib/proxy.lua:1233` writes `_G._last_project_root`;
-   repo-wide grep returns exactly one hit — that write. Nothing reads it. `local_project_root` is
-   used only as the `path_filter` argument to `search.query`, never to trigger indexing. The comment
-   at `:1222` says as much: *"Detect project root (passive only, no auto-indexing in proxy)"*.
-
-### Observable confirmation
-
-`lib/proxy.lua:1379` appends `| RAG: N hits` to the dispatch log only when `#rag > 0`. **That line
-has never fired.** It is a clean binary signal for whether the pipeline is alive.
-
-Supporting evidence: `~/Jenova/.system/` does not exist and `vectors.json` has never been written on
-this machine.
-
-### Retrieval semantics, for when it is restored
-
-- **BM25 degrades gracefully without embeddings.** `search.query` guards the vector path at
-  `lib/search.lua:766` and falls back to `r.score = norm_bm25` at `:826`. It never dereferences a
-  nil `embed`.
-- **The reverse is impossible.** The vector path sits behind the same `total_docs` gate, which only
-  BM25 indexing feeds. **Semantic search cannot run unless BM25 indexed first, in the same process.**
-- `load_vectors` populates `vec_index` **only** (`lib/search.lua:434`) — never `bm25_index`, `df`,
-  `avg_dl` or `total_docs`. A fully populated `vectors.json` is unreachable dead data on its own.
-- `load_vectors` stores `text = ""` (`:429`), so restored chunks carry no snippet text.
-- `vectors.json` is rewritten **wholesale** on every save (`:337-406`), re-serialised every 10 files
-  (`:497-498`), with a 20 MB merge cap above which the on-disk index is **silently discarded**
-  (`:369-372`).
-
-Restoration is remediation-plan **Stage R**, gated on Stage 2 — `index_dir` shells out to `find`
-(`lib/search.lua:527`) and `stat` per file (`:149`, `:170`), which cannot run on the event loop
-until `async_popen_read` yields.
+Tool definitions come entirely from connected external MCP servers. There are **no built-in
+retrieval tools** — no `read_file`, `search_code`, `grep` or `list_notes` — and the server exposes
+no MCP endpoint. The default is off, with no servers configured.
 
 ---
 
-## 4. Server-side prompt augmentation
+## 8. Conversation history
 
-Everything below runs in `lib/proxy.lua` on every `POST /v1/chat/completions` (`:637`).
+**No summarisation, no truncation, no retrieval over history.** The whole active branch is sent
+every turn. Branching selects which *path* through the message tree is active but drops nothing
+from it.
 
-### Intent detection
-
-Two sources, `:1203` and `:1236-1251`:
-
-- **`X-Intent:` header** — **nothing in this repository ever sets it.**
-- **Message-content prefixes** — `Visual Rewrite:` → `visual`, `Open File Chat:` / `Chatbot:` →
-  `filechat`, `Web Search:` → `websearch`. The prefix is stripped at `:1247`.
-
-**No client emits these prefixes either.** The only way to trigger one is to type it literally into
-the chat box. In normal WebUI use `intent == nil` and the no-intent branch at `:1332` runs.
-
-### Persona injection — always runs
-
-Guarded by `:1253` (non-empty user message, not already carrying a `--- REPOSITORY CONTEXT ---`
-block). Three branches:
-
-| Branch | Site | Behaviour |
-|---|---|---|
-| Agent mode (request carried `tools[]`) | `:1308-1319` | Prepends a `CORE MANDATE` persona as a new system message if none exists; **appends** web and RAG context to `messages[1]` |
-| Conversational with intent | `:1320-1331` | `prompts[intent]` + contexts **prepended** to the existing system message |
-| No intent — the normal case | `:1332-1347` | `prompts.freechat` (`lib/prompts.lua:32-42`) prepended |
-
-Net result for a normal chat, `messages[1].content` becomes:
-
-```
-prompts.freechat
-  + WorkspaceService.INITIAL_IDENTITY
-  + project_root: …
-  + thinking / audio directives
-  + [CURRENT WORKSPACE ARTIFACTS (Notes & Files)]: …
-```
-
-### Web search — works, but has no UI
-
-`exec_web_search` (`:394-410`) → `ddg_html_search` (`:358-386`, max 5 title+snippet results) →
-falls back to `ddg_instant_answer` (`:315-354`). Injected as `--- WEB SEARCH RESULTS ---` at
-`:1280-1293`. Requires `fetch` or `curl` on `PATH` (`:258-277`).
-
-**Triggered only by `intent == "websearch"`, i.e. by literally typing `Web Search:`.** There is no
-button anywhere in `jca_web`. It is a hidden magic-word feature, and it is the one genuine outbound
-network path in the system.
-
-Note it forces `rag_limit = 0` (`:1254`) and clears `req_json.tools` (`:1300-1301`).
-
-> The comment at `lib/proxy.lua:392` claims a ~13 s worst case. That is the *tool-declared* bound
-> (`curl --max-time 8` + `5`). FreeBSD `fetch -T` sets a **per-operation**, not total, timeout — and
-> the real backstop is `async_popen_read`'s own 15 s deadline per call, which per the scheduler's
-> poke granularity can slip to ~31 s. Realistic worst case is closer to 60 s.
-
-### FIM
-
-`:1405-1409` performs no injection. The comment notes RAG context could be added there later.
-
----
-
-## 5. Per-message attachments
-
-A separate path from workspace file assets. Files attached to an individual message are expanded by
-`ChatService.convertDbMessageToApiChatMessageData` (`chat.service.ts:802-979`) into multimodal
-content parts: images (`:856-861`), text files (`:868-873`), pasted context (`:883-892`), audio
-(`:899-907`), PDFs as text or page images (`:914-932`), MCP prompts (`:939-949`) and MCP resources
-(`:956-966`). Text is wrapped by `formatAttachmentText` (`jca_web/src/lib/utils/formatters.ts:147-155`).
-
-**These land in the user message, not the system message.** Images are stripped when the model lacks
-vision (`chat.service.ts:151-176`).
-
----
-
-## 6. MCP tools
-
-Tool definitions come **entirely from connected external MCP servers**
-(`mcp.svelte.ts:1035-1058`). There are **no built-in retrieval tools** — no `read_file`,
-`search_code`, `grep` or `list_notes` anywhere in `jca_web/src/lib/**` or `lib/**` — and
-`lib/proxy.lua` exposes no MCP endpoint.
-
-Default is off: `mcpServers: "[]"` (`jca_web/src/lib/constants/settings-config.ts:32`).
-
-> ⚠️ **Connecting an MCP server currently disables workspace context** — see the `agentic.svelte.ts:436`
-> defect in §1.
-
----
-
-## 7. Conversation history
-
-**No summarisation, no truncation, no retrieval over history.** `chat.svelte.ts:602` sends
-`conversationsStore.activeMessages.slice(0, -1)` — the entire active branch, every turn. Branching
-(`jca_web/src/lib/utils/branching.ts`) selects which *path* through the message tree is active but
-drops nothing from it.
-
-The only reduction is `excludeReasoningFromContext` (`chat.service.ts:257-259`), which omits
-`reasoning_content` from prior turns.
-
-Context overflow surfaces as a server error carrying `contextInfo: { n_prompt_tokens, n_ctx }`
-(`chat.svelte.ts:617-620`, `:902-905`). With the current profile (`-np 2 -c 32768`) each slot gets
-16,384 tokens, because llama.cpp splits context per slot.
+Context overflow therefore surfaces as a backend error rather than being prevented. `llama.cpp`
+divides `CTX_SIZE` between `NUM_SLOTS`, so each slot gets a fraction of the configured context —
+which is why the profiles that want a wide single conversation set `NUM_SLOTS=1`.
 
 ---
 
@@ -287,15 +251,14 @@ Context overflow surfaces as a server error carrying `contextInfo: { n_prompt_to
 
 | # | Mechanism | Live | Trigger | Injects into |
 |---|---|---|---|---|
-| 1 | Workspace context | ✅ | Automatic, any send with a `conversationId` | System message |
-| 2 | FOCUS / RULES notes | ✅ | Same, tree-wide | System message, first |
-| 3 | Persona | ✅ | Automatic, every non-empty request | System message, server-side |
-| 4 | Per-message attachments | ✅ | User attaches a file | **User** message |
-| 5 | Web search | ⚠️ code works, no UI | Typing `Web Search:` | System message |
-| 6 | MCP tools | ⚠️ off by default | User configures a server | Conversation tail |
-| 7 | Lua BM25 + vector retriever | ❌ inert | — | — |
-| 8 | History summarisation | ❌ not implemented | — | — |
+| 1 | Server-side retrieval | ❌ query path complete, index never populated | — | — |
+| 2 | Persona | ✅ | every non-empty chat request | System message |
+| 3 | Editor context | ✅ | typing `Editor:` | System message |
+| 4 | Web search | ✅ code works, no UI | typing `Web Search:` | System message |
+| 5 | Workspace context | ✅ Web UI only | any send with a `conversationId` | System message |
+| 6 | FOCUS / RULES notes | ✅ Web UI only | same, tree-wide | System message, first |
+| 7 | Per-message attachments | ✅ Web UI only | user attaches a file | **User** message |
+| 8 | MCP tools | ⚠️ off by default | user configures a server | Conversation tail |
+| 9 | History summarisation | ❌ not implemented | — | — |
 
-Restoration work is tracked as **Stage R** in
-[`remediation-plan.md`](remediation-plan.md); the client-side defects in §1 are **Stage 0** items
-0.8–0.10.
+The one open item here is #1: wiring an indexer to `rag.indexContent`, and deciding what it walks.

@@ -10,12 +10,18 @@
 ## body, so server-sent events reach the client as the model produces them
 ## rather than at the end.
 
-import std/[net, strutils, strformat, tables]
+import std/[net, nativesockets, posix, strutils, strformat, tables]
 import ./http
 
 const
   RelayChunk = 16 * 1024
   UpstreamConnectTimeoutMs = 5_000
+  ## Generous on purpose, and still finite. A cold `llama-server` can take
+  ## minutes to answer while it loads a multi-gigabyte model, so a short receive
+  ## timeout would abort legitimate requests — but with no timeout at all a
+  ## wedged upstream held this worker thread for the life of the process.
+  ## Matches the `TIMEOUT` the profiles carry.
+  UpstreamRecvTimeoutSec = 600
 
 type UpstreamError* = object of CatchableError
 
@@ -50,6 +56,14 @@ proc buildRequest(req: Request, host: string, port: int): string =
 ## to the client. A refused connection is reported as 502 with the address that
 ## failed, because "the model backend is not running" is the single most common
 ## operational state and it should not look like a server bug.
+## Function purpose: the one 502 this module answers with, named so the
+## connect-failure path and the "upstream closed without sending anything" path
+## cannot drift apart. Both are the same operational fact to the client.
+proc sendUpstreamUnavailable(client: Socket, host: string, port: int) =
+  client.sendResponse(502, "application/json",
+    &"""{{"error":"upstream unavailable","upstream":"{host}:{port}",""" &
+    &""""hint":"is llama-server running?"}}""")
+
 proc forward*(client: Socket, req: Request, host: string, port: int): bool =
   var up: Socket
   try:
@@ -58,13 +72,18 @@ proc forward*(client: Socket, req: Request, host: string, port: int): bool =
   except CatchableError:
     if not up.isNil:
       try: up.close() except CatchableError: discard
-    client.sendResponse(502, "application/json",
-      &"""{{"error":"upstream unavailable","upstream":"{host}:{port}",""" &
-      &""""hint":"is llama-server running?"}}""")
+    sendUpstreamUnavailable(client, host, port)
     return false
 
   defer:
     try: up.close() except CatchableError: discard
+
+  # Action purpose: bound every `recv` below, the same way `server.setTimeouts`
+  # bounds the client side. Without it an upstream that accepts the connection
+  # and then stops speaking owns this worker thread indefinitely.
+  var tv = Timeval(tv_sec: posix.Time(UpstreamRecvTimeoutSec), tv_usec: 0)
+  discard setsockopt(up.getFd, SOL_SOCKET, SO_RCVTIMEO,
+                     addr tv, SockLen(sizeof(tv)))
 
   up.send(buildRequest(req, host, port))
 
@@ -87,4 +106,14 @@ proc forward*(client: Socket, req: Request, host: string, port: int): bool =
         return relayed > 0
       sent += w
     relayed += n
-  relayed > 0
+
+  # An upstream that accepted the connection and then closed without a byte —
+  # a crash mid-load, a receive timeout — left the client with an empty reply
+  # and no status at all, because the caller only closes the socket on `false`.
+  # That is the same operational state as a refused connection, so it gets the
+  # same answer. A partial relay still returns true: the response head is
+  # already on the wire and cannot be replaced.
+  if relayed == 0:
+    sendUpstreamUnavailable(client, host, port)
+    return false
+  true

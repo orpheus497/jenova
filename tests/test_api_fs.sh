@@ -137,8 +137,10 @@ assert_absent "note delete removes the live file" "$WS/Alpha/Beta/Gamma/Renamed_
 TRASHED=$(find_one "$WS/Alpha/.trash" "*_Renamed_$NID.md")
 if [ -n "$TRASHED" ]; then pass "note delete moves the file to workspace trash"
 else fail "note delete moves the file to workspace trash" "nothing matching *_Renamed_$NID.md in $WS/Alpha/.trash"; fi
-assert_file "trashed note has a metadata sidecar" "$TRASHED.metadata.json"
 if [ -n "$TRASHED" ]; then
+    # With $TRASHED empty this asserted on the literal path ".metadata.json",
+    # which is a different question from the one it claims to ask.
+    assert_file "trashed note has a metadata sidecar" "$TRASHED.metadata.json"
     # The sidecar's FIELDS are the contract, not its byte layout. fs_sync.lua
     # writes '{"type": "notes", ...}' with spaces; the Nim core emits compact
     # JSON. Only these two components ever read the file and both parse it as
@@ -153,7 +155,6 @@ fi
 # --- /api/fs/trash lists it -------------------------------------------------
 assert_match "trash listing includes the note" "Renamed_$NID.md"  "$(get /api/fs/trash)"
 assert_match "trash listing names the workspace" '"workspace":"Alpha"' "$(get /api/fs/trash)"
-assert_match "trash listing hides sidecars" '^\(.*\)$' "$(get /api/fs/trash)"
 if get /api/fs/trash | grep -q 'metadata.json'; then
     fail "trash listing excludes .metadata.json sidecars" "a sidecar leaked into the listing"
 else

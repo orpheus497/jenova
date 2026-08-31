@@ -104,7 +104,10 @@ has "--port overrides the client port"  'serving on 127.0.0.1:18773' "$PORTS"
 has "--llama-port reaches the upstream" 'llama 127.0.0.1:19001'      "$PORTS"
 has "--embed-port reaches the upstream" 'embed 127.0.0.1:19002'      "$PORTS"
 
-out=$("$CORE" serve --nonsense 2>&1); rc=$?
+# Guarded like the other serve checks: if the flag were ever accepted instead of
+# refused, an unguarded invocation would start a real server on the default port
+# and hang the suite there.
+out=$(JENOVA_NO_BACKENDS=1 JENOVA_PORT=18774 timeout 3 "$CORE" serve --nonsense 2>&1); rc=$?
 if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "unknown option"; then
     pass "an unknown serve flag is refused, not ignored"
 else

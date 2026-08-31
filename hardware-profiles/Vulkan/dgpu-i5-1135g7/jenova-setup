@@ -91,7 +91,12 @@ MOUNT_DIR="/mnt/jenova-models"
 MOUNT_SIZE="8G"
 
 _SCRIPT_DIR=$(dirname "$(realpath "$0")")
-_JENOVA_ROOT=$(realpath "$_SCRIPT_DIR/../../../..")
+# Action purpose: three parents, not four. This script lives at
+# <root>/hardware-profiles/<backend>/<config>/, so the root is dgpu-i5-1135g7 ->
+# Vulkan -> hardware-profiles -> <root>. A fourth `..` landed one level ABOVE
+# the repository, so every repository-relative path built from it was wrong and
+# the swap-mount helper below was never found.
+_JENOVA_ROOT=$(realpath "$_SCRIPT_DIR/../../..")
 _SWAP_MOUNT_SCRIPT="$_JENOVA_ROOT/bin/jenova-swap-mount"
 
 if [ -x "$_SWAP_MOUNT_SCRIPT" ]; then

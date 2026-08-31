@@ -158,6 +158,13 @@ proc appendVariantInt32*(iter: ptr DBusMessageIter, value: int32) =
   discard dbus_message_iter_append_basic(addr sub, TypeInt32, addr v)
   discard dbus_message_iter_close_container(iter, addr sub)
 
+proc appendVariantUint32*(iter: ptr DBusMessageIter, value: uint32) =
+  var sub: DBusMessageIter
+  discard dbus_message_iter_open_container(iter, TypeVariant, "u", addr sub)
+  var v = cuint(value)
+  discard dbus_message_iter_append_basic(addr sub, TypeUInt32, addr v)
+  discard dbus_message_iter_close_container(iter, addr sub)
+
 proc appendString*(iter: ptr DBusMessageIter, value: string) =
   var cs = value.cstring
   discard dbus_message_iter_append_basic(iter, TypeString, addr cs)

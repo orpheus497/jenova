@@ -18,6 +18,12 @@ const
   ReaderThreads = 4
   ReaderOps = 400
   WriterOps = 400
+  ## The measurement this whole self-test exists for. It was printed and never
+  ## checked, so a fully serialized layer — every reader running strictly before
+  ## or after the writer, which is 0% overlap — still reported PASS. A serialized
+  ## run cannot clear this; a genuinely concurrent one clears it comfortably,
+  ## since the readers and the writer start within microseconds of each other.
+  MinOverlapPct = 25.0
 
 type
   WorkerArg = object
@@ -87,6 +93,7 @@ proc run*(dbPath: string): int =
   var distinct_ok = true
   var totalOps = w.done
   var anyFailed = w.failed
+  var worstOverlapPct = 100.0
 
   echo &"  writer   ops={w.done:<5} conn=0x{toHex(w.connAddr.int64, 12)}"
   for i in 1 ..< total:
@@ -97,6 +104,7 @@ proc run*(dbPath: string): int =
     let ov = overlapNs(r, w).float / 1_000_000.0
     let span = (r.endNs - r.startNs).float / 1_000_000.0
     let pct = if span > 0: ov / span * 100.0 else: 0.0
+    if pct < worstOverlapPct: worstOverlapPct = pct
     echo &"  reader {i} ops={r.done:<5} conn=0x{toHex(r.connAddr.int64, 12)}" &
          &"  ran {span:6.1f} ms, {pct:5.1f}% of it concurrent with the writer"
 
@@ -109,6 +117,10 @@ proc run*(dbPath: string): int =
     result = 1
   if not distinct_ok:
     echo "  FAIL: threads shared a connection handle — the layer is not per-thread"
+    result = 1
+  if worstOverlapPct < MinOverlapPct:
+    echo &"  FAIL: a reader overlapped the writer for only {worstOverlapPct:.1f}% " &
+         &"of its run, below the {MinOverlapPct:.1f}% floor — the layer serialized"
     result = 1
   if result == 0:
     echo "  PASS: distinct handles per thread, readers overlapped the writer"

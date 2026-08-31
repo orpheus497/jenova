@@ -1,7 +1,5 @@
 @import "tailwindcss";
 
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap");
-
 @import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
@@ -143,12 +141,17 @@
   --color-brand-blue: #aba0d9;
   --color-brand-gold: #e4b382; /* Gold */
 
-  --font-body-base: "Inter", sans-serif;
-  --font-code-sm: "JetBrains Mono", monospace;
-  --font-headline-md: "Inter", sans-serif;
-  --font-label-caps: "JetBrains Mono", monospace;
-  --font-sans: "Inter", sans-serif;
-  --font-mono: "JetBrains Mono", monospace;
+  /* No webfont is fetched. The Google Fonts @import that used to sit at the top
+     of this file contacted fonts.googleapis.com on every page load, which is
+     inconsistent with a local-first product. Inter and JetBrains Mono are still
+     named first, so a viewer who has them installed gets them; everyone else
+     falls through to the platform's own UI and monospace faces. */
+  --font-body-base: "Inter", ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-code-sm: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  --font-headline-md: "Inter", ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-label-caps: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  --font-sans: "Inter", ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace;
 }
 
 @layer base {

@@ -216,6 +216,16 @@ proc upsert(e: Entity, node: JsonNode, mirror = true): ApiResult =
   let prior = if mirror: rowFields(e, id) else: initTable[string, string]()
   let existed = prior.len > 0
 
+  # Action purpose: `is_deleted` is not one of `e.cols`, so `rowFields` cannot
+  # carry it and `writeRow` always writes 0. Captured here, before the row is
+  # overwritten, so a rollback restores the flag the row actually had — otherwise
+  # a failed upsert against a soft-deleted row silently resurrects it.
+  var priorDeleted = "0"
+  if mirror and existed:
+    let flagRows = db.query("SELECT is_deleted FROM " & e.name & " WHERE id=?", id)
+    if flagRows.len > 0 and flagRows[0].len > 0 and flagRows[0][0].len > 0:
+      priorDeleted = flagRows[0][0]
+
   writeRow(e, node)
 
   if mirror and not mirrorUpsert(e, node, prior, existed):
@@ -225,6 +235,7 @@ proc upsert(e: Entity, node: JsonNode, mirror = true): ApiResult =
       for col in e.cols:
         restoreNode[col.name] = %prior.field(col.name)
       writeRow(e, restoreNode)
+      db.exec("UPDATE " & e.name & " SET is_deleted=? WHERE id=?", priorDeleted, id)
     else:
       db.exec("DELETE FROM " & e.name & " WHERE id=?", id)
     return err(500, "filesystem sync failed for " & e.name)
@@ -463,12 +474,16 @@ proc handleFs*(req: Request): ApiResult =
 ## `storage.service.ts` in the frozen Web UI calls all four verbs (D-Z), so the
 ## response shapes are matched rather than improved.
 proc handleStorage*(req: Request): ApiResult =
-  if not req.path.startsWith("/api/storage"):
+  # A bare prefix match accepts `/api/storagefoo` and then decodes `oo` as the
+  # relative path, so the boundary is required: the route is the exact path or a
+  # child of it, never a sibling that merely shares the first thirteen bytes.
+  const Prefix = "/api/storage"
+  if not (req.path == Prefix or req.path.startsWith(Prefix & "/")):
     return err(404, "not found")
 
   var rel = ""
-  if req.path.len > 13:            # "/api/storage/" is 13 characters
-    rel = urlDecode(req.path[13 .. ^1])
+  if req.path.len > Prefix.len + 1:   # everything after "/api/storage/"
+    rel = urlDecode(req.path[Prefix.len + 1 .. ^1])
 
   # GET /api/storage or /api/storage/ — the listing
   if req.meth == "GET" and rel.len == 0:
@@ -532,6 +547,11 @@ proc handleDb*(req: Request): ApiResult =
       if rows.len == 0: return err(404, "not found")
       return ok($(%*{"cache_key": rows[0][0], "response": rows[0][1],
                      "timestamp": (try: parseBiggestInt(rows[0][2]) except ValueError: 0)}))
+    # Anything that is not a GET fell through to the write below, so a DELETE or
+    # a PUT stored a cache entry. Every other route in this file answers 405 for
+    # an unsupported method; this one now does too.
+    if req.meth != "POST":
+      return err(405, "method not allowed")
     let node = parseBodyJson(req.body)
     if node.isNil or not node.hasKey("key") or not node.hasKey("response"):
       return err(400, "key and response required")

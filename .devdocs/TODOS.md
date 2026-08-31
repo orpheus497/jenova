@@ -1,12 +1,13 @@
 # TODOS
 
-**Last updated:** 2026-08-31 21:42
+**Last updated:** 2026-08-31 22:51
 
 Only what is actually outstanding. Everything closed lives in `PROGRESS.md`; everything retired
 lives in `.devdocs/ARCHIVE/`. **Do not re-add defects about archived files** — that loop cost a day.
 
 > **Re-verified 2026-08-31 20:10 (Session 010) against the tree, item by item.** T-2 … T-5, T-9 and
-> T-10 were each checked by reading the file they name and **all hold**.
+> T-10 were each checked by reading the file they name and **all hold**. *(T-9 was closed
+> 2026-08-31 22:51; T-10 is now partial. See `PROGRESS.md`.)*
 >
 > **Two things Session 007's identical sweep missed, and the reason is the same both times — it
 > read documents where it should have read artifacts.** (1) **T-1 was not "unexplained"** — five
@@ -36,7 +37,7 @@ lives in `.devdocs/ARCHIVE/`. **Do not re-add defects about archived files** —
 | **T-2** | **`db.nim`'s prepared-statement cache never evicts.** `api.nim`'s message update builds its `SET` clause from whichever fields the client sends, so distinct SQL strings accumulate, each holding a `sqlite3_stmt`. Fix belongs in `db.nim` (a cap plus finalize-on-evict), not in `api.nim` |
 | **T-3** | **Chat history is never trimmed.** The whole conversation is resent every turn. Needs a byte budget derived from `CTX_SIZE` |
 | **T-4** | **`fssync.resolveStoragePath` only resolves symlinks for paths that already exist.** A new file written through a symlinked parent escapes the workspace root; separately, a symlinked `$JENOVA_WORKSPACES` makes the check reject legitimate paths. Both directions need an assertion |
-| **T-12** | **`test_routes` fails 5 assertions, and has been failing.** The upstream-proxy checks — `POST /v1/chat/completions`, `/completion`, `/infill` — expect **502** with no `llama-server` running and get **500** (the pipeline threw) or **200** (something answered). **Attributed on 2026-08-31 19:23:** the working tree was stashed, `jenova-core` rebuilt from the committed baseline, and the identical five failed, so it is **pre-existing and not from the GUI work**. The other four suites pass. **`BRIEFING.md` claimed the suites passed** on the strength of Session 006 plus "not re-run since" — a claim with a disclaimer attached is still a claim, and this is rule 1 applied to a tracker rather than to a sentence. Diagnose 500-vs-502 first: a 500 means the pipeline raised before reaching the proxy, which is a different fault from the 200 |
+| **T-12** | **Does not reproduce — 2026-08-31 22:51.** `test_routes` passes **13/13** in the working tree *and* against the committed baseline, rebuilt into a scratch tree with `git archive HEAD`. So this session did not fix it and it is not in the baseline either. The likeliest explanation is that the run which recorded it had something listening on 8081, turning the three 502 assertions into 200s. **Left open, not closed** — a defect that stops reproducing without a fix is a defect whose trigger is unknown. If it returns, check `sockstat -4l | grep 8081` before anything else |
 | **T-5** | **`bin/jenova` leaves `llama-server` running on exit.** Deliberate for the agent model (not discarding a multi-gigabyte load), but the embedding server is also left with nothing attached, and a stale pidfile points at a dead process after a failed start |
 
 ## Backlog — GUI parity with the Web UI (given 2026-08-31, USER)
@@ -127,6 +128,14 @@ yet — defer to the future."*
 |---|---|
 | **T-14** | **Renaming a workspace, project or folder orphans everything under it on disk.** `mirrorUpsert` returns bare `true` for `projects` and `folders` (no filesystem action at all), and `syncWorkspace` only `ensureDir`s the **new** name. Since `physicalPath` derives every note and asset path from ancestor **names**, a container rename strands the old directory tree and later writes land in a fresh one. *Reasoned from source, not executed* |
 
+## Found 2026-08-31 22:51 during the review-finding sweep — executed, not read
+
+| ID | Item |
+|---|---|
+| **T-16** | **`hardware-profiles/detect-hardware.sh` cannot run at all.** Line 19 sources `$JENOVA_ROOT/lib/detect-env.sh`, archived with the rest of the shell tree, so the script aborts there — every mode, including `--info` and `--apply`. **Executed and confirmed**, not read: `sh hardware-profiles/detect-hardware.sh --info` prints only the sourcing error. `BRIEFING.md` lists `hardware-profiles/` as retained setup-time tooling, so this is a live gap. It also means the OS-release and `_JENOVA_ROOT` fixes made on 2026-08-31 are correct but unexercised. Three ways out — inline the handful of values it uses (`JENOVA_OS_RELEASE`, `JENOVA_CPU_MODEL`, `JENOVA_CPU_THREADS`, `JENOVA_PHYSICAL_THREADS`, `JENOVA_RAM_GIB`, `JENOVA_SWAP_GIB`, `load_jenova_profile`), restore the library, or move profile selection into the Nim core — and the choice is **T-7's**, not a defect fix |
+| **T-17** | **Nothing indexes anything for retrieval.** `rag.query` short-circuits on `documentCount() == 0`, and `rag.indexContent`/`indexFile` have **no callers repo-wide outside `rag-selftest`**. The query path is complete and proven by the self-test — keyword ranking, path filter, snippet survival, the float32 BLOB round-trip, the similarity maths — but the `--- REPOSITORY CONTEXT ---` block can never appear in a real request and `Prepared.ragHits` is always 0. **This is B-15 carried across the rewrite**, with one cause instead of Lua's three: no indexer is wired. Deciding *what* it walks (the workspace tree? a project root? on what trigger?) is the open question, not the code |
+| **T-18** | **`hardware-profiles/Vulkan/dgpu-i5-1135g7/jenova-setup` calls `bin/jenova-swap-mount`, which is archived.** The `_JENOVA_ROOT` traversal was off by one and is now fixed, but the helper it resolves to no longer exists, so the script always takes its inline `mdmfs` fallback. That fallback works; the dead reference and the `README`/`docs/usage.md` lines still advertising `jenova-swap-mount` as a command do not. Decide whether the tool comes back or the references go |
+
 ## Product decisions — not mine to make
 
 | ID | Item |
@@ -140,8 +149,7 @@ yet — defer to the future."*
 
 | ID | Item |
 |---|---|
-| **T-9** | `hardware-profiles/CPU/generic/jenova-setup` is entirely Linux — `cpupower`, `/sys`, `numactl`. It is the only CPU-only profile |
-| **T-10** | Each `profile.conf`'s **tuning** `PROFILE_*` block contradicts the `jenova.conf` beside it — for `Vulkan/dgpu-i5-1135g7`, FIT 256 vs 128, CTX 8192 vs 16384, NGL 16 vs `all`, DRAFT 0 vs 1. Nothing reads those tuning values. Sync or delete them. **Not the whole prefix:** `PROFILE_OPT_IN` and `PROFILE_DESC` *are* read, by `detect-hardware.sh:166,302` — this item said "nothing reads them" until 2026-08-31, which would have made deleting the block look safe |
+| **T-10** | **Three profiles still contradict their own `profile.conf`.** Closed for `Vulkan/dgpu-i5-1135g7` (jenova.conf synced to NGL 16 / 8K / 1 slot / no drafter) and `Vulkan/dgpu-igpu-i5-1135g7` (draft flag to 1) on 2026-08-31 22:51. Remaining: `apu-ryzen7-5700u`, `CPU/generic` and `dgpu-generic-12gb` — and the `FIT_TARGET` and `HEALTH_TIMEOUT` values on the two just synced, which were left alone because `-fitt` is not passed at all when `NGL_AGENT` is an explicit count. **Not the whole prefix:** `PROFILE_OPT_IN` and `PROFILE_DESC` *are* read, by `detect-hardware.sh` |
 
 ---
 

@@ -99,7 +99,12 @@ proc jsonEscape(s: string): string =
     of '\n': result.add "\\n"
     of '\r': result.add "\\r"
     of '\t': result.add "\\t"
-    else: result.add c
+    else:
+      # Every other byte below 0x20 is illegal raw in a JSON string, so a request
+      # path carrying one produced a body no client could parse. The named
+      # escapes above cover only three of them.
+      if c < ' ': result.add "\\u" & toHex(ord(c), 4)
+      else: result.add c
 
 ## Action purpose: bound how long a connection may keep a worker waiting on a
 ## client that has stopped sending. `lib/proxy.lua` had a header timeout that
@@ -137,20 +142,27 @@ proc slowQuery(rows: int): (int, float) =
   (n, ms)
 
 proc serveStatic(client: Socket, req: Request) =
+  # A HEAD gets the identical response headers a GET would produce, body
+  # withheld. It was previously served the body as well, which is a protocol
+  # violation and makes a HEAD as expensive on the wire as a GET.
+  let headOnly = req.meth == "HEAD"
   let root = staticRootS.get()
   if root.len == 0:
-    client.sendResponse(404, "text/plain", "no static root configured")
+    client.sendResponse(404, "text/plain", "no static root configured",
+                        headOnly = headOnly)
     return
   var full: string
   try:
     full = http.resolveStatic(root, req.path)
   except HttpError:
-    client.sendResponse(403, "text/plain", "forbidden")
+    client.sendResponse(403, "text/plain", "forbidden", headOnly = headOnly)
     return
   if not fileExists(full):
-    client.sendResponse(404, "text/plain", "not found: " & req.path)
+    client.sendResponse(404, "text/plain", "not found: " & req.path,
+                        headOnly = headOnly)
     return
-  client.sendResponse(200, http.contentTypeFor(full), readFile(full))
+  client.sendResponse(200, http.contentTypeFor(full), readFile(full),
+                      headOnly = headOnly)
 
 ## Function purpose: serve one request. The bool result is retained because
 ## `upstream.forward` reports whether it took ownership of the socket.
@@ -275,8 +287,17 @@ proc classWorker(arg: ClassWorkerArg) {.thread.} =
     try:
       handedOff = handle(client, arg.class, arg.id)
     except CatchableError:
+      # The message goes to the log, not to the client: it carries filesystem
+      # paths, SQL and internal state, and the caller that triggered the fault is
+      # the last party that should be handed them.
+      let msg = getCurrentExceptionMsg()
       try:
-        client.sendResponse(500, "text/plain", getCurrentExceptionMsg())
+        stderr.writeLine "[server] " & $ClassTable[arg.class].name &
+                         " worker " & $arg.id & ": " & msg
+      except CatchableError:
+        discard
+      try:
+        client.sendResponse(500, "text/plain", "internal server error")
       except CatchableError:
         discard
     if not handedOff:

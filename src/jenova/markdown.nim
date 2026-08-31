@@ -31,12 +31,34 @@ proc inlineSpan(s: string, delim: string, tag: string): string =
     result.add "<" & tag & ">" & s[start + delim.len ..< stop] & "</" & tag & ">"
     i = stop + delim.len
 
+## Code spans are lifted out before the emphasis passes run and put back after.
+## Marking them up first left their contents in the string, so `*` and `_` inside
+## a code span were still read as emphasis — `` `a*b*c` `` came out as
+## `<tt>a<i>b</i>c</tt>`, which is the one thing a code span is supposed to
+## prevent. The NUL-delimited placeholder cannot occur in the escaped text and
+## carries no emphasis delimiter of its own.
 proc inlineMarkup*(line: string): string =
-  result = escape(line)
-  result = result.inlineSpan("`", "tt")
+  let escaped = escape(line)
+  var codes: seq[string]
+  var protected = newStringOfCap(escaped.len)
+  var i = 0
+  while i < escaped.len:
+    if escaped[i] == '`':
+      let stop = escaped.find('`', i + 1)
+      if stop > 0:
+        codes.add escaped[i + 1 ..< stop]
+        protected.add "\0" & $(codes.len - 1) & "\0"
+        i = stop + 1
+        continue
+    protected.add escaped[i]
+    i.inc
+
+  result = protected
   result = result.inlineSpan("**", "b")
   result = result.inlineSpan("__", "b")
   result = result.inlineSpan("*", "i")
+  for idx, code in codes:
+    result = result.replace("\0" & $idx & "\0", "<tt>" & code & "</tt>")
 
 proc lineMarkup(line: string): string =
   let t = line.strip(trailing = false)

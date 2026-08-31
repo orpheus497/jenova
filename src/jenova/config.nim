@@ -104,9 +104,21 @@ done
 ## Function purpose: load configuration under the corrected precedence. The
 ## profile conf is required — without it there are no tuning values at all and
 ## guessing them would be worse than failing.
+## Action purpose: `detect-hardware.sh --apply` deploys the matched profile to
+## `$JCA_HOME/etc/jenova.conf` and only *mirrors* it into the repository's `etc/`
+## when that directory happens to be writable. The deployed copy is therefore the
+## authoritative one, and reading the repository copy first meant a host whose
+## source tree was read-only ran on a stale profile. The whole directory is
+## chosen at once — profile and local override together — so the two can never
+## come from different trees and disagree.
+proc configDir(p: Paths): string =
+  let deployed = p.jcaHome / "etc"
+  if fileExists(deployed / "jenova.conf"): deployed else: p.root / "etc"
+
 proc load*(p: Paths): Config =
-  result.profileConf = p.root / "etc" / "jenova.conf"
-  result.localConf = p.root / "etc" / "jenova.local.conf"
+  let dir = configDir(p)
+  result.profileConf = dir / "jenova.conf"
+  result.localConf = dir / "jenova.local.conf"
 
   if not fileExists(result.profileConf):
     raise newException(ConfigError,

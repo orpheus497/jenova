@@ -128,8 +128,12 @@ const StatusText = {
 ## `extraHeaders` must already be CRLF-terminated per line. It exists for the
 ## cache path, which answers with `X-Cache: HIT` — `proxy.lua:1390` sets that
 ## header and the Web UI reads it, so it is contract rather than diagnostics.
+## `headOnly` answers a HEAD request: identical headers, including the
+## `Content-Length` the body would have had, with the body itself withheld.
+## Computing the body and then dropping it is what keeps the two methods from
+## drifting apart.
 proc sendResponse*(sock: Socket, status: int, contentType, body: string,
-                   extraHeaders = "") =
+                   extraHeaders = "", headOnly = false) =
   let reason = StatusText.getOrDefault(status, "Unknown")
   var head = "HTTP/1.1 " & $status & " " & reason & "\r\n"
   head.add "Content-Type: " & contentType & "\r\n"
@@ -138,7 +142,7 @@ proc sendResponse*(sock: Socket, status: int, contentType, body: string,
     head.add extraHeaders
   head.add "Connection: close\r\n\r\n"
   sock.send(head)
-  if body.len > 0:
+  if body.len > 0 and not headOnly:
     sock.send(body)
 
 ## Action purpose: open a Server-Sent Events stream. `Connection: close` and no
@@ -173,7 +177,13 @@ proc resolveStatic*(root, reqPath: string): string =
   if rel.len == 0 or rel == "/": rel = "/index.html"
   if rel.startsWith("/"): rel = rel[1 .. ^1]
   let full = (root / rel).normalizedPath
-  let rootNorm = root.normalizedPath
-  if not full.startsWith(rootNorm):
+  var rootNorm = root.normalizedPath
+  while rootNorm.len > 1 and rootNorm.endsWith("/"):
+    rootNorm = rootNorm[0 ..< ^1]
+  # The boundary is required, not decoration: a bare prefix match accepts a
+  # *sibling* directory whose name merely starts with the root's — `public-old`
+  # for the root `public` — and serves it. This is the same rule
+  # `fssync.resolveStoragePath` applies to the workspaces root.
+  if not (full == rootNorm or full.startsWith(rootNorm & "/")):
     raise newException(HttpError, "path escapes static root: " & reqPath)
   full

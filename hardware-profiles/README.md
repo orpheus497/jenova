@@ -26,14 +26,15 @@ hardware-profiles/
 ```
 
 The depth is uniform on purpose. An earlier layout mixed vendor (`AMD`), backend (`Vulkan`) and
-GPU class (`dgpu`) at the same level and varied between three and four levels deep, which broke
-the fixed-depth glob that `scripts/jenova-setup` used to list profiles — every four-level
-profile was silently omitted.
+GPU class (`dgpu`) at the same level and varied between three and four levels deep, which broke a
+fixed-depth glob used to list profiles — every four-level profile was silently omitted.
 
 **Profiles do not select a model.** They set devices, layer offload, context size, batch sizes,
-threads and KV cache type — nothing more. Which model runs is decided by `lib/jenova-model.sh`,
-which discovers whatever `.gguf` files are in `$JCA_HOME/models/`, or by a `JENOVA_MODEL`
-override. Model names appearing in profile comments are the hardware each profile was sized
+threads and KV cache type — nothing more. Which model runs is decided by `src/jenova/models.nim`:
+`models.discover`, called from `config.load`, takes the alphabetically first `.gguf` in
+`$JCA_HOME/models/agent`, `draft` and `embed`, and fills only the paths the configuration left
+empty. A `JENOVA_MODEL`, `JENOVA_DRAFT_MODEL` or `JENOVA_EMBED_MODEL` override wins over
+discovery. Model names appearing in profile comments are the hardware each profile was sized
 against, not a setting; several of those comments have drifted from each other and none of them
 is read by anything.
 
@@ -61,15 +62,18 @@ GPUs.
 ### `Vulkan/dgpu-i5-1135g7` — single dGPU, Optane swap
 
 **Hardware:** Intel i5-1135G7 | GTX 1650 Ti 4GB (sole GPU) | 16GB RAM | Intel Optane NVMe
-**Strategy:** Full offload to the single dGPU. Optane NVMe swap backs context overflow at ~7 μs.
+**Strategy:** Partial offload — a 9B Q4_K_M does not fit in 4 GiB, so ~16 of 36 layers go to the
+dGPU and the rest to the CPU. One slot at 8K keeps the KV cache small enough to leave VRAM for
+those layers, and there is no budget for a drafter beside them. Optane NVMe swap backs the
+overflow at ~7 μs.
 
 | Setting | Value |
 |---|---|
 | `DEVICES` | `Vulkan0` |
-| `NGL_AGENT` | `all` |
-| `CTX_SIZE` | `16384` |
-| `NUM_SLOTS` | `2` |
-| Drafter | Yes |
+| `NGL_AGENT` | `16` |
+| `CTX_SIZE` | `8192` |
+| `NUM_SLOTS` | `1` |
+| Drafter | No |
 
 ### `Vulkan/dgpu-igpu-i5-1135g7` — dual GPU
 
@@ -82,7 +86,7 @@ GPUs.
 | `NGL_AGENT` | `all` |
 | `CTX_SIZE` | `32768` |
 | `NUM_SLOTS` | `2` |
-| Drafter | No |
+| Drafter | Yes, pinned to `Vulkan1` |
 
 ### `Vulkan/apu-ryzen7-5700u` — AMD UMA partial offload
 
@@ -98,12 +102,18 @@ the BIOS allocates 4+ GiB of UMA.
 | `NUM_SLOTS` | `2` |
 | Drafter | Yes |
 
-### `Vulkan/dgpu-generic-12gb` — any 12GB+ Vulkan GPU
+### `Vulkan/dgpu-generic-12gb` — allowlisted 12GB+ Vulkan GPUs
 
-**Hardware:** Any Vulkan-capable GPU with 12GB+ VRAM (RTX 3080/4070/4080/4090, RX 7900, Arc A770)
-**Strategy:** Full single-GPU offload. This is the **GPU fallback** for hardware with no
-specific profile — it scores 25, above `CPU/generic` (20) and below every hardware-specific
-profile (30+).
+**Hardware:** RTX 3080/3090/4070/4080/4090/5070 Ti/5080/5090, RX 6800/6900/6950/7800/7900/9070,
+Arc A770
+**Strategy:** Full single-GPU offload. This is the **GPU fallback** for hardware with no specific
+profile — it scores 25, above `CPU/generic` (20) and below every hardware-specific profile (30+).
+
+**`MATCH_GPU_0` is an explicit allowlist, not a catch-all.** It offloads every layer and opens a
+32K context, which only a card with 12 GiB or more survives; `detect-hardware.sh` reads no VRAM
+figure and can only validate by device name, so the pattern names the models that qualify. A card
+that is not listed falls to `CPU/generic` — the safe direction — and this profile stays deployable
+by name with `--apply-profile`. A newer card with enough VRAM belongs in that list.
 
 | Setting | Value |
 |---|---|
@@ -140,7 +150,6 @@ default to Vulkan.
 Deploy it deliberately:
 
 ```sh
-JENOVA_BACKEND=cuda make llama
 ./hardware-profiles/detect-hardware.sh --apply-profile CUDA/dgpu-generic
 ```
 
@@ -158,16 +167,16 @@ JENOVA_BACKEND=cuda make llama
 
 | Profile | Backend | `DEVICES` | `NGL_AGENT` | GPU memory | Context | Drafter | Auto-selected |
 |---|---|---|---|---|---|---|---|
-| `Vulkan/dgpu-i5-1135g7` | Vulkan | `Vulkan0` | `all` | 4 GiB dGPU | 16K | Yes | Yes |
-| `Vulkan/dgpu-igpu-i5-1135g7` | Vulkan | `Vulkan0,Vulkan1` | `all` | ~11 GiB dual | 32K | No | Yes |
+| `Vulkan/dgpu-i5-1135g7` | Vulkan | `Vulkan0` | `16` | 4 GiB dGPU | 8K | No | Yes |
+| `Vulkan/dgpu-igpu-i5-1135g7` | Vulkan | `Vulkan0,Vulkan1` | `all` | ~11 GiB dual | 32K | Yes | Yes |
 | `Vulkan/apu-ryzen7-5700u` | Vulkan | `Vulkan0` | `24` | ~2–4 GiB UMA | 16K | Yes | Yes |
-| `Vulkan/dgpu-generic-12gb` | Vulkan | `Vulkan0` | `all` | 12GB+ | 32K | Yes | Fallback |
+| `Vulkan/dgpu-generic-12gb` | Vulkan | `Vulkan0` | `all` | 12GB+ | 32K | Yes | Fallback, allowlisted |
 | `CPU/generic` | CPU | `CPU` | `0` | none | 16K | No | Fallback |
 | `CUDA/dgpu-generic` | CUDA | `CUDA0` | `all` | VRAM-dependent | 16K | Yes | **No — opt-in** |
 
-There is no model column because no profile sets a model. The default set that
-`scripts/model_dl.sh` downloads — Qwen3.5-4B-Q6_K, Qwen3-Embedding-0.6B-Q8_0 and
-Qwen3.5-0.8B-Q8_0 — is the same on every profile.
+There is no model column because no profile sets a model. Each `profile.conf` names the model it
+was sized against under `RECOMMENDED_AGENT_MODEL`, which is documentation rather than a setting —
+nothing reads it.
 
 ## Profile Detection
 
@@ -234,11 +243,12 @@ PROFILE_OPT_IN=1             # Optional: exclude from auto-detection entirely
 
 ### `jenova.conf`
 
-Runtime configuration sourced by `bin/jenova-ca`. **Use the unprefixed names** — `DEVICES`,
-`CTX_SIZE`, `NUM_SLOTS`, `THREADS`, `THREADS_BATCH`, `NGL_AGENT`, `FIT_TARGET`,
-`KV_CACHE_TYPE`. `jenova-ca` reads exactly these. Setting `JENOVA_CTX_SIZE` and friends instead
-is silently ignored, and `llama-server` then launches with empty `-c`, `-np` and `-t` values.
-The `JENOVA_*` names belong on the right-hand side, as environment overrides:
+Runtime configuration, evaluated by `src/jenova/config.nim`. **Use the unprefixed names** —
+`DEVICES`, `CTX_SIZE`, `NUM_SLOTS`, `THREADS`, `THREADS_BATCH`, `NGL_AGENT`, `FIT_TARGET`,
+`KV_CACHE_TYPE`. The key list `config.nim` reads is exactly `Keys` in that file; a name not in it
+is invisible to the core. Setting `JENOVA_CTX_SIZE` and friends instead is silently ignored, and
+`llama-server` then launches on the built-in defaults. The `JENOVA_*` names belong on the
+right-hand side, as environment overrides:
 
 ```sh
 CTX_SIZE="${JENOVA_CTX:-16384}"
@@ -257,14 +267,11 @@ after deploying a profile.
 # Deploy a specific profile
 ./hardware-profiles/detect-hardware.sh --apply-profile Vulkan/dgpu-i5-1135g7
 
-# Or copy manually
-cp hardware-profiles/Vulkan/dgpu-i5-1135g7/jenova.conf etc/jenova.conf
+# Or copy manually. config.nim prefers $JCA_HOME/etc over the source tree's etc/
+cp hardware-profiles/Vulkan/dgpu-i5-1135g7/jenova.conf "${JCA_HOME:-$HOME/Jenova}/etc/jenova.conf"
 
 # Run that profile's system tuning
 sudo hardware-profiles/Vulkan/dgpu-i5-1135g7/jenova-setup
-
-# Or force a profile through the dispatcher
-sudo ./scripts/jenova-setup --profile Vulkan/dgpu-i5-1135g7
 ```
 
 ---

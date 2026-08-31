@@ -146,7 +146,10 @@ check "import inserts rows" '"id":"w9"' "$(get /api/db/workspaces)"
 # --- error handling --------------------------------------------------------
 check "unknown collection" 'unknown collection' "$(get /api/db/nope)"
 check "invalid JSON body"  'invalid JSON'       "$(req POST /api/db/workspaces 'not json')"
-check "object without id"  'id'                 "$(req POST /api/db/workspaces '{"name":"x"}')"
+# The bare substring 'id' matched almost any response, including a success body
+# carrying an id — it could not distinguish the rejection from an accepted write.
+check "object without id"  'must be an object with an id' \
+      "$(req POST /api/db/workspaces '{"name":"x"}')"
 
 echo ""
 if [ "$FAILED" -eq 0 ]; then

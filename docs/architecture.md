@@ -15,19 +15,24 @@ management layer, running entirely on your own hardware.
 
 ## Components
 
+The product is **two Nim binaries**, declared in `jenova_core.nimble` and built with `nimble`.
+Both link the same modules under `src/jenova/`; the split exists so a headless or LAN-server host
+builds without a graphical toolkit.
+
 | Component | Role | Stack |
 |---|---|---|
-| Intelligence proxy | Fronts everything: Web UI, workspace database, retrieval, tool execution, web search, inference forwarding | LuaJIT |
+| `bin/jenova` | The desktop application: chat window, workspace tree, canvas, tray, backend control. **Starts and supervises the HTTP server and both backends itself** | Nim, owlkettle, GTK4/libadwaita (`src/jenova_gui.nim`) |
+| `bin/jenova-core` | The same program without GTK: HTTP server, database, filesystem mirror, retrieval, backend supervision | Nim (`src/jenova_core.nim`) |
 | `llama-server` | GGUF inference | C++ (llama.cpp, Vulkan) |
 | Embedding server | A second `llama-server` in embedding mode | C++ |
-| Web UI | Browser workspace and chat | SvelteKit / Svelte 5 / Tailwind 4 |
-| `jenova-ui` | Tray icon and ncurses TUI | C, GTK3, ncurses, Lua |
-| `jenova-ca` | Supervisor for the three daemons | POSIX `/bin/sh` |
+| Web UI | Browser workspace and chat, served by the HTTP server | SvelteKit / Svelte 5 / Tailwind 4 |
 
-Everything except `external/llama.cpp` lives in this repository. All components read the same
-configuration hierarchy — `etc/jenova.conf` (the deployed hardware profile), then
-`etc/jenova.local.conf` (your overrides, gitignored and preserved across updates) — so a changed
-model path or port propagates to the daemon, the tray and the Web UI alike.
+Everything except `external/llama.cpp` lives in this repository. Both binaries read the same
+configuration hierarchy through `src/jenova/config.nim` — `etc/jenova.conf` (the deployed hardware
+profile), then `etc/jenova.local.conf` (your overrides, preserved across updates), then the
+environment — so a changed model path or port propagates to every surface alike. The conf files
+keep their `/bin/sh` format and are evaluated by `/bin/sh`, because they *are* shell; nothing in
+the running product depends on a project shell script.
 
 ## Ports — one front door
 
@@ -36,48 +41,50 @@ unconditionally, including under `--lan`.
 
 | Port | Reached by | How |
 |---|---|---|
-| **8080** | clients, Web UI, LAN peers | the proxy's own listener |
-| 8081 | the proxy only | forwarded HTTP, with the `Host` header rewritten |
-| 8082 | the proxy only | an **in-process** call — `lib/embed.lua` is loaded inside the proxy and posts to `127.0.0.1:8082` itself. Embeddings never traverse the proxy's public HTTP surface |
+| **8080** | clients, Web UI, LAN peers | the server's own listener (`src/jenova/server.nim`) |
+| 8081 | the server only | forwarded HTTP, with the `Host` header rewritten (`src/jenova/upstream.nim`) |
+| 8082 | the server only | an **in-process** call — `src/jenova/rag.nim` posts to `127.0.0.1:8082` itself. Embeddings never traverse the public HTTP surface |
 
-`bin/jenova-ca` launches both backends with `--host "$BACKEND_BIND_HOST"`, which is loopback
-regardless of `--lan`. Exposing 8081 or 8082 would publish unauthenticated inference endpoints.
+`src/jenova/lifecycle.nim` launches both backends with `--host` bound to loopback regardless of
+`--lan`. Exposing 8081 or 8082 would publish unauthenticated inference endpoints.
 
 ## Request flow
 
-1. **Input** arrives at the proxy on `:8080`, from the Web UI or an API client.
-2. **The proxy** (`lib/proxy.lua`) augments the request — workspace context from SQLite,
-   retrieval hits, prior tool results — and forwards it to `:8081`.
-3. **Inference** runs in `llama-server` with Vulkan or CUDA offload.
-4. **Tool calls** emitted by the model are executed locally by the proxy — storage read/write,
-   filesystem discovery, web search — and fed back as the next turn.
-5. **Embeddings** for retrieval are requested in-process from `:8082`.
-6. **Output** streams back through the proxy with chunked transfer-encoding, token by token.
+1. **Input** arrives on `:8080`. An acceptor thread reads the request line without consuming it and
+   routes it to the pool that owns that class of work (`src/jenova/routes.nim`).
+2. **The completion pipeline** (`src/jenova/pipeline.nim`) rewrites the request — intent detection,
+   retrieval hits, web search, editor context, persona injection, tool stripping — and the response
+   cache is keyed on the SHA-256 of the *rewritten* body.
+3. **Forwarding** to `:8081` is a verbatim byte relay (`src/jenova/upstream.nim`), so streamed
+   tokens reach the client as the model produces them.
+4. **Inference** runs in `llama-server` with Vulkan or CUDA offload.
+5. **Embeddings** for retrieval are requested from `:8082` by `rag.nim`.
+6. **Workspace state** — `/api/db/*`, `/api/fs/*` and `/api/storage/*` — is served by
+   `src/jenova/api.nim` over SQLite, mirrored to disk by `src/jenova/fssync.nim`.
 
-For the detail of step 2 — which of the two context systems supplies what, and in what order —
-see [context-and-retrieval.md](context-and-retrieval.md).
+For the detail of step 2 — which context systems supply what, and in what order — see
+[context-and-retrieval.md](context-and-retrieval.md).
 
 ---
 
-## The intelligence proxy
+## The HTTP server
 
-A LuaJIT process built on a `select`-based event loop with coroutine yielding for all I/O
-(`lib/http.lua`):
+`src/jenova/server.nim` is threads and blocking I/O, deliberately. Two stages:
 
-- **Non-blocking sockets** — every accepted connection is set `O_NONBLOCK` and `FD_CLOEXEC`, so
-  requests interleave and forked children never inherit live client sockets or the listener.
-- **Async subprocesses** — `find` for file discovery, `fetch`/`curl` for web search, run through a
-  non-blocking `fork`/`pipe` that yields to the scheduler while waiting.
-- **Async health checks** — backend liveness is probed over non-blocking TCP.
-- **Background indexing** — inbound storage writes queue re-indexing rather than blocking the
-  response.
+- **Acceptor threads** block in `accept(2)`, peek at the request line with `MSG_PEEK` without
+  consuming it, classify the route, and push the descriptor onto that class's queue. They never run
+  a handler, so no handler can stall the accept path.
+- **A dedicated pool per route class** — static, health, api, completion, embed, debug — each with
+  its own queue and its own threads. A saturated class cannot starve another: completion streams are
+  held open for the length of a generation, so a single shared pool would stop answering health
+  checks and serving assets while generations were in flight.
 
-Its HTTP surface is documented in [usage.md](usage.md#http-api). Every response carries
-`Connection: close`; there is no keep-alive, no compression, and no caching headers.
+Only integers cross thread boundaries — a `SocketHandle` — and the owning worker parses the request
+on its own thread. Every response carries `Connection: close`; there is no keep-alive, no
+compression, and no caching headers. The surface is documented in [usage.md](usage.md#http-api).
 
-> These asynchrony properties are recent. Until the `d2afac0` fix, an FFI ABI bug made
-> `set_nonblocking()` a silent no-op, so the event loop was decorative and the proxy served
-> exactly one request at a time. `tests/proxy-concurrency/` guards against the regression.
+`jenova-core serve-selftest` measures both properties: that an established stream holds its cadence
+under blocking database load, and that saturating one class leaves health and static responsive.
 
 ## Inference server (`:8081`)
 
@@ -87,26 +94,27 @@ Its HTTP surface is documented in [usage.md](usage.md#http-api). Every response 
   devices. An explicit layer count skips `-fitt`, which conflicts with it.
 - **Speculative decoding** — an optional small drafter model, enabled per profile with
   `JENOVA_DRAFT=1` and pinned to `JENOVA_DRAFT_DEVICE`. Typically 1.5×–2× faster generation when
-  there is VRAM headroom. It is **off** in the dual-GPU and CPU profiles and on in the rest.
+  there is VRAM headroom. It is **off** in the CPU profile and in `Vulkan/dgpu-i5-1135g7`, which
+  has none to spare, and on in the rest.
 - **KV cache** — `q8_0` by default, via `KV_CACHE_TYPE` / `JENOVA_KV_TYPE`. `q4_0` uses less
   memory at some quality cost; `f16` is the highest quality and the largest.
 
 ## Embedding server (`:8082`)
 
-A second `llama-server` launched with `--embedding` and `GGML_VULKAN_DISABLE=1`, so it runs on
-CPU and leaves VRAM to the main model. Its consumers are the proxy's retrieval pipeline and the
-codebase indexer (`lib/indexer_runner.lua`). If no embedding model is found, `jenova-ca` warns and
-starts without it.
+A second `llama-server` launched with `--embedding`, `-dev none -ngl 0` and
+`GGML_VULKAN_DISABLE=1`, so it runs on CPU and leaves VRAM to the main model. Its only consumer is
+`src/jenova/rag.nim`. If no embedding model is found, the supervisor says so and starts without it;
+retrieval degrades to keyword-only, which is a supported state.
 
 ## Web UI
 
 A SvelteKit static SPA — no server-side rendering. `@sveltejs/adapter-static` compiles it to
-plain HTML/JS/CSS in `public/`, which the proxy serves at the same origin as the API, so there is
-no CORS to configure.
+plain HTML/JS/CSS in `public/`, which the server serves at the same origin as the API, so there is
+no CORS to configure. It is the LAN client; the desktop window is the primary surface.
 
 ```
-Browser ──HTTP──▶ Intelligence proxy (:8080) ──▶ llama-server (:8081)
-                  │                          └──▶ embedding server (:8082)
+Browser ──HTTP──▶ jenova / jenova-core (:8080) ──▶ llama-server (:8081)
+                  │                            └──▶ embedding server (:8082)
                   └── static assets from public/
 ```
 
@@ -129,25 +137,29 @@ Development commands are in [../jca_web/README.md](../jca_web/README.md).
 
 ## Persistence
 
-**Workspace state is server-side, in SQLite.** The proxy owns `~/Jenova/var/jenova.db` through
-`lib/db.lua`, which loads `libsqlite3` over the FFI; the Web UI reaches it over `/api/db/*`. Your
-data is not trapped in browser storage — clearing site data does not lose a conversation.
+**Workspace state is server-side, in SQLite.** The server owns the database through
+`src/jenova/db.nim`, which links `libsqlite3` and gives **every thread its own connection** in WAL
+mode, so readers run during a write. Clients reach it over `/api/db/*`. Your data is not trapped in
+browser storage — clearing site data does not lose a conversation.
 
 | Path | Contents |
 |---|---|
-| `var/jenova.db` | Workspaces, projects, folders, conversations, messages, notes, file assets. **Back up this file** |
-| `var/log/` | Daemon logs, rotated by `jenova-ca` |
-| `var/cache/` | Embedding index and retrieval snapshots |
-| `Workspaces/` | Markdown mirror of notes and chats, plus uploaded file assets |
-| `.system/` | PID and lock files |
-| `etc/jenova.conf` | The deployed hardware profile |
+| `.system/jenova.db` | Workspaces, projects, folders, conversations, messages, notes, file assets, the response cache and the retrieval index. **Back up this file** |
+| `var/log/` | Backend logs |
+| `var/cache/` | Cache directory |
+| `Workspaces/` | Markdown mirror of notes and chats, plus uploaded file assets, one git repository per workspace |
+| `.system/` | The database, PID files and the Neovim socket |
+| `.trash/` | Deleted workspaces, beside their `.metadata.json` sidecars |
+| `etc/jenova.conf` | The deployed hardware profile, when one has been applied here |
 | `models/` | GGUF storage: `agent/`, `draft/`, `embed/`, and optionally `instruct/`, `thinking/` |
 
-All paths are relative to `$JCA_HOME`, which defaults to `~/Jenova`.
+All paths are relative to `$JCA_HOME`, which defaults to `~/Jenova`. `src/jenova/paths.nim`
+resolves every one of them in one place.
 
-`lib/fs_sync.lua` mirrors notes and chats to `$JCA_HOME/Workspaces` as `.md` files on every
+`src/jenova/fssync.nim` mirrors notes and file assets to `$JCA_HOME/Workspaces` on every
 significant change, so the same content is editable with any text editor and backed up by
-ordinary tools. The database remains authoritative.
+ordinary tools. Deletion moves an item into a trash tree beside a `.metadata.json` sidecar rather
+than unlinking it, which is what makes restore possible. The database remains authoritative.
 
 ---
 
@@ -182,7 +194,7 @@ Per-profile values, the detection scoring, and how to add a profile are in
 | Directory | Type | Update |
 |---|---|---|
 | `external/llama.cpp` | Git submodule of [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | `git submodule update --init` |
-| `external/ext_bin/` | Build output — `llama-server` and its shared libraries | `make llama` |
+| `external/ext_bin/` | Build output — `llama-server` and its shared libraries | `nimble llama` |
 
-`ext_bin/` exists so the runtime is isolated from the raw build tree; `make install` deploys from
-it rather than from `external/llama.cpp/build`.
+`ext_bin/` exists so the runtime is isolated from the raw build tree: `src/jenova/paths.nim` looks
+for `llama-server` there in a source checkout, and under `bin/` in a deployed one.

@@ -224,15 +224,27 @@ proc indexContent*(path, content: string, mtime = 0): bool =
   # Embedding is best-effort: a chunk with no vector is still keyword-searchable
   # and still carries its text for snippets, which is the property `search.lua`
   # lost by not persisting chunk text.
+  # Action purpose: every batch must contribute exactly one slot per chunk it was
+  # given. `embed` returns an empty sequence when the server is unreachable and
+  # can return fewer vectors than inputs, so appending its result directly made
+  # `vectors` shorter than `chunks` — and the `vectors[idx]` lookup below then
+  # handed each remaining chunk a *different* chunk's vector. Padding keeps the
+  # index alignment that lookup assumes.
   var vectors: seq[seq[float32]]
   var batch: seq[string]
+
+  proc flushBatch() =
+    if batch.len == 0: return
+    let got = embed(batch)
+    for k in 0 ..< batch.len:
+      vectors.add (if k < got.len: got[k] else: newSeq[float32]())
+    batch.setLen 0
+
   for c in chunks:
     batch.add c.text
     if batch.len == EmbedBatch:
-      vectors.add embed(batch)
-      batch.setLen 0
-  if batch.len > 0:
-    vectors.add embed(batch)
+      flushBatch()
+  flushBatch()
 
   for idx, c in chunks:
     let vec = if idx < vectors.len: packVec(vectors[idx]) else: ""

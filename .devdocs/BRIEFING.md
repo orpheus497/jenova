@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-08-31 21:42
+**Last updated:** 2026-08-31 22:51
 **Branch:** `bsd`
 
 ---
@@ -20,6 +20,7 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 | **7** | **Do not ask what has been answered.** Check `DECISIONS_LOG.md` SETTLED FACTS first. The Vulkan2 device list and "the app starts its own server" were each re-raised after being settled. |
 | **8** | **Do not write derivable facts into these documents.** Counts, file lists and subcommand lists rot immediately and cause the doc-churn loop. Point at the code. |
 | **9** | **A tracker that names a file must be re-read when that file is archived.** `BLUEPRINT.md` described `proxy.lua` and `jenova-ca` for three sessions after they were deleted, while being the file `AGENTS.md` calls authoritative (**D-AO**). A stale document does not sit inert — it manufactures work. |
+| **10** | **This applies to `docs/` and `README.md` too, and it went unnoticed longer there.** On 2026-08-31 the trackers were current while every user-facing document still described the LuaJIT proxy, the C/GTK3 `jenova-ui`, `bin/jenova-ca`, `lib/jenova-model.sh`, a Makefile and `scripts/*.sh` — and pointed readers at `~/Jenova/var/jenova.db`, which is not where the database is. They were realigned at 22:51. **The trackers are not the documentation.** |
 
 ---
 
@@ -33,7 +34,7 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 | **Architecture** | `BLUEPRINT.md` — rewritten 2026-08-31 and current. The pre-rewrite audit record is `ARCHIVE/devdocs/BLUEPRINT_pre-007.md` and is **history, not requirements** |
 | **Language purity** | No Lua. No C. No shell script in the product tree except `hardware-profiles/`'s profile-selection tooling, which is setup-time data handling |
 | **Runtime home** | `$HOME/Jenova`. `~/JCA` is permanently off limits |
-| **Tests** | Shell suites under `tests/`, run by `nimble suites`; the list is in `jenova_core.nimble` and the specs in `TESTS.md`. **`test_routes` FAILS 5 and is pre-existing** (`TODOS.md` T-12) — attributed 19:23 by rebuilding from the committed baseline and getting the identical five. **`test_nvimctl` added 21:03 and passes 5/5.** The other suites have not been re-run since 19:23 |
+| **Tests** | Shell suites under `tests/`, run by `nimble suites`; the list is in `jenova_core.nimble` and the specs in `TESTS.md`. **All six suites and all four self-tests pass, run 2026-08-31 22:51.** `test_routes` passed 13/13 in the working tree *and* against a `git archive HEAD` rebuild, so **T-12 no longer reproduces** — it is left open, not closed, because nothing was done to fix it |
 
 ## 2. Verified working, by running it
 
@@ -57,7 +58,21 @@ survive again)*:
 
 ## 3. Known broken
 
-**One thing: `TODOS.md` G-23 — the Neovim tab renders opaque and visually disconnected.** Three
+**Three things, and G-23 is the only one seen on screen.**
+
+**`TODOS.md` T-16 — `hardware-profiles/detect-hardware.sh` cannot run at all**, confirmed by
+running it 2026-08-31 22:51: line 19 sources `lib/detect-env.sh`, archived with the shell tree, so
+every mode aborts there. It is the retained setup-time tooling this file's Language-purity row
+carves out, so it is a live gap, and every hardware-profile fix made that day is unexercised until
+it is resolved. The way out is a **T-7** decision, not a defect fix.
+
+**`TODOS.md` T-17 — retrieval's index is never populated.** `rag.query` short-circuits on
+`documentCount() == 0`, and `rag.indexContent`/`indexFile` have no callers outside `rag-selftest`.
+The query path is complete and proven by that self-test; nothing feeds it. This is B-15 carried
+across the rewrite, and `docs/context-and-retrieval.md` now says so rather than describing
+retrieval as live.
+
+**`TODOS.md` G-23 — the Neovim tab renders opaque and visually disconnected.** Three
 fixes attempted, none evidence-led, none confirmed. **Do not attempt a fourth value change**; G-23
 lists what is already verified and the one diagnostic that settles it (`GTK_DEBUG=interactive`).
 

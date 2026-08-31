@@ -83,15 +83,26 @@ proc isValidUuid*(id: string): bool =
       return false
   true
 
-## Seeded per process: the default global RNG is deterministic, which would make
-## two runs mint the same "unique" ids.
-var uuidRng = initRand(int(epochTime() * 1_000_000) xor getCurrentProcessId())
+## Seeded per thread: the default global RNG is deterministic, which would make
+## two runs mint the same "unique" ids — and a single shared `Rand` is mutable
+## state every worker thread would advance concurrently, which is the same race
+## the roots above are threadvar to avoid. The thread id joins the seed so two
+## threads starting inside the same microsecond do not mint the same stream.
+var uuidRng {.threadvar.}: Rand
+var uuidRngSeeded {.threadvar.}: bool
+
+proc seedUuidRng() =
+  if not uuidRngSeeded:
+    uuidRng = initRand(int(epochTime() * 1_000_000) xor
+                       getCurrentProcessId() xor getThreadId())
+    uuidRngSeeded = true
 
 ## Function purpose: the counterpart to `isValidUuid`, and the reason it has to
 ## exist is `physicalPath` — it refuses any note or file-asset id that is not a
 ## UUID, and `upsert` then deletes the row it just wrote. A caller minting one of
 ## those ids needs this; `genOid` produces 24 hex characters and is rejected.
 proc newUuid*(): string =
+  seedUuidRng()
   var bytes: array[16, uint8]
   for b in bytes.mitems: b = uint8(uuidRng.rand(255))
   bytes[6] = (bytes[6] and 0x0f'u8) or 0x40'u8   # version 4
@@ -403,18 +414,31 @@ proc getTrash*(): seq[TrashEntry] =
 ## database row. The sidecar's `original_path` wins over the caller-supplied one
 ## — `fs_sync.lua:356` does the same, because the client sends back what it was
 ## shown while the sidecar is what was actually recorded at deletion.
+## Function purpose: is `path` the root itself or something beneath it? A bare
+## prefix test accepts `<root>-evil` as being inside `<root>`, which is the same
+## directory-boundary rule `resolveStoragePath` applies.
+proc underRoot(path, root: string): bool =
+  if root.len == 0: return false
+  let r = root.normalizedPath
+  path == r or path.startsWith(r & "/")
+
+## Action purpose: the tables `writeTrashMetadata` is ever called with. The
+## sidecar is a file on disk, so its `type` field is untrusted input that was
+## being concatenated straight into an UPDATE statement; only these five names
+## may reach the SQL.
+const RestorableTables = ["notes", "fileAssets", "workspaces", "projects", "folders"]
+
 proc restoreTrash*(trashPath, originalPath: string): bool =
   if trashPath.len == 0 or originalPath.len == 0: return false
-  let (_, trash) = roots()
-  let (workspaces, _) = roots()
+  let (workspaces, trash) = roots()
 
   # Containment: only paths inside a known trash directory may be restored, so a
   # crafted request cannot move an arbitrary file. fs_sync.lua had no such check;
   # it is added here rather than reproduced, and is the one behavioural addition
   # in this module.
   let normalized = trashPath.normalizedPath
-  if not (normalized.startsWith(trash.normalizedPath) or
-          (normalized.startsWith(workspaces.normalizedPath) and
+  if not (underRoot(normalized, trash) or
+          (underRoot(normalized, workspaces) and
            normalized.contains("/.trash/"))):
     return false
 
@@ -431,6 +455,15 @@ proc restoreTrash*(trashPath, originalPath: string): bool =
     except CatchableError:
       discard
 
+  # The destination is as much a filesystem write as the source is a read, and
+  # it comes from the same two untrusted places — the caller's `original_path`
+  # and the sidecar. Without this a crafted pair moved a trashed file anywhere
+  # the process could write.
+  let normalizedTarget = target.normalizedPath
+  if not (underRoot(normalizedTarget, workspaces) or
+          underRoot(normalizedTarget, trash)):
+    return false
+
   try:
     ensureDir(target.parentDir)
     if dirExists(trashPath):
@@ -440,7 +473,7 @@ proc restoreTrash*(trashPath, originalPath: string): bool =
   except OSError, IOError:
     return false
 
-  if metaType.len > 0 and metaId.len > 0:
+  if metaType.len > 0 and metaId.len > 0 and metaType in RestorableTables:
     try:
       db.exec("UPDATE " & metaType & " SET is_deleted=0 WHERE id=?", metaId)
     except CatchableError:

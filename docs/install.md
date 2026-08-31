@@ -9,47 +9,30 @@ Jenova targets **FreeBSD 15+** (amd64, aarch64). It is the only supported platfo
 git clone --recurse-submodules https://github.com/orpheus497/jenova
 cd jenova
 
-# 2. Install dependencies and build llama.cpp (Vulkan), jenova-ui, and the Web UI
-make
+# 2. Install the dependencies below, then build
+nimble llama     # llama.cpp with Vulkan, into external/ext_bin/
+nimble web       # the Web UI, into public/
+nimble gui       # bin/jenova, the desktop application
 
-# 3. Detect hardware, deploy to ~/Jenova, link launchers into ~/.local/bin
-make install
+# 3. Detect hardware and deploy the matching profile
+./hardware-profiles/detect-hardware.sh --apply
 ```
 
-This is the base system `make(1)`. GNU make is not used and is not a dependency.
-
-If `~/.local/bin` is not on your `PATH`, the installer says so. Add it:
-
-```sh
-export PATH="$HOME/.local/bin:$PATH"
-```
+Both binaries land in `bin/`. Run `./bin/jenova` for the desktop application, or
+`./bin/jenova-core serve` for the headless server.
 
 ### Build targets
 
 | Command | Builds |
 |---|---|
-| `make` | Everything — dependencies, llama.cpp, `jenova-ui`, Web UI |
-| `make deps` | Dependencies only (`scripts/install-dependencies.sh`) |
-| `make llama` | llama.cpp with the selected backend (`scripts/build-llama.sh`) |
-| `make jenova-ui` | The GTK3 tray / ncurses TUI |
-| `make web` | The SvelteKit Web UI into `public/` |
-| `make install` | Build everything, then `scripts/install.sh` |
-| `make clean` | Remove build artifacts |
-| `make clean-root` | Remove stray artifacts in the repository root |
+| `nimble core` | `bin/jenova-core`, the headless server |
+| `nimble gui` | `bin/jenova`, the desktop application |
+| `nimble llama` | llama.cpp with Vulkan, into `external/ext_bin/` |
+| `nimble web` | The SvelteKit Web UI into `public/` |
+| `nimble suites` | Build both binaries, then run every suite under `tests/` |
+| `nimble clean` | Remove the binaries and `nimcache` |
 
-Every build target depends on `deps`, and the Makefile is `.NOTPARALLEL` so dependencies are
-always in place before anything is compiled.
-
-### Installer flags
-
-`make install` runs `scripts/install.sh`, which accepts:
-
-| Flag | Action |
-|---|---|
-| `--force` | Overwrite existing configuration without prompting |
-| `--skip-llama` | Skip the llama.cpp build check |
-| `--skip-web` | Skip building the Web UI |
-| `--client-only` | LAN-client install — implies `--skip-llama --skip-web` and skips model downloads; talks to a remote backend |
+The tasks are declared in `jenova_core.nimble`; there is no Makefile.
 
 ---
 
@@ -59,43 +42,46 @@ Everything installs from `pkg(8)`. **There is no optional tier** — a package t
 installed stops the build.
 
 ```sh
-make deps
+pkg install nim nimble pkgconf git cmake sqlite3 \
+            vulkan-loader shaderc spirv-headers \
+            gtk4 libadwaita gtksourceview5 vte3 dbus \
+            node npm curl xdg-utils
 ```
 
-Or install them yourself:
+**`nimble` is a separate package.** `lang/nim` does not install it — it is `devel/nimble`, and
+without it none of the build tasks in `jenova_core.nimble` can be run.
 
-```sh
-pkg install pkgconf git cmake sqlite3 luajit-openresty lua54 gettext-tools \
-            vulkan-loader shaderc spirv-headers gtk3 libappindicator ncurses \
-            node npm curl xdg-utils llvm stylua
-```
+| Package | Port | Needed for |
+|---|---|---|
+| `nim` | `lang/nim` | The compiler. Both binaries are Nim |
+| `nimble` | `devel/nimble` | The build system. **Not pulled in by `lang/nim`** |
+| `pkgconf` | `devel/pkgconf` | Build-time library discovery — the GTK4, GtkSourceView, VTE and D-Bus flags are all resolved with `pkg-config` at compile time |
+| `git` | `devel/git` | Cloning, and the `external/llama.cpp` submodule |
+| `cmake` | `devel/cmake` | `external/llama.cpp`'s build system. Upstream's choice — nothing in this repository is built with cmake directly |
+| `sqlite3` | `databases/sqlite3` | The workspace database and the retrieval index. `src/jenova/db.nim` links `libsqlite3`; FTS5 is checked at runtime and retrieval degrades if absent |
+| `vulkan-loader` | `graphics/vulkan-loader` | GPU offload — the default inference backend |
+| `shaderc` | `graphics/shaderc` | Provides `glslc`, the Vulkan shader compiler. No `glslc`, no Vulkan build |
+| `spirv-headers` | `devel/spirv-headers` | SPIR-V headers for the shader build |
+| `gtk4` | `x11-toolkits/gtk40` | The desktop application's toolkit, through owlkettle |
+| `libadwaita` | `x11-toolkits/libadwaita` | Adwaita widgets used by the window |
+| `gtksourceview5` | `x11-toolkits/gtksourceview5` | Syntax-highlighted code views (`src/jenova/sourceview.nim`) |
+| `vte3` | `x11-toolkits/vte3` | The embedded terminal widget (`src/jenova/vte.nim`), built against `vte-2.91-gtk4` |
+| `dbus` | `devel/dbus` | The tray item is a `StatusNotifierItem` published on the session bus (`src/jenova/dbus.nim`) |
+| `node`, `npm` | `www/node`, `www/npm` | Building the Web UI into `public/` |
+| `curl` | `ftp/curl` | HTTPS fallback for web search; base `fetch(1)` is tried first |
+| `xdg-utils` | `devel/xdg-utils` | Provides `xdg-open`, used by the "Open Web UI" action |
 
-| Package | Needed for |
-|---|---|
-| `pkgconf` | Build-time library discovery. Installed first — the `lua54`, `gtk3`, `libappindicator` and `ncurses` checks all use `pkg-config` |
-| `git` | Cloning, and the `external/llama.cpp` submodule |
-| `cmake` | `external/llama.cpp`'s build system. Upstream's choice — nothing in this repository is built with cmake directly |
-| `sqlite3` | The workspace database — `lib/db.lua` loads it through the FFI at runtime |
-| `luajit-openresty` | The intelligence proxy and all Lua runtime |
-| `lua54` | Interpreter embedded in `jenova-ui` |
-| `gettext-tools` | Build tooling |
-| `vulkan-loader` | GPU offload — the default inference backend |
-| `shaderc` | Provides `glslc`, the Vulkan shader compiler. No `glslc`, no Vulkan build |
-| `spirv-headers` | SPIR-V headers for the shader build |
-| `gtk3` | `jenova-ui` system tray |
-| `libappindicator` | `jenova-ui` tray icon — `ayatana-appindicator` is accepted instead |
-| `ncurses` | `jenova-ui` TUI |
-| `node`, `npm` | Building the Web UI, which the proxy serves from `public/` |
-| `curl` | HTTPS fallback for web search and health probes |
-| `xdg-utils` | Provides `xdg-open`, used by the tray's "Open Web UI" action |
-| `llvm` | Provides `clangd` |
-| `stylua` | Lua formatter |
+`owlkettle` is a Nim dependency, not a package: `nimble` fetches it from the requirement declared
+in `jenova_core.nimble`.
+
+Only `jenova` needs the GTK4 group. `nimble core` builds the headless binary without any of it,
+which is the point of the two-binary split.
 
 ### Base system — do not install these
 
 These ship with FreeBSD and are never packages. Anything telling you to install them is wrong:
 
-`make(1)` · `cc(1)` · `realpath(1)` · `fetch(1)` · `sysctl(8)` · `swapinfo(8)` · `pciconf(8)` ·
+`sh(1)` · `cc(1)` · `realpath(1)` · `fetch(1)` · `sysctl(8)` · `swapinfo(8)` · `pciconf(8)` ·
 `nvmecontrol(8)` · `zpool(8)` · `ifconfig(8)` · `route(8)` · `mdmfs(8)` · `nc(1)` · `stat(1)`
 
 `fetch(1)` is tried before `curl` throughout; `curl` is the fallback, not an optional extra.
@@ -104,11 +90,11 @@ These ship with FreeBSD and are never packages. Anything telling you to install 
 
 | Tool | Why |
 |---|---|
-| **GNU make** (`gmake`) | Both Makefiles build with base `make(1)`. No `$(shell)`, no `ifeq`, no `:=` — library discovery happens in the shell at recipe time |
+| **GNU make** (`gmake`) and base `make(1)` | There is no Makefile. `nimble` is the build system |
 | **GNU coreutils** | Only ever wanted for `realpath(1)`, which FreeBSD has in base |
 | **bash** | Every script in this repository is POSIX `/bin/sh` |
 
-All three are GPL, which this project's dependency policy excludes.
+The first and third are GPL, which this project's dependency policy excludes.
 
 ---
 
@@ -133,17 +119,16 @@ CUDA is **never auto-selected** — the `CUDA/dgpu-generic` profile sets `PROFIL
 excludes it from detection. To use it deliberately:
 
 ```sh
-JENOVA_BACKEND=cuda make llama
 ./hardware-profiles/detect-hardware.sh --apply-profile CUDA/dgpu-generic
 ```
 
-`JENOVA_BACKEND` accepts `auto` (default), `vulkan`, `cuda`, `hybrid`, `cpu`.
+The `nimble llama` task builds with `-DGGML_VULKAN=ON`. For CUDA, configure
+`external/llama.cpp` yourself with the CUDA backend and copy the result into
+`external/ext_bin/bin/`, then apply the profile above.
 
 ---
 
 ## Hardware profile
-
-`make install` applies a profile automatically. To inspect or change it:
 
 ```sh
 ./hardware-profiles/detect-hardware.sh --info     # detection report, no changes
@@ -151,8 +136,11 @@ JENOVA_BACKEND=cuda make llama
 ./hardware-profiles/detect-hardware.sh --apply    # auto-detect and deploy
 ./hardware-profiles/detect-hardware.sh --apply-profile Vulkan/dgpu-i5-1135g7
 
-sudo scripts/jenova-setup                         # sysctls, swap, ZFS ARC
+sudo hardware-profiles/<backend>/<config>/jenova-setup   # sysctls, swap, ZFS ARC
 ```
+
+`--apply` writes `$JCA_HOME/etc/jenova.conf`, and `src/jenova/config.nim` prefers that copy over
+the one in the source tree.
 
 Profiles live at `hardware-profiles/<backend>/<config>/`. See
 [../hardware-profiles/README.md](../hardware-profiles/README.md).
@@ -171,14 +159,11 @@ Each profile's `jenova-setup` applies this and other tunables for you.
 
 ## Models
 
-`scripts/install.sh` offers to download the default model set, or run it later:
+Put `.gguf` files under `~/Jenova/models/` — `agent/`, `draft/` and `embed/`. Each profile's
+`profile.conf` names the model it was sized against under `RECOMMENDED_AGENT_MODEL` and
+`RECOMMENDED_EMBED_MODEL`, with the URL to fetch it from.
 
-```sh
-scripts/model_dl.sh
-```
-
-That fetches Qwen3.5-4B-Q6_K (agent), Qwen3-Embedding-0.6B-Q8_0 (embedding) and
-Qwen3.5-0.8B-Q8_0 (drafter) into `~/Jenova/models/`. See [usage.md](usage.md#models) for the
+`jenova-core models list` prints what discovery resolved. See [usage.md](usage.md#models) for the
 directory layout, discovery rules and overrides.
 
 ---
@@ -186,20 +171,20 @@ directory layout, discovery rules and overrides.
 ## Running
 
 ```sh
-jenova-ca --daemon        # start the backend
-jenova                    # tray, or TUI if there is no display
+./bin/jenova                  # the desktop application, which is also the server
+./bin/jenova-core serve       # headless: the same server without the window
 ```
 
-Then open <http://localhost:8080>.
+Then open <http://localhost:8080>, or use the window.
 
 ### LAN access
 
 ```sh
-jenova-ca --daemon --lan
+./bin/jenova-core serve --lan
 ```
 
-This binds **the proxy** to `0.0.0.0`. The inference and embedding servers stay on loopback —
-they are internal backends reached through the proxy.
+This binds **the client-facing port** to `0.0.0.0`. The inference and embedding servers stay on
+loopback — they are internal backends reached through it.
 
 **Open only port 8080** in your firewall. Never expose 8081 or 8082; they are unauthenticated.
 
@@ -211,18 +196,15 @@ sockstat -4l | grep -E '8080|8081|8082'
 
 ---
 
-## Updating and removing
+## Updating
 
 ```sh
-scripts/update.sh --all           # pull, rebuild UI and Web UI, re-apply the profile
-scripts/update.sh --no-pull       # rebuild without pulling
-scripts/update.sh --skip-rebuild  # pull only
-
-scripts/cleanup.sh --all          # clear logs, cache and stale PID files
-scripts/cleanup.sh --logs --rotate
-
-scripts/uninstall.sh              # remove deployed files; models are preserved
-scripts/uninstall.sh --clean-runtime --clean-builds
+git pull
+git submodule update --init
+nimble llama      # only when external/llama.cpp moved
+nimble web
+nimble gui
+./hardware-profiles/detect-hardware.sh --apply
 ```
 
 ---
@@ -231,5 +213,7 @@ scripts/uninstall.sh --clean-runtime --clean-builds
 
 - Detection reads `kern.ostype`, not `uname -s`, which answers `Linux` under the Linuxulator.
   Before this was fixed, Jenova misdetected its own developer's FreeBSD machine as Fedora.
+- Both binaries carry a `when not defined(freebsd)` guard, so a build on another platform fails at
+  compile time rather than at run time.
 - `external/llama.cpp` is a git submodule. If you cloned without `--recurse-submodules`, run
   `git submodule update --init`.

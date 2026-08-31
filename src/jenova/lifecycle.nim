@@ -279,21 +279,25 @@ proc start*(l: Lifecycle, be: Backend): int =
 ## a state the next start has to recover from.
 proc stop*(l: Lifecycle, be: Backend, graceMs = 2000): bool =
   let st = l.state(be)
+  # `removeFile` raises on a pid file that is unlinkable — a read-only state
+  # directory, a permission change. That exception escaped `stop` and therefore
+  # `stopAll`, turning a cleanup failure into a failed shutdown. `tryRemoveFile`
+  # reports rather than raises, and the process has already been signalled.
   if not st.running:
-    removeFile(pidFileFor(l, be))
+    discard tryRemoveFile(pidFileFor(l, be))
     return true
 
   discard kill(st.pid.Pid, SIGTERM)
   let deadline = epochTime() + graceMs.float / 1000.0
   while epochTime() < deadline:
     if not isAlive(st.pid):
-      removeFile(pidFileFor(l, be))
+      discard tryRemoveFile(pidFileFor(l, be))
       return true
     sleep(50)
 
   discard kill(st.pid.Pid, SIGKILL)
   sleep(100)
-  removeFile(pidFileFor(l, be))
+  discard tryRemoveFile(pidFileFor(l, be))
   not isAlive(st.pid)
 
 proc startAll*(l: Lifecycle): tuple[llama, embed: int] =
@@ -373,11 +377,19 @@ proc watchOnce*(l: Lifecycle, be: Backend, failures: var int,
     return &"{be}: unhealthy, holding off (cooldown)"
 
   lastRestart = now
-  failures = 0
   discard l.stop(be)
   let pid = l.start(be)
+  # `start` returns -1 when the port is held by something this harness did not
+  # start, which is a failure and not a pid. Testing only for 0 logged
+  # "restarted (pid -1)" and cleared the failure counter, so the watchdog then
+  # reported a healthy backend that had never come up. Failures are reset only
+  # on a restart that actually produced a process.
+  let port = if be == beLlama: l.llamaPort else: l.embedPort
+  if pid < 0:
+    return &"{be}: restart FAILED — port {port} is held by another process"
   if pid == 0:
     return &"{be}: restart FAILED — check {l.logFileFor(be)}"
+  failures = 0
   &"{be}: restarted (pid {pid})"
 
 ## Function purpose: render status for the `status` verb. Reports each backend

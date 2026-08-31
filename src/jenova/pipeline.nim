@@ -61,19 +61,31 @@ const
 
   LargePayloadChars = 2000   ## `proxy.lua:1258`
 
-var editorSocket = ""
+# Action purpose: a plain `string` global is reference-counted memory that every
+# worker thread would touch, and the `{.cast(gcsafe).}` that silenced the
+# compiler here only hid that. This is `server.nim`'s SharedStr: a fixed buffer
+# and a length, both plain values, so a cross-thread read races on nothing.
+type SharedStr = object
+  buf: array[1024, char]
+  len: int
+
+var editorSocket: SharedStr
 
 ## Function purpose: tell the pipeline where Neovim is listening, the way
 ## `rag.configureEmbed` supplies the embedding server's address. Unset by
 ## default, which is why `Editor:` degrades to a plain answer on a host with no
 ## editor running rather than failing the turn.
 proc configureEditor*(socket: string) =
-  editorSocket = socket
+  let n = min(socket.len, editorSocket.buf.high)
+  if n > 0: copyMem(addr editorSocket.buf[0], socket.cstring, n)
+  editorSocket.len = n
 
 # Written once at startup, read-only afterwards; the server's worker threads only
 # read it.
-proc editorSock(): string {.gcsafe.} =
-  {.cast(gcsafe).}: editorSocket
+proc editorSock(): string =
+  result = newString(editorSocket.len)
+  if editorSocket.len > 0:
+    copyMem(addr result[0], addr editorSocket.buf[0], editorSocket.len)
 
 ## Function purpose: find the last user message, which is the one the intent
 ## prefix and the RAG query come from. Returns -1 when there is none.
@@ -163,7 +175,10 @@ proc injectSystem(messages: JsonNode, intent: Intent, hasTools: bool,
       let mandate = "CORE MANDATE: You are Jenova, an autonomous agent. " &
                     prompts.FreeChat
       messages.elems.insert(%*{"role": "system", "content": mandate}, 0)
-    var content = messages[0]["content"].getStr
+    # `hasSystem` proves the role, not that a `content` key exists — a client may
+    # send `{"role":"system"}` with the text elsewhere. Direct indexing raised
+    # KeyError and failed the whole turn; the optional accessor yields "".
+    var content = messages[0]{"content"}.getStr
     if webContext.len > 0: content.add "\n" & webContext
     if editorContext.len > 0: content.add "\n" & editorContext
     if ragContext.len > 0: content.add "\n" & ragContext
@@ -177,14 +192,14 @@ proc injectSystem(messages: JsonNode, intent: Intent, hasTools: bool,
     if ragContext.len > 0: systemPrompt.add "\n" & ragContext
     if hasSystem:
       messages[0]["content"] = %(systemPrompt & "\n\n" &
-                                 messages[0]["content"].getStr)
+                                 messages[0]{"content"}.getStr)
     else:
       messages.elems.insert(%*{"role": "system", "content": systemPrompt}, 0)
     return
 
   # No intent: persona prepended, RAG appended.
   if hasSystem:
-    var content = prompts.FreeChat & "\n\n" & messages[0]["content"].getStr
+    var content = prompts.FreeChat & "\n\n" & messages[0]{"content"}.getStr
     if ragContext.len > 0: content.add "\n" & ragContext
     messages[0]["content"] = %content
   else:

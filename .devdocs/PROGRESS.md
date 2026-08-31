@@ -2,11 +2,81 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-08-31 21:42
+**Last updated:** 2026-08-31 22:51
 
 ---
 
 ## Completed
+
+### 2026-08-31 22:51 — **Review-finding sweep: 23 code fixes, 4 test fixes, 7 documents realigned.** Both binaries build; all six suites and all four self-tests pass.
+
+Externally supplied findings, each verified against the tree before acting. **Two were rejected on
+the evidence** (see `DECISIONS_LOG.md` D-AU, D-AV).
+
+**Correctness / safety, `src/jenova/`:**
+
+- `api.nim` — cache route now requires POST (a DELETE stored an entry); `/api/storage` prefix now
+  requires an exact match or a `/` boundary (`/api/storagefoo` decoded `oo` as a path); a failed
+  upsert's rollback restores the row's prior `is_deleted` instead of resurrecting a deleted row.
+- `fssync.nim` — `uuidRng` made `{.threadvar.}` and per-thread seeded (a shared `Rand` mutated by
+  14 worker threads); `restoreTrash` now validates the **destination** with the same containment as
+  the source, and `metaType` is checked against an allowlist before reaching the UPDATE.
+- `http.nim` — `resolveStatic` requires a directory boundary after the root, so `public-old` no
+  longer matches the root `public`. `sendResponse` gained `headOnly`.
+- `server.nim` — HEAD returns GET's headers without the body; `jsonEscape` escapes every control
+  byte below 0x20; the 500 handler logs the exception and sends a fixed body instead of the message.
+- `upstream.nim` — `SO_RCVTIMEO` on the upstream socket; an upstream that closes before relaying a
+  byte now answers the same 502 as a refused connection instead of an empty reply.
+- `lifecycle.nim` — pid-file cleanup via `tryRemoveFile` so `stop`/`stopAll` cannot raise;
+  `watchOnce` treats `start`'s `-1` (port held) as a failed restart and keeps the failure count.
+- `pipeline.nim` — editor socket moved to `server.nim`'s SharedStr pattern, removing the
+  `{.cast(gcsafe).}` over a refcounted global; system-message content read with `{}`.
+- `rag.nim` — each embedding batch now contributes one slot per chunk, padding short or failed
+  results, so `vectors[idx]` cannot shift against `chunks[idx]`.
+- `nvimctl.nim` — stdout drained against a `poll(2)` deadline instead of an unbounded `readAll`
+  before the timed wait; the child is terminated when the deadline expires.
+- `markdown.nim` — code spans lifted out before the emphasis passes and restored after, so `*` and
+  `_` inside `` `code` `` are no longer italicised.
+- `tray.nim` / `dbus.nim` — dbusmenu `Properties.Get` returns a single variant and `GetAll` an
+  `a{sv}`, both carrying `Version`; they previously shared one empty-dictionary reply.
+- `config.nim` — the profile deployed to `$JCA_HOME/etc` now wins over the source tree's `etc/`,
+  which is where `detect-hardware.sh --apply` writes it.
+- `dbselftest.nim` — the reader/writer overlap is now asserted against a `MinOverlapPct` floor;
+  it was measured, printed and never checked, so a serialized layer still reported PASS. **Proved
+  able to go red** by raising the floor to 101 and rebuilding.
+- `serverselftest.nim` — `loadRunning` is `Atomic[bool]`.
+- `jenova_core.nim` — the top-level handler also catches `ModelError` and `OSError`.
+
+**Tests:** `test_api_db` asserts the actual missing-id text rather than the substring `id`;
+`test_api_fs` moves the sidecar assertion inside its `-n "$TRASHED"` guard and drops an
+always-true `assert_match`; `test_lifecycle`'s unknown-flag check runs under `timeout` with
+`JENOVA_NO_BACKENDS=1` and a scratch port.
+
+**Hardware profiles:** `CPU/generic/jenova-setup` rewritten for FreeBSD — `powerd`/`cpufreq` in
+place of `cpupower` and `/sys`, ZFS ARC cap and OOM policy in place of the transparent-huge-page
+write (**closes T-9**). `Vulkan/dgpu-i5-1135g7`'s `jenova.conf` synced to its `profile.conf`
+(NGL 16, 8K, 1 slot, no drafter) and `dgpu-igpu`'s draft flag to 1 (**T-10, two of five**).
+`dgpu-generic-12gb`'s catch-all `MATCH_GPU_0` replaced with a 12 GiB-or-more model allowlist.
+`CUDA/dgpu-generic`'s unread `CUDA_DMMV_POOL_SIZE` removed. `detect-hardware.sh` reads
+`kern.osrelease` instead of the unset `$JENOVA_OS_RELEASE`. `dgpu-i5-1135g7/jenova-setup`'s
+`_JENOVA_ROOT` traversal corrected from four parents to three.
+
+**Web UI:** the Google Fonts `@import` removed from `app.css` on the USER's call — no self-hosting,
+font stacks widened to system fallbacks. Verified absent from the built `public/bundle.css`.
+
+**Documents realigned to the tree:** `README.md`, `docs/architecture.md`,
+`docs/context-and-retrieval.md` (rewritten), `docs/install.md`, `docs/usage.md`,
+`docs/privacy.md`, `hardware-profiles/README.md`, `jca_web/README.md`. They described the LuaJIT
+proxy, the C/GTK3 `jenova-ui`, `bin/jenova-ca`, `lib/jenova-model.sh`, a Makefile and
+`scripts/*.sh` — all archived. Database path corrected throughout to
+`~/Jenova/.system/jenova.db`.
+
+### 2026-08-31 22:51 — **`test_routes` no longer reproduces T-12's five failures — including on the committed baseline.**
+
+Rebuilt HEAD into a scratch tree via `git archive` and ran the suite against it: **13/13 PASS**,
+same as the working tree. The five failures are therefore not fixed by this session's work and are
+not present in the baseline either — most likely the earlier run had something listening on 8081,
+turning the three 502 assertions into 200s. Recorded as an observation, not a fix.
 
 ### 2026-08-31 21:42 — **Documentation aligned to the tree.** `BLUEPRINT.md` deps + invoked tools, `ARCHITECTURE_MAPPING.md` §2/§4/§5, `TESTS.md` §0 + new §5i.
 

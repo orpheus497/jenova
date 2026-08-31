@@ -5,6 +5,25 @@ One short paragraph per session. Sessions 001-005 are in
 
 ---
 
+## Session 012 — 2026-08-31
+
+Worked a batch of externally supplied review findings, verifying each against the tree first: **23
+code fixes across 13 Nim modules, 4 test fixes, 6 hardware-profile fixes, 8 documents realigned**,
+with both binaries building and all six suites and four self-tests passing. The live faults were
+containment and concurrency ones — `/api/storage` matched `/api/storagefoo`, `restoreTrash`
+validated its source but not its destination and fed a sidecar field into SQL, `resolveStatic`
+would serve `public-old`, `fssync`'s UUID RNG was one `Rand` shared by every worker thread, and
+`rag`'s embedding batches could shift vectors against chunks. **Two findings were rejected on the
+evidence**: the `~/JCA` guard is D-AC and stays (now D-AV), and T-12's five `test_routes` failures
+do not reproduce against the committed baseline either, so nothing here fixed them. One decision
+went to the USER — the Google Fonts import — who chose removal without self-hosting. Three new
+items, all executed rather than read: **T-16, `detect-hardware.sh` cannot run at all** because
+`lib/detect-env.sh` was archived out from under it; **T-17**, nothing calls `rag.indexContent`
+outside the self-test, so retrieval's index is always empty; **T-18**, the Optane profile resolves
+an archived helper. Detail in `SESSION_HANDOFF.md` Session 012.
+
+---
+
 ## Session 011 — 2026-08-31
 
 Closed **T-1**, the SIGBUS that produced eleven cores: `closeWindow()` destroys the window and every

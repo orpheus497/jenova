@@ -8,39 +8,39 @@ no telemetry of any kind. This page states precisely what that does and does not
 - **Every generated token.** Inference runs in `llama-server` on your own GPU or CPU. No prompt,
   completion or embedding is sent to a model provider — there is no provider, and no code path to
   configure one.
-- **Your conversations, notes and files.** They live in SQLite at `~/Jenova/var/jenova.db` and as
-  Markdown under `~/Jenova/Workspaces`.
-- **Your retrieval index.** Embeddings are computed locally by the embedding server and cached in
-  `~/Jenova/var/cache`.
+- **Your conversations, notes and files.** They live in SQLite at `~/Jenova/.system/jenova.db` and
+  as Markdown under `~/Jenova/Workspaces`.
+- **Your retrieval index.** Embeddings are computed locally by the embedding server on `:8082` and
+  stored in the same database.
 
 No usage data, crash reports or analytics are collected. There is no analytics code in the Web UI.
 
 ## What does leave your machine
 
-Four things reach the network. Three are deliberate; one is a defect.
+Three things reach the network, all deliberate.
 
 | What | Where it goes | When |
 |---|---|---|
 | **Web search** | `api.duckduckgo.com`, `html.duckduckgo.com` | Only when a model invokes the web-search tool. Your query text is sent |
-| **Model downloads** | `huggingface.co` | Only when you run `scripts/model_dl.sh` or accept the installer's download prompt |
-| **Package and source updates** | FreeBSD `pkg` mirrors, `github.com` | Only during `make deps`, `git clone`, and `scripts/update.sh` |
-| **Web UI webfonts** ⚠️ | `fonts.googleapis.com`, `fonts.gstatic.com` | **Every Web UI page load**, from your browser |
+| **Model downloads** | `huggingface.co` | Only when you fetch a model yourself |
+| **Package and source updates** | FreeBSD `pkg` mirrors, `github.com`, the `nimble` registry | Only during `pkg install`, `git clone` and `nimble` builds |
 
-The webfont import at `jca_web/src/app.css:3` is inconsistent with this project's local-first
-intent: it means a browser with network access contacts Google on every load, which exposes your
-IP address and the fact that you are using Jenova. It is logged as a defect to fix by
-self-hosting the two font families. Until then, a browser extension that blocks the request, or
-an offline machine, prevents it; the UI falls back to system fonts.
+**The Web UI fetches no webfonts.** `jca_web/src/app.css` imported Inter and JetBrains Mono from
+`fonts.googleapis.com`, so a browser with network access contacted Google on every page load —
+exposing your IP address and the fact that you are running Jenova. That import was removed on
+2026-08-31. The font stacks still name both families first, so a viewer who has them installed
+locally gets them, and everyone else falls through to the platform's own UI and monospace faces.
+Nothing is downloaded either way.
 
 **MCP servers you configure yourself** are an additional outbound path under your control. A
 remote MCP server receives whatever the model sends it.
 
 ## No authentication
 
-The proxy on `:8080` has **no authentication**. Access control is the bind address and your
+The server on `:8080` has **no authentication**. Access control is the bind address and your
 firewall, nothing else.
 
-- Default (`jenova-ca --daemon`) binds `127.0.0.1` — reachable only from this machine.
+- Default (`jenova`, or `jenova-core serve`) binds `127.0.0.1` — reachable only from this machine.
 - `--lan` binds `0.0.0.0` — reachable by **anyone on your network**, with full access to your
   workspaces, files and inference.
 
@@ -53,17 +53,17 @@ All paths are relative to `$JCA_HOME`, which defaults to `~/Jenova`.
 
 | Path | Contents |
 |---|---|
-| `var/jenova.db` | Conversations, messages, workspaces, projects, folders, notes, file assets |
+| `.system/jenova.db` | Conversations, messages, workspaces, projects, folders, notes, file assets |
 | `Workspaces/` | Markdown mirror of notes and chats, plus uploaded file assets |
-| `var/cache/` | Embedding index and retrieval snapshots — a semantic index of your content |
+| `var/cache/` | Cache directory |
 | `var/log/` | Daemon logs. May contain prompts, paths and error context |
-| `.system/` | PID and lock files |
+| `.system/` | The database, pid files and the Neovim socket |
 | `models/` | GGUF model weights |
 | `etc/jenova.local.conf` | Your configuration overrides |
 
-To inspect what the system has been doing, read `var/log/`. To wipe derived state without losing
-your work, `scripts/cleanup.sh --all` clears logs, cache and stale PID files; the database and
-`Workspaces/` are untouched.
+To inspect what the system has been doing, read `var/log/`. Removing `var/log/`, `var/cache/` and
+any stale pid file under `.system/` wipes derived state without touching the database or
+`Workspaces/`.
 
 ## Keeping data out of git
 
@@ -75,15 +75,15 @@ Two habits matter anyway:
 
 - Put anything private in `etc/jenova.local.conf`, never in `etc/jenova.conf` — the latter is
   overwritten whenever a hardware profile is applied.
-- Your data lives in `~/Jenova`, outside this repository. A `make install` deployment is
-  self-contained there and is not affected by anything you do to the source tree.
+- Your data lives in `~/Jenova`, outside this repository, and is not affected by anything you do
+  to the source tree.
 
 ## Auditing this yourself
 
 Every claim above is checkable. The outbound calls are the only `http` URLs in the runtime:
 
 ```sh
-grep -rn 'https\?://' lib/ bin/ scripts/          # backend
+grep -rn 'https\?://' src/                        # both binaries
 grep -rn 'https\?://' jca_web/src/                # Web UI
 sockstat -4l | grep -E '8080|8081|8082'           # what is actually listening
 ```

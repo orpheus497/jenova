@@ -52,7 +52,61 @@ further down is left in place for the historical record; **this table overrides 
 | **The shell tree** | **Not to be repaired (D-AH).** The installer, the shell-era docs and the shell test scripts are scaffolding around the system being replaced. **Remaining work = what is missing from the Nim core**, never what is broken in the old one. Deployment of the single binary is one decision after the rewrite |
 | **CUDA** | **Not meaningfully available on FreeBSD.** `CUDA/dgpu-generic` is unreachable on the target platform, so its data defects (B-21, and the CUDA half of B-05) are moot. **Apply the platform constraint before raising anything about that profile** |
 
+
 ---
+
+## D-AV — `~/JCA` stays refused. A review finding asking to remove the guard was rejected — 2026-08-31 22:51
+
+A supplied finding asked that `paths.nim` stop raising `PathError` when `JCA_HOME` resolves to
+`$HOME/JCA`, "so existing legacy deployments remain operational by default".
+
+**Rejected.** That guard *is* **D-AC**, reinforced by **D-AE**: `~/JCA` is the USER's pre-existing
+working deployment and nothing this program does may write into it. The default moving to
+`~/Jenova` is not sufficient on its own, because a shell that has sourced the old environment
+exports `JCA_HOME=~/JCA` and an inherited value beats a default — which is exactly the case the
+guard exists to catch. `JENOVA_ALLOW_DEPLOYED=1` is the deliberate override.
+
+**The general point matters more than this instance.** A finding is evidence, not an instruction.
+This one was internally reasonable and would have undone a safety ruling taken after the risk was
+already understood.
+
+---
+
+## D-AU — `Vulkan/dgpu-generic-12gb` matches an allowlist of GPU models, not a vendor word — 2026-08-31 22:51
+
+`MATCH_GPU_0` was `.*(NVIDIA|GeForce|Quadro|RTX|GTX|AMD|ATI|Radeon|RX|Intel|Arc).*` — any Vulkan
+device at all. The profile offloads **every** layer and opens a **32K** context, so a 2 GiB iGPU
+auto-selected a configuration that cannot load.
+
+Three options were considered. `PROFILE_OPT_IN=1` (the mechanism CUDA already uses) is the smallest
+change but deletes the GPU fallback outright, which Directive 3 weighs against. Adding VRAM
+detection to `detect-hardware.sh` preserves it properly — but that script **cannot currently run at
+all** (see the note below), so the detection code would be unexecuted, and this project's standing
+rule is that unrun code is not stated to work.
+
+**Chosen: an explicit model allowlist.** It is data, not code; it needs no new detection; it
+preserves auto-selection for the hardware the profile was actually written for; and an unlisted
+card falls to `CPU/generic`, which is the safe direction to be wrong in. The profile stays
+deployable by name. A newer card with enough VRAM is a one-line addition.
+
+**Noted while doing this, not fixed:** `hardware-profiles/detect-hardware.sh:19` sources
+`$JENOVA_ROOT/lib/detect-env.sh`, which was archived with the rest of the shell tree, so the script
+aborts on line 19 and **no invocation of it works** — `--info`, `--list`, `--apply` or otherwise.
+`BRIEFING.md` lists `hardware-profiles/` as retained setup-time tooling, so this is a live gap
+rather than a dead file. Whether to inline what it needs, restore the library, or move selection
+into the Nim core is a USER decision and is **not** taken here.
+
+---
+
+## D-AT2 — configuration is read from `$JCA_HOME/etc` in preference to the source tree — 2026-08-31 22:51
+
+`config.load` built both conf paths from `p.root / "etc"`. `detect-hardware.sh --apply` writes the
+matched profile to `$JCA_HOME/etc/jenova.conf` and only *mirrors* it into the repository's `etc/`
+when that directory happens to be writable, so the deployed copy is authoritative and was being
+ignored. The whole directory is now chosen at once — profile and local override together — so the
+two can never come from different trees and disagree. The source tree remains the fallback, which
+is what keeps the test suites (scratch `JCA_HOME`, no `etc/`) working unchanged.
+
 
 ## 2026-08-31 — D-AT: **the parity scope is named by the USER; MCP is deferred** *(BINDING)*
 

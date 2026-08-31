@@ -17,30 +17,30 @@ and the judgment stay yours.
 git clone --recurse-submodules https://github.com/orpheus497/jenova
 cd jenova
 
-make             # install every dependency, then build everything
-make install     # deploy to ~/Jenova and link launchers into ~/.local/bin
-jenova-ca --daemon
+nimble llama     # build the llama.cpp backend into external/ext_bin
+nimble web       # build the Web UI into public/
+nimble gui       # build bin/jenova, the desktop application
+./bin/jenova
 ```
 
-Then open <http://localhost:8080>.
+Then open <http://localhost:8080>, or just use the window.
 
-`make` is the FreeBSD base system `make(1)`. GNU make, GNU coreutils and bash are not used and
-are not dependencies — every script here is POSIX `/bin/sh`.
+The build system is **nimble**; the tasks are declared in `jenova_core.nimble`. There is no
+Makefile, and no build or runtime step shells out to a project script.
 
-Dependencies install themselves: every build target runs `scripts/install-dependencies.sh` first,
-and a package that cannot be installed stops the build. There is no optional tier.
-
-Individual targets: `make deps`, `make llama`, `make jenova-ui`, `make web`, `make core`.
+Individual tasks: `nimble core` (the headless binary), `nimble gui`, `nimble llama`, `nimble web`,
+`nimble suites` (build both binaries and run the test suites).
 
 ---
 
 ## What Runs
 
-`jenova-ca` supervises three daemons as a single unit.
+One process owns all three ports: the application starts the HTTP server on `:8080` and supervises
+both `llama-server` backends in-process.
 
 | Port | Service | Bind | Purpose |
 |---|---|---|---|
-| **8080** | Intelligence proxy | `127.0.0.1`, or `0.0.0.0` under `--lan` | The only client-facing port. Serves the Web UI, the workspace database API, retrieval, web search, and forwards inference |
+| **8080** | Jenova HTTP server | `127.0.0.1`, or `0.0.0.0` under `--lan` | The only client-facing port. Serves the Web UI, the workspace database API, retrieval, web search, and forwards inference |
 | 8081 | `llama-server` | loopback always | OpenAI-compatible inference |
 | 8082 | `llama-server` (embedding mode) | loopback always | Embeddings for semantic search |
 
@@ -50,53 +50,50 @@ unauthenticated; exposing them would publish open inference endpoints.
 
 ### Web UI
 
-A SvelteKit static SPA served by the proxy at `:8080`. Persistent workspaces, branching
+A SvelteKit static SPA served at `:8080`, and the LAN client. Persistent workspaces, branching
 conversation history, token streaming with TPS/TTFT metrics, `<think>` reasoning blocks, GFM
 markdown, KaTeX math, syntax highlighting, in-browser PDF viewing, and MCP client support.
 
 Workspaces, projects, folders, conversations, messages and notes are stored in SQLite at
-`~/Jenova/var/jenova.db`, managed by the proxy. Notes and chats are additionally mirrored to
+`~/Jenova/.system/jenova.db`, managed by the server. Notes and chats are additionally mirrored to
 `~/Jenova/Workspaces` as plain Markdown, readable and editable with any text editor.
 
-### Desktop Manager
+### Desktop application
 
-`jenova-ui` is a native C application offering two interfaces over the same code:
+`jenova` is a native Nim application built with [owlkettle](https://github.com/can-lehmann/owlkettle)
+on GTK4/libadwaita, compiled from `src/jenova_gui.nim`. It offers two surfaces over the same
+in-process code:
 
-- **System tray** (GTK3 + appindicator) — health polling and server control from a context menu.
-- **ncurses TUI** (`jenova-tui`, or `jenova-ui tui`) — the same control surface without a
-  graphical environment, for headless and terminal-centric use.
+- **The window** — chat, the workspace tree, notes, a canvas, and backend control: start, stop and
+  restart, live per-service health, the LAN toggle, model switching, and the Web UI opener.
+- **A system tray item** — the same control surface from a context menu, published over D-Bus as a
+  `org.kde.StatusNotifierItem` (`src/jenova/tray.nim`). `--no-tray` runs the window without it.
 
-`jenova` picks the tray when a display is available and is not an SSH session, and falls back to
-the TUI otherwise.
+There is no separate supervisor to start: `jenova` *is* the server. It brings up the HTTP port and
+both backends itself and supervises them in-process. `jenova-core` is the same program without the
+GTK dependency, for a headless or LAN-server host.
 
 ### LAN mode
 
-`jenova-ca --daemon --lan` moves the proxy to `0.0.0.0`, making your workspace reachable from a
-phone, tablet or second machine at `http://<host-ip>:8080`. The tray and TUI can toggle this.
+`jenova-core serve --lan` moves the client-facing port to `0.0.0.0`, making your workspace
+reachable from a phone, tablet or second machine at `http://<host-ip>:8080`. The window and the
+tray menu toggle the same thing.
 
 ---
 
 ## Commands
 
-`make install` links these into `~/.local/bin`:
+`nimble` builds two binaries into `bin/`:
 
 | Command | Description |
 |---|---|
-| `jenova` | Start the tray, or the TUI if there is no display |
-| `jenova-ca` | Backend supervisor — see [docs/usage.md](docs/usage.md) |
-| `jenova-tui` | ncurses manager (`jenova-ui tui`) |
-| `jenova-ui` | Desktop Manager binary |
-| `jenova-swap-mount` | Mount an NVMe/Optane-backed swap filesystem for model storage |
-| `jenova-model-switch` | Swap the active agent model to `instruct` or `thinking` |
+| `jenova` | The desktop application. Starts the server and both backends itself. `--no-tray` suppresses the tray item |
+| `jenova-core` | The same program without GTK, for a headless or LAN-server host — see [docs/usage.md](docs/usage.md) |
 
-`bin/jenova-term` is an internal helper that finds a terminal emulator; it is not linked onto
-your `PATH`.
-
-Updating:
-
-```sh
-./scripts/update.sh --all      # pull, rebuild UI and Web UI, re-apply the hardware profile
-```
+`jenova-core` carries the operational subcommands: `serve`, `backends`, `models`, `paths`,
+`config`, `db-init`, `db-capabilities`, and the self-tests. The desktop application performs the
+same operations in-process — backend control, model switching and the LAN toggle are all in its
+window and tray menu — and spawns no shell to do any of it.
 
 ---
 
@@ -107,17 +104,17 @@ matching profile that sets GPU offload, context size, batch sizes and thread cou
 
 | Profile | Devices | Layers | Context | Drafter |
 |---|---|---|---|---|
-| `Vulkan/dgpu-i5-1135g7` | `Vulkan0` | all | 16K | yes |
-| `Vulkan/dgpu-igpu-i5-1135g7` | `Vulkan0,Vulkan1` | all | 32K | no |
+| `Vulkan/dgpu-i5-1135g7` | `Vulkan0` | 16 | 8K | no |
+| `Vulkan/dgpu-igpu-i5-1135g7` | `Vulkan0,Vulkan1` | all | 32K | yes |
 | `Vulkan/apu-ryzen7-5700u` | `Vulkan0` | 24 | 16K | yes |
 | `Vulkan/dgpu-generic-12gb` | `Vulkan0` | all | 32K | yes |
 | `CPU/generic` | `CPU` | 0 | 16K | no |
 | `CUDA/dgpu-generic` | `CUDA0` | all | 16K | yes |
 
-**Profiles do not choose your model.** `lib/jenova-model.sh` discovers whatever `.gguf` files are
-in `~/Jenova/models/`, and `scripts/model_dl.sh` downloads the same default set on every profile:
-Qwen3.5-4B-Q6_K (agent), Qwen3-Embedding-0.6B-Q8_0 (embedding), Qwen3.5-0.8B-Q8_0 (drafter).
-Point `JENOVA_MODEL` at anything else you like.
+**Profiles do not choose your model.** `src/jenova/models.nim` discovers whatever `.gguf` files are
+in `~/Jenova/models/` — `models.discover`, called from `config.load`, fills only the model paths the
+configuration left empty. Point `JENOVA_MODEL`, `JENOVA_DRAFT_MODEL` or `JENOVA_EMBED_MODEL` at
+anything else you like; an explicit path always wins over discovery.
 
 Rough VRAM guide: about **0.75 GB per 1B parameters** at Q4_K_M.
 
@@ -139,8 +136,9 @@ no other platform: one kernel ABI, one package manager, one hardware-profile tre
 | **Swap** | Swap-backed model store via `mdmfs`, tuned for NVMe/Optane |
 | **Not supported** | Linux, macOS, Windows |
 
-`lib/detect-env.sh` identifies the kernel through `kern.ostype` and refuses to run on anything
-else. It does not use `uname -s`, which answers `Linux` under the FreeBSD Linuxulator.
+Both binaries carry a `when not defined(freebsd)` guard and will not compile anywhere else.
+Hardware detection reads `kern.ostype` rather than `uname -s`, which answers `Linux` under the
+FreeBSD Linuxulator.
 
 ---
 
@@ -162,7 +160,7 @@ else. It does not use `uname -s`, which answers `Linux` under the FreeBSD Linuxu
 
 ```
 jenova/
-├── bin/                # Launchers and tool scripts
+├── bin/                # Built binaries: jenova, jenova-core
 ├── docs/               # This documentation
 ├── etc/                # Active configuration (jenova.conf, jenova.local.conf)
 ├── external/
@@ -170,17 +168,16 @@ jenova/
 │   └── llama.cpp/      # Inference engine (git submodule)
 ├── hardware-profiles/  # Per-hardware tuning profiles and auto-detection
 ├── jca_web/            # Web UI source (SvelteKit)
-├── jenova-ui/          # Desktop Manager source (C)
-├── lib/                # Lua modules and shell libraries
 ├── png/                # Icons and branding
-├── public/             # Built Web UI, served by the proxy (build output)
-├── scripts/            # Build, install, update and maintenance scripts
-├── tests/              # Test scripts
-└── var/                # Runtime database, logs and cache (gitignored)
+├── public/             # Built Web UI, served at :8080 (build output)
+├── src/
+│   ├── jenova/         # The modules both binaries link
+│   ├── jenova_core.nim # Headless server entry point
+│   └── jenova_gui.nim  # Desktop application entry point
+└── tests/              # Test suites, run by `nimble suites`
 ```
 
 Your models, database, logs and workspaces live under `~/Jenova`, not in this repository.
-`make install` deploys a self-contained system there that does not depend on the source tree.
 
 ---
 

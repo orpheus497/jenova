@@ -14,7 +14,7 @@
 ## Phase 3 is the one that justifies per-class pools. A server that passes 1 and
 ## 2 can still fail 3, and would look healthy right up until it went dark.
 
-import std/[net, strformat, strutils, os, monotimes]
+import std/[net, strformat, strutils, os, monotimes, atomics]
 import ./server
 import ./routes
 import ./db
@@ -43,7 +43,11 @@ type
 
 var streamResult: ClientResult
 var loadResults: array[16, ClientResult]
-var loadRunning: bool
+# Action purpose: the worker threads poll this flag while the main thread flips
+# it. A plain `bool` is a non-atomic cross-thread read that the compiler is free
+# to hoist out of the loop, so phase 2's workers could miss the transition to
+# false and never terminate. `Atomic[bool]` makes the write visible.
+var loadRunning: Atomic[bool]
 
 proc nowMs(): float = getMonoTime().ticks.float / 1_000_000.0
 
@@ -104,7 +108,7 @@ proc streamClient(arg: ClientArg) {.thread.} =
 proc loadClient(arg: ClientArg) {.thread.} =
   var r = ClientResult()
   try:
-    while loadRunning:
+    while loadRunning.load():
       discard httpGet(&"/api/_selftest/slow-query?rows={SlowRows}")
       r.ops.inc
   except CatchableError:
@@ -145,7 +149,7 @@ proc run*(dbPath, staticRoot: string): int =
        &"max gap {idle.maxGapMs:6.1f} ms   avg {idle.avgGapMs:5.1f} ms"
 
   # ---- Phase 2: stream under blocking database load ----------------------
-  loadRunning = true
+  loadRunning.store(true)
   var lt: array[LoadClients, Thread[ClientArg]]
   createThread(st, streamClient,
                ClientArg(id: 0, events: StreamEvents, interval: StreamInterval))
@@ -153,7 +157,7 @@ proc run*(dbPath, staticRoot: string): int =
   for i in 0 ..< LoadClients:
     createThread(lt[i], loadClient, ClientArg(id: i))
   joinThread(st)
-  loadRunning = false
+  loadRunning.store(false)
   for i in 0 ..< LoadClients: joinThread(lt[i])
   let loaded = streamResult
   var totalOps = 0

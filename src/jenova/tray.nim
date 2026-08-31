@@ -69,6 +69,8 @@ const
   PropIface = "org.freedesktop.DBus.Properties"
   WatcherName = "org.kde.StatusNotifierWatcher"
   WatcherPath = "/StatusNotifierWatcher"
+  ## The `com.canonical.dbusmenu` protocol revision this object implements.
+  DbusMenuVersion = 3'u32
 
 ## Action purpose: a single process-wide tray. The D-Bus vtable hands callbacks a
 ## raw `userData` pointer, and threading a `ref` through it means pinning it
@@ -285,12 +287,29 @@ proc menuHandler(conn: ptr DBusConnection, msg: ptr DBusMessage,
     send(conn, dbus_message_new_method_return(msg))
     return DBUS_HANDLER_RESULT_HANDLED
 
-  if dbus_message_is_method_call(msg, PropIface, "GetAll") != 0 or
-     dbus_message_is_method_call(msg, PropIface, "Get") != 0:
+  # Action purpose: the two property methods have different return signatures and
+  # were answered identically — `Get` returns a single `v`, `GetAll` returns
+  # `a{sv}`. Replying to a `Get` with a dictionary is a signature mismatch the
+  # caller discards, and both replies were empty besides, so the panel never
+  # learned the menu's `Version` and could treat the object as not a dbusmenu at
+  # all. `Version` is the one property `com.canonical.dbusmenu` defines.
+  if dbus_message_is_method_call(msg, PropIface, "Get") != 0:
     let reply = dbus_message_new_method_return(msg)
-    var iter, dict: DBusMessageIter
+    var iter: DBusMessageIter
+    dbus_message_iter_init_append(reply, addr iter)
+    appendVariantUint32(addr iter, DbusMenuVersion)
+    send(conn, reply)
+    return DBUS_HANDLER_RESULT_HANDLED
+
+  if dbus_message_is_method_call(msg, PropIface, "GetAll") != 0:
+    let reply = dbus_message_new_method_return(msg)
+    var iter, dict, entry: DBusMessageIter
     dbus_message_iter_init_append(reply, addr iter)
     discard dbus_message_iter_open_container(addr iter, TypeArray, "{sv}", addr dict)
+    discard dbus_message_iter_open_container(addr dict, TypeDictEntry, nil, addr entry)
+    appendString(addr entry, "Version")
+    appendVariantUint32(addr entry, DbusMenuVersion)
+    discard dbus_message_iter_close_container(addr dict, addr entry)
     discard dbus_message_iter_close_container(addr iter, addr dict)
     send(conn, reply)
     return DBUS_HANDLER_RESULT_HANDLED
