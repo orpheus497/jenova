@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-08-31 20:10
+**Last updated:** 2026-08-31 20:20
 **Branch:** `bsd`
 
 ---
@@ -46,8 +46,20 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 
 ## 3. Known broken
 
-**The redraw SIGBUS is real, it is diagnosed, and the fix is compiled but UNRUN (20:10).** This
+**The redraw SIGBUS is real, it is diagnosed, and the fix RAN 1:47 with no core (20:15).** This
 section said "Nothing is known broken" at 19:41. **That was written between two crashes.**
+
+**The run is evidence, not proof.** Three cores fell between 19:41 and 19:46 on the previous build
+and none has appeared since 20:09 — but **fullscreen, F11 and note open/close, the paths that
+produced them, are not confirmed to have been exercised.** Closing T-1 needs a session that hits
+them.
+
+**Found in that same run and fixed at 20:20 (compiled, unrun): chat bubbles were "weirdly huge".**
+Every child of the transcript column was unannotated, and **`Box`'s adder defaults to
+`expand: true`**, which in a vertical Box is `vexpand` — so each message card took an equal share of
+the viewport height. **§3a already carried that rule and it was not applied here.** Not attributed
+to the 20:10 fix: it is structurally present in the committed source, and the build that first
+shipped this column crashed before it could be evaluated.
 
 | | |
 |---|---|

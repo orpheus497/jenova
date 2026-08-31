@@ -1164,23 +1164,30 @@ method view(app: AppState): Widget =
                   # cannot be bound to state per redraw the way an Entry is.
                   TextView:
                     buffer = app.noteBuffer
-                Label:
+                # Every child here is `expand: false`, and the annotations are
+                # the whole point. **`Box`'s adder defaults to `expand: true`**,
+                # which in a *vertical* Box sets `vexpand` — so an unannotated
+                # message card stretches to take an equal share of the viewport
+                # height, and two replies in a tall window each become half a
+                # screen. That is the "weirdly huge" bubbles. A transcript sizes
+                # to its content and scrolls; it never divides the space up.
+                Label {.expand: false.}:
                   text = (if app.openNote.len > 0: ""
                           elif app.messages.len == 0: "Ask Jenova something."
                           else: "")
                   style = [StyleClass("dim-note")]
                 for m in (if app.openNote.len > 0: @[] else: app.messages):
-                  Frame:
+                  Frame {.expand: false.}:
                     style = [StyleClass("msg-card"),
                              StyleClass(if m.role == rUser: "msg-user" else: "msg-agent")]
                     Box(orient = OrientY, spacing = 4, margin = 10):
-                      Label:
+                      Label {.expand: false.}:
                         text = (if m.role == rUser: "YOU" else: "JENOVA")
                         xAlign = 0.0
                         style = [StyleClass("msg-role"),
                                  StyleClass(if m.role == rUser: "msg-role-user"
                                             else: "msg-role-agent")]
-                      insert(app.messageBody(m))
+                      insert(app.messageBody(m)) {.expand: false.}
 
             Label {.expand: false.}:
               text = app.notice

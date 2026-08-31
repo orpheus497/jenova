@@ -2,11 +2,46 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-08-31 20:10
+**Last updated:** 2026-08-31 20:20
 
 ---
 
 ## Completed
+
+### 2026-08-31 20:20 — **Chat bubbles were "weirdly huge": every message card carried `vexpand`. Fixed; compiled, UNRUN.**
+
+The USER, running the 20:09 build: *"bubbles are weirdly huge and then expand"* — **all of them,
+code or not.**
+
+**`Box`'s adder defaults to `expand: true`** (`widgets.nim`, `adder add {.expand: true, …}`), and in
+a **vertical** Box that sets `vexpand`. Every child of the transcript column was unannotated, so
+each message `Frame` — plus the role `Label` and the inserted body inside it — **stretched to take
+an equal share of the viewport height.** Two replies in a tall window is half a screen each. **A
+transcript sizes to its content and scrolls; it never divides the space up.** Now `{.expand: false.}`
+on the empty-state label, the message card, its role label and its body.
+
+**`messageBody`'s own children already carried the annotation** (`Label`, `Frame`, `SourceCode` are
+each `expand: false`); **the card that wraps them did not**, so the inner correctness was cancelled
+one level up.
+
+**This is the third appearance of the same rule** — `BRIEFING.md` §3a already records *"`Box`'s
+adder defaults to `expand: true`… `hexpand` propagates up the tree, so one greedy button makes the
+whole panel greedy."* **It was written down and then not applied to the transcript.**
+
+**Not attributed to the 20:10 fix.** It is structurally present in the committed source and there is
+no evidence it looked different before; the 19:39 build that first shipped this column **crashed
+before it could be evaluated.** Claiming it as a regression would be inventing a cause.
+
+### 2026-08-31 20:15 — **T-1: the 20:09 build ran 1:47 with no core. First real evidence the fix holds.**
+
+`ps` showed `./bin/jenova` at **1:47 elapsed** and `find /var/coredumps -newermt "20:09"` returned
+**nothing**. **The previous build produced three cores between 19:41 and 19:46.** Still five cores
+total, newest 19:46.
+
+**This is evidence, not proof.** A clean run is only worth what was exercised in it, and the paths
+that produced the cores — **fullscreen, F11, opening and closing notes** — are not confirmed to have
+been touched. Session 009's lesson applies exactly: *a feature confirmed on screen was confirmed
+only for the path that was exercised.*
 
 ### 2026-08-31 20:10 — **The SIGBUS is real, it was diagnosed from the cores, and the fix is built. Compiled; UNRUN.**
 
