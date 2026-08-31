@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-08-31 18:37
+**Last updated:** 2026-08-31 19:02
 **Branch:** `bsd`
 
 ---
@@ -60,15 +60,31 @@ not evidence. Check the artifact.**
 ## 3a. The live workstream — GUI parity (D-AP)
 
 The GUI is the product; `jca_web` becomes the ephemeral single-device LAN client. **Everything
-built has now been run** — the USER ran it at 18:30 and reported what it looks like. **Working:**
-theme, canvas, side panel, workspace tree (functional), markdown text blocks. **Broken on screen:**
-the panel is a flat black slab, the tree is unstyled, the wordmark is one low-contrast word, and
-code blocks collapse to nothing — **`TODOS.md` G-8 … G-11, each traced to a line.** **Missing:**
-notes and fileAssets in the tree, syntax highlighting, models selector, settings, attachments, MCP.
+built has been run.** The USER ran it at 18:30, named four visual defects, and confirmed the fixes
+at 18:55: *"for the most part it looks good."* **Working and seen:** theme, canvas, glass side
+panel, workspace tree, wordmark, markdown text and code blocks. **Missing:** notes and fileAssets
+in the tree, syntax highlighting, models selector, settings, attachments, MCP.
 
-**The one that matters most: `.glass-panel` is defined in `theme.nim` and applied to no widget.**
-The Web UI's sidebar root is that exact class. A 55% tint of `#131313` over a `#131313` window is
-invisible, which is why the panel reads as a slab rather than glass.
+**Open from the 18:55 run — `TODOS.md` G-12, G-13a, G-13b.** Quit had lived **only in the tray**
+and the headerbar menu now has one (G-12); nothing in the program could leave fullscreen and
+`fullscreened` is now bound to app state (G-13a). Both **compiled at 19:02 and unrun.**
+
+**G-13b — fullscreen does not fill and glitches — is open with no mechanism, and that is the
+entry.** The USER's answers ruled out the titlebar theory that had been written here: the header
+bar **stays**, so G-12 and G-13 are not one bug. **Three hypotheses were checked against the source
+and all three died** — the `fullscreened` property hook is change-guarded (`widgetdef.nim:508-519`),
+`addOverlay` already fills (`widgets.nim:431-432`), and the titlebar theory fell to the USER's own
+answer. **One proven oddity is still only a suspect:** `gtk_overlay_set_measure_overlay` is called
+nowhere in owlkettle, so the Overlay measures **only** its `DrawingArea` main child, which requests
+nothing — the sidebar and chat column are invisible to the window's size request. **Next step is a
+terminal capture from a fullscreen run, not a patch.**
+
+**The method that found G-8 … G-11 is the thing worth keeping.** The USER described the screen in
+one sentence; every item was then traced to a specific line before a word was written down, and the
+one hypothesis that felt obvious (a light-theme `.background` inheriting black text) was **checked
+and discarded** — the app forces dark at `gui.nim:998` and the sheet loads at priority 600. Four
+defects, four mechanisms, no speculation. Contrast with Session 007, which read the same trackers
+and reported that no new defect existed.
 
 **Read D-AR before touching `gui.nim`.** Four rounds shipped a broken window because a scripted bulk
 edit was followed by a compile and nothing else. **`nimble gui` exiting 0 says the widget tree is
@@ -84,14 +100,16 @@ propagates **up** the tree, so one greedy button makes the whole panel greedy.
 
 ## 4. Outstanding
 
-**`TODOS.md` T-1 … T-10 plus G-8 … G-11 is the complete list.** T-1 … T-10 were re-verified against
-the tree on 2026-08-31 and all ten hold. **G-8 … G-11 are new and are the first defects in this
-project found by looking at the running window rather than by reading unrun code** — the USER ran
-it, described what was wrong, and each item was then traced to a line. The sequenced plan is
-`PLANS.md`:
+**`TODOS.md` T-1 … T-10 plus G-13b is the outstanding list.** T-1 … T-10 were re-verified against
+the tree on 2026-08-31 and all ten hold. **G-8 … G-11 are closed and confirmed on screen**; G-12
+and G-13a are compiled and unrun. **G-8 … G-13 were the first defects in this project found by
+looking at the running window rather than by reading unrun code** — the USER ran it, described what
+was wrong, and each item was then traced to a line, with the hypotheses that did not survive being
+recorded as disproven rather than quietly dropped. The sequenced plan is `PLANS.md`:
 
-0. **GUI parity (G-8 … G-11 first, then G-4's remaining half, G-6, G-7)** — the live workstream,
-   §3a. Everything below is queued behind it.
+0. **GUI parity — run 19:02 to confirm G-12/G-13a, get a terminal capture for G-13b, then G-4's
+   remaining half (notes/fileAssets), G-7, G-6.** The live workstream, §3a; everything below is
+   queued behind it.
 1. **Stabilise** — T-2 … T-5. **Nothing blocks**; T-1 is unexplained, not a gate.
 2. ~~The `jca_web` workspace question~~ — **answered by D-AP**; it is the GUI parity work.
 3. **Deployment** — one decision, taken once (T-7).

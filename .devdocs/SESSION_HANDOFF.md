@@ -5,6 +5,56 @@ Reverse-chronological. **Keep entries short.** Sessions 001-005 are in
 
 ---
 
+## Session 009 — 2026-08-31
+
+**Instruction:** stick strictly to `AGENTS.md`, read the devdocs, **do not trust them — cross
+reference against the codebase**, then report where the work is. Then: proceed.
+
+### The correction that started it
+
+My first report said G-4 and G-5 were "built, unrun" because `BRIEFING.md`, `TODOS.md` and
+`PLANS.md` all said so. **The USER had run them.** I had confirmed T-1 … T-10 with greps and never
+opened `theme.nim`, `gui.nim` or the Web UI components — which is exactly where the real defects
+were. **D-AN with the polarity reversed:** Session 007 invented defects by reading unrun code; this
+session's first pass let a stale tracker hide four real ones and reported "no new defect".
+
+### Found by reading the code against the running window
+
+The USER described the screen in one sentence. Every item was traced to a line **before** anything
+was written down, and the first hypothesis — a light-theme `.background` inheriting black text —
+was **checked and discarded** (`gui.nim:998` forces dark; the sheet loads at priority 600).
+
+- **G-8** — `.glass-panel` was defined in `theme.nim` and **applied to no widget**, while the Web
+  UI's sidebar root carries exactly that class. `alpha(@jenova_bg, 0.55)` over a `@jenova_bg`
+  window is invisible: that is the black slab. Fixed, plus the missing `box-shadow` and `rounded-r`.
+- **G-9** — the tree's `Expander`s had **no style class at all**. New `.tree-node`.
+- **G-10** — the wordmark was one word at ≈2.9:1. Now three stacked lines; logo decodes at 48×48.
+- **G-11** — code blocks collapsed because owlkettle's `ScrolledWindow` never calls
+  `set_propagate_natural_height`. ScrolledWindow removed; the Label wraps. **`markdown.parse` was
+  not at fault** — it already emits an unterminated fence as code.
+
+**The USER ran it: *"for the most part it looks good."*** No CSS parsing warning, no core.
+
+### Then, from that run
+
+**G-12** — Quit existed **only in the tray**; the headerbar menu had none. Added.
+**G-13a** — nothing in the program could leave fullscreen; `fullscreened` is now bound to app
+state. **G-13b** — fullscreen layout/rendering stays **open with no mechanism**: three hypotheses
+were checked and all three died, including one the USER's own answer disproved. The next step is a
+terminal capture, not a patch.
+
+### Files touched
+
+`src/jenova/{theme,gui}.nim`, and `.devdocs/{TODOS,PROGRESS,PLANS,BRIEFING,SESSION_HANDOFF,
+SUMMARIES}.md`.
+
+### Next
+
+Run `bin/jenova` (19:02) — Quit and the fullscreen toggle are compiled and unseen. For G-13b,
+fullscreen it and capture the terminal. Then G-4's remaining half (notes/fileAssets), G-7, G-6.
+
+---
+
 ## Session 008 — 2026-08-31
 
 **Instruction:** bring the GUI to 1:1 parity with the Web UI — appearance, colouring, canvas,

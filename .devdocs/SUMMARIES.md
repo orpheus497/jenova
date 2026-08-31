@@ -5,6 +5,24 @@ One short paragraph per session. Sessions 001-005 are in
 
 ---
 
+## Session 009 — 2026-08-31
+
+Asked to cross-reference the devdocs against the codebase rather than trust them, and the first
+pass failed that instruction — it confirmed T-1 … T-10 with greps, repeated three trackers' claim
+that G-4 and G-5 were "built, unrun" when the USER had already run them, and reported no new
+defect. The USER corrected it and named what the window actually looked like. Reading `theme.nim`,
+`gui.nim` and the Web UI's own components then produced four defects with a mechanism each:
+`.glass-panel` defined but applied to no widget (the black slab — the Web UI's sidebar root carries
+exactly that class, and a 55% tint of `@jenova_bg` over a `@jenova_bg` window is invisible), the
+workspace tree carrying no style class at all, a one-word wordmark at ≈2.9:1 where the Web UI
+stacks three coloured lines, and code blocks collapsing because owlkettle's `ScrolledWindow` never
+calls `set_propagate_natural_height`. All four were fixed and **confirmed on screen** — *"for the
+most part it looks good"* — with no CSS parsing warning and no core. That run surfaced two more:
+Quit had existed only in the tray (fixed), and fullscreen misbehaves. Fullscreen is now escapable
+(`fullscreened` bound to app state), but its layout and rendering faults stay **open with no
+mechanism** — three hypotheses were checked against the source and all three were disproven, one of
+them by the USER's own answer. Detail in `SESSION_HANDOFF.md` Session 009.
+
 ## Session 008 — 2026-08-31
 
 Began GUI parity with the Web UI under D-AP — the GUI becomes the product and `jca_web` becomes the

@@ -2,11 +2,38 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-08-31 18:42
+**Last updated:** 2026-08-31 19:02
 
 ---
 
 ## Completed
+
+### 2026-08-31 19:02 — **G-12 and G-13a: an in-app Quit, and a way out of fullscreen. Compiled, NOT run.**
+
+- **G-12** — Quit had existed **only in the tray** (`trayMenu`, id 12). The headerbar menu now has
+  one, on the `pendingActions` "quit" path `gui.nim:400` already handled. A desktop with no
+  StatusNotifierWatcher gets no tray at all, which is what left the window with a single exit.
+- **G-13a** — `App.fullscreen`, bound to the Window's `fullscreened`, with a menu item that reads
+  "Fullscreen" / "Leave fullscreen". owlkettle has no window-state event, so a compositor-initiated
+  fullscreen takes two toggles to escape; recorded as a limitation, not hidden.
+
+**G-13b — fullscreen layout and rendering — stays open with no mechanism.** Three hypotheses were
+checked against the source and all three were **disproven**: the `fullscreened` property hook is
+change-guarded (`widgetdef.nim:508-519`); `addOverlay` already fills (`widgets.nim:431-432`); and
+the titlebar-hiding theory was killed by the USER's own answer that the header bar stays. **One
+proven oddity remains a suspect and nothing more:** `gtk_overlay_set_measure_overlay` is called
+nowhere in owlkettle, so the Overlay measures only its `DrawingArea` main child and the real content
+is invisible to the window's size request. **The next step is a terminal capture from a fullscreen
+run, not a patch.**
+
+### 2026-08-31 18:55 — **G-8 … G-11 CONFIRMED ON SCREEN by the USER.** *"For the most part it looks good."*
+
+The run also produced **no CSS parsing warning** — the only terminal output was two
+`VK_SUBOPTIMAL_KHR` swapchain notices and a clean `SIGINT` exit, so every rule added at 18:42
+parsed, including `box-shadow` with `alpha()`, the four-value `border-radius` shorthand and
+`letter-spacing`. **No core** from the run.
+
+Two new defects came out of it — `TODOS.md` **G-12** and **G-13**.
 
 ### 2026-08-31 18:42 — **G-8 … G-11: the four defects the USER saw on screen. Written and compiled; NOT yet run.**
 

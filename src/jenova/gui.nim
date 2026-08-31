@@ -348,6 +348,12 @@ viewable App:
   renameDraft: string
   search: string
   sidebarOpen: bool = true
+  ## Bound to the Window's `fullscreened`, which the application had never set —
+  ## so nothing in the program could leave fullscreen once the compositor put it
+  ## there. owlkettle exposes no window-state event, so this cannot *observe* a
+  ## compositor-initiated fullscreen; it can only drive one. Escaping that case
+  ## therefore takes two toggles, which is still an exit where there was none.
+  fullscreen: bool
   ## Decoded once at startup, not per redraw: `view` runs on every canvas frame,
   ## and re-decoding a 165 KB JPEG thirty times a second is the same mistake as
   ## re-forking `ifconfig`. A nil pixbuf is survivable — `Picture` renders empty
@@ -399,6 +405,8 @@ viewable App:
           changed = true
           if action == "quit":
             st.closeWindow()
+          elif action == "toggle_fullscreen":
+            st.fullscreen = not st.fullscreen
           elif action == "toggle_lan":
             let next = not st.lanEnabled
             setLanState(st.p, next)
@@ -684,6 +692,7 @@ method view(app: AppState): Widget =
     Window:
       title = "Jenova"
       defaultSize = (900, 680)
+      fullscreened = app.fullscreen
 
       HeaderBar {.addTitlebar.}:
         WindowTitle {.addTitle.}:
@@ -752,6 +761,20 @@ method view(app: AppState): Widget =
                 text = "Open Web UI"
                 style = [ButtonFlat]
                 proc clicked() = pendingActions.add "web"
+              Separator()
+              Button:
+                text = (if app.fullscreen: "Leave fullscreen" else: "Fullscreen")
+                style = [ButtonFlat]
+                proc clicked() = pendingActions.add "toggle_fullscreen"
+              Separator()
+              # The tray has carried the only Quit since it was written
+              # (`trayMenu`, id 12). A desktop with no StatusNotifierWatcher gets
+              # no tray, which left the headerbar's close button as the single
+              # way out of the application.
+              Button:
+                text = "Quit"
+                style = [ButtonFlat]
+                proc clicked() = pendingActions.add "quit"
 
       # The canvas is the Overlay's main child, so it fills the window and every
       # widget below is stacked over it — the GTK equivalent of the Web UI's
