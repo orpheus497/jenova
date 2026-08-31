@@ -177,6 +177,121 @@ what the N-S2 write-once path buffer exists to avoid. A direct transcription wou
 if forced to compile with `{.gcsafe.}` it would be a data race. **This is the reason the storage
 question below must be answered before any code is written, not during.**
 
+---
+
+## The plan, rebuilt on D-AF and the 2026-08-31 inventory
+
+> **D-AF changed the shape of everything below.** `llama-server` is the inference engine; the Nim
+> core is the harness. `upstream.nim` is the primary inference path. In-process inference is kept
+> as `JENOVA_INPROC=1` but is no longer the default, and **nothing new is built on it.**
+>
+> **This deletes work rather than adding it.** N-25, N-26 and D-W are closed by the ruling. FIM
+> becomes route classification instead of an implementation on `llama_vocab_fim_*`.
+
+### Stage N-S4c — invert the inference default *(new, small, first)*
+
+1. `JENOVA_INPROC` default flips from `1` to `0` in `src/jenova_core.nim:78`.
+2. Route `/infill` to the completion class in `routes.nim` so it reaches `upstream.forward` —
+   **this is the whole of the USER's Neovim FIM requirement** under D-AF.
+3. Route `/v1/health` to the health class; it currently 400s because the completion class tries to
+   parse a body.
+4. The core must **supervise** `llama-server` rather than assume it is up — this is the piece D-N's
+   single-binary ruling deferred and N-S6 owns. Until then a 502 naming the unreachable upstream is
+   the honest answer, which `upstream.nim` already gives.
+5. `llama.nim` and `inference.nim` stay compiled and reachable. **No new work lands on them.**
+
+**Acceptance:** with `llama-server` up, `/v1/chat/completions`, `/completion` and `/infill` stream
+through the proxy; sampling parameters that N-25 recorded as ignored now take effect, because
+`llama-server` parses them. That last check is the one that proves the ruling did what it claims.
+
+
+
+The inventory changed the shape of the remaining work. **The surface is nearly reproduced; the
+behaviour is not.** What remains is not "finish porting modules" — it is one missing surface
+(N-29), one missing pipeline (N-30), and the RAG engine that feeds it (N-S5b).
+
+### Stage N-S5a-2 — finish the surface (N-29). *Unblocks retiring `lib/proxy.lua`.*
+
+| Item | Detail | Decided by |
+|---|---|---|
+| `/api/storage/*` — 4 routes | **Live**, `storage.service.ts` calls all four. `POST` save, `GET` fetch (`application/octet-stream`), `GET /api/storage/` list (recursive, depth 4, skipping dotfiles/`node_modules`/`build`), `DELETE` trash | Investigation, 2026-08-31 |
+| `fs_sync.trash_path` | The 13th function; `DELETE /api/storage/<path>` needs it | — |
+| `/api/workspaces` | **Do not port.** No caller in `jca_web/src`; `tests/proxy-concurrency/README.md:34` records it never worked. Subtract it (D-D) | Investigation |
+| `/infill` | Classify to the completion class. **Required — the USER's Neovim configuration depends on FIM** | USER, 2026-08-31 |
+| `/v1/health` | Currently 400 — classified to completion, which then fails to parse a body. Route it to the health class | — |
+
+**Path containment is the risk here, not the routes.** `/api/storage/*` takes a client-supplied
+path and reads, writes and deletes under `$JENOVA_WORKSPACES`. `proxy.lua` guards with a `..` check
+plus `resolve_safe_path`. The Nim port must contain by resolved real path, not by string matching,
+and it must be asserted — `http.resolveStatic` already has the pattern.
+
+### Stage N-S5b — RAG, rebuilt per Q-24 and Q-25
+
+Both indexes in SQLite (**FTS5 + BLOB**), embeddings **in-process on CPU**. This kills all three
+`search.lua` storage defects and the GC-safety problem together. **First action is the FTS5 probe
+against the native build** — if absent, fall back to Q-24 option B and say so (D-AB).
+`llama.LoadSpec` needs a per-context device override so the embedding context requests CPU while
+the agent context keeps its Vulkan devices; **C-14 is the standing warning that a new binding must
+honour every configured value.**
+
+### Stage N-S5c — the completion pipeline (N-30). **The stage that makes it Jenova.**
+
+Seven behaviours, in dependency order. RAG (N-S5b) must land first because steps 2–3 consume it.
+
+1. **Intent detection** — four prefixes, stripped from the message after matching.
+2. **RAG retrieval** — per-intent limits; the large-payload query rewrite (basename + trailing
+   prose when a `Path:` is embedded and the message exceeds 2000 chars).
+3. **RAG injection** — `--- REPOSITORY CONTEXT ---`, `[n] path`, snippets truncated at 1000 chars.
+4. **Web search** — DuckDuckGo HTML with an Instant Answer fallback, via `fetch`. Two distinct
+   failure messages, because "no results" and "no HTTPS client" tell the model different things.
+5. **Persona injection** — three modes, and they are not interchangeable: agent (never override a
+   client system prompt; inject the CORE MANDATE only when absent), conversational (persona-first),
+   and no-intent (persona prepended, RAG appended).
+6. **Tool stripping** — `visual` and `websearch` clear `tools` and set `tool_choice = "none"`.
+7. **Cache intercept** — SHA-256 of the **rewritten** body, `X-Cache: HIT` on a hit.
+
+**Fold N-25 in here.** Sampling parameters are ignored today because the sampler chain is built
+once at load; this stage rebuilds the request path and is where per-request sampling belongs.
+
+**Note the ordering trap in step 7:** the key is the SHA-256 of the body *after* rewriting, so
+caching must sit at the end of the pipeline. Hashing the client's original body would produce a
+different key and silently break cache compatibility with existing entries.
+
+### Then
+
+**N-S6** lifecycle parity — deletes `bin/jenova-ca`, closing B-12, B-13 and N-23 · **N-S7** GUI ·
+**N-S8** CLI · **N-S9** retires `jca_web/`, closing B-01, B-03, B-04.
+
+**Cheap and independent of all of the above:** N-24 (`jenova.local.conf` names a `Vulkan2` that does
+not exist), B-22 (a test that rewrites `etc/jenova.conf`), N-26 (no cancellation on disconnect for
+non-streaming requests).
+
+---
+
+## N-28 — a guard so the core cannot write to `~/JCA`. **USER decision, nothing written.**
+
+**D-AC prohibits anything that affects `~/JCA`.** The binary currently defaults into it
+(`paths.nim:71`), and N-S5a widened what a bare run does there from one database file to
+directories, git repos, file writes and trash moves. The test suites are contained; the binary is
+not, and the gap is closed by a guard rather than by remembering — remembering is what failed.
+
+**Q-27 — which guard?**
+
+| | Option | For | Against |
+|---|---|---|---|
+| **A** | **Refuse to start when `JCA_HOME` is unset.** No default at all; the caller must name a home | Impossible to touch `~/JCA` by accident, because nothing is implicit. Smallest change — one guard in `paths.resolve` | Changes behaviour for the eventual real deployment, which *will* want the default. Needs removing or inverting at N-S6 |
+| **B** | **Refuse when the resolved `JCA_HOME` is the deployed one**, unless `JENOVA_ALLOW_DEPLOYED=1` is set | Keeps the default working for the real product; blocks exactly the case D-AC names; the override documents intent at the call site | Needs a definition of "the deployed one" — simplest is `$HOME/JCA` literally, which is what `jenova-conf.sh:39` uses |
+| **C** | **A build-time flag** — `-d:jenovaRewrite` compiles a core that refuses any `JCA_HOME` under `$HOME` | Cannot be bypassed at runtime; disappears cleanly when the flag is dropped at N-S6 | Two binaries with different behaviour is its own hazard, and the one you test is not the one you ship |
+| **D** | **No code change; rely on the suites' `mktemp` isolation** | Nothing to unwind later | **This is the status quo that already failed.** A bare `jenova-core serve` typed to check something still writes to the protected tree |
+
+**Recommendation: B**, with the deployed home defined as `$HOME/JCA` to match `lib/jenova-conf.sh:39`.
+It protects the exact folder named in D-AC, survives into the real product instead of needing to be
+unwound at N-S6, and makes any deliberate exception visible in the command that requests it.
+
+**Not written. Awaiting the USER.**
+
+---
+
 ### The three questions — all USER decisions
 
 **Q-24 — Where do the two indexes live?**

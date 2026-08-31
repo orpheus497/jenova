@@ -45,7 +45,32 @@ recorded rather than buried — a `git rm` that violated C-11, undone, and a `py
 that violated COMMAND LAWS. The port also proved a contract detail no test had held: `fs_sync`
 refuses to mirror a row whose id is not a UUID and the original *deletes the row*, which
 `test_api_db.sh` had been passing only because `api.nim` had no mirroring to reject it — **the test
-was encoding the gap, not the contract.** See `SESSION_HANDOFF.md` Session 005.
+was encoding the gap, not the contract.** The USER then moved the runtime home from `~/JCA` to
+`~/Jenova` and had the core hard-refuse the legacy tree, after correctly demolishing my warning that
+editing the source would break their deployment — `install.sh` copies `lib/` into the deployed tree,
+which runs from its own copy, so the source cannot reach it. **A final verification pass then
+retracted three more of my claims from the same day:** the rename covered 20 sites and not the
+"eleven" I reported, having missed `etc/jenova.conf` and all six profile confs — the ones that
+matter, since the core evaluates them through `/bin/sh`; the `fs_sync` port covered 12 of 13
+functions, not all 13; and **`lib/proxy.lua` is not retired at all** — `/api/storage/*`,
+`/api/workspaces` and `/infill` are unported, found by probing a running core rather than reading.
+**All five errors this session share one shape: a count, a completion or a mechanism asserted from
+what I had just written instead of enumerated from the thing itself**, each one command from being
+checked. A route inventory is now a standing check in `TESTS.md §5d`. That inventory found **N-30, the
+largest gap in the rewrite**: the core's completion path is a raw llama-server equivalent, missing
+all seven of `proxy.lua`'s behaviours — intent detection, RAG retrieval and injection, web search,
+three-mode persona injection, tool stripping and the cache intercept. **The session then closed on
+the USER reversing an architectural ruling that was never theirs.** Q-22 had asked "one binary, or
+a core plus a GUI client" — a GUI question — and I had written into D-N that it *"also settles …
+direct linkage of `llama.cpp` rather than local HTTP"*, when the spec's actual open question was
+static vs dynamic linkage. **Two whole stages were built on that inference.** **D-AF restores what
+the USER always understood: `llama-server` is the inference engine and the Nim core is the harness
+around it** — `upstream.nim` becomes primary, in-process inference is retained as an option rather
+than deleted, 639 of 3,452 Nim lines become optional and 2,813 are unaffected, and N-25, N-26, D-W
+and half of N-7 close without being built while FIM collapses to route classification. **Three
+instances of one failure this session** — the D-Y clause, N-8, and D-N's linkage sentence — each a
+decision of mine recorded in the USER's voice and then acted on; this one directed two stages.
+See `SESSION_HANDOFF.md` Session 005.
 
 ---
 

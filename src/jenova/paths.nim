@@ -68,7 +68,21 @@ proc resolve*(root = ""): Paths =
   if home.len == 0:
     raise newException(PathError, "HOME is not set; cannot derive JCA_HOME")
 
-  result.jcaHome = getEnv("JCA_HOME", home / "JCA")
+  result.jcaHome = getEnv("JCA_HOME", home / "Jenova")
+
+  # Action purpose: ruling D-AC — `~/JCA` is the USER's pre-existing working
+  # deployment and nothing may write into it. The runtime home moved to
+  # `~/Jenova`, but changing the default alone is not airtight: a shell that has
+  # sourced the Jenova environment exports `JCA_HOME=~/JCA`, and an inherited
+  # value overrides a default. This refuses that case outright rather than
+  # relying on whoever runs the binary remembering — remembering is exactly what
+  # failed. The override exists so N-S6 can address the real tree deliberately.
+  if result.jcaHome.normalizedPath == (home / "JCA").normalizedPath and
+     getEnv("JENOVA_ALLOW_DEPLOYED") != "1":
+    raise newException(PathError,
+      "refusing to operate on the legacy deployment at " & result.jcaHome &
+      " (ruling D-AC). The runtime home is now " & home / "Jenova" &
+      ". Set JENOVA_ALLOW_DEPLOYED=1 only if targeting the old tree is intended.")
   result.state = getEnv("JENOVA_STATE", result.jcaHome / ".system")
   result.workspaces = getEnv("JENOVA_WORKSPACES", result.jcaHome / "Workspaces")
   result.logDir = getEnv("LOG_DIR", result.jcaHome / "var" / "log")

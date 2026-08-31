@@ -22,9 +22,11 @@ scripts are the exception: they test the text, not the kernel. Anything touching
 
 ## 2. The automated suite
 
-`tests/Makefile` `check` target — **runs 4 of the 9 test scripts present**. *(Corrected
-2026-08-31; this section said "3 of 8" from before `test_api_db.sh` was added at N-S3b. The four
-orphans below are unchanged, so B-25 stands — only the count was wrong.)*
+`tests/Makefile` `check` target — **runs 6 entry points: 5 of the 9 scripts in `tests/`, plus
+`proxy-concurrency/all.sh`.** *(Count corrected twice on 2026-08-31: it read "3 of 8" from before
+`test_api_db.sh` landed at N-S3b, then "4 of 9" before `test_api_fs.sh` and `test_routes.sh` were
+added. **The four orphans are unchanged throughout, so B-25 stands** — only the arithmetic was
+ever stale.)*
 
 | Script | Spec | Status |
 |---|---|---|
@@ -272,6 +274,37 @@ Streaming shape: `POST /v1/chat/completions` with `"stream":true` returns
 
 > **Not covered by any test yet:** sampling parameters are ignored (N-25) and client disconnect
 > does not cancel a generation (N-26). Neither should be assumed working because these checks pass.
+
+## 5d. The route inventory — **now a test**, `tests/test_routes.sh` (2026-08-31)
+
+**9 assertions, PASS.** Wired into `tests/Makefile check`. Runs in a scratch `JCA_HOME` (D-AE).
+
+**Reading the statuses correctly matters here.** A **502** on `/v1/chat/completions`, `/completion`
+and `/infill` is the **pass** condition under D-AF: it proves the request was classified and reached
+`upstream.forward`, which then found no `llama-server` listening. **A 404 or 405 would mean the
+route was never classified at all** — which is precisely what `/infill` returned before N-S4c. The
+test asserts 502, not "not an error", for exactly that reason.
+
+The prose below explains why the check exists and how to extend it when a new surface is claimed.
+
+### Why it exists
+
+**Any stage claiming to reproduce a surface must diff its routes against the running binary before
+the claim is made.** N-29 exists because that was never done: the audit enumerated the route
+families it noticed, `/api/storage/*` was not among them, and N-S5a was recorded complete with five
+routes unserved.
+
+The check is one loop and takes seconds:
+
+```sh
+probe() { printf '%s %s HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n' "$1" "$2" \
+          | nc 127.0.0.1 "$PORT" | head -1; }
+```
+
+Enumerate the source's routes first — for `lib/proxy.lua`,
+`grep -oE '"\^(GET|POST|DELETE|PUT|\[A-Z\]\+) /[a-zA-Z0-9/_%.-]*'` plus the `find("…")` matches,
+since it uses both forms — then probe every one. **A 404 or 405 on a route the original serves is
+the finding.** Reading the handler list is not a substitute; that is what produced the false claim.
 
 ## 5c. `tests/test_api_fs.sh` — the filesystem contract (N-S5a, 2026-08-31)
 

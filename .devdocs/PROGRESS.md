@@ -2,11 +2,190 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-08-31 09:08
+**Last updated:** 2026-08-31 10:19
 
 ---
 
 ## Completed
+
+### 2026-08-31 10:19 — N-S4c complete: the inference default inverted (D-AF)
+
+`JENOVA_INPROC` defaults to **0** (`jenova_core.nim:85`). The core proxies inference to
+`llama-server` and is the harness around it; in-process generation is retained behind
+`JENOVA_INPROC=1` per Directive 3 and nothing new is built on it.
+
+**`/infill` is classified to the completion class** (`routes.nim`). Under D-AF that is the whole of
+the USER's Neovim FIM requirement — `llama-server` runs with `--spm-infill` (`bin/jenova-ca:235,808`)
+and `proxy.lua:1406` likewise only ever forwarded the request verbatim. No in-process FIM
+implementation on `llama_vocab_fim_*` is needed.
+
+**`/v1/health` fixed.** It was caught by the `/v1/` prefix, classified as a completion, and answered
+**400** because the handler parsed a JSON body a GET does not carry. Now matched before that prefix
+and answered by the health class.
+
+**Verified by probing a running core:**
+
+```
+GET  /health              200      GET  /api/db/workspaces  200
+GET  /v1/health           200      GET  /api/fs/trash       200
+POST /v1/chat/completions 502      POST /infill             502
+GET  /../etc/jenova.conf  403
+```
+
+**The 502s are the pass condition, not a failure.** They prove the request reached
+`upstream.forward` and found no `llama-server` listening. A 404 or 405 would mean the route was
+never classified — which is exactly what `/infill` did before this change.
+
+**`tests/test_routes.sh` added and wired into `tests/Makefile`** — 9 assertions, PASS. This is the
+standing route inventory `TESTS.md §5d` mandates, and it exists because N-29 was missed by reading
+handler lists instead of asking the binary.
+
+**Banner and help corrected.** The header comment, `Stage`, the `serve` description and the
+`JENOVA_INPROC` hint all described the old default; a binary that misreports its own architecture
+is the defect class this workspace exists to catch.
+
+**Not verified here, and stated rather than implied:** end-to-end generation and per-request
+sampling through `llama-server` need a running `llama-server` with a model. The models live under
+`~/JCA`, which **D-AE places permanently out of bounds**, so this check belongs to the USER. What is
+verified is classification and that the proxy path is reached.
+
+### 2026-08-31 — D-AF: **`llama-server` is the inference engine.** A ruling of mine reversed by the USER
+
+The USER asked what was actually being built, and the answer exposed a decision I made and
+attributed to them.
+
+**Q-22 asked "One binary, or a core plus a GUI client?" — a GUI architecture question.** The USER
+chose the single binary. **D-N then carried a sentence I wrote:** *"This also settles the spec's own
+open question toward direct linkage of `llama.cpp` rather than local HTTP."* The spec's question was
+**static vs dynamic linkage** — how to link it, not whether to replace `llama-server`. **I converted
+a GUI answer into an inference-engine ruling, recorded it as binding, and built N-S4a and N-S4b on
+it.** The USER's standing understanding — `llama-server` retained for LAN and web access — was
+correct throughout.
+
+**Third instance of the same failure this session** (after the D-Y clause and N-8), and the most
+expensive, because it directed two entire stages rather than one claim.
+
+**The cost, counted rather than estimated.** Of 3,452 lines of Nim, **639 (19%)** — `llama.nim` and
+`inference.nim` — become optional under `JENOVA_INPROC=1`; they are **retained, not deleted**
+(Directive 3), and the USER explicitly values the non-server runtime. **2,813 lines (81%) are
+unaffected**: the thread-pool server — which is the actual fix for the defect that motivated the
+whole rewrite — plus `/api/db/*`, `/api/fs/*`, the concurrent SQLite layer, path/config resolution,
+and `upstream.nim`, which was written at N-S3a and now becomes the primary inference path.
+
+**Kept from the detour:** the `DT_RUNPATH` linking findings, and **C-14** — the binding ignoring
+`DEVICES` and `KV_CACHE_TYPE` was a configuration lesson that still applies to launching
+`llama-server` correctly. **Superseded:** D-W's serial inference (llama-server has slots), the
+socket-ownership handoff, and chat templating.
+
+**Work items closed by the ruling rather than built:** N-25 (sampling parameters), N-26
+(cancellation), D-W (serial inference), and the second half of N-7 (a GUI fault killing inference —
+now solved by process separation). **FIM collapses** from an in-process implementation to route
+classification. **Q-25 is reopened as Q-28**, because it was answered assuming in-process inference.
+
+### 2026-08-31 — Full route-and-symbol inventory (USER-directed). **N-30 found: the completion pipeline is unported.**
+
+The USER directed a complete inventory rather than stage-by-stage discovery. It found the largest
+outstanding gap in the rewrite, which no tracker had recorded.
+
+**N-30 — the Nim core's completion path is a raw llama-server equivalent, not Jenova.**
+`server.nim:181-185` reads `stream`, `max_tokens`/`n_predict` and `messages`/`prompt`. That is all.
+`lib/proxy.lua:1225-1400` additionally performs **intent detection** (four message prefixes,
+stripped after matching), **RAG retrieval and injection**, **web search**, **persona and
+system-prompt injection in three distinct modes**, **tool stripping per intent**, and an
+**LLM cache intercept keyed on the SHA-256 of the rewritten body**. **None of it is ported.**
+This is the product's distinguishing behaviour — the "Intelligence" in Intelligence Proxy — and it
+reframes N-S5b: RAG is one input to this pipeline, not the stage itself.
+
+**Q1 answered by investigation, not assumption.** `/api/storage/*` is **live**:
+`jca_web/src/lib/services/storage.service.ts` implements all four verbs against it (`save` POST,
+`get` GET, `list` GET `./api/storage/`, `delete` DELETE). It must be ported.
+**`/api/workspaces` is dead** — no caller in `jca_web/src`, and
+`tests/proxy-concurrency/README.md:34` records that it "had never worked". Only `proxy.lua`'s own
+handler references it.
+
+**Q2 answered.** `/infill` is a **pure passthrough** — `proxy.lua:1406` forwards the raw request to
+`llama-server` with no transformation, and `bin/jenova-ca:235,808` runs the server with
+`--spm-infill`. The USER needs FIM for their Neovim configuration. **In-process FIM is
+implementable**: `external/llama.cpp/include/llama.h:1096-1101` exposes `llama_vocab_fim_pre`,
+`_suf`, `_mid`, `_rep`, `_sep`, and `:1483` provides `llama_sampler_init_infill`.
+
+**Database coverage verified complete.** All 46 `db.lua` public functions are reachable through
+`api.nim`'s generic handlers — including `get_all_*` via `/<entity>/all`, `get_deleted_*` via
+`/<entity>/deleted`, `partial_update_message`, `delete_messages_bulk`, `restore_item`, the cache
+pair and `import_data`. No gap here.
+
+**Module port status:** `db.lua`, `http.lua`, `fs_sync.lua`, `git.lua` and `ffi_defs.lua` have Nim
+counterparts. `json.lua` is superseded by `std/json`. **Unported and still required:**
+`search.lua` + `embed.lua` + `indexer_runner.lua` (N-S5b), `prompts.lua` (N-30), `sha256.lua`
+(N-30's cache key), `daemon.lua` (N-S6), `ui.lua` (N-S7).
+
+### 2026-08-31 — Verification pass: **three claims from earlier today retracted**
+
+The USER asked for the analysis to be checked before reporting. It did not survive. Three claims
+made in this file and in `DECISIONS_LOG.md` a few hours ago are false, and the method that produced
+them is the same one that produced N-8 and the deployment warning: **asserting a count or a
+completion from what I had just written, rather than enumerating the thing itself.**
+
+| Claim | Where | Reality |
+|---|---|---|
+| *"`JCA_HOME` … changed at **all eleven code sites**"* | D-AD, and the rename entry below | **There were 20.** I changed 15 and missed 8 on the first pass: `etc/jenova.conf:16`, all six `hardware-profiles/*/*/jenova.conf`, and `hardware-profiles/detect-hardware.sh:323`. The five Lua modules already said `Jenova` and needed nothing. **The missed ones mattered most**: `etc/jenova.conf` is what `config.nim` evaluates through `/bin/sh`, so the core would have read `~/JCA` back out of the profile |
+| *"Port **all 13** `fs_sync` functions"* | N-S5a scope and completion entry | **12 of 13.** `fs_sync.trash_path` (`fs_sync.lua:281`) was never ported. It is the one `DELETE /api/storage/<path>` depends on |
+| *"**`lib/proxy.lua` is out of the serving path**"* | N-S5a entry, `BRIEFING.md`, `SUMMARIES.md` | **False. Five routes are unported**, verified by probing a running core rather than by reading — see the table below |
+
+**Route inventory, measured against `bin/jenova-core serve`:**
+
+```
+GET  /api/storage            -> 404      (proxy.lua: recursive file listing)
+GET  /api/storage/<path>     -> 404      (proxy.lua: file download)
+POST /api/storage/<path>     -> unported (proxy.lua:1009 upload)
+DELETE /api/storage/<path>   -> unported (proxy.lua:1041, needs fs_sync.trash_path)
+GET  /api/workspaces         -> 404      (proxy.lua:1096 filesystem workspace list)
+POST /infill                 -> 405      (FIM completion; routes.nim never classifies it)
+GET  /v1/health              -> 400      (classified to completion, which fails to parse a body)
+--- working ---
+GET /health, /api/db/*, /api/fs/*  -> 200
+```
+
+**Why the audit missed `/api/storage/*` entirely.** `TODOS.md` N-20 recorded *"`/api/fs/*` is not
+ported"* and nothing recorded `/api/storage/*`. The original full-tree audit enumerated the route
+*families* it noticed and never diffed them against the implementation. **A route inventory is
+cheap and was never run** — the one above took a single loop against a running binary. Recorded as
+**N-29**.
+
+**N-S5a is therefore NOT complete.** The `fs_sync` mirroring (N-27) and `/api/fs/*` (N-20) are done
+and tested; `/api/storage/*`, `/api/workspaces` and `/infill` are not, and `lib/proxy.lua` cannot be
+retired until they are.
+
+### 2026-08-31 — Runtime home moved to `~/Jenova`; the `~/JCA` guard added (D-AD, Q-27)
+
+`JCA_HOME` now defaults to `$HOME/Jenova` at **all 20 code sites — 15 changed, 5 already correct.**
+*(Corrected: this entry first said "eleven" and the first pass missed 8, including
+`etc/jenova.conf` and all six profile confs. See the retraction entry above.)* The 15: two `lib/`
+shell modules, four `scripts/`, `etc/jenova.conf`, six `hardware-profiles/*/*/jenova.conf`,
+`detect-hardware.sh:323`, and `src/jenova/paths.nim:71`. The five Lua modules already said
+`Jenova`. **That last point is the interesting one:** shell
+and Lua had disagreed all along, and it stayed invisible because `jenova-conf.sh` exported the
+value before any Lua ran. The rename resolves the inconsistency rather than adding to it. The env
+var name is unchanged; only its default path moved.
+
+`src/jenova/paths.nim` refuses to resolve against `$HOME/JCA` unless `JENOVA_ALLOW_DEPLOYED=1`,
+per ruling D-AC. **Verified: the guard fires and names the ruling, the default resolves to
+`~/Jenova`, the explicit override still works, and both API suites still pass.** A changed default
+alone would not have sufficed — an inherited `JCA_HOME` beats a default, and a shell that has
+sourced the Jenova environment exports exactly that.
+
+Docs updated across `README.md` and `docs/{install,usage,privacy,architecture}.md`. `sh -n` clean
+on all six shell files.
+
+**`~/Jenova` already existed** — 2026-08-14, with a `Workspaces/` directory of the same date,
+created by the Lua fallback. Not created by this work, and not empty.
+
+**A false claim of mine retracted.** I warned that editing `lib/jenova-conf.sh` would break the
+USER's running deployment. **It would not.** `scripts/install.sh:267` copies `lib/*` into
+`$JCA_HOME/lib/`, and the deployment runs from its own copy at `~/JCA/lib/jenova-conf.sh` dated
+2026-08-24 — the source tree cannot reach it. The USER challenged the claim and was correct.
+**Second time this session I argued from an assumed mechanism rather than reading it** (N-8 was the
+first); both took one command to check, and this one argued for the wrong decision.
 
 ### 2026-08-31 09:08 — N-S5a complete: **the filesystem mirror, and `lib/proxy.lua` is out of the serving path**
 

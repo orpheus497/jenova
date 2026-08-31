@@ -8,10 +8,10 @@ no telemetry of any kind. This page states precisely what that does and does not
 - **Every generated token.** Inference runs in `llama-server` on your own GPU or CPU. No prompt,
   completion or embedding is sent to a model provider — there is no provider, and no code path to
   configure one.
-- **Your conversations, notes and files.** They live in SQLite at `~/JCA/var/jenova.db` and as
-  Markdown under `~/JCA/Workspaces`.
+- **Your conversations, notes and files.** They live in SQLite at `~/Jenova/var/jenova.db` and as
+  Markdown under `~/Jenova/Workspaces`.
 - **Your retrieval index.** Embeddings are computed locally by the embedding server and cached in
-  `~/JCA/var/cache`.
+  `~/Jenova/var/cache`.
 
 No usage data, crash reports or analytics are collected. There is no analytics code in the Web UI.
 
@@ -49,7 +49,7 @@ stay on loopback; exposing them would publish unauthenticated inference endpoint
 
 ## Where your data is
 
-All paths are relative to `$JCA_HOME`, which defaults to `~/JCA`.
+All paths are relative to `$JCA_HOME`, which defaults to `~/Jenova`.
 
 | Path | Contents |
 |---|---|
@@ -75,7 +75,7 @@ Two habits matter anyway:
 
 - Put anything private in `etc/jenova.local.conf`, never in `etc/jenova.conf` — the latter is
   overwritten whenever a hardware profile is applied.
-- Your data lives in `~/JCA`, outside this repository. A `make install` deployment is
+- Your data lives in `~/Jenova`, outside this repository. A `make install` deployment is
   self-contained there and is not affected by anything you do to the source tree.
 
 ## Auditing this yourself

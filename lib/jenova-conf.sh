@@ -36,7 +36,7 @@ fi
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 
-JCA_HOME="${JCA_HOME:-$HOME/JCA}"; export JCA_HOME
+JCA_HOME="${JCA_HOME:-$HOME/Jenova}"; export JCA_HOME
 JENOVA_STATE="${JENOVA_STATE:-$JCA_HOME/.system}"; export JENOVA_STATE
 JENOVA_WORKSPACES="${JENOVA_WORKSPACES:-$JCA_HOME/Workspaces}"; export JENOVA_WORKSPACES
 LOG_DIR="${LOG_DIR:-$JCA_HOME/var/log}"; export LOG_DIR

@@ -16,7 +16,7 @@ set -e
 _REAL_SCRIPT=$(realpath "$0" 2>/dev/null || echo "$0")
 _SCRIPT_DIR=$(cd "$(dirname "$_REAL_SCRIPT")" && pwd)
 JENOVA_ROOT=$(cd "$_SCRIPT_DIR/.." && pwd)
-JCA_HOME="${JCA_HOME:-$HOME/JCA}"
+JCA_HOME="${JCA_HOME:-$HOME/Jenova}"
 
 # Shared OS/hardware detection
 . "$JENOVA_ROOT/lib/detect-env.sh"

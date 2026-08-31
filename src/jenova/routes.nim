@@ -63,13 +63,24 @@ proc totalThreads*(): int =
 ## be made from a peek at the request line without consuming the socket. The
 ## connection is then handed to the owning pool, which performs the real parse.
 proc classify*(path: string): RouteClass =
-  if path == "/health" or path.startsWith("/health?"):
+  # Action purpose: `/v1/health` is a liveness check, not a completion. It was
+  # caught by the `/v1/` prefix below and answered 400, because the completion
+  # handler tried to parse a JSON body that a GET does not carry. It is tested
+  # before that prefix for exactly that reason.
+  if path == "/health" or path.startsWith("/health?") or
+     path == "/v1/health" or path.startsWith("/v1/health?"):
     rcHealth
   elif path.startsWith("/debug/"):
     rcDebug
   elif path.startsWith("/api/"):
     rcApi
+  # Action purpose: `/infill` is llama.cpp's fill-in-the-middle endpoint and the
+  # USER's Neovim configuration depends on it. Under D-AF it is forwarded to
+  # `llama-server`, which is built with `--spm-infill` (`bin/jenova-ca:235,808`),
+  # so classifying it here is the whole of the requirement — `proxy.lua:1406`
+  # likewise only ever forwarded it verbatim.
   elif path.startsWith("/v1/") or path.startsWith("/completion") or
+       path.startsWith("/infill") or
        path.startsWith("/chat") or path.startsWith("/props") or
        path.startsWith("/slots"):
     rcCompletion

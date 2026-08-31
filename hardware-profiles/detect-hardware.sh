@@ -320,7 +320,7 @@ apply_profile() {
     fi
 
     _jenova_root="$(dirname "$SCRIPT_DIR")"
-    _jca_home="${JCA_HOME:-$HOME/JCA}"
+    _jca_home="${JCA_HOME:-$HOME/Jenova}"
     _profile_conf="$MATCHED_PROFILE_DIR/jenova.conf"
 
     if [ -f "$_profile_conf" ]; then

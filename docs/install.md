@@ -12,7 +12,7 @@ cd jenova
 # 2. Install dependencies and build llama.cpp (Vulkan), jenova-ui, and the Web UI
 make
 
-# 3. Detect hardware, deploy to ~/JCA, link launchers into ~/.local/bin
+# 3. Detect hardware, deploy to ~/Jenova, link launchers into ~/.local/bin
 make install
 ```
 
@@ -178,7 +178,7 @@ scripts/model_dl.sh
 ```
 
 That fetches Qwen3.5-4B-Q6_K (agent), Qwen3-Embedding-0.6B-Q8_0 (embedding) and
-Qwen3.5-0.8B-Q8_0 (drafter) into `~/JCA/models/`. See [usage.md](usage.md#models) for the
+Qwen3.5-0.8B-Q8_0 (drafter) into `~/Jenova/models/`. See [usage.md](usage.md#models) for the
 directory layout, discovery rules and overrides.
 
 ---

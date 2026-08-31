@@ -1,9 +1,11 @@
 ## Script function and purpose: Entry point for jenova-core, the native FreeBSD
 ## binary that replaces the Lua proxy, the shell orchestrators and the GTK3 tray
-## (`.devdocs/PLANS.md` Plan B, ruling D-L). At stage N-S4b it resolves paths and
-## configuration, serves HTTP with per-class thread pools, owns the database, and
-## generates in-process through libllama. **No GUI, RAG or CLI subsystem exists
-## yet**, and it does not pretend otherwise.
+## (`.devdocs/PLANS.md` Plan B, ruling D-L). It resolves paths and configuration,
+## serves HTTP with per-class thread pools, owns the database and the filesystem
+## mirror, and **proxies inference to `llama-server`** (ruling D-AF: this is the
+## harness; llama.cpp's own server is the engine). In-process generation through
+## libllama is retained behind `JENOVA_INPROC=1` but is not the default.
+## **No GUI, RAG or CLI subsystem exists yet**, and it does not pretend otherwise.
 
 ## Action purpose: refuse to compile anywhere but FreeBSD. Plan A spent seven
 ## stages removing the pretence that this project is portable; the Nim core
@@ -17,7 +19,7 @@ import jenova/[paths, config, db, dbselftest, server, serverselftest, llama, inf
 
 const
   Version = "0.1.0"
-  Stage = "N-S4b — in-process inference"
+  Stage = "N-S4c — harness; inference proxied to llama-server (D-AF)"
 
 proc usage() =
   echo &"jenova-core {Version} ({Stage})"
@@ -28,13 +30,13 @@ proc usage() =
   echo "  config        Resolve and print configuration under the full precedence rule"
   echo "  db-init       Create the database and schema"
   echo "  db-selftest   Prove the database layer runs concurrently, with measurements"
-  echo "  serve         Run the threaded HTTP server with in-process inference"
+  echo "  serve         Run the threaded HTTP server, proxying inference to llama-server"
   echo "  serve-selftest  Prove a stream holds its cadence while other connections block"
   echo "  llama-selftest  Load the model and generate, bypassing the server"
   echo "  version       Print version and stage"
   echo ""
   echo "Precedence: builtin default < etc/jenova.conf < etc/jenova.local.conf < environment"
-  echo "Set JENOVA_INPROC=0 to proxy completions to llama-server instead."
+  echo "Set JENOVA_INPROC=1 to load the model into this process instead of proxying."
   echo ""
   echo "No GUI, RAG or CLI subsystem is implemented yet."
   echo "See .devdocs/PLANS.md Plan B for the stage order."
@@ -72,10 +74,17 @@ proc main() =
       let port = c.getInt("PORT", 8080)
       db.initDb(p.state / "jenova.db")
 
-      # In-process inference is opt-in for now: with JENOVA_INPROC=0 the
-      # completion routes proxy to llama-server exactly as before, so a host
-      # where the model cannot be loaded still serves.
-      let inProc = c.getInt("JENOVA_INPROC", 1) != 0
+      # Action purpose: ruling D-AF — `llama-server` is the inference engine and
+      # this core is the harness around it. The default is therefore the proxy
+      # path: `llama-server` already provides per-request sampling parameters,
+      # client-disconnect cancellation, `/infill` and parallel slots, all of
+      # which an in-process path would have to reimplement (they were recorded
+      # as N-25, N-26 and D-W before the ruling closed them).
+      #
+      # In-process inference is retained, not deleted (Directive 3): set
+      # JENOVA_INPROC=1 to load the model into this process instead. Nothing new
+      # is built on that path.
+      let inProc = c.getInt("JENOVA_INPROC", 0) != 0
       if inProc:
         let ngl = if c.get("NGL_AGENT", "all") == "all": -1'i32
                   else: c.getInt("NGL_AGENT", 0).int32

@@ -29,7 +29,7 @@ _find_model() {
 }
 
 # --- Model Discovery ---
-JCA_HOME="${JCA_HOME:-$HOME/JCA}"
+JCA_HOME="${JCA_HOME:-$HOME/Jenova}"
 _MODELS_DIR="${JCA_HOME}/models"
 
 # Scans each type-specific folder. Overrides can be applied later.

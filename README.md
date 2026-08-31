@@ -18,7 +18,7 @@ git clone --recurse-submodules https://github.com/orpheus497/jenova
 cd jenova
 
 make             # install every dependency, then build everything
-make install     # deploy to ~/JCA and link launchers into ~/.local/bin
+make install     # deploy to ~/Jenova and link launchers into ~/.local/bin
 jenova-ca --daemon
 ```
 
@@ -55,8 +55,8 @@ conversation history, token streaming with TPS/TTFT metrics, `<think>` reasoning
 markdown, KaTeX math, syntax highlighting, in-browser PDF viewing, and MCP client support.
 
 Workspaces, projects, folders, conversations, messages and notes are stored in SQLite at
-`~/JCA/var/jenova.db`, managed by the proxy. Notes and chats are additionally mirrored to
-`~/JCA/Workspaces` as plain Markdown, readable and editable with any text editor.
+`~/Jenova/var/jenova.db`, managed by the proxy. Notes and chats are additionally mirrored to
+`~/Jenova/Workspaces` as plain Markdown, readable and editable with any text editor.
 
 ### Desktop Manager
 
@@ -115,7 +115,7 @@ matching profile that sets GPU offload, context size, batch sizes and thread cou
 | `CUDA/dgpu-generic` | `CUDA0` | all | 16K | yes |
 
 **Profiles do not choose your model.** `lib/jenova-model.sh` discovers whatever `.gguf` files are
-in `~/JCA/models/`, and `scripts/model_dl.sh` downloads the same default set on every profile:
+in `~/Jenova/models/`, and `scripts/model_dl.sh` downloads the same default set on every profile:
 Qwen3.5-4B-Q6_K (agent), Qwen3-Embedding-0.6B-Q8_0 (embedding), Qwen3.5-0.8B-Q8_0 (drafter).
 Point `JENOVA_MODEL` at anything else you like.
 
@@ -179,7 +179,7 @@ jenova/
 └── var/                # Runtime database, logs and cache (gitignored)
 ```
 
-Your models, database, logs and workspaces live under `~/JCA`, not in this repository.
+Your models, database, logs and workspaces live under `~/Jenova`, not in this repository.
 `make install` deploys a self-contained system there that does not depend on the source tree.
 
 ---

@@ -127,7 +127,7 @@ fi
 # ---------------------------------------------------------------------------
 # 2. Create required runtime directories & Permission checks
 # ---------------------------------------------------------------------------
-JCA_HOME="${JCA_HOME:-$HOME/JCA}"
+JCA_HOME="${JCA_HOME:-$HOME/Jenova}"
 info "Creating runtime directories in $JCA_HOME..."
 
 mkdir -p "$JCA_HOME/.system" 2>/dev/null || {

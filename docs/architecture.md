@@ -129,7 +129,7 @@ Development commands are in [../jca_web/README.md](../jca_web/README.md).
 
 ## Persistence
 
-**Workspace state is server-side, in SQLite.** The proxy owns `~/JCA/var/jenova.db` through
+**Workspace state is server-side, in SQLite.** The proxy owns `~/Jenova/var/jenova.db` through
 `lib/db.lua`, which loads `libsqlite3` over the FFI; the Web UI reaches it over `/api/db/*`. Your
 data is not trapped in browser storage — clearing site data does not lose a conversation.
 
@@ -143,7 +143,7 @@ data is not trapped in browser storage — clearing site data does not lose a co
 | `etc/jenova.conf` | The deployed hardware profile |
 | `models/` | GGUF storage: `agent/`, `draft/`, `embed/`, and optionally `instruct/`, `thinking/` |
 
-All paths are relative to `$JCA_HOME`, which defaults to `~/JCA`.
+All paths are relative to `$JCA_HOME`, which defaults to `~/Jenova`.
 
 `lib/fs_sync.lua` mirrors notes and chats to `$JCA_HOME/Workspaces` as `.md` files on every
 significant change, so the same content is editable with any text editor and backed up by

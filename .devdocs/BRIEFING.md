@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-08-31 09:08
+**Last updated:** 2026-08-31 10:19
 **Branch:** `bsd`
 **Phase:** 3 — Execution. **Plan B (Nim native FreeBSD desktop application) is the active workstream.**
 
@@ -11,7 +11,9 @@
 | Item | Value |
 |---|---|
 | Active plan | **Plan B — Nim native FreeBSD GUI application** (D-L). Approved backend-first, N-S0 … N-S9 |
-| Stage | **N-S0 … N-S5a complete.** Generation is in-process; the filesystem mirror and `/api/fs/*` are ported. **`lib/proxy.lua` is out of the serving path.** N-S5b (RAG) is next, and Q-24/Q-25 are answered |
+| Architecture | **D-AF, 2026-08-31: `llama-server` runs inference; Jenova is the harness.** 2,813 of 3,452 Nim lines (81%) are unaffected. `llama.nim` + `inference.nim` (639) become an optional path |
+| Stage | **N-S4c done 2026-08-31** — inference proxied by default, `/infill` and `/v1/health` correct, route inventory now a test. **Next: N-S5a-2 (`/api/storage/*`).** |
+| Stage (prior) | **N-S0 … N-S4 complete; N-S5a PARTIAL.** The `fs_sync` mirroring (N-27) and `/api/fs/*` (N-20) are done and tested. **`lib/proxy.lua` is NOT retired — five routes are unported (N-29).** An earlier entry today claimed it was; that claim is retracted |
 | Plan A (FreeBSD migration) | Code complete, S-0 … S-7. The foundation Plan B builds on |
 | Open defects | **38 recorded, B-01 … B-38 less B-07, plus N-27 new this session.** Under D-O only a subset is to be fixed — see §6 |
 | Open decisions | **Q-9, Q-11, Q-12 and Q-10.** All four reframed 2026-08-31; none answered |
@@ -28,6 +30,10 @@
 | **D-Y** | **No deployment, build or install testing until the rewrite is complete.** The USER runs a working deployment from this tree and an install would overwrite it. `make install`, `make verify` and `jenova-ca --daemon` are **prohibited**. `V-1 … V-6` move to a post-refactor phase and are no longer Active |
 | **D-Z** | **`jca_web/` is frozen — not to be touched, edited or damaged.** It is the working interim LAN client until N-S7 reaches parity and N-S9 retires it. The `jca_web/src/` full read is **cancelled**. B-01, B-03 and B-04 are deferred to N-S9 because fixing them means editing a frozen tree |
 | **D-AB** | **This workspace is a Linuxulator container; detection results are suspect until their mechanism is shown not to route through the emulation layer.** State the mechanism alongside any detection claim, or it is unverified |
+| **D-AC** | **Building and testing are permitted; `~/JCA` is untouchable.** Not minimised — nothing may create, write, delete or rename there. `make install`, `make verify` and `jenova-ca` stay out of scope for the whole rewrite |
+| **D-AF** | **`llama-server` is the inference engine; the Nim core is the harness around it.** `upstream.nim` becomes the primary path; in-process inference is retained as `JENOVA_INPROC=1`, not deleted. **Supersedes D-N's linkage clause, which I wrote myself** — Q-22 asked about GUI architecture, not about replacing `llama-server`. Closes N-25, N-26 and D-W; reduces FIM to route classification; **reopens Q-25 as Q-28** |
+| **D-AE** | **`~/JCA` is permanently off limits — no migration, no overwrite, no change, ever.** Stated by the USER four times. The `~/Jenova` split exists so testing cannot reach the deployment; **offering to migrate defeats its purpose and is not to be raised again** |
+| **D-AD** | **The runtime home is `$HOME/Jenova`**, changed at all eleven code sites. The five Lua modules already said `Jenova`, so this also resolved a shell/Lua inconsistency that `jenova-conf.sh`'s export had been hiding. `paths.resolve` **refuses `$HOME/JCA`** unless `JENOVA_ALLOW_DEPLOYED=1` |
 
 **N-8 is CLOSED, and it was substantially wrong — my error.** `AGENTS.md` has **four** directives.
 There is no Directive 7, no `.dbc`, no `test_roms/`; they were removed before this session. I
@@ -115,17 +121,64 @@ Under **D-Z**, B-01 leaves this list — it cannot be fixed without editing a fr
 `hardware-profiles/` is data and survives the rewrite, which is why its defects are worth fixing
 and the Lua/shell ones are not.
 
+## 6a. N-29 — the route inventory that had never been run
+
+**Five routes the Web UI can call are unported**, found by probing a running core rather than by
+reading the trackers:
+
+| Route | Core | `proxy.lua` serves |
+|---|---|---|
+| `GET /api/storage` | **404** | recursive file listing, depth 4 |
+| `GET /api/storage/<path>` | **404** | file download, `application/octet-stream` |
+| `POST /api/storage/<path>` | **absent** | file upload (`:1009`) |
+| `DELETE /api/storage/<path>` | **absent** | trash a file — needs `fs_sync.trash_path`, the 1 of 13 functions not ported |
+| `GET /api/workspaces` | **404** | filesystem workspace list (`:1096`) |
+| `POST /infill` | **405** | FIM completion — `routes.nim` never classifies it, so it lands in the static class |
+| `GET /v1/health` | **400** | classified to completion, which then fails to parse a body |
+
+**Why it was missed.** `TODOS.md` N-20 recorded that `/api/fs/*` was unported and nothing ever
+recorded `/api/storage/*`. The full-tree audit enumerated the route families it happened to notice
+and **never diffed them against the implementation.** The inventory above is one loop against a
+running binary. It should be a standing check at every stage that claims a surface is reproduced.
+
+## 6b. N-30 — the largest gap, found by the directed inventory
+
+**The Nim core's completion path is a raw llama-server equivalent, not Jenova.**
+`server.nim:181-185` reads `stream`, `max_tokens` and `messages`/`prompt`. `lib/proxy.lua:1225-1400`
+additionally does **seven** things, none of them ported:
+
+intent detection (four stripped prefixes) · RAG retrieval with per-intent limits · RAG injection as
+`--- REPOSITORY CONTEXT ---` · web search with two distinct failure messages · persona injection in
+three non-interchangeable modes · per-intent tool stripping · an LLM cache intercept keyed on the
+SHA-256 of the **rewritten** body.
+
+**This is the product's distinguishing behaviour.** It reframes N-S5b — RAG is one input to this
+pipeline, not the stage itself — and it is now N-S5c in `PLANS.md`.
+
 ## 7. Next steps
 
-1. **N-S5b — RAG.** Both design questions are answered: **Q-24 = SQLite for both indexes** (FTS5 +
-   BLOB), **Q-25 = in-process, CPU-only embeddings**. First task is the FTS5 probe in the native
-   build — if absent, fall back to Q-24 option B and report it (D-AB: check, do not assume).
+1. ~~**N-S4c**~~ — **done 2026-08-31.** Default inverted, `/infill` classified, `/v1/health` fixed,
+   `tests/test_routes.sh` added. The one check that needs a real `llama-server` — per-request
+   sampling actually taking effect — is the USER's, since the models live under `~/JCA` (D-AE).
+2. **Answer Q-28** — embeddings via the :8082 server (recommended, consistent with D-AF) or
+   in-process CPU-only as Q-25 chose. Q-25 assumed in-process inference; that assumption is gone.
+   **Gates the embedding half of N-S5b only** — it does not block N-S5a-2.
+3. **N-S5a-2 — finish the surface (N-29).** `/api/storage/*` (4 routes, **verified live** in
+   `storage.service.ts`), `fs_sync.trash_path`, `/infill` classified (**the USER's Neovim FIM
+   depends on it**), `/v1/health` routed to health. **Do not port `/api/workspaces` — it is dead
+   and never worked.** This is what actually retires `lib/proxy.lua`.
+4. **N-S5b — RAG.** **Q-24 = SQLite for both indexes** (FTS5 + BLOB) stands. First task is the FTS5
+   probe in the native build — if absent, fall back to Q-24 option B and report it (D-AB: check, do
+   not assume). The embedding half waits on Q-28.
 2. **`llama.LoadSpec` needs a per-context device override** so the embedding context can request
    CPU while the agent context keeps `DEVICES=Vulkan0,Vulkan1`. C-14 is the standing warning here.
-3. **N-24 and B-22** — the two cheap fixes that touch nothing frozen or deployed.
-4. **N-S6** — lifecycle parity, which is what finally deletes `bin/jenova-ca` and closes B-12,
+3. **N-S5c — the completion pipeline (N-30).** The stage that makes the core Jenova rather than a
+   llama-server clone. Depends on N-S5b for its RAG input. **N-25 folds in here** — per-request
+   sampling belongs in the rebuilt request path.
+4. **N-24 and B-22** — the two cheap fixes that touch nothing frozen or deployed.
+5. **N-S6** — lifecycle parity, which is what finally deletes `bin/jenova-ca` and closes B-12,
    B-13 and N-23 in the shell path.
-5. **Q-12 and B-10** remain the only open questions outside the rewrite path.
+6. **Q-12 and B-10** remain the only open questions outside the rewrite path.
 
 ## 8. Standing process notes
 

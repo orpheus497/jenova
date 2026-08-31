@@ -28,7 +28,7 @@ jenova-ca restart               # stop + start
 | `--embed-port N` | Embedding port (default 8082) |
 
 Runtime state lives under `$JCA_HOME/.system/` (PID and lock files), logs in
-`$JCA_HOME/var/log/`, caches in `$JCA_HOME/var/cache/`. `JCA_HOME` defaults to `~/JCA`.
+`$JCA_HOME/var/log/`, caches in `$JCA_HOME/var/cache/`. `JCA_HOME` defaults to `~/Jenova`.
 
 ## The interfaces
 
@@ -64,11 +64,11 @@ sudo jenova-swap-mount <size>        # mount a swap-backed mdmfs for model stora
 
 ### Directory layout
 
-Models live under `$JCA_HOME/models` — `~/JCA/models` by default, **not** in the source
+Models live under `$JCA_HOME/models` — `~/Jenova/models` by default, **not** in the source
 repository.
 
 ```
-~/JCA/models/
+~/Jenova/models/
 ├── agent/      # main inference model
 ├── draft/      # small model for speculative decoding
 ├── embed/      # embedding model for retrieval
@@ -114,7 +114,7 @@ An override always wins over discovery.
 scripts/model_dl.sh
 ```
 
-Downloads the defaults into `~/JCA/models/`, the same set for every hardware profile:
+Downloads the defaults into `~/Jenova/models/`, the same set for every hardware profile:
 
 | Role | File | Approx. size |
 |---|---|---|
@@ -127,7 +127,7 @@ It also symlinks `models/jenova.gguf` to the agent model for health checks.
 To add your own, drop a `.gguf` into the matching directory and restart:
 
 ```sh
-cp my-model.gguf ~/JCA/models/agent/
+cp my-model.gguf ~/Jenova/models/agent/
 jenova-ca restart
 jenova-ca status
 ```

@@ -8,7 +8,7 @@
 set -e
 
 JENOVA_ROOT="$(dirname "$(dirname "$(realpath "$0")")")"
-JCA_HOME="${JCA_HOME:-$HOME/JCA}"
+JCA_HOME="${JCA_HOME:-$HOME/Jenova}"
 export JENOVA_ROOT JCA_HOME
 
 # Shared OS/hardware detection and profile loader.
