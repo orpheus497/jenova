@@ -60,11 +60,26 @@ Style:
 - Clear, direct, and practical.
 - Concise unless the user is asking for a deeper synthesis."""
 
+## The persona for `Editor:` (G-18). It differs from `FileChat` in one way that
+## matters: **the buffer may not be what is on disk.** A model told only "here is
+## the file" will happily suggest "as you saved earlier", which is wrong for
+## exactly the case this feature exists to serve.
+const Editor* = """You are Jenova, reading the file the user currently has open
+in their editor.
+
+- The content you are given is the live editor buffer. It may contain unsaved
+  changes, so treat it as the truth, not the copy on disk.
+- The cursor line is given so you can answer "this function", "here", "this
+  line" without asking which one.
+- Answer about the code in front of you. Do not invent surrounding files you
+  have not been shown."""
+
 type Intent* = enum
   inNone = ""
   inVisual = "visual"
   inFileChat = "filechat"
   inWebSearch = "websearch"
+  inEditor = "editor"
 
 ## Function purpose: the persona for an intent. `proxy.lua:1310` falls back to
 ## freechat for any intent without its own prompt, which is what `inNone` and
@@ -74,4 +89,5 @@ proc personaFor*(intent: Intent): string =
   of inVisual: Visual
   of inFileChat: FileChat
   of inWebSearch: WebSearch
+  of inEditor: Editor
   of inNone: FreeChat

@@ -2,11 +2,25 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-08-31 21:03
+**Last updated:** 2026-08-31 21:14
 
 ---
 
 ## Completed
+
+### 2026-08-31 21:14 — **G-18 step 18.2: `Editor:` intent — the model gets the live buffer, only when asked. RUN.**
+
+New intent prefix `Editor:` in `pipeline.nim`, `inEditor` in `prompts.nim` with its own persona,
+`configureEditor` wired into both entry points. Using the existing prefix mechanism means it works
+from the GUI, the Web UI and any client without touching a UI.
+
+**9/9 checks pass**, and the one that matters is **"no prefix → buffer NOT leaked"**: an ordinary
+turn carries no document. The gate is asserted, not assumed.
+
+**GC-safety note:** `editorSocket` is a global string read from `server.nim`'s worker threads, which
+Nim rejects. `rag.nim` sidesteps this with `{.threadvar.}`, but that would leave the socket **empty
+in the worker** and silently break the feature — its default just happens to be right. Read through
+a `{.cast(gcsafe).}` accessor instead: written once at startup, read-only after.
 
 ### 2026-08-31 21:03 — **G-18 step 18.1: `nvimctl.nim` — the AI can read the active Neovim document. RUN, and the suite is proven able to fail.**
 

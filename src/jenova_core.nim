@@ -21,7 +21,7 @@ when not defined(freebsd):
 
 import std/[os, strformat, strutils, json]
 import jenova/[paths, config, db, dbselftest, server, serverselftest,
-               rag, sha256, pipeline, prompts, lifecycle, models]
+               rag, sha256, pipeline, prompts, lifecycle, models, nvimctl]
 
 const
   Version = "0.1.0"
@@ -337,6 +337,7 @@ proc main() =
       let c = config.load(p)
       db.initDb(p.state / "jenova-ragtest.db")
       rag.configureEmbed("127.0.0.1", c.getInt("LLAMA_EMBED_PORT", 8082))
+      pipeline.configureEditor(nvimctl.socketPath(p))
       rag.initSchema()
       let caps = rag.available()
       echo "rag-selftest"
@@ -508,6 +509,7 @@ proc main() =
       # calls initSchema itself. Wiring is not proven by unit checks.
       rag.initSchema()
       rag.configureEmbed("127.0.0.1", c.getInt("LLAMA_EMBED_PORT", 8082))
+      pipeline.configureEditor(nvimctl.socketPath(p))
 
       # Action purpose: bring the inference backends up as part of starting.
       # There is no separate "start the server" and "start the backends" step,

@@ -6,19 +6,23 @@
 ## them, which made it a plain reverse proxy in front of `llama-server`. Every
 ## behaviour that distinguishes Jenova from `llama-server` lives here.
 ##
-## Seven steps, in this order, and **the order is part of the contract**:
+## The steps below run in this order, and **the order is part of the contract**:
 ##
-## 1. **Intent detection** — four prefixes on the last user message, stripped
-##    after matching so the model never sees the marker.
+## 1. **Intent detection** — a prefix on the last user message, stripped after
+##    matching so the model never sees the marker. `IntentPrefixes` is the list.
 ## 2. **RAG retrieval** — a per-intent result limit, plus a rewritten query for
 ##    large file-chat payloads.
 ## 3. **RAG injection** — a `--- REPOSITORY CONTEXT ---` block.
 ## 4. **Web search** — only for the websearch intent.
-## 5. **Persona injection** — three modes that are not interchangeable.
-## 6. **Tool stripping** — for the two intents that gain nothing from tools.
-## 7. **Cache key** — SHA-256 of the **rewritten** body.
+## 5. **Editor context** — only for `Editor:`, read live from Neovim through
+##    `nvimctl`. **Never attached to a turn that did not ask for it:** it is the
+##    largest block injected here, and silently including it would make every
+##    unrelated question carry whatever file happened to be open (G-18, D-AT).
+## 6. **Persona injection** — three modes that are not interchangeable.
+## 7. **Tool stripping** — for the two intents that gain nothing from tools.
+## 8. **Cache key** — SHA-256 of the **rewritten** body.
 ##
-## **Step 7 must stay last.** The key is the hash of the body *after* rewriting,
+## **The cache key must stay last.** The key is the hash of the body *after* rewriting,
 ## so an entry stored by `proxy.lua` and one stored here only agree if both hash
 ## the same final text. Hashing the client's original body would silently
 ## produce a different key and orphan every existing cache entry.
@@ -29,6 +33,7 @@ import ./rag
 import ./websearch
 import ./db
 import ./sha256
+import ./nvimctl
 
 type
   Prepared* = object
@@ -38,6 +43,7 @@ type
     ragHits*: int
     webHits*: int
     hadTools*: bool
+    editorDoc*: bool       ## an `Editor:` turn found a live document
 
 const
   IntentPrefixes = {
@@ -45,6 +51,7 @@ const
     "Open File Chat:": inFileChat,
     "Chatbot:": inFileChat,
     "Web Search:": inWebSearch,
+    "Editor:": inEditor,
   }.toTable
 
   ## `proxy.lua:1255` — a message already carrying repository context is not
@@ -53,6 +60,20 @@ const
   ContextMarker = "--- REPOSITORY CONTEXT ---"
 
   LargePayloadChars = 2000   ## `proxy.lua:1258`
+
+var editorSocket = ""
+
+## Function purpose: tell the pipeline where Neovim is listening, the way
+## `rag.configureEmbed` supplies the embedding server's address. Unset by
+## default, which is why `Editor:` degrades to a plain answer on a host with no
+## editor running rather than failing the turn.
+proc configureEditor*(socket: string) =
+  editorSocket = socket
+
+# Written once at startup, read-only afterwards; the server's worker threads only
+# read it.
+proc editorSock(): string {.gcsafe.} =
+  {.cast(gcsafe).}: editorSocket
 
 ## Function purpose: find the last user message, which is the one the intent
 ## prefix and the RAG query come from. Returns -1 when there is none.
@@ -131,7 +152,7 @@ proc ragQueryFor(message: string): tuple[query: string, large: bool] =
 ## * **No intent** — persona prepended and RAG appended, without the intent
 ##   personas.
 proc injectSystem(messages: JsonNode, intent: Intent, hasTools: bool,
-                  ragContext, webContext: string) =
+                  ragContext, webContext, editorContext: string) =
   if messages.kind != JArray: return
   let hasSystem = messages.len > 0 and messages[0].kind == JObject and
                   messages[0].hasKey("role") and
@@ -144,6 +165,7 @@ proc injectSystem(messages: JsonNode, intent: Intent, hasTools: bool,
       messages.elems.insert(%*{"role": "system", "content": mandate}, 0)
     var content = messages[0]["content"].getStr
     if webContext.len > 0: content.add "\n" & webContext
+    if editorContext.len > 0: content.add "\n" & editorContext
     if ragContext.len > 0: content.add "\n" & ragContext
     messages[0]["content"] = %content
     return
@@ -151,6 +173,7 @@ proc injectSystem(messages: JsonNode, intent: Intent, hasTools: bool,
   if intent != inNone:
     var systemPrompt = prompts.personaFor(intent)
     if webContext.len > 0: systemPrompt.add "\n" & webContext
+    if editorContext.len > 0: systemPrompt.add "\n" & editorContext
     if ragContext.len > 0: systemPrompt.add "\n" & ragContext
     if hasSystem:
       messages[0]["content"] = %(systemPrompt & "\n\n" &
@@ -212,6 +235,7 @@ proc prepare*(rawBody: string, projectRoot = ""): Prepared =
 
   var ragContext = ""
   var webContext = ""
+  var editorContext = ""
 
   # A message that already carries a context block is a follow-up turn; adding
   # another would stack duplicates down the conversation.
@@ -229,7 +253,19 @@ proc prepare*(rawBody: string, projectRoot = ""): Prepared =
       result.webHits = results.len
       webContext = websearch.formatContext(results)
 
-    injectSystem(messages, intent, result.hadTools, ragContext, webContext)
+    # Only for `Editor:` — the document is never attached to a turn that did not
+    # ask for it. It is the largest block the pipeline can inject and it is read
+    # from a live editor, so silently including it would make every unrelated
+    # question carry whatever file happened to be open (G-18, D-AT).
+    if intent == inEditor:
+      let sock = editorSock()
+      if sock.len > 0:
+        let doc = nvimctl.activeDocument(sock)
+        result.editorDoc = doc.found
+        editorContext = doc.asPromptContext()
+
+    injectSystem(messages, intent, result.hadTools, ragContext, webContext,
+                 editorContext)
 
   result.body = $req
   result.cacheKey = cacheKeyFor(result.body)

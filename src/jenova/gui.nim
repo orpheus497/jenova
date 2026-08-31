@@ -53,6 +53,8 @@ import ./api
 import ./markdown
 import ./fssync
 import ./sourceview
+import ./nvimctl
+import ./pipeline
 
 type
   Role* = enum
@@ -1309,6 +1311,10 @@ proc run*(withTray = true) =
   db.initDb(p.state / "jenova.db")
   rag.initSchema()
   rag.configureEmbed("127.0.0.1", c.getInt("LLAMA_EMBED_PORT", 8082))
+  # `Editor:` reads whatever is open in the editor listening here. Configured
+  # unconditionally: `nvimctl` treats an absent socket as "no document", so this
+  # costs nothing on a host with no Neovim running.
+  pipeline.configureEditor(nvimctl.socketPath(p))
   discard lc.startAll()
   discard server.start(
     host, port, p.root / "public",
