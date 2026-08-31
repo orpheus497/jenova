@@ -25,9 +25,9 @@ for Sessions 001–003 — including Session 001, which moved or deleted 31 file
 | `Makefile` | Top-level build/install/verify entry points; builds with base `make(1)` |
 | `README.md` | User-facing entry document |
 | `LICENSE`, `NOTICE`, `UPSTREAM-COPYRIGHT` | Licensing; upstream attribution |
-| `.clangd.example` | Editor config template for the C sources |
+| `.clangd.example` | Editor config template. **Now vestigial — N-S7 removed the last C source from the repository**; it survives only because `external/llama.cpp` is C++ |
 | `.gitmodules` | Declares `external/` submodules |
-| `.gitignore` | Excludes build artifacts, incl. `/bin/jenova-ui` and `/jenova-ui/jenova-ui` |
+| `.gitignore` | Excludes build artifacts. Updated at N-S7: `/bin/jenova` is now a **compiled binary**, and the `/bin/jenova-ui` and `/jenova-ui/jenova-ui` entries were dropped with that tree |
 | `.coderabbit.yaml`, `.jules/`, `.vscode/`, `.system/` | Third-party tooling config |
 | `proxy.log` | Runtime artifact in the source root. Untracked and gitignored (`*.log`), so not committed — but the proxy writes it here rather than to `$LOG_DIR`, which is where `cleanup.sh` looks. See `TODOS.md` B-37 |
 
@@ -51,6 +51,11 @@ New tree, created 2026-08-28 at stage N-S0. Grows as `lib/`, `bin/` and `scripts
 | `src/jenova/websearch.nim` | DuckDuckGo HTML with an Instant Answer fallback, replacing `proxy.lua:259-415`. **Shells out to base `fetch(1)` deliberately** — Nim's `httpclient` would link OpenSSL into a project that has spent seven stages removing dependencies, and FreeBSD base does HTTPS for free. Runs on a worker thread, so unlike the Lua original it blocks nothing else. Keeps both distinct failure messages: "found nothing" and "cannot search" tell the model different things |
 | `src/jenova/sha256.nim` | SHA-256, replacing `lib/sha256.lua`. **Hand-written because Nim ships SHA-1 and the algorithm is contract, not decoration** — the cache is keyed on the SHA-256 of the rewritten body, so a different hash silently orphans every existing entry. Asserted against the published FIPS 180-4 vectors, including the million-character case that exercises the block loop and length encoding |
 | `src/jenova/rag.nim` | Hybrid retrieval — FTS5 keyword search plus cosine over stored embeddings — replacing `lib/search.lua`. **A redesign rather than a transcription, because all three of `search.lua`'s defects were storage defects:** the BM25 index lived only in process memory and was lost on every restart, the vector index was one JSON blob with a hard 20 MB merge cap, and chunk text was not persisted so a semantic hit could not produce a snippet after a restart. Q-24 puts both indexes in SQLite, which also removes the GC-safety hazard those module globals would have been across 14 worker threads. Weights, chunk size, overlap and the 0.3 semantic floor are `search.lua`'s. Embeddings come from the server on :8082 (D-E, D-AF); when it is unreachable retrieval degrades to keyword-only, as the original did |
+| `src/jenova/gui.nim` | **The desktop application (N-S7)** — a GTK4/libadwaita window via owlkettle, replacing `jenova-ui/src/main.c` and `lib/ui.lua`. Two things at once: the chat view, which is new, and the control surface, which is not and is retained feature-for-feature under Directive 3. Chat goes over HTTP to `127.0.0.1:$PORT` **deliberately**, so the desktop client exercises the same pipeline the Web UI does and a bug cannot appear in one and not the other; control actions call `lifecycle` in-process. **The tray and the window menu share one action queue**, drained on the GTK main loop — `ui.lua` had the tray and the TUI each rebuilding the same command strings. `ui.lua:69` spawned `jenova-ca proxy-serve` as a child of the tray, which **is** defect B-13; here server, supervisor and window are one process and that split has no equivalent |
+| `src/jenova/tray.nim` | **StatusNotifierItem over D-Bus (N-10, ruling D-AJ).** GTK4 dropped `libappindicator` and owlkettle has no tray, so the tray is a *protocol*: `org.kde.StatusNotifierItem` for the icon and `com.canonical.dbusmenu` for the menu. Dispatched from a GTK main-loop timeout rather than a thread, so callbacks touch widget state directly and no locking question arises. **A desktop with no StatusNotifierWatcher degrades to "no tray icon", never to a failed startup** — the window is the application and the tray is an addition |
+| `src/jenova/dbus.nim` | The minimum of `libdbus-1` `tray.nim` speaks — not a general binding. Bound through `<dbus/dbus.h>` itself, never by mirroring the ABI, which is the rule `llama.nim` follows and the defect class deleting `ffi_defs.lua`'s Linux arm existed to remove. GDBus was available and not used: its object registration is built on introspection XML and `GVariant`, and `dbus-1` was already a hard dependency of the desktop stack |
+| `src/jenova/models.nim` | Model discovery and switching, replacing `lib/jenova-model.sh` and `bin/jenova-model-switch` — **the last two shell scripts the running product relied on** (D-AI). `config.nim` calls `discover` for any `MODEL_*` key the conf files leave empty; a value they *do* set still wins, because `etc/jenova.local.conf` is the USER's file and may name a model explicitly. Both halves were proven equivalent against the originals on the same scratch trees before those originals were archived |
+| `src/jenova_gui.nim` | Entry point for `bin/jenova`. **A second binary, not a second program:** `jenova-core` must stay buildable where there is no GTK, because N-7 requires LAN mode to serve whether or not the GUI runs. Both link the same core modules |
 | `src/jenova/routes.nim` | Route classification and the per-class thread table. Six classes — static, health, api, completion, embed, debug — each with its own queue and threads. **Sized for a two-device personal product (D-T), 14 handler threads total** |
 | `src/jenova/upstream.nim` | Streaming reverse proxy to `llama-server` (:8081) and the embedding server (:8082), replacing the forwarding half of `lib/proxy.lua`. Verbatim byte relay with partial-write handling, so SSE reaches the client as the model produces it. **Since D-AF (2026-08-31) this is the primary inference path, not a fallback** — `llama-server` is the engine and this core is the harness |
 | `src/jenova/http.nim` | HTTP/1.1 request parsing and response writing over blocking sockets, replacing `lib/http.lua`. Blocking is deliberate — one connection per thread. Includes SSE framing and static-path containment |
@@ -64,50 +69,49 @@ New tree, created 2026-08-28 at stage N-S0. Grows as `lib/`, `bin/` and `scripts
 Built by `make core`, which probes `PATH` then `/usr/local/nim/bin` — the FreeBSD `lang/nim` port
 does not install onto the default `PATH`.
 
-## 2. `bin/` — user-facing launchers
+## 2. `bin/` — the two binaries
 
-All POSIX `sh` (verified `file(1)`), per ruling D-A. Six are deployed and symlinked by
-`install.sh:240`; `jenova-term` is not (B-11).
+**Rewritten 2026-08-31 at N-S7.** This section previously listed nine entries, seven of which were
+POSIX `sh` launchers. Five are archived and one, `bin/jenova`, changed from a shell script into a
+compiled binary.
 
 | File | Role |
 |---|---|
-| `jenova` | Full-environment launcher — starts the Jenova UI |
-| ~~`jenova-ca`~~ | **ARCHIVED 2026-08-31** to `.devdocs/ARCHIVE/bin/`. Superseded at N-S6 — the core has every verb and flag except `--daemon`, deliberately absent. **B-12 and B-13 die with it** |
-| `jenova-core` | **The product.** HTTP server, database, filesystem mirror, RAG, completion pipeline, and `llama-server` lifecycle. `serve` starts everything in one command |
-| `jenova-model-switch` | Switches the active agent model by symlink |
-| `jenova-swap-mount` | Swap-backed memory filesystem for models. FreeBSD-native (`mdmfs`) |
-| `jenova-term` | Launches a command in a terminal emulator. Called by `lib/ui.lua:104`; **never deployed** (B-11) |
-| `jenova-tui` | Wrapper launching `jenova-ui` in TUI mode |
+| `jenova` | **The desktop application.** Compiled from `src/jenova_gui.nim` by `make gui`: GTK4/libadwaita window, chat with streaming, backend control, model switching, LAN toggle, and a StatusNotifierItem tray. Build artifact, gitignored. *(Was a shell launcher; that script is `.devdocs/ARCHIVE/bin/jenova.sh`.)* |
+| `jenova-core` | **The headless server.** HTTP server, database, filesystem mirror, RAG, completion pipeline, and `llama-server` lifecycle. `serve` starts everything in one command. Build artifact, gitignored |
+| `jenova-swap-mount` | Swap-backed memory filesystem for models. FreeBSD-native (`mdmfs`). The one remaining shell launcher, and nothing in the running product calls it |
 | `jenova.desktop` | Desktop entry |
-| `jenova-ui` | **Build artifact, not source.** FreeBSD x86-64 ELF, untracked and gitignored. Produced from `jenova-ui/src/main.c` |
 
-## 3. `lib/` — runtime modules
+**Archived at N-S7:** `jenova-term` (its only caller was `ui.lua:104` — **B-11 closed**),
+`jenova-tui` (the TUI is replaced by the window, **D-AL**), `jenova-model-switch` (now
+`models.nim`), and `jenova-ui` (the C tray's build artifact). **Archived at N-S6:** `jenova-ca`.
 
-Shell modules are sourced; Lua modules run under LuaJIT.
+**Two binaries, one program.** `jenova-core` must stay buildable where there is no GTK, because
+**N-7 requires LAN mode to serve whether or not the GUI is running**. Both link the same core
+modules and both drive `lifecycle` in-process.
 
-### Shell
+## 3. `lib/` — **two shell modules, and the core needs neither**
 
-| File | Role |
-|---|---|
-| `detect-env.sh` | FreeBSD environment detection. Reads `kern.ostype`, never `uname -s` (constraint C-8) |
-| `jenova-conf.sh` | **Single owner of path resolution.** Detects installed-vs-source layout; exports `LLAMA_SERVER`, `LLAMA_LIB_DIR`, `JCA_HOME`, `JENOVA_STATE`, `JENOVA_WORKSPACES`, `LOG_DIR`, `CACHE_DIR`, `PID_FILE` (`:25-44`), then sources `etc/jenova.local.conf` under a realpath containment check (`:53-74`) |
-| `jenova-model.sh` | Model path/selection helpers |
+**No Lua remains anywhere in the product.** Fifteen Lua modules were archived across N-S6 and
+N-S7 — the fourteen `proxy.lua` and friends, then `ui.lua`. See `.devdocs/ARCHIVE/README.md`.
 
-**All three are load-bearing and must not be archived.** `src/jenova/config.nim` evaluates
-`etc/jenova.conf` with `/bin/sh`, and that file sources `jenova-model.sh` for model discovery
-(`etc/jenova.conf:27`). Removing them breaks configuration resolution in the Nim core.
-
-### Lua — **one file left**
-
-**Fourteen Lua modules were moved to `.devdocs/ARCHIVE/lib/` on 2026-08-31** once the Nim core
-reached parity: `proxy`, `search`, `embed`, `fs_sync`, `db`, `http`, `json`, `sha256`, `prompts`,
-`git`, `daemon`, `ffi_defs`, `healthcheck`, `indexer_runner`. The last four went because their only
-callers went — checked by reverse-dependency search, not assumed. See `.devdocs/ARCHIVE/README.md`
-for the module-by-module mapping and the defects that died with each.
-
-| File | Lines | Role |
+| File | Role | Relied on by `jenova-core`? |
 |---|---|---|
-| `ui.lua` | 257 | Tray/TUI behaviour called from `jenova-ui/src/main.c`. **Now inert:** it spawns `bin/jenova-ca` (`:69,109,111`), which is archived, so the GTK3 tray path does not function in the source tree until **N-S7** replaces it. Requires no other Lua module, which is why it could stay while the rest went |
+| `detect-env.sh` | FreeBSD environment detection. Reads `kern.ostype`, never `uname -s` (C-8) | **No** — only `scripts/*.sh` and `detect-hardware.sh` |
+| `jenova-conf.sh` | Path resolution for the shell tree. `src/jenova/paths.nim` replaced it | **No** — only `scripts/cleanup.sh:30` |
+
+> **A long-standing claim, corrected 2026-08-31 by reverse-dependency search.** This section, and
+> `ARCHIVE/README.md` and `PROGRESS.md` with it, read *"All three are load-bearing and must not be
+> archived."* **Only `jenova-model.sh` ever was**, and it is now archived too: `models.nim` performs
+> discovery, and the seven conf files no longer source it. **No `.nim` file references
+> `detect-env.sh` or `jenova-conf.sh`.** They stay for the shell tree's sake and leave with it at
+> N-S9.
+
+**The total-conversion gate (D-AI) is therefore passed.** Verified by enumeration: zero `*.lua` and
+zero `*.c`/`*.h` outside `.devdocs/`, `external/` and `jca_web/`. The core executes `/bin/sh` (for
+the shell-format **config files**, which the gate exempts), `llama-server` via `execv`, `git`, base
+`fetch(1)`, and `xdg-open`/`route`/`ifconfig` for desktop actions — no project shell script among
+them.
 
 ## 4. `scripts/` — install / build / maintenance
 
@@ -148,55 +152,40 @@ Supporting: `detect-hardware.sh` (scoring ladder + `--apply-profile`), `common-s
 | `jenova.conf` | The deployed hardware profile, mirrored here by `--apply-profile`. Sourced **last** by `jenova-ca`, so it wins every tuning variable (B-12). Rewritten as a side effect of `tests/test_validate_arg.sh` (B-22) |
 | `jenova.local.conf` | Intended user overrides. **Ineffective for bare names** (B-12) |
 
-## 7. `jenova-ui/` — GTK3 tray + ncurses TUI
+## 7. ~~`jenova-ui/`~~ — **removed 2026-08-31 at N-S7**
 
-| Path | Role |
-|---|---|
-| `src/main.c` | Resolves root via `KERN_PROC_PATHNAME`, embeds LuaJIT, calls `ui.init()`. Carries the `#error` guard refusing non-FreeBSD builds (S-5) |
-| `Makefile` | Probes both indicator libraries; names FreeBSD packages |
-| `jenova-ui` | Build artifact; untracked and gitignored |
-
-Links GTK3 / libappindicator (LGPL) — the open Q-4 licence exposure, deferred under D-D.
+The GTK3 tray and ncurses TUI, C with embedded LuaJIT. Archived whole to
+`.devdocs/ARCHIVE/jenova-ui/`; replaced by `src/jenova/gui.nim` (window and control surface) and
+`src/jenova/tray.nim` (StatusNotifierItem over D-Bus). **B-02's last load-bearing instance went
+with it** — `main.c:324`'s `$HOME/.jenova/ui.lock`, a fourth spelling of the state directory. The
+GTK3, libappindicator, LuaJIT and ncurses dependencies left `DEPS` at the same time.
 
 ## 8. `tests/`
 
 Specs and status live in `TESTS.md`.
 
-**`make -C tests check` runs five** *(the invocation is corrected 2026-08-31 13:07 — the root
-`Makefile` has **no `check` target**, so `make check` from the repository root fails; **B-42**)*,
-and four of the five target the Nim core: `test_api_db.sh` (23), `test_api_fs.sh` (46),
-`test_routes.sh` (13), `test_lifecycle.sh` (31). Those four run in a scratch `JCA_HOME` and none
-spawns a backend.
+**`make check` runs five, all targeting the Nim core**, all in a scratch `JCA_HOME`, and none
+spawns a backend: `test_api_db.sh` (23), `test_api_fs.sh` (46), `test_routes.sh` (13),
+`test_lifecycle.sh` (31), `test_models.sh` (15).
 
-**The fifth, `test-health.sh`, is the defect in this list (B-40).** It is the *first* line of the
-`check` target, it still requires `python3` — which is still absent from
-`install-dependencies.sh`'s `DEPS` — and **it starts no server**, so it exits 1 unless something is
-already listening on `$HOST:$PORT`. **B-24 is therefore not closed** by the `proxy-concurrency`
-archive, as `TODOS.md §1` and `ARCHIVE/README.md` both claim.
+**The root `check` target exists as of 2026-08-31 (B-42 closed).** Three documents had claimed
+`make check` worked when the root `Makefile` had no such target; it now delegates to
+`make -C tests check` and depends on `core`.
 
-**Also present, still orphaned (B-25):** `test_validate_arg.sh` — **and it still rewrites
-`etc/jenova.conf`** (B-22, `:62`) · `test_gpu.sh`, `test_gpu_single.sh` — both need
-`external/ext_bin/bin/llama-cli`, which `build-llama.sh` never copies · `download-draft-model.sh`,
-a utility rather than a test (B-26).
+**`test-health.sh` was archived, not fixed (D-AH).** It shelled to `python3` and started no server,
+so it aborted the suite on its first line. **B-24 closes by subtraction** — `jenova-core` covers
+health in-binary via `backends health` and the self-test subcommands.
 
-**Archived 2026-08-31:** `test-launcher.sh` and `test_bin_jenova.sh` (both tested `jenova-ca`) and
-the whole `proxy-concurrency/` harness (the acceptance gate for `proxy.lua`'s event loop).
-**B-23 and B-24 die with that harness.**
+**Enumerated on disk:** `tests/` holds a `Makefile` and **eight scripts** — the five in `check`,
+plus three that are not wired in. **Three remain orphaned (B-25):** `test_validate_arg.sh`
+(**which still rewrites `etc/jenova.conf`** — B-22, `:62`, the highest-value cheap fix left),
+`test_gpu.sh` and `test_gpu_single.sh` (both need an `external/ext_bin/bin/llama-cli` that
+`build-llama.sh` never copies, so they fail unconditionally). `download-draft-model.sh` is a
+utility, not a test (B-26).
 
 **The core's own self-tests** are subcommands, not scripts: `db-selftest`, `serve-selftest`,
 `rag-selftest` (7), `pipeline-selftest` (15), `sha256-selftest` (4), `llama-selftest`,
 `db-capabilities`.
-> **A stale paragraph, deleted 2026-08-31 13:07 rather than left to be read as current.** It said
-> *"Nine test scripts in `tests/` plus `proxy-concurrency/all.sh`; `make check` runs six"* and named
-> `test-launcher.sh`, `test_bin_jenova.sh` and `proxy-concurrency/all.sh` as present — **all three
-> were archived earlier the same day**, and the section's own opening paragraph already said five.
-> Recorded as **B-41(c)**: this file contradicted itself two paragraphs apart.
-
-**Enumerated on disk:** `tests/` holds a `Makefile` and **nine scripts** — the five in `check`,
-plus the four orphans below. **Three remain orphaned (B-25)**, `test_bin_jenova.sh` having been
-archived: `test_validate_arg.sh` (which also still rewrites `etc/jenova.conf`, B-22), `test_gpu.sh`
-and `test_gpu_single.sh`. `download-draft-model.sh` is the ninth and is a utility, not a test
-(B-26).
 
 ## 9. `jca_web/` — SvelteKit Web UI
 

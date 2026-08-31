@@ -10,12 +10,13 @@
 #   make            # Install dependencies, then build everything
 #   make deps       # Install dependencies only
 #   make llama      # Build external/llama.cpp
-#   make jenova-ui  # Build the desktop manager
+#   make core       # Build the headless server (jenova-core)
+#   make gui        # Build the desktop application (jenova)
 #   make web        # Build the Web UI
 #   make install    # Build everything and deploy to $JCA_HOME
 #   make clean      # Remove build artifacts
 
-.PHONY: all deps llama web jenova-ui core install clean clean-root help
+.PHONY: all deps llama web gui core check install clean clean-root help
 
 # The FreeBSD lang/nim port installs the compiler to /usr/local/nim/bin, which is
 # not on the default PATH. Probe PATH first so a user-installed compiler wins.
@@ -30,9 +31,9 @@ NIMFLAGS ?= -d:release --hints:off
 # which is never up to date, forcing `npm install` on every single build.
 .NOTPARALLEL:
 
-all: deps llama jenova-ui web
+all: deps llama core gui web
 	@echo ""
-	@echo "✅ Jenova build complete (llama.cpp + jenova-ui + web)"
+	@echo "✅ Jenova build complete (llama.cpp + jenova-core + jenova + web)"
 	@echo "   Run 'make install' to deploy."
 
 # Install every dependency. Idempotent — packages already present are skipped,
@@ -60,18 +61,37 @@ web: deps jca_web/node_modules
 	@cd jca_web && npm run build
 	@echo "   Web UI built: public/"
 
-jenova-ui: deps
-	@echo "🔨 Building jenova-ui..."
-	@$(MAKE) -C jenova-ui
-	@mkdir -p bin || exit 1
-	@cp jenova-ui/jenova-ui bin/jenova-ui || exit 1
-	@echo "   jenova-ui built: bin/jenova-ui"
+# Action purpose: build bin/jenova, the desktop application (N-S7). It replaces
+# the `jenova-ui` target, which built a C/GTK3/LuaJIT/ncurses tray — archived
+# under rulings D-AJ and D-AL.
+#
+# Kept separate from `core` on purpose: jenova-core is the headless server and
+# must stay buildable on a machine with no GTK at all, because N-7 requires LAN
+# mode to serve whether or not the GUI is running. Splitting the binaries is not
+# splitting the program — both link the same core modules.
+gui: deps
+	@echo "🔨 Building jenova (desktop application)..."
+	@_nim=`command -v $(NIM) 2>/dev/null || echo $(NIMPATH)`; \
+	if [ ! -x "$$_nim" ]; then \
+		echo "ERROR: nim compiler not found on PATH or at $(NIMPATH)." >&2; \
+		echo "       Install it with: pkg install nim" >&2; \
+		exit 1; \
+	fi; \
+	if [ ! -d "$$HOME/.nimble/pkgs2" ] || ! ls -d "$$HOME"/.nimble/pkgs2/owlkettle-* >/dev/null 2>&1; then \
+		echo "ERROR: owlkettle is not installed." >&2; \
+		echo "       Install it with: nimble install owlkettle" >&2; \
+		echo "       (there is no FreeBSD package; nimble is the only source)" >&2; \
+		exit 1; \
+	fi; \
+	mkdir -p bin || exit 1; \
+	"$$_nim" c $(NIMFLAGS) --path:src --out:bin/jenova src/jenova_gui.nim || exit 1
+	@echo "   jenova built: bin/jenova"
 
-# Action purpose: build the Nim core (PLANS.md Plan B). Deliberately does NOT
-# depend on `deps` — nim is not yet in the dependency list, and adding it is a
-# dependency change awaiting approval (TODOS.md N-11). Until then this target
-# locates an already-installed compiler and fails loudly if there is none.
-core:
+# Action purpose: build the Nim core. It now depends on `deps` like every other
+# build target, because `nim` was added to the dependency list at N-S7 (N-11,
+# ruling D-AK). The compiler probe below is still needed regardless: the FreeBSD
+# lang/nim port installs to /usr/local/nim/bin, which is not on the default PATH.
+core: deps
 	@echo "🔨 Building jenova-core..."
 	@_nim=`command -v $(NIM) 2>/dev/null || echo $(NIMPATH)`; \
 	if [ ! -x "$$_nim" ]; then \
@@ -83,13 +103,19 @@ core:
 	"$$_nim" c $(NIMFLAGS) --out:bin/jenova-core src/jenova_core.nim || exit 1
 	@echo "   jenova-core built: bin/jenova-core"
 
+# Action purpose: `make check` from the repository root. Three documents claimed
+# this target existed when it did not, so `make check` failed outright and the
+# suites were only ever run by hand from tests/ (TODOS.md B-42). It depends on
+# `core` because every suite drives bin/jenova-core.
+check: core
+	@$(MAKE) -C tests check
+
 install: all
 	@./scripts/install.sh
 
 clean:
 	@echo "🧹 Cleaning build artifacts..."
-	@if [ -d jenova-ui ]; then $(MAKE) -C jenova-ui clean; fi
-	@rm -f bin/jenova-ui bin/jenova-core
+	@rm -f bin/jenova-core bin/jenova
 	@rm -rf -- external/llama.cpp/build external/ext_bin/ public/ nimcache/
 
 clean-root:
@@ -107,8 +133,8 @@ help:
 	@echo "    make               Install dependencies, then build everything"
 	@echo "    make deps          Install all dependencies (no optional tier)"
 	@echo "    make llama         Build external/llama.cpp"
-	@echo "    make jenova-ui     Build the desktop manager"
-	@echo "    make core          Build the Nim core (jenova-core)"
+	@echo "    make core          Build the headless server (jenova-core)"
+	@echo "    make gui           Build the desktop application (jenova)"
 	@echo "    make web           Build the Web UI"
 	@echo ""
 	@echo "  Deploy:"

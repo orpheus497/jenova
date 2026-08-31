@@ -19,7 +19,11 @@
 ## those flags are the accumulated result of tuning against real hardware and a
 ## paraphrase would change generation behaviour in ways no test here would catch.
 
-import std/[os, osproc, strutils, strformat, posix, times, strtabs, net]
+## `osproc` and `strtabs` were dropped 2026-08-31: both became unused when
+## `start` moved from `startProcess` to fork/dup2/execv (see the note at `start`),
+## and an import that no longer carries anything is dead code by the Codebase
+## Integrity Standard's third class.
+import std/[os, strutils, strformat, posix, times, net]
 import ./config
 import ./paths
 

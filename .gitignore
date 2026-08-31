@@ -5,10 +5,12 @@
 # --- Build Artifacts ---
 /public/
 /bin/llama-server
-/bin/jenova-ui
 /bin/jenova-core
+# bin/jenova was a shell launcher and is now a compiled binary (N-S7): the
+# desktop application, built by `make gui` from src/jenova_gui.nim. The shell
+# script it replaced is in .devdocs/ARCHIVE/bin/jenova.sh.
+/bin/jenova
 nimcache/
-/jenova-ui/jenova-ui
 /external/ext_bin/
 
 /cli-agent/build/

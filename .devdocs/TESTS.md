@@ -28,10 +28,21 @@ fifth, `test-health.sh`, is the exception in every respect — see the note belo
 | `test_api_fs.sh` | 46 | The filesystem mirror, `/api/fs/*`, `/api/storage/*` and its containment |
 | `test_routes.sh` | 13 | The standing route inventory, incl. the pipeline reaching the upstream |
 | `test_lifecycle.sh` | 31 | The `llama-server` argument vector, `--lan`, port flags, refusal paths |
-| `test-health.sh` | — | Smoke test. **Broken two ways — see below** |
+| `test_models.sh` | 15 | Model discovery and switching (N-36, N-37) — see §5h |
+| ~~`test-health.sh`~~ | — | **ARCHIVED 2026-08-31 (D-AH).** See the note below |
 
-> **`test-health.sh` is the first line of the `check` target and cannot pass unattended (B-40).**
-> Two independent defects, both verified 2026-08-31 13:07:
+> **RESOLVED 2026-08-31 by archiving it (D-AH). B-24 closed by subtraction.** The USER's question
+> settled it — *"why is python in use at all, this should never have been the case"* — and it is
+> sharper than my recommendation had been: I proposed rewriting the script on base `fetch(1)`, which
+> still keeps a shell health test for a proxy that no longer exists. **`jenova-core` covers health
+> in-binary**: `backends health` probes the port (not the pid, which is the B-14/B-13 distinction),
+> and five self-test subcommands cover the rest. The script is in `.devdocs/ARCHIVE/tests/`.
+>
+> The two defects are kept below because they are why it went, and because the second is a pattern
+> worth recognising in any suite.
+>
+> **`test-health.sh` was the first line of the `check` target and could not pass unattended
+> (B-40).** Two independent defects, both verified 2026-08-31 13:07:
 >
 > 1. **It still requires `python3`** (`:14`), and `python3` is still absent from
 >    `install-dependencies.sh`'s 18-entry `DEPS` list. **B-24 is therefore NOT closed.**
@@ -45,10 +56,10 @@ fifth, `test-health.sh`, is the exception in every respect — see the note belo
 >    first line unless something is already listening — which is also why "all suites pass" has only
 >    ever been observed by running them individually.
 >
-> **The fix is not to add `python3`.** A FreeBSD-base smoke test needs no interpreter: `fetch -qo -`
-> against `/health`, with the script starting and stopping its own server the way the other four do.
-> That closes B-24 by subtraction rather than by adding a dependency, which is the pattern S-2 and
-> S-4 established.
+> **Superseded recommendation, kept visible:** *"rewrite it on base `fetch(1)`, starting and
+> stopping its own server."* That would have worked and was still the wrong answer — it preserves a
+> test whose subject is gone. **Deleting it was the right move**, and the USER saw that a step
+> earlier than I did.
 
 Plus the core's own subcommands: `db-selftest`, `serve-selftest`, `rag-selftest` (7),
 `pipeline-selftest` (15), `sha256-selftest` (4), `llama-selftest`, `db-capabilities`.
@@ -362,6 +373,32 @@ silently dropped or reordered one changes generation behaviour without failing a
 **Refusal paths too:** `start` with no model exits non-zero and names the reason, `stop` is
 idempotent, `status` reports each backend separately rather than collapsing to one word — because
 "agent up, embeddings down" is a real state, and hiding it is how B-14 stayed invisible.
+
+## 5h. `tests/test_models.sh` — discovery and switching (N-36, N-37, 2026-08-31)
+
+**15 assertions, PASS.** Guards the total-conversion gate: `models.nim` replaced
+`lib/jenova-model.sh` and `bin/jenova-model-switch`, the last two shell scripts the running product
+relied on.
+
+**A reimplementation of a file-scanning helper does not fail by crashing — it fails by picking a
+different plausible file.** Every assertion pins one of those failure modes rather than a happy
+path: the agent model is created *out of collation order* so a missing sort would be caught;
+`.old` backups must not be discovered as active; the agent falls back to a flat `models/` directory
+and draft and embed **must not**, because giving them a fallback the shell never had would start
+passing `-m`/`-md` paths where the original left them empty; and the switch's symlink target must be
+**relative**, since an absolute one works until the tree is deployed and then points outside it.
+
+**Equivalence was established against the originals before they were archived, not after.** Both
+implementations ran against the same scratch trees and their outputs were compared — four discovery
+cases, and a switch compared down to the resulting `models/agent` link targets. Identical in every
+case.
+
+> **A negative control, because this project has twice shipped a suite that could not fail.**
+> `test_routes.sh` once called `pass`/`fail` helpers it did not have and reported PASS while the
+> shell printed "command not found"; `test_api_fs.sh` once reported `ok` on eight absence checks
+> while the server was on the wrong port. So this suite was **verified to fail**: corrupting only
+> what the assertions *read* turns 4 of the 15 red and the suite exits non-zero. **Adding a suite
+> now includes proving it can go red.**
 
 ## 5f. `sha256-selftest` and `pipeline-selftest` — the completion pipeline (N-S5c, 2026-08-31)
 

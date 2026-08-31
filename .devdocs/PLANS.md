@@ -2,7 +2,7 @@
 
 Forward-looking strategy for implementations that are scoped but not yet built.
 
-**Last updated:** 2026-08-31 13:21 — REMAINING WORK corrected by **D-AH**: N-S6b/c/d withdrawn as rebuilding the old program. **Next is N-S7.**
+**Last updated:** 2026-08-31 — REMAINING WORK corrected by **D-AH**; re-sequenced by **D-AI** (CLI last, behind the total-conversion gate); toolchain probed
 
 ---
 
@@ -77,19 +77,112 @@ project code.
 > **The frame that section should have used, and the one below does: what is missing from the Nim
 > core, not what is broken in the shell tree.**
 
-### What actually remains
+### What actually remains — **re-sequenced 2026-08-31 by D-AI**
 
-**Three stages, all Nim, and they are the ones the plan always had.**
+**The CLI moves behind the total-conversion gate.** The USER: *"the cli is an added tool for another
+time after we have confirmed the total conversion and that there is no more lua c or shell scripts
+relied on (aside from configs)."*
 
 | # | Stage | Scope | Subtracts | Risk |
 |---|---|---|---|---|
-| **1** | **N-S7 — the GUI** | owlkettle GTK4 + libadwaita window, chat view, streaming, GtkSourceView code blocks, tray on StatusNotifierItem (**N-10**) | `jenova-ui/src/main.c`, `lib/ui.lua`, the GTK3 dependency, `bin/jenova-term` | **high** — owlkettle is unproven on this host |
-| **2** | **N-S8 — `jenova-cli`** | Terminal agentic loop with tool execution | — | medium |
-| **3** | **N-S9 — retire `jca_web/`** | Once the GUI reaches parity. **D-Z lifts here; B-01's live privacy leak closes with it** | `jca_web/`, and the whole shell installer/updater/uninstaller with it | medium |
+| **1** | **N-S7 — the desktop application** | Native Nim GUI **and** the tray/TUI control surface it must retain under Directive 3 | `jenova-ui/src/main.c` (C), `lib/ui.lua` (Lua), `bin/jenova-term`, GTK3 + libappindicator + LuaJIT + ncurses | **high** |
+| **2** | **N-S7b — the last shell reliance** | `jenova-model.sh` and `jenova-model-switch` ported to Nim | 2 shell scripts | low |
+| **3** | **GATE — total conversion confirmed** | Enumerate that no Lua, C or shell script is relied on by the running product, configs excepted | — | — |
+| **4** | **N-S9 — retire `jca_web/`** | **D-Z lifts here; B-01's live privacy leak closes with it** | `jca_web/`, and the shell installer/updater/uninstaller | medium |
+| **5** | **N-S8 — `jenova-cli`** | Terminal agentic loop with tool execution. **An added tool, after the gate** | — | medium |
 
-**Deployment is one decision at the end, not a stage.** The product is a single Nim binary. What
-installs it is settled once, after N-S9, against that binary — **not by repairing `install.sh`,
-which deploys the old program and which D-Y prohibits exercising anyway.**
+**Deployment is one decision at the end, not a stage.** The product is a single Nim binary — **not a
+repair to `install.sh`**, which deploys the old program and which D-Y prohibits exercising anyway.
+
+### The total-conversion inventory — **enumerated, not taken from the trackers**
+
+**What the running `jenova-core` actually relies on, by reverse-dependency search:**
+
+| Language | File | Relied on by | Dies at |
+|---|---|---|---|
+| **Lua** | `lib/ui.lua` (257 lines) | `jenova-ui/src/main.c` via embedded LuaJIT | **N-S7** |
+| **C** | `jenova-ui/src/main.c` (695 lines) | the tray and TUI binary | **N-S7** |
+| **shell** | `lib/jenova-model.sh` | `etc/jenova.conf:27` → `config.nim`'s `/bin/sh` evaluation → `MODEL_PATH`/`MODEL_DRAFT`/`MODEL_EMBED` at `lifecycle.nim:82,115,130` | **N-S7b** |
+| **shell** | `bin/jenova-model-switch` | `lib/ui.lua:125`, the tray's model-switch action | **N-S7b** |
+
+**That is the whole list.** Three previously-recorded items are **not** on it:
+
+- **`lib/detect-env.sh` and `lib/jenova-conf.sh` are NOT relied on by the core.** The trackers said
+  all three shell modules were load-bearing; **only `jenova-model.sh` is.** Their callers are
+  `scripts/*.sh` and `detect-hardware.sh` — setup-time tooling the running product never invokes.
+- **`scripts/*.sh` and `hardware-profiles/detect-hardware.sh` are setup-time tools**, not runtime
+  reliances. They go with N-S9's tree, not the conversion gate.
+- **`/bin/sh` itself is FreeBSD base, not a project script.** `config.nim` evaluates the conf files
+  with it, and `websearch.nim` shells to base `fetch(1)` by deliberate design. **The configs are
+  exempt by the USER's own parenthetical**, and evaluating a shell-format config requires a shell.
+
+**Why `etc/jenova.conf` keeps its format.** It is a config, and configs are exempt. It is also real
+shell — a `return 1` guard, a `JENOVA_LAYOUT` branch, a `.` source, and `${X:-default}` expansion
+throughout. `config.nim:54-60` already argues, correctly, that a partial parser for a shell subset
+"would silently mishandle all three and report a plausible wrong answer". **N-S7b removes the
+*script* from the chain, not the shell format** — model discovery moves into Nim, and the conf's
+source line stops being what supplies `MODEL_*`.
+
+### Verified toolchain baseline — **probed 2026-08-31, mechanism stated per D-AB**
+
+`pkg info` and `pkg-config` read the real FreeBSD package database; `pkg search` and `fetch(1)`
+reached the network. None of this routes through the emulation layer.
+
+| Component | State | Consequence |
+|---|---|---|
+| `nim 2.2.10` | Present, `/usr/local/nim/bin/nim`, off `PATH` | The `Makefile` already probes both locations |
+| **`owlkettle`** | **ABSENT.** Not in `~/.nimble/pkgs2`; **no FreeBSD port** — `pkg search owlkettle` empty | **`nimble install` only.** Network confirmed reachable |
+| `gtk4` | **4.20.4 installed**, pkg-config resolves | The one major dependency already satisfied |
+| **`libadwaita-1`** | **ABSENT**, available as `libadwaita-1.8.5.1` | `pkg install` |
+| **`gtksourceview-5`** | **ABSENT**, available as `gtksourceview5-5.18.0` | `pkg install`. **Code-block highlighting only — deferrable** |
+| `dbus` | **1.16.2 installed**, pkg-config resolves | **Makes an SNI tray feasible at all** — see below |
+| Session | `DISPLAY=:0`, `WAYLAND_DISPLAY=wayland-0`, `XDG_RUNTIME_DIR=/var/run/xdg/orpheus497` | A live graphical session exists to test against |
+
+### N-S7's real scope — **larger than "a chat window", and one part is unsolved**
+
+**Directive 3 forbids losing features.** The current tray/TUI is not decoration; it is the control
+surface, and `lib/ui.lua` defines it exactly:
+
+| Feature | Today | In Nim |
+|---|---|---|
+| Tray icon reflecting active/inactive, polled 3 s | appindicator + `jenova-ca status` | **UNSOLVED — see below** |
+| Menu: Open Web UI · System Control · Start/Stop/Restart · Switch Instruct/Thinking · Toggle LAN · Quit | `ui.get_menu`, `ui.on_action` | Direct — `lifecycle.nim` already owns every verb **in-process** |
+| LAN state persisted at `$JENOVA_STATE/lan_mode` | `ui.lua:12-37` | Direct |
+| Status string `LOCAL (127.0.0.1)` / `LAN (<ip>)` | `route -n get default` + `ifconfig` | Direct, base tools |
+| ncurses TUI with the same menu | `main.c:486` `run_tui` | **A GUI window replaces it.** Confirm rather than assume |
+| Chat view, streaming, code blocks | **does not exist** | New — the actual desktop application |
+
+**One structural simplification lands for free.** `ui.lua:69` spawns `jenova-ca proxy-serve` as a
+child of the tray — **that is B-13's mechanism**, the reason `--daemon` started no `:8080`. In the
+Nim core the server and the supervisor are already one process, so **the tray stops owning a proxy
+altogether**; it calls `lifecycle` in-process. The `proxy-serve` verb has no `jenova-core`
+equivalent and needs none.
+
+**The unsolved part — N-10, and it is an architecture problem, not a task.** GTK4 dropped
+`libappindicator`. **owlkettle provides no tray of any kind.** A StatusNotifierItem tray is a
+**D-Bus protocol** (`org.kde.StatusNotifierItem` + `com.canonical.dbusmenu`), and `dbus-1.16.2` is
+present — so it is *possible*, but it is an implementation against a D-Bus binding Nim does not
+ship, not a widget call. **Three honest options; this is the USER's call:**
+
+| | Option | For | Against |
+|---|---|---|---|
+| **A** | **Implement SNI over D-Bus in Nim** | Keeps the tray, keeps the single binary, no C | The largest unbudgeted piece of work in the rewrite |
+| **B** | **Drop the tray; the GUI window is the application** | Simplest, and a real desktop app arguably needs no tray. Removes N-10 entirely | **Removes a shipped feature — Directive 3 requires explicit instruction** |
+| **C** | **Ship the window first, tray after** | Unblocks the stage now; the window is the valuable half | Leaves `jenova-ui` alive, so C and Lua survive past N-S7 — **which defers the conversion gate** |
+
+**No recommendation without the USER**, because B trades a feature away and C trades the gate away.
+
+### Gates on N-S7 — Directive 1
+
+1. **`nimble install owlkettle`** — a new Nim dependency, MIT, the toolkit D-P chose.
+2. **`pkg install libadwaita`** — D-P names it. *(owlkettle builds against bare GTK4 without it, so
+   this is separable.)*
+3. **`pkg install gtksourceview5`** — code-block highlighting only. **Deferrable.**
+4. **N-11 — add `nim` to `install-dependencies.sh`'s `DEPS`.** Still unapproved, still true.
+
+**The owlkettle spike D-Q always allowed for is now cheap and specific:** install it, build one
+window against GTK4 4.20.4, and confirm it runs in this session. That answers "unproven on this
+host" before any Jenova code is written against it.
 
 ### The parts missing from the core — "taking the good and enhancing"
 

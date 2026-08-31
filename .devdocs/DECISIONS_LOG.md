@@ -49,6 +49,81 @@ further down is left in place for the historical record; **this table overrides 
 
 ---
 
+## 2026-08-31 — D-AJ / D-AK / D-AL: N-S7 unblocked
+
+### D-AJ — **The tray is retained, implemented as StatusNotifierItem over D-Bus in Nim.** *(BINDING)*
+
+**N-10 option A.** GTK4 dropped `libappindicator` and owlkettle provides no tray, so the tray becomes
+a **protocol implementation**: `org.kde.StatusNotifierItem` for the icon and status, and
+`com.canonical.dbusmenu` for the menu, spoken over `dbus-1.16.2` (installed, pkg-config resolves).
+
+**This is the largest unbudgeted unit of work in the rewrite and it was chosen with that stated.**
+The alternatives were rejected on their costs: dropping the tray removes a shipped feature
+(Directive 3), and shipping the window first leaves `main.c` and `ui.lua` alive, which defers the
+total-conversion gate (D-AI).
+
+**One thing gets simpler, not harder.** `ui.lua:69` spawned `jenova-ca proxy-serve` as a child of the
+tray — **B-13's mechanism**. In the Nim core the server and supervisor are one process, so the tray
+calls `lifecycle` in-process and the `proxy-serve` verb needs no equivalent.
+
+### D-AK — **All three dependencies approved.** *(Directive 1 satisfied)*
+
+`nimble install owlkettle` (MIT) · `pkg install libadwaita` (1.8.5.1) · `pkg install gtksourceview5`
+(5.18.0). Built against the `gtk4 4.20.4` already installed. **This is the full N-S7 specification
+D-P named**: adaptive window plus syntax-highlighted code blocks in the chat view.
+
+**N-11 follows from it:** `nim` and these three go into `install-dependencies.sh`'s `DEPS`, and
+`core` gains a `deps` prerequisite.
+
+### D-AL — **The ncurses TUI is replaced by the GUI window.** *(BINDING — Directive 3 instruction given)*
+
+The window becomes the control surface. **Removed with `main.c`:** the ncurses TUI
+(`main.c:486 run_tui`), `bin/jenova-term` (whose only purpose is launching the TUI in a terminal,
+closing **B-11**), `bin/jenova-tui`, and the `ncurses` and `luajit` dependencies.
+
+**This is the explicit instruction Directive 3 requires** — recorded as such rather than inferred,
+because a session inferring a removal is the exact failure D-AF was written about.
+
+---
+
+## 2026-08-31 — D-AI: **the CLI waits for the total-conversion gate**
+
+### D-AI — `jenova-cli` is an added tool, built after conversion is confirmed. *(BINDING)*
+
+> "the cli is an added tool for another time after we have confirmed the total conversion and that
+> there is no more lua c or shell scripts relied on (aside from configs)"
+
+**N-S8 moves from second to last.** The order is now **N-S7** (desktop application) → **N-S7b** (the
+last shell reliance) → **GATE: total conversion confirmed** → **N-S9** (retire `jca_web/`) → **N-S8**
+(CLI).
+
+**The gate is a specific, enumerable claim, not a feeling:** no Lua, no C, and no shell *script*
+relied on by the running product — **configs excepted, by the USER's own parenthetical.**
+
+**Enumerated 2026-08-31 by reverse-dependency search, so the gate has a definition:**
+
+| Language | File | Dies at |
+|---|---|---|
+| Lua | `lib/ui.lua` | N-S7 |
+| C | `jenova-ui/src/main.c` | N-S7 |
+| shell | `lib/jenova-model.sh` (via `etc/jenova.conf:27` → `config.nim`) | N-S7b |
+| shell | `bin/jenova-model-switch` (via `ui.lua:125`) | N-S7b |
+
+**Four files. That is the whole conversion surface**, and three things previously recorded as
+blocking it are not on the list: `lib/detect-env.sh` and `lib/jenova-conf.sh` are **not referenced by
+any `.nim` file** — the trackers' "all three shell modules are load-bearing" was wrong, and only
+`jenova-model.sh` ever was; `scripts/*.sh` and `detect-hardware.sh` are setup-time tools the running
+product never invokes; and `/bin/sh` is FreeBSD base, not a project script — the same standing the
+core already gives base `fetch(1)` in `websearch.nim`.
+
+### The standing corollary
+
+**"Relied on by the running product" is the test, not "present in the tree."** A shell script that
+only a setup-time tool calls does not block the gate. A 40-line Lua file the product loads at
+startup does.
+
+---
+
 ## 2026-08-31 — D-AH: **the old system's decay is not the remaining work**
 
 ### D-AH — Do not rebuild the program being replaced. *(BINDING)*

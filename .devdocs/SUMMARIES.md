@@ -5,7 +5,7 @@ Reverse-chronological. A pointer, not a re-narration.
 
 ---
 
-## Session 006 — 2026-08-31 13:07 → 13:21
+## Session 006 — 2026-08-31 13:07 → 14:13
 
 Read every mandated tracker and checked each load-bearing claim against the file it cites; no
 product code touched. **The Nim core held up on every functional claim tested** — the class table,
@@ -56,6 +56,56 @@ the wrong plan, for want of the one triage question D-O already mandates.** The 
 three Nim stages: **N-S7** GUI, **N-S8** CLI — the one stage that adds rather than ports — and
 **N-S9** retiring `jca_web/`, with the engine wiring already done and proven and `hardware-profiles/`
 the only part of the old tree that survives.
+**A third segment then re-sequenced the plan and investigated N-S7 properly.** **D-AI** moves the
+CLI to last, behind a total-conversion gate — no Lua, C or shell script relied on by the running
+product, configs excepted — and the gate now has a definition by reverse-dependency search rather
+than by tracker: **four files**, `lib/ui.lua`, `jenova-ui/src/main.c`, `lib/jenova-model.sh` and
+`bin/jenova-model-switch`. **The USER's standing instruction to never trust the devdocs paid out on
+the first check:** three trackers claim *"all three shell modules are load-bearing"* and **only
+`jenova-model.sh` is** — nothing in `src/` references `detect-env.sh` or `jenova-conf.sh`, whose
+only callers are setup-time shell tools the running product never invokes. The toolchain was then
+probed against the real package database rather than assumed: **gtk4 4.20.4, dbus 1.16.2 and nim
+2.2.10 are installed; owlkettle is absent with no FreeBSD port at all** (nimble only, network
+reachable), libadwaita and gtksourceview5 absent but installable and both separable from the core
+window. Reading `lib/ui.lua` in full showed **N-S7 is larger than the plan said** — the tray is the
+control surface, not decoration, and Directive 3 retains all of it — while one simplification lands
+free, since `ui.lua` spawning `jenova-ca proxy-serve` as a child of the tray **is B-13's mechanism**
+and the Nim core already has server and supervisor in one process. **The unsolved part is N-10 and
+it is architecture, not a task:** GTK4 dropped `libappindicator`, **owlkettle has no tray at all**,
+and StatusNotifierItem is a D-Bus protocol — dbus being present makes it possible, not easy. Three
+options are recorded, and none was chosen, because one removes a shipped feature and another defers
+the gate. **Nothing was built:** N-S7 is blocked on two Directive 1 items, the dependency change and
+the tray decision, and building against an uninstalled toolkit would be the same "hotfix jamming"
+already corrected once this session. **The fourth segment then built it, and the total-conversion
+gate is passed.** The USER answered both blocking questions — **D-AJ** implement SNI in Nim,
+**D-AK** all three dependencies, **D-AL** the window replaces the ncurses TUI — and installed the
+pkg dependencies themselves. **The riskiest unknown was retired first:** owlkettle 3.0.0 installed
+via nimble and a throwaway window compiled and linked against gtk4 4.20.4 into a native FreeBSD 15.1
+ELF, answering D-Q's "unproven on this host" for compile and link before a line of Jenova code was
+written against it. Then five modules: `models.nim` (discovery and switching), `gui.nim` (the
+GTK4/libadwaita window with chat streaming and the full control surface), `dbus.nim` and `tray.nim`
+(**StatusNotifierItem plus com.canonical.dbusmenu spoken directly over D-Bus**, dispatched from a
+GTK main-loop timeout so menu callbacks share the widget thread and no locking question arises), and
+`jenova_gui.nim`. **Equivalence was proven before the originals were archived, not after** — the
+same scratch trees switched and scanned by both implementations, compared down to relative symlink
+targets, identical in every case — and the new 15-assertion suite was then **proven able to fail**,
+because this project has twice shipped a suite that reported PASS while asserting nothing. **The
+gate was verified by enumeration, not claimed:** zero Lua, zero C outside the archive and vendored
+trees, and the only programs the core executes are `/bin/sh` for the exempt **config files**,
+`llama-server` via `execv`, `git`, base `fetch(1)`, and `xdg-open`/`route`/`ifconfig` — **no project
+shell script.** `bin/jenova` is now a compiled binary and `bin/jenova-core` stays headless so a LAN
+server still builds without GTK (N-7). Also closed: N-10, N-11, B-11, **B-24 by subtraction** (the
+python-shelling `test-health.sh` archived rather than rewritten), **B-42** (`make check` exists at
+the root for the first time), and B-02's last load-bearing instance; `DEPS` both grew and shrank.
+**Four failures disclosed:** a **C-11 violation** — `git mv` staged a rename, the same slip as
+Session 005's `git rm`, undone with `git reset HEAD --` and every later move done with plain `mv`; a
+`sed` that replaced a widget property with `discard` and left nonsense in the view; **dead code I
+wrote myself** in `lanAddress`, an Integrity-Standard class-3 violation in a file added the same
+hour, fixed by *using* it so the header shows the LAN address as the original did; and the honest
+limit of the whole stage — **the window has never been displayed and the tray has never been seen by
+a watcher.** Both build warning-free and link libgtk-4, libadwaita-1 and libdbus-1, but D-AG
+reserves each process start to the USER, and a tray with a wrong D-Bus signature shows *no icon*
+rather than an error — which is exactly the kind of claim that must not be made from reading.
 See `SESSION_HANDOFF.md` Session 006.
 
 ---

@@ -79,29 +79,41 @@ fi
 # cmake is listed because external/llama.cpp uses it as its build system. That
 # is upstream's choice, not Jenova's -- nothing in this repository is built with
 # cmake directly.
-# pkgconf MUST be first: the probes for lua54, gtk3, appindicator and ncurses
-# call pkg-config, so on a bare system every one of them would misreport until
-# it is installed.
+# pkgconf MUST be first: the probes for gtk4, libadwaita, gtksourceview5 and
+# dbus call pkg-config, so on a bare system every one of them would misreport
+# until it is installed.
+#
+# Revised 2026-08-31 at N-S7 (ruling D-AK). The desktop application is now Nim +
+# GTK4 rather than C + GTK3 + embedded LuaJIT + ncurses, so this list both grows
+# and shrinks:
+#
+#   added   nim, gtk4, libadwaita, gtksourceview5, dbus
+#   removed luajit-openresty, lua54  -- no Lua remains in the product
+#           gtk3, libappindicator, ncurses -- the C tray and TUI are archived
+#           stylua -- a Lua formatter, with no Lua left to format
+#           llvm/clangd -- there are no C sources left in the repository
+#
+# owlkettle is NOT here and cannot be: it is a Nim library with no FreeBSD port,
+# installed with `nimble install owlkettle`. The `gui` target checks for it and
+# fails with that instruction rather than producing a confusing compile error.
 DEPS=$(cat <<'EOF'
 pkg-config:pkgconf
 git:git
 cmake:cmake
 sqlite3:sqlite3
-luajit:luajit-openresty
-lua54:lua54
+nim:nim
 gettext:gettext-tools
 vulkan:vulkan-loader
 glslc:shaderc
 spirv-headers:spirv-headers
-gtk3:gtk3
-appindicator:libappindicator
-ncurses:ncurses
+gtk4:gtk4
+libadwaita:libadwaita
+gtksourceview5:gtksourceview5
+dbus:dbus
 node:node
 npm:npm
 curl:curl
 xdg-open:xdg-utils
-clangd:llvm
-stylua:stylua
 EOF
 )
 
@@ -110,20 +122,26 @@ EOF
 # or a known header path rather than command -v.
 is_installed() {
     case "$1" in
-        gtk3)
-            pkg-config --exists gtk+-3.0 2>/dev/null
+        gtk4)
+            pkg-config --exists gtk4 2>/dev/null
             ;;
-        appindicator)
-            # FreeBSD ships both libappindicator and the ayatana fork;
-            # jenova-ui builds against whichever is present.
-            pkg-config --exists appindicator3-0.1 2>/dev/null ||
-            pkg-config --exists ayatana-appindicator3-0.1 2>/dev/null
+        libadwaita)
+            pkg-config --exists libadwaita-1 2>/dev/null
             ;;
-        ncurses)
-            pkg-config --exists ncurses 2>/dev/null
+        gtksourceview5)
+            pkg-config --exists gtksourceview-5 2>/dev/null
             ;;
-        lua54)
-            pkg-config --exists lua-5.4 2>/dev/null
+        dbus)
+            # The StatusNotifierItem tray is a D-Bus protocol (D-AJ), so this is
+            # a build dependency of bin/jenova, not just a runtime nicety.
+            pkg-config --exists dbus-1 2>/dev/null
+            ;;
+        nim)
+            # The FreeBSD lang/nim port installs to /usr/local/nim/bin, which is
+            # not on the default PATH — so `command -v nim` alone reports a
+            # missing compiler on a machine that has one. The Makefile probes
+            # both locations for the same reason.
+            command -v nim >/dev/null 2>&1 || [ -x /usr/local/nim/bin/nim ]
             ;;
         spirv-headers)
             [ -f /usr/local/include/spirv/unified1/spirv.h ]
@@ -135,12 +153,6 @@ is_installed() {
             [ -f /usr/local/lib/libvulkan.so ] ||
             [ -f /usr/local/lib/libvulkan.so.1 ] ||
             ldconfig -r 2>/dev/null | grep -q libvulkan
-            ;;
-        clangd)
-            # The llvm port installs versioned binaries (clangd19, ...), so an
-            # unversioned `command -v clangd` fails even on a good install.
-            # Ask pkg whether the package itself is present.
-            pkg info -e llvm 2>/dev/null
             ;;
         *)
             command -v "$1" >/dev/null 2>&1

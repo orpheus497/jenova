@@ -2,7 +2,7 @@
 
 Granular task list. Completed items move to the `BLUEPRINT.md` implementation registry.
 
-**Last updated:** 2026-08-31 13:07 — cross-reference pass; §6 added (N-35, B-39 … B-43), N-34 rescoped
+**Last updated:** 2026-08-31 14:13 — N-S7 complete; total-conversion gate passed
 
 ---
 
@@ -177,6 +177,53 @@ nobody re-derives it; **no stage is scheduled against it.** Recorded as
 **B-30 changed shape, and the change is worth recording rather than closing.** `MAX_TURNS`,
 `MAX_ACTIONS` and `TIMEOUT` are now in `config.nim:49`'s key list, so `jenova-core config` reports
 them. **No consumer acts on them** — they are surfaced, not used. The defect stands.
+
+---
+
+## N-S7 — **COMPLETE 2026-08-31. Total conversion reached.**
+
+**Order was N-S7 → N-S7b → GATE → N-S9 → N-S8 (D-AI). The first three are done.**
+
+| ID | Outcome |
+|---|---|
+| ~~**N-10**~~ | **CLOSED — SNI implemented in Nim (D-AJ option A).** `src/jenova/tray.nim` + `src/jenova/dbus.nim`: `org.kde.StatusNotifierItem` and `com.canonical.dbusmenu` spoken over `dbus-1.16.2`, dispatched from a GTK main-loop timeout so menu callbacks share the widget thread. **A desktop with no StatusNotifierWatcher degrades to "no tray", never to a failed startup** |
+| ~~**N-36**~~ | **CLOSED — `models.nim` `discover`.** Proven equivalent to `lib/jenova-model.sh` by running both against the same scratch tree across four cases: identical. The seven conf files no longer source it |
+| ~~**N-37**~~ | **CLOSED — `models.nim` `switchModel`, plus `jenova-core models switch`.** Proven equivalent to `bin/jenova-model-switch` by switching the same scratch tree with both and comparing `models/agent` **including relative symlink targets**: identical |
+| ~~**N-38**~~ | **CLOSED — the control surface is reproduced in full** (Directive 3): the menu item for item, LAN state at `$JENOVA_STATE/lan_mode`, the 3 s status poll, and the `LOCAL (127.0.0.1)` / `LAN (<ip>)` string. **The tray and the window menu share one implementation** — a queue drained on the main loop — because `ui.lua` had the tray and TUI each rebuilding the same command strings. The TUI is replaced by the window (**D-AL**) |
+| ~~**N-11**~~ | **CLOSED (D-AK).** owlkettle 3.0.0 via nimble; libadwaita 1.8.5.1 and gtksourceview5 5.18.0 via pkg. `DEPS` revised: **added** `nim`, `gtk4`, `libadwaita`, `gtksourceview5`, `dbus`; **removed** `luajit-openresty`, `lua54`, `gtk3`, `libappindicator`, `ncurses`, `stylua`, `llvm` — none has anything left to build. `core` and `gui` now depend on `deps` |
+| ~~**B-11**~~ | **CLOSED.** `bin/jenova-term` existed only to open a terminal for the TUI; its sole caller was `ui.lua:104`. Both archived |
+| ~~**B-24**~~ | **CLOSED by subtraction (D-AH).** `tests/test-health.sh` archived; no `python3`, no rewrite |
+| ~~**B-42**~~ | **CLOSED.** `make check` now exists at the repository root |
+| **B-02** | **Last load-bearing instance closed** — `main.c:324`'s `$HOME/.jenova/ui.lock` went with `jenova-ui/`. What remains is `scripts/update.sh:105`'s fallback PID path, in the shell tree that goes at N-S9 |
+
+### The total-conversion gate — **PASSED, by enumeration**
+
+`find` reports **zero `*.lua` and zero `*.c`/`*.h`** outside `.devdocs/`,
+`external/` and `jca_web/`. The only programs the core executes:
+
+| Executes | Why it does not break the gate |
+|---|---|
+| `/bin/sh` (`config.nim:93`) | Evaluates the shell-format **config files**. Configs are exempt by the USER's own parenthetical, and `/bin/sh` is FreeBSD base — the same standing `websearch.nim` gives base `fetch(1)` |
+| `llama-server` via `execv` (`lifecycle.nim:258`) | The inference engine (D-AF). Not a script |
+| `git` (`fssync.nim:99`) | A declared dependency, invoked with an argument vector |
+| `fetch` (`websearch.nim:42`) | FreeBSD base HTTPS client, chosen deliberately over linking OpenSSL |
+| `xdg-open`, `route`, `ifconfig` (`gui.nim:207`) | Base/desktop tools for opening a browser and reading the LAN address |
+
+**`lib/` is down to two files**, `detect-env.sh` and `jenova-conf.sh` — kept **not
+because the core needs them**, which was the long-standing incorrect claim, but
+because `scripts/*.sh` and `detect-hardware.sh` still call them. They leave with
+that tree at N-S9.
+
+### Outstanding from N-S7 — disclosed, not hidden
+
+| Item | State |
+|---|---|
+| **The window has never been run** | It builds with zero warnings, links `libgtk-4`/`libadwaita-1`/`libdbus-1`, and its `--help` and flag-refusal paths work. **Displaying it starts a process, which D-AG reserves to the USER per instance.** Nothing below the compile line is proven |
+| **`gtksourceview5` is installed and not yet consumed** | Approved under D-AK for code-block highlighting; the chat view renders code as plain text until it is wired in |
+| **The tray has never been seen by a watcher** | Same gate as the window. The protocol is written against the spec, and a wrong signature yields a silently-absent icon rather than an error — **so this is exactly the kind of claim that must not be made from reading** |
+
+**Next: N-S9** retires `jca_web/` (closing B-01's live privacy leak, B-03, B-04)
+and the shell installer tree with it. **Then N-S8**, the CLI.
 
 ---
 

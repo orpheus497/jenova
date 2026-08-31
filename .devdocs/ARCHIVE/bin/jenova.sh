@@ -1,0 +1,24 @@
+#!/bin/sh
+
+# jenova: Full-environment launcher — start Jenova UI.
+#
+# This is the canonical entry point for starting the Jenova UI tray/manager.
+
+set -e
+
+_REAL_PATH=$(realpath "$0" 2>/dev/null || readlink -f "$0" 2>/dev/null || echo "$0")
+SCRIPT_DIR=$(dirname "$_REAL_PATH")
+
+JENOVA_UI="$SCRIPT_DIR/jenova-ui"
+JENOVA_TUI="$SCRIPT_DIR/jenova-tui"
+
+if [ -x "$JENOVA_UI" ] && [ -z "$SSH_CLIENT" ] && [ -z "$SSH_TTY" ] && { [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ]; }; then
+    echo "Starting Jenova UI..."
+    exec "$JENOVA_UI" "$@"
+elif [ -x "$JENOVA_TUI" ]; then
+    echo "Starting Jenova TUI..."
+    exec "$JENOVA_TUI" "$@"
+else
+    echo "jenova-ui and jenova-tui not found or not executable."
+    exit 1
+fi

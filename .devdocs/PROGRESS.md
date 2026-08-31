@@ -2,11 +2,79 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-08-31 12:58
+**Last updated:** 2026-08-31 14:13
 
 ---
 
 ## Completed
+
+### 2026-08-31 — **N-S7. The desktop application is Nim. Total conversion reached.**
+
+**No Lua, no C, no project shell script is executed by the running product.**
+Verified by enumeration after the change, not claimed: `find` reports zero `*.lua`
+and zero `*.c`/`*.h` outside `.devdocs/`, `external/` and `jca_web/`, and the only
+programs the core executes are `/bin/sh` (to evaluate the shell-format **config
+files**, which D-AI exempts), `llama-server` via `execv`, `git`, base `fetch(1)`,
+and `xdg-open`/`route`/`ifconfig` for the desktop actions.
+
+**Built:**
+
+| Module | Lines | What it is |
+|---|---|---|
+| `src/jenova/gui.nim` | ~480 | The GTK4/libadwaita window: chat view with streaming, and the whole control surface `lib/ui.lua` defined |
+| `src/jenova/tray.nim` | ~330 | **StatusNotifierItem over D-Bus** — the tray, as a protocol rather than a widget (D-AJ) |
+| `src/jenova/dbus.nim` | ~180 | The minimum of libdbus-1 the tray speaks, bound through `<dbus/dbus.h>` |
+| `src/jenova/models.nim` | ~200 | Model discovery and switching, replacing the last two shell scripts |
+| `src/jenova_gui.nim` | ~70 | `bin/jenova`'s entry point |
+
+**`bin/jenova` is a compiled binary now**, built by `make gui`. It is kept
+separate from `jenova-core` deliberately: the headless server must stay buildable
+on a machine with no GTK, because **N-7 requires LAN mode to serve whether or not
+the GUI is running.** Splitting the binaries is not splitting the program — both
+link the same core modules and both drive `lifecycle` in-process.
+
+**The tray was the expensive part, and it was known to be.** GTK4 dropped
+`libappindicator` and owlkettle has no tray, so `org.kde.StatusNotifierItem` plus
+`com.canonical.dbusmenu` are implemented directly. It is dispatched from a **GTK
+main-loop timeout**, not a thread, so menu callbacks run on the same thread as the
+widgets and there is no locking question at all. **A desktop with no
+StatusNotifierWatcher degrades to "no tray icon", never to a failed startup** —
+`tray.start` returns false and the window is unaffected.
+
+**One structural defect did not get carried across.** `ui.lua:69` spawned
+`jenova-ca proxy-serve` as a **child of the tray** — the mechanism of **B-13**.
+Here the server, supervisor and window are one process, so the tray owns nothing
+and `proxy-serve` has no equivalent. Related: **the tray and the window menu now
+share one implementation**, a queue drained on the main loop, because `ui.lua`
+had the tray and the TUI each rebuilding the same command strings.
+
+**`switchModel` was proven equivalent before its original was archived, not
+after.** The same scratch tree was switched by `bin/jenova-model-switch` and by
+`models.switchModel`, and the resulting `models/agent` compared including relative
+symlink targets: **identical**. Discovery was compared the same way against
+`lib/jenova-model.sh` across four cases: identical.
+
+**And the new suite was proven able to fail.** `tests/test_models.sh` reports 15
+assertions PASS; corrupting only what the assertions *read* turns 4 of them red
+and the suite non-zero. This project has twice recorded suites that reported PASS
+while asserting nothing, so a negative control is now part of adding one.
+
+**Closed:** N-36, N-37, N-38, N-10, N-11, **B-11**, **B-24** (by subtraction),
+**B-42**, and B-02's last load-bearing instance. **`make check` exists at the
+repository root for the first time** — three documents had claimed it did.
+
+**Conf files edited, and why that is not a rebuild of the old program:**
+`etc/jenova.conf` and the six profile `jenova.conf` files no longer source
+`lib/jenova-model.sh`. They keep their shell format — they are configs, which
+D-AI exempts — and **a value set in them still wins**, because `config.nim` fills
+only what they leave empty. `etc/jenova.local.conf` was not read for content and
+not touched.
+
+**Disclosed:** `gtksourceview5` was installed under D-AK and is **not yet
+consumed** — code blocks render as plain text until the chat view uses it. And
+**the window has not been run**: it builds, links `libgtk-4`/`libadwaita-1`/
+`libdbus-1`, and its `--help` and flag-refusal paths work, but D-AG reserves each
+process start to the USER and displaying a window was not among the approvals.
 
 ### 2026-08-31 — **The Lua runtime and `bin/jenova-ca` archived. Thirteen defects closed by moving files.**
 

@@ -16,7 +16,7 @@ when not defined(freebsd):
 
 import std/[os, strformat, strutils, json]
 import jenova/[paths, config, db, dbselftest, server, serverselftest, llama,
-               inference, rag, sha256, pipeline, prompts, lifecycle]
+               inference, rag, sha256, pipeline, prompts, lifecycle, models]
 
 const
   Version = "0.1.0"
@@ -162,6 +162,37 @@ proc main() =
         quit(0)
       else:
         echo "usage: jenova-core backends [start|stop|restart|status|health|args]"
+        quit(2)
+    of "models":
+      # Action purpose: model discovery and switching, replacing
+      # `lib/jenova-model.sh` and `bin/jenova-model-switch` — the last two shell
+      # scripts the running product relied on (D-AI's total-conversion gate).
+      # The GUI calls `models.switchModel` directly; this subcommand exists so
+      # the same operation is available without a desktop session.
+      let p = paths.resolve()
+      let sub = if args.len > 1: args[1] else: "list"
+      case sub
+      of "list":
+        let c = config.load(p)
+        echo "agent: ", c.get("MODEL_PATH")
+        echo "draft: ", c.get("MODEL_DRAFT")
+        echo "embed: ", c.get("MODEL_EMBED")
+        quit(0)
+      of "switch":
+        if args.len < 3:
+          echo "usage: jenova-core models switch [instruct|thinking]"
+          quit(2)
+        # Switching relinks models/agent; llama-server holds the old model open
+        # until it is restarted, so this reports rather than silently implying
+        # the running backend changed.
+        let r = models.switchModel(p.jcaHome, args[2])
+        for e in r.removed: echo "removed identical active model: ", e.extractFilename
+        for e in r.preserved: echo "preserved active model as: ", e.extractFilename
+        echo r.message
+        echo "restart the backend for this to take effect: jenova-core backends restart"
+        quit(0)
+      else:
+        echo "usage: jenova-core models [list|switch <instruct|thinking>]"
         quit(2)
     of "db-capabilities":
       # Reports what the linked libsqlite3 can actually do, rather than what the

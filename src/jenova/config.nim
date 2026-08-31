@@ -13,6 +13,7 @@
 
 import std/[os, osproc, strutils, tables]
 import ./paths
+import ./models
 
 type
   Config* = object
@@ -32,7 +33,8 @@ const
   Keys* = [
     # paths
     "JCA_HOME", "JENOVA_STATE", "LOG_DIR", "CACHE_DIR", "PID_FILE", "LLAMA_SERVER",
-    # models (discovered by lib/jenova-model.sh, which jenova.conf sources)
+    # models (resolved by ./models.nim after the conf is evaluated; the conf
+    # files no longer source a shell helper for this — see load() below)
     "MODEL_PATH", "MODEL_DRAFT", "MODEL_EMBED",
     # network
     "HOST", "PORT", "LLAMA_PORT", "LLAMA_EMBED_PORT",
@@ -53,11 +55,10 @@ const
 
 ## Action purpose: evaluate the conf files with /bin/sh rather than parsing them.
 ##
-## They ARE shell — `etc/jenova.conf` opens with a guard clause, branches on
-## JENOVA_LAYOUT to pick LLAMA_SERVER (`:17-21`), and sources
-## `lib/jenova-model.sh` for model discovery (`:27`). A hand-written parser for a
-## subset of shell would silently mishandle all three and report a plausible
-## wrong answer. Handing them to the interpreter that owns the format is exact.
+## They ARE shell — `etc/jenova.conf` opens with a guard clause and branches on
+## JENOVA_LAYOUT to pick LLAMA_SERVER (`:17-21`). A hand-written parser for a
+## subset of shell would silently mishandle both and report a plausible wrong
+## answer. Handing them to the interpreter that owns the format is exact.
 ##
 ## The two files are sourced profile-then-local, which is the corrected order.
 ## Exported JENOVA_* variables still win, because both files read their defaults
@@ -65,9 +66,12 @@ const
 ##
 ##     builtin default  <  profile conf  <  local conf  <  environment
 ##
-## This shell dependency is deliberate and temporary: it lasts until the conf
-## format itself changes, which is a separate decision touching all six shipped
-## hardware profiles.
+## **This is not a shell-script dependency**, and the distinction is what D-AI's
+## total-conversion gate turns on. The conf files are *configs*, which the gate
+## exempts, and `/bin/sh` is FreeBSD base — the same standing `websearch.nim`
+## gives base `fetch(1)`. What the confs no longer do is source a **project**
+## shell script: they sourced `lib/jenova-model.sh` for model discovery until
+## 2026-08-31, and `./models.nim` does that now (see `load`).
 proc evalConfFiles(p: Paths, profileConf, localConf: string): Table[string, string] =
   var script = """
 set -e
@@ -116,6 +120,22 @@ proc load*(p: Paths): Config =
   if result.values.len == 0:
     raise newException(ConfigError,
       "config evaluation produced nothing; check " & result.profileConf)
+
+  # Action purpose: resolve the three model paths in Nim rather than through
+  # `lib/jenova-model.sh`, which `etc/jenova.conf:27` used to source. That script
+  # was the last shell script the running product relied on, and removing it is
+  # the total-conversion gate (D-AI); `models.discover` reproduces its logic.
+  #
+  # A value the conf actually set still wins. This is not defensiveness — it is
+  # the contract: `etc/jenova.local.conf` is the USER's machine file and may name
+  # a model explicitly, and silently overriding it with a directory scan would be
+  # the same class of defect as B-12's inverted hierarchy. Discovery fills only
+  # what the conf left empty, which is precisely what the shell did.
+  for key, kind in {"MODEL_PATH": mkAgent,
+                    "MODEL_DRAFT": mkDraft,
+                    "MODEL_EMBED": mkEmbed}.items:
+    if result.values.getOrDefault(key, "").strip.len == 0:
+      result.values[key] = discover(p.jcaHome, kind)
 
 proc get*(c: Config, key: string, default = ""): string =
   c.values.getOrDefault(key, default)
