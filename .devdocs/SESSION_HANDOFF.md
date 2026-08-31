@@ -85,14 +85,55 @@ file awareness is a socket query**, not a filesystem guess.
 `src/jenova/{canvas,gui}.nim`, `jenova_core.nimble`, and
 `.devdocs/{TODOS,PROGRESS,PLANS,BRIEFING,DECISIONS_LOG,SESSION_HANDOFF,SUMMARIES}.md`.
 
+### T-1: eleven cores, six hypotheses, and the USER solved it
+
+**The bug:** `closeWindow()` destroys the window and every widget under it; the same timer callback
+then fell through to `redraw()` and diffed freed memory. **It crashed on *exit*** — which is why
+every session "worked fine" and left a core.
+
+**The USER diagnosed it** (*"i think the issue is the quit button"*) after five of mine died:
+
+| Claimed cause | Killed by |
+|---|---|
+| ORC collecting owlkettle's `state → event → state` cycles (D-AS) | `--mm:arc` shipped; still crashed |
+| The 30 fps whole-tree redraw | Removed; still crashed, just rarer |
+| GTK4 unparenting a fullscreened titlebar | The **no-fullscreen** session crashed too |
+| `ToggleButton` reentrancy via `set_active` | Replaced with a plain `Button`; **next core identical** |
+| (implicitly) the chat column's `Box` | `Box` never calls `updateChildren` at all |
+
+**The single lesson: read a core for *when*, not just *where*.** The faulting widget was identical
+in all eleven and was never the cause — it was **the first widget a doomed diff touched**. And the
+USER stated the answer twice in plain language — *every session runs fine and leaves a core* — which
+I read as a contradiction instead of as a timestamp.
+
+**Two process rules paid for here:** an uptime sample on a live process is **not** a result (I
+reported "1:47, no core" about a process that died two minutes later — core 40484); and a claim that
+evidence *cannot* be obtained must itself be tested (*"no debugger here reads a FreeBSD core"* was
+false — `gdb 15.1 for FreeBSD` read all eleven).
+
+**Confirmed 20:52 by a completed session**, not an uptime: newest core 20:42 from the *previous*
+build, none since 20:49, process exited.
+
+### Also closed
+
+- **Chat bubbles "weirdly huge"** — every message card carried `vexpand`, because `Box`'s adder
+  defaults to `expand: true`. §3a already carried that rule and it had not been applied here.
+- **The fullscreen top bar** — `HeaderBar {.addTitlebar.}` means `gtk_window_set_titlebar`, which
+  GTK4 hides in fullscreen. `Window` → **`AdwWindow`** and the bar extracted into
+  `proc topBar(app): Widget`, inserted atop the chat column (the Web UI's sidebar is full height, so
+  spanning would not be parity). **G-13c's bottom-row workaround is now redundant**, kept because a
+  second exit costs nothing. **Given up and stated:** `AdwWindow` has no `title` field, so the
+  WM/taskbar title may be empty.
+
 ### Next
 
-1. **Run `bin/jenova` (20:10).** T-1's fix is compiled and unseen. **Use it the way that crashed it
-   — fullscreen, F11, open and close notes** — and if it dies, the core is now readable: `gdb -batch
-   -ex "bt 25" bin/jenova /var/coredumps/<core>`.
-2. **T-13**, a three-line fix in the branch beside the one already fixed.
-3. **G-16 … G-21**, starting with whichever the USER wants; **G-19 (Neovim) is the only one needing
-   a new dependency** and should be scoped into `PLANS.md` before it is started.
+1. **T-13** — renaming a file asset writes a zero-byte file and wipes its metadata. Three lines, in
+   the branch beside the one already fixed.
+2. **G-16 … G-21** (D-AT): filesystem view/browser, writer/editor, file awareness, **Neovim in a
+   tab**, models selector, trash view. **`vte 2.91-gtk4 0.80.5` and `nvim 0.12.5` are both installed
+   — checked**, so G-19's approach is viable. It is the only item needing a new dependency and
+   should be scoped into `PLANS.md` first.
+3. **T-12** (`test_routes` fails 5, pre-existing) and `PLANS.md` stage 1 (T-2 … T-5) behind that.
 
 ---
 

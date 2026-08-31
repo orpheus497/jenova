@@ -921,108 +921,117 @@ proc nodeTools(app: AppState, entity, id: string, ws, pr, fd: string,
         style = [ButtonFlat, StyleClass("row-btn")]
         proc clicked() = app.deleteNode(entity, id)
 
+## Function purpose: the top bar, and **it is a body widget, not a titlebar.**
+## It was `HeaderBar {.addTitlebar.}` on a `Window`, which meant
+## `gtk_window_set_titlebar` — and **GTK4 hides that while the window is
+## fullscreened.** The USER: *"when going to fullscreen the top bar is
+## missing."* That took the sidebar toggle, the app menu (Quit included) and the
+## status line with it; G-13c had already moved the fullscreen control to the
+## bottom row for exactly this reason, one control at a time.
+##
+## The window is now an `AdwWindow` — *"a Window that does not have a title
+## bar"* — with this bar as an ordinary widget inside the content, which is the
+## pattern owlkettle's own `AdwWindow` example uses. It stays mapped in
+## fullscreen, and the whole class of titlebar-only-in-windowed-mode problems
+## goes with it.
+##
+## **It sits atop the chat column rather than spanning the window** because the
+## Web UI's sidebar is full height (`h-full glass-panel rounded-r-[24px]`,
+## `ChatSidebar.svelte:177`), so a bar above the sidebar would not be parity.
+proc topBar(app: AppState): Widget =
+  gui:
+    # No adder annotation here — a `gui` tree's top-level widget may not carry
+    # one. `expand: false` is applied where this is inserted instead.
+    HeaderBar:
+      WindowTitle {.addTitle.}:
+        title = "Jenova"
+        subtitle = (case app.status
+                    of bsUp: "ready"
+                    of bsStarting: "starting — loading model"
+                    of bsDown: "stopped") &
+                   # Reproduces `ui.get_status_info`'s mode string: the LAN
+                   # address is shown, not just the fact of LAN mode, because
+                   # the address is the thing you need in order to connect a
+                   # phone or second machine to it.
+                   (if app.lanEnabled:
+                      "  ·  LAN " & (if app.lanAddr.len > 0: app.lanAddr
+                                     else: "0.0.0.0")
+                    else: "  ·  local 127.0.0.1")
+
+      Button {.addLeft.}:
+        # Mirrors the Web UI's `Sidebar.Trigger`. A plain `Button`: the state it
+        # would otherwise carry is shown by the icon, the way `fullscreenButton`
+        # does it, so there is no `state` property to bind and no second writer
+        # racing the Flap's own `changed`.
+        icon = (if app.sidebarOpen: "sidebar-show-symbolic"
+                else: "sidebar-show-right-symbolic")
+        tooltip = (if app.sidebarOpen: "Hide sidebar" else: "Show sidebar")
+        proc clicked() =
+          app.sidebarOpen = not app.sidebarOpen
+
+      MenuButton {.addRight.}:
+        icon = "open-menu-symbolic"
+        Popover:
+          Box(orient = OrientY, spacing = 4, margin = 8):
+            # Every item enqueues; none of them acts. The queue is drained in
+            # the afterBuild timer, which is also where the tray's identical
+            # menu lands — one implementation, reachable two ways.
+            Button:
+              text = "Start backend"
+              style = [ButtonFlat]
+              proc clicked() = pendingActions.add "start"
+            Button:
+              text = "Stop backend"
+              style = [ButtonFlat]
+              proc clicked() = pendingActions.add "stop"
+            Button:
+              text = "Restart backend"
+              style = [ButtonFlat]
+              proc clicked() = pendingActions.add "restart"
+            Separator()
+            Button:
+              text = "Switch to instruct model"
+              style = [ButtonFlat]
+              proc clicked() = pendingActions.add "switch_instruct"
+            Button:
+              text = "Switch to thinking model"
+              style = [ButtonFlat]
+              proc clicked() = pendingActions.add "switch_thinking"
+            Separator()
+            Button:
+              # The label states the action, not the state, because a toggle
+              # labelled with its current value is ambiguous about what
+              # clicking it does — `ui.lua:73` had the same reasoning.
+              text = (if app.lanEnabled: "Disable LAN access"
+                      else: "Enable LAN access")
+              style = [ButtonFlat]
+              proc clicked() = pendingActions.add "toggle_lan"
+            Button:
+              text = "Open Web UI"
+              style = [ButtonFlat]
+              proc clicked() = pendingActions.add "web"
+            Separator()
+            Button:
+              text = (if app.fullscreen: "Leave fullscreen" else: "Fullscreen")
+              style = [ButtonFlat]
+              proc clicked() = pendingActions.add "toggle_fullscreen"
+            Separator()
+            # The tray has carried the only Quit since it was written
+            # (`trayMenu`, id 12). A desktop with no StatusNotifierWatcher gets
+            # no tray, which left the window's own close button as the single
+            # way out of the application.
+            Button:
+              text = "Quit"
+              style = [ButtonFlat]
+              proc clicked() = pendingActions.add "quit"
+
 method view(app: AppState): Widget =
   result = gui:
-    Window:
-      title = "Jenova"
+    # `AdwWindow`, not `Window`: it has no titlebar slot, so the top bar is an
+    # ordinary widget that stays mapped in fullscreen. See `topBar`.
+    AdwWindow:
       defaultSize = (900, 680)
       fullscreened = app.fullscreen
-
-      HeaderBar {.addTitlebar.}:
-        WindowTitle {.addTitle.}:
-          title = "Jenova"
-          subtitle = (case app.status
-                      of bsUp: "ready"
-                      of bsStarting: "starting — loading model"
-                      of bsDown: "stopped") &
-                     # Reproduces `ui.get_status_info`'s mode string: the LAN
-                     # address is shown, not just the fact of LAN mode, because
-                     # the address is the thing you need in order to connect a
-                     # phone or second machine to it.
-                     (if app.lanEnabled:
-                        "  ·  LAN " & (if app.lanAddr.len > 0: app.lanAddr
-                                       else: "0.0.0.0")
-                      else: "  ·  local 127.0.0.1")
-
-        Button {.addLeft.}:
-          # Mirrors the Web UI's `Sidebar.Trigger`. **A plain Button, and it must
-          # stay one.** This was a `ToggleButton` bound to `app.sidebarOpen`, and
-          # that is the SIGBUS in every core up to 20:33: the `state` property
-          # hook calls `gtk_toggle_button_set_active`, which emits `toggled`
-          # **synchronously**, and owlkettle's `toggledCallback` ends with
-          # `redraw()` — so a redraw walking into this widget started a *nested*
-          # whole-tree diff. The nested pass re-adds the header bar's children
-          # through `gtk_header_bar_remove`, dropping the last reference and
-          # finalising this very widget; the outer diff then unwound and
-          # disconnected a signal from freed memory (the state's
-          # `internalWidget` read as `0xaaaaaaaaaaaaaaaa`).
-          #
-          # `app.sidebarOpen` had two writers driving each other — this control
-          # and the Flap's own `changed` — which is what kept re-entering the
-          # hook. A Button has no `state` property and cannot emit into a diff,
-          # so the loop has no source. The open/closed state shows in the icon,
-          # the way `fullscreenButton` already does it.
-          icon = (if app.sidebarOpen: "sidebar-show-symbolic"
-                  else: "sidebar-show-right-symbolic")
-          tooltip = (if app.sidebarOpen: "Hide sidebar" else: "Show sidebar")
-          proc clicked() =
-            app.sidebarOpen = not app.sidebarOpen
-
-        MenuButton {.addRight.}:
-          icon = "open-menu-symbolic"
-          Popover:
-            Box(orient = OrientY, spacing = 4, margin = 8):
-              # Every item enqueues; none of them acts. The queue is drained in
-              # the afterBuild timer, which is also where the tray's identical
-              # menu lands — one implementation, reachable two ways.
-              Button:
-                text = "Start backend"
-                style = [ButtonFlat]
-                proc clicked() = pendingActions.add "start"
-              Button:
-                text = "Stop backend"
-                style = [ButtonFlat]
-                proc clicked() = pendingActions.add "stop"
-              Button:
-                text = "Restart backend"
-                style = [ButtonFlat]
-                proc clicked() = pendingActions.add "restart"
-              Separator()
-              Button:
-                text = "Switch to instruct model"
-                style = [ButtonFlat]
-                proc clicked() = pendingActions.add "switch_instruct"
-              Button:
-                text = "Switch to thinking model"
-                style = [ButtonFlat]
-                proc clicked() = pendingActions.add "switch_thinking"
-              Separator()
-              Button:
-                # The label states the action, not the state, because a toggle
-                # labelled with its current value is ambiguous about what
-                # clicking it does — `ui.lua:73` had the same reasoning.
-                text = (if app.lanEnabled: "Disable LAN access"
-                        else: "Enable LAN access")
-                style = [ButtonFlat]
-                proc clicked() = pendingActions.add "toggle_lan"
-              Button:
-                text = "Open Web UI"
-                style = [ButtonFlat]
-                proc clicked() = pendingActions.add "web"
-              Separator()
-              Button:
-                text = (if app.fullscreen: "Leave fullscreen" else: "Fullscreen")
-                style = [ButtonFlat]
-                proc clicked() = pendingActions.add "toggle_fullscreen"
-              Separator()
-              # The tray has carried the only Quit since it was written
-              # (`trayMenu`, id 12). A desktop with no StatusNotifierWatcher gets
-              # no tray, which left the headerbar's close button as the single
-              # way out of the application.
-              Button:
-                text = "Quit"
-                style = [ButtonFlat]
-                proc clicked() = pendingActions.add "quit"
 
       # The canvas is the Overlay's main child, so it fills the window and every
       # widget below is stacked over it — the GTK equivalent of the Web UI's
@@ -1178,6 +1187,12 @@ method view(app: AppState): Widget =
           # ── Chat column ───────────────────────────────────────────────────
           Box(orient = OrientY):
             style = [StyleClass("chat-col")]
+
+            # The top bar lives here, not in a titlebar slot — GTK4 hides a
+            # `gtk_window_set_titlebar` titlebar in fullscreen, which is what
+            # made it vanish. Atop the chat column rather than spanning the
+            # window because the Web UI's sidebar is full height.
+            insert(app.topBar()) {.expand: false.}
             # The transcript takes all the free height; the notice and the action
             # row take only what they need — the child annotation on the Box, not
             # a property of the child. The three children keep the same types in

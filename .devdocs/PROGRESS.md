@@ -2,11 +2,65 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-08-31 20:37
+**Last updated:** 2026-08-31 20:52
 
 ---
 
 ## Completed
+
+### 2026-08-31 20:52 — **CONFIRMED BY THE USER: T-1 and the fullscreen top bar are both closed. RUN.**
+
+> **The USER: *"tested seems all resolved."***
+
+**Verified against the artifact, not the sentence:** the newest core is **20:42**, from the *previous*
+build; **nothing since the 20:49 one**, and the process has **exited**. That is a **completed session
+that exercised the failing path** — quitting — which is the standard set after the 20:15 mistake.
+**An uptime sample would not have counted; an exit with no core does.**
+
+**T-1 is closed.** Eleven cores, 15:26 → 20:42, one cause: `closeWindow()` followed by `redraw()` in
+the same timer callback. **Removed from `TODOS.md` per the completion rule.**
+
+**Closed with it:** the "weirdly huge" chat bubbles (`vexpand` on every message card) and the
+fullscreen top bar (`Window` + titlebar → `AdwWindow` + body widget). **G-13c's workaround is now
+redundant** — the fullscreen button no longer *needs* to live in the bottom row, though it stays
+there because a second exit costs nothing.
+
+**The one lesson worth carrying out of six wrong hypotheses:** *read a core for **when**, not just
+**where***. The faulting widget was identical in all eleven and it was never the cause — it was
+simply the first widget a doomed diff touched. **The USER supplied the answer twice in plain
+language — "every session runs fine and leaves a core" — and it was read as a contradiction rather
+than as a timestamp.**
+
+### 2026-08-31 20:49 — **The top bar survives fullscreen: `Window` + titlebar → `AdwWindow` + a body widget. Compiled; UNRUN.**
+
+> **The USER: *"when going to full screen the top bar is missing."***
+
+**Not a regression — it is the GTK4 behaviour G-13c already recorded**, now hitting the rest of the
+bar. A `HeaderBar {.addTitlebar.}` means `gtk_window_set_titlebar`, and **GTK4 hides that while the
+window is fullscreened**, taking the sidebar toggle, the app menu (Quit included) and the status
+line. G-13c had already moved the *fullscreen* control out for exactly this reason — **one control
+at a time, treating the symptom.** This removes the cause.
+
+- **`Window` → `AdwWindow`** — *"a Window that does not have a title bar"* (`adw.nim:43`). The bar
+  is now an ordinary widget inside the content, which is the pattern owlkettle's own `AdwWindow`
+  example uses.
+- **The HeaderBar became `proc topBar(app): Widget`**, matching `fullscreenButton`/`messageBody`/
+  `convRow`. Moving it out of `view` was what kept the re-indent to one block rather than the
+  200-line shift a wrapper would have forced — **D-AR's exact failure mode.**
+- **It sits atop the chat column, not spanning the window**, because the Web UI's sidebar is full
+  height (`h-full glass-panel rounded-r-[24px]`, `ChatSidebar.svelte:177`). A bar above the sidebar
+  would not be parity.
+- **Window controls survive:** `showTitleButtons` defaults to `true` (`widgets.nim:1021`), so
+  close/minimise/maximise are still drawn in the bar. **Checked, not assumed.**
+
+**One thing given up, stated rather than discovered later:** `AdwWindow` is `of BaseWindow`, which
+has **no `title` field**, so `gtk_window_set_title` is no longer called and the *window-manager /
+taskbar* title may be empty. The bar's own `WindowTitle` still reads "Jenova". If the WM title
+matters it is a one-line `gtk_window_set_title` FFI — **absent, not unavailable.**
+
+**Build note:** the first attempt failed — *"The top-level widget in a gui tree may not have an
+adder"* — because `topBar` opened with `HeaderBar {.expand: false.}`. The annotation belongs at the
+`insert` site, and it is there.
 
 ### 2026-08-31 20:43 — **THE SIGBUS: it was the Quit path, and the USER diagnosed it. Fixed; UNRUN.**
 

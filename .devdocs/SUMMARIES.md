@@ -7,6 +7,24 @@ One short paragraph per session. Sessions 001-005 are in
 
 ## Session 010 — 2026-08-31
 
+**Ended with T-1 closed, confirmed by a completed run.** The SIGBUS was the **Quit path**:
+`closeWindow()` destroys the window and every widget under it, and the same timer callback then fell
+through to `redraw()` and diffed freed memory — **it crashed on exit**, which is why every session
+"worked fine" and left a core. **The USER diagnosed it** after five of mine died (ORC cycles → ARC
+shipped and it still crashed; the 30 fps whole-tree redraw → removed, still crashed; a fullscreened
+titlebar → the no-fullscreen session crashed too; `ToggleButton` reentrancy → replaced with a plain
+`Button`, next core identical; the chat column's `Box` → it never calls `updateChildren` at all).
+**The lesson is one sentence: read a core for *when*, not just *where*** — the faulting widget was
+identical in all eleven and was never the cause, only the first thing a doomed diff touched, and the
+USER had stated the answer twice in plain language while I read it as a contradiction. Two process
+rules were paid for: **an uptime sample on a live process is not a result** (I reported "1:47, no
+core" about a process that died two minutes later), and **a claim that evidence cannot be obtained
+must itself be tested** ("no debugger here reads a FreeBSD core" was false — gdb read all eleven).
+Also closed: chat bubbles were "weirdly huge" because every message card carried `vexpand`
+(`Box`'s adder defaults to `expand: true`), and the fullscreen top bar, by moving from
+`Window` + `gtk_window_set_titlebar` to **`AdwWindow`** with the bar extracted into `topBar` atop the
+chat column. Earlier in the session:
+
 Cross-referenced every tracker claim against the tree before answering: T-2 … T-5, T-9, T-10 and
 G-8 … G-15 all hold, as do the architecture claims, and the code inventory needed no correction —
 then `/var/coredumps` contradicted the one section that said nothing was broken. **Five
