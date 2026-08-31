@@ -129,32 +129,60 @@ headerbar .subtitle {
   font-size: 0.85em;
 }
 
-/* `.glass-panel` (app.css:213-220) minus the blur GTK4 cannot do. The
-   translucent fill, the light top/left edge and the drop shadow are what carry
-   the depth; the blur is the part that is genuinely absent. */
+/* `.glass-panel` (app.css:213-220) minus the blur GTK4 cannot do. Without the
+   blur the fill cannot separate the panel from its ground on its own — the two
+   are the same colour — so the light top/left edge and the drop shadow are the
+   whole of the depth cue, and the shadow was absent while the class itself was
+   applied to no widget. */
 .glass-panel {
   background-color: alpha(@jenova_bg, 0.4);
   border-top: 1px solid alpha(#ffffff, 0.1);
   border-left: 1px solid alpha(#ffffff, 0.1);
   border-radius: 10px;
+  box-shadow: 0 8px 32px alpha(#000000, 0.37);
 }
 
 /* ── Sidebar ──────────────────────────────────────────────────────────────
-   owlkettle's Flap adds GTK's `.background` class to the flap child, which
-   paints an opaque theme colour and would hide the canvas completely. This
-   rule is loaded at user priority (600) against the theme's 200, so it wins —
-   but it has to exist, or the panel is a solid slab. */
+   owlkettle's Flap adds GTK's `.background` class to the flap child
+   (`adw.nim:653`), which paints an opaque theme colour and would hide the
+   canvas completely. This rule is loaded at user priority (600) against the
+   theme's 200, so it wins — but it has to exist, or the panel is a solid slab.
+
+   The Box carries `.glass-panel` too, which is the class the Web UI's own
+   sidebar root carries (`ChatSidebar.svelte:177`). Everything here is what is
+   specific to the sidebar and must override it: `rounded-r-[24px]` and square
+   left corners, because the panel is flush against the window edge; and a fill
+   one step lighter than the window, because a 55% tint of `@jenova_bg` over a
+   `@jenova_bg` window is invisible and rendered the panel as a black slab.
+   Declared after `.glass-panel` so the later rule wins at equal specificity. */
 .jenova-sidebar,
 .jenova-sidebar.background {
-  background-color: alpha(@jenova_bg, 0.55);
-  border-right: 1px solid alpha(@jenova_border, 0.45);
+  background-color: alpha(@jenova_card, 0.55);
+  border-radius: 0 24px 24px 0;
 }
 
 .sidebar-logo { border-radius: 4px; }
 
+/* The wordmark is three stacked lines in three brand colours, uppercase and
+   bold (`ChatSidebar.svelte:186-188`). One purple word on near-black measured
+   about 2.9:1 and was the unreadable text in the panel header. */
 .brand {
   font-weight: bold;
-  color: @jenova_purple_head;
+  letter-spacing: 0.02em;
+}
+.brand-purple  { color: @jenova_purple_head; }
+.brand-crimson { color: @jenova_secondary; }
+.brand-gold    { color: @jenova_accent; }
+
+/* Tree containers. `ChatSidebarWorkspaceItem.svelte:27` frames every workspace
+   as a card — `rounded-lg border border-white/5 bg-surface/20`. Without it the
+   tree is undifferentiated text on the panel. A class beats the bare `expander`
+   transparency rule above on specificity, which is why that rule can stay. */
+.tree-node {
+  background-color: alpha(@jenova_card, 0.5);
+  border: 1px solid alpha(#ffffff, 0.05);
+  border-radius: 8px;
+  padding: 2px 4px;
 }
 
 .section-label {

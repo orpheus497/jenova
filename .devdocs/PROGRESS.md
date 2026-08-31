@@ -2,11 +2,43 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-08-31 18:19
+**Last updated:** 2026-08-31 18:42
 
 ---
 
 ## Completed
+
+### 2026-08-31 18:42 — **G-8 … G-11: the four defects the USER saw on screen. Written and compiled; NOT yet run.**
+
+**The first defects in this project found by looking at the running window instead of by reading
+unrun code.** The USER ran the build, described what was wrong in one sentence, and each item was
+traced to a line before anything was edited.
+
+- **G-8 — `.glass-panel` was applied to no widget.** Defined at `theme.nim:135-140`, carried by
+  nothing; the Web UI's sidebar root carries exactly that class (`ChatSidebar.svelte:177`). The
+  sidebar Box now carries `.glass-panel` + `.jenova-sidebar` (`gui.nim:778`). The class gained the
+  `box-shadow: 0 8px 32px rgba(0,0,0,0.37)` it had been missing from `app.css:215`, and
+  `.jenova-sidebar` now sets `border-radius: 0 24px 24px 0` (`rounded-r-[24px]`) and fills with
+  `alpha(@jenova_card, 0.55)` — **a 55% tint of `@jenova_bg` over a `@jenova_bg` window was
+  invisible, which is what made the panel a black slab.**
+- **G-9 — the tree had no styling at all.** New `.tree-node` (card, white/5 border, radius,
+  padding), after `ChatSidebarWorkspaceItem.svelte:27`, on all three `Expander` levels.
+- **G-10 — the wordmark was one word at ~2.9:1.** Now three stacked Labels — JENOVA / COGNITIVE /
+  ARCHITECTURE in `#7b52ab` / `#c96464` / `#e4b382` — and the logo decodes at **48×48** (`w-12 h-12`)
+  instead of 24.
+- **G-11 — code blocks collapsed to their header.** The body's `ScrolledWindow` is gone. owlkettle
+  3.0.0's ScrolledWindow exposes only `child` and never calls
+  `gtk_scrolled_window_set_propagate_natural_height`, so it ignores its child's natural size and
+  reports a near-zero minimum, which `expand: false` grants. The Label is now a direct child with
+  `wrap = true`. **`markdown.parse` was not at fault** — it already emits an unterminated fence as
+  code (`markdown.nim:50-52`).
+
+**Also corrected in the trackers:** three files said G-4 and G-5 were "built, unrun". They had been
+run. The stale status is what let four real defects sit unrecorded while a session reported that no
+new defect existed.
+
+**Status: compiled, `bin/jenova` 18:42. Not run.** Per D-AR a compile says the widget tree is valid,
+never that it is right.
 
 ### 2026-08-31 — **G-4/G-5: workspace tree and markdown. Layout defects found by the USER, fixed.**
 

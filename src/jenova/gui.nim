@@ -610,11 +610,18 @@ proc messageBody(app: AppState, m: Message): Widget =
                   tooltip = "Copy"
                   style = [ButtonFlat, StyleClass("row-btn")]
                   proc clicked() = copyToClipboard(b.text)
-              ScrolledWindow {.expand: false.}:
-                Label:
-                  text = b.text
-                  xAlign = 0.0
-                  style = [StyleClass("code-body")]
+              # No ScrolledWindow around this. owlkettle 3.0.0's ScrolledWindow
+              # exposes only `child` and never calls
+              # `gtk_scrolled_window_set_propagate_natural_height`, so it keeps
+              # GTK's default of ignoring its child's natural size and reports a
+              # near-zero minimum — which `expand: false` then grants, collapsing
+              # every code block to its header. Wrapping is what the Web UI does
+              # with a long line in any case.
+              Label {.expand: false.}:
+                text = b.text
+                xAlign = 0.0
+                wrap = true
+                style = [StyleClass("code-body")]
 
 proc convRow(app: AppState, c: ConvItem): Widget =
   gui:
@@ -768,20 +775,34 @@ method view(app: AppState): Widget =
           # Box's adder defaults to expand: true, so every child is marked.
           Box(orient = OrientY, spacing = 6, margin = 10) {.addFlap, width: 260.}:
             sizeRequest = (260, -1)
-            style = [StyleClass("jenova-sidebar")]
+            # `.glass-panel` is the class the Web UI's sidebar root carries;
+            # `.jenova-sidebar` overrides the parts specific to this edge.
+            style = [StyleClass("glass-panel"), StyleClass("jenova-sidebar")]
 
-            Box(orient = OrientX, spacing = 8) {.expand: false.}:
+            Box(orient = OrientX, spacing = 10) {.expand: false.}:
               Picture {.expand: false, hAlign: AlignCenter, vAlign: AlignCenter.}:
-                # The pixbuf is already 24x24 (see `run`), so the natural size is
+                # The pixbuf is already 48x48 (see `run`), so the natural size is
                 # small and nothing here has to fight it. `AlignCenter` stops the
                 # Box stretching it to fill the row's height.
                 pixbuf = app.logo
                 contentFit = ContentScaleDown
                 style = [StyleClass("sidebar-logo")]
-              Label {.expand: false, hAlign: AlignFill.}:
-                text = "JENOVA"
-                xAlign = 0.0
-                style = [StyleClass("brand")]
+              # Three stacked lines, one colour each. A Box of Labels rather than
+              # one markup Label so each line keeps a style class and the palette
+              # stays in `theme.nim` instead of becoming an inline span.
+              Box(orient = OrientY) {.expand: false, hAlign: AlignFill.}:
+                Label {.expand: false.}:
+                  text = "JENOVA"
+                  xAlign = 0.0
+                  style = [StyleClass("brand"), StyleClass("brand-purple")]
+                Label {.expand: false.}:
+                  text = "COGNITIVE"
+                  xAlign = 0.0
+                  style = [StyleClass("brand"), StyleClass("brand-crimson")]
+                Label {.expand: false.}:
+                  text = "ARCHITECTURE"
+                  xAlign = 0.0
+                  style = [StyleClass("brand"), StyleClass("brand-gold")]
 
             Button {.expand: false.}:
               sensitive = not app.streaming
@@ -817,6 +838,7 @@ method view(app: AppState): Widget =
                 for ws in app.workspaces:
                   Expander {.expand: false.}:
                     label = ws.name
+                    style = [StyleClass("tree-node")]
                     expanded = app.expanded.getOrDefault(ws.id, false)
                     proc activate(on: bool) = app.expanded[ws.id] = on
 
@@ -827,6 +849,7 @@ method view(app: AppState): Widget =
                       for pr in app.projectsOf(ws.id):
                         Expander {.expand: false.}:
                           label = pr.name
+                          style = [StyleClass("tree-node")]
                           expanded = app.expanded.getOrDefault(pr.id, false)
                           proc activate(on: bool) = app.expanded[pr.id] = on
 
@@ -837,6 +860,7 @@ method view(app: AppState): Widget =
                             for fd in app.foldersOf(pr.id):
                               Expander {.expand: false.}:
                                 label = fd.name
+                                style = [StyleClass("tree-node")]
                                 expanded = app.expanded.getOrDefault(fd.id, false)
                                 proc activate(on: bool) = app.expanded[fd.id] = on
 
@@ -953,12 +977,12 @@ proc run*(withTray = true) =
   # A failure here is not fatal by design — see the `logo` field.
   var logo: Pixbuf
   try:
-    # Action purpose: decoded **at** 24x24, not decoded and then asked to be
+    # Action purpose: decoded **at** 48x48, not decoded and then asked to be
     # small. `sizeRequest` and CSS `min-width` both set a *minimum*, so neither
     # can shrink a widget — a Picture takes its natural size from the pixbuf, and
     # `png/jenova.jpg` is a large square banner. Scaling at load is the only
-    # thing that actually caps it.
-    logo = loadPixbuf(p.root / "png" / "jenova.jpg", 24, 24,
+    # thing that actually caps it. 48 matches the Web UI's `w-12 h-12` tile.
+    logo = loadPixbuf(p.root / "png" / "jenova.jpg", 48, 48,
                       preserveAspectRatio = true)
   except CatchableError:
     discard

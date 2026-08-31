@@ -2,7 +2,7 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-08-31 18:19
+**Last updated:** 2026-08-31 18:37
 
 ---
 
@@ -34,10 +34,11 @@ longer the front of the queue.
 |---|---|
 | G-1/G-2 theme + canvas | **Done, run, confirmed** |
 | G-3 side panel, G-3b rename/delete | **Done** |
-| G-4 workspace tree | **Built, unrun.** Notes and fileAssets still missing — they need an editor view |
-| G-5 markdown + code blocks | **Built, unrun.** No syntax highlighting (G-7) |
+| G-4 workspace tree | **Run. Functional, unstyled** (G-9). Notes and fileAssets still missing — they need an editor view |
+| G-5 markdown + code blocks | **Run. Text renders; code blocks collapse** (G-11). No syntax highlighting (G-7) |
 | G-6 remaining surface | Unscoped: notes/files/trash views, models selector, settings, attachments, MCP |
 | G-7 syntax highlighting | `gtksourceview5` FFI |
+| **G-8 … G-11** | **The visual defects the USER saw on 2026-08-31 18:30.** Panel is a flat slab (`.glass-panel` applied to nothing), tree unstyled, wordmark one word, code blocks collapse. **This is now the front of the queue** — all four are styling or widget-tree fixes in `theme.nim`/`gui.nim`, and G-8 and G-11 are the two that change what the window looks like most |
 
 **How this work goes wrong, and the rule that came out of it (D-AR).** Four consecutive rounds
 shipped a broken window because a scripted bulk edit was followed by `nimble gui` and nothing else.

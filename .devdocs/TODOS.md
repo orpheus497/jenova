@@ -1,6 +1,6 @@
 # TODOS
 
-**Last updated:** 2026-08-31 18:19
+**Last updated:** 2026-08-31 18:42
 
 Only what is actually outstanding. Everything closed lives in `PROGRESS.md`; everything retired
 lives in `.devdocs/ARCHIVE/`. **Do not re-add defects about archived files** — that loop cost a day.
@@ -41,13 +41,33 @@ appearance, colouring, wallpaper/canvas, structure and feature set.
 Scoped into stages in `PLANS.md`. **Nothing here is blocked** — T-1 was corrected on 2026-08-31 and
 is not a gate (see above).
 
+### Observed on screen — the USER ran the build, 2026-08-31 18:30
+
+**G-4 and G-5 are no longer "built, unrun". They were run.** The report: *"markdown blocks are
+not dynamic — the panel, the workspace tree are coloured black so can't really see the text, but
+visible."* Each item below was traced to a line before it was written down.
+
+> **All four are fixed in source and compiled (`bin/jenova` 18:42) — and NOT run.** They stay here
+> until the window has been looked at, because a compile is not verification (D-AR) and marking
+> them closed on a successful build is the exact move this project keeps paying for. What each fix
+> was is in `PROGRESS.md` 18:42.
+
+| ID | Item |
+|---|---|
+| **G-8** | **The side panel renders as a flat black slab — `.glass-panel` is applied to nothing.** The class is defined at `theme.nim:135-140` and carried by **no widget**: `gui.nim:771` puts only `StyleClass("jenova-sidebar")` on the flap child. The Web UI's sidebar root *is* that class — `ChatSidebar.svelte:177`, `h-full glass-panel rounded-r-[24px]`. What `.jenova-sidebar` gives instead is `alpha(#131313, 0.55)` plus a right border: **a 55% tint of `#131313` over a `window` that is also `#131313` is invisible**, and there is no highlight edge, no radius and no shadow to separate the panel from the ground. Separately, theme.nim's own `.glass-panel` **omits** `box-shadow: 0 8px 32px rgba(0,0,0,0.37)` (`app.css:215`) while its comment at `theme.nim:132-134` names the drop shadow as one of the three things carrying the depth |
+| **G-9** | **The workspace tree has no styling at all.** `gui.nim:818,828,838` are bare `Expander`s with no style class, on the same near-black ground. The Web UI gives every workspace item a card — `rounded-lg border border-white/5 bg-surface/20`, with crimson `text-secondary` chevron and `Layers` icons and a `text-sm font-medium text-foreground` name (`ChatSidebarWorkspaceItem.svelte:27-41`). With no card, no border and no icon colour the tree is undifferentiated text |
+| **G-10** | **The wordmark is one word where the Web UI has three.** `gui.nim:781-784` renders `JENOVA` in `.brand` `#7b52ab` — **≈2.9:1 against `#131313`**, which is the "can't really see the text" in the panel header. The Web UI stacks JENOVA / COGNITIVE / ARCHITECTURE in `#7b52ab` / `#c96464` / `#e4b382`, uppercase and bold, beside a **48×48** logo tile with a purple border and glow (`ChatSidebar.svelte:181-190`). Ours decodes the logo at 24×24 (`gui.nim:774-780`) |
+| **G-11** | **Code blocks collapse — the body is not sized to its content.** `gui.nim:613` wraps the code `Label` in `ScrolledWindow {.expand: false.}`. owlkettle 3.0.0's ScrolledWindow (`widgets.nim:1116-1131`) exposes **only `child`**; `gtk_scrolled_window_set_propagate_natural_height`/`_width` is called **nowhere in the package**, so it keeps GTK's default of not propagating its child's natural size and reports a near-zero minimum — and `expand: false` in a vertical Box grants exactly the minimum. **The fence parser is not at fault:** `markdown.parse` emits an unterminated fence as code (`markdown.nim:50-52`), so a block does appear as it streams. Candidate fixes: drop the ScrolledWindow and wrap the Label inside the Frame (what the Web UI does), give it a `sizeRequest`, or add the propagate-natural FFI |
+
+### Backlog — GUI parity, as scoped before the run
+
 | ID | Item |
 |---|---|
 | ~~G-1 / G-2~~ | **DONE — ran, USER confirmed.** Theme and canvas |
 | ~~G-2b~~ | **CLOSED — not a task.** The USER's ruling: *"the font should just be whatever users system font is."* Every `font-family` and absolute `font-size` is out of the stylesheet. Nothing to install, and a native app overriding the desktop's typography was the defect, not the missing fonts |
 | ~~G-3 / G-3b~~ | **DONE** — panel, wordmark, logo, New Chat, search, conversation list, inline rename, delete. Delete is soft and cascades into the trash tree, so it needs no confirmation dialog |
-| **G-4** | **BUILT, NOT YET RUN.** Workspace → Project → Folder → chats as nested `Expander`s, with create/rename/delete per container via `api.putEntity`/`deleteEntity` — the same path the HTTP routes take, so the filesystem mirror applies. **Notes and fileAssets are NOT in the tree**; they need an editor view and are the remaining half of this item |
-| **G-5** | **BUILT, NOT YET RUN.** `markdown.nim` — headings, bullets, quotes, bold/italic/inline code as Pango markup; fenced code framed with a language label and copy button. **No syntax highlighting:** `gtksourceview5` is an approved dependency (D-AK) but owlkettle has no binding, so it is raw FFI and belongs in its own item. **Copy uses `wl-copy`** — Wayland only, unconfirmed |
+| **G-4** | **RUN. Functional, unstyled — see G-9.** Workspace → Project → Folder → chats as nested `Expander`s, with create/rename/delete per container via `api.putEntity`/`deleteEntity` — the same path the HTTP routes take, so the filesystem mirror applies. **Notes and fileAssets are NOT in the tree**; they need an editor view and are the remaining half of this item |
+| **G-5** | **RUN. Text blocks render; code blocks collapse — see G-11.** `markdown.nim` — headings, bullets, quotes, bold/italic/inline code as Pango markup; fenced code framed with a language label and copy button. **No syntax highlighting:** `gtksourceview5` is an approved dependency (D-AK) but owlkettle has no binding, so it is raw FFI and belongs in its own item. **Copy uses `wl-copy`** and lives at `gui.nim:572`, not in `markdown.nim` — Wayland only, unconfirmed |
 | **G-6** | **The remaining Web UI surface**, triaged against parity: notes/files/trash views, models selector, chat settings, attachments, MCP. **Not scoped — a heading, not a task** |
 | **G-7** | **Syntax highlighting in code blocks.** `gtksourceview5` is installed and approved (D-AK); owlkettle has no binding, so this is a small hand-written FFI surface — its own item, not a rider on G-5 |
 
