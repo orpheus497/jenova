@@ -19,7 +19,7 @@
 ## walk is native `os` code on a worker thread, so the fork storm simply does not
 ## arise. The observable results are identical; only the process count changes.
 
-import std/[os, json, strutils, times, base64, osproc, algorithm, streams]
+import std/[os, json, strutils, times, base64, osproc, algorithm, streams, random]
 import ./db
 import ./paths
 
@@ -82,6 +82,26 @@ proc isValidUuid*(id: string): bool =
     elif ch notin HexDigits:
       return false
   true
+
+## Seeded per process: the default global RNG is deterministic, which would make
+## two runs mint the same "unique" ids.
+var uuidRng = initRand(int(epochTime() * 1_000_000) xor getCurrentProcessId())
+
+## Function purpose: the counterpart to `isValidUuid`, and the reason it has to
+## exist is `physicalPath` — it refuses any note or file-asset id that is not a
+## UUID, and `upsert` then deletes the row it just wrote. A caller minting one of
+## those ids needs this; `genOid` produces 24 hex characters and is rejected.
+proc newUuid*(): string =
+  var bytes: array[16, uint8]
+  for b in bytes.mitems: b = uint8(uuidRng.rand(255))
+  bytes[6] = (bytes[6] and 0x0f'u8) or 0x40'u8   # version 4
+  bytes[8] = (bytes[8] and 0x3f'u8) or 0x80'u8   # RFC 4122 variant
+  const hex = "0123456789abcdef"
+  result = newStringOfCap(36)
+  for i, b in bytes:
+    if i in [4, 6, 8, 10]: result.add '-'
+    result.add hex[int(b shr 4)]
+    result.add hex[int(b and 0x0f)]
 
 proc epochPrefix(): string = $int(epochTime())
 

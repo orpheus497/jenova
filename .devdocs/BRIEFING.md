@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-08-31 19:02
+**Last updated:** 2026-08-31 19:23
 **Branch:** `bsd`
 
 ---
@@ -33,7 +33,7 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 | **Architecture** | `BLUEPRINT.md` — rewritten 2026-08-31 and current. The pre-rewrite audit record is `ARCHIVE/devdocs/BLUEPRINT_pre-007.md` and is **history, not requirements** |
 | **Language purity** | No Lua. No C. No shell script in the product tree except `hardware-profiles/`'s profile-selection tooling, which is setup-time data handling |
 | **Runtime home** | `$HOME/Jenova`. `~/JCA` is permanently off limits |
-| **Tests** | Five suites under `tests/`, run by `nimble suites`. Reported passing at Session 006; **not re-run since** |
+| **Tests** | Five suites under `tests/`, run by `nimble suites`. **Re-run 2026-08-31 19:23: four pass, `test_routes` FAILS 5** — pre-existing, attributed by rebuilding from the committed baseline and getting the identical five (`TODOS.md` T-12). The previous entry here said "reported passing at Session 006; not re-run since", which is how a stale pass survives four sessions |
 
 ## 2. Verified working, by running it *(Session 006 — not re-run since)*
 
@@ -62,22 +62,26 @@ not evidence. Check the artifact.**
 The GUI is the product; `jca_web` becomes the ephemeral single-device LAN client. **Everything
 built has been run.** The USER ran it at 18:30, named four visual defects, and confirmed the fixes
 at 18:55: *"for the most part it looks good."* **Working and seen:** theme, canvas, glass side
-panel, workspace tree, wordmark, markdown text and code blocks. **Missing:** notes and fileAssets
-in the tree, syntax highlighting, models selector, settings, attachments, MCP.
+panel, workspace tree, wordmark, markdown text and code blocks. **Missing:** syntax highlighting
+(G-7), models selector, chat settings, attachments, MCP, trash view.
 
-**Open from the 18:55 run — `TODOS.md` G-12, G-13a, G-13b.** Quit had lived **only in the tray**
-and the headerbar menu now has one (G-12); nothing in the program could leave fullscreen and
-`fullscreened` is now bound to app state (G-13a). Both **compiled at 19:02 and unrun.**
+**The 19:11 build did not work, and the reason is worth keeping (G-14, G-15).** Notes could never
+be created — `physicalPath` refuses a non-UUID id, so `upsert` deleted every row it wrote — and
+anything created below the top level was invisible because only the immediate parent id was set
+while the tree matches on all three. **The database found both before any code was read:** zero
+rows, *not even soft-deleted ones*, is the signature of a rollback rather than of a button that
+does nothing. Both fixed at 19:23. **G-15 was pre-existing and shipped inside the half of G-4 that
+was "confirmed on screen" at 18:55** — confirmation covers the path that was exercised and nothing
+else.
 
-**G-13b — fullscreen does not fill and glitches — is open with no mechanism, and that is the
-entry.** The USER's answers ruled out the titlebar theory that had been written here: the header
-bar **stays**, so G-12 and G-13 are not one bug. **Three hypotheses were checked against the source
-and all three died** — the `fullscreened` property hook is change-guarded (`widgetdef.nim:508-519`),
-`addOverlay` already fills (`widgets.nim:431-432`), and the titlebar theory fell to the USER's own
-answer. **One proven oddity is still only a suspect:** `gtk_overlay_set_measure_overlay` is called
-nowhere in owlkettle, so the Overlay measures **only** its `DrawingArea` main child, which requests
-nothing — the sidebar and chat column are invisible to the window's size request. **Next step is a
-terminal capture from a fullscreen run, not a patch.**
+**Compiled at 19:23 and NOT run.** An in-app Quit, which had existed **only in the
+tray** (G-12); a way out of fullscreen, since `fullscreened` was a property the program never bound
+(G-13a); and **G-4's remaining half — notes and fileAssets at all three tree levels with a note
+editor in the main area.** Running this build is the next thing that happens.
+
+**G-13b — fullscreen not filling, and glitching — is DEFERRED at the USER's direction:** suspected
+to be their compositor rather than the program. **Not work unless identified.** Four hypotheses
+were checked and all four died; the record is in `TODOS.md` so they are not re-derived.
 
 **The method that found G-8 … G-11 is the thing worth keeping.** The USER described the screen in
 one sentence; every item was then traced to a specific line before a word was written down, and the

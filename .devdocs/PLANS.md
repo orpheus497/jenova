@@ -2,7 +2,7 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-08-31 19:02
+**Last updated:** 2026-08-31 19:23
 
 ---
 
@@ -34,13 +34,13 @@ longer the front of the queue.
 |---|---|
 | G-1/G-2 theme + canvas | **Done, run, confirmed** |
 | G-3 side panel, G-3b rename/delete | **Done** |
-| G-4 workspace tree | **Run. Functional, unstyled** (G-9). Notes and fileAssets still missing — they need an editor view |
-| G-5 markdown + code blocks | **Run. Text renders; code blocks collapse** (G-11). No syntax highlighting (G-7) |
-| G-6 remaining surface | Unscoped: notes/files/trash views, models selector, settings, attachments, MCP |
-| G-7 syntax highlighting | `gtksourceview5` FFI |
+| ~~G-4 workspace tree~~ | **COMPLETE in source 19:11, unrun.** Tree confirmed 18:55; notes and fileAssets now listed at all three levels, with a note editor in the main area |
+| ~~G-5 markdown + code blocks~~ | **Done and confirmed 18:55.** No syntax highlighting (G-7) |
+| G-6 remaining surface | Unscoped, and now smaller: models selector, chat settings, attachments, MCP, trash view. **Notes and files are no longer in it** |
+| G-7 syntax highlighting | `gtksourceview5` FFI. **The next real item** |
 | ~~G-8 … G-11~~ | **CLOSED 18:55 — fixed and confirmed on screen.** Panel slab, unstyled tree, one-word wordmark, collapsing code blocks. Record in `PROGRESS.md` 18:42/18:55 |
 | **G-12, G-13a** | **In-app Quit and a way out of fullscreen. Compiled 19:02, unrun** |
-| **G-13b** | **Fullscreen does not fill; glitches or freezes. OPEN, no mechanism** — three hypotheses checked and disproven. Next step is a terminal capture from a fullscreen run, not a patch |
+| ~~G-13b~~ | **DEFERRED by the USER 19:11 — suspected compositor, not the program.** Not work unless identified |
 
 **How this work goes wrong, and the rule that came out of it (D-AR).** Four consecutive rounds
 shipped a broken window because a scripted bulk edit was followed by `nimble gui` and nothing else.

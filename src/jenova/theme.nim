@@ -251,6 +251,17 @@ headerbar .subtitle {
   font-size: 0.9em;
 }
 
+/* The note editor. GTK paints a TextView on the theme's base colour, so without
+   this it is an opaque unthemed slab in the middle of the glass — the same
+   defect the workspace tree had. `text` is the inner node that actually draws. */
+textview,
+textview text {
+  background-color: alpha(@jenova_card, 0.55);
+  color: @jenova_fg;
+  border-radius: 6px;
+}
+textview { padding: 8px; }
+
 entry {
   background-color: alpha(@jenova_card, 0.85);
   color: @jenova_fg;

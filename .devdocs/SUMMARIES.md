@@ -18,10 +18,15 @@ workspace tree carrying no style class at all, a one-word wordmark at ≈2.9:1 w
 stacks three coloured lines, and code blocks collapsing because owlkettle's `ScrolledWindow` never
 calls `set_propagate_natural_height`. All four were fixed and **confirmed on screen** — *"for the
 most part it looks good"* — with no CSS parsing warning and no core. That run surfaced two more:
-Quit had existed only in the tray (fixed), and fullscreen misbehaves. Fullscreen is now escapable
-(`fullscreened` bound to app state), but its layout and rendering faults stay **open with no
-mechanism** — three hypotheses were checked against the source and all three were disproven, one of
-them by the USER's own answer. Detail in `SESSION_HANDOFF.md` Session 009.
+Quit had existed only in the tray (fixed), and fullscreen misbehaves. Fullscreen is now escapable —
+`fullscreened` was a property the program never bound — but its layout and rendering faults were
+**deferred by the USER as a suspected compositor issue, not the program's**, with four dead
+hypotheses recorded so no future session re-derives them. The session closed by finishing **G-4**:
+notes and fileAssets listed at all three tree levels with a `TextView` note editor, saving through
+`api.putEntity` so the filesystem mirror and the per-workspace git repo apply exactly as from the
+Web UI. That last change also caught G-9's defect *before* the screen rather than after — a
+`TextView` GTK would have painted as an unthemed slab got its stylesheet rule in the same pass.
+Detail in `SESSION_HANDOFF.md` Session 009.
 
 ## Session 008 — 2026-08-31
 

@@ -43,6 +43,21 @@ state. **G-13b** — fullscreen layout/rendering stays **open with no mechanism*
 were checked and all three died, including one the USER's own answer disproved. The next step is a
 terminal capture, not a patch.
 
+### And then G-4's remaining half — the last structural gap in the workspace surface
+
+Notes and fileAssets are now listed at all three container levels, filtered by the same search box,
+with create/rename/delete through `api.putEntity`/`deleteEntity`; a note opens in a `TextView`
+editor with Save/Close. One `leavesIn` helper places both, because a note, an asset and a
+conversation carry the same three parent ids. **File assets get no editor — their content may be
+binary.** The chat column keeps three children of the same types in the same order whether a note
+or the transcript is open, per the constraint the T-1 fix established. `textview` styling went into
+`theme.nim` in the same pass: GTK paints a TextView on the theme's base colour, so it would have
+been an unthemed slab in the middle of the glass — **G-9's defect, caught before the screen this
+time instead of after.**
+
+**G-13b was deferred by the USER** — suspected compositor, not the program. Four hypotheses had
+already died; they are recorded so no future session re-derives them.
+
 ### Files touched
 
 `src/jenova/{theme,gui}.nim`, and `.devdocs/{TODOS,PROGRESS,PLANS,BRIEFING,SESSION_HANDOFF,
@@ -50,8 +65,9 @@ SUMMARIES}.md`.
 
 ### Next
 
-Run `bin/jenova` (19:02) — Quit and the fullscreen toggle are compiled and unseen. For G-13b,
-fullscreen it and capture the terminal. Then G-4's remaining half (notes/fileAssets), G-7, G-6.
+**Run `bin/jenova` (19:11).** Quit, the fullscreen toggle, the notes/files tree and the note editor
+are all compiled and unseen. Then **G-7** (`gtksourceview5` FFI for code-block highlighting), then
+G-6, whose scope shrank when notes and files left it.
 
 ---
 

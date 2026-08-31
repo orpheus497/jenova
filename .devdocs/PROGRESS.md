@@ -2,11 +2,69 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-08-31 19:02
+**Last updated:** 2026-08-31 19:23
 
 ---
 
 ## Completed
+
+### 2026-08-31 19:23 — **G-14 and G-15: the reason nothing could be created. Fixed; the id half is PROVEN.**
+
+The USER: *"these features dont work."* **The database settled it before any code was read** — the
+`projects`, `folders`, `notes` and `fileAssets` tables held **zero rows, not even soft-deleted
+ones**, while `workspaces` and a chat directly under a workspace were fine. A row that was never
+created and a row that was created and rolled back look different, and this looked like rollback.
+
+- **G-14 — a note could never be created.** `fssync.physicalPath:149` refuses any id that is not a
+  UUID; `syncNote` then returns false, and **`upsert` deletes the row it has just written**
+  (`api.nim:221-230`). `createNote` was minting `$genOid()` — 24 hex characters, not a UUID. So
+  every note was inserted and destroyed inside one call, which is exactly the zero-rows evidence.
+  **`tests/test_api_db.sh` already asserted this rule** — *"note with a non-UUID id is rejected"* —
+  and it was there to be read. Fixed with a new `fssync.newUuid()`, beside the `isValidUuid` it has
+  to satisfy.
+- **G-15 — anything created inside a project or folder was invisible.** `newChat(projId = id)` set
+  `workspaceId` to `""` while `convsIn` matches on **all three** ids, so the row saved and then
+  matched nothing. **This one is pre-existing — it shipped in G-4's first half and was confirmed
+  "functional" on 18:55 because nothing had been created below the top level.** `createNote`
+  inherited it. `nodeTools` now carries the container's full ancestry instead of one parent column.
+
+**Proof, not assertion.** `newUuid` was exercised over 20 000 draws: every id satisfies
+`isValidUuid`, none repeated, the version and variant nibbles are correct, and a `genOid`-shaped id
+is confirmed **rejected** — the check was written so it *could* go red on the old value. **The GUI
+path itself is compiled and unrun.**
+
+### 2026-08-31 19:23 — **`test_routes` has been failing, and the trackers said the suites passed.**
+
+`nimble suites`: `test_api_db` PASS, `test_api_fs` PASS, `test_lifecycle` PASS, `test_models` PASS,
+**`test_routes` FAIL (5)** — the upstream-proxy assertions (`/v1/chat/completions`, `/completion`,
+`/infill`) expect 502 with no `llama-server` and get 500 or 200. **Attributed, not assumed:** the
+working tree was stashed, `jenova-core` rebuilt from the committed baseline, and the *identical five*
+failed. **It is pre-existing and nothing to do with this session.** `BRIEFING.md` said the suites
+were "reported passing at Session 006; not re-run since" — the second half of that sentence was
+carrying the first. Recorded as `TODOS.md` **T-12**.
+
+### 2026-08-31 19:11 — **G-4 complete: notes and fileAssets in the tree, with a note editor. Compiled, NOT run.**
+
+The remaining half of G-4, and the last structural gap in the workspace surface.
+
+- **Both entities in the tree at all three container levels** — `listNotes`/`listFiles` mirror
+  `listConversations`, and one `leavesIn` helper places them because a note, an asset and a
+  conversation all carry the same three parent ids. The search box filters all three.
+- **A note editor in the main area** — title `Entry` plus a `TextView`. A TextView owns a
+  `TextBuffer`, not a string, so the buffer is built once on `App` and refilled per note rather
+  than bound per redraw. Save writes through **`api.putEntity`**, the same call the HTTP route
+  makes, so the filesystem mirror and the per-workspace git repo apply exactly as from the Web UI.
+- **The chat column keeps three children of the same types in the same order** whether a note or
+  the transcript is open, so owlkettle's positional matching never swaps a widget out from under
+  the diff — the constraint the T-1 fix established.
+- **`textview` styling added to `theme.nim`.** GTK paints a TextView on the theme's base colour, so
+  it would have been an opaque unthemed slab in the middle of the glass — **the same defect as
+  G-9**, caught before it reached the screen this time rather than after.
+- **File assets are listed, renamed and deleted but get no editor.** Their content may be binary.
+  A scope call, stated rather than left to be discovered.
+
+**Also:** `commitRename` grew branches for both entities. `putEntity` writes the whole row, so a
+rename has to resend the parent ids and the note body or it would blank them.
 
 ### 2026-08-31 19:02 — **G-12 and G-13a: an in-app Quit, and a way out of fullscreen. Compiled, NOT run.**
 

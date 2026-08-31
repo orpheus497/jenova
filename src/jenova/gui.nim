@@ -51,6 +51,7 @@ import ./rag
 import ./server
 import ./api
 import ./markdown
+import ./fssync
 
 type
   Role* = enum
@@ -212,6 +213,9 @@ proc lanAddress(): string =
 type
   ConvItem = tuple[id, name, folderId, projectId, workspaceId: string]
   NodeItem = tuple[id, parent, name: string]
+  ## A note or a file asset. Structurally identical to `ConvItem` — both carry
+  ## the same three parent ids — so one set of tree helpers places all three.
+  LeafItem = tuple[id, name, folderId, projectId, workspaceId: string]
 
 proc listWorkspaces(): seq[NodeItem] =
   for r in db.query("SELECT id, name FROM workspaces WHERE is_deleted=0 ORDER BY name"):
@@ -236,6 +240,28 @@ proc listConversations(): seq[ConvItem] =
     if r.len >= 5:
       result.add (id: r[0], name: r[1], folderId: r[2],
                   projectId: r[3], workspaceId: r[4])
+
+## Notes and file assets hang off the same three parent ids as a conversation, so
+## the tree can place them beside one. Notes are ordered by recency like the
+## conversation list; assets by name, which is what `FilesView` shows.
+proc listNotes(): seq[LeafItem] =
+  for r in db.query("SELECT id, title, folderId, projectId, workspaceId " &
+                    "FROM notes WHERE is_deleted=0 ORDER BY updatedAt DESC"):
+    if r.len >= 5:
+      result.add (id: r[0], name: r[1], folderId: r[2],
+                  projectId: r[3], workspaceId: r[4])
+
+proc listFiles(): seq[LeafItem] =
+  for r in db.query("SELECT id, name, folderId, projectId, workspaceId " &
+                    "FROM fileAssets WHERE is_deleted=0 ORDER BY name"):
+    if r.len >= 5:
+      result.add (id: r[0], name: r[1], folderId: r[2],
+                  projectId: r[3], workspaceId: r[4])
+
+proc loadNote(id: string): tuple[found: bool, title, content: string] =
+  for r in db.query("SELECT title, content FROM notes WHERE id=?", [id]):
+    if r.len >= 2: return (true, r[0], r[1])
+  (false, "", "")
 
 proc newConversation(): string =
   result = $genOid()
@@ -343,6 +369,14 @@ viewable App:
   workspaces: seq[NodeItem]
   projects: seq[NodeItem]
   folders: seq[NodeItem]
+  notes: seq[LeafItem]
+  files: seq[LeafItem]
+  ## The note open in the main area, or empty for the transcript. The buffer is
+  ## built once and refilled per note: a `TextView` owns a `TextBuffer`, not a
+  ## string, so it cannot be driven from `view` the way an `Entry` can.
+  openNote: string
+  noteTitle: string
+  noteBuffer: TextBuffer = newTextBuffer()
   expanded: Table[string, bool]
   renaming: string
   renameDraft: string
@@ -460,6 +494,7 @@ proc selectConversation(app: AppState, id: string) =
   if app.streaming or id == app.convId: return
   app.convId = id
   app.messages = loadMessages(id)
+  app.openNote = ""
   app.notice = ""
 
 proc reloadTree(app: AppState) =
@@ -467,6 +502,40 @@ proc reloadTree(app: AppState) =
   app.workspaces = listWorkspaces()
   app.projects = listProjects()
   app.folders = listFolders()
+  app.notes = listNotes()
+  app.files = listFiles()
+
+proc openNoteEditor(app: AppState, id: string) =
+  if app.streaming: return
+  let n = loadNote(id)
+  if not n.found:
+    app.notice = "note not found"
+    return
+  app.openNote = id
+  app.noteTitle = n.title
+  app.noteBuffer.text = n.content
+  app.notice = ""
+
+## Function purpose: write the open note back through `api.putEntity`, the same
+## call the HTTP route makes, so the filesystem mirror and the per-workspace git
+## repo apply exactly as they do for the Web UI. The parent ids are resent
+## unchanged because `putEntity` writes the whole row.
+proc saveNote(app: AppState) =
+  if app.openNote.len == 0: return
+  var node = %*{"id": app.openNote,
+                "title": app.noteTitle,
+                "content": app.noteBuffer.text(),
+                "updatedAt": int(epochTime() * 1000)}
+  for n in app.notes:
+    if n.id == app.openNote:
+      node["folderId"] = %n.folderId
+      node["projectId"] = %n.projectId
+      node["workspaceId"] = %n.workspaceId
+  if api.putEntity("notes", node):
+    app.reloadTree()
+    app.notice = "note saved"
+  else:
+    app.notice = "could not save note"
 
 proc newChat(app: AppState, wsId = "", projId = "", folderId = "") =
   if app.streaming: return
@@ -477,6 +546,7 @@ proc newChat(app: AppState, wsId = "", projId = "", folderId = "") =
   app.reloadTree()
   app.convId = id
   app.messages = @[]
+  app.openNote = ""
   app.notice = ""
 
 proc createNode(app: AppState, entity, parentCol, parentId: string) =
@@ -491,11 +561,36 @@ proc createNode(app: AppState, entity, parentCol, parentId: string) =
   else:
     app.notice = "could not create " & entity
 
+## `notes` keys its name column `title`, not `name`, so it cannot go through
+## `createNode`'s generic node shape. Creating one opens it immediately —
+## a new empty note that is not on screen is indistinguishable from nothing
+## having happened.
+##
+## **The id must be a real UUID, not a `genOid`.** `fssync.physicalPath` refuses
+## anything else and `upsert` then deletes the row it has already written, so an
+## OID-keyed note is created and destroyed inside one call.
+##
+## **All three ancestor ids are written, not just the immediate parent.** The
+## tree matches on the full triple, so a note carrying only its `folderId` is
+## saved and then invisible.
+proc createNote(app: AppState, wsId, projId, folderId: string) =
+  let id = fssync.newUuid()
+  var node = %*{"id": id, "title": "New note", "content": "",
+                "workspaceId": wsId, "projectId": projId, "folderId": folderId,
+                "updatedAt": int(epochTime() * 1000)}
+  if api.putEntity("notes", node):
+    app.reloadTree()
+    app.openNoteEditor(id)
+  else:
+    app.notice = "could not create note"
+
 proc deleteNode(app: AppState, entity, id: string) =
   if api.deleteEntity(entity, id):
     if entity == "conversations" and id == app.convId:
       app.convId = ""
       app.messages = @[]
+    if entity == "notes" and id == app.openNote:
+      app.openNote = ""
     app.reloadTree()
   else:
     app.notice = "could not delete"
@@ -505,6 +600,23 @@ proc commitRename(app: AppState, entity, id: string) =
   if name.len > 0:
     if entity == "conversations":
       db.exec("UPDATE conversations SET name=? WHERE id=?", [name, id])
+      app.reloadTree()
+    elif entity == "notes" or entity == "fileAssets":
+      # `putEntity` writes the whole row, so the parent ids and the note's body
+      # have to be resent or the rename would blank them.
+      var node = %*{"id": id, "updatedAt": int(epochTime() * 1000)}
+      node[if entity == "notes": "title" else: "name"] = %name
+      if entity == "notes":
+        let n = loadNote(id)
+        node["content"] = %(if id == app.openNote: app.noteBuffer.text()
+                            else: n.content)
+        if id == app.openNote: app.noteTitle = name
+      for n in (if entity == "notes": app.notes else: app.files):
+        if n.id == id:
+          node["folderId"] = %n.folderId
+          node["projectId"] = %n.projectId
+          node["workspaceId"] = %n.workspaceId
+      discard api.putEntity(entity, node)
       app.reloadTree()
     else:
       var node = %*{"id": id, "name": name}
@@ -561,6 +673,17 @@ proc convsIn(app: AppState, ws, pr, fd: string): seq[ConvItem] =
   for c in app.visibleConvs():
     if c.workspaceId == ws and c.projectId == pr and c.folderId == fd:
       result.add c
+
+## The search box filters notes and assets by the same case-insensitive
+## substring it applies to conversations, so one query narrows the whole tree
+## rather than only part of it.
+proc leavesIn(app: AppState, items: seq[LeafItem],
+              ws, pr, fd: string): seq[LeafItem] =
+  let q = app.search.strip.toLowerAscii
+  for n in items:
+    if n.workspaceId == ws and n.projectId == pr and n.folderId == fd and
+       (q.len == 0 or n.name.toLowerAscii.contains(q)):
+      result.add n
 
 proc rowLabel(app: AppState, entity, id, name: string): Widget =
   ## A tree row: its name, or an Entry while it is being renamed.
@@ -654,26 +777,59 @@ proc convRow(app: AppState, c: ConvItem): Widget =
         style = [ButtonFlat, StyleClass("row-btn")]
         proc clicked() = app.deleteNode("conversations", c.id)
 
-proc nodeTools(app: AppState, entity, id: string,
+## Function purpose: a note or file-asset row. Same shape as `convRow` — an
+## activating button, a rename and a delete — but a file asset has no editor to
+## open, because its content may be binary; it is listed, renamed and deleted.
+proc leafRow(app: AppState, entity: string, n: LeafItem): Widget =
+  gui:
+    Box(orient = OrientX, spacing = 2):
+      Button {.expand: false, hAlign: AlignFill.}:
+        sensitive = entity == "notes"
+        style = [ButtonFlat, StyleClass("row-btn"),
+                 StyleClass(if entity == "notes" and n.id == app.openNote:
+                              "conv-active" else: "conv-idle")]
+        proc clicked() =
+          if entity == "notes": app.openNoteEditor(n.id)
+        insert(app.rowLabel(entity, n.id,
+                            (if entity == "notes": "▤  " else: "◫  ") & n.name))
+      Button {.expand: false.}:
+        icon = "document-edit-symbolic"
+        tooltip = "Rename"
+        style = [ButtonFlat, StyleClass("row-btn")]
+        proc clicked() =
+          app.renaming = n.id
+          app.renameDraft = n.name
+      Button {.expand: false.}:
+        icon = "user-trash-symbolic"
+        tooltip = "Delete"
+        style = [ButtonFlat, StyleClass("row-btn")]
+        proc clicked() = app.deleteNode(entity, n.id)
+
+proc nodeTools(app: AppState, entity, id: string, ws, pr, fd: string,
                makes: seq[(string, string)]): Widget =
   ## The action strip under a container: rename it, delete it, and create the
-  ## things it can hold.
+  ## things it can hold. `ws`/`pr`/`fd` are the container's full ancestry, not
+  ## just its own id — a chat or note is placed by all three, and one carrying
+  ## only its immediate parent is saved and then never matched by the tree.
   gui:
     Box(orient = OrientX, spacing = 2):
       insert(app.rowLabel(entity, id, "")) {.expand: false, hAlign: AlignFill.}
       for m in makes:
         Button {.expand: false.}:
-          icon = (if m[0] == "chat": "chat-message-new-symbolic" else: "folder-new-symbolic")
-          tooltip = (if m[0] == "chat": "New chat here" else: "New " & m[0])
+          icon = (case m[0]
+                  of "chat": "chat-message-new-symbolic"
+                  of "note": "document-new-symbolic"
+                  else: "folder-new-symbolic")
+          tooltip = (case m[0]
+                     of "chat": "New chat here"
+                     of "note": "New note here"
+                     else: "New " & m[0])
           style = [ButtonFlat, StyleClass("row-btn")]
           proc clicked() =
-            if m[0] == "chat":
-              case entity
-              of "workspaces": app.newChat(wsId = id)
-              of "projects": app.newChat(projId = id)
-              else: app.newChat(folderId = id)
-            else:
-              app.createNode(m[0], m[1], id)
+            case m[0]
+            of "chat": app.newChat(ws, pr, fd)
+            of "note": app.createNote(ws, pr, fd)
+            else: app.createNode(m[0], m[1], id)
       Button {.expand: false.}:
         icon = "document-edit-symbolic"
         tooltip = "Rename"
@@ -866,8 +1022,9 @@ method view(app: AppState): Widget =
                     proc activate(on: bool) = app.expanded[ws.id] = on
 
                     Box(orient = OrientY, spacing = 1, margin = 4):
-                      insert(app.nodeTools("workspaces", ws.id,
-                             @[("projects", "workspaceId"), ("chat", "")])) {.expand: false.}
+                      insert(app.nodeTools("workspaces", ws.id, ws.id, "", "",
+                             @[("projects", "workspaceId"), ("note", "workspaceId"),
+                               ("chat", "")])) {.expand: false.}
 
                       for pr in app.projectsOf(ws.id):
                         Expander {.expand: false.}:
@@ -877,8 +1034,9 @@ method view(app: AppState): Widget =
                           proc activate(on: bool) = app.expanded[pr.id] = on
 
                           Box(orient = OrientY, spacing = 1, margin = 4):
-                            insert(app.nodeTools("projects", pr.id,
-                                   @[("folders", "projectId"), ("chat", "")])) {.expand: false.}
+                            insert(app.nodeTools("projects", pr.id, ws.id, pr.id, "",
+                                   @[("folders", "projectId"), ("note", "projectId"),
+                                     ("chat", "")])) {.expand: false.}
 
                             for fd in app.foldersOf(pr.id):
                               Expander {.expand: false.}:
@@ -888,13 +1046,26 @@ method view(app: AppState): Widget =
                                 proc activate(on: bool) = app.expanded[fd.id] = on
 
                                 Box(orient = OrientY, spacing = 1, margin = 4):
-                                  insert(app.nodeTools("folders", fd.id, @[("chat", "")])) {.expand: false.}
+                                  insert(app.nodeTools("folders", fd.id, ws.id, pr.id, fd.id,
+                                         @[("note", "folderId"), ("chat", "")])) {.expand: false.}
+                                  for n in app.leavesIn(app.notes, ws.id, pr.id, fd.id):
+                                    insert(app.leafRow("notes", n)) {.expand: false.}
+                                  for f in app.leavesIn(app.files, ws.id, pr.id, fd.id):
+                                    insert(app.leafRow("fileAssets", f)) {.expand: false.}
                                   for c in app.convsIn(ws.id, pr.id, fd.id):
                                     insert(app.convRow(c)) {.expand: false.}
 
+                            for n in app.leavesIn(app.notes, ws.id, pr.id, ""):
+                              insert(app.leafRow("notes", n)) {.expand: false.}
+                            for f in app.leavesIn(app.files, ws.id, pr.id, ""):
+                              insert(app.leafRow("fileAssets", f)) {.expand: false.}
                             for c in app.convsIn(ws.id, pr.id, ""):
                               insert(app.convRow(c)) {.expand: false.}
 
+                      for n in app.leavesIn(app.notes, ws.id, "", ""):
+                        insert(app.leafRow("notes", n)) {.expand: false.}
+                      for f in app.leavesIn(app.files, ws.id, "", ""):
+                        insert(app.leafRow("fileAssets", f)) {.expand: false.}
                       for c in app.convsIn(ws.id, "", ""):
                         insert(app.convRow(c)) {.expand: false.}
 
@@ -917,15 +1088,30 @@ method view(app: AppState): Widget =
           # ── Chat column ───────────────────────────────────────────────────
           Box(orient = OrientY):
             style = [StyleClass("chat-col")]
-            # The transcript takes all the free height; the notice and the input row
-            # take only what they need. In owlkettle this is the child annotation on
-            # the Box, not a property of the child widget.
+            # The transcript takes all the free height; the notice and the action
+            # row take only what they need — the child annotation on the Box, not
+            # a property of the child. The three children keep the same types in
+            # the same order whether a note or the transcript is open, so
+            # owlkettle's positional matching never swaps a widget out from under
+            # the diff; only what is inside them changes.
             ScrolledWindow {.expand: true.}:
               Box(orient = OrientY, spacing = 12, margin = 16):
+                if app.openNote.len > 0:
+                  Entry {.expand: false.}:
+                    text = app.noteTitle
+                    placeholder = "Note title"
+                    proc changed(text: string) = app.noteTitle = text
+                  # A TextView owns a TextBuffer rather than a string, so it is
+                  # driven from `app.noteBuffer` and read back on save — it
+                  # cannot be bound to state per redraw the way an Entry is.
+                  TextView:
+                    buffer = app.noteBuffer
                 Label:
-                  text = (if app.messages.len == 0: "Ask Jenova something." else: "")
+                  text = (if app.openNote.len > 0: ""
+                          elif app.messages.len == 0: "Ask Jenova something."
+                          else: "")
                   style = [StyleClass("dim-note")]
-                for m in app.messages:
+                for m in (if app.openNote.len > 0: @[] else: app.messages):
                   Frame:
                     style = [StyleClass("msg-card"),
                              StyleClass(if m.role == rUser: "msg-user" else: "msg-agent")]
@@ -945,20 +1131,32 @@ method view(app: AppState): Widget =
               style = [StyleClass("dim-note")]
 
             Box(orient = OrientX, spacing = 8, margin = 12) {.expand: false.}:
-              Entry {.expand: true.}:
-                text = app.draft
-                placeholder = "Message Jenova…"
-                sensitive = not app.streaming
-                proc changed(text: string) =
-                  app.draft = text
-                proc activate() =
-                  app.send()
-              Button:
-                text = (if app.streaming: "…" else: "Send")
-                sensitive = not app.streaming
-                style = [ButtonSuggested]
-                proc clicked() =
-                  app.send()
+              if app.openNote.len > 0:
+                Button {.expand: false.}:
+                  text = "Save note"
+                  style = [ButtonSuggested]
+                  proc clicked() = app.saveNote()
+                Button {.expand: false.}:
+                  text = "Close"
+                  style = [ButtonFlat]
+                  proc clicked() =
+                    app.openNote = ""
+                    app.notice = ""
+              else:
+                Entry {.expand: true.}:
+                  text = app.draft
+                  placeholder = "Message Jenova…"
+                  sensitive = not app.streaming
+                  proc changed(text: string) =
+                    app.draft = text
+                  proc activate() =
+                    app.send()
+                Button:
+                  text = (if app.streaming: "…" else: "Send")
+                  sensitive = not app.streaming
+                  style = [ButtonSuggested]
+                  proc clicked() =
+                    app.send()
 
 ## Function purpose: entry point for `bin/jenova`. Resolution happens here,
 ## before the window exists, so a configuration error is reported on the terminal
@@ -1022,6 +1220,8 @@ proc run*(withTray = true) =
                        workspaces = listWorkspaces(),
                        projects = listProjects(),
                        folders = listFolders(),
+                       notes = listNotes(),
+                       files = listFiles(),
                        logo = logo))
 
   if withTray:
