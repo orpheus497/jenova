@@ -5,6 +5,97 @@ Reverse-chronological. **Keep entries short.** Sessions 001-005 are in
 
 ---
 
+## Session 010 — 2026-08-31
+
+**Instruction:** read `AGENTS.md`, then the devdocs, **cross-reference against the codebase before
+responding**, report what remains and what is outstanding. Then: approve the crash fix, and 1:1
+parity with the Web UI.
+
+### The trackers were right about T-1 … T-10 and wrong about the only thing that matters
+
+Every one of T-2 … T-5, T-9, T-10 and G-8 … G-15 was verified by opening the file it names. **They
+all hold**, and the architecture claims hold too (freebsd guards, no Makefile, no shell in the
+product tree, six profiles, five docs, the nimble task list). **Cross-referencing produced no
+correction to the code inventory.**
+
+**Then I checked `/var/coredumps` instead of reading what the trackers said about it.**
+
+### T-1 is reversed: the SIGBUS is real, and it is in the shipped build
+
+`BRIEFING.md` said *"Nothing is known broken"*; T-1 said the redraw SIGBUS was *"not established…
+no artifact behind them"*. **There are five `./bin/jenova` cores, not one** — 15:26, **19:15, 19:41,
+19:46, 19:46** — and **three post-date the 19:39 build**. `BRIEFING.md` (19:41) and this file
+(19:42) were written **between two of those crashes**, still asserting one core existed.
+
+**The sentence that made the dismissal possible was false.** `BRIEFING.md:54`: *"no debugger here
+reads a FreeBSD core."* **`gdb 15.1 [GDB v15.1 for FreeBSD]` is installed.** One command gave the
+signal, the stack and the faulting call, for all five. **D-AS: before recording that evidence cannot
+be obtained, try to obtain it.**
+
+All three current-build cores: **SIGBUS**, identical stack —
+`g_type_check_instance` ← `g_signal_handler_disconnect` ← `widgetutils.disconnect` ← `updateState`
+of a **HeaderBar child** ← `updateChildren` ← `HeaderBar` ← `updateChild` (Window titlebar) ←
+`Window` ← `redraw` ← a `gui.nim` timeout closure.
+
+### Two causes, both fixed, both built
+
+- **The trigger was ours.** The canvas frame clock called `st.redraw()` — a **whole-tree diff** —
+  every 33 ms, re-binding every signal handler in the window 30×/s **while idle**. `canvas.nim` now
+  owns a bare `GtkDrawingArea` and the timer calls `gtk_widget_queue_draw` on it alone.
+  **`canvas.nim`'s own header already argued this** — it explains why the draw callback must not
+  return `true` — and the timer then did the same thing by another route.
+- **The fault class was owlkettle's.** `EventObj[T].widget` is a strong ref back to the owning
+  state, so every widget with a callback is a `state → event → state` **cycle**. ORC collects those
+  and can take a state while GTK still holds the widget and handler. **`--mm:arc` on the `gui` task
+  only**; `jenova-core` keeps ORC. Corroborated by `=trace` (ORC-only) at 15:26 and `=destroy` at
+  19:15, and by SIGBUS rather than SIGSEGV.
+
+**Executed:** both binaries build, exit 0. `nm` shows **0** cycle-collector symbols in `bin/jenova`,
+**2** in `bin/jenova-core` — the flag applied exactly where it was scoped. G-7's nine `gtk_source_*`
+symbols still referenced. **The window has NOT been run.**
+
+### The mistake I made inside the fix, because it is the reusable part
+
+I named the chat column's `Box` as the culprit **from the shape of the stack**. Reading the library
+showed `Box.children` pops correctly and **does not call `updateChildren` at all** — that frame is
+`HeaderBar`'s `left`/`right`. **A stack tells you where, not why.** Had I not checked, the fix would
+have restructured a widget tree that was never at fault and left the real one running.
+
+### Two defects in no tracker (reasoned from source, not executed)
+
+- **T-13 — renaming a file asset destroys its content.** `commitRename` resends `content` for notes
+  only; `writeRow` is `INSERT OR REPLACE` over every column, so `syncFileAsset` writes a zero-byte
+  file and trashes the original. `size`/`type`/`uploadDate` wiped too. **The comment above it names
+  the hazard and the `fileAssets` branch does not act on it.**
+- **T-14 — renaming a container orphans everything under it on disk.** `mirrorUpsert` does nothing
+  for `projects`/`folders`; `syncWorkspace` only creates the new name. Paths derive from ancestor
+  **names**.
+
+### Scope, from the USER (D-AT)
+
+**G-6 retired as a heading**, triaged into **G-16 … G-21**: filesystem view/browser, writer/editor,
+**file awareness**, **Neovim in a tab**, models selector, trash view. **MCP DEFERRED** — and the
+size is why that matters: it is the only item that is a *subsystem*, not a view (`grep -rin mcp
+src/` = two hits, both a TEXT column, against 14 Web UI components over a browser-side SDK client).
+**Neovim is `vte4` + `nvim --listen <socket>`**, so the USER keeps their own config and **G-18's
+file awareness is a socket query**, not a filesystem guess.
+
+### Files touched
+
+`src/jenova/{canvas,gui}.nim`, `jenova_core.nimble`, and
+`.devdocs/{TODOS,PROGRESS,PLANS,BRIEFING,DECISIONS_LOG,SESSION_HANDOFF,SUMMARIES}.md`.
+
+### Next
+
+1. **Run `bin/jenova` (20:10).** T-1's fix is compiled and unseen. **Use it the way that crashed it
+   — fullscreen, F11, open and close notes** — and if it dies, the core is now readable: `gdb -batch
+   -ex "bt 25" bin/jenova /var/coredumps/<core>`.
+2. **T-13**, a three-line fix in the branch beside the one already fixed.
+3. **G-16 … G-21**, starting with whichever the USER wants; **G-19 (Neovim) is the only one needing
+   a new dependency** and should be scoped into `PLANS.md` before it is started.
+
+---
+
 ## Session 009 — 2026-08-31
 
 **Instruction:** stick strictly to `AGENTS.md`, read the devdocs, **do not trust them — cross

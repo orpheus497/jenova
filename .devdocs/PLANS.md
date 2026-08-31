@@ -2,7 +2,7 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-08-31 19:39
+**Last updated:** 2026-08-31 20:10
 
 ---
 
@@ -36,7 +36,8 @@ longer the front of the queue.
 | G-3 side panel, G-3b rename/delete | **Done** |
 | ~~G-4 workspace tree~~ | **DONE — run and confirmed by the USER 19:38.** Panel, tree and notes work |
 | ~~G-5 markdown + code blocks~~ | **Done and confirmed 18:55.** No syntax highlighting (G-7) |
-| G-6 remaining surface | Unscoped, and now smaller: models selector, chat settings, attachments, MCP, trash view. **Notes and files are no longer in it** |
+| ~~G-6 remaining surface~~ | **Retired 20:10 — triaged into G-16 … G-21 by the USER's scope call (D-AT):** filesystem view/browser, writer/editor, **file awareness**, **Neovim in a tab**, models selector, trash view. **MCP DEFERRED** — it was the only item that is a subsystem rather than a view, and it is out |
+| **T-1 — the SIGBUS** | **REAL, diagnosed from five cores, FIXED in source 20:10, UNRUN.** Frame clock no longer whole-tree-diffs; GUI builds `--mm:arc`. See D-AS |
 | ~~G-7 syntax highlighting~~ | **DONE in source 19:39, compiled and linked, unrun.** `sourceview.nim`, a hand-written gtksourceview-5 binding |
 | **G-13c** | **Fullscreen had no exit — ours, not the compositor. Fixed 19:39, unrun** |
 | ~~G-8 … G-11~~ | **CLOSED 18:55 — fixed and confirmed on screen.** Panel slab, unstyled tree, one-word wordmark, collapsing code blocks. Record in `PROGRESS.md` 18:42/18:55 |
@@ -67,7 +68,7 @@ corrected on 2026-08-31 and is an unexplained core, not a gate.
 
 | Step | Item | Shape of the work | Proof it worked |
 |---|---|---|---|
-| **1.1** | **T-1 — one unexplained core.** *Not a blocker* | **No work to do.** If the program dies again, capture the core **on the FreeBSD host** and read the signal before writing a cause down. The previous entry's cause was narrative with no artifact behind it | A signal, from a real core, read on the host |
+| **1.1** | **T-1 — the SIGBUS.** **Diagnosed and fixed in source 20:10; UNRUN** | **The writing is done; the running is not.** Two fixes are in: the frame clock repaints the canvas alone instead of diffing the whole tree, and the GUI builds `--mm:arc` so ORC stops collecting owlkettle's `state → event → state` cycles under GTK (**D-AS**). **Exercise the paths that produced the cores** — fullscreen, F11, opening and closing notes | **No new core** after a session that includes fullscreen and note toggling. If one appears, it is now readable: `gdb -batch -ex "bt 25" bin/jenova /var/coredumps/<core>` |
 | **1.2** | **T-5 — backends survive exit** | `gui.run`'s `defer` joins the worker threads and stops nothing. Leaving the *agent* loaded is deliberate — reloading multiple gigabytes into VRAM on every restart is worse — but the **embedding** server is left with nothing attached, and a backend that dies during start leaves its pidfile behind. Fix: stop the embed backend on exit; clear a pidfile whose process is not alive | `jenova-core backends status` after a GUI exit reports the agent up, embeddings down, and no stale pid |
 | **1.3** | **T-2 — unbounded statement cache** | `db.nim`'s cache is a plain `Table` and finalizes only at connection close, while `api.nim`'s message update builds its `SET` clause from whichever fields the client sends. Distinct SQL accumulates without bound. **The fix belongs in `db.nim` — a cap plus finalize-on-evict — not in `api.nim`**; constraining the caller leaves the cache still unbounded for the next caller | A new suite that issues many distinct field combinations and asserts the cache stays capped. **It must be proven able to fail** before it is believed |
 | **1.4** | **T-4 — `resolveStoragePath` containment** | Two directions, one fix. The symlink check is gated on `fileExists or dirExists`, so a **new** file written through a symlinked parent escapes the root; and `normBase` is lexical, so a symlinked `$JENOVA_WORKSPACES` makes the check reject **legitimate** paths. Resolve the deepest existing ancestor and compare against a resolved base | Extend `test_api_fs.sh`: a write through a symlinked parent is refused **403**, and a legitimate write under a symlinked root succeeds |

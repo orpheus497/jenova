@@ -2,11 +2,61 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-08-31 19:39
+**Last updated:** 2026-08-31 20:10
 
 ---
 
 ## Completed
+
+### 2026-08-31 20:10 — **The SIGBUS is real, it was diagnosed from the cores, and the fix is built. Compiled; UNRUN.**
+
+**T-1 was wrong and this reverses it.** `BRIEFING.md` said "Nothing is known broken" and T-1 said
+the redraw SIGBUS was "not established… no artifact behind them". **There are five `./bin/jenova`
+cores, not one**, and three of them (19:41, 19:46, 19:46) post-date the 19:39 build. The trackers
+asserting "exactly one core exists" were written at 19:40-19:42, between those crashes.
+
+**The claim that made the dismissal possible was also false:** `BRIEFING.md:54` said no debugger
+here reads a FreeBSD core. **`gdb 15.1 [GDB v15.1 for FreeBSD]` is installed and read all five.**
+
+**The signal and the stack**, identical across all three current-build cores:
+
+```
+signal SIGBUS
+#0 g_type_check_instance   #1 g_signal_handler_disconnect
+#2 disconnect (widgetutils) #3/#4 updateState/update of a HeaderBar child
+#5 updateChildren           #6/#7 HeaderBar   #8 updateChild (Window titlebar)
+#9/#10 Window               #11 redraw        #12 a gui.nim timeout closure
+```
+
+**Two causes, both fixed.**
+
+- **The trigger was ours.** The canvas frame clock called `st.redraw()` every `FrameMs` (33 ms).
+  `redraw()` is a **whole-tree diff**, so animating a `DrawingArea` re-bound every signal handler in
+  the window — the header bar's included — **thirty times a second, forever, while idle.**
+  `canvas.nim` now owns a bare `GtkDrawingArea` and the timer calls `gtk_widget_queue_draw` on it
+  alone, which is all owlkettle's own `DrawingArea.update` hook ever did. **The reasoning was
+  already written in `canvas.nim`'s header** — it explains why the draw callback must not return
+  `true` — and the timer then did the same thing by another route.
+- **The fault class was owlkettle's.** `EventObj[T].widget` (`widgetdef.nim:44-50`) is a **strong
+  ref back to the state that owns the event**, so every widget with a callback is a
+  `state → event → state` **reference cycle**. Under Nim 2's default **ORC** those cycles are
+  collected, and the collector can take a widget state while GTK still holds the widget and its
+  handler. Corroborated by the two older cores: `=trace` (an ORC-cycle-collector-only hook) on an
+  owlkettle widgets type at 15:26, `=destroy` on one at 19:15 — and by **SIGBUS** (wild pointer)
+  rather than SIGSEGV (merely freed). **`--mm:arc` on the `gui` task only.** ARC has no cycle
+  collector, so those cycles leak instead; GTK owns the widgets and what leaks is a small state
+  object per discarded widget in a fixed-size tree. **`jenova-core` keeps ORC** — it links no
+  owlkettle, has none of these cycles, and is a long-lived threaded server.
+
+**Verified by execution:** both binaries build (exit 0). `nm bin/jenova` shows **0** cycle-collector
+symbols and `bin/jenova-core` shows **2**, so the flag applied exactly where it was scoped. G-7's
+nine `gtk_source_*` symbols are still referenced. **The window has not been run — that is the
+USER's step, and rule 1 applies to this entry as much as to any other.**
+
+**A correction to my own first report, made mid-session:** I named the chat-column `Box` as the
+culprit from the stack shape. Reading the library showed `Box.children` pops correctly and **does
+not call `updateChildren` at all** — the frame belongs to `HeaderBar`'s `left`/`right`. Inferring a
+mechanism from a stack is not reading the code that produced it.
 
 ### 2026-08-31 19:39 — **G-7: syntax highlighting, via a hand-written GtkSourceView 5 binding. Compiled and LINKED; unrun.**
 

@@ -26,6 +26,7 @@
 
 import std/[math, random]
 import owlkettle/cairo
+import owlkettle/bindings/gtk
 import ./theme
 
 const
@@ -106,3 +107,45 @@ proc draw*(ctx: CairoContext, size: (int, int)): bool =
         ctx.lineTo(q.x, q.y)
         ctx.stroke()
   false
+
+# ---------------------------------------------------------------------------
+# The widget, and why this module owns it
+# ---------------------------------------------------------------------------
+
+## The note at the top of this file explains why the simulation is stepped by a
+## timer rather than by the draw callback: returning `true` from the callback
+## makes owlkettle re-diff the whole application every frame. **The timer then
+## did exactly that anyway**, by calling `redraw()` — a full tree diff at
+## `FrameMs`, which re-binds every signal handler in the window thirty times a
+## second, the header bar's included. That is the churn behind the SIGBUS cores
+## of 2026-08-31: `updateState` disconnects a handler from a GtkWidget the cycle
+## collector has already taken.
+##
+## A `DrawingArea` does not need any of that to animate. It needs
+## `gtk_widget_queue_draw` on itself, which is all owlkettle's own `update` hook
+## does. So the canvas is built here as a bare GtkDrawingArea and repainted
+## directly, and the widget-tree diff is left to the two timers that fire on
+## real state changes.
+
+var area: GtkWidget
+
+## The `GtkDrawingAreaDrawFunc` GTK calls to paint. `ctx` arrives as an untyped
+## pointer and is the `cairo_t*` `CairoContext` wraps.
+proc drawFunc(widget: GtkWidget, ctx: pointer, width, height: cint,
+              data: pointer) {.cdecl.} =
+  discard draw(CairoContext(ctx), (int(width), int(height)))
+
+## Function purpose: build the canvas widget. Called once, from the renderable in
+## `gui.nim` — owlkettle's `renderable` macro emits an unexported type, so the
+## widget must be declared there while the FFI stays here, the same split
+## `sourceview.nim` uses.
+proc newArea*(): GtkWidget =
+  area = gtk_drawing_area_new()
+  gtk_drawing_area_set_draw_func(area, drawFunc, nil, nil)
+  area
+
+## Function purpose: repaint the canvas alone. This is what the frame clock
+## calls instead of `redraw()`. A no-op before the window is built.
+proc queueFrame*() =
+  if not pointer(area).isNil:
+    gtk_widget_queue_draw(area)

@@ -427,7 +427,10 @@ viewable App:
       if st.cfg.get("CANVAS", "1") != "0":
         discard addGlobalTimeout(canvas.FrameMs, proc(): bool =
           canvas.step()
-          discard st.redraw()
+          # `queueFrame`, not `redraw`. `redraw()` diffs the entire widget tree,
+          # so animating the canvas through it re-bound every signal handler in
+          # the window thirty times a second — see the note in `canvas.nim`.
+          canvas.queueFrame()
           true
         )
 
@@ -700,6 +703,18 @@ proc rowLabel(app: AppState, entity, id, name: string): Widget =
         text = name
         xAlign = 0.0
         ellipsize = EllipsizeEnd
+
+## The particle field, as its own widget rather than owlkettle's `DrawingArea`.
+## Declared here for the same reason `SourceCode` is — the `renderable` macro
+## emits an unexported type — with the FFI in `canvas.nim`.
+##
+## The point of the split is the frame clock: owlkettle repaints a `DrawingArea`
+## only from its `update` hook, so animating one costs a **full widget-tree
+## diff per frame**. This widget is repainted directly by `canvas.queueFrame`.
+renderable NeuralCanvas of BaseWidget:
+  hooks:
+    beforeBuild:
+      state.internalWidget = canvas.newArea()
 
 ## A read-only, syntax-highlighted code block (G-7). Declared here rather than in
 ## `sourceview.nim` because owlkettle's `renderable` emits an unexported type;
@@ -983,9 +998,7 @@ method view(app: AppState): Widget =
       # `theme.css()` makes those content widgets transparent; an opaque one
       # would hide the field entirely rather than tint it.
       Overlay:
-        DrawingArea:
-          proc draw(ctx: CairoContext, size: (int, int)): bool =
-            canvas.draw(ctx, size)
+        NeuralCanvas()
 
         Flap {.addOverlay.}:
           revealed = app.sidebarOpen

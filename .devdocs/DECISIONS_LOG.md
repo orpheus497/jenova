@@ -54,6 +54,57 @@ further down is left in place for the historical record; **this table overrides 
 
 ---
 
+## 2026-08-31 — D-AT: **the parity scope is named by the USER; MCP is deferred** *(BINDING)*
+
+> "the file system and browser, the writer and editor, the file awareness and neovim integration
+> with a tab that has neovim running with the ai able to read the active document — we dont need
+> mcp for the gui yet — defer to the future"
+
+**1:1 parity (D-AP) still stands as the standard; this names what is actually next.** The surface is
+`TODOS.md` **G-16 … G-21**. **MCP is out** — deferred, not cancelled, and **not to be picked up
+casually**: it is not a view to port but a **Nim MCP client** (the Web UI's is a browser-side
+`@modelcontextprotocol/sdk` client with an agentic tool loop; `grep -rin mcp src/` returns two hits,
+both a TEXT column).
+
+**Neovim is embedded as a `vte4` terminal hosting `nvim --listen <socket>`, not as a re-implemented
+UI.** The alternative — `nvim --embed` with the grid rendered by us — means writing a Neovim
+front-end (grids, highlights, cursor shapes, IME) and was rejected on size. The socket is what makes
+**G-18 file awareness** cheap: the active document is `nvim_get_current_buf` +
+`nvim_buf_get_lines`, not a filesystem guess. **The USER keeps their own Neovim and their own
+config**, which the embed approach would not have preserved. New dependency `vte4` is LGPL and
+permitted under D-X.
+
+## 2026-08-31 — D-AS: **the GUI builds under ARC; a tracker entry is not evidence, and neither is a claim about the tooling** *(BINDING)*
+
+**T-1 was corrected away on the strength of a sentence that was never checked.** `BRIEFING.md:54`
+said *"no debugger here reads a FreeBSD core"*. **`gdb 15.1 [GDB v15.1 for FreeBSD]` is installed.**
+One command read all five cores and gave the signal, the stack and the faulting library call.
+
+**This is D-AN's rule turned on the correction rather than on the claim.** Session 009 was right
+that Session 006 asserted a cause with no artifact behind it. It was wrong to conclude the *symptom*
+was unreal, and it reached that conclusion the same way — by reasoning from documents instead of
+from the artifact. **Rule 1 forbids stating what was not executed; it equally forbids denying it.**
+The corollary, and it is the whole decision: **before recording that evidence cannot be obtained,
+try to obtain it.**
+
+**The technical ruling.** `EventObj[T].widget` (`widgetdef.nim:44-50`) is a strong reference back to
+the state that owns the event, so **every owlkettle widget with a callback is a `state → event →
+state` reference cycle.** Nim 2's default ORC collects such cycles and can take a widget state while
+GTK still holds the widget and its connected handler; the next `updateState` then disconnects a
+signal from a wild pointer — **SIGBUS**, which is what all five cores are.
+
+**`--mm:arc`, on the `gui` task only.** ARC has no cycle collector, so the cycles leak instead of
+being freed underneath GTK. The leak is bounded — GTK owns the widgets, and what is left is a small
+state object per discarded widget in a fixed-size tree. **`jenova-core` stays on ORC**: it links no
+owlkettle, has none of these cycles, and is a long-lived threaded server where an uncollected cycle
+would be the worse trade. **Two binaries, two memory models, deliberately** — verified by `nm`,
+which shows 0 cycle-collector symbols in `bin/jenova` and 2 in `bin/jenova-core`.
+
+**And a second rule, because it cost the same session twice: a stack tells you where, not why.**
+The frame shape was read as the chat column's `Box`. Reading the library showed `Box.children` pops
+correctly and **does not call `updateChildren` at all** — the frame is `HeaderBar`'s `left`/`right`.
+**Infer nothing from a backtrace you have not matched against the source that produced it.**
+
 ## 2026-08-31 — D-AR: **a compile is not verification for layout, and bulk edits are banned** *(BINDING)*
 
 > "stop hotfixing stop making quick edits stop doing anything analyse investigate and report"

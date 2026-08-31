@@ -5,6 +5,30 @@ One short paragraph per session. Sessions 001-005 are in
 
 ---
 
+## Session 010 — 2026-08-31
+
+Cross-referenced every tracker claim against the tree before answering: T-2 … T-5, T-9, T-10 and
+G-8 … G-15 all hold, as do the architecture claims, and the code inventory needed no correction —
+then `/var/coredumps` contradicted the one section that said nothing was broken. **Five
+`./bin/jenova` cores exist, not one, and three post-date the current build**; `BRIEFING.md` and
+`SESSION_HANDOFF.md` were written between two of them still asserting a single core. The dismissal
+had rested on *"no debugger here reads a FreeBSD core"* — **gdb 15.1 for FreeBSD is installed and
+read all five** (D-AS: before recording that evidence cannot be obtained, try to obtain it). All
+three current cores give one stack: SIGBUS in `g_signal_handler_disconnect` on a HeaderBar child,
+reached from a `redraw()` in a `gui.nim` timeout. Two causes, both fixed and built: the canvas frame
+clock was running a **whole-tree diff 30×/s** to animate a `DrawingArea` (now `queue_draw` on the
+canvas alone, which `canvas.nim`'s own header had already argued for), and owlkettle's `state →
+event → state` reference cycles were being collected by **ORC** while GTK still held the widgets
+(now `--mm:arc`, GUI binary only, `nm`-verified as 0 cycle-collector symbols against jenova-core's
+2). **Not run — that is the USER's step.** Inside the fix I first blamed the chat column's `Box`
+from the stack's shape and was wrong: `Box` never calls `updateChildren` — a stack says where, not
+why. Also found T-13 (renaming a file asset writes a zero-byte file and wipes its metadata) and
+T-14 (renaming a container orphans its files on disk), neither in any tracker. The USER then named
+the parity scope (**D-AT**): G-6 retired into G-16 … G-21 — filesystem browser, writer/editor, file
+awareness, Neovim in a tab via `vte4` + `nvim --listen`, models selector, trash view — with **MCP
+deferred**, which matters because it was the only item that is a subsystem rather than a view. Full
+detail in `SESSION_HANDOFF.md` Session 010.
+
 ## Session 009 — 2026-08-31
 
 Asked to cross-reference the devdocs against the codebase rather than trust them, and the first

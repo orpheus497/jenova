@@ -26,8 +26,25 @@ const NimFlags = "-d:release -d:gtkminor=10 -d:gtk48 --hints:off --path:src"
 task core, "Build the headless server (bin/jenova-core)":
   exec "nim c " & NimFlags & " --out:bin/jenova-core src/jenova_core.nim"
 
+# `--mm:arc`, and only here. owlkettle's `EventObj[T].widget` is a strong ref back
+# to the state that owns the event (`widgetdef.nim:44-50`), so every widget with a
+# callback is a `state -> event -> state` reference cycle. Under Nim 2's default
+# ORC those cycles are collected, and the collector can take a widget state while
+# GTK still holds the widget and its connected handler — the next `updateState`
+# then disconnects a signal from a wild pointer. That is the SIGBUS in the five
+# `jenova` cores of 2026-08-31: `g_signal_handler_disconnect` ->
+# `g_type_check_instance`, reached from the header bar's children.
+#
+# ARC has no cycle collector, so those cycles leak instead. The leak is bounded:
+# GTK owns the widgets, and what is left behind is a small state object per
+# discarded widget in a fixed-size tree.
+#
+# `jenova-core` keeps ORC. It links no owlkettle and has none of these cycles,
+# and it is a long-lived threaded server where an uncollected cycle would matter.
+const GuiFlags = NimFlags & " --mm:arc"
+
 task gui, "Build the desktop application (bin/jenova)":
-  exec "nim c " & NimFlags & " --out:bin/jenova src/jenova_gui.nim"
+  exec "nim c " & GuiFlags & " --out:bin/jenova src/jenova_gui.nim"
 
 task suites, "Build both binaries and run the test suites":
   coreTask()

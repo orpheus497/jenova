@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-08-31 19:39
+**Last updated:** 2026-08-31 20:10
 **Branch:** `bsd`
 
 ---
@@ -46,24 +46,30 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 
 ## 3. Known broken
 
-**Nothing is known broken.** This section previously asserted a redraw SIGBUS as the blocking
-defect. **It was corrected on 2026-08-31 and the correction is the more useful entry:**
+**The redraw SIGBUS is real, it is diagnosed, and the fix is compiled but UNRUN (20:10).** This
+section said "Nothing is known broken" at 19:41. **That was written between two crashes.**
 
 | | |
 |---|---|
-| **The "redraw SIGBUS"** | **Not established.** One core exists (`/var/coredumps/jenova.66331.1001.core`, from `./bin/jenova`, **15:26** — before the 15:44 rebuild), **and its signal is unknown**: no debugger here reads a FreeBSD core, and that binary no longer exists. "SIGBUS", "~90 s while typing" and the `gtk_widget_set_margin_top` frame had **no artifact behind them**. The stated cause is contradicted by `owlkettle/widgets.nim:243`, where a type mismatch at a child index is a **handled** remove-and-reinsert, not a bad write. **The USER ran the current build for 1:41.78 on 2026-08-31 and it exited cleanly on Ctrl-C, producing no core.** See `TODOS.md` T-1 |
+| **The redraw SIGBUS** | **ESTABLISHED.** **Five** `./bin/jenova` cores — 15:26, 19:15, **19:41, 19:46, 19:46** — three of them from the 19:39 build. All **SIGBUS**. Identical stack in all three current ones: `g_type_check_instance` ← `g_signal_handler_disconnect` ← owlkettle's `disconnect` ← `updateState` of a **HeaderBar child** ← `updateChildren` ← `HeaderBar` ← `updateChild` (the Window titlebar) ← `Window` ← `redraw` ← **a `gui.nim` timeout closure**. Two causes, both fixed at 20:10: the canvas frame clock was calling `redraw()` — a **whole-tree diff** — 30×/s (now `gtk_widget_queue_draw` on the canvas alone), and owlkettle's `state → event → state` reference cycles were being collected by **ORC** while GTK still held the widgets (now `--mm:arc`, GUI binary only). **Built, `nm`-verified, not run.** See `TODOS.md` T-1 and **D-AS** |
 
-**This is rule 1 catching a live example, and it was caught by the USER, not by me** — I read the
-claim in these documents and repeated it as fact without checking the evidence. **A tracker entry is
-not evidence. Check the artifact.**
+**The previous entry's dismissal rested on `BRIEFING.md:54`: *"no debugger here reads a FreeBSD
+core."* `gdb 15.1 [GDB v15.1 for FreeBSD]` is installed and read all five.** Rule 1 forbids stating
+what was not executed, and **it equally forbids denying it**. Before writing down that evidence
+cannot be obtained, **try to obtain it** — that is D-AS, and it is the more expensive lesson than
+the one this section used to carry.
+
+**A stack tells you where, not why.** The frame shape was read as the chat column's `Box`; the
+library shows `Box.children` pops correctly and **never calls `updateChildren`**. The frame is the
+HeaderBar's. **Match a backtrace against the source before inferring a mechanism from it.**
 
 ## 3a. The live workstream — GUI parity (D-AP)
 
 The GUI is the product; `jca_web` becomes the ephemeral single-device LAN client. **Everything
 built has been run.** The USER ran it at 18:30, named four visual defects, and confirmed the fixes
 at 18:55: *"for the most part it looks good."* **Working and seen:** theme, canvas, glass side
-panel, workspace tree, wordmark, markdown text and code blocks. **Missing:** models selector, chat
-settings, attachments, MCP, trash view — **G-6 is now the whole remainder of the parity backlog.**
+panel, workspace tree, wordmark, markdown text and code blocks. **What is missing is §3b's list, not
+this one** — G-6 was retired and triaged at 20:10, and **MCP came out of it entirely** (D-AT).
 
 **The 19:11 build did not work, and the reason is worth keeping (G-14, G-15).** Notes could never
 be created — `physicalPath` refuses a non-UUID id, so `upsert` deleted every row it wrote — and
@@ -127,6 +133,19 @@ for as if they capped something. To make a `Picture` small, decode it small.
 
 **`Box`'s adder defaults to `expand: true`**, and `insert(...)` inherits that default. `hexpand`
 propagates **up** the tree, so one greedy button makes the whole panel greedy.
+
+## 3b. The parity scope, named by the USER (20:10, **D-AT**)
+
+**`G-6` is retired as a heading and triaged into `TODOS.md` G-16 … G-21:** the filesystem view and
+browser, the writer/editor, **file awareness**, **Neovim in a tab**, the models selector, the trash
+view. **MCP is DEFERRED — *"we dont need mcp for the gui yet"*.** That matters because MCP was the
+largest item by far and the only one that is not a view to port: the Web UI's is a browser-side
+`@modelcontextprotocol/sdk` client with an agentic tool loop, and `grep -rin mcp src/` returns two
+hits, both a TEXT column. **Everything else in the list is GUI work over a backend that exists.**
+
+**Neovim is a `vte4` terminal hosting `nvim --listen <socket>`, not a re-implemented UI** (D-AT) —
+so the USER keeps their own Neovim and their own config, and **G-18's file awareness becomes a
+socket query** (`nvim_get_current_buf` + `nvim_buf_get_lines`) rather than a filesystem guess.
 
 ## 4. Outstanding
 

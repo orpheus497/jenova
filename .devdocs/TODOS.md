@@ -1,27 +1,31 @@
 # TODOS
 
-**Last updated:** 2026-08-31 19:39
+**Last updated:** 2026-08-31 20:10
 
 Only what is actually outstanding. Everything closed lives in `PROGRESS.md`; everything retired
 lives in `.devdocs/ARCHIVE/`. **Do not re-add defects about archived files** — that loop cost a day.
 
-> **Re-verified 2026-08-31 (Session 007) against the tree, item by item.** Every one of T-1 … T-10
-> was checked by reading the file it names. **All ten hold. No new defect was found, and nothing
-> here is speculative.** The evidence is in `SESSION_HANDOFF.md` Session 007; the sequenced plan for
-> working through them is `PLANS.md`. **T-1's fix is compiled into `bin/jenova` — the outstanding
-> work on it is to run it, not to write it.**
+> **Re-verified 2026-08-31 20:10 (Session 010) against the tree, item by item.** T-2 … T-5, T-9 and
+> T-10 were each checked by reading the file they name and **all hold**.
+>
+> **Two things Session 007's identical sweep missed, and the reason is the same both times — it
+> read documents where it should have read artifacts.** (1) **T-1 was not "unexplained"** — five
+> cores existed and a working `gdb` was installed; see T-1. (2) **T-13 and T-14 are new defects in
+> code the sweep had already walked past**, both in the rename path beside the one fixed at 19:23.
+> **"No new defect was found" is a claim like any other**, and it is only as good as what was
+> opened. The sequenced plan is `PLANS.md`.
 
 ---
 
 ## Blocking
 
-**Nothing is blocking.** T-1 was the only entry here and it did not survive examination — see below.
+**Nothing is blocking.** T-1 is fixed in source and awaits a run.
 
-## Unexplained, not blocking
+## Fixed in source, awaiting a run
 
 | ID | Item |
 |---|---|
-| **T-1** | **One unexplained core, and a diagnosis that is not supported.** **Corrected 2026-08-31 (Session 007) — the previous text was narrative, not evidence, and it was mine to check before I repeated it.**<br><br>**What is actually known.** Exactly one core from this program exists: `/var/coredumps/jenova.66331.1001.core`, `file` reports *"from ./bin/jenova, pid=66331"*, dated **15:26** — **before** `gui.nim` was edited (15:29) and rebuilt (15:44). So something did terminate abnormally, once, in a build that no longer exists.<br><br>**What is NOT known.** **The signal.** No debugger in the editing container reads a FreeBSD core, and the binary that produced it has been rebuilt, so a backtrace against the current one would be misleading. "SIGBUS", "after ~90 s while typing", and the `gtk_widget_set_margin_top` frame all came from Session 006's write-up with **no artifact behind them** — the same session whose own handoff says its defining failure was asserting what it had not run.<br><br>**The stated cause is contradicted by the library.** `owlkettle/widgets.nim:243` walks both child sequences **by index** and, when the types at an index disagree, calls `gtk_box_remove` then `gtk_box_insert_child_after`. **A type mismatch at a position is an explicitly handled path — it swaps the widget out.** A vanishing sibling causes a cascade of remove/reinsert, which is wasteful and may flicker; it is **not** a write into the wrong widget. *(Read: Box's update hook. Not the whole library, and nothing was run.)*<br><br>**Counter-evidence from the USER, 2026-08-31 16:17.** `./bin/jenova` ran **1:41.78** — past the claimed ~90 s — and exited on the USER's own Ctrl-C (`SIGINT: Interrupted by Ctrl-C`, Nim's default handler). Terminal output was two benign warnings: `VK_SUBOPTIMAL_KHR` (swapchain notice on resize) and a `GtkText` focus-out warning. **`find /var/coredumps -newermt "15:44"` returns nothing — that run produced no core.**<br><br>**Standing status:** one unexplained core predating the current build; the current build shows no fault in 101 s of use. **Not a blocker, and it does not gate G-1 … G-6.** If it recurs, capture the core and read the signal on the FreeBSD host before writing a cause down |
+| **T-1** | **THE SIGBUS IS REAL. Diagnosed from the cores and FIXED 2026-08-31 20:10. Compiled; UNRUN.** **The correction below (Session 009, 19:40) was itself wrong and is superseded** — it is kept underneath because how it went wrong is the useful part.<br><br>**Five cores exist, not one.** `./bin/jenova` cores at 15:26, **19:15, 19:41, 19:46, 19:46**. Three post-date the 19:39 build. The text saying "exactly one core exists" was written at 19:40-19:42, **between two of those crashes**.<br><br>**"No debugger here reads a FreeBSD core" was false.** `gdb 15.1 [GDB v15.1 for FreeBSD]` is installed and read all five. **That false premise is the whole reason a true report was dismissed instead of checked** — the artifact was one command away.<br><br>**Signal: SIGBUS**, identical stack in all three current-build cores: `g_type_check_instance` ← `g_signal_handler_disconnect` ← `widgetutils.disconnect` ← `updateState` of a **HeaderBar child** ← `updateChildren` ← `HeaderBar` ← `updateChild` (the Window's titlebar) ← `Window` ← `redraw` ← **a `gui.nim` timeout closure**.<br><br>**Trigger (ours):** the canvas frame clock called `st.redraw()` — a **whole-tree diff** — every 33 ms, re-binding every signal handler in the window 30×/s while idle. Fixed: `canvas.nim` owns a bare `GtkDrawingArea`; the timer calls `gtk_widget_queue_draw` on it alone.<br><br>**Fault class (owlkettle's):** `EventObj[T].widget` is a strong ref back to the owning state, so every widget with a callback is a `state → event → state` **cycle**. Nim 2's default **ORC** collects those cycles and can take a state while GTK still holds the widget and its handler. Corroborated by `=trace` (ORC-only) at 15:26 and `=destroy` at 19:15, and by SIGBUS rather than SIGSEGV. Fixed: **`--mm:arc` on the `gui` task only**; `jenova-core` keeps ORC.<br><br>**Proven by execution:** both binaries build; `nm` shows 0 cycle-collector symbols in `bin/jenova` and 2 in `bin/jenova-core`. **Not run.** The outstanding work on T-1 is to run the window.<br><br>---<br><br>**Superseded — the 19:40 text, kept for the record:** *"One unexplained core, and a diagnosis that is not supported."* **Corrected 2026-08-31 (Session 007) — the previous text was narrative, not evidence, and it was mine to check before I repeated it.**<br><br>**What is actually known.** Exactly one core from this program exists: `/var/coredumps/jenova.66331.1001.core`, `file` reports *"from ./bin/jenova, pid=66331"*, dated **15:26** — **before** `gui.nim` was edited (15:29) and rebuilt (15:44). So something did terminate abnormally, once, in a build that no longer exists.<br><br>**What is NOT known.** **The signal.** No debugger in the editing container reads a FreeBSD core, and the binary that produced it has been rebuilt, so a backtrace against the current one would be misleading. "SIGBUS", "after ~90 s while typing", and the `gtk_widget_set_margin_top` frame all came from Session 006's write-up with **no artifact behind them** — the same session whose own handoff says its defining failure was asserting what it had not run.<br><br>**The stated cause is contradicted by the library.** `owlkettle/widgets.nim:243` walks both child sequences **by index** and, when the types at an index disagree, calls `gtk_box_remove` then `gtk_box_insert_child_after`. **A type mismatch at a position is an explicitly handled path — it swaps the widget out.** A vanishing sibling causes a cascade of remove/reinsert, which is wasteful and may flicker; it is **not** a write into the wrong widget. *(Read: Box's update hook. Not the whole library, and nothing was run.)*<br><br>**Counter-evidence from the USER, 2026-08-31 16:17.** `./bin/jenova` ran **1:41.78** — past the claimed ~90 s — and exited on the USER's own Ctrl-C (`SIGINT: Interrupted by Ctrl-C`, Nim's default handler). Terminal output was two benign warnings: `VK_SUBOPTIMAL_KHR` (swapchain notice on resize) and a `GtkText` focus-out warning. **`find /var/coredumps -newermt "15:44"` returns nothing — that run produced no core.**<br><br>**Standing status:** one unexplained core predating the current build; the current build shows no fault in 101 s of use. **Not a blocker, and it does not gate G-1 … G-6.** If it recurs, capture the core and read the signal on the FreeBSD host before writing a cause down |
 
 ## Real, verified by reading the code
 
@@ -39,8 +43,9 @@ lives in `.devdocs/ARCHIVE/`. **Do not re-add defects about archived files** —
 sees when it connects over LAN, ephemerally. **1:1 parity with the Web UI is the target** —
 appearance, colouring, wallpaper/canvas, structure and feature set.
 
-Scoped into stages in `PLANS.md`. **Nothing here is blocked** — T-1 was corrected on 2026-08-31 and
-is not a gate (see above).
+Scoped into stages in `PLANS.md`. **Nothing here is blocked** — T-1 is fixed in source and awaits a
+run, not a gate (see above). **The forward-looking scope is D-AT's list, G-16 … G-21, further
+down**; this section is the record of what was already built and confirmed.
 
 ### Observed on screen — the USER ran the build, 2026-08-31 18:30
 
@@ -92,8 +97,34 @@ visible."* Each item below was traced to a line before it was written down.
 | ~~G-3 / G-3b~~ | **DONE** — panel, wordmark, logo, New Chat, search, conversation list, inline rename, delete. Delete is soft and cascades into the trash tree, so it needs no confirmation dialog |
 | ~~G-4~~ | **COMPLETE in source 19:11 — compiled, NOT run.** The tree half was confirmed on screen at 18:55. **The remaining half is now built:** notes and fileAssets are listed at all three container levels, filtered by the same search box, with create/rename/delete through `api.putEntity`/`deleteEntity`; and a note opens in a `TextView` editor in the main area with Save/Close. **File assets are listed, renamed and deleted but have no editor — their content may be binary**, which is a scope call, not an omission. Save goes through `putEntity`, the same path the HTTP route takes, so the filesystem mirror and the per-workspace git repo apply |
 | **G-5** | **RUN. Text blocks render; code blocks collapse — see G-11.** `markdown.nim` — headings, bullets, quotes, bold/italic/inline code as Pango markup; fenced code framed with a language label and copy button. **No syntax highlighting:** `gtksourceview5` is an approved dependency (D-AK) but owlkettle has no binding, so it is raw FFI and belongs in its own item. **Copy uses `wl-copy`** and lives at `gui.nim:572`, not in `markdown.nim` — Wayland only, unconfirmed |
-| **G-6** | **The remaining Web UI surface**, triaged against parity: notes/files/trash views, models selector, chat settings, attachments, MCP. **Not scoped — a heading, not a task** |
+| ~~**G-6**~~ | **Triaged 2026-08-31 20:10 — replaced by G-16 … G-21 below.** It was one heading covering six unrelated things, one of which was an entire unbuilt subsystem |
 | **G-7** | **Syntax highlighting in code blocks.** `gtksourceview5` is installed and approved (D-AK); owlkettle has no binding, so this is a small hand-written FFI surface — its own item, not a rider on G-5 |
+
+## Backlog — the parity surface, triaged (given 2026-08-31 20:10, USER)
+
+**G-6 was one word per item, and one of those words was a subsystem.** Triaged against
+`jca_web/src/lib/components/app/` by reading it. **The USER's scope call, verbatim:** *"the file
+system and browser, the writer and editor, the file awareness and neovim integration with a tab
+that has neovim running with the ai able to read the active document — we dont need mcp for the gui
+yet — defer to the future."*
+
+| ID | Item | Backend state |
+|---|---|---|
+| **G-16** | **Filesystem view and browser.** `FilesView.svelte`, `VFSExplorer.svelte` | `/api/storage/*` exists and is tested. **GUI work only** |
+| **G-17** | **The writer and editor.** The note editor exists (G-4) and is the seed; this is making it an actual writing surface rather than a `TextView` with Save/Close | `putEntity` path exists. **GUI work only** |
+| **G-18** | **File awareness — the AI can read the active document.** The model is given the open file's content as context | `pipeline.nim` already injects RAG and persona context; this is another injection source. **Small backend + GUI** |
+| **G-19** | **Neovim in a tab.** **Decided (D-AT): a `vte4` terminal widget hosts a real `nvim --listen <socket>`, and a small msgpack-RPC client in Nim reads the active buffer** (`nvim_get_current_buf`, `nvim_buf_get_lines`). The USER keeps their own Neovim and their own config; file awareness becomes a socket query. **New dependency: `vte4`** (LGPL — permitted under D-X). FFI shape follows `sourceview.nim` | **Nothing exists.** `/infill` is already asserted as "the USER's Neovim dependency" (`test_routes.sh:82`), so the engine half is partly there |
+| **G-20** | **Models selector.** The Web UI has six components; the GUI has **two hardcoded menu items** ("Switch to instruct/thinking model") | `models.discover` / `models.switchModel` exist. **GUI work only** |
+| **G-21** | **Trash view.** `TrashView.svelte` | `/api/fs/trash` exists **and is asserted by `test_routes.sh`**; `list` already takes an `is_deleted` flag. **GUI work only** |
+| ~~**MCP**~~ | **DEFERRED by the USER 2026-08-31 20:10 — "we dont need mcp for the gui yet".** **Do not open work on this.** Recorded because the size is the reason it must not be picked up casually: the Web UI's MCP is **14 components** over a *browser-side* client (`@modelcontextprotocol/sdk`, StreamableHTTP/SSE/WebSocket) plus an agentic tool loop in `stores/agentic.svelte.ts`. **`grep -rin mcp src/` returns two hits, both the `mcpServerOverrides` TEXT column** carried for the Web UI's data model. Parity means writing an MCP client **in Nim**, not porting a view |
+| **G-22** | **Chat settings / attachments.** `ChatSettings`, `DialogChatSettings`, `ChatAttachments`. **Not named in the USER's scope call and not assumed to be in it** — raise before working |
+
+## Real, verified by reading the code — found 2026-08-31 20:10, in no previous tracker
+
+| ID | Item |
+|---|---|
+| **T-13** | **Renaming a file asset destroys its content.** `gui.nim:604-620`'s `commitRename` resends `content` **for notes only** — the comment directly above it names the hazard and the `fileAssets` branch does not act on it. `api.writeRow` does `INSERT OR REPLACE` over **every** column with missing fields as empty, and `mirrorUpsert` then calls `fssync.syncFileAsset(id, name, "")`, writing a zero-byte file and trashing the original. `size`, `type` and `uploadDate` are wiped too. **Same class as G-14/G-15, one branch away from the fix already applied.** *Reasoned from source, not executed* |
+| **T-14** | **Renaming a workspace, project or folder orphans everything under it on disk.** `mirrorUpsert` returns bare `true` for `projects` and `folders` (no filesystem action at all), and `syncWorkspace` only `ensureDir`s the **new** name. Since `physicalPath` derives every note and asset path from ancestor **names**, a container rename strands the old directory tree and later writes land in a fresh one. *Reasoned from source, not executed* |
 
 ## Product decisions — not mine to make
 
