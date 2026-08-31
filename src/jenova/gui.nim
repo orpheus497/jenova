@@ -52,6 +52,7 @@ import ./server
 import ./api
 import ./markdown
 import ./fssync
+import ./sourceview
 
 type
   Role* = enum
@@ -700,6 +701,32 @@ proc rowLabel(app: AppState, entity, id, name: string): Widget =
         xAlign = 0.0
         ellipsize = EllipsizeEnd
 
+## A read-only, syntax-highlighted code block (G-7). Declared here rather than in
+## `sourceview.nim` because owlkettle's `renderable` emits an unexported type;
+## the FFI stays in that module and this is only the widget around it.
+##
+## No ScrolledWindow wraps this and none should — owlkettle's never calls
+## `set_propagate_natural_height`, which is what collapsed the plain-Label code
+## blocks to their header (G-11). The view word-wraps instead.
+renderable SourceCode of BaseWidget:
+  code: string
+  language: string
+  buffer {.private, onlyState.}: GtkSourceBuffer
+
+  hooks:
+    beforeBuild:
+      let (view, buffer) = newSourceWidget()
+      state.buffer = buffer
+      state.internalWidget = view
+
+  hooks code:
+    property:
+      setSourceText(state.buffer, state.code)
+
+  hooks language:
+    property:
+      setSourceLanguage(state.buffer, state.language)
+
 proc copyToClipboard(text: string) =
   try:
     let p = startProcess("wl-copy", args = [text], options = {poUsePath})
@@ -748,11 +775,29 @@ proc messageBody(app: AppState, m: Message): Widget =
               # near-zero minimum — which `expand: false` then grants, collapsing
               # every code block to its header. Wrapping is what the Web UI does
               # with a long line in any case.
-              Label {.expand: false.}:
-                text = b.text
-                xAlign = 0.0
-                wrap = true
+              SourceCode {.expand: false.}:
+                code = b.text
+                language = b.lang
                 style = [StyleClass("code-body")]
+
+## Function purpose: the fullscreen control, and it lives in the bottom action
+## row rather than the HeaderBar **because GTK4 hides a titlebar set through
+## `gtk_window_set_titlebar` while the window is fullscreened**. The menu item
+## added at 19:02 went with it, so entering fullscreen removed the only way to
+## leave — the top of the window is cut off and the control is inside the part
+## that vanished. This button is always mapped, which is also what makes its
+## `F11` accelerator reachable: owlkettle attaches the shortcut controller to the
+## button itself at `GTK_SHORTCUT_SCOPE_MANAGED`, so a popover child would only
+## answer while the popover is open.
+proc fullscreenButton(app: AppState): Widget =
+  gui:
+    Button:
+      icon = (if app.fullscreen: "view-restore-symbolic"
+              else: "view-fullscreen-symbolic")
+      tooltip = (if app.fullscreen: "Leave fullscreen (F11)" else: "Fullscreen (F11)")
+      shortcut = "F11"
+      style = [ButtonFlat, StyleClass("row-btn")]
+      proc clicked() = app.fullscreen = not app.fullscreen
 
 proc convRow(app: AppState, c: ConvItem): Widget =
   gui:
@@ -1142,6 +1187,7 @@ method view(app: AppState): Widget =
                   proc clicked() =
                     app.openNote = ""
                     app.notice = ""
+                insert(app.fullscreenButton()) {.expand: false.}
               else:
                 Entry {.expand: true.}:
                   text = app.draft
@@ -1157,6 +1203,7 @@ method view(app: AppState): Widget =
                   style = [ButtonSuggested]
                   proc clicked() =
                     app.send()
+                insert(app.fullscreenButton()) {.expand: false.}
 
 ## Function purpose: entry point for `bin/jenova`. Resolution happens here,
 ## before the window exists, so a configuration error is reported on the terminal

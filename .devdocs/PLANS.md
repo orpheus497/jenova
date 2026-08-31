@@ -2,7 +2,7 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-08-31 19:23
+**Last updated:** 2026-08-31 19:39
 
 ---
 
@@ -34,12 +34,14 @@ longer the front of the queue.
 |---|---|
 | G-1/G-2 theme + canvas | **Done, run, confirmed** |
 | G-3 side panel, G-3b rename/delete | **Done** |
-| ~~G-4 workspace tree~~ | **COMPLETE in source 19:11, unrun.** Tree confirmed 18:55; notes and fileAssets now listed at all three levels, with a note editor in the main area |
+| ~~G-4 workspace tree~~ | **DONE — run and confirmed by the USER 19:38.** Panel, tree and notes work |
 | ~~G-5 markdown + code blocks~~ | **Done and confirmed 18:55.** No syntax highlighting (G-7) |
 | G-6 remaining surface | Unscoped, and now smaller: models selector, chat settings, attachments, MCP, trash view. **Notes and files are no longer in it** |
-| G-7 syntax highlighting | `gtksourceview5` FFI. **The next real item** |
+| ~~G-7 syntax highlighting~~ | **DONE in source 19:39, compiled and linked, unrun.** `sourceview.nim`, a hand-written gtksourceview-5 binding |
+| **G-13c** | **Fullscreen had no exit — ours, not the compositor. Fixed 19:39, unrun** |
 | ~~G-8 … G-11~~ | **CLOSED 18:55 — fixed and confirmed on screen.** Panel slab, unstyled tree, one-word wordmark, collapsing code blocks. Record in `PROGRESS.md` 18:42/18:55 |
-| **G-12, G-13a** | **In-app Quit and a way out of fullscreen. Compiled 19:02, unrun** |
+| ~~G-12, G-13a~~ | **DONE — in the 19:23 build the USER confirmed at 19:38** |
+| ~~G-14, G-15~~ | **DONE — note creation and nested-container visibility, confirmed working 19:38** |
 | ~~G-13b~~ | **DEFERRED by the USER 19:11 — suspected compositor, not the program.** Not work unless identified |
 
 **How this work goes wrong, and the rule that came out of it (D-AR).** Four consecutive rounds

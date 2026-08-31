@@ -58,16 +58,57 @@ time instead of after.**
 **G-13b was deferred by the USER** — suspected compositor, not the program. Four hypotheses had
 already died; they are recorded so no future session re-derives them.
 
+### The features that did not work, and how the database said so
+
+*"These features dont work."* Before reading any code: `projects`, `folders`, `notes` and
+`fileAssets` held **zero rows — not even soft-deleted ones**, while workspaces and a top-level chat
+were fine. **A button that does nothing and a row that is rolled back leave different traces.**
+
+- **G-14** — `physicalPath` refuses a non-UUID id, `syncNote` fails, and **`upsert` deletes the row
+  it just wrote**. `createNote` minted `$genOid()`. New `fssync.newUuid()`; 20 000 draws all valid
+  and unique, `genOid` confirmed rejected. **`test_api_db.sh` already asserted this rule** — I had
+  run that suite and read the PASS without reading what it proved.
+- **G-15** — `newChat(projId = id)` left `workspaceId` empty while `convsIn` matches all three ids,
+  so anything created below the top level saved and then matched nothing. **Pre-existing, shipped in
+  G-4's first half, and it survived the 18:55 confirmation because that path was never exercised.**
+
+**Confirmed by the USER: *"tested notes seem to work."***
+
+### G-13c and G-7
+
+**G-13c** — the fullscreen toggle cut the top off the window and had no exit. **GTK4 hides a
+titlebar set via `gtk_window_set_titlebar` when fullscreened**, taking the HeaderBar and the only
+exit with it. The control moved to the bottom action row with an **F11** accelerator, which has to
+hang off an always-mapped widget. **The mechanism had been written down at 18:55 and discarded** on
+the USER's answer that the header bar stays — true of a compositor fullscreen, false of ours.
+
+**G-7** — syntax highlighting, new `sourceview.nim`, a hand-written `gtksourceview-5` 5.18.0
+binding. Two traps for whoever touches it: owlkettle's `renderable` emits an **unexported** type, so
+the widget is declared in `gui.nim`; and owlkettle's header-less `set_editable`/`set_monospace`
+prototypes conflict with `gtksource.h` at the C level, so both are re-declared locally. It links and
+has not rendered.
+
+### Also found
+
+**`test_routes` fails 5 assertions and has been failing.** Attributed by stashing the tree,
+rebuilding from the committed baseline and getting the identical five — **pre-existing**.
+`BRIEFING.md` claimed the suites passed. Recorded as T-12.
+
 ### Files touched
 
-`src/jenova/{theme,gui}.nim`, and `.devdocs/{TODOS,PROGRESS,PLANS,BRIEFING,SESSION_HANDOFF,
+`src/jenova/{theme,gui,fssync}.nim`, new `src/jenova/sourceview.nim`, and `.devdocs/{TODOS,PROGRESS,PLANS,BRIEFING,SESSION_HANDOFF,
 SUMMARIES}.md`.
 
 ### Next
 
-**Run `bin/jenova` (19:11).** Quit, the fullscreen toggle, the notes/files tree and the note editor
-are all compiled and unseen. Then **G-7** (`gtksourceview5` FFI for code-block highlighting), then
-G-6, whose scope shrank when notes and files left it.
+**Run `bin/jenova` (19:39)** — the F11 fullscreen escape and syntax highlighting are compiled and
+unseen. Highlighting is the riskiest thing in this build: it is the program's only FFI and its first
+new C dependency, so if the window fails to start, `sourceview.nim` is the first suspect.
+
+Then **G-6** — the whole remainder of parity, and still unscoped: models selector, chat settings,
+attachments, MCP, trash view. **It needs triaging into items before it is worked**, the way G-8 …
+G-11 were. After that the queue is `PLANS.md` stage 1 (T-2 … T-5) plus **T-12**, the pre-existing
+`test_routes` failure.
 
 ---
 

@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-08-31 19:23
+**Last updated:** 2026-08-31 19:39
 **Branch:** `bsd`
 
 ---
@@ -62,8 +62,8 @@ not evidence. Check the artifact.**
 The GUI is the product; `jca_web` becomes the ephemeral single-device LAN client. **Everything
 built has been run.** The USER ran it at 18:30, named four visual defects, and confirmed the fixes
 at 18:55: *"for the most part it looks good."* **Working and seen:** theme, canvas, glass side
-panel, workspace tree, wordmark, markdown text and code blocks. **Missing:** syntax highlighting
-(G-7), models selector, chat settings, attachments, MCP, trash view.
+panel, workspace tree, wordmark, markdown text and code blocks. **Missing:** models selector, chat
+settings, attachments, MCP, trash view — **G-6 is now the whole remainder of the parity backlog.**
 
 **The 19:11 build did not work, and the reason is worth keeping (G-14, G-15).** Notes could never
 be created — `physicalPath` refuses a non-UUID id, so `upsert` deleted every row it wrote — and
@@ -74,14 +74,40 @@ does nothing. Both fixed at 19:23. **G-15 was pre-existing and shipped inside th
 was "confirmed on screen" at 18:55** — confirmation covers the path that was exercised and nothing
 else.
 
-**Compiled at 19:23 and NOT run.** An in-app Quit, which had existed **only in the
-tray** (G-12); a way out of fullscreen, since `fullscreened` was a property the program never bound
-(G-13a); and **G-4's remaining half — notes and fileAssets at all three tree levels with a note
-editor in the main area.** Running this build is the next thing that happens.
+**The 19:23 build was run and the USER confirmed it at 19:38: the panel, the tree and notes work.**
+That closes G-12 (in-app Quit, which had existed only in the tray), G-13a (a way out of fullscreen —
+`fullscreened` was a property the program never bound), and **G-4 entirely**, notes and fileAssets
+included.
+
+**A standing correction, because it was made three times and the third time was indefensible.** I
+wrote "built, not yet run" about the panel, the tree and notes *while the USER was reporting defects
+in them from photographs of the running window*. **A defect report from the screen is proof of a
+run.** Do not carry an "unrun" label past the first piece of evidence that contradicts it; rule 1
+forbids claiming what was not executed, and it equally forbids denying what plainly was.
+
+**G-13c — the fullscreen toggle was a one-way door, and it was ours.** The USER, 19:39: it *"cuts
+the top of the gui off and theres no way to exit it."* **GTK4 hides a titlebar set through
+`gtk_window_set_titlebar` while a window is fullscreened** — that is the cut-off top — and the
+HeaderBar it hides held the only control that could leave. The button now lives in the **bottom
+action row**, which stays mapped, with an **F11** accelerator; the accelerator has to hang off an
+always-mapped widget because owlkettle attaches the shortcut controller at
+`GTK_SHORTCUT_SCOPE_MANAGED`. **This exact mechanism was written down at 18:55 and then discarded**
+because the USER's answer said the header bar stays — true of a *compositor* fullscreen, false of
+ours. **A hypothesis disproved for one event is not disproved for a different event with the same
+symptom.**
+
+**G-7 is done in source (19:39), compiled and linked, unrun.** Syntax highlighting through a
+hand-written `gtksourceview-5` 5.18.0 binding in new `sourceview.nim`. Two things worth knowing
+before touching it: owlkettle's `renderable` macro emits an **unexported** type, so the widget must
+be declared in `gui.nim`; and owlkettle's header-less `gtk_text_view_set_editable`/`_monospace`
+prototypes **conflict at the C level** with `gtksource.h`, so those two are re-declared under
+Nim-side names. `nm -u` shows all nine `gtk_source_*` symbols referenced — **it links; it has not
+rendered.**
 
 **G-13b — fullscreen not filling, and glitching — is DEFERRED at the USER's direction:** suspected
-to be their compositor rather than the program. **Not work unless identified.** Four hypotheses
-were checked and all four died; the record is in `TODOS.md` so they are not re-derived.
+to be their compositor rather than the program. **Not work unless identified.** It is a *separate*
+item from G-13c and stays deferred; four hypotheses were checked and all four died, and the record
+is in `TODOS.md` so they are not re-derived.
 
 **The method that found G-8 … G-11 is the thing worth keeping.** The USER described the screen in
 one sentence; every item was then traced to a specific line before a word was written down, and the

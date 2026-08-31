@@ -2,11 +2,63 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-08-31 19:23
+**Last updated:** 2026-08-31 19:39
 
 ---
 
 ## Completed
+
+### 2026-08-31 19:39 — **G-7: syntax highlighting, via a hand-written GtkSourceView 5 binding. Compiled and LINKED; unrun.**
+
+The last item in the GUI-parity backlog that was actually scoped. `gtksourceview-5` **5.18.0** is
+installed with headers (D-AK), and its language specs and style schemes are compiled into the
+library as a GResource — **nothing has to be installed beside the binary and no data path is
+configured.**
+
+- **New `src/jenova/sourceview.nim`** — the only place in the program that declares foreign
+  functions. A deliberately small surface: init, buffer, view, language, style scheme. Flags come
+  from `staticExec("pkg-config …")` rather than being written down.
+- **The `renderable` lives in `gui.nim`, not in `sourceview.nim`.** owlkettle's macro
+  (`widgetdef.nim:730`) emits its type **without an export marker**, so a widget declared in another
+  module is invisible to the one that uses it. The FFI stays behind a three-call Nim surface and the
+  widget sits with the rest of the widget tree.
+- **Two GtkTextView setters had to be re-declared under Nim-side names.** owlkettle's bindings
+  declare `set_editable` and `set_monospace` with **no header**, so Nim emits its own `(void*, int)`
+  prototypes; including `gtksource.h` in the same file drags in the real GTK declarations and clang
+  rejects the pair as conflicting. Naming them locally leaves one declaration of each — the
+  header's.
+- **Fence labels are mapped to GtkSourceView ids** for the handful that differ (`bash`→`sh`,
+  `py`→`python3`, `rs`→`rust`…); anything else passes through and, if unknown, resolves to nil,
+  which is how GtkSourceView is told "no highlighting". An unrecognised language degrades to plain
+  text rather than failing.
+- **Style scheme is a preference list** — `Adwaita-dark` first, then other dark schemes — because
+  which schemes a build ships is not guaranteed and an unavailable id returns nil.
+
+**Evidence, such as it is:** the link step resolved `-lgtksourceview-5` and `nm -u bin/jenova` shows
+all nine `gtk_source_*` symbols referenced. **That proves it links, not that it renders.** Unrun.
+
+### 2026-08-31 19:39 — **G-13c: fullscreen had no exit, and the cause was ours after all.**
+
+The USER: *"the fullscreen option cuts the top of the gui off and theres no way to exit it."*
+**G-13b was deferred as a suspected compositor problem; this is not that** — it is the toggle added
+at 19:02. **GTK4 hides a titlebar set through `gtk_window_set_titlebar` while a window is
+fullscreened**, which is the top being cut off, and the HeaderBar it hides contained the *only*
+control that could leave fullscreen. Entering it was a one-way door.
+
+Fixed by moving the control out of the titlebar: a fullscreen button in the **bottom action row**,
+which stays mapped in fullscreen, present in both the chat and note-editor layouts, with an **F11**
+accelerator. The accelerator has to hang off an always-mapped widget — owlkettle attaches the
+shortcut controller to the button at `GTK_SHORTCUT_SCOPE_MANAGED`, so a popover child would only
+answer while the popover is open. The menu item stays for the non-fullscreen case.
+
+**The earlier reasoning was not wrong, it was aimed at the wrong event.** The titlebar-hiding
+mechanism was written down at 18:55 and discarded when the USER's answer said the header bar stays —
+which was true of a *compositor* fullscreen and false of ours.
+
+### 2026-08-31 19:39 — **G-4, G-14, G-15 CONFIRMED by the USER: *"tested notes seem to work."***
+
+Notes create, open, edit and save; the tree places them. The UUID fix and the ancestry fix both hold
+in the running program.
 
 ### 2026-08-31 19:23 — **G-14 and G-15: the reason nothing could be created. Fixed; the id half is PROVEN.**
 
@@ -31,7 +83,7 @@ created and a row that was created and rolled back look different, and this look
 **Proof, not assertion.** `newUuid` was exercised over 20 000 draws: every id satisfies
 `isValidUuid`, none repeated, the version and variant nibbles are correct, and a `genOid`-shaped id
 is confirmed **rejected** — the check was written so it *could* go red on the old value. **The GUI
-path itself is compiled and unrun.**
+path was then run: the USER confirmed at 19:38 that the panel, the tree and notes work.**
 
 ### 2026-08-31 19:23 — **`test_routes` has been failing, and the trackers said the suites passed.**
 
