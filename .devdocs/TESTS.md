@@ -8,6 +8,18 @@ See `DECISIONS_LOG.md` C-10.
 
 > **§5a onward are stage acceptance records** — what each stage had to prove and how. They are
 > history, kept for the reasoning. **§0 is the current suite.**
+>
+> **The commands in §5a–§5f no longer run — corrected 2026-08-31 (Session 007).** They were written
+> against a tree that no longer exists and a session copying one of them will get an error, not a
+> result. Specifically: **`make core` and `make check`** (§5a N-S0, §5b, §5c, §5d) — there is no
+> Makefile (D-AM); **`tests/Makefile check`** — archived; **the N-S1 shell comparison**, which
+> sources `lib/detect-env.sh`, `lib/jenova-conf.sh`, `lib/jenova-model.sh` and reproduces
+> `bin/jenova-ca:44-48` — all four files are archived, and the inverted-precedence defect it
+> measured (B-12 / Q-9) died with them; and **`jenova-core llama-selftest`** (§5f N-S4) — that
+> subcommand went with `llama.nim` and `inference.nim` on 2026-08-31.
+>
+> **The recorded results and the reasoning remain valid as history.** What each check was *for* is
+> why these sections are kept. **§0 is the only section to run anything from.**
 
 ---
 

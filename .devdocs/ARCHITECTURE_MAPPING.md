@@ -52,6 +52,10 @@ on the next commit and re-deriving the drift is what consumed whole sessions (se
 | `jenova_gui.nim` | Desktop application. `bin/jenova` |
 | `jenova/` | The modules — server, routing, database, filesystem mirror, RAG, completion pipeline, backend lifecycle, model discovery, GUI, tray, D-Bus |
 
+**Confirmed 2026-08-31 (Session 007)** by reading every module header: each file below the two entry
+points has one, and the headers are the authority this file defers to. `BLUEPRINT.md` §4 names the
+layering; neither file lists the modules, deliberately.
+
 **Deleted 2026-08-31, not deferred:** `llama.nim` and `inference.nim`. They duplicated
 `llama-server`, which is the engine (D-AF); duplicating it is the opposite of being a harness for
 it. The `JENOVA_INPROC` path went with them.
@@ -111,5 +115,5 @@ Vite / Svelte / Playwright / ESLint / TS configs. Zero OS coupling (C-5).
 | `png/` | Source icons. Ships `jca.jpg`, `jca_grey.jpg`, `jenova.jpg/png`, `jvim.jpg`, splash art |
 | `external/` | Submodules — `llama.cpp` and `ext_bin`. **Untouched by policy** |
 | `var/` | Runtime logs/cache within the source tree |
-| `docs/` | User-facing documentation, consolidated to 8 files in Session 002. Empty `architecture/`, `installation/`, `usage/` directories remain (B-38) |
+| `docs/` | User-facing documentation. **Five files** — `architecture.md`, `context-and-retrieval.md`, `install.md`, `privacy.md`, `usage.md`. Empty `architecture/`, `installation/`, `usage/` directories remain (B-38). *This entry said "8 files" until 2026-08-31; it was never eight.* There is no `docs/README.md` — the archived `BLUEPRINT_pre-007.md` §7 cites one |
 | `.devdocs/` | This workspace, incl. `ARCHIVE/` — everything retired from the product tree. Trackers + `ARCHIVE/` (pre-consolidation reference). **Fully tracked in git — corrected 2026-08-31.** This entry previously claimed `.gitignore:54` ignores `/.devdocs/` and that the trackers were therefore local-only. **That was false in both halves:** `.gitignore` contains no `devdocs` entry at all, and `git ls-files .devdocs/` lists the entire tree. **The process record is committed and public in repository history.** `PROGRESS.md`'s 2026-08-28 16:29 entry carries the same false claim and is corrected there |

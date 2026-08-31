@@ -1,9 +1,15 @@
 # TODOS
 
-**Last updated:** 2026-08-31 15:39
+**Last updated:** 2026-08-31 15:49
 
 Only what is actually outstanding. Everything closed lives in `PROGRESS.md`; everything retired
 lives in `.devdocs/ARCHIVE/`. **Do not re-add defects about archived files** — that loop cost a day.
+
+> **Re-verified 2026-08-31 (Session 007) against the tree, item by item.** Every one of T-1 … T-10
+> was checked by reading the file it names. **All ten hold. No new defect was found, and nothing
+> here is speculative.** The evidence is in `SESSION_HANDOFF.md` Session 007; the sequenced plan for
+> working through them is `PLANS.md`. **T-1's fix is compiled into `bin/jenova` — the outstanding
+> work on it is to run it, not to write it.**
 
 ---
 
@@ -35,7 +41,7 @@ lives in `.devdocs/ARCHIVE/`. **Do not re-add defects about archived files** —
 | ID | Item |
 |---|---|
 | **T-9** | `hardware-profiles/CPU/generic/jenova-setup` is entirely Linux — `cpupower`, `/sys`, `numactl`. It is the only CPU-only profile |
-| **T-10** | Each `profile.conf`'s `PROFILE_*` block contradicts the `jenova.conf` beside it. Informational; nothing reads them. Sync or delete |
+| **T-10** | Each `profile.conf`'s **tuning** `PROFILE_*` block contradicts the `jenova.conf` beside it — for `Vulkan/dgpu-i5-1135g7`, FIT 256 vs 128, CTX 8192 vs 16384, NGL 16 vs `all`, DRAFT 0 vs 1. Nothing reads those tuning values. Sync or delete them. **Not the whole prefix:** `PROFILE_OPT_IN` and `PROFILE_DESC` *are* read, by `detect-hardware.sh:166,302` — this item said "nothing reads them" until 2026-08-31, which would have made deleting the block look safe |
 
 ---
 

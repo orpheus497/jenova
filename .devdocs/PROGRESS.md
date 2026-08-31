@@ -2,11 +2,31 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-08-31 15:39
+**Last updated:** 2026-08-31 15:49
 
 ---
 
 ## Completed
+
+### 2026-08-31 — **The trackers were audited against the tree. The code inventory was right; three documents were not.**
+
+- **`BLUEPRINT.md` rewritten** to describe the Nim program. The 626-line pre-rewrite audit record —
+  `proxy.lua`, `jenova-ca`, `install.sh`, `main.c`, `ffi_defs.lua`, a `Makefile`, ten profiles, none
+  of which exist — is archived to `.devdocs/ARCHIVE/devdocs/BLUEPRINT_pre-007.md` (**D-AO**).
+- **`TESTS.md` §5a–§5f marked as carrying dead commands** — `make core`, `tests/Makefile check`, the
+  N-S1 shell comparison against four archived files, and `jenova-core llama-selftest`. Kept as
+  history for the reasoning; §0 is the only runnable section.
+- **`ARCHITECTURE_MAPPING.md` corrected:** `docs/` is five files, not eight.
+- **`TODOS.md` T-10 corrected:** `PROFILE_OPT_IN` and `PROFILE_DESC` *are* read by
+  `detect-hardware.sh`; only the tuning block is unread. The blanket claim would have made deleting
+  the block look safe.
+- **T-1 … T-10 re-verified item by item against the files they name. All ten hold, and no new defect
+  was found** — the first audit pass in this project to produce zero code-side corrections.
+- **`PLANS.md` rewritten** as a four-stage dependency-ordered plan with the two USER decisions named
+  as decisions.
+
+**No code was changed. Nothing was built and no suite was run**, so nothing here is a claim about
+runtime behaviour (D-AN).
 
 ### 2026-08-31 — **The build is nimble. The shell tree is gone. The app runs.**
 

@@ -54,6 +54,35 @@ further down is left in place for the historical record; **this table overrides 
 
 ---
 
+## 2026-08-31 — D-AO: **`BLUEPRINT.md` described a system that had been deleted**
+
+**The finding.** `AGENTS.md` designates `BLUEPRINT.md` the *authoritative system architecture*. Its
+626-line revision described `lib/proxy.lua`, `bin/jenova-ca`, `scripts/install.sh`,
+`jenova-ui/src/main.c`, `lib/ffi_defs.lua`, `lib/detect-env.sh`, a `Makefile` and a ten-profile
+tree. **None of them are in the tree.** Its §1 put `lib/`, `scripts/`, `jenova-ui/` and `Makefile`
+"in scope"; its §3 required LuaJIT, Lua 5.4 and ncurses; its §7 cited `docs/README.md`, which does
+not exist.
+
+**The ruling.** The pre-rewrite audit record is **archived to
+`.devdocs/ARCHIVE/devdocs/BLUEPRINT_pre-007.md`** (never deleted, per D-AM) and `BLUEPRINT.md` is
+rewritten to describe the Nim program only.
+
+**Why this is a decision and not a tidy-up.** It is D-AN's loop with a different input. D-AN named
+the habit — asserting from reading unrun code — but the *reading* was still being done against a
+document that outranked the code by its own charter. A session obeying `AGENTS.md` correctly would
+read `BLUEPRINT.md` first and derive a system with a Lua proxy in it. **The licence table in that
+file is the proof the mechanism is real:** it marked GTK3 and libappindicator as rule-2 violations,
+and **three separate sessions re-derived a conflict that does not exist from those rows**, one of
+them building a whole GUI-toolkit recommendation on it. D-X had to be written to stop it. **A stale
+authoritative document does not sit inert; it manufactures work.**
+
+**The standing corollary.** `TESTS.md` §5a–§5f had the same defect in a milder form — `make core`,
+`tests/Makefile check` and `jenova-core llama-selftest` are commands that now error. They are marked
+as history rather than rewritten, because their *reasoning* is the reason they are kept.
+**A tracker that names a file must be re-read when that file is archived.** This is the doc-side
+twin of the S-4/S-6 root cause already recorded in the archived blueprint: *a stage that moves files
+must re-read them at the destination.*
+
 ## 2026-08-31 — D-AM: **a Nim program has no Makefile and no shell scripts**
 
 > "why are you constantly talking to me about shell scripts when we already went over this - a nim
