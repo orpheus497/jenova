@@ -38,6 +38,9 @@
 import std/[json, net, os, oids, osproc, streams, strutils, times]
 import owlkettle
 import owlkettle/adw
+import owlkettle/cairo
+import ./theme
+import ./canvas
 import ./paths
 import ./config
 import ./lifecycle
@@ -326,6 +329,19 @@ viewable App:
           discard st.redraw()
         true
       )
+      # Action purpose: the canvas frame clock, separate from the two above
+      # because it is the only timer that redraws while nothing has happened.
+      # `canvas.draw` is pure rendering and never asks for a redraw itself, so
+      # without this the field would be static. Disabled by `CANVAS=0`, which
+      # exists because this is the one thing in the window that costs CPU when
+      # the program is idle.
+      if st.cfg.get("CANVAS", "1") != "0":
+        discard addGlobalTimeout(canvas.FrameMs, proc(): bool =
+          canvas.step()
+          discard st.redraw()
+          true
+        )
+
       discard addGlobalTimeout(40, proc(): bool =
         var changed = false
 
@@ -463,48 +479,63 @@ method view(app: AppState): Widget =
                 style = [ButtonFlat]
                 proc clicked() = pendingActions.add "web"
 
-      Box(orient = OrientY):
-        # The transcript takes all the free height; the notice and the input row
-        # take only what they need. In owlkettle this is the child annotation on
-        # the Box, not a property of the child widget.
-        ScrolledWindow {.expand: true.}:
-          Box(orient = OrientY, spacing = 12, margin = 16):
-            Label:
-              text = (if app.messages.len == 0: "Ask Jenova something." else: "")
-              style = [StyleClass("dim-label")]
-            for m in app.messages:
-              Frame:
-                Box(orient = OrientY, spacing = 4, margin = 10):
-                  Label:
-                    text = (if m.role == rUser: "You" else: "Jenova")
-                    xAlign = 0.0
-                    style = [StyleClass("caption"), StyleClass("dim-label")]
-                  Label:
-                    text = m.text
-                    xAlign = 0.0
-                    wrap = true
+      # The canvas is the Overlay's main child, so it fills the window and every
+      # widget below is stacked over it — the GTK equivalent of the Web UI's
+      # `inset-0 z-0` canvas under a `z-10` content layer (`+layout.svelte`).
+      # `theme.css()` makes those content widgets transparent; an opaque one
+      # would hide the field entirely rather than tint it.
+      Overlay:
+        DrawingArea:
+          proc draw(ctx: CairoContext, size: (int, int)): bool =
+            canvas.draw(ctx, size)
 
-        Label {.expand: false.}:
-          text = app.notice
-          margin = (if app.notice.len > 0: 8 else: 0)
-          wrap = true
-          style = [StyleClass("dim-label"), StyleClass("caption")]
+        Box(orient = OrientY) {.addOverlay.}:
+          # The transcript takes all the free height; the notice and the input row
+          # take only what they need. In owlkettle this is the child annotation on
+          # the Box, not a property of the child widget.
+          ScrolledWindow {.expand: true.}:
+            Box(orient = OrientY, spacing = 12, margin = 16):
+              Label:
+                text = (if app.messages.len == 0: "Ask Jenova something." else: "")
+                style = [StyleClass("dim-note")]
+              for m in app.messages:
+                Frame:
+                  style = [StyleClass("msg-card"),
+                           StyleClass(if m.role == rUser: "msg-user" else: "msg-agent")]
+                  Box(orient = OrientY, spacing = 4, margin = 10):
+                    Label:
+                      text = (if m.role == rUser: "YOU" else: "JENOVA")
+                      xAlign = 0.0
+                      style = [StyleClass("msg-role"),
+                               StyleClass(if m.role == rUser: "msg-role-user"
+                                          else: "msg-role-agent")]
+                    Label:
+                      text = m.text
+                      xAlign = 0.0
+                      wrap = true
+                      style = [StyleClass("msg-body")]
 
-        Box(orient = OrientX, spacing = 8, margin = 12) {.expand: false.}:
-          Entry {.expand: true.}:
-            text = app.draft
-            placeholder = "Message Jenova…"
-            sensitive = not app.streaming
-            proc changed(text: string) =
-              app.draft = text
-            proc activate() =
-              app.send()
-          Button:
-            text = (if app.streaming: "…" else: "Send")
-            sensitive = not app.streaming
-            style = [ButtonSuggested]
-            proc clicked() =
-              app.send()
+          Label {.expand: false.}:
+            text = app.notice
+            margin = (if app.notice.len > 0: 8 else: 0)
+            wrap = true
+            style = [StyleClass("dim-note")]
+
+          Box(orient = OrientX, spacing = 8, margin = 12) {.expand: false.}:
+            Entry {.expand: true.}:
+              text = app.draft
+              placeholder = "Message Jenova…"
+              sensitive = not app.streaming
+              proc changed(text: string) =
+                app.draft = text
+              proc activate() =
+                app.send()
+            Button:
+              text = (if app.streaming: "…" else: "Send")
+              sensitive = not app.streaming
+              style = [ButtonSuggested]
+              proc clicked() =
+                app.send()
 
 ## Function purpose: entry point for `bin/jenova`. Resolution happens here,
 ## before the window exists, so a configuration error is reported on the terminal
@@ -563,4 +594,10 @@ proc run*(withTray = true) =
         true
       )
 
-  adw.brew(widget)
+  # `ColorSchemeForceDark` is not a preference: the palette ported from the Web
+  # UI is its *dark* theme only — the light one is `oklch`, which GTK4 CSS does
+  # not parse — so a light-mode desktop would otherwise get dark text on
+  # Adwaita's light chrome.
+  adw.brew(widget,
+           colorScheme = ColorSchemeForceDark,
+           stylesheets = [theme.stylesheet()])

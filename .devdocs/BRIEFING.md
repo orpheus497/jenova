@@ -46,9 +46,16 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 
 ## 3. Known broken
 
+**Nothing is known broken.** This section previously asserted a redraw SIGBUS as the blocking
+defect. **It was corrected on 2026-08-31 and the correction is the more useful entry:**
+
 | | |
 |---|---|
-| **SIGBUS on redraw** | Crashed after ~90 s with the user typing. Backtrace: `gtk_widget_set_margin_top` inside owlkettle's diff, from a timer calling `redraw`. **Cause: conditionally-present sibling widgets** in `view` — owlkettle matches Box children positionally, so a Label that appears and disappears shifts the rest. **The fix is in the source and compiled into `bin/jenova`; it has NOT been run.** Core dumps land in `/var/coredumps/`; `gdb -batch -ex "bt 25" ./bin/jenova <core>` gives the trace |
+| **The "redraw SIGBUS"** | **Not established.** One core exists (`/var/coredumps/jenova.66331.1001.core`, from `./bin/jenova`, **15:26** — before the 15:44 rebuild), **and its signal is unknown**: no debugger here reads a FreeBSD core, and that binary no longer exists. "SIGBUS", "~90 s while typing" and the `gtk_widget_set_margin_top` frame had **no artifact behind them**. The stated cause is contradicted by `owlkettle/widgets.nim:243`, where a type mismatch at a child index is a **handled** remove-and-reinsert, not a bad write. **The USER ran the current build for 1:41.78 on 2026-08-31 and it exited cleanly on Ctrl-C, producing no core.** See `TODOS.md` T-1 |
+
+**This is rule 1 catching a live example, and it was caught by the USER, not by me** — I read the
+claim in these documents and repeated it as fact without checking the evidence. **A tracker entry is
+not evidence. Check the artifact.**
 
 ## 4. Outstanding
 

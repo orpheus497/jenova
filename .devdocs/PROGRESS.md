@@ -8,6 +8,25 @@ Macro progress tracking. Most recent entries at the top.
 
 ## Completed
 
+### 2026-08-31 — **G-1/G-2: the window has the Web UI's identity. Built, not yet run.**
+
+- **`src/jenova/theme.nim` added.** The Web UI dark palette (`app.css:61-95`, pure hex) as Nim
+  constants, generating a GTK4 stylesheet. `gui.nim` had been passing **no stylesheet at all** —
+  the window was stock Adwaita.
+- **`src/jenova/canvas.nim` added.** The `NeuralCanvas` port — 80 particles, reflecting walls,
+  links under 150 px fading linearly — on a `DrawingArea` via cairo.
+- **`gui.nim` wired:** content moved inside an `Overlay` with the canvas as its main child;
+  message frames carry role-tinted style classes; `brew` now takes the stylesheet and
+  `ColorSchemeForceDark` (the ported palette is the dark theme only — the Web UI's light theme is
+  `oklch`, which GTK4 CSS does not parse). Canvas frame clock at ~30 fps, disabled by `CANVAS=0`.
+
+**Not reproduced, and stated rather than left to be discovered:** `backdrop-filter: blur(40px)`
+(the `.glass-panel` blur — GTK4 has no backdrop filter; approximated by translucency plus the
+original's highlight and shadow) and `mix-blend-mode: screen` on the canvas (owlkettle's cairo
+bindings expose no `cairo_set_operator`; plain alpha over near-black is very close).
+
+**`nimble gui` exits 0 with no warnings. The window has NOT been run** — appearance is unverified.
+
 ### 2026-08-31 — **The trackers were audited against the tree. The code inventory was right; three documents were not.**
 
 - **`BLUEPRINT.md` rewritten** to describe the Nim program. The 626-line pre-rewrite audit record —

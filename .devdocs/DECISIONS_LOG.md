@@ -54,6 +54,46 @@ further down is left in place for the historical record; **this table overrides 
 
 ---
 
+## 2026-08-31 — D-AP: **the GUI is the product; the Web UI becomes the LAN client** *(BINDING)*
+
+> "convert the native GUI appearance and style and colouring and wallpapers and structure and
+> features etc to be 1:1 parity with the webUI — the end goal will be that our work will proceed to
+> be focussed on the gui sole application, eventually the webUI becomes something only experienced
+> by users connecting via lan — and in that instance, ephemerally — it'll only be one device
+> connecting via lan"
+
+**`jca_web` is not retired and not dropped.** It becomes the ephemeral, single-device LAN client.
+**This closes T-6**, which had been carried as an open product decision: the answer is option A
+(build the workspace surface natively) *plus* a retained option C (keep the Web UI for LAN), not
+one or the other.
+
+**"1:1 parity" is the standard for appearance, colouring, canvas, structure and feature set.**
+Where GTK4 genuinely cannot reproduce a Web property, the gap is **named in the source header**
+where the port happens — not discovered later by someone comparing screenshots. Two such gaps are
+already recorded in `theme.nim` and `canvas.nim`: `backdrop-filter` and `mix-blend-mode`.
+
+**LAN is deliberately not invested in further.** It is built and works; Directive 3 forbids
+removing it. It gets no more work until the GUI is done.
+
+## 2026-08-31 — D-AQ: **the filesystem as source of truth — PROPOSED, NOT DECIDED**
+
+> "rather than a database that lags — or a direct file system vfs — we could make something like
+> the genuine filesystem — this frees the database for the rag and learning growth personal
+> information access point for the ai to have RAG intelligence across restarts"
+
+**Recorded so it is not lost, and explicitly left open.** Today the database is authoritative and
+`fssync.nim` mirrors it to disk. The proposal inverts that.
+
+**The expensive half already exists** — `fssync` already writes a directory per workspace, a git
+repo per workspace, a trash tree and `.metadata.json` sidecars. What must be settled before any
+work starts: where identity lives once rows stop being canonical (the sidecars are the obvious
+home), and what replaces the database's transactional guarantee for move/rename/delete — **the
+per-workspace git repo is the candidate, and it is already being created.**
+
+**It must not be entangled with G-1 … G-6.** The visual work does not depend on it, and mixing a
+storage inversion into a restyling is how neither gets attributed when something breaks.
+Tracked as `TODOS.md` **T-11**.
+
 ## 2026-08-31 — D-AO: **`BLUEPRINT.md` described a system that had been deleted**
 
 **The finding.** `AGENTS.md` designates `BLUEPRINT.md` the *authoritative system architecture*. Its

@@ -50,7 +50,19 @@ on the next commit and re-deriving the drift is what consumed whole sessions (se
 |---|---|
 | `jenova_core.nim` | Headless server. Subcommands: run `jenova-core` with no arguments |
 | `jenova_gui.nim` | Desktop application. `bin/jenova` |
-| `jenova/` | The modules — server, routing, database, filesystem mirror, RAG, completion pipeline, backend lifecycle, model discovery, GUI, tray, D-Bus |
+| `jenova/` | The modules — server, routing, database, filesystem mirror, RAG, completion pipeline, backend lifecycle, model discovery, GUI, tray, D-Bus, **theme, canvas** |
+
+**Added 2026-08-31 (G-1/G-2, ruling D-AP):** `theme.nim` and `canvas.nim`.
+
+- **`theme.nim`** holds the palette **as Nim constants** and generates the GTK4 stylesheet from
+  them. The palette is not duplicated in CSS text, because `canvas.nim` paints behind the widgets
+  and needs the same values — the Web UI's own canvas hard-codes colours that match no token in
+  `app.css`, which is the drift this arrangement prevents.
+- **`canvas.nim`** is the `NeuralCanvas` port: a cairo particle field on a `DrawingArea`.
+
+Both headers record what did **not** survive the port from `jca_web/src/app.css` —
+`backdrop-filter` and `mix-blend-mode` have no GTK4 equivalent. That belongs in the source, not
+here.
 
 **Confirmed 2026-08-31 (Session 007)** by reading every module header: each file below the two entry
 points has one, and the headers are the authority this file defers to. `BLUEPRINT.md` §4 names the

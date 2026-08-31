@@ -15,9 +15,13 @@ lives in `.devdocs/ARCHIVE/`. **Do not re-add defects about archived files** —
 
 ## Blocking
 
+**Nothing is blocking.** T-1 was the only entry here and it did not survive examination — see below.
+
+## Unexplained, not blocking
+
 | ID | Item |
 |---|---|
-| **T-1** | **SIGBUS in the GUI redraw.** Crashed after ~90 s of use. Backtrace: `gtk_widget_set_margin_top` inside owlkettle's widget diff, reached from a timer calling `redraw`. Cause: conditionally-present sibling widgets in `view` — owlkettle matches Box children positionally, so a Label that appears and disappears shifts the rest. **Fix is built and NOT yet run.** Cores land in `/var/coredumps/`; `gdb -batch -ex "bt 25" ./bin/jenova <core>` |
+| **T-1** | **One unexplained core, and a diagnosis that is not supported.** **Corrected 2026-08-31 (Session 007) — the previous text was narrative, not evidence, and it was mine to check before I repeated it.**<br><br>**What is actually known.** Exactly one core from this program exists: `/var/coredumps/jenova.66331.1001.core`, `file` reports *"from ./bin/jenova, pid=66331"*, dated **15:26** — **before** `gui.nim` was edited (15:29) and rebuilt (15:44). So something did terminate abnormally, once, in a build that no longer exists.<br><br>**What is NOT known.** **The signal.** No debugger in the editing container reads a FreeBSD core, and the binary that produced it has been rebuilt, so a backtrace against the current one would be misleading. "SIGBUS", "after ~90 s while typing", and the `gtk_widget_set_margin_top` frame all came from Session 006's write-up with **no artifact behind them** — the same session whose own handoff says its defining failure was asserting what it had not run.<br><br>**The stated cause is contradicted by the library.** `owlkettle/widgets.nim:243` walks both child sequences **by index** and, when the types at an index disagree, calls `gtk_box_remove` then `gtk_box_insert_child_after`. **A type mismatch at a position is an explicitly handled path — it swaps the widget out.** A vanishing sibling causes a cascade of remove/reinsert, which is wasteful and may flicker; it is **not** a write into the wrong widget. *(Read: Box's update hook. Not the whole library, and nothing was run.)*<br><br>**Counter-evidence from the USER, 2026-08-31 16:17.** `./bin/jenova` ran **1:41.78** — past the claimed ~90 s — and exited on the USER's own Ctrl-C (`SIGINT: Interrupted by Ctrl-C`, Nim's default handler). Terminal output was two benign warnings: `VK_SUBOPTIMAL_KHR` (swapchain notice on resize) and a `GtkText` focus-out warning. **`find /var/coredumps -newermt "15:44"` returns nothing — that run produced no core.**<br><br>**Standing status:** one unexplained core predating the current build; the current build shows no fault in 101 s of use. **Not a blocker, and it does not gate G-1 … G-6.** If it recurs, capture the core and read the signal on the FreeBSD host before writing a cause down |
 
 ## Real, verified by reading the code
 
@@ -28,11 +32,30 @@ lives in `.devdocs/ARCHIVE/`. **Do not re-add defects about archived files** —
 | **T-4** | **`fssync.resolveStoragePath` only resolves symlinks for paths that already exist.** A new file written through a symlinked parent escapes the workspace root; separately, a symlinked `$JENOVA_WORKSPACES` makes the check reject legitimate paths. Both directions need an assertion |
 | **T-5** | **`bin/jenova` leaves `llama-server` running on exit.** Deliberate for the agent model (not discarding a multi-gigabyte load), but the embedding server is also left with nothing attached, and a stale pidfile points at a dead process after a failed start |
 
+## Backlog — GUI parity with the Web UI (given 2026-08-31, USER)
+
+**The direction (D-AP):** the GUI becomes the product. The Web UI becomes what a *single* device
+sees when it connects over LAN, ephemerally. **1:1 parity with the Web UI is the target** —
+appearance, colouring, wallpaper/canvas, structure and feature set.
+
+Scoped into stages in `PLANS.md`. **Nothing here is blocked** — T-1 was corrected on 2026-08-31 and
+is not a gate (see above).
+
+| ID | Item |
+|---|---|
+| **G-1 / G-2** | **BUILT 2026-08-31, NOT YET RUN.** `theme.nim` and `canvas.nim` added, `gui.nim` wired, `nimble gui` exits 0 with no warnings. **What is unverified is everything visual:** whether the CSS parses (GTK reports parse failures at runtime, not at compile time), whether the canvas is visible through the content layer, and whether ~30 fps redraw is acceptable while idle. **Run it and look at it.** `CANVAS=0` disables the frame clock |
+| **G-2b** | **Fonts are not installed and typography is therefore not 1:1.** The stylesheet asks for `Inter` and `JetBrains Mono`; `fc-list` finds neither, so both fall back — to Noto Sans and Noto Sans Mono. The Web UI gets them from Google Fonts at `app.css:3`, **which is the B-01 leak**, so copying that approach would import a defect. Installing them is a **dependency addition and needs USER approval (Directive 1)** — candidates are the `x11-fonts` packages. **Until then the window renders in Noto and looks close but not identical** |
+| **G-3** | **The side panel.** `adw.Flap` (`content` / `flap` / `revealed` / `foldPolicy`) is the analogue of the Web UI's `Sidebar.Provider`. Header logo block, search, then the tree. **Blocked on T-1** |
+| **G-4** | **The workspace tree.** Workspace → Project → Folder → {chats, focus note, notes}, plus unassigned chats and global assets. **The gap is data, not drawing:** these rows already exist in the database and are already served over `/api/db/*`; the GUI knows only `conversations`/`messages` and needs to read the rest **in-process through `db.nim`**, not over HTTP |
+| **G-5** | **Chat surface parity.** Markdown rendering and syntax-highlighted code blocks via `gtksourceview5` — already an approved dependency under D-AK and the reason D-P named it |
+| **G-6** | **The remaining Web UI surface**, triaged against parity: files/notes/trash views, models selector, chat settings, attachments, MCP. **Not yet scoped — G-6 is a heading, not a task** |
+
 ## Product decisions — not mine to make
 
 | ID | Item |
 |---|---|
-| **T-6** | **`jca_web` still owns the workspace side** — workspaces, projects, folders, notes, fileAssets. The native GUI has chat and persistence only. Retiring `jca_web` therefore means either building that surface in the GUI or dropping it. **A product call** |
+| **T-6** | ~~**`jca_web` still owns the workspace side**~~ — **ANSWERED 2026-08-31 by D-AP.** The workspace surface is **built natively** (G-4). `jca_web` is **not dropped**: it becomes the ephemeral single-device LAN client. This was option A plus a retained option C, and it is no longer an open question |
+| **T-11** | **Filesystem as the source of truth, database freed for RAG and memory.** *(USER proposal 2026-08-31 — recorded, not yet decided; see D-AQ.)* Today the database is authoritative and `fssync.nim` mirrors it to disk. The proposal inverts that. **The expensive half already exists** — `fssync` already writes a directory per workspace, a git repo per workspace, a trash tree and `.metadata.json` sidecars. What must be settled: identity in the sidecars, and what replaces the database's transactional guarantee for move/rename/delete (the per-workspace git repo is the obvious candidate). **Independent of G-1 … G-6 and must not be entangled with them** |
 | **T-7** | **Deployment.** The product is two Nim binaries. How they get installed is one decision, taken once. The shell installer is archived and is not the answer |
 | **T-8** | **CLI.** After the above |
 
