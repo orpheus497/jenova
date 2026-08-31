@@ -19,7 +19,7 @@
 ## those flags are the accumulated result of tuning against real hardware and a
 ## paraphrase would change generation behaviour in ways no test here would catch.
 
-import std/[os, osproc, strutils, strformat, posix, times, strtabs]
+import std/[os, osproc, strutils, strformat, posix, times, strtabs, net]
 import ./config
 import ./paths
 
@@ -44,7 +44,7 @@ proc pidFileFor(l: Lifecycle, be: Backend): string =
   of beLlama: l.paths.state / "llama-server.pid"
   of beEmbed: l.paths.state / "llama-embed.pid"
 
-proc logFileFor(l: Lifecycle, be: Backend): string =
+proc logFileFor*(l: Lifecycle, be: Backend): string =
   case be
   of beLlama: l.paths.logDir / "llama-server.log"
   of beEmbed: l.paths.logDir / "llama-embed.log"
@@ -157,10 +157,40 @@ proc state*(l: Lifecycle, be: Backend): ProcState =
 ## also N-23's fix on the supervisor side:** the path is resolved from
 ## `paths.llamaLibDir`, which already distinguishes an installed layout from a
 ## source tree, rather than being hard-coded to either.
+## Function purpose: is anything already bound to this backend's port? The pid
+## file is not sufficient evidence on its own — if it is deleted or lost while
+## the process lives, `state()` reports "not running" and a second
+## `llama-server` gets started, which then fails to bind and dies. The port is
+## the authority on whether the slot is occupied.
+##
+## `bin/jenova-ca:848` covered the same case with
+## `pkill -f "llama-server.*--port.*$PORT"`. That kills by matching a command
+## line, which can match something the harness does not own; checking the bind
+## refuses to start a duplicate without killing anything.
+proc portInUse*(port: int): bool =
+  var s: Socket
+  try:
+    s = newSocket(buffered = false)
+    s.connect("127.0.0.1", port.Port, timeout = 500)
+    result = true
+  except CatchableError:
+    result = false
+  finally:
+    try:
+      if not s.isNil: s.close()
+    except CatchableError: discard
+
 proc start*(l: Lifecycle, be: Backend): int =
   let existing = l.state(be)
   if existing.running:
     return existing.pid
+
+  # An orphan holding the port: the pid file says nothing is running, but
+  # something is. Starting a second copy would produce a bind failure and a
+  # confusing log rather than an honest refusal.
+  let port = if be == beLlama: l.llamaPort else: l.embedPort
+  if portInUse(port):
+    return -1
 
   let binary = l.paths.llamaServer
   if not fileExists(binary):
@@ -265,10 +295,86 @@ proc stop*(l: Lifecycle, be: Backend, graceMs = 2000): bool =
 proc startAll*(l: Lifecycle): tuple[llama, embed: int] =
   (l.start(beLlama), l.start(beEmbed))
 
+## Function purpose: is a backend answering HTTP, not merely holding a pid?
+## **The distinction is the whole point of the watchdog.** `jenova-ca:258` probes
+## the port for exactly this reason: a `llama-server` that has wedged — out of
+## VRAM mid-load, or stuck on a request — keeps its pid and stops serving.
+## A pid check alone reports that as healthy, which is the failure mode B-13
+## produced from the other direction.
+proc healthy*(l: Lifecycle, be: Backend, timeoutMs = 2000): bool =
+  let port = if be == beLlama: l.llamaPort else: l.embedPort
+  var s: Socket
+  try:
+    s = newSocket(buffered = false)
+    s.connect("127.0.0.1", port.Port, timeout = timeoutMs)
+    s.send("GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+    var line = ""
+    s.readLine(line, timeout = timeoutMs)
+    result = line.contains("200")
+  except CatchableError:
+    result = false
+  finally:
+    try:
+      if not s.isNil: s.close()
+    except CatchableError: discard
+
 proc stopAll*(l: Lifecycle): bool =
   let a = l.stop(beLlama)
   let b = l.stop(beEmbed)
   a and b
+
+## Function purpose: the supervision loop, replacing `bin/jenova-ca:453`'s
+## `_watchdog`. Runs on its own thread inside `serve`, so the harness supervises
+## its own engine rather than depending on a separate shell process — which is
+## what made B-13 possible in the first place.
+##
+## The three constants are `jenova-ca`'s and are kept:
+##
+## * **30 s interval** — long enough that a model still loading is not mistaken
+##   for a dead one.
+## * **3 consecutive failures** before acting — a single missed probe during a
+##   long prompt ingestion is not a fault, and restarting on one would be worse
+##   than the fault.
+## * **60 s restart cooldown** — without it a backend that cannot start (bad
+##   device, missing model) is restarted every interval forever, which turns a
+##   configuration error into a fork bomb.
+##
+## **It checks health, not liveness.** A wedged `llama-server` keeps its pid; only
+## the port tells the truth.
+type WatchConfig* = object
+  intervalMs*: int
+  cooldownMs*: int
+  maxFailures*: int
+
+proc defaultWatch*(): WatchConfig =
+  WatchConfig(intervalMs: 30_000, cooldownMs: 60_000, maxFailures: 3)
+
+proc watchOnce*(l: Lifecycle, be: Backend, failures: var int,
+                lastRestart: var float, wc: WatchConfig): string =
+  ## One tick. Returns a log line, or empty when nothing happened. Separated
+  ## from the loop so it can be tested without waiting 30 seconds.
+  let st = l.state(be)
+  if st.running and l.healthy(be):
+    if failures > 0:
+      failures = 0
+      return &"{be}: recovered"
+    return ""
+
+  inc failures
+  if failures < wc.maxFailures:
+    return &"{be}: probe failed ({failures}/{wc.maxFailures})"
+
+  let now = epochTime()
+  if now - lastRestart < wc.cooldownMs.float / 1000.0:
+    return &"{be}: unhealthy, holding off (cooldown)"
+
+  lastRestart = now
+  failures = 0
+  discard l.stop(be)
+  let pid = l.start(be)
+  if pid == 0:
+    return &"{be}: restart FAILED — check {l.logFileFor(be)}"
+  &"{be}: restarted (pid {pid})"
 
 ## Function purpose: render status for the `status` verb. Reports each backend
 ## separately rather than collapsing to one word, because "the agent model is up

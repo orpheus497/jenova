@@ -85,6 +85,39 @@ hasnt "NGL_AGENT=all does not pass -ngl"   '\-ngl ' "$FITT_LINE"
 has   "explicit NGL_AGENT passes -ngl 18"  '\-ngl 18' "$NGL_LINE"
 hasnt "explicit NGL_AGENT skips -fitt"     '\-fitt' "$NGL_LINE"
 
+# --- --lan moves ONLY the client-facing port (S-0, D-E) ----------------------
+# This is a security property, not a default. Publishing the backends would put
+# two unauthenticated inference endpoints on the network; jenova-ca:568-575 is
+# explicit about it. Asserted in both directions.
+LAN=$(JENOVA_NO_BACKENDS=1 JENOVA_PORT=18771 timeout 3 "$CORE" serve --lan 2>&1 | head -6)
+has   "--lan binds the client port to 0.0.0.0"      'serving on 0.0.0.0'    "$LAN"
+has   "--lan leaves llama on loopback"              'llama 127.0.0.1'       "$LAN"
+has   "--lan leaves embed on loopback"              'embed 127.0.0.1'       "$LAN"
+hasnt "--lan does not publish a backend"            'llama 0.0.0.0'         "$LAN"
+
+DEF=$(JENOVA_NO_BACKENDS=1 JENOVA_PORT=18772 timeout 3 "$CORE" serve 2>&1 | head -6)
+has "without --lan the client port stays loopback" 'serving on 127.0.0.1' "$DEF"
+
+# --- port overrides ----------------------------------------------------------
+PORTS=$(JENOVA_NO_BACKENDS=1 timeout 3 "$CORE" serve --port 18773 --llama-port 19001 --embed-port 19002 2>&1 | head -6)
+has "--port overrides the client port"  'serving on 127.0.0.1:18773' "$PORTS"
+has "--llama-port reaches the upstream" 'llama 127.0.0.1:19001'      "$PORTS"
+has "--embed-port reaches the upstream" 'embed 127.0.0.1:19002'      "$PORTS"
+
+out=$("$CORE" serve --nonsense 2>&1); rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "unknown option"; then
+    pass "an unknown serve flag is refused, not ignored"
+else
+    fail "an unknown serve flag is refused, not ignored" "exit=$rc" "$out"
+fi
+
+# --- health is not liveness --------------------------------------------------
+# A wedged llama-server keeps its pid; only the port tells the truth. This is
+# what the watchdog acts on, and the distinction B-13 got wrong.
+"$CORE" backends health >/dev/null 2>&1
+if [ $? -ne 0 ]; then pass "health reports failure when nothing is listening"
+else fail "health reports failure when nothing is listening" "expected non-zero exit"; fi
+
 # --- refusal paths -----------------------------------------------------------
 out=$("$CORE" backends start 2>&1); rc=$?
 if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "MODEL_PATH\|model not found\|not found at"; then

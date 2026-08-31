@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-08-31 12:35
+**Last updated:** 2026-08-31 12:58
 **Branch:** `bsd`
 **Phase:** 3 — Execution. Plan B (Nim native FreeBSD desktop application) is the active workstream.
 
@@ -11,11 +11,13 @@
 | Item | Value |
 |---|---|
 | Architecture | **`llama-server` is the inference engine; the Nim core is the harness around it (D-AF).** Never a standalone — this is permanent |
-| Stage | **N-S0 … N-S5c complete; N-S6 partial.** Config, database, threaded server, the full `/api/*` surface, filesystem mirror, RAG, the completion pipeline (N-30 closed), and backend supervision — `backends [start\|stop\|status\|args]`, both argument vectors, refusal paths. **B-13 closed by construction** |
-| Next | **Finish N-S6 — four items.** The `--watch` watchdog, `--lan`, the port flags, `hardware-profiles/` consumption. *(`restart` is now trivial and `serve` already brings the whole system up in one command.)* That is the whole remaining gap against `bin/jenova-ca` |
+| Stage | **N-S0 … N-S6 COMPLETE.** Config, database, threaded server, the full `/api/*` surface, filesystem mirror, RAG, the completion pipeline (N-30 closed), and lifecycle — `backends [start\|stop\|restart\|status\|health\|args]`, both argument vectors, `--lan`, port flags, and a watchdog thread. **B-13 closed by construction** |
+| Next | **N-S7 — the GUI.** owlkettle GTK4 window, chat view, streaming, tray on StatusNotifierItem (N-10, and B-02's last live instance). The highest-risk stage: owlkettle is unproven on this host and D-Q put it last deliberately |
+| Archived | **Done 2026-08-31.** 14 `lib/*.lua`, `bin/jenova-ca`, two test scripts and `tests/proxy-concurrency/` moved to `.devdocs/ARCHIVE/` with a manifest. **Thirteen defects closed by the move alone** — B-12, B-13, B-14, B-15, B-16, B-17, B-18, B-19, B-23, B-24, B-36, N-19, N-23. `lib/` is down to four files |
+| Broken by it | **`scripts/install.sh` still deploys `jenova-ca` (N-34).** The install path must be rewired to `jenova-core` before any deployment. Recorded, not patched — D-Y prohibits exercising it during the rewrite. Also: the GTK3 tray is inert until N-S7, since `ui.lua` spawns the archived binary |
 | Startup | **One command.** `jenova-core serve` starts the HTTP server *and* forks both backends; the forks return instantly and models load inside `llama-server`. Already-running backends are left alone, so a harness restart never reloads a model. `JENOVA_NO_BACKENDS=1` serves without them, which is what the test suites use |
 | Runtime home | **`$HOME/Jenova`.** `~/JCA` is the legacy deployment and is permanently untouchable (D-AE); the core refuses to resolve against it |
-| Tests | `test_api_db` 23 · `test_api_fs` 46 · `test_routes` 13 · `test_lifecycle` 21 · `pipeline-selftest` 15 · `rag-selftest` 7 · `sha256-selftest` 4 · `db-selftest` · `serve-selftest` — **all PASS**, all in a scratch `JCA_HOME`, none spawning a backend |
+| Tests | `test_api_db` 23 · `test_api_fs` 46 · `test_routes` 13 · `test_lifecycle` 31 · `pipeline-selftest` 15 · `rag-selftest` 7 · `sha256-selftest` 4 · `db-selftest` · `serve-selftest` — **all PASS**, all in a scratch `JCA_HOME`, none spawning a backend |
 | Open decisions | **NONE.** Q-12, the last one, was closed 2026-08-31 — CUDA is unreachable on FreeBSD, so the profile and its defects are moot. `DECISIONS_LOG.md` had carried 11 `AWAITING USER DECISION` markers, **all stale**; a status index at the top of that file now overrides them. **Nothing is blocked on the USER** |
 | Settled, never re-asked | **Devices:** agent on GPU, embedding on CPU, drafter on GPU, **Vulkan0 and Vulkan1**. **`etc/jenova.local.conf` is the USER's file** — no session edits or "fixes" it. **`~/JCA`** untouchable. **Licence** AGPL-3.0. **Engine** `llama-server`, always |
 | Commits | Everything is uncommitted. Commit boundaries are the USER's alone (C-11) |
@@ -48,9 +50,10 @@ soft deletes, cascades, restore), `/api/fs/*` (trash, restore, empty, tree), `/a
 web search run for the websearch intent, a persona chosen, tools stripped where they do not apply,
 and the cache consulted on the rewritten body's key.
 
-**`lib/proxy.lua` is fully superseded.** Every route *and* every completion behaviour is reproduced.
-`/api/workspaces` is the sole exception, dead and deliberately dropped. Nothing has been deleted —
-see N-33.
+**`lib/proxy.lua` is archived**, along with 13 other Lua modules and `bin/jenova-ca`. Every route
+and every completion behaviour is reproduced in the core; `/api/workspaces` is the sole exception,
+dead and deliberately dropped. **`lib/` now holds four files:** three shell modules that
+`config.nim` shells out to, and `ui.lua` until N-S7.
 
 **Retrieval ships** (`rag.nim`): FTS5 keyword index, float32 vectors in BLOB columns, chunk text
 persisted. **FTS5 was confirmed present by probe** (`jenova-core db-capabilities`), not assumed.

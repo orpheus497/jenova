@@ -2,11 +2,116 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-08-31 12:35
+**Last updated:** 2026-08-31 12:58
 
 ---
 
 ## Completed
+
+### 2026-08-31 — **The Lua runtime and `bin/jenova-ca` archived. Thirteen defects closed by moving files.**
+
+On the USER's instruction, everything the Nim core superseded was moved to `.devdocs/ARCHIVE/`
+rather than deleted (Directive 3), with a manifest at `.devdocs/ARCHIVE/README.md`.
+
+**Moved:** 14 `lib/*.lua` modules · `bin/jenova-ca` · `tests/test-launcher.sh` ·
+`tests/test_bin_jenova.sh` · the whole `tests/proxy-concurrency/` harness.
+
+**Thirteen defects closed without a line of fixing code** — B-12, B-13, B-14, B-15, B-16, B-17,
+B-18, B-19, B-23, B-24, B-36, N-19, N-23. **This is D-O working exactly as designed:** the triage
+ruled "fix only what survives the rewrite", and none of these did.
+
+**Dependencies were traced before moving, not after.** `daemon.lua`, `ffi_defs.lua`,
+`healthcheck.lua` and `indexer_runner.lua` were not on the original list — they went because a
+reverse-dependency search showed their only callers were the four modules already going.
+`ffi_defs.lua` was also required by `proxy-concurrency/test_ffi_flags.lua`, which is why that whole
+harness went with it.
+
+**Four files deliberately stayed in `lib/`.** The three shell modules are **load-bearing**:
+`config.nim` evaluates `etc/jenova.conf` with `/bin/sh`, and that file sources `jenova-model.sh` for
+model discovery — archiving them would break configuration resolution in the Nim core. `ui.lua`
+stays until N-S7 because `jenova-ui/src/main.c` calls it, and it requires no other Lua module, which
+is precisely why it could stay while the rest went.
+
+**Verified after the move:** `make core` builds and all seven suites pass with `lib/` reduced to
+four files. `tests/Makefile` updated — `check` now runs five scripts, every one targeting the Nim
+core.
+
+**Dangling references, disclosed rather than hidden.** **`scripts/install.sh:240` still deploys
+`jenova-ca` in its symlink loop and will not find it — the install path is broken until it is
+rewired to deploy `jenova-core`.** Recorded as **N-34**; D-Y prohibits exercising the install path
+during the rewrite, so it is recorded rather than patched, but it must be done before any
+deployment. Lesser: `lib/ui.lua` spawns `jenova-ca`, so **the GTK3 tray is inert in the source tree
+until N-S7**; four `scripts/` mention it in hints and cleanup; `jenova-conf.sh:44` still names the
+pidfile `jenova-ca.pid`, which is only a filename.
+
+**Noted, not caused by this move:** the 17 files archived in Session 002 are tracked in git but
+absent from the working tree — a pre-existing state. `git show HEAD:<path>` recovers any of them.
+
+### 2026-08-31 — **N-S6 COMPLETE.** Full parity with `bin/jenova-ca`, and one planned item retracted
+
+**"`hardware-profiles/` consumption" was never a real N-S6 item.** I had listed it from the plan
+rather than from the code. **`bin/jenova-ca` contains zero references to `hardware-profiles/`** —
+it consumes `etc/jenova.conf`, the *applied* profile, which `config.nim` already reads. Profile
+selection and application are owned by `hardware-profiles/detect-hardware.sh`, a setup-time tool
+with its own lifecycle. **Checking before building saved a stage's worth of unnecessary work**, and
+is the habit that should have caught D-N's linkage clause and the two-command split earlier.
+
+**Full surface diff against `bin/jenova-ca`:** it has `start stop status restart --port
+--llama-port --embed-port --watch --daemon --lan`. The core now has every one of those except
+`--daemon`.
+
+**`--daemon` is deliberately not implemented.** Self-daemonising is an anti-pattern: a foreground
+process supervised externally is the correct shape, D-H already deferred service integration to
+this cut-over, and at N-S7 the tray owns the process. Recorded as a decision rather than a gap.
+
+**An orphan-handling defect found by asking what happens when the pid file lies.** `start` consulted
+only the pid file, so a backend whose pidfile was deleted while the process lived would get a
+*second* `llama-server` started, which then fails to bind and dies — a confusing log instead of an
+honest refusal. **The port is the authority on whether the slot is occupied**, so `start` now checks
+it and returns -1. `jenova-ca:848` handled the same case with
+`pkill -f "llama-server.*--port.*$PORT"`, which kills by command-line match and can hit something
+the harness does not own; refusing to start is narrower and safer.
+
+**Two fall-through bugs in my own error handling, caught by running it rather than reading it:**
+both `backends start` and `backends restart` printed the refusal *and then* `started (pid -1)`,
+because the new branch was an `elif` in a chain that fell through to an unconditional success line.
+Fixed to exit on refusal.
+
+The startup banner, `Stage` string and `usage()` were all still describing the old command surface
+and were rewritten — a binary that misreports what it does is the defect class these trackers exist
+to catch.
+
+### 2026-08-31 — N-S6: `--lan`, port flags, `restart`, `health`, and the watchdog
+
+`tests/test_lifecycle.sh` — 31 assertions, PASS. Four of N-S6's five remaining items done;
+`hardware-profiles/` consumption is the last.
+
+**`--lan` moves only the client-facing port, and that is a security property.** `0.0.0.0` for
+`:8080`; `llama-server` and the embedding server stay on `127.0.0.1` **unconditionally**, including
+under `--lan`. `jenova-ca:568-575` is explicit about why: publishing them would put two
+unauthenticated inference endpoints on the network. **Asserted in both directions** — that the
+client port moves, and that neither backend does.
+
+**`--port`, `--llama-port`, `--embed-port`** override config, which is the precedence the shell used
+and the only order that makes a flag useful. **An unknown flag is refused rather than ignored**, and
+that is asserted too — silently swallowing a mistyped flag is how a run does the wrong thing while
+looking correct.
+
+**`backends health` is not `backends status`, and the distinction is the point.** `status` reports
+pids; `health` probes the port. **A wedged `llama-server` keeps its pid and stops serving** — out of
+VRAM mid-load, or stuck on a request — so a pid check reports it healthy. That is B-13's failure
+mode from the other direction, and it is what the watchdog must act on.
+
+**The watchdog runs as a thread inside `serve`**, not as a separate shell loop. `jenova-ca` ran it
+as its own process, which is exactly how two components come to disagree about what is running —
+the class of defect B-13 was. Its three constants are `jenova-ca`'s and are kept for reasons worth
+stating: **30 s interval** (a model still loading must not be mistaken for a dead one), **3
+consecutive failures** before acting (one missed probe during a long prompt ingestion is not a
+fault, and restarting on it would be worse than the fault), and a **60 s restart cooldown**
+(without it a backend that *cannot* start — bad device, missing model — is restarted every interval
+forever, turning a configuration error into a fork bomb).
+
+`watchOnce` is separated from the loop so the logic can be tested without waiting 30 seconds.
 
 ### 2026-08-31 — `serve` starts the backends. **A two-command split removed, and it should never have been built.**
 

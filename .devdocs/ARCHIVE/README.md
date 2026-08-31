@@ -1,60 +1,100 @@
 # ARCHIVE
 
-Nothing here is deleted. These files were removed from the product tree during the
-FreeBSD-only migration and consolidation, and are kept as the reference source until that
-work is proven complete.
+Components retired from the product tree. **Nothing here is deleted** — it is moved, so the
+implementation it was replaced by can be checked against it, and so a decision can be reversed
+without going through git history.
 
-**Restore any file with:**
-
-```sh
-git mv .devdocs/ARCHIVE/<path> <original-path>
-```
-
-Git history is preserved across the move, so `git log --follow` works on the restored file.
+Retained under Directive 3: features are never removed without explicit instruction. Everything
+below was moved on the USER's instruction after its replacement was built and tested.
 
 ---
 
-## Contents
+## 2026-08-31 — the Lua runtime and `bin/jenova-ca` (N-33, after N-S6)
 
-### `scripts/`
+Superseded by `src/jenova/*.nim`. Moved once the Nim core reached **full parity with
+`bin/jenova-ca`** at N-S6 and every route and completion behaviour of `lib/proxy.lua` was
+reproduced and tested.
 
-| File | Why it moved | What does its job now |
+### `lib/` — 14 modules
+
+| Archived | Replaced by | Defects that die with it |
 |---|---|---|
-| `build-desktop.sh` | Checked for GTK/appindicator/ncurses/luajit and **built nothing**, despite the name. Pure duplication. | `scripts/install-dependencies.sh` |
-| `preflight-check.sh` | "Check dependencies before building" collapses into "install dependencies" once dependencies are mandatory. Its checks duplicated `install.sh` and `install-dependencies.sh`. | `scripts/install-dependencies.sh`, run automatically by `gmake deps` |
-| `jenova-manager.sh` | 738-line TUI menu wrapping build/install/update operations, duplicating both the Makefile and the ncurses TUI in `jenova-ui`. | `gmake` for build tasks, `jenova-tui` for operations |
+| `proxy.lua` | `server.nim`, `routes.nim`, `api.nim`, `upstream.nim`, `pipeline.nim` | **B-19** unreachable header timeout · **B-18** hot-path defects |
+| `search.lua` | `rag.nim` | **B-15** RAG inert — `index_dir`/`reindex_file` had zero callers |
+| `embed.lua` | `rag.nim` (embeddings via :8082) | **B-14** `init()` returned true without setting `initialized`, so `/health` reported embeddings alive while every call failed |
+| `fs_sync.lua` | `fssync.nim` | **B-16** blocking `io.popen` · **B-17** fork storms |
+| `db.lua` | `db.nim` | **B-18** prepare-and-finalize per call |
+| `http.lua` | `http.nim` | — |
+| `json.lua` | `std/json` | — |
+| `sha256.lua` | `sha256.nim` (asserted against FIPS 180-4 vectors) | — |
+| `prompts.lua` | `prompts.nim` (verbatim) | — |
+| `git.lua` | `fssync.nim` (argument vector, not a quoted shell string) | — |
+| `daemon.lua` | `lifecycle.nim` | — |
+| `ffi_defs.lua` | `llama.nim` bound through `llama.h` | The whole ABI-mirroring defect class S-1 existed to remove |
+| `healthcheck.lua` | `lifecycle.healthy` | — |
+| `indexer_runner.lua` | `rag.nim` | — |
 
-### `root/`
+**`daemon.lua`, `ffi_defs.lua`, `healthcheck.lua` and `indexer_runner.lua` are here because their
+only callers are here** — nothing outside this directory required them once the four above moved.
+That was checked by reverse-dependency search, not assumed.
 
-| File | Why it moved | What does its job now |
-|---|---|---|
-| `install-jenova.sh` | Orchestrator that duplicated the Makefile and called it back circularly — `Makefile` had an `install-jenova` target that ran this script, which then ran `gmake`. | `gmake`, `gmake install` |
+### `bin/jenova-ca`
 
-### `docs/`
+Superseded at N-S6. The Nim core has every one of its verbs and flags —
+`start stop status restart --port --llama-port --embed-port --watch --lan` — except `--daemon`,
+which is **deliberately absent**: self-daemonising is an anti-pattern, D-H deferred service
+integration to this cut-over, and N-S7's tray owns the process.
 
-| File | Why it moved | What does its job now |
-|---|---|---|
-| `STREAMLINED.md` | Install guide duplicating `docs/installation/freebsd.md`; marked ⚠️ stale in the doc index, and documented flags the installer never parsed. | `docs/installation/freebsd.md` |
-| `checklist.md` | Checkbox walkthrough of the same install; marked ⚠️ stale; referenced hardware-profile paths and config paths that do not exist. | `docs/installation/freebsd.md` |
-| `CHANGELOG-install.md` | Not a changelog — no versions, dates or chronology. A one-time pull-request summary with three wrong file sizes, marked ⚠️ stale, and documenting four installer flags that were never implemented. | nothing; it described a past PR |
+**B-13 dies with it** — `PROXY_PID` declared at `:13` and never assigned, so `--daemon` started no
+`:8080`. In the Nim core the HTTP server and the backend supervisor are one process, so that
+disagreement cannot exist.
+
+### `tests/`
+
+| Archived | Why |
+|---|---|
+| `test-launcher.sh` | Every check targets `jenova-ca` and `proxy.lua` |
+| `test_bin_jenova.sh` | Validates `bin/jenova` against a running `jenova-ca`. Orphaned (B-25) |
+| `proxy-concurrency/` | The acceptance harness for `proxy.lua`'s event loop. **B-23** (the fd assertion is vacuous on FreeBSD because `/proc` is not mounted) and **B-24** (undeclared `python3` dependency) die with it |
+
+Replaced by `test_api_db.sh` (23), `test_api_fs.sh` (46), `test_routes.sh` (13),
+`test_lifecycle.sh` (31), plus `rag-selftest`, `pipeline-selftest`, `sha256-selftest`,
+`db-selftest` and `serve-selftest`.
 
 ---
 
-## Moved, not archived
+## What deliberately stayed in `lib/`
 
-`bin/build-llama-jenova` → `scripts/build-llama.sh`. It is a build script and `bin/` holds
-runtime binaries; `install.sh` never deployed it. Still in the product tree, just in the right
-place.
+| Kept | Why |
+|---|---|
+| `detect-env.sh`, `jenova-conf.sh`, `jenova-model.sh` | **Load-bearing.** `config.nim` evaluates `etc/jenova.conf` with `/bin/sh`, and that file sources `jenova-model.sh` for model discovery. Archiving these would break configuration resolution in the Nim core |
+| `ui.lua` | The GTK3 tray, called from `jenova-ui/src/main.c`. Replaced at N-S7, not before |
 
 ---
 
-## Not in this archive
+## Known dangling references — **disclosed, not hidden**
 
-Files removed *before* the archive rule was set are in git history at the commit prior to the
-migration, not here:
+Moving these leaves references behind. None affects `jenova-core`, which builds and passes every
+suite with `lib/` reduced to four files. **None affects the USER's deployment either**, which runs
+from its own copy under `~/JCA` (D-AE).
 
-- `lib/linux-tune.sh`, `tests/test_linux_tune_regex.sh`
-- `docs/installation/linux.md`, `docs/installation/macos.md`
-- `hardware-profiles/macOS/` (2 profiles, 6 files)
-- `hardware-profiles/Linux/AMD/apu/ryzen7-5700u-3b` (3 files)
-- `hardware-profiles/Linux/Vulkan/dgpu/gtx-1650ti` (3 files)
+| Site | Effect |
+|---|---|
+| `lib/ui.lua:69,109,111` | The tray spawns `bin/jenova-ca`. **The GTK3 tray path is now inert in the source tree** until N-S7 replaces it |
+| `scripts/install.sh:240` | Deploys `jenova-ca` in its symlink loop — will not find it. **The install path needs updating to deploy `jenova-core`**, which is N-S6 follow-through not yet done |
+| `scripts/{update,uninstall,cleanup,build-llama}.sh` | Reference it in restart hints, symlink cleanup and warnings |
+| `lib/jenova-conf.sh:44` | `PID_FILE` still named `jenova-ca.pid`. Harmless — a filename |
+| `tests/test_gpu.sh` | Orphaned already (B-25) |
+
+**The install path being broken is the one that matters.** It is recorded rather than patched
+because rewiring `install.sh` to deploy the Nim core is its own change, and D-Y prohibits exercising
+the install path during the rewrite anyway.
+
+---
+
+## Earlier archive (2026-08-28, Session 002)
+
+`docs/`, `scripts/` and `root/` hold the documentation consolidation and the superseded installer
+scripts. **Those 17 files are tracked in git but absent from the working tree** — a pre-existing
+state, not created by the 2026-08-31 move. `git show HEAD:.devdocs/ARCHIVE/<path>` recovers any of
+them.

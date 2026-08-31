@@ -20,26 +20,37 @@ import jenova/[paths, config, db, dbselftest, server, serverselftest, llama,
 
 const
   Version = "0.1.0"
-  Stage = "N-S4c — harness; inference proxied to llama-server (D-AF)"
+  Stage = "N-S6 — harness with lifecycle; llama-server is the engine (D-AF)"
 
 proc usage() =
   echo &"jenova-core {Version} ({Stage})"
   echo ""
   echo "Usage: jenova-core <command>"
   echo ""
-  echo "  paths         Resolve and print every runtime path"
-  echo "  config        Resolve and print configuration under the full precedence rule"
-  echo "  db-init       Create the database and schema"
-  echo "  db-selftest   Prove the database layer runs concurrently, with measurements"
-  echo "  serve         Run the threaded HTTP server, proxying inference to llama-server"
-  echo "  serve-selftest  Prove a stream holds its cadence while other connections block"
-  echo "  llama-selftest  Load the model and generate, bypassing the server"
-  echo "  version       Print version and stage"
+  echo "  serve [opts]  Start Jenova: the HTTP server and the inference backends"
+  echo "                  --lan              bind the client port to 0.0.0.0"
+  echo "                                     (backends stay on loopback always)"
+  echo "                  --port N           client-facing port (default 8080)"
+  echo "                  --llama-port N     agent backend port (default 8081)"
+  echo "                  --embed-port N     embedding backend port (default 8082)"
+  echo ""
+  echo "  backends <sub>  Manage the inference backends directly"
+  echo "                  start | stop | restart | status | health | args"
+  echo "                  status = pids · health = does the port answer"
+  echo ""
+  echo "  paths | config        Resolve and print paths / configuration"
+  echo "  db-init               Create the database and schema"
+  echo "  db-capabilities       Report what the linked libsqlite3 supports"
+  echo "  version               Print version and stage"
+  echo ""
+  echo "  Self-tests: db-selftest, serve-selftest, rag-selftest,"
+  echo "              pipeline-selftest, sha256-selftest, llama-selftest"
   echo ""
   echo "Precedence: builtin default < etc/jenova.conf < etc/jenova.local.conf < environment"
-  echo "Set JENOVA_INPROC=1 to load the model into this process instead of proxying."
+  echo "JENOVA_NO_BACKENDS=1  serve without starting llama-server (used by the tests)"
+  echo "JENOVA_INPROC=1       load the model in-process instead of proxying (not the default)"
   echo ""
-  echo "No GUI, RAG or CLI subsystem is implemented yet."
+  echo "No GUI or CLI subsystem is implemented yet."
   echo "See .devdocs/PLANS.md Plan B for the stage order."
 
 proc main() =
@@ -80,6 +91,11 @@ proc main() =
       case sub
       of "start":
         let (llamaPid, embedPid) = lc.startAll()
+        if llamaPid == -1:
+          echo "llama-server: port ", lc.llamaPort,
+               " is already in use — refusing to start a second"
+          echo "  stop the existing one first, or use --llama-port"
+          quit(1)
         if llamaPid == 0:
           echo "failed to start llama-server"
           if not fileExists(p.llamaServer):
@@ -93,7 +109,9 @@ proc main() =
               echo "  model not found at ", m
           quit(1)
         echo "llama-server started (pid ", llamaPid, ")"
-        if embedPid > 0:
+        if embedPid == -1:
+          echo "embed-server: port ", lc.embedPort, " already in use — not started"
+        elif embedPid > 0:
           echo "embed-server started (pid ", embedPid, ")"
         else:
           # Not an error: retrieval degrades to keyword-only without it, which
@@ -108,6 +126,28 @@ proc main() =
           quit(0)
         echo "one or more backends did not stop cleanly"
         quit(1)
+      of "restart":
+        discard lc.stopAll()
+        let (llamaPid, embedPid) = lc.startAll()
+        if llamaPid == -1:
+          echo "restart failed: port ", lc.llamaPort,
+               " is held by something this harness did not start"
+          quit(1)
+        if llamaPid == 0:
+          echo "restart failed: llama-server did not come back"
+          quit(1)
+        echo "llama-server restarted (pid ", llamaPid, ")"
+        if embedPid > 0: echo "embed-server restarted (pid ", embedPid, ")"
+        quit(0)
+      of "health":
+        # Health, not liveness. A wedged llama-server keeps its pid; only the
+        # port tells the truth. This is what the watchdog acts on.
+        var bad = 0
+        for be in [lifecycle.beLlama, lifecycle.beEmbed]:
+          let ok = lc.healthy(be)
+          echo "  ", be, ": ", (if ok: "healthy" else: "NOT responding")
+          if not ok and be == lifecycle.beLlama: inc bad
+        quit(if bad == 0: 0 else: 1)
       of "status":
         echo "backends:"
         echo lc.describe()
@@ -121,7 +161,7 @@ proc main() =
         echo p.llamaServer, " ", lc.embedArgs().join(" ")
         quit(0)
       else:
-        echo "usage: jenova-core backends [start|stop|status|args]"
+        echo "usage: jenova-core backends [start|stop|restart|status|health|args]"
         quit(2)
     of "db-capabilities":
       # Reports what the linked libsqlite3 can actually do, rather than what the
@@ -378,9 +418,52 @@ proc main() =
       quit(1)
     of "serve":
       let p = paths.resolve()
-      let c = config.load(p)
-      let host = c.get("HOST", "127.0.0.1")
-      let port = c.getInt("PORT", 8080)
+      var c = config.load(p)
+
+      # Action purpose: `--lan`, `--port`, `--llama-port`, `--embed-port`,
+      # reproducing `bin/jenova-ca:336-365`. Flags override config, which is the
+      # precedence the shell used and the only order that makes a flag useful.
+      #
+      # **`--lan` moves ONLY the client-facing port.** `llama-server` and the
+      # embedding server bind loopback unconditionally, including under `--lan` —
+      # `jenova-ca:568-575` is explicit about why, and it is the S-0 ruling:
+      # publishing them would put two unauthenticated inference endpoints on the
+      # network. That is a security property, not a default.
+      var host = c.get("HOST", "127.0.0.1")
+      var port = c.getInt("PORT", 8080)
+      var llamaPortOverride = 0
+      var embedPortOverride = 0
+      var i = 1
+      while i < args.len:
+        proc needValue(flag: string): string =
+          if i + 1 >= args.len:
+            echo flag, " requires a value"
+            quit(2)
+          inc i
+          args[i]
+        case args[i]
+        of "--lan": host = "0.0.0.0"
+        of "--port":
+          let v = needValue("--port")
+          port = try: parseInt(v) except ValueError: (echo "--port must be a number"; quit(2))
+        of "--llama-port":
+          let v = needValue("--llama-port")
+          llamaPortOverride = try: parseInt(v) except ValueError: (echo "--llama-port must be a number"; quit(2))
+        of "--embed-port":
+          let v = needValue("--embed-port")
+          embedPortOverride = try: parseInt(v) except ValueError: (echo "--embed-port must be a number"; quit(2))
+        else:
+          echo "serve: unknown option ", args[i]
+          echo "usage: jenova-core serve [--lan] [--port N] [--llama-port N] [--embed-port N]"
+          quit(2)
+        inc i
+      if llamaPortOverride > 0: putEnv("JENOVA_LLAMA_PORT", $llamaPortOverride)
+      if embedPortOverride > 0: putEnv("JENOVA_LLAMA_EMBED_PORT", $embedPortOverride)
+      # Re-resolve so the overrides flow through the same precedence chain the
+      # rest of the program reads, rather than being carried separately.
+      if llamaPortOverride > 0 or embedPortOverride > 0:
+        c = config.load(p)
+
       db.initDb(p.state / "jenova.db")
 
       # Action purpose: the retrieval schema must exist before the first request
@@ -421,7 +504,9 @@ proc main() =
         let lc = lifecycle.init(p, c)
         let llamaState = lc.state(lifecycle.beLlama)
         let (llamaPid, embedPid) = lc.startAll()
-        if llamaPid == 0:
+        if llamaPid == -1:
+          echo "  llama-server: port already in use by something else — not started"
+        elif llamaPid == 0:
           echo "  WARNING: llama-server did not start — completions will 502"
           if not fileExists(p.llamaServer):
             echo "           binary missing at ", p.llamaServer, " (make llama)"
@@ -433,10 +518,31 @@ proc main() =
           echo "  llama-server: already running (pid ", llamaPid, ") — left alone"
         else:
           echo "  llama-server: started (pid ", llamaPid, "), model loading"
-        if embedPid == 0:
+        if embedPid == -1:
+          echo "  embed-server: port already in use — not starting a second"
+        elif embedPid == 0:
           echo "  embed-server: not started — retrieval is keyword-only"
         else:
           echo "  embed-server: pid ", embedPid
+
+        # Action purpose: supervise from inside the harness. `jenova-ca` ran its
+        # watchdog as a separate shell loop; here it is a thread in the process
+        # that owns the backends, so there is no second component whose view of
+        # "running" can diverge from the server's — which is the class of
+        # disagreement B-13 was.
+        var watcher: Thread[Lifecycle]
+        proc watchLoop(lcc: Lifecycle) {.thread.} =
+          let wc = lifecycle.defaultWatch()
+          var llamaFails, embedFails = 0
+          var llamaLast, embedLast = 0.0
+          while true:
+            sleep(wc.intervalMs)
+            let a = lcc.watchOnce(lifecycle.beLlama, llamaFails, llamaLast, wc)
+            if a.len > 0: echo "[watchdog] ", a
+            let b = lcc.watchOnce(lifecycle.beEmbed, embedFails, embedLast, wc)
+            if b.len > 0: echo "[watchdog] ", b
+        createThread(watcher, watchLoop, lc)
+        echo "  watchdog: on (30s interval, 3 failures, 60s cooldown)"
 
       # Action purpose: ruling D-AF — `llama-server` is the inference engine and
       # this core is the harness around it. The default is therefore the proxy

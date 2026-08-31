@@ -198,6 +198,39 @@ Proxy**, and it reframes N-S5b: RAG is one input to the pipeline, not the stage.
 **Verified with no gap:** all 46 `db.lua` public functions are reachable through `api.nim`'s
 generic handlers.
 
+### 5r. N-S6 complete, then the Lua runtime archived
+
+**N-S6 finished**, and the last planned item turned out not to exist: **"`hardware-profiles/`
+consumption" was in my plan, not in the code.** `bin/jenova-ca` has zero references to
+`hardware-profiles/` — it reads `etc/jenova.conf`, the applied profile, which `config.nim` already
+handles. Selection is `detect-hardware.sh`'s job, a setup-time tool. **Checking before building
+saved a stage of unnecessary work.**
+
+Landed: `--lan` (client port only — backends stay loopback unconditionally, a security property
+asserted both ways), `--port`/`--llama-port`/`--embed-port`, `restart`, `health` (port probe, not
+pid — a wedged `llama-server` keeps its pid and stops serving), and the watchdog as a thread inside
+`serve` with `jenova-ca`'s own constants: 30 s interval, 3 failures, 60 s cooldown. An orphan guard
+was added after asking what happens when the pid file lies — `start` now checks the port, because
+the pid file is not authority on whether the slot is occupied.
+
+**Then, on the USER's instruction, everything superseded was archived** to `.devdocs/ARCHIVE/`:
+14 `lib/*.lua` modules, `bin/jenova-ca`, two test scripts, and the whole `proxy-concurrency/`
+harness. **Thirteen defects closed by moving files** — B-12, B-13, B-14, B-15, B-16, B-17, B-18,
+B-19, B-23, B-24, B-36, N-19, N-23. D-O working exactly as designed.
+
+**Dependencies were traced first, not after.** `daemon.lua`, `ffi_defs.lua`, `healthcheck.lua` and
+`indexer_runner.lua` were not on the original list; a reverse-dependency search showed their only
+callers were the four already going. **Four files deliberately stayed:** the three shell modules are
+load-bearing (`config.nim` shells out to `etc/jenova.conf`, which sources `jenova-model.sh`), and
+`ui.lua` survives to N-S7.
+
+**Disclosed rather than hidden — `scripts/install.sh:240` still deploys `jenova-ca` and will not
+find it.** The install path is broken until rewired to `jenova-core` (**N-34**). D-Y prohibits
+exercising it during the rewrite, so it is recorded, not patched. The GTK3 tray is likewise inert
+in the source tree until N-S7.
+
+Verified after the move: the core builds and all seven suites pass with `lib/` at four files.
+
 ### 5q. The reason the USER kept being asked answered questions
 
 > "im getting sick of being asked the same questions a hundred times over … why are you constantly

@@ -13,6 +13,33 @@ See `DECISIONS_LOG.md` C-10.
 
 ---
 
+## 0. Current suite — 2026-08-31
+
+`make check` runs **five scripts, all targeting the Nim core**, all in a scratch `JCA_HOME`, none
+spawning a backend:
+
+| Script | Assertions | Covers |
+|---|---|---|
+| `test_api_db.sh` | 23 | The `/api/db/*` contract — cascades, fork reparenting, upward restore |
+| `test_api_fs.sh` | 46 | The filesystem mirror, `/api/fs/*`, `/api/storage/*` and its containment |
+| `test_routes.sh` | 13 | The standing route inventory, incl. the pipeline reaching the upstream |
+| `test_lifecycle.sh` | 31 | The `llama-server` argument vector, `--lan`, port flags, refusal paths |
+| `test-health.sh` | — | Smoke test; still needs `python3` |
+
+Plus the core's own subcommands: `db-selftest`, `serve-selftest`, `rag-selftest` (7),
+`pipeline-selftest` (15), `sha256-selftest` (4), `llama-selftest`, `db-capabilities`.
+
+**Archived 2026-08-31** to `.devdocs/ARCHIVE/tests/`: `test-launcher.sh` and `test_bin_jenova.sh`
+(both tested `bin/jenova-ca`) and the whole `proxy-concurrency/` harness (the acceptance gate for
+`proxy.lua`'s event loop). **B-23 and B-24 die with that harness** — the vacuous `/proc` fd
+assertion and the undeclared `python3` dependency both lived there.
+
+**Still orphaned (B-25):** `test_validate_arg.sh` — **and it still rewrites `etc/jenova.conf`**
+(B-22, `:62`), which is the highest-value cheap fix left in the suite — plus `test_gpu.sh` and
+`test_gpu_single.sh`, which need a `llama-cli` that `build-llama.sh` never copies.
+
+**§3 and §5 below describe the archived `proxy-concurrency` gate and are retained as history.**
+
 ## 1. Standing rule
 
 The editing environment is a Linux container on a FreeBSD host (the Linuxulator). **Nothing run
@@ -275,9 +302,20 @@ Streaming shape: `POST /v1/chat/completions` with `"stream":true` returns
 > **Not covered by any test yet:** sampling parameters are ignored (N-25) and client disconnect
 > does not cancel a generation (N-26). Neither should be assumed working because these checks pass.
 
-## 5g. `tests/test_lifecycle.sh` — the backend argument vector (N-S6, 2026-08-31)
+## 5g. `tests/test_lifecycle.sh` — the backend argument vector and lifecycle flags (N-S6)
 
-**21 assertions, PASS.** It does not start `llama-server` — that needs a model, and the models live
+**31 assertions, PASS.**
+
+**The `--lan` assertions are the load-bearing ones and go both ways:** that the client port moves to
+`0.0.0.0`, *and* that neither backend does. Backends bind loopback unconditionally — publishing them
+would put two unauthenticated inference endpoints on the network (S-0, D-E,
+`jenova-ca:568-575`). A one-directional assertion would pass on a build that published everything.
+
+Also pinned: the three port overrides reach the right places; **an unknown `serve` flag is refused
+rather than ignored** — silently swallowing a typo is how a run does the wrong thing while looking
+correct; and **`backends health` fails when nothing is listening**, because health is not liveness.
+A wedged `llama-server` keeps its pid and stops serving, so a pid check calls it healthy. That is
+what the watchdog acts on. It does not start `llama-server` — that needs a model, and the models live
 under `~/JCA`, which D-AE places permanently out of bounds. It asserts the **command line**, via
 `jenova-core backends args`, which prints it without starting anything.
 

@@ -2,7 +2,7 @@
 
 Granular task list. Completed items move to the `BLUEPRINT.md` implementation registry.
 
-**Last updated:** 2026-08-31 12:35
+**Last updated:** 2026-08-31 12:58
 
 ---
 
@@ -48,15 +48,31 @@ Granular task list. Completed items move to the `BLUEPRINT.md` implementation re
 already superseded, and they die when that code is deleted rather than needing a fix. This table is
 the accurate state; the detailed entries further down are kept for their evidence.
 
-### 1. Dies with `lib/*.lua` — **no work, deletion only** (N-33)
+### 1. ~~Dies with `lib/*.lua`~~ — **DONE 2026-08-31. Archived, so these are CLOSED.**
 
-**B-12** (inverted config hierarchy) · **B-14** (embed reports healthy while dead) ·
-**B-15** (RAG inert, zero callers) · **B-16** (blocking `io.popen`) · **B-17** (fork storms) ·
-**B-18** (hot-path defects) · **B-19** (unreachable header timeout) · **B-36** (missing purpose
-headers) · **N-19** (already moot).
+**B-12** (inverted config hierarchy) · **B-13** (`--daemon` starts no `:8080`) · **B-14** (embed
+reports healthy while dead) · **B-15** (RAG inert, zero callers) · **B-16** (blocking `io.popen`) ·
+**B-17** (fork storms) · **B-18** (hot-path defects) · **B-19** (unreachable header timeout) ·
+**B-23** (vacuous fd assertion) · **B-24** (undeclared `python3`) · **B-36** (missing purpose
+headers) · **N-19**, **N-23**.
 
-**Eight defects that need no fix at all** — `config.nim`, `rag.nim`, `fssync.nim`, `db.nim`,
-`http.nim` and `server.nim` replaced the code that had them. This is D-O working as designed.
+**Thirteen defects closed without a line of fixing code** — the 14 Lua modules, `bin/jenova-ca`,
+`test-launcher.sh`, `test_bin_jenova.sh` and `tests/proxy-concurrency/` are in
+`.devdocs/ARCHIVE/`. **This is D-O working exactly as designed:** the triage said fix only what
+survives the rewrite, and none of these did.
+
+**Verified after the move:** `jenova-core` builds and all seven suites pass with `lib/` reduced to
+four files (`detect-env.sh`, `jenova-conf.sh`, `jenova-model.sh`, `ui.lua`).
+
+### 1b. NEW — dangling references the archive leaves behind
+
+| Site | Effect |
+|---|---|
+| **`scripts/install.sh:240`** | **The one that matters.** Its symlink loop deploys `jenova-ca`, which is gone. **The install path must be rewired to deploy `jenova-core`** — N-S6 follow-through, not yet done. D-Y prohibits exercising the install path during the rewrite, so this is recorded rather than patched |
+| `lib/ui.lua:69,109,111` | The GTK3 tray spawns `jenova-ca`. **The tray path is inert in the source tree until N-S7** replaces it |
+| `scripts/{update,uninstall,cleanup,build-llama}.sh` | Restart hints, symlink cleanup, warnings |
+| `lib/jenova-conf.sh:44` | `PID_FILE` still named `jenova-ca.pid`. A filename; harmless |
+| `tests/test_gpu.sh` | Orphaned already (B-25) |
 
 ### 2. Frozen in `jca_web/` until N-S9 (D-Z)
 
@@ -71,15 +87,22 @@ tree, so it stands until N-S9 retires that tree. **Flagged, not quietly reclassi
 |---|---|---|
 | `hardware-profiles/` data | **B-05** (partly), **B-10**, **B-20** | Data outlives the rewrite. **B-10 is the real one** — the only CPU-only profile, and entirely Linux. **B-21 is MOOT and so is the CUDA half of B-05: CUDA is not meaningfully available on FreeBSD, so `CUDA/dgpu-generic` can never be selected on the target platform.** Closed 2026-08-31 |
 | `scripts/` | **B-11**, **B-27**, **B-28**, **B-29**, **B-35** | `jenova-term` never deployed; `--purge` documented but unparsed; `$SKIP_JVIM` dead code; a documented step that does not exist; `cleanup.sh`'s widened trust boundary |
-| `tests/` | **B-22**, **B-23**, **B-24**, **B-25**, **B-26** | **B-22 still writes `etc/jenova.conf`** (`test_validate_arg.sh:62`, unchanged). B-23's fd check is vacuous on FreeBSD. Four tests still orphaned. `python3` still needed by `test-health.sh` and the `proxy-concurrency` harness |
+| `tests/` | **B-22**, **B-25**, **B-26** | **B-22 still writes `etc/jenova.conf`** (`test_validate_arg.sh:62`, unchanged) — the highest-value cheap fix left. B-25: three orphans remain (`test_validate_arg`, `test_gpu`, `test_gpu_single`). **B-23 and B-24 are CLOSED** — they lived in `proxy-concurrency/`, now archived |
 | docs / hygiene | **B-06**, **B-30**, **B-32**, **B-33**, **B-34**, **B-37**, **B-38** | `gmake` still appears 6× in this file; `proxy.log` still in the repo root; the three empty `docs/` directories still present |
 | **B-02** | 2 live instances | `jenova-ui/src/main.c:324` (tray lock — dies at N-S7) and `scripts/update.sh:105` (fallback PID path). The rest are comments or deliberate legacy cleanup |
 
 ### 4. Nim core — recorded, none blocking
 
 **N-16** no HTTP keep-alive · **N-18** compile-time thread counts · **N-21** restore revives
-individually-deleted messages (faithful to the original contract) · **N-23** absolute rpath, resolve
-before any deploy · **N-12**, **N-14**, **N-15** integrity-pass notes.
+individually-deleted messages (faithful to the original contract) · **N-12**, **N-14**, **N-15**
+integrity-pass notes.
+
+**N-34 is the one that will bite:** `scripts/install.sh` still deploys the archived `jenova-ca` and
+must be rewired to `jenova-core` before any deployment.
+
+*(N-23 was closed with the archive — the rpath concern applied to `llama.nim`, now an optional path
+under D-AF, and `lifecycle.nim` resolves the library directory from `paths.llamaLibDir`, which
+already distinguishes installed from source.)*
 
 ### 5. Closed as **not a session's business** — never raise again
 
@@ -105,8 +128,9 @@ Vulkan1.** No session edits it. It was raised repeatedly and that was wrong. **C
 | ~~N-28~~ | **Closed 2026-08-31 by D-AD + Q-27.** The runtime home moved to `$HOME/Jenova` at all 20 code sites (15 changed, 5 already correct), and `paths.resolve` now refuses `$HOME/JCA` outright unless `JENOVA_ALLOW_DEPLOYED=1`. See `PROGRESS.md` |
 | ~~N-S5a~~ | **Complete 2026-08-31** — `fssync.nim`, the ten `/api/db/*` mirroring call sites, the four `/api/fs/*` routes, the four `/api/storage/*` routes and `fs_sync.trash_path`. **N-27, N-20 and N-29 all closed; `lib/proxy.lua` is superseded.** `tests/test_api_fs.sh` 46 assertions, `test_routes.sh` 11, `test_api_db.sh` 23 — all PASS. `/api/workspaces` deliberately dropped (dead; no caller, never worked). See `PROGRESS.md` |
 | ~~N-S5c~~ | **Complete 2026-08-31 — N-30 closed.** `pipeline.nim`, `prompts.nim`, `websearch.nim`, `sha256.nim`. All seven behaviours ported **and wired into the serving path**: intent detection, RAG retrieval and injection, web search, three-mode persona injection, tool stripping, cache intercept on the rewritten body's key. SHA-256 asserted against the FIPS 180-4 vectors. `pipeline-selftest` 15, `sha256-selftest` 4 — PASS. See `PROGRESS.md` |
-| **N-S6** | **PARTIAL — supervision landed 2026-08-31.** Done: `lifecycle.nim`, `backends [start\|stop\|status\|args]`, the llama-server and embed argument vectors, refusal paths, 21 assertions. **B-13 closed by construction.** Outstanding: `serve` auto-starting backends, `--lan` wiring, `hardware-profiles/` consumption, and the health watchdog. Only then does `bin/jenova-ca` become deletable |
-| **N-33** | **`lib/proxy.lua` and its modules are now fully superseded and are candidates for deletion — but nothing has been removed.** Every route and every completion behaviour is reproduced in the Nim core. Retained under Directive 3 until the USER instructs removal. Affected: `lib/{proxy,search,embed,fs_sync,db,http,json,sha256,prompts,git}.lua`. **`ffi_defs.lua`, `daemon.lua` and `ui.lua` are NOT in this set** — they are still used by the tray and lifecycle path until N-S6/N-S7 |
+| ~~N-S6~~ | **COMPLETE 2026-08-31. Full parity with `bin/jenova-ca`, which is now deletable (N-33).** `jenova-ca` has `start stop status restart --port --llama-port --embed-port --watch --daemon --lan`; the core has all of them bar `--daemon`, which is **deliberately not implemented** — self-daemonising is an anti-pattern, D-H deferred service integration here, and N-S7's tray owns the process. **"`hardware-profiles/` consumption" was retracted: `bin/jenova-ca` never references `hardware-profiles/` at all** — it reads `etc/jenova.conf`, the applied profile, which `config.nim` already handles. Selection is `detect-hardware.sh`'s job, a setup-time tool. Detail below |
+| ~~N-S6-detail~~ | **NEARLY COMPLETE — one item left.** Done 2026-08-31: `lifecycle.nim`; `backends [start\|stop\|restart\|status\|health\|args]`; both argument vectors; `serve` bringing the whole system up in **one command** (the two-command split was `jenova-ca`'s shape reproduced without asking why — it existed because the tray owned the proxy, which is B-13); `--lan` (client port only — backends stay loopback unconditionally, asserted both ways); `--port`/`--llama-port`/`--embed-port`; the watchdog as a thread inside `serve` (30 s / 3 failures / 60 s cooldown); `JENOVA_NO_BACKENDS=1` so tests never load a model onto the GPU. 31 assertions. **B-13 closed by construction.** **Outstanding: `hardware-profiles/` consumption.** Only then is `bin/jenova-ca` deletable |
+| ~~N-33~~ | **DONE 2026-08-31 — archived, not deleted, on the USER's instruction.** 14 Lua modules, `bin/jenova-ca`, two test scripts and `tests/proxy-concurrency/` moved to `.devdocs/ARCHIVE/`, with a manifest at `.devdocs/ARCHIVE/README.md` mapping each to its replacement and the defects that die with it. **Closes B-12, B-13, B-14, B-15, B-16, B-17, B-18, B-19, B-23, B-24, B-36, N-19, N-23.** Kept in `lib/`: the three shell modules (`config.nim` shells out to them — load-bearing) and `ui.lua` (until N-S7). **New: `scripts/install.sh` still deploys `jenova-ca` and must be rewired to `jenova-core`** |
 | ~~N-29~~ | **Closed 2026-08-31.** All five routes resolved: `/api/storage/*` ported with containment, `/infill` and `/v1/health` classified at N-S4c, `/api/workspaces` subtracted under D-D |
 | ~~N-S5b~~ | **Complete 2026-08-31** — `rag.nim`: FTS5 keyword index, BLOB vectors, chunk text persisted. **FTS5 confirmed present by probe** (`jenova-core db-capabilities`), so Q-24 option A shipped. `db.nim` gained `execBlob`/`queryBlob`. `rag-selftest` 7 assertions PASS, including the vector path verified without an embedding server. See `PROGRESS.md` |
 | ~~N-31~~ | **Closed 2026-08-31.** The embedding server returns exactly the `data[].embedding` shape `rag.embed` parses; `chunks with vectors` went 0 → 3 against a live embedder, and the semantic ranking check passed. Verified during a permissioned model-copy test |
@@ -116,7 +140,8 @@ Vulkan1.** No session edits it. It was raised repeatedly and that was wrong. **C
 | ~~N-S4c~~ | **Complete 2026-08-31** — inference default inverted to the proxy path; `/infill` classified (the USER's Neovim FIM need, satisfied by classification alone under D-AF); `/v1/health` fixed from 400; `tests/test_routes.sh` added, 9 assertions PASS. See `PROGRESS.md` |
 | ~~N-22~~ | **RETRACTED 2026-08-28 — the claim was false and the fault was mine.** `CTX_SIZE=32768` serves fine on this hardware, as the USER stated. My binding ignored `DEVICES` (so the whole model went to Vulkan0 alone instead of splitting across Vulkan0+Vulkan1) and ignored `KV_CACHE_TYPE` (so the KV cache was f16, twice the size of the configured `q8_0`). Verified after the fix: ctx=32768, slots=2, kv=q8_0, Vulkan0 152 MiB + Vulkan1 381 MiB, generation succeeds |
 | ~~N-24~~ | **CLOSED 2026-08-31 — not a session's business, and raising it repeatedly was the defect.** `etc/jenova.local.conf` is the **USER's machine file**, generated by `scripts/build-llama.sh`. **The USER has stated the intended configuration: agent on GPU, embedding on CPU, drafter on GPU, Vulkan0 and Vulkan1.** That is settled and recorded in `DECISIONS_LOG.md` SETTLED FACTS. **No session edits, rewrites or "fixes" that file, and no session asks about it again.** The evidence is preserved only so the observation is not lost: `llama-server` rejects `-dev Vulkan0,Vulkan1,Vulkan2` outright with `invalid device: Vulkan2`, and `--list-devices` reports exactly Vulkan0 (GTX 1650 Ti, 4342 MiB) and Vulkan1 (Intel Iris Xe, 12064 MiB) |
-| **N-23** | The llama rpath is absolute to `external/ext_bin/bin`, correct for a source tree. An installed binary needs the deployed lib directory instead — resolve before N-S6 |
+| **N-34** | **`scripts/install.sh` deploys `bin/jenova-ca`, which is archived.** `:240`'s symlink loop names it, and `:25` documents it. **The install path is broken until it is rewired to deploy `bin/jenova-core`** — the N-S6 follow-through. D-Y prohibits exercising the install path during the rewrite, so this is recorded rather than patched, but it must be done before any deployment | `scripts/install.sh:25,240` |
+| ~~N-23~~ | **Closed 2026-08-31 with the archive.** The llama rpath concern applied to `llama.nim`, which is now an optional path (D-AF); `lifecycle.nim` resolves the library directory from `paths.llamaLibDir`, which already distinguishes installed from source |
 | **N-21** | **Restoring a conversation revives every message, including ones deleted individually beforehand.** Faithful to `db.restore_item` and therefore correct for now — but it is a latent defect in the contract, and the GUI (N-S7) need not inherit it |
 | **N-16** | **No HTTP keep-alive** — every response is `Connection: close`, so a page with many assets opens a connection per asset. Acceptable now; revisit before the Web UI is served in anger, since connections beyond the worker count queue in the accept backlog |
 | ~~N-17~~ | **Withdrawn by D-T.** It framed bounded concurrency as a capacity limit needing documentation. For a two-device personal product the bound is the specification, not a limitation |

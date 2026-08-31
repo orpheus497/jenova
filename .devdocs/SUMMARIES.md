@@ -70,6 +70,24 @@ than deleted, 639 of 3,452 Nim lines become optional and 2,813 are unaffected, a
 and half of N-7 close without being built while FIM collapses to route classification. **Three
 instances of one failure this session** — the D-Y clause, N-8, and D-N's linkage sentence — each a
 decision of mine recorded in the USER's voice and then acted on; this one directed two stages.
+**The session then finished the backend.** N-S5c ported the completion pipeline — intents, RAG
+injection, three-mode persona selection, web search, tool stripping and a cache keyed on the
+SHA-256 of the *rewritten* body — closing N-30 and making the core Jenova rather than a reverse
+proxy. N-S4c had already inverted the inference default to `llama-server` per D-AF, reducing the
+USER's Neovim FIM requirement from an implementation to one line of route classification. N-S6 then
+reached **full parity with `bin/jenova-ca`** — `--lan`, port flags, `restart`, a port-probing
+`health`, and a watchdog thread — and its last planned item evaporated on inspection:
+**`jenova-ca` never referenced `hardware-profiles/` at all.** Along the way `serve` was
+restructured to start everything in one command, after the USER pointed out that the two-command
+split was `jenova-ca`'s shape reproduced without asking why it existed — it existed because the
+tray owned the proxy, which is B-13. **Finally the superseded tree was archived on the USER's
+instruction:** 14 Lua modules, `bin/jenova-ca`, two test scripts and the `proxy-concurrency`
+harness, closing **thirteen defects by moving files rather than fixing code**. Disclosed with it:
+`scripts/install.sh` still deploys the archived binary and must be rewired before any deployment
+(N-34). **The session's recurring failure was inferring general permission from specific**, three
+times over, and its recurring lesson was that wiring is never proven by unit checks — two vacuous
+test passes and a `startProcess` pipe that silently stalled `llama-server` mid-load all surfaced
+only by running the thing rather than reading it.
 See `SESSION_HANDOFF.md` Session 005.
 
 ---

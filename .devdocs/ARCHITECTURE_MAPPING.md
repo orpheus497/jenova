@@ -72,7 +72,8 @@ All POSIX `sh` (verified `file(1)`), per ruling D-A. Six are deployed and symlin
 | File | Role |
 |---|---|
 | `jenova` | Full-environment launcher — starts the Jenova UI |
-| `jenova-ca` | **Central orchestrator.** Launches `llama-server` + the Intelligence Proxy; owns `start`/`stop`/`status`/`--daemon`. Sources `detect-env.sh` → `jenova-conf.sh` → `jenova-model.sh` → `etc/jenova.conf` (`:44-48`) — the order that inverts the config hierarchy (B-12) |
+| ~~`jenova-ca`~~ | **ARCHIVED 2026-08-31** to `.devdocs/ARCHIVE/bin/`. Superseded at N-S6 — the core has every verb and flag except `--daemon`, deliberately absent. **B-12 and B-13 die with it** |
+| `jenova-core` | **The product.** HTTP server, database, filesystem mirror, RAG, completion pipeline, and `llama-server` lifecycle. `serve` starts everything in one command |
 | `jenova-model-switch` | Switches the active agent model by symlink |
 | `jenova-swap-mount` | Swap-backed memory filesystem for models. FreeBSD-native (`mdmfs`) |
 | `jenova-term` | Launches a command in a terminal emulator. Called by `lib/ui.lua:104`; **never deployed** (B-11) |
@@ -92,25 +93,21 @@ Shell modules are sourced; Lua modules run under LuaJIT.
 | `jenova-conf.sh` | **Single owner of path resolution.** Detects installed-vs-source layout; exports `LLAMA_SERVER`, `LLAMA_LIB_DIR`, `JCA_HOME`, `JENOVA_STATE`, `JENOVA_WORKSPACES`, `LOG_DIR`, `CACHE_DIR`, `PID_FILE` (`:25-44`), then sources `etc/jenova.local.conf` under a realpath containment check (`:53-74`) |
 | `jenova-model.sh` | Model path/selection helpers |
 
-### Lua
+**All three are load-bearing and must not be archived.** `src/jenova/config.nim` evaluates
+`etc/jenova.conf` with `/bin/sh`, and that file sources `jenova-model.sh` for model discovery
+(`etc/jenova.conf:27`). Removing them breaks configuration resolution in the Nim core.
+
+### Lua — **one file left**
+
+**Fourteen Lua modules were moved to `.devdocs/ARCHIVE/lib/` on 2026-08-31** once the Nim core
+reached parity: `proxy`, `search`, `embed`, `fs_sync`, `db`, `http`, `json`, `sha256`, `prompts`,
+`git`, `daemon`, `ffi_defs`, `healthcheck`, `indexer_runner`. The last four went because their only
+callers went — checked by reverse-dependency search, not assumed. See `.devdocs/ARCHIVE/README.md`
+for the module-by-module mapping and the defects that died with each.
 
 | File | Lines | Role |
 |---|---|---|
-| `proxy.lua` | 1748 | The Intelligence Proxy. **Fully superseded as of 2026-08-31 (N-S5c)** — every route *and* every completion behaviour is reproduced in the Nim core. `/api/workspaces` is the sole exception, dead and deliberately dropped. **Retained, not deleted** (Directive 3) until the USER instructs removal — see N-33 |
-| `ffi_defs.lua` | 236 | Centralised FFI definitions. **FreeBSD-only since S-1** — the Linux ABI arm was deleted, removing a silent struct-corruption class. Disappears entirely at the Nim cut-over (D-D) |
-| `db.lua` | 934 | SQLite persistence via FFI `ffi.load("sqlite3")`. Largest module |
-| `search.lua` | — | Hybrid BM25 + semantic vector search. **Inert** — `index_dir`/`reindex_file` have zero callers (B-15) |
-| `embed.lua` | — | Persistent embedding interface via `llama-server --embedding`. `init()` returns true without setting `initialized` (B-14) |
-| `http.lua` | — | Minimal HTTP client on LuaJIT FFI, no external dependencies |
-| `daemon.lua` | 176 | Process lifecycle via FFI fork/exec; child reaping |
-| `fs_sync.lua` | 454 | Filesystem synchronisation over `db` + `git`; three blocking `io.popen` sites remain (B-16) |
-| `git.lua` | 58 | Git command wrapper; shell-quotes `cwd` and prefers `async_popen_read` |
-| `ui.lua` | 257 | Tray/TUI behaviour called from `main.c`; spawns the proxy (`:69`) and `jenova-term` (`:104`) |
-| `json.lua` | — | Minimal JSON encoder/decoder |
-| `sha256.lua` | 87 | Pure-Lua SHA-256 |
-| `prompts.lua` | — | System prompts for the interaction modes |
-| `healthcheck.lua` | — | Standalone LuaJIT health probe |
-| `indexer_runner.lua` | — | Standalone LuaJIT indexer entry point |
+| `ui.lua` | 257 | Tray/TUI behaviour called from `jenova-ui/src/main.c`. **Now inert:** it spawns `bin/jenova-ca` (`:69,109,111`), which is archived, so the GTK3 tray path does not function in the source tree until **N-S7** replaces it. Requires no other Lua module, which is why it could stay while the rest went |
 
 ## 4. `scripts/` — install / build / maintenance
 
@@ -163,11 +160,24 @@ Links GTK3 / libappindicator (LGPL) — the open Q-4 licence exposure, deferred 
 
 ## 8. `tests/`
 
-Specs and status live in `TESTS.md`. Files: `Makefile`, `test-health.sh`, `test-launcher.sh`,
-`test_api_db.sh` (added at N-S3b), `test_bin_jenova.sh`, `test_validate_arg.sh`, `test_gpu.sh`,
-`test_gpu_single.sh`, `download-draft-model.sh`, and `proxy-concurrency/` (`all.sh`, `run.sh`,
-`test_reaper.sh`, `stub_backend.py`, `probe_streams.py`, `test_ffi_flags.lua`, `README.md`).
-Plus `test_routes.sh` (the standing route inventory, added at N-S4c).
+Specs and status live in `TESTS.md`.
+
+**`make check` runs five, and every one targets the Nim core:** `test-health.sh`,
+`test_api_db.sh` (23), `test_api_fs.sh` (46), `test_routes.sh` (13), `test_lifecycle.sh` (31).
+All run in a scratch `JCA_HOME` and none spawns a backend.
+
+**Also present, still orphaned (B-25):** `test_validate_arg.sh` — **and it still rewrites
+`etc/jenova.conf`** (B-22, `:62`) · `test_gpu.sh`, `test_gpu_single.sh` — both need
+`external/ext_bin/bin/llama-cli`, which `build-llama.sh` never copies · `download-draft-model.sh`,
+a utility rather than a test (B-26).
+
+**Archived 2026-08-31:** `test-launcher.sh` and `test_bin_jenova.sh` (both tested `jenova-ca`) and
+the whole `proxy-concurrency/` harness (the acceptance gate for `proxy.lua`'s event loop).
+**B-23 and B-24 die with that harness.**
+
+**The core's own self-tests** are subcommands, not scripts: `db-selftest`, `serve-selftest`,
+`rag-selftest` (7), `pipeline-selftest` (15), `sha256-selftest` (4), `llama-selftest`,
+`db-capabilities`.
 **Nine test scripts in `tests/` plus `proxy-concurrency/all.sh`; `make check` runs six** —
 `test-health.sh`, `test-launcher.sh`, `proxy-concurrency/all.sh`, `test_api_db.sh`,
 `test_api_fs.sh`, `test_routes.sh`. **Four remain orphaned (B-25):** `test_bin_jenova.sh`,
