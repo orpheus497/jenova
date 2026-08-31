@@ -412,6 +412,15 @@ proc importData(node: JsonNode): ApiResult =
 
 ## Function purpose: route one `/api/fs/*` request — the last surface `lib/proxy.lua`
 ## still served (N-20). Four routes, reproduced from `proxy.lua:647-672`.
+## Entity writes for in-process callers (the GUI sidebar). Goes through the same
+## upsert/softDelete the HTTP routes use, so cascades and the filesystem mirror
+## apply identically whichever surface the user is on.
+proc putEntity*(entity: string, node: JsonNode): bool =
+  entity in Entities and upsert(Entities[entity], node).status == 200
+
+proc deleteEntity*(entity, id: string): bool =
+  entity in Entities and softDelete(Entities[entity], id).status == 200
+
 proc handleFs*(req: Request): ApiResult =
   if not req.path.startsWith("/api/fs/"):
     return err(404, "not found")

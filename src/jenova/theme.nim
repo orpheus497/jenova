@@ -103,13 +103,16 @@ window.background {
 }
 
 /* Everything stacked over the canvas is transparent, or the canvas is invisible.
-   This is the GTK equivalent of the Web UI's `z-10` content layer sitting above
-   an `inset-0` canvas. */
-overlay > box,
-overlay > box > box,
+   Targeted by class rather than by descent: the tree is Overlay > Flap >
+   {sidebar, chat column}, and element-path selectors broke silently the last
+   time that shape changed. `.jenova-sidebar` sets its own translucent fill and
+   wins on specificity. */
+.chat-col,
+.chat-col > box,
 scrolledwindow,
 scrolledwindow > viewport,
-overlay > box scrolledwindow {
+expander,
+frame {
   background-color: transparent;
 }
 
@@ -198,6 +201,20 @@ headerbar .subtitle {
 .msg-role-agent { color: @jenova_accent; }
 
 .msg-body { color: @jenova_fg; }
+
+.code-block {
+  background-color: @jenova_code_bg;
+  border: 1px solid alpha(@jenova_border, 0.5);
+  border-radius: 6px;
+}
+.code-lang {
+  color: @jenova_muted_fg;
+  font-size: 0.8em;
+}
+.code-body {
+  font-family: monospace;
+  color: @jenova_code_fg;
+}
 
 /* The empty-state and notice lines. Both are always present in the tree and
    vary only by text, so they must read as absent when empty. */

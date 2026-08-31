@@ -2,7 +2,7 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-08-31 15:49
+**Last updated:** 2026-08-31 18:19
 
 ---
 
@@ -23,41 +23,59 @@ is the first time that has been true, and it is the point of the exercise.
 
 ---
 
-## The plan
+## The live workstream — GUI parity (D-AP)
+
+**This is what is actually being built.** The USER's direction, 2026-08-31: the GUI becomes the
+product; `jca_web` becomes the ephemeral single-device LAN client. **This closed T-6**, and it
+re-ordered everything below — the four stages that follow are still correct, but stage 1 is no
+longer the front of the queue.
+
+| | State |
+|---|---|
+| G-1/G-2 theme + canvas | **Done, run, confirmed** |
+| G-3 side panel, G-3b rename/delete | **Done** |
+| G-4 workspace tree | **Built, unrun.** Notes and fileAssets still missing — they need an editor view |
+| G-5 markdown + code blocks | **Built, unrun.** No syntax highlighting (G-7) |
+| G-6 remaining surface | Unscoped: notes/files/trash views, models selector, settings, attachments, MCP |
+| G-7 syntax highlighting | `gtksourceview5` FFI |
+
+**How this work goes wrong, and the rule that came out of it (D-AR).** Four consecutive rounds
+shipped a broken window because a scripted bulk edit was followed by `nimble gui` and nothing else.
+**A compile proves the tree is valid, never that it is right.** Layout changes are rewritten as a
+block through the harness's edit tooling, read back, and the widget tree shown before building.
+Sizing APIs (`min-width`, `sizeRequest`, flap `width`) are **minimums** — check the semantics before
+reaching for one.
+
+**LAN gets no further investment.** Built, works, retained under Directive 3.
+
+---
+
+## The standing plan
 
 Four stages. **They are ordered by dependency, not by preference**, and stages 2–4 each open with a
 decision that is the USER's to make. A session does not start stage 2 by choosing for them.
 
 ### Stage 1 — Make it stable *(actionable now; no decision required)*
 
-`TODOS.md` **T-1 … T-5**. This is the only stage a session can execute unaided, and T-1 gates it.
+`TODOS.md` **T-2 … T-5**. A session can execute all of it unaided. **Nothing blocks it** — T-1 was
+corrected on 2026-08-31 and is an unexplained core, not a gate.
 
 | Step | Item | Shape of the work | Proof it worked |
 |---|---|---|---|
-| **1.1** | **T-1 — the redraw SIGBUS.** **BLOCKER** | **Already built. The work is to run it.** `view` no longer has conditionally-present siblings: the empty-state Label and the notice Label are always emitted, with only `text`/`margin` varying, so owlkettle's positional Box matching cannot shift | Use the window past the ~90 s mark that crashed it. Cores land in `/var/coredumps/`; `gdb -batch -ex "bt 25" ./bin/jenova <core>`. **Until it is run, its status is "unknown", not "fixed"** |
+| **1.1** | **T-1 — one unexplained core.** *Not a blocker* | **No work to do.** If the program dies again, capture the core **on the FreeBSD host** and read the signal before writing a cause down. The previous entry's cause was narrative with no artifact behind it | A signal, from a real core, read on the host |
 | **1.2** | **T-5 — backends survive exit** | `gui.run`'s `defer` joins the worker threads and stops nothing. Leaving the *agent* loaded is deliberate — reloading multiple gigabytes into VRAM on every restart is worse — but the **embedding** server is left with nothing attached, and a backend that dies during start leaves its pidfile behind. Fix: stop the embed backend on exit; clear a pidfile whose process is not alive | `jenova-core backends status` after a GUI exit reports the agent up, embeddings down, and no stale pid |
 | **1.3** | **T-2 — unbounded statement cache** | `db.nim`'s cache is a plain `Table` and finalizes only at connection close, while `api.nim`'s message update builds its `SET` clause from whichever fields the client sends. Distinct SQL accumulates without bound. **The fix belongs in `db.nim` — a cap plus finalize-on-evict — not in `api.nim`**; constraining the caller leaves the cache still unbounded for the next caller | A new suite that issues many distinct field combinations and asserts the cache stays capped. **It must be proven able to fail** before it is believed |
 | **1.4** | **T-4 — `resolveStoragePath` containment** | Two directions, one fix. The symlink check is gated on `fileExists or dirExists`, so a **new** file written through a symlinked parent escapes the root; and `normBase` is lexical, so a symlinked `$JENOVA_WORKSPACES` makes the check reject **legitimate** paths. Resolve the deepest existing ancestor and compare against a resolved base | Extend `test_api_fs.sh`: a write through a symlinked parent is refused **403**, and a legitimate write under a symlinked root succeeds |
 | **1.5** | **T-3 — chat history is never trimmed** | The whole conversation is resent every turn. Needs a byte budget derived from `CTX_SIZE`, dropping oldest-first and never dropping the system message | A unit check on the trim function at a small budget; not a live generation |
 
-**Sequencing note.** 1.2–1.5 are independent of each other and of 1.1. But **1.1 is the blocker for
-believing any of them**: a program that dies after 90 s cannot demonstrate the others in use.
+**Sequencing note.** 1.2–1.5 are independent of each other and of 1.1, and all four are queued
+behind the GUI parity workstream above.
 
-### Stage 2 — The workspace question *(USER decision, then work)*
+### Stage 2 — The workspace question — **ANSWERED, and now the live workstream**
 
-`TODOS.md` **T-6**. `jca_web` still owns workspaces, projects, folders, notes and fileAssets. The
-native GUI has chat and persistence only. **The core already serves the whole `/api/*` surface those
-features use** — this is a *client* gap, not a server gap, which is what makes it a clean decision.
-
-Three options, with their honest costs:
-
-| | Option | Cost |
-|---|---|---|
-| **A** | Build the workspace surface natively in the GUI | The largest unit of remaining work. Retires `jca_web`, `node`/`npm` and the `web` nimble task |
-| **B** | Drop the workspace features | Removes shipped functionality. **Directive 3 forbids this without an explicit instruction from the USER** |
-| **C** | Keep `jca_web` as the workspace client | Zero work now. The product stays two front ends, and the `public/` bundle stays a build artifact of a Node toolchain |
-
-**A session does not pick.** Whichever is chosen goes to `DECISIONS_LOG.md` first.
+`TODOS.md` T-6 is closed by **D-AP**: option A (build it natively) **plus** a retained option C
+(`jca_web` survives as the LAN client). Not a decision any longer — it is the GUI parity work
+above.
 
 ### Stage 3 — Deployment *(USER decision, then work)*
 

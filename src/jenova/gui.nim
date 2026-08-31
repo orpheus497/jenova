@@ -35,7 +35,7 @@
 ## shells to base `fetch(1)`: this project has spent seven stages removing
 ## dependencies, and a localhost request needs no TLS stack.
 
-import std/[json, net, os, oids, osproc, streams, strutils, times]
+import std/[json, net, os, oids, osproc, streams, strutils, tables, times]
 import owlkettle
 import owlkettle/adw
 import owlkettle/cairo
@@ -49,6 +49,8 @@ import ./tray
 import ./db
 import ./rag
 import ./server
+import ./api
+import ./markdown
 
 type
   Role* = enum
@@ -207,17 +209,33 @@ proc lanAddress(): string =
   runCapture("sh", ["-c",
     "ifconfig 2>/dev/null | awk '/inet / && !/127\\.0\\.0\\.1/ {print $2; exit}'"])
 
-type ConvItem = tuple[id, name: string]
+type
+  ConvItem = tuple[id, name, folderId, projectId, workspaceId: string]
+  NodeItem = tuple[id, parent, name: string]
+
+proc listWorkspaces(): seq[NodeItem] =
+  for r in db.query("SELECT id, name FROM workspaces WHERE is_deleted=0 ORDER BY name"):
+    if r.len >= 2: result.add (id: r[0], parent: "", name: r[1])
+
+proc listProjects(): seq[NodeItem] =
+  for r in db.query("SELECT id, workspaceId, name FROM projects WHERE is_deleted=0 ORDER BY name"):
+    if r.len >= 3: result.add (id: r[0], parent: r[1], name: r[2])
+
+proc listFolders(): seq[NodeItem] =
+  for r in db.query("SELECT id, projectId, name FROM folders WHERE is_deleted=0 ORDER BY name"):
+    if r.len >= 3: result.add (id: r[0], parent: r[1], name: r[2])
 
 ## Function purpose: the sidebar's conversation list. Ordered by `lastModified`
 ## descending, which is what `ChatSidebar` shows and the order a user expects —
 ## the thing they were last working on is at the top, not the thing they created
 ## first.
 proc listConversations(): seq[ConvItem] =
-  for r in db.query("SELECT id, name FROM conversations WHERE is_deleted=0 " &
+  for r in db.query("SELECT id, name, folderId, projectId, workspaceId " &
+                    "FROM conversations WHERE is_deleted=0 " &
                     "ORDER BY lastModified DESC"):
-    if r.len >= 2:
-      result.add (id: r[0], name: r[1])
+    if r.len >= 5:
+      result.add (id: r[0], name: r[1], folderId: r[2],
+                  projectId: r[3], workspaceId: r[4])
 
 proc newConversation(): string =
   result = $genOid()
@@ -322,6 +340,12 @@ viewable App:
   ## canvas frame, and a SELECT per frame would be defect B-17 with a database
   ## behind it instead of a fork.
   convs: seq[ConvItem]
+  workspaces: seq[NodeItem]
+  projects: seq[NodeItem]
+  folders: seq[NodeItem]
+  expanded: Table[string, bool]
+  renaming: string
+  renameDraft: string
   search: string
   sidebarOpen: bool = true
   ## Decoded once at startup, not per redraw: `view` runs on every canvas frame,
@@ -430,13 +454,59 @@ proc selectConversation(app: AppState, id: string) =
   app.messages = loadMessages(id)
   app.notice = ""
 
-proc newChat(app: AppState) =
+proc reloadTree(app: AppState) =
+  app.convs = listConversations()
+  app.workspaces = listWorkspaces()
+  app.projects = listProjects()
+  app.folders = listFolders()
+
+proc newChat(app: AppState, wsId = "", projId = "", folderId = "") =
   if app.streaming: return
   let id = newConversation()
-  app.convs = listConversations()
+  if wsId.len > 0 or projId.len > 0 or folderId.len > 0:
+    db.exec("UPDATE conversations SET workspaceId=?, projectId=?, folderId=? WHERE id=?",
+            [wsId, projId, folderId, id])
+  app.reloadTree()
   app.convId = id
   app.messages = @[]
   app.notice = ""
+
+proc createNode(app: AppState, entity, parentCol, parentId: string) =
+  let id = $genOid()
+  var node = %*{"id": id, "name": "New " & entity[0 ..< entity.len - 1]}
+  if parentCol.len > 0: node[parentCol] = %parentId
+  if api.putEntity(entity, node):
+    app.reloadTree()
+    app.expanded[id] = true
+    app.renaming = id
+    app.renameDraft = node["name"].getStr
+  else:
+    app.notice = "could not create " & entity
+
+proc deleteNode(app: AppState, entity, id: string) =
+  if api.deleteEntity(entity, id):
+    if entity == "conversations" and id == app.convId:
+      app.convId = ""
+      app.messages = @[]
+    app.reloadTree()
+  else:
+    app.notice = "could not delete"
+
+proc commitRename(app: AppState, entity, id: string) =
+  let name = app.renameDraft.strip
+  if name.len > 0:
+    if entity == "conversations":
+      db.exec("UPDATE conversations SET name=? WHERE id=?", [name, id])
+      app.reloadTree()
+    else:
+      var node = %*{"id": id, "name": name}
+      for n in app.projects:
+        if n.id == id: node["workspaceId"] = %n.parent
+      for n in app.folders:
+        if n.id == id: node["projectId"] = %n.parent
+      discard api.putEntity(entity, node)
+      app.reloadTree()
+  app.renaming = ""
 
 ## Function purpose: the conversation list as the sidebar should show it —
 ## filtered by the search box. Case-insensitive substring, matching
@@ -470,6 +540,137 @@ proc send(app: AppState) =
   let body = $(%*{"messages": msgs, "stream": true})
   let port = app.cfg.getInt("PORT", 8080)
   streamReq.send(StreamJob(host: "127.0.0.1", port: port, body: body))
+
+proc projectsOf(app: AppState, wsId: string): seq[NodeItem] =
+  for n in app.projects:
+    if n.parent == wsId: result.add n
+
+proc foldersOf(app: AppState, prId: string): seq[NodeItem] =
+  for n in app.folders:
+    if n.parent == prId: result.add n
+
+proc convsIn(app: AppState, ws, pr, fd: string): seq[ConvItem] =
+  for c in app.visibleConvs():
+    if c.workspaceId == ws and c.projectId == pr and c.folderId == fd:
+      result.add c
+
+proc rowLabel(app: AppState, entity, id, name: string): Widget =
+  ## A tree row: its name, or an Entry while it is being renamed.
+  if app.renaming == id:
+    gui:
+      Entry:
+        text = app.renameDraft
+        proc changed(t: string) = app.renameDraft = t
+        proc activate() = app.commitRename(entity, id)
+  else:
+    gui:
+      Label:
+        text = name
+        xAlign = 0.0
+        ellipsize = EllipsizeEnd
+
+proc copyToClipboard(text: string) =
+  try:
+    let p = startProcess("wl-copy", args = [text], options = {poUsePath})
+    discard p.waitForExit()
+    p.close()
+  except CatchableError: discard
+
+proc messageBody(app: AppState, m: Message): Widget =
+  ## User turns are plain text; only assistant output is markdown.
+  if m.role == rUser:
+    return gui:
+      Label:
+        text = m.text
+        xAlign = 0.0
+        wrap = true
+        style = [StyleClass("msg-body")]
+
+  gui:
+    Box(orient = OrientY, spacing = 8):
+      for b in markdown.parse(m.text):
+        if b.kind == bkText:
+          Label {.expand: false.}:
+            text = b.text
+            useMarkup = true
+            xAlign = 0.0
+            wrap = true
+            style = [StyleClass("msg-body")]
+        else:
+          Frame {.expand: false.}:
+            style = [StyleClass("code-block")]
+            Box(orient = OrientY, spacing = 4, margin = 8):
+              Box(orient = OrientX) {.expand: false.}:
+                Label {.expand: false, hAlign: AlignFill.}:
+                  text = (if b.lang.len > 0: b.lang else: "code")
+                  xAlign = 0.0
+                  style = [StyleClass("code-lang")]
+                Button {.expand: false.}:
+                  icon = "edit-copy-symbolic"
+                  tooltip = "Copy"
+                  style = [ButtonFlat, StyleClass("row-btn")]
+                  proc clicked() = copyToClipboard(b.text)
+              ScrolledWindow {.expand: false.}:
+                Label:
+                  text = b.text
+                  xAlign = 0.0
+                  style = [StyleClass("code-body")]
+
+proc convRow(app: AppState, c: ConvItem): Widget =
+  gui:
+    Box(orient = OrientX, spacing = 2):
+      # hAlign fill rather than expand: hexpand propagates up the tree and would
+      # make the whole sidebar demand half the window.
+      Button {.expand: false, hAlign: AlignFill.}:
+        style = [ButtonFlat, StyleClass("row-btn"),
+                 StyleClass(if c.id == app.convId: "conv-active" else: "conv-idle")]
+        proc clicked() = app.selectConversation(c.id)
+        insert(app.rowLabel("conversations", c.id, c.name))
+      Button {.expand: false.}:
+        icon = "document-edit-symbolic"
+        tooltip = "Rename"
+        style = [ButtonFlat, StyleClass("row-btn")]
+        proc clicked() =
+          app.renaming = c.id
+          app.renameDraft = c.name
+      Button {.expand: false.}:
+        icon = "user-trash-symbolic"
+        tooltip = "Delete"
+        style = [ButtonFlat, StyleClass("row-btn")]
+        proc clicked() = app.deleteNode("conversations", c.id)
+
+proc nodeTools(app: AppState, entity, id: string,
+               makes: seq[(string, string)]): Widget =
+  ## The action strip under a container: rename it, delete it, and create the
+  ## things it can hold.
+  gui:
+    Box(orient = OrientX, spacing = 2):
+      insert(app.rowLabel(entity, id, "")) {.expand: false, hAlign: AlignFill.}
+      for m in makes:
+        Button {.expand: false.}:
+          icon = (if m[0] == "chat": "chat-message-new-symbolic" else: "folder-new-symbolic")
+          tooltip = (if m[0] == "chat": "New chat here" else: "New " & m[0])
+          style = [ButtonFlat, StyleClass("row-btn")]
+          proc clicked() =
+            if m[0] == "chat":
+              case entity
+              of "workspaces": app.newChat(wsId = id)
+              of "projects": app.newChat(projId = id)
+              else: app.newChat(folderId = id)
+            else:
+              app.createNode(m[0], m[1], id)
+      Button {.expand: false.}:
+        icon = "document-edit-symbolic"
+        tooltip = "Rename"
+        style = [ButtonFlat, StyleClass("row-btn")]
+        proc clicked() =
+          app.renaming = id
+          app.renameDraft = ""
+      Button {.expand: false.}:
+        icon = "user-trash-symbolic"
+        tooltip = "Delete"
+        style = [ButtonFlat, StyleClass("row-btn")]
+        proc clicked() = app.deleteNode(entity, id)
 
 method view(app: AppState): Widget =
   result = gui:
@@ -564,11 +765,9 @@ method view(app: AppState): Widget =
             # otherwise the toggle button reports a state the panel is not in.
             app.sidebarOpen = revealed
 
-          # `Box`'s adder defaults to `expand: true`, so **every** child here is
-          # marked explicitly. Left implicit, each row stretches to an equal
-          # share of the panel height — which is what turned the logo into a
-          # half-panel banner and strewed the wordmark down the side.
+          # Box's adder defaults to expand: true, so every child is marked.
           Box(orient = OrientY, spacing = 6, margin = 10) {.addFlap, width: 260.}:
+            sizeRequest = (260, -1)
             style = [StyleClass("jenova-sidebar")]
 
             Box(orient = OrientX, spacing = 8) {.expand: false.}:
@@ -579,7 +778,7 @@ method view(app: AppState): Widget =
                 pixbuf = app.logo
                 contentFit = ContentScaleDown
                 style = [StyleClass("sidebar-logo")]
-              Label {.expand: true.}:
+              Label {.expand: false, hAlign: AlignFill.}:
                 text = "JENOVA"
                 xAlign = 0.0
                 style = [StyleClass("brand")]
@@ -601,13 +800,61 @@ method view(app: AppState): Widget =
               proc changed(text: string) =
                 app.search = text
 
-            Label {.expand: false.}:
-              text = "CHATS"
-              xAlign = 0.0
-              style = [StyleClass("section-label")]
+            Box(orient = OrientX) {.expand: false.}:
+              Label {.expand: false, hAlign: AlignFill.}:
+                text = "WORKSPACES"
+                xAlign = 0.0
+                style = [StyleClass("section-label")]
+              Button {.expand: false.}:
+                icon = "folder-new-symbolic"
+                tooltip = "New workspace"
+                style = [ButtonFlat, StyleClass("row-btn")]
+                proc clicked() = app.createNode("workspaces", "", "")
 
             ScrolledWindow {.expand: true.}:
               Box(orient = OrientY, spacing = 1):
+
+                for ws in app.workspaces:
+                  Expander {.expand: false.}:
+                    label = ws.name
+                    expanded = app.expanded.getOrDefault(ws.id, false)
+                    proc activate(on: bool) = app.expanded[ws.id] = on
+
+                    Box(orient = OrientY, spacing = 1, margin = 4):
+                      insert(app.nodeTools("workspaces", ws.id,
+                             @[("projects", "workspaceId"), ("chat", "")])) {.expand: false.}
+
+                      for pr in app.projectsOf(ws.id):
+                        Expander {.expand: false.}:
+                          label = pr.name
+                          expanded = app.expanded.getOrDefault(pr.id, false)
+                          proc activate(on: bool) = app.expanded[pr.id] = on
+
+                          Box(orient = OrientY, spacing = 1, margin = 4):
+                            insert(app.nodeTools("projects", pr.id,
+                                   @[("folders", "projectId"), ("chat", "")])) {.expand: false.}
+
+                            for fd in app.foldersOf(pr.id):
+                              Expander {.expand: false.}:
+                                label = fd.name
+                                expanded = app.expanded.getOrDefault(fd.id, false)
+                                proc activate(on: bool) = app.expanded[fd.id] = on
+
+                                Box(orient = OrientY, spacing = 1, margin = 4):
+                                  insert(app.nodeTools("folders", fd.id, @[("chat", "")])) {.expand: false.}
+                                  for c in app.convsIn(ws.id, pr.id, fd.id):
+                                    insert(app.convRow(c)) {.expand: false.}
+
+                            for c in app.convsIn(ws.id, pr.id, ""):
+                              insert(app.convRow(c)) {.expand: false.}
+
+                      for c in app.convsIn(ws.id, "", ""):
+                        insert(app.convRow(c)) {.expand: false.}
+
+                Label {.expand: false.}:
+                  text = "CHATS"
+                  xAlign = 0.0
+                  style = [StyleClass("section-label")]
                 # Always present so the list's container never changes shape;
                 # only its text varies. The rows themselves are the one place
                 # children legitimately come and go.
@@ -617,19 +864,12 @@ method view(app: AppState): Widget =
                           else: "")
                   xAlign = 0.0
                   style = [StyleClass("dim-note")]
-                for c in app.visibleConvs():
-                  Button {.expand: false.}:
-                    style = [ButtonFlat, StyleClass("row-btn"),
-                             StyleClass(if c.id == app.convId: "conv-active"
-                                        else: "conv-idle")]
-                    proc clicked() = app.selectConversation(c.id)
-                    Label:
-                      text = c.name
-                      xAlign = 0.0
-                      ellipsize = EllipsizeEnd
+                for c in app.convsIn("", "", ""):
+                  insert(app.convRow(c)) {.expand: false.}
 
           # ── Chat column ───────────────────────────────────────────────────
           Box(orient = OrientY):
+            style = [StyleClass("chat-col")]
             # The transcript takes all the free height; the notice and the input row
             # take only what they need. In owlkettle this is the child annotation on
             # the Box, not a property of the child widget.
@@ -649,11 +889,7 @@ method view(app: AppState): Widget =
                         style = [StyleClass("msg-role"),
                                  StyleClass(if m.role == rUser: "msg-role-user"
                                             else: "msg-role-agent")]
-                      Label:
-                        text = m.text
-                        xAlign = 0.0
-                        wrap = true
-                        style = [StyleClass("msg-body")]
+                      insert(app.messageBody(m))
 
             Label {.expand: false.}:
               text = app.notice
@@ -736,6 +972,9 @@ proc run*(withTray = true) =
                        convId = conv,
                        messages = history,
                        convs = listConversations(),
+                       workspaces = listWorkspaces(),
+                       projects = listProjects(),
+                       folders = listFolders(),
                        logo = logo))
 
   if withTray:

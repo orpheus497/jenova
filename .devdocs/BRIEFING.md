@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-08-31 15:49
+**Last updated:** 2026-08-31 18:19
 **Branch:** `bsd`
 
 ---
@@ -57,13 +57,32 @@ defect. **It was corrected on 2026-08-31 and the correction is the more useful e
 claim in these documents and repeated it as fact without checking the evidence. **A tracker entry is
 not evidence. Check the artifact.**
 
+## 3a. The live workstream — GUI parity (D-AP)
+
+The GUI is the product; `jca_web` becomes the ephemeral single-device LAN client. **Done and run:**
+theme, canvas. **Built, unrun:** side panel, workspace tree, markdown/code blocks. **Missing:**
+notes and fileAssets in the tree, syntax highlighting, models selector, settings, attachments, MCP.
+
+**Read D-AR before touching `gui.nim`.** Four rounds shipped a broken window because a scripted bulk
+edit was followed by a compile and nothing else. **`nimble gui` exiting 0 says the widget tree is
+valid, never that it is right**, and one such edit inserted a wrapper without re-indenting its body
+— the panel rendered as five columns and compiled cleanly. Layout changes go through the harness's
+edit tooling as one block, read back before building.
+
+**Sizing APIs are minimums.** `min-width`, `sizeRequest` and the flap's `width` were each reached
+for as if they capped something. To make a `Picture` small, decode it small.
+
+**`Box`'s adder defaults to `expand: true`**, and `insert(...)` inherits that default. `hexpand`
+propagates **up** the tree, so one greedy button makes the whole panel greedy.
+
 ## 4. Outstanding
 
 **`TODOS.md` T-1 … T-10 is the complete list. All ten were re-verified against the tree on
 2026-08-31 and all ten hold; no new defect was found.** The sequenced plan is `PLANS.md`:
 
-1. **Stabilise** — T-1 … T-5. T-1 is the only blocker and the work on it is *to run it*.
-2. **The `jca_web` workspace question** — a product decision (T-6).
+0. **GUI parity (G-1 … G-7)** — the live workstream, §3a. Everything below is queued behind it.
+1. **Stabilise** — T-2 … T-5. **Nothing blocks**; T-1 is unexplained, not a gate.
+2. ~~The `jca_web` workspace question~~ — **answered by D-AP**; it is the GUI parity work.
 3. **Deployment** — one decision, taken once (T-7).
 4. **CLI** — after the above (T-8).
 

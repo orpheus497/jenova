@@ -1,6 +1,6 @@
 # TODOS
 
-**Last updated:** 2026-08-31 15:49
+**Last updated:** 2026-08-31 18:19
 
 Only what is actually outstanding. Everything closed lives in `PROGRESS.md`; everything retired
 lives in `.devdocs/ARCHIVE/`. **Do not re-add defects about archived files** — that loop cost a day.
@@ -43,14 +43,13 @@ is not a gate (see above).
 
 | ID | Item |
 |---|---|
-| ~~G-1 / G-2~~ | **DONE — ran 2026-08-31, USER confirmed.** Theme and canvas. Still unreported: whether the canvas reads at the right weight, and whether ~30 fps idle redraw is acceptable. `CANVAS=0` disables the frame clock |
-| **G-3** | **BUILT 2026-08-31, NOT YET RUN.** `adw.Flap` panel, wordmark, logo, New Chat, search, conversation list with active row; switching refused mid-stream. Both binaries build clean. **Unverified: everything visual, plus whether the `.jenova-sidebar` rule actually beats the `.background` class owlkettle's Flap adds to the panel** — if it does not, the sidebar is an opaque slab and the canvas is hidden behind it |
-| **G-3b** | **Rename and delete conversations.** Left out of G-3 on purpose: both need a confirmation dialog, and a destructive action without one is worse than not having it. Fold into G-4 |
-| **G-2b** | **Fonts are not installed and typography is therefore not 1:1.** The stylesheet asks for `Inter` and `JetBrains Mono`; `fc-list` finds neither, so both fall back — to Noto Sans and Noto Sans Mono. The Web UI gets them from Google Fonts at `app.css:3`, **which is the B-01 leak**, so copying that approach would import a defect. Installing them is a **dependency addition and needs USER approval (Directive 1)** — candidates are the `x11-fonts` packages. **Until then the window renders in Noto and looks close but not identical** |
-| **G-3** | **The side panel.** `adw.Flap` (`content` / `flap` / `revealed` / `foldPolicy`) is the analogue of the Web UI's `Sidebar.Provider`. Header logo block, search, then the tree. **Blocked on T-1** |
-| **G-4** | **The workspace tree.** Workspace → Project → Folder → {chats, focus note, notes}, plus unassigned chats and global assets. **The gap is data, not drawing:** these rows already exist in the database and are already served over `/api/db/*`; the GUI knows only `conversations`/`messages` and needs to read the rest **in-process through `db.nim`**, not over HTTP |
-| **G-5** | **Chat surface parity.** Markdown rendering and syntax-highlighted code blocks via `gtksourceview5` — already an approved dependency under D-AK and the reason D-P named it |
-| **G-6** | **The remaining Web UI surface**, triaged against parity: files/notes/trash views, models selector, chat settings, attachments, MCP. **Not yet scoped — G-6 is a heading, not a task** |
+| ~~G-1 / G-2~~ | **DONE — ran, USER confirmed.** Theme and canvas |
+| ~~G-2b~~ | **CLOSED — not a task.** The USER's ruling: *"the font should just be whatever users system font is."* Every `font-family` and absolute `font-size` is out of the stylesheet. Nothing to install, and a native app overriding the desktop's typography was the defect, not the missing fonts |
+| ~~G-3 / G-3b~~ | **DONE** — panel, wordmark, logo, New Chat, search, conversation list, inline rename, delete. Delete is soft and cascades into the trash tree, so it needs no confirmation dialog |
+| **G-4** | **BUILT, NOT YET RUN.** Workspace → Project → Folder → chats as nested `Expander`s, with create/rename/delete per container via `api.putEntity`/`deleteEntity` — the same path the HTTP routes take, so the filesystem mirror applies. **Notes and fileAssets are NOT in the tree**; they need an editor view and are the remaining half of this item |
+| **G-5** | **BUILT, NOT YET RUN.** `markdown.nim` — headings, bullets, quotes, bold/italic/inline code as Pango markup; fenced code framed with a language label and copy button. **No syntax highlighting:** `gtksourceview5` is an approved dependency (D-AK) but owlkettle has no binding, so it is raw FFI and belongs in its own item. **Copy uses `wl-copy`** — Wayland only, unconfirmed |
+| **G-6** | **The remaining Web UI surface**, triaged against parity: notes/files/trash views, models selector, chat settings, attachments, MCP. **Not scoped — a heading, not a task** |
+| **G-7** | **Syntax highlighting in code blocks.** `gtksourceview5` is installed and approved (D-AK); owlkettle has no binding, so this is a small hand-written FFI surface — its own item, not a rider on G-5 |
 
 ## Product decisions — not mine to make
 

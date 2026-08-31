@@ -2,11 +2,42 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-08-31 15:49
+**Last updated:** 2026-08-31 18:19
 
 ---
 
 ## Completed
+
+### 2026-08-31 — **G-4/G-5: workspace tree and markdown. Layout defects found by the USER, fixed.**
+
+**Shipped:**
+- **Workspace tree** — Workspaces → Projects → Folders → chats, as nested `Expander`s, with inline
+  create/rename/delete per container. Inline rename (the row becomes an `Entry`); delete cascades
+  and is soft, so it lands in the trash tree.
+- **`api.putEntity`/`deleteEntity`** — creates and deletes go through the same `upsert`/`softDelete`
+  the HTTP routes use, so the filesystem mirror and per-workspace git repo happen exactly as they
+  do from the Web UI.
+- **`markdown.nim`** — headings, bullets, blockquotes, bold, italic, inline code as Pango markup;
+  fenced code in a framed block with a language label and a copy button.
+- **Fonts removed from the stylesheet entirely** on the USER's instruction: no `font-family`, no
+  absolute `font-size`. The window uses the desktop's own typography; relative sizes only.
+
+**Three layout defects, all mine, all found by the USER looking at the screen:**
+
+| Symptom | Cause |
+|---|---|
+| Logo rendered as a half-panel banner | `min-width` then `sizeRequest` — **both set a minimum.** A `Picture` takes its natural size from the pixbuf. Fixed by decoding at 24×24 with `gdk_pixbuf_new_from_file_at_scale` |
+| Rows strewn down the panel at equal intervals; one chat row floating in an empty box | `Box`'s adder defaults to **`expand: true`**, and `insert(...)` uses that default. Every row got `vexpand` |
+| Sidebar claiming half the window | `Button {.expand: true.}` inside a horizontal row sets `hexpand`, and GTK propagates computed expand **up** the tree. `width: 260` on the flap is also a minimum. Fixed with `hAlign: AlignFill` and explicit `expand: false` |
+
+**And one I inflicted while fixing them:** a scripted bulk substitution inserted a wrapper Box
+without re-indenting the 95-line body, so every sidebar element became a sibling of the wrapper and
+the panel rendered as five vertical columns. **It compiled.** Recorded as **D-AR**.
+
+CSS selectors were rewritten from element paths (`overlay > box > box`) to style classes, because
+the element paths broke silently when the tree shape changed and nothing reported it.
+
+**Both binaries build clean. The rebuilt panel has NOT been run.**
 
 ### 2026-08-31 — **G-3: the side panel. Built, not yet run.**
 

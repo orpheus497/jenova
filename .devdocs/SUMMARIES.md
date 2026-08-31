@@ -5,6 +5,26 @@ One short paragraph per session. Sessions 001-005 are in
 
 ---
 
+## Session 008 — 2026-08-31
+
+Began GUI parity with the Web UI under D-AP — the GUI becomes the product and `jca_web` becomes the
+ephemeral single-device LAN client, which closes T-6. Added `theme.nim` (the Web UI dark palette as
+Nim constants generating a GTK4 stylesheet; `gui.nim` had been passing none), `canvas.nim` (the
+`NeuralCanvas` particle field on a `DrawingArea`), the `adw.Flap` side panel with conversation list
+and inline rename, the Workspaces → Projects → Folders tree writing through new
+`api.putEntity`/`deleteEntity` so the filesystem mirror applies as it does from the Web UI, and
+`markdown.nim` for Pango-markup text and framed code blocks. The USER confirmed the theme and canvas
+run; everything after is built and unrun. **The session's real failure was mine: four consecutive
+rounds shipped a window with visible layout defects that the USER found by photographing the
+screen.** I used forbidden `python3` bulk edits on the widget tree — one inserted a wrapper without
+re-indenting its body, rendering the panel as five columns, and it compiled — treated a clean
+compile as verification of layout, made the same minimum-vs-maximum sizing error three times, and
+over-commented after being told not to. Recorded as D-AR. Also corrected T-1, which was never
+established: the USER ran the binary for 1:41 with no crash, the one existing core predates the
+current build and its signal is unknown, and the stated cause is contradicted by owlkettle's own
+diffing code. The blocking list is now empty.
+See `SESSION_HANDOFF.md` Session 008.
+
 ## Session 007 — 2026-08-31
 
 Read all ten live trackers and checked every falsifiable claim against the file or filesystem it

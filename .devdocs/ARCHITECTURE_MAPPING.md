@@ -52,7 +52,15 @@ on the next commit and re-deriving the drift is what consumed whole sessions (se
 | `jenova_gui.nim` | Desktop application. `bin/jenova` |
 | `jenova/` | The modules — server, routing, database, filesystem mirror, RAG, completion pipeline, backend lifecycle, model discovery, GUI, tray, D-Bus, **theme, canvas** |
 
-**Added 2026-08-31 (G-1/G-2, ruling D-AP):** `theme.nim` and `canvas.nim`.
+**Added 2026-08-31 (G-1 … G-5, ruling D-AP):** `theme.nim`, `canvas.nim`, `markdown.nim`.
+
+- **`markdown.nim`** splits an assistant reply into text and fenced-code blocks and converts inline
+  markdown to Pango markup. An unterminated fence renders as code so a block appears while it is
+  still streaming rather than popping in when the closing fence lands.
+
+`api.nim` gained `putEntity`/`deleteEntity` — the GUI sidebar writes through the same
+`upsert`/`softDelete` the HTTP routes use, so cascades and the filesystem mirror apply whichever
+surface the user is on. The GUI writes no entity SQL of its own.
 
 - **`theme.nim`** holds the palette **as Nim constants** and generates the GTK4 stylesheet from
   them. The palette is not duplicated in CSS text, because `canvas.nim` paints behind the widgets
