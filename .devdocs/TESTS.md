@@ -275,6 +275,55 @@ Streaming shape: `POST /v1/chat/completions` with `"stream":true` returns
 > **Not covered by any test yet:** sampling parameters are ignored (N-25) and client disconnect
 > does not cancel a generation (N-26). Neither should be assumed working because these checks pass.
 
+## 5g. `tests/test_lifecycle.sh` — the backend argument vector (N-S6, 2026-08-31)
+
+**21 assertions, PASS.** It does not start `llama-server` — that needs a model, and the models live
+under `~/JCA`, which D-AE places permanently out of bounds. It asserts the **command line**, via
+`jenova-core backends args`, which prints it without starting anything.
+
+**Why the argument vector is worth a test at all:** under D-AF `llama-server` is the engine, so
+these flags *are* the tuning. They are the accumulated result of work against real hardware, and a
+silently dropped or reordered one changes generation behaviour without failing anything. Pinned:
+`--spm-infill` (the USER's Neovim FIM), `--cache-prompt`, `--offline`, `-cb`, `-fa auto`,
+`-sm layer`, loopback binding and ports for both backends, and the embed server's `-ngl 0 -dev none`
+— CPU by design so it cannot compete for VRAM with the agent model.
+
+**The branch most easily conflated is asserted in both directions:** `NGL_AGENT=all` must use
+`-fitt` and must *not* pass `-ngl`; an explicit count must pass `-ngl N` and must *not* pass
+`-fitt`. The two conflict, and passing both is how a single-GPU profile ends up mis-offloaded.
+
+**Refusal paths too:** `start` with no model exits non-zero and names the reason, `stop` is
+idempotent, `status` reports each backend separately rather than collapsing to one word — because
+"agent up, embeddings down" is a real state, and hiding it is how B-14 stayed invisible.
+
+## 5f. `sha256-selftest` and `pipeline-selftest` — the completion pipeline (N-S5c, 2026-08-31)
+
+**`sha256-selftest`: 4 assertions, PASS.** The published FIPS 180-4 vectors — empty string, `"abc"`,
+the 56-byte two-block message, and one million `a` characters. **The last one is the point:** it
+exercises the block loop and the 64-bit length encoding, where a single-pass test would not. A
+hand-written hash fails by producing plausible wrong digests rather than by crashing, so published
+vectors are the only honest check.
+
+**`pipeline-selftest`: 15 assertions, PASS.** Intent detection and prefix stripping; visual intent
+stripping tools and setting `tool_choice: none`; agent mode never overriding a client system prompt
+and injecting the CORE MANDATE only when none exists; the freechat fallback; cache key stability;
+**the key being the SHA-256 of the rewritten body and not the original**; cache round-trip;
+non-chat bodies passing through untouched; and a message already carrying a context marker not
+being re-retrieved.
+
+> **Wiring is not proven by unit checks.** `serve` never called `rag.initSchema()`, so the first
+> chat request hit a missing table and answered **500 instead of reaching the upstream** — while
+> `pipeline-selftest` stayed green throughout, because it calls `initSchema` itself.
+> `tests/test_routes.sh` now posts a real chat body and asserts **502**: 502 means the pipeline
+> completed and `llama-server` is merely absent, 500 means it threw. **The distinction is the
+> assertion.**
+
+> **A vacuous pass, caught immediately — the second this session.** Those new route assertions
+> called `pass`/`fail` helpers that existed in `test_api_fs.sh` and not in `test_routes.sh`. The
+> shell printed "command not found" to stderr and the suite still reported PASS, because `FAILED`
+> was never incremented. **A test that cannot fail reports success just as loudly as one that
+> passes.**
+
 ## 5e. `jenova-core rag-selftest` — retrieval (N-S5b, 2026-08-31)
 
 **7 assertions, PASS.** Indexes a three-document scratch corpus, then asserts a keyword hit ranks

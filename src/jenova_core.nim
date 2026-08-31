@@ -14,9 +14,9 @@
 when not defined(freebsd):
   {.error: "jenova-core targets FreeBSD only — see .devdocs/PLANS.md Plan B.".}
 
-import std/[os, strformat, strutils]
+import std/[os, strformat, strutils, json]
 import jenova/[paths, config, db, dbselftest, server, serverselftest, llama,
-               inference, rag]
+               inference, rag, sha256, pipeline, prompts, lifecycle]
 
 const
   Version = "0.1.0"
@@ -68,6 +68,61 @@ proc main() =
     of "db-selftest":
       let p = paths.resolve()
       quit(dbselftest.run(p.state / "jenova-selftest.db"))
+    of "backends":
+      # Action purpose: `start`/`stop`/`status` for the inference backends,
+      # replacing `bin/jenova-ca`'s verbs. Under D-AF the harness owns
+      # llama-server's lifecycle, so this is not a convenience wrapper — it is
+      # how the engine gets started at all.
+      let p = paths.resolve()
+      let c = config.load(p)
+      let lc = lifecycle.init(p, c)
+      let sub = if args.len > 1: args[1] else: "status"
+      case sub
+      of "start":
+        let (llamaPid, embedPid) = lc.startAll()
+        if llamaPid == 0:
+          echo "failed to start llama-server"
+          if not fileExists(p.llamaServer):
+            echo "  binary not found at ", p.llamaServer
+            echo "  build it with: make llama"
+          else:
+            let m = c.get("MODEL_PATH")
+            if m.len == 0:
+              echo "  MODEL_PATH is not set — check etc/jenova.conf"
+            elif not fileExists(m):
+              echo "  model not found at ", m
+          quit(1)
+        echo "llama-server started (pid ", llamaPid, ")"
+        if embedPid > 0:
+          echo "embed-server started (pid ", embedPid, ")"
+        else:
+          # Not an error: retrieval degrades to keyword-only without it, which
+          # is a supported state. Saying so beats a silent absence — B-14 was
+          # exactly the case of an embed server reported healthy while dead.
+          echo "embed-server not started (no MODEL_EMBED configured or found)"
+          echo "  retrieval will be keyword-only, which is supported"
+        quit(0)
+      of "stop":
+        if lc.stopAll():
+          echo "backends stopped"
+          quit(0)
+        echo "one or more backends did not stop cleanly"
+        quit(1)
+      of "status":
+        echo "backends:"
+        echo lc.describe()
+        quit(0)
+      of "args":
+        # Prints the exact llama-server command line this config produces, so it
+        # can be diffed against what bin/jenova-ca builds without starting
+        # anything. Fidelity here is not checkable any other way.
+        echo p.llamaServer, " ", lc.llamaArgs().join(" ")
+        echo ""
+        echo p.llamaServer, " ", lc.embedArgs().join(" ")
+        quit(0)
+      else:
+        echo "usage: jenova-core backends [start|stop|status|args]"
+        quit(2)
     of "db-capabilities":
       # Reports what the linked libsqlite3 can actually do, rather than what the
       # design assumes. Q-24 puts the keyword index in FTS5 and that is
@@ -78,6 +133,126 @@ proc main() =
       echo "journal_mode:       ", db.journalMode()
       echo "fts5:               ", (if db.hasFts5(): "available" else: "ABSENT")
       quit(0)
+    of "sha256-selftest":
+      # The cache key is a SHA-256 of the rewritten request body, and a wrong
+      # hash does not fail loudly — it produces plausible digests that orphan
+      # every cache entry proxy.lua has written. These are the published
+      # FIPS 180-4 vectors; the million-character case exercises the block loop
+      # and the 64-bit length encoding rather than a single pass.
+      var bad = 0
+      proc vec(label, input, want: string) =
+        let got = sha256.sha256(input)
+        if got == want: echo "  ok   ", label
+        else:
+          echo "  FAIL ", label, "\n       want ", want, "\n       got  ", got
+          inc bad
+      vec("empty string", "",
+          "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+      vec("\"abc\"", "abc",
+          "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+      vec("56-byte two-block message",
+          "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+          "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1")
+      vec("one million 'a'", repeat('a', 1_000_000),
+          "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0")
+      if bad == 0:
+        echo ""
+        echo "sha256-selftest: PASS"
+        quit(0)
+      echo ""
+      echo "sha256-selftest: FAIL (", bad, ")"
+      quit(1)
+    of "pipeline-selftest":
+      # Proves the seven behaviours of N-30 against a scratch database. Web
+      # search is exercised only for its formatting, not by making a request.
+      let p = paths.resolve()
+      db.initDb(p.state / "jenova-pipetest.db")
+      rag.initSchema()
+      var bad = 0
+      proc check(label: string, cond: bool, detail = "") =
+        if cond: echo "  ok   ", label
+        else:
+          echo "  FAIL ", label, (if detail.len > 0: "\n       " & detail else: "")
+          inc bad
+
+      echo "pipeline-selftest"
+
+      block intents:
+        let r = pipeline.prepare(
+          """{"messages":[{"role":"user","content":"Web Search: what is FreeBSD"}]}""")
+        check("Web Search: prefix detected", r.intent == inWebSearch)
+        let body = parseJson(r.body)
+        let lastMsg = body["messages"][^1]["content"].getStr
+        check("intent prefix stripped from the message",
+              not lastMsg.contains("Web Search:"), "got: " & lastMsg)
+
+      block visualStripsTools:
+        let r = pipeline.prepare(
+          """{"messages":[{"role":"user","content":"Visual Rewrite: tidy this"}],""" &
+          """"tools":[{"type":"function"}]}""")
+        let body = parseJson(r.body)
+        check("visual intent strips tools", not body.hasKey("tools"))
+        check("visual intent sets tool_choice=none",
+              body{"tool_choice"}.getStr == "none")
+        check("visual persona injected",
+              body["messages"][0]["content"].getStr.contains("inline rewrite mode"))
+
+      block agentMode:
+        let r = pipeline.prepare(
+          """{"messages":[{"role":"system","content":"CLIENT PROMPT"},""" &
+          """{"role":"user","content":"hello"}],"tools":[{"type":"function"}]}""")
+        let body = parseJson(r.body)
+        check("agent mode never overrides a client system prompt",
+              body["messages"][0]["content"].getStr.startsWith("CLIENT PROMPT"))
+        check("agent mode reports tools present", r.hadTools)
+
+      block agentNoSystem:
+        let r = pipeline.prepare(
+          """{"messages":[{"role":"user","content":"hello"}],""" &
+          """"tools":[{"type":"function"}]}""")
+        let body = parseJson(r.body)
+        check("agent mode injects CORE MANDATE when no system prompt exists",
+              body["messages"][0]["content"].getStr.startsWith("CORE MANDATE:"))
+
+      block noIntent:
+        let r = pipeline.prepare(
+          """{"messages":[{"role":"user","content":"just chatting"}]}""")
+        let body = parseJson(r.body)
+        check("no intent falls back to the freechat persona",
+              body["messages"][0]["content"].getStr.contains("autonomous agent"))
+        check("no intent is reported as inNone", r.intent == inNone)
+
+      block cacheKey:
+        let a = pipeline.prepare(
+          """{"messages":[{"role":"user","content":"stable"}]}""")
+        let b = pipeline.prepare(
+          """{"messages":[{"role":"user","content":"stable"}]}""")
+        check("cache key is stable across identical requests",
+              a.cacheKey == b.cacheKey and a.cacheKey.len == 64)
+        check("cache key is the SHA-256 of the REWRITTEN body, not the original",
+              a.cacheKey == sha256.sha256(a.body))
+        pipeline.cacheStore(a.cacheKey, "CACHED RESPONSE")
+        check("cache round-trips", pipeline.cacheLookup(a.cacheKey) == "CACHED RESPONSE")
+
+      block passthrough:
+        let raw = """{"prompt":"raw completion","n_predict":16}"""
+        let r = pipeline.prepare(raw)
+        check("a non-chat body passes through untouched", r.body == raw)
+
+      block followUp:
+        let withCtx = """{"messages":[{"role":"user","content":""" &
+                      """"see --- REPOSITORY CONTEXT --- above"}]}"""
+        let r = pipeline.prepare(withCtx)
+        check("a message already carrying context is not re-retrieved",
+              r.ragHits == 0)
+
+      if bad == 0:
+        echo ""
+        echo "pipeline-selftest: PASS"
+        quit(0)
+      echo ""
+      echo "pipeline-selftest: FAIL (", bad, ")"
+      quit(1)
     of "rag-selftest":
       # Proves retrieval end to end against a scratch corpus: index, keyword
       # hit, and — when the embedding server is up — a semantic hit for a query
@@ -201,6 +376,14 @@ proc main() =
       let host = c.get("HOST", "127.0.0.1")
       let port = c.getInt("PORT", 8080)
       db.initDb(p.state / "jenova.db")
+
+      # Action purpose: the retrieval schema must exist before the first request
+      # arrives, because the completion pipeline queries it on every chat turn.
+      # Omitting this made `/v1/chat/completions` answer 500 instead of reaching
+      # the upstream — a defect the pipeline self-test could not see, because it
+      # calls initSchema itself. Wiring is not proven by unit checks.
+      rag.initSchema()
+      rag.configureEmbed("127.0.0.1", c.getInt("LLAMA_EMBED_PORT", 8082))
 
       # Action purpose: ruling D-AF — `llama-server` is the inference engine and
       # this core is the harness around it. The default is therefore the proxy

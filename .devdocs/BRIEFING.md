@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-08-31 10:38
+**Last updated:** 2026-08-31 11:34
 **Branch:** `bsd`
 **Phase:** 3 — Execution. Plan B (Nim native FreeBSD desktop application) is the active workstream.
 
@@ -11,10 +11,10 @@
 | Item | Value |
 |---|---|
 | Architecture | **`llama-server` is the inference engine; the Nim core is the harness around it (D-AF).** Never a standalone — this is permanent |
-| Stage | **N-S0 … N-S5b complete.** Config, database, threaded server, the full `/api/*` surface, filesystem mirror and RAG all ship |
-| Next | **N-S5c — the completion pipeline (N-30).** The last major gap, and the thing that makes the core Jenova rather than a proxy |
+| Stage | **N-S0 … N-S5c complete; N-S6 partial.** Config, database, threaded server, the full `/api/*` surface, filesystem mirror, RAG, the completion pipeline (N-30 closed), and backend supervision — `backends [start\|stop\|status\|args]`, both argument vectors, refusal paths. **B-13 closed by construction** |
+| Next | **Finish N-S6** — `serve` auto-starting backends, `--lan`, `hardware-profiles/` consumption, health watchdog. Only then is `bin/jenova-ca` deletable |
 | Runtime home | **`$HOME/Jenova`.** `~/JCA` is the legacy deployment and is permanently untouchable (D-AE); the core refuses to resolve against it |
-| Tests | `test_api_db` 23 · `test_api_fs` 46 · `test_routes` 11 · `rag-selftest` 7 · `db-selftest` — all PASS, all in a scratch `JCA_HOME` |
+| Tests | `test_api_db` 23 · `test_api_fs` 46 · `test_routes` 13 · `pipeline-selftest` 15 · `rag-selftest` 7 · `sha256-selftest` 4 · `db-selftest` · `serve-selftest` — all PASS, all in a scratch `JCA_HOME` |
 | Open decisions | **Q-9, Q-10, Q-11, Q-12** — none block the rewrite path |
 | Commits | Everything is uncommitted. Commit boundaries are the USER's alone (C-11) |
 
@@ -41,14 +41,32 @@ soft deletes, cascades, restore), `/api/fs/*` (trash, restore, empty, tree), `/a
 (save, get, list, trash), static assets, and `/v1/chat/completions`, `/completion`, `/infill`,
 `/embed*` proxied to `llama-server` and the embedding server.
 
-**`lib/proxy.lua` is superseded for serving.** Every route it answers is answered by the core,
-except `/api/workspaces`, which has no caller and never worked — subtracted under D-D. **It is not
-yet removable:** `proxy.lua:1225-1400` still holds the completion pipeline.
+**Every chat request is rewritten before it leaves** — intent detected and stripped, RAG injected,
+web search run for the websearch intent, a persona chosen, tools stripped where they do not apply,
+and the cache consulted on the rewritten body's key.
+
+**`lib/proxy.lua` is fully superseded.** Every route *and* every completion behaviour is reproduced.
+`/api/workspaces` is the sole exception, dead and deliberately dropped. Nothing has been deleted —
+see N-33.
 
 **Retrieval ships** (`rag.nim`): FTS5 keyword index, float32 vectors in BLOB columns, chunk text
 persisted. **FTS5 was confirmed present by probe** (`jenova-core db-capabilities`), not assumed.
 
-## 4. N-30 — the remaining gap, and the whole of N-S5c
+## 4. N-30 — **CLOSED 2026-08-31 at N-S5c**
+
+All seven behaviours are ported and wired into the serving path. `pipeline.nim` owns them,
+`prompts.nim` carries the personas verbatim, `websearch.nim` does DuckDuckGo through base `fetch(1)`,
+and `sha256.nim` supplies the cache key — hand-written because Nim ships SHA-1 and a different
+algorithm would silently orphan every cache entry `proxy.lua` has written, and **asserted against
+the published FIPS 180-4 vectors** for that reason.
+
+**Two lessons kept from building it.** `serve` never called `rag.initSchema()`, so the first chat
+request answered 500 while `pipeline-selftest` — which calls it itself — stayed green: **wiring is
+not proven by unit checks**, and `test_routes.sh` now posts a real chat body and asserts 502.
+And a new assertion in that same test called helpers it did not have, printing "command not found"
+while still reporting PASS — **the second vacuous pass this session**.
+
+### The original finding, kept for the record
 
 `server.nim` reads `stream`, `max_tokens` and `messages`/`prompt`. `lib/proxy.lua:1225-1400` also
 does **seven** things, none ported:
@@ -67,8 +85,19 @@ compatibility with existing cache entries.
 
 ## 5. Outstanding
 
-**Code:** N-S5c (the pipeline above) → N-S6 lifecycle parity, which deletes `bin/jenova-ca` and
-closes B-12, B-13, N-23 → N-S7 GUI → N-S8 CLI → N-S9 retires `jca_web/`, closing B-01, B-03, B-04.
+**Code:** finish N-S6 — `serve` auto-starting backends, `--lan`, `hardware-profiles/` consumption,
+the health watchdog. That makes `bin/jenova-ca` deletable and closes B-12 and N-23 with it. Then
+N-S7 GUI → N-S8 CLI → N-S9 retires `jca_web/`, closing B-01, B-03, B-04.
+
+**N-24 is now demonstrable, not theoretical.** `jenova-core backends args` emits
+`-dev Vulkan0,Vulkan1,Vulkan2` on this host — the non-existent device reaches the argument vector,
+where the old shell path discarded it via B-12. **`etc/jenova.local.conf` is untracked and is the
+USER's machine file**, generated by `build-llama.sh`, so it is reported rather than edited.
+
+**N-33: `lib/proxy.lua` and its modules are now fully superseded** — every route and every
+completion behaviour is reproduced. Nothing has been deleted; Directive 3 keeps them until the USER
+instructs removal. `ffi_defs.lua`, `daemon.lua` and `ui.lua` are excluded, still used by the tray
+and lifecycle path until N-S6/N-S7.
 
 **Independent and cheap:** N-24 (`jenova.local.conf` names a `Vulkan2` that does not exist),
 B-22 (a test that rewrites `etc/jenova.conf`).

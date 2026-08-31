@@ -39,6 +39,7 @@ import ./routes
 import ./upstream
 import ./api
 import ./inference
+import ./pipeline
 import std/json
 
 type
@@ -195,7 +196,35 @@ proc handle(client: Socket, class: RouteClass, workerId: int): bool =
         """{"error":"inference worker unavailable"}""")
       return false
 
-    discard upstream.forward(client, req, llamaHostS.get(), llamaPort)
+    # Action purpose: **this is where the core stops being a reverse proxy and
+    # becomes Jenova** (N-30). The request is rewritten before it reaches
+    # `llama-server`: intent detected and stripped, RAG retrieved and injected,
+    # web search run for the websearch intent, a persona chosen, tools stripped
+    # where they do not apply. `pipeline.prepare` owns all of it.
+    #
+    # `/infill` and `/completion` carry a raw prompt with no messages to inject
+    # into, so `prepare` returns them untouched — the check is inside it rather
+    # than duplicated here.
+    var outbound = req
+    if req.body.len > 0:
+      let prepared = pipeline.prepare(req.body)
+
+      # The cache is consulted on the *rewritten* body's key, which is why this
+      # sits after prepare and not before it. proxy.lua:1385.
+      if prepared.cacheKey.len > 0:
+        let hit = pipeline.cacheLookup(prepared.cacheKey)
+        if hit.len > 0:
+          client.sendResponse(200, "application/json", hit,
+                              extraHeaders = "X-Cache: HIT\r\n")
+          return false
+
+      # Only the body changes. `upstream.buildRequest` recomputes Content-Length
+      # from it and drops the client's, so setting the header here would be a
+      # no-op — checked rather than assumed, because a stale length silently
+      # truncates the request llama-server reads.
+      outbound.body = prepared.body
+
+    discard upstream.forward(client, outbound, llamaHostS.get(), llamaPort)
 
   of rcEmbed:
     discard upstream.forward(client, req, embedHostS.get(), embedPort)

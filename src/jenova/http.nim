@@ -125,11 +125,17 @@ const StatusText = {
   405: "Method Not Allowed", 500: "Internal Server Error",
 }.toTable
 
-proc sendResponse*(sock: Socket, status: int, contentType, body: string) =
+## `extraHeaders` must already be CRLF-terminated per line. It exists for the
+## cache path, which answers with `X-Cache: HIT` — `proxy.lua:1390` sets that
+## header and the Web UI reads it, so it is contract rather than diagnostics.
+proc sendResponse*(sock: Socket, status: int, contentType, body: string,
+                   extraHeaders = "") =
   let reason = StatusText.getOrDefault(status, "Unknown")
   var head = "HTTP/1.1 " & $status & " " & reason & "\r\n"
   head.add "Content-Type: " & contentType & "\r\n"
   head.add "Content-Length: " & $body.len & "\r\n"
+  if extraHeaders.len > 0:
+    head.add extraHeaders
   head.add "Connection: close\r\n\r\n"
   sock.send(head)
   if body.len > 0:

@@ -2,7 +2,7 @@
 
 Forward-looking strategy for implementations that are scoped but not yet built.
 
-**Last updated:** 2026-08-31 10:38 — N-S5 scoped; Q-24…Q-26 raised; licence text corrected per D-X
+**Last updated:** 2026-08-31 11:34 — N-S5 scoped; Q-24…Q-26 raised; licence text corrected per D-X
 
 ---
 

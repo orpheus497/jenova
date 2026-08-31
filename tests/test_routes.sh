@@ -45,14 +45,16 @@ probe() { # method path
         | nc 127.0.0.1 "$PORT" | head -1 | sed 's/^HTTP\/1.1 \([0-9]*\).*/\1/'
 }
 
+pass() { echo "  ok   $1"; }
+fail() { echo "  FAIL $1"; shift; for l in "$@"; do echo "       $l"; done
+         FAILED=$((FAILED + 1)); }
+
 expect() { # method path expected-code label
     got=$(probe "$1" "$2")
     if [ "$got" = "$3" ]; then
-        echo "  ok   $4 ($1 $2 -> $3)"
+        pass "$4 ($1 $2 -> $3)"
     else
-        echo "  FAIL $4"
-        echo "       $1 $2 expected $3, got ${got:-<no response>}"
-        FAILED=$((FAILED + 1))
+        fail "$4" "$1 $2 expected $3, got ${got:-<no response>}"
     fi
 }
 
@@ -79,6 +81,32 @@ expect POST /v1/chat/completions 502 "chat completions proxied"
 expect POST /completion          502 "completion proxied"
 expect POST /infill              502 "FIM proxied — the USER's Neovim dependency"
 expect GET  /v1/health           200 "/v1/health is health, not completion"
+
+# --- the completion pipeline runs in the serving path (N-30) -----------------
+# A chat POST goes through pipeline.prepare — intent detection, RAG retrieval,
+# persona injection — before reaching the upstream. A 500 here means the
+# pipeline threw; a 502 means it completed and llama-server is simply absent.
+# This distinction is the whole check: the pipeline self-test calls
+# rag.initSchema() itself and so could not catch `serve` failing to.
+postcode() { # path body
+    printf 'POST %s HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s' \
+        "$1" "${#2}" "$2" | nc 127.0.0.1 "$PORT" | head -1 \
+        | sed 's/^HTTP\/1.1 \([0-9]*\).*/\1/'
+}
+got=$(postcode /v1/chat/completions '{"messages":[{"role":"user","content":"hi"}]}')
+if [ "$got" = "502" ]; then
+    pass "chat request survives the pipeline and reaches the upstream"
+else
+    fail "chat request survives the pipeline and reaches the upstream" \
+         "expected 502 (pipeline ok, no llama-server), got ${got:-<none>} — 500 means the pipeline threw"
+fi
+got=$(postcode /infill '{"input_prefix":"def f(","input_suffix":"):"}')
+if [ "$got" = "502" ]; then
+    pass "FIM body passes through the pipeline untouched"
+else
+    fail "FIM body passes through the pipeline untouched" \
+         "expected 502, got ${got:-<none>}"
+fi
 
 # --- containment ------------------------------------------------------------
 expect GET /../etc/jenova.conf   403 "path traversal refused"
