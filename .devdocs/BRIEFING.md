@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-08-31 11:34
+**Last updated:** 2026-08-31 12:35
 **Branch:** `bsd`
 **Phase:** 3 — Execution. Plan B (Nim native FreeBSD desktop application) is the active workstream.
 
@@ -12,10 +12,12 @@
 |---|---|
 | Architecture | **`llama-server` is the inference engine; the Nim core is the harness around it (D-AF).** Never a standalone — this is permanent |
 | Stage | **N-S0 … N-S5c complete; N-S6 partial.** Config, database, threaded server, the full `/api/*` surface, filesystem mirror, RAG, the completion pipeline (N-30 closed), and backend supervision — `backends [start\|stop\|status\|args]`, both argument vectors, refusal paths. **B-13 closed by construction** |
-| Next | **Finish N-S6** — `serve` auto-starting backends, `--lan`, `hardware-profiles/` consumption, health watchdog. Only then is `bin/jenova-ca` deletable |
+| Next | **Finish N-S6 — four items.** The `--watch` watchdog, `--lan`, the port flags, `hardware-profiles/` consumption. *(`restart` is now trivial and `serve` already brings the whole system up in one command.)* That is the whole remaining gap against `bin/jenova-ca` |
+| Startup | **One command.** `jenova-core serve` starts the HTTP server *and* forks both backends; the forks return instantly and models load inside `llama-server`. Already-running backends are left alone, so a harness restart never reloads a model. `JENOVA_NO_BACKENDS=1` serves without them, which is what the test suites use |
 | Runtime home | **`$HOME/Jenova`.** `~/JCA` is the legacy deployment and is permanently untouchable (D-AE); the core refuses to resolve against it |
-| Tests | `test_api_db` 23 · `test_api_fs` 46 · `test_routes` 13 · `pipeline-selftest` 15 · `rag-selftest` 7 · `sha256-selftest` 4 · `db-selftest` · `serve-selftest` — all PASS, all in a scratch `JCA_HOME` |
-| Open decisions | **Q-9, Q-10, Q-11, Q-12** — none block the rewrite path |
+| Tests | `test_api_db` 23 · `test_api_fs` 46 · `test_routes` 13 · `test_lifecycle` 21 · `pipeline-selftest` 15 · `rag-selftest` 7 · `sha256-selftest` 4 · `db-selftest` · `serve-selftest` — **all PASS**, all in a scratch `JCA_HOME`, none spawning a backend |
+| Open decisions | **NONE.** Q-12, the last one, was closed 2026-08-31 — CUDA is unreachable on FreeBSD, so the profile and its defects are moot. `DECISIONS_LOG.md` had carried 11 `AWAITING USER DECISION` markers, **all stale**; a status index at the top of that file now overrides them. **Nothing is blocked on the USER** |
+| Settled, never re-asked | **Devices:** agent on GPU, embedding on CPU, drafter on GPU, **Vulkan0 and Vulkan1**. **`etc/jenova.local.conf` is the USER's file** — no session edits or "fixes" it. **`~/JCA`** untouchable. **Licence** AGPL-3.0. **Engine** `llama-server`, always |
 | Commits | Everything is uncommitted. Commit boundaries are the USER's alone (C-11) |
 
 ## 2. Rulings in force — not to be reopened
@@ -23,6 +25,7 @@
 | Ruling | Decision |
 |---|---|
 | **D-AF** | **`llama-server` is the inference engine. Jenova is the harness.** `upstream.nim` is the primary path. In-process inference is retained behind `JENOVA_INPROC=1` (Directive 3) but is not the default and nothing new is built on it. **Supersedes D-N's linkage clause and D-W entirely** |
+| **D-AG** | **Testing is per-instance and permissioned.** Every run that starts a process is asked for individually — what, why, how long. **Permission to test once is never permission to test again.** Building and self-tests that spawn nothing stay permitted under D-AC |
 | **D-AE** | **`~/JCA` is permanently off limits — no migration, overwrite or change, ever.** The `~/Jenova` split exists so testing cannot reach the deployment. **Not to be raised again** |
 | **D-AD** | The runtime home is `$HOME/Jenova`, at all 20 code sites. `paths.resolve` refuses `$HOME/JCA` unless `JENOVA_ALLOW_DEPLOYED=1` |
 | **D-AC** | Building and testing are permitted. Nothing may create, write, delete or rename under `~/JCA`. `make install`, `make verify` and `jenova-ca` stay out of scope for the whole rewrite |
@@ -85,14 +88,21 @@ compatibility with existing cache entries.
 
 ## 5. Outstanding
 
-**Code:** finish N-S6 — `serve` auto-starting backends, `--lan`, `hardware-profiles/` consumption,
-the health watchdog. That makes `bin/jenova-ca` deletable and closes B-12 and N-23 with it. Then
-N-S7 GUI → N-S8 CLI → N-S9 retires `jca_web/`, closing B-01, B-03, B-04.
+**Finish N-S6.** Measured against `bin/jenova-ca`, the core is missing exactly five things:
+the **`restart`** verb · the **`--watch` watchdog** (30 s interval, 60 s restart cooldown, 3
+consecutive failures before action) · **`--lan`** · the **`--port` / `--llama-port` /
+`--embed-port`** flags · **`hardware-profiles/` consumption**. Plus the decision on whether `serve`
+auto-starts the backends. **That list is the whole of what stands between here and deleting
+`bin/jenova-ca`**, which takes B-12 and N-23 with it.
 
-**N-24 is now demonstrable, not theoretical.** `jenova-core backends args` emits
-`-dev Vulkan0,Vulkan1,Vulkan2` on this host — the non-existent device reaches the argument vector,
-where the old shell path discarded it via B-12. **`etc/jenova.local.conf` is untracked and is the
-USER's machine file**, generated by `build-llama.sh`, so it is reported rather than edited.
+Then **N-S7** GUI (owlkettle GTK4 + tray on StatusNotifierItem — N-10, and the last live instance of
+B-02) → **N-S8** CLI → **N-S9** retires `jca_web/`, closing B-01, B-03, B-04.
+
+**The defect backlog is smaller than it reads.** `TODOS.md` lists 34 open B-defects; **eight of
+them need no fix at all** — B-12, B-14, B-15, B-16, B-17, B-18, B-19 and B-36 describe `lib/*.lua`
+that the Nim core has superseded, so they die with the deletion in N-33. A full triage is at the top
+of `TODOS.md`. **The genuinely remaining defects are in `hardware-profiles/` data, `scripts/`,
+`tests/` and the docs** — the parts that outlive the rewrite.
 
 **N-33: `lib/proxy.lua` and its modules are now fully superseded** — every route and every
 completion behaviour is reproduced. Nothing has been deleted; Directive 3 keeps them until the USER

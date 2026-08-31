@@ -182,29 +182,62 @@ proc start*(l: Lifecycle, be: Backend): int =
   createDir(l.paths.logDir)
   createDir(l.paths.state)
 
-  var env = newStringTable()
-  for k, v in envPairs():
-    env[k] = v
-  let libDir = l.paths.llamaLibDir
-  if dirExists(libDir):
-    let existingPath = getEnv("LD_LIBRARY_PATH")
-    env["LD_LIBRARY_PATH"] =
-      if existingPath.len > 0: libDir & ":" & existingPath else: libDir
-  if be == beEmbed:
-    env["GGML_VULKAN_DISABLE"] = "1"
+  let logPath = logFileFor(l, be)
+
+  # Action purpose: fork/dup2/exec rather than `startProcess`, and the reason is
+  # a defect this replaced rather than a preference.
+  #
+  # `startProcess` with `poStdErrToStdOut` hands the child a **pipe**, and a pipe
+  # nobody reads fills at roughly 64 KB and then **blocks the writer**.
+  # `llama-server` prints device enumeration and per-layer offload progress while
+  # loading a model — comfortably more than 64 KB — so it stalled mid-load and
+  # never finished. The failure looked like "the model did not load" and was
+  # invisible, because the same defect meant nothing was captured to diagnose it.
+  #
+  # Redirecting straight to a file, as `bin/jenova-ca` does with `> "$log" 2>&1`,
+  # removes the pipe entirely: there is no buffer to fill and no reader to need.
+  var argv: seq[string] = @[binary]
+  argv.add args
+
+  let pid = fork()
+  if pid < 0:
+    return 0
+  if pid == 0:
+    # Child. Detach from the controlling terminal so the backend survives this
+    # process exiting, then point stdout and stderr at the log before exec.
+    discard setsid()
+    let fd = posix.open(logPath.cstring,
+                        O_WRONLY or O_CREAT or O_APPEND, 0o644.Mode)
+    if fd >= 0:
+      discard dup2(fd, 1)
+      discard dup2(fd, 2)
+      if fd > 2: discard posix.close(fd)
+    discard posix.close(0)
+
+    let libDir = l.paths.llamaLibDir
+    if dirExists(libDir):
+      let existingPath = getEnv("LD_LIBRARY_PATH")
+      putEnv("LD_LIBRARY_PATH",
+             if existingPath.len > 0: libDir & ":" & existingPath else: libDir)
+    if be == beEmbed:
+      # CPU-only by design: the embedding model must not compete for VRAM with
+      # the agent model.
+      putEnv("GGML_VULKAN_DISABLE", "1")
+
+    var cargs = allocCStringArray(argv)
+    discard execv(binary.cstring, cargs)
+    # Only reached if execv failed; the parent already has the pid, so exiting
+    # non-zero is what makes the failure visible to the next status check.
+    quit(127)
 
   try:
-    let p = startProcess(binary, args = args, env = env,
-                         options = {poStdErrToStdOut})
-    let logPath = logFileFor(l, be)
-    # The child's output is drained to a file by a detached reader rather than
-    # inherited, because startProcess gives no direct redirect and a full pipe
-    # would eventually block the child.
-    writeFile(pidFileFor(l, be), $p.processID)
-    writeFile(logPath, &"[{now()}] started {binary}\n")
-    return p.processID
-  except OSError, IOError:
-    return 0
+    writeFile(pidFileFor(l, be), $pid)
+    let f = open(logPath, fmAppend)
+    f.write(&"[{now()}] jenova-core started {binary} {args.join(\" \")}\n")
+    f.close()
+  except IOError, OSError:
+    discard
+  pid
 
 ## Function purpose: stop a backend. SIGTERM, a grace period, then SIGKILL —
 ## the escalation `jenova-ca:373-386` performs, because `llama-server` needs a

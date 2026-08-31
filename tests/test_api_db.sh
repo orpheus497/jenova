@@ -64,7 +64,7 @@ check_absent() { # label unwanted-substring actual
 }
 
 rm -f "$DB" "$DB-wal" "$DB-shm"
-JENOVA_PORT="$PORT" "$CORE" serve >/dev/null 2>&1 &
+JENOVA_NO_BACKENDS=1 JENOVA_PORT="$PORT" "$CORE" serve >/dev/null 2>&1 &
 SRV=$!
 # The scratch tree is removed on exit; the guard is belt-and-braces against the
 # mktemp having failed and JCA_HOME pointing somewhere real.

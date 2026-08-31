@@ -344,14 +344,20 @@ proc main() =
           "src/net/socket.nim")
         if rows.len > 0:
           let line = try: parseInt(rows[0][0]) except ValueError: 1
+          # Assert on THIS row, not on the global count. The first version
+          # checked `chunkCount() == 1`, which held only when no embedding
+          # server was running — with a live embedder every chunk already has a
+          # vector, so a correct system failed the check. **The assertion was
+          # written for the degraded case and mistook it for the only case.**
           rag.storeChunkVector("src/net/socket.nim", line, v)
-          if rag.chunkCount() == 1:
+          let stored = db.queryBlob(
+            "SELECT path, vec FROM rag_chunks WHERE path=? AND start_line=?",
+            "src/net/socket.nim", $line)
+          if stored.len > 0 and stored[0].blob.len == v.len * 4:
             echo "  ok   vector persists to the chunk row and reads back"
           else:
-            echo "  FAIL stored vector not visible: chunkCount=", rag.chunkCount()
+            echo "  FAIL stored vector not readable for that row"
             inc failures
-          db.exec("UPDATE rag_chunks SET vec=NULL WHERE path=?",
-                  "src/net/socket.nim")
 
       if rag.chunkCount() > 0:
         let hits = rag.query("network listener", topK = 3)
@@ -384,6 +390,53 @@ proc main() =
       # calls initSchema itself. Wiring is not proven by unit checks.
       rag.initSchema()
       rag.configureEmbed("127.0.0.1", c.getInt("LLAMA_EMBED_PORT", 8082))
+
+      # Action purpose: bring the inference backends up as part of starting.
+      # There is no separate "start the server" and "start the backends" step,
+      # and there should never have been one.
+      #
+      # The two-command split this replaces was not a design choice — it was
+      # `bin/jenova-ca`'s shape reproduced without asking why that shape existed.
+      # In the shell, the client-facing proxy was spawned by the *tray*, not by
+      # `jenova-ca`, which is the whole of defect B-13: `--daemon` started no
+      # `:8080` because a different process owned it. **In one binary that split
+      # has no reason to exist.**
+      #
+      # Both calls fork and return immediately; the model load happens inside
+      # `llama-server`, so startup here stays instant. Until a backend finishes
+      # loading, `upstream.forward` answers 502 naming the unreachable upstream,
+      # which is the honest response and already tested.
+      #
+      # Already-running backends are left alone — `lifecycle.start` returns the
+      # existing pid rather than starting a second copy — so restarting the
+      # harness does not reload a multi-gigabyte model into VRAM.
+      # `JENOVA_NO_BACKENDS=1` serves without them. The test suites set it: they
+      # exercise routing and the pipeline, and must never load a model onto the
+      # GPU as a side effect of running (D-AG). Relying on a scratch home having
+      # no models would be luck, not isolation.
+      if getEnv("JENOVA_NO_BACKENDS") == "1":
+        echo "  backends: not started (JENOVA_NO_BACKENDS=1)"
+      else:
+       block backends:
+        let lc = lifecycle.init(p, c)
+        let llamaState = lc.state(lifecycle.beLlama)
+        let (llamaPid, embedPid) = lc.startAll()
+        if llamaPid == 0:
+          echo "  WARNING: llama-server did not start — completions will 502"
+          if not fileExists(p.llamaServer):
+            echo "           binary missing at ", p.llamaServer, " (make llama)"
+          else:
+            let m = c.get("MODEL_PATH")
+            if m.len == 0: echo "           MODEL_PATH is not set"
+            elif not fileExists(m): echo "           model not found at ", m
+        elif llamaState.running:
+          echo "  llama-server: already running (pid ", llamaPid, ") — left alone"
+        else:
+          echo "  llama-server: started (pid ", llamaPid, "), model loading"
+        if embedPid == 0:
+          echo "  embed-server: not started — retrieval is keyword-only"
+        else:
+          echo "  embed-server: pid ", embedPid
 
       # Action purpose: ruling D-AF — `llama-server` is the inference engine and
       # this core is the harness around it. The default is therefore the proxy

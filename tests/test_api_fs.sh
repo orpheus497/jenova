@@ -64,7 +64,7 @@ assert_match() { # label pattern actual
 # so they cannot be predicted — they are found.
 find_one() { find "$1" -maxdepth 1 -name "$2" 2>/dev/null | head -1; }
 
-JENOVA_PORT="$PORT" "$CORE" serve >/dev/null 2>&1 &
+JENOVA_NO_BACKENDS=1 JENOVA_PORT="$PORT" "$CORE" serve >/dev/null 2>&1 &
 SRV=$!
 cleanup() {
     kill $SRV 2>/dev/null

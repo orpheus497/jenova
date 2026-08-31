@@ -29,7 +29,7 @@ JCA_HOME=$(mktemp -d "${TMPDIR:-/tmp}/jenova-routes.XXXXXX") || exit 1
 export JCA_HOME
 mkdir -p "$JCA_HOME/.system" "$JCA_HOME/Workspaces"
 
-JENOVA_PORT="$PORT" "$CORE" serve >/dev/null 2>&1 &
+JENOVA_NO_BACKENDS=1 JENOVA_PORT="$PORT" "$CORE" serve >/dev/null 2>&1 &
 SRV=$!
 cleanup() {
     kill $SRV 2>/dev/null

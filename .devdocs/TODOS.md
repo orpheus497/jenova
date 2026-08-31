@@ -2,7 +2,7 @@
 
 Granular task list. Completed items move to the `BLUEPRINT.md` implementation registry.
 
-**Last updated:** 2026-08-31 11:34
+**Last updated:** 2026-08-31 12:35
 
 ---
 
@@ -42,6 +42,53 @@ Granular task list. Completed items move to the `BLUEPRINT.md` implementation re
 
 ---
 
+## TRIAGE — 2026-08-31. Read this before the tables below.
+
+**The B-series below reads as 34 open defects. It is not.** Most describe code the Nim core has
+already superseded, and they die when that code is deleted rather than needing a fix. This table is
+the accurate state; the detailed entries further down are kept for their evidence.
+
+### 1. Dies with `lib/*.lua` — **no work, deletion only** (N-33)
+
+**B-12** (inverted config hierarchy) · **B-14** (embed reports healthy while dead) ·
+**B-15** (RAG inert, zero callers) · **B-16** (blocking `io.popen`) · **B-17** (fork storms) ·
+**B-18** (hot-path defects) · **B-19** (unreachable header timeout) · **B-36** (missing purpose
+headers) · **N-19** (already moot).
+
+**Eight defects that need no fix at all** — `config.nim`, `rag.nim`, `fssync.nim`, `db.nim`,
+`http.nim` and `server.nim` replaced the code that had them. This is D-O working as designed.
+
+### 2. Frozen in `jca_web/` until N-S9 (D-Z)
+
+**B-01** — the Google Fonts leak. **This is a live privacy defect**: a browser with network access
+contacts `fonts.googleapis.com` on every page load. It cannot be fixed without editing a frozen
+tree, so it stands until N-S9 retires that tree. **Flagged, not quietly reclassified.**
+**B-03**, **B-04** — stale comments and two impossible diagrams. Cosmetic; same gate.
+
+### 3. Survives the rewrite — **these are the real remaining defects**
+
+| Area | Items | Note |
+|---|---|---|
+| `hardware-profiles/` data | **B-05** (partly), **B-10**, **B-20** | Data outlives the rewrite. **B-10 is the real one** — the only CPU-only profile, and entirely Linux. **B-21 is MOOT and so is the CUDA half of B-05: CUDA is not meaningfully available on FreeBSD, so `CUDA/dgpu-generic` can never be selected on the target platform.** Closed 2026-08-31 |
+| `scripts/` | **B-11**, **B-27**, **B-28**, **B-29**, **B-35** | `jenova-term` never deployed; `--purge` documented but unparsed; `$SKIP_JVIM` dead code; a documented step that does not exist; `cleanup.sh`'s widened trust boundary |
+| `tests/` | **B-22**, **B-23**, **B-24**, **B-25**, **B-26** | **B-22 still writes `etc/jenova.conf`** (`test_validate_arg.sh:62`, unchanged). B-23's fd check is vacuous on FreeBSD. Four tests still orphaned. `python3` still needed by `test-health.sh` and the `proxy-concurrency` harness |
+| docs / hygiene | **B-06**, **B-30**, **B-32**, **B-33**, **B-34**, **B-37**, **B-38** | `gmake` still appears 6× in this file; `proxy.log` still in the repo root; the three empty `docs/` directories still present |
+| **B-02** | 2 live instances | `jenova-ui/src/main.c:324` (tray lock — dies at N-S7) and `scripts/update.sh:105` (fallback PID path). The rest are comments or deliberate legacy cleanup |
+
+### 4. Nim core — recorded, none blocking
+
+**N-16** no HTTP keep-alive · **N-18** compile-time thread counts · **N-21** restore revives
+individually-deleted messages (faithful to the original contract) · **N-23** absolute rpath, resolve
+before any deploy · **N-12**, **N-14**, **N-15** integrity-pass notes.
+
+### 5. Closed as **not a session's business** — never raise again
+
+**N-24** — `etc/jenova.local.conf` names `Vulkan2`. **This is the USER's machine file and the USER
+has stated the intended configuration: agent on GPU, embedding on CPU, drafter on GPU, Vulkan0 and
+Vulkan1.** No session edits it. It was raised repeatedly and that was wrong. **Closed.**
+
+---
+
 ## Backlog — the Nim rewrite (D-L), 2026-08-28
 
 **Nothing here is scoped or approved.** Q-20, Q-21 and Q-22 gate all of it.
@@ -62,12 +109,13 @@ Granular task list. Completed items move to the `BLUEPRINT.md` implementation re
 | **N-33** | **`lib/proxy.lua` and its modules are now fully superseded and are candidates for deletion — but nothing has been removed.** Every route and every completion behaviour is reproduced in the Nim core. Retained under Directive 3 until the USER instructs removal. Affected: `lib/{proxy,search,embed,fs_sync,db,http,json,sha256,prompts,git}.lua`. **`ffi_defs.lua`, `daemon.lua` and `ui.lua` are NOT in this set** — they are still used by the tray and lifecycle path until N-S6/N-S7 |
 | ~~N-29~~ | **Closed 2026-08-31.** All five routes resolved: `/api/storage/*` ported with containment, `/infill` and `/v1/health` classified at N-S4c, `/api/workspaces` subtracted under D-D |
 | ~~N-S5b~~ | **Complete 2026-08-31** — `rag.nim`: FTS5 keyword index, BLOB vectors, chunk text persisted. **FTS5 confirmed present by probe** (`jenova-core db-capabilities`), so Q-24 option A shipped. `db.nim` gained `execBlob`/`queryBlob`. `rag-selftest` 7 assertions PASS, including the vector path verified without an embedding server. See `PROGRESS.md` |
-| **N-31** | **The embedding server HTTP call is unverified.** `rag.embed` posts to `:8082/v1/embeddings` and parses `data[].embedding`. The storage and similarity maths are asserted directly by `rag-selftest`, but **the request/response shape has never been exercised against a running embedding server** — `chunks with vectors: 0` in the self-test is that server being absent. Keyword-only retrieval is a supported degraded mode, so this does not block N-S5c; it does mean the semantic half is written and not proven | `src/jenova/rag.nim` `embed()` |
+| ~~N-31~~ | **Closed 2026-08-31.** The embedding server returns exactly the `data[].embedding` shape `rag.embed` parses; `chunks with vectors` went 0 → 3 against a live embedder, and the semantic ranking check passed. Verified during a permissioned model-copy test |
+| ~~N-31-orig~~ | **The embedding server HTTP call is unverified.** `rag.embed` posts to `:8082/v1/embeddings` and parses `data[].embedding`. The storage and similarity maths are asserted directly by `rag-selftest`, but **the request/response shape has never been exercised against a running embedding server** — `chunks with vectors: 0` in the self-test is that server being absent. Keyword-only retrieval is a supported degraded mode, so this does not block N-S5c; it does mean the semantic half is written and not proven | `src/jenova/rag.nim` `embed()` |
 | ~~N-25~~ | **Closed 2026-08-31 by D-AF, not fixed — `llama-server` parses sampling parameters per request.** The defect was real only for the in-process path, which is now optional. It reapplies if `JENOVA_INPROC=1` is ever made load-bearing again |
 | ~~N-26~~ | **Closed 2026-08-31 by D-AF** — `llama-server` handles client disconnect. Same caveat as N-25: real only for the in-process path |
 | ~~N-S4c~~ | **Complete 2026-08-31** — inference default inverted to the proxy path; `/infill` classified (the USER's Neovim FIM need, satisfied by classification alone under D-AF); `/v1/health` fixed from 400; `tests/test_routes.sh` added, 9 assertions PASS. See `PROGRESS.md` |
 | ~~N-22~~ | **RETRACTED 2026-08-28 — the claim was false and the fault was mine.** `CTX_SIZE=32768` serves fine on this hardware, as the USER stated. My binding ignored `DEVICES` (so the whole model went to Vulkan0 alone instead of splitting across Vulkan0+Vulkan1) and ignored `KV_CACHE_TYPE` (so the KV cache was f16, twice the size of the configured `q8_0`). Verified after the fix: ctx=32768, slots=2, kv=q8_0, Vulkan0 152 MiB + Vulkan1 381 MiB, generation succeeds |
-| **N-24** | **`etc/jenova.local.conf` names a device that does not exist** — `DEVICES="Vulkan0,Vulkan1,Vulkan2"`, but this machine has only `Vulkan0`, `Vulkan1` and `CPU`. Harmless until now **only because B-12 meant the shell discarded the local conf entirely**; the Nim core honours it and so is the first thing to read the bad value. `scripts/build-llama.sh` generated it. **Fixing B-12 exposed a latent bad configuration that had been invisible for as long as it has existed** |
+| ~~N-24~~ | **CLOSED 2026-08-31 — not a session's business, and raising it repeatedly was the defect.** `etc/jenova.local.conf` is the **USER's machine file**, generated by `scripts/build-llama.sh`. **The USER has stated the intended configuration: agent on GPU, embedding on CPU, drafter on GPU, Vulkan0 and Vulkan1.** That is settled and recorded in `DECISIONS_LOG.md` SETTLED FACTS. **No session edits, rewrites or "fixes" that file, and no session asks about it again.** The evidence is preserved only so the observation is not lost: `llama-server` rejects `-dev Vulkan0,Vulkan1,Vulkan2` outright with `invalid device: Vulkan2`, and `--list-devices` reports exactly Vulkan0 (GTX 1650 Ti, 4342 MiB) and Vulkan1 (Intel Iris Xe, 12064 MiB) |
 | **N-23** | The llama rpath is absolute to `external/ext_bin/bin`, correct for a source tree. An installed binary needs the deployed lib directory instead — resolve before N-S6 |
 | **N-21** | **Restoring a conversation revives every message, including ones deleted individually beforehand.** Faithful to `db.restore_item` and therefore correct for now — but it is a latent defect in the contract, and the GUI (N-S7) need not inherit it |
 | **N-16** | **No HTTP keep-alive** — every response is `Connection: close`, so a page with many assets opens a connection per asset. Acceptable now; revisit before the Web UI is served in anger, since connections beyond the worker count queue in the accept backlog |
@@ -85,7 +133,7 @@ Granular task list. Completed items move to the `BLUEPRINT.md` implementation re
 | **N-10** | **Tray rebuild on StatusNotifierItem.** GTK4 drops `libappindicator`; the tray is an existing feature and is retained (Directive 3) |
 | ~~N-3~~ | **Closed by D-N** — single binary, GUI links the core in-process; `llama.cpp` linked directly |
 | **N-4** | `jca_web/` deprecation policy: no new features, what "retained" means in practice, and what replaces `/api/db/*` when it goes |
-| ~~N-5~~ | **Closed by D-O** — triage adopted. Survivors were B-05, B-09, B-10, B-20, B-21, B-22, B-01. **Updated 2026-08-31:** B-09 closed by deletion (Q-11); B-01 deferred to N-S9 (D-Z). Remaining: B-05, B-10, B-20, B-21, B-22 |
+| ~~N-5~~ | **Closed by D-O** — triage adopted. Survivors were B-05, B-09, B-10, B-20, B-21, B-22, B-01. **Updated 2026-08-31:** B-09 closed by deletion (Q-11); B-01 deferred to N-S9 (D-Z); **B-21 moot — CUDA is unreachable on FreeBSD**. **Remaining: B-10, B-20, B-22, and B-05's non-CUDA half** |
 | ~~N-6~~ | **Withdrawn by C-11** — commit boundaries are the USER's. Noted only: the working tree still has none |
 | **N-7** | **D-N follow-through:** a single binary must still serve LAN mode without the GUI running (Directive 3), and must isolate inference so a GUI fault cannot kill a generation |
 | ~~N-8~~ | **CLOSED 2026-08-31 — substantially wrong, and the error was mine.** `AGENTS.md` contains **four** directives and **no Directive 7, no `.dbc`, no cartridge, no `test_roms/`** — they were removed before this session. I reported this item out of this file without checking it against the governance file I had read in full minutes earlier. Directive 2's copyleft clause is ruled dead letter by **D-X**, not amended. **The real defect the check found:** the devdocs cite a superseded numbering — **`Directive 6` appears 14× and does not exist**, and it is what `D-J`, `C-10` and the mandated per-session integrity pass were built on; `Directive 7` appears 6×. The Codebase Integrity Standard is retained on its merits as workspace practice and is no longer claimed to be mandated by a directive |

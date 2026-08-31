@@ -198,6 +198,29 @@ Proxy**, and it reframes N-S5b: RAG is one input to the pipeline, not the stage.
 **Verified with no gap:** all 46 `db.lua` public functions are reachable through `api.nim`'s
 generic handlers.
 
+### 5q. The reason the USER kept being asked answered questions
+
+> "im getting sick of being asked the same questions a hundred times over … why are you constantly
+> wasting compute over and over again asking questions already answered a hundred times"
+
+**It is a documentation defect with a specific mechanism.** `DECISIONS_LOG.md` carried **eleven
+`AWAITING USER DECISION` markers; ten were stale.** Q-20 was answered by D-P, Q-22 by D-N, Q-23 by
+D-W and then mooted by D-AF, Q-1/Q-3/Q-5 by D-F/D-G/D-H, Q-9 resolved to no-action, and **Q-10 and
+Q-11 were answered and executed earlier the same day.** Only Q-12 is open.
+
+A session reads that file and sees eleven open questions. **The file was manufacturing the
+repetition.** A QUESTION STATUS index and a SETTLED FACTS table now sit at the top and override the
+stale markers, so the next session sees one open question and a list of things it must not ask.
+
+**The hardware question in particular is closed for good.** The USER stated it plainly: **agent on
+GPU, embedding on CPU, drafter on GPU, Vulkan0 and Vulkan1.** `etc/jenova.local.conf` is the USER's
+machine file and **no session edits, rewrites or "fixes" it** — the configs exist deliberately, and
+a session's job is to use them, not rewrite them. N-24 is closed on that basis.
+
+**The backlog was also overstated by a quarter.** Eight of the 34 "open" B-defects describe
+`lib/*.lua` the Nim core has superseded and need no fix — they die with N-33's deletion. Full
+triage at the top of `TODOS.md`.
+
 ### 5p. N-S6 (first increment) — backend supervision. **B-13 closed by construction.**
 
 `lifecycle.nim` and `jenova-core backends [start|stop|status|args]`. 21 assertions, PASS.
