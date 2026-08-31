@@ -44,7 +44,49 @@ further down is left in place for the historical record; **this table overrides 
 | **Licence** | AGPL-3.0, copyleft dependencies permitted (**D-X**) |
 | **Inference engine** | `llama-server`, always. Never a standalone (**D-AF**) |
 | **Testing** | Per-instance permission only (**D-AG**) |
+| **The shell tree** | **Not to be repaired (D-AH).** The installer, the shell-era docs and the shell test scripts are scaffolding around the system being replaced. **Remaining work = what is missing from the Nim core**, never what is broken in the old one. Deployment of the single binary is one decision after the rewrite |
 | **CUDA** | **Not meaningfully available on FreeBSD.** `CUDA/dgpu-generic` is unreachable on the target platform, so its data defects (B-21, and the CUDA half of B-05) are moot. **Apply the platform constraint before raising anything about that profile** |
+
+---
+
+## 2026-08-31 — D-AH: **the old system's decay is not the remaining work**
+
+### D-AH — Do not rebuild the program being replaced. *(BINDING)*
+
+> "why are we getting bogged down and into rebuilding the old broken version - i specifically chose
+> the redesign and rewrite so we werent making a million entry points, a million processes on one
+> thread and a million things to pass through one proxy … we are not rebuilding llama as nim and we
+> are not rebuilding the same faulty lua system - we are taking the good and enhancing the parts
+> missing"
+
+**The remaining work is what is missing from the Nim core, not what is broken in the shell tree.**
+The shell installer, the shell-era documentation and the shell test scripts are scaffolding around a
+system being replaced. **D-O already said this** — *fix only what survives the rewrite* — and it was
+in front of me.
+
+**What this rules, specifically:**
+
+| | Ruling |
+|---|---|
+| **N-35 — WITHDRAWN** | *"why would you run make install for a program that's being rebuilt in nim?"* `make install` is the **old program's** deployment path. The deliverable is **one Nim binary**, and how it is deployed is a single decision taken after the rewrite — not a repair to `install.sh`, which D-Y prohibits exercising anyway. **The claim was factually true and entirely beside the point** |
+| **B-39 — DEFERRED** | *"not your concern until the completed refactor and rewrite and redesign."* Documentation describes a product; the product is not finished. Written now, it is written again after N-S7, N-S8 and N-S9. **B-32, B-33 and B-34 defer with it** |
+| **B-40 / B-24 — resolve by DELETION** | *"why is python in use at all - this should never have been the case."* Correct, and sharper than my own recommendation, which was to rewrite the script on base `fetch(1)` — that still keeps a shell health test for a proxy that no longer exists. **`jenova-core` covers health in-binary.** Archive `tests/test-health.sh`; B-24 dies by subtraction, as B-23 did |
+| **B-11 — never a question** | *"what the hell is jenova-term - if its another one of these multitudes that are never used - why are we even talking about it."* `bin/jenova-term`'s only caller is `lib/ui.lua:104`, the GTK3 tray. **It dies at N-S7.** Putting it to the USER as a ruling was noise |
+| **N-34 — enumerate once, schedule nothing** | The 33 dangling `jenova-ca` references are all in files the rewrite removes. A list of things that leave, not a repair backlog |
+
+**The architectural point behind the ruling, which is the part worth carrying:** the rewrite exists
+to end *many entry points, many processes on one thread, and everything funnelled through one
+proxy*. **Restoring the old surface would reintroduce exactly what it was chosen to remove.** Every
+stage I proposed at 13:07 added an entry point back.
+
+**Next is N-S7 — the GUI.** Then N-S8 the CLI, then N-S9 retires `jca_web/`.
+
+### The failure mode, named so it is catchable next time
+
+I ran an accurate audit and then **mistook "this is broken" for "this is work"**. The filter that
+was missing is one question, and D-O is exactly that question: *does this file survive the rewrite?*
+Every item I scheduled fails it. **An audit finding is not a work item until it passes the triage
+that is already ruled.**
 
 ---
 

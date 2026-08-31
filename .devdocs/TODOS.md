@@ -2,7 +2,7 @@
 
 Granular task list. Completed items move to the `BLUEPRINT.md` implementation registry.
 
-**Last updated:** 2026-08-31 12:58
+**Last updated:** 2026-08-31 13:07 — cross-reference pass; §6 added (N-35, B-39 … B-43), N-34 rescoped
 
 ---
 
@@ -53,10 +53,13 @@ the accurate state; the detailed entries further down are kept for their evidenc
 **B-12** (inverted config hierarchy) · **B-13** (`--daemon` starts no `:8080`) · **B-14** (embed
 reports healthy while dead) · **B-15** (RAG inert, zero callers) · **B-16** (blocking `io.popen`) ·
 **B-17** (fork storms) · **B-18** (hot-path defects) · **B-19** (unreachable header timeout) ·
-**B-23** (vacuous fd assertion) · **B-24** (undeclared `python3`) · **B-36** (missing purpose
-headers) · **N-19**, **N-23**.
+**B-23** (vacuous fd assertion) · ~~**B-24** (undeclared `python3`)~~ **— REOPENED, see §6/B-40** ·
+**B-36** (missing purpose headers) · **N-19**, **N-23**.
 
-**Thirteen defects closed without a line of fixing code** — the 14 Lua modules, `bin/jenova-ca`,
+**Twelve defects closed without a line of fixing code** *(count corrected 2026-08-31 13:07 from
+thirteen: **B-24 cited `tests/test-health.sh:14` as well as the harness**, and only the harness was
+archived. A defect dies with a file only if every site in its evidence went with that file.)* — the
+14 Lua modules, `bin/jenova-ca`,
 `test-launcher.sh`, `test_bin_jenova.sh` and `tests/proxy-concurrency/` are in
 `.devdocs/ARCHIVE/`. **This is D-O working exactly as designed:** the triage said fix only what
 survives the rewrite, and none of these did.
@@ -66,13 +69,24 @@ four files (`detect-env.sh`, `jenova-conf.sh`, `jenova-model.sh`, `ui.lua`).
 
 ### 1b. NEW — dangling references the archive leaves behind
 
-| Site | Effect |
-|---|---|
-| **`scripts/install.sh:240`** | **The one that matters.** Its symlink loop deploys `jenova-ca`, which is gone. **The install path must be rewired to deploy `jenova-core`** — N-S6 follow-through, not yet done. D-Y prohibits exercising the install path during the rewrite, so this is recorded rather than patched |
-| `lib/ui.lua:69,109,111` | The GTK3 tray spawns `jenova-ca`. **The tray path is inert in the source tree until N-S7** replaces it |
-| `scripts/{update,uninstall,cleanup,build-llama}.sh` | Restart hints, symlink cleanup, warnings |
-| `lib/jenova-conf.sh:44` | `PID_FILE` still named `jenova-ca.pid`. A filename; harmless |
-| `tests/test_gpu.sh` | Orphaned already (B-25) |
+> **Counts corrected 2026-08-31 13:07 by enumeration; framing corrected 13:21 by D-AH.** This table
+> understated the surface roughly sixfold — and then I read it as a repair backlog, which it is not.
+> **Every file below is a file the rewrite removes:** `lib/ui.lua` at N-S7, the shell scripts with
+> the shell tree. The counts are recorded so they are not re-derived. **Nothing here is scheduled**,
+> and **N-35 — "`make install` never builds `jenova-core`" — is withdrawn**: `make install` is the
+> old program's deployment path and the deliverable is one Nim binary.
+
+| Site | Sites | Effect |
+|---|---|---|
+| **`scripts/install.sh`** | **6** — `:7,25,240,294,385,450` | **The one that matters.** The deploy loop, the symlink loop, a `sed` rewrite and the next-steps text all name `jenova-ca`, which is gone. **The install path must be rewired to `jenova-core`** — N-S6 follow-through, not yet done. D-Y prohibits *exercising* the install path during the rewrite; writing it does not exercise it |
+| `lib/ui.lua` | **14**, not 3 | `:69,109,111,114,117,119,123,128,130,141,143,145,149,164`. The GTK3 tray spawns `jenova-ca` for proxy-serve, start, stop, restart and status. **The tray path is inert in the source tree until N-S7** replaces it |
+| `scripts/uninstall.sh` | **10** — `:5,24,26,83,85,87,96,97,128,142` | Not just mentions: **`:85` invokes `"$JENOVA_CA" stop`**, so uninstall cannot stop a running system |
+| `scripts/update.sh` | 5 — `:6,100,105,126,220` | Restart, pidfile fallback, redeploy loop |
+| `scripts/cleanup.sh` | 1 — `:95` | Hint text: *"Run 'bin/jenova-ca stop' first"* |
+| `scripts/build-llama.sh` | 1 — `:308` | Restart hint |
+| `README.md`, `docs/*.md` | **22** | **B-39.** The quickstart tells users to run a binary that does not exist |
+| Pidfile name only — harmless | 8 | `lib/jenova-conf.sh:44`, `src/jenova/paths.nim:90`, `etc/jenova.conf:95`, five profile `jenova.conf` |
+| `tests/test_gpu.sh` | 1 | Orphaned already (B-25) |
 
 ### 2. Frozen in `jca_web/` until N-S9 (D-Z)
 
@@ -86,8 +100,8 @@ tree, so it stands until N-S9 retires that tree. **Flagged, not quietly reclassi
 | Area | Items | Note |
 |---|---|---|
 | `hardware-profiles/` data | **B-05** (partly), **B-10**, **B-20** | Data outlives the rewrite. **B-10 is the real one** — the only CPU-only profile, and entirely Linux. **B-21 is MOOT and so is the CUDA half of B-05: CUDA is not meaningfully available on FreeBSD, so `CUDA/dgpu-generic` can never be selected on the target platform.** Closed 2026-08-31 |
-| `scripts/` | **B-11**, **B-27**, **B-28**, **B-29**, **B-35** | `jenova-term` never deployed; `--purge` documented but unparsed; `$SKIP_JVIM` dead code; a documented step that does not exist; `cleanup.sh`'s widened trust boundary |
-| `tests/` | **B-22**, **B-25**, **B-26** | **B-22 still writes `etc/jenova.conf`** (`test_validate_arg.sh:62`, unchanged) — the highest-value cheap fix left. B-25: three orphans remain (`test_validate_arg`, `test_gpu`, `test_gpu_single`). **B-23 and B-24 are CLOSED** — they lived in `proxy-concurrency/`, now archived |
+| ~~`scripts/`~~ | ~~**B-11**, **B-27**, **B-28**, **B-29**, **B-35**~~ | **RECLASSIFIED 2026-08-31 13:21 by D-AH — these do NOT survive the rewrite and were mis-filed here.** `jenova-term` never deployed (**B-11 — and `bin/jenova-term`'s only caller is `lib/ui.lua:104`, the GTK3 tray, so it dies at N-S7; it was never a question to put to the USER**); `--purge` unparsed; `$SKIP_JVIM` dead code; a documented step that does not exist; `cleanup.sh`'s widened trust boundary. **All five live in the shell installer/updater/uninstaller — the orchestration layer the Nim core replaces.** Kept as evidence, scheduled for nothing |
+| `tests/` | **B-22**, **B-24**, **B-25**, **B-26**, **B-40**, **B-42** | **B-22 still writes `etc/jenova.conf`** (`test_validate_arg.sh:62`, re-confirmed 13:07) — the highest-value cheap fix left. B-25: three orphans remain (`test_validate_arg`, `test_gpu`, `test_gpu_single`). **B-23 is CLOSED** — it lived only in `proxy-concurrency/`. **B-24 is NOT** — it also cited `test-health.sh:14`, which stayed; reopened as **B-40**, together with that file starting no server. **B-42:** there is no `check` target at the repository root |
 | docs / hygiene | **B-06**, **B-30**, **B-32**, **B-33**, **B-34**, **B-37**, **B-38** | `gmake` still appears 6× in this file; `proxy.log` still in the repo root; the three empty `docs/` directories still present |
 | **B-02** | 2 live instances | `jenova-ui/src/main.c:324` (tray lock — dies at N-S7) and `scripts/update.sh:105` (fallback PID path). The rest are comments or deliberate legacy cleanup |
 
@@ -110,6 +124,60 @@ already distinguishes installed from source.)*
 has stated the intended configuration: agent on GPU, embedding on CPU, drafter on GPU, Vulkan0 and
 Vulkan1.** No session edits it. It was raised repeatedly and that was wrong. **Closed.**
 
+### 6. Cross-reference pass, 2026-08-31 13:07 — **substantially corrected by the USER at 13:21**
+
+> **D-AH, and it invalidates most of what this section originally claimed.** I audited the old
+> system's scaffolding — the shell installer, the shell docs, the shell test scripts — and recorded
+> its decay as "remaining work". **None of it survives the rewrite, so under D-O none of it is
+> work.** The USER: *"why are we getting bogged down into rebuilding the old broken version - I
+> specifically chose the redesign and rewrite so we weren't making a million entry points, a million
+> processes on one thread and a million things to pass through one proxy … we are not rebuilding the
+> same faulty lua system - we are taking the good and enhancing the parts missing."*
+>
+> **N-35 is WITHDRAWN. B-39 is DEFERRED. B-40 resolves by deletion. B-11 was never a question.**
+> The rows below are kept with their corrections visible rather than edited away, per the standing
+> rule that a false claim stays legible.
+>
+> **The rows that survive are B-41, B-42 and B-43 — devdoc accuracy — and they are hygiene, not a
+> stage.**
+
+Every load-bearing tracker claim was checked against the file it cites. The Nim core matched its
+map on every functional claim tested — the class table reads exactly `static:4 health:2 api:3
+completion:3 embed:1 debug:1`; `/api/db/*`, `/api/fs/*` and `/api/storage*` are all dispatched in
+`server.nim:245-253`; `routes.nim:71-84` classifies `/infill` to completion and `/v1/health` to
+health; `rag.nim:62` creates the FTS5 virtual table and `jenova_core.nim:474` calls
+`rag.initSchema()` on the `serve` path; `lifecycle.nim:350` carries 30 s / 60 s / 3 exactly as
+written up. **Thirteen open B-defects were re-confirmed at their cited `file:line`** — B-01, B-02,
+B-10, B-11, B-20, B-22, B-27, B-28, B-29, B-32, B-33, B-37, B-38 — as were N-11, N-16 and N-18.
+
+**What failed the cross-reference is the deployment story and the documentation, not the core.**
+
+| ID | Defect | Evidence |
+|---|---|---|
+| ~~**N-35**~~ | **WITHDRAWN 2026-08-31 13:21 by D-AH.** *"what the fuck are you talking about, why would you run make install for a program that's being rebuilt in nim?"* **The claim was factually true and completely beside the point.** `Makefile:33`'s `all` does omit `core`, and `install.sh` does name `jenova-ca` — but `make install` is the **old program's** deployment path, D-Y already prohibits exercising it, and the deliverable is **one Nim binary**. How that is deployed is a single decision taken **after** the rewrite, not a repair to a shell installer that does not survive. **Recording the decay of a path nothing should use, as urgent work, is the exact error D-O exists to prevent** | — |
+| ~~**B-39**~~ | **DEFERRED 2026-08-31 13:21 by D-AH.** *"not your concern until the completed refactor and rewrite and redesign."* The evidence stands and is kept for whoever writes the docs: **22 `jenova-ca` references** across `README.md` (4), `docs/usage.md` (11), `docs/install.md` (2), `docs/privacy.md` (1), `docs/architecture.md` (4), plus **8 archived `lib/*.lua` modules cited as live implementation** across `docs/architecture.md` and `docs/context-and-retrieval.md`. **But documentation describes a product, and the product is not finished** — written now it is written again after N-S7, N-S8 and N-S9. **B-32, B-33 and B-34 defer with it**, as symptoms of the same thing | `README.md`; `docs/*.md` |
+| **B-40** | **B-24 reopened — and it resolves by deletion, not by a fix.** *(Corrected 13:21: my recommendation was "rewrite on base `fetch(1)`", and the USER's question was sharper — "why is python in use at all, this should never have been the case." Rewriting it still keeps a shell smoke test for a proxy that no longer exists.)* `tests/test-health.sh` is the last shell health test for the archived Lua proxy: `:14` shells to `python3`, which is absent from `DEPS`, and it **starts no server**, so `make -C tests check` aborts on its first line. **`jenova-core` already covers this in-binary** — `db-selftest`, `serve-selftest`, `rag-selftest`, `pipeline-selftest`, `sha256-selftest`, and `backends health`, which probes the port rather than the pid. **Archive `test-health.sh` and drop it from `tests/Makefile`. B-24 then dies by subtraction, the way B-23 did** | `tests/test-health.sh`; `tests/Makefile:5` |
+| **B-41** | **Tracker self-contradiction, in the two files a session is told to read first.** (a) `BRIEFING.md §5` says *"Finish N-S6 … missing exactly five things: `restart`, `--watch`, `--lan`, the port flags, `hardware-profiles/` consumption"* while **`BRIEFING.md §1` of the same file** records N-S6 COMPLETE and all four flags shipped; §5 also lists **N-24 as "independent and cheap"** and **N-31 as "recorded, not blocking"** when both are CLOSED per this file. (b) `ARCHITECTURE_MAPPING.md §1a` says **"Eight subcommands"** — **thirteen exist**: the eight listed plus `backends`, `db-capabilities`, `sha256-selftest`, `pipeline-selftest`, `rag-selftest`. (c) `ARCHITECTURE_MAPPING.md §8`'s closing paragraph still says *"Nine test scripts … plus `proxy-concurrency/all.sh`; `make check` runs six"* and names `test-launcher.sh`, `test_bin_jenova.sh` and `proxy-concurrency/all.sh` as present — **all three are archived**, and the same section's opening paragraph already says five. (d) `BRIEFING.md §1` says *"Everything is uncommitted"* — **`git status --porcelain` is empty**; the tree is fully committed at `5e6db04`. (e) **`Directive 6` is now cited 22 times, not 14** (`PROGRESS` 4, `PLANS` 4, `TODOS` 5, `SESSION_HANDOFF` 3, `DECISIONS_LOG` 2, `SUMMARIES` 2, `TESTS` 1, `ARCHITECTURE_MAPPING` 1); three in this file are still unqualified live text | the files named |
+| **B-42** | **`make check` does not exist.** `TESTS.md §0/§2` and `ARCHITECTURE_MAPPING.md §8` all say *"`make check` runs five scripts"*. The **root `Makefile` has no `check` target and no `test` target** — `.PHONY: all deps llama web jenova-ui core install clean clean-root help`. The five run under **`make -C tests check`**. From the repository root `make check` fails outright | `Makefile:19`; `tests/Makefile:4` |
+| **B-43** | **Two `.devdocs/` files sit outside the mandated workspace architecture and describe archived code in the present tense.** `CONCURRENCY_ANALYSIS.md` and `REMEDIATION_PLAN.md` are not in `AGENTS.md` § WORKSPACE ARCHITECTURE's eleven-file table. Both analyse **`lib/proxy.lua`, which is archived**, and `REMEDIATION_PLAN.md:7-9` still publishes live status — *"Phase 1 … is implemented and verified … Phases 2–4 are not started"* — for a module that no longer exists in the tree. Their diagnosis is historically valuable (it is what motivated the rewrite), so **archive rather than delete** | `.devdocs/CONCURRENCY_ANALYSIS.md`; `.devdocs/REMEDIATION_PLAN.md:7-9` |
+
+**N-34's enumeration stands; its framing was wrong (13:21, D-AH).** Counting the dangling
+references was worth doing once — but **every file holding them is a file the rewrite removes**:
+`lib/ui.lua` dies at N-S7, and the shell installer/updater/uninstaller die with the shell tree.
+**They are not a repair backlog. They are a list of things that leave.** The count is kept below so
+nobody re-derives it; **no stage is scheduled against it.** Recorded as
+`scripts/install.sh:25,240`. Enumerated: **`install.sh:7,25,240,294,385,450` (6 sites)** ·
+**`update.sh:6,100,105,126,220` (5)** · **`uninstall.sh:5,24,26,83,85,87,96,97,128,142` (10 — and
+`:85` *invokes* `"$JENOVA_CA" stop`, it does not merely mention it)** · `cleanup.sh:95` ·
+`build-llama.sh:308` · **`lib/ui.lua` at 14 sites, not the 3 recorded** (`:69,109,111,114,117,119,
+123,128,130,141,143,145,149,164`). Harmless-by-filename, as already recorded:
+`lib/jenova-conf.sh:44`, `src/jenova/paths.nim:90`, `etc/jenova.conf:95` and five profile
+`jenova.conf` files name the pidfile `jenova-ca.pid`.
+
+**B-30 changed shape, and the change is worth recording rather than closing.** `MAX_TURNS`,
+`MAX_ACTIONS` and `TIMEOUT` are now in `config.nim:49`'s key list, so `jenova-core config` reports
+them. **No consumer acts on them** — they are surfaced, not used. The defect stands.
+
 ---
 
 ## Backlog — the Nim rewrite (D-L), 2026-08-28
@@ -130,7 +198,7 @@ Vulkan1.** No session edits it. It was raised repeatedly and that was wrong. **C
 | ~~N-S5c~~ | **Complete 2026-08-31 — N-30 closed.** `pipeline.nim`, `prompts.nim`, `websearch.nim`, `sha256.nim`. All seven behaviours ported **and wired into the serving path**: intent detection, RAG retrieval and injection, web search, three-mode persona injection, tool stripping, cache intercept on the rewritten body's key. SHA-256 asserted against the FIPS 180-4 vectors. `pipeline-selftest` 15, `sha256-selftest` 4 — PASS. See `PROGRESS.md` |
 | ~~N-S6~~ | **COMPLETE 2026-08-31. Full parity with `bin/jenova-ca`, which is now deletable (N-33).** `jenova-ca` has `start stop status restart --port --llama-port --embed-port --watch --daemon --lan`; the core has all of them bar `--daemon`, which is **deliberately not implemented** — self-daemonising is an anti-pattern, D-H deferred service integration here, and N-S7's tray owns the process. **"`hardware-profiles/` consumption" was retracted: `bin/jenova-ca` never references `hardware-profiles/` at all** — it reads `etc/jenova.conf`, the applied profile, which `config.nim` already handles. Selection is `detect-hardware.sh`'s job, a setup-time tool. Detail below |
 | ~~N-S6-detail~~ | **NEARLY COMPLETE — one item left.** Done 2026-08-31: `lifecycle.nim`; `backends [start\|stop\|restart\|status\|health\|args]`; both argument vectors; `serve` bringing the whole system up in **one command** (the two-command split was `jenova-ca`'s shape reproduced without asking why — it existed because the tray owned the proxy, which is B-13); `--lan` (client port only — backends stay loopback unconditionally, asserted both ways); `--port`/`--llama-port`/`--embed-port`; the watchdog as a thread inside `serve` (30 s / 3 failures / 60 s cooldown); `JENOVA_NO_BACKENDS=1` so tests never load a model onto the GPU. 31 assertions. **B-13 closed by construction.** **Outstanding: `hardware-profiles/` consumption.** Only then is `bin/jenova-ca` deletable |
-| ~~N-33~~ | **DONE 2026-08-31 — archived, not deleted, on the USER's instruction.** 14 Lua modules, `bin/jenova-ca`, two test scripts and `tests/proxy-concurrency/` moved to `.devdocs/ARCHIVE/`, with a manifest at `.devdocs/ARCHIVE/README.md` mapping each to its replacement and the defects that die with it. **Closes B-12, B-13, B-14, B-15, B-16, B-17, B-18, B-19, B-23, B-24, B-36, N-19, N-23.** Kept in `lib/`: the three shell modules (`config.nim` shells out to them — load-bearing) and `ui.lua` (until N-S7). **New: `scripts/install.sh` still deploys `jenova-ca` and must be rewired to `jenova-core`** |
+| ~~N-33~~ | **DONE 2026-08-31 — archived, not deleted, on the USER's instruction.** 14 Lua modules, `bin/jenova-ca`, two test scripts and `tests/proxy-concurrency/` moved to `.devdocs/ARCHIVE/`, with a manifest at `.devdocs/ARCHIVE/README.md` mapping each to its replacement and the defects that die with it. **Closes B-12, B-13, B-14, B-15, B-16, B-17, B-18, B-19, B-23, ~~B-24~~, B-36, N-19, N-23** — **twelve, not thirteen; B-24's evidence also named `test-health.sh:14`, which stayed. See §6/B-40.** Kept in `lib/`: the three shell modules (`config.nim` shells out to them — load-bearing) and `ui.lua` (until N-S7). **New: `scripts/install.sh` still deploys `jenova-ca` and must be rewired to `jenova-core`** |
 | ~~N-29~~ | **Closed 2026-08-31.** All five routes resolved: `/api/storage/*` ported with containment, `/infill` and `/v1/health` classified at N-S4c, `/api/workspaces` subtracted under D-D |
 | ~~N-S5b~~ | **Complete 2026-08-31** — `rag.nim`: FTS5 keyword index, BLOB vectors, chunk text persisted. **FTS5 confirmed present by probe** (`jenova-core db-capabilities`), so Q-24 option A shipped. `db.nim` gained `execBlob`/`queryBlob`. `rag-selftest` 7 assertions PASS, including the vector path verified without an embedding server. See `PROGRESS.md` |
 | ~~N-31~~ | **Closed 2026-08-31.** The embedding server returns exactly the `data[].embedding` shape `rag.embed` parses; `chunks with vectors` went 0 → 3 against a live embedder, and the semantic ranking check passed. Verified during a permissioned model-copy test |
@@ -140,7 +208,8 @@ Vulkan1.** No session edits it. It was raised repeatedly and that was wrong. **C
 | ~~N-S4c~~ | **Complete 2026-08-31** — inference default inverted to the proxy path; `/infill` classified (the USER's Neovim FIM need, satisfied by classification alone under D-AF); `/v1/health` fixed from 400; `tests/test_routes.sh` added, 9 assertions PASS. See `PROGRESS.md` |
 | ~~N-22~~ | **RETRACTED 2026-08-28 — the claim was false and the fault was mine.** `CTX_SIZE=32768` serves fine on this hardware, as the USER stated. My binding ignored `DEVICES` (so the whole model went to Vulkan0 alone instead of splitting across Vulkan0+Vulkan1) and ignored `KV_CACHE_TYPE` (so the KV cache was f16, twice the size of the configured `q8_0`). Verified after the fix: ctx=32768, slots=2, kv=q8_0, Vulkan0 152 MiB + Vulkan1 381 MiB, generation succeeds |
 | ~~N-24~~ | **CLOSED 2026-08-31 — not a session's business, and raising it repeatedly was the defect.** `etc/jenova.local.conf` is the **USER's machine file**, generated by `scripts/build-llama.sh`. **The USER has stated the intended configuration: agent on GPU, embedding on CPU, drafter on GPU, Vulkan0 and Vulkan1.** That is settled and recorded in `DECISIONS_LOG.md` SETTLED FACTS. **No session edits, rewrites or "fixes" that file, and no session asks about it again.** The evidence is preserved only so the observation is not lost: `llama-server` rejects `-dev Vulkan0,Vulkan1,Vulkan2` outright with `invalid device: Vulkan2`, and `--list-devices` reports exactly Vulkan0 (GTX 1650 Ti, 4342 MiB) and Vulkan1 (Intel Iris Xe, 12064 MiB) |
-| **N-34** | **`scripts/install.sh` deploys `bin/jenova-ca`, which is archived.** `:240`'s symlink loop names it, and `:25` documents it. **The install path is broken until it is rewired to deploy `bin/jenova-core`** — the N-S6 follow-through. D-Y prohibits exercising the install path during the rewrite, so this is recorded rather than patched, but it must be done before any deployment | `scripts/install.sh:25,240` |
+| **N-34** | **`scripts/install.sh` deploys `bin/jenova-ca`, which is archived.** ~~`:240`'s symlink loop names it, and `:25` documents it.~~ **Rescoped 2026-08-31 13:07 by enumeration — six sites in this file, and 33 across the shell tree.** See §1b. **The install path is broken until it is rewired to deploy `bin/jenova-core`** — the N-S6 follow-through. **And see N-35: rewiring `install.sh` alone is not enough, because `make install` never builds `jenova-core` either.** D-Y prohibits exercising the install path during the rewrite, so this is recorded rather than patched, but it must be done before any deployment | `scripts/install.sh:7,25,240,294,385,450` |
+| **N-35** | **`make install` can never deploy the product.** `Makefile:33` — `all: deps llama jenova-ui web` — omits `core`, and `install: all`. The install path therefore builds no `bin/jenova-core` and deploys none. **Strictly larger than N-34**, which only covers the dead name. Two changes: add `core` to `all`, and put `jenova-core` in `install.sh`'s deploy and symlink loops | `Makefile:19,33,88`; `scripts/install.sh:240,294` |
 | ~~N-23~~ | **Closed 2026-08-31 with the archive.** The llama rpath concern applied to `llama.nim`, which is now an optional path (D-AF); `lifecycle.nim` resolves the library directory from `paths.llamaLibDir`, which already distinguishes installed from source |
 | **N-21** | **Restoring a conversation revives every message, including ones deleted individually beforehand.** Faithful to `db.restore_item` and therefore correct for now — but it is a latent defect in the contract, and the GUI (N-S7) need not inherit it |
 | **N-16** | **No HTTP keep-alive** — every response is `Connection: close`, so a page with many assets opens a connection per asset. Acceptable now; revisit before the Web UI is served in anger, since connections beyond the worker count queue in the accept backlog |
@@ -238,7 +307,7 @@ Active only with a `PLANS.md` entry.
 |---|---|---|
 | **B-22** | **`tests/test_validate_arg.sh` rewrites the repository's `etc/jenova.conf`.** `assert_pass "Vulkan/dgpu-i5-1135g7"` genuinely invokes `--apply-profile`, and `apply_profile` mirrors the profile into `$JENOVA_ROOT/etc/jenova.conf` when that directory is writable. The test's `JCA_HOME` mktemp isolation does not cover the repo mirror. **This is the origin of commit `eee557e` "Revert hand-edit of etc/jenova.conf" — it was not a hand-edit** | `tests/test_validate_arg.sh:62`; `hardware-profiles/detect-hardware.sh:339-342` |
 | **B-23** | **The fd-leak assertion is vacuous on FreeBSD.** `run.sh` counts descriptors with `find /proc/$PX/fd`. `/proc` is not mounted on stock FreeBSD, so both counts are 0 and `[ 0 -le 2 ]` passes regardless of a leak. The check only ever worked under the Linuxulator, where it was written. **V-4, the S-1 acceptance gate, is partly vacuous on the target platform.** FreeBSD needs `procstat -f` | `tests/proxy-concurrency/run.sh:58,96` |
-| **B-24** | **`python3` is an undeclared dependency.** Required by `tests/test-health.sh` and the entire `proxy-concurrency` harness (`stub_backend.py`, `probe_streams.py`, inline heredocs). Absent from the `DEPS` list, so `make deps` does not install it and V-4 cannot run on a clean machine | `scripts/install-dependencies.sh` DEPS; `tests/test-health.sh:14`; `tests/proxy-concurrency/run.sh:27,46` |
+| **B-24** | **`python3` is an undeclared dependency. STILL OPEN — see B-40.** ~~Required by `tests/test-health.sh` and the entire `proxy-concurrency` harness~~ — the harness is archived; **`tests/test-health.sh:14` is not, and it is the first line of `tests/Makefile check`.** `python3` remains absent from the 18-entry `DEPS` list, re-confirmed 2026-08-31 13:07, so `make deps` does not install it. **The fix is subtraction, not addition:** rewrite the smoke test on base `fetch(1)` | `scripts/install-dependencies.sh:85-105`; `tests/test-health.sh:14` |
 | **B-25** | **`tests/Makefile` runs 4 of the 9 test scripts** *(count corrected 2026-08-31; was "3 of 8" before `test_api_db.sh` was added at N-S3b — the defect stands, only the number was stale)*. `test_bin_jenova.sh`, `test_validate_arg.sh`, `test_gpu.sh`, `test_gpu_single.sh` are orphaned. Both GPU tests additionally require `external/ext_bin/bin/llama-cli`, which `build-llama.sh` never copies (it copies `llama-server` and `*.so*` only), so they fail unconditionally | `tests/Makefile:7-10`; `scripts/build-llama.sh:205-210` |
 | **B-26** | **`download-draft-model.sh` writes to the wrong directory and fetches the wrong model.** It targets the repository's `models/`, not `$JCA_HOME/models/draft/`, so discovery never finds the result; and it downloads Qwen2.5-Coder-0.5B while `model_dl.sh` downloads Qwen3.5-0.8B. Its closing message claims speculative decoding will be enabled automatically — `JENOVA_DRAFT` is 0 in the deployed profile | `tests/download-draft-model.sh:8,10-11,44` |
 

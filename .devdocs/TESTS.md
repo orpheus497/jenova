@@ -15,8 +15,12 @@ See `DECISIONS_LOG.md` C-10.
 
 ## 0. Current suite — 2026-08-31
 
-`make check` runs **five scripts, all targeting the Nim core**, all in a scratch `JCA_HOME`, none
-spawning a backend:
+**`make -C tests check`** runs five scripts. *(Invocation corrected 2026-08-31 13:07: this said
+`make check`, and the **root `Makefile` has no `check` target** — `.PHONY: all deps llama web
+jenova-ui core install clean clean-root help`. From the repository root `make check` fails. **B-42**.)*
+
+**Four of the five target the Nim core**, all in a scratch `JCA_HOME`, none spawning a backend. The
+fifth, `test-health.sh`, is the exception in every respect — see the note below the table:
 
 | Script | Assertions | Covers |
 |---|---|---|
@@ -24,7 +28,27 @@ spawning a backend:
 | `test_api_fs.sh` | 46 | The filesystem mirror, `/api/fs/*`, `/api/storage/*` and its containment |
 | `test_routes.sh` | 13 | The standing route inventory, incl. the pipeline reaching the upstream |
 | `test_lifecycle.sh` | 31 | The `llama-server` argument vector, `--lan`, port flags, refusal paths |
-| `test-health.sh` | — | Smoke test; still needs `python3` |
+| `test-health.sh` | — | Smoke test. **Broken two ways — see below** |
+
+> **`test-health.sh` is the first line of the `check` target and cannot pass unattended (B-40).**
+> Two independent defects, both verified 2026-08-31 13:07:
+>
+> 1. **It still requires `python3`** (`:14`), and `python3` is still absent from
+>    `install-dependencies.sh`'s 18-entry `DEPS` list. **B-24 is therefore NOT closed.**
+>    `TODOS.md §1` and `.devdocs/ARCHIVE/README.md` both record it as dying with the
+>    `proxy-concurrency` harness; that is true of the harness's copy and false of this one. B-24's
+>    original evidence named `tests/test-health.sh:14` **and** the harness — archiving one half
+>    closed half a defect.
+> 2. **It starts no server.** The whole script is 29 lines: source `etc/jenova.conf`, then probe
+>    `$HOST:$PORT/health` and exit 1 on any exception. Every other suite starts its own
+>    `jenova-core` on a scratch home and stops it on exit. So `make -C tests check` aborts on its
+>    first line unless something is already listening — which is also why "all suites pass" has only
+>    ever been observed by running them individually.
+>
+> **The fix is not to add `python3`.** A FreeBSD-base smoke test needs no interpreter: `fetch -qo -`
+> against `/health`, with the script starting and stopping its own server the way the other four do.
+> That closes B-24 by subtraction rather than by adding a dependency, which is the pattern S-2 and
+> S-4 established.
 
 Plus the core's own subcommands: `db-selftest`, `serve-selftest`, `rag-selftest` (7),
 `pipeline-selftest` (15), `sha256-selftest` (4), `llama-selftest`, `db-capabilities`.
@@ -49,11 +73,16 @@ scripts are the exception: they test the text, not the kernel. Anything touching
 
 ## 2. The automated suite
 
-`tests/Makefile` `check` target — **runs 6 entry points: 5 of the 9 scripts in `tests/`, plus
-`proxy-concurrency/all.sh`.** *(Count corrected twice on 2026-08-31: it read "3 of 8" from before
-`test_api_db.sh` landed at N-S3b, then "4 of 9" before `test_api_fs.sh` and `test_routes.sh` were
-added. **The four orphans are unchanged throughout, so B-25 stands** — only the arithmetic was
-ever stale.)*
+`tests/Makefile` `check` target — **runs 5 of the 9 scripts in `tests/`.** *(Count corrected three
+times on 2026-08-31, the last at 13:07 by enumerating the directory: "3 of 8" from before
+`test_api_db.sh` landed at N-S3b, then "4 of 9", then "6 entry points … plus
+`proxy-concurrency/all.sh`" — **which was already false when written, because that harness had been
+archived hours earlier**. The orphan set shrank by one with `test_bin_jenova.sh`'s archival, so
+**B-25 now has three instances, not four**; the defect stands.)*
+
+**§2's table below is retained as the record of the pre-archive suite and is not current.**
+`test-launcher.sh`, `proxy-concurrency/all.sh` and `test_bin_jenova.sh` are in
+`.devdocs/ARCHIVE/tests/`. **§0 above is the current suite.**
 
 | Script | Spec | Status |
 |---|---|---|

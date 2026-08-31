@@ -5,6 +5,61 @@ Reverse-chronological. A pointer, not a re-narration.
 
 ---
 
+## Session 006 — 2026-08-31 13:07 → 13:21
+
+Read every mandated tracker and checked each load-bearing claim against the file it cites; no
+product code touched. **The Nim core held up on every functional claim tested** — the class table,
+route dispatch and classification, the FTS5 schema and its `serve`-path wiring, the pipeline's four
+intents and cache intercept, the watchdog's three constants, the flag surface with `--daemon`
+deliberately absent — and thirteen open B-defects were re-confirmed at their cited `file:line`.
+**What failed the cross-reference is everything around the core.** The largest finding is one no
+tracker had: **`make install` can never deploy the product**, because `Makefile:33`'s `all` target
+omits `core` and `install: all`, so the install path builds no `jenova-core` and both of
+`install.sh`'s binary loops still name the archived `jenova-ca` — **N-34 recorded the dead name and
+missed that the product is never built at all** (N-35). Second: **the entire user-facing
+documentation set describes the archived architecture**, 22 `jenova-ca` references across
+`README.md` and five `docs/*.md` with the quickstart instructing `jenova-ca --daemon`, plus eight
+archived Lua modules cited as live implementation — and B-32, B-33 and B-34 turn out to be three
+symptoms of it (B-39). Third, and instructive about how a defect dies wrongly: **B-24 was closed on
+half its evidence.** It named `test-health.sh:14` *and* the `proxy-concurrency` harness; the harness
+was archived and the defect marked dead, while `test-health.sh` still needs a `python3` that is
+still not in `DEPS` — and it **starts no server**, so `make -C tests check` aborts on its first
+line, which is why "all suites pass" has only ever been observed by running them one at a time
+(B-40). `TESTS.md` had this right and `TODOS.md` did not. Also found: **there is no `check` target
+at the repository root** at all (B-42); **`BRIEFING.md §5` contradicted its own §1** three times over
+and claimed an uncommitted tree that `git status` shows clean; `ARCHITECTURE_MAPPING.md` said "eight
+subcommands" where thirteen exist — the third stale value for that row — and contradicted itself two
+paragraphs apart on the test count (B-41); and two `.devdocs/` files outside `AGENTS.md`'s
+eleven-file table still analyse archived `lib/proxy.lua` in the present tense (B-43). **N-34 was
+rescoped by enumeration from 5 dangling references to 33**, including 14 in `lib/ui.lua` and an
+`uninstall.sh` that *invokes* the archived binary rather than merely naming it. **Four of the eight
+findings are last session's exact failure shape repeated — a count asserted from the previous
+revision of the same row instead of enumerated from the thing itself** — and all four were corrected
+in place by enumeration. **Then the plan built on all of it was rejected, and rightly (D-AH).** I
+scoped seven stages putting three ahead of the GUI — repair the shell installer, rewrite the
+shell-era docs, repair the shell test scripts — on the reasoning that a GUI on a product that cannot
+be installed is a GUI on nothing. **That took the old shell installer as the definition of
+"installed" for a product being replaced by a single Nim binary, and all three stages rebuild the
+program being replaced.** The USER: *"we are not rebuilding llama as nim and we are not rebuilding
+the same faulty lua system - we are taking the good and enhancing the parts missing"* — and the
+architectural point is the part to carry, because **the rewrite exists to end many entry points,
+many processes on one thread and everything funnelled through one proxy, and every stage I proposed
+added an entry point back.** **D-O had already ruled all of it out** — *fix only what survives the
+rewrite* — and I had read it that morning. **N-35 withdrawn** (deployment of one binary is a single
+decision after the rewrite, not a repair to `install.sh`); **B-39 deferred** (documentation
+describes a product and the product is not finished); **B-24 resolves by deleting
+`tests/test-health.sh`**, sharper than my own answer of rewriting it on `fetch(1)`, since
+`jenova-core` covers health in-binary; **B-11 was never a question**, `jenova-term`'s only caller
+being the GTK3 tray that N-S7 deletes. **The failure is a different one from last session's:** those
+were unverified counts, and today's were all enumerated — **this was verified evidence routed into
+the wrong plan, for want of the one triage question D-O already mandates.** The corrected plan is
+three Nim stages: **N-S7** GUI, **N-S8** CLI — the one stage that adds rather than ports — and
+**N-S9** retiring `jca_web/`, with the engine wiring already done and proven and `hardware-profiles/`
+the only part of the old tree that survives.
+See `SESSION_HANDOFF.md` Session 006.
+
+---
+
 ## Session 005 — 2026-08-31 09:08
 
 Every tracker claim cross-referenced against the file it cites. The Nim core matches its map and

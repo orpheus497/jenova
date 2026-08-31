@@ -2,7 +2,7 @@
 
 Forward-looking strategy for implementations that are scoped but not yet built.
 
-**Last updated:** 2026-08-31 12:58 — N-S5 scoped; Q-24…Q-26 raised; licence text corrected per D-X
+**Last updated:** 2026-08-31 13:21 — REMAINING WORK corrected by **D-AH**: N-S6b/c/d withdrawn as rebuilding the old program. **Next is N-S7.**
 
 ---
 
@@ -55,6 +55,249 @@ Seven classes. Each is a Directive 6 violation whether it appears in product cod
 
 `external/` is out of scope by policy. `jca_web/node_modules/` and build outputs are not
 project code.
+
+---
+
+## REMAINING WORK — corrected 2026-08-31 13:21 by D-AH
+
+> **The 13:07 revision of this section is withdrawn. It planned three stages of rebuilding the old
+> program.**
+>
+> N-S6b (the shell installer), N-S6c (the shell-era documentation) and N-S6d (the shell test
+> scripts) were scoped as the next three stages, ahead of the GUI. **Every one of them is
+> scaffolding around a system that is being replaced.** Under **D-O** — fix only what survives the
+> rewrite — none of it is work at all, and I had that ruling in front of me.
+>
+> The USER: *"why are we getting bogged down into rebuilding the old broken version - I specifically
+> chose the redesign and rewrite so we weren't making a million entry points, a million processes on
+> one thread and a million things to pass through one proxy … we are not rebuilding llama as nim and
+> we are not rebuilding the same faulty lua system - we are taking the good and enhancing the parts
+> missing."*
+>
+> **The frame that section should have used, and the one below does: what is missing from the Nim
+> core, not what is broken in the shell tree.**
+
+### What actually remains
+
+**Three stages, all Nim, and they are the ones the plan always had.**
+
+| # | Stage | Scope | Subtracts | Risk |
+|---|---|---|---|---|
+| **1** | **N-S7 — the GUI** | owlkettle GTK4 + libadwaita window, chat view, streaming, GtkSourceView code blocks, tray on StatusNotifierItem (**N-10**) | `jenova-ui/src/main.c`, `lib/ui.lua`, the GTK3 dependency, `bin/jenova-term` | **high** — owlkettle is unproven on this host |
+| **2** | **N-S8 — `jenova-cli`** | Terminal agentic loop with tool execution | — | medium |
+| **3** | **N-S9 — retire `jca_web/`** | Once the GUI reaches parity. **D-Z lifts here; B-01's live privacy leak closes with it** | `jca_web/`, and the whole shell installer/updater/uninstaller with it | medium |
+
+**Deployment is one decision at the end, not a stage.** The product is a single Nim binary. What
+installs it is settled once, after N-S9, against that binary — **not by repairing `install.sh`,
+which deploys the old program and which D-Y prohibits exercising anyway.**
+
+### The parts missing from the core — "taking the good and enhancing"
+
+The backend is complete as a **harness**: routing, thread-per-class isolation, SQLite, the
+filesystem mirror, RAG, the completion pipeline, backend lifecycle and the watchdog. **What is
+thin is the engine wiring**, and this is where enhancement belongs rather than reconstruction.
+`llama-server` is the engine (**D-AF**) — none of this rebuilds it.
+
+| Surface | State today | The missing part |
+|---|---|---|
+| **agent** — `llama-server` :8081 | `upstream.forward` relays verbatim, streaming SSE without stalling. Argument vector built from the profile, 31 assertions | Proven |
+| **embed** — `llama-server --embedding` :8082 | `rcEmbed` class, forwarded; `rag.embed` parses `data[].embedding`; verified against a live embedder, `chunks with vectors` 0 → 3 | Proven |
+| **FIM** — `/infill` | Classified to completion and forwarded; `llama-server` is built `--spm-infill`. **Under D-AF that classification is the whole requirement** | Proven by classification. Only the Neovim client's own behaviour is unexercised |
+| **lifecycle** | `start\|stop\|restart\|status\|health\|args`, `fork`/`dup2`/`execv` straight to the log file, watchdog thread at 30 s / 3 / 60 s | Proven |
+| **CLI** | **Absent.** This is N-S8 | The agentic loop and tool execution — **the one stage that adds rather than ports** |
+| **GUI** | **Absent.** This is N-S7 | Everything |
+
+**N-21 is the one contract decision to take at N-S7 rather than inherit.** Restoring a conversation
+revives every message, including ones deleted individually beforehand — faithful to
+`db.restore_item` and therefore correct for the frozen client. **The GUI need not reproduce it.**
+
+**N-11 gates N-S7 and is a genuine Directive 1 item:** `nim` is not in
+`install-dependencies.sh`'s `DEPS`, and `libadwaita` and `gtksourceview5` are in ports but not
+installed on this host. `make core` works only because a compiler is already present.
+
+**The owlkettle risk is unchanged and so is its mitigation:** D-Q put the toolkit last deliberately,
+so the surprises arrive after the backend is committed. A throwaway spike before N-S7 is cheap and
+does not disturb the order.
+
+### Independent, cheap, and genuinely surviving
+
+`hardware-profiles/` is **data, not code, and it outlives the rewrite** (`BLUEPRINT.md §10`).
+Three defects live there and nothing depends on them: **B-10** (`CPU/generic/jenova-setup` is
+entirely Linux — `cpupower`, `/sys`, `numactl` — and is the only CPU-only profile), **B-20**
+(`profile.conf`'s `PROFILE_*` block contradicts the `jenova.conf` beside it; informational, so sync
+or delete), **B-05**'s non-CUDA half (header comments naming the wrong model).
+
+### Not work — recorded so it is not re-raised
+
+**The shell tree's defects die with the shell tree.** B-11 (`jenova-term`, whose only caller is
+`lib/ui.lua:104`), B-27, B-28, B-29, B-35, the 33 dangling `jenova-ca` references, and
+**N-34/N-35** in their entirety. **The documentation defects — B-39, and B-32/B-33/B-34 with it —
+defer until the rewrite is complete**, because documentation describes a product and the product is
+not finished.
+
+**One thing does resolve, and by deletion:** `tests/test-health.sh` is the last shell health test
+for the archived proxy, it shells to `python3`, and it starts no server so it aborts the suite on
+line 1. **`jenova-core` covers health in-binary** — `backends health` probes the port, and five
+self-test subcommands cover the rest. **Archive it and drop it from `tests/Makefile`; B-24 then dies
+by subtraction the way B-23 did.** No rewrite, no `python3` in `DEPS`.
+
+### Devdoc accuracy — hygiene, not a stage
+
+**B-41**, **B-42**, **B-43**. The four count and invocation errors found at 13:07 were corrected in
+place. What remains is `BRIEFING.md` staying honest, and moving `CONCURRENCY_ANALYSIS.md` and
+`REMEDIATION_PLAN.md` — both outside `AGENTS.md`'s eleven-file table, both analysing archived
+`lib/proxy.lua` in the present tense — into `ARCHIVE/`. **Archive, not delete: their diagnosis is
+what motivated the rewrite.**
+
+---
+
+## Superseded — the 13:07 plan, kept legible
+
+> Retained per the standing rule that a false claim is corrected in place with the original visible.
+> **Read nothing below this line as current.** Its stage table put N-S6b/c/d ahead of N-S7 on the
+> reasoning that "a GUI on a product that cannot be installed is a GUI on nothing" — which took the
+> old shell installer as the definition of "installed" for a product that is being replaced by a
+> single binary.
+
+## ~~REMAINING WORK — the whole of it, 2026-08-31 13:07~~
+
+**Scoped from a cross-reference of every tracker claim against the source, not from the trackers.**
+The backend is done and it holds up: `N-S0 … N-S6` were checked against the files they cite and the
+core matched its map on every functional claim tested. **What does not hold up is everything around
+the core** — the way it is built, installed, launched and documented still describes `bin/jenova-ca`
+and fourteen archived Lua modules.
+
+> **The finding that reorders the plan.** `BRIEFING.md` says the next stage is N-S7, the GUI.
+> But **`make install` does not build `jenova-core` and `install.sh` does not deploy it** (N-35), so
+> the product currently cannot be installed by any documented route, and the documented route tells
+> the user to run a binary that is not in `bin/` (B-39). **N-S7 would add a GUI to a product that
+> cannot be delivered.** The recommendation below puts the deployment path first. **That reorders
+> D-Q's "GUI last" only in the sense of inserting a backend stage ahead of it — it does not move the
+> GUI earlier, and D-Y is not touched: writing the install path is not exercising it.**
+
+### Stage order — recommended
+
+| # | Stage | Closes | Risk | Gate |
+|---|---|---|---|---|
+| **1** | **N-S6b — the deployment path** *(new; N-34 + N-35 done properly)* | N-34, N-35, B-11, B-27, B-28, B-29, B-35 | low | Directive 1 |
+| **2** | **N-S6c — documentation to the shipped architecture** | B-39, and with it B-32, B-33, B-34 | low | Directive 1 |
+| **3** | **N-S6d — the test surface** | B-40/B-24, B-22, B-25, B-26, B-42 | low | Directive 1 · **D-AG per run** |
+| **4** | **N-S7 — the GUI** | N-10, B-02's live instance, `lib/ui.lua`'s 14 dangling calls, the GTK3 dependency | **high** | Directive 1 · N-11 |
+| **5** | **N-S8 — `jenova-cli`** | — | medium | Directive 1 |
+| **6** | **N-S9 — retire `jca_web/`** | B-01 *(a live privacy leak until then)*, B-03, B-04 | medium | D-Z lifts here |
+| **7** | **V-1 … V-6 — post-refactor acceptance on native FreeBSD** | B-06 | — | **D-Y lifts here** |
+
+**Independent of all of the above, and cheap:** the `hardware-profiles/` data defects — **B-10**
+(the only CPU-only profile, entirely Linux), **B-20** (`profile.conf` contradicts the `jenova.conf`
+beside it), **B-05**'s non-CUDA half. Data files; no stage depends on them; they can land any time.
+
+### 1 · N-S6b — the deployment path. **The product cannot currently be installed.**
+
+Two defects, and fixing only the recorded one leaves it broken.
+
+| | Change | Why |
+|---|---|---|
+| a | **`Makefile:33` — add `core` to `all`** | `all: deps llama jenova-ui web` and `install: all`, so **`make install` never builds `bin/jenova-core`**. This is N-35 and it is not in any tracker before today |
+| b | **`install.sh:240,294` — deploy and symlink `jenova-core`, drop `jenova-ca`** | Both loops name a binary that is in `.devdocs/ARCHIVE/bin/` |
+| c | `install.sh:7,25,450` — header, step list and next-steps text | `:450` prints *"Start the backend: `jenova-ca --daemon`"*. **The replacement is `jenova-core serve`, one command, no `--daemon`** — which is the whole point of the N-S6 restructure |
+| d | `install.sh:19-26` — the header's step numbering | Documents a model-download step that does not exist and skips 4, 6, 7 (**B-29**) |
+| e | **`install.sh` — decide `jenova-term`** | `lib/ui.lua:104` invokes it for the tray's "System Control" item; it is deployed by nothing (**B-11**). Either deploy it or drop the menu item at N-S7. **A USER decision, not mine** |
+| f | `uninstall.sh` — 10 sites, incl. **`:85`'s `"$JENOVA_CA" stop`** | It *invokes* the archived binary, so uninstall cannot stop a running system. Also parse `--purge` (**B-27**) and remove the `jenova-model-switch` symlink `install.sh` creates |
+| g | `update.sh` — 5 sites; `$SKIP_JVIM` dead code; `make` without `-C` at `:199,210` | **B-28** |
+| h | `cleanup.sh:95` hint; **and the B-35 path guard** | Refuse to operate on any path that does not resolve inside `$JCA_HOME`. Disclosed at Session 004 and never done |
+| i | `build-llama.sh:308` restart hint | One line |
+
+**Acceptance, and it must not be `sh -n`.** `sh -n` is what let a syntactically perfect Linux script
+survive S-6 (constraint **C-9**). The check here is a **dry enumeration**: `grep -rn 'jenova-ca'`
+over `bin/ lib/ scripts/ Makefile` returns only the harmless pidfile-name sites, and
+`make -n install` shows `jenova-core` being built and deployed. **Neither runs the installer** —
+D-Y stands until stage 7.
+
+### 2 · N-S6c — documentation. **22 references to a binary that no longer exists.**
+
+`README.md` (4) · `docs/usage.md` (11) · `docs/install.md` (2) · `docs/privacy.md` (1) ·
+`docs/architecture.md` (4). The README quickstart is `jenova-ca --daemon`. Separately, **eight
+archived `lib/*.lua` modules are cited as live implementation** across `docs/architecture.md` and
+`docs/context-and-retrieval.md` — `proxy`, `search`, `embed`, `fs_sync`, `db`, `http`, `prompts`,
+`indexer_runner`.
+
+**B-32, B-33 and B-34 are three symptoms of this and should be fixed as part of it, not separately.**
+B-32's claim (*"inbound storage writes queue re-indexing"*, *"the proxy's retrieval pipeline"*) is
+now describable **truthfully** for the first time, because `rag.nim` and `pipeline.nim` exist — the
+prose was aspirational for `proxy.lua` and is merely mis-attributed for the core.
+
+**One thing this stage must not quietly do:** `docs/privacy.md:43` claims the default binds
+loopback. That is still true (`--lan` moves only the client port, asserted both ways in
+`test_lifecycle.sh`), so it is a naming fix, not a claim retraction. **Say which sentences are
+renames and which are corrections** — the B-01 lesson is that a live defect must not be reclassified
+by a rewrite.
+
+### 3 · N-S6d — the test surface
+
+| | Item | Note |
+|---|---|---|
+| a | **`test-health.sh`** — B-40 | Rewrite on base `fetch(1)`, starting and stopping its own server like the other four. **Closes B-24 by subtraction rather than by adding `python3` to `DEPS`** — the S-2/S-4 pattern. It is currently the *first* line of `check` and aborts the suite |
+| b | **B-22** — `test_validate_arg.sh:62` still rewrites `etc/jenova.conf` | **The highest-value cheap fix left.** Confirmed unchanged today. It is the true origin of commit `eee557e` |
+| c | **B-42** — no `check` target at the repository root | Either add `check: ; @$(MAKE) -C tests check` or correct every doc that says `make check`. **The former, and then the docs become true** |
+| d | B-25 — three orphans | `test_validate_arg.sh`, `test_gpu.sh`, `test_gpu_single.sh`. Both GPU tests need a `llama-cli` that `build-llama.sh` never copies, so they fail unconditionally: wire in, fix, or archive |
+| e | B-26 — `download-draft-model.sh` | Wrong directory, wrong model, false closing message. A utility, not a test |
+
+**D-AG governs every run here.** Each execution that starts a process is asked for individually,
+stating what, why and for how long. Permission to run one suite is not permission to run the next.
+
+### 4 · N-S7 — the GUI. **Unchanged in scope; now genuinely next after 1–3.**
+
+owlkettle GTK4 + libadwaita, chat view, streaming, tray on StatusNotifierItem (**N-10**). Replaces
+`jenova-ui/src/main.c` and `lib/ui.lua`, which is where **14 of the dangling `jenova-ca` calls live**
+and where **B-02's last load-bearing instance** sits (`main.c:324`'s `$HOME/.jenova/ui.lock`, a
+fourth spelling of the state directory).
+
+**Two things gate it and neither is written down as a gate today:**
+
+1. **N-11 — the dependency change.** `nim` is not in `install-dependencies.sh`'s `DEPS`, and
+   `libadwaita` and `gtksourceview5` are in ports but **not installed** on this host. `make core`
+   works only because a compiler is already present. **Directive 1 gates the `DEPS` edit.**
+2. **owlkettle is unproven on this host**, and D-Q put it last deliberately. The mitigation named
+   when that order was set is still available and still cheap: **a throwaway spike before committing
+   the stage.** It does not disturb the order.
+
+**N-21 is the one contract decision to take here, not to inherit.** Restoring a conversation revives
+every message, including ones deleted individually beforehand. It is faithful to `db.restore_item`
+and therefore correct for the frozen client — **the GUI need not reproduce it.**
+
+### 5–7 · CLI, `jca_web/` retirement, acceptance
+
+**N-S8** `jenova-cli`, a terminal agentic loop with tool execution — the one stage that adds a
+feature rather than porting one. **N-S9** retires `jca_web/`; **D-Z lifts here and B-01's live
+privacy leak closes with it** — until then a browser with network access contacts
+`fonts.googleapis.com` on every page load. **V-1 … V-6** are the post-refactor acceptance phase and
+**D-Y lifts at their gate, not before**; B-06's `gmake` naming is corrected as part of writing them
+up.
+
+### Latent items — recorded, none scheduled
+
+**N-16** no HTTP keep-alive (revisit before the Web UI is served in anger; every response is
+`Connection: close`, confirmed at `http.nim:139,152`) · **N-18** compile-time class thread counts
+(`routes.nim`'s `ClassTable` is `const` — deliberately, for GC-safety across worker threads) ·
+**N-13** the eventual conf-format change that stops `config.nim` shelling out to `/bin/sh` ·
+**N-12**, **N-14**, **N-15** integrity-pass notes · **B-30**, which changed shape rather than
+closing: `MAX_TURNS`/`MAX_ACTIONS`/`TIMEOUT` are now in `config.nim:49`'s key list, so
+`jenova-core config` reports them — **and nothing acts on them.**
+
+### Devdoc hygiene — free, and it is what makes the rest of this readable
+
+**B-41** and **B-43**. `BRIEFING.md §5` contradicts `BRIEFING.md §1` three times over (N-S6
+"outstanding", N-24 "cheap and independent", N-31 "not blocking" — all three closed);
+`BRIEFING.md §1` says the tree is uncommitted when `git status --porcelain` is empty;
+`ARCHITECTURE_MAPPING.md` said "eight subcommands" where thirteen exist and contradicted itself two
+paragraphs apart on the test count; `Directive 6` is now cited **22 times**, not the 14 recorded.
+**`CONCURRENCY_ANALYSIS.md` and `REMEDIATION_PLAN.md` are outside `AGENTS.md`'s eleven-file table
+and analyse archived code in the present tense** — `REMEDIATION_PLAN.md:7-9` still publishes
+"Phases 2–4 are not started" for `lib/proxy.lua`. **Archive them, do not delete: their diagnosis is
+what motivated the rewrite.**
+
+*The four items corrected in place today — the subcommand count, the two test-count paragraphs and
+the `make check` invocation — are done. The rest are listed under B-41/B-43 and await Directive 1.*
 
 ---
 

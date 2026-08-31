@@ -4,6 +4,171 @@ Session-to-session continuity. Reverse-chronological — most recent session at 
 
 ---
 
+## Session 006 — 2026-08-31 13:07 → 13:21
+
+**Branch:** `bsd`
+**Directive:** "Read all the devdocs, stick strictly to the AGENTS.md, then analyse all claims from
+the devdocs against the codebase and report on the plan for the remaining work, ensuring it is
+clearly documented in the devdocs."
+
+**No product code was touched.** Documentation alignment, analysis and forward planning only.
+
+### 6a. Method
+
+Read all eleven mandated `.devdocs/` files plus `ARCHIVE/README.md`, `CONCURRENCY_ANALYSIS.md` and
+`REMEDIATION_PLAN.md`, then checked every load-bearing claim against the file it cites. Enumeration
+first, tracker text second — the discipline this workspace keeps failing at and keeps recording.
+
+### 6b. What held up
+
+**The Nim core matched its map on every functional claim tested.** `routes.nim`'s `ClassTable`
+reads exactly `static:4 health:2 api:3 completion:3 embed:1 debug:1`; `server.nim:245-253`
+dispatches `/api/db/*`, `/api/fs/*` and `/api/storage*`; `routes.nim:71-84` classifies `/infill` to
+completion and tests `/v1/health` *before* the `/v1/` prefix; `rag.nim:62` creates the FTS5 virtual
+table and `jenova_core.nim:474` calls `rag.initSchema()` on the `serve` path; `pipeline.nim` carries
+the four intent prefixes, the context marker, the `tool_choice: none` strip and the cache intercept;
+`lifecycle.nim:350` is 30 s / 60 s / 3 exactly as written up; `--lan`/`--port`/`--llama-port`/
+`--embed-port` are present and `--daemon` is deliberately absent. `lib/` is four files; six
+hardware profiles at depth 2; four profile tuning scripts after Q-11.
+
+**Thirteen open B-defects re-confirmed at their cited `file:line`** — B-01, B-02, B-10, B-11, B-20,
+B-22, B-27, B-28, B-29, B-32, B-33, B-37, B-38 — plus N-11 (no `nim` in `DEPS`), N-16
+(`Connection: close` at `http.nim:139,152`) and N-18 (`ClassTable` is `const`).
+
+### 6c. What did not — eight findings, and the two that matter
+
+**N-35 — `make install` can never deploy the product.** `Makefile:33` is
+`all: deps llama jenova-ui web`; `core` is not in it, and `install: all`. So the install path builds
+no `bin/jenova-core`, and `install.sh:240,294` name `jenova-ca` in both loops. **N-34 recorded the
+dead name and missed that the product is never built in the first place.** No tracker had this.
+
+**B-39 — the whole user-facing documentation set describes the archived architecture.** 22
+`jenova-ca` references across `README.md` and five `docs/*.md`; the README quickstart and
+`install.sh:450` both instruct `jenova-ca --daemon`. Eight archived `lib/*.lua` modules are cited as
+live implementation. B-32, B-33 and B-34 turn out to be three symptoms of this, recorded before the
+archive made it total.
+
+**B-40 — B-24 is not closed, and was closed on half its evidence.** B-24 named
+`tests/test-health.sh:14` **and** the `proxy-concurrency` harness. The harness was archived and the
+defect was marked dead; `test-health.sh` still requires `python3`, `python3` is still absent from
+`DEPS`, and `test-health.sh` is the **first line** of the `check` target. A second defect in the
+same file surfaced with it: **it starts no server**, so `make -C tests check` aborts on line 1
+unless something is already listening. That is why "all suites pass" has only ever been observed by
+running them one at a time. `TESTS.md §0` had this right and `TODOS.md §1` did not — **two trackers
+disagreeing, with the less prominent one correct.**
+
+**B-42 — there is no `check` target at the repository root.** Three documents say `make check`. The
+root `Makefile`'s `.PHONY` line does not contain it.
+
+**B-41 — tracker self-contradiction, in the two files a session is told to read first.**
+`BRIEFING.md §5` contradicted `BRIEFING.md §1` three times (N-S6 "five items outstanding" vs
+COMPLETE; N-24 "cheap and independent" and N-31 "not blocking" vs both CLOSED), and §1 said the tree
+was uncommitted when `git status --porcelain` is empty. `ARCHITECTURE_MAPPING.md §1a` said "eight
+subcommands" where thirteen exist — the **third** stale value for that row — and §8 named three
+archived scripts as present two paragraphs after saying five. `Directive 6` is now cited **22**
+times, not the 14 recorded.
+
+**B-43** — `CONCURRENCY_ANALYSIS.md` and `REMEDIATION_PLAN.md` are outside `AGENTS.md`'s eleven-file
+table and analyse archived `lib/proxy.lua` in the present tense, with `REMEDIATION_PLAN.md:7-9`
+still publishing "Phases 2–4 are not started". Archive, not delete — their diagnosis is what
+motivated the rewrite.
+
+**N-34 rescoped by enumeration:** 33 dangling `jenova-ca` sites across the shell tree, not the 5
+recorded — `install.sh` 6, `uninstall.sh` 10 (**`:85` *invokes* `"$JENOVA_CA" stop`**), `update.sh`
+5, `cleanup.sh` 1, `build-llama.sh` 1, and **`lib/ui.lua` 14, not 3**.
+
+**B-30 changed shape rather than closing:** `MAX_TURNS`/`MAX_ACTIONS`/`TIMEOUT` are now in
+`config.nim:49`'s key list, so `jenova-core config` reports them — and nothing acts on them.
+
+### 6d. The plan I proposed — **rejected by the USER, and rightly (D-AH)**
+
+**What I wrote at 13:07:** seven stages, with **N-S6b** (repair the shell installer), **N-S6c**
+(rewrite the shell-era documentation) and **N-S6d** (repair the shell test scripts) placed *ahead of
+N-S7*, on the reasoning that "a GUI on a product that cannot be installed is a GUI on nothing."
+
+**Why it was wrong.** It took the old shell installer as the definition of "installed" for a product
+that is being replaced by a single Nim binary. **All three stages rebuild the program being
+replaced.** D-O — *fix only what survives the rewrite* — already ruled every one of them out, and I
+had read it that morning.
+
+> "why are we getting bogged down and into rebuilding the old broken version - i specifically chose
+> the redesign and rewrite so we werent making a million entry points, a million processes on one
+> thread and a million things to pass through one proxy … we are not rebuilding llama as nim and we
+> are not rebuilding the same faulty lua system - we are taking the good and enhancing the parts
+> missing"
+
+**The architectural point is the part to carry:** the rewrite exists to end many entry points, many
+processes on one thread, and everything funnelled through one proxy. **Every stage I proposed added
+an entry point back.**
+
+**Recorded as D-AH.** Its four specific rulings:
+
+| | |
+|---|---|
+| **N-35 withdrawn** | *"why would you run make install for a program that's being rebuilt in nim?"* Factually true, entirely beside the point. Deployment of the single binary is one decision **after** the rewrite |
+| **B-39 deferred** | Documentation describes a product; the product is not finished. B-32/33/34 defer with it |
+| **B-40 / B-24 by deletion** | *"why is python in use at all."* Sharper than my own answer, which was to rewrite the script on `fetch(1)` — that still keeps a shell health test for a proxy that no longer exists. `jenova-core` covers health in-binary. **Archive it; B-24 dies by subtraction as B-23 did** |
+| **B-11 was never a question** | `bin/jenova-term`'s only caller is `lib/ui.lua:104`, the GTK3 tray. It dies at N-S7. Putting it to the USER was noise |
+
+### 6d-2. The corrected plan — three stages, all Nim
+
+**N-S7** GUI (owlkettle GTK4, tray on StatusNotifierItem; subtracts `main.c`, `lib/ui.lua`, GTK3,
+`jenova-term`) · **N-S8** `jenova-cli`, the agentic loop — **the one stage that adds rather than
+ports** · **N-S9** retires `jca_web/`, where D-Z lifts and B-01's live leak closes.
+
+**The engine wiring is done and proven, not pending:** agent on :8081, embeddings on :8082 verified
+against a live embedder, `/infill` classified and forwarded to a `--spm-infill` build, lifecycle and
+watchdog. `llama-server` is the engine and nothing here rebuilds it.
+
+`hardware-profiles/` data defects (B-10, B-20, B-05's non-CUDA half) are the only survivors of the
+old tree — data outlives the rewrite — and can land at any point.
+
+### 6d-3. The failure mode, named so it is catchable
+
+**The audit was accurate. What I got wrong was mistaking "this is broken" for "this is work."** The
+missing filter is one question, and it is already a standing ruling: *does this file survive the
+rewrite?* Every stage I scheduled fails it. **An audit finding is not a work item until it passes
+the triage that is already ruled.**
+
+This is a different failure from Session 005's — those were unverified counts, and today's counts
+were all enumerated. **This one is verified evidence routed into the wrong plan.**
+
+### 6e. Documents updated
+
+`TODOS.md` (§6 added — N-35, B-39 … B-43; §1b table corrected by enumeration; N-34 rescoped in
+place) · `PLANS.md` (§ REMAINING WORK) · `BRIEFING.md` (overwritten; §5's three self-contradictions
+gone) · `ARCHITECTURE_MAPPING.md` (subcommand count 8 → 13; §8's stale paragraph replaced with an
+enumerated one) · `TESTS.md` (§0 and §2 — the `make check` invocation, and B-24 reopened with the
+reason it was closed on half its evidence) · this file and `SUMMARIES.md`.
+
+**Corrected in place rather than left to be found again:** the four count/invocation errors above.
+**Left for Directive 1:** every product-code change, and the `CONCURRENCY_ANALYSIS.md` /
+`REMEDIATION_PLAN.md` archival, which moves files.
+
+### 6f. What was deliberately not done
+
+- **No product code, no `Makefile`, no `install.sh` edits.** All Directive 1 gated.
+- **No builds and no test runs.** `make core` is permitted under D-AC and was not needed for a
+  read-only cross-reference; every suite start is D-AG gated and none was requested.
+- **`etc/jenova.local.conf` not read for content, not touched.** SETTLED FACTS.
+- **`jca_web/` not opened beyond confirming `app.css:3`'s Google Fonts import still stands** (D-Z).
+- **No git writes** (C-11). `git status` and `git log` only.
+
+### 6g. Next steps — **corrected 13:21**
+
+1. **N-11** — approval to add `nim` (and later `libadwaita`, `gtksourceview5`) to
+   `install-dependencies.sh`'s `DEPS`. **N-S7 cannot start without it**; `make core` works today
+   only because a compiler happens to be present.
+2. Optionally, the **owlkettle spike** — cheap, and it moves the toolkit risk before the stage
+   rather than into it.
+3. **N-S7 — the GUI.**
+4. Archive `tests/test-health.sh` and drop it from `tests/Makefile` (closes B-24 by subtraction).
+   Small, and it is the only item from today's audit that is actually work.
+
+*(Withdrawn from this list at 13:21 by D-AH: N-S6b, N-S6c, N-S6d and the `jenova-term` ruling.)*
+
+---
+
 ## Session 005 — 2026-08-31 09:08
 
 **Branch:** `bsd`

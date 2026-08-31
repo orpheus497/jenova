@@ -37,7 +37,7 @@ New tree, created 2026-08-28 at stage N-S0. Grows as `lib/`, `bin/` and `scripts
 
 | Path | Role |
 |---|---|
-| `src/jenova_core.nim` | Entry point for `jenova-core`. Carries the FreeBSD-only compile guard (`{.error.}` when `freebsd` is undefined), mirroring the `#error` in `main.c`. **Eight subcommands** (corrected 2026-08-31, was listed as three): `version`, `paths`, `config`, `db-init`, `db-selftest`, `serve`, `llama-selftest`, `serve-selftest`. `JENOVA_INPROC=0` reverts completions to proxying `llama-server` |
+| `src/jenova_core.nim` | Entry point for `jenova-core`. Carries the FreeBSD-only compile guard (`{.error.}` when `freebsd` is undefined), mirroring the `#error` in `main.c`. **Thirteen subcommands** *(corrected 2026-08-31 13:07 by enumerating `jenova_core.nim`'s dispatch — this row read "three" until 09:08, then "eight", and was stale again by 12:58. The count is now taken from the source, not from the previous revision of this row.)*: `version`, `paths`, `config`, `db-init`, `db-selftest`, `db-capabilities`, `backends` (`start\|stop\|restart\|status\|health\|args`), `serve`, `llama-selftest`, `serve-selftest`, `rag-selftest`, `pipeline-selftest`, `sha256-selftest`. `JENOVA_INPROC=1` selects in-process inference; the default proxies to `llama-server` (D-AF) |
 | `src/jenova/paths.nim` | Layout detection and runtime path resolution — replaces the path half of `lib/jenova-conf.sh`. Every path derives from one place, so no module re-derives one from a possibly-unset variable (the B-07 defect class). **`JCA_HOME` defaults to `$HOME/Jenova` (D-AD)**, and resolution **refuses `$HOME/JCA`** — the USER's legacy deployment — unless `JENOVA_ALLOW_DEPLOYED=1` (D-AC, Q-27). The guard exists because a changed default is not enough: an inherited `JCA_HOME` beats it |
 | `src/jenova/server.nim` | The HTTP server, replacing `lib/proxy.lua`. **A fixed pool of worker threads each block in `accept(2)` on one shared listening socket**; each connection is served start-to-finish on its own thread. No shared event loop exists to stall. `/debug/*` endpoints are off unless explicitly enabled |
 | `src/jenova/llama.nim`, `src/jenova/inference.nim` | **Optional since D-AF (2026-08-31).** Selected only by `JENOVA_INPROC=1`; the default proxies to `llama-server`. Retained under Directive 3 — the USER values the non-server runtime existing — but no new work lands here. `llama-server` supplies per-request sampling, disconnect cancellation, `/infill` and parallel slots, all of which this path would have to reimplement |
@@ -162,9 +162,17 @@ Links GTK3 / libappindicator (LGPL) — the open Q-4 licence exposure, deferred 
 
 Specs and status live in `TESTS.md`.
 
-**`make check` runs five, and every one targets the Nim core:** `test-health.sh`,
-`test_api_db.sh` (23), `test_api_fs.sh` (46), `test_routes.sh` (13), `test_lifecycle.sh` (31).
-All run in a scratch `JCA_HOME` and none spawns a backend.
+**`make -C tests check` runs five** *(the invocation is corrected 2026-08-31 13:07 — the root
+`Makefile` has **no `check` target**, so `make check` from the repository root fails; **B-42**)*,
+and four of the five target the Nim core: `test_api_db.sh` (23), `test_api_fs.sh` (46),
+`test_routes.sh` (13), `test_lifecycle.sh` (31). Those four run in a scratch `JCA_HOME` and none
+spawns a backend.
+
+**The fifth, `test-health.sh`, is the defect in this list (B-40).** It is the *first* line of the
+`check` target, it still requires `python3` — which is still absent from
+`install-dependencies.sh`'s `DEPS` — and **it starts no server**, so it exits 1 unless something is
+already listening on `$HOST:$PORT`. **B-24 is therefore not closed** by the `proxy-concurrency`
+archive, as `TODOS.md §1` and `ARCHIVE/README.md` both claim.
 
 **Also present, still orphaned (B-25):** `test_validate_arg.sh` — **and it still rewrites
 `etc/jenova.conf`** (B-22, `:62`) · `test_gpu.sh`, `test_gpu_single.sh` — both need
@@ -178,10 +186,17 @@ the whole `proxy-concurrency/` harness (the acceptance gate for `proxy.lua`'s ev
 **The core's own self-tests** are subcommands, not scripts: `db-selftest`, `serve-selftest`,
 `rag-selftest` (7), `pipeline-selftest` (15), `sha256-selftest` (4), `llama-selftest`,
 `db-capabilities`.
-**Nine test scripts in `tests/` plus `proxy-concurrency/all.sh`; `make check` runs six** —
-`test-health.sh`, `test-launcher.sh`, `proxy-concurrency/all.sh`, `test_api_db.sh`,
-`test_api_fs.sh`, `test_routes.sh`. **Four remain orphaned (B-25):** `test_bin_jenova.sh`,
-`test_validate_arg.sh`, `test_gpu.sh`, `test_gpu_single.sh`.
+> **A stale paragraph, deleted 2026-08-31 13:07 rather than left to be read as current.** It said
+> *"Nine test scripts in `tests/` plus `proxy-concurrency/all.sh`; `make check` runs six"* and named
+> `test-launcher.sh`, `test_bin_jenova.sh` and `proxy-concurrency/all.sh` as present — **all three
+> were archived earlier the same day**, and the section's own opening paragraph already said five.
+> Recorded as **B-41(c)**: this file contradicted itself two paragraphs apart.
+
+**Enumerated on disk:** `tests/` holds a `Makefile` and **nine scripts** — the five in `check`,
+plus the four orphans below. **Three remain orphaned (B-25)**, `test_bin_jenova.sh` having been
+archived: `test_validate_arg.sh` (which also still rewrites `etc/jenova.conf`, B-22), `test_gpu.sh`
+and `test_gpu_single.sh`. `download-draft-model.sh` is the ninth and is a utility, not a test
+(B-26).
 
 ## 9. `jca_web/` — SvelteKit Web UI
 

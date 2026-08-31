@@ -55,7 +55,18 @@ disagreement cannot exist.
 |---|---|
 | `test-launcher.sh` | Every check targets `jenova-ca` and `proxy.lua` |
 | `test_bin_jenova.sh` | Validates `bin/jenova` against a running `jenova-ca`. Orphaned (B-25) |
-| `proxy-concurrency/` | The acceptance harness for `proxy.lua`'s event loop. **B-23** (the fd assertion is vacuous on FreeBSD because `/proc` is not mounted) and **B-24** (undeclared `python3` dependency) die with it |
+| `proxy-concurrency/` | The acceptance harness for `proxy.lua`'s event loop. **B-23** (the fd assertion is vacuous on FreeBSD because `/proc` is not mounted) dies with it. ~~**B-24** (undeclared `python3` dependency) dies with it~~ — **RETRACTED 2026-08-31 13:07, and the retraction is the instructive part** |
+
+> **B-24 was closed on half its evidence.** It cited **`tests/test-health.sh:14` *and*** the
+> `proxy-concurrency` harness. Archiving the harness removed one of the two and the defect was
+> marked dead. **`tests/test-health.sh` is still in `tests/` and still requires `python3`**, which
+> is still absent from `install-dependencies.sh`'s `DEPS` — and it is the **first line** of
+> `tests/Makefile`'s `check` target. Reopened as **B-40** in `TODOS.md §6`, along with a second
+> defect in the same file found at the same time: **it starts no server**, so the suite aborts on
+> line 1 unless something is already listening.
+>
+> **The lesson for future archival: a defect dies with a file only if every site in its evidence
+> went with that file.** Check the evidence list, not the headline.
 
 Replaced by `test_api_db.sh` (23), `test_api_fs.sh` (46), `test_routes.sh` (13),
 `test_lifecycle.sh` (31), plus `rag-selftest`, `pipeline-selftest`, `sha256-selftest`,
