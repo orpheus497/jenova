@@ -35,7 +35,7 @@
 ## shells to base `fetch(1)`: this project has spent seven stages removing
 ## dependencies, and a localhost request needs no TLS stack.
 
-import std/[json, net, os, osproc, streams, strutils]
+import std/[json, net, os, oids, osproc, streams, strutils, times]
 import owlkettle
 import owlkettle/adw
 import ./paths
@@ -204,6 +204,31 @@ proc lanAddress(): string =
   runCapture("sh", ["-c",
     "ifconfig 2>/dev/null | awk '/inet / && !/127\\.0\\.0\\.1/ {print $2; exit}'"])
 
+proc newConversation(): string =
+  result = $genOid()
+  db.exec("INSERT INTO conversations (id, name, lastModified, is_deleted) VALUES (?, ?, ?, 0)",
+          [result, "Chat " & now().format("yyyy-MM-dd HH:mm"), $toUnix(getTime())])
+
+proc latestConversation(): string =
+  let rows = db.query("SELECT id FROM conversations WHERE is_deleted=0 " &
+                      "ORDER BY lastModified DESC LIMIT 1")
+  if rows.len > 0 and rows[0].len > 0: rows[0][0] else: ""
+
+proc saveMessage(convId: string, role: Role, text: string) =
+  if convId.len == 0 or text.len == 0: return
+  db.exec("INSERT INTO messages (id, convId, type, role, timestamp, content, is_deleted) " &
+          "VALUES (?, ?, 'message', ?, ?, ?, 0)",
+          [$genOid(), convId, $role, $toUnix(getTime()), text])
+  db.exec("UPDATE conversations SET lastModified=? WHERE id=?",
+          [$toUnix(getTime()), convId])
+
+proc loadMessages(convId: string): seq[Message] =
+  if convId.len == 0: return
+  for r in db.query("SELECT role, content FROM messages WHERE convId=? AND is_deleted=0 " &
+                    "ORDER BY timestamp ASC, rowid ASC", convId):
+    if r.len < 2: continue
+    result.add Message(role: (if r[0] == "user": rUser else: rAssistant), text: r[1])
+
 proc trayMenu(lanEnabled: bool): seq[TrayItem] =
   @[
     TrayItem(kind: tiAction, id: 1, label: "Open Web UI", action: "web"),
@@ -274,6 +299,7 @@ viewable App:
   ## `jenova-ca status` every 3 s in the tray and every 1 s in the TUI is defect
   ## B-17, and recomputing this in `view` would be a worse version of it.
   lanAddr: string
+  convId: string
   streaming: bool
   notice: string
 
@@ -329,6 +355,8 @@ viewable App:
           case m.kind
           of umDone:
             st.streaming = false
+            if st.messages.len > 0 and st.messages[^1].role == rAssistant:
+              saveMessage(st.convId, rAssistant, st.messages[^1].text)
           of umError:
             st.notice = m.text
             if st.messages.len > 0 and st.messages[^1].role == rAssistant and
@@ -358,6 +386,7 @@ proc send(app: AppState) =
     return
 
   app.messages.add Message(role: rUser, text: text)
+  saveMessage(app.convId, rUser, text)
   app.draft = ""
   app.notice = ""
   app.streaming = true
@@ -440,10 +469,9 @@ method view(app: AppState): Widget =
         # the Box, not a property of the child widget.
         ScrolledWindow {.expand: true.}:
           Box(orient = OrientY, spacing = 12, margin = 16):
-            if app.messages.len == 0:
-              Label:
-                text = "Ask Jenova something."
-                style = [StyleClass("dim-label")]
+            Label:
+              text = (if app.messages.len == 0: "Ask Jenova something." else: "")
+              style = [StyleClass("dim-label")]
             for m in app.messages:
               Frame:
                 Box(orient = OrientY, spacing = 4, margin = 10):
@@ -456,12 +484,11 @@ method view(app: AppState): Widget =
                     xAlign = 0.0
                     wrap = true
 
-        if app.notice.len > 0:
-          Label {.expand: false.}:
-            text = app.notice
-            margin = 8
-            wrap = true
-            style = [StyleClass("dim-label"), StyleClass("caption")]
+        Label {.expand: false.}:
+          text = app.notice
+          margin = (if app.notice.len > 0: 8 else: 0)
+          wrap = true
+          style = [StyleClass("dim-label"), StyleClass("caption")]
 
         Box(orient = OrientX, spacing = 8, margin = 12) {.expand: false.}:
           Entry {.expand: true.}:
@@ -508,6 +535,10 @@ proc run*(withTray = true) =
     joinThread(streamThread); joinThread(ctlThread)
     streamReq.close(); ctlReq.close(); uiChan.close()
 
+  var conv = latestConversation()
+  if conv.len == 0: conv = newConversation()
+  let history = loadMessages(conv)
+
   let initialLan = isLanEnabled(p)
   let initialAddr = if initialLan: lanAddress() else: ""
   let widget = gui(App(p = p,
@@ -515,7 +546,9 @@ proc run*(withTray = true) =
                        lc = lc,
                        status = bsDown,
                        lanEnabled = initialLan,
-                       lanAddr = initialAddr))
+                       lanAddr = initialAddr,
+                       convId = conv,
+                       messages = history))
 
   if withTray:
     # The tray is started before the main loop but pumped from inside it; see
