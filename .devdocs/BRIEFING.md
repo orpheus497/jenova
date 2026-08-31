@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-08-31 23:28
+**Last updated:** 2026-09-01 (Session 013)
 **Branch:** `bsd`
 
 ---
@@ -11,286 +11,124 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 
 | # | Rule |
 |---|---|
-| **1** | **Never state anything you have not run.** "The tray works", "the UI freezes", "this will break" — all asserted without testing, all wrong or unknown. If it was not executed, say "I don't know". |
-| **2** | **This is a Nim program. It has no Makefile and no shell scripts.** Build with `nimble`. Do not write, repair, or discuss shell scripts, installers or Makefiles. They are archived. |
-| **3** | **Do not reinvent what exists.** `std/json` parses JSON. `upstream.nim` relays SSE. Before writing a parser, client or helper, check whether the codebase or the stdlib already has one. |
-| **4** | **Do not rebuild old patterns.** The two-command split (server started separately from the app) was rebuilt after the USER had already killed it. `llama-server` is the engine — do not duplicate it in Nim. |
-| **5** | **Anything not in use goes to `.devdocs/ARCHIVE/`.** Not deleted, not left lying in the root. |
-| **6** | **Comments: only where the code is not self-explanatory.** `AGENTS.md` forbids retroactive comment editing. Do not write essays above functions. Do not "improve" existing comments. |
-| **7** | **Do not ask what has been answered.** Check `DECISIONS_LOG.md` SETTLED FACTS first. The Vulkan2 device list and "the app starts its own server" were each re-raised after being settled. |
-| **8** | **Do not write derivable facts into these documents.** Counts, file lists and subcommand lists rot immediately and cause the doc-churn loop. Point at the code. |
-| **9** | **A tracker that names a file must be re-read when that file is archived.** `BLUEPRINT.md` described `proxy.lua` and `jenova-ca` for three sessions after they were deleted, while being the file `AGENTS.md` calls authoritative (**D-AO**). A stale document does not sit inert — it manufactures work. |
-| **10** | **This applies to `docs/` and `README.md` too, and it went unnoticed longer there.** On 2026-08-31 the trackers were current while every user-facing document still described the LuaJIT proxy, the C/GTK3 `jenova-ui`, `bin/jenova-ca`, `lib/jenova-model.sh`, a Makefile and `scripts/*.sh` — and pointed readers at `~/Jenova/var/jenova.db`, which is not where the database is. They were realigned at 22:51. **The trackers are not the documentation.** |
+| **1** | **Never state anything you have not run** — and **never deny what plainly was run.** Both halves are the rule. If it was not executed, say "I don't know". If the USER says they ran it, they ran it. |
+| **2** | **This is a Nim program using `llama-server`. That is all it is.** No shell scripts, no Lua, no C, no Makefile. Build with `nimble`. |
+| **3** | **The archived old build is not work.** A broken reference to an archived file is fixed by **deleting the reference or porting it to Nim** — never by repairing it, and never by asking the USER which (**D-AZ**). Both options sit inside the standing ruling. |
+| **3b** | **Everything is driven from the GUI** (**D-BC**). Anything needing a terminal, a shell script or a hand-edited file is a defect. |
+| **4** | **Explain in plain English, then cite the ID.** "G-23 needs resolving" communicates nothing. Say what it is, then give the reference (**D-BA**). |
+| **5** | **Do not reinvent what exists.** `std/json` parses JSON. `upstream.nim` relays SSE. Check the stdlib and the codebase first — including whether the API route you are about to write is already implemented and tested, because repeatedly it was. |
+| **6** | **Do not rebuild old patterns.** The two-command split was rebuilt after the USER killed it. `llama-server` is the engine — do not duplicate it in Nim. |
+| **7** | **Comments only where the code is not self-explanatory.** No essays above functions. Do not retroactively "improve" existing comments. |
+| **8** | **Do not ask what has been answered.** `DECISIONS_LOG.md` SETTLED FACTS and its QUESTION STATUS index, first. |
+| **9** | **Do not write derivable facts into these documents.** Counts and file lists rot. Point at the code. |
+| **10** | **Re-check a tracker's claims against the code; do not carry them forward.** Session 013 found six false claims in these documents, one repeated across five files. |
+| **11** | **Verify a scope list against the source, not against a summary.** The "GUI parity" list carried since Session 010 named six items. The Web UI's own component listing has roughly three times that. |
+| **12** | **A "not yet run" label is not durable.** It survives exactly until any evidence contradicts it — a screenshot, a defect report, or the USER saying so. Carrying it past that point has now cost two sessions. |
 
 ---
 
-## 1. State
+## 1. What this is
 
 | | |
 |---|---|
-| **What it is** | A native FreeBSD desktop application in Nim. `llama-server` does inference; this is the harness around it |
-| **Binaries** | `bin/jenova` — the desktop app (window, tray, chat, backend control). `bin/jenova-core` — headless server. Both link the same modules; the split exists so a LAN/server host builds without GTK |
-| **Build** | `nimble`. Tasks are in `jenova_core.nimble`. **No Makefile** |
-| **Architecture** | `BLUEPRINT.md` — rewritten 2026-08-31 and current. The pre-rewrite audit record is `ARCHIVE/devdocs/BLUEPRINT_pre-007.md` and is **history, not requirements** |
-| **Language purity** | No Lua. No C. No shell script in the product tree except `hardware-profiles/`'s profile-selection tooling, which is setup-time data handling |
+| **What it is** | A native FreeBSD desktop application in Nim. `llama-server` does the inference; this is everything around it |
+| **Binaries** | `bin/jenova` — the desktop app. `bin/jenova-core` — the same program headless, for LAN. Both link the same modules; the split exists so a server host builds without GTK |
+| **Build** | `nimble`. Tasks in `jenova_core.nimble`: `core`, `gui`, `suites`, `llama`, `web`, `clean` |
+| **Architecture** | `BLUEPRINT.md` |
 | **Runtime home** | `$HOME/Jenova`. `~/JCA` is permanently off limits |
-| **Tests** | Shell suites under `tests/`, run by `nimble suites`; the list is in `jenova_core.nimble` and the specs in `TESTS.md`. **All six suites and all four self-tests pass, run 2026-08-31 22:51.** `test_routes` passed 13/13 in the working tree *and* against a `git archive HEAD` rebuild, so **T-12 no longer reproduces** — it is left open, not closed, because nothing was done to fix it |
+| **Tests** | **Six** shell suites under `tests/`, run by `nimble suites`, plus **five** self-test subcommands in `jenova-core` (`db-`, `serve-`, `rag-`, `pipeline-`, `sha256-selftest`). *Earlier revisions said four self-tests; there are five.* **None of them covers the GUI** — see §5 |
 
-## 2. Verified working, by running it
+## 2. State
 
-**Confirmed by the USER on the 20:49 build (2026-08-31 20:52), a completed session:**
+**The build has been run.** The 2026-08-31 23:28 build — the one carrying the Neovim
+page transparency fix, the document panel, the editor-page framing and the colour work
+— **was run by the USER.** Earlier revisions of this file described it as "compiled,
+never seen on screen"; that label was stale and was repeated for two sessions after it
+stopped being true.
 
-- The window, the theme, the canvas, the glass side panel, the workspace tree, the wordmark.
-- Notes: create, edit, save, and visibility at every container level.
-- Markdown text and code blocks; **chat bubbles sized to their content**.
-- Fullscreen and F11, **with the top bar still present and its controls reachable**.
-- **Quit — from the menu and the tray — leaves no core.** That is T-1's actual test.
+**What that run reported: the GUI is missing a large number of Web UI features.** No
+appearance or rendering defect was raised. So the four items built on 2026-08-31 are
+run and undisputed, and **the outstanding work is functional, not visual.**
 
-**Confirmed at Session 006 and not re-run since** *(older, and labelled so a stale pass cannot
-survive again)*:
+**The backend is in good shape.** Configuration, database, threaded HTTP server, the
+whole `/api/*` surface, the filesystem mirror, retrieval, the prompt pipeline, backend
+supervision and watchdog, model discovery and switching are implemented and covered by
+tests. Session 013 read nineteen modules and confirmed every fix recorded on
+2026-08-31 is genuinely present in the source.
 
-- The tray icon registers.
-- `bin/jenova` starts the HTTP server and both backends itself — one command, no separate `serve`.
-- The embedding server comes up on `:8082`.
-- The agent `llama-server` comes up on `:8081` **now that `Vulkan2` is out of `etc/jenova.local.conf`** — it was rejecting the whole `-dev` argument and dying instantly.
-- Conversations persist to the `conversations`/`messages` tables and reload at startup.
-- Clean exit: both worker threads join, no hang.
+## 3. What is actually missing — the honest list
 
-## 2b. Built 2026-08-31 23:28, NOT seen on screen
+**The desktop application has the shape of the Web UI and not its function.** Chat,
+sidebar, workspace tree, notes, theme, canvas, syntax highlighting and the embedded
+Neovim page all work. Almost everything you do *to* a message does not exist.
 
-**G-23, G-24, G-25 and G-27 are all implemented and compiled.** Every suite and self-test passes.
-**None of them has been looked at**, and that is the only outstanding claim. `PLANS.md` lists the
-five things to check on the first run, in order and by mechanism.
-
-**G-23 was the interesting one: it was never a GTK problem.** Neovim paints `Normal` with a
-background, VTE renders what it is told, and no CSS could see through it — three attempts had all
-worked on the wrong side of the boundary (**D-AX**). Established by running the USER's own config,
-which took one command.
-
-**Two limits stated rather than left to be discovered:** `termguicolors = true` in the USER's
-`init.lua` bypasses the new VTE palette entirely (**D-AY**), and `expander > title` was never a
-GTK4 selector — the node is `expander-widget`.
-
-**G-26 cancelled G-16** — no virtual file explorer; the Neovim page rooted at
-`$JCA_HOME/Workspaces` is the browser (**D-AW**). Its condition is *"as long as everything is
-correctly in sync"*, which promotes **T-14** — still open, and now load-bearing.
-
-## 3. Known broken
-
-**Three things, and G-23 is the only one seen on screen.**
-
-**`TODOS.md` T-16 — `hardware-profiles/detect-hardware.sh` cannot run at all**, confirmed by
-running it 2026-08-31 22:51: line 19 sources `lib/detect-env.sh`, archived with the shell tree, so
-every mode aborts there. It is the retained setup-time tooling this file's Language-purity row
-carves out, so it is a live gap, and every hardware-profile fix made that day is unexercised until
-it is resolved. The way out is a **T-7** decision, not a defect fix.
-
-**`TODOS.md` T-17 — retrieval's index is never populated.** `rag.query` short-circuits on
-`documentCount() == 0`, and `rag.indexContent`/`indexFile` have no callers outside `rag-selftest`.
-The query path is complete and proven by that self-test; nothing feeds it. This is B-15 carried
-across the rewrite, and `docs/context-and-retrieval.md` now says so rather than describing
-retrieval as live.
-
-**`TODOS.md` G-23 — the Neovim tab renders opaque and visually disconnected.** Three
-fixes attempted, none evidence-led, none confirmed. **Do not attempt a fourth value change**; G-23
-lists what is already verified and the one diagnostic that settles it (`GTK_DEBUG=interactive`).
-
-**Everything else is confirmed working by a completed run** — the USER tested the 20:49 build and
-quit it (*"tested seems all resolved"*); the newest core is **20:42, from the previous build**, and
-the process exited leaving none. **An uptime sample would not have counted. An exit with no core
-does.**
-
-The T-1 record below is kept because the *route* to it is the expensive part.
-
-### T-1, closed 20:52 — the SIGBUS was the Quit path
-
-**The USER diagnosed it** — *"i think the issue is the quit button"* — after **five** of my
-hypotheses had died.
-
-```nim
-changed = true          # set for EVERY action, quit included
-if action == "quit":
-  st.closeWindow()      # destroys the window and every GtkWidget under it
-...
-if changed:
-  discard st.redraw()   # gui.nim:490 — diffs a tree of freed widgets
-```
-
-**Fix:** a `quitting` flag, `return false` immediately after `closeWindow` (which also removes the
-timeout), and the same guard on the other two timers — the 3 s poll redraws, and the canvas timer's
-`queueFrame` addresses the DrawingArea directly.
-
-**Why five hypotheses died first, and it is one mistake repeated.** Every core was read for *where*
-it faulted, never for *when*. The faulting widget is always the header bar's **`left[0]` — simply
-the first widget in tree order carrying a handler to disconnect**, i.e. the first thing a doomed
-diff touches. It was never that widget's fault, which is why `ToggleButton` → `Button` changed
-nothing. **And the real signal was in the USER's own words twice: every session ran fine and left a
-core. It was crashing on exit.** "All good so far" and a fresh core were both true; I read them as
-contradicting instead of as telling me *when*.
-
-| Claimed cause | Killed by |
+| Works | Missing entirely |
 |---|---|
-| ORC collecting owlkettle's `state → event → state` cycles (**D-AS**) | `--mm:arc` shipped; it still crashed |
-| The 30 fps whole-tree redraw | Removed; it still crashed, just rarer |
-| GTK4 unparenting a fullscreened custom titlebar | **The session that never entered fullscreen crashed too** |
-| `ToggleButton` reentrancy via `gtk_toggle_button_set_active` | Replaced with a plain `Button`; **the next core is identical — which is what proved the fault is positional, not per-widget** |
+| Send a message, stream a reply | **Edit, regenerate, delete, copy or continue a message** (G-28) |
+| Conversations: create, rename, delete, search | **Branching** — alternative versions of an answer (G-29) |
+| Workspace / project / folder tree, notes | **Attachments** of any kind — image, text, PDF, audio (G-30) |
+| Markdown text and highlighted code blocks | **Tables, task lists, LaTeX maths** (G-34) |
+| Theme, canvas, glass panel, wordmark | **Any settings screen — so no temperature, top_p, top_k, penalties** (G-31) |
+| Neovim page + AI reads the live buffer | **Import / export of conversations** (G-32) |
+| Tray, LAN toggle, backend start/stop | **Generation statistics, and a stop button** (G-33) |
+| Two hardcoded model-switch menu items | **A real model selector and model information** (G-20) |
+| One line of grey status text | **Typed errors, retry, context-overflow reporting** (G-35) |
+| — | **Trash view** (G-21), **delete confirmations** (G-36), **a real note editor** (G-17) |
+| — | **Hardware profile detection and selection** — currently impossible from anywhere (S-1) |
+| — | **Recall of past chats** — the search engine is built and starved (T-17) |
 
-**All three code changes are retained on their own merits and none was the fault.** D-AS is partly
-retracted.
+**Almost all of it is GUI work over a backend that is already finished and tested** —
+the message-update route, the recursive fork cascade, `/api/db/import`, the trash
+routes and `models.switchModel` all exist with assertions behind them.
 
-**And a process failure worth more than the bug.** At 20:15 I reported "1:47 elapsed, no core" as
-evidence the fix held. **That process is core 40484 — it died two minutes later.** Sampling a
-*live* program and finding no crash *yet* is not a result. **Rule 1 was broken in the act of citing
-it.** A fix is confirmed by a **completed** session that exercised the failing path.
+Full detail with mechanisms and line references: `TODOS.md`. Ordered plan: `PLANS.md`.
 
-**Chat bubbles were "weirdly huge" — fixed 20:20, CONFIRMED 20:52.**
-Every child of the transcript column was unannotated, and **`Box`'s adder defaults to
-`expand: true`**, which in a vertical Box is `vexpand` — so each message card took an equal share of
-the viewport height. **§3a already carried that rule and it was not applied here.** Not attributed
-to the 20:10 fix: it is structurally present in the committed source, and the build that first
-shipped this column crashed before it could be evaluated.
+## 4. Known broken in the Nim code
 
-**The top bar vanished in fullscreen — fixed 20:49, CONFIRMED 20:52.** The USER: *"when going
-to full screen the top bar is missing."* **Not a regression — the GTK4 behaviour G-13c already
-recorded**, now taking the sidebar toggle, the app menu and the status line, because
-`HeaderBar {.addTitlebar.}` means `gtk_window_set_titlebar` and GTK4 hides that in fullscreen.
-**`Window` → `AdwWindow`** (which has no titlebar slot) with the bar extracted into
-`proc topBar(app): Widget` and inserted at the top of the chat column — where it stays mapped.
-Atop the chat column rather than spanning the window because the Web UI's sidebar is full height.
-**Window controls survive** (`showTitleButtons` defaults true — checked). **Given up, and stated:**
-`AdwWindow` has no `title` field, so the WM/taskbar title may be empty; the bar's own `WindowTitle`
-still reads "Jenova".
+Seven items, each verified by reading the file it names (`TODOS.md`). The two that
+matter:
 
-**The core inventory lived in `TODOS.md` T-1 and went with it when T-1 was closed;** the full record
-is `PROGRESS.md` 20:43 / 20:52. Eleven cores, 15:26 through 20:42, all SIGBUS, all one cause.
+- **Renaming a workspace, project or folder strands every file under it on disk**
+  (T-14). Paths are built from parent *names*, and a container rename does nothing on
+  disk. Load-bearing, because the Neovim page rooted at the workspaces folder is now
+  the file browser.
+- **Nothing populates the search index** (T-17), so the AI has no recall of past chats.
+  The search half is finished and proven; the indexer half was never written. **Scope is
+  now decided — it indexes chats** (D-BD), and it is Step 4.
 
-**The previous entry's dismissal rested on `BRIEFING.md:54`: *"no debugger here reads a FreeBSD
-core."* `gdb 15.1 [GDB v15.1 for FreeBSD]` is installed and read all five.** Rule 1 forbids stating
-what was not executed, and **it equally forbids denying it**. Before writing down that evidence
-cannot be obtained, **try to obtain it** — that is D-AS, and it is the more expensive lesson than
-the one this section used to carry.
+Separately, **there is currently no way to detect hardware or change profile at all**
+(S-1). It was two shell scripts and both are broken by subtraction. It becomes Nim with
+a GUI screen (D-BC), Step 6.
 
-**A stack tells you where, not why.** The frame shape was read as the chat column's `Box`; the
-library shows `Box.children` pops correctly and **never calls `updateChildren`**. The frame is the
-HeaderBar's. **Match a backtrace against the source before inferring a mechanism from it.**
+The rest — a leaked embedding server on exit, an unbounded statement cache, two holes
+in the file-containment check, untrimmed chat history — are real but not urgent.
 
-## 3a. The live workstream — GUI parity (D-AP)
+## 5. The gap nobody has recorded: the GUI has no test coverage
 
-The GUI is the product; `jca_web` becomes the ephemeral single-device LAN client. **Everything
-built has been run.** The USER ran it at 18:30, named four visual defects, and confirmed the fixes
-at 18:55: *"for the most part it looks good."* **Working and seen:** theme, canvas, glass side
-panel, workspace tree, wordmark, markdown text and code blocks. **What is missing is §3b's list, not
-this one** — G-6 was retired and triaged at 20:10, and **MCP came out of it entirely** (D-AT).
+All six suites and all five self-tests exercise `jenova-core` — routes, database,
+filesystem, lifecycle, models, and the Neovim buffer reader. **Nothing tests `gui.nim`
+at all.** Every GUI defect in this project's history was found by the USER looking at
+the screen.
 
-**The 19:11 build did not work, and the reason is worth keeping (G-14, G-15).** Notes could never
-be created — `physicalPath` refuses a non-UUID id, so `upsert` deleted every row it wrote — and
-anything created below the top level was invisible because only the immediate parent id was set
-while the tree matches on all three. **The database found both before any code was read:** zero
-rows, *not even soft-deleted ones*, is the signature of a rollback rather than of a button that
-does nothing. Both fixed at 19:23. **G-15 was pre-existing and shipped inside the half of G-4 that
-was "confirmed on screen" at 18:55** — confirmation covers the path that was exercised and nothing
-else.
+That is tolerable for layout and is not tolerable for the work in §3, which is mostly
+*logic* — branching, message editing, parameter passing. **Each step in `PLANS.md`
+names what would prove it worked**, and where that can be a suite it should be one.
 
-**The 19:23 build was run and the USER confirmed it at 19:38: the panel, the tree and notes work.**
-That closes G-12 (in-app Quit, which had existed only in the tray), G-13a (a way out of fullscreen —
-`fullscreened` was a property the program never bound), and **G-4 entirely**, notes and fileAssets
-included.
+## 6. Waiting on the USER
 
-**A standing correction, because it was made three times and the third time was indefensible.** I
-wrote "built, not yet run" about the panel, the tree and notes *while the USER was reporting defects
-in them from photographs of the running window*. **A defect report from the screen is proof of a
-run.** Do not carry an "unrun" label past the first piece of evidence that contradicts it; rule 1
-forbids claiming what was not executed, and it equally forbids denying what plainly was.
+**Nothing in the plan is blocked.** The two questions raised on 2026-09-01 were answered
+the same day: the search index indexes **chats** (D-BD), and hardware profile selection
+is **ported to Nim and driven from the GUI** (D-BC). Both are now plan steps.
 
-**G-13c — the fullscreen toggle was a one-way door, and it was ours.** The USER, 19:39: it *"cuts
-the top of the gui off and theres no way to exit it."* **GTK4 hides a titlebar set through
-`gtk_window_set_titlebar` while a window is fullscreened** — that is the cut-off top — and the
-HeaderBar it hides held the only control that could leave. The button now lives in the **bottom
-action row**, which stays mapped, with an **F11** accelerator; the accelerator has to hang off an
-always-mapped widget because owlkettle attaches the shortcut controller at
-`GTK_SHORTCUT_SCOPE_MANAGED`. **This exact mechanism was written down at 18:55 and then discarded**
-because the USER's answer said the header bar stays — true of a *compositor* fullscreen, false of
-ours. **A hypothesis disproved for one event is not disproved for a different event with the same
-symptom.**
+Three product decisions remain parked, none on the critical path: filesystem as the
+source of truth (T-11), deployment (T-7), a CLI (T-8).
 
-**G-7 is done in source (19:39), compiled and linked, unrun.** Syntax highlighting through a
-hand-written `gtksourceview-5` 5.18.0 binding in new `sourceview.nim`. Two things worth knowing
-before touching it: owlkettle's `renderable` macro emits an **unexported** type, so the widget must
-be declared in `gui.nim`; and owlkettle's header-less `gtk_text_view_set_editable`/`_monospace`
-prototypes **conflict at the C level** with `gtksource.h`, so those two are re-declared under
-Nim-side names. `nm -u` shows all nine `gtk_source_*` symbols referenced — **it links; it has not
-rendered.**
-
-**G-13b — fullscreen not filling, and glitching — is DEFERRED at the USER's direction:** suspected
-to be their compositor rather than the program. **Not work unless identified.** It is a *separate*
-item from G-13c and stays deferred; four hypotheses were checked and all four died, and the record
-is in `TODOS.md` so they are not re-derived.
-
-**The method that found G-8 … G-11 is the thing worth keeping.** The USER described the screen in
-one sentence; every item was then traced to a specific line before a word was written down, and the
-one hypothesis that felt obvious (a light-theme `.background` inheriting black text) was **checked
-and discarded** — the app forces dark at `gui.nim:998` and the sheet loads at priority 600. Four
-defects, four mechanisms, no speculation. Contrast with Session 007, which read the same trackers
-and reported that no new defect existed.
-
-**Read D-AR before touching `gui.nim`.** Four rounds shipped a broken window because a scripted bulk
-edit was followed by a compile and nothing else. **`nimble gui` exiting 0 says the widget tree is
-valid, never that it is right**, and one such edit inserted a wrapper without re-indenting its body
-— the panel rendered as five columns and compiled cleanly. Layout changes go through the harness's
-edit tooling as one block, read back before building.
-
-**Sizing APIs are minimums.** `min-width`, `sizeRequest` and the flap's `width` were each reached
-for as if they capped something. To make a `Picture` small, decode it small.
-
-**`Box`'s adder defaults to `expand: true`**, and `insert(...)` inherits that default. `hexpand`
-propagates **up** the tree, so one greedy button makes the whole panel greedy.
-
-## 3b. The parity scope, named by the USER (20:10, **D-AT**)
-
-**`G-6` is retired as a heading and triaged into `TODOS.md` G-16 … G-21:** the filesystem view and
-browser, the writer/editor, **file awareness**, **Neovim in a tab**, the models selector, the trash
-view. **MCP is DEFERRED — *"we dont need mcp for the gui yet"*.** That matters because MCP was the
-largest item by far and the only one that is not a view to port: the Web UI's is a browser-side
-`@modelcontextprotocol/sdk` client with an agentic tool loop, and `grep -rin mcp src/` returns two
-hits, both a TEXT column. **Everything else in the list is GUI work over a backend that exists.**
-
-**Neovim is a `vte4` terminal hosting `nvim --listen <socket>`, not a re-implemented UI** (D-AT) —
-so the USER keeps their own Neovim and their own config.
-
-**Status of that list as of 21:42:**
-
-| | |
-|---|---|
-| **G-18 file awareness** | **DONE and self-tested, unseen by the USER.** `nvimctl.nim` + the `Editor:` intent. **No msgpack client** — `nvim --server --remote-expr` is the evaluator Neovim already ships. Suite proven able to go red |
-| **G-19 Neovim tab** | **Built and linked; G-23 open** — renders opaque and out of place |
-| **G-16, G-17, G-20, G-21** | Not started. Filesystem browser, writer/editor, models selector, trash view. **All GUI work over a backend that exists** — `/api/storage/*`, `/api/fs/trash`, `models.discover`/`switchModel` |
-| **G-22** | Chat settings / attachments. **Not in the USER's scope call** — raise before working |
-
-## 4. Outstanding
-
-**`TODOS.md` is the list; this is the order.** T-1 and T-13 were closed this session and are gone
-from it, per the completion rule. **Nothing is blocking.**
-
-1. **G-23** — the Neovim tab's appearance. **The only thing known broken.** Evidence first
-   (`GTK_DEBUG=interactive`); three value-changes already failed.
-2. **T-14** — renaming a workspace/project/folder orphans its files on disk. Reasoned from source,
-   **not executed**, and the fix is larger than T-13's because it means moving directories.
-3. **G-16, G-17, G-20, G-21** — the rest of the parity surface, §3b. All GUI work.
-4. **Stabilise** — T-2 … T-5, plus **T-12** (`test_routes` fails 5, pre-existing).
-5. **Deployment** (T-7) then **CLI** (T-8) — each opens with a decision that is the USER's.
-
-Independent of all of it: **T-9**, **T-10** (profile data hygiene) and **T-15** (a watch item, not a
-defect — read its history before acting on it).
-
-**Explicitly not work:** the archived shell tree. It is gone, not pending.
-
-**Explicitly not work:** the archived shell tree. It is gone, not pending.
-
-## 5. Settled — do not re-raise
+## 7. Settled — do not re-raise
 
 | | |
 |---|---|
 | **Engine** | `llama-server`, always. In-process `libllama` was deleted, not deferred |
+| **Language** | Nim only, plus `llama-server`. No shell, no Lua, no C, no Makefile |
 | **Devices** | `Vulkan0,Vulkan1`. There is no Vulkan2 on this machine |
 | **Startup** | The app starts its own server and backends. One command |
 | **`~/JCA`** | Off limits, permanently |
@@ -298,3 +136,6 @@ defect — read its history before acting on it).
 | **TUI** | Replaced by the window |
 | **Tray** | StatusNotifierItem over D-Bus, in Nim. It works |
 | **Unused files** | Archive to `.devdocs/ARCHIVE/`, never delete, never leave in the root |
+| **MCP** | Deferred by the USER. Largest thing in the Web UI — do not pick it up casually |
+| **Virtual file explorer** | Cancelled by the USER (D-AW). The Neovim page is the browser |
+| **`jca_web`** | Frozen (D-Z). Read it to establish parity; never edit it |

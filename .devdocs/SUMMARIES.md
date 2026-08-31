@@ -5,6 +5,58 @@ One short paragraph per session. Sessions 001-005 are in
 
 ---
 
+## Session 013 — 2026-09-01
+
+A verification pass with no code changed: all eleven trackers read in full, then
+**nineteen modules opened** and every falsifiable claim checked against the file it
+names. **The code inventory held up** — every fix recorded on 2026-08-31 was located in
+the source and is genuinely present, including all four of the features built at 23:28.
+**Seven documented claims were false**, the largest being that G-25's document panel is
+a `Paned`: it is a `Box`, it was called a Paned in five separate documents, and the code
+comment records that a `Paned` **crashed the application on the first click of the
+Neovim button** — with the consequence nothing had recorded, that the panel has no drag
+handle and is fixed at 420 px. T-10 named three hardware profiles as contradicting
+their own config; all three match exactly, and the only real mismatch is on the profile
+T-10 called *closed*, where both values are inert. `.glow-text` is defined and applied
+to no widget — **G-8's exact defect recurring in the same file.** And the four features
+built on 2026-08-31 were labelled "UNRUN on screen" when **the USER had run them and
+said so more than once** — no appearance defect came back from that run, so the
+outstanding work is functional rather than visual. **Three mistakes were mine and the
+USER corrected all three.** I scheduled repairs to two *archived shell scripts*,
+which is precisely the loop `TODOS.md` opens by forbidding; they are reclassified as
+**S-1**, whose only outcomes are deletion or a port to Nim, and the rule is now
+`BRIEFING.md` rule 3 and **D-AZ**. And I wrote the entire report in ticket codes, which
+is illegible to anyone not holding the tracker open — now **D-BA**, and every item in
+`TODOS.md` and `PLANS.md` was rewritten to say what it is before citing its ID. And I
+told the USER twice that the current build had never been run **after being told it
+had**, carrying Session 012's label forward without questioning it — `BRIEFING.md` §3a
+had already recorded that exact failure once, and it happened again, so rule 1 is now
+restated in both directions and the durability of an "unrun" label is `BRIEFING.md`
+rule 12 and **D-BB**. **The
+finding that changes the plan is the USER's, not mine:** they said the GUI was missing
+many Web UI features, and I had taken the tracker's six-item parity list on trust
+without checking. Reading the Web UI's own component barrel files found the desktop
+application has **no message actions at all** (no edit, regenerate, delete, copy or
+continue), **no conversation branching** despite the database and API already modelling
+the fork tree, **no attachments**, **no settings screen and therefore no way to set
+temperature or any sampling parameter**, no import/export, no trash view, no generation
+statistics, no stop button, no markdown tables or maths, and one line of grey text for
+every error. Recorded as **G-28 … G-36** — roughly three times the previous scope, and
+almost all of it GUI work over backend that is already finished and tested. `TODOS.md`,
+`PLANS.md` and `BRIEFING.md` were rewritten rather than patched. **Two rulings closed
+the session's only open questions**: everything is driven from the GUI, so hardware
+profile detection and selection are ported into Nim with a GUI screen and both shell
+scripts are archived (**D-BC**, Step 6); and the retrieval index indexes chats, fed as
+messages are saved with a backfill at startup, which makes a finished-but-starved
+subsystem live (**D-BD**, Step 4). **One of those questions should never have been put**
+— D-AH, D-AM and D-AZ already ruled that a reference to an archived file is fixed by
+deletion or a port to Nim, so both options were inside the standing ruling and the
+choice was mine; **a question whose every option is already permitted is not a
+question.** Also ruled on the USER's instruction: `.devdocs/` stays terse and does not
+quote them verbatim. Detail in `SESSION_HANDOFF.md` Session 013.
+
+---
+
 ## Session 012 — 2026-08-31
 
 Worked a batch of externally supplied review findings, verifying each against the tree first: **23
@@ -31,8 +83,10 @@ something** — `theme.nim` has no selection rule at all, code blocks resolve to
 ANSI, and `.glow-text` was never ported. The fourth ask cancels G-16 (**D-AW**) and, because its
 condition is *"as long as everything is correctly in sync"*, promotes **T-14**. Scoped as G-24 … G-27 in
 `PLANS.md`, then **built on the USER's *"proceed"*** — all four implemented, both binaries compiling,
-every suite and self-test passing, **and none of it seen on screen**, which is the only outstanding
-claim. **G-23 fell out along the way and it was never a GTK problem**: Neovim paints `Normal` with a
+every suite and self-test passing. *(**Corrected 2026-09-01:** this entry's original
+"and none of it seen on screen, which is the only outstanding claim" is withdrawn —
+**the USER ran that build**, and no appearance defect came back from it. See
+`BRIEFING.md` rule 12.)* **G-23 fell out along the way and it was never a GTK problem**: Neovim paints `Normal` with a
 background and VTE renders what it is told, so no CSS could ever have seen through it — three
 attempts had all worked on the wrong side of the boundary, and one command against the USER's own
 config settled it (**D-AX**). Two limits are stated rather than left to be discovered: their

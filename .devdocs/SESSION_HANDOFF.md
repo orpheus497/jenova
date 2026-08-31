@@ -3,6 +3,148 @@
 Reverse-chronological. **Keep entries short.** Sessions 001-005 are in
 `.devdocs/ARCHIVE/devdocs/SESSION_HANDOFF_pre-006.md`.
 
+> **Reading the "built, unrun" notes below.** Several entries record a feature as built
+> and not yet seen on screen. **Those are point-in-time records, not current status.**
+> The current status is `BRIEFING.md` §2: **the 2026-08-31 23:28 build has been run by
+> the USER**, nothing visual was reported wrong with it, and the outstanding work is
+> functional. **Do not re-derive an "unrun" claim from a dated entry here** — that has
+> now cost two sessions (D-BB, `BRIEFING.md` rule 12).
+
+---
+
+## Session 013 — 2026-09-01
+
+**Instruction:** read `AGENTS.md`, read every devdoc in full, cross-reference every
+claim against the codebase, report the outstanding work and a plan, and correct the
+documents. **No shell, no edits until told.** Then, in order: *"speak fucking English"*,
+*"there is a lot of this missing, the GUI is missing so many features and functions the
+webUI has"*, *"why are we talking about shell scripts and old shit from the archive"*,
+and *"stop telling me the current build was never run — I have said multiple times now
+it was run"*. **All four were correct.**
+
+### What was done
+
+Eleven trackers read end to end, then nineteen modules opened and checked against them.
+Full record in `PROGRESS.md` 2026-09-01. **No code changed.** All ten trackers were
+then rewritten or amended for congruence.
+
+Every fix recorded on 2026-08-31 was located in the source and is genuinely present.
+**Seven tracker claims were false**, the largest being that G-25's document panel is a
+`Paned` — it is a `Box`, said so in five documents, and the code comment records that a
+`Paned` *crashed the application on the first click of the Neovim button*, with the
+consequence nothing recorded: no drag handle, fixed at 420 px. T-10 named three
+profiles as broken that are all correct. `.glow-text` is defined and applied to
+nothing, which is G-8's defect recurring in the same file. And the four features built
+at 23:28 were labelled unrun when the USER had run them.
+
+### Run status, settled
+
+**The 2026-08-31 23:28 build was run by the USER.** No appearance or rendering defect
+was reported from it. The report was that the GUI is missing Web UI features.
+Every "UNRUN on screen" label has been withdrawn across the trackers and the rule is
+now `BRIEFING.md` rule 12.
+
+### Three mistakes of mine, and they are the reason the USER had to correct me
+
+**1. I scheduled repairs to archived shell scripts.** The first plan had
+`detect-hardware.sh` and `bin/jenova-swap-mount` as steps 2 and 3. **Both are shell.
+Both are archived.** The standing rule — D-AH, D-AM, and now `BRIEFING.md` rule 3 — is
+that the old build is gone, not pending, and `TODOS.md` opens with *"do not re-add
+defects about archived files — that loop cost a day."* I re-added them. Reclassified as
+**S-1**, whose only outcomes are deletion or a port to Nim.
+
+**2. I wrote the whole report in ticket codes.** "T-14 — renaming a container orphans
+its files" is only legible to someone holding the tracker open. The USER has asked for
+plain English across multiple sessions. Recorded as `BRIEFING.md` rule 4, and every
+item in `TODOS.md` and `PLANS.md` was rewritten to say what the thing is before citing
+its ID.
+
+**3. I told the USER twice that the current build had never been run, after being told
+it had.** The label came from Session 012's handoff and I carried it forward without
+questioning it, then repeated it back at the person who had run the thing.
+**`BRIEFING.md` §3a already recorded this exact failure once** — *"a defect report from
+the screen is proof of a run; do not carry an 'unrun' label past the first piece of
+evidence that contradicts it"* — and it happened again anyway. Now `BRIEFING.md` rule
+12, and rule 1 is restated in both directions: **it forbids denying what was executed
+as much as claiming what was not.**
+
+### The finding that changes the plan
+
+**The GUI parity scope was wrong by omission, and I initially repeated it on trust.**
+The USER said features were missing; they were right and I had not checked. The list
+carried since Session 010 — file browser, editor, file awareness, Neovim, model
+selector, trash view — was written from a summary. Reading the Web UI's own barrel
+files (`jca_web/src/lib/components/app/*/index.ts`) found the desktop application has:
+
+- **no message actions at all** — no edit, regenerate, delete, copy or continue
+- **no conversation branching**, though the database and API already model the fork tree
+- **no attachments** of any kind
+- **no settings screen**, so temperature and every sampling parameter are unreachable
+- no import/export, no trash view, no generation statistics, **no stop button**
+- no markdown tables or maths; errors are one line of grey text
+
+Recorded as **G-28 … G-36**. **Almost all of it is GUI work over backend that is
+already finished and tested.**
+
+### Documents rewritten
+
+`TODOS.md`, `PLANS.md` and `BRIEFING.md` were rewritten rather than patched: every item
+now states what it is in plain English before giving its ID, the archived-shell items
+are reclassified as deletions, and the real parity list replaces the old six-item one.
+`PROGRESS.md`, `SUMMARIES.md` and this file record the pass. **`DECISIONS_LOG.md`
+gained D-AZ** (the archived build is not work) and **D-BA** (explain before citing).
+
+### Two rulings taken, and one question that should not have been asked
+
+**D-BC — everything is driven from the GUI.** Nim plus `llama-server`, and any operation
+a user needs must be reachable from the window. Hardware profile detection, scoring and
+apply are ported into Nim with a GUI screen; the tuning values become data in
+`profile.conf`; both shell scripts are archived when it lands. `TODOS.md` S-1, Step 6.
+
+**D-BD — the search index indexes chats.** Messages keyed by conversation, indexed as
+they are saved, backfilled once at startup. `TODOS.md` T-17, Step 4.
+
+**Q-32 was mine to answer and I put it to the USER instead.** D-AH, D-AM and D-AZ
+already ruled that a reference to an archived file is fixed by deletion or a port to
+Nim; offering "archive or port?" re-opened a settled rule as a question. **A question
+whose every option is already permitted by a standing ruling is not a question.**
+
+**Style, on the USER's instruction:** `.devdocs/` stays terse and does not quote the
+USER verbatim — record the ruling, not the wording. Existing verbatim quotes are left as
+history; nothing new adds one.
+
+### Next — the full plan is `PLANS.md`; this is its shape
+
+1. **Renaming a project or folder must stop stranding its files on disk** (T-14).
+   Load-bearing now that the Neovim page is the file browser.
+2. **Give a message its actions back** — edit, regenerate, delete, copy, continue
+   (G-28). Largest usability gap; no new backend needed.
+3. **Conversation branching** (G-29), after 2, because editing and regenerating are
+   what create branches. The database and API already model the fork tree.
+4. **Make the search index chats** (T-17), so the AI recalls past conversations. The
+   engine is finished and starved.
+5. **A settings screen, and with it the sampling parameters** (G-31) plus
+   import/export (G-32). Temperature and every other sampling value are currently
+   unreachable from the desktop app.
+6. **Hardware profiles in Nim, driven from the GUI** (S-1). There is currently no way
+   to detect hardware or change profile at all.
+7. **The rest of the chat surface** — stop button and statistics (G-33), attachments
+   (G-30), real error reporting (G-35), markdown tables and maths (G-34), delete
+   confirmations (G-36).
+8. **The remaining views** — model selector and model information (G-20), trash view
+   (G-21), a real note editor (G-17).
+9. **Stability**, smallest first — stop the embedding server on exit (T-5), cap the
+   statement cache (T-2), fix both directions of file containment (T-4), trim chat
+   history (T-3).
+
+**Nothing is blocked.** Three product decisions stay parked and are not on the critical
+path: filesystem as source of truth (**T-11**), deployment (**T-7**), CLI (**T-8**).
+
+**Standing gap now recorded:** nothing tests `gui.nim`. All six suites and five
+self-tests exercise `jenova-core` only, and every GUI defect in this project's history
+was found by the USER looking at the screen. The work in steps 2-4 is mostly logic, so
+each step in `PLANS.md` names what would prove it worked.
+
 ---
 
 ## Session 012 — 2026-08-31 23:28
@@ -99,8 +241,12 @@ change** — then G-24, then G-25 once Q-29 and Q-30 are answered.
 
 ### Third instruction — *"proceed"*, 23:05: G-27, G-23, G-24 and G-25 built
 
-All four implemented, both binaries built, every suite and self-test passing. **None of it has been
-seen on screen** — that is the whole of what is outstanding.
+All four implemented, both binaries built, every suite and self-test passing.
+
+> **CORRECTED 2026-09-01: "none of it has been seen on screen" is withdrawn. The USER
+> ran this build**, and no appearance or rendering defect came back from that run. The
+> statement was true when written and was then repeated by two later sessions after the
+> USER had said otherwise. See `BRIEFING.md` rule 12.
 
 **G-23 is the one worth reading.** It was never a GTK problem, which is why three attempts on that
 side failed: **Neovim paints the background.** A colourscheme sets `Normal` with a `guibg`, Neovim
@@ -138,7 +284,7 @@ border. Both are now set unconditionally.
 
 ### Next steps
 
-0. **Run it and look at the five things `PLANS.md` lists** — that is the only claim still open on this work.
+0. ~~**Run it and look at the five things `PLANS.md` lists**~~ — **done: the USER ran this build.** No appearance defect came back; the report was that the GUI is missing Web UI features. Superseded by Session 013.
 1. ~~Answer Q-29 and Q-30~~ — answered by *"proceed"* — they gate G-25, the largest of the four new items.
 1. **T-16** — decide how `detect-hardware.sh` gets its environment back, or whether selection moves
    into the core. It gates every hardware-profile fix made today.

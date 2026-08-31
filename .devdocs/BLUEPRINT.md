@@ -3,7 +3,7 @@
 Authoritative system architecture: what the program is, what it depends on, and how data moves
 through it. Mandated by `AGENTS.md` § WORKSPACE ARCHITECTURE.
 
-**Last updated:** 2026-08-31 21:42
+**Last updated:** 2026-09-01 (Session 013)
 
 > **Rewritten 2026-08-31 (Session 007). The previous 626-line revision is in
 > `.devdocs/ARCHIVE/devdocs/BLUEPRINT_pre-007.md`** — archived, not deleted, per D-AM.
@@ -144,7 +144,23 @@ exists.
 
 `hardware-profiles/` is **data, not product code** — six profiles at uniform depth 2 (`<backend>/<config>`,
 ruling D-F), plus `detect-hardware.sh` and `common-setup.sh`, which are **setup-time** tools the
-running product never invokes. `etc/jenova.conf` is the applied profile mirrored into place.
+running product never invokes. `etc/jenova.conf` is the applied profile mirrored into place, and
+`config.nim` prefers the deployed copy under `$JCA_HOME/etc` over the source tree's (D-AT2).
+
+**The profile *data* is current and correct** — all six profiles were re-checked key by
+key on 2026-09-01 against their own `profile.conf`, and the only mismatch left is two
+inert values on `Vulkan/dgpu-i5-1135g7`.
+
+**The two shell scripts here are the last shell in the tree, and they are broken by
+subtraction:** `detect-hardware.sh:19` sources `lib/detect-env.sh` and
+`Vulkan/dgpu-i5-1135g7/jenova-setup:100` resolves `bin/jenova-swap-mount`, both archived
+with the old build. **Neither is invoked by the running product**, so there is currently
+no way to detect hardware or change profile at all.
+
+**Ruled at D-BC: detection, scoring and apply are ported into Nim and driven from the
+GUI**, with the same available as a `jenova-core` subcommand for headless hosts. The
+kernel-tuning values in the `jenova-setup` scripts become data in `profile.conf`, applied
+by Nim. **Both scripts are archived when that lands.** `TODOS.md` S-1, `PLANS.md` Step 6.
 
 **CUDA is not meaningfully available on FreeBSD**, so `CUDA/dgpu-generic` is unreachable on the
 target platform and is opt-in only (D-B). **Apply that constraint before raising anything about
@@ -155,13 +171,46 @@ that profile** — Q-12 should never have been put.
 | | |
 |---|---|
 | **In-process `libllama`** | Deleted 2026-08-31, not deferred. Duplicating the engine is the opposite of being a harness for it (D-AF) |
-| **The shell tree** | Installer, `jenova-ca`, `proxy.lua`, `ffi_defs.lua`, the C tray, the ncurses TUI. Archived under `.devdocs/ARCHIVE/`. **Not outstanding work — it is gone** (D-AH, D-AM) |
+| **The shell tree** | Installer, `jenova-ca`, `proxy.lua`, `ffi_defs.lua`, the C tray, the ncurses TUI. Archived under `.devdocs/ARCHIVE/`. **Not outstanding work — it is gone** (D-AH, D-AM). **A surviving reference to one of these files is fixed by deleting the reference or porting the behaviour to Nim. Repairing the archived thing is never an outcome** (D-AZ) — the last two such references are in `hardware-profiles/` and are ported at Step 6 (D-BC) |
 | **`rc.d` / service integration** | Cancelled at D-H. It gets written once, against the Nim program, as part of the deployment decision |
 | **A CLI** | Waits for the total-conversion gate, then the `jca_web` decision (D-AI) |
 
 ## 9. Open architectural questions
 
-**None are open with the USER.** `DECISIONS_LOG.md`'s question index is the authority; every
-question in that file is answered. The two remaining *product* decisions — the fate of `jca_web`
-and how the binaries are deployed — are recorded in `TODOS.md` as T-6 and T-7 and in `PLANS.md`.
-They are the USER's calls, not a session's, and neither is blocked on analysis.
+**None.** `DECISIONS_LOG.md`'s QUESTION STATUS index is the authority. The last two were
+answered on 2026-09-01:
+
+- **The retrieval index indexes chats** (D-BD) — messages keyed by conversation, indexed
+  as they are saved, backfilled at startup. `rag.nim` and the query path in
+  `pipeline.nim` are already complete; only the feed was missing.
+- **Hardware profile selection becomes Nim, driven from the GUI** (D-BC) — see §7.
+
+**Two architectural principles now bind the design:** the product is Nim plus
+`llama-server` and nothing else (D-AM, D-AZ), and **every operation must be reachable
+from the window** (D-BC) — a feature requiring a terminal or a hand-edited file is not
+finished.
+
+**Longer-standing product decisions, parked deliberately:** filesystem as the source of
+truth (T-11, D-AQ), deployment (T-7), and a CLI (T-8, gated by D-AI). **T-6 is closed**
+— D-AP settled `jca_web`'s fate: it becomes the ephemeral single-device LAN client and
+is frozen (D-Z).
+
+## 10. What is NOT built, and is the actual outstanding work
+
+The architecture above is complete and serving. **The gap is in the desktop
+application**, which reproduces the Web UI's shape without most of its function: no
+message actions, no conversation branching, no attachments, no settings surface (and so
+no reachable sampling parameters), no import/export, no trash view, no generation
+statistics, no stop control, and no typed error reporting.
+
+**Two subsystems are built and unreachable rather than missing:** retrieval works and is
+never fed (Step 4), and hardware profile selection has no working entry point at all
+(Step 6). Both are consequences of the same thing — nothing surfaced them in the GUI.
+
+**This is GUI work over the surface described above, which already carries it** — the
+message-update route, the recursive fork cascade, `/api/db/import`, the trash routes and
+model switching are all implemented and asserted. Nothing in §1-§8 needs to change to
+build any of it.
+
+Enumerated against `jca_web/src/lib/components/app/*/index.ts`; the itemised list is
+`TODOS.md` G-17, G-20, G-21 and G-28 … G-36, and the order is `PLANS.md`.

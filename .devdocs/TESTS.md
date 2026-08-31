@@ -3,8 +3,8 @@
 Test specifications, validation criteria and expected outcomes. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE.
 
-**Created:** 2026-08-28 (Session 004). Mandated from the outset; absent for Sessions 001–003.
-See `DECISIONS_LOG.md` C-10.
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 (Session 013).
+Mandated from the outset; absent for Sessions 001–003. See `DECISIONS_LOG.md` C-10.
 
 > **§5a onward are stage acceptance records** — what each stage had to prove and how. They are
 > history, kept for the reasoning. **§0 is the current suite.**
@@ -49,6 +49,45 @@ to `python3` and started no server.
 **A new suite must be proven able to fail.** Two suites in this project have reported PASS while
 asserting nothing. `test_models.sh` was verified by corrupting what its assertions read and
 confirming it goes red.
+
+**Five self-tests, six suites.** *Some earlier trackers said four self-tests;
+`db-capabilities` is a capability report, not an assertion, which is where the
+miscount came from.*
+
+## 0a. The coverage gap: nothing tests the GUI — 2026-09-01
+
+**Every suite and every self-test above exercises `jenova-core`.** Routes, database,
+filesystem mirror, containment, lifecycle and the argument vector, model discovery and
+switching, the Neovim buffer reader. **There is no test of `gui.nim` of any kind** — no
+suite, no self-test, no compiled driver.
+
+**Every GUI defect in this project's history was found by the USER looking at the
+screen**: the black sidebar slab, the unstyled tree, the unreadable wordmark, the
+collapsing code blocks, the five-column panel, the oversized chat bubbles, the
+one-way-door fullscreen, notes that could not be created, and the crash on quit.
+
+That was survivable while the outstanding GUI work was *layout*, where a screenshot is
+the only real test anyway. **It is not survivable for the work now planned**, which is
+mostly *logic*: conversation branch trees, message mutation, and parameter plumbing
+into the request body.
+
+**What `PLANS.md` requires, per step, and why each is assertable:**
+
+| Step | What must be proven | How, without a window |
+|---|---|---|
+| **1 — container rename** (T-14) | A renamed project takes its files with it, and a failed move rolls back | Extend `test_api_fs.sh`. It already builds a workspace/project/folder/note and inspects the disk — this is the dimension it was built for |
+| **2 — message actions** (G-28) | Edit and delete reach the right rows and cascade correctly | Extend `test_api_db.sh`. Both go through `/api/db/messages/*`, which is already asserted. Only regenerate and continue need the screen |
+| **3 — branching** (G-29) | The active path and the sibling counts are right for a known fork shape | A pure walk over rows. Belongs in an assertion, not a screenshot — this is the step most likely to be silently wrong |
+| **4 — chat indexing** (T-17) | A query returns the right message; a conversation-scoped filter confines results; re-indexing a conversation does not duplicate chunks | Extend `rag-selftest`. It already indexes a scratch corpus and asserts ranking, filtering and the vector round-trip |
+| **5 — settings** (G-31) | A stored sampling value actually reaches the outbound JSON body | A check on the body-building function. **Not** a live generation |
+| **6 — hardware profiles** (S-1) | Known hardware selects the right profile; an opt-in profile never wins automatically; the fallback ladder holds (specific > GPU generic > CPU generic) | A new suite over the profile data. Pure scoring logic, no hardware needed. **Prove it can go red first** — the archived `test_validate_arg.sh` never asserted this and rewrote `etc/jenova.conf` as a side effect |
+| **9 — statement cache** (T-2) | The cache stays capped under many distinct queries | A new suite. **Prove it can go red first** |
+| **9 — containment** (T-4) | A write through a symlinked parent is refused 403; a legitimate write under a symlinked root succeeds | Extend `test_api_fs.sh`, both directions |
+| **9 — history trim** (T-3) | Oldest dropped first, system message never dropped, budget respected | A unit check on the trim function at a small budget |
+
+**The rule this section exists to state:** where a GUI feature's *behaviour* can be
+asserted below the widget layer, it must be. Reserve the screen for what only the
+screen can show.
 
 ## 5i. `tests/test_nvimctl.sh` — the live editor buffer (G-18, 2026-08-31)
 

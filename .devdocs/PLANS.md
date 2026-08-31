@@ -2,308 +2,373 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-08-31 23:28
+**Last updated:** 2026-09-01 (Session 013)
+
+**Write plans in plain English, then cite the ID** (**D-BA**). A step that reads
+"resolve G-23" tells the reader nothing. Say what the thing is first.
 
 ---
 
-## Where the program is
+## What the program is
 
-A native FreeBSD desktop application in Nim. `llama-server` is the engine; this is the harness.
-`bin/jenova` is the app, `bin/jenova-core` the headless server. Build with `nimble`. Architecture
-is `BLUEPRINT.md` (rewritten 2026-08-31; the pre-rewrite audit record is archived).
+A native FreeBSD desktop application written in **Nim**, using **`llama-server`** from
+llama.cpp as the inference engine. Those are the only two things in it.
 
-**Done:** config, database, threaded HTTP server, the `/api/*` surface, filesystem mirror, RAG, the
-completion pipeline, backend lifecycle and watchdog, model discovery and switching, the GTK4 window,
-the StatusNotifierItem tray, conversation persistence. No Lua, no C, no shell scripts.
+- `bin/jenova` — the desktop application: window, tray, chat, backend control.
+- `bin/jenova-core` — the same program without the GUI, for serving over LAN.
 
-**Verified 2026-08-31 (Session 007) by reading every file the trackers name:** T-1 … T-10 are the
-complete and accurate outstanding set. **No new defect was found.** Cross-referencing the trackers
-against the tree produced corrections to three *documents* and none to the code inventory — which
-is the first time that has been true, and it is the point of the exercise.
+Build with `nimble`. **There is no Makefile, no shell script, no Lua and no C in the
+product** (**D-AM**, **D-AZ**). Any reference suggesting otherwise is a leftover
+pointing at the archived old build, and the fix is deletion or a port to Nim — never a
+repair. See **S-1**.
+
+**Finished, working and confirmed on screen:** configuration, database, threaded HTTP
+server, the whole `/api/*` surface, the filesystem mirror, the retrieval *engine*, the
+prompt pipeline (intents, RAG injection, personas, tool stripping, response cache),
+backend supervision and watchdog, model discovery and switching, the GTK4 window,
+theme and canvas, the tray, conversation persistence, the workspace tree, notes,
+markdown with syntax-highlighted code blocks, the embedded Neovim page, and the
+`Editor:` intent that feeds the live Neovim buffer to the model.
 
 ---
 
-## The live workstream — GUI parity (D-AP)
+## Where the work stands
 
-**This is what is actually being built.** The USER's direction, 2026-08-31: the GUI becomes the
-product; `jca_web` becomes the ephemeral single-device LAN client. **This closed T-6**, and it
-re-ordered everything below — the four stages that follow are still correct, but stage 1 is no
-longer the front of the queue.
+**The 2026-08-31 23:28 build has been run by the USER.** The four items built that day
+— the Neovim page transparency fix, the right-hand document panel, the editor-page
+framing and the colour work — are run. **No appearance defect was reported from that
+run.** The report was that the GUI is missing a large number of Web UI features.
 
-| | State |
+**So the outstanding work is functional, not visual.**
+
+**The parity scope carried since Session 010 was wrong by omission.** It named six
+items (a file browser, an editor, file awareness, Neovim, a model selector, a trash
+view) and was written from a summary rather than from the Web UI. Re-derived
+2026-09-01 by reading `jca_web/src/lib/components/app/*/index.ts` — the barrel files
+that name and describe every shipped component. The real list is three times larger and
+is `TODOS.md` G-17, G-20, G-21 and G-28 … G-36.
+
+| Works today | Missing entirely |
 |---|---|
-| G-1/G-2 theme + canvas | **Done, run, confirmed** |
-| G-3 side panel, G-3b rename/delete | **Done** |
-| ~~G-4 workspace tree~~ | **DONE — run and confirmed by the USER 19:38.** Panel, tree and notes work |
-| ~~G-5 markdown + code blocks~~ | **Done and confirmed 18:55.** No syntax highlighting (G-7) |
-| ~~G-6 remaining surface~~ | **Retired 20:10 — triaged into G-16 … G-21 by the USER's scope call (D-AT):** filesystem view/browser, writer/editor, **file awareness**, **Neovim in a tab**, models selector, trash view. **MCP DEFERRED** — it was the only item that is a subsystem rather than a view, and it is out |
-| ~~T-1 — the SIGBUS~~ | **CLOSED 20:52, confirmed by a completed run.** It was the **Quit path**: `closeWindow()` then `redraw()` in the same timer callback. **Eleven cores, six wrong hypotheses, and the USER diagnosed it.** Record in `PROGRESS.md` 20:43/20:52 |
-| ~~G-7 syntax highlighting~~ | **DONE — `sourceview.nim`, a hand-written gtksourceview-5 binding. Run and confirmed 20:52** |
-| ~~G-13c~~ | **DONE.** Fullscreen had no exit; fixed 19:39, confirmed 20:52. **Now redundant** — the top bar survives fullscreen since the `AdwWindow` change, so the bottom-row control is a second exit rather than the only one. Kept: it costs nothing |
-| ~~Top bar in fullscreen~~ | **DONE 20:49, confirmed 20:52.** `Window` + `gtk_window_set_titlebar` → **`AdwWindow`** with the bar extracted into `proc topBar` and inserted atop the chat column. **Given up and stated:** `AdwWindow` has no `title` field, so the WM/taskbar title may be empty |
-| ~~T-13~~ | **DONE in source 20:56, UNRUN.** Renaming a file asset wrote a zero-byte file over it and wiped its metadata; the rename now resends `content`/`size`/`type`/`uploadDate` as the notes branch already did |
-| ~~G-8 … G-11~~ | **CLOSED 18:55 — fixed and confirmed on screen.** Panel slab, unstyled tree, one-word wordmark, collapsing code blocks. Record in `PROGRESS.md` 18:42/18:55 |
-| ~~G-12, G-13a~~ | **DONE — in the 19:23 build the USER confirmed at 19:38** |
-| ~~G-14, G-15~~ | **DONE — note creation and nested-container visibility, confirmed working 19:38** |
-| ~~G-13b~~ | **DEFERRED by the USER 19:11 — suspected compositor, not the program.** Not work unless identified |
+| Send a message, stream a reply | Edit, regenerate, delete, copy or continue a message |
+| Conversations: create, rename, delete, search | Branching — alternative versions of an answer |
+| Workspace / project / folder tree, notes | Attachments of any kind |
+| Markdown text and highlighted code blocks | Tables, task lists, LaTeX maths |
+| Theme, canvas, Neovim page, AI reads the buffer | Any settings screen — so no sampling parameters |
+| Tray, LAN toggle, backend start/stop | Import/export, statistics, a stop button |
+| Two hardcoded model-switch items | A real model selector and model information |
+| One line of grey status text | Typed errors, retry, context-overflow reporting |
 
-**How this work goes wrong, and the rule that came out of it (D-AR).** Four consecutive rounds
-shipped a broken window because a scripted bulk edit was followed by `nimble gui` and nothing else.
-**A compile proves the tree is valid, never that it is right.** Layout changes are rewritten as a
-block through the harness's edit tooling, read back, and the widget tree shown before building.
-Sizing APIs (`min-width`, `sizeRequest`, flap `width`) are **minimums** — check the semantics before
-reaching for one.
-
-**LAN gets no further investment.** Built, works, retained under Directive 3.
+**Almost all of it is GUI work over backend that is already implemented and has
+assertions behind it.**
 
 ---
 
-## G-24 … G-27 — the USER's direction of 2026-08-31 23:05 — **BUILT 23:28, UNRUN on screen**
+## Standing constraint: the GUI has no test coverage
 
-> **All four are implemented in source and compiled.** Q-29 and Q-30 were answered by the USER's
-> *"proceed"* (see `DECISIONS_LOG.md`), and **G-23 was diagnosed and fixed along the way — it was
-> Neovim painting `Normal`, not GTK (D-AX)**. What remains is the one thing this plan cannot do:
-> **look at it.** The section below is kept as the record of what was decided and why, and the
-> order it was done in.
->
-> **What to check on the first run**, in this order — each is a distinct mechanism, and lumping them
-> into "does it look right" is how three G-23 attempts were spent:
-> 1. **Neovim page translucency.** The particle canvas should show through the editor. If it does
->    not, the override is not reaching the instance — check `hi Normal` inside it before changing
->    any value.
-> 2. **Text selection.** Select in the message box and in a note: purple, not blue.
-> 3. **Code-block colours.** A fenced block in a reply should be purple keywords and gold strings,
->    not Adwaita's blues.
-> 4. **The document panel.** Toggle it on a chat; the page editor's `nvim` must survive the toggle.
-> 5. **The editor page's bottom row.** Close and fullscreen, not a message box.
+All six suites and all five self-tests exercise `jenova-core`. **Nothing tests
+`gui.nim`.** Every GUI defect in this project's history was found by the USER looking
+at the screen, and that is the loop the steps below are meant to stop repeating.
 
-Four asks given together. They are **not** four independent tickets: G-26 removes work, G-24 and
-G-25 both hang off the Neovim integration, and G-27 is the only one that can be done in isolation.
-**Do them in the order below**, because G-25 is the one with an unanswered design question and
-starting there stalls the other three.
-
-### Order, and why
-
-| Step | Item | Blocked by | Why here |
-|---|---|---|---|
-| 1 | **G-27** — palette completion | nothing | Entirely additive, touches `theme.nim`/`sourceview.nim`/`vte.nim` only, and **its VTE half is a prerequisite for G-24 and G-25 looking right** — a Neovim page in stock ANSI is off-scheme however it is framed |
-| 2 | **G-23** — the Neovim tab's opacity | nothing, but needs the diagnostic | Still open, still wants `GTK_DEBUG=interactive`, **still not a fourth value change**. G-24 restyles the same widget, so resolving this first stops a fifth guess being folded into a layout change |
-| 3 | **G-24** — Neovim as a page | 2 | Small once 2 is known: it is a margin, an action row and a style class |
-| 4 | **G-26** — cancel the file explorer | nothing | Already recorded; the work is *not doing* G-16. Its real cost is **T-14** moving up |
-| 5 | **G-25** — the right-hand document panel | a USER decision (below) | The largest, and the only one that cannot start today |
+The work ahead is mostly *logic* — branching trees, message mutation, parameter
+plumbing — not layout. **Every step below names what would prove it worked**, and where
+that can be an assertion rather than a screenshot, it must be. A new suite is not
+believed until it has been shown to go red (**this project has twice shipped a suite
+that reported PASS while asserting nothing**).
 
 ---
 
-### G-27 — finish the palette *(actionable now)*
+## Step 1 — Renaming a container must stop losing its files
 
-Four separate defects with four separate fixes. **Do not treat this as one CSS pass.**
+**What is wrong:** rename a workspace, project or folder and every note and file
+underneath it is stranded. Each file's path on disk is built from its parents' *names*
+(`fssync.nim:191-206`), but `api.mirrorUpsert` does nothing at all for `projects` and
+`folders` — they fall through to `else: true` (`api.nim:194`) — and `syncWorkspace`
+only creates the new directory without moving the old one (`fssync.nim:282`).
 
-1. **Selection colours.** `theme.nim` has no selection rule, so GTK4 uses the system accent —
-   Adwaita blue — everywhere text is selected. Add `selection`, `entry > text > selection` and
-   `textview text selection` on `@jenova_primary` with `@jenova_fg`, and a `:selected` rule for any
-   list row. This is the single most visible item and the cheapest.
-2. **A Jenova GtkSourceView scheme.** `sourceview.nim:89` asks for `Adwaita-dark` first, and a probe
-   compiled against the installed library **confirms it resolves** — so every code block in chat is
-   GNOME's palette. GtkSourceView schemes are XML and merge from
-   `gtk_source_style_scheme_manager_append_search_path()`. **Ship the scheme inside the binary**
-   (`staticRead`, written to `$JCA_HOME/.system/styles/` at startup, path appended before the first
-   buffer is built) so the application stays one file with no data dependency. Map keyword →
-   `@jenova_purple_head`, string → `@jenova_accent` gold, comment → `@jenova_muted_fg`, number and
-   constant → `ColBrandBlue`, error → `@jenova_secondary` crimson. Keep `SchemePreference` as the
-   fallback chain beneath it.
-3. **The VTE palette.** `vte.nim:77` passes a nil palette of size 0, so Neovim renders in VTE's
-   built-in xterm 16 — this is why the Neovim page looks like a different application. Build a
-   16-entry `array[16, GdkRGBA]` from the brand constants and pass `paletteSize = 16`. **The eight
-   bright slots matter more than the eight normal ones** for a Neovim colourscheme, and this only
-   fixes what nvim draws through ANSI: a user whose config sets `termguicolors` bypasses the
-   palette entirely and needs a Neovim colourscheme instead — which is theirs, not ours, and is
-   the boundary D-AT drew. **State that limit in the code rather than discovering it later.**
-4. **Glows and the missing borders.** `app.css:270` is `text-shadow: 0 0 8px rgba(221,183,255,0.4)`
-   (`.glow-text`) and `:227` a crimson `box-shadow: 0 0 20px`; neither was ported and GTK4 supports
-   both. Apply the text glow to `.brand` and the active conversation row, not globally.
+**Why first:** you ruled that the Neovim page rooted at the workspaces folder *is* the
+file browser (**D-AW**), which cancelled the virtual file explorer. That makes the
+directory tree the interface rather than a mirror, and it currently tells the truth
+only until the first rename. D-AW says explicitly that it does not close this — it
+raises it.
 
-**Also audit, because the USER named "some text in the side panel and buttons":** every widget in
-`leafRow`, `nodeTools` and `topBar` carries `ButtonFlat` + `.row-btn`, which sets no colour — so
-icon buttons inherit the theme's, not the brand's. `Expander`'s own title and disclosure arrow are
-likewise unstyled. Enumerate them against the running window before writing rules; **a colour
-audit done by reading is how three G-23 attempts died.**
+**The work:**
+1. `mirrorUpsert` gains real `projects` and `folders` branches: resolve the old
+   directory from the row's *previous* values (`prior`, which `upsert` already reads
+   and passes in) and `moveDir` it to the new name.
+2. `syncWorkspace` takes the prior name and renames rather than creating.
+3. A failed move must roll the database back, which `upsert` already does — the branch
+   only has to return `false`.
+
+**Proof it worked:** extend `tests/test_api_fs.sh`, which already builds a workspace,
+project, folder and note. Rename the project through `/api/db/projects`; assert the
+note's file exists at the new path, that the old directory is gone, and that a rename
+whose `moveDir` fails leaves both the row and the directory untouched.
 
 ---
 
-### G-24 — the Neovim tab becomes a page *(after G-23)*
+## Step 2 — Give a message its actions back  *(`TODOS.md` G-28)*
 
-`gui.nim:1242` already swaps the main area, so this is framing, not restructuring:
+**What is wrong:** once a message is sent there is nothing you can do to it. The Nim
+GUI has one copy button, on code blocks (`gui.nim:929`). The Web UI's
+`ChatMessageActions` has five actions on every message.
 
-1. Drop `margin = 12` and the `.nvim-term` radius/shadow so the editor fills the column edge to
-   edge, the way the transcript's `ScrolledWindow` does.
-2. **Branch the bottom action row on `app.editorOpen`, not only on `app.openNote`.** Today the
-   editor page shows the chat `Entry` and Send button, and has no Close — the note page gets
-   Save/Close and the editor should get the same shape (Close, plus `fullscreenButton`).
-3. Hide the `notice` label while the editor is open; it is chat feedback.
-4. **Keep the three-children-same-types invariant** the comment at `gui.nim:1238` records. That is
-   what stops owlkettle's positional diff swapping a widget out from under it, and it is the
-   discipline that survived T-1.
+**Why second:** it is the largest usability gap in the product, and it is the
+difference between correcting a mistake and starting the conversation over.
 
----
+**The work, per action:**
 
-### G-25 — the right-hand document panel *(needs one USER decision first)*
+| Action | Mechanism |
+|---|---|
+| **Copy** | The message text to the clipboard. `copyToClipboard` already exists (`gui.nim:893`) and drives `wl-copy` |
+| **Delete** | `api.deleteEntity("messages", id)` — the route and its cascade already exist and are asserted by `test_api_db.sh` |
+| **Edit** | An inline `Entry`/`TextView` swap on the message card, saving through `/api/db/messages/update`, which already performs partial updates (`api.nim:593-608`) |
+| **Regenerate** | Drop the assistant message and re-post the conversation up to the preceding user turn. `gui.send` already builds that body |
+| **Continue** | Re-post with the incomplete assistant text as the tail, so the model extends rather than restarts |
 
-**What is settled:** it is a `Paned` (`owlkettle/widgets.nim:1344` — `orient`, `initialPosition`,
-`first`, `second`), not a `Flap`, because owlkettle does not expose AdwFlap's `flap-position`. It is
-toggled per chat from the top bar, and it hosts a real `nvim` in a second VTE, not a text view.
+**Do this before branching.** Editing and regenerating are what *create* branches;
+building the navigator first would leave it with nothing to navigate.
 
-**What is not settled, and must not be guessed — two questions for the USER:**
+**Watch out for:** the transcript column's widget-shape invariant. The comment at
+`gui.nim:1477-1482` records that the chat column keeps three children of the same types
+in the same order so owlkettle's positional diff cannot swap a widget out from under
+it. Adding an edit mode must vary *what is inside* a card, not the card's type.
 
-- **Q-29: what is a "document"?**
-  - **(a) A `notes` row that Neovim edits on disk.** `fssync` already writes every note to
-    `Workspaces/<ws>/<project>/<folder>/<title>_<id>.md`, so the file exists and the sidebar already
-    lists it. **But the database is authoritative and nvim would be a second writer** — save in
-    nvim and the row is stale; save in the GUI and nvim's buffer is. That is **T-11** (filesystem as
-    source of truth), which is recorded as undecided, so option (a) *is* taking T-11.
-  - **(b) A plain file under the project directory**, outside the `notes` table. No two-writer
-    problem, no T-11 entanglement, and "multiple can be saved" is just files in a directory. The
-    cost is that these documents are not in the workspace tree unless the panel lists them itself
-    — which G-26 says is acceptable, because Neovim is the browser.
-  - **Recommendation: (b)**, and it can be revisited if T-11 later lands. It is the option that
-    does not require a settled answer to a question the USER has explicitly left open.
-
-- **Q-30: with two Neovim instances, which one does `Editor:` read?** `pipeline.configureEditor`
-  takes one socket (`gui.nim:1337`) and `nvimctl` reads whatever buffer that instance has focused.
-  The panel document is the one "directly connected to the chat", so **the panel's socket is the
-  likelier answer** — but the full-page editor is where the user is actually working. Candidates:
-  the panel always wins; the most recently focused wins; or `Editor:` gains a suffix. **Not a
-  decision to take silently — it changes what the model is shown.**
-
-**The work, once those are answered:**
-
-1. `vte.nim` — replace the module-level `sockPath`/`spawnCwd` pair with per-widget spawn arguments,
-   so two terminals can carry different sockets and working directories. `newNvimTerminal` reads
-   globals at build time today because `beforeBuild` sees no field values; the `renderable` will
-   need `{.private, onlyState.}` fields set the way `SourceCode` sets its buffer.
-2. `nvimctl.nim` — `socketPath` becomes a function of a role, not a constant. **Keep it short:** the
-   104-byte `sun_path` limit is measured, not assumed, and two sockets under `.system/` stay inside
-   it.
-3. `gui.nim` — `Paned` around the chat column; `panelOpen` and `panelDoc` state; a document switcher
-   in the panel header; the top-bar toggle.
-4. **Retire the `fileAssets` rows from the tree** — G-25 replaces them. The `fileAssets` table,
-   `/api/db/fileAssets` and the mirror stay for the LAN client (D-Z), so this is a GUI removal only.
+**Proof it worked:** the mutations are all HTTP calls, so they are assertable without a
+window — extend `test_api_db.sh` for the edit and delete paths. Regenerate and continue
+are GUI composition over `gui.send` and need the screen.
 
 ---
 
-## G-19 / G-18 — Neovim in a tab, and file awareness *(scoped 2026-08-31 20:58)*
+## Step 3 — Conversation branching  *(`TODOS.md` G-29)*
 
-**Ruling D-AT.** The USER: *"neovim integration with a tab that has neovim running with the ai able
-to read the active document."*
+**What is wrong:** editing or regenerating in the Web UI creates a **sibling** — an
+alternative version — and prev/next arrows with a counter ("2/5") move between them. A
+conversation is a tree.
 
-### The mechanism is PROVEN, by running it — and it needs no msgpack client
+**The backend is already done.** `conversations.forkedFromConversationId` exists in the
+schema (`db.nim:296`); `api.nim:263-281` already implements both deletion modes — a
+recursive descendant walk for delete-with-forks, and reparenting children onto the
+deleted node's own parent otherwise — and `test_api_db.sh` asserts both.
 
-The obvious design was a Nim **msgpack-RPC client** against `nvim --listen`. **It is not needed.**
-`nvim --server <sock> --remote-expr <vimscript>` prints the result on stdout, and Neovim ships it.
-Directive 3 — *do not reinvent what exists* — and it matches how the program already invokes
-installed binaries (`wl-copy` in `copyToClipboard`; `git`, `fetch`, `xdg-open`).
+**What blocks it:** the GUI models a conversation as a flat `seq[Message]`
+(`gui.nim:372`) and cannot represent a branch at all. This is a state-shape change
+first and widgets second.
 
-**Executed 2026-08-31 20:57 against a real `nvim --headless --listen`, output verbatim:**
+**The work:**
+1. `App.messages` becomes the *active path* through the tree, with the full message set
+   held beside it so siblings can be computed.
+2. A sibling lookup: messages sharing a parent. The Web UI's `getMessageSiblings()` is
+   the reference behaviour.
+3. Prev/next controls plus a position counter on any message that has siblings.
+4. Switching sibling reloads the active path from that point down.
 
-| Query | Result | Gives us |
+**Proof it worked:** the tree walk is pure logic over rows and belongs in an assertion,
+not a screenshot — a scratch conversation with a known fork shape, asserting the active
+path and the sibling counts at each node.
+
+---
+
+## Step 4 — Make the search index chats, so the AI remembers  *(`TODOS.md` T-17)*
+
+**What is wrong:** `rag.nim` is finished and proven by `rag-selftest` — keyword ranking,
+path filtering, snippet persistence, the float32 vector round-trip and the similarity
+maths all pass. **Nothing calls `indexContent` outside that self-test**, so the index is
+always empty, `rag.query` short-circuits (`rag.nim:323`), and `pipeline.prepare` — which
+already queries it on every chat turn — always gets nothing back.
+
+**Scope, decided (D-BD): chats.** Index messages keyed by conversation, so the path
+filter the query path already supports scopes a search to one chat or across all of
+them.
+
+**The work:**
+1. Index a message as it is saved. The save sites are `gui.nim:296` and the server-side
+   path; both already have the conversation id in hand.
+2. Use a stable key per conversation so re-indexing replaces rather than duplicates —
+   `indexContent` is already idempotent per path (`rag.nim:213` forgets first).
+3. Backfill existing history once at startup, so the feature works on day one rather
+   than only for chats created after it ships.
+4. Indexing must not block the turn: it is worker-thread work, and `db.nim` is already
+   per-thread.
+
+**Proof it worked:** extend `rag-selftest` — index a scratch conversation, assert a
+query returns the right message, that a conversation-scoped filter confines results, and
+that re-indexing the same conversation does not duplicate chunks.
+
+---
+
+## Step 5 — A settings screen, and with it the sampling parameters  *(`TODOS.md` G-31, G-32)*
+
+**What is wrong:** there is **no settings surface at all**, and the consequence is
+concrete — `gui.send` posts `{"messages": …, "stream": true}` and nothing else
+(`gui.nim:797`), so **temperature, top_p, top_k, min_p, repeat_penalty, frequency and
+presence penalty and repeat-last-n cannot be set from the desktop application.** They
+are not defaulted badly; they are absent.
+
+**Why this is cheap:** `llama-server` accepts every one of them per request — that is
+why **D-AF** closed the old "sampling parameters are ignored" item — and
+`pipeline.prepare` passes unknown top-level keys straight through untouched
+(`pipeline.nim:285` re-serialises the whole object). So the plumbing is: put the values
+in the JSON body.
+
+**The work:**
+1. A settings dialog. The Web UI's `ChatSettings` is tabbed: General (system message),
+   Display, Sampling, Penalties, Import/Export, Developer. Skip the API-key tab —
+   this server does not authenticate — and skip MCP, which is deferred.
+2. Persist to a file under `p.state`, the way `lan_mode` already is
+   (`gui.nim:173-184`).
+3. `gui.send` merges the stored parameters into the request body.
+4. **Import/export (G-32) belongs in the same screen** and is a front end over
+   `POST /api/db/import`, which is already transactional and asserted (`api.nim:401`).
+
+**Worth copying from the Web UI:** it shows, per parameter, whether the value came from
+the user, from the server's `/props`, or from an app default. That distinction is what
+stops someone chasing a setting they never actually set.
+
+**Proof it worked:** assert that a stored temperature reaches the outbound body — a
+check on the body-building function, not a live generation.
+
+---
+
+## Step 6 — Hardware profiles in Nim, driven from the GUI  *(`TODOS.md` S-1)*
+
+**What is wrong:** choosing a hardware profile is still two shell scripts, and both are
+broken by subtraction — `detect-hardware.sh:19` sources an archived `lib/` file, and one
+profile's `jenova-setup` resolves an archived `bin/` helper. Nothing invokes either, so
+**there is currently no way to detect hardware or change profile at all** except editing
+`etc/jenova.conf` by hand.
+
+**Ruled at D-BC:** it becomes Nim, and it is driven from the window.
+
+**The work:**
+1. **Detection in Nim** — CPU model, GPU devices, RAM, swap, OS release. `sysctl` and
+   the Vulkan device list, read directly rather than shelled out to.
+2. **Scoring in Nim** — each profile's `MATCH_CPU`, `MATCH_GPU_0/1` and `MATCH_OS`
+   against what was detected, reproducing the existing ladder: specific hardware beats
+   the GPU fallback beats the CPU fallback, and `PROFILE_OPT_IN` profiles never
+   auto-match.
+3. **Apply in Nim** — write the chosen profile's `jenova.conf` to `$JCA_HOME/etc`, which
+   `config.nim` already prefers over the source tree (D-AT2).
+4. **A GUI screen** — list the profiles, show which one matched and the score that
+   decided it, show the detected hardware beside it, and apply one. Restarting the
+   backend afterwards is already a GUI action.
+5. **The same as a `jenova-core` subcommand** for headless hosts.
+6. **Kernel tuning becomes data.** The sysctl values in the `jenova-setup` scripts move
+   into `profile.conf` and Nim applies them, reporting what it could not set without
+   privilege rather than failing silently.
+7. **Archive both scripts** once this lands, and fix the two Linux filesystem strings
+   in the profile data (**S-2**) in the same pass.
+
+**Proof it worked:** scoring is pure logic over data files and belongs in a suite —
+feed known hardware descriptions and assert the selected profile, including that an
+opt-in profile never wins automatically and that the fallback ladder holds. That is what
+the archived `test_validate_arg.sh` never did.
+
+---
+
+## Step 7 — The rest of the chat surface
+
+Ordered by how often it bites.
+
+**7a. A stop button, and generation statistics  *(G-33)***
+The send button greys out mid-generation (`gui.nim:1548-1553`); there is no way to
+cancel. The Web UI's turns into a stop button. Statistics — tokens in/out, elapsed,
+tokens per second — are shown per message and live during generation. **The
+`messages.timings` column already exists (`db.nim:302`) and nothing writes it.**
+Cancelling means closing the streaming socket from the control worker, which is why the
+two workers are separate (`gui.nim:79-80`).
+
+**7b. Attachments  *(G-30)***
+Images, text, PDFs, by file picker, drag-and-drop and paste; thumbnails; full-size
+preview; validation against what the model can actually read. Nine Web UI components
+cover it. **The storage side already exists** — `fileAssets` rows carry `content`,
+`size`, `type` and `uploadDate`, and `fssync.syncFileAsset` already decodes `data:`
+base64 payloads to bytes (`fssync.nim:310-337`). Audio recording is the one piece that
+may not be worth porting; raise it before building.
+
+**7c. Real error reporting  *(G-35)***
+Everything currently lands in one grey line (`app.notice`, `gui.nim:1500`). The Web UI
+distinguishes a timeout from a server error and, on a context overflow, shows the
+prompt-token count against the context size. `streamOnce` already has the status code
+in hand (`gui.nim:130`) and throws it away into a sentence.
+
+**7d. Markdown tables, task lists and maths  *(G-34)***
+`markdown.nim` does headings, bullets, quotes, emphasis, inline code and fences. A
+model asked to compare things answers with a table, which currently renders as raw
+pipes. LaTeX is the larger piece and may reasonably be deferred; tables are not.
+
+**7e. Delete confirmations  *(G-36)***
+Every delete in the tree and conversation list fires on one click (`gui.nim:986`,
+`1014`, `1052`). The argument for having no dialog was that deletes are soft — but a
+soft delete with no trash view (**G-21**) is indistinguishable from data loss, so this
+and G-21 answer each other.
+
+---
+
+## Step 8 — The remaining views
+
+**8a. Model selector and model information  *(G-20)*** — replace the two hardcoded menu
+items (`gui.nim:1274-1280`) with a searchable list carrying per-model status and
+capabilities, plus a details dialog (context size, parameter count, quantisation,
+vocabulary, slots, modalities, chat template). Backend exists: `models.discover`,
+`models.switchModel`.
+
+**8b. Trash view  *(G-21)*** — everything deleted is soft-deleted and currently
+invisible. Backend exists and is asserted: `GET /api/fs/trash`,
+`POST /api/fs/trash/restore`, `DELETE /api/fs/trash/empty` (`api.nim:435-462`), plus
+`/<entity>/deleted` and `/<entity>/<id>/restore` on every table.
+
+**8c. A real writing surface  *(G-17)*** — the note editor is a `TextView` with Save and
+Close (`gui.nim:1089`). It is the seed, not the thing.
+
+---
+
+## Step 9 — Stability, none of it urgent
+
+In this order, smallest first:
+
+| | Work | Proof |
 |---|---|---|
-| `expand("%:p")` | `/…/sample.txt` | the active document's path |
-| `join(getline(1,"$"),"\n")` | `line one\nline two\nline three` | **the buffer, including unsaved edits** |
-| `line(".")` | `1` | cursor position, for "what am I looking at" |
-| `&modified` | `0` | whether disk and buffer agree |
-| `&filetype` | `text` | **feeds `sourceview.nim`'s language directly** |
-
-**The buffer query is the whole point of G-18:** the AI reads *what is on screen*, not what was last
-saved to disk.
-
-### A constraint found by running it, not by reading
-
-**The socket path must be short.** `nvim --headless --listen <108-char path>` fails with
-`Failed to --listen: invalid argument` — FreeBSD's `sun_path` is ~104 bytes. **`$HOME/Jenova/state/`
-is well inside that**; a scratch path under `/tmp/claude-…` was not. Any future "it works on my
-machine" here is this.
-
-### Steps
-
-| Step | Item | Shape of the work | Proof it worked |
-|---|---|---|---|
-| ~~**19.1-19.3**~~ | **DONE 21:23, compiled and linked, UNRUN.** `src/jenova/vte.nim`; the terminal spawns `nvim --listen` at the **same socket `nvimctl` reads**, so the tab and the `Editor:` intent see one editor. Toggle in the top bar. `nm -u` shows all five `vte_*` symbols | **It links; it has not rendered.** Needs a run |
-| ~~**18.1**~~ | **DONE 21:03, RUN.** `src/jenova/nvimctl.nim`, with `tests/test_nvimctl.sh` + `tests/nvimctl_check.nim` wired into `nimble suites`. **5 passed, 0 failed.** The suite runs its assertions twice — clean, then after editing the buffer **without saving** — and **the interim run went red**, which proves both that the checks assert something and that the reader returns the *buffer*, not the file on disk | **Done.** Skips cleanly with no `nvim` installed |
-| ~~**18.2**~~ | **DONE 21:14, RUN.** New `Editor:` intent prefix — the existing gating mechanism, so it works from the GUI, the Web UI and any client with no UI work. `prompts.Editor` tells the model the buffer may differ from disk. Both binaries build; `pipeline.configureEditor` wired into both entry points | **9/9 checks pass**, including **"no prefix → buffer NOT leaked"** — the gate is asserted, not assumed |
-
-**Sequencing:** 19.1 is the only risky step (a new C dependency and the program's second FFI). 18.1
-is independent of all of it — **it works against any `nvim --listen`, including one the USER already
-has running** — so it can be built and proven before the terminal widget exists.
-
-**Not in scope:** writing *back* into the buffer from the AI. Reading is what was asked for.
+| **T-5** | Stop the embedding server on exit. `gui.run`'s `defer` joins threads and stops nothing (`gui.nim:1588`); `lifecycle.stopAll` already exists. Leaving the *agent* model loaded is deliberate — reloading gigabytes into VRAM every start is worse — so stop only the embed backend, and clear a pidfile whose process is dead | `jenova-core backends status` after a GUI exit: agent up, embeddings down, no stale pid |
+| **T-2** | Cap the database's prepared-statement cache. It is a plain `Table` that never evicts (`db.nim:46`, `165`) and finalizes only at connection close (`db.nim:383`), while the message-update route builds a different SQL string per field combination. **The fix belongs in `db.nim`** — a cap plus finalize-on-evict — not in the caller | A suite issuing many distinct field combinations, asserting the cache stays capped. Prove it can go red first |
+| **T-4** | Both directions of the file-containment check. The symlink check only runs on paths that already exist (`fssync.nim:641`), so a *new* file written through a symlinked parent escapes; and `normBase` is lexical (`fssync.nim:628`), so a symlinked workspaces root rejects legitimate paths. Resolve the deepest existing ancestor and compare against a resolved base | `test_api_fs.sh`: a write through a symlinked parent is refused **403**; a legitimate write under a symlinked root succeeds |
+| **T-3** | Trim chat history. The whole conversation is resent every turn (`pipeline.nim` has no trim step), so a long chat eventually exceeds the context. Needs a byte budget from `CTX_SIZE`, dropping oldest first, never dropping the system message | A unit check on the trim function at a small budget — not a live generation |
 
 ---
 
-## The standing plan
+## Waiting on a decision from the USER
 
-Four stages. **They are ordered by dependency, not by preference**, and stages 2–4 each open with a
-decision that is the USER's to make. A session does not start stage 2 by choosing for them.
+**Nothing in Steps 1-9 is blocked.** Q-31 and Q-32 were answered on 2026-09-01 (D-BD,
+D-BC) and became Steps 4 and 6.
 
-### Stage 1 — Make it stable *(actionable now; no decision required)*
+Three product decisions remain parked, none of them on the critical path:
 
-`TODOS.md` **T-2 … T-5**. A session can execute all of it unaided. **Nothing blocks it** — T-1 was
-corrected on 2026-08-31 and is an unexplained core, not a gate.
-
-| Step | Item | Shape of the work | Proof it worked |
-|---|---|---|---|
-| **1.1** | **T-1 — the SIGBUS.** **Diagnosed and fixed in source 20:10; UNRUN** | **The writing is done; the running is not.** Two fixes are in: the frame clock repaints the canvas alone instead of diffing the whole tree, and the GUI builds `--mm:arc` so ORC stops collecting owlkettle's `state → event → state` cycles under GTK (**D-AS**). **Exercise the paths that produced the cores** — fullscreen, F11, opening and closing notes | **No new core** after a session that includes fullscreen and note toggling. If one appears, it is now readable: `gdb -batch -ex "bt 25" bin/jenova /var/coredumps/<core>` |
-| **1.2** | **T-5 — backends survive exit** | `gui.run`'s `defer` joins the worker threads and stops nothing. Leaving the *agent* loaded is deliberate — reloading multiple gigabytes into VRAM on every restart is worse — but the **embedding** server is left with nothing attached, and a backend that dies during start leaves its pidfile behind. Fix: stop the embed backend on exit; clear a pidfile whose process is not alive | `jenova-core backends status` after a GUI exit reports the agent up, embeddings down, and no stale pid |
-| **1.3** | **T-2 — unbounded statement cache** | `db.nim`'s cache is a plain `Table` and finalizes only at connection close, while `api.nim`'s message update builds its `SET` clause from whichever fields the client sends. Distinct SQL accumulates without bound. **The fix belongs in `db.nim` — a cap plus finalize-on-evict — not in `api.nim`**; constraining the caller leaves the cache still unbounded for the next caller | A new suite that issues many distinct field combinations and asserts the cache stays capped. **It must be proven able to fail** before it is believed |
-| **1.4** | **T-4 — `resolveStoragePath` containment** | Two directions, one fix. The symlink check is gated on `fileExists or dirExists`, so a **new** file written through a symlinked parent escapes the root; and `normBase` is lexical, so a symlinked `$JENOVA_WORKSPACES` makes the check reject **legitimate** paths. Resolve the deepest existing ancestor and compare against a resolved base | Extend `test_api_fs.sh`: a write through a symlinked parent is refused **403**, and a legitimate write under a symlinked root succeeds |
-| **1.5** | **T-3 — chat history is never trimmed** | The whole conversation is resent every turn. Needs a byte budget derived from `CTX_SIZE`, dropping oldest-first and never dropping the system message | A unit check on the trim function at a small budget; not a live generation |
-
-**Sequencing note.** 1.2–1.5 are independent of each other and of 1.1, and all four are queued
-behind the GUI parity workstream above.
-
-### Stage 2 — The workspace question — **ANSWERED, and now the live workstream**
-
-`TODOS.md` T-6 is closed by **D-AP**: option A (build it natively) **plus** a retained option C
-(`jca_web` survives as the LAN client). Not a decision any longer — it is the GUI parity work
-above.
-
-### Stage 3 — Deployment *(USER decision, then work)*
-
-`TODOS.md` **T-7**. The product is two Nim binaries plus `etc/`, `public/`, `png/` and
-`hardware-profiles/`. **How they get installed is one decision, taken once.**
-
-**The shell installer is archived and is not the answer** (D-AH, D-AM) — it has been raised as
-outstanding work three separate times and it is not. The realistic candidates are a FreeBSD port /
-package, or `nimble install` plus a documented data-directory layout. Service integration (`rc.d`,
-`rcvar`, `sysrc jenova_enable=YES`) was cancelled at D-H **specifically so it could be written once
-against the Nim program** — it belongs in this stage, not before it.
-
-### Stage 4 — The CLI *(after stages 2 and 3)*
-
-`TODOS.md` **T-8**, gated by **D-AI**. `jenova-core` already has an operational subcommand surface;
-`jenova-cli` is a distinct, user-facing tool and it is explicitly the last thing built.
-
-### Independent of all four — profile data hygiene
-
-`TODOS.md` **T-9** and **T-10**. Neither blocks anything and neither is on the critical path.
-
-- **T-9:** `hardware-profiles/CPU/generic/jenova-setup` is entirely Linux (`cpupower`, `/sys`,
-  `numactl`) and is the only CPU-only profile — so a FreeBSD host with no working Vulkan ICD lands
-  on tuning that does nothing. Rewrite on FreeBSD sysctls or delete the script and let the profile
-  be data-only, as the two generic fallbacks already are (Q-11).
-- **T-10:** each `profile.conf`'s tuning `PROFILE_*` block contradicts the `jenova.conf` beside it
-  (for `Vulkan/dgpu-i5-1135g7`: FIT 256 vs 128, CTX 8192 vs 16384, NGL 16 vs `all`, DRAFT 0 vs 1).
-  Nothing reads those tuning values. Sync or delete them.
+- **Filesystem as the source of truth** (`TODOS.md` T-11, D-AQ). The expensive half
+  already exists. Must not be entangled with the GUI work above.
+- **How the binaries get installed** (T-7).
+- **A CLI** (T-8), gated by D-AI.
 
 ---
 
 ## Standing rules for whoever picks this up
 
-From `BRIEFING.md`, and both were paid for:
-
-- **If it was not executed, it is not stated.** A defect list written from reading unrun code is
-  speculation with line numbers; it generates a plan, devdoc edits and a correction pass. "I don't
-  know" is the correct answer for anything unrun.
-- **Check whether it already exists before writing it.** `std/json`, `upstream.nim`, `paths.nim`.
-- **Do not re-raise what is settled.** `DECISIONS_LOG.md`'s SETTLED FACTS table first: the engine,
-  the devices, the startup model, `~/JCA`, the licence, the build system, the shell tree.
-- **Adding a suite includes proving it can go red.** This project has twice shipped a suite that
-  reported PASS while asserting nothing.
+- **If it was not executed, it is not stated — and if it was executed, do not deny it.**
+  A "not yet run" label lasts until the first evidence against it. Carrying one past
+  that point has cost two sessions.
+- **Explain, then cite.** Never hand over a plan whose steps are bare IDs (**D-BA**).
+- **Everything is driven from the GUI** (**D-BC**). A feature that needs a terminal, a
+  shell script or a hand-edited file is not finished.
+- **The archived shell/Lua build is not work.** Delete the reference or port it to Nim
+  (**D-AZ**). Do not put "archive or port?" to the USER — both sit inside the standing
+  ruling and the choice is the session's.
+- **Check whether it already exists before writing it.** `std/json`, `upstream.nim`,
+  `paths.nim`, and — repeatedly — an API route that is already implemented and tested.
+- **Verify a scope against the source, not a summary.** The old six-item parity list is
+  why this plan had to be rewritten.
+- **A compile is not verification for layout** (**D-AR**). `nimble gui` exiting 0 says
+  the widget tree is valid, never that it is right.
+- **A new suite must be proven able to fail** before it is believed.
+- **Sizing APIs are minimums.** `min-width`, `sizeRequest` and a flap's `width` each set
+  a floor. To make something small, make the thing itself small.
+- **`Box`'s adder defaults to `expand: true`**, and in a vertical Box that is `vexpand`.
+  Annotate every child.

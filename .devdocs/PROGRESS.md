@@ -2,13 +2,138 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-08-31 23:28
+**Last updated:** 2026-09-01 (Session 013)
+
+> **Reading the "UNRUN" labels in this file.** Entries below are point-in-time records
+> and several were written with a "compiled; UNRUN" status that was true on the day.
+> **They are history, not current status.** The current status is settled and lives in
+> `BRIEFING.md` §2: **the 2026-08-31 23:28 build has been run by the USER**, no
+> appearance or rendering defect was reported from it, and the report from that run is
+> that the GUI is missing Web UI features. **Do not re-derive an "unrun" claim from a
+> dated entry here** — that mistake has now been made twice (D-BB, `BRIEFING.md` rule 12).
 
 ---
 
 ## Completed
 
-### 2026-08-31 23:28 — **G-27, G-23, G-24 and G-25 implemented. Both binaries build; every suite and self-test passes. UNRUN on screen.**
+### 2026-09-01 — **Two USER rulings: everything is driven from the GUI (D-BC), and the search index indexes chats (D-BD). No questions remain open.**
+
+**D-BC.** The product is Nim plus `llama-server`, and every operation must be reachable
+from the window. Anything needing a terminal, a shell script or a hand-edited file is a
+defect. **Hardware profile detection, scoring and apply are ported into Nim and get a
+GUI screen**; the kernel-tuning values move into `profile.conf` as data; both shell
+scripts are archived when it lands. `TODOS.md` **S-1**, `PLANS.md` Step 6.
+
+**D-BD.** The retrieval index is fed from chat history — messages keyed by conversation,
+indexed as they are saved, with a one-off backfill at startup. This is the persistent
+recall D-AQ described, and it makes a finished subsystem live. `TODOS.md` **T-17**,
+`PLANS.md` Step 4.
+
+**Q-32 should never have been put.** D-AH, D-AM and D-AZ already ruled that a reference
+to an archived file is fixed by deletion or a port to Nim. Offering the USER "archive or
+port?" re-opened a settled rule as a question — both options were inside the ruling, so
+the choice was the session's to make. Recorded so the pattern is catchable: **a question
+whose every option is already permitted by a standing ruling is not a question.**
+
+**Also recorded, on the USER's instruction:** `.devdocs/` entries are to stay terse and
+**must not quote the USER verbatim** — record the ruling, not the wording. Several
+existing decisions carry long verbatim quotes; they are left as history, but nothing new
+adds one.
+
+### 2026-09-01 — **Full verification pass. Seven false tracker claims corrected, and the GUI parity scope found to be roughly three times what these documents said. No code changed.**
+
+All eleven trackers read in full, then every falsifiable claim checked against the file
+it names. **Nineteen modules opened and read**: `jenova_core`, `jenova_gui`, `db`,
+`rag`, `pipeline`, `fssync`, `api`, `lifecycle`, `nvimctl`, `vte`, `gui`, `theme`,
+`sourceview`, `paths`, `config`, `http`, `upstream`, `server`, plus the nimble file, six
+hardware-profile config pairs and `detect-hardware.sh`.
+
+**The code inventory held up.** Every fix recorded on 2026-08-31 — the storage-prefix
+boundary, the rollback that no longer resurrects deleted rows, the per-thread UUID
+generator, the destination check in `restoreTrash`, the `public-old` static-root
+boundary, the upstream receive timeout, the embedding batch padding, the `poll(2)`
+deadline in `nvimctl` — was located in the source and is genuinely present. So were
+G-23's Neovim transparency override, G-24's three-branch action row, G-25's document
+panel and G-27's selection rules, embedded colour scheme and terminal palette.
+
+**Seven documented claims were false:**
+
+1. **G-25 is a `Box`, not a `Paned`.** Stated as a Paned in `PROGRESS`, `TODOS`,
+   `PLANS`, `SESSION_HANDOFF` and `SUMMARIES`. `gui.nim:1497` is a `Box`, and the
+   comment above it records why: **a `Paned` crashed the application on the first click
+   of the Neovim button**, because `updatePanedChild` asserts neither child ever
+   changes widget type and that area is a `ScrolledWindow` normally and an
+   `NvimTerminal` on the editor page. **The consequence nothing recorded: there is no
+   drag handle and the panel is fixed at 420 px.**
+2. **`paned > separator` in `theme.nim:251` is dead CSS** — a leftover from that
+   change, styling a widget not in the tree.
+3. **T-10 named the wrong profiles.** It listed `apu-ryzen7-5700u`, `CPU/generic` and
+   `dgpu-generic-12gb` as still contradicting their own `profile.conf`. All three were
+   compared key by key and **all three match exactly.** The only real mismatch is on
+   `Vulkan/dgpu-i5-1135g7`, which T-10 listed as *closed*: `FIT_TARGET` 256 vs 128 and
+   `HEALTH_TIMEOUT` 120 vs 90 — **both inert**, since `-fitt` is only passed when the
+   layer count is `all` and this profile sets 16, and the watchdog hardcodes its own
+   constants.
+4. **`.glow-text` is applied to no widget.** Recorded as "added, and applied to the
+   wordmark and the active conversation row". It is defined at `theme.nim:162` and
+   carried by nothing; the glow ships as a duplicated `text-shadow` inside `.brand`
+   and `.conv-active`. The effect works, the class is dead. **This is G-8's exact
+   defect — a class defined and applied to nothing — recurring in the same file.**
+5. **"All four self-tests" — there are five**: `db-`, `serve-`, `rag-`, `pipeline-`
+   and `sha256-selftest` (`jenova_core.nim:51`).
+6. **D-AW and G-26 cite `vte.nim:90` for the Neovim working directory.** It is no
+   longer there; the directory comes from `gui.nim:1574`. The premise still holds, the
+   citation does not.
+7. **"Compiled, UNRUN on screen" against the four features built at 23:28 — false.**
+   **The USER ran that build**, and said so more than once. The label was written
+   honestly on 2026-08-31 and then carried forward unchanged by Session 013's first two
+   reports, which repeated it back at the USER after being told. **Rule 1 forbids
+   denying what was executed exactly as much as it forbids claiming what was not**, and
+   `BRIEFING.md` §3a had already recorded this precise failure once before — *"a defect
+   report from the screen is proof of a run; do not carry an 'unrun' label past the
+   first piece of evidence that contradicts it."* It happened again anyway. Recorded as
+   `BRIEFING.md` rule 12: **a "not yet run" label is not durable.**
+
+**What the run actually established, stated once so it is not re-derived:** the four
+2026-08-31 features are run, **no appearance or rendering defect was reported**, and
+the USER's report from the screen is that the GUI is missing a large number of Web UI
+features. That is why the outstanding work below is functional rather than visual.
+
+**The larger finding: the GUI parity scope was wrong by omission.** The list carried
+since Session 010 — a file browser, an editor, file awareness, Neovim, a model
+selector, a trash view — was written from a summary rather than from the Web UI.
+Reading `jca_web/src/lib/components/app/*/index.ts`, the barrel files that name every
+shipped component, found that the desktop application **has no message actions at all**
+(no edit, regenerate, delete, copy or continue), **no conversation branching**, **no
+attachments**, **no settings screen and therefore no sampling parameters**, no
+import/export, no generation statistics, no stop button, no typed error reporting, and
+no markdown tables or maths. Recorded as **G-28 … G-36**.
+
+**Almost all of it is GUI work over finished, tested backend** — the message-update
+route, the recursive fork cascade, `/api/db/import`, the trash routes and
+`models.switchModel` all exist with assertions behind them.
+
+**One process failure recorded because it is the reason rule 3 exists.** This session's
+first plan scheduled repairs to `hardware-profiles/detect-hardware.sh` and a missing
+`bin/jenova-swap-mount` — **both shell, both archived.** The USER's standing rule is
+that the old build is gone, not pending. Reclassified as `TODOS.md` **S-1**, whose only
+outcomes are deletion or a port to Nim. **A defect in an archived file is not a task.**
+
+**One suspicion, explicitly not a finding:** `installScheme` (`gui.nim:1578`) asks the
+GtkSourceView scheme manager for a search path at `sourceview.nim:186`, while
+`gtk_source_init()` runs only inside `newSourceWidget` at `:233`. Whether the manager
+resolves before init is a runtime question **and it has not been run.** If it does not,
+code blocks fall back to `Adwaita-dark` silently — which makes check 3 on the first-run
+list meaningful rather than cosmetic.
+
+### 2026-08-31 23:28 — **G-27, G-23, G-24 and G-25 implemented. Both binaries build; every suite and self-test passes.**
+
+> **CORRECTION 2026-09-01: the "UNRUN on screen" label that stood in this heading is
+> withdrawn. The USER ran this build.** No appearance or rendering defect was reported
+> from that run; the feedback was that the GUI is missing Web UI features. The label
+> was written honestly at 23:28 and then **carried forward by two later sessions after
+> the USER had said otherwise**, which is rule 1 in reverse — it forbids denying what
+> was executed as much as claiming what was not.
 
 **G-23 — the Neovim page's opacity, and it was never a GTK problem.** Three previous attempts all
 worked on this side of the boundary and all failed. **Neovim paints the background**: a colourscheme

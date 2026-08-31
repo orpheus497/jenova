@@ -3,9 +3,10 @@
 File-by-file map of the codebase: what lives where, and why. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE. Update whenever a file is added, removed or relocated.
 
-**Created:** 2026-08-28 (Session 004). This file was mandated from the outset and did not exist
-for Sessions 001–003 — including Session 001, which moved or deleted 31 files. See
-`DECISIONS_LOG.md` C-10.
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 (Session 013).
+
+This file was mandated from the outset and did not exist for Sessions 001–003 —
+including Session 001, which moved or deleted 31 files. See `DECISIONS_LOG.md` C-10.
 
 > **Provenance.** Every entry below is first-hand: each file was enumerated on disk this session
 > and its role taken from its own header comment, its opening lines, or `file(1)`. Where a role
@@ -100,22 +101,38 @@ GTK — N-7 requires LAN mode to serve whether or not the GUI runs.
 
 ## 3. `hardware-profiles/` — 6 profiles, uniform depth 2
 
-Layout `<backend>/<config>` per ruling D-F. Each directory holds `jenova.conf` (consumed by
-`jenova-ca`, unprefixed names), `profile.conf` (metadata + match scores), and **optionally** a
-`jenova-setup` kernel-tuning script — absent for the two generic fallbacks since Q-11, which is a
-supported state, not a defect.
+Layout `<backend>/<config>` per ruling D-F. Each directory holds `jenova.conf` (**consumed by
+`config.nim`**, unprefixed names — `bin/jenova-ca` is archived), `profile.conf` (metadata + match
+scores), and **optionally** a `jenova-setup` kernel-tuning script — absent for the two generic
+fallbacks since Q-11, which is a supported state, not a defect.
+
+**Re-verified 2026-09-01, key by key across all six profiles.** Every `PROFILE_*` value
+matches the `jenova.conf` beside it except two on `Vulkan/dgpu-i5-1135g7` — `FIT_TARGET`
+256 vs 128 and `HEALTH_TIMEOUT` 120 vs 90 — **and both are inert**, since `-fitt` is
+only passed when the layer count is `all` (`lifecycle.nim:99`) and the watchdog
+hardcodes its own constants (`lifecycle.nim:357`). The long-running "three profiles
+contradict themselves" item was stale and is closed.
 
 | Profile | Tuning status |
 |---|---|
 | `Vulkan/dgpu-igpu-i5-1135g7` | Real FreeBSD sysctls ✅ |
 | `Vulkan/apu-ryzen7-5700u` | Real FreeBSD sysctls ✅ |
-| `Vulkan/dgpu-i5-1135g7` | Real sysctls, but `:94` resolves one level too deep post-S-6 |
+| `Vulkan/dgpu-i5-1135g7` | Real sysctls. The `_JENOVA_ROOT` traversal was corrected to three parents on 2026-08-31, **but the helper it then resolves — `bin/jenova-swap-mount` — is archived**, so the script always takes its inline `mdmfs` fallback. Its tuning values move into `profile.conf` at Step 6 |
 | `Vulkan/dgpu-generic-12gb` | **No tuning script — deleted 2026-08-31 (Q-11).** It was a config symlinker with a root five `dirname` calls too high, not a tuning script. Data files only; `scripts/jenova-setup` reports "no tuning defined" and exits 0. This is the GPU fallback |
 | `CUDA/dgpu-generic` | Same — script deleted 2026-08-31 (Q-11). Opt-in only via `PROFILE_OPT_IN` (D-B) |
 | `CPU/generic` | **Entirely Linux** — `cpupower`, `/sys`, `numactl` (B-10). The only CPU-only profile |
 
 Supporting: `detect-hardware.sh` (scoring ladder + `--apply-profile`), `common-setup.sh`,
 `README.md`.
+
+**These are the last two shell scripts in the tree and both reference archived files** —
+`detect-hardware.sh:19` sources `lib/detect-env.sh`, and `dgpu-i5-1135g7/jenova-setup:100`
+resolves `bin/jenova-swap-mount`. **The running product invokes neither**, so there is
+currently no working way to detect hardware or change profile.
+
+**Ruled at D-BC:** detection, scoring and apply move into Nim with a GUI screen; the
+kernel-tuning values become data in `profile.conf`; **both scripts are archived when that
+lands**, leaving these directories as pure data. `TODOS.md` S-1, `PLANS.md` Step 6.
 
 ## 4. `etc/`
 
@@ -132,13 +149,39 @@ Shell suites run by **`nimble suites`** (which builds both binaries first), plus
 `llama-server` backend; `test_nvimctl.sh` spawns a headless `nvim` and skips when none is installed.
 Specs are in `TESTS.md`.
 
+**Six suites, and five self-test subcommands inside `jenova-core`** (`db-`, `serve-`,
+`rag-`, `pipeline-`, `sha256-selftest`) plus `db-capabilities`, which reports rather
+than asserts. *Some earlier trackers said four self-tests; there are five.*
+
+**Every one of them exercises `jenova-core`. Nothing tests `gui.nim` at all** — no
+suite, no self-test, no driver. Every GUI defect in this project's history was found by
+the USER looking at the screen. That is recorded here because the outstanding work is
+mostly GUI *logic* (branch trees, message mutation, parameter plumbing), and `PLANS.md`
+names for each step what would prove it worked.
+
 **Archived 2026-08-31:** `test_gpu.sh`, `test_gpu_single.sh`, `test_validate_arg.sh` (which rewrote
 `etc/jenova.conf` as a side effect) and `download-draft-model.sh` — all orphaned, none wired into
 any target.
 
 ## 6. `jca_web/` — SvelteKit Web UI
 
-Directory-level only; a full read remains outstanding.
+Directory-level, plus **the component surface, enumerated 2026-09-01**.
+
+**How it was enumerated, so it is not re-derived by guesswork:** every component group
+ships a barrel file listing its exports with a doc comment each —
+`src/lib/components/app/index.ts` names the groups (`actions`, `badges`, `chat`,
+`content`, `dialogs`, `forms`, `mcp`, `misc`, `models`, `navigation`, `server`), and
+each group's own `index.ts` names and describes its components. **That is the
+authoritative inventory of what the Web UI does**, and it is what the GUI parity scope
+must be checked against — the previous six-item scope was written from a summary and
+missed most of it (see `TODOS.md` G-28 … G-36).
+
+The groups that matter for parity: **`chat`** is by far the largest (attachments, the
+input form, message rendering with branching and actions, the screen, settings, the
+sidebar), then **`models`** (selector, model information), **`dialogs`** (errors,
+confirmations, previews, import/export), **`content`** (markdown with tables and
+LaTeX, syntax highlighting, collapsible blocks, `FilesView`) and **`server`** (status,
+error splash with retry, loading splash). **`mcp`** is deferred by the USER.
 
 `src/lib/{actions,assets,components,constants,contexts,enums,hooks,markdown,services,stores,types,utils}`,
 `src/routes/`, `src/app.css` (the Google Fonts leak, B-01), `src/service-worker.js`, `static/`,
