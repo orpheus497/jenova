@@ -207,6 +207,18 @@ proc lanAddress(): string =
   runCapture("sh", ["-c",
     "ifconfig 2>/dev/null | awk '/inet / && !/127\\.0\\.0\\.1/ {print $2; exit}'"])
 
+type ConvItem = tuple[id, name: string]
+
+## Function purpose: the sidebar's conversation list. Ordered by `lastModified`
+## descending, which is what `ChatSidebar` shows and the order a user expects —
+## the thing they were last working on is at the top, not the thing they created
+## first.
+proc listConversations(): seq[ConvItem] =
+  for r in db.query("SELECT id, name FROM conversations WHERE is_deleted=0 " &
+                    "ORDER BY lastModified DESC"):
+    if r.len >= 2:
+      result.add (id: r[0], name: r[1])
+
 proc newConversation(): string =
   result = $genOid()
   db.exec("INSERT INTO conversations (id, name, lastModified, is_deleted) VALUES (?, ?, ?, 0)",
@@ -305,6 +317,18 @@ viewable App:
   convId: string
   streaming: bool
   notice: string
+  ## Sidebar state. `convs` is cached rather than queried in `view` for the same
+  ## reason `lanAddr` is: `view` runs on every token of a stream and on every
+  ## canvas frame, and a SELECT per frame would be defect B-17 with a database
+  ## behind it instead of a fork.
+  convs: seq[ConvItem]
+  search: string
+  sidebarOpen: bool = true
+  ## Decoded once at startup, not per redraw: `view` runs on every canvas frame,
+  ## and re-decoding a 165 KB JPEG thirty times a second is the same mistake as
+  ## re-forking `ifconfig`. A nil pixbuf is survivable — `Picture` renders empty
+  ## — so a missing icon file costs the logo, not the window.
+  logo: Pixbuf
 
   hooks:
     afterBuild:
@@ -373,6 +397,10 @@ viewable App:
             st.streaming = false
             if st.messages.len > 0 and st.messages[^1].role == rAssistant:
               saveMessage(st.convId, rAssistant, st.messages[^1].text)
+            # The reply bumped `lastModified`, so the cached list is now in the
+            # wrong order. Refreshed here rather than in `view` for the reason
+            # `convs` is cached at all.
+            st.convs = listConversations()
           of umError:
             st.notice = m.text
             if st.messages.len > 0 and st.messages[^1].role == rAssistant and
@@ -392,6 +420,34 @@ viewable App:
           discard st.redraw()
         true
       )
+
+## Function purpose: switch the transcript to another conversation. Refused mid
+## stream: tokens in flight are appended to `messages[^1]` by the drain timer,
+## which would otherwise write the tail of one conversation into another.
+proc selectConversation(app: AppState, id: string) =
+  if app.streaming or id == app.convId: return
+  app.convId = id
+  app.messages = loadMessages(id)
+  app.notice = ""
+
+proc newChat(app: AppState) =
+  if app.streaming: return
+  let id = newConversation()
+  app.convs = listConversations()
+  app.convId = id
+  app.messages = @[]
+  app.notice = ""
+
+## Function purpose: the conversation list as the sidebar should show it —
+## filtered by the search box. Case-insensitive substring, matching
+## `ChatSidebarSearch`'s behaviour rather than inventing a ranking nobody asked
+## for.
+proc visibleConvs(app: AppState): seq[ConvItem] =
+  let q = app.search.strip.toLowerAscii
+  if q.len == 0: return app.convs
+  for c in app.convs:
+    if c.name.toLowerAscii.contains(q):
+      result.add c
 
 ## Function purpose: hand the draft message to the local server and start
 ## streaming the reply. The body is the OpenAI-compatible shape `pipeline.nim`
@@ -436,6 +492,16 @@ method view(app: AppState): Widget =
                         "  ·  LAN " & (if app.lanAddr.len > 0: app.lanAddr
                                        else: "0.0.0.0")
                       else: "  ·  local 127.0.0.1")
+
+        ToggleButton {.addLeft.}:
+          # Mirrors the Web UI's `Sidebar.Trigger`. A toggle rather than a plain
+          # button so the control shows whether the panel is open, which a
+          # one-way button cannot.
+          icon = "sidebar-show-symbolic"
+          tooltip = "Toggle sidebar"
+          state = app.sidebarOpen
+          proc changed(pressed: bool) =
+            app.sidebarOpen = pressed
 
         MenuButton {.addRight.}:
           icon = "open-menu-symbolic"
@@ -489,53 +555,127 @@ method view(app: AppState): Widget =
           proc draw(ctx: CairoContext, size: (int, int)): bool =
             canvas.draw(ctx, size)
 
-        Box(orient = OrientY) {.addOverlay.}:
-          # The transcript takes all the free height; the notice and the input row
-          # take only what they need. In owlkettle this is the child annotation on
-          # the Box, not a property of the child widget.
-          ScrolledWindow {.expand: true.}:
-            Box(orient = OrientY, spacing = 12, margin = 16):
+        Flap {.addOverlay.}:
+          revealed = app.sidebarOpen
+          transitionType = FlapTransitionOver
+          proc changed(revealed: bool) =
+            # The Flap folds itself on a narrow window and can be swiped shut, so
+            # `sidebarOpen` has to follow the widget rather than lead it —
+            # otherwise the toggle button reports a state the panel is not in.
+            app.sidebarOpen = revealed
+
+          # `Box`'s adder defaults to `expand: true`, so **every** child here is
+          # marked explicitly. Left implicit, each row stretches to an equal
+          # share of the panel height — which is what turned the logo into a
+          # half-panel banner and strewed the wordmark down the side.
+          Box(orient = OrientY, spacing = 6, margin = 10) {.addFlap, width: 260.}:
+            style = [StyleClass("jenova-sidebar")]
+
+            Box(orient = OrientX, spacing = 8) {.expand: false.}:
+              Picture {.expand: false, hAlign: AlignCenter, vAlign: AlignCenter.}:
+                # The pixbuf is already 24x24 (see `run`), so the natural size is
+                # small and nothing here has to fight it. `AlignCenter` stops the
+                # Box stretching it to fill the row's height.
+                pixbuf = app.logo
+                contentFit = ContentScaleDown
+                style = [StyleClass("sidebar-logo")]
+              Label {.expand: true.}:
+                text = "JENOVA"
+                xAlign = 0.0
+                style = [StyleClass("brand")]
+
+            Button {.expand: false.}:
+              sensitive = not app.streaming
+              style = [ButtonFlat, StyleClass("row-btn")]
+              proc clicked() = app.newChat()
+              # A Label child rather than `text`, because GTK centres a Button's
+              # own label and no CSS property moves it — `text-align` does not
+              # apply. This is the only way to get a left-aligned list row.
               Label:
-                text = (if app.messages.len == 0: "Ask Jenova something." else: "")
-                style = [StyleClass("dim-note")]
-              for m in app.messages:
-                Frame:
-                  style = [StyleClass("msg-card"),
-                           StyleClass(if m.role == rUser: "msg-user" else: "msg-agent")]
-                  Box(orient = OrientY, spacing = 4, margin = 10):
-                    Label:
-                      text = (if m.role == rUser: "YOU" else: "JENOVA")
-                      xAlign = 0.0
-                      style = [StyleClass("msg-role"),
-                               StyleClass(if m.role == rUser: "msg-role-user"
-                                          else: "msg-role-agent")]
-                    Label:
-                      text = m.text
-                      xAlign = 0.0
-                      wrap = true
-                      style = [StyleClass("msg-body")]
+                text = "＋   New Chat"
+                xAlign = 0.0
 
-          Label {.expand: false.}:
-            text = app.notice
-            margin = (if app.notice.len > 0: 8 else: 0)
-            wrap = true
-            style = [StyleClass("dim-note")]
-
-          Box(orient = OrientX, spacing = 8, margin = 12) {.expand: false.}:
-            Entry {.expand: true.}:
-              text = app.draft
-              placeholder = "Message Jenova…"
-              sensitive = not app.streaming
+            SearchEntry {.expand: false.}:
+              text = app.search
+              placeholderText = "Search chats"
               proc changed(text: string) =
-                app.draft = text
-              proc activate() =
-                app.send()
-            Button:
-              text = (if app.streaming: "…" else: "Send")
-              sensitive = not app.streaming
-              style = [ButtonSuggested]
-              proc clicked() =
-                app.send()
+                app.search = text
+
+            Label {.expand: false.}:
+              text = "CHATS"
+              xAlign = 0.0
+              style = [StyleClass("section-label")]
+
+            ScrolledWindow {.expand: true.}:
+              Box(orient = OrientY, spacing = 1):
+                # Always present so the list's container never changes shape;
+                # only its text varies. The rows themselves are the one place
+                # children legitimately come and go.
+                Label {.expand: false.}:
+                  text = (if app.visibleConvs().len == 0:
+                            (if app.search.len > 0: "No matches." else: "No chats yet.")
+                          else: "")
+                  xAlign = 0.0
+                  style = [StyleClass("dim-note")]
+                for c in app.visibleConvs():
+                  Button {.expand: false.}:
+                    style = [ButtonFlat, StyleClass("row-btn"),
+                             StyleClass(if c.id == app.convId: "conv-active"
+                                        else: "conv-idle")]
+                    proc clicked() = app.selectConversation(c.id)
+                    Label:
+                      text = c.name
+                      xAlign = 0.0
+                      ellipsize = EllipsizeEnd
+
+          # ── Chat column ───────────────────────────────────────────────────
+          Box(orient = OrientY):
+            # The transcript takes all the free height; the notice and the input row
+            # take only what they need. In owlkettle this is the child annotation on
+            # the Box, not a property of the child widget.
+            ScrolledWindow {.expand: true.}:
+              Box(orient = OrientY, spacing = 12, margin = 16):
+                Label:
+                  text = (if app.messages.len == 0: "Ask Jenova something." else: "")
+                  style = [StyleClass("dim-note")]
+                for m in app.messages:
+                  Frame:
+                    style = [StyleClass("msg-card"),
+                             StyleClass(if m.role == rUser: "msg-user" else: "msg-agent")]
+                    Box(orient = OrientY, spacing = 4, margin = 10):
+                      Label:
+                        text = (if m.role == rUser: "YOU" else: "JENOVA")
+                        xAlign = 0.0
+                        style = [StyleClass("msg-role"),
+                                 StyleClass(if m.role == rUser: "msg-role-user"
+                                            else: "msg-role-agent")]
+                      Label:
+                        text = m.text
+                        xAlign = 0.0
+                        wrap = true
+                        style = [StyleClass("msg-body")]
+
+            Label {.expand: false.}:
+              text = app.notice
+              margin = (if app.notice.len > 0: 8 else: 0)
+              wrap = true
+              style = [StyleClass("dim-note")]
+
+            Box(orient = OrientX, spacing = 8, margin = 12) {.expand: false.}:
+              Entry {.expand: true.}:
+                text = app.draft
+                placeholder = "Message Jenova…"
+                sensitive = not app.streaming
+                proc changed(text: string) =
+                  app.draft = text
+                proc activate() =
+                  app.send()
+              Button:
+                text = (if app.streaming: "…" else: "Send")
+                sensitive = not app.streaming
+                style = [ButtonSuggested]
+                proc clicked() =
+                  app.send()
 
 ## Function purpose: entry point for `bin/jenova`. Resolution happens here,
 ## before the window exists, so a configuration error is reported on the terminal
@@ -572,6 +712,21 @@ proc run*(withTray = true) =
 
   let initialLan = isLanEnabled(p)
   let initialAddr = if initialLan: lanAddress() else: ""
+  # Action purpose: the sidebar logo, decoded once. `png/jenova.jpg` is the same
+  # image the Web UI serves as `/jenova.jpg`, so both surfaces show one mark.
+  # A failure here is not fatal by design — see the `logo` field.
+  var logo: Pixbuf
+  try:
+    # Action purpose: decoded **at** 24x24, not decoded and then asked to be
+    # small. `sizeRequest` and CSS `min-width` both set a *minimum*, so neither
+    # can shrink a widget — a Picture takes its natural size from the pixbuf, and
+    # `png/jenova.jpg` is a large square banner. Scaling at load is the only
+    # thing that actually caps it.
+    logo = loadPixbuf(p.root / "png" / "jenova.jpg", 24, 24,
+                      preserveAspectRatio = true)
+  except CatchableError:
+    discard
+
   let widget = gui(App(p = p,
                        cfg = c,
                        lc = lc,
@@ -579,7 +734,9 @@ proc run*(withTray = true) =
                        lanEnabled = initialLan,
                        lanAddr = initialAddr,
                        convId = conv,
-                       messages = history))
+                       messages = history,
+                       convs = listConversations(),
+                       logo = logo))
 
   if withTray:
     # The tray is started before the main loop but pumped from inside it; see

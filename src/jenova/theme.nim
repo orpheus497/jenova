@@ -17,13 +17,17 @@
 ##
 ## * **`backdrop-filter: blur(40px)`** — the `.glass-panel` blur. GTK4 has no
 ##   backdrop filter. Approximated by a translucent fill over the canvas plus the
-##   same top/left highlight and drop shadow, which carries the depth cue without
-##   the blur.
+##   same top/left highlight, which carries the depth cue without the blur.
 ## * **`mix-blend-mode: screen`** on the canvas — see `canvas.nim`.
 ##
 ## Everything else transfers: the dark palette is pure hex (the Web UI's *light*
 ## theme is `oklch`, which is why only the dark one is ported), and GTK4 supports
 ## `@define-color`, `alpha()`, radii, borders and shadows directly.
+##
+## **Typography is deliberately NOT ported.** The Web UI names Inter and
+## JetBrains Mono; this sheet names no font and no absolute size, so the window
+## uses the desktop's own. A native application that overrides the system font is
+## the thing that makes it look foreign.
 
 import owlkettle
 
@@ -58,9 +62,6 @@ const
   CanvasParticle* = (0.867, 0.718, 1.0)   ## rgb(221,183,255)
   CanvasLink* = (0.725, 0.780, 0.894)     ## rgb(185,199,228)
 
-  FontBody* = "Inter"
-  FontMono* = "JetBrains Mono"
-
 ## Function purpose: the stylesheet, built as one string so the palette constants
 ## above are the only place a colour is written down.
 ##
@@ -88,13 +89,17 @@ proc css*(): string =
 @define-color jenova_purple_deep """ & ColBrandPurple & """;
 
 /* The window is the ground the canvas is painted on. Near-black, matching the
-   Web UI's `bg-black` wrapper at `+layout.svelte`. */
+   Web UI's `bg-black` wrapper at `+layout.svelte`.
+
+   No font-family and no font-size anywhere in this sheet: the user's system
+   font, at the user's size, is correct. The Web UI pulls Inter and JetBrains
+   Mono from Google Fonts; a desktop application overriding the desktop's own
+   typography is wrong, and copying that import would also import the B-01
+   leak. Relative sizes (`0.8em`) are used where a label must be secondary. */
 window,
 window.background {
   background-color: @jenova_bg;
   color: @jenova_fg;
-  font-family: """" & FontBody & """", sans-serif;
-  font-size: 15px;
 }
 
 /* Everything stacked over the canvas is transparent, or the canvas is invisible.
@@ -115,11 +120,10 @@ headerbar {
   box-shadow: none;
 }
 
-headerbar .title { font-weight: 700; letter-spacing: -0.01em; }
+headerbar .title { font-weight: bold; }
 headerbar .subtitle {
   color: @jenova_muted_fg;
-  font-family: """" & FontMono & """", monospace;
-  font-size: 11px;
+  font-size: 0.85em;
 }
 
 /* `.glass-panel` (app.css:213-220) minus the blur GTK4 cannot do. The
@@ -129,24 +133,65 @@ headerbar .subtitle {
   background-color: alpha(@jenova_bg, 0.4);
   border-top: 1px solid alpha(#ffffff, 0.1);
   border-left: 1px solid alpha(#ffffff, 0.1);
-  box-shadow: 0 8px 32px alpha(#000000, 0.37);
-  border-radius: 24px;
+  border-radius: 10px;
+}
+
+/* ── Sidebar ──────────────────────────────────────────────────────────────
+   owlkettle's Flap adds GTK's `.background` class to the flap child, which
+   paints an opaque theme colour and would hide the canvas completely. This
+   rule is loaded at user priority (600) against the theme's 200, so it wins —
+   but it has to exist, or the panel is a solid slab. */
+.jenova-sidebar,
+.jenova-sidebar.background {
+  background-color: alpha(@jenova_bg, 0.55);
+  border-right: 1px solid alpha(@jenova_border, 0.45);
+}
+
+.sidebar-logo { border-radius: 4px; }
+
+.brand {
+  font-weight: bold;
+  color: @jenova_purple_head;
+}
+
+.section-label {
+  color: @jenova_muted_fg;
+  font-size: 0.8em;
+  margin: 6px 4px 2px 4px;
+}
+
+/* List rows — the sidebar's New Chat and every conversation. Padding and radius
+   only; the left alignment is done in the widget tree, because GTK centres a
+   Button's own label and no CSS property moves it. */
+.row-btn {
+  padding: 6px 8px;
+  min-height: 0;
+  border-radius: 6px;
+  border-color: transparent;
+  background-color: transparent;
+  background-image: none;
+  box-shadow: none;
+}
+.row-btn:hover { background-color: alpha(@jenova_sidebar_accent, 0.9); }
+.conv-idle   { color: alpha(@jenova_fg, 0.72); }
+.conv-active {
+  background-color: alpha(@jenova_sidebar_accent, 0.95);
+  color: @jenova_fg;
+  box-shadow: inset 2px 0 0 @jenova_purple_head;
 }
 
 /* Message cards. The Web UI frames each turn; the role tint is what makes a
    long transcript scannable without reading it. */
 .msg-card {
   background-color: alpha(@jenova_card, 0.55);
-  border: 1px solid alpha(@jenova_border, 0.45);
-  border-radius: 10px;
+  border: 1px solid alpha(@jenova_border, 0.4);
+  border-radius: 8px;
 }
 .msg-user   { border-left: 2px solid @jenova_purple_head; }
 .msg-agent  { border-left: 2px solid @jenova_accent; }
 
 .msg-role {
-  font-family: """" & FontMono & """", monospace;
-  font-size: 11px;
-  letter-spacing: 0.12em;
+  font-size: 0.8em;
   color: @jenova_muted_fg;
 }
 .msg-role-user  { color: @jenova_purple_head; }
@@ -158,16 +203,15 @@ headerbar .subtitle {
    vary only by text, so they must read as absent when empty. */
 .dim-note {
   color: @jenova_muted_fg;
-  font-family: """" & FontMono & """", monospace;
-  font-size: 12px;
+  font-size: 0.9em;
 }
 
 entry {
   background-color: alpha(@jenova_card, 0.85);
   color: @jenova_fg;
   border: 1px solid alpha(@jenova_border, 0.8);
-  border-radius: 10px;
-  padding: 10px 12px;
+  border-radius: 6px;
+  padding: 6px 8px;
   caret-color: @jenova_accent;
 }
 entry:focus-within {
@@ -180,8 +224,8 @@ button {
   background-color: alpha(@jenova_card, 0.9);
   color: @jenova_fg;
   border: 1px solid alpha(@jenova_border, 0.7);
-  border-radius: 10px;
-  padding: 8px 14px;
+  border-radius: 6px;
+  padding: 4px 10px;
 }
 button:hover { background-color: @jenova_sidebar_accent; border-color: @jenova_purple_head; }
 button.flat { background-color: transparent; border-color: transparent; }

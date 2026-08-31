@@ -12,7 +12,16 @@ namedBin      = {"jenova_core": "jenova-core", "jenova_gui": "jenova"}.toTable
 requires "nim >= 2.2.10"
 requires "owlkettle >= 3.0.0"
 
-const NimFlags = "-d:release --hints:off --path:src"
+# Which GTK4 API level owlkettle may compile against. The installed toolkit is
+# 4.20.4 (D-AK); 10 is a deliberate floor rather than a match, unlocking what the
+# GUI actually uses — `contentFit` on Picture (4.8) and `placeholderText` on
+# SearchEntry (4.10) — without opting into every newer path owlkettle guards.
+#
+# **`-d:gtk48` is required alongside it and is not redundant.** owlkettle 3.0.0
+# gates the *widget* on `GtkMinor >= 8` but its *binding* on `defined(gtk48)`
+# (`bindings/gtk.nim:836`), so raising only `gtkminor` fails to compile with an
+# undeclared `gtk_picture_set_content_fit`. Both switches, or neither.
+const NimFlags = "-d:release -d:gtkminor=10 -d:gtk48 --hints:off --path:src"
 
 task core, "Build the headless server (bin/jenova-core)":
   exec "nim c " & NimFlags & " --out:bin/jenova-core src/jenova_core.nim"

@@ -8,7 +8,36 @@ Macro progress tracking. Most recent entries at the top.
 
 ## Completed
 
-### 2026-08-31 — **G-1/G-2: the window has the Web UI's identity. Built, not yet run.**
+### 2026-08-31 — **G-3: the side panel. Built, not yet run.**
+
+- **`adw.Flap`** carries the panel, chat as its content. `revealed` is two-way — the Flap folds
+  itself on a narrow window and can be swiped shut, so the toggle follows the widget rather than
+  leading it.
+- **Sidebar:** the three-line wordmark in its brand colours (`ChatSidebar.svelte:186-190`), the
+  logo from `png/jenova.jpg` — the same image the Web UI serves as `/jenova.jpg` — a New Chat
+  button, a search box, and the conversation list with the active row marked.
+- **Conversation switching works off the existing tables.** `listConversations` orders by
+  `lastModified` descending; the list is cached in state and refreshed on stream completion, never
+  queried from `view`, because `view` now runs on every canvas frame.
+- **Switching is refused mid-stream** — the drain timer appends tokens to `messages[^1]`, so a
+  switch during generation would write the tail of one conversation into another.
+
+**Build flags changed:** `-d:gtkminor=10 -d:gtk48`. **The second is not redundant** — owlkettle
+3.0.0 gates the Picture `contentFit` *widget* on `GtkMinor >= 8` but its *binding* on
+`defined(gtk48)` (`bindings/gtk.nim:836`), so raising only `gtkminor` fails to compile. A defect in
+the dependency, worked around in our build rather than by patching an installed package.
+
+**Not in this increment, deliberately:** renaming and deleting conversations. Both need a
+confirmation dialog, and a destructive action without one is worse than its absence. With G-4.
+
+**`nimble gui` and `nimble core` both exit 0 with no warnings. Not yet run.**
+
+### 2026-08-31 — **G-1/G-2: the window has the Web UI's identity. CONFIRMED RUNNING.**
+
+**The USER ran it: "i ran it it seems to work".** That is the first execution evidence for the
+theme and the canvas — the stylesheet parses and the window renders. **What that statement does
+not cover, and should not be read as covering:** whether the canvas is visible at the intended
+weight, and whether ~30 fps idle redraw is acceptable. Neither has been reported on.
 
 - **`src/jenova/theme.nim` added.** The Web UI dark palette (`app.css:61-95`, pure hex) as Nim
   constants, generating a GTK4 stylesheet. `gui.nim` had been passing **no stylesheet at all** —
