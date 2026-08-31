@@ -184,6 +184,9 @@ window.background {
    wins on specificity. */
 .chat-col,
 .chat-col > box,
+.main-area,
+.doc-panel,
+.doc-panel-closed,
 scrolledwindow,
 scrolledwindow > viewport,
 expander,

@@ -1057,52 +1057,62 @@ proc nodeTools(app: AppState, entity, id: string, ws, pr, fd: string,
 ## editor/transcript switch has one place rather than being read out of a deeply
 ## nested tree.
 proc mainArea(app: AppState): Widget =
-  if app.editorOpen:
-    # No margin: the editor is a *page*, filling its side of the split the way
-    # the transcript's ScrolledWindow does. A margin plus `.nvim-term`'s former
-    # radius and drop shadow is what made it read as a floating card rather than
-    # a view you navigated to (G-24).
-    gui:
-      NvimTerminal:
-        style = [StyleClass("nvim-term")]
-  else:
-    gui:
-      ScrolledWindow:
-        Box(orient = OrientY, spacing = 12, margin = 16):
-          if app.openNote.len > 0:
-            Entry {.expand: false.}:
-              text = app.noteTitle
-              placeholder = "Note title"
-              proc changed(text: string) = app.noteTitle = text
-            # A TextView owns a TextBuffer rather than a string, so it is
-            # driven from `app.noteBuffer` and read back on save — it
-            # cannot be bound to state per redraw the way an Entry is.
-            TextView:
-              buffer = app.noteBuffer
-          # Every child here is `expand: false`, and the annotations are
-          # the whole point. **`Box`'s adder defaults to `expand: true`**,
-          # which in a *vertical* Box sets `vexpand` — so an unannotated
-          # message card stretches to take an equal share of the viewport
-          # height, and two replies in a tall window each become half a
-          # screen. That is the "weirdly huge" bubbles. A transcript sizes
-          # to its content and scrolls; it never divides the space up.
-          Label {.expand: false.}:
-            text = (if app.openNote.len > 0: ""
-                    elif app.messages.len == 0: "Ask Jenova something."
-                    else: "")
-            style = [StyleClass("dim-note")]
-          for m in (if app.openNote.len > 0: @[] else: app.messages):
-            Frame {.expand: false.}:
-              style = [StyleClass("msg-card"),
-                       StyleClass(if m.role == rUser: "msg-user" else: "msg-agent")]
-              Box(orient = OrientY, spacing = 4, margin = 10):
-                Label {.expand: false.}:
-                  text = (if m.role == rUser: "YOU" else: "JENOVA")
-                  xAlign = 0.0
-                  style = [StyleClass("msg-role"),
-                           StyleClass(if m.role == rUser: "msg-role-user"
-                                      else: "msg-role-agent")]
-                insert(app.messageBody(m)) {.expand: false.}
+  ## **The Box is not decoration and must not be removed.** `Paned` asserts that
+  ## neither of its children ever changes widget type
+  ## (`owlkettle/widgets.nim:1341`, `assert newChild.isNil`), and this area is
+  ## `NvimTerminal` or `ScrolledWindow` depending on the page. Returning either
+  ## one directly killed the application on the first click of the Neovim
+  ## button. `Box` is the container that *does* handle a child changing type —
+  ## its children hook removes the old widget and inserts the new one — so the
+  ## swap happens one level down, where it is supported.
+  gui:
+    Box(orient = OrientY):
+      style = [StyleClass("main-area")]
+      if app.editorOpen:
+        # No margin: the editor is a *page*, filling its side of the split the way
+        # the transcript's ScrolledWindow does. A margin plus `.nvim-term`'s former
+        # radius and drop shadow is what made it read as a floating card rather
+        # than a view you navigated to (G-24).
+        NvimTerminal {.expand: true.}:
+          style = [StyleClass("nvim-term")]
+      else:
+        ScrolledWindow {.expand: true.}:
+          Box(orient = OrientY, spacing = 12, margin = 16):
+            if app.openNote.len > 0:
+              Entry {.expand: false.}:
+                text = app.noteTitle
+                placeholder = "Note title"
+                proc changed(text: string) = app.noteTitle = text
+              # A TextView owns a TextBuffer rather than a string, so it is
+              # driven from `app.noteBuffer` and read back on save — it
+              # cannot be bound to state per redraw the way an Entry is.
+              TextView:
+                buffer = app.noteBuffer
+            # Every child here is `expand: false`, and the annotations are
+            # the whole point. **`Box`'s adder defaults to `expand: true`**,
+            # which in a *vertical* Box sets `vexpand` — so an unannotated
+            # message card stretches to take an equal share of the viewport
+            # height, and two replies in a tall window each become half a
+            # screen. That is the "weirdly huge" bubbles. A transcript sizes
+            # to its content and scrolls; it never divides the space up.
+            Label {.expand: false.}:
+              text = (if app.openNote.len > 0: ""
+                      elif app.messages.len == 0: "Ask Jenova something."
+                      else: "")
+              style = [StyleClass("dim-note")]
+            for m in (if app.openNote.len > 0: @[] else: app.messages):
+              Frame {.expand: false.}:
+                style = [StyleClass("msg-card"),
+                         StyleClass(if m.role == rUser: "msg-user" else: "msg-agent")]
+                Box(orient = OrientY, spacing = 4, margin = 10):
+                  Label {.expand: false.}:
+                    text = (if m.role == rUser: "YOU" else: "JENOVA")
+                    xAlign = 0.0
+                    style = [StyleClass("msg-role"),
+                             StyleClass(if m.role == rUser: "msg-role-user"
+                                        else: "msg-role-agent")]
+                  insert(app.messageBody(m)) {.expand: false.}
+
 
 ## Function purpose: the right-hand document panel (G-25) — a second Neovim,
 ## editing one plain `.md` file in the active chat's own project directory.
@@ -1471,15 +1481,22 @@ method view(app: AppState): Widget =
             # owlkettle's positional matching never swaps a widget out from under
             # the diff; only what is inside them changes.
             #
-            # **The Paned is always here, open panel or not** (G-25). Building it
-            # only when the panel opens would rebuild this whole subtree on every
-            # toggle — which destroys the page editor's `NvimTerminal` and kills
-            # the `nvim` running in it. Keeping the Paned constant means only its
-            # end child comes and goes.
-            Paned {.expand: true.}:
-              orient = OrientX
-              insert(app.mainArea()) {.resize: true, shrink: true.}
-              insert(app.docPanel()) {.resize: false, shrink: false.}
+            # Action purpose: a `Box`, and **not a `Paned`** (G-25). A Paned was
+            # tried first, for the drag handle, and it crashed the application on
+            # the first click of the Neovim button: `updatePanedChild` asserts
+            # `newChild.isNil` (`owlkettle/widgets.nim:1341`), which requires
+            # that neither of its children ever changes widget type — and this
+            # area is a `ScrolledWindow` normally and an `NvimTerminal` on the
+            # editor page.
+            #
+            # `Box` is the container that *does* support it: its children hook
+            # removes the old widget and inserts the new one when `update`
+            # returns a rebuilt child (`widgets.nim:239-249`). It is also what
+            # this window already used for the editor swap before the panel
+            # existed. The cost is the drag handle; the panel is a fixed width.
+            Box(orient = OrientX) {.expand: true.}:
+              insert(app.mainArea()) {.expand: true.}
+              insert(app.docPanel()) {.expand: false.}
             Label {.expand: false.}:
               # The notice is chat feedback — "backend restarted", "note saved".
               # It has nothing to say about the editor page and a stale line
