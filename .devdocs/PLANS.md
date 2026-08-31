@@ -2,7 +2,7 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-08-31 21:14
+**Last updated:** 2026-08-31 21:23
 
 ---
 
@@ -94,9 +94,7 @@ machine" here is this.
 
 | Step | Item | Shape of the work | Proof it worked |
 |---|---|---|---|
-| **19.1** | **`vte.nim` — the terminal widget** | Hand-written `vte-2.91-gtk4` FFI, **exactly the shape of `sourceview.nim`**: flags from `staticExec("pkg-config …")`, a small Nim surface, and the `renderable` declared in `gui.nim` because owlkettle's macro emits an unexported type. **`vte-2.91-gtk4 0.80.5` is installed — checked, not assumed.** LGPL, permitted under D-X | `nm -u bin/jenova` shows the `vte_*` symbols and the link resolves |
-| **19.2** | **Spawn `nvim` in it** | `vte_terminal_spawn_async` with `nvim --listen $JENOVA_STATE/nvim.sock`. **Short path — see above.** The USER's own config and plugins load, which is the entire reason for hosting a real `nvim` rather than rendering a UI ourselves | The tab shows a working Neovim the USER can edit in |
-| **19.3** | **The tab itself** | A new pane in the chat column beside the transcript and the note editor. **Child types stay stable** — that constraint is already recorded for this column | Switching tabs does not disturb the transcript |
+| ~~**19.1-19.3**~~ | **DONE 21:23, compiled and linked, UNRUN.** `src/jenova/vte.nim`; the terminal spawns `nvim --listen` at the **same socket `nvimctl` reads**, so the tab and the `Editor:` intent see one editor. Toggle in the top bar. `nm -u` shows all five `vte_*` symbols | **It links; it has not rendered.** Needs a run |
 | ~~**18.1**~~ | **DONE 21:03, RUN.** `src/jenova/nvimctl.nim`, with `tests/test_nvimctl.sh` + `tests/nvimctl_check.nim` wired into `nimble suites`. **5 passed, 0 failed.** The suite runs its assertions twice — clean, then after editing the buffer **without saving** — and **the interim run went red**, which proves both that the checks assert something and that the reader returns the *buffer*, not the file on disk | **Done.** Skips cleanly with no `nvim` installed |
 | ~~**18.2**~~ | **DONE 21:14, RUN.** New `Editor:` intent prefix — the existing gating mechanism, so it works from the GUI, the Web UI and any client with no UI work. `prompts.Editor` tells the model the buffer may differ from disk. Both binaries build; `pipeline.configureEditor` wired into both entry points | **9/9 checks pass**, including **"no prefix → buffer NOT leaked"** — the gate is asserted, not assumed |
 

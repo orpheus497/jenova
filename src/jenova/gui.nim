@@ -54,6 +54,7 @@ import ./markdown
 import ./fssync
 import ./sourceview
 import ./nvimctl
+import ./vte
 import ./pipeline
 
 type
@@ -401,6 +402,7 @@ viewable App:
   renameDraft: string
   search: string
   sidebarOpen: bool = true
+  editorOpen: bool
   ## Bound to the Window's `fullscreened`, which the application had never set —
   ## so nothing in the program could leave fullscreen once the compositor put it
   ## there. owlkettle exposes no window-state event, so this cannot *observe* a
@@ -759,6 +761,12 @@ renderable NeuralCanvas of BaseWidget:
     beforeBuild:
       state.internalWidget = canvas.newArea()
 
+## Closing the tab destroys the widget and ends the `nvim` session with it.
+renderable NvimTerminal of BaseWidget:
+  hooks:
+    beforeBuild:
+      state.internalWidget = vte.newNvimTerminal()
+
 ## A read-only, syntax-highlighted code block (G-7). Declared here rather than in
 ## `sourceview.nim` because owlkettle's `renderable` emits an unexported type;
 ## the FFI stays in that module and this is only the widget around it.
@@ -994,6 +1002,13 @@ proc topBar(app: AppState): Widget =
         proc clicked() =
           app.sidebarOpen = not app.sidebarOpen
 
+      Button {.addRight.}:
+        icon = (if app.editorOpen: "go-previous-symbolic" else: "text-editor-symbolic")
+        tooltip = (if app.editorOpen: "Back to chat" else: "Neovim")
+        style = [ButtonFlat]
+        proc clicked() =
+          app.editorOpen = not app.editorOpen
+
       MenuButton {.addRight.}:
         icon = "open-menu-symbolic"
         Popover:
@@ -1224,7 +1239,12 @@ method view(app: AppState): Widget =
             # the same order whether a note or the transcript is open, so
             # owlkettle's positional matching never swaps a widget out from under
             # the diff; only what is inside them changes.
-            ScrolledWindow {.expand: true.}:
+            if app.editorOpen:
+              NvimTerminal {.expand: true.}:
+                margin = 12
+                style = [StyleClass("nvim-term")]
+            else:
+             ScrolledWindow {.expand: true.}:
               Box(orient = OrientY, spacing = 12, margin = 16):
                 if app.openNote.len > 0:
                   Entry {.expand: false.}:
@@ -1315,6 +1335,7 @@ proc run*(withTray = true) =
   # unconditionally: `nvimctl` treats an absent socket as "no document", so this
   # costs nothing on a host with no Neovim running.
   pipeline.configureEditor(nvimctl.socketPath(p))
+  vte.configure(nvimctl.socketPath(p), p.workspaces)
   discard lc.startAll()
   discard server.start(
     host, port, p.root / "public",

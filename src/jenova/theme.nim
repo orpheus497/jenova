@@ -142,6 +142,22 @@ headerbar .subtitle {
   box-shadow: 0 8px 32px alpha(#000000, 0.37);
 }
 
+/* The Neovim terminal. VTE paints its own opaque background unless
+   `set_clear_background(false)` is called, which is why an alpha in
+   `vte_terminal_set_colors` alone left it a solid slab. With that off, the
+   background is this rule's, so the tab sits in the same glass as everything
+   else instead of looking pasted on. */
+.nvim-term,
+.nvim-term > vte-terminal,
+vte-terminal.nvim-term {
+  background-color: alpha(@jenova_bg, 0.35);
+  border-top: 1px solid alpha(#ffffff, 0.1);
+  border-left: 1px solid alpha(#ffffff, 0.1);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px alpha(#000000, 0.37);
+  padding: 8px;
+}
+
 /* ── Sidebar ──────────────────────────────────────────────────────────────
    owlkettle's Flap adds GTK's `.background` class to the flap child
    (`adw.nim:653`), which paints an opaque theme colour and would hide the

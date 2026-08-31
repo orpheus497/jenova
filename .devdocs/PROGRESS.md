@@ -2,11 +2,33 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-08-31 21:14
+**Last updated:** 2026-08-31 21:23
 
 ---
 
 ## Completed
+
+### 2026-08-31 21:23 — **G-19 steps 19.1-19.3: Neovim in a tab. Compiled and linked; UNRUN.**
+
+New `src/jenova/vte.nim` — hand-written `vte-2.91-gtk4` FFI, same split as `sourceview.nim` (FFI in
+the module, `renderable` in `gui.nim`). Terminal spawns `nvim --listen <sock>` at the **same socket
+`nvimctl` reads**, which is what ties G-19 to G-18: the editor in the tab is the one the `Editor:`
+intent sees. Colours come from `theme.nim` rather than VTE's defaults. Toggle button in the top bar.
+
+**`nm -u` shows all five `vte_*` symbols and the link resolved. It links; it has not rendered.**
+
+**Two traps worth knowing before touching this:**
+
+- **Nim identifiers are case-insensitive after the first character**, so a global `workDir` and a
+  parameter `workdir` are *the same identifier* — `workDir = workdir` compiled as a self-assignment
+  to an immutable parameter and failed with a misleading "cannot be assigned to". Global renamed
+  `spawnCwd`.
+- **owlkettle's `beforeBuild` cannot see field values**, so spawn arguments go through
+  `vte.configure` first, the same arrangement `canvas.newArea` uses.
+
+**Closing the tab destroys the widget and ends the `nvim` session.** Stated rather than discovered
+later; a persistent session would need the terminal kept in the tree and hidden, which owlkettle has
+no clean route to.
 
 ### 2026-08-31 21:14 — **G-18 step 18.2: `Editor:` intent — the model gets the live buffer, only when asked. RUN.**
 
