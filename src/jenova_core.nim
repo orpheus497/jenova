@@ -3,9 +3,14 @@
 ## (`.devdocs/PLANS.md` Plan B, ruling D-L). It resolves paths and configuration,
 ## serves HTTP with per-class thread pools, owns the database and the filesystem
 ## mirror, and **proxies inference to `llama-server`** (ruling D-AF: this is the
-## harness; llama.cpp's own server is the engine). In-process generation through
-## libllama is retained behind `JENOVA_INPROC=1` but is not the default.
-## **No GUI, RAG or CLI subsystem exists yet**, and it does not pretend otherwise.
+## harness; llama.cpp's own server is the engine).
+##
+## The in-process `libllama` path was **deleted** on 2026-08-31: `llama.nim` and
+## `inference.nim` duplicated what `llama-server` already does, and duplicating
+## the engine is the opposite of being a harness for it.
+##
+## The desktop application is a separate binary, `bin/jenova`. The CLI does not
+## exist yet, and this does not pretend otherwise.
 
 ## Action purpose: refuse to compile anywhere but FreeBSD. Plan A spent seven
 ## stages removing the pretence that this project is portable; the Nim core
@@ -15,8 +20,8 @@ when not defined(freebsd):
   {.error: "jenova-core targets FreeBSD only — see .devdocs/PLANS.md Plan B.".}
 
 import std/[os, strformat, strutils, json]
-import jenova/[paths, config, db, dbselftest, server, serverselftest, llama,
-               inference, rag, sha256, pipeline, prompts, lifecycle, models]
+import jenova/[paths, config, db, dbselftest, server, serverselftest,
+               rag, sha256, pipeline, prompts, lifecycle, models]
 
 const
   Version = "0.1.0"
@@ -44,11 +49,10 @@ proc usage() =
   echo "  version               Print version and stage"
   echo ""
   echo "  Self-tests: db-selftest, serve-selftest, rag-selftest,"
-  echo "              pipeline-selftest, sha256-selftest, llama-selftest"
+  echo "              pipeline-selftest, sha256-selftest"
   echo ""
   echo "Precedence: builtin default < etc/jenova.conf < etc/jenova.local.conf < environment"
   echo "JENOVA_NO_BACKENDS=1  serve without starting llama-server (used by the tests)"
-  echo "JENOVA_INPROC=1       load the model in-process instead of proxying (not the default)"
   echo ""
   echo "No GUI or CLI subsystem is implemented yet."
   echo "See .devdocs/PLANS.md Plan B for the stage order."
@@ -575,81 +579,18 @@ proc main() =
         createThread(watcher, watchLoop, lc)
         echo "  watchdog: on (30s interval, 3 failures, 60s cooldown)"
 
-      # Action purpose: ruling D-AF — `llama-server` is the inference engine and
-      # this core is the harness around it. The default is therefore the proxy
-      # path: `llama-server` already provides per-request sampling parameters,
-      # client-disconnect cancellation, `/infill` and parallel slots, all of
-      # which an in-process path would have to reimplement (they were recorded
-      # as N-25, N-26 and D-W before the ruling closed them).
-      #
-      # In-process inference is retained, not deleted (Directive 3): set
-      # JENOVA_INPROC=1 to load the model into this process instead. Nothing new
-      # is built on that path.
-      let inProc = c.getInt("JENOVA_INPROC", 0) != 0
-      if inProc:
-        let ngl = if c.get("NGL_AGENT", "all") == "all": -1'i32
-                  else: c.getInt("NGL_AGENT", 0).int32
-        inference.configure(llama.LoadSpec(
-          modelPath: c.get("MODEL_PATH"),
-          devices: c.get("DEVICES"),
-          tensorSplit: c.get("TENSOR_SPLIT"),
-          nCtx: c.getInt("CTX_SIZE", 4096).uint32,
-          nBatch: c.getInt("BATCH_SIZE", 0).uint32,
-          nUbatch: c.getInt("UBATCH_SIZE", 0).uint32,
-          nSeqMax: c.getInt("NUM_SLOTS", 0).uint32,
-          nGpuLayers: ngl,
-          nThreads: c.getInt("THREADS", 4).int32,
-          nThreadsBatch: c.getInt("THREADS_BATCH", 4).int32,
-          kvCacheType: c.get("KV_CACHE_TYPE", "f16")))
-        inference.start()
-
       discard server.start(
         host, port, p.root / "public",
         llamaHost = "127.0.0.1", llamaPortArg = c.getInt("LLAMA_PORT", 8081),
         embedHost = "127.0.0.1", embedPortArg = c.getInt("LLAMA_EMBED_PORT", 8082),
-        useInProcessInference = inProc)
+        )
       echo &"jenova-core serving on {host}:{port}"
-      echo "  inference: ", (if inProc: "in-process (model loads on first request)"
-                             else: "proxied to llama-server")
+      echo "  inference: proxied to llama-server (D-AF)"
       echo "  ", server.describe()
       echo "  upstreams: llama 127.0.0.1:", c.getInt("LLAMA_PORT", 8081),
            "  embed 127.0.0.1:", c.getInt("LLAMA_EMBED_PORT", 8082)
       echo "  static root: ", p.root / "public"
       server.joinAll()
-    of "llama-selftest":
-      let p = paths.resolve()
-      let c = config.load(p)
-      let ngl = if c.get("NGL_AGENT", "all") == "all": -1'i32
-                else: c.getInt("NGL_AGENT", 0).int32
-      let spec = llama.LoadSpec(
-        modelPath: c.get("MODEL_PATH"),
-        devices: c.get("DEVICES"),
-        tensorSplit: c.get("TENSOR_SPLIT"),
-        nCtx: c.getInt("CTX_SIZE", 4096).uint32,
-        nBatch: c.getInt("BATCH_SIZE", 0).uint32,
-        nUbatch: c.getInt("UBATCH_SIZE", 0).uint32,
-        nSeqMax: c.getInt("NUM_SLOTS", 0).uint32,
-        nGpuLayers: ngl,
-        nThreads: c.getInt("THREADS", 4).int32,
-        nThreadsBatch: c.getInt("THREADS_BATCH", 4).int32,
-        kvCacheType: c.get("KV_CACHE_TYPE", "f16"))
-      echo "available devices:"
-      for d in llama.deviceNames(): echo "  ", d
-      echo "loading: ", spec.modelPath
-      echo &"  devices={spec.devices} ctx={spec.nCtx} slots={spec.nSeqMax} " &
-           &"kv={spec.kvCacheType} ngl={ngl} threads={spec.nThreads}"
-      var h = llama.load(spec)
-      defer: h.free()
-      echo &"  loaded. context={h.nCtx} vocab={llama.llama_vocab_n_tokens(h.vocab)}"
-      let prompt = if args.len > 1: args[1] else: "Write one short sentence about FreeBSD."
-      echo "prompt: ", prompt
-      stdout.write "output: "
-      let n = h.generate(prompt, 48, proc(piece: string): bool =
-        stdout.write piece
-        stdout.flushFile()
-        true)
-      echo ""
-      echo &"  {n} tokens generated"
     of "serve-selftest":
       let p = paths.resolve()
       quit(serverselftest.run(p.state / "jenova-servertest.db", p.root / "public"))

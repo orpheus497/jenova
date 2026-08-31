@@ -58,6 +58,129 @@ project code.
 
 ---
 
+## N-S7a — the audit remediation plan. **2026-08-31 14:53**
+
+**22 defects (B-44 … B-65). Six of them are one architectural fault**, and the fix for it is
+*less* code than what is there now. Ordered by structural leverage, not by severity, so the same
+line is not touched twice.
+
+### The rule this plan is written against
+
+**Three ways to get this wrong, all named by the USER, all things this project has already done
+once:**
+
+| Trap | What it would look like here | Guard |
+|---|---|---|
+| **Bottleneck on one thread** | Putting streaming *and* supervision on a single worker, so a generation blocks a "stop backend" | **Two workers with distinct roles**, which is `routes.nim`'s per-class isolation (D-U) applied to the GUI — not a new pattern |
+| **Rebuild a defect from the old design** | A status poll that forks (B-17) · a supervisor owned by the UI as a child process (B-13) · a command builder that quotes shell strings (`ui.lua`'s `shell_quote`) | No fix below introduces a fork, a child supervisor, or a shell string |
+| **Fix something we are cutting** | Restructuring `api.nim`'s dynamic SQL, or rewriting static file serving | **Both serve `jca_web` only and die at N-S9.** Verified: the GUI references neither. They get a *bound*, not a redesign |
+
+### Fix 1 — the GUI concurrency model. **One change, six defects: B-44, B-45, B-46, B-47, B-53, B-57**
+
+**The fault:** `gui.nim` creates a thread per generation and never joins it, and runs supervision
+inline on the GTK loop. Two mistakes, one root — **no owned execution context**.
+
+**The fix, and it removes code:**
+
+| | |
+|---|---|
+| **Two persistent workers, started once, joined at shutdown** | `stream` (one generation at a time — that *is* the bound, exactly as `rcCompletion` is sized) and `control` (start/stop/restart/health — serialised among themselves, which is correct: concurrent start and stop is not a thing anyone wants) |
+| **Requests in by channel, results out by one channel** | The GTK drain already exists and works; it stops being the only part that is right |
+| **Explicit shutdown** | quit sentinel → `joinThread` → *then* `close`. Kills B-45 and B-46 outright, because the close can no longer race a live worker |
+| **`isNil` guard before `sock.close()`** | B-44. **`except CatchableError` never protected it**, so every `finally` that closes a `ref` needs the same treatment |
+| **`waitForExit` in `runCapture`** | B-53. It moves to the control worker, so `xdg-open` stops running on the GTK thread too |
+| **`streaming` owned by the drain, never set speculatively** | B-57 |
+
+**Why two and not one:** a generation runs for tens of seconds. Sharing its thread with supervision
+means "stop the backend" waits for the model to finish talking. **That is the bottleneck the USER
+named**, and it is the shape of `proxy.lua` serialising every client behind one event loop.
+
+**Why not more than two:** there is no third kind of work. Adding threads for their own sake is how
+`routes.nim` came to provision 34 before D-T cut it to 14.
+
+**Acceptance:** a `restart` issued *during* a generation is serviced without waiting for it, and the
+window keeps painting throughout. One test, and it is the whole point of the change.
+
+### Fix 2 — tray protocol conformance. **B-48, B-49, B-50**
+
+Self-contained in `tray.nim`. **A wrong D-Bus reply produces a missing icon rather than an error**,
+so none of this is provable by reading — it lands together and is verified against a live panel.
+
+- `Properties.Get` returns a **variant**, not `a{sv}` (B-48). The `GetAll` path is already correct.
+- Add `Introspectable.Introspect`, and dbusmenu `GetGroupProperties` / `GetProperty`; honour
+  `GetLayout`'s `parentId` (B-49).
+- Set the icon's initial status from a real probe, and move `setStatus` out of the
+  `if newStatus != st.status` branch that currently hides the first one (B-50).
+
+### Fix 3 — bound what is unbounded. **B-51, B-52, B-54**
+
+| Defect | Fix | Why this shape |
+|---|---|---|
+| **B-51** statement cache | **Cap it in `db.nim`, finalize on evict** | Fixes the *class*, in the layer that survives N-S9. **`api.nim`'s dynamic `SET` is deliberately not restructured — it dies with `jca_web`** |
+| **B-52** conversation history | Trim to a byte budget derived from `CTX_SIZE` before sending | The number belongs to the model's context, so it comes from config rather than a constant someone picked |
+| **B-54** static `readFile` | A size cap and a clear refusal, **not** a streaming rewrite | It serves `jca_web` only. A cap is honest and cheap; a chunked sender is work on a path being cut |
+
+### Fix 4 — correctness. **B-55, B-56, B-58, B-59, B-60**
+
+- Decode `\uXXXX` to UTF-8 and stop dropping `\r` (B-55, B-56). Non-ASCII currently renders as an
+  escape in the chat view — visible on the first accented character a model emits.
+- `models.nim`: remove the temp symlink on every failure path, and exclude dangling links from
+  `targetModel` as `[ -f ]` did (B-58, B-59). **Both are fidelity gaps against the shell original.**
+- `fssync.resolveStoragePath`: resolve the **parent** directory's real path so a new file cannot be
+  written through a symlinked parent, and compare against the resolved root so a symlinked
+  `$JENOVA_WORKSPACES` stops rejecting legitimate files (B-60). **Both directions get an assertion**
+  — the suite covers traversal today but neither symlink case.
+
+### Fix 5 — integrity. **B-61, B-62, B-63, B-64, B-65**
+
+Delete the dead (`dbus_message_new_error`, `get_interface`, `get_member`, `val`), correct the two
+comments that contradict their own code, move the watchdog `Thread` to module scope and join it,
+and drain queued jobs on `inference.stop`.
+
+**B-61 and B-62 are mine and they are the most instructive items in the audit**: `dbus.nim`'s header
+claims the binding never mirrors an ABI while `DBusMessageIter` mirrors it in 14 dummy fields, and
+`lanAddress` claims an argument vector over code that runs `sh -c`. **A comment describing what the
+code should have done reads exactly like a comment describing what it does** — the `startProcess`
+pipe failure (D-AG) in a different costume.
+
+### Fix 6 — **stop the devdocs rotting.** *(The USER's standing complaint, addressed structurally)*
+
+> "i dont want to be stuck in this loop of rewriting devdocs every session"
+
+**The loop has a mechanical cause and it is not forgetfulness.** The trackers record **facts
+derivable from the code** — subcommand counts, module lists, test counts, file inventories — and
+those rot on the next commit. Every session then spends its first hour rediscovering the drift.
+B-41 was five instances of exactly this in one pass; the subcommand count alone has been wrong
+three times (three → eight → thirteen).
+
+**Three changes, and the first is the one that matters:**
+
+1. **`make devdocs-check` — drift becomes a failing command, not an archaeology session.** A script
+   verifying the derivable claims against the tree: the subcommand list, the module and test
+   inventories, `lib/` and `bin/` contents, and the total-conversion gate (no Lua, no C, no project
+   shell script). **A session runs one command instead of re-reading eleven files**, and drift is
+   caught when it is introduced.
+2. **Stop writing derivable facts into prose.** `ARCHITECTURE_MAPPING.md` should say what each
+   module is *for* and why it is shaped that way — which does not rot — and point at
+   `jenova-core --help` for the list, which does. **Rationale is durable; inventories are not.**
+3. **Cap the narrative.** `SESSION_HANDOFF.md` and `SUMMARIES.md` have grown past 1,000 lines of
+   process history. **This one needs the USER, because `AGENTS.md` mandates their format** — the
+   proposal is a hard length cap per entry and archival at 20 entries rather than 40.
+
+**This plan's own footprint is one `PLANS.md` section and one `TODOS.md` table.** No other tracker
+is touched until the work lands, and then only `PROGRESS.md` gets a line.
+
+### Sequence
+
+**Fix 1 first** — six defects, and the only one that changes structure, so everything else lands on
+a stable base. Then **2** and **3** (independent of each other), then **4**, then **5**.
+**Fix 6 runs in parallel with any of them** and is the one that pays back every future session.
+
+**Nothing here needs a new dependency. Nothing here touches `jca_web/`, the shell installer, or
+anything else being cut.**
+
+---
+
 ## REMAINING WORK — corrected 2026-08-31 13:21 by D-AH
 
 > **The 13:07 revision of this section is withdrawn. It planned three stages of rebuilding the old

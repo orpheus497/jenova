@@ -35,7 +35,7 @@
 ## shells to base `fetch(1)`: this project has spent seven stages removing
 ## dependencies, and a localhost request needs no TLS stack.
 
-import std/[net, os, osproc, streams, strutils]
+import std/[json, net, os, osproc, streams, strutils]
 import owlkettle
 import owlkettle/adw
 import ./paths
@@ -43,6 +43,9 @@ import ./config
 import ./lifecycle
 import ./models
 import ./tray
+import ./db
+import ./rag
+import ./server
 
 type
   Role* = enum
@@ -63,122 +66,92 @@ type
     bsStarting = "starting"
     bsUp = "ready"
 
-## Action purpose: streaming happens on a worker thread, because a generation
-## takes tens of seconds and the GTK main loop must keep painting. Tokens cross
-## back through a channel, which Nim deep-copies on send, so no GC'd object is
-## shared between the threads. A global is used rather than a closure because a
-## `{.thread.}` proc may not capture heap state.
-type StreamJob = object
-  host: string
-  port: int
-  body: string
+# Two persistent workers: `stream` runs one generation at a time, `control` runs
+# supervision. Separate so a stop is not queued behind a generation.
+type
+  StreamJob = object
+    host: string
+    port: int
+    body: string
+
+  ControlJob = object
+    action: string
+    lc: Lifecycle
+    jcaHome: string
+    port: int
+
+  UiMsgKind = enum umToken, umDone, umError, umNotice, umStatus
+
+  UiMsg = object
+    kind: UiMsgKind
+    text: string
+    status: BackendStatus
 
 var
-  streamChan: Channel[string]
-  streamThread: Thread[StreamJob]
-  streamBusy: bool = false
+  streamReq: Channel[StreamJob]
+  ctlReq: Channel[ControlJob]
+  uiChan: Channel[UiMsg]
+  streamThread: Thread[void]
+  ctlThread: Thread[void]
+  pendingActions: seq[string] = @[]
 
-## Action purpose: control actions are queued, not executed at the call site.
-##
-## The tray and the window menu offer the same actions, and the tray's callback
-## arrives from the D-Bus dispatch with no access to the widget state. Routing
-## both through one queue means there is exactly **one** implementation of "start
-## the backend" rather than two that can drift — which is the failure `ui.lua`
-## had, where the tray and the TUI each rebuilt the same command strings.
-##
-## Safe without a lock: `tray.pump` is driven from a GTK timeout, so the tray
-## callback and the drain both run on the main loop thread.
-var pendingActions: seq[string] = @[]
+# An empty host/action is the shutdown sentinel: each worker returns from its own
+# loop so joinThread completes, rather than being unblocked by a channel close.
+const QuitSentinel = ""
 
-const
-  StreamDone = "\x00__done__"       ## sentinel: generation finished cleanly
-  StreamErrPrefix = "\x00__err__"   ## sentinel prefix: generation failed
-
-## Function purpose: read one HTTP response body off a blocking socket, feeding
-## every SSE `data:` payload into the channel as it arrives.
-##
-## This parses only as much HTTP as it needs: status line, skip headers, then
-## stream. `upstream.nim` already relays bytes verbatim for the proxy path; this
-## is the client side of the same conversation and shares its assumption that the
-## peer is our own server on loopback.
-proc streamWorker(job: StreamJob) {.thread.} =
+proc streamOnce(job: StreamJob) =
   var sock: Socket
   try:
     sock = newSocket()
     sock.connect(job.host, Port(job.port))
-
-    let req = "POST /v1/chat/completions HTTP/1.1\r\n" &
+    sock.send("POST /v1/chat/completions HTTP/1.1\r\n" &
               "Host: " & job.host & "\r\n" &
               "Content-Type: application/json\r\n" &
               "Connection: close\r\n" &
-              "Content-Length: " & $job.body.len & "\r\n\r\n" & job.body
-    sock.send(req)
+              "Content-Length: " & $job.body.len & "\r\n\r\n" & job.body)
 
     let statusLine = sock.recvLine(timeout = 120_000)
-    if statusLine.len == 0:
-      streamChan.send(StreamErrPrefix & "no response from the server")
-      return
     let parts = statusLine.split(' ')
-    let code = if parts.len > 1: parts[1] else: "?"
+    let code = if parts.len > 1: parts[1] else: ""
     if code != "200":
-      # 502 is the honest answer when llama-server is not up yet; say so rather
-      # than showing an empty reply, which is what a silent failure looks like.
-      var detail = "the server answered " & code
-      if code == "502":
-        detail = "llama-server is not answering yet — it may still be loading the model"
-      streamChan.send(StreamErrPrefix & detail)
+      uiChan.send(UiMsg(kind: umError, text:
+        if code == "502": "llama-server is not answering yet"
+        elif code.len == 0: "no response from the server"
+        else: "the server answered " & code))
       return
 
-    # Skip headers.
     while true:
       let line = sock.recvLine(timeout = 120_000)
-      if line.len == 0 or line == "\r\n":
-        break
+      if line.len == 0 or line == "\r\n": break
 
     while true:
       let line = sock.recvLine(timeout = 300_000)
-      if line.len == 0:
-        break
-      if not line.startsWith("data:"):
-        continue
+      if line.len == 0: break
+      if not line.startsWith("data:"): continue
       let payload = line[5 .. ^1].strip
-      if payload == "[DONE]":
-        break
-      # Pull the token out without a JSON parse. The field is always
-      # `"content":"..."` in a chat.completion.chunk, and a full parse per token
-      # on the UI's critical path buys nothing.
-      let key = "\"content\":\""
-      let idx = payload.find(key)
-      if idx < 0:
-        continue
-      var i = idx + key.len
+      if payload == "[DONE]": break
       var tok = ""
-      while i < payload.len:
-        if payload[i] == '\\' and i + 1 < payload.len:
-          case payload[i + 1]
-          of 'n': tok.add '\n'
-          of 't': tok.add '\t'
-          of 'r': discard
-          of '"': tok.add '"'
-          of '\\': tok.add '\\'
-          of 'u':
-            # \uXXXX — pass the escape through rather than mangling it.
-            if i + 5 < payload.len: tok.add payload[i .. i + 5]
-          else: tok.add payload[i + 1]
-          i += 2
-          if payload[i - 1] == 'u': i += 4
-        elif payload[i] == '"':
-          break
-        else:
-          tok.add payload[i]
-          i += 1
+      try:
+        tok = parseJson(payload){"choices"}{0}{"delta"}{"content"}.getStr("")
+      except CatchableError:
+        continue
       if tok.len > 0:
-        streamChan.send(tok)
+        uiChan.send(UiMsg(kind: umToken, text: tok))
   except CatchableError as e:
-    streamChan.send(StreamErrPrefix & e.msg)
+    uiChan.send(UiMsg(kind: umError, text: e.msg))
   finally:
-    try: sock.close() except CatchableError: discard
-    streamChan.send(StreamDone)
+    # `Socket` is a ref: closing it when newSocket() never ran is a SIGSEGV that
+    # `except CatchableError` does not catch.
+    if not sock.isNil:
+      try: sock.close() except CatchableError: discard
+    uiChan.send(UiMsg(kind: umDone))
+
+proc streamWorker() {.thread.} =
+  while true:
+    let job = streamReq.recv()
+    if job.host == QuitSentinel: break
+    streamOnce(job)
+
 
 ## Function purpose: the LAN-mode flag, persisted exactly where `ui.lua:12-15`
 ## put it so a running deployment's state is not orphaned by the port.
@@ -207,6 +180,7 @@ proc runCapture(cmd: string, args: openArray[string]): string =
     let p = startProcess(cmd, args = args, options = {poUsePath, poStdErrToStdOut})
     defer: p.close()
     let outp = p.outputStream.readAll()
+    discard p.waitForExit()
     for line in outp.splitLines():
       if line.strip.len > 0:
         return line.strip
@@ -219,8 +193,6 @@ proc runCapture(cmd: string, args: openArray[string]): string =
 ## address, falling back to the first non-loopback address.
 ##
 ## The original ran `ip route get`, an iproute2 command that does not exist on
-## FreeBSD, so it always fell through to the `ifconfig` path. The working half is
-## kept and the dead half is not carried across.
 proc lanAddress(): string =
   let iface = runCapture("sh", ["-c",
     "route -n get default 2>/dev/null | awk '/interface:/{print $2}'"])
@@ -232,31 +204,6 @@ proc lanAddress(): string =
   runCapture("sh", ["-c",
     "ifconfig 2>/dev/null | awk '/inet / && !/127\\.0\\.0\\.1/ {print $2; exit}'"])
 
-## Function purpose: JSON string escaping for the request body. Hand-written for
-## the same reason `sha256.nim` is: the payload must be exactly right, and
-## pulling a parser onto this path to serialise one string is not a trade worth
-## making.
-proc escapeJson(s: string): string =
-  result = "\""
-  for c in s:
-    case c
-    of '"': result.add "\\\""
-    of '\\': result.add "\\\\"
-    of '\n': result.add "\\n"
-    of '\r': result.add "\\r"
-    of '\t': result.add "\\t"
-    of '\x00' .. '\x08', '\x0B', '\x0C', '\x0E' .. '\x1F':
-      result.add "\\u" & toHex(ord(c), 4)
-    else: result.add c
-  result.add "\""
-
-## Action purpose: the tray menu, reproducing `ui.get_menu` (`ui.lua:72-89`) item
-## for item and in the same order, because it is the surface Directive 3 retains.
-## Ids are stable and start at 1, since 0 is dbusmenu's root.
-##
-## The one item that is not carried across is "System Control", which launched
-## the ncurses TUI through `bin/jenova-term`. Ruling D-AL replaces the TUI with
-## this window, so the item has nothing left to open.
 proc trayMenu(lanEnabled: bool): seq[TrayItem] =
   @[
     TrayItem(kind: tiAction, id: 1, label: "Open Web UI", action: "web"),
@@ -276,6 +223,40 @@ proc trayMenu(lanEnabled: bool): seq[TrayItem] =
     TrayItem(kind: tiSeparator, id: 11),
     TrayItem(kind: tiAction, id: 12, label: "Quit", action: "quit"),
   ]
+
+proc ctlWorker() {.thread.} =
+  while true:
+    let j = ctlReq.recv()
+    if j.action == QuitSentinel: break
+    case j.action
+    of "start":
+      let (l, _) = j.lc.startAll()
+      uiChan.send(UiMsg(kind: umNotice, text:
+        if l == -1: "port in use; backend not started" else: "starting backend (pid " & $l & ")"))
+      uiChan.send(UiMsg(kind: umStatus, status: bsStarting))
+    of "stop":
+      discard j.lc.stopAll()
+      uiChan.send(UiMsg(kind: umNotice, text: "backend stopped"))
+      uiChan.send(UiMsg(kind: umStatus, status: bsDown))
+    of "restart":
+      discard j.lc.stopAll()
+      let (l, _) = j.lc.startAll()
+      uiChan.send(UiMsg(kind: umNotice, text: "restarting backend (pid " & $l & ")"))
+      uiChan.send(UiMsg(kind: umStatus, status: bsStarting))
+    of "switch_instruct", "switch_thinking":
+      let target = if j.action == "switch_instruct": "instruct" else: "thinking"
+      try:
+        let r = models.switchModel(j.jcaHome, target)
+        uiChan.send(UiMsg(kind: umNotice, text: r.message & " - restart to load it"))
+      except CatchableError as e:
+        uiChan.send(UiMsg(kind: umNotice, text: "switch failed: " & e.msg))
+    of "web":
+      discard runCapture("xdg-open", ["http://127.0.0.1:" & $j.port])
+    of "poll":
+      let up = j.lc.healthy(beLlama, timeoutMs = 300)
+      uiChan.send(UiMsg(kind: umStatus, status:
+        if up: bsUp elif j.lc.state(beLlama).pid > 0: bsStarting else: bsDown))
+    else: discard
 
 viewable App:
   ## Application state. `paths` and `cfg` are resolved once at startup rather
@@ -309,93 +290,60 @@ viewable App:
       # reach the view without waiting on a health interval.
       let st = state
       discard addGlobalTimeout(3000, proc(): bool =
-        let up = st.lc.healthy(beLlama, timeoutMs = 300)
-        let newStatus =
-          if up: bsUp
-          elif st.lc.state(beLlama).pid > 0: bsStarting
-          else: bsDown
+        ctlReq.send(ControlJob(action: "poll", lc: st.lc,
+                               jcaHome: st.p.jcaHome,
+                               port: st.cfg.getInt("PORT", 8080)))
         let newLan = isLanEnabled(st.p)
-        if newStatus != st.status or newLan != st.lanEnabled:
-          st.status = newStatus
-          if newLan != st.lanEnabled:
-            st.lanEnabled = newLan
-            st.lanAddr = if newLan: lanAddress() else: ""
-          # The tray icon reflects backend state, which is the whole reason the
-          # GTK3 tray polled `jenova-ca status` every 3 s. Here the check is an
-          # in-process port probe rather than a fork.
-          tray.setStatus(if newStatus == bsUp: tsActive else: tsPassive)
+        if newLan != st.lanEnabled:
+          st.lanEnabled = newLan
+          st.lanAddr = if newLan: lanAddress() else: ""
           discard st.redraw()
         true
       )
       discard addGlobalTimeout(40, proc(): bool =
         var changed = false
 
-        # Control actions, from the window menu and the tray alike.
         while pendingActions.len > 0:
           let action = pendingActions[0]
           pendingActions.delete(0)
           changed = true
-          case action
-          of "start":
-            let (l, _) = st.lc.startAll()
-            st.notice =
-              if l == -1: "backend already running, or its port is occupied"
-              else: "starting backend (pid " & $l & ") — the model takes a moment"
-            st.status = bsStarting
-          of "stop":
-            discard st.lc.stopAll()
-            st.status = bsDown
-            st.notice = "backend stopped"
-          of "restart":
-            discard st.lc.stopAll()
-            let (l, _) = st.lc.startAll()
-            st.status = bsStarting
-            st.notice = "restarting backend (pid " & $l & ")"
-          of "switch_instruct", "switch_thinking":
-            let target = if action == "switch_instruct": "instruct" else: "thinking"
-            try:
-              let r = models.switchModel(st.p.jcaHome, target)
-              st.notice = r.message & " — restart the backend to load it"
-            except CatchableError as e:
-              st.notice = "switch failed: " & e.msg
-          of "toggle_lan":
+          if action == "quit":
+            st.closeWindow()
+          elif action == "toggle_lan":
             let next = not st.lanEnabled
             setLanState(st.p, next)
             st.lanEnabled = next
             st.lanAddr = if next: lanAddress() else: ""
             tray.setItems(trayMenu(next))
-            st.notice =
-              if next: "LAN enabled — restart to bind 0.0.0.0 (backends stay loopback)"
-              else: "LAN disabled — restart to bind 127.0.0.1"
-          of "web":
-            let port = st.cfg.getInt("PORT", 8080)
-            discard runCapture("xdg-open", ["http://127.0.0.1:" & $port])
-          of "quit":
-            # Deliberately does NOT stop the backend. `ui.lua:149` did, because
-            # the tray owned the proxy as a child process and leaving it behind
-            # orphaned it. Here `llama-server` is supervised independently and
-            # holds a loaded model — quitting the window to free the screen
-            # should not throw away a multi-gigabyte load the user will want back.
-            st.closeWindow()
+            st.notice = if next: "LAN enabled - restart to bind 0.0.0.0"
+                        else: "LAN disabled - restart to bind 127.0.0.1"
           else:
-            discard
+            ctlReq.send(ControlJob(action: action, lc: st.lc,
+                                   jcaHome: st.p.jcaHome,
+                                   port: st.cfg.getInt("PORT", 8080)))
 
         while true:
-          let (hasData, msg) = streamChan.tryRecv()
+          let (hasData, m) = uiChan.tryRecv()
           if not hasData: break
           changed = true
-          if msg == StreamDone:
+          case m.kind
+          of umDone:
             st.streaming = false
-            streamBusy = false
-          elif msg.startsWith(StreamErrPrefix):
-            st.notice = msg[StreamErrPrefix.len .. ^1]
+          of umError:
+            st.notice = m.text
             if st.messages.len > 0 and st.messages[^1].role == rAssistant and
                st.messages[^1].text.len == 0:
               st.messages.delete(st.messages.len - 1)
-          else:
+          of umNotice:
+            st.notice = m.text
+          of umStatus:
+            if m.status != st.status:
+              st.status = m.status
+              tray.setStatus(if m.status == bsUp: tsActive else: tsPassive)
+          of umToken:
             if st.messages.len == 0 or st.messages[^1].role != rAssistant:
               st.messages.add Message(role: rAssistant, text: "")
-            st.messages[^1].text.add msg
+            st.messages[^1].text.add m.text
         if changed:
           discard st.redraw()
         true
@@ -406,27 +354,21 @@ viewable App:
 ## expects, so intents, RAG and personas apply exactly as they do for the Web UI.
 proc send(app: AppState) =
   let text = app.draft.strip
-  if text.len == 0 or streamBusy:
+  if text.len == 0 or app.streaming:
     return
 
   app.messages.add Message(role: rUser, text: text)
   app.draft = ""
   app.notice = ""
   app.streaming = true
-  streamBusy = true
 
-  var msgs = "["
-  for i, m in app.messages:
-    if m.role == rAssistant and m.text.len == 0:
-      continue
-    if i > 0 and msgs.len > 1: msgs.add ","
-    msgs.add "{\"role\":\"" & $m.role & "\",\"content\":" & escapeJson(m.text) & "}"
-  msgs.add "]"
-
-  let body = "{\"messages\":" & msgs & ",\"stream\":true}"
+  var msgs = newJArray()
+  for m in app.messages:
+    if m.role == rAssistant and m.text.len == 0: continue
+    msgs.add %*{"role": $m.role, "content": m.text}
+  let body = $(%*{"messages": msgs, "stream": true})
   let port = app.cfg.getInt("PORT", 8080)
-  createThread(streamThread, streamWorker,
-               StreamJob(host: "127.0.0.1", port: port, body: body))
+  streamReq.send(StreamJob(host: "127.0.0.1", port: port, body: body))
 
 method view(app: AppState): Widget =
   result = gui:
@@ -544,8 +486,27 @@ proc run*(withTray = true) =
   let p = paths.resolve()
   let c = config.load(p)
   let lc = lifecycle.init(p, c)
-  streamChan.open()
-  defer: streamChan.close()
+
+  let host = if isLanEnabled(p): "0.0.0.0" else: c.get("HOST", "127.0.0.1")
+  let port = c.getInt("PORT", 8080)
+
+  db.initDb(p.state / "jenova.db")
+  rag.initSchema()
+  rag.configureEmbed("127.0.0.1", c.getInt("LLAMA_EMBED_PORT", 8082))
+  discard lc.startAll()
+  discard server.start(
+    host, port, p.root / "public",
+    llamaHost = "127.0.0.1", llamaPortArg = c.getInt("LLAMA_PORT", 8081),
+    embedHost = "127.0.0.1", embedPortArg = c.getInt("LLAMA_EMBED_PORT", 8082))
+
+  streamReq.open(); ctlReq.open(); uiChan.open()
+  createThread(streamThread, streamWorker)
+  createThread(ctlThread, ctlWorker)
+  defer:
+    streamReq.send(StreamJob(host: QuitSentinel))
+    ctlReq.send(ControlJob(action: QuitSentinel))
+    joinThread(streamThread); joinThread(ctlThread)
+    streamReq.close(); ctlReq.close(); uiChan.close()
 
   let initialLan = isLanEnabled(p)
   let initialAddr = if initialLan: lanAddress() else: ""
