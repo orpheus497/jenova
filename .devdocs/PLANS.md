@@ -2,7 +2,7 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-08-31 20:10
+**Last updated:** 2026-08-31 20:58
 
 ---
 
@@ -37,9 +37,11 @@ longer the front of the queue.
 | ~~G-4 workspace tree~~ | **DONE — run and confirmed by the USER 19:38.** Panel, tree and notes work |
 | ~~G-5 markdown + code blocks~~ | **Done and confirmed 18:55.** No syntax highlighting (G-7) |
 | ~~G-6 remaining surface~~ | **Retired 20:10 — triaged into G-16 … G-21 by the USER's scope call (D-AT):** filesystem view/browser, writer/editor, **file awareness**, **Neovim in a tab**, models selector, trash view. **MCP DEFERRED** — it was the only item that is a subsystem rather than a view, and it is out |
-| **T-1 — the SIGBUS** | **REAL, diagnosed from five cores, FIXED in source 20:10, UNRUN.** Frame clock no longer whole-tree-diffs; GUI builds `--mm:arc`. See D-AS |
-| ~~G-7 syntax highlighting~~ | **DONE in source 19:39, compiled and linked, unrun.** `sourceview.nim`, a hand-written gtksourceview-5 binding |
-| **G-13c** | **Fullscreen had no exit — ours, not the compositor. Fixed 19:39, unrun** |
+| ~~T-1 — the SIGBUS~~ | **CLOSED 20:52, confirmed by a completed run.** It was the **Quit path**: `closeWindow()` then `redraw()` in the same timer callback. **Eleven cores, six wrong hypotheses, and the USER diagnosed it.** Record in `PROGRESS.md` 20:43/20:52 |
+| ~~G-7 syntax highlighting~~ | **DONE — `sourceview.nim`, a hand-written gtksourceview-5 binding. Run and confirmed 20:52** |
+| ~~G-13c~~ | **DONE.** Fullscreen had no exit; fixed 19:39, confirmed 20:52. **Now redundant** — the top bar survives fullscreen since the `AdwWindow` change, so the bottom-row control is a second exit rather than the only one. Kept: it costs nothing |
+| ~~Top bar in fullscreen~~ | **DONE 20:49, confirmed 20:52.** `Window` + `gtk_window_set_titlebar` → **`AdwWindow`** with the bar extracted into `proc topBar` and inserted atop the chat column. **Given up and stated:** `AdwWindow` has no `title` field, so the WM/taskbar title may be empty |
+| ~~T-13~~ | **DONE in source 20:56, UNRUN.** Renaming a file asset wrote a zero-byte file over it and wiped its metadata; the rename now resends `content`/`size`/`type`/`uploadDate` as the notes branch already did |
 | ~~G-8 … G-11~~ | **CLOSED 18:55 — fixed and confirmed on screen.** Panel slab, unstyled tree, one-word wordmark, collapsing code blocks. Record in `PROGRESS.md` 18:42/18:55 |
 | ~~G-12, G-13a~~ | **DONE — in the 19:23 build the USER confirmed at 19:38** |
 | ~~G-14, G-15~~ | **DONE — note creation and nested-container visibility, confirmed working 19:38** |
@@ -53,6 +55,56 @@ Sizing APIs (`min-width`, `sizeRequest`, flap `width`) are **minimums** — chec
 reaching for one.
 
 **LAN gets no further investment.** Built, works, retained under Directive 3.
+
+---
+
+## G-19 / G-18 — Neovim in a tab, and file awareness *(scoped 2026-08-31 20:58)*
+
+**Ruling D-AT.** The USER: *"neovim integration with a tab that has neovim running with the ai able
+to read the active document."*
+
+### The mechanism is PROVEN, by running it — and it needs no msgpack client
+
+The obvious design was a Nim **msgpack-RPC client** against `nvim --listen`. **It is not needed.**
+`nvim --server <sock> --remote-expr <vimscript>` prints the result on stdout, and Neovim ships it.
+Directive 3 — *do not reinvent what exists* — and it matches how the program already invokes
+installed binaries (`wl-copy` in `copyToClipboard`; `git`, `fetch`, `xdg-open`).
+
+**Executed 2026-08-31 20:57 against a real `nvim --headless --listen`, output verbatim:**
+
+| Query | Result | Gives us |
+|---|---|---|
+| `expand("%:p")` | `/…/sample.txt` | the active document's path |
+| `join(getline(1,"$"),"\n")` | `line one\nline two\nline three` | **the buffer, including unsaved edits** |
+| `line(".")` | `1` | cursor position, for "what am I looking at" |
+| `&modified` | `0` | whether disk and buffer agree |
+| `&filetype` | `text` | **feeds `sourceview.nim`'s language directly** |
+
+**The buffer query is the whole point of G-18:** the AI reads *what is on screen*, not what was last
+saved to disk.
+
+### A constraint found by running it, not by reading
+
+**The socket path must be short.** `nvim --headless --listen <108-char path>` fails with
+`Failed to --listen: invalid argument` — FreeBSD's `sun_path` is ~104 bytes. **`$HOME/Jenova/state/`
+is well inside that**; a scratch path under `/tmp/claude-…` was not. Any future "it works on my
+machine" here is this.
+
+### Steps
+
+| Step | Item | Shape of the work | Proof it worked |
+|---|---|---|---|
+| **19.1** | **`vte.nim` — the terminal widget** | Hand-written `vte-2.91-gtk4` FFI, **exactly the shape of `sourceview.nim`**: flags from `staticExec("pkg-config …")`, a small Nim surface, and the `renderable` declared in `gui.nim` because owlkettle's macro emits an unexported type. **`vte-2.91-gtk4 0.80.5` is installed — checked, not assumed.** LGPL, permitted under D-X | `nm -u bin/jenova` shows the `vte_*` symbols and the link resolves |
+| **19.2** | **Spawn `nvim` in it** | `vte_terminal_spawn_async` with `nvim --listen $JENOVA_STATE/nvim.sock`. **Short path — see above.** The USER's own config and plugins load, which is the entire reason for hosting a real `nvim` rather than rendering a UI ourselves | The tab shows a working Neovim the USER can edit in |
+| **19.3** | **The tab itself** | A new pane in the chat column beside the transcript and the note editor. **Child types stay stable** — that constraint is already recorded for this column | Switching tabs does not disturb the transcript |
+| **18.1** | **`nvimctl` — the four queries** | One small module wrapping `startProcess("nvim", ["--server", sock, "--remote-expr", expr])`. **Not a general RPC layer** — four expressions, above. Absent socket or dead server returns "no active document" rather than raising | A unit check against a headless `nvim`, the way it was proven above |
+| **18.2** | **Feed it to the model** | `pipeline.nim` already injects RAG and persona context; the active document is another source, **gated on the USER asking for it** rather than silently attached to every turn. `&filetype` labels the fenced block so `sourceview` highlights it | A turn that references the open file; a turn that does not, when the tab is closed |
+
+**Sequencing:** 19.1 is the only risky step (a new C dependency and the program's second FFI). 18.1
+is independent of all of it — **it works against any `nvim --listen`, including one the USER already
+has running** — so it can be built and proven before the terminal widget exists.
+
+**Not in scope:** writing *back* into the buffer from the AI. Reading is what was asked for.
 
 ---
 

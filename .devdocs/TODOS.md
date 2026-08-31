@@ -1,6 +1,6 @@
 # TODOS
 
-**Last updated:** 2026-08-31 20:52
+**Last updated:** 2026-08-31 20:58
 
 Only what is actually outstanding. Everything closed lives in `PROGRESS.md`; everything retired
 lives in `.devdocs/ARCHIVE/`. **Do not re-add defects about archived files** — that loop cost a day.
@@ -119,7 +119,6 @@ yet — defer to the future."*
 
 | ID | Item |
 |---|---|
-| **T-13** | **Renaming a file asset destroys its content.** `gui.nim:604-620`'s `commitRename` resends `content` **for notes only** — the comment directly above it names the hazard and the `fileAssets` branch does not act on it. `api.writeRow` does `INSERT OR REPLACE` over **every** column with missing fields as empty, and `mirrorUpsert` then calls `fssync.syncFileAsset(id, name, "")`, writing a zero-byte file and trashing the original. `size`, `type` and `uploadDate` are wiped too. **Same class as G-14/G-15, one branch away from the fix already applied.** *Reasoned from source, not executed* |
 | **T-14** | **Renaming a workspace, project or folder orphans everything under it on disk.** `mirrorUpsert` returns bare `true` for `projects` and `folders` (no filesystem action at all), and `syncWorkspace` only `ensureDir`s the **new** name. Since `physicalPath` derives every note and asset path from ancestor **names**, a container rename strands the old directory tree and later writes land in a fresh one. *Reasoned from source, not executed* |
 
 ## Product decisions — not mine to make

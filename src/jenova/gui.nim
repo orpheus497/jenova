@@ -269,6 +269,17 @@ proc loadNote(id: string): tuple[found: bool, title, content: string] =
     if r.len >= 2: return (true, r[0], r[1])
   (false, "", "")
 
+## Function purpose: the columns a file-asset rename has to carry forward.
+## `api.writeRow` is `INSERT OR REPLACE` over **every** column, so any field the
+## caller omits is written empty — a rename that sent only the name blanked the
+## content, and `fssync.syncFileAsset` then wrote a zero-byte file and trashed
+## the original (T-13). Read back as strings: `api.f` stringifies either way.
+proc loadFileAsset(id: string): tuple[found: bool, content, size, kind, uploadDate: string] =
+  for r in db.query(
+      "SELECT content, size, type, uploadDate FROM fileAssets WHERE id=?", [id]):
+    if r.len >= 4: return (true, r[0], r[1], r[2], r[3])
+  (false, "", "", "", "")
+
 proc newConversation(): string =
   result = $genOid()
   db.exec("INSERT INTO conversations (id, name, lastModified, is_deleted) VALUES (?, ?, ?, 0)",
@@ -624,8 +635,14 @@ proc commitRename(app: AppState, entity, id: string) =
       db.exec("UPDATE conversations SET name=? WHERE id=?", [name, id])
       app.reloadTree()
     elif entity == "notes" or entity == "fileAssets":
-      # `putEntity` writes the whole row, so the parent ids and the note's body
-      # have to be resent or the rename would blank them.
+      # `putEntity` writes the **whole** row — `api.writeRow` is INSERT OR
+      # REPLACE over every column and a missing field is written empty. So every
+      # column that is not being renamed has to be resent, for both entities.
+      # **This branch used to do it for notes only** (T-13): renaming a file
+      # asset blanked its `content`, `size`, `type` and `uploadDate`, and
+      # `fssync.syncFileAsset` then wrote a zero-byte file over the real one and
+      # trashed the original. The hazard was named in the comment here and acted
+      # on for one of the two entities.
       var node = %*{"id": id, "updatedAt": int(epochTime() * 1000)}
       node[if entity == "notes": "title" else: "name"] = %name
       if entity == "notes":
@@ -633,6 +650,12 @@ proc commitRename(app: AppState, entity, id: string) =
         node["content"] = %(if id == app.openNote: app.noteBuffer.text()
                             else: n.content)
         if id == app.openNote: app.noteTitle = name
+      else:
+        let f = loadFileAsset(id)
+        node["content"] = %f.content
+        node["size"] = %f.size
+        node["type"] = %f.kind
+        node["uploadDate"] = %f.uploadDate
       for n in (if entity == "notes": app.notes else: app.files):
         if n.id == id:
           node["folderId"] = %n.folderId

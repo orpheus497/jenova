@@ -2,11 +2,42 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-08-31 20:52
+**Last updated:** 2026-08-31 20:58
 
 ---
 
 ## Completed
+
+### 2026-08-31 20:58 — **G-19/G-18 scoped into `PLANS.md`, and the mechanism was proven by running it — no msgpack client needed.**
+
+**The design I was about to write was wrong, and running it first is what caught that.** A Nim
+**msgpack-RPC client** against `nvim --listen` is the obvious build. **It is unnecessary:**
+`nvim --server <sock> --remote-expr <vimscript>` prints the result on stdout and Neovim ships it.
+Directive 3, and it matches how the program already invokes installed binaries (`wl-copy`, `git`,
+`fetch`, `xdg-open`).
+
+**Executed against a real headless `nvim`:** `expand("%:p")` → the path, `join(getline(1,"$"),"\n")`
+→ **the buffer including unsaved edits**, `line(".")` → the cursor, `&modified` → the dirty flag,
+`&filetype` → **the language, which feeds `sourceview.nim` directly**. The buffer query is the whole
+of G-18: the AI reads what is on screen, not what was last saved.
+
+**A constraint found only by running it:** the listen socket path must be **short** — a 108-character
+path fails with `Failed to --listen: invalid argument` because FreeBSD's `sun_path` is ~104 bytes.
+`$HOME/Jenova/state/` is inside it. **That would have been a baffling bug six steps later.**
+
+**Also checked rather than assumed:** `vte-2.91-gtk4 0.80.5` and `nvim 0.12.5` are installed.
+
+### 2026-08-31 20:56 — **T-13: renaming a file asset no longer destroys it. Compiled; UNRUN.**
+
+`commitRename` resent the preserved columns **for notes only** — and the comment directly above it
+named the hazard. `api.writeRow` is `INSERT OR REPLACE` over every column with missing fields
+written empty, so renaming a file asset blanked `content`, `size`, `type` and `uploadDate`, and
+`fssync.syncFileAsset` then wrote a **zero-byte file** over the real one and trashed the original.
+
+New `loadFileAsset` reads the four columns back and the rename resends them, mirroring what the
+notes branch already did. **Not run** — it is a GUI path, and `nimble suites` needs per-instance
+permission (D-AG). **T-14 (renaming a container orphans its files on disk) is untouched and still
+open.**
 
 ### 2026-08-31 20:52 — **CONFIRMED BY THE USER: T-1 and the fullscreen top bar are both closed. RUN.**
 
