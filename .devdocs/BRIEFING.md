@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-08-31 20:20
+**Last updated:** 2026-08-31 20:37
 **Branch:** `bsd`
 
 ---
@@ -46,13 +46,36 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 
 ## 3. Known broken
 
-**The redraw SIGBUS is real, it is diagnosed, and the fix RAN 1:47 with no core (20:15).** This
-section said "Nothing is known broken" at 19:41. **That was written between two crashes.**
+**The redraw SIGBUS is SOLVED and fixed in source (20:37); UNRUN.** Nine cores. **It took a
+debugger, and three wrong hypotheses died on the way — that sequence is the entry.**
 
-**The run is evidence, not proof.** Three cores fell between 19:41 and 19:46 on the previous build
-and none has appeared since 20:09 — but **fullscreen, F11 and note open/close, the paths that
-produced them, are not confirmed to have been exercised.** Closing T-1 needs a session that hits
-them.
+**What it was.** The sidebar `ToggleButton`'s `state` hook calls `gtk_toggle_button_set_active`,
+which emits `toggled` **synchronously**; owlkettle's callback ends with `redraw()`. So a redraw
+reaching that widget **started a nested whole-tree diff inside the running one**, which re-added the
+header bar's children through `gtk_header_bar_remove` and finalised the widget the outer diff still
+held. **Ours:** `app.sidebarOpen` had two writers driving each other — the button and the `Flap`'s
+own `changed`. **Fix:** a plain `Button` with an icon swap — no `state` property, so the reentrancy
+has no source rather than a guard.
+
+**Proof, from `gdb` on a `--debugger:native` build:** the faulting `ToggleButtonState` carries
+`tooltip` len 14 (*"Toggle sidebar"*) and its `internalWidget` reads `0xaaaaaaaaaaaaaaaa` —
+**freed-memory poison**. Both test-session cores are identical.
+
+**Three hypotheses died, each disproven by running the thing:**
+
+| Claimed cause | Killed by |
+|---|---|
+| ORC collecting owlkettle's `state → event → state` cycles (**D-AS**) | `--mm:arc` shipped; it still crashed |
+| The 30 fps whole-tree redraw | Removed; it still crashed, just rarer |
+| GTK4 unparenting a fullscreened custom titlebar | **The session that never entered fullscreen crashed too** |
+
+**Both 20:10 changes are retained on their own merits and neither was the fault.** D-AS is partly
+retracted.
+
+**And a process failure worth more than the bug.** At 20:15 I reported "1:47 elapsed, no core" as
+evidence the fix held. **That process is core 40484 — it died two minutes later.** Sampling a
+*live* program and finding no crash *yet* is not a result. **Rule 1 was broken in the act of citing
+it.** A fix is confirmed by a **completed** session that exercised the failing path.
 
 **Found in that same run and fixed at 20:20 (compiled, unrun): chat bubbles were "weirdly huge".**
 Every child of the transcript column was unannotated, and **`Box`'s adder defaults to
@@ -61,9 +84,8 @@ the viewport height. **§3a already carried that rule and it was not applied her
 to the 20:10 fix: it is structurally present in the committed source, and the build that first
 shipped this column crashed before it could be evaluated.
 
-| | |
-|---|---|
-| **The redraw SIGBUS** | **ESTABLISHED.** **Five** `./bin/jenova` cores — 15:26, 19:15, **19:41, 19:46, 19:46** — three of them from the 19:39 build. All **SIGBUS**. Identical stack in all three current ones: `g_type_check_instance` ← `g_signal_handler_disconnect` ← owlkettle's `disconnect` ← `updateState` of a **HeaderBar child** ← `updateChildren` ← `HeaderBar` ← `updateChild` (the Window titlebar) ← `Window` ← `redraw` ← **a `gui.nim` timeout closure**. Two causes, both fixed at 20:10: the canvas frame clock was calling `redraw()` — a **whole-tree diff** — 30×/s (now `gtk_widget_queue_draw` on the canvas alone), and owlkettle's `state → event → state` reference cycles were being collected by **ORC** while GTK still held the widgets (now `--mm:arc`, GUI binary only). **Built, `nm`-verified, not run.** See `TODOS.md` T-1 and **D-AS** |
+**The core inventory is `TODOS.md` T-1** — nine, 15:26 through 20:33, all SIGBUS with the same
+stack. It is not repeated here; a count in two places is rule 8's doc-churn loop.
 
 **The previous entry's dismissal rested on `BRIEFING.md:54`: *"no debugger here reads a FreeBSD
 core."* `gdb 15.1 [GDB v15.1 for FreeBSD]` is installed and read all five.** Rule 1 forbids stating

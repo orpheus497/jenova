@@ -74,6 +74,23 @@ front-end (grids, highlights, cursor shapes, IME) and was rejected on size. The 
 config**, which the embed approach would not have preserved. New dependency `vte4` is LGPL and
 permitted under D-X.
 
+## 2026-08-31 20:26 — D-AS is **PARTLY RETRACTED**: ARC did not fix the SIGBUS
+
+**The technical cause D-AS states is not supported.** `--mm:arc` shipped at 20:10 and the program
+**still SIGBUSes** — cores at 20:17 and 20:23, the second from the 20:20 build after the USER
+exercised fullscreen, F11 and notes. Removing the 30 fps whole-tree redraw did not stop it either;
+it only stretched time-to-crash from ~2 min to ~8 and ~3.
+
+**What stands:** the *evidence* rules (read the artifact; try to obtain evidence before recording
+that you cannot; a stack tells you where, not why), and **the `--mm:arc` flag itself**, which is
+retained because the cycle it removes is real even though it is not this fault. **What is retracted:
+the claim that ORC's cycle collector is the cause.**
+
+**And the rule this cost, which is new:** at 20:15 I sampled a **live** process — 1:47 elapsed, no
+core — and recorded it as evidence the fix held. **That process is core 40484; it died at 20:17.**
+**An uptime sample on a running program is not a result.** A fix is confirmed by a *completed*
+session that exercised the failing path, never by a program that has not crashed yet.
+
 ## 2026-08-31 — D-AS: **the GUI builds under ARC; a tracker entry is not evidence, and neither is a claim about the tooling** *(BINDING)*
 
 **T-1 was corrected away on the strength of a sentence that was never checked.** `BRIEFING.md:54`

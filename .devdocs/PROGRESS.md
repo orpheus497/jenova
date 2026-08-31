@@ -2,11 +2,99 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-08-31 20:20
+**Last updated:** 2026-08-31 20:37
 
 ---
 
 ## Completed
+
+### 2026-08-31 20:43 — **THE SIGBUS: it was the Quit path, and the USER diagnosed it. Fixed; UNRUN.**
+
+> **The USER: *"i think the issue is the quit button."*** It was.
+
+```nim
+while pendingActions.len > 0:
+  ...
+  changed = true            # set for EVERY action, quit included
+  if action == "quit":
+    st.closeWindow()        # destroys the window and every GtkWidget under it
+...
+if changed:
+  discard st.redraw()       # gui.nim:490 — diffs a tree of freed widgets
+true                        # and the timer keeps firing at the dead tree
+```
+
+`closeWindow` finalises the window, the header bar and all its children; the **same callback
+invocation** then falls through to `redraw()`, which walks Window → titlebar → HeaderBar → `left[0]`
+and disconnects a signal from poisoned memory.
+
+**Fix:** set a `quitting` flag, `return false` immediately after `closeWindow` (which also removes
+the timeout), and guard the other two timers — the 3 s poll redraws, and the canvas timer's
+`queueFrame` addresses the DrawingArea directly, so both would touch freed widgets too.
+
+**Why five hypotheses died before this one, and it is the same mistake each time.** Every core was
+read for *where* it faulted and never for *when*. The answer was in plain sight in all ten: the
+faulting widget is always the header bar's **`left[0]`** — **the first widget in tree order carrying
+a handler to disconnect**, i.e. simply *the first thing a doomed diff touches*. It was never that
+widget's fault, which is why swapping `ToggleButton` → `Button` changed nothing.
+
+**And the observation that should have led:** *every session ran fine and left a core.* **The
+program was crashing on exit.** The USER's "seems sorted — all good so far" and a fresh core were
+both true, and I treated the second as contradicting the first instead of as telling me *when*.
+
+**Dead hypotheses, kept so none is re-derived:** ORC cycle collection (D-AS — `--mm:arc` shipped,
+still crashed); the 30 fps whole-tree redraw (removed, still crashed); GTK4 unparenting a
+fullscreened titlebar (**the no-fullscreen session crashed too**); `ToggleButton` reentrancy via
+`gtk_toggle_button_set_active` (**replaced with a plain `Button`, still crashed — and that core is
+the one that proves the fault is positional, not per-widget**).
+
+**Retained anyway, on their own merits and labelled as such:** `--mm:arc`, the frame-clock change,
+and the plain `Button` (its icon now shows sidebar state, which the toggle did not do any better).
+
+### 2026-08-31 20:37 — ~~The SIGBUS is SOLVED… the sidebar toggle re-entered the widget diff~~ — **WRONG, superseded above.** The replacement `Button` crashed identically at 20:41. Kept because it is what disproved the per-widget theory
+
+**Nine cores, and the last two were read with symbols.** Both test sessions crashed identically —
+**including the one that never entered fullscreen, which kills the titlebar hypothesis outright.**
+
+**The faulting object, inspected rather than inferred:**
+
+```
+state_p0 = ToggleButtonState
+  tooltip        = len 14      -> "Toggle sidebar"    <- the sidebar control
+  state          = true        -> sidebar was open
+  internalWidget = 0xfe5270ed650
+x/4gx 0xfe5270ed650: 0xaaaaaaaaaaaaaaaa x4           <- freed-memory poison
+```
+
+Faulting line `widgets.nim:1780` — `disconnectEvents: state.internalWidget.disconnect(state.changed)`.
+Redraw origin `src/jenova/gui.nim:490`, the 40 ms drain timer. **Identical in both cores.**
+
+**The mechanism.** `ToggleButton`'s `state` property hook calls `gtk_toggle_button_set_active`, which
+emits `toggled` **synchronously**, and owlkettle's `toggledCallback` ends with `data[].redraw()`. So
+a redraw that walks into this widget **starts a nested whole-tree diff from inside the diff already
+running.** The nested pass re-adds the header bar's children through `gtk_header_bar_remove`,
+dropping the last reference and finalising the widget; the outer diff then unwinds and disconnects a
+signal from freed memory.
+
+**We supplied the loop.** `app.sidebarOpen` had **two writers driving each other** — this control's
+`changed` and the `Flap`'s own `changed`. owlkettle's property hooks are guarded by
+`state.X != widget.valX`, which is what normally stops such a callback re-firing; the Flap's
+animation callback writes `sidebarOpen` at a moment when the button's state is not yet in sync, so
+the guard passes and the hook fires.
+
+**Fix: a plain `Button` with an icon swap.** A `Button` has no `state` property and cannot emit into
+a diff, so the reentrancy has **no source** rather than being guarded. The Flap remains the source of
+truth and its `changed` still reports folding and swiping. Same pattern `fullscreenButton` uses.
+
+**Same shape, unobserved, deliberately NOT rewritten on suspicion:** `Entry`'s `text` hook calls
+`gtk_editable_set_text`, whose `changed` callback also ends in `redraw()`, and two of our three
+Entries have a second writer (`app.draft` cleared on send, `app.noteTitle` set on rename). **All
+nine cores are the ToggleButton and none is an Entry.** Recorded as **T-15** to watch. Rewriting
+three Entries on a suspicion is exactly what D-AN forbids.
+
+**What this closes out honestly:** neither 20:10 fix was the cause. `--mm:arc` is retained (the
+cycle it removes is real, just not this fault) and the frame-clock change is retained on its own
+merits. **Both were shipped as fixes for a bug they did not fix**, and D-AS is partly retracted.
 
 ### 2026-08-31 20:20 — **Chat bubbles were "weirdly huge": every message card carried `vexpand`. Fixed; compiled, UNRUN.**
 
@@ -32,16 +120,31 @@ whole panel greedy."* **It was written down and then not applied to the transcri
 no evidence it looked different before; the 19:39 build that first shipped this column **crashed
 before it could be evaluated.** Claiming it as a regression would be inventing a cause.
 
-### 2026-08-31 20:15 — **T-1: the 20:09 build ran 1:47 with no core. First real evidence the fix holds.**
+### 2026-08-31 20:26 — **RETRACTED: the SIGBUS is not fixed, and the 20:15 entry below was wrong.**
 
-`ps` showed `./bin/jenova` at **1:47 elapsed** and `find /var/coredumps -newermt "20:09"` returned
-**nothing**. **The previous build produced three cores between 19:41 and 19:46.** Still five cores
-total, newest 19:46.
+**Two more cores: 20:17 and 20:23.** The 20:23 one is from the 20:20 build, after the USER
+exercised fullscreen, F11 and notes. **Seven cores total.** Core 47403 symbolises cleanly and the
+stack is **unchanged** — header-bar child → `updateChildren` → **HeaderBar** → the Window's
+**titlebar** hook → `redraw` from a timeout closure.
 
-**This is evidence, not proof.** A clean run is only worth what was exercised in it, and the paths
-that produced the cores — **fullscreen, F11, opening and closing notes** — are not confirmed to have
-been touched. Session 009's lesson applies exactly: *a feature confirmed on screen was confirmed
-only for the path that was exercised.*
+**Both 20:10 fixes are disproven as the cause.** `--mm:arc` did not stop it, so **D-AS's
+ORC-cycle-collection explanation is not supported**. Dropping the 30 fps whole-tree redraw did not
+stop it either — it made it rarer (~8 min, then ~3 min, against ~2 min). Both changes stand on their
+own merits; neither was the fault.
+
+**The 20:15 entry was retracted because of how it was made, not just because it was wrong.** I
+sampled a **live** process at 1:47 elapsed, saw no core yet, and wrote that down as evidence the fix
+held. **That process is core 40484 — it died at 20:17, two minutes after I checked it.** An uptime
+sample on a running program is not a result; it is the absence of a result so far. **Rule 1 covers
+this exactly and I broke it while quoting it.**
+
+**Live hypothesis, explicitly not established:** GTK4 unparents a titlebar set via
+`gtk_window_set_titlebar` on fullscreen, finalising the HeaderBar and its children while owlkettle
+still holds them. `HeaderBar`/`AdwHeaderBar` are the **only** owlkettle widgets that call
+`widgetutils.updateChildren`, so frames #5-#8 can be nothing else. **Next step is evidence, not a
+third fix:** `bin/jenova` rebuilt 20:26 with `--debugger:native` so the next core gives file:line.
+
+### ~~2026-08-31 20:15 — T-1: the 20:09 build ran 1:47 with no core~~ — **RETRACTED, see above**
 
 ### 2026-08-31 20:10 — **The SIGBUS is real, it was diagnosed from the cores, and the fix is built. Compiled; UNRUN.**
 

@@ -101,6 +101,11 @@ var
   streamThread: Thread[void]
   ctlThread: Thread[void]
   pendingActions: seq[string] = @[]
+  # Set the moment "quit" is drained. `closeWindow` destroys the window and with
+  # it every GtkWidget in the tree, so anything that touches a widget afterwards
+  # is touching freed memory — which is the SIGBUS in all ten cores of
+  # 2026-08-31. Every timeout checks this and removes itself.
+  quitting = false
 
 # An empty host/action is the shutdown sentinel: each worker returns from its own
 # loop so joinThread completes, rather than being unblocked by a channel close.
@@ -408,6 +413,7 @@ viewable App:
       # reach the view without waiting on a health interval.
       let st = state
       discard addGlobalTimeout(3000, proc(): bool =
+        if quitting: return false
         ctlReq.send(ControlJob(action: "poll", lc: st.lc,
                                jcaHome: st.p.jcaHome,
                                port: st.cfg.getInt("PORT", 8080)))
@@ -426,6 +432,9 @@ viewable App:
       # the program is idle.
       if st.cfg.get("CANVAS", "1") != "0":
         discard addGlobalTimeout(canvas.FrameMs, proc(): bool =
+          # `queueFrame` addresses the DrawingArea directly, so after
+          # `closeWindow` it would queue a draw on a freed widget.
+          if quitting: return false
           canvas.step()
           # `queueFrame`, not `redraw`. `redraw()` diffs the entire widget tree,
           # so animating the canvas through it re-bound every signal handler in
@@ -442,7 +451,16 @@ viewable App:
           pendingActions.delete(0)
           changed = true
           if action == "quit":
+            # **Return, do not fall through.** `closeWindow` finalises the
+            # window and every widget under it; the `redraw()` at the bottom of
+            # this callback would then diff a tree of freed GtkWidgets and
+            # disconnect a signal from poisoned memory. That is the crash — it
+            # fired on *exit*, which is why every session looked fine and left a
+            # core behind. `false` also removes this timeout, so it cannot fire
+            # again against the dead tree.
+            quitting = true
             st.closeWindow()
+            return false
           elif action == "toggle_fullscreen":
             st.fullscreen = not st.fullscreen
           elif action == "toggle_lan":
@@ -926,15 +944,29 @@ method view(app: AppState): Widget =
                                        else: "0.0.0.0")
                       else: "  ·  local 127.0.0.1")
 
-        ToggleButton {.addLeft.}:
-          # Mirrors the Web UI's `Sidebar.Trigger`. A toggle rather than a plain
-          # button so the control shows whether the panel is open, which a
-          # one-way button cannot.
-          icon = "sidebar-show-symbolic"
-          tooltip = "Toggle sidebar"
-          state = app.sidebarOpen
-          proc changed(pressed: bool) =
-            app.sidebarOpen = pressed
+        Button {.addLeft.}:
+          # Mirrors the Web UI's `Sidebar.Trigger`. **A plain Button, and it must
+          # stay one.** This was a `ToggleButton` bound to `app.sidebarOpen`, and
+          # that is the SIGBUS in every core up to 20:33: the `state` property
+          # hook calls `gtk_toggle_button_set_active`, which emits `toggled`
+          # **synchronously**, and owlkettle's `toggledCallback` ends with
+          # `redraw()` — so a redraw walking into this widget started a *nested*
+          # whole-tree diff. The nested pass re-adds the header bar's children
+          # through `gtk_header_bar_remove`, dropping the last reference and
+          # finalising this very widget; the outer diff then unwound and
+          # disconnected a signal from freed memory (the state's
+          # `internalWidget` read as `0xaaaaaaaaaaaaaaaa`).
+          #
+          # `app.sidebarOpen` had two writers driving each other — this control
+          # and the Flap's own `changed` — which is what kept re-entering the
+          # hook. A Button has no `state` property and cannot emit into a diff,
+          # so the loop has no source. The open/closed state shows in the icon,
+          # the way `fullscreenButton` already does it.
+          icon = (if app.sidebarOpen: "sidebar-show-symbolic"
+                  else: "sidebar-show-right-symbolic")
+          tooltip = (if app.sidebarOpen: "Hide sidebar" else: "Show sidebar")
+          proc clicked() =
+            app.sidebarOpen = not app.sidebarOpen
 
         MenuButton {.addRight.}:
           icon = "open-menu-symbolic"
