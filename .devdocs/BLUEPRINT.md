@@ -3,7 +3,7 @@
 Authoritative system architecture: what the program is, what it depends on, and how data moves
 through it. Mandated by `AGENTS.md` § WORKSPACE ARCHITECTURE.
 
-**Last updated:** 2026-08-31 15:49
+**Last updated:** 2026-08-31 21:42
 
 > **Rewritten 2026-08-31 (Session 007). The previous 626-line revision is in
 > `.devdocs/ARCHIVE/devdocs/BLUEPRINT_pre-007.md`** — archived, not deleted, per D-AM.
@@ -126,6 +126,7 @@ re-derived a conflict that does not exist from those rows** — the rows were th
 | Nim ≥ 2.2.10 | MIT | The language |
 | owlkettle ≥ 3.0.0 | MIT | GTK4 + libadwaita bindings (D-P, D-AK) |
 | gtk4, libadwaita, gtksourceview5 | LGPL-2.1 | The window (D-AK) |
+| vte-2.91-gtk4 | LGPL-3.0 | The terminal hosting Neovim (G-19, D-AT). GUI binary only |
 | dbus | AFL-2.1 / GPL-2 dual | StatusNotifierItem + `com.canonical.dbusmenu` for the tray (D-AJ) |
 | sqlite3 | Public domain | Persistence and the FTS5 retrieval index. **FTS5 confirmed present by probe**, not assumed (D-AB) |
 | llama.cpp / ggml | MIT | Submodule under `external/`. **Consumed, never modified** |
@@ -134,7 +135,10 @@ re-derived a conflict that does not exist from those rows** — the rows were th
 
 **Base-system tools the product invokes**, which are not project scripts and do not block the
 total-conversion gate: `/bin/sh` (to evaluate the shell-format config files), `git`, `fetch(1)`,
-`xdg-open`, `route`, `ifconfig`.
+`xdg-open`, `route`, `ifconfig`, `wl-copy`, and **`nvim`** — spawned into the terminal tab, and
+invoked as `nvim --server <sock> --remote-expr` to read the open buffer. **That is deliberately not
+an RPC client:** Neovim ships the expression evaluator, so msgpack framing would re-implement what
+exists.
 
 ## 7. Data that outlives the code
 

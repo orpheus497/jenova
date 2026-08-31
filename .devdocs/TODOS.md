@@ -1,6 +1,6 @@
 # TODOS
 
-**Last updated:** 2026-08-31 21:23
+**Last updated:** 2026-08-31 21:42
 
 Only what is actually outstanding. Everything closed lives in `PROGRESS.md`; everything retired
 lives in `.devdocs/ARCHIVE/`. **Do not re-add defects about archived files** — that loop cost a day.
@@ -16,6 +16,12 @@ lives in `.devdocs/ARCHIVE/`. **Do not re-add defects about archived files** —
 > opened. The sequenced plan is `PLANS.md`.
 
 ---
+
+## Open — observed on screen, not resolved
+
+| ID | Item |
+|---|---|
+| **G-23** | **The Neovim tab renders opaque and visually disconnected from the rest of the window.** USER, 2026-08-31: *"still opaque mostly - barely have opacity - its still looking extremely out of place."* **Three consecutive attempts failed and none was evidence-led** — an alpha in `vte_terminal_set_colors` (overpainted), then `set_clear_background(false)` plus a `.nvim-term` glass rule (unconfirmed).<br><br>**Verified, so do not re-check:** the `.nvim-term` rule **is** in the generated stylesheet (`theme.css()` dumped and read); owlkettle applies `style` on **build**, not only update (`widgets.nim:69-71`); `vte_terminal_set_clear_background` is linked and **not** deprecated in VTE 0.80 (`vteterminal.h:588`).<br><br>**Unknown:** whether the 21:36 binary was the one run, and what GTK matches at the `vte-terminal` node.<br><br>**Next step is evidence, not a fourth value change:** `GTK_DEBUG=interactive ./bin/jenova`, select the `vte-terminal` node, read which rules match and what paints the background. A CSS parse error would also print to stderr at startup. **This is the same trap as T-1** — five hypotheses died there because cores were read for *where* rather than *when*; here three died because the widget was styled without looking at what GTK was doing with it |
 
 ## Watch — same shape as a fixed bug, not observed
 

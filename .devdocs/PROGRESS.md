@@ -2,11 +2,36 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-08-31 21:23
+**Last updated:** 2026-08-31 21:42
 
 ---
 
 ## Completed
+
+### 2026-08-31 21:42 — **Documentation aligned to the tree.** `BLUEPRINT.md` deps + invoked tools, `ARCHITECTURE_MAPPING.md` §2/§4/§5, `TESTS.md` §0 + new §5i.
+
+### 2026-08-31 21:36 — **Terminal transparency: `set_clear_background(false)` + `.nvim-term` CSS. Compiled; UNRUN and UNCONFIRMED.**
+
+VTE paints its own opaque background regardless of the alpha in `vte_terminal_set_colors`, so the
+21:33 alpha-only attempt was overpainted. Clearing turned off; `.nvim-term` in `theme.nim` supplies
+the ground at `alpha(@jenova_bg, 0.35)` with the `.glass-panel` edge/radius/shadow.
+
+**The USER reports it still looks opaque and out of place, and this is NOT confirmed fixed.** What is
+verified: the rule is present in the generated sheet (dumped `theme.css()`), owlkettle applies
+`style` on **build** (`widgets.nim:69-71`), and `set_clear_background` is linked and not deprecated
+in VTE 0.80. What is unknown: whether the 21:36 binary was the one run, and what GTK actually
+matches at the `vte-terminal` node. **Next step is `GTK_DEBUG=interactive`, not another value
+change** — three consecutive guesses were spent here.
+
+### 2026-08-31 21:33 — **Terminal cwd is the Workspaces root, not `$HOME/Jenova`.**
+
+`vte.configure` takes `p.workspaces`, with a `dirExists` guard because a missing cwd makes
+`spawn_async` fail outright and the root does not exist before the first workspace.
+
+### 2026-08-31 21:23 — **Dependency added: `vte-2.91-gtk4` 0.80.5 (LGPL-3.0), GUI binary only.**
+
+Permitted under D-X. `jenova-core` links neither it nor `gtksourceview5`, so a headless host still
+builds without a terminal library.
 
 ### 2026-08-31 21:23 — **G-19 steps 19.1-19.3: Neovim in a tab. Compiled and linked; UNRUN.**
 

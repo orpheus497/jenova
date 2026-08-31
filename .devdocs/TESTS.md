@@ -25,8 +25,8 @@ See `DECISIONS_LOG.md` C-10.
 
 ## 0. Current suite — 2026-08-31
 
-**`nimble suites`** builds both binaries then runs five scripts. Each runs in a scratch `JCA_HOME`
-and none spawns a backend.
+**`nimble suites`** builds both binaries then runs the scripts below. Each runs in a scratch
+`JCA_HOME` and none spawns a `llama-server` backend.
 
 | Script | Covers |
 |---|---|
@@ -35,6 +35,7 @@ and none spawns a backend.
 | `test_routes.sh` | The route inventory, incl. the pipeline reaching the upstream |
 | `test_lifecycle.sh` | The `llama-server` argument vector, `--lan`, port flags, refusal paths |
 | `test_models.sh` | Model discovery and switching (§5h) |
+| `test_nvimctl.sh` | Reading the live Neovim buffer (§5i). **The one suite that spawns a process** — a headless `nvim` — and the only one needing a compiled driver, `tests/nvimctl_check.nim`. Skips cleanly with no `nvim` installed |
 
 Plus the core's own subcommands: `db-selftest`, `serve-selftest`, `rag-selftest`,
 `pipeline-selftest`, `sha256-selftest`, `db-capabilities`.
@@ -48,6 +49,28 @@ to `python3` and started no server.
 **A new suite must be proven able to fail.** Two suites in this project have reported PASS while
 asserting nothing. `test_models.sh` was verified by corrupting what its assertions read and
 confirming it goes red.
+
+## 5i. `tests/test_nvimctl.sh` — the live editor buffer (G-18, 2026-08-31)
+
+Covers `src/jenova/nvimctl.nim`. No `jenova-core` subcommand exists behind it, so the script owns the
+editor's lifecycle and `tests/nvimctl_check.nim` owns the assertions.
+
+**Why the assertions are what they are.** `nvimctl` does not fail by crashing. It fails by returning
+the file **on disk** instead of the **buffer** — which looks correct in every test where nothing has
+been edited, and is precisely wrong for the feature, whose purpose is reading unsaved work. So the
+same 13 assertions run twice: once clean, then again after `setline(2,…)` edits the buffer **without
+saving**. The script also asserts the edit never reached the file.
+
+**Proven able to fail:** on the dirty pass the buffer-text and `modified` checks were observed going
+red and the driver exiting 1, while `cat` showed the file unchanged. That is simultaneously the
+proof the assertions bite and the proof of the feature's core claim.
+
+**Measured, not assumed:** `nvim --listen` rejects a socket path near **104 bytes** — FreeBSD's
+`sun_path` limit. The suite uses `/tmp/jenova-test-nvim.$$.sock`; the product uses
+`$HOME/Jenova/state/`. A path under a deep scratch directory fails with
+`Failed to --listen: invalid argument`.
+
+**Run 2026-08-31: 5 passed, 0 failed.**
 
 ## 1. Standing rule
 

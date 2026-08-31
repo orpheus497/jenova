@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-08-31 21:23
+**Last updated:** 2026-08-31 21:42
 **Branch:** `bsd`
 
 ---
@@ -33,7 +33,7 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 | **Architecture** | `BLUEPRINT.md` — rewritten 2026-08-31 and current. The pre-rewrite audit record is `ARCHIVE/devdocs/BLUEPRINT_pre-007.md` and is **history, not requirements** |
 | **Language purity** | No Lua. No C. No shell script in the product tree except `hardware-profiles/`'s profile-selection tooling, which is setup-time data handling |
 | **Runtime home** | `$HOME/Jenova`. `~/JCA` is permanently off limits |
-| **Tests** | Five suites under `tests/`, run by `nimble suites`. **Re-run 2026-08-31 19:23: four pass, `test_routes` FAILS 5** — pre-existing, attributed by rebuilding from the committed baseline and getting the identical five (`TODOS.md` T-12). The previous entry here said "reported passing at Session 006; not re-run since", which is how a stale pass survives four sessions |
+| **Tests** | Shell suites under `tests/`, run by `nimble suites`; the list is in `jenova_core.nimble` and the specs in `TESTS.md`. **`test_routes` FAILS 5 and is pre-existing** (`TODOS.md` T-12) — attributed 19:23 by rebuilding from the committed baseline and getting the identical five. **`test_nvimctl` added 21:03 and passes 5/5.** The other suites have not been re-run since 19:23 |
 
 ## 2. Verified working, by running it
 
@@ -57,12 +57,16 @@ survive again)*:
 
 ## 3. Known broken
 
-**Nothing is known broken** — and unlike the last time this section said that, it is backed by a
-**completed run**: the USER tested the 20:49 build and quit it (*"tested seems all resolved"*), the
-newest core is **20:42 from the previous build**, and the process exited leaving none. **An uptime
-sample would not have counted. An exit with no core does.**
+**One thing: `TODOS.md` G-23 — the Neovim tab renders opaque and visually disconnected.** Three
+fixes attempted, none evidence-led, none confirmed. **Do not attempt a fourth value change**; G-23
+lists what is already verified and the one diagnostic that settles it (`GTK_DEBUG=interactive`).
 
-The record below is kept because the *route* to it is the expensive part.
+**Everything else is confirmed working by a completed run** — the USER tested the 20:49 build and
+quit it (*"tested seems all resolved"*); the newest core is **20:42, from the previous build**, and
+the process exited leaving none. **An uptime sample would not have counted. An exit with no core
+does.**
+
+The T-1 record below is kept because the *route* to it is the expensive part.
 
 ### T-1, closed 20:52 — the SIGBUS was the Quit path
 
@@ -123,8 +127,8 @@ Atop the chat column rather than spanning the window because the Web UI's sideba
 `AdwWindow` has no `title` field, so the WM/taskbar title may be empty; the bar's own `WindowTitle`
 still reads "Jenova".
 
-**The core inventory is `TODOS.md` T-1** — ten, 15:26 through 20:41, all SIGBUS with the same
-stack. It is not repeated here; a count in two places is rule 8's doc-churn loop.
+**The core inventory lived in `TODOS.md` T-1 and went with it when T-1 was closed;** the full record
+is `PROGRESS.md` 20:43 / 20:52. Eleven cores, 15:26 through 20:42, all SIGBUS, all one cause.
 
 **The previous entry's dismissal rested on `BRIEFING.md:54`: *"no debugger here reads a FreeBSD
 core."* `gdb 15.1 [GDB v15.1 for FreeBSD]` is installed and read all five.** Rule 1 forbids stating
@@ -217,27 +221,34 @@ largest item by far and the only one that is not a view to port: the Web UI's is
 hits, both a TEXT column. **Everything else in the list is GUI work over a backend that exists.**
 
 **Neovim is a `vte4` terminal hosting `nvim --listen <socket>`, not a re-implemented UI** (D-AT) —
-so the USER keeps their own Neovim and their own config, and **G-18's file awareness becomes a
-socket query** (`nvim_get_current_buf` + `nvim_buf_get_lines`) rather than a filesystem guess.
+so the USER keeps their own Neovim and their own config.
+
+**Status of that list as of 21:42:**
+
+| | |
+|---|---|
+| **G-18 file awareness** | **DONE and self-tested, unseen by the USER.** `nvimctl.nim` + the `Editor:` intent. **No msgpack client** — `nvim --server --remote-expr` is the evaluator Neovim already ships. Suite proven able to go red |
+| **G-19 Neovim tab** | **Built and linked; G-23 open** — renders opaque and out of place |
+| **G-16, G-17, G-20, G-21** | Not started. Filesystem browser, writer/editor, models selector, trash view. **All GUI work over a backend that exists** — `/api/storage/*`, `/api/fs/trash`, `models.discover`/`switchModel` |
+| **G-22** | Chat settings / attachments. **Not in the USER's scope call** — raise before working |
 
 ## 4. Outstanding
 
-**`TODOS.md` T-1 … T-10 plus G-13b is the outstanding list.** T-1 … T-10 were re-verified against
-the tree on 2026-08-31 and all ten hold. **G-8 … G-11 are closed and confirmed on screen**; G-12
-and G-13a are compiled and unrun. **G-8 … G-13 were the first defects in this project found by
-looking at the running window rather than by reading unrun code** — the USER ran it, described what
-was wrong, and each item was then traced to a line, with the hypotheses that did not survive being
-recorded as disproven rather than quietly dropped. The sequenced plan is `PLANS.md`:
+**`TODOS.md` is the list; this is the order.** T-1 and T-13 were closed this session and are gone
+from it, per the completion rule. **Nothing is blocking.**
 
-0. **GUI parity — run 19:02 to confirm G-12/G-13a, get a terminal capture for G-13b, then G-4's
-   remaining half (notes/fileAssets), G-7, G-6.** The live workstream, §3a; everything below is
-   queued behind it.
-1. **Stabilise** — T-2 … T-5. **Nothing blocks**; T-1 is unexplained, not a gate.
-2. ~~The `jca_web` workspace question~~ — **answered by D-AP**; it is the GUI parity work.
-3. **Deployment** — one decision, taken once (T-7).
-4. **CLI** — after the above (T-8).
+1. **G-23** — the Neovim tab's appearance. **The only thing known broken.** Evidence first
+   (`GTK_DEBUG=interactive`); three value-changes already failed.
+2. **T-14** — renaming a workspace/project/folder orphans its files on disk. Reasoned from source,
+   **not executed**, and the fix is larger than T-13's because it means moving directories.
+3. **G-16, G-17, G-20, G-21** — the rest of the parity surface, §3b. All GUI work.
+4. **Stabilise** — T-2 … T-5, plus **T-12** (`test_routes` fails 5, pre-existing).
+5. **Deployment** (T-7) then **CLI** (T-8) — each opens with a decision that is the USER's.
 
-Independent of all four: profile data hygiene, T-9 and T-10.
+Independent of all of it: **T-9**, **T-10** (profile data hygiene) and **T-15** (a watch item, not a
+defect — read its history before acting on it).
+
+**Explicitly not work:** the archived shell tree. It is gone, not pending.
 
 **Explicitly not work:** the archived shell tree. It is gone, not pending.
 

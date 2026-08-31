@@ -2,7 +2,7 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-08-31 21:23
+**Last updated:** 2026-08-31 21:42
 
 ---
 

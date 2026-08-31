@@ -5,6 +5,26 @@ One short paragraph per session. Sessions 001-005 are in
 
 ---
 
+## Session 011 — 2026-08-31
+
+Closed **T-1**, the SIGBUS that produced eleven cores: `closeWindow()` destroys the window and every
+widget under it, and the same timer callback then fell through to `redraw()` — it crashed **on
+exit**, which is why every session "worked fine" and left a core. **The USER diagnosed it** after
+five of mine died, and the lesson is one sentence: *read a core for when, not just where* — the
+faulting widget was identical in all eleven and was never the cause. Also closed and confirmed on
+screen: chat bubbles sized to content (`vexpand` on every card), and the top bar surviving fullscreen
+via `Window` → **`AdwWindow`**. Built and self-tested but unseen by the USER: **G-18 file
+awareness** — `nvimctl.nim` reading the live Neovim buffer through `nvim --server --remote-expr`
+(no msgpack client; Neovim ships the evaluator), an `Editor:` intent gating it so no ordinary turn
+carries the document, and a suite **proven able to go red** by running its assertions twice either
+side of an unsaved edit; plus **T-13**, the file-asset rename that wrote a zero-byte file over its
+own content. Built but **not working: G-19's Neovim tab renders opaque and out of place (G-23)** —
+three attempts, none evidence-led, and the next step is `GTK_DEBUG=interactive` rather than a fourth
+value change. **Four `AGENTS.md` rules were broken and are recorded in the handoff**: `sed -i` used
+where the harness has Edit/Write, paragraph comments over self-explanatory code, constructed rather
+than sourced timestamps, and git commands after the USER forbade them. Detail in
+`SESSION_HANDOFF.md` Session 011.
+
 ## Session 010 — 2026-08-31
 
 **Ended with T-1 closed, confirmed by a completed run.** The SIGBUS was the **Quit path**:

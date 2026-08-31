@@ -54,13 +54,20 @@ on the next commit and re-deriving the drift is what consumed whole sessions (se
 
 **Added 2026-08-31 (G-1 … G-5, ruling D-AP):** `theme.nim`, `canvas.nim`, `markdown.nim`.
 
-**Added 2026-08-31 (G-7, G-18):** `sourceview.nim` and `nvimctl.nim`.
+**Added 2026-08-31 (G-7, G-18, G-19):** `sourceview.nim`, `nvimctl.nim`, `vte.nim`.
 
 - **`nvimctl.nim`** reads the document open in Neovim — path, buffer, cursor, dirty flag, filetype —
   through `nvim --server <sock> --remote-expr`. **It is deliberately not an RPC client:** Neovim
   ships the expression evaluator, so msgpack framing would re-implement what exists (Directive 3),
   and the program already drives `wl-copy`, `git`, `fetch` and `xdg-open` the same way. The buffer,
   not the file on disk, is the point — unsaved work is what the USER is looking at.
+- **`vte.nim`** is the terminal hosting `nvim`, a hand-written `vte-2.91-gtk4` binding. **It spawns
+  at the same socket `nvimctl` reads**, which is what ties the tab to the `Editor:` intent. The
+  `renderable` lives in `gui.nim` for the reason `sourceview.nim`'s does — owlkettle's macro emits
+  an unexported type. **GUI binary only**; `jenova-core` links neither.
+
+**`sourceview.nim` and `vte.nim` are the program's only FFI.** Both follow one shape: flags from
+`staticExec("pkg-config …")`, a small Nim surface, the widget declared in `gui.nim`.
 
 - **`markdown.nim`** splits an assistant reply into text and fenced-code blocks and converts inline
   markdown to Pango markup. An unterminated fence renders as code so a block appears while it is
@@ -114,13 +121,16 @@ Supporting: `detect-hardware.sh` (scoring ladder + `--apply-profile`), `common-s
 
 | File | Role |
 |---|---|
-| `jenova.conf` | The deployed hardware profile, mirrored here by `--apply-profile`. Sourced **last** by `jenova-ca`, so it wins every tuning variable (B-12). Rewritten as a side effect of `tests/test_validate_arg.sh` (B-22) |
-| `jenova.local.conf` | Intended user overrides. **Ineffective for bare names** (B-12) |
+| `jenova.conf` | The deployed hardware profile, mirrored here by `--apply-profile`. Read by `config.nim`, which applies environment → `jenova.local.conf` → `jenova.conf`. *This row described `jenova-ca` sourcing order and `test_validate_arg.sh` until 2026-08-31; both were deleted — see D-AM, Q-9* |
+| `jenova.local.conf` | The USER's machine file. **Never edited by a session** (SETTLED FACT) |
 
 ## 5. `tests/`
 
-**Six** suites, run by **`nimble suites`** (which builds both binaries first). Each runs in a scratch
-`JCA_HOME` and none spawns a backend. Specs are in `TESTS.md`.
+Shell suites run by **`nimble suites`** (which builds both binaries first), plus
+`nvimctl_check.nim` — the compiled driver `test_nvimctl.sh` needs, because `nvimctl` has no
+`jenova-core` subcommand to curl. Each runs in a scratch `JCA_HOME` and none spawns a
+`llama-server` backend; `test_nvimctl.sh` spawns a headless `nvim` and skips when none is installed.
+Specs are in `TESTS.md`.
 
 **Archived 2026-08-31:** `test_gpu.sh`, `test_gpu_single.sh`, `test_validate_arg.sh` (which rewrote
 `etc/jenova.conf` as a side effect) and `download-draft-model.sh` — all orphaned, none wired into
