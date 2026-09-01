@@ -185,6 +185,13 @@ var
   uiChan: Channel[UiMsg]
   streamThread: Thread[void]
   ctlThread: Thread[void]
+  # S-1. Hardware detection has its **own** worker and is not on `ctlReq`.
+  # `llama-server --list-devices` initialises Vulkan and is unbounded, and the
+  # control worker is a single serial queue that also services start, stop,
+  # restart and the three-second poll — so a slow probe there stalls every one
+  # of them and the window hangs on "starting". It did. (D-BQ.)
+  hwReq: Channel[ControlJob]
+  hwThread: Thread[void]
   pendingActions: seq[string] = @[]
   # G-30. The drop callback is a bare C function pointer and cannot carry a
   # closure, so it only ever appends here; the timer that already runs on the
@@ -729,41 +736,43 @@ proc ctlWorker() {.thread.} =
       # frozen transcript. Failure is silent by design — retrieval degrades, the
       # conversation does not.
       discard rag.indexExchange(j.msgId)
-    of "hardware":
-      # Action purpose: on this worker and not the GTK thread because detection
-      # runs `sysctl` and `llama-server --list-devices` as subprocesses — the
-      # device enumeration in particular initialises Vulkan and takes long
-      # enough to freeze a window. It starts no backend and binds no port.
-      try:
-        let profs = hardware.listProfiles(j.lc.paths.root)
-        let h = hardware.detect(j.lc.paths.llamaServer, j.lc.paths.llamaLibDir)
-        uiChan.send(UiMsg(kind: umHardware, hw: h,
-                          scores: hardware.scoreAll(profs, h),
-                          text: hardware.currentProfile(profs,
-                                  j.lc.paths.jcaHome).name))
-      except CatchableError as e:
-        uiChan.send(UiMsg(kind: umNotice,
-                          text: "hardware detection failed: " & e.msg))
-    of "apply_profile":
-      try:
-        let profs = hardware.listProfiles(j.lc.paths.root)
+    else: discard
+
+## Function purpose: hardware detection and profile apply, on a worker of their
+## own (S-1, **D-BQ**).
+##
+## Action purpose: **this is not on `ctlReq`, and that is the whole point.**
+## `hardware.detect` shells `llama-server --list-devices`, which initialises
+## Vulkan and is unbounded. The control worker is one serial queue that also
+## services start, stop, restart and the three-second poll, so a slow probe
+## there leaves every one of them unprocessed — the window sits on "starting"
+## and the buttons do nothing. That is exactly what shipped at 16:19 and it is
+## why this thread exists. A probe that hangs now costs the Hardware screen and
+## nothing else.
+proc hwWorker() {.thread.} =
+  while true:
+    let j = hwReq.recv()
+    if j.action == QuitSentinel: break
+    try:
+      let profs = hardware.listProfiles(j.lc.paths.root)
+      if j.action == "apply_profile":
         let (found, prof) = hardware.findByName(profs, j.profileName)
         if not found:
           uiChan.send(UiMsg(kind: umNotice,
                             text: "no such profile: " & j.profileName))
-        else:
-          let r = hardware.applyProfile(prof, j.lc.paths.jcaHome)
-          uiChan.send(UiMsg(kind: umNotice, text: r.msg))
-          # Re-detect so the screen shows the new profile as current without
-          # the USER having to reopen it.
-          let h = hardware.detect(j.lc.paths.llamaServer, j.lc.paths.llamaLibDir)
-          uiChan.send(UiMsg(kind: umHardware, hw: h,
-                            scores: hardware.scoreAll(profs, h),
-                            text: hardware.currentProfile(profs,
-                                    j.lc.paths.jcaHome).name))
-      except CatchableError as e:
-        uiChan.send(UiMsg(kind: umNotice, text: "apply failed: " & e.msg))
-    else: discard
+          continue
+        let r = hardware.applyProfile(prof, j.lc.paths.jcaHome)
+        uiChan.send(UiMsg(kind: umNotice, text: r.msg))
+      # Both actions end by reporting the current state, so applying a profile
+      # shows it as current without the USER reopening the screen.
+      let h = hardware.detect(j.lc.paths.llamaServer, j.lc.paths.llamaLibDir)
+      uiChan.send(UiMsg(kind: umHardware, hw: h,
+                        scores: hardware.scoreAll(profs, h),
+                        text: hardware.currentProfile(profs,
+                                j.lc.paths.jcaHome).name))
+    except CatchableError as e:
+      uiChan.send(UiMsg(kind: umNotice,
+                        text: "hardware detection failed: " & e.msg))
 
 viewable App:
   ## Application state. `paths` and `cfg` are resolved once at startup rather
@@ -2967,14 +2976,14 @@ proc openHardware(app: AppState) =
   app.hardwareOpen = true
   app.hwDetecting = true
   app.notice = ""
-  ctlReq.send(ControlJob(action: "hardware", lc: app.lc))
+  hwReq.send(ControlJob(action: "hardware", lc: app.lc))
 
 ## Function purpose: deploy a profile. The apply itself is a file copy, but it
 ## is sent to the worker anyway so the re-detection that follows it does not run
 ## on the GTK thread.
 proc applyHardwareProfile(app: AppState, name: string) =
   app.hwDetecting = true
-  ctlReq.send(ControlJob(action: "apply_profile", lc: app.lc, profileName: name))
+  hwReq.send(ControlJob(action: "apply_profile", lc: app.lc, profileName: name))
 
 ## Function purpose: the hardware screen (S-1, D-BC) — which profile this
 ## machine matched, the score that decided it, what was detected, and a button
@@ -3717,14 +3726,16 @@ proc run*(withTray = true, checkOnly = false) =
       llamaHost = "127.0.0.1", llamaPortArg = c.getInt("LLAMA_PORT", 8081),
       embedHost = "127.0.0.1", embedPortArg = c.getInt("LLAMA_EMBED_PORT", 8082))
 
-  streamReq.open(); ctlReq.open(); uiChan.open()
+  streamReq.open(); ctlReq.open(); hwReq.open(); uiChan.open()
   createThread(streamThread, streamWorker)
   createThread(ctlThread, ctlWorker)
+  createThread(hwThread, hwWorker)
   defer:
     streamReq.send(StreamJob(host: QuitSentinel))
     ctlReq.send(ControlJob(action: QuitSentinel))
-    joinThread(streamThread); joinThread(ctlThread)
-    streamReq.close(); ctlReq.close(); uiChan.close()
+    hwReq.send(ControlJob(action: QuitSentinel))
+    joinThread(streamThread); joinThread(ctlThread); joinThread(hwThread)
+    streamReq.close(); ctlReq.close(); hwReq.close(); uiChan.close()
 
   var conv = latestConversation()
   if conv.len == 0: conv = newConversation()

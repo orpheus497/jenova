@@ -24,7 +24,7 @@
 ## machine *is* — `hw.model`, `hw.physmem` — is detection, not tuning, and is
 ## the only use of it here.
 
-import std/[algorithm, os, osproc, re, strutils]
+import std/[algorithm, os, osproc, re, streams, strtabs, strutils]
 
 type
   Hardware* = object
@@ -159,6 +159,61 @@ proc detectCpu(h: var Hardware) =
   h.cpuModel = sysctlStr("hw.model")
   h.cpuThreads = sysctlInt("hw.ncpu")
 
+## Function purpose: run a command that must not be allowed to hang, and kill it
+## if it does.
+##
+## Action purpose: **`execCmdEx` has no timeout, and that cost a hang.** The GPU
+## probe below initialises Vulkan; while the agent model is loading onto the same
+## device it can be slow, and there is no upper bound on "slow". The first
+## version of this ran unbounded on the shared control worker and left the window
+## sitting on "starting" with every button dead (**D-BQ**). It is off that worker
+## now, and it is bounded here as well — one guard would have been enough for
+## today, and two is what keeps a stuck probe from also hanging the exit path,
+## where the worker is joined.
+##
+## The output is read after the process ends rather than while it runs: this
+## reads a device list of a few hundred bytes, far below the pipe buffer, so
+## draining concurrently would be machinery for no gain.
+proc runBounded(exe: string, args: seq[string], libDir: string,
+                timeoutMs: int): tuple[output: string, ok: bool] =
+  var p: Process
+  try:
+    var env = newStringTable(modeCaseSensitive)
+    for k, v in envPairs(): env[k] = v
+    if libDir.len > 0 and dirExists(libDir):
+      # Required, not defensive: without it the loader cannot find
+      # `libllama-server-impl.so` and the device list comes back **empty**,
+      # which does not look like an error — it looks like a machine with no GPU,
+      # and it silently selected the wrong profile the first time this ran.
+      let prior = getEnv("LD_LIBRARY_PATH")
+      env["LD_LIBRARY_PATH"] =
+        if prior.len > 0: libDir & ":" & prior else: libDir
+    p = startProcess(exe, args = args, env = env,
+                     options = {poStdErrToStdOut})
+  except OSError, Exception:
+    return ("", false)
+
+  var waited = 0
+  const Step = 50
+  while waited < timeoutMs:
+    if p.peekExitCode() != -1: break
+    sleep(Step)
+    waited += Step
+
+  if p.peekExitCode() == -1:
+    # Still running past its budget. Killed rather than waited on, because the
+    # caller is a worker whose thread is joined at exit.
+    try: p.terminate() except CatchableError: discard
+    try: p.kill() except CatchableError: discard
+    try: discard p.waitForExit() except CatchableError: discard
+    try: p.close() except CatchableError: discard
+    return ("", false)
+
+  var outp = ""
+  try: outp = p.outputStream.readAll() except CatchableError: discard
+  try: p.close() except CatchableError: discard
+  (outp, true)
+
 ## Action purpose: the GPU list comes from `llama-server --list-devices`, not
 ## from `vulkaninfo` or `pciconf` as the shell used. It is the same source that
 ## established the SETTLED FACTS device row, it is a binary this project already
@@ -168,25 +223,11 @@ proc detectCpu(h: var Hardware) =
 ## GPU-matched profile.
 proc detectGpu(h: var Hardware, llamaServer, llamaLibDir: string) =
   if llamaServer.len == 0 or not fileExists(llamaServer): return
-  var outp = ""
-  try:
-    # Action purpose: `LD_LIBRARY_PATH` is required, not defensive. The source
-    # tree keeps `libllama-server-impl.so` beside the binary in
-    # `external/ext_bin/bin`, so without this the loader fails with "Shared
-    # object not found" and the device list comes back **empty** — which does
-    # not look like an error, it looks like a machine with no GPU, and it
-    # silently selected the wrong profile when this was first run.
-    # `lifecycle.start` sets the same variable from the same `paths` field.
-    var cmd = ""
-    if llamaLibDir.len > 0 and dirExists(llamaLibDir):
-      cmd = "LD_LIBRARY_PATH=" & quoteShell(llamaLibDir) &
-            "${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} "
-    cmd.add quoteShell(llamaServer) & " --list-devices"
-    let (o, code) = execCmdEx(cmd)
-    if code != 0 and o.len == 0: return
-    outp = o
-  except OSError, IOError:
-    return
+  # 10 seconds: an enumeration that has not answered by then is not going to,
+  # and the caller would rather report "no GPU reported" than never return.
+  let (outp, ok) = runBounded(llamaServer, @["--list-devices"], llamaLibDir,
+                              10_000)
+  if not ok: return
   for raw in outp.splitLines:
     let line = raw.strip
     # The listing is `  Vulkan0: NVIDIA GTX 1650 Ti (4342 MiB, ...)`; the
