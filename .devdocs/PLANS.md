@@ -2,7 +2,7 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-09-01 19:05 (Session 019)
+**Last updated:** 2026-09-02 08:13 (Session 020)
 
 **Write plans in plain English, then cite the ID** (**D-BA**). A step that reads
 "resolve G-23" tells the reader nothing. Say what the thing is first.
@@ -83,9 +83,9 @@ assertions behind it.**
 
 ## Standing constraint: the GUI has no test coverage
 
-All six suites and **all ten** self-tests exercise `jenova-core`. **Nothing tests
-`gui.nim`.** *(Corrected 2026-09-01 18:07 — "nine" was carried in two files while
-`src/jenova_core.nim` has always dispatched ten. Read them out of the source.)* Every GUI defect in this project's history was found by the USER looking
+All six suites and every self-test exercise `jenova-core`. **Nothing tests `gui.nim`.**
+*(Read the self-test list out of `src/jenova_core.nim`. A count written here has been
+wrong repeatedly — rule 9.)* Every GUI defect in this project's history was found by the USER looking
 at the screen, and that is the loop the steps below are meant to stop repeating.
 
 The work ahead is mostly *logic* — branching trees, message mutation, parameter
@@ -534,7 +534,7 @@ source first. The view itself is widgets and is a USER run.
 
 ---
 
-### 8a. Model selector and model information *(G-20)*
+### 8a. Model selector and model information *(G-20)* — **rewritten 2026-09-02 08:01 against the source**
 
 Replace the two hardcoded menu items — the literals **"Switch to instruct model"** and
 **"Switch to thinking model"**, which appear **twice each**: once in the window's model
@@ -542,16 +542,68 @@ menu and once again in **`gui.trayMenu`** — with a searchable list carrying pe
 status and capabilities, plus a details dialog (context size, parameter count,
 quantisation, vocabulary, slots, modalities, chat template).
 
-**Backend exists: `models.discover` and `models.switchModel` in `src/jenova/models.nim`.
-But `discover` has no caller in `gui.nim`** — verified 2026-09-01 18:07, the GUI's only
-`models.*` call is `models.switchModel` in the control worker. **So there is no list to
-draw yet, and calling `discover` is 8a's first job**, not its last. This is the same
-shape as T-17: a finished, tested engine with nothing feeding it.
+**The previous revision of this step was wrong about the backend, and the correction
+is the whole shape of the work.** It said `discover` is a finished engine with nothing
+feeding it — T-17's shape — so 8a's first job was to call it. **It is not.** Read out of
+`src/jenova/models.nim` on 2026-09-02:
 
-**Where the logic goes:** whatever turns `discover`'s output plus `/props` into rows —
-sorting, status, capability badges — belongs in `models.nim`, not in `gui.nim`, for the
-reason `settings.nim` and `hardware.nim` are where they are. That is what makes it
-assertable with no window.
+| What the plan assumed | What `models.nim` actually does |
+|---|---|
+| `discover` lists the models on disk | **`discover(jcaHome, kind)` returns ONE path** for one of three fixed roles — agent, draft, embed. An env override, else the first `.gguf` in sorted order under `models/<role>`. There is no enumeration in it; `findModel` walks a directory and throws away everything but `found[0]` |
+| It is called and merely unused in the GUI | **It has no caller anywhere in the product.** Not `gui.nim`, and not `jenova-core models list`, which echoes three `config` values and never asks `models.nim` anything. It is dead code |
+| `switchModel` activates a chosen model | **`switchModel` refuses any target that is not the literal `"instruct"` or `"thinking"`.** It resolves `models/<target>`, validates a temporary symlink, preserves displaced entries as `.old`, and renames into place. The safety is real and must be kept — the *target vocabulary* is what is two items wide |
+
+**So the backend does not exist for this feature; two thirds of it has to be written.**
+That is the opposite of Steps 4, 8b and 10a, where the engine was finished and starved.
+
+**The one thing that genuinely does already exist is the information half.** `gui.nim`
+already reads `/props` for the context window and the loaded model's name (G-33), for
+`default_generation_settings.params` (G-31) and for `modalities` (G-30), and
+`routes.nim` already forwards `/props` upstream. **The details dialog is mostly a
+second reader of a call the window is already making** — the same reuse that made the
+settings panel's "Custom" badge free (D-BK).
+
+#### The work, in order, smallest and most assertable first
+
+**8a-1 — Give `models.nim` an enumerator.** A proc that walks `models/` and returns
+every `.gguf` with its role directory, filename, size and whether it is the active
+symlink target — the loop `findModel` already contains, without the `found[0]`. Skip
+`.old`/backup entries the way `targetModel` does (`isBackup` exists). **This is new
+code in `models.nim` and it is where the whole step's assertability lives.**
+
+**8a-2 — Decide what "switch" means for a model that is neither instruct nor thinking.**
+`switchModel`'s four-step safety (validate before touching, relative link target,
+preserve rather than delete, atomic rename) is the part worth keeping, and its
+two-literal gate is the part in the way. **The change is to take a resolved model path
+rather than a role name**, with the existing two-target entry point kept as a caller of
+it — Directive 3, total feature retention: `jenova-core models switch instruct` must
+keep working unchanged.
+
+**8a-3 — Rows, not widgets.** Whatever turns the enumeration plus `/props` into rows —
+sorting, active/loaded status, capability badges — belongs in `models.nim`, for the
+reason `settings.nim`, `hardware.nim` and `workspace.nim` are where they are. `gui.nim`
+gets a list to draw and a details dialog to fill.
+
+**8a-4 — Replace the four literals.** Two in the window's model menu, two in
+`gui.trayMenu`. Search the strings; no line numbers are recorded for `gui.nim` (rule 9).
+
+#### What proves it worked
+
+| | What is asserted | Where |
+|---|---|---|
+| 8a-1 | A fixture tree of role directories yields **every** `.gguf` and **not** the `.old` backups; an empty tree yields an empty list, not an error; the active symlink is identified as active | `models-selftest` (new) |
+| 8a-2 | Switching to a path outside `models/` is **refused**; a switch preserves the displaced entry rather than deleting it; **`switch "instruct"` still resolves and behaves exactly as before** | `models-selftest` |
+| 8a-3 | Rows carry the loaded model marked as loaded when `/props` names it, and the same list with `/props` absent still renders every model as not-loaded rather than empty | `models-selftest` |
+| 8a-4 | Nothing — it is widgets. The list, the search box and the dialog are a **USER run** | — |
+
+**Every assertion is to be shown biting by varying the DATA — a fixture tree with and
+without the backup, a `/props` payload naming a different model — never by editing the
+source (D-BX, rule 16).** `bin/jenova --check` must exit 0 before handover (rule 17).
+
+**Not in this step:** downloading or deleting models, and per-model *loading* (the Web
+UI's load/unload). `llama-server` holds one model and `lifecycle` restarts it; a
+load/unload surface implies a model server this program does not have. Raise it if the
+USER wants it — do not infer it from the Web UI's button.
 
 ---
 
@@ -635,7 +687,16 @@ weeks without). Every one shown going red first.
 
 ---
 
-### 10b. An uploaded file becomes a workspace artefact *(D-BV)*
+### 10b. **BUILT 2026-09-02 07:51.** An uploaded file becomes a workspace artefact *(D-BV)*
+
+Done and out of this plan. `gui.fileAttachmentsAsArtefacts` writes a `fileAssets` row per
+attachment through `api.putEntity`, so `fssync.syncFileAsset` mirrors the bytes and the
+same cascades apply as on the HTTP surface. The inline base64 in `messages.extra` is
+untouched (Q-34, parity). A chat with no workspace, project or folder files nothing —
+a global artefact would be visible to every unassigned chat. The record is `PROGRESS.md`
+2026-09-02 07:51. The original write-up follows.
+
+
 
 **Nothing in the program has ever written a `fileAssets` row** — verified: the table is
 created in `db.nim`, cascaded in `api.nim`, trashed and restored in `fssync.nim`, and
@@ -719,7 +780,7 @@ surface is not licence to delete user data.
    notes and the editor page can still open them — that is the USER's own editor, not a
    surface Jenova built. **Do not add the exclusion back somewhere else.**
 
-**What proves it worked:** `nimble core` and `nimble gui` build, all ten self-tests pass,
+**What proves it worked:** `nimble core` and `nimble gui` build, every self-test passes,
 and **`bin/jenova --check` exits 0** — which is exactly the check rule 17 exists for,
 because removing a widget block is precisely the change that compiles and then fails to
 build a window. Nothing else here is assertable; it is deletion.
@@ -761,11 +822,6 @@ Both binaries build, **twelve self-tests pass**, `bin/jenova --check` exits 0.
 ## Ordering — set 2026-09-01 18:41
 
 **Done: Step 11, 10c, 10a, 8b — see above.** What remains, in order:
-
-**10b** — uploads become workspace `fileAssets` artefacts (G-44). No longer gated: Q-34
-answered parity, so the inline payload stays and the artefact is written in addition.
-**Now the obvious next step**, because 10a already reads `fileAssets` and nothing writes
-one — the context builder has a table it can see and nobody fills.
 
 **8a** — the model selector (G-20), whose first job is that `models.discover` has no
 caller in `gui.nim` at all. **8c** — make the notes editor good (G-17, D-BW).

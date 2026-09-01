@@ -1,6 +1,6 @@
 # TODOS
 
-**Last updated:** 2026-09-01 19:05 (Session 019)
+**Last updated:** 2026-09-02 08:13 (Session 020)
 
 Only what is actually outstanding. Everything finished lives in `PROGRESS.md`.
 
@@ -100,29 +100,12 @@ a rescoped **8c**.
 **Every claim in the four items below was verified against the source on 2026-09-01 at
 18:29.** None is inferred.
 
-**G-43, G-45, G-46 and G-21 are gone from this file because they are done**
-(2026-09-01 19:05, `PROGRESS.md`). Per the completion rule their record lives in
-`PROGRESS.md`, not here. In short: workspace notes and files now reach the model
-via the new `workspace.nim` and `pipeline.chatBody`; the editor page loads `jvim`;
-the document panel is removed; and the window has a trash view whose restore also
+**G-21, G-43, G-44, G-45 and G-46 are gone from this file because they are done**
+(`PROGRESS.md`, 2026-09-01 19:05 and 2026-09-02 07:51). Per the completion rule
+their record lives in `PROGRESS.md`, not here. Workspace notes and files reach the
+model, an upload is filed as a `fileAssets` artefact, the editor page loads `jvim`,
+the document panel is removed, and the window has a trash view whose restore also
 puts a message back in the retrieval index.
-
-### G-44 — An uploaded file is never stored as a workspace artefact *(D-BV)*
-
-**Nothing in the program has ever written a `fileAssets` row.** The table is created in
-`db.nim`, cascaded in `api.nim`, trashed and restored in `fssync.nim`, and **never
-inserted into**. An attachment therefore exists only as inline base64 in
-`messages.extra` (D-BP) and is invisible both to its workspace and to G-43's context.
-
-**Q-34 is ANSWERED — parity with the Web UI (2026-09-01 18:41):** `messages.extra` keeps
-the inline base64 exactly as D-BP stores it and the artefact is written **in addition**.
-Nothing about the message row changes, so a conversation still moves between this window
-and the frozen `jca_web` unconverted. **Step 7d is closed and nothing here is gated.**
-
-**This is now the obvious next piece of work.** G-43 landed 2026-09-01 19:05, so
-`workspace.contextFor` already reads `fileAssets` and renders it — including the
-`(Binary file, content not available for direct reading)` case — and **nothing has ever
-written a row for it to find.** The reader exists; the writer does not. `PLANS.md` 10b.
 
 ### G-17 is rescoped **twice**, and is now the smallest it has ever been *(D-BW)*
 
@@ -232,11 +215,25 @@ in `gui.trayMenu`. Search the two literals; do not chase a line number.
 
 **And `models.discover` is never called from `gui.nim` at all** — verified
 2026-09-01 18:07, the only `models.*` call in the whole GUI is
-`models.switchModel(j.jcaHome, target)` in the control worker. So the selector has no
-list to draw from today; 8a's first job is to call `discover` and put its result on
-screen.
+`models.switchModel(j.jcaHome, target)` in the control worker.
 
-Backend exists: `models.discover` / `models.switchModel` (`src/jenova/models.nim`).
+**The 2026-09-02 audit found this is understated, and the correction changes the
+work.** `models.discover` has **no caller anywhere in the product** — not in
+`gui.nim`, and not in `jenova-core models list` either, which echoes three
+`config` values and never asks `models.nim` anything. It is dead code.
+
+**And feeding it would not build a selector, because it is not a lister.**
+`models.discover(jcaHome, kind)` returns **one path** for one of three fixed roles
+(agent / draft / embed): an env override, else the first `.gguf` in sorted order
+from `models/<role>`. `models.switchModel` refuses any target that is not the
+literal string `"instruct"` or `"thinking"`. **So there is no enumeration to draw
+and no way to activate an arbitrary model** — this is *not* T-17's shape (a
+finished engine with nothing feeding it). See `PLANS.md` 8a, rewritten against the
+source on 2026-09-02.
+
+Backend as it actually stands: `models.discover` (role resolver, dead),
+`models.switchModel` (two literal targets), `models.targetModel`,
+`models.countDevices` (`src/jenova/models.nim`).
 
 ### G-17 — The note editor is a plain text box
 
@@ -285,7 +282,7 @@ PASS while asserting nothing.
 | ID | What it is |
 |---|---|
 | **G-42** | **Markdown tables now render too large rather than sized to their content.** Reported by the USER 2026-09-01 18:29, on the G-41 build. **G-41 is the cause and it is a half-fix, not a regression:** a bare owlkettle `ScrolledWindow` collapsed every table to a stub, so `ContentScroll` was given `set_propagate_natural_height` **and** deliberately *not* natural width, with `policy(AUTOMATIC, NEVER)`. That stopped the collapse; nothing then constrains the result *down* to the content, so a table claims more room than its rows need. **The USER's words: "not too serious."** Cosmetic, filed, not urgent. The fix is a width/height measurement in `ContentScroll`, not another policy flag — and per D-BR neither half of G-41 is assertable, so this is a USER run either way. |
-| **G-37** | *(Both halves re-verified 2026-09-01 18:07 and both addresses **held** — `theme.nim` has not been touched since. `.glow-text` is `theme.nim:253`, `paned > separator` is `theme.nim:428` and `:hover` at 432, and a grep for `glow-text` across `gui.nim` still returns **zero**.)* **Two style rules in `theme.nim` are dead.** `paned > separator` styles a widget that is not in the tree — a leftover from G-25, which shipped as a `Box` after a `Paned` crashed the app. And `.glow-text` is defined and carried by no widget: the glow effect works, but as a `text-shadow` duplicated inside `.brand` and `.conv-active`. **The second half is G-8's exact defect — a class defined and applied to nothing — recurring in the same file.** Both were found and reported on 2026-09-01 and neither was filed as work; that is why they are here. Re-verified 2026-09-01 14:19: `.glow-text` is `theme.nim:253` and **no widget in `gui.nim` carries the class** (a grep for it in `gui.nim` returns zero hits); `paned > separator` is `theme.nim:428-432`. *Re-verified 2026-09-01 17:27: the `.glow-text` address held, the separator address did not — it was written as 416-420 against a file where it is 428. Earlier revisions named 162 and 251-255, and before that named them in the opposite order.* |
+| **G-37** | *(Re-verified 2026-09-02 08:01. **Both findings hold. The claim written beside them did not.** The previous revision said "`theme.nim` has not been touched since" — Step 11 deleted `.doc-panel` and `.doc-panel-closed` from it that same evening, so the separator rule moved: it is **`theme.nim:417`** with `:hover` at **421**, not 428/432. `.glow-text` is still **`theme.nim:253`** and a grep for it across `gui.nim` still returns **zero**. **Search the selectors; the numbers here are a hint and have now rotted three times.**)* **Two style rules in `theme.nim` are dead.** `paned > separator` styles a widget that is not in the tree — a leftover from G-25, which shipped as a `Box` after a `Paned` crashed the app. And `.glow-text` is defined and carried by no widget: the glow effect works, but as a `text-shadow` duplicated inside `.brand` and `.conv-active`. **The second half is G-8's exact defect — a class defined and applied to nothing — recurring in the same file.** Both were found and reported on 2026-09-01 and neither was filed as work; that is why they are here. Re-verified 2026-09-01 14:19: `.glow-text` is `theme.nim:253` and **no widget in `gui.nim` carries the class** (a grep for it in `gui.nim` returns zero hits); `paned > separator` is `theme.nim:428-432`. *Re-verified 2026-09-01 17:27: the `.glow-text` address held, the separator address did not — it was written as 416-420 against a file where it is 428. Earlier revisions named 162 and 251-255, and before that named them in the opposite order.* |
 | **G-38** | **A code comment in `gui.nim` describes a widget that was never used.** The main-area comment still explains itself as feeding "the `Paned` that G-25 adds". G-25 shipped as a `Box`, and the comment above the `Box` itself records why. A reader following the first comment looks for a `Paned` that does not exist. Prose only, no behaviour. **The doc comment directly above `gui.mainArea`** — *verified 2026-09-01 18:07; the address written here (2637) was wrong, as was 2560 before it, which is why no third number is being recorded.* |
 | **T-12** | **A one-line fix to two test scripts. The subject is closed — do not diagnose it again (D-BJ).** `test_routes.sh` and `test_lifecycle.sh` fail if anything already holds the machine's real ports, because neither overrides `JENOVA_LLAMA_PORT` the way both already override `JENOVA_PORT`. **That is the entire finding.** It is not a product fault, it is not a mystery, and it has been fully diagnosed three separate times. **The fix:** give both scripts their own dead upstream ports. Until the USER schedules it, a session seeing those failures records nothing and says nothing. |
 

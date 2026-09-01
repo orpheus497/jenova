@@ -1,8 +1,8 @@
 # BRIEFING
 
-**Last updated:** 2026-09-01 19:05 (Session 019)
-**Branch:** `bsd`. **`jvim/` is untracked** (4,201 files, added by the USER); the
-`.devdocs/` edits from this session are uncommitted.
+**Last updated:** 2026-09-02 08:13 (Session 020)
+**Branch:** `bsd`. **`jvim/` is untracked** (4,201 files, added by the USER); this
+session's source and `.devdocs/` edits are uncommitted.
 
 ---
 
@@ -66,8 +66,8 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 
 ## 2. State
 
-**Verified as of 2026-09-01 19:05.** Both binaries build from a clean run of `nimble core`
-and `nimble gui`; **all twelve self-tests pass, and `bin/jenova --check` exits 0 — the
+**Verified as of 2026-09-02 07:51.** Both binaries build from a clean run of `nimble core`
+and `nimble gui`; **every self-test passes, and `bin/jenova --check` exits 0 — the
 application reaches its first frame**, which is a thing a compile does not tell you and
 which was learned the hard way at 14:02 (rule 17). Both binaries are ELF 64-bit FreeBSD
 executables. The six shell suites were **not** run and did not need to be — nothing this
@@ -105,6 +105,71 @@ backend supervision and watchdog, model discovery and switching are implemented 
 covered by tests.
 
 ## 3. Done this session
+
+### Session 020 — 2026-09-02 08:13 — all ten devdocs read; every claim re-checked against the source
+
+**No code was touched and nothing was run.** All ten trackers were read in full and every
+current-state claim read back against `src/` — **behaviour, not just symbol existence**:
+`workspace.contextFor`'s six documented behaviours and its exact output strings,
+`nvimctl.editorEnv` returning the whole environment, `gui.fileAttachmentsAsArtefacts`
+filing at the conversation's own level and skipping an unscoped chat, `api.restoreItem`
+re-indexing, and the settings parity assertion checking both directions.
+
+**Everything claimed built is built.** Verified by reading the code, not a summary:
+Step 11 (the document panel — **all fifteen named symbols return zero hits across
+`src/`**), 10c (`nvimctl.editorEnv`, taken by `vte.configure`, passed to the spawn),
+10a (`workspace.contextFor`, injected at `pipeline.nim:350`, scope supplied by
+`gui.nim:1586`), 10b (`gui.fileAttachmentsAsArtefacts` writing through
+`api.putEntity`), 8b (`api.restoreItem` re-indexing, `restoreEntity`, `deletedRows`,
+`gui.refreshTrash`/`openTrash`/`restoreFromTrash`). Six shell suites under `tests/`.
+**No shell, Lua, C, Python or Makefile anywhere in `src/` or `bin/`.**
+
+**Every outstanding finding is still true**, each re-read: G-17, G-20, G-37, G-38,
+T-2, T-3, T-4, T-5, G-42's `ContentScroll` (natural height propagated, natural width
+deliberately not, `policy(AUTOMATIC, NEVER)`) and G-47's `NvimTerminal {.expand: true.}`.
+
+**Seven things were wrong and are fixed.**
+
+1. **`BLUEPRINT.md` §10 said the desktop application has "no attachments, no trash view,
+   no stop control, and no typed error reporting". All four are built** — three at
+   2026-09-01 15:46, the trash view at 19:05, both after that file's own timestamp.
+   **This is the serious one: `AGENTS.md` designates `BLUEPRINT.md` the authoritative
+   architecture, so a session reading it derives a product missing four features it has
+   — which is D-AO's exact failure mode, in the file D-AO was written about.**
+2. **`BLUEPRINT.md` §10 also contradicted its own §7**, calling hardware profile
+   selection unreachable when §7 records it built the same day.
+3. **`BRIEFING.md` §3 said ten self-test subcommands. The dispatch carries twelve.**
+4. **`TESTS.md` said "Nine self-tests, six suites."** Both are counts, both are now
+   pointers to `src/jenova_core.nim`. **That line has now carried four, five, six,
+   nine and ten** — rule 9 exists for exactly this and the number keeps being rewritten
+   instead of removed.
+5. **`TESTS.md` §0i said `hardware-selftest` has 13 assertions. It has twelve.**
+   (`attach-selftest` has **46** against 44 accounted for — noted, not corrected, because
+   the number should not be written down at all.)
+6. **`TODOS.md` G-37 said "`theme.nim` has not been touched since" and gave the
+   separator rule at 428/432.** Step 11 deleted two `.doc-panel` rules from that file
+   the same evening; it is **417/421**. The finding holds; the claim beside it did not.
+7. **`DECISIONS_LOG.md`'s QUESTION STATUS index still described Q-30 as live** — two
+   Neovim instances, `configureEditor` re-aimed on both transitions. Step 11 made it
+   moot and `PLANS.md` says so; the index that exists to *be* the current read did not.
+   Overridden at the top of the file.
+
+**One finding of this session's own was retracted.** `ARCHITECTURE_MAPPING.md` genuinely
+is not the file-by-file map Directive 4 defines — fourteen modules share one row — but
+**Session 019 recorded that at 18:07 as deliberately left**, on rule 9's and D-AN's
+reasoning. Filing it as a defect was the rediscovery that note exists to prevent. The
+guard now lives in `ARCHITECTURE_MAPPING.md` itself.
+
+**And one finding that changes the next step's shape rather than a document's wording.**
+`PLANS.md` 8a said the model selector's first job was to call `models.discover`, which
+was "a finished engine with nothing feeding it" — T-17's shape. **It is not.**
+`discover` returns **one path for one of three fixed roles**, `switchModel` refuses any
+target that is not the literal `"instruct"` or `"thinking"`, and `discover` has **no
+caller anywhere in the product** — `jenova-core models list` echoes three `config`
+values and never asks `models.nim` anything. **There is no enumeration to draw and no
+way to activate an arbitrary model; two thirds of 8a's backend has to be written.**
+`PLANS.md` 8a is rewritten against the source with the work broken into four parts and
+a proof table.
 
 ### Session 019 — a new direction from the USER, and the claims audited
 
@@ -161,9 +226,10 @@ and `PLANS.md` was read back against the source.
 
 **Every finding is true.** G-17, G-20, G-21, G-37, G-38, T-2, T-3, T-4 and T-5 were
 each confirmed by reading the code they describe, and so was the Step 8b note that a
-restored message is never re-indexed. **Everything claimed built is built:** ten
-self-test subcommands dispatched from `src/jenova_core.nim`, six `nimble` tasks, six
-shell suites, `settings.nim` with its parity assertion, `hardware.nim`,
+restored message is never re-indexed. **Everything claimed built is built:** the
+self-test subcommands dispatched from `src/jenova_core.nim` *(the count that stood
+here was ten and is now wrong again — read the `of "…-selftest"` cases out of the
+file, per rule 9)*, six `nimble` tasks, six shell suites, `settings.nim` with its parity assertion, `hardware.nim`,
 `pipeline.ParseMemo` / `markdown.BlockMemo` / the 25 MB cap from 7c, `AutoScroll` and
 `ContentScroll` with their three protos from G-41, and the retrieval feed wired from
 `api.nim` and `gui.nim`. **No shell script, Lua file, C file or Makefile exists
@@ -343,9 +409,11 @@ one sentence in it.** The ruling is Rule 0 above, and the phrasing that invited 
 | **Typed errors, Retry, context-overflow reporting** (G-35) | — |
 | **Delete confirmations naming the cascade** (G-36) | — |
 | **Attachments: picker, drag-and-drop, paste, thumbnails, preview** (G-30) | — |
-| Recall of past chats — the index is fed | **Workspace notes and files as context** (G-43) — the data model is complete and nothing reads it |
-| — | **An upload stored as a workspace artefact** (G-44) — no `fileAssets` row has ever been written |
-| — | **The editor page loading `jvim`** (G-45) — the spawn passes no environment |
+| Recall of past chats — the index is fed | — |
+| **Workspace notes and files reach the model**, scoped and with FOCUS notes (G-43) | — |
+| **An upload is filed as a workspace artefact** (G-44) | — |
+| **The editor page loads `jvim`** (G-45) | — |
+| **A trash view, whose restore also re-indexes** (G-21) | — |
 | **Settings — 1:1 with the Web UI, minus API Key, MCP and `serverUrl`** (G-31) | — |
 | **Import / export of conversations** (G-32) | — |
 | **Hardware profile detection, scoring and selection** (S-1) | — |
@@ -419,16 +487,18 @@ Full detail with mechanisms and references: `TODOS.md`. Ordered plan: `PLANS.md`
 
 ## 6. The gap: the GUI has no test coverage
 
-All six suites and all six self-tests exercise `jenova-core`. **Nothing tests `gui.nim` at
+All six suites and every self-test exercise `jenova-core`. **Nothing tests `gui.nim` at
 all.** Every GUI defect in this project's history was found by the USER looking at the
 screen.
 
 **The response is working and should be continued.** Branching's tree walk went into
-`api.nim`, the request body into `pipeline.chatBody`, and this session the chat indexer
-into `rag.nim` — all below the widget layer, all asserted, none of them requiring a
-window. **Where a GUI feature's behaviour can be moved below the widget layer, move it
-there and assert it.** What is left in `gui.nim` is then layout, which is what a screen is
-actually for.
+`api.nim`, the request body into `pipeline.chatBody`, the chat indexer into `rag.nim`,
+and on 2026-09-01 the workspace scoping ladder into `workspace.nim`, the editor
+environment into `nvimctl.editorEnv` and the trash listing and undo into
+`api.deletedRows`/`restoreEntity` — all below the widget layer, all asserted, none of
+them requiring a window. **Where a GUI feature's behaviour can be moved below the widget
+layer, move it there and assert it.** What is left in `gui.nim` is then layout, which is
+what a screen is actually for.
 
 ## 7. Waiting on the USER
 
@@ -523,20 +593,23 @@ permanent. Moving payloads out of the row would fix all of it and would diverge
 from the frozen Web UI's storage shape. **Worth raising only if 7c does not make
 the window responsive.**
 
-**Step 11, 10c, 10a and 8b are built** (2026-09-01 19:05). Twelve self-tests
-pass, both binaries are ELF 64-bit FreeBSD, `bin/jenova --check` exits 0.
-The record is `PROGRESS.md`; the detail is `PLANS.md` "What Session 019 built".
+**Step 11, 10c, 10a, 8b and 10b are built** (2026-09-01 19:05 and 2026-09-02
+07:51). Every self-test passes, both binaries are ELF 64-bit FreeBSD,
+`bin/jenova --check` exits 0. The record is `PROGRESS.md`; the detail is
+`PLANS.md` "What Session 019 built".
 
-**Next — `PLANS.md` 10b, uploads become workspace artefacts (G-44).** It is the
-obvious one now and no longer gated: Q-34 answered parity, so the inline payload
-stays exactly as D-BP stores it and the artefact is written **in addition**.
-**10a already reads `fileAssets` and renders it** — including the "binary file"
-case — **and nothing has ever written a row for it to find.** The reader exists;
-the writer does not.
+**Next — 8a, the model selector** (G-20). **Its first job is not what this file
+said until 2026-09-02:** `models.discover` is not a lister and has no caller
+anywhere, and `models.switchModel` accepts two literal targets, so **an
+enumerator and a path-taking switch have to be written in `models.nim`** before
+there is anything for a list to draw. Four parts and a proof table are in
+`PLANS.md` 8a. **Then 8c — make the notes editor good** (G-17, D-BW), which is
+the smallest that item has ever been.
 
-**Then 8a — the model selector** (G-20), whose first job is that
-`models.discover` has no caller in `gui.nim` at all. **Then 8c — make the notes
-editor good** (G-17, D-BW), which is the smallest that item has ever been.
+**One thing 10b leaves unproven and it is a USER run:** whether an attachment
+actually appears in the workspace tree, and whether its text then comes back in
+the model's context on a later turn. The row write and the context render are
+each asserted; the two meeting on a live chat is not.
 
 **Two open defects, both widget behaviour and both a USER run:** **G-42**,
 markdown tables now render larger than their content — caused by G-41's own fix,

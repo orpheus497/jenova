@@ -3,7 +3,7 @@
 Authoritative system architecture: what the program is, what it depends on, and how data moves
 through it. Mandated by `AGENTS.md` § WORKSPACE ARCHITECTURE.
 
-**Last updated:** 2026-09-01 15:13 (Session 017)
+**Last updated:** 2026-09-02 08:13 (Session 020)
 
 > **Rewritten 2026-08-31 (Session 007). The previous 626-line revision is in
 > `.devdocs/ARCHIVE/devdocs/BLUEPRINT_pre-007.md`** — archived, not deleted, per D-AM.
@@ -165,9 +165,10 @@ exists.
 
 ## 6b. The embedded editor's configuration — `jvim/` (added 2026-09-01, **D-BS**)
 
-Jenova embeds two live Neovim instances through `vte.nim` (the editor page and the
-document panel), on sockets from `nvimctl.socketPath` and `nvimctl.docSocketPath`. As of
-2026-09-01 the USER supplies their configuration: **`jvim/`**, a self-contained Neovim
+Jenova embeds **one** live Neovim instance through `vte.nim` — the editor page — on the
+socket from `nvimctl.socketPath`. *(The document panel and its second instance were
+removed 2026-09-01 by D-BW; `docSocketPath` no longer exists.)* As of
+2026-09-01 the USER supplies its configuration: **`jvim/`**, a self-contained Neovim
 distribution carrying a Jenova integration layer — FIM completion, a chat drawer, LAN
 discovery, backend telemetry, and an agent tool loop over the buffer, LSP and the shell.
 
@@ -183,8 +184,10 @@ calls `/v1/chat/completions`, `/infill` and `/api/storage/<path>` on the same fr
 §3 describes. **All three routes already exist.** The editor is therefore just another
 client of the one front door — the same shape as the Web UI, and it needs no server work.
 
-**Not yet connected (G-45):** the spawn passes no environment, so the configuration is
-not loaded and the variables are not set.
+**Connected 2026-09-01 (G-45):** `nvimctl.editorEnv` builds the child environment and
+`vte.configure` passes it to the spawn, so `<root>/jvim` is the editor's config directory
+and the `JENOVA_*` variables are set. It returns the whole environment, because VTE's
+`envv` replaces rather than extends.
 
 ---
 
@@ -247,8 +250,17 @@ is frozen (D-Z).
 ## 10. What is NOT built, and is the actual outstanding work
 
 The architecture above is complete and serving. **The gap is in the desktop
-application**, which reproduces the Web UI's shape without all of its function: no
-attachments, no trash view, no stop control, and no typed error reporting.
+application**, which reproduces the Web UI's shape without all of its function.
+
+> **Corrected 2026-09-02 (Session 020).** This paragraph read *"no attachments, no trash
+> view, no stop control, and no typed error reporting"* — **all four were built on
+> 2026-09-01**, three of them (G-30, G-33, G-35) at 15:46 and the trash view (G-21) at
+> 19:05, i.e. hours after this file's own "last updated" stamp. **This is D-AO's failure
+> mode in the file D-AO was written about:** `AGENTS.md` designates this the authoritative
+> architecture, so a session reading it derives a product missing four features it has.
+> The live list of what is actually missing is `TODOS.md`; the ordered plan is `PLANS.md`.
+> **Do not restate the missing-feature list here** — it is derivable, it rots, and this is
+> the second time this file has carried a deleted system's description as current.
 
 **Built 2026-09-01:** message actions (copy, edit, delete, regenerate, continue),
 **conversation branching**, **generation statistics**, **a reasoning view**,
@@ -286,8 +298,10 @@ three pure functions in `api.nim` and is asserted by `jenova-core tree-selftest`
 and idempotently. **That migration is required, not optional** — see the correction in
 D-BG.
 
-**One subsystem is still built and unreachable rather than missing:** hardware profile
-selection has no working entry point at all (Step 6). Retrieval was the other, and it was
+**Both of the "built but unreachable" subsystems are now reached.** *(Corrected 2026-09-02:
+this said hardware profile selection "has no working entry point at all (Step 6)", which
+contradicted §7 of this same file — Step 6 built `hardware.nim`, the Hardware screen and
+`jenova-core hardware` on 2026-09-01 15:13.)* Retrieval was the other, and it was
 the sharper case — **fully asserted by its own self-test and never once executed by the
 program**, because nothing called `indexContent`. Fixed 2026-09-01 (Step 4, D-BI). The
 lesson generalises past retrieval: a green suite says the parts work, never that anything

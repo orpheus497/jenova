@@ -1694,6 +1694,49 @@ proc pendingExtra(app: AppState): string =
       arr.add %*{"type": "TEXT", "name": a.name, "content": a.payload}
   $arr
 
+## Function purpose: file an attachment as a workspace artefact as well as an
+## inline payload (G-44, ruling D-BV). **Both, not either** — Q-34 was answered
+## "parity with the Web UI", so `messages.extra` keeps the base64 exactly as
+## D-BP stores it and a conversation still moves between this window and the
+## frozen `jca_web` unconverted. The row is written *in addition*.
+##
+## **Why it matters beyond the tree:** `workspace.contextFor` already reads
+## `fileAssets` and renders it, and nothing had ever written one — the reader
+## existed and the writer did not, so a file dropped into a chat was invisible to
+## the very workspace it was dropped into.
+##
+## Written through `api.putEntity` and not SQL here, because that route also
+## mirrors the bytes to disk through `fssync.syncFileAsset` and applies the same
+## cascades the HTTP surface does. **A chat with no workspace files nothing** —
+## a global artefact would be visible to every unassigned chat, which is not
+## where the USER put it.
+proc fileAttachmentsAsArtefacts(app: AppState) =
+  if app.pending.len == 0: return
+  var folderId, projectId, workspaceId: string
+  for c in app.convs:
+    if c.id == app.convId:
+      folderId = c.folderId; projectId = c.projectId; workspaceId = c.workspaceId
+      break
+  if folderId.len == 0 and projectId.len == 0 and workspaceId.len == 0: return
+
+  let now = epochTime().int
+  for a in app.pending:
+    # An image's `content` is left empty deliberately: the column is the text a
+    # model can be shown, and `workspace.contextFor` renders an empty one as
+    # "(Binary file, content not available for direct reading)" — which is the
+    # Web UI's own wording for exactly this case. The bytes are already in
+    # `messages.extra` and go to the model as an image part.
+    let isText = a.kind != "IMAGE"
+    let node = %*{
+      "id": $genOid(), "folderId": folderId, "projectId": projectId,
+      "workspaceId": workspaceId, "name": a.name,
+      "size": (if isText: a.payload.len else: 0),
+      "type": (if isText: "text/plain" else: "image/*"),
+      "uploadDate": now,
+      "content": (if isText: a.payload else: "")}
+    if not api.putEntity("fileAssets", node):
+      app.notice = "Attached, but could not file " & a.name & " in the workspace"
+
 proc send(app: AppState) =
   let text = app.draft.strip
   # G-30: **attachments alone are a turn.** "Look at this" with a picture and no
@@ -1715,6 +1758,11 @@ proc send(app: AppState) =
                          extra: extra))
   if isFirstTurn: app.retitleConversation(text)
   app.draft = ""
+  # G-44: filed as workspace artefacts before `pending` is cleared, and after the
+  # message row exists — so a failure here leaves the turn intact and only the
+  # filing undone, which is the recoverable half.
+  app.fileAttachmentsAsArtefacts()
+  app.reloadTree()
   # Cleared only once the turn carrying them is saved, so a failed save does not
   # silently drop the files the USER picked.
   app.pending = @[]

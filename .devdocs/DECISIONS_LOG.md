@@ -23,6 +23,15 @@ are recorded below with their consequences so neither is re-raised.
 tree is gone and that a reference to an archived file is fixed by deletion or a port to
 Nim. Both options were inside the standing ruling, so it was mine to take.
 
+**Q-30 IS MOOT and this index said otherwise until 2026-09-02 08:01.** Its rows below —
+in both tables — still describe two Neovim instances and `pipeline.configureEditor` being
+"re-aimed on both transitions". **Step 11 removed the document panel** (D-BW): there is
+one embedded Neovim, `configureEditor` is called once in `gui.run`, and `docSocketPath`
+does not exist. The rows are left as the historical record of the decision; **this
+paragraph overrides them**, exactly as the paragraph below overrides the stale
+`AWAITING USER DECISION` markers. *Found by the 2026-09-02 audit, in the one index whose
+entire purpose is to be the current read.*
+
 **Longer-standing product decisions, deliberately parked, not forgotten:** filesystem
 as the source of truth (`TODOS.md` **T-11**, see D-AQ), how the binaries are deployed
 (**T-7**), and a CLI (**T-8**, gated by D-AI). **None of these blocks any work in

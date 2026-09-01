@@ -16,6 +16,8 @@ Macro progress tracking. Most recent entries at the top.
 
 ## Completed
 
+### 2026-09-02 07:51 — **10b built: an attachment is filed as a workspace `fileAssets` artefact as well as an inline payload (G-44, D-BV).** Written through `api.putEntity`, so `fssync.syncFileAsset` mirrors it and the same cascades apply; the inline base64 in `messages.extra` is unchanged (Q-34, parity). Closes the reader/writer gap G-43 left — `workspace.contextFor` already rendered `fileAssets` and nothing had ever written one. A chat with no workspace files nothing. Twelve self-tests pass, both binaries ELF FreeBSD, `--check` 0. Files: `gui.nim`.
+
 ### 2026-09-01 19:05 — **Step 11, 10c, 10a and 8b built. Twelve self-tests, both binaries, `--check` 0.**
 
 **Step 11 — the document side panel is removed (G-46, D-BW).** An explicitly instructed removal, which is the only thing Directive 3 permits. Gone: `AppState.panelOpen`/`panelDoc`/`panelDir`/`panelDocs`, `docDir`, `refreshDocs`, `openDoc`, `newDoc`, `closePanel`, `isNoteMirror`, the panel widget block, its toggle button, the `DocTerminal` renderable, `vte.configureDoc`, `vte.newDocTerminal`, the `docSockPath`/`docCwd`/`docFile` triple, `nvimctl.docSocketPath`, `DocSocketName`, and `.doc-panel`/`.doc-panel-closed` in `theme.nim`. The outer horizontal `Box` that existed only to seat the panel went with it. **`pipeline.configureEditor` is now set once, in `gui.run`, and never re-aimed — Q-30 is moot.** The `sun_path` reasoning that lived on `DocSocketName` was moved to `SocketName` rather than deleted with it. **No `document.md` on disk was touched.**

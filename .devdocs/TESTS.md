@@ -3,7 +3,7 @@
 Test specifications, validation criteria and expected outcomes. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 17:51 (Session 018).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-02 08:13 (Session 020).
 Mandated from the outset; absent for Sessions 001–003. See `DECISIONS_LOG.md` C-10.
 
 > **§5a onward are stage acceptance records** — what each stage had to prove and how. They are
@@ -37,10 +37,10 @@ Mandated from the outset; absent for Sessions 001–003. See `DECISIONS_LOG.md` 
 | `test_models.sh` | Model discovery and switching (§5h) |
 | `test_nvimctl.sh` | Reading the live Neovim buffer (§5i). **The one suite that spawns a process** — a headless `nvim` — and the only one needing a compiled driver, `tests/nvimctl_check.nim`. Skips cleanly with no `nvim` installed |
 
-Plus the core's own subcommands: `db-selftest`, `serve-selftest`, `rag-selftest`,
-`pipeline-selftest`, `sha256-selftest`, `tree-selftest`, **`hardware-selftest`** (§0i),
-**`markdown-selftest`**, **`error-selftest`** and **`attach-selftest`** (§0j),
-`db-capabilities`. **That is nine self-tests.**
+Plus the core's own self-test subcommands, and **`db-capabilities`**, which reports rather
+than asserts. **Read the list out of `src/jenova_core.nim`, never from a count written
+here** — this line has said nine and ten while the source said otherwise, and
+`workspace-selftest` (§0o) and `nvim-env-selftest` (§0q) were added on 2026-09-01.
 
 **There is no Makefile.** `make check` and `make -C tests check` no longer exist (D-AM).
 
@@ -79,7 +79,11 @@ nothing about them.
 puts it there. **The same trap catches any direct `nim` call**, including a compile-guard
 check: it fails with "command not found", which reads as silence rather than an error.
 
-**Nine self-tests, six suites.** *`tree-selftest` was added 2026-09-01 for the
+**Six suites, and the self-tests — read their list out of `src/jenova_core.nim`, never
+from a number written here.** *This line said "nine" until 2026-09-02 08:01, when the
+dispatch carried twelve; the count has now been wrong in this file twice and in three
+other files once each. It is rule 9: the number is derivable and it rots.*
+*`tree-selftest` was added 2026-09-01 for the
 branching tree walk, `hardware-selftest` the same day for profile scoring (§0i),
 and `markdown-selftest`, `error-selftest` and `attach-selftest` for Step 7 (§0j).
 Earlier trackers said four self-tests;
@@ -164,7 +168,7 @@ exported by the shell launchers, so it is the real case.
 **Almost none of this is assertable, and saying so is the honest answer.** Step 11 is a
 deletion: there is no behaviour to assert, only the absence of one.
 
-**What must hold:** `nimble core` and `nimble gui` build, all ten self-tests still pass,
+**What must hold:** `nimble core` and `nimble gui` build, every self-test still passes,
 and **`bin/jenova --check` exits 0.**
 
 **`--check` is the check that matters here and it is not a formality.** Rule 17 exists
@@ -378,7 +382,9 @@ software that is merely slow. The ladder lives in `hardware.scoreProfile`, below
 widget layer, and is asserted against hand-written `Hardware` values with no `sysctl`
 call and no window.
 
-**13 assertions.** Every `profile.conf` parses · two GPUs select
+**Twelve assertions** *(this said thirteen until 2026-09-02; counted out of the
+`hardware-selftest` block, it is twelve — another derivable number that rotted, rule 9).*
+Every `profile.conf` parses · two GPUs select
 `Vulkan/dgpu-igpu-i5-1135g7` · one GPU does not · **the dual profile scores strictly
 below the winner on single-GPU hardware, and strictly above it on dual** · the opt-in
 `CUDA/dgpu-generic` is disqualified · unknown hardware falls back to `CPU/generic`

@@ -3,7 +3,7 @@
 File-by-file map of the codebase: what lives where, and why. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE. Update whenever a file is added, removed or relocated.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 19:05 (Session 019).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-02 08:13 (Session 020).
 
 This file was mandated from the outset and did not exist for Sessions 001–003 —
 including Session 001, which moved or deleted 31 files. See `DECISIONS_LOG.md` C-10.
@@ -40,6 +40,18 @@ including Session 001, which moved or deleted 31 files. See `DECISIONS_LOG.md` C
 
 **Module roles are in the source headers.** They are not duplicated here: an inventory in prose rots
 on the next commit, which is what caused the doc-churn loop.
+
+> **This is deliberate, and it has now been rediscovered twice — do not "fix" it a third
+> time.** `AGENTS.md` Directive 4 calls this file a *full file-by-file map*, and §2 below
+> does **not** list the fourteen original modules (`db`, `fssync`, `rag`, `models`, `tray`,
+> `dbus`, `http`, `upstream`, `paths`, `prompts`, `sha256`, `websearch`, and the two
+> selftest modules), deferring instead to each module's own header comment. That tension
+> was recorded and left as it stands by Session 019 (2026-09-01 18:07), on rule 9's
+> reasoning and D-AN's: a duplicated prose inventory rots on the next commit and
+> re-deriving the drift is what consumed whole sessions. **Session 020 filed it as a
+> backlog defect anyway and then retracted it on re-reading that note.** The guard is
+> written here, at the point of discovery, rather than only in a handoff entry nobody
+> re-reads.
 
 ## 2. `src/` — the program
 
@@ -230,10 +242,9 @@ Shell suites run by **`nimble suites`** (which builds both binaries first), plus
 `llama-server` backend; `test_nvimctl.sh` spawns a headless `nvim` and skips when none is installed.
 Specs are in `TESTS.md`.
 
-**Six suites, and six self-test subcommands inside `jenova-core`** (`db-`, `serve-`,
-`rag-`, `pipeline-`, `sha256-`, `tree-selftest`) plus `db-capabilities`, which reports
-rather than asserts. *Earlier trackers said four, then five; `tree-selftest` was added
-2026-09-01 for the branching tree walk, which is pure logic and therefore assertable.*
+**Six suites, plus the self-test subcommands inside `jenova-core`.** *Read the list out of
+`src/jenova_core.nim` — do not carry a number here. This line has said four, five, six,
+nine and ten, and was wrong in three files three different ways on 2026-09-01 (rule 9).*
 
 **Every one of them exercises `jenova-core`. Nothing tests `gui.nim` at all** — no
 suite, no self-test, no driver. Every GUI defect in this project's history was found by
