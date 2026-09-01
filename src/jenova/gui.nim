@@ -62,6 +62,19 @@ type
     rUser = "user"
     rAssistant = "assistant"
 
+  ## What `llama-server` reported about one turn. **These are its numbers, not
+  ## ours** — the server measures prompt and generation separately and this
+  ## carries both rather than a single elapsed time, because "slow" almost always
+  ## means a long prompt re-read rather than slow generation, and one figure
+  ## cannot tell those apart. Field names match the server's `result_timings`
+  ## exactly so there is nothing to translate when reading either side.
+  Timings* = object
+    promptN*: int          ## tokens in the prompt
+    promptMs*: float
+    predictedN*: int       ## tokens generated
+    predictedMs*: float
+    cacheN*: int           ## prompt tokens reused from cache rather than re-read
+
   Message* = object
     role*: Role
     text*: string
@@ -71,6 +84,20 @@ type
     ## nothing to edit, delete or update, which is why G-28 was a state-shape
     ## change before it was a set of buttons.
     id*: string
+    ## The model's reasoning, kept apart from the answer (G-39). `llama-server`
+    ## separates it into `reasoning_content` when the request asks it to; left
+    ## inline it appears in the reply as a `<think>` block the user has to read
+    ## past.
+    thinking*: string
+    ## Which model produced this turn, as the server named it. Per message rather
+    ## than per conversation because switching models mid-chat is a menu item.
+    model*: string
+    timings*: Timings
+    ## The turn this one follows (G-29). Empty for the first turn of a
+    ## conversation. **Two messages sharing a parent are alternative versions of
+    ## the same turn** — that is the whole of branching, and it is why editing or
+    ## regenerating adds a row rather than overwriting one.
+    parent*: string
 
   BackendStatus* = enum
     ## Deliberately three states, not two. `ui.poll_status` collapsed everything
@@ -96,12 +123,22 @@ type
     jcaHome: string
     port: int
 
-  UiMsgKind = enum umToken, umDone, umError, umNotice, umStatus
+  UiMsgKind = enum
+    umToken, umDone, umError, umNotice, umStatus,
+    ## G-39: reasoning arrives on its own channel because it is a separate field
+    ## on the wire and belongs in a separate place on screen.
+    umThinking,
+    ## G-33: the server's own measurements, and the model it used.
+    umTimings, umModel,
+    ## G-33: the backend's context window and loaded model, from `/props`.
+    umProps
 
   UiMsg = object
     kind: UiMsgKind
     text: string
     status: BackendStatus
+    timings: Timings
+    ctx: int
 
 var
   streamReq: Channel[StreamJob]
@@ -122,6 +159,10 @@ const QuitSentinel = ""
 
 proc streamOnce(job: StreamJob) =
   var sock: Socket
+  # Sent once per generation rather than per chunk: the model name repeats on
+  # every one of potentially thousands of chunks, and each send crosses a channel
+  # to the GTK thread and forces a redraw.
+  var lastModel = ""
   try:
     sock = newSocket()
     sock.connect(job.host, Port(job.port))
@@ -151,13 +192,37 @@ proc streamOnce(job: StreamJob) =
       if not line.startsWith("data:"): continue
       let payload = line[5 .. ^1].strip
       if payload == "[DONE]": break
-      var tok = ""
+      var node: JsonNode
       try:
-        tok = parseJson(payload){"choices"}{0}{"delta"}{"content"}.getStr("")
+        node = parseJson(payload)
       except CatchableError:
         continue
+      # Action purpose: four things come out of one chunk and only the first was
+      # ever read. `timings` and `model` are **top level**, not inside `choices` —
+      # reading them from the delta finds nothing, which is the shape mistake
+      # this comment exists to prevent.
+      let delta = node{"choices"}{0}{"delta"}
+      let tok = delta{"content"}.getStr("")
+      let reasoning = delta{"reasoning_content"}.getStr("")
+      if reasoning.len > 0:
+        uiChan.send(UiMsg(kind: umThinking, text: reasoning))
       if tok.len > 0:
         uiChan.send(UiMsg(kind: umToken, text: tok))
+      let model = node{"model"}.getStr("")
+      if model.len > 0 and model != lastModel:
+        lastModel = model
+        uiChan.send(UiMsg(kind: umModel, text: model))
+      let t = node{"timings"}
+      if t != nil and t.kind == JObject:
+        # `timings_per_token` makes the server send this on every chunk, so the
+        # figures on screen are live rather than appearing only once the reply has
+        # finished. The last one to arrive is the final, complete measurement.
+        uiChan.send(UiMsg(kind: umTimings, timings: Timings(
+          promptN: t{"prompt_n"}.getInt(0),
+          promptMs: t{"prompt_ms"}.getFloat(0.0),
+          predictedN: t{"predicted_n"}.getInt(0),
+          predictedMs: t{"predicted_ms"}.getFloat(0.0),
+          cacheN: t{"cache_n"}.getInt(0))))
   except CatchableError as e:
     uiChan.send(UiMsg(kind: umError, text: e.msg))
   finally:
@@ -172,6 +237,59 @@ proc streamWorker() {.thread.} =
     let job = streamReq.recv()
     if job.host == QuitSentinel: break
     streamOnce(job)
+
+## Function purpose: one short GET against the local server, returning the body.
+## It exists for `/props`, which `routes.nim` already forwards to `llama-server`,
+## so the window reads the backend's real configuration through the same front
+## door as everything else rather than opening a second connection to :8081.
+##
+## The body is extracted between the first `{` and the last `}` rather than by
+## honouring `Content-Length` or de-chunking: this reads one small JSON object
+## from a local server, and reproducing an HTTP body parser to do it would be a
+## worse version of `upstream.nim`.
+proc httpGetLocal(host: string, port: int, path: string): string =
+  var sock: Socket
+  var raw = ""
+  try:
+    sock = newSocket()
+    sock.connect(host, Port(port))
+    sock.send("GET " & path & " HTTP/1.1\r\nHost: " & host &
+              "\r\nConnection: close\r\n\r\n")
+    let statusLine = sock.recvLine(timeout = 2000)
+    if not statusLine.contains(" 200"): return ""
+    while true:
+      let line = sock.recvLine(timeout = 2000)
+      if line.len == 0 or line == "\r\n": break
+    while true:
+      let line = sock.recvLine(timeout = 2000)
+      if line.len == 0: break
+      raw.add line
+  except CatchableError:
+    return ""
+  finally:
+    if not sock.isNil:
+      try: sock.close() except CatchableError: discard
+  let a = raw.find('{')
+  let b = raw.rfind('}')
+  if a < 0 or b <= a: "" else: raw[a .. b]
+
+## Function purpose: the context window one conversation actually gets, and the
+## model the backend has loaded, read from `llama-server`'s own `/props`.
+##
+## **This is not `CTX_SIZE` from the config.** `llama-server` gives each parallel
+## slot `n_ctx / n_parallel`, and then caps that to the model's training context
+## — so with `-c 32768 -np 2` a conversation has 16384, and less again if the
+## model was trained shorter. Deriving it from the config would overstate the
+## room remaining by the slot count, silently, and only on long conversations.
+proc fetchProps(host: string, port: int): tuple[ctx: int, model: string] =
+  let body = httpGetLocal(host, port, "/props")
+  if body.len == 0: return (0, "")
+  try:
+    let n = parseJson(body)
+    (n{"default_generation_settings"}{"n_ctx"}.getInt(0),
+     n{"model_alias"}.getStr(""))
+  except CatchableError:
+    (0, "")
 
 
 ## Function purpose: the LAN-mode flag, persisted exactly where `ui.lua:12-15`
@@ -299,25 +417,77 @@ proc latestConversation(): string =
                       "ORDER BY lastModified DESC LIMIT 1")
   if rows.len > 0 and rows[0].len > 0: rows[0][0] else: ""
 
+## Action purpose: `timings` is a TEXT column, so the measurements are stored as
+## JSON in it rather than as five new columns. The schema already had the column
+## and `jca_web` is frozen against this table (D-Z), so widening it is neither
+## necessary nor free. The keys are the server's own names.
+proc timingsToJson(t: Timings): string =
+  if t.predictedN == 0 and t.promptN == 0: return ""
+  $(%*{"prompt_n": t.promptN, "prompt_ms": t.promptMs,
+       "predicted_n": t.predictedN, "predicted_ms": t.predictedMs,
+       "cache_n": t.cacheN})
+
+proc timingsFromJson(s: string): Timings =
+  if s.len == 0: return
+  try:
+    let n = parseJson(s)
+    Timings(promptN: n{"prompt_n"}.getInt(0), promptMs: n{"prompt_ms"}.getFloat(0.0),
+            predictedN: n{"predicted_n"}.getInt(0),
+            predictedMs: n{"predicted_ms"}.getFloat(0.0),
+            cacheN: n{"cache_n"}.getInt(0))
+  except CatchableError:
+    Timings()
+
 ## Returns the id of the row it wrote, empty if it wrote nothing. The caller
 ## keeps it on the in-memory message: a turn with no id cannot be edited or
 ## deleted, and re-reading the row back to find one would race the next insert.
-proc saveMessage(convId: string, role: Role, text: string): string =
+##
+## `thinking`, `model` and `timings` are columns the schema has always carried and
+## **nothing has ever written** (G-33, G-39). They are filled here rather than by a
+## later UPDATE so a reply is one row written once.
+proc saveMessage(convId: string, role: Role, text: string,
+                 thinking = "", model = "", timings = Timings(),
+                 parent = ""): string =
   if convId.len == 0 or text.len == 0: return ""
   result = $genOid()
-  db.exec("INSERT INTO messages (id, convId, type, role, timestamp, content, is_deleted) " &
-          "VALUES (?, ?, 'message', ?, ?, ?, 0)",
-          [result, convId, $role, $toUnix(getTime()), text])
+  db.exec("INSERT INTO messages (id, convId, type, role, timestamp, content, " &
+          "thinking, model, timings, parent, is_deleted) " &
+          "VALUES (?, ?, 'message', ?, ?, ?, ?, ?, ?, ?, 0)",
+          [result, convId, $role, $toUnix(getTime()), text,
+           thinking, model, timingsToJson(timings), parent])
   db.exec("UPDATE conversations SET lastModified=? WHERE id=?",
           [$toUnix(getTime()), convId])
 
+## **Every** message in the conversation, ordered oldest first — the tree, not
+## the transcript. `ORDER BY` is what makes the ordering meaningful to
+## `api.siblingsIn` and `api.deepestFrom`, which read "newest" as "last", so it
+## is part of the contract rather than a tidy default.
 proc loadMessages(convId: string): seq[Message] =
   if convId.len == 0: return
-  for r in db.query("SELECT role, content, id FROM messages WHERE convId=? AND is_deleted=0 " &
+  for r in db.query("SELECT role, content, id, thinking, model, timings, parent " &
+                    "FROM messages WHERE convId=? AND is_deleted=0 " &
                     "ORDER BY timestamp ASC, rowid ASC", convId):
-    if r.len < 3: continue
+    if r.len < 7: continue
     result.add Message(role: (if r[0] == "user": rUser else: rAssistant),
-                       text: r[1], id: r[2])
+                       text: r[1], id: r[2], thinking: r[3], model: r[4],
+                       timings: timingsFromJson(r[5]), parent: r[6])
+
+## The turn the reader is currently on, persisted so reopening a conversation
+## returns to the branch they were reading rather than to whichever version
+## happens to be newest. `conversations.currNode` has always existed for this.
+proc loadLeaf(convId: string): string =
+  if convId.len == 0: return ""
+  let rows = db.query("SELECT currNode FROM conversations WHERE id=?", convId)
+  if rows.len > 0 and rows[0].len > 0: rows[0][0] else: ""
+
+proc saveLeaf(convId, leaf: string) =
+  if convId.len == 0: return
+  db.exec("UPDATE conversations SET currNode=? WHERE id=?", [leaf, convId])
+
+## Function purpose: the (id, parent) pairs `api`'s tree walk works over, in the
+## order it expects — oldest first, so "newest" means "last".
+proc edgesOf(all: seq[Message]): seq[api.MsgEdge] =
+  for m in all: result.add (m.id, m.parent)
 
 proc trayMenu(lanEnabled: bool): seq[TrayItem] =
   @[
@@ -340,9 +510,14 @@ proc trayMenu(lanEnabled: bool): seq[TrayItem] =
   ]
 
 proc ctlWorker() {.thread.} =
+  # Whether `/props` has been read for the backend currently up. Cleared when it
+  # goes down, so a restart or a model switch re-reads it rather than reporting
+  # the previous model's context window (G-33).
+  var propsRead = false
   while true:
     let j = ctlReq.recv()
     if j.action == QuitSentinel: break
+    if j.action in ["stop", "restart"]: propsRead = false
     case j.action
     of "start":
       let (l, _) = j.lc.startAll()
@@ -371,6 +546,16 @@ proc ctlWorker() {.thread.} =
       let up = j.lc.healthy(beLlama, timeoutMs = 300)
       uiChan.send(UiMsg(kind: umStatus, status:
         if up: bsUp elif j.lc.state(beLlama).pid > 0: bsStarting else: bsDown))
+      # Read once per backend lifetime, on this thread: `/props` is a socket
+      # round trip and the poll already runs here every few seconds, so it costs
+      # nothing extra and never touches the GTK loop.
+      if up and not propsRead:
+        propsRead = true
+        let (ctx, model) = fetchProps("127.0.0.1", j.port)
+        if ctx > 0 or model.len > 0:
+          uiChan.send(UiMsg(kind: umProps, ctx: ctx, text: model))
+      elif not up:
+        propsRead = false
     else: discard
 
 viewable App:
@@ -380,7 +565,22 @@ viewable App:
   p: Paths
   cfg: Config
   lc: Lifecycle
+  ## **`messages` is the active path, `allMessages` is the tree** (G-29). A
+  ## conversation is not a list: editing a turn or regenerating a reply adds an
+  ## alternative version beside the old one, and what is on screen is one route
+  ## from the root down to `leaf`. Every widget reads `messages`; every branch
+  ## operation reads `allMessages`.
   messages: seq[Message]
+  allMessages: seq[Message]
+  ## The (id, parent) pairs of `allMessages`, cached rather than rebuilt where
+  ## they are used. The sibling counter needs them **once per message per
+  ## redraw**, and with `timings_per_token` the transcript redraws several times
+  ## a second — so building them there allocates a fresh sequence per message per
+  ## frame. That is defect B-17's shape with a tree walk behind it instead of a
+  ## fork, which is the same reason `convs` and `lanAddr` are cached.
+  edges: seq[api.MsgEdge]
+  ## The turn at the end of the visible path, persisted as `conversations.currNode`.
+  leaf: string
   draft: string
   status: BackendStatus
   lanEnabled: bool
@@ -392,6 +592,13 @@ viewable App:
   convId: string
   streaming: bool
   notice: string
+  ## G-33. `ctxSize` is the context **one conversation** gets — `llama-server`'s
+  ## per-slot figure from `/props`, not `CTX_SIZE` from the config, which is the
+  ## total shared across parallel slots. Zero until the backend has been up long
+  ## enough to answer, and the context readout is hidden rather than guessed
+  ## while it is.
+  ctxSize: int
+  serverModel: string
   ## Sidebar state. `convs` is cached rather than queried in `view` for the same
   ## reason `lanAddr` is: `view` runs on every token of a stream and on every
   ## canvas frame, and a SELECT per frame would be defect B-17 with a database
@@ -531,11 +738,41 @@ viewable App:
               # saved. Updating it is what stops the transcript gaining a second
               # copy of the same reply every time one is resumed (G-28).
               if st.messages[^1].id.len > 0:
-                discard api.patchMessage(%*{"id": st.messages[^1].id,
-                                            "content": st.messages[^1].text})
+                discard api.patchMessage(%*{
+                  "id": st.messages[^1].id,
+                  "content": st.messages[^1].text,
+                  "thinking": st.messages[^1].thinking,
+                  "model": st.messages[^1].model,
+                  "timings": timingsToJson(st.messages[^1].timings)})
+                # The tree holds its own copy of this turn, and the path holds
+                # another. Updating only the row leaves the tree carrying the
+                # text from *before* the reply was extended, and the next redraw
+                # that rebuilds the path from the tree would put it back on
+                # screen — undoing the continuation without touching the database.
+                for t in st.allMessages.mitems:
+                  if t.id == st.messages[^1].id:
+                    t.text = st.messages[^1].text
+                    t.thinking = st.messages[^1].thinking
+                    t.model = st.messages[^1].model
+                    t.timings = st.messages[^1].timings
               else:
-                st.messages[^1].id = saveMessage(st.convId, rAssistant,
-                                                 st.messages[^1].text)
+                # The parent is the turn before it on the branch that was posted.
+                # A regenerate re-posted the conversation truncated to that turn,
+                # so the new reply lands beside the old one rather than after it —
+                # which is the whole of how a branch is made (G-29).
+                let parent =
+                  if st.messages.len > 1: st.messages[^2].id else: ""
+                let saved = saveMessage(
+                  st.convId, rAssistant, st.messages[^1].text,
+                  st.messages[^1].thinking, st.messages[^1].model,
+                  st.messages[^1].timings, parent)
+                st.messages[^1].id = saved
+                st.messages[^1].parent = parent
+                if saved.len > 0:
+                  st.allMessages.add st.messages[^1]
+                  st.edges = edgesOf(st.allMessages)
+                  st.leaf = saved
+                  saveLeaf(st.convId, saved)
             # The reply bumped `lastModified`, so the cached list is now in the
             # wrong order. Refreshed here rather than in `view` for the reason
             # `convs` is cached at all.
@@ -555,10 +792,83 @@ viewable App:
             if st.messages.len == 0 or st.messages[^1].role != rAssistant:
               st.messages.add Message(role: rAssistant, text: "")
             st.messages[^1].text.add m.text
+          of umThinking:
+            # Reasoning arrives before any answer token, so the assistant turn
+            # usually has to be created here rather than by `umToken` (G-39).
+            if st.messages.len == 0 or st.messages[^1].role != rAssistant:
+              st.messages.add Message(role: rAssistant, text: "")
+            st.messages[^1].thinking.add m.text
+          of umModel:
+            if st.messages.len > 0 and st.messages[^1].role == rAssistant:
+              st.messages[^1].model = m.text
+          of umTimings:
+            # Overwritten rather than accumulated: each report from the server is
+            # the running total for this turn, not a delta.
+            if st.messages.len > 0 and st.messages[^1].role == rAssistant:
+              st.messages[^1].timings = m.timings
+          of umProps:
+            if m.ctx > 0: st.ctxSize = m.ctx
+            if m.text.len > 0: st.serverModel = m.text
         if changed:
           discard st.redraw()
         true
       )
+
+## Function purpose: the visible transcript for a tree and a leaf, and the leaf
+## it settled on (G-29). A free function rather than a method on the window
+## because the first transcript has to be built before the window exists, and two
+## copies of a tree walk is exactly the drift `api`'s pure helpers were extracted
+## to avoid.
+##
+## When the leaf is missing or unknown — a fresh conversation, or one whose
+## `currNode` points at a turn since deleted — it falls back to the newest branch
+## from the oldest root.
+##
+## **That fallback is not a migration, and treating it as one is the defect that
+## shipped.** Messages written before branching have a NULL `parent`, so every one
+## of them is a root: the fallback then yields a path of exactly one message and
+## `siblingsIn` reads the whole conversation as versions of a single turn.
+## `db.migrateMessageParents` chains them at startup, and that is what makes
+## existing history readable — not this (**D-BG**).
+proc pathOf(all: seq[Message], leaf: string): tuple[path: seq[Message], leaf: string] =
+  let edges = edgesOf(all)
+  var byId = initTable[string, int]()
+  for i, m in all: byId[m.id] = i
+
+  result.leaf = leaf
+  if leaf.len == 0 or not byId.hasKey(leaf):
+    var root = ""
+    for m in all:
+      if m.parent.len == 0:
+        root = m.id
+        break
+    result.leaf = if root.len > 0: api.deepestFrom(edges, root) else: ""
+
+  for id in api.pathTo(edges, result.leaf):
+    if byId.hasKey(id): result.path.add all[byId[id]]
+
+## Function purpose: recompute the visible transcript after anything that changes
+## the shape of the conversation.
+proc rebuildPath(app: AppState) =
+  let (path, leaf) = pathOf(app.allMessages, app.leaf)
+  app.messages = path
+  app.leaf = leaf
+  app.edges = edgesOf(app.allMessages)
+
+## Function purpose: load a conversation's tree and the branch last being read.
+proc loadConversation(app: AppState, convId: string) =
+  app.allMessages = loadMessages(convId)
+  app.leaf = loadLeaf(convId)
+  app.rebuildPath()
+
+## Function purpose: record a newly saved turn as the end of the visible path.
+## The tree, the path and the persisted `currNode` all move together — leaving
+## any one of them behind is what makes a transcript disagree with itself.
+proc appendTurn(app: AppState, m: Message) =
+  app.allMessages.add m
+  app.leaf = m.id
+  saveLeaf(app.convId, m.id)
+  app.rebuildPath()
 
 ## Function purpose: switch the transcript to another conversation. Refused mid
 ## stream: tokens in flight are appended to `messages[^1]` by the drain timer,
@@ -566,7 +876,7 @@ viewable App:
 proc selectConversation(app: AppState, id: string) =
   if app.streaming or id == app.convId: return
   app.convId = id
-  app.messages = loadMessages(id)
+  app.loadConversation(id)
   app.openNote = ""
   app.notice = ""
 
@@ -619,6 +929,8 @@ proc newChat(app: AppState, wsId = "", projId = "", folderId = "") =
   app.reloadTree()
   app.convId = id
   app.messages = @[]
+  app.allMessages = @[]
+  app.leaf = ""
   app.openNote = ""
   app.notice = ""
 
@@ -662,6 +974,8 @@ proc deleteNode(app: AppState, entity, id: string) =
     if entity == "conversations" and id == app.convId:
       app.convId = ""
       app.messages = @[]
+      app.allMessages = @[]
+      app.leaf = ""
     if entity == "notes" and id == app.openNote:
       app.openNote = ""
     app.reloadTree()
@@ -806,15 +1120,21 @@ proc visibleConvs(app: AppState): seq[ConvItem] =
     if c.name.toLowerAscii.contains(q):
       result.add c
 
-## Function purpose: hand the draft message to the local server and start
-## streaming the reply. The body is the OpenAI-compatible shape `pipeline.nim`
-## expects, so intents, RAG and personas apply exactly as they do for the Web UI.
 ## Function purpose: post the transcript exactly as it currently stands and start
-## streaming. Split out of `send` because regenerate and continue post the same
-## body from a different starting state — regenerate after dropping the last
-## reply, continue with a partial reply still in place as the tail so the model
-## extends it rather than starting over (G-28).
-proc postConversation(app: AppState) =
+## streaming. The body is the OpenAI-compatible shape `pipeline.nim` expects, so
+## intents, RAG and personas apply exactly as they do for the Web UI.
+##
+## Split out of `send` because regenerate and continue post the same body from a
+## different starting state — regenerate after dropping the reply being redone,
+## continue with the partial reply still in place as the tail (G-28).
+##
+## `continuing` is what makes that tail mean *extend this*. **Ending the array
+## with an assistant message is necessary and not sufficient:** `llama-server`
+## applies the chat template with `add_generation_prompt = true` unless the
+## request says otherwise, which closes the assistant turn and opens a fresh one —
+## so the model re-answers instead of carrying on. That is what shipped, and
+## `continue_final_message` is the field that fixes it (**D-BH**).
+proc postConversation(app: AppState, continuing = false) =
   app.notice = ""
   app.streaming = true
 
@@ -822,9 +1142,29 @@ proc postConversation(app: AppState) =
   for m in app.messages:
     if m.role == rAssistant and m.text.len == 0: continue
     msgs.add %*{"role": $m.role, "content": m.text}
-  let body = $(%*{"messages": msgs, "stream": true})
+  # Action purpose: both flags are requests for data the server will otherwise
+  # not send, and neither changes what the model generates.
+  #
+  # * `timings_per_token` makes `llama-server` attach its `timings` object to
+  #   **every** chunk instead of only the last one. Without it the token counts
+  #   and tokens-per-second appear once, after the reply has finished, which is
+  #   exactly when they have stopped being interesting (G-33).
+  # * `reasoning_format: "auto"` makes it split a reasoning model's thinking into
+  #   `reasoning_content` instead of leaving it inline in the answer as a
+  #   `<think>` block the reader has to skip past (G-39).
+  #
+  # `pipeline.prepare` re-serialises the whole request object, so unknown
+  # top-level keys reach the upstream untouched — which is why this is the whole
+  # of the plumbing.
+  var req = %*{"messages": msgs, "stream": true,
+               "timings_per_token": true, "reasoning_format": "auto"}
+  if continuing:
+    # `"content"` and not `true`: the accepted values are `true` (auto),
+    # `"content"` and `"reasoning_content"` (`common/chat.cpp:565`), and what is
+    # being resumed here is the visible answer, never the reasoning.
+    req["continue_final_message"] = %"content"
   let port = app.cfg.getInt("PORT", 8080)
-  streamReq.send(StreamJob(host: "127.0.0.1", port: port, body: body))
+  streamReq.send(StreamJob(host: "127.0.0.1", port: port, body: $req))
 
 proc send(app: AppState) =
   let text = app.draft.strip
@@ -832,9 +1172,12 @@ proc send(app: AppState) =
     return
 
   # The row id comes back so the message can be edited or deleted without
-  # re-reading the table to find which row it became.
-  let id = saveMessage(app.convId, rUser, text)
-  app.messages.add Message(role: rUser, text: text, id: id)
+  # re-reading the table to find which row it became. The parent is the turn at
+  # the end of the branch currently being read, which is what attaches the new
+  # message to *this* branch rather than to whichever one is newest (G-29).
+  let parent = if app.messages.len > 0: app.messages[^1].id else: ""
+  let id = saveMessage(app.convId, rUser, text, parent = parent)
+  app.appendTurn(Message(role: rUser, text: text, id: id, parent: parent))
   app.draft = ""
   app.postConversation()
 
@@ -843,6 +1186,10 @@ proc send(app: AppState) =
 ## `messages[^1]`, so mutating the sequence underneath it would write the tail of
 ## a reply into the wrong turn. That is the same hazard `selectConversation`
 ## refuses for, and it is why these are guarded rather than merely greyed out.
+## Deleting a turn takes **everything under it** with it, on every branch. A
+## reply to a question that is no longer there is not a conversation, and leaving
+## the descendants as orphans would make them unreachable rather than gone —
+## invisible in the transcript and still counted by every sibling counter.
 proc deleteMessage(app: AppState, idx: int) =
   if app.streaming or idx < 0 or idx >= app.messages.len: return
   # The id alone, not the whole message: copying the object would copy the reply
@@ -850,11 +1197,54 @@ proc deleteMessage(app: AppState, idx: int) =
   let id = app.messages[idx].id
   # A turn that never became a row — an assistant reply abandoned mid-stream —
   # has nothing to delete but should still leave the transcript.
-  if id.len > 0 and not api.deleteEntity("messages", id):
-    app.notice = "could not delete that message"
+  if id.len == 0:
+    app.messages.delete(idx)
     return
-  if id.len > 0 and app.editingMsg == id: app.editingMsg = ""
-  app.messages.delete(idx)
+
+  # Collect the subtree before deleting any of it: `api.deleteEntity` soft-deletes
+  # one row, and re-reading the tree between deletes would lose the links.
+  var doomed = @[id]
+  var scan = 0
+  while scan < doomed.len and scan < 4096:
+    let cur = doomed[scan]
+    inc scan
+    for m in app.allMessages:
+      if m.parent == cur and m.id notin doomed: doomed.add m.id
+
+  for victim in doomed:
+    if not api.deleteEntity("messages", victim):
+      app.notice = "could not delete that message"
+      return
+  if app.editingMsg in doomed: app.editingMsg = ""
+
+  # The reader lands on the deleted turn's parent, which is the nearest thing
+  # still on their branch.
+  let parent = app.messages[idx].parent
+  var kept: seq[Message]
+  for m in app.allMessages:
+    if m.id notin doomed: kept.add m
+  app.allMessages = kept
+  app.leaf = parent
+  saveLeaf(app.convId, parent)
+  app.rebuildPath()
+
+## Function purpose: move to another version of a turn (G-29) — what the
+## prev/next arrows beside a "2 of 3" counter do.
+##
+## The reader lands on the deepest continuation of the version they chose, not on
+## the switch point, so picking an older answer shows the conversation that
+## followed *it* rather than stranding them mid-transcript.
+proc switchSibling(app: AppState, id: string, delta: int) =
+  if app.streaming or id.len == 0: return
+  let edges = app.edges
+  let sibs = api.siblingsIn(edges, id)
+  if sibs.len < 2: return
+  let at = sibs.find(id)
+  if at < 0: return
+  let next = (at + delta + sibs.len) mod sibs.len
+  app.leaf = api.deepestFrom(edges, sibs[next])
+  saveLeaf(app.convId, app.leaf)
+  app.rebuildPath()
 
 proc startEdit(app: AppState, idx: int) =
   if app.streaming or idx < 0 or idx >= app.messages.len: return
@@ -865,42 +1255,66 @@ proc startEdit(app: AppState, idx: int) =
 proc cancelEdit(app: AppState) =
   app.editingMsg = ""
 
-## Saves the edited text and stops there. **It deliberately does not resend.**
-## Re-answering an edited turn produces an alternative version of every turn
-## after it — that is a branch, it is `PLANS.md` Step 3, and doing it here
-## without the tree to hold both versions would silently destroy the rest of the
-## conversation instead of offering a choice between them.
+## Function purpose: save an edited turn as a **new version of it** and answer
+## again (G-29).
+##
+## **It no longer overwrites the message, and that is the point of the tree.**
+## Until branching existed this saved in place and did not resend, because
+## re-answering would have destroyed every turn that followed (D-BF). Now the old
+## version and its replies stay where they are, reachable through the counter on
+## the turn, and the edit becomes a sibling with its own continuation.
 proc saveEdit(app: AppState) =
-  if app.editingMsg.len == 0: return
-  let text = app.editBuffer.text()
-  if not api.patchMessage(%*{"id": app.editingMsg, "content": text}):
+  if app.editingMsg.len == 0 or app.streaming: return
+  let text = app.editBuffer.text().strip
+  var at = -1
+  for i, m in app.messages:
+    if m.id == app.editingMsg: at = i
+  if at < 0 or text.len == 0:
+    app.editingMsg = ""
+    return
+
+  let parent = app.messages[at].parent
+  let role = app.messages[at].role
+  let id = saveMessage(app.convId, role, text, parent = parent)
+  if id.len == 0:
     app.notice = "could not save that edit"
     return
-  for m in app.messages.mitems:
-    if m.id == app.editingMsg: m.text = text
   app.editingMsg = ""
+  app.appendTurn(Message(role: role, text: text, id: id, parent: parent))
+  # Only a user turn is worth re-answering. Editing a reply records a different
+  # version of what the model said and stops there — asking it to answer its own
+  # answer is not a turn.
+  if role == rUser: app.postConversation()
 
-## Function purpose: throw the last reply away and ask again. **The last one
-## only.** Regenerating in the middle would orphan every turn after it, and
-## keeping the old and new answers side by side is branching (Step 3).
-proc regenerate(app: AppState) =
-  if app.streaming or app.messages.len == 0: return
-  if app.messages[^1].role != rAssistant: return
-  let before = app.messages.len
-  app.deleteMessage(before - 1)
-  # The delete failed and has already said so; re-posting now would ask the model
-  # to answer a question it can still see its own answer to.
-  if app.messages.len == before: return
+## Function purpose: ask again and keep the previous answer (G-29).
+##
+## **The old reply is not deleted.** It becomes one version of the turn and the
+## new one becomes another, side by side under the same question, which is what
+## the counter on the message steps through. Until the tree existed this deleted
+## the reply and could only be offered on the last message; both restrictions are
+## gone (D-BF).
+proc regenerate(app: AppState, idx: int) =
+  if app.streaming or idx < 0 or idx >= app.messages.len: return
+  if app.messages[idx].role != rAssistant: return
+  # Re-post the conversation as it stood *before* this reply. The new answer is
+  # then saved against the same parent, which is what makes the two siblings.
+  app.messages.setLen(idx)
+  app.leaf = if idx > 0: app.messages[^1].id else: ""
   app.postConversation()
 
 ## Function purpose: ask the model to carry on from a reply that stopped early.
-## The partial text stays in place as the tail of the request, so the model
-## extends it; the drain timer appends to that same message and `umDone` updates
-## its row rather than inserting a second one.
+## The partial text stays in place as the tail of the request **and the request
+## says to continue it** (D-BH); the drain timer appends to that same message and
+## `umDone` updates its row rather than inserting a second one.
+##
+## Refused when the turn carries reasoning, which is the Web UI's own guard
+## (`ChatMessageAssistant.svelte:460`). Resuming the visible answer of a turn whose
+## thinking is held separately asks the model to continue text it did not stop on.
 proc continueReply(app: AppState) =
   if app.streaming or app.messages.len == 0: return
   if app.messages[^1].role != rAssistant or app.messages[^1].text.len == 0: return
-  app.postConversation()
+  if app.messages[^1].thinking.len > 0: return
+  app.postConversation(continuing = true)
 
 proc projectsOf(app: AppState, wsId: string): seq[NodeItem] =
   for n in app.projects:
@@ -1047,6 +1461,75 @@ proc messageBody(app: AppState, m: Message): Widget =
                 language = b.lang
                 style = [StyleClass("code-body")]
 
+## Function purpose: the numbers the Web UI shows under a reply (G-33) — tokens
+## generated and their rate, tokens read in, how much of the context window the
+## turn used and what is left of it, and which model produced it.
+##
+## **Built as one string rather than a row of badge widgets, deliberately.** The
+## transcript rebuilds every message on every token of a stream, and
+## `timings_per_token` means that is now several times a second with live
+## numbers; four extra widgets per message inside that loop is the cost
+## `canvas.queueFrame` exists to avoid. One `Label` whose text changes is the
+## cheap shape.
+##
+## Empty until the server has actually reported something, so a message from
+## before this existed shows nothing rather than a row of zeroes.
+proc statsLine(app: AppState, m: Message): string =
+  let t = m.timings
+  if t.predictedN <= 0 and t.promptN <= 0: return ""
+  var parts: seq[string]
+
+  if t.predictedN > 0:
+    var s = $t.predictedN & " out"
+    if t.predictedMs > 0:
+      s.add "  " & formatFloat(t.predictedN.float * 1000.0 / t.predictedMs,
+                               ffDecimal, 1) & " tok/s"
+      s.add "  " & formatFloat(t.predictedMs / 1000.0, ffDecimal, 1) & "s"
+    parts.add s
+
+  if t.promptN > 0:
+    # `cache_n` is the part of the prompt the server did not have to read again.
+    # Worth showing because a turn that feels slow is nearly always a cold
+    # prompt rather than slow generation, and those two look identical without
+    # it.
+    var s = $t.promptN & " in"
+    if t.cacheN > 0: s.add " (" & $t.cacheN & " cached)"
+    if t.promptMs > 0:
+      s.add "  " & formatFloat(t.promptN.float * 1000.0 / t.promptMs,
+                               ffDecimal, 0) & " tok/s"
+    parts.add s
+
+  # Only ever with a real figure from `/props`. Deriving the window from
+  # `CTX_SIZE` would overstate what is left by the slot count, and again by
+  # whatever the model's training context capped it to.
+  if app.ctxSize > 0:
+    let used = t.promptN + t.predictedN
+    parts.add $used & "/" & $app.ctxSize & " ctx  " &
+              $max(0, app.ctxSize - used) & " left"
+
+  let model = (if m.model.len > 0: m.model else: app.serverModel)
+  if model.len > 0: parts.add model.extractFilename.changeFileExt("")
+
+  parts.join("    ")
+
+## Function purpose: wrap `statsLine` in a widget, so it is built **once** per
+## message per redraw rather than once to test it and again to display it. With
+## `timings_per_token` the transcript redraws several times a second, so that
+## difference is the whole reason this is a proc.
+##
+## An empty `Box` is what a message with no statistics gets: a Box with no
+## children requests no size, which is the same reason the document panel is one.
+proc messageStats(app: AppState, m: Message): Widget =
+  let line = app.statsLine(m)
+  gui:
+    Box(orient = OrientY):
+      if line.len > 0:
+        Label {.expand: false.}:
+          text = line
+          xAlign = 0.0
+          wrap = true
+          style = [StyleClass("dim-note")]
+
 ## Function purpose: the toolbar under a message (G-28). The Web UI gives every
 ## message five actions; this window had none — one copy button on code blocks
 ## was the whole of it, so there was no way to correct a mistake short of
@@ -1062,8 +1545,28 @@ proc messageBody(app: AppState, m: Message): Widget =
 ## message is a row, because there is nothing to act on until then.
 proc messageActions(app: AppState, idx: int, m: Message): Widget =
   let isLast = idx == app.messages.len - 1
+  # The versions of this turn (G-29). One means it was never branched, and the
+  # control is not drawn — a "1 of 1" counter on every message is noise.
+  let sibs = (if m.id.len > 0: api.siblingsIn(app.edges, m.id) else: @[])
+  let at = (if sibs.len > 1: sibs.find(m.id) else: -1)
   gui:
     Box(orient = OrientX, spacing = 4):
+      if at >= 0:
+        Button {.expand: false.}:
+          icon = "go-previous-symbolic"
+          tooltip = "Previous version"
+          sensitive = not app.streaming
+          style = [ButtonFlat, StyleClass("row-btn")]
+          proc clicked() = app.switchSibling(m.id, -1)
+        Label {.expand: false.}:
+          text = $(at + 1) & "/" & $sibs.len
+          style = [StyleClass("dim-note")]
+        Button {.expand: false.}:
+          icon = "go-next-symbolic"
+          tooltip = "Next version"
+          sensitive = not app.streaming
+          style = [ButtonFlat, StyleClass("row-btn")]
+          proc clicked() = app.switchSibling(m.id, 1)
       Button {.expand: false.}:
         icon = "edit-copy-symbolic"
         tooltip = "Copy"
@@ -1076,19 +1579,25 @@ proc messageActions(app: AppState, idx: int, m: Message): Widget =
           sensitive = not app.streaming
           style = [ButtonFlat, StyleClass("row-btn")]
           proc clicked() = app.startEdit(idx)
-      if m.role == rAssistant and isLast and m.id.len > 0:
+      if m.role == rAssistant and m.id.len > 0:
         Button {.expand: false.}:
           icon = "view-refresh-symbolic"
           tooltip = "Regenerate"
           sensitive = not app.streaming
           style = [ButtonFlat, StyleClass("row-btn")]
-          proc clicked() = app.regenerate()
-        Button {.expand: false.}:
-          icon = "media-playback-start-symbolic"
-          tooltip = "Continue"
-          sensitive = not app.streaming
-          style = [ButtonFlat, StyleClass("row-btn")]
-          proc clicked() = app.continueReply()
+          proc clicked() = app.regenerate(idx)
+        # Continue extends a reply in place rather than making another version of
+        # it, so it stays on the last turn: there is nothing to extend in the
+        # middle of a conversation that already has an answer after it. **And it
+        # is hidden on a turn that carries reasoning**, which is the Web UI's own
+        # guard — see `continueReply` and D-BH.
+        if isLast and m.thinking.len == 0:
+          Button {.expand: false.}:
+            icon = "media-playback-start-symbolic"
+            tooltip = "Continue"
+            sensitive = not app.streaming
+            style = [ButtonFlat, StyleClass("row-btn")]
+            proc clicked() = app.continueReply()
       if m.id.len > 0:
         Button {.expand: false.}:
           icon = "user-trash-symbolic"
@@ -1284,7 +1793,31 @@ proc mainArea(app: AppState): Widget =
                         style = [ButtonFlat, StyleClass("row-btn")]
                         proc clicked() = app.cancelEdit()
                   else:
+                    # G-39: the model's reasoning, above the answer and folded
+                    # away. **It defaults open only while this turn is streaming**
+                    # — a reasoning model can think for a long time before its
+                    # first answer token, and a collapsed box during that silence
+                    # looks like nothing is happening. Once the reply lands the
+                    # default flips back to closed, so a finished transcript is
+                    # answers rather than working-out, unless the reader said
+                    # otherwise by clicking.
+                    if m.thinking.len > 0:
+                      Expander {.expand: false.}:
+                        label = "Reasoning"
+                        expanded = app.expanded.getOrDefault(
+                          "think:" & (if m.id.len > 0: m.id else: "live"),
+                          app.streaming and i == app.messages.len - 1)
+                        proc activate(on: bool) =
+                          app.expanded["think:" & (if m.id.len > 0: m.id
+                                                   else: "live")] = on
+                        Label:
+                          text = m.thinking
+                          xAlign = 0.0
+                          wrap = true
+                          margin = 6
+                          style = [StyleClass("dim-note")]
                     insert(app.messageBody(m)) {.expand: false.}
+                    insert(app.messageStats(m)) {.expand: false.}
                     insert(app.messageActions(i, m)) {.expand: false.}
 
 
@@ -1767,7 +2300,10 @@ proc run*(withTray = true) =
 
   var conv = latestConversation()
   if conv.len == 0: conv = newConversation()
-  let history = loadMessages(conv)
+  # The first transcript is a path through the tree like every later one, so it
+  # is computed the same way rather than by taking every row in order (G-29).
+  let allHistory = loadMessages(conv)
+  let (history, startLeaf) = pathOf(allHistory, loadLeaf(conv))
 
   let initialLan = isLanEnabled(p)
   let initialAddr = if initialLan: lanAddress() else: ""
@@ -1794,6 +2330,9 @@ proc run*(withTray = true) =
                        lanAddr = initialAddr,
                        convId = conv,
                        messages = history,
+                       allMessages = allHistory,
+                       edges = edgesOf(allHistory),
+                       leaf = startLeaf,
                        convs = listConversations(),
                        workspaces = listWorkspaces(),
                        projects = listProjects(),

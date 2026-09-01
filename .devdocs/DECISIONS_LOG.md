@@ -88,7 +88,120 @@ further down is left in place for the historical record; **this table overrides 
 
 ---
 
-## D-BF — message actions stop where branching begins — 2026-09-01
+## D-BH — Continue: what the server needs, and where the Web UI is not the standard — 2026-09-01
+
+Raised by the USER running the build: **Continue made the model repeat its previous
+answer instead of extending it.** Investigating it found three things, and the second is
+the one worth keeping.
+
+**1. The server needs to be told.** `continue_final_message` — `true`, `"content"` or
+`"reasoning_content"` (`common/chat.cpp:565`). Absent, the chat template gets
+`add_generation_prompt = true`, closes the assistant turn and starts a new one. We send
+`"content"`.
+
+**2. `jca_web` is the parity reference, not the correctness reference.** It does not send
+`continue_final_message` anywhere, so **its Continue is broken in the same way**. D-Z
+freezes it as the definition of *what features exist*; it is not evidence that a feature
+works. **Read the server for behaviour and the Web UI for scope** — they answer different
+questions, and this session answered a behaviour question out of the Web UI.
+
+**3. Two guards were missed by reading the tracker instead of the component.** In the Web
+UI, Continue is hidden when the message carries reasoning
+(`ChatMessageAssistant.svelte:460`, `enableContinueGeneration && !hasReasoning`) and is
+**off by default** (`enableContinueGeneration: false`).
+
+- **The reasoning guard is adopted.** Continuing the visible answer while a separate
+  reasoning block already exists asks the model to resume text it did not end on.
+- **The default-off is deliberately not adopted, yet.** There is no settings surface
+  (G-31), so an opt-in flag would make the feature unreachable rather than optional. It
+  becomes a setting at Step 5, and that is recorded there rather than left as a silent
+  divergence.
+
+**The standing rule this produces:** *a feature copied from `jca_web` is copied for its
+scope. Its behaviour is verified against `llama-server`'s own source before it is called
+finished.*
+
+---
+
+## D-BG — how branching behaves, and what it released — 2026-09-01 *(supersedes the restrictions in D-BF)*
+
+Taken while building `PLANS.md` Step 3 (G-29). D-BF held two message actions back until
+the tree existed. It exists, so both are released and the rules they are released under
+are recorded here.
+
+**Editing a turn creates a new version of it and answers again.** It no longer overwrites
+the message. The old version and every reply underneath it stay reachable through the
+counter on that turn. Editing an *assistant* turn records a different version and stops
+there — asking the model to answer its own answer is not a turn.
+
+**Regenerating works on any reply, not only the last, and does not delete the old one.**
+The previous answer becomes one version and the new one another, side by side under the
+same question.
+
+**Continue stays on the last turn.** It extends a reply in place rather than making
+another version of it, and there is nothing to extend in the middle of a conversation
+that already has an answer after it. This is the one D-BF restriction that was not about
+the tree, so the tree does not lift it.
+
+**CORRECTED 2026-09-01 — Continue did not work when this was written.** Putting the
+partial reply at the end of the message array is necessary and **not sufficient**:
+`llama-server` applies the chat template with `add_generation_prompt = true` unless the
+request carries **`continue_final_message`**, which closes the assistant turn and opens a
+new one — so the model re-answers instead of extending. The request now sends
+`continue_final_message: "content"` (`common/chat.cpp:565` gives the accepted values).
+
+**And the Web UI does not send it either**, so its own Continue has the same defect
+against this server. Copying the message shape from a reference client without checking
+the reference client works is how this shipped. See **D-BH** for what else that missed.
+
+**Deleting a turn takes its whole subtree, across every branch.** A reply to a question
+that is no longer there is not a conversation, and leaving descendants as orphans makes
+them unreachable rather than gone — invisible in the transcript and still counted by
+every sibling counter.
+
+**Switching version lands the reader on the deepest continuation of the version they
+chose**, not on the switch point, so picking an older answer shows the conversation that
+followed *it*.
+
+**The tree walk is three pure functions in `api.nim`, not methods on the window.** A wrong
+tree walk does not fail loudly — it draws a plausible transcript with the wrong turns in
+it, or a counter off by one. Neither is visible without already knowing the answer, so
+the logic lives where a self-test can feed it a known fork shape with no database and no
+window. That is `jenova-core tree-selftest`, and it is why there are now **six**
+self-tests.
+
+**CORRECTED 2026-09-01 — the original claim here was false and the USER hit it.**
+
+> This entry originally read: *"Conversations written before this exist have an empty
+> `parent` on every row. No migration: the path builder falls back to the newest branch
+> from the oldest root, which is exactly how those conversations read before branching
+> existed."*
+
+**Every clause of that is wrong, and it was written without being tested.** The fallback
+only recovers a conversation whose messages form a chain. In existing data **no message
+is any other's parent**, so:
+
+- `siblingsIn` groups by parent, and every old message shares the same empty parent —
+  making **every message an alternative version of every other one**;
+- `deepestFrom` finds no children, so the visible path is **one message**, and the rest
+  of the conversation is reachable only through the version arrows.
+
+Confirmed against the USER's live database: four messages, all `parent` NULL, the
+transcript collapsed to one bubble, and `currNode` moved as they arrowed through them.
+
+**The real rule: existing messages must be migrated.** `db.initDb` chains each
+conversation's messages in written order, touching only rows whose `parent` is NULL, so
+it is idempotent and cannot disturb a row that branching has already parented.
+
+**Why it was missed, recorded because the pattern is the point.** `tree-selftest`
+asserted a well-formed fork tree thoroughly — and never asserted the **flat, parentless
+shape that every pre-existing conversation actually has**, which is the first shape any
+real user meets. A test suite that only covers the shape the feature creates cannot see
+the shape the feature inherits.
+
+---
+
+## D-BF — message actions stop where branching begins — 2026-09-01 *(its two restrictions are lifted by D-BG)*
 
 Taken while building `PLANS.md` Step 2 (G-28). The Web UI's five message actions were
 ported, but two of them touch conversation history in a way the GUI cannot yet represent.

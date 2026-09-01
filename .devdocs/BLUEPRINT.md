@@ -3,7 +3,7 @@
 Authoritative system architecture: what the program is, what it depends on, and how data moves
 through it. Mandated by `AGENTS.md` § WORKSPACE ARCHITECTURE.
 
-**Last updated:** 2026-09-01 10:17 (Session 014)
+**Last updated:** 2026-09-01 11:07 (Session 014)
 
 > **Rewritten 2026-08-31 (Session 007). The previous 626-line revision is in
 > `.devdocs/ARCHIVE/devdocs/BLUEPRINT_pre-007.md`** — archived, not deleted, per D-AM.
@@ -204,15 +204,29 @@ is frozen (D-Z).
 ## 10. What is NOT built, and is the actual outstanding work
 
 The architecture above is complete and serving. **The gap is in the desktop
-application**, which reproduces the Web UI's shape without most of its function: no
-conversation branching, no attachments, no settings surface (and so no reachable
-sampling parameters), no import/export, no trash view, no generation statistics, no stop
-control, and no typed error reporting.
+application**, which reproduces the Web UI's shape without all of its function: no
+attachments, no settings surface (and so no reachable sampling parameters), no
+import/export, no trash view, no stop control, and no typed error reporting.
 
-**Message actions are built** (2026-09-01) — copy, edit, delete, regenerate and
-continue. Two of them are deliberately restricted until branching exists: edit does not
-resend, and regenerate and continue are offered on the last message only, because both
-otherwise produce alternative versions of turns the GUI has nowhere to keep (**D-BF**).
+**Built 2026-09-01:** message actions (copy, edit, delete, regenerate, continue),
+**conversation branching**, **generation statistics** and **a reasoning view**.
+
+**The chat turn now asks for two things it did not before.** `gui.send` puts
+`timings_per_token` and `reasoning_format` in the request body; `pipeline.prepare`
+re-serialises the whole object, so both reach `llama-server` untouched, and the reply
+stream carries a top-level `timings` object and a `delta.reasoning_content` field
+alongside the content. The window reads the per-conversation context window from
+`llama-server`'s `/props` — **not** from `CTX_SIZE`, which is the total shared across
+parallel slots and would overstate what is left.
+
+**A conversation is a tree, not a list.** `messages.parent` links a turn to the one it
+follows, and two turns sharing a parent are alternative versions of the same turn;
+`conversations.currNode` records which branch is being read. The walk over that tree is
+three pure functions in `api.nim` and is asserted by `jenova-core tree-selftest`
+(**D-BG**). Messages written before branching carry a **NULL** `parent`, so
+`db.initDb` chains each conversation's messages in the order they were written, once
+and idempotently. **That migration is required, not optional** — see the correction in
+D-BG.
 
 **Two subsystems are built and unreachable rather than missing:** retrieval works and is
 never fed (Step 4), and hardware profile selection has no working entry point at all

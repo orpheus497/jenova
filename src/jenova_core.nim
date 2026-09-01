@@ -21,7 +21,7 @@ when not defined(freebsd):
 
 import std/[os, strformat, strutils, json]
 import jenova/[paths, config, db, dbselftest, server, serverselftest,
-               rag, sha256, pipeline, prompts, lifecycle, models, nvimctl]
+               rag, sha256, pipeline, prompts, lifecycle, models, nvimctl, api]
 
 const
   Version = "0.1.0"
@@ -49,7 +49,7 @@ proc usage() =
   echo "  version               Print version and stage"
   echo ""
   echo "  Self-tests: db-selftest, serve-selftest, rag-selftest,"
-  echo "              pipeline-selftest, sha256-selftest"
+  echo "              pipeline-selftest, sha256-selftest, tree-selftest"
   echo ""
   echo "Precedence: builtin default < etc/jenova.conf < etc/jenova.local.conf < environment"
   echo "JENOVA_NO_BACKENDS=1  serve without starting llama-server (used by the tests)"
@@ -208,6 +208,163 @@ proc main() =
       echo "journal_mode:       ", db.journalMode()
       echo "fts5:               ", (if db.hasFts5(): "available" else: "ABSENT")
       quit(0)
+    of "tree-selftest":
+      # Action purpose: conversation branching (G-29) is a tree walk, and a wrong
+      # tree walk does not fail loudly — it draws a plausible transcript with the
+      # wrong turns in it, or a "2 of 3" counter that is off by one. Neither is
+      # visible without knowing what the right answer was. So the walk lives in
+      # `api.nim` as pure functions over (id, parent) pairs and is asserted here
+      # against a fork shape written out by hand, with no database and no window.
+      #
+      # The shape, built in timestamp order the way the window supplies it:
+      #
+      #   u1 ── a1                     first exchange
+      #    └──  a2 ── u2 ── a3         a1 regenerated as a2, conversation went on
+      #    └──  a4                     and regenerated again as a4
+      #   u5                           an edit of u1: a sibling of the root turn
+      #
+      var bad = 0
+      proc check(label: string, cond: bool, detail = "") =
+        if cond: echo "  ok   ", label
+        else:
+          echo "  FAIL ", label, (if detail.len > 0: "\n       " & detail else: "")
+          inc bad
+
+      echo "tree-selftest"
+      let edges: seq[api.MsgEdge] = @[
+        ("u1", ""), ("a1", "u1"), ("a2", "u1"), ("u2", "a2"),
+        ("a3", "u2"), ("a4", "u1"), ("u5", "")]
+
+      check("the path to a leaf is root-first",
+            api.pathTo(edges, "a3") == @["u1", "a2", "u2", "a3"],
+            "got: " & $api.pathTo(edges, "a3"))
+      check("a path skips the branches it did not take",
+            "a1" notin api.pathTo(edges, "a3"))
+      check("the path to a root turn is just that turn",
+            api.pathTo(edges, "u1") == @["u1"])
+      check("an unknown leaf yields no path, rather than a partial one",
+            api.pathTo(edges, "nope").len == 0)
+      check("an empty leaf yields no path", api.pathTo(edges, "").len == 0)
+
+      # The counter's whole job: three versions of the reply to u1.
+      check("every version of a turn is a sibling of the others",
+            api.siblingsIn(edges, "a2") == @["a1", "a2", "a4"],
+            "got: " & $api.siblingsIn(edges, "a2"))
+      check("siblings are in the order they were made",
+            api.siblingsIn(edges, "a4")[0] == "a1")
+      check("a turn that was never branched is its own only sibling",
+            api.siblingsIn(edges, "u2") == @["u2"])
+      check("root turns are siblings of each other",
+            api.siblingsIn(edges, "u1") == @["u1", "u5"])
+      check("an unknown id has no siblings",
+            api.siblingsIn(edges, "nope").len == 0)
+
+      # Switching to a sibling has to land the reader somewhere sensible: the
+      # newest continuation of the version they chose, not the switch point.
+      check("switching to a branch follows it to its newest leaf",
+            api.deepestFrom(edges, "a2") == "a3",
+            "got: " & api.deepestFrom(edges, "a2"))
+      check("a branch with no continuation is its own leaf",
+            api.deepestFrom(edges, "a4") == "a4")
+      check("the newest branch is the one followed from the root",
+            api.deepestFrom(edges, "u1") == "a4",
+            "got: " & api.deepestFrom(edges, "u1"))
+
+      # `parent` is data and a row can be edited through the API, so a cycle is
+      # reachable. It must draw a wrong transcript at worst, never hang the
+      # window.
+      let cyclic: seq[api.MsgEdge] = @[("x", "y"), ("y", "x")]
+      check("a cycle in the parent links terminates",
+            api.pathTo(cyclic, "x").len > 0 and api.pathTo(cyclic, "x").len <= 4096)
+      check("a cycle in the child links terminates",
+            api.deepestFrom(cyclic, "x").len > 0)
+
+      # Action purpose: **the shape that shipped broken, asserted so it cannot
+      # ship again.** Every message written before branching existed has no
+      # parent, so a whole conversation arrives as a flat set of roots. The
+      # assertions above only covered the shape branching *creates*; these cover
+      # the shape it *inherits*, which is the one every existing user met first.
+      # They record what the walk genuinely does with unmigrated data — the
+      # diagnosis — and the migration below is the repair.
+      let flat: seq[api.MsgEdge] = @[
+        ("m1", ""), ("m2", ""), ("m3", ""), ("m4", "")]
+      check("unmigrated history makes every message a sibling of every other",
+            api.siblingsIn(flat, "m1").len == 4,
+            "the defect: a four-message chat reads as four versions of one turn")
+      check("unmigrated history collapses the transcript to one message",
+            api.pathTo(flat, api.deepestFrom(flat, "m1")).len == 1,
+            "so the rest is reachable only through the version arrows")
+
+      # The same four turns once `db.migrateMessageParents` has chained them.
+      let chained: seq[api.MsgEdge] = @[
+        ("m1", ""), ("m2", "m1"), ("m3", "m2"), ("m4", "m3")]
+      check("a migrated conversation is one path again",
+            api.pathTo(chained, "m4") == @["m1", "m2", "m3", "m4"])
+      check("a migrated conversation shows no version arrows",
+            api.siblingsIn(chained, "m1").len == 1 and
+            api.siblingsIn(chained, "m3").len == 1)
+      check("a migrated conversation opens on its last turn",
+            api.deepestFrom(chained, "m1") == "m4")
+
+      # --- the migration itself, against a real table ------------------------
+      # The walk above is pure; the migration is SQL, so this half needs a
+      # database. It runs here rather than in `db-selftest` because what it
+      # protects is branching, and a reader chasing this defect should find the
+      # diagnosis and the repair in one place.
+      block migration:
+        let p = paths.resolve()
+        let scratch = p.state / "jenova-treetest.db"
+        removeFile(scratch)
+        db.initDb(scratch)
+
+        # Rows exactly as the pre-branching build wrote them: `parent` never
+        # bound, so NULL — not an empty string.
+        for spec in [("t1", 10), ("t2", 20), ("t3", 30), ("t4", 40)]:
+          db.exec("INSERT INTO messages (id, convId, type, role, timestamp, " &
+                  "content, is_deleted) VALUES (?, 'c1', 'message', 'user', ?, 'x', 0)",
+                  spec[0], $spec[1])
+        # One row branching already parented, and one soft-deleted, so the
+        # migration is shown not to disturb either.
+        db.exec("INSERT INTO messages (id, convId, type, role, timestamp, content, " &
+                "parent, is_deleted) VALUES ('t5','c1','message','user',50,'x','t4',0)")
+        db.exec("INSERT INTO messages (id, convId, type, role, timestamp, content, " &
+                "is_deleted) VALUES ('gone','c1','message','user',25,'x',1)")
+
+        proc parentOf(id: string): string =
+          let r = db.query("SELECT COALESCE(parent,'<NULL>') FROM messages WHERE id=?", id)
+          if r.len > 0 and r[0].len > 0: r[0][0] else: "<missing>"
+
+        check("before migrating, an old row has no parent at all",
+              parentOf("t2") == "<NULL>", "got: " & parentOf("t2"))
+
+        db.migrateMessageParents()
+
+        check("the oldest turn stays the root", parentOf("t1") == "")
+        check("each later turn is chained to the one before it",
+              parentOf("t2") == "t1" and parentOf("t3") == "t2" and
+              parentOf("t4") == "t3")
+        check("a row branching already parented is left alone",
+              parentOf("t5") == "t4")
+        check("a soft-deleted row is skipped, so the chain has no hole",
+              parentOf("gone") == "<NULL>")
+
+        # Running twice must change nothing: the second pass finds no NULLs for
+        # this conversation and must leave every parent as it found it.
+        db.migrateMessageParents()
+        check("migrating twice changes nothing",
+              parentOf("t1") == "" and parentOf("t2") == "t1" and
+              parentOf("t4") == "t3" and parentOf("t5") == "t4")
+
+        db.closeConn()
+        removeFile(scratch)
+
+      if bad == 0:
+        echo ""
+        echo "tree-selftest: PASS"
+        quit(0)
+      echo ""
+      echo "tree-selftest: FAIL (", bad, ")"
+      quit(1)
     of "sha256-selftest":
       # The cache key is a SHA-256 of the rewritten request body, and a wrong
       # hash does not fail loudly — it produces plausible digests that orphan
@@ -320,6 +477,31 @@ proc main() =
         let r = pipeline.prepare(withCtx)
         check("a message already carrying context is not re-retrieved",
               r.ragHits == 0)
+
+      block passThrough:
+        # Action purpose: the desktop window asks for its generation statistics
+        # and its reasoning split by putting `timings_per_token` and
+        # `reasoning_format` in the request body, and `llama-server` sends
+        # neither unless asked (G-33, G-39). Nothing else guards that: the
+        # pipeline rewrites the body it is handed, and if it dropped keys it did
+        # not recognise, both features would go quietly dead with every other
+        # test still green. That is the failure this asserts against.
+        let r = pipeline.prepare(
+          """{"messages":[{"role":"user","content":"hello"}],""" &
+          """"timings_per_token":true,"reasoning_format":"auto",""" &
+          """"continue_final_message":"content","temperature":0.7}""")
+        let body = parseJson(r.body)
+        check("an unknown request key survives the pipeline",
+              body{"timings_per_token"}.getBool(false))
+        check("a second unknown key survives with its value intact",
+              body{"reasoning_format"}.getStr == "auto")
+        # Without this reaching the server, Continue makes the model restart its
+        # answer instead of extending it — which is exactly what shipped (D-BH).
+        check("the continuation flag survives the pipeline",
+              body{"continue_final_message"}.getStr == "content")
+        # Sampling parameters travel the same path, and Step 5 depends on it.
+        check("a sampling parameter survives the pipeline",
+              body{"temperature"}.getFloat(0.0) == 0.7)
 
       if bad == 0:
         echo ""

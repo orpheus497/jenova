@@ -2,7 +2,7 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-09-01 10:17 (Session 014)
+**Last updated:** 2026-09-01 11:07 (Session 014)
 
 > **Reading the "UNRUN" labels in this file.** Entries below are point-in-time records
 > and several were written with a "compiled; UNRUN" status that was true on the day.
@@ -15,6 +15,77 @@ Macro progress tracking. Most recent entries at the top.
 ---
 
 ## Completed
+
+### 2026-09-01 11:07 — **Two defects the USER found by running the build, both from the same failure: reading a summary instead of the source.**
+
+**1. Existing conversations became a stack of "versions".** Messages written before
+branching have a **NULL** `parent`, so every one of them was a root — `siblingsIn` read a
+whole conversation as alternative versions of one turn, and the transcript collapsed to a
+single bubble with the rest behind the arrows. Confirmed against the USER's live database:
+four messages, all NULL, `currNode` moved as they arrowed through them. **Fixed** by
+`db.migrateMessageParents`, called from `initDb`, which chains each conversation in
+written order and touches only NULL rows, so it is idempotent. Verified end to end
+against a copy of the real database. **The claim in D-BG that no migration was needed was
+false and is corrected there.**
+
+**2. Continue made the model repeat itself.** Ending the message array with the partial
+reply is necessary and not sufficient: `llama-server` applies the chat template with
+`add_generation_prompt = true` unless the request carries **`continue_final_message`**,
+which closes the assistant turn and opens a new one. **Fixed** — the request now sends
+`"content"`. Continue is also now hidden on a turn carrying reasoning, matching the Web
+UI's own guard (**D-BH**).
+
+**`jca_web` does not send that flag either, so its Continue is broken the same way.** The
+standing rule from this: **the Web UI defines what features exist; `llama-server`'s source
+defines how they behave.** This session answered a behaviour question out of the Web UI.
+
+**`tree-selftest` grew from 15 assertions to 26** — it had covered the tree shape
+branching *creates* and never the flat, parentless shape it *inherits*, which is the one
+every existing user meets first. The new cases assert the broken behaviour explicitly,
+then the migrated behaviour, then the migration itself against a real table including
+idempotency. Proven able to fail.
+
+### 2026-09-01 10:50 — **G-33 (part) and G-39 built: generation statistics, context usage, model name, and a reasoning view.**
+
+**The stream parser read `choices[0].delta.content` and threw the rest of every
+chunk away.** It now also reads `delta.reasoning_content`, and the **top-level**
+`timings` and `model` — top level, not inside `choices`, which is the shape mistake
+that would have found nothing. The request asks for both: `timings_per_token` makes
+`llama-server` report on every chunk instead of only the last, so the numbers are live;
+`reasoning_format: "auto"` makes it split thinking out of the answer instead of leaving
+it inline as a `<think>` block.
+
+Per reply: tokens out and tokens/second, tokens in and how many were cached, elapsed,
+context used and remaining, and the model. **The context figure comes from
+`llama-server`'s `/props`, not from `CTX_SIZE`** — the server gives each parallel slot
+`n_ctx / n_parallel` and caps that to the model's training context, so the configured
+total would overstate what is left. Read once per backend lifetime on the control thread.
+
+`messages.thinking`, `messages.model` and `messages.timings` are columns the schema has
+always carried and **nothing had ever written**; they are written now, so statistics and
+reasoning survive a restart.
+
+**Asserted:** `pipeline-selftest` gained three checks that unknown top-level request keys
+survive `prepare`. Nothing else guarded that, and if the pipeline dropped them both
+features would go silently dead with every other test still green. Proven able to fail.
+
+### 2026-09-01 10:50 — **G-29 built: conversation branching.** `PLANS.md` Step 3.
+
+A conversation is a tree. Editing a turn or regenerating a reply now adds an
+**alternative version** beside the old one instead of replacing it, and prev/next arrows
+with a "2/3" counter move between versions. `messages.parent` — another column that
+existed and was never written — holds the shape; `conversations.currNode` holds the
+branch being read, so reopening a chat returns to it.
+
+`App.messages` is now the **active path** and `App.allMessages` is the tree. The walk
+itself is three pure functions in `api.nim` (`pathTo`, `siblingsIn`, `deepestFrom`) so it
+could be asserted at all: a wrong tree walk draws a plausible transcript with the wrong
+turns in it. **New `jenova-core tree-selftest`, 15 assertions over a hand-written fork
+shape** including cycle termination, since `parent` is data and a cycle would otherwise
+hang the window. Proven able to fail.
+
+**This lifts both D-BF restrictions** — edit now resends, and regenerate works on any
+reply, not only the last. Recorded as **D-BG**.
 
 ### 2026-09-01 10:17 — **G-28 built: a message now carries actions — copy, edit, delete, regenerate and continue.** `PLANS.md` Step 2.
 

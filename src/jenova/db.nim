@@ -336,6 +336,35 @@ CREATE TABLE IF NOT EXISTS llm_cache (
 ##
 ## Refuses to run against a single-threaded SQLite build rather than discovering
 ## it later as corruption — the whole design assumes concurrent connections.
+## Function purpose: give every message a parent, once (G-29).
+##
+## **A tree in which every node is a root is not a tree.** Messages written before
+## conversation branching existed never had `parent` bound, so it is NULL on all of
+## them — and the branching code reads that as "these are all alternative versions of
+## one another": the transcript collapses to a single message and the rest of the
+## conversation is reachable only through the version arrows. That is what shipped, and
+## it is what this repairs.
+##
+## Each conversation's messages are chained in the order they were written, which is the
+## conversation as it actually happened. **Only rows whose `parent` is NULL are touched**,
+## so this is idempotent and cannot disturb a row that branching has already parented — a
+## genuine first turn carries an empty string, not NULL, and stays a root.
+##
+## Soft-deleted rows are skipped so the chain matches what the transcript shows. One
+## restored later comes back as its own root; that is the trash view's problem (G-21) and
+## it is better than a hole in the middle of a live conversation.
+proc migrateMessageParents*() =
+  let convs = query(
+    "SELECT DISTINCT convId FROM messages WHERE parent IS NULL AND is_deleted=0")
+  for c in convs:
+    if c.len == 0 or c[0].len == 0: continue
+    var prev = ""
+    for r in query("SELECT id FROM messages WHERE convId=? AND is_deleted=0 " &
+                   "ORDER BY timestamp ASC, rowid ASC", c[0]):
+      if r.len == 0: continue
+      exec("UPDATE messages SET parent=? WHERE id=? AND parent IS NULL", prev, r[0])
+      prev = r[0]
+
 proc initDb*(path: string) =
   if sqlite3_threadsafe() == 0:
     raise newException(DbError,
@@ -345,6 +374,9 @@ proc initDb*(path: string) =
   setGlobalPath(path)
   dbPath = path
   execScript(Schema)
+  # After the schema, because it reads the table the schema creates. Both binaries
+  # open the database through here, so neither can see an unmigrated tree.
+  migrateMessageParents()
 
 ## Action purpose: transaction control goes through execScript rather than the
 ## prepared-statement cache. BEGIN/COMMIT/ROLLBACK are connection state, not

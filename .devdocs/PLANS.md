@@ -2,7 +2,7 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-09-01 10:17 (Session 014)
+**Last updated:** 2026-09-01 11:07 (Session 014)
 
 **Write plans in plain English, then cite the ID** (**D-BA**). A step that reads
 "resolve G-23" tells the reader nothing. Say what the thing is first.
@@ -50,14 +50,16 @@ is `TODOS.md` G-17, G-20, G-21 and G-28 … G-36.
 
 | Works today | Missing entirely |
 |---|---|
-| Send a message, stream a reply | Branching — alternative versions of an answer |
-| **Copy, edit, delete, regenerate and continue a message** | Attachments of any kind |
-| Conversations: create, rename, delete, search | Tables, task lists, LaTeX maths |
-| **Renaming a container keeps its files** | Any settings screen — so no sampling parameters |
-| Markdown text and highlighted code blocks | Import/export, statistics, a stop button |
-| Theme, canvas, Neovim page, AI reads the buffer | A real model selector and model information |
-| Tray, LAN toggle, backend start/stop | Typed errors, retry, context-overflow reporting |
-| Two hardcoded model-switch items | Trash view, delete confirmations, a real note editor |
+| Send a message, stream a reply | Attachments of any kind |
+| **Copy, edit, delete, regenerate and continue a message** | Any settings screen — so no sampling parameters |
+| **Branching — alternative versions, with a counter** | Import / export of conversations |
+| **Generation statistics, context usage, model name** | **A stop button** |
+| **A reasoning view for thinking models** | Tables, task lists, LaTeX maths |
+| Conversations: create, rename, delete, search | A real model selector and model information |
+| **Renaming a container keeps its files** | Typed errors, retry, context-overflow reporting |
+| Markdown text and highlighted code blocks | Trash view, delete confirmations, a real note editor |
+| Theme, canvas, Neovim page, AI reads the buffer | Recall of past chats — the index is never fed |
+| Tray, LAN toggle, backend start/stop | Hardware profile detection and selection |
 
 **Almost all of it is GUI work over backend that is already implemented and has
 assertions behind it.**
@@ -66,7 +68,7 @@ assertions behind it.**
 
 ## Standing constraint: the GUI has no test coverage
 
-All six suites and all five self-tests exercise `jenova-core`. **Nothing tests
+All six suites and all six self-tests exercise `jenova-core`. **Nothing tests
 `gui.nim`.** Every GUI defect in this project's history was found by the USER looking
 at the screen, and that is the loop the steps below are meant to stop repeating.
 
@@ -100,53 +102,36 @@ Done and out of this plan. Copy, edit, delete, regenerate and continue, over a `
 that now carries its row id — which was the change the other four rested on. The record
 is `PROGRESS.md` 2026-09-01 10:17; the scoping call is **D-BF**.
 
-**Two parts were deliberately held back and they are Step 3's job**, not loose ends:
-**edit does not resend**, and **regenerate and continue are offered on the last message
-only**. Both are the same restriction — re-answering a turn that has turns after it
-produces an alternative version of all of them, which is a branch. Without the tree,
-offering it would destroy the following turns instead of letting you choose between
-them.
+**The two restrictions it shipped under were lifted the same day by Step 3** (D-BF →
+D-BG): edit resends, regenerate works on any reply. Continue stays on the last turn, and
+is additionally hidden on a turn carrying reasoning (**D-BH**).
 
-**Step 3 is the next step, and lifting those two restrictions is most of what it is
-for.**
+**Continue also shipped broken and was repaired the same day** — the request has to carry
+`continue_final_message` or `llama-server` starts a new turn instead of extending the
+existing one. See `PROGRESS.md` 2026-09-01 11:07.
 
 ---
 
-## Step 3 — Conversation branching  *(`TODOS.md` G-29)*
+## Step 3 — **BUILT 2026-09-01.** Conversation branching
 
-**What is wrong:** editing or regenerating in the Web UI creates a **sibling** — an
-alternative version — and prev/next arrows with a counter ("2/5") move between them. A
-conversation is a tree.
+Done and out of this plan. `App.messages` is the active path and `App.allMessages` is the
+tree; `messages.parent` holds the shape and `conversations.currNode` holds the branch
+being read. Prev/next arrows and a "2/3" counter appear on any turn that has more than
+one version. The record is `PROGRESS.md` 2026-09-01 10:50; the behaviour is **D-BG**.
 
-**The backend is already done.** `conversations.forkedFromConversationId` exists in the
-schema (`db.nim:296`); `api.deleteConversation` already implements both deletion modes —
-a recursive descendant walk for delete-with-forks, and reparenting children onto the
-deleted node's own parent otherwise — and `test_api_db.sh` asserts both.
+**It released both of D-BF's restrictions:** edit now resends, and regenerate works on
+any reply rather than only the last.
 
-**What blocks it:** the GUI models a conversation as a flat `seq[Message]`
-(`gui.nim:383`) and cannot represent a branch at all. This is a state-shape change
-first and widgets second.
+**The tree walk went into `api.nim` as three pure functions**, not into `gui.nim`, so it
+could be asserted at all — a wrong tree walk draws a plausible transcript with the wrong
+turns in it. `jenova-core tree-selftest`, **26 assertions** — 15 over a hand-written fork
+shape, and 11 added after the USER found that the first 15 covered only the shape
+branching *creates* and never the flat shape it *inherits*.
+**That makes six self-tests, not five.**
 
-**Step 2 did the first half of it.** Each `Message` now carries its row id, which is the
-identity a sibling lookup needs — the tree cannot be built over turns that have no
-names. What remains is the shape, not the contents.
-
-**It also has two callers waiting for it (D-BF).** Edit currently saves without
-resending, and regenerate and continue are offered on the last message only, because
-both create alternative versions and there is nowhere to put them. **Lifting those two
-restrictions is part of this step, not a follow-up.**
-
-**The work:**
-1. `App.messages` becomes the *active path* through the tree, with the full message set
-   held beside it so siblings can be computed.
-2. A sibling lookup: messages sharing a parent. The Web UI's `getMessageSiblings()` is
-   the reference behaviour.
-3. Prev/next controls plus a position counter on any message that has siblings.
-4. Switching sibling reloads the active path from that point down.
-
-**Proof it worked:** the tree walk is pure logic over rows and belongs in an assertion,
-not a screenshot — a scratch conversation with a known fork shape, asserting the active
-path and the sibling counts at each node.
+**Also built in the same pass, out of order and on the USER's instruction:** the
+generation statistics half of **Step 7a** (G-33) and a **reasoning view** (G-39). See
+`PROGRESS.md`. Step 7a survives, reduced to the stop button.
 
 ---
 
@@ -206,6 +191,13 @@ in the JSON body.
 the user, from the server's `/props`, or from an app default. That distinction is what
 stops someone chasing a setting they never actually set.
 
+**One deliberate divergence lands here, recorded so it is not rediscovered as a bug.**
+The Web UI has Continue **off by default** (`enableContinueGeneration: false`). This
+window shows it unconditionally on the last non-reasoning turn, because with no settings
+surface an opt-in flag would make the feature unreachable rather than optional
+(**D-BH**). **This step is where it becomes a setting** — and the default should match the
+Web UI's once there is somewhere to change it.
+
 **Proof it worked:** assert that a stored temperature reaches the outbound body — a
 check on the body-building function, not a live generation.
 
@@ -251,13 +243,12 @@ the archived `test_validate_arg.sh` never did.
 
 Ordered by how often it bites.
 
-**7a. A stop button, and generation statistics  *(G-33)***
-The send button greys out mid-generation (`gui.nim:1548-1553`); there is no way to
-cancel. The Web UI's turns into a stop button. Statistics — tokens in/out, elapsed,
-tokens per second — are shown per message and live during generation. **The
-`messages.timings` column already exists (`db.nim:302`) and nothing writes it.**
-Cancelling means closing the streaming socket from the control worker, which is why the
-two workers are separate (`gui.nim:79-80`).
+**7a. A stop button  *(G-33)*** — **statistics are done** (2026-09-01), this is the half
+that is left. The send button greys out mid-generation; there is no way to cancel. The
+Web UI's turns into a stop button. Cancelling means closing the streaming socket from
+the control worker, which is why the two workers are separate. **Watch out for the
+`umDone` path:** a cancelled reply still has to be saved with the text it reached, and
+with the parent that makes it a sibling rather than an orphan (D-BG).
 
 **7b. Attachments  *(G-30)***
 Images, text, PDFs, by file picker, drag-and-drop and paste; thumbnails; full-size

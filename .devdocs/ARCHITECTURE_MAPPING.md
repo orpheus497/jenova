@@ -3,7 +3,7 @@
 File-by-file map of the codebase: what lives where, and why. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE. Update whenever a file is added, removed or relocated.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 (Session 013).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 10:50 (Session 014).
 
 This file was mandated from the outset and did not exist for Sessions 001–003 —
 including Session 001, which moved or deleted 31 files. See `DECISIONS_LOG.md` C-10.
@@ -149,9 +149,10 @@ Shell suites run by **`nimble suites`** (which builds both binaries first), plus
 `llama-server` backend; `test_nvimctl.sh` spawns a headless `nvim` and skips when none is installed.
 Specs are in `TESTS.md`.
 
-**Six suites, and five self-test subcommands inside `jenova-core`** (`db-`, `serve-`,
-`rag-`, `pipeline-`, `sha256-selftest`) plus `db-capabilities`, which reports rather
-than asserts. *Some earlier trackers said four self-tests; there are five.*
+**Six suites, and six self-test subcommands inside `jenova-core`** (`db-`, `serve-`,
+`rag-`, `pipeline-`, `sha256-`, `tree-selftest`) plus `db-capabilities`, which reports
+rather than asserts. *Earlier trackers said four, then five; `tree-selftest` was added
+2026-09-01 for the branching tree walk, which is pure logic and therefore assertable.*
 
 **Every one of them exercises `jenova-core`. Nothing tests `gui.nim` at all** — no
 suite, no self-test, no driver. Every GUI defect in this project's history was found by

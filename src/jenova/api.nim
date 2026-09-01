@@ -14,7 +14,7 @@
 ## Deletes are soft throughout: rows are flagged, never removed, which is what
 ## makes the trash view and restore possible.
 
-import std/[json, strutils, tables, os]
+import std/[algorithm, json, strutils, tables, os]
 import ./db
 import ./http
 import ./fssync
@@ -453,6 +453,80 @@ proc updateMessage(node: JsonNode): ApiResult =
 ## module rather than writing message SQL of its own.
 proc patchMessage*(node: JsonNode): bool =
   updateMessage(node).status == 200
+
+# ---------------------------------------------------------------------------
+# The message tree (G-29)
+# ---------------------------------------------------------------------------
+#
+# A conversation is a tree, not a list. Editing a turn or regenerating a reply
+# produces an *alternative version* of it — a sibling — and what the reader sees
+# is one path from the root down to whichever leaf they last landed on. The
+# `messages.parent` column has always existed to hold this and nothing wrote it.
+#
+# These three are **pure functions over (id, parent) pairs**, deliberately. They
+# are the part of branching most likely to be silently wrong — an off-by-one in a
+# sibling counter looks fine and misleads — and pure functions over data can be
+# asserted against a known fork shape without a database or a window, which is
+# what `jenova-core tree-selftest` does. The window calls them over the messages
+# it already holds, so this costs it no extra queries.
+
+type MsgEdge* = tuple[id, parent: string]
+
+## Function purpose: the chain from the conversation root down to `leaf`, oldest
+## first — the conversation as it is currently being read.
+##
+## The depth guard is not defensive padding: `parent` is data, a row can be
+## edited through the API, and a cycle would otherwise hang the window rather
+## than draw a wrong transcript. `restoreItem` guards its parent walk for the
+## same reason.
+proc pathTo*(edges: openArray[MsgEdge], leaf: string): seq[string] =
+  if leaf.len == 0: return
+  var parentOf = initTable[string, string]()
+  for e in edges: parentOf[e.id] = e.parent
+  if not parentOf.hasKey(leaf): return
+  var cur = leaf
+  var guard = 0
+  while cur.len > 0 and guard < 4096:
+    result.add cur
+    inc guard
+    if not parentOf.hasKey(cur): break
+    cur = parentOf[cur]
+  reverse(result)
+
+## Function purpose: every version of one turn, in the order they were made —
+## what a "2 of 3" counter counts and what prev/next steps through.
+##
+## A message is its own sibling, so a turn that was never branched returns a list
+## of one. That is what lets the caller ask for siblings unconditionally and show
+## the control only when there is more than one.
+proc siblingsIn*(edges: openArray[MsgEdge], id: string): seq[string] =
+  var parent = ""
+  var found = false
+  for e in edges:
+    if e.id == id:
+      parent = e.parent
+      found = true
+      break
+  if not found: return
+  for e in edges:
+    if e.parent == parent: result.add e.id
+
+## Function purpose: where the reader lands after switching to a sibling — the
+## deepest message under `id`, always following the newest branch.
+##
+## "Newest" is last in `edges`, which the caller supplies in timestamp order, so
+## switching to an older version of a turn shows the reply that was made *for
+## that version* rather than stranding the reader at the switch point.
+proc deepestFrom*(edges: openArray[MsgEdge], id: string): string =
+  result = id
+  var guard = 0
+  while guard < 4096:
+    inc guard
+    var next = ""
+    for e in edges:
+      if e.parent == result: next = e.id
+    if next.len == 0: break
+    result = next
 
 ## Function purpose: bulk import, reproducing `db.import_data`. Wrapped in a
 ## transaction so a partial dump cannot leave the database half-populated —

@@ -5,7 +5,55 @@ One short paragraph per session. Sessions 001-005 are in
 
 ---
 
-## Session 014 — 2026-09-01 10:17
+## Session 014 — 2026-09-01 11:07
+
+**The USER ran the build and found two defects, both mine and both the same mistake:
+taking behaviour from a summary rather than from the source.** (1) Every conversation that
+already existed turned into a stack of "versions" — messages written before branching have
+a **NULL** parent, so all of them were roots, the whole chat read as alternative versions
+of one turn, and the transcript collapsed to a single bubble with the rest behind the
+arrows. **I had written the opposite into D-BG — "no migration needed" — and never tested
+it;** that claim is corrected there, in `BLUEPRINT.md` and in the code comment that
+repeated it. Fixed by `db.migrateMessageParents` at `initDb`, idempotent, verified against
+a copy of the USER's real database. (2) Continue made the model repeat itself: ending the
+array with the partial reply is not sufficient, `llama-server` needs
+**`continue_final_message`** or it closes the assistant turn and starts a new one. Fixed,
+and reading the Web UI properly — which I had not done — also found that Continue there is
+hidden on reasoning turns (adopted) and off by default (deliberately not, until there is a
+settings screen; written into Step 5). **`jca_web` does not send that flag either, so its
+own Continue is broken the same way** — recorded as **D-BH**: the Web UI defines what
+features exist, `llama-server`'s source defines how they behave. **The testing lesson is
+the more useful one:** `tree-selftest` asserted the tree shape branching *creates* and
+never the flat shape it *inherits*, which is what every existing user meets first; it is
+now 26 assertions covering both, proven able to fail by a third independent corruption.
+T-12, correctly called out by the USER, means only that two suites cannot run while the
+app is open — I re-reported it three times instead of saying it once. Below, the rest of
+the session.
+
+Verification first, then **Steps 1, 2 and 3 built**, plus two features asked for
+mid-session. **Step 3 (G-29): a conversation is a tree.** Editing a turn or regenerating
+a reply now adds an alternative version beside the old one, with prev/next arrows and a
+"2/3" counter; `messages.parent` and `conversations.currNode` hold the shape and the
+branch being read — two more columns the schema always had and nothing ever wrote. **The
+tree walk went into `api.nim` as three pure functions rather than into `gui.nim`, and
+that was the decision that mattered**: a wrong tree walk draws a plausible transcript
+with the wrong turns in it, which no screenshot catches, so it is asserted against a
+hand-written fork shape by a new **`tree-selftest`** — 15 assertions including cycle
+termination, since `parent` is data. That makes **six self-tests, not five**, corrected
+in the four documents that state it. Both D-BF restrictions are released (**D-BG**): edit
+resends, regenerate works on any reply. **Statistics and a reasoning view (G-33 part,
+G-39):** the stream parser was reading `delta.content` and discarding the rest of every
+chunk — it now also reads `delta.reasoning_content` and the *top-level* `timings` and
+`model`, and the request asks for both with `timings_per_token` and
+`reasoning_format`. The contract was read out of `llama.cpp`'s own source rather than
+inferred from the Web UI. **Context usage comes from `/props`, not `CTX_SIZE`**, because
+the server divides the context across parallel slots and caps it to the model's training
+length. `pipeline-selftest` gained three assertions that unknown request keys survive the
+rewrite — without which both features would have gone dead silently with every other test
+green. Two memory faults and one correctness bug in this pass's own code were found by
+inspection and fixed. All six suites and six self-tests pass, both binaries build, the
+FreeBSD guard fires. **Nothing has been seen on screen** — four new icon names and a live
+stream are the outstanding checks. Below, the earlier halves of the session.
 
 Verification first, then **Steps 1 and 2 built**. **Step 2 (G-28): a message carries its
 actions again** — copy, edit, delete, regenerate and continue, where before there was one

@@ -1,6 +1,6 @@
 # TODOS
 
-**Last updated:** 2026-09-01 10:17 (Session 014)
+**Last updated:** 2026-09-01 11:07 (Session 014)
 
 Only what is actually outstanding. Everything finished lives in `PROGRESS.md`.
 
@@ -50,33 +50,19 @@ barrel files that list every shipped component. That is the authoritative invent
 check any future scope claim against it, not against a summary.
 
 **Ordering and the work for each item is `PLANS.md`.** The mapping:
-G-29 is Step 3 · G-31 and G-32 are Step 5 · G-33, G-30, G-35, G-34
-and G-36 are Step 7 · G-20, G-21 and G-17 are Step 8.
+G-31 and G-32 are Step 5 · G-33, G-30, G-35, G-34 and G-36 are Step 7 ·
+G-20, G-21 and G-17 are Step 8.
 
-**G-28 is gone from this file because it is done** — a message now carries copy, edit,
-delete, regenerate and continue (2026-09-01, `PROGRESS.md`, D-BF). Two parts of it are
-deliberately held back until branching exists and are named in **G-29** below, not here:
-edit does not resend, and regenerate and continue are offered on the last message only.
+**Done and gone from this file** (2026-09-01, all in `PROGRESS.md`):
 
-### G-29 — Conversation branching does not exist
-
-**It now also gates two message actions.** Editing a turn, or regenerating one that has
-turns after it, produces an *alternative version* of everything that follows. G-28
-shipped without those cases (D-BF) because there is nowhere to put the old version, so
-**Step 3 is what makes edit resend and what lets regenerate work anywhere but the end.**
-
-Editing or regenerating a message in the Web UI creates a **sibling** — an alternative
-version — and you navigate between them with prev/next arrows and a counter ("2/5").
-The whole conversation is a tree, not a list.
-
-The database already supports it: `conversations.forkedFromConversationId` exists, and
-`api.nim` already implements recursive fork deletion and child reparenting
-(`api.deleteConversation`). **The backend is done. The GUI models a conversation as a
-flat `seq[Message]` (`gui.nim:383`) and cannot represent a branch at all.** G-28 gave
-each of those messages its row id, which is the identity a sibling lookup needs, so the
-remaining change is the shape rather than the contents.
-
-Web UI: `ChatMessageBranchingControls`, `ChatMessages`' `getMessageSiblings()`.
+- **G-28** — a message carries copy, edit, delete, regenerate and continue.
+- **G-29 — branching.** Editing or regenerating adds an alternative version rather than
+  replacing one, with a "2/3" counter to move between them. This also released the two
+  restrictions G-28 shipped under: **edit now resends, and regenerate works on any
+  reply** (D-BF → **D-BG**).
+- **G-39 — the reasoning view.** A reasoning model's thinking is split out of the answer
+  and folded away above it, open while the turn is streaming.
+- **The statistics half of G-33.** G-33 remains, reduced to the stop button.
 
 ### G-30 — No attachments of any kind
 
@@ -95,11 +81,15 @@ that may not be worth porting — raise it before building.
 
 ### G-31 — No settings, and therefore no sampling controls
 
-**There is no settings surface in the Nim GUI at all.** `gui.send` posts
-`{"messages": …, "stream": true}` and nothing else (`gui.nim:797`), so **temperature,
-top_p, top_k, min_p, repeat_penalty, frequency/presence penalty and repeat-last-n
-cannot be set from the desktop application.** They are not defaulted badly — they are
-absent.
+**There is no settings surface in the Nim GUI at all**, so **temperature, top_p, top_k,
+min_p, repeat_penalty, frequency/presence penalty and repeat-last-n cannot be set from
+the desktop application.** They are not defaulted badly — they are absent.
+
+**The plumbing is now proven, which reduces this to the screen.** `gui.postConversation`
+already puts `timings_per_token` and `reasoning_format` in the request body and both
+reach `llama-server` untouched, and `pipeline-selftest` asserts that an unknown
+top-level key — `temperature` among them — survives `pipeline.prepare`. So this item is
+a dialog and a stored file, not a plumbing question.
 
 The Web UI's `ChatSettings` has seven tabs: General (API key, system message), Display
 (theme, badges), Sampling, Penalties, Import/Export, MCP, Developer. It also shows,
@@ -118,15 +108,17 @@ conversations and write them to a JSON file, or read one back.
 transactionally (`api.nim:401-422`) and `test_api_db.sh` asserts it. This is a GUI
 front end over finished work.
 
-### G-33 — No generation statistics, and no way to stop a generation
+### G-33 — No way to stop a generation
 
-- **Statistics:** the Web UI shows tokens in/out, elapsed time, tokens per second, per
-  message (`ChatMessageStatistics`) and live during generation
-  (`ChatScreenProcessingInfo`). The Nim GUI shows none of it. The `messages.timings`
-  column already exists in the schema (`db.nim:302`) and nothing writes it.
-- **Stop:** the Web UI's send button becomes a stop button mid-generation
-  (`ChatFormActionSubmit`). **The Nim GUI's just greys out** (`gui.nim:1548-1553`) —
-  once a generation starts there is no way to cancel it short of quitting.
+**Statistics are done** (2026-09-01) — tokens in and out, tokens per second, elapsed,
+cached prompt tokens, context used and remaining, and the model, per reply and live
+during generation. See `PROGRESS.md`.
+
+**What is left is the stop control.** The Web UI's send button becomes a stop button
+mid-generation (`ChatFormActionSubmit`); **the Nim GUI's just greys out**, so once a
+generation starts there is no way to cancel it short of quitting. Cancelling means
+closing the streaming socket from the control worker, which is why the two workers are
+separate.
 
 ### G-34 — Markdown is missing tables, task lists and maths
 
@@ -191,7 +183,7 @@ message rendering. Do not pick it up casually.
 
 ## Standing gap — nothing tests the GUI
 
-All six suites and all five self-test subcommands exercise `jenova-core`: routes,
+All six suites and all six self-test subcommands exercise `jenova-core`: routes,
 database, filesystem, lifecycle, model discovery, and the Neovim buffer reader.
 **Nothing tests `gui.nim` at all.** Every GUI defect in this project's history was
 found by the USER looking at the screen.

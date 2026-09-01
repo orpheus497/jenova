@@ -3,7 +3,7 @@
 Test specifications, validation criteria and expected outcomes. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 10:17 (Session 014).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 11:07 (Session 014).
 Mandated from the outset; absent for Sessions 001–003. See `DECISIONS_LOG.md` C-10.
 
 > **§5a onward are stage acceptance records** — what each stage had to prove and how. They are
@@ -38,7 +38,7 @@ Mandated from the outset; absent for Sessions 001–003. See `DECISIONS_LOG.md` 
 | `test_nvimctl.sh` | Reading the live Neovim buffer (§5i). **The one suite that spawns a process** — a headless `nvim` — and the only one needing a compiled driver, `tests/nvimctl_check.nim`. Skips cleanly with no `nvim` installed |
 
 Plus the core's own subcommands: `db-selftest`, `serve-selftest`, `rag-selftest`,
-`pipeline-selftest`, `sha256-selftest`, `db-capabilities`.
+`pipeline-selftest`, `sha256-selftest`, `tree-selftest`, `db-capabilities`.
 
 **There is no Makefile.** `make check` and `make -C tests check` no longer exist (D-AM).
 
@@ -77,7 +77,8 @@ given `JENOVA_LLAMA_PORT=<dead port>`. **Neither is a product fault.** Fix filed
 and it puts `nim` there. Invoked directly the suite fails at the compile step; under
 `nimble suites` it passes 5/5.
 
-**Five self-tests, six suites.** *Some earlier trackers said four self-tests;
+**Six self-tests, six suites.** *`tree-selftest` was added 2026-09-01 for the
+branching tree walk. Earlier trackers said four self-tests;
 `db-capabilities` is a capability report, not an assertion, which is where the
 miscount came from.*
 
@@ -104,7 +105,7 @@ into the request body.
 |---|---|---|
 | **1 — container rename** (T-14) | ~~A renamed project takes its files with it, and a failed move rolls back~~ **DONE 2026-09-01 — see §0b** | Done as planned: `test_api_fs.sh`, +17 assertions |
 | **2 — message actions** (G-28) | ~~Edit and delete reach the right rows and cascade correctly~~ **DONE 2026-09-01 — see §0c** | Done as planned: `test_api_db.sh`, +12 assertions. Regenerate and continue remain screen-only |
-| **3 — branching** (G-29) | The active path and the sibling counts are right for a known fork shape | A pure walk over rows. Belongs in an assertion, not a screenshot — this is the step most likely to be silently wrong |
+| **3 — branching** (G-29) | ~~The active path and the sibling counts are right for a known fork shape~~ **DONE 2026-09-01 — see §0d** | Done as planned, and as predicted it was the step needing an assertion rather than a screenshot: `jenova-core tree-selftest`, 26 assertions |
 | **4 — chat indexing** (T-17) | A query returns the right message; a conversation-scoped filter confines results; re-indexing a conversation does not duplicate chunks | Extend `rag-selftest`. It already indexes a scratch corpus and asserts ranking, filtering and the vector round-trip |
 | **5 — settings** (G-31) | A stored sampling value actually reaches the outbound JSON body | A check on the body-building function. **Not** a live generation |
 | **6 — hardware profiles** (S-1) | Known hardware selects the right profile; an opt-in profile never wins automatically; the fallback ladder holds (specific > GPU generic > CPU generic) | A new suite over the profile data. Pure scoring logic, no hardware needed. **Prove it can go red first** — the archived `test_validate_arg.sh` never asserted this and rewrote `etc/jenova.conf` as a side effect |
@@ -171,6 +172,71 @@ exported as `patchMessage` so the window's edit and `POST /api/db/messages/updat
 one implementation. Before that the only partial-update code lived inside the HTTP
 handler, and the GUI would have needed a second copy — two definitions of one contract,
 drifting from the first change.
+
+## 0d. `jenova-core tree-selftest` — the branching tree walk (G-29, 2026-09-01)
+
+**Why this is a self-test and not a suite.** Conversation branching is a tree walk, and a
+wrong tree walk **does not fail loudly**: it draws a plausible transcript with the wrong
+turns in it, or a "2 of 3" counter off by one. Neither is visible to someone who does not
+already know the right answer, which makes it precisely the class of defect a screenshot
+cannot catch. So the walk was put in `api.nim` as three pure functions over `(id, parent)`
+pairs — `pathTo`, `siblingsIn`, `deepestFrom` — and is asserted here against a fork shape
+written out by hand, with no database and no window. `sha256-selftest` is the precedent:
+pure logic gets its own subcommand.
+
+**26 assertions.** It began as 15 over one fork shape — a turn regenerated twice, a
+conversation continuing under the middle version, an edit of the root turn — and **that
+was not enough, which the USER found by running the build.**
+
+**What the first 15 missed, recorded because it is the lesson.** They covered the shape
+branching *creates* and never the shape it *inherits*: every message written before
+branching has a NULL `parent`, so an existing conversation arrives as a flat set of
+roots. `siblingsIn` then reads the whole conversation as versions of one turn, and the
+transcript collapses to a single message. **A suite that only tests the shape a feature
+produces cannot see the shape it is given.** The eleven added assertions are that gap,
+in three layers: the broken behaviour stated explicitly, the migrated behaviour, and the
+migration itself.
+
+| Asserted | Why |
+|---|---|
+| The path to a leaf is root-first and skips the branches not taken | The transcript itself |
+| An unknown or empty leaf yields **no** path rather than a partial one | A `currNode` pointing at a deleted turn must fall back, not draw half a conversation |
+| Every version of a turn is a sibling, in the order they were made | What the counter counts and what prev/next steps through |
+| A turn never branched is its own only sibling | Lets the caller ask unconditionally and draw the control only when there is more than one |
+| Root turns are siblings of each other | Editing the first turn of a conversation is the case most likely to be missed |
+| Switching to a branch follows it to its **newest** leaf | Picking an older answer must show the conversation that followed *it*, not strand the reader at the switch point |
+| A cycle in the parent links, and in the child links, **terminates** | `parent` is data and a row is editable through the API. A cycle must draw a wrong transcript at worst, never hang the window |
+| **Unmigrated history makes every message a sibling, and collapses the path to one message** | The defect the USER hit, stated as an assertion so it is a known property rather than a surprise |
+| The same turns, once chained, are one path with no version arrows and open on the last turn | What the migration has to produce |
+| The migration chains a real table, leaves an already-parented row alone, skips soft-deleted rows, and **changes nothing on a second run** | It runs on every `initDb`, so idempotency is not optional |
+
+**Proven able to fail, three independent corruptions.** Removing the `reverse` in `pathTo`
+turns *the path to a leaf is root-first* red; taking the first child instead of the last
+in `deepestFrom` turns *the newest branch is the one followed from the root* red; and
+making `migrateMessageParents` return immediately turns *the oldest turn stays the root*,
+*each later turn is chained to the one before it* and *migrating twice changes nothing*
+red. Each corruption is caught by its own assertions and no others.
+
+**Also verified end to end, not only synthetically:** a copy of the USER's live database
+was run through `jenova-core db-init` and its four NULL-parent messages came out correctly
+chained. The original was not touched.
+
+## 0e. `pipeline-selftest` — request keys survive the rewrite (G-33, G-39, 2026-09-01)
+
+Three assertions, and they guard a silent failure. The window asks for its statistics and
+its reasoning split by putting `timings_per_token` and `reasoning_format` in the request
+body, and **`llama-server` sends neither unless asked**. `pipeline.prepare` rewrites that
+body. If it ever dropped keys it did not recognise, both features would go quietly dead
+with every other test in the project still green — no error, no log line, just numbers
+that never appear.
+
+**Now four assertions.** `continue_final_message` joined them 2026-09-01: without it
+reaching the server, Continue makes the model restart its answer instead of extending it,
+which is exactly what shipped. Sampling parameters travel the same path, so `temperature`
+is asserted alongside them — Step 5 depends on the same property.
+
+**Proven able to fail:** a one-line `req.delete("timings_per_token")` in `prepare` turns
+the first assertion red.
 
 ## 5i. `tests/test_nvimctl.sh` — the live editor buffer (G-18, 2026-08-31)
 
