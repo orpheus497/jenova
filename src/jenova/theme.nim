@@ -280,6 +280,41 @@ list > row:selected {
 /* A capped code block scrolls inside itself rather than pushing the rest of the
    transcript off screen; `fullHeightCodeBlocks` turns the cap off. */
 .code-capped { border-radius: 4px; }
+/* G-34. A markdown table is a real Grid of Labels, so the rule of the thing is
+   the header weight and a line under it — GTK draws no table chrome of its own.
+   The border goes on the header cell rather than the Grid because a Grid has no
+   row concept to hang it on. */
+.md-table {
+  border: 1px solid @jenova_border;
+  border-radius: 6px;
+  background-color: alpha(@jenova_fg, 0.03);
+}
+.md-th {
+  font-weight: bold;
+  border-bottom: 1px solid @jenova_border;
+  padding-bottom: 2px;
+}
+.md-td { color: @jenova_fg; }
+/* G-30. A staged attachment above the composer: a chip, so several read as a
+   row of items rather than as one run of text. */
+.attach-chip {
+  background-color: alpha(@jenova_fg, 0.07);
+  border: 1px solid @jenova_border;
+  border-radius: 12px;
+  padding: 2px 4px 2px 10px;
+}
+/* G-30: the drop target is a Frame only because it needs a single-child
+   setter; it must not look like one. */
+.drop-zone {
+  border: none;
+  background: transparent;
+}
+.attach-thumb {
+  padding: 0;
+  min-width: 0;
+  min-height: 0;
+  border-radius: 4px;
+}
 .settings-label { font-weight: bold; }
 /* Secondary by size rather than by a second colour, which is how `.code-lang`
    and `.dim-note` already do it. */

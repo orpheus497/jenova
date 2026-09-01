@@ -81,6 +81,30 @@ const Cascades = {
     "UPDATE messages SET is_deleted=1 WHERE convId=?"],
 }.toTable
 
+## Function purpose: how many live rows a delete would take with it, so the
+## desktop application's confirmation can say "and 12 items inside it" (G-36)
+## rather than asking a question the user cannot answer.
+##
+## Action purpose: **the counts are derived from `Cascades` itself** rather than
+## written out a second time. A hand-written count and the cascade would drift —
+## and a confirmation that under-reports what it is about to delete is worse
+## than no confirmation at all, because it is trusted. Each `UPDATE t SET
+## is_deleted=1 WHERE <pred>` becomes `SELECT COUNT(*) FROM t WHERE <pred> AND
+## is_deleted=0`, so the rows counted are exactly the rows that statement is
+## about to flag.
+proc cascadeCount*(entity, id: string): int =
+  if not Cascades.hasKey(entity): return 0
+  for sql in Cascades[entity]:
+    let setAt = sql.find(" SET ")
+    let whereAt = sql.find(" WHERE ")
+    if setAt < 0 or whereAt < 0: continue
+    let table = sql["UPDATE ".len ..< setAt]
+    let pred = sql[whereAt + " WHERE ".len .. ^1]
+    for row in db.query("SELECT COUNT(*) FROM " & table & " WHERE " & pred &
+                        " AND is_deleted=0", id):
+      if row.len > 0:
+        try: result += parseInt(row[0]) except ValueError: discard
+
 type ApiResult* = object
   status*: int
   body*: string

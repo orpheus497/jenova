@@ -172,10 +172,11 @@ layers on CPU. On a dual-GPU laptop, `-fitt` distributes layers across both Vulk
 point is not raw speed but pooled VRAM, which buys either a larger model or a much wider context
 than the discrete GPU alone allows. Coordination between devices costs a little throughput.
 
-**Memory.** On ZFS, cap `vfs.zfs.arc_max` so the ARC does not compete with the model; each
-profile's `jenova-setup` does this. Integrated-GPU systems share system RAM with the GPU and
-benefit from fast NVMe swap. Where an Optane device is present, `jenova-swap-mount` can back the
-model store with it, letting context overflow page at roughly 7 µs.
+**Memory.** On ZFS, capping `vfs.zfs.arc_max` stops the ARC competing with the model — worth
+doing, and **yours to do: Jenova sets no kernel tunable and never writes `/etc/sysctl.conf`.**
+Integrated-GPU systems share system RAM with the GPU and benefit from fast NVMe swap; where an
+Optane device is present, backing the model store with it lets context overflow page at roughly
+7 µs.
 
 **Speculative decoding.** A small drafter proposes several tokens and the main model verifies
 them in one pass — usually 1.5×–2× faster, at roughly 0.5–0.8 GB extra VRAM. Enabled per profile,

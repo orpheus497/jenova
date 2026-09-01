@@ -5,11 +5,18 @@
 import std/strutils
 
 type
-  BlockKind* = enum bkText, bkCode
+  BlockKind* = enum bkText, bkCode, bkTable
   Block* = object
     kind*: BlockKind
     text*: string
     lang*: string
+    ## G-34. A table is rows of already-marked-up cells rather than one string,
+    ## because Pango has no table: it has to become a real `Grid` of `Label`s in
+    ## the widget layer. Row 0 is the header. `aligns` is one `xAlign` per
+    ## column, taken from the `:---:` markers, so the widget layer applies it
+    ## without re-parsing anything.
+    rows*: seq[seq[string]]
+    aligns*: seq[float]
 
 proc escape(s: string): string =
   s.multiReplace(("&", "&amp;"), ("<", "&lt;"), (">", "&gt;"))
@@ -56,18 +63,62 @@ proc inlineMarkup*(line: string): string =
   result = protected
   result = result.inlineSpan("**", "b")
   result = result.inlineSpan("__", "b")
+  # Before the single `*` pass, or the first two tildes would already be gone —
+  # and after the double-asterisk passes, for the same reason (G-34).
+  result = result.inlineSpan("~~", "s")
   result = result.inlineSpan("*", "i")
   for idx, code in codes:
     result = result.replace("\0" & $idx & "\0", "<tt>" & code & "</tt>")
 
 proc lineMarkup(line: string): string =
   let t = line.strip(trailing = false)
-  if t.startsWith("### "): "<b>" & inlineMarkup(t[4 .. ^1]) & "</b>"
+  # G-34: task lists are checked before the plain bullet, because every task
+  # item is also a bullet and the bullet branch would swallow it and render the
+  # raw brackets. The box is a character rather than a widget: this is one line
+  # of a Pango label, and the Web UI's checkbox is not interactive either.
+  if t.startsWith("- [ ] ") or t.startsWith("* [ ] "):
+    "  ☐ " & inlineMarkup(t[6 .. ^1])
+  elif t.startsWith("- [x] ") or t.startsWith("* [x] ") or
+       t.startsWith("- [X] ") or t.startsWith("* [X] "):
+    "  ☑ " & inlineMarkup(t[6 .. ^1])
+  elif t.startsWith("### "): "<b>" & inlineMarkup(t[4 .. ^1]) & "</b>"
   elif t.startsWith("## "): "<big><b>" & inlineMarkup(t[3 .. ^1]) & "</b></big>"
   elif t.startsWith("# "): "<big><b>" & inlineMarkup(t[2 .. ^1]) & "</b></big>"
   elif t.startsWith("- ") or t.startsWith("* "): "  • " & inlineMarkup(t[2 .. ^1])
   elif t.startsWith("> "): "<i>" & inlineMarkup(t[2 .. ^1]) & "</i>"
   else: inlineMarkup(line)
+
+## Function purpose: split a `|`-delimited row into its cells, dropping the
+## optional leading and trailing pipes so `| a | b |` and `a | b` give the same
+## two cells.
+proc tableCells(line: string): seq[string] =
+  var t = line.strip
+  if t.startsWith("|"): t = t[1 .. ^1]
+  if t.endsWith("|"): t = t[0 ..< ^1]
+  for cell in t.split('|'): result.add cell.strip
+
+## Function purpose: is this the `|---|:--:|` line that turns the row above it
+## into a table header? That line is the only thing distinguishing a table from
+## a paragraph that happens to contain a pipe, which is why it is required.
+proc isTableSeparator(line: string): bool =
+  let cells = tableCells(line)
+  if cells.len == 0 or not line.contains('|'): return false
+  for cell in cells:
+    if cell.len == 0: return false
+    for ch in cell:
+      if ch notin {'-', ':', ' '}: return false
+    if not cell.contains('-'): return false
+  true
+
+## `:---` left, `---:` right, `:---:` centre — as an `xAlign` the widget layer
+## can apply directly.
+proc alignOf(cell: string): float =
+  let c = cell.strip
+  let left = c.startsWith(":")
+  let right = c.endsWith(":")
+  if left and right: 0.5
+  elif right: 1.0
+  else: 0.0
 
 ## Split on fenced code blocks. An unterminated fence — which is every code block
 ## mid-stream — is emitted as code rather than held back, so a block appears as
@@ -100,11 +151,54 @@ proc parse*(content: string): seq[Block] =
     cur.add line
 
   flush(if inCode: bkCode else: bkText, lang)
-  result = blocks
 
-  for b in result.mitems:
-    if b.kind == bkText:
-      var lines: seq[string] = @[]
-      for l in b.text.splitLines():
-        lines.add lineMarkup(l)
-      b.text = lines.join("\n")
+  # G-34: tables are lifted out of the text blocks here rather than inside the
+  # fence loop above, so the fence handling — which is what makes a block appear
+  # while it is still streaming — is untouched. A `|` inside a code block is
+  # never seen by this, because code blocks are already separate by now.
+  # `outp` rather than writing straight into `result`, because the closure below
+  # would be capturing `result` — which Nim refuses as a memory-safety
+  # violation, and rightly: it is the caller's buffer.
+  var outp: seq[Block] = @[]
+  for b in blocks:
+    if b.kind != bkText:
+      outp.add b
+      continue
+    let lines = b.text.splitLines()
+    var pending: seq[string] = @[]
+
+    proc flushText() =
+      if pending.len > 0:
+        var marked: seq[string] = @[]
+        for l in pending: marked.add lineMarkup(l)
+        outp.add Block(kind: bkText, text: marked.join("\n"))
+        pending.setLen(0)
+
+    var i = 0
+    while i < lines.len:
+      # A table is a header row, a separator row, then rows until something
+      # that is not a row. The separator is what makes it a table at all.
+      if i + 1 < lines.len and lines[i].contains('|') and
+         isTableSeparator(lines[i + 1]):
+        flushText()
+        var tbl = Block(kind: bkTable)
+        let header = tableCells(lines[i])
+        var marked: seq[string] = @[]
+        for cell in header: marked.add inlineMarkup(cell)
+        tbl.rows.add marked
+        for cell in tableCells(lines[i + 1]): tbl.aligns.add alignOf(cell)
+        i += 2
+        while i < lines.len and lines[i].contains('|'):
+          var row: seq[string] = @[]
+          for cell in tableCells(lines[i]): row.add inlineMarkup(cell)
+          # A short row is padded rather than dropped: a model miscounting its
+          # own pipes should cost an empty cell, not the whole table.
+          while row.len < tbl.rows[0].len: row.add ""
+          tbl.rows.add row
+          i.inc
+        outp.add tbl
+        continue
+      pending.add lines[i]
+      i.inc
+    flushText()
+  result = outp

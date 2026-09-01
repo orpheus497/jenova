@@ -15,7 +15,7 @@ nimble web       # the Web UI, into public/
 nimble gui       # bin/jenova, the desktop application
 
 # 3. Detect hardware and deploy the matching profile
-./hardware-profiles/detect-hardware.sh --apply
+jenova-core hardware apply --best
 ```
 
 Both binaries land in `bin/`. Run `./bin/jenova` for the desktop application, or
@@ -119,7 +119,7 @@ CUDA is **never auto-selected** — the `CUDA/dgpu-generic` profile sets `PROFIL
 excludes it from detection. To use it deliberately:
 
 ```sh
-./hardware-profiles/detect-hardware.sh --apply-profile CUDA/dgpu-generic
+jenova-core hardware apply CUDA/dgpu-generic
 ```
 
 The `nimble llama` task builds with `-DGGML_VULKAN=ON`. For CUDA, configure
@@ -131,16 +131,20 @@ The `nimble llama` task builds with `-DGGML_VULKAN=ON`. For CUDA, configure
 ## Hardware profile
 
 ```sh
-./hardware-profiles/detect-hardware.sh --info     # detection report, no changes
-./hardware-profiles/detect-hardware.sh --list     # list every profile
-./hardware-profiles/detect-hardware.sh --apply    # auto-detect and deploy
-./hardware-profiles/detect-hardware.sh --apply-profile Vulkan/dgpu-i5-1135g7
-
-sudo hardware-profiles/<backend>/<config>/jenova-setup   # sysctls, swap, ZFS ARC
+jenova-core hardware detect     # detection report, no changes
+jenova-core hardware list     # list every profile
+jenova-core hardware apply --best    # auto-detect and deploy
+jenova-core hardware apply Vulkan/dgpu-i5-1135g7
 ```
 
-`--apply` writes `$JCA_HOME/etc/jenova.conf`, and `src/jenova/config.nim` prefers that copy over
-the one in the source tree.
+The same screen is in the desktop application under the Hardware button, which is the
+intended way to do it — the subcommand exists for headless hosts.
+
+`apply` writes `$JCA_HOME/etc/jenova.conf`, and `src/jenova/config.nim` prefers that copy over
+the one in the source tree. It never touches your `jenova.local.conf`.
+
+**Jenova applies no kernel tuning.** It reads `sysctl` values to detect the machine and
+sets none. Anything under [ZFS](#zfs) below is yours to apply if you want it.
 
 Profiles live at `hardware-profiles/<backend>/<config>/`. See
 [../hardware-profiles/README.md](../hardware-profiles/README.md).
@@ -153,7 +157,7 @@ On ZFS, cap the ARC so it does not compete with the model for RAM. Add to `/etc/
 vfs.zfs.arc_max=2147483648
 ```
 
-Each profile's `jenova-setup` applies this and other tunables for you.
+Apply it yourself — Jenova does not set kernel tunables.
 
 ---
 
@@ -204,7 +208,7 @@ git submodule update --init
 nimble llama      # only when external/llama.cpp moved
 nimble web
 nimble gui
-./hardware-profiles/detect-hardware.sh --apply
+jenova-core hardware apply --best
 ```
 
 ---

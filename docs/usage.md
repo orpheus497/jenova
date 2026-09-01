@@ -54,9 +54,12 @@ The `jenova.desktop` entry launches `jenova`.
 jenova-core paths                    # every resolved runtime path
 jenova-core config                   # paths plus the resolved configuration
 jenova-core db-capabilities          # what the linked libsqlite3 supports
-./hardware-profiles/detect-hardware.sh --info
-sudo hardware-profiles/<backend>/<config>/jenova-setup   # sysctls, swap, ZFS ARC
+jenova-core hardware detect          # what this machine is, and which profile matched
+jenova-core hardware list            # every profile, scored
+jenova-core hardware apply --best    # deploy the matched profile
 ```
+
+The desktop application has the same thing under the Hardware button.
 
 ---
 

@@ -104,11 +104,12 @@ done
 ## Function purpose: load configuration under the corrected precedence. The
 ## profile conf is required — without it there are no tuning values at all and
 ## guessing them would be worse than failing.
-## Action purpose: `detect-hardware.sh --apply` deploys the matched profile to
-## `$JCA_HOME/etc/jenova.conf` and only *mirrors* it into the repository's `etc/`
-## when that directory happens to be writable. The deployed copy is therefore the
-## authoritative one, and reading the repository copy first meant a host whose
-## source tree was read-only ran on a stale profile. The whole directory is
+## Action purpose: `hardware.applyProfile` — the window's Hardware screen, or
+## `jenova-core hardware apply` — deploys the matched profile to
+## `$JCA_HOME/etc/jenova.conf`. The deployed copy is therefore the authoritative
+## one, and reading the repository copy first meant a host whose source tree was
+## read-only ran on a stale profile. (This was `detect-hardware.sh --apply`
+## until S-1 ported it to Nim; the precedence is unchanged.) The whole directory is
 ## chosen at once — profile and local override together — so the two can never
 ## come from different trees and disagree.
 proc configDir(p: Paths): string =
@@ -123,7 +124,8 @@ proc load*(p: Paths): Config =
   if not fileExists(result.profileConf):
     raise newException(ConfigError,
       "profile config not found: " & result.profileConf &
-      " (apply one with hardware-profiles/detect-hardware.sh --apply-profile)")
+      " (apply one from the window's Hardware screen, or with" &
+      " `jenova-core hardware apply --best`)")
 
   if not fileExists(result.localConf):
     result.localConf = ""

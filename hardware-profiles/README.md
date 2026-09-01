@@ -20,8 +20,6 @@ hardware-profiles/
 │   └── dgpu-generic/             # Opt-in only — never auto-selected
 ├── CPU/
 │   └── generic/                  # CPU-only fallback
-├── common-setup.sh
-├── detect-hardware.sh
 └── README.md
 ```
 
@@ -110,10 +108,10 @@ Arc A770
 profile — it scores 25, above `CPU/generic` (20) and below every hardware-specific profile (30+).
 
 **`MATCH_GPU_0` is an explicit allowlist, not a catch-all.** It offloads every layer and opens a
-32K context, which only a card with 12 GiB or more survives; `detect-hardware.sh` reads no VRAM
+32K context, which only a card with 12 GiB or more survives; detection reads no VRAM
 figure and can only validate by device name, so the pattern names the models that qualify. A card
 that is not listed falls to `CPU/generic` — the safe direction — and this profile stays deployable
-by name with `--apply-profile`. A newer card with enough VRAM belongs in that list.
+by name with `jenova-core hardware apply`. A newer card with enough VRAM belongs in that list.
 
 | Setting | Value |
 |---|---|
@@ -150,7 +148,7 @@ default to Vulkan.
 Deploy it deliberately:
 
 ```sh
-./hardware-profiles/detect-hardware.sh --apply-profile CUDA/dgpu-generic
+jenova-core hardware apply CUDA/dgpu-generic
 ```
 
 | Setting | Value |
@@ -181,9 +179,9 @@ nothing reads it.
 ## Profile Detection
 
 ```sh
-./hardware-profiles/detect-hardware.sh --info    # Hardware detection report
-./hardware-profiles/detect-hardware.sh --apply   # Auto-detect and deploy
-./hardware-profiles/detect-hardware.sh --list    # List all profiles
+jenova-core hardware detect    # Hardware detection report
+jenova-core hardware apply --best   # Auto-detect and deploy
+jenova-core hardware list    # List all profiles
 ```
 
 ### Detection Scoring
@@ -225,8 +223,7 @@ answers `Linux`, which previously caused detection to select a Linux profile on 
 ```
 <backend>/<config>/
 ├── profile.conf        # Detection rules and metadata
-├── jenova.conf         # Runtime configuration
-└── jenova-setup        # One-time system tuning (run as root)
+└── jenova.conf         # Runtime configuration
 ```
 
 ### `profile.conf`
@@ -254,10 +251,13 @@ right-hand side, as environment overrides:
 CTX_SIZE="${JENOVA_CTX:-16384}"
 ```
 
-### `jenova-setup`
+### Kernel tuning — not here, and not Jenova's job
 
-One-time system tuning: sysctls, ZFS ARC cap, hardware-specific settings. Run once as root
-after deploying a profile.
+Each profile once carried a `jenova-setup` script that set sysctls and capped the ZFS ARC.
+**Those are archived and nothing replaces them: Jenova never applies a kernel tunable and
+never writes `/etc/sysctl.conf`.** It reads `sysctl` to detect the machine and sets nothing.
+Tuning the kernel is yours to do; the values the old scripts used are preserved under
+`.devdocs/ARCHIVE/hardware-profiles/`.
 
 ---
 
@@ -265,14 +265,13 @@ after deploying a profile.
 
 ```sh
 # Deploy a specific profile
-./hardware-profiles/detect-hardware.sh --apply-profile Vulkan/dgpu-i5-1135g7
+jenova-core hardware apply Vulkan/dgpu-i5-1135g7
 
 # Or copy manually. config.nim prefers $JCA_HOME/etc over the source tree's etc/
 cp hardware-profiles/Vulkan/dgpu-i5-1135g7/jenova.conf "${JCA_HOME:-$HOME/Jenova}/etc/jenova.conf"
-
-# Run that profile's system tuning
-sudo hardware-profiles/Vulkan/dgpu-i5-1135g7/jenova-setup
 ```
+
+The desktop application's Hardware screen does the same thing, and is the intended route.
 
 ---
 
@@ -303,7 +302,7 @@ them directly.
 3. Add `profile.conf` with detection patterns and metadata.
 4. Add `jenova.conf` by copying an existing profile — **check the variable names against the
    list above.**
-5. Add `jenova-setup` if the hardware needs system tuning.
-6. Test: `./hardware-profiles/detect-hardware.sh --info`
+5. That is all a profile is — two data files. There is no setup script.
+6. Test: `jenova-core hardware detect`
 
 Name profiles for the hardware, not the model — model selection is an environment override.

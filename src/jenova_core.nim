@@ -19,10 +19,10 @@
 when not defined(freebsd):
   {.error: "jenova-core targets FreeBSD only — see .devdocs/PLANS.md Plan B.".}
 
-import std/[os, strformat, strutils, json]
-import jenova/[paths, config, db, dbselftest, server, serverselftest,
+import std/[os, sequtils, strformat, strutils, json]
+import jenova/[paths, config, db, dbselftest, server, serverselftest, markdown,
                rag, sha256, pipeline, prompts, lifecycle, models, nvimctl, api,
-               settings]
+               settings, hardware]
 
 const
   Version = "0.1.0"
@@ -44,13 +44,18 @@ proc usage() =
   echo "                  start | stop | restart | status | health | args"
   echo "                  status = pids · health = does the port answer"
   echo ""
+  echo "  hardware <sub>  Detect hardware and select a profile (S-1)"
+  echo "                  detect | list | apply <name|--best>"
+  echo ""
   echo "  paths | config        Resolve and print paths / configuration"
   echo "  db-init               Create the database and schema"
   echo "  db-capabilities       Report what the linked libsqlite3 supports"
   echo "  version               Print version and stage"
   echo ""
   echo "  Self-tests: db-selftest, serve-selftest, rag-selftest,"
-  echo "              pipeline-selftest, sha256-selftest, tree-selftest"
+  echo "              pipeline-selftest, sha256-selftest, tree-selftest,"
+  echo "              hardware-selftest, markdown-selftest, error-selftest,"
+  echo "              attach-selftest"
   echo ""
   echo "Precedence: builtin default < etc/jenova.conf < etc/jenova.local.conf < environment"
   echo "JENOVA_NO_BACKENDS=1  serve without starting llama-server (used by the tests)"
@@ -198,6 +203,68 @@ proc main() =
         quit(0)
       else:
         echo "usage: jenova-core models [list|switch <instruct|thinking>]"
+        quit(2)
+    of "hardware":
+      # Action purpose: hardware detection and profile selection, replacing
+      # `hardware-profiles/detect-hardware.sh` (S-1, D-BC). The GUI calls
+      # `hardware.*` directly; this exists so a headless host can do the same,
+      # which is the one case a window cannot serve.
+      let p = paths.resolve()
+      let sub = if args.len > 1: args[1] else: "detect"
+      let profiles = hardware.listProfiles(p.root)
+      case sub
+      of "detect":
+        let h = hardware.detect(p.llamaServer, p.llamaLibDir)
+        echo "OS:      ", h.osName, " ", h.osRelease
+        echo "CPU:     ", h.cpuModel, " (", h.cpuThreads, " threads)"
+        if h.gpuDevices.len == 0:
+          echo "GPU:     none reported by llama-server --list-devices"
+        else:
+          for d in h.gpuDevices: echo "GPU:     ", d
+        echo "RAM:     ", h.ramGiB, " GiB"
+        echo "Swap:    ", h.swapGiB, " GiB"
+        echo "Storage: ", h.storage
+        echo "SwapHw:  ", h.swapInfo
+        echo ""
+        let (found, best) = hardware.bestProfile(profiles, h)
+        if found:
+          echo "matched: ", best.profile.name, "  (score ", best.points, ")"
+          for w in best.why: echo "         ", w
+        else:
+          echo "matched: none — no profile scored above zero"
+        let (haveCur, cur) = hardware.currentProfile(profiles, p.jcaHome)
+        echo "current: ", (if haveCur: cur else: "none deployed")
+        quit(if found: 0 else: 1)
+      of "list":
+        let h = hardware.detect(p.llamaServer, p.llamaLibDir)
+        for s in hardware.scoreAll(profiles, h):
+          let mark = if s.disqualified: "  --" else: align($s.points, 4)
+          echo mark, "  ", s.profile.name
+          for w in s.why: echo "        ", w
+        quit(0)
+      of "apply":
+        if args.len < 3:
+          echo "usage: jenova-core hardware apply <profile-name|--best>"
+          quit(2)
+        var target: hardware.Profile
+        if args[2] == "--best":
+          let h = hardware.detect(p.llamaServer, p.llamaLibDir)
+          let (found, best) = hardware.bestProfile(profiles, h)
+          if not found:
+            stderr.writeLine "no profile matched this machine"
+            quit(1)
+          target = best.profile
+        else:
+          let (found, p2) = hardware.findByName(profiles, args[2])
+          if not found:
+            stderr.writeLine "no such profile: " & args[2]
+            quit(1)
+          target = p2
+        let r = hardware.applyProfile(target, p.jcaHome)
+        echo r.msg
+        quit(if r.ok: 0 else: 1)
+      else:
+        echo "usage: jenova-core hardware [detect|list|apply <name|--best>]"
         quit(2)
     of "db-capabilities":
       # Reports what the linked libsqlite3 can actually do, rather than what the
@@ -359,12 +426,494 @@ proc main() =
         db.closeConn()
         removeFile(scratch)
 
+      # Action purpose: G-36's confirmation tells the USER how many items a
+      # delete will take with it, and **an under-count is worse than no dialog**
+      # — a confirmation is trusted. `api.cascadeCount` derives its counts by
+      # rewriting the same `Cascades` statements the delete runs, so this
+      # asserts the derivation actually finds the rows.
+      block cascadeCounting:
+        let p = paths.resolve()
+        let scratch = p.state / "jenova-cascadetest.db"
+        removeFile(scratch)
+        db.initDb(scratch)
+
+        db.exec("INSERT INTO workspaces (id, name, is_deleted) VALUES " &
+                "('w1','W',0)")
+        db.exec("INSERT INTO projects (id, workspaceId, name, is_deleted) " &
+                "VALUES ('p1','w1','P',0)")
+        db.exec("INSERT INTO folders (id, projectId, name, is_deleted) " &
+                "VALUES ('f1','p1','F',0)")
+        db.exec("INSERT INTO notes (id, workspaceId, projectId, folderId, " &
+                "title, is_deleted) VALUES ('n1','w1','p1','f1','N',0)")
+        db.exec("INSERT INTO conversations (id, workspaceId, projectId, " &
+                "folderId, name, is_deleted) VALUES ('c1','w1','p1','f1','C',0)")
+        db.exec("INSERT INTO messages (id, convId, role, content, is_deleted) " &
+                "VALUES ('m1','c1','user','hi',0)")
+        db.exec("INSERT INTO messages (id, convId, role, content, is_deleted) " &
+                "VALUES ('m2','c1','assistant','yo',0)")
+
+        # A workspace takes its project, folder, note and conversation — four.
+        check("a workspace counts every descendant table",
+              api.cascadeCount("workspaces", "w1") == 4,
+              "got " & $api.cascadeCount("workspaces", "w1"))
+        check("a folder counts only what is in it",
+              api.cascadeCount("folders", "f1") == 2,
+              "got " & $api.cascadeCount("folders", "f1"))
+        check("a conversation counts its messages",
+              api.cascadeCount("conversations", "c1") == 2,
+              "got " & $api.cascadeCount("conversations", "c1"))
+        check("a leaf entity cascades to nothing",
+              api.cascadeCount("notes", "n1") == 0)
+
+        # **Already-deleted rows are not counted**, or the dialog would promise
+        # to delete things that are already gone.
+        db.exec("UPDATE messages SET is_deleted=1 WHERE id='m2'")
+        check("a soft-deleted row is not counted again",
+              api.cascadeCount("conversations", "c1") == 1,
+              "got " & $api.cascadeCount("conversations", "c1"))
+
+        db.closeConn()
+        removeFile(scratch)
+
       if bad == 0:
         echo ""
         echo "tree-selftest: PASS"
         quit(0)
       echo ""
       echo "tree-selftest: FAIL (", bad, ")"
+      quit(1)
+    of "attach-selftest":
+      # Action purpose: G-30. What an attachment becomes on the wire is the
+      # whole feature — a picture that reaches the model as the wrong part type
+      # is silently ignored by it, which looks like a model that cannot see.
+      # `pipeline.contentFor` is pure, so the shape is asserted here instead of
+      # being discovered by attaching something and reading a wrong answer.
+      var bad = 0
+      proc check(label: string, cond: bool, detail = "") =
+        if cond: echo "  ok   ", label
+        else:
+          echo "  FAIL ", label, (if detail.len > 0: "\n       " & detail else: "")
+          inc bad
+
+      echo "attach-selftest"
+
+      block noAttachments:
+        # Action purpose: **the plain-string form must survive untouched.** Every
+        # request this program has ever sent uses it, and switching all of them
+        # to content arrays to support a feature most turns do not use would be
+        # a change to every single generation.
+        let c = pipeline.contentFor("hello", nil)
+        check("no attachments leaves content a plain string",
+              c.kind == JString and c.getStr == "hello", $c)
+        check("an empty array is also left as a string",
+              pipeline.contentFor("hi", newJArray()).kind == JString)
+
+      block image:
+        let extra = %*[{"type": "IMAGE", "name": "a.png",
+                        "base64Url": "data:image/png;base64,AAAA"}]
+        let c = pipeline.contentFor("look", extra)
+        check("an attachment turns content into parts", c.kind == JArray)
+        check("the text comes first", c[0]{"type"}.getStr == "text" and
+              c[0]{"text"}.getStr == "look")
+        check("an image becomes an image_url part",
+              c[1]{"type"}.getStr == "image_url", $c[1])
+        check("the data URL is passed through whole",
+              c[1]{"image_url"}{"url"}.getStr == "data:image/png;base64,AAAA")
+
+      block textFile:
+        let extra = %*[{"type": "TEXT", "name": "notes.md", "content": "BODY"}]
+        let c = pipeline.contentFor("read this", extra)
+        let part = c[1]{"text"}.getStr
+        check("a text file becomes a text part",
+              c[1]{"type"}.getStr == "text")
+        # The Web UI's exact wrapper — `formatAttachmentText`. A different one
+        # would mean the same conversation reads differently on each surface.
+        check("it is wrapped in the Web UI's own header",
+              part == "\n\n--- File: notes.md ---\nBODY", part)
+
+      block imageOnly:
+        # Attachments with no words at all: a normal thing to send.
+        let extra = %*[{"type": "IMAGE", "name": "a.png", "base64Url": "data:x"}]
+        let c = pipeline.contentFor("", extra)
+        check("an attachment with no text sends no empty text part",
+              c.kind == JArray and c.len == 1 and
+              c[0]{"type"}.getStr == "image_url", $c)
+
+      block legacy:
+        # The old web UI stored pasted text as `context`; an imported
+        # conversation still carries them and dropping them loses content.
+        let extra = %*[{"type": "context", "name": "p.txt", "content": "X"}]
+        let c = pipeline.contentFor("q", extra)
+        check("a legacy `context` attachment is still sent",
+              c.len == 2 and c[1]{"text"}.getStr.contains("p.txt"), $c)
+
+      block ordering:
+        # The Web UI emits text, then images, then text files. A different order
+        # is a different prompt.
+        let extra = %*[
+          {"type": "TEXT", "name": "t.txt", "content": "T"},
+          {"type": "IMAGE", "name": "i.png", "base64Url": "data:i"}]
+        let c = pipeline.contentFor("q", extra)
+        check("images are emitted before text files, as the Web UI does",
+              c[1]{"type"}.getStr == "image_url" and
+              c[2]{"text"}.getStr.contains("t.txt"), $c)
+
+      block pdfAndAudio:
+        let extra = %*[
+          {"type": "PDF", "name": "d.pdf", "content": "TEXT",
+           "processedAsImages": false},
+          {"type": "AUDIO", "name": "a.wav", "base64Data": "QUJD",
+           "mimeType": "audio/wav"}]
+        let c = pipeline.contentFor("q", extra)
+        check("an audio attachment becomes an input_audio part",
+              c.anyIt(it{"type"}.getStr == "input_audio"), $c)
+        check("its format is read from the mime type",
+              c.filterIt(it{"type"}.getStr == "input_audio")[0]{"input_audio"}{"format"}.getStr == "wav")
+        check("a text-extracted PDF becomes a text part",
+              c.anyIt(it{"type"}.getStr == "text" and
+                      it{"text"}.getStr.contains("PDF file: d.pdf")), $c)
+
+      block malformed:
+        # A row whose `extra` is nonsense must not take the turn down with it.
+        let c = pipeline.contentFor("q", %*[{"type": "IMAGE"}, "junk", 7])
+        check("a malformed attachment is survived", c.kind == JArray)
+
+      block uris:
+        # What a drag-and-drop actually delivers.
+        check("a file URI becomes a path",
+              pipeline.uriToPath("file:///home/x/a.png") == "/home/x/a.png")
+        # Action purpose: **the percent-decode is the whole point.** Most
+        # screenshots have a space in the name, and without this every one of
+        # them would fail to open.
+        check("percent-encoding is undone",
+              pipeline.uriToPath("file:///home/x/a%20b.png") ==
+              "/home/x/a b.png")
+        check("a bare path is left alone",
+              pipeline.uriToPath("/home/x/c.png") == "/home/x/c.png")
+        check("a stray percent does not throw",
+              pipeline.uriToPath("file:///x/%zz").len > 0)
+
+      block classify:
+        let p = paths.resolve()
+        let dir = p.state / "attachtest"
+        removeDir(dir); createDir(dir)
+
+        writeFile(dir / "notes.conf", "KEY=value\n")
+        let t = pipeline.readAttachment(dir / "notes.conf", true, true)
+        # Action purpose: text is decided by **reading** the file, not by a list
+        # of known suffixes — a `.conf`, a `.log` or a file with no extension at
+        # all is attachable, and an allowlist would refuse all three.
+        check("an unknown extension is attached as text if it reads as text",
+              t.ok and t.att.kind == "TEXT", t.err)
+
+        writeFile(dir / "blob.bin", "AB\0CD")
+        let b = pipeline.readAttachment(dir / "blob.bin", true, true)
+        check("a file with a NUL byte is refused", not b.ok)
+        check("and the refusal says why", b.err.contains("not text"), b.err)
+
+        # A 1x1 PNG, so the extension path is exercised on real bytes.
+        writeFile(dir / "pic.png", "\137PNG\13\10\26\10rest")
+        let vis = pipeline.readAttachment(dir / "pic.png", true, true)
+        check("an image on a vision model is accepted",
+              vis.ok and vis.att.kind == "IMAGE", vis.err)
+        check("and carries a data URL of the right type",
+              vis.att.payload.startsWith("data:image/png;base64,"),
+              vis.att.payload[0 ..< min(40, vis.att.payload.len)])
+
+        let noVis = pipeline.readAttachment(dir / "pic.png", true, false)
+        check("an image on a text-only model is refused", not noVis.ok)
+        # Action purpose: **an unanswered `/props` must not refuse.** Refusing on
+        # an unknown is the same defect as accepting one the model cannot read,
+        # in the other direction.
+        let unknown = pipeline.readAttachment(dir / "pic.png", false, false)
+        check("but is allowed while /props has not answered yet", unknown.ok)
+
+        let missing = pipeline.readAttachment(dir / "nope.txt", true, true)
+        check("a file that cannot be read is refused, not crashed",
+              not missing.ok and missing.err.len > 0)
+        removeDir(dir)
+
+      if bad == 0:
+        echo ""
+        echo "attach-selftest: PASS"
+        quit(0)
+      echo ""
+      echo "attach-selftest: FAIL (", bad, ")"
+      quit(1)
+    of "error-selftest":
+      # Action purpose: G-35. Every generation failure used to land in one grey
+      # line — "the server answered 500" was the whole diagnosis a USER got.
+      # The classifier is pure, so the distinctions it draws are asserted here
+      # rather than discovered by hitting them on screen.
+      var bad = 0
+      proc check(label: string, cond: bool, detail = "") =
+        if cond: echo "  ok   ", label
+        else:
+          echo "  FAIL ", label, (if detail.len > 0: "\n       " & detail else: "")
+          inc bad
+
+      echo "error-selftest"
+
+      block overflow:
+        # llama.cpp's own wording, from `server-context.cpp`.
+        let body = """{"error":{"code":400,"type":"exceed_context_size_error",
+          "message":"request (9412 tokens) exceeds the available context size (8192 tokens), try increasing it"}}"""
+        let e = pipeline.classifyError(400, body)
+        check("a context overflow is recognised",
+              e.kind == pipeline.cekContextOverflow, $e.kind)
+        check("the prompt size is extracted", e.promptTokens == 9412,
+              "got " & $e.promptTokens)
+        check("the context size is extracted", e.ctxSize == 8192,
+              "got " & $e.ctxSize)
+        check("both numbers reach the message",
+              e.message.contains("9412") and e.message.contains("8192"),
+              e.message)
+        # Action purpose: **an overflow must not offer a Retry.** Retrying sends
+        # the identical oversized prompt and fails identically, so the button
+        # would be a lie.
+        check("an overflow is NOT retryable", not e.retryable)
+
+      block backendDown:
+        let e = pipeline.classifyError(502)
+        check("502 is the backend not being up", e.kind == pipeline.cekBackendDown)
+        check("and it is retryable", e.retryable)
+        check("503 is treated the same way",
+              pipeline.classifyError(503).kind == pipeline.cekBackendDown)
+
+      block timeouts:
+        let e = pipeline.classifyError(0, exceptionMsg = "Call to 'recv' timed out.")
+        check("a timeout is a timeout, not a generic failure",
+              e.kind == pipeline.cekTimeout, $e.kind)
+        check("a timeout is retryable", e.retryable)
+        let r = pipeline.classifyError(0, exceptionMsg = "Connection refused")
+        check("a refused connection says the backend is not running",
+              r.kind == pipeline.cekBackendDown, $r.kind)
+
+      block serverError:
+        let e = pipeline.classifyError(500,
+          """{"error":{"message":"slot unavailable","type":"server_error"}}""")
+        check("a 500 is a server error", e.kind == pipeline.cekServerError)
+        check("the server's own words are shown, not just the code",
+              e.message.contains("slot unavailable"), e.message)
+
+      block junkBody:
+        # A body that is not JSON must not throw — the failure path is the one
+        # place an exception is least welcome.
+        let e = pipeline.classifyError(500, "<html>502 Bad Gateway</html>")
+        check("a non-JSON body is survived", e.kind == pipeline.cekServerError)
+        check("and falls back to naming the status", e.message.contains("500"),
+              e.message)
+
+      if bad == 0:
+        echo ""
+        echo "error-selftest: PASS"
+        quit(0)
+      echo ""
+      echo "error-selftest: FAIL (", bad, ")"
+      quit(1)
+    of "markdown-selftest":
+      # Action purpose: `markdown.nim` renders every assistant reply, and it was
+      # only ever reachable from `gui.nim` — so nothing could assert it and a
+      # model answering with a table rendered as raw pipes (G-34). The module
+      # imports `std/strutils` and nothing else, so it links here and the whole
+      # of it is checkable with no window.
+      var bad = 0
+      proc check(label: string, cond: bool, detail = "") =
+        if cond: echo "  ok   ", label
+        else:
+          echo "  FAIL ", label, (if detail.len > 0: "\n       " & detail else: "")
+          inc bad
+
+      echo "markdown-selftest"
+
+      block tables:
+        let bs = markdown.parse(
+          "before\n\n| a | b |\n|---|---:|\n| 1 | 2 |\n| 3 | 4 |\n\nafter")
+        let tbls = bs.filterIt(it.kind == markdown.bkTable)
+        check("a pipe table becomes a table block", tbls.len == 1,
+              "got " & $tbls.len & " of " & $bs.len & " blocks")
+        if tbls.len == 1:
+          let t = tbls[0]
+          check("header plus two body rows", t.rows.len == 3,
+                "rows=" & $t.rows.len)
+          check("the header cells are the header", t.rows[0] == @["a", "b"])
+          check("a body row keeps its cells", t.rows[2] == @["3", "4"])
+          # `---:` is right-aligned; the widget layer applies this directly.
+          check("the separator's alignment markers are read",
+                t.aligns == @[0.0, 1.0], "aligns=" & $t.aligns)
+        check("the text around it survives as text",
+              bs.filterIt(it.kind == markdown.bkText).len == 2)
+
+      block noSeparatorNoTable:
+        # The separator row is the whole distinction between a table and a
+        # sentence with a pipe in it. Without this, "use a | b" became a table.
+        let bs = markdown.parse("a | b\nc | d")
+        check("a pipe with no separator row is NOT a table",
+              bs.allIt(it.kind != markdown.bkTable))
+
+      block pipesInCode:
+        let bs = markdown.parse("```sh\ncat x | grep y\n|---|\n```")
+        check("pipes inside a code fence are not a table",
+              bs.allIt(it.kind != markdown.bkTable) and
+              bs.anyIt(it.kind == markdown.bkCode))
+
+      block ragged:
+        let bs = markdown.parse("| a | b | c |\n|---|---|---|\n| 1 |")
+        let t = bs.filterIt(it.kind == markdown.bkTable)
+        check("a short row is padded, not dropped",
+              t.len == 1 and t[0].rows.len == 2 and t[0].rows[1].len == 3,
+              (if t.len == 1: "row=" & $t[0].rows[^1] else: "no table"))
+
+      block taskLists:
+        let bs = markdown.parse("- [ ] todo\n- [x] done\n- plain")
+        let text = bs[0].text
+        check("an unchecked task renders a box", text.contains("☐ todo"))
+        check("a checked task renders a ticked box", text.contains("☑ done"))
+        check("a plain bullet is still a bullet", text.contains("• plain"))
+        check("the raw brackets are gone", not text.contains("[ ]"))
+
+      block strikeAndEmphasis:
+        check("strikethrough becomes <s>",
+              markdown.inlineMarkup("~~gone~~") == "<s>gone</s>")
+        check("bold still works alongside it",
+              markdown.inlineMarkup("**b** ~~s~~") == "<b>b</b> <s>s</s>")
+        # The pre-existing guarantee: a code span suppresses emphasis inside it.
+        check("a code span still suppresses emphasis",
+              markdown.inlineMarkup("`a*b*c`") == "<tt>a*b*c</tt>")
+        check("markup characters in a cell are escaped, not injected",
+              markdown.inlineMarkup("<b>") == "&lt;b&gt;")
+
+      if bad == 0:
+        echo ""
+        echo "markdown-selftest: PASS"
+        quit(0)
+      echo ""
+      echo "markdown-selftest: FAIL (", bad, ")"
+      quit(1)
+    of "hardware-selftest":
+      # Action purpose: profile scoring decides which tuning the machine runs
+      # under, and a wrong score does not fail loudly — it silently runs on the
+      # wrong profile, which looks like working software that is merely slow.
+      # So the ladder is asserted here against hand-written hardware
+      # descriptions, with no sysctl call and no window (S-1).
+      var bad = 0
+      proc check(label: string, cond: bool, detail = "") =
+        if cond: echo "  ok   ", label
+        else:
+          echo "  FAIL ", label, (if detail.len > 0: "\n       " & detail else: "")
+          inc bad
+
+      echo "hardware-selftest"
+      let p = paths.resolve()
+      let profiles = hardware.listProfiles(p.root)
+
+      check("every profile.conf in the tree parses and names itself",
+            profiles.len >= 5 and profiles.allIt(it.name.len > 0),
+            "found " & $profiles.len)
+
+      # The USER's machine, per SETTLED FACTS: i5-1135G7, GTX 1650 Ti on
+      # Vulkan0, Intel Iris Xe on Vulkan1.
+      let dual = Hardware(
+        osName: "FreeBSD", osRelease: "14.0-RELEASE",
+        cpuModel: "11th Gen Intel(R) Core(TM) i5-1135G7 @ 2.40GHz",
+        cpuThreads: 8,
+        gpuDevices: @["Vulkan0: NVIDIA GeForce GTX 1650 Ti (4342 MiB)",
+                      "Vulkan1: Intel(R) Iris(R) Xe Graphics (12064 MiB)"],
+        ramGiB: 16, swapGiB: 27, storage: "ZFS", swapInfo: "/dev/nvd0p2 nvme0")
+
+      # The same CPU and dGPU with the iGPU absent — the case the -8 exists for.
+      var single = dual
+      single.gpuDevices = @["Vulkan0: NVIDIA GeForce GTX 1650 Ti (4342 MiB)"]
+
+      let dualBest = hardware.bestProfile(profiles, dual)
+      check("two GPUs select the dual-GPU profile",
+            dualBest.found and dualBest.score.profile.name.contains("dgpu-igpu"),
+            "got " & (if dualBest.found: dualBest.score.profile.name else: "none"))
+
+      let singleBest = hardware.bestProfile(profiles, single)
+      check("one GPU does not select a dual-GPU profile",
+            singleBest.found and not singleBest.score.profile.name.contains("dgpu-igpu"),
+            "got " & (if singleBest.found: singleBest.score.profile.name else: "none"))
+
+      # Action purpose: this is the assertion the whole ladder turns on, and the
+      # first version of it was worthless. `dgpu-i5-1135g7` and
+      # `dgpu-igpu-i5-1135g7` are identical but for MATCH_GPU_1, so with the
+      # penalty removed they TIE on single-GPU hardware — and the right one
+      # still won, purely because it sorts first and the sort is stable.
+      # Corrupting PtsGpuMissing to 0 left the suite green, which is rule 16:
+      # the hole was here, not in the code. The margin is what must be asserted,
+      # not the winner's name.
+      proc scoreOf(scores: seq[hardware.Score], needle: string): int =
+        for s in scores:
+          if s.profile.name.contains(needle): return s.points
+        low(int)
+
+      let singleScores = hardware.scoreAll(profiles, single)
+      check("on one GPU the dual-GPU profile scores STRICTLY BELOW the winner",
+            scoreOf(singleScores, "dgpu-igpu") < singleBest.score.points,
+            "dual " & $scoreOf(singleScores, "dgpu-igpu") &
+            " vs winner " & $singleBest.score.points &
+            " — a tie here means MATCH_GPU_1 is deciding nothing")
+
+      let dualScores = hardware.scoreAll(profiles, dual)
+      check("on two GPUs the dual-GPU profile scores STRICTLY ABOVE the single",
+            scoreOf(dualScores, "dgpu-igpu") > scoreOf(dualScores, "dgpu-i5-"),
+            "dual " & $scoreOf(dualScores, "dgpu-igpu") &
+            " vs single " & $scoreOf(dualScores, "dgpu-i5-"))
+
+      var optInSeen = false
+      for s in hardware.scoreAll(profiles, dual):
+        if s.profile.optIn:
+          optInSeen = true
+          check("opt-in profile " & s.profile.name & " is disqualified",
+                s.disqualified)
+      check("an opt-in profile exists to test (CUDA/dgpu-generic)", optInSeen)
+
+      # A machine matching no specific profile must still land somewhere.
+      let generic = Hardware(
+        osName: "FreeBSD", osRelease: "14.0-RELEASE",
+        cpuModel: "AMD EPYC 7551P 32-Core Processor", cpuThreads: 64,
+        gpuDevices: @[], ramGiB: 128, swapGiB: 0,
+        storage: "UFS", swapInfo: "None")
+      let genBest = hardware.bestProfile(profiles, generic)
+      check("unknown hardware falls back rather than matching nothing",
+            genBest.found and genBest.score.profile.name.contains("CPU"),
+            "got " & (if genBest.found: genBest.score.profile.name else: "none"))
+
+      # A non-FreeBSD host must be disqualified from every OS-pinned profile,
+      # since MATCH_OS mismatch disqualifies rather than scoring zero.
+      var alien = dual
+      alien.osName = "Linux"
+      var pinned = 0
+      for s in hardware.scoreAll(profiles, alien):
+        if s.profile.matchOs.len > 0 and not s.profile.optIn:
+          if s.disqualified: inc pinned
+      check("an OS mismatch disqualifies every OS-pinned profile",
+            pinned > 0 and pinned == profiles.countIt(
+              it.matchOs.len > 0 and not it.optIn),
+            "disqualified " & $pinned)
+
+      # Apply must never touch the USER's machine file (SETTLED FACTS).
+      let scratch = p.state / "hwtest-home"
+      removeDir(scratch)
+      createDir(scratch / "etc")
+      writeFile(scratch / "etc" / "jenova.local.conf", "THREADS=8\n")
+      let applied = hardware.applyProfile(dualBest.score.profile, scratch)
+      check("apply writes jenova.conf", applied.ok and
+            fileExists(scratch / "etc" / "jenova.conf"), applied.msg)
+      check("apply leaves jenova.local.conf untouched",
+            readFile(scratch / "etc" / "jenova.local.conf") == "THREADS=8\n")
+      check("the applied profile is then reported as current",
+            hardware.currentProfile(profiles, scratch).name ==
+            dualBest.score.profile.name)
+      removeDir(scratch)
+
+      if bad == 0:
+        echo ""
+        echo "hardware-selftest: PASS"
+        quit(0)
+      echo ""
+      echo "hardware-selftest: FAIL (", bad, ")"
       quit(1)
     of "sha256-selftest":
       # The cache key is a SHA-256 of the rewritten request body, and a wrong

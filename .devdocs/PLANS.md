@@ -2,16 +2,16 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-09-01 13:52 (Session 016)
+**Last updated:** 2026-09-01 16:19 (Session 017)
 
 **Write plans in plain English, then cite the ID** (**D-BA**). A step that reads
 "resolve G-23" tells the reader nothing. Say what the thing is first.
 
 **Cite the symbol, then the line.** Every line reference below was re-derived against
-the source on 2026-09-01 at 12:08. The previous set had rotted inside one session —
-`gui.nim` grew by roughly 750 lines while the steps citing it were being written, so
-each pointed at unrelated code while the finding it described stayed true. A reference
-that names the proc survives that; a bare line number does not.
+the source on **2026-09-01 at 16:19**, with `gui.nim` at 3,837 lines. **This is the
+fifth sweep in one day** and each was made stale by the next block of work. That is the
+point rather than an embarrassment: **a reference that names the proc survives; a bare
+line number does not.** Read the symbol and treat the number as a hint.
 
 ---
 
@@ -26,7 +26,7 @@ llama.cpp as the inference engine. Those are the only two things in it.
 Build with `nimble`. **There is no Makefile, no shell script, no Lua and no C in the
 product** (**D-AM**, **D-AZ**). Any reference suggesting otherwise is a leftover
 pointing at the archived old build, and the fix is deletion or a port to Nim — never a
-repair. See **S-1**.
+repair. **As of 2026-09-01 the product tree has no shell script left at all** — the last six were archived by Step 6.
 
 **Finished, working and confirmed on screen:** configuration, database, threaded HTTP
 server, the whole `/api/*` surface, the filesystem mirror, the retrieval *engine*, the
@@ -56,16 +56,19 @@ is `TODOS.md` G-17, G-20, G-21 and G-28 … G-36. G-28 … G-33 and G-39 are bui
 
 | Works today | Missing entirely |
 |---|---|
-| Send a message, stream a reply | Attachments of any kind |
-| Copy, edit, delete, regenerate and continue a message | **A stop button** |
-| Branching — alternative versions, with a counter | Tables, task lists, LaTeX maths |
+| Send a message, stream a reply | **PDF text extraction** (gated: needs zlib) |
+| Copy, edit, delete, regenerate and continue a message | **Audio capture** (raise first) |
+| Branching — alternative versions, with a counter | **LaTeX maths** |
 | Generation statistics, context usage, model name | A real model selector and model information |
-| A reasoning view for thinking models | Typed errors, retry, context-overflow reporting |
-| Conversations: create, rename, delete, search | Trash view, delete confirmations, a real note editor |
-| Renaming a container keeps its files | Hardware profile detection and selection |
+| A reasoning view for thinking models | A trash view, a real note editor |
+| Conversations: create, rename, delete, search | — |
+| **Stop a generation · tables · typed errors · delete confirmations** | — |
+| **Attachments: picker, drag-and-drop, paste, thumbnails, preview** | — |
+| Renaming a container keeps its files | — |
 | Markdown text and highlighted code blocks | — |
 | Recall of past chats — the index is fed | — |
 | **Settings: every sampling and penalty parameter** | — |
+| **Hardware profiles: detection, scoring, a screen** | — |
 | **Import / export of conversations** | — |
 | Theme, canvas, Neovim page, AI reads the buffer | — |
 | Tray, LAN toggle, backend start/stop | — |
@@ -77,7 +80,7 @@ assertions behind it.**
 
 ## Standing constraint: the GUI has no test coverage
 
-All six suites and all six self-tests exercise `jenova-core`. **Nothing tests
+All six suites and **all nine** self-tests exercise `jenova-core`. **Nothing tests
 `gui.nim`.** Every GUI defect in this project's history was found by the USER looking
 at the screen, and that is the loop the steps below are meant to stop repeating.
 
@@ -101,7 +104,8 @@ path is refused rather than merged (**D-BE**). Proven by 17 new assertions in
 `BRIEFING.md` all cite them, and renumbering to close a gap would silently re-point
 every one of those references.
 
-**Steps 1 to 5 are built. Step 6 is the next step.**
+**Steps 1 to 7 are built. Step 8 is the next step**, with what remains of
+attachments (7b) alongside it.
 
 ---
 
@@ -222,93 +226,114 @@ records. **Step 6 is the next step.**
 
 ---
 
-## Step 6 — Hardware profiles in Nim, driven from the GUI  *(`TODOS.md` S-1)*
+## Step 6 — **BUILT 2026-09-01.** Hardware profiles in Nim, driven from the window
 
-**What is wrong:** choosing a hardware profile is still two shell scripts, and both are
-broken by subtraction — `detect-hardware.sh:19` sources an archived `lib/` file, and one
-profile's `jenova-setup` resolves an archived `bin/` helper. Nothing invokes either, so
-**there is currently no way to detect hardware or change profile at all** except editing
-`etc/jenova.conf` by hand.
+Done and out of this plan. Choosing a profile was two shell scripts that had not run
+since their `lib/` was archived, so there was no way to detect hardware or change
+profile at all. There is now: **`src/jenova/hardware.nim`** — detection, the
+`profile.conf` reader, the scorer and apply — a **Hardware screen** in the window, and
+**`jenova-core hardware detect|list|apply`** for headless hosts. The record is
+`PROGRESS.md` 2026-09-01 15:13.
 
-**Ruled at D-BC:** it becomes Nim, and it is driven from the window.
+**The scoring ladder was ported from `match_profile` against the script**, not against
+this plan's own summary of it — which had lost the detail that a `MATCH_OS`, `MATCH_CPU`
+or `MATCH_SWAP` mismatch **disqualifies** a profile rather than merely scoring it zero.
 
-**The work:**
-1. **Detection in Nim** — CPU model, GPU devices, RAM, swap, OS release. `sysctl` and
-   the Vulkan device list, read directly rather than shelled out to.
-2. **Scoring in Nim** — each profile's `MATCH_CPU`, `MATCH_GPU_0/1` and `MATCH_OS`
-   against what was detected, reproducing the existing ladder: specific hardware beats
-   the GPU fallback beats the CPU fallback, and `PROFILE_OPT_IN` profiles never
-   auto-match.
-3. **Apply in Nim** — write the chosen profile's `jenova.conf` to `$JCA_HOME/etc`, which
-   `config.nim` already prefers over the source tree (D-AT2).
-4. **A GUI screen** — list the profiles, show which one matched and the score that
-   decided it, show the detected hardware beside it, and apply one. Restarting the
-   backend afterwards is already a GUI action.
-5. **The same as a `jenova-core` subcommand** for headless hosts.
-6. **Kernel tuning becomes data.** The sysctl values in the `jenova-setup` scripts move
-   into `profile.conf` and Nim applies them, reporting what it could not set without
-   privilege rather than failing silently.
-7. **Archive both scripts** once this lands, and fix the two Linux filesystem strings
-   in the profile data (**S-2**) in the same pass.
+**Kernel tuning was deliberately not ported (D-BN).** Jenova applies no `sysctl` and
+never writes `/etc/sysctl.conf`. All six shell scripts are archived to
+`.devdocs/ARCHIVE/hardware-profiles/` and nothing replaces them; **the product tree now
+contains no shell script at all.** S-2's two Linux filesystem strings were fixed in the
+same pass, and the doc references telling the USER to `sudo` a `jenova-setup` were
+deleted rather than repaired.
 
-**Proof it worked:** scoring is pure logic over data files and belongs in a suite —
-feed known hardware descriptions and assert the selected profile, including that an
-opt-in profile never wins automatically and that the fallback ladder holds. That is what
-the archived `test_validate_arg.sh` never did.
+**Proven by 13 assertions in a seventh self-test, `hardware-selftest`**, with three
+independent corruptions giving three different sets of red. **One corruption initially
+passed** — removing the `-8` left the two candidate profiles tied at 35, and the right
+one still won because it sorts first and the sort is stable. That is rule 16 working:
+the hole was in the assertion set, which checked the winner's *name* and not the
+*margin*. Fixed, and the corruption then went red naming the tie. See `TESTS.md` §0i.
+
+**Two things worth carrying forward:**
+
+1. **A green self-test said nothing about detection against a real machine.** The first
+   real run reported **no GPU at all** and matched the wrong profile, because
+   `llama-server` cannot load without `LD_LIBRARY_PATH` pointing at `paths.llamaLibDir`
+   — `lifecycle.start` sets it and `detectGpu` did not. **An unloadable binary and a
+   machine with no GPU produce the same empty string**, so it failed silently. This is
+   rule 15 in a new costume: the parts were asserted, the *join* to the environment was
+   not.
+2. **`applyProfile` never writes `jenova.local.conf`**, and that is asserted, because
+   silently discarding the USER's machine file is the one way this feature could do real
+   damage.
+
+**Not verified: the screen itself.** `--check` builds the widget tree, but the panel's
+contents are drawn only when open — the same as the settings panel. That is a USER run.
+
+**The step numbers below are deliberately unchanged**, for the reason Step 1 records.
+**Step 7 is the next step.**
 
 ---
 
-## Step 7 — The rest of the chat surface
+## Step 7 — **BUILT 2026-09-01.** The rest of the chat surface
 
-Ordered by how often it bites.
+**All five parts are built.** The stop button (G-33),
+markdown tables and task lists (G-34), typed errors with Retry (G-35) and delete
+confirmations (G-36). The record is `PROGRESS.md` 2026-09-01 15:46.
 
-**7a. A stop button  *(G-33)*** — **statistics are done** (2026-09-01), this is the half
-that is left. The send button greys out mid-generation; there is no way to cancel. The
-Web UI's turns into a stop button. Cancelling means closing the streaming socket from
-the control worker, which is why the two workers are separate. **Watch out for the
-`umDone` path:** a cancelled reply still has to be saved with the text it reached, and
-with the parent that makes it a sibling rather than an orphan (D-BG).
+**Two calls taken inside the scope, recorded as D-BO and D-BP.** Attachments
+(7b) are built too, with two formats left that are each gated on a decision
+rather than on work — see below.
 
-**7b. Attachments  *(G-30)***
-Images, text, PDFs, by file picker, drag-and-drop and paste; thumbnails; full-size
-preview; validation against what the model can actually read. Nine Web UI components
-cover it. **The storage side already exists** — `fileAssets` rows carry `content`,
-`size`, `type` and `uploadDate`, and `fssync.syncFileAsset` already decodes `data:`
-base64 payloads to bytes (`fssync.nim:310-337`). Audio recording is the one piece that
-may not be worth porting; raise it before building.
+**7b. Attachments *(G-30)* — built, except two formats that are each gated.**
+**All three of the Web UI's routes in work**: a file picker, drag-and-drop onto
+the chat column (`DropZone`, a renderable, because owlkettle exposes no way to
+reach a `GtkWidget` from a `gui:` block), and paste of an image from the
+clipboard. Chips carry **real thumbnails**, clicking one opens a **full-size
+preview**, and a sent turn shows what was attached to it.
 
-**7c. Real error reporting  *(G-35)***
-Everything currently lands in one grey line — `App.notice` (`gui.nim:637`), written from
-sixteen places. The Web UI distinguishes a timeout from a server error and, on a context
-overflow, shows the prompt-token count against the context size. `gui.streamOnce`
-(`gui.nim:164`) already has the status code in hand and throws it away into a sentence.
+**The classifier moved below the widget layer** — `pipeline.readAttachment`,
+`looksTextual`, `mimeForImage`, `uriToPath` — which is what made it assertable,
+and was forced anyway: the drop drain runs inside the window's own timer, where a
+proc taking the GUI's state type does not yet exist.
 
-**7d. Markdown tables, task lists and maths  *(G-34)***
-`markdown.nim` does headings, bullets, quotes, emphasis, inline code and fences. A
-model asked to compare things answers with a table, which currently renders as raw
-pipes. LaTeX is the larger piece and may reasonably be deferred; tables are not.
+**What is left, and neither is an omission:**
 
-**7e. Delete confirmations  *(G-36)***
-Every delete in the tree and conversation list fires on one click, through the single
-path `gui.deleteNode` (`gui.nim:1034`) — which is also what makes this cheap, since one
-proc gates every caller. The argument for having no dialog was that deletes are soft —
-but a soft delete with no trash view (**G-21**) is indistinguishable from data loss, so
-this and G-21 answer each other.
+1. **PDFs — gated on a dependency decision.** Extraction needs FlateDecode, i.e.
+   zlib inflate. Nim's stdlib has none, so it means linking `libz` — present at
+   `/usr/lib/libz.so.1`, zlib licence, which AGENTS.md permits. **Directive 1
+   gates a dependency change, so this is the USER's call.** `contentFor` already
+   sends a PDF that carries text or page images, which an imported Web UI
+   conversation has.
+2. **Audio capture — raise before building**, as this plan has said since 7b was
+   written. `input_audio` parts are already emitted; nothing records. It needs
+   `/dev/dsp` ioctl work or a capture library, **and no model in use has an audio
+   modality**, so it may buy nothing.
+
+**Proof:** `attach-selftest`, **27 assertions**, five clean reds across two
+rounds. The part order is asserted, so a divergence from the Web UI names itself;
+so are the URI decode, the NUL-byte text test and the vision refusal in both
+directions. What is *not* asserted, and cannot be from here: the picker, the
+chips, the thumbnails, the drop target and the paste button are widgets.
+
+**LaTeX maths is deliberately still open** under G-34. Tables were the half that
+bites; KaTeX has no GTK equivalent and rendering maths is its own project.
 
 ---
 
 ## Step 8 — The remaining views
 
 **8a. Model selector and model information  *(G-20)*** — replace the two hardcoded menu
-items (`gui.nim:2032`) with a searchable list carrying per-model status and
+items (`gui.nim:3312`, `gui.nim:3316`, mirrored in the tray at `gui.nim:639,641`) with a
+searchable list carrying per-model status and
 capabilities, plus a details dialog (context size, parameter count, quantisation,
 vocabulary, slots, modalities, chat template). Backend exists: `models.discover`,
 `models.switchModel`.
 
 **8b. Trash view  *(G-21)*** — everything deleted is soft-deleted and currently
-invisible. Backend exists and is asserted: `GET /api/fs/trash` (`api.nim:591`),
-`POST /api/fs/trash/restore` (`api.nim:599`), `DELETE /api/fs/trash/empty`
-(`api.nim:607`), plus `/<entity>/deleted` and `/<entity>/<id>/restore` on every table.
+invisible. Backend exists and is asserted, all inside `api.handleFs` (`api.nim:625`):
+`GET /api/fs/trash` (`api.nim:631`), `POST /api/fs/trash/restore` (`api.nim:639`),
+`DELETE /api/fs/trash/empty` (`api.nim:647`), plus `/<entity>/deleted` and
+`/<entity>/<id>/restore` on every table (`api.nim:802`, over `api.restoreItem`).
 
 **One thing this step now also has to do**, recorded here rather than left to be
 rediscovered: **restoring a message from the trash does not put it back in the retrieval
@@ -317,7 +342,7 @@ recoverable everywhere except in what the model recalls until the next start, wh
 `rag.backfillChats` picks it up. Restore should call `rag.indexExchange` directly.
 
 **8c. A real writing surface  *(G-17)*** — the note editor is a `TextView` with Save and
-Close — `gui.saveNote` (`gui.nim:968`). It is the seed, not the thing.
+Close — `gui.saveNote` (`gui.nim:1252`). It is the seed, not the thing.
 
 ---
 
@@ -327,10 +352,10 @@ In this order, smallest first:
 
 | | Work | Proof |
 |---|---|---|
-| **T-5** | Stop the embedding server on exit. `gui.run` (`gui.nim:2317`) starts both backends and its `defer` only sends the workers the quit sentinel and joins them — `lifecycle.stopAll` already exists and is never called. Leaving the *agent* model loaded is deliberate — reloading gigabytes into VRAM every start is worse — so stop only the embed backend, and clear a pidfile whose process is dead | `jenova-core backends status` after a GUI exit: agent up, embeddings down, no stale pid |
-| **T-2** | Cap the database's prepared-statement cache. It is a plain `Table` that never evicts — `Conn.cache` (`db.nim:46`) filled by `db.prepared` (`db.nim:165`) — and the only `sqlite3_finalize` is in `db.closeConn` (`db.nim:415-418`), while `api.updateMessage` builds a different SQL string per field combination. **The fix belongs in `db.nim`** — a cap plus finalize-on-evict — not in the caller | A suite issuing many distinct field combinations, asserting the cache stays capped. Prove it can go red first |
+| **T-5** | Stop the embedding server on exit. `gui.run` (`gui.nim:3713`) starts both backends and its `defer` (`gui.nim:3724-3728`) only sends the workers the quit sentinel, joins them and closes the channels — `lifecycle.stopAll` (`lifecycle.nim:329`) already exists and is reached only from the tray's stop/restart actions (`gui.nim:681`, `685`), never from exit. Leaving the *agent* model loaded is deliberate — reloading gigabytes into VRAM every start is worse — so stop only the embed backend, and clear a pidfile whose process is dead | `jenova-core backends status` after a GUI exit: agent up, embeddings down, no stale pid |
+| **T-2** | Cap the database's prepared-statement cache. It is a plain `Table` that never evicts — `Conn.cache` (`db.nim:46`) filled by `db.prepared` (`db.nim:165-174`) — and the only `sqlite3_finalize` is the shutdown loop in `db.closeConn` (`db.nim:415-419`), while `api.updateMessage` builds a different SQL string per field combination. **The fix belongs in `db.nim`** — a cap plus finalize-on-evict — not in the caller | A suite issuing many distinct field combinations, asserting the cache stays capped. Prove it can go red first |
 | **T-4** | Both directions of the file-containment check, both inside `fssync.resolveStoragePath` (`fssync.nim:694`). The symlink check runs only on paths that already exist (`fssync.nim:713`), so a *new* file written through a symlinked parent escapes; and the base is compared lexically (`fssync.nim:700`), so a symlinked workspaces root rejects legitimate paths. Resolve the deepest existing ancestor and compare against a resolved base | `test_api_fs.sh`: a write through a symlinked parent is refused **403**; a legitimate write under a symlinked root succeeds |
-| **T-3** | Trim chat history. The whole conversation is resent every turn — `pipeline.prepare` (`pipeline.nim:222`) has no trim step and neither does anything else in the file — so a long chat eventually exceeds the context. Needs a byte budget from `CTX_SIZE`, dropping oldest first, never dropping the system message | A unit check on the trim function at a small budget — not a live generation |
+| **T-3** | Trim chat history. The whole conversation is resent every turn — `pipeline.prepare` (`pipeline.nim:223`) has no trim step and neither does anything else in the file — so a long chat eventually exceeds the context. Needs a byte budget from `CTX_SIZE`, dropping oldest first, never dropping the system message | A unit check on the trim function at a small budget — not a live generation |
 
 ---
 

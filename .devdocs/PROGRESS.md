@@ -2,7 +2,7 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-09-01 14:02 (Session 016)
+**Last updated:** 2026-09-01 16:19 (Session 017)
 
 > **Reading the "UNRUN" labels in this file.** Entries below are point-in-time records
 > and several were written with a "compiled; UNRUN" status that was true on the day.
@@ -15,6 +15,176 @@ Macro progress tracking. Most recent entries at the top.
 ---
 
 ## Completed
+
+### 2026-09-01 16:19 — **Step 7 finished: attachments have all three routes in, thumbnails and preview. Two formats left, each gated on a decision rather than on work (G-30).**
+
+**Drag-and-drop.** A `DropZone` renderable wraps the chat column — a renderable
+for the reason `AutoScroll` is one: owlkettle exposes no way to reach a
+`GtkWidget` from a `gui:` block, and a controller must attach to one. **Four
+protos declared, and only four** — `g_signal_connect_data`, `GValue`,
+`G_TYPE_STRING`, `GdkClipboard`, `GAsyncResult` and the display/clipboard getters
+were already in owlkettle's bindings and are imported rather than rewritten.
+**`G_TYPE_STRING` rather than `GDK_TYPE_FILE_LIST`**: a file manager offers
+`text/uri-list`, GTK converts it for us, and the drop arrives as newline-separated
+URIs — no boxed-list walk, three fewer protos.
+
+**Paste.** A button beside the paperclip, not a key binding, because a key
+binding for it would be invisible; GTK's `Entry` already pastes *text* on Ctrl+V,
+so what was missing was an *image*. `gdk_clipboard_read_texture_async`, then
+`gdk_texture_save_to_png` into the cache dir, **and then the file path is handed
+to the same queue a dropped file uses** — one attachment path, three ways in.
+
+**Thumbnails and full-size preview.** A `data:` URL is decoded to a file named
+for the digest of its own bytes and loaded with `loadPixbuf`, which owlkettle
+already wraps — **no `GdkPixbufLoader` proto was needed**, which is rule 5 paying
+off. Written once, cached by digest, so the redraw that runs on every frame is a
+table lookup. Chips show the picture; clicking one opens a preview panel; a sent
+turn shows what was attached to it.
+
+**The classifier moved below the widget layer.** `readAttachment`, `looksTextual`,
+`mimeForImage` and `uriToPath` are now `pipeline.*`, and `PendingAttachment` is an
+alias of `pipeline.Attachment`. **That was forced, and it was also right:** the
+drop drain runs inside the window's own timer, where a proc taking `AppState`
+cannot exist yet — and moving it made all of it assertable.
+
+**`attach-selftest` is now 27 assertions**, 12 added here: the URI decode
+including percent-encoding, the NUL-byte text test, an unknown extension attaching
+as text, the vision refusal **in both directions** — refused on a text-only model,
+**allowed while `/props` has not answered**, because refusing on an unknown is the
+same defect the other way round — and an unreadable file refused rather than
+crashing. **Three corruptions, three clean reds:** the percent-decode dropped, text
+decided by extension instead of content, and an unanswered `/props` refusing.
+
+**What is left, and neither is work I can simply do:**
+
+- **PDF text extraction is gated on a dependency decision.** It needs FlateDecode
+  — zlib inflate — and Nim's stdlib has none, so it means linking `libz`
+  (`/usr/lib/libz.so.1`, zlib licence, permitted by AGENTS.md). **Directive 1
+  gates a dependency change, so it is the USER's call.** Nothing else about the
+  parser is hard.
+- **Audio capture is the raise the plan has always called for.** `input_audio`
+  parts are already emitted; nothing records. It needs `/dev/dsp` ioctl work or a
+  capture library, **and no model in use has an audio modality.**
+
+**Verified:** both binaries build, **all nine self-tests pass**, `bin/jenova
+--check` exits 0. **Every one of these is a widget and none of it has been seen** —
+the drop target, the paste button, the thumbnails and the preview panel.
+
+### 2026-09-01 15:46 — **Step 7 built: the chat surface catches up with the Web UI's. Four items finished, attachments part-built (G-33, G-34, G-35, G-36, G-30).**
+
+**A stop button (G-33).** The send button becomes Stop mid-generation. Cancelling
+needs **two** things and not one: the worker lives blocked inside `sock.recvLine`,
+so a flag it is not executing cannot stop it. The socket's **file descriptor** is
+published in an `Atomic[int]` and `shutdown(2)` on it ends that read at once; the
+flag then tells the loop the failure was asked for rather than real, so pressing
+Stop does not print "Connection reset by peer". An `int` crosses the thread
+boundary, never the `Socket` — that is a `ref`, and closing one while its owner
+reads is a use-after-free. **The partial answer is kept**: `umDone` still fires and
+saves the text reached with the parent that makes it a sibling (D-BG). Taken inline
+on the GTK thread rather than through the control worker (**D-BO**).
+
+**Markdown tables, task lists and strikethrough (G-34).** A model asked to compare
+things answers with a table and it rendered as raw pipes. A table is now a
+`bkTable` block of marked-up cells — **a real `Grid`, because Pango has no table**
+— scrolling inside itself so a wide one cannot widen the transcript. Column
+alignment comes from the `:---:` markers. Task lists render ☐/☑, and `~~text~~`
+becomes `<s>`. **LaTeX is deliberately not done** and stays in G-34's description.
+
+**Typed errors and Retry (G-35).** Every failure landed in one grey line — "the
+server answered 500" was the whole diagnosis. `pipeline.classifyError` now
+distinguishes a context overflow, a timeout, a backend that is down, a refused
+request and a server error, **and `streamOnce` reads the error body it used to
+throw away** — which is where llama.cpp puts the prompt size and the context size,
+so an overflow now says "9412 tokens against a context of 8192". A Retry button
+appears only for the kinds that are honestly retryable; **an overflow is not one**,
+because retrying sends the identical oversized prompt.
+
+**Delete confirmations (G-36).** Every delete fired on one click. One dialog on
+`gui.deleteNode` covers all three call sites, and it **names the cascade**:
+`api.cascadeCount` derives the count by rewriting the same `Cascades` statements
+the delete runs, so a hand-written count cannot drift from it — a confirmation that
+under-reports is worse than none, because it is trusted.
+
+**Attachments, the core (G-30).** A paperclip, a file picker, removable chips, and
+storage in `messages.extra` **in the frozen Web UI's own shape** (D-Z) so a
+conversation moves between the two surfaces unconverted. `pipeline.contentFor`
+builds the OpenAI content parts, reproducing
+`jca_web/src/lib/services/chat.service.ts:820-935` **including the part order**. A
+turn with no attachments still sends a plain string, so every request without one
+is byte-identical to before. An image is refused with a reason when
+`/props.modalities.vision` says the model cannot see. **Text is decided by reading
+the file for a NUL byte, not by its extension**, so a `.conf` or a file with no
+extension attaches. Attachments alone are a valid turn.
+
+**Three self-tests added, taking the total to nine** — `markdown-selftest` (17),
+`error-selftest` (15), `attach-selftest` (15), plus 5 new assertions on
+`cascadeCount` inside `tree-selftest`. **All shown able to fail**: three
+corruptions each on markdown and the classifier, two clean reds on attachments.
+
+**Honest limits, stated rather than left to be found:**
+
+- **The stop button, the table rendering, the chips and the dialog are unseen.**
+  `--check` builds the widget tree; it does not press anything. That is a USER run.
+- **One markdown corruption stayed green and was a *weak* corruption, not a hole** —
+  removing the "separator must contain a dash" check changes no realistic input,
+  because the empty-cell and charset checks already reject them. Replaced with a
+  corruption that does change behaviour, which went red.
+- **One attachment corruption crashed instead of going red.** Removing the
+  no-attachments guard hits a nil dereference before the assertion is reached. It
+  shows the guard is load-bearing; it is not a clean red and is not claimed as one.
+- **G-30 is not finished.** Drag-and-drop, paste, thumbnails, full-size preview,
+  PDF extraction and audio capture all remain — see `TODOS.md`.
+
+### 2026-09-01 15:13 — **Step 6 built: hardware profiles are Nim, driven from the window. The last shell script leaves the product tree (S-1, S-2, D-BC, D-BN).**
+
+- **`src/jenova/hardware.nim`** — detection, the `profile.conf` reader, the scorer and
+  apply, below the widget layer so all of it is assertable with no window.
+- **The scoring ladder ported from `match_profile`**, including the three conditions
+  that **disqualify** rather than score zero (`MATCH_OS`, `MATCH_CPU`, `MATCH_SWAP`) —
+  a detail the plan's own summary of the ladder had lost until it was read again.
+- **A GUI screen** — the Hardware button in the header. It lists every profile with its
+  score, the reasons behind that score, which one is current, and an Apply button.
+  Detection runs on the control worker, never the GTK thread.
+- **`jenova-core hardware detect|list|apply <name|--best>`** for headless hosts.
+- **`hardware-selftest` — the seventh self-test.** 13 assertions.
+- **`applyProfile` never writes `jenova.local.conf`** — asserted, since silently
+  discarding the USER's machine file is the one way this feature could do real damage.
+- **The six shell scripts archived** to `.devdocs/ARCHIVE/hardware-profiles/`:
+  `detect-hardware.sh`, `common-setup.sh` and four `jenova-setup`. **`hardware-profiles/`
+  is now data only, and the product tree contains no shell script at all** — only the
+  six test harnesses under `tests/`.
+- **S-2 fixed** — the two `HW_STORAGE="ext4/xfs/btrfs"` strings now say `ZFS`.
+- **Kernel tuning deliberately not ported (D-BN).** The references in `docs/install.md`,
+  `docs/usage.md`, `docs/architecture.md` and `hardware-profiles/README.md` telling the
+  USER to `sudo` a `jenova-setup` are deleted rather than repaired, and each now says
+  Jenova sets no kernel tunable. `config.nim`'s "no profile config" error pointed at
+  `detect-hardware.sh --apply-profile`, a script that no longer exists; it now names the
+  Hardware screen and the subcommand.
+
+**Two findings from actually running it, both worth keeping:**
+
+1. **The assertion set had a hole, found by corrupting the ladder (rule 16).** Removing
+   the `-8` left the suite **green**: the dual and single profiles then **tie** at 35 on
+   single-GPU hardware, and the right one still won purely because it sorts first and
+   the sort is stable. The winner's *name* was never the thing to assert — the *margin*
+   was. The new assertion checks the dual profile scores **strictly below** the winner,
+   and it goes red on that corruption naming the tie.
+2. **Detection reported no GPU at all on the real machine**, and so matched
+   `dgpu-i5-1135g7` (30) instead of `dgpu-igpu-i5-1135g7` (40). `llama-server` needs
+   `LD_LIBRARY_PATH` pointing at `paths.llamaLibDir` or the loader cannot find
+   `libllama-server-impl.so` — `lifecycle.start` sets it and `detectGpu` did not. **The
+   failure was silent: an unloadable binary and a machine with no GPU are the same empty
+   string.** Fixed; the real run now reports both Vulkan devices and scores 40.
+
+**Proven able to fail: three independent corruptions, three different sets of red** —
+the `-8` (which found the hole above), opt-in no longer disqualifying, and an OS
+mismatch scoring zero instead of disqualifying. Source restored byte-identical after
+each. **All seven self-tests pass**, `nimble core` and `nimble gui` build clean, both
+binaries are ELF 64-bit FreeBSD, and **`bin/jenova --check` exits 0** (rule 17).
+
+**Not verified: the Hardware screen on screen.** `--check` builds the widget tree but the
+panel's contents are drawn only when it is open, exactly as the settings panel is. That
+is the USER's run.
 
 ### 2026-09-01 14:02 — **The Theme setting aborted the application on every launch. Fixed, and `jenova --check` added so it cannot happen unnoticed again.**
 

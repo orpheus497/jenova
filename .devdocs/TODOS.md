@@ -1,6 +1,6 @@
 # TODOS
 
-**Last updated:** 2026-09-01 13:52 (Session 016)
+**Last updated:** 2026-09-01 16:19 (Session 017)
 
 Only what is actually outstanding. Everything finished lives in `PROGRESS.md`.
 
@@ -9,11 +9,11 @@ Only what is actually outstanding. Everything finished lives in `PROGRESS.md`.
 reference, not an explanation.
 
 **Cite the symbol, then the line.** Every line reference in this file was re-derived
-against the source on 2026-09-01 at 12:08, because **thirteen of them had rotted inside
-a single session**: `gui.nim` grew from roughly 1,600 lines to 2,365 while the entries
-citing it were being written, and every one of those citations then pointed at unrelated
-code. The finding each described was still true; only its address was wrong. A reference
-that names the proc survives that. **A bare line number is a claim with an expiry date.**
+against the source on **2026-09-01 at 16:19**. This is the **fifth** sweep in one day —
+12:08, 14:19, 15:13, 15:46 and now — and each was made stale by the next block of work:
+`gui.nim` went from ~1,600 lines to **3,837** over the day. **Every finding survived
+every sweep; only the addresses moved.** That is the lesson, and it is rule 14: **read
+the symbol, treat the number as a hint.**
 
 ---
 
@@ -50,10 +50,15 @@ neither is asking which — both already sit inside the standing ruling.
 
 ## Run status — settled, stop re-raising it
 
-**The 2026-08-31 23:28 build has been run by the USER.** The Neovim page transparency
-fix, the document panel, the editor-page framing and the colour work are all run.
-**No appearance or rendering defect was reported from that run** — the report was that
-the GUI is missing Web UI features, which is what this file is now about.
+**The 2026-09-01 14:02 build has been run by the USER, and nothing came back wrong.**
+Confirmed on screen: both themes, the ghost text in the parameter boxes, and the full
+settings field set including the "not yet in effect" markers. **Step 5 and Step 5a have
+no outstanding visual question.**
+
+**The 2026-08-31 23:28 build was also run**, and the Neovim page transparency fix, the
+document panel, the editor-page framing and the colour work are all run with no
+appearance defect reported. The report from *that* run was that the GUI is missing Web
+UI features, which is what this file is about.
 
 Earlier revisions carried "compiled, UNRUN on screen" against those four items and two
 sessions repeated it after it had stopped being true. **A "not yet run" label lasts
@@ -74,8 +79,11 @@ barrel files that list every shipped component. That is the authoritative invent
 check any future scope claim against it, not against a summary.
 
 **Ordering and the work for each item is `PLANS.md`.** The mapping:
-G-33, G-30, G-35, G-34 and G-36 are Step 7 · G-20, G-21 and G-17 are Step 8 ·
-S-1 is Step 6. **Step 6 is next.**
+What is left of G-30 is Step 7b · G-20, G-21 and G-17 are Step 8.
+**Steps 1-7 are built.** G-33 (the stop button), G-34 (tables, task lists,
+strikethrough), G-35 (typed errors and Retry) and G-36 (delete confirmations)
+are done and gone from this file — the record is `PROGRESS.md`. **Step 8 is
+next**, with what remains of attachments (7b) alongside it.
 
 **Done and gone from this file** (2026-09-01, all in `PROGRESS.md`):
 
@@ -102,53 +110,22 @@ S-1 is Step 6. **Step 6 is next.**
   and folded away above it, open while the turn is streaming.
 - **The statistics half of G-33.** G-33 remains, reduced to the stop button.
 
-### G-30 — No attachments of any kind
+### G-30 — Attachments: all three routes are in; two formats are not
 
-The Web UI accepts images, text files, PDFs and audio, by file picker, drag-and-drop
-or paste, shows them as thumbnails, previews them full-size, and validates them
-against what the model can actually read (vision/audio).
+**Built 2026-09-01** (`PROGRESS.md`). **All three of the Web UI's routes in now
+work** — a file picker, **drag-and-drop** onto the chat column, and **paste of an
+image from the clipboard**. Staged files show as chips with **real thumbnails**,
+clicking one opens a **full-size preview**, and a sent turn shows what was
+attached to it. Stored in `messages.extra` in the frozen Web UI's shape (D-BP)
+and sent as OpenAI content parts by `pipeline.contentFor`.
 
-**The Nim GUI has no attachment path whatsoever.** Nine Web UI components cover this:
-`ChatAttachmentsList`, `ChatAttachmentPreview`, `ChatAttachmentThumbnailImage`,
-`ChatAttachmentThumbnailFile`, `ChatAttachmentsViewAll`, `ChatScreenDragOverlay`,
-`ChatFormActionAttachmentsDropdown`, `DialogChatAttachmentPreview`,
-`DialogChatAttachmentsViewAll`.
+**What is left, and both have a reason rather than an omission:**
 
-Audio recording (`ChatFormActionRecord`) is part of this group and is the one piece
-that may not be worth porting — raise it before building.
+| | |
+|---|---|
+| **PDFs** | **Blocked on a dependency decision — yours.** `contentFor` already *sends* a PDF carrying extracted text or page images, which is what an imported Web UI conversation has, but Jenova cannot produce either. Extraction needs **FlateDecode**, i.e. zlib inflate: Nim's stdlib has none, so it means linking `libz` (`/usr/lib/libz.so.1` is present, zlib licence, which AGENTS.md permits). **That is a dependency change and Directive 1 gates it.** Nothing else about the parser is hard |
+| **Audio capture** | **Raise before building, as `PLANS.md` has said since 7b was written.** `contentFor` emits `input_audio` parts already; nothing records. It needs either `/dev/dsp` ioctl work or a capture library, **and the models in use have no audio modality**, so it may buy nothing at all |
 
-### G-33 — No way to stop a generation
-
-**Statistics are done** (2026-09-01) — tokens in and out, tokens per second, elapsed,
-cached prompt tokens, context used and remaining, and the model, per reply and live
-during generation. See `PROGRESS.md`.
-
-**What is left is the stop control.** The Web UI's send button becomes a stop button
-mid-generation (`ChatFormActionSubmit`); **the Nim GUI's just greys out**, so once a
-generation starts there is no way to cancel it short of quitting. Cancelling means
-closing the streaming socket from the control worker, which is why the two workers are
-separate.
-
-### G-34 — Markdown is missing tables, task lists and maths
-
-`markdown.nim` handles headings, bullets, quotes, bold, italic, inline code and fenced
-code blocks. The Web UI's `MarkdownContent` additionally does **GitHub-flavoured
-tables, task lists and strikethrough**, and **LaTeX maths** via KaTeX.
-
-A model asked for a comparison answers with a table. It currently renders as raw pipes
-and dashes.
-
-### G-35 — No error reporting worth the name
-
-The Web UI has typed error dialogs: `DialogChatError` distinguishes a **timeout** from
-a **server error** and shows the prompt-token count against the context size when the
-failure was a context overflow. There are also `ServerErrorSplash` (retry, API key
-entry) and `ServerLoadingSplash`.
-
-**The Nim GUI puts everything into one grey line of text** — `App.notice`
-(`gui.nim:637`), written from sixteen places and rendered as one row. "the server
-answered 500" is the whole diagnosis a user gets. `gui.streamOnce` (`gui.nim:164`) has
-the status code in hand and turns it into that sentence.
 
 ### G-20 — The model selector is two hardcoded menu items
 
@@ -158,7 +135,8 @@ load/unload, and a full model-information dialog showing context size, parameter
 count, quantisation, vocabulary size, parallel slots, modalities and the chat template.
 
 **The Nim GUI has "Switch to instruct model" and "Switch to thinking model"**
-(`gui.nim:2032`), two hardcoded menu items.
+(`gui.nim:3312` and `gui.nim:3316`), two hardcoded menu items — and the same two
+hardcoded in the tray (`gui.nim:639,641`).
 
 Backend exists: `models.discover` / `models.switchModel`.
 
@@ -167,23 +145,16 @@ Backend exists: `models.discover` / `models.switchModel`.
 Deleting anything is a soft delete and it goes somewhere. There is no way to see or
 restore it from the desktop application.
 
-Backend exists and is tested: `GET /api/fs/trash` (`api.nim:591`),
-`POST /api/fs/trash/restore` (`api.nim:599`), `DELETE /api/fs/trash/empty`
-(`api.nim:607`), plus `/<entity>/deleted` and `/<entity>/<id>/restore` on every table.
+Backend exists and is tested, all inside `api.handleFs` (`api.nim:625`):
+`GET /api/fs/trash` (`api.nim:631`), `POST /api/fs/trash/restore` (`api.nim:639`),
+`DELETE /api/fs/trash/empty` (`api.nim:647`), over `fssync.getTrash`,
+`fssync.restoreTrash` and `fssync.emptyTrash`. Plus `/<entity>/deleted` and
+`/<entity>/<id>/restore` on every table (`api.nim:802`, over `api.restoreItem`).
 
 ### G-17 — The note editor is a plain text box
 
-It is a `TextView` with Save and Close — `gui.saveNote` (`gui.nim:968`). It is the seed
+It is a `TextView` with Save and Close — `gui.saveNote` (`gui.nim:1252`). It is the seed
 of a writing surface, not one.
-
-### G-36 — Deleting things asks for no confirmation
-
-Every delete in the tree and the conversation list happens on a single click.
-`gui.deleteNode` (`gui.nim:1034`) is the one path, reached from the workspace tree and
-from the conversation list's delete button (`gui.nim:1694`). The Web UI confirms, and
-shows how many child items a cascade will take with it (`DialogConfirmation`). Deletes
-here are soft, which is the argument that was used for not having a dialog — but a soft
-delete with no trash view (**G-21**) is indistinguishable from data loss.
 
 ### MCP — still deferred by you, and it is the largest item in the Web UI
 
@@ -213,8 +184,8 @@ PASS while asserting nothing.
 
 | ID | What it is |
 |---|---|
-| **G-37** | **Two style rules in `theme.nim` are dead.** `paned > separator` styles a widget that is not in the tree — a leftover from G-25, which shipped as a `Box` after a `Paned` crashed the app. And `.glow-text` is defined and carried by no widget: the glow effect works, but as a `text-shadow` duplicated inside `.brand` and `.conv-active`. **The second half is G-8's exact defect — a class defined and applied to nothing — recurring in the same file.** Both were found and reported on 2026-09-01 and neither was filed as work; that is why they are here. Re-verified 2026-09-01 12:08: `.glow-text` is `theme.nim:162` and no widget in `gui.nim` carries the class; `paned > separator` is `theme.nim:251-255`. *An earlier revision of this row named those two lines in the opposite order.* |
-| **G-38** | **A code comment in `gui.nim` describes a widget that was never used.** The main-area comment still explains itself as feeding "the `Paned` that G-25 adds". G-25 shipped as a `Box`, and the comment above the `Box` itself records why. A reader following the first comment looks for a `Paned` that does not exist. Prose only, no behaviour. `gui.nim:1763` |
+| **G-37** | **Two style rules in `theme.nim` are dead.** `paned > separator` styles a widget that is not in the tree — a leftover from G-25, which shipped as a `Box` after a `Paned` crashed the app. And `.glow-text` is defined and carried by no widget: the glow effect works, but as a `text-shadow` duplicated inside `.brand` and `.conv-active`. **The second half is G-8's exact defect — a class defined and applied to nothing — recurring in the same file.** Both were found and reported on 2026-09-01 and neither was filed as work; that is why they are here. Re-verified 2026-09-01 14:19: `.glow-text` is `theme.nim:253` and **no widget in `gui.nim` carries the class** (a grep for it in `gui.nim` returns nothing); `paned > separator` is `theme.nim:416-420`. *Both addresses moved again when `theme.nim` gained the light palette — an earlier revision named 162 and 251-255, and before that named them in the opposite order.* |
+| **G-38** | **A code comment in `gui.nim` describes a widget that was never used.** The main-area comment still explains itself as feeding "the `Paned` that G-25 adds". G-25 shipped as a `Box`, and the comment above the `Box` itself records why. A reader following the first comment looks for a `Paned` that does not exist. Prose only, no behaviour. `gui.nim:2560`, above `mainArea` |
 | **T-12** | **A one-line fix to two test scripts. The subject is closed — do not diagnose it again (D-BJ).** `test_routes.sh` and `test_lifecycle.sh` fail if anything already holds the machine's real ports, because neither overrides `JENOVA_LLAMA_PORT` the way both already override `JENOVA_PORT`. **That is the entire finding.** It is not a product fault, it is not a mystery, and it has been fully diagnosed three separate times. **The fix:** give both scripts their own dead upstream ports. Until the USER schedules it, a session seeing those failures records nothing and says nothing. |
 
 **Noted, not work:** `jca_web/src/lib/components/app/workspace/` holds one orphan file,
@@ -241,10 +212,10 @@ and a deleted turn is forgotten. **Step 4 is built.**
 
 | ID | What is wrong, in plain English | Where |
 |---|---|---|
-| **T-5** | **Quitting the app leaves the embedding server running.** Leaving the main model loaded is deliberate — reloading gigabytes into the GPU every start is worse. But the embedding server is left running with nothing attached to it. | `gui.run` (`gui.nim:2317`) calls `lc.startAll()`; its `defer` sends both workers the quit sentinel and joins them, and calls no `stopAll` |
+| **T-5** | **Quitting the app leaves the embedding server running.** Leaving the main model loaded is deliberate — reloading gigabytes into the GPU every start is worse. But the embedding server is left running with nothing attached to it. | `gui.run` (`gui.nim:3713`) calls `lc.startAll()`; its `defer` (`gui.nim:3724-3728`) sends both workers the quit sentinel, joins them and closes the channels — **and calls no `stopAll`**, which exists at `lifecycle.nim:329` and is only ever reached from the tray's stop/restart actions (`gui.nim:681`, `gui.nim:685`) |
 | **T-2** | **A long-running server slowly leaks memory.** The database keeps a cache of compiled queries that is never trimmed, and one API route builds a different query text for every combination of fields a client sends. | The cache is `Conn.cache` (`db.nim:46`), filled by `db.prepared` (`db.nim:165`) with no eviction; the only `sqlite3_finalize` is in `db.closeConn` (`db.nim:415-418`). The route is `api.updateMessage` |
 | **T-4** | **Two holes in the file-access containment check.** A *new* file written through a symlinked folder can escape the workspace root, because the symlink check only runs on paths that already exist. Separately, if the workspace root itself is a symlink, legitimate paths get rejected. | Both in `fssync.resolveStoragePath` (`fssync.nim:694`): the lexical base at `fssync.nim:700`, and the existence-gated symlink check at `fssync.nim:713` |
-| **T-3** | **The whole conversation is resent to the model every single turn.** No trimming, so a long chat eventually exceeds the context window. Needs a byte budget from `CTX_SIZE`, dropping oldest first, never dropping the system message. | `pipeline.prepare` (`pipeline.nim:222`) — **there is no trim step anywhere in the file** |
+| **T-3** | **The whole conversation is resent to the model every single turn.** No trimming, so a long chat eventually exceeds the context window. Needs a byte budget from `CTX_SIZE`, dropping oldest first, never dropping the system message. | `pipeline.prepare` (`pipeline.nim:223`) — **there is no trim step anywhere in the file**; the only `trim`-shaped call in it is `text.strip` on an intent prefix (`pipeline.nim:105`) |
 
 ---
 
@@ -252,16 +223,25 @@ and a deleted turn is forgotten. **Step 4 is built.**
 
 | ID | Item |
 |---|---|
-| **T-15** | The crash fixed in Session 011 was a widget re-entering the redraw. `Entry` has the same shape: its `text` hook can trigger a redraw, and two of the three Entries have a second thing writing to them (`app.draft` cleared on send, `app.noteTitle` set on rename). **Do not rewrite them.** All eleven crashes were the quit path and none was an `Entry`. Act only if a crash actually shows one. | The tree-row rename `Entry` (`gui.nim:1392`), the note-title `Entry` (`gui.nim:1790`) and the chat-draft `Entry` (`gui.nim:2298`). *This row's addresses were stale until 2026-09-01 12:39 — they named lines 830, 1083 and 1541, which are the `umDone` index dispatch, the rename node builder and the timings formatter. Session 015's citation sweep corrected the Active tables and missed this one.* |
+| **T-15** | The crash fixed in Session 011 was a widget re-entering the redraw. `Entry` has the same shape: its `text` hook can trigger a redraw, and two of the three Entries have a second thing writing to them (`app.draft` cleared on send, `app.noteTitle` set on rename). **Do not rewrite them.** All eleven crashes were the quit path and none was an `Entry`. Act only if a crash actually shows one. | **There are four `Entry` widgets now, not three.** The tree-row rename `Entry` (`gui.nim:1887`), the note-title `Entry` (`gui.nim:2592`), the chat-draft `Entry` (`gui.nim:3655`), and **a new fourth one G-31 added** — the settings panel's generic text field (`gui.nim:2938`), which is rebuilt per setting from `optsDraft` and so has the same shape. *Corrected 2026-09-01 14:19. The previous set — 1392, 1790, 2298 — was itself a correction made at 12:39 and had already rotted by 14:09.* |
+
 
 ---
 
-## S — the last shell in the tree, to be replaced by Nim
+## S — **empty. There is no shell left in the product tree.**
 
-| ID | Item |
-|---|---|
-| **S-1** | **Hardware profile selection is still two shell scripts, and it must become Nim driven from the GUI** (D-BC). `detect-hardware.sh` detects the CPU, GPUs, RAM and OS, scores them against each profile's `MATCH_*` patterns and copies the winner's `jenova.conf` into place; the per-profile `jenova-setup` scripts apply kernel tuning. Both reference `lib/` and `bin/` files archived with the old build, so **neither currently runs at all** — and nothing invokes them, since `config.nim` reads `etc/jenova.conf` directly. **The work:** port detection, scoring and apply into Nim; add a GUI screen that lists the profiles, shows which matched and why, and applies one; expose the same as a `jenova-core` subcommand for headless hosts; move the kernel-tuning values into `profile.conf` as data and have Nim apply them, reporting what it could not change without privilege. Archive both scripts when it lands. |
-| **S-2** | Two `profile.conf` files describe Linux filesystems (`HW_STORAGE="ext4/xfs/btrfs"`) on a FreeBSD-only project: `Vulkan/apu-ryzen7-5700u:20` and `CPU/generic:18`. Data only; fix while doing S-1. |
+**S-1 and S-2 were built on 2026-09-01 15:13 and are gone from this file** per the
+completion rule; the record is `PROGRESS.md`. Hardware detection, scoring, the profile
+screen and `jenova-core hardware` are Nim (`src/jenova/hardware.nim`), the six shell
+scripts are in `.devdocs/ARCHIVE/hardware-profiles/`, and `hardware-profiles/` holds
+data only.
+
+**`tests/*.sh` are the six test harnesses, not product code.** They are the only shell
+files left anywhere outside `external/` and `.devdocs/ARCHIVE/`.
+
+**Kernel tuning was deliberately not ported (D-BN)** — Jenova never applies a `sysctl`
+and never writes `/etc/sysctl.conf`. Nothing replaces those scripts, and that is the
+finished state, not a gap.
 
 ---
 

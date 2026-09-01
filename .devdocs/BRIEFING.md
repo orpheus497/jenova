@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-09-01 14:02 (Session 016)
+**Last updated:** 2026-09-01 16:19 (Session 017)
 **Branch:** `bsd`
 
 ---
@@ -61,17 +61,17 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 | **Build** | `nimble`. Tasks in `jenova_core.nimble`: `core`, `gui`, `suites`, `llama`, `web`, `clean` |
 | **Architecture** | `BLUEPRINT.md` |
 | **Runtime home** | `$HOME/Jenova`. `~/JCA` is permanently off limits |
-| **Tests** | **Six** shell suites under `tests/`, run by `nimble suites`, plus **six** self-test subcommands in `jenova-core` (`db-`, `serve-`, `rag-`, `pipeline-`, `sha256-`, `tree-selftest`). **None of them covers the GUI** — see §5 |
+| **Tests** | **Six** shell suites under `tests/`, run by `nimble suites`, plus **nine** self-test subcommands in `jenova-core` — the six older ones plus `hardware-`, `markdown-`, `error-` and `attach-selftest`. **None of them covers the GUI** — see §6 |
 
 ## 2. State
 
-**Verified as of 2026-09-01 14:02.** Both binaries build from a clean run of `nimble core`
+**Verified as of 2026-09-01 16:19.** Both binaries build from a clean run of `nimble core`
 and `nimble gui`; the FreeBSD-only guard was confirmed to still *fire* when the target is
-changed, not merely to exist; **`pipeline-selftest` passes, and `bin/jenova --check`
+changed, not merely to exist; **all nine self-tests pass, and `bin/jenova --check`
 exits 0 — the application reaches its first frame**, which is a thing a compile does
-not tell you and which was learned the hard way at 14:02 (rule 17). Both binaries are ELF 64-bit
-FreeBSD executables. The suites were **not** run this session and did not need to be —
-nothing outside `pipeline-selftest`'s reach changed.
+not tell you and which was learned the hard way at 14:02 (rule 17). Both binaries are
+ELF 64-bit FreeBSD executables. The six shell suites were **not** run and did not need
+to be — nothing Steps 6 and 7 touched is inside their reach.
 
 **Those runs happened because this session's work was building them; they are not a
 standing instruction.** Per Rule 0, do not run the suites or the product again without
@@ -81,9 +81,16 @@ directly — `test_nvimctl.sh` needs `nim` on `PATH` and only `nimble` puts it t
 reads as silence rather than an error. If `test_routes` or `test_lifecycle` fail, that is
 T-12 and it is closed: nothing to record, nothing to investigate.
 
-**The 2026-08-31 23:28 build was run by the USER**, and no appearance or rendering defect
-came back from it. The outstanding work is **functional, not visual**. Do not re-add an
-"unrun" label to those features.
+**The 2026-09-01 14:02 build has been run by the USER**, and **no defect came back
+from it.** They confirmed on screen: **both themes**, the **ghost text** in the
+parameter boxes, and **the full field set including the "not yet in effect"
+markers**. That supersedes the 2026-08-31 23:28 record below it and settles every
+open visual question from Step 5 and Step 5a — the opaque panel and its scrim, the
+light palette, the placeholders and the marker. **Do not re-add an "unrun" label to
+any of it** (rule 12).
+
+The earlier **2026-08-31 23:28** build was also run by the USER with no appearance
+defect reported. Both records stand; the newer one is the current state.
 
 **The backend is in good shape.** Configuration, database, threaded HTTP server, the whole
 `/api/*` surface, the filesystem mirror, retrieval **and its feed**, the prompt pipeline,
@@ -91,6 +98,33 @@ backend supervision and watchdog, model discovery and switching are implemented 
 covered by tests.
 
 ## 3. Done this session
+
+### An audit of every claim in these documents against the source (Session 017)
+
+**No code was touched and nothing was run.** Every substantive claim in `BRIEFING.md`,
+`TODOS.md` and `PLANS.md` was read back against the source.
+
+**The findings are all true.** Every defect (T-2, T-3, T-4, T-5), every missing feature
+(G-17, G-20, G-21, G-30, G-33, G-34, G-35, G-36), every backlog item (G-37, G-38, T-12)
+and both shell items (S-1, S-2) were confirmed by reading the code they describe.
+Everything claimed built is built: `settings.nim` (534 lines) with its parity assertion
+in `jenova_core.nim:632-678`, `--check` in `jenova_gui.nim:54`, the retrieval feed
+(`rag.indexExchange` called from `api.nim:798`, `api.nim:836` and `gui.nim:618`,
+`rag.backfillChats` from `gui.nim:609`, `rag.forgetMessage` from `api.nim:401`), and
+`AutoScroll`, the code-block cap and auto-titling in `gui.nim`. Six shell suites and six
+self-tests, as stated.
+
+**One claim was wrong and is corrected.** `DECISIONS_LOG.md` carried Q-31 and Q-32 as
+`OPEN` in its second table, one screen below the table declaring both answered — the
+exact defect that index was created to stop. Both rows now read ANSWERED.
+
+**And the citation rot recurred inside Session 016.** `TODOS.md` and `PLANS.md` both
+claim their line references were re-derived at 12:08; that was true, but parts two to
+four then took `gui.nim` from 2,365 lines to **3,072**, and `theme.nim`, `api.nim` and
+`fssync.nim` moved with it. **Eleven citations were stale by the time those files were
+last written at 14:09**, including every address in the Step 9 defect table. All
+re-derived at 14:19. **The lesson is not "sweep harder"** — two sweeps in one day both
+rotted within hours. It is rule 14: **read the symbol, treat the number as a hint.**
 
 ### Step 5a — the panel made readable, and the settings brought to 1:1
 
@@ -214,14 +248,20 @@ one sentence in it.** The ruling is Rule 0 above, and the phrasing that invited 
 
 | Works | Missing entirely |
 |---|---|
-| Send a message, stream a reply | **Attachments** of any kind — image, text, PDF, audio (G-30) |
-| Copy, edit, delete, regenerate, continue a message | **A stop button** — the other half of G-33 |
-| Branching — alternative versions, with a counter | **Tables, task lists, LaTeX maths** (G-34) |
-| Statistics: tokens, tok/s, context used and left, model | **A real model selector and model information** (G-20) |
-| A reasoning view for thinking models | **Typed errors, retry, context-overflow reporting** (G-35) |
-| Recall of past chats — the index is fed | **Trash view** (G-21), **delete confirmations** (G-36), **a real note editor** (G-17) |
-| **Settings — 1:1 with the Web UI, minus API Key, MCP and `serverUrl`** (G-31) | **Hardware profile detection and selection** — currently impossible from anywhere (S-1) |
+| Send a message, stream a reply | **PDF text extraction** — gated on a zlib dependency decision, yours (G-30) |
+| Copy, edit, delete, regenerate, continue a message | **Audio capture** — to be raised before it is built (G-30) |
+| Branching — alternative versions, with a counter | **LaTeX maths** — the half of G-34 left |
+| Statistics: tokens, tok/s, context used and left, model | **A real model selector** (G-20), **trash view** (G-21) |
+| A reasoning view for thinking models | **A real note editor** (G-17) |
+| **Stop a generation, keeping the partial answer** (G-33) | — |
+| **Markdown tables, task lists, strikethrough** (G-34) | — |
+| **Typed errors, Retry, context-overflow reporting** (G-35) | — |
+| **Delete confirmations naming the cascade** (G-36) | — |
+| **Attachments: picker, drag-and-drop, paste, thumbnails, preview** (G-30) | — |
+| Recall of past chats — the index is fed | — |
+| **Settings — 1:1 with the Web UI, minus API Key, MCP and `serverUrl`** (G-31) | — |
 | **Import / export of conversations** (G-32) | — |
+| **Hardware profile detection, scoring and selection** (S-1) | — |
 | **Light / dark / system theme, a following transcript, auto-titled chats** | — |
 | Conversations: create, rename, delete, search | — |
 | Workspace / project / folder tree, notes — renaming keeps its files | — |
@@ -240,9 +280,8 @@ Full detail with mechanisms and references: `TODOS.md`. Ordered plan: `PLANS.md`
 
 **T-17 was built in Session 015 and G-31/G-32 this session.** What remains:
 
-- **There is no way to detect hardware or change profile at all** (S-1). It was two shell
-  scripts and both are broken by subtraction. It becomes Nim with a GUI screen (D-BC),
-  Step 6.
+- **S-1 is built** (15:13) — hardware detection, scoring and profile selection are Nim,
+  with a screen and a subcommand. Gone from this list.
 - A leaked embedding server on exit (T-5), an unbounded statement cache (T-2), two holes
   in the file-containment check (T-4), untrimmed chat history (T-3) — real but not urgent,
   and all Step 9.
@@ -270,48 +309,96 @@ actually for.
 **Nothing in the plan is blocked.** Three product decisions remain parked, none on the
 critical path: filesystem as the source of truth (T-11), deployment (T-7), a CLI (T-8).
 
-## 8. Next
+## 8. Unobserved from earlier phases — awaiting a USER screen run
 
 **A screen run — the USER's, when it suits them, and not something a session initiates or
-asks after** (Rule 0). Three things have never been seen working. None is a suspicion;
-they are simply unobserved, and they stay unobserved until the USER happens to look:
+asks after** (Rule 0). **The settings work is done and confirmed** (item 3). What remains
+below is unobserved rather than suspected, and stays that way until the USER happens to
+look:
 
 1. **The repairs from Session 014** — existing conversations reading as transcripts again
    with no version arrows on ordinary turns, and Continue extending an answer rather than
-   restarting it.
+   restarting it. **Continue is now off by default** (D-BH closed at Step 5), so it has to
+   be switched on under Settings → General to be seen at all.
 2. **Session 015's recall, against a live backend.** Everything was verified with the
    embedding server **down**, so the semantic half of ranking on real embeddings is
    unproven. The feed, the filter, the forget, the backfill and the injection into the
    outbound body are all asserted. On a start with the embedder up, the window says
    "indexed N past messages for recall" once, and a later question about an earlier chat
    should reach the model with that chat attached.
-3. **The settings panel, and it is the largest unseen change in the project.** Its
-   layout, the opaque panel and its scrim, the "Custom" badge — and above all **the
-   light palette**, which touches every widget, the canvas, the terminal and the
-   code-block scheme. The gear is in the top bar, right of the document-panel button;
-   Theme is the first field under General. Also unseen: the transcript following a
-   streaming reply, and the code-block cap — that one is the change nearest G-11's
-   collapse defect, and it is capped by an explicit height *because* owlkettle's
-   ScrolledWindow reports a near-zero minimum without one, but that is reasoning and
-   not a screenshot.
-4. **The icons**, still unconfirmed: `view-refresh-symbolic`,
-   `media-playback-start-symbolic`, `go-previous-symbolic`, `go-next-symbolic` and this
-   session's `emblem-system-symbolic` and `window-close-symbolic` are all standard Adwaita
-   symbolics, but a missing one renders as a broken placeholder rather than failing the
-   build.
+3. **The settings panel is run and confirmed** — both themes, the ghost text and the
+   whole field set. Nothing about it is outstanding.
 
-Then **`PLANS.md` Step 6 — hardware profiles in Nim, driven from the window** (S-1, ruled
-at D-BC). Choosing a hardware profile is still two shell scripts and **both are broken by
-subtraction**: `detect-hardware.sh:19` sources an archived `lib/detect-env.sh` and one
-profile's `jenova-setup` resolves an archived `bin/` helper. Nothing invokes either, so
-**there is currently no way to detect hardware or change profile at all** except editing
-`etc/jenova.conf` by hand — which D-BC makes a defect, not a limitation. The work is
-detection, scoring and apply ported to Nim, a screen that lists the profiles and shows
-which matched and why, the same as a `jenova-core` subcommand for headless hosts, the
-kernel tuning moved into `profile.conf` as data, and both scripts archived. **The scoring
-is pure logic over data files and belongs in a suite** — feed known hardware, assert the
-selected profile, including that an opt-in profile never wins automatically and that the
-fallback ladder holds. Fix S-2's two Linux filesystem strings in the same pass.
+   Three of its behaviours need a *live generation* or a *long answer* to appear at
+   all, so they were not necessarily exercised by that run — stated as scope, not as
+   suspicion: the transcript **following a streaming reply** (`AutoScroll`), the
+   **code-block cap** on an answer over 24 lines, and the **"Custom" badge and server
+   placeholders**, which need a backend up to have any `/props` values to compare
+   against. With the backend down every box shows the built-in default instead, which
+   is what the USER saw and is the designed behaviour.
+4. **Four icons still unconfirmed**: `view-refresh-symbolic`,
+   `media-playback-start-symbolic`, `go-previous-symbolic` and `go-next-symbolic` — the
+   regenerate, continue and version-arrow controls, which only appear on a branched or
+   continuable turn. All are standard Adwaita symbolics, but a missing one renders as a
+   broken placeholder rather than failing the build. **`emblem-system-symbolic` is
+   confirmed** — the USER opened the settings panel with it — and
+   `format-text-rich-symbolic` only appears once the raw-output toggle is switched on.
+
+## THE PHASE JUST FINISHED — Step 7, the chat surface. **Complete at 16:19.**
+
+| | |
+|---|---|
+| **A stop button** (G-33) | Cancelling needs a **file descriptor**, not just a flag: the worker lives blocked in `recvLine`, and `shutdown(2)` is what ends that read. The partial answer is kept. **D-BO** |
+| **Tables, task lists, strikethrough** (G-34) | A real `Grid` — Pango has no table — scrolling inside itself, with `:---:` alignment. **LaTeX still open** |
+| **Typed errors and Retry** (G-35) | `streamOnce` now **reads the error body it used to throw away**, which is where the prompt and context sizes live. An overflow names both and is **not** offered a Retry |
+| **Delete confirmations** (G-36) | One dialog over all three call sites, **naming the cascade**, counted by rewriting the same `Cascades` statements the delete runs |
+| **Attachments** (G-30) | **All three of the Web UI's routes**: picker, drag-and-drop, and paste of a clipboard image. Chips carry **thumbnails**; clicking one opens a **full-size preview**; a sent turn shows what it carried. Stored in the frozen Web UI's shape and sent in its part order (**D-BP**) |
+
+**Nine self-tests, all passing.** `attach-selftest` is 27 assertions, `markdown-`
+17, `error-` 15, plus 5 on `cascadeCount`. **Eight clean reds across the day's
+corruptions.**
+
+**Reuse paid off twice, which is rule 5 working:** thumbnails needed **no** new
+GTK proto because `loadPixbuf` already wraps
+`gdk_pixbuf_new_from_file_at_scale`, and the paste path writes a PNG and hands it
+to **the same queue a dropped file uses** — one attachment implementation, three
+ways in.
+
+**Two honest notes kept from the day:** one markdown corruption stayed green and
+was a *weak* corruption rather than a hole, and was replaced with one that bites;
+one attachment corruption **crashed** instead of going red and is not counted as
+a red.
+
+## What is left of Step 7 — two decisions, not two jobs
+
+- **PDF text extraction needs a dependency decision, and it is yours.** It
+  requires FlateDecode — zlib inflate — which Nim's stdlib does not have, so it
+  means linking `libz` (`/usr/lib/libz.so.1`, zlib licence, permitted by
+  AGENTS.md). **Directive 1 gates a dependency change.** Nothing else about the
+  parser is hard, and `contentFor` already *sends* a PDF that carries text or
+  page images.
+- **Audio capture is the raise `PLANS.md` has always called for.** `input_audio`
+  parts are already emitted; nothing records. It needs `/dev/dsp` ioctl work or a
+  capture library — **and no model in use has an audio modality**, so it may buy
+  nothing at all.
+
+## Next — `PLANS.md` Step 8, the remaining views
+
+**8a. A real model selector** (G-20) — two hardcoded menu items today, in the
+window and in the tray. Backend exists: `models.discover`, `models.switchModel`.
+**8b. A trash view** (G-21) — everything deleted is invisible; the routes exist
+and are asserted. G-36 landed first and the two answer each other, so this is now
+the more pressing half. **8c. A real note editor** (G-17). Then Step 9's four
+stability items.
+
+**Unseen, and it is now a large surface:** the stop button, table rendering,
+attachment chips and thumbnails, the drop target, the paste button, the preview
+panel, the confirmation dialog and the Retry button. `--check` builds the widget
+tree and presses nothing.
+
+**Still outstanding from earlier phases:** the Session 014 repairs, Session 015's
+recall against a *live* backend, three settings behaviours needing a live
+generation, and four Adwaita icons that only appear on a branched turn.
 
 ## 9. Settled — do not re-raise
 

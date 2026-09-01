@@ -5,6 +5,114 @@ One short paragraph per session. Sessions 001-005 are in
 
 ---
 
+## Session 017 (part four) — 2026-09-01 16:19
+
+**Step 7 finished: attachments now have all three of the Web UI's routes in.** Drag-and-drop
+over the chat column (a `DropZone` renderable, taking `text/uri-list` as a plain string so
+no boxed file-list walk is needed), paste of a clipboard image (saved to PNG and then handed
+to **the same queue a dropped file uses** — one implementation, three ways in), and
+thumbnails with a full-size preview that needed **no new GTK proto at all**, because
+`loadPixbuf` already wraps the scaling loader. **The classifier moved below the widget
+layer** — `pipeline.readAttachment`, `uriToPath`, `looksTextual` — which was forced as well
+as right: the drop drain runs inside the window's own timer, where a proc taking the GUI
+state type cannot yet exist, and moving it made the whole thing assertable.
+**`attach-selftest` is now 27 assertions**, twelve added here, with three clean reds —
+including the vision refusal asserted **in both directions**, since refusing an image while
+`/props` has not answered is the same defect as accepting one the model cannot read. All
+nine self-tests pass and `--check` exits 0. **What remains of Step 7 is two decisions rather
+than two jobs:** PDF extraction needs FlateDecode and therefore a `libz` link, which
+Directive 1 gates as a dependency change; and audio capture is the raise the plan has always
+called for, with no model in use having an audio modality anyway. **Everything a person can
+touch is unseen.** Detail: `SESSION_HANDOFF.md` Session 017 (part four).
+
+---
+
+## Session 017 (part three) — 2026-09-01 15:46
+
+**Step 7 built — four of its five parts finished and the fifth part-built.** A **stop
+button** (G-33) that keeps the partial answer, cancelling by publishing the socket's file
+descriptor and calling `shutdown(2)` on it, because the worker lives blocked in
+`recvLine` and a flag it never executes stops nothing (**D-BO**). **Markdown tables**
+(G-34) as a real `Grid` — Pango has no table — plus task lists and strikethrough, with
+LaTeX deliberately left open. **Typed errors with Retry** (G-35), where the real fix was
+that `streamOnce` threw away the error body llama.cpp puts the prompt and context sizes
+in, so an overflow now names both numbers and is *not* offered a retry. **Delete
+confirmations** (G-36) naming the cascade, counted by rewriting the same `Cascades`
+statements the delete runs so the number cannot drift. And **the attachment core**
+(G-30): picker, chips, storage in `messages.extra` in the frozen Web UI's own shape
+(**D-BP**), sent as OpenAI content parts in the Web UI's order — with drag-and-drop,
+paste, thumbnails, PDFs and audio capture still outstanding. **Three new self-tests take
+the total to nine**, all shown able to fail; one markdown corruption stayed green and was
+recorded as a *weak* corruption rather than a hole, and one attachment corruption crashed
+instead of going red and is not counted as one. **Everything user-visible here is
+unseen** — `--check` builds the widget tree and presses nothing. Detail:
+`SESSION_HANDOFF.md` Session 017 (part three).
+
+---
+
+## Session 017 (part two) — 2026-09-01 15:13
+
+**Step 6 built: hardware profiles are Nim, driven from the window, and the last shell
+script leaves the product tree.** `src/jenova/hardware.nim` holds detection, the
+`profile.conf` reader, the scorer and apply — below the widget layer, so the whole
+scoring ladder is assertable with no window; `gui.nim` only draws the new Hardware
+screen, and `jenova-core hardware detect|list|apply` serves headless hosts. The six shell
+scripts are archived, S-2's two Linux filesystem strings are fixed, and the four
+documents telling the USER to `sudo` a `jenova-setup` had those references **deleted
+rather than repaired**, per D-BN. **Thirteen assertions in a seventh self-test, three
+corruptions, three different reds — and one corruption passed first**, which found that
+the assertion checked the winning profile's *name* when the `-8` penalty's whole job is
+the *margin*: without it the two candidates tie and the right one wins only by sort
+order. **A second defect the suite could never have caught:** the first real run found no
+GPU at all and picked the wrong profile, because `llama-server` needs `LD_LIBRARY_PATH`
+and `detectGpu` did not set it — an unloadable binary and a GPU-less machine are the same
+empty string. Both fixed; all seven self-tests pass, both binaries build, `--check` exits
+0, and real detection now scores 40 on the correct profile. **The screen itself is
+unrun** — that is the USER's. Detail: `SESSION_HANDOFF.md` Session 017 (part two).
+
+---
+
+## Session 017 — 2026-09-01 14:19
+
+**Audit session: every claim in the trackers read back against the source, no code
+touched, nothing run.** The findings all hold — the four Step 9 defects, the eight
+missing GUI features, both shell items, and everything claimed built is built. **Two
+documentation defects found and fixed:** `DECISIONS_LOG.md` still carried Q-31 and Q-32
+as `OPEN` one screen below the table answering them, which is precisely the defect that
+index was created to stop; and **the citation rot recurred inside Session 016** — both
+`TODOS.md` and `PLANS.md` state their references were re-derived at 12:08, but parts two
+to four then took `gui.nim` to 3,072 lines and eleven addresses were stale by the time
+those files were written at 14:09. All re-derived; the conclusion recorded is that a
+second sweep is not the fix, rule 14 is. **`PLANS.md` Step 6 was then scoped from a
+sketch into the actual plan** — the scoring ladder written out as a table, a new
+`hardware.nim` below the widget layer, the sysctl set enumerated, a seventh self-test
+specified with its red-first corruption. **One thing was put to the USER that should not
+have been** — whether Jenova writes `/etc/sysctl.conf` — and they ruled instantly that
+it touches `sysctl` for nothing (**D-BN**). It was not invented: Step 6 had carried
+"the kernel tuning moved into `profile.conf` and Nim applies them" since it was written,
+lifted out of the archived `jenova-setup` scripts. I re-derived every citation in that
+file and left that item's *content* unexamined. **An archived script doing something is
+not an argument that Jenova should do it**, and D-AZ already said so. Step 6 is now
+detection, scoring and selection only. Detail: `SESSION_HANDOFF.md` Session 017.
+
+---
+
+## Session 016 (part four) — 2026-09-01 14:09
+
+**The USER ran the 14:02 build and nothing came back wrong** — both themes, the ghost
+text and the full settings field set including the pending markers, all confirmed on
+screen. **The light palette worked**, which was the largest untested change in the
+project: a second palette driving every widget, the canvas, the terminal colours and
+the code-block scheme, converted from the Web UI's `oklch` block and never once looked
+at. The opaque panel and scrim — the defect that started part two — are confirmed too.
+Recorded in `BRIEFING.md`, `TODOS.md`'s run-status section and a SETTLED FACTS row;
+**no "unrun" label goes back on any of it** (rule 12). Three behaviours need a live
+generation, a long answer or a running backend to appear at all and so were not
+necessarily exercised — `AutoScroll`, the code-block cap, and the "Custom" badge — but
+that is scope, not doubt. **No code was touched.** Next is `PLANS.md` **Step 6**,
+hardware profiles in Nim driven from the window (S-1). Detail: `SESSION_HANDOFF.md`
+Session 016 (part four).
+
 ## Session 016 (part three) — 2026-09-01 14:02
 
 **I handed over a build that aborted on every launch, and had no way of knowing.**

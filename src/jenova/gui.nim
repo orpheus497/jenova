@@ -35,7 +35,9 @@
 ## shells to base `fetch(1)`: this project has spent seven stages removing
 ## dependencies, and a localhost request needs no TLS stack.
 
-import std/[algorithm, json, net, os, oids, osproc, streams, strutils, tables, times]
+import std/[algorithm, atomics, base64, json, net, os, oids, osproc, posix,
+            streams,
+            strutils, tables, times]
 import owlkettle
 import owlkettle/adw
 import owlkettle/cairo
@@ -57,6 +59,8 @@ import ./nvimctl
 import ./vte
 import ./pipeline
 import ./settings
+import ./sha256
+import ./hardware
 
 type
   Role* = enum
@@ -99,6 +103,17 @@ type
     ## the same turn** — that is the whole of branching, and it is why editing or
     ## regenerating adds a row rather than overwriting one.
     parent*: string
+    ## G-30. The turn's attachments, as the JSON text of the `messages.extra`
+    ## column — **the frozen Web UI's own array shape** (D-Z), so a conversation
+    ## moves between the two surfaces without conversion. Carried as text rather
+    ## than a `JsonNode` because `Message` crosses a thread channel and a
+    ## `JsonNode` is a `ref`.
+    extra*: string
+
+  ## G-30. A staged attachment is `pipeline.Attachment` — the type moved below
+  ## the widget layer with the classifier that produces it, so both are
+  ## assertable. This alias is kept because the widgets read better for it.
+  PendingAttachment* = pipeline.Attachment
 
   BackendStatus* = enum
     ## Deliberately three states, not two. `ui.poll_status` collapsed everything
@@ -127,6 +142,8 @@ type
     ## the committed row itself, so nothing has to copy message text across the
     ## channel and the worker cannot index a turn that was never written (T-17).
     msgId: string
+    ## S-1: which profile an `apply_profile` job should deploy.
+    profileName: string
 
   UiMsgKind = enum
     umToken, umDone, umError, umNotice, umStatus,
@@ -136,7 +153,11 @@ type
     ## G-33: the server's own measurements, and the model it used.
     umTimings, umModel,
     ## G-33: the backend's context window and loaded model, from `/props`.
-    umProps
+    umProps,
+    ## S-1: the detected hardware and the profile ranking. Detection shells out
+    ## to `sysctl` and `llama-server --list-devices`, so it runs on the control
+    ## worker and arrives here.
+    umHardware
 
   UiMsg = object
     kind: UiMsgKind
@@ -148,6 +169,15 @@ type
     ## Carried as text and parsed on arrival so no `JsonNode` — a ref type —
     ## crosses the channel between threads.
     params: string
+    ## G-30: does the loaded model accept images? From `/props.modalities`.
+    vision: bool
+    ## G-35: may the USER honestly be offered a Retry for this failure?
+    retryable: bool
+    ## S-1. Both are plain value types all the way down — objects, ints and
+    ## `seq[string]` — so they deep-copy across the channel the way `timings`
+    ## does. Nothing here is a `ref`.
+    hw: hardware.Hardware
+    scores: seq[hardware.Score]
 
 var
   streamReq: Channel[StreamJob]
@@ -156,15 +186,55 @@ var
   streamThread: Thread[void]
   ctlThread: Thread[void]
   pendingActions: seq[string] = @[]
+  # G-30. The drop callback is a bare C function pointer and cannot carry a
+  # closure, so it only ever appends here; the timer that already runs on the
+  # GTK thread drains it with the app state in hand. Same shape as
+  # `pendingActions`, and for the same reason — a GTK callback must not reach
+  # into the widget tree.
+  droppedPaths: seq[string] = @[]
   # Set the moment "quit" is drained. `closeWindow` destroys the window and with
   # it every GtkWidget in the tree, so anything that touches a widget afterwards
   # is touching freed memory — which is the SIGBUS in all ten cores of
   # 2026-08-31. Every timeout checks this and removes itself.
   quitting = false
-
 # An empty host/action is the shutdown sentinel: each worker returns from its own
 # loop so joinThread completes, rather than being unblocked by a channel close.
 const QuitSentinel = ""
+
+# G-33, the stop button. **Two variables and not one**, because a flag alone
+# cannot stop a generation: the stream worker spends its life blocked inside
+# `sock.recvLine`, and a flag it is not executing to check does nothing. So the
+# socket's file descriptor is published here and `shutdown(2)` on it is what
+# unblocks that read immediately — the flag then tells the loop the failure was
+# asked for rather than a real error.
+#
+# An `int` fd is what crosses the thread boundary, never the `Socket`: `Socket`
+# is a `ref`, and closing one from another thread while its owner is inside a
+# read is a use-after-free. `shutdown` on a raw descriptor is safe, and is the
+# same thing a cancelled HTTP client does anywhere.
+var
+  streamCancel: Atomic[bool]
+  streamFd: Atomic[int]
+
+# Action purpose: **-1, not the zero an `Atomic[int]` starts at.** Zero is a
+# perfectly valid descriptor — it is stdin — so a Stop pressed before anything
+# had ever streamed would have called `shutdown` on this process's own stdin.
+streamFd.store(-1)
+
+## Function purpose: stop the generation in flight. Safe to call when nothing is
+## streaming — the fd is -1 and this does nothing.
+##
+## Action purpose: this runs on the **GTK thread**, directly from the button,
+## rather than being posted to the control worker. `PLANS.md` 7a proposed the
+## worker because a stop must never queue behind a generation — but an atomic
+## store and one `shutdown` syscall neither block nor allocate, so doing it
+## inline satisfies that requirement more completely than a queue does: there is
+## no queue to be behind. (**D-BO**.)
+proc cancelStream() =
+  streamCancel.store(true)
+  let fd = streamFd.load()
+  if fd >= 0:
+    discard posix.shutdown(SocketHandle(fd), posix.SHUT_RDWR)
 
 proc streamOnce(job: StreamJob) =
   var sock: Socket
@@ -172,9 +242,13 @@ proc streamOnce(job: StreamJob) =
   # every one of potentially thousands of chunks, and each send crosses a channel
   # to the GTK thread and forces a redraw.
   var lastModel = ""
+  # Cleared here rather than by the canceller, so a stop pressed between two
+  # generations cannot cancel the next one before it has sent a byte.
+  streamCancel.store(false)
   try:
     sock = newSocket()
     sock.connect(job.host, Port(job.port))
+    streamFd.store(sock.getFd().int)
     sock.send("POST /v1/chat/completions HTTP/1.1\r\n" &
               "Host: " & job.host & "\r\n" &
               "Content-Type: application/json\r\n" &
@@ -185,10 +259,26 @@ proc streamOnce(job: StreamJob) =
     let parts = statusLine.split(' ')
     let code = if parts.len > 1: parts[1] else: ""
     if code != "200":
-      uiChan.send(UiMsg(kind: umError, text:
-        if code == "502": "llama-server is not answering yet"
-        elif code.len == 0: "no response from the server"
-        else: "the server answered " & code))
+      # Action purpose: **the body is read now, and it was thrown away before.**
+      # llama-server puts the whole diagnosis in it — including, for a context
+      # overflow, the prompt size and the context size — and dropping it left
+      # "the server answered 400" as the entire report (G-35). Headers first,
+      # then whatever body arrives before the connection closes.
+      var body = ""
+      try:
+        while true:
+          let h = sock.recvLine(timeout = 5_000)
+          if h.len == 0 or h == "\r\n": break
+        while true:
+          let chunk = sock.recvLine(timeout = 5_000)
+          if chunk.len == 0: break
+          body.add chunk
+      except CatchableError:
+        discard
+      let status = try: parseInt(code) except ValueError: 0
+      let ce = pipeline.classifyError(status, body)
+      uiChan.send(UiMsg(kind: umError, text: ce.message,
+                        retryable: ce.retryable))
       return
 
     while true:
@@ -196,6 +286,11 @@ proc streamOnce(job: StreamJob) =
       if line.len == 0 or line == "\r\n": break
 
     while true:
+      # Checked before the read as well as relied on after it: if the stop lands
+      # between two chunks the loop leaves here, and if it lands while blocked
+      # inside `recvLine` the `shutdown` ends that read and the `except` below
+      # sees the flag.
+      if streamCancel.load(): break
       let line = sock.recvLine(timeout = 300_000)
       if line.len == 0: break
       if not line.startsWith("data:"): continue
@@ -233,12 +328,25 @@ proc streamOnce(job: StreamJob) =
           predictedMs: t{"predicted_ms"}.getFloat(0.0),
           cacheN: t{"cache_n"}.getInt(0))))
   except CatchableError as e:
-    uiChan.send(UiMsg(kind: umError, text: e.msg))
+    # Action purpose: a cancelled read fails, and that failure is the stop
+    # working. Reporting it would put "Connection reset by peer" on screen every
+    # single time the USER pressed Stop (G-33).
+    if not streamCancel.load():
+      # A transport failure has no status line to read, so it is classified from
+      # the exception instead — which is how a timeout comes to be reported as a
+      # timeout rather than as whatever the socket layer called it (G-35).
+      let ce = pipeline.classifyError(0, exceptionMsg = e.msg)
+      uiChan.send(UiMsg(kind: umError, text: ce.message,
+                        retryable: ce.retryable))
   finally:
+    streamFd.store(-1)
     # `Socket` is a ref: closing it when newSocket() never ran is a SIGSEGV that
     # `except CatchableError` does not catch.
     if not sock.isNil:
       try: sock.close() except CatchableError: discard
+    # Always sent, cancelled or not — `umDone` is what saves the reply with the
+    # text it reached and the parent that makes it a sibling (D-BG). A stop must
+    # keep the partial answer, not discard it.
     uiChan.send(UiMsg(kind: umDone))
 
 proc streamWorker() {.thread.} =
@@ -298,18 +406,22 @@ proc httpGetLocal(host: string, port: int, path: string): string =
 ## from a second one — this proc is a socket round trip and the reason it runs on
 ## the control thread at all.
 proc fetchProps(host: string, port: int):
-    tuple[ctx: int, model: string, params: string] =
+    tuple[ctx: int, model: string, params: string, vision: bool] =
   let body = httpGetLocal(host, port, "/props")
-  if body.len == 0: return (0, "", "")
+  if body.len == 0: return (0, "", "", false)
   try:
     let n = parseJson(body)
     let gen = n{"default_generation_settings"}
     let params = gen{"params"}
+    # G-30: `modalities.vision` is the server's own answer to "can this model
+    # look at a picture", set from the loaded projector. It is what decides
+    # whether attaching an image is offered or refused with a reason.
     (gen{"n_ctx"}.getInt(0),
      n{"model_alias"}.getStr(""),
-     if params != nil and params.kind == JObject: $params else: "")
+     (if params != nil and params.kind == JObject: $params else: ""),
+     n{"modalities"}{"vision"}.getBool(false))
   except CatchableError:
-    (0, "", "")
+    (0, "", "", false)
 
 
 ## Function purpose: the LAN-mode flag, persisted exactly where `ui.lua:12-15`
@@ -467,7 +579,7 @@ proc timingsFromJson(s: string): Timings =
 ## later UPDATE so a reply is one row written once.
 proc saveMessage(convId: string, role: Role, text: string,
                  thinking = "", model = "", timings = Timings(),
-                 parent = ""): string =
+                 parent = "", extra = ""): string =
   # Action purpose: **a turn with no visible text but with reasoning is still a
   # turn.** This refused anything with an empty `content`, which was harmless
   # while the transcript was a flat list and is not now: `umDone` read the empty
@@ -477,10 +589,10 @@ proc saveMessage(convId: string, role: Role, text: string,
   if convId.len == 0 or (text.len == 0 and thinking.len == 0): return ""
   result = $genOid()
   db.exec("INSERT INTO messages (id, convId, type, role, timestamp, content, " &
-          "thinking, model, timings, parent, is_deleted) " &
-          "VALUES (?, ?, 'message', ?, ?, ?, ?, ?, ?, ?, 0)",
+          "thinking, model, timings, parent, extra, is_deleted) " &
+          "VALUES (?, ?, 'message', ?, ?, ?, ?, ?, ?, ?, ?, 0)",
           [result, convId, $role, $toUnix(getTime()), text,
-           thinking, model, timingsToJson(timings), parent])
+           thinking, model, timingsToJson(timings), parent, extra])
   db.exec("UPDATE conversations SET lastModified=? WHERE id=?",
           [$toUnix(getTime()), convId])
 
@@ -490,13 +602,14 @@ proc saveMessage(convId: string, role: Role, text: string,
 ## is part of the contract rather than a tidy default.
 proc loadMessages(convId: string): seq[Message] =
   if convId.len == 0: return
-  for r in db.query("SELECT role, content, id, thinking, model, timings, parent " &
-                    "FROM messages WHERE convId=? AND is_deleted=0 " &
-                    "ORDER BY timestamp ASC, rowid ASC", convId):
-    if r.len < 7: continue
+  for r in db.query("SELECT role, content, id, thinking, model, timings, " &
+                    "parent, extra FROM messages WHERE convId=? AND " &
+                    "is_deleted=0 ORDER BY timestamp ASC, rowid ASC", convId):
+    if r.len < 8: continue
     result.add Message(role: (if r[0] == "user": rUser else: rAssistant),
                        text: r[1], id: r[2], thinking: r[3], model: r[4],
-                       timings: timingsFromJson(r[5]), parent: r[6])
+                       timings: timingsFromJson(r[5]), parent: r[6],
+                       extra: r[7])
 
 ## The turn the reader is currently on, persisted so reopening a conversation
 ## returns to the branch they were reading rather than to whichever version
@@ -591,10 +704,10 @@ proc ctlWorker() {.thread.} =
       # nothing extra and never touches the GTK loop.
       if up and not propsRead:
         propsRead = true
-        let (ctx, model, params) = fetchProps("127.0.0.1", j.port)
+        let (ctx, model, params, vision) = fetchProps("127.0.0.1", j.port)
         if ctx > 0 or model.len > 0 or params.len > 0:
           uiChan.send(UiMsg(kind: umProps, ctx: ctx, text: model,
-                            params: params))
+                            params: params, vision: vision))
       elif not up:
         propsRead = false
       # Action purpose: put existing history into the retrieval index once, and
@@ -616,6 +729,40 @@ proc ctlWorker() {.thread.} =
       # frozen transcript. Failure is silent by design — retrieval degrades, the
       # conversation does not.
       discard rag.indexExchange(j.msgId)
+    of "hardware":
+      # Action purpose: on this worker and not the GTK thread because detection
+      # runs `sysctl` and `llama-server --list-devices` as subprocesses — the
+      # device enumeration in particular initialises Vulkan and takes long
+      # enough to freeze a window. It starts no backend and binds no port.
+      try:
+        let profs = hardware.listProfiles(j.lc.paths.root)
+        let h = hardware.detect(j.lc.paths.llamaServer, j.lc.paths.llamaLibDir)
+        uiChan.send(UiMsg(kind: umHardware, hw: h,
+                          scores: hardware.scoreAll(profs, h),
+                          text: hardware.currentProfile(profs,
+                                  j.lc.paths.jcaHome).name))
+      except CatchableError as e:
+        uiChan.send(UiMsg(kind: umNotice,
+                          text: "hardware detection failed: " & e.msg))
+    of "apply_profile":
+      try:
+        let profs = hardware.listProfiles(j.lc.paths.root)
+        let (found, prof) = hardware.findByName(profs, j.profileName)
+        if not found:
+          uiChan.send(UiMsg(kind: umNotice,
+                            text: "no such profile: " & j.profileName))
+        else:
+          let r = hardware.applyProfile(prof, j.lc.paths.jcaHome)
+          uiChan.send(UiMsg(kind: umNotice, text: r.msg))
+          # Re-detect so the screen shows the new profile as current without
+          # the USER having to reopen it.
+          let h = hardware.detect(j.lc.paths.llamaServer, j.lc.paths.llamaLibDir)
+          uiChan.send(UiMsg(kind: umHardware, hw: h,
+                            scores: hardware.scoreAll(profs, h),
+                            text: hardware.currentProfile(profs,
+                                    j.lc.paths.jcaHome).name))
+      except CatchableError as e:
+        uiChan.send(UiMsg(kind: umNotice, text: "apply failed: " & e.msg))
     else: discard
 
 viewable App:
@@ -652,6 +799,23 @@ viewable App:
   convId: string
   streaming: bool
   notice: string
+  ## G-35: whether the notice currently on screen is a failure worth offering a
+  ## Retry for. Set only by `umError`, and cleared by every other writer of
+  ## `notice`, so a stale Retry cannot outlive the error that earned it.
+  noticeRetryable: bool
+  ## G-30: does the loaded model accept images? Read once per backend lifetime
+  ## from `/props.modalities.vision`, and what decides whether an image can be
+  ## attached at all.
+  serverVision: bool
+  ## G-30: the attachment being previewed full-size, as its `data:` URL. Empty
+  ## when the preview is closed.
+  previewUrl: string
+  previewName: string
+  ## G-30. Attachments staged on the composer, not yet sent. Cleared when the
+  ## turn they belong to is posted. Each is a `messages.extra` element in the
+  ## Web UI's own shape (D-Z), kept as parsed fields here only so the strip can
+  ## draw a name and a size without re-parsing on every redraw.
+  pending: seq[PendingAttachment]
   ## G-33. `ctxSize` is the context **one conversation** gets — `llama-server`'s
   ## per-slot figure from `/props`, not `CTX_SIZE` from the config, which is the
   ## total shared across parallel slots. Zero until the backend has been up long
@@ -716,6 +880,17 @@ viewable App:
   optsDraft: settings.Settings
   settingsOpen: bool
   settingsSection: settings.SettingSection
+  ## S-1. The hardware screen is its own panel rather than a settings section,
+  ## because `settings.SettingSection` is the Web UI parity set (D-BL) and the
+  ## parity assertion in `hardware-selftest`'s sibling `pipeline-selftest`
+  ## checks it key for key — a Jenova-only section added there would turn it red
+  ## for no defect. `hwDetecting` is what the panel shows while the control
+  ## worker is out; detection is never run on this thread.
+  hardwareOpen: bool
+  hwDetecting: bool
+  hw: hardware.Hardware
+  hwScores: seq[hardware.Score]
+  hwCurrent: string
   ## The two multi-line fields. A `TextView` owns a `TextBuffer` rather than a
   ## string, so — exactly as the note editor and the in-place message edit
   ## already do — each is filled when the dialog opens and read back on save.
@@ -789,6 +964,26 @@ viewable App:
 
       discard addGlobalTimeout(40, proc(): bool =
         var changed = false
+
+        # G-30: files dropped on the window. The GTK drop callback is a bare C
+        # function pointer that only appends to `droppedPaths`; the work happens
+        # here, on the GTK thread, with the app state in hand — the same shape
+        # `pendingActions` uses, and for the same reason.
+        while droppedPaths.len > 0:
+          let path = droppedPaths[0]
+          droppedPaths.delete(0)
+          changed = true
+          # `readAttachment` and not `attachFile`: this runs inside the
+          # `viewable`'s own hook, where a proc taking `AppState` does not yet
+          # exist. That is the reason the decision is a pure proc above.
+          if not state.streaming:
+            let r = pipeline.readAttachment(path, state.serverDefaults.len > 0,
+                                   state.serverVision)
+            if r.ok:
+              state.pending.add r.att
+              state.notice = "attached " & r.att.name
+            else:
+              state.notice = r.err
 
         while pendingActions.len > 0:
           let action = pendingActions[0]
@@ -893,11 +1088,18 @@ viewable App:
             st.convs = listConversations()
           of umError:
             st.notice = m.text
+            st.noticeRetryable = m.retryable
             if st.messages.len > 0 and st.messages[^1].role == rAssistant and
                st.messages[^1].text.len == 0:
               st.messages.delete(st.messages.len - 1)
           of umNotice:
             st.notice = m.text
+            st.noticeRetryable = false
+          of umHardware:
+            st.hw = m.hw
+            st.hwScores = m.scores
+            st.hwCurrent = m.text
+            st.hwDetecting = false
           of umStatus:
             if m.status != st.status:
               st.status = m.status
@@ -921,6 +1123,7 @@ viewable App:
             if st.messages.len > 0 and st.messages[^1].role == rAssistant:
               st.messages[^1].timings = m.timings
           of umProps:
+            st.serverVision = m.vision
             if m.ctx > 0: st.ctxSize = m.ctx
             if m.text.len > 0: st.serverModel = m.text
             # Flattened to strings on arrival rather than kept as JSON, because
@@ -1117,6 +1320,42 @@ proc createNote(app: AppState, wsId, projId, folderId: string) =
     app.notice = "could not create note"
 
 proc deleteNode(app: AppState, entity, id: string) =
+  # G-36. Every delete in the tree and the conversation list fired on a single
+  # click. The argument for having no dialog was that deletes are soft — but
+  # with no trash view (G-21) a soft delete is indistinguishable from data loss,
+  # so the two answer each other and this is the half that lands first.
+  #
+  # Action purpose: **the child count is shown**, because the cascade is the
+  # part that surprises: deleting a workspace takes its projects, folders,
+  # notes, assets and every conversation in them. `api.cascadeCount` derives
+  # that from the same table the cascade itself runs off.
+  let kids = api.cascadeCount(entity, id)
+  let what = case entity
+             of "conversations": "this conversation"
+             of "workspaces": "this workspace"
+             of "projects": "this project"
+             of "folders": "this folder"
+             of "notes": "this note"
+             of "fileAssets": "this file"
+             else: "this item"
+  let (res, _) = app.open: gui:
+    MessageDialog:
+      title = "Delete"
+      message =
+        (if kids > 0:
+           "Delete " & what & " and the " & $kids &
+           (if kids == 1: " item" else: " items") & " inside it?"
+         else: "Delete " & what & "?") &
+        "\n\nIt can be restored from the trash."
+      DialogButton {.addButton.}:
+        text = "Cancel"
+        res = DialogCancel
+      DialogButton {.addButton.}:
+        text = "Delete"
+        res = DialogAccept
+        style = [ButtonDestructive]
+  if res.kind != DialogAccept: return
+
   if api.deleteEntity(entity, id):
     if entity == "conversations" and id == app.convId:
       app.convId = ""
@@ -1295,7 +1534,16 @@ proc postConversation(app: AppState, continuing = false) =
     msgs.add %*{"role": "system", "content": sys}
   for m in app.messages:
     if m.role == rAssistant and m.text.len == 0: continue
-    var turn = %*{"role": $m.role, "content": m.text}
+    # G-30: a turn with attachments sends an OpenAI content *array* rather than
+    # a string. `pipeline.contentFor` builds it — below the widget layer, and in
+    # the frozen Web UI's own part order (D-Z) — and returns a plain string
+    # unchanged when there is nothing attached, so every request without
+    # attachments is byte-identical to what this sent before.
+    var extraNode: JsonNode = nil
+    if m.extra.len > 0:
+      try: extraNode = parseJson(m.extra) except CatchableError: discard
+    var turn = %*{"role": $m.role,
+                  "content": pipeline.contentFor(m.text, extraNode)}
     # G-31, Developer: a reasoning turn's thinking is sent back so the model can
     # see its own chain of thought across turns, unless the setting strips it.
     # The field is only ever added to an assistant turn that has one, so the
@@ -1334,9 +1582,104 @@ proc retitleConversation(app: AppState, text: string) =
   db.exec("UPDATE conversations SET name=? WHERE id=?", [name, app.convId])
   app.convs = listConversations()
 
+proc attachFile(app: AppState, path: string) =
+  let r = pipeline.readAttachment(path, app.serverDefaults.len > 0,
+                                  app.serverVision)
+  if r.ok:
+    app.pending.add r.att
+    app.notice = "attached " & r.att.name
+  else:
+    app.notice = r.err
+
+proc attachDialog(app: AppState) =
+  let (res, state) = app.open: gui:
+    FileChooserDialog:
+      title = "Attach files"
+      action = FileChooserOpen
+      selectMultiple = true
+      DialogButton {.addButton.}:
+        text = "Cancel"
+        res = DialogCancel
+      DialogButton {.addButton.}:
+        text = "Attach"
+        res = DialogAccept
+        style = [ButtonSuggested]
+  if res.kind != DialogAccept: return
+  for f in FileChooserDialogState(state).filenames:
+    app.attachFile(f)
+
+## G-30, thumbnails. **A `data:` URL is decoded to a file under the cache dir and
+## the pixbuf is loaded from there**, rather than a `GdkPixbufLoader` being
+## hand-declared: `gdk_pixbuf_new_from_file_at_scale` is already in owlkettle's
+## bindings and already wrapped as `loadPixbuf`, and rule 5 says check what
+## exists before writing a proto. The file is named for the digest of its own
+## bytes, so it is written once and every later redraw is a cache hit — which is
+## what makes this safe to call from `view`, where it runs on every frame.
+var thumbCache: Table[string, Pixbuf]
+
+proc attachmentPixbuf(app: AppState, dataUrl: string, size: int): Pixbuf =
+  if dataUrl.len == 0: return nil
+  let key = $size & ":" & sha256.sha256(dataUrl)
+  if thumbCache.hasKey(key): return thumbCache[key]
+  # Only cache a *successful* load: caching nil would make one unreadable image
+  # permanently unreadable, including after the cause was fixed.
+  let comma = dataUrl.find(',')
+  if comma < 0: return nil
+  var bytes = ""
+  try: bytes = base64.decode(dataUrl[comma + 1 .. ^1])
+  except CatchableError: return nil
+  let file = app.p.cacheDir / "attach-" & sha256.sha256(bytes)
+  try:
+    createDir(app.p.cacheDir)
+    if not fileExists(file): writeFile(file, bytes)
+    result = loadPixbuf(file, size, size, preserveAspectRatio = true)
+    thumbCache[key] = result
+  except CatchableError:
+    # A file that is not a decodable image is not an error worth a notice — the
+    # chip falls back to its name and type.
+    return nil
+
+## Function purpose: read a stored `messages.extra` back into something the
+## transcript can draw. The stored shape is the Web UI's (D-BP), so this is where
+## its field names are turned back into the two this window renders.
+proc attachmentsOf(extra: string): seq[PendingAttachment] =
+  if extra.len == 0: return
+  var node: JsonNode
+  try: node = parseJson(extra) except CatchableError: return
+  if node.isNil or node.kind != JArray: return
+  for e in node:
+    if e.kind != JObject: continue
+    case e{"type"}.getStr("")
+    of "IMAGE":
+      result.add PendingAttachment(kind: "IMAGE", name: e{"name"}.getStr(""),
+                                   payload: e{"base64Url"}.getStr(""))
+    of "TEXT", "context":
+      let body = e{"content"}.getStr("")
+      result.add PendingAttachment(kind: "TEXT", name: e{"name"}.getStr(""),
+                                   payload: body, bytes: body.len)
+    of "PDF":
+      let body = e{"content"}.getStr("")
+      result.add PendingAttachment(kind: "TEXT", name: e{"name"}.getStr(""),
+                                   payload: body, bytes: body.len)
+    else: discard
+
+## Function purpose: the staged attachments as the JSON text that goes into the
+## `messages.extra` column, in the Web UI's shape (D-Z).
+proc pendingExtra(app: AppState): string =
+  if app.pending.len == 0: return ""
+  var arr = newJArray()
+  for a in app.pending:
+    if a.kind == "IMAGE":
+      arr.add %*{"type": "IMAGE", "name": a.name, "base64Url": a.payload}
+    else:
+      arr.add %*{"type": "TEXT", "name": a.name, "content": a.payload}
+  $arr
+
 proc send(app: AppState) =
   let text = app.draft.strip
-  if text.len == 0 or app.streaming:
+  # G-30: **attachments alone are a turn.** "Look at this" with a picture and no
+  # words is a normal thing to send, and requiring text would refuse it.
+  if (text.len == 0 and app.pending.len == 0) or app.streaming:
     return
   # The first turn names the conversation. Checked before the message is
   # appended, because after it the path is never empty.
@@ -1347,10 +1690,15 @@ proc send(app: AppState) =
   # the end of the branch currently being read, which is what attaches the new
   # message to *this* branch rather than to whichever one is newest (G-29).
   let parent = if app.messages.len > 0: app.messages[^1].id else: ""
-  let id = saveMessage(app.convId, rUser, text, parent = parent)
-  app.appendTurn(Message(role: rUser, text: text, id: id, parent: parent))
+  let extra = app.pendingExtra()
+  let id = saveMessage(app.convId, rUser, text, parent = parent, extra = extra)
+  app.appendTurn(Message(role: rUser, text: text, id: id, parent: parent,
+                         extra: extra))
   if isFirstTurn: app.retitleConversation(text)
   app.draft = ""
+  # Cleared only once the turn carrying them is saved, so a failed save does not
+  # silently drop the files the USER picked.
+  app.pending = @[]
   app.postConversation()
 
 ## Function purpose: the actions a message can carry (G-28). **Every one of them
@@ -1605,9 +1953,13 @@ from owlkettle/mainloop import setupApp, AppConfig
 # makes every `adw.brew` in this file ambiguous. One line avoids that entirely.
 proc adw_init() {.importc: "adw_init", cdecl.}
 
-from owlkettle/bindings/gtk import GtkAdjustment,
+from owlkettle/bindings/gtk import GtkAdjustment, GtkWidget, GType, GValue,
+  cbool, GConnectFlags, GdkClipboard, GAsyncResult, GAsyncReadyCallback,
+  GError, gdk_display_get_default, gdk_display_get_clipboard,
+  G_TYPE_STRING, g_signal_connect_data,
   gtk_scrolled_window_new, gtk_scrolled_window_set_child,
-  gtk_scrolled_window_get_vadjustment, gtk_adjustment_set_value
+  gtk_scrolled_window_get_vadjustment, gtk_adjustment_set_value,
+  gtk_frame_new, gtk_frame_set_child
 
 proc gtk_adjustment_get_value(a: GtkAdjustment): cdouble {.importc, cdecl.}
 proc gtk_adjustment_get_upper(a: GtkAdjustment): cdouble {.importc, cdecl.}
@@ -1654,6 +2006,119 @@ renderable AutoScroll of BaseWidget:
   adder add:
     if widget.hasChild:
       raise newException(ValueError, "AutoScroll takes one child; use a Box.")
+    widget.hasChild = true
+    widget.valChild = child
+
+# G-30, drag-and-drop. Four protos, declared because **none of them is in
+# owlkettle's bindings** — checked before writing them, per rule 5.
+# `g_signal_connect_data`, `GValue` and `G_TYPE_STRING` are already there and are
+# used rather than re-declared.
+#
+# Action purpose: **`G_TYPE_STRING`, not `GDK_TYPE_FILE_LIST`.** A file manager
+# offers `text/uri-list` for a file drag, and GTK converts that to a string for
+# us — so the drop arrives as newline-separated `file://` URIs and needs no
+# `GdkFileList` unboxing, which would mean three more protos and a boxed-list
+# walk. The trade is that a drop of plain text is also accepted, and that is
+# handled below rather than being a defect.
+type GtkDropTarget = distinct pointer
+
+proc gtk_drop_target_new(typ: GType, actions: cuint): GtkDropTarget
+  {.importc, cdecl.}
+proc gtk_widget_add_controller(w: GtkWidget, c: GtkDropTarget)
+  {.importc, cdecl.}
+proc g_value_get_string(v: ptr GValue): cstring {.importc, cdecl.}
+
+const GdkActionCopy = 1.cuint
+
+# G-30, paste. **Three protos, and only three** — `GdkClipboard`,
+# `GAsyncResult`, `GAsyncReadyCallback`, `gdk_display_get_default` and
+# `gdk_display_get_clipboard` are all already in owlkettle's bindings and are
+# imported rather than re-declared (rule 5).
+#
+# Action purpose: the pasted image is **written to a PNG and then handed to the
+# same queue a dropped file uses**. That is deliberate: `gdk_texture_save_to_png`
+# already exists, so this needs no pixel unpacking, and the attachment then
+# takes exactly the path a picked or dropped file takes — one implementation,
+# three ways in.
+type GdkTexture = distinct pointer
+
+proc gdk_clipboard_read_texture_async(c: GdkClipboard, cancellable: pointer,
+                                      cb: GAsyncReadyCallback, data: pointer)
+  {.importc, cdecl.}
+proc gdk_clipboard_read_texture_finish(c: GdkClipboard, res: GAsyncResult,
+                                       err: ptr GError): GdkTexture
+  {.importc, cdecl.}
+proc gdk_texture_save_to_png(t: GdkTexture, filename: cstring): cbool
+  {.importc, cdecl.}
+
+var
+  ## Where a pasted image is written. Set once at startup, because the clipboard
+  ## callback is a bare C function and cannot be given the paths object.
+  pasteDir = ""
+
+proc onPasted(obj: pointer, res: GAsyncResult, data: pointer) {.cdecl.} =
+  var err = GError(nil)
+  let tex = gdk_clipboard_read_texture_finish(GdkClipboard(obj), res, err.addr)
+  # No image on the clipboard is the ordinary case, not a failure: the button is
+  # always there and most of the time the clipboard holds text.
+  if pointer(tex).isNil or pasteDir.len == 0: return
+  let file = pasteDir / "pasted-" & $epochTime().int & ".png"
+  try:
+    createDir(pasteDir)
+    if gdk_texture_save_to_png(tex, file.cstring) != cbool(0):
+      droppedPaths.add file
+  except CatchableError: discard
+
+proc pasteImage() =
+  let display = gdk_display_get_default()
+  if pointer(display).isNil: return
+  let clip = gdk_display_get_clipboard(display)
+  # `pointer(clip)` and not `clip.isNil`: the `isNil` borrow lives in the
+  # bindings module and this file imports it by name, so the operator is not in
+  # scope here — the same note `AutoScroll` carries for `GtkAdjustment`.
+  if pointer(clip).isNil: return
+  gdk_clipboard_read_texture_async(clip, nil, onPasted, nil)
+
+proc onDrop(target: GtkDropTarget, value: ptr GValue, x, y: cdouble,
+            data: pointer): cbool {.cdecl.} =
+  if value.isNil: return cbool(0)
+  let raw = g_value_get_string(value)
+  if raw.isNil: return cbool(0)
+  for line in ($raw).splitLines:
+    let t = line.strip
+    # Only a file URI is an attachment. Dropped plain text is not silently
+    # turned into a file, because a text drop is a different intention.
+    if t.startsWith("file://"): droppedPaths.add pipeline.uriToPath(t)
+  cbool(1)
+
+## A drop target over the chat column (G-30), which is the Web UI's
+## `ChatScreenDragOverlay`. A renderable for the reason `AutoScroll` is one:
+## owlkettle exposes no way to reach a widget's `GtkWidget` from a `gui:` block,
+## and a controller has to be attached to one.
+renderable DropZone of BaseWidget:
+  child: Widget
+
+  hooks:
+    beforeBuild:
+      # A Frame, not a Box: `updateChild` needs a real *setter*, and
+      # `gtk_box_append` only ever adds — swapping the child would stack them.
+      # The frame border is removed by `.drop-zone` in `theme.nim`.
+      state.internalWidget = gtk_frame_new(nil)
+    afterBuild:
+      # Attached once, on build. GTK owns the controller from here.
+      let target = gtk_drop_target_new(G_TYPE_STRING, GdkActionCopy)
+      discard g_signal_connect_data(pointer(target), "drop",
+                                    cast[pointer](onDrop), nil, nil,
+                                    GConnectFlags(0))
+      gtk_widget_add_controller(state.internalWidget, target)
+
+  hooks child:
+    (build, update):
+      state.updateChild(state.child, widget.valChild, gtk_frame_set_child)
+
+  adder add:
+    if widget.hasChild:
+      raise newException(ValueError, "DropZone takes one child; use a Box.")
     widget.hasChild = true
     widget.valChild = child
 
@@ -1712,6 +2177,29 @@ proc messageBody(app: AppState, m: Message): Widget =
 
   gui:
     Box(orient = OrientY, spacing = 8):
+      # G-30: a sent turn shows what was attached to it. Read from the row's
+      # `extra`, so it survives a restart and is the same list the request
+      # carried — not a copy kept beside it that could disagree.
+      if m.extra.len > 0:
+        Box(orient = OrientX, spacing = 6) {.expand: false.}:
+          for a in attachmentsOf(m.extra):
+            Box(orient = OrientX, spacing = 4) {.expand: false.}:
+              style = [StyleClass("attach-chip")]
+              if a.kind == "IMAGE":
+                let pb = app.attachmentPixbuf(a.payload, 64)
+                if not pb.isNil:
+                  Button {.expand: false.}:
+                    tooltip = "Preview " & a.name
+                    style = [ButtonFlat, StyleClass("attach-thumb")]
+                    proc clicked() =
+                      app.previewUrl = a.payload
+                      app.previewName = a.name
+                    Picture:
+                      pixbuf = pb
+                      contentFit = ContentContain
+              Label {.expand: false.}:
+                text = (if a.kind == "IMAGE": "🖼 " else: "📄 ") & a.name
+                style = [StyleClass("settings-help")]
       for b in markdown.parse(m.text):
         if b.kind == bkText:
           Label {.expand: false.}:
@@ -1720,6 +2208,26 @@ proc messageBody(app: AppState, m: Message): Widget =
             xAlign = 0.0
             wrap = true
             style = [StyleClass("msg-body")]
+        elif b.kind == bkTable:
+          # G-34. **A real `Grid`, because Pango has no table.** A model asked to
+          # compare things answers with one, and it used to render as raw pipes.
+          # It scrolls horizontally inside itself: a wide table must not widen
+          # the whole transcript, and a `Label` cannot be relied on to shrink.
+          ScrolledWindow {.expand: false.}:
+            style = [StyleClass("md-table")]
+            Grid(rowSpacing = 2, columnSpacing = 16, margin = 8):
+              for rowIdx, row in b.rows:
+                for colIdx, cell in row:
+                  Label {.x: colIdx, y: rowIdx.}:
+                    text = cell
+                    useMarkup = true
+                    # Row 0 is the header; every other row takes the column's
+                    # own alignment from the `:---:` markers.
+                    xAlign = (if colIdx < b.aligns.len: b.aligns[colIdx]
+                              else: 0.0)
+                    wrap = true
+                    style = [StyleClass(
+                      if rowIdx == 0: "md-th" else: "md-td")]
         else:
           Frame {.expand: false.}:
             style = [StyleClass("code-block")]
@@ -2451,6 +2959,173 @@ proc settingsField(app: AppState, d: settings.SettingDef): Widget =
 ## the shape this window is built in. A separate `Window` would need its own
 ## close path, and every crash in this project's history was a widget outliving
 ## the thing that owned it (G-25, and the eleven quit-path crashes).
+## Function purpose: open the hardware screen and ask the control worker for a
+## detection. Opening always re-detects rather than showing a cached result —
+## the whole point of the screen is to say what this machine *is*, and a stale
+## answer on it is worse than a spinner.
+proc openHardware(app: AppState) =
+  app.hardwareOpen = true
+  app.hwDetecting = true
+  app.notice = ""
+  ctlReq.send(ControlJob(action: "hardware", lc: app.lc))
+
+## Function purpose: deploy a profile. The apply itself is a file copy, but it
+## is sent to the worker anyway so the re-detection that follows it does not run
+## on the GTK thread.
+proc applyHardwareProfile(app: AppState, name: string) =
+  app.hwDetecting = true
+  ctlReq.send(ControlJob(action: "apply_profile", lc: app.lc, profileName: name))
+
+## Function purpose: the hardware screen (S-1, D-BC) — which profile this
+## machine matched, the score that decided it, what was detected, and a button
+## to deploy any of them. It replaces `detect-hardware.sh`, which had not run
+## since its `lib/` was archived.
+##
+## Everything it shows comes from `hardware.nim`; this proc only draws. That is
+## deliberate and is what let the scoring be asserted in `hardware-selftest`
+## with no window at all.
+proc hardwarePanel(app: AppState): Widget =
+  gui:
+    Box(orient = OrientY):
+      # Same shape as the settings panel: always in the tree, insensitive when
+      # closed so it does not swallow clicks. See the note there.
+      sensitive = app.hardwareOpen
+      style = (if app.hardwareOpen: @[StyleClass("settings-scrim")]
+               else: newSeq[StyleClass]())
+      if app.hardwareOpen:
+        Box(orient = OrientY, spacing = 8, margin = 24) {.hAlign: AlignCenter,
+                                                          vAlign: AlignCenter.}:
+          sizeRequest = (720, 560)
+          style = [StyleClass("settings-panel")]
+
+          Box(orient = OrientX, spacing = 8) {.expand: false.}:
+            Label {.expand: true.}:
+              text = "Hardware"
+              xAlign = 0.0
+              style = [StyleClass("brand"), StyleClass("brand-purple")]
+            Button {.expand: false.}:
+              icon = "view-refresh-symbolic"
+              tooltip = "Detect again"
+              style = [ButtonFlat, StyleClass("row-btn")]
+              proc clicked() = app.openHardware()
+            Button {.expand: false.}:
+              icon = "window-close-symbolic"
+              tooltip = "Close"
+              style = [ButtonFlat, StyleClass("row-btn")]
+              proc clicked() = app.hardwareOpen = false
+
+          ScrolledWindow {.expand: true.}:
+            Box(orient = OrientY, spacing = 14, margin = 4):
+              if app.hwDetecting:
+                Label {.expand: false.}:
+                  text = "Detecting…"
+                  xAlign = 0.0
+                  style = [StyleClass("settings-help")]
+              else:
+                Label {.expand: false.}:
+                  text = "Detected"
+                  xAlign = 0.0
+                  style = [StyleClass("settings-label")]
+                Label {.expand: false.}:
+                  text = app.hw.osName & " " & app.hw.osRelease & "\n" &
+                         app.hw.cpuModel & " (" & $app.hw.cpuThreads &
+                           " threads)\n" &
+                         (if app.hw.gpuDevices.len == 0:
+                            "no GPU reported by llama-server --list-devices"
+                          else: app.hw.gpuDevices.join("\n")) & "\n" &
+                         $app.hw.ramGiB & " GiB RAM · " & $app.hw.swapGiB &
+                           " GiB swap · " & app.hw.storage
+                  xAlign = 0.0
+                  wrap = true
+                  style = [StyleClass("settings-help")]
+
+                Label {.expand: false.}:
+                  text = "Profiles"
+                  xAlign = 0.0
+                  style = [StyleClass("settings-label")]
+                Label {.expand: false.}:
+                  text = "Highest score wins. A profile marked opt-in is " &
+                         "never selected automatically and can only be " &
+                         "applied by hand. Applying one writes " &
+                         "jenova.conf and leaves your jenova.local.conf " &
+                         "untouched; restart the backend for it to take " &
+                         "effect."
+                  xAlign = 0.0
+                  wrap = true
+                  style = [StyleClass("settings-help")]
+
+                for s in app.hwScores:
+                  Box(orient = OrientY, spacing = 2) {.expand: false.}:
+                    Box(orient = OrientX, spacing = 8) {.expand: false.}:
+                      Label {.expand: true.}:
+                        text = s.profile.name &
+                               (if s.profile.name == app.hwCurrent:
+                                  "  — current" else: "") &
+                               (if s.disqualified: "  — not eligible"
+                                else: "  — score " & $s.points)
+                        xAlign = 0.0
+                        wrap = true
+                      Button {.expand: false.}:
+                        text = "Apply"
+                        style = [ButtonFlat, StyleClass("row-btn")]
+                        sensitive = s.profile.name != app.hwCurrent
+                        proc clicked() =
+                          app.applyHardwareProfile(s.profile.name)
+                    if s.profile.desc.len > 0:
+                      Label {.expand: false.}:
+                        text = s.profile.desc
+                        xAlign = 0.0
+                        wrap = true
+                        style = [StyleClass("settings-help")]
+                    # Why it scored what it scored. This is the half D-BC's
+                    # screen exists for: a number with no reason behind it is
+                    # not an explanation of which hardware was matched.
+                    for w in s.why:
+                      Label {.expand: false.}:
+                        text = "· " & w
+                        xAlign = 0.0
+                        wrap = true
+                        style = [StyleClass("settings-help")]
+
+## Function purpose: the full-size attachment preview (G-30), the Web UI's
+## `DialogChatAttachmentPreview`. Same overlay shape as the settings and hardware
+## panels — always in the tree, insensitive when closed so it does not swallow
+## clicks. See the note in `settingsPanel`.
+proc previewPanel(app: AppState): Widget =
+  gui:
+    Box(orient = OrientY):
+      sensitive = app.previewUrl.len > 0
+      style = (if app.previewUrl.len > 0: @[StyleClass("settings-scrim")]
+               else: newSeq[StyleClass]())
+      if app.previewUrl.len > 0:
+        Box(orient = OrientY, spacing = 8, margin = 24) {.hAlign: AlignCenter,
+                                                          vAlign: AlignCenter.}:
+          style = [StyleClass("settings-panel")]
+          Box(orient = OrientX, spacing = 8) {.expand: false.}:
+            Label {.expand: true.}:
+              text = app.previewName
+              xAlign = 0.0
+              style = [StyleClass("settings-label")]
+            Button {.expand: false.}:
+              icon = "window-close-symbolic"
+              tooltip = "Close"
+              style = [ButtonFlat, StyleClass("row-btn")]
+              proc clicked() =
+                app.previewUrl = ""
+                app.previewName = ""
+          # 900 rather than the natural size: a large photograph would otherwise
+          # size the panel past the window, and a `Picture` has no maximum of
+          # its own.
+          let pb = app.attachmentPixbuf(app.previewUrl, 900)
+          if pb.isNil:
+            Label {.expand: true.}:
+              text = "This image could not be decoded for preview."
+              style = [StyleClass("settings-help")]
+          else:
+            Picture {.expand: true.}:
+              pixbuf = pb
+              contentFit = ContentContain
+
 proc settingsPanel(app: AppState): Widget =
   gui:
     Box(orient = OrientY):
@@ -2604,6 +3279,14 @@ proc topBar(app: AppState): Widget =
         tooltip = "Settings"
         style = [ButtonFlat]
         proc clicked() = app.openSettings()
+
+      # S-1: choosing a hardware profile was two shell scripts that no longer
+      # ran, so this was reachable from nowhere at all (D-BC).
+      Button {.addRight.}:
+        icon = "computer-symbolic"
+        tooltip = "Hardware profile"
+        style = [ButtonFlat]
+        proc clicked() = app.openHardware()
 
       MenuButton {.addRight.}:
         icon = "open-menu-symbolic"
@@ -2855,16 +3538,70 @@ method view(app: AppState): Widget =
             # this window already used for the editor swap before the panel
             # existed. The cost is the drag handle; the panel is a fixed width.
             Box(orient = OrientX) {.expand: true.}:
-              insert(app.mainArea()) {.expand: true.}
+              DropZone {.expand: true.}:
+                # G-30: the drop target wraps the chat column, which is the
+                # Web UI's `ChatScreenDragOverlay` position.
+                style = [StyleClass("drop-zone")]
+                insert(app.mainArea())
               insert(app.docPanel()) {.expand: false.}
-            Label {.expand: false.}:
-              # The notice is chat feedback — "backend restarted", "note saved".
-              # It has nothing to say about the editor page and a stale line
-              # under a full-screen editor reads as an error in it.
-              text = (if app.editorOpen: "" else: app.notice)
+            # G-30: what is staged, above the composer, each removable. The
+            # Web UI shows thumbnails; this shows the name, the type and the
+            # size, because a GTK thumbnail means decoding the image on the
+            # GTK thread and the strip has to stay cheap to redraw.
+            if app.pending.len > 0 and not app.editorOpen:
+              Box(orient = OrientX, spacing = 6, margin = 8) {.expand: false.}:
+                for idx, a in app.pending:
+                  Box(orient = OrientX, spacing = 4) {.expand: false.}:
+                    style = [StyleClass("attach-chip")]
+                    # G-30: a real thumbnail for an image, which is what the Web
+                    # UI's `ChatAttachmentThumbnailImage` shows. Decoded once
+                    # and cached by digest — `view` runs on every frame.
+                    if a.kind == "IMAGE":
+                      let pb = app.attachmentPixbuf(a.payload, 40)
+                      if not pb.isNil:
+                        Button {.expand: false.}:
+                          tooltip = "Preview " & a.name
+                          style = [ButtonFlat, StyleClass("attach-thumb")]
+                          proc clicked() =
+                            app.previewUrl = a.payload
+                            app.previewName = a.name
+                          Picture:
+                            pixbuf = pb
+                            contentFit = ContentContain
+                    Label {.expand: false.}:
+                      text = (if a.kind == "IMAGE": "🖼 " else: "📄 ") &
+                             a.name & "  (" & $(a.bytes div 1024) & " KiB)"
+                      style = [StyleClass("settings-help")]
+                    Button {.expand: false.}:
+                      icon = "window-close-symbolic"
+                      tooltip = "Remove"
+                      style = [ButtonFlat, StyleClass("row-btn")]
+                      proc clicked() =
+                        if idx < app.pending.len: app.pending.delete(idx)
+
+            Box(orient = OrientX, spacing = 8) {.expand: false.}:
               margin = (if app.notice.len > 0 and not app.editorOpen: 8 else: 0)
-              wrap = true
-              style = [StyleClass("dim-note")]
+              Label {.expand: true.}:
+                # The notice is chat feedback — "backend restarted", "note
+                # saved". It has nothing to say about the editor page and a
+                # stale line under a full-screen editor reads as an error in it.
+                text = (if app.editorOpen: "" else: app.notice)
+                xAlign = 0.0
+                wrap = true
+                style = [StyleClass("dim-note")]
+              # G-35: a failure the USER can do something about offers the
+              # action rather than describing it. Only for the kinds
+              # `pipeline.classifyError` marked retryable — a context overflow
+              # is not one of them, because retrying it fails identically.
+              if app.noticeRetryable and not app.editorOpen and
+                 not app.streaming:
+                Button {.expand: false.}:
+                  text = "Retry"
+                  style = [ButtonFlat, StyleClass("row-btn")]
+                  proc clicked() =
+                    app.notice = ""
+                    app.noticeRetryable = false
+                    app.postConversation()
 
             Box(orient = OrientX, spacing = 8, margin = 12) {.expand: false.}:
               # Action purpose: three branches, not two. This tested only
@@ -2897,6 +3634,24 @@ method view(app: AppState): Widget =
                     app.notice = ""
                 insert(app.fullscreenButton()) {.expand: false.}
               else:
+                # G-30: the paperclip. A file picker only — drag-and-drop and
+                # paste are the Web UI's other two routes and are not here yet.
+                Button {.expand: false.}:
+                  icon = "mail-attachment-symbolic"
+                  tooltip = "Attach a file"
+                  style = [ButtonFlat, StyleClass("row-btn")]
+                  sensitive = not app.streaming
+                  proc clicked() = app.attachDialog()
+                # G-30: paste. GTK's Entry already pastes text on Ctrl+V; what
+                # it cannot do is take an image off the clipboard, which is the
+                # Web UI's third route in. A button rather than a key binding,
+                # because a key binding for it would be invisible.
+                Button {.expand: false.}:
+                  icon = "edit-paste-symbolic"
+                  tooltip = "Attach an image from the clipboard"
+                  style = [ButtonFlat, StyleClass("row-btn")]
+                  sensitive = not app.streaming
+                  proc clicked() = pasteImage()
                 Entry {.expand: true.}:
                   text = app.draft
                   placeholder = "Message Jenova…"
@@ -2905,18 +3660,25 @@ method view(app: AppState): Widget =
                     app.draft = text
                   proc activate() =
                     app.send()
+                # G-33: the send button becomes a stop button mid-generation,
+                # which is what the Web UI's `ChatFormActionSubmit` does. It
+                # previously just greyed out, so once a generation started there
+                # was no way to cancel it short of quitting the application.
                 Button:
-                  text = (if app.streaming: "…" else: "Send")
-                  sensitive = not app.streaming
-                  style = [ButtonSuggested]
+                  text = (if app.streaming: "Stop" else: "Send")
+                  style = [if app.streaming: ButtonDestructive
+                           else: ButtonSuggested]
                   proc clicked() =
-                    app.send()
+                    if app.streaming: cancelStream()
+                    else: app.send()
                 insert(app.fullscreenButton()) {.expand: false.}
 
         # G-31. Last child of the Overlay, so it stacks above the Flap and the
         # chat column rather than under them — the floating panel, over the
         # whole window and the canvas behind it.
         insert(app.settingsPanel()) {.addOverlay.}
+        insert(app.hardwarePanel()) {.addOverlay.}
+        insert(app.previewPanel()) {.addOverlay.}
 
 ## Function purpose: entry point for `bin/jenova`. Resolution happens here,
 ## before the window exists, so a configuration error is reported on the terminal
@@ -2941,6 +3703,9 @@ proc run*(withTray = true, checkOnly = false) =
   # and a search path appended later would be too late for the blocks already on
   # screen. Silent on failure by design — see `installScheme`.
   sourceview.installScheme(p.state / "styles")
+  # G-30: the clipboard callback is a bare C function and cannot be handed the
+  # paths object, so where a pasted image is written is set once, here.
+  pasteDir = p.cacheDir
   # Action purpose: `--check` stops short of everything that touches the
   # machine. It still builds the **whole** widget tree under a real GTK, which
   # is the half a compile cannot see — see the note above `brew` below.

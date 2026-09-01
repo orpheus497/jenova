@@ -27,7 +27,7 @@
 ## the same final text. Hashing the client's original body would silently
 ## produce a different key and orphan every existing cache entry.
 
-import std/[json, strutils, tables]
+import std/[base64, json, os, strutils, tables]
 import ./prompts
 import ./rag
 import ./websearch
@@ -351,3 +351,278 @@ proc chatBody*(messages: JsonNode, continuing = false,
   # and before serialisation so nothing downstream has to re-parse.
   settings.applyTo(req, opts)
   $req
+
+## G-35. A generation can fail in ways that need different answers from the
+## USER, and the desktop application put all of them into one grey line — "the
+## server answered 500" was the whole diagnosis. These are the distinctions the
+## Web UI's `DialogChatError` draws, and they live here rather than in `gui.nim`
+## because a classifier is pure and a window is not needed to assert it.
+type
+  ChatErrorKind* = enum
+    cekContextOverflow  ## the prompt does not fit; the numbers are known
+    cekTimeout          ## the server accepted it and stopped answering
+    cekBackendDown      ## nothing is listening, or it is still loading
+    cekBadRequest       ## the request was refused as malformed
+    cekServerError      ## the server broke
+    cekNetwork          ## the connection failed or was lost
+
+  ChatError* = object
+    kind*: ChatErrorKind
+    message*: string      ## what to show the USER, in plain English
+    detail*: string       ## the server's own words, when it gave any
+    promptTokens*: int    ## overflow only; 0 when unknown
+    ctxSize*: int         ## overflow only; 0 when unknown
+    retryable*: bool      ## is offering a Retry honest here?
+
+## Action purpose: pull the two numbers out of llama.cpp's own overflow message,
+## `"request (N tokens) exceeds the available context size (M tokens)"`. They
+## are the whole value of that error — "too long" is not actionable, "9,412 of
+## 8,192" tells the USER to start a new chat or raise the context.
+proc parenNumbers(s: string): seq[int] =
+  var i = 0
+  while i < s.len:
+    if s[i] == '(':
+      var j = i + 1
+      var digits = ""
+      while j < s.len and s[j] in {'0' .. '9', ',', '_'}:
+        if s[j] in {'0' .. '9'}: digits.add s[j]
+        j.inc
+      if digits.len > 0:
+        try: result.add parseInt(digits) except ValueError: discard
+      i = j
+    else: i.inc
+
+## Function purpose: turn an HTTP status and whatever body came with it into
+## something worth putting on screen. `exceptionMsg` carries the transport
+## failure when there was no response at all.
+proc classifyError*(status: int, body = "", exceptionMsg = ""): ChatError =
+  # A transport failure has no status to read.
+  if status == 0:
+    let m = exceptionMsg.toLowerAscii
+    if m.contains("timeout") or m.contains("timed out"):
+      return ChatError(kind: cekTimeout, retryable: true,
+        message: "the server stopped responding part-way through",
+        detail: exceptionMsg)
+    if m.contains("connection refused") or m.contains("cannot connect") or
+       m.contains("no route"):
+      return ChatError(kind: cekBackendDown, retryable: true,
+        message: "the backend is not running — start it from the tray",
+        detail: exceptionMsg)
+    return ChatError(kind: cekNetwork, retryable: true,
+      message: "the connection to the backend failed", detail: exceptionMsg)
+
+  var serverMsg = ""
+  var errType = ""
+  if body.len > 0:
+    try:
+      let node = parseJson(body)
+      let e = node{"error"}
+      if e != nil and e.kind == JObject:
+        serverMsg = e{"message"}.getStr("")
+        errType = e{"type"}.getStr("")
+    except CatchableError:
+      discard
+
+  if errType == "exceed_context_size_error" or
+     (serverMsg.len > 0 and serverMsg.contains("context size")):
+    let nums = parenNumbers(serverMsg)
+    result = ChatError(kind: cekContextOverflow, detail: serverMsg,
+                       retryable: false)
+    if nums.len >= 2:
+      result.promptTokens = nums[0]
+      result.ctxSize = nums[1]
+      result.message = "this conversation is too long — " & $nums[0] &
+        " tokens against a context of " & $nums[1] &
+        ". Start a new chat, or raise the context size."
+    else:
+      result.message = "this conversation is longer than the model's context. " &
+        "Start a new chat, or raise the context size."
+    return
+
+  case status
+  of 502, 503:
+    # Action purpose: 502 is what Jenova's own proxy answers when nothing is
+    # behind it, and 503 is llama-server still loading. Both mean "not ready",
+    # and both are worth retrying — unlike every other error here.
+    ChatError(kind: cekBackendDown, retryable: true, detail: serverMsg,
+      message: "the backend is not answering yet — it may still be loading")
+  of 400, 422:
+    ChatError(kind: cekBadRequest, retryable: false, detail: serverMsg,
+      message: (if serverMsg.len > 0: "the server refused the request: " &
+                serverMsg else: "the server refused the request"))
+  of 401, 403:
+    ChatError(kind: cekBadRequest, retryable: false, detail: serverMsg,
+      message: "the server refused this request as unauthorised")
+  of 404:
+    ChatError(kind: cekBadRequest, retryable: false, detail: serverMsg,
+      message: "the completion endpoint was not found on the backend")
+  else:
+    ChatError(kind: cekServerError, retryable: true, detail: serverMsg,
+      message: (if serverMsg.len > 0:
+                  "the server failed: " & serverMsg
+                else: "the server answered " & $status))
+
+## G-30, attachments. **The shape is the frozen Web UI's, not a new one**
+## (D-Z): a message's `extra` column holds a JSON array of typed attachments —
+## `IMAGE`, `TEXT`, `PDF`, `AUDIO`, and the legacy `context` the old web UI
+## wrote — and this turns them into the OpenAI content parts `llama-server`
+## reads. Reproduced from `jca_web/src/lib/services/chat.service.ts:820-935`,
+## **including the order**, because a request that differs from the one the Web
+## UI sends against the same conversation is not parity.
+##
+## It lives here rather than in `gui.nim` for the reason `chatBody` does: the
+## request body is the thing that was got wrong twice, and this way a self-test
+## can see it.
+
+proc attachmentText*(label, name, content: string): string =
+  ## `formatAttachmentText` in `jca_web/src/lib/utils/formatters.ts:147`.
+  "\n\n--- " & label & ": " & name & " ---\n" & content
+
+## Function purpose: the `content` field for one outbound turn. A turn with no
+## attachments keeps a **plain string**, exactly as before — the array form is
+## only used when it is needed, because switching every message to parts would
+## change every request this program has ever sent for no reason.
+proc contentFor*(text: string, extra: JsonNode): JsonNode =
+  if extra.isNil or extra.kind != JArray or extra.len == 0:
+    return %text
+
+  var parts = newJArray()
+  if text.len > 0:
+    parts.add %*{"type": "text", "text": text}
+
+  proc ofType(t: string): seq[JsonNode] =
+    for e in extra:
+      if e.kind == JObject and e{"type"}.getStr("") == t: result.add e
+
+  # Images first, then text, then audio, then PDFs — the Web UI's order.
+  for img in ofType("IMAGE"):
+    parts.add %*{"type": "image_url",
+                 "image_url": {"url": img{"base64Url"}.getStr("")}}
+
+  for f in ofType("TEXT"):
+    parts.add %*{"type": "text",
+                 "text": attachmentText("File", f{"name"}.getStr(""),
+                                        f{"content"}.getStr(""))}
+
+  # The old web UI stored pasted text as `context`; a conversation imported from
+  # it still carries them, and dropping them would silently lose content the
+  # user attached (D-Z).
+  for f in ofType("context"):
+    parts.add %*{"type": "text",
+                 "text": attachmentText("File", f{"name"}.getStr(""),
+                                        f{"content"}.getStr(""))}
+
+  for a in ofType("AUDIO"):
+    let mime = a{"mimeType"}.getStr("")
+    parts.add %*{"type": "input_audio",
+                 "input_audio": {"data": a{"base64Data"}.getStr(""),
+                                 "format": (if mime.contains("wav"): "wav"
+                                            else: "mp3")}}
+
+  for p in ofType("PDF"):
+    # A PDF reaches the model as page images when it was rasterised, and as
+    # extracted text otherwise. Jenova writes neither yet — but a conversation
+    # imported from the Web UI carries both, and this is what sends them back.
+    if p{"processedAsImages"}.getBool(false) and p{"images"} != nil and
+       p{"images"}.kind == JArray:
+      for img in p{"images"}:
+        parts.add %*{"type": "image_url", "image_url": {"url": img.getStr("")}}
+    else:
+      parts.add %*{"type": "text",
+                   "text": attachmentText("PDF file", p{"name"}.getStr(""),
+                                          p{"content"}.getStr(""))}
+  parts
+
+## G-30, the attachment classifier. **Here rather than in `gui.nim`** for the
+## standing reason: a decision that can be made below the widget layer is made
+## there and asserted, and this one governs what the model is asked to look at.
+## It also has to be callable from inside the window's own timer, where a proc
+## taking the GUI's state type does not yet exist.
+type
+  Attachment* = object
+    ## `kind` is the Web UI's `AttachmentType` string — `IMAGE` or `TEXT` —
+    ## because that is what goes into the `messages.extra` row (D-BP).
+    kind*: string
+    name*: string
+    ## An `IMAGE` carries a `data:` URL; a `TEXT` carries the file's text.
+    payload*: string
+    bytes*: int
+
+const
+  ## The image types `llama-server`'s multimodal projector accepts. Anything
+  ## else readable as text is attached as text; anything else at all is refused
+  ## with a reason, rather than sent as bytes the model cannot look at.
+  ImageExts* = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"]
+
+## Function purpose: is this file text? Decided by **reading it**, not by its
+## extension — a `.log`, a `.conf` and a file with no extension at all are all
+## attachable, and a list of known suffixes would refuse them.
+##
+## Action purpose: a NUL byte is the test, because that is what actually breaks
+## the request — JSON cannot carry one, and every binary format has them within
+## the first few KiB while no text encoding does.
+proc looksTextual*(data: string): bool =
+  let sample = if data.len > 8192: data[0 ..< 8192] else: data
+  for ch in sample:
+    if ch == '\0': return false
+  true
+
+proc mimeForImage*(ext: string): string =
+  case ext.toLowerAscii
+  of ".png": "image/png"
+  of ".webp": "image/webp"
+  of ".gif": "image/gif"
+  of ".bmp": "image/bmp"
+  else: "image/jpeg"
+
+## Function purpose: `file:///home/x/a%20b.png` is a URI, not a path — this is
+## what a drag-and-drop delivers. Undoing the percent-encoding is required, not
+## cosmetic: a dropped file whose name contains a space would otherwise fail to
+## open, and that is most screenshots.
+proc uriToPath*(uri: string): string =
+  var s = uri.strip
+  if s.startsWith("file://"): s = s[7 .. ^1]
+  result = newStringOfCap(s.len)
+  var i = 0
+  while i < s.len:
+    if s[i] == '%' and i + 2 < s.len:
+      try:
+        result.add chr(parseHexInt(s[i + 1 .. i + 2]))
+        i += 3
+        continue
+      except ValueError: discard
+    result.add s[i]
+    i.inc
+
+## Function purpose: read one file and decide what it can be attached as (G-30).
+## Shared by the file picker and the drop target, so the two cannot disagree.
+##
+## `visionKnown` is whether `/props` has answered yet. **Refusing an image on an
+## unknown is the same defect as accepting one the model cannot read**, so an
+## unanswered `/props` allows the attachment.
+proc readAttachment*(path: string, visionKnown, visionOk: bool):
+    tuple[ok: bool, att: Attachment, err: string] =
+  var data = ""
+  try:
+    data = readFile(path)
+  except CatchableError as e:
+    return (false, Attachment(),
+            "could not read " & path.extractFilename & ": " & e.msg)
+  let name = path.extractFilename
+  let ext = path.splitFile.ext.toLowerAscii
+
+  if ext in ImageExts:
+    if visionKnown and not visionOk:
+      return (false, Attachment(), name &
+        " is an image, and the loaded model cannot see images. " &
+        "Load a vision model to attach it.")
+    return (true, Attachment(kind: "IMAGE", name: name,
+      payload: "data:" & mimeForImage(ext) & ";base64," & base64.encode(data),
+      bytes: data.len), "")
+
+  if not looksTextual(data):
+    return (false, Attachment(),
+            name & " is not text and is not an image Jenova can attach.")
+
+  result = (true, Attachment(kind: "TEXT", name: name, payload: data,
+                             bytes: data.len), "")

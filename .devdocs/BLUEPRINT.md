@@ -3,7 +3,7 @@
 Authoritative system architecture: what the program is, what it depends on, and how data moves
 through it. Mandated by `AGENTS.md` § WORKSPACE ARCHITECTURE.
 
-**Last updated:** 2026-09-01 13:52 (Session 016)
+**Last updated:** 2026-09-01 15:13 (Session 017)
 
 > **Rewritten 2026-08-31 (Session 007). The previous 626-line revision is in
 > `.devdocs/ARCHIVE/devdocs/BLUEPRINT_pre-007.md`** — archived, not deleted, per D-AM.
@@ -165,25 +165,27 @@ exists.
 
 ## 7. Data that outlives the code
 
-`hardware-profiles/` is **data, not product code** — six profiles at uniform depth 2 (`<backend>/<config>`,
-ruling D-F), plus `detect-hardware.sh` and `common-setup.sh`, which are **setup-time** tools the
-running product never invokes. `etc/jenova.conf` is the applied profile mirrored into place, and
-`config.nim` prefers the deployed copy under `$JCA_HOME/etc` over the source tree's (D-AT2).
+`hardware-profiles/` is **data, and as of 2026-09-01 it is nothing but data** — six
+profiles at uniform depth 2 (`<backend>/<config>`, ruling D-F), each holding a
+`profile.conf` and a `jenova.conf` and no script at all. `etc/jenova.conf` is the applied
+profile mirrored into place, and `config.nim` prefers the deployed copy under
+`$JCA_HOME/etc` over the source tree's (D-AT2).
 
 **The profile *data* is current and correct** — all six profiles were re-checked key by
 key on 2026-09-01 against their own `profile.conf`, and the only mismatch left is two
 inert values on `Vulkan/dgpu-i5-1135g7`.
 
-**The two shell scripts here are the last shell in the tree, and they are broken by
-subtraction:** `detect-hardware.sh:19` sources `lib/detect-env.sh` and
-`Vulkan/dgpu-i5-1135g7/jenova-setup:100` resolves `bin/jenova-swap-mount`, both archived
-with the old build. **Neither is invoked by the running product**, so there is currently
-no way to detect hardware or change profile at all.
+**Detection, scoring and apply are `src/jenova/hardware.nim`** (S-1, ruled at D-BC,
+built 2026-09-01 15:13), reached from the window's Hardware screen and from
+`jenova-core hardware detect|list|apply`. The scoring ladder is asserted by
+`hardware-selftest`. The six shell scripts that used to live here —
+`detect-hardware.sh`, `common-setup.sh` and four `jenova-setup` — are archived to
+`.devdocs/ARCHIVE/hardware-profiles/`, and **the product tree now contains no shell
+script outside `tests/`.**
 
-**Ruled at D-BC: detection, scoring and apply are ported into Nim and driven from the
-GUI**, with the same available as a `jenova-core` subcommand for headless hosts. The
-kernel-tuning values in the `jenova-setup` scripts become data in `profile.conf`, applied
-by Nim. **Both scripts are archived when that lands.** `TODOS.md` S-1, `PLANS.md` Step 6.
+**Kernel tuning was deliberately not ported and nothing replaced it (D-BN).** Jenova
+applies no `sysctl` and never writes `/etc/sysctl.conf`; it reads `sysctl` only to
+describe the machine.
 
 **CUDA is not meaningfully available on FreeBSD**, so `CUDA/dgpu-generic` is unreachable on the
 target platform and is opt-in only (D-B). **Apply that constraint before raising anything about

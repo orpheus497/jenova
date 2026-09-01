@@ -37,8 +37,8 @@ further down is left in place for the historical record; **this table overrides 
 
 | Question | Status |
 |---|---|
-| **Q-31 — what does the retrieval indexer walk, and when?** | **OPEN 2026-09-01.** See the table above and `PLANS.md`. `TODOS.md` T-17 |
-| **Q-32 — archive or port the two `hardware-profiles/` shell scripts?** | **OPEN 2026-09-01.** See the table above and `PLANS.md`. `TODOS.md` S-1 |
+| **Q-31 — what does the retrieval indexer walk, and when?** | **ANSWERED 2026-09-01 — chats (D-BD), fed per completed exchange (D-BI). Built.** *These two rows read `OPEN` until 2026-09-01 14:19, one screen below the table that answers them — the exact defect this index was created to stop.* |
+| **Q-32 — archive or port the two `hardware-profiles/` shell scripts?** | **ANSWERED 2026-09-01 — port to Nim, drive it from the GUI, archive the shell (D-BC).** It is `PLANS.md` Step 6, `TODOS.md` S-1, and it is the work in front of us |
 | **Q-29 — what is a right-panel "document"?** | **ANSWERED 23:28 — a plain project file.** A `notes` row that Neovim edits on disk (which makes nvim a second writer against an authoritative database, and therefore *is* taking **T-11**), or a plain file under the project directory (no two-writer problem, not in the workspace tree). Taken as recommended: **the plain file**, because it does not require settling **T-11**, which the USER has deliberately left open. Implemented as `.md` files in the chat's project directory, with `fssync`'s note mirrors excluded from the switcher so no file has two writers |
 | **Q-30 — with two Neovim instances, which one does `Editor:` read?** | **ANSWERED 23:28 — the panel, while it is open.** `pipeline.configureEditor` takes one socket. The panel document is the one "directly connected to the chat", but the full-page editor is where the user is working. Taken: **the panel wins while open**, falling back to the page editor when it closes, because the panel document is the one the USER described as connected to the chat — the page editor is a workspace, not a subject. `pipeline.configureEditor` is re-aimed on both transitions |
 | Q-12 — the CUDA profile's model default | **CLOSED 2026-08-31 — no action, and the question should never have been put.** *"Cuda doesn't exist on freebsd so why are you even asking — who cares it's insignificant and there's nothing you have to do regarding it."* **This project is FreeBSD-only (Plan A, S-0…S-7), and CUDA is not meaningfully available on FreeBSD**, so `CUDA/dgpu-generic` can never be selected on the target platform — it is opt-in only (D-B) and the opt-in leads nowhere. **B-21 is moot for the same reason**, as is the CUDA half of B-05. I should have applied the project's own platform constraint before raising it |
@@ -74,12 +74,16 @@ further down is left in place for the historical record; **this table overrides 
 | **Claims** | **Never state what was not executed (D-AN) — and never deny what was (D-AS, D-BB).** Both halves are the rule. A "not yet run" label expires at the first evidence against it |
 | **Starting the GUI** | **`bin/jenova --check` before handing over any GUI change (D-BM).** It builds the whole window under a real GTK and exits — no window, no backend, no port — so it is allowed where starting the product is not. **Nothing in `gui.run` may touch GTK before `brew`** |
 | **Running the product** | **Do not (D-BJ).** Not the app, not `serve`, not the backends, not the suites — unless the USER asks in that message. **Building is not running.** And never enumerate processes or ports to see what the USER has open. **T-12 is closed**: two suites fail if anything already holds the machine's real ports, that is the whole of it, and it is never diagnosed again |
+| **The 2026-09-01 14:02 build** | **Run by the USER, nothing wrong reported.** Both themes, the ghost text and the whole settings field set including the pending markers, all confirmed on screen. **Step 5 and Step 5a carry no open visual question — do not re-add an "unrun" label to any of it** |
 | **The 2026-08-31 23:28 build** | **Run by the USER.** No appearance or rendering defect reported. The report from that run is that the GUI is missing Web UI features. **Do not re-add an "unrun" label to G-23, G-24, G-25 or G-27** |
 | **Language** | **Nim, plus `llama-server` from llama.cpp. That is the whole product.** No shell script, no Lua, no C, no Makefile (D-AM, **D-AZ**). Shell-format *config files* are exempt by the USER's own parenthetical at D-AI |
 | **The shell tree** | **Not to be repaired (D-AH, D-AZ).** The installer, the shell-era docs and the shell test scripts are scaffolding around the system being replaced. **Remaining work = what is missing from the Nim core**, never what is broken in the old one. **A reference to an archived file is fixed by deleting the reference or porting it to Nim — repairing the archived thing is never an outcome.** Deployment of the single binary is one decision after the rewrite |
 | **Surface** | **Everything is driven from the GUI (D-BC).** Anything that needs a terminal, a shell script or a hand-edited file is a defect, not a limitation |
 | **Retrieval** | **The index indexes chats (D-BD), and it is fed (D-BI).** A completed exchange is indexed when the reply lands — not each message as it is written, which would let a question retrieve itself. Existing history is backfilled once the embedding server answers, and a deleted turn is forgotten |
 | **Settings** | **The window has a settings surface, 1:1 with the Web UI's minus API Key, MCP and `serverUrl` (D-BL).** Every other field is drawn; one whose feature is not built yet is marked *"not yet in effect"* with the step that turns it on, never left silently dead. An unset value is **omitted from the request**, never sent as a zero (D-BK) |
+| **`sysctl`** | **Jenova never touches it (D-BN).** No tunable applied, no `/etc/sysctl.conf` written, session or persistent, privileged or not. The `jenova-setup` scripts' kernel tuning is **not ported** and nothing replaces it. *Reading* a `sysctl` to detect the hardware is not this and is fine. **Do not put this to the USER again** — it reached them once only because it was carried out of an archived script instead of being struck |
+| **Attachments** | **Stored in `messages.extra` in the frozen Web UI's own shape, and sent as OpenAI content parts in its own part order (D-BP).** Not a private format — import/export moves conversations between the two surfaces, and a request that differs from the Web UI's for the same conversation is not parity |
+| **Cancelling** | **A file descriptor and `shutdown(2)`, not a flag alone (D-BO).** The stream worker is blocked inside `recvLine`; a flag it is not executing checks nothing. The partial answer is always saved |
 | **Reports** | **Plain English first, ID second (D-BA).** No item, plan step or status line may lead with a bare tracker ID |
 | **Style** | Keep `.devdocs/` terse. **Do not quote the USER verbatim** — record the ruling, not the wording |
 | **CUDA** | **Not meaningfully available on FreeBSD.** `CUDA/dgpu-generic` is unreachable on the target platform, so its data defects (B-21, and the CUDA half of B-05) are moot. **Apply the platform constraint before raising anything about that profile** |
@@ -88,6 +92,78 @@ further down is left in place for the historical record; **this table overrides 
 ---
 
 ---
+
+---
+
+## D-BP — an attachment is stored in the Web UI's shape, not a new one — 2026-09-01
+
+**Taken while building G-30.**
+
+A message's attachments go into the existing `messages.extra` column as the
+**frozen Web UI's own JSON array** — `IMAGE` / `TEXT` / `PDF` / `AUDIO` and the
+legacy `context` — and `pipeline.contentFor` reproduces
+`jca_web/src/lib/services/chat.service.ts:820-935` including its **part order**.
+
+**Three reasons, and the third is the one that decided it.** No schema change is
+needed; import/export already moves conversations between the two surfaces
+(G-32), and a private shape would have silently dropped every attachment
+crossing that boundary; and **a request that differs from the one the Web UI
+sends for the same conversation is not parity**, which is the standard the whole
+GUI programme is being held to. The order is asserted for that reason.
+
+**A consequence worth stating:** `contentFor` sends PDF and audio parts that
+Jenova itself cannot yet *produce*. That is not dead code — an imported Web UI
+conversation carries them, and dropping them would lose content the user
+attached.
+
+---
+
+## D-BO — the stop is taken on the GTK thread, not the control worker — 2026-09-01
+
+**A deliberate divergence from `PLANS.md` 7a, which proposed the worker.**
+
+The plan's reasoning was that a stop must never queue behind a generation, which
+is why the two workers are separate. **An atomic store and one `shutdown(2)`
+neither block nor allocate**, so taking it inline satisfies that requirement more
+completely than a queue does: there is no queue to be behind, and no second
+thread to be busy.
+
+**What does cross the boundary is an `int`, never the `Socket`.** `Socket` is a
+`ref`; closing one from another thread while its owner is inside `recvLine` is a
+use-after-free. `shutdown` on a raw descriptor is safe and is what any cancelled
+HTTP client does.
+
+**And a flag alone would not have worked**, which is the part worth keeping: the
+worker spends its life blocked inside a read, so a flag it is not executing to
+check stops nothing. The flag exists only to tell the loop that the read failed
+*because it was asked to*, so pressing Stop does not report a socket error.
+
+---
+
+## D-BN — Jenova does not touch `sysctl`. At all — 2026-09-01
+
+**Ruled by the USER, immediately, on being asked.**
+
+**Jenova never applies a kernel tunable and never writes `/etc/sysctl.conf`.** Not
+for the session, not persistently, not with privilege, not by reporting lines for the
+USER to paste. The kernel tuning in the four `hardware-profiles/*/jenova-setup`
+scripts is **not ported** — those scripts are archived with the rest of the shell tree
+and **nothing replaces them**. `PLANS.md` Step 6 is detection, scoring and profile
+selection, and that is the whole of it.
+
+**Reading a `sysctl` is not this.** Detection asks the machine what CPU and how much
+memory it has. That is describing the hardware, not tuning it, and it stays.
+
+**Where the idea came from, so the same route is closed rather than the question
+merely answered.** It was not invented — `PLANS.md` Step 6 had carried "the kernel
+tuning moved into `profile.conf` as data and Nim applies them, reporting what it could
+not change without privilege" since the step was written, lifted out of what
+`jenova-setup` and `common-setup.sh` do. **That is the defect.** D-AZ and Rule 3 say a
+behaviour in the archived build is either ported or the reference is deleted, and the
+session doing the porting decides which. Something that writes a system file was never
+a candidate for porting, and carrying it into a plan — then escalating it to the USER
+as a decision — is the failure. **An archived script doing something is not an argument
+that Jenova should do it.**
 
 ---
 

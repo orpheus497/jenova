@@ -3,7 +3,7 @@
 File-by-file map of the codebase: what lives where, and why. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE. Update whenever a file is added, removed or relocated.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 14:02 (Session 016).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 16:19 (Session 017).
 
 This file was mandated from the outset and did not exist for Sessions 001–003 —
 including Session 001, which moved or deleted 31 files. See `DECISIONS_LOG.md` C-10.
@@ -31,12 +31,12 @@ including Session 001, which moved or deleted 31 files. See `DECISIONS_LOG.md` C
 | `bin/` | `jenova` (desktop app) and `jenova-core` (headless server), both build artifacts, plus `jenova.desktop` |
 | `tests/` | Shell suites driven by `nimble suites`, plus `nvimctl_check.nim` — the one suite that needs a compiled caller |
 | `etc/` | `jenova.conf` (applied profile) and `jenova.local.conf` (**the USER's file — never edited by a session**) |
-| `hardware-profiles/` | Profile data plus `detect-hardware.sh`, the setup-time selection tool. Data outlives the rewrite |
+| `hardware-profiles/` | **Profile data only** — `profile.conf` + `jenova.conf` per profile. Detection and selection are `src/jenova/hardware.nim`; the six shell scripts were archived 2026-09-01 (S-1) |
 | `jca_web/` | The SvelteKit Web UI. Still holds the workspace side — workspaces, projects, folders, notes, fileAssets — which the native GUI does not have |
 | `public/`, `png/`, `docs/`, `var/`, `external/` | Web bundle, icons, user docs, runtime dirs, submodules |
 
 **Archived to `.devdocs/ARCHIVE/` (D-AM):** `Makefile`, `tests/Makefile`, `scripts/` (8 files),
-`lib/` (2 files), `proxy.log`, four orphaned test scripts, `bin/jenova-swap-mount`.
+`lib/` (2 files), `proxy.log`, four orphaned test scripts, `bin/jenova-swap-mount`, and — 2026-09-01 — `hardware-profiles/`'s six shell scripts (`detect-hardware.sh`, `common-setup.sh`, four `jenova-setup`). **The product tree now contains no shell script outside `tests/`.**
 
 **Module roles are in the source headers.** They are not duplicated here: an inventory in prose rots
 on the next commit, which is what caused the doc-churn loop.
@@ -64,6 +64,45 @@ body. **It sits beside `config.nim` in the layering, not beside `gui.nim`**: it 
 only on `paths` and `std/json`, and `pipeline.chatBody` calls the merge. That placement
 is deliberate and is the reason the whole settings feature is assertable from
 `pipeline-selftest` with no window — see D-BH for what the alternative cost.
+
+**Added 2026-09-01 (S-1, ruling D-BC):** `hardware.nim` — hardware detection, the
+`profile.conf` reader, the profile scorer and apply, replacing the archived
+`detect-hardware.sh`. **Same layering argument as `settings.nim`**: it depends only on
+`std` and knows nothing of owlkettle, so `hardware-selftest` asserts the whole scoring
+ladder with no window and no machine. `gui.nim` draws the Hardware screen and
+`jenova_core.nim` exposes `hardware detect|list|apply`; neither contains any scoring.
+**It never sets a `sysctl`** (D-BN) — it reads them to describe the machine and nothing
+more.
+
+**No new module for Step 7 (2026-09-01), and that is the point.** Its four features went
+into the modules that already owned the behaviour, so each could be asserted:
+`markdown.nim` gained tables, task lists and strikethrough and is **now linked into
+`jenova-core`** purely so `markdown-selftest` can reach it; `pipeline.nim` gained
+`classifyError` (G-35) and `contentFor` (G-30), for the reason `chatBody` is there — the
+request body and the failure report are the two things that were got wrong while they
+lived in `gui.nim`; and `api.nim` gained `cascadeCount`, which derives its numbers by
+rewriting the `Cascades` statements rather than restating them. **`gui.nim` holds the
+widgets and the socket cancellation**, which is the one part that cannot move: it is a
+file descriptor and two threads (D-BO).
+
+**Finishing 7b (16:19) moved more of it down, and one move was forced.**
+`pipeline.nim` now also holds the attachment *classifier* — `Attachment`,
+`readAttachment`, `looksTextual`, `mimeForImage`, `uriToPath` — and `gui.nim`'s
+`PendingAttachment` is an alias of `pipeline.Attachment`. The forcing reason is worth
+recording: the drag-and-drop drain runs inside the `viewable`'s own timer, where a proc
+taking `AppState` **cannot exist yet**, because that type is produced by the macro the
+timer is written inside. Splitting the decision out was the only way to share one
+implementation between the picker and the drop — and it made all of it assertable.
+
+**`gui.nim` gained one renderable and seven protos.** `DropZone` is a renderable for the
+reason `AutoScroll` is: owlkettle offers no route from a `gui:` block to a `GtkWidget`,
+and a `GtkDropTarget` has to attach to one. The protos are the four for the drop target
+and three for the clipboard; **everything else was already in owlkettle's bindings and
+is imported**, including `g_signal_connect_data`, `GValue`, `G_TYPE_STRING`,
+`GdkClipboard`, `GAsyncResult` and both display/clipboard getters. Thumbnails needed
+**no** new proto at all — `loadPixbuf` already wraps
+`gdk_pixbuf_new_from_file_at_scale`, so a pasted or attached image is written to the
+cache dir under its own digest and loaded from there.
 
 - **`nvimctl.nim`** reads the document open in Neovim — path, buffer, cursor, dirty flag, filetype —
   through `nvim --server <sock> --remote-expr`. **It is deliberately not an RPC client:** Neovim
@@ -119,12 +158,21 @@ it. The `JENOVA_INPROC` path went with them.
 **Both binaries link the same modules.** The split exists so a LAN or server host builds without
 GTK — N-7 requires LAN mode to serve whether or not the GUI runs.
 
-## 3. `hardware-profiles/` — 6 profiles, uniform depth 2
+## 3. `hardware-profiles/` — 6 profiles, uniform depth 2, **data only**
 
-Layout `<backend>/<config>` per ruling D-F. Each directory holds `jenova.conf` (**consumed by
-`config.nim`**, unprefixed names — `bin/jenova-ca` is archived), `profile.conf` (metadata + match
-scores), and **optionally** a `jenova-setup` kernel-tuning script — absent for the two generic
-fallbacks since Q-11, which is a supported state, not a defect.
+Layout `<backend>/<config>` per ruling D-F. Each directory holds exactly two files now:
+`jenova.conf` (**consumed by `config.nim`**, unprefixed names) and `profile.conf`
+(metadata plus the `MATCH_*` patterns the scorer reads).
+
+**As of 2026-09-01 15:13 there are no scripts here at all.** `detect-hardware.sh`,
+`common-setup.sh` and the four per-profile `jenova-setup` scripts are archived to
+`.devdocs/ARCHIVE/hardware-profiles/`, and **detection, scoring and apply are
+`src/jenova/hardware.nim`** — reached from the window's Hardware screen and from
+`jenova-core hardware`. `PROGRESS.md` 2026-09-01 15:13, `PLANS.md` Step 6, D-BC.
+
+**Kernel tuning is not part of the product and nothing replaced those scripts (D-BN).**
+Jenova applies no `sysctl` and never writes `/etc/sysctl.conf`; it reads `sysctl` only
+to detect the machine.
 
 **Re-verified 2026-09-01, key by key across all six profiles.** Every `PROFILE_*` value
 matches the `jenova.conf` beside it except two on `Vulkan/dgpu-i5-1135g7` — `FIT_TARGET`
@@ -133,26 +181,19 @@ only passed when the layer count is `all` (`lifecycle.nim:99`) and the watchdog
 hardcodes its own constants (`lifecycle.nim:357`). The long-running "three profiles
 contradict themselves" item was stale and is closed.
 
-| Profile | Tuning status |
+| Profile | Role in detection |
 |---|---|
-| `Vulkan/dgpu-igpu-i5-1135g7` | Real FreeBSD sysctls ✅ |
-| `Vulkan/apu-ryzen7-5700u` | Real FreeBSD sysctls ✅ |
-| `Vulkan/dgpu-i5-1135g7` | Real sysctls. The `_JENOVA_ROOT` traversal was corrected to three parents on 2026-08-31, **but the helper it then resolves — `bin/jenova-swap-mount` — is archived**, so the script always takes its inline `mdmfs` fallback. Its tuning values move into `profile.conf` at Step 6 |
-| `Vulkan/dgpu-generic-12gb` | **No tuning script — deleted 2026-08-31 (Q-11).** It was a config symlinker with a root five `dirname` calls too high, not a tuning script. Data files only; `scripts/jenova-setup` reports "no tuning defined" and exits 0. This is the GPU fallback |
-| `CUDA/dgpu-generic` | Same — script deleted 2026-08-31 (Q-11). Opt-in only via `PROFILE_OPT_IN` (D-B) |
-| `CPU/generic` | **Entirely Linux** — `cpupower`, `/sys`, `numactl` (B-10). The only CPU-only profile |
+| `Vulkan/dgpu-igpu-i5-1135g7` | The USER's machine. Wins at **40** — the only profile declaring `MATCH_GPU_1` |
+| `Vulkan/dgpu-i5-1135g7` | Same CPU and dGPU, no `MATCH_GPU_1`. Scores 35 on this machine, and wins if the Iris Xe is absent — that split is the whole purpose of the `-8` penalty |
+| `Vulkan/apu-ryzen7-5700u` | Ryzen 7 5700U + Vega 8 |
+| `Vulkan/dgpu-generic-12gb` | The **GPU fallback**, allowlisted by device name |
+| `CPU/generic` | The **last-resort fallback** — no GPU pattern at all |
+| `CUDA/dgpu-generic` | **`PROFILE_OPT_IN=1` — excluded from scoring entirely** (D-B). Unreachable on FreeBSD in any case |
 
-Supporting: `detect-hardware.sh` (scoring ladder + `--apply-profile`), `common-setup.sh`,
-`README.md`.
+**`HW_STORAGE` was `ext4/xfs/btrfs` on `apu-ryzen7-5700u` and `CPU/generic`** — Linux
+filesystems on a FreeBSD-only project. Corrected to `ZFS` on 2026-09-01 (S-2, closed).
 
-**These are the last two shell scripts in the tree and both reference archived files** —
-`detect-hardware.sh:19` sources `lib/detect-env.sh`, and `dgpu-i5-1135g7/jenova-setup:100`
-resolves `bin/jenova-swap-mount`. **The running product invokes neither**, so there is
-currently no working way to detect hardware or change profile.
-
-**Ruled at D-BC:** detection, scoring and apply move into Nim with a GUI screen; the
-kernel-tuning values become data in `profile.conf`; **both scripts are archived when that
-lands**, leaving these directories as pure data. `TODOS.md` S-1, `PLANS.md` Step 6.
+Supporting: `README.md`, which documents the scoring ladder and the profile format.
 
 ## 4. `etc/`
 

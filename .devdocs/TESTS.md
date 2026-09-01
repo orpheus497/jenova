@@ -3,7 +3,7 @@
 Test specifications, validation criteria and expected outcomes. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 14:02 (Session 016).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 16:19 (Session 017).
 Mandated from the outset; absent for Sessions 001–003. See `DECISIONS_LOG.md` C-10.
 
 > **§5a onward are stage acceptance records** — what each stage had to prove and how. They are
@@ -38,7 +38,9 @@ Mandated from the outset; absent for Sessions 001–003. See `DECISIONS_LOG.md` 
 | `test_nvimctl.sh` | Reading the live Neovim buffer (§5i). **The one suite that spawns a process** — a headless `nvim` — and the only one needing a compiled driver, `tests/nvimctl_check.nim`. Skips cleanly with no `nvim` installed |
 
 Plus the core's own subcommands: `db-selftest`, `serve-selftest`, `rag-selftest`,
-`pipeline-selftest`, `sha256-selftest`, `tree-selftest`, `db-capabilities`.
+`pipeline-selftest`, `sha256-selftest`, `tree-selftest`, **`hardware-selftest`** (§0i),
+**`markdown-selftest`**, **`error-selftest`** and **`attach-selftest`** (§0j),
+`db-capabilities`. **That is nine self-tests.**
 
 **There is no Makefile.** `make check` and `make -C tests check` no longer exist (D-AM).
 
@@ -77,10 +79,119 @@ nothing about them.
 puts it there. **The same trap catches any direct `nim` call**, including a compile-guard
 check: it fails with "command not found", which reads as silence rather than an error.
 
-**Six self-tests, six suites.** *`tree-selftest` was added 2026-09-01 for the
-branching tree walk. Earlier trackers said four self-tests;
+**Nine self-tests, six suites.** *`tree-selftest` was added 2026-09-01 for the
+branching tree walk, `hardware-selftest` the same day for profile scoring (§0i),
+and `markdown-selftest`, `error-selftest` and `attach-selftest` for Step 7 (§0j).
+Earlier trackers said four self-tests;
 `db-capabilities` is a capability report, not an assertion, which is where the
 miscount came from.*
+
+## 0j. Step 7's three self-tests (G-34, G-35, G-30, 2026-09-01 15:46)
+
+**`markdown-selftest` — 17 assertions.** `markdown.nim` renders every assistant
+reply and was reachable only from `gui.nim`, so nothing could assert it. It links
+here — it imports `std/strutils` and nothing else. Covers: a pipe table becomes a
+table block with its header, rows and `:---:` alignment · **a pipe with no
+separator row is not a table** · pipes inside a code fence are not a table · a
+short row is padded rather than dropped · task lists render ☐/☑ and the raw
+brackets are gone · `~~` becomes `<s>` · a code span still suppresses emphasis ·
+`<b>` in a cell is escaped, not injected.
+
+**Proven able to fail — three corruptions, three different reds:** any pipe line
+counted as a separator (the "no separator" assertion) · alignment markers ignored
+(the alignment assertion) · task lists falling through to the bullet branch (two).
+
+**A fourth corruption stayed green and was recorded as a *weak* corruption, not a
+hole (rule 16).** Removing the "a separator cell must contain a dash" check changes
+no realistic input, because the empty-cell and charset checks already reject them —
+the guard is redundant rather than untested. Saying so is the point: rule 16 is
+about finding holes, not about logging every corruption that fails to bite.
+
+**`error-selftest` — 15 assertions.** `pipeline.classifyError`. Covers: llama.cpp's
+own overflow wording parsed for **both numbers** · **an overflow is not offered a
+Retry**, because retrying sends the identical oversized prompt · 502/503 are the
+backend not being up, and are retryable · a timeout is a timeout · a refused
+connection names the backend · a 500 shows the server's own words · **a non-JSON
+body is survived** and falls back to naming the status.
+
+**Three corruptions, three reds:** an overflow marked retryable · the two numbers
+no longer extracted (three assertions) · a timeout collapsed into a generic
+network failure.
+
+**`attach-selftest` — 27 assertions.** `pipeline.contentFor` and, since 16:19,
+`pipeline.readAttachment` / `uriToPath`. Covers: **no
+attachments leaves `content` a plain string**, so every request without one is
+unchanged · an image becomes an `image_url` part carrying the whole data URL · a
+text file is wrapped in the Web UI's own `--- File: name ---` header · **images
+before text files, the Web UI's order** · an attachment with no text sends no
+empty text part · a legacy `context` attachment is still sent · audio becomes
+`input_audio` with the format read from the mime type · a text-extracted PDF
+becomes a text part · a malformed `extra` is survived.
+
+**Two clean reds:** images emitted as text parts (four assertions) · the
+attachment header changed from the Web UI's (two).
+
+**Twelve more assertions were added at 16:19** with drag-and-drop and paste: the
+URI percent-decode (without which most screenshots fail to open, since their
+names have spaces), the NUL-byte text test, an unknown extension attaching as
+text, **the vision refusal in both directions** — refused on a text-only model
+and *allowed* while `/props` has not answered, because refusing on an unknown is
+the same defect the other way round — and an unreadable file refused rather than
+crashing. **Three further corruptions, three clean reds:** the percent-decode
+dropped · text decided by extension instead of content · an unanswered `/props`
+refusing images.
+
+**A third corruption crashed rather than going red, and is not claimed as a
+pass.** Removing the no-attachments guard reaches a nil dereference before the
+assertion runs. It shows the guard is load-bearing; it is not a clean red.
+
+**Plus 5 assertions on `api.cascadeCount` in `tree-selftest`** — a workspace counts
+every descendant table, a folder only what is in it, a conversation its messages, a
+leaf nothing, and **a soft-deleted row is not counted again**. Corrupting the
+`is_deleted=0` filter turns the last one red. G-36's dialog quotes this number, and
+a confirmation that under-reports what it will delete is worse than none.
+
+**What none of these reach:** the stop button, the table `Grid`, the attachment
+chips, the picker and the confirmation dialog are widgets. `--check` builds the
+tree; it does not press anything.
+
+## 0i. `hardware-selftest` — profile scoring (S-1, 2026-09-01 15:13)
+
+**Why it exists:** scoring decides which tuning the machine runs under, and a wrong
+score does not fail loudly — it runs the wrong profile, which looks like working
+software that is merely slow. The ladder lives in `hardware.scoreProfile`, below the
+widget layer, and is asserted against hand-written `Hardware` values with no `sysctl`
+call and no window.
+
+**13 assertions.** Every `profile.conf` parses · two GPUs select
+`Vulkan/dgpu-igpu-i5-1135g7` · one GPU does not · **the dual profile scores strictly
+below the winner on single-GPU hardware, and strictly above it on dual** · the opt-in
+`CUDA/dgpu-generic` is disqualified · unknown hardware falls back to `CPU/generic`
+rather than matching nothing · an OS mismatch disqualifies *every* OS-pinned profile ·
+apply writes `jenova.conf`, **leaves `jenova.local.conf` untouched**, and the applied
+profile is then reported as current.
+
+**Proven able to fail — three corruptions, three different sets of red:**
+
+| Corruption | Result |
+|---|---|
+| `PtsGpuMissing` −8 → 0 | **PASSED at first.** See below |
+| `readProfile` never sets `optIn` | the opt-in assertion goes red alone |
+| an OS mismatch scores 0 instead of disqualifying | the OS assertion goes red alone |
+
+**The first corruption passing is the finding, not a failed experiment (rule 16).**
+`dgpu-i5-1135g7` and `dgpu-igpu-i5-1135g7` are identical but for `MATCH_GPU_1`, so with
+the penalty removed they **tie at 35** on single-GPU hardware — and the right one still
+won, purely because it sorts first and Nim's sort is stable. **The assertion was
+checking the winner's name when the thing that mattered was the margin.** The strict
+inequality was added, and the same corruption then goes red naming the tie.
+
+**What this suite could not see, and did not:** the first real run reported **no GPU at
+all**, because `llama-server` needs `LD_LIBRARY_PATH` set to `paths.llamaLibDir` and
+`detectGpu` did not set it. An unloadable binary and a GPU-less machine produce the same
+empty string. **A unit check over hand-written hardware cannot reach that** — it is the
+join to the environment, which is rule 15 again. Fixed and confirmed against the real
+machine: both Vulkan devices, score 40.
 
 ## 0h. `jenova --check` — does the application start at all? (2026-09-01 14:02)
 
