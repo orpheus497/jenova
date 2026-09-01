@@ -32,20 +32,26 @@ const
 proc usage() =
   echo "jenova ", Version, " (", Stage, ")"
   echo ""
-  echo "Usage: jenova [--no-tray] [--help]"
+  echo "Usage: jenova [--no-tray] [--check] [--help]"
   echo ""
   echo "  The Jenova desktop application: chat window, backend control,"
   echo "  model switching, LAN toggle, and a StatusNotifierItem tray."
   echo ""
   echo "  --no-tray   run the window without registering a tray item"
+  echo "  --check     start-up smoke test: initialise GTK and build the whole"
+  echo "              window, then exit. Shows no window, starts no backend,"
+  echo "              binds no port. Exit 0 means the application reaches its"
+  echo "              first frame — which a successful compile does not tell you"
   echo ""
   echo "  The headless server is a separate binary: jenova-core serve"
 
 proc main() =
   var withTray = true
+  var checkOnly = false
   for arg in commandLineParams():
     case arg
     of "--no-tray": withTray = false
+    of "--check": checkOnly = true
     of "-h", "--help", "help":
       usage()
       quit(0)
@@ -60,7 +66,7 @@ proc main() =
       quit(2)
 
   try:
-    gui.run(withTray = withTray)
+    gui.run(withTray = withTray, checkOnly = checkOnly)
   except CatchableError as e:
     # A configuration or path error must reach the terminal. Reporting it inside
     # a window the error may have prevented from opening is how a startup

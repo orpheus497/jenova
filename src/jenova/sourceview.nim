@@ -13,6 +13,7 @@
 
 import std/[os, strutils, tables]
 import owlkettle/bindings/gtk
+import ./theme
 
 {.passC: staticExec("pkg-config --cflags gtksourceview-5").}
 {.passL: staticExec("pkg-config --libs gtksourceview-5").}
@@ -88,8 +89,15 @@ proc ensureSourceInit() =
 ## ships is not guaranteed — an unavailable id returns nil rather than failing,
 ## so the fallback costs nothing and a missing scheme degrades to the default
 ## rather than to an unreadable light block.
-const SchemePreference = ["jenova-dark", "Adwaita-dark", "classic-dark",
-                          "solarized-dark", "oblivion", "cobalt"]
+const SchemePreference = @["jenova-dark", "Adwaita-dark", "classic-dark",
+                           "solarized-dark", "oblivion", "cobalt"]
+
+## The same ladder for a light palette (G-31's Theme setting). A dark code block
+## on a white transcript is the mismatch that makes a ported theme look
+## half-finished, and the fallbacks matter for the same reason as above: which
+## schemes a build ships is not guaranteed.
+const LightSchemePreference = @["Adwaita", "classic", "solarized-light",
+                                "tango", "kate"]
 
 ## Action purpose: the Jenova scheme, embedded in the binary rather than shipped
 ## as a data file. GtkSourceView loads schemes only from a directory on its
@@ -190,7 +198,13 @@ proc installScheme*(dir: string) =
 
 proc applyScheme(buffer: GtkSourceBuffer) =
   let mgr = gtk_source_style_scheme_manager_get_default()
-  for id in SchemePreference:
+  # The palette in force decides which ladder is walked. `theme.active()` rather
+  # than a parameter, because every SourceCode widget resolves its own scheme as
+  # it is built and threading the choice through the widget tree would put a
+  # theme concern into every code block.
+  let prefer = (if theme.active().preferDark: SchemePreference
+                else: LightSchemePreference)
+  for id in prefer:
     let scheme = gtk_source_style_scheme_manager_get_scheme(mgr, id.cstring)
     if not scheme.isNil:
       gtk_source_buffer_set_style_scheme(buffer, scheme)

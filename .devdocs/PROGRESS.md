@@ -2,7 +2,7 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-09-01 12:55 (Session 016)
+**Last updated:** 2026-09-01 14:02 (Session 016)
 
 > **Reading the "UNRUN" labels in this file.** Entries below are point-in-time records
 > and several were written with a "compiled; UNRUN" status that was true on the day.
@@ -15,6 +15,147 @@ Macro progress tracking. Most recent entries at the top.
 ---
 
 ## Completed
+
+### 2026-09-01 14:02 — **The Theme setting aborted the application on every launch. Fixed, and `jenova --check` added so it cannot happen unnoticed again.**
+
+**The USER ran the build and it died in 0.09 seconds**, before any window:
+
+```
+Gdk-ERROR: gdk_display_manager_get() was called before gtk_init()
+SIGABRT: Abnormal termination.
+```
+
+**The cause.** No `settings.json` existed yet, so the stored theme was
+`initSettings()`'s default — `"system"`. `gui.run` resolved the startup palette
+with `theme.paletteFor("system")`, which asked libadwaita for the desktop's
+colour scheme. **`adw.brew` is what calls `adw_init`, and `run` executes before
+it**, so that reached `gdk_display_manager_get` with no display and GDK aborted
+the process. **Not an edge case: a 100% crash on every launch**, and it is the
+project's first ever GTK call before `brew`.
+
+**The fix is structural, not a comment.** `paletteFor` is now GTK-free by
+construction — `light` or dark, no call — and `"system"` opens on the application's
+own default. The window's `afterBuild` hook, which runs once GTK is up,
+re-resolves it against the desktop through the new `livePaletteFor` and applies
+it before the first frame. `brew` is handed `ColorSchemeDefault` for `system` so
+libadwaita follows the desktop for its own chrome, and a forced scheme otherwise.
+The dialog's Save also uses `livePaletteFor`, since the window exists by then.
+
+**Why nothing caught it, which matters more than the bug.** `nimble gui` exiting 0
+says the widget tree compiles and nothing whatever about whether the program
+reaches its first frame — **which is D-AR, already written down and quoted in this
+very session before being relied on anyway**. No self-test can reach it either:
+`pipeline-selftest` links `jenova-core`, which does not link owlkettle at all. And
+D-BJ correctly forbids starting the product, so the whole startup path had no
+verification of any kind.
+
+**`bin/jenova --check` closes that hole.** It calls `adw_init`, installs the
+stylesheet and **builds the entire widget tree including every `afterBuild`
+hook**, then returns without `runMainloop` — so **no window is presented, no
+backend is started, no port is bound and nothing touches the GPU**. That is what
+makes it usable under D-BJ where starting the application is not.
+
+**Proven able to fail:** reinstating the old `paletteFor` and running `--check`
+reproduces the abort exactly — same message, exit 134. **Verified across every
+input the setting has:** `system`, `light`, `dark`, a corrupt `settings.json` and
+no file at all, each against a scratch `JCA_HOME`, all exit 0. A static sweep of
+`run` confirms no GTK, GDK or libadwaita call remains ahead of `brew`.
+
+**Files touched — three:** `src/jenova/theme.nim` (`paletteFor` made pure,
+`livePaletteFor` and `needsLiveResolve` added), `src/jenova/gui.nim` (the
+`afterBuild` resolve, the `checkOnly` path), `src/jenova_gui.nim` (the flag).
+
+### 2026-09-01 13:52 — **Settings brought to 1:1 with the Web UI, and the panel made readable.** `PLANS.md` Step 5a.
+
+**Two defects the USER found by running the build, and the field set completed on
+their instruction.**
+
+**1. The panel was transparent and the transcript read through it.** It carried
+`.glass-panel` — `alpha(@jenova_bg, 0.4)` — which is right for the sidebar and
+the chat form, both at the window edge over the canvas, and wrong for a panel in
+the middle over text. **A blur is not available to fix it:** GTK 4.20 implements
+no `backdrop-filter` (the property is absent from the library, checked, not
+assumed) and GSK's `gtk_snapshot_push_blur` blurs a widget's own children rather
+than what is behind a sibling. **The Web UI's own settings dialog is not glass
+either** — `Dialog.Content` is `bg-background`, opaque, over a
+`fixed inset-0 bg-black/50` overlay, and `.glass-panel` is applied to four
+components in `jca_web`, none of them a dialog. So the panel is now opaque with a
+dimming scrim behind it, which is both the fix and the parity.
+
+**2. Two placeholders could never populate, and every box was blank with the
+backend down.** `/props` reports Typical P as **`typical_p`** while the field is
+keyed `typ_p`, so that one lookup always missed; and `samplers` arrives as a JSON
+array, which the flattener mapped to empty. Both fixed. Separately, every numeric
+field now carries **`llama-server`'s own compiled-in default as ghost text**, so
+no box is ever empty — accurate because Jenova passes no sampling flags on the
+command line at all, checked in `lifecycle.nim` and both conf files, so the server
+always starts from those values. **The "Custom" badge still compares against the
+server's reported value and never against the static fallback**, or it would lie
+whenever the two differ.
+
+**3. The help text was the Web UI's, verbatim, and it is reference text.** "Keeps
+only k top tokens" does not tell you whether to type 20 or 100. Every sampling and
+penalty field now gives the usable range, which direction does what, and the value
+that switches the sampler off.
+
+**4. The field set is now 1:1 with `ChatSettings.svelte`, minus three** (**D-BL**,
+superseding D-BK). Twelve fields were added. `settingSections` is the authority,
+not `SETTING_CONFIG_DEFAULT`, which also holds keys the Web UI never draws.
+Excluded: **API Key** and the whole **MCP** section on the USER's instruction, and
+**`serverUrl`** on architectural grounds — `bin/jenova` starts its own server and
+is the host (N-S6), so a field pointing it elsewhere would bypass the local
+pipeline, personas and retrieval. All three are recorded in
+`settings.OmittedFields`.
+
+**Eight of the twelve new fields are wired to behaviour built in the same pass:**
+
+- **Theme — light, dark or system.** `theme.nim` now carries a `Palette` record
+  and two instances. The light one is the Web UI's `:root` block, which is `oklch`
+  with chroma 0 — the neutral ramp — converted on the published scale. Its
+  surfaces are the Web UI's; the four brand hues are kept and darkened, because
+  its own light theme drops the brand entirely and this window's identity is the
+  wordmark. The canvas particles, the VTE palette and the GtkSourceView scheme all
+  follow, since each paints outside the stylesheet. **It applies without a
+  restart**: owlkettle takes stylesheets once at `brew` and offers no way to
+  change them, so `theme.applyPalette` installs an override provider above
+  owlkettle's own at priority 700.
+- **A transcript that follows a streaming reply**, and `disableAutoScroll` to stop
+  it. A new `AutoScroll` renderable, because owlkettle's `ScrolledWindow` exposes
+  only `child`. **It follows only when the view is already near the bottom**, so
+  scrolling up to re-read during a generation is not yanked back.
+- **Conversations name themselves from the first message**, with
+  `askForTitleConfirmation` gating the rename when that message is edited. Every
+  chat was called "New chat" before.
+- **Long code blocks are capped and scroll inside themselves**, with
+  `fullHeightCodeBlocks` to turn the cap off. A `sizeRequest` and not CSS, because
+  GTK4 has no `max-height`; only blocks over 24 lines are wrapped, since a
+  `sizeRequest` is a minimum and would pad a short one.
+- **A per-message raw-output toggle**, `showRawModelNames` on the statistics line,
+  and both sidebar options.
+
+**Four fields are drawn, stored and marked "not yet in effect"** — the three
+attachment settings and audio capture, all of which need G-30 (Step 7b). The
+marker names the step. A control that silently does nothing is G-8's defect; one
+that says what it is waiting for is a schedule.
+
+**10 new assertions, 25 in total for this feature, three shown going red.**
+Removing a Web UI field turns the parity check red alone; reverting the `typ_p`
+mapping turns that check red alone; stripping a numeric field's built-in default
+turns the ghost-text check red alone. **The parity claim is now asserted rather
+than stated** — `settingSections`' key list is in the self-test, so a field
+dropped or renamed later goes red and names itself.
+
+**Files touched — seven:** `src/jenova/settings.nim` (the full field set, ghost
+text, the `/props` name map), `src/jenova/theme.nim` (the palette record, the
+light palette, the opaque panel and scrim, the runtime swap),
+`src/jenova/gui.nim` (the panel, `AutoScroll`, auto-titling, the code cap, the raw
+toggle and the rest of the wiring), `src/jenova/sourceview.nim` (a light scheme
+ladder), `src/jenova/canvas.nim` and `src/jenova/vte.nim` (read the active
+palette), `src/jenova_core.nim` (the assertions).
+
+**Not seen on screen.** Both binaries build, the FreeBSD guard was confirmed to
+fire, `pipeline-selftest` passes. Nothing was run against a live backend and no
+window was opened (D-BJ).
 
 ### 2026-09-01 12:55 — **G-31 and G-32 built: a settings screen, the sampling parameters, and import/export.** `PLANS.md` Step 5.
 

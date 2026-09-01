@@ -1,6 +1,6 @@
 # TODOS
 
-**Last updated:** 2026-09-01 12:55 (Session 016)
+**Last updated:** 2026-09-01 13:52 (Session 016)
 
 Only what is actually outstanding. Everything finished lives in `PROGRESS.md`.
 
@@ -80,12 +80,16 @@ S-1 is Step 6. **Step 6 is next.**
 **Done and gone from this file** (2026-09-01, all in `PROGRESS.md`):
 
 - **G-31 — a settings screen, and with it every sampling and penalty parameter.**
-  A floating panel over the window, six sections, 1:1 with the Web UI's
-  `ChatSettings` minus API Key and MCP (excluded by the USER) and minus the
-  fields whose feature this window does not have yet — each of those listed in
-  `settings.OmittedFields` with the step that brings it back (**D-BK**). This
-  also **closed D-BH's deliberate divergence**: Continue is now a setting, off by
-  default, matching the Web UI.
+  A floating panel over the window, six sections, **1:1 with the Web UI's
+  `ChatSettings`** minus three recorded exclusions: API Key and MCP (the USER's
+  instruction) and `serverUrl` (`bin/jenova` is the host — N-S6). A field whose
+  feature is not built yet is drawn, stores its value and is marked *"not yet in
+  effect"* with the step that turns it on (**D-BL**, superseding D-BK). This also
+  **closed D-BH's deliberate divergence**: Continue is now a setting, off by
+  default, matching the Web UI. **Eight small features were built to back the
+  settings that govern them** — a light palette, a following transcript,
+  conversation auto-titling, a code-block cap, a raw-output toggle, raw model
+  names and both sidebar options.
 - **G-32 — import and export of conversations**, over the transactional path that
   already existed. A file exported by the frozen Web UI is accepted too.
 

@@ -3,7 +3,7 @@
 File-by-file map of the codebase: what lives where, and why. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE. Update whenever a file is added, removed or relocated.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 12:55 (Session 016).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 14:02 (Session 016).
 
 This file was mandated from the outset and did not exist for Sessions 001–003 —
 including Session 001, which moved or deleted 31 files. See `DECISIONS_LOG.md` C-10.
@@ -50,14 +50,14 @@ on the next commit and re-deriving the drift is what consumed whole sessions (se
 | | |
 |---|---|
 | `jenova_core.nim` | Headless server. Subcommands: run `jenova-core` with no arguments |
-| `jenova_gui.nim` | Desktop application. `bin/jenova` |
+| `jenova_gui.nim` | Desktop application. `bin/jenova`. Flags: `--no-tray`, and **`--check`** — the start-up smoke test (`TESTS.md` §0h): builds the whole window under a real GTK and exits, showing no window and starting no backend |
 | `jenova/` | The modules — server, routing, database, filesystem mirror, RAG, completion pipeline, backend lifecycle, model discovery, GUI, tray, D-Bus, **theme, canvas** |
 
 **Added 2026-08-31 (G-1 … G-5, ruling D-AP):** `theme.nim`, `canvas.nim`, `markdown.nim`.
 
 **Added 2026-08-31 (G-7, G-18, G-19):** `sourceview.nim`, `nvimctl.nim`, `vte.nim`.
 
-**Added 2026-09-01 (G-31, ruling D-BK):** `settings.nim` — the desktop application's
+**Added 2026-09-01 (G-31, rulings D-BK and D-BL):** `settings.nim` — the desktop application's
 settings: the field declarations, the file store under `p.state`, the validator, and
 `applyTo`, which merges the sampling and penalty parameters into the outbound request
 body. **It sits beside `config.nim` in the layering, not beside `gui.nim`**: it depends
@@ -75,8 +75,16 @@ is deliberate and is the reason the whole settings feature is assertable from
   `renderable` lives in `gui.nim` for the reason `sourceview.nim`'s does — owlkettle's macro emits
   an unexported type. **GUI binary only**; `jenova-core` links neither.
 
-**`sourceview.nim` and `vte.nim` are the program's only FFI.** Both follow one shape: flags from
-`staticExec("pkg-config …")`, a small Nim surface, the widget declared in `gui.nim`.
+**`sourceview.nim` and `vte.nim` are the program's only FFI *modules*.** Both follow one shape:
+flags from `staticExec("pkg-config …")`, a small Nim surface, the widget declared in `gui.nim`.
+
+**Two files now also declare a handful of individual protos** (2026-09-01, G-31), and the rule
+they follow is worth stating because it is what keeps this from spreading: **check owlkettle's
+own bindings first and declare only what is genuinely missing.** `owlkettle/bindings/gtk` and
+`.../adw` are importable directly — `sourceview.nim` already did — and carry most of what was
+needed. `theme.nim` declares **two** (`gtk_style_context_remove_provider_for_display`,
+`adw_style_manager_get_dark`) for the runtime palette swap; `gui.nim` declares **three**
+adjustment getters for `AutoScroll`. Everything else is imported.
 
 - **`markdown.nim`** splits an assistant reply into text and fenced-code blocks and converts inline
   markdown to Pango markup. An unterminated fence renders as code so a block appears while it is
@@ -87,7 +95,11 @@ is deliberate and is the reason the whole settings feature is assertable from
 surface the user is on. The GUI writes no entity SQL of its own.
 
 - **`theme.nim`** holds the palette **as Nim constants** and generates the GTK4 stylesheet from
-  them. The palette is not duplicated in CSS text, because `canvas.nim` paints behind the widgets
+  them. **Two palettes since 2026-09-01** (G-31's Theme setting): a `Palette` record, `DarkPalette`
+  assembled from the constants above it, and `LightPalette` converted from the Web UI's `oklch`
+  `:root` block. `active()` is what `canvas.nim`, `vte.nim` and `sourceview.nim` read, because each
+  paints outside the stylesheet and cannot pick a colour up from a `@define-color`. `applyPalette`
+  swaps it on a running window, which owlkettle itself cannot do. The palette is not duplicated in CSS text, because `canvas.nim` paints behind the widgets
   and needs the same values — the Web UI's own canvas hard-codes colours that match no token in
   `app.css`, which is the drift this arrangement prevents.
 - **`canvas.nim`** is the `NeuralCanvas` port: a cairo particle field on a `DrawingArea`.

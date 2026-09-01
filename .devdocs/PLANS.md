@@ -2,7 +2,7 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-09-01 12:55 (Session 016)
+**Last updated:** 2026-09-01 13:52 (Session 016)
 
 **Write plans in plain English, then cite the ID** (**D-BA**). A step that reads
 "resolve G-23" tells the reader nothing. Say what the thing is first.
@@ -194,18 +194,28 @@ without a window. `pipeline.chatBody` takes the settings and merges them last.
 empty value is not sent at all** rather than sent as a zero, because a typed store
 cannot tell "the user asked for 0.0" from "the user never touched it" and a
 defaulted 0 on every parameter would silently override the server's own preset
-while looking like a working screen; and **a field whose feature does not exist is
-not drawn**, because a control wired to nothing is G-8's and G-37's exact defect —
-`settings.OmittedFields` names each one and the step that brings it back.
+while looking like a working screen; and the source indicator was worth copying
+because it reuses the `/props` call already being made.
+
+**Step 5a followed on 2026-09-01 13:52**, from the USER running the build: the
+panel was transparent and unreadable, the tuneables needed real guidance, and the
+field set was to be **1:1 with the Web UI's, skipping API and MCP** (**D-BL**,
+superseding D-BK's narrower rule). Twelve fields added, eight of them with the
+behaviour they govern built in the same pass — a light palette, a following
+transcript, conversation auto-titling, a code-block cap, a raw-output toggle. The
+four that need attachments are drawn, stored and marked *"not yet in effect"*
+with the step that turns them on. The record is `PROGRESS.md` 2026-09-01 13:52.
 
 **D-BH's deliberate divergence is closed here as planned:** Continue is a setting
 now, off by default, matching the Web UI.
 
-**Proven by 15 new assertions**, each shown going red first, by four independent
-corruptions producing four different sets of red. **One of the four initially
+**Proven by 25 assertions**, each shown going red first, by seven independent
+corruptions producing seven different sets of red. **One of them initially
 passed, and that found a hole in the assertion set rather than in the code** —
 nothing asserted that `custom` JSON can override the fields the body sets for
-itself, which is the whole point of an escape hatch. See `TESTS.md` §0g.
+itself, which is the whole point of an escape hatch. **The parity claim is itself
+asserted**, so a field dropped or renamed later goes red and names itself. See
+`TESTS.md` §0g.
 
 **The step numbers below are deliberately unchanged**, for the reason Step 1
 records. **Step 6 is the next step.**

@@ -5,6 +5,63 @@ One short paragraph per session. Sessions 001-005 are in
 
 ---
 
+## Session 016 (part three) — 2026-09-01 14:02
+
+**I handed over a build that aborted on every launch, and had no way of knowing.**
+The Theme setting resolved its startup palette by asking libadwaita for the
+desktop's colour scheme — from `gui.run`, which executes **before** `adw.brew`, and
+`brew` is what calls `adw_init`. That reached `gdk_display_manager_get` with no
+display and GDK killed the process in 0.09 s. With no `settings.json` the stored
+theme was `"system"`, so it was **100% reproducible, not an edge case**. **Why
+nothing caught it is the part that matters:** `nimble gui` exiting 0 proves the
+widget tree compiles and says nothing about call ordering across an init boundary —
+that is **D-AR, which I quoted in this same session and then leaned on a compile
+anyway** — and no self-test can reach `gui.nim` at all, since every one links
+`jenova-core`, which links no owlkettle. D-BJ correctly forbids starting the
+product, and I never said out loud that this left the whole startup path
+unverified. **A green suite plus a clean compile were, for the GUI, compatible with
+a program that could not start.** Fixed structurally: `paletteFor` is now GTK-free
+by construction and `"system"` is re-resolved in the window's `afterBuild` hook,
+where there is a display. **The real outcome is `bin/jenova --check`** (D-BM,
+`BRIEFING.md` rule 17, `TESTS.md` §0h): it builds the entire widget tree under a
+real GTK and exits without a mainloop — no window, no backend, no port, no GPU — so
+it is allowed where starting the product is not. Proven able to fail by reinstating
+the bug (same `Gdk-ERROR`, exit 134), and verified across `system`, `light`, `dark`,
+a corrupt settings file and no file, each against a scratch `JCA_HOME`. **It says
+the application runs, never that anything on it is right** — the panel, the light
+palette and the rest are still a screen run. Full detail: `SESSION_HANDOFF.md`
+Session 016 (part three).
+
+## Session 016 (part two) — 2026-09-01 13:52
+
+**The USER ran the build and found two things; both were mine.** The settings
+panel carried `.glass-panel` at 40% opacity, so the transcript read straight
+through it — and the Web UI does not use that class on a dialog at all, which
+makes it a divergence I introduced while claiming parity. **A blur cannot fix it:**
+GTK 4.20 implements no `backdrop-filter` (absent from the library, checked) and
+GSK's blur applies to a widget's own children, not what is behind a sibling, with
+owlkettle exposing no snapshot API regardless. The answer is the Web UI's own —
+opaque panel, dimmed scrim. Second, the tuneables: **two placeholders could never
+populate**, because `/props` calls Typical P `typical_p` and reports `samplers` as
+an array, and with the backend down every box was blank — now every numeric field
+carries llama.cpp's own compiled-in default as ghost text, safe to state because
+Jenova passes no sampling flags at all. The help text, which was the Web UI's
+verbatim reference text, was rewritten to give range, direction and the value that
+disables each sampler. **Then, on the USER reaffirming it, the field set was
+brought to 1:1** (**D-BL**, superseding D-BK): twelve fields added, three excluded
+and recorded — API Key and MCP on instruction, `serverUrl` because `bin/jenova` is
+the host. **Eight of the twelve needed a feature and got one:** a full light
+palette that applies without a restart, a transcript that follows a streaming reply
+without fighting the reader, conversation auto-titling, a code-block cap, a
+raw-output toggle, raw model names and both sidebar options. The four needing
+attachments are drawn, stored and marked *"not yet in effect"* with the step that
+turns them on. **10 new assertions, three corruptions, three different sets of red
+— one of them re-creating the reported `typ_p` bug — and the parity claim is now
+asserted rather than stated.** Both binaries build, the guard fires,
+`pipeline-selftest` passes. **Nothing was seen on screen** (D-BJ); the light
+palette in particular is the largest untested change. Full detail:
+`SESSION_HANDOFF.md` Session 016 (part two).
+
 ## Session 016 — 2026-09-01 12:55
 
 **Step 5 built: the settings screen, and with it every sampling and penalty parameter.**

@@ -629,6 +629,100 @@ proc main() =
               settings.loadFrom(sf).get("temperature") == "0.35")
         removeFile(sf)
 
+      # Action purpose: **the parity claim itself, asserted rather than stated.**
+      # "1:1 with the Web UI" is the kind of thing that is true on the day it is
+      # written and quietly false a month later. The list below is
+      # `jca_web`'s `ChatSettings.svelte` `settingSections`, in its order, minus
+      # the three `settings.OmittedFields` records — so if a field is dropped,
+      # renamed or silently added, this goes red and names it.
+      block settingsParityWithTheWebUi:
+        let turn2 = %*[{"role": "user", "content": "hi"}]
+        var themed = settings.initSettings()
+        themed["theme"] = "light"
+        const WebUiFields = [
+          # General
+          "theme", "systemMessage", "pasteLongTextToFileLen",
+          "copyTextAttachmentsAsPlainText", "enableContinueGeneration",
+          "pdfAsImage", "askForTitleConfirmation",
+          # Display
+          "showMessageStats", "showThoughtInProgress", "keepStatsVisible",
+          "autoMicOnEmpty", "renderUserContentAsMarkdown",
+          "fullHeightCodeBlocks", "disableAutoScroll",
+          "alwaysShowSidebarOnDesktop", "autoShowSidebarOnNewChat",
+          "showRawModelNames",
+          # Sampling
+          "temperature", "dynatemp_range", "dynatemp_exponent", "top_k",
+          "top_p", "min_p", "xtc_probability", "xtc_threshold", "typ_p",
+          "max_tokens", "samplers", "backend_sampling",
+          # Penalties
+          "repeat_last_n", "repeat_penalty", "presence_penalty",
+          "frequency_penalty", "dry_multiplier", "dry_base",
+          "dry_allowed_length", "dry_penalty_last_n",
+          # Developer
+          "disableReasoningParsing", "excludeReasoningFromContext",
+          "showRawOutputSwitch", "custom"]
+
+        var have: seq[string]
+        for d in settings.Defs: have.add d.key
+        var missing: seq[string]
+        for k in WebUiFields:
+          if k notin have: missing.add k
+        var extra: seq[string]
+        for k in have:
+          if k notin WebUiFields: extra.add k
+        check("every Web UI settings field is present",
+              missing.len == 0, "missing: " & missing.join(", "))
+        check("and none that the Web UI does not have",
+              extra.len == 0, "extra: " & extra.join(", "))
+        check("the three exclusions are recorded, not silently dropped",
+              settings.OmittedFields.len == 3)
+
+        # The one name that differs between this panel and `/props`. It was
+        # wrong on the first build and the placeholder was simply blank, which
+        # is the kind of defect a screenshot does not show.
+        check("typ_p is looked up in /props as typical_p",
+              settings.propsNameFor(settings.defFor("typ_p")) == "typical_p")
+        var sameNames = true
+        for d in settings.Defs:
+          if d.key != "typ_p" and settings.propsNameFor(d) != d.key:
+            sameNames = false
+        check("and it is the only field whose /props name differs", sameNames)
+
+        # Ghost text: every numeric request parameter must carry llama.cpp's own
+        # default, so no box is blank before the backend answers.
+        var noGhost: seq[string]
+        for d in settings.Defs:
+          if d.inRequest and d.kind in {skFloat, skInt} and
+             d.appDefault.len == 0:
+            noGhost.add d.key
+        check("every numeric parameter has a built-in default to show",
+              noGhost.len == 0, "no default: " & noGhost.join(", "))
+
+        # Guidance, not reference text — the Web UI's own help is a single
+        # clause and the USER asked for more than that.
+        var thin: seq[string]
+        for d in settings.Defs:
+          if d.help.len < 60: thin.add d.key
+        check("every field explains itself at more than a clause",
+              thin.len == 0, "too short: " & thin.join(", "))
+
+        # A field the window cannot act on yet says so; one it can, does not.
+        check("only the attachment and audio fields are marked pending",
+              settings.defFor("pdfAsImage").awaiting.len > 0 and
+              settings.defFor("autoMicOnEmpty").awaiting.len > 0 and
+              settings.defFor("temperature").awaiting.len == 0 and
+              settings.defFor("theme").awaiting.len == 0)
+
+        # The select: its stored default has to be one of its own options, or
+        # the dropdown opens on nothing.
+        let themeDef = settings.defFor("theme")
+        check("the theme select defaults to one of its own options",
+              settings.initSettings().get("theme") ==
+                themeDef.options[0].split('|')[0])
+        check("theme is not sent to the model",
+              not parseJson(pipeline.chatBody(turn2, opts = themed))
+                .hasKey("theme"))
+
       # Action purpose: the *wiring*, which is the half a unit check cannot see.
       # `rag.query` and `pipeline.prepare` were both finished and both correct
       # while the feature did not exist, because nothing had ever put a document

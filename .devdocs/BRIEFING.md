@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-09-01 12:55 (Session 016)
+**Last updated:** 2026-09-01 14:02 (Session 016)
 **Branch:** `bsd`
 
 ---
@@ -47,6 +47,7 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 | **13** | **A new assertion is not believed until it has been seen to go red.** Two suites in this project have reported PASS while asserting nothing. |
 | **14** | **Cite the symbol, then the line.** A bare line number is a claim with an expiry date — thirteen of them rotted inside one session because `gui.nim` grew by 750 lines while they were being written. `fssync.resolveStoragePath (fssync.nim:694)` survives that; `fssync.nim:628` does not. |
 | **15** | **A green suite says the parts work, never that anything calls them.** `rag.nim` was fully asserted and completely dead for weeks — every assertion supplied its own corpus, so nothing could tell. When a feature is finished, assert the *join*, not only the parts. |
+| **17** | **A compile is not evidence the application starts.** `nimble gui` exiting 0 says the widget tree is valid; the Theme setting shipped a 100% SIGABRT behind a clean compile because `gui.run` asked libadwaita a question before `adw.brew` called `adw_init`. **Run `bin/jenova --check` before handing over any GUI change** — it builds the whole window under a real GTK and exits, showing no window, starting no backend and binding no port, so it is allowed where starting the product is not (D-BJ). **Nothing in `gui.run` may touch GTK, GDK or libadwaita before `brew`.** |
 | **16** | **When you corrupt the code to prove an assertion bites and it stays green, the hole is in the assertion set.** That is not a failed experiment, it is the experiment working. It has now found something three sessions running — most recently that nothing checked `custom` JSON reaching the fields the body sets for itself. **Write the missing assertion, then re-run the corruption.** |
 
 ---
@@ -64,9 +65,11 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 
 ## 2. State
 
-**Verified as of 2026-09-01 12:55.** Both binaries build from a clean run of `nimble core`
+**Verified as of 2026-09-01 14:02.** Both binaries build from a clean run of `nimble core`
 and `nimble gui`; the FreeBSD-only guard was confirmed to still *fire* when the target is
-changed, not merely to exist; **`pipeline-selftest` passes.** Both binaries are ELF 64-bit
+changed, not merely to exist; **`pipeline-selftest` passes, and `bin/jenova --check`
+exits 0 — the application reaches its first frame**, which is a thing a compile does
+not tell you and which was learned the hard way at 14:02 (rule 17). Both binaries are ELF 64-bit
 FreeBSD executables. The suites were **not** run this session and did not need to be —
 nothing outside `pipeline-selftest`'s reach changed.
 
@@ -89,7 +92,39 @@ covered by tests.
 
 ## 3. Done this session
 
-### Step 5 — a settings screen, and with it every sampling parameter (G-31, G-32)
+### Step 5a — the panel made readable, and the settings brought to 1:1
+
+**The USER ran the build and found two defects, both mine.**
+
+**The panel was transparent.** It carried `.glass-panel` at 40% opacity, which is
+right for the sidebar over the canvas and wrong for a panel over text. **A blur is
+not available** — GTK 4.20 implements no `backdrop-filter` at all, and GSK's blur
+applies to a widget's own children rather than what is behind a sibling. **The Web
+UI's settings dialog is not glass either**: opaque content over a dimmed overlay,
+and `.glass-panel` is on four `jca_web` components, none a dialog. Now opaque with
+a scrim, which is both the fix and the parity.
+
+**The tuneables said nothing useful.** Two placeholders could never populate —
+`/props` calls Typical P `typical_p`, and `samplers` arrives as an array — and with
+the backend down every box was blank. Every numeric field now carries
+`llama-server`'s own compiled-in default as ghost text, which is safe to state
+because Jenova passes **no sampling flags** on the command line. The help text was
+the Web UI's verbatim reference text; it now gives range, direction and the value
+that disables each sampler.
+
+**The field set is 1:1** (**D-BL**, superseding D-BK on the USER's instruction,
+given twice). Twelve fields added; three excluded and recorded — API Key and MCP on
+instruction, `serverUrl` because `bin/jenova` is the host. **Eight of the twelve
+needed a feature and got one:** a full light palette applying without a restart, a
+transcript that follows a streaming reply, conversation auto-titling, a code-block
+cap, a raw-output toggle, raw model names and both sidebar options. **The four
+needing attachments are drawn, stored and marked "not yet in effect"** with the
+step that turns them on — which is the answer to D-BK's real concern.
+
+**10 new assertions, three corruptions, three different sets of red**, one of them
+re-creating the reported `typ_p` bug. **The parity claim is asserted, not stated.**
+
+### Previously — Step 5, the settings screen itself (G-31, G-32)
 
 **There was no settings surface at all**, so temperature, top_p, top_k, min_p and the
 penalties were *absent* from the request rather than defaulted badly. There is one now: a
@@ -185,8 +220,9 @@ one sentence in it.** The ruling is Rule 0 above, and the phrasing that invited 
 | Statistics: tokens, tok/s, context used and left, model | **A real model selector and model information** (G-20) |
 | A reasoning view for thinking models | **Typed errors, retry, context-overflow reporting** (G-35) |
 | Recall of past chats — the index is fed | **Trash view** (G-21), **delete confirmations** (G-36), **a real note editor** (G-17) |
-| **Settings: every sampling and penalty parameter** (G-31) | **Hardware profile detection and selection** — currently impossible from anywhere (S-1) |
+| **Settings — 1:1 with the Web UI, minus API Key, MCP and `serverUrl`** (G-31) | **Hardware profile detection and selection** — currently impossible from anywhere (S-1) |
 | **Import / export of conversations** (G-32) | — |
+| **Light / dark / system theme, a following transcript, auto-titled chats** | — |
 | Conversations: create, rename, delete, search | — |
 | Workspace / project / folder tree, notes — renaming keeps its files | — |
 | Markdown text and highlighted code blocks | — |
@@ -249,10 +285,15 @@ they are simply unobserved, and they stay unobserved until the USER happens to l
    outbound body are all asserted. On a start with the embedder up, the window says
    "indexed N past messages for recall" once, and a later question about an earlier chat
    should reach the model with that chat attached.
-3. **This session's settings panel.** Its layout is unseen, and so are the placeholders
-   and the "Custom" badge, which need a backend up to have any `/props` values at all —
-   with it down every field simply shows no placeholder, which is designed rather than a
-   fallback. The gear is in the top bar, right of the document-panel button.
+3. **The settings panel, and it is the largest unseen change in the project.** Its
+   layout, the opaque panel and its scrim, the "Custom" badge — and above all **the
+   light palette**, which touches every widget, the canvas, the terminal and the
+   code-block scheme. The gear is in the top bar, right of the document-panel button;
+   Theme is the first field under General. Also unseen: the transcript following a
+   streaming reply, and the code-block cap — that one is the change nearest G-11's
+   collapse defect, and it is capped by an explicit height *because* owlkettle's
+   ScrolledWindow reports a near-zero minimum without one, but that is reasoning and
+   not a screenshot.
 4. **The icons**, still unconfirmed: `view-refresh-symbolic`,
    `media-playback-start-symbolic`, `go-previous-symbolic`, `go-next-symbolic` and this
    session's `emblem-system-symbolic` and `window-close-symbolic` are all standard Adwaita
@@ -285,7 +326,7 @@ fallback ladder holds. Fix S-2's two Linux filesystem strings in the same pass.
 | **TUI** | Replaced by the window |
 | **Tray** | StatusNotifierItem over D-Bus, in Nim. It works |
 | **Retrieval** | Indexes chats (D-BD), fed per completed exchange (D-BI) |
-| **Settings** | The window has one (D-BK). Parity with the Web UI is parity in what the user can *do* — **a field whose feature does not exist here is not drawn**, and each omission names the step that brings it back. An unset value is **omitted** from the request, never sent as a zero |
+| **Settings** | The window has one, **1:1 with the Web UI's minus API Key, MCP and `serverUrl`** (D-BL). Every other field is drawn; one whose feature is not built yet is marked *"not yet in effect"* with the step that turns it on, never left silently dead. An unset value is **omitted** from the request, never sent as a zero (D-BK) |
 | **Unused files** | Archive to `.devdocs/ARCHIVE/`, never delete, never leave in the root |
 | **MCP** | Deferred by the USER. Largest thing in the Web UI — do not pick it up casually |
 | **Virtual file explorer** | Cancelled by the USER (D-AW). The Neovim page is the browser |

@@ -81,8 +81,10 @@ proc draw*(ctx: CairoContext, size: (int, int)): bool =
     reseed(w, h)
 
   ctx.lineWidth = 1.0
-  let (pr, pg, pb) = theme.CanvasParticle
-  let (lr, lg, lb) = theme.CanvasLink
+  # Read from the palette in force, not from the dark constants: light particles
+  # are chosen to glow on near-black and are invisible on white (G-31's Theme).
+  let (pr, pg, pb) = theme.active().canvasParticle
+  let (lr, lg, lb) = theme.active().canvasLink
 
   for i in 0 ..< particles.len:
     let p = particles[i]

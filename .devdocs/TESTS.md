@@ -3,7 +3,7 @@
 Test specifications, validation criteria and expected outcomes. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 12:55 (Session 016).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 14:02 (Session 016).
 Mandated from the outset; absent for Sessions 001–003. See `DECISIONS_LOG.md` C-10.
 
 > **§5a onward are stage acceptance records** — what each stage had to prove and how. They are
@@ -82,6 +82,42 @@ branching tree walk. Earlier trackers said four self-tests;
 `db-capabilities` is a capability report, not an assertion, which is where the
 miscount came from.*
 
+## 0h. `jenova --check` — does the application start at all? (2026-09-01 14:02)
+
+**Run this before handing over any GUI change.** `BRIEFING.md` rule 17.
+
+```sh
+bin/jenova --check     # exit 0 = the application reaches its first frame
+```
+
+**Why it exists.** The Theme setting shipped a **100%-reproducible SIGABRT** behind a
+clean `nimble gui`: `gui.run` asked libadwaita for the desktop colour scheme while
+resolving the startup palette, and `adw.brew` — which calls `adw_init` — had not run
+yet, so it reached `gdk_display_manager_get` with no display and GDK aborted the
+process in 0.09 s. **A compile cannot see call ordering across an init boundary**
+(D-AR), and no self-test can reach `gui.nim` at all, because `pipeline-selftest` links
+`jenova-core` and `jenova-core` links no owlkettle. The startup path had *no*
+verification of any kind.
+
+**What it does and does not do.** It calls `adw_init`, installs the stylesheet and
+**builds the entire widget tree, including every `afterBuild` hook**, then returns
+without `runMainloop`. So it exercises everything a launch does up to the first frame —
+and **presents no window, starts no backend, binds no port and touches no GPU**, which
+is what makes it usable under **D-BJ** where starting the application is not. It needs
+a display; it does not need the model.
+
+**It does not replace a screen run.** Exit 0 means the program is *running*, never that
+anything on it is *right* — layout, colour and legibility are still only visible to the
+USER looking at it (D-AR's other half).
+
+**Proven able to fail.** Reinstating the old `paletteFor` and running `--check`
+reproduces the abort exactly: same `Gdk-ERROR` line, exit 134.
+
+**Verified across every input the setting has**, each against a scratch `JCA_HOME` so
+the USER's own state is never touched: `theme` of `system`, `light` and `dark`, a
+corrupt `settings.json`, and no settings file at all — all exit 0. A static sweep of
+`run` confirms no GTK, GDK or libadwaita call remains ahead of `brew`.
+
 ## 0a. The coverage gap: nothing tests the GUI — 2026-09-01
 
 **Every suite and every self-test above exercises `jenova-core`.** Routes, database,
@@ -92,7 +128,12 @@ suite, no self-test, no compiled driver.
 **Every GUI defect in this project's history was found by the USER looking at the
 screen**: the black sidebar slab, the unstyled tree, the unreadable wordmark, the
 collapsing code blocks, the five-column panel, the oversized chat bubbles, the
-one-way-door fullscreen, notes that could not be created, and the crash on quit.
+one-way-door fullscreen, notes that could not be created, the crash on quit — and, on
+2026-09-01, **an application that aborted before drawing anything at all**.
+
+**That last one was different in kind and is now covered**: it needed no eye, only a
+launch, and `jenova --check` (§0h) is that launch without the cost of one. The rest of
+this section still stands for everything a screenshot is genuinely required for.
 
 That was survivable while the outstanding GUI work was *layout*, where a screenshot is
 the only real test anyway. **It is not survivable for the work now planned**, which is
@@ -378,6 +419,31 @@ went green**. The hole was in the assertion set, not the code. *Custom JSON over
 field the body sets itself* was written in response and turns that corruption red. This
 is the third session running in which the act of proving an assertion can fail found
 something the assertion did not cover; the pattern is worth keeping.
+
+### The parity half — ten more, added 2026-09-01 13:52 (D-BL)
+
+**"1:1 with the Web UI" is exactly the kind of claim that is true the day it is written
+and quietly false a month later**, so it is asserted rather than stated: `jca_web`'s
+`ChatSettings.svelte` `settingSections` key list is in the self-test.
+
+| Asserted | Why it is the assertion |
+|---|---|
+| Every Web UI settings field is present | The parity claim itself. A field dropped or renamed later goes red **and names itself** |
+| And none the Web UI does not have | The other direction. A one-way check passes on a panel that has drifted by addition |
+| The three exclusions are recorded | API Key, MCP and `serverUrl` are deliberate (D-BL). Recorded, so the difference is never re-read as an oversight |
+| `typ_p` is looked up in `/props` as `typical_p` | **The defect the USER's report exposed.** One name mismatch, one permanently blank placeholder, and every other field working — which is a bug a screenshot does not show |
+| And it is the only field whose `/props` name differs | Pins the exception. A second mismatch introduced later is caught rather than silently blank |
+| Every numeric parameter has a built-in default to show | The ghost text. Without it a box is blank until the backend answers, which is what the USER saw |
+| Every field explains itself at more than a clause | The Web UI's own help is reference text — "Keeps only k top tokens" — and the USER asked for guidance. A length floor is crude but it is the part a machine can check |
+| Only the attachment and audio fields are marked pending | The marker must track reality. A field marked pending after its feature lands is as misleading as one that is silently dead |
+| The theme select defaults to one of its own options | A select whose stored default is not in its list opens on nothing |
+| Theme is not sent to the model | It is a window concern. `applyTo` iterates every field, so a select leaking into the request body is one missing `discard` away |
+
+**Proven able to fail, three independent corruptions, three different sets of red.**
+Removing `showRawModelNames` from the field list turns *every Web UI settings field is
+present* red **alone**. Reverting the `typ_p` mapping turns its own check red **alone** —
+that is the actual reported bug, re-created and caught. Stripping `dry_base`'s built-in
+default turns the ghost-text check red **alone**.
 
 **Not proven, and stated as such:** no reply has been streamed through this with a live
 `llama-server` and a live embedding server. Everything above runs with the embedder down.

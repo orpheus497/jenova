@@ -112,8 +112,8 @@ proc buildTerminal(socket, workdir, file: string): GtkWidget =
   result = vte_terminal_new()
 
   var
-    fg = parseHex(theme.ColForeground)
-    bg = parseHex(theme.ColBackground, BackgroundAlpha)
+    fg = parseHex(theme.active().fg)
+    bg = parseHex(theme.active().bg, BackgroundAlpha)
 
   # Action purpose: hand VTE the brand's sixteen ANSI slots. This call passed a
   # nil palette of size 0, which leaves VTE on its built-in xterm 16 — so every

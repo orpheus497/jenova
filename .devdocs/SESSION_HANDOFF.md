@@ -12,6 +12,183 @@ Reverse-chronological. **Keep entries short.** Sessions 001-005 are in
 
 ---
 
+## Session 016 (part three) — 2026-09-01 14:02
+
+**The USER ran the build and it aborted before drawing anything.**
+
+```
+Gdk-ERROR: gdk_display_manager_get() was called before gtk_init()
+SIGABRT — real 0:00.09
+```
+
+**Their question was "why didn't you test that it even starts up", and the
+answer is that I did not, and had no way to.**
+
+### The defect
+
+No `settings.json` existed, so the stored theme was `initSettings()`'s default,
+`"system"`. `gui.run` resolved the startup palette with `paletteFor("system")`,
+which asked libadwaita for the desktop scheme. **`adw.brew` is what calls
+`adw_init`, and `run` runs before it** — so that reached `gdk_display_manager_get`
+with no display and GDK killed the process. **A 100% crash on every launch**, and
+the project's first ever GTK call ahead of `brew`.
+
+### Why nothing caught it — the part worth keeping
+
+- **`nimble gui` exit 0 proves the widget tree compiles and nothing else.** That is
+  **D-AR**, which is written in `PLANS.md`, which I quoted earlier in this same
+  session, and then leaned on a compile anyway.
+- **No self-test can reach `gui.nim`.** Every one links `jenova-core`, and
+  `jenova-core` links no owlkettle. `pipeline-selftest` passing was never evidence
+  about the window.
+- **D-BJ forbids starting the product**, correctly — and I never said out loud that
+  this left the entire startup path unverified, nor asked for a smoke run before
+  handing over a build. **A green suite and a clean compile were, for the GUI,
+  compatible with a program that could not start.**
+
+### The fix, structural rather than a comment
+
+`paletteFor` is GTK-free by construction now; `"system"` opens on the application's
+own default and the window's `afterBuild` hook — which runs with GTK up —
+re-resolves it through the new `livePaletteFor` before the first frame. `brew` gets
+`ColorSchemeDefault` for system so libadwaita follows the desktop for its own
+chrome. Save uses `livePaletteFor`, since the window exists by then.
+
+### `bin/jenova --check`, and it is the real outcome (D-BM)
+
+Calls `adw_init`, installs the stylesheet, **builds the entire widget tree
+including every `afterBuild` hook**, then returns without `runMainloop`. **No
+window presented, no backend started, no port bound, no GPU touched** — which is
+what makes it usable under D-BJ where starting the application is not.
+
+- **Proven able to fail:** reinstating the old `paletteFor` and running `--check`
+  reproduces the abort exactly — same `Gdk-ERROR` line, exit 134.
+- **Verified across every input the setting has**, each against a scratch
+  `JCA_HOME` so the USER's state is never touched: `system`, `light`, `dark`, a
+  corrupt `settings.json`, and no file at all. All exit 0.
+- **A static sweep of `run`** confirms no GTK, GDK or libadwaita call remains ahead
+  of `brew`.
+- Recorded as `BRIEFING.md` **rule 17**, `TESTS.md` **§0h**, and **D-BM**.
+
+### Still not verified
+
+**`--check` says the application runs, never that anything on it is right.** The
+opaque panel, the scrim, the light palette, `AutoScroll` under a live stream and the
+code-block cap are all still unseen, and remain a screen run.
+
+---
+
+## Session 016 (part two) — 2026-09-01 13:52
+
+**Instruction:** the USER ran the build. Two defects: the settings panel is
+transparent so the transcript reads through it, and the tuneables need real
+explanation or ghost text showing the defaults. Analyse and report, no changes.
+Then, on approval: **1:1 parity with all the Web UI's settings options, skipping
+API and MCP.**
+
+### Part one — investigation, no changes
+
+**The transparency was mine.** The panel carried `.glass-panel` —
+`alpha(@jenova_bg, 0.4)`. That class is right for the sidebar and the chat form,
+which sit at the window edge over the canvas, and wrong for a panel in the middle
+over text. **And the Web UI does not use it on a dialog at all**: `.glass-panel`
+appears on four `jca_web` components and none is one; `Dialog.Content` is
+`bg-background` — opaque — over `Dialog.Overlay`'s `fixed inset-0 bg-black/50`. So
+this was a divergence I introduced while claiming parity.
+
+**A gaussian blur is not reachable, checked rather than assumed.** `backdrop-filter`
+does not appear in `libgtk-4.so` at all on 4.20.4; the CSS properties that do exist
+are `filter`, `opacity`, `background-blend-mode` and `box-shadow`, and `filter:
+blur()` blurs the widget itself — the settings text. GSK has `gsk_blur_node_new` and
+`gtk_snapshot_push_blur`, but those blur a widget's own children during its
+snapshot, not what is behind a sibling, and **owlkettle exposes no snapshot or
+render-node API whatsoever**. `theme.nim`'s own header had already recorded that
+GTK4 has no backdrop filter; I then applied the class it describes to the one
+widget where the approximation does not hold.
+
+**Two placeholders could never populate**, found by reading llama.cpp's
+`task_params::to_json` rather than by guessing: `/props` reports Typical P as
+**`typical_p`** while the field is keyed `typ_p`, and `samplers` arrives as a JSON
+array which the flattener mapped to empty. **And with the backend down every box
+was blank** — designed, but poor. `lifecycle.nim` and both conf files pass **no
+sampling flags at all**, so the server always starts from llama.cpp's compiled-in
+defaults, which makes them safe to ship as static ghost text.
+
+**One thing suspected and cleared:** the float formatter renders a server default
+of `0.0` as `"0"`, not empty — the decimal point blocks the trailing-zero strip.
+Not reported as a bug.
+
+### Part two — built on approval
+
+**The USER reaffirmed 1:1 parity after D-BK's dead-control reasoning was put to
+them, so that is their decision and D-BK's first clause is superseded by D-BL.**
+`ChatSettings.svelte`'s `settingSections` is the authority — not
+`SETTING_CONFIG_DEFAULT`, which carries keys the Web UI never draws. **Twelve
+fields added**, three excluded and recorded: API Key and MCP on instruction, and
+`serverUrl` because `bin/jenova` starts its own server and *is* the host (N-S6).
+
+**Eight of the twelve needed a feature built, and got one:**
+
+- **Theme.** `theme.nim` gained a `Palette` record, `DarkPalette` assembled from
+  the existing constants, and `LightPalette` converted from the Web UI's `oklch`
+  `:root` block on the published neutral ramp. Its surfaces are the Web UI's; the
+  brand hues are kept and darkened, because its own light theme drops the brand and
+  this window's identity is the wordmark. `canvas.nim`, `vte.nim` and
+  `sourceview.nim` read `active()`, since each paints outside the stylesheet.
+  **Applies without a restart** — owlkettle installs stylesheets once at `brew` and
+  offers no way to change them, so `applyPalette` puts an override provider above
+  owlkettle's own at priority 700.
+- **A following transcript** (`AutoScroll`), which follows only when the view is
+  already near the bottom, so reading back during a generation is not yanked away.
+- **Conversation auto-titling** from the first message, with
+  `askForTitleConfirmation` gating the rename on edit. Every chat was "New chat".
+- **A code-block cap** — a `sizeRequest`, not CSS, because GTK4 has no
+  `max-height`; and only over 24 lines, because a `sizeRequest` is a *minimum* and
+  would pad a short block instead of shrinking a long one.
+- The raw-output toggle, raw model names, and both sidebar options.
+
+**Four are drawn, stored and marked "not yet in effect"** — the three attachment
+settings and audio capture, all needing G-30 (Step 7b). The marker names the step.
+That is the answer to D-BK's real concern: a control that silently does nothing is
+a defect; one that says what it is waiting for is a schedule.
+
+**Reuse over reinvention, which the first attempt got wrong.** I began by
+hand-declaring six GTK protos for the palette swap, then checked: `gdk_display_get_default`,
+`gtk_css_provider_new`, `gtk_css_provider_load_from_data`,
+`gtk_style_context_add_provider_for_display`, `g_object_unref` and
+`adw_style_manager_get_default` are **all already in owlkettle's bindings**, which
+`sourceview.nim` has been importing directly all along. Only two were genuinely
+missing. `gui.nim` likewise declares three adjustment getters and imports the rest.
+
+### Verification, all of it executed
+
+- `nimble core` and `nimble gui` — exit 0, both **ELF 64-bit FreeBSD**.
+- **The FreeBSD guard fires**, confirmed with the compiler `nimble` uses.
+- `pipeline-selftest` passes; **25 assertions now cover this feature**, 10 added here.
+- **Proven able to fail, three independent corruptions, three different sets of
+  red.** Removing a Web UI field turns the parity check red alone; **reverting the
+  `typ_p` mapping re-creates the actual reported bug and turns its check red
+  alone**; stripping a numeric default turns the ghost-text check red alone.
+- **The parity claim is asserted rather than stated** — the key list is in the
+  self-test, so a field dropped or renamed later goes red and names itself.
+- **Stubs and placeholders:** none in any of the seven changed files.
+- **Memory handling:** settings still read once at startup; `optionLabels` and
+  `optionIndex` are procs rather than expressions inside the widget tree, since
+  `view` runs on every canvas frame; `AutoScroll`'s pin hook does three C calls on
+  a redraw and only while streaming.
+
+### Not verified, and stated as such
+
+**Nothing has been seen on screen.** No window was opened, no product started, no
+backend run, no ports or processes enumerated (D-BJ). Specifically unseen: the
+opaque panel and its scrim; the light palette, which is the largest single change
+and touches every widget; `AutoScroll`'s behaviour under a real stream; and the
+code-block cap, which is the change nearest G-11's collapse defect — it is capped
+by an explicit height precisely because owlkettle's ScrolledWindow reports a
+near-zero minimum without one, but that reasoning is not a screenshot.
+
+---
+
 ## Session 016 — 2026-09-01 12:55
 
 **Instruction:** read `AGENTS.md` and stay strictly inside it, read the devdocs,

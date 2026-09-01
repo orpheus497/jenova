@@ -728,9 +728,24 @@ viewable App:
   ## which is why a field with no entry here simply shows no placeholder rather
   ## than claiming a default it has not read.
   serverDefaults: Table[string, string]
+  ## Which messages are being shown as raw text (G-31's raw-output toggle), by
+  ## row id. Per message and not a global mode, because the point is to compare
+  ## one rendered turn against its source.
+  rawMsgs: Table[string, bool]
 
   hooks:
     afterBuild:
+      # Action purpose: **resolve a "System" theme here and not in `run`.**
+      # `run` executes before `adw.brew`, and `brew` is what calls `adw_init` —
+      # asking libadwaita for the desktop's colour scheme before that reaches
+      # `gdk_display_manager_get`, which **aborts the process**. The first
+      # version of this setting did exactly that and every launch died in 0.09 s
+      # with `Gdk-ERROR: gdk_display_manager_get() was called before gtk_init()`.
+      # By here GTK is up, so the question can be asked. `run` opens on the
+      # static default and this corrects it before the first frame.
+      if theme.needsLiveResolve(state.opts.get("theme")):
+        theme.applyPalette(theme.livePaletteFor(state.opts.get("theme")))
+
       # Action purpose: two timers, at deliberately different rates.
       #
       # The status poll is 3 s, matching the tray's cadence in `ui.lua` — slow
@@ -925,6 +940,15 @@ viewable App:
                                    leading = false, chars = {'0'}).strip(
                                    leading = false, chars = {'.'})
                       of JBool: (if v.getBool: "1" else: "0")
+                      of JArray:
+                        # `samplers` is the one array here, and it is exactly the
+                        # semicolon-separated order the field accepts — so the
+                        # placeholder shows the server's real sampler order
+                        # rather than nothing, which is what it showed before.
+                        var parts: seq[string]
+                        for e in v:
+                          if e.kind == JString: parts.add e.getStr
+                        parts.join(";")
                       else: ""
               except CatchableError:
                 discard
@@ -1052,6 +1076,10 @@ proc newChat(app: AppState, wsId = "", projId = "", folderId = "") =
   app.leaf = ""
   app.openNote = ""
   app.notice = ""
+  # G-31. On by default, matching the Web UI: a new chat is usually the moment
+  # you want the list of the old ones. Never *closes* it — the setting is
+  # "auto-show", and a toggle that also hid the sidebar would fight the user.
+  if app.opts.getBool("autoShowSidebarOnNewChat"): app.sidebarOpen = true
 
 proc createNode(app: AppState, entity, parentCol, parentId: string) =
   let id = $genOid()
@@ -1284,10 +1312,35 @@ proc postConversation(app: AppState, continuing = false) =
   streamReq.send(StreamJob(host: "127.0.0.1", port: port,
                            body: pipeline.chatBody(msgs, continuing, app.opts)))
 
+## Function purpose: a conversation's name, taken from the message that started
+## it (G-31). The Web UI titles a chat from its first message and this window
+## left every one called "New chat", which is what made the sidebar unusable
+## once there were more than a handful.
+##
+## First line only, and cut on a word boundary: a title is a sidebar row, and a
+## paragraph in it pushes the delete button off the edge.
+proc titleFrom(text: string): string =
+  const Limit = 48
+  var line = text.strip.splitLines()[0].strip
+  if line.len == 0: return ""
+  if line.len > Limit:
+    let cut = line.rfind(' ', last = Limit)
+    line = (if cut > Limit div 2: line[0 ..< cut] else: line[0 ..< Limit]) & "…"
+  line
+
+proc retitleConversation(app: AppState, text: string) =
+  let name = titleFrom(text)
+  if name.len == 0 or app.convId.len == 0: return
+  db.exec("UPDATE conversations SET name=? WHERE id=?", [name, app.convId])
+  app.convs = listConversations()
+
 proc send(app: AppState) =
   let text = app.draft.strip
   if text.len == 0 or app.streaming:
     return
+  # The first turn names the conversation. Checked before the message is
+  # appended, because after it the path is never empty.
+  let isFirstTurn = app.messages.len == 0
 
   # The row id comes back so the message can be edited or deleted without
   # re-reading the table to find which row it became. The parent is the turn at
@@ -1296,6 +1349,7 @@ proc send(app: AppState) =
   let parent = if app.messages.len > 0: app.messages[^1].id else: ""
   let id = saveMessage(app.convId, rUser, text, parent = parent)
   app.appendTurn(Message(role: rUser, text: text, id: id, parent: parent))
+  if isFirstTurn: app.retitleConversation(text)
   app.draft = ""
   app.postConversation()
 
@@ -1398,7 +1452,27 @@ proc saveEdit(app: AppState) =
     app.notice = "could not save that edit"
     return
   app.editingMsg = ""
+  # G-31: editing the turn the conversation was named after renames it to match,
+  # and `askForTitleConfirmation` decides whether that is asked first. Only the
+  # **first** turn, because it is the only one the name was ever taken from.
+  let wasFirst = at == 0 and role == rUser
   app.appendTurn(Message(role: role, text: text, id: id, parent: parent))
+  if wasFirst:
+    if not app.opts.getBool("askForTitleConfirmation"):
+      app.retitleConversation(text)
+    else:
+      let (res, _) = app.open: gui:
+        MessageDialog:
+          title = "Rename conversation"
+          message = "Rename this conversation to \"" & titleFrom(text) & "\"?"
+          DialogButton {.addButton.}:
+            text = "Keep the old name"
+            res = DialogCancel
+          DialogButton {.addButton.}:
+            text = "Rename"
+            res = DialogAccept
+            style = [ButtonSuggested]
+      if res.kind == DialogAccept: app.retitleConversation(text)
   # Only a user turn is worth re-answering. Editing a reply records a different
   # version of what the model said and stops there — asking it to answer its own
   # answer is not a turn.
@@ -1507,6 +1581,82 @@ renderable DocTerminal of BaseWidget:
 ## No ScrolledWindow wraps this and none should — owlkettle's never calls
 ## `set_propagate_natural_height`, which is what collapsed the plain-Label code
 ## blocks to their header (G-11). The view word-wraps instead.
+# Action purpose: the transcript follows a reply as it streams (G-31's
+# `disableAutoScroll`). owlkettle's `ScrolledWindow` exposes only `child` — no
+# adjustment — so the follow has to be its own renderable, which is the same
+# reason `SourceCode` is one.
+#
+# Three of the four calls needed are already in owlkettle's bindings; only the
+# adjustment *getters* are missing, so only those are declared. Imported by name
+# rather than wholesale: `gui.nim` already pulls in `owlkettle`, `adw` and
+# `cairo`, and a fourth open import invites a collision for no benefit.
+# `updateChild` lives in `owlkettle/widgetutils`, which `owlkettle.nim` imports
+# but does not re-export — so a renderable declared outside the library has to
+# import it directly. `SourceCode` and `NvimTerminal` never needed it because
+# neither takes a child widget.
+import owlkettle/widgetutils
+# `mainloop` is imported by `owlkettle.nim` but not re-exported, the same as
+# `widgetutils` above — so `--check`'s build-without-present path has to reach
+# for it directly.
+from owlkettle/mainloop import setupApp, AppConfig
+
+# Declared rather than imported: pulling it in from `owlkettle/bindings/adw`
+# also binds that module's name, which then collides with `owlkettle/adw` and
+# makes every `adw.brew` in this file ambiguous. One line avoids that entirely.
+proc adw_init() {.importc: "adw_init", cdecl.}
+
+from owlkettle/bindings/gtk import GtkAdjustment,
+  gtk_scrolled_window_new, gtk_scrolled_window_set_child,
+  gtk_scrolled_window_get_vadjustment, gtk_adjustment_set_value
+
+proc gtk_adjustment_get_value(a: GtkAdjustment): cdouble {.importc, cdecl.}
+proc gtk_adjustment_get_upper(a: GtkAdjustment): cdouble {.importc, cdecl.}
+proc gtk_adjustment_get_page_size(a: GtkAdjustment): cdouble {.importc, cdecl.}
+
+## A scrolling transcript that stays at the bottom while `pin` is set.
+##
+## **It only follows when the view is already near the bottom**, which is the
+## behaviour that makes this tolerable rather than infuriating: scrolling up to
+## re-read something during a generation must not be yanked back on the next
+## token. `disableAutoScroll` turns the whole thing off; this threshold is what
+## stops it fighting the reader when it is on.
+renderable AutoScroll of BaseWidget:
+  child: Widget
+  pin: bool
+
+  hooks:
+    beforeBuild:
+      state.internalWidget = gtk_scrolled_window_new(
+        GtkAdjustment(nil), GtkAdjustment(nil))
+
+  hooks child:
+    (build, update):
+      state.updateChild(state.child, widget.valChild, gtk_scrolled_window_set_child)
+
+  hooks pin:
+    (build, update):
+      if widget.hasPin: state.pin = widget.valPin
+      if state.pin:
+        let adj = gtk_scrolled_window_get_vadjustment(state.internalWidget)
+        # `pointer(adj)` and not `adj.isNil`: the `isNil` borrow for
+        # `GtkAdjustment` lives in the bindings module and this file imports it
+        # by name, so the operator is not in scope here.
+        if not pointer(adj).isNil:
+          let upper = gtk_adjustment_get_upper(adj)
+          let page = gtk_adjustment_get_page_size(adj)
+          let bottom = upper - page
+          # 64px of slack: a redraw lands before GTK has re-measured the new
+          # token, so an exact comparison reads as "not at the bottom" on the
+          # very frame that should follow.
+          if bottom - gtk_adjustment_get_value(adj) < 64.0:
+            gtk_adjustment_set_value(adj, bottom)
+
+  adder add:
+    if widget.hasChild:
+      raise newException(ValueError, "AutoScroll takes one child; use a Box.")
+    widget.hasChild = true
+    widget.valChild = child
+
 renderable SourceCode of BaseWidget:
   code: string
   language: string
@@ -1533,18 +1683,32 @@ proc copyToClipboard(text: string) =
     p.close()
   except CatchableError: discard
 
+const
+  ## Above this many lines a code block is capped and scrolls inside itself, so
+  ## one long answer cannot push the rest of the transcript off screen. Roughly a
+  ## screenful, which is the point at which scrolling the block beats scrolling
+  ## the conversation.
+  CodeCapLines = 24
+  CodeCapPx = 360
+
 proc messageBody(app: AppState, m: Message): Widget =
   ## User turns are plain text and assistant output is markdown — unless
   ## `renderUserContentAsMarkdown` is set, which is the Web UI's own option and
   ## the reason the two branches share the renderer below rather than the user
   ## branch returning early in every case (G-31).
-  if m.role == rUser and not app.opts.getBool("renderUserContentAsMarkdown"):
+  ##
+  ## The raw-output toggle short-circuits both: it exists to show the exact text
+  ## the model produced, so it must bypass the renderer rather than configure it
+  ## — which is how you tell a markdown bug from a model that really wrote that.
+  let raw = m.id.len > 0 and app.rawMsgs.getOrDefault(m.id, false)
+  if raw or (m.role == rUser and
+             not app.opts.getBool("renderUserContentAsMarkdown")):
     return gui:
       Label:
         text = m.text
         xAlign = 0.0
         wrap = true
-        style = [StyleClass("msg-body")]
+        style = [StyleClass(if raw: "code-body" else: "msg-body")]
 
   gui:
     Box(orient = OrientY, spacing = 8):
@@ -1570,17 +1734,35 @@ proc messageBody(app: AppState, m: Message): Widget =
                   tooltip = "Copy"
                   style = [ButtonFlat, StyleClass("row-btn")]
                   proc clicked() = copyToClipboard(b.text)
-              # No ScrolledWindow around this. owlkettle 3.0.0's ScrolledWindow
-              # exposes only `child` and never calls
-              # `gtk_scrolled_window_set_propagate_natural_height`, so it keeps
-              # GTK's default of ignoring its child's natural size and reports a
-              # near-zero minimum — which `expand: false` then grants, collapsing
-              # every code block to its header. Wrapping is what the Web UI does
-              # with a long line in any case.
-              SourceCode {.expand: false.}:
-                code = b.text
-                language = b.lang
-                style = [StyleClass("code-body")]
+              # Action purpose: **the cap, and why it is a `sizeRequest` rather
+              # than CSS.** GTK4 CSS has no `max-height` — only `min-*` — so a
+              # long block is capped by putting it in a ScrolledWindow with an
+              # explicit height (G-31's `fullHeightCodeBlocks`).
+              #
+              # That is safe here for the same reason it was fatal at G-11:
+              # owlkettle's ScrolledWindow never calls
+              # `set_propagate_natural_height`, so it reports a near-zero minimum
+              # and collapses a child to nothing — **unless it is given a height
+              # to hold**, which is exactly what a cap is. An uncapped block
+              # still gets no ScrolledWindow at all.
+              #
+              # Only long blocks are wrapped: `sizeRequest` is a *minimum*, so
+              # capping a four-line snippet would pad it to 360px of empty
+              # scroller instead of shrinking anything.
+              if b.text.countLines > CodeCapLines and
+                 not app.opts.getBool("fullHeightCodeBlocks"):
+                ScrolledWindow {.expand: false.}:
+                  sizeRequest = (-1, CodeCapPx)
+                  style = [StyleClass("code-capped")]
+                  SourceCode:
+                    code = b.text
+                    language = b.lang
+                    style = [StyleClass("code-body")]
+              else:
+                SourceCode {.expand: false.}:
+                  code = b.text
+                  language = b.lang
+                  style = [StyleClass("code-body")]
 
 ## Function purpose: the numbers the Web UI shows under a reply (G-33) — tokens
 ## generated and their rate, tokens read in, how much of the context window the
@@ -1629,7 +1811,12 @@ proc statsLine(app: AppState, m: Message): string =
               $max(0, app.ctxSize - used) & " left"
 
   let model = (if m.model.len > 0: m.model else: app.serverModel)
-  if model.len > 0: parts.add model.extractFilename.changeFileExt("")
+  # G-31: the identifier in full when asked for. The shortened form is the
+  # default because a model path is long and the statistics line is one row; the
+  # full one is what distinguishes two quantisations of the same model.
+  if model.len > 0:
+    parts.add (if app.opts.getBool("showRawModelNames"): model
+               else: model.extractFilename.changeFileExt(""))
 
   parts.join("    ")
 
@@ -1702,6 +1889,16 @@ proc messageActions(app: AppState, idx: int, m: Message): Widget =
         tooltip = "Copy"
         style = [ButtonFlat, StyleClass("row-btn")]
         proc clicked() = copyToClipboard(m.text)
+      # G-31, Developer: off by default and opt-in, because it is a debugging
+      # control — the Web UI gates it behind the same switch for the same reason.
+      if app.opts.getBool("showRawOutputSwitch") and m.id.len > 0:
+        Button {.expand: false.}:
+          icon = "format-text-rich-symbolic"
+          tooltip = (if app.rawMsgs.getOrDefault(m.id, false):
+                       "Show formatted" else: "Show raw text")
+          style = [ButtonFlat, StyleClass("row-btn")]
+          proc clicked() =
+            app.rawMsgs[m.id] = not app.rawMsgs.getOrDefault(m.id, false)
       if m.role == rUser and m.id.len > 0:
         Button {.expand: false.}:
           icon = "document-edit-symbolic"
@@ -1876,7 +2073,12 @@ proc mainArea(app: AppState): Widget =
         NvimTerminal {.expand: true.}:
           style = [StyleClass("nvim-term")]
       else:
-        ScrolledWindow {.expand: true.}:
+        # G-31: `AutoScroll`, not `ScrolledWindow` — the transcript follows a
+        # streaming reply unless `disableAutoScroll` says otherwise. Pinned only
+        # while a generation is running; a finished conversation stays where the
+        # reader left it.
+        AutoScroll {.expand: true.}:
+          pin = app.streaming and not app.opts.getBool("disableAutoScroll")
           Box(orient = OrientY, spacing = 12, margin = 16):
             if app.openNote.len > 0:
               Entry {.expand: false.}:
@@ -2077,6 +2279,14 @@ proc saveSettings(app: AppState) =
     app.notice = "settings could not be written to " & app.p.state
     return
   app.opts = app.optsDraft
+  # Applied immediately rather than on next start. owlkettle takes its
+  # stylesheets once at `brew` and offers no way to change them, so
+  # `theme.applyPalette` installs an override provider above owlkettle's own —
+  # see the note there. Done after the store, so a theme that somehow fails to
+  # apply is still the one that comes back on the next launch.
+  # `livePaletteFor`, not `paletteFor`: the window exists by the time anything
+  # can be saved, so "System" can be resolved properly here.
+  theme.applyPalette(theme.livePaletteFor(app.optsDraft.get("theme")))
   app.settingsOpen = false
   app.notice = "settings saved"
 
@@ -2139,6 +2349,18 @@ proc importConversations(app: AppState) =
   app.reloadTree()
   app.notice = "imported from " & names[0]
 
+## Function purpose: the visible half of a `value|label` option list, and the
+## index of the stored value in it. Two small procs rather than expressions
+## inside the widget tree, because `view` runs on every canvas frame and a
+## `split` per option per frame belongs in a proc that reads once.
+proc optionLabels(d: settings.SettingDef): seq[string] =
+  for o in d.options: result.add o.split('|')[^1]
+
+proc optionIndex(d: settings.SettingDef, value: string): int =
+  for i, o in d.options:
+    if o.split('|')[0] == value: return i
+  0
+
 ## Function purpose: one settings field, drawn from its declaration rather than
 ## hand-written per key — the field list lives in `settings.nim` and adding one
 ## there is the whole of adding one here.
@@ -2150,7 +2372,19 @@ proc importConversations(app: AppState) =
 ## which is why the placeholder is the honest thing to show in it.
 proc settingsField(app: AppState, d: settings.SettingDef): Widget =
   let stored = app.optsDraft.get(d.key)
-  let serverDef = app.serverDefaults.getOrDefault(d.key, "")
+  # Action purpose: **the server's name for this parameter, not ours.** Only
+  # `typ_p` differs — `/props` reports it as `typical_p` — and that one mismatch
+  # left its placeholder blank on the first build while every other field
+  # worked, which is exactly the shape of bug that survives a demo.
+  let serverDef = app.serverDefaults.getOrDefault(settings.propsNameFor(d), "")
+  # Ghost text falls back to `llama-server`'s own compiled-in default, so a box
+  # is never blank before the backend answers. Safe to state as fact because
+  # **Jenova passes no sampling flags on the command line**, so the server always
+  # starts from these — checked in `lifecycle.nim` and both conf files.
+  let ghost = (if serverDef.len > 0: serverDef else: d.appDefault)
+  # "Custom" compares against the **server's** value and never against the static
+  # fallback: the badge means "this differs from what your server is actually
+  # using", and comparing to a constant would make it lie whenever the two differ.
   let isCustom = stored.len > 0 and serverDef.len > 0 and stored != serverDef
   gui:
     Box(orient = OrientY, spacing = 2):
@@ -2163,6 +2397,14 @@ proc settingsField(app: AppState, d: settings.SettingDef): Widget =
           Label {.expand: false.}:
             text = "Custom"
             style = [StyleClass("settings-custom")]
+        # A field whose feature has not been built yet says so, rather than
+        # presenting a control that silently does nothing (**D-BL**). The value
+        # is still stored, so it is live the moment the feature lands.
+        if d.awaiting.len > 0:
+          Label {.expand: false.}:
+            text = "not yet in effect"
+            tooltip = "Takes effect with " & d.awaiting
+            style = [StyleClass("settings-awaiting")]
         if d.kind == skBool:
           Switch {.expand: false, vAlign: AlignCenter.}:
             state = app.optsDraft.getBool(d.key)
@@ -2177,10 +2419,17 @@ proc settingsField(app: AppState, d: settings.SettingDef): Widget =
         # its text and cannot be bound to state per redraw the way an Entry is.
         TextView {.expand: false.}:
           buffer = (if d.key == "custom": app.customBuffer else: app.sysBuffer)
+      elif d.kind == skSelect:
+        DropDown {.expand: false.}:
+          items = optionLabels(d)
+          selected = optionIndex(d, stored)
+          proc select(i: int) =
+            if i >= 0 and i < d.options.len:
+              app.optsDraft[d.key] = d.options[i].split('|')[0]
       elif d.kind != skBool:
         Entry {.expand: false.}:
           text = stored
-          placeholder = (if serverDef.len > 0: "Default: " & serverDef else: "")
+          placeholder = (if ghost.len > 0: "Default: " & ghost else: "")
           proc changed(t: string) =
             app.optsDraft[d.key] = t
 
@@ -2214,11 +2463,20 @@ proc settingsPanel(app: AppState): Widget =
       # without this the window would be covered by an invisible widget that
       # swallowed every click. GTK4's default pick skips insensitive widgets.
       sensitive = app.settingsOpen
+      # The scrim. On the wrapper rather than the panel so it covers the whole
+      # window, and only while the panel is open — an always-painted scrim would
+      # dim the application permanently.
+      style = (if app.settingsOpen: @[StyleClass("settings-scrim")]
+               else: newSeq[StyleClass]())
       if app.settingsOpen:
         Box(orient = OrientY, spacing = 8, margin = 24) {.hAlign: AlignCenter,
                                                           vAlign: AlignCenter.}:
           sizeRequest = (720, 560)
-          style = [StyleClass("glass-panel"), StyleClass("settings-panel")]
+          # **Not `.glass-panel`.** See the rule in `theme.nim`: this is opaque
+          # because the USER reported reading the transcript through it, GTK4
+          # has no `backdrop-filter` to blur it with, and the Web UI's own
+          # settings dialog is opaque over a dimmed overlay in any case.
+          style = [StyleClass("settings-panel")]
 
           Box(orient = OrientX, spacing = 8) {.expand: false.}:
             Label {.expand: true.}:
@@ -2421,6 +2679,11 @@ method view(app: AppState): Widget =
 
         Flap {.addOverlay.}:
           revealed = app.sidebarOpen
+          # G-31. `FlapFoldNever` keeps the sidebar in the layout instead of
+          # letting it fold itself away on a narrow window, which is what the Web
+          # UI's "always show on desktop" does.
+          foldPolicy = (if app.opts.getBool("alwaysShowSidebarOnDesktop"):
+                          FlapFoldNever else: FlapFoldAuto)
           transitionType = FlapTransitionOver
           proc changed(revealed: bool) =
             # The Flap folds itself on a narrow window and can be swiped shut, so
@@ -2658,7 +2921,7 @@ method view(app: AppState): Widget =
 ## Function purpose: entry point for `bin/jenova`. Resolution happens here,
 ## before the window exists, so a configuration error is reported on the terminal
 ## rather than inside a half-built UI.
-proc run*(withTray = true) =
+proc run*(withTray = true, checkOnly = false) =
   let p = paths.resolve()
   let c = config.load(p)
   let lc = lifecycle.init(p, c)
@@ -2678,11 +2941,16 @@ proc run*(withTray = true) =
   # and a search path appended later would be too late for the blocks already on
   # screen. Silent on failure by design — see `installScheme`.
   sourceview.installScheme(p.state / "styles")
-  discard lc.startAll()
-  discard server.start(
-    host, port, p.root / "public",
-    llamaHost = "127.0.0.1", llamaPortArg = c.getInt("LLAMA_PORT", 8081),
-    embedHost = "127.0.0.1", embedPortArg = c.getInt("LLAMA_EMBED_PORT", 8082))
+  # Action purpose: `--check` stops short of everything that touches the
+  # machine. It still builds the **whole** widget tree under a real GTK, which
+  # is the half a compile cannot see — see the note above `brew` below.
+  if not checkOnly:
+    discard lc.startAll()
+  if not checkOnly:
+    discard server.start(
+      host, port, p.root / "public",
+      llamaHost = "127.0.0.1", llamaPortArg = c.getInt("LLAMA_PORT", 8081),
+      embedHost = "127.0.0.1", embedPortArg = c.getInt("LLAMA_EMBED_PORT", 8082))
 
   streamReq.open(); ctlReq.open(); uiChan.open()
   createThread(streamThread, streamWorker)
@@ -2702,6 +2970,11 @@ proc run*(withTray = true) =
 
   let initialLan = isLanEnabled(p)
   let initialAddr = if initialLan: lanAddress() else: ""
+  # Read once, here, and used three times below — for the window state, for the
+  # palette, and for the colour scheme handed to `brew`. Loading it three times
+  # would let a file written between the calls give the window one theme and the
+  # stylesheet another.
+  let startOpts = settings.load(p)
   # Action purpose: the sidebar logo, decoded once. `png/jenova.jpg` is the same
   # image the Web UI serves as `/jenova.jpg`, so both surfaces show one mark.
   # A failure here is not fatal by design — see the `logo` field.
@@ -2740,8 +3013,8 @@ proc run*(withTray = true) =
                        # and re-reading a file in either is the shape of defect
                        # B-17. A missing or malformed file is the defaults, so
                        # this cannot stop the window opening.
-                       opts = settings.load(p),
-                       optsDraft = settings.load(p),
+                       opts = startOpts,
+                       optsDraft = startOpts,
                        settingsSection = ssGeneral))
 
   if withTray:
@@ -2757,10 +3030,43 @@ proc run*(withTray = true) =
         true
       )
 
-  # `ColorSchemeForceDark` is not a preference: the palette ported from the Web
-  # UI is its *dark* theme only — the light one is `oklch`, which GTK4 CSS does
-  # not parse — so a light-mode desktop would otherwise get dark text on
-  # Adwaita's light chrome.
+  # Action purpose: the palette is a setting now (G-31), so the colour scheme is
+  # forced to **match the palette** rather than forced to dark unconditionally.
+  # The reason it was pinned still holds and is why this is forced rather than
+  # left at `Default`: Adwaita's own chrome — menus, tooltips, the file chooser —
+  # has to agree with the sheet, and a light desktop under the dark palette gave
+  # dark text on light chrome. `paletteFor` resolves "system" by asking
+  # libadwaita what the desktop actually wants.
+  # **Nothing here may touch GTK.** `brew` is what calls `adw_init`, so a GTK or
+  # libadwaita call on this line runs before there is a display and aborts the
+  # process. `paletteFor` is GTK-free for exactly that reason; "System" opens on
+  # the static default and the window's `afterBuild` hook re-resolves it.
+  let startPalette = theme.paletteFor(startOpts.get("theme"))
+
+  # Action purpose: **the smoke test that would have caught the abort.**
+  # `nimble gui` exiting 0 says the widget tree compiles; it says nothing about
+  # whether the program reaches its first frame, and this window shipped a
+  # 100%-reproducible SIGABRT that a clean compile could not see (D-AR).
+  #
+  # `--check` does what `brew` does minus the two things that make running the
+  # product intrusive: it calls `adw_init`, installs the stylesheet and **builds
+  # the entire widget tree**, including every `afterBuild` hook — then returns
+  # without `runMainloop`, so **no window is ever presented**. Combined with the
+  # skips above it starts no backend, binds no port and touches no GPU, which is
+  # what makes it usable under D-BJ where starting the application is not.
+  if checkOnly:
+    adw_init()
+    discard setupApp(AppConfig(widget: widget, icons: @[], darkTheme: false,
+                               stylesheets: @[theme.stylesheet(startPalette)]))
+    echo "jenova --check: GTK initialised, window tree built, no window shown"
+    return
+
   adw.brew(widget,
-           colorScheme = ColorSchemeForceDark,
-           stylesheets = [theme.stylesheet()])
+           # `Default` for System, so libadwaita follows the desktop for its own
+           # chrome; forced otherwise, so Adwaita's menus and dialogs agree with
+           # a palette the user picked against the desktop's preference.
+           colorScheme = (if theme.needsLiveResolve(startOpts.get("theme")):
+                            ColorSchemeDefault
+                          elif startPalette.preferDark: ColorSchemeForceDark
+                          else: ColorSchemeForceLight),
+           stylesheets = [theme.stylesheet(startPalette)])

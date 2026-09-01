@@ -3,7 +3,7 @@
 Authoritative system architecture: what the program is, what it depends on, and how data moves
 through it. Mandated by `AGENTS.md` § WORKSPACE ARCHITECTURE.
 
-**Last updated:** 2026-09-01 12:55 (Session 016)
+**Last updated:** 2026-09-01 13:52 (Session 016)
 
 > **Rewritten 2026-08-31 (Session 007). The previous 626-line revision is in
 > `.devdocs/ARCHIVE/devdocs/BLUEPRINT_pre-007.md`** — archived, not deleted, per D-AM.
@@ -227,10 +227,20 @@ attachments, no trash view, no stop control, and no typed error reporting.
 **conversation branching**, **generation statistics**, **a reasoning view**,
 **recall of past chats** — the retrieval index is fed now (§5, D-BI) — and **a
 settings surface with every sampling and penalty parameter, plus import/export**
-(§5, **D-BK**). Parity with the Web UI's settings means parity in what the user can
-do: **a field whose feature does not exist here is not drawn**, and
-`settings.OmittedFields` names each one with the step that brings it back, so the
-difference is a schedule rather than an oversight.
+(§5, **D-BK**, **D-BL**). The settings panel is **1:1 with the Web UI's** minus
+three recorded exclusions — API Key and MCP on the USER's instruction, and
+`serverUrl` because `bin/jenova` is the host (N-S6) and pointing it elsewhere
+would bypass the local pipeline. A field whose feature is not built yet is drawn
+and marked *"not yet in effect"* with the step that turns it on. **The parity
+claim is asserted in `pipeline-selftest`**, not merely stated.
+
+**The window has two palettes.** `theme.nim` carries a `Palette` record with a
+dark and a light instance — the Web UI's `.dark` hex block and its `oklch` `:root`
+block respectively — and the Theme setting chooses between them or follows the
+desktop. It applies without a restart: owlkettle installs stylesheets once at
+`brew`, so `theme.applyPalette` puts an override provider above its own. The
+canvas, the terminal palette and the code-block scheme read `theme.active()`,
+because each paints outside the stylesheet.
 
 **The chat turn now asks for two things it did not before.** `gui.send` puts
 `timings_per_token` and `reasoning_format` in the request body; `pipeline.prepare`

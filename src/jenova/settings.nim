@@ -17,13 +17,20 @@
 ## parameter would silently override the server's own preset on every request.
 ## Conversion happens once, in `applyTo`, on the values that survive that test.
 ##
-## **Scope of parity, decided here and recorded as D-BK.** The sections and field
-## names reproduce `jca_web`'s `ChatSettings` one for one, minus the two the USER
-## excluded (API Key, MCP) and minus the fields whose *feature* does not exist in
-## this window yet. A control wired to nothing is not parity — it is **G-8's and
-## G-37's exact defect**, a thing defined and applied to nothing, and this project
-## has now shipped it twice. Each omission is listed in `OmittedFields` below with
-## the step that brings it back, so it is not rediscovered as a gap.
+## **The field list is 1:1 with `jca_web`'s `ChatSettings.svelte` `settingSections`**
+## — that array, not `SETTING_CONFIG_DEFAULT`, is the authority, because the
+## config object also holds keys the Web UI never draws (`showSystemMessage`,
+## `mcpServerUsageStats`). Two groups are excluded on the USER's instruction: the
+## **API Key** field and the whole **MCP** section. One more is excluded on
+## architectural grounds and is recorded rather than dropped silently —
+## **`serverUrl`**, see `OmittedFields`.
+##
+## **Every remaining field is drawn** (**D-BL**, superseding D-BK's narrower
+## rule). Where the behaviour a field governs does not exist in this window yet,
+## the field still stores its value and is marked `awaiting`, so the panel says
+## which step turns it on rather than presenting a control that silently does
+## nothing. That is the difference between a documented schedule and G-8's
+## defect.
 
 import std/[json, os, strutils, tables]
 import ./paths
@@ -32,7 +39,7 @@ type
   SettingKind* = enum
     ## How a stored string is converted on its way into the request body, and
     ## which widget draws it.
-    skFloat, skInt, skBool, skString, skText
+    skFloat, skInt, skBool, skString, skText, skSelect
 
   SettingSection* = enum
     ssGeneral = "General"
@@ -53,209 +60,333 @@ type
     ## Sent to `llama-server` in the request body when set. False for the
     ## settings that only change what the window does.
     inRequest*: bool
+    ## `llama-server` reports this parameter under a different name in
+    ## `/props`. Empty means the key is the same. **Only `typ_p` differs**, and
+    ## that single mismatch is why its placeholder was blank on the first build.
+    propsKey*: string
+    ## `llama-server`'s own compiled-in default, shown as ghost text before the
+    ## backend has answered. Accurate because **Jenova passes no sampling flags
+    ## on the command line at all** — checked in `lifecycle.nim` and both conf
+    ## files — so the server always starts from these. Sourced from
+    ## `common/common.h`'s `common_params_sampling`, not from memory.
+    appDefault*: string
+    ## Options for a `skSelect`, as `value|label` pairs.
+    options*: seq[string]
+    ## Empty when the field takes effect now. Otherwise the plain-English reason
+    ## it does not yet, shown beside the control.
+    awaiting*: string
     help*: string
 
   Settings* = object
     values*: Table[string, string]
 
 const
-  ## Every field, in the order it is drawn, grouped by the section it belongs to.
-  ## Labels and help text are taken from `jca_web`'s `settings-config.ts` and
-  ## `ChatSettings.svelte` rather than reworded, so the two surfaces describe a
-  ## parameter the same way.
+  ## Every field, in the order `ChatSettings.svelte` draws it, section by
+  ## section. Labels follow the Web UI's so the two surfaces name a parameter
+  ## the same way. **The help text deliberately does not** — the Web UI's is
+  ## reference text ("Keeps only k top tokens"), which says nothing about what to
+  ## type. Each one below gives the usable range, which direction does what, and
+  ## the value that switches the sampler off.
   Defs*: seq[SettingDef] = @[
     # ---- General ---------------------------------------------------------
+    SettingDef(key: "theme", label: "Theme",
+               section: ssGeneral, kind: skSelect,
+               options: @["system|System", "light|Light", "dark|Dark"],
+               help: "System follows your desktop's own light/dark preference. " &
+                     "The dark palette is the brand one; the light palette is " &
+                     "neutral, matching the Web UI's."),
     SettingDef(key: "systemMessage", label: "System message",
                section: ssGeneral, kind: skText,
-               help: "The starting message that defines how the model should " &
-                     "behave. It is placed beneath Jenova's own persona, not " &
-                     "instead of it."),
+               help: "Standing instructions sent at the top of every " &
+                     "conversation — tone, role, things to always or never do. " &
+                     "It is placed beneath Jenova's own persona rather than " &
+                     "replacing it, so it adds to the behaviour instead of " &
+                     "fighting it. Leave empty for no standing instruction."),
+    SettingDef(key: "pasteLongTextToFileLen",
+               label: "Paste long text to file length",
+               section: ssGeneral, kind: skInt, appDefault: "2500",
+               awaiting: "attachments — PLANS.md Step 7b (G-30)",
+               help: "Pasting more than this many characters turns the paste " &
+                     "into a text attachment instead of filling the message " &
+                     "box. 0 disables it."),
+    SettingDef(key: "copyTextAttachmentsAsPlainText",
+               label: "Copy text attachments as plain text",
+               section: ssGeneral, kind: skBool, boolDefault: false,
+               awaiting: "attachments — PLANS.md Step 7b (G-30)",
+               help: "When copying a message that has text attachments, join " &
+                     "them into one plain string rather than a format that can " &
+                     "be pasted back as attachments."),
     SettingDef(key: "enableContinueGeneration",
                label: "Enable \"Continue\" button",
                section: ssGeneral, kind: skBool, boolDefault: false,
-               help: "Offer Continue on the last reply. Works only with " &
-                     "non-reasoning models."),
+               help: "Adds a Continue action to the last reply, which asks the " &
+                     "model to carry on from where it stopped rather than " &
+                     "start again. Off by default, matching the Web UI. Not " &
+                     "offered on a reply that carries reasoning — see D-BH."),
+    SettingDef(key: "pdfAsImage", label: "Parse PDF as image",
+               section: ssGeneral, kind: skBool, boolDefault: false,
+               awaiting: "attachments — PLANS.md Step 7b (G-30)",
+               help: "Send an attached PDF's pages as images rather than " &
+                     "extracted text. Needs a vision model; falls back to text " &
+                     "on one without."),
+    SettingDef(key: "askForTitleConfirmation",
+               label: "Ask before changing a conversation title",
+               section: ssGeneral, kind: skBool, boolDefault: false,
+               help: "A new conversation takes its name from your first " &
+                     "message. With this on, editing that message asks before " &
+                     "renaming the conversation to match."),
 
     # ---- Display ---------------------------------------------------------
     SettingDef(key: "showMessageStats",
                label: "Show message generation statistics",
                section: ssDisplay, kind: skBool, boolDefault: true,
-               help: "Display tokens, tokens/second and context use beneath " &
-                     "each reply."),
-    SettingDef(key: "keepStatsVisible",
-               label: "Keep stats visible after generation",
-               section: ssDisplay, kind: skBool, boolDefault: false,
-               help: "Keep processing statistics visible after generation " &
-                     "finishes."),
+               help: "The line under each reply: tokens in and out, tokens per " &
+                     "second, how much of the context window the turn used, " &
+                     "and which model answered."),
     SettingDef(key: "showThoughtInProgress",
                label: "Show thought in progress",
                section: ssDisplay, kind: skBool, boolDefault: false,
-               help: "Expand the reasoning box by default while a reasoning " &
-                     "model is generating."),
+               help: "Keep a reasoning model's Reasoning box open by default. " &
+                     "It already opens while a turn is streaming and whenever " &
+                     "the answer itself is empty; this makes it open always."),
+    SettingDef(key: "keepStatsVisible",
+               label: "Keep stats visible after generation",
+               section: ssDisplay, kind: skBool, boolDefault: false,
+               help: "Only matters when the statistics line above is off: the " &
+                     "live numbers still appear while a reply is generating, " &
+                     "and this decides whether they stay once it finishes."),
+    SettingDef(key: "autoMicOnEmpty",
+               label: "Show microphone on empty input",
+               section: ssDisplay, kind: skBool, boolDefault: false,
+               awaiting: "audio capture — PLANS.md Step 7b (G-30)",
+               help: "Show a record button instead of Send while the message " &
+                     "box is empty, on models that accept audio."),
     SettingDef(key: "renderUserContentAsMarkdown",
                label: "Render user content as Markdown",
                section: ssDisplay, kind: skBool, boolDefault: false,
-               help: "Render your own messages with markdown formatting."),
+               help: "Format your own messages as markdown too, rather than " &
+                     "showing them as the plain text you typed."),
+    SettingDef(key: "fullHeightCodeBlocks",
+               label: "Use full height code blocks",
+               section: ssDisplay, kind: skBool, boolDefault: false,
+               help: "Off, a long code block is capped in height and scrolls " &
+                     "inside itself, so one answer cannot fill the whole " &
+                     "transcript. On, every block is shown at its natural " &
+                     "height."),
+    SettingDef(key: "disableAutoScroll",
+               label: "Disable automatic scroll",
+               section: ssDisplay, kind: skBool, boolDefault: false,
+               help: "The transcript follows the reply as it streams. Turn " &
+                     "this on to keep the view where you put it — useful when " &
+                     "reading back while the model is still answering."),
+    SettingDef(key: "alwaysShowSidebarOnDesktop",
+               label: "Always show the sidebar",
+               section: ssDisplay, kind: skBool, boolDefault: false,
+               help: "Stop the sidebar folding itself away when the window is " &
+                     "narrow. It keeps its width instead, and the chat column " &
+                     "gets what is left."),
+    SettingDef(key: "autoShowSidebarOnNewChat",
+               label: "Show the sidebar on a new chat",
+               section: ssDisplay, kind: skBool, boolDefault: true,
+               help: "Open the sidebar automatically when you start a new " &
+                     "conversation. Off, it stays as you left it."),
+    SettingDef(key: "showRawModelNames", label: "Show raw model names",
+               section: ssDisplay, kind: skBool, boolDefault: false,
+               help: "The statistics line shortens a model path to its bare " &
+                     "name. On, it shows the identifier in full, which is what " &
+                     "you need when two quantisations of one model are " &
+                     "installed."),
 
     # ---- Sampling --------------------------------------------------------
     SettingDef(key: "temperature", label: "Temperature",
                section: ssSampling, kind: skFloat, inRequest: true,
-               help: "Controls the randomness of the generated text by " &
-                     "affecting the probability distribution of the output " &
-                     "tokens. Higher = more random, lower = more focused."),
+               appDefault: "0.8",
+               help: "How much randomness the model is allowed. Range 0.0-2.0. " &
+                     "Low (0.1-0.4) for code, extraction and factual answers; " &
+                     "around 0.8 for conversation; above 1.2 gets inventive " &
+                     "and starts to wander. 0 is effectively deterministic."),
     SettingDef(key: "dynatemp_range", label: "Dynamic temperature range",
                section: ssSampling, kind: skFloat, inRequest: true,
-               help: "Addon for the temperature sampler. The added value to " &
-                     "the range of dynamic temperature, which adjusts " &
-                     "probabilities by entropy of tokens."),
+               appDefault: "0.0",
+               help: "Lets the temperature move by plus or minus this amount " &
+                     "depending on how certain the model is — confident tokens " &
+                     "get a lower temperature, uncertain ones higher. " &
+                     "0 disables it. Try 0.2-0.4 with a temperature near 1.0."),
     SettingDef(key: "dynatemp_exponent", label: "Dynamic temperature exponent",
                section: ssSampling, kind: skFloat, inRequest: true,
-               help: "Addon for the temperature sampler. Smoothes out the " &
-                     "probability redistribution based on the most probable " &
-                     "token."),
+               appDefault: "1.0",
+               help: "Shapes how sharply dynamic temperature reacts. Only has " &
+                     "an effect when the range above is non-zero. Higher is " &
+                     "more abrupt; 1.0 is linear."),
     SettingDef(key: "top_k", label: "Top K",
                section: ssSampling, kind: skInt, inRequest: true,
-               help: "Keeps only k top tokens."),
+               appDefault: "40",
+               help: "Consider only the k most likely next tokens. 1 is greedy " &
+                     "— always the single best. 20-40 is the usual range; a " &
+                     "very high value effectively disables it. Lower tightens, " &
+                     "higher loosens."),
     SettingDef(key: "top_p", label: "Top P",
                section: ssSampling, kind: skFloat, inRequest: true,
-               help: "Limits tokens to those that together have a cumulative " &
-                     "probability of at least p."),
+               appDefault: "0.95",
+               help: "Keep the most likely tokens until their probabilities " &
+                     "add up to p, and ignore the rest. Range 0.0-1.0, and " &
+                     "1.0 disables it. 0.9-0.95 is typical; lower is more " &
+                     "focused."),
     SettingDef(key: "min_p", label: "Min P",
                section: ssSampling, kind: skFloat, inRequest: true,
-               help: "Limits tokens based on the minimum probability for a " &
-                     "token to be considered, relative to the probability of " &
-                     "the most likely token."),
+               appDefault: "0.05",
+               help: "Drop any token less than this fraction as likely as the " &
+                     "best one. 0 disables it. 0.05-0.1 works well, and is " &
+                     "often used instead of Top P rather than alongside it."),
     SettingDef(key: "xtc_probability", label: "XTC probability",
                section: ssSampling, kind: skFloat, inRequest: true,
-               help: "XTC sampler cuts out top tokens; this parameter " &
-                     "controls the chance of cutting tokens at all. 0 " &
-                     "disables XTC."),
+               appDefault: "0.0",
+               help: "XTC removes the most obvious tokens to make writing less " &
+                     "predictable. This is the chance of doing it at all, and " &
+                     "0 disables XTC. 0.5 is a common starting point for " &
+                     "creative work; leave it off for code."),
     SettingDef(key: "xtc_threshold", label: "XTC threshold",
                section: ssSampling, kind: skFloat, inRequest: true,
-               help: "XTC sampler cuts out top tokens; this parameter " &
-                     "controls the token probability that is required to cut " &
-                     "that token."),
+               appDefault: "0.1",
+               help: "How likely a token must be before XTC will consider " &
+                     "cutting it. Only matters when the probability above is " &
+                     "non-zero. Above 0.5 disables XTC."),
     SettingDef(key: "typ_p", label: "Typical P",
                section: ssSampling, kind: skFloat, inRequest: true,
-               help: "Sorts and limits tokens based on the difference " &
-                     "between log-probability and entropy."),
+               propsKey: "typical_p", appDefault: "1.0",
+               help: "Prefers tokens of typical surprise rather than simply " &
+                     "the most likely, which reduces bland phrasing. " &
+                     "1.0 disables it. Try 0.9-0.95."),
     SettingDef(key: "max_tokens", label: "Max tokens",
                section: ssSampling, kind: skInt, inRequest: true,
-               help: "The maximum number of tokens per output. Use -1 for " &
-                     "infinite (no limit)."),
+               appDefault: "-1",
+               help: "Hard ceiling on the length of one reply. -1 means no " &
+                     "limit and lets the model stop where it wants, which is " &
+                     "usually what you want; set a number to cut long answers " &
+                     "short."),
     SettingDef(key: "samplers", label: "Samplers",
                section: ssSampling, kind: skString, inRequest: true,
-               help: "The order at which samplers are applied, in simplified " &
-                     "way. Default is \"top_k;typ_p;top_p;min_p;temperature\"."),
+               help: "The order the samplers are applied in, separated by " &
+                     "semicolons — for example " &
+                     "top_k;typ_p;top_p;min_p;temperature. Only change this if " &
+                     "you know why; the placeholder shows the order your " &
+                     "server is actually using."),
     SettingDef(key: "backend_sampling", label: "Backend sampling",
                section: ssSampling, kind: skBool, boolDefault: false,
                inRequest: true,
-               help: "Enable backend-based samplers. When enabled, supported " &
-                     "samplers run on the accelerator backend for faster " &
-                     "sampling."),
+               help: "Run the supported samplers on the GPU instead of the " &
+                     "CPU. Faster where the backend supports it, and it does " &
+                     "not change what is generated."),
 
     # ---- Penalties -------------------------------------------------------
     SettingDef(key: "repeat_last_n", label: "Repeat last N",
                section: ssPenalties, kind: skInt, inRequest: true,
-               help: "Last n tokens to consider for penalizing repetition."),
+               appDefault: "64",
+               help: "How many recent tokens the repetition penalties look " &
+                     "back over. 0 disables all of them; -1 means the whole " &
+                     "context. 64-256 is the usual range."),
     SettingDef(key: "repeat_penalty", label: "Repeat penalty",
                section: ssPenalties, kind: skFloat, inRequest: true,
-               help: "Controls the repetition of token sequences in the " &
-                     "generated text."),
+               appDefault: "1.0",
+               help: "Divides the score of tokens that already appeared. " &
+                     "1.0 disables it. 1.05-1.15 discourages loops; above 1.2 " &
+                     "starts distorting normal language, because ordinary " &
+                     "words repeat legitimately."),
     SettingDef(key: "presence_penalty", label: "Presence penalty",
                section: ssPenalties, kind: skFloat, inRequest: true,
-               help: "Limits tokens based on whether they appear in the " &
-                     "output or not."),
+               appDefault: "0.0",
+               help: "A flat penalty for any token that has appeared at all, " &
+                     "however often. 0 disables it. 0.1-0.5 pushes the model " &
+                     "towards new subject matter."),
     SettingDef(key: "frequency_penalty", label: "Frequency penalty",
                section: ssPenalties, kind: skFloat, inRequest: true,
-               help: "Limits tokens based on how often they appear in the " &
-                     "output."),
+               appDefault: "0.0",
+               help: "Penalty that grows with how often a token has already " &
+                     "appeared. 0 disables it. 0.1-0.5 reduces verbal tics " &
+                     "without banning a word outright."),
     SettingDef(key: "dry_multiplier", label: "DRY multiplier",
                section: ssPenalties, kind: skFloat, inRequest: true,
-               help: "DRY sampling reduces repetition in generated text even " &
-                     "across long contexts. This parameter sets the DRY " &
-                     "sampling multiplier."),
+               appDefault: "0.0",
+               help: "DRY penalises repeated sequences rather than single " &
+                     "tokens, which is what stops a model looping a whole " &
+                     "phrase. This is its strength, and 0 disables DRY. " &
+                     "0.8 is the usual starting value."),
     SettingDef(key: "dry_base", label: "DRY base",
                section: ssPenalties, kind: skFloat, inRequest: true,
-               help: "DRY sampling reduces repetition in generated text even " &
-                     "across long contexts. This parameter sets the DRY " &
-                     "sampling base value."),
+               appDefault: "1.75",
+               help: "How steeply DRY's penalty grows as a repeated sequence " &
+                     "gets longer. Only matters when the multiplier is " &
+                     "non-zero. 1.75 suits most cases."),
     SettingDef(key: "dry_allowed_length", label: "DRY allowed length",
                section: ssPenalties, kind: skInt, inRequest: true,
-               help: "DRY sampling reduces repetition in generated text even " &
-                     "across long contexts. This parameter sets the allowed " &
-                     "length for DRY sampling."),
+               appDefault: "2",
+               help: "How long a repeated run may be before DRY penalises it. " &
+                     "2 catches loops early; raise it if the model writes code " &
+                     "or lists where short repeats are legitimate."),
     SettingDef(key: "dry_penalty_last_n", label: "DRY penalty last N",
                section: ssPenalties, kind: skInt, inRequest: true,
-               help: "DRY sampling reduces repetition in generated text even " &
-                     "across long contexts. This parameter sets DRY penalty " &
-                     "for the last n tokens."),
+               appDefault: "-1",
+               help: "How far back DRY scans for repetition. -1 is the whole " &
+                     "context; 0 disables it."),
 
     # ---- Developer -------------------------------------------------------
     SettingDef(key: "disableReasoningParsing",
                label: "Disable reasoning content parsing",
                section: ssDeveloper, kind: skBool, boolDefault: false,
                inRequest: true,
-               help: "Send reasoning_format=none to prevent server-side " &
-                     "extraction of reasoning tokens into a separate field."),
+               help: "Stops the server splitting a reasoning model's thinking " &
+                     "into its own field, so it arrives inline in the answer. " &
+                     "This empties the Reasoning box — it is for seeing " &
+                     "exactly what the model emitted."),
     SettingDef(key: "excludeReasoningFromContext",
                label: "Exclude reasoning from context",
                section: ssDeveloper, kind: skBool, boolDefault: false,
-               help: "Strip reasoning content from previous messages before " &
-                     "sending to the model. When unchecked, reasoning is " &
-                     "sent back so the model can see its own chain-of-" &
-                     "thought across turns."),
+               help: "Strip earlier thinking out of the conversation before " &
+                     "sending it. Off, the model sees its own reasoning from " &
+                     "previous turns, which helps continuity and costs context."),
+    SettingDef(key: "showRawOutputSwitch",
+               label: "Enable raw output toggle",
+               section: ssDeveloper, kind: skBool, boolDefault: false,
+               help: "Adds a per-message button that switches between the " &
+                     "rendered markdown and the exact text the model produced " &
+                     "— which is how you tell a formatting bug from a model " &
+                     "that really did write that."),
     SettingDef(key: "custom", label: "Custom JSON",
                section: ssDeveloper, kind: skText, inRequest: true,
-               help: "Custom JSON parameters to send to the API. Must be " &
-                     "valid JSON format. Merged last, so it overrides any " &
-                     "field above."),
+               help: "A JSON object merged into every request, last, so it " &
+                     "overrides anything above — including the fields the " &
+                     "window sets itself. This is how to reach a parameter " &
+                     "with no field here, such as " &
+                     "{\"mirostat\": 2, \"top_n_sigma\": 1.0}."),
   ]
 
-  ## The Web UI fields deliberately not drawn, and what brings each one back.
-  ## Recorded so a later session does not read the difference as an oversight and
-  ## re-derive it — and so none of them is added as a control with no feature
-  ## under it (**D-BK**).
+  ## The three fields `ChatSettings.svelte` draws that this panel does not, and
+  ## why. Recorded so the difference is never read as an oversight (**D-BL**).
   OmittedFields*: seq[tuple[key, reason: string]] = @[
     ("apiKey", "excluded by the USER — this server does not authenticate"),
-    ("serverUrl", "excluded by the USER; the desktop application is the host"),
-    ("mcpServers", "MCP is deferred (SETTLED FACT); the whole section is skipped"),
-    ("mcpServerUsageStats", "MCP is deferred"),
-    ("agenticMaxTurns", "MCP is deferred"),
-    ("agenticMaxToolPreviewLines", "MCP is deferred"),
-    ("showToolCallInProgress", "MCP is deferred"),
-    ("alwaysShowAgenticTurns", "MCP is deferred"),
-    ("theme", "the window's palette is dark-only; a light theme is theming " &
-              "work, not a setting"),
-    ("askForTitleConfirmation", "the window has no automatic conversation " &
-                                "titling to confirm"),
-    ("disableAutoScroll", "the transcript has no automatic scroll to disable"),
-    ("fullHeightCodeBlocks", "code blocks already render at full height — " &
-                             "`.code-body` carries no height cap to override, " &
-                             "and the transcript word-wraps instead (G-11)"),
-    ("pasteLongTextToFileLen", "attachments — G-30, PLANS.md Step 7b"),
-    ("copyTextAttachmentsAsPlainText", "attachments — G-30, Step 7b"),
-    ("pdfAsImage", "attachments — G-30, Step 7b"),
-    ("autoMicOnEmpty", "audio capture — G-30, Step 7b"),
-    ("showRawModelNames", "the model selector — G-20, Step 8a"),
-    ("showRawOutputSwitch", "there is no per-message raw-output toggle to " &
-                            "enable — it lands with G-35's message surface"),
-    ("alwaysShowSidebarOnDesktop", "the window has one sidebar and one " &
-                                   "toggle; there is no desktop/mobile split"),
-    ("autoShowSidebarOnNewChat", "same — the sidebar toggle is manual and " &
-                                 "persistent"),
+    ("mcpServers", "the whole MCP section is excluded by the USER; MCP is " &
+                   "deferred (SETTLED FACT)"),
+    ("serverUrl", "architectural, not scope. `bin/jenova` starts its own " &
+                  "server and backends and is the host — settled at N-S6 and " &
+                  "again at Session 006. A field pointing the window at a " &
+                  "different backend would bypass the local pipeline, personas " &
+                  "and retrieval, which is a product change and not a setting. " &
+                  "LAN mode already covers serving this machine to others."),
   ]
 
   SettingsFile = "settings.json"
 
 ## Function purpose: the stored settings for a fresh install — every field empty
-## except the booleans, which carry their own default. Empty is meaningful (see
-## the header), so this is not the same as an empty table.
+## except the booleans and the one select, which carry their own default. Empty
+## is meaningful (see the header), so this is not the same as an empty table.
 proc initSettings*(): Settings =
   result.values = initTable[string, string]()
   for d in Defs:
     result.values[d.key] =
-      if d.kind == skBool: (if d.boolDefault: "1" else: "0") else: ""
+      case d.kind
+      of skBool: (if d.boolDefault: "1" else: "0")
+      of skSelect: (if d.options.len > 0: d.options[0].split('|')[0] else: "")
+      else: ""
 
 proc settingsFile(p: Paths): string = p.state / SettingsFile
 
@@ -271,10 +402,19 @@ proc getBool*(s: Settings, key: string): bool =
 proc `[]=`*(s: var Settings, key, value: string) =
   s.values[key] = value
 
-## Function purpose: load the settings, falling back to the defaults for anything
-## the file does not carry. **A malformed or absent file is the defaults, never an
-## error** — this is read on the window's startup path, and a settings file that
-## refuses to parse must not stop the application opening.
+## Function purpose: the definition for a key, so the window can ask about one
+## field without walking `Defs` itself.
+proc defFor*(key: string): SettingDef =
+  for d in Defs:
+    if d.key == key: return d
+
+## Function purpose: the name `llama-server` reports this parameter under in
+## `/props`. **`typ_p` is the only one that differs** — the server calls it
+## `typical_p` — and that single mismatch is why its placeholder was blank until
+## this existed.
+proc propsNameFor*(d: SettingDef): string =
+  if d.propsKey.len > 0: d.propsKey else: d.key
+
 proc loadFrom*(file: string): Settings =
   result = initSettings()
   if not fileExists(file): return
@@ -287,11 +427,12 @@ proc loadFrom*(file: string): Settings =
   except CatchableError:
     discard
 
+## Function purpose: load the settings, falling back to the defaults for anything
+## the file does not carry. **A malformed or absent file is the defaults, never an
+## error** — this is read on the window's startup path, and a settings file that
+## refuses to parse must not stop the application opening.
 proc load*(p: Paths): Settings = loadFrom(settingsFile(p))
 
-## Function purpose: persist the settings beside `lan_mode`, which is the pattern
-## this window already uses for state that must survive a restart but does not
-## belong in the database.
 ## The path is a parameter on this pair so a self-test can round-trip the store
 ## without writing over the USER's own `settings.json` — the same reason every
 ## other self-test opens a scratch database rather than the real one.
@@ -366,6 +507,10 @@ proc applyTo*(body: JsonNode, s: Settings) =
         except ValueError: discard
     of skString:
       if raw.len > 0: body[d.key] = %raw
+    of skSelect:
+      # No select is a request parameter — `theme` is the only one and it is
+      # entirely a window concern.
+      discard
     of skText:
       if d.key == "custom" and raw.len > 0:
         try:

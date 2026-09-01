@@ -72,13 +72,14 @@ further down is left in place for the historical record; **this table overrides 
 | **Startup** | **`bin/jenova` starts its own server and backends.** One command. Settled at N-S6 and again here |
 | **Unused files** | Archive to `.devdocs/ARCHIVE/`. Never delete, never leave in the root (**D-AM**) |
 | **Claims** | **Never state what was not executed (D-AN) — and never deny what was (D-AS, D-BB).** Both halves are the rule. A "not yet run" label expires at the first evidence against it |
+| **Starting the GUI** | **`bin/jenova --check` before handing over any GUI change (D-BM).** It builds the whole window under a real GTK and exits — no window, no backend, no port — so it is allowed where starting the product is not. **Nothing in `gui.run` may touch GTK before `brew`** |
 | **Running the product** | **Do not (D-BJ).** Not the app, not `serve`, not the backends, not the suites — unless the USER asks in that message. **Building is not running.** And never enumerate processes or ports to see what the USER has open. **T-12 is closed**: two suites fail if anything already holds the machine's real ports, that is the whole of it, and it is never diagnosed again |
 | **The 2026-08-31 23:28 build** | **Run by the USER.** No appearance or rendering defect reported. The report from that run is that the GUI is missing Web UI features. **Do not re-add an "unrun" label to G-23, G-24, G-25 or G-27** |
 | **Language** | **Nim, plus `llama-server` from llama.cpp. That is the whole product.** No shell script, no Lua, no C, no Makefile (D-AM, **D-AZ**). Shell-format *config files* are exempt by the USER's own parenthetical at D-AI |
 | **The shell tree** | **Not to be repaired (D-AH, D-AZ).** The installer, the shell-era docs and the shell test scripts are scaffolding around the system being replaced. **Remaining work = what is missing from the Nim core**, never what is broken in the old one. **A reference to an archived file is fixed by deleting the reference or porting it to Nim — repairing the archived thing is never an outcome.** Deployment of the single binary is one decision after the rewrite |
 | **Surface** | **Everything is driven from the GUI (D-BC).** Anything that needs a terminal, a shell script or a hand-edited file is a defect, not a limitation |
 | **Retrieval** | **The index indexes chats (D-BD), and it is fed (D-BI).** A completed exchange is indexed when the reply lands — not each message as it is written, which would let a question retrieve itself. Existing history is backfilled once the embedding server answers, and a deleted turn is forgotten |
-| **Settings** | **The window has a settings surface (D-BK), and every sampling and penalty parameter is set from it.** Parity with the Web UI means parity in what the user can do — **a field whose feature does not exist here is not drawn**, and `settings.OmittedFields` names each one with the step that brings it back. An unset value is **omitted from the request**, never sent as a zero |
+| **Settings** | **The window has a settings surface, 1:1 with the Web UI's minus API Key, MCP and `serverUrl` (D-BL).** Every other field is drawn; one whose feature is not built yet is marked *"not yet in effect"* with the step that turns it on, never left silently dead. An unset value is **omitted from the request**, never sent as a zero (D-BK) |
 | **Reports** | **Plain English first, ID second (D-BA).** No item, plan step or status line may lead with a bare tracker ID |
 | **Style** | Keep `.devdocs/` terse. **Do not quote the USER verbatim** — record the ruling, not the wording |
 | **CUDA** | **Not meaningfully available on FreeBSD.** `CUDA/dgpu-generic` is unreachable on the target platform, so its data defects (B-21, and the CUDA half of B-05) are moot. **Apply the platform constraint before raising anything about that profile** |
@@ -90,7 +91,98 @@ further down is left in place for the historical record; **this table overrides 
 
 ---
 
+## D-BM — a GUI change is not handed over until `jenova --check` passes — 2026-09-01
+
+**Ruled after shipping an application that aborted on every launch.**
+
+The Theme setting resolved its startup palette by asking libadwaita for the
+desktop's colour scheme, from `gui.run` — which executes **before** `adw.brew`,
+and `brew` is what calls `adw_init`. That reached `gdk_display_manager_get` with
+no display and GDK aborted the process in 0.09 s, on every launch, with a clean
+compile behind it.
+
+**Two rules come out of it.**
+
+**1. Nothing in `gui.run` may touch GTK, GDK or libadwaita before `brew`.** That
+is a structural property, so it is kept structurally rather than by comment:
+`theme.paletteFor` is GTK-free by construction and `"system"` is re-resolved in
+the window's `afterBuild` hook, where there is a display. `livePaletteFor` is the
+variant that may ask, and it is only reachable from after the window exists.
+
+**2. `bin/jenova --check` before any GUI change is handed over.** It builds the
+whole widget tree under a real GTK and exits without `runMainloop` — **no window
+presented, no backend started, no port bound, no GPU touched** — which is
+precisely what makes it compatible with **D-BJ**. D-BJ stops a session seizing the
+USER's machine; it was never meant to mean the startup path goes unverified, and
+for one release it did exactly that.
+
+**Why this was not caught by anything already in place, stated so the gap is not
+re-opened elsewhere:** `nimble gui` exiting 0 proves the widget tree compiles and
+says nothing about call ordering across an init boundary — **that is D-AR, which
+was quoted in the same session that then relied on a compile anyway**. And no
+self-test can reach `gui.nim`: they all link `jenova-core`, which links no
+owlkettle. **A green suite plus a clean compile was, for the GUI, compatible with
+a program that could not start.**
+
+**`--check` is not a screen run and does not replace one.** Exit 0 means the
+application is running; whether anything on it is *right* is still only visible to
+the USER looking at it.
+
+---
+
+## D-BL — 1:1 means every field; a pending one says so — 2026-09-01
+
+**Supersedes D-BK's narrower rule, on the USER's instruction, given twice.**
+
+D-BK drew only the settings whose feature already existed, and listed the rest as
+omissions with the step that would bring them back. The reasoning was sound — a
+control wired to nothing is G-8's defect and G-37's defect — but **the USER asked
+for 1:1 parity with all the Web UI's settings options, skipping API and MCP, and
+then asked again after that reasoning was put to them.** That is their call to
+make and it is made.
+
+**The rule now: every field `ChatSettings.svelte` draws is drawn here**, except
+three, and the three are recorded in `settings.OmittedFields` rather than dropped
+quietly:
+
+| Field | Why |
+|---|---|
+| **API Key** | Excluded by the USER. This server does not authenticate |
+| **the MCP section** | Excluded by the USER. MCP is deferred (SETTLED FACT) |
+| **`serverUrl`** | **Architectural, not scope.** `bin/jenova` starts its own server and backends and *is* the host — settled at N-S6 and again at Session 006. A field pointing the window at a different backend would bypass the local pipeline, personas and retrieval, which is a product change and not a setting. LAN mode already covers serving this machine to others |
+
+**`settingSections` is the authority, not `SETTING_CONFIG_DEFAULT`.** The config
+object also carries keys the Web UI never draws — `showSystemMessage`,
+`mcpServerUsageStats` — and taking the list from it would have invented fields
+that do not exist on either surface. **The parity claim is asserted**, not
+stated: the key list is in `pipeline-selftest`, so a field dropped, renamed or
+added later goes red and names itself.
+
+**The answer to D-BK's real concern is a marker, not an omission.** A field whose
+behaviour does not exist yet is drawn, stores its value, and is labelled *"not yet
+in effect"* with the step that turns it on. It is then live the moment that step
+lands, with no second pass. The four are the three attachment settings and audio
+capture, all waiting on G-30 (Step 7b). **The distinction D-BK was reaching for
+still holds — a control that silently does nothing is a defect — and this is what
+answers it: one that says what it is waiting for is a schedule.**
+
+**Eight of the twelve fields added here were not blocked at all**, which is the
+part D-BK got wrong by inspection rather than by principle: theme, autoscroll,
+auto-titling, the code-block cap, the raw-output toggle, raw model names and both
+sidebar options all needed a small feature built, and all were.
+
+---
+
 ## D-BK — what "1:1 parity" with the Web UI's settings actually means — 2026-09-01
+
+> **Superseded by D-BL** on the USER's instruction. Its first clause — *a field
+> whose feature does not exist is not drawn* — no longer holds; every field is
+> drawn and a pending one is marked. **Its second and third clauses stand
+> unchanged** and are still the operating rules: an empty value is omitted from
+> the request rather than sent as a zero, and the source indicator was worth
+> copying because it reuses a call already being made. Kept in full below,
+> because the reasoning about dead controls is what produced the marker.
+
 
 Taken while building `PLANS.md` Step 5 (G-31). The USER asked for **1:1 parity with all
 the settings options of the Web UI, skipping API and MCP**. Reproducing the field list
