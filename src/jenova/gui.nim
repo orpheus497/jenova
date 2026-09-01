@@ -884,10 +884,11 @@ viewable App:
   ## from `/props.modalities.vision`, and what decides whether an image can be
   ## attached at all.
   serverVision: bool
-  ## G-30: the attachment being previewed full-size, as its `data:` URL. Empty
-  ## when the preview is closed.
-  previewUrl: string
-  previewName: string
+  ## G-30: the attachment being previewed full-size. **The whole attachment and
+  ## not just its `data:` URL** (G-40) — the preview needs the identity key to
+  ## look its decoded pixbuf up, and carrying only the payload was what forced
+  ## the old code to re-hash it on every frame.
+  previewAtt: PendingAttachment
   ## G-30. Attachments staged on the composer, not yet sent. Cleared when the
   ## turn they belong to is posted. Each is a `messages.extra` element in the
   ## Web UI's own shape (D-Z), kept as parsed fields here only so the strip can
@@ -1597,6 +1598,18 @@ proc visibleConvs(app: AppState): seq[ConvItem] =
 ## request says otherwise, which closes the assistant turn and opens a fresh one —
 ## so the model re-answers instead of carrying on. That is what shipped, and
 ## `continue_final_message` is the field that fixes it (**D-BH**).
+## G-40. **One parse of a message's `extra`, shared by the two paths that need
+## it.** `view` runs on every frame and `postConversation` rebuilds the whole
+## history on every send; both used to parse every payload themselves, which is
+## what made attaching anything freeze the window. Declared here because the
+## send path is the first user of it — the transcript's is `attachmentsOf`
+## below. `pipeline.ParseMemo` is where the parsing and the assertions live.
+var attachMemo: pipeline.ParseMemo
+
+## The same holding for markdown: `view` re-parsed every message's full text on
+## every frame, which a long conversation paid on every streamed token.
+var mdMemo: markdown.BlockMemo
+
 proc postConversation(app: AppState, continuing = false) =
   app.notice = ""
   app.streaming = true
@@ -1616,9 +1629,13 @@ proc postConversation(app: AppState, continuing = false) =
     # the frozen Web UI's own part order (D-Z) — and returns a plain string
     # unchanged when there is nothing attached, so every request without
     # attachments is byte-identical to what this sent before.
+    # G-40: **built from the memo, not re-parsed.** This rebuilds the whole
+    # history on every turn, on the GTK thread, so re-parsing each message's
+    # `extra` here charged the send a pass over every payload in the
+    # conversation — on top of the one `view` was already charging per frame.
     var extraNode: JsonNode = nil
     if m.extra.len > 0:
-      try: extraNode = parseJson(m.extra) except CatchableError: discard
+      extraNode = attachMemo.extraNodeFor(m.id, m.extra)
     var turn = %*{"role": $m.role,
                   "content": pipeline.contentFor(m.text, extraNode)}
     # G-31, Developer: a reasoning turn's thinking is sent back so the model can
@@ -1694,17 +1711,28 @@ proc attachDialog(app: AppState) =
 ## what makes this safe to call from `view`, where it runs on every frame.
 var thumbCache: Table[string, Pixbuf]
 
-proc attachmentPixbuf(app: AppState, dataUrl: string, size: int): Pixbuf =
-  if dataUrl.len == 0: return nil
-  let key = $size & ":" & sha256.sha256(dataUrl)
+## G-40. **The key is the attachment's identity, never a digest of its bytes.**
+## This proc is called from `view`, so it runs on every frame — and the previous
+## version built its key as `sha256(dataUrl)`, one line above the cache lookup it
+## was meant to satisfy. The decode was cached and the key was not, so a
+## multi-megabyte hash ran on every redraw and the window stopped responding.
+## **Nothing in here may touch `payload` on the cache-hit path.**
+proc attachmentPixbuf(app: AppState, a: PendingAttachment, size: int): Pixbuf =
+  if a.payload.len == 0: return nil
+  # An attachment always carries a key; the fallback is for one built before
+  # `key` existed, and is still O(1).
+  let ident = if a.key.len > 0: a.key else: a.name & ":" & $a.payload.len
+  let key = $size & ":" & ident
   if thumbCache.hasKey(key): return thumbCache[key]
   # Only cache a *successful* load: caching nil would make one unreadable image
   # permanently unreadable, including after the cause was fixed.
-  let comma = dataUrl.find(',')
+  let comma = a.payload.find(',')
   if comma < 0: return nil
   var bytes = ""
-  try: bytes = base64.decode(dataUrl[comma + 1 .. ^1])
+  try: bytes = base64.decode(a.payload[comma + 1 .. ^1])
   except CatchableError: return nil
+  # The digest here is on the miss path only — once per attachment per size, not
+  # once per frame — and names the file so identical images share one.
   let file = app.p.cacheDir / "attach-" & sha256.sha256(bytes)
   try:
     createDir(app.p.cacheDir)
@@ -1716,29 +1744,8 @@ proc attachmentPixbuf(app: AppState, dataUrl: string, size: int): Pixbuf =
     # chip falls back to its name and type.
     return nil
 
-## Function purpose: read a stored `messages.extra` back into something the
-## transcript can draw. The stored shape is the Web UI's (D-BP), so this is where
-## its field names are turned back into the two this window renders.
-proc attachmentsOf(extra: string): seq[PendingAttachment] =
-  if extra.len == 0: return
-  var node: JsonNode
-  try: node = parseJson(extra) except CatchableError: return
-  if node.isNil or node.kind != JArray: return
-  for e in node:
-    if e.kind != JObject: continue
-    case e{"type"}.getStr("")
-    of "IMAGE":
-      result.add PendingAttachment(kind: "IMAGE", name: e{"name"}.getStr(""),
-                                   payload: e{"base64Url"}.getStr(""))
-    of "TEXT", "context":
-      let body = e{"content"}.getStr("")
-      result.add PendingAttachment(kind: "TEXT", name: e{"name"}.getStr(""),
-                                   payload: body, bytes: body.len)
-    of "PDF":
-      let body = e{"content"}.getStr("")
-      result.add PendingAttachment(kind: "TEXT", name: e{"name"}.getStr(""),
-                                   payload: body, bytes: body.len)
-    else: discard
+proc attachmentsOf(m: Message): seq[PendingAttachment] =
+  attachMemo.attachmentsFor(m.id, m.extra)
 
 ## Function purpose: the staged attachments as the JSON text that goes into the
 ## `messages.extra` column, in the Web UI's shape (D-Z).
@@ -2042,13 +2049,65 @@ proc gtk_adjustment_get_value(a: GtkAdjustment): cdouble {.importc, cdecl.}
 proc gtk_adjustment_get_upper(a: GtkAdjustment): cdouble {.importc, cdecl.}
 proc gtk_adjustment_get_page_size(a: GtkAdjustment): cdouble {.importc, cdecl.}
 
-## A scrolling transcript that stays at the bottom while `pin` is set.
+# G-41. Declared rather than imported because **none of the three is in
+# owlkettle's bindings** — checked before writing them, per rule 5. They are what
+# makes a `ScrolledWindow` size to its content instead of collapsing, which
+# owlkettle's own `ScrolledWindow` has no way to express: it exposes `child` and
+# nothing else.
+proc gtk_scrolled_window_set_propagate_natural_height(
+  sw: GtkWidget, p: cbool) {.importc, cdecl.}
+proc gtk_scrolled_window_set_propagate_natural_width(
+  sw: GtkWidget, p: cbool) {.importc, cdecl.}
+proc gtk_scrolled_window_set_policy(sw: GtkWidget, h, v: cint) {.importc, cdecl.}
+
+const
+  ## `GtkPolicyType`. Named rather than passed as bare integers, because
+  ## `set_policy(w, 1, 2)` at the call site says nothing about what it does.
+  PolicyAutomatic = cint(1)
+  PolicyNever = cint(2)
+
+## G-41. Whether the transcript is currently following a reply, and whether the
+## reader is sitting at the bottom. **Two separate facts and they must stay
+## separate:** `pinned` is "a generation is running and following is enabled",
+## `sticky` is "the reader has not scrolled away". Following happens only when
+## both hold. Module-level for the reason `droppedPaths` is — a GTK signal
+## handler is a bare C function pointer with no place to put state, and there is
+## exactly one transcript.
+var scrollPinned = false
+var scrollSticky = true
+
+## Action purpose: **this is why following used to fall behind and then stop.**
+## The old version read the adjustment inside the widget's own update hook, which
+## runs *before* GTK has re-measured the newly appended token — so `upper` was
+## still the pre-token height and the view was left one token short every frame.
+## Once a reply grew faster than the 64px slack, the gap exceeded the threshold,
+## the "am I near the bottom?" test began answering no, and following stopped
+## altogether for the rest of the generation.
 ##
-## **It only follows when the view is already near the bottom**, which is the
-## behaviour that makes this tolerable rather than infuriating: scrolling up to
-## re-read something during a generation must not be yanked back on the next
-## token. `disableAutoScroll` turns the whole thing off; this threshold is what
-## stops it fighting the reader when it is on.
+## `changed` fires *after* the new content has been measured, which is the only
+## moment the real bottom is known.
+proc onAdjChanged(adj: GtkAdjustment, data: pointer) {.cdecl.} =
+  if not scrollPinned or not scrollSticky: return
+  if pointer(adj).isNil: return
+  let bottom = gtk_adjustment_get_upper(adj) - gtk_adjustment_get_page_size(adj)
+  if bottom > 0.0 and gtk_adjustment_get_value(adj) < bottom:
+    gtk_adjustment_set_value(adj, bottom)
+
+## Action purpose: the reader's intent, recorded whenever the view moves —
+## **before** the next block of content changes where the bottom is. Scrolling up
+## to re-read something mid-generation must not be yanked back on the next token,
+## and scrolling back down must resume following without waiting for the reply to
+## end. 64px of slack so "as good as at the bottom" counts as at the bottom.
+proc onAdjValue(adj: GtkAdjustment, data: pointer) {.cdecl.} =
+  if pointer(adj).isNil: return
+  let bottom = gtk_adjustment_get_upper(adj) - gtk_adjustment_get_page_size(adj)
+  scrollSticky = bottom - gtk_adjustment_get_value(adj) < 64.0
+
+## A scrolling transcript that follows a reply while `pin` is set.
+##
+## **It only follows when the reader is already near the bottom.** That is what
+## makes it tolerable rather than infuriating. `disableAutoScroll` turns the whole
+## thing off.
 renderable AutoScroll of BaseWidget:
   child: Widget
   pin: bool
@@ -2057,6 +2116,18 @@ renderable AutoScroll of BaseWidget:
     beforeBuild:
       state.internalWidget = gtk_scrolled_window_new(
         GtkAdjustment(nil), GtkAdjustment(nil))
+    afterBuild:
+      # Attached once, on build; GTK owns the handlers from here. The adjustment
+      # belongs to the ScrolledWindow and outlives every redraw, so this cannot
+      # re-bind per frame the way a `gui:` property would.
+      let adj = gtk_scrolled_window_get_vadjustment(state.internalWidget)
+      if not pointer(adj).isNil:
+        discard g_signal_connect_data(pointer(adj), "changed",
+                                      cast[pointer](onAdjChanged), nil, nil,
+                                      GConnectFlags(0))
+        discard g_signal_connect_data(pointer(adj), "value-changed",
+                                      cast[pointer](onAdjValue), nil, nil,
+                                      GConnectFlags(0))
 
   hooks child:
     (build, update):
@@ -2065,24 +2136,53 @@ renderable AutoScroll of BaseWidget:
   hooks pin:
     (build, update):
       if widget.hasPin: state.pin = widget.valPin
-      if state.pin:
-        let adj = gtk_scrolled_window_get_vadjustment(state.internalWidget)
-        # `pointer(adj)` and not `adj.isNil`: the `isNil` borrow for
-        # `GtkAdjustment` lives in the bindings module and this file imports it
-        # by name, so the operator is not in scope here.
-        if not pointer(adj).isNil:
-          let upper = gtk_adjustment_get_upper(adj)
-          let page = gtk_adjustment_get_page_size(adj)
-          let bottom = upper - page
-          # 64px of slack: a redraw lands before GTK has re-measured the new
-          # token, so an exact comparison reads as "not at the bottom" on the
-          # very frame that should follow.
-          if bottom - gtk_adjustment_get_value(adj) < 64.0:
-            gtk_adjustment_set_value(adj, bottom)
+      # Entering a generation re-arms following even if the reader had scrolled
+      # away during the previous one — otherwise a single scroll-up would
+      # silently disable it for the rest of the session.
+      if state.pin and not scrollPinned: scrollSticky = true
+      scrollPinned = state.pin
 
   adder add:
     if widget.hasChild:
       raise newException(ValueError, "AutoScroll takes one child; use a Box.")
+    widget.hasChild = true
+    widget.valChild = child
+
+## G-41. A `ScrolledWindow` that **sizes to its content's height** and scrolls
+## only sideways, for a table or any other block that must not be clipped to an
+## arbitrary height.
+##
+## **owlkettle's `ScrolledWindow` cannot express this** — it exposes `child` and
+## nothing else — and a bare one reports a near-zero minimum height, so it
+## collapses whatever is inside it to a stub. That is what made tables render at
+## a fixed small size regardless of how many rows they had, and it is the same
+## root cause as the G-11 code-block collapse.
+##
+## **Natural *height* propagates; natural *width* deliberately does not.** A wide
+## table must not widen the transcript, so the horizontal axis stays scrollable
+## while the vertical axis simply takes the room the rows need.
+renderable ContentScroll of BaseWidget:
+  child: Widget
+
+  hooks:
+    beforeBuild:
+      state.internalWidget = gtk_scrolled_window_new(
+        GtkAdjustment(nil), GtkAdjustment(nil))
+    afterBuild:
+      gtk_scrolled_window_set_propagate_natural_height(
+        state.internalWidget, cbool(1))
+      gtk_scrolled_window_set_propagate_natural_width(
+        state.internalWidget, cbool(0))
+      gtk_scrolled_window_set_policy(state.internalWidget,
+                                     PolicyAutomatic, PolicyNever)
+
+  hooks child:
+    (build, update):
+      state.updateChild(state.child, widget.valChild, gtk_scrolled_window_set_child)
+
+  adder add:
+    if widget.hasChild:
+      raise newException(ValueError, "ContentScroll takes one child; use a Box.")
     widget.hasChild = true
     widget.valChild = child
 
@@ -2259,25 +2359,24 @@ proc messageBody(app: AppState, m: Message): Widget =
       # carried — not a copy kept beside it that could disagree.
       if m.extra.len > 0:
         Box(orient = OrientX, spacing = 6) {.expand: false.}:
-          for a in attachmentsOf(m.extra):
+          for a in attachmentsOf(m):
             Box(orient = OrientX, spacing = 4) {.expand: false.}:
               style = [StyleClass("attach-chip")]
               if a.kind == "IMAGE":
-                let pb = app.attachmentPixbuf(a.payload, 64)
+                let pb = app.attachmentPixbuf(a, 64)
                 if not pb.isNil:
                   Button {.expand: false.}:
                     tooltip = "Preview " & a.name
                     style = [ButtonFlat, StyleClass("attach-thumb")]
                     proc clicked() =
-                      app.previewUrl = a.payload
-                      app.previewName = a.name
+                      app.previewAtt = a
                     Picture:
                       pixbuf = pb
                       contentFit = ContentContain
               Label {.expand: false.}:
                 text = (if a.kind == "IMAGE": "🖼 " else: "📄 ") & a.name
                 style = [StyleClass("settings-help")]
-      for b in markdown.parse(m.text):
+      for b in mdMemo.blocksFor(m.id, m.text):
         if b.kind == bkText:
           Label {.expand: false.}:
             text = b.text
@@ -2290,7 +2389,13 @@ proc messageBody(app: AppState, m: Message): Widget =
           # compare things answers with one, and it used to render as raw pipes.
           # It scrolls horizontally inside itself: a wide table must not widen
           # the whole transcript, and a `Label` cannot be relied on to shrink.
-          ScrolledWindow {.expand: false.}:
+          #
+          # G-41: **`ContentScroll`, not `ScrolledWindow`.** A bare owlkettle
+          # `ScrolledWindow` reports a near-zero minimum height, so it clipped
+          # every table to a stub no matter how many rows it had — the same
+          # collapse as G-11. `ContentScroll` takes the height the rows need and
+          # keeps the horizontal scrolling that the width argument above wants.
+          ContentScroll {.expand: false.}:
             style = [StyleClass("md-table")]
             Grid(rowSpacing = 2, columnSpacing = 16, margin = 8):
               for rowIdx, row in b.rows:
@@ -3171,16 +3276,16 @@ proc hardwarePanel(app: AppState): Widget =
 proc previewPanel(app: AppState): Widget =
   gui:
     Box(orient = OrientY):
-      sensitive = app.previewUrl.len > 0
-      style = (if app.previewUrl.len > 0: @[StyleClass("settings-scrim")]
+      sensitive = app.previewAtt.payload.len > 0
+      style = (if app.previewAtt.payload.len > 0: @[StyleClass("settings-scrim")]
                else: newSeq[StyleClass]())
-      if app.previewUrl.len > 0:
+      if app.previewAtt.payload.len > 0:
         Box(orient = OrientY, spacing = 8, margin = 24) {.hAlign: AlignCenter,
                                                           vAlign: AlignCenter.}:
           style = [StyleClass("settings-panel")]
           Box(orient = OrientX, spacing = 8) {.expand: false.}:
             Label {.expand: true.}:
-              text = app.previewName
+              text = app.previewAtt.name
               xAlign = 0.0
               style = [StyleClass("settings-label")]
             Button {.expand: false.}:
@@ -3188,12 +3293,11 @@ proc previewPanel(app: AppState): Widget =
               tooltip = "Close"
               style = [ButtonFlat, StyleClass("row-btn")]
               proc clicked() =
-                app.previewUrl = ""
-                app.previewName = ""
+                app.previewAtt = PendingAttachment()
           # 900 rather than the natural size: a large photograph would otherwise
           # size the panel past the window, and a `Picture` has no maximum of
           # its own.
-          let pb = app.attachmentPixbuf(app.previewUrl, 900)
+          let pb = app.attachmentPixbuf(app.previewAtt, 900)
           if pb.isNil:
             Label {.expand: true.}:
               text = "This image could not be decoded for preview."
@@ -3634,14 +3738,13 @@ method view(app: AppState): Widget =
                     # UI's `ChatAttachmentThumbnailImage` shows. Decoded once
                     # and cached by digest — `view` runs on every frame.
                     if a.kind == "IMAGE":
-                      let pb = app.attachmentPixbuf(a.payload, 40)
+                      let pb = app.attachmentPixbuf(a, 40)
                       if not pb.isNil:
                         Button {.expand: false.}:
                           tooltip = "Preview " & a.name
                           style = [ButtonFlat, StyleClass("attach-thumb")]
                           proc clicked() =
-                            app.previewUrl = a.payload
-                            app.previewName = a.name
+                            app.previewAtt = a
                           Picture:
                             pixbuf = pb
                             contentFit = ContentContain

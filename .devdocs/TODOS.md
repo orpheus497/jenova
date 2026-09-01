@@ -1,6 +1,6 @@
 # TODOS
 
-**Last updated:** 2026-09-01 16:19 (Session 017)
+**Last updated:** 2026-09-01 17:27 (Session 018)
 
 Only what is actually outstanding. Everything finished lives in `PROGRESS.md`.
 
@@ -9,11 +9,21 @@ Only what is actually outstanding. Everything finished lives in `PROGRESS.md`.
 reference, not an explanation.
 
 **Cite the symbol, then the line.** Every line reference in this file was re-derived
-against the source on **2026-09-01 at 16:19**. This is the **fifth** sweep in one day —
-12:08, 14:19, 15:13, 15:46 and now — and each was made stale by the next block of work:
-`gui.nim` went from ~1,600 lines to **3,837** over the day. **Every finding survived
-every sweep; only the addresses moved.** That is the lesson, and it is rule 14: **read
-the symbol, treat the number as a hint.**
+against the source on **2026-09-01 at 17:27**. This is the **sixth** sweep — 12:08,
+14:19, 15:13, 15:46, 16:19 and now — and every one of them was made stale by the next
+block of work.
+
+**The sixth sweep is the one that settles the argument.** It was run against a *clean
+working tree with no session edits in it* — nothing had changed the code since the fifth
+sweep was written — and **six of the eight citations were still wrong.** They did not rot
+because a session moved the code afterwards; they were **wrong when they were written**,
+because they were copied forward from the previous revision instead of being read out of
+the file. The fifth sweep also recorded `gui.nim` at **3,837 lines** when the file it was
+describing is **3,916**.
+
+**Every finding survived every sweep. Only the addresses moved.** That is rule 14, and
+the correction to it is rule 9: **a line number is not worth writing down.** Read the
+symbol.
 
 ---
 
@@ -135,8 +145,10 @@ load/unload, and a full model-information dialog showing context size, parameter
 count, quantisation, vocabulary size, parallel slots, modalities and the chat template.
 
 **The Nim GUI has "Switch to instruct model" and "Switch to thinking model"**
-(`gui.nim:3312` and `gui.nim:3316`), two hardcoded menu items — and the same two
-hardcoded in the tray (`gui.nim:639,641`).
+(`gui.nim:3389` and `gui.nim:3393`), two hardcoded menu items — and the same two
+hardcoded in `gui.trayMenu` (`gui.nim:646,648`). *Re-derived 2026-09-01 17:27; the
+previous addresses — 3312/3316 and 639/641 — were wrong at the moment they were
+written, not rotted afterwards.*
 
 Backend exists: `models.discover` / `models.switchModel`.
 
@@ -153,7 +165,7 @@ Backend exists and is tested, all inside `api.handleFs` (`api.nim:625`):
 
 ### G-17 — The note editor is a plain text box
 
-It is a `TextView` with Save and Close — `gui.saveNote` (`gui.nim:1252`). It is the seed
+It is a `TextView` with Save and Close — `gui.saveNote` (`gui.nim:1329`). It is the seed
 of a writing surface, not one.
 
 ### MCP — still deferred by you, and it is the largest item in the Web UI
@@ -184,8 +196,8 @@ PASS while asserting nothing.
 
 | ID | What it is |
 |---|---|
-| **G-37** | **Two style rules in `theme.nim` are dead.** `paned > separator` styles a widget that is not in the tree — a leftover from G-25, which shipped as a `Box` after a `Paned` crashed the app. And `.glow-text` is defined and carried by no widget: the glow effect works, but as a `text-shadow` duplicated inside `.brand` and `.conv-active`. **The second half is G-8's exact defect — a class defined and applied to nothing — recurring in the same file.** Both were found and reported on 2026-09-01 and neither was filed as work; that is why they are here. Re-verified 2026-09-01 14:19: `.glow-text` is `theme.nim:253` and **no widget in `gui.nim` carries the class** (a grep for it in `gui.nim` returns nothing); `paned > separator` is `theme.nim:416-420`. *Both addresses moved again when `theme.nim` gained the light palette — an earlier revision named 162 and 251-255, and before that named them in the opposite order.* |
-| **G-38** | **A code comment in `gui.nim` describes a widget that was never used.** The main-area comment still explains itself as feeding "the `Paned` that G-25 adds". G-25 shipped as a `Box`, and the comment above the `Box` itself records why. A reader following the first comment looks for a `Paned` that does not exist. Prose only, no behaviour. `gui.nim:2560`, above `mainArea` |
+| **G-37** | **Two style rules in `theme.nim` are dead.** `paned > separator` styles a widget that is not in the tree — a leftover from G-25, which shipped as a `Box` after a `Paned` crashed the app. And `.glow-text` is defined and carried by no widget: the glow effect works, but as a `text-shadow` duplicated inside `.brand` and `.conv-active`. **The second half is G-8's exact defect — a class defined and applied to nothing — recurring in the same file.** Both were found and reported on 2026-09-01 and neither was filed as work; that is why they are here. Re-verified 2026-09-01 14:19: `.glow-text` is `theme.nim:253` and **no widget in `gui.nim` carries the class** (a grep for it in `gui.nim` returns zero hits); `paned > separator` is `theme.nim:428-432`. *Re-verified 2026-09-01 17:27: the `.glow-text` address held, the separator address did not — it was written as 416-420 against a file where it is 428. Earlier revisions named 162 and 251-255, and before that named them in the opposite order.* |
+| **G-38** | **A code comment in `gui.nim` describes a widget that was never used.** The main-area comment still explains itself as feeding "the `Paned` that G-25 adds". G-25 shipped as a `Box`, and the comment above the `Box` itself records why. A reader following the first comment looks for a `Paned` that does not exist. Prose only, no behaviour. `gui.nim:2637`, above `gui.mainArea` — *not 2560, which was wrong when written.* |
 | **T-12** | **A one-line fix to two test scripts. The subject is closed — do not diagnose it again (D-BJ).** `test_routes.sh` and `test_lifecycle.sh` fail if anything already holds the machine's real ports, because neither overrides `JENOVA_LLAMA_PORT` the way both already override `JENOVA_PORT`. **That is the entire finding.** It is not a product fault, it is not a mystery, and it has been fully diagnosed three separate times. **The fix:** give both scripts their own dead upstream ports. Until the USER schedules it, a session seeing those failures records nothing and says nothing. |
 
 **Noted, not work:** `jca_web/src/lib/components/app/workspace/` holds one orphan file,
@@ -198,8 +210,14 @@ of the parity inventory. Recorded so it is not rediscovered and mistaken for a g
 
 ## Active — defects in the Nim code, each verified by reading it
 
-**Ordering is `PLANS.md`:** S-1 is Step 6 ·
-T-5, T-2, T-4 and T-3 are Step 9, in that order.
+**Ordering is `PLANS.md`:** T-5, T-2, T-4 and T-3 are Step 9, in that order.
+
+**G-40 is gone from this table because it is done** — attachments no longer freeze
+the window (2026-09-01 17:51, `PROGRESS.md`, **D-BQ**). Per the completion rule its
+record lives in `PROGRESS.md`. **One piece of it was deliberately left and is now
+`PLANS.md` Step 7d:** payloads still live inline in `messages.extra` (D-BP), so each
+one is held in `allMessages`, again in `messages`, and again in the outbound body.
+That is a storage-shape decision for the USER, not a defect.
 
 **T-14 is gone from this table because it is done** — renaming a container now moves its
 directory (2026-09-01, `PROGRESS.md`, D-BE). Per the completion rule, its record lives
@@ -212,7 +230,7 @@ and a deleted turn is forgotten. **Step 4 is built.**
 
 | ID | What is wrong, in plain English | Where |
 |---|---|---|
-| **T-5** | **Quitting the app leaves the embedding server running.** Leaving the main model loaded is deliberate — reloading gigabytes into the GPU every start is worse. But the embedding server is left running with nothing attached to it. | `gui.run` (`gui.nim:3713`) calls `lc.startAll()`; its `defer` (`gui.nim:3724-3728`) sends both workers the quit sentinel, joins them and closes the channels — **and calls no `stopAll`**, which exists at `lifecycle.nim:329` and is only ever reached from the tray's stop/restart actions (`gui.nim:681`, `gui.nim:685`) |
+| **T-5** | **Quitting the app leaves the embedding server running.** Leaving the main model loaded is deliberate — reloading gigabytes into the GPU every start is worse. But the embedding server is left running with nothing attached to it. | `gui.run` calls `lc.startAll()` (`gui.nim:3790`); its `defer` (`gui.nim:3801-3806`) sends the workers the quit sentinel, joins the three threads and closes the channels — **and calls no `stopAll`**, which exists as `lifecycle.stopAll` (`lifecycle.nim:329`) and is only ever reached from the control worker's stop/restart jobs (`gui.nim:735`, `gui.nim:739`). *Re-derived 2026-09-01 17:27; every address in the previous revision — 3713, 3724-3728, 681, 685 — was wrong.* |
 | **T-2** | **A long-running server slowly leaks memory.** The database keeps a cache of compiled queries that is never trimmed, and one API route builds a different query text for every combination of fields a client sends. | The cache is `Conn.cache` (`db.nim:46`), filled by `db.prepared` (`db.nim:165`) with no eviction; the only `sqlite3_finalize` is in `db.closeConn` (`db.nim:415-418`). The route is `api.updateMessage` |
 | **T-4** | **Two holes in the file-access containment check.** A *new* file written through a symlinked folder can escape the workspace root, because the symlink check only runs on paths that already exist. Separately, if the workspace root itself is a symlink, legitimate paths get rejected. | Both in `fssync.resolveStoragePath` (`fssync.nim:694`): the lexical base at `fssync.nim:700`, and the existence-gated symlink check at `fssync.nim:713` |
 | **T-3** | **The whole conversation is resent to the model every single turn.** No trimming, so a long chat eventually exceeds the context window. Needs a byte budget from `CTX_SIZE`, dropping oldest first, never dropping the system message. | `pipeline.prepare` (`pipeline.nim:223`) — **there is no trim step anywhere in the file**; the only `trim`-shaped call in it is `text.strip` on an intent prefix (`pipeline.nim:105`) |
@@ -223,7 +241,7 @@ and a deleted turn is forgotten. **Step 4 is built.**
 
 | ID | Item |
 |---|---|
-| **T-15** | The crash fixed in Session 011 was a widget re-entering the redraw. `Entry` has the same shape: its `text` hook can trigger a redraw, and two of the three Entries have a second thing writing to them (`app.draft` cleared on send, `app.noteTitle` set on rename). **Do not rewrite them.** All eleven crashes were the quit path and none was an `Entry`. Act only if a crash actually shows one. | **There are four `Entry` widgets now, not three.** The tree-row rename `Entry` (`gui.nim:1887`), the note-title `Entry` (`gui.nim:2592`), the chat-draft `Entry` (`gui.nim:3655`), and **a new fourth one G-31 added** — the settings panel's generic text field (`gui.nim:2938`), which is rebuilt per setting from `optsDraft` and so has the same shape. *Corrected 2026-09-01 14:19. The previous set — 1392, 1790, 2298 — was itself a correction made at 12:39 and had already rotted by 14:09.* |
+| **T-15** | The crash fixed in Session 011 was a widget re-entering the redraw. `Entry` has the same shape: its `text` hook can trigger a redraw, and two of them have a second thing writing to them (`app.draft` cleared on send, `app.noteTitle` set on rename). **Do not rewrite them.** All eleven crashes were the quit path and none was an `Entry`. Act only if a crash actually shows one. | **Four `Entry` widgets, plus a `SearchEntry`.** The tree-row rename `Entry` (`gui.nim:1964`), the note-title `Entry` (`gui.nim:2669`), the settings panel's generic text field (`gui.nim:3015`, rebuilt per setting from `optsDraft`, added by G-31), the chat-draft `Entry` (`gui.nim:3732`), and the conversation `SearchEntry` (`gui.nim:3497`), which the previous revisions never counted. *Re-derived 2026-09-01 17:27; the previous set — 1887, 2592, 3655, 2938 — was wrong in all four, and was itself the third revision of this row.* |
 
 
 ---

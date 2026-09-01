@@ -5,6 +5,49 @@ One short paragraph per session. Sessions 001-005 are in
 
 ---
 
+## Session 018 (part two) — 2026-09-01 17:58
+
+Fixed two USER-reported rendering defects, both from one gap: **owlkettle's
+`ScrolledWindow` exposes `child` and nothing else** (**D-BR**). A bare one reports a
+near-zero minimum height and collapses its child, so **every markdown table rendered at
+a fixed small size regardless of row count** — the same trap this codebase already
+documented at the code-block cap, walked into by the table written later. New
+`ContentScroll` renderable propagates natural height but deliberately not natural width,
+so a table takes the room its rows need and still scrolls sideways instead of widening
+the transcript. **Autoscroll was reading the scroll adjustment inside the widget's own
+update hook, which runs before GTK re-measures the new token** — so it acted on a stale
+height every frame and, once a reply grew faster than its 64px tolerance, stopped
+following altogether, which is why it looked switched off. It now runs from the
+adjustment's own `changed` signal with `value-changed` recording whether the reader has
+scrolled away. Ten self-tests pass and `--check` exits 0, but **neither fix is asserted
+and neither can be — both are widget behaviour, so a USER run is the only
+verification.** Detail: `SESSION_HANDOFF.md` Session 018 (part two).
+
+---
+
+## Session 018 — 2026-09-01 17:51
+
+Audited every devdoc claim against the source, then fixed the GUI lockup the USER
+reported on attachments (G-40, Step 7c). **Every finding in the trackers was true and
+six of eight line citations were wrong** — the sixth sweep ran against a clean tree, so
+they had been copied forward rather than read, which retires "sweep harder" as the
+answer. **The freeze had four compounding causes**, the worst being that the thumbnail
+cache built its key as a SHA-256 of the payload on the line above the lookup that key
+served, so a multi-megabyte hash ran on every frame; `view` also re-parsed every
+attachment's JSON and every message's markdown per frame, `postConversation` re-parsed
+every payload per send, and nothing capped the input. Attachments now carry an identity
+key, two memos hold one parse per message, and anything over **25 MB is refused, never
+truncated** (**D-BQ**). The memo deliberately keeps both the original node and the
+reduced list from one parse, because the reduced form drops AUDIO and flattens PDF and
+building the request from it would have silently stopped sending both. **17 assertions,
+three corruptions, three clean reds**, one re-creating the original defect; two real
+bugs caught while writing them. **I asked a question the USER had already answered many
+times (refuse vs truncate) — a Rule 8 violation, now closed as Q-33/D-BQ so it cannot
+recur.** Ten self-tests pass, `--check` exits 0; **whether the window is actually
+responsive is a USER run.** Detail: `SESSION_HANDOFF.md` Session 018.
+
+---
+
 ## Session 017 (part four) — 2026-09-01 16:19
 
 **Step 7 finished: attachments now have all three of the Web UI's routes in.** Drag-and-drop

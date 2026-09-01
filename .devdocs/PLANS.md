@@ -2,16 +2,17 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-09-01 16:19 (Session 017)
+**Last updated:** 2026-09-01 17:27 (Session 018)
 
 **Write plans in plain English, then cite the ID** (**D-BA**). A step that reads
 "resolve G-23" tells the reader nothing. Say what the thing is first.
 
-**Cite the symbol, then the line.** Every line reference below was re-derived against
-the source on **2026-09-01 at 16:19**, with `gui.nim` at 3,837 lines. **This is the
-fifth sweep in one day** and each was made stale by the next block of work. That is the
-point rather than an embarrassment: **a reference that names the proc survives; a bare
-line number does not.** Read the symbol and treat the number as a hint.
+**Cite the symbol, then the line.** Re-derived against the source on **2026-09-01 at
+17:27**, with `gui.nim` at **3,916** lines — the fifth sweep recorded 3,837 for the
+same file. **The sixth sweep ran against a clean tree with no edits since the fifth,
+and six of eight citations were still wrong**, so they were not rotted by later work;
+they were copied forward instead of read. **A reference that names the proc survives; a
+bare line number does not.** Read the symbol and treat the number as a hint.
 
 ---
 
@@ -104,8 +105,9 @@ path is refused rather than merged (**D-BE**). Proven by 17 new assertions in
 `BRIEFING.md` all cite them, and renumbering to close a gap would silently re-point
 every one of those references.
 
-**Steps 1 to 7 are built. Step 8 is the next step**, with what remains of
-attachments (7b) alongside it.
+**Steps 1 to 7 are built, and Step 7c has repaired the defect Step 7 shipped with
+(G-40, the window froze on any attachment). Step 8 is the next work.** Step 7d —
+where attachment payloads are stored — is a decision for the USER, not scoped work.
 
 ---
 
@@ -317,6 +319,162 @@ chips, the thumbnails, the drop target and the paste button are widgets.
 
 **LaTeX maths is deliberately still open** under G-34. Tables were the half that
 bites; KaTeX has no GTK equivalent and rendering maths is its own project.
+
+---
+
+## Step 7c — **BUILT 2026-09-01 17:51.** Attachments no longer freeze the window (G-40)
+
+Done and out of this plan. The record is `PROGRESS.md` 2026-09-01 17:51; the cap
+and the refusal are **D-BQ**.
+
+**What was actually wrong, kept because it is the general lesson:** the thumbnail
+cache built its key as `sha256(payload)` **on the line above the lookup that key
+served**. The decode was cached and the key was not, so the expensive half ran on
+every frame — a cache that guaranteed the cost it existed to avoid. Alongside it,
+`view` re-parsed every attachment's JSON and every message's markdown per frame,
+and `postConversation` re-parsed every payload again on every send.
+
+**The rule this step establishes, and it is the durable part:** *nothing inside
+`view` may do work proportional to a payload.* `view` runs on every frame; a proc
+called from it may look things up and must not parse, hash, decode or copy.
+
+**One thing the plan had wrong, recorded rather than quietly dropped.** 7c-4 said
+the body build should move off the GTK thread to the stream worker. **It should
+not, and the reason is worth keeping:** the worker would need the message history,
+so the payloads would cross the channel instead — the same copy, in the other
+direction. The real waste was that `postConversation` *re-parsed* every payload,
+not that it ran where it ran. Routing it through the memo removed that; the string
+build and the single channel copy stay on the GTK thread deliberately.
+
+**A second thing worth carrying:** the memo keeps **both** the original node and
+the reduced attachment list from one parse. The reduced form drops `AUDIO` and
+flattens `PDF` because this window cannot draw either — so building the outbound
+request from it, which was the obvious implementation, would have silently stopped
+sending audio and PDF page images that an imported Web UI conversation carries
+(D-BP). That is asserted in both directions now.
+
+**Proof: 17 new assertions in `attach-selftest`, three independent corruptions,
+three clean reds** — one of them (deriving the key from the payload) re-creating
+the original defect exactly. **Two real bugs were caught by the new assertions as
+they were written:** `for i, e in` over a `JArray` resolves to `pairs` and aborts
+the process, and truncating division reported a 25.001 MB file as *"is 25 MB and
+the limit is 25 MB"*. Ten self-tests pass, both binaries build ELF 64-bit FreeBSD,
+`bin/jenova --check` exits 0.
+
+**Not verified, and it is the whole point of the step:** whether the window is
+actually responsive with a document attached. There is no GUI test coverage,
+`--check` presses nothing, and the parse counters prove the work is not repeated
+but cannot prove the frame budget is met. **That is a USER run.**
+
+---
+
+## Step 7c, as planned — kept for the record
+
+**Reported by the USER 2026-09-01:** attaching a document locks the GUI up
+completely and the only way out is to kill it. **This outranks Step 8.** Step 8
+adds views; this one makes a feature that already shipped usable at all.
+
+**The full mechanism, with all four contributing sites, is `TODOS.md` G-40.** In
+one sentence: `view` re-parses every attachment's JSON and re-hashes every base64
+payload **on every frame**, `postConversation` rebuilds and re-inlines the whole
+history **on the GTK thread on every send**, nothing caps the input, and every
+payload is held two or three times over.
+
+### The rule this step establishes
+
+**Nothing inside `view` may do work proportional to a payload.** `view` runs on
+every frame; a proc called from it may look things up and must not parse, hash,
+decode or copy. That is the general form of the rule the comment at
+`gui.nim:3624-3627` already stated for thumbnails and that the thumbnail work then
+broke. **Writing it down here is the point of the step** — G-40 is the third time
+this project has shipped a per-frame cost (the canvas `redraw` at `gui.nim:1035`
+and the code-block cap were the first two).
+
+### The work, in order, smallest and most assertable first
+
+**7c-1 — Give an attachment an identity that is not its content.**
+`pipeline.Attachment` (`pipeline.nim:542`) gains a `key` field, set **once** by
+`readAttachment` from the file's name, size and mtime — never from the payload.
+`gui.attachmentPixbuf` then keys `thumbCache` on `$size & ":" & a.key` and the
+per-frame SHA-256 disappears. A stored attachment read back from `extra` gets its
+key from the row: `m.id & ":" & $index`, which is stable and already unique.
+
+**7c-2 — Parse `extra` once per message, not once per frame.**
+`gui.attachmentsOf` moves below the widget layer as `pipeline.parseAttachments`,
+and behind it goes a small memo keyed by message id. `view` gets a lookup.
+**The memo carries a `parses` counter**, which is what makes the fix itself
+assertable rather than merely believed — see the proof section.
+
+**7c-3 — Cap the input, and refuse rather than truncate.**
+A size limit in `pipeline.readAttachment`, refused with a reason naming the limit
+and the actual size. **Refusal over truncation** because a silently shortened
+document changes what the model was asked about while looking like it worked —
+the same class of defect as D-BK's "unset value sent as a zero". *This is the one
+open product question in the step; see the bottom.*
+
+**7c-4 — Get the body build off the GTK thread.**
+`postConversation` currently builds the whole outbound body, inlining every image,
+in the Send handler. The body build moves to the stream worker: the job carries
+what the worker needs to build it, not the built string. This also stops the
+multi-megabyte channel deep-copy at `gui.nim:1637`.
+
+**7c-5 — Memoise `markdown.parse` for completed messages.**
+Same shape as 7c-2, same memo, keyed by message id. **The live streaming turn is
+excluded** — its text changes every token, so memoising it would show a stale
+transcript. That exclusion is the part to get right and the part to assert.
+
+### What proves it worked
+
+**The honest split first: the freeze itself cannot be asserted from here.** There
+is no GUI test coverage (`BRIEFING.md` §6), `--check` presses nothing, and a
+timing assertion would be flaky. **Only the USER running it settles the report.**
+
+**But the fix is not therefore unprovable** — the rule-15 move is to assert the
+*join*, and here the join has a natural counter:
+
+| | What is asserted | Where |
+|---|---|---|
+| 7c-1 | A key is set at read time, is stable across calls, differs for different files, and **is unchanged when only the payload differs** | `attach-selftest` |
+| 7c-2 | Calling `parseAttachments` for one message id **100 times increments `parses` exactly once** — this is the fix, stated as an assertion that bites | `attach-selftest` |
+| 7c-3 | A file over the cap is refused, the reason names both sizes, and one under it is accepted | `attach-selftest` |
+| 7c-4 | The body the worker builds is **byte-identical** to the one `postConversation` built before the move | `pipeline-selftest` |
+| 7c-5 | A completed message parses once; **a message whose text changed re-parses** | `attach-selftest` |
+
+**Every one of the above is to be shown going red first**, against the unfixed
+source where that is possible and against a deliberate corruption where it is not.
+The 7c-2 and 7c-5 counters are the two that matter: they are the only assertions in
+this project that would catch a per-frame cost being reintroduced, and **that is
+exactly how G-40 got in.**
+
+**`bin/jenova --check` must still exit 0** before this is handed over (rule 17).
+
+### What is deliberately not in this step
+
+**The storage shape (mechanism D).** Payloads live inline in `messages.extra` by
+D-BP, so they are copied into `allMessages`, again into `messages`, and again into
+the body. The real answer is to store the bytes beside the row and keep a reference
+in `extra` — but that **changes the D-BP shape the frozen Web UI reads**, and D-Z
+makes `jca_web` unreadable-and-unwritable, so a conversation would stop moving
+between the two surfaces unconverted. **That is a decision for the USER, not a
+session**, and it is written up as **Step 7d** below rather than folded in here.
+
+**T-3 is adjacent and stays where it is.** Untrimmed history is what makes B
+unbounded, but trimming is Step 9 work with its own proof and should not be
+smuggled into a defect fix.
+
+---
+
+## Step 7d — Attachment storage, **a decision for the USER, not scoped work**
+
+Not work until it is ruled on. Inline payloads in `messages.extra` (D-BP) are why
+a single conversation holds each image three times in memory and re-uploads it on
+every turn. Storing the bytes beside the row and keeping a reference would fix all
+of that — **and would diverge from the frozen Web UI's shape**, which D-BP chose
+deliberately so conversations move between the surfaces without conversion.
+
+**The trade is:** parity with `jca_web`'s storage, against memory and per-turn
+upload cost. Both are real. **Raise it after Step 7c is run and seen to work** —
+7c may well make the inline shape acceptable, which would settle this at no cost.
 
 ---
 

@@ -27,7 +27,7 @@
 ## the same final text. Hashing the client's original body would silently
 ## produce a different key and orphan every existing cache entry.
 
-import std/[base64, json, os, strutils, tables]
+import std/[base64, json, os, strutils, tables, times]
 import ./prompts
 import ./rag
 import ./websearch
@@ -547,12 +547,27 @@ type
     ## An `IMAGE` carries a `data:` URL; a `TEXT` carries the file's text.
     payload*: string
     bytes*: int
+    ## G-40. **The identity of this attachment, and never a digest of its
+    ## content.** The window caches a decoded thumbnail per attachment, and the
+    ## cache key has to be derivable on every frame — so it must not be
+    ## something that costs a pass over the payload to compute. Hashing the
+    ## payload to build the key is exactly what froze the GUI: the decode was
+    ## cached and the key was not, so a multi-megabyte SHA-256 ran on every
+    ## redraw. Set once, at the point the attachment is created.
+    key*: string
 
 const
   ## The image types `llama-server`'s multimodal projector accepts. Anything
   ## else readable as text is attached as text; anything else at all is refused
   ## with a reason, rather than sent as bytes the model cannot look at.
   ImageExts* = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"]
+
+  ## D-BQ. **An attachment over this is refused, never truncated.** A shortened
+  ## document changes what the model was asked about while still looking like it
+  ## worked, which is the same defect as sending an unset parameter as a zero
+  ## (D-BK) — the reply comes back confident and is about a fragment. Measured on
+  ## the file as read, before base64 expansion, and applied to every kind.
+  MaxAttachmentBytes* = 25 * 1024 * 1024
 
 ## Function purpose: is this file text? Decided by **reading it**, not by its
 ## extension — a `.log`, a `.conf` and a file with no extension at all are all
@@ -602,14 +617,45 @@ proc uriToPath*(uri: string): string =
 ## unanswered `/props` allows the attachment.
 proc readAttachment*(path: string, visionKnown, visionOk: bool):
     tuple[ok: bool, att: Attachment, err: string] =
+  let name = path.extractFilename
+
+  # D-BQ, G-40. **The size is checked before the file is read, not after.**
+  # Reading first and refusing afterwards would still pull the whole file into
+  # memory, which is the cost the cap exists to prevent — a 2 GB file would hang
+  # the window on `readFile` no matter what the check then decided.
+  var size = 0'i64
+  try:
+    size = getFileSize(path)
+  except CatchableError as e:
+    return (false, Attachment(),
+            "could not read " & name & ": " & e.msg)
+  if size > MaxAttachmentBytes:
+    # Action purpose: the file's size is rounded **up**. Truncating division
+    # reported a 25.001 MB file as "is 25 MB and the limit is 25 MB", which
+    # tells the reader nothing and reads like a bug in the check rather than a
+    # file that is too big. Anything over the cap now always prints as more.
+    const Mib = 1024 * 1024
+    return (false, Attachment(), name & " is " &
+      $((size + Mib - 1) div Mib) & " MB and the limit is " &
+      $(MaxAttachmentBytes div Mib) & " MB. " &
+      "Attach a smaller file — Jenova does not shorten it for you, because a " &
+      "truncated document would be answered as though it were the whole thing.")
+
   var data = ""
   try:
     data = readFile(path)
   except CatchableError as e:
     return (false, Attachment(),
-            "could not read " & path.extractFilename & ": " & e.msg)
-  let name = path.extractFilename
+            "could not read " & name & ": " & e.msg)
   let ext = path.splitFile.ext.toLowerAscii
+
+  # G-40: identity, not content. Name, size and mtime distinguish two staged
+  # files without a pass over either one's bytes. Two attachments of the *same*
+  # file are genuinely the same picture and may share a cached thumbnail.
+  var stamp = ""
+  try: stamp = $getLastModificationTime(path).toUnix
+  except CatchableError: discard
+  let key = name & ":" & $size & ":" & stamp
 
   if ext in ImageExts:
     if visionKnown and not visionOk:
@@ -618,11 +664,112 @@ proc readAttachment*(path: string, visionKnown, visionOk: bool):
         "Load a vision model to attach it.")
     return (true, Attachment(kind: "IMAGE", name: name,
       payload: "data:" & mimeForImage(ext) & ";base64," & base64.encode(data),
-      bytes: data.len), "")
+      bytes: data.len, key: key), "")
 
   if not looksTextual(data):
     return (false, Attachment(),
             name & " is not text and is not an image Jenova can attach.")
 
   result = (true, Attachment(kind: "TEXT", name: name, payload: data,
-                             bytes: data.len), "")
+                             bytes: data.len, key: key), "")
+
+## Function purpose: read a stored `messages.extra` back into attachments.
+## **Moved out of `gui.nim` for G-40**, where it was called from inside `view`
+## and so re-parsed every payload on every frame; below the widget layer it is
+## both cheap to call once and assertable, which the widget version was not.
+##
+## The stored shape is the frozen Web UI's (D-BP), so this is where its field
+## names become the two kinds this program renders.
+## The reduction from the stored node to what the transcript can draw. **Lossy on
+## purpose:** a `PDF` becomes its extracted text and an `AUDIO` is dropped,
+## because neither is something this window renders — the *request* path keeps
+## the original node and sends both (D-BP), which is why `ParseMemo` holds each.
+proc attachmentsOfNode*(node: JsonNode): seq[Attachment] =
+  if node.isNil or node.kind != JArray: return
+  # `for i, e in node` is not available here: on a `JArray` that resolves to
+  # `pairs`, which asserts the node is an object and aborts the process.
+  var i = -1
+  for e in node:
+    inc i
+    if e.kind != JObject: continue
+    # G-40: the identity of a *stored* attachment is its position in the row it
+    # came from. Stable, unique, and — the point — free to compute.
+    let key = $i & ":" & e{"name"}.getStr("")
+    case e{"type"}.getStr("")
+    of "IMAGE":
+      result.add Attachment(kind: "IMAGE", name: e{"name"}.getStr(""),
+                            payload: e{"base64Url"}.getStr(""), key: key)
+    of "TEXT", "context", "PDF":
+      let body = e{"content"}.getStr("")
+      result.add Attachment(kind: "TEXT", name: e{"name"}.getStr(""),
+                            payload: body, bytes: body.len, key: key)
+    else: discard
+
+## Function purpose: the same reduction straight from the stored text, for the
+## callers that have no message id to memoise against.
+proc parseAttachments*(extra: string): seq[Attachment] =
+  if extra.len == 0: return
+  var node: JsonNode
+  try: node = parseJson(extra) except CatchableError: return
+  attachmentsOfNode(node)
+
+type
+  ParseMemo* = object
+    ## G-40. **`view` runs on every frame and must never do work proportional to
+    ## a payload.** This holds one parse of a message's `extra` so that the
+    ## frame does a table lookup instead.
+    ##
+    ## **Both forms are kept from the same parse, and that is deliberate.** The
+    ## transcript needs `seq[Attachment]`, which is lossy — it collapses `PDF`
+    ## to text and drops `AUDIO`, because those are things this window cannot
+    ## draw. The outbound request needs the **original node**, because
+    ## `contentFor` sends PDF page images and audio parts that an imported Web
+    ## UI conversation carries (D-BP). Deriving the request from the lossy form
+    ## would silently drop them from what the model is sent.
+    ##
+    ## `parses` is not diagnostic decoration and is not to be removed: it is the
+    ## only thing in this program that can *assert* the fix. A per-frame cost
+    ## reintroduced later is invisible to every other check — it compiles, it
+    ## passes, it renders correctly, and it is only discovered when the window
+    ## stops responding. `attach-selftest` asserts a hundred lookups parse once.
+    nodes: Table[string, JsonNode]
+    atts: Table[string, seq[Attachment]]
+    stamps: Table[string, int]
+    parses*: int
+
+## Function purpose: parse one message's `extra` at most once, returning both the
+## original node for the request path and the renderable list for the transcript.
+##
+## `id` is the message row id. **A message with no id is never memoised** — an
+## assistant turn is a live buffer while it streams and only becomes a row when
+## it completes, so caching it would pin the first token on screen. The stamp is
+## the payload's length, which catches the one way a saved row still changes:
+## Continue extends it, and an append always changes the length.
+proc entryFor*(memo: var ParseMemo, id, extra: string):
+    tuple[node: JsonNode, atts: seq[Attachment]] =
+  if id.len > 0 and memo.stamps.getOrDefault(id, -1) == extra.len and
+     memo.atts.hasKey(id):
+    return (memo.nodes.getOrDefault(id, nil), memo.atts[id])
+
+  inc memo.parses
+  var node: JsonNode = nil
+  if extra.len > 0:
+    try: node = parseJson(extra) except CatchableError: node = nil
+  let atts = attachmentsOfNode(node)
+  if id.len > 0:
+    memo.nodes[id] = node
+    memo.atts[id] = atts
+    memo.stamps[id] = extra.len
+  (node, atts)
+
+proc attachmentsFor*(memo: var ParseMemo, id, extra: string): seq[Attachment] =
+  memo.entryFor(id, extra).atts
+
+## The `extra` as the request path needs it — the original node, unreduced.
+proc extraNodeFor*(memo: var ParseMemo, id, extra: string): JsonNode =
+  memo.entryFor(id, extra).node
+
+proc forget*(memo: var ParseMemo, id: string) =
+  memo.nodes.del(id)
+  memo.atts.del(id)
+  memo.stamps.del(id)

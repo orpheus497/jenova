@@ -3,7 +3,7 @@
 Test specifications, validation criteria and expected outcomes. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 16:19 (Session 017).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 17:51 (Session 018).
 Mandated from the outset; absent for Sessions 001–003. See `DECISIONS_LOG.md` C-10.
 
 > **§5a onward are stage acceptance records** — what each stage had to prove and how. They are
@@ -85,6 +85,49 @@ and `markdown-selftest`, `error-selftest` and `attach-selftest` for Step 7 (§0j
 Earlier trackers said four self-tests;
 `db-capabilities` is a capability report, not an assertion, which is where the
 miscount came from.*
+
+## 0k. The per-frame cost assertions (G-40, Step 7c, 2026-09-01 17:51)
+
+**17 assertions added to `attach-selftest`.** They are a different kind from
+everything else in this file and the difference is the point.
+
+**What they assert is a count, not an output.** The defect that froze the window
+produced *correct output*: the right thumbnail, the right transcript, the right
+request. It compiled, every existing assertion passed, and a screenshot looked
+perfect. The only observable was that the work was done **again on every frame** —
+so what is asserted is `ParseMemo.parses` and `BlockMemo.parses`, the number of
+times a payload was parsed. *"A hundred lookups of one message parse it exactly
+once"* is the fix stated as an assertion.
+
+**These are the only assertions in this project that can catch a per-frame cost
+being reintroduced.** The `parses` counters exist for that and are not to be
+removed as debug leftovers.
+
+**Covered:** an attachment carries an identity key; the key is stable across reads
+and differs for two files with identical content (**this is the one that
+re-creates the original defect when corrupted**); a hundred lookups parse once; a
+message with no row id is never memoised, because a streaming turn is a live
+buffer; a message whose payload changed *is* re-parsed, because Continue extends a
+saved row; the request path keeps the **unreduced** node while the renderable form
+drops `AUDIO`, and both come from one parse; an imported audio attachment is still
+sent; a file over 25 MB is refused, the refusal names both sizes, and nothing
+truncated is returned (**D-BQ**); a file under it is still accepted. Plus four on
+`markdown.BlockMemo` in the same shape.
+
+**Three independent corruptions, three clean reds:** the memo disabled (2 red),
+the key derived from the payload (1 red — the original defect), the markdown stamp
+check removed (1 red — the Continue case, which would have shown a stale
+transcript).
+
+**Two real bugs were found by these assertions while they were being written**,
+which is the case for writing them: `for i, e in` over a `JArray` resolves to
+`pairs`, which asserts the node is an object and aborts the process; and
+truncating division reported a 25.001 MB file as *"is 25 MB and the limit is
+25 MB"*. The size is rounded up now.
+
+**What is not asserted, and cannot be from here:** that the window is actually
+responsive with a document attached. The counters prove the work is not repeated;
+they cannot prove the frame budget is met. That is a USER run.
 
 ## 0j. Step 7's three self-tests (G-34, G-35, G-30, 2026-09-01 15:46)
 

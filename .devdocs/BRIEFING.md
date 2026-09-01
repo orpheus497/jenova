@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-09-01 16:19 (Session 017)
+**Last updated:** 2026-09-01 17:58 (Session 018)
 **Branch:** `bsd`
 
 ---
@@ -61,7 +61,7 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 | **Build** | `nimble`. Tasks in `jenova_core.nimble`: `core`, `gui`, `suites`, `llama`, `web`, `clean` |
 | **Architecture** | `BLUEPRINT.md` |
 | **Runtime home** | `$HOME/Jenova`. `~/JCA` is permanently off limits |
-| **Tests** | **Six** shell suites under `tests/`, run by `nimble suites`, plus **nine** self-test subcommands in `jenova-core` — the six older ones plus `hardware-`, `markdown-`, `error-` and `attach-selftest`. **None of them covers the GUI** — see §6 |
+| **Tests** | **Six** shell suites under `tests/`, run by `nimble suites`, plus **ten** self-test subcommands in `jenova-core`: `db-`, `tree-`, `attach-`, `error-`, `hardware-`, `markdown-`, `pipeline-`, `rag-`, `serve-` and `sha256-selftest`. *Corrected 2026-09-01 17:27 — every revision since Step 7 said "nine" while listing "the six older ones plus four", which is ten. Read them out of `src/jenova_core.nim` rather than carrying the number.* **None of them covers the GUI** — see §6 |
 
 ## 2. State
 
@@ -278,6 +278,45 @@ Full detail with mechanisms and references: `TODOS.md`. Ordered plan: `PLANS.md`
 
 ## 5. Known broken in the Nim code
 
+> ### **G-40 — attachments froze the entire window. Fixed 2026-09-01 17:51 (Step 7c).**
+>
+> **Reported by the USER; the GUI stopped responding on attaching a document.** Not
+> a crash — unbounded synchronous work on the GTK thread, from four compounding
+> causes. The worst: `attachmentPixbuf` built its cache key as `sha256(payload)`
+> **on the line above the lookup that key served**, so a multi-megabyte hash ran on
+> every frame — a cache that guaranteed the cost it existed to avoid. Alongside it
+> `view` re-parsed every attachment's JSON and every message's markdown per frame,
+> `postConversation` re-parsed every payload per send, and nothing capped input.
+>
+> **Fixed** with an identity key (name/size/mtime, never content), one parse per
+> message held in `pipeline.ParseMemo` and `markdown.BlockMemo`, and a **25 MB cap
+> that refuses rather than truncates** (**D-BQ**). 17 assertions, three clean reds.
+>
+> **The rule it establishes:** *nothing inside `view` may do work proportional to a
+> payload.* `view` runs on every frame; a proc called from it may look things up
+> and must not parse, hash, decode or copy.
+>
+> **Unverified, and it is the whole point:** whether the window is actually
+> responsive with a document attached. The counters prove the work is not repeated;
+> they cannot prove the frame budget is met. **That is a USER run.**
+
+> ### **G-41 — tables were a fixed size; autoscroll did not follow. Fixed 2026-09-01 17:58.**
+>
+> Both from one gap (**D-BR**): **owlkettle's `ScrolledWindow` exposes `child` and
+> nothing else.** A bare one reports a near-zero minimum height and collapses its
+> child, so every table was clipped to a stub regardless of row count — the same
+> trap this project already documented at the code-block cap. `ContentScroll`
+> propagates natural height, not natural width, so a table takes the room its rows
+> need and still scrolls sideways.
+>
+> **Autoscroll read the adjustment in the widget's own `update` hook, which runs
+> before GTK re-measures the new token** — so it acted on a stale height every
+> frame and, once a reply grew faster than its 64px tolerance, stopped following
+> for the rest of the generation. Now driven from the adjustment's `changed`
+> signal, with `value-changed` recording whether the reader has scrolled away.
+>
+> **Neither is asserted and neither can be — both are widget behaviour.**
+
 **T-17 was built in Session 015 and G-31/G-32 this session.** What remains:
 
 - **S-1 is built** (15:13) — hardware detection, scoring and profile selection are Nim,
@@ -382,14 +421,27 @@ a red.
   capture library — **and no model in use has an audio modality**, so it may buy
   nothing at all.
 
-## Next — `PLANS.md` Step 8, the remaining views
+## Next — `PLANS.md` **Step 8, the remaining views**
 
-**8a. A real model selector** (G-20) — two hardcoded menu items today, in the
-window and in the tray. Backend exists: `models.discover`, `models.switchModel`.
-**8b. A trash view** (G-21) — everything deleted is invisible; the routes exist
-and are asserted. G-36 landed first and the two answer each other, so this is now
-the more pressing half. **8c. A real note editor** (G-17). Then Step 9's four
-stability items.
+**Step 7c is done** — attachments no longer freeze the window. **The one thing
+outstanding from it is a USER run**: the parse counters prove the work is not
+repeated, but nothing here can prove the window is responsive with a document
+attached.
+
+**Step 7d is a decision, not work:** attachment payloads still live inline in
+`messages.extra` (D-BP), so each is held in `allMessages`, again in `messages`,
+and again in the outbound body — and every image is re-uploaded to
+`llama-server` on every subsequent turn, which **T-3** (no history trim) makes
+permanent. Moving payloads out of the row would fix all of it and would diverge
+from the frozen Web UI's storage shape. **Worth raising only if 7c does not make
+the window responsive.**
+
+**Step 8, the remaining views.** **8a. A real model selector** (G-20) — two
+hardcoded menu items today, in the window and in the tray. Backend exists:
+`models.discover`, `models.switchModel`. **8b. A trash view** (G-21) —
+everything deleted is invisible; the routes exist and are asserted. G-36 landed
+first and the two answer each other, so this is the more pressing half. **8c. A
+real note editor** (G-17). Then Step 9's four stability items.
 
 **Unseen, and it is now a large surface:** the stop button, table rendering,
 attachment chips and thumbnails, the drop target, the paste button, the preview

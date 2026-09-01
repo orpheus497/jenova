@@ -7,12 +7,12 @@ resolution. Most recent entries at the top.
 
 ## QUESTION STATUS — read this before asking the USER anything
 
-**NO QUESTIONS ARE OPEN.** Q-31 and Q-32 were raised 2026-09-01 and **answered the same
-day**. Both are recorded below with the answer and its consequences, so neither is
-re-raised.
+**NO QUESTIONS ARE OPEN.** Q-31, Q-32 and Q-33 were raised and **answered the same
+day**. All are recorded below with the answer and its consequences, so none is re-raised.
 
 | Question | Answer |
 |---|---|
+| **Q-33 — an oversized attachment: refuse it, or truncate it?** | **ANSWERED 2026-09-01: REFUSE. The cap is 25 MB.** Ruled as **D-BQ**. **The USER had already given this answer repeatedly before it was asked, and asking it again was a Rule 8 violation.** It is not to be raised in any form again — not as "refuse or truncate", not as "what cap", not as "should the limit apply to documents as well as images" |
 | **Q-31 — what does the retrieval indexer walk?** | **ANSWERED 2026-09-01: chats.** Ruled as **D-BD**. `TODOS.md` T-17 is a task now, not a decision |
 | **Q-32 — archive the `hardware-profiles/` shell scripts, or port them?** | **ANSWERED 2026-09-01: port to Nim, drive it from the GUI, archive the shell.** Ruled as **D-BC**. `TODOS.md` S-1 is a task now |
 
@@ -92,6 +92,59 @@ further down is left in place for the historical record; **this table overrides 
 ---
 
 ---
+
+---
+
+## D-BR — a layout owlkettle cannot express becomes a renderable, and GTK state is read from GTK's own signals — 2026-09-01 17:58
+
+**Taken while fixing G-41.** Two rules, both learned the same way twice.
+
+**1. owlkettle's `ScrolledWindow` exposes `child` and nothing else** — no size
+policy, no natural-size propagation, no adjustment. A bare one reports a near-zero
+minimum and **collapses whatever is inside it to a stub**. That has now caused the
+same defect three times: the G-11 code-block collapse, the code-block cap that had
+to be a `sizeRequest` to work around it, and G-41's tables clipped to a fixed
+height. **The answer is a renderable**, not another workaround — `AutoScroll`,
+`DropZone`, `SourceCode` and now `ContentScroll` all exist for the same reason:
+owlkettle offers no route from a `gui:` block to a `GtkWidget`, and some things can
+only be said to GTK directly.
+
+**2. Read GTK's state from GTK's signals, never from a widget update hook.**
+Autoscroll failed because it read the scroll adjustment inside its own `update`
+hook, which runs **before** GTK re-measures new content — so it acted on a stale
+`upper` every frame and silently gave up once the content grew faster than its
+tolerance. **A widget update hook is the wrong place to ask GTK what size
+something is.** The `changed` signal fires after re-measurement and is the only
+moment the answer is true.
+
+**The general form:** when a fix needs a number GTK computes during layout, the
+question must be asked from a layout-time signal. Guessing earlier and adding
+slack looks like it works and degrades silently, which is what this cost.
+
+---
+
+## D-BQ — an oversized attachment is **refused**, never truncated. The cap is **25 MB** — 2026-09-01 17:41
+
+**Ruled by the USER, and it had been given repeatedly before a session asked it again.**
+Recording it here is the fix for that: the answer lives in a document, so it stops
+depending on the USER repeating it.
+
+**The ruling.** A file over **25 MB** is refused at
+`pipeline.readAttachment`, with a message naming the limit and the file's actual size.
+**It is never attached truncated, and never silently shortened.**
+
+**Why refusal is the right answer and not merely the instruction.** A truncated
+document changes what the model was asked about **while looking like it worked** — the
+answer comes back confident and is about a fragment. That is the same class of defect as
+D-BK's "an unset value must be omitted, never sent as a zero": a surface that appears to
+function while quietly substituting different input. A refusal is legible; a truncation
+is a wrong answer with no symptom.
+
+**The cap is on the file as read**, before base64 expansion, and applies to every
+attachment kind — a document, an image, anything. There is no per-conversation total.
+
+**This question is closed and is not to be re-raised in any form** — see the QUESTION
+STATUS index, Q-33. Asking it again was a Rule 8 violation.
 
 ---
 

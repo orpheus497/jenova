@@ -2,7 +2,7 @@
 ## and turn inline markdown into Pango markup, so the transcript reads like the
 ## Web UI's `MarkdownContent` rather than one flat string.
 
-import std/strutils
+import std/[strutils, tables]
 
 type
   BlockKind* = enum bkText, bkCode, bkTable
@@ -202,3 +202,35 @@ proc parse*(content: string): seq[Block] =
       i.inc
     flushText()
   result = outp
+
+type
+  BlockMemo* = object
+    ## G-40. **`parse` is called from `view`, so it runs on every frame** — once
+    ## per message on the branch, over that message's whole text. It was not the
+    ## cause of the attachment freeze but it is the same defect and the same
+    ## budget, and a long conversation paid it on every token of every reply.
+    ##
+    ## `parses` exists to be asserted, for the reason `pipeline.ParseMemo`'s
+    ## does: a per-frame cost that comes back is invisible to a compile, to a
+    ## self-test and to a screenshot, right up until the window stops responding.
+    blocks: Table[string, seq[Block]]
+    stamps: Table[string, int]
+    parses*: int
+
+## Function purpose: the blocks of one message, parsed at most once.
+##
+## **A message with no id is never memoised.** An assistant turn is a live buffer
+## while it streams and only becomes a row when it finishes, so caching it would
+## freeze the transcript on its first token. The stamp is the text length, which
+## catches the one way a saved message still changes — Continue extends it, and
+## an append always changes the length.
+proc blocksFor*(memo: var BlockMemo, id, text: string): seq[Block] =
+  if id.len == 0:
+    inc memo.parses
+    return parse(text)
+  if memo.stamps.getOrDefault(id, -1) == text.len and memo.blocks.hasKey(id):
+    return memo.blocks[id]
+  inc memo.parses
+  result = parse(text)
+  memo.blocks[id] = result
+  memo.stamps[id] = text.len

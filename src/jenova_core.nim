@@ -633,6 +633,114 @@ proc main() =
               not missing.ok and missing.err.len > 0)
         removeDir(dir)
 
+      # Action purpose: G-40. **These are the assertions that catch the defect
+      # that froze the window**, and they are the only ones in this program that
+      # can. A per-frame cost is invisible to everything else — it compiles, it
+      # renders correctly, every other assertion passes, and it is discovered
+      # when the GUI stops responding. What is asserted is therefore not the
+      # output but the **number of parses**, which is the thing that went wrong.
+      block perFrameCost:
+        let p = paths.resolve()
+        let dir = p.state / "attachcost"
+        removeDir(dir); createDir(dir)
+
+        # The identity key must not be derived from the payload: deriving it
+        # from the bytes is exactly what made the cache useless, because the key
+        # cost a full pass over the thing the cache existed to avoid touching.
+        writeFile(dir / "a.txt", "hello")
+        let k1 = pipeline.readAttachment(dir / "a.txt", true, true)
+        let k2 = pipeline.readAttachment(dir / "a.txt", true, true)
+        check("an attachment carries an identity key", k1.att.key.len > 0)
+        check("and the key is stable across reads of the same file",
+              k1.att.key == k2.att.key, k1.att.key & " vs " & k2.att.key)
+        writeFile(dir / "b.txt", "hello")
+        let k3 = pipeline.readAttachment(dir / "b.txt", true, true)
+        check("and two different files with identical content differ",
+              k1.att.key != k3.att.key, k1.att.key & " vs " & k3.att.key)
+
+        let extra = """[{"type":"IMAGE","name":"p.png","base64Url":"data:image/png;base64,AAAA"}]"""
+        var memo: pipeline.ParseMemo
+        for _ in 0 ..< 100:
+          discard memo.attachmentsFor("msg-1", extra)
+        # **This is the fix, stated as an assertion.** Before G-40 this number
+        # was one per frame, forever.
+        check("a hundred lookups of one message parse it exactly once",
+              memo.parses == 1, "parses = " & $memo.parses)
+        check("and the lookup still returns the attachment",
+              memo.attachmentsFor("msg-1", extra).len == 1)
+
+        # A live streaming turn has no row id yet. It must not be memoised, or
+        # the transcript would freeze on its first token.
+        var live: pipeline.ParseMemo
+        discard live.attachmentsFor("", extra)
+        discard live.attachmentsFor("", extra)
+        check("a message with no id is never memoised", live.parses == 2,
+              "parses = " & $live.parses)
+
+        # Continue extends a saved row, so a memo keyed on id alone would serve
+        # the text from before the extension.
+        var grown: pipeline.ParseMemo
+        discard grown.attachmentsFor("msg-2", extra)
+        let extra2 = """[{"type":"IMAGE","name":"p.png","base64Url":"data:image/png;base64,AAAABBBB"}]"""
+        discard grown.attachmentsFor("msg-2", extra2)
+        check("a message whose payload changed is re-parsed",
+              grown.parses == 2, "parses = " & $grown.parses)
+
+        # The request path must keep the **original** node: the renderable form
+        # drops AUDIO and flattens PDF, and building the outbound body from it
+        # would silently stop sending both.
+        let rich = """[{"type":"AUDIO","name":"a.wav","base64Data":"QQ==","mimeType":"audio/wav"}]"""
+        var keep: pipeline.ParseMemo
+        let node = keep.extraNodeFor("msg-3", rich)
+        check("the request path keeps the unreduced node",
+              not node.isNil and node.kind == JArray and node.len == 1)
+        check("even where the renderable form drops it",
+              keep.attachmentsFor("msg-3", rich).len == 0)
+        check("and both forms come from one parse", keep.parses == 1,
+              "parses = " & $keep.parses)
+        let audio = pipeline.contentFor("look", node)
+        check("so an imported audio attachment is still sent",
+              audio.kind == JArray and ($audio).contains("input_audio"), $audio)
+
+        # D-BQ: refused, never truncated. Asserted against a real oversized file
+        # rather than against the constant — checking that the number is 25
+        # would pass even if nothing ever compared anything to it.
+        let big = dir / "big.bin"
+        writeFile(big, repeat('x', pipeline.MaxAttachmentBytes + 1024))
+        let over = pipeline.readAttachment(big, true, true)
+        check("a file over the cap is refused", not over.ok)
+        check("and the refusal names the limit and the actual size",
+              over.err.contains("25 MB") and over.err.contains("26"), over.err)
+        check("and nothing truncated is returned",
+              over.att.payload.len == 0 and over.att.kind.len == 0)
+        removeFile(big)
+
+        writeFile(dir / "small.txt", "under the cap")
+        let under = pipeline.readAttachment(dir / "small.txt", true, true)
+        check("a file under the cap is still accepted", under.ok, under.err)
+        removeDir(dir)
+
+      # Action purpose: G-40, the same holding for markdown. `view` re-parsed
+      # every message's full text on every frame too.
+      block markdownPerFrame:
+        var mm: markdown.BlockMemo
+        for _ in 0 ..< 100:
+          discard mm.blocksFor("msg-1", "# hi\n\ntext")
+        check("a hundred markdown lookups parse once", mm.parses == 1,
+              "parses = " & $mm.parses)
+        check("and still return the blocks",
+              mm.blocksFor("msg-1", "# hi\n\ntext").len > 0)
+        var streaming: markdown.BlockMemo
+        discard streaming.blocksFor("", "partial")
+        discard streaming.blocksFor("", "partial reply")
+        check("a streaming turn with no id is never memoised",
+              streaming.parses == 2, "parses = " & $streaming.parses)
+        var extended: markdown.BlockMemo
+        discard extended.blocksFor("m", "one")
+        discard extended.blocksFor("m", "one two")
+        check("a continued message is re-parsed", extended.parses == 2,
+              "parses = " & $extended.parses)
+
       if bad == 0:
         echo ""
         echo "attach-selftest: PASS"
