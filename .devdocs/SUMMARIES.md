@@ -5,6 +5,46 @@ One short paragraph per session. Sessions 001-005 are in
 
 ---
 
+## Session 020 (part three) — 2026-09-02 09:43
+
+**The USER ran the build: PDF attachment works, the model switcher does not.** They asked
+whether the selector was replacing the named switch or duplicating it — **duplicating,
+and it was a session's decision (D-CA) rather than theirs.** Ruled as **D-CB**: the
+switcher draws from `models/instruct` and `models/thinking` only, swaps `models/agent`,
+and must not accumulate `.old` copies; the user owns the two source folders. **What
+shipped scans every subdirectory**, so it offers embed and drafter models as the agent
+model — a configuration `lifecycle` never launches. Filed as **G-48**; the symptom of the
+reported failure is not known and was deliberately not guessed at. **Also cut: the
+devdoc bloat this session added** — a verbatim quote of the USER against the standing
+style ruling, a candidate table, and paragraph entries in a one-line ledger. No code
+changed. Detail: `SESSION_HANDOFF.md` Session 020 (part three).
+
+---
+
+## Session 020 (part two) — 2026-09-02 08:43
+
+**The USER ruled on two things they had said for weeks, and both are now in a document so
+they stop being re-asked: libz is an approved dependency (D-BY), and audio capture is not
+needed and not gated (D-BZ).** The first closes **Step 7b**: new `zlib.nim` (bound as
+`uncompress`/`compress` only, so no versioned struct is mirrored into Nim — D-V) and new
+`pdf.nim` (content streams, FlateDecode, the four text-showing operators), wired into
+`readAttachment`, which had refused every PDF as "not text". A PDF now attaches as its
+extracted text in the Web UI's own shape, and **one with no readable text is refused
+rather than attached empty** — a scan or an Identity-H font yields nothing, and an empty
+attachment reads as a working one. **Audio's *send* path is retained under Directive 3**:
+not building capture is not licence to delete what already carries imported Web UI
+conversations. **Then 8a: the window has a real model list (G-20).** `models.available` is
+the enumerator the audit showed `discover` could never be, `switchToPath` generalises the
+switch with a containment check, and the two named quick-switches are **kept beside it,
+not replaced (D-CA)** — Directive 3, and a D-Bus tray menu cannot host a list. Model
+*information* is deliberately not built and is said so. **Twelve self-tests pass**,
+including a new `models-selftest` (15 assertions) and ten added to `attach-selftest`, all
+proven to discriminate by varying the data — the PDF page built both compressed and not,
+the switch asserted as a transition. Both binaries ELF FreeBSD, `--check` 0. Detail:
+`SESSION_HANDOFF.md` Session 020 (part two).
+
+---
+
 ## Session 020 — 2026-09-02 08:13
 
 **An audit, no code, nothing run — and the first pass of it was not an audit.** I read

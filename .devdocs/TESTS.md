@@ -3,7 +3,7 @@
 Test specifications, validation criteria and expected outcomes. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-02 08:13 (Session 020).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-02 08:43 (Session 020).
 Mandated from the outset; absent for Sessions 001–003. See `DECISIONS_LOG.md` C-10.
 
 > **§5a onward are stage acceptance records** — what each stage had to prove and how. They are
@@ -89,6 +89,54 @@ and `markdown-selftest`, `error-selftest` and `attach-selftest` for Step 7 (§0j
 Earlier trackers said four self-tests;
 `db-capabilities` is a capability report, not an assertion, which is where the
 miscount came from.*
+
+## 0r. `models-selftest` — the model list and the switch (G-20, 8a, 2026-09-02 08:43)
+
+**Why it exists:** a selector that quietly omits a model, or offers a `.old` backup as an
+installed one, does not fail loudly — the wrong model simply loads, which looks like a
+model behaving oddly rather than a list that lied. The enumeration and the switch are in
+`models.nim`, below the widget layer, so both are asserted against a fixture tree with no
+window and no GPU.
+
+**Every assertion varies the data, never the code (D-BX).** One tree, and the switch is
+asserted as a **transition**: nothing active → alpha active and beta not → beta active
+and alpha not. Those three cannot all pass unless the flag is real.
+
+**Covered:** every installed model is listed · **a `.old` backup is not** · the role is
+the directory it sits in · an empty tree lists nothing rather than raising · the link
+target is **relative**, since an absolute one works until the tree moves · the displaced
+model is **preserved as `.old`, not deleted** · a path outside `models/` is refused and so
+is a file that is not a `.gguf` — containment, because `switchToPath` is exported ·
+**and the two named targets still work**, which is Directive 3 asserted rather than
+assumed.
+
+**Not covered, and it cannot be from here:** the panel, its search box and the Switch
+button are widgets. `--check` builds the tree and presses nothing.
+
+## 0s. The PDF assertions (G-30, Step 7b, 2026-09-02 08:43)
+
+**10 added to `attach-selftest`**, once libz was approved (D-BY).
+
+**The fixture is built both ways from one page**, compressed and not, so the FlateDecode
+path is asserted against the same expected text as the plain one rather than against a
+second fixture that could drift from it. **The zlib binding is proven by a round trip**
+— `inflate(deflate(x)) == x` — which is `rag.vectorRoundTrip`'s precedent and the reason
+`deflate` exists at all.
+
+**Covered:** an uncompressed stream yields its text · a FlateDecode stream yields the
+same · a kerned `[(Hel) -250 (lo)] TJ` is **one word**, which is what collecting strings
+before flushing them is for · a hex string decodes · an escaped paren does not truncate
+the literal · **a page with no text objects yields nothing** · a file that is not a PDF
+yields nothing · **a PDF with no readable text is refused rather than attached** · a
+readable one attaches as `PDF` carrying its text.
+
+**The two negatives are the load-bearing ones.** An empty attachment would look exactly
+like a working one while the model answered about nothing — the same class as a truncated
+file (D-BQ) and an unset value sent as a zero (D-BK).
+
+**Known limit, asserted around rather than hidden:** a font using Identity-H encodes glyph
+indices, so `pdf.looksReadable` rejects the result. This is a text extractor, not a
+renderer — no layout, no reading order, no page images.
 
 ## 0p. Proving an assertion bites — **without touching the code** (D-BX, 2026-09-01 19:00)
 

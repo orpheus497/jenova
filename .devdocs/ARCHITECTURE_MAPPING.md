@@ -3,7 +3,7 @@
 File-by-file map of the codebase: what lives where, and why. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE. Update whenever a file is added, removed or relocated.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-02 08:13 (Session 020).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-02 08:43 (Session 020).
 
 This file was mandated from the outset and did not exist for Sessions 001–003 —
 including Session 001, which moved or deleted 31 files. See `DECISIONS_LOG.md` C-10.
@@ -93,6 +93,25 @@ layering argument as `settings.nim` and `hardware.nim`**: it imports `db` and `s
 nothing else, so `workspace-selftest` asserts the whole ladder with no window, no backend
 and no conversation. `pipeline.chatBody` injects what it returns and `gui.nim` only
 supplies the scope ids it already holds.
+
+**Added 2026-09-02 (G-30 Step 7b, ruling D-BY):** `zlib.nim` and `pdf.nim` — PDF text
+extraction, unblocked by the USER approving `libz`. **`zlib.nim` is the program's third
+FFI module and the only one that links into `jenova-core`**; it binds `uncompress` and
+`compress` and nothing else, so no versioned C struct is mirrored into Nim (D-V).
+`pdf.nim` is pure and imports only `std` and `zlib`, **same layering argument as
+`settings.nim`, `hardware.nim` and `workspace.nim`** — which is what lets
+`attach-selftest` assert extraction with no window and no attachment. `pipeline.nim`
+calls it from `readAttachment`; `gui.nim` only stores the result in the Web UI's PDF
+shape.
+
+**`models.nim` gained `available`, `activeAgentPath` and `switchToPath` (G-20, 8a,
+2026-09-02).** The first is the enumerator the selector needed and `discover` could never
+be — `discover` resolves one path for one of three fixed roles and discards the rest of
+the directory. `switchToPath` is `switchModel`'s safety generalised to an arbitrary model
+with a containment check; **`switchModel` stays as its own entry point** because
+`jenova-core models switch instruct` is a shipped surface (Directive 3, asserted in
+`models-selftest`). `gui.nim` draws the panel and scores nothing, the same split as the
+Hardware screen.
 
 **Removed 2026-09-01 (G-46, ruling D-BW):** the document side panel. `vte.nim` lost
 `configureDoc` and `newDocTerminal`, `nvimctl.nim` lost `docSocketPath` and

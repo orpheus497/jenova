@@ -2,7 +2,7 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-09-01 19:05 (Session 019)
+**Last updated:** 2026-09-02 09:43 (Session 020)
 
 > **Reading the "UNRUN" labels in this file.** Entries below are point-in-time records
 > and several were written with a "compiled; UNRUN" status that was true on the day.
@@ -15,6 +15,22 @@ Macro progress tracking. Most recent entries at the top.
 ---
 
 ## Completed
+
+### 2026-09-02 09:43 — **D-CB: the model switcher draws from `instruct` and `thinking` only, swaps `agent`, and must not accumulate `.old` copies.** Answers Q-36; supersedes D-CA. `TODOS.md` G-48.
+
+### 2026-09-02 09:36 — **PDF attachment confirmed on screen by the USER.** Step 7b has no unverified claim left.
+
+### 2026-09-02 09:36 — **The model switcher does not work (G-48).** Reported from the screen; symptom not known, not diagnosed. Supersedes the 08:43 claim that 8a is built.
+
+### 2026-09-02 08:43 — **Step 8a built: the window has a real model selector (G-20).** `models.available` enumerates every `.gguf` in the tree — the enumerator 8a needed and `discover` could not be, since it resolves one path per fixed role and discards the rest — and `models.switchToPath` generalises the switch's four-step safety to an arbitrary model with a containment check, while `switchModel(home, "instruct"|"thinking")` stays as its own entry point (Directive 3, asserted). A Models panel lists every model with its role, size and which is active, with search and a per-row Switch dispatched to the control worker. **The two named quick-switches in the menu and the tray are kept, not replaced (D-CA)** — a D-Bus tray menu cannot host a list. **New self-test `models-selftest`, 15 assertions**, written as transitions over one fixture tree. Files: `models.nim`, `gui.nim`, `jenova_core.nim`.
+
+### 2026-09-02 08:43 — **Dependency added: `libz` (zlib licence, `/usr/lib/libz.so.1`), approved by the USER (D-BY).** Linked `-lz` from the new `src/jenova/zlib.nim`, bound as `uncompress`/`compress` only so no versioned C struct is mirrored into Nim (D-V).
+
+### 2026-09-02 08:43 — **Step 7b closed: PDF text extraction (G-30).** New `src/jenova/pdf.nim` — content streams, FlateDecode through `zlib.nim`, and the four text-showing operators — wired into `pipeline.readAttachment`, which previously refused every PDF as "not text". A PDF now attaches as its extracted text in the Web UI's own PDF shape (D-BP), so `contentFor` sends it as that surface does. **A PDF with no readable text is refused rather than attached empty** — a scan, an encrypted file or an Identity-H font all yield nothing, and an empty attachment would read as a working one (D-BY). **10 new assertions in `attach-selftest`**, both sides of every case, including a zlib round trip. Files: `zlib.nim` (new), `pdf.nim` (new), `pipeline.nim`, `gui.nim`, `jenova_core.nim`.
+
+### 2026-09-02 08:43 — **Audio capture is not built and is not gated (D-BZ).** Ruled by the USER. The existing `input_audio` send path in `contentFor` is retained under Directive 3 — it carries conversations imported from the frozen Web UI, and not building capture is not licence to delete what already sends.
+
+### 2026-09-02 08:13 — **Every devdoc claim audited against the source; seven false claims corrected. No code changed.** All ten trackers read in full. Everything claimed built verified by reading behaviour, not symbol existence — `workspace.contextFor`'s six documented behaviours and exact output strings, `nvimctl.editorEnv` returning the whole environment, `gui.fileAttachmentsAsArtefacts` filing at the conversation's own level, `api.restoreItem` re-indexing, the settings parity assertion checking both directions. **The serious finding is `BLUEPRINT.md` §10**, which said the desktop application has no attachments, no trash view, no stop control and no typed error reporting — all four built the previous day — and separately contradicted its own §7 on hardware profiles. That is D-AO's failure mode in the file D-AO was written about. Also corrected: two self-test counts, `hardware-selftest`'s "13 assertions" against twelve, G-37's stale addresses, and a Q-30 row the QUESTION STATUS index still carried as live. Files: `.devdocs/` only.
 
 ### 2026-09-02 07:51 — **10b built: an attachment is filed as a workspace `fileAssets` artefact as well as an inline payload (G-44, D-BV).** Written through `api.putEntity`, so `fssync.syncFileAsset` mirrors it and the same cascades apply; the inline base64 in `messages.extra` is unchanged (Q-34, parity). Closes the reader/writer gap G-43 left — `workspace.contextFor` already rendered `fileAssets` and nothing had ever written one. A chat with no workspace files nothing. Twelve self-tests pass, both binaries ELF FreeBSD, `--check` 0. Files: `gui.nim`.
 

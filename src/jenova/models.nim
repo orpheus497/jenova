@@ -138,18 +138,32 @@ proc targetModel*(jcaHome, target: string): string =
 ##    file is pointless. `.old.N` disambiguates when `.old` is taken.
 ## 4. **The swap is a rename**, which is atomic, so no reader ever sees the
 ##    directory without an active model.
-proc switchModel*(jcaHome, target: string): SwitchResult =
-  if target notin ["instruct", "thinking"]:
+proc switchToPath*(jcaHome, modelPath: string): SwitchResult =
+  ## The generalised half of `switchModel`, added for the model selector (8a):
+  ## the safety below is what is worth keeping, and the two-literal target
+  ## vocabulary was the only thing standing between it and an arbitrary model.
+  if not modelPath.endsWith(".gguf"):
+    raise newException(ModelError, "not a .gguf: " & modelPath)
+  if not (fileExists(modelPath) or symlinkExists(modelPath)):
+    raise newException(ModelError, "model does not exist: " & modelPath)
+
+  let modelsDir = jcaHome / "models"
+  # Action purpose: the selector takes a path from a list this program built, but
+  # `switchToPath` is exported and a caller could hand it anything. Activating a
+  # file from outside the model tree would put a symlink into `models/agent`
+  # pointing anywhere on the disk, so containment is checked here rather than
+  # trusted at the call site.
+  if not modelPath.isRelativeTo(modelsDir):
     raise newException(ModelError,
-      "target must be 'instruct' or 'thinking', got: " & target)
+      "model is outside " & modelsDir & ": " & modelPath)
 
   let
-    agentDir = jcaHome / "models" / "agent"
-    targetPath = targetModel(jcaHome, target)
-    targetName = targetPath.extractFilename
-    targetReal = try: targetPath.expandFilename except OSError: targetPath
+    agentDir = modelsDir / "agent"
+    targetName = modelPath.extractFilename
+    targetReal = try: modelPath.expandFilename except OSError: modelPath
 
   createDir(agentDir)
+  let linkTarget = relativePath(modelPath, agentDir)
 
   # Action purpose: a dotted temporary name ending in `.tmp.<pid>` cannot match
   # the `*.gguf` scan below, so the clearing loop can never mistake the
@@ -157,7 +171,7 @@ proc switchModel*(jcaHome, target: string): SwitchResult =
   let tmpLink = agentDir / ("." & targetName & ".tmp." & $getCurrentProcessId())
 
   removeFile(tmpLink)
-  createSymlink(".." / target / targetName, tmpLink)
+  createSymlink(linkTarget, tmpLink)
 
   let tmpReal = try: tmpLink.expandFilename except OSError: ""
   if tmpReal.len == 0 or tmpReal != targetReal:
@@ -193,4 +207,70 @@ proc switchModel*(jcaHome, target: string): SwitchResult =
   moveFile(tmpLink, agentDir / targetName)
 
   result.target = targetName
-  result.message = "switched to " & target & " model: " & targetName
+  result.message = "switched to model: " & targetName
+
+## Function purpose: the two named targets the tray and the model menu have
+## always offered. **Kept as its own entry point rather than folded into
+## `switchToPath`** — Directive 3: `jenova-core models switch instruct` is a
+## shipped surface and must keep working unchanged.
+proc switchModel*(jcaHome, target: string): SwitchResult =
+  if target notin ["instruct", "thinking"]:
+    raise newException(ModelError,
+      "target must be 'instruct' or 'thinking', got: " & target)
+  result = switchToPath(jcaHome, targetModel(jcaHome, target))
+  result.message = "switched to " & target & " model: " & result.target
+
+type
+  InstalledModel* = object
+    ## One `.gguf` the tree holds, as a model list needs it.
+    path*: string    ## absolute
+    name*: string    ## file name
+    role*: string    ## the `models/` subdirectory it sits in; "" for a flat one
+    bytes*: int64
+    active*: bool    ## resolves to the same file as the live `models/agent` link
+
+## Function purpose: the real file the active agent model points at, or "" when
+## there is none. Every row's `active` flag is this compared against.
+proc activeAgentPath*(jcaHome: string): string =
+  let cur = findModel(jcaHome / "models" / "agent")
+  if cur.len == 0: return ""
+  try: cur.expandFilename except OSError: cur
+
+## Function purpose: every model on disk, which is what a selector draws.
+##
+## **`discover` cannot answer this and that is why this exists** (8a): it
+## resolves *one* path for one of three fixed roles and throws the rest of the
+## directory away. Backups are skipped for the reason `isBackup` records — a
+## `.old` is a previous model, not an installed one — and `models/agent` is
+## skipped because its entries are symlinks to rows already listed under their
+## own role, which would otherwise appear twice.
+proc available*(jcaHome: string): seq[InstalledModel] =
+  let
+    modelsDir = jcaHome / "models"
+    activeReal = activeAgentPath(jcaHome)
+  if not dirExists(modelsDir): return
+
+  # The flat directory first, then each role beneath it. `agent` is deliberately
+  # not scanned; see the note above.
+  var dirs = @[(modelsDir, "")]
+  for kind, path in walkDir(modelsDir):
+    if kind notin {pcDir, pcLinkToDir}: continue
+    let role = path.extractFilename
+    if role == "agent": continue
+    dirs.add (path, role)
+
+  for (dir, role) in dirs:
+    if not dirExists(dir): continue
+    for kind, path in walkDir(dir):
+      if kind notin {pcFile, pcLinkToFile}: continue
+      if not path.endsWith(".gguf"): continue
+      if path.isBackup: continue
+      var size = 0'i64
+      try: size = getFileSize(path) except CatchableError: discard
+      let real = try: path.expandFilename except OSError: path
+      result.add InstalledModel(path: path, name: path.extractFilename,
+                                role: role, bytes: size,
+                                active: activeReal.len > 0 and real == activeReal)
+
+  result.sort(proc (a, b: InstalledModel): int =
+    if a.role != b.role: cmp(a.role, b.role) else: cmp(a.name, b.name))

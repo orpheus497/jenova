@@ -7,12 +7,12 @@ resolution. Most recent entries at the top.
 
 ## QUESTION STATUS — read this before asking the USER anything
 
-**NO QUESTIONS ARE OPEN.** Q-34 and Q-35 were raised at 18:29 and **answered by the USER
-at 18:41, the same session.** Both answers *reduce* scope rather than adding it, and both
-are recorded below with their consequences so neither is re-raised.
+**NO QUESTIONS ARE OPEN.** Q-34 and Q-35 were answered 2026-09-01; Q-36 was raised and
+answered 2026-09-02 (**D-CB**).
 
 | Question | Answer |
 |---|---|
+| **Q-36 — does the model selector replace the named switch, or duplicate it?** | **ANSWERED 2026-09-02: keep a selector, but it draws only from `instruct` and `thinking` and swaps what is in `agent`. D-CB.** |
 | **Q-35 — may the panel editor edit a `notes` row?** | **ANSWERED 2026-09-01: no. Keep the existing notes editor and do not replace it with Neovim** — and **remove the document side panel entirely.** Ruled as **D-BW**, which supersedes D-BT. **T-11 is not touched by any of this**, which is the point: with notes in their own editor and Neovim confined to the editor page, there is no second writer against an authoritative row at all |
 | **Q-34 — does `messages.extra` keep the inline payload once a file is an artefact?** | **ANSWERED 2026-09-01: yes — parity with the Web UI.** The inline base64 stays exactly as D-BP stores it; the `fileAssets` artefact is written **in addition**. **This closes Step 7d**, which existed only to ask this. The memory and per-turn upload cost D-BP names is accepted deliberately, and Step 7c is what makes it tolerable |
 | **Q-33 — an oversized attachment: refuse it, or truncate it?** | **ANSWERED 2026-09-01: REFUSE. The cap is 25 MB.** Ruled as **D-BQ**. **The USER had already given this answer repeatedly before it was asked, and asking it again was a Rule 8 violation.** It is not to be raised in any form again — not as "refuse or truncate", not as "what cap", not as "should the limit apply to documents as well as images" |
@@ -104,6 +104,94 @@ further down is left in place for the historical record; **this table overrides 
 ---
 
 ---
+
+---
+
+## D-CB — what the model switcher is allowed to do — 2026-09-02 09:43
+
+**Ruled by the USER, answering Q-36. A selector is wanted; the one that shipped is
+wrong.**
+
+1. **It draws from `models/instruct` and `models/thinking` only.** Not every directory
+   under `models/`. Offering an embed model or a speculative-decoding drafter as the
+   agent model produces a configuration that does not match what `lifecycle` launches.
+2. **It swaps what is in `models/agent`.** That is the whole operation.
+3. **The user owns the two source folders** — reasoning models in `thinking`, instruct
+   models in `instruct`. The switcher reads them; it does not manage them.
+4. **It must not accumulate copies.** The `.old`/`.old.N` backup chain leaves a directory
+   full of near-duplicate links after a few switches.
+
+**Consequence:** `models.available` is wrong as written — it scans every subdirectory —
+and the backup behaviour inherited from `bin/jenova-model-switch` is wrong for repeated
+use. `TODOS.md` **G-48**.
+
+**D-CA is superseded.** The window keeps one way to switch, not two.
+
+---
+
+## D-CA — **SUPERSEDED by D-CB.** The selector was added beside the named switches — 2026-09-02 08:43
+
+Taken while building 8a. `PLANS.md` said "replace the four literals". **They are kept**,
+because Directive 3 permits removing a feature only on explicit instruction and the USER
+gave none — and because a **D-Bus tray menu cannot host a searchable list at all**, so
+removing them there would delete the tray's only way to change model and replace it with
+nothing.
+
+So the window gains a Models panel and a `Models…` menu item, and the two quick-switches
+stay under it as the shortcut they always were. `switchModel(home, "instruct")` still
+works unchanged and is asserted in `models-selftest` for exactly that reason.
+
+---
+
+## D-BZ — audio capture is **not built**. The `input_audio` send path stays — 2026-09-02 08:43
+
+**Ruled by the USER:** they do not need audio now, and have said so repeatedly across
+sessions. Recorded here so it stops being re-raised as a gated decision: **it is not
+gated, it is not scheduled, and it is not to be put to them again.**
+
+**What is *not* removed, and the distinction matters.** `pipeline.contentFor` already
+emits `input_audio` parts for an `AUDIO` attachment, and `ParseMemo` deliberately keeps
+the unreduced node so those survive to the request (D-BP). **That is a send path for a
+conversation imported from the frozen Web UI, not a capture feature** — deleting it would
+silently drop content a user attached on the other surface, and Directive 3 forbids it.
+**Not building capture is not licence to remove what already sends.**
+
+---
+
+## D-BY — **libz is an approved dependency.** PDF text extraction is built — 2026-09-02 08:43
+
+**Ruled by the USER**, who records having given this answer every session for weeks. It
+had been carried as "gated on a dependency decision" since Step 7b was written, which is
+what made them repeat it — the same defect D-BQ was created to stop, in a new place.
+**It is now recorded, so it stops depending on the USER saying it again.**
+
+**The dependency.** `/usr/lib/libz.so.1` — FreeBSD base, zlib licence, which AGENTS.md
+Directive 2 names explicitly. Linked with `-lz` from the new `src/jenova/zlib.nim`.
+
+**Bound as `uncompress`/`compress` and nothing else, which is D-V applied.** Those entry
+points take no struct, so no versioned C layout is mirrored into Nim — hand-declaring
+`z_stream` would rebuild the `ffi_defs.lua` defect class this migration exists to have
+deleted. The header supplies the prototypes and the C compiler owns them.
+
+**`deflate` exists for the assertions, not for the product** — nothing in Jenova
+compresses anything. `rag.vectorRoundTrip` is the precedent: a codec is proven by putting
+a known value through both directions, and asserting against pre-compressed bytes
+embedded as a literal would be asserting against something no reader can check.
+
+**Two calls taken inside the scope:**
+
+1. **A PDF with no readable text is refused, never attached empty.** A scan, an encrypted
+   file and a font this reader cannot decode all produce nothing, and an empty attachment
+   would look exactly like a working one while the model answered about nothing — the same
+   class as a truncated file (D-BQ) and an unset value sent as zero (D-BK).
+2. **Extraction is a text extractor, not a renderer, and the limit is stated rather than
+   discovered.** Content streams and the four text-showing operators; no layout, no
+   reading order, no page images. A font using Identity-H encodes glyph indices, so
+   `pdf.looksReadable` rejects the result instead of attaching mojibake.
+
+**Storage is the Web UI's own PDF shape** — `{"type":"PDF", "content":…,
+"processedAsImages":false}` — so `contentFor` sends it exactly as that surface does and an
+exported conversation still opens there (D-BP, D-Z).
 
 ---
 

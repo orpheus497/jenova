@@ -36,6 +36,7 @@ import ./workspace
 import ./sha256
 import ./nvimctl
 import ./settings
+import ./pdf
 
 type
   Prepared* = object
@@ -679,6 +680,23 @@ proc readAttachment*(path: string, visionKnown, visionOk: bool):
     return (true, Attachment(kind: "IMAGE", name: name,
       payload: "data:" & mimeForImage(ext) & ";base64," & base64.encode(data),
       bytes: data.len, key: key), "")
+
+  # Step 7b, closed 2026-09-02: a PDF is attached as its extracted text. It is
+  # tried before `looksTextual` because a PDF is binary and that test refuses it.
+  #
+  # Action purpose: **no text means refuse, never attach an empty document.** A
+  # scanned page carries images and no text objects, and an empty attachment
+  # would look exactly like a working one while the model answered about nothing
+  # — the same defect as a truncated file (D-BQ) and an unset value sent as zero
+  # (D-BK).
+  if ext == ".pdf":
+    let text = pdf.textFrom(data)
+    if text.len == 0:
+      return (false, Attachment(), name &
+        " has no text Jenova can read — it is most likely a scan, an encrypted " &
+        "file, or a font this reader cannot decode. Attach the text itself.")
+    return (true, Attachment(kind: "PDF", name: name, payload: text,
+                             bytes: text.len, key: key), "")
 
   if not looksTextual(data):
     return (false, Attachment(),

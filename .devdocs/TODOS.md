@@ -1,6 +1,6 @@
 # TODOS
 
-**Last updated:** 2026-09-02 08:13 (Session 020)
+**Last updated:** 2026-09-02 09:43 (Session 020)
 
 Only what is actually outstanding. Everything finished lives in `PROGRESS.md`.
 
@@ -153,12 +153,10 @@ Enumerated 2026-09-01 by reading `jca_web/src/lib/components/app/*/index.ts` —
 barrel files that list every shipped component. That is the authoritative inventory;
 check any future scope claim against it, not against a summary.
 
-**Ordering and the work for each item is `PLANS.md`.** The mapping:
-What is left of G-30 is Step 7b · G-20, G-21 and G-17 are Step 8.
-**Steps 1-7 are built.** G-33 (the stop button), G-34 (tables, task lists,
-strikethrough), G-35 (typed errors and Retry) and G-36 (delete confirmations)
-are done and gone from this file — the record is `PROGRESS.md`. **Step 8 is
-next**, with what remains of attachments (7b) alongside it.
+**Ordering and the work for each item is `PLANS.md`.** Steps 1-7 are built and Step
+7b is closed (PDF, confirmed on screen). Of Step 8: **8b is built; 8a shipped and
+does not work (G-48); 8c — make the notes editor good (G-17) — is untouched.**
+G-33, G-34 (minus LaTeX), G-35, G-36 and G-30 are done; the record is `PROGRESS.md`.
 
 **Done and gone from this file** (2026-09-01, all in `PROGRESS.md`):
 
@@ -185,55 +183,33 @@ next**, with what remains of attachments (7b) alongside it.
   and folded away above it, open while the turn is streaming.
 - **The statistics half of G-33.** G-33 remains, reduced to the stop button.
 
-### G-30 — Attachments: all three routes are in; two formats are not
+**G-30 is gone from this file because it is done** (`PROGRESS.md`, 2026-09-02 08:43),
+and **the USER confirmed it on screen at 09:36 — uploading a PDF works, "basic".**
+Per the completion rule its record lives in `PROGRESS.md`. **Audio capture is not
+built and is not gated (D-BZ)** — ruled by the USER; the `input_audio` *send* path
+stays under Directive 3 because it carries imported Web UI conversations.
 
-**Built 2026-09-01** (`PROGRESS.md`). **All three of the Web UI's routes in now
-work** — a file picker, **drag-and-drop** onto the chat column, and **paste of an
-image from the clipboard**. Staged files show as chips with **real thumbnails**,
-clicking one opens a **full-size preview**, and a sent turn shows what was
-attached to it. Stored in `messages.extra` in the frozen Web UI's shape (D-BP)
-and sent as OpenAI content parts by `pipeline.contentFor`.
+**G-20 is NOT done.** Recorded as built at 08:43; the USER ran it and the switcher
+does not work. A defect report from the screen outranks a session's claim (rule 1).
 
-**What is left, and both have a reason rather than an omission:**
+### G-48 — the model switcher does not work, and what shipped was the wrong shape
 
-| | |
-|---|---|
-| **PDFs** | **Blocked on a dependency decision — yours.** `contentFor` already *sends* a PDF carrying extracted text or page images, which is what an imported Web UI conversation has, but Jenova cannot produce either. Extraction needs **FlateDecode**, i.e. zlib inflate: Nim's stdlib has none, so it means linking `libz` (`/usr/lib/libz.so.1` is present, zlib licence, which AGENTS.md permits). **That is a dependency change and Directive 1 gates it.** Nothing else about the parser is hard |
-| **Audio capture** | **Raise before building, as `PLANS.md` has said since 7b was written.** `contentFor` emits `input_audio` parts already; nothing records. It needs either `/dev/dsp` ioctl work or a capture library, **and the models in use have no audio modality**, so it may buy nothing at all |
+**Reported by the USER 2026-09-02 09:36. The symptom is not known** and is not inferred
+(rule 1) — `models-selftest` passes against a fixture tree, which says nothing about the
+window (rule 15).
 
+**What it must do instead (D-CB):**
 
-### G-20 — The model selector is two hardcoded menu items
+- draw only from `models/instruct` and `models/thinking` — **not every subdirectory**,
+  which is what `models.available` does today and which offers embed and draft models as
+  the agent model
+- swap what is in `models/agent`, and nothing else
+- **not accumulate `.old` copies** on repeated switches
 
-Still open, unchanged, and now with the scale stated. The Web UI has a searchable
-model list with per-model status (loading/ready/error), capability badges, favourites,
-load/unload, and a full model-information dialog showing context size, parameter
-count, quantisation, vocabulary size, parallel slots, modalities and the chat template.
+**One way to switch in the window, not two.** D-CA is superseded.
 
-**The Nim GUI has "Switch to instruct model" and "Switch to thinking model"** — two
-hardcoded menu items in the window's model menu, and **the same two hardcoded again**
-in `gui.trayMenu`. Search the two literals; do not chase a line number.
-
-**And `models.discover` is never called from `gui.nim` at all** — verified
-2026-09-01 18:07, the only `models.*` call in the whole GUI is
-`models.switchModel(j.jcaHome, target)` in the control worker.
-
-**The 2026-09-02 audit found this is understated, and the correction changes the
-work.** `models.discover` has **no caller anywhere in the product** — not in
-`gui.nim`, and not in `jenova-core models list` either, which echoes three
-`config` values and never asks `models.nim` anything. It is dead code.
-
-**And feeding it would not build a selector, because it is not a lister.**
-`models.discover(jcaHome, kind)` returns **one path** for one of three fixed roles
-(agent / draft / embed): an env override, else the first `.gguf` in sorted order
-from `models/<role>`. `models.switchModel` refuses any target that is not the
-literal string `"instruct"` or `"thinking"`. **So there is no enumeration to draw
-and no way to activate an arbitrary model** — this is *not* T-17's shape (a
-finished engine with nothing feeding it). See `PLANS.md` 8a, rewritten against the
-source on 2026-09-02.
-
-Backend as it actually stands: `models.discover` (role resolver, dead),
-`models.switchModel` (two literal targets), `models.targetModel`,
-`models.countDevices` (`src/jenova/models.nim`).
+**What is left of G-34: LaTeX maths.** Tables, task lists and strikethrough are
+built; KaTeX has no GTK equivalent and rendering maths is its own project.
 
 ### G-17 — The note editor is a plain text box
 

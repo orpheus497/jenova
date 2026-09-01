@@ -2,7 +2,7 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-09-02 08:13 (Session 020)
+**Last updated:** 2026-09-02 09:43 (Session 020)
 
 **Write plans in plain English, then cite the ID** (**D-BA**). A step that reads
 "resolve G-23" tells the reader nothing. Say what the thing is first.
@@ -301,18 +301,19 @@ preview**, and a sent turn shows what was attached to it.
 and was forced anyway: the drop drain runs inside the window's own timer, where a
 proc taking the GUI's state type does not yet exist.
 
-**What is left, and neither is an omission:**
+**Both remaining items are settled — 2026-09-02, and 7b is closed.**
 
-1. **PDFs — gated on a dependency decision.** Extraction needs FlateDecode, i.e.
-   zlib inflate. Nim's stdlib has none, so it means linking `libz` — present at
-   `/usr/lib/libz.so.1`, zlib licence, which AGENTS.md permits. **Directive 1
-   gates a dependency change, so this is the USER's call.** `contentFor` already
-   sends a PDF that carries text or page images, which an imported Web UI
-   conversation has.
-2. **Audio capture — raise before building**, as this plan has said since 7b was
-   written. `input_audio` parts are already emitted; nothing records. It needs
-   `/dev/dsp` ioctl work or a capture library, **and no model in use has an audio
-   modality**, so it may buy nothing.
+1. **PDFs — BUILT.** **libz is an approved dependency (D-BY)**, ruled by the USER
+   after they had given the same answer across several sessions. New
+   `src/jenova/zlib.nim` (bound as `uncompress`/`compress` only, so no versioned
+   struct is mirrored — D-V) and `src/jenova/pdf.nim` (content streams and the
+   four text-showing operators). `readAttachment` attaches a PDF as its extracted
+   text in the Web UI's own PDF shape. **A PDF with no readable text is refused,
+   never attached empty.**
+2. **Audio capture — NOT BUILT and not gated (D-BZ).** Ruled by the USER: they do
+   not need it. **It is not to be put to them again.** The `input_audio` *send*
+   path stays under Directive 3 — it carries imported Web UI conversations, and
+   not building capture is not licence to delete what already sends.
 
 **Proof:** `attach-selftest`, **27 assertions**, five clean reds across two
 rounds. The part order is asserted, so a divergence from the Web UI names itself;
@@ -534,7 +535,35 @@ source first. The view itself is widgets and is a USER run.
 
 ---
 
-### 8a. Model selector and model information *(G-20)* — **rewritten 2026-09-02 08:01 against the source**
+### 8a. **SHIPPED AND WRONG — reopened 2026-09-02.** Model selector *(G-20, G-48)*
+
+Recorded as built at 08:43; the USER ran it and it does not work. **The symptom is not
+known** and is not to be guessed at (rule 1, D-AN).
+
+**The shape is also wrong, and that is settled — D-CB.** It must draw from
+`models/instruct` and `models/thinking` only, swap `models/agent`, and stop accumulating
+`.old` copies. What shipped scans every subdirectory, so it offers embed and draft models
+as the agent model.
+
+**The work:**
+
+1. Narrow `models.available` to the two source folders.
+2. Replace the `.old` chain with something that does not fill the directory.
+3. One switch surface in the window, not two (D-CB supersedes D-CA).
+4. Find out what the reported failure actually is before changing the panel.
+
+**In the tree now:** `models.available`, `activeAgentPath`, `switchToPath` in
+`models.nim`; `gui.modelsPanel`; `models-selftest`. **`switchModel` and
+`jenova-core models switch` are untouched and still work.**
+
+**Model information was never built** — context size, quantisation, vocabulary, chat
+template need `/props` plus a GGUF header read. Separate work.
+
+The original write-up follows.
+
+---
+
+### 8a as planned — kept for the record. **Rewritten 2026-09-02 08:01 against the source**
 
 Replace the two hardcoded menu items — the literals **"Switch to instruct model"** and
 **"Switch to thinking model"**, which appear **twice each**: once in the window's model
@@ -821,10 +850,14 @@ Both binaries build, **twelve self-tests pass**, `bin/jenova --check` exits 0.
 
 ## Ordering — set 2026-09-01 18:41
 
-**Done: Step 11, 10c, 10a, 8b — see above.** What remains, in order:
+**Done: Step 11, 10c, 10a, 8b, and — 2026-09-02 — Step 7b (PDF), confirmed on screen.**
+What remains, in order:
 
-**8a** — the model selector (G-20), whose first job is that `models.discover` has no
-caller in `gui.nim` at all. **8c** — make the notes editor good (G-17, D-BW).
+**G-48 first** — the model switcher, rebuilt to D-CB. It is the only thing in the tree
+that is broken rather than absent.
+
+**Then 8c** — make the notes editor good (G-17, D-BW). The last unbuilt item of Step 8
+and the smallest that item has ever been.
 
 **Then the two open defects, both widget behaviour and both a USER run:** **G-42**
 (markdown tables now render larger than their content) and **G-47** (the editor page's

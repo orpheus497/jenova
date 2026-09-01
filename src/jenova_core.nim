@@ -22,7 +22,7 @@ when not defined(freebsd):
 import std/[os, sequtils, strformat, strutils, json]
 import jenova/[paths, config, db, dbselftest, server, serverselftest, markdown,
                rag, sha256, pipeline, prompts, lifecycle, models, nvimctl, api,
-               settings, hardware, workspace]
+               settings, hardware, workspace, pdf, zlib]
 
 const
   Version = "0.1.0"
@@ -55,7 +55,8 @@ proc usage() =
   echo "  Self-tests: db-selftest, serve-selftest, rag-selftest,"
   echo "              pipeline-selftest, sha256-selftest, tree-selftest,"
   echo "              hardware-selftest, markdown-selftest, error-selftest,"
-  echo "              attach-selftest"
+  echo "              attach-selftest, workspace-selftest, nvim-env-selftest,"
+  echo "              models-selftest"
   echo ""
   echo "Precedence: builtin default < etc/jenova.conf < etc/jenova.local.conf < environment"
   echo "JENOVA_NO_BACKENDS=1  serve without starting llama-server (used by the tests)"
@@ -741,6 +742,76 @@ proc main() =
         check("a continued message is re-parsed", extended.parses == 2,
               "parses = " & $extended.parses)
 
+      # Step 7b, closed 2026-09-02 — PDF text extraction, unblocked by the
+      # USER's approval of libz. Every assertion here varies the *data*: the
+      # same page is built compressed and uncompressed, and the negative cases
+      # are a PDF with no text and a file that is not one (D-BX).
+      block pdfText:
+        proc onePagePdf(streamBody: string, flate: bool): string =
+          let body = if flate: zlib.deflate(streamBody).data else: streamBody
+          result = "%PDF-1.4\n1 0 obj\n<< /Length " & $body.len &
+                   (if flate: " /Filter /FlateDecode" else: "") &
+                   " >>\nstream\n" & body & "\nendstream\nendobj\n%%EOF\n"
+
+        const Page = "BT /F1 12 Tf 72 720 Td (Hello from a PDF) Tj ET"
+
+        let plain = pdf.textFrom(onePagePdf(Page, flate = false))
+        check("an uncompressed content stream yields its text",
+              plain.contains("Hello from a PDF"), plain)
+
+        let flated = pdf.textFrom(onePagePdf(Page, flate = true))
+        check("a FlateDecode stream yields the same text", flated == plain,
+              "flate=" & flated & " plain=" & plain)
+
+        # The round trip is what proves the binding rather than the fixture.
+        let round = zlib.inflate(zlib.deflate(Page).data)
+        check("zlib round-trips a payload byte-exact",
+              round.ok and round.data == Page)
+
+        # TJ splits a word across kerning entries. Flushing per string would
+        # put a space inside it, so this asserts the join and not the parts.
+        let kerned = pdf.textFrom(onePagePdf(
+          "BT [(Hel) -250 (lo)] TJ ET", flate = false))
+        check("a kerned TJ array is one word", kerned.contains("Hello"), kerned)
+
+        # A hex string is the other way a PDF writes text.
+        let hexed = pdf.textFrom(onePagePdf(
+          "BT <48656C6C6F> Tj ET", flate = false))
+        check("a hex string decodes", hexed.contains("Hello"), hexed)
+
+        # An escaped paren inside a literal must not end the string early.
+        let escaped = pdf.textFrom(onePagePdf(
+          "BT (a \\(b\\) c) Tj ET", flate = false))
+        check("an escaped paren does not truncate the string",
+              escaped.contains("a (b) c"), escaped)
+
+        # The negatives, and they are the ones that matter: an empty answer must
+        # come back empty so `readAttachment` refuses rather than attaching a
+        # blank document that reads as a working one.
+        let imageOnly = pdf.textFrom(
+          "%PDF-1.4\n1 0 obj\n<< /Length 4 >>\nstream\nq Q\nendstream\n%%EOF\n")
+        check("a page with no text objects yields nothing", imageOnly.len == 0,
+              imageOnly)
+        check("a file that is not a PDF yields nothing",
+              pdf.textFrom("just some text").len == 0)
+
+        # And the refusal itself, through the classifier the picker calls.
+        let tmp = getTempDir() / "jenova-selftest-empty.pdf"
+        writeFile(tmp, "%PDF-1.4\n1 0 obj\n<< >>\nstream\nq Q\nendstream\n")
+        let refused = pipeline.readAttachment(tmp, true, true)
+        check("a PDF with no readable text is refused, not attached",
+              not refused.ok and refused.err.contains("no text"), refused.err)
+
+        let good = getTempDir() / "jenova-selftest-good.pdf"
+        writeFile(good, onePagePdf(Page, flate = true))
+        let got = pipeline.readAttachment(good, true, true)
+        check("a readable PDF attaches as PDF carrying its text",
+              got.ok and got.att.kind == "PDF" and
+              got.att.payload.contains("Hello from a PDF"),
+              got.att.kind & " / " & got.att.payload)
+        removeFile(tmp)
+        removeFile(good)
+
       if bad == 0:
         echo ""
         echo "attach-selftest: PASS"
@@ -1216,6 +1287,112 @@ proc main() =
         quit(0)
       echo ""
       echo "nvim-env-selftest: FAIL (", bad, ")"
+      quit(1)
+    of "models-selftest":
+      # Action purpose: 8a. The model selector picks from a list, and a list that
+      # quietly omits a model or offers a `.old` backup as an installed one is a
+      # defect no screenshot shows — the wrong model simply loads. The
+      # enumeration and the switch are below the widget layer, so both are
+      # asserted here against a fixture tree with no window and no GPU.
+      var bad = 0
+      proc check(label: string, cond: bool, detail = "") =
+        if cond: echo "  ok   ", label
+        else:
+          echo "  FAIL ", label, (if detail.len > 0: "\n       " & detail else: "")
+          inc bad
+
+      echo "models-selftest"
+
+      let home = getTempDir() / "jenova-models-selftest"
+      removeDir(home)
+      createDir(home / "models" / "instruct")
+      createDir(home / "models" / "thinking")
+      writeFile(home / "models" / "instruct" / "alpha.gguf", "a")
+      writeFile(home / "models" / "thinking" / "beta.gguf", "bb")
+      # A backup of a previous switch. It sits beside a live model and must never
+      # be offered as one — selecting it would activate a superseded file.
+      writeFile(home / "models" / "instruct" / "gamma.gguf.old", "ccc")
+
+      block enumeration:
+        let all = models.available(home)
+        var names: seq[string]
+        for m in all: names.add m.name
+        check("every installed model is listed",
+              "alpha.gguf" in names and "beta.gguf" in names, $names)
+        check("a .old backup is not listed", "gamma.gguf.old" notin names,
+              $names)
+        check("the role is the directory it sits in",
+              all.filterIt(it.name == "alpha.gguf")[0].role == "instruct")
+        check("an empty tree lists nothing rather than failing",
+              models.available(getTempDir() / "jenova-models-absent").len == 0)
+
+      block switching:
+        # The transition is the assertion (D-BX): nothing is active, then alpha
+        # is and beta is not, then beta is and alpha is not.
+        check("nothing is active before a switch",
+              models.available(home).allIt(not it.active))
+
+        let alpha = home / "models" / "instruct" / "alpha.gguf"
+        discard models.switchToPath(home, alpha)
+        var rows = models.available(home)
+        check("the switched model reads as active",
+              rows.filterIt(it.name == "alpha.gguf")[0].active)
+        check("the others do not",
+              rows.filterIt(it.name == "beta.gguf")[0].active == false)
+
+        # Relative, not absolute — an absolute link works until the tree moves.
+        let link = expandSymlink(home / "models" / "agent" / "alpha.gguf")
+        check("the link target is relative", link.startsWith(".."), link)
+
+        let beta = home / "models" / "thinking" / "beta.gguf"
+        discard models.switchToPath(home, beta)
+        rows = models.available(home)
+        check("switching again moves the active flag",
+              rows.filterIt(it.name == "beta.gguf")[0].active and
+              rows.filterIt(it.name == "alpha.gguf")[0].active == false)
+        check("the displaced model is preserved as .old, not deleted",
+              fileExists(home / "models" / "agent" / "alpha.gguf.old") or
+              symlinkExists(home / "models" / "agent" / "alpha.gguf.old"))
+
+      block refusals:
+        # Containment. `switchToPath` is exported, so a path outside the model
+        # tree must be refused here rather than trusted at the call site.
+        var refusedOutside = false
+        try:
+          discard models.switchToPath(home, getTempDir() / "elsewhere.gguf")
+        except models.ModelError:
+          refusedOutside = true
+        check("a model outside models/ is refused", refusedOutside)
+
+        var refusedKind = false
+        try:
+          discard models.switchToPath(home, home / "models" / "notes.txt")
+        except models.ModelError:
+          refusedKind = true
+        check("a file that is not a .gguf is refused", refusedKind)
+
+      block namedTargetsSurvive:
+        # Directive 3. `jenova-core models switch instruct` is a shipped surface
+        # and routing it through `switchToPath` must not have changed it.
+        let r = models.switchModel(home, "instruct")
+        check("the named instruct target still switches",
+              r.target == "alpha.gguf", r.target)
+        check("its message still names the target",
+              r.message.contains("instruct"), r.message)
+        var refusedName = false
+        try:
+          discard models.switchModel(home, "banana")
+        except models.ModelError:
+          refusedName = true
+        check("an unknown named target is still refused", refusedName)
+
+      removeDir(home)
+      if bad == 0:
+        echo ""
+        echo "models-selftest: PASS"
+        quit(0)
+      echo ""
+      echo "models-selftest: FAIL (", bad, ")"
       quit(1)
     of "hardware-selftest":
       # Action purpose: profile scoring decides which tuning the machine runs

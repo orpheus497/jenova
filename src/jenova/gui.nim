@@ -145,6 +145,8 @@ type
     msgId: string
     ## S-1: which profile an `apply_profile` job should deploy.
     profileName: string
+    ## 8a: which `.gguf` a `switch_path` job should make active.
+    modelPath: string
 
   UiMsgKind = enum
     umToken, umDone, umError, umNotice, umStatus,
@@ -753,6 +755,16 @@ proc ctlWorker() {.thread.} =
         uiChan.send(UiMsg(kind: umNotice, text: r.message & " - restart to load it"))
       except CatchableError as e:
         uiChan.send(UiMsg(kind: umNotice, text: "switch failed: " & e.msg))
+    of "switch_path":
+      # 8a. The selector's own switch. It goes to the worker rather than running
+      # inline for the reason the two named ones do — it renames files under
+      # `models/agent`, and the GTK thread is drawing while it happens.
+      try:
+        let r = models.switchToPath(j.jcaHome, j.modelPath)
+        uiChan.send(UiMsg(kind: umNotice,
+                          text: r.message & " - restart to load it"))
+      except CatchableError as e:
+        uiChan.send(UiMsg(kind: umNotice, text: "switch failed: " & e.msg))
     of "web":
       discard runCapture("xdg-open", ["http://127.0.0.1:" & $j.port])
     of "poll":
@@ -960,6 +972,13 @@ viewable App:
   ## checks it key for key — a Jenova-only section added there would turn it red
   ## for no defect. `hwDetecting` is what the panel shows while the control
   ## worker is out; detection is never run on this thread.
+  ## 8a: the model selector. `modelList` is filled when the panel opens and
+  ## never from `view` — enumerating the tree on every frame is the per-frame
+  ## cost G-40 was, in a new place.
+  modelsOpen: bool
+  modelList: seq[models.InstalledModel]
+  modelFilter: string
+
   hardwareOpen: bool
   ## G-21. Everything deleted is a soft delete and had no surface at all, which
   ## makes a delete indistinguishable from data loss — the hazard the confirm
@@ -1690,6 +1709,13 @@ proc pendingExtra(app: AppState): string =
   for a in app.pending:
     if a.kind == "IMAGE":
       arr.add %*{"type": "IMAGE", "name": a.name, "base64Url": a.payload}
+    elif a.kind == "PDF":
+      # The Web UI's own PDF shape, so `contentFor` sends it as that surface
+      # does and an exported conversation still opens there (D-BP).
+      # `processedAsImages` is false because this reader extracts text, never
+      # page images — and `contentFor` branches on exactly that flag.
+      arr.add %*{"type": "PDF", "name": a.name, "content": a.payload,
+                 "processedAsImages": false}
     else:
       arr.add %*{"type": "TEXT", "name": a.name, "content": a.payload}
   $arr
@@ -3311,6 +3337,108 @@ proc hardwarePanel(app: AppState): Widget =
                         wrap = true
                         style = [StyleClass("settings-help")]
 
+## Function purpose: open the model selector, reading the tree once (8a, G-20).
+##
+## Action purpose: the enumeration happens **here and not in `view`**. It is a
+## directory walk with a `getFileSize` per entry — cheap, but `view` runs on
+## every frame, and doing it there is the class of defect G-40 was.
+proc openModels(app: AppState) =
+  app.modelList = models.available(app.lc.paths.jcaHome)
+  app.modelFilter = ""
+  app.modelsOpen = true
+
+## Function purpose: make one model active, on the worker (8a).
+proc switchToModel(app: AppState, path: string) =
+  ctlReq.send(ControlJob(action: "switch_path", jcaHome: app.lc.paths.jcaHome,
+                         modelPath: path))
+  app.modelsOpen = false
+
+## Function purpose: the model selector (G-20) — every `.gguf` the tree holds,
+## which one is active, and a switch per row.
+##
+## **The two named quick-switches in the menu and the tray are kept, not
+## replaced** (Directive 3): they are a shipped surface, and a D-Bus tray menu
+## cannot host a searchable list at all. This is the list they never were.
+##
+## What it draws comes from `models.available`; this proc only lays it out,
+## which is what let the enumeration and the switch be asserted in
+## `models-selftest` with no window.
+proc modelsPanel(app: AppState): Widget =
+  gui:
+    Box(orient = OrientY):
+      # Same shape as the settings and hardware panels: always in the tree,
+      # insensitive when closed so it does not swallow clicks.
+      sensitive = app.modelsOpen
+      style = (if app.modelsOpen: @[StyleClass("settings-scrim")]
+               else: newSeq[StyleClass]())
+      if app.modelsOpen:
+        Box(orient = OrientY, spacing = 8, margin = 24) {.hAlign: AlignCenter,
+                                                          vAlign: AlignCenter.}:
+          sizeRequest = (720, 560)
+          style = [StyleClass("settings-panel")]
+
+          Box(orient = OrientX, spacing = 8) {.expand: false.}:
+            Label {.expand: true.}:
+              text = "Models"
+              xAlign = 0.0
+              style = [StyleClass("brand"), StyleClass("brand-purple")]
+            Button {.expand: false.}:
+              icon = "view-refresh-symbolic"
+              tooltip = "Re-read the model directory"
+              style = [ButtonFlat, StyleClass("row-btn")]
+              proc clicked() = app.openModels()
+            Button {.expand: false.}:
+              icon = "window-close-symbolic"
+              tooltip = "Close"
+              style = [ButtonFlat, StyleClass("row-btn")]
+              proc clicked() = app.modelsOpen = false
+
+          SearchEntry {.expand: false.}:
+            text = app.modelFilter
+            placeholderText = "Search models"
+            proc changed(t: string) = app.modelFilter = t
+
+          ScrolledWindow {.expand: true.}:
+            Box(orient = OrientY, spacing = 14, margin = 4):
+              if app.modelList.len == 0:
+                Label {.expand: false.}:
+                  text = "No .gguf files under " &
+                         app.lc.paths.jcaHome & "/models."
+                  xAlign = 0.0
+                  wrap = true
+                  style = [StyleClass("settings-help")]
+              else:
+                Label {.expand: false.}:
+                  text = "Switching relinks models/agent and preserves the " &
+                         "model it replaces as .old. It does not reload the " &
+                         "backend — llama-server holds the old weights until " &
+                         "it is restarted."
+                  xAlign = 0.0
+                  wrap = true
+                  style = [StyleClass("settings-help")]
+
+                for m in app.modelList:
+                  if app.modelFilter.len == 0 or
+                     app.modelFilter.toLowerAscii in m.name.toLowerAscii or
+                     app.modelFilter.toLowerAscii in m.role.toLowerAscii:
+                    Box(orient = OrientY, spacing = 2) {.expand: false.}:
+                      Box(orient = OrientX, spacing = 8) {.expand: false.}:
+                        Label {.expand: true.}:
+                          text = m.name & (if m.active: "  — active" else: "")
+                          xAlign = 0.0
+                          wrap = true
+                        Button {.expand: false.}:
+                          text = "Switch"
+                          style = [ButtonFlat, StyleClass("row-btn")]
+                          sensitive = not m.active
+                          proc clicked() = app.switchToModel(m.path)
+                      Label {.expand: false.}:
+                        text = (if m.role.len > 0: m.role else: "models") &
+                               " · " & $((m.bytes + 1024 * 1024 - 1) div
+                                         (1024 * 1024)) & " MB"
+                        xAlign = 0.0
+                        style = [StyleClass("settings-help")]
+
 ## Function purpose: the full-size attachment preview (G-30), the Web UI's
 ## `DialogChatAttachmentPreview`. Same overlay shape as the settings and hardware
 ## panels — always in the tree, insensitive when closed so it does not swallow
@@ -3504,6 +3632,15 @@ proc topBar(app: AppState): Widget =
         style = [ButtonFlat]
         proc clicked() = app.openHardware()
 
+      # 8a, G-20: the model list. `models.discover` had no caller anywhere in the
+      # program, so until now there was no list to draw and the only way to
+      # change model was the two hardcoded menu items below.
+      Button {.addRight.}:
+        icon = "drive-multidisk-symbolic"
+        tooltip = "Models"
+        style = [ButtonFlat]
+        proc clicked() = app.openModels()
+
       MenuButton {.addRight.}:
         icon = "open-menu-symbolic"
         Popover:
@@ -3524,6 +3661,13 @@ proc topBar(app: AppState): Widget =
               style = [ButtonFlat]
               proc clicked() = pendingActions.add "restart"
             Separator()
+            # 8a: the full list. The two named switches below it stay — they are
+            # a shipped surface and Directive 3 keeps them — but they are the
+            # shortcut now rather than the only way in.
+            Button:
+              text = "Models…"
+              style = [ButtonFlat]
+              proc clicked() = app.openModels()
             Button:
               text = "Switch to instruct model"
               style = [ButtonFlat]
@@ -3883,6 +4027,7 @@ method view(app: AppState): Widget =
         # whole window and the canvas behind it.
         insert(app.settingsPanel()) {.addOverlay.}
         insert(app.hardwarePanel()) {.addOverlay.}
+        insert(app.modelsPanel()) {.addOverlay.}
         insert(app.trashPanel()) {.addOverlay.}
         insert(app.previewPanel()) {.addOverlay.}
 

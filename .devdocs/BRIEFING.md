@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-09-02 08:13 (Session 020)
+**Last updated:** 2026-09-02 09:43 (Session 020)
 **Branch:** `bsd`. **`jvim/` is untracked** (4,201 files, added by the USER); this
 session's source and `.devdocs/` edits are uncommitted.
 
@@ -105,6 +105,49 @@ backend supervision and watchdog, model discovery and switching are implemented 
 covered by tests.
 
 ## 3. Done this session
+
+### Session 020 (part three) — 2026-09-02 09:43 — the USER ran it
+
+**PDF attachment is confirmed on screen.** Step 7b has no unverified claim left.
+
+**The model switcher does not work (G-48), and its shape is wrong.** The symptom is not
+known and is not to be guessed at. **D-CB settles what it must do:** draw from
+`models/instruct` and `models/thinking` only, swap `models/agent`, do not accumulate
+`.old` copies, and give the window one switch surface rather than two. What shipped
+scans every subdirectory, so it offers embed and draft models as the agent model.
+
+`models-selftest` passes throughout — the parts are asserted, the join to the window is
+not, and the window is what fails (rule 15).
+
+### Session 020 (part two) — 2026-09-02 08:43 — Step 7b closed and 8a built
+
+**Two USER rulings, both of which they had given repeatedly and neither of which was
+written down.** **D-BY: libz is approved** — it had been carried as "gated on a
+dependency decision, yours" since Step 7b was written, which is what made them repeat it.
+**D-BZ: audio capture is not needed and is not gated** — not scheduled, not to be raised
+again. **The `input_audio` send path stays** under Directive 3; it carries imported Web UI
+conversations, and not building capture is not licence to delete what already sends.
+
+**Step 7b is closed — a PDF attaches as its text.** New `zlib.nim` (bound as
+`uncompress`/`compress` only — no `z_stream` mirrored into Nim, D-V) and new `pdf.nim`
+(content streams, FlateDecode, the four text-showing operators), wired into
+`readAttachment`, which had refused every PDF outright. Stored in the Web UI's own PDF
+shape. **A PDF with no readable text is refused, never attached empty** — a scan or an
+Identity-H font yields nothing, and an empty attachment reads as a working one. **It is a
+text extractor, not a renderer:** no layout, no reading order, no page images.
+
+**8a is built — the window has a model list.** `models.available` is the enumerator
+`discover` could never be; `models.switchToPath` generalises the switch with a containment
+check; the two named quick-switches are **kept beside it, not replaced (D-CA)** because a
+D-Bus tray menu cannot host a list. **Model information is deliberately not built** — it
+needs `/props` plus a GGUF header read and is its own work.
+
+**Twelve self-tests pass** — new `models-selftest` (15) and ten added to
+`attach-selftest`, all proven to discriminate by varying the data (D-BX). Both binaries
+ELF 64-bit FreeBSD; **`bin/jenova --check` exits 0**.
+
+**Unseen, and it is what the USER is about to test:** the Models panel and its search, and
+a PDF's text actually reaching the model.
 
 ### Session 020 — 2026-09-02 08:13 — all ten devdocs read; every claim re-checked against the source
 
@@ -502,8 +545,14 @@ what a screen is actually for.
 
 ## 7. Waiting on the USER
 
-**Nothing in the plan is blocked.** Three product decisions remain parked, none on the
-critical path: filesystem as the source of truth (T-11), deployment (T-7), a CLI (T-8).
+**Nothing in the plan is blocked.** Q-36 was raised and answered on 2026-09-02 (D-CB).
+
+**One symptom is still needed before G-48 is worked:** what the switcher actually does on
+screen — panel opens or not, list populated or not, Switch giving a notice, an error, or
+nothing.
+
+Three product decisions remain parked, none on the critical path: filesystem as the
+source of truth (T-11), deployment (T-7), a CLI (T-8).
 
 ## 8. Unobserved from earlier phases — awaiting a USER screen run
 
@@ -598,13 +647,11 @@ the window responsive.**
 `bin/jenova --check` exits 0. The record is `PROGRESS.md`; the detail is
 `PLANS.md` "What Session 019 built".
 
-**Next — 8a, the model selector** (G-20). **Its first job is not what this file
-said until 2026-09-02:** `models.discover` is not a lister and has no caller
-anywhere, and `models.switchModel` accepts two literal targets, so **an
-enumerator and a path-taking switch have to be written in `models.nim`** before
-there is anything for a list to draw. Four parts and a proof table are in
-`PLANS.md` 8a. **Then 8c — make the notes editor good** (G-17, D-BW), which is
-the smallest that item has ever been.
+**Step 7b is built and confirmed on screen. 8a shipped and does not work** —
+**G-48**, and the shape it must take is **D-CB**.
+
+**Next — G-48**, then **8c, make the notes editor good** (G-17, D-BW): the last
+unbuilt item of Step 8 and the smallest that item has ever been.
 
 **One thing 10b leaves unproven and it is a USER run:** whether an attachment
 actually appears in the workspace tree, and whether its text then comes back in

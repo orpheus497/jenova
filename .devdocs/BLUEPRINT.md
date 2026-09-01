@@ -3,7 +3,7 @@
 Authoritative system architecture: what the program is, what it depends on, and how data moves
 through it. Mandated by `AGENTS.md` § WORKSPACE ARCHITECTURE.
 
-**Last updated:** 2026-09-02 08:13 (Session 020)
+**Last updated:** 2026-09-02 08:43 (Session 020)
 
 > **Rewritten 2026-08-31 (Session 007). The previous 626-line revision is in
 > `.devdocs/ARCHIVE/devdocs/BLUEPRINT_pre-007.md`** — archived, not deleted, per D-AM.
@@ -152,6 +152,7 @@ re-derived a conflict that does not exist from those rows** — the rows were th
 | vte-2.91-gtk4 | LGPL-3.0 | The terminal hosting Neovim (G-19, D-AT). GUI binary only |
 | dbus | AFL-2.1 / GPL-2 dual | StatusNotifierItem + `com.canonical.dbusmenu` for the tray (D-AJ) |
 | sqlite3 | Public domain | Persistence and the FTS5 retrieval index. **FTS5 confirmed present by probe**, not assumed (D-AB) |
+| zlib (`libz`) | zlib | FlateDecode, so a PDF attachment can be read (**D-BY**, approved 2026-09-02). FreeBSD base. Bound as `uncompress`/`compress` only — no versioned struct is mirrored into Nim (D-V) |
 | llama.cpp / ggml | MIT | Submodule under `external/`. **Consumed, never modified** |
 | vulkan-loader | Apache-2.0 | GPU offload |
 | cmake | BSD-3 | Builds the submodule via `nimble llama` |
