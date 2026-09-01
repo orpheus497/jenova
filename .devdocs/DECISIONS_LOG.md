@@ -78,6 +78,7 @@ further down is left in place for the historical record; **this table overrides 
 | **The shell tree** | **Not to be repaired (D-AH, D-AZ).** The installer, the shell-era docs and the shell test scripts are scaffolding around the system being replaced. **Remaining work = what is missing from the Nim core**, never what is broken in the old one. **A reference to an archived file is fixed by deleting the reference or porting it to Nim — repairing the archived thing is never an outcome.** Deployment of the single binary is one decision after the rewrite |
 | **Surface** | **Everything is driven from the GUI (D-BC).** Anything that needs a terminal, a shell script or a hand-edited file is a defect, not a limitation |
 | **Retrieval** | **The index indexes chats (D-BD), and it is fed (D-BI).** A completed exchange is indexed when the reply lands — not each message as it is written, which would let a question retrieve itself. Existing history is backfilled once the embedding server answers, and a deleted turn is forgotten |
+| **Settings** | **The window has a settings surface (D-BK), and every sampling and penalty parameter is set from it.** Parity with the Web UI means parity in what the user can do — **a field whose feature does not exist here is not drawn**, and `settings.OmittedFields` names each one with the step that brings it back. An unset value is **omitted from the request**, never sent as a zero |
 | **Reports** | **Plain English first, ID second (D-BA).** No item, plan step or status line may lead with a bare tracker ID |
 | **Style** | Keep `.devdocs/` terse. **Do not quote the USER verbatim** — record the ruling, not the wording |
 | **CUDA** | **Not meaningfully available on FreeBSD.** `CUDA/dgpu-generic` is unreachable on the target platform, so its data defects (B-21, and the CUDA half of B-05) are moot. **Apply the platform constraint before raising anything about that profile** |
@@ -86,6 +87,60 @@ further down is left in place for the historical record; **this table overrides 
 ---
 
 ---
+
+---
+
+## D-BK — what "1:1 parity" with the Web UI's settings actually means — 2026-09-01
+
+Taken while building `PLANS.md` Step 5 (G-31). The USER asked for **1:1 parity with all
+the settings options of the Web UI, skipping API and MCP**. Reproducing the field list
+literally would have shipped controls for features this window does not have, so three
+calls were taken inside the approved scope and are recorded here rather than left to be
+rediscovered as gaps or as bugs.
+
+**1. A field whose feature does not exist is not drawn.** The Web UI's list includes
+settings for attachments (paste-to-file length, copy-attachments-as-plain-text, PDF as
+image), audio (`autoMicOnEmpty`), the model selector (`showRawModelNames`), a light
+theme, automatic conversation titling, transcript autoscroll, and a code-block height
+cap. **None of those features exists here**, so each control would have been a widget
+wired to nothing — **which is G-8's defect and G-37's defect, and this project has now
+shipped that twice in the same file.** Parity in the count of switches is not parity;
+parity in what the user can actually do is. Every omission is listed in
+`settings.OmittedFields` **with the step that brings it back**, so the difference reads
+as a schedule rather than an oversight, and so nothing is rediscovered as a gap.
+
+The excluded pair are the USER's: API Key (this server does not authenticate) and the
+whole MCP section (deferred — SETTLED FACT). `serverUrl` goes with them: the desktop
+application *is* the host.
+
+**2. An empty value is omitted from the request, not sent as a zero.** This is the Web
+UI's own semantic and it is the reason the store keeps strings rather than floats: a
+typed field cannot distinguish *"the user asked for 0.0"* from *"the user never touched
+it"*, and sending a defaulted 0 for every parameter would silently override
+`llama-server`'s own preset on every single request — **while looking exactly like a
+working settings screen**. The server's value is authoritative for anything unset, which
+is also what makes the placeholder-and-"Custom"-badge honest rather than decorative.
+
+**3. The source indicator was worth copying because it reuses a call already being
+made.** The USER's condition was that it not duplicate or reinvent something available.
+It does not: `gui.fetchProps` already read `/props` once per backend lifetime for the
+context size, and it now reads `default_generation_settings.params` from the same
+response. That is the placeholder and the badge, at the cost of one extra field on an
+existing round trip. The Web UI's own indicator is simpler than `PLANS.md` described —
+it is a "Custom" chip plus a reset arrow marking divergence from the server default, not
+a three-way user/props/default readout — and the simpler thing is what was built.
+
+**Where it lives is not a detail.** `settings.nim` holds the fields, the store, the
+validator and the merge; `gui.nim` draws them. The sampling parameters are only ever a
+JSON field on the outbound body, so the merge belonging to `pipeline.chatBody` is what
+makes the entire feature provable with no window, no backend and no generation. **A
+settings dialog that assembled its own body would have undone D-BH**, which cost two
+broken releases to learn.
+
+**And it closes D-BH's deliberate divergence.** Continue was shown unconditionally
+because, with no settings surface, an opt-in flag would have made the feature
+unreachable rather than optional. There is a surface now, so it is opt-in and off by
+default, matching the Web UI.
 
 ---
 

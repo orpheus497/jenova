@@ -2,7 +2,7 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-09-01 12:08 (Session 015)
+**Last updated:** 2026-09-01 12:55 (Session 016)
 
 > **Reading the "UNRUN" labels in this file.** Entries below are point-in-time records
 > and several were written with a "compiled; UNRUN" status that was true on the day.
@@ -15,6 +15,83 @@ Macro progress tracking. Most recent entries at the top.
 ---
 
 ## Completed
+
+### 2026-09-01 12:55 — **G-31 and G-32 built: a settings screen, the sampling parameters, and import/export.** `PLANS.md` Step 5.
+
+**There was no settings surface at all**, so temperature, top_p, top_k, min_p and
+every penalty were *absent* from the request rather than defaulted badly —
+`pipeline.chatBody` put in `messages`, `stream`, `timings_per_token` and
+`reasoning_format` and nothing else. They are settable now, from a floating panel
+over the window.
+
+**A new module, `src/jenova/settings.nim`, holds the fields, the store, the
+validator and the merge.** `gui.nim` draws them and nothing more. That placement
+is the point: the sampling parameters are only ever a JSON field on the outbound
+body, so putting the merge below the widget layer makes the whole feature
+assertable with no window, no backend and no generation — the lesson D-BH cost
+two broken releases to learn.
+
+**A value is a string and empty means "not set"** — the Web UI's own semantic, and
+the reason the store is untyped. A `float` field cannot tell "the user asked for
+0.0" from "the user never touched it", and sending a defaulted 0 for every
+parameter would silently override the server's own preset on every request while
+looking exactly like a working settings screen.
+
+**Parity is 1:1 with `jca_web`'s `ChatSettings` minus what does not exist here**
+(**D-BK**). Six sections — General, Display, Sampling, Penalties, Import/Export,
+Developer. API Key and MCP are excluded on the USER's instruction. The rest of the
+Web UI's fields govern features this window has not built yet (attachments, the
+model selector, audio) or has no equivalent for (a light theme, auto-titling,
+autoscroll, a code-block height cap), and **a control wired to nothing is G-8's
+and G-37's exact defect**. Every omission is listed in `settings.OmittedFields`
+with the step that brings it back.
+
+**The "Custom" badge is real, not decorative.** `fetchProps` already read
+`/props` for the context size; it now also reads `default_generation_settings.params`
+from the same call, which becomes each field's placeholder — and a field whose
+stored value differs from the server's is marked. That is the distinction the Web
+UI added the indicator for: whether a parameter is set because you set it.
+
+**D-BH's deliberate divergence is closed.** Continue was shown unconditionally
+because with no settings surface an opt-in flag would have made it unreachable.
+It is a setting now, off by default, matching the Web UI.
+
+**Import/export (G-32)** is a front end over the transactional path that already
+existed. `api.exportAll` and `api.importAll` are exported for the window the way
+`putEntity` and `patchMessage` already are, so one implementation serves both
+surfaces. **Import accepts two shapes** — this build's dump and the frozen Web
+UI's `[{conv, messages}]` — so a file from either surface opens in the other.
+
+**15 new assertions in `pipeline-selftest`, all shown going red first.** Four
+independent corruptions produced four different sets of red: an unset float sent
+as 0.0 turned only the omission check red and left the merge check green;
+serialising an integer as a string turned only the kind check red; neutering the
+validator turned exactly the two refusal checks red; and reordering the merge
+turned only the override check red. **The third corruption initially passed,
+which found a hole in the assertion set rather than in the code** — nothing
+asserted that `custom` can override the fields the body sets for itself, which is
+the whole point of an escape hatch. That assertion exists now because its absence
+was demonstrated. `TESTS.md` §0g.
+
+**Files touched — six:** `src/jenova/settings.nim` (new), `src/jenova/pipeline.nim`
+(`chatBody` takes and merges the settings), `src/jenova/gui.nim` (the panel, the
+props read, the display settings, the system message and reasoning context),
+`src/jenova/api.nim` (`exportAll`, `importAll`), `src/jenova/theme.nim` (four
+rules), `src/jenova_core.nim` (the assertions).
+
+**Not seen on screen.** Both binaries build, the FreeBSD guard was confirmed to
+fire, and `pipeline-selftest` passes. Nothing was run against a live backend and
+no window was opened (D-BJ).
+
+### 2026-09-01 12:55 — **Two stale references in the trackers corrected.**
+
+`TODOS.md` T-15 named `gui.nim:830`, `1083` and `1541` as the three `Entry`
+widgets; those lines are the `umDone` index dispatch, the rename node builder and
+the timings formatter. The real sites are the tree-row rename (`gui.nim:1392`),
+the note title (`gui.nim:1790`) and the chat draft (`gui.nim:2298`). **Session
+015's citation sweep corrected the Active tables and missed the Watch table.** The
+finding itself still holds. `ARCHITECTURE_MAPPING.md` was stamped "Session 014"
+against a Session 015 timestamp; corrected.
 
 ### 2026-09-01 12:08 — **T-17 built: the search index has chats in it, so the AI recalls past conversations.** `PLANS.md` Step 4.
 

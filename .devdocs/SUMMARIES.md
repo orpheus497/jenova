@@ -5,6 +5,35 @@ One short paragraph per session. Sessions 001-005 are in
 
 ---
 
+## Session 016 — 2026-09-01 12:55
+
+**Step 5 built: the settings screen, and with it every sampling and penalty parameter.**
+There was no settings surface at all, so temperature, top_p, top_k, min_p and the
+penalties were *absent* from the request rather than defaulted badly. There is one now — a
+floating panel over the window, six sections, with import/export (G-32) in the same
+screen. **The field list was derived from `jca_web`'s own `settings-config.ts` and
+`ChatSettings.svelte`, not from a summary**, and that mattered: the Web UI's "source
+indicator" is a Custom chip against the server's `/props` value shown as a placeholder,
+not the three-way readout `PLANS.md` described, and the Web UI states the semantic the
+design turns on — *empty means use the server default and is not sent*. **Three calls
+inside the scope, recorded as D-BK:** a field whose feature does not exist here is **not
+drawn**, because a control wired to nothing is G-8's and G-37's defect and this project
+has shipped it twice — every omission is listed with the step that brings it back; an
+unset value is omitted rather than sent as a zero, because a defaulted 0 on every
+parameter would silently override the server's preset while looking like a working
+screen; and the indicator was worth copying because it reuses the `/props` call already
+being made, which was the USER's condition. The new module sits **below the widget
+layer**, which is what makes the whole feature provable with no window — D-BH's lesson
+applied on purpose rather than after a failure — and D-BH's own divergence closed with
+it, Continue now being a setting that is off by default. **15 assertions, four
+independent corruptions, four different sets of red — and the fourth corruption passed,
+which found a hole in my assertion set rather than in the code**: nothing asserted that
+custom JSON can override the fields the body sets for itself, so that assertion now
+exists. Both binaries build, the FreeBSD guard fires, `pipeline-selftest` passes.
+**Separately, one stale citation was corrected in the one table Session 015's sweep
+missed** — T-15's three `Entry` addresses. **Nothing was seen on screen and nothing was
+run against a live backend** (D-BJ). Full detail: `SESSION_HANDOFF.md` Session 016.
+
 ## Session 015 — 2026-09-01 12:25
 
 **Step 4 built: the AI recalls past chats.** The retrieval engine had been finished,

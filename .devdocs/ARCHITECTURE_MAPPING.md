@@ -3,7 +3,7 @@
 File-by-file map of the codebase: what lives where, and why. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE. Update whenever a file is added, removed or relocated.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 10:50 (Session 014).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 12:55 (Session 016).
 
 This file was mandated from the outset and did not exist for Sessions 001–003 —
 including Session 001, which moved or deleted 31 files. See `DECISIONS_LOG.md` C-10.
@@ -56,6 +56,14 @@ on the next commit and re-deriving the drift is what consumed whole sessions (se
 **Added 2026-08-31 (G-1 … G-5, ruling D-AP):** `theme.nim`, `canvas.nim`, `markdown.nim`.
 
 **Added 2026-08-31 (G-7, G-18, G-19):** `sourceview.nim`, `nvimctl.nim`, `vte.nim`.
+
+**Added 2026-09-01 (G-31, ruling D-BK):** `settings.nim` — the desktop application's
+settings: the field declarations, the file store under `p.state`, the validator, and
+`applyTo`, which merges the sampling and penalty parameters into the outbound request
+body. **It sits beside `config.nim` in the layering, not beside `gui.nim`**: it depends
+only on `paths` and `std/json`, and `pipeline.chatBody` calls the merge. That placement
+is deliberate and is the reason the whole settings feature is assertable from
+`pipeline-selftest` with no window — see D-BH for what the alternative cost.
 
 - **`nvimctl.nim`** reads the document open in Neovim — path, buffer, cursor, dirty flag, filetype —
   through `nvim --server <sock> --remote-expr`. **It is deliberately not an RPC client:** Neovim

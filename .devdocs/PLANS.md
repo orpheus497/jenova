@@ -2,7 +2,7 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-09-01 12:08 (Session 015)
+**Last updated:** 2026-09-01 12:55 (Session 016)
 
 **Write plans in plain English, then cite the ID** (**D-BA**). A step that reads
 "resolve G-23" tells the reader nothing. Say what the thing is first.
@@ -52,20 +52,22 @@ items (a file browser, an editor, file awareness, Neovim, a model selector, a tr
 view) and was written from a summary rather than from the Web UI. Re-derived
 2026-09-01 by reading `jca_web/src/lib/components/app/*/index.ts` — the barrel files
 that name and describe every shipped component. The real list is three times larger and
-is `TODOS.md` G-17, G-20, G-21 and G-28 … G-36.
+is `TODOS.md` G-17, G-20, G-21 and G-28 … G-36. G-28 … G-33 and G-39 are built.
 
 | Works today | Missing entirely |
 |---|---|
 | Send a message, stream a reply | Attachments of any kind |
-| **Copy, edit, delete, regenerate and continue a message** | Any settings screen — so no sampling parameters |
-| **Branching — alternative versions, with a counter** | Import / export of conversations |
-| **Generation statistics, context usage, model name** | **A stop button** |
-| **A reasoning view for thinking models** | Tables, task lists, LaTeX maths |
-| Conversations: create, rename, delete, search | A real model selector and model information |
-| **Renaming a container keeps its files** | Typed errors, retry, context-overflow reporting |
-| Markdown text and highlighted code blocks | Trash view, delete confirmations, a real note editor |
-| Theme, canvas, Neovim page, AI reads the buffer | Hardware profile detection and selection |
-| **Recall of past chats — the index is fed** | — |
+| Copy, edit, delete, regenerate and continue a message | **A stop button** |
+| Branching — alternative versions, with a counter | Tables, task lists, LaTeX maths |
+| Generation statistics, context usage, model name | A real model selector and model information |
+| A reasoning view for thinking models | Typed errors, retry, context-overflow reporting |
+| Conversations: create, rename, delete, search | Trash view, delete confirmations, a real note editor |
+| Renaming a container keeps its files | Hardware profile detection and selection |
+| Markdown text and highlighted code blocks | — |
+| Recall of past chats — the index is fed | — |
+| **Settings: every sampling and penalty parameter** | — |
+| **Import / export of conversations** | — |
+| Theme, canvas, Neovim page, AI reads the buffer | — |
 | Tray, LAN toggle, backend start/stop | — |
 
 **Almost all of it is GUI work over backend that is already implemented and has
@@ -99,7 +101,7 @@ path is refused rather than merged (**D-BE**). Proven by 17 new assertions in
 `BRIEFING.md` all cite them, and renumbering to close a gap would silently re-point
 every one of those references.
 
-**Steps 1, 2, 3 and 4 are built. Step 5 is the next step.**
+**Steps 1 to 5 are built. Step 6 is the next step.**
 
 ---
 
@@ -172,52 +174,41 @@ half a unit check cannot see: an indexed turn is retrieved and lands in the body
 the model. See `TESTS.md` §0e.
 
 **The step numbers below are deliberately unchanged**, for the reason Step 1 records.
-**Step 5 is the next step.**
 
 ---
 
-## Step 5 — A settings screen, and with it the sampling parameters  *(`TODOS.md` G-31, G-32)*
+## Step 5 — **BUILT 2026-09-01.** A settings screen, and with it the sampling parameters
 
-**What is wrong:** there is **no settings surface at all**, and the consequence is
-concrete — `pipeline.chatBody` (`pipeline.nim:331`) builds the whole request and puts in
-`messages`, `stream`, `timings_per_token` and `reasoning_format` and nothing else, so
-**temperature, top_p, top_k, min_p, repeat_penalty, frequency and presence penalty and
-repeat-last-n cannot be set from the desktop application.** They are not defaulted
-badly; they are absent.
+Done and out of this plan. There was no settings surface at all, so every sampling
+and penalty parameter was *absent* from the request rather than defaulted badly.
+There is one now — a floating panel over the window, six sections, 1:1 with the
+Web UI's `ChatSettings` minus API Key and MCP (excluded by the USER) and minus the
+fields whose feature does not exist here yet (**D-BK**). Import/export (G-32)
+landed in the same screen. The record is `PROGRESS.md` 2026-09-01 12:55.
 
-**Why this is cheap:** `llama-server` accepts every one of them per request — that is
-why **D-AF** closed the old "sampling parameters are ignored" item — and
-`pipeline.prepare` passes unknown top-level keys straight through untouched
-(`pipeline.nim:285` re-serialises the whole object). So the plumbing is: put the values
-in the JSON body.
+**The new module is `src/jenova/settings.nim`** — fields, store, validator and the
+merge, all below the widget layer, which is what made the whole feature assertable
+without a window. `pipeline.chatBody` takes the settings and merges them last.
 
-**The work:**
-1. A settings dialog. The Web UI's `ChatSettings` is tabbed: General (system message),
-   Display, Sampling, Penalties, Import/Export, Developer. Skip the API-key tab —
-   this server does not authenticate — and skip MCP, which is deferred.
-2. Persist to a file under `p.state`, the way `lan_mode` already is —
-   `gui.isLanEnabled` (`gui.nim:304`) and `gui.setLanState` (`gui.nim:308`).
-3. **The values are merged in `pipeline.chatBody`, not in the window.** That is where
-   the body is built now, and it is below the GUI layer specifically so a self-test can
-   see it — which is the whole lesson of D-BH. A settings dialog that assembles its own
-   body would undo that.
-4. **Import/export (G-32) belongs in the same screen** and is a front end over
-   `POST /api/db/import`, which is already transactional and asserted
-   (`api.importData`, routed at `api.nim:714`).
+**Two things this step decided that the plan above had not**, both in D-BK: **an
+empty value is not sent at all** rather than sent as a zero, because a typed store
+cannot tell "the user asked for 0.0" from "the user never touched it" and a
+defaulted 0 on every parameter would silently override the server's own preset
+while looking like a working screen; and **a field whose feature does not exist is
+not drawn**, because a control wired to nothing is G-8's and G-37's exact defect —
+`settings.OmittedFields` names each one and the step that brings it back.
 
-**Worth copying from the Web UI:** it shows, per parameter, whether the value came from
-the user, from the server's `/props`, or from an app default. That distinction is what
-stops someone chasing a setting they never actually set.
+**D-BH's deliberate divergence is closed here as planned:** Continue is a setting
+now, off by default, matching the Web UI.
 
-**One deliberate divergence lands here, recorded so it is not rediscovered as a bug.**
-The Web UI has Continue **off by default** (`enableContinueGeneration: false`). This
-window shows it unconditionally on the last non-reasoning turn, because with no settings
-surface an opt-in flag would make the feature unreachable rather than optional
-(**D-BH**). **This step is where it becomes a setting** — and the default should match the
-Web UI's once there is somewhere to change it.
+**Proven by 15 new assertions**, each shown going red first, by four independent
+corruptions producing four different sets of red. **One of the four initially
+passed, and that found a hole in the assertion set rather than in the code** —
+nothing asserted that `custom` JSON can override the fields the body sets for
+itself, which is the whole point of an escape hatch. See `TESTS.md` §0g.
 
-**Proof it worked:** assert that a stored temperature reaches the outbound body — a
-check on the body-building function, not a live generation.
+**The step numbers below are deliberately unchanged**, for the reason Step 1
+records. **Step 6 is the next step.**
 
 ---
 

@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-09-01 12:25 (Session 015)
+**Last updated:** 2026-09-01 12:55 (Session 016)
 **Branch:** `bsd`
 
 ---
@@ -47,6 +47,7 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 | **13** | **A new assertion is not believed until it has been seen to go red.** Two suites in this project have reported PASS while asserting nothing. |
 | **14** | **Cite the symbol, then the line.** A bare line number is a claim with an expiry date — thirteen of them rotted inside one session because `gui.nim` grew by 750 lines while they were being written. `fssync.resolveStoragePath (fssync.nim:694)` survives that; `fssync.nim:628` does not. |
 | **15** | **A green suite says the parts work, never that anything calls them.** `rag.nim` was fully asserted and completely dead for weeks — every assertion supplied its own corpus, so nothing could tell. When a feature is finished, assert the *join*, not only the parts. |
+| **16** | **When you corrupt the code to prove an assertion bites and it stays green, the hole is in the assertion set.** That is not a failed experiment, it is the experiment working. It has now found something three sessions running — most recently that nothing checked `custom` JSON reaching the fields the body sets for itself. **Write the missing assertion, then re-run the corruption.** |
 
 ---
 
@@ -63,10 +64,11 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 
 ## 2. State
 
-**Verified as of 2026-09-01 12:08.** Both binaries build from a clean run of `nimble core`
+**Verified as of 2026-09-01 12:55.** Both binaries build from a clean run of `nimble core`
 and `nimble gui`; the FreeBSD-only guard was confirmed to still *fire* when the target is
-changed, not merely to exist; **all six suites and all six self-tests pass.**
-`bin/jenova-core` is an ELF 64-bit FreeBSD executable.
+changed, not merely to exist; **`pipeline-selftest` passes.** Both binaries are ELF 64-bit
+FreeBSD executables. The suites were **not** run this session and did not need to be —
+nothing outside `pipeline-selftest`'s reach changed.
 
 **Those runs happened because this session's work was building them; they are not a
 standing instruction.** Per Rule 0, do not run the suites or the product again without
@@ -87,7 +89,45 @@ covered by tests.
 
 ## 3. Done this session
 
-### Step 4 — the search index has chats in it (T-17)
+### Step 5 — a settings screen, and with it every sampling parameter (G-31, G-32)
+
+**There was no settings surface at all**, so temperature, top_p, top_k, min_p and the
+penalties were *absent* from the request rather than defaulted badly. There is one now: a
+floating panel over the window, six sections — General, Display, Sampling, Penalties,
+Import/Export, Developer — with import and export of conversations in the same screen.
+
+**The new module `settings.nim` sits below the widget layer**, holding the fields, the
+store under `p.state`, the validator and the merge. `pipeline.chatBody` calls the merge;
+`gui.nim` only draws. That is what makes the whole feature provable with no window and no
+backend — **D-BH's lesson applied on purpose rather than after a second broken release.**
+
+**Three calls taken inside the scope, recorded as D-BK:**
+
+1. **A field whose feature does not exist here is not drawn.** The Web UI's list includes
+   settings for attachments, audio, the model selector, a light theme, auto-titling,
+   autoscroll and a code-block height cap — none of which this window has. A control wired
+   to nothing is **G-8's defect and G-37's defect**, shipped twice already. Every omission
+   is in `settings.OmittedFields` with the step that brings it back.
+2. **An unset value is omitted from the request, never sent as a zero.** A typed store
+   cannot tell "asked for 0.0" from "never touched", and a defaulted 0 on every parameter
+   would silently override the server's own preset **while looking like a working screen**.
+3. **The "Custom" badge reuses the `/props` call already being made** for the context
+   size, which was the USER's condition for copying it.
+
+**D-BH's deliberate divergence is closed:** Continue is a setting now, off by default,
+matching the Web UI.
+
+**15 assertions, four independent corruptions, four different sets of red** — and the
+fourth **passed**, which found a hole in the assertion set rather than in the code. See
+rule 16. `TESTS.md` §0g.
+
+### One stale citation corrected, in the table the last sweep missed
+
+`TODOS.md` T-15 named the three `Entry` widgets at `gui.nim:830`, `1083` and `1541`; those
+lines are unrelated code. The real sites are `gui.nim:1392`, `1790` and `2298`. Session
+015 corrected the Active tables and never touched the Watch table.
+
+### Previously — Step 4, the search index has chats in it (T-17)
 
 **The retrieval engine was finished, proven, and completely dead.** `indexContent` had no
 caller outside its own self-test, so the index was always empty, `rag.query`
@@ -140,14 +180,16 @@ one sentence in it.** The ruling is Rule 0 above, and the phrasing that invited 
 | Works | Missing entirely |
 |---|---|
 | Send a message, stream a reply | **Attachments** of any kind — image, text, PDF, audio (G-30) |
-| Copy, edit, delete, regenerate, continue a message | **Any settings screen — so no temperature, top_p, top_k, penalties** (G-31) |
-| Branching — alternative versions, with a counter | **Import / export of conversations** (G-32) |
-| Statistics: tokens, tok/s, context used and left, model | **A stop button** — the other half of G-33 |
-| A reasoning view for thinking models | **Tables, task lists, LaTeX maths** (G-34) |
-| **Recall of past chats — the index is fed** | **A real model selector and model information** (G-20) |
-| Conversations: create, rename, delete, search | **Typed errors, retry, context-overflow reporting** (G-35) |
-| Workspace / project / folder tree, notes — renaming keeps its files | **Trash view** (G-21), **delete confirmations** (G-36), **a real note editor** (G-17) |
-| Markdown text and highlighted code blocks | **Hardware profile detection and selection** — currently impossible from anywhere (S-1) |
+| Copy, edit, delete, regenerate, continue a message | **A stop button** — the other half of G-33 |
+| Branching — alternative versions, with a counter | **Tables, task lists, LaTeX maths** (G-34) |
+| Statistics: tokens, tok/s, context used and left, model | **A real model selector and model information** (G-20) |
+| A reasoning view for thinking models | **Typed errors, retry, context-overflow reporting** (G-35) |
+| Recall of past chats — the index is fed | **Trash view** (G-21), **delete confirmations** (G-36), **a real note editor** (G-17) |
+| **Settings: every sampling and penalty parameter** (G-31) | **Hardware profile detection and selection** — currently impossible from anywhere (S-1) |
+| **Import / export of conversations** (G-32) | — |
+| Conversations: create, rename, delete, search | — |
+| Workspace / project / folder tree, notes — renaming keeps its files | — |
+| Markdown text and highlighted code blocks | — |
 | Theme, canvas, glass panel, wordmark | — |
 | Neovim page + AI reads the live buffer | — |
 | Tray, LAN toggle, backend start/stop | — |
@@ -160,7 +202,7 @@ Full detail with mechanisms and references: `TODOS.md`. Ordered plan: `PLANS.md`
 
 ## 5. Known broken in the Nim code
 
-**T-17 is no longer among them** — it was built this session. What remains:
+**T-17 was built in Session 015 and G-31/G-32 this session.** What remains:
 
 - **There is no way to detect hardware or change profile at all** (S-1). It was two shell
   scripts and both are broken by subtraction. It becomes Nim with a GUI screen (D-BC),
@@ -201,24 +243,34 @@ they are simply unobserved, and they stay unobserved until the USER happens to l
 1. **The repairs from Session 014** — existing conversations reading as transcripts again
    with no version arrows on ordinary turns, and Continue extending an answer rather than
    restarting it.
-2. **This session's recall, against a live backend.** Everything was verified with the
+2. **Session 015's recall, against a live backend.** Everything was verified with the
    embedding server **down**, so the semantic half of ranking on real embeddings is
    unproven. The feed, the filter, the forget, the backfill and the injection into the
    outbound body are all asserted. On a start with the embedder up, the window says
    "indexed N past messages for recall" once, and a later question about an earlier chat
    should reach the model with that chat attached.
-3. **The icons**, still unconfirmed: `view-refresh-symbolic`,
-   `media-playback-start-symbolic`, `go-previous-symbolic`, `go-next-symbolic` are all
-   standard Adwaita symbolics, but a missing one renders as a broken placeholder rather
-   than failing the build.
+3. **This session's settings panel.** Its layout is unseen, and so are the placeholders
+   and the "Custom" badge, which need a backend up to have any `/props` values at all —
+   with it down every field simply shows no placeholder, which is designed rather than a
+   fallback. The gear is in the top bar, right of the document-panel button.
+4. **The icons**, still unconfirmed: `view-refresh-symbolic`,
+   `media-playback-start-symbolic`, `go-previous-symbolic`, `go-next-symbolic` and this
+   session's `emblem-system-symbolic` and `window-close-symbolic` are all standard Adwaita
+   symbolics, but a missing one renders as a broken placeholder rather than failing the
+   build.
 
-Then **`PLANS.md` Step 5 — a settings screen, and with it the sampling parameters**
-(G-31), plus import/export (G-32). There is no settings surface at all, so temperature,
-top_p, top_k, min_p and the penalties cannot be set from the desktop application — they
-are absent, not defaulted badly. The plumbing is proven: `pipeline.prepare` passes unknown
-top-level keys through untouched and `pipeline-selftest` asserts it for `temperature`
-specifically. **The values get merged in `pipeline.chatBody`, not in the window** — that is
-where the body is built now, deliberately below the GUI layer so a self-test can see it.
+Then **`PLANS.md` Step 6 — hardware profiles in Nim, driven from the window** (S-1, ruled
+at D-BC). Choosing a hardware profile is still two shell scripts and **both are broken by
+subtraction**: `detect-hardware.sh:19` sources an archived `lib/detect-env.sh` and one
+profile's `jenova-setup` resolves an archived `bin/` helper. Nothing invokes either, so
+**there is currently no way to detect hardware or change profile at all** except editing
+`etc/jenova.conf` by hand — which D-BC makes a defect, not a limitation. The work is
+detection, scoring and apply ported to Nim, a screen that lists the profiles and shows
+which matched and why, the same as a `jenova-core` subcommand for headless hosts, the
+kernel tuning moved into `profile.conf` as data, and both scripts archived. **The scoring
+is pure logic over data files and belongs in a suite** — feed known hardware, assert the
+selected profile, including that an opt-in profile never wins automatically and that the
+fallback ladder holds. Fix S-2's two Linux filesystem strings in the same pass.
 
 ## 9. Settled — do not re-raise
 
@@ -233,6 +285,7 @@ where the body is built now, deliberately below the GUI layer so a self-test can
 | **TUI** | Replaced by the window |
 | **Tray** | StatusNotifierItem over D-Bus, in Nim. It works |
 | **Retrieval** | Indexes chats (D-BD), fed per completed exchange (D-BI) |
+| **Settings** | The window has one (D-BK). Parity with the Web UI is parity in what the user can *do* — **a field whose feature does not exist here is not drawn**, and each omission names the step that brings it back. An unset value is **omitted** from the request, never sent as a zero |
 | **Unused files** | Archive to `.devdocs/ARCHIVE/`, never delete, never leave in the root |
 | **MCP** | Deferred by the USER. Largest thing in the Web UI — do not pick it up casually |
 | **Virtual file explorer** | Cancelled by the USER (D-AW). The Neovim page is the browser |

@@ -3,7 +3,7 @@
 Authoritative system architecture: what the program is, what it depends on, and how data moves
 through it. Mandated by `AGENTS.md` § WORKSPACE ARCHITECTURE.
 
-**Last updated:** 2026-09-01 12:08 (Session 015)
+**Last updated:** 2026-09-01 12:55 (Session 016)
 
 > **Rewritten 2026-08-31 (Session 007). The previous 626-line revision is in
 > `.devdocs/ARCHIVE/devdocs/BLUEPRINT_pre-007.md`** — archived, not deleted, per D-AM.
@@ -100,6 +100,13 @@ forwards to :8081 and relays the SSE stream back. **A 502 means the pipeline com
 **A GUI turn.** `gui.send` builds the same OpenAI-shaped body and posts it to the local :8080, so
 intents, RAG and personas apply identically to the window and to the Web UI. The stream worker
 relays tokens over one channel to the GTK loop.
+
+**The body is built by `pipeline.chatBody`, not by the window**, and that is where the user's
+sampling and penalty settings are merged (**D-BK**). `settings.nim` owns the fields, the store
+under `p.state`, the validator and the merge; `gui.nim` draws them. **An unset parameter is
+omitted from the request rather than sent as a zero**, so `llama-server`'s own preset stays
+authoritative for anything the user has not chosen — which is also what the settings panel shows
+as each field's placeholder, read from `/props` on the call that already fetches the context size.
 
 **Persistence.** `db` owns SQLite in WAL mode with a **per-thread connection** and a per-connection
 prepared-statement cache. `api` serves `/api/db/*`; `fssync` mirrors the database rows onto disk
@@ -214,12 +221,16 @@ is frozen (D-Z).
 
 The architecture above is complete and serving. **The gap is in the desktop
 application**, which reproduces the Web UI's shape without all of its function: no
-attachments, no settings surface (and so no reachable sampling parameters), no
-import/export, no trash view, no stop control, and no typed error reporting.
+attachments, no trash view, no stop control, and no typed error reporting.
 
 **Built 2026-09-01:** message actions (copy, edit, delete, regenerate, continue),
-**conversation branching**, **generation statistics**, **a reasoning view**, and
-**recall of past chats** — the retrieval index is fed now (§5, D-BI).
+**conversation branching**, **generation statistics**, **a reasoning view**,
+**recall of past chats** — the retrieval index is fed now (§5, D-BI) — and **a
+settings surface with every sampling and penalty parameter, plus import/export**
+(§5, **D-BK**). Parity with the Web UI's settings means parity in what the user can
+do: **a field whose feature does not exist here is not drawn**, and
+`settings.OmittedFields` names each one with the step that brings it back, so the
+difference is a schedule rather than an oversight.
 
 **The chat turn now asks for two things it did not before.** `gui.send` puts
 `timings_per_token` and `reasoning_format` in the request body; `pipeline.prepare`

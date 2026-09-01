@@ -34,6 +34,7 @@ import ./websearch
 import ./db
 import ./sha256
 import ./nvimctl
+import ./settings
 
 type
   Prepared* = object
@@ -319,8 +320,9 @@ proc cacheStore*(key, response: string) =
 ##
 ## * `timings_per_token` — attach `timings` to **every** chunk rather than only
 ##   the last, so the token counts and rate on screen are live (G-33).
-## * `reasoning_format: "auto"` — split a reasoning model's thinking into
-##   `reasoning_content` instead of leaving it inline in the answer (G-39).
+## * `reasoning_format` — `"auto"` splits a reasoning model's thinking into
+##   `reasoning_content` instead of leaving it inline in the answer (G-39). The
+##   Developer setting turns it to `"none"`.
 ##
 ## **`continuing` needs both of its fields.** `continue_final_message` on its own
 ## is refused with *"Cannot set both add_generation_prompt and
@@ -328,12 +330,24 @@ proc cacheStore*(key, response: string) =
 ## turned off explicitly as well, or the template closes the assistant turn and
 ## the model starts a fresh answer instead of extending the one it is given.
 ## Verified against a running server, not read out of the schema (**D-BH**).
-proc chatBody*(messages: JsonNode, continuing = false): string =
+##
+## Action purpose: **the settings merge happens last and it is the reason this
+## proc takes them at all** (G-31). The sampling and penalty parameters are only
+## ever a JSON field on this body — `llama-server` accepts every one of them per
+## request (**D-AF**) and `prepare` passes unknown top-level keys through
+## untouched — so putting the merge here makes the whole feature assertable
+## without a window and without a generation.
+proc chatBody*(messages: JsonNode, continuing = false,
+               opts = settings.initSettings()): string =
   var req = %*{"messages": messages, "stream": true,
-               "timings_per_token": true, "reasoning_format": "auto"}
+               "timings_per_token": true,
+               "reasoning_format": settings.reasoningFormat(opts)}
   if continuing:
     # `"content"` and not `true`: what is being resumed is the visible answer,
     # never the reasoning.
     req["continue_final_message"] = %"content"
     req["add_generation_prompt"] = %false
+  # After the fixed fields, so `custom` can override any of them deliberately,
+  # and before serialisation so nothing downstream has to re-parse.
+  settings.applyTo(req, opts)
   $req

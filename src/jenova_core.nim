@@ -21,7 +21,8 @@ when not defined(freebsd):
 
 import std/[os, strformat, strutils, json]
 import jenova/[paths, config, db, dbselftest, server, serverselftest,
-               rag, sha256, pipeline, prompts, lifecycle, models, nvimctl, api]
+               rag, sha256, pipeline, prompts, lifecycle, models, nvimctl, api,
+               settings]
 
 const
   Version = "0.1.0"
@@ -534,6 +535,99 @@ proc main() =
               cont{"add_generation_prompt"}.getBool(true) == false)
         check("a continuation still ends on the assistant turn being extended",
               cont{"messages"}[^1]{"role"}.getStr == "assistant")
+
+      # Action purpose: **the proof `PLANS.md` Step 5 asked for, and the six
+      # around it that the same defect class needs** (G-31). The sampling
+      # parameters are only ever a JSON field on the outbound body, so the whole
+      # feature is assertable here — no window, no generation, no backend.
+      #
+      # The first check is the one that matters most and is the least obvious:
+      # **an unset parameter must be absent, not zero.** Sending a defaulted 0.0
+      # for every field the user never touched would silently override the
+      # server's own preset on every request, and would look exactly like a
+      # working settings screen.
+      block settingsReachTheBody:
+        let turn = %*[{"role": "user", "content": "hi"}]
+
+        let bare = parseJson(pipeline.chatBody(turn))
+        check("an unset sampling parameter is not sent at all",
+              not bare.hasKey("temperature") and not bare.hasKey("top_k") and
+              not bare.hasKey("repeat_penalty"))
+        check("an unset boolean is not sent either",
+              not bare.hasKey("backend_sampling"))
+
+        var s = settings.initSettings()
+        s["temperature"] = "0.35"
+        s["top_k"] = "40"
+        s["repeat_penalty"] = "1.15"
+        let tuned = parseJson(pipeline.chatBody(turn, opts = s))
+        check("a stored temperature reaches the outbound body",
+              tuned{"temperature"}.getFloat(0.0) == 0.35,
+              "got: " & $tuned{"temperature"})
+        # A `top_k` of `"40"` as a JSON *string* is silently ignored by
+        # `llama-server`, which is indistinguishable on screen from a setting
+        # that does nothing. The kind is the assertion, not just the value.
+        check("an integer parameter is sent as a number, not a string",
+              tuned{"top_k"}.kind == JInt and tuned{"top_k"}.getInt == 40)
+        check("a penalty reaches the body by the same path",
+              tuned{"repeat_penalty"}.getFloat(0.0) == 1.15)
+        check("merging settings does not disturb the fields already there",
+              tuned{"timings_per_token"}.getBool(false) and
+              tuned{"stream"}.getBool(false))
+
+        var r = settings.initSettings()
+        r["disableReasoningParsing"] = "1"
+        let raw = parseJson(pipeline.chatBody(turn, opts = r))
+        check("the Developer switch turns reasoning parsing off",
+              raw{"reasoning_format"}.getStr == "none")
+
+        # Custom JSON is the escape hatch for a parameter this build does not
+        # name, so it is merged last and is allowed to override one that it does.
+        var cst = settings.initSettings()
+        cst["temperature"] = "0.9"
+        cst["custom"] = """{"temperature": 0.1, "mirostat": 2}"""
+        let merged = parseJson(pipeline.chatBody(turn, opts = cst))
+        check("custom JSON adds a parameter this build does not name",
+              merged{"mirostat"}.getInt(0) == 2)
+        check("custom JSON is merged last and overrides a named field",
+              merged{"temperature"}.getFloat(0.0) == 0.1)
+
+        # Action purpose: **and it must reach past the named fields to the ones
+        # the body sets for itself**, or it is only an escape hatch for the
+        # parameters this build already knows about — which is the opposite of
+        # what an escape hatch is for. *This assertion exists because it was
+        # missing:* moving the merge above the fixed fields broke exactly this
+        # behaviour and every check here still passed.
+        var ovr = settings.initSettings()
+        ovr["custom"] = """{"reasoning_format": "none", "stream": false}"""
+        let over = parseJson(pipeline.chatBody(turn, opts = ovr))
+        check("custom JSON can override a field the body sets itself",
+              over{"reasoning_format"}.getStr == "none" and
+              over{"stream"}.getBool(true) == false)
+
+        # The settings merge must not undo D-BH. Continue shipped broken twice;
+        # a later feature quietly clobbering its two fields would be the third.
+        let both = parseJson(pipeline.chatBody(turn, continuing = true, opts = s))
+        check("settings do not clobber the continuation flags",
+              both{"continue_final_message"}.getStr == "content" and
+              both{"add_generation_prompt"}.getBool(true) == false)
+
+        var badv = settings.initSettings()
+        badv["temperature"] = "warm"
+        check("a non-numeric parameter is refused before it is stored",
+              not settings.validate(badv).ok)
+        var badj = settings.initSettings()
+        badj["custom"] = "{not json"
+        check("malformed custom JSON is refused before it is stored",
+              not settings.validate(badj).ok)
+        check("a well-formed set validates", settings.validate(cst).ok)
+
+        # A scratch file, never `p.state / "settings.json"` — a self-test that
+        # overwrote the USER's own settings would be a defect of its own.
+        let sf = p.state / "jenova-pipetest-settings.json"
+        check("settings survive a save and load", settings.saveTo(sf, s) and
+              settings.loadFrom(sf).get("temperature") == "0.35")
+        removeFile(sf)
 
       # Action purpose: the *wiring*, which is the half a unit check cannot see.
       # `rag.query` and `pipeline.prepare` were both finished and both correct

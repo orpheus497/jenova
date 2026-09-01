@@ -12,6 +12,133 @@ Reverse-chronological. **Keep entries short.** Sessions 001-005 are in
 
 ---
 
+## Session 016 — 2026-09-01 12:55
+
+**Instruction:** read `AGENTS.md` and stay strictly inside it, read the devdocs,
+cross-reference every claim against the codebase, and present the phase to work on. Then,
+on approval: do the two documentation fixes, build Step 5 with **global** settings, and
+copy the Web UI's parameter-source indicator **only if it is not a duplication or a
+reinvention of something already available**. **1:1 parity with the Web UI's settings
+options, skipping API and MCP**, organised as a floating menu.
+
+### Part one — verification, no changes
+
+**Twenty-four falsifiable claims checked against the file each names. Twenty-three hold
+exactly, including their addresses.** Session 015's "cite the symbol, then the line"
+convention worked: `gui.nim` has grown to 2,414 lines since those citations were written
+and every one of them still lands on the right proc.
+
+Confirmed still true: `chatBody` carried no sampling parameter; there was no settings
+surface of any kind in `gui.nim`; `pipeline.nim` has no trim step anywhere; nothing
+cancels a running stream; `gui.run`'s `defer` calls no `stopAll`; the statement cache
+never evicts; `markdown.nim` has no table, task-list or maths handling; both hardware
+scripts still source archived files; neither test script overrides `JENOVA_LLAMA_PORT`.
+**Step 4's work was checked for the failure mode it was itself built to fix** — every
+one of `rag.nim`'s new chat-indexing procs has a caller outside `rag.nim`, in `api.nim`,
+`gui.nim` and `jenova_core.nim`. It is wired, not merely written.
+
+**One stale reference found, and it is the same rot in the one table the last sweep
+missed.** `TODOS.md` T-15 named `gui.nim:830`, `1083` and `1541` as the three `Entry`
+widgets; those are the `umDone` index dispatch, the rename node builder and the timings
+formatter. The real sites are `gui.nim:1392`, `1790` and `2298`. Session 015 corrected the
+Active tables and did not touch the Watch table. Also: `ARCHITECTURE_MAPPING.md` was
+stamped "Session 014" against a Session 015 timestamp. Both fixed on approval.
+
+### Part two — Step 5 built: a settings screen, the sampling parameters, import/export
+
+**The parity list was derived from the source, not from a summary** (rule 11) — read out
+of `jca_web`'s `settings-config.ts`, `settings-sections.ts` and `ChatSettings.svelte`.
+That mattered twice. The Web UI's "parameter source indicator" is **not** the three-way
+user/props/default readout `PLANS.md` described; it is a "Custom" chip plus a reset arrow
+marking divergence from the server's `/props` value, with that value shown as the field's
+placeholder. And `settings-config.ts` states the semantic the whole design turns on:
+*empty means use the server default, and empty values are NOT sent*.
+
+**Three calls taken inside the approved scope, recorded as D-BK:**
+
+1. **A field whose feature does not exist here is not drawn.** Reproducing the Web UI's
+   list literally would have added controls for attachments, audio, the model selector, a
+   light theme, auto-titling, autoscroll and a code-block height cap — **none of which
+   exists in this window**. That is a widget wired to nothing, which is G-8's defect and
+   G-37's defect, already shipped twice in this project. Each omission is in
+   `settings.OmittedFields` with the step that brings it back, so the difference reads as
+   a schedule. **Verified by reading, not assumed:** `theme.nim` has no light palette,
+   `gui.nim` has no auto-titling and no autoscroll, and `.code-body` carries no height cap.
+2. **An empty value is omitted from the request, never sent as a zero.** This is why the
+   store keeps strings: a typed field cannot tell "the user asked for 0.0" from "the user
+   never touched it", and a defaulted 0 on every parameter would silently override the
+   server's preset on every request **while looking exactly like a working screen**.
+3. **The source indicator was worth copying because it reuses a call already made.**
+   `gui.fetchProps` already read `/props` once per backend lifetime for the context size;
+   it now also reads `default_generation_settings.params` from the same response. One
+   extra field on an existing round trip — which was the USER's condition.
+
+**Files touched — six:**
+
+- **`src/jenova/settings.nim`** (new) — the field declarations, the store under
+  `p.state`, `validate`, and `applyTo`. **Placed beside `config.nim` in the layering, not
+  beside `gui.nim`**: it depends only on `paths` and `std/json`, so `pipeline.chatBody`
+  can call the merge and a self-test can read the result. That is the whole of D-BH's
+  lesson applied on purpose rather than after a failure.
+- **`src/jenova/pipeline.nim`** — `chatBody` takes the settings and merges them **last**,
+  so `custom` JSON can override the fields the body sets for itself.
+- **`src/jenova/gui.nim`** — the floating panel as an **Overlay child**, not a second
+  window: the Overlay already stacks the sidebar Flap over the canvas, and a separate
+  `Window` would need its own close path in a program whose entire crash history is
+  widgets outliving their owners. Always in the tree and empty when closed, with
+  `sensitive` bound to the open state so a closed panel clicks through. Plus the props
+  read, the four display settings, the system message, and the reasoning-context switch.
+- **`src/jenova/api.nim`** — `exportAll` and `importAll`, exported for the window the way
+  `putEntity` and `patchMessage` already are. **Import accepts two shapes**: this build's
+  dump and the frozen Web UI's `[{conv, messages}]`, so a file from either surface opens
+  in the other without adding a route.
+- **`src/jenova/theme.nim`** — four rules.
+- **`src/jenova_core.nim`** — 15 assertions.
+
+**D-BH's deliberate divergence is closed.** Continue was unconditional because with no
+settings surface an opt-in flag would have made it unreachable. It is opt-in now and off
+by default, matching the Web UI.
+
+### Verification, all of it executed
+
+- `nimble core` and `nimble gui` — exit 0, both binaries rebuilt, both **ELF 64-bit
+  FreeBSD**.
+- **The FreeBSD guard was confirmed to fire**, not merely to exist: compiling with
+  `--os:linux` errors at `jenova_core.nim:20`. Run with the compiler `nimble` itself uses,
+  per the recorded trap — a bare `nim` is not on `PATH` and fails as silence.
+- `pipeline-selftest` passes, 15 new assertions among them.
+- **Proven able to fail, by four independent corruptions producing four different sets of
+  red.** An unset float sent as 0.0 turned the omission check red **alone** and left the
+  merge check green. An integer serialised as a string turned the kind check red alone.
+  Neutering `validate` turned exactly the two refusal checks red.
+- **The fourth corruption passed, and that was the useful one.** Moving the merge above
+  the fixed fields broke a behaviour the module's own header claims — `custom` reaching
+  `reasoning_format` and `stream` — and **every assertion stayed green**. The hole was in
+  my assertion set, not the code. *Custom JSON overrides a field the body sets itself* was
+  written in response and turns that corruption red. **Third session running in which
+  proving an assertion can fail found something the assertion did not cover.**
+- **The round-trip check writes to a scratch file, never `p.state / "settings.json"`.** A
+  self-test that overwrote the USER's own settings would be a defect of its own, which is
+  why `saveTo`/`loadFrom` take a path and `save`/`load` wrap them.
+- **Stubs and placeholders:** none. The only hits in the changed files are a CSS
+  pseudo-element and SQL bind markers, both pre-existing.
+- **Memory handling:** the settings are read **once**, at startup, not per turn and not
+  per redraw — re-reading a file in `view` is defect B-17's shape. `optsDraft` is one copy
+  taken when the panel opens, which is what gives Cancel something to discard. The
+  `/props` params cross the thread channel **as text**, not as a `JsonNode`, so no ref type
+  travels between threads. `exportAll` builds the dump in memory, which is inherent to an
+  export and runs only on an explicit click.
+
+### Not verified, and stated as such
+
+**Nothing has been seen on screen and nothing was run against a live backend.** No
+window was opened, no product started, no ports or processes enumerated (D-BJ). What that
+leaves unseen: the panel's layout, and the "Custom" badge and placeholders, which need a
+running backend to have any `/props` values at all — with the backend down every field
+simply shows no placeholder, which is the designed behaviour rather than a fallback.
+
+---
+
 ## Session 015 — 2026-09-01 12:25
 
 **Instruction:** read `AGENTS.md` and stay strictly inside it, read the devdocs,

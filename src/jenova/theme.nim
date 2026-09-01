@@ -163,6 +163,32 @@ list > row:selected {
   text-shadow: 0 0 8px alpha(@jenova_glow, 0.4);
 }
 
+/* The settings panel (G-31). It floats over the whole window as an Overlay
+   child, so it carries `.glass-panel`'s blur and border and adds only the
+   things a panel needs that an edge-anchored sidebar does not: a radius on
+   every corner and a shadow deep enough to separate it from the transcript
+   behind it. */
+.settings-panel {
+  border-radius: 18px;
+  box-shadow: 0 18px 48px alpha(black, 0.55);
+}
+.settings-label { font-weight: bold; }
+/* Secondary by size rather than by a second colour, which is how `.code-lang`
+   and `.dim-note` already do it. */
+.settings-help {
+  color: @jenova_muted_fg;
+  font-size: 0.85em;
+}
+/* The "Custom" badge — this parameter differs from what the server reported in
+   `/props`. The Web UI uses an orange chip for the same signal; `@jenova_accent`
+   is this palette's nearest equivalent and is already what `.brand-gold` carries
+   on the third wordmark line. */
+.settings-custom {
+  color: @jenova_accent;
+  font-size: 0.8em;
+  font-weight: bold;
+}
+
 /* The window is the ground the canvas is painted on. Near-black, matching the
    Web UI's `bg-black` wrapper at `+layout.svelte`.
 

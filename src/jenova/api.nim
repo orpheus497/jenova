@@ -582,6 +582,46 @@ proc putEntity*(entity: string, node: JsonNode): bool =
 proc deleteEntity*(entity, id: string): bool =
   entity in Entities and softDelete(Entities[entity], id).status == 200
 
+## Function purpose: every live row, in the shape `importData` reads (G-32).
+## Exported for the desktop application's Export button, which must not build a
+## dump of its own: a hand-rolled writer and this reader would drift, and the
+## column list is already declared once in `Entities`.
+proc exportAll*(): JsonNode =
+  const order = ["conversations", "messages", "workspaces", "projects",
+                 "folders", "notes", "fileAssets"]
+  result = newJObject()
+  for name in order:
+    let e = Entities[name]
+    result[name] = rowsToJson(e, db.query(
+      "SELECT " & e.colList & " FROM " & e.name & " WHERE is_deleted=0"))
+
+## Function purpose: the import behind the desktop application's Import button,
+## over the same transactional `importData` the HTTP route uses (G-32).
+##
+## Action purpose: **two input shapes are accepted, because there are two
+## writers.** This build exports the keyed object `importData` consumes; the
+## frozen Web UI (D-Z) exports `[{conv, messages}, …]`, one entry per
+## conversation. Converting the second here rather than adding a route keeps one
+## transactional implementation and makes a file from either surface readable by
+## the other.
+proc importAll*(node: JsonNode): tuple[ok: bool, msg: string] =
+  if node.isNil: return (false, "the file is not valid JSON")
+  var payload = node
+  if node.kind == JArray:
+    var convs = newJArray()
+    var msgs = newJArray()
+    for entry in node:
+      if entry.kind != JObject: continue
+      if entry.hasKey("conv") and entry["conv"].kind == JObject:
+        convs.add entry["conv"]
+      if entry.hasKey("messages") and entry["messages"].kind == JArray:
+        for m in entry["messages"]: msgs.add m
+    if convs.len == 0 and msgs.len == 0:
+      return (false, "no conversations found in the file")
+    payload = %*{"conversations": convs, "messages": msgs}
+  let r = importData(payload)
+  if r.status == 200: (true, "") else: (false, r.body)
+
 proc handleFs*(req: Request): ApiResult =
   if not req.path.startsWith("/api/fs/"):
     return err(404, "not found")

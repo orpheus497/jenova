@@ -56,6 +56,7 @@ import ./sourceview
 import ./nvimctl
 import ./vte
 import ./pipeline
+import ./settings
 
 type
   Role* = enum
@@ -143,6 +144,10 @@ type
     status: BackendStatus
     timings: Timings
     ctx: int
+    ## G-31: `default_generation_settings.params` from `/props`, as JSON text.
+    ## Carried as text and parsed on arrival so no `JsonNode` — a ref type —
+    ## crosses the channel between threads.
+    params: string
 
 var
   streamReq: Channel[StreamJob]
@@ -285,15 +290,26 @@ proc httpGetLocal(host: string, port: int, path: string): string =
 ## — so with `-c 32768 -np 2` a conversation has 16384, and less again if the
 ## model was trained shorter. Deriving it from the config would overstate the
 ## room remaining by the slot count, silently, and only on long conversations.
-proc fetchProps(host: string, port: int): tuple[ctx: int, model: string] =
+## Action purpose: the same response also carries the server's **own** sampling
+## values, under `default_generation_settings.params`. The settings dialog shows
+## them as each field's placeholder and marks a field "Custom" when the stored
+## value differs (G-31), which is what stops someone chasing a parameter they
+## never set. They are read from the call that was already being made rather than
+## from a second one — this proc is a socket round trip and the reason it runs on
+## the control thread at all.
+proc fetchProps(host: string, port: int):
+    tuple[ctx: int, model: string, params: string] =
   let body = httpGetLocal(host, port, "/props")
-  if body.len == 0: return (0, "")
+  if body.len == 0: return (0, "", "")
   try:
     let n = parseJson(body)
-    (n{"default_generation_settings"}{"n_ctx"}.getInt(0),
-     n{"model_alias"}.getStr(""))
+    let gen = n{"default_generation_settings"}
+    let params = gen{"params"}
+    (gen{"n_ctx"}.getInt(0),
+     n{"model_alias"}.getStr(""),
+     if params != nil and params.kind == JObject: $params else: "")
   except CatchableError:
-    (0, "")
+    (0, "", "")
 
 
 ## Function purpose: the LAN-mode flag, persisted exactly where `ui.lua:12-15`
@@ -575,9 +591,10 @@ proc ctlWorker() {.thread.} =
       # nothing extra and never touches the GTK loop.
       if up and not propsRead:
         propsRead = true
-        let (ctx, model) = fetchProps("127.0.0.1", j.port)
-        if ctx > 0 or model.len > 0:
-          uiChan.send(UiMsg(kind: umProps, ctx: ctx, text: model))
+        let (ctx, model, params) = fetchProps("127.0.0.1", j.port)
+        if ctx > 0 or model.len > 0 or params.len > 0:
+          uiChan.send(UiMsg(kind: umProps, ctx: ctx, text: model,
+                            params: params))
       elif not up:
         propsRead = false
       # Action purpose: put existing history into the retrieval index once, and
@@ -691,6 +708,26 @@ viewable App:
   ## re-forking `ifconfig`. A nil pixbuf is survivable — `Picture` renders empty
   ## — so a missing icon file costs the logo, not the window.
   logo: Pixbuf
+  ## G-31. `opts` is what is saved and what reaches the request body; `draft` is
+  ## what the open dialog is editing. **Two copies, deliberately:** the dialog has
+  ## a Cancel, and a single copy edited in place would apply every keystroke to
+  ## the next generation and have nothing to revert to.
+  opts: settings.Settings
+  optsDraft: settings.Settings
+  settingsOpen: bool
+  settingsSection: settings.SettingSection
+  ## The two multi-line fields. A `TextView` owns a `TextBuffer` rather than a
+  ## string, so — exactly as the note editor and the in-place message edit
+  ## already do — each is filled when the dialog opens and read back on save.
+  ## Separate buffers because both fields can be on screen in one session and
+  ## one shared buffer would make each overwrite the other.
+  sysBuffer: TextBuffer = newTextBuffer()
+  customBuffer: TextBuffer = newTextBuffer()
+  ## The server's own sampling values from `/props`, shown as each field's
+  ## placeholder. Empty until the backend has been up long enough to answer,
+  ## which is why a field with no entry here simply shows no placeholder rather
+  ## than claiming a default it has not read.
+  serverDefaults: Table[string, string]
 
   hooks:
     afterBuild:
@@ -871,6 +908,26 @@ viewable App:
           of umProps:
             if m.ctx > 0: st.ctxSize = m.ctx
             if m.text.len > 0: st.serverModel = m.text
+            # Flattened to strings on arrival rather than kept as JSON, because
+            # the only consumer is a placeholder and a string comparison against
+            # the stored value. Numbers are rendered by `$`, so an integer server
+            # default reads as `40` and not `40.0`.
+            if m.params.len > 0:
+              try:
+                let n = parseJson(m.params)
+                if n.kind == JObject:
+                  for k, v in n:
+                    st.serverDefaults[k] =
+                      case v.kind
+                      of JString: v.getStr
+                      of JInt: $v.getInt
+                      of JFloat: formatFloat(v.getFloat, ffDecimal, -1).strip(
+                                   leading = false, chars = {'0'}).strip(
+                                   leading = false, chars = {'.'})
+                      of JBool: (if v.getBool: "1" else: "0")
+                      else: ""
+              except CatchableError:
+                discard
         if changed:
           discard st.redraw()
         true
@@ -1201,15 +1258,31 @@ proc postConversation(app: AppState, continuing = false) =
   app.streaming = true
 
   var msgs = newJArray()
+  # G-31: the stored system message goes in first, as a `system` role.
+  # `pipeline.injectSystem` puts Jenova's own persona **above** an existing
+  # system message rather than replacing it, so this adds to the persona instead
+  # of competing with it — which is why the field is described as "beneath".
+  let sys = app.opts.get("systemMessage").strip
+  if sys.len > 0:
+    msgs.add %*{"role": "system", "content": sys}
   for m in app.messages:
     if m.role == rAssistant and m.text.len == 0: continue
-    msgs.add %*{"role": $m.role, "content": m.text}
+    var turn = %*{"role": $m.role, "content": m.text}
+    # G-31, Developer: a reasoning turn's thinking is sent back so the model can
+    # see its own chain of thought across turns, unless the setting strips it.
+    # The field is only ever added to an assistant turn that has one, so the
+    # default costs nothing on a non-reasoning model.
+    if m.role == rAssistant and m.thinking.len > 0 and
+       not app.opts.getBool("excludeReasoningFromContext"):
+      turn["reasoning_content"] = %m.thinking
+    msgs.add turn
   # The body is built by `pipeline.chatBody`, not here, so a self-test can see
   # it. Continue shipped broken twice while the body lived in this file, where
-  # nothing below the window could assert it.
+  # nothing below the window could assert it — and the sampling parameters are
+  # merged in there for the same reason.
   let port = app.cfg.getInt("PORT", 8080)
   streamReq.send(StreamJob(host: "127.0.0.1", port: port,
-                           body: pipeline.chatBody(msgs, continuing)))
+                           body: pipeline.chatBody(msgs, continuing, app.opts)))
 
 proc send(app: AppState) =
   let text = app.draft.strip
@@ -1461,8 +1534,11 @@ proc copyToClipboard(text: string) =
   except CatchableError: discard
 
 proc messageBody(app: AppState, m: Message): Widget =
-  ## User turns are plain text; only assistant output is markdown.
-  if m.role == rUser:
+  ## User turns are plain text and assistant output is markdown — unless
+  ## `renderUserContentAsMarkdown` is set, which is the Web UI's own option and
+  ## the reason the two branches share the renderer below rather than the user
+  ## branch returning early in every case (G-31).
+  if m.role == rUser and not app.opts.getBool("renderUserContentAsMarkdown"):
     return gui:
       Label:
         text = m.text
@@ -1564,8 +1640,17 @@ proc statsLine(app: AppState, m: Message): string =
 ##
 ## An empty `Box` is what a message with no statistics gets: a Box with no
 ## children requests no size, which is the same reason the document panel is one.
-proc messageStats(app: AppState, m: Message): Widget =
-  let line = app.statsLine(m)
+proc messageStats(app: AppState, idx: int, m: Message): Widget =
+  # G-31: two settings, and they are not the same one. `showMessageStats`
+  # governs the footer under a finished reply. `keepStatsVisible` governs
+  # whether it survives the end of generation when that footer is off — the
+  # live numbers are worth watching during a generation even to someone who
+  # does not want them afterwards, which is the distinction the Web UI draws
+  # between its processing indicator and its per-message footer.
+  let live = app.streaming and idx == app.messages.len - 1
+  let show = app.opts.getBool("showMessageStats") or live or
+             app.opts.getBool("keepStatsVisible")
+  let line = (if show: app.statsLine(m) else: "")
   gui:
     Box(orient = OrientY):
       if line.len > 0:
@@ -1636,7 +1721,14 @@ proc messageActions(app: AppState, idx: int, m: Message): Widget =
         # middle of a conversation that already has an answer after it. **And it
         # is hidden on a turn that carries reasoning**, which is the Web UI's own
         # guard — see `continueReply` and D-BH.
-        if isLast and m.thinking.len == 0:
+        #
+        # **D-BH's deliberate divergence ends here.** It was shown
+        # unconditionally because with no settings surface an opt-in flag would
+        # have made the feature unreachable rather than optional. There is a
+        # settings surface now, so it is opt-in and off by default, matching the
+        # Web UI's `enableContinueGeneration: false` (G-31).
+        if isLast and m.thinking.len == 0 and
+           app.opts.getBool("enableContinueGeneration"):
           Button {.expand: false.}:
             icon = "media-playback-start-symbolic"
             tooltip = "Continue"
@@ -1854,9 +1946,13 @@ proc mainArea(app: AppState): Widget =
                         # entire reply in `reasoning_content`, and a collapsed box
                         # above an empty card is indistinguishable from the model
                         # having said nothing.
+                        # G-31 adds the third case: `showThoughtInProgress`
+                        # makes open-while-generating the standing default
+                        # rather than something the reader re-opens each turn.
                         expanded = app.expanded.getOrDefault(
                           "think:" & (if m.id.len > 0: m.id else: "live"),
                           m.text.len == 0 or
+                          app.opts.getBool("showThoughtInProgress") or
                           (app.streaming and i == app.messages.len - 1))
                         proc activate(on: bool) =
                           app.expanded["think:" & (if m.id.len > 0: m.id
@@ -1868,7 +1964,7 @@ proc mainArea(app: AppState): Widget =
                           margin = 6
                           style = [StyleClass("dim-note")]
                     insert(app.messageBody(m)) {.expand: false.}
-                    insert(app.messageStats(m)) {.expand: false.}
+                    insert(app.messageStats(i, m)) {.expand: false.}
                     insert(app.messageActions(i, m)) {.expand: false.}
 
 
@@ -1953,6 +2049,240 @@ proc docPanel(app: AppState): Widget =
 ## **It sits atop the chat column rather than spanning the window** because the
 ## Web UI's sidebar is full height (`h-full glass-panel rounded-r-[24px]`,
 ## `ChatSidebar.svelte:177`), so a bar above the sidebar would not be parity.
+## Function purpose: open the settings panel on a copy of the stored values, and
+## fill the two text buffers from it. Opening is where the copy is taken, so
+## Cancel is simply discarding the copy and nothing has to be undone.
+proc openSettings(app: AppState) =
+  app.optsDraft = app.opts
+  app.sysBuffer.text = app.opts.get("systemMessage")
+  app.customBuffer.text = app.opts.get("custom")
+  app.settingsOpen = true
+  app.notice = ""
+
+## Function purpose: validate the edited copy, store it, and make it live. The
+## text buffers are read back here rather than on every keystroke — a `TextView`
+## has no per-change binding the way an `Entry` does, and polling one from `view`
+## would run on every canvas frame.
+proc saveSettings(app: AppState) =
+  app.optsDraft["systemMessage"] = app.sysBuffer.text()
+  app.optsDraft["custom"] = app.customBuffer.text()
+  # Refused before storing, not at merge time: `settings.applyTo` runs on the way
+  # to the model, and a value silently dropped there is indistinguishable from a
+  # parameter the server ignored.
+  let (ok, key, msg) = settings.validate(app.optsDraft)
+  if not ok:
+    app.notice = "settings not saved — " & key & " " & msg
+    return
+  if not settings.save(app.p, app.optsDraft):
+    app.notice = "settings could not be written to " & app.p.state
+    return
+  app.opts = app.optsDraft
+  app.settingsOpen = false
+  app.notice = "settings saved"
+
+## Function purpose: write every live row to a file the import below — and the
+## frozen Web UI's — can read back (G-32). The dump is built by `api.exportAll`,
+## which declares its columns once; this proc only chooses the file.
+proc exportConversations(app: AppState) =
+  let (res, state) = app.open: gui:
+    FileChooserDialog:
+      title = "Export conversations"
+      action = FileChooserSave
+      initialPath = app.p.state
+      DialogButton {.addButton.}:
+        text = "Cancel"
+        res = DialogCancel
+      DialogButton {.addButton.}:
+        text = "Export"
+        res = DialogAccept
+        style = [ButtonSuggested]
+  if res.kind != DialogAccept: return
+  let names = FileChooserDialogState(state).filenames
+  if names.len == 0: return
+  try:
+    writeFile(names[0], pretty(api.exportAll()))
+    app.notice = "exported to " & names[0]
+  except CatchableError as e:
+    app.notice = "export failed: " & e.msg
+
+## Function purpose: read a dump back in, through the same transactional route
+## the HTTP surface uses, then reload what is on screen so the imported rows are
+## visible without a restart.
+proc importConversations(app: AppState) =
+  let (res, state) = app.open: gui:
+    FileChooserDialog:
+      title = "Import conversations"
+      action = FileChooserOpen
+      initialPath = app.p.state
+      DialogButton {.addButton.}:
+        text = "Cancel"
+        res = DialogCancel
+      DialogButton {.addButton.}:
+        text = "Import"
+        res = DialogAccept
+        style = [ButtonSuggested]
+  if res.kind != DialogAccept: return
+  let names = FileChooserDialogState(state).filenames
+  if names.len == 0: return
+  var node: JsonNode
+  try:
+    node = parseJson(readFile(names[0]))
+  except CatchableError:
+    app.notice = "import failed: " & names[0] & " is not valid JSON"
+    return
+  let (ok, msg) = api.importAll(node)
+  if not ok:
+    app.notice = "import failed: " & msg
+    return
+  # The import writes rows directly, so nothing on screen knows about them yet.
+  app.convs = listConversations()
+  app.reloadTree()
+  app.notice = "imported from " & names[0]
+
+## Function purpose: one settings field, drawn from its declaration rather than
+## hand-written per key — the field list lives in `settings.nim` and adding one
+## there is the whole of adding one here.
+##
+## Action purpose: **the placeholder is the server's own value and the "Custom"
+## badge marks a divergence from it** (G-31). Together they answer the question
+## the Web UI added this indicator for: whether a parameter is set because you
+## set it, or because `llama-server` chose it. An empty field is not sent at all,
+## which is why the placeholder is the honest thing to show in it.
+proc settingsField(app: AppState, d: settings.SettingDef): Widget =
+  let stored = app.optsDraft.get(d.key)
+  let serverDef = app.serverDefaults.getOrDefault(d.key, "")
+  let isCustom = stored.len > 0 and serverDef.len > 0 and stored != serverDef
+  gui:
+    Box(orient = OrientY, spacing = 2):
+      Box(orient = OrientX, spacing = 6) {.expand: false.}:
+        Label {.expand: true.}:
+          text = d.label
+          xAlign = 0.0
+          style = [StyleClass("settings-label")]
+        if isCustom:
+          Label {.expand: false.}:
+            text = "Custom"
+            style = [StyleClass("settings-custom")]
+        if d.kind == skBool:
+          Switch {.expand: false, vAlign: AlignCenter.}:
+            state = app.optsDraft.getBool(d.key)
+            proc changed(on: bool) =
+              app.optsDraft[d.key] = (if on: "1" else: "0")
+
+      # `if`/`elif` and not a `case`: owlkettle's `gui` DSL parses a child block
+      # as a two-element node and a `case` arm is not one — it fails the
+      # `child.len == 2` assertion in `guidsl.nim:150` at compile time.
+      if d.kind == skText:
+        # Driven from a buffer for the reason the note editor is: a TextView owns
+        # its text and cannot be bound to state per redraw the way an Entry is.
+        TextView {.expand: false.}:
+          buffer = (if d.key == "custom": app.customBuffer else: app.sysBuffer)
+      elif d.kind != skBool:
+        Entry {.expand: false.}:
+          text = stored
+          placeholder = (if serverDef.len > 0: "Default: " & serverDef else: "")
+          proc changed(t: string) =
+            app.optsDraft[d.key] = t
+
+      if d.help.len > 0:
+        Label {.expand: false.}:
+          text = d.help
+          xAlign = 0.0
+          wrap = true
+          style = [StyleClass("settings-help")]
+
+## Function purpose: the settings surface (G-31) — the sections of the Web UI's
+## `ChatSettings`, minus the two the USER excluded and the fields whose feature
+## does not exist here yet (**D-BK**, and `settings.OmittedFields` names every
+## one).
+##
+## Action purpose: **an overlay child of the window, not a second window.** It is
+## the floating panel the USER asked for, and it costs no window lifecycle: the
+## Overlay already stacks the sidebar Flap over the canvas, so a second child is
+## the shape this window is built in. A separate `Window` would need its own
+## close path, and every crash in this project's history was a widget outliving
+## the thing that owned it (G-25, and the eleven quit-path crashes).
+proc settingsPanel(app: AppState): Widget =
+  gui:
+    Box(orient = OrientY):
+      # Always in the tree, empty when closed — the document panel's shape, and
+      # for the same reason: an Overlay child that comes and goes is a child
+      # count that changes under owlkettle's positional matching.
+      #
+      # Action purpose: **`sensitive` is what makes a closed panel click
+      # through.** An empty Box still takes the Overlay's whole allocation, so
+      # without this the window would be covered by an invisible widget that
+      # swallowed every click. GTK4's default pick skips insensitive widgets.
+      sensitive = app.settingsOpen
+      if app.settingsOpen:
+        Box(orient = OrientY, spacing = 8, margin = 24) {.hAlign: AlignCenter,
+                                                          vAlign: AlignCenter.}:
+          sizeRequest = (720, 560)
+          style = [StyleClass("glass-panel"), StyleClass("settings-panel")]
+
+          Box(orient = OrientX, spacing = 8) {.expand: false.}:
+            Label {.expand: true.}:
+              text = "Settings"
+              xAlign = 0.0
+              style = [StyleClass("brand"), StyleClass("brand-purple")]
+            Button {.expand: false.}:
+              icon = "window-close-symbolic"
+              tooltip = "Close without saving"
+              style = [ButtonFlat, StyleClass("row-btn")]
+              proc clicked() = app.settingsOpen = false
+
+          # The section switcher. A row of flat buttons rather than a sidebar:
+          # the panel is 720 wide and a 260-wide nav inside it would leave the
+          # fields narrower than the sidebar they sit beside.
+          Box(orient = OrientX, spacing = 4) {.expand: false.}:
+            for s in settings.SettingSection:
+              Button {.expand: false.}:
+                text = $s
+                style = [if s == app.settingsSection: ButtonSuggested
+                         else: ButtonFlat, StyleClass("row-btn")]
+                proc clicked() = app.settingsSection = s
+
+          ScrolledWindow {.expand: true.}:
+            Box(orient = OrientY, spacing = 14, margin = 4):
+              if app.settingsSection == ssImportExport:
+                # G-32. The backend is `api.importAll` over the same
+                # transactional path `POST /api/db/import` uses; this is the
+                # front end the desktop application did not have.
+                Label {.expand: false.}:
+                  text = "Write every conversation and message to a JSON " &
+                         "file, or read one back. A file exported by the Web " &
+                         "UI is accepted as well as one exported here."
+                  xAlign = 0.0
+                  wrap = true
+                  style = [StyleClass("settings-help")]
+                Box(orient = OrientX, spacing = 8) {.expand: false.}:
+                  Button {.expand: false.}:
+                    text = "Export…"
+                    style = [ButtonFlat, StyleClass("row-btn")]
+                    proc clicked() = app.exportConversations()
+                  Button {.expand: false.}:
+                    text = "Import…"
+                    style = [ButtonFlat, StyleClass("row-btn")]
+                    proc clicked() = app.importConversations()
+              else:
+                for d in settings.fieldsIn(app.settingsSection):
+                  insert(app.settingsField(d)) {.expand: false.}
+
+          Box(orient = OrientX, spacing = 8) {.expand: false.}:
+            Label {.expand: true.}:
+              text = "Stored in " & app.p.state
+              xAlign = 0.0
+              ellipsize = EllipsizeStart
+              style = [StyleClass("settings-help")]
+            Button {.expand: false.}:
+              text = "Cancel"
+              style = [ButtonFlat, StyleClass("row-btn")]
+              proc clicked() = app.settingsOpen = false
+            Button {.expand: false.}:
+              text = "Save"
+              style = [ButtonSuggested, StyleClass("row-btn")]
+              proc clicked() = app.saveSettings()
+
 proc topBar(app: AppState): Widget =
   gui:
     # No adder annotation here — a `gui` tree's top-level widget may not carry
@@ -2007,6 +2337,15 @@ proc topBar(app: AppState): Widget =
             app.refreshDocs()
             if app.panelDocs.len > 0: app.openDoc(app.panelDocs[0])
             else: app.newDoc()
+
+      # G-31. In the bar rather than in the app menu because it is a surface the
+      # user opens repeatedly while tuning a model, not a one-off action like
+      # restarting a backend.
+      Button {.addRight.}:
+        icon = "emblem-system-symbolic"
+        tooltip = "Settings"
+        style = [ButtonFlat]
+        proc clicked() = app.openSettings()
 
       MenuButton {.addRight.}:
         icon = "open-menu-symbolic"
@@ -2311,6 +2650,11 @@ method view(app: AppState): Widget =
                     app.send()
                 insert(app.fullscreenButton()) {.expand: false.}
 
+        # G-31. Last child of the Overlay, so it stacks above the Flap and the
+        # chat column rather than under them — the floating panel, over the
+        # whole window and the canvas behind it.
+        insert(app.settingsPanel()) {.addOverlay.}
+
 ## Function purpose: entry point for `bin/jenova`. Resolution happens here,
 ## before the window exists, so a configuration error is reported on the terminal
 ## rather than inside a half-built UI.
@@ -2390,7 +2734,15 @@ proc run*(withTray = true) =
                        folders = listFolders(),
                        notes = listNotes(),
                        files = listFiles(),
-                       logo = logo))
+                       logo = logo,
+                       # G-31. Read once here rather than per turn: `view` runs on
+                       # every canvas frame and `postConversation` on every send,
+                       # and re-reading a file in either is the shape of defect
+                       # B-17. A missing or malformed file is the defaults, so
+                       # this cannot stop the window opening.
+                       opts = settings.load(p),
+                       optsDraft = settings.load(p),
+                       settingsSection = ssGeneral))
 
   if withTray:
     # The tray is started before the main loop but pumped from inside it; see

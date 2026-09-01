@@ -1,6 +1,6 @@
 # TODOS
 
-**Last updated:** 2026-09-01 12:25 (Session 015)
+**Last updated:** 2026-09-01 12:55 (Session 016)
 
 Only what is actually outstanding. Everything finished lives in `PROGRESS.md`.
 
@@ -74,10 +74,20 @@ barrel files that list every shipped component. That is the authoritative invent
 check any future scope claim against it, not against a summary.
 
 **Ordering and the work for each item is `PLANS.md`.** The mapping:
-G-31 and G-32 are Step 5 · G-33, G-30, G-35, G-34 and G-36 are Step 7 ·
-G-20, G-21 and G-17 are Step 8. **Step 5 is next.**
+G-33, G-30, G-35, G-34 and G-36 are Step 7 · G-20, G-21 and G-17 are Step 8 ·
+S-1 is Step 6. **Step 6 is next.**
 
 **Done and gone from this file** (2026-09-01, all in `PROGRESS.md`):
+
+- **G-31 — a settings screen, and with it every sampling and penalty parameter.**
+  A floating panel over the window, six sections, 1:1 with the Web UI's
+  `ChatSettings` minus API Key and MCP (excluded by the USER) and minus the
+  fields whose feature this window does not have yet — each of those listed in
+  `settings.OmittedFields` with the step that brings it back (**D-BK**). This
+  also **closed D-BH's deliberate divergence**: Continue is now a setting, off by
+  default, matching the Web UI.
+- **G-32 — import and export of conversations**, over the transactional path that
+  already existed. A file exported by the frozen Web UI is accepted too.
 
 - **G-28** — a message carries copy, edit, delete, regenerate and continue.
 - **G-29 — branching.** Editing or regenerating adds an alternative version rather than
@@ -102,37 +112,6 @@ against what the model can actually read (vision/audio).
 
 Audio recording (`ChatFormActionRecord`) is part of this group and is the one piece
 that may not be worth porting — raise it before building.
-
-### G-31 — No settings, and therefore no sampling controls
-
-**There is no settings surface in the Nim GUI at all**, so **temperature, top_p, top_k,
-min_p, repeat_penalty, frequency/presence penalty and repeat-last-n cannot be set from
-the desktop application.** They are not defaulted badly — they are absent.
-
-**The plumbing is now proven, which reduces this to the screen.** The request body is
-built by `pipeline.chatBody` (`pipeline.nim:331`) and already carries `timings_per_token`
-and `reasoning_format` untouched to `llama-server`, and `pipeline-selftest` asserts that
-an unknown top-level key — `temperature` among them — survives `pipeline.prepare`. So
-this item is a dialog and a stored file, not a plumbing question. The window posts
-through `gui.postConversation` (`gui.nim:1199`), which is where stored values would be
-merged in.
-
-The Web UI's `ChatSettings` has seven tabs: General (API key, system message), Display
-(theme, badges), Sampling, Penalties, Import/Export, MCP, Developer. It also shows,
-per parameter, whether the value came from the user, from the server's `/props`, or
-from an app default (`ChatSettingsParameterSourceIndicator`).
-
-**`llama-server` accepts all of these per request** (this is why D-AF closed N-25), so
-this is GUI work over a path that already carries them.
-
-### G-32 — No import or export of conversations
-
-`ChatSettingsImportExportTab` + `DialogConversationSelection` let you pick
-conversations and write them to a JSON file, or read one back.
-
-**The backend route already exists and is tested** — `POST /api/db/import` runs
-transactionally (`api.importData`, routed at `api.nim:714`) and `test_api_db.sh` asserts
-it. This is a GUI front end over finished work.
 
 ### G-33 — No way to stop a generation
 
@@ -269,7 +248,7 @@ and a deleted turn is forgotten. **Step 4 is built.**
 
 | ID | Item |
 |---|---|
-| **T-15** | The crash fixed in Session 011 was a widget re-entering the redraw. `Entry` has the same shape: its `text` hook can trigger a redraw, and two of the three Entries have a second thing writing to them (`app.draft` cleared on send, `app.noteTitle` set on rename). **Do not rewrite them.** All eleven crashes were the quit path and none was an `Entry`. Act only if a crash actually shows one. | `gui.nim:830`, `1083`, `1541` |
+| **T-15** | The crash fixed in Session 011 was a widget re-entering the redraw. `Entry` has the same shape: its `text` hook can trigger a redraw, and two of the three Entries have a second thing writing to them (`app.draft` cleared on send, `app.noteTitle` set on rename). **Do not rewrite them.** All eleven crashes were the quit path and none was an `Entry`. Act only if a crash actually shows one. | The tree-row rename `Entry` (`gui.nim:1392`), the note-title `Entry` (`gui.nim:1790`) and the chat-draft `Entry` (`gui.nim:2298`). *This row's addresses were stale until 2026-09-01 12:39 — they named lines 830, 1083 and 1541, which are the `umDone` index dispatch, the rename node builder and the timings formatter. Session 015's citation sweep corrected the Active tables and missed this one.* |
 
 ---
 

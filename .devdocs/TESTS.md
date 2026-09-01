@@ -3,7 +3,7 @@
 Test specifications, validation criteria and expected outcomes. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 12:25 (Session 015).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 12:55 (Session 016).
 Mandated from the outset; absent for Sessions 001–003. See `DECISIONS_LOG.md` C-10.
 
 > **§5a onward are stage acceptance records** — what each stage had to prove and how. They are
@@ -107,7 +107,7 @@ into the request body.
 | **2 — message actions** (G-28) | ~~Edit and delete reach the right rows and cascade correctly~~ **DONE 2026-09-01 — see §0c** | Done as planned: `test_api_db.sh`, +12 assertions. Regenerate and continue remain screen-only |
 | **3 — branching** (G-29) | ~~The active path and the sibling counts are right for a known fork shape~~ **DONE 2026-09-01 — see §0d** | Done as planned, and as predicted it was the step needing an assertion rather than a screenshot: `jenova-core tree-selftest`, 26 assertions |
 | **4 — chat indexing** (T-17) | ~~A query returns the right message; a conversation-scoped filter confines results; re-indexing a conversation does not duplicate chunks~~ **DONE 2026-09-01 — see §0f** | Done as planned, plus four in `pipeline-selftest` the plan had not asked for: the *wiring*, which is the half that had been invisible |
-| **5 — settings** (G-31) | A stored sampling value actually reaches the outbound JSON body | A check on the body-building function. **Not** a live generation |
+| **5 — settings** (G-31) | ~~A stored sampling value actually reaches the outbound JSON body~~ **DONE 2026-09-01 — see §0g** | Done as planned, plus fourteen the plan had not asked for — most importantly that an **unset** value is not sent at all |
 | **6 — hardware profiles** (S-1) | Known hardware selects the right profile; an opt-in profile never wins automatically; the fallback ladder holds (specific > GPU generic > CPU generic) | A new suite over the profile data. Pure scoring logic, no hardware needed. **Prove it can go red first** — the archived `test_validate_arg.sh` never asserted this and rewrote `etc/jenova.conf` as a side effect |
 | **9 — statement cache** (T-2) | The cache stays capped under many distinct queries | A new suite. **Prove it can go red first** |
 | **9 — containment** (T-4) | A write through a symlinked parent is refused 403; a legitimate write under a symlinked root succeeds | Extend `test_api_fs.sh`, both directions |
@@ -338,6 +338,46 @@ turns *a message indexed without vectors is retried later* red **alone**. And re
 from `ragLimitFor` — the wiring corruption — leaves *a chat message reaches the index*
 **green** while turning the other three red, which is the evidence that the two groups
 measure genuinely different things.
+
+## 0g. `pipeline-selftest` — settings reach the model (G-31, G-32, 2026-09-01)
+
+**Fifteen assertions**, all in `pipeline-selftest`, because the sampling parameters are
+only ever a JSON field on the outbound body. That is why `settings.applyTo` and the merge
+live below the widget layer: **the entire feature is provable with no window, no backend
+and no generation.**
+
+| Asserted | Why it is the assertion |
+|---|---|
+| An **unset** parameter is not sent at all | The one that matters most and reads as the least interesting. Sending a defaulted 0.0 for every untouched field would silently override the server's own preset on every request — and would look exactly like a working settings screen |
+| An unset **boolean** is not sent either | An unasked-for `false` is still an override. A bool is never "empty", so this needed its own rule and therefore its own check |
+| A stored temperature reaches the outbound body | What `PLANS.md` Step 5 named as the proof |
+| An integer is sent as a **number, not a string** | `"40"` as a JSON string is ignored by `llama-server`, which on screen is indistinguishable from a setting that does nothing. The *kind* is the assertion |
+| A penalty reaches the body by the same path | A different section over one merge — proves the mechanism, not one field |
+| Merging does not disturb the fields already there | `stream` and `timings_per_token` are what the statistics and the stream itself depend on |
+| The Developer switch turns reasoning parsing off | `reasoning_format` is computed rather than constant now, so it can be got wrong |
+| Custom JSON adds a parameter this build does not name | The escape hatch working |
+| Custom JSON overrides a **named** field | It is merged last, deliberately |
+| Custom JSON overrides a field **the body sets itself** | **This one exists because it was missing** — see below |
+| Settings do not clobber the continuation flags | Continue shipped broken twice (D-BH). A later feature quietly overwriting its two fields would be the third |
+| A non-numeric parameter is refused **before** it is stored | At merge time it would be silently dropped on the way to the model, which is indistinguishable from a parameter the server ignored |
+| Malformed custom JSON is refused before it is stored | Same reason, different failure |
+| A well-formed set validates | A validator that refuses everything also passes both checks above |
+| Settings survive a save and load | Against a **scratch file**, never `p.state / "settings.json"` — a self-test that overwrote the USER's own settings would be a defect of its own |
+
+**Proven able to fail, four independent corruptions, four different sets of red.**
+Sending an unset float as 0.0 turns *an unset sampling parameter is not sent at all* red
+**alone**, leaving *a stored temperature reaches the outbound body* green — the two are
+measuring different things. Serialising an integer as a string turns the kind check red
+**alone**. Neutering `validate` turns exactly the **two** refusal checks red and nothing
+else.
+
+**The fourth corruption passed, and that is the most useful result here.** Moving the
+merge *above* the fixed fields — so `custom` could no longer reach `reasoning_format` or
+`stream` — broke a behaviour the module's own header claims, and **every assertion still
+went green**. The hole was in the assertion set, not the code. *Custom JSON overrides a
+field the body sets itself* was written in response and turns that corruption red. This
+is the third session running in which the act of proving an assertion can fail found
+something the assertion did not cover; the pattern is worth keeping.
 
 **Not proven, and stated as such:** no reply has been streamed through this with a live
 `llama-server` and a live embedding server. Everything above runs with the embedder down.
