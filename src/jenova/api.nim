@@ -423,6 +423,37 @@ proc restore(e: Entity, id: string): ApiResult = restoreItem(e.name, id)
 proc parseBodyJson(body: string): JsonNode =
   try: parseJson(body) except CatchableError: nil
 
+## Function purpose: write only the message columns the caller actually supplied.
+## `writeRow` is INSERT OR REPLACE over every column, so upserting a message to
+## change its text alone would blank its `convId`, `role` and `timestamp` — which
+## is why editing a message needs this and not `putEntity`.
+##
+## It is a proc rather than inline in the route because the GUI's edit action
+## needs exactly this behaviour, and a second copy in `gui.nim` would be two
+## definitions of one contract. `POST /api/db/messages/update` and the window now
+## call the same code.
+proc updateMessage(node: JsonNode): ApiResult =
+  if node.isNil or not node.hasKey("id"):
+    return err(400, "id required")
+  let e = Entities["messages"]
+  var sets: seq[string]
+  var vals: seq[string]
+  for col in e.cols:
+    if col.name != "id" and node.hasKey(col.name):
+      sets.add col.name & "=?"
+      let v = node[col.name]
+      vals.add (if v.kind == JString: v.getStr else: $v)
+  if sets.len == 0: return err(400, "no updatable fields present")
+  vals.add node["id"].getStr
+  db.exec("UPDATE messages SET " & sets.join(", ") & " WHERE id=?", vals)
+  ok("""{"status":"ok"}""")
+
+## Function purpose: the GUI's entry point to the partial message update above,
+## shaped like `putEntity`/`deleteEntity` so the window keeps going through this
+## module rather than writing message SQL of its own.
+proc patchMessage*(node: JsonNode): bool =
+  updateMessage(node).status == 200
+
 ## Function purpose: bulk import, reproducing `db.import_data`. Wrapped in a
 ## transaction so a partial dump cannot leave the database half-populated —
 ## the original rolled back on any failure and so does this.
@@ -619,21 +650,7 @@ proc handleDb*(req: Request): ApiResult =
         return err(500, "bulk delete failed")
       return ok("""{"status":"ok"}""")
     of "update":
-      let node = parseBodyJson(req.body)
-      if node.isNil or not node.hasKey("id"):
-        return err(400, "id required")
-      # Partial update: only the columns present in the body are written.
-      var sets: seq[string]
-      var vals: seq[string]
-      for col in e.cols:
-        if col.name != "id" and node.hasKey(col.name):
-          sets.add col.name & "=?"
-          let v = node[col.name]
-          vals.add (if v.kind == JString: v.getStr else: $v)
-      if sets.len == 0: return err(400, "no updatable fields present")
-      vals.add node["id"].getStr
-      db.exec("UPDATE messages SET " & sets.join(", ") & " WHERE id=?", vals)
-      return ok("""{"status":"ok"}""")
+      return updateMessage(parseBodyJson(req.body))
     else: discard
 
   # ---- /<entity>/deleted, /<entity>/all, /<entity>/<id>/restore ----------

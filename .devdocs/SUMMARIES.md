@@ -5,7 +5,23 @@ One short paragraph per session. Sessions 001-005 are in
 
 ---
 
-## Session 014 — 2026-09-01 09:58
+## Session 014 — 2026-09-01 10:17
+
+Verification first, then **Steps 1 and 2 built**. **Step 2 (G-28): a message carries its
+actions again** — copy, edit, delete, regenerate and continue, where before there was one
+copy button on code blocks and nothing else. The change the other four rested on was not
+a button: `Message` had **no row id**, so there was nothing to act on; `saveMessage` now
+returns the row it wrote and `loadMessages` selects it. `send` split so regenerate and
+continue post the same body from a different starting state, a continued reply updates
+its own row rather than inserting a duplicate, and the update route's body was extracted
+into `api.patchMessage` so the window and the HTTP surface run one implementation instead
+of two copies of the contract. **Edit deliberately does not resend, and regenerate and
+continue are offered on the last message only (D-BF)** — both create alternative versions
+of later turns, which is branching, and offering it without the tree would destroy those
+turns rather than offer a choice; lifting both is now part of Step 3. 12 assertions added
+to `test_api_db.sh`, **proven able to fail in both halves separately**. Nothing has been
+seen on screen and two new icon names are unconfirmed — that is a screen check. Below,
+the earlier half of the session.
 
 Verification first, then `PLANS.md` **Step 1 built**. Twenty-four tracker claims that
 name a file and a line were checked against the source and **all twenty-four hold**;

@@ -2,7 +2,7 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-09-01 09:58 (Session 014)
+**Last updated:** 2026-09-01 10:17 (Session 014)
 
 **Write plans in plain English, then cite the ID** (**D-BA**). A step that reads
 "resolve G-23" tells the reader nothing. Say what the thing is first.
@@ -50,14 +50,14 @@ is `TODOS.md` G-17, G-20, G-21 and G-28 … G-36.
 
 | Works today | Missing entirely |
 |---|---|
-| Send a message, stream a reply | Edit, regenerate, delete, copy or continue a message |
-| Conversations: create, rename, delete, search | Branching — alternative versions of an answer |
-| Workspace / project / folder tree, notes | Attachments of any kind |
-| Markdown text and highlighted code blocks | Tables, task lists, LaTeX maths |
-| Theme, canvas, Neovim page, AI reads the buffer | Any settings screen — so no sampling parameters |
-| Tray, LAN toggle, backend start/stop | Import/export, statistics, a stop button |
-| Two hardcoded model-switch items | A real model selector and model information |
-| One line of grey status text | Typed errors, retry, context-overflow reporting |
+| Send a message, stream a reply | Branching — alternative versions of an answer |
+| **Copy, edit, delete, regenerate and continue a message** | Attachments of any kind |
+| Conversations: create, rename, delete, search | Tables, task lists, LaTeX maths |
+| **Renaming a container keeps its files** | Any settings screen — so no sampling parameters |
+| Markdown text and highlighted code blocks | Import/export, statistics, a stop button |
+| Theme, canvas, Neovim page, AI reads the buffer | A real model selector and model information |
+| Tray, LAN toggle, backend start/stop | Typed errors, retry, context-overflow reporting |
+| Two hardcoded model-switch items | Trash view, delete confirmations, a real note editor |
 
 **Almost all of it is GUI work over backend that is already implemented and has
 assertions behind it.**
@@ -94,36 +94,21 @@ every one of those references.
 
 ---
 
-## Step 2 — Give a message its actions back  *(`TODOS.md` G-28)*
+## Step 2 — **BUILT 2026-09-01.** A message carries its actions again
 
-**What is wrong:** once a message is sent there is nothing you can do to it. The Nim
-GUI has one copy button, on code blocks (`gui.nim:929`). The Web UI's
-`ChatMessageActions` has five actions on every message.
+Done and out of this plan. Copy, edit, delete, regenerate and continue, over a `Message`
+that now carries its row id — which was the change the other four rested on. The record
+is `PROGRESS.md` 2026-09-01 10:17; the scoping call is **D-BF**.
 
-**Why second:** it is the largest usability gap in the product, and it is the
-difference between correcting a mistake and starting the conversation over.
+**Two parts were deliberately held back and they are Step 3's job**, not loose ends:
+**edit does not resend**, and **regenerate and continue are offered on the last message
+only**. Both are the same restriction — re-answering a turn that has turns after it
+produces an alternative version of all of them, which is a branch. Without the tree,
+offering it would destroy the following turns instead of letting you choose between
+them.
 
-**The work, per action:**
-
-| Action | Mechanism |
-|---|---|
-| **Copy** | The message text to the clipboard. `copyToClipboard` already exists (`gui.nim:893`) and drives `wl-copy` |
-| **Delete** | `api.deleteEntity("messages", id)` — the route and its cascade already exist and are asserted by `test_api_db.sh` |
-| **Edit** | An inline `Entry`/`TextView` swap on the message card, saving through `/api/db/messages/update`, which already performs partial updates (`api.nim:593-608`) |
-| **Regenerate** | Drop the assistant message and re-post the conversation up to the preceding user turn. `gui.send` already builds that body |
-| **Continue** | Re-post with the incomplete assistant text as the tail, so the model extends rather than restarts |
-
-**Do this before branching.** Editing and regenerating are what *create* branches;
-building the navigator first would leave it with nothing to navigate.
-
-**Watch out for:** the transcript column's widget-shape invariant. The comment at
-`gui.nim:1477-1482` records that the chat column keeps three children of the same types
-in the same order so owlkettle's positional diff cannot swap a widget out from under
-it. Adding an edit mode must vary *what is inside* a card, not the card's type.
-
-**Proof it worked:** the mutations are all HTTP calls, so they are assertable without a
-window — extend `test_api_db.sh` for the edit and delete paths. Regenerate and continue
-are GUI composition over `gui.send` and need the screen.
+**Step 3 is the next step, and lifting those two restrictions is most of what it is
+for.**
 
 ---
 
@@ -134,13 +119,22 @@ alternative version — and prev/next arrows with a counter ("2/5") move between
 conversation is a tree.
 
 **The backend is already done.** `conversations.forkedFromConversationId` exists in the
-schema (`db.nim:296`); `api.nim:263-281` already implements both deletion modes — a
-recursive descendant walk for delete-with-forks, and reparenting children onto the
+schema (`db.nim:296`); `api.deleteConversation` already implements both deletion modes —
+a recursive descendant walk for delete-with-forks, and reparenting children onto the
 deleted node's own parent otherwise — and `test_api_db.sh` asserts both.
 
 **What blocks it:** the GUI models a conversation as a flat `seq[Message]`
-(`gui.nim:372`) and cannot represent a branch at all. This is a state-shape change
+(`gui.nim:383`) and cannot represent a branch at all. This is a state-shape change
 first and widgets second.
+
+**Step 2 did the first half of it.** Each `Message` now carries its row id, which is the
+identity a sibling lookup needs — the tree cannot be built over turns that have no
+names. What remains is the shape, not the contents.
+
+**It also has two callers waiting for it (D-BF).** Edit currently saves without
+resending, and regenerate and continue are offered on the last message only, because
+both create alternative versions and there is nowhere to put them. **Lifting those two
+restrictions is part of this step, not a follow-up.**
 
 **The work:**
 1. `App.messages` becomes the *active path* through the tree, with the full message set
@@ -169,7 +163,7 @@ filter the query path already supports scopes a search to one chat or across all
 them.
 
 **The work:**
-1. Index a message as it is saved. The save sites are `gui.nim:296` and the server-side
+1. Index a message as it is saved. The save sites are `gui.saveMessage` and the server-side
    path; both already have the conversation id in hand.
 2. Use a stable key per conversation so re-indexing replaces rather than duplicates —
    `indexContent` is already idempotent per path (`rag.nim:213` forgets first).

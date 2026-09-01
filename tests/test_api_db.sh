@@ -95,6 +95,47 @@ req POST /api/db/messages/update '{"id":"m1","content":"edited"}' >/dev/null
 check "partial update writes only given fields" '"content":"edited"' "$(get '/api/db/message?id=m1')"
 check "partial update preserves others"         '"role":"user"'      "$(get '/api/db/message?id=m1')"
 
+# --- the paths behind the window's message actions (G-28) -------------------
+# Action purpose: of the five actions a message now carries, edit and delete are
+# pure HTTP and therefore assertable here; regenerate and continue are GUI
+# composition over gui.send and need the screen. The window calls
+# api.patchMessage and api.deleteEntity, and patchMessage is the SAME proc this
+# route calls — extracted from the route body so there is one definition of the
+# contract rather than a second copy in gui.nim.
+
+# Editing must not disturb the columns it was not given. gui.saveEdit sends
+# {"id","content"} and nothing else, and api.writeRow is INSERT OR REPLACE over
+# every column — so an edit that went through putEntity would blank the turn's
+# convId, role and timestamp. That is why edit uses the partial update.
+req POST /api/db/messages/update '{"id":"m1","content":"edited twice"}' >/dev/null
+check "edit writes the new text"    '"content":"edited twice"' "$(get '/api/db/message?id=m1')"
+check "edit keeps the conversation" '"convId":"c1"'            "$(get '/api/db/message?id=m1')"
+check "edit keeps the timestamp"    '"timestamp":1730000001'   "$(get '/api/db/message?id=m1')"
+check "edit keeps the role"         '"role":"user"'            "$(get '/api/db/message?id=m1')"
+
+# An update with nothing to update is a client error, not a silent success: a
+# blank UPDATE would report ok having written nothing at all.
+check "update without an id is refused"       '"error"' "$(req POST /api/db/messages/update '{"content":"x"}')"
+check "update with no known field is refused" '"error"' "$(req POST /api/db/messages/update '{"id":"m1","nope":"x"}')"
+
+# Deleting one turn must leave its siblings and its conversation alone. This is
+# the route behind the window's per-message delete; the cascade asserted further
+# down is a different one, driven by deleting the conversation.
+req POST /api/db/messages '{"id":"m2","convId":"c1","role":"assistant","content":"reply","timestamp":1730000002}' >/dev/null
+check "the second message exists before deletion" '"id":"m2"' "$(get '/api/db/messages?convId=c1')"
+req DELETE /api/db/messages/m2 '' >/dev/null
+MSGS=$(get '/api/db/messages?convId=c1')
+if printf '%s' "$MSGS" | grep -q '"id":"m2"'; then
+    echo "  FAIL deleting one message removes it from the listing"
+    echo "       still present in: $MSGS"
+    FAILED=$((FAILED + 1))
+else
+    echo "  ok   deleting one message removes it from the listing"
+fi
+check "deleting one message keeps its siblings"     '"id":"m1"' "$MSGS"
+check "deleting one message keeps the conversation" '"id":"c1"' "$(get /api/db/conversations)"
+check "a deleted message is soft-deleted, not gone" '"id":"m2"' "$(get /api/db/messages/deleted)"
+
 # --- soft delete, trash, restore -------------------------------------------
 req DELETE /api/db/conversations/c1 '' >/dev/null
 check "deleted conversation leaves list" '^\[\]'      "$(get /api/db/conversations)"

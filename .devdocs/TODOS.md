@@ -1,6 +1,6 @@
 # TODOS
 
-**Last updated:** 2026-09-01 09:58 (Session 014)
+**Last updated:** 2026-09-01 10:17 (Session 014)
 
 Only what is actually outstanding. Everything finished lives in `PROGRESS.md`.
 
@@ -50,26 +50,20 @@ barrel files that list every shipped component. That is the authoritative invent
 check any future scope claim against it, not against a summary.
 
 **Ordering and the work for each item is `PLANS.md`.** The mapping:
-G-28 is Step 2 · G-29 is Step 3 · G-31 and G-32 are Step 5 · G-33, G-30, G-35, G-34
+G-29 is Step 3 · G-31 and G-32 are Step 5 · G-33, G-30, G-35, G-34
 and G-36 are Step 7 · G-20, G-21 and G-17 are Step 8.
 
-### G-28 — You cannot do anything to a message once it is sent
-
-The Web UI gives every message a toolbar. **The Nim GUI has none at all.** There is a
-copy button on code blocks (`gui.nim:929`) and nothing else. Missing:
-
-| Missing | Web UI component |
-|---|---|
-| **Copy a message** | `ChatMessageActions` |
-| **Edit a message** and resend | `ChatMessageEditForm` |
-| **Regenerate** an answer | `ChatMessageActions` |
-| **Delete** a message (and its descendants) | `ChatMessageActions` |
-| **Continue** an answer that stopped early | `ChatMessageActions` |
-
-**This is the biggest single gap in the product.** Everything else on this page is a
-feature; this is the basic ability to correct a mistake without starting over.
+**G-28 is gone from this file because it is done** — a message now carries copy, edit,
+delete, regenerate and continue (2026-09-01, `PROGRESS.md`, D-BF). Two parts of it are
+deliberately held back until branching exists and are named in **G-29** below, not here:
+edit does not resend, and regenerate and continue are offered on the last message only.
 
 ### G-29 — Conversation branching does not exist
+
+**It now also gates two message actions.** Editing a turn, or regenerating one that has
+turns after it, produces an *alternative version* of everything that follows. G-28
+shipped without those cases (D-BF) because there is nowhere to put the old version, so
+**Step 3 is what makes edit resend and what lets regenerate work anywhere but the end.**
 
 Editing or regenerating a message in the Web UI creates a **sibling** — an alternative
 version — and you navigate between them with prev/next arrows and a counter ("2/5").
@@ -77,8 +71,10 @@ The whole conversation is a tree, not a list.
 
 The database already supports it: `conversations.forkedFromConversationId` exists, and
 `api.nim` already implements recursive fork deletion and child reparenting
-(`api.nim:263-281`). **The backend is done. The GUI models a conversation as a flat
-`seq[Message]` (`gui.nim:372`) and cannot represent a branch at all.**
+(`api.deleteConversation`). **The backend is done. The GUI models a conversation as a
+flat `seq[Message]` (`gui.nim:383`) and cannot represent a branch at all.** G-28 gave
+each of those messages its row id, which is the identity a sibling lookup needs, so the
+remaining change is the shape rather than the contents.
 
 Web UI: `ChatMessageBranchingControls`, `ChatMessages`' `getMessageSiblings()`.
 

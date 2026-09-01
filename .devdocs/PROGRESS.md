@@ -2,7 +2,7 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-09-01 09:58 (Session 014)
+**Last updated:** 2026-09-01 10:17 (Session 014)
 
 > **Reading the "UNRUN" labels in this file.** Entries below are point-in-time records
 > and several were written with a "compiled; UNRUN" status that was true on the day.
@@ -15,6 +15,25 @@ Macro progress tracking. Most recent entries at the top.
 ---
 
 ## Completed
+
+### 2026-09-01 10:17 — **G-28 built: a message now carries actions — copy, edit, delete, regenerate and continue.** `PLANS.md` Step 2.
+
+`Message` gained an `id`, which is the change everything else rested on: `saveMessage`
+returns the row it wrote and `loadMessages` selects it, so a turn on screen can be acted
+on. `send` split into `send` + `postConversation` so regenerate and continue post the
+same body from a different starting state. `api.updateMessage` was extracted from the
+`/api/db/messages/update` route and exported as `patchMessage`, so the window and the
+HTTP surface run one implementation rather than two. A continued reply updates its own
+row instead of inserting a duplicate.
+
+**Scoped deliberately (D-BF): edit does not resend, and regenerate/continue are offered
+on the last message only** — re-answering a turn that has turns after it is branching
+(Step 3), and doing it without the tree would destroy them rather than offer a choice.
+
+`tests/test_api_db.sh` gained 12 assertions over the edit and delete paths. **Proven able
+to fail** in both halves: neutering the extracted update turns the edit assertions red,
+and pointing the delete at another id turns the delete assertions red. Both binaries
+build, the FreeBSD guard still fires, all six suites and all five self-tests pass.
 
 ### 2026-09-01 09:58 — **T-14 fixed: renaming a workspace, project or folder now moves its directory instead of stranding every file under it.** `PLANS.md` Step 1.
 

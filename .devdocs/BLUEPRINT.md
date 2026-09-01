@@ -3,7 +3,7 @@
 Authoritative system architecture: what the program is, what it depends on, and how data moves
 through it. Mandated by `AGENTS.md` § WORKSPACE ARCHITECTURE.
 
-**Last updated:** 2026-09-01 09:58 (Session 014)
+**Last updated:** 2026-09-01 10:17 (Session 014)
 
 > **Rewritten 2026-08-31 (Session 007). The previous 626-line revision is in
 > `.devdocs/ARCHIVE/devdocs/BLUEPRINT_pre-007.md`** — archived, not deleted, per D-AM.
@@ -205,9 +205,14 @@ is frozen (D-Z).
 
 The architecture above is complete and serving. **The gap is in the desktop
 application**, which reproduces the Web UI's shape without most of its function: no
-message actions, no conversation branching, no attachments, no settings surface (and so
-no reachable sampling parameters), no import/export, no trash view, no generation
-statistics, no stop control, and no typed error reporting.
+conversation branching, no attachments, no settings surface (and so no reachable
+sampling parameters), no import/export, no trash view, no generation statistics, no stop
+control, and no typed error reporting.
+
+**Message actions are built** (2026-09-01) — copy, edit, delete, regenerate and
+continue. Two of them are deliberately restricted until branching exists: edit does not
+resend, and regenerate and continue are offered on the last message only, because both
+otherwise produce alternative versions of turns the GUI has nowhere to keep (**D-BF**).
 
 **Two subsystems are built and unreachable rather than missing:** retrieval works and is
 never fed (Step 4), and hardware profile selection has no working entry point at all

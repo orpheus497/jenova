@@ -88,6 +88,35 @@ further down is left in place for the historical record; **this table overrides 
 
 ---
 
+## D-BF — message actions stop where branching begins — 2026-09-01
+
+Taken while building `PLANS.md` Step 2 (G-28). The Web UI's five message actions were
+ported, but two of them touch conversation history in a way the GUI cannot yet represent.
+
+**The rule: an action that would produce an *alternative version* of an existing turn is
+not offered until the tree exists (Step 3).** Concretely:
+
+- **Edit saves the text and does not resend.** Re-answering an edited turn creates a
+  sibling of every turn after it. Without somewhere to put the old versions, resending
+  would silently delete the rest of the conversation — which is worse than the gap it
+  fills.
+- **Regenerate and continue are offered on the last message only.** Same reason. On the
+  last message there is nothing after it to destroy, so the destructive case does not
+  arise and the action is honest.
+
+**Why this is the right boundary rather than a shortcut:** the Web UI's own behaviour
+here *is* branching — `getMessageSiblings` and the prev/next counter exist precisely
+because editing and regenerating produce alternatives. Reproducing the buttons without
+the tree would reproduce the gesture and not the behaviour. Step 3 lifts both
+restrictions, and lifting them is most of what Step 3 is for.
+
+**One consequence recorded so it is not read as an oversight:** deleting a message in
+the middle of a conversation *is* allowed, and leaves a gap. That is a deletion, not an
+alternative version — the user asked for the turn to go — and it is a soft delete, so
+the row survives for the trash view (G-21).
+
+---
+
 ## D-BE — a container rename moves its directory; a collision is refused, not merged — 2026-09-01
 
 Two calls taken while building `PLANS.md` Step 1 (T-14). Both were inside the approved

@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-09-01 09:58 (Session 014)
+**Last updated:** 2026-09-01 10:17 (Session 014)
 **Branch:** `bsd`
 
 ---
@@ -41,7 +41,7 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 
 ## 2. State
 
-**Verified as of 2026-09-01 09:58.** Both binaries build from a clean run of
+**Verified as of 2026-09-01 10:17.** Both binaries build from a clean run of
 `nimble core` and `nimble gui`; the FreeBSD-only guard was confirmed to still *fire*
 when the target is changed, not merely to exist; **all six suites and all five
 self-tests pass.** `bin/jenova-core` is an ELF 64-bit FreeBSD executable.
@@ -67,7 +67,25 @@ whole `/api/*` surface, the filesystem mirror, retrieval, the prompt pipeline, b
 supervision and watchdog, model discovery and switching are implemented and covered by
 tests.
 
-## 3. Done this session — the file mirror no longer lies
+## 3. Done this session — two plan steps
+
+### Step 2 — a message carries its actions again (G-28)
+
+**Once a message was sent there was nothing you could do to it.** One copy button, on
+code blocks, was the whole of it. It now has **copy, edit, delete, regenerate and
+continue.**
+
+The change everything else rested on was not a button: **`Message` had no row id.** It
+carried a role and a string, so there was nothing to edit or delete even if a button
+existed. `saveMessage` now returns the row it wrote and `loadMessages` selects it.
+
+**Two things are deliberately held back until branching exists (D-BF), and they are
+Step 3's job:** edit **does not resend**, and regenerate and continue are offered on the
+**last message only**. Both are the same restriction — re-answering a turn that has turns
+after it produces an alternative version of all of them, and without the tree that
+destroys them rather than offering a choice.
+
+### Step 1 — the file mirror no longer lies
 
 **Renaming a workspace, project or folder used to strand every file underneath it.**
 Paths on disk are built from ancestors' *names*, and nothing moved the directory — so
@@ -81,7 +99,8 @@ be done rolls the database write back. A rename onto an already-occupied path is
 **refused rather than merged**, because a merge has no undo and a refusal does
 (**D-BE**). The GUI shows the refusal instead of discarding it.
 
-Detail in `PROGRESS.md`; the assertions and the red-proof are `TESTS.md` §0b.
+Detail for both steps is in `PROGRESS.md`; the assertions and the red-proofs are
+`TESTS.md` §0b (renames) and §0c (message actions).
 
 ## 4. What is actually missing — the honest list
 
@@ -91,9 +110,10 @@ Neovim page all work. Almost everything you do *to* a message does not exist.
 
 | Works | Missing entirely |
 |---|---|
-| Send a message, stream a reply | **Edit, regenerate, delete, copy or continue a message** (G-28) |
-| Conversations: create, rename, delete, search | **Branching** — alternative versions of an answer (G-29) |
-| Workspace / project / folder tree, notes — **and renaming one now keeps its files** | **Attachments** of any kind — image, text, PDF, audio (G-30) |
+| Send a message, stream a reply | **Branching** — alternative versions of an answer (G-29) |
+| **Copy, edit, delete, regenerate, continue a message** | **Attachments** of any kind — image, text, PDF, audio (G-30) |
+| Conversations: create, rename, delete, search | **Tables, task lists, LaTeX maths** (G-34) |
+| Workspace / project / folder tree, notes — **and renaming one now keeps its files** | **Any settings screen — so no temperature, top_p, top_k, penalties** (G-31) |
 | Markdown text and highlighted code blocks | **Tables, task lists, LaTeX maths** (G-34) |
 | Theme, canvas, glass panel, wordmark | **Any settings screen — so no temperature, top_p, top_k, penalties** (G-31) |
 | Neovim page + AI reads the live buffer | **Import / export of conversations** (G-32) |
@@ -149,11 +169,15 @@ critical path: filesystem as the source of truth (T-11), deployment (T-7), a CLI
 
 ## 8. Next
 
-**`PLANS.md` Step 2 — give a message its actions back** (G-28): copy, delete, edit,
-regenerate, continue. The largest usability gap in the product, and no new backend is
-needed — the message-update route and its cascade already exist and are asserted. It
-comes before branching (Step 3) because editing and regenerating are what *create*
-branches.
+**`PLANS.md` Step 3 — conversation branching** (G-29). Editing or regenerating a turn
+produces an *alternative version* of it, and the Web UI moves between versions with
+prev/next arrows and a counter. **The backend already models the fork tree and is
+asserted;** the GUI holds a flat `seq[Message]` and cannot represent a branch, so this is
+a state-shape change first and widgets second.
+
+**Step 2 did the first half of it:** every message now carries its row id, which is the
+identity a sibling lookup needs. And Step 3 has two callers already waiting — it is what
+lets edit resend, and what lets regenerate work anywhere but the last message (D-BF).
 
 ## 9. Settled — do not re-raise
 

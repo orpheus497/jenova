@@ -3,7 +3,7 @@
 Test specifications, validation criteria and expected outcomes. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 09:58 (Session 014).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 10:17 (Session 014).
 Mandated from the outset; absent for Sessions 001–003. See `DECISIONS_LOG.md` C-10.
 
 > **§5a onward are stage acceptance records** — what each stage had to prove and how. They are
@@ -103,7 +103,7 @@ into the request body.
 | Step | What must be proven | How, without a window |
 |---|---|---|
 | **1 — container rename** (T-14) | ~~A renamed project takes its files with it, and a failed move rolls back~~ **DONE 2026-09-01 — see §0b** | Done as planned: `test_api_fs.sh`, +17 assertions |
-| **2 — message actions** (G-28) | Edit and delete reach the right rows and cascade correctly | Extend `test_api_db.sh`. Both go through `/api/db/messages/*`, which is already asserted. Only regenerate and continue need the screen |
+| **2 — message actions** (G-28) | ~~Edit and delete reach the right rows and cascade correctly~~ **DONE 2026-09-01 — see §0c** | Done as planned: `test_api_db.sh`, +12 assertions. Regenerate and continue remain screen-only |
 | **3 — branching** (G-29) | The active path and the sibling counts are right for a known fork shape | A pure walk over rows. Belongs in an assertion, not a screenshot — this is the step most likely to be silently wrong |
 | **4 — chat indexing** (T-17) | A query returns the right message; a conversation-scoped filter confines results; re-indexing a conversation does not duplicate chunks | Extend `rag-selftest`. It already indexes a scratch corpus and asserts ranking, filtering and the vector round-trip |
 | **5 — settings** (G-31) | A stored sampling value actually reaches the outbound JSON body | A check on the body-building function. **Not** a live generation |
@@ -141,6 +141,36 @@ cheapest possible demonstration that it bites: it read the row back through
 `GET /api/db/projects/<id>`, a route that does not exist. There is no per-id GET on this
 surface; the collection listing is the read path. The corrected assertion matches the
 whole row, which also pins the column order.
+
+## 0c. `tests/test_api_db.sh` — message actions (G-28, 2026-09-01)
+
+**12 assertions added.** Of the five actions a message now carries, **edit and delete are
+pure HTTP and are asserted here; copy is a clipboard call and regenerate and continue are
+GUI composition over `gui.send`** — those three are screen-only and are not claimed to be
+covered.
+
+| Asserted | Why it is the assertion |
+|---|---|
+| An edit writes the new text **and leaves `convId`, `role` and `timestamp` alone** | `api.writeRow` is INSERT OR REPLACE over every column, so an edit routed through `putEntity` would blank the rest of the row. The three "keeps" assertions are the ones that would catch that, and they fail for a different reason than the "writes" one — which is why all four are separate |
+| An update with no id, and one naming no known column, are both refused | A blank `UPDATE` would report success having written nothing |
+| Deleting one message removes it from the listing, **as an explicit negative check** | The action the window's per-message delete performs. A `check` for absence written as a substring match would pass vacuously on an empty response, so this one greps and fails on a hit |
+| Its siblings and its conversation survive | Distinguishes a single-turn delete from the conversation cascade asserted further down |
+| The deleted message is still in `/deleted` | It is a soft delete, so it must be recoverable — which is what makes the trash view (G-21) possible later |
+
+**Proven able to fail, in both halves separately.** Neutering the `UPDATE` inside the
+extracted `api.updateMessage` turns *edit writes the new text* red (and the pre-existing
+*partial update writes only given fields* with it), while the three "keeps" assertions
+stay green — correctly, since those columns genuinely are not touched. Pointing the
+DELETE at a different id turns *deleting one message removes it from the listing* and *a
+deleted message is soft-deleted, not gone* red. Two independent corruptions, two
+different sets of red, which is the evidence that the assertions are measuring two
+different things rather than one.
+
+**Why the update logic moved:** the route body was extracted into `api.updateMessage` and
+exported as `patchMessage` so the window's edit and `POST /api/db/messages/update` run
+one implementation. Before that the only partial-update code lived inside the HTTP
+handler, and the GUI would have needed a second copy — two definitions of one contract,
+drifting from the first change.
 
 ## 5i. `tests/test_nvimctl.sh` — the live editor buffer (G-18, 2026-08-31)
 

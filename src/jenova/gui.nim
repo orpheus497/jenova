@@ -65,6 +65,12 @@ type
   Message* = object
     role*: Role
     text*: string
+    ## The `messages` row this came from. **Empty means it is not saved yet** —
+    ## an assistant turn is a live buffer while it streams and only becomes a row
+    ## when it completes. Every action but copy needs it: without an id there was
+    ## nothing to edit, delete or update, which is why G-28 was a state-shape
+    ## change before it was a set of buttons.
+    id*: string
 
   BackendStatus* = enum
     ## Deliberately three states, not two. `ui.poll_status` collapsed everything
@@ -293,20 +299,25 @@ proc latestConversation(): string =
                       "ORDER BY lastModified DESC LIMIT 1")
   if rows.len > 0 and rows[0].len > 0: rows[0][0] else: ""
 
-proc saveMessage(convId: string, role: Role, text: string) =
-  if convId.len == 0 or text.len == 0: return
+## Returns the id of the row it wrote, empty if it wrote nothing. The caller
+## keeps it on the in-memory message: a turn with no id cannot be edited or
+## deleted, and re-reading the row back to find one would race the next insert.
+proc saveMessage(convId: string, role: Role, text: string): string =
+  if convId.len == 0 or text.len == 0: return ""
+  result = $genOid()
   db.exec("INSERT INTO messages (id, convId, type, role, timestamp, content, is_deleted) " &
           "VALUES (?, ?, 'message', ?, ?, ?, 0)",
-          [$genOid(), convId, $role, $toUnix(getTime()), text])
+          [result, convId, $role, $toUnix(getTime()), text])
   db.exec("UPDATE conversations SET lastModified=? WHERE id=?",
           [$toUnix(getTime()), convId])
 
 proc loadMessages(convId: string): seq[Message] =
   if convId.len == 0: return
-  for r in db.query("SELECT role, content FROM messages WHERE convId=? AND is_deleted=0 " &
+  for r in db.query("SELECT role, content, id FROM messages WHERE convId=? AND is_deleted=0 " &
                     "ORDER BY timestamp ASC, rowid ASC", convId):
-    if r.len < 2: continue
-    result.add Message(role: (if r[0] == "user": rUser else: rAssistant), text: r[1])
+    if r.len < 3: continue
+    result.add Message(role: (if r[0] == "user": rUser else: rAssistant),
+                       text: r[1], id: r[2])
 
 proc trayMenu(lanEnabled: bool): seq[TrayItem] =
   @[
@@ -397,6 +408,12 @@ viewable App:
   openNote: string
   noteTitle: string
   noteBuffer: TextBuffer = newTextBuffer()
+  ## The message being edited in place (G-28), by row id, or empty. A second
+  ## buffer rather than reusing `noteBuffer`: the note editor and the transcript
+  ## can both be open, and sharing one `TextBuffer` would make each overwrite the
+  ## other's text.
+  editingMsg: string
+  editBuffer: TextBuffer = newTextBuffer()
   expanded: Table[string, bool]
   renaming: string
   renameDraft: string
@@ -509,7 +526,16 @@ viewable App:
           of umDone:
             st.streaming = false
             if st.messages.len > 0 and st.messages[^1].role == rAssistant:
-              saveMessage(st.convId, rAssistant, st.messages[^1].text)
+              # An assistant turn that already has a row is one that was
+              # *continued* — the model extended text that had already been
+              # saved. Updating it is what stops the transcript gaining a second
+              # copy of the same reply every time one is resumed (G-28).
+              if st.messages[^1].id.len > 0:
+                discard api.patchMessage(%*{"id": st.messages[^1].id,
+                                            "content": st.messages[^1].text})
+              else:
+                st.messages[^1].id = saveMessage(st.convId, rAssistant,
+                                                 st.messages[^1].text)
             # The reply bumped `lastModified`, so the cached list is now in the
             # wrong order. Refreshed here rather than in `view` for the reason
             # `convs` is cached at all.
@@ -783,14 +809,12 @@ proc visibleConvs(app: AppState): seq[ConvItem] =
 ## Function purpose: hand the draft message to the local server and start
 ## streaming the reply. The body is the OpenAI-compatible shape `pipeline.nim`
 ## expects, so intents, RAG and personas apply exactly as they do for the Web UI.
-proc send(app: AppState) =
-  let text = app.draft.strip
-  if text.len == 0 or app.streaming:
-    return
-
-  app.messages.add Message(role: rUser, text: text)
-  saveMessage(app.convId, rUser, text)
-  app.draft = ""
+## Function purpose: post the transcript exactly as it currently stands and start
+## streaming. Split out of `send` because regenerate and continue post the same
+## body from a different starting state — regenerate after dropping the last
+## reply, continue with a partial reply still in place as the tail so the model
+## extends it rather than starting over (G-28).
+proc postConversation(app: AppState) =
   app.notice = ""
   app.streaming = true
 
@@ -801,6 +825,82 @@ proc send(app: AppState) =
   let body = $(%*{"messages": msgs, "stream": true})
   let port = app.cfg.getInt("PORT", 8080)
   streamReq.send(StreamJob(host: "127.0.0.1", port: port, body: body))
+
+proc send(app: AppState) =
+  let text = app.draft.strip
+  if text.len == 0 or app.streaming:
+    return
+
+  # The row id comes back so the message can be edited or deleted without
+  # re-reading the table to find which row it became.
+  let id = saveMessage(app.convId, rUser, text)
+  app.messages.add Message(role: rUser, text: text, id: id)
+  app.draft = ""
+  app.postConversation()
+
+## Function purpose: the actions a message can carry (G-28). **Every one of them
+## is refused mid-stream** — the drain timer appends each token to
+## `messages[^1]`, so mutating the sequence underneath it would write the tail of
+## a reply into the wrong turn. That is the same hazard `selectConversation`
+## refuses for, and it is why these are guarded rather than merely greyed out.
+proc deleteMessage(app: AppState, idx: int) =
+  if app.streaming or idx < 0 or idx >= app.messages.len: return
+  # The id alone, not the whole message: copying the object would copy the reply
+  # text with it, and a long reply is the largest string in this program.
+  let id = app.messages[idx].id
+  # A turn that never became a row — an assistant reply abandoned mid-stream —
+  # has nothing to delete but should still leave the transcript.
+  if id.len > 0 and not api.deleteEntity("messages", id):
+    app.notice = "could not delete that message"
+    return
+  if id.len > 0 and app.editingMsg == id: app.editingMsg = ""
+  app.messages.delete(idx)
+
+proc startEdit(app: AppState, idx: int) =
+  if app.streaming or idx < 0 or idx >= app.messages.len: return
+  if app.messages[idx].id.len == 0: return
+  app.editingMsg = app.messages[idx].id
+  app.editBuffer.text = app.messages[idx].text
+
+proc cancelEdit(app: AppState) =
+  app.editingMsg = ""
+
+## Saves the edited text and stops there. **It deliberately does not resend.**
+## Re-answering an edited turn produces an alternative version of every turn
+## after it — that is a branch, it is `PLANS.md` Step 3, and doing it here
+## without the tree to hold both versions would silently destroy the rest of the
+## conversation instead of offering a choice between them.
+proc saveEdit(app: AppState) =
+  if app.editingMsg.len == 0: return
+  let text = app.editBuffer.text()
+  if not api.patchMessage(%*{"id": app.editingMsg, "content": text}):
+    app.notice = "could not save that edit"
+    return
+  for m in app.messages.mitems:
+    if m.id == app.editingMsg: m.text = text
+  app.editingMsg = ""
+
+## Function purpose: throw the last reply away and ask again. **The last one
+## only.** Regenerating in the middle would orphan every turn after it, and
+## keeping the old and new answers side by side is branching (Step 3).
+proc regenerate(app: AppState) =
+  if app.streaming or app.messages.len == 0: return
+  if app.messages[^1].role != rAssistant: return
+  let before = app.messages.len
+  app.deleteMessage(before - 1)
+  # The delete failed and has already said so; re-posting now would ask the model
+  # to answer a question it can still see its own answer to.
+  if app.messages.len == before: return
+  app.postConversation()
+
+## Function purpose: ask the model to carry on from a reply that stopped early.
+## The partial text stays in place as the tail of the request, so the model
+## extends it; the drain timer appends to that same message and `umDone` updates
+## its row rather than inserting a second one.
+proc continueReply(app: AppState) =
+  if app.streaming or app.messages.len == 0: return
+  if app.messages[^1].role != rAssistant or app.messages[^1].text.len == 0: return
+  app.postConversation()
 
 proc projectsOf(app: AppState, wsId: string): seq[NodeItem] =
   for n in app.projects:
@@ -946,6 +1046,56 @@ proc messageBody(app: AppState, m: Message): Widget =
                 code = b.text
                 language = b.lang
                 style = [StyleClass("code-body")]
+
+## Function purpose: the toolbar under a message (G-28). The Web UI gives every
+## message five actions; this window had none — one copy button on code blocks
+## was the whole of it, so there was no way to correct a mistake short of
+## starting the conversation again.
+##
+## **Regenerate and continue are offered on the last message only, and edit does
+## not resend.** Both restrictions are the same restriction: re-answering a turn
+## that has turns after it produces an alternative version of all of them, which
+## is a branch (`PLANS.md` Step 3). Offering it before the tree exists would
+## destroy the following turns rather than letting you choose between them.
+##
+## Copy has no id requirement — text is text. Everything else is hidden until the
+## message is a row, because there is nothing to act on until then.
+proc messageActions(app: AppState, idx: int, m: Message): Widget =
+  let isLast = idx == app.messages.len - 1
+  gui:
+    Box(orient = OrientX, spacing = 4):
+      Button {.expand: false.}:
+        icon = "edit-copy-symbolic"
+        tooltip = "Copy"
+        style = [ButtonFlat, StyleClass("row-btn")]
+        proc clicked() = copyToClipboard(m.text)
+      if m.role == rUser and m.id.len > 0:
+        Button {.expand: false.}:
+          icon = "document-edit-symbolic"
+          tooltip = "Edit"
+          sensitive = not app.streaming
+          style = [ButtonFlat, StyleClass("row-btn")]
+          proc clicked() = app.startEdit(idx)
+      if m.role == rAssistant and isLast and m.id.len > 0:
+        Button {.expand: false.}:
+          icon = "view-refresh-symbolic"
+          tooltip = "Regenerate"
+          sensitive = not app.streaming
+          style = [ButtonFlat, StyleClass("row-btn")]
+          proc clicked() = app.regenerate()
+        Button {.expand: false.}:
+          icon = "media-playback-start-symbolic"
+          tooltip = "Continue"
+          sensitive = not app.streaming
+          style = [ButtonFlat, StyleClass("row-btn")]
+          proc clicked() = app.continueReply()
+      if m.id.len > 0:
+        Button {.expand: false.}:
+          icon = "user-trash-symbolic"
+          tooltip = "Delete"
+          sensitive = not app.streaming
+          style = [ButtonFlat, StyleClass("row-btn")]
+          proc clicked() = app.deleteMessage(idx)
 
 ## Function purpose: the fullscreen control, and it lives in the bottom action
 ## row rather than the HeaderBar **because GTK4 hides a titlebar set through
@@ -1104,7 +1254,7 @@ proc mainArea(app: AppState): Widget =
                       elif app.messages.len == 0: "Ask Jenova something."
                       else: "")
               style = [StyleClass("dim-note")]
-            for m in (if app.openNote.len > 0: @[] else: app.messages):
+            for i, m in (if app.openNote.len > 0: @[] else: app.messages):
               Frame {.expand: false.}:
                 style = [StyleClass("msg-card"),
                          StyleClass(if m.role == rUser: "msg-user" else: "msg-agent")]
@@ -1115,7 +1265,27 @@ proc mainArea(app: AppState): Widget =
                     style = [StyleClass("msg-role"),
                              StyleClass(if m.role == rUser: "msg-role-user"
                                         else: "msg-role-agent")]
-                  insert(app.messageBody(m)) {.expand: false.}
+                  # Editing varies what is *inside* the card, never the card's
+                  # own type — the swap happens among a `Box`'s children, which
+                  # is the one place owlkettle handles a child changing type.
+                  if app.editingMsg.len > 0 and app.editingMsg == m.id:
+                    # A TextView owns a TextBuffer rather than a string, so the
+                    # edit is driven from `app.editBuffer` and read back on save,
+                    # exactly as the note editor is and for the same reason.
+                    TextView {.expand: false.}:
+                      buffer = app.editBuffer
+                    Box(orient = OrientX, spacing = 4) {.expand: false.}:
+                      Button {.expand: false.}:
+                        text = "Save"
+                        style = [ButtonSuggested, StyleClass("row-btn")]
+                        proc clicked() = app.saveEdit()
+                      Button {.expand: false.}:
+                        text = "Cancel"
+                        style = [ButtonFlat, StyleClass("row-btn")]
+                        proc clicked() = app.cancelEdit()
+                  else:
+                    insert(app.messageBody(m)) {.expand: false.}
+                    insert(app.messageActions(i, m)) {.expand: false.}
 
 
 ## Function purpose: the right-hand document panel (G-25) — a second Neovim,
