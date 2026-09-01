@@ -163,6 +163,31 @@ invoked as `nvim --server <sock> --remote-expr` to read the open buffer. **That 
 an RPC client:** Neovim ships the expression evaluator, so msgpack framing would re-implement what
 exists.
 
+## 6b. The embedded editor's configuration — `jvim/` (added 2026-09-01, **D-BS**)
+
+Jenova embeds two live Neovim instances through `vte.nim` (the editor page and the
+document panel), on sockets from `nvimctl.socketPath` and `nvimctl.docSocketPath`. As of
+2026-09-01 the USER supplies their configuration: **`jvim/`**, a self-contained Neovim
+distribution carrying a Jenova integration layer — FIM completion, a chat drawer, LAN
+discovery, backend telemetry, and an agent tool loop over the buffer, LSP and the shell.
+
+**It is a configuration dependency, not a code dependency.** No Nim module imports it,
+neither binary links it, and `nimble` does not build it. **The no-Lua rule (D-AM, D-AZ)
+does not reach it** — it archives Lua that *implements* Jenova; this is the configuration
+language of a program Jenova embeds.
+
+**The coupling is entirely environment variables and HTTP**, and it points inward:
+`jvim/lua/jenova/endpoints.lua` reads `JENOVA_CONNECT_HOST`/`JENOVA_HOST`, `JENOVA_PORT`,
+`JENOVA_LLAMA_PORT`, `JENOVA_LLAMA_EMBED_PORT`, `JENOVA_ROOT` and `JENOVA_LAN_MODE`, and
+calls `/v1/chat/completions`, `/infill` and `/api/storage/<path>` on the same front door
+§3 describes. **All three routes already exist.** The editor is therefore just another
+client of the one front door — the same shape as the Web UI, and it needs no server work.
+
+**Not yet connected (G-45):** the spawn passes no environment, so the configuration is
+not loaded and the variables are not set.
+
+---
+
 ## 7. Data that outlives the code
 
 `hardware-profiles/` is **data, and as of 2026-09-01 it is nothing but data** — six

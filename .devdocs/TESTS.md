@@ -86,6 +86,178 @@ Earlier trackers said four self-tests;
 `db-capabilities` is a capability report, not an assertion, which is where the
 miscount came from.*
 
+## 0p. Proving an assertion bites — **without touching the code** (D-BX, 2026-09-01 19:00)
+
+**The method changed and this is the record of what replaces the old one.** Corrupting a
+source file to watch a suite go red is forbidden (D-BX) after a session did it, lost the
+restore to an interrupted command, and left broken source behind a green build. The
+concern that practice served is real and unchanged — **an assertion that cannot fail is
+worthless, and this project has shipped two suites that reported PASS while asserting
+nothing.** These are the techniques that answer it, all used in this session:
+
+| Technique | Where it is used |
+|---|---|
+| **Assert both sides of one fixture.** A datum asserted *visible* in one scope and *invisible* in another cannot both pass unless the scoping is real | `workspace-selftest`: `note-a2` is visible to a project chat and invisible to a folder chat |
+| **Assert a transition, not a state.** A sequence that must change direction proves the behaviour end to end | `pipeline-selftest`: recalled → deleted → not recalled → restored → recalled |
+| **Build the hostile condition inside the test** rather than hoping the environment supplies it | `nvim-env-selftest` sets a colliding `JENOVA_PORT` with `putEnv` and asserts ours wins |
+| **Derive the expected value rather than eyeballing a threshold** | `nvim-env-selftest` computes the exact entry count from `envPairs()` |
+
+**Two assertions written this session could not fail and were caught by this thinking, not
+by a corruption:** `check("no key is duplicated", true)` is unconditionally true, and
+`env.len > 8` stayed green with the entire inherited environment missing, because the
+added keys alone number nine. Both were replaced with exact derivations.
+
+---
+
+## 0o. `workspace-selftest` — workspace artefacts reach the model (G-43, 2026-09-01 19:05)
+
+**32 assertions over a hand-built tree** — one workspace, two projects, two folders under
+the first project, regular and FOCUS notes at every level, and two file assets (one with
+content, one without).
+
+**The scoping ladder**, which is the half a summary always gets wrong:
+
+- A folder chat sees its own folder's note, **not a sibling folder's**, not the project's
+  own, not an unassigned one.
+- A project chat sees the project's note **and its child folders'**.
+- A workspace chat sees everything nested below it.
+- **A global chat sees only what belongs to nothing** — not everything, which is how a
+  rule written for one workspace would end up answering a question about another — and
+  **gets no FOCUS notes at all**.
+
+**The FOCUS escape:** a workspace-root FOCUS note reaches a *folder*-level chat, labelled
+`[Workspace]` from the note's own level and not the asking chat's. A FOCUS note with
+blank content contributes nothing.
+
+**The literal format:** all three headings verbatim, `Title:`/`Content:`, `File: <name>
+(Type: <type>)`, and the exact string `(Binary file, content not available for direct
+reading)`. A trashed note is not quoted back to the model.
+
+**THE JOIN — assertions 24-32, and the ones that matter.** Every assertion above would
+stay green if nothing ever *called* `contextFor`, which is exactly how `rag.nim` was
+finished, asserted and completely dead for weeks (T-17, rule 15). So: the context reaches
+the outbound body, under the Web UI's own heading, **in a system message and not a user
+turn**, with the user's own turn untouched and still last. An **empty** context injects
+nothing at all — no stray system message — and an **existing** system message is extended
+rather than replaced, with no second one inserted.
+
+## 0q. `nvim-env-selftest` — the editor's environment (G-45, 2026-09-01 19:05)
+
+Every key `jvim/lua/jenova/endpoints.lua` reads, with the values it expects, so a rename
+on either side goes red and names itself. `JENOVA_LAN_MODE` asserted in both directions.
+
+**The one that matters: the environment is complete.** VTE's `envv` *replaces* the child
+environment rather than extending it, so a result carrying only the `JENOVA_*` keys is a
+broken editor — it fails as "nvim: not found", which reads as a missing dependency rather
+than as this function's bug. **Same class as the `detectGpu` `LD_LIBRARY_PATH` failure in
+§0i: an unreachable thing and an absent thing produce the same silence.** Asserted as an
+exact count derived from `envPairs()`, plus `PATH` and `HOME` surviving by value.
+
+**And an inherited value is overridden in place, not appended** — the collision is created
+by the test with `putEnv`, because `paths.findRoot` documents that `JENOVA_ROOT` *is*
+exported by the shell launchers, so it is the real case.
+
+---
+
+## 0n. What Step 11 must prove — the panel removal (G-46, D-BW, 2026-09-01 18:41)
+
+**Almost none of this is assertable, and saying so is the honest answer.** Step 11 is a
+deletion: there is no behaviour to assert, only the absence of one.
+
+**What must hold:** `nimble core` and `nimble gui` build, all ten self-tests still pass,
+and **`bin/jenova --check` exits 0.**
+
+**`--check` is the check that matters here and it is not a formality.** Rule 17 exists
+because the Theme setting shipped a 100% SIGABRT behind a clean compile. **Removing a
+widget block is precisely the change that compiles and then fails to build a window** — a
+dangling style class, a `sizeRequest` on a widget that no longer exists, a renderable
+still referenced from one branch of `mainArea`. `--check` builds the whole tree under a
+real GTK, shows no window, starts no backend and binds no port, so it is allowed where
+running the product is not (D-BJ).
+
+**One thing to check by reading, not by running:** that `pipeline.configureEditor` is
+left set **once**, in `gui.run`, to `nvimctl.socketPath`. The panel re-aimed it in
+`openDoc` and restored it in `closePanel`; if either call is deleted without the other,
+`Editor:` ends up pointed at a socket nothing listens on and the intent silently returns
+no document — **which looks exactly like "the model can't see my file" and is the same
+failure class as the `detectGpu` `LD_LIBRARY_PATH` bug** (§0i): an unreachable thing and
+an absent thing produce the same empty string.
+
+**Existing `document.md` files must still be on disk afterwards.** They are the USER's
+files; the removal takes the surface, not the data.
+
+---
+
+## 0m. What Step 10 must assert — written before the code (2026-09-01 18:29)
+
+**Written up front deliberately.** Every feature in this project that was proven after
+the fact shipped a hole; the ones whose assertions were written with the plan (settings,
+hardware, attachments) did not.
+
+### 10a — workspace artefacts reach the model (G-43, D-BU)
+
+**This is the one that must not be asserted only in parts.** `rag.nim` was fully
+asserted and completely dead for weeks because every assertion supplied its own corpus
+(rule 15). G-43 is the same shape — a complete data model with no reader — so **the join
+is the assertion that matters**, not the formatter.
+
+Over a hand-built tree (one workspace, two projects, two folders, regular and FOCUS notes
+at every level, plus file assets), in `pipeline-selftest`:
+
+| # | Assertion |
+|---|---|
+| 1 | **Scope isolation** — a chat set to folder A does **not** see folder B's regular notes |
+| 2 | **Widening** — a project chat sees the project's notes *and* its child folders'; a workspace chat sees everything nested |
+| 3 | **FOCUS escape** — a workspace-root FOCUS note reaches a *folder*-level chat. This is the behaviour a summary always loses and the reason the flag exists |
+| 4 | **The global fallback** — a chat with no container sees only artefacts with no container, and **no** FOCUS notes |
+| 5 | **The literal format** — `--- FOCUS / RULES ---`, `[Folder\|Project\|Workspace] Title`, `--- NOTES ---` with `Title:`/`Content:`, `--- FILES ---` with `File: <name> (Type: <type>)`, and the exact string `(Binary file, content not available for direct reading)` for a file with no content |
+| 6 | **A blank FOCUS note contributes nothing** |
+| 7 | **THE JOIN** — the text lands in the **system message of the body actually sent**, under `[CURRENT WORKSPACE ARTIFACTS (Notes & Files)]`, alongside the persona and the RAG context rather than displacing them |
+
+**7 is the one that would have caught T-17.** A corruption that removes the injection
+call while leaving the builder intact must go red on 7 and stay green on 1–6; if it does
+not, the assertion set has the hole rule 16 describes.
+
+**Known and deliberately not asserted:** there is **no token budget**. The Web UI has a
+standing `TODO` saying the same, and Jenova inherits it by taking parity. It belongs with
+**T-3**, not here.
+
+### 10b — an upload becomes an artefact (G-44, D-BV)
+
+Attaching a file to a conversation scoped to a workspace/project/folder writes a
+`fileAssets` row **at that level**; the row is picked up by 10a's builder; deleting the
+container cascades it. **Shown going red against the current source, where no
+`fileAssets` row is ever written by anything.**
+
+### 10c — the editor's environment (G-45, D-BS)
+
+The spawn environment is built by a proc that takes no terminal, so it is asserted
+directly: `NVIM_APPNAME=jvim` is present, and `JENOVA_ROOT`, `JENOVA_PORT` and
+`JENOVA_LAN_MODE` carry the values `paths`/`config` hold. **Whether jvim actually loads
+is a USER run** — the same honest split as every widget in this project.
+
+### 8b — the trash view (G-21)
+
+The restore re-index is the assertable half: index an exchange, delete it, assert
+`rag.query` no longer returns it, restore it, **assert it comes back without a
+`backfillChats` call**. The view is widgets.
+
+---
+
+## 0l. Confirmed on screen by the USER — 2026-09-01 18:29
+
+**G-40 is verified.** The USER ran the 17:51 build and **uploading attachments works as
+intended**. Step 7c §0k's standing caveat — that the parse counters prove the work is not
+repeated but cannot prove the frame budget is met — **is discharged by that run.** Do not
+re-add it (rule 12).
+
+**G-41 is half-verified.** Tables are no longer clipped to a stub. They now render
+*larger* than their content, filed as **G-42** (`TODOS.md` Backlog), which the USER
+called "not too serious". Autoscroll during a live generation was not separately
+reported on.
+
+---
+
 ## 0k. The per-frame cost assertions (G-40, Step 7c, 2026-09-01 17:51)
 
 **17 assertions added to `attach-selftest`.** They are a different kind from

@@ -1,7 +1,8 @@
 # BRIEFING
 
-**Last updated:** 2026-09-01 17:58 (Session 018)
-**Branch:** `bsd`
+**Last updated:** 2026-09-01 19:05 (Session 019)
+**Branch:** `bsd`. **`jvim/` is untracked** (4,201 files, added by the USER); the
+`.devdocs/` edits from this session are uncommitted.
 
 ---
 
@@ -44,11 +45,11 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 | **10** | **Re-check a tracker's claims against the code; do not carry them forward.** Session 013 found seven false claims. Session 015 found thirteen citations that pointed at unrelated code while every finding they described was still true. |
 | **11** | **Verify a scope list against the source, not against a summary.** The "GUI parity" list carried since Session 010 named six items. The Web UI's own component listing has roughly three times that. |
 | **12** | **A "not yet run" label is not durable.** It survives exactly until any evidence contradicts it — a screenshot, a defect report, or the USER saying so. Carrying it past that point has now cost two sessions. |
-| **13** | **A new assertion is not believed until it has been seen to go red.** Two suites in this project have reported PASS while asserting nothing. |
+| **13** | **A new assertion is not believed until it has been shown to discriminate — and you prove that by varying the DATA, never by breaking the code (D-BX).** Two suites here have reported PASS while asserting nothing, so the concern is real; the method is not corruption. Give the function inputs that must produce different answers and assert both sides; assert a *transition* (recalled → deleted → not recalled → restored → recalled) rather than a state; create the hostile condition inside the test with `putEnv` or a fixture row. |
 | **14** | **Cite the symbol, then the line.** A bare line number is a claim with an expiry date — thirteen of them rotted inside one session because `gui.nim` grew by 750 lines while they were being written. `fssync.resolveStoragePath (fssync.nim:694)` survives that; `fssync.nim:628` does not. |
 | **15** | **A green suite says the parts work, never that anything calls them.** `rag.nim` was fully asserted and completely dead for weeks — every assertion supplied its own corpus, so nothing could tell. When a feature is finished, assert the *join*, not only the parts. |
 | **17** | **A compile is not evidence the application starts.** `nimble gui` exiting 0 says the widget tree is valid; the Theme setting shipped a 100% SIGABRT behind a clean compile because `gui.run` asked libadwaita a question before `adw.brew` called `adw_init`. **Run `bin/jenova --check` before handing over any GUI change** — it builds the whole window under a real GTK and exits, showing no window, starting no backend and binding no port, so it is allowed where starting the product is not (D-BJ). **Nothing in `gui.run` may touch GTK, GDK or libadwaita before `brew`.** |
-| **16** | **When you corrupt the code to prove an assertion bites and it stays green, the hole is in the assertion set.** That is not a failed experiment, it is the experiment working. It has now found something three sessions running — most recently that nothing checked `custom` JSON reaching the fields the body sets for itself. **Write the missing assertion, then re-run the corruption.** |
+| **16** | **NEVER edit the product code to break it, for any reason (D-BX).** Not to prove an assertion bites, not with a copy to restore from — a session did exactly that, the restore never ran because the USER interrupted the command holding it, and corrupted source sat in the tree behind a green build. **This rule previously said the opposite and that is how it happened.** The underlying concern stands — an assertion that cannot fail is worthless — and the answer is rule 13's: vary the inputs, assert both sides, assert transitions. If a test passes on data that should fail it, the hole is in the assertion set; write the missing assertion and re-run it **against data**, never against a damaged file. |
 
 ---
 
@@ -61,17 +62,23 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 | **Build** | `nimble`. Tasks in `jenova_core.nimble`: `core`, `gui`, `suites`, `llama`, `web`, `clean` |
 | **Architecture** | `BLUEPRINT.md` |
 | **Runtime home** | `$HOME/Jenova`. `~/JCA` is permanently off limits |
-| **Tests** | **Six** shell suites under `tests/`, run by `nimble suites`, plus **ten** self-test subcommands in `jenova-core`: `db-`, `tree-`, `attach-`, `error-`, `hardware-`, `markdown-`, `pipeline-`, `rag-`, `serve-` and `sha256-selftest`. *Corrected 2026-09-01 17:27 — every revision since Step 7 said "nine" while listing "the six older ones plus four", which is ten. Read them out of `src/jenova_core.nim` rather than carrying the number.* **None of them covers the GUI** — see §6 |
+| **Tests** | **Six** shell suites under `tests/`, run by `nimble suites`, plus the self-test subcommands in `jenova-core`. **Read the list out of `src/jenova_core.nim`, never out of this table** — the count was wrong in three files three different ways on 2026-09-01, and two more were added the same day. **None of them covers the GUI** — see §6 |
 
 ## 2. State
 
-**Verified as of 2026-09-01 16:19.** Both binaries build from a clean run of `nimble core`
-and `nimble gui`; the FreeBSD-only guard was confirmed to still *fire* when the target is
-changed, not merely to exist; **all nine self-tests pass, and `bin/jenova --check`
-exits 0 — the application reaches its first frame**, which is a thing a compile does
-not tell you and which was learned the hard way at 14:02 (rule 17). Both binaries are
-ELF 64-bit FreeBSD executables. The six shell suites were **not** run and did not need
-to be — nothing Steps 6 and 7 touched is inside their reach.
+**Verified as of 2026-09-01 19:05.** Both binaries build from a clean run of `nimble core`
+and `nimble gui`; **all twelve self-tests pass, and `bin/jenova --check` exits 0 — the
+application reaches its first frame**, which is a thing a compile does not tell you and
+which was learned the hard way at 14:02 (rule 17). Both binaries are ELF 64-bit FreeBSD
+executables. The six shell suites were **not** run and did not need to be — nothing this
+session touched is inside their reach.
+
+**One correction that had to be made by reading the code, not the trackers.** A session
+corrupted `nvimctl.nim` to watch a self-test go red and the restore never ran, so broken
+source sat in the tree **behind a fully green build** — every self-test passed, because
+the corrupted branch was one the tests reached only through a collision that shell did
+not have. It was found by reading the function. **The ruling is D-BX and rules 13 and 16
+were rewritten**, because those rules had told the session to do it.
 
 **Those runs happened because this session's work was building them; they are not a
 standing instruction.** Per Rule 0, do not run the suites or the product again without
@@ -98,6 +105,84 @@ backend supervision and watchdog, model discovery and switching are implemented 
 covered by tests.
 
 ## 3. Done this session
+
+### Session 019 — a new direction from the USER, and the claims audited
+
+**The USER gave four instructions in one message, and they are one feature: a workspace
+should carry its own notes, its own files, and an editor that works on them with the AI.**
+Rulings **D-BS**, **D-BT**, **D-BU**, **D-BV**. The plan is `PLANS.md` **Step 10** plus a
+rescoped **8c**; the items are `TODOS.md` **G-43**, **G-44**, **G-45**.
+
+**Everything below was verified against the source before it was written down.**
+
+1. **`jvim/` was added to the tree** — 4,201 files, untracked, the default configuration
+   for the Neovim Jenova embeds, carrying a `lua/jenova/` layer with FIM, a chat drawer,
+   LAN discovery, telemetry and an agent tool loop over buffer, LSP and shell. **D-BS
+   rules it configuration, not product Lua** — the no-Lua rule archives Lua that
+   *implements* Jenova, and porting a Neovim config to Nim is not a coherent idea. **A
+   session must not archive it.** It is mapped in `ARCHITECTURE_MAPPING.md` §6b and
+   `BLUEPRINT.md` §6b.
+2. **The notes editor stays, Neovim is confined to the editor page, and the document
+   side panel is removed (D-BW, superseding D-BT the same session).** The USER called
+   the panel a gimmick. **This is a removal and Directive 3 permits it because it was
+   explicitly instructed** — never cite it as licence to remove anything else. G-17 is
+   now simply *make the notes editor good*; it is the smallest it has ever been.
+3. **Workspace notes and files must reach the model (D-BU).** `pipeline.nim` contains
+   **no reference to notes at all**, while `notes.isFocusNote`, `fileAssets.content` and
+   `conversations.workspaceId` all exist and `api.nim` round-trips them. **The data model
+   is complete and nothing reads it** — T-17's shape a third time.
+4. **An uploaded file becomes a workspace artefact (D-BV).** **Nothing in the program has
+   ever written a `fileAssets` row.** This decides half of Step 7d.
+
+**Both questions raised at 18:29 were answered by the USER at 18:41, and no question is
+open.** **Q-34 — parity with the Web UI:** `messages.extra` keeps the inline base64
+exactly as D-BP stores it and the artefact is written *in addition*, so nothing about the
+message row changes. **That closes Step 7d.** **Q-35 — no:** keep the notes editor, do not
+replace it with Neovim, and remove the document panel. **T-11 is not touched by any of
+it** — with notes in their own editor and Neovim on its own page there is no second
+writer against an authoritative row at all, which is the outcome Q-29 was protecting.
+**Both answers reduce scope.**
+
+### G-40 is confirmed on screen. G-41 is half-confirmed.
+
+**The USER ran the 17:51 build: uploading attachments works as intended.** Step 7c's one
+outstanding item — whether the window is responsive with a document attached, which
+nothing here could assert — **is closed by that run** (rule 12: do not re-add the label).
+
+**Tables are no longer clipped to a stub, but now render larger than their content.**
+Filed as **G-42**, `TODOS.md` Backlog. The USER: *"not too serious."* The cause is G-41's
+own fix — `ContentScroll` propagates natural height and deliberately not natural width,
+which stopped the collapse without constraining the result down.
+
+### The claims audited again, and the citation policy changed
+
+**No code was touched and nothing was run.** Every outstanding claim in `TODOS.md`
+and `PLANS.md` was read back against the source.
+
+**Every finding is true.** G-17, G-20, G-21, G-37, G-38, T-2, T-3, T-4 and T-5 were
+each confirmed by reading the code they describe, and so was the Step 8b note that a
+restored message is never re-indexed. **Everything claimed built is built:** ten
+self-test subcommands dispatched from `src/jenova_core.nim`, six `nimble` tasks, six
+shell suites, `settings.nim` with its parity assertion, `hardware.nim`,
+`pipeline.ParseMemo` / `markdown.BlockMemo` / the 25 MB cap from 7c, `AutoScroll` and
+`ContentScroll` with their three protos from G-41, and the retrieval feed wired from
+`api.nim` and `gui.nim`. **No shell script, Lua file, C file or Makefile exists
+anywhere in the product tree.**
+
+**Two things were wrong and are fixed.**
+
+1. **The self-test count was wrong in three files, three different ways** — `BRIEFING.md`
+   §2 said nine, `PLANS.md` said nine, `TODOS.md` said six. `jenova_core.nim` dispatches
+   **ten**. §1 had already recorded the correction on 2026-09-01 at 17:27 and the other
+   lines were never brought with it.
+2. **The seventh citation sweep, and the last one.** The addresses split perfectly by
+   file: **every** line reference into `db.nim`, `fssync.nim`, `pipeline.nim`,
+   `theme.nim` and `lifecycle.nim` was correct; **every** reference into `gui.nim` and
+   `api.nim` was wrong, because 7c and G-41 took `gui.nim` from 3,916 to **4,019**
+   lines. **Seven sweeps have now re-derived the same two files and all seven rotted.**
+   So the numbers into those two files are **deleted, not corrected** — a reference in
+   `TODOS.md` and `PLANS.md` now names the symbol and stops. That is rule 9 finally
+   applied instead of restated.
 
 ### An audit of every claim in these documents against the source (Session 017)
 
@@ -258,7 +343,9 @@ one sentence in it.** The ruling is Rule 0 above, and the phrasing that invited 
 | **Typed errors, Retry, context-overflow reporting** (G-35) | — |
 | **Delete confirmations naming the cascade** (G-36) | — |
 | **Attachments: picker, drag-and-drop, paste, thumbnails, preview** (G-30) | — |
-| Recall of past chats — the index is fed | — |
+| Recall of past chats — the index is fed | **Workspace notes and files as context** (G-43) — the data model is complete and nothing reads it |
+| — | **An upload stored as a workspace artefact** (G-44) — no `fileAssets` row has ever been written |
+| — | **The editor page loading `jvim`** (G-45) — the spawn passes no environment |
 | **Settings — 1:1 with the Web UI, minus API Key, MCP and `serverUrl`** (G-31) | — |
 | **Import / export of conversations** (G-32) | — |
 | **Hardware profile detection, scoring and selection** (S-1) | — |
@@ -436,12 +523,30 @@ permanent. Moving payloads out of the row would fix all of it and would diverge
 from the frozen Web UI's storage shape. **Worth raising only if 7c does not make
 the window responsive.**
 
-**Step 8, the remaining views.** **8a. A real model selector** (G-20) — two
-hardcoded menu items today, in the window and in the tray. Backend exists:
-`models.discover`, `models.switchModel`. **8b. A trash view** (G-21) —
-everything deleted is invisible; the routes exist and are asserted. G-36 landed
-first and the two answer each other, so this is the more pressing half. **8c. A
-real note editor** (G-17). Then Step 9's four stability items.
+**Step 11, 10c, 10a and 8b are built** (2026-09-01 19:05). Twelve self-tests
+pass, both binaries are ELF 64-bit FreeBSD, `bin/jenova --check` exits 0.
+The record is `PROGRESS.md`; the detail is `PLANS.md` "What Session 019 built".
+
+**Next — `PLANS.md` 10b, uploads become workspace artefacts (G-44).** It is the
+obvious one now and no longer gated: Q-34 answered parity, so the inline payload
+stays exactly as D-BP stores it and the artefact is written **in addition**.
+**10a already reads `fileAssets` and renders it** — including the "binary file"
+case — **and nothing has ever written a row for it to find.** The reader exists;
+the writer does not.
+
+**Then 8a — the model selector** (G-20), whose first job is that
+`models.discover` has no caller in `gui.nim` at all. **Then 8c — make the notes
+editor good** (G-17, D-BW), which is the smallest that item has ever been.
+
+**Two open defects, both widget behaviour and both a USER run:** **G-42**,
+markdown tables now render larger than their content — caused by G-41's own fix,
+which propagates natural height and deliberately not natural width, so the
+collapse stopped without the result being constrained down. And **G-47**, the
+editor page's Neovim truncated at the bottom on a resize, reported at 18:41 and
+**not diagnosed** — a candidate mechanism is written in `TODOS.md` and flagged
+as a candidate, not a finding.
+
+**Then Step 9:** T-5, T-2, T-4, T-3.
 
 **Unseen, and it is now a large surface:** the stop button, table rendering,
 attachment chips and thumbnails, the drop target, the paste button, the preview

@@ -362,8 +362,6 @@ window.background {
 .chat-col,
 .chat-col > box,
 .main-area,
-.doc-panel,
-.doc-panel-closed,
 scrolledwindow,
 scrolledwindow > viewport,
 expander,
@@ -412,15 +410,6 @@ headerbar .subtitle {
 vte-terminal.nvim-term {
   background-color: alpha(@jenova_bg, 0.35);
   padding: 8px;
-}
-
-/* The document panel (G-25). One left border and nothing else: it is a second
-   pane of the same window, not a card on top of it, so it gets the divider a
-   split needs and none of `.glass-panel`'s floating cues. Empty when the panel
-   is closed, which is why the rule may not paint a fill — a closed panel would
-   otherwise leave a coloured sliver at the window edge. */
-.doc-panel {
-  border-left: 1px solid alpha(@jenova_border, 0.55);
 }
 
 /* GtkPaned's drag handle. Invisible at rest and brand-coloured under the

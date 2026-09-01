@@ -25,15 +25,13 @@
 ## * **`getline(1,"$")` returns the buffer, not the file.** That is the whole
 ##   point: unsaved edits are what the USER is looking at.
 
-import std/[os, osproc, posix, strutils, times]
+import std/[os, osproc, posix, sets, strutils, times]
 import ./paths
 
 const
+  ## Kept short for a measured reason: FreeBSD's `sun_path` is about 104 bytes
+  ## and `--listen` fails outright above it.
   SocketName = "nvim.sock"
-  ## The document panel's editor is a second `nvim`, so it needs a second socket.
-  ## Kept as short as the first for the same measured reason: FreeBSD's
-  ## `sun_path` is about 104 bytes and `--listen` fails outright above it.
-  DocSocketName = "nvim-doc.sock"
   ## Long enough that a slow editor still answers, short enough that a hung one
   ## does not stall the chat turn that asked.
   QueryTimeoutMs = 2000
@@ -50,16 +48,52 @@ type
     line*: int
     modified*: bool
 
+## Function purpose: the environment the embedded editor is spawned with, so the
+## in-tree `jvim/` configuration loads and its Jenova layer can find this
+## process (G-45, D-BS). Pure and parameterised rather than reading `config`
+## itself, which is what lets `nvim-env-selftest` assert it with no terminal and
+## no window.
+##
+## **It returns the WHOLE environment, not just the additions.** VTE's
+## `envv` *replaces* the child's environment when it is non-nil rather than
+## adding to it, so returning only the `JENOVA_*` keys would spawn an editor with
+## no `PATH`, no `HOME` and no display — which fails as "nvim: not found" and
+## reads as a missing dependency rather than as this function's bug.
+##
+## `NVIM_APPNAME` alone would send Neovim to `~/.config/jvim`, i.e. to a symlink
+## the user is expected to have made by hand — which is D-BC's defect. Pointing
+## `XDG_CONFIG_HOME` at the project root instead makes `<root>/jvim` the config
+## directory with no setup step at all; both are needed, and it was verified by
+## running `stdpath('config')` under them rather than assumed.
+proc editorEnv*(p: Paths, host: string, port, llamaPort, embedPort: int,
+                lanMode: bool): seq[string] =
+  var seen = initHashSet[string]()
+  var extra = @[
+    ("JENOVA_ROOT", p.root),
+    ("JENOVA_CONNECT_HOST", host),
+    ("JENOVA_HOST", host),
+    ("JENOVA_PORT", $port),
+    ("JENOVA_LLAMA_PORT", $llamaPort),
+    ("JENOVA_LLAMA_EMBED_PORT", $embedPort),
+    ("JENOVA_LAN_MODE", if lanMode: "1" else: "0")]
+  # Only when the configuration is actually present. A missing `jvim/` must
+  # leave the editor exactly as it was rather than aiming Neovim at a directory
+  # that does not exist, which it reports as a bare start screen with no
+  # explanation.
+  if dirExists(p.root / "jvim"):
+    extra.add ("XDG_CONFIG_HOME", p.root)
+    extra.add ("NVIM_APPNAME", "jvim")
+  for (k, v) in extra:
+    seen.incl k
+    result.add k & "=" & v
+  for k, v in envPairs():
+    if k notin seen:
+      result.add k & "=" & v
+
 ## Function purpose: where the editor listens. Named here rather than at the call
 ## sites so the spawn (G-19) and the reader agree by construction.
 proc socketPath*(p: Paths): string =
   p.state / SocketName
-
-## Function purpose: where the document panel's editor listens. Separate from
-## `socketPath` so the two instances cannot collide, and so `Editor:` can be
-## pointed at whichever of them the user is actually working in.
-proc docSocketPath*(p: Paths): string =
-  p.state / DocSocketName
 
 ## Function purpose: drain a child's stdout until EOF or the deadline, whichever
 ## comes first. `complete` is false only on the deadline, so the caller can tell

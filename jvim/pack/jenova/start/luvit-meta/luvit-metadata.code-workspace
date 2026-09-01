@@ -1,0 +1,24 @@
+{
+  "folders": [
+    {
+      "path": "."
+    }
+  ],
+  "settings": {
+    "cSpell.words": [
+      "copymethod",
+      "deepcopy",
+      "deepcount",
+      "dgram",
+      "discordia",
+      "infmt",
+      "inittype",
+      "newmethod",
+      "nodiscard",
+      "paramtype",
+      "returntype",
+      "reuseaddr",
+      "rinfo"
+    ]
+  }
+}

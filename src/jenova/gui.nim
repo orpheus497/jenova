@@ -35,7 +35,7 @@
 ## shells to base `fetch(1)`: this project has spent seven stages removing
 ## dependencies, and a localhost request needs no TLS stack.
 
-import std/[algorithm, atomics, base64, json, net, os, oids, osproc, posix,
+import std/[atomics, base64, json, net, os, oids, osproc, posix,
             streams,
             strutils, tables, times]
 import owlkettle
@@ -58,6 +58,7 @@ import ./sourceview
 import ./nvimctl
 import ./vte
 import ./pipeline
+import ./workspace
 import ./settings
 import ./sha256
 import ./hardware
@@ -483,6 +484,11 @@ proc lanAddress(): string =
     "ifconfig 2>/dev/null | awk '/inet / && !/127\\.0\\.0\\.1/ {print $2; exit}'"])
 
 type
+  ## G-21. `kind` is the table name `api.restoreEntity` takes; `label` is what
+  ## the row shows, which differs per table — a note has a title, a message has
+  ## only its text.
+  TrashItem = tuple[kind, id, label, detail: string]
+
   ConvItem = tuple[id, name, folderId, projectId, workspaceId: string]
   NodeItem = tuple[id, parent, name: string]
   ## A note or a file asset. Structurally identical to `ConvItem` — both carry
@@ -929,16 +935,6 @@ viewable App:
   search: string
   sidebarOpen: bool = true
   editorOpen: bool
-  ## The right-hand document panel (G-25). A chat's documents are plain `.md`
-  ## files in that chat's own project directory, edited by a second `nvim` — not
-  ## `notes` rows, so nothing here is a second writer against the database
-  ## (ruling Q-29). `panelDocs` is cached for the same reason `convs` is: `view`
-  ## runs on every canvas frame and a directory walk per frame is defect B-17
-  ## with a filesystem behind it.
-  panelOpen: bool
-  panelDoc: string
-  panelDir: string
-  panelDocs: seq[string]
   ## Bound to the Window's `fullscreened`, which the application had never set —
   ## so nothing in the program could leave fullscreen once the compositor put it
   ## there. owlkettle exposes no window-state event, so this cannot *observe* a
@@ -965,6 +961,13 @@ viewable App:
   ## for no defect. `hwDetecting` is what the panel shows while the control
   ## worker is out; detection is never run on this thread.
   hardwareOpen: bool
+  ## G-21. Everything deleted is a soft delete and had no surface at all, which
+  ## makes a delete indistinguishable from data loss — the hazard the confirm
+  ## dialog (G-36) names but cannot answer on its own. Cached in `trashItems` for
+  ## the reason `convs` is: `view` runs on every canvas frame, and seven table
+  ## scans per frame is B-17 with a database behind it.
+  trashOpen: bool
+  trashItems: seq[TrashItem]
   hwDetecting: bool
   hw: hardware.Hardware
   hwScores: seq[hardware.Score]
@@ -1499,84 +1502,6 @@ proc commitRename(app: AppState, entity, id: string) =
 ## filtered by the search box. Case-insensitive substring, matching
 ## `ChatSidebarSearch`'s behaviour rather than inventing a ranking nobody asked
 ## for.
-## Function purpose: is this filename one of `fssync`'s note mirrors rather than
-## a panel document? A mirrored note is `<title>_<uuid>.md`, and listing those
-## beside real documents would offer the user two ways to edit one note — the
-## note editor and Neovim — writing to the same file with no reconciliation.
-## That is precisely the two-writer problem Q-29 chose the plain-file model to
-## avoid, so the mirrors are excluded rather than merely deprioritised.
-proc isNoteMirror(name: string): bool =
-  if not name.endsWith(".md"): return false
-  let stem = name[0 ..< ^3]
-  stem.len > 37 and stem[^37] == '_' and fssync.isValidUuid(stem[^36 .. ^1])
-
-## Function purpose: the directory the active chat's documents live in. Resolved
-## through `fssync.scopeDir` so the panel and the note mirror agree about where a
-## project is on disk, rather than each deriving it.
-proc docDir(app: AppState): string =
-  for c in app.convs:
-    if c.id == app.convId:
-      return fssync.scopeDir(c.folderId, c.projectId, c.workspaceId)
-  app.p.workspaces / "unassigned"
-
-proc refreshDocs(app: AppState) =
-  app.panelDir = app.docDir()
-  app.panelDocs = @[]
-  if not dirExists(app.panelDir): return
-  for kind, path in walkDir(app.panelDir):
-    if kind notin {pcFile, pcLinkToFile}: continue
-    let name = path.extractFilename
-    if not name.endsWith(".md") or name.startsWith(".") or isNoteMirror(name):
-      continue
-    app.panelDocs.add name
-  app.panelDocs.sort()
-
-## Function purpose: open one document in the panel. The spawn arguments are set
-## before `panelOpen` flips, because the widget is built on the redraw that flag
-## causes and `beforeBuild` reads them then.
-##
-## `pipeline.configureEditor` is re-aimed here, which is the answer to Q-30: with
-## two editors running, `Editor:` reads the **panel** one, because the panel
-## document is the one the USER described as connected to the chat. The page
-## editor is a workspace, not a subject.
-proc openDoc(app: AppState, name: string) =
-  app.refreshDocs()
-  try:
-    createDir(app.panelDir)
-  except OSError:
-    app.notice = "Cannot create " & app.panelDir
-    return
-  let full = app.panelDir / name
-  vte.configureDoc(nvimctl.docSocketPath(app.p), app.panelDir, full)
-  pipeline.configureEditor(nvimctl.docSocketPath(app.p))
-  app.panelDoc = name
-  app.panelOpen = true
-
-## Function purpose: a new, uniquely named document beside the chat's notes.
-## The file is created empty rather than left to Neovim's `:w`, so it appears in
-## the switcher immediately and a user who closes the panel without saving has
-## not lost the entry they just made.
-proc newDoc(app: AppState) =
-  app.refreshDocs()
-  var n = 1
-  var name = "document.md"
-  while name in app.panelDocs:
-    inc n
-    name = "document-" & $n & ".md"
-  try:
-    createDir(app.panelDir)
-    writeFile(app.panelDir / name, "")
-  except IOError, OSError:
-    app.notice = "Cannot write into " & app.panelDir
-    return
-  app.openDoc(name)
-
-proc closePanel(app: AppState) =
-  app.panelOpen = false
-  app.panelDoc = ""
-  # Back to the page editor, so `Editor:` follows the surface that is still open.
-  pipeline.configureEditor(nvimctl.socketPath(app.p))
-
 proc visibleConvs(app: AppState): seq[ConvItem] =
   let q = app.search.strip.toLowerAscii
   if q.len == 0: return app.convs
@@ -1651,8 +1576,18 @@ proc postConversation(app: AppState, continuing = false) =
   # nothing below the window could assert it — and the sampling parameters are
   # merged in there for the same reason.
   let port = app.cfg.getInt("PORT", 8080)
+  # G-43: the notes and files of whatever this chat belongs to. Read from
+  # `app.convs`, which the sidebar already keeps current, so this costs no query
+  # of its own. An unassigned chat resolves to the global scope, which is *not*
+  # everything — see `workspace.contextFor`.
+  var wsCtx = ""
+  for c in app.convs:
+    if c.id == app.convId:
+      wsCtx = workspace.contextFor(c.folderId, c.projectId, c.workspaceId)
+      break
   streamReq.send(StreamJob(host: "127.0.0.1", port: port,
-                           body: pipeline.chatBody(msgs, continuing, app.opts)))
+                           body: pipeline.chatBody(msgs, continuing, app.opts,
+                                                   wsCtx)))
 
 ## Function purpose: a conversation's name, taken from the message that started
 ## it (G-31). The Web UI titles a chat from its first message and this window
@@ -1996,15 +1931,6 @@ renderable NvimTerminal of BaseWidget:
   hooks:
     beforeBuild:
       state.internalWidget = vte.newNvimTerminal()
-
-## The document panel's editor (G-25). A separate renderable rather than a field
-## on `NvimTerminal`, because `beforeBuild` sees no field values — the spawn
-## arguments come from `vte.configureDoc`, set by the click that opens the
-## document. Two renderables is the honest expression of "two processes".
-renderable DocTerminal of BaseWidget:
-  hooks:
-    beforeBuild:
-      state.internalWidget = vte.newDocTerminal()
 
 ## A read-only, syntax-highlighted code block (G-7). Declared here rather than in
 ## `sourceview.nim` because owlkettle's `renderable` emits an unexported type;
@@ -2860,70 +2786,6 @@ proc mainArea(app: AppState): Widget =
                     insert(app.messageActions(i, m)) {.expand: false.}
 
 
-## Function purpose: the right-hand document panel (G-25) — a second Neovim,
-## editing one plain `.md` file in the active chat's own project directory.
-##
-## **It is always in the tree, and empty when closed.** Its children come and go;
-## the Box does not. A Box with no children requests no width, so a closed panel
-## costs a handle at the window edge and nothing else — and the page editor on
-## the other side of the Paned is never rebuilt by a toggle, which would kill the
-## `nvim` running in it.
-##
-## The switcher lists `.md` files in that directory, excluding `fssync`'s note
-## mirrors: a mirrored note is already editable in the note editor, and offering
-## a second writer for the same file is exactly what Q-29 chose this model to
-## avoid.
-proc docPanel(app: AppState): Widget =
-  gui:
-    Box(orient = OrientY):
-      # Both properties are set on **every** redraw, not only when the panel is
-      # open. owlkettle updates a property only when the widget carries it, so a
-      # `sizeRequest` assigned inside the `if` would persist after the panel
-      # closed and hold 420 px of dead space at the window edge — and the border
-      # would draw as a stray line there. The closed class deliberately has no
-      # rules of its own.
-      style = [StyleClass(if app.panelOpen: "doc-panel" else: "doc-panel-closed")]
-      sizeRequest = ((if app.panelOpen: 420 else: 0), -1)
-      if app.panelOpen:
-        Box(orient = OrientX, spacing = 4, margin = 6) {.expand: false.}:
-          MenuButton {.expand: false.}:
-            icon = "document-open-symbolic"
-            tooltip = "Switch document"
-            style = [ButtonFlat]
-            Popover:
-              Box(orient = OrientY, spacing = 2, margin = 8):
-                Label {.expand: false.}:
-                  text = (if app.panelDocs.len == 0: "No documents yet." else: "")
-                  style = [StyleClass("dim-note")]
-                for d in app.panelDocs:
-                  Button {.expand: false.}:
-                    text = d
-                    style = [ButtonFlat, StyleClass("row-btn"),
-                             StyleClass(if d == app.panelDoc: "conv-active"
-                                        else: "conv-idle")]
-                    proc clicked() = app.openDoc(d)
-
-          Label {.expand: true.}:
-            text = app.panelDoc
-            xAlign = 0.0
-            ellipsize = EllipsizeStart
-            style = [StyleClass("section-label")]
-
-          Button {.expand: false.}:
-            icon = "document-new-symbolic"
-            tooltip = "New document"
-            style = [ButtonFlat, StyleClass("row-btn")]
-            proc clicked() = app.newDoc()
-
-          Button {.expand: false.}:
-            icon = "window-close-symbolic"
-            tooltip = "Close panel"
-            style = [ButtonFlat, StyleClass("row-btn")]
-            proc clicked() = app.closePanel()
-
-        DocTerminal {.expand: true.}:
-          style = [StyleClass("nvim-term")]
-
 ## Function purpose: the top bar, and **it is a body widget, not a titlebar.**
 ## It was `HeaderBar {.addTitlebar.}` on a `Window`, which meant
 ## `gtk_window_set_titlebar` — and **GTK4 hides that while the window is
@@ -3141,6 +3003,138 @@ proc settingsField(app: AppState, d: settings.SettingDef): Widget =
 ## the shape this window is built in. A separate `Window` would need its own
 ## close path, and every crash in this project's history was a widget outliving
 ## the thing that owned it (G-25, and the eleven quit-path crashes).
+## Function purpose: read every soft-deleted row into `trashItems` (G-21). The
+## column list comes from `api.deletedRows`, which reuses `Entities`' own
+## declaration — a query written here would drift from it the first time a
+## column was added.
+##
+## **The order is the restore order, not alphabetical.** Containers are listed
+## before what lives in them, so a user working down the list restores a
+## workspace before the notes inside it; restoring a child alone still works,
+## because `api.restoreItem` revives its ancestry upward anyway.
+proc refreshTrash(app: AppState) =
+  app.trashItems = @[]
+  const tables = ["workspaces", "projects", "folders", "conversations",
+                  "notes", "fileAssets", "messages"]
+  for t in tables:
+    for row in api.deletedRows(t):
+      if row.len == 0: continue
+      # The label column differs per table and the first column is always the
+      # id, so a name is looked for rather than assumed to be at a fixed index.
+      var label = ""
+      case t
+      of "workspaces", "projects", "folders", "conversations", "fileAssets":
+        if row.len > 1: label = row[1]
+      of "notes":
+        for cell in row[1 .. ^1]:
+          if cell.len > 0 and cell != "null": label = cell; break
+      of "messages":
+        for cell in row[1 .. ^1]:
+          if cell.len > 20: label = cell; break
+      else: discard
+      if label.strip.len == 0: label = "(untitled)"
+      # A message is its own text and can be a page of it; the row is one line.
+      label = label.splitLines()[0]
+      if label.len > 72: label = label[0 ..< 72] & "…"
+      let noun =
+        case t
+        of "workspaces": "Workspace"
+        of "projects": "Project"
+        of "folders": "Folder"
+        of "conversations": "Conversation"
+        of "notes": "Note"
+        of "fileAssets": "File"
+        else: "Message"
+      app.trashItems.add (kind: t, id: row[0], label: label, detail: noun)
+
+proc openTrash(app: AppState) =
+  app.refreshTrash()
+  app.notice = ""
+  app.trashOpen = true
+
+## Function purpose: undo one soft delete. Goes through `api.restoreEntity` and
+## not a direct `is_deleted=0`, because that route also revives the item's
+## ancestry — a note inside a deleted folder would otherwise come back invisible
+## — and re-indexes a restored message for retrieval, which nothing did until
+## 8b (D-BI left deletion forgetting with no counterpart).
+proc restoreFromTrash(app: AppState, item: TrashItem) =
+  if api.restoreEntity(item.kind, item.id):
+    app.notice = item.detail & " restored: " & item.label
+    app.refreshTrash()
+    # `reloadTree` already re-reads the conversations along with every container,
+    # so the sidebar shows the restored item without a second query.
+    app.reloadTree()
+  else:
+    app.notice = "Could not restore that " & item.detail.toLowerAscii
+
+## Function purpose: the trash screen (G-21). Everything deleted in this
+## application is a soft delete and there was no way to see or undo one, which
+## is what makes an accidental delete look like data loss.
+##
+## It draws only; the listing is `api.deletedRows` and the undo is
+## `api.restoreEntity`, both of which the HTTP routes already used and which are
+## asserted without a window.
+proc trashPanel(app: AppState): Widget =
+  gui:
+    Box(orient = OrientY):
+      # Same shape as the settings and hardware panels: always in the tree,
+      # insensitive when closed so it does not swallow clicks.
+      sensitive = app.trashOpen
+      style = (if app.trashOpen: @[StyleClass("settings-scrim")]
+               else: newSeq[StyleClass]())
+      if app.trashOpen:
+        Box(orient = OrientY, spacing = 8, margin = 24) {.hAlign: AlignCenter,
+                                                          vAlign: AlignCenter.}:
+          sizeRequest = (720, 560)
+          style = [StyleClass("settings-panel")]
+
+          Box(orient = OrientX, spacing = 8) {.expand: false.}:
+            Label {.expand: true.}:
+              text = "Trash"
+              xAlign = 0.0
+              style = [StyleClass("brand"), StyleClass("brand-purple")]
+            Button {.expand: false.}:
+              icon = "view-refresh-symbolic"
+              tooltip = "Refresh"
+              style = [ButtonFlat, StyleClass("row-btn")]
+              proc clicked() = app.refreshTrash()
+            Button {.expand: false.}:
+              icon = "window-close-symbolic"
+              tooltip = "Close"
+              style = [ButtonFlat, StyleClass("row-btn")]
+              proc clicked() = app.trashOpen = false
+
+          ScrolledWindow {.expand: true.}:
+            Box(orient = OrientY, spacing = 6, margin = 4):
+              if app.trashItems.len == 0:
+                Label {.expand: false.}:
+                  text = "Nothing has been deleted."
+                  xAlign = 0.0
+                  style = [StyleClass("settings-help")]
+              else:
+                Label {.expand: false.}:
+                  text = "Restoring a container brings back what was inside " &
+                         "it. Restoring something inside a deleted container " &
+                         "brings the container back too."
+                  xAlign = 0.0
+                  wrap = true
+                  style = [StyleClass("settings-help")]
+                for item in app.trashItems:
+                  Box(orient = OrientX, spacing = 8) {.expand: false.}:
+                    Label {.expand: false.}:
+                      text = item.detail
+                      xAlign = 0.0
+                      sizeRequest = (110, -1)
+                      style = [StyleClass("settings-label")]
+                    Label {.expand: true.}:
+                      text = item.label
+                      xAlign = 0.0
+                      ellipsize = EllipsizeEnd
+                    Button {.expand: false.}:
+                      text = "Restore"
+                      style = [ButtonFlat, StyleClass("row-btn")]
+                      proc clicked() = app.restoreFromTrash(item)
+
 ## Function purpose: open the hardware screen and ask the control worker for a
 ## detection. Opening always re-detects rather than showing a cached result —
 ## the whole point of the screen is to say what this machine *is*, and a stale
@@ -3435,22 +3429,15 @@ proc topBar(app: AppState): Widget =
         proc clicked() =
           app.editorOpen = not app.editorOpen
 
-      # The document panel, available on every chat (G-25). Enabled only when a
-      # conversation is selected, because a document belongs to that chat's
-      # project and there is no project to resolve without one.
+      # G-21. In the bar and not the app menu for the same reason the delete
+      # confirmations exist (G-36): the two answer each other. A confirmation
+      # tells the user what a delete will take; this is where they go when they
+      # did it anyway.
       Button {.addRight.}:
-        icon = "view-dual-symbolic"
-        tooltip = (if app.panelOpen: "Close document panel"
-                   else: "Open document panel")
-        sensitive = app.convId.len > 0
+        icon = "user-trash-symbolic"
+        tooltip = "Trash"
         style = [ButtonFlat]
-        proc clicked() =
-          if app.panelOpen:
-            app.closePanel()
-          else:
-            app.refreshDocs()
-            if app.panelDocs.len > 0: app.openDoc(app.panelDocs[0])
-            else: app.newDoc()
+        proc clicked() = app.openTrash()
 
       # G-31. In the bar rather than in the app menu because it is a surface the
       # user opens repeatedly while tuning a model, not a one-off action like
@@ -3705,26 +3692,16 @@ method view(app: AppState): Widget =
             # owlkettle's positional matching never swaps a widget out from under
             # the diff; only what is inside them changes.
             #
-            # Action purpose: a `Box`, and **not a `Paned`** (G-25). A Paned was
-            # tried first, for the drag handle, and it crashed the application on
-            # the first click of the Neovim button: `updatePanedChild` asserts
-            # `newChild.isNil` (`owlkettle/widgets.nim:1341`), which requires
-            # that neither of its children ever changes widget type — and this
-            # area is a `ScrolledWindow` normally and an `NvimTerminal` on the
-            # editor page.
-            #
-            # `Box` is the container that *does* support it: its children hook
-            # removes the old widget and inserts the new one when `update`
-            # returns a rebuilt child (`widgets.nim:239-249`). It is also what
-            # this window already used for the editor swap before the panel
-            # existed. The cost is the drag handle; the panel is a fixed width.
-            Box(orient = OrientX) {.expand: true.}:
-              DropZone {.expand: true.}:
-                # G-30: the drop target wraps the chat column, which is the
-                # Web UI's `ChatScreenDragOverlay` position.
-                style = [StyleClass("drop-zone")]
-                insert(app.mainArea())
-              insert(app.docPanel()) {.expand: false.}
+            # D-BW removed the document panel, and with it the horizontal Box
+            # that existed only to sit the panel beside this column. The
+            # `Box`-not-`Paned` reasoning it carried still applies one level
+            # down and lives at `mainArea`, which is the widget that actually
+            # changes type between a `ScrolledWindow` and an `NvimTerminal`.
+            DropZone {.expand: true.}:
+              # G-30: the drop target wraps the chat column, which is the
+              # Web UI's `ChatScreenDragOverlay` position.
+              style = [StyleClass("drop-zone")]
+              insert(app.mainArea())
             # G-30: what is staged, above the composer, each removable. The
             # Web UI shows thumbnails; this shows the name, the type and the
             # size, because a GTK thumbnail means decoding the image on the
@@ -3858,6 +3835,7 @@ method view(app: AppState): Widget =
         # whole window and the canvas behind it.
         insert(app.settingsPanel()) {.addOverlay.}
         insert(app.hardwarePanel()) {.addOverlay.}
+        insert(app.trashPanel()) {.addOverlay.}
         insert(app.previewPanel()) {.addOverlay.}
 
 ## Function purpose: entry point for `bin/jenova`. Resolution happens here,
@@ -3878,7 +3856,16 @@ proc run*(withTray = true, checkOnly = false) =
   # unconditionally: `nvimctl` treats an absent socket as "no document", so this
   # costs nothing on a host with no Neovim running.
   pipeline.configureEditor(nvimctl.socketPath(p))
-  vte.configure(nvimctl.socketPath(p), p.workspaces)
+  # G-45: the editor is spawned with an environment that loads the in-tree
+  # `jvim/` configuration and tells its Jenova layer where this process is
+  # listening. `127.0.0.1` and not `host`: the editor runs beside the server, and
+  # `host` is `0.0.0.0` in LAN mode, which is a bind address rather than a
+  # reachable one.
+  vte.configure(nvimctl.socketPath(p), p.workspaces,
+                nvimctl.editorEnv(p, "127.0.0.1", port,
+                                  c.getInt("LLAMA_PORT", 8081),
+                                  c.getInt("LLAMA_EMBED_PORT", 8082),
+                                  isLanEnabled(p)))
   # Before the window exists, because `applyScheme` asks for `jenova-dark` first
   # and a search path appended later would be too late for the blocks already on
   # screen. Silent on failure by design — see `installScheme`.

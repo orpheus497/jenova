@@ -3,7 +3,7 @@
 File-by-file map of the codebase: what lives where, and why. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE. Update whenever a file is added, removed or relocated.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 16:19 (Session 017).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 19:05 (Session 019).
 
 This file was mandated from the outset and did not exist for Sessions 001–003 —
 including Session 001, which moved or deleted 31 files. See `DECISIONS_LOG.md` C-10.
@@ -73,6 +73,26 @@ ladder with no window and no machine. `gui.nim` draws the Hardware screen and
 `jenova_core.nim` exposes `hardware detect|list|apply`; neither contains any scoring.
 **It never sets a `sysctl`** (D-BN) — it reads them to describe the machine and nothing
 more.
+
+**Added 2026-09-01 (G-43, ruling D-BU):** `workspace.nim` — the workspace artifact
+context: the four-level scoping ladder (folder → project → workspace → global), the
+FOCUS-note escape, and the literal output format the Web UI teaches the model. **Same
+layering argument as `settings.nim` and `hardware.nim`**: it imports `db` and `std` and
+nothing else, so `workspace-selftest` asserts the whole ladder with no window, no backend
+and no conversation. `pipeline.chatBody` injects what it returns and `gui.nim` only
+supplies the scope ids it already holds.
+
+**Removed 2026-09-01 (G-46, ruling D-BW):** the document side panel. `vte.nim` lost
+`configureDoc` and `newDocTerminal`, `nvimctl.nim` lost `docSocketPath` and
+`DocSocketName`, `theme.nim` lost `.doc-panel` and `.doc-panel-closed`, and `gui.nim`
+lost the `DocTerminal` renderable with the panel's state and procs. **There is one
+embedded Neovim now, the editor page's**, which is what makes `pipeline.configureEditor`
+a single call in `gui.run` and moots Q-30.
+
+**`nvimctl.nim` also gained `editorEnv` (G-45, D-BS)** — the environment the embedded
+editor is spawned with, so the in-tree `jvim/` configuration loads. It lives there rather
+than in `vte.nim` because `vte.nim` is GUI-only FFI and `nvimctl.nim` links into
+`jenova-core`, which is what makes the environment assertable at all.
 
 **No new module for Step 7 (2026-09-01), and that is the point.** Its four features went
 into the modules that already owned the behaviour, so each could be asserted:
@@ -249,6 +269,44 @@ error splash with retry, loading splash). **`mcp`** is deferred by the USER.
 `src/routes/`, `src/app.css` (the Google Fonts leak, B-01), `src/service-worker.js`, `static/`,
 `docs/flows/` (two Mermaid diagrams depicting an impossible path, B-04), `tests/`, plus the
 Vite / Svelte / Playwright / ESLint / TS configs. Zero OS coupling (C-5).
+
+## 6b. `jvim/` — the embedded Neovim's configuration. **Added by the USER 2026-09-01**
+
+**4,201 files, untracked as of this session.** A self-contained Neovim distribution that
+the USER has designated the default configuration for the Neovim that Jenova embeds.
+
+**It is not product Lua and the no-Lua rule does not reach it (D-BS).** D-AM/D-AZ and
+`BRIEFING.md` rule 2 archive Lua that *implements Jenova*; Lua is the configuration
+language of a program Jenova embeds, and porting a Neovim config to Nim is not a coherent
+idea. **Recorded here because a session applying the rule mechanically would archive a
+deliberate addition.**
+
+| Path | Role |
+|---|---|
+| `init.lua` | Entry point — options, spec runner, keymaps, health checks |
+| `lua/jvim/` | First-party native UI stack — tree, finder, statusline, tabline, terminal, dashboard, notify, keyhelp, indent guides, layout, diagnostics list, icons, ui |
+| `lua/jenova/` | **The integration layer.** `endpoints.lua` (the URL/env contract), `chat.lua`, `health.lua`, `lan.lua`, `monitor.lua`, `spec_runner.lua` |
+| `lua/jenova/agent/` | Tool registry, memory, learning, context compaction, provider, engine |
+| `lua/jenova/agent/tools/` | `buffer_read/write/edit/multiedit/grep/glob/ls/list`, `lsp`, `shell`, `vim_cmd`, `ask_user`, `remember` |
+| `pack/` | Vendored plugins — zero package manager, zero network on first boot. **Carries 24 third-party shell scripts; none is Jenova product code** |
+| `colors/`, `doc/`, `plugin/` | Themes, `:help jvim` tags, UI/dashboard plugin files |
+
+**The contract with the Nim side, read out of `lua/jenova/endpoints.lua`:** host from
+`JENOVA_CONNECT_HOST`/`JENOVA_HOST`, ports from `JENOVA_PORT` (8080),
+`JENOVA_LLAMA_PORT` (8081) and `JENOVA_LLAMA_EMBED_PORT` (8082); it calls
+`/v1/chat/completions`, `/infill` and `/api/storage/<path>`, and reads `JENOVA_ROOT` and
+`JENOVA_LAN_MODE`. **Every one of those routes is already served** — `routes.nim` routes
+`/infill`, `server.nim` handles `/api/storage`.
+
+**What is not wired (G-45):** `vte.nim` spawns with `envv = nil`, so `NVIM_APPNAME` is
+never set and none of the `JENOVA_*` variables are passed. Both embedded editors run
+stock Neovim.
+
+**Two things noted, neither acted on:** `jvim/README.md` documents an `install.sh` that
+is **not in the tree**, and `jvim/nvim.log` is a stray log (its own `.gitignore` ignores
+`*.log`).
+
+---
 
 ## 7. Supporting trees
 

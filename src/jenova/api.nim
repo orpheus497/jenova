@@ -452,11 +452,26 @@ proc restoreItem(entityName, id: string, depth = 0): ApiResult =
     else: discard
 
   db.exec("UPDATE " & e.name & " SET is_deleted=0 WHERE id=?", id)
+  # Action purpose: deletion forgets (D-BI) and nothing undid it, so a restored
+  # turn came back everywhere except in what the model recalls. It looked
+  # repaired because `rag.backfillChats` picks it up at the *next* start — which
+  # is worse than plainly broken: the gap closes itself before anyone can
+  # reproduce it. Restoring re-indexes here, immediately, opposite
+  # `rag.forgetMessage` in `softDelete` above.
+  if e.name == "messages":
+    discard rag.indexExchange(id, withParent = false)
   if e.name == "conversations":
     # Faithful to db.restore_item: every message of the conversation is revived,
     # including any deleted individually beforehand. Recorded as N-21 — it is a
     # pre-existing behaviour of the shipped client's contract, not a new one.
     db.exec("UPDATE messages SET is_deleted=0 WHERE convId=?", id)
+    # And every revived assistant turn goes back into the index with them, for
+    # the reason above. Only assistant rows: `indexExchange` takes a reply and
+    # pulls in the turn it answers, so walking user rows too would index each
+    # exchange twice.
+    for r in db.query("SELECT id FROM messages WHERE convId=? AND role=? " &
+                      "AND is_deleted=0", id, "assistant"):
+      discard rag.indexExchange(r[0])
   ok("""{"status":"ok"}""")
 
 proc restore(e: Entity, id: string): ApiResult = restoreItem(e.name, id)
@@ -605,6 +620,21 @@ proc putEntity*(entity: string, node: JsonNode): bool =
 
 proc deleteEntity*(entity, id: string): bool =
   entity in Entities and softDelete(Entities[entity], id).status == 200
+
+## Function purpose: undo a soft delete for an in-process caller — the window's
+## trash view (G-21). Goes through the same `restoreItem` the HTTP route uses, so
+## the upward cascade and the retrieval re-index apply whichever surface the user
+## restored from. A window that wrote `is_deleted=0` itself would skip both.
+proc restoreEntity*(entity, id: string): bool =
+  entity in Entities and restoreItem(entity, id).status == 200
+
+## Function purpose: the soft-deleted rows of one table, newest first where the
+## table has anything to order by. The trash view's source, and deliberately not
+## a new query shape — it is `Entities`' own column list with the flag inverted.
+proc deletedRows*(entity: string): seq[seq[string]] =
+  if entity notin Entities: return
+  let e = Entities[entity]
+  db.query("SELECT " & e.colList & " FROM " & e.name & " WHERE is_deleted=1")
 
 ## Function purpose: every live row, in the shape `importData` reads (G-32).
 ## Exported for the desktop application's Export button, which must not build a

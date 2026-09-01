@@ -5,6 +5,90 @@ One short paragraph per session. Sessions 001-005 are in
 
 ---
 
+## Session 019 (part four) — 2026-09-01 19:05
+
+**Built Step 11, 10c, 10a and 8b.** The document panel is removed (G-46, D-BW) — which
+moots Q-30, since `pipeline.configureEditor` is now one call and never re-aimed; the
+editor page loads `jvim` via the new `nvimctl.editorEnv` (G-45), which returns the *whole*
+environment because VTE's `envv` replaces rather than extends; **workspace notes and files
+finally reach the model** through the new `src/jenova/workspace.nim` and
+`pipeline.chatBody` (G-43, 32 assertions, nine of them the join); and the window has a
+trash view whose restore also re-indexes the message (G-21) — a defect that healed itself
+at the next start and so could never be reproduced. `.gitignore` consolidated, with
+`bin/jenova` flagged as tracked-though-ignored and deliberately left for the USER.
+**Twelve self-tests, both binaries ELF FreeBSD, `--check` 0.** **And a rule was broken:**
+I corrupted `nvimctl.nim` to prove assertions could fail, the third restore never ran, and
+broken source sat in the tree behind a green build until the USER made me read the code.
+**Ruled D-BX — never again, no exception — and BRIEFING rules 13 and 16 were rewritten,
+because rule 16 had instructed it.** The replacement method (`TESTS.md` §0p) is to vary
+the data, not the code, and it immediately caught two assertions that could not fail.
+Detail: `SESSION_HANDOFF.md`, Session 019 (part four).
+
+---
+
+## Session 019 (part three) — 2026-09-01 18:41
+
+**Both open questions answered by the USER, and both reduce scope.** **Q-34: parity with
+the Web UI** — `messages.extra` keeps the inline base64 exactly as D-BP stores it and
+10b's artefact is written *in addition*, which **closes Step 7d** by accepting the cost it
+named rather than paying it. **Q-35: no** — the notes editor stays and is not replaced by
+Neovim, Neovim and `jvim` stay on the editor page, **and the document side panel is
+removed**, the USER having called it a gimmick. Ruled **D-BW**, which **supersedes D-BT**
+taken minutes earlier the same session; D-BT is kept with a do-not-act banner so a later
+reader can see what was dropped. **This is a removal and Directive 3 permits it only
+because it was explicitly instructed** — recorded in those words. Footprint read out of
+the source and planned as **Step 11**; existing `document.md` files stay on disk. **Three
+things settle at no cost:** Q-30 is moot (one Neovim instead of two), **T-11 is not
+touched** — with notes in their own editor there is no second writer at all, which is what
+Q-29 was protecting — and G-17 shrinks to "make the notes editor good". One defect filed
+and deliberately **not** diagnosed: **G-47**, the editor page's Neovim truncated at the
+bottom on a resize. No code touched. **Work ordered for the session: Step 11, 10c, 10a,
+8b.** Detail: `SESSION_HANDOFF.md`, Session 019 (part three).
+
+---
+
+## Session 019 (part two) — 2026-09-01 18:29
+
+**The USER confirmed G-40 on screen — attachments upload as intended — closing Step 7c's
+one unprovable item**, and reported that markdown tables now render *larger* than their
+content rather than clipped (filed **G-42**, cosmetic, caused by G-41's own half-fix).
+Then gave four instructions that are one feature: **a workspace should carry its own
+notes, its own files, and an editor that works on them with the AI.** Recorded as
+**D-BS** (`jvim/` is Neovim configuration, not product Lua — the no-Lua rule would
+otherwise archive a deliberate addition), **D-BT** (the note editor *is* the embedded
+Neovim; G-17 and Step 8c rescoped away from building a writing surface), **D-BU**
+(workspace notes and files become a fourth injected context, 1:1 with
+`WorkspaceService.getWorkspaceContext`) and **D-BV** (an upload becomes a workspace
+artefact — deciding half of Step 7d). **All of it verified against the source first:**
+`pipeline.nim` has no reference to notes at all though the whole data model exists and is
+round-tripped — T-17's shape a third time; **nothing has ever written a `fileAssets`
+row**; and `vte.nim` spawns with `envv = nil` so jvim never loads, though every route it
+asks for is already served. Planned as **Step 10** (10c wiring, 10a context, 10b
+artefacts) with the assertions written **before** the code in `TESTS.md` §0m. **Two
+questions opened, neither a session's call** — Q-34 (does `messages.extra` keep the
+inline payload?) and Q-35 (may the panel edit a `notes` row — that is taking T-11).
+No code touched. Detail: `SESSION_HANDOFF.md`, Session 019 (part two).
+
+---
+
+## Session 019 — 2026-09-01 18:07
+
+An audit of every outstanding claim against the source, with no code touched and nothing
+run. **Every finding is true** — G-17, G-20, G-21, G-37, G-38, T-2, T-3, T-4, T-5 and the
+Step 8b re-index gap were each confirmed by reading the code — and everything claimed
+built is built. Two errors fixed: the **self-test count was wrong in three files three
+different ways** (nine, nine and six, against ten dispatched from `jenova_core.nim`), and
+the **seventh citation sweep** found the addresses split perfectly by file — every
+reference into the stable modules correct, every reference into `gui.nim` and `api.nim`
+wrong, because 7c and G-41 grew `gui.nim` from 3,916 to 4,019 lines. Seven sweeps have
+now rotted, so **the numbers into those two files were deleted rather than re-derived an
+eighth time**; references name the symbol and stop. One new fact: **`models.discover` has
+no caller in `gui.nim`**, making the discovery call 8a's first job rather than a detail.
+The phase presented for approval is **Step 8 in the order 8b (trash view) → 8a (model
+selector) → 8c (note editor)**. Detail: `SESSION_HANDOFF.md`, Session 019.
+
+---
+
 ## Session 018 (part two) — 2026-09-01 17:58
 
 Fixed two USER-reported rendering defects, both from one gap: **owlkettle's

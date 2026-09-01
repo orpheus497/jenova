@@ -2,17 +2,19 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-09-01 17:27 (Session 018)
+**Last updated:** 2026-09-01 19:05 (Session 019)
 
 **Write plans in plain English, then cite the ID** (**D-BA**). A step that reads
 "resolve G-23" tells the reader nothing. Say what the thing is first.
 
-**Cite the symbol, then the line.** Re-derived against the source on **2026-09-01 at
-17:27**, with `gui.nim` at **3,916** lines — the fifth sweep recorded 3,837 for the
-same file. **The sixth sweep ran against a clean tree with no edits since the fifth,
-and six of eight citations were still wrong**, so they were not rotted by later work;
-they were copied forward instead of read. **A reference that names the proc survives; a
-bare line number does not.** Read the symbol and treat the number as a hint.
+**Cite the symbol. Do not cite the line.** Seventh sweep, 2026-09-01 18:07: every
+finding in this file and in `TODOS.md` is **still true**, and the addresses split
+cleanly by file. Every citation into `db.nim`, `fssync.nim`, `pipeline.nim`,
+`theme.nim` and `lifecycle.nim` was **correct**; every citation into `gui.nim` and
+`api.nim` was **wrong**, because G-40's fix and G-41 took `gui.nim` from 3,916 to
+**4,019** lines. **Seven sweeps have now corrected the same two files' addresses and
+all seven rotted.** The bare numbers into those two files are therefore deleted rather
+than re-derived an eighth time; a reference names the symbol and stops.
 
 ---
 
@@ -81,8 +83,9 @@ assertions behind it.**
 
 ## Standing constraint: the GUI has no test coverage
 
-All six suites and **all nine** self-tests exercise `jenova-core`. **Nothing tests
-`gui.nim`.** Every GUI defect in this project's history was found by the USER looking
+All six suites and **all ten** self-tests exercise `jenova-core`. **Nothing tests
+`gui.nim`.** *(Corrected 2026-09-01 18:07 — "nine" was carried in two files while
+`src/jenova_core.nim` has always dispatched ten. Read them out of the source.)* Every GUI defect in this project's history was found by the USER looking
 at the screen, and that is the loop the steps below are meant to stop repeating.
 
 The work ahead is mostly *logic* — branching trees, message mutation, parameter
@@ -464,9 +467,16 @@ smuggled into a defect fix.
 
 ---
 
-## Step 7d — Attachment storage, **a decision for the USER, not scoped work**
+## Step 7d — **CLOSED 2026-09-01 18:41.** Attachment storage: parity, inline stays
 
-Not work until it is ruled on. Inline payloads in `messages.extra` (D-BP) are why
+**Ruled: parity with the Web UI (Q-34, amended into D-BV).** The inline payload stays
+exactly as D-BP stores it and the `fileAssets` artefact of 10b is written **in addition**,
+so nothing about the message row changes and a conversation still moves between the two
+surfaces unconverted. The memory and per-turn upload cost is accepted deliberately; Step
+7c is what makes it tolerable and the USER has run and confirmed that. **T-3 is what
+makes the per-turn cost unbounded and it is still Step 9.** The original write-up follows.
+
+Inline payloads in `messages.extra` (D-BP) are why
 a single conversation holds each image three times in memory and re-uploads it on
 every turn. Storing the bytes beside the row and keeping a reference would fix all
 of that — **and would diverge from the frozen Web UI's shape**, which D-BP chose
@@ -480,29 +490,291 @@ upload cost. Both are real. **Raise it after Step 7c is run and seen to work** �
 
 ## Step 8 — The remaining views
 
-**8a. Model selector and model information  *(G-20)*** — replace the two hardcoded menu
-items (`gui.nim:3312`, `gui.nim:3316`, mirrored in the tray at `gui.nim:639,641`) with a
-searchable list carrying per-model status and
-capabilities, plus a details dialog (context size, parameter count, quantisation,
-vocabulary, slots, modalities, chat template). Backend exists: `models.discover`,
-`models.switchModel`.
+**Every reference in this step was re-verified against the source on 2026-09-01 at
+18:07, and is written as a symbol with no line number** — the seventh sweep found
+every `gui.nim` and `api.nim` address in this file stale while every address into the
+stable modules held. The policy, and the evidence for it, is the sweep note at the top
+of `TODOS.md`.
 
-**8b. Trash view  *(G-21)*** — everything deleted is soft-deleted and currently
-invisible. Backend exists and is asserted, all inside `api.handleFs` (`api.nim:625`):
-`GET /api/fs/trash` (`api.nim:631`), `POST /api/fs/trash/restore` (`api.nim:639`),
-`DELETE /api/fs/trash/empty` (`api.nim:647`), plus `/<entity>/deleted` and
-`/<entity>/<id>/restore` on every table (`api.nim:802`, over `api.restoreItem`).
-
-**One thing this step now also has to do**, recorded here rather than left to be
-rediscovered: **restoring a message from the trash does not put it back in the retrieval
-index.** Deletion forgets (D-BI) and nothing undoes that, so a restored turn is
-recoverable everywhere except in what the model recalls until the next start, when
-`rag.backfillChats` picks it up. Restore should call `rag.indexExchange` directly.
-
-**8c. A real writing surface  *(G-17)*** — the note editor is a `TextView` with Save and
-Close — `gui.saveNote` (`gui.nim:1252`). It is the seed, not the thing.
+**Recommended order: 8b, then 8a, then 8c.** 8b is the smallest, it is the one the
+codebase already argues for in a comment of its own, and it closes a data-loss-shaped
+hole that G-36 half-opened by making deletion easy and confident.
 
 ---
+
+### 8b. **BUILT 2026-09-01 19:05.** Trash view *(G-21)*
+
+Everything deleted is soft-deleted and currently invisible from the desktop
+application. **`gui.nim` has no trash surface at all** — its only `trash` matches are
+the `user-trash-symbolic` icons on four delete buttons, and a comment stating that
+with no trash view a soft delete is indistinguishable from data loss. That comment is
+the case for this step.
+
+**The backend exists and is asserted. Do not write a route.** Inside **`api.handleFs`**:
+`GET /api/fs/trash` over `fssync.getTrash`, `POST /api/fs/trash/restore` over
+`fssync.restoreTrash`, `DELETE /api/fs/trash/empty` over `fssync.emptyTrash`. Inside
+**`api.handleDb`**: `/<entity>/deleted` and `/<entity>/<id>/restore` on every table,
+over **`api.restoreItem`**, which walks parents to a depth of 8 and revives a
+conversation's messages with it.
+
+**The one piece of real logic in the step, and it is below the widget layer where it
+can be asserted: restoring a message does not put it back in the retrieval index.**
+Confirmed by reading `api.restoreItem` on 2026-09-01 18:07 — it flips `is_deleted`,
+walks its parents, returns, and contains no `rag.*` call, while the delete path calls
+`rag.forgetMessage`. Deletion forgets (D-BI) and nothing undoes it, so a restored turn
+comes back everywhere except in what the model recalls — until the next start, when
+`rag.backfillChats` silently repairs it, **which is exactly the shape of bug that hides
+for weeks** (rule 15). `restoreItem` should call `rag.indexExchange` for a restored
+message.
+
+**What proves it worked:** the re-index is a `db-`/`rag-selftest` assertion — index an
+exchange, delete it, assert `rag.query` no longer returns it, restore it, assert it
+comes back **without** a `backfillChats` call. Shown going red against the unfixed
+source first. The view itself is widgets and is a USER run.
+
+---
+
+### 8a. Model selector and model information *(G-20)*
+
+Replace the two hardcoded menu items — the literals **"Switch to instruct model"** and
+**"Switch to thinking model"**, which appear **twice each**: once in the window's model
+menu and once again in **`gui.trayMenu`** — with a searchable list carrying per-model
+status and capabilities, plus a details dialog (context size, parameter count,
+quantisation, vocabulary, slots, modalities, chat template).
+
+**Backend exists: `models.discover` and `models.switchModel` in `src/jenova/models.nim`.
+But `discover` has no caller in `gui.nim`** — verified 2026-09-01 18:07, the GUI's only
+`models.*` call is `models.switchModel` in the control worker. **So there is no list to
+draw yet, and calling `discover` is 8a's first job**, not its last. This is the same
+shape as T-17: a finished, tested engine with nothing feeding it.
+
+**Where the logic goes:** whatever turns `discover`'s output plus `/props` into rows —
+sorting, status, capability badges — belongs in `models.nim`, not in `gui.nim`, for the
+reason `settings.nim` and `hardware.nim` are where they are. That is what makes it
+assertable with no window.
+
+---
+
+### 8c. Make the notes editor good *(G-17)* — rescoped **again**, 2026-09-01 18:41 by **D-BW**
+
+**Rescoped twice in one session and it is now the smallest it has ever been.** It began
+as "build a real writing surface", became "point the embedded Neovim at the workspace"
+(D-BT), and the USER has now ruled: **keep the existing notes editor, do not replace it
+with Neovim, and keep Neovim on its own page.**
+
+> *"lets keep the default notes editor and dont replace it with neovim"* … *"instead we
+> should make the notes system work well and keep the neovim and neovim config to its own
+> page - the editor page - as it currently exists."*
+
+**So 8c is: make `gui.saveNote` and its `TextView` a good notes editor.** Not a second
+Neovim, not a document panel. **Q-35 is answered and T-11 is not touched** — with notes
+in their own editor and Neovim on its own page there is no second writer against an
+authoritative row at all, which is the outcome Q-29 was trying to protect.
+
+**Scope it against the Web UI's notes surface when it is picked up** (rule 11), and note
+that the notes *data* work is 10a — a note that reaches the model is worth more than a
+note that is pleasant to type.
+
+---
+
+## Step 10 — **NEW, 2026-09-01 18:29.** The workspace becomes a working context
+
+Three USER instructions given together, and they are one feature: **a workspace should
+carry its own notes, its own files, and an editor that works on them with the AI.**
+Rulings **D-BS**, **D-BT**, **D-BU**, **D-BV**.
+
+**Everything below was verified against the source on 2026-09-01 at 18:29** before it
+was written down.
+
+---
+
+### 10a. **BUILT 2026-09-01 19:05.** Workspace artefacts reach the model *(D-BU)*
+
+**`pipeline.nim` contains no reference to notes at all.** Meanwhile the `notes` table
+carries `isFocusNote`, `fileAssets` carries `content` and `type`, `conversations`
+carries `folderId`/`projectId`/`workspaceId`, and `api.nim` round-trips `isFocusNote`.
+**The entire data model exists and nothing reads it.** That is T-17 for the third time:
+a finished, tested store with nothing feeding it, and every test green because each
+supplies its own data (rule 15).
+
+**The insertion point already exists.** `pipeline.injectSystem` appends `webContext`,
+`editorContext` and `ragContext` to the persona. **Workspace context is a fourth of
+identical shape** — so it lives below the widget layer and is provable with no window,
+the same move that made settings, hardware and the attachment classifier provable.
+
+**Parity is taken from the source, not a summary** (rule 11):
+`jca_web/src/lib/services/workspace.service.ts`, `WorkspaceService.getWorkspaceContext`,
+injected by `chat.service.ts` under the heading `[CURRENT WORKSPACE ARTIFACTS (Notes &
+Files)]`. The behaviour a summary loses, and which **is** the step:
+
+1. Scope is the conversation's **deepest** set id — folder, else project, else workspace,
+   else *global*, which selects only artefacts with **no** container.
+2. Regular notes at **folder** level are **strictly isolated to that folder**. At project
+   level they include child folders; at workspace level, everything nested.
+3. **A FOCUS note escapes its level** and applies across the whole workspace tree. This is
+   the part every summary drops and it is why the flag exists.
+4. **Files follow regular-note scoping and have no FOCUS concept.**
+5. The format is **literal**: `--- FOCUS / RULES ---` with `[Folder|Project|Workspace] Title`,
+   `--- NOTES ---` with `Title:`/`Content:`, `--- FILES ---` with
+   `File: <name> (Type: <type>)` and either `Content:` or exactly
+   `(Binary file, content not available for direct reading)`.
+6. A FOCUS note with blank content contributes nothing.
+
+**Carried over knowingly:** the upstream has a standing `TODO` that there is **no token
+budget**, so a large workspace can overflow the context by itself. Jenova inherits that
+by taking parity. **Not fixed here — it is T-3's problem** and fixing either alone buys
+nothing.
+
+**What proves it worked:** a `pipeline-selftest` section over a hand-built tree —
+workspace, two projects, two folders, regular and FOCUS notes at every level, plus files.
+Assert **scope isolation** (a folder chat does not see its sibling's notes), **FOCUS
+escape** (a workspace-root FOCUS note reaches a folder chat), **the global fallback**,
+the **exact** output strings, and the **join** — that the text lands in the system message
+of the body actually sent (rule 15; this is the assertion T-17 proved a project can go
+weeks without). Every one shown going red first.
+
+---
+
+### 10b. An uploaded file becomes a workspace artefact *(D-BV)*
+
+**Nothing in the program has ever written a `fileAssets` row** — verified: the table is
+created in `db.nim`, cascaded in `api.nim`, trashed and restored in `fssync.nim`, and
+**never inserted into**. So an attachment is invisible to the workspace it was dropped
+into, and invisible to 10a's context builder.
+
+**The work:** attaching a file to a chat that belongs to a workspace/project/folder also
+writes a `fileAssets` row at that level and mirrors the bytes through `fssync`, so it
+appears in the tree and trashes and restores with its container.
+
+**Q-34 is ANSWERED — parity with the Web UI (2026-09-01 18:41).** `messages.extra` keeps
+the inline base64 exactly as D-BP stores it and the artefact is written **in addition**.
+Nothing about the message row changes, so a conversation still moves between this window
+and the frozen `jca_web` unconverted. **Step 7d is closed** — it existed only to ask this.
+**Nothing in 10b is gated any more.**
+
+**Proof:** an `attach-selftest`/`db-selftest` assertion that an attachment on a scoped
+conversation produces a `fileAssets` row at the right level, that it is picked up by
+10a's context, and that deleting the container cascades it.
+
+---
+
+### 10c. **BUILT 2026-09-01 19:05.** The editor page's Neovim loads `jvim` *(D-BS)*
+
+**Scope narrowed 2026-09-01 18:41 by D-BW:** there is **one** embedded Neovim now, the
+editor page's. The document panel and its second instance are removed by Step 11, so
+`vte.configureDoc`/`newDocTerminal` are not wired to anything — they are deleted.
+
+**`vte.nim` spawns `nvim --listen <socket> --cmd <TransparentBackground>` with
+`envv = nil`.** So `NVIM_APPNAME` is never set, jvim's configuration is never loaded,
+and `JENOVA_ROOT`, `JENOVA_PORT` and `JENOVA_LAN_MODE` — which
+`jvim/lua/jenova/endpoints.lua` reads, and which its own `has_jvim_env` tests for — are
+never passed. **The editor page runs stock Neovim today.** Passing an environment to
+`vte_terminal_spawn_async` is the whole of it.
+
+**Nothing needs building on the server.** `endpoints.lua` wants `/v1/chat/completions`
+and `/infill` on port 8080 and `/api/storage/<path>`; `routes.nim` already routes
+`/infill` and `server.nim` already handles `/api/storage`. Verified, not assumed.
+
+**What this unlocks is the reason it is worth doing:** `jvim/lua/jenova/` already ships
+FIM completion, a chat drawer, LAN discovery, backend telemetry, and an `agent/` tree
+with buffer read/write/edit/grep/glob/ls, LSP, shell and `vim_cmd` tools plus memory and
+context compaction. **10c is the line of wiring that turns 8c's panel into that.**
+
+**Proof:** the spawn's environment is built by a proc that can be asserted without a
+terminal — assert `NVIM_APPNAME=jvim` and the three `JENOVA_*` values are present and
+correct. Whether jvim actually loads is a USER run.
+
+---
+
+---
+
+## Step 11 — **BUILT 2026-09-01 19:05.** The document side panel is removed *(D-BW)*
+
+**The USER called it a gimmick and instructed its removal.** Directive 3 permits this
+because it was explicitly instructed; that is recorded so it is never cited as licence to
+remove anything else.
+
+**Footprint, read out of the source 2026-09-01 18:41 — it is well bounded:**
+
+| Where | What |
+|---|---|
+| `gui.nim` state | `AppState.panelOpen`, `panelDoc`, `panelDir`, `panelDocs` |
+| `gui.nim` procs | `docDir`, `refreshDocs`, `openDoc`, `newDoc`, `closePanel`, `isNoteMirror` |
+| `gui.nim` widgets | the panel block and its `sizeRequest` swap, the toggle button, the `DocTerm` renderable |
+| `vte.nim` | `configureDoc`, `newDocTerminal`, and the `docSockPath`/`docCwd`/`docFile` triple |
+| `nvimctl.nim` | `docSocketPath` |
+| `theme.nim` | `.doc-panel` and `.doc-panel-closed` |
+
+**The per-chat `document.md` stops being created.** Existing ones on disk are **not**
+deleted — they are the USER's files in their own workspace tree, and removing a Jenova
+surface is not licence to delete user data.
+
+**Two simplifications fall out and both are the point:**
+
+1. **`pipeline.configureEditor` is set once in `gui.run` and never re-aimed.** The re-aim
+   in `openDoc` and the restore in `closePanel` go with the panel. **Q-30 is moot** — it
+   asked which of two instances `Editor:` reads, and there is one.
+2. **`isNoteMirror` goes, but its reasoning does not.** It existed to keep `fssync`'s note
+   mirrors out of the panel switcher so no file had two writers. `fssync` still mirrors
+   notes and the editor page can still open them — that is the USER's own editor, not a
+   surface Jenova built. **Do not add the exclusion back somewhere else.**
+
+**What proves it worked:** `nimble core` and `nimble gui` build, all ten self-tests pass,
+and **`bin/jenova --check` exits 0** — which is exactly the check rule 17 exists for,
+because removing a widget block is precisely the change that compiles and then fails to
+build a window. Nothing else here is assertable; it is deletion.
+
+---
+
+## What Session 019 built — 2026-09-01 19:05
+
+**Step 11, 10c, 10a and 8b are done**, in that order, which is the order set at 18:41.
+Both binaries build, **twelve self-tests pass**, `bin/jenova --check` exits 0.
+
+| Step | What landed |
+|---|---|
+| **11** | The document panel is gone — four `AppState` fields, six procs, the widget block, the toggle, the `DocTerm` renderable, `vte.configureDoc`/`newDocTerminal`, `nvimctl.docSocketPath`, two `theme.nim` rules. `pipeline.configureEditor` is now set **once**, in `gui.run`, and never re-aimed — **Q-30 is moot**. No `document.md` on disk was touched |
+| **10c** | `nvimctl.editorEnv` builds the editor's environment; `vte.configure` takes it and the spawn passes it. **New self-test `nvim-env-selftest`** |
+| **10a** | **New module `src/jenova/workspace.nim`** — the scoping ladder and the format, ported from `WorkspaceService.getWorkspaceContext` by reading it. `pipeline.chatBody` injects it; `gui.postConversation` supplies the scope. **New self-test `workspace-selftest`, 32 assertions** |
+| **8b** | `api.restoreItem` re-indexes a restored message; `api.restoreEntity` and `api.deletedRows` added; a **trash panel** in the window over both. Three new assertions in `pipeline-selftest` |
+
+### Three things worth carrying forward
+
+1. **`editorEnv` returns the WHOLE environment, and that is not a detail.** VTE's `envv`
+   *replaces* the child environment rather than extending it, so returning only the
+   `JENOVA_*` keys spawns an editor with no `PATH` — which fails as "nvim: not found"
+   and reads as a missing dependency rather than as the function's bug. Same class as the
+   `detectGpu` `LD_LIBRARY_PATH` failure: an unreachable thing and an absent thing
+   produce the same silence.
+2. **`XDG_CONFIG_HOME` and `NVIM_APPNAME` are both needed, and it was verified rather
+   than assumed** — `stdpath('config')` was read back under them. `NVIM_APPNAME` alone
+   sends Neovim to `~/.config/jvim`, a symlink the user would have to make by hand, which
+   is D-BC's defect.
+3. **A self-test assertion that could not fail was written and caught.**
+   `check("no key is duplicated", true)` is unconditionally true — the exact defect this
+   project has shipped twice. It was replaced with an exact count derived from
+   `envPairs()`, and a second assertion (`env.len > 8`) that also could not bite was
+   replaced for the same reason.
+
+---
+
+## Ordering — set 2026-09-01 18:41
+
+**Done: Step 11, 10c, 10a, 8b — see above.** What remains, in order:
+
+**10b** — uploads become workspace `fileAssets` artefacts (G-44). No longer gated: Q-34
+answered parity, so the inline payload stays and the artefact is written in addition.
+**Now the obvious next step**, because 10a already reads `fileAssets` and nothing writes
+one — the context builder has a table it can see and nobody fills.
+
+**8a** — the model selector (G-20), whose first job is that `models.discover` has no
+caller in `gui.nim` at all. **8c** — make the notes editor good (G-17, D-BW).
+
+**Then the two open defects, both widget behaviour and both a USER run:** **G-42**
+(markdown tables now render larger than their content) and **G-47** (the editor page's
+Neovim truncated at the bottom on a resize, reported 18:41, **not diagnosed**).
+
+**Then Step 9's four stability items**, in the order T-5, T-2, T-4, T-3.
 
 ## Step 9 — Stability, none of it urgent
 
@@ -510,7 +782,7 @@ In this order, smallest first:
 
 | | Work | Proof |
 |---|---|---|
-| **T-5** | Stop the embedding server on exit. `gui.run` (`gui.nim:3713`) starts both backends and its `defer` (`gui.nim:3724-3728`) only sends the workers the quit sentinel, joins them and closes the channels — `lifecycle.stopAll` (`lifecycle.nim:329`) already exists and is reached only from the tray's stop/restart actions (`gui.nim:681`, `685`), never from exit. Leaving the *agent* model loaded is deliberate — reloading gigabytes into VRAM every start is worse — so stop only the embed backend, and clear a pidfile whose process is dead | `jenova-core backends status` after a GUI exit: agent up, embeddings down, no stale pid |
+| **T-5** | Stop the embedding server on exit. **`gui.run`** starts both backends and its `defer` only sends the three workers the quit sentinel, joins them and closes the channels — **`lifecycle.stopAll`** (`lifecycle.nim:329`, verified 18:07) already exists and is reached only from the control worker's stop/restart jobs, never from exit. Leaving the *agent* model loaded is deliberate — reloading gigabytes into VRAM every start is worse — so stop only the embed backend, and clear a pidfile whose process is dead | `jenova-core backends status` after a GUI exit: agent up, embeddings down, no stale pid |
 | **T-2** | Cap the database's prepared-statement cache. It is a plain `Table` that never evicts — `Conn.cache` (`db.nim:46`) filled by `db.prepared` (`db.nim:165-174`) — and the only `sqlite3_finalize` is the shutdown loop in `db.closeConn` (`db.nim:415-419`), while `api.updateMessage` builds a different SQL string per field combination. **The fix belongs in `db.nim`** — a cap plus finalize-on-evict — not in the caller | A suite issuing many distinct field combinations, asserting the cache stays capped. Prove it can go red first |
 | **T-4** | Both directions of the file-containment check, both inside `fssync.resolveStoragePath` (`fssync.nim:694`). The symlink check runs only on paths that already exist (`fssync.nim:713`), so a *new* file written through a symlinked parent escapes; and the base is compared lexically (`fssync.nim:700`), so a symlinked workspaces root rejects legitimate paths. Resolve the deepest existing ancestor and compare against a resolved base | `test_api_fs.sh`: a write through a symlinked parent is refused **403**; a legitimate write under a symlinked root succeeds |
 | **T-3** | Trim chat history. The whole conversation is resent every turn — `pipeline.prepare` (`pipeline.nim:223`) has no trim step and neither does anything else in the file — so a long chat eventually exceeds the context. Needs a byte budget from `CTX_SIZE`, dropping oldest first, never dropping the system message | A unit check on the trim function at a small budget — not a live generation |

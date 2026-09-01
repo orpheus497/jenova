@@ -85,28 +85,18 @@ const TransparentBackground =
 var
   sockPath = ""
   spawnCwd = ""
-  docSockPath = ""
-  docCwd = ""
-  docFile = ""
+  spawnEnv: seq[string] = @[]
 
 ## owlkettle's `beforeBuild` sees no field values, so the spawn arguments are
 ## set here first — same arrangement as `canvas.newArea`.
-proc configure*(socket, workdir: string) =
+##
+## `env` is the **whole** child environment, built by `nvimctl.editorEnv`, and an
+## empty one means "inherit" (G-45). It is passed in rather than read here so
+## this module keeps knowing nothing but VTE.
+proc configure*(socket, workdir: string, env: seq[string] = @[]) =
   sockPath = socket
   spawnCwd = workdir
-
-## Function purpose: aim the document panel's editor before the widget is built
-## (G-25). Set from the click that opens a document, which is the redraw before
-## `beforeBuild` runs — the same ordering `configure` relies on.
-##
-## Switching documents therefore means destroying the panel widget and building
-## it again, because a VTE spawns its child once. That is not a workaround: it is
-## the same lifecycle the page editor already has, and it keeps one `nvim` per
-## visible terminal rather than a multiplexing scheme nothing asked for.
-proc configureDoc*(socket, workdir, file: string) =
-  docSockPath = socket
-  docCwd = workdir
-  docFile = file
+  spawnEnv = env
 
 proc buildTerminal(socket, workdir, file: string): GtkWidget =
   result = vte_terminal_new()
@@ -145,10 +135,17 @@ proc buildTerminal(socket, workdir, file: string): GtkWidget =
   # A missing cwd makes the spawn fail outright, and the workspaces root does not
   # exist until the first workspace is created.
   if workdir.len > 0 and dirExists(workdir): cwd = workdir.cstring
+  # Action purpose: a non-nil `envv` **replaces** the child's environment rather
+  # than adding to it, so this is either the complete environment or nil — never
+  # a partial one, which would spawn an editor with no `PATH` and no display.
+  # `editorEnv` is what guarantees it is complete.
+  var envv: cstringArray = nil
+  if spawnEnv.len > 0: envv = allocCStringArray(spawnEnv)
   vte_terminal_spawn_async(
     result, PtyDefault, cwd,
-    argv, nil, SpawnSearchPath,
+    argv, envv, SpawnSearchPath,
     nil, nil, nil, -1, nil, nil, nil)
+  if envv != nil: deallocCStringArray(envv)
   deallocCStringArray(argv)
 
 ## Function purpose: build the terminal and start `nvim` in it. `--listen` makes
@@ -156,7 +153,3 @@ proc buildTerminal(socket, workdir, file: string): GtkWidget =
 proc newNvimTerminal*(): GtkWidget =
   buildTerminal(sockPath, spawnCwd, "")
 
-## Function purpose: the document panel's editor — a second `nvim`, on its own
-## socket, opened on one file in that chat's project directory (G-25).
-proc newDocTerminal*(): GtkWidget =
-  buildTerminal(docSockPath, docCwd, docFile)

@@ -22,7 +22,7 @@ when not defined(freebsd):
 import std/[os, sequtils, strformat, strutils, json]
 import jenova/[paths, config, db, dbselftest, server, serverselftest, markdown,
                rag, sha256, pipeline, prompts, lifecycle, models, nvimctl, api,
-               settings, hardware]
+               settings, hardware, workspace]
 
 const
   Version = "0.1.0"
@@ -898,6 +898,325 @@ proc main() =
       echo ""
       echo "markdown-selftest: FAIL (", bad, ")"
       quit(1)
+    of "workspace-selftest":
+      # Action purpose: G-43. The `notes` and `fileAssets` tables, `isFocusNote`
+      # and the scope columns on `conversations` have existed since the schema
+      # was written and **nothing ever read them** — a user could fill a
+      # workspace with notes and the model never saw one. That is the third time
+      # this project has shipped a complete store with no reader, so the last
+      # block here asserts the **join** and not only the formatter: rule 15.
+      var bad = 0
+      proc check(label: string, cond: bool, detail = "") =
+        if cond: echo "  ok   ", label
+        else:
+          echo "  FAIL ", label, (if detail.len > 0: "\n       " & detail else: "")
+          inc bad
+
+      echo "workspace-selftest"
+
+      let p = paths.resolve()
+      db.initDb(p.state / "jenova-wstest.db")
+
+      # One workspace, two projects, two folders under project A. Written by
+      # hand so the scoping ladder is checked against a shape this test knows
+      # completely, rather than against whatever happens to be in the database.
+      for t in ["notes", "fileAssets", "folders", "projects", "workspaces"]:
+        db.exec("DELETE FROM " & t & " WHERE id LIKE 'wst-%'", [])
+      db.exec("INSERT OR REPLACE INTO workspaces (id, name, is_deleted) " &
+              "VALUES ('wst-ws', 'WS', 0)", [])
+      for pid in ["wst-pA", "wst-pB"]:
+        db.exec("INSERT OR REPLACE INTO projects (id, workspaceId, name, " &
+                "is_deleted) VALUES (?, 'wst-ws', ?, 0)", [pid, pid])
+      for fid in ["wst-fA1", "wst-fA2"]:
+        db.exec("INSERT OR REPLACE INTO folders (id, projectId, name, " &
+                "is_deleted) VALUES (?, 'wst-pA', ?, 0)", [fid, fid])
+
+      proc addNote(id, title, content, fid, pid, wid: string, focus: int) =
+        db.exec("INSERT OR REPLACE INTO notes (id, folderId, projectId, " &
+                "workspaceId, title, content, updatedAt, isFocusNote, " &
+                "is_deleted) VALUES (?, ?, ?, ?, ?, ?, 0, ?, 0)",
+                [id, fid, pid, wid, title, content, $focus])
+
+      addNote("wst-n1", "In folder A1", "note-a1", "wst-fA1", "", "", 0)
+      addNote("wst-n2", "In folder A2", "note-a2", "wst-fA2", "", "", 0)
+      addNote("wst-n3", "In project A", "note-pa", "", "wst-pA", "", 0)
+      addNote("wst-n4", "At the root", "note-ws", "", "", "wst-ws", 0)
+      addNote("wst-n5", "Unassigned", "note-global", "", "", "", 0)
+      # The FOCUS note that has to escape its level.
+      addNote("wst-f1", "House rules", "always use tabs", "", "", "wst-ws", 1)
+      # A blank FOCUS note must contribute nothing at all.
+      addNote("wst-f2", "Empty rule", "   ", "", "", "wst-ws", 1)
+      db.exec("INSERT OR REPLACE INTO fileAssets (id, folderId, projectId, " &
+              "workspaceId, name, size, type, uploadDate, content, " &
+              "is_deleted) VALUES ('wst-file1', 'wst-fA1', '', '', " &
+              "'readme.txt', 4, 'text/plain', 0, 'hello', 0)", [])
+      db.exec("INSERT OR REPLACE INTO fileAssets (id, folderId, projectId, " &
+              "workspaceId, name, size, type, uploadDate, content, " &
+              "is_deleted) VALUES ('wst-file2', 'wst-fA1', '', '', " &
+              "'logo.png', 9, 'image/png', 0, '', 0)", [])
+
+      block folderScopeIsIsolated:
+        let ctx = workspace.contextFor("wst-fA1", "", "")
+        check("a folder chat sees its own folder's note", "note-a1" in ctx)
+        # The one that matters: a sibling folder is invisible. This is the
+        # behaviour every re-implementation from a summary gets wrong.
+        check("a folder chat does NOT see a sibling folder's note",
+              "note-a2" notin ctx)
+        check("a folder chat does NOT see the project's own note",
+              "note-pa" notin ctx)
+        check("a folder chat does NOT see an unassigned note",
+              "note-global" notin ctx)
+
+      block focusEscapesItsLevel:
+        let ctx = workspace.contextFor("wst-fA1", "", "")
+        check("a workspace-root FOCUS note reaches a folder chat",
+              "always use tabs" in ctx)
+        check("the FOCUS block is labelled by the note's own level",
+              "[Workspace] House rules" in ctx, ctx)
+        check("a blank FOCUS note contributes nothing",
+              "Empty rule" notin ctx)
+
+      block projectWidens:
+        let ctx = workspace.contextFor("", "wst-pA", "")
+        check("a project chat sees the project's note", "note-pa" in ctx)
+        check("a project chat sees its child folders' notes",
+              "note-a1" in ctx and "note-a2" in ctx)
+        check("a project chat does NOT see an unassigned note",
+              "note-global" notin ctx)
+
+      block workspaceTakesEverythingNested:
+        let ctx = workspace.contextFor("", "", "wst-ws")
+        check("a workspace chat sees notes at every level below it",
+              "note-ws" in ctx and "note-pa" in ctx and
+              "note-a1" in ctx and "note-a2" in ctx)
+        check("a workspace chat still does NOT see an unassigned note",
+              "note-global" notin ctx)
+
+      block globalMeansUnassignedNotEverything:
+        let ctx = workspace.contextFor("", "", "")
+        check("a global chat sees the unassigned note", "note-global" in ctx)
+        # Otherwise a rule written for one workspace answers a question about
+        # another, which is worse than having no context at all.
+        check("a global chat sees nothing belonging to a workspace",
+              "note-ws" notin ctx and "note-a1" notin ctx)
+        check("a global chat gets no FOCUS notes",
+              "FOCUS / RULES" notin ctx)
+
+      block literalFormat:
+        let ctx = workspace.contextFor("wst-fA1", "", "")
+        check("the FOCUS heading is verbatim", "--- FOCUS / RULES ---" in ctx)
+        check("the NOTES heading is verbatim", "--- NOTES ---" in ctx)
+        check("the FILES heading is verbatim", "--- FILES ---" in ctx)
+        check("a note renders as Title:/Content:",
+              "Title: In folder A1\nContent: note-a1" in ctx, ctx)
+        check("a file names its type",
+              "File: readme.txt (Type: text/plain)" in ctx, ctx)
+        check("a file with content renders it", "Content:\nhello" in ctx)
+        # The exact upstream string. A model shown a different one is being
+        # taught a format the Web UI never used.
+        check("a file with no content says so verbatim",
+              "(Binary file, content not available for direct reading)" in ctx,
+              ctx)
+
+      block deletedArtefactsAreExcluded:
+        db.exec("UPDATE notes SET is_deleted=1 WHERE id='wst-n1'", [])
+        let ctx = workspace.contextFor("wst-fA1", "", "")
+        check("a trashed note is not quoted back to the model",
+              "note-a1" notin ctx)
+        db.exec("UPDATE notes SET is_deleted=0 WHERE id='wst-n1'", [])
+
+      block theJoin:
+        # THE ONE THAT MATTERS, and the one T-17 proves a project can go weeks
+        # without. Every assertion above would stay green if nothing ever called
+        # `contextFor` — which is exactly how `rag.nim` was finished, asserted
+        # and completely dead. This asserts the context reaches the body that is
+        # actually sent.
+        let ctx = workspace.contextFor("wst-fA1", "", "")
+        check("there is context to inject", ctx.len > 0)
+        let msgs = %*[{"role": "user", "content": "what are the house rules"}]
+        let body = pipeline.chatBody(msgs, false, settings.initSettings(), ctx)
+        check("the artifacts reach the outbound body", "always use tabs" in body)
+        check("they are under the Web UI's own heading",
+              workspace.ContextHeading in body, body)
+        let parsed = parseJson(body)
+        check("they land in a system message, not a user turn",
+              parsed["messages"][0]["role"].getStr == "system",
+              parsed["messages"][0]["role"].getStr)
+        check("the user's own turn is untouched and still last",
+              parsed["messages"][^1]["content"].getStr ==
+              "what are the house rules")
+        # An empty context must add nothing at all — no stray system message,
+        # no empty heading. A chat in an empty workspace is the common case.
+        let plain = parseJson(pipeline.chatBody(
+          %*[{"role": "user", "content": "hi"}], false,
+          settings.initSettings(), ""))
+        check("no context means no injected system message",
+              plain["messages"].len == 1 and
+              plain["messages"][0]["role"].getStr == "user")
+
+      block existingSystemMessageIsExtendedNotReplaced:
+        let ctx = workspace.contextFor("wst-fA1", "", "")
+        let msgs = %*[{"role": "system", "content": "KEEP ME"},
+                      {"role": "user", "content": "q"}]
+        let parsed = parseJson(
+          pipeline.chatBody(msgs, false, settings.initSettings(), ctx))
+        let sys = parsed["messages"][0]["content"].getStr
+        check("an existing system message survives", "KEEP ME" in sys)
+        check("and the artifacts are appended to it", "always use tabs" in sys)
+        check("no second system message is inserted",
+              parsed["messages"].len == 2)
+
+      for t in ["notes", "fileAssets", "folders", "projects", "workspaces"]:
+        db.exec("DELETE FROM " & t & " WHERE id LIKE 'wst-%'", [])
+
+      if bad == 0:
+        echo ""
+        echo "workspace-selftest: PASS"
+        quit(0)
+      echo ""
+      echo "workspace-selftest: FAIL (", bad, ")"
+      quit(1)
+    of "nvim-env-selftest":
+      # Action purpose: the editor's environment is the whole of G-45, and it is
+      # the one part of it that can be checked without a terminal. It matters
+      # more than it looks: VTE *replaces* the child environment rather than
+      # adding to it, so a partial result spawns an editor with no `PATH` — which
+      # fails as "nvim: not found" and reads as a missing dependency rather than
+      # as this function's bug. That is the same class as the `detectGpu`
+      # `LD_LIBRARY_PATH` failure (§0i): an unreachable thing and an absent thing
+      # produce the same silence.
+      var bad = 0
+      proc check(label: string, cond: bool, detail = "") =
+        if cond: echo "  ok   ", label
+        else:
+          echo "  FAIL ", label, (if detail.len > 0: "\n       " & detail else: "")
+          inc bad
+
+      echo "nvim-env-selftest"
+
+      let p = paths.resolve()
+      let env = nvimctl.editorEnv(p, "127.0.0.1", 8080, 8081, 8082, false)
+
+      proc valueOf(e: seq[string], key: string): string =
+        for entry in e:
+          let i = entry.find('=')
+          if i > 0 and entry[0 ..< i] == key: return entry[i + 1 .. ^1]
+        ""
+      proc countOf(e: seq[string], key: string): int =
+        for entry in e:
+          let i = entry.find('=')
+          if i > 0 and entry[0 ..< i] == key: inc result
+
+      block contract:
+        # Every key `jvim/lua/jenova/endpoints.lua` reads, with the values it
+        # expects. A rename on either side goes red here and names itself.
+        check("JENOVA_ROOT is the project root",
+              env.valueOf("JENOVA_ROOT") == p.root,
+              "got '" & env.valueOf("JENOVA_ROOT") & "'")
+        check("JENOVA_PORT is the proxy port", env.valueOf("JENOVA_PORT") == "8080")
+        check("JENOVA_LLAMA_PORT is the agent port",
+              env.valueOf("JENOVA_LLAMA_PORT") == "8081")
+        check("JENOVA_LLAMA_EMBED_PORT is the embedding port",
+              env.valueOf("JENOVA_LLAMA_EMBED_PORT") == "8082")
+        # `endpoints.lua` reads either name; both are set so neither ordering of
+        # its own fallback can miss.
+        check("both host names are set",
+              env.valueOf("JENOVA_CONNECT_HOST") == "127.0.0.1" and
+              env.valueOf("JENOVA_HOST") == "127.0.0.1")
+        # `is_lan_mode()` tests == "1", so "0" and absent must both mean off.
+        check("JENOVA_LAN_MODE is '0' when LAN is off",
+              env.valueOf("JENOVA_LAN_MODE") == "0")
+        let lan = nvimctl.editorEnv(p, "127.0.0.1", 8080, 8081, 8082, true)
+        check("JENOVA_LAN_MODE is '1' when LAN is on",
+              lan.valueOf("JENOVA_LAN_MODE") == "1")
+
+      block wholeEnvironment:
+        # THE ONE THAT MATTERS. `envv` replaces rather than extends, so a result
+        # that carries only the JENOVA_* keys is a broken editor, not a partial
+        # feature.
+        # Exact, not "more than a few". `env.len > 8` was written here first and
+        # **stayed green** under the corruption that dropped the inherited
+        # environment entirely, because the JENOVA_* keys alone are nine — the
+        # assertion looked like it covered the failure and did not (rule 16).
+        var ourKeys = @["JENOVA_ROOT", "JENOVA_CONNECT_HOST", "JENOVA_HOST",
+                        "JENOVA_PORT", "JENOVA_LLAMA_PORT",
+                        "JENOVA_LLAMA_EMBED_PORT", "JENOVA_LAN_MODE"]
+        if dirExists(p.root / "jvim"):
+          ourKeys.add "XDG_CONFIG_HOME"
+          ourKeys.add "NVIM_APPNAME"
+        var parent, overridden = 0
+        for k, _ in envPairs():
+          inc parent
+          if k in ourKeys: inc overridden
+        check("every inherited variable is carried and ours override in place",
+              env.len == parent - overridden + ourKeys.len,
+              "got " & $env.len & ", expected " &
+              $(parent - overridden + ourKeys.len) &
+              " (parent " & $parent & ", overridden " & $overridden & ")")
+        check("PATH survives", env.valueOf("PATH") == getEnv("PATH"))
+        check("HOME survives", env.valueOf("HOME") == getEnv("HOME"))
+        # A duplicate key is not an error to `execve` — which of the two wins is
+        # libc-dependent — so an override that appended instead of replacing
+        # would work on this machine and not on another.
+        var dups: seq[string]
+        for k in ["JENOVA_ROOT", "JENOVA_PORT", "JENOVA_HOST", "PATH", "HOME",
+                  "XDG_CONFIG_HOME", "NVIM_APPNAME"]:
+          if env.countOf(k) > 1:
+            dups.add k & "×" & $env.countOf(k)
+        check("no key appears twice", dups.len == 0, dups.join(", "))
+        check("every entry is KEY=VALUE",
+              env.allIt(it.find('=') > 0))
+
+      block overrideAnInheritedValue:
+        # The collision is **created here** rather than hoped for. Written first
+        # as "assert no key appears twice" against the ambient environment, which
+        # passed under the corruption that appends instead of overriding —
+        # because nothing in this shell happens to export a `JENOVA_*` name, so
+        # there was no collision to find. An assertion whose bite depends on who
+        # ran it is not an assertion. `paths.findRoot` itself documents that
+        # `JENOVA_ROOT` *is* exported by the shell launchers, so this is the real
+        # case and not a contrived one.
+        putEnv("JENOVA_PORT", "9999")
+        putEnv("JENOVA_ROOT", "/nonexistent/from-the-parent")
+        let o = nvimctl.editorEnv(p, "127.0.0.1", 8080, 8081, 8082, false)
+        check("an inherited JENOVA_PORT is overridden, not appended",
+              o.valueOf("JENOVA_PORT") == "8080" and o.countOf("JENOVA_PORT") == 1,
+              "value '" & o.valueOf("JENOVA_PORT") & "', " &
+              $o.countOf("JENOVA_PORT") & " entries")
+        check("an inherited JENOVA_ROOT is overridden, not appended",
+              o.valueOf("JENOVA_ROOT") == p.root and o.countOf("JENOVA_ROOT") == 1,
+              "value '" & o.valueOf("JENOVA_ROOT") & "', " &
+              $o.countOf("JENOVA_ROOT") & " entries")
+        delEnv("JENOVA_PORT")
+        delEnv("JENOVA_ROOT")
+
+      block jvimConfig:
+        # `NVIM_APPNAME` alone sends Neovim to `~/.config/jvim` — a symlink the
+        # user would have to make by hand, which is D-BC's defect. Pointing
+        # XDG_CONFIG_HOME at the root makes `<root>/jvim` the config dir with no
+        # setup step. Verified by running `stdpath('config')` under it.
+        if dirExists(p.root / "jvim"):
+          check("NVIM_APPNAME selects jvim",
+                env.valueOf("NVIM_APPNAME") == "jvim")
+          check("XDG_CONFIG_HOME points at the tree holding jvim/",
+                env.valueOf("XDG_CONFIG_HOME") == p.root,
+                "got '" & env.valueOf("XDG_CONFIG_HOME") & "'")
+        else:
+          # A missing jvim/ must leave the editor exactly as it was rather than
+          # aiming Neovim at a directory that does not exist, which it reports as
+          # a bare start screen with no explanation.
+          check("no jvim/ present, so NVIM_APPNAME is not set",
+                env.valueOf("NVIM_APPNAME") == "")
+          check("no jvim/ present, so XDG_CONFIG_HOME is untouched",
+                env.valueOf("XDG_CONFIG_HOME") == getEnv("XDG_CONFIG_HOME"))
+
+      if bad == 0:
+        echo ""
+        echo "nvim-env-selftest: PASS"
+        quit(0)
+      echo ""
+      echo "nvim-env-selftest: FAIL (", bad, ")"
+      quit(1)
     of "hardware-selftest":
       # Action purpose: profile scoring decides which tuning the machine runs
       # under, and a wrong score does not fail loudly — it silently runs on the
@@ -1408,6 +1727,39 @@ proc main() =
               "system message did not carry the snippet")
         check("the recalled turn is attributed to the chat it came from",
               sys.contains(rag.chatScope("pipetest-conv")))
+
+      # Action purpose: G-21/8b. Deleting forgets (D-BI) and nothing undid it,
+      # so a restored turn came back everywhere except in what the model
+      # recalls. **The reason it needs an assertion rather than a look:**
+      # `rag.backfillChats` repairs it at the next start, so the defect heals
+      # itself before anyone can reproduce it — the same shape as T-17, where
+      # every test passed while the feature did not exist.
+      block restoringPutsATurnBackInTheIndex:
+        db.exec("DELETE FROM messages WHERE id LIKE 'restoretest-%'", [])
+        rag.forgetConversation("restoretest-conv")
+        db.exec("INSERT OR REPLACE INTO messages (id, convId, type, role, " &
+                "timestamp, parent, content, is_deleted) " &
+                "VALUES (?, ?, 'message', ?, ?, ?, ?, 0)",
+                ["restoretest-reply", "restoretest-conv", "assistant", "0", "",
+                 "The rosewood cabinet key lives in the third drawer."])
+        discard rag.indexExchange("restoretest-reply")
+        proc recalled(): bool =
+          let hits = rag.query("rosewood cabinet key", topK = 5)
+          for h in hits:
+            if h.path.contains("restoretest-conv"): return true
+          false
+        check("the turn is recalled before deletion", recalled())
+
+        discard api.deleteEntity("messages", "restoretest-reply")
+        check("deleting it forgets it", not recalled())
+
+        discard api.restoreEntity("messages", "restoretest-reply")
+        # Without a `backfillChats` anywhere near this — that is the whole point.
+        check("restoring it puts it back, with no restart and no backfill",
+              recalled())
+
+        db.exec("DELETE FROM messages WHERE id LIKE 'restoretest-%'", [])
+        rag.forgetConversation("restoretest-conv")
 
         rag.forgetConversation("pipetest-conv")
         db.exec("DELETE FROM messages WHERE id LIKE 'pipetest-%'", [])

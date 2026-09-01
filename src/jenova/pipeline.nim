@@ -32,6 +32,7 @@ import ./prompts
 import ./rag
 import ./websearch
 import ./db
+import ./workspace
 import ./sha256
 import ./nvimctl
 import ./settings
@@ -338,7 +339,20 @@ proc cacheStore*(key, response: string) =
 ## untouched — so putting the merge here makes the whole feature assertable
 ## without a window and without a generation.
 proc chatBody*(messages: JsonNode, continuing = false,
-               opts = settings.initSettings()): string =
+               opts = settings.initSettings(), wsContext = ""): string =
+  # G-43: the workspace's notes and files, injected the way the Web UI's own
+  # client injects them — into the system message, under the heading it uses.
+  # It goes in here and not in `prepare` because `prepare` is handed a body and
+  # never learns which conversation it belongs to, and because the Web UI does
+  # this client-side too: its `chat.service.ts` builds the block before the
+  # request leaves. Doing it here keeps it assertable with no window.
+  if wsContext.len > 0 and messages.kind == JArray:
+    let block1 = "\n\n" & workspace.ContextHeading & "\n" & wsContext
+    if messages.len > 0 and messages[0].kind == JObject and
+       messages[0]{"role"}.getStr == "system":
+      messages[0]["content"] = %(messages[0]{"content"}.getStr & block1)
+    else:
+      messages.elems.insert(%*{"role": "system", "content": block1.strip}, 0)
   var req = %*{"messages": messages, "stream": true,
                "timings_per_token": true,
                "reasoning_format": settings.reasoningFormat(opts)}

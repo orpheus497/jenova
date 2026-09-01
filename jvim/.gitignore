@@ -1,0 +1,24 @@
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Swap and Undo files
+*~
+*.swp
+*.swo
+[._]*.s[a-v][a-z]
+[._]*.un~
+undo/
+
+# Neovim specific files
+Session.vim
+.netrwhist
+*.shada
+
+# Log files
+*.log

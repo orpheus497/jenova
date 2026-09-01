@@ -1,6 +1,6 @@
 # TODOS
 
-**Last updated:** 2026-09-01 17:27 (Session 018)
+**Last updated:** 2026-09-01 19:05 (Session 019)
 
 Only what is actually outstanding. Everything finished lives in `PROGRESS.md`.
 
@@ -24,6 +24,20 @@ describing is **3,916**.
 **Every finding survived every sweep. Only the addresses moved.** That is rule 14, and
 the correction to it is rule 9: **a line number is not worth writing down.** Read the
 symbol.
+
+**Seventh sweep, 2026-09-01 18:07 — and this one is the last, because the policy
+changed instead.** Every finding in this file was re-verified against the source and
+**every one is still true**. The addresses split exactly along which files the last
+two steps touched: every citation into `db.nim`, `fssync.nim`, `pipeline.nim`,
+`theme.nim` and `lifecycle.nim` was **correct**; every citation into `gui.nim` and
+`api.nim` was **wrong**, because G-40's fix and G-41 took `gui.nim` from 3,916 to
+**4,019** lines and moved `api.nim` with it.
+
+**So bare line numbers into `gui.nim` and `api.nim` are gone from this file and from
+`PLANS.md`.** A reference now names the symbol and stops there — `gui.saveNote`,
+`api.handleFs`, `lifecycle.stopAll`. Line numbers survive only where they were
+verified correct *and* the file is stable. This is rule 9 applied rather than
+restated; six sessions of re-deriving them proved re-deriving is not the fix.
 
 ---
 
@@ -73,6 +87,74 @@ UI features, which is what this file is about.
 Earlier revisions carried "compiled, UNRUN on screen" against those four items and two
 sessions repeated it after it had stopped being true. **A "not yet run" label lasts
 only until any evidence contradicts it.** Do not re-add one here.
+
+---
+
+## NEW DIRECTION from the USER — 2026-09-01 18:29
+
+Four instructions given in one message, and **they are one feature**: a workspace should
+carry its own notes, its own files, and an editor that works on them with the AI.
+Rulings **D-BS**, **D-BT**, **D-BU**, **D-BV**; the plan is `PLANS.md` **Step 10**, plus
+a rescoped **8c**.
+
+**Every claim in the four items below was verified against the source on 2026-09-01 at
+18:29.** None is inferred.
+
+**G-43, G-45, G-46 and G-21 are gone from this file because they are done**
+(2026-09-01 19:05, `PROGRESS.md`). Per the completion rule their record lives in
+`PROGRESS.md`, not here. In short: workspace notes and files now reach the model
+via the new `workspace.nim` and `pipeline.chatBody`; the editor page loads `jvim`;
+the document panel is removed; and the window has a trash view whose restore also
+puts a message back in the retrieval index.
+
+### G-44 — An uploaded file is never stored as a workspace artefact *(D-BV)*
+
+**Nothing in the program has ever written a `fileAssets` row.** The table is created in
+`db.nim`, cascaded in `api.nim`, trashed and restored in `fssync.nim`, and **never
+inserted into**. An attachment therefore exists only as inline base64 in
+`messages.extra` (D-BP) and is invisible both to its workspace and to G-43's context.
+
+**Q-34 is ANSWERED — parity with the Web UI (2026-09-01 18:41):** `messages.extra` keeps
+the inline base64 exactly as D-BP stores it and the artefact is written **in addition**.
+Nothing about the message row changes, so a conversation still moves between this window
+and the frozen `jca_web` unconverted. **Step 7d is closed and nothing here is gated.**
+
+**This is now the obvious next piece of work.** G-43 landed 2026-09-01 19:05, so
+`workspace.contextFor` already reads `fileAssets` and renders it — including the
+`(Binary file, content not available for direct reading)` case — and **nothing has ever
+written a row for it to find.** The reader exists; the writer does not. `PLANS.md` 10b.
+
+### G-17 is rescoped **twice**, and is now the smallest it has ever been *(D-BW)*
+
+**D-BT is superseded.** At 18:29 the USER directed the note editor at Neovim; at 18:41
+they ruled the opposite and reduced the scope further:
+
+> *"lets keep the default notes editor and dont replace it with neovim"* … *"instead we
+> should make the notes system work well and keep the neovim and neovim config to its own
+> page - the editor page - as it currently exists."*
+
+**So G-17 is: make `gui.saveNote` and its `TextView` a good notes editor.** Not a writing
+surface built from scratch (its original scope), not a second Neovim (D-BT's).
+
+**Q-35 is answered and nothing is gated.** T-11 is **not** touched — with notes in their
+own editor and Neovim on its own page there is no second writer against an authoritative
+row at all, which is what Q-29 was protecting.
+
+### G-47 — the editor page's Neovim is truncated at the bottom on a resize
+
+**Reported by the USER 2026-09-01 18:41:** when the main display changes, the embedded
+Neovim is *"slightly truncated at the bottom, so the neovim inside the vt needs to
+scroll."*
+
+**Not diagnosed — stated as reported** (rule 1). The editor page mounts
+`NvimTerminal {.expand: true.}` and `vte.buildTerminal` sets a 10,000-line scrollback but
+nothing about geometry. **The likely mechanism, flagged as a candidate and not a
+finding:** a VTE sizes itself in whole character cells, so an allocation that is not an
+exact multiple of the cell height leaves a partial row clipped at the bottom edge. That
+would need confirming against the widget before anything is changed, and it is widget
+behaviour, so **it is a USER run either way** — the same standing gap as G-41 and G-42.
+
+**Not scheduled for this session.** Filed so it is not rediscovered.
 
 ---
 
@@ -144,29 +226,26 @@ model list with per-model status (loading/ready/error), capability badges, favou
 load/unload, and a full model-information dialog showing context size, parameter
 count, quantisation, vocabulary size, parallel slots, modalities and the chat template.
 
-**The Nim GUI has "Switch to instruct model" and "Switch to thinking model"**
-(`gui.nim:3389` and `gui.nim:3393`), two hardcoded menu items — and the same two
-hardcoded in `gui.trayMenu` (`gui.nim:646,648`). *Re-derived 2026-09-01 17:27; the
-previous addresses — 3312/3316 and 639/641 — were wrong at the moment they were
-written, not rotted afterwards.*
+**The Nim GUI has "Switch to instruct model" and "Switch to thinking model"** — two
+hardcoded menu items in the window's model menu, and **the same two hardcoded again**
+in `gui.trayMenu`. Search the two literals; do not chase a line number.
 
-Backend exists: `models.discover` / `models.switchModel`.
+**And `models.discover` is never called from `gui.nim` at all** — verified
+2026-09-01 18:07, the only `models.*` call in the whole GUI is
+`models.switchModel(j.jcaHome, target)` in the control worker. So the selector has no
+list to draw from today; 8a's first job is to call `discover` and put its result on
+screen.
 
-### G-21 — No trash view
-
-Deleting anything is a soft delete and it goes somewhere. There is no way to see or
-restore it from the desktop application.
-
-Backend exists and is tested, all inside `api.handleFs` (`api.nim:625`):
-`GET /api/fs/trash` (`api.nim:631`), `POST /api/fs/trash/restore` (`api.nim:639`),
-`DELETE /api/fs/trash/empty` (`api.nim:647`), over `fssync.getTrash`,
-`fssync.restoreTrash` and `fssync.emptyTrash`. Plus `/<entity>/deleted` and
-`/<entity>/<id>/restore` on every table (`api.nim:802`, over `api.restoreItem`).
+Backend exists: `models.discover` / `models.switchModel` (`src/jenova/models.nim`).
 
 ### G-17 — The note editor is a plain text box
 
-It is a `TextView` with Save and Close — `gui.saveNote` (`gui.nim:1329`). It is the seed
-of a writing surface, not one.
+It is a `TextView` with Save and Close — **`gui.saveNote`**, with one caller, the Save
+button's `clicked`. *(Verified 2026-09-01 18:07. The line number is deliberately not
+recorded — see the sweep note at the top of this file.)*
+
+**Rescoped 2026-09-01 18:41 by D-BW: this stays and is made good.** It is not replaced by
+Neovim and it is not rebuilt from scratch. See the D-BW block above.
 
 ### MCP — still deferred by you, and it is the largest item in the Web UI
 
@@ -178,9 +257,18 @@ message rendering. Do not pick it up casually.
 
 ## Standing gap — nothing tests the GUI
 
-All six suites and all six self-test subcommands exercise `jenova-core`: routes,
+All six suites and every self-test subcommand exercise `jenova-core` — **read the list
+out of `src/jenova_core.nim`, not from a number written here; it was wrong in three
+files three different ways on 2026-09-01 and two more were added the same day.** They cover: routes,
 database, filesystem, lifecycle, model discovery, and the Neovim buffer reader.
-**Nothing tests `gui.nim` at all.** Every GUI defect in this project's history was
+**Nothing tests `gui.nim` at all**, and that is still true.
+
+**But the response is working and 2026-09-01 is the clearest evidence yet.** Four
+features landed that day and the logic of all four sits below the widget layer, asserted
+with no window: `workspace.contextFor` (the whole scoping ladder), `nvimctl.editorEnv`
+(the editor's environment), `api.restoreEntity`/`deletedRows` (the trash listing and
+undo), and `pipeline.chatBody`'s injection. **What was left in `gui.nim` was four panels
+and a button** — which is layout, and layout is what a screen is for. Keep doing this. Every GUI defect in this project's history was
 found by the USER looking at the screen.
 
 That was tolerable while the outstanding GUI work was layout. **It is not tolerable for
@@ -196,8 +284,9 @@ PASS while asserting nothing.
 
 | ID | What it is |
 |---|---|
-| **G-37** | **Two style rules in `theme.nim` are dead.** `paned > separator` styles a widget that is not in the tree — a leftover from G-25, which shipped as a `Box` after a `Paned` crashed the app. And `.glow-text` is defined and carried by no widget: the glow effect works, but as a `text-shadow` duplicated inside `.brand` and `.conv-active`. **The second half is G-8's exact defect — a class defined and applied to nothing — recurring in the same file.** Both were found and reported on 2026-09-01 and neither was filed as work; that is why they are here. Re-verified 2026-09-01 14:19: `.glow-text` is `theme.nim:253` and **no widget in `gui.nim` carries the class** (a grep for it in `gui.nim` returns zero hits); `paned > separator` is `theme.nim:428-432`. *Re-verified 2026-09-01 17:27: the `.glow-text` address held, the separator address did not — it was written as 416-420 against a file where it is 428. Earlier revisions named 162 and 251-255, and before that named them in the opposite order.* |
-| **G-38** | **A code comment in `gui.nim` describes a widget that was never used.** The main-area comment still explains itself as feeding "the `Paned` that G-25 adds". G-25 shipped as a `Box`, and the comment above the `Box` itself records why. A reader following the first comment looks for a `Paned` that does not exist. Prose only, no behaviour. `gui.nim:2637`, above `gui.mainArea` — *not 2560, which was wrong when written.* |
+| **G-42** | **Markdown tables now render too large rather than sized to their content.** Reported by the USER 2026-09-01 18:29, on the G-41 build. **G-41 is the cause and it is a half-fix, not a regression:** a bare owlkettle `ScrolledWindow` collapsed every table to a stub, so `ContentScroll` was given `set_propagate_natural_height` **and** deliberately *not* natural width, with `policy(AUTOMATIC, NEVER)`. That stopped the collapse; nothing then constrains the result *down* to the content, so a table claims more room than its rows need. **The USER's words: "not too serious."** Cosmetic, filed, not urgent. The fix is a width/height measurement in `ContentScroll`, not another policy flag — and per D-BR neither half of G-41 is assertable, so this is a USER run either way. |
+| **G-37** | *(Both halves re-verified 2026-09-01 18:07 and both addresses **held** — `theme.nim` has not been touched since. `.glow-text` is `theme.nim:253`, `paned > separator` is `theme.nim:428` and `:hover` at 432, and a grep for `glow-text` across `gui.nim` still returns **zero**.)* **Two style rules in `theme.nim` are dead.** `paned > separator` styles a widget that is not in the tree — a leftover from G-25, which shipped as a `Box` after a `Paned` crashed the app. And `.glow-text` is defined and carried by no widget: the glow effect works, but as a `text-shadow` duplicated inside `.brand` and `.conv-active`. **The second half is G-8's exact defect — a class defined and applied to nothing — recurring in the same file.** Both were found and reported on 2026-09-01 and neither was filed as work; that is why they are here. Re-verified 2026-09-01 14:19: `.glow-text` is `theme.nim:253` and **no widget in `gui.nim` carries the class** (a grep for it in `gui.nim` returns zero hits); `paned > separator` is `theme.nim:428-432`. *Re-verified 2026-09-01 17:27: the `.glow-text` address held, the separator address did not — it was written as 416-420 against a file where it is 428. Earlier revisions named 162 and 251-255, and before that named them in the opposite order.* |
+| **G-38** | **A code comment in `gui.nim` describes a widget that was never used.** The main-area comment still explains itself as feeding "the `Paned` that G-25 adds". G-25 shipped as a `Box`, and the comment above the `Box` itself records why. A reader following the first comment looks for a `Paned` that does not exist. Prose only, no behaviour. **The doc comment directly above `gui.mainArea`** — *verified 2026-09-01 18:07; the address written here (2637) was wrong, as was 2560 before it, which is why no third number is being recorded.* |
 | **T-12** | **A one-line fix to two test scripts. The subject is closed — do not diagnose it again (D-BJ).** `test_routes.sh` and `test_lifecycle.sh` fail if anything already holds the machine's real ports, because neither overrides `JENOVA_LLAMA_PORT` the way both already override `JENOVA_PORT`. **That is the entire finding.** It is not a product fault, it is not a mystery, and it has been fully diagnosed three separate times. **The fix:** give both scripts their own dead upstream ports. Until the USER schedules it, a session seeing those failures records nothing and says nothing. |
 
 **Noted, not work:** `jca_web/src/lib/components/app/workspace/` holds one orphan file,
@@ -212,8 +301,12 @@ of the parity inventory. Recorded so it is not rediscovered and mistaken for a g
 
 **Ordering is `PLANS.md`:** T-5, T-2, T-4 and T-3 are Step 9, in that order.
 
-**G-40 is gone from this table because it is done** — attachments no longer freeze
-the window (2026-09-01 17:51, `PROGRESS.md`, **D-BQ**). Per the completion rule its
+**G-40 is gone from this table because it is done *and now confirmed on screen*** —
+attachments no longer freeze the window (2026-09-01 17:51, `PROGRESS.md`, **D-BQ**).
+**The USER ran it 2026-09-01 18:29: uploading attachments works as intended.** Step 7c's
+one outstanding item — "whether the window is actually responsive with a document
+attached", which nothing here could assert — **is closed by that run.** Per rule 12 do
+not re-add an unverified label to it. Per the completion rule its
 record lives in `PROGRESS.md`. **One piece of it was deliberately left and is now
 `PLANS.md` Step 7d:** payloads still live inline in `messages.extra` (D-BP), so each
 one is held in `allMessages`, again in `messages`, and again in the outbound body.
@@ -230,7 +323,7 @@ and a deleted turn is forgotten. **Step 4 is built.**
 
 | ID | What is wrong, in plain English | Where |
 |---|---|---|
-| **T-5** | **Quitting the app leaves the embedding server running.** Leaving the main model loaded is deliberate — reloading gigabytes into the GPU every start is worse. But the embedding server is left running with nothing attached to it. | `gui.run` calls `lc.startAll()` (`gui.nim:3790`); its `defer` (`gui.nim:3801-3806`) sends the workers the quit sentinel, joins the three threads and closes the channels — **and calls no `stopAll`**, which exists as `lifecycle.stopAll` (`lifecycle.nim:329`) and is only ever reached from the control worker's stop/restart jobs (`gui.nim:735`, `gui.nim:739`). *Re-derived 2026-09-01 17:27; every address in the previous revision — 3713, 3724-3728, 681, 685 — was wrong.* |
+| **T-5** | **Quitting the app leaves the embedding server running.** Leaving the main model loaded is deliberate — reloading gigabytes into the GPU every start is worse. But the embedding server is left running with nothing attached to it. | **`gui.run`** calls `lc.startAll()`; its `defer` sends the three workers the quit sentinel, joins them and closes the channels — **and calls no `stopAll`**. `lifecycle.stopAll` (`lifecycle.nim:329`, verified) exists and is reached **only** from the control worker's stop/restart jobs. *Read in full 2026-09-01 18:07: the `defer` body is four statements and none of them is a `stopAll`. Line numbers into `gui.nim` deliberately not recorded — see the sweep note.* |
 | **T-2** | **A long-running server slowly leaks memory.** The database keeps a cache of compiled queries that is never trimmed, and one API route builds a different query text for every combination of fields a client sends. | The cache is `Conn.cache` (`db.nim:46`), filled by `db.prepared` (`db.nim:165`) with no eviction; the only `sqlite3_finalize` is in `db.closeConn` (`db.nim:415-418`). The route is `api.updateMessage` |
 | **T-4** | **Two holes in the file-access containment check.** A *new* file written through a symlinked folder can escape the workspace root, because the symlink check only runs on paths that already exist. Separately, if the workspace root itself is a symlink, legitimate paths get rejected. | Both in `fssync.resolveStoragePath` (`fssync.nim:694`): the lexical base at `fssync.nim:700`, and the existence-gated symlink check at `fssync.nim:713` |
 | **T-3** | **The whole conversation is resent to the model every single turn.** No trimming, so a long chat eventually exceeds the context window. Needs a byte budget from `CTX_SIZE`, dropping oldest first, never dropping the system message. | `pipeline.prepare` (`pipeline.nim:223`) — **there is no trim step anywhere in the file**; the only `trim`-shaped call in it is `text.strip` on an intent prefix (`pipeline.nim:105`) |
@@ -241,7 +334,7 @@ and a deleted turn is forgotten. **Step 4 is built.**
 
 | ID | Item |
 |---|---|
-| **T-15** | The crash fixed in Session 011 was a widget re-entering the redraw. `Entry` has the same shape: its `text` hook can trigger a redraw, and two of them have a second thing writing to them (`app.draft` cleared on send, `app.noteTitle` set on rename). **Do not rewrite them.** All eleven crashes were the quit path and none was an `Entry`. Act only if a crash actually shows one. | **Four `Entry` widgets, plus a `SearchEntry`.** The tree-row rename `Entry` (`gui.nim:1964`), the note-title `Entry` (`gui.nim:2669`), the settings panel's generic text field (`gui.nim:3015`, rebuilt per setting from `optsDraft`, added by G-31), the chat-draft `Entry` (`gui.nim:3732`), and the conversation `SearchEntry` (`gui.nim:3497`), which the previous revisions never counted. *Re-derived 2026-09-01 17:27; the previous set — 1887, 2592, 3655, 2938 — was wrong in all four, and was itself the third revision of this row.* |
+| **T-15** | The crash fixed in Session 011 was a widget re-entering the redraw. `Entry` has the same shape: its `text` hook can trigger a redraw, and two of them have a second thing writing to them (`app.draft` cleared on send, `app.noteTitle` set on rename). **Do not rewrite them.** All eleven crashes were the quit path and none was an `Entry`. Act only if a crash actually shows one. | **Four `Entry` widgets plus one `SearchEntry` — count confirmed 2026-09-01 18:07** by enumerating the widget declarations in `gui.nim`. They are, in file order: the tree-row rename, the note-title, the settings panel's generic text field (rebuilt per setting from `optsDraft`, added by G-31), the conversation `SearchEntry`, and the chat-draft. **This row has now had its addresses rewritten four times and been wrong four times** — 1887/2592/3655/2938, then 1964/2669/3015/3732/3497, and both sets are wrong against the current file. **No fifth set is being recorded.** Grep the declarations. |
 
 
 ---
