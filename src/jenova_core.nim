@@ -535,6 +535,38 @@ proc main() =
         check("a continuation still ends on the assistant turn being extended",
               cont{"messages"}[^1]{"role"}.getStr == "assistant")
 
+      # Action purpose: the *wiring*, which is the half a unit check cannot see.
+      # `rag.query` and `pipeline.prepare` were both finished and both correct
+      # while the feature did not exist, because nothing had ever put a document
+      # in the index — and every test still passed. This asserts the join: a
+      # chat message that has been indexed comes back through `prepare` and is
+      # in the body that goes to the model. The same class of gap as `serve`
+      # once failing to call `initSchema` with every suite green (T-17).
+      block chatRecallReachesTheModel:
+        db.exec("DELETE FROM messages WHERE id LIKE 'pipetest-%'", [])
+        db.exec("INSERT OR REPLACE INTO messages (id, convId, type, role, " &
+                "timestamp, parent, content, is_deleted) " &
+                "VALUES (?, ?, 'message', ?, ?, ?, ?, 0)",
+                ["pipetest-reply", "pipetest-conv", "assistant", "0", "",
+                 "The spare key is kept under the blue flowerpot."])
+        rag.forgetConversation("pipetest-conv")
+        let n = rag.indexExchange("pipetest-reply")
+        check("a chat message reaches the index", n == 1)
+
+        let r = pipeline.prepare(
+          """{"messages":[{"role":"user","content":"where is the spare key"}]}""")
+        check("an indexed chat turn is retrieved on a later turn",
+              r.ragHits > 0, "ragHits=" & $r.ragHits)
+        let sys = parseJson(r.body){"messages"}[0]{"content"}.getStr
+        check("the recalled turn is in the body sent to the model",
+              sys.contains("blue flowerpot"),
+              "system message did not carry the snippet")
+        check("the recalled turn is attributed to the chat it came from",
+              sys.contains(rag.chatScope("pipetest-conv")))
+
+        rag.forgetConversation("pipetest-conv")
+        db.exec("DELETE FROM messages WHERE id LIKE 'pipetest-%'", [])
+
       if bad == 0:
         echo ""
         echo "pipeline-selftest: PASS"
@@ -658,6 +690,214 @@ proc main() =
       else:
         echo "  note embedding server unreachable on :8082 —"
         echo "       keyword-only retrieval, which is a supported degraded mode"
+
+      # ---- chat indexing (T-17, D-BD) --------------------------------------
+      #
+      # Everything above proved the engine. This proves it is *fed*, which is
+      # the half that never existed: `indexContent` had no caller outside this
+      # self-test, so the index was empty on every real run and `query`
+      # short-circuited before doing anything.
+      #
+      # Placed last on purpose — it writes documents under `chat/`, and running
+      # it earlier would put them in front of the corpus the blocks above assert
+      # rankings over.
+      block chats:
+        const
+          ConvA = "ragtest-conv-a"
+          ConvB = "ragtest-conv-b"
+          AskA = "ragtest-a-user"
+          ReplyA = "ragtest-a-reply"
+          AskB = "ragtest-b-user"
+          ReplyB = "ragtest-b-reply"
+
+        proc addMsg(id, convId, role, content, parent: string) =
+          db.exec("INSERT OR REPLACE INTO messages (id, convId, type, role, " &
+                  "timestamp, parent, content, is_deleted) " &
+                  "VALUES (?, ?, 'message', ?, ?, ?, ?, 0)",
+                  [id, convId, role, "0", parent, content])
+
+        proc chunksAt(path: string): int =
+          let rows = db.query("SELECT COUNT(*) FROM rag_chunks WHERE path=?", path)
+          if rows.len > 0 and rows[0].len > 0:
+            try: parseInt(rows[0][0]) except ValueError: 0
+          else: 0
+
+        # Whether *this path* was embedded, which is the only honest way to ask
+        # whether the embedding server answered. `chunkCount()` counts vectors
+        # across the whole index, and the vectors block above stores one by hand
+        # — so it reports an embedder that is not there. That is the same
+        # mistake recorded on the chunk-count assertion above, inverted.
+        proc vectoredAt(path: string): int =
+          let rows = db.query(
+            "SELECT COUNT(*) FROM rag_chunks WHERE path=? AND vec IS NOT NULL",
+            path)
+          if rows.len > 0 and rows[0].len > 0:
+            try: parseInt(rows[0][0]) except ValueError: 0
+          else: 0
+
+        # A scratch database is reused between runs, so the rows this block
+        # writes are removed before it starts as well as after it.
+        db.exec("DELETE FROM messages WHERE id LIKE 'ragtest-%'", [])
+
+        addMsg(AskA, ConvA, "user",
+               "What time does the harbour ferry leave on Sunday mornings?", "")
+        addMsg(ReplyA, ConvA, "assistant",
+               "It departs at seven and again at eleven, from the eastern " &
+               "pontoon.", AskA)
+        addMsg(AskB, ConvB, "user",
+               "Which pasta shape holds a thick ragu best?", "")
+        addMsg(ReplyB, ConvB, "assistant",
+               "Rigatoni holds a thick ragu best, because the ridges catch it.",
+               AskB)
+
+        let pathReplyA = rag.chatPath(ConvA, "assistant", ReplyA)
+        let pathAskA = rag.chatPath(ConvA, "user", AskA)
+
+        # 1. An exchange indexes the reply *and* the turn it answers. Two, not
+        #    one: a question indexed at the moment it was saved would be in the
+        #    index before its own request was answered.
+        let n = rag.indexExchange(ReplyA)
+        if n == 2 and chunksAt(pathReplyA) > 0 and chunksAt(pathAskA) > 0:
+          echo "  ok   an exchange indexes the reply and the question it answers"
+        else:
+          echo "  FAIL indexExchange indexed ", n, " of 2"
+          inc failures
+
+        # 2. The right message comes back. "eastern pontoon" appears in the
+        #    reply and nowhere else, so the top hit is an exact path, not a
+        #    conversation.
+        block:
+          let hits = rag.query("eastern pontoon", topK = 3)
+          if hits.len > 0 and hits[0].path == pathReplyA:
+            echo "  ok   a query returns the message that answered it"
+          else:
+            echo "  FAIL chat query: got ",
+                 (if hits.len > 0: hits[0].path else: "<none>")
+            inc failures
+
+        discard rag.indexExchange(ReplyB)
+
+        # 3. A conversation-scoped filter confines results — asserted in both
+        #    directions, because a filter that returns nothing at all also
+        #    "leaks nothing".
+        block:
+          let all = rag.query("ragu", topK = 5)
+          var sawB = false
+          for h in all:
+            if h.path.startsWith(rag.chatScope(ConvB)): sawB = true
+          let scoped = rag.query("ragu", topK = 5,
+                                 pathFilter = rag.chatScope(ConvA))
+          var leaked = false
+          for h in scoped:
+            if not h.path.startsWith(rag.chatScope(ConvA)): leaked = true
+          if sawB and not leaked:
+            echo "  ok   a conversation filter confines recall to that chat"
+          else:
+            echo "  FAIL conversation filter: reachable=", sawB,
+                 " leaked=", leaked
+            inc failures
+
+        # 4. Re-indexing replaces. `indexContent` forgets a path before writing
+        #    it, and the chat path is stable for the life of the row — together
+        #    that is what stops every turn adding another copy of itself.
+        block:
+          let before = chunksAt(pathReplyA)
+          let docsBefore = rag.documentCount()
+          discard rag.indexExchange(ReplyA)
+          if before > 0 and chunksAt(pathReplyA) == before and
+             rag.documentCount() == docsBefore:
+            echo "  ok   re-indexing a conversation does not duplicate chunks"
+          else:
+            echo "  FAIL re-index duplicated: ", before, " -> ",
+                 chunksAt(pathReplyA)
+            inc failures
+
+        # 5. A deleted turn stops being recalled. Without this the deletion is
+        #    honoured everywhere except in what the model remembers.
+        block:
+          db.exec("UPDATE messages SET is_deleted=1 WHERE id=?", ReplyA)
+          rag.forgetMessage(ReplyA)
+          let hits = rag.query("eastern pontoon", topK = 3)
+          var still = false
+          for h in hits:
+            if h.path == pathReplyA: still = true
+          if chunksAt(pathReplyA) == 0 and not still:
+            echo "  ok   a deleted message is forgotten by the index"
+          else:
+            echo "  FAIL a deleted message is still retrievable"
+            inc failures
+          db.exec("UPDATE messages SET is_deleted=0 WHERE id=?", ReplyA)
+
+        # 6. The backfill picks up what is not indexed. Asserted as "at least
+        #    one, and that one is back" rather than an exact count: with no
+        #    embedding server every chunk lacks a vector, so the backfill
+        #    correctly re-indexes all four. An exact count here would be an
+        #    assertion written for one mode that fails in the other.
+        block:
+          let got = rag.backfillChats()
+          if got >= 1 and chunksAt(pathReplyA) > 0:
+            echo "  ok   the backfill indexes history that was never indexed (",
+                 got, ")"
+          else:
+            echo "  FAIL backfill indexed ", got, " and did not restore the reply"
+            inc failures
+
+        # 7. The backfill is incremental: it skips a message that is already
+        #    indexed **and** carrying a vector, and retries one that is not —
+        #    which is what makes it self-healing after a start with the embedding
+        #    server down.
+        #
+        #    Both halves are proven **without an embedding server**, by storing
+        #    vectors against the chat chunks the same way the vector block above
+        #    tests the BLOB path. The rule under test is the skip, not the
+        #    embedder — and gating this on a live server is how it would end up
+        #    asserted in one mode and silently skipped in the other, which is the
+        #    mistake already recorded on the chunk-count assertion above.
+        block:
+          for r in db.query(
+              "SELECT path, start_line FROM rag_chunks WHERE path LIKE ?",
+              rag.ChatRoot & "/%"):
+            if r.len < 2: continue
+            let line = try: parseInt(r[1]) except ValueError: 1
+            rag.storeChunkVector(r[0], line, @[0.1'f32, 0.2'f32, 0.3'f32])
+          let second = rag.backfillChats()
+          if vectoredAt(pathReplyA) > 0 and second == 0:
+            echo "  ok   a backfill skips history that is already indexed"
+          else:
+            echo "  FAIL a second backfill re-indexed ", second, " rows"
+            inc failures
+
+          # And the other half: strip the vectors from one message and it is
+          # picked up again, rather than staying semantically invisible forever.
+          db.exec("UPDATE rag_chunks SET vec=NULL WHERE path=?", pathReplyA)
+          let retried = rag.backfillChats()
+          if retried == 1:
+            echo "  ok   a message indexed without vectors is retried later"
+          else:
+            echo "  FAIL vectorless message not retried (", retried, ")"
+            inc failures
+
+        # 8. Deleting a conversation clears everything under it.
+        block:
+          rag.forgetConversation(ConvA)
+          if chunksAt(pathReplyA) == 0 and chunksAt(pathAskA) == 0:
+            echo "  ok   deleting a conversation clears its whole index scope"
+          else:
+            echo "  FAIL conversation scope survived its deletion"
+            inc failures
+
+        # 9. An empty turn is not a document. A reply that is pure reasoning has
+        #    nothing to retrieve *by*, and indexing it puts an empty body in the
+        #    keyword index.
+        if not rag.indexMessage(ConvA, "assistant", "ragtest-empty", "   "):
+          echo "  ok   an empty turn is not indexed"
+        else:
+          echo "  FAIL an empty turn was indexed"
+          inc failures
+
+        db.exec("DELETE FROM messages WHERE id LIKE 'ragtest-%'", [])
+        rag.forgetConversation(ConvA)
+        rag.forgetConversation(ConvB)
 
       if failures == 0:
         echo ""
@@ -786,12 +1026,29 @@ proc main() =
           let wc = lifecycle.defaultWatch()
           var llamaFails, embedFails = 0
           var llamaLast, embedLast = 0.0
+          # Whether existing history has been put into the retrieval index in
+          # this process (T-17).
+          var backfilled = false
           while true:
             sleep(wc.intervalMs)
             let a = lcc.watchOnce(lifecycle.beLlama, llamaFails, llamaLast, wc)
             if a.len > 0: echo "[watchdog] ", a
             let b = lcc.watchOnce(lifecycle.beEmbed, embedFails, embedLast, wc)
             if b.len > 0: echo "[watchdog] ", b
+            # Action purpose: index the chats that already exist, once, and not
+            # until the embedding server answers — indexing while it is still
+            # loading its model stores chunks with no vector and leaves all of
+            # history keyword-only (T-17, D-BD). This thread is used because it
+            # is already awake on an interval and is not serving requests; the
+            # embedding address is a threadvar and so must be set on it.
+            # `JENOVA_NO_BACKENDS=1` skips this whole block, which is why the
+            # test suites never index anything.
+            if not backfilled and
+               lcc.healthy(lifecycle.beEmbed, timeoutMs = 300):
+              backfilled = true
+              rag.configureEmbed("127.0.0.1", lcc.embedPort)
+              let n = rag.backfillChats()
+              if n > 0: echo "[rag] indexed ", n, " past messages for recall"
         createThread(watcher, watchLoop, lc)
         echo "  watchdog: on (30s interval, 3 failures, 60s cooldown)"
 

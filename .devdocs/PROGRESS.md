@@ -2,7 +2,7 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-09-01 11:37 (Session 014)
+**Last updated:** 2026-09-01 12:08 (Session 015)
 
 > **Reading the "UNRUN" labels in this file.** Entries below are point-in-time records
 > and several were written with a "compiled; UNRUN" status that was true on the day.
@@ -15,6 +15,68 @@ Macro progress tracking. Most recent entries at the top.
 ---
 
 ## Completed
+
+### 2026-09-01 12:08 — **T-17 built: the search index has chats in it, so the AI recalls past conversations.** `PLANS.md` Step 4.
+
+**The retrieval engine was finished, proven, and completely dead.** `indexContent` had no
+caller outside its own self-test, so `documentCount()` was always 0, `rag.query`
+short-circuited on its second line, and `pipeline.prepare` — which had been asking it a
+question on every chat turn since it was written — always got nothing back. Every test
+passed throughout, because every assertion supplied its own corpus.
+
+**A message occupies `chat/<convId>/<role>/<id>`**, which makes the `pathFilter` the query
+path already had do the scoping: `chat` is every conversation, `chat/<convId>` is one. No
+change to `query`.
+
+**The unit is a completed exchange, not a message** (**D-BI**). The pipeline queries this
+index with the user's own words on the way to the model, so a question indexed when it is
+saved is in the index before its own request is answered and comes back as its own
+top-ranked context. `rag.indexExchange` takes a reply id and indexes it and the turn it
+answers. Both surfaces run that one rule — the window dispatches it from `umDone` onto the
+**control worker**, never the GTK thread; the HTTP path fires on an assistant row.
+
+**The backfill waits for the embedding server** rather than running at startup: indexing
+while it loads stores chunks with no vector, and all of history would have been
+permanently keyword-only. It is incremental *and* self-healing — a message is skipped only
+when it is indexed **and** carries a vector — so a start with the embedder down costs
+nothing and is repaired later.
+
+**Deletion forgets**, after the commit so a rollback cannot strip the index. A message
+delete forgets that message; a conversation delete forgets its whole scope.
+
+**14 new assertions, all shown going red first** — 10 in `rag-selftest`, and **4 in
+`pipeline-selftest` for the wiring**, which is the half a unit check cannot see: an
+indexed turn is retrieved and lands in the body sent to the model. Four independent
+corruptions produced four different sets of red, and the wiring corruption left the feed
+assertion green — the evidence they measure different things. `TESTS.md` §0f.
+
+**The suite caught a bad assertion of mine on its first run:** it gated the incremental
+check on `rag.chunkCount()`, a count across the whole index that the vectors block
+populates by hand, and so reported a live embedder where there was none. Both halves of
+the backfill are now proven with no embedding server at all.
+
+**Files touched — four:** `src/jenova/rag.nim` (the whole chat-indexing section),
+`src/jenova/api.nim` (feed on the message routes, forget on the delete paths),
+`src/jenova/gui.nim` (an `index` control job, the gated backfill, dispatch from `umDone`),
+`src/jenova_core.nim` (the watchdog-thread backfill, 14 assertions).
+
+**Not seen on screen, and not run against a live backend.** Everything above was verified
+with the embedding server down.
+
+### 2026-09-01 12:08 — **Thirteen stale line citations in `TODOS.md` and `PLANS.md` corrected, and the convention changed.**
+
+Every falsifiable claim in those two files was re-checked against the source. **Every
+finding still holds; thirteen of their addresses did not.** `gui.nim` grew from roughly
+1,600 lines to 2,365 during Session 014 — *while the entries citing it were being
+written* — and `api.nim` was restructured in the same session, so citations for the model
+selector, the note editor, the delete path, error reporting, the stale `Paned` comment,
+the exit path, the import route, the trash routes, the containment holes, the statement
+cache and the chat save sites all pointed at unrelated code. `theme.nim`'s two dead style
+rules were cited in the opposite order.
+
+**The convention is now: name the symbol, then the line.** A reference to
+`fssync.resolveStoragePath (fssync.nim:694)` survives a file growing by 700 lines; a bare
+`fssync.nim:628` does not. Recorded at the top of both files.
 
 ### 2026-09-01 11:37 — **Continue actually fixed, the ghost bubble removed, and the request body moved somewhere a test can see it.**
 

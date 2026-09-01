@@ -28,8 +28,12 @@
 ##
 ## Embeddings are obtained from the embedding server on :8082 — ruling **D-E**
 ## settled the ports and D-AF settled that `llama-server` is the backend.
+##
+## **What is in the index: chats** (D-BD). The feed is at the bottom of this
+## file, and it is what made the difference between a proven module and a used
+## one — until 2026-09-01 `indexContent` had no caller outside the self-test.
 
-import std/[os, json, strutils, strformat, algorithm, math, times, httpclient]
+import std/[os, json, sets, strutils, strformat, algorithm, math, times, httpclient]
 import ./db
 
 const
@@ -272,6 +276,134 @@ proc chunkCount*(): int =
   if rows.len > 0 and rows[0].len > 0:
     try: parseInt(rows[0][0]) except ValueError: 0
   else: 0
+
+# ---------------------------------------------------------------------------
+# Chat indexing (T-17, D-BD)
+# ---------------------------------------------------------------------------
+#
+# Everything above this line worked and was proven by `rag-selftest`, and none
+# of it had ever been fed: `indexContent` had no caller outside that self-test,
+# so `documentCount()` was always 0, `query` short-circuited on its second line,
+# and `pipeline.prepare` — which asks this module a question on every chat turn
+# — always got nothing back. **The engine was finished and starved.** What it
+# indexes is ruled at **D-BD**: chats.
+#
+# A message occupies `chat/<convId>/<role>/<id>`. That shape is chosen so the
+# existing `pathFilter` becomes useful without changing it — it matches a path
+# exactly or as a directory prefix, so `chat` scopes a search to every
+# conversation and `chat/<convId>` to one. **The role sits in the path and not
+# in the indexed body**: `formatContext` prints the path above the snippet, so
+# the model is told who said it, whereas a role word inside the body would be a
+# keyword that every query containing "user" could match.
+
+const ChatRoot* = "chat"
+
+## Function purpose: the index path one chat message occupies. It is stable for
+## the life of the row, which is what makes re-indexing *replace* rather than
+## duplicate — `indexContent` forgets a path before it writes it.
+proc chatPath*(convId, role, msgId: string): string =
+  ChatRoot & "/" & convId & "/" &
+  (if role.len > 0: role else: "message") & "/" & msgId
+
+## Function purpose: the `pathFilter` value that confines a query to one
+## conversation, for a caller that wants recall of this chat rather than all of
+## them.
+proc chatScope*(convId: string): string = ChatRoot & "/" & convId
+
+## Function purpose: index one message. Empty content is not an error and not a
+## document — a turn that is pure reasoning has nothing to retrieve *by*, and
+## indexing it would put an empty body in the keyword index.
+proc indexMessage*(convId, role, msgId, content: string): bool =
+  if convId.len == 0 or msgId.len == 0: return false
+  if content.strip().len == 0: return false
+  indexContent(chatPath(convId, role, msgId), content)
+
+## Function purpose: index a completed exchange — an assistant reply and the
+## turn it answers — from the reply's id alone, so a caller needs to hold only
+## the row it just wrote.
+##
+## **Why an exchange and not each message the moment it is written.** The
+## pipeline queries this index with the user's own words on the way to the
+## model. A user turn indexed when it is saved is therefore in the index
+## *before* the request it belongs to has been answered, and comes back as its
+## own top-ranked "context" — the model is handed the question it was just
+## asked. Waiting for the reply removes that race rather than narrowing it: by
+## the time this runs, the request that could have retrieved itself is over. A
+## question that never got an answer is picked up by `backfillChats` at the next
+## start.
+proc indexExchange*(replyId: string, withParent = true): int =
+  var id = replyId
+  var remaining = if withParent: 2 else: 1
+  while id.len > 0 and remaining > 0:
+    let rows = db.query(
+      "SELECT convId, role, content, parent FROM messages " &
+      "WHERE id=? AND is_deleted=0", id)
+    if rows.len == 0 or rows[0].len < 4: break
+    if indexMessage(rows[0][0], rows[0][1], id, rows[0][2]): inc result
+    dec remaining
+    id = rows[0][3]
+
+## Function purpose: take a message out of the index when it is deleted. An
+## index that keeps answering with turns the user removed is worse than an empty
+## one — the deletion is visible everywhere except in what the model recalls.
+##
+## The row is read rather than remembered because deletion here is *soft*: the
+## row is still present with `is_deleted=1`, so the path can still be rebuilt
+## from it and the call site does not have to capture anything beforehand.
+proc forgetMessage*(msgId: string) =
+  if msgId.len == 0: return
+  for r in db.query("SELECT convId, role FROM messages WHERE id=?", msgId):
+    if r.len >= 2: forgetFile(chatPath(r[0], r[1], msgId))
+
+## Function purpose: the same for a whole conversation, which is deleted in one
+## statement over its messages and so has no per-row call site to hook.
+##
+## The paths come from `rag_documents` rather than from `messages`, because a
+## conversation delete flags every one of its rows including ones that were
+## never indexed — this way the work is proportional to what is actually in the
+## index.
+proc forgetConversation*(convId: string) =
+  if convId.len == 0: return
+  var paths: seq[string]
+  for r in db.query("SELECT path FROM rag_documents WHERE path LIKE ?",
+                    chatScope(convId) & "/%"):
+    if r.len > 0: paths.add r[0]
+  for p in paths: forgetFile(p)
+
+## Function purpose: put existing history into the index once, so recall works
+## on the chats that already exist rather than only on ones created after this
+## shipped (**D-BD**'s third clause).
+##
+## **Incremental, so it is safe to call at every start.** A message is skipped
+## when its path is already indexed *and* carries at least one chunk with a
+## vector. That second condition is what makes this self-healing: a message
+## indexed while the embedding server was down has keyword rows and no vectors,
+## and would otherwise stay semantically invisible forever — here it is simply
+## picked up again on a later start. Callers gate this on the embedder being
+## reachable, so the retry cannot loop.
+##
+## **Content is fetched one row at a time, deliberately.** Selecting id, convId
+## and role for the whole table costs three short strings per message; selecting
+## the content with it would hold every message ever written in memory at once,
+## for a pass that then indexes them one by one anyway.
+proc backfillChats*(): int =
+  var indexed: HashSet[string]
+  for r in db.query(
+      "SELECT d.path FROM rag_documents d WHERE d.path LIKE ? AND EXISTS (" &
+      "SELECT 1 FROM rag_chunks c WHERE c.path = d.path AND c.vec IS NOT NULL)",
+      ChatRoot & "/%"):
+    if r.len > 0: indexed.incl r[0]
+
+  var todo: seq[tuple[convId, role, id: string]]
+  for r in db.query("SELECT id, convId, role FROM messages WHERE is_deleted=0"):
+    if r.len < 3 or r[1].len == 0: continue
+    if chatPath(r[1], r[2], r[0]) in indexed: continue
+    todo.add (convId: r[1], role: r[2], id: r[0])
+
+  for t in todo:
+    let rows = db.query("SELECT content FROM messages WHERE id=?", t.id)
+    if rows.len == 0 or rows[0].len == 0: continue
+    if indexMessage(t.convId, t.role, t.id, rows[0][0]): inc result
 
 # ---------------------------------------------------------------------------
 # Query — the hybrid scoring of search.lua:741-830

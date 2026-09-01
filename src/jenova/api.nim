@@ -18,6 +18,7 @@ import std/[algorithm, json, strutils, tables, os]
 import ./db
 import ./http
 import ./fssync
+import ./rag
 
 type
   Column = object
@@ -289,6 +290,16 @@ WITH RECURSIVE descendants AS (
 ##   conversation's own parent** before it is flagged, so the fork tree stays
 ##   connected instead of leaving children pointing at a deleted node.
 proc deleteConversation(id: string, withForks: bool): ApiResult =
+  # Action purpose: the conversations whose messages this call is about to flag,
+  # collected **before** the transaction and forgotten from the retrieval index
+  # **after** it commits (T-17). A conversation's messages are flagged in one
+  # statement, so there is no per-row site to hook, and doing it inside the
+  # transaction would strip the index for a delete that then rolled back.
+  var affected = @[id]
+  if withForks:
+    for r in db.query(DescendantsCte & "SELECT id FROM descendants", id):
+      if r.len > 0 and r[0].len > 0 and r[0] != id: affected.add r[0]
+
   db.begin()
   try:
     if withForks:
@@ -306,6 +317,7 @@ proc deleteConversation(id: string, withForks: bool): ApiResult =
   except CatchableError:
     db.rollback()
     return err(500, "delete failed: " & getCurrentExceptionMsg())
+  for c in affected: rag.forgetConversation(c)
   ok("""{"status":"ok"}""")
 
 proc dbSoftDelete(e: Entity, id: string) =
@@ -382,6 +394,11 @@ proc softDelete(e: Entity, id: string, withForks = false): ApiResult =
 
   else:
     dbSoftDelete(e, id)
+    # Action purpose: a deleted turn must stop being recalled (T-17). Reachable
+    # from both surfaces — the window's per-message delete goes through
+    # `deleteEntity`, which is this proc — and safe on the GTK thread, because
+    # forgetting a path is three DELETEs and never touches the embedding server.
+    if e.name == "messages": rag.forgetMessage(id)
 
   ok("""{"status":"ok"}""")
 
@@ -722,9 +739,24 @@ proc handleDb*(req: Request): ApiResult =
       except CatchableError:
         db.rollback()
         return err(500, "bulk delete failed")
+      # After the commit, for the reason `deleteConversation` does it after its
+      # own: a rolled-back delete must not leave the index stripped (T-17).
+      for idNode in node["ids"]: rag.forgetMessage(idNode.getStr)
       return ok("""{"status":"ok"}""")
     of "update":
-      return updateMessage(parseBodyJson(req.body))
+      # Action purpose: an edited message whose index entry still holds the old
+      # text is recalled by its old words and quoted back with its new ones.
+      # Re-indexed here, on the route, and **not inside `updateMessage`** —
+      # `patchMessage` shares that proc and is called by the window on the GTK
+      # thread, where an embedding round trip would freeze the transcript. The
+      # window feeds the index from its own control worker instead (T-17).
+      #
+      # No parent: the turn this one answers has not changed.
+      let node = parseBodyJson(req.body)
+      let r = updateMessage(node)
+      if r.status == 200 and not node.isNil and node.hasKey("content"):
+        discard rag.indexExchange(node.f "id", withParent = false)
+      return r
     else: discard
 
   # ---- /<entity>/deleted, /<entity>/all, /<entity>/<id>/restore ----------
@@ -753,6 +785,15 @@ proc handleDb*(req: Request): ApiResult =
   if req.meth == "POST":
     let node = parseBodyJson(req.body)
     if node.isNil: return err(400, "invalid JSON body")
-    return upsert(e, node)
+    let r = upsert(e, node)
+    # Action purpose: feed the retrieval index from the surface the Web UI and
+    # any LAN client write through (T-17). **Only on an assistant row**, which
+    # indexes the reply and the turn it answers together — see
+    # `rag.indexExchange` for why a user turn is not indexed the moment it
+    # arrives. This is the same rule the window applies, so the two surfaces
+    # cannot build different indexes.
+    if r.status == 200 and head == "messages" and node.f("role") == "assistant":
+      discard rag.indexExchange(node.f "id")
+    return r
 
   err(405, "method not allowed")

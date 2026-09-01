@@ -2,10 +2,16 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-09-01 11:37 (Session 014)
+**Last updated:** 2026-09-01 12:08 (Session 015)
 
 **Write plans in plain English, then cite the ID** (**D-BA**). A step that reads
 "resolve G-23" tells the reader nothing. Say what the thing is first.
+
+**Cite the symbol, then the line.** Every line reference below was re-derived against
+the source on 2026-09-01 at 12:08. The previous set had rotted inside one session —
+`gui.nim` grew by roughly 750 lines while the steps citing it were being written, so
+each pointed at unrelated code while the finding it described stayed true. A reference
+that names the proc survives that; a bare line number does not.
 
 ---
 
@@ -58,8 +64,9 @@ is `TODOS.md` G-17, G-20, G-21 and G-28 … G-36.
 | Conversations: create, rename, delete, search | A real model selector and model information |
 | **Renaming a container keeps its files** | Typed errors, retry, context-overflow reporting |
 | Markdown text and highlighted code blocks | Trash view, delete confirmations, a real note editor |
-| Theme, canvas, Neovim page, AI reads the buffer | Recall of past chats — the index is never fed |
-| Tray, LAN toggle, backend start/stop | Hardware profile detection and selection |
+| Theme, canvas, Neovim page, AI reads the buffer | Hardware profile detection and selection |
+| **Recall of past chats — the index is fed** | — |
+| Tray, LAN toggle, backend start/stop | — |
 
 **Almost all of it is GUI work over backend that is already implemented and has
 assertions behind it.**
@@ -92,7 +99,7 @@ path is refused rather than merged (**D-BE**). Proven by 17 new assertions in
 `BRIEFING.md` all cite them, and renumbering to close a gap would silently re-point
 every one of those references.
 
-**Step 2 is the next step.**
+**Steps 1, 2, 3 and 4 are built. Step 5 is the next step.**
 
 ---
 
@@ -136,41 +143,47 @@ generation statistics half of **Step 7a** (G-33) and a **reasoning view** (G-39)
 
 ---
 
-## Step 4 — Make the search index chats, so the AI remembers  *(`TODOS.md` T-17)*
+## Step 4 — **BUILT 2026-09-01.** The search index has chats in it, so the AI remembers
 
-**What is wrong:** `rag.nim` is finished and proven by `rag-selftest` — keyword ranking,
-path filtering, snippet persistence, the float32 vector round-trip and the similarity
-maths all pass. **Nothing calls `indexContent` outside that self-test**, so the index is
-always empty, `rag.query` short-circuits (`rag.nim:323`), and `pipeline.prepare` — which
-already queries it on every chat turn — always gets nothing back.
+Done and out of this plan. **`indexContent` had no caller outside its own self-test**,
+so the index was always empty, `rag.query` short-circuited on its second line, and
+`pipeline.prepare` — which asks it a question on every chat turn — always got nothing
+back. The engine was finished and starved. It is fed now: a completed exchange is
+indexed from both surfaces, existing history is backfilled once the embedding server
+answers, and a deleted turn is forgotten. The record is `PROGRESS.md` 2026-09-01 12:08;
+the calls taken inside the scope are **D-BI**.
 
-**Scope, decided (D-BD): chats.** Index messages keyed by conversation, so the path
-filter the query path already supports scopes a search to one chat or across all of
-them.
+**A message occupies `chat/<convId>/<role>/<id>`**, which makes the `pathFilter` the
+query path already had do the scoping — `chat` is every conversation, `chat/<convId>` is
+one — with no change to `query`.
 
-**The work:**
-1. Index a message as it is saved. The save sites are `gui.saveMessage` and the server-side
-   path; both already have the conversation id in hand.
-2. Use a stable key per conversation so re-indexing replaces rather than duplicates —
-   `indexContent` is already idempotent per path (`rag.nim:213` forgets first).
-3. Backfill existing history once at startup, so the feature works on day one rather
-   than only for chats created after it ships.
-4. Indexing must not block the turn: it is worker-thread work, and `db.nim` is already
-   per-thread.
+**Three things this step decided that the plan above had not** (all in D-BI): an
+exchange is indexed when the **reply** lands rather than each message as it is written,
+because a question indexed at save time is in the index before its own request is
+answered and comes back as its own top-ranked context; the backfill waits for the
+**embedding server** rather than running at startup, because indexing while it loads
+stores chunks with no vector and leaves all of history keyword-only; and deletion
+**forgets**, because an index that keeps answering with removed turns honours the
+deletion everywhere except where the user would notice.
 
-**Proof it worked:** extend `rag-selftest` — index a scratch conversation, assert a
-query returns the right message, that a conversation-scoped filter confines results, and
-that re-indexing the same conversation does not duplicate chunks.
+**Proven by 14 new assertions** — 10 in `rag-selftest` and 4 in `pipeline-selftest`,
+each shown going red first. The `pipeline-selftest` four are the *wiring*, which is the
+half a unit check cannot see: an indexed turn is retrieved and lands in the body sent to
+the model. See `TESTS.md` §0e.
+
+**The step numbers below are deliberately unchanged**, for the reason Step 1 records.
+**Step 5 is the next step.**
 
 ---
 
 ## Step 5 — A settings screen, and with it the sampling parameters  *(`TODOS.md` G-31, G-32)*
 
 **What is wrong:** there is **no settings surface at all**, and the consequence is
-concrete — `gui.send` posts `{"messages": …, "stream": true}` and nothing else
-(`gui.nim:797`), so **temperature, top_p, top_k, min_p, repeat_penalty, frequency and
-presence penalty and repeat-last-n cannot be set from the desktop application.** They
-are not defaulted badly; they are absent.
+concrete — `pipeline.chatBody` (`pipeline.nim:331`) builds the whole request and puts in
+`messages`, `stream`, `timings_per_token` and `reasoning_format` and nothing else, so
+**temperature, top_p, top_k, min_p, repeat_penalty, frequency and presence penalty and
+repeat-last-n cannot be set from the desktop application.** They are not defaulted
+badly; they are absent.
 
 **Why this is cheap:** `llama-server` accepts every one of them per request — that is
 why **D-AF** closed the old "sampling parameters are ignored" item — and
@@ -182,11 +195,15 @@ in the JSON body.
 1. A settings dialog. The Web UI's `ChatSettings` is tabbed: General (system message),
    Display, Sampling, Penalties, Import/Export, Developer. Skip the API-key tab —
    this server does not authenticate — and skip MCP, which is deferred.
-2. Persist to a file under `p.state`, the way `lan_mode` already is
-   (`gui.nim:173-184`).
-3. `gui.send` merges the stored parameters into the request body.
+2. Persist to a file under `p.state`, the way `lan_mode` already is —
+   `gui.isLanEnabled` (`gui.nim:304`) and `gui.setLanState` (`gui.nim:308`).
+3. **The values are merged in `pipeline.chatBody`, not in the window.** That is where
+   the body is built now, and it is below the GUI layer specifically so a self-test can
+   see it — which is the whole lesson of D-BH. A settings dialog that assembles its own
+   body would undo that.
 4. **Import/export (G-32) belongs in the same screen** and is a front end over
-   `POST /api/db/import`, which is already transactional and asserted (`api.nim:401`).
+   `POST /api/db/import`, which is already transactional and asserted
+   (`api.importData`, routed at `api.nim:714`).
 
 **Worth copying from the Web UI:** it shows, per parameter, whether the value came from
 the user, from the server's `/props`, or from an app default. That distinction is what
@@ -260,10 +277,10 @@ base64 payloads to bytes (`fssync.nim:310-337`). Audio recording is the one piec
 may not be worth porting; raise it before building.
 
 **7c. Real error reporting  *(G-35)***
-Everything currently lands in one grey line (`app.notice`, `gui.nim:1500`). The Web UI
-distinguishes a timeout from a server error and, on a context overflow, shows the
-prompt-token count against the context size. `streamOnce` already has the status code
-in hand (`gui.nim:130`) and throws it away into a sentence.
+Everything currently lands in one grey line — `App.notice` (`gui.nim:637`), written from
+sixteen places. The Web UI distinguishes a timeout from a server error and, on a context
+overflow, shows the prompt-token count against the context size. `gui.streamOnce`
+(`gui.nim:164`) already has the status code in hand and throws it away into a sentence.
 
 **7d. Markdown tables, task lists and maths  *(G-34)***
 `markdown.nim` does headings, bullets, quotes, emphasis, inline code and fences. A
@@ -271,28 +288,35 @@ model asked to compare things answers with a table, which currently renders as r
 pipes. LaTeX is the larger piece and may reasonably be deferred; tables are not.
 
 **7e. Delete confirmations  *(G-36)***
-Every delete in the tree and conversation list fires on one click (`gui.nim:986`,
-`1014`, `1052`). The argument for having no dialog was that deletes are soft — but a
-soft delete with no trash view (**G-21**) is indistinguishable from data loss, so this
-and G-21 answer each other.
+Every delete in the tree and conversation list fires on one click, through the single
+path `gui.deleteNode` (`gui.nim:1034`) — which is also what makes this cheap, since one
+proc gates every caller. The argument for having no dialog was that deletes are soft —
+but a soft delete with no trash view (**G-21**) is indistinguishable from data loss, so
+this and G-21 answer each other.
 
 ---
 
 ## Step 8 — The remaining views
 
 **8a. Model selector and model information  *(G-20)*** — replace the two hardcoded menu
-items (`gui.nim:1274-1280`) with a searchable list carrying per-model status and
+items (`gui.nim:2032`) with a searchable list carrying per-model status and
 capabilities, plus a details dialog (context size, parameter count, quantisation,
 vocabulary, slots, modalities, chat template). Backend exists: `models.discover`,
 `models.switchModel`.
 
 **8b. Trash view  *(G-21)*** — everything deleted is soft-deleted and currently
-invisible. Backend exists and is asserted: `GET /api/fs/trash`,
-`POST /api/fs/trash/restore`, `DELETE /api/fs/trash/empty` (`api.nim:435-462`), plus
-`/<entity>/deleted` and `/<entity>/<id>/restore` on every table.
+invisible. Backend exists and is asserted: `GET /api/fs/trash` (`api.nim:591`),
+`POST /api/fs/trash/restore` (`api.nim:599`), `DELETE /api/fs/trash/empty`
+(`api.nim:607`), plus `/<entity>/deleted` and `/<entity>/<id>/restore` on every table.
+
+**One thing this step now also has to do**, recorded here rather than left to be
+rediscovered: **restoring a message from the trash does not put it back in the retrieval
+index.** Deletion forgets (D-BI) and nothing undoes that, so a restored turn is
+recoverable everywhere except in what the model recalls until the next start, when
+`rag.backfillChats` picks it up. Restore should call `rag.indexExchange` directly.
 
 **8c. A real writing surface  *(G-17)*** — the note editor is a `TextView` with Save and
-Close (`gui.nim:1089`). It is the seed, not the thing.
+Close — `gui.saveNote` (`gui.nim:968`). It is the seed, not the thing.
 
 ---
 
@@ -302,10 +326,10 @@ In this order, smallest first:
 
 | | Work | Proof |
 |---|---|---|
-| **T-5** | Stop the embedding server on exit. `gui.run`'s `defer` joins threads and stops nothing (`gui.nim:1588`); `lifecycle.stopAll` already exists. Leaving the *agent* model loaded is deliberate — reloading gigabytes into VRAM every start is worse — so stop only the embed backend, and clear a pidfile whose process is dead | `jenova-core backends status` after a GUI exit: agent up, embeddings down, no stale pid |
-| **T-2** | Cap the database's prepared-statement cache. It is a plain `Table` that never evicts (`db.nim:46`, `165`) and finalizes only at connection close (`db.nim:383`), while the message-update route builds a different SQL string per field combination. **The fix belongs in `db.nim`** — a cap plus finalize-on-evict — not in the caller | A suite issuing many distinct field combinations, asserting the cache stays capped. Prove it can go red first |
-| **T-4** | Both directions of the file-containment check. The symlink check only runs on paths that already exist (`fssync.nim:641`), so a *new* file written through a symlinked parent escapes; and `normBase` is lexical (`fssync.nim:628`), so a symlinked workspaces root rejects legitimate paths. Resolve the deepest existing ancestor and compare against a resolved base | `test_api_fs.sh`: a write through a symlinked parent is refused **403**; a legitimate write under a symlinked root succeeds |
-| **T-3** | Trim chat history. The whole conversation is resent every turn (`pipeline.nim` has no trim step), so a long chat eventually exceeds the context. Needs a byte budget from `CTX_SIZE`, dropping oldest first, never dropping the system message | A unit check on the trim function at a small budget — not a live generation |
+| **T-5** | Stop the embedding server on exit. `gui.run` (`gui.nim:2317`) starts both backends and its `defer` only sends the workers the quit sentinel and joins them — `lifecycle.stopAll` already exists and is never called. Leaving the *agent* model loaded is deliberate — reloading gigabytes into VRAM every start is worse — so stop only the embed backend, and clear a pidfile whose process is dead | `jenova-core backends status` after a GUI exit: agent up, embeddings down, no stale pid |
+| **T-2** | Cap the database's prepared-statement cache. It is a plain `Table` that never evicts — `Conn.cache` (`db.nim:46`) filled by `db.prepared` (`db.nim:165`) — and the only `sqlite3_finalize` is in `db.closeConn` (`db.nim:415-418`), while `api.updateMessage` builds a different SQL string per field combination. **The fix belongs in `db.nim`** — a cap plus finalize-on-evict — not in the caller | A suite issuing many distinct field combinations, asserting the cache stays capped. Prove it can go red first |
+| **T-4** | Both directions of the file-containment check, both inside `fssync.resolveStoragePath` (`fssync.nim:694`). The symlink check runs only on paths that already exist (`fssync.nim:713`), so a *new* file written through a symlinked parent escapes; and the base is compared lexically (`fssync.nim:700`), so a symlinked workspaces root rejects legitimate paths. Resolve the deepest existing ancestor and compare against a resolved base | `test_api_fs.sh`: a write through a symlinked parent is refused **403**; a legitimate write under a symlinked root succeeds |
+| **T-3** | Trim chat history. The whole conversation is resent every turn — `pipeline.prepare` (`pipeline.nim:222`) has no trim step and neither does anything else in the file — so a long chat eventually exceeds the context. Needs a byte budget from `CTX_SIZE`, dropping oldest first, never dropping the system message | A unit check on the trim function at a small budget — not a live generation |
 
 ---
 

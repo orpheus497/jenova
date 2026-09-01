@@ -3,7 +3,7 @@
 Test specifications, validation criteria and expected outcomes. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 11:37 (Session 014).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 12:25 (Session 015).
 Mandated from the outset; absent for Sessions 001–003. See `DECISIONS_LOG.md` C-10.
 
 > **§5a onward are stage acceptance records** — what each stage had to prove and how. They are
@@ -50,32 +50,32 @@ to `python3` and started no server.
 asserting nothing. `test_models.sh` was verified by corrupting what its assertions read and
 confirming it goes red.
 
-**Run `nimble suites` with `bin/jenova` closed — 2026-09-01. This is T-12's unknown
-trigger, identified after two sessions of it appearing and vanishing.**
+## Do not run these unless the USER asks — 2026-09-01 (**D-BJ**)
 
-**Two suites assume nothing is listening on the machine's real ports**, and both fail
-while the desktop application is running:
+**A session does not run `nimble suites`, the product, or the backends on its own
+initiative** while the migration is in progress. Running takes the machine's ports and
+loads gigabytes onto the GPU, in the middle of the USER's own work. **Building is not
+running:** `nimble core` and `nimble gui` are free and are how a change is checked to
+compile.
 
-- **`test_routes.sh`** pins `JENOVA_PORT` for its own core but never overrides
-  `JENOVA_LLAMA_PORT`, so that core forwards to the default **8081**. Five assertions
-  expect **502** — "the pipeline completed and no `llama-server` answered" — and see 200
-  or 500 when a real backend answers there.
-- **`test_lifecycle.sh`** pins `JENOVA_PORT` for its `serve` cases (`:92`, `:98`, `:110`)
-  but runs `backends health` (`:120`) and `backends start` (`:125`) with **no port
-  override**. `health` then succeeds where it asserts failure, and `start` refuses with
-  *"port 8081 is already in use"* instead of the expected missing-model message — the
-  product refusing to start a second backend over a live one, which is correct.
+**And do not enumerate processes or ports to find out what is already up.** That is an
+audit of the USER's machine, nobody asked for it, and it is where the T-12 loop starts
+every time.
 
-**Proven and dated on both sides:** all six suites passed three times between 09:56 and
-09:58, `bin/jenova` was started at 10:01:13, and the failures appear only after.
-`test_routes` passes **13/13** on the same binary, with the application still running,
-given `JENOVA_LLAMA_PORT=<dead port>`. **Neither is a product fault.** Fix filed in
-`TODOS.md` Backlog: give both scripts their own dead upstream ports.
+**T-12, stated once and closed.** `test_routes.sh` and `test_lifecycle.sh` fail if
+anything already holds the real ports, because neither overrides `JENOVA_LLAMA_PORT` the
+way both already override `JENOVA_PORT` — `test_routes` expects a 502 meaning "no
+`llama-server` answered", and `test_lifecycle` runs `backends health` and `backends start`
+with no override, so the product's correct *"port 8081 is already in use"* refusal reads
+as a failure. **Neither is a product fault, this has been fully diagnosed three times, and
+it is not to be diagnosed again.** The one-line fix — give both scripts their own dead
+upstream ports — is in `TODOS.md` Backlog. A session that sees those failures writes
+nothing about them.
 
-**Also: run the suites through `nimble suites`, not by calling the scripts directly.**
-`test_nvimctl.sh` compiles `nvimctl_check.nim` and `nim` is not on `PATH` — `nimble` is,
-and it puts `nim` there. Invoked directly the suite fails at the compile step; under
-`nimble suites` it passes 5/5.
+**Also: invoke the suites through `nimble suites`, never the scripts directly.**
+`test_nvimctl.sh` compiles `nvimctl_check.nim` and `nim` is not on `PATH` — only `nimble`
+puts it there. **The same trap catches any direct `nim` call**, including a compile-guard
+check: it fails with "command not found", which reads as silence rather than an error.
 
 **Six self-tests, six suites.** *`tree-selftest` was added 2026-09-01 for the
 branching tree walk. Earlier trackers said four self-tests;
@@ -106,7 +106,7 @@ into the request body.
 | **1 — container rename** (T-14) | ~~A renamed project takes its files with it, and a failed move rolls back~~ **DONE 2026-09-01 — see §0b** | Done as planned: `test_api_fs.sh`, +17 assertions |
 | **2 — message actions** (G-28) | ~~Edit and delete reach the right rows and cascade correctly~~ **DONE 2026-09-01 — see §0c** | Done as planned: `test_api_db.sh`, +12 assertions. Regenerate and continue remain screen-only |
 | **3 — branching** (G-29) | ~~The active path and the sibling counts are right for a known fork shape~~ **DONE 2026-09-01 — see §0d** | Done as planned, and as predicted it was the step needing an assertion rather than a screenshot: `jenova-core tree-selftest`, 26 assertions |
-| **4 — chat indexing** (T-17) | A query returns the right message; a conversation-scoped filter confines results; re-indexing a conversation does not duplicate chunks | Extend `rag-selftest`. It already indexes a scratch corpus and asserts ranking, filtering and the vector round-trip |
+| **4 — chat indexing** (T-17) | ~~A query returns the right message; a conversation-scoped filter confines results; re-indexing a conversation does not duplicate chunks~~ **DONE 2026-09-01 — see §0f** | Done as planned, plus four in `pipeline-selftest` the plan had not asked for: the *wiring*, which is the half that had been invisible |
 | **5 — settings** (G-31) | A stored sampling value actually reaches the outbound JSON body | A check on the body-building function. **Not** a live generation |
 | **6 — hardware profiles** (S-1) | Known hardware selects the right profile; an opt-in profile never wins automatically; the fallback ladder holds (specific > GPU generic > CPU generic) | A new suite over the profile data. Pure scoring logic, no hardware needed. **Prove it can go red first** — the archived `test_validate_arg.sh` never asserted this and rewrote `etc/jenova.conf` as a side effect |
 | **9 — statement cache** (T-2) | The cache stays capped under many distinct queries | A new suite. **Prove it can go red first** |
@@ -278,6 +278,73 @@ proof the assertions bite and the proof of the feature's core claim.
 `Failed to --listen: invalid argument`.
 
 **Run 2026-08-31: 5 passed, 0 failed.**
+
+## 0f. Chat indexing — the index is fed, and the feed reaches the model (T-17, 2026-09-01)
+
+**Fourteen assertions across two self-tests**, and the split between them is the point.
+`rag-selftest` proves the index is *fed correctly*; `pipeline-selftest` proves the feed
+*arrives*. Those are different failures, and this project has already shipped the second
+one: `serve` once failed to call `rag.initSchema()` and every suite stayed green while
+`/v1/chat/completions` answered 500.
+
+**Why this needed testing at all.** Retrieval was finished and proven — ranking,
+filtering, snippets, the float32 round-trip, the similarity maths — and it had never
+been used, because `indexContent` had no caller outside its own self-test. **A module
+can be fully asserted and completely dead.** Nothing in the suite could tell the
+difference, because every assertion supplied its own corpus.
+
+### Ten in `rag-selftest`
+
+| Asserted | Why it is the assertion |
+|---|---|
+| An exchange indexes **two** rows — the reply and the turn it answers | The unit is an exchange, not a message. Indexing a question when it is saved puts it in the index before its own request is answered, and the model is handed back the question it just asked |
+| A query returns the **exact message** that answered it | On wording that appears in the reply and nowhere else, so the hit is a path and not a conversation |
+| A conversation filter confines recall, asserted **in both directions** | A filter returning nothing at all also leaks nothing. So: the other conversation is reachable unfiltered, *and* absent when filtered |
+| Re-indexing does not duplicate chunks or documents | The path is stable per row and `indexContent` forgets before writing. Together that is what stops every turn adding another copy of itself |
+| A deleted message is forgotten and no longer retrievable | Otherwise the deletion is honoured everywhere except in what the model remembers |
+| The backfill indexes history that was never indexed | The feature working on chats that already exist, which is the whole of D-BD's third clause |
+| The backfill **skips** what is already indexed | Run at every start; a non-incremental one would re-embed the entire history each launch |
+| A message indexed **without vectors is retried** later | The self-healing half. Indexed while the embedder was down, it would otherwise stay semantically invisible for ever |
+| Deleting a conversation clears its whole index scope | Its messages are flagged in one statement, so there is no per-row site to hook |
+| An empty turn is not indexed | A reply that is pure reasoning has nothing to retrieve *by*, and would put an empty body in the keyword index |
+
+**Both halves of the backfill are proven with no embedding server running**, by storing
+vectors against the chat chunks directly — the same technique the vector block already
+uses for the BLOB path. **The rule under test is the skip, not the embedder.** Gating it
+on a live server is how an assertion ends up running in one mode and silently skipped in
+the other.
+
+**One assertion of mine was wrong on its first run and the suite caught it**, which is
+the cheapest possible demonstration that it bites. It gated the incremental check on
+`rag.chunkCount() > 0` — a count of vector-bearing chunks **across the whole index**,
+which the vectors block above populates by hand. It therefore reported a live embedder
+where there was none. **That is the exact mistake already recorded on the chunk-count
+assertion in §0, inverted:** written for one mode and mistaking it for the only one.
+
+### Four in `pipeline-selftest` — the wiring
+
+| Asserted | Why |
+|---|---|
+| A chat message reaches the index | Separates a broken feed from broken wiring, which is what makes the next three diagnostic |
+| An indexed turn is **retrieved** on a later turn (`ragHits > 0`) | `prepare` already queried the index on every turn and always got nothing; this is the first assertion that it now gets something |
+| The recalled text is **in the body sent to the model** | Retrieved and then dropped is indistinguishable from never retrieved, from every angle except reading the outbound body |
+| The recalled turn is attributed to the chat it came from | The path is printed above the snippet, so the model is told this is a past conversation and which one |
+
+**Proven able to fail, four independent corruptions, four different sets of red.**
+Limiting `indexExchange` to one row turns *an exchange indexes the reply and the question
+it answers* red **alone**. Making `forgetMessage` a no-op turns *a deleted message is
+forgotten* red **alone**. Dropping the vector condition from the backfill's skip query
+turns *a message indexed without vectors is retried later* red **alone**. And returning 0
+from `ragLimitFor` — the wiring corruption — leaves *a chat message reaches the index*
+**green** while turning the other three red, which is the evidence that the two groups
+measure genuinely different things.
+
+**Not proven, and stated as such:** no reply has been streamed through this with a live
+`llama-server` and a live embedding server. Everything above runs with the embedder down.
+What that leaves unseen is the semantic half of ranking on real embeddings — the keyword
+half, the feed, the filter, the forget and the injection are all asserted. **This is not a
+gap to go and close**: bringing the backends up to prove it is exactly what D-BJ and D-AG
+forbid. It is observed when the USER next runs the application, or not at all.
 
 ## 1. Standing rule
 

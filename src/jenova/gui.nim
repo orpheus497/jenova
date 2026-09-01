@@ -122,6 +122,10 @@ type
     lc: Lifecycle
     jcaHome: string
     port: int
+    ## The reply an `index` job is about. Only the id travels: the worker reads
+    ## the committed row itself, so nothing has to copy message text across the
+    ## channel and the worker cannot index a turn that was never written (T-17).
+    msgId: string
 
   UiMsgKind = enum
     umToken, umDone, umError, umNotice, umStatus,
@@ -520,10 +524,24 @@ proc ctlWorker() {.thread.} =
   # goes down, so a restart or a model switch re-reads it rather than reporting
   # the previous model's context window (G-33).
   var propsRead = false
+  # Whether existing history has been put into the retrieval index in this
+  # process (T-17). Not cleared on a restart: the backfill is incremental and
+  # what it already indexed stays indexed.
+  var backfilled = false
+  var embedConfigured = false
   while true:
     let j = ctlReq.recv()
     if j.action == QuitSentinel: break
     if j.action in ["stop", "restart"]: propsRead = false
+    # Action purpose: `rag`'s embedding address is a threadvar, so it is set on
+    # whichever thread configured it — the main one — and this worker would
+    # otherwise fall back to the default port and silently index without vectors
+    # on a host that moved the embedding server. Once per thread, not per job:
+    # the address cannot change for the life of the process, and the poll runs
+    # every three seconds for as long as the window is open.
+    if not embedConfigured and j.action in ["index", "poll"]:
+      embedConfigured = true
+      rag.configureEmbed("127.0.0.1", j.lc.embedPort)
     case j.action
     of "start":
       let (l, _) = j.lc.startAll()
@@ -562,6 +580,25 @@ proc ctlWorker() {.thread.} =
           uiChan.send(UiMsg(kind: umProps, ctx: ctx, text: model))
       elif not up:
         propsRead = false
+      # Action purpose: put existing history into the retrieval index once, and
+      # **not until the embedding server answers** (T-17). Running it at startup
+      # would index every past message during the seconds the embedder is still
+      # loading, storing chunks with no vector and leaving the whole of history
+      # keyword-only. The poll already runs here every three seconds, so waiting
+      # costs nothing and needs no timer of its own. `backfillChats` is
+      # incremental, so a later start does no work twice.
+      if not backfilled and j.lc.healthy(beEmbed, timeoutMs = 300):
+        backfilled = true
+        let n = rag.backfillChats()
+        if n > 0:
+          uiChan.send(UiMsg(kind: umNotice,
+                            text: "indexed " & $n & " past messages for recall"))
+    of "index":
+      # Blocking is the point of doing it here: embedding a turn is an HTTP
+      # round trip to the embedding server, and on the GTK thread that is a
+      # frozen transcript. Failure is silent by design — retrieval degrades, the
+      # conversation does not.
+      discard rag.indexExchange(j.msgId)
     else: discard
 
 viewable App:
@@ -761,6 +798,11 @@ viewable App:
                     t.thinking = st.messages[^1].thinking
                     t.model = st.messages[^1].model
                     t.timings = st.messages[^1].timings
+                # A continued reply is longer than the text already indexed, so
+                # the entry is rewritten from the row that was just patched
+                # (T-17). Idempotent — `indexContent` forgets the path first.
+                ctlReq.send(ControlJob(action: "index", lc: st.lc,
+                                       msgId: st.messages[^1].id))
               else:
                 # The parent is the turn before it on the branch that was posted.
                 # A regenerate re-posted the conversation truncated to that turn,
@@ -779,6 +821,13 @@ viewable App:
                   st.edges = edgesOf(st.allMessages)
                   st.leaf = saved
                   saveLeaf(st.convId, saved)
+                  # Action purpose: the exchange is complete, so this is the
+                  # first moment the question can be indexed without the
+                  # request that asked it retrieving itself (T-17). The worker
+                  # indexes this reply and its parent — the user turn — from
+                  # the two rows now committed.
+                  ctlReq.send(ControlJob(action: "index", lc: st.lc,
+                                         msgId: saved))
                 else:
                   # Nothing was generated at all. **Leaving it in the path is the
                   # ghost bubble the USER saw**: an empty card, visible until the

@@ -3,7 +3,7 @@
 Authoritative system architecture: what the program is, what it depends on, and how data moves
 through it. Mandated by `AGENTS.md` § WORKSPACE ARCHITECTURE.
 
-**Last updated:** 2026-09-01 11:07 (Session 014)
+**Last updated:** 2026-09-01 12:08 (Session 015)
 
 > **Rewritten 2026-08-31 (Session 007). The previous 626-line revision is in
 > `.devdocs/ARCHIVE/devdocs/BLUEPRINT_pre-007.md`** — archived, not deleted, per D-AM.
@@ -113,6 +113,16 @@ with it. A move that cannot be performed rolls the database write back, and a re
 onto an already-occupied path is refused rather than merged (**D-BE**) — the invariant
 being kept is that the database never claims a name the disk does not carry.
 
+**Retrieval is fed by the chat itself.** A message is a document at
+`chat/<convId>/<role>/<id>`, so `rag.query`'s existing path filter scopes a search to one
+conversation or across all of them. **The unit is a completed exchange, not a message**
+(**D-BI**): the reply and the turn it answers are indexed together when the reply lands,
+because `pipeline.prepare` queries this index on the way to the model and a question
+indexed at save time would be retrieved by its own request. The window feeds it from its
+control worker and the HTTP surface from the message routes — one rule, two surfaces.
+Existing history is backfilled once the embedding server answers, incrementally and
+self-healingly; a deleted turn is forgotten after the commit that deleted it.
+
 **Configuration precedence:** environment → `etc/jenova.local.conf` → `etc/jenova.conf` (the applied
 hardware profile). `config.nim` implements this order. **The inverted shell order (Q-9/B-12) died
 with `bin/jenova-ca`** and is not a live defect.
@@ -186,9 +196,8 @@ that profile** — Q-12 should never have been put.
 **None.** `DECISIONS_LOG.md`'s QUESTION STATUS index is the authority. The last two were
 answered on 2026-09-01:
 
-- **The retrieval index indexes chats** (D-BD) — messages keyed by conversation, indexed
-  as they are saved, backfilled at startup. `rag.nim` and the query path in
-  `pipeline.nim` are already complete; only the feed was missing.
+- **The retrieval index indexes chats** (D-BD), and **the feed was built on 2026-09-01**
+  (D-BI). See §5.
 - **Hardware profile selection becomes Nim, driven from the GUI** (D-BC) — see §7.
 
 **Two architectural principles now bind the design:** the product is Nim plus
@@ -209,7 +218,8 @@ attachments, no settings surface (and so no reachable sampling parameters), no
 import/export, no trash view, no stop control, and no typed error reporting.
 
 **Built 2026-09-01:** message actions (copy, edit, delete, regenerate, continue),
-**conversation branching**, **generation statistics** and **a reasoning view**.
+**conversation branching**, **generation statistics**, **a reasoning view**, and
+**recall of past chats** — the retrieval index is fed now (§5, D-BI).
 
 **The chat turn now asks for two things it did not before.** `gui.send` puts
 `timings_per_token` and `reasoning_format` in the request body; `pipeline.prepare`
@@ -228,9 +238,12 @@ three pure functions in `api.nim` and is asserted by `jenova-core tree-selftest`
 and idempotently. **That migration is required, not optional** — see the correction in
 D-BG.
 
-**Two subsystems are built and unreachable rather than missing:** retrieval works and is
-never fed (Step 4), and hardware profile selection has no working entry point at all
-(Step 6). Both are consequences of the same thing — nothing surfaced them in the GUI.
+**One subsystem is still built and unreachable rather than missing:** hardware profile
+selection has no working entry point at all (Step 6). Retrieval was the other, and it was
+the sharper case — **fully asserted by its own self-test and never once executed by the
+program**, because nothing called `indexContent`. Fixed 2026-09-01 (Step 4, D-BI). The
+lesson generalises past retrieval: a green suite says the parts work, never that anything
+calls them.
 
 **This is GUI work over the surface described above, which already carries it** — the
 message-update route, the recursive fork cascade, `/api/db/import`, the trash routes and

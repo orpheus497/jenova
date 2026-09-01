@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-09-01 11:37 (Session 014)
+**Last updated:** 2026-09-01 12:25 (Session 015)
 **Branch:** `bsd`
 
 ---
@@ -8,6 +8,26 @@
 ## 0. READ THIS BEFORE DOING ANYTHING
 
 Every rule below exists because it was broken, repeatedly, and cost the USER a day.
+
+> ### Rule 0 — **DO NOT RUN THE PRODUCT, AND DO NOT LOOK AT THE MACHINE** (**D-BJ**)
+>
+> Until the migration is complete: do not start `bin/jenova`, `jenova-core serve`, the
+> backends, or `nimble suites` **unless the USER asks for that specific thing in that
+> message**. **Building is not running** — `nimble core` and `nimble gui` are free and are
+> how a change is checked.
+>
+> **Never enumerate processes or ports to see what the USER has open.** Nobody asked for an
+> audit of their machine. Running the product seizes ports and loads gigabytes onto the
+> GPU, in the middle of the USER's actual work.
+>
+> **T-12 is closed.** Two suites fail if something already holds the real ports. That is
+> the whole of it, it has been fully diagnosed three times, and it is never diagnosed
+> again. Seeing those failures: write nothing, say nothing, carry on.
+>
+> **The underlying pull, named so it is recognisable:** an unexplained red result creates
+> an appetite to prove it, and that appetite is the bug. **Evidence is only worth
+> gathering for work the USER asked for.** A stray result from an unrequested run is noise
+> a session generated and then investigated.
 
 | # | Rule |
 |---|---|
@@ -21,10 +41,12 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 | **7** | **Comments only where the code is not self-explanatory.** No essays above functions. Do not retroactively "improve" existing comments. |
 | **8** | **Do not ask what has been answered.** `DECISIONS_LOG.md` SETTLED FACTS and its QUESTION STATUS index, first. |
 | **9** | **Do not write derivable facts into these documents.** Counts and file lists rot. Point at the code. |
-| **10** | **Re-check a tracker's claims against the code; do not carry them forward.** Session 013 found seven false claims in these documents, one repeated across five files. |
+| **10** | **Re-check a tracker's claims against the code; do not carry them forward.** Session 013 found seven false claims. Session 015 found thirteen citations that pointed at unrelated code while every finding they described was still true. |
 | **11** | **Verify a scope list against the source, not against a summary.** The "GUI parity" list carried since Session 010 named six items. The Web UI's own component listing has roughly three times that. |
 | **12** | **A "not yet run" label is not durable.** It survives exactly until any evidence contradicts it — a screenshot, a defect report, or the USER saying so. Carrying it past that point has now cost two sessions. |
-| **13** | **A new assertion is not believed until it has been seen to go red.** Step 1's were run against the unfixed source and produced 12 failures before they were trusted. Two suites in this project have reported PASS while asserting nothing. |
+| **13** | **A new assertion is not believed until it has been seen to go red.** Two suites in this project have reported PASS while asserting nothing. |
+| **14** | **Cite the symbol, then the line.** A bare line number is a claim with an expiry date — thirteen of them rotted inside one session because `gui.nim` grew by 750 lines while they were being written. `fssync.resolveStoragePath (fssync.nim:694)` survives that; `fssync.nim:628` does not. |
+| **15** | **A green suite says the parts work, never that anything calls them.** `rag.nim` was fully asserted and completely dead for weeks — every assertion supplied its own corpus, so nothing could tell. When a feature is finished, assert the *join*, not only the parts. |
 
 ---
 
@@ -37,199 +59,133 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 | **Build** | `nimble`. Tasks in `jenova_core.nimble`: `core`, `gui`, `suites`, `llama`, `web`, `clean` |
 | **Architecture** | `BLUEPRINT.md` |
 | **Runtime home** | `$HOME/Jenova`. `~/JCA` is permanently off limits |
-| **Tests** | **Six** shell suites under `tests/`, run by `nimble suites`, plus **five** self-test subcommands in `jenova-core` (`db-`, `serve-`, `rag-`, `pipeline-`, `sha256-selftest`). **None of them covers the GUI** — see §5 |
+| **Tests** | **Six** shell suites under `tests/`, run by `nimble suites`, plus **six** self-test subcommands in `jenova-core` (`db-`, `serve-`, `rag-`, `pipeline-`, `sha256-`, `tree-selftest`). **None of them covers the GUI** — see §5 |
 
 ## 2. State
 
-**Verified as of 2026-09-01 11:07.** Both binaries build from a clean run of
-`nimble core` and `nimble gui`; the FreeBSD-only guard was confirmed to still *fire*
-when the target is changed, not merely to exist; **all six suites and all six
-self-tests pass.** `bin/jenova-core` is an ELF 64-bit FreeBSD executable.
+**Verified as of 2026-09-01 12:08.** Both binaries build from a clean run of `nimble core`
+and `nimble gui`; the FreeBSD-only guard was confirmed to still *fire* when the target is
+changed, not merely to exist; **all six suites and all six self-tests pass.**
+`bin/jenova-core` is an ELF 64-bit FreeBSD executable.
 
-**The build has been run once, and it produced two defects — both now fixed.** See §3.
-**Neither fix has been seen on screen**; §8 names what the window still has to settle.
+**Those runs happened because this session's work was building them; they are not a
+standing instruction.** Per Rule 0, do not run the suites or the product again without
+being asked. If a run is asked for: invoke it through `nimble suites`, never the scripts
+directly — `test_nvimctl.sh` needs `nim` on `PATH` and only `nimble` puts it there, and
+**the same trap catches any direct `nim` call**, which fails with "command not found" and
+reads as silence rather than an error. If `test_routes` or `test_lifecycle` fail, that is
+T-12 and it is closed: nothing to record, nothing to investigate.
 
-**One qualification, and it is not a product fault.** **Run `nimble suites` with
-`bin/jenova` closed.** Two suites assume nothing is listening on the machine's real
-ports: `test_routes` expects a 502 meaning "no `llama-server` answered" while talking to
-the real backend on 8081, and `test_lifecycle` runs `backends health` and `backends
-start` with no port override, so the product's correct *"port 8081 is already in use"*
-refusal reads as a failure. Given a dead upstream port `test_routes` passes 13/13 with
-the app still running. **This is T-12's unknown trigger, identified after two sessions.**
-Fix filed in `TODOS.md` Backlog. Separately, invoke the suites through `nimble suites`,
-not by calling the scripts — `test_nvimctl.sh` needs `nim` on `PATH` and only `nimble`
-puts it there.
+**The 2026-08-31 23:28 build was run by the USER**, and no appearance or rendering defect
+came back from it. The outstanding work is **functional, not visual**. Do not re-add an
+"unrun" label to those features.
 
-**The 2026-08-31 23:28 build was run by the USER**, and no appearance or rendering
-defect came back from it. The report from that run is that the GUI is missing a large
-number of Web UI features, which is why the outstanding work is **functional, not
-visual**. Do not re-add an "unrun" label to those features.
+**The backend is in good shape.** Configuration, database, threaded HTTP server, the whole
+`/api/*` surface, the filesystem mirror, retrieval **and its feed**, the prompt pipeline,
+backend supervision and watchdog, model discovery and switching are implemented and
+covered by tests.
 
-**The backend is in good shape.** Configuration, database, threaded HTTP server, the
-whole `/api/*` surface, the filesystem mirror, retrieval, the prompt pipeline, backend
-supervision and watchdog, model discovery and switching are implemented and covered by
-tests.
+## 3. Done this session
 
-## 3. Done this session — three plan steps, two extras, and two defects the USER found
+### Step 4 — the search index has chats in it (T-17)
 
-### The two defects, and the rule they produced
+**The retrieval engine was finished, proven, and completely dead.** `indexContent` had no
+caller outside its own self-test, so the index was always empty, `rag.query`
+short-circuited on its second line, and `pipeline.prepare` — which had been asking it a
+question on every chat turn since it was written — always got nothing back. Every test
+passed throughout, because every assertion supplied its own corpus.
 
-**The build was run and it was wrong in two ways.** Both came from one failure: taking
-behaviour from a summary or from `jca_web` instead of from the source.
+**A message is now a document at `chat/<convId>/<role>/<id>`**, which makes the
+`pathFilter` the query path already had do the scoping: `chat` is every conversation,
+`chat/<convId>` is one. No change to `query`.
 
-1. **Existing conversations turned into a stack of versions.** Messages written before
-   branching have a **NULL** parent, so every one was a root — a whole conversation read
-   as alternative versions of one turn, and the transcript collapsed to a single bubble.
-   Fixed by a migration in `db.initDb` that chains each conversation in written order,
-   idempotently. **`D-BG` had claimed no migration was needed; that was false and is
-   corrected there.**
-2. **Continue made the model repeat itself, and the first fix made it fail outright.**
-   `llama-server` needs **`continue_final_message` *and* `add_generation_prompt: false`**;
-   sending only the first is refused with HTTP 400. Both are sent now and verified against
-   a running server.
-3. **An assistant turn with no visible text was silently discarded**, leaving an empty
-   bubble on screen and out of the tree, so the next message attached to a stale parent.
-   Now saved when it carries reasoning, and removed from the path when it carries nothing.
+**Three calls taken inside the scope, recorded as D-BI:**
 
-**The rule (D-BH): `jca_web` defines what features exist. One request to a running
-`llama-server` defines how they behave.** Reading the source was the first version of that
-rule and it was not enough — the schema showed the field and not the constraint on it,
-which is how the HTTP 400 got shipped. **One `curl`, not one `grep`.**
+1. **The unit is a completed exchange, not a message.** The pipeline queries this index
+   with the user's own words *on the way to the model*, so a question indexed when it is
+   saved is in the index before its own request is answered and comes back as its own
+   top-ranked context. The reply and the turn it answers are indexed together when the
+   reply lands. Both surfaces run that one rule — the window from its control worker,
+   never the GTK thread; the HTTP path on an assistant row.
+2. **The backfill waits for the embedding server.** Indexing while it loads stores chunks
+   with no vector, and all of history would have been permanently keyword-only — which
+   looks like working retrieval until someone asks in different words. It is incremental
+   and self-healing: a message is skipped only when it is indexed **and** carries a vector.
+3. **Deletion forgets**, after the commit, so a rolled-back delete cannot strip the index.
 
-**And the structural lesson, twice over: logic the GUI owns cannot be tested.** The
-branching tree walk moved to `api.nim` and the request body moved to `pipeline.chatBody`
-for the same reason — both fail invisibly until a person runs the program.
-`tree-selftest` is 26 assertions, `pipeline-selftest` 10.
+**14 assertions, all shown going red first** — 10 in `rag-selftest`, and **4 in
+`pipeline-selftest` for the wiring**, which is the half a unit check cannot see. Four
+independent corruptions gave four different sets of red, and the wiring corruption left
+the feed assertion green. `TESTS.md` §0f.
 
-### Step 3 — conversation branching (G-29)
+### Thirteen stale citations corrected
 
-**A conversation is a tree now.** Editing a turn or regenerating a reply adds an
-**alternative version** beside the old one instead of replacing it, and prev/next arrows
-with a "2/3" counter move between versions. `messages.parent` holds the shape;
-`conversations.currNode` holds the branch you were reading, so reopening a chat returns
-to it. `App.messages` is the visible path, `App.allMessages` is the tree.
+Every finding in `TODOS.md` and `PLANS.md` still held; thirteen of their addresses did
+not, because `gui.nim` grew by 750 lines during the session that wrote them. Corrected,
+and the convention changed to **name the symbol, then the line** (rule 14).
 
-**This released both restrictions Step 2 shipped under (D-BF → D-BG):** edit now
-resends, and regenerate works on any reply rather than only the last. Continue still
-stays on the last turn — it extends a reply in place rather than making a version of it,
-which the tree does not change.
+### The USER ruled on running the product (D-BJ) — this is Rule 0
 
-**The tree walk went into `api.nim` as three pure functions, not into `gui.nim`**, so it
-could be asserted at all: a wrong tree walk draws a plausible transcript with the wrong
-turns in it, which no screenshot catches. `jenova-core tree-selftest`, **26 assertions**
-— 15 for the tree, 11 added afterwards for the flat shape existing history arrives in and
-the migration that repairs it. **There are six self-tests now, not five.**
-
-### Generation statistics and a reasoning view (G-33 part, G-39)
-
-Asked for mid-session and built in the same pass. **The stream parser was reading
-`delta.content` and throwing the rest of every chunk away.** Per reply, and live while it
-streams: tokens out and tokens/second, tokens in and how many were cached, elapsed,
-context used and remaining, and the model.
-
-Two flags now go out with every request, because `llama-server` sends neither otherwise:
-`timings_per_token` (report on every chunk, not just the last) and
-`reasoning_format: "auto"` (split thinking into its own field rather than leaving it
-inline as a `<think>` block). A reasoning model's thinking appears folded above the
-answer, open while the turn is streaming and closed once it lands.
-
-**The context figure comes from `/props`, not from `CTX_SIZE`** — the server gives each
-parallel slot `n_ctx / n_parallel` and caps it to the model's training context, so the
-configured total would overstate what is left.
-
-**G-33 is not finished: the stop button is still missing.** Statistics were its other
-half.
-
-### Step 2 — a message carries its actions again (G-28)
-
-**Once a message was sent there was nothing you could do to it.** One copy button, on
-code blocks, was the whole of it. It now has **copy, edit, delete, regenerate and
-continue.**
-
-The change everything else rested on was not a button: **`Message` had no row id.** It
-carried a role and a string, so there was nothing to edit or delete even if a button
-existed. `saveMessage` now returns the row it wrote and `loadMessages` selects it.
-
-Two restrictions it shipped under were lifted the same day by Step 3 (D-BF → D-BG): edit
-now resends, and regenerate works on any reply. Continue still stays on the last turn,
-and is now also hidden on a turn carrying reasoning (D-BH).
-
-### Step 1 — the file mirror no longer lies
-
-**Renaming a workspace, project or folder used to strand every file underneath it.**
-Paths on disk are built from ancestors' *names*, and nothing moved the directory — so
-the old tree was orphaned and the next save landed in a fresh empty one beside it. That
-mattered because the Neovim page rooted at the workspaces directory **is** the file
-browser (D-AW): the tree is the interface, and it told the truth only until the first
-rename.
-
-It now moves the directory, and everything under it travels with it. A move that cannot
-be done rolls the database write back. A rename onto an already-occupied path is
-**refused rather than merged**, because a merge has no undo and a refusal does
-(**D-BE**). The GUI shows the refusal instead of discarding it.
-
-Detail for both steps is in `PROGRESS.md`; the assertions and the red-proofs are
-`TESTS.md` §0b (renames) and §0c (message actions).
+After the work was done, an unrequested `nimble suites` run came back red and I enumerated
+the USER's processes and ports, reported their own open application back to them as an
+anomaly, and started probing endpoints — chasing a discrepancy nobody had asked about, on
+a machine they were working on. **Parts of four sessions have now gone into a subject with
+one sentence in it.** The ruling is Rule 0 above, and the phrasing that invited it —
+"run `nimble suites` with `bin/jenova` closed", which was in three files — is gone.
 
 ## 4. What is actually missing — the honest list
 
-**The desktop application has the shape of the Web UI and not its function.** Chat,
-sidebar, workspace tree, notes, theme, canvas, syntax highlighting and the embedded
-Neovim page all work. Almost everything you do *to* a message does not exist.
+**The desktop application has the shape of the Web UI and not all of its function.**
 
 | Works | Missing entirely |
 |---|---|
 | Send a message, stream a reply | **Attachments** of any kind — image, text, PDF, audio (G-30) |
-| **Copy, edit, delete, regenerate, continue a message** | **Any settings screen — so no temperature, top_p, top_k, penalties** (G-31) |
-| **Branching — alternative versions, with a counter** | **Import / export of conversations** (G-32) |
-| **Statistics: tokens, tok/s, context used and left, model** | **A stop button** — the other half of G-33 |
-| **A reasoning view for thinking models** | **Tables, task lists, LaTeX maths** (G-34) |
-| Conversations: create, rename, delete, search | **A real model selector and model information** (G-20) |
-| Workspace / project / folder tree, notes — **and renaming one now keeps its files** | **Typed errors, retry, context-overflow reporting** (G-35) |
-| Markdown text and highlighted code blocks | **Trash view** (G-21), **delete confirmations** (G-36), **a real note editor** (G-17) |
-| Theme, canvas, glass panel, wordmark | **Hardware profile detection and selection** — currently impossible from anywhere (S-1) |
-| Neovim page + AI reads the live buffer | **Recall of past chats** — the search engine is built and starved (T-17) |
+| Copy, edit, delete, regenerate, continue a message | **Any settings screen — so no temperature, top_p, top_k, penalties** (G-31) |
+| Branching — alternative versions, with a counter | **Import / export of conversations** (G-32) |
+| Statistics: tokens, tok/s, context used and left, model | **A stop button** — the other half of G-33 |
+| A reasoning view for thinking models | **Tables, task lists, LaTeX maths** (G-34) |
+| **Recall of past chats — the index is fed** | **A real model selector and model information** (G-20) |
+| Conversations: create, rename, delete, search | **Typed errors, retry, context-overflow reporting** (G-35) |
+| Workspace / project / folder tree, notes — renaming keeps its files | **Trash view** (G-21), **delete confirmations** (G-36), **a real note editor** (G-17) |
+| Markdown text and highlighted code blocks | **Hardware profile detection and selection** — currently impossible from anywhere (S-1) |
+| Theme, canvas, glass panel, wordmark | — |
+| Neovim page + AI reads the live buffer | — |
 | Tray, LAN toggle, backend start/stop | — |
 
-**Almost all of it is GUI work over a backend that is already finished and tested** —
-the message-update route, the recursive fork cascade, `/api/db/import`, the trash
-routes and `models.switchModel` all exist with assertions behind them.
+**Almost all of it is GUI work over a backend that is already finished and tested** — the
+message-update route, the recursive fork cascade, `/api/db/import`, the trash routes and
+`models.switchModel` all exist with assertions behind them.
 
-Full detail with mechanisms and line references: `TODOS.md`. Ordered plan: `PLANS.md`.
+Full detail with mechanisms and references: `TODOS.md`. Ordered plan: `PLANS.md`.
 
 ## 5. Known broken in the Nim code
 
-Six items, each verified by reading the file it names (`TODOS.md`). **T-14 is no longer
-among them** — it was fixed this session. The one that matters:
+**T-17 is no longer among them** — it was built this session. What remains:
 
-- **Nothing populates the search index** (T-17), so the AI has no recall of past chats.
-  The search half is finished and proven; the indexer half was never written. **Scope is
-  decided — it indexes chats** (D-BD), and it is Step 4.
+- **There is no way to detect hardware or change profile at all** (S-1). It was two shell
+  scripts and both are broken by subtraction. It becomes Nim with a GUI screen (D-BC),
+  Step 6.
+- A leaked embedding server on exit (T-5), an unbounded statement cache (T-2), two holes
+  in the file-containment check (T-4), untrimmed chat history (T-3) — real but not urgent,
+  and all Step 9.
+- Two cosmetic defects in the `TODOS.md` Backlog: two dead style rules in `theme.nim`
+  (G-37) and a code comment in `gui.nim` describing a `Paned` that was never used (G-38).
+- **One filed this session:** restoring a message from the trash does not put it back in
+  the retrieval index, because deletion forgets and nothing undoes it. It is written into
+  `PLANS.md` Step 8b, where the trash view is built, rather than left to be rediscovered.
 
-Separately, **there is currently no way to detect hardware or change profile at all**
-(S-1). It was two shell scripts and both are broken by subtraction. It becomes Nim with
-a GUI screen (D-BC), Step 6.
+## 6. The gap: the GUI has no test coverage
 
-The rest — a leaked embedding server on exit, an unbounded statement cache, two holes
-in the file-containment check, untrimmed chat history — are real but not urgent, and are
-Step 9.
+All six suites and all six self-tests exercise `jenova-core`. **Nothing tests `gui.nim` at
+all.** Every GUI defect in this project's history was found by the USER looking at the
+screen.
 
-Two cosmetic defects are newly filed in the `TODOS.md` **Backlog**: two dead style rules
-in `theme.nim`, one of which is G-8's defect recurring in the same file, and a code
-comment in `gui.nim` describing a `Paned` that was never used.
-
-## 6. The gap nobody has recorded: the GUI has no test coverage
-
-All six suites and all six self-tests exercise `jenova-core` — routes, database,
-filesystem, lifecycle, models, the Neovim buffer reader, and now the branching tree walk.
-**Nothing tests `gui.nim` at all.** Every GUI defect in this project's history was found
-by the USER looking at the screen.
-
-**The response to that is working and should be continued.** Branching's tree walk was
-put in `api.nim` rather than `gui.nim` *specifically* so it could be asserted, and it is —
-26 assertions, no window. The rule that produced it: **where a GUI feature's behaviour
-can be moved below the widget layer, move it there and assert it.** What is left in
-`gui.nim` is then layout, which is what a screen is actually for.
+**The response is working and should be continued.** Branching's tree walk went into
+`api.nim`, the request body into `pipeline.chatBody`, and this session the chat indexer
+into `rag.nim` — all below the widget layer, all asserted, none of them requiring a
+window. **Where a GUI feature's behaviour can be moved below the widget layer, move it
+there and assert it.** What is left in `gui.nim` is then layout, which is what a screen is
+actually for.
 
 ## 7. Waiting on the USER
 
@@ -238,29 +194,31 @@ critical path: filesystem as the source of truth (T-11), deployment (T-7), a CLI
 
 ## 8. Next
 
-**A screen run, to confirm the two repairs.** The build has been run once and produced
-the two defects above; both are fixed and asserted, but **neither fix has been seen
-working on screen.**
+**A screen run — the USER's, when it suits them, and not something a session initiates or
+asks after** (Rule 0). Three things have never been seen working. None is a suspicion;
+they are simply unobserved, and they stay unobserved until the USER happens to look:
 
-1. **Existing conversations should read as transcripts again**, with no version arrows on
-   ordinary turns. The migration runs on startup; a copy of the live database was already
-   put through it and came out correctly chained, so this is a confirmation rather than an
-   experiment.
-2. **Continue should extend an answer rather than restart it.**
+1. **The repairs from Session 014** — existing conversations reading as transcripts again
+   with no version arrows on ordinary turns, and Continue extending an answer rather than
+   restarting it.
+2. **This session's recall, against a live backend.** Everything was verified with the
+   embedding server **down**, so the semantic half of ranking on real embeddings is
+   unproven. The feed, the filter, the forget, the backfill and the injection into the
+   outbound body are all asserted. On a start with the embedder up, the window says
+   "indexed N past messages for recall" once, and a later question about an earlier chat
+   should reach the model with that chat attached.
 3. **The icons**, still unconfirmed: `view-refresh-symbolic`,
    `media-playback-start-symbolic`, `go-previous-symbolic`, `go-next-symbolic` are all
    standard Adwaita symbolics, but a missing one renders as a broken placeholder rather
    than failing the build.
-4. **The statistics and the reasoning view against a live backend.** The wire contract came
-   from `llama.cpp`'s own source and the pipeline pass-through is asserted, but no reply
-   has been streamed through the new parser here. **A reasoning view stays empty on a model
-   that does no reasoning** — correct, not a defect.
 
-Then **`PLANS.md` Step 4 — make the search index chats** (T-17), so the AI recalls past
-conversations. `rag.nim` is finished and proven and **nothing has ever called
-`indexContent` outside its own self-test**, so the index is always empty and every chat
-turn queries it for nothing. Scope is settled (D-BD): messages keyed by conversation,
-indexed as they are saved, backfilled once at startup.
+Then **`PLANS.md` Step 5 — a settings screen, and with it the sampling parameters**
+(G-31), plus import/export (G-32). There is no settings surface at all, so temperature,
+top_p, top_k, min_p and the penalties cannot be set from the desktop application — they
+are absent, not defaulted badly. The plumbing is proven: `pipeline.prepare` passes unknown
+top-level keys through untouched and `pipeline-selftest` asserts it for `temperature`
+specifically. **The values get merged in `pipeline.chatBody`, not in the window** — that is
+where the body is built now, deliberately below the GUI layer so a self-test can see it.
 
 ## 9. Settled — do not re-raise
 
@@ -274,6 +232,7 @@ indexed as they are saved, backfilled once at startup.
 | **Licence** | AGPL-3.0; copyleft dependencies permitted |
 | **TUI** | Replaced by the window |
 | **Tray** | StatusNotifierItem over D-Bus, in Nim. It works |
+| **Retrieval** | Indexes chats (D-BD), fed per completed exchange (D-BI) |
 | **Unused files** | Archive to `.devdocs/ARCHIVE/`, never delete, never leave in the root |
 | **MCP** | Deferred by the USER. Largest thing in the Web UI — do not pick it up casually |
 | **Virtual file explorer** | Cancelled by the USER (D-AW). The Neovim page is the browser |

@@ -72,11 +72,12 @@ further down is left in place for the historical record; **this table overrides 
 | **Startup** | **`bin/jenova` starts its own server and backends.** One command. Settled at N-S6 and again here |
 | **Unused files** | Archive to `.devdocs/ARCHIVE/`. Never delete, never leave in the root (**D-AM**) |
 | **Claims** | **Never state what was not executed (D-AN) — and never deny what was (D-AS, D-BB).** Both halves are the rule. A "not yet run" label expires at the first evidence against it |
+| **Running the product** | **Do not (D-BJ).** Not the app, not `serve`, not the backends, not the suites — unless the USER asks in that message. **Building is not running.** And never enumerate processes or ports to see what the USER has open. **T-12 is closed**: two suites fail if anything already holds the machine's real ports, that is the whole of it, and it is never diagnosed again |
 | **The 2026-08-31 23:28 build** | **Run by the USER.** No appearance or rendering defect reported. The report from that run is that the GUI is missing Web UI features. **Do not re-add an "unrun" label to G-23, G-24, G-25 or G-27** |
 | **Language** | **Nim, plus `llama-server` from llama.cpp. That is the whole product.** No shell script, no Lua, no C, no Makefile (D-AM, **D-AZ**). Shell-format *config files* are exempt by the USER's own parenthetical at D-AI |
 | **The shell tree** | **Not to be repaired (D-AH, D-AZ).** The installer, the shell-era docs and the shell test scripts are scaffolding around the system being replaced. **Remaining work = what is missing from the Nim core**, never what is broken in the old one. **A reference to an archived file is fixed by deleting the reference or porting it to Nim — repairing the archived thing is never an outcome.** Deployment of the single binary is one decision after the rewrite |
 | **Surface** | **Everything is driven from the GUI (D-BC).** Anything that needs a terminal, a shell script or a hand-edited file is a defect, not a limitation |
-| **Retrieval** | **The index indexes chats (D-BD).** Fed as messages are saved, plus a backfill at startup |
+| **Retrieval** | **The index indexes chats (D-BD), and it is fed (D-BI).** A completed exchange is indexed when the reply lands — not each message as it is written, which would let a question retrieve itself. Existing history is backfilled once the embedding server answers, and a deleted turn is forgotten |
 | **Reports** | **Plain English first, ID second (D-BA).** No item, plan step or status line may lead with a bare tracker ID |
 | **Style** | Keep `.devdocs/` terse. **Do not quote the USER verbatim** — record the ruling, not the wording |
 | **CUDA** | **Not meaningfully available on FreeBSD.** `CUDA/dgpu-generic` is unreachable on the target platform, so its data defects (B-21, and the CUDA half of B-05) are moot. **Apply the platform constraint before raising anything about that profile** |
@@ -85,6 +86,110 @@ further down is left in place for the historical record; **this table overrides 
 ---
 
 ---
+
+---
+
+## D-BJ — **do not run the system. The USER's machine is not a test fixture.** — 2026-09-01
+
+**Ruled by the USER, 2026-09-01 12:25, after this had cost parts of four sessions.**
+
+**Until the migration is complete, a session does not run the product.** Not `bin/jenova`,
+not `jenova-core serve`, not the backends, not `nimble suites` — unless the USER asks for
+that specific thing in that message. **Building is not running.** `nimble core` and
+`nimble gui` produce a binary and touch nothing; running one takes over ports, loads
+gigabytes onto the GPU, and lands in the middle of whatever the USER is actually doing.
+
+**And a session never goes looking for what is running.** No process listing, no port
+enumeration, no health probe, no checking whether the app is open. **Nobody asked for an
+audit of the USER's machine.** This is the specific behaviour being stopped, because it is
+what turns one stray test result into twenty minutes of investigation that produces
+nothing.
+
+**T-12 is closed as a subject.** It is not a defect, not a mystery, and not a thing to
+re-derive. It means one fact and only one fact:
+
+> **`test_routes` and `test_lifecycle` fail if anything is already listening on the
+> machine's real ports.** The product refusing to start a second backend over a live one
+> is the product working correctly.
+
+A session that sees those failures records **nothing**, investigates **nothing**, and does
+not mention the USER's running application. The one-line fix — give both scripts their own
+dead upstream ports — sits in the `TODOS.md` Backlog and is done when the USER schedules
+it. **It is never diagnosed again.**
+
+**Why this keeps happening, so the next session recognises it in itself.** The failure
+mode is not curiosity, it is *verification appetite*: a green run feels like proof, so an
+unexplained red pulls a session into proving it. **The pull is the bug.** The rule that
+answers it: **evidence is only worth gathering for work the USER asked for.** An
+unexplained result on an unrequested run is not a finding — it is noise a session
+generated and then investigated.
+
+This is now the fourth entry recording a version of this. D-AS and D-BB were about denying
+what the USER had run; `BRIEFING.md` rule 12 was about stale "unrun" labels; Session 014
+recorded re-reporting T-12 three times and launching a crash investigation when the USER
+had simply closed the backend. **This one is broader than all of them and supersedes their
+operational half: do not run it, and do not look.**
+
+---
+
+## D-BI — how the chat index is fed, and the three calls that took — 2026-09-01
+
+Taken while building `PLANS.md` Step 4 (T-17). **D-BD had settled *what* is indexed —
+chats. It had not settled when, and the plan's phrasing ("index a message as it is
+saved") is wrong in a way that only shows up at runtime.** Three calls, all inside the
+approved scope, all recorded here so none is rediscovered as a bug.
+
+**1. The unit is a completed exchange, not a message.** `pipeline.prepare` queries this
+index **with the user's own words, on the way to the model**. A question indexed at the
+moment it is saved is therefore in the index *before* the request it belongs to has been
+answered — and comes back as its own top-ranked "context", handing the model the question
+it was just asked. Indexing when the **reply** lands removes the race rather than
+narrowing it: by then the request that could have retrieved itself is over. `indexExchange`
+takes a reply id and indexes it and its parent. **A question that never got an answer is
+not indexed** until the next start, which the backfill covers — an unanswered turn is not
+an exchange, and there is nothing to recall it alongside.
+
+The same rule runs on both surfaces: the window dispatches it from `umDone`, and the HTTP
+path fires only on an **assistant** row. Two surfaces applying one rule cannot build two
+different indexes.
+
+**2. The backfill waits for the embedding server; it does not run at startup.** Indexing
+during the seconds the embedder is still loading its model stores chunks with **no
+vector**, and nothing would ever revisit them — the whole of existing history would be
+permanently keyword-only, which looks exactly like working retrieval until someone asks a
+question in different words. It runs on the first poll where the embed backend answers:
+the window's control worker, the core's watchdog thread. Both are already awake on an
+interval and neither is serving a request.
+
+**And it is self-healing rather than once-only.** A message is skipped when it is indexed
+*and* carries a vector, so anything indexed while the embedder was down is picked up on a
+later start. That is what makes the gate safe rather than merely cautious.
+
+**3. Deletion forgets.** An index that keeps answering with turns the user deleted honours
+the deletion everywhere except in the one place they would notice. A message delete forgets
+that message; a conversation delete forgets its whole `chat/<convId>/` scope, because its
+messages are flagged in a single statement and there is no per-row site to hook. Forgetting
+happens **after** the transaction commits, so a delete that rolls back does not leave the
+index stripped.
+
+**The gap this leaves, stated rather than discovered later: restore does not re-index.**
+Nothing undoes a forget, so a message restored from the trash is recoverable everywhere
+except in what the model recalls, until the next start picks it up. Written into
+`PLANS.md` Step 8b, which is where the trash view is built.
+
+**A message occupies `chat/<convId>/<role>/<id>`.** The role is in the path and not in the
+indexed body: `rag.formatContext` prints the path above the snippet, so the model is told
+who said it, whereas a role word inside the body would be a keyword every query containing
+"user" could match. The shape also makes the `pathFilter` that already existed do the
+scoping — `chat` is every conversation, `chat/<convId>` is one — with no change to `query`.
+
+**The lesson worth carrying, and it is not about retrieval.** `rag.nim` was finished,
+proven by its own self-test, and **completely dead**: `indexContent` had no caller outside
+that test, so the index was always empty and every assertion still passed, because each
+supplied its own corpus. **A module can be fully asserted and never once executed by the
+program.** The four new `pipeline-selftest` assertions exist for that reason — they test
+the join, not the parts. Same shape as `serve` once failing to call `rag.initSchema()`
+with every suite green.
 
 ---
 
