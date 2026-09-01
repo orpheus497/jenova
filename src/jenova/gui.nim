@@ -655,6 +655,48 @@ proc trayMenu(lanEnabled: bool): seq[TrayItem] =
     TrayItem(kind: tiAction, id: 12, label: "Quit", action: "quit"),
   ]
 
+## Function purpose: the reason the backend gave for exiting, so the notice says
+## something actionable instead of "it exited".
+##
+## Action purpose: **the last error line, searched from the end.** The log is
+## hundreds of kilobytes and grows across runs, so only the tail is read; a
+## failed model load puts its diagnosis in the final few lines and the
+## interesting one is the last line marked `E`. Falls back to naming the file,
+## which is still better than silence.
+proc lastBackendError(logPath: string): string =
+  const Tail = 8192
+  var text = ""
+  try:
+    let f = open(logPath)
+    defer: f.close()
+    let size = f.getFileSize()
+    if size > Tail: f.setFilePos(size - Tail)
+    text = f.readAll()
+  except CatchableError:
+    return "see " & logPath
+  let lines = text.splitLines
+  var fallback = ""
+  for i in countdown(lines.high, 0):
+    let t = lines[i].strip
+    if t.len == 0: continue
+    # llama.cpp's own severity marker: `0.04.076.241 E llama_model_load: …`.
+    # The vulkan allocator prints without one, so that prefix is matched too.
+    if not (t.contains(" E ") or t.startsWith("ggml_vulkan:")): continue
+    # Action purpose: **the last error line is the least useful one.** llama.cpp
+    # ends a failed load with "exiting due to model loading error", which says
+    # only that it failed; the line that says *why* — the allocator running out
+    # of device memory, say — is a few lines above it. So the epilogue lines are
+    # kept as a fallback and the search continues past them for a real cause.
+    if t.contains("exiting due to") or t.contains("cleaning up before exit") or
+       t.contains("failed to load model") or t.contains("common_init_"):
+      if fallback.len == 0: fallback = t
+      continue
+    return (if t.len > 180: t[0 ..< 180] & "…" else: t) & "  (" & logPath & ")"
+  if fallback.len > 0:
+    return (if fallback.len > 180: fallback[0 ..< 180] & "…" else: fallback) &
+           "  (" & logPath & ")"
+  "see " & logPath
+
 proc ctlWorker() {.thread.} =
   # Whether `/props` has been read for the backend currently up. Cleared when it
   # goes down, so a restart or a model switch re-reads it rather than reporting
@@ -665,10 +707,15 @@ proc ctlWorker() {.thread.} =
   # what it already indexed stays indexed.
   var backfilled = false
   var embedConfigured = false
+  # Whether this start's failure has already been reported. Reset by `start` and
+  # `restart` so a retry is announced again, and by the backend coming up.
+  var exitAnnounced = false
   while true:
     let j = ctlReq.recv()
     if j.action == QuitSentinel: break
     if j.action in ["stop", "restart"]: propsRead = false
+    # A new attempt is a new chance to fail, and its failure must be announced.
+    if j.action in ["start", "restart"]: exitAnnounced = false
     # Action purpose: `rag`'s embedding address is a threadvar, so it is set on
     # whichever thread configured it — the main one — and this worker would
     # otherwise fall back to the default port and silently index without vectors
@@ -704,8 +751,29 @@ proc ctlWorker() {.thread.} =
       discard runCapture("xdg-open", ["http://127.0.0.1:" & $j.port])
     of "poll":
       let up = j.lc.healthy(beLlama, timeoutMs = 300)
+      # Action purpose: **`running`, not `pid > 0`.** `state` already resolves
+      # liveness with `kill(pid, 0)`; this read only the pid, and a pidfile
+      # outlives the process it names. So a backend that started and then
+      # exited — an out-of-memory model load takes about four seconds — left
+      # `pid > 0` true forever and the window sat on "starting" with nothing
+      # ever contradicting it. That is the whole defect.
+      let ps = j.lc.state(beLlama)
       uiChan.send(UiMsg(kind: umStatus, status:
-        if up: bsUp elif j.lc.state(beLlama).pid > 0: bsStarting else: bsDown))
+        if up: bsUp elif ps.running: bsStarting else: bsDown))
+
+      # Action purpose: a dead process whose pidfile survives is the *only*
+      # evidence the backend was asked to run and failed — `pid > 0` with
+      # `running` false cannot happen any other way, because nothing writes a
+      # pidfile without forking. Announced **once** per start, or the notice
+      # line would rewrite itself every three seconds.
+      if not up and ps.pid > 0 and not ps.running:
+        if not exitAnnounced:
+          exitAnnounced = true
+          uiChan.send(UiMsg(kind: umNotice, text:
+            "the backend started and then exited — " &
+            lastBackendError(j.lc.logFileFor(beLlama))))
+      elif up:
+        exitAnnounced = false
       # Read once per backend lifetime, on this thread: `/props` is a socket
       # round trip and the poll already runs here every few seconds, so it costs
       # nothing extra and never touches the GTK loop.
