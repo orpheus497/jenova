@@ -503,6 +503,38 @@ proc main() =
         check("a sampling parameter survives the pipeline",
               body{"temperature"}.getFloat(0.0) == 0.7)
 
+      block outboundBody:
+        # Action purpose: **this is the assertion whose absence let Continue ship
+        # broken twice.** The window's request body used to be built inside
+        # `gui.nim`, where no self-test could reach it, so a body that the server
+        # refuses outright looked identical to a correct one from every angle
+        # except running the program. `pipeline.chatBody` exists to be checked
+        # here.
+        let normal = parseJson(pipeline.chatBody(
+          %*[{"role": "user", "content": "hi"}]))
+        check("an ordinary turn asks for live timings",
+              normal{"timings_per_token"}.getBool(false))
+        check("an ordinary turn asks for reasoning to be split out",
+              normal{"reasoning_format"}.getStr == "auto")
+        check("an ordinary turn does NOT ask to continue anything",
+              not normal.hasKey("continue_final_message") and
+              not normal.hasKey("add_generation_prompt"))
+
+        let cont = parseJson(pipeline.chatBody(
+          %*[{"role": "user", "content": "count"},
+             {"role": "assistant", "content": "1, 2,"}], continuing = true))
+        check("a continuation names what it is continuing",
+              cont{"continue_final_message"}.getStr == "content")
+        # The half that was missing. `llama-server` refuses the request with
+        # HTTP 400 — "Cannot set both add_generation_prompt and
+        # continue_final_message to true" — when this is absent, so Continue
+        # failed outright rather than merely behaving oddly.
+        check("a continuation turns the generation prompt OFF",
+              cont.hasKey("add_generation_prompt") and
+              cont{"add_generation_prompt"}.getBool(true) == false)
+        check("a continuation still ends on the assistant turn being extended",
+              cont{"messages"}[^1]{"role"}.getStr == "assistant")
+
       if bad == 0:
         echo ""
         echo "pipeline-selftest: PASS"

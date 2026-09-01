@@ -94,10 +94,21 @@ Raised by the USER running the build: **Continue made the model repeat its previ
 answer instead of extending it.** Investigating it found three things, and the second is
 the one worth keeping.
 
-**1. The server needs to be told.** `continue_final_message` — `true`, `"content"` or
-`"reasoning_content"` (`common/chat.cpp:565`). Absent, the chat template gets
-`add_generation_prompt = true`, closes the assistant turn and starts a new one. We send
-`"content"`.
+**1. The server needs to be told — with BOTH fields.** `continue_final_message`
+(`true`, `"content"` or `"reasoning_content"`, `common/chat.cpp:565`) **and**
+`add_generation_prompt: false`.
+
+> **CORRECTED 2026-09-01 — the first attempt sent only the first field and was refused.**
+> `llama-server` answers **HTTP 400**: *"Cannot set both add_generation_prompt and
+> continue_final_message to true."* So Continue went from silently re-answering to
+> failing outright, which is worse, and the USER hit it immediately. **I read the field
+> out of the schema and never sent one request to check it** — a single `curl` would have
+> shown it. Both fields are now sent, and the corrected form is verified against the live
+> server: `"1, 2,"` continues to `"1, 2, 3, 4, 5"`, streaming and not, direct to :8081 and
+> through :8080.
+>
+> **Streaming emits only the new tokens**, not the prefix (non-streaming returns the whole
+> message). The window streams, so appending to the existing message is correct.
 
 **2. `jca_web` is the parity reference, not the correctness reference.** It does not send
 `continue_final_message` anywhere, so **its Continue is broken in the same way**. D-Z
@@ -117,9 +128,20 @@ UI, Continue is hidden when the message carries reasoning
   becomes a setting at Step 5, and that is recorded there rather than left as a silent
   divergence.
 
-**The standing rule this produces:** *a feature copied from `jca_web` is copied for its
-scope. Its behaviour is verified against `llama-server`'s own source before it is called
+**The standing rule this produces, amended 2026-09-01 after the first version of it was
+not enough:** *a feature copied from `jca_web` is copied for its scope. **Its behaviour is
+verified by sending one request to a running `llama-server`** before it is called
 finished.*
+
+Reading the source was what the rule first said, and reading the source is what produced
+the HTTP 400 — the schema showed the field and not the constraint on it. **One `curl` is
+the standard, not one `grep`.**
+
+**And the structural half of the same lesson:** the request body was built inside
+`gui.nim`, where nothing below the window could assert it. It now lives in
+`pipeline.chatBody` with six assertions over it. **A request body belongs below the GUI
+layer for the same reason the branching tree walk does** — both are logic whose failure is
+invisible until a person runs the program.
 
 ---
 
@@ -146,9 +168,10 @@ the tree, so the tree does not lift it.
 **CORRECTED 2026-09-01 — Continue did not work when this was written.** Putting the
 partial reply at the end of the message array is necessary and **not sufficient**:
 `llama-server` applies the chat template with `add_generation_prompt = true` unless the
-request carries **`continue_final_message`**, which closes the assistant turn and opens a
-new one — so the model re-answers instead of extending. The request now sends
-`continue_final_message: "content"` (`common/chat.cpp:565` gives the accepted values).
+request carries **`continue_final_message`** *and* **`add_generation_prompt: false`** —
+otherwise it closes the assistant turn and opens a new one, and sending only the first of
+the two is refused with HTTP 400. Both are sent now; see D-BH, which records that the
+first attempt sent one and was rejected.
 
 **And the Web UI does not send it either**, so its own Continue has the same defect
 against this server. Copying the message shape from a reference client without checking

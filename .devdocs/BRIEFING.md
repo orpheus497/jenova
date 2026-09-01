@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-09-01 11:07 (Session 014)
+**Last updated:** 2026-09-01 11:37 (Session 014)
 **Branch:** `bsd`
 
 ---
@@ -83,16 +83,23 @@ behaviour from a summary or from `jca_web` instead of from the source.
    Fixed by a migration in `db.initDb` that chains each conversation in written order,
    idempotently. **`D-BG` had claimed no migration was needed; that was false and is
    corrected there.**
-2. **Continue made the model repeat itself.** The partial reply at the end of the array is
-   necessary and not sufficient — `llama-server` needs **`continue_final_message`** or it
-   closes the assistant turn and starts a new one. Now sent.
+2. **Continue made the model repeat itself, and the first fix made it fail outright.**
+   `llama-server` needs **`continue_final_message` *and* `add_generation_prompt: false`**;
+   sending only the first is refused with HTTP 400. Both are sent now and verified against
+   a running server.
+3. **An assistant turn with no visible text was silently discarded**, leaving an empty
+   bubble on screen and out of the tree, so the next message attached to a stale parent.
+   Now saved when it carries reasoning, and removed from the path when it carries nothing.
 
-**The rule (D-BH): `jca_web` defines what features exist. `llama-server`'s source defines
-how they behave.** They answer different questions, and `jca_web` does not send that flag
-either — its own Continue is broken the same way.
+**The rule (D-BH): `jca_web` defines what features exist. One request to a running
+`llama-server` defines how they behave.** Reading the source was the first version of that
+rule and it was not enough — the schema showed the field and not the constraint on it,
+which is how the HTTP 400 got shipped. **One `curl`, not one `grep`.**
 
-**And the testing lesson:** `tree-selftest` asserted the tree shape branching *creates*
-and never the flat shape it *inherits*. It is now 26 assertions, covering both.
+**And the structural lesson, twice over: logic the GUI owns cannot be tested.** The
+branching tree walk moved to `api.nim` and the request body moved to `pipeline.chatBody`
+for the same reason — both fail invisibly until a person runs the program.
+`tree-selftest` is 26 assertions, `pipeline-selftest` 10.
 
 ### Step 3 — conversation branching (G-29)
 

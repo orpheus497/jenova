@@ -2,7 +2,7 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-09-01 11:07 (Session 014)
+**Last updated:** 2026-09-01 11:37 (Session 014)
 
 **Write plans in plain English, then cite the ID** (**D-BA**). A step that reads
 "resolve G-23" tells the reader nothing. Say what the thing is first.
@@ -106,9 +106,10 @@ is `PROGRESS.md` 2026-09-01 10:17; the scoping call is **D-BF**.
 D-BG): edit resends, regenerate works on any reply. Continue stays on the last turn, and
 is additionally hidden on a turn carrying reasoning (**D-BH**).
 
-**Continue also shipped broken and was repaired the same day** — the request has to carry
-`continue_final_message` or `llama-server` starts a new turn instead of extending the
-existing one. See `PROGRESS.md` 2026-09-01 11:07.
+**Continue shipped broken twice and was repaired the same day.** The request has to carry
+**both** `continue_final_message` and `add_generation_prompt: false` — the first alone is
+refused with HTTP 400. See `PROGRESS.md` 2026-09-01 11:37 and **D-BH**. The request body
+now lives in `pipeline.chatBody`, below the GUI, so a self-test can see it.
 
 ---
 

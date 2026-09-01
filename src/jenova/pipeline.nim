@@ -304,3 +304,36 @@ proc cacheStore*(key, response: string) =
             "VALUES (?, ?, strftime('%s','now'))", key, response)
   except CatchableError:
     discard
+
+## Function purpose: the request body the desktop window posts for one chat turn.
+##
+## **It lives here rather than in `gui.nim` for the reason the branching tree walk
+## lives in `api.nim`: nothing below the window could see it.** A request body
+## that is subtly wrong does not fail to compile and does not fail a suite — it
+## fails at the server, at runtime, in front of the USER. Continue shipped twice
+## broken because the body was built inside the GUI where no self-test could
+## reach it. `pipeline-selftest` now asserts this directly.
+##
+## Three of the four keys are requests for data `llama-server` will not send
+## unless asked, and none of them changes what the model generates:
+##
+## * `timings_per_token` — attach `timings` to **every** chunk rather than only
+##   the last, so the token counts and rate on screen are live (G-33).
+## * `reasoning_format: "auto"` — split a reasoning model's thinking into
+##   `reasoning_content` instead of leaving it inline in the answer (G-39).
+##
+## **`continuing` needs both of its fields.** `continue_final_message` on its own
+## is refused with *"Cannot set both add_generation_prompt and
+## continue_final_message to true"* (HTTP 400) — the generation prompt has to be
+## turned off explicitly as well, or the template closes the assistant turn and
+## the model starts a fresh answer instead of extending the one it is given.
+## Verified against a running server, not read out of the schema (**D-BH**).
+proc chatBody*(messages: JsonNode, continuing = false): string =
+  var req = %*{"messages": messages, "stream": true,
+               "timings_per_token": true, "reasoning_format": "auto"}
+  if continuing:
+    # `"content"` and not `true`: what is being resumed is the visible answer,
+    # never the reasoning.
+    req["continue_final_message"] = %"content"
+    req["add_generation_prompt"] = %false
+  $req

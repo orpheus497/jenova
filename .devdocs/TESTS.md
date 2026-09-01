@@ -3,7 +3,7 @@
 Test specifications, validation criteria and expected outcomes. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 11:07 (Session 014).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 11:37 (Session 014).
 Mandated from the outset; absent for Sessions 001–003. See `DECISIONS_LOG.md` C-10.
 
 > **§5a onward are stage acceptance records** — what each stage had to prove and how. They are
@@ -230,13 +230,32 @@ body. If it ever dropped keys it did not recognise, both features would go quiet
 with every other test in the project still green — no error, no log line, just numbers
 that never appear.
 
-**Now four assertions.** `continue_final_message` joined them 2026-09-01: without it
-reaching the server, Continue makes the model restart its answer instead of extending it,
-which is exactly what shipped. Sampling parameters travel the same path, so `temperature`
-is asserted alongside them — Step 5 depends on the same property.
+**Now ten assertions, in two groups.**
 
-**Proven able to fail:** a one-line `req.delete("timings_per_token")` in `prepare` turns
-the first assertion red.
+**Four on the pass-through:** unknown top-level keys survive `prepare` with their values
+intact. Sampling parameters travel the same path, so `temperature` is asserted alongside
+them — Step 5 depends on the same property. **Proven able to fail** by a one-line
+`req.delete("timings_per_token")` in `prepare`.
+
+**Six on the outbound body, and these exist because their absence let Continue ship broken
+twice.** The window's request body used to be built inside `gui.nim`, where no self-test
+could reach it — so a body the server *refuses outright* looked identical to a correct one
+from every angle except running the program. It now lives in `pipeline.chatBody`.
+
+| Asserted | Why |
+|---|---|
+| An ordinary turn asks for live timings and for reasoning to be split out | The two features depend on the server being asked |
+| An ordinary turn does **not** ask to continue anything | Sending the continuation fields on every turn would change what the model does |
+| A continuation names what it is continuing (`"content"`) | Not `true`, and never `reasoning_content` — the visible answer is what is resumed |
+| **A continuation turns the generation prompt OFF** | The half that was missing. Without it `llama-server` answers **HTTP 400** — *"Cannot set both add_generation_prompt and continue_final_message to true"* — so Continue failed outright rather than merely behaving oddly |
+| A continuation still ends on the assistant turn being extended | The fields are meaningless without the partial reply as the tail |
+
+**Proven able to fail:** dropping the `add_generation_prompt` line turns *a continuation
+turns the generation prompt OFF* red and nothing else.
+
+**Also verified against a running server, which is what the earlier attempt skipped:**
+`"1, 2,"` continues to `"1, 2, 3, 4, 5"` — non-streaming returns the whole message,
+streaming emits only the new tokens. The window streams, so appending is correct.
 
 ## 5i. `tests/test_nvimctl.sh` — the live editor buffer (G-18, 2026-08-31)
 

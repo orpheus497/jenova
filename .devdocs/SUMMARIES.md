@@ -5,6 +5,29 @@ One short paragraph per session. Sessions 001-005 are in
 
 ---
 
+## Session 014 — 2026-09-01 11:37
+
+**The 11:07 Continue fix was itself broken and the USER hit it immediately.**
+`continue_final_message` on its own is refused — `llama-server` answers **HTTP 400**,
+*"Cannot set both add_generation_prompt and continue_final_message to true"* — so Continue
+went from silently re-answering to failing outright. I had read the field out of the
+schema and shipped it **without sending one request**. Both fields are sent now and
+verified against a running server. **The empty bubble was mine too:** `saveMessage`
+refused any turn with empty `content`, which was harmless while the transcript was a flat
+list and not once the tree became the source of truth — `umDone` read the empty id as
+"nothing happened", so the reply stayed on screen, stayed out of the tree, and the next
+message attached to a stale parent. Fixed three ways: a turn with reasoning is saved, a
+turn with nothing is removed from the path rather than left as a ghost card, and an
+all-reasoning reply opens its reasoning box. **The structural fix matters more than
+either:** the request body moved out of `gui.nim` into `pipeline.chatBody`, because a body
+the server refuses looks identical to a correct one from every angle except running the
+program — the same lesson as the branching tree walk moving to `api.nim`, now two for two.
+`pipeline-selftest` has ten assertions, red-proofed. **The server was never at fault** —
+the USER's exact failing conversation replays in 1.1 seconds. **And twice I treated the
+USER using their own machine as a defect**, re-reporting T-12 three times and then
+investigating a crash that was them closing the backend; they had to stop me both times.
+Below, the rest of the session.
+
 ## Session 014 — 2026-09-01 11:07
 
 **The USER ran the build and found two defects, both mine and both the same mistake:

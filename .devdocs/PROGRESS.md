@@ -2,7 +2,7 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-09-01 11:07 (Session 014)
+**Last updated:** 2026-09-01 11:37 (Session 014)
 
 > **Reading the "UNRUN" labels in this file.** Entries below are point-in-time records
 > and several were written with a "compiled; UNRUN" status that was true on the day.
@@ -15,6 +15,33 @@ Macro progress tracking. Most recent entries at the top.
 ---
 
 ## Completed
+
+### 2026-09-01 11:37 — **Continue actually fixed, the ghost bubble removed, and the request body moved somewhere a test can see it.**
+
+**Continue was still broken after the 11:07 "fix".** `continue_final_message` on its own is
+refused: `llama-server` answers **HTTP 400 — "Cannot set both add_generation_prompt and
+continue_final_message to true."** It needs `add_generation_prompt: false` as well. **Both
+are sent now**, verified against a running server: `"1, 2,"` continues to
+`"1, 2, 3, 4, 5"`, streaming and non-streaming, direct to :8081 and through :8080. In
+streaming the server emits only the new tokens, so appending to the existing message is
+right.
+
+**The ghost bubble.** `saveMessage` refused any turn with empty `content`, which was
+harmless while the transcript was a flat list. With the tree it meant `umDone` read the
+empty id as "nothing happened": the reply stayed on screen, stayed out of `allMessages`,
+and left `leaf` on the previous turn — so the next message attached to a stale parent and
+became an unwanted sibling. **Now:** a turn with reasoning but no visible text is saved,
+and a turn with genuinely nothing is removed from the path instead of left as an empty
+card. A reasoning model's reply also opens its reasoning box when the answer is empty,
+rather than showing a blank bubble above a collapsed one.
+
+**The request body moved from `gui.nim` into `pipeline.chatBody`.** This is the same
+lesson as the branching tree walk: **a request body that the server refuses looks
+identical to a correct one from every angle except running the program.** Built inside the
+window, nothing below the GUI could assert it, which is why Continue shipped broken twice.
+`pipeline-selftest` now has six assertions over it, including that a continuation turns
+the generation prompt off — **proven able to fail**, and it is exactly the check that was
+missing.
 
 ### 2026-09-01 11:07 — **Two defects the USER found by running the build, both from the same failure: reading a summary instead of the source.**
 

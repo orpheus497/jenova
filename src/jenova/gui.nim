@@ -448,7 +448,13 @@ proc timingsFromJson(s: string): Timings =
 proc saveMessage(convId: string, role: Role, text: string,
                  thinking = "", model = "", timings = Timings(),
                  parent = ""): string =
-  if convId.len == 0 or text.len == 0: return ""
+  # Action purpose: **a turn with no visible text but with reasoning is still a
+  # turn.** This refused anything with an empty `content`, which was harmless
+  # while the transcript was a flat list and is not now: `umDone` read the empty
+  # id back as "nothing happened", so the reply stayed on screen, stayed out of
+  # the tree, and left the next message attaching to a stale parent. A reasoning
+  # model whose whole reply is reasoning hits this every time.
+  if convId.len == 0 or (text.len == 0 and thinking.len == 0): return ""
   result = $genOid()
   db.exec("INSERT INTO messages (id, convId, type, role, timestamp, content, " &
           "thinking, model, timings, parent, is_deleted) " &
@@ -773,6 +779,13 @@ viewable App:
                   st.edges = edgesOf(st.allMessages)
                   st.leaf = saved
                   saveLeaf(st.convId, saved)
+                else:
+                  # Nothing was generated at all. **Leaving it in the path is the
+                  # ghost bubble the USER saw**: an empty card, visible until the
+                  # next rebuild, absent from the tree, and with `leaf` still on
+                  # the previous turn — so the next message attached to a stale
+                  # parent and became an unwanted sibling.
+                  st.messages.delete(st.messages.len - 1)
             # The reply bumped `lastModified`, so the cached list is now in the
             # wrong order. Refreshed here rather than in `view` for the reason
             # `convs` is cached at all.
@@ -1142,29 +1155,12 @@ proc postConversation(app: AppState, continuing = false) =
   for m in app.messages:
     if m.role == rAssistant and m.text.len == 0: continue
     msgs.add %*{"role": $m.role, "content": m.text}
-  # Action purpose: both flags are requests for data the server will otherwise
-  # not send, and neither changes what the model generates.
-  #
-  # * `timings_per_token` makes `llama-server` attach its `timings` object to
-  #   **every** chunk instead of only the last one. Without it the token counts
-  #   and tokens-per-second appear once, after the reply has finished, which is
-  #   exactly when they have stopped being interesting (G-33).
-  # * `reasoning_format: "auto"` makes it split a reasoning model's thinking into
-  #   `reasoning_content` instead of leaving it inline in the answer as a
-  #   `<think>` block the reader has to skip past (G-39).
-  #
-  # `pipeline.prepare` re-serialises the whole request object, so unknown
-  # top-level keys reach the upstream untouched — which is why this is the whole
-  # of the plumbing.
-  var req = %*{"messages": msgs, "stream": true,
-               "timings_per_token": true, "reasoning_format": "auto"}
-  if continuing:
-    # `"content"` and not `true`: the accepted values are `true` (auto),
-    # `"content"` and `"reasoning_content"` (`common/chat.cpp:565`), and what is
-    # being resumed here is the visible answer, never the reasoning.
-    req["continue_final_message"] = %"content"
+  # The body is built by `pipeline.chatBody`, not here, so a self-test can see
+  # it. Continue shipped broken twice while the body lived in this file, where
+  # nothing below the window could assert it.
   let port = app.cfg.getInt("PORT", 8080)
-  streamReq.send(StreamJob(host: "127.0.0.1", port: port, body: $req))
+  streamReq.send(StreamJob(host: "127.0.0.1", port: port,
+                           body: pipeline.chatBody(msgs, continuing)))
 
 proc send(app: AppState) =
   let text = app.draft.strip
@@ -1804,9 +1800,15 @@ proc mainArea(app: AppState): Widget =
                     if m.thinking.len > 0:
                       Expander {.expand: false.}:
                         label = "Reasoning"
+                        # Open while this turn is streaming, and **open whenever
+                        # the answer is empty** — a reasoning model can put its
+                        # entire reply in `reasoning_content`, and a collapsed box
+                        # above an empty card is indistinguishable from the model
+                        # having said nothing.
                         expanded = app.expanded.getOrDefault(
                           "think:" & (if m.id.len > 0: m.id else: "live"),
-                          app.streaming and i == app.messages.len - 1)
+                          m.text.len == 0 or
+                          (app.streaming and i == app.messages.len - 1))
                         proc activate(on: bool) =
                           app.expanded["think:" & (if m.id.len > 0: m.id
                                                    else: "live")] = on

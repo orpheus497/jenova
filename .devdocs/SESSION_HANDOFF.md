@@ -147,6 +147,58 @@ names new to this project — `view-refresh-symbolic` and `media-playback-start-
 are standard Adwaita symbolics but have not been confirmed to render, and a missing icon
 shows as a broken placeholder rather than failing the build. **That is a screen check.**
 
+### Part six — the 11:07 fix was itself broken. Continue actually works now.
+
+**Instruction:** the USER reported it had got worse — models not continuing, and an empty
+chat bubble on old conversations. *Analyse and investigate, no hot fixes.* Then, on the
+report: proceed, update all documentation, report for handoff.
+
+**Continue was still broken.** `continue_final_message` on its own is **refused** —
+`llama-server` answers HTTP 400, *"Cannot set both add_generation_prompt and
+continue_final_message to true."* It needs `add_generation_prompt: false` as well. I had
+read the field out of `server-schema.cpp` and shipped it **without sending a single
+request**, so Continue went from silently re-answering to failing outright. Both fields are
+sent now and the corrected form is verified against a running server: `"1, 2,"` →
+`"1, 2, 3, 4, 5"`, streaming and not, direct to :8081 and through :8080. Streaming emits
+only the new tokens, so appending to the existing message is right.
+
+**The empty bubble was mine too, and it is the more interesting one.** `saveMessage`
+refused any turn whose `content` was empty. That was harmless while the transcript was a
+flat list; with the tree it meant `umDone` read the empty id back as *nothing happened* —
+so the reply stayed on screen, stayed **out of `allMessages`**, and left `leaf` on the
+previous turn. The next message then attached to a stale parent and became an unwanted
+sibling. **I introduced that coupling and never checked the path.** A turn carrying
+reasoning but no visible text is now saved; a turn carrying nothing is removed from the
+path instead of left as a ghost card; and a reply that is all reasoning opens its reasoning
+box rather than showing a blank bubble above a collapsed one.
+
+**The structural fix is the part worth carrying forward.** The request body was built
+inside `gui.nim`, where **nothing below the window could assert it** — a body the server
+refuses outright looks identical to a correct one from every angle except running the
+program. It moved to `pipeline.chatBody`, and `pipeline-selftest` now has six assertions
+over it including *a continuation turns the generation prompt OFF*, proven able to fail.
+**This is the same lesson as the branching tree walk moving to `api.nim`**, and it is now
+two for two: logic the GUI owns is logic nothing can test.
+
+**Investigation notes worth keeping:** the server and pipeline were never at fault — the
+USER's exact failing conversation replays through :8080 with all the new flags in 1.1
+seconds. The two sibling user turns in their data are `saveEdit` working as designed
+(D-BG); those arrows are correct. The migration had run: one root, every other message
+chained.
+
+**Two process failures of mine, both the same shape.** I treated the USER running their
+own application as evidence of a defect — first re-deriving and re-reporting T-12 three
+times when it only ever meant *two suites cannot run while the app is open*, then
+launching into a crash investigation when they had simply closed the backend. **Both were
+noise I generated, and the USER had to stop me twice.**
+
+**Files touched:** `src/jenova/pipeline.nim` (`chatBody`), `src/jenova/gui.nim`
+(`saveMessage`'s guard, `umDone`'s empty-turn path, the reasoning default, posting through
+`chatBody`), `src/jenova_core.nim` (six new assertions).
+
+**Verification:** both binaries build, all six suites and all six self-tests pass, the new
+assertion red-proofed, and the corrected Continue confirmed against a live backend.
+
 ### Part five — the USER ran the build and it was wrong in two ways. Both were mine, and both were the same mistake.
 
 **Instruction:** *analyse and investigate, then report — no hot fixes.* Then, on the
@@ -329,12 +381,25 @@ left alone rather than killed to get a green board.
 there. Under `nimble suites` it passes 5/5, as it did three times this session. **Run
 the suites through `nimble suites`, not by calling the scripts.**
 
-### Next
+### Next — read this first if you are picking this up
 
-**A screen run first.** Steps 1-3, the statistics and the reasoning view are all built
-and everything assertable about them is asserted, but nothing has been on screen. The two
-things only the window settles are the four new icon names and a live stream through the
-new parser.
+**A screen run, and it is the only thing standing between here and Step 4.** The build has
+been run twice by the USER and produced defects both times; all of them are fixed and
+asserted, but **no fix has been confirmed on screen.** What to check, in order:
+
+1. **An old conversation reads as a transcript** — no version arrows on ordinary turns.
+   Arrows on a turn you edited are correct.
+2. **Continue extends an answer** instead of restarting it or erroring.
+3. **No empty bubbles**, and a reply is never lost.
+4. **The four icons render:** `view-refresh-symbolic`, `media-playback-start-symbolic`,
+   `go-previous-symbolic`, `go-next-symbolic`. A missing one shows as a placeholder rather
+   than failing the build.
+5. **Statistics appear under a reply** and count up while it streams.
+
+**Do not read the USER running or closing their own application as a defect.** T-12 means
+only that `test_routes` and `test_lifecycle` cannot run while `bin/jenova` is open — say
+so once and wait, do not re-derive it. A backend that has gone away is usually the USER
+closing it.
 
 **Then `PLANS.md` Step 4 — make the search index chats** (T-17). `rag.nim` is finished
 and proven, and **nothing has ever called `indexContent` outside its own self-test**, so
