@@ -683,7 +683,11 @@ proc commitRename(app: AppState, entity, id: string) =
         if n.id == id: node["workspaceId"] = %n.parent
       for n in app.folders:
         if n.id == id: node["projectId"] = %n.parent
-      discard api.putEntity(entity, node)
+      # A container rename now moves its directory, and a move that cannot be
+      # done rolls the row back (T-14). Discarding the result would leave the
+      # sidebar showing the old name with no explanation of why it did not take.
+      if not api.putEntity(entity, node):
+        app.notice = "could not rename: the folder on disk could not be moved"
       app.reloadTree()
   app.renaming = ""
 

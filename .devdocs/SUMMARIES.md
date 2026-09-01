@@ -5,6 +5,41 @@ One short paragraph per session. Sessions 001-005 are in
 
 ---
 
+## Session 014 — 2026-09-01 09:58
+
+Verification first, then `PLANS.md` **Step 1 built**. Twenty-four tracker claims that
+name a file and a line were checked against the source and **all twenty-four hold**;
+four small documentation gaps were found and filed, including that `TODOS.md` had no
+**Backlog** section despite `AGENTS.md` mandating one, and that two defects reported last
+session — dead `paned` CSS and a `.glow-text` class applied to nothing — had never become
+work items (**G-37**, **G-38**). Then the fix: **renaming a workspace, project or folder
+now moves its directory instead of stranding every file underneath it** (T-14).
+`api.mirrorUpsert` had no `projects` or `folders` branch at all — both fell through to
+`else: true` — and `syncWorkspace` only ever created, so a rename moved the row and left
+the tree behind. `fssync` gained `containerDir` and `renameContainer`, a failed move
+rolls the row back, and a rename onto an occupied path is **refused rather than merged**
+because a merge has no undo (**D-BE**); the GUI now shows the refusal instead of
+discarding it. A latent hazard was closed on the way past — `syncWorkspace` would have
+deleted a directory a rename had just moved into place when `git init` failed. **17
+assertions added to `test_api_fs.sh` and proven able to fail**: run against the unfixed
+source they produce 12 failures, and the suite caught one of my own bad assertions on
+its first run. Both binaries build, the FreeBSD guard was confirmed to *fire*, all six
+suites and five self-tests pass, no stubs or placeholders anywhere in `src/`, and the
+rename path skips all database and path work when neither the name nor the parent
+changed. **And the last suite run of the session went red, which solved T-12** — open
+since Session 012 with an unknown trigger. `test_routes` failed exactly the five
+assertions T-12 names, because the USER had started the desktop app in the meantime and
+the suite never overrides the upstream port: it expects a 502 meaning "no `llama-server`
+answered" while talking to the real backend on 8081. Given a dead upstream port the same
+binary passes 13/13 with the app still running, and the timeline is dated on both sides —
+six suites green three times between 09:56 and 09:58, the app started at 10:01:13.
+Chasing it found **a second suite with the same coupling**: `test_lifecycle` runs
+`backends health` and `backends start` with no port override, so the product's correct
+"port 8081 is already in use" refusal reads as a failure. **Neither is a product fault**
+— the fix is filed and not taken, being outside the approved scope, and the USER's
+running application was left alone rather than killed for a green board.
+Next is **Step 2, message actions** (G-28). Detail in `SESSION_HANDOFF.md` Session 014.
+
 ## Session 013 — 2026-09-01
 
 A verification pass with no code changed: all eleven trackers read in full, then

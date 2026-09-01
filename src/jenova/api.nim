@@ -163,7 +163,35 @@ proc mirrorUpsert(e: Entity, node: JsonNode, prior: Table[string, string],
                   existed: bool): bool =
   case e.name
   of "workspaces":
-    fssync.syncWorkspace(node.f "name")
+    fssync.syncWorkspace(node.f "name",
+                         (if existed: prior.field("name") else: ""))
+  of "projects":
+    # Action purpose: a project's directory is named after the project and sits
+    # inside its workspace's, so both a rename and a move to another workspace
+    # relocate it. Until this branch existed both fell through to `else: true`
+    # and every note and asset under the project was stranded on disk (T-14).
+    #
+    # The name and parent are compared *before* calling, because resolving a
+    # container's directory costs a database lookup per ancestor and the Web UI
+    # re-posts whole rows: an upsert that changed neither must not pay for four
+    # queries and two path builds to discover it has nothing to move. An insert
+    # has nothing to move either — the directory appears when the first note or
+    # asset is written into it, which `physicalPath` already handles.
+    if existed and (prior.field("name") != node.f("name") or
+                    prior.field("workspaceId") != node.f("workspaceId")):
+      fssync.renameContainer("projects", prior.field("name"),
+                             prior.field("workspaceId"),
+                             node.f "name", node.f "workspaceId")
+    else:
+      true
+  of "folders":
+    if existed and (prior.field("name") != node.f("name") or
+                    prior.field("projectId") != node.f("projectId")):
+      fssync.renameContainer("folders", prior.field("name"),
+                             prior.field("projectId"),
+                             node.f "name", node.f "projectId")
+    else:
+      true
   of "notes":
     let okFs = fssync.syncNote(node.f "id", node.f "title", node.f "content",
                                node.f "folderId", node.f "projectId",

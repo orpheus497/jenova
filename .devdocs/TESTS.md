@@ -3,7 +3,7 @@
 Test specifications, validation criteria and expected outcomes. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 (Session 013).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-01 09:58 (Session 014).
 Mandated from the outset; absent for Sessions 001–003. See `DECISIONS_LOG.md` C-10.
 
 > **§5a onward are stage acceptance records** — what each stage had to prove and how. They are
@@ -50,6 +50,33 @@ to `python3` and started no server.
 asserting nothing. `test_models.sh` was verified by corrupting what its assertions read and
 confirming it goes red.
 
+**Run `nimble suites` with `bin/jenova` closed — 2026-09-01. This is T-12's unknown
+trigger, identified after two sessions of it appearing and vanishing.**
+
+**Two suites assume nothing is listening on the machine's real ports**, and both fail
+while the desktop application is running:
+
+- **`test_routes.sh`** pins `JENOVA_PORT` for its own core but never overrides
+  `JENOVA_LLAMA_PORT`, so that core forwards to the default **8081**. Five assertions
+  expect **502** — "the pipeline completed and no `llama-server` answered" — and see 200
+  or 500 when a real backend answers there.
+- **`test_lifecycle.sh`** pins `JENOVA_PORT` for its `serve` cases (`:92`, `:98`, `:110`)
+  but runs `backends health` (`:120`) and `backends start` (`:125`) with **no port
+  override**. `health` then succeeds where it asserts failure, and `start` refuses with
+  *"port 8081 is already in use"* instead of the expected missing-model message — the
+  product refusing to start a second backend over a live one, which is correct.
+
+**Proven and dated on both sides:** all six suites passed three times between 09:56 and
+09:58, `bin/jenova` was started at 10:01:13, and the failures appear only after.
+`test_routes` passes **13/13** on the same binary, with the application still running,
+given `JENOVA_LLAMA_PORT=<dead port>`. **Neither is a product fault.** Fix filed in
+`TODOS.md` Backlog: give both scripts their own dead upstream ports.
+
+**Also: run the suites through `nimble suites`, not by calling the scripts directly.**
+`test_nvimctl.sh` compiles `nvimctl_check.nim` and `nim` is not on `PATH` — `nimble` is,
+and it puts `nim` there. Invoked directly the suite fails at the compile step; under
+`nimble suites` it passes 5/5.
+
 **Five self-tests, six suites.** *Some earlier trackers said four self-tests;
 `db-capabilities` is a capability report, not an assertion, which is where the
 miscount came from.*
@@ -75,7 +102,7 @@ into the request body.
 
 | Step | What must be proven | How, without a window |
 |---|---|---|
-| **1 — container rename** (T-14) | A renamed project takes its files with it, and a failed move rolls back | Extend `test_api_fs.sh`. It already builds a workspace/project/folder/note and inspects the disk — this is the dimension it was built for |
+| **1 — container rename** (T-14) | ~~A renamed project takes its files with it, and a failed move rolls back~~ **DONE 2026-09-01 — see §0b** | Done as planned: `test_api_fs.sh`, +17 assertions |
 | **2 — message actions** (G-28) | Edit and delete reach the right rows and cascade correctly | Extend `test_api_db.sh`. Both go through `/api/db/messages/*`, which is already asserted. Only regenerate and continue need the screen |
 | **3 — branching** (G-29) | The active path and the sibling counts are right for a known fork shape | A pure walk over rows. Belongs in an assertion, not a screenshot — this is the step most likely to be silently wrong |
 | **4 — chat indexing** (T-17) | A query returns the right message; a conversation-scoped filter confines results; re-indexing a conversation does not duplicate chunks | Extend `rag-selftest`. It already indexes a scratch corpus and asserts ranking, filtering and the vector round-trip |
@@ -88,6 +115,32 @@ into the request body.
 **The rule this section exists to state:** where a GUI feature's *behaviour* can be
 asserted below the widget layer, it must be. Reserve the screen for what only the
 screen can show.
+
+## 0b. `tests/test_api_fs.sh` — container renames (T-14, 2026-09-01)
+
+**17 assertions added**, covering what `PLANS.md` Step 1 named and two things it did not.
+
+| Asserted | Why it is the assertion |
+|---|---|
+| A renamed project's directory moves, and nothing is left at the old path | The defect itself: the row moved and the directory did not |
+| The note **and** the file asset are found under the new path | Files are what was being stranded. A directory that moves empty proves nothing |
+| The same for a folder rename, and for a workspace rename | Three different resolvers, three different parent chains |
+| A renamed workspace keeps its `.git` directory | The workspace *is* a git repository; a rename that loses it loses the history |
+| `/api/fs/tree` lists the note at its new path | The Neovim page is the file browser (D-AW), so the tree is the interface the fix exists for |
+| A rename onto an occupied directory answers an error, both directories survive intact, and the row is still holding its **old** name | The refusal and the rollback, which are D-BE. This is the assertion most likely to rot |
+| Renaming everything back restores the original paths | The move works in both directions, and it leaves the rest of the script reading as written |
+
+**Proven able to fail — the whole point.** Run against the pre-fix source with the new
+assertions in place, `test_api_fs.sh` reports **FAIL (12)**, and the twelve are exactly
+the positive checks. Some of the absence checks pass vacuously in that run — a
+`Delta/Gamma` that never existed is trivially absent — which is why the positive checks
+carry the proof and are stated first.
+
+**One assertion was wrong on the first run and the suite caught it**, which is the
+cheapest possible demonstration that it bites: it read the row back through
+`GET /api/db/projects/<id>`, a route that does not exist. There is no per-id GET on this
+surface; the collection listing is the read path. The corrected assertion matches the
+whole row, which also pins the column order.
 
 ## 5i. `tests/test_nvimctl.sh` — the live editor buffer (G-18, 2026-08-31)
 

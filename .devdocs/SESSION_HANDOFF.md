@@ -12,6 +12,150 @@ Reverse-chronological. **Keep entries short.** Sessions 001-005 are in
 
 ---
 
+## Session 014 — 2026-09-01 09:58
+
+**Instruction:** read `AGENTS.md` and stay strictly inside it, read the devdocs,
+cross-reference every claim against the codebase, and present the phase to work on.
+Then, on approval: execute the plan step, cross-reference the wiring, inspect for stubs
+and placeholders, confirm a clean complete build, check memory handling, and update the
+documents — with **new entries only after the work was finished**.
+
+### Part one — verification, no changes
+
+Every falsifiable claim in the trackers that names a file and a line was checked against
+that file. **Twenty-four checked, twenty-four hold.** Notably: `mirrorUpsert` really did
+have no `projects` or `folders` branch; `indexContent` really has no caller outside the
+self-test and `indexFile` has none at all; `gui.send` really posts nothing but
+`messages` and `stream`; the fork backend, the import route, the trash routes and the
+partial message update all really exist; `messages.timings` exists and nothing writes it;
+the document panel really is a `Box`; six suites and five self-tests, none touching
+`gui.nim`. The parity inventory was re-checked against `jca_web`'s barrel files and every
+component named in `TODOS.md` is there — the chat group alone exports 57.
+
+**Four gaps in the documents, all small, all now filed:**
+
+1. **`TODOS.md` had no Backlog section**, which `AGENTS.md` mandates. It had two
+   headings both called "Active". Fixed.
+2. **Two verified defects were reported in Session 013 and never became work items** —
+   dead `paned > separator` CSS and a `.glow-text` class applied to nothing. Filed as
+   **G-37**. The second is G-8's defect recurring in the same file.
+3. **A stale code comment** in `gui.nim` describing "the `Paned` that G-25 adds"; G-25
+   shipped as a `Box`. Filed as **G-38**.
+4. `jca_web` has a `workspace/` directory the barrel does not export — one orphan file,
+   no importers. Recorded as *not* a parity gap so it is not rediscovered as one.
+
+### Part two — Step 1 built: renaming a container no longer strands its files (T-14)
+
+**The defect.** Every note and asset path is built from its ancestors' *names*
+(`fssync.physicalPath`). `api.mirrorUpsert` had branches for workspaces, notes and file
+assets, and projects and folders fell through to `else: true`. `syncWorkspace` only ever
+created. So a rename moved the row and left the directory, orphaning the old tree and
+sending the next save to a fresh empty one. Load-bearing because the Neovim page rooted
+at the workspaces directory **is** the file browser (D-AW).
+
+**Files touched — four:**
+
+- **`src/jenova/fssync.nim`** — added `containerDir` (a container's directory from an
+  explicit name and parent id, needed because `upsert` overwrites the row before the
+  mirror runs, so the *previous* location can only be rebuilt from captured values) and
+  `renameContainer` (the move, with the collision refusal). `syncWorkspace` gained a
+  `priorName` parameter and now moves rather than creating.
+- **`src/jenova/api.nim`** — real `projects` and `folders` branches in `mirrorUpsert`;
+  `syncWorkspace` is passed the prior name.
+- **`src/jenova/gui.nim`** — `commitRename` no longer discards the result for containers,
+  so a refusal reaches the window as a notice instead of failing silently (D-BC).
+- **`tests/test_api_fs.sh`** — 17 assertions.
+
+**Two calls taken inside the approved scope, recorded as D-BE:** a rename onto an
+occupied path is **refused, not merged** (a merge has no undo, a refusal does — the row
+rolls back); and projects and folders still get **no directory on insert**, only on
+rename, because creating them eagerly would put every empty project into the file
+browser and that is a product change, not this fix.
+
+**One latent hazard closed on the way past.** `syncWorkspace` removed the directory again
+if `git init` failed — safe while it only ever created one, destructive the moment it can
+be handed a directory a rename has just moved there. It now only unmakes a directory the
+same call made.
+
+### Verification, all of it executed
+
+- `nimble core` and `nimble gui` — exit 0, both binaries rebuilt. `bin/jenova-core` is
+  an **ELF 64-bit FreeBSD** executable.
+- **The FreeBSD guard was confirmed to fire**, not merely to exist: compiling with
+  `--os:linux` errors out at `jenova_core.nim:20`.
+- **All six suites pass, all five self-tests pass** — with one qualification, below.
+- **The new assertions were proven able to go red.** The three source files were reverted
+  to HEAD with the new test kept, rebuilt, and run: **FAIL (12)**, the twelve being
+  exactly the positive rename checks. Sources restored and re-verified green.
+- **The suite caught one of my own bad assertions on its first run** — it read a row back
+  through `GET /api/db/projects/<id>`, which is not a route on this surface. Corrected to
+  match the whole row from the collection listing, which also pins the column order.
+- **Stubs and placeholders:** none. Every "placeholder" hit in `src/` is a GTK CSS
+  property, an SQL placeholder or a doc reference, and every bare `discard` sits inside
+  an `except` block.
+- **Memory handling:** resolving a container's directory costs a database lookup per
+  ancestor, and the Web UI re-posts whole rows, so the name and parent are compared
+  **before** calling — an upsert that changed neither pays for zero queries and zero path
+  builds. `syncWorkspace` compares raw names before `sanitize`, so an unchanged re-sync
+  costs one string compare rather than two allocations. `renameContainer` resolves the
+  destination first and returns before allocating the source path when it cannot proceed.
+
+### T-12 solved on the last run of the session, after two sessions open
+
+**The final `nimble suites` run went red**, and the failure is worth more than the fix
+was. `test_routes` failed **exactly the five assertions T-12 names**, having passed three
+times earlier in the session on the same code. T-12's own note said to check port 8081
+first, and that was right: **the USER had started `bin/jenova` in the meantime**, which
+brought up a real `llama-server` on 8081.
+
+Those five assertions post to the proxied routes and expect **502** — "the pipeline
+completed and no `llama-server` answered". The suite starts its own core with
+`JENOVA_NO_BACKENDS=1` but **never overrides `LLAMA_PORT`**, so that core still forwards
+to the default 8081, where a real backend was now answering. The assertions saw 200 and
+500 instead.
+
+**Proven, not asserted, and dated on both sides.** All six suites passed three times
+between **09:56 and 09:58**; `bin/jenova` was started at **10:01:13**; the failures
+appear only after. Re-run as `JENOVA_LLAMA_PORT=18099 sh tests/test_routes.sh`, with the
+USER's application still running and untouched, the same binary passes **13/13**.
+
+**Chasing it further found a second suite with the same coupling.** `test_lifecycle`
+fails two assertions for the same reason: it pins `JENOVA_PORT` for its `serve` cases
+(`:92`, `:98`, `:110`) but runs `backends health` (`:120`) and `backends start` (`:125`)
+with **no port override at all**. So `health` succeeds where it asserts failure, and
+`start` refuses with *"port 8081 is already in use"* rather than the expected
+missing-model message — **which is the product working correctly**, refusing to start a
+second backend over a live one.
+
+**Neither is a product fault.** T-12 is rewritten with the full diagnosis, covering both
+suites, and moved to Backlog. The fix is to give both scripts their own dead upstream
+ports, as they already give themselves their own `JENOVA_PORT`. **Not done — a change to
+test files, outside the approved scope.** The USER's running application was deliberately
+left alone rather than killed to get a green board.
+
+**One more artefact worth recording so it is not mistaken for a fault:**
+`test_nvimctl.sh` fails immediately when invoked directly, because it compiles
+`nvimctl_check.nim` and `nim` is not on `PATH` — only `nimble` is, and it puts `nim`
+there. Under `nimble suites` it passes 5/5, as it did three times this session. **Run
+the suites through `nimble suites`, not by calling the scripts.**
+
+### Next
+
+**`PLANS.md` Step 2 — give a message its actions back** (G-28): copy, delete, edit,
+regenerate, continue. Largest usability gap in the product; the message-update route and
+its cascade already exist and are asserted, so copy, delete and edit are assertable
+without a window. Regenerate and continue are GUI composition over `gui.send` and need
+the screen. It precedes branching (Step 3) because editing and regenerating are what
+create branches.
+
+**Step numbering in `PLANS.md` was deliberately left unchanged** with Step 1 retired in
+place — `TODOS.md`, `TESTS.md` and `BRIEFING.md` all cite those numbers.
+
+**Nothing is blocked.** Three product decisions stay parked and are not on the critical
+path: filesystem as source of truth (T-11), deployment (T-7), CLI (T-8).
+
+---
+
 ## Session 013 — 2026-09-01
 
 **Instruction:** read `AGENTS.md`, read every devdoc in full, cross-reference every

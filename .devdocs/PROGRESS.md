@@ -2,7 +2,7 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-09-01 (Session 013)
+**Last updated:** 2026-09-01 09:58 (Session 014)
 
 > **Reading the "UNRUN" labels in this file.** Entries below are point-in-time records
 > and several were written with a "compiled; UNRUN" status that was true on the day.
@@ -15,6 +15,21 @@ Macro progress tracking. Most recent entries at the top.
 ---
 
 ## Completed
+
+### 2026-09-01 09:58 — **T-14 fixed: renaming a workspace, project or folder now moves its directory instead of stranding every file under it.** `PLANS.md` Step 1.
+
+`fssync` gained `containerDir` and `renameContainer`; `api.mirrorUpsert` gained the
+`projects` and `folders` branches it never had (both fell through to `else: true`);
+`syncWorkspace` takes the prior name and moves rather than creating. A move that cannot
+be done returns false and `upsert` rolls the row back, so the database never claims a
+name the disk does not carry. A rename onto an occupied directory is refused rather
+than merged (**D-BE**). `gui.commitRename` no longer discards the result, so a refusal
+reaches the window instead of failing silently.
+
+`tests/test_api_fs.sh` gained 17 assertions covering project, folder and workspace
+rename, the files carried with them, the refusal, and the rollback. **Proven able to
+fail:** run against the unfixed source they produce 12 failures. Both binaries build,
+the FreeBSD guard still fires, all six suites and all five self-tests pass.
 
 ### 2026-09-01 — **Two USER rulings: everything is driven from the GUI (D-BC), and the search index indexes chats (D-BD). No questions remain open.**
 

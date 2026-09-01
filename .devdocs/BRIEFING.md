@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-09-01 (Session 013)
+**Last updated:** 2026-09-01 09:58 (Session 014)
 **Branch:** `bsd`
 
 ---
@@ -21,9 +21,10 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 | **7** | **Comments only where the code is not self-explanatory.** No essays above functions. Do not retroactively "improve" existing comments. |
 | **8** | **Do not ask what has been answered.** `DECISIONS_LOG.md` SETTLED FACTS and its QUESTION STATUS index, first. |
 | **9** | **Do not write derivable facts into these documents.** Counts and file lists rot. Point at the code. |
-| **10** | **Re-check a tracker's claims against the code; do not carry them forward.** Session 013 found six false claims in these documents, one repeated across five files. |
+| **10** | **Re-check a tracker's claims against the code; do not carry them forward.** Session 013 found seven false claims in these documents, one repeated across five files. |
 | **11** | **Verify a scope list against the source, not against a summary.** The "GUI parity" list carried since Session 010 named six items. The Web UI's own component listing has roughly three times that. |
 | **12** | **A "not yet run" label is not durable.** It survives exactly until any evidence contradicts it — a screenshot, a defect report, or the USER saying so. Carrying it past that point has now cost two sessions. |
+| **13** | **A new assertion is not believed until it has been seen to go red.** Step 1's were run against the unfixed source and produced 12 failures before they were trusted. Two suites in this project have reported PASS while asserting nothing. |
 
 ---
 
@@ -36,27 +37,53 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 | **Build** | `nimble`. Tasks in `jenova_core.nimble`: `core`, `gui`, `suites`, `llama`, `web`, `clean` |
 | **Architecture** | `BLUEPRINT.md` |
 | **Runtime home** | `$HOME/Jenova`. `~/JCA` is permanently off limits |
-| **Tests** | **Six** shell suites under `tests/`, run by `nimble suites`, plus **five** self-test subcommands in `jenova-core` (`db-`, `serve-`, `rag-`, `pipeline-`, `sha256-selftest`). *Earlier revisions said four self-tests; there are five.* **None of them covers the GUI** — see §5 |
+| **Tests** | **Six** shell suites under `tests/`, run by `nimble suites`, plus **five** self-test subcommands in `jenova-core` (`db-`, `serve-`, `rag-`, `pipeline-`, `sha256-selftest`). **None of them covers the GUI** — see §5 |
 
 ## 2. State
 
-**The build has been run.** The 2026-08-31 23:28 build — the one carrying the Neovim
-page transparency fix, the document panel, the editor-page framing and the colour work
-— **was run by the USER.** Earlier revisions of this file described it as "compiled,
-never seen on screen"; that label was stale and was repeated for two sessions after it
-stopped being true.
+**Verified as of 2026-09-01 09:58.** Both binaries build from a clean run of
+`nimble core` and `nimble gui`; the FreeBSD-only guard was confirmed to still *fire*
+when the target is changed, not merely to exist; **all six suites and all five
+self-tests pass.** `bin/jenova-core` is an ELF 64-bit FreeBSD executable.
 
-**What that run reported: the GUI is missing a large number of Web UI features.** No
-appearance or rendering defect was raised. So the four items built on 2026-08-31 are
-run and undisputed, and **the outstanding work is functional, not visual.**
+**One qualification, and it is not a product fault.** **Run `nimble suites` with
+`bin/jenova` closed.** Two suites assume nothing is listening on the machine's real
+ports: `test_routes` expects a 502 meaning "no `llama-server` answered" while talking to
+the real backend on 8081, and `test_lifecycle` runs `backends health` and `backends
+start` with no port override, so the product's correct *"port 8081 is already in use"*
+refusal reads as a failure. Given a dead upstream port `test_routes` passes 13/13 with
+the app still running. **This is T-12's unknown trigger, identified after two sessions.**
+Fix filed in `TODOS.md` Backlog. Separately, invoke the suites through `nimble suites`,
+not by calling the scripts — `test_nvimctl.sh` needs `nim` on `PATH` and only `nimble`
+puts it there.
+
+**The 2026-08-31 23:28 build was run by the USER**, and no appearance or rendering
+defect came back from it. The report from that run is that the GUI is missing a large
+number of Web UI features, which is why the outstanding work is **functional, not
+visual**. Do not re-add an "unrun" label to those features.
 
 **The backend is in good shape.** Configuration, database, threaded HTTP server, the
 whole `/api/*` surface, the filesystem mirror, retrieval, the prompt pipeline, backend
 supervision and watchdog, model discovery and switching are implemented and covered by
-tests. Session 013 read nineteen modules and confirmed every fix recorded on
-2026-08-31 is genuinely present in the source.
+tests.
 
-## 3. What is actually missing — the honest list
+## 3. Done this session — the file mirror no longer lies
+
+**Renaming a workspace, project or folder used to strand every file underneath it.**
+Paths on disk are built from ancestors' *names*, and nothing moved the directory — so
+the old tree was orphaned and the next save landed in a fresh empty one beside it. That
+mattered because the Neovim page rooted at the workspaces directory **is** the file
+browser (D-AW): the tree is the interface, and it told the truth only until the first
+rename.
+
+It now moves the directory, and everything under it travels with it. A move that cannot
+be done rolls the database write back. A rename onto an already-occupied path is
+**refused rather than merged**, because a merge has no undo and a refusal does
+(**D-BE**). The GUI shows the refusal instead of discarding it.
+
+Detail in `PROGRESS.md`; the assertions and the red-proof are `TESTS.md` §0b.
+
+## 4. What is actually missing — the honest list
 
 **The desktop application has the shape of the Web UI and not its function.** Chat,
 sidebar, workspace tree, notes, theme, canvas, syntax highlighting and the embedded
@@ -66,7 +93,7 @@ Neovim page all work. Almost everything you do *to* a message does not exist.
 |---|---|
 | Send a message, stream a reply | **Edit, regenerate, delete, copy or continue a message** (G-28) |
 | Conversations: create, rename, delete, search | **Branching** — alternative versions of an answer (G-29) |
-| Workspace / project / folder tree, notes | **Attachments** of any kind — image, text, PDF, audio (G-30) |
+| Workspace / project / folder tree, notes — **and renaming one now keeps its files** | **Attachments** of any kind — image, text, PDF, audio (G-30) |
 | Markdown text and highlighted code blocks | **Tables, task lists, LaTeX maths** (G-34) |
 | Theme, canvas, glass panel, wordmark | **Any settings screen — so no temperature, top_p, top_k, penalties** (G-31) |
 | Neovim page + AI reads the live buffer | **Import / export of conversations** (G-32) |
@@ -83,47 +110,52 @@ routes and `models.switchModel` all exist with assertions behind them.
 
 Full detail with mechanisms and line references: `TODOS.md`. Ordered plan: `PLANS.md`.
 
-## 4. Known broken in the Nim code
+## 5. Known broken in the Nim code
 
-Seven items, each verified by reading the file it names (`TODOS.md`). The two that
-matter:
+Six items, each verified by reading the file it names (`TODOS.md`). **T-14 is no longer
+among them** — it was fixed this session. The one that matters:
 
-- **Renaming a workspace, project or folder strands every file under it on disk**
-  (T-14). Paths are built from parent *names*, and a container rename does nothing on
-  disk. Load-bearing, because the Neovim page rooted at the workspaces folder is now
-  the file browser.
 - **Nothing populates the search index** (T-17), so the AI has no recall of past chats.
   The search half is finished and proven; the indexer half was never written. **Scope is
-  now decided — it indexes chats** (D-BD), and it is Step 4.
+  decided — it indexes chats** (D-BD), and it is Step 4.
 
 Separately, **there is currently no way to detect hardware or change profile at all**
 (S-1). It was two shell scripts and both are broken by subtraction. It becomes Nim with
 a GUI screen (D-BC), Step 6.
 
 The rest — a leaked embedding server on exit, an unbounded statement cache, two holes
-in the file-containment check, untrimmed chat history — are real but not urgent.
+in the file-containment check, untrimmed chat history — are real but not urgent, and are
+Step 9.
 
-## 5. The gap nobody has recorded: the GUI has no test coverage
+Two cosmetic defects are newly filed in the `TODOS.md` **Backlog**: two dead style rules
+in `theme.nim`, one of which is G-8's defect recurring in the same file, and a code
+comment in `gui.nim` describing a `Paned` that was never used.
+
+## 6. The gap nobody has recorded: the GUI has no test coverage
 
 All six suites and all five self-tests exercise `jenova-core` — routes, database,
 filesystem, lifecycle, models, and the Neovim buffer reader. **Nothing tests `gui.nim`
 at all.** Every GUI defect in this project's history was found by the USER looking at
 the screen.
 
-That is tolerable for layout and is not tolerable for the work in §3, which is mostly
+That is tolerable for layout and is not tolerable for the work in §4, which is mostly
 *logic* — branching, message editing, parameter passing. **Each step in `PLANS.md`
 names what would prove it worked**, and where that can be a suite it should be one.
 
-## 6. Waiting on the USER
+## 7. Waiting on the USER
 
-**Nothing in the plan is blocked.** The two questions raised on 2026-09-01 were answered
-the same day: the search index indexes **chats** (D-BD), and hardware profile selection
-is **ported to Nim and driven from the GUI** (D-BC). Both are now plan steps.
+**Nothing in the plan is blocked.** Three product decisions remain parked, none on the
+critical path: filesystem as the source of truth (T-11), deployment (T-7), a CLI (T-8).
 
-Three product decisions remain parked, none on the critical path: filesystem as the
-source of truth (T-11), deployment (T-7), a CLI (T-8).
+## 8. Next
 
-## 7. Settled — do not re-raise
+**`PLANS.md` Step 2 — give a message its actions back** (G-28): copy, delete, edit,
+regenerate, continue. The largest usability gap in the product, and no new backend is
+needed — the message-update route and its cascade already exist and are asserted. It
+comes before branching (Step 3) because editing and regenerating are what *create*
+branches.
+
+## 9. Settled — do not re-raise
 
 | | |
 |---|---|

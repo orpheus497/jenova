@@ -88,6 +88,33 @@ further down is left in place for the historical record; **this table overrides 
 
 ---
 
+## D-BE — a container rename moves its directory; a collision is refused, not merged — 2026-09-01
+
+Two calls taken while building `PLANS.md` Step 1 (T-14). Both were inside the approved
+scope; recorded so neither is re-litigated.
+
+**1. A rename onto an occupied path is refused.** Two containers can carry the same
+name — nothing constrains it — and their sanitized names can collide even when the names
+differ. `moveDir` onto an existing directory merges the two, mixing their files with no
+way to tell afterwards which came from where. **There is no undo for a merge**, and
+there is one for a refusal: `renameContainer` returns false, `upsert` rolls the row back
+to its previous name, and the caller gets a 500. The GUI surfaces it as a notice rather
+than discarding it, per D-BC — a failure a user cannot see is a defect.
+
+**2. Projects and folders still get no directory on insert.** Only on rename. A
+container's directory is created by the first note or asset written into it
+(`physicalPath` calls `ensureDir` on the parent), and that is unchanged. Creating empty
+directories eagerly would put every empty project into the Neovim file browser, which is
+a product change and not part of this fix. A rename with no directory to move is
+therefore success, not failure.
+
+**One latent hazard closed on the way past.** `syncWorkspace` removed the directory
+again if `git init` failed — correct while it only ever *created* one, and destructive
+once it can be handed a directory a rename has just moved there. It now only unmakes a
+directory the same call made.
+
+---
+
 ## D-BC — everything is Nim, and everything is driven from the GUI — 2026-09-01 *(BINDING)*
 
 **The product is Nim plus `llama-server`. Any operation a user needs must be reachable

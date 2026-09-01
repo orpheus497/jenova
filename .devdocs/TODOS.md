@@ -1,6 +1,6 @@
 # TODOS
 
-**Last updated:** 2026-09-01 (Session 013)
+**Last updated:** 2026-09-01 09:58 (Session 014)
 
 Only what is actually outstanding. Everything finished lives in `PROGRESS.md`.
 
@@ -209,20 +209,38 @@ PASS while asserting nothing.
 
 ---
 
+## Backlog — raw, unscoped, no `PLANS.md` entry yet
+
+| ID | What it is |
+|---|---|
+| **G-37** | **Two style rules in `theme.nim` are dead.** `paned > separator` styles a widget that is not in the tree — a leftover from G-25, which shipped as a `Box` after a `Paned` crashed the app. And `.glow-text` is defined and carried by no widget: the glow effect works, but as a `text-shadow` duplicated inside `.brand` and `.conv-active`. **The second half is G-8's exact defect — a class defined and applied to nothing — recurring in the same file.** Both were found and reported on 2026-09-01 and neither was filed as work; that is why they are here. Verified again 2026-09-01: `theme.nim:162`, `theme.nim:251-255` |
+| **G-38** | **A code comment in `gui.nim` describes a widget that was never used.** The main-area comment still explains itself as feeding "the `Paned` that G-25 adds". G-25 shipped as a `Box`, and the comment above the `Box` itself records why. A reader following the first comment looks for a `Paned` that does not exist. Prose only, no behaviour. `gui.nim:1053` |
+| **T-12** | **Two suites fail whenever the desktop application is actually running, and the trigger is now identified after two sessions of it appearing and vanishing.** Both assume nothing is listening on the machine's real ports. **`test_routes.sh`:** five assertions post to the proxied routes and expect **502**, meaning "the pipeline completed and no `llama-server` answered". The script pins `JENOVA_PORT` for its own core but never overrides `JENOVA_LLAMA_PORT`, so that core forwards to the default **8081**, where the running app's real backend answers — the five then see 200 or 500. **`test_lifecycle.sh`:** it pins `JENOVA_PORT` for its `serve` cases (`:92,98,110`) but runs `backends health` (`:120`) and `backends start` (`:125`) with **no port override at all**, so `health` succeeds when it asserts failure, and `start` refuses with "port 8081 is already in use" instead of the expected missing-model message. **Proven 2026-09-01, dated on both sides:** all six suites passed three times between 09:56 and 09:58; `bin/jenova` was started at **10:01:13**; the failures appear only after. `test_routes` passes **13/13** on the same binary, with the application still running, when given `JENOVA_LLAMA_PORT=<dead port>`. **Neither is a product fault** — the product's "port already in use" refusal is it working correctly. **The fix:** give both scripts their own dead upstream ports, the way they already give themselves their own `JENOVA_PORT`. Not done — a change to test files, outside the approved scope. **Until then, run `nimble suites` with the desktop application closed.** |
+
+**Noted, not work:** `jca_web/src/lib/components/app/workspace/` holds one orphan file,
+`FlashModelUpload.svelte`, with an empty `index.ts` and nothing importing it. It is the
+one directory under `components/app/` the barrel does not export, so it is **not** part
+of the parity inventory. Recorded so it is not rediscovered and mistaken for a gap.
+`jca_web` is frozen (D-Z) — this is not a licence to edit it.
+
+---
+
 ## Active — defects in the Nim code, each verified by reading it
 
-**Ordering is `PLANS.md`:** T-14 is Step 1 · T-17 is Step 4 · S-1 is Step 6 ·
+**Ordering is `PLANS.md`:** T-17 is Step 4 · S-1 is Step 6 ·
 T-5, T-2, T-4 and T-3 are Step 9, in that order.
+
+**T-14 is gone from this table because it is done** — renaming a container now moves its
+directory (2026-09-01, `PROGRESS.md`, D-BE). Per the completion rule, its record lives
+in `PROGRESS.md` and not here.
 
 | ID | What is wrong, in plain English | Where |
 |---|---|---|
-| **T-14** | **Renaming a workspace, project or folder loses all the files inside it.** Every file's location on disk is built from the *names* of its parents, but renaming a project does nothing on disk — so the old directory is stranded and new saves go to a fresh empty one. This matters more now that the Neovim page is the file browser: the file tree is the interface, and it would be lying. | `api.nim:194` does nothing for projects/folders; `fssync.nim:191-206` builds paths from names |
 | **T-17** | **Nothing feeds the search index, so the AI has no recall of past chats.** The search half is finished and proven; the indexer half was never written, so `rag.query` gives up on an empty index. **Scope is decided (D-BD): index chat messages, keyed by conversation, as they are saved, plus a backfill of existing history at startup.** | `rag.nim:323`; the only callers of `indexContent` are in the self-test, `jenova_core.nim:350-356`. Save sites: `gui.nim:296` and the pipeline path |
 | **T-5** | **Quitting the app leaves the embedding server running.** Leaving the main model loaded is deliberate — reloading gigabytes into the GPU every start is worse. But the embedding server is left running with nothing attached to it. | `gui.nim:1579` starts them, `gui.nim:1588-1592` stops nothing |
 | **T-2** | **A long-running server slowly leaks memory.** The database keeps a cache of compiled queries that is never trimmed, and one API route builds a different query text for every combination of fields a client sends. | `db.nim:46`, `165-175`, `383-389` |
 | **T-4** | **Two holes in the file-access containment check.** A *new* file written through a symlinked folder can escape the workspace root, because the symlink check only runs on paths that already exist. Separately, if the workspace root itself is a symlink, legitimate paths get rejected. | `fssync.nim:628`, `641` |
 | **T-3** | **The whole conversation is resent to the model every single turn.** No trimming, so a long chat eventually exceeds the context window. Needs a byte budget from `CTX_SIZE`, dropping oldest first, never dropping the system message. | `pipeline.nim:222-286` — there is no trim step |
-| **T-12** | `test_routes` failed five assertions once and has not failed since, including against a clean rebuild of the committed code. **Left open because nothing was fixed** — a fault that stops happening on its own has an unknown trigger. If it returns, check whether something is listening on port 8081 first. | — |
 
 ---
 

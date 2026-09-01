@@ -125,6 +125,59 @@ req POST /api/db/notes \
 assert_file   "rename writes the new path"        "$WS/Alpha/Beta/Gamma/Renamed_$NID.md"
 assert_absent "rename removes the old path"       "$WS/Alpha/Beta/Gamma/Hello_$NID.md"
 
+# --- renaming a container must take its files with it (T-14) ----------------
+# Action purpose: every note and asset path is built from its ancestors' NAMES
+# (fssync physicalPath), so a rename that moves the row and not the directory
+# strands everything underneath it. api.mirrorUpsert had no projects or folders
+# branch at all — both fell through to `else: true` — and syncWorkspace only ever
+# created. This matters more than it reads: the Neovim page rooted at the
+# workspaces directory IS the file browser (D-AW), so the tree is the interface.
+req POST /api/db/projects "{\"id\":\"$PID\",\"workspaceId\":\"$WID\",\"name\":\"Delta\"}" >/dev/null
+assert_dir    "project rename moves its directory"        "$WS/Alpha/Delta"
+assert_absent "project rename leaves nothing behind"      "$WS/Alpha/Beta"
+assert_file   "project rename carries the note with it"   "$WS/Alpha/Delta/Gamma/Renamed_$NID.md"
+assert_file   "project rename carries the asset with it"  "$WS/Alpha/Delta/Gamma/a.txt_$AID"
+assert_match  "the note is listed at its new path"        "Renamed_$NID.md" "$(get '/api/fs/tree?workspace=Alpha')"
+
+req POST /api/db/folders "{\"id\":\"$FID\",\"projectId\":\"$PID\",\"name\":\"Epsilon\"}" >/dev/null
+assert_dir    "folder rename moves its directory"         "$WS/Alpha/Delta/Epsilon"
+assert_absent "folder rename leaves nothing behind"       "$WS/Alpha/Delta/Gamma"
+assert_file   "folder rename carries the note with it"    "$WS/Alpha/Delta/Epsilon/Renamed_$NID.md"
+
+req POST /api/db/workspaces "{\"id\":\"$WID\",\"name\":\"Zeta\"}" >/dev/null
+assert_dir    "workspace rename moves its directory"      "$WS/Zeta"
+assert_absent "workspace rename leaves nothing behind"    "$WS/Alpha"
+assert_dir    "workspace rename keeps the git repository" "$WS/Zeta/.git"
+assert_file   "workspace rename carries the note with it" "$WS/Zeta/Delta/Epsilon/Renamed_$NID.md"
+
+# Action purpose: a rename onto an occupied path must be REFUSED, not merged.
+# moveDir would mix two containers' files together and there is no undo for that,
+# so the branch returns false and api.upsert rolls the row back to its old name —
+# the state the mirror exists to guarantee is that the database never claims a
+# name the disk does not carry.
+SPID="77777777-7777-7777-7777-777777777777"
+SNID="88888888-8888-8888-8888-888888888888"
+req POST /api/db/projects "{\"id\":\"$SPID\",\"workspaceId\":\"$WID\",\"name\":\"Sigma\"}" >/dev/null
+req POST /api/db/notes \
+    "{\"id\":\"$SNID\",\"projectId\":\"$SPID\",\"title\":\"Other\",\"content\":\"other\"}" >/dev/null
+assert_file "the blocking project has a directory of its own" "$WS/Zeta/Sigma/Other_$SNID.md"
+BLOCKED=$(req POST /api/db/projects "{\"id\":\"$PID\",\"workspaceId\":\"$WID\",\"name\":\"Sigma\"}")
+assert_match  "a rename onto an occupied directory is refused" 'error' "$BLOCKED"
+assert_dir    "the refused rename leaves the source directory" "$WS/Zeta/Delta"
+assert_file   "the refused rename leaves its files untouched"  "$WS/Zeta/Delta/Epsilon/Renamed_$NID.md"
+assert_file   "the refused rename leaves the target untouched" "$WS/Zeta/Sigma/Other_$SNID.md"
+# There is no GET /api/db/<entity>/<id> route — the collection listing is the
+# read path — so the whole row is matched, which also pins the column order.
+assert_match  "the refused rename rolls the row back" \
+              "{\"id\":\"$PID\",\"workspaceId\":\"$WID\",\"name\":\"Delta\"}" \
+              "$(get /api/db/projects)"
+
+# Put the tree back, which also proves the move works in both directions.
+req POST /api/db/folders "{\"id\":\"$FID\",\"projectId\":\"$PID\",\"name\":\"Gamma\"}" >/dev/null
+req POST /api/db/projects "{\"id\":\"$PID\",\"workspaceId\":\"$WID\",\"name\":\"Beta\"}" >/dev/null
+req POST /api/db/workspaces "{\"id\":\"$WID\",\"name\":\"Alpha\"}" >/dev/null
+assert_file "renaming back restores the original path" "$WS/Alpha/Beta/Gamma/Renamed_$NID.md"
+
 # --- /api/fs/tree -----------------------------------------------------------
 assert_match "tree lists the note"        "Renamed_$NID.md" "$(get /api/fs/tree)"
 assert_match "tree marks directories"     '"isDir":true'    "$(get /api/fs/tree)"

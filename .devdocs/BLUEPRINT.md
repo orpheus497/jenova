@@ -3,7 +3,7 @@
 Authoritative system architecture: what the program is, what it depends on, and how data moves
 through it. Mandated by `AGENTS.md` § WORKSPACE ARCHITECTURE.
 
-**Last updated:** 2026-09-01 (Session 013)
+**Last updated:** 2026-09-01 09:58 (Session 014)
 
 > **Rewritten 2026-08-31 (Session 007). The previous 626-line revision is in
 > `.devdocs/ARCHIVE/devdocs/BLUEPRINT_pre-007.md`** — archived, not deleted, per D-AM.
@@ -106,6 +106,12 @@ prepared-statement cache. `api` serves `/api/db/*`; `fssync` mirrors the databas
 (workspace directories, the `<epoch>_<name>` trash naming, the `.metadata.json` sidecar) and
 enforces containment on `/api/storage/*` — traversal is refused with **403, not 404**, because a 404
 discloses whether a path outside the root exists.
+
+**A note or asset's path is built from its ancestors' names**, so renaming a workspace,
+project or folder **moves that container's directory** and everything under it travels
+with it. A move that cannot be performed rolls the database write back, and a rename
+onto an already-occupied path is refused rather than merged (**D-BE**) — the invariant
+being kept is that the database never claims a name the disk does not carry.
 
 **Configuration precedence:** environment → `etc/jenova.local.conf` → `etc/jenova.conf` (the applied
 hardware profile). `config.nim` implements this order. **The inverted shell order (Q-9/B-12) died

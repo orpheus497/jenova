@@ -237,6 +237,61 @@ proc scopeDir*(folderId, projectId, workspaceId: string): string =
       return workspaces / sanitize(w.name)
   workspaces / "unassigned"
 
+## Function purpose: the directory a container occupies, resolved from an explicit
+## name and parent id rather than from its own row. `api.upsert` overwrites the
+## row before the mirror runs, so a container's *previous* location can only be
+## rebuilt from the values captured beforehand — which is what makes moving the
+## directory possible at all. The layout is the same one `trashProject` and
+## `trashFolder` build, so a container that has been moved is still found when it
+## is later deleted.
+proc containerDir*(kind, name, parentId: string): string =
+  let (workspaces, _) = roots()
+  let safe = sanitize(name)
+  if safe.len == 0: return ""
+  case kind
+  of "workspaces":
+    workspaces / safe
+  of "projects":
+    let w = lookupName("workspaces", parentId)
+    if not w.found: "" else: workspaces / sanitize(w.name) / safe
+  of "folders":
+    let p = lookupName("projects", parentId)
+    if not p.found: return ""
+    let w = lookupName("workspaces", p.parent)
+    if not w.found: ""
+    else: workspaces / sanitize(w.name) / sanitize(p.name) / safe
+  else:
+    ""
+
+## Function purpose: move a container's directory when its name or its parent
+## changes. Without this a rename strands everything underneath it: every note and
+## asset path is built from ancestor *names* (`physicalPath`), so the row moved and
+## the directory did not, leaving the old tree orphaned and the next write landing
+## in a fresh empty directory beside it (T-14).
+##
+## Returns false only when the move itself could not be done, so `api.upsert` rolls
+## the row back — a database claiming a name the disk does not carry is the state
+## this mirror exists to prevent. **A container with no directory yet is not a
+## failure:** directories are created by the first note or asset written into them,
+## so there is simply nothing to move.
+proc renameContainer*(kind, priorName, priorParent, newName,
+                      newParent: string): bool =
+  let dst = containerDir(kind, newName, newParent)
+  if dst.len == 0: return false
+  let src = containerDir(kind, priorName, priorParent)
+  if src.len == 0 or src == dst: return true
+  if not dirExists(src): return true
+  # Action purpose: a sibling already standing at the new path would be merged
+  # into by `moveDir`, silently mixing two containers' files together. Refusing
+  # hands the caller a rollback instead, which is recoverable; a merge is not.
+  if dirExists(dst) or fileExists(dst): return false
+  try:
+    ensureDir(dst.parentDir)
+    moveDir(src, dst)
+    true
+  except OSError:
+    false
+
 proc notePath(id, title, folderId, projectId, workspaceId: string):
     tuple[path, workspace: string] =
   physicalPath(id, title, folderId, projectId, workspaceId, ".md")
@@ -277,16 +332,33 @@ proc moveToTrash(source, trashPath, table, id: string): bool =
 ## Function purpose: a workspace is a git repository, created on first sync.
 ## `fs_sync.lua:141` removes the directory again if `git init` fails, so a
 ## half-made workspace is not left behind; that is reproduced.
-proc syncWorkspace*(name: string): bool =
+##
+## `priorName` is the name the row carried before this upsert, empty on insert.
+## A rename **moves** the repository instead of leaving it behind under the old
+## name with every file still in it (T-14).
+proc syncWorkspace*(name: string, priorName = ""): bool =
   let (workspaces, _) = roots()
   let path = workspaces / sanitize(name)
+  # `priorName != name` is checked first so the common case — a re-sync of an
+  # unchanged workspace — costs one string compare instead of two `sanitize`
+  # allocations.
+  if priorName.len > 0 and priorName != name and
+     sanitize(priorName) != sanitize(name):
+    if not renameContainer("workspaces", priorName, "", name, ""):
+      return false
+  # Action purpose: whether this call created the directory decides whether it may
+  # unmake it below. Removing one that was already there — or that a rename has
+  # just moved here — would delete the user's files, which the original could not
+  # do because it only ever created.
+  let created = not dirExists(path)
   try:
     ensureDir(path)
   except OSError:
     return false
   if not gitInit(path):
-    try: removeDir(path)
-    except OSError: discard
+    if created:
+      try: removeDir(path)
+      except OSError: discard
     return false
   true
 

@@ -2,7 +2,7 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-09-01 (Session 013)
+**Last updated:** 2026-09-01 09:58 (Session 014)
 
 **Write plans in plain English, then cite the ID** (**D-BA**). A step that reads
 "resolve G-23" tells the reader nothing. Say what the thing is first.
@@ -78,32 +78,19 @@ that reported PASS while asserting nothing**).
 
 ---
 
-## Step 1 — Renaming a container must stop losing its files
+## Step 1 — **BUILT 2026-09-01.** Renaming a container no longer loses its files
 
-**What is wrong:** rename a workspace, project or folder and every note and file
-underneath it is stranded. Each file's path on disk is built from its parents' *names*
-(`fssync.nim:191-206`), but `api.mirrorUpsert` does nothing at all for `projects` and
-`folders` — they fall through to `else: true` (`api.nim:194`) — and `syncWorkspace`
-only creates the new directory without moving the old one (`fssync.nim:282`).
+Done and out of this plan. Renaming a workspace, project or folder now moves its
+directory, a move that cannot be done rolls the row back, and a rename onto an occupied
+path is refused rather than merged (**D-BE**). Proven by 17 new assertions in
+`tests/test_api_fs.sh`, shown going red against the unfixed source first. The record is
+`PROGRESS.md` 2026-09-01 09:58.
 
-**Why first:** you ruled that the Neovim page rooted at the workspaces folder *is* the
-file browser (**D-AW**), which cancelled the virtual file explorer. That makes the
-directory tree the interface rather than a mirror, and it currently tells the truth
-only until the first rename. D-AW says explicitly that it does not close this — it
-raises it.
+**The step numbers below are deliberately unchanged.** `TODOS.md`, `TESTS.md` and
+`BRIEFING.md` all cite them, and renumbering to close a gap would silently re-point
+every one of those references.
 
-**The work:**
-1. `mirrorUpsert` gains real `projects` and `folders` branches: resolve the old
-   directory from the row's *previous* values (`prior`, which `upsert` already reads
-   and passes in) and `moveDir` it to the new name.
-2. `syncWorkspace` takes the prior name and renames rather than creating.
-3. A failed move must roll the database back, which `upsert` already does — the branch
-   only has to return `false`.
-
-**Proof it worked:** extend `tests/test_api_fs.sh`, which already builds a workspace,
-project, folder and note. Rename the project through `/api/db/projects`; assert the
-note's file exists at the new path, that the old directory is gone, and that a rename
-whose `moveDir` fails leaves both the row and the directory untouched.
+**Step 2 is the next step.**
 
 ---
 
