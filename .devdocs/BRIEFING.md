@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-09-02 09:43 (Session 020)
+**Last updated:** 2026-09-02 10:53 (Session 021)
 **Branch:** `bsd`. **`jvim/` is untracked** (4,201 files, added by the USER); this
 session's source and `.devdocs/` edits are uncommitted.
 
@@ -66,7 +66,7 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 
 ## 2. State
 
-**Verified as of 2026-09-02 07:51.** Both binaries build from a clean run of `nimble core`
+**Verified as of 2026-09-02 10:43.** Both binaries build from a clean run of `nimble core`
 and `nimble gui`; **every self-test passes, and `bin/jenova --check` exits 0 — the
 application reaches its first frame**, which is a thing a compile does not tell you and
 which was learned the hard way at 14:02 (rule 17). Both binaries are ELF 64-bit FreeBSD
@@ -105,6 +105,99 @@ backend supervision and watchdog, model discovery and switching are implemented 
 covered by tests.
 
 ## 3. Done this session
+
+### Session 021 (part three) — 2026-09-02 10:53 — the USER ran it; G-48 is closed
+
+**Switching and folder resolution work as intended.** Confirmed on screen. **G-20 and
+G-48 are done and gone from `TODOS.md`.**
+
+**Which of the three changes fixed the reported failure was never diagnosed**, because the
+symptom was never known. The reshape was D-CB's shape, not a repair aimed at a mechanism.
+**No session is to write a diagnosis in later** — there was none.
+
+**Loading a switched model into the backend was not exercised**, the USER not having
+started it. That is **unobserved, not suspect** — §8, not a defect. **The two halves that
+were confirmed keep their confirmation** (rule 12).
+
+### Session 021 (part two) — 2026-09-02 10:43 — the switcher takes D-CB's shape
+
+**G-48-1, -2 and -3 are built. G-48-4 — the reported failure — is untouched, because the
+symptom is still not known.**
+
+**The enumeration is the two source folders.** `models.available` drew from every
+subdirectory of `models/` *and* the flat `models/` directory; it draws from
+`models/instruct` and `models/thinking` and nothing else. An embed model or a
+speculative-decoding drafter offered as the agent model produces a configuration
+`lifecycle` never launches, and it fails as a model behaving oddly rather than as a list
+that lied.
+
+**A displaced symlink is removed, not renamed.** Every entry `switchToPath` has ever
+written is a link into a source folder, so a `.old` copy of one preserves nothing and
+leaves the directory fuller on every switch — which is the chain the USER saw. **A
+displaced real file is still preserved**, because a `.gguf` put in `models/agent` by hand
+is the user's only copy and deleting it is data loss. `symlinkExists` is an lstat, so it
+tells the two apart.
+
+**One switch surface in the window.** The two named menu items are gone — an explicitly
+instructed removal, which is the only kind Directive 3 permits. **The tray keeps its
+pair**, because a D-Bus menu cannot host a searchable list and removing them would leave
+the tray with no way to change model at all. **That is a reading of D-CB's "in the
+window", not a ruling — it can be overruled in one word.**
+
+**`jenova-core models switch` is unchanged and asserted**; only its wording moved, to
+"removed displaced model link".
+
+**`models-selftest` is 22 assertions, and both new groups bite by varying the data
+(D-BX).** The fixture holds an embed model, a drafter and a loose `.gguf` alongside the
+two source folders, and asserts the source models present *and* the other three absent —
+neither side passes alone. The backups are asserted as a **round trip**: α → β → α leaving
+exactly one entry and no `.old*` at any point, because one switch cannot show a chain.
+
+**Twelve self-tests pass, both binaries are ELF 64-bit FreeBSD, `bin/jenova --check` exits
+0.** The six shell suites were not run — Rule 0, and nothing touched is in their reach.
+
+**Unseen, and it is what the USER is about to test:** the Models panel against a real model
+tree, and the app menu with one switch entry instead of three.
+
+### Session 021 — 2026-09-02 10:00 — every claim re-checked against the source; G-48 scoped
+
+**No code was touched and nothing was run.** All ten trackers read in full; every
+current-state claim read back against `src/`.
+
+**Everything claimed built is built**, verified by reading rather than by symbol
+existence: twelve self-test cases dispatched in `src/jenova_core.nim`; `zlib.nim`
+(`{.passL: "-lz".}`, no `z_stream`) and `pdf.nim`, with `pipeline.readAttachment` trying
+the PDF path **before** `looksTextual` because a PDF fails the NUL test; `models.available`
+/ `activeAgentPath` / `switchToPath` with `switchModel` still gated to the two literals and
+still called by `jenova-core models switch`; `gui.modelsPanel`, `openModels`,
+`switchToModel` and the `switch_path` job in `ctlWorker`; workspace context injected in
+`pipeline`; `api.restoreItem` re-indexing; `gui.fileAttachmentsAsArtefacts` writing through
+`api.putEntity`; `nvimctl.editorEnv`. Step 11's removed symbols return **zero** hits. Six
+shell suites; **no shell, Lua, C, Python or Makefile in `src/` or `bin/`**.
+
+**Every outstanding finding still holds** — T-5 (`gui.run`'s `defer` is four statements and
+none is a `stopAll`), T-2, T-4, T-3, G-37 (`.glow-text` carried by no widget; `paned >
+separator` at 417/421, the corrected address), G-38, G-17.
+
+**Four things were wrong, and three of them change work rather than wording.**
+
+1. **This file's §4 table and `PLANS.md`'s "Where the work stands" table both still gated
+   PDF on the libz decision and still said to raise audio capture first.** Both were ruled
+   on 2026-09-02 (D-BY, D-BZ) and **D-BZ forbids putting audio to the USER again in any
+   form.** Corrected in both files. Same class as the `BLUEPRINT.md` §10 finding.
+2. **There are three switch surfaces, not two.** The Models panel, the window menu's two
+   named literals, **and the tray's two — which are built in `gui.nim`, not `tray.nim`.**
+   D-CB says one *in the window*; the reading taken is that the tray keeps its two, since a
+   D-Bus menu cannot host a list and removing them leaves it with no way to switch at all.
+3. **`models-selftest` asserts the behaviour D-CB now forbids** — `TESTS.md` §0r records
+   "the displaced model is preserved as `.old`, not deleted" as covered. G-48-2 invalidates
+   that assertion, and `TESTS.md` §0r must change with it. Nothing said so.
+4. **`models.available` also scans the flat `models/` directory**, not only the
+   subdirectories every tracker names. The narrowing is two deletions, not one.
+
+**And one consequence nothing recorded:** the `.old` chain lives in `switchToPath`, which
+`switchModel` calls — so fixing it changes the tray's two quick-switches **and**
+`jenova-core models switch`, whose output prints the `preserved:` lines.
 
 ### Session 020 (part three) — 2026-09-02 09:43 — the USER ran it
 
@@ -440,13 +533,23 @@ one sentence in it.** The ruling is Rule 0 above, and the phrasing that invited 
 
 **The desktop application has the shape of the Web UI and not all of its function.**
 
+> **Corrected 2026-09-02 10:00.** This table gated PDF on "a zlib dependency decision,
+> yours" and told the next session to raise **audio capture** before building it. **libz
+> was approved (D-BY) and PDF is built and confirmed on screen; audio is ruled not needed
+> and not gated (D-BZ), and is not to be put to the USER in any form.** It also listed the
+> trash view as missing while the Works column below lists it as built. **This is the same
+> class as the `BLUEPRINT.md` §10 finding — a summary table outliving the ruling it
+> describes, and it is what made the USER repeat both answers for weeks.**
+
 | Works | Missing entirely |
 |---|---|
-| Send a message, stream a reply | **PDF text extraction** — gated on a zlib dependency decision, yours (G-30) |
-| Copy, edit, delete, regenerate, continue a message | **Audio capture** — to be raised before it is built (G-30) |
-| Branching — alternative versions, with a counter | **LaTeX maths** — the half of G-34 left |
-| Statistics: tokens, tok/s, context used and left, model | **A real model selector** (G-20), **trash view** (G-21) |
-| A reasoning view for thinking models | **A real note editor** (G-17) |
+| Send a message, stream a reply | **A real note editor** (G-17) |
+| Copy, edit, delete, regenerate, continue a message | **LaTeX maths** — the half of G-34 left |
+| Branching — alternative versions, with a counter | **Model information** — context size, quantisation, chat template. Needs `/props` plus a GGUF header read; never built and said so |
+| Statistics: tokens, tok/s, context used and left, model | — |
+| A reasoning view for thinking models | — |
+| **A PDF attaches as its extracted text** (G-30, D-BY) — confirmed on screen | — |
+| **A model switcher** (G-20, G-48, D-CB) — confirmed on screen | — |
 | **Stop a generation, keeping the partial answer** (G-33) | — |
 | **Markdown tables, task lists, strikethrough** (G-34) | — |
 | **Typed errors, Retry, context-overflow reporting** (G-35) | — |
@@ -545,11 +648,8 @@ what a screen is actually for.
 
 ## 7. Waiting on the USER
 
-**Nothing in the plan is blocked.** Q-36 was raised and answered on 2026-09-02 (D-CB).
-
-**One symptom is still needed before G-48 is worked:** what the switcher actually does on
-screen — panel opens or not, list populated or not, Switch giving a notice, an error, or
-nothing.
+**Nothing in the plan is blocked and no symptom is outstanding.** Q-36 was raised and
+answered on 2026-09-02 (D-CB); **G-48 was closed by the USER's run at 10:53.**
 
 Three product decisions remain parked, none on the critical path: filesystem as the
 source of truth (T-11), deployment (T-7), a CLI (T-8).
@@ -581,7 +681,13 @@ look:
    placeholders**, which need a backend up to have any `/props` values to compare
    against. With the backend down every box shows the built-in default instead, which
    is what the USER saw and is the designed behaviour.
-4. **Four icons still unconfirmed**: `view-refresh-symbolic`,
+4. **A switched model actually loading.** The switch itself and the folder resolution are
+   **confirmed** (2026-09-02 10:53); what was not exercised is the other end — restarting
+   the backend and `llama-server` coming up on the newly linked `models/agent`. The USER
+   had not started it. **Unobserved, not suspect**, and by design: the panel says a switch
+   does not reload the backend, because `llama-server` holds the old weights until it is
+   restarted.
+5. **Four icons still unconfirmed**: `view-refresh-symbolic`,
    `media-playback-start-symbolic`, `go-previous-symbolic` and `go-next-symbolic` — the
    regenerate, continue and version-arrow controls, which only appear on a branched or
    continuable turn. All are standard Adwaita symbolics, but a missing one renders as a
@@ -647,11 +753,11 @@ the window responsive.**
 `bin/jenova --check` exits 0. The record is `PROGRESS.md`; the detail is
 `PLANS.md` "What Session 019 built".
 
-**Step 7b is built and confirmed on screen. 8a shipped and does not work** —
-**G-48**, and the shape it must take is **D-CB**.
+**Step 7b and 8a are built and both confirmed on screen** — 8a shipped, did not
+work, was reshaped to D-CB at 2026-09-02 10:43, and the USER ran it at 10:53.
 
-**Next — G-48**, then **8c, make the notes editor good** (G-17, D-BW): the last
-unbuilt item of Step 8 and the smallest that item has ever been.
+**Next — 8c, make the notes editor good** (G-17, D-BW): the last unbuilt item of
+Step 8 and the smallest that item has ever been.
 
 **One thing 10b leaves unproven and it is a USER run:** whether an attachment
 actually appears in the workspace tree, and whether its text then comes back in

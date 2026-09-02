@@ -5,6 +5,62 @@ One short paragraph per session. Sessions 001-005 are in
 
 ---
 
+## Session 021 (part three) — 2026-09-02 10:53
+
+**The USER ran the build: switching and folder resolution work as intended, so G-20 and
+G-48 are done and gone from `TODOS.md`.** No code changed. **Which of the three changes
+fixed the reported failure was never diagnosed** — the symptom was never known and the
+reshape was D-CB's shape rather than a repair aimed at a mechanism; recorded so no later
+session writes a diagnosis in. **Loading a switched model into the backend was not
+exercised**, the USER not having started it, so it is filed as *unobserved* in
+`BRIEFING.md` §8 rather than as a defect — and the two halves that were confirmed keep
+their confirmation (rule 12). **Next is 8c, the notes editor** (G-17, D-BW), the last
+unbuilt item of Step 8. Detail: `SESSION_HANDOFF.md` Session 021 (part three).
+
+---
+
+## Session 021 (part two) — 2026-09-02 10:43
+
+**The model switcher now has D-CB's shape: G-48-1, -2 and -3 are built.** `models.available`
+drew from every subdirectory of `models/` and the flat directory as well, so it offered
+embed and drafter models as the agent model; it draws from `models/instruct` and
+`models/thinking` and nothing else, and the empty-list message names both directories that
+were actually read rather than the tree above them. **A displaced symlink is removed rather
+than renamed to `.old`** — every entry the switch has ever written is a link into a source
+folder, so the copy preserved nothing and left the directory fuller each time, which is the
+chain the USER saw; **a displaced real file is still preserved**, being their only copy.
+**The window's two named menu items are gone — one switch surface — and the tray keeps its
+pair**, a D-Bus menu having no way to host a searchable list; that last is recorded as a
+reading of D-CB, overrulable in one word. `jenova-core models switch` is unchanged and
+still asserted. **`models-selftest` is 22 assertions**, both new groups made to bite by
+varying the data: the narrowing asserted from both sides of one tree that also holds an
+embed model, a drafter and a loose `.gguf`, and the backups asserted as a round trip α → β
+→ α, because one switch cannot show a chain. **Twelve self-tests pass, both binaries ELF
+64-bit FreeBSD, `--check` 0.** **G-48-4 — the reported failure — is untouched: the symptom
+is still not known and was not guessed at.** Detail: `SESSION_HANDOFF.md` Session 021
+(part two).
+
+---
+
+## Session 021 — 2026-09-02 10:00
+
+**All ten trackers read and every claim read back against the source; no code touched and
+nothing run.** Everything claimed built is built — verified by behaviour where behaviour
+is claimed, including that `readAttachment` tries the PDF path *before* `looksTextual`,
+which is the ordering the feature rests on — and every outstanding finding still holds
+(T-5, T-2, T-4, T-3, G-37, G-38, G-17). **Four wrong claims.** The consequential one:
+`BRIEFING.md` §4 and `PLANS.md`'s work-stands table both still gated PDF on the libz
+decision and still told the next session to raise audio capture first, **against D-BY and
+D-BZ, ruled the same day** — the `BLUEPRINT.md` §10 class, and the mechanism that made the
+USER repeat both answers for weeks. Also: there are **three** switch surfaces, not two, the
+third being the tray's, built in `gui.nim`; `models-selftest` asserts the `.old` behaviour
+D-CB forbids, so `TESTS.md` §0r changes with the fix; and `models.available` scans the flat
+`models/` directory as well as every subdirectory. **G-48 is scoped into four parts with a
+proof table** — parts 1-3 are settled shape and need no symptom, part 4 waits on one, and
+the symptom was deliberately not guessed at. Detail: `SESSION_HANDOFF.md` Session 021.
+
+---
+
 ## Session 020 (part three) — 2026-09-02 09:43
 
 **The USER ran the build: PDF attachment works, the model switcher does not.** They asked

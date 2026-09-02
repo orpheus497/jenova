@@ -197,7 +197,7 @@ proc main() =
         # until it is restarted, so this reports rather than silently implying
         # the running backend changed.
         let r = models.switchModel(p.jcaHome, args[2])
-        for e in r.removed: echo "removed identical active model: ", e.extractFilename
+        for e in r.removed: echo "removed displaced model link: ", e.extractFilename
         for e in r.preserved: echo "preserved active model as: ", e.extractFilename
         echo r.message
         echo "restart the backend for this to take effect: jenova-core backends restart"
@@ -1312,13 +1312,30 @@ proc main() =
       # A backup of a previous switch. It sits beside a live model and must never
       # be offered as one — selecting it would activate a superseded file.
       writeFile(home / "models" / "instruct" / "gamma.gguf.old", "ccc")
+      # Action purpose: G-48/D-CB. The three places a model may sit that are NOT
+      # a switch source. Both sides of one tree, so narrowing the scan cannot
+      # pass by simply listing nothing — `alpha` and `beta` must still appear.
+      createDir(home / "models" / "embed")
+      createDir(home / "models" / "draft")
+      writeFile(home / "models" / "embed" / "nomic.gguf", "e")
+      writeFile(home / "models" / "draft" / "tiny.gguf", "d")
+      writeFile(home / "models" / "loose.gguf", "l")
 
       block enumeration:
         let all = models.available(home)
         var names: seq[string]
         for m in all: names.add m.name
-        check("every installed model is listed",
+        check("both source folders' models are listed",
               "alpha.gguf" in names and "beta.gguf" in names, $names)
+        check("an embed model is not offered as an agent model",
+              "nomic.gguf" notin names, $names)
+        check("a draft model is not offered as an agent model",
+              "tiny.gguf" notin names, $names)
+        check("a .gguf loose in models/ is not listed",
+              "loose.gguf" notin names, $names)
+        check("only the two source roles appear",
+              all.allIt(it.role in models.SourceRoles),
+              $all.mapIt(it.role))
         check("a .old backup is not listed", "gamma.gguf.old" notin names,
               $names)
         check("the role is the directory it sits in",
@@ -1327,6 +1344,12 @@ proc main() =
               models.available(getTempDir() / "jenova-models-absent").len == 0)
 
       block switching:
+        # Function purpose: what `models/agent` actually holds, which is the only
+        # way to assert that repeated switches do not fill it (D-CB).
+        proc agentEntries(): seq[string] =
+          for kind, path in walkDir(home / "models" / "agent"):
+            result.add path.extractFilename
+
         # The transition is the assertion (D-BX): nothing is active, then alpha
         # is and beta is not, then beta is and alpha is not.
         check("nothing is active before a switch",
@@ -1350,9 +1373,27 @@ proc main() =
         check("switching again moves the active flag",
               rows.filterIt(it.name == "beta.gguf")[0].active and
               rows.filterIt(it.name == "alpha.gguf")[0].active == false)
-        check("the displaced model is preserved as .old, not deleted",
-              fileExists(home / "models" / "agent" / "alpha.gguf.old") or
-              symlinkExists(home / "models" / "agent" / "alpha.gguf.old"))
+
+        # Action purpose: G-48/D-CB, and the reason it is asserted as a round
+        # trip rather than a state. One switch leaving no `.old` proves nothing —
+        # the chain the USER saw only appears once a model is displaced twice, so
+        # the assertion has to come back to where it started.
+        check("switching does not leave a backup behind",
+              agentEntries() == @["beta.gguf"], $agentEntries())
+        discard models.switchToPath(home, alpha)
+        check("switching back leaves exactly one entry, still no backup",
+              agentEntries() == @["alpha.gguf"], $agentEntries())
+        check("the round trip put the active flag back",
+              models.available(home).filterIt(it.name == "alpha.gguf")[0].active)
+
+        # The other side of the same rule: a real `.gguf` the user dropped into
+        # models/agent by hand is their only copy, so it IS preserved. Asserted
+        # after the transition above so the backup it leaves cannot pollute it.
+        writeFile(home / "models" / "agent" / "manual.gguf", "m")
+        discard models.switchToPath(home, beta)
+        check("a real file placed in models/agent is preserved as .old",
+              fileExists(home / "models" / "agent" / "manual.gguf.old") and
+              not fileExists(home / "models" / "agent" / "manual.gguf"))
 
       block refusals:
         # Containment. `switchToPath` is exported, so a path outside the model

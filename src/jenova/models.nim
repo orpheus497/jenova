@@ -29,8 +29,8 @@ type
     ## What `switchModel` did, so a caller can report it without re-deriving it.
     ## The GUI shows `message`; the tests assert on the individual fields.
     target*: string      ## the .gguf now active in models/agent
-    preserved*: seq[string]  ## active entries renamed to .old
-    removed*: seq[string]    ## active entries that already pointed at the target
+    preserved*: seq[string]  ## real files renamed to .old — never symlinks (D-CB)
+    removed*: seq[string]    ## displaced links, and entries already on the target
     message*: string
 
 ## Action purpose: `.old` and `.old.N` are the backups `jenova-model-switch`
@@ -133,9 +133,12 @@ proc targetModel*(jcaHome, target: string): string =
 ##    old model in place rather than an empty `models/agent`.
 ## 2. **Relative link target.** `../<target>/<name>`, not an absolute path, so the
 ##    tree survives being moved or deployed elsewhere.
-## 3. **Existing entries are renamed to `.old`, not deleted** — unless they already
-##    resolve to the same real file, in which case keeping a second name for one
-##    file is pointless. `.old.N` disambiguates when `.old` is taken.
+## 3. **A displaced entry is only preserved when it is the user's only copy.** The
+##    shell renamed everything to `.old`/`.old.N`, which fills the directory with
+##    near-duplicate links after a few switches (D-CB). An entry that is a symlink
+##    is removed — the `.gguf` it points at still sits in its source folder, so
+##    the link preserves nothing. A **real file** placed here by hand is still
+##    renamed to `.old`, because deleting it would be the user's only copy gone.
 ## 4. **The swap is a rename**, which is atomic, so no reader ever sees the
 ##    directory without an active model.
 proc switchToPath*(jcaHome, modelPath: string): SwitchResult =
@@ -193,6 +196,14 @@ proc switchToPath*(jcaHome, modelPath: string): SwitchResult =
     if entryReal.len > 0 and entryReal == targetReal:
       removeFile(entry)
       result.removed.add entry
+    elif symlinkExists(entry):
+      # Action purpose: D-CB — every entry this proc has ever written is a symlink
+      # into `instruct/` or `thinking/`, so renaming one to `.old` keeps a second
+      # name for a file that has not moved and leaves the directory a little
+      # fuller on every switch. `symlinkExists` is an lstat, so it distinguishes
+      # the link from a real `.gguf` the user dropped in by hand.
+      removeFile(entry)
+      result.removed.add entry
     else:
       var dest = entry & ".old"
       if fileExists(dest) or symlinkExists(dest):
@@ -236,30 +247,31 @@ proc activeAgentPath*(jcaHome: string): string =
   if cur.len == 0: return ""
   try: cur.expandFilename except OSError: cur
 
-## Function purpose: every model on disk, which is what a selector draws.
+const SourceRoles* = ["instruct", "thinking"]
+  ## The only two directories a switch may draw from (D-CB). The user owns them —
+  ## reasoning models in `thinking`, instruct models in `instruct` — and the
+  ## switcher reads them without managing them.
+
+## Function purpose: the models a switch may choose between, which is what the
+## selector draws.
 ##
 ## **`discover` cannot answer this and that is why this exists** (8a): it
 ## resolves *one* path for one of three fixed roles and throws the rest of the
-## directory away. Backups are skipped for the reason `isBackup` records — a
-## `.old` is a previous model, not an installed one — and `models/agent` is
-## skipped because its entries are symlinks to rows already listed under their
-## own role, which would otherwise appear twice.
+## directory away.
+##
+## **Only `instruct` and `thinking` are scanned (D-CB).** The previous revision
+## walked every subdirectory of `models/` *and* the flat `models/` directory
+## itself, so it offered embed and speculative-decoding drafter models as the
+## agent model — a configuration `lifecycle` never launches, and one that fails
+## as a model behaving oddly rather than as a list that lied. `models/agent` was
+## never a source folder: it is the slot being swapped.
 proc available*(jcaHome: string): seq[InstalledModel] =
   let
     modelsDir = jcaHome / "models"
     activeReal = activeAgentPath(jcaHome)
-  if not dirExists(modelsDir): return
 
-  # The flat directory first, then each role beneath it. `agent` is deliberately
-  # not scanned; see the note above.
-  var dirs = @[(modelsDir, "")]
-  for kind, path in walkDir(modelsDir):
-    if kind notin {pcDir, pcLinkToDir}: continue
-    let role = path.extractFilename
-    if role == "agent": continue
-    dirs.add (path, role)
-
-  for (dir, role) in dirs:
+  for role in SourceRoles:
+    let dir = modelsDir / role
     if not dirExists(dir): continue
     for kind, path in walkDir(dir):
       if kind notin {pcFile, pcLinkToFile}: continue

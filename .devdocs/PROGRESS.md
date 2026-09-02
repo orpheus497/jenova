@@ -2,7 +2,7 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-09-02 09:43 (Session 020)
+**Last updated:** 2026-09-02 10:53 (Session 021)
 
 > **Reading the "UNRUN" labels in this file.** Entries below are point-in-time records
 > and several were written with a "compiled; UNRUN" status that was true on the day.
@@ -15,6 +15,12 @@ Macro progress tracking. Most recent entries at the top.
 ---
 
 ## Completed
+
+### 2026-09-02 10:53 — **G-48 confirmed on screen by the USER: switching and folder resolution work as intended.** The reported failure no longer reproduces. **Which of the three changes fixed it was never diagnosed and is not claimed.** Loading a switched model into the backend was not exercised — the USER had not started it — and is unobserved rather than suspect (`BRIEFING.md` §8).
+
+### 2026-09-02 10:43 — **G-48-1, -2 and -3 built: the switcher takes D-CB's shape.** `models.available` scans `models/instruct` and `models/thinking` only — it previously walked every subdirectory *and* the flat `models/`, so it offered embed and drafter models as the agent model. `switchToPath` no longer renames a displaced **symlink** to `.old` (the `.gguf` it points at has not moved, so the link preserved nothing and the chain filled the directory); a displaced **real file** is still preserved, because it is the user's only copy. The window's two named menu items are removed — one switch surface, D-CB — and the tray's pair is kept, a D-Bus menu having no way to host a list. `jenova-core models switch` is unchanged but now prints "removed displaced model link". **`models-selftest` is 22 assertions**, both sides of one tree for the narrowing and a round trip α → β → α for the backups. Twelve self-tests pass, both binaries ELF 64-bit FreeBSD, `bin/jenova --check` exits 0. **G-48-4 — the reported failure — is not touched: the symptom is still not known.** Files: `models.nim`, `gui.nim`, `jenova_core.nim`.
+
+### 2026-09-02 10:00 — **Every devdoc claim re-audited against the source; four wrong claims corrected; G-48 scoped into four parts with a proof table. No code changed.** Everything claimed built is built and every outstanding finding still holds. Corrected: `BRIEFING.md` §4 and `PLANS.md`'s work-stands table both still gated PDF on the libz decision and still said to raise audio first, against D-BY and D-BZ; there are three switch surfaces, not two, the third being the tray's, built in `gui.nim`; `models-selftest` asserts the `.old` behaviour D-CB forbids, so `TESTS.md` §0r changes with the fix; and `models.available` also scans the flat `models/` directory. Files: `.devdocs/` only.
 
 ### 2026-09-02 09:43 — **D-CB: the model switcher draws from `instruct` and `thinking` only, swaps `agent`, and must not accumulate `.old` copies.** Answers Q-36; supersedes D-CA. `TODOS.md` G-48.
 

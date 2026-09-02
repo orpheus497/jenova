@@ -1,6 +1,6 @@
 # TODOS
 
-**Last updated:** 2026-09-02 09:43 (Session 020)
+**Last updated:** 2026-09-02 10:53 (Session 021)
 
 Only what is actually outstanding. Everything finished lives in `PROGRESS.md`.
 
@@ -154,9 +154,10 @@ barrel files that list every shipped component. That is the authoritative invent
 check any future scope claim against it, not against a summary.
 
 **Ordering and the work for each item is `PLANS.md`.** Steps 1-7 are built and Step
-7b is closed (PDF, confirmed on screen). Of Step 8: **8b is built; 8a shipped and
-does not work (G-48); 8c — make the notes editor good (G-17) — is untouched.**
-G-33, G-34 (minus LaTeX), G-35, G-36 and G-30 are done; the record is `PROGRESS.md`.
+7b is closed (PDF, confirmed on screen). Of Step 8: **8b and 8a are built and both
+confirmed on screen; 8c — make the notes editor good (G-17) — is the only item of
+Step 8 left.** G-33, G-34 (minus LaTeX), G-35, G-36 and G-30 are done; the record is
+`PROGRESS.md`.
 
 **Done and gone from this file** (2026-09-01, all in `PROGRESS.md`):
 
@@ -189,24 +190,19 @@ Per the completion rule its record lives in `PROGRESS.md`. **Audio capture is no
 built and is not gated (D-BZ)** — ruled by the USER; the `input_audio` *send* path
 stays under Directive 3 because it carries imported Web UI conversations.
 
-**G-20 is NOT done.** Recorded as built at 08:43; the USER ran it and the switcher
-does not work. A defect report from the screen outranks a session's claim (rule 1).
+**G-20 and G-48 are gone from this file because they are done** — reshaped to D-CB at
+2026-09-02 10:43 and **confirmed on screen by the USER at 10:53: switching and folder
+resolution work as intended.** Per the completion rule the record is `PROGRESS.md`. The
+list draws from `models/instruct` and `models/thinking` only, a displaced link is removed
+rather than kept as `.old`, and the window has one switch surface (the tray keeps its
+pair — a reading of D-CB, overrulable).
 
-### G-48 — the model switcher does not work, and what shipped was the wrong shape
-
-**Reported by the USER 2026-09-02 09:36. The symptom is not known** and is not inferred
-(rule 1) — `models-selftest` passes against a fixture tree, which says nothing about the
-window (rule 15).
-
-**What it must do instead (D-CB):**
-
-- draw only from `models/instruct` and `models/thinking` — **not every subdirectory**,
-  which is what `models.available` does today and which offers embed and draft models as
-  the agent model
-- swap what is in `models/agent`, and nothing else
-- **not accumulate `.old` copies** on repeated switches
-
-**One way to switch in the window, not two.** D-CA is superseded.
+**Two things stated plainly rather than dressed up.** **Which of the three changes fixed
+the reported failure was never diagnosed**, because the symptom was never known; it is not
+claimed now that it is gone. And **loading a switched model into the backend has not been
+exercised** — the USER had not started it — so that is *unobserved*, not suspect, and it
+sits in `BRIEFING.md` §8 rather than here. **Do not file it as a defect and do not re-add
+an unverified label to the two halves that were confirmed** (rule 12).
 
 **What is left of G-34: LaTeX maths.** Tables, task lists and strikethrough are
 built; KaTeX has no GTK equivalent and rendering maths is its own project.

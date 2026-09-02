@@ -3353,12 +3353,13 @@ proc switchToModel(app: AppState, path: string) =
                          modelPath: path))
   app.modelsOpen = false
 
-## Function purpose: the model selector (G-20) — every `.gguf` the tree holds,
-## which one is active, and a switch per row.
+## Function purpose: the model selector (G-20, G-48) — the models in
+## `models/instruct` and `models/thinking`, which one is active, and a switch per
+## row.
 ##
-## **The two named quick-switches in the menu and the tray are kept, not
-## replaced** (Directive 3): they are a shipped surface, and a D-Bus tray menu
-## cannot host a searchable list at all. This is the list they never were.
+## **This is the window's only way to switch (D-CB).** The two named items that
+## sat in the app menu are gone; the tray keeps its pair, because a D-Bus menu
+## cannot host a searchable list.
 ##
 ## What it draws comes from `models.available`; this proc only lays it out,
 ## which is what let the enumeration and the switch be asserted in
@@ -3401,18 +3402,22 @@ proc modelsPanel(app: AppState): Widget =
           ScrolledWindow {.expand: true.}:
             Box(orient = OrientY, spacing = 14, margin = 4):
               if app.modelList.len == 0:
+                # D-CB: name both folders that were actually looked in. "No
+                # models found" over a tree the user knows has models in it is
+                # the report that sends them looking in the wrong place.
                 Label {.expand: false.}:
-                  text = "No .gguf files under " &
-                         app.lc.paths.jcaHome & "/models."
+                  text = "No .gguf files in " & app.lc.paths.jcaHome &
+                         "/models/instruct or " & app.lc.paths.jcaHome &
+                         "/models/thinking."
                   xAlign = 0.0
                   wrap = true
                   style = [StyleClass("settings-help")]
               else:
                 Label {.expand: false.}:
-                  text = "Switching relinks models/agent and preserves the " &
-                         "model it replaces as .old. It does not reload the " &
-                         "backend — llama-server holds the old weights until " &
-                         "it is restarted."
+                  text = "Switching relinks models/agent. The model it " &
+                         "replaces stays where it is, in its own folder. It " &
+                         "does not reload the backend — llama-server holds " &
+                         "the old weights until it is restarted."
                   xAlign = 0.0
                   wrap = true
                   style = [StyleClass("settings-help")]
@@ -3632,9 +3637,9 @@ proc topBar(app: AppState): Widget =
         style = [ButtonFlat]
         proc clicked() = app.openHardware()
 
-      # 8a, G-20: the model list. `models.discover` had no caller anywhere in the
-      # program, so until now there was no list to draw and the only way to
-      # change model was the two hardcoded menu items below.
+      # 8a, G-20, G-48: the model list, and since D-CB the window's only way to
+      # change model. `models.discover` had no caller anywhere in the program, so
+      # before it there was no list to draw at all.
       Button {.addRight.}:
         icon = "drive-multidisk-symbolic"
         tooltip = "Models"
@@ -3661,21 +3666,16 @@ proc topBar(app: AppState): Widget =
               style = [ButtonFlat]
               proc clicked() = pendingActions.add "restart"
             Separator()
-            # 8a: the full list. The two named switches below it stay — they are
-            # a shipped surface and Directive 3 keeps them — but they are the
-            # shortcut now rather than the only way in.
+            # G-48, D-CB: **one** way to switch in the window. The two named
+            # items that stood here — "Switch to instruct model" and "Switch to
+            # thinking model" — are removed on the USER's instruction, which is
+            # the only removal Directive 3 permits. The tray keeps its pair,
+            # because a D-Bus menu cannot host a searchable list and taking them
+            # out would leave it with no way to change model at all.
             Button:
               text = "Models…"
               style = [ButtonFlat]
               proc clicked() = app.openModels()
-            Button:
-              text = "Switch to instruct model"
-              style = [ButtonFlat]
-              proc clicked() = pendingActions.add "switch_instruct"
-            Button:
-              text = "Switch to thinking model"
-              style = [ButtonFlat]
-              proc clicked() = pendingActions.add "switch_thinking"
             Separator()
             Button:
               # The label states the action, not the state, because a toggle

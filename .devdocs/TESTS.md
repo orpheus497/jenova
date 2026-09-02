@@ -3,7 +3,7 @@
 Test specifications, validation criteria and expected outcomes. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-02 08:43 (Session 020).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-02 10:43 (Session 021).
 Mandated from the outset; absent for Sessions 001–003. See `DECISIONS_LOG.md` C-10.
 
 > **§5a onward are stage acceptance records** — what each stage had to prove and how. They are
@@ -102,13 +102,30 @@ window and no GPU.
 asserted as a **transition**: nothing active → alpha active and beta not → beta active
 and alpha not. Those three cannot all pass unless the flag is real.
 
-**Covered:** every installed model is listed · **a `.old` backup is not** · the role is
-the directory it sits in · an empty tree lists nothing rather than raising · the link
-target is **relative**, since an absolute one works until the tree moves · the displaced
-model is **preserved as `.old`, not deleted** · a path outside `models/` is refused and so
-is a file that is not a `.gguf` — containment, because `switchToPath` is exported ·
-**and the two named targets still work**, which is Directive 3 asserted rather than
-assumed.
+**Rewritten to D-CB — 2026-09-02 10:43, G-48. 22 assertions.** *(The two it replaces —
+"every installed model is listed" and "the displaced model is preserved as `.old`, not
+deleted" — were the shape D-CB forbids. They were rewritten with the fix rather than left
+to go red, which is what a superseded assertion otherwise does.)*
+
+**The narrowing, asserted from both sides of one tree.** The fixture holds `instruct` and
+`thinking` **and** an `embed` model, a `draft` model and a `.gguf` loose in `models/`.
+Both source models are listed; the embed, the draft and the loose file are **not**; and
+every row's role is one of the two. **Those cannot all pass unless the scan is exactly the
+two folders** — asserting only the absences would pass on a list that returns nothing.
+
+**The backups, asserted as a round trip and not a state.** α → β leaves `models/agent`
+holding exactly `beta.gguf`; β → α leaves exactly `alpha.gguf`; **no `.old*` at any
+point**, and the active flag comes back with it. **One switch proves nothing here** — the
+chain the USER saw only appears once a model is displaced twice, so the assertion has to
+return to where it started. The other side of the rule is asserted after it: a **real**
+`.gguf` written into `models/agent` by hand **is** renamed to `.old`, because it is the
+user's only copy.
+
+**Also covered:** a `.old` backup is not listed · the role is the directory it sits in · an
+empty tree lists nothing rather than raising · the link target is **relative**, since an
+absolute one works until the tree moves · a path outside `models/` is refused and so is a
+file that is not a `.gguf` — containment, because `switchToPath` is exported · **and the
+two named targets still work**, which is Directive 3 asserted rather than assumed.
 
 **Not covered, and it cannot be from here:** the panel, its search box and the Switch
 button are widgets. `--check` builds the tree and presses nothing.

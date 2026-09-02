@@ -12,6 +12,194 @@ Reverse-chronological. **Keep entries short.** Sessions 001-005 are in
 
 ---
 
+## Session 021 (part three) — 2026-09-02 10:53 — **the USER ran it; G-48 is closed**
+
+**Instruction:** it seems to work as intended so far, and will be tested further later;
+loading was not tested because the backend was not started, but switching and folder
+resolution worked as intended.
+
+**No code was touched and nothing was run.** This entry is the doc update.
+
+**G-20 and G-48 are done and are gone from `TODOS.md`** per the completion rule; the record
+is `PROGRESS.md` 10:43 and 10:53. Step 8 has one unbuilt item left, **8c**.
+
+### Two things recorded plainly, because both are the kind that get rewritten later
+
+1. **Which of the three changes fixed the reported failure was never diagnosed.** The
+   symptom was never known — it was asked for and not needed in the end, because parts
+   1-3 were D-CB's *shape* rather than a repair aimed at a mechanism. **No session is to
+   write a diagnosis in afterwards.** The honest statement is that the reported failure no
+   longer reproduces and the cause was never established.
+2. **Loading a switched model into the backend is unobserved, not suspect.** The USER had
+   not started it. It is filed in `BRIEFING.md` §8 with the other things awaiting a screen
+   run, **not** in `TODOS.md` as a defect — and it is by design that a switch does not
+   reload: `llama-server` holds the old weights until it is restarted, which is what the
+   panel says. **The two halves that were confirmed keep their confirmation** (rule 12).
+
+**Files touched:** `BRIEFING.md`, `TODOS.md`, `PLANS.md`, `PROGRESS.md`,
+`SESSION_HANDOFF.md`, `SUMMARIES.md`. **No source file.**
+
+**Next:** **8c — make the notes editor good** (G-17, D-BW), the last unbuilt item of Step
+8 and the smallest that item has ever been. Then the two widget defects **G-42** and
+**G-47**, both a USER run. Then Step 9: T-5, T-2, T-4, T-3.
+
+---
+
+## Session 021 (part two) — 2026-09-02 10:43 — **the switcher reshaped to D-CB**
+
+**Instruction:** proceed, stay strict to `AGENTS.md`, complete the listed work, report
+after the build with all the devdocs updated.
+
+### G-48-1 — the enumeration is the two source folders (D-CB)
+
+`models.available` walked **every** subdirectory of `models/` and the flat `models/`
+directory as well, so it offered embed and speculative-decoding drafter models as the
+agent model — a configuration `lifecycle` never launches. It now draws from a named
+`SourceRoles` const: `models/instruct` and `models/thinking`. `models/agent` was never a
+source folder; it is the slot being swapped.
+
+**The empty-list message changed with it.** It said "No .gguf files under …/models", which
+over a tree the user knows has models in it sends them looking in the wrong place. It now
+names both directories that were actually read.
+
+### G-48-2 — a displaced symlink is removed, not renamed
+
+**Every entry `switchToPath` has ever written is a symlink into a source folder**, so
+renaming one to `.old` keeps a second name for a file that has not moved and leaves the
+directory fuller on every switch. That is the chain the USER saw.
+
+**A displaced real file is still preserved as `.old`**, and that half is not incidental: a
+`.gguf` placed in `models/agent` by hand is the user's only copy, and D-CB rules against
+duplicate *copies*, not against the safety. `symlinkExists` is an lstat, so it separates
+the two without following either.
+
+**This reaches two shipped surfaces, because `switchModel` calls `switchToPath`** — the
+tray's two quick-switches and `jenova-core models switch`. The subcommand's behaviour is
+unchanged and still asserted; only its wording moved, to "removed displaced model link".
+
+### G-48-3 — one switch surface in the window
+
+The app menu's "Switch to instruct model" and "Switch to thinking model" are removed. **An
+explicitly instructed removal, which is the only kind Directive 3 permits.**
+
+**The tray's pair is kept, and this is a reading rather than a ruling.** D-CB says one
+switch surface *in the window*; the tray is not the window, and a D-Bus menu cannot host a
+searchable list, so removing them would leave the tray with no way to change model and
+nothing in its place. **Stated here so the USER can overrule it in one word.**
+
+### G-48-4 — not touched
+
+**The symptom is still not known and was not guessed at** (rule 1, D-AN). Parts 1-3 are
+D-CB's shape and were settled without it. What is needed is what the window does on
+screen, or a read-only listing of `$HOME/Jenova/models`.
+
+### Verification
+
+**`models-selftest` is 22 assertions and both new groups were made to bite by varying the
+DATA (D-BX), never the code.** The fixture tree now holds an embed model, a drafter and a
+`.gguf` loose in `models/` **alongside** the two source folders, and asserts the source
+models present *and* those three absent — **neither side passes on its own**, since
+asserting only the absences would pass on a list that returns nothing. The backups are
+asserted as a **round trip**, α → β → α, leaving exactly one entry in `models/agent` and no
+`.old*` at any point: **one switch proves nothing**, because the chain only appears once a
+model is displaced twice. The real-file case is asserted after it so its backup cannot
+pollute the transition.
+
+**Twelve self-tests pass, both binaries are ELF 64-bit FreeBSD, `bin/jenova --check` exits
+0** (rule 17 — removing a menu block is exactly the change that compiles and then fails to
+build a window). The six shell suites were not run: Rule 0, and nothing touched is in their
+reach.
+
+**Files touched:** `src/jenova/models.nim`, `src/jenova/gui.nim`, `src/jenova_core.nim`,
+and the devdocs.
+
+**For the USER to test:** open **Models** in the header — the list should hold only what is
+in `models/instruct` and `models/thinking`; switch twice and `models/agent` should hold one
+entry and no `.old`; and the app menu should carry one model entry instead of three.
+
+**Next:** **G-48-4** once the symptom is known. Then **8c** (make the notes editor good),
+the two widget defects **G-42** and **G-47** (both a USER run), then Step 9: T-5, T-2, T-4,
+T-3.
+
+---
+
+## Session 021 — 2026-09-02 10:00 — **every claim re-audited; G-48 scoped into four parts**
+
+**Instruction:** read `AGENTS.md` and stay strict to it, read the devdocs, cross-reference
+the plan and every claim against the codebase, document the remaining work clearly, and
+present the phase to work on today.
+
+**No code was touched and nothing was run** (Rule 0 — no source changed, so no build was
+needed).
+
+### Everything claimed built is built
+
+Read out of `src/`, and read for behaviour where a document describes behaviour. Twelve
+`of "…-selftest"` cases in `src/jenova_core.nim`. `zlib.nim` links `-lz` and declares no
+`z_stream`; `pdf.nim` is pure; **`pipeline.readAttachment` tries the PDF path before
+`looksTextual`**, which is the ordering that matters — a PDF is binary and the NUL test
+refuses it. `models.available` / `activeAgentPath` / `switchToPath` exist; `switchModel`
+still refuses anything but the two literals and is still the `jenova-core models switch`
+path. `gui.openModels` / `switchToModel` / `modelsPanel` and the `switch_path` job in
+`ctlWorker` are wired, and the panel has the same overlay shape as the settings and
+hardware panels, which are confirmed working. Workspace context injected in `pipeline`;
+`api.restoreItem` re-indexes; `gui.fileAttachmentsAsArtefacts` writes through
+`api.putEntity`; `nvimctl.editorEnv` exists. Step 11's removed symbols return **zero**
+hits across `src/`. Six shell suites in `tests/`; **no shell, Lua, C, Python or Makefile
+in `src/` or `bin/`.**
+
+**Every outstanding finding still holds**, each re-read: T-5 (`gui.run`'s `defer` is four
+statements — the three quit sentinels, the joins and the closes — and none is a
+`stopAll`), T-2 (`Conn.cache` never evicts; the only `sqlite3_finalize` is the shutdown
+loop), T-4 (the symlink check is existence-gated), T-3 (no trim anywhere in
+`pipeline.nim`), G-37 (`.glow-text` returns **zero** hits in `gui.nim`; `paned >
+separator` is at 417/421, the address last session corrected to), G-38, G-17.
+
+### Four wrong claims, three of which change the work
+
+1. **`BRIEFING.md` §4 and `PLANS.md`'s "Where the work stands" table both still gated PDF
+   on "a zlib dependency decision, yours" and still said to raise audio capture before
+   building it.** Both were ruled the same day — **D-BY approved libz and PDF is confirmed
+   on screen; D-BZ rules audio not needed, not gated, and not to be put to the USER
+   again in any form.** Both tables also listed the trash view as missing while listing it
+   as built elsewhere. **This is the `BLUEPRINT.md` §10 class exactly: a summary table
+   outliving the ruling it describes — and it is the mechanism that made the USER repeat
+   both of those answers for weeks.** Corrected in both files.
+2. **There are three switch surfaces, not two.** The Models panel, the window menu's two
+   named literals, and **the tray's two — which are `TrayItem` rows built in `gui.nim`,
+   not in `tray.nim`.** D-CB says one *in the window*. **The reading taken, and stated as
+   a reading:** the tray keeps its two, because a D-Bus menu cannot host a searchable list
+   and removing them leaves the tray with no way to change model and nothing in its place.
+3. **`models-selftest` asserts the behaviour D-CB now forbids.** `TESTS.md` §0r lists "the
+   displaced model is preserved as `.old`, not deleted" as covered. G-48-2 supersedes it,
+   so it is rewritten with the fix rather than left to go red. Nothing recorded this.
+4. **`models.available` also scans the flat `models/` directory** — its `dirs` seed is
+   `(modelsDir, "")` before the subdirectory walk. Every tracker named only the
+   subdirectory scan; the narrowing is two deletions.
+
+**And one consequence nothing recorded:** the `.old` chain is in `switchToPath`, which
+`switchModel` calls — so fixing it reaches the tray's quick-switches **and**
+`jenova-core models switch`, whose output prints the `preserved:` lines. Directive 3: the
+subcommand keeps working, its output changes.
+
+### What was deliberately not done
+
+**The G-48 symptom was not guessed at** (rule 1, D-AN). The panel's structure is identical
+to two panels confirmed working, so nothing in the widget shape distinguishes it, and
+`available`'s inputs check out — `models/` resolves under `paths.jcaHome`, and no
+`MODEL_PATH` override is set in `etc/`. **A read-only listing of `$HOME/Jenova/models`
+would settle it cheaply** and is offered rather than taken, because it is the USER's
+runtime home (Rule 0's spirit, though it is neither a run nor a process audit).
+
+**Files touched:** `BRIEFING.md`, `TODOS.md`, `PLANS.md`, `TESTS.md`, `PROGRESS.md`,
+`SESSION_HANDOFF.md`, `SUMMARIES.md`. **No source file.**
+
+**Next:** **G-48-1, -2 and -3**, awaiting the USER's approval per Directive 1. Then
+**G-48-4** once the symptom is known, then **8c** (make the notes editor good), the two
+widget defects **G-42** and **G-47** (both a USER run), then Step 9: T-5, T-2, T-4, T-3.
+
+---
+
 ## Session 020 (part three) — 2026-09-02 09:43 — **the USER ran it; the switcher is wrong; devdoc bloat removed**
 
 **Instruction:** the PDF upload works, basic. The model switcher does not. Why does it

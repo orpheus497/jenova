@@ -3,7 +3,7 @@
 File-by-file map of the codebase: what lives where, and why. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE. Update whenever a file is added, removed or relocated.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-02 08:43 (Session 020).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-02 10:43 (Session 021).
 
 This file was mandated from the outset and did not exist for Sessions 001–003 —
 including Session 001, which moved or deleted 31 files. See `DECISIONS_LOG.md` C-10.
@@ -105,13 +105,20 @@ calls it from `readAttachment`; `gui.nim` only stores the result in the Web UI's
 shape.
 
 **`models.nim` gained `available`, `activeAgentPath` and `switchToPath` (G-20, 8a,
-2026-09-02).** The first is the enumerator the selector needed and `discover` could never
-be — `discover` resolves one path for one of three fixed roles and discards the rest of
-the directory. `switchToPath` is `switchModel`'s safety generalised to an arbitrary model
-with a containment check; **`switchModel` stays as its own entry point** because
+2026-09-02), reshaped to D-CB the same day (G-48).** `available` is the enumerator the
+selector needed and `discover` could never be — `discover` resolves one path for one of
+three fixed roles and discards the rest of the directory. **It draws from `SourceRoles`
+— `models/instruct` and `models/thinking` — and nothing else**; the first revision walked
+every subdirectory and the flat `models/` too, which offered embed and speculative-decoding
+drafter models as the agent model. `switchToPath` is `switchModel`'s safety generalised to
+an arbitrary model with a containment check, and **it no longer renames a displaced symlink
+to `.old`** (the `.gguf` it points at has not moved, so the link preserved nothing and the
+chain filled the directory) — a displaced **real file** is still preserved, being the
+user's only copy. **`switchModel` stays as its own entry point** because
 `jenova-core models switch instruct` is a shipped surface (Directive 3, asserted in
 `models-selftest`). `gui.nim` draws the panel and scores nothing, the same split as the
-Hardware screen.
+Hardware screen; since D-CB it is also the window's **only** switch surface, the two named
+menu items having been removed. The tray keeps its pair — a D-Bus menu cannot host a list.
 
 **Removed 2026-09-01 (G-46, ruling D-BW):** the document side panel. `vte.nim` lost
 `configureDoc` and `newDocTerminal`, `nvimctl.nim` lost `docSocketPath` and

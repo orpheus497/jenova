@@ -2,7 +2,7 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-09-02 09:43 (Session 020)
+**Last updated:** 2026-09-02 10:53 (Session 021)
 
 **Write plans in plain English, then cite the ID** (**D-BA**). A step that reads
 "resolve G-23" tells the reader nothing. Say what the thing is first.
@@ -57,13 +57,21 @@ view) and was written from a summary rather than from the Web UI. Re-derived
 that name and describe every shipped component. The real list is three times larger and
 is `TODOS.md` G-17, G-20, G-21 and G-28 … G-36. G-28 … G-33 and G-39 are built.
 
+> **Corrected 2026-09-02 10:00.** This table said PDF was "gated: needs zlib" and audio
+> capture was to be "raised first". **Both were ruled on 2026-09-02** — libz approved
+> (D-BY), PDF built and confirmed on screen; **audio not needed, not gated, and not to be
+> raised again (D-BZ).** It also listed the trash view as missing (built 2026-09-01 19:05).
+> `BRIEFING.md` §4 carried the same three errors and is corrected with it.
+
 | Works today | Missing entirely |
 |---|---|
-| Send a message, stream a reply | **PDF text extraction** (gated: needs zlib) |
-| Copy, edit, delete, regenerate and continue a message | **Audio capture** (raise first) |
-| Branching — alternative versions, with a counter | **LaTeX maths** |
-| Generation statistics, context usage, model name | A real model selector and model information |
-| A reasoning view for thinking models | A trash view, a real note editor |
+| Send a message, stream a reply | **A real note editor** (G-17) |
+| Copy, edit, delete, regenerate and continue a message | **LaTeX maths** |
+| Branching — alternative versions, with a counter | **Model information** — needs `/props` + a GGUF header read; never built |
+| Generation statistics, context usage, model name | — |
+| A reasoning view for thinking models | — |
+| **PDF attachments become text** (D-BY) · **a trash view** (G-21) | — |
+| **A model switcher** (G-20, G-48, D-CB) — confirmed on screen | — |
 | Conversations: create, rename, delete, search | — |
 | **Stop a generation · tables · typed errors · delete confirmations** | — |
 | **Attachments: picker, drag-and-drop, paste, thumbnails, preview** | — |
@@ -535,7 +543,24 @@ source first. The view itself is widgets and is a USER run.
 
 ---
 
-### 8a. **SHIPPED AND WRONG — reopened 2026-09-02.** Model selector *(G-20, G-48)*
+### 8a. **BUILT and CONFIRMED ON SCREEN 2026-09-02 10:53.** Model selector *(G-20, G-48)*
+
+Done and out of this plan. Reshaped to D-CB at 10:43 — the enumeration is
+`models/instruct` and `models/thinking` only, a displaced symlink is removed rather than
+renamed (only a real file is still preserved as `.old`), and the window's two named menu
+items are gone with the tray keeping its pair. **22 assertions in `models-selftest`**;
+twelve self-tests pass, both binaries ELF 64-bit FreeBSD, `bin/jenova --check` exits 0.
+**The USER ran it: switching and folder resolution work as intended.** The record is
+`PROGRESS.md` 2026-09-02 10:43 and 10:53.
+
+**Two honest notes.** **Which of the three changes fixed the reported failure was never
+diagnosed**, because the symptom was never known — the reshape was D-CB's shape, not a
+repair aimed at a mechanism, and no session should later write one in. And **loading a
+switched model into the backend was not exercised**, the USER not having started it; that
+is unobserved, not suspect, and lives in `BRIEFING.md` §8. **Do not re-add an unverified
+label to the two halves that were confirmed** (rule 12).
+
+The write-up that produced this follows.
 
 Recorded as built at 08:43; the USER ran it and it does not work. **The symptom is not
 known** and is not to be guessed at (rule 1, D-AN).
@@ -545,16 +570,63 @@ known** and is not to be guessed at (rule 1, D-AN).
 `.old` copies. What shipped scans every subdirectory, so it offers embed and draft models
 as the agent model.
 
-**The work:**
+**The work — four parts, scoped against the source 2026-09-02 10:00. Three of them are
+D-CB's shape and need no symptom; only the fourth waits on one.**
 
-1. Narrow `models.available` to the two source folders.
-2. Replace the `.old` chain with something that does not fill the directory.
-3. One switch surface in the window, not two (D-CB supersedes D-CA).
-4. Find out what the reported failure actually is before changing the panel.
+**G-48-1 — narrow the enumeration to the two source folders.** `models.available` walks
+**every** subdirectory of `models/` *and* the flat `models/` directory itself (its `dirs`
+seed is `(modelsDir, "")` before the subdirectory walk). **That is two deletions, not one**
+— every tracker so far has named only the subdirectory scan. It becomes `models/instruct`
+and `models/thinking`, and nothing else. `models/agent` stays excluded for the reason it
+already is: its entries are symlinks to rows listed under their own role.
+
+**G-48-2 — stop accumulating copies.** The `.old`/`.old.N` chain is in `switchToPath`.
+**A displaced entry that is a symlink is removed, not renamed** — the real `.gguf` still
+lives in `instruct/` or `thinking/`, so a `.old` link preserves nothing and only fills the
+directory. **A displaced entry that is a real file is still preserved as `.old`**, because
+deleting a `.gguf` the user put in `models/agent` by hand is data loss and D-CB rules on
+duplicate *copies*, not on the safety.
+
+> **Two consequences nothing recorded, both of which this part reaches:**
+>
+> 1. **`switchModel` calls `switchToPath`**, so this changes the tray's two quick-switches
+>    and `jenova-core models switch`, whose output prints the `preserved:` lines
+>    (`jenova_core.nim`, the `models`/`switch` case). Directive 3: the subcommand must keep
+>    working — its *output* changes, its contract does not.
+> 2. **`models-selftest` asserts the old behaviour.** `TESTS.md` §0r records "the displaced
+>    model is **preserved as `.old`, not deleted**" as covered. That assertion is superseded
+>    by D-CB and is rewritten with this part, not left to fail.
+
+**G-48-3 — one switch surface in the window.** The two named literals are in the window's
+app menu (`gui.nim`, the `Popover` under the `open-menu-symbolic` `MenuButton`, directly
+below the `Models…` item). They go; the Models panel stays.
+
+> **The tray's two are kept, and this is a reading, not a ruling.** D-CB says one switch
+> surface **in the window**. The tray's items are `TrayItem` rows built in `gui.nim` — not
+> in `tray.nim` — dispatching the same `switch_instruct`/`switch_thinking` jobs. A D-Bus
+> menu cannot host a searchable list, so removing them leaves the tray with no way to
+> change model and nothing in its place. **Stated so the USER can overrule it in one word.**
+
+**G-48-4 — fix the reported failure.** Not started until the symptom is known (rule 1,
+D-AN). `models-selftest` passes throughout, which says the parts work and nothing about
+the window (rule 15) — **and the join from the panel to `models.available` is exactly what
+is untested.**
 
 **In the tree now:** `models.available`, `activeAgentPath`, `switchToPath` in
-`models.nim`; `gui.modelsPanel`; `models-selftest`. **`switchModel` and
-`jenova-core models switch` are untouched and still work.**
+`models.nim`; `gui.openModels` / `switchToModel` / `modelsPanel`, the `switch_path` job in
+`gui.ctlWorker`, and the `drive-multidisk-symbolic` header button; `models-selftest`.
+**`switchModel` and `jenova-core models switch` are untouched and still work.**
+
+#### What proves each part worked
+
+| | What is asserted | Where |
+|---|---|---|
+| 48-1 | A fixture tree with `instruct`, `thinking`, `embed`, `draft` **and** a flat `models/*.gguf` lists **only** the first two folders' models — both sides of one tree, so the narrowing cannot pass by listing nothing | `models-selftest` |
+| 48-2 | Switching **α → β → α** leaves exactly one entry in `models/agent` and **no `.old*` at any point** — a transition, per D-BX. A real file placed in `models/agent` **is** still preserved | `models-selftest` |
+| 48-3 | Nothing — it is a widget deletion. **`bin/jenova --check` must exit 0** (rule 17): removing a menu block is precisely the change that compiles and then fails to build a window | — |
+| 48-4 | Depends on the symptom | — |
+
+**Every assertion bites by varying the DATA, never the code (D-BX, rule 16).**
 
 **Model information was never built** — context size, quantisation, vocabulary, chat
 template need `/props` plus a GGUF header read. Separate work.
@@ -853,8 +925,9 @@ Both binaries build, **twelve self-tests pass**, `bin/jenova --check` exits 0.
 **Done: Step 11, 10c, 10a, 8b, and — 2026-09-02 — Step 7b (PDF), confirmed on screen.**
 What remains, in order:
 
-**G-48 first** — the model switcher, rebuilt to D-CB. It is the only thing in the tree
-that is broken rather than absent.
+**8c first — make the notes editor good** (G-17, D-BW). It is the last unbuilt item of
+Step 8 and the smallest that item has ever been. **G-48 is closed** — built 2026-09-02
+10:43, confirmed on screen at 10:53.
 
 **Then 8c** — make the notes editor good (G-17, D-BW). The last unbuilt item of Step 8
 and the smallest that item has ever been.
