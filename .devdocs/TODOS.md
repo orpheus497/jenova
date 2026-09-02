@@ -6,10 +6,12 @@ Only what is actually outstanding. Everything finished lives in `PROGRESS.md`.
 
 > **Session 023 added the A-series below.** A three-part audit — Web UI parity, a claim-by-claim
 > validation of all ten trackers against the source, and a mechanism analysis of the implemented
-> features. **No code was changed and nothing was run.** Two of its findings (**A-1**, **A-2**)
-> outrank everything else in this file: the self-tests are executed by no sanctioned path, and the
-> shell suites report PASS when they cannot run. **Every A-row carries `[V]` or `[A]`** — read that
-> marker before scheduling work on it (**D-CG**).
+> features. **No code was changed and nothing was run.** **Every A-row carries `[V]` or `[A]`** —
+> read that marker before scheduling work on it (**D-CG**).
+>
+> **A-1 and A-2 were built on 2026-09-03 09:02** and are gone from this file per the completion
+> rule; the record is `PROGRESS.md`. **Test and check work is left until last from here on** —
+> the USER's instruction, filed as **A-68** in Backlog.
 >
 > **`A-67` is a traceability index** mapping each of the 64 sweep findings to its A-row. It exists
 > because the first pass of this section **dropped five of them** and mis-stated `A-52`'s severity;
@@ -64,9 +66,8 @@ for that specific thing in that message. **Building is not running** — `nimble
 asked for an audit of their machine. Running the product takes over ports, loads gigabytes
 onto the GPU, and interrupts whatever the USER is actually doing.
 
-**T-12 is closed as a subject.** Two suites fail if something already holds the real
-ports. That is the whole of it. See the Backlog entry for the one-line fix, and do not
-re-derive it a fourth time.
+**T-12 is fixed** (2026-09-03 09:02, `PROGRESS.md`). The two suites no longer collide with the
+machine's real ports. Nothing here to re-derive.
 
 ---
 
@@ -290,7 +291,7 @@ PASS while asserting nothing.
 | **G-51** | **The constraint is bounded and it is exactly one widget — surveyed 2026-09-02 11:43.** `Button.shortcut` is the **only** property in owlkettle whose update hook can abort the process from a child-count change. The other assert-only hooks are `Paned`'s `resize`/`shrink`/child-type, and **`Paned` is used nowhere in `gui.nim`** (zero hits — it is also G-37's and G-38's subject). Every other assertion in owlkettle is an internal invariant, not a positional-diff trap. **So the rule is: `gui.fullscreenButton` must be the last child of its row and nothing may be inserted before it — no more than that.** Adding a child in a container that also holds a keyboard-shortcut button crashes the application on the next redraw. Found 2026-09-02 11:30 by causing it: putting a fourth button in the note editor's header row aborted the process on opening a note, with `widgets.nim(920) state.shortcut == widget.valShortcut [AssertionDefect]`. **The mechanism, verified in owlkettle's source and not inferred:** owlkettle diffs a `Box`'s children **by index** and reuses a child's state whenever the type matches (`widgetdef.nim`, the type-id compare in the generated `update`), and **`Button.shortcut` has no update path at all** — its `build` hook installs a `GtkShortcutController` and its `update` hook only asserts the value never changed, with owlkettle's own `# TODO` on the assertion. So a shortcut-carrying `Button` that lands on the index of a `Button` built without one aborts. **`gui.fullscreenButton` (`shortcut = "F11"`) is the only such widget in this program**, and it is the last child of all three branches of the chat/note/editor header row, whose counts are 3, 3 and 5. **This is a live trap, not an open defect** — the code is correct as it stands and a comment at the note pane records it. The durable fix, if the constraint ever becomes inconvenient, is to move F11 off the button and onto the window as a real shortcut controller; that is not scheduled. **`bin/jenova --check` cannot catch this class:** it builds each branch once and the assertion only fires on an *update*, which needs a branch to change. |
 | **G-37** | *(Re-verified 2026-09-02 08:01. **Both findings hold. The claim written beside them did not.** The previous revision said "`theme.nim` has not been touched since" — Step 11 deleted `.doc-panel` and `.doc-panel-closed` from it that same evening, so the separator rule moved: it is **`theme.nim:417`** with `:hover` at **421**, not 428/432. `.glow-text` is still **`theme.nim:253`** and a grep for it across `gui.nim` still returns **zero**. **Search the selectors; the numbers here are a hint and have now rotted three times.**)* **Two style rules in `theme.nim` are dead.** `paned > separator` styles a widget that is not in the tree — a leftover from G-25, which shipped as a `Box` after a `Paned` crashed the app. And `.glow-text` is defined and carried by no widget: the glow effect works, but as a `text-shadow` duplicated inside `.brand` and `.conv-active`. **The second half is G-8's exact defect — a class defined and applied to nothing — recurring in the same file.** Both were found and reported on 2026-09-01 and neither was filed as work; that is why they are here. Re-verified 2026-09-01 14:19: `.glow-text` is `theme.nim:253` and **no widget in `gui.nim` carries the class** (a grep for it in `gui.nim` returns zero hits); `paned > separator` is `theme.nim:428-432`. *Re-verified 2026-09-01 17:27: the `.glow-text` address held, the separator address did not — it was written as 416-420 against a file where it is 428. Earlier revisions named 162 and 251-255, and before that named them in the opposite order.* |
 | **G-38** | **A code comment in `gui.nim` describes a widget that was never used.** The main-area comment still explains itself as feeding "the `Paned` that G-25 adds". G-25 shipped as a `Box`, and the comment above the `Box` itself records why. A reader following the first comment looks for a `Paned` that does not exist. Prose only, no behaviour. **The doc comment directly above `gui.mainArea`** — *verified 2026-09-01 18:07; the address written here (2637) was wrong, as was 2560 before it, which is why no third number is being recorded.* |
-| **T-12** | **A one-line fix to two test scripts. The subject is closed — do not diagnose it again (D-BJ).** `test_routes.sh` and `test_lifecycle.sh` fail if anything already holds the machine's real ports, because neither overrides `JENOVA_LLAMA_PORT` the way both already override `JENOVA_PORT`. **That is the entire finding.** It is not a product fault, it is not a mystery, and it has been fully diagnosed three separate times. **The fix:** give both scripts their own dead upstream ports. Until the USER schedules it, a session seeing those failures records nothing and says nothing. |
+| **A-68** | **The test scripts and checks are left until last.** Given by the USER 2026-09-03 09:05. They come up every session while the main work is unfinished, and they are likely to keep failing until it is done. Raw and unscoped — no `PLANS.md` entry, and none is to be written without the USER asking for one. |
 
 ---
 
@@ -308,18 +309,16 @@ as a lead, not a fact, and verify before scheduling work. This distinction exist
 agent citation had already rotted when it was written (`nvimctl.alive` was cited at `:350` in a
 196-line file), which is rule 14's failure mode inside the audit that was hunting for it.
 
-### A-1 and A-2 — the two structural findings. These outrank everything else in this file.
+### A-1 and A-2 — **BUILT 2026-09-03 09:02 and gone from this file.**
 
-| ID | V | What it is |
-|---|---|---|
-| **A-1** | `[V]` | **Nothing runs the self-tests. They are the project's entire assertion base and no sanctioned path executes them.** `nimble suites` builds both binaries and then runs exactly six shell scripts (`jenova_core.nimble`, `task suites`). A search for `selftest` across `tests/` and `jenova_core.nimble` returns **zero hits**. The `of "…-selftest"` cases dispatched in `src/jenova_core.nim` are reachable only by typing `jenova-core <name>-selftest` into a terminal by hand. **`TESTS.md` is 1,349 lines documenting assertions that no build task, no suite and no CI runs**, and dozens of source comments justify a design choice with "so it is assertable in `X-selftest`". Every one of those justifications is intact as engineering and unverified as fact. **This is also an L5/D-BC defect on its own terms** — the project's own verification requires a terminal. **The fix is one line in `task suites`**: run the self-test subcommands alongside the shell suites. |
-| **A-2** | `[V]` | **Every shell suite reports PASS when it cannot run.** `[ -x "$CORE" ] \|\| { echo "SKIP…"; exit 0; }` at `tests/test_routes.sh:25`, `tests/test_api_db.sh:21`, `tests/test_api_fs.sh:27`, `tests/test_lifecycle.sh:22`, and `command -v nc >/dev/null \|\| { echo SKIP; exit 0; }` at `tests/test_routes.sh:26`, `tests/test_api_db.sh:22`, `tests/test_api_fs.sh:28`. `nimble suites` builds first so the `-x` guard always passes, but **on a host without `nc(1)` four of the six suites exit 0 having asserted nothing** and the run reports success. **Taken with A-1, the entire green-build signal can be produced without executing a single assertion** — which is the exact failure D-BX was written about. **The fix:** `exit 1` on a missing prerequisite, or a summary line that names what was skipped and makes the run non-green. |
+Per the completion rule their record lives in `PROGRESS.md`. `nimble suites` runs all fourteen
+self-tests, and every `SKIP … exit 0` guard is `FAIL … exit 1`. **T-12 was fixed in the same pass.**
 
 ### A-3 … A-6 — high severity
 
 | ID | V | What it is |
 |---|---|---|
-| **A-3** | `[V]` | **Attaching an image silently deletes the entire earlier conversation from what the model is sent.** `pipeline.trimHistory` (`src/jenova/pipeline.nim:269`) measures each message as `($m).len` — the full JSON serialisation, base64 `data:` payload included. `pipeline.configureHistoryBudget` (`:247`) sets the budget to `perSlot * 4 div 2` bytes, which with `CTX_SIZE 8192` and `NUM_SLOTS 4` is **4,096 bytes**. One screenshot is several megabytes, so the budget can never be met; the loop drops oldest-first until only the protected final turn remains. **The user sees the model forget the conversation the moment they attach a picture, with nothing on screen to explain it.** The 4-bytes-per-token conversion is honestly declared as an approximation in the code; that base64 breaks the approximation entirely is not. |
+| **A-3** | `[V]` | **Attaching an image silently deletes the entire earlier conversation from what the model is sent.** `pipeline.trimHistory` (`src/jenova/pipeline.nim:269`) measures each message as `($m).len` — the full JSON serialisation, base64 `data:` payload included. `pipeline.configureHistoryBudget` (`:247`) sets the budget to `perSlot * 4 div 2` bytes. *(**Corrected 2026-09-03 09:10 by reading both sources:** this said "with `CTX_SIZE 8192` and `NUM_SLOTS 4` is **4,096 bytes**", and those inputs match nothing. The code defaults are `CTX_SIZE 8192` / `NUM_SLOTS` **1** — `lifecycle.nim:112`, `gui.nim:4352` — giving **16,384 bytes**; `etc/jenova.conf:62-63` ships **32768** / **2**, giving **32,768 bytes**. **The finding is untouched** — every one of those is kilobytes and a screenshot is megabytes — but the arithmetic was invented, which is rule 9 inside the audit that exists to catch it.)* One screenshot is several megabytes, so the budget can never be met; the loop drops oldest-first until only the protected final turn remains. **The user sees the model forget the conversation the moment they attach a picture, with nothing on screen to explain it.** The 4-bytes-per-token conversion is honestly declared as an approximation in the code; that base64 breaks the approximation entirely is not. |
 | **A-4** | `[V]` | **The 25 MB attachment cap and the 32 MB request-body cap are inconsistent, and a 24–25 MiB attachment produces an unexplainable 500.** `pipeline.MaxAttachmentBytes` is 25 MiB checked against the file on disk *before* base64 (`src/jenova/pipeline.nim:660`, enforced at `:722`); `http.MaxBodyBytes` is 32 MiB checked against `Content-Length` (`src/jenova/http.nim:23`, enforced at `:73`). Base64 expands by 4/3, so **the crossover is 24 MiB**: a 24.5 MiB image passes the attachment cap, becomes ~34 MiB of data URL, and `http.parseRequest` raises. `server.classWorker` answers a bare `500 internal server error` with no body, `pipeline.classifyError` finds no JSON to read and falls through to "the server answered 500". **That is precisely the undiagnosable grey line G-35 was built to eliminate**, reached by a path G-35 could not classify. The window posts to its own core, so this is the ordinary desktop send, not a LAN-only path. |
 | **A-5** | `[V]` | **The context-used figure under-reports, and gets worse exactly as a conversation gets long.** `gui.statsLine` computes `let used = t.promptN + t.predictedN` (`src/jenova/gui.nim:2679`) and prints it against `app.ctxSize` with a "left" remainder. `promptN` is llama-server's `timings.prompt_n`, which is the tokens this request had to *evaluate* — the cached prefix is reported separately as `cache_n`, which the code reads into `Timings.cacheN` and shows only as a parenthetical. **The true prompt is `cache_n + prompt_n`; the display omits `cache_n`.** Jenova passes `--cache-prompt` on every start (`src/jenova/lifecycle.nim:115`), so prefix reuse is the normal case. The error is exactly `cache_n` and grows with the conversation, so the number is least wrong when it does not matter and most wrong when a user consults it to decide whether to start a new chat. **The frozen Web UI gets this right** — `chat.svelte.ts:1851` computes `promptTokens + cacheTokens + predictedTokens` — so this is a parity divergence as well as a defect. The field's own docstring (`gui.nim:78`, "tokens in the prompt") is not what the field holds. |
 | **A-6** | `[A]` | **The G-40 memos removed the per-frame parse but not the per-frame copy.** `markdown.blocksFor`'s hit path is `return memo.blocks[id]` (`src/jenova/markdown.nim:232`) and `pipeline.entryFor`'s builds a tuple from `memo.atts[id]` (`src/jenova/pipeline.nim:859`); both read out of a table that retains ownership, so under ARC the value is `=copy`'d — deep-copying every string, and for an image attachment the whole base64 payload. Both are called from `view` (`gui.messageBody`, `gui.mainArea`). **If this holds, `view` still does work proportional to the transcript on every frame — the complexity L7 forbids — and only the constant fell.** The instrument aimed at it is blind: `parses` counts parses, not copies, so `attach-selftest`'s `mm.parses == 1` stays green regardless. **`[A]` and it matters:** this rests on Nim ARC copy semantics for a table-owned lvalue, was not confirmed by a second read, and would be settled by reading the generated C or by a counter on the copy path. |
@@ -499,8 +498,10 @@ claim they are fine.
   `rag-selftest` — were grep-sampled, not read. **Nobody has verified that a `check(...)` in them
   can actually fail:** that the conditions are non-trivial, that no fixture is built by the code
   under test, that `bad` is incremented on the paths that matter. The pattern is sound where it was
-  sampled. **"Sound where sampled" is not "these tests test something"** — and per A-1 nothing runs
-  them anyway, so this compounds.
+  sampled. **"Sound where sampled" is not "these tests test something"** — *(the second half of this
+  bullet said "per A-1 nothing runs them anyway"; A-1 is closed and they do run now, which makes
+  this gap sharper rather than softer: the assertions execute, so whether they discriminate is the
+  only remaining question)*. **Deferred with all test work under A-68.**
 - **Time and timezone handling.** Ordering and identity depend on wall-clock in several places:
   `fssync.epochPrefix` names trash entries `$int(epochTime())` at **one-second resolution**, which
   is a collision waiting to happen for a multi-file delete; `fssync` seeds its UUID RNG from
@@ -596,17 +597,17 @@ one-line `Entry` bound to a string, not a `TextView` with a buffer** (`src/jenov
 which is what blocks multi-line drafts, Shift+Enter, autogrow, the height cap and the height reset
 together. **`data-services` (147 features) was never checked at all.**
 
-### A-60 — the trackers' own housekeeping debt
+### A-60 — **CLOSED 2026-09-03 09:10.** The archival half is done; one half deliberately remains.
 
-`[V]` **`PROGRESS.md` is ~122 entries against `AGENTS.md`'s ~40 archival threshold, and no
-`PROGRESS_ARCHIVE.md` exists.** `AGENTS.md` also defines it as a milestone ledger — *one line per
-completed item, no session narrative* — and many entries are multi-paragraph narratives that belong
-in `SESSION_HANDOFF.md`. `SESSION_HANDOFF.md` is under the threshold but is ~198 KB.
+`[V]` **Archived on the USER's instruction.** `PROGRESS.md` was **117** entries *(this row said
+"~122" — counted, it was 117)* against `AGENTS.md`'s ~40 threshold. The oldest 58 are now
+`PROGRESS_ARCHIVE.md`; the oldest 18 sessions are `SESSION_HANDOFF_ARCHIVE.md`. Order preserved,
+pointers in both live files. `PROGRESS.md` 229 KB → 105 KB, `SESSION_HANDOFF.md` 205 KB → 86 KB.
 
-**Not done in the 2026-09-03 pass, deliberately:** creating an archive file adds a file, which
-Directive 1 gates, and reshaping 122 entries is not a `.devdocs/` typo fix. **It is the USER's to
-schedule.** The corrections that *were* safe — false claims, dead pointers, stale counts — are
-applied in place with the reason beside each.
+**What was NOT done and is not scheduled:** `AGENTS.md` defines `PROGRESS.md` as a milestone ledger
+— *one line per completed item, no session narrative* — and many entries are multi-paragraph
+narratives that belong in `SESSION_HANDOFF.md`. **Reshaping them is not archival and was not asked
+for.** Recorded so it is not mistaken for finished, and not re-raised as a defect.
 
 **Noted, not work:** `jca_web/src/lib/components/app/workspace/` holds one orphan file,
 `FlashModelUpload.svelte`, with an empty `index.ts` and nothing importing it. It is the
@@ -685,8 +686,9 @@ files left anywhere outside `external/` and `jvim/pack/` *(corrected 2026-09-03:
 `.devdocs/ARCHIVE/`, deleted by the USER — **D-CE** — and omitted `jvim/`'s 24 vendored
 third-party plugin scripts, which are configuration and exempt under D-BS)*.
 
-**But see `TODOS.md` A-2:** those six harnesses `exit 0` when they cannot run, so being
-"the only shell left" says nothing about whether they assert anything on a given host.
+*(This said the six harnesses `exit 0` when they cannot run, so being "the only shell left" said
+nothing about whether they assert anything on a given host. **A-2 is closed** — 2026-09-03 09:02,
+`PROGRESS.md` — and every one of them now fails rather than skipping.)*
 
 **Kernel tuning was deliberately not ported (D-BN)** — Jenova never applies a `sysctl`
 and never writes `/etc/sysctl.conf`. Nothing replaces those scripts, and that is the

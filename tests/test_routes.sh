@@ -22,12 +22,25 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 CORE="$ROOT/bin/jenova-core"
 FAILED=0
 
-[ -x "$CORE" ] || { echo "SKIP: $CORE not built (run: make core)"; exit 0; }
-command -v nc >/dev/null 2>&1 || { echo "SKIP: nc not available"; exit 0; }
+# Action purpose: a prerequisite this suite cannot supply makes the run FAIL,
+# never PASS (TODOS.md A-2). Both guards used to `exit 0`, so on a host with no
+# nc(1) this suite reported success having asserted nothing — and `nimble
+# suites` went green over it. An unrunnable check is an unknown, not a pass.
+[ -x "$CORE" ] || { echo "FAIL: $CORE not built (run: nimble core)"; exit 1; }
+command -v nc >/dev/null 2>&1 || { echo "FAIL: nc(1) not on PATH; this suite cannot run"; exit 1; }
 
 JCA_HOME=$(mktemp -d "${TMPDIR:-/tmp}/jenova-routes.XXXXXX") || exit 1
 export JCA_HOME
 mkdir -p "$JCA_HOME/.system" "$JCA_HOME/Workspaces"
+
+# Action purpose: T-12. The proxied classes are asserted to answer 502 — the
+# honest answer when llama-server is not running — so this suite must point the
+# core at upstream ports nothing holds. It already overrode JENOVA_PORT and not
+# these two, so a run on a machine with the real backends up got real answers
+# instead of 502 and failed for a reason that was not a defect.
+JENOVA_LLAMA_PORT=18744
+JENOVA_LLAMA_EMBED_PORT=18745
+export JENOVA_LLAMA_PORT JENOVA_LLAMA_EMBED_PORT
 
 JENOVA_NO_BACKENDS=1 JENOVA_PORT="$PORT" "$CORE" serve >/dev/null 2>&1 &
 SRV=$!

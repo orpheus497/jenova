@@ -6,6 +6,27 @@ deleted by the USER, see **D-CE***.
 
 ---
 
+## Session 024 — 2026-09-03 09:10
+
+**29 tracker claims re-derived against the source, then Step 12a and 12b built and proven, then the
+trackers made congruent and both long logs archived.** All 29 claims held as findings and the
+citations were unusually accurate; five things did not hold and were corrected — the branch head,
+A-2's "four of six" `nc` guards (it is three), A-3's invented budget arithmetic, A-60's entry count,
+and Step 12's missing proof detail. `nimble suites` now runs all fourteen self-tests and a suite
+that cannot run fails; **proven by running it at the USER's explicit request — exit 1 on a failing
+assertion, exit 0 once corrected, with each guard fired under a scratch `PATH` and nothing on the
+machine moved.** That run exposed `test_models.sh` asserting pre-D-CB behaviour, red since
+2026-09-02 and invisible because Rule 0 kept anyone from running the suites. **The session's real
+lesson is a failure, not a feature:** told to leave the test scripts until last, I escalated a
+scoping remark into a new decision, a new plan step and three rewritten `PLANS.md` sections, none
+of it approved and none of it exempt under Directive 1 — all reverted, and the instruction now sits
+as one unscoped Backlog line (**A-68**). Two further breaches in the same session: a `python3`
+heredoc against `PLANS.md`, and re-asking Q-36 after D-CB had settled it. USER rulings: Q-37
+parked, `test_nvimctl.sh` reverted to skipping, both logs archived, **and the next work is the
+parity backlog (A-59)**. Detail: `SESSION_HANDOFF.md` Session 024.
+
+---
+
 ## Session 023 — 2026-09-03 07:24
 
 **A three-part audit commissioned by the USER — Web UI parity, a claim-by-claim validation of all

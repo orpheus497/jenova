@@ -9,20 +9,30 @@ the USER and does not exist, see **D-CE***.
 > ## Step 12 — the audit's findings. This is the current work and it is ahead of the parity list.
 >
 > **Ordering, and why it is this order.** Steps 1-11 are built. The 2026-09-03 audit put two
-> findings in front of everything else, and they are not features:
+> findings in front of everything else, and they are not features. **Both are now built and the
+> live work is 12c → 12f**, all of it product code.
 >
-> **12a — make the self-tests run (`TODOS.md` A-1). Do this first, before any other item in this
-> file.** `nimble suites` runs six shell scripts and nothing else; a search for `selftest` across
-> `tests/` and `jenova_core.nimble` returns zero. **Every assertion this project has written is
-> executed by no sanctioned path.** The work is small — add the `of "…-selftest"` subcommands to
-> `task suites` — and it must come first because *every other item below is verified by assertions
-> that currently nothing runs*. Building 12b..12f without 12a means writing more assertions into
-> the same silence. **What proves it worked:** `nimble suites` fails when a self-test fails.
+> **Test and check work is left until last** — the USER's instruction, 2026-09-03 09:05,
+> `TODOS.md` **A-68**. It comes up every session while the main work is unfinished, and the suites
+> are likely to keep failing until that work is done. **12a and 12b were built before that
+> instruction and stay built.**
 >
-> **12b — make a suite that cannot run report failure (`TODOS.md` A-2).** Four of the six suites
-> `exit 0` on a missing `nc(1)`. Combined with 12a's gap, the green-build signal can be produced
-> without executing a single assertion — D-BX's exact failure mode, standing since the suites were
-> written. **What proves it worked:** with `nc` renamed out of `PATH`, `nimble suites` goes red.
+> **12a — BUILT 2026-09-03 09:02 (`TODOS.md` A-1).** `task suites` now runs all fourteen
+> `X-selftest` subcommands before the shell suites, from a `SelfTests` const beside the task.
+> **Proven:** `nimble suites` exited 1 on a failing assertion and 0 once corrected. *The failure was
+> observed through a shell suite; making a self-test fail would mean damaging code (D-BX), so the
+> last step — that a self-test propagates identically through the same `exec` — is reasoning.*
+>
+> **12b — BUILT 2026-09-03 09:02 (`TODOS.md` A-2).** Every `SKIP … exit 0` guard is now
+> `FAIL … exit 1`, `test_nvimctl.sh`'s missing-`nvim` skip included, which makes `nvim` a
+> prerequisite of a green run. **Proven:** each guard was fired by running the suite under a scratch
+> `PATH` lacking the prerequisite — nothing on the USER's machine was renamed or moved. *The plan
+> said to rename `nc` out of `PATH`; that alters the USER's system and was not done.*
+>
+> **T-12 was fixed in the same pass**, and the one-line fix recorded for it was wrong for one of the
+> two scripts: `test_lifecycle.sh` asserts the *default* ports back out of the argument vector, so a
+> global `JENOVA_LLAMA_PORT` export would have turned two passing assertions red. Its override is
+> scoped to the single `backends health` probe. **The record for all three is `PROGRESS.md`.**
 >
 > **12c — the two data-losing defects in the chat path.** **A-3:** `trimHistory` measures base64
 > payloads against a byte budget of a few kilobytes, so attaching an image silently drops the whole

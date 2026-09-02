@@ -3,35 +3,40 @@
 Test specifications, validation criteria and expected outcomes. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-03 07:24 (Session 023).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-03 09:10 (Session 024).
 Mandated from the outset; absent for Sessions 001–003. See `DECISIONS_LOG.md` C-10.
 
-> ## READ THIS FIRST — 2026-09-03. Most of what this file documents is never executed.
+> ## READ THIS FIRST — 2026-09-03 09:02. What this file documents is now executed.
 >
-> **`nimble suites` does not run the self-tests.** It builds both binaries and then runs exactly
-> six shell scripts. A search for `selftest` across `tests/` and `jenova_core.nimble` returns
-> **zero hits**. The `of "…-selftest"` cases dispatched in `src/jenova_core.nim` — which are the
-> subject of nearly every section below — are invoked by **no build task, no suite and no CI**.
-> They are reachable only by typing `jenova-core <name>-selftest` into a terminal by hand.
+> **`nimble suites` runs the self-tests.** `task suites` builds both binaries, then runs all
+> **fourteen** `X-selftest` subcommands from a `SelfTests` const beside the task, then the six shell
+> suites. Each self-test exits 0 on PASS and 1 on FAIL and `exec` raises on a non-zero exit, so a
+> failing assertion fails the run. **Add a new self-test to that const or nothing will run it** —
+> there is no reflection to enumerate them.
 >
-> **So this file documents a large, careful, genuinely-written assertion base that the project's
-> own sanctioned entry point does not execute.** Every "asserted in `X-selftest`" claim below, and
-> every source comment that justifies a design choice with "so it is assertable", describes real
-> code whose green status nothing checks. **The assertions are not fictional — the coverage is.**
+> **A suite that cannot run now reports failure.** Every `SKIP … exit 0` guard is `FAIL … exit 1`,
+> including `test_nvimctl.sh`'s missing-`nvim` skip — which makes `nvim` a prerequisite of a green
+> run, a deliberate change of contract recorded in `PROGRESS.md`.
 >
-> **And the six suites that do run report PASS when they cannot run.** `[ -x "$CORE" ] || { echo
-> "SKIP…"; exit 0; }` and `command -v nc >/dev/null || { echo SKIP; exit 0; }` guard
-> `test_routes.sh:25-26`, `test_api_db.sh:21-22`, `test_api_fs.sh:27-28` and `test_lifecycle.sh:22`.
-> `nimble suites` builds first, so the `-x` guard always passes — but **on a host without `nc(1)`
-> four of the six exit 0 having asserted nothing**, and the run is green.
+> **Proven by running it, not by reading it:** `nimble suites` exited 1 on a genuinely failing
+> assertion and 0 once that was corrected, and each prerequisite guard was fired under a scratch
+> `PATH`. **One caveat stated plainly:** the failure that was observed came through a *shell suite*.
+> Making a *self-test* fail would mean damaging code, which D-BX forbids — the two go through the
+> identical `exec` call, so the propagation is the same mechanism, but that last step is reasoning
+> rather than observation.
 >
-> **Together: the green-build signal can be produced without executing a single assertion.** That
-> is the exact failure D-BX was written about, and it has been sitting under every "N self-tests
-> pass" line this project has ever recorded. Those lines were true — a session ran them by hand —
-> but nothing makes them true again on the next commit.
+> **What this changes for the claims below.** "Asserted in `X-selftest`" is now a coverage claim
+> again, not merely a statement that assertions exist. **What it does not change:** `gui.nim` still
+> has no coverage of any kind, and every GUI defect in this project's history was found by the USER
+> looking at the screen.
 >
-> **`TODOS.md` A-1 and A-2.** Until they are fixed, read any coverage claim in this file as
-> *"an assertion exists"*, never as *"this is verified on every build"*.
+> **The previous header — the whole of it — was true when written on 2026-09-03 07:24 and is
+> superseded.** It said `nimble suites` ran no self-tests and that four of six suites exited 0 on a
+> missing `nc(1)`. *One correction to that record while it is being replaced: it was **three**
+> suites that guarded on `nc`, not four — `test_routes.sh:26`, `test_api_db.sh:22` and
+> `test_api_fs.sh:28`. `test_lifecycle.sh:22` guarded on the missing binary, not on `nc`.*
+>
+> **`TODOS.md` A-1 and A-2 are closed;** the record is `PROGRESS.md` 2026-09-03 09:02.
 >
 > *Two smaller corrections from the same audit: the dispatch carries **fourteen** self-test cases
 > where `PROGRESS.md` and `SUMMARIES.md` both say thirteen — which is rule 9 again, and the fix is

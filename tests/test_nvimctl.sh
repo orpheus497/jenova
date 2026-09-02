@@ -30,6 +30,11 @@ fail() { FAILED=$((FAILED + 1)); echo "  FAIL $1"; [ $# -gt 1 ] && echo "       
 
 echo "== test_nvimctl =="
 
+# Action purpose: this skip is DELIBERATE and is the one exception to A-2's rule
+# that a suite which cannot run must fail. nvim is not a build dependency of
+# either binary, so requiring it would make a green run impossible on a host
+# that can legitimately build and ship Jenova. A-2's guards on the other five
+# suites all fail; this one skips, by the USER's ruling of 2026-09-03.
 if ! command -v nvim >/dev/null 2>&1; then
     echo "  SKIP no nvim on PATH - nvimctl has nothing to talk to"
     exit 0

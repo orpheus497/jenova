@@ -19,7 +19,10 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 CORE="$ROOT/bin/jenova-core"
 FAILED=0
 
-[ -x "$CORE" ] || { echo "SKIP: $CORE not built (run: make core)"; exit 0; }
+# Action purpose: a prerequisite this suite cannot supply makes the run FAIL,
+# never PASS (TODOS.md A-2). This used to `exit 0`, which reported success
+# having asserted nothing.
+[ -x "$CORE" ] || { echo "FAIL: $CORE not built (run: nimble core)"; exit 1; }
 
 JCA_HOME=$(mktemp -d "${TMPDIR:-/tmp}/jenova-lifecycle.XXXXXX") || exit 1
 export JCA_HOME
@@ -117,7 +120,15 @@ fi
 # --- health is not liveness --------------------------------------------------
 # A wedged llama-server keeps its pid; only the port tells the truth. This is
 # what the watchdog acts on, and the distinction B-13 got wrong.
-"$CORE" backends health >/dev/null 2>&1
+#
+# Action purpose: T-12, and the override is scoped to THIS command rather than
+# exported. The assertion is that health goes red when nothing is listening, so
+# it has to probe ports nothing holds — unoverridden it probed the machine's
+# real 8081/8082 and passed only while the USER's backends were down. It is not
+# exported because the argument-vector assertions above read back the DEFAULT
+# ports (`--port 8081`, `--port 8082`); a global override turns those two red.
+JENOVA_LLAMA_PORT=18775 JENOVA_LLAMA_EMBED_PORT=18776 \
+    "$CORE" backends health >/dev/null 2>&1
 if [ $? -ne 0 ]; then pass "health reports failure when nothing is listening"
 else fail "health reports failure when nothing is listening" "expected non-zero exit"; fi
 

@@ -248,7 +248,8 @@ inert values on `Vulkan/dgpu-i5-1135g7`.
 **Detection, scoring and apply are `src/jenova/hardware.nim`** (S-1, ruled at D-BC,
 built 2026-09-01 15:13), reached from the window's Hardware screen and from
 `jenova-core hardware detect|list|apply`. The scoring ladder is asserted by
-`hardware-selftest` — **an assertion nothing automatically runs; see `TESTS.md` and A-1**.
+`hardware-selftest`, which **`nimble suites` runs** as of 2026-09-03 09:02 *(this said "an
+assertion nothing automatically runs; see `TESTS.md` and A-1" — A-1 is closed)*.
 The six shell scripts that used to live here — `detect-hardware.sh`, `common-setup.sh` and
 four `jenova-setup` — were removed from the tree and survive in git history at `349a9b5b~1`
 (*corrected 2026-09-03: this said "archived to `.devdocs/ARCHIVE/hardware-profiles/`", a
@@ -368,5 +369,6 @@ and the order is `PLANS.md`.
 >
 > **The current itemised list is `TODOS.md`'s A-series**, and it is far larger than the G-series
 > ever was: a 1,095-feature Web UI inventory replaced the six-item scope list, and a code audit
-> added 64 findings plus five coverage gaps. **Two of them (A-1, A-2) are about this project's
-> testing rather than its features, and outrank the parity work.**
+> added 64 findings plus five coverage gaps. *(A-1 and A-2, the two testing findings, were built
+> 2026-09-03 09:02 — `PROGRESS.md`. **All remaining test and check work is deferred to last** by the
+> USER's instruction, `TODOS.md` **A-68**; the live work is `PLANS.md` Step 12c → 12f.)*

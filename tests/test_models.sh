@@ -29,7 +29,7 @@ assert_eq() {
 }
 
 if [ ! -x "$CORE" ]; then
-    echo "test_models: bin/jenova-core not built — run 'make core' first" >&2
+    echo "test_models: bin/jenova-core not built — run 'nimble core' first" >&2
     exit 1
 fi
 
@@ -112,9 +112,35 @@ case "$(readlink "$SCRATCH/models/agent/qwen-instruct.gguf" 2>/dev/null)" in
     *) fail "link target is relative, not absolute" "unexpected form" ;;
 esac
 
-assert_eq "the previous active model is preserved as .old, not deleted" \
-    "$(readlink "$SCRATCH/models/agent/qwen-thinking.gguf.old" 2>/dev/null)" \
-    "../thinking/qwen-thinking.gguf"
+# Action purpose: D-CB. This asserted the opposite until 2026-09-03 — that a
+# displaced SYMLINK survives as `.old` — which is the behaviour the ruling
+# removed on 2026-09-02: the link named a `.gguf` that never moved, so `.old`
+# kept a second name for the same file and the directory filled on every
+# switch. `models-selftest` was updated with the code and this suite was not,
+# so it has asserted a deleted behaviour ever since. Found by 12a, which is the
+# point of 12a.
+if [ -e "$SCRATCH/models/agent/qwen-thinking.gguf.old" ] ||
+   [ -L "$SCRATCH/models/agent/qwen-thinking.gguf.old" ]; then
+    fail "a displaced symlink is removed, not kept as .old" \
+         "found $SCRATCH/models/agent/qwen-thinking.gguf.old"
+else
+    pass "a displaced symlink is removed, not kept as .old"
+fi
+
+# ...and the half D-CB kept, asserted here because removing the symlink case
+# leaves nothing in this suite covering the branch that still preserves. A real
+# `.gguf` the user dropped into `models/agent` by hand is their only copy of it.
+: > "$SCRATCH/models/agent/manual.gguf"
+"$CORE" models switch thinking >/dev/null 2>&1
+if [ -f "$SCRATCH/models/agent/manual.gguf.old" ] &&
+   [ ! -L "$SCRATCH/models/agent/manual.gguf.old" ]; then
+    pass "a displaced real file is preserved as .old"
+else
+    fail "a displaced real file is preserved as .old" \
+         "no plain file at $SCRATCH/models/agent/manual.gguf.old"
+fi
+rm -f "$SCRATCH/models/agent/manual.gguf.old"
+"$CORE" models switch instruct >/dev/null 2>&1
 
 # A .old backup must never be selected as the active model, or a switch would
 # resurrect the model it just replaced.

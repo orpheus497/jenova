@@ -1,10 +1,11 @@
 # BRIEFING
 
-**Last updated:** 2026-09-03 07:24 (Session 023 — the three-part audit)
-**Branch:** `bsd`, at **`b9ed3703`** ("feat: complete Step 9 and enhance self-testing") — the USER
-committed Session 022's `src/` work during this session. **Session 023 itself changed only
-`.devdocs/`**: no product code was touched and nothing was run. `jvim/` is tracked on purpose and
-`.gitignore` carries a block saying so.
+**Last updated:** 2026-09-03 09:10 (Session 024)
+**Branch:** `bsd`, at **`94b0c49e`** ("Devdocs Cleanup") — the USER committed Session 023's
+`.devdocs/` work. *(This said `b9ed3703` and was one commit stale.)* **Session 024 changed
+`jenova_core.nimble` and the six `tests/*.sh`** — Step 12a and 12b — and `nimble suites` was run
+twice, at the USER's explicit request. **No `src/` file was touched.** `jvim/` is tracked on
+purpose and `.gitignore` carries a block saying so.
 
 ---
 
@@ -51,7 +52,7 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 | **15** | **A green suite says the parts work, never that anything calls them.** `rag.nim` was fully asserted and completely dead for weeks. When a feature is finished, assert the *join*, not only the parts. |
 | **16** | **NEVER edit the product code to break it, for any reason (D-BX).** Not to prove an assertion bites, not with a copy to restore from. If a test passes on data that should fail it, the hole is in the assertion set; write the missing assertion and re-run it **against data**, never against a damaged file. |
 | **17** | **A compile is not evidence the application starts.** **Run `bin/jenova --check` before handing over any GUI change** — it builds the whole window under a real GTK and exits, showing no window and binding no port. **And know its limit: it builds each branch once**, so it proves the window reaches its first frame and never that it survives a *state transition*. It exited 0 on the build that aborted the moment a note was opened (G-51). |
-| **18** | **NEW 2026-09-03 — a green build proves nothing right now.** `nimble suites` runs six shell scripts and no self-tests, and four of those six report PASS when they cannot run. Until `TODOS.md` **A-1** and **A-2** are fixed, "the suites pass" is not evidence. See §6. |
+| **18** | **REPLACED 2026-09-03 09:02 — the suites now mean something, and test work is now LAST.** This rule said a green build proved nothing because `nimble suites` ran no self-tests and four of six passed when they could not run. **A-1 and A-2 are built** — all fourteen self-tests run and a suite that cannot run fails. **The rule that replaces it is the USER's instruction of 09:05 (`TODOS.md` A-68): test and check work is left until last.** A red suite met while doing feature work is not a work item — record nothing, say nothing, carry on, exactly as Rule 0 already directs. Do not open a session with test bookkeeping. |
 
 ---
 
@@ -64,7 +65,7 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 | **Build** | `nimble`. Tasks in `jenova_core.nimble`: `core`, `gui`, `suites`, `llama`, `web`, `clean` |
 | **Architecture** | `BLUEPRINT.md` |
 | **Runtime home** | `$HOME/Jenova`. `~/JCA` is permanently off limits |
-| **Tests** | Six shell suites under `tests/`, run by `nimble suites`, plus self-test subcommands in `jenova-core` — **read the list out of `src/jenova_core.nim`, never from a number written here.** **Nothing runs the self-tests and nothing tests the GUI — see §6.** |
+| **Tests** | `nimble suites` runs the **self-test subcommands** (from the `SelfTests` const in `jenova_core.nimble` — **read the names out of `src/jenova_core.nim`, never from a number written here**) and then the six shell suites under `tests/`. A failing assertion fails the run, and a suite that cannot run fails rather than skipping. **Nothing tests the GUI — see §6.** |
 
 ## 2. State
 
@@ -123,23 +124,36 @@ re-deriving it here.**
 **The list is `TODOS.md`.** The ordered plan is `PLANS.md`. The parity inventory is `TODOS.md`
 A-59, and it supersedes every scope list this project has written.
 
+> ### THE NEXT WORK IS THE PARITY BACKLOG — `TODOS.md` **A-59**. Chosen by the USER 2026-09-03 09:10.
+>
+> **1,095 Web UI features enumerated, 866 verdicts across eight of nine areas.** It is the largest
+> body of work in the project and it is what "the GUI is missing Web UI features" actually means.
+>
+> **Three things to know before picking it up.** **`data-services` (147 features) was never checked
+> at all** — that area has no verdicts, only a feature count. The verdicts that exist were produced
+> by one agent each **with no adversarial re-check**, so they are leads, not facts (**D-CG**).
+> And **"Missing" is not a feature count** — the granularity is deliberately fine and many rows
+> collapse to one root cause: six of the chat-form gaps are all downstream of the composer being a
+> one-line `Entry` bound to a string rather than a `TextView` with a buffer.
+>
+> **Step 12c…12f are not cancelled** — they are the verified defects and they sit behind this.
+
 **The shape of it, which does not rot:** the backend is largely finished and the outstanding work
-is mostly in the window — with the exception of the two testing findings in §5, which are ahead of
-all of it.
+is mostly in the window.
 
 ## 5. Known broken
 
-**Two findings outrank every feature gap in this project.**
+**A-1 and A-2 were the two that outranked every feature gap. Both were built 2026-09-03 09:02**
+(`PROGRESS.md`); `nimble suites` runs all fourteen self-tests and a suite that cannot run fails.
+**T-12 went with them.** That pass also found `test_models.sh` asserting **pre-D-CB** behaviour —
+red since 2026-09-02 10:43, invisible because Rule 0 stopped anyone running the suites. The
+product was correct; the assertion was stale, and it is corrected.
 
-- **A-1 — nothing runs the self-tests.** `nimble suites` builds both binaries and runs six shell
-  scripts. A search for `selftest` across `tests/` and `jenova_core.nimble` returns **zero**. The
-  self-test subcommands are reachable only by hand. `TESTS.md` documents an assertion base that no
-  sanctioned path executes.
-- **A-2 — the suites report PASS when they cannot run.** Four of six `exit 0` on a missing `nc(1)`.
-  **Together with A-1, a green build can be produced without executing a single assertion** — which
-  is precisely what D-BX was written about.
+**All remaining test and check work is deferred to last** — the USER's instruction, `TODOS.md`
+**A-68**. The live work is `PLANS.md` Step 12c onward, below.
 
-**Four high-severity code defects, all verified by reading the source:**
+**Four high-severity code defects, all verified by reading the source — and all re-verified
+2026-09-03 09:00 against the current tree:**
 
 - **A-3 — attaching an image silently deletes the earlier conversation** from what the model is
   sent. `pipeline.trimHistory` measures the full JSON serialisation including the base64 payload,
@@ -163,36 +177,40 @@ means (**A-25**).
 resize — **not diagnosed**, two candidates recorded, and not settleable without the running widget.
 Two cosmetic Backlog items (G-37, G-38) and the G-51 widget constraint.
 
-## 6. The coverage gap — worse than "nothing tests the GUI"
+## 6. The coverage gap — now one gap, not two
 
-**The old statement was that all six suites and every self-test exercise `jenova-core`, and nothing
-tests `gui.nim`. Both halves are still true. The audit found the more serious half.**
+**Half of this section is closed.** Every suite and every self-test exercises `jenova-core`, and
+**`nimble suites` now executes all fourteen self-tests** with a suite that cannot run reporting
+failure. So "it is asserted in `X-selftest`" is a coverage claim again.
 
-**Nothing runs the self-tests at all** (A-1), and the suites that do run are green when they are
-inert (A-2). So the position is:
+**What remains, and it is the durable half:**
 
-- `gui.nim` has no coverage — unchanged, and every GUI defect in this project's history was found
-  by the USER looking at the screen.
-- The behaviour deliberately pushed *below* the widget layer to be assertable — `workspace.contextFor`,
-  `nvimctl.editorEnv`, `api.restoreEntity`, `pipeline.chatBody`, the whole of `settings.nim` — **is
-  asserted, and those assertions are executed by nothing.**
+- **`gui.nim` has no coverage of any kind.** Every GUI defect in this project's history was found
+  by the USER looking at the screen. Nothing about 12a changes that — `gui.nim` links into no test
+  binary.
+- The behaviour deliberately pushed *below* the widget layer to be assertable —
+  `workspace.contextFor`, `nvimctl.editorEnv`, `api.restoreEntity`, `pipeline.chatBody`, the whole
+  of `settings.nim` — **is asserted, and those assertions now run.**
 
-**The response is still correct and should continue.** Moving behaviour below the widget layer is
-the right design and it is why the audit could read this codebase at all. **But "it is asserted in
-`X-selftest`" stops being a coverage claim until A-1 lands**, and `PLANS.md` Step 12 puts it first
-for that reason.
+**The response is correct and should continue.** Moving behaviour below the widget layer is the
+right design and it is why the audit could read this codebase at all.
+
+**One thing not to mistake for coverage** (`TODOS.md` A-66): nobody has verified that a `check(...)`
+inside the self-test bodies can actually *fail*. Roughly 900–1,100 lines were grep-sampled, never
+read. Sound where sampled is not the same as proven to discriminate. **That is deferred with all
+other test work under A-68** and is not to be picked up before the feature work is done.
 
 ## 7. Waiting on the USER
 
-**One question is open — Q-37**, raised by this audit and recorded in `DECISIONS_LOG.md`:
-**should the desktop settings govern a LAN request?** `settings.applyTo` has one caller,
-`pipeline.chatBody`, and the LAN path goes through `pipeline.prepare`, which takes no `Settings`.
-So the sampling and penalty parameters apply only to bodies the window builds. That may be correct
-— two clients, two stores — but nothing says so and `BLUEPRINT.md` §5 read as though it were
-universal.
+**Nothing is blocking. Q-37 is PARKED by the USER (2026-09-03 09:10) — do not re-raise it.**
+It asked whether the desktop settings should govern a LAN request: `settings.applyTo` has one
+caller, `pipeline.chatBody`, and the LAN path goes through `pipeline.prepare`, which takes no
+`Settings`, so the sampling and penalty parameters apply only to bodies the window builds.
+**Re-verified 2026-09-03 and it still holds.** It blocks nothing and is parked deliberately, not
+forgotten. `TODOS.md` A-53.
 
-**Three product decisions remain parked, none on the critical path:** filesystem as the source of
-truth (T-11), deployment (T-7), a CLI (T-8).
+**Four product decisions remain parked, none on the critical path:** Q-37 above, filesystem as the
+source of truth (T-11), deployment (T-7), a CLI (T-8).
 
 **Answered during this audit and not to be re-raised:** the `.devdocs/ARCHIVE/` deletion was the
 USER's own and deliberate (**D-CE**); the response cache is a defect to fix rather than remove

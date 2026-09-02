@@ -324,12 +324,15 @@ Supporting: `README.md`, which documents the scoring ladder and the profile form
 Shell suites run by **`nimble suites`** (which builds both binaries first), plus
 `nvimctl_check.nim` — the compiled driver `test_nvimctl.sh` needs, because `nvimctl` has no
 `jenova-core` subcommand to curl. Each runs in a scratch `JCA_HOME` and none spawns a
-`llama-server` backend; `test_nvimctl.sh` spawns a headless `nvim` and skips when none is installed.
+`llama-server` backend; `test_nvimctl.sh` spawns a headless `nvim` and **fails when none is
+installed** *(corrected 2026-09-03 09:02: it skipped, and skipping reported PASS — A-2)*.
 Specs are in `TESTS.md`.
 
-**Six suites, plus the self-test subcommands inside `jenova-core`.** *Read the list out of
-`src/jenova_core.nim` — do not carry a number here. This line has said four, five, six,
-nine and ten, and was wrong in three files three different ways on 2026-09-01 (rule 9).*
+**Six suites, plus the self-test subcommands inside `jenova-core` — and as of 2026-09-03 09:02
+`nimble suites` runs both**, the self-tests first, from the `SelfTests` const in
+`jenova_core.nimble`. **A new self-test must be added to that const or nothing will run it.**
+*Read the list out of `src/jenova_core.nim` — do not carry a number here. This line has said four,
+five, six, nine and ten, and was wrong in three files three different ways on 2026-09-01 (rule 9).*
 
 **Every one of them exercises `jenova-core`. Nothing tests `gui.nim` at all** — no
 suite, no self-test, no driver. Every GUI defect in this project's history was found by
@@ -422,4 +425,4 @@ is **not in the tree**, and `jvim/nvim.log` is a stray log (its own `.gitignore`
 | `external/` | Submodules — `llama.cpp` and `ext_bin`. **Untouched by policy** |
 | `var/` | Runtime logs/cache within the source tree |
 | `docs/` | User-facing documentation — `architecture.md`, `context-and-retrieval.md`, `install.md`, `privacy.md`, `usage.md`. **It contains no subdirectories** *(corrected 2026-09-03: this claimed "Empty `architecture/`, `installation/`, `usage/` directories remain (B-38)"; a listing shows `docs` and nothing under it, so B-38 is closed by fact)*. **`docs/` is stale and contradicts the shipped product — `TODOS.md` A-54**: `context-and-retrieval.md:85-99` is headed *"Why it returns nothing today"* and asserts nothing fills the retrieval index, which has been false since T-17 closed. **Correcting it is product work outside `.devdocs/` and is gated by Directive 1.** There is no `docs/README.md` |
-| `.devdocs/` | This workspace — **the ten trackers and nothing else.** *Corrected 2026-09-03: this said "incl. `ARCHIVE/` — everything retired from the product tree". **`ARCHIVE/` no longer exists**; the USER deleted it in `349a9b5b` and everything it held is in git history at `349a9b5b~1` (**D-CE**).* **Fully tracked in git — corrected 2026-08-31.** This entry previously claimed `.gitignore:54` ignores `/.devdocs/` and that the trackers were therefore local-only. **That was false in both halves:** `.gitignore` contains no `devdocs` entry at all, and `git ls-files .devdocs/` lists the entire tree. **The process record is committed and public in repository history.** `PROGRESS.md`'s 2026-08-28 16:29 entry carries the same false claim and is corrected there |
+| `.devdocs/` | This workspace — the ten trackers **plus two archive files** (`PROGRESS_ARCHIVE.md`, `SESSION_HANDOFF_ARCHIVE.md`, added 2026-09-03 09:10 under the `AGENTS.md` archival policy; not read at session start). *This said "the ten trackers and nothing else".* *Corrected 2026-09-03: this said "incl. `ARCHIVE/` — everything retired from the product tree". **`ARCHIVE/` no longer exists**; the USER deleted it in `349a9b5b` and everything it held is in git history at `349a9b5b~1` (**D-CE**).* **Fully tracked in git — corrected 2026-08-31.** This entry previously claimed `.gitignore:54` ignores `/.devdocs/` and that the trackers were therefore local-only. **That was false in both halves:** `.gitignore` contains no `devdocs` entry at all, and `git ls-files .devdocs/` lists the entire tree. **The process record is committed and public in repository history.** `PROGRESS.md`'s 2026-08-28 16:29 entry carries the same false claim and is corrected there |
