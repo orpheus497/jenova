@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-09-02 11:21 (Session 022)
+**Last updated:** 2026-09-02 11:35 (Session 022)
 **Branch:** `bsd`. The tree was clean at `71ed41cb` when this session started; **this
 session's changes to `api.nim`, `gui.nim`, `workspace.nim`, `jenova_core.nim` and the
 `.devdocs/` are uncommitted.** **`jvim/` is tracked** (4,199 files in git of 4,201 on
@@ -51,7 +51,7 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 | **13** | **A new assertion is not believed until it has been shown to discriminate — and you prove that by varying the DATA, never by breaking the code (D-BX).** Two suites here have reported PASS while asserting nothing, so the concern is real; the method is not corruption. Give the function inputs that must produce different answers and assert both sides; assert a *transition* (recalled → deleted → not recalled → restored → recalled) rather than a state; create the hostile condition inside the test with `putEnv` or a fixture row. |
 | **14** | **Cite the symbol, then the line.** A bare line number is a claim with an expiry date — thirteen of them rotted inside one session because `gui.nim` grew by 750 lines while they were being written. `fssync.resolveStoragePath (fssync.nim:694)` survives that; `fssync.nim:628` does not. |
 | **15** | **A green suite says the parts work, never that anything calls them.** `rag.nim` was fully asserted and completely dead for weeks — every assertion supplied its own corpus, so nothing could tell. When a feature is finished, assert the *join*, not only the parts. |
-| **17** | **A compile is not evidence the application starts.** `nimble gui` exiting 0 says the widget tree is valid; the Theme setting shipped a 100% SIGABRT behind a clean compile because `gui.run` asked libadwaita a question before `adw.brew` called `adw_init`. **Run `bin/jenova --check` before handing over any GUI change** — it builds the whole window under a real GTK and exits, showing no window, starting no backend and binding no port, so it is allowed where starting the product is not (D-BJ). **Nothing in `gui.run` may touch GTK, GDK or libadwaita before `brew`.** |
+| **17** | **A compile is not evidence the application starts.** `nimble gui` exiting 0 says the widget tree is valid; the Theme setting shipped a 100% SIGABRT behind a clean compile because `gui.run` asked libadwaita a question before `adw.brew` called `adw_init`. **Run `bin/jenova --check` before handing over any GUI change** — it builds the whole window under a real GTK and exits, showing no window, starting no backend and binding no port, so it is allowed where starting the product is not (D-BJ). **Nothing in `gui.run` may touch GTK, GDK or libadwaita before `brew`.** **And know its limit: `--check` builds each branch once, so it proves the window reaches its first frame and never that it survives a *state transition*.** It exited 0 on the build that aborted the moment a note was opened (G-51). |
 | **16** | **NEVER edit the product code to break it, for any reason (D-BX).** Not to prove an assertion bites, not with a copy to restore from — a session did exactly that, the restore never ran because the USER interrupted the command holding it, and corrupted source sat in the tree behind a green build. **This rule previously said the opposite and that is how it happened.** The underlying concern stands — an assertion that cannot fail is worthless — and the answer is rule 13's: vary the inputs, assert both sides, assert transitions. If a test passes on data that should fail it, the hole is in the assertion set; write the missing assertion and re-run it **against data**, never against a damaged file. |
 
 ---
@@ -69,7 +69,7 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 
 ## 2. State
 
-**Verified as of 2026-09-02 11:21.** Both binaries build from `nimble core` and
+**Verified as of 2026-09-02 11:35.** Both binaries build from `nimble core` and
 `nimble gui`; **every self-test passes, and `bin/jenova --check` exits 0 — the
 application reaches its first frame**, which is a thing a compile does not tell you and
 which was learned the hard way at 14:02 (rule 17). Both binaries are ELF 64-bit FreeBSD
@@ -108,6 +108,27 @@ backend supervision and watchdog, model discovery and switching are implemented 
 covered by tests.
 
 ## 3. Done this session
+
+### Session 022 (part three) — 2026-09-02 11:35 — the 11:21 build crashed on a note; fixed
+
+**Mine, and diagnosed rather than guessed.** owlkettle diffs a `Box`'s children **by
+index** and updates in place when the state's type matches, and **`Button.shortcut` has no
+update path** — it installs a `GtkShortcutController` in `build` and its `update` hook does
+nothing but assert the value never changed, with owlkettle's own `# TODO` on that line.
+**`gui.fullscreenButton` (`shortcut = "F11"`) is the only widget in this program that sets
+one.** The pin toggle made the note header four children instead of three, so opening a
+note handed the fullscreen widget to the **Send** button's state and `assert "" == "F11"`
+aborted the process.
+
+**Fixed by moving the toggle beside the note title** — where the Web UI puts its pin —
+restoring the header's 3/3/5 branch shape exactly. Nothing was removed. Recorded as
+**G-51** and as a comment at the point of discovery: **nothing may change the child count
+of a container holding a shortcut-carrying `Button`.**
+
+**A real limit of rule 17, now written down.** `bin/jenova --check` **exited 0 on the
+broken build** and would again: it builds each branch once, and this class of assertion
+fires only on an *update*, which needs a branch to change. `--check` proves the window
+reaches its first frame; it never proves it survives a state transition.
 
 ### Session 022 (part two) — 2026-09-02 11:21 — 8c-1 and 8c-2 built
 

@@ -2797,10 +2797,40 @@ proc mainArea(app: AppState): Widget =
           pin = app.streaming and not app.opts.getBool("disableAutoScroll")
           Box(orient = OrientY, spacing = 12, margin = 16):
             if app.openNote.len > 0:
-              Entry {.expand: false.}:
-                text = app.noteTitle
-                placeholder = "Note title"
-                proc changed(text: string) = app.noteTitle = text
+              Box(orient = OrientX, spacing = 8) {.expand: false.}:
+                Entry {.expand: true.}:
+                  text = app.noteTitle
+                  placeholder = "Note title"
+                  proc changed(text: string) = app.noteTitle = text
+                # G-50: the only way to mark a note FOCUS from this window. The
+                # flag has existed in the schema since it was written and
+                # `workspace.contextFor` has given it the escape behaviour since
+                # G-43 — a FOCUS note reaches every chat in the workspace tree
+                # rather than only its own level (D-BU) — and until now it could
+                # be set from nowhere but the Web UI, which is a D-BC defect.
+                # `view-pin-symbolic` is the metaphor the Web UI's own note
+                # header uses.
+                #
+                # **It is here and not in the button row below, and that is not
+                # cosmetic.** Adding a fourth child to that row moved
+                # `fullscreenButton` — the one widget in this program carrying a
+                # `shortcut` — onto the index the Send button's state occupies,
+                # and owlkettle's `Button.shortcut` has no update path: it builds
+                # a `GtkShortcutController` once and its update hook only
+                # asserts the value never changed. The assertion aborted the
+                # process on opening a note. **Nothing may change the child
+                # count of a container that holds a shortcut-carrying Button.**
+                ToggleButton {.expand: false.}:
+                  icon = "view-pin-symbolic"
+                  state = app.noteFocus
+                  tooltip = (if app.noteFocus:
+                               "FOCUS note: applies across the whole workspace. " &
+                               "Click to make it a normal note, then Save"
+                             else:
+                               "Make this a FOCUS note — a rule the model sees " &
+                               "in every chat in this workspace. Save to apply")
+                  style = [ButtonFlat]
+                  proc changed(state: bool) = app.noteFocus = state
               # A TextView owns a TextBuffer rather than a string, so it is
               # driven from `app.noteBuffer` and read back on save — it
               # cannot be bound to state per redraw the way an Entry is.
@@ -3997,27 +4027,6 @@ method view(app: AppState): Widget =
                   proc clicked() = app.editorOpen = false
                 insert(app.fullscreenButton()) {.expand: false.}
               elif app.openNote.len > 0:
-                # G-50: the only way to mark a note FOCUS from this window. The
-                # flag has existed in the schema since it was written and
-                # `workspace.contextFor` has given it the escape behaviour since
-                # G-43 — a FOCUS note reaches every chat in the workspace tree
-                # rather than only its own level (D-BU) — and until now it could
-                # be set from nowhere but the Web UI, which is a D-BC defect.
-                #
-                # A toggle rather than a checkbox because it sits in a header of
-                # icon buttons, and `view-pin-symbolic` because that is the
-                # metaphor the Web UI's own note header uses.
-                ToggleButton {.expand: false.}:
-                  icon = "view-pin-symbolic"
-                  state = app.noteFocus
-                  tooltip = (if app.noteFocus:
-                               "FOCUS note: applies across the whole workspace. " &
-                               "Click to make it a normal note, then Save"
-                             else:
-                               "Make this a FOCUS note — a rule the model sees " &
-                               "in every chat in this workspace. Save to apply")
-                  style = [ButtonFlat]
-                  proc changed(state: bool) = app.noteFocus = state
                 Button {.expand: false.}:
                   text = "Save note"
                   style = [ButtonSuggested]

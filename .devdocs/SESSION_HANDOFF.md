@@ -12,6 +12,63 @@ Reverse-chronological. **Keep entries short.** Sessions 001-005 are in
 
 ---
 
+## Session 022 (part three) — 2026-09-02 11:35 — **the 11:21 build crashed on opening a note; fixed**
+
+**Instruction:** the USER ran it — opening the note page freezes and locks up the GUI, with
+`widgets.nim(920, 9) state.shortcut == widget.valShortcut [AssertionDefect]`.
+
+**My defect, shipped an hour earlier, and it was diagnosed rather than guessed at.**
+
+### The mechanism, read out of owlkettle's source
+
+1. **owlkettle diffs a `Box`'s children by index.** The generated `update` method compares
+   the state's runtime type-id and rebuilds only on a mismatch (`widgetdef.nim`,
+   `genUpdate`); a matching type is **updated in place**.
+2. **`Button.shortcut` has no update path.** Its `build` hook installs a
+   `GtkShortcutController`; its `update` hook does nothing but
+   `assert state.shortcut == widget.valShortcut`, with owlkettle's own `# TODO` on that
+   line. So the property cannot change, and a mismatch aborts the process.
+3. **`gui.fullscreenButton` is the only widget in this program that sets `shortcut`**
+   (`"F11"`), and it is the last child of all three branches of the chat/note/editor
+   header row.
+
+**So:** the header's branches held 3, 3 and 5 children. The pin toggle made the note
+branch **4**. Opening a note goes chat(5) → note(4), and index 3 — the **Send** button's
+state, built with `shortcut = ""` — was handed the fullscreen widget. `assert "" == "F11"`.
+At three children that index was simply removed, which is exactly why it worked before.
+
+### The fix
+
+**The toggle moved out of the button row and beside the note title**, in a horizontal `Box`
+with the title `Entry` — which is where the Web UI puts its pin anyway. **The header's
+three branches are back to 3/3/5, byte for byte the shape that worked.** The feature is
+unchanged; nothing was removed.
+
+**Filed as G-51 in `TODOS.md` Backlog, and as a comment at the point of discovery:**
+nothing may change the child count of a container holding a shortcut-carrying `Button`. It
+is a live trap rather than an open defect — the code is correct as it stands — and the
+durable fix, if the constraint ever becomes inconvenient, is to move F11 off the button and
+onto the window as a real shortcut controller. Not scheduled.
+
+### What this says about the check that passed
+
+**`bin/jenova --check` exited 0 on the broken build and would do so again.** It builds each
+branch once; **this assertion fires only on an *update*, which needs a branch to change.**
+That is a real limit of rule 17's check and it is now written down: `--check` proves the
+window reaches its first frame, never that it survives a state transition.
+
+**Files touched:** `src/jenova/gui.nim`, and the trackers. **Twelve self-tests pass**
+(`jenova-core` was not rebuilt — `gui.nim` does not link into it), `bin/jenova --check`
+exits 0, `bin/jenova` is ELF 64-bit FreeBSD.
+
+**For the USER to test:** open a note — the header should be Save / Close / fullscreen as
+before, with the **pin to the right of the title box**. Then pin it, Save, and ask something
+in a chat scoped to a different folder in the same workspace.
+
+**Next:** unchanged — **8c-3 … 8c-6**, then **G-42** and **G-47**, then Step 9.
+
+---
+
 ## Session 022 (part two) — 2026-09-02 11:21 — **8c-1 and 8c-2 built: the FOCUS flag survives, and the window can set it**
 
 **Instruction:** proceed, stay strict to `AGENTS.md`, complete the work, update the devdocs

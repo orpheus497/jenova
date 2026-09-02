@@ -5,6 +5,25 @@ One short paragraph per session. Sessions 001-005 are in
 
 ---
 
+## Session 022 (part three) — 2026-09-02 11:35
+
+**The 11:21 build crashed on opening a note and the crash was mine.** Diagnosed rather than
+guessed: owlkettle diffs a `Box`'s children by index and updates in place when the type
+matches, and **`Button.shortcut` has no update path** — it builds a `GtkShortcutController`
+once and its update hook only asserts the value never changed, owlkettle's own `# TODO`
+sitting on that assertion. `gui.fullscreenButton` (`shortcut = "F11"`) is the only such
+widget in the program; the pin toggle made the note header four children instead of three,
+so opening a note handed the fullscreen widget to the Send button's state and
+`assert "" == "F11"` aborted the process. **Fixed by moving the toggle beside the note
+title**, where the Web UI puts its pin, which restores the header's 3/3/5 branch shape
+exactly. Recorded as **G-51** and as a comment at the point of discovery: nothing may
+change the child count of a container holding a shortcut-carrying `Button`. **And a real
+limit of rule 17 is now written down** — `--check` exited 0 on the broken build and would
+again, because it builds each branch once and this class of assertion only fires on an
+update. Detail: `SESSION_HANDOFF.md` Session 022 (part three).
+
+---
+
 ## Session 022 (part two) — 2026-09-02 11:21
 
 **8c-1 and 8c-2 are built: a note keeps its FOCUS flag, and the window can set one.** The

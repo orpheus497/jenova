@@ -2,7 +2,7 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-09-02 11:21 (Session 022)
+**Last updated:** 2026-09-02 11:35 (Session 022)
 
 > **Reading the "UNRUN" labels in this file.** Entries below are point-in-time records
 > and several were written with a "compiled; UNRUN" status that was true on the day.
@@ -15,6 +15,8 @@ Macro progress tracking. Most recent entries at the top.
 ---
 
 ## Completed
+
+### 2026-09-02 11:35 — **Fixed a crash the 11:21 build shipped: opening a note aborted the application.** Reported by the USER from the screen. **Diagnosed, not guessed:** owlkettle diffs a `Box`'s children by index and reuses state when the type matches, and `Button.shortcut` has no update path — it builds a `GtkShortcutController` once and its update hook only asserts the value never changed. The pin toggle made the note header four children instead of three, so `gui.fullscreenButton` (`shortcut = "F11"`, the only such widget in the program) landed on the Send button's state and `assert "" == "F11"` aborted the process. **Fixed by moving the toggle out of that row and beside the note title**, where the Web UI puts it — the header's three branches are back to 3/3/5 children, exactly as before. The hazard is recorded as **G-51** and in a comment at the point of discovery. **`bin/jenova --check` cannot catch this class**: it builds each branch once and the assertion only fires on an update. Twelve self-tests pass, `bin/jenova --check` exits 0. Files: `gui.nim`.
 
 ### 2026-09-02 11:21 — **8c-1 and 8c-2 built: a note keeps its FOCUS flag, and the window can set it (G-49, G-50).** `api.putEntity` now merges a partial node onto the stored row before writing, so a column the window omits is carried forward instead of blanked — the class behind both G-49 and T-13, fixed at the one boundary every in-process write passes through, with `upsert` and the HTTP contract untouched (**D-CC**). `gui.saveNote` sends `isFocusNote` explicitly, `loadNote` reads it, and the note header carries a `view-pin-symbolic` `ToggleButton` — the first surface in this program that can mark a note FOCUS, which until now was reachable only from the frozen Web UI (D-BC). New `workspace.isFocusValue` is the one truth test both the context builder and the window read. **`workspace-selftest` gains 18 assertions**, written through `api.putEntity` itself so the join is asserted and not the formatter, as a transition — set → carried across a partial save → cleared → set again. Twelve self-tests pass, both binaries ELF 64-bit FreeBSD, `bin/jenova --check` exits 0. Files: `api.nim`, `gui.nim`, `workspace.nim`, `jenova_core.nim`.
 

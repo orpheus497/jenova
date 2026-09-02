@@ -2,7 +2,7 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-09-02 11:21 (Session 022)
+**Last updated:** 2026-09-02 11:35 (Session 022)
 
 **Write plans in plain English, then cite the ID** (**D-BA**). A step that reads
 "resolve G-23" tells the reader nothing. Say what the thing is first.
@@ -760,11 +760,21 @@ UI still posts partial objects and still means them (**D-CC**).
 the *open editor's* value, not the stored one. A note renamed with unsaved text in the
 buffer must keep that text, so the same rule now applies to an unsaved FOCUS toggle.
 
-**8c-2 — the window can set the flag (G-50).** A `view-pin-symbolic` `ToggleButton` in the
-note header, bound to new `AppState.noteFocus`, read by `gui.loadNote` and written by
+**8c-2 — the window can set the flag (G-50).** A `view-pin-symbolic` `ToggleButton` **beside
+the note title**, bound to new `AppState.noteFocus`, read by `gui.loadNote` and written by
 `gui.saveNote` as `1`/`0`. `workspace.contextFor` did the rest, exactly as this plan said.
 New **`workspace.isFocusValue`** is the single truth test both the context builder and the
 window read, so the toggle cannot disagree with the behaviour it controls.
+
+> **It shipped in the button row below and crashed the application, and where it sits now
+> is the fix, not a preference (11:35, `TODOS.md` G-51).** owlkettle diffs a `Box`'s
+> children **by index** and `Button.shortcut` has **no update path** — it installs a
+> `GtkShortcutController` in `build` and its `update` hook only asserts the value never
+> changed. `gui.fullscreenButton` (`"F11"`) is the only widget here that sets one, and a
+> fourth child in that row moved it onto the Send button's state: `assert "" == "F11"`,
+> process aborted on opening a note. **Nothing may change the child count of a container
+> holding a shortcut-carrying `Button`**, and `--check` cannot catch it — it builds each
+> branch once and the assertion fires only on an update.
 
 **Proof: 18 assertions added to `workspace-selftest`, and they go through
 `api.putEntity` itself** — the call the Save button makes — rather than through an INSERT,
