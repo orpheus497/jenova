@@ -1,9 +1,34 @@
 # SUMMARIES
 
-One short paragraph per session. Sessions 001-005 are in
-`.devdocs/ARCHIVE/devdocs/SUMMARIES_pre-006.md`.
+One short paragraph per session. Sessions 001-005 are in git history at `349a9b5b~1`, path
+`.devdocs/ARCHIVE/devdocs/SUMMARIES_pre-006.md` — *corrected 2026-09-03, that directory was
+deleted by the USER, see **D-CE***.
 
 ---
+
+## Session 023 — 2026-09-03 07:24
+
+**A three-part audit commissioned by the USER — Web UI parity, a claim-by-claim validation of all
+ten trackers against the source, and a mechanism analysis — followed by correcting the trackers
+against its findings. No code was touched and nothing was run.** It produced the parity inventory
+this project has never had (**1,095 Web UI features**, against a scope list of six), checked **388
+tracker claims** and found **176 of them — 45% — did not hold as written**, and read seven
+subsystems end to end for **64 findings, none refuted**. **Two findings outrank every feature gap:
+`nimble suites` runs no self-tests at all, and four of the six shell suites report PASS when they
+cannot run — so a green build can be produced without executing a single assertion, which is
+D-BX's exact failure mode.** The GPU question was answered: Jenova sets nothing that influences
+render-device choice, the Iris Xe already draws the window as the display GPU, and the winning
+hardware profile also puts model layers on it — so the real request is to stop inference using it,
+and the lever already exists. Four decisions taken (**D-CD** the response cache is a defect to fix;
+**D-CE** the `.devdocs/ARCHIVE/` deletion was the USER's own; **D-CF** `jenova.local.conf` is out
+of scope; **D-CG** `[V]`/`[A]` marking, because an audit finding is not a fact until a second read
+confirms it) and **Q-37** raised. **Stated plainly: the audit did not finish** — three usage limits
+cost ~60% of the agent runs, `data-services` (147 features) was never checked, and two thirds of
+the findings carry `[A]`. **And the first pass of the write-up dropped five of its own findings and
+mis-stated a severity** — caught by a self-check, recovered as A-61 … A-65, and now guarded by a
+traceability index (**A-67**) that maps all 64 sweep IDs to their rows and has been verified to
+resolve. Detail: `SESSION_HANDOFF.md` Session 023. Findings: `TODOS.md` A-series. Work:
+`PLANS.md` Step 12.
 
 ## Session 022 (part five) — 2026-09-02 12:19
 

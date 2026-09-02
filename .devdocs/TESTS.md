@@ -3,8 +3,41 @@
 Test specifications, validation criteria and expected outcomes. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-02 12:19 (Session 022).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-03 07:24 (Session 023).
 Mandated from the outset; absent for Sessions 001–003. See `DECISIONS_LOG.md` C-10.
+
+> ## READ THIS FIRST — 2026-09-03. Most of what this file documents is never executed.
+>
+> **`nimble suites` does not run the self-tests.** It builds both binaries and then runs exactly
+> six shell scripts. A search for `selftest` across `tests/` and `jenova_core.nimble` returns
+> **zero hits**. The `of "…-selftest"` cases dispatched in `src/jenova_core.nim` — which are the
+> subject of nearly every section below — are invoked by **no build task, no suite and no CI**.
+> They are reachable only by typing `jenova-core <name>-selftest` into a terminal by hand.
+>
+> **So this file documents a large, careful, genuinely-written assertion base that the project's
+> own sanctioned entry point does not execute.** Every "asserted in `X-selftest`" claim below, and
+> every source comment that justifies a design choice with "so it is assertable", describes real
+> code whose green status nothing checks. **The assertions are not fictional — the coverage is.**
+>
+> **And the six suites that do run report PASS when they cannot run.** `[ -x "$CORE" ] || { echo
+> "SKIP…"; exit 0; }` and `command -v nc >/dev/null || { echo SKIP; exit 0; }` guard
+> `test_routes.sh:25-26`, `test_api_db.sh:21-22`, `test_api_fs.sh:27-28` and `test_lifecycle.sh:22`.
+> `nimble suites` builds first, so the `-x` guard always passes — but **on a host without `nc(1)`
+> four of the six exit 0 having asserted nothing**, and the run is green.
+>
+> **Together: the green-build signal can be produced without executing a single assertion.** That
+> is the exact failure D-BX was written about, and it has been sitting under every "N self-tests
+> pass" line this project has ever recorded. Those lines were true — a session ran them by hand —
+> but nothing makes them true again on the next commit.
+>
+> **`TODOS.md` A-1 and A-2.** Until they are fixed, read any coverage claim in this file as
+> *"an assertion exists"*, never as *"this is verified on every build"*.
+>
+> *Two smaller corrections from the same audit: the dispatch carries **fourteen** self-test cases
+> where `PROGRESS.md` and `SUMMARIES.md` both say thirteen — which is rule 9 again, and the fix is
+> to read the cases out of the source rather than to write a new number here. And §0m's 10b row
+> says a `fileAssets` row "is never written" — `gui.fileAttachmentsAsArtefacts` writes one at
+> `src/jenova/gui.nim:1902`.*
 
 > **§5a onward are stage acceptance records** — what each stage had to prove and how. They are
 > history, kept for the reasoning. **§0 is the current suite.**

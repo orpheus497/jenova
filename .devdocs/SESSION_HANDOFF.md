@@ -1,14 +1,123 @@
 # SESSION HANDOFF
 
-Reverse-chronological. **Keep entries short.** Sessions 001-005 are in
-`.devdocs/ARCHIVE/devdocs/SESSION_HANDOFF_pre-006.md`.
+Reverse-chronological. **Keep entries short.** Sessions 001-005 are in git history at
+`349a9b5b~1`, path `.devdocs/ARCHIVE/devdocs/SESSION_HANDOFF_pre-006.md` — *corrected 2026-09-03,
+that directory was deleted by the USER, see **D-CE***.
 
-> **Reading the "built, unrun" notes below.** Several entries record a feature as built
-> and not yet seen on screen. **Those are point-in-time records, not current status.**
-> The current status is `BRIEFING.md` §2: **the 2026-08-31 23:28 build has been run by
-> the USER**, nothing visual was reported wrong with it, and the outstanding work is
-> functional. **Do not re-derive an "unrun" claim from a dated entry here** — that has
-> now cost two sessions (D-BB, `BRIEFING.md` rule 12).
+> **Reading the dated entries below.** Several record a feature as built and not yet seen on
+> screen, or record a defect that has since been fixed. **Those are point-in-time records, not
+> current status.** The current status is `BRIEFING.md`. **Do not re-derive a claim from a dated
+> entry here** — that has now cost three sessions (D-BB, `BRIEFING.md` rule 12).
+>
+> **Session 023's audit found the sharpest example of that in this file.** The Session 022 (11:05)
+> entry says *"G-50 — the window cannot create or toggle a FOCUS note. `isFocusNote` appears
+> nowhere in `gui.nim`."* **There are sixteen occurrences.** The toggle was built later that same
+> day: a `view-pin-symbolic` `ToggleButton` bound to `AppState.noteFocus` at
+> `src/jenova/gui.nim:2990`, read through `gui.loadNote` and written back by `gui.saveNote`.
+> **A session acting on that line would add a widget to the note-header row — which is exactly
+> the change that aborts the process under G-51.** The entry is left as the record of what was
+> true at 11:05; this note overrides it.
+
+---
+
+## Session 023 — 2026-09-03 07:24 — **the three-part audit; the trackers corrected against it**
+
+**Instruction:** a deep cross-reference of Web UI vs GUI features; a validation of every claim in
+`.devdocs/` against the codebase; a mechanism analysis of the implemented features — how they are
+wired, how memory is handled, whether the integrated GPU can render the UI. Then use all three to
+clean up and correct the devdocs and align the planning. **AGENTS.md adhered to strictly. No edits
+outside `.devdocs/`. Ambiguities put to the USER as plain-English questions.**
+
+**Nothing was run and no product code was touched.** Rule 0 held throughout. The audit ran as
+read-only multi-agent sweeps over `src/`, `jca_web/src`, `tests/`, `etc/`, `hardware-profiles/` and
+all ten trackers.
+
+### What was produced
+
+1. **Parity.** **1,095 Web UI features enumerated** from component sources and barrel files — the
+   authoritative inventory rule 11 has wanted since Session 010, against a scope list of six. 866
+   verdicts across eight of nine areas. **31 GUI capabilities beyond the Web UI catalogued.**
+2. **Claims.** **388 claims checked across all ten trackers: 212 TRUE, 87 STALE, 53 MISLEADING,
+   35 FALSE.** 45% did not hold as written.
+3. **Mechanism.** Seven subsystems read end to end. **64 findings, none refuted.** A completeness
+   critic then re-read the audit's own coverage and found five more.
+
+### The two findings that outrank everything
+
+**Nothing runs the self-tests (A-1).** `nimble suites` builds both binaries and runs six shell
+scripts; `selftest` appears **zero** times in `tests/` and `jenova_core.nimble`. **And the suites
+that do run report PASS when they cannot run (A-2)** — four of six `exit 0` on a missing `nc(1)`.
+**Together: a green build can be produced without executing a single assertion**, which is D-BX's
+exact failure mode, standing under every "N self-tests pass" line this project has recorded. Those
+lines were true when a session typed the command; nothing makes them true again.
+
+`PLANS.md` **Step 12a** puts fixing this ahead of all feature work, because every other item is
+verified by assertions that currently run nowhere.
+
+### The GPU question, answered
+
+**Jenova does nothing to choose which GPU renders its UI** — zero hits across the whole tree for
+`GSK_RENDERER`, `GDK_BACKEND`, `DRI_PRIME`, `MESA_*`, `VK_*` or `__NV_PRIME_RENDER_OFFLOAD`, and
+`bin/jenova.desktop` is a bare `Exec=`. GTK has no API for device choice either; it is settled by
+loader environment before `gtk_init`. **On this laptop the Iris Xe already renders the UI** as the
+display GPU — and the auto-winning profile also puts model layers and the drafter on it. **So the
+real request is not "let the iGPU render the UI" but "stop inference using it"**, and the lever
+already exists: applying `Vulkan/dgpu-i5-1135g7` excludes the Iris Xe by design, at a stated cost.
+Two dead knobs found on that path: `CANVAS=0` (A-25) and `GGML_VK_ALLOW_SYSMEM_FALLBACK` (D-CF).
+
+### Files touched — `.devdocs/` only
+
+`TODOS.md` (the A-series added; four false claims corrected), `BRIEFING.md` (rewritten to current
+state; rule 18 added), `BLUEPRINT.md` (six corrections incl. two false "both link the same modules"
+claims and two missing dependencies), `ARCHITECTURE_MAPPING.md` (six corrections incl. an internal
+contradiction about FFI modules), `TESTS.md` (the A-1/A-2 header), `DECISIONS_LOG.md` (D-CD…D-CG,
+Q-37, three settled facts corrected), `PLANS.md` (Step 12; the stale parity table and scope
+sentence), `SESSION_HANDOFF.md`, `SUMMARIES.md`.
+
+### Decisions taken
+
+**D-CD** the response cache is a defect to fix, not to remove — USER ruling. **D-CE** the
+`.devdocs/ARCHIVE/` deletion was the USER's own and deliberate; git history is the archive; nine
+trackers corrected. **D-CF** `etc/jenova.local.conf` is the USER's in-use config and out of scope.
+**D-CG** an audit finding is not a fact until a second read confirms it — hence `[V]`/`[A]` on
+every A-row.
+
+### Stated plainly rather than smoothed over
+
+**The audit did not finish cleanly.** Three usage-limit walls cost roughly 60% of the agent runs.
+**`data-services` (147 Web UI features) was never checked.** The adversarial pass over the parity
+gaps ran on a fraction of them, and roughly two thirds of the 64 findings carry `[A]` rather than
+`[V]`. **That is why D-CG exists** and why `PLANS.md` Step 12 scopes only verified findings.
+
+**One agent citation had already rotted when it was written** — `nvimctl.alive` at `:350` in a
+196-line file. The finding was true and the address was fiction. **That is rule 14's failure mode
+occurring inside the audit that was hunting for it**, and it is the concrete reason `[A]` rows are
+not to be acted on unverified.
+
+**The first pass of the A-series dropped five of its own findings, and a self-check caught it.**
+`SIM-04` (PDF partial decode), `R-02` (six path keys never consulted), `R-03` (six dead conf keys),
+`R-08` (no backend tuning in the window) and `R-13` (the dependency audit) were produced by the
+sweeps and were not written into `TODOS.md`. They are now **A-61 … A-65**. **The same check found
+the `A-52` heading claiming "fifteen findings … all cosmetic"** when it collects a different number
+including several rated medium — a tidy count and a tidy severity written over an untidy list,
+which is rule 9's failure mode, committed by me inside the audit that exists to catch it.
+
+**So `TODOS.md` A-67 is a traceability index mapping every one of the 64 sweep IDs to its A-row**,
+written so the next session can check this file's coverage mechanically rather than trust it. It
+was verified: all 64 resolve. `R-14` is deliberately absent and the index says why.
+
+**A first pass of my own was wrong and is corrected in the record:** diffing settings against the
+Web UI's *config object* suggested eleven parity gaps. Diffed against what the Web UI actually
+*draws* — the authority `settings.nim:22` names — there are six, and the "1:1" claim holds.
+
+### Next steps
+
+1. **`PLANS.md` Step 12a — make `nimble suites` run the self-tests.** Everything else is downstream.
+2. **12b — make a suite that cannot run go red.**
+3. **12c — A-3 and A-4**, the two data-losing defects in the chat path.
+4. **Answer Q-37** — should the desktop settings govern a LAN request?
+5. **Decide on `docs/`** (A-54) — it is user-facing, outside `.devdocs/`, and correcting it is
+   gated by Directive 1.
 
 ---
 

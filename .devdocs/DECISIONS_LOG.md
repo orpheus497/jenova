@@ -5,10 +5,78 @@ resolution. Most recent entries at the top.
 
 ---
 
+## D-CD … D-CG — 2026-09-03, the three-part audit
+
+### D-CD — the response cache is a defect, not a dormant feature. **USER ruling.**
+
+`pipeline.cacheLookup` runs on every chat turn and `pipeline.cacheStore` has one caller in the
+tree, inside `pipeline-selftest`. Put to the USER as three options — fix it, document it as
+deliberately dormant, or remove the lookup. **The USER chose: a defect to be fixed later.** It is
+`TODOS.md` **A-7** with a `PLANS.md` entry. **Not to be removed** (Directive 3), and not to be
+re-raised as "should we keep it".
+
+**One thing the implementer must not miss:** a cache hit currently answers `200 application/json`
+to a client that only reads `data:` lines, so wiring the writer without also fixing the hit
+response would make cached turns render as blank replies.
+
+### D-CE — `.devdocs/ARCHIVE/` was deleted by the USER, deliberately. Correct the pointers, do not restore it.
+
+The directory held the shell tree, `jenova-ca`, `proxy.lua`, the six `hardware-profiles` scripts
+and `BLUEPRINT_pre-007.md`. It was removed in commit `349a9b5b` (2026-09-01). **Nine trackers still
+pointed at it**, and this file's own SETTLED FACTS recorded "Archive to `.devdocs/ARCHIVE/`. Never
+delete" — so the settled fact contradicted the tree.
+
+**Put to the USER 2026-09-02 and answered: *"I am the one who deleted it."*** So it is not a defect
+and there is nothing to recover. **The ruling:** git history at `349a9b5b~1` is the archive; the
+disk carries nothing. Every pointer is corrected in this pass and D-AM's settled fact is amended
+above. **A session must not re-file this as a data-loss defect**, and must not restore the directory.
+
+### D-CF — `etc/jenova.local.conf` is the USER's in-use machine config and is out of audit scope.
+
+The audit found that the local conf pins `DEVICES="${JENOVA_DEVICES:-Vulkan0}"` while the profile
+that wins detection asks for `Vulkan0,Vulkan1`, and that the local file overrides the profile.
+Raised as a possible defect. **The USER answered: *"leave this alone, it's my current in-use config,
+not the project shipped."*** So:
+
+* **The shipped configuration is the `hardware-profiles/` tree and `etc/jenova.conf`.** Analysis and
+  parity claims are made against those, never against the local file.
+* **The local conf's divergence from the profile is not a finding** and is not to be re-raised.
+* This confirms the existing SETTLED FACT that no session edits that file. The audit did not.
+
+**One consequence that IS in scope and is recorded as a finding, not a defect in the USER's file:**
+`GGML_VK_ALLOW_SYSMEM_FALLBACK` set in that file never reaches `llama-server`, because
+`config.evalConfFiles` sources the conf in a throwaway `/bin/sh` and returns only names listed in
+`config.Keys`, and `lifecycle.start`'s child exports only `LD_LIBRARY_PATH` (plus
+`GGML_VULKAN_DISABLE` for the embed backend). The variable is real — it is in the tree's own
+`libggml-vulkan` build. **A user setting it reasonably expects it to work.** `TODOS.md` A-52.
+
+### D-CG — an audit finding is not a fact until a second read confirms it. `[V]` / `[A]`.
+
+The audit ran as multi-agent sweeps and its adversarial verification pass was cut short three times
+by usage limits. Rather than present verified and unverified findings identically, **every A-row in
+`TODOS.md` carries `[V]` (this session read the cited code and confirmed it) or `[A]` (an agent
+reported it and a second agent failed to refute it, and nothing else).**
+
+**The reason is concrete, not procedural caution.** One agent citation had already rotted when it
+was written — `nvimctl.alive` cited at `:350` in a 196-line file — which is rule 14's failure mode
+occurring *inside* the audit hunting for it. The finding was true; the address was fiction. A second
+agent claimed `jca_web` never calls `/api/db/cache`, which is false (`database.service.ts:598`,
+`:609`) though its conclusion survived for a different reason.
+
+**The rule this establishes:** a session may act on a `[V]` row. A session picking up an `[A]` row
+**verifies it first and upgrades the marker**, and if it does not hold, deletes the row and records
+why. Do not carry an `[A]` forward as though it were established — that is rule 10.
+
+---
+
 ## QUESTION STATUS — read this before asking the USER anything
 
-**NO QUESTIONS ARE OPEN.** Q-34 and Q-35 were answered 2026-09-01; Q-36 was raised and
-answered 2026-09-02 (**D-CB**).
+**ONE QUESTION IS OPEN — Q-37**, raised 2026-09-03 by the audit. Q-34 and Q-35 were answered
+2026-09-01; Q-36 was raised and answered 2026-09-02 (**D-CB**).
+
+| Question | Status |
+|---|---|
+| **Q-37 — should the desktop settings govern a LAN request?** | **OPEN.** `settings.applyTo` has one caller, `pipeline.chatBody` (`src/jenova/pipeline.nim:442`), and the LAN path is `server.handle` → `pipeline.prepare`, which takes no `Settings` at all. So temperature, top_k, top_p, min_p, the xtc/dry families, max_tokens, samplers and the whole penalties section apply **only to bodies the window itself builds**. A LAN client sends its own values, so this may be correct by design — two clients, two stores. **But nothing in the window says so, and `BLUEPRINT.md` §5 reads as though the merge were universal.** The question is whether the desktop store is meant to be the machine's setting or the window's. `TODOS.md` **A-53**. |
 
 | Question | Answer |
 |---|---|
@@ -79,10 +147,10 @@ further down is left in place for the historical record; **this table overrides 
 | **Licence** | AGPL-3.0, copyleft dependencies permitted (**D-X**) |
 | **Inference engine** | `llama-server`, always. Never a standalone (**D-AF**) |
 | **Testing** | Per-instance permission only (**D-AG**) |
-| **Build system** | **`nimble`. There is no Makefile and no shell script in this project** (**D-AM**) |
-| **Devices** | **`Vulkan0,Vulkan1`. There is no Vulkan2** — it made `llama-server` reject `-dev` and die instantly. Removed from `etc/jenova.local.conf` on the USER's instruction |
+| **Build system** | **`nimble`. There is no Makefile** (**D-AM**). *Corrected 2026-09-03: this said "and no shell script in this project", which is false as written — `tests/*.sh` are the six sanctioned suites. The operative rule is **no shell script in the product tree** (`src/`, `bin/`), which holds. Two diagnostics in `src/jenova_core.nim` and five lines in `tests/*.sh` still tell the user to run `make` — see `TODOS.md` **A-52**.* |
+| **Devices** | **`Vulkan0,Vulkan1`. There is no Vulkan2** — it made `llama-server` reject `-dev` and die instantly. Removed from `etc/jenova.local.conf` on the USER's instruction. *Caveat added 2026-09-03: the names are **positional**, and `hardware.detectGpu` accepts any line whose prefix is `Vulkan` with no filtering by device type. If a software ICD (lavapipe) is ever enumerated it takes a numbered slot and shifts what `Vulkan0` and `Vulkan1` mean, and `DEVICES` is passed through positionally to `-dev` (`src/jenova/lifecycle.nim:96`). **Nothing in the product records or verifies the name-to-device mapping.** Not a defect today; a fragility worth knowing before trusting the two names.* |
 | **Startup** | **`bin/jenova` starts its own server and backends.** One command. Settled at N-S6 and again here |
-| **Unused files** | Archive to `.devdocs/ARCHIVE/`. Never delete, never leave in the root (**D-AM**) |
+| **Unused files** | **Remove from the product tree; git history is the archive** (**D-AM**, amended by **D-CE** 2026-09-03). *This row said "Archive to `.devdocs/ARCHIVE/`. Never delete." **That directory no longer exists** — the USER deleted it in `349a9b5b` and has confirmed the deletion was deliberate and theirs. Never leave an unused file in the root still holds.* |
 | **Claims** | **Never state what was not executed (D-AN) — and never deny what was (D-AS, D-BB).** Both halves are the rule. A "not yet run" label expires at the first evidence against it |
 | **Starting the GUI** | **`bin/jenova --check` before handing over any GUI change (D-BM).** It builds the whole window under a real GTK and exits — no window, no backend, no port — so it is allowed where starting the product is not. **Nothing in `gui.run` may touch GTK before `brew`** |
 | **Running the product** | **Do not (D-BJ).** Not the app, not `serve`, not the backends, not the suites — unless the USER asks in that message. **Building is not running.** And never enumerate processes or ports to see what the USER has open. **T-12 is closed**: two suites fail if anything already holds the machine's real ports, that is the whole of it, and it is never diagnosed again |

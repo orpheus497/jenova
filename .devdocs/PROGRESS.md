@@ -2,7 +2,45 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-09-02 12:19 (Session 022)
+**Last updated:** 2026-09-03 07:24 (Session 023 — corrections only; no code was executed)
+
+> ## Corrections from the 2026-09-03 audit
+>
+> **No milestone entry was added for Session 023** — it changed no code, so under the doc-update
+> matrix there is nothing to record here. What follows are corrections to existing entries.
+>
+> **1. "Thirteen self-tests pass" (2026-09-02 12:19 entry) is wrong — the dispatch carries
+> fourteen**, and `SUMMARIES.md` repeated the same number. **This is rule 9 for at least the sixth
+> time:** the line has said four, five, six, nine, ten, twelve and thirteen. **The number is not to
+> be rewritten again** — read the `of "…-selftest"` cases out of `src/jenova_core.nim`.
+>
+> **2. Far more importantly, "N self-tests pass" has never meant what it appears to mean.**
+> `nimble suites` runs six shell scripts and **no self-tests at all** — `selftest` appears zero
+> times in `tests/` and `jenova_core.nimble`. Every such line in this file was true on the day a
+> session typed the commands by hand, and **nothing makes it true again on the next commit**. See
+> `TODOS.md` **A-1** and `TESTS.md`.
+>
+> **3. The six `hardware-profiles` shell scripts were not "archived to
+> `.devdocs/ARCHIVE/hardware-profiles/`"** (2026-09-01 15:13 entry). That directory was deleted by
+> the USER in `349a9b5b`; the scripts live in git history only (**D-CE**). The operative half — no
+> shell script in the product tree outside `tests/` — still holds.
+>
+> **4. "`bin/jenova` is both listed in `.gitignore` and tracked in git"** (2026-09-01 19:05 entry)
+> is stale. `git ls-files bin` returns only `bin/jenova.desktop`; the binary was untracked in
+> `495855c0`. **`.gitignore`'s own headline comment still asks the USER to decide this**, and the
+> decision has already been made — `TODOS.md` A-52.
+>
+> **5. "Every omission is listed in `settings.OmittedFields`"** (2026-09-01 12:55 entry) is not
+> quite true: seven Web UI settings keys are absent and `OmittedFields` names three. The four
+> unnamed are MCP/agentic and legitimately excluded, so **the 1:1 parity claim itself holds** — it
+> is the bookkeeping that is incomplete (`TODOS.md` A-31).
+>
+> **6. Shape, and an archival debt.** `AGENTS.md` defines this file as a **milestone ledger, one
+> line per item, no session narrative**, and says to move the oldest half into
+> `PROGRESS_ARCHIVE.md` past ~40 entries. **This file carries ~122 entries, many of them
+> multi-paragraph narratives that belong in `SESSION_HANDOFF.md`, and no archive file exists.**
+> **Not done in this pass:** creating `PROGRESS_ARCHIVE.md` adds a file, which Directive 1 gates,
+> and reshaping 122 entries is not a documentation typo. Recorded as work for the USER to schedule.
 
 > **Reading the "UNRUN" labels in this file.** Entries below are point-in-time records
 > and several were written with a "compiled; UNRUN" status that was true on the day.

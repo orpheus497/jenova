@@ -1,8 +1,54 @@
 # PLANS
 
-Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
+Forward-looking only. Superseded plans are in git history at `349a9b5b~1`, path
+`.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md` — *corrected 2026-09-03: that directory was deleted by
+the USER and does not exist, see **D-CE***.
 
-**Last updated:** 2026-09-02 12:19 (Session 022)
+**Last updated:** 2026-09-03 07:24 (Session 023)
+
+> ## Step 12 — the audit's findings. This is the current work and it is ahead of the parity list.
+>
+> **Ordering, and why it is this order.** Steps 1-11 are built. The 2026-09-03 audit put two
+> findings in front of everything else, and they are not features:
+>
+> **12a — make the self-tests run (`TODOS.md` A-1). Do this first, before any other item in this
+> file.** `nimble suites` runs six shell scripts and nothing else; a search for `selftest` across
+> `tests/` and `jenova_core.nimble` returns zero. **Every assertion this project has written is
+> executed by no sanctioned path.** The work is small — add the `of "…-selftest"` subcommands to
+> `task suites` — and it must come first because *every other item below is verified by assertions
+> that currently nothing runs*. Building 12b..12f without 12a means writing more assertions into
+> the same silence. **What proves it worked:** `nimble suites` fails when a self-test fails.
+>
+> **12b — make a suite that cannot run report failure (`TODOS.md` A-2).** Four of the six suites
+> `exit 0` on a missing `nc(1)`. Combined with 12a's gap, the green-build signal can be produced
+> without executing a single assertion — D-BX's exact failure mode, standing since the suites were
+> written. **What proves it worked:** with `nc` renamed out of `PATH`, `nimble suites` goes red.
+>
+> **12c — the two data-losing defects in the chat path.** **A-3:** `trimHistory` measures base64
+> payloads against a byte budget of a few kilobytes, so attaching an image silently drops the whole
+> earlier conversation from what the model is sent. **A-4:** the 25 MiB attachment cap and the
+> 32 MiB body cap cross over at 24 MiB, so a 24–25 MiB attachment produces the untyped 500 that
+> G-35 exists to prevent. Both are in `pipeline.nim` and `http.nim`, below the widget layer, so
+> both are assertable — **which is only worth saying once 12a is done.**
+>
+> **12d — the response cache (`TODOS.md` A-7, ruled **D-CD**).** The USER has ruled it a defect to
+> fix rather than remove. The writer must be wired on the completion path, **and the hit response
+> must be fixed with it** — a hit currently answers plain JSON to a client that only reads `data:`
+> lines, so wiring the writer alone would make cached turns render blank.
+>
+> **12e — the two silent renderer defects.** **A-26:** a note edit that preserves character count
+> renders as the pre-edit text, because `BlockMemo` stamps on `text.len` and the note key is stable
+> across edits — sound for messages, false for notes, and 8c-3 pointed the same memo at both.
+> **A-48:** markdown links and images are not rendered at all; a model's citation renders as raw
+> `[text](url)`. A link pass must carry an http/https allowlist with it.
+>
+> **12f — the trash is write-only from the window (`TODOS.md` A-16, A-17, A-18).** Deletion mirrors
+> to disk with care and a sidecar written so a restore can put it back; **restore never reads it**,
+> and `/api/fs/trash/*` is reachable only over HTTP. Under D-BC that is a defect, not a limitation.
+>
+> **What is deliberately NOT in Step 12:** the `[A]`-marked findings. Per **D-CG** a session picks
+> one up by verifying it first and upgrading the marker. Scoping unverified findings into a plan is
+> how a session builds the wrong thing.
 
 **Write plans in plain English, then cite the ID** (**D-BA**). A step that reads
 "resolve G-23" tells the reader nothing. Say what the thing is first.
@@ -33,7 +79,8 @@ repair. **As of 2026-09-01 the product tree has no shell script left at all** �
 
 **Finished, working and confirmed on screen:** configuration, database, threaded HTTP
 server, the whole `/api/*` surface, the filesystem mirror, the retrieval *engine*, the
-prompt pipeline (intents, RAG injection, personas, tool stripping, response cache),
+prompt pipeline (intents, RAG injection, personas, tool stripping — **but not the response
+cache**; it is read on every turn and written by nothing, `TODOS.md` A-7 / **D-CD**),
 backend supervision and watchdog, model discovery and switching, the GTK4 window,
 theme and canvas, the tray, conversation persistence, the workspace tree, notes,
 markdown with syntax-highlighted code blocks, the embedded Neovim page, and the
@@ -63,10 +110,23 @@ is `TODOS.md` G-17, G-20, G-21 and G-28 … G-36. G-28 … G-33 and G-39 are bui
 > raised again (D-BZ).** It also listed the trash view as missing (built 2026-09-01 19:05).
 > `BRIEFING.md` §4 carried the same three errors and is corrected with it.
 
+> **Corrected again 2026-09-03.** The "Missing entirely" column still listed **a real note editor
+> (G-17)**, which was built on 2026-09-02 11:53 and confirmed on screen. **This is the third
+> correction to this one table** — it has now outlived the PDF ruling, the audio ruling, the trash
+> view and the note editor. The durable fix is that it stops being a feature ledger: the ledger is
+> `TODOS.md`, and the table below is kept only as the short orientation for a reader who has never
+> seen the product.
+>
+> **The parity scope sentence above it is also stale** — it names "`TODOS.md` G-17, G-20, G-21 and
+> G-28 … G-36" as the real list, and every one of those IDs is closed and gone from that file. The
+> current inventory is **1,095 Web UI features**, enumerated 2026-09-03, recorded as `TODOS.md`
+> **A-59**. That is what rule 11 should be checked against from now on.
+
 | Works today | Missing entirely |
 |---|---|
-| Send a message, stream a reply | **A real note editor** (G-17) |
-| Copy, edit, delete, regenerate and continue a message | **LaTeX maths** |
+| Send a message, stream a reply | **LaTeX maths** |
+| **A real note editor** (G-17) — markdown view, Edit/Cancel, unsaved-changes guard, delete, FOCUS | **Markdown links and images** — not rendered at all (A-48) |
+| Copy, edit, delete, regenerate and continue a message | **Multi-line composer** — it is a one-line `Entry` (A-59) |
 | Branching — alternative versions, with a counter | **Model information** — needs `/props` + a GGUF header read; never built |
 | Generation statistics, context usage, model name | — |
 | A reasoning view for thinking models | — |
@@ -253,9 +313,12 @@ this plan's own summary of it — which had lost the detail that a `MATCH_OS`, `
 or `MATCH_SWAP` mismatch **disqualifies** a profile rather than merely scoring it zero.
 
 **Kernel tuning was deliberately not ported (D-BN).** Jenova applies no `sysctl` and
-never writes `/etc/sysctl.conf`. All six shell scripts are archived to
-`.devdocs/ARCHIVE/hardware-profiles/` and nothing replaces them; **the product tree now
-contains no shell script at all.** S-2's two Linux filesystem strings were fixed in the
+never writes `/etc/sysctl.conf`. All six shell scripts were removed from the tree and
+survive in git history at `349a9b5b~1` *(corrected 2026-09-03: this said "archived to
+`.devdocs/ARCHIVE/hardware-profiles/`" — that directory was deleted by the USER, **D-CE**)*;
+nothing replaces them. **The product tree contains no shell script outside `tests/`**
+*(the earlier wording, "no shell script at all", overstated it — `tests/*.sh` are the six
+sanctioned suites)*. S-2's two Linux filesystem strings were fixed in the
 same pass, and the doc references telling the USER to `sudo` a `jenova-setup` were
 deleted rather than repaired.
 

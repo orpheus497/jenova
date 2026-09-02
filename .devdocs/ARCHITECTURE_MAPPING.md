@@ -3,7 +3,7 @@
 File-by-file map of the codebase: what lives where, and why. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE. Update whenever a file is added, removed or relocated.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-02 12:19 (Session 022).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-03 07:24 (Session 023).
 
 This file was mandated from the outset and did not exist for Sessions 001–003 —
 including Session 001, which moved or deleted 31 files. See `DECISIONS_LOG.md` C-10.
@@ -32,11 +32,19 @@ including Session 001, which moved or deleted 31 files. See `DECISIONS_LOG.md` C
 | `tests/` | Shell suites driven by `nimble suites`, plus `nvimctl_check.nim` — the one suite that needs a compiled caller |
 | `etc/` | `jenova.conf` (applied profile) and `jenova.local.conf` (**the USER's file — never edited by a session**) |
 | `hardware-profiles/` | **Profile data only** — `profile.conf` + `jenova.conf` per profile. Detection and selection are `src/jenova/hardware.nim`; the six shell scripts were archived 2026-09-01 (S-1) |
-| `jca_web/` | The SvelteKit Web UI. Still holds the workspace side — workspaces, projects, folders, notes, fileAssets — which the native GUI does not have |
+| `jca_web/` | The SvelteKit Web UI, frozen (D-Z). **The parity reference** — 1,095 of its features were enumerated on 2026-09-03 and the inventory is `TODOS.md` A-59. *Corrected 2026-09-03: this row said it "still holds the workspace side — workspaces, projects, folders, notes, fileAssets — **which the native GUI does not have**". The native GUI has had all five since G-43/G-44/G-17/G-50 (2026-09-01 and 2026-09-02) — this is the "not built" line outliving the work, in the file Directive 4 designates the map, for the second time* |
+| `.system/` | Runtime state — `p.state` in `paths.resolve` (`src/jenova/paths.nim:86`), holding the settings store, the LAN flag and `jenova.db`. Gitignored and correctly so. **Added to this map 2026-09-03**; it existed and was unlisted |
 | `public/`, `png/`, `docs/`, `var/`, `external/` | Web bundle, icons, user docs, runtime dirs, submodules |
 
-**Archived to `.devdocs/ARCHIVE/` (D-AM):** `Makefile`, `tests/Makefile`, `scripts/` (8 files),
-`lib/` (2 files), `proxy.log`, four orphaned test scripts, `bin/jenova-swap-mount`, and — 2026-09-01 — `hardware-profiles/`'s six shell scripts (`detect-hardware.sh`, `common-setup.sh`, four `jenova-setup`). **The product tree now contains no shell script outside `tests/`.**
+**Removed from the product tree (D-AM), recoverable from git history at `349a9b5b~1`:** `Makefile`,
+`tests/Makefile`, `scripts/` (8 files), `lib/` (2 files), `proxy.log`, four orphaned test scripts,
+`bin/jenova-swap-mount`, and — 2026-09-01 — `hardware-profiles/`'s six shell scripts
+(`detect-hardware.sh`, `common-setup.sh`, four `jenova-setup`). **The product tree contains no shell
+script outside `tests/`**, re-confirmed 2026-09-03.
+
+> *Corrected 2026-09-03: this said "**Archived to `.devdocs/ARCHIVE/`**". That directory was
+> deleted by the USER in commit `349a9b5b` and does not exist. See **D-CE** — the deletion was
+> deliberate, there is nothing to recover, and git history is the archive.*
 
 **Module roles are in the source headers.** They are not duplicated here: an inventory in prose rots
 on the next commit, which is what caused the doc-churn loop.
@@ -172,8 +180,16 @@ cache dir under its own digest and loaded from there.
   `renderable` lives in `gui.nim` for the reason `sourceview.nim`'s does — owlkettle's macro emits
   an unexported type. **GUI binary only**; `jenova-core` links neither.
 
-**`sourceview.nim` and `vte.nim` are the program's only FFI *modules*.** Both follow one shape:
-flags from `staticExec("pkg-config …")`, a small Nim surface, the widget declared in `gui.nim`.
+**`sourceview.nim` and `vte.nim` are the program's only *GUI-side, pkg-config* FFI modules.** Both
+follow one shape: flags from `staticExec("pkg-config …")`, a small Nim surface, the widget declared
+in `gui.nim`.
+
+> *Corrected 2026-09-03: this said they are "the program's **only** FFI modules", which
+> **contradicts §2's own `zlib.nim` paragraph two screens above**, where that module is described
+> as "the program's third FFI module". The full FFI set is `sourceview.nim`, `vte.nim`, `dbus.nim`
+> (pkg-config, core-linked), `zlib.nim` (`{.passL: "-lz".}`, core-linked) and `db.nim`'s sqlite3
+> `dynlib`. Two adjacent statements in one file disagreeing is the class this file exists to
+> prevent.*
 
 **Two files now also declare a handful of individual protos** (2026-09-01, G-31), and the rule
 they follow is worth stating because it is what keeps this from spreading: **check owlkettle's
@@ -189,7 +205,13 @@ adjustment getters for `AutoScroll`. Everything else is imported.
 
 `api.nim` gained `putEntity`/`deleteEntity` — the GUI sidebar writes through the same
 `upsert`/`softDelete` the HTTP routes use, so cascades and the filesystem mirror apply whichever
-surface the user is on. The GUI writes no entity SQL of its own.
+surface the user is on. **The GUI writes no *entity* SQL of its own.**
+
+> *Qualified 2026-09-03: the sentence read "The GUI writes no entity SQL of its own", which is
+> true of the seven `api.Entities` and false as a general statement — `gui.nim` runs its own SQL
+> throughout for conversations and messages (`saveMessage`, `loadMessages`, `saveLeaf`,
+> `latestConversation`, `reloadTree`'s table scans). The distinction is real and worth keeping;
+> the wording invited a reader to conclude the GUI is SQL-free, which it is not.*
 
 **`putEntity` merges since 2026-09-02 (D-CC), and that is the one place the two write
 paths differ on purpose.** `writeRow` is INSERT OR REPLACE over every column, so an omitted
@@ -244,8 +266,13 @@ layering; neither file lists the modules, deliberately.
 `llama-server`, which is the engine (D-AF); duplicating it is the opposite of being a harness for
 it. The `JENOVA_INPROC` path went with them.
 
-**Both binaries link the same modules.** The split exists so a LAN or server host builds without
-GTK — N-7 requires LAN mode to serve whether or not the GUI runs.
+**Both binaries link the same *non-GUI* modules.** The split exists so a LAN or server host builds
+without GTK — N-7 requires LAN mode to serve whether or not the GUI runs.
+
+> *Corrected 2026-09-03: this said "**the same modules**", flatly, as does `BLUEPRINT.md` §2. The
+> exceptions are the whole point of the split — `gui.nim`, `theme.nim`, `canvas.nim`, `vte.nim` and
+> `sourceview.nim` are GUI-only and `jenova-core` links none of them. `markdown.nim` was pulled
+> into the core deliberately so `markdown-selftest` could reach it.*
 
 ## 3. `hardware-profiles/` — 6 profiles, uniform depth 2, **data only**
 
@@ -254,10 +281,11 @@ Layout `<backend>/<config>` per ruling D-F. Each directory holds exactly two fil
 (metadata plus the `MATCH_*` patterns the scorer reads).
 
 **As of 2026-09-01 15:13 there are no scripts here at all.** `detect-hardware.sh`,
-`common-setup.sh` and the four per-profile `jenova-setup` scripts are archived to
-`.devdocs/ARCHIVE/hardware-profiles/`, and **detection, scoring and apply are
-`src/jenova/hardware.nim`** — reached from the window's Hardware screen and from
-`jenova-core hardware`. `PROGRESS.md` 2026-09-01 15:13, `PLANS.md` Step 6, D-BC.
+`common-setup.sh` and the four per-profile `jenova-setup` scripts were removed from the
+tree and survive in git history at `349a9b5b~1` *(corrected 2026-09-03: this said
+"archived to `.devdocs/ARCHIVE/hardware-profiles/`" — deleted by the USER, **D-CE**)*, and
+**detection, scoring and apply are `src/jenova/hardware.nim`** — reached from the window's
+Hardware screen and from `jenova-core hardware`. `PROGRESS.md` 2026-09-01 15:13, `PLANS.md` Step 6, D-BC.
 
 **Kernel tuning is not part of the product and nothing replaced those scripts (D-BN).**
 Jenova applies no `sysctl` and never writes `/etc/sysctl.conf`; it reads `sysctl` only
@@ -393,5 +421,5 @@ is **not in the tree**, and `jvim/nvim.log` is a stray log (its own `.gitignore`
 | `png/` | Source icons. Ships `jca.jpg`, `jca_grey.jpg`, `jenova.jpg/png`, `jvim.jpg`, splash art |
 | `external/` | Submodules — `llama.cpp` and `ext_bin`. **Untouched by policy** |
 | `var/` | Runtime logs/cache within the source tree |
-| `docs/` | User-facing documentation. **Five files** — `architecture.md`, `context-and-retrieval.md`, `install.md`, `privacy.md`, `usage.md`. Empty `architecture/`, `installation/`, `usage/` directories remain (B-38). *This entry said "8 files" until 2026-08-31; it was never eight.* There is no `docs/README.md` — the archived `BLUEPRINT_pre-007.md` §7 cites one |
-| `.devdocs/` | This workspace, incl. `ARCHIVE/` — everything retired from the product tree. Trackers + `ARCHIVE/` (pre-consolidation reference). **Fully tracked in git — corrected 2026-08-31.** This entry previously claimed `.gitignore:54` ignores `/.devdocs/` and that the trackers were therefore local-only. **That was false in both halves:** `.gitignore` contains no `devdocs` entry at all, and `git ls-files .devdocs/` lists the entire tree. **The process record is committed and public in repository history.** `PROGRESS.md`'s 2026-08-28 16:29 entry carries the same false claim and is corrected there |
+| `docs/` | User-facing documentation — `architecture.md`, `context-and-retrieval.md`, `install.md`, `privacy.md`, `usage.md`. **It contains no subdirectories** *(corrected 2026-09-03: this claimed "Empty `architecture/`, `installation/`, `usage/` directories remain (B-38)"; a listing shows `docs` and nothing under it, so B-38 is closed by fact)*. **`docs/` is stale and contradicts the shipped product — `TODOS.md` A-54**: `context-and-retrieval.md:85-99` is headed *"Why it returns nothing today"* and asserts nothing fills the retrieval index, which has been false since T-17 closed. **Correcting it is product work outside `.devdocs/` and is gated by Directive 1.** There is no `docs/README.md` |
+| `.devdocs/` | This workspace — **the ten trackers and nothing else.** *Corrected 2026-09-03: this said "incl. `ARCHIVE/` — everything retired from the product tree". **`ARCHIVE/` no longer exists**; the USER deleted it in `349a9b5b` and everything it held is in git history at `349a9b5b~1` (**D-CE**).* **Fully tracked in git — corrected 2026-08-31.** This entry previously claimed `.gitignore:54` ignores `/.devdocs/` and that the trackers were therefore local-only. **That was false in both halves:** `.gitignore` contains no `devdocs` entry at all, and `git ls-files .devdocs/` lists the entire tree. **The process record is committed and public in repository history.** `PROGRESS.md`'s 2026-08-28 16:29 entry carries the same false claim and is corrected there |

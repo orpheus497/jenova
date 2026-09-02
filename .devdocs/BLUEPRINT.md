@@ -3,10 +3,14 @@
 Authoritative system architecture: what the program is, what it depends on, and how data moves
 through it. Mandated by `AGENTS.md` § WORKSPACE ARCHITECTURE.
 
-**Last updated:** 2026-09-02 12:19 (Session 022)
+**Last updated:** 2026-09-03 07:24 (Session 023)
 
-> **Rewritten 2026-08-31 (Session 007). The previous 626-line revision is in
-> `.devdocs/ARCHIVE/devdocs/BLUEPRINT_pre-007.md`** — archived, not deleted, per D-AM.
+> **Rewritten 2026-08-31 (Session 007). The previous 626-line revision is in git history at
+> `349a9b5b~1`, path `.devdocs/ARCHIVE/devdocs/BLUEPRINT_pre-007.md`.**
+>
+> *Corrected 2026-09-03: this said the file "is in `.devdocs/ARCHIVE/…` — archived, not deleted".
+> **That directory does not exist.** The USER deleted it in `349a9b5b` and has confirmed the
+> deletion was deliberate. Git history is the archive now — see **D-CE**.*
 >
 > **Why it had to go.** It described `lib/proxy.lua`, `bin/jenova-ca`, `scripts/install.sh`,
 > `jenova-ui/src/main.c`, `lib/ffi_defs.lua`, `lib/detect-env.sh`, a `Makefile` and a ten-profile
@@ -43,7 +47,15 @@ pipeline, and a window (D-AF: `llama-server` is the engine, always; never a stan
 | `bin/jenova` | `src/jenova_gui.nim` | The desktop application: window, tray, chat, backend control, model switching, LAN toggle |
 | `bin/jenova-core` | `src/jenova_core.nim` | The headless server and the operational subcommand surface |
 
-**Both link the same modules in `src/jenova/`.** The split is a *build* split, not a program split:
+**Both link *most of* the same modules in `src/jenova/`.** The split is a *build* split, not a program split:
+
+> *Corrected 2026-09-03: this read "**Both link the same modules**", flatly, and `ARCHITECTURE_MAPPING.md`
+> §2 repeats it. It is not true and the exceptions are the point of the split: **`vte.nim` and
+> `sourceview.nim` are GUI-only FFI modules and `jenova-core` links neither**, and `gui.nim`,
+> `canvas.nim` and `theme.nim` are likewise GUI-only. `markdown.nim` was pulled into `jenova-core`
+> deliberately so `markdown-selftest` could reach it, and `zlib.nim` is the one FFI module that
+> does link into the core. **The accurate statement is that both binaries link the same*
+> non-GUI* modules**, which is what makes the behaviour below the widget layer assertable at all.*
 N-7 requires LAN mode to serve whether or not a GUI is running, and folding owlkettle into the core
 would make a graphical toolkit a build-time requirement for a server host. This is what D-N's
 "single binary" ruling was about — one program, not a daemon plus a detached client over a socket.
@@ -105,7 +117,16 @@ intents, RAG and personas apply identically to the window and to the Web UI. The
 relays tokens over one channel to the GTK loop.
 
 **The body is built by `pipeline.chatBody`, not by the window**, and that is where the user's
-sampling and penalty settings are merged (**D-BK**). `settings.nim` owns the fields, the store
+sampling and penalty settings are merged (**D-BK**).
+
+> **Scope correction, 2026-09-03 — this paragraph reads as though the merge were universal and it
+> is not.** `settings.applyTo` has exactly one caller in the tree: `pipeline.chatBody`
+> (`src/jenova/pipeline.nim:442`). **The LAN path never reaches it** — `server.handle` calls
+> `pipeline.prepare`, and `prepare` takes no `Settings` parameter at all. So every `inRequest` key
+> — temperature, top_k, top_p, min_p, typ_p, the xtc and dry families, max_tokens, samplers and the
+> whole penalties section — applies **only to bodies the window itself builds**. A LAN client sends
+> its own values, so this may well be correct by design; **nothing states it either way**, which is
+> why it is now **Q-37**, the one open question in `DECISIONS_LOG.md`. `settings.nim` owns the fields, the store
 under `p.state`, the validator and the merge; `gui.nim` draws them. **An unset parameter is
 omitted from the request rather than sent as a zero**, so `llama-server`'s own preset stays
 authoritative for anything the user has not chosen — which is also what the settings panel shows
@@ -174,6 +195,8 @@ re-derived a conflict that does not exist from those rows** — the rows were th
 | llama.cpp / ggml | MIT | Submodule under `external/`. **Consumed, never modified** |
 | vulkan-loader | Apache-2.0 | GPU offload |
 | cmake | BSD-3 | Builds the submodule via `nimble llama` |
+| cairo | LGPL-2.1 / MPL-1.1 | The particle canvas paints through `owlkettle/cairo` (`canvas.nim`). **Added to this table 2026-09-03** — it was a real linked dependency the table did not name |
+| libpcre | BSD-2 | Pulled in by `std/re`, imported by `hardware.nim` for the profile `MATCH_*` patterns. **Added 2026-09-03.** Permissive, so no licence question — but a Nim `dynlib` that fails to load **terminates the process**, so on a host without libpcre the failure lands when the Hardware screen first scores a profile |
 
 **Base-system tools the product invokes**, which are not project scripts and do not block the
 total-conversion gate: `/bin/sh` (to evaluate the shell-format config files), `git`, `fetch(1)`,
@@ -225,10 +248,12 @@ inert values on `Vulkan/dgpu-i5-1135g7`.
 **Detection, scoring and apply are `src/jenova/hardware.nim`** (S-1, ruled at D-BC,
 built 2026-09-01 15:13), reached from the window's Hardware screen and from
 `jenova-core hardware detect|list|apply`. The scoring ladder is asserted by
-`hardware-selftest`. The six shell scripts that used to live here —
-`detect-hardware.sh`, `common-setup.sh` and four `jenova-setup` — are archived to
-`.devdocs/ARCHIVE/hardware-profiles/`, and **the product tree now contains no shell
-script outside `tests/`.**
+`hardware-selftest` — **an assertion nothing automatically runs; see `TESTS.md` and A-1**.
+The six shell scripts that used to live here — `detect-hardware.sh`, `common-setup.sh` and
+four `jenova-setup` — were removed from the tree and survive in git history at `349a9b5b~1`
+(*corrected 2026-09-03: this said "archived to `.devdocs/ARCHIVE/hardware-profiles/`", a
+directory the USER has since deleted — **D-CE**). **The product tree contains no shell script
+outside `tests/`**, re-confirmed 2026-09-03.
 
 **Kernel tuning was deliberately not ported and nothing replaced it (D-BN).** Jenova
 applies no `sysctl` and never writes `/etc/sysctl.conf`; it reads `sysctl` only to
@@ -243,7 +268,7 @@ that profile** — Q-12 should never have been put.
 | | |
 |---|---|
 | **In-process `libllama`** | Deleted 2026-08-31, not deferred. Duplicating the engine is the opposite of being a harness for it (D-AF) |
-| **The shell tree** | Installer, `jenova-ca`, `proxy.lua`, `ffi_defs.lua`, the C tray, the ncurses TUI. Archived under `.devdocs/ARCHIVE/`. **Not outstanding work — it is gone** (D-AH, D-AM). **A surviving reference to one of these files is fixed by deleting the reference or porting the behaviour to Nim. Repairing the archived thing is never an outcome** (D-AZ) — the last two such references are in `hardware-profiles/` and are ported at Step 6 (D-BC) |
+| **The shell tree** | Installer, `jenova-ca`, `proxy.lua`, `ffi_defs.lua`, the C tray, the ncurses TUI. **Removed from the tree; recoverable from git history at `349a9b5b~1`** *(corrected 2026-09-03 — this said "archived under `.devdocs/ARCHIVE/`", a directory the USER has since deleted, **D-CE**)*. **Not outstanding work — it is gone** (D-AH, D-AM). **A surviving reference to one of these files is fixed by deleting the reference or porting the behaviour to Nim. Repairing the archived thing is never an outcome** (D-AZ) — the last two such references are in `hardware-profiles/` and are ported at Step 6 (D-BC) |
 | **`rc.d` / service integration** | Cancelled at D-H. It gets written once, against the Nim program, as part of the deployment decision |
 | **A CLI** | Waits for the total-conversion gate, then the `jca_web` decision (D-AI) |
 
@@ -331,5 +356,17 @@ message-update route, the recursive fork cascade, `/api/db/import`, the trash ro
 model switching are all implemented and asserted. Nothing in §1-§8 needs to change to
 build any of it.
 
-Enumerated against `jca_web/src/lib/components/app/*/index.ts`; the itemised list is
-`TODOS.md` G-17, G-20, G-21 and G-28 … G-36, and the order is `PLANS.md`.
+Enumerated against `jca_web/src/lib/components/app/*/index.ts`; the itemised list is `TODOS.md`
+and the order is `PLANS.md`.
+
+> **Corrected 2026-09-03.** This line named "`TODOS.md` G-17, G-20, G-21 and G-28 … G-36" as the
+> itemised list. **Every one of those IDs is closed and gone from `TODOS.md`** — they were built
+> across 2026-09-01 and 2026-09-02 and their records live in `PROGRESS.md` per the completion rule.
+> A session following this pointer finds nothing and concludes the work is done. **This is the same
+> failure §10's own 2026-09-02 correction was written about, recurring four lines below it** — and
+> it is why the pointer is now to the file rather than to a list of IDs that rots.
+>
+> **The current itemised list is `TODOS.md`'s A-series**, and it is far larger than the G-series
+> ever was: a 1,095-feature Web UI inventory replaced the six-item scope list, and a code audit
+> added 64 findings plus five coverage gaps. **Two of them (A-1, A-2) are about this project's
+> testing rather than its features, and outrank the parity work.**
