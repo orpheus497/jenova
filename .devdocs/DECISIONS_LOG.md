@@ -107,6 +107,36 @@ further down is left in place for the historical record; **this table overrides 
 
 ---
 
+## D-CC — the window's entity writes merge; the HTTP ones do not — 2026-09-02 11:21
+
+**Taken while building 8c-1 (G-49).** Recorded because it makes two write paths behave
+differently on purpose, and a session finding that later would otherwise read it as a bug.
+
+**`api.writeRow` is INSERT OR REPLACE over every column**, so a caller that omits a field
+writes it empty. **That is correct for `/api/db/*`** — the Web UI posts partial objects and
+means them, and `upsert` is unchanged. **It is wrong for the window**, which builds its
+node from whatever the open screen happens to hold, and it has now caused two data-loss
+defects: a file-asset rename blanked `content` and `fssync.syncFileAsset` wrote a
+zero-byte file over the real one (**T-13**), and a note save blanked `isFocusNote`,
+silently demoting a FOCUS note (**G-49**).
+
+**So `api.putEntity` — which every in-process window write goes through and nothing else
+calls — merges the node onto the stored row before handing it to `upsert`.** A create is
+unaffected: a row that does not exist has no stored fields.
+
+**Why the boundary and not the call sites.** Both defects were repaired at the call site,
+and the second one is the evidence that repairing call sites does not hold — there are six
+`putEntity` callers and each new one inherits the trap silently, because omitting a field
+looks exactly like not needing it. **The fix belongs where the asymmetry is, which is the
+one function that separates the window's writes from the Web UI's.**
+
+**What this does not change:** `upsert`, `writeRow`, `softDelete`, the HTTP routes, the
+cascades and the filesystem mirror. **And the explicit resends in the window stay** — they
+carry the *open editor's* value, which the merge cannot know: a note renamed with unsaved
+text in the buffer must keep that text and not the row's.
+
+---
+
 ## D-CB — what the model switcher is allowed to do — 2026-09-02 09:43
 
 **Ruled by the USER, answering Q-36. A selector is wanted; the one that shipped is

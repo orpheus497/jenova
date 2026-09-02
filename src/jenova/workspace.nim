@@ -65,12 +65,23 @@ type
 ## rows are excluded here rather than at each call site — a soft-deleted note is
 ## in the trash, and the model quoting it back would make the deletion look
 ## ignored everywhere the user would actually notice.
+## Function purpose: decide whether a stored `isFocusNote` cell means FOCUS.
+## Exported because the window reads the same column when it opens a note, and
+## two copies of this test would drift the moment either was widened — a note
+## would be FOCUS to the context builder and not to the toggle showing it, or the
+## reverse. The column is written by three surfaces with three notions of a
+## boolean: SQLite has no boolean type, the Web UI posts `0`/`1`, and a JSON
+## body can carry `false` or `null`, so all four falsehoods are named here rather
+## than assumed away.
+proc isFocusValue*(raw: string): bool =
+  raw notin ["", "0", "null", "false"]
+
 proc allNotes*(): seq[Note] =
   for r in db.query("SELECT title, content, folderId, projectId, workspaceId, " &
                     "isFocusNote FROM notes WHERE is_deleted=0"):
     result.add Note(
       title: r[0], content: r[1], folderId: r[2], projectId: r[3],
-      workspaceId: r[4], isFocus: r[5] notin ["", "0", "null"])
+      workspaceId: r[4], isFocus: isFocusValue(r[5]))
 
 proc allFiles*(): seq[FileAsset] =
   for r in db.query("SELECT name, type, content, folderId, projectId, " &

@@ -3,7 +3,7 @@
 Authoritative system architecture: what the program is, what it depends on, and how data moves
 through it. Mandated by `AGENTS.md` § WORKSPACE ARCHITECTURE.
 
-**Last updated:** 2026-09-02 08:43 (Session 020)
+**Last updated:** 2026-09-02 11:21 (Session 022)
 
 > **Rewritten 2026-08-31 (Session 007). The previous 626-line revision is in
 > `.devdocs/ARCHIVE/devdocs/BLUEPRINT_pre-007.md`** — archived, not deleted, per D-AM.
@@ -113,6 +113,13 @@ prepared-statement cache. `api` serves `/api/db/*`; `fssync` mirrors the databas
 (workspace directories, the `<epoch>_<name>` trash naming, the `.metadata.json` sidecar) and
 enforces containment on `/api/storage/*` — traversal is refused with **403, not 404**, because a 404
 discloses whether a path outside the root exists.
+
+**The two write surfaces differ in exactly one respect, deliberately (D-CC).** `/api/db/*`
+replaces the whole row, because the Web UI posts partial objects and means them. The
+window's writes go through `api.putEntity`, which **merges the node onto the stored row
+first**, because the window builds its node from whatever the open screen holds and an
+omitted column there means "not on this screen", never "clear it". Everything below that
+one function — `upsert`, the cascades, the mirror — is shared.
 
 **A note or asset's path is built from its ancestors' names**, so renaming a workspace,
 project or folder **moves that container's directory** and everything under it travels

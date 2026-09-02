@@ -5,6 +5,46 @@ One short paragraph per session. Sessions 001-005 are in
 
 ---
 
+## Session 022 (part two) — 2026-09-02 11:21
+
+**8c-1 and 8c-2 are built: a note keeps its FOCUS flag, and the window can set one.** The
+fix for G-49 went one level up from where the plan put it — the plan said to resend the
+field where the node is built, which is what was done for T-13 and is why the defect came
+back, so **`api.putEntity` now merges a partial node onto the stored row** and any column
+the window omits is carried forward. It is the only function every in-process window write
+passes through and nothing else calls it, so `upsert` and the whole HTTP contract are
+untouched (**D-CC**). G-50 is a `view-pin-symbolic` toggle in the note header, with the
+icon confirmed present before it was used, and new `workspace.isFocusValue` as the one
+truth test both the context builder and the window read. **18 assertions were added to
+`workspace-selftest`, written through `api.putEntity` itself** so the join is asserted and
+not the formatter, as a transition — written FOCUS, carried across a partial save, cleared
+while staying at its own level, set again. Twelve self-tests pass, both binaries are ELF
+64-bit FreeBSD, `bin/jenova --check` exits 0; **no red was produced and none was attempted,
+D-BX forbidding it.** What is left of 8c is the comfort work, 8c-3 … 8c-6. Detail:
+`SESSION_HANDOFF.md` Session 022 (part two).
+
+---
+
+## Session 022 — 2026-09-02 11:05
+
+**Every current-state claim in the ten trackers was read back against `src/`; no code was
+touched and nothing was run.** Everything claimed built is built and every outstanding
+finding still holds — the twelve self-tests, `SourceRoles`, the symlink-vs-real-file
+backup rule, the single `Models…` menu entry with the tray's pair kept, the editor
+environment, the PDF-before-`looksTextual` ordering, T-5, T-2, T-4, T-3, G-37, G-38 and
+G-17. **Two documents were wrong in the same way a summary table outlives the work it
+describes:** `ARCHITECTURE_MAPPING.md` §6b still said the editor environment was unwired
+and that two Neovim instances run stock, and `BRIEFING.md`'s header still said `jvim/` was
+untracked and the tree dirty. **And two defects nothing had recorded were found, both
+inside the next step:** saving or renaming a note writes the row without `isFocusNote`, so
+a FOCUS note silently stops being one (**G-49**), and the window cannot set that flag at
+all (**G-50**) — so 10a's FOCUS escape is built, asserted and unreachable. **8c is scoped
+into six parts with a proof table**, read against the Web UI's own notes routes rather than
+its component barrels, with those two defects first. Detail: `SESSION_HANDOFF.md`
+Session 022.
+
+---
+
 ## Session 021 (part three) — 2026-09-02 10:53
 
 **The USER ran the build: switching and folder resolution work as intended, so G-20 and

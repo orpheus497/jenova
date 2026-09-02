@@ -985,6 +985,16 @@ proc main() =
 
       echo "workspace-selftest"
 
+      # Action purpose: the last block writes through `api.putEntity`, which
+      # mirrors the row onto disk, so the mirror is pointed at a scratch tree
+      # before anything resolves paths. Set here and not later because
+      # `paths.resolve` reads the variable and `fssync.roots` caches whatever
+      # the first call to it produced — a block added above this one would
+      # otherwise silently move the files back. Without it the self-test leaves
+      # note files in the USER's own `Workspaces` directory.
+      let wsScratch = getTempDir() / "jenova-wstest-workspaces"
+      putEnv("JENOVA_WORKSPACES", wsScratch)
+
       let p = paths.resolve()
       db.initDb(p.state / "jenova-wstest.db")
 
@@ -1137,8 +1147,78 @@ proc main() =
         check("no second system message is inserted",
               parsed["messages"].len == 2)
 
+      # Action purpose: G-49 and G-50. Every block above supplies its own rows
+      # with raw SQL, so not one of them could see that saving a note **through
+      # the window's own write path** blanked `isFocusNote` and silently demoted
+      # a FOCUS note to an ordinary one. That is rule 15 for the fourth time in
+      # this project, and it is why this block goes through `api.putEntity` — the
+      # exact call the Save button makes — rather than through an INSERT.
+      #
+      # The id is a real UUID because `fssync.physicalPath` refuses anything
+      # else, and `upsert` then rolls back the row it has already written; the
+      # same trap `gui.createNote` documents. The content is deliberately not
+      # the one `wst-f1` carries, or the two notes could not be told apart.
+      block focusSurvivesTheWindowsOwnWritePath:
+        const fixture = "9d3f4a10-5c2b-4e7d-8a11-6b0c2f9e4d33"
+        const rule = "prefer explicit over implicit"
+        db.exec("DELETE FROM notes WHERE id=?", [fixture])
+
+        check("a FOCUS note can be written through the window's own path",
+              api.putEntity("notes", %*{
+                "id": fixture, "title": "Rules", "content": rule,
+                "workspaceId": "wst-ws", "isFocusNote": 1, "updatedAt": 1}))
+        check("...and it escapes its level to reach a folder chat",
+              rule in workspace.contextFor("wst-fA1", "", ""))
+
+        # THE ONE G-49 IS, and it varies the DATA — the node — never the code
+        # (D-BX). This node is exactly what `gui.saveNote` used to build: a
+        # title, a content, and no `isFocusNote` at all.
+        check("a partial save is accepted",
+              api.putEntity("notes", %*{
+                "id": fixture, "title": "Rules", "content": rule,
+                "workspaceId": "wst-ws", "updatedAt": 2}))
+        check("...and the note is STILL a FOCUS note afterwards",
+              rule in workspace.contextFor("wst-fA1", "", ""))
+
+        # The class and not the instance (D-CC): any column the window omits is
+        # carried forward, which is the general form of T-13 and of G-49.
+        check("a node omitting the content is accepted",
+              api.putEntity("notes", %*{"id": fixture, "title": "Rules II"}))
+        check("...and the content it never mentioned survives",
+              rule in workspace.contextFor("wst-fA1", "", ""))
+
+        # A transition, not a state (D-BX): set → carried → cleared → set again.
+        # Neither half passes alone — always-true would fail the clear, and
+        # always-false would fail every line above.
+        check("clearing the flag through the same path is honoured",
+              api.putEntity("notes", %*{"id": fixture, "isFocusNote": 0}))
+        check("...and the note stops reaching a sibling folder's chat",
+              rule notin workspace.contextFor("wst-fA1", "", ""))
+        check("...while still being present at its own level",
+              rule in workspace.contextFor("", "", "wst-ws"))
+        check("setting the flag again is honoured",
+              api.putEntity("notes", %*{"id": fixture, "isFocusNote": 1}))
+        check("...and the escape comes back with it",
+              rule in workspace.contextFor("wst-fA1", "", ""))
+
+        db.exec("DELETE FROM notes WHERE id=?", [fixture])
+
+      # Action purpose: the window reads this same cell to draw the toggle
+      # (G-50), so the test that decides "set" is one proc rather than two
+      # comparisons that drift. Asserted from both sides, because a version
+      # that always answered yes — or always no — would pass a one-sided set.
+      block theFocusTestItself:
+        check("an unset cell is not FOCUS", not workspace.isFocusValue(""))
+        check("a zero is not FOCUS", not workspace.isFocusValue("0"))
+        check("a JSON null is not FOCUS", not workspace.isFocusValue("null"))
+        check("a JSON false is not FOCUS", not workspace.isFocusValue("false"))
+        check("a one IS FOCUS", workspace.isFocusValue("1"))
+        check("a JSON true IS FOCUS", workspace.isFocusValue("true"))
+
       for t in ["notes", "fileAssets", "folders", "projects", "workspaces"]:
         db.exec("DELETE FROM " & t & " WHERE id LIKE 'wst-%'", [])
+      removeDir(wsScratch)
+      delEnv("JENOVA_WORKSPACES")
 
       if bad == 0:
         echo ""

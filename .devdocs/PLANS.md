@@ -2,7 +2,7 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-09-02 10:53 (Session 021)
+**Last updated:** 2026-09-02 11:21 (Session 022)
 
 **Write plans in plain English, then cite the ID** (**D-BA**). A step that reads
 "resolve G-23" tells the reader nothing. Say what the thing is first.
@@ -724,9 +724,104 @@ Neovim, not a document panel. **Q-35 is answered and T-11 is not touched** — w
 in their own editor and Neovim on its own page there is no second writer against an
 authoritative row at all, which is the outcome Q-29 was trying to protect.
 
-**Scope it against the Web UI's notes surface when it is picked up** (rule 11), and note
-that the notes *data* work is 10a — a note that reaches the model is worth more than a
-note that is pleasant to type.
+#### Scoped 2026-09-02 11:05, against the source on both sides
+
+**The Web UI's surface, read out of `jca_web/src/routes/notes/[id]/+page.svelte` and
+`notes/+page.svelte`** (rule 11 — the barrel files do not carry `notes`; the routes do):
+
+1. A note **renders as Markdown** and drops to a plain `textarea` only on **Edit**.
+2. **Cancel** leaves edit mode and restores the stored title and content.
+3. **Delete** behind a confirmation dialog — and **a FOCUS note has no delete button.**
+4. A **FOCUS note is pinned and coloured** in the header; a regular one gets a file icon.
+5. The list page has a **title search**, a **New Global Note**, sorting by `updatedAt`
+   newest-first, and a **container badge** (workspace / project / folder / Global).
+6. An empty note says so rather than showing a blank pane.
+
+**This window has:** an `Entry` for the title, a `TextView` for the content, Save, and
+Close. Nothing else. **And two defects, both found 2026-09-02 and both inside this step:**
+**G-49** — Save and rename write the row without `isFocusNote`, so a FOCUS note stops being
+one — and **G-50** — nothing in `gui.nim` can set the flag in the first place.
+
+**Order — the two defects first, because they are correctness and the rest is comfort.**
+
+### 8c-1 and 8c-2 — **BUILT 2026-09-02 11:21**
+
+**8c-1 — the flag is no longer wiped (G-49).** **The fix went one level up from where this
+plan put it.** The plan said to resend `isFocusNote` where the node is built, the way the
+rename branch already resends a file asset's `content`. **That repairs the instance and
+leaves the class** — and the class had already bitten once (T-13) and been repaired the
+same way, which is how it came back. `api.putEntity` now **merges a partial node onto the
+stored row** before handing it to `upsert`, so any column the window omits is carried
+forward. It is the only function every in-process window write passes through and nothing
+else calls it, so `upsert`, `writeRow` and the whole HTTP contract are untouched — the Web
+UI still posts partial objects and still means them (**D-CC**).
+
+**The explicit resends in the window stay**, and the reason is worth keeping: they carry
+the *open editor's* value, not the stored one. A note renamed with unsaved text in the
+buffer must keep that text, so the same rule now applies to an unsaved FOCUS toggle.
+
+**8c-2 — the window can set the flag (G-50).** A `view-pin-symbolic` `ToggleButton` in the
+note header, bound to new `AppState.noteFocus`, read by `gui.loadNote` and written by
+`gui.saveNote` as `1`/`0`. `workspace.contextFor` did the rest, exactly as this plan said.
+New **`workspace.isFocusValue`** is the single truth test both the context builder and the
+window read, so the toggle cannot disagree with the behaviour it controls.
+
+**Proof: 18 assertions added to `workspace-selftest`, and they go through
+`api.putEntity` itself** — the call the Save button makes — rather than through an INSERT,
+because every existing assertion in that suite supplies its own rows and that is precisely
+why none of them could see G-49 (rule 15, a fourth time). Written as a **transition**
+(D-BX): a FOCUS note is written, survives a partial save carrying no flag, is cleared and
+stops escaping its level, is still present at its own level, and comes back when the flag
+is set again. **No single wrong behaviour passes all of them** — ignoring the flag fails
+the third, always-carrying it fails the clear, and `isFocusValue` is asserted from both
+sides. **Twelve self-tests pass, both binaries are ELF 64-bit FreeBSD, `bin/jenova --check`
+exits 0.**
+
+**Two things stated plainly.** **No red was produced and none was attempted** — the
+assertions were not shown failing against a damaged tree, because D-BX forbids corrupting
+the source and a `git stash`-and-rebuild has the same failure mode the ruling was written
+about. The discrimination argument above is structural, and the previous revision is in
+git if the USER ever wants the red. And **the toggle itself is unseen** — `--check` builds
+the widget tree and presses nothing.
+
+**One thing the self-test needed and it is worth carrying:** writing through `putEntity`
+mirrors the row to disk, so `workspace-selftest` now points `JENOVA_WORKSPACES` at a
+scratch directory **before `paths.resolve()`** — `fssync.roots` caches the first value it
+resolves, so a block added above that line would silently move the files into the USER's
+own `Workspaces`.
+
+**8c-3 — Markdown view, and Edit / Cancel.** `markdown.parse` and `BlockMemo` already
+exist and the transcript already renders through them; a note is the same content in a
+different pane. **Cancel restores from the row**, which is what makes it safe to leave edit
+mode; today Close simply drops the buffer.
+
+**8c-4 — do not lose unsaved work on Close.** The one behaviour here that can destroy
+something the user typed. The Web UI avoids it by keeping the stored copy and treating the
+textarea as a draft; the same shape works here.
+
+**8c-5 — delete with the confirmation that already exists, and refuse it on a FOCUS
+note.** `api.cascadeCount` and the G-36 dialog are built and are already used by the tree's
+delete buttons. This is reuse, not new work.
+
+**8c-6 — the list affordances:** title search, newest-first, the container badge, and the
+empty-note text. Smallest and last.
+
+#### What proves each part worked
+
+| | What is asserted | Where |
+|---|---|---|
+| 8c-1 | **DONE.** A note written FOCUS through `putEntity` **still is one after a partial save carrying no flag**, and a node omitting the content leaves the content intact — the class, not the instance | `workspace-selftest` |
+| 8c-2 | **DONE.** Setting the flag through `putEntity` makes `contextFor` reach a folder chat from the workspace root; clearing it stops that **while the note stays at its own level**; setting it again restores it — a **transition**, per D-BX. `isFocusValue` asserted from both sides | `workspace-selftest` |
+| 8c-3 | `markdown.parse` on a note's content yields the same blocks as the transcript path for the same text | `markdown-selftest` |
+| 8c-4 | Whatever holds the draft is below the widget layer or it is not assertable at all — if it cannot be, say so and it is a USER run | — |
+| 8c-5 | `cascadeCount` for a note names the right count; the FOCUS refusal is a widget condition | `db-selftest` / — |
+| 8c-6 | The filter and the sort, if they are a proc; the widgets are a USER run | — |
+
+**Every assertion bites by varying the DATA, never the code (D-BX, rule 16).**
+**`bin/jenova --check` must exit 0 before handover** (rule 17).
+
+**Not in this step:** anything that makes Neovim the notes editor (D-BW ruled against it),
+and LaTeX in a note (that is G-34's open half, and it has no GTK equivalent).
 
 ---
 
@@ -925,12 +1020,13 @@ Both binaries build, **twelve self-tests pass**, `bin/jenova --check` exits 0.
 **Done: Step 11, 10c, 10a, 8b, and — 2026-09-02 — Step 7b (PDF), confirmed on screen.**
 What remains, in order:
 
-**8c first — make the notes editor good** (G-17, D-BW). It is the last unbuilt item of
-Step 8 and the smallest that item has ever been. **G-48 is closed** — built 2026-09-02
+**8c — make the notes editor good** (G-17, D-BW), scoped into six parts against both
+sources on 2026-09-02 11:05. **8c-1 and 8c-2 are built** (11:21) — the two correctness
+defects found inside it, a save wiping a note's FOCUS flag (G-49) and the window having no
+way to set that flag (G-50). **What is left of Step 8 is 8c-3 … 8c-6**, which is comfort
+work: Markdown view with Edit/Cancel, not losing unsaved text on Close, delete behind the
+existing confirmation, and the list affordances. **G-48 is closed** — built 2026-09-02
 10:43, confirmed on screen at 10:53.
-
-**Then 8c** — make the notes editor good (G-17, D-BW). The last unbuilt item of Step 8
-and the smallest that item has ever been.
 
 **Then the two open defects, both widget behaviour and both a USER run:** **G-42**
 (markdown tables now render larger than their content) and **G-47** (the editor page's

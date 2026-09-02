@@ -1,6 +1,6 @@
 # TODOS
 
-**Last updated:** 2026-09-02 10:53 (Session 021)
+**Last updated:** 2026-09-02 11:21 (Session 022)
 
 Only what is actually outstanding. Everything finished lives in `PROGRESS.md`.
 
@@ -210,11 +210,31 @@ built; KaTeX has no GTK equivalent and rendering maths is its own project.
 ### G-17 — The note editor is a plain text box
 
 It is a `TextView` with Save and Close — **`gui.saveNote`**, with one caller, the Save
-button's `clicked`. *(Verified 2026-09-01 18:07. The line number is deliberately not
-recorded — see the sweep note at the top of this file.)*
+button's `clicked`. *(Re-verified 2026-09-02 11:05: an `Entry` bound to `app.noteTitle`
+and a `TextView` bound to `app.noteBuffer`, inside the same `AutoScroll` the transcript
+uses; a "Save note" button and a "Close" button in the header. That is the whole surface.)*
 
 **Rescoped 2026-09-01 18:41 by D-BW: this stays and is made good.** It is not replaced by
 Neovim and it is not rebuilt from scratch. See the D-BW block above.
+
+**Scoped against the Web UI's own notes surface 2026-09-02 11:05** (rule 11 — read out of
+`jca_web/src/routes/notes/[id]/+page.svelte` and `notes/+page.svelte`, not from a summary).
+The gaps, and the plan is `PLANS.md` 8c: the Web UI **renders a note as Markdown** and
+drops to a `textarea` only on Edit; it has an explicit **Cancel** that restores the stored
+values; **Delete behind a confirmation dialog**, with a FOCUS note not deletable at all; a
+**note search** and a **global-note** create; and an empty-note affordance. **Close
+discards unsaved edits with no prompt** — the one that can lose work.
+
+**The FOCUS/pin indicator is built** (2026-09-02 11:21, `PROGRESS.md`) and is gone from
+that list; what remains of 8c is **8c-3 … 8c-6**.
+
+**G-49 and G-50 are gone from this file because they are built** (`PROGRESS.md`,
+2026-09-02 11:21). Per the completion rule their record lives there. A note keeps its FOCUS
+flag through a save or a rename — **fixed as a class, not an instance:** `api.putEntity`
+merges a partial node onto the stored row, so any column the window omits is carried
+forward, which also closes T-13's shape for good (**D-CC**). And the note header now
+carries a pin toggle, so a FOCUS note can be made from the window at all, which it never
+could before. **Unseen, and it is what a screen run would show:** the toggle itself.
 
 ### MCP — still deferred by you, and it is the largest item in the Web UI
 

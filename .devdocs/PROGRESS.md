@@ -2,7 +2,7 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-09-02 10:53 (Session 021)
+**Last updated:** 2026-09-02 11:21 (Session 022)
 
 > **Reading the "UNRUN" labels in this file.** Entries below are point-in-time records
 > and several were written with a "compiled; UNRUN" status that was true on the day.
@@ -15,6 +15,10 @@ Macro progress tracking. Most recent entries at the top.
 ---
 
 ## Completed
+
+### 2026-09-02 11:21 — **8c-1 and 8c-2 built: a note keeps its FOCUS flag, and the window can set it (G-49, G-50).** `api.putEntity` now merges a partial node onto the stored row before writing, so a column the window omits is carried forward instead of blanked — the class behind both G-49 and T-13, fixed at the one boundary every in-process write passes through, with `upsert` and the HTTP contract untouched (**D-CC**). `gui.saveNote` sends `isFocusNote` explicitly, `loadNote` reads it, and the note header carries a `view-pin-symbolic` `ToggleButton` — the first surface in this program that can mark a note FOCUS, which until now was reachable only from the frozen Web UI (D-BC). New `workspace.isFocusValue` is the one truth test both the context builder and the window read. **`workspace-selftest` gains 18 assertions**, written through `api.putEntity` itself so the join is asserted and not the formatter, as a transition — set → carried across a partial save → cleared → set again. Twelve self-tests pass, both binaries ELF 64-bit FreeBSD, `bin/jenova --check` exits 0. Files: `api.nim`, `gui.nim`, `workspace.nim`, `jenova_core.nim`.
+
+### 2026-09-02 11:05 — **Every devdoc claim re-audited against the source; two stale document claims corrected; two real defects found and filed; 8c scoped into six parts with a proof table. No code changed.** Everything claimed built is built and every outstanding finding still holds. Corrected: `ARCHITECTURE_MAPPING.md` §6b said the editor environment is not wired and that both embedded editors run stock Neovim — 10c wired it and Step 11 left one editor; and `BRIEFING.md`'s header said `jvim/` was untracked and the session's edits uncommitted — the tree is clean at `71ed41cb` and `jvim/` is tracked. Filed: **G-49** (saving or renaming a note writes the row without `isFocusNote`, so a FOCUS note silently stops being one) and **G-50** (nothing in `gui.nim` can set the flag). Files: `.devdocs/` only.
 
 ### 2026-09-02 10:53 — **G-48 confirmed on screen by the USER: switching and folder resolution work as intended.** The reported failure no longer reproduces. **Which of the three changes fixed it was never diagnosed and is not claimed.** Loading a switched model into the backend was not exercised — the USER had not started it — and is unobserved rather than suspect (`BRIEFING.md` §8).
 

@@ -3,7 +3,7 @@
 Test specifications, validation criteria and expected outcomes. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-02 10:43 (Session 021).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-02 11:21 (Session 022).
 Mandated from the outset; absent for Sessions 001–003. See `DECISIONS_LOG.md` C-10.
 
 > **§5a onward are stage acceptance records** — what each stage had to prove and how. They are
@@ -89,6 +89,42 @@ and `markdown-selftest`, `error-selftest` and `attach-selftest` for Step 7 (§0j
 Earlier trackers said four self-tests;
 `db-capabilities` is a capability report, not an assertion, which is where the
 miscount came from.*
+
+## 0t. The FOCUS-note assertions (G-49, G-50, 8c-1/8c-2, 2026-09-02 11:21)
+
+**18 added to `workspace-selftest`**, and where they are written is the point of them.
+
+**Why they exist:** a note marked FOCUS applies across the whole workspace tree, and every
+other assertion in that suite inserts its rows with raw SQL. **So nothing could see that
+saving a note through the window's own path blanked the flag** and quietly demoted the note
+to its own level — the model simply stopped being told a rule, which reads as a model
+ignoring it. That is rule 15 for the fourth time in this project, after `rag.nim`,
+`fileAssets` and the workspace store itself.
+
+**So these go through `api.putEntity`** — the exact call the Save button makes — rather
+than through an INSERT. That is the join, and it is the half a unit check cannot see.
+
+**Asserted as a transition, never as a state (D-BX).** A note is written FOCUS and reaches
+a folder chat from the workspace root; **a partial save carrying no `isFocusNote` leaves it
+FOCUS**; a node omitting the content leaves the content intact; clearing the flag stops the
+escape **while the note is still present at its own level**; setting it again brings the
+escape back. **No single wrong behaviour survives the set** — ignoring the flag fails the
+carry, always carrying it fails the clear, and dropping the note entirely fails the
+own-level check. `workspace.isFocusValue` is asserted from both sides for the same reason:
+a version that always answered yes, or always no, would pass a one-sided set.
+
+**No red was produced and none was attempted.** The discrimination argument above is
+structural. **D-BX forbids corrupting the source to watch an assertion bite**, and a
+stash-and-rebuild has exactly the failure mode that ruling was written about — a restore
+that does not run leaves broken source behind a green build. The prior revision is in git.
+
+**The suite now points `JENOVA_WORKSPACES` at a scratch directory**, set before
+`paths.resolve()`, because writing through `putEntity` mirrors the row to disk and
+`fssync.roots` caches the first root it resolves. Without it the self-test would leave note
+files in the USER's own `Workspaces`.
+
+**Not covered, and it cannot be from here:** the pin toggle is a widget. `--check` builds
+the tree and presses nothing.
 
 ## 0r. `models-selftest` — the model list and the switch (G-20, 8a, 2026-09-02 08:43)
 

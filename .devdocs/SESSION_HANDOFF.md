@@ -12,6 +12,159 @@ Reverse-chronological. **Keep entries short.** Sessions 001-005 are in
 
 ---
 
+## Session 022 (part two) — 2026-09-02 11:21 — **8c-1 and 8c-2 built: the FOCUS flag survives, and the window can set it**
+
+**Instruction:** proceed, stay strict to `AGENTS.md`, complete the work, update the devdocs
+and make them congruent, then report the session completion and handoff.
+
+### 8c-1 — a note keeps its FOCUS flag (G-49)
+
+**The fix went one level up from where the plan put it, and that is the part worth
+carrying.** The plan said to resend `isFocusNote` where the node is built — which is
+exactly what was done for **T-13**, the same defect in the same shape, and **it came back
+anyway.** There are six `putEntity` callers and each new one inherits the trap silently,
+because omitting a field looks identical to not needing it.
+
+**So `api.putEntity` merges the node onto the stored row before handing it to `upsert`.**
+Any column the window omits is carried forward. It is the only function every in-process
+window write passes through and **nothing else calls it**, so `upsert`, `writeRow`,
+`softDelete`, the cascades, the mirror and the whole `/api/db/*` contract are untouched —
+the Web UI still posts partial objects and still means them (**D-CC**). A create is
+unaffected, a new row having no stored fields to merge.
+
+**The explicit resends in the window stay and are not redundant.** They carry the *open
+editor's* value, which the merge cannot know: a note renamed with unsaved text in the
+buffer must keep that text, not the row's. `isFocusNote` now follows the same rule, so an
+unsaved toggle travels with the unsaved text.
+
+### 8c-2 — the window can mark a note FOCUS (G-50)
+
+A `view-pin-symbolic` `ToggleButton` in the note header, bound to new
+`AppState.noteFocus`, read by `gui.loadNote` and written by `gui.saveNote` as `1`/`0` —
+the Web UI's own encoding, since both surfaces read the column. **The icon was confirmed
+present in this machine's Adwaita theme before it was used**, rather than assumed.
+
+**`workspace.contextFor` did the rest**, as the plan said: it has had the escape behaviour
+since G-43 and simply had no way to be reached from here. New **`workspace.isFocusValue`**
+is the single truth test both it and the window read, so the toggle cannot come to disagree
+with the behaviour it controls.
+
+### Verification
+
+**18 assertions added to `workspace-selftest`, written through `api.putEntity` itself** —
+the call the Save button makes. That is the join, and it is the whole point: every other
+assertion in that suite inserts its rows with raw SQL, which is precisely why not one of
+them could see G-49 (rule 15, a fourth time after `rag.nim`, `fileAssets` and the workspace
+store).
+
+**Asserted as a transition, not a state (D-BX):** written FOCUS and reaching a folder chat
+from the workspace root → **surviving a partial save that carries no flag** → a node
+omitting the content leaving the content intact → cleared, and the escape stops **while the
+note stays at its own level** → set again, and the escape returns. **No single wrong
+behaviour passes the set** — ignoring the flag fails the carry, always carrying it fails
+the clear, dropping the note fails the own-level check. `isFocusValue` is asserted from
+both sides for the same reason.
+
+**Twelve self-tests pass, both binaries are ELF 64-bit FreeBSD, `bin/jenova --check` exits
+0.** The six shell suites were not run — Rule 0, and nothing touched is in their reach.
+
+**No red was produced and none was attempted.** D-BX forbids corrupting the source, and a
+stash-and-rebuild has the same failure mode that ruling was written about — a restore that
+does not run leaves broken source behind a green build. The discrimination argument above
+is structural; the prior revision is in git if the USER ever wants the red.
+
+**One thing the self-test needed, worth carrying:** writing through `putEntity` mirrors the
+row to disk, so the suite now points `JENOVA_WORKSPACES` at a scratch directory **before
+`paths.resolve()`** — `fssync.roots` caches the first root it resolves, so a block added
+above that line would silently put note files in the USER's own `Workspaces`.
+
+**Files touched:** `src/jenova/api.nim`, `src/jenova/gui.nim`, `src/jenova/workspace.nim`,
+`src/jenova_core.nim`, and every tracker.
+
+**Decision recorded:** **D-CC** — the window's entity writes merge; the HTTP ones do not.
+
+**For the USER to test:** open a note, click the **pin** in the header, Save — then open a
+chat scoped to a *different* folder in the same workspace and ask something; the note's
+text should be in the model's context under `--- FOCUS / RULES ---`. And rename a note that
+is already FOCUS: it must still be FOCUS afterwards.
+
+**Next:** **8c-3 … 8c-6** — a Markdown view with Edit/Cancel, not discarding unsaved text
+on Close, delete behind the existing G-36 confirmation with a FOCUS note refused, and the
+list affordances. Then the two widget defects **G-42** and **G-47** (both a USER run), then
+Step 9: T-5, T-2, T-4, T-3.
+
+---
+
+## Session 022 — 2026-09-02 11:05 — **every claim re-audited; two defects found inside 8c; 8c scoped**
+
+**Instruction:** read `AGENTS.md` and stay strict to it, read the devdocs, cross-reference
+the plan and every claim against the codebase, document the remaining work clearly, and
+present the phase to work on today.
+
+**No code was touched and nothing was run** (Rule 0 — no source changed, so no build was
+needed). The binaries were inspected with `file(1)` and their mtimes read; that is not a run.
+
+### Everything claimed built is built, and every outstanding finding still holds
+
+Read out of `src/`, for behaviour where a document describes behaviour. Twelve
+`of "…-selftest"` cases in `src/jenova_core.nim`. `models.SourceRoles` is exactly
+`["instruct", "thinking"]`; `switchToPath` removes a displaced entry when `symlinkExists`
+says it is a link and still renames a real file to `.old`; `models-selftest` is **22**
+`check` calls, which is what `TESTS.md` §0r and `PROGRESS.md` claim. The app menu carries
+one `Models…` entry with a comment recording the removal, and the tray's two `TrayItem`
+rows are still built in `gui.nim`. `vte.configure` takes an `env` sequence and `gui.run`
+passes `nvimctl.editorEnv(…)`. `pipeline.readAttachment` tries `pdf.textFrom` **before**
+`looksTextual`. `zlib.nim` is `{.passL: "-lz".}` with `uncompress`/`compress`/`compressBound`
+and no `z_stream`. Step 11's removed symbols return **zero** hits. Six shell suites; no
+shell, Lua, C, Python or Makefile in `src/` or `bin/`. T-5 (`gui.run`'s `defer` sends three
+quit sentinels, joins and closes — no `stopAll`), T-2, T-4 (the symlink check is still
+gated on `fileExists or dirExists`), T-3 (no trim in `pipeline.nim`), G-37
+(`.glow-text` at `theme.nim:253`, zero hits in `gui.nim`; `paned > separator` at 417/421),
+G-38 (`gui.nim:2742` still describes "the `Paned` that G-25 adds") and G-17, each re-read.
+Both binaries are ELF 64-bit FreeBSD and newer than every source file.
+
+### Two documents were wrong, both the same class
+
+1. **`ARCHITECTURE_MAPPING.md` §6b carried "What is not wired (G-45): `vte.nim` spawns with
+   `envv = nil` … Both embedded editors run stock Neovim."** **Both halves false** — 10c
+   wired it on 2026-09-01 and Step 11 left one editor. It sat two sections below §2, which
+   records the same wiring as done. **This is `BLUEPRINT.md` §10's failure mode in the file
+   Directive 4 designates the file-by-file map.**
+2. **`BRIEFING.md`'s header said `jvim/` was untracked and the session's edits
+   uncommitted.** The tree is clean at `71ed41cb`, `jvim/` is tracked (4,199 of 4,201
+   files), and `.gitignore` carries a "TRACKED ON PURPOSE" block about it.
+
+### Two defects nothing had recorded, both inside 8c
+
+1. **G-49 — saving or renaming a note in the window wipes its FOCUS flag.** `gui.saveNote`
+   and the sidebar rename branch build the node without `isFocusNote`; `api.f` returns `""`
+   for a missing field, `api.writeRow` is INSERT OR REPLACE over every column, and
+   `workspace.allNotes` reads `isFocus` as `r[5] notin ["", "0", "null"]`. **The comment
+   above that rename branch already names this hazard (T-13)** — it was acted on for
+   `fileAssets` and for a note's `content`, and `isFocusNote` was missed in both paths.
+2. **G-50 — the window cannot create or toggle a FOCUS note.** `isFocusNote` appears
+   nowhere in `gui.nim`, so the only surface that can set it is the frozen Web UI. D-BC.
+
+**Together: 10a's FOCUS escape is built, asserted and unreachable — and cleared by the
+first save from the window.** `workspace-selftest` supplies its own rows and never goes
+through `putEntity`, so nothing could tell (rule 15, a fourth time).
+
+### 8c scoped against both sources
+
+The Web UI's notes surface was read out of `jca_web/src/routes/notes/[id]/+page.svelte`
+and `notes/+page.svelte` — **the barrel files do not carry `notes`; the routes do**, which
+is why earlier scope passes over `components/app/*/index.ts` never saw it. Six parts and a
+proof table are in `PLANS.md` 8c, ordered with the two defects first.
+
+**Files touched:** `BRIEFING.md`, `TODOS.md`, `PLANS.md`, `ARCHITECTURE_MAPPING.md`,
+`PROGRESS.md`, `SESSION_HANDOFF.md`, `SUMMARIES.md`. **No source file.**
+
+**Next:** **8c-1 and 8c-2** — stop the save path wiping `isFocusNote`, then give the window
+a FOCUS toggle — awaiting the USER's approval per Directive 1. Then 8c-3 … 8c-6, then the
+two widget defects **G-42** and **G-47** (both a USER run), then Step 9: T-5, T-2, T-4, T-3.
+
+---
+
 ## Session 021 (part three) — 2026-09-02 10:53 — **the USER ran it; G-48 is closed**
 
 **Instruction:** it seems to work as intended so far, and will be tested further later;

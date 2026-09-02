@@ -538,10 +538,16 @@ proc listFiles(): seq[LeafItem] =
       result.add (id: r[0], name: r[1], folderId: r[2],
                   projectId: r[3], workspaceId: r[4])
 
-proc loadNote(id: string): tuple[found: bool, title, content: string] =
-  for r in db.query("SELECT title, content FROM notes WHERE id=?", [id]):
-    if r.len >= 2: return (true, r[0], r[1])
-  (false, "", "")
+## Action purpose: `isFocusNote` is read here and not left to the context builder
+## because the window has to *show* the flag to let the user change it (G-50).
+## The truth test is `workspace.isFocusValue` rather than a comparison written
+## here: the same cell decides whether `workspace.contextFor` treats the note as
+## a rule, and a second notion of "set" would make the toggle disagree with the
+## behaviour it controls.
+proc loadNote(id: string): tuple[found: bool, title, content: string, focus: bool] =
+  for r in db.query("SELECT title, content, isFocusNote FROM notes WHERE id=?", [id]):
+    if r.len >= 3: return (true, r[0], r[1], workspace.isFocusValue(r[2]))
+  (false, "", "", false)
 
 ## Function purpose: the columns a file-asset rename has to carry forward.
 ## `api.writeRow` is `INSERT OR REPLACE` over **every** column, so any field the
@@ -934,6 +940,11 @@ viewable App:
   ## string, so it cannot be driven from `view` the way an `Entry` can.
   openNote: string
   noteTitle: string
+  ## Whether the open note is a FOCUS note — a rule that escapes its own level
+  ## and applies across the whole workspace tree (G-50, D-BU). Held as state
+  ## rather than read out of the row per frame, because the toggle has to show an
+  ## edit that is not saved yet, the same way the title `Entry` does.
+  noteFocus: bool
   noteBuffer: TextBuffer = newTextBuffer()
   ## The message being edited in place (G-28), by row id, or empty. A second
   ## buffer rather than reusing `noteBuffer`: the note editor and the transcript
@@ -1342,18 +1353,26 @@ proc openNoteEditor(app: AppState, id: string) =
     return
   app.openNote = id
   app.noteTitle = n.title
+  app.noteFocus = n.focus
   app.noteBuffer.text = n.content
   app.notice = ""
 
 ## Function purpose: write the open note back through `api.putEntity`, the same
 ## call the HTTP route makes, so the filesystem mirror and the per-workspace git
-## repo apply exactly as they do for the Web UI. The parent ids are resent
-## unchanged because `putEntity` writes the whole row.
+## repo apply exactly as they do for the Web UI.
+##
+## Action purpose: `isFocusNote` is sent explicitly and the parent ids are still
+## resent, even though `putEntity` now carries forward any column this node
+## omits (D-CC). The flag is not a carry-forward case — it is a value this screen
+## *owns* while the note is open, so a toggle the user has just flipped has to
+## reach the row. Written as `1`/`0` rather than a JSON boolean because the Web
+## UI writes the column that way and both surfaces read it back.
 proc saveNote(app: AppState) =
   if app.openNote.len == 0: return
   var node = %*{"id": app.openNote,
                 "title": app.noteTitle,
                 "content": app.noteBuffer.text(),
+                "isFocusNote": (if app.noteFocus: 1 else: 0),
                 "updatedAt": int(epochTime() * 1000)}
   for n in app.notes:
     if n.id == app.openNote:
@@ -1475,20 +1494,27 @@ proc commitRename(app: AppState, entity, id: string) =
       db.exec("UPDATE conversations SET name=? WHERE id=?", [name, id])
       app.reloadTree()
     elif entity == "notes" or entity == "fileAssets":
-      # `putEntity` writes the **whole** row — `api.writeRow` is INSERT OR
-      # REPLACE over every column and a missing field is written empty. So every
-      # column that is not being renamed has to be resent, for both entities.
-      # **This branch used to do it for notes only** (T-13): renaming a file
-      # asset blanked its `content`, `size`, `type` and `uploadDate`, and
-      # `fssync.syncFileAsset` then wrote a zero-byte file over the real one and
-      # trashed the original. The hazard was named in the comment here and acted
-      # on for one of the two entities.
+      # `api.writeRow` is INSERT OR REPLACE over every column, and a field this
+      # node omits used to be written empty: renaming a file asset blanked its
+      # `content`, `size`, `type` and `uploadDate`, and `fssync.syncFileAsset`
+      # then wrote a zero-byte file over the real one and trashed the original
+      # (T-13). **`putEntity` now merges a partial node onto the stored row
+      # (D-CC), so that trap is closed at the boundary** rather than here.
+      #
+      # The explicit resends below stay, and are not redundant: what they carry
+      # is not the *stored* value but the **open editor's** value, which the
+      # merge cannot know — a note renamed with unsaved text in the buffer must
+      # keep that text, not the row's. Same reason `isFocusNote` is sent from
+      # `app.noteFocus` for the open note: an unsaved toggle travels with the
+      # unsaved text or the two disagree after one rename.
       var node = %*{"id": id, "updatedAt": int(epochTime() * 1000)}
       node[if entity == "notes": "title" else: "name"] = %name
       if entity == "notes":
         let n = loadNote(id)
         node["content"] = %(if id == app.openNote: app.noteBuffer.text()
                             else: n.content)
+        node["isFocusNote"] = %(if (if id == app.openNote: app.noteFocus
+                                    else: n.focus): 1 else: 0)
         if id == app.openNote: app.noteTitle = name
       else:
         let f = loadFileAsset(id)
@@ -3971,6 +3997,27 @@ method view(app: AppState): Widget =
                   proc clicked() = app.editorOpen = false
                 insert(app.fullscreenButton()) {.expand: false.}
               elif app.openNote.len > 0:
+                # G-50: the only way to mark a note FOCUS from this window. The
+                # flag has existed in the schema since it was written and
+                # `workspace.contextFor` has given it the escape behaviour since
+                # G-43 — a FOCUS note reaches every chat in the workspace tree
+                # rather than only its own level (D-BU) — and until now it could
+                # be set from nowhere but the Web UI, which is a D-BC defect.
+                #
+                # A toggle rather than a checkbox because it sits in a header of
+                # icon buttons, and `view-pin-symbolic` because that is the
+                # metaphor the Web UI's own note header uses.
+                ToggleButton {.expand: false.}:
+                  icon = "view-pin-symbolic"
+                  state = app.noteFocus
+                  tooltip = (if app.noteFocus:
+                               "FOCUS note: applies across the whole workspace. " &
+                               "Click to make it a normal note, then Save"
+                             else:
+                               "Make this a FOCUS note — a rule the model sees " &
+                               "in every chat in this workspace. Save to apply")
+                  style = [ButtonFlat]
+                  proc changed(state: bool) = app.noteFocus = state
                 Button {.expand: false.}:
                   text = "Save note"
                   style = [ButtonSuggested]

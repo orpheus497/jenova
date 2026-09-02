@@ -3,7 +3,7 @@
 File-by-file map of the codebase: what lives where, and why. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE. Update whenever a file is added, removed or relocated.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-02 10:43 (Session 021).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-02 11:21 (Session 022).
 
 This file was mandated from the outset and did not exist for Sessions 001–003 —
 including Session 001, which moved or deleted 31 files. See `DECISIONS_LOG.md` C-10.
@@ -191,6 +191,20 @@ adjustment getters for `AutoScroll`. Everything else is imported.
 `upsert`/`softDelete` the HTTP routes use, so cascades and the filesystem mirror apply whichever
 surface the user is on. The GUI writes no entity SQL of its own.
 
+**`putEntity` merges since 2026-09-02 (D-CC), and that is the one place the two write
+paths differ on purpose.** `writeRow` is INSERT OR REPLACE over every column, so an omitted
+field is written empty — correct for `/api/db/*`, where the Web UI posts partial objects
+and means them, and wrong for the window, which builds its node from whatever the open
+screen holds. It cost two data-loss defects (T-13's zero-byte file, G-49's demoted FOCUS
+note) before being fixed at the boundary instead of at the call sites. **`upsert`,
+`writeRow`, `softDelete` and the HTTP contract are unchanged**; a create is unaffected,
+having no stored row to merge.
+
+**`workspace.nim` gained `isFocusValue` (G-50, 2026-09-02)** — the single test for whether
+a stored `isFocusNote` cell means FOCUS. Exported because `gui.loadNote` reads the same
+column to draw the note header's pin toggle, and two copies of the test would drift into a
+toggle that disagrees with the behaviour it controls.
+
 - **`theme.nim`** holds the palette **as Nim constants** and generates the GTK4 stylesheet from
   them. **Two palettes since 2026-09-01** (G-31's Theme setting): a `Palette` record, `DarkPalette`
   assembled from the constants above it, and `LightPalette` converted from the Web UI's `oklch`
@@ -309,8 +323,12 @@ Vite / Svelte / Playwright / ESLint / TS configs. Zero OS coupling (C-5).
 
 ## 6b. `jvim/` — the embedded Neovim's configuration. **Added by the USER 2026-09-01**
 
-**4,201 files, untracked as of this session.** A self-contained Neovim distribution that
-the USER has designated the default configuration for the Neovim that Jenova embeds.
+**4,201 files on disk, 4,199 of them tracked in git.** A self-contained Neovim
+distribution that the USER has designated the default configuration for the Neovim that
+Jenova embeds. *(Corrected 2026-09-02 11:05: this said "untracked as of this session".
+`jvim/` is committed, and `.gitignore` carries an explicit "TRACKED ON PURPOSE" block
+telling a session not to add an ignore rule for it. `BRIEFING.md`'s header carried the
+same stale claim.)*
 
 **It is not product Lua and the no-Lua rule does not reach it (D-BS).** D-AM/D-AZ and
 `BRIEFING.md` rule 2 archive Lua that *implements Jenova*; Lua is the configuration
@@ -335,9 +353,14 @@ deliberate addition.**
 `JENOVA_LAN_MODE`. **Every one of those routes is already served** — `routes.nim` routes
 `/infill`, `server.nim` handles `/api/storage`.
 
-**What is not wired (G-45):** `vte.nim` spawns with `envv = nil`, so `NVIM_APPNAME` is
-never set and none of the `JENOVA_*` variables are passed. Both embedded editors run
-stock Neovim.
+**Wired 2026-09-01 (G-45, Step 10c).** *(Corrected 2026-09-02 11:05. This paragraph read
+"**What is not wired (G-45):** `vte.nim` spawns with `envv = nil` … Both embedded editors
+run stock Neovim." **Both halves were false.** `vte.configure` takes an `env` sequence and
+`gui.run` passes `nvimctl.editorEnv(…)` into it; the spawn allocates a real `envv` when
+that sequence is non-empty. And there has been **one** embedded editor since Step 11
+removed the document panel. This is the `BLUEPRINT.md` §10 class in the file Directive 4
+designates the file-by-file map: a "not built" line outliving the work that built it, two
+sections below §2, which records the same wiring as done.)*
 
 **Two things noted, neither acted on:** `jvim/README.md` documents an `install.sh` that
 is **not in the tree**, and `jvim/nvim.log` is a stray log (its own `.gitignore` ignores

@@ -615,8 +615,37 @@ proc importData(node: JsonNode): ApiResult =
 ## Entity writes for in-process callers (the GUI sidebar). Goes through the same
 ## upsert/softDelete the HTTP routes use, so cascades and the filesystem mirror
 ## apply identically whichever surface the user is on.
+##
+## Action purpose: **the node is merged onto the stored row before it is
+## written, and that is the one deliberate difference from the HTTP path.**
+## `writeRow` is INSERT OR REPLACE over every column, so a caller that omits one
+## blanks it. That is *correct* for `/api/db/*`, where the Web UI posts partial
+## objects and means them; it is wrong for the window, which builds its node from
+## whatever fields the open screen happens to hold. **The class has now bitten
+## twice** — a file-asset rename blanked `content` and `fssync.syncFileAsset`
+## then wrote a zero-byte file over the real one (T-13), and a note save blanked
+## `isFocusNote`, silently demoting a FOCUS note so it stopped reaching the model
+## from anywhere but its own level (G-49). Both were repaired at the call site,
+## and the second one proved that repairing call sites does not hold: there are
+## six of them and each new one inherits the trap. Merging at the boundary every
+## window write already passes through fixes the class instead of the instance,
+## and leaves the HTTP contract untouched (D-CC).
+##
+## **A create is unaffected**: a row that does not exist yet has no stored fields
+## to merge, so the node is written exactly as given.
 proc putEntity*(entity: string, node: JsonNode): bool =
-  entity in Entities and upsert(Entities[entity], node).status == 200
+  if entity notin Entities: return false
+  if node.kind != JObject or not node.hasKey("id"): return false
+  let e = Entities[entity]
+  let prior = rowFields(e, node.f "id")
+  if prior.len == 0:
+    return upsert(e, node).status == 200
+  var merged = newJObject()
+  for key, val in node: merged[key] = val
+  for col in e.cols:
+    if not merged.hasKey(col.name) and prior.hasKey(col.name):
+      merged[col.name] = %prior[col.name]
+  upsert(e, merged).status == 200
 
 proc deleteEntity*(entity, id: string): bool =
   entity in Entities and softDelete(Entities[entity], id).status == 200
