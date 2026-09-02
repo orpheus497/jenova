@@ -3,7 +3,7 @@
 Test specifications, validation criteria and expected outcomes. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-02 11:21 (Session 022).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-02 11:53 (Session 022).
 Mandated from the outset; absent for Sessions 001–003. See `DECISIONS_LOG.md` C-10.
 
 > **§5a onward are stage acceptance records** — what each stage had to prove and how. They are
@@ -89,6 +89,31 @@ and `markdown-selftest`, `error-selftest` and `attach-selftest` for Step 7 (§0j
 Earlier trackers said four self-tests;
 `db-capabilities` is a capability report, not an assertion, which is where the
 miscount came from.*
+
+## 0u. What 8c-3 … 8c-6 added, and what could not be asserted (2026-09-02 11:53)
+
+**No new assertion was written, and three of the four parts needed none — by
+construction rather than by omission.** Recorded because "nothing was added" is exactly
+the line a later session should be able to check rather than re-derive.
+
+* **8c-3** — the note view and the transcript now call the **same** `gui.mdBlock`, so
+  "a note renders like a reply" is true by construction. The parsing under it is
+  `markdown.parse`, already asserted in `markdown-selftest`.
+* **8c-5** — `cascadeCount("notes", …)` was already asserted in `db-selftest`. The FOCUS
+  refusal is a widget condition.
+* **8c-6** — the sort is `listNotes`' `ORDER BY updatedAt DESC` and the filter is
+  `gui.leavesIn`; both predate the step. The change was a placeholder string.
+
+**8c-4 cannot be asserted from here, and that is the honest answer rather than an
+oversight.** `noteDirty` and `confirmLoseNoteEdits` take `AppState`, the type owlkettle's
+`viewable` macro emits **inside `gui.nim`**, and `gui.nim` links into no test binary —
+`jenova-core` does not import it. Moving the guard below the widget layer would mean
+moving the buffer with it, and the buffer is a `GtkTextBuffer`. **So it is a USER run**,
+and the standing gap in §6 of `BRIEFING.md` is the reason.
+
+**And `--check` is not evidence for any of this.** It builds each branch once; the note
+editor's modes, the dialog and the delete refusal are all *transitions*. That limit is
+G-51's lesson and is now written into rule 17 itself.
 
 ## 0t. The FOCUS-note assertions (G-49, G-50, 8c-1/8c-2, 2026-09-02 11:21)
 

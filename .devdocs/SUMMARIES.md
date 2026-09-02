@@ -5,6 +5,28 @@ One short paragraph per session. Sessions 001-005 are in
 
 ---
 
+## Session 022 (part four) — 2026-09-02 11:53
+
+**The USER confirmed the note editor works, and 8c-3 … 8c-6 were built — Step 8 is complete
+and G-17 is closed.** A survey ran first: **`Button.shortcut` is the only owlkettle
+property whose update hook can abort from a child-count change** (`Paned`'s are the other
+candidates and `Paned` is used nowhere here), so G-51 is one rule about one widget, and the
+new controls went in the note pane rather than the header row, whose child count is
+unchanged. A note now **renders as markdown** through `gui.mdBlock`, extracted from
+`messageBody` so both surfaces share one renderer, and edits as text with Cancel restoring
+the row. **Unsaved work is no longer droppable in silence through any of its three doors** —
+Close, opening another note, and creating one; the plan had named only the first, and the
+other two are a single click each. Delete moved onto the note over G-36's existing cascade
+dialog, refused on a FOCUS note with the reason on the button. **8c-6 was mostly already
+built and is recorded rather than rebuilt:** the sort and the note-title search both predate
+the step, and the only real gap was the search box's placeholder denying it searched notes.
+The view renders from `noteOrigContent` and never the `TextBuffer`, which is Step 7c's rule.
+Twelve self-tests pass and `--check` exits 0; **8c-4 is not assertable — `AppState` lives in
+`gui.nim`, which links into no test binary — and it is a USER run.** Detail:
+`SESSION_HANDOFF.md` Session 022 (part four).
+
+---
+
 ## Session 022 (part three) — 2026-09-02 11:35
 
 **The 11:21 build crashed on opening a note and the crash was mine.** Diagnosed rather than

@@ -3,7 +3,7 @@
 File-by-file map of the codebase: what lives where, and why. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE. Update whenever a file is added, removed or relocated.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-02 11:21 (Session 022).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-02 11:53 (Session 022).
 
 This file was mandated from the outset and did not exist for Sessions 001–003 —
 including Session 001, which moved or deleted 31 files. See `DECISIONS_LOG.md` C-10.
@@ -199,6 +199,13 @@ screen holds. It cost two data-loss defects (T-13's zero-byte file, G-49's demot
 note) before being fixed at the boundary instead of at the call sites. **`upsert`,
 `writeRow`, `softDelete` and the HTTP contract are unchanged**; a create is unaffected,
 having no stored row to merge.
+
+**`gui.nim` gained `mdBlock` (8c-3, 2026-09-02)** — one markdown block rendered as a
+widget, lifted out of `messageBody` so the note view and the transcript render through the
+**same** code rather than two copies. It stays in `gui.nim` because it is widgets and
+nothing else; the parsing it renders is already `markdown.nim`'s and already asserted. The
+extraction left `messageBody`'s child structure identical — one widget per block, same
+order — which is what keeps owlkettle's transcript diffing unchanged.
 
 **`workspace.nim` gained `isFocusValue` (G-50, 2026-09-02)** — the single test for whether
 a stored `isFocusNote` cell means FOCUS. Exported because `gui.loadNote` reads the same

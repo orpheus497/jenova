@@ -2,7 +2,7 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-09-02 11:35 (Session 022)
+**Last updated:** 2026-09-02 11:53 (Session 022)
 
 > **Reading the "UNRUN" labels in this file.** Entries below are point-in-time records
 > and several were written with a "compiled; UNRUN" status that was true on the day.
@@ -15,6 +15,10 @@ Macro progress tracking. Most recent entries at the top.
 ---
 
 ## Completed
+
+### 2026-09-02 11:53 — **8c-3 … 8c-6 built: Step 8 is complete and G-17 is closed.** A note now **reads as rendered markdown** and drops to the `TextView` only on Edit, with Cancel restoring the stored row; the transcript's block renderer was **extracted as `gui.mdBlock`** and both surfaces call it, so a note's tables and capped code blocks are the transcript's, not a second copy. **Unsaved work is no longer droppable in silence (8c-4):** Close, opening another note from the tree, and creating a note all go through `confirmLoseNoteEdits`, offering Cancel / Discard / Save, and a failed save refuses to proceed. **Delete moved into the note itself (8c-5)** over G-36's existing cascade dialog, refused on a FOCUS note with the reason on the button rather than hidden. **8c-6 was mostly already built and is recorded rather than rebuilt:** `listNotes` already orders newest-first and the tree's search already filtered notes and files — its placeholder said "Search chats" and denied a working feature, which is the only thing that needed changing; the container badge is redundant because the tree nests a note under its container; the empty-note affordance is new. **The view renders from `noteOrigContent`, never `noteBuffer.text()`** — Step 7c's rule that nothing in `view` may do work proportional to a payload. Twelve self-tests pass, `bin/jenova --check` exits 0, `bin/jenova` is ELF 64-bit FreeBSD. Files: `gui.nim`.
+
+### 2026-09-02 11:43 — **The USER ran it: the note editor works — writing, saving and closing all behave.** G-49, G-50 and the G-51 crash fix are confirmed on screen. Loading a switched model into the backend remains untested by the USER's own choice while they work; that is unchanged and stays `BRIEFING.md` §8, not a defect.
 
 ### 2026-09-02 11:35 — **Fixed a crash the 11:21 build shipped: opening a note aborted the application.** Reported by the USER from the screen. **Diagnosed, not guessed:** owlkettle diffs a `Box`'s children by index and reuses state when the type matches, and `Button.shortcut` has no update path — it builds a `GtkShortcutController` once and its update hook only asserts the value never changed. The pin toggle made the note header four children instead of three, so `gui.fullscreenButton` (`shortcut = "F11"`, the only such widget in the program) landed on the Send button's state and `assert "" == "F11"` aborted the process. **Fixed by moving the toggle out of that row and beside the note title**, where the Web UI puts it — the header's three branches are back to 3/3/5 children, exactly as before. The hazard is recorded as **G-51** and in a comment at the point of discovery. **`bin/jenova --check` cannot catch this class**: it builds each branch once and the assertion only fires on an update. Twelve self-tests pass, `bin/jenova --check` exits 0. Files: `gui.nim`.
 

@@ -2,7 +2,7 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-09-02 11:35 (Session 022)
+**Last updated:** 2026-09-02 11:53 (Session 022)
 
 **Write plans in plain English, then cite the ID** (**D-BA**). A step that reads
 "resolve G-23" tells the reader nothing. Say what the thing is first.
@@ -800,21 +800,41 @@ scratch directory **before `paths.resolve()`** — `fssync.roots` caches the fir
 resolves, so a block added above that line would silently move the files into the USER's
 own `Workspaces`.
 
-**8c-3 — Markdown view, and Edit / Cancel.** `markdown.parse` and `BlockMemo` already
-exist and the transcript already renders through them; a note is the same content in a
-different pane. **Cancel restores from the row**, which is what makes it safe to leave edit
-mode; today Close simply drops the buffer.
+### 8c-3 … 8c-6 — **BUILT 2026-09-02 11:53. Step 8 is complete and G-17 is closed.**
 
-**8c-4 — do not lose unsaved work on Close.** The one behaviour here that can destroy
-something the user typed. The Web UI avoids it by keeping the stored copy and treating the
-textarea as a draft; the same shape works here.
+**8c-3 — a note reads as markdown and edits as text.** The transcript's block renderer was
+**extracted as `gui.mdBlock`** and both surfaces call it, so a note's tables, capped code
+blocks and copy buttons *are* the transcript's rather than a second copy that drifts.
+`messageBody`'s child structure is unchanged — one widget per block, same order — so
+nothing about how owlkettle diffs a transcript moved. Cancel restores the stored row.
 
-**8c-5 — delete with the confirmation that already exists, and refuse it on a FOCUS
-note.** `api.cascadeCount` and the G-36 dialog are built and are already used by the tree's
-delete buttons. This is reuse, not new work.
+**8c-4 — unsaved work cannot be dropped in silence, through any of its three doors.**
+Close was the one the plan named; **the other two are worse and the plan had missed them** —
+clicking a different note in the tree and creating a new one both replace the buffer, and
+each is a single click with no warning. All three now go through `confirmLoseNoteEdits`
+(Cancel / Discard / Save), and **a failed save refuses to proceed**, because carrying on
+would lose exactly what the dialog was protecting. The guard on *create* runs before the
+row is written, or a cancelled dialog would leave an orphan "New note" behind.
 
-**8c-6 — the list affordances:** title search, newest-first, the container badge, and the
-empty-note text. Smallest and last.
+**8c-5 — delete is on the note**, over G-36's existing cascade dialog. **A FOCUS note is
+refused rather than hidden** — a deliberate divergence from the Web UI, which omits the
+button: a disabled control carrying the reason says why, and one that vanishes reads as a
+bug. The protection is the same either way.
+
+**8c-6 — mostly already built, and recorded instead of rebuilt** (rule 5). `listNotes`
+already orders newest-first, and **the tree's search already filtered notes and files by
+title** — `leavesIn` has always done it. Its placeholder said *"Search chats"*, so a
+working feature was denied by its own label; that string is the only thing that needed
+changing. **The container badge is not built and should not be:** the tree nests a note
+under its container, so a badge would restate the row's own position. The empty-note
+affordance is new.
+
+> **One rule this step had to obey and it is Step 7c's.** The rendered view reads
+> **`noteOrigContent`, never `noteBuffer.text()`** — `view` runs on every frame and
+> reading a `TextBuffer` copies the whole note out of GTK each time, which is the defect
+> that froze the window on an attachment (G-40, D-BQ). It is also exactly correct: view
+> mode is only reachable with the buffer equal to the stored text, because edit mode's
+> only exits are Cancel (restores) and Save (writes, then re-baselines).
 
 #### What proves each part worked
 
@@ -822,10 +842,10 @@ empty-note text. Smallest and last.
 |---|---|---|
 | 8c-1 | **DONE.** A note written FOCUS through `putEntity` **still is one after a partial save carrying no flag**, and a node omitting the content leaves the content intact — the class, not the instance | `workspace-selftest` |
 | 8c-2 | **DONE.** Setting the flag through `putEntity` makes `contextFor` reach a folder chat from the workspace root; clearing it stops that **while the note stays at its own level**; setting it again restores it — a **transition**, per D-BX. `isFocusValue` asserted from both sides | `workspace-selftest` |
-| 8c-3 | `markdown.parse` on a note's content yields the same blocks as the transcript path for the same text | `markdown-selftest` |
-| 8c-4 | Whatever holds the draft is below the widget layer or it is not assertable at all — if it cannot be, say so and it is a USER run | — |
-| 8c-5 | `cascadeCount` for a note names the right count; the FOCUS refusal is a widget condition | `db-selftest` / — |
-| 8c-6 | The filter and the sort, if they are a proc; the widgets are a USER run | — |
+| 8c-3 | **Already covered.** Both surfaces call `markdown.parse` through the *same* `mdBlock`, so "the same blocks as the transcript" is now true by construction rather than by assertion | `markdown-selftest` |
+| 8c-4 | **Not assertable, and this is the honest answer the plan asked for.** `noteDirty` and `confirmLoseNoteEdits` take `AppState`, which is the type owlkettle's `viewable` macro emits inside `gui.nim`, and `gui.nim` does not link into `jenova-core`. **It is a USER run** | — |
+| 8c-5 | **Already covered:** `cascadeCount("notes", …)` is asserted. The FOCUS refusal is a widget condition | `db-selftest` / — |
+| 8c-6 | **Already covered by construction:** the sort is `listNotes`' `ORDER BY updatedAt DESC` and the filter is `leavesIn`, both of which predate this step. The placeholder is a string | — |
 
 **Every assertion bites by varying the DATA, never the code (D-BX, rule 16).**
 **`bin/jenova --check` must exit 0 before handover** (rule 17).
@@ -1030,13 +1050,22 @@ Both binaries build, **twelve self-tests pass**, `bin/jenova --check` exits 0.
 **Done: Step 11, 10c, 10a, 8b, and — 2026-09-02 — Step 7b (PDF), confirmed on screen.**
 What remains, in order:
 
-**8c — make the notes editor good** (G-17, D-BW), scoped into six parts against both
-sources on 2026-09-02 11:05. **8c-1 and 8c-2 are built** (11:21) — the two correctness
-defects found inside it, a save wiping a note's FOCUS flag (G-49) and the window having no
-way to set that flag (G-50). **What is left of Step 8 is 8c-3 … 8c-6**, which is comfort
-work: Markdown view with Edit/Cancel, not losing unsaved text on Close, delete behind the
-existing confirmation, and the list affordances. **G-48 is closed** — built 2026-09-02
-10:43, confirmed on screen at 10:53.
+**Step 8 is complete.** 8b, 8a and 8c are all built; **G-17 is closed** (11:53) and 8c-1
+and 8c-2, the two correctness defects found inside it, were confirmed on screen at 11:43.
+
+**What remains, in order:**
+
+**The two open widget defects, both a USER run:** **G-42** (markdown tables render larger
+than their content) and **G-47** (the editor page's Neovim truncated at the bottom on a
+resize, reported 2026-09-01 18:41 and **not diagnosed**).
+
+**Then Step 9's four stability items**, in the order T-5, T-2, T-4, T-3.
+
+**Standing, not scheduled:** LaTeX maths, the open half of G-34 — KaTeX has no GTK
+equivalent and rendering maths is its own project. Model information (context size,
+quantisation, chat template) needs `/props` plus a GGUF header read and was never built.
+**G-51** is a constraint to respect, not work: nothing may be inserted before
+`gui.fullscreenButton` in its row.
 
 **Then the two open defects, both widget behaviour and both a USER run:** **G-42**
 (markdown tables now render larger than their content) and **G-47** (the editor page's

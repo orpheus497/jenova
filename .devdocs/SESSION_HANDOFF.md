@@ -12,6 +12,98 @@ Reverse-chronological. **Keep entries short.** Sessions 001-005 are in
 
 ---
 
+## Session 022 (part four) — 2026-09-02 11:53 — **the USER confirmed 8c-1/8c-2; 8c-3 … 8c-6 built; Step 8 is complete**
+
+**Instruction:** the note editor works — writing, saving and closing all behave; model
+loading is still deliberately untested while the USER works. Update the devdocs and
+proceed with the next steps.
+
+**G-49, G-50 and the G-51 crash fix are confirmed on screen.** Loading a switched model
+stays unobserved by the USER's own choice and remains `BRIEFING.md` §8, not a defect.
+
+### A survey run before touching that header row again
+
+**`Button.shortcut` is the only property in owlkettle whose update hook can abort the
+process from a child-count change.** The other assert-only hooks are `Paned`'s
+`resize`/`shrink`/child-type, and **`Paned` is used nowhere in `gui.nim`** — zero hits, it
+being also G-37's and G-38's subject. Everything else asserting in owlkettle is an internal
+invariant, not a positional-diff trap. **So G-51 is one rule about one widget:** nothing
+may be inserted before `gui.fullscreenButton` in its row. Recorded there.
+
+That is why the note editor's new controls went in the note pane's own title row and why
+the header's Save button became `sensitive = app.noteEditing` rather than a conditional
+widget: **the header row's child count is unchanged at 3.**
+
+### 8c-3 — a note reads as markdown and edits as text
+
+The transcript's block renderer is **extracted as `gui.mdBlock`** and both surfaces call
+it, so a note's tables, capped code blocks and copy buttons *are* the transcript's rather
+than a second copy that drifts. **`messageBody`'s child structure is unchanged** — one
+widget per block, in the same order — so nothing about how owlkettle diffs a transcript
+moved. The title is a `Label` while reading and an `Entry` while editing; the types differ,
+so owlkettle rebuilds, which is the safe direction.
+
+### 8c-4 — unsaved work cannot be dropped in silence, through any of its three doors
+
+**The plan named Close. The other two are worse and the plan had missed them:** clicking a
+different note in the tree and creating a new one both replace the buffer, and each is a
+single click with no warning that anything was pending. All three now go through
+`confirmLoseNoteEdits` — Cancel / Discard / Save — and **a failed save refuses to
+proceed**, because carrying on would lose exactly what the dialog was protecting. The guard
+on *create* runs **before** the row is written, or a cancelled dialog would leave an orphan
+"New note" behind.
+
+### 8c-5 — delete is on the note
+
+Over G-36's existing cascade dialog, which already names what goes with it. **A FOCUS note
+is refused rather than hidden** — a deliberate divergence from the Web UI, which omits the
+button: a disabled control carrying the reason says why, and one that vanishes reads as a
+bug.
+
+### 8c-6 — mostly already built, and recorded rather than rebuilt
+
+`listNotes` has always ordered newest-first, and **the tree's search has always filtered
+notes and files by title** — `leavesIn` does it. Its placeholder said *"Search chats"*, so
+a working feature was denied by its own label; **that string was the only thing that needed
+changing.** The container badge is **not** built and should not be: the tree nests a note
+under its container, so a badge would restate the row's own position. The empty-note
+affordance is new.
+
+### One rule this step had to obey, and it is Step 7c's
+
+The rendered view reads **`noteOrigContent`, never `noteBuffer.text()`.** `view` runs on
+every frame and reading a `TextBuffer` copies the whole note out of GTK each time — the
+defect that froze the window on an attachment (G-40, D-BQ). It is also exactly correct:
+view mode is only reachable with the buffer equal to the stored text, because edit mode's
+only exits are Cancel, which restores, and Save, which writes and then re-baselines.
+
+### Verification, and what could not be verified
+
+**Twelve self-tests pass, `bin/jenova --check` exits 0, `bin/jenova` is ELF 64-bit
+FreeBSD.** `jenova-core` was not rebuilt — `gui.nim` does not link into it.
+
+**8c-4 is not assertable and that is the honest answer the plan asked for.** `noteDirty`
+and `confirmLoseNoteEdits` take `AppState`, the type owlkettle's `viewable` macro emits
+inside `gui.nim`, and `gui.nim` links into no test binary. **It is a USER run.** 8c-3, 8c-5
+and 8c-6 need no new assertion: both surfaces now share one renderer,
+`cascadeCount("notes", …)` is already asserted, and the sort and filter predate this step.
+
+**And `--check` is not evidence here either**, for the reason part three established: it
+builds each branch once and cannot exercise a transition.
+
+**Files touched:** `src/jenova/gui.nim`, and the trackers. **No decision was taken that
+needed recording** — every call was inside the approved plan.
+
+**For the USER to test:** open a note (it should render, with an Edit button), edit it,
+then try to close it, click another note, and create a note — each should ask before losing
+the changes. Check the delete button is refused while the pin is on. And the sidebar search
+box should now say it searches notes and files too, which it always did.
+
+**Next:** **G-42** and **G-47**, the two open widget defects, both a USER run and G-47
+**not diagnosed**. Then **Step 9**: T-5, T-2, T-4, T-3.
+
+---
+
 ## Session 022 (part three) — 2026-09-02 11:35 — **the 11:21 build crashed on opening a note; fixed**
 
 **Instruction:** the USER ran it — opening the note page freezes and locks up the GUI, with

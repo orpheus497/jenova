@@ -945,6 +945,17 @@ viewable App:
   ## rather than read out of the row per frame, because the toggle has to show an
   ## edit that is not saved yet, the same way the title `Entry` does.
   noteFocus: bool
+  ## 8c-3. A note reads as rendered markdown and is edited as plain text, which
+  ## is the Web UI's own split and is forced anyway: a `TextView` shows the
+  ## characters it holds and cannot render them.
+  noteEditing: bool
+  ## 8c-4. The row as it was loaded, so Cancel can restore it and Close can tell
+  ## whether anything would be lost. Kept beside the live values rather than
+  ## re-read on demand: the row changes under a Save and the comparison has to
+  ## be against what the *editor* started from.
+  noteOrigTitle: string
+  noteOrigContent: string
+  noteOrigFocus: bool
   noteBuffer: TextBuffer = newTextBuffer()
   ## The message being edited in place (G-28), by row id, or empty. A second
   ## buffer rather than reusing `noteBuffer`: the note editor and the transcript
@@ -1355,7 +1366,22 @@ proc openNoteEditor(app: AppState, id: string) =
   app.noteTitle = n.title
   app.noteFocus = n.focus
   app.noteBuffer.text = n.content
+  # 8c-3: a note opens as it reads, not as it is typed — the Web UI's default
+  # and the safer one, since a stray keystroke in a view cannot alter a note.
+  app.noteEditing = false
+  app.noteOrigTitle = n.title
+  app.noteOrigContent = n.content
+  app.noteOrigFocus = n.focus
   app.notice = ""
+
+## Function purpose: whether the open note carries an edit that is not in the
+## row yet (8c-4). Close asks this before discarding the buffer, which is the
+## one action in this editor that could destroy something the user typed.
+proc noteDirty(app: AppState): bool =
+  app.openNote.len > 0 and
+    (app.noteTitle != app.noteOrigTitle or
+     app.noteFocus != app.noteOrigFocus or
+     app.noteBuffer.text() != app.noteOrigContent)
 
 ## Function purpose: write the open note back through `api.putEntity`, the same
 ## call the HTTP route makes, so the filesystem mirror and the per-workspace git
@@ -1381,9 +1407,88 @@ proc saveNote(app: AppState) =
       node["workspaceId"] = %n.workspaceId
   if api.putEntity("notes", node):
     app.reloadTree()
+    # 8c-3/8c-4: the saved values become the baseline, so the note is no longer
+    # dirty and Cancel from here restores what was just written rather than what
+    # the editor happened to open with.
+    app.noteOrigTitle = app.noteTitle
+    app.noteOrigContent = app.noteBuffer.text()
+    app.noteOrigFocus = app.noteFocus
+    app.noteEditing = false
     app.notice = "note saved"
   else:
     app.notice = "could not save note"
+
+## Function purpose: leave edit mode, putting back what the row holds (8c-3).
+## The Web UI's Cancel does the same, and it is the reason the baseline is kept:
+## without it "cancel" could only mean "stop typing", which changes nothing and
+## is not what the button says.
+proc cancelNoteEdit(app: AppState) =
+  app.noteTitle = app.noteOrigTitle
+  app.noteBuffer.text = app.noteOrigContent
+  app.noteFocus = app.noteOrigFocus
+  app.noteEditing = false
+  app.notice = ""
+
+## Function purpose: close the note editor, refusing to throw away unsaved work
+## silently (8c-4). Everything else in this window that can lose data asks first
+## — G-36 put a dialog on every delete for exactly this reason — and Close was
+## the one remaining action that simply dropped the buffer.
+##
+## Action purpose: three answers, not two. "Discard" and "Save and close" are
+## both things the user plainly means at that moment, and offering only one of
+## them makes the other require cancelling the dialog and starting again.
+## Function purpose: ask before anything that would throw the note buffer away,
+## and answer whether to go ahead (8c-4). **Shared, because Close is not the
+## only door.** Clicking a different note in the tree and creating a new one both
+## replace the buffer, and those are easier to hit by accident than the Close
+## button is — one click, with no warning that anything was pending.
+proc confirmLoseNoteEdits(app: AppState): bool =
+  if not app.noteDirty: return true
+  # Action purpose: three answers, not two. "Discard" and "Save" are both things
+  # the user plainly means at that moment, and offering only one makes the other
+  # require cancelling the dialog and starting the action again.
+  let (res, _) = app.open: gui:
+    MessageDialog:
+      title = "Unsaved changes"
+      message = "\"" & (if app.noteTitle.len > 0: app.noteTitle
+                        else: "Untitled note") &
+                "\" has changes that are not saved.\n\n" &
+                "Continuing without saving will lose them."
+      DialogButton {.addButton.}:
+        text = "Cancel"
+        res = DialogCancel
+      DialogButton {.addButton.}:
+        text = "Discard"
+        res = DialogReject
+        style = [ButtonDestructive]
+      DialogButton {.addButton.}:
+        text = "Save"
+        res = DialogAccept
+        style = [ButtonSuggested]
+  case res.kind
+  of DialogAccept:
+    app.saveNote()
+    # A failed save must not proceed: carrying on would lose exactly what the
+    # dialog was protecting. `saveNote` re-baselines only when the write landed,
+    # so `noteDirty` is the honest answer to "did it save".
+    not app.noteDirty
+  of DialogReject: true
+  else: false
+
+proc closeNote(app: AppState) =
+  if not app.confirmLoseNoteEdits(): return
+  app.openNote = ""
+  app.noteEditing = false
+  app.notice = ""
+
+## Function purpose: open a note the way the tree opens one — through the
+## unsaved-changes guard. `openNoteEditor` deliberately does not carry the guard
+## itself: it is also the call that *follows* a create, where the guard has
+## already been asked and asking twice would be the defect.
+proc openNoteGuarded(app: AppState, id: string) =
+  if app.openNote.len > 0 and app.openNote != id and
+     not app.confirmLoseNoteEdits(): return
+  app.openNoteEditor(id)
 
 proc newChat(app: AppState, wsId = "", projId = "", folderId = "") =
   if app.streaming: return
@@ -1428,6 +1533,10 @@ proc createNode(app: AppState, entity, parentCol, parentId: string) =
 ## tree matches on the full triple, so a note carrying only its `folderId` is
 ## saved and then invisible.
 proc createNote(app: AppState, wsId, projId, folderId: string) =
+  # 8c-4: asked before the row is written, not after. Guarding the `openNoteEditor`
+  # below instead would leave an orphan "New note" behind whenever the user
+  # cancelled the dialog.
+  if not app.confirmLoseNoteEdits(): return
   let id = fssync.newUuid()
   var node = %*{"id": id, "title": "New note", "content": "",
                 "workspaceId": wsId, "projectId": projId, "folderId": folderId,
@@ -1435,6 +1544,10 @@ proc createNote(app: AppState, wsId, projId, folderId: string) =
   if api.putEntity("notes", node):
     app.reloadTree()
     app.openNoteEditor(id)
+    # 8c-3: a note that has just been created is opened to be written, not read.
+    # `openNoteEditor` defaults to the view, which is right for an existing note
+    # and would show a new one as an empty page with no obvious way in.
+    app.noteEditing = true
   else:
     app.notice = "could not create note"
 
@@ -2359,6 +2472,96 @@ const
   CodeCapLines = 24
   CodeCapPx = 360
 
+## Function purpose: render one markdown block as a widget. Extracted from
+## `messageBody` (8c-3) so a note is shown through the transcript's own
+## renderer — tables, capped code blocks, the copy button and all — instead of
+## growing a second copy beside it that drifts. **`messageBody`'s child
+## structure is unchanged**: it still contributes exactly one widget per block,
+## in the same order, so nothing about how owlkettle diffs a transcript moves.
+##
+## The `{.expand: false.}` annotations live at the call sites and not here,
+## because they are the parent's adder properties rather than the widget's.
+proc mdBlock(app: AppState, b: markdown.Block): Widget =
+  if b.kind == bkText:
+    gui:
+      Label:
+        text = b.text
+        useMarkup = true
+        xAlign = 0.0
+        wrap = true
+        style = [StyleClass("msg-body")]
+  elif b.kind == bkTable:
+    # G-34. **A real `Grid`, because Pango has no table.** A model asked to
+    # compare things answers with one, and it used to render as raw pipes.
+    # It scrolls horizontally inside itself: a wide table must not widen
+    # the whole transcript, and a `Label` cannot be relied on to shrink.
+    #
+    # G-41: **`ContentScroll`, not `ScrolledWindow`.** A bare owlkettle
+    # `ScrolledWindow` reports a near-zero minimum height, so it clipped
+    # every table to a stub no matter how many rows it had — the same
+    # collapse as G-11. `ContentScroll` takes the height the rows need and
+    # keeps the horizontal scrolling that the width argument above wants.
+    gui:
+      ContentScroll:
+        style = [StyleClass("md-table")]
+        Grid(rowSpacing = 2, columnSpacing = 16, margin = 8):
+          for rowIdx, row in b.rows:
+            for colIdx, cell in row:
+              Label {.x: colIdx, y: rowIdx.}:
+                text = cell
+                useMarkup = true
+                # Row 0 is the header; every other row takes the column's
+                # own alignment from the `:---:` markers.
+                xAlign = (if colIdx < b.aligns.len: b.aligns[colIdx]
+                          else: 0.0)
+                wrap = true
+                style = [StyleClass(
+                  if rowIdx == 0: "md-th" else: "md-td")]
+  else:
+    gui:
+      Frame:
+        style = [StyleClass("code-block")]
+        Box(orient = OrientY, spacing = 4, margin = 8):
+          Box(orient = OrientX) {.expand: false.}:
+            Label {.expand: false, hAlign: AlignFill.}:
+              text = (if b.lang.len > 0: b.lang else: "code")
+              xAlign = 0.0
+              style = [StyleClass("code-lang")]
+            Button {.expand: false.}:
+              icon = "edit-copy-symbolic"
+              tooltip = "Copy"
+              style = [ButtonFlat, StyleClass("row-btn")]
+              proc clicked() = copyToClipboard(b.text)
+          # Action purpose: **the cap, and why it is a `sizeRequest` rather
+          # than CSS.** GTK4 CSS has no `max-height` — only `min-*` — so a
+          # long block is capped by putting it in a ScrolledWindow with an
+          # explicit height (G-31's `fullHeightCodeBlocks`).
+          #
+          # That is safe here for the same reason it was fatal at G-11:
+          # owlkettle's ScrolledWindow never calls
+          # `set_propagate_natural_height`, so it reports a near-zero minimum
+          # and collapses a child to nothing — **unless it is given a height
+          # to hold**, which is exactly what a cap is. An uncapped block
+          # still gets no ScrolledWindow at all.
+          #
+          # Only long blocks are wrapped: `sizeRequest` is a *minimum*, so
+          # capping a four-line snippet would pad it to 360px of empty
+          # scroller instead of shrinking anything.
+          if b.text.countLines > CodeCapLines and
+             not app.opts.getBool("fullHeightCodeBlocks"):
+            ScrolledWindow {.expand: false.}:
+              sizeRequest = (-1, CodeCapPx)
+              style = [StyleClass("code-capped")]
+              SourceCode:
+                code = b.text
+                language = b.lang
+                style = [StyleClass("code-body")]
+          else:
+            SourceCode {.expand: false.}:
+              code = b.text
+              language = b.lang
+              style = [StyleClass("code-body")]
+
 proc messageBody(app: AppState, m: Message): Widget =
   ## User turns are plain text and assistant output is markdown — unless
   ## `renderUserContentAsMarkdown` is set, which is the Web UI's own option and
@@ -2403,82 +2606,7 @@ proc messageBody(app: AppState, m: Message): Widget =
                 text = (if a.kind == "IMAGE": "🖼 " else: "📄 ") & a.name
                 style = [StyleClass("settings-help")]
       for b in mdMemo.blocksFor(m.id, m.text):
-        if b.kind == bkText:
-          Label {.expand: false.}:
-            text = b.text
-            useMarkup = true
-            xAlign = 0.0
-            wrap = true
-            style = [StyleClass("msg-body")]
-        elif b.kind == bkTable:
-          # G-34. **A real `Grid`, because Pango has no table.** A model asked to
-          # compare things answers with one, and it used to render as raw pipes.
-          # It scrolls horizontally inside itself: a wide table must not widen
-          # the whole transcript, and a `Label` cannot be relied on to shrink.
-          #
-          # G-41: **`ContentScroll`, not `ScrolledWindow`.** A bare owlkettle
-          # `ScrolledWindow` reports a near-zero minimum height, so it clipped
-          # every table to a stub no matter how many rows it had — the same
-          # collapse as G-11. `ContentScroll` takes the height the rows need and
-          # keeps the horizontal scrolling that the width argument above wants.
-          ContentScroll {.expand: false.}:
-            style = [StyleClass("md-table")]
-            Grid(rowSpacing = 2, columnSpacing = 16, margin = 8):
-              for rowIdx, row in b.rows:
-                for colIdx, cell in row:
-                  Label {.x: colIdx, y: rowIdx.}:
-                    text = cell
-                    useMarkup = true
-                    # Row 0 is the header; every other row takes the column's
-                    # own alignment from the `:---:` markers.
-                    xAlign = (if colIdx < b.aligns.len: b.aligns[colIdx]
-                              else: 0.0)
-                    wrap = true
-                    style = [StyleClass(
-                      if rowIdx == 0: "md-th" else: "md-td")]
-        else:
-          Frame {.expand: false.}:
-            style = [StyleClass("code-block")]
-            Box(orient = OrientY, spacing = 4, margin = 8):
-              Box(orient = OrientX) {.expand: false.}:
-                Label {.expand: false, hAlign: AlignFill.}:
-                  text = (if b.lang.len > 0: b.lang else: "code")
-                  xAlign = 0.0
-                  style = [StyleClass("code-lang")]
-                Button {.expand: false.}:
-                  icon = "edit-copy-symbolic"
-                  tooltip = "Copy"
-                  style = [ButtonFlat, StyleClass("row-btn")]
-                  proc clicked() = copyToClipboard(b.text)
-              # Action purpose: **the cap, and why it is a `sizeRequest` rather
-              # than CSS.** GTK4 CSS has no `max-height` — only `min-*` — so a
-              # long block is capped by putting it in a ScrolledWindow with an
-              # explicit height (G-31's `fullHeightCodeBlocks`).
-              #
-              # That is safe here for the same reason it was fatal at G-11:
-              # owlkettle's ScrolledWindow never calls
-              # `set_propagate_natural_height`, so it reports a near-zero minimum
-              # and collapses a child to nothing — **unless it is given a height
-              # to hold**, which is exactly what a cap is. An uncapped block
-              # still gets no ScrolledWindow at all.
-              #
-              # Only long blocks are wrapped: `sizeRequest` is a *minimum*, so
-              # capping a four-line snippet would pad it to 360px of empty
-              # scroller instead of shrinking anything.
-              if b.text.countLines > CodeCapLines and
-                 not app.opts.getBool("fullHeightCodeBlocks"):
-                ScrolledWindow {.expand: false.}:
-                  sizeRequest = (-1, CodeCapPx)
-                  style = [StyleClass("code-capped")]
-                  SourceCode:
-                    code = b.text
-                    language = b.lang
-                    style = [StyleClass("code-body")]
-              else:
-                SourceCode {.expand: false.}:
-                  code = b.text
-                  language = b.lang
-                  style = [StyleClass("code-body")]
+        insert(app.mdBlock(b)) {.expand: false.}
 
 ## Function purpose: the numbers the Web UI shows under a reply (G-33) — tokens
 ## generated and their rate, tokens read in, how much of the context window the
@@ -2710,7 +2838,7 @@ proc leafRow(app: AppState, entity: string, n: LeafItem): Widget =
                  StyleClass(if entity == "notes" and n.id == app.openNote:
                               "conv-active" else: "conv-idle")]
         proc clicked() =
-          if entity == "notes": app.openNoteEditor(n.id)
+          if entity == "notes": app.openNoteGuarded(n.id)
         insert(app.rowLabel(entity, n.id,
                             (if entity == "notes": "▤  " else: "◫  ") & n.name))
       Button {.expand: false.}:
@@ -2798,10 +2926,23 @@ proc mainArea(app: AppState): Widget =
           Box(orient = OrientY, spacing = 12, margin = 16):
             if app.openNote.len > 0:
               Box(orient = OrientX, spacing = 8) {.expand: false.}:
-                Entry {.expand: true.}:
-                  text = app.noteTitle
-                  placeholder = "Note title"
-                  proc changed(text: string) = app.noteTitle = text
+                # 8c-3: the title is a heading while reading and a field while
+                # editing, which is the Web UI's own split. The two are
+                # different widget types, so owlkettle rebuilds rather than
+                # reusing state — the safe direction, and the reason the mode
+                # switch cannot carry a half-updated `Entry` into a `Label`.
+                if app.noteEditing:
+                  Entry {.expand: true.}:
+                    text = app.noteTitle
+                    placeholder = "Note title"
+                    proc changed(text: string) = app.noteTitle = text
+                else:
+                  Label {.expand: true.}:
+                    text = (if app.noteTitle.len > 0: app.noteTitle
+                            else: "Untitled note")
+                    xAlign = 0.0
+                    ellipsize = EllipsizeEnd
+                    style = [StyleClass("brand")]
                 # G-50: the only way to mark a note FOCUS from this window. The
                 # flag has existed in the schema since it was written and
                 # `workspace.contextFor` has given it the escape behaviour since
@@ -2831,11 +2972,73 @@ proc mainArea(app: AppState): Widget =
                                "in every chat in this workspace. Save to apply")
                   style = [ButtonFlat]
                   proc changed(state: bool) = app.noteFocus = state
-              # A TextView owns a TextBuffer rather than a string, so it is
-              # driven from `app.noteBuffer` and read back on save — it
-              # cannot be bound to state per redraw the way an Entry is.
-              TextView:
-                buffer = app.noteBuffer
+                # 8c-3: one button, two labels — the mode switch. A second
+                # conditional widget here would be free (nothing in this Box
+                # carries a shortcut), but one button that says what it does is
+                # clearer than two that swap places.
+                Button {.expand: false.}:
+                  text = (if app.noteEditing: "Cancel" else: "Edit")
+                  style = [ButtonFlat]
+                  tooltip = (if app.noteEditing:
+                               "Discard these changes and go back to reading"
+                             else: "Edit this note")
+                  proc clicked() =
+                    if app.noteEditing: app.cancelNoteEdit()
+                    else: app.noteEditing = true
+                # 8c-5: delete over the same confirmation every other delete in
+                # this window uses (G-36), which names the cascade.
+                #
+                # **A FOCUS note is refused rather than hidden.** The Web UI
+                # omits the button entirely; a disabled one with the reason on
+                # it says why, and a control that vanishes reads as a bug. The
+                # protection is the same: a workspace-wide rule should not go in
+                # one click from the note it happens to be written in.
+                Button {.expand: false.}:
+                  icon = "user-trash-symbolic"
+                  style = [ButtonFlat, StyleClass("row-btn")]
+                  sensitive = not app.noteFocus
+                  tooltip = (if app.noteFocus:
+                               "Un-pin this note before deleting it — it is a " &
+                               "FOCUS rule for the whole workspace"
+                             else: "Delete this note")
+                  proc clicked() =
+                    let id = app.openNote
+                    app.deleteNode("notes", id)
+              if app.noteEditing:
+                # A TextView owns a TextBuffer rather than a string, so it is
+                # driven from `app.noteBuffer` and read back on save — it
+                # cannot be bound to state per redraw the way an Entry is.
+                TextView:
+                  buffer = app.noteBuffer
+              elif app.noteOrigContent.len == 0:
+                # 8c-6: an empty note says so. A blank pane is indistinguishable
+                # from a note that failed to load.
+                Label {.expand: false.}:
+                  text = "This note is empty. Click Edit to write in it."
+                  xAlign = 0.0
+                  style = [StyleClass("dim-note")]
+              else:
+                # 8c-3: rendered through the transcript's own block renderer, so
+                # a note's tables, code blocks and emphasis look exactly as they
+                # do in a reply rather than nearly so.
+                #
+                # Action purpose: **the source is `noteOrigContent`, not
+                # `noteBuffer.text()`, and that is the Step 7c rule rather than a
+                # preference.** `view` runs on every frame and nothing in it may
+                # do work proportional to a payload; reading a `TextBuffer`
+                # copies the whole note out of GTK each time, which is the same
+                # defect as the per-frame `sha256` that froze the window on an
+                # attachment (G-40, D-BQ). The memo behind `blocksFor` would
+                # still have re-parsed nothing, but the copy happens before it.
+                #
+                # It is also exactly right: view mode is only ever reachable
+                # with the buffer equal to the stored text. Edit mode's only
+                # exits are Cancel, which restores, and Save, which writes and
+                # then re-baselines — so there is no state in which the rendered
+                # note and the buffer disagree.
+                Box(orient = OrientY, spacing = 8) {.expand: false.}:
+                  for b in mdMemo.blocksFor(app.openNote, app.noteOrigContent):
+                    insert(app.mdBlock(b)) {.expand: false.}
             # Every child here is `expand: false`, and the annotations are
             # the whole point. **`Box`'s adder defaults to `expand: true`**,
             # which in a *vertical* Box sets `vexpand` — so an unannotated
@@ -3835,7 +4038,11 @@ method view(app: AppState): Widget =
 
             SearchEntry {.expand: false.}:
               text = app.search
-              placeholderText = "Search chats"
+              # 8c-6: it said "Search chats" and has never only searched chats —
+              # `leavesIn` filters notes and files by the same string, so a
+              # note-title search was built, working and undiscoverable because
+              # the box denied doing it.
+              placeholderText = "Search chats, notes and files"
               proc changed(text: string) =
                 app.search = text
 
@@ -4027,16 +4234,22 @@ method view(app: AppState): Widget =
                   proc clicked() = app.editorOpen = false
                 insert(app.fullscreenButton()) {.expand: false.}
               elif app.openNote.len > 0:
+                # G-51: this row's child count must not change. `sensitive`
+                # rather than a conditional widget for exactly that reason —
+                # `fullscreenButton` below carries the only keyboard shortcut in
+                # the program and owlkettle aborts if it lands on the state of a
+                # Button built without one.
                 Button {.expand: false.}:
                   text = "Save note"
                   style = [ButtonSuggested]
+                  sensitive = app.noteEditing
+                  tooltip = (if app.noteEditing: "Save this note"
+                             else: "Click Edit to change this note")
                   proc clicked() = app.saveNote()
                 Button {.expand: false.}:
                   text = "Close"
                   style = [ButtonFlat]
-                  proc clicked() =
-                    app.openNote = ""
-                    app.notice = ""
+                  proc clicked() = app.closeNote()
                 insert(app.fullscreenButton()) {.expand: false.}
               else:
                 # G-30: the paperclip. A file picker only — drag-and-drop and

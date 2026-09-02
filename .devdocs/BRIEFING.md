@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-09-02 11:35 (Session 022)
+**Last updated:** 2026-09-02 11:53 (Session 022)
 **Branch:** `bsd`. The tree was clean at `71ed41cb` when this session started; **this
 session's changes to `api.nim`, `gui.nim`, `workspace.nim`, `jenova_core.nim` and the
 `.devdocs/` are uncommitted.** **`jvim/` is tracked** (4,199 files in git of 4,201 on
@@ -69,7 +69,7 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 
 ## 2. State
 
-**Verified as of 2026-09-02 11:35.** Both binaries build from `nimble core` and
+**Verified as of 2026-09-02 11:53.** Both binaries build from `nimble core` and
 `nimble gui`; **every self-test passes, and `bin/jenova --check` exits 0 — the
 application reaches its first frame**, which is a thing a compile does not tell you and
 which was learned the hard way at 14:02 (rule 17). Both binaries are ELF 64-bit FreeBSD
@@ -108,6 +108,45 @@ backend supervision and watchdog, model discovery and switching are implemented 
 covered by tests.
 
 ## 3. Done this session
+
+### Session 022 (part four) — 2026-09-02 11:53 — Step 8 is complete; G-17 is closed
+
+**The USER ran it: the note editor works** — writing, saving and closing. G-49, G-50 and
+the G-51 crash fix are confirmed on screen.
+
+**A survey ran before that header row was touched again.** **`Button.shortcut` is the only
+property in owlkettle whose update hook can abort the process from a child-count change** —
+the other assert-only hooks are `Paned`'s, and `Paned` is used nowhere here. So G-51 is one
+rule about one widget, and the new controls went into the note pane while **the header
+row's child count stayed at three**; Save became `sensitive = app.noteEditing` rather than a
+conditional widget for exactly that reason.
+
+**8c-3 — a note reads as markdown and edits as text.** The transcript's renderer was
+extracted as **`gui.mdBlock`** and both surfaces call it, so a note's tables and capped code
+blocks *are* the transcript's. `messageBody`'s child structure is unchanged.
+
+**8c-4 — unsaved work cannot be dropped in silence, through any of its three doors.** The
+plan named Close; **the other two are worse and it had missed them** — clicking a different
+note and creating one both replace the buffer in a single click. All three ask now, and a
+failed save refuses to proceed.
+
+**8c-5 — delete is on the note**, over G-36's cascade dialog, **refused on a FOCUS note**
+with the reason on the button rather than hidden.
+
+**8c-6 — mostly already built, and recorded rather than rebuilt.** The newest-first sort and
+the note-title search both predate this step; the search box's placeholder said *"Search
+chats"* and denied a working feature, and that string was the only real gap. The container
+badge is deliberately not built — the tree already nests a note under its container.
+
+**The view renders from `noteOrigContent`, never `noteBuffer.text()`** — Step 7c's rule that
+nothing in `view` may do work proportional to a payload.
+
+**Twelve self-tests pass, `bin/jenova --check` exits 0, both binaries are ELF 64-bit
+FreeBSD.** **8c-4 is not assertable and it is a USER run:** `AppState` is the type
+owlkettle's macro emits inside `gui.nim`, which links into no test binary.
+
+**Unseen, and it is what a screen run would show:** the rendered view, the Edit/Cancel
+switch, the unsaved-changes dialog on all three doors, and delete refusing a pinned note.
 
 ### Session 022 (part three) — 2026-09-02 11:35 — the 11:21 build crashed on a note; fixed
 
@@ -653,8 +692,9 @@ one sentence in it.** The ruling is Rule 0 above, and the phrasing that invited 
 
 | Works | Missing entirely |
 |---|---|
-| Send a message, stream a reply | **A real note editor** (G-17) |
-| Copy, edit, delete, regenerate, continue a message | **LaTeX maths** — the half of G-34 left |
+| Send a message, stream a reply | **LaTeX maths** — the half of G-34 left |
+| **A real note editor** (G-17) — markdown view, Edit/Cancel, an unsaved-changes guard, delete, FOCUS | — |
+| Copy, edit, delete, regenerate, continue a message | — |
 | Branching — alternative versions, with a counter | **Model information** — context size, quantisation, chat template. Needs `/props` plus a GGUF header read; never built and said so |
 | Statistics: tokens, tok/s, context used and left, model | — |
 | A reasoning view for thinking models | — |
@@ -872,11 +912,14 @@ the window responsive.**
 **Step 7b and 8a are built and both confirmed on screen** — 8a shipped, did not
 work, was reshaped to D-CB at 2026-09-02 10:43, and the USER ran it at 10:53.
 
-**Next — 8c-3 … 8c-6, the rest of the notes editor** (G-17, D-BW). **8c-1 and
-8c-2 are built** (11:21) — the two correctness defects that were inside it. What
-is left is comfort work: a Markdown view with Edit/Cancel, not losing unsaved
-text on Close, delete behind the existing confirmation, and the list
-affordances. Six parts and a proof table are in `PLANS.md` 8c.
+**Step 8 is complete.** 8b, 8a and 8c are built and G-17 is closed (11:53).
+
+**Next — the two open widget defects, both a USER run:** **G-42**, markdown
+tables render larger than their content, and **G-47**, the editor page's Neovim
+truncated at the bottom on a resize — reported 2026-09-01 18:41 and **not
+diagnosed**; a candidate mechanism is in `TODOS.md`, flagged as a candidate.
+
+**Then Step 9:** T-5, T-2, T-4, T-3.
 
 **One thing 10b leaves unproven and it is a USER run:** whether an attachment
 actually appears in the workspace tree, and whether its text then comes back in

@@ -1,6 +1,6 @@
 # TODOS
 
-**Last updated:** 2026-09-02 11:35 (Session 022)
+**Last updated:** 2026-09-02 11:53 (Session 022)
 
 Only what is actually outstanding. Everything finished lives in `PROGRESS.md`.
 
@@ -107,21 +107,11 @@ model, an upload is filed as a `fileAssets` artefact, the editor page loads `jvi
 the document panel is removed, and the window has a trash view whose restore also
 puts a message back in the retrieval index.
 
-### G-17 is rescoped **twice**, and is now the smallest it has ever been *(D-BW)*
-
-**D-BT is superseded.** At 18:29 the USER directed the note editor at Neovim; at 18:41
-they ruled the opposite and reduced the scope further:
-
-> *"lets keep the default notes editor and dont replace it with neovim"* … *"instead we
-> should make the notes system work well and keep the neovim and neovim config to its own
-> page - the editor page - as it currently exists."*
-
-**So G-17 is: make `gui.saveNote` and its `TextView` a good notes editor.** Not a writing
-surface built from scratch (its original scope), not a second Neovim (D-BT's).
-
-**Q-35 is answered and nothing is gated.** T-11 is **not** touched — with notes in their
-own editor and Neovim on its own page there is no second writer against an authoritative
-row at all, which is what Q-29 was protecting.
+**G-17 is built and gone from this file** (`PROGRESS.md`, 2026-09-02 11:53). D-BW's
+rescoping — keep the notes editor, do not replace it with Neovim, keep Neovim on the
+editor page — is what was built. **T-11 was never touched by any of it**, which is the
+point: with notes in their own editor and Neovim on its own page there is no second writer
+against an authoritative row at all, which is the outcome Q-29 was protecting.
 
 ### G-47 — the editor page's Neovim is truncated at the bottom on a resize
 
@@ -153,11 +143,11 @@ Enumerated 2026-09-01 by reading `jca_web/src/lib/components/app/*/index.ts` —
 barrel files that list every shipped component. That is the authoritative inventory;
 check any future scope claim against it, not against a summary.
 
-**Ordering and the work for each item is `PLANS.md`.** Steps 1-7 are built and Step
-7b is closed (PDF, confirmed on screen). Of Step 8: **8b and 8a are built and both
-confirmed on screen; 8c — make the notes editor good (G-17) — is the only item of
-Step 8 left.** G-33, G-34 (minus LaTeX), G-35, G-36 and G-30 are done; the record is
-`PROGRESS.md`.
+**Ordering and the work for each item is `PLANS.md`.** Steps 1-7 are built, Step 7b is
+closed (PDF, confirmed on screen), and **Step 8 is complete — 8b, 8a and 8c are all
+built**, 8a and 8c-1/8c-2 confirmed on screen. G-33, G-34 (minus LaTeX), G-35, G-36 and
+G-30 are done; the record is `PROGRESS.md`. **What is left in this file is two widget
+defects and Step 9.**
 
 **Done and gone from this file** (2026-09-01, all in `PROGRESS.md`):
 
@@ -207,26 +197,16 @@ an unverified label to the two halves that were confirmed** (rule 12).
 **What is left of G-34: LaTeX maths.** Tables, task lists and strikethrough are
 built; KaTeX has no GTK equivalent and rendering maths is its own project.
 
-### G-17 — The note editor is a plain text box
+**G-17 is gone from this file because it is built** (`PROGRESS.md`, 2026-09-02 11:53).
+Per the completion rule its record lives there. **Step 8 has no unbuilt item left.** A note
+reads as rendered markdown and edits as text, Cancel restores, unsaved work cannot be
+dropped without being asked, delete is on the note and refused on a FOCUS rule, and a note
+can be marked FOCUS from the window at all. **The one thing left of the original scope is
+LaTeX maths, which belongs to G-34 and not here** — KaTeX has no GTK equivalent.
 
-It is a `TextView` with Save and Close — **`gui.saveNote`**, with one caller, the Save
-button's `clicked`. *(Re-verified 2026-09-02 11:05: an `Entry` bound to `app.noteTitle`
-and a `TextView` bound to `app.noteBuffer`, inside the same `AutoScroll` the transcript
-uses; a "Save note" button and a "Close" button in the header. That is the whole surface.)*
-
-**Rescoped 2026-09-01 18:41 by D-BW: this stays and is made good.** It is not replaced by
-Neovim and it is not rebuilt from scratch. See the D-BW block above.
-
-**Scoped against the Web UI's own notes surface 2026-09-02 11:05** (rule 11 — read out of
-`jca_web/src/routes/notes/[id]/+page.svelte` and `notes/+page.svelte`, not from a summary).
-The gaps, and the plan is `PLANS.md` 8c: the Web UI **renders a note as Markdown** and
-drops to a `textarea` only on Edit; it has an explicit **Cancel** that restores the stored
-values; **Delete behind a confirmation dialog**, with a FOCUS note not deletable at all; a
-**note search** and a **global-note** create; and an empty-note affordance. **Close
-discards unsaved edits with no prompt** — the one that can lose work.
-
-**The FOCUS/pin indicator is built** (2026-09-02 11:21, `PROGRESS.md`) and is gone from
-that list; what remains of 8c is **8c-3 … 8c-6**.
+**Unseen, and it is what a screen run would show:** the rendered view, the Edit/Cancel
+switch, the unsaved-changes dialog on all three of its doors, and the delete button
+refusing a pinned note.
 
 **G-49 and G-50 are gone from this file because they are built** (`PROGRESS.md`,
 2026-09-02 11:21). Per the completion rule their record lives there. A note keeps its FOCUS
@@ -273,7 +253,7 @@ PASS while asserting nothing.
 
 | ID | What it is |
 |---|---|
-| **G-51** | **Adding or removing a child in a container that also holds a keyboard-shortcut button crashes the application on the next redraw.** Found 2026-09-02 11:30 by causing it: putting a fourth button in the note editor's header row aborted the process on opening a note, with `widgets.nim(920) state.shortcut == widget.valShortcut [AssertionDefect]`. **The mechanism, verified in owlkettle's source and not inferred:** owlkettle diffs a `Box`'s children **by index** and reuses a child's state whenever the type matches (`widgetdef.nim`, the type-id compare in the generated `update`), and **`Button.shortcut` has no update path at all** — its `build` hook installs a `GtkShortcutController` and its `update` hook only asserts the value never changed, with owlkettle's own `# TODO` on the assertion. So a shortcut-carrying `Button` that lands on the index of a `Button` built without one aborts. **`gui.fullscreenButton` (`shortcut = "F11"`) is the only such widget in this program**, and it is the last child of all three branches of the chat/note/editor header row, whose counts are 3, 3 and 5. **This is a live trap, not an open defect** — the code is correct as it stands and a comment at the note pane records it. The durable fix, if the constraint ever becomes inconvenient, is to move F11 off the button and onto the window as a real shortcut controller; that is not scheduled. **`bin/jenova --check` cannot catch this class:** it builds each branch once and the assertion only fires on an *update*, which needs a branch to change. |
+| **G-51** | **The constraint is bounded and it is exactly one widget — surveyed 2026-09-02 11:43.** `Button.shortcut` is the **only** property in owlkettle whose update hook can abort the process from a child-count change. The other assert-only hooks are `Paned`'s `resize`/`shrink`/child-type, and **`Paned` is used nowhere in `gui.nim`** (zero hits — it is also G-37's and G-38's subject). Every other assertion in owlkettle is an internal invariant, not a positional-diff trap. **So the rule is: `gui.fullscreenButton` must be the last child of its row and nothing may be inserted before it — no more than that.** Adding a child in a container that also holds a keyboard-shortcut button crashes the application on the next redraw. Found 2026-09-02 11:30 by causing it: putting a fourth button in the note editor's header row aborted the process on opening a note, with `widgets.nim(920) state.shortcut == widget.valShortcut [AssertionDefect]`. **The mechanism, verified in owlkettle's source and not inferred:** owlkettle diffs a `Box`'s children **by index** and reuses a child's state whenever the type matches (`widgetdef.nim`, the type-id compare in the generated `update`), and **`Button.shortcut` has no update path at all** — its `build` hook installs a `GtkShortcutController` and its `update` hook only asserts the value never changed, with owlkettle's own `# TODO` on the assertion. So a shortcut-carrying `Button` that lands on the index of a `Button` built without one aborts. **`gui.fullscreenButton` (`shortcut = "F11"`) is the only such widget in this program**, and it is the last child of all three branches of the chat/note/editor header row, whose counts are 3, 3 and 5. **This is a live trap, not an open defect** — the code is correct as it stands and a comment at the note pane records it. The durable fix, if the constraint ever becomes inconvenient, is to move F11 off the button and onto the window as a real shortcut controller; that is not scheduled. **`bin/jenova --check` cannot catch this class:** it builds each branch once and the assertion only fires on an *update*, which needs a branch to change. |
 | **G-42** | **Markdown tables now render too large rather than sized to their content.** Reported by the USER 2026-09-01 18:29, on the G-41 build. **G-41 is the cause and it is a half-fix, not a regression:** a bare owlkettle `ScrolledWindow` collapsed every table to a stub, so `ContentScroll` was given `set_propagate_natural_height` **and** deliberately *not* natural width, with `policy(AUTOMATIC, NEVER)`. That stopped the collapse; nothing then constrains the result *down* to the content, so a table claims more room than its rows need. **The USER's words: "not too serious."** Cosmetic, filed, not urgent. The fix is a width/height measurement in `ContentScroll`, not another policy flag — and per D-BR neither half of G-41 is assertable, so this is a USER run either way. |
 | **G-37** | *(Re-verified 2026-09-02 08:01. **Both findings hold. The claim written beside them did not.** The previous revision said "`theme.nim` has not been touched since" — Step 11 deleted `.doc-panel` and `.doc-panel-closed` from it that same evening, so the separator rule moved: it is **`theme.nim:417`** with `:hover` at **421**, not 428/432. `.glow-text` is still **`theme.nim:253`** and a grep for it across `gui.nim` still returns **zero**. **Search the selectors; the numbers here are a hint and have now rotted three times.**)* **Two style rules in `theme.nim` are dead.** `paned > separator` styles a widget that is not in the tree — a leftover from G-25, which shipped as a `Box` after a `Paned` crashed the app. And `.glow-text` is defined and carried by no widget: the glow effect works, but as a `text-shadow` duplicated inside `.brand` and `.conv-active`. **The second half is G-8's exact defect — a class defined and applied to nothing — recurring in the same file.** Both were found and reported on 2026-09-01 and neither was filed as work; that is why they are here. Re-verified 2026-09-01 14:19: `.glow-text` is `theme.nim:253` and **no widget in `gui.nim` carries the class** (a grep for it in `gui.nim` returns zero hits); `paned > separator` is `theme.nim:428-432`. *Re-verified 2026-09-01 17:27: the `.glow-text` address held, the separator address did not — it was written as 416-420 against a file where it is 428. Earlier revisions named 162 and 251-255, and before that named them in the opposite order.* |
 | **G-38** | **A code comment in `gui.nim` describes a widget that was never used.** The main-area comment still explains itself as feeding "the `Paned` that G-25 adds". G-25 shipped as a `Box`, and the comment above the `Box` itself records why. A reader following the first comment looks for a `Paned` that does not exist. Prose only, no behaviour. **The doc comment directly above `gui.mainArea`** — *verified 2026-09-01 18:07; the address written here (2637) was wrong, as was 2560 before it, which is why no third number is being recorded.* |
