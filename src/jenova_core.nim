@@ -22,7 +22,7 @@ when not defined(freebsd):
 import std/[os, sequtils, strformat, strutils, json]
 import jenova/[paths, config, db, dbselftest, server, serverselftest, markdown,
                rag, sha256, pipeline, prompts, lifecycle, models, nvimctl, api,
-               settings, hardware, workspace, pdf, zlib]
+               settings, hardware, workspace, pdf, zlib, fssync]
 
 const
   Version = "0.1.0"
@@ -56,7 +56,7 @@ proc usage() =
   echo "              pipeline-selftest, sha256-selftest, tree-selftest,"
   echo "              hardware-selftest, markdown-selftest, error-selftest,"
   echo "              attach-selftest, workspace-selftest, nvim-env-selftest,"
-  echo "              models-selftest"
+  echo "              models-selftest, fs-selftest"
   echo ""
   echo "Precedence: builtin default < etc/jenova.conf < etc/jenova.local.conf < environment"
   echo "JENOVA_NO_BACKENDS=1  serve without starting llama-server (used by the tests)"
@@ -1515,6 +1515,84 @@ proc main() =
       echo ""
       echo "models-selftest: FAIL (", bad, ")"
       quit(1)
+    of "fs-selftest":
+      # Action purpose: T-4. `fssync.resolveStoragePath` is the containment
+      # check on `/api/storage/*` — the one thing standing between a path a
+      # client supplies and the rest of the filesystem — and it had a hole at
+      # each end. Both are asserted here, **both sides of each**, because a
+      # check that refuses everything passes a refusal test and a check that
+      # accepts everything passes an acceptance test.
+      #
+      # It needs a real tree with real symlinks, which is why this is its own
+      # subcommand rather than a block somewhere: `fssync.roots` caches the
+      # first root it resolves, so `JENOVA_WORKSPACES` has to be set before
+      # anything in the process touches it.
+      var bad = 0
+      proc check(label: string, cond: bool, detail = "") =
+        if cond: echo "  ok   ", label
+        else:
+          echo "  FAIL ", label, (if detail.len > 0: "\n       " & detail else: "")
+          inc bad
+
+      echo "fs-selftest"
+
+      let base = getTempDir() / "jenova-fstest"
+      removeDir(base)
+      let real = base / "real"
+      let link = base / "link"
+      let outside = base / "outside"
+      createDir(real / "ws")
+      createDir(outside)
+      writeFile(outside / "secret.txt", "not yours")
+      # **The workspaces root is itself a symlink**, which is the second hole:
+      # the base was compared lexically, so `expandFilename` returned the real
+      # location and the prefix test then failed for every legitimate path.
+      createSymlink(real, link)
+      # And a symlink *inside* the tree pointing out of it, which is the first.
+      createSymlink(outside, real / "ws" / "escape")
+
+      putEnv("JENOVA_WORKSPACES", link)
+
+      block theRootMayBeASymlink:
+        # Existing file under a symlinked root.
+        writeFile(real / "ws" / "note.md", "hello")
+        check("a real file under a symlinked workspaces root resolves",
+              fssync.resolveStoragePath("ws/note.md").len > 0,
+              "got empty")
+        # And a path that does not exist yet, which is every create.
+        check("a NEW file under a symlinked workspaces root resolves",
+              fssync.resolveStoragePath("ws/fresh.md").len > 0,
+              "got empty")
+
+      block aSymlinkedParentMayNotEscape:
+        # The existing-file case, which the old check did catch.
+        check("an existing file reached through an escaping symlink is refused",
+              fssync.resolveStoragePath("ws/escape/secret.txt").len == 0)
+        # **The one T-4 is about.** The old check ran only on paths that already
+        # existed, so a create through the same symlink walked straight out.
+        check("a NEW file written through an escaping symlink is refused",
+              fssync.resolveStoragePath("ws/escape/planted.txt").len == 0)
+        check("...and so is a new directory under it",
+              fssync.resolveStoragePath("ws/escape/deeper/planted.txt").len == 0)
+
+      block theLexicalChecksStillHold:
+        check("a traversal is refused", fssync.resolveStoragePath("../x").len == 0)
+        check("a buried traversal is refused",
+              fssync.resolveStoragePath("ws/../../x").len == 0)
+        check("an empty path is refused", fssync.resolveStoragePath("").len == 0)
+        check("a NUL is refused", fssync.resolveStoragePath("ws/a\0b").len == 0)
+        check("a newline is refused", fssync.resolveStoragePath("ws/a\nb").len == 0)
+
+      removeDir(base)
+      delEnv("JENOVA_WORKSPACES")
+
+      if bad == 0:
+        echo ""
+        echo "fs-selftest: PASS"
+        quit(0)
+      echo ""
+      echo "fs-selftest: FAIL (", bad, ")"
+      quit(1)
     of "hardware-selftest":
       # Action purpose: profile scoring decides which tuning the machine runs
       # under, and a wrong score does not fail loudly — it silently runs on the
@@ -2062,6 +2140,81 @@ proc main() =
         rag.forgetConversation("pipetest-conv")
         db.exec("DELETE FROM messages WHERE id LIKE 'pipetest-%'", [])
 
+      # Action purpose: T-3. The whole conversation was resent every turn with no
+      # trim anywhere, so a long chat eventually exceeded the context window and
+      # then every request failed. **Asserted at a small budget against a hand
+      # built array**, not against a live generation — the plan's own proof, and
+      # the only one that can bite here.
+      block trimmingHistory:
+        proc convo(n: int): JsonNode =
+          result = %*[{"role": "system", "content": "PERSONA"}]
+          for i in 0 ..< n:
+            result.add %*{"role": (if i mod 2 == 0: "user" else: "assistant"),
+                          "content": "turn " & $i & " " & repeat("x", 200)}
+          result.add %*{"role": "user", "content": "the question"}
+
+        # Both sides of the budget, so neither an always-trim nor a never-trim
+        # implementation passes.
+        let roomy = convo(6)
+        check("a conversation inside the budget is left alone",
+              pipeline.trimHistory(roomy, 1_000_000) == 0 and roomy.len == 8)
+
+        let tight = convo(6)
+        let dropped = pipeline.trimHistory(tight, 900)
+        check("a conversation over the budget loses turns", dropped > 0)
+        check("...and the messages actually went", tight.len == 8 - dropped,
+              $tight.len & " left after dropping " & $dropped)
+        # The two that must survive at any budget. Asserted separately from the
+        # count, because a trim that kept the right *number* and the wrong
+        # *messages* would satisfy the line above.
+        check("the system message survives",
+              tight[0]{"role"}.getStr == "system" and
+              tight[0]{"content"}.getStr == "PERSONA")
+        check("the final turn survives",
+              tight[^1]{"content"}.getStr == "the question")
+        check("what went was the OLDEST turn, not the newest",
+              "turn 0" notin $tight and "turn 5" in $tight, $tight)
+
+        # A budget nothing can satisfy must still leave a sendable request
+        # rather than an empty one — content is never shortened (D-BQ's rule).
+        let squeezed = convo(6)
+        discard pipeline.trimHistory(squeezed, 1)
+        check("an impossible budget still leaves the system and the question",
+              squeezed.len == 2 and
+              squeezed[0]{"role"}.getStr == "system" and
+              squeezed[^1]{"content"}.getStr == "the question", $squeezed)
+
+        # Off, by default and by construction: a zero budget must not trim, or
+        # every deployment that never called `configureHistoryBudget` would
+        # silently lose turns.
+        let untouched = convo(6)
+        check("a zero budget trims nothing",
+              pipeline.trimHistory(untouched, 0) == 0 and untouched.len == 8)
+
+      # Action purpose: T-2. The prepared-statement cache never evicted and one
+      # API route builds a different SQL text per field combination, so a
+      # long-running `serve` grew a statement per shape for ever. **Asserted by
+      # issuing more distinct statements than the cap**, which is the only thing
+      # that distinguishes a bound from a comment claiming one.
+      block cappingTheStatementCache:
+        let before = db.cachedStatements()
+        check("the cache starts under the cap", before <= db.MaxCachedStatements)
+        # Distinct SQL text each time, which is exactly the shape
+        # `api.updateMessage` produces.
+        for i in 0 .. db.MaxCachedStatements + 20:
+          discard db.query("SELECT " & $i & " AS n WHERE 1=1")
+        check("the cache is still bounded after more than a cap of statements",
+              db.cachedStatements() <= db.MaxCachedStatements,
+              "holding " & $db.cachedStatements())
+        check("it did not simply stop caching",
+              db.cachedStatements() > 0)
+        # The half that matters more than the bound: a flush must not leave the
+        # connection unusable. A finalized handle still in the table would make
+        # this raise or return nothing.
+        let rows = db.query("SELECT 42 AS n")
+        check("queries still work after a flush",
+              rows.len == 1 and rows[0].len == 1 and rows[0][0] == "42")
+
       if bad == 0:
         echo ""
         echo "pipeline-selftest: PASS"
@@ -2459,6 +2612,11 @@ proc main() =
       rag.initSchema()
       rag.configureEmbed("127.0.0.1", c.getInt("LLAMA_EMBED_PORT", 8082))
       pipeline.configureEditor(nvimctl.socketPath(p))
+      # T-3: the history trim's budget, derived from this deployment's own
+      # context size and slot count. Set here rather than read inside `prepare`,
+      # which is handed a body and knows nothing about the configuration.
+      pipeline.configureHistoryBudget(c.getInt("CTX_SIZE", 8192),
+                                      c.getInt("NUM_SLOTS", 1))
 
       # Action purpose: bring the inference backends up as part of starting.
       # There is no separate "start the server" and "start the backends" step,

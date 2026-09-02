@@ -2,7 +2,7 @@
 
 Forward-looking only. Superseded plans are in `.devdocs/ARCHIVE/devdocs/PLANS_pre-006.md`.
 
-**Last updated:** 2026-09-02 11:53 (Session 022)
+**Last updated:** 2026-09-02 12:19 (Session 022)
 
 **Write plans in plain English, then cite the ID** (**D-BA**). A step that reads
 "resolve G-23" tells the reader nothing. Say what the thing is first.
@@ -1053,27 +1053,51 @@ What remains, in order:
 **Step 8 is complete.** 8b, 8a and 8c are all built; **G-17 is closed** (11:53) and 8c-1
 and 8c-2, the two correctness defects found inside it, were confirmed on screen at 11:43.
 
-**What remains, in order:**
+**Step 9 is complete too, and so is G-42** (2026-09-02 12:19). **Every numbered step in
+this plan is now built.**
 
-**The two open widget defects, both a USER run:** **G-42** (markdown tables render larger
-than their content) and **G-47** (the editor page's Neovim truncated at the bottom on a
-resize, reported 2026-09-01 18:41 and **not diagnosed**).
+**What remains is one undiagnosed defect and three things nobody has scheduled:**
 
-**Then Step 9's four stability items**, in the order T-5, T-2, T-4, T-3.
+- **G-47** — the editor page's Neovim truncated at the bottom on a resize. **Still not
+  diagnosed**, and looked at properly on 2026-09-02 rather than guessed at: two candidates
+  are recorded in `TODOS.md` and neither can be settled without the running widget, because
+  VTE's size allocation is in `libvte` and not in this tree.
+- **LaTeX maths**, the open half of G-34. KaTeX has no GTK equivalent; it is its own
+  project.
+- **Model information** — context size, quantisation, vocabulary, chat template. Needs
+  `/props` plus a GGUF header read. Never built, and said so.
+- **The three parked product decisions**, none on the critical path: the filesystem as the
+  source of truth (T-11), deployment (T-7), a CLI (T-8).
 
-**Standing, not scheduled:** LaTeX maths, the open half of G-34 — KaTeX has no GTK
-equivalent and rendering maths is its own project. Model information (context size,
-quantisation, chat template) needs `/props` plus a GGUF header read and was never built.
-**G-51** is a constraint to respect, not work: nothing may be inserted before
+**G-51 is a constraint to respect, not work:** nothing may be inserted before
 `gui.fullscreenButton` in its row.
 
-**Then the two open defects, both widget behaviour and both a USER run:** **G-42**
-(markdown tables now render larger than their content) and **G-47** (the editor page's
-Neovim truncated at the bottom on a resize, reported 18:41, **not diagnosed**).
+> **Superseded 2026-09-02 12:19.** This ordering block ended here with "the two open
+> defects, then Step 9's four stability items". **G-42 and all four of Step 9 are built**;
+> **G-47 alone survives** and is undiagnosed. The current list is at the top of this
+> section.
 
-**Then Step 9's four stability items**, in the order T-5, T-2, T-4, T-3.
+## Step 9 — **BUILT 2026-09-02 12:19.** Stability
 
-## Step 9 — Stability, none of it urgent
+Done and out of this plan. All four in the planned order, plus **G-42** alongside them.
+The record is `PROGRESS.md`.
+
+| | What was built | What proves it |
+|---|---|---|
+| **T-5** | `gui.run`'s `defer` stops the embed backend after the joins. **Not `stopAll`** — the agent model stays loaded deliberately. **`lifecycle.stop` already cleared a dead pidfile**, so the second half of T-5 needed nothing new (rule 5) | `stop`'s own behaviour was already asserted. **The call site is not assertable** — `gui.nim` links into no test binary — and that is said rather than papered over |
+| **T-2** | A cap in `db.nim` plus finalize-on-evict, **before** the new statement is prepared. **Flush-all, not LRU:** the real working set never reaches the cap, so the ordering bookkeeping would cost the hot path to bound something only `api.updateMessage`'s combinatorial SQL grows | `pipeline-selftest`: more than a cap of distinct statements leaves the cache bounded, **still caching**, and — the one that matters — **still able to answer a query**, which a dangling finalized handle would not |
+| **T-4** | `fssync.resolveStoragePath` resolves the **deepest existing ancestor** against a **resolved** base. One change closes both holes: the unresolved tail cannot hide a symlink because it does not exist, and `..` was already refused lexically | **New `fs-selftest`, 10 assertions**, over a real tree with real symlinks: a symlinked *root* accepts its own paths (new and existing), and an escaping symlink refuses both an existing file and a **new** one |
+| **T-3** | `pipeline.trimHistory`, called from `prepare` — **one call covers the window and the Web UI**, since the window posts to the same local :8080. Never the system message, never the final turn, **never shortened content** (D-BQ's rule) | `pipeline-selftest`: both sides of the budget, the two survivors asserted **separately from the count**, oldest-not-newest, an impossible budget still leaving a sendable request, and a zero budget trimming nothing |
+| **G-42** | `ContentScroll` propagates natural width and aligns to the start. G-41 turned propagation off so a table could not widen the transcript, which left the scroller with no width of its own and `GTK_ALIGN_FILL` stretched it | Not assertable — widget behaviour (D-BR). **A USER run.** The enclosing `AutoScroll` does not propagate natural width either, so G-41's concern cannot return |
+
+**The one thing to carry forward, because it is a limit rather than an achievement.** The
+history budget converts `CTX_SIZE / NUM_SLOTS` at four bytes per token and halves it.
+**That is an approximation and is written into the code as one.** An exact count needs the
+model's own tokenizer — an HTTP round trip per turn on the hot path — and a rough bound
+that always leaves headroom beats an exact one nobody can afford. The failure it prevents,
+a conversation that grows until every request is refused, is not subtle.
+
+### The plan that produced it, kept for the record
 
 In this order, smallest first:
 

@@ -12,6 +12,98 @@ Reverse-chronological. **Keep entries short.** Sessions 001-005 are in
 
 ---
 
+## Session 022 (part five) — 2026-09-02 12:19 — **Step 9 and G-42 built; every numbered step in the plan is now complete**
+
+**Instruction:** the note editor seems fine — proceed.
+
+### G-42 — a table is sized to its rows again
+
+**The mechanism was already recorded and it held up.** G-41 turned natural-width
+propagation *off* so a wide table could not widen the transcript, which worked and left
+`ContentScroll` with no width of its own — so the vertical `Box` stretched it on the
+default `GTK_ALIGN_FILL`. The collapse was fixed and nothing pulled the result back down.
+
+**The pair that actually answers it:** propagate natural width, and align to the start.
+GTK then allocates the lesser of content width and column width, with the horizontal
+scrollbar taking the remainder. **G-41's concern cannot return, and it was checked rather
+than assumed:** the enclosing `AutoScroll` never calls `set_propagate_natural_width`
+either, so it absorbs whatever the inner one asks for and the window cannot be widened by
+a table. One new proto, `gtk_widget_set_halign` — owlkettle's `hAlign` is a `Box` *packing*
+property set by the parent, and this has to be the widget's own, because every markdown
+block goes through one `insert` and only a table must not stretch.
+
+### G-47 — looked at properly, and still not diagnosed
+
+`vte.nim` and the editor page were read in full. The page mounts
+`NvimTerminal {.expand: true.}`; `buildTerminal` sets colours, scrollback and a font scale
+and **nothing about geometry**. **Two candidates, both recorded as candidates:** cell
+rounding, and `.nvim-term`'s `padding: 8px`, since GTK4 CSS padding shrinks the content box
+and whether VTE's row computation accounts for it is not knowable from here.
+
+**It stops there on purpose.** VTE's size allocation is in `libvte`, not in this tree — the
+header gives prototypes, not behaviour. Settling it needs the allocation height, VTE's
+`char_height` and the row count Neovim believes it has, all from the running widget.
+**Nothing was changed on a guess** (D-AN), and the padding was deliberately left alone:
+altering it to see what happens is exactly the move that ruling forbids.
+
+### Step 9 — all four, in the planned order
+
+**T-5 — quitting stops the embedding server.** One call in `gui.run`'s `defer`, **after the
+joins** (the control worker owns stop/restart jobs; stopping a backend under one is how a
+restart starts a server about to be killed), and **deliberately not `stopAll`** — the agent
+model stays loaded because reloading VRAM every start is worse. **The stale-pidfile half
+needed nothing**: `lifecycle.stop`'s `not st.running` branch already cleared it. That is
+rule 5, and it is why this item was one line rather than a proc.
+
+**T-2 — the prepared-statement cache is bounded.** A cap plus `sqlite3_finalize` on
+overflow, **before** the new statement is prepared, or the flush would finalize the handle
+it is about to return. **Flush-all rather than LRU, as a stated trade:** the real working
+set is a few dozen fixed statements and never reaches the cap, so recency bookkeeping would
+tax the hot path to bound something only `api.updateMessage`'s combinatorial SQL grows.
+Safe because nothing holds a handle across a `prepared` call — `query` materialises its rows
+and resets, `exec` steps once and resets.
+
+**T-4 — both holes, closed by one change.** Resolve the deepest *existing* ancestor against
+a *resolved* base. The unresolved tail cannot smuggle anything: it does not exist, so it
+holds no symlink, and `..` was already refused lexically. That fixes the create path (the
+old check ran only on paths that already existed) **and** stops a symlinked workspaces root
+refusing its own tree.
+
+**T-3 — history is trimmed.** `pipeline.trimHistory`, called from `prepare`, so **one call
+covers both surfaces** — the window posts to the same local :8080 the Web UI does, which is
+the arrangement D-BI settled for the retrieval feed. Placed *outside* the
+"no context marker yet" block deliberately: inside it, a long conversation would stop being
+trimmed exactly when it needed it most. Never the system message, never the final turn,
+**content never shortened**.
+
+### Verification
+
+**Thirteen self-tests pass** — new **`fs-selftest`** (10 assertions) and **12 added to
+`pipeline-selftest`**. `bin/jenova --check` exits 0; both binaries are ELF 64-bit FreeBSD.
+The six shell suites were not run — Rule 0.
+
+**Two limits stated rather than smoothed over.** The history budget converts
+`CTX_SIZE / NUM_SLOTS` at four bytes per token and halves it — **an approximation, written
+into the code as one**, because an exact count needs the model's tokenizer over HTTP on the
+hot path. And **T-5's call site is not assertable**: `lifecycle.stop`'s behaviour is
+asserted, but that `gui.run`'s `defer` calls it cannot be checked from a test binary,
+because `gui.nim` links into none. **No red was produced and none attempted** (D-BX); the
+discrimination in each new block is structural and described in `TESTS.md` §0v and §0w.
+
+**Files touched:** `src/jenova/gui.nim`, `db.nim`, `fssync.nim`, `pipeline.nim`,
+`src/jenova_core.nim`, and the trackers. **No new decision needed recording.**
+
+**For the USER to test:** a markdown table should now be as wide as its rows rather than
+the column. And on quitting the window, the embedding server should be gone while the agent
+model stays loaded.
+
+**Next:** **there is no unbuilt step left in `PLANS.md`.** What remains is **G-47**
+(undiagnosed, needs the running widget), **LaTeX maths** (G-34's open half), **model
+information** (never built — `/props` plus a GGUF header read), and the three parked
+product decisions: T-11, T-7, T-8.
+
+---
+
 ## Session 022 (part four) — 2026-09-02 11:53 — **the USER confirmed 8c-1/8c-2; 8c-3 … 8c-6 built; Step 8 is complete**
 
 **Instruction:** the note editor works — writing, saving and closing all behave; model

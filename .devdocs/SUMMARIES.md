@@ -5,6 +5,29 @@ One short paragraph per session. Sessions 001-005 are in
 
 ---
 
+## Session 022 (part five) — 2026-09-02 12:19
+
+**Step 9 and G-42 are built, and every numbered step in `PLANS.md` is now complete.**
+**G-42:** `ContentScroll` propagates natural width and aligns to the start — G-41 had
+turned propagation off so a table could not widen the transcript, which left the scroller
+with no width of its own and `GTK_ALIGN_FILL` stretched it; the enclosing `AutoScroll`
+does not propagate natural width either, so G-41's concern cannot return, and that was
+checked rather than assumed. **G-47 was looked at properly and is still not diagnosed** —
+two candidates are recorded, and VTE's size allocation is in `libvte` rather than this
+tree, so nothing was changed on a guess. **Step 9:** quitting stops the embedding server
+and not the agent one (`lifecycle.stop` already cleared a dead pidfile, so it was one call);
+the statement cache is capped and flushed before the new statement is prepared, flush-all
+rather than LRU as a stated trade; `resolveStoragePath` resolves the deepest existing
+ancestor against a resolved base, closing both holes with one change; and `trimHistory`
+runs inside `prepare`, so one call covers the window and the Web UI, never dropping the
+system message or the final turn and never shortening content. **New `fs-selftest` (10
+assertions) and 12 added to `pipeline-selftest`; thirteen self-tests pass** and `--check`
+exits 0. **Two limits stated rather than smoothed over:** the byte budget is an
+approximation of a token count, and T-5's call site is not assertable because `gui.nim`
+links into no test binary. Detail: `SESSION_HANDOFF.md` Session 022 (part five).
+
+---
+
 ## Session 022 (part four) — 2026-09-02 11:53
 
 **The USER confirmed the note editor works, and 8c-3 … 8c-6 were built — Step 8 is complete

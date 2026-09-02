@@ -3,7 +3,7 @@
 Authoritative system architecture: what the program is, what it depends on, and how data moves
 through it. Mandated by `AGENTS.md` § WORKSPACE ARCHITECTURE.
 
-**Last updated:** 2026-09-02 11:21 (Session 022)
+**Last updated:** 2026-09-02 12:19 (Session 022)
 
 > **Rewritten 2026-08-31 (Session 007). The previous 626-line revision is in
 > `.devdocs/ARCHIVE/devdocs/BLUEPRINT_pre-007.md`** — archived, not deleted, per D-AM.
@@ -92,7 +92,10 @@ The layers, named so the data flow below is readable:
 
 **A chat turn.** Client POSTs `/v1/chat/completions` to :8080 → `server` accepts on a worker thread
 and `routes` classifies → `pipeline` detects intent, strips the prefix, retrieves RAG context,
-injects the persona and computes the cache key as the SHA-256 **of the rewritten body** → `upstream`
+injects the persona, **trims the oldest turns to a byte budget** (T-3 — never the system
+message, never the final turn, and content is never shortened; the budget comes from
+`CTX_SIZE / NUM_SLOTS` and is an approximation of a token count, stated as one) and computes
+the cache key as the SHA-256 **of the rewritten body** → `upstream`
 forwards to :8081 and relays the SSE stream back. **A 502 means the pipeline completed and
 `llama-server` is absent; a 500 means the pipeline threw.** That distinction is the assertion in
 `tests/test_routes.sh` and it exists because `serve` once failed to call `rag.initSchema()`.
@@ -109,10 +112,18 @@ authoritative for anything the user has not chosen — which is also what the se
 as each field's placeholder, read from `/props` on the call that already fetches the context size.
 
 **Persistence.** `db` owns SQLite in WAL mode with a **per-thread connection** and a per-connection
-prepared-statement cache. `api` serves `/api/db/*`; `fssync` mirrors the database rows onto disk
+prepared-statement cache, **bounded** since 2026-09-02: the cache is keyed by SQL text and
+one route builds a different text per field combination, so an unbounded one grew a
+statement per shape for the life of the process (T-2). It is capped and flushed rather than
+evicted by recency — the working set never reaches the cap, so ordering bookkeeping would
+tax every query to bound only the combinatorial path. `api` serves `/api/db/*`; `fssync` mirrors the database rows onto disk
 (workspace directories, the `<epoch>_<name>` trash naming, the `.metadata.json` sidecar) and
 enforces containment on `/api/storage/*` — traversal is refused with **403, not 404**, because a 404
-discloses whether a path outside the root exists.
+discloses whether a path outside the root exists. **Containment resolves symlinks on the
+deepest *existing* ancestor of the requested path and compares it against a *resolved*
+root** (T-4, 2026-09-02): checking only paths that already exist let a *create* through a
+symlinked parent escape, and comparing against the lexical root made a symlinked workspaces
+root refuse its own tree.
 
 **The two write surfaces differ in exactly one respect, deliberately (D-CC).** `/api/db/*`
 replaces the whole row, because the Web UI posts partial objects and means them. The

@@ -708,15 +708,43 @@ proc resolveStoragePath*(relative: string): string =
   if candidate.len != normBase.len and candidate[normBase.len] != '/':
     return ""
 
-  # A symlinked component can point outside the tree while every lexical check
-  # above still passes. Only meaningful for a path that exists.
-  if fileExists(candidate) or dirExists(candidate):
+  # Action purpose: **T-4 — the symlink check had a hole at each end, and both
+  # close the same way: resolve, then compare resolved against resolved.**
+  #
+  # 1. It ran only `if fileExists(candidate) or dirExists(candidate)`, so it saw
+  #    an existing file through a symlink and **missed a new one written through
+  #    a symlinked parent** — the create path, which is the one that matters,
+  #    because that is how a file gets outside the tree in the first place.
+  # 2. It compared against `normBase`, the *lexical* root. If the workspaces
+  #    root is itself a symlink, `expandFilename` returns the real location and
+  #    the prefix test fails for **every legitimate path**, refusing the whole
+  #    tree.
+  #
+  # So: resolve the base, walk up to the deepest ancestor that actually exists,
+  # resolve that, and require it inside the resolved base. The unresolved tail
+  # below that ancestor cannot smuggle anything — it does not exist, so it holds
+  # no symlink, and `..` was rejected lexically at the top of this proc.
+  var realBase = normBase
+  if dirExists(normBase):
     try:
-      let real = expandFilename(candidate)
-      if not (real == normBase or real.startsWith(normBase & "/")):
-        return ""
+      realBase = expandFilename(normBase)
     except OSError:
       return ""
+
+  var probe = candidate
+  while not (fileExists(probe) or dirExists(probe)):
+    let up = probe.parentDir
+    # `parentDir` of a root returns itself or empty; either way there is nothing
+    # further up and nothing existing was found.
+    if up.len == 0 or up == probe: return ""
+    probe = up
+
+  try:
+    let realProbe = expandFilename(probe)
+    if not (realProbe == realBase or realProbe.startsWith(realBase & "/")):
+      return ""
+  except OSError:
+    return ""
   candidate
 
 ## Function purpose: `POST /api/storage/<path>` — write a file verbatim,

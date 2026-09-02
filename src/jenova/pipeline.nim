@@ -47,6 +47,7 @@ type
     webHits*: int
     hadTools*: bool
     editorDoc*: bool       ## an `Editor:` turn found a live document
+    trimmed*: int          ## T-3: oldest turns dropped to fit the context budget
 
 const
   IntentPrefixes = {
@@ -222,6 +223,69 @@ proc cacheKeyFor(body: string): string =
 ## Returns the rewritten body and the cache key. A body that is not a chat
 ## request passes through untouched — `/completion` and `/infill` carry a raw
 ## prompt with no messages to inject into.
+## T-3. The byte budget a conversation's messages must fit into, or 0 for no
+## trimming. Module state set once at start-up, the same arrangement as
+## `configureEditor`, because `prepare` is handed a body and never learns which
+## configuration it belongs to.
+var historyBudget = 0
+
+## Function purpose: set the history budget from the deployment's own context
+## size (T-3). Called once at start-up by each entry point.
+##
+## Action purpose: **the conversion is an approximation and is stated as one
+## rather than hidden.** `CTX_SIZE` is a token count shared across `NUM_SLOTS`
+## parallel slots — the per-slot figure is what a turn actually gets, which is
+## why `gui.nim` reads it from `/props` rather than from the config. Here there
+## is no `/props`, so the per-slot share is derived, converted at four bytes per
+## token, and halved to leave room for the reply and for the context blocks
+## `injectSystem` adds after this budget was computed.
+##
+## An exact answer needs the model's own tokenizer, which is an HTTP round trip
+## per turn on the hot path. **A rough bound that always leaves headroom beats an
+## exact one nobody can afford**, and the failure it prevents — a conversation
+## that grows until every request is refused — is not a subtle one.
+proc configureHistoryBudget*(ctxSize, slots: int) =
+  if ctxSize <= 0: return
+  let perSlot = ctxSize div max(1, slots)
+  historyBudget = perSlot * 4 div 2
+
+## Function purpose: drop the oldest turns until a conversation fits a byte
+## budget, and answer how many went (T-3). **The whole history was resent on
+## every turn with no trim anywhere**, so a long chat eventually exceeded the
+## context window and every further request failed.
+##
+## Two things are never dropped, and they are the reason this is a function
+## rather than a slice:
+##
+## * **A `system` message.** It carries the persona, and the retrieval and
+##   workspace blocks injected into it — dropping it changes who is answering.
+## * **The final message.** It is the turn being asked about; a request that
+##   drops it is a request about nothing.
+##
+## Oldest first, because the recent turns are the ones the next answer depends
+## on. **Content is never shortened** — a truncated message reads as a working
+## one while meaning something the user did not write, which is D-BQ's ruling on
+## oversized attachments applied to the same hazard.
+proc trimHistory*(messages: JsonNode, budgetBytes: int): int =
+  if budgetBytes <= 0 or messages.kind != JArray or messages.len <= 1:
+    return 0
+  var total = 0
+  for m in messages:
+    total += ($m).len
+  if total <= budgetBytes: return 0
+
+  var i = 0
+  # `messages.len - 1` keeps the final turn whatever happens. `i` does not
+  # advance on a delete: the next candidate shifts down into the same slot.
+  while total > budgetBytes and i < messages.len - 1:
+    let m = messages[i]
+    if m.kind == JObject and m{"role"}.getStr == "system":
+      inc i
+      continue
+    total -= ($m).len
+    messages.elems.delete(i)
+    inc result
+
 proc prepare*(rawBody: string, projectRoot = ""): Prepared =
   result.body = rawBody
 
@@ -284,6 +348,17 @@ proc prepare*(rawBody: string, projectRoot = ""): Prepared =
 
     injectSystem(messages, intent, result.hadTools, ragContext, webContext,
                  editorContext)
+
+  # T-3. **Here, and outside the block above, deliberately.** Every request
+  # passes through this line — the window posts to the same local :8080 as the
+  # Web UI does, so one call covers both surfaces, which is the arrangement the
+  # retrieval feed settled on (D-BI). Inside the block it would run only on a
+  # turn that was not already carrying a context marker, so a long conversation
+  # would stop being trimmed exactly when it most needed to be.
+  #
+  # After `injectSystem`, because the system message is what that grows, and the
+  # budget is measured against what is actually sent.
+  result.trimmed = trimHistory(messages, historyBudget)
 
   result.body = $req
   result.cacheKey = cacheKeyFor(result.body)

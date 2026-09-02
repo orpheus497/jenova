@@ -2,7 +2,7 @@
 
 Macro progress tracking. Most recent entries at the top.
 
-**Last updated:** 2026-09-02 11:53 (Session 022)
+**Last updated:** 2026-09-02 12:19 (Session 022)
 
 > **Reading the "UNRUN" labels in this file.** Entries below are point-in-time records
 > and several were written with a "compiled; UNRUN" status that was true on the day.
@@ -15,6 +15,8 @@ Macro progress tracking. Most recent entries at the top.
 ---
 
 ## Completed
+
+### 2026-09-02 12:19 — **Step 9 built: all four stability items, and G-42.** **T-5** — quitting stops the embedding server; `lifecycle.stop` already cleared a dead pidfile, so this was one call in `gui.run`'s `defer`, after the joins, and **deliberately not `stopAll`**: the agent model stays loaded because reloading VRAM every start is worse. **T-2** — the prepared-statement cache is capped at `db.MaxCachedStatements` and flushed with `sqlite3_finalize` on overflow, before the new statement is prepared; flush-all rather than LRU, since the real working set never reaches the cap and only `api.updateMessage`'s combinatorial SQL does. **T-4** — `fssync.resolveStoragePath` now resolves the deepest *existing* ancestor against a *resolved* base, closing both holes: a new file written through an escaping symlink is refused, and a symlinked workspaces root no longer rejects every legitimate path. **T-3** — `pipeline.trimHistory` drops oldest turns to a byte budget, never the system message and never the final turn, never shortening content; wired into `prepare`, so one call covers the window and the Web UI alike, with the budget derived from `CTX_SIZE`/`NUM_SLOTS` and **stated as an approximation**. **G-42** — a markdown table is sized to its rows again: `ContentScroll` propagates natural width and aligns to the start, which is what G-41's half-fix left out. **New `fs-selftest` (10 assertions)** plus 12 added to `pipeline-selftest`; **thirteen self-tests pass**, `bin/jenova --check` exits 0, both binaries ELF 64-bit FreeBSD. Files: `gui.nim`, `db.nim`, `fssync.nim`, `pipeline.nim`, `jenova_core.nim`.
 
 ### 2026-09-02 11:53 — **8c-3 … 8c-6 built: Step 8 is complete and G-17 is closed.** A note now **reads as rendered markdown** and drops to the `TextView` only on Edit, with Cancel restoring the stored row; the transcript's block renderer was **extracted as `gui.mdBlock`** and both surfaces call it, so a note's tables and capped code blocks are the transcript's, not a second copy. **Unsaved work is no longer droppable in silence (8c-4):** Close, opening another note from the tree, and creating a note all go through `confirmLoseNoteEdits`, offering Cancel / Discard / Save, and a failed save refuses to proceed. **Delete moved into the note itself (8c-5)** over G-36's existing cascade dialog, refused on a FOCUS note with the reason on the button rather than hidden. **8c-6 was mostly already built and is recorded rather than rebuilt:** `listNotes` already orders newest-first and the tree's search already filtered notes and files — its placeholder said "Search chats" and denied a working feature, which is the only thing that needed changing; the container badge is redundant because the tree nests a note under its container; the empty-note affordance is new. **The view renders from `noteOrigContent`, never `noteBuffer.text()`** — Step 7c's rule that nothing in `view` may do work proportional to a payload. Twelve self-tests pass, `bin/jenova --check` exits 0, `bin/jenova` is ELF 64-bit FreeBSD. Files: `gui.nim`.
 

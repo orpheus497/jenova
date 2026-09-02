@@ -3,7 +3,7 @@
 Test specifications, validation criteria and expected outcomes. Mandated by `AGENTS.md`
 § WORKSPACE ARCHITECTURE.
 
-**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-02 11:53 (Session 022).
+**Created:** 2026-08-28 (Session 004). **Last updated:** 2026-09-02 12:19 (Session 022).
 Mandated from the outset; absent for Sessions 001–003. See `DECISIONS_LOG.md` C-10.
 
 > **§5a onward are stage acceptance records** — what each stage had to prove and how. They are
@@ -89,6 +89,51 @@ and `markdown-selftest`, `error-selftest` and `attach-selftest` for Step 7 (§0j
 Earlier trackers said four self-tests;
 `db-capabilities` is a capability report, not an assertion, which is where the
 miscount came from.*
+
+## 0w. The Step 9 assertions in `pipeline-selftest` (T-3 and T-2, 2026-09-02 12:19)
+
+**12 added.** Both are properties a comment can claim and only an assertion can hold.
+
+**T-3, the history trim — 7 assertions, and the shape is the point.** Both sides of the
+budget, so neither an always-trim nor a never-trim implementation passes. **The two
+messages that must survive are asserted separately from the count**, because a trim that
+kept the right *number* and the wrong *messages* would satisfy a count on its own. That
+what went was the **oldest** and not the newest is its own assertion, for the same reason.
+An impossible budget must still leave a sendable request — the system message and the
+question — because content is never shortened (D-BQ). And **a zero budget must trim
+nothing**, or a deployment that never called `configureHistoryBudget` would silently lose
+turns.
+
+**T-2, the statement cache — 4 assertions.** More than a cap of *distinct* SQL texts is
+issued, which is the shape `api.updateMessage` produces and the reason the leak existed.
+Then: the cache is bounded, **it did not simply stop caching** (a bound of zero would pass
+the first assertion alone), and — **the one that matters more than the bound** — a query
+still works afterwards. A flush that finalized a handle still in the table would raise or
+return nothing there.
+
+**Neither was shown going red, and none was attempted (D-BX).** The discrimination is
+structural, as above.
+
+## 0v. `fs-selftest` — the file-containment check (T-4, 2026-09-02 12:19)
+
+**New subcommand, 10 assertions.** `fssync.resolveStoragePath` is what stands between a
+path a client supplies on `/api/storage/*` and the rest of the filesystem, and it had a
+hole at each end. **Its own subcommand rather than a block in an existing one**, because
+`fssync.roots` caches the first root it resolves — `JENOVA_WORKSPACES` has to be set before
+anything in the process touches it, and only a fresh process can guarantee that.
+
+**A real tree with real symlinks**, because the defect *is* symlink resolution and a
+fixture that fakes it would assert nothing. The workspaces root is itself a symlink, and a
+directory inside the tree points out of it.
+
+**Both holes, and both sides of each — which is the whole design.** A check that refuses
+everything passes a refusal test; one that accepts everything passes an acceptance test.
+So: a symlinked *root* accepts both an existing file and a **new** one under it (hole two,
+which refused the entire tree); an escaping symlink refuses an existing file **and a new
+one, and a new directory under it** (hole one — the old check ran only on paths that
+already existed, so every *create* walked straight through). The lexical refusals —
+traversal, buried traversal, empty, NUL, newline — are asserted alongside, so the fix
+cannot have loosened them.
 
 ## 0u. What 8c-3 … 8c-6 added, and what could not be asserted (2026-09-02 11:53)
 

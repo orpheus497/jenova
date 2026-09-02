@@ -1,6 +1,6 @@
 # TODOS
 
-**Last updated:** 2026-09-02 11:53 (Session 022)
+**Last updated:** 2026-09-02 12:19 (Session 022)
 
 Only what is actually outstanding. Everything finished lives in `PROGRESS.md`.
 
@@ -119,15 +119,25 @@ against an authoritative row at all, which is the outcome Q-29 was protecting.
 Neovim is *"slightly truncated at the bottom, so the neovim inside the vt needs to
 scroll."*
 
-**Not diagnosed — stated as reported** (rule 1). The editor page mounts
-`NvimTerminal {.expand: true.}` and `vte.buildTerminal` sets a 10,000-line scrollback but
-nothing about geometry. **The likely mechanism, flagged as a candidate and not a
-finding:** a VTE sizes itself in whole character cells, so an allocation that is not an
-exact multiple of the cell height leaves a partial row clipped at the bottom edge. That
-would need confirming against the widget before anything is changed, and it is widget
-behaviour, so **it is a USER run either way** — the same standing gap as G-41 and G-42.
+**Still not diagnosed, and it was looked at properly on 2026-09-02 rather than left
+alone** (rule 1). `vte.nim` and the editor page were both read in full. The page mounts
+`NvimTerminal {.expand: true.}` in a vertical `Box`; `vte.buildTerminal` sets colours, a
+10,000-line scrollback and a font scale, and **nothing whatever about geometry**.
 
-**Not scheduled for this session.** Filed so it is not rediscovered.
+**Two candidates, and both are candidates rather than findings:**
+
+1. **Cell rounding.** A VTE sizes itself in whole character cells, so an allocation that
+   is not an exact multiple of the cell height leaves a partial row at the bottom.
+2. **`.nvim-term` carries `padding: 8px`** (`theme.nim`). GTK4 CSS padding shrinks a
+   widget's content box, and **whether VTE's row computation accounts for it is not
+   knowable from this tree.**
+
+**Why it stops there.** VTE's size allocation lives in `libvte`, not in this repository —
+the header gives prototypes, not behaviour. Settling it needs three numbers from the
+running widget: the allocation height, VTE's `char_height`, and the row count Neovim
+believes it has. **So no change is being made on a guess** (D-AN), and the padding is
+deliberately left alone: altering it to see what happens is exactly the move the ruling
+forbids. **It is a USER run either way** — the same standing gap as G-41.
 
 ---
 
@@ -254,7 +264,6 @@ PASS while asserting nothing.
 | ID | What it is |
 |---|---|
 | **G-51** | **The constraint is bounded and it is exactly one widget — surveyed 2026-09-02 11:43.** `Button.shortcut` is the **only** property in owlkettle whose update hook can abort the process from a child-count change. The other assert-only hooks are `Paned`'s `resize`/`shrink`/child-type, and **`Paned` is used nowhere in `gui.nim`** (zero hits — it is also G-37's and G-38's subject). Every other assertion in owlkettle is an internal invariant, not a positional-diff trap. **So the rule is: `gui.fullscreenButton` must be the last child of its row and nothing may be inserted before it — no more than that.** Adding a child in a container that also holds a keyboard-shortcut button crashes the application on the next redraw. Found 2026-09-02 11:30 by causing it: putting a fourth button in the note editor's header row aborted the process on opening a note, with `widgets.nim(920) state.shortcut == widget.valShortcut [AssertionDefect]`. **The mechanism, verified in owlkettle's source and not inferred:** owlkettle diffs a `Box`'s children **by index** and reuses a child's state whenever the type matches (`widgetdef.nim`, the type-id compare in the generated `update`), and **`Button.shortcut` has no update path at all** — its `build` hook installs a `GtkShortcutController` and its `update` hook only asserts the value never changed, with owlkettle's own `# TODO` on the assertion. So a shortcut-carrying `Button` that lands on the index of a `Button` built without one aborts. **`gui.fullscreenButton` (`shortcut = "F11"`) is the only such widget in this program**, and it is the last child of all three branches of the chat/note/editor header row, whose counts are 3, 3 and 5. **This is a live trap, not an open defect** — the code is correct as it stands and a comment at the note pane records it. The durable fix, if the constraint ever becomes inconvenient, is to move F11 off the button and onto the window as a real shortcut controller; that is not scheduled. **`bin/jenova --check` cannot catch this class:** it builds each branch once and the assertion only fires on an *update*, which needs a branch to change. |
-| **G-42** | **Markdown tables now render too large rather than sized to their content.** Reported by the USER 2026-09-01 18:29, on the G-41 build. **G-41 is the cause and it is a half-fix, not a regression:** a bare owlkettle `ScrolledWindow` collapsed every table to a stub, so `ContentScroll` was given `set_propagate_natural_height` **and** deliberately *not* natural width, with `policy(AUTOMATIC, NEVER)`. That stopped the collapse; nothing then constrains the result *down* to the content, so a table claims more room than its rows need. **The USER's words: "not too serious."** Cosmetic, filed, not urgent. The fix is a width/height measurement in `ContentScroll`, not another policy flag — and per D-BR neither half of G-41 is assertable, so this is a USER run either way. |
 | **G-37** | *(Re-verified 2026-09-02 08:01. **Both findings hold. The claim written beside them did not.** The previous revision said "`theme.nim` has not been touched since" — Step 11 deleted `.doc-panel` and `.doc-panel-closed` from it that same evening, so the separator rule moved: it is **`theme.nim:417`** with `:hover` at **421**, not 428/432. `.glow-text` is still **`theme.nim:253`** and a grep for it across `gui.nim` still returns **zero**. **Search the selectors; the numbers here are a hint and have now rotted three times.**)* **Two style rules in `theme.nim` are dead.** `paned > separator` styles a widget that is not in the tree — a leftover from G-25, which shipped as a `Box` after a `Paned` crashed the app. And `.glow-text` is defined and carried by no widget: the glow effect works, but as a `text-shadow` duplicated inside `.brand` and `.conv-active`. **The second half is G-8's exact defect — a class defined and applied to nothing — recurring in the same file.** Both were found and reported on 2026-09-01 and neither was filed as work; that is why they are here. Re-verified 2026-09-01 14:19: `.glow-text` is `theme.nim:253` and **no widget in `gui.nim` carries the class** (a grep for it in `gui.nim` returns zero hits); `paned > separator` is `theme.nim:428-432`. *Re-verified 2026-09-01 17:27: the `.glow-text` address held, the separator address did not — it was written as 416-420 against a file where it is 428. Earlier revisions named 162 and 251-255, and before that named them in the opposite order.* |
 | **G-38** | **A code comment in `gui.nim` describes a widget that was never used.** The main-area comment still explains itself as feeding "the `Paned` that G-25 adds". G-25 shipped as a `Box`, and the comment above the `Box` itself records why. A reader following the first comment looks for a `Paned` that does not exist. Prose only, no behaviour. **The doc comment directly above `gui.mainArea`** — *verified 2026-09-01 18:07; the address written here (2637) was wrong, as was 2560 before it, which is why no third number is being recorded.* |
 | **T-12** | **A one-line fix to two test scripts. The subject is closed — do not diagnose it again (D-BJ).** `test_routes.sh` and `test_lifecycle.sh` fail if anything already holds the machine's real ports, because neither overrides `JENOVA_LLAMA_PORT` the way both already override `JENOVA_PORT`. **That is the entire finding.** It is not a product fault, it is not a mystery, and it has been fully diagnosed three separate times. **The fix:** give both scripts their own dead upstream ports. Until the USER schedules it, a session seeing those failures records nothing and says nothing. |
@@ -269,7 +278,8 @@ of the parity inventory. Recorded so it is not rediscovered and mistaken for a g
 
 ## Active — defects in the Nim code, each verified by reading it
 
-**Ordering is `PLANS.md`:** T-5, T-2, T-4 and T-3 are Step 9, in that order.
+**Step 9 is built — this section is empty of defects.** T-5, T-2, T-4 and T-3 were
+built 2026-09-02 12:19; the record is `PROGRESS.md`.
 
 **G-40 is gone from this table because it is done *and now confirmed on screen*** —
 attachments no longer freeze the window (2026-09-01 17:51, `PROGRESS.md`, **D-BQ**).
@@ -291,12 +301,21 @@ in `PROGRESS.md` and not here.
 exchange is indexed, existing history is backfilled once the embedding server answers,
 and a deleted turn is forgotten. **Step 4 is built.**
 
-| ID | What is wrong, in plain English | Where |
-|---|---|---|
-| **T-5** | **Quitting the app leaves the embedding server running.** Leaving the main model loaded is deliberate — reloading gigabytes into the GPU every start is worse. But the embedding server is left running with nothing attached to it. | **`gui.run`** calls `lc.startAll()`; its `defer` sends the three workers the quit sentinel, joins them and closes the channels — **and calls no `stopAll`**. `lifecycle.stopAll` (`lifecycle.nim:329`, verified) exists and is reached **only** from the control worker's stop/restart jobs. *Read in full 2026-09-01 18:07: the `defer` body is four statements and none of them is a `stopAll`. Line numbers into `gui.nim` deliberately not recorded — see the sweep note.* |
-| **T-2** | **A long-running server slowly leaks memory.** The database keeps a cache of compiled queries that is never trimmed, and one API route builds a different query text for every combination of fields a client sends. | The cache is `Conn.cache` (`db.nim:46`), filled by `db.prepared` (`db.nim:165`) with no eviction; the only `sqlite3_finalize` is in `db.closeConn` (`db.nim:415-418`). The route is `api.updateMessage` |
-| **T-4** | **Two holes in the file-access containment check.** A *new* file written through a symlinked folder can escape the workspace root, because the symlink check only runs on paths that already exist. Separately, if the workspace root itself is a symlink, legitimate paths get rejected. | Both in `fssync.resolveStoragePath` (`fssync.nim:694`): the lexical base at `fssync.nim:700`, and the existence-gated symlink check at `fssync.nim:713` |
-| **T-3** | **The whole conversation is resent to the model every single turn.** No trimming, so a long chat eventually exceeds the context window. Needs a byte budget from `CTX_SIZE`, dropping oldest first, never dropping the system message. | `pipeline.prepare` (`pipeline.nim:223`) — **there is no trim step anywhere in the file**; the only `trim`-shaped call in it is `text.strip` on an intent prefix (`pipeline.nim:105`) |
+**T-5, T-2, T-4 and T-3 are gone from this file because they are built**
+(`PROGRESS.md`, 2026-09-02 12:19). Per the completion rule their record lives there.
+Quitting stops the embedding server; the prepared-statement cache is capped and flushed;
+the file-containment check resolves the deepest existing ancestor against a resolved base,
+so a new file cannot be written through an escaping symlink and a symlinked workspaces root
+no longer refuses its own tree; and chat history is trimmed to a byte budget, oldest first,
+never the system message and never the final turn.
+
+**Two things stated plainly rather than dressed up.** The history budget is derived from
+`CTX_SIZE` divided by `NUM_SLOTS` at four bytes per token and halved — **an approximation,
+and recorded as one**; an exact figure needs the model's own tokenizer, which is an HTTP
+round trip per turn on the hot path. And **T-5's join is not asserted**: that `gui.run`'s
+`defer` calls it cannot be checked from a test binary, because `gui.nim` links into none.
+`lifecycle.stop`'s own behaviour is asserted; the call site is a screen run.
+
 
 ---
 

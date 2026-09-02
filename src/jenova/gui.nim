@@ -2198,12 +2198,19 @@ proc gtk_scrolled_window_set_propagate_natural_height(
 proc gtk_scrolled_window_set_propagate_natural_width(
   sw: GtkWidget, p: cbool) {.importc, cdecl.}
 proc gtk_scrolled_window_set_policy(sw: GtkWidget, h, v: cint) {.importc, cdecl.}
+## G-42. Not in owlkettle's bindings — `hAlign` there is a `Box` *packing*
+## property set by the parent, and this has to be the widget's own, because the
+## call site inserts every markdown block through one `insert` and a table is the
+## only kind that must not stretch.
+proc gtk_widget_set_halign(w: GtkWidget, align: cint) {.importc, cdecl.}
 
 const
   ## `GtkPolicyType`. Named rather than passed as bare integers, because
   ## `set_policy(w, 1, 2)` at the call site says nothing about what it does.
   PolicyAutomatic = cint(1)
   PolicyNever = cint(2)
+  ## `GtkAlign`. `FILL` is the default and is what made a table stretch.
+  AlignStartG = cint(1)
 
 ## G-41. Whether the transcript is currently following a reply, and whether the
 ## reader is sitting at the bottom. **Two separate facts and they must stay
@@ -2310,8 +2317,27 @@ renderable ContentScroll of BaseWidget:
     afterBuild:
       gtk_scrolled_window_set_propagate_natural_height(
         state.internalWidget, cbool(1))
+      # G-42. **This was `0` and that is why a table rendered larger than its
+      # rows.** G-41 turned natural-width propagation off so a wide table could
+      # not widen the whole transcript, which worked — and left the scroller with
+      # no width of its own, so the vertical `Box` stretched it to the full
+      # column on the default `GTK_ALIGN_FILL`. The collapse was fixed and
+      # nothing constrained the result back down.
+      #
+      # The pair below is the actual answer: **natural width is the content's
+      # width, and the widget aligns to the start instead of filling.** GTK then
+      # allocates the lesser of the two — the table's own width when it fits,
+      # the column's when it does not, with the horizontal scrollbar taking the
+      # remainder under `PolicyAutomatic`.
+      #
+      # G-41's concern does not come back, and it is worth saying why rather
+      # than trusting it: the enclosing `AutoScroll` never calls
+      # `set_propagate_natural_width` either, so it reports its own small
+      # natural width upward and absorbs whatever this one asks for. The window
+      # cannot be widened by a table.
       gtk_scrolled_window_set_propagate_natural_width(
-        state.internalWidget, cbool(0))
+        state.internalWidget, cbool(1))
+      gtk_widget_set_halign(state.internalWidget, AlignStartG)
       gtk_scrolled_window_set_policy(state.internalWidget,
                                      PolicyAutomatic, PolicyNever)
 
@@ -4318,6 +4344,12 @@ proc run*(withTray = true, checkOnly = false) =
   # unconditionally: `nvimctl` treats an absent socket as "no document", so this
   # costs nothing on a host with no Neovim running.
   pipeline.configureEditor(nvimctl.socketPath(p))
+  # T-3: the history trim's budget. The window posts to its own :8080, so the
+  # request goes through `pipeline.prepare` exactly as the Web UI's does and one
+  # trim covers both — but the budget still has to be set in each process that
+  # runs a pipeline, and this one runs its own.
+  pipeline.configureHistoryBudget(c.getInt("CTX_SIZE", 8192),
+                                  c.getInt("NUM_SLOTS", 1))
   # G-45: the editor is spawned with an environment that loads the in-tree
   # `jvim/` configuration and tells its Jenova layer where this process is
   # listening. `127.0.0.1` and not `host`: the editor runs beside the server, and
@@ -4356,6 +4388,21 @@ proc run*(withTray = true, checkOnly = false) =
     hwReq.send(ControlJob(action: QuitSentinel))
     joinThread(streamThread); joinThread(ctlThread); joinThread(hwThread)
     streamReq.close(); ctlReq.close(); hwReq.close(); uiChan.close()
+    # T-5. **The embedding server, and deliberately not the agent one.** Quitting
+    # left `llama-embed` running with nothing attached to it — this `defer` sent
+    # the workers their quit sentinel and stopped no backend at all. Leaving the
+    # *agent* model loaded is the deliberate half: reloading gigabytes into VRAM
+    # on every start is worse than an idle process, and it is why `stopAll` is
+    # not what is called here.
+    #
+    # After the joins, never before: the control worker owns the stop/restart
+    # jobs, and stopping a backend underneath a job still running one is how a
+    # restart ends up starting a server this is about to kill.
+    #
+    # `lifecycle.stop` already clears a pid file whose process is gone — the
+    # `not st.running` branch — so the stale-pid half of T-5 needs nothing new.
+    if not checkOnly:
+      discard lc.stop(beEmbed)
 
   var conv = latestConversation()
   if conv.len == 0: conv = newConversation()

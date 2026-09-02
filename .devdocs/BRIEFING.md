@@ -1,6 +1,6 @@
 # BRIEFING
 
-**Last updated:** 2026-09-02 11:53 (Session 022)
+**Last updated:** 2026-09-02 12:19 (Session 022)
 **Branch:** `bsd`. The tree was clean at `71ed41cb` when this session started; **this
 session's changes to `api.nim`, `gui.nim`, `workspace.nim`, `jenova_core.nim` and the
 `.devdocs/` are uncommitted.** **`jvim/` is tracked** (4,199 files in git of 4,201 on
@@ -69,7 +69,7 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 
 ## 2. State
 
-**Verified as of 2026-09-02 11:53.** Both binaries build from `nimble core` and
+**Verified as of 2026-09-02 12:19.** Both binaries build from `nimble core` and
 `nimble gui`; **every self-test passes, and `bin/jenova --check` exits 0 — the
 application reaches its first frame**, which is a thing a compile does not tell you and
 which was learned the hard way at 14:02 (rule 17). Both binaries are ELF 64-bit FreeBSD
@@ -108,6 +108,37 @@ backend supervision and watchdog, model discovery and switching are implemented 
 covered by tests.
 
 ## 3. Done this session
+
+### Session 022 (part five) — 2026-09-02 12:19 — Step 9 and G-42; the plan has no unbuilt step left
+
+**G-42 — a table is sized to its rows again.** `ContentScroll` propagates natural width
+and aligns to the start. G-41 turned propagation off so a wide table could not widen the
+transcript, which worked and left the scroller with no width of its own, so the vertical
+`Box` stretched it on the default `GTK_ALIGN_FILL`. **G-41's concern cannot return, and
+that was checked rather than assumed:** the enclosing `AutoScroll` does not propagate
+natural width either.
+
+**G-47 — looked at properly and still not diagnosed.** Two candidates recorded as
+candidates: cell rounding, and `.nvim-term`'s `padding: 8px`. **VTE's size allocation is
+in `libvte`, not this tree**, so settling it needs three numbers from the running widget.
+**Nothing was changed on a guess** (D-AN), and the padding was deliberately left alone.
+
+**Step 9, all four, in the planned order.** **T-5** — the `defer` stops the embed backend
+after the joins, not `stopAll`, the agent model staying loaded on purpose; the
+stale-pidfile half needed nothing, `lifecycle.stop` already doing it. **T-2** — the
+prepared-statement cache is capped and flushed *before* the new statement is prepared;
+flush-all not LRU, as a stated trade. **T-4** — `resolveStoragePath` resolves the deepest
+existing ancestor against a resolved base, which closes both holes with one change.
+**T-3** — `trimHistory` inside `prepare`, so one call covers both surfaces; never the
+system message, never the final turn, content never shortened.
+
+**Thirteen self-tests pass** — new `fs-selftest` (10) and 12 added to `pipeline-selftest`.
+`bin/jenova --check` exits 0; both binaries ELF 64-bit FreeBSD.
+
+**Two limits stated rather than smoothed over.** The history budget converts
+`CTX_SIZE / NUM_SLOTS` at four bytes per token and halves it — **an approximation, written
+into the code as one**. And **T-5's call site is not assertable**: `lifecycle.stop` is
+asserted, but that `gui.run`'s `defer` calls it cannot be checked from a test binary.
 
 ### Session 022 (part four) — 2026-09-02 11:53 — Step 8 is complete; G-17 is closed
 
@@ -912,14 +943,18 @@ the window responsive.**
 **Step 7b and 8a are built and both confirmed on screen** — 8a shipped, did not
 work, was reshaped to D-CB at 2026-09-02 10:43, and the USER ran it at 10:53.
 
-**Step 8 is complete.** 8b, 8a and 8c are built and G-17 is closed (11:53).
+**Every numbered step in `PLANS.md` is built.** Steps 1-11, and Step 9 with
+G-42 alongside it (12:19).
 
-**Next — the two open widget defects, both a USER run:** **G-42**, markdown
-tables render larger than their content, and **G-47**, the editor page's Neovim
-truncated at the bottom on a resize — reported 2026-09-01 18:41 and **not
-diagnosed**; a candidate mechanism is in `TODOS.md`, flagged as a candidate.
+**What is left is one undiagnosed defect and three unscheduled things:**
 
-**Then Step 9:** T-5, T-2, T-4, T-3.
+- **G-47** — the editor page's Neovim truncated at the bottom on a resize.
+  **Not diagnosed**, and not for want of looking: two candidates are recorded
+  and neither is settleable without the running widget.
+- **LaTeX maths**, G-34's open half. KaTeX has no GTK equivalent.
+- **Model information** — context size, quantisation, chat template. Needs
+  `/props` plus a GGUF header read; never built.
+- **The three parked product decisions**: T-11, T-7, T-8.
 
 **One thing 10b leaves unproven and it is a USER run:** whether an attachment
 actually appears in the workspace tree, and whether its text then comes back in
@@ -934,7 +969,9 @@ editor page's Neovim truncated at the bottom on a resize, reported at 18:41 and
 **not diagnosed** — a candidate mechanism is written in `TODOS.md` and flagged
 as a candidate, not a finding.
 
-**Then Step 9:** T-5, T-2, T-4, T-3.
+> **Superseded 2026-09-02 12:19** — this whole block is the Step 7 handover and is
+> kept as history. **G-42 and all four Step 9 items are built; only G-47 survives.**
+> The current state is §2 and §3 at the top of this file.
 
 **Unseen, and it is now a large surface:** the stop button, table rendering,
 attachment chips and thumbnails, the drop target, the paste button, the preview

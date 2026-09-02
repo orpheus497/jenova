@@ -48,6 +48,12 @@ type
   Row* = seq[string]
 
 const
+  ## T-2. The ceiling on one connection's prepared-statement cache. Comfortably
+  ## above the fixed statement set the program actually issues, so the flush in
+  ## `prepared` fires only on the combinatorial key space `api.updateMessage`
+  ## produces — which is the leak, not the cache.
+  MaxCachedStatements* = 256
+
   SQLITE_OK = 0
   SQLITE_ROW = 100
   SQLITE_DONE = 101
@@ -168,6 +174,29 @@ proc prepared(c: Conn, sql: string): StmtHandle =
     discard sqlite3_reset(result)
     discard sqlite3_clear_bindings(result)
   else:
+    # Action purpose: **T-2 — the cache had no bound and a long-running server
+    # leaked.** It is keyed by SQL text, and `api.updateMessage` builds a
+    # different text for every combination of fields a client sends, so the key
+    # space is combinatorial rather than fixed and a `serve` process grew a
+    # prepared statement per distinct shape, for ever. The only
+    # `sqlite3_finalize` was the shutdown loop in `closeConn`.
+    #
+    # **Flush-all rather than LRU, and that is a deliberate trade.** An LRU needs
+    # a recency order maintained on every hit — the hot path — to bound something
+    # that is not otherwise a problem: the real working set is a few dozen fixed
+    # statements and never reaches the cap, so the flush fires only on the
+    # combinatorial path it exists for, and re-preparing a few dozen statements
+    # once is far cheaper than the ordering bookkeeping would be on every query.
+    #
+    # **Before the new statement is prepared, never after** — flushing afterwards
+    # would finalize the handle about to be returned. Nothing else holds one
+    # across this call: `query` materialises its rows and resets before
+    # returning, and `exec` steps once and resets, so no live cursor spans a
+    # `prepared` call and the flush cannot pull a handle out from under one.
+    if c.cache.len >= MaxCachedStatements:
+      for _, s in c.cache:
+        discard sqlite3_finalize(s)
+      c.cache.clear()
     var s: StmtHandle
     let rc = sqlite3_prepare_v2(c.h, sql.cstring, -1, addr s, nil)
     c.check(rc, "prepare failed for: " & sql)
@@ -411,6 +440,11 @@ proc journalMode*(): string =
 ## Function purpose: expose this thread's connection address so the self-test can
 ## show that threads genuinely hold distinct handles rather than sharing one.
 proc connAddr*(): uint = cast[uint](conn().h)
+
+## Function purpose: how many statements this thread's connection is holding.
+## Exported for the T-2 assertion and for nothing else — the bound is the whole
+## fix, and a bound nothing can observe is a claim rather than a property.
+proc cachedStatements*(): int = conn().cache.len
 
 proc closeConn*() =
   if tlsConn != nil:
