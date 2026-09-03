@@ -18,7 +18,7 @@ import std/[os, posix, sequtils, strformat, strutils, tables, times, json]
 import jenova/[paths, config, db, dbselftest, server, serverselftest, markdown,
                rag, sha256, pipeline, prompts, lifecycle, models, nvimctl, api,
                settings, hardware, workspace, pdf, zlib, fssync, composer, convmd,
-               http, upstream, websearch, version]
+               assetview, http, upstream, websearch, version]
 
 const
   Version = version.Version
@@ -55,7 +55,8 @@ proc usage() =
   echo "              hardware-selftest, markdown-selftest, error-selftest,"
   echo "              attach-selftest, workspace-selftest, nvim-env-selftest,"
   echo "              models-selftest, fs-selftest, composer-selftest,"
-  echo "              convmd-selftest, lifecycle-selftest, relay-selftest"
+  echo "              convmd-selftest, asset-selftest, lifecycle-selftest,"
+  echo "              relay-selftest"
   echo ""
   echo "Precedence: builtin default < etc/jenova.conf < etc/jenova.local.conf < environment"
   echo "JENOVA_NO_BACKENDS=1  serve without starting llama-server (used by the tests)"
@@ -3063,6 +3064,134 @@ proc main() =
         quit(0)
       echo ""
       echo "composer-selftest: FAIL (", bad, ")"
+      quit(1)
+    of "asset-selftest":
+      # Which viewer a stored file asset gets is decided in `assetview.nim` for
+      # the reason the composer's key rule is decided in `composer.nim`:
+      # `gui.nim` links into no test binary, so a rule written inside the widget
+      # tree is a rule nothing can assert.
+      var bad = 0
+      proc check(label: string, cond: bool, detail = "") =
+        if cond: echo "  ok   ", label
+        else:
+          echo "  FAIL ", label, (if detail.len > 0: "\n       " & detail else: "")
+          inc bad
+
+      echo "asset-selftest"
+
+      block dataUrls:
+        let (isData, mime, enc) =
+          assetview.splitDataUrl("data:image/png;base64,aGk=")
+        check("a data URI declares its own media type",
+              isData and mime == "image/png", mime)
+        check("and the parameters are not part of the type", enc == "aGk=", enc)
+        check("plain text is not a data URI",
+              not assetview.splitDataUrl("hello").isData)
+        # A `data:` prefix with no comma is not a URI and must not be treated as
+        # one, or the whole string would be handed to the base64 decoder.
+        check("a truncated data URI is not one",
+              not assetview.splitDataUrl("data:image/png;base64").isData)
+        check("a decoder that is fed newlines still decodes",
+              assetview.decodeBase64("aGVs\nbG8=") == (true, "hello"))
+        check("and a length that cannot be base64 is refused",
+              not assetview.decodeBase64("abc").ok)
+
+      block viewerChoice:
+        # The transition that matters: the same declared type with and without
+        # bytes must give different answers, because the window stores
+        # `image/*` with an empty column for every chat image it files.
+        let filed = assetview.classify("shot.png", "image/*", "")
+        check("an image filed from a chat has no content to show",
+              filed.viewer == assetview.avEmpty, $filed.viewer)
+        check("and the wildcard type is not passed on as a media type",
+              filed.mime == "image/png", filed.mime)
+
+        # The payload is written as base64 rather than encoded here, so the
+        # fixture states what a stored row looks like instead of restating the
+        # encoder.
+        let uploaded = assetview.classify(
+          "shot.png", "image/png", "data:image/png;base64,AAECAw==")
+        check("an uploaded image previews", uploaded.viewer == assetview.avImage,
+              $uploaded.viewer)
+        check("and the viewer is handed bytes, never the data URI",
+              uploaded.data == "\0\1\2\3")
+
+        let text = assetview.classify("notes.txt", "text/plain", "hello there")
+        check("text stored as text reads as text",
+              text.viewer == assetview.avText, $text.viewer)
+        check("and its bytes are the stored string", text.data == "hello there")
+
+        # The byte scan outranks the declaration. A row claiming `text/plain`
+        # over bytes with a NUL in them is the case that would otherwise put
+        # binary into a TextView.
+        let lying = assetview.classify("notes.txt", "text/plain", "ab\0cd")
+        check("a NUL makes it binary whatever the row claims",
+              lying.viewer == assetview.avBinary, $lying.viewer)
+
+        let noName = assetview.classify("payload", "", "\xff\xfe\x00\x01")
+        check("a nameless untyped binary is still recognised as binary",
+              noName.viewer == assetview.avBinary, $noName.viewer)
+        check("and it is labelled by something rather than by nothing",
+              assetview.typeLabel(noName, "payload") == "unrecognised",
+              assetview.typeLabel(noName, "payload"))
+        check("while an extension names the type when no row does",
+              assetview.typeLabel(
+                assetview.classify("x.zip", "", "\0"), "x.zip") == "zip file")
+
+        # A `data:` URI whose payload will not decode carries no file. Showing
+        # its base64 as text would be the failure dressed as a success.
+        let broken = assetview.classify("x.png", "", "data:image/png;base64,!!!")
+        check("an undecodable data URI is not shown as its own base64",
+              broken.viewer == assetview.avBinary and broken.data.len == 0)
+
+      block naming:
+        check("markdown is named from its extension",
+              assetview.mimeFromName("a.MD") == "text/markdown")
+        check("an unknown extension implies nothing",
+              assetview.mimeFromName("a.qqq") == "")
+        check("a name with no extension implies nothing",
+              assetview.mimeFromName("Makefile") == "")
+        # The export suggestion must not carry separators: a name with a path in
+        # it would write outside the directory chosen in the picker.
+        check("an export name is stripped to its last component",
+              assetview.exportName("../../etc/passwd") == "passwd")
+        check("and a name that is only separators still names something",
+              assetview.exportName("/") == "asset")
+
+      block sizes:
+        check("bytes under a kilobyte are reported as bytes",
+              assetview.sizeLabel(512) == "512 B", assetview.sizeLabel(512))
+        # Rounded up, so a file with content never reports as zero of anything.
+        check("a single byte over a kilobyte rounds up",
+              assetview.sizeLabel(1025) == "2 KB", assetview.sizeLabel(1025))
+        check("and megabytes round up the same way",
+              assetview.sizeLabel(1024 * 1024 + 1) == "2 MB",
+              assetview.sizeLabel(1024 * 1024 + 1))
+
+      block previewCap:
+        let short = assetview.previewText("hello")
+        check("a small file is shown whole",
+              short.text == "hello" and not short.truncated)
+        let big = assetview.previewText(repeat('x', assetview.PreviewTextCap + 5))
+        check("a large one is cut to the cap",
+              big.text.len == assetview.PreviewTextCap, $big.text.len)
+        # A view that stops silently is indistinguishable from a file that ends
+        # there, which is the one thing a preview must not be.
+        check("and says that it was cut", big.truncated)
+        # The two halves of the same window must agree about the same file:
+        # anything the composer would attach has to be something the viewer will
+        # then open.
+        check("nothing attachable is too large to open",
+              assetview.MaxOpenBytes <= pipeline.MaxAttachmentBytes)
+        check("and the preview cap is inside the open cap",
+              assetview.PreviewTextCap < assetview.MaxOpenBytes)
+
+      if bad == 0:
+        echo ""
+        echo "asset-selftest: PASS"
+        quit(0)
+      echo ""
+      echo "asset-selftest: FAIL (", bad, ")"
       quit(1)
     of "pipeline-selftest":
       # Proves the pipeline's seven behaviours against a scratch database. Web
