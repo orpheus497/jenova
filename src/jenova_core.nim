@@ -3145,12 +3145,19 @@ proc main() =
               thin.len == 0, "too short: " & thin.join(", "))
 
         # A field the window cannot act on yet says so; one it can, does not.
-        check("the three fields the window cannot act on are marked pending",
+        check("the two fields the window cannot act on are marked pending",
               settings.defFor("pdfAsImage").awaiting.len > 0 and
               settings.defFor("autoMicOnEmpty").awaiting.len > 0 and
-              settings.defFor("pasteLongTextToFileLen").awaiting.len > 0 and
               settings.defFor("temperature").awaiting.len == 0 and
               settings.defFor("theme").awaiting.len == 0)
+
+        # W-01. Both of the settings wired in this branch must stop claiming to
+        # be pending, or the honesty check above degrades into decoration: a
+        # field that works while saying it does not is the same defect as one
+        # that says it works and does not, pointed the other way.
+        for wired in ["copyTextAttachmentsAsPlainText", "pasteLongTextToFileLen"]:
+          check(wired & " is no longer pending, because it is wired now",
+                settings.defFor(wired).awaiting.len == 0)
 
         # W-01. **The old assertion only checked that a reason existed, and
         # three of them were false**: all three named "attachments — PLANS.md
@@ -3173,8 +3180,6 @@ proc main() =
         check("every pending field says what it is waiting on, not just that it is",
               vague.len == 0, "too vague: " & vague.join(", "))
 
-        check("the copy setting is no longer pending, because it is wired now",
-              settings.defFor("copyTextAttachmentsAsPlainText").awaiting.len == 0)
 
         # The select: its stored default has to be one of its own options, or
         # the dropdown opens on nothing.

@@ -105,19 +105,18 @@ const
     SettingDef(key: "pasteLongTextToFileLen",
                label: "Paste long text to file length",
                section: ssGeneral, kind: skInt, appDefault: "2500",
-               # W-01. **The reason this named was already false.** It read
-               # "attachments — PLANS.md Step 7b (G-30)" long after attachments
-               # shipped in full — file picker, drop zone, clipboard paste, PDF
-               # extraction, thumbnails — so the field read as deferred when it
-               # had simply been forgotten. What it actually waits on is
-               # narrower and is named here instead.
-               awaiting: "a paste handler on the composer. `DraftView` owns a " &
-                         "GtkTextView and GTK pastes text into it directly, so " &
-                         "there is no point at which this window sees the " &
-                         "pasted string and could divert a long one",
-               help: "Pasting more than this many characters turns the paste " &
-                     "into a text attachment instead of filling the message " &
-                     "box. 0 disables it."),
+               # W-01: wired. `composer.classifyInsertion` decides it and the
+               # composer's `changed` callback acts on it. The blocker this
+               # field named for two revisions — first a finished attachments
+               # step, then a paste handler that cannot exist — was real only in
+               # its second form, and the way past it was to stop looking for a
+               # paste signal: GTK pastes into the `GtkTextView` directly, so
+               # the window sees one large insertion in a buffer `changed`, and
+               # a prefix/suffix diff recovers the pasted run exactly.
+               help: "Pasting more than this many characters attaches the " &
+                     "pasted text as a file instead of filling the message " &
+                     "box, so a long paste goes to the model as a document and " &
+                     "your message stays readable. 0 disables it."),
     SettingDef(key: "copyTextAttachmentsAsPlainText",
                label: "Copy text attachments as plain text",
                section: ssGeneral, kind: skBool, boolDefault: false,

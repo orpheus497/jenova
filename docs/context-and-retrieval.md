@@ -97,10 +97,22 @@ real requests.
 
 | Writer | When |
 |---|---|
+| `api.upsert` → `rag.indexNote` / `rag.indexFileAsset` | **Every note and file asset saved on either surface.** Hooked at `upsert` rather than in each client, because that is the one layer the Web UI's `/api/db/*` route and the window's in-process `putEntity` both pass through |
 | `api.handleDb` → `rag.indexExchange` | Every message the Web UI creates or edits, on the `/api/db/messages` route |
-| `api.restoreEntity` → `rag.indexExchange` | A conversation restored from the trash is re-indexed |
+| `api.restoreEntity` | Anything restored from the trash is re-indexed — a message, a conversation, a note, a file |
 | `gui.ctlWorker` → `rag.indexExchange` | Each completed exchange in the desktop window, on a worker thread so the embedding round trip never touches the GTK loop |
-| `rag.backfillChats` | Once at every `jenova-core serve` start, and once in the window as soon as the embedding server answers — **not before**, or history would be indexed while the embedder is still loading and stored keyword-only |
+| `rag.backfillChats`, `rag.backfillWorkspace` | Once at every `jenova-core serve` start, and once in the window as soon as the embedding server answers — **not before**, or content would be indexed while the embedder is still loading and stored keyword-only |
+
+Until recently the index held **chats and nothing else**: notes and uploaded documents were not
+searchable by keyword or by vector, only injected wholesale by scope through mechanism 5. A note is
+indexed with its title prepended to the body, and a file asset with its filename, so a note called
+"Pooling" whose text never repeats the word is still findable by it. An image is not indexed: its
+`content` column is deliberately empty because the bytes live in `messages.extra`.
+
+Indexing is **best-effort and never fails the write it is attached to** — a note is saved whether
+or not it could be indexed, and the backfills repair a skipped entry at the next start. It runs
+only when the indexed text actually changed, so re-saving an unedited note costs no embedding
+round trip.
 
 `backfillChats` is incremental, so a later start does no work twice, and `indexExchange` indexes a
 reply together with the user turn that prompted it — never at the moment the question is asked,

@@ -67,6 +67,10 @@ With no prefix you get the ordinary persona plus retrieval.
 
 ## Attachments
 
+Pasting more than `pasteLongTextToFileLen` characters (2500 by default, 0 to disable) attaches the
+pasted text as a file instead of filling the message box, so a long paste reaches the model as a
+document and your message stays readable.
+
 A file over roughly 23 MB is **refused, not shortened**: a truncated document would be answered as
 though it were the whole thing. Whether a file is text is decided by reading it — a NUL byte in
 the first 8 KiB makes it binary — so a `.log`, a `.conf` or a file with no extension is
