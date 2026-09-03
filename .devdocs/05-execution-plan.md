@@ -51,6 +51,18 @@ blind spots are known rather than assumed.
 
 **Exit:** green suite on FreeBSD, the window runs, `png/` has a desktop screenshot.
 
+> **Partly answered, session 7 — but on Linux, not FreeBSD.** The premise that this could only
+> happen on the target host was wrong: GTK 4.14.5, libadwaita 1.5.0, GtkSourceView 5.12.0, VTE
+> 0.76 and D-Bus 1.14 are stock packages, so both binaries now compile, link and run off FreeBSD,
+> and the window maps under `Xvfb`. `tests/gui_build.sh` does it, and found two defects in this
+> branch on its first run — one that stopped `bin/jenova` building at all, one that collapsed the
+> window's whole layout (report 03, "The GUI became buildable and runnable").
+>
+> **What remains genuinely FreeBSD-only** and keeps this phase open: the `sysctl` hardware probe,
+> the `fork`/`setsid`/`execv` backend path against FreeBSD's process semantics, the D-Bus tray
+> (no `StatusNotifierWatcher` runs under Xvfb), the embedded Neovim page, GTK 4.20.4 against the
+> 4.14 tested here, and the A-2 screenshot, which should be of the real desktop.
+
 ---
 
 ## Phase 2 — The transcript becomes a ListView (1 session)

@@ -1,34 +1,28 @@
-## Script function and purpose: entry point for `bin/jenova`, the native FreeBSD
-## desktop application (N-S7). Replaces the shell launcher of the same name, plus
-## `jenova-ui/src/main.c` (C, GTK3, embedded LuaJIT, ncurses) and `lib/ui.lua`.
+## Script function and purpose: entry point for the desktop application.
 ##
-## ## Why this is a second binary and not another `jenova-core` subcommand
+## A second binary rather than another `jenova-core` subcommand, because the
+## headless server must stay buildable on a machine with no GTK — LAN mode has to
+## serve whether or not a window is running, and folding owlkettle in would make
+## a graphical toolkit a build-time requirement for a server.
 ##
-## `jenova-core` is the headless server and must stay buildable on a machine with
-## no GTK at all — N-7 requires LAN mode to serve whether or not the GUI is
-## running, and folding owlkettle into it would make a graphical toolkit a
-## build-time requirement for a server. Splitting the *binaries* is not splitting
-## the *program*: both link the same core modules, and the GUI drives
-## `lifecycle` in-process exactly as `jenova-core serve` does.
-##
-## This is the distinction D-N's "single binary" ruling was actually about — one
-## program rather than a daemon plus a detached client talking over a socket —
-## and it is preserved here. What is *not* reproduced is `bin/jenova-ca`'s split,
-## where the tray owned the client-facing proxy as a child process: that is
-## defect B-13, and `gui.nim` documents why it disappears.
+## Two binaries are not two programs: both link the same core modules and this
+## one drives the backend lifecycle in-process, exactly as the server does. What
+## is deliberately not reproduced is a tray that owns the client-facing port as a
+## child process — see `gui.nim` for why that arrangement disappears.
 
 when not defined(freebsd):
-  {.error: "Jenova targets FreeBSD only. " &
-           "This carries forward the #error guard that jenova-ui/src/main.c held " &
-           "before N-S7 archived it, and matches the guard in jenova_core.nim.".}
+  {.error: "Jenova targets FreeBSD only — see docs/install.md. " &
+           "This matches the guard in jenova_core.nim.".}
 
 import std/os
 import jenova/gui
 
 const
   Version = "0.1.0"
-  Stage = "N-S7 desktop application"
+  Stage = "desktop application"
 
+## Function purpose: printed on `--help` and on an unknown flag, so a mistyped
+## option shows what was expected rather than only that it was wrong.
 proc usage() =
   echo "jenova ", Version, " (", Stage, ")"
   echo ""
@@ -45,6 +39,8 @@ proc usage() =
   echo ""
   echo "  The headless server is a separate binary: jenova-core serve"
 
+## Function purpose: parses the three flags and hands everything else to the
+## window, so argument handling stays out of the widget module.
 proc main() =
   var withTray = true
   var checkOnly = false
@@ -56,10 +52,9 @@ proc main() =
       usage()
       quit(0)
     else:
-      # Action purpose: refuse an unknown flag rather than ignoring it. The same
-      # rule is asserted for `jenova-core serve` in tests/test_lifecycle.sh —
-      # silently swallowing a mistyped flag is how a run does the wrong thing
-      # while looking correct.
+      # Action purpose: refuse an unknown flag rather than ignore it. Silently
+      # swallowing a mistyped one is how a run does the wrong thing while
+      # looking correct.
       echo "unknown option: ", arg
       echo ""
       usage()
@@ -68,9 +63,9 @@ proc main() =
   try:
     gui.run(withTray = withTray, checkOnly = checkOnly)
   except CatchableError as e:
-    # A configuration or path error must reach the terminal. Reporting it inside
-    # a window the error may have prevented from opening is how a startup
-    # failure becomes a silent one.
+    # Action purpose: a configuration or path error must reach the terminal.
+    # Reporting it inside a window the error may have prevented from opening is
+    # how a start-up failure becomes a silent one.
     stderr.writeLine "jenova: ", e.msg
     quit(1)
 
