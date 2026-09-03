@@ -20,18 +20,18 @@ type
 ## can run arbitrary code instead of activating a named GTK action. This is the
 ## piece owlkettle's bindings do not carry, and the reason this module declares
 ## anything at all.
-# Action purpose: GTK's callback action, absent from owlkettle's bindings.
-#
-# Declared without a `header:` pragma, which is not an oversight. A header makes
-# Nim include it in this module's C file, while owlkettle declares every GTK
-# function it binds as a bare prototype over `void*`. Both land in the same
-# translation unit and the C compiler sees the same symbol declared twice with
-# different types — a build failure `nim check` cannot report, because it never
-# runs a C compiler. The two other hand-bound modules escape this only because
-# neither touches a function owlkettle also binds; this one touches three.
-#
-# The signature is guaranteed by reading `gtk/gtkshortcutaction.h` instead, the
-# way every other hand-declared prototype in this program is.
+##
+## Action purpose: declared without a `header:` pragma, which is not an
+## oversight. A header makes Nim include it in this module's C file, while
+## owlkettle declares every GTK function it binds as a bare prototype over
+## `void*`. Both land in the same translation unit and the C compiler sees the
+## same symbol declared twice with different types — a build failure `nim check`
+## cannot report, because it never runs a C compiler. The two other hand-bound
+## modules escape this only because neither touches a function owlkettle also
+## binds; this one touches three.
+##
+## The signature is guaranteed by reading `gtk/gtkshortcutaction.h` instead, the
+## way every other hand-declared prototype in this program is.
 proc gtk_callback_action_new(callback: GtkShortcutFunc, data: pointer,
                              destroy: GDestroyNotify): GtkShortcutAction
   {.importc, cdecl.}

@@ -3318,11 +3318,12 @@ renderable SourceCode of BaseWidget:
     property:
       setSourceLanguage(state.buffer, state.language)
 
-# owlkettle binds this with a third `length` argument that GDK does not take
-# (`gdkclipboard.h:113` is two parameters). Declared here with the real
-# signature rather than imported, and header-less for the reason `shortcuts.nim`
-# records: a `header:` pragma pulls the real GTK headers into a translation unit
-# that also carries owlkettle's header-less prototypes.
+## Function purpose: sets the clipboard's text. owlkettle binds this with a third
+## `length` argument that GDK does not take (`gdkclipboard.h:113` is two
+## parameters), so it is declared here with the real signature rather than
+## imported — and header-less for the reason `shortcuts.nim` records: a
+## `header:` pragma pulls the real GTK headers into a translation unit that also
+## carries owlkettle's header-less prototypes.
 proc gdk_clipboard_set_text(c: GdkClipboard, text: cstring)
   {.importc: "gdk_clipboard_set_text", cdecl.}
 
