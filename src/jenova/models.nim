@@ -18,7 +18,7 @@ type
   SwitchResult* = object
     ## What the switch did, so a caller reports it without re-deriving it. The
     ## window shows `message`; the tests assert on the individual fields.
-    target*: string      ## the .gguf now active in models/agent
+    target*: string      ## the source .gguf now behind models/agent/active.gguf
     preserved*: seq[string]  ## real files renamed to .old — never symlinks
     removed*: seq[string]    ## displaced links, and entries already on the target
     message*: string
@@ -49,6 +49,23 @@ proc findModel*(dir: string): string =
   found.sort()
   found[0]
 
+const ActiveLink* = "active.gguf"
+  ## The one name a switch writes into `models/agent`. Fixed rather than the
+  ## model's own filename so that reading the slot is a lookup and not a guess:
+  ## anything else in the directory — a hand-dropped `.gguf`, an entry a failed
+  ## cleanup could not clear — used to win on collation order and silently run a
+  ## model nobody selected.
+
+## Function purpose: the active agent model, by name where a switch has set one
+## and by collation order where it has not. The fallback is for directories no
+## switch has touched: an install predating `ActiveLink`, or one the operator
+## fills by hand.
+proc agentModel*(agentDir: string): string =
+  let active = agentDir / ActiveLink
+  if symlinkExists(active) or fileExists(active):
+    return active
+  findModel(agentDir)
+
 ## Function purpose: the three paths `lifecycle` builds its argument vectors
 ## from, resolved in one place so a caller cannot get a different answer.
 ##
@@ -62,7 +79,7 @@ proc discover*(jcaHome: string, kind: ModelKind): string =
     result = getEnv("JENOVA_MODEL")
     if result.len > 0:
       return
-    result = findModel(modelsDir / "agent")
+    result = agentModel(modelsDir / "agent")
     if result.len == 0:
       result = findModel(modelsDir)
   of mkDraft:
@@ -106,6 +123,9 @@ proc targetModel*(jcaHome, target: string): string =
 ##    folder; a real file dropped in by hand is renamed to `.old`.
 ## 4. The swap is a rename, which is atomic, so no reader sees the directory
 ##    without an active model, and the source may not itself be in the slot.
+## 5. The link is always named `ActiveLink`, never after the model. That is what
+##    makes the slot readable by lookup: a second `.gguf` in the directory is
+##    then untidiness, where before it decided which model ran.
 proc switchToPath*(jcaHome, modelPath: string): SwitchResult =
   if not modelPath.endsWith(".gguf"):
     raise newException(ModelError, "not a .gguf: " & modelPath)
@@ -171,7 +191,7 @@ proc switchToPath*(jcaHome, modelPath: string): SwitchResult =
   # atomically. Doing it first means the slot holds the right model from this
   # point on, and anything that fails afterwards is untidiness rather than an
   # unusable installation.
-  let active = agentDir / targetName
+  let active = agentDir / ActiveLink
   moveFile(tmpLink, active)
   result.target = targetName
 
@@ -231,7 +251,7 @@ type
 ## Function purpose: the real file behind the active symlink, which is what an
 ## `active` flag has to be compared against — the link's own path never matches.
 proc activeAgentPath*(jcaHome: string): string =
-  let cur = findModel(jcaHome / "models" / "agent")
+  let cur = agentModel(jcaHome / "models" / "agent")
   if cur.len == 0: return ""
   try: cur.expandFilename except OSError: cur
 

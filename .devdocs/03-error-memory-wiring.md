@@ -724,6 +724,29 @@ is as fine as `recv` granularity allows, and says so. R-21 narrows the claim.
 Ten assertions added. **Both code fixes were proven to fail without them**: restoring the
 independent filters fails "the survivors keep their own snippets", and removing the slot check
 fails "a model already in the active slot is refused".
+
+### R-22 · the active model was chosen by collation order · session 8
+
+| # | Finding | Verdict |
+|---|---|---|
+| R-22 | R-19's cleanup is non-fatal, so a failed clear can leave a stale `.gguf` that `discover` selects over the switched one | **Valid, and wider than stated.** The switch named the link after the model, so the slot held several plausible names and `findModel` broke the tie by sorting. A cleanup failure is one way to get a second candidate; a `.gguf` you drop in yourself is another, and needs no failure at all |
+
+Reproduced before fixing, against a built `jenova-core`: switch to `zeta-instruct.gguf`, drop a
+symlink named `alpha-thinking.gguf` beside it, and `models list` answers `alpha-thinking.gguf` — a
+model the switch never selected and the user never chose.
+
+Fixed at the root rather than at the symptom. **A switch now always writes
+`models/agent/active.gguf`**, so reading the slot is a lookup and no other entry can change the
+answer; `agentModel` is the one place that rule lives, and both `discover` and `activeAgentPath`
+read through it. The collation scan survives as the fallback for a slot no switch has written — an
+install predating the fixed name, or one the operator fills by hand — which is also what makes the
+change need no migration: the next switch converts the directory.
+
+`models list` now follows the link, so it names the model rather than answering `active.gguf`.
+
+Three assertions added, and **the fix was proven to fail without them**: reverting `agentModel` to
+a bare `findModel` fails "a second entry in the slot does not override the switch", naming the
+wrong model in the failure message.
 ---
 
 ## The GUI became buildable and runnable · session 7
