@@ -7,7 +7,7 @@ the retrieval path is `src/jenova/rag.nim` and the injection path is `src/jenova
 Where a mechanism is implemented but not reached in normal operation, it says so rather than
 describing intent as behaviour.
 
-> **Three states in this document were wrong and are corrected below.** It reported the retrieval
+> **Four states in this document were wrong and are corrected below.** It reported the retrieval
 > index as never populated, workspace context and per-message attachments as existing only in the
 > Web UI, and conversation history as never trimmed. All four claims had been overtaken by the
 > code. Recorded here rather than quietly edited, because a document that told a reader a working

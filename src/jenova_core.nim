@@ -665,6 +665,27 @@ proc main() =
         check("and two different files with identical content differ",
               k1.att.key != k3.att.key, k1.att.key & " vs " & k3.att.key)
 
+        # The case a differing basename does not reach. Keyed on the file NAME,
+        # two files that agree on name, size and mtime collide — which is what a
+        # copied file, two checkouts of one repository, or two exports written
+        # in the same second all produce — and the thumbnail cache then draws
+        # the first picture for the second attachment. The mtimes are set equal
+        # deliberately, because that is the colliding case and leaving them to
+        # the clock would make this pass by accident.
+        block sameNameDifferentDirectory:
+          let one = dir / "one"
+          let two = dir / "two"
+          createDir(one); createDir(two)
+          writeFile(one / "shot.png", "same")
+          writeFile(two / "shot.png", "same")
+          let stamp = getLastModificationTime(one / "shot.png")
+          setLastModificationTime(two / "shot.png", stamp)
+          let a = pipeline.readAttachment(one / "shot.png", true, true)
+          let b = pipeline.readAttachment(two / "shot.png", true, true)
+          check("two files of one name, size and mtime in different " &
+                "directories are not one attachment",
+                a.att.key != b.att.key, a.att.key & " vs " & b.att.key)
+
         let extra = """[{"type":"IMAGE","name":"p.png","base64Url":"data:image/png;base64,AAAA"}]"""
         var memo: pipeline.ParseMemo
         for _ in 0 ..< 100:
@@ -739,6 +760,23 @@ proc main() =
                 bounded.parses == before,
                 "the newest entry was evicted; parses went " & $before &
                 " -> " & $bounded.parses)
+
+          # `forget` has to drop the queue entry too, on the same reasoning as
+          # the markdown memo's `invalidate`: `entryFor` appends an id only when
+          # `atts` does not already hold it, so a payload re-baselined under one
+          # id takes a queue slot every time. 100 forgets plus 50 other messages
+          # is 51 ids and inside the cap of 128 — nothing should be evicted.
+          # With the duplicates it is 150 entries, eviction runs, and the 32 it
+          # drops are all the row that was just re-parsed.
+          block forgetDoesNotDuplicate:
+            var dup: pipeline.ParseMemo
+            for _ in 0 ..< 100:
+              dup.forget("hot")
+              discard dup.attachmentsFor("hot", one)
+            for i in 0 ..< 50:
+              discard dup.attachmentsFor("cold-" & $i, one)
+            check("a row forgotten 100 times holds one memo slot, not 100",
+                  dup.len == 51, "held " & $dup.len & " of 51 distinct ids")
 
           bounded.clear()
           check("clear empties the memo", bounded.len == 0)
@@ -1078,6 +1116,33 @@ proc main() =
 
       echo "markdown-selftest"
 
+      # `http.hasParam` is asserted here rather than in a suite of its own: it
+      # is three lines of query parsing with no server behind it, and the
+      # alternative was that nothing asserted it at all. The flag form is the
+      # one its own doc comment promises and the one it did not answer —
+      # `find('=')` returns -1 for a bare `?debug`, and a test of `e > 0` read
+      # that as absent.
+      block flagParameters:
+        proc req(q: string): http.Request = http.Request(query: q)
+        check("a valueless flag is present", req("debug").hasParam("debug"))
+        check("and so is the same flag with an empty value",
+              req("debug=").hasParam("debug"))
+        check("and one carrying a value", req("debug=1").hasParam("debug"))
+        check("a valueless flag among others is found",
+              req("a=1&debug&b=2").hasParam("debug"))
+        check("it is still the last pair when it is last",
+              req("a=1&debug").hasParam("debug"))
+        check("a flag that is not there is absent",
+              not req("a=1&b=2").hasParam("debug"))
+        check("and a key is not matched by a longer one that starts with it",
+              not req("debugging=1").hasParam("debug"))
+        check("an empty query has no parameters",
+              not req("").hasParam("debug"))
+        # The neighbour it shares a parse with, so a change to one cannot
+        # silently redefine the other.
+        check("a valueless flag still reads as an empty value",
+              req("debug").queryStr("debug") == "")
+
       block tables:
         let bs = markdown.parse(
           "before\n\n| a | b |\n|---|---:|\n| 1 | 2 |\n| 3 | 4 |\n\nafter")
@@ -1184,6 +1249,29 @@ proc main() =
         discard memo.blocksFor("note-2", a)
         check("invalidating one id leaves every other id cached",
               memo.parses == parsesBefore)
+
+        # `invalidate` has to drop the QUEUE entry as well as the maps, because
+        # `blocksFor` appends an id only when `blocks` does not already hold it.
+        # Left behind, one repeatedly-edited note takes a queue slot per edit,
+        # and `evict` then walks those stale copies and deletes the live entry
+        # while the maps sit far under the cap.
+        #
+        # Asserted by counting what survives rather than by reading `order`,
+        # which is private: 400 edits of one note plus 200 other messages is 201
+        # ids and well inside the cap, so nothing should be evicted at all.
+        # With the duplicates it is 600 queue entries, eviction runs, and the
+        # 128 it drops are all the hot note — which is the one thing that had
+        # just been rendered.
+        block invalidateDoesNotDuplicate:
+          var dup: markdown.BlockMemo
+          for _ in 0 ..< 400:
+            dup.invalidate("hot")
+            discard dup.blocksFor("hot", "hello")
+          for i in 0 ..< 200:
+            discard dup.blocksFor("cold-" & $i, "hello")
+          check("a note edited 400 times holds one memo slot, not 400",
+                dup.len == 201,
+                "held " & $dup.len & " of 201 distinct ids")
 
         # Same shape as the memo above: unbounded, never cleared, keyed by
         # message id in a module-level `var`.
@@ -2055,6 +2143,30 @@ proc main() =
         check("a real file placed in models/agent is preserved as .old",
               fileExists(home / "models" / "agent" / "manual.gguf.old") and
               not fileExists(home / "models" / "agent" / "manual.gguf"))
+
+        # The slot ITSELF, which the case above does not reach. The swap is a
+        # rename onto `active.gguf`, which replaces whatever is there without a
+        # word, and the clearing loop skips that name on the grounds that it is
+        # the entry just written. So a real `active.gguf` — an install predating
+        # the fixed name, or one filled in by hand — was destroyed by the
+        # switch, reported as a success, and absent from `preserved`.
+        block realFileInTheSlot:
+          let slot = home / "models" / "agent" / models.ActiveLink
+          removeFile(slot)
+          writeFile(slot, "handmade")
+          let r = models.switchToPath(home, alpha)
+          check("a real file in the active slot is preserved, not overwritten",
+                fileExists(slot & ".old"), $r.preserved)
+          check("and it is the bytes that were there, not a copy of the target",
+                (if fileExists(slot & ".old"): readFile(slot & ".old")
+                 else: "") == "handmade")
+          check("the switch reports having preserved it",
+                r.preserved.anyIt(it.endsWith(models.ActiveLink & ".old")),
+                $r.preserved)
+          check("and the slot now points at the model that was switched to",
+                symlinkExists(slot) and
+                expandSymlink(slot).extractFilename == "alpha.gguf",
+                (if symlinkExists(slot): expandSymlink(slot) else: "not a link"))
 
       block refusals:
         # Containment. `switchToPath` is exported, so a path outside the model
@@ -3025,6 +3137,21 @@ proc main() =
           check("and the surviving text is what was outside the selection",
                 over.remaining == "keep  end", "[" & over.remaining & "]")
 
+          # The case that separates "measure the inserted run" from "measure the
+          # draft's net growth", which the fixture above does not: the selection
+          # replaced is 200 characters and the run pasted over it is 250, so the
+          # draft grows by 50 — under the threshold — while the pasted run is
+          # two and a half times over it. Measuring the growth left a long paste
+          # inline whenever the user had selected enough text first, and every
+          # other fixture here passes either way.
+          let netUnder = composer.classifyInsertion(
+            "keep " & repeat('y', 200) & " end", "keep " & long & " end", T)
+          check("a paste over a large selection is measured by the run, " &
+                "not by the draft's net growth",
+                netUnder.divert and netUnder.inserted == long,
+                "divert=" & $netUnder.divert & " inserted=" &
+                $netUnder.inserted.len & " net growth=" & $(250 - 200))
+
         block emptyDraft:
           let r = composer.classifyInsertion("", long, T)
           check("a paste into an empty draft is diverted", r.divert)
@@ -3326,6 +3453,46 @@ proc main() =
         check("settings survive a save and load", settings.saveTo(sf, s) and
               settings.loadFrom(sf).get("temperature") == "0.35")
         removeFile(sf)
+
+        # Action purpose: `getBool`'s own doc comment promises the field's
+        # declared default for an unset value, and the code answered plain
+        # `false`. `initSettings` writes every boolean, so through that path the
+        # fallback never ran and the gap was invisible — but a
+        # default-constructed `Settings`, whose table is empty, read every
+        # `boolDefault: true` field as OFF. Two ship on: the statistics line and
+        # the sidebar on a new chat. Asserted against a bare `Settings()`,
+        # because that is the only value that reaches the fallback at all.
+        block boolDefaults:
+          let bare = settings.Settings()
+          check("a field declared on reads as on when nothing is stored",
+                bare.getBool("showMessageStats"))
+          check("and so does the other one that ships on",
+                bare.getBool("autoShowSidebarOnNewChat"))
+          check("a field declared off still reads as off",
+                not bare.getBool("pdfAsImage"))
+          check("an unknown key is off rather than an error",
+                not bare.getBool("noSuchSetting"))
+          # The stored value has to win in BOTH directions, or the fallback has
+          # simply replaced one wrong answer with another: turning a
+          # default-on field off must stick.
+          var off = settings.initSettings()
+          off["showMessageStats"] = "0"
+          check("an explicit 0 beats a default of on",
+                not off.getBool("showMessageStats"))
+          var on = settings.initSettings()
+          on["pdfAsImage"] = "1"
+          check("an explicit 1 beats a default of off", on.getBool("pdfAsImage"))
+          # The declared defaults are what `initSettings` writes, so the two
+          # paths must agree — otherwise a fresh install and a bare object are
+          # two different programs.
+          let fresh = settings.initSettings()
+          var disagreed: seq[string]
+          for d in settings.Defs:
+            if d.kind == settings.skBool and
+               fresh.getBool(d.key) != bare.getBool(d.key):
+              disagreed.add d.key
+          check("a fresh install and an unwritten one agree on every boolean",
+                disagreed.len == 0, $disagreed)
 
       # Action purpose: the parity claim itself, asserted rather than stated.
       # "1:1 with the Web UI" is the kind of thing that is true on the day it is
@@ -4315,6 +4482,33 @@ proc main() =
         check("forgetting a note removes it from the index",
               rag.notePath("wsidx-note") notin indexedPaths(rag.NoteRoot))
 
+        # Action purpose: the same rule through the CONTAINER, which is where it
+        # was not applied. Deleting a workspace flags its notes, files and
+        # conversations in one statement each, so none of them passes through
+        # the per-item delete that calls `rag.forget*` — and every one of them
+        # went on answering retrieval after the workspace was gone. The only
+        # place a deletion was invisible.
+        block deletingAContainerUnfilesWhatItHeld:
+          db.exec("DELETE FROM notes WHERE id LIKE 'wsdel-%'", [])
+          db.exec("DELETE FROM workspaces WHERE id='wsdel-ws'", [])
+          db.exec("INSERT INTO workspaces (id, name, is_deleted) " &
+                  "VALUES (?, ?, 0)", "wsdel-ws", "Doomed")
+          db.exec("INSERT INTO notes (id, title, content, workspaceId, " &
+                  "is_deleted) VALUES (?, ?, ?, ?, 0)",
+                  "wsdel-note", "Held", "grimlock content", "wsdel-ws")
+          discard rag.indexNote("wsdel-note", "Held", "grimlock content")
+          check("the note under the workspace is indexed to begin with",
+                rag.notePath("wsdel-note") in indexedPaths(rag.NoteRoot))
+
+          check("deleting the workspace succeeds",
+                api.deleteEntity("workspaces", "wsdel-ws"))
+          check("and the note it held stops being recalled",
+                rag.notePath("wsdel-note") notin indexedPaths(rag.NoteRoot))
+
+          db.exec("DELETE FROM notes WHERE id LIKE 'wsdel-%'", [])
+          db.exec("DELETE FROM workspaces WHERE id='wsdel-ws'", [])
+          rag.forgetNote("wsdel-note")
+
         # The backfill exists so a workspace that predates this wiring becomes
         # searchable without the user re-saving every note.
         db.exec("DELETE FROM notes WHERE id LIKE 'wsidx-%'", [])
@@ -4352,6 +4546,53 @@ proc main() =
                                  @[0.1'f32, 0.2'f32, 0.3'f32])
         check("once it has one, the backfill does no work twice",
               rag.backfillWorkspace() == 0)
+
+        # Action purpose: "has a vector" has to mean EVERY chunk has one, not
+        # any one of them. A note long enough to chunk is embedded a chunk at a
+        # time, so an embedder that dies part-way through one leaves a document
+        # with its first chunk vectorised and the rest NULL — and an `EXISTS`
+        # test reads that as done. The document is then retired for good and the
+        # tail the user actually asked about is never embedded, which is the one
+        # state this backfill exists to recover from.
+        #
+        # `ChunkWords` apart so the note really does chunk; asserted first,
+        # because with one chunk this fixture silently becomes the all-NULL case
+        # already covered above.
+        block partiallyEmbedded:
+          db.exec("DELETE FROM notes WHERE id LIKE 'wsidx-%'", [])
+          rag.forgetNote("wsidx-part")
+          var words: seq[string]
+          for i in 0 ..< rag.ChunkWords * 4:
+            words.add "word" & $i
+          db.exec("INSERT INTO notes (id, title, content, is_deleted) " &
+                  "VALUES (?, ?, ?, 0)", "wsidx-part", "Partial",
+                  words.join(" "))
+          discard rag.backfillWorkspace()
+          let path = rag.notePath("wsidx-part")
+          var lines: seq[int]
+          for r in db.query(
+              "SELECT start_line FROM rag_chunks WHERE path=? ORDER BY start_line",
+              path):
+            if r.len > 0:
+              lines.add (try: parseInt(r[0]) except ValueError: 1)
+          check("the fixture note really is more than one chunk",
+                lines.len >= 2, $lines.len & " chunks")
+
+          # Every chunk vectorised, then exactly one cleared: the half-embedded
+          # document, written rather than waited for, because with an embedder
+          # reachable this would otherwise test the fully-embedded case.
+          for line in lines:
+            rag.storeChunkVector(path, line, @[0.1'f32, 0.2'f32, 0.3'f32])
+          check("with every chunk embedded there is nothing to do",
+                rag.backfillWorkspace() == 0)
+          if lines.len >= 2:
+            db.exec("UPDATE rag_chunks SET vec=NULL WHERE path=? AND start_line=?",
+                    path, $lines[^1])
+            check("a document missing one chunk's vector is retried",
+                  rag.backfillWorkspace() >= 1)
+
+          db.exec("DELETE FROM notes WHERE id LIKE 'wsidx-%'", [])
+          rag.forgetNote("wsidx-part")
 
         db.exec("DELETE FROM notes WHERE id LIKE 'wsidx-%'", [])
         rag.forgetNote("wsidx-bf")

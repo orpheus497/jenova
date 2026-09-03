@@ -1075,6 +1075,14 @@ viewable App:
   ## LAN *off* is told once, in a line that vanishes, that the socket is still
   ## answering on `0.0.0.0`.
   lanBound: bool
+  ## **Why** the socket is on `0.0.0.0`: the LAN flag, or `HOST` in the
+  ## configuration file. `run` resolves the bind as "the flag, or else `HOST`",
+  ## so a deployment with `HOST=0.0.0.0` and the flag off produces exactly the
+  ## `lanEnabled != lanBound` signature a toggled-off flag produces — and the
+  ## banner then told that user to restart to stop it, which restarting does not
+  ## do, because the file says `0.0.0.0` every time it is read. The remedy is a
+  ## different one and has to be named as such.
+  lanFromConfig: bool
   ## Cached, not computed per redraw: resolving it forks `route` and `ifconfig`,
   ## and `view` runs on every token of a stream. `ui.poll_status` forking
   ## `jenova-ca status` every 3 s in the tray and every 1 s in the TUI is defect
@@ -5876,10 +5884,23 @@ method view(app: AppState): Widget =
                     # opened, so the toggle cannot move it and never claimed to —
                     # it just said so in a line that the next notice overwrote.
                     revealed = app.lanEnabled != app.lanBound and not app.editorOpen
+                    # Three cases and not two, because the remedy is not the
+                    # same one. A bind that came from `HOST` in the
+                    # configuration file survives every restart, so telling that
+                    # user to restart is an instruction that cannot work — and it
+                    # is the dangerous direction, where the socket is open to the
+                    # network while the switch says it is not.
                     title = (if app.lanEnabled:
                                "LAN access is switched on, but this window's " &
                                "server is still bound to 127.0.0.1. Quit and start " &
                                "Jenova again to serve on the network."
+                             elif app.lanFromConfig:
+                               "LAN access is switched off, but this window's " &
+                               "server is bound to 0.0.0.0 and can be reached " &
+                               "from the network, because HOST=0.0.0.0 is set in " &
+                               "your configuration file. The LAN switch does not " &
+                               "override it and restarting will not change it — " &
+                               "change HOST in etc/jenova.local.conf."
                              else:
                                "LAN access is switched off, but this window's " &
                                "server is still bound to 0.0.0.0 and can be " &
@@ -6153,7 +6174,12 @@ proc run*(withTray = true, checkOnly = false) =
   let c = config.load(p)
   let lc = lifecycle.init(p, c)
 
-  let host = if isLanEnabled(p): "0.0.0.0" else: c.get("HOST", "127.0.0.1")
+  let lanFlag = isLanEnabled(p)
+  let host = if lanFlag: "0.0.0.0" else: c.get("HOST", "127.0.0.1")
+  # The bind is `0.0.0.0` and the LAN flag is not what put it there, so `HOST`
+  # did. Resolved here beside the decision rather than re-derived in `view`,
+  # which would read the configuration on every frame.
+  let lanFromConfig = not lanFlag and host == "0.0.0.0"
   let port = c.getInt("PORT", 8080)
 
   db.initDb(p.state / "jenova.db")
@@ -6274,6 +6300,7 @@ proc run*(withTray = true, checkOnly = false) =
                        # Reading the flag twice would make the two agree by
                        # construction and the banner below could never fire.
                        lanBound = host == "0.0.0.0",
+                       lanFromConfig = lanFromConfig,
                        lanAddr = initialAddr,
                        convId = conv,
                        messages = history,

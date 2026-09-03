@@ -61,14 +61,22 @@ type
 ## `prev` with one run spliced in, recoverable in O(n) from the longest common
 ## prefix and suffix around it.
 ##
-## Action purpose: the three guards are the ways an insertion can be something
-## else — typing is too short, deleting or replacing a selection leaves `next`
-## no longer than `prev`, and a threshold of zero means the feature is off.
+## Action purpose: the guards are the ways an insertion can be something else —
+## a threshold of zero means the feature is off, deleting or replacing a
+## selection with something shorter leaves `next` no longer than `prev`, and
+## typing is too short.
+##
+## **The length that decides is the inserted run's, not the draft's net growth.**
+## With `prev = P + D + S` and `next = P + I + S` the growth is `I.len - D.len`,
+## so testing the growth charges the paste for whatever it replaced: selecting a
+## paragraph and pasting a long document over it grows the draft by the
+## difference, and a paste well past the threshold was silently left inline
+## whenever the selection it replaced was large enough. The run is recovered
+## first — it is O(n) either way — and measured directly.
 proc classifyInsertion*(prev, next: string, threshold: int): Insertion =
   result.remaining = next
   if threshold <= 0: return
   if next.len <= prev.len: return
-  if next.len - prev.len < threshold: return
 
   var p = 0
   while p < prev.len and p < next.len and prev[p] == next[p]: inc p
@@ -77,9 +85,6 @@ proc classifyInsertion*(prev, next: string, threshold: int): Insertion =
         prev[prev.len - 1 - sfx] == next[next.len - 1 - sfx]: inc sfx
 
   let inserted = next[p ..< next.len - sfx]
-  # Invariant, not a reachable case: with `prev = P + D + S` and
-  # `next = P + I + S` the growth is `I.len - D.len`, so `I.len` already clears
-  # the threshold tested above. Stated because the divert promises it.
   if inserted.len < threshold: return
 
   result.divert = true

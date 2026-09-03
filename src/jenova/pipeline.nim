@@ -808,13 +808,23 @@ proc readAttachment*(path: string, visionKnown, visionOk: bool):
             "could not read " & name & ": " & e.msg)
   let ext = path.splitFile.ext.toLowerAscii
 
-  # Identity, not content: name, size and mtime distinguish two staged files
-  # without a pass over either one's bytes, and two attachments of the same file
-  # are genuinely the same picture and may share a cached thumbnail.
+  # Identity, not content: the source path, size and mtime distinguish two
+  # staged files without a pass over either one's bytes, and two attachments of
+  # the same file are genuinely the same picture and may share a cached
+  # thumbnail.
+  #
+  # Action purpose: the whole path and not the basename. Keyed on the basename,
+  # `~/a/diagram.png` and `~/b/diagram.png` collided whenever they matched on
+  # size and mtime — which is exactly what a copied file, a checkout of the same
+  # repository, or two exports written in the same second all produce — and the
+  # thumbnail cache then showed the first picture for the second attachment.
+  # Absolute, so the same file reached by a relative path and by its full one is
+  # still one identity.
+  let ident = try: path.absolutePath.normalizedPath except OSError: path
   var stamp = ""
   try: stamp = $getLastModificationTime(path).toUnix
   except CatchableError: discard
-  let key = name & ":" & $size & ":" & stamp
+  let key = ident & ":" & $size & ":" & stamp
 
   if ext in ImageExts:
     if visionKnown and not visionOk:
@@ -984,6 +994,15 @@ proc forget*(memo: var ParseMemo, id: string) =
   memo.nodes.del(id)
   memo.atts.del(id)
   memo.stamps.del(id)
+  # Action purpose: the queue entry goes with them, because `entryFor` appends
+  # an id only when `atts` does not already hold it. Left behind, the next parse
+  # of the same row appends a second entry for it, and a note forgotten and
+  # redrawn repeatedly fills `order` with copies of one id — `evict` then walks
+  # stale entries and deletes live map entries while the maps sit well under the
+  # cap. O(n) and affordable: this is called where a payload is re-baselined,
+  # never from a frame.
+  let at = memo.order.find(id)
+  if at >= 0: memo.order.delete(at)
 
 ## Function purpose: switching conversation makes every entry here dead at once,
 ## which is cheaper to empty than to let the cap evict one insert at a time.

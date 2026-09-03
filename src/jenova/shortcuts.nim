@@ -70,6 +70,10 @@ renderable ShortcutHost of BaseWidget:
   held {.private, onlyState.}: Bindings
   slots {.private, onlyState.}: seq[ptr tuple[owner: Bindings, index: int]]
   installed {.private, onlyState.}: seq[string]
+  ## The controller currently on the widget, so a changed accelerator set can
+  ## take the old one off. Without it every rebuild added another controller
+  ## and GTK kept dispatching through all of them.
+  controller {.private, onlyState.}: GtkEventController
 
   hooks:
     beforeBuild:
@@ -109,9 +113,28 @@ renderable ShortcutHost of BaseWidget:
       if accels == state.installed: return
 
       # Action purpose: GTK cannot remove one shortcut from a controller, so a
-      # changed accelerator set means a whole new controller and the old one is
-      # released only when the widget is. Written to run rarely: the set is
+      # changed accelerator set means a whole new controller — and the old one
+      # has to come OFF the widget. Left on, each rebuild stacked another, so an
+      # accelerator the new set no longer declares still fired through the
+      # controller that carried it, dispatching into a slot whose index no
+      # longer names the same binding. Written to run rarely: the set is
       # declared once at start-up and does not vary with application state.
+      if not state.controller.isNil:
+        gtk_widget_remove_controller(state.internalWidget, state.controller)
+        state.controller = GtkEventController(nil)
+      # Action purpose: freed only after the removal above, never before. The
+      # controller holds these pointers as its actions' user data, so releasing
+      # them while it is still installed leaves every one of its accelerators
+      # dispatching through freed memory — the removal is what guarantees
+      # nothing can reach them again.
+      for slot in state.slots:
+        # `reset` before `dealloc`: `owner` is a Nim `ref` living in untraced
+        # memory, so freeing the block without it drops the reference without
+        # releasing it and the `Bindings` object is never collected.
+        reset(slot[])
+        dealloc(slot)
+      state.slots = @[]
+
       let controller = gtk_shortcut_controller_new()
       gtk_shortcut_controller_set_scope(controller, GTK_SHORTCUT_SCOPE_MANAGED)
       for i, b in state.bindings:
@@ -126,6 +149,7 @@ renderable ShortcutHost of BaseWidget:
         gtk_shortcut_controller_add_shortcut(
           controller, gtk_shortcut_new(trigger, action))
       gtk_widget_add_controller(state.internalWidget, controller)
+      state.controller = controller
       state.installed = accels
 
   adder add:

@@ -10,10 +10,12 @@
 const
   Version* = "0.1.0"
 
-  ## The licence the repository ships under, as libadwaita's About window names
-  ## it. `LICENSE` is the AGPL v3 text and `jenova_core.nimble:6` says
-  ## `AGPL-3.0-or-later`; `LicenseAGPL3_0` is the "or later" variant, and
-  ## `LicenseAGPL3_0_Only` is the one that is not.
+  ## The copyright line the About window shows. The licence itself is not
+  ## declared here: libadwaita's About window takes it as a `License` enum
+  ## value, set where that window is configured. `LICENSE` is the AGPL v3 text
+  ## and `jenova_core.nimble:6` says `AGPL-3.0-or-later`, so the value there is
+  ## `LicenseAGPL3_0`, the "or later" variant — `LicenseAGPL3_0_Only` is the one
+  ## that is not.
   Copyright* = "© 2026 orpheus497"
 
   ## Where the project lives. Used by the About window's Website and Report an

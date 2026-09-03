@@ -196,6 +196,11 @@ proc switchToPath*(jcaHome, modelPath: string): SwitchResult =
       "failed to validate replacement symlink for " & targetName &
       " (resolved to '" & tmpReal & "', expected '" & targetReal & "')")
 
+  # Declared before the swap because preserving a real file already in the slot
+  # can fail, and that is reported through the same list as every other entry
+  # the cleanup could not clear rather than through a second channel.
+  var failuresPreActive: seq[string]
+
   var existing: seq[string]
   for kind, path in walkDir(agentDir):
     if kind notin {pcFile, pcLinkToFile}: continue
@@ -216,10 +221,34 @@ proc switchToPath*(jcaHome, modelPath: string): SwitchResult =
   # point on, and anything that fails afterwards is untidiness rather than an
   # unusable installation.
   let active = agentDir / ActiveLink
+  # Action purpose: `moveFile` is a rename, which replaces the destination
+  # silently — and the destination is skipped by the clearing loop below on the
+  # grounds that it is the entry just put there. So a REAL `active.gguf`, one an
+  # operator dropped in by hand or an install predating `ActiveLink` left, was
+  # neither preserved nor removed: it was destroyed by the rename, with a
+  # success message and a `preserved` list that did not mention it. A symlink is
+  # still simply replaced — the file it names has not moved and is still in its
+  # source folder, which is the same reasoning the clearing loop uses.
+  if fileExists(active) and not symlinkExists(active):
+    var dest = active & ".old"
+    if fileExists(dest) or symlinkExists(dest):
+      var counter = 1
+      while fileExists(active & ".old." & $counter) or
+            symlinkExists(active & ".old." & $counter):
+        counter += 1
+      dest = active & ".old." & $counter
+    try:
+      moveFile(active, dest)
+      result.preserved.add dest
+    except OSError, IOError:
+      # Reported like any other entry the cleanup could not clear. Raising here
+      # would abort a switch whose replacement is already validated and ready,
+      # and the rename below still leaves the slot correct.
+      failuresPreActive.add active.extractFilename
   moveFile(tmpLink, active)
   result.target = targetName
 
-  var failures: seq[string]
+  var failures = failuresPreActive
   for entry in existing:
     # The entry just moved into place is the answer, not a leftover.
     if entry == active: continue

@@ -437,10 +437,20 @@ proc forgetFileAsset*(id: string) =
 ## interrupted half way resumes rather than restarting.
 proc backfillWorkspace*(): int =
   var indexed: HashSet[string]
+  # Action purpose: a document counts as indexed only when *every* chunk carries
+  # a vector. `EXISTS ... vec IS NOT NULL` asks whether any one does, and a run
+  # interrupted part-way through a long note leaves exactly that state — one
+  # embedded chunk and the rest null. Skipping on it retires the document for
+  # good, and the tail the user actually asked about is never embedded. The
+  # `NOT EXISTS ... IS NULL` half is what makes the pass resumable; the first
+  # half stays because it is what excludes a document with no chunks at all,
+  # for which the second is vacuously true.
   for r in db.query(
       "SELECT d.path FROM rag_documents d WHERE (d.path LIKE ? OR d.path LIKE ?)" &
       " AND EXISTS (SELECT 1 FROM rag_chunks c WHERE c.path = d.path" &
-      " AND c.vec IS NOT NULL)",
+      " AND c.vec IS NOT NULL)" &
+      " AND NOT EXISTS (SELECT 1 FROM rag_chunks c WHERE c.path = d.path" &
+      " AND c.vec IS NULL)",
       NoteRoot & "/%", FileRoot & "/%"):
     if r.len > 0: indexed.incl r[0]
 
@@ -482,9 +492,13 @@ proc backfillWorkspace*(): int =
 ## them singly anyway.
 proc backfillChats*(): int =
   var indexed: HashSet[string]
+  # Complete in the same sense as `backfillWorkspace`, and for the same reason:
+  # a partly embedded turn has to be retried, not retired.
   for r in db.query(
       "SELECT d.path FROM rag_documents d WHERE d.path LIKE ? AND EXISTS (" &
-      "SELECT 1 FROM rag_chunks c WHERE c.path = d.path AND c.vec IS NOT NULL)",
+      "SELECT 1 FROM rag_chunks c WHERE c.path = d.path AND c.vec IS NOT NULL)" &
+      " AND NOT EXISTS (SELECT 1 FROM rag_chunks c WHERE c.path = d.path" &
+      " AND c.vec IS NULL)",
       ChatRoot & "/%"):
     if r.len > 0: indexed.incl r[0]
 
