@@ -5465,14 +5465,32 @@ method view(app: AppState): Widget =
                       insert(app.convRow(c)) {.expand: false.}
 
               # ── Chat column ───────────────────────────────────────────────────
-              Box(orient = OrientY):
+              # **`ToolbarView`, not a plain `Box`** (report 05, Phase 3). The
+              # chat column is a header, a scrolling body and a stack of bars at
+              # the bottom, which is precisely the layout libadwaita has a
+              # widget for — and it was compiled out of the binary until
+              # `-d:adwminor=4`, so the column was a Box because its replacement
+              # was not built (report 06 §2).
+              #
+              # What the widget adds over the Box is the part a Box cannot do:
+              # it knows which of its children are *bars* and which is *content*,
+              # so the top bar takes its shadow from whether the transcript is
+              # scrolled under it, and the bottom bars keep their own backdrop
+              # instead of inheriting the column's.
+              #
+              # Both styles are `ToolbarFlat` because the window's own palette
+              # is doing this job already: `.chat-col` is transparent so the
+              # canvas shows through, and a raised toolbar would paint over it.
+              ToolbarView:
+                topBarStyle = ToolbarFlat
+                bottomBarStyle = ToolbarFlat
                 style = [StyleClass("chat-col")]
 
                 # The top bar lives here, not in a titlebar slot — GTK4 hides a
                 # `gtk_window_set_titlebar` titlebar in fullscreen, which is what
                 # made it vanish. Atop the chat column rather than spanning the
                 # window because the Web UI's sidebar is full height.
-                insert(app.topBar()) {.expand: false.}
+                insert(app.topBar()) {.addTop.}
 
                 # Phase 3, report 05. `Banner` is libadwaita's widget for exactly
                 # this — a strip under the header naming a condition the window is
@@ -5489,7 +5507,7 @@ method view(app: AppState): Widget =
                 # `useMarkup = false` on both: the titles are plain sentences and
                 # one of them interpolates an address, so leaving Pango markup on
                 # would make a stray `&` in a hostname a rendering error.
-                Banner {.expand: false.}:
+                Banner {.addTop.}:
                   # `bsDown` only. `bsStarting` is deliberately not banner-worthy:
                   # it resolves on its own within seconds and the header subtitle
                   # already says "starting — loading model", so a strip that
@@ -5504,7 +5522,7 @@ method view(app: AppState): Widget =
                   # and the tray.
                   proc clicked() = pendingActions.add "start"
 
-                Banner {.expand: false.}:
+                Banner {.addTop.}:
                   # The flag and the socket disagree. See `lanBound`: the listener
                   # is in this process and its address was fixed before the window
                   # opened, so the toggle cannot move it and never claimed to —
@@ -5537,7 +5555,7 @@ method view(app: AppState): Widget =
                 # `Box`-not-`Paned` reasoning it carried still applies one level
                 # down and lives at `mainArea`, which is the widget that actually
                 # changes type between a `ScrolledWindow` and an `NvimTerminal`.
-                DropZone {.expand: true.}:
+                DropZone:
                   # the drop target wraps the chat column, which is the
                   # Web UI's `ChatScreenDragOverlay` position.
                   style = [StyleClass("drop-zone")]
@@ -5547,7 +5565,7 @@ method view(app: AppState): Widget =
                 # size, because a GTK thumbnail means decoding the image on the
                 # GTK thread and the strip has to stay cheap to redraw.
                 if app.pending.len > 0 and not app.editorOpen:
-                  Box(orient = OrientX, spacing = 6, margin = 8) {.expand: false.}:
+                  Box(orient = OrientX, spacing = 6, margin = 8) {.addBottom.}:
                     for idx, a in app.pending:
                       Box(orient = OrientX, spacing = 4) {.expand: false.}:
                         style = [StyleClass("attach-chip")]
@@ -5576,7 +5594,7 @@ method view(app: AppState): Widget =
                           proc clicked() =
                             if idx < app.pending.len: app.pending.delete(idx)
 
-                Box(orient = OrientX, spacing = 8) {.expand: false.}:
+                Box(orient = OrientX, spacing = 8) {.addBottom.}:
                   # **This row is now the error surface and nothing else.**
                   # Every confirmation — "note saved", "attached X", "settings
                   # saved" — goes to `ToastOverlay`, appears over the transcript
@@ -5619,7 +5637,7 @@ method view(app: AppState): Widget =
                         app.noticeRetryable = false
                         app.postConversation()
 
-                Box(orient = OrientX, spacing = 8, margin = 12) {.expand: false.}:
+                Box(orient = OrientX, spacing = 8, margin = 12) {.addBottom.}:
                   # Action purpose: three branches, not two. This tested only
                   # `app.openNote`, so the editor page fell through to the *chat*
                   # row and showed a message box and a Send button under Neovim —

@@ -117,6 +117,7 @@ the right widget, not a bigger lid.
 | Transient notification | `ToastOverlay` (`adw.nim:1374` on the pinned revision, ungated) | ~~A one-line notice label~~ — upstream's widget: confirmations toast, and the row is now errors only |
 | Empty states | `StatusPage` | ~~A dim `Label`~~ — done for the empty transcript, the two model-list states and the trash, session 7 |
 | Inline messages | `Banner` | ~~—~~ — done for backend-down and the LAN flag/socket disagreement, session 7 |
+| Header/content/footer | `ToolbarView` | ~~A `Box` of three sections~~ — the chat column is a `ToolbarView` |
 | Adaptive sidebar | `OverlaySplitView` | `Flap` |
 | Menus | `PopoverMenu`, `ModelButton`, `ContextMenu` | 1 `Popover`, 1 `MenuButton` |
 | Split primary action | `SplitButton` | Two buttons |
