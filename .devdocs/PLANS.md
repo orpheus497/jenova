@@ -412,9 +412,15 @@ that was not there.**
   **stricter than `rehype-sanitize`**, not merely equivalent.
 - **KaTeX is G-34's existing open half**, not a new finding.
 
-**The `[A]` sweep is the largest remaining blockage** — 34 findings that **D-CG** bars from being
-scoped until verified, roughly a third of the audit. **Record refutations as prominently as
-confirmations:** the A-series was written in one pass and the tree has moved a long way since.
+**The `[A]` sweep is COMPLETE — 2026-09-03. It is no longer a blockage and this paragraph used to
+say it was.** 34 rows: **31 confirmed, 1 refuted (A-64), 1 merged into Step 12g (A-49), 1 needing a
+runtime probe (A-51).** **Zero `[A]` markers remain in `TODOS.md`**, confirmed by counting the
+file's own markers rather than trusting a report. **D-CG no longer bars anything except A-51.**
+
+*A stale blocker in a planning document costs the next session a session, which is why this line was
+rewritten rather than left to be re-derived.* **Record refutations as prominently as confirmations:**
+the A-series was written in one pass and the tree has moved a long way since — and the one
+refutation, A-64, was replaced rather than deleted so it is not rediscovered.
 
 > ## Step 12 — the audit's findings. This is the current work and it is ahead of the parity list.
 >

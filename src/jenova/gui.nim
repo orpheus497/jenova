@@ -2810,6 +2810,13 @@ const
 ## because they are the parent's adder properties rather than the widget's.
 proc mdBlock(app: AppState, b: markdown.Block): Widget =
   if b.kind == bkText:
+    # A-48's activation was attempted here as a `MarkupLabel` renderable owning
+    # its own `GtkLabel` with `activate-link` connected, and **reverted: it
+    # segfaults on the first `view` build.** Not the markup — four builds with
+    # byte-identical markup showed an empty-bodied handler is safe and one
+    # touching `app` is fatal, dying at `b.text.countLines` in the *code-block*
+    # branch. **A link therefore still renders and its click is unhandled.**
+    # See `TODOS.md` A-48; the allowlist and the markup assertions are unaffected.
     gui:
       Label:
         text = b.text
@@ -3902,8 +3909,23 @@ proc openTrash(app: AppState) =
 ## — and re-indexes a restored message for retrieval, which nothing did until
 ## 8b (D-BI left deletion forgetting with no counterpart).
 proc restoreFromTrash(app: AppState, item: TrashItem) =
-  if api.restoreEntity(item.kind, item.id):
-    app.notice = item.detail & " restored: " & item.label
+  # A-18-1. **`restoreEntityOutcome`, not `restoreEntity`** — and this call is
+  # the whole feature. The tri-state existed for a while with nothing reading
+  # it, which made it a mechanism and not a feature: the window went on printing
+  # plain success whether or not the file came back, which is the false
+  # reassurance the trash view was built to end.
+  let (ok, outcome) = api.restoreEntityOutcome(item.kind, item.id)
+  if ok:
+    app.notice =
+      case outcome
+      # The only outcome the user is told about. `rmNoPhysicalForm` is the
+      # ordinary answer for a conversation or a message — mentioning a file
+      # there would be noise on the commonest restore of all.
+      of fssync.rmFileMissing:
+        item.detail & " restored: " & item.label &
+          " — but its file was not in the trash and has not come back"
+      else:
+        item.detail & " restored: " & item.label
     app.refreshTrash()
     # `reloadTree` already re-reads the conversations along with every container,
     # so the sidebar shows the restored item without a second query.

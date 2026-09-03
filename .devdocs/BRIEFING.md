@@ -60,20 +60,344 @@ re-deriving one area from `jca_web/src`, not looking a list up; and `PROGRESS.md
 > Green assertions proved the parts. **Rule 15 — a green suite says the parts work, never that
 > anything calls them — is the exact failure, and it is in this file, numbered, above.**
 >
-> ### The shape to expect, stated as a hypothesis and NOT yet confirmed
+> ### The USER has stated which it is, and it is the worse of the two
 >
-> **Each fix was made minimal and assertable *below* the widget layer** — one enum case, one map
-> line, one render branch; a tri-state replacing a bool; a header read — **and the user-facing half
-> was left to a screen run that never happened.** That is the design this project deliberately
-> rewards (§6: "the response is correct and should continue"), and **its failure mode is mechanisms
-> that are correct and features that are incomplete.** *Do not act on this hypothesis until the
-> USER's specifics arrive; five sessions guessing produces five wrong answers.*
+> **The fixes are half-done ON SCREEN. The things recorded as built do not work when used.**
+> *(Asked and answered 2026-09-03. The alternative reading — "repairs rather than features, the
+> parity work never moved" — was offered and is NOT what was reported.)*
+>
+> **This session had already checked, by reading, that every surface EXISTS in the tree:** A-70's
+> SYSTEM branch (`gui.nim:3433`/`:3439`/`:3445`), A-18's second trash section (`:4069-4081`) and
+> Empty Trash button (`:4019-4022`), 12d-3's `cacheHit` reaching `statsLine` (`:2958`/`:2961`),
+> A-48's `<a href>` genuinely emitted (`markdown.nim:149`). **So the joins are present in the source
+> and broken in the window.** *That is precisely the class no assertion, no `--check` and no amount
+> of reading can reach* — **and it is the class this project has already paid three unusable builds
+> and one SIGBUS to learn about.**
+>
+> ### **The first thing to do is re-check every widget added today against the trap catalogue we already own.**
+>
+> Session 025 recorded **five owlkettle traps** in `PLANS.md` Step 13a, every one of which produced
+> a widget that was **green on every check this project can run and completely unusable on screen**:
+> `addOverlay` defaults to `AlignFill` and a targetable child swallows every click; `xAlign`/`yAlign`
+> align text *inside* a label and do not size it; **a `property` hook is overwritten by
+> `afterBuild`**; **`ContentScroll` must not be reused for anything but a transcript block** — its
+> `halign = START` and natural-width propagation collapse an empty child to nothing; **GTK4 CSS has
+> no `max-height`**; and **a raw pointer into an owlkettle `EventObj` may be held for one update
+> cycle only.** Add **G-51**: a child inserted before `gui.fullscreenButton` in a row aborts the
+> process on the next redraw.
+>
+> **Nobody checked today's fourteen units against that list.** It is the highest-value thing
+> available and it needs no screen.
+>
+> ### One hazard found by reading, and it is the shape to look for
+>
+> **A-18-3 inserted "Empty Trash" into the trash panel's header row *before* the Close button**
+> (`gui.nim`, the `Box(orient = OrientX)` above the `ScrolledWindow`), taking that row from three
+> children to four **and shifting Close's index by one.** **G-51's mechanism is exactly this:**
+> owlkettle diffs a `Box`'s children **by index** and reuses a child's state whenever the type
+> matches. All four are `Button`s. **This row does not abort**, because the abort needs a
+> shortcut-carrying `Button` and `gui.fullscreenButton` is the only one in the program and is not
+> here — **but "does not abort" is not "is correct", and index-shifted state reuse across same-typed
+> children is the family this project has already been burned by.** Every other panel added today
+> should be read the same way: **what index did a new child take, and what was there before it?**
+>
+> ### The instrument problem, stated plainly
+>
+> **This session verified by reading that every surface exists, and the USER reports they do not
+> work. Both are true, and that is the definition of the gap.** No assertion, no `--check`, no
+> amount of source reading reaches widget behaviour. **The USER's screen is the only instrument this
+> project has, and today fourteen units were recorded as built without using it once.**
+>
+> ### RESOLVED BY REVERT AND VERIFIED — 2026-09-03 13:25:33. **The window starts again.**
+>
+> **`nimble core` 0, `nimble gui` 0, `bin/jenova --check` 0** — *"GTK initialised, window tree built,
+> no window shown"* — **all sixteen self-tests 0, and the core count did not move: 30 → 30, delta
+> zero.** *Verified by the same instrument that proved the crash, which is the point: a core-count
+> delta of zero across a run is evidence in a way that "the source defect is gone" is not.*
+>
+> **The revert was one edit** — `MarkupLabel` back to `Label` at `mdBlock`'s `bkText` branch, with
+> the attempt preserved as a comment. **A-48 kept everything that was ever established:** the
+> allowlist, the 24 assertions and the rendering are all `markdown.nim` and were never touched.
+>
+> **The history below is kept in full, because what the three failed fixes bought is worth more than
+> the feature was.**
+>
+> ### It took THREE fix-forward attempts before the revert, and the standing decision is why
+>
+> **The builder set its own condition — one attempt, then revert — and this was the third.** Each
+> attempt left the window unstartable, and **three sessions could not verify anything through
+> `--check` while it stood.** *A crashing window is strictly worse than a link whose click was never
+> proven.* **Revert to green; do not fix forward. That is now the rule, not a judgement call.**
+>
+> ### THE WINDOW DID NOT START. `bin/jenova --check` SEGFAULTED. **Verified current at 13:23:27 — and twice mis-reported as stale.**
+>
+> **Nim's own message: `SIGSEGV: Illegal storage access. (Attempt to read from nil?)`** Frame 0 is
+> **`gui.mdBlock`**, reached `run` → `build` → `view` → `mainArea` → `messageBody` → `mdBlock`, on
+> the **first view build**. **29 cores in `/var/coredumps`.**
+>
+> **It was twice reported as already fixed and it was not.** The refutation is arithmetic, not
+> argument: a build at **13:23:27**, newer than every source file (`gui.nim` 13:21:06), still exits
+> **139**, and the core count went **28 → 29** across that single run — **so that run produced its
+> own core.** *A "the source defect is gone and the binary post-dates it" reading cannot survive a
+> core-count delta.*
+>
+> ### The cause, and it is NOT the markup
+>
+> **A bisect settled it — four builds of the same `MarkupLabel`, rendering byte-identical A-48
+> markup through the identical `useMarkup` Label, varying only the event body:**
+>
+> | event body | `--check` |
+> |---|---|
+> | event omitted entirely | **0** |
+> | `proc activate(uri: string) = discard uri` | **0** |
+> | `proc activate(uri: string) = app.notice = uri` | **SIGSEGV** |
+> | `proc activate(uri: string) = app.openLink(uri)` | **SIGSEGV** |
+>
+> **Two of the four pass on identical markup, so no markup-path cause survives.** Refuted with it:
+> the `\x01`/`\x02` placeholder scheme, unbalanced `</a>`, `escape()` ordering, and **A-56's UTF-8
+> slicing** — all named as suspects, all wrong.
+>
+> > **STATE THE CAUSE NARROWLY OR IT MISDIRECTS THE NEXT SESSION.** *"Capturing `app` in an event
+> > closure is fatal"* **is false and would condemn the whole window** — `convRow`'s `proc
+> > clicked()`, the sidebar, the trash panel and the settings panel all capture `app` and all work.
+> > **The true statement is: a CUSTOM renderable's hand-declared event, rebuilt per frame inside
+> > `view`** — the composer SIGBUS's family — **and `mdBlock` is the worst site for it because it
+> > returns a fresh `Widget` per block, per message, per frame.** *The general version tells a future
+> > session that custom renderables are unusable; the narrow one tells them where the boundary is.*
+>
+> ### **The faulting LINE is in a different branch from the faulting CAUSE — and this is the limit of "read the core first"**
+>
+> **It dies at `b.text.countLines` — A-28's exact line, in the CODE-BLOCK branch — while the closure
+> causing it is in the TEXT branch.** *That is why frame 0 misled three sessions into the markup
+> path.* **It is the argument for a bisect over a backtrace on this class of fault, and it belongs
+> beside "on a SIGBUS, read the core first" as its stated limit:** a backtrace names where the
+> process died, **which is not always where the defect is.** *Now recorded in the code itself at
+> `gui.nim:2817`, next to the reverted branch.*
+>
+> **The genuine toolkit finding underneath:** capturing `app` in an event closure is an **established
+> working pattern** — `settingsPanel`, `trashPanel` and the sidebar rows all do it. **What is new is
+> doing it inside a `Widget`-returning proc that is itself called in a loop from another one:**
+> `messageBody` calls `mdBlock` per block, per message. **Nobody is guessing beyond that.**
+>
+> ### **RULE 24 — a correlation is not evidence until you have built the control that could break it.**
+>
+> `markdown.nim` was modified at 13:14:26 and the first core is 13:15. **Two timestamps a minute
+> apart were offered as "as close to a pointed finger as source-and-timestamps can get", and it was
+> coincidence** — the crash arrived with the `gui.nim` renderable, not the markup emission.
+> **The bisect that refuted it is the control that should have been built before the suspects were
+> named.** *Sibling of rule 20 — a search returning nothing is not evidence until you have confirmed
+> it could have found something — and the fourth instance of that family today.* **It was produced
+> by a coder disproving its own fix.**
+>
+> ### Standing decision: **REVERT TO GREEN, do not fix forward.**
+>
+> **One edit — `MarkupLabel` back to `Label` at `mdBlock`'s `bkText` branch.** Three sessions cannot
+> verify anything through `--check` while this stands, and **a crashing window is strictly worse
+> than a link whose click was never proven.** **It costs A-48 nothing that was ever established:**
+> the allowlist, the 24 assertions and the rendering are all `markdown.nim` and untouched. **What
+> reverts is the activation, which was never proven.**
+>
+> ### A-48's activation — the strongest form of the finding, and it is worth more than the feature
+>
+> **Not "unobserved". Not merely "blocked on a renderable". The CORRECT renderable — built the
+> sanctioned way, with owlkettle's own `state.connect` and correct hook ordering — segfaults on
+> first build, for reasons not yet established.**
+>
+> **Three mechanisms are eliminated BY CONSTRUCTION, which is what makes this a real finding rather
+> than a failed attempt:** the **markup path** (bisect: identical markup passes with an empty event
+> body), the **hand-rolled signal connection** (replaced with `state.connect` — still cores), and the
+> **hook ordering** (`beforeBuild` creates the widget, the `text` property hook dereferences one that
+> exists — still cores). **What remains is the event closure capturing `app` inside a
+> `Widget`-returning proc called in a loop.**
+>
+> **This is an owlkettle finding, not a coding error**, and it was produced by a builder disproving
+> its own fix twice.
+>
+> ### An OPEN QUESTION, not an answer — **and it is the first thing that connects this crash to something the codebase already documented about itself**
+>
+> **Marked as a lead, untested, and recorded as a question deliberately.**
+>
+> **The fact, verified here, `jenova_core.nimble:29-40`** — the comment justifying `--mm:arc` for the
+> GUI: *"owlkettle's `EventObj[T].widget` is a strong ref back to the state that owns the event, so
+> **every widget with a callback is a `state → event → state` reference cycle**… ARC has no cycle
+> collector, so those cycles leak instead. **The leak is bounded: GTK owns the widgets, and what is
+> left behind is a small state object per discarded widget in a fixed-size tree.**"* **That same
+> comment names the five SIGBUS cores of 2026-08-31 as the reason ARC was chosen at all.**
+>
+> **The theory:** that justification rests on *"a fixed-size tree"* — **and `mdBlock` is not one.** A
+> fresh `Widget` per block, per message, per frame. A user-declared renderable carrying an event
+> inside it would mint a new cycle every frame in a tree that grows with the transcript. **If it
+> holds, A-48's crash is the August SIGBUS hazard reappearing exactly where the assumption behind the
+> memory-management choice does not hold.**
+>
+> **What argues against it, recorded beside it because it may kill it:** `mdBlock`'s own code-copy
+> `Button` does `proc clicked() = copyToClipboard(b.text)` (`gui.nim:2868`) — **per block, in the
+> same loop, capturing the same borrowed `b` — and it is safe.**
+>
+> ### **REFUTED — the user-declared/built-in split does not exist. Recorded as refuted, not dropped.**
+>
+> **`widgetdef.nim:44-50`, read here:**
+> ```nim
+> EventObj*[T] = object
+>   app*: Viewable        # strong ref to the whole AppState
+>   callback*: T
+>   handler*: culong
+>   widget*: Renderable
+> ```
+> **A `Button`'s `clicked` and a custom renderable's `activate` are the same object, wired the same
+> way.** There is no category "outside owlkettle's management" — it was invented. **And the nimble
+> comment's cycle is worse than it states: the event holds `app` as well as `widget`.**
+>
+> ### The MEASURED boundary that replaces the theory
+>
+> > **In `mdBlock`, a closure capturing `app` segfaults; a closure capturing `b` does not.**
+> > Four builds, byte-identical markup. `mdBlock`'s own code-copy `Button` captures `b`, in the same
+> > loop, on the same borrowed item, and ships.
+>
+> ### The one variable left standing is **DEPTH**, and it is measured
+>
+> **`convRow` captures `app` in five closures in a loop and works.** Its four call sites —
+> `gui.nim:4783`, `:4790`, `:4797`, `:4813` — **are all directly inside `method view` (`:4647`):
+> depth 1.** **`mdBlock` is depth 3:** `view` → `mainArea` (`:4840`) → `messageBody` (`:3506`) →
+> `mdBlock` (`:2943`). *Verified here.* **A second `mdBlock` call site exists in the note-editor path
+> (`:3418`) at a different depth — an untouched data point for whoever runs the experiment.**
+>
+> ### **DEPTH IS DEAD TOO — structurally, and this closes the thread to the limit of reading**
+>
+> **`widgetutils.nim:91-92`, verified here:**
+> ```nim
+> updater.assignApp(state.app)
+> let newChild = if child.isNil: updater.build() else: updater.update(child)
+> ```
+> **`assignApp` then `build`, adjacent, unconditional, with no branch between them**, and the
+> multi-child helpers open the same way. **The containers recurse one level at a time and there is no
+> depth-sensitive branch anywhere in the path.** So `genAssignAppEvents` not descending into children
+> is real **and irrelevant — it was never meant to.** *Depth was the last surviving theory and it is
+> dead by construction, not by measurement.*
+>
+> ### **A RIGHT ANSWER ARRIVED WITH A WRONG PROOF FIRST. Only the sound proof is recorded — and the distinction is the day's most expensive lesson.**
+>
+> **The unsound argument, WITHDRAWN by its author:** that `linkCallback` calls `data[].redraw()`,
+> that `redraw` raises on a nil `app`, and that since the `discard uri` build was measured safe,
+> `event.app` must therefore have been non-nil. **`redraw` never ran in any of those builds.** The
+> crash is at **build**; `--check` is build-and-exit — verified at `gui.nim:5197-5201`, it calls
+> `setupApp`, prints *"GTK initialised, window tree built, no window shown"* and returns. **No window,
+> no click, no signal emitted, so the callback never executes and the nil-guard never fires.** The
+> safe/fatal split says **nothing whatever** about `event.app`. The companion "you would have seen
+> owlkettle's `ValueError`" argument fails identically — that message lives inside `redraw`, on the
+> activation path.
+>
+> **The sound argument, which is what the record carries:** **a nil `EventObj.app` is inert at build
+> time** — a nil field in an object nothing dereferences until a handler fires — **so it cannot
+> produce a segfault during `view` → `build` at all.**
+>
+> > **A right conclusion reached by wrong reasoning is not evidence, and a later session leaning on it
+> > would be leaning on nothing.** *This is the cleanest instance of what has cost the most today:
+> > **a wrong proof of a right answer**. It was catchable only because the reasoning was published
+> > with the claim — "the depth theory is dead", written without its argument, would have stood.*
+>
+> ### What remains established, and it is generator emission — not activation
+>
+> - **Connect is emitted by TWO generators, disconnect by ONE.** `HookConnectEvents` at
+>   `widgetdef.nim:442` (`genBuildState`) **and** `:528` (`genUpdateState`); `HookDisconnectEvents` at
+>   `:496` (`genUpdateState`) **alone**. **Zero `=destroy`, `HookDestroy` or `proc destroy` in the
+>   file** — verified, count is 0.
+> - **Within `genUpdateState`, disconnect precedes reconnect, so an update is correctly paired.**
+>   **The hole is exactly build-then-discard-WITHOUT-an-intervening-update** — *which a per-block,
+>   per-frame tree produces and a fixed sidebar does not.* **That narrower form is the one to carry.**
+> - `connect` hands GTK a **raw pointer into a ref object's payload**, held for the life of the
+>   connection.
+> - **Residue: exactly ONE variable — what the closure captures.** **Nobody is naming a mechanism,
+>   and five theories died today by naming one.**
+>
+> **Whoever picks A-48 up should start from a documented hazard rather than from four builds.**
+>
+> ### Three units are BLOCKED on it, and that is the correct state
+>
+> **ONLY FINDING 5 IS BLOCKED. Finding 7 and 13c-2 are UNBLOCKED — correcting an earlier over-reach.**
+>
+> Three units were held. **That was too many.** **Finding 5** stays blocked: its closure captures
+> `app`, per message, in a loop, at `mdBlock`'s depth — **unmeasured in exactly that configuration.**
+> **Finding 7** (a settings-panel button) and **13c-2** (an expander) are **neither inside `mdBlock`
+> nor per-block**, and *the only established boundary is "a closure capturing `app` in `mdBlock`".*
+> **Generalising past the measurement is what killed five theories today**, and blocking two units on
+> a boundary nobody has drawn is the same error wearing a cautious face.
+>
+> ### **FINDING 5 IS AN EXPERIMENT, NOT A QUEUED UNIT — reclassified, correcting an earlier call**
+>
+> **It was filed as "probably safe" because it is a `Button`, and `Button` works in that position.
+> That reasoning was wrong.** *The safe `Button` there captures `b`; Finding 5's would capture `app`*
+> — `proc clicked() = app.forkConversationRow(m.id)`, **per message, in a loop, at `mdBlock`'s
+> depth. That is the crashing shape on every axis measured.**
+>
+> **So: add the closure, run `bin/jenova --check` immediately — before anything else and before any
+> other change.** *What it must not be is built as routine work by someone who thinks it is a small
+> icon.*
+>
+> ### **PRE-REGISTER BOTH READINGS BEFORE THE PROBE RUNS. This is a condition, not a note.**
+>
+> **A free probe exists: `mdBlock` has two call sites** — `gui.nim:2943` via `messageBody` and
+> `:3418` via `mainArea` — **one compiled closure at two runtime depths, needing no new widget.**
+>
+> **But depth is now dead by construction, so a split result MUST NOT be read as "depth".** The two
+> paths also differ in **`b`'s provenance**: the transcript's blocks are a table-owned value copied
+> out of the memo under ARC (**A-6**). **Both readings are to be written down before the probe runs,
+> not chosen after it.** *That is the discipline that would have saved five theories today.*
+>
+> ### The process note, now a pattern rather than an incident
+>
+> **Every theory offered on this crash has been refuted — by someone building a control or reading a
+> type — and each refutation left the question sharper than the theory did.** The markup timeline
+> fell to a bisect; the user/built-in split fell to reading `EventObj` and **forced the question onto
+> depth**; the depth objection is **what turned Finding 5 from a small icon into an experiment.**
+> **The refutations were the progress, not the delays** — and in every case the refuter was
+> correcting their own work.
+>
+> ### Two process failures this cost, both worth a line
+>
+> **1. A SOURCE FIX IS NOT EVIDENCE THAT A CRASH IS GONE.** Reading the source and comparing mtimes
+> establishes that the *diagnosed* mechanism was addressed — **not that it was the only one, nor that
+> the fix worked.** Only running it establishes that. **And the structural problem underneath: the
+> sessions that can read are the ones not permitted to run.** The crash was twice declared stale by
+> reading, and twice disproved by a rebuild and a core-count delta.
+>
+> **2. A CORRECT CAVEAT UNDER A WRONG HEADLINE IS READ AS THE HEADLINE.** The stale-crash report
+> carried an explicit, accurate disclaimer that it did **not** establish the binary was green — under
+> a headline saying the crash was already fixed. **The disclaimer was true and nobody acted on it.**
+> *Belongs beside rule 9.*
+
+> ### THE VERIFICATION GATE — three criteria, not one. **This is the remedy, and it is the most important thing on this page.**
+>
+> **"Verify each build against its plan" is what produced fourteen mechanisms and no features, and
+> the reason is worth stating precisely: every one of those builds DID match its plan.** A-18-1 was
+> a tri-state, asserted fourteen ways, exactly as scoped — **and nothing read it.** A plan-conformance
+> check cannot catch that, because the plan was conformed to.
+>
+> | | Criterion | Failing it means |
+> |---|---|---|
+> | **(a)** | Does it match its plan? | Not done |
+> | **(b)** | **Does something read ALL of what it produces** — a caller that is not a self-test? | **NOT DONE.** This is the one that was missing |
+> | **(c)** | **Has a human SEEN it work?** | **UNSEEN** — a legitimate state, but it must be recorded in that word |
+>
+> **A unit failing (b) is not done, however green.** A unit passing (b) and failing (c) is **UNSEEN**
+> and **must never be written as "built"**. *`PROGRESS.md` says which, for every unit.*
+>
+> **(b) has a one-command form** — rule 18b: **grep for a caller that is not a self-test.** It has
+> now found six, including one this project manufactured on the day it was quoting the rule at
+> itself.
+>
+> **"ALL of what it produces" is the amendment, and the fork is the proving case.**
+> `api.forkConversation`'s join exists and three of its returned fields are consumed — **but the
+> `atMessageId` it honours is passed empty by its only caller.** **A partial join passes a binary
+> gate, and a partial join is precisely the shape this project keeps producing.** *Second
+> criterion-level correction of the day, both from the same session, both against work it had
+> signed off.*
 >
 > ### Standing consequence
 >
-> **"Built" now requires a screen run for anything with a visible surface.** An assertion-green,
-> `--check`-green unit touching `gui.nim` is **IMPLEMENTED, UNCONFIRMED** — never "built" — and
-> `PROGRESS.md` says which. **This is the one rule today produced that cost something to learn.**
+> **"Built" requires a screen run for anything with a visible surface.** An assertion-green,
+> `--check`-green unit touching `gui.nim` is **IMPLEMENTED, UNSEEN** — never "built".
+> **This is the one rule today produced that cost something to learn.**
 
 ---
 

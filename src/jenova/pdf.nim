@@ -151,7 +151,11 @@ proc looksReadable*(s: string): bool =
 ## says whether it is compressed, so it is read backwards from the keyword rather
 ## than by resolving object references — this reader never has to build an xref
 ## table, which is the half of a PDF parser that is genuinely hard.
-proc streamsOf*(data: string): seq[string] =
+## **A-61: it also reports what it could not decode.** A stream that fails to
+## inflate used to be dropped here with no `else`, which was the first of two
+## silent skip paths under a docstring promising all-or-nothing. The count is
+## returned rather than logged because the caller is the one that has to refuse.
+proc streamsOf*(data: string): tuple[streams: seq[string], undecodable: int] =
   var i = 0
   while true:
     let s = data.find("stream", i)
@@ -172,9 +176,14 @@ proc streamsOf*(data: string): seq[string] =
     if raw.len > 0:
       if dict.contains("FlateDecode"):
         let r = zlib.inflate(raw)
-        if r.ok: result.add r.data
+        # A-61: a stream that will not inflate, or that exceeds
+        # `MaxInflatedBytes`, is content this reader cannot see. It is counted
+        # rather than dropped, so `textFrom` can refuse the document instead of
+        # returning the part it happened to manage.
+        if r.ok: result.streams.add r.data
+        else: inc result.undecodable
       else:
-        result.add raw
+        result.streams.add raw
     i = e + 9
 
 ## Function purpose: the text of a PDF, or empty when it has none that can be
@@ -183,10 +192,29 @@ proc streamsOf*(data: string): seq[string] =
 ## than attaching a blank.
 proc textFrom*(data: string): string =
   if not data.startsWith("%PDF"): return ""
+  let (streams, undecodable) = streamsOf(data)
+  # A-61, first skip path. **The USER ruled all-or-nothing on 2026-09-03**, over
+  # the alternative of declaring the partiality: a document this reader could
+  # only partly decompress is refused whole, rather than attached as the
+  # fraction that happened to inflate. The harm being closed is D-BQ's — a
+  # fragment that reads as a working document while meaning something the user
+  # did not write, with the model then answering confidently about it.
+  if undecodable > 0: return ""
+
   var text = ""
-  for content in streamsOf(data):
+  for content in streams:
     let t = textOf(content)
-    if t.len > 0 and looksReadable(t):
-      text.add t
-      if text[^1] != '\n': text.add '\n'
+    # **A stream with no text at all is not a failure and must not refuse the
+    # document.** `streamsOf` returns *every* stream — embedded fonts, image
+    # data, pure graphics — and those legitimately yield nothing. Refusing on
+    # them would reject almost every real PDF, which is the trap in the strict
+    # reading of this rule.
+    if t.len == 0: continue
+    # A-61, second skip path. Text came out and it is not readable — an
+    # encoding this reader cannot handle, Identity-H being the declared case.
+    # That *is* content that was lost, so it refuses rather than contributing
+    # the readable remainder around it.
+    if not looksReadable(t): return ""
+    text.add t
+    if text[^1] != '\n': text.add '\n'
   text.strip

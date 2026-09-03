@@ -819,6 +819,66 @@ proc main() =
         check("a file that is not a PDF yields nothing",
               pdf.textFrom("just some text").len == 0)
 
+        # Action purpose: A-61, and the gap it sat in is worth naming. **Every
+        # assertion above this is an end case** — all readable, or nothing
+        # readable at all — and the defect lived in the middle, where some
+        # streams decode and others do not. `textFrom` appended whatever
+        # succeeded and returned it, while its own docstring, `readAttachment`'s
+        # refusal message and four `.devdocs/` files all promised
+        # all-or-nothing. **A 70%-decoded document was attached as the
+        # document.** The USER ruled all-or-nothing on 2026-09-03, over
+        # declaring the partiality.
+        #
+        # Varied by DATA, never by damaging code (D-BX): the same two-stream
+        # document, once whole and once with one stream corrupted.
+        proc twoStreamPdf(first, second: string, breakSecond: bool): string =
+          proc obj(n: int, payload: string, flate: bool): string =
+            let body = if flate: zlib.deflate(payload).data else: payload
+            $n & " 0 obj\n<< /Length " & $body.len &
+              (if flate: " /Filter /FlateDecode" else: "") &
+              " >>\nstream\n" & body & "\nendstream\nendobj\n"
+          result = "%PDF-1.4\n" & obj(1, first, false)
+          if breakSecond:
+            # A stream declared FlateDecode whose bytes are not deflate data:
+            # exactly what a truncated or damaged PDF presents.
+            result.add "2 0 obj\n<< /Length 9 /Filter /FlateDecode >>\n" &
+                       "stream\nnot-zlib\nendstream\nendobj\n"
+          else:
+            result.add obj(2, second, true)
+          result.add "%%EOF\n"
+
+        const PageA = "BT (First page text) Tj ET"
+        const PageB = "BT (Second page text) Tj ET"
+
+        # The positive half, and it is not optional: without it a `textFrom`
+        # that refused everything would satisfy the negative below.
+        let bothOk = pdf.textFrom(twoStreamPdf(PageA, PageB, breakSecond = false))
+        check("a two-stream document yields both streams' text",
+              bothOk.contains("First page text") and
+              bothOk.contains("Second page text"), bothOk)
+
+        # The defect itself. Before A-61 this returned "First page text".
+        let halfBroken = pdf.textFrom(twoStreamPdf(PageA, PageB, breakSecond = true))
+        check("a document with one undecodable stream is refused WHOLE, " &
+              "not attached as the readable part",
+              halfBroken.len == 0, halfBroken)
+
+        # And the trap inside the strict rule: `streamsOf` returns *every*
+        # stream, so an embedded font or an image yields no text and must not
+        # be mistaken for content that was lost. Refusing on those would reject
+        # nearly every real PDF.
+        let withBinary = pdf.textFrom(twoStreamPdf(PageA, "q 1 0 0 1 0 0 cm Q",
+                                                   breakSecond = false))
+        check("a stream carrying no text does not refuse the document",
+              withBinary.contains("First page text"), withBinary)
+
+        # The second skip path: text came out and is not readable. That is an
+        # encoding this reader cannot handle, so it is loss and it refuses.
+        let garbled = pdf.textFrom(onePagePdf(
+          "BT (" & repeat("\xC0\xC1\xC2\xC3", 8) & ") Tj ET", flate = false))
+        check("a stream whose text is unreadable refuses the document",
+              garbled.len == 0, garbled)
+
         # And the refusal itself, through the classifier the picker calls.
         let tmp = getTempDir() / "jenova-selftest-empty.pdf"
         writeFile(tmp, "%PDF-1.4\n1 0 obj\n<< >>\nstream\nq Q\nendstream\n")
