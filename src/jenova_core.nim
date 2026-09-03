@@ -23,7 +23,7 @@ import std/[os, posix, sequtils, strformat, strutils, tables, times, json]
 import jenova/[paths, config, db, dbselftest, server, serverselftest, markdown,
                rag, sha256, pipeline, prompts, lifecycle, models, nvimctl, api,
                settings, hardware, workspace, pdf, zlib, fssync, composer, convmd,
-               http, upstream]
+               http, upstream, websearch]
 
 const
   Version = "0.1.0"
@@ -1933,6 +1933,24 @@ proc main() =
         check("the round trip put the active flag back",
               models.available(home).filterIt(it.name == "alpha.gguf")[0].active)
 
+        # The slot cannot be its own source. `isRelativeTo(modelsDir)` admits
+        # anything under `models/`, and `models/agent` is under `models/` — so
+        # this path once made the link resolve to the entry being activated and
+        # the clearing loop removed it, leaving a symlink pointing at its own
+        # name.
+        block activeSlotIsNotASource:
+          var refused = false
+          try:
+            discard models.switchToPath(home, home / "models" / "agent" / "alpha.gguf")
+          except ModelError:
+            refused = true
+          check("a model already in the active slot is refused", refused)
+          check("and the switch that was there is untouched",
+                agentEntries() == @["alpha.gguf"], $agentEntries())
+          check("and it still resolves to a real file",
+                fileExists(expandFilename(home / "models" / "agent" / "alpha.gguf")))
+
+
         # The other side of the same rule: a real `.gguf` the user dropped into
         # models/agent by hand is their only copy, so it IS preserved. Asserted
         # after the transition above so the backup it leaves cannot pollute it.
@@ -2941,6 +2959,36 @@ proc main() =
           inc bad
 
       echo "pipeline-selftest"
+
+      block webSearchPairing:
+        # A result is a title and a snippet at the same position. Filtering the
+        # two lists separately and pairing them afterwards moved every snippet
+        # after a rejected one up onto the previous title, so the first weak
+        # result mislabelled all the rest.
+        let titles = @["First", "Second", "Third"]
+        let good = @["a snippet long enough", "another good snippet",
+                     "a third good snippet"]
+        let paired = websearch.pairResults(titles, good)
+        check("every complete result is kept", paired.len == 3, $paired.len)
+        check("and each title keeps its own snippet",
+              paired[1].contains("Second") and
+              paired[1].contains("another good snippet"), paired[1])
+
+        # The defect: "Second" has no usable snippet.
+        let holed = @["a snippet long enough", "short", "a third good snippet"]
+        let after = websearch.pairResults(titles, holed)
+        check("a result with no usable snippet is dropped whole",
+              after.len == 2, $after.len)
+        check("and the survivors keep their own snippets",
+              after[0].contains("First") and
+              after[0].contains("a snippet long enough") and
+              after[1].contains("Third") and
+              after[1].contains("a third good snippet"),
+              after.join(" | "))
+        check("the numbering counts what is shown, not what was scanned",
+              after[1].startsWith("[2]"), after[1])
+        check("a title with no snippet at all is dropped",
+              websearch.pairResults(@["Only"], @[]).len == 0)
 
       block intents:
         let r = pipeline.prepare(
