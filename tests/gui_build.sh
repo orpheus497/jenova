@@ -25,9 +25,12 @@
 #   --check         ->  GTK init, the stylesheet, and every widget's build hook
 #   run + type      ->  the layout, which only exists once a window is mapped
 #   seed + copy     ->  the transcript, which drew nothing in any earlier run
+#   seed markdown   ->  the code-block and table widgets, which nothing had ever
+#                       built, and the Pango markup a reply's emphasis becomes,
+#                       which is refused whole and drawn as an empty label
 #
-# The last step asserts the property defect (2) broke, in the form a user would
-# check it: **the composer is at the bottom of the window and accepts typing.**
+# The composer step asserts the property defect (2) broke, in the form a user
+# would check it: **the composer is at the bottom of the window and accepts typing.**
 # It clicks near the bottom edge, types, and requires that strip of pixels to
 # change. See `composer_reachable` for why it is that and not a measurement of
 # the picture — the measurement was tried first and passed against the defect.
@@ -151,7 +154,34 @@ mkdir -p "$JH/.system" "$JH/Workspaces"
 # writing SQL, so the schema has one owner and this cannot drift from it.
 SEED_PORT=18788
 SEED_MSGS=6
-seed_text() { printf 'Seeded message %s: the transcript has to render this line.' "$1"; }
+seed_text() {
+  # Message 4 is the assistant turn that is actually *markdown*, and until it
+  # existed every message in this conversation was one plain sentence — so the
+  # code-block, table and emphasis branches of `mdBlock` had never been built
+  # by anything, in any test, on any host. Their `beforeBuild` hooks construct
+  # a GtkSourceView and a GtkPopover, which is the class of work `--check`
+  # exists to run.
+  #
+  # It also carries `***bold italic***`, which is the one thing here aimed at
+  # the *renderer* rather than the widgets: the emphasis passes used to close
+  # bold before italic and hand Pango `<b><i>x</b></i>`, and Pango answers
+  # malformed markup by refusing the whole string and drawing an empty label.
+  # That is invisible to a compile and to a screenshot; it is visible in the
+  # log, which is why `run_check` and the run both grep for it now.
+  #
+  # Deliberately short. The transcript follows to the bottom, so every line
+  # added here pushes message 1 — the one the clipboard assertion reads —
+  # closer to the top edge of the viewport.
+  #
+  # The line breaks are emitted as the two characters `\` and `n`, not as real
+  # newlines: this is substituted straight into a JSON body, and a raw newline
+  # inside a JSON string is a parse error rather than a line break.
+  if [ "$1" = 4 ]; then
+    printf 'Seeded message 4 is ***markdown***:\\n\\n```sh\\necho one\\n```\\n\\n| a | b |\\n|---|---|\\n| 1 | 2 |'
+  else
+    printf 'Seeded message %s: the transcript has to render this line.' "$1"
+  fi
+}
 
 seed_post() { # path body
   printf 'POST %s HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s' \
@@ -233,9 +263,17 @@ run_check() {
   # not the whole answer. A CSS parse error is the one this catches most often:
   # owlkettle takes the stylesheet at `brew` and a bad property is a warning,
   # not a failure.
-  if grep -Eq "CRITICAL|WARNING \*\*: .*css|Theme parser" "$OUT/check.err"; then
+  #
+  # `error parsing markup` is the second, and it is the only report there is
+  # that a message rendered as an **empty label**. Pango's markup parser is
+  # XML-shaped: one crossed tag and it refuses the whole string, the label draws
+  # nothing, and every other check here — the exit status, the picture, the
+  # clipboard read on a different card — passes. Message 4 exists to put
+  # emphasis through that parser.
+  if grep -Eq "CRITICAL|WARNING \*\*: .*css|Theme parser|error parsing markup" \
+     "$OUT/check.err"; then
     echo "gui_build: GTK complained during --check:"
-    grep -E "CRITICAL|WARNING|Theme parser" "$OUT/check.err"
+    grep -E "CRITICAL|WARNING|Theme parser|markup" "$OUT/check.err"
     return 1
   fi
   grep -q "window tree built" "$OUT/check.out"
@@ -590,9 +628,9 @@ kill -9 "$GPID" 2>/dev/null || true
 
 # Reported whatever the outcome: a GTK criticality during the run is worth
 # seeing even when the picture came out right.
-if grep -Eq "CRITICAL|assertion" "$OUT/run.log"; then
+if grep -Eq "CRITICAL|assertion|error parsing markup" "$OUT/run.log"; then
   echo "gui_build: GTK complained during the run:"
-  grep -E "CRITICAL|assertion" "$OUT/run.log"
+  grep -E "CRITICAL|assertion|markup" "$OUT/run.log"
   rc=1
 fi
 

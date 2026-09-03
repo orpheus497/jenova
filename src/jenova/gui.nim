@@ -3345,12 +3345,15 @@ proc copyToClipboard(text: string) =
   gdk_clipboard_set_text(clip, text.cstring)
 
 const
-  ## Above this many lines a code block is capped and scrolls inside itself, so
-  ## one long answer cannot push the rest of the transcript off screen. Roughly a
-  ## screenful, which is the point at which scrolling the block beats scrolling
-  ## the conversation.
-  CodeCapLines = 24
+  ## The height a capped block is given, in pixels. Its companion — how many
+  ## lines is too many — is `markdown.CodeCapLines`, which lives below the
+  ## widget layer because which blocks are capped is a question a self-test can
+  ## ask and this one is not.
   CodeCapPx = 360
+  ## The preview popover, sized against the 900x680 the window opens at: large
+  ## enough that a capped block is worth opening and small enough that the
+  ## popover still has the window to sit in.
+  CodePreviewPx = (720, 480)
 
 ## Function purpose: render one markdown block as a widget. Extracted from
 ## `messageBody` (8c-3) so a note is shown through the transcript's own
@@ -3414,9 +3417,39 @@ proc mdBlock(app: AppState, b: markdown.Block): Widget =
               text = (if b.lang.len > 0: b.lang else: "code")
               xAlign = 0.0
               style = [StyleClass("code-lang")]
+            # Action purpose: the Web UI's `DialogCodePreview` runs the block —
+            # it puts HTML, SVG and JavaScript into a sandboxed iframe. There is
+            # no engine here to run anything in and adding one is a dependency,
+            # so this is the other half of what a preview is for: the block seen
+            # whole. A `MenuButton` owns the popover's open state itself, which
+            # is why this needs no field on `AppState` and adds no overlay to
+            # the window.
+            #
+            # Offered on every code block and not only the capped ones. The
+            # block whose text is still arriving crosses the cap mid-reply, so a
+            # condition here would change this row's child count while owlkettle
+            # is matching its children by position — the shape of two defects
+            # this file already records. A property may vary per frame; the
+            # number of children may not.
+            MenuButton {.expand: false.}:
+              icon = "view-fullscreen-symbolic"
+              tooltip = "Show the whole block"
+              style = [ButtonFlat, StyleClass("row-btn")]
+              Popover:
+                ScrolledWindow:
+                  sizeRequest = CodePreviewPx
+                  SourceCode:
+                    code = b.text
+                    language = b.lang
+                    style = [StyleClass("code-body")]
+            # Action purpose: an unterminated fence is half a snippet, and half
+            # a snippet on the clipboard is indistinguishable from a whole one
+            # once it is pasted. `ActionIconsCodeBlock` disables both its
+            # actions on the same condition, and for the same reason.
             Button {.expand: false.}:
               icon = "edit-copy-symbolic"
-              tooltip = "Copy"
+              tooltip = (if b.complete: "Copy" else: "Still being written")
+              sensitive = b.complete
               style = [ButtonFlat, StyleClass("row-btn")]
               proc clicked() = copyToClipboard(b.text)
           # Action purpose: the cap, and why it is a `sizeRequest` rather
@@ -3434,8 +3467,7 @@ proc mdBlock(app: AppState, b: markdown.Block): Widget =
           # Only long blocks are wrapped: `sizeRequest` is a *minimum*, so
           # capping a four-line snippet would pad it to 360px of empty
           # scroller instead of shrinking anything.
-          if b.text.countLines > CodeCapLines and
-             not app.opts.getBool("fullHeightCodeBlocks"):
+          if b.isLongCode and not app.opts.getBool("fullHeightCodeBlocks"):
             ScrolledWindow {.expand: false.}:
               sizeRequest = (-1, CodeCapPx)
               style = [StyleClass("code-capped")]
