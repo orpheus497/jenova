@@ -15,7 +15,7 @@
 ## What is indexed is chats, notes and file assets; the writers are at the
 ## bottom of this file.
 
-import std/[os, json, sets, strutils, strformat, algorithm, math, tables, times,
+import std/[json, sets, strutils, strformat, algorithm, math, tables, times,
             httpclient]
 import ./db
 

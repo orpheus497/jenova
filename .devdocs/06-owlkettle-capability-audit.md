@@ -17,7 +17,7 @@ native widgets exist.
 |---|---|---|
 | `owlkettle/widgets.nim` renderables | **62** | — |
 | `owlkettle/adw.nim` renderables | **23** | — |
-| **Total** | **85** | ~~**18 distinct types**~~ → **38 after session 7** |
+| **Total** | **85** | ~~**18 distinct types**~~ → **38 after session 7**, **39 after session 8** (`AboutWindow`) |
 
 > **Session 7 first "corrected" these to 21 and 83, and that was wrong.** The
 > recount was taken against the **`v3.0.0` tag**; this report states its revision in
@@ -70,7 +70,7 @@ widget guarded `{.since: AdwVersion >= (1, x).}` does not exist in the binary:
 | `EntryRow` | 1.2 | A labelled text-entry row |
 | `PasswordEntryRow` | 1.2 | Ditto, masked |
 | `Banner` | 1.3 | Inline message strip with an optional button |
-| `AboutWindow` | 1.2 | The standard About dialog |
+| `AboutWindow` | 1.2 | The standard About dialog. **In use since session 8** — app menu → About Jenova |
 
 > **This table is correct and session 7 briefly claimed otherwise.** `ToolbarView`
 > was struck from it on the finding that `grep -rn ToolbarView owlkettle/` returns
@@ -83,6 +83,14 @@ widget guarded `{.since: AdwVersion >= (1, x).}` does not exist in the binary:
 > **All seven are now in the binary.** `-d:adwminor=4` is set, and `Banner` is in
 > use in `gui.nim`'s chat column — for backend-down, and for the LAN flag/socket
 > disagreement (session 7).
+>
+> **Six of the seven are in use.** `AboutWindow` was the last one still only
+> compiled, and it is used from session 8. The seventh, `PasswordEntryRow`, has
+> nothing to mask: `settings.nim:353` records `apiKey` as
+> `"excluded by the USER — this server does not authenticate"`, and the search
+> backend it does reach (`websearch.nim`, DuckDuckGo's instant-answer endpoint)
+> takes no key either. A masked entry row with no secret behind it would be
+> decoration.
 
 Plus **13 individual properties** on widgets that do compile, among them `StatusPage.description`
 (1.4), `ActionRow.titleLines`/`subtitleLines` (1.3), `ButtonContent.canShrink` (1.4).
@@ -154,7 +162,7 @@ the right widget, not a bigger lid.
 | Inline messages | `Banner` | ~~—~~ — done for backend-down and the LAN flag/socket disagreement, session 7 |
 | Header/content/footer | `ToolbarView` | ~~A `Box` of three sections~~ — the chat column is a `ToolbarView` |
 | Adaptive sidebar | `OverlaySplitView` | ~~`Flap`~~ — swapped, with `AdwBreakpoint` hand-bound to drive `collapsed`, since owlkettle has no breakpoint at all |
-| Menus | `PopoverMenu`, `ContextMenu`, `MenuItem` | ~~1 `Popover`, 1 `MenuButton`~~ — every sidebar row has a `⋯` menu and a right-click menu. `ModelButton` is wrapped as `MenuItem` so choosing an item closes the menu, which owlkettle's does not |
+| Menus | `PopoverMenu`, `ContextMenu`, `MenuItem` | ~~1 `Popover`, 1 `MenuButton`~~ — every sidebar row has a `⋯` menu and a right-click menu. `ModelButton` is wrapped as `MenuItem` so choosing an item closes the menu, which owlkettle's does not. **The app menu itself was the last holdout** and was still a `Popover` of flat `Button`s in session 7: its items ran and left the menu standing over the window they had just changed. Session 8 moved it to `PopoverMenu` + `MenuItem` |
 | Split primary action | `SplitButton` | ~~Two buttons~~ — Send carries the intent-prefix menu (P-E8). It reverts to a plain `Button` while streaming, because Stop has no secondary action |
 | Reading-width column | `Clamp` | ~~Margins~~ — the transcript is clamped to 760, the Web UI's own `max-w-3xl` |
 | Identity | `Avatar` | ~~Text labels~~ — an icon avatar beside the name on every message card |

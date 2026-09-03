@@ -16,6 +16,10 @@ type
   GtkShortcutFunc = proc (widget: GtkWidget, args: GVariantPtr,
                           data: pointer): cbool {.cdecl.}
 
+## Function purpose: wraps a Nim callback as a `GtkShortcutAction`, so a binding
+## can run arbitrary code instead of activating a named GTK action. This is the
+## piece owlkettle's bindings do not carry, and the reason this module declares
+## anything at all.
 # Action purpose: GTK's callback action, absent from owlkettle's bindings.
 #
 # Declared without a `header:` pragma, which is not an oversight. A header makes

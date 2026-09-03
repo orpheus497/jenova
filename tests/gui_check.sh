@@ -37,6 +37,23 @@ esac
 
 [ -n "${OWLKETTLE:-}" ] && set -- "$@" "--path:$OWLKETTLE"
 
+# Asked before the real check, because owlkettle being unreachable does not
+# produce one honest error — it produces a wall of them. Every module that
+# imports it fails, every type it declares becomes undeclared, and the first
+# thing printed is a cascade several hundred lines down in `gui.nim` that reads
+# like a defect in this repository. Two lines here name the actual cause.
+PRE=$(mktemp -d)
+echo "import owlkettle" > "$PRE/owlprobe.nim"
+if ! "$NIM" check "$@" --hints:off "$PRE/owlprobe.nim" >/dev/null 2>&1; then
+  rm -rf "$PRE"
+  echo "gui_check: owlkettle is not on the compiler's path."
+  echo "gui_check: install it (\`nimble install\`, which reads the revision"
+  echo "gui_check: jenova_core.nimble pins) or point OWLKETTLE at a checkout:"
+  echo "gui_check:   OWLKETTLE=/path/to/owlkettle sh tests/gui_check.sh"
+  exit 1
+fi
+rm -rf "$PRE"
+
 if [ "$(uname -s)" = "FreeBSD" ]; then
   SRC=$ROOT
 else

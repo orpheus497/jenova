@@ -114,6 +114,27 @@ for right-click on messages and tree rows · `SplitButton` for send-with-options
 > decided whether this window compiled. `jenova_core.nimble` now pins `ac61ecf`, the revision
 > report 06 audited.
 
+> **Session 8 closes Phase 3.** Everything above that was still open is done —
+> `ToolbarView` carries the chat column, `OverlaySplitView` replaced `Flap` with
+> `AdwBreakpoint` hand-bound to drive `collapsed`, `SplitButton` carries Send
+> and its intent-prefix menu — and two things the phase did not list came out of
+> finishing it:
+>
+> - **The app menu was still a `Popover` of flat `Button`s.** Every sidebar row
+>   had already moved to `PopoverMenu` + `MenuItem`, for the reason `MenuItem`
+>   exists: a plain button in a popover runs its handler and leaves the popover
+>   standing over the window it just changed. The one menu the plan never named
+>   was the one that still did it. Now `PopoverMenu` + `MenuItem` throughout.
+> - **`AboutWindow` was compiled in and unused.** It was the last of the seven
+>   `{.since: AdwVersion >= (1, x).}` widgets Phase 0 put back in the binary
+>   with nothing using it, and the program's version was reachable only from
+>   `--version` on a terminal. Its Troubleshooting page names the four paths a
+>   bug report needs, which cannot be guessed from outside a relocatable tree.
+>
+> The version those three files each declared separately is now
+> `src/jenova/version.nim`. The `.nimble` field stays a literal because nimble
+> reads it before anything in `src/` compiles; nothing else declares one.
+
 ---
 
 ## Phase 4 — Keyboard and the command palette (1 session)

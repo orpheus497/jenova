@@ -231,7 +231,7 @@ proc rotateLog*(path: string) =
 
 ## Function purpose: one lock file per backend, so starting the agent model does
 ## not block starting the embedder.
-proc lockFileFor(l: Lifecycle, be: Backend): string =
+proc lockFileFor*(l: Lifecycle, be: Backend): string =
   pidFileFor(l, be) & ".lock"
 
 ## Function purpose: the window between "nothing is running" and "the pid file
@@ -244,44 +244,59 @@ proc lockFileFor(l: Lifecycle, be: Backend): string =
 ## releases it when the holder exits and a process killed mid-start leaves
 ## nothing to clean up.
 ##
-## Failing to take the lock is not a reason to refuse to start, so the descriptor
-## is optional. That is also why the wait is a bounded retry rather than a
-## blocking one: a holder wedged partway through would make a blocking wait
-## indefinite, and the caller is the serial control worker or the watchdog.
-## Losing the race is worth a second of waiting; it is not worth hanging backend
-## control. The bound is a retry count rather than a clock so it cannot be moved
-## by one.
+## The wait is a bounded retry rather than a blocking one: a holder wedged
+## partway through would make a blocking wait indefinite, and the caller is the
+## serial control worker or the watchdog. Losing the race is worth a second of
+## waiting; it is not worth hanging backend control. The bound is a retry count
+## rather than a clock so it cannot be moved by one.
 const
   LockTries = 100
   LockRetryMs = 10
 
-## Function purpose: two failures, and they are not the same. A lock file that
-## cannot be opened means an unwritable state directory, which everything else
-## here already reports, so the caller proceeds unlocked. Losing the wait means
-## another process is inside `start` for this backend right now, and proceeding
-## is the race the lock exists to prevent — `contended` says which happened.
-proc lockStart(l: Lifecycle, be: Backend): tuple[fd: cint, contended: bool] =
-  result = (cint(-1), false)
+type
+  ## Three outcomes, and only the first one permits a fork. Exported for the
+  ## same reason `rotateLog` is: the distinction between them is not visible in
+  ## `start`'s return value — a refusal and a missing binary both answer 0 — so
+  ## the only way to assert it is to call the lock directly.
+  StartLock* = enum
+    slHeld,         ## this process owns the lock for this backend
+    slContended,    ## another process is inside `start` for this backend
+    slUnavailable   ## the lock could not be taken at all
+
+## Function purpose: two failures, and they are not the same — but neither is a
+## state to fork in, so `status` says which happened and the caller stops on
+## both.
+##
+## Action purpose: **failing closed.** An earlier version proceeded unlocked
+## when the lock file could not be opened, on the reasoning that an unwritable
+## state directory is reported elsewhere. It is not reported *here*, and the
+## consequence is specific: two callers both find the slot free, both fork, and
+## a multi-gigabyte model is loaded twice. The same directory holds the pid
+## file, so a lifecycle that cannot open the lock cannot track or stop what it
+## would start either. This matches what `pipe` failure does further down —
+## descriptor exhaustion is not a state to fork in, and neither is this.
+proc lockStart*(l: Lifecycle, be: Backend): tuple[fd: cint, status: StartLock] =
+  result = (cint(-1), slUnavailable)
   try:
     let fd = posix.open(lockFileFor(l, be).cstring,
                         O_WRONLY or O_CREAT, 0o644.Mode)
-    if fd < 0: return (cint(-1), false)
+    if fd < 0: return (cint(-1), slUnavailable)
     # Action purpose: POSIX record locks are not inherited across `fork`, but
     # the descriptor is and nothing closes it before `execve` — so it is marked
     # close-on-exec rather than left open in the backend for its lifetime.
     discard fcntl(fd, FdSetFd, FdCloexec)
     for _ in 0 ..< LockTries:
       if lockf(fd, LockTry, 0) == 0:
-        return (fd, false)
+        return (fd, slHeld)
       os.sleep(LockRetryMs)
     discard posix.close(fd)
-    result = (cint(-1), true)
+    result = (cint(-1), slContended)
   except CatchableError:
-    result = (cint(-1), false)
+    result = (cint(-1), slUnavailable)
 
 ## Function purpose: released explicitly rather than left to process exit,
 ## because the caller is a long-lived worker and not a short command.
-proc unlockStart(fd: cint) =
+proc unlockStart*(fd: cint) =
   if fd < 0: return
   discard lockf(fd, LockRelease, 0)
   discard posix.close(fd)
@@ -294,19 +309,21 @@ proc start*(l: Lifecycle, be: Backend): int =
     return l.state(be).pid
 
   createDir(l.paths.state)
-  let (lock, contended) = lockStart(l, be)
+  let (lock, lockStatus) = lockStart(l, be)
   defer: unlockStart(lock)
 
   # Asked again with the lock held: another process may have started this
   # backend while this one waited, making the earlier answer stale.
   let existing = l.state(be)
-  if contended and not existing.running:
-    # Lost the wait, and the holder has not published a pid yet or the check
-    # above would have found it. Forking now is the second backend the lock
-    # exists to prevent.
-    return 0
   if existing.running:
     return existing.pid
+  if lockStatus != slHeld:
+    # `slContended`: lost the wait, and the holder has not published a pid yet
+    # or the check above would have found it. `slUnavailable`: there is no
+    # mutual exclusion to rely on at all. Forking under either is the second
+    # backend the lock exists to prevent, so both stop here. The watchdog
+    # reports this as a failed restart and points at the log.
+    return 0
 
   # An orphan holding the port: the pid file says nothing is running but
   # something is. A second copy would produce a bind failure and a confusing

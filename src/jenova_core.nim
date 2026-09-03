@@ -18,10 +18,10 @@ import std/[os, posix, sequtils, strformat, strutils, tables, times, json]
 import jenova/[paths, config, db, dbselftest, server, serverselftest, markdown,
                rag, sha256, pipeline, prompts, lifecycle, models, nvimctl, api,
                settings, hardware, workspace, pdf, zlib, fssync, composer, convmd,
-               http, upstream, websearch]
+               http, upstream, websearch, version]
 
 const
-  Version = "0.1.0"
+  Version = version.Version
   Stage = "harness with lifecycle; llama-server is the engine"
 
 ## Function purpose: printed on `--help` and on an unknown subcommand, so a
@@ -2659,6 +2659,39 @@ proc main() =
 
         check("sweeping a directory that does not exist is a no-op",
               paths.sweepCache(root / "absent", 1).removed == 0)
+
+      block startLock:
+        # The lock is what stops two callers both finding the backend slot free
+        # and both forking a multi-gigabyte model. Its failure modes are not
+        # visible in `start`'s answer — a refusal and a missing binary both
+        # return 0 — so it is asserted directly.
+        let dir = getTempDir() / "jenova-lock-" & $getCurrentProcessId()
+        createDir(dir)
+        defer: removeDir(dir)
+        let l = Lifecycle(paths: Paths(state: dir, logDir: dir / "log"),
+                          llamaPort: 18999, embedPort: 18998,
+                          bindHost: "127.0.0.1")
+
+        let held = lifecycle.lockStart(l, lifecycle.beLlama)
+        check("an uncontended start lock is held",
+              held.status == lifecycle.slHeld and held.fd >= 0)
+        lifecycle.unlockStart(held.fd)
+
+        # A lock file that cannot be opened. `open(O_WRONLY|O_CREAT)` on a
+        # directory fails with EISDIR, which is the same shape as the real
+        # cause: a state directory this process may not write.
+        #
+        # It must not report a held lock. An earlier version returned exactly
+        # the value an uncontended success returns, so `start` went on to fork
+        # with no mutual exclusion at all.
+        removeFile(lifecycle.lockFileFor(l, lifecycle.beLlama))
+        createDir(lifecycle.lockFileFor(l, lifecycle.beLlama))
+        let blocked = lifecycle.lockStart(l, lifecycle.beLlama)
+        check("a lock file that cannot be opened is not a held lock",
+              blocked.status == lifecycle.slUnavailable and blocked.fd < 0,
+              "lockStart answered " & $blocked.status & " — `start` would fork " &
+              "with nothing serialising it")
+        removeDir(lifecycle.lockFileFor(l, lifecycle.beLlama))
 
       block rotation:
         # An unrotated log is appended to for ever and nothing anywhere deletes

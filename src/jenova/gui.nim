@@ -57,6 +57,7 @@ import ./hardware
 import ./composer
 import ./shortcuts
 import ./convmd
+import ./version
 
 type
   ## `rSystem` is not decoration — its absence corrupted conversations.
@@ -3165,6 +3166,10 @@ renderable DraftView of BaseWidget:
 ## are already in owlkettle's bindings and are imported above, per rule 5.
 proc gtk_widget_get_ancestor(w: GtkWidget, t: GType): GtkWidget
   {.importc, cdecl.}
+## Function purpose: the `GType` the ancestor walk above searches for. GTK
+## registers it lazily, so it is asked for by function rather than looked up by
+## name — `g_type_from_name` answers zero until something has instantiated a
+## popover.
 proc gtk_popover_get_type(): GType {.importc, cdecl.}
 
 renderable MenuItem of BaseWidget:
@@ -3227,11 +3232,26 @@ proc adw_breakpoint_new(c: AdwBreakpointCondition): AdwBreakpoint
 proc adw_window_add_breakpoint(w: GtkWidget, b: AdwBreakpoint) {.importc, cdecl.}
 proc gtk_widget_get_root(w: GtkWidget): GtkWidget {.importc, cdecl.}
 
+## Function purpose: the `apply` half of the breakpoint. A module-level `var`
+## and not a field on the state, because the callback is a plain C function
+## pointer with no owlkettle widget behind it — the signal fires from GTK, and
+## the redraw that reads this happens on the next update the app already runs.
 proc onBreakpointApply(bp: pointer, data: pointer) {.cdecl.} =
   windowNarrow = true
+
+## Function purpose: the `unapply` half. Separate procs rather than one with a
+## flag in `data`, because `g_signal_connect_data` takes the closure pointer by
+## value and there is nothing to keep a heap cell alive for.
 proc onBreakpointUnapply(bp: pointer, data: pointer) {.cdecl.} =
   windowNarrow = false
 
+## Function purpose: installs the breakpoint once, the first time the host
+## widget is realized. Every step is a guard rather than an assumption: a widget
+## realized outside a window has no root, a condition string libadwaita cannot
+## parse returns nil, and `adw_breakpoint_new` on a nil condition would be the
+## crash. `breakpointAdded` makes it idempotent — `realize` fires again after
+## the window is hidden and reshown, and a second breakpoint on the same
+## condition would leave two handlers writing the same flag.
 proc onHostRealize(w: GtkWidget, data: pointer) {.cdecl.} =
   if breakpointAdded: return
   let root = gtk_widget_get_root(w)
@@ -5035,6 +5055,43 @@ proc openModels(app: AppState) =
   app.modelFilter = ""
   app.modelsOpen = true
 
+## Function purpose: the standard libadwaita About window, opened from the app
+## menu. It is the seventh and last of the `{.since: AdwVersion >= (1, x).}`
+## widgets that `-d:adwminor=4` put back in the binary, and the only one the
+## window had no use for until now — the program reported its version on
+## `--version` and nowhere a user of the window could see it.
+##
+## Action purpose: `app.open` is owlkettle's modal opener and it blocks in
+## `g_main_context_iteration` until the window is closed (`widgets.nim:3604`).
+## That is correct here and would not be in a streaming path: the About window
+## has no result to wait for, and the stream runs on its own thread and reaches
+## the GUI through `uiChan`, not through this loop.
+##
+## `LicenseAGPL3_0` and not `LicenseAGPL3_0_Only`: `jenova_core.nimble:6` says
+## `AGPL-3.0-or-later`, and the two enum values are exactly that distinction.
+##
+## `debugInfo` fills libadwaita's Troubleshooting page. It names the four paths
+## a bug report needs and cannot be guessed from outside — the root is
+## relocatable through `JENOVA_ROOT`, and the JCA home is separate from it.
+proc showAbout(app: AppState) =
+  discard app.open: gui:
+    AboutWindow:
+      applicationName = "Jenova"
+      developerName = "orpheus497"
+      version = version.Version
+      applicationIcon = "application-x-executable"
+      website = version.HomeUrl
+      issueUrl = version.IssueUrl
+      copyright = version.Copyright
+      licenseType = LicenseAGPL3_0
+      comments = "A local-first AI environment. The model, the database and " &
+                 "the retrieval index are on this machine; nothing leaves it " &
+                 "unless you turn on web search or LAN access."
+      debugInfo = "root:      " & app.p.root & "\n" &
+                  "jca home:  " & app.p.jcaHome & "\n" &
+                  "state:     " & app.p.state & "\n" &
+                  "logs:      " & app.p.logDir
+
 ## Function purpose: make one model active, on the worker (8a).
 proc switchToModel(app: AppState, path: string) =
   ctlReq.send(ControlJob(action: "switch_path", jcaHome: app.lc.paths.jcaHome,
@@ -5463,22 +5520,25 @@ proc topBar(app: AppState): Widget =
 
       MenuButton {.addRight.}:
         icon = "open-menu-symbolic"
-        Popover:
+        # `PopoverMenu` and `MenuItem`, not a `Popover` of flat `Button`s. The
+        # difference is not the styling: a plain button inside a popover runs
+        # its handler and leaves the popover standing, so this menu stayed open
+        # over the window it had just changed. Every row menu in the sidebar
+        # already went through `MenuItem` for exactly that reason; this was the
+        # last menu in the program that had not.
+        PopoverMenu:
           Box(orient = OrientY, spacing = 4, margin = 8):
             # Every item enqueues; none of them acts. The queue is drained in
             # the afterBuild timer, which is also where the tray's identical
             # menu lands — one implementation, reachable two ways.
-            Button:
+            MenuItem:
               text = "Start backend"
-              style = [ButtonFlat]
               proc clicked() = pendingActions.add "start"
-            Button:
+            MenuItem:
               text = "Stop backend"
-              style = [ButtonFlat]
               proc clicked() = pendingActions.add "stop"
-            Button:
+            MenuItem:
               text = "Restart backend"
-              style = [ButtonFlat]
               proc clicked() = pendingActions.add "restart"
             Separator()
             # One way to switch in the window. The two named
@@ -5487,36 +5547,35 @@ proc topBar(app: AppState): Widget =
             # the only removal Directive 3 permits. The tray keeps its pair,
             # because a D-Bus menu cannot host a searchable list and taking them
             # out would leave it with no way to change model at all.
-            Button:
+            MenuItem:
               text = "Models…"
-              style = [ButtonFlat]
               proc clicked() = app.openModels()
             Separator()
-            Button:
+            MenuItem:
               # The label states the action, not the state, because a toggle
               # labelled with its current value is ambiguous about what
               # clicking it does — `ui.lua:73` had the same reasoning.
               text = (if app.lanEnabled: "Disable LAN access"
                       else: "Enable LAN access")
-              style = [ButtonFlat]
               proc clicked() = pendingActions.add "toggle_lan"
-            Button:
+            MenuItem:
               text = "Open Web UI"
-              style = [ButtonFlat]
               proc clicked() = pendingActions.add "web"
             Separator()
-            Button:
+            MenuItem:
               text = (if app.fullscreen: "Leave fullscreen" else: "Fullscreen")
-              style = [ButtonFlat]
               proc clicked() = pendingActions.add "toggle_fullscreen"
+            Separator()
+            MenuItem:
+              text = "About Jenova"
+              proc clicked() = app.showAbout()
             Separator()
             # The tray has carried the only Quit since it was written
             # (`trayMenu`, id 12). A desktop with no StatusNotifierWatcher gets
             # no tray, which left the window's own close button as the single
             # way out of the application.
-            Button:
+            MenuItem:
               text = "Quit"
-              style = [ButtonFlat]
               proc clicked() = pendingActions.add "quit"
 
 ## The window's keyboard bindings, in one place. Adding one is a row here, not

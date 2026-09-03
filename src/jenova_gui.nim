@@ -16,9 +16,10 @@ when not defined(freebsd):
 
 import std/os
 import jenova/gui
+import jenova/version
 
 const
-  Version = "0.1.0"
+  Version = version.Version
   Stage = "desktop application"
 
 ## Function purpose: printed on `--help` and on an unknown flag, so a mistyped

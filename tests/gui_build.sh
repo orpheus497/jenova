@@ -162,7 +162,33 @@ echo "gui_build: seeding a conversation"
 JENOVA_ROOT="$RT" JCA_HOME="$JH" JENOVA_NO_BACKENDS=1 JENOVA_PORT="$SEED_PORT" \
   "$OUT/jenova-core" serve >"$OUT/seed.log" 2>&1 &
 SEEDPID=$!
-sleep 2
+
+# Waited on, not slept through. A fixed `sleep 2` is a guess about how long the
+# process takes to bind, and it is wrong in both directions: too short on a
+# loaded runner, so the first `seed_post` writes into a closed socket and the
+# transcript is silently short; too long everywhere else. The socket answers or
+# it does not, so that is what is asked. Any status line counts — the question
+# is whether the listener is up, not what it thinks of the path.
+seed_ready=0
+i=0
+while [ "$i" -lt 40 ]; do
+  if printf 'GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n' \
+     | nc 127.0.0.1 "$SEED_PORT" 2>/dev/null | grep -q "^HTTP/"; then
+    seed_ready=1
+    break
+  fi
+  # The server dying is not something to keep waiting for.
+  kill -0 "$SEEDPID" 2>/dev/null || break
+  sleep 0.25 2>/dev/null || sleep 1
+  i=$((i + 1))
+done
+[ "$seed_ready" -eq 1 ] || {
+  echo "gui_build: the seeding server never answered on 127.0.0.1:$SEED_PORT"
+  cat "$OUT/seed.log" 2>/dev/null
+  kill "$SEEDPID" 2>/dev/null || true
+  exit 1
+}
+
 seed_post /api/db/workspaces '{"id":"w1","name":"Work"}'
 seed_post /api/db/conversations \
   '{"id":"seeded","name":"Seeded chat","lastModified":1730000000,"workspaceId":"w1"}'
@@ -273,10 +299,18 @@ CARD_COPY_DX=29
 SCAN_STEP=10
 
 ## The screen x of the leftmost card edge, or nothing if no card is drawn.
+##
+## Two different empty answers, and they are separated here rather than at the
+## call site: `convert` failing measured nothing, while `convert` succeeding and
+## finding no saturated column means no card drew. The first exits non-zero, the
+## second exits zero with no output. Piping straight into `sed` would lose the
+## distinction — a pipeline reports its *last* command's status, and `awk`
+## succeeds on empty input — so the scan is written to a file first.
 card_accent_x() { # image wx wy ww wh
   convert "$1" -crop "$(($4 - 40))x$(($5 / 2))+$(($2 + 20))+$(($3 + $5 / 8))" +repage \
-    -colorspace HSL -channel G -separate -resize "$(($4 - 40))x1!" -depth 8 txt:- 2>/dev/null |
-    sed -n 's/^\([0-9]*\),0: .*gray(\([0-9]*\)).*/\1 \2/p' |
+    -colorspace HSL -channel G -separate -resize "$(($4 - 40))x1!" -depth 8 \
+    txt:- >"$OUT/accent.txt" 2>/dev/null || return 1
+  sed -n 's/^\([0-9]*\),0: .*gray(\([0-9]*\)).*/\1 \2/p' "$OUT/accent.txt" |
     awk -v ox=$(($2 + 20)) '$2 > 40 { print $1 + ox; exit }'
 }
 
@@ -285,8 +319,14 @@ transcript_renders() {
   [ $# -eq 4 ] || { echo "gui_build: no window to read the transcript from"; return 1; }
   ww=$1; wh=$2; wx=$3; wy=$4
 
-  import -window root "$OUT/transcript.png" 2>/dev/null || return 1
-  ax=$(card_accent_x "$OUT/transcript.png" "$wx" "$wy" "$ww" "$wh")
+  import -window root "$OUT/transcript.png" 2>/dev/null || {
+    TRANSCRIPT_FAILED=measure
+    return 1
+  }
+  ax=$(card_accent_x "$OUT/transcript.png" "$wx" "$wy" "$ww" "$wh") || {
+    TRANSCRIPT_FAILED=measure
+    return 1
+  }
   if [ -z "$ax" ]; then
     TRANSCRIPT_FAILED=nocards
     return 1
@@ -372,7 +412,7 @@ composer_reachable() {
   d=$(convert "$OUT/before-band.png" "$OUT/after-band.png" \
       -compose difference -composite -colorspace Gray \
       -format "%[fx:maxima]" info: 2>/dev/null)
-  [ -n "$d" ] || return 1
+  [ -n "$d" ] || { PROBE_FAILED=measure; return 1; }
   echo "gui_build: largest pixel change in the composer row = $d"
   awk -v v="$d" 'BEGIN { exit !(v > 0.05) }' || { PROBE_FAILED=typing; return 1; }
 
@@ -420,14 +460,19 @@ composer_reachable() {
     d=$(convert "$OUT/idle-band.png" "$OUT/newchat-band.png" \
         -compose difference -composite -colorspace Gray \
         -format "%[fx:mean]" info: 2>/dev/null)
-    [ -n "$d" ] || break
+    # A `convert` that produced nothing measured nothing. Breaking here would
+    # leave `n` at 0, which is non-empty, passes the emptiness check below and
+    # then fails the threshold — reporting a broken ImageMagick as a missing
+    # `<Ctrl>n` binding. The two are not the same failure, so they do not share
+    # an exit path.
+    [ -n "$d" ] || { PROBE_FAILED=measure; return 1; }
     n=$(awk -v a="$n" -v b="$d" 'BEGIN { print (b > a ? b : a) }')
     # Once it is clearly past the bar there is nothing to gain by watching
     # longer, and the run is eight seconds shorter.
     awk -v v="$n" -v b="$noise" 'BEGIN { exit !(v > 0.0004 && v > b * 4) }' && break
     i=$((i + 1))
   done
-  [ -n "$n" ] && [ -n "$noise" ] || return 1
+  [ -n "$n" ] && [ -n "$noise" ] || { PROBE_FAILED=measure; return 1; }
   echo "gui_build: composer mean change — idle $noise, after <Ctrl>n $n"
   # Four times the measured idle noise, and above a floor so a perfectly still
   # window cannot divide by nothing.
@@ -496,6 +541,11 @@ elif ! transcript_renders; then
     wrongtext)
       echo "gui_build: a Copy button answered, but with something other than the"
       echo "gui_build: seeded conversation's first message." ;;
+    measure)
+      echo "gui_build: a measurement did not produce a number. ImageMagick's"
+      echo "gui_build: \`convert\` or \`import\` failed while reading the transcript,"
+      echo "gui_build: so nothing was proved either way about what drew. This is"
+      echo "gui_build: a harness failure, not a GUI failure." ;;
     nocards)
       echo "gui_build: no card edge in the transcript — the accent border every"
       echo "gui_build: message card carries is not there, so no message drew." ;;
@@ -510,6 +560,14 @@ elif ! transcript_renders; then
 elif composer_reachable; then
   echo "gui_build: the transcript renders the seeded conversation"
   echo "gui_build: the composer is at the bottom of the window and takes typing"
+elif [ "${PROBE_FAILED:-}" = "measure" ]; then
+  echo "gui_build: a measurement did not produce a number. ImageMagick's"
+  echo "gui_build: \`convert\` returned nothing for one of the band crops or"
+  echo "gui_build: differences, so nothing was proved either way about the"
+  echo "gui_build: window. This is a harness failure, not a GUI failure."
+  echo "gui_build: $OUT is kept for inspection."
+  KEEP=1
+  rc=1
 elif [ "${PROBE_FAILED:-}" = "shortcut" ]; then
   echo "gui_build: <Ctrl>n did not reach the window. The composer takes typing,"
   echo "gui_build: so the window is laid out — what failed is the shortcut"
