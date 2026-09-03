@@ -1,60 +1,32 @@
-## Script function and purpose: the native FreeBSD desktop application (N-S7) —
-## a GTK4/libadwaita window built with owlkettle, replacing `jenova-ui/src/main.c`
-## (C, GTK3, embedded LuaJIT, ncurses) and `lib/ui.lua` (Lua).
+## Script function and purpose: the desktop application — a GTK4/libadwaita
+## window built with owlkettle.
 ##
-## It is two things at once, and that is deliberate: the **chat window**, which is
-## new and is the actual product, and the **control surface**, which is not new
-## and must be reproduced feature-for-feature under Directive 3. `lib/ui.lua`
-## defines that surface exactly — start/stop/restart, model switching, the LAN
-## toggle and its persisted state file, a status poll, and the web-UI opener —
-## and every one of them is here.
+## It is two things at once. The chat window is the product; the control surface
+## — start, stop, restart, model switching, the LAN toggle and its persisted
+## flag, a status poll and the web-UI opener — is reproduced feature for feature
+## from what came before it.
 ##
-## ## What got simpler by moving into the core
+## Those control actions call the lifecycle module in-process rather than
+## shelling out to a supervisor. The server, the supervisor and the window are
+## one process and the tray owns nothing, which is what makes "the daemon is up"
+## and "the client port answers" incapable of disagreeing.
 ##
-## `ui.lua:69` spawned `bin/jenova-ca proxy-serve` as a **child of the tray**.
-## That is the mechanism of defect B-13: the client-facing port belonged to a
-## different process from the supervisor, so "the daemon is up" and ":8080
-## answers" could disagree, and a headless start had no `:8080` at all. Here the
-## server, the supervisor and the window are one process and the tray owns
-## nothing, so `proxy-serve` has no equivalent and needs none.
+## Two things do still spawn a process, and neither is a supervisor or a project
+## script. Reading the address LAN mode publishes runs `route` and `ifconfig`,
+## because no libc call answers "the address on the default route" and
+## reimplementing a routing-socket query for a status line is not a trade worth
+## making; and opening the web UI runs `xdg-open`, which is the documented way
+## to hand a URL to the desktop. Neither runs on the GTK thread — a wedged
+## routing lookup would hold the very frame meant to show its result — so both
+## are jobs on the control worker. The one synchronous call is at start-up,
+## before the window exists and before there is a frame to block.
 ##
-## Control actions therefore call `lifecycle` **in-process** rather than shelling
-## out to a supervisor binary, and model switching calls `models.switchModel`
-## rather than `bin/jenova-model-switch`.
-##
-## **Two things do still spawn a process, and this said "the GUI spawns no shell
-## at all" while they did.** Neither is a supervisor and neither is a project
-## script, which is the property that actually matters — but the sentence was
-## wrong as written and a reader auditing it would have found it wrong:
-##
-## * `lanAddress` runs `route -n get default` and `ifconfig` through `sh -c` to
-##   read the address LAN mode will publish. There is no libc call that answers
-##   "the address on the default route" and reimplementing a routing-socket
-##   query for a status line is not a trade worth making.
-## * The "Open Web UI" action runs `xdg-open`, which is the documented way to
-##   hand a URL to the desktop and is a declared dependency.
-##
-## Neither runs on the GTK thread. `lanAddress` did, which was a defect of its
-## own (E-06): a wedged routing lookup blocked the window for as long as it
-## took, holding the very frame that was meant to show the address. It is now a
-## `lan_addr` job on the control worker answering with `umLanAddr`, which is
-## `hwWorker`'s shape for `--list-devices` applied to a smaller probe. The one
-## remaining synchronous call is at startup in `run`, before the window exists —
-## there is no frame to block and nothing to deliver a message to yet.
-##
-## ## Why chat goes over HTTP to the local server
-##
-## The window could call `pipeline` directly, but it deliberately does not. Going
-## through `127.0.0.1:$PORT` means the desktop client exercises **the same path
-## the Web UI and any LAN client use** — intent detection, RAG, personas, tool
-## stripping and the cache all apply identically, and a bug in that path cannot
-## show up in one client and not the other. It also keeps inference isolated in
-## `llama-server`, so a GUI fault cannot kill a generation (N-7).
-##
-## The socket is raw rather than `std/httpclient` for the reason `websearch.nim`
-## shells to base `fetch(1)`: this project has spent seven stages removing
-## dependencies, and a localhost request needs no TLS stack.
-
+## Chat goes over HTTP to this program's own local server rather than calling
+## the pipeline directly. That way the desktop client exercises the same path
+## every other client does — intent detection, retrieval, personas, tool
+## stripping and the cache all apply identically — and a bug in that path cannot
+## show up in one client and not the other. The socket is raw rather than
+## `std/httpclient` because a localhost request needs no TLS stack.
 import std/[atomics, base64, json, net, os, oids, osproc, posix,
             streams,
             strutils, tables, times]
@@ -87,15 +59,15 @@ import ./shortcuts
 import ./convmd
 
 type
-  ## A-70. **`rSystem` is not decoration — its absence corrupted conversations.**
+  ## `rSystem` is not decoration — its absence corrupted conversations.
   ## System rows reach `messages`: `convmd.fromMarkdown` reads `<!-- system: … -->`
   ## back as a system turn and 13b's import writes that role through faithfully.
   ## With only two cases, `listMessages` coerced it to `rAssistant` on the way
   ## in, and because every other site reads *this enum* rather than the row, the
   ## damage spread from there: the outbound body sent the persona to the model as
   ## the assistant's own prior words on every later turn, and export wrote
-  ## `## jenova` over `<!-- system: … -->`, **destroying the evidence in the file
-  ## itself.** The string values are what `$` produces, so adding the case
+  ## `## jenova` over `<!-- system: … -->`, destroying the evidence in the file
+  ## itself. The string values are what `$` produces, so adding the case
   ## repairs the send, the export and the render together, and every row already
   ## stored keeps its correct `"system"` and heals at the next read.
   Role* = enum
@@ -103,15 +75,15 @@ type
     rAssistant = "assistant"
     rSystem = "system"
 
-  ## What `llama-server` reported about one turn. **These are its numbers, not
-  ## ours** — the server measures prompt and generation separately and this
+  ## What `llama-server` reported about one turn. These are its numbers, not
+  ## ours — the server measures prompt and generation separately and this
   ## carries both rather than a single elapsed time, because "slow" almost always
   ## means a long prompt re-read rather than slow generation, and one figure
   ## cannot tell those apart. Field names match the server's `result_timings`
   ## exactly so there is nothing to translate when reading either side.
   Timings* = object
     promptN*: int          ## prompt tokens *evaluated* — not the whole prompt,
-                           ## which is this plus `cacheN` (A-5)
+                           ## which is this plus `cacheN`
     promptMs*: float
     predictedN*: int       ## tokens generated
     predictedMs*: float
@@ -120,13 +92,13 @@ type
   Message* = object
     role*: Role
     text*: string
-    ## The `messages` row this came from. **Empty means it is not saved yet** —
+    ## The `messages` row this came from. Empty means it is not saved yet —
     ## an assistant turn is a live buffer while it streams and only becomes a row
     ## when it completes. Every action but copy needs it: without an id there was
-    ## nothing to edit, delete or update, which is why G-28 was a state-shape
+    ## nothing to edit, delete or update, which is why editing is a state-shape
     ## change before it was a set of buttons.
     id*: string
-    ## The model's reasoning, kept apart from the answer (G-39). `llama-server`
+    ## The model's reasoning, kept apart from the answer. `llama-server`
     ## separates it into `reasoning_content` when the request asks it to; left
     ## inline it appears in the reply as a `<think>` block the user has to read
     ## past.
@@ -136,23 +108,23 @@ type
     model*: string
     timings*: Timings
     ## 12d-3: this reply came from the response cache rather than the model.
-    ## **Deliberately not persisted.** It is a property of how *this* generation
+    ## Deliberately not persisted. It is a property of how *this* generation
     ## was answered, not of the turn — reloading the conversation tomorrow and
     ## seeing "cached" would be a claim about a request nobody made.
     cacheHit*: bool
-    ## The turn this one follows (G-29). Empty for the first turn of a
-    ## conversation. **Two messages sharing a parent are alternative versions of
-    ## the same turn** — that is the whole of branching, and it is why editing or
+    ## The turn this one follows. Empty for the first turn of a
+    ## conversation. Two messages sharing a parent are alternative versions of
+    ## the same turn — that is the whole of branching, and it is why editing or
     ## regenerating adds a row rather than overwriting one.
     parent*: string
-    ## G-30. The turn's attachments, as the JSON text of the `messages.extra`
-    ## column — **the frozen Web UI's own array shape** (D-Z), so a conversation
+    ## The turn's attachments, as the JSON text of the `messages.extra`
+    ## column — the frozen Web UI's own array shape, so a conversation
     ## moves between the two surfaces without conversion. Carried as text rather
     ## than a `JsonNode` because `Message` crosses a thread channel and a
     ## `JsonNode` is a `ref`.
     extra*: string
 
-  ## G-30. A staged attachment is `pipeline.Attachment` — the type moved below
+  ## A staged attachment is `pipeline.Attachment` — the type moved below
   ## the widget layer with the classifier that produces it, so both are
   ## assertable. This alias is kept because the widgets read better for it.
   PendingAttachment* = pipeline.Attachment
@@ -182,30 +154,30 @@ type
     port: int
     ## The reply an `index` job is about. Only the id travels: the worker reads
     ## the committed row itself, so nothing has to copy message text across the
-    ## channel and the worker cannot index a turn that was never written (T-17).
+    ## channel and the worker cannot index a turn that was never written.
     msgId: string
-    ## S-1: which profile an `apply_profile` job should deploy.
+    ## which profile an `apply_profile` job should deploy.
     profileName: string
     ## 8a: which `.gguf` a `switch_path` job should make active.
     modelPath: string
 
   UiMsgKind = enum
     umToken, umDone, umError, umNotice, umStatus,
-    ## G-39: reasoning arrives on its own channel because it is a separate field
+    ## reasoning arrives on its own channel because it is a separate field
     ## on the wire and belongs in a separate place on screen.
     umThinking,
-    ## G-33: the server's own measurements, and the model it used.
+    ## the server's own measurements, and the model it used.
     umTimings, umModel,
-    ## G-33: the backend's context window and loaded model, from `/props`.
+    ## the backend's context window and loaded model, from `/props`.
     umProps,
-    ## S-1: the detected hardware and the profile ranking. Detection shells out
+    ## the detected hardware and the profile ranking. Detection shells out
     ## to `sysctl` and `llama-server --list-devices`, so it runs on the control
     ## worker and arrives here.
     umHardware,
     ## 12d-3: this turn was answered from the response cache. Sent once, on the
     ## response head, before any token.
     umCacheHit,
-    ## E-06: the address LAN mode publishes. Reading it shells out to `route`
+    ## the address LAN mode publishes. Reading it shells out to `route`
     ## and `ifconfig`, so it is computed on the control worker and arrives here
     ## — the same shape `umHardware` uses for `--list-devices`.
     umLanAddr
@@ -216,15 +188,15 @@ type
     status: BackendStatus
     timings: Timings
     ctx: int
-    ## G-31: `default_generation_settings.params` from `/props`, as JSON text.
+    ## `default_generation_settings.params` from `/props`, as JSON text.
     ## Carried as text and parsed on arrival so no `JsonNode` — a ref type —
     ## crosses the channel between threads.
     params: string
-    ## G-30: does the loaded model accept images? From `/props.modalities`.
+    ## does the loaded model accept images? From `/props.modalities`.
     vision: bool
-    ## G-35: may the USER honestly be offered a Retry for this failure?
+    ## may the USER honestly be offered a Retry for this failure?
     retryable: bool
-    ## S-1. Both are plain value types all the way down — objects, ints and
+    ## Both are plain value types all the way down — objects, ints and
     ## `seq[string]` — so they deep-copy across the channel the way `timings`
     ## does. Nothing here is a `ref`.
     hw: hardware.Hardware
@@ -236,15 +208,15 @@ var
   uiChan: Channel[UiMsg]
   streamThread: Thread[void]
   ctlThread: Thread[void]
-  # S-1. Hardware detection has its **own** worker and is not on `ctlReq`.
+  # Hardware detection has its own worker and is not on `ctlReq`.
   # `llama-server --list-devices` initialises Vulkan and is unbounded, and the
   # control worker is a single serial queue that also services start, stop,
   # restart and the three-second poll — so a slow probe there stalls every one
-  # of them and the window hangs on "starting". It did. (D-BQ.)
+  # of them and the window hangs on "starting". It did.
   hwReq: Channel[ControlJob]
   hwThread: Thread[void]
   pendingActions: seq[string] = @[]
-  # G-30. The drop callback is a bare C function pointer and cannot carry a
+  # The drop callback is a bare C function pointer and cannot carry a
   # closure, so it only ever appends here; the timer that already runs on the
   # GTK thread drains it with the app state in hand. Same shape as
   # `pendingActions`, and for the same reason — a GTK callback must not reach
@@ -259,7 +231,7 @@ var
 # loop so joinThread completes, rather than being unblocked by a channel close.
 const QuitSentinel = ""
 
-# G-33, the stop button. **Two variables and not one**, because a flag alone
+# the stop button. Two variables and not one, because a flag alone
 # cannot stop a generation: the stream worker spends its life blocked inside
 # `sock.recvLine`, and a flag it is not executing to check does nothing. So the
 # socket's file descriptor is published here and `shutdown(2)` on it is what
@@ -274,7 +246,7 @@ var
   streamCancel: Atomic[bool]
   streamFd: Atomic[int]
 
-# Action purpose: **-1, not the zero an `Atomic[int]` starts at.** Zero is a
+# Action purpose: -1, not the zero an `Atomic[int]` starts at. Zero is a
 # perfectly valid descriptor — it is stdin — so a Stop pressed before anything
 # had ever streamed would have called `shutdown` on this process's own stdin.
 streamFd.store(-1)
@@ -282,18 +254,21 @@ streamFd.store(-1)
 ## Function purpose: stop the generation in flight. Safe to call when nothing is
 ## streaming — the fd is -1 and this does nothing.
 ##
-## Action purpose: this runs on the **GTK thread**, directly from the button,
+## Action purpose: this runs on the GTK thread, directly from the button,
 ## rather than being posted to the control worker. `PLANS.md` 7a proposed the
 ## worker because a stop must never queue behind a generation — but an atomic
 ## store and one `shutdown` syscall neither block nor allocate, so doing it
 ## inline satisfies that requirement more completely than a queue does: there is
-## no queue to be behind. (**D-BO**.)
+## no queue to be behind.
 proc cancelStream() =
   streamCancel.store(true)
   let fd = streamFd.load()
   if fd >= 0:
     discard posix.shutdown(SocketHandle(fd), posix.SHUT_RDWR)
 
+## Function purpose: one generation, on the stream thread. Everything it
+## learns reaches the window as a message rather than by touching state, so the
+## GTK thread stays the only writer.
 proc streamOnce(job: StreamJob) =
   var sock: Socket
   # Sent once per generation rather than per chunk: the model name repeats on
@@ -317,10 +292,10 @@ proc streamOnce(job: StreamJob) =
     let parts = statusLine.split(' ')
     let code = if parts.len > 1: parts[1] else: ""
     if code != "200":
-      # Action purpose: **the body is read now, and it was thrown away before.**
+      # Action purpose: the body is read now, and it was thrown away before.
       # llama-server puts the whole diagnosis in it — including, for a context
       # overflow, the prompt size and the context size — and dropping it left
-      # "the server answered 400" as the entire report (G-35). Headers first,
+      # "the server answered 400" as the entire report. Headers first,
       # then whatever body arrives before the connection closes.
       var body = ""
       try:
@@ -339,7 +314,7 @@ proc streamOnce(job: StreamJob) =
                         retryable: ce.retryable))
       return
 
-    # Action purpose: 12d-3. **The headers were skipped, not read**, and that is
+    # Action purpose: 12d-3. The headers were skipped, not read, and that is
     # why a cache hit has always been invisible here. `server.handle` has sent
     # `X-Cache: HIT` on the hit path since the route was written, and this loop
     # discarded it along with everything else — so a cached turn was
@@ -373,7 +348,7 @@ proc streamOnce(job: StreamJob) =
       except CatchableError:
         continue
       # Action purpose: four things come out of one chunk and only the first was
-      # ever read. `timings` and `model` are **top level**, not inside `choices` —
+      # ever read. `timings` and `model` are top level, not inside `choices` —
       # reading them from the delta finds nothing, which is the shape mistake
       # this comment exists to prevent.
       let delta = node{"choices"}{0}{"delta"}
@@ -401,11 +376,11 @@ proc streamOnce(job: StreamJob) =
   except CatchableError as e:
     # Action purpose: a cancelled read fails, and that failure is the stop
     # working. Reporting it would put "Connection reset by peer" on screen every
-    # single time the USER pressed Stop (G-33).
+    # single time the USER pressed Stop.
     if not streamCancel.load():
       # A transport failure has no status line to read, so it is classified from
       # the exception instead — which is how a timeout comes to be reported as a
-      # timeout rather than as whatever the socket layer called it (G-35).
+      # timeout rather than as whatever the socket layer called it.
       let ce = pipeline.classifyError(0, exceptionMsg = e.msg)
       uiChan.send(UiMsg(kind: umError, text: ce.message,
                         retryable: ce.retryable))
@@ -416,10 +391,12 @@ proc streamOnce(job: StreamJob) =
     if not sock.isNil:
       try: sock.close() except CatchableError: discard
     # Always sent, cancelled or not — `umDone` is what saves the reply with the
-    # text it reached and the parent that makes it a sibling (D-BG). A stop must
+    # text it reached and the parent that makes it a sibling. A stop must
     # keep the partial answer, not discard it.
     uiChan.send(UiMsg(kind: umDone))
 
+## Function purpose: the stream thread's loop. One generation at a time, so a
+## second send cannot interleave tokens into the same transcript.
 proc streamWorker() {.thread.} =
   while true:
     let job = streamReq.recv()
@@ -464,15 +441,15 @@ proc httpGetLocal(host: string, port: int, path: string): string =
 ## Function purpose: the context window one conversation actually gets, and the
 ## model the backend has loaded, read from `llama-server`'s own `/props`.
 ##
-## **This is not `CTX_SIZE` from the config.** `llama-server` gives each parallel
+## This is not `CTX_SIZE` from the config. `llama-server` gives each parallel
 ## slot `n_ctx / n_parallel`, and then caps that to the model's training context
 ## — so with `-c 32768 -np 2` a conversation has 16384, and less again if the
 ## model was trained shorter. Deriving it from the config would overstate the
 ## room remaining by the slot count, silently, and only on long conversations.
-## Action purpose: the same response also carries the server's **own** sampling
+## Action purpose: the same response also carries the server's own sampling
 ## values, under `default_generation_settings.params`. The settings dialog shows
 ## them as each field's placeholder and marks a field "Custom" when the stored
-## value differs (G-31), which is what stops someone chasing a parameter they
+## value differs, which is what stops someone chasing a parameter they
 ## never set. They are read from the call that was already being made rather than
 ## from a second one — this proc is a socket round trip and the reason it runs on
 ## the control thread at all.
@@ -484,7 +461,7 @@ proc fetchProps(host: string, port: int):
     let n = parseJson(body)
     let gen = n{"default_generation_settings"}
     let params = gen{"params"}
-    # G-30: `modalities.vision` is the server's own answer to "can this model
+    # `modalities.vision` is the server's own answer to "can this model
     # look at a picture", set from the loaded projector. It is what decides
     # whether attaching an image is offered or refused with a reason.
     (gen{"n_ctx"}.getInt(0),
@@ -500,11 +477,13 @@ proc fetchProps(host: string, port: int):
 proc lanStateFile(p: Paths): string =
   p.state / "lan_mode"
 
+## Function purpose: the flag is a file rather than in-memory state, because
+## the tray and a headless start both have to agree with the window about it.
 proc isLanEnabled(p: Paths): bool =
   try: readFile(lanStateFile(p)).strip == "1"
   except CatchableError: false
 
-## Function purpose: persist the LAN flag, and **say whether it stuck** (E-03).
+## Function purpose: persist the LAN flag, and say whether it stuck.
 ##
 ## Action purpose: this discarded the failure, and the toggle then lied. The
 ## state file is what the *next* start binds from — nothing in this process
@@ -525,24 +504,18 @@ proc setLanState(p: Paths, enabled: bool): bool =
   except CatchableError:
     false
 
-## Function purpose: run a base-system command and return its first non-empty
-## line. Used for the LAN address and for handing a URL to the browser — the two
-## things with no library equivalent.
+## Function purpose: the two things with no library equivalent — reading the
+## address on the default route, and handing a URL to the desktop. Always an
+## argument vector and never a shell string, so no quoting question arises.
 ##
-## `route(8)`, `ifconfig(8)` and `xdg-open(1)` are invoked with an argument
-## vector, never a shell string. `ui.lua` built shell commands and needed a
-## `shell_quote` helper to stay safe; passing argv removes the question.
-## `ctlWorker` is serial and also carries backend start and stop, so a child
-## that never exits would wedge backend control, not just the LAN readout.
+## Action purpose: the wait comes before the read, because reading blocks until
+## the pipe reaches EOF and a hung child never gives one — and the worker this
+## runs on is serial and also carries backend control, so a child that never
+## exits would wedge more than the readout.
 ##
-## The wait comes before the read for that reason: `readAll` blocks until the
-## pipe reaches EOF, which a hung child never gives. Waiting first bounds it,
-## and reading after the child is gone cannot block.
-##
-## That ordering is only safe while the output stays under one pipe buffer —
-## `osproc.waitForExit` warns that a child without `poParentStreams` can fill
-## its output buffer and deadlock. `route`, `ifconfig` and `xdg-open` all print
-## a few lines, so the child completes its write and exits without a reader.
+## That ordering is safe only while the output stays under one pipe buffer: a
+## child whose buffer fills with no reader deadlocks instead. The three commands
+## used here print a few lines each.
 proc runOutput(cmd: string, args: openArray[string],
                timeoutMs = 5000): string =
   try:
@@ -555,8 +528,8 @@ proc runOutput(cmd: string, args: openArray[string],
   except CatchableError:
     ""
 
-## The first non-empty line of `runOutput`, for the callers that want one value
-## rather than a block to parse.
+## Function purpose: the first non-empty line of `runOutput`, for the callers
+## that want one value rather than a block to parse.
 proc runCapture(cmd: string, args: openArray[string],
                 timeoutMs = 5000): string =
   for line in runOutput(cmd, args, timeoutMs).splitLines():
@@ -603,7 +576,7 @@ proc lanAddress(): string =
   inetAddress(runOutput("ifconfig", []), skipLoopback = true)
 
 type
-  ## G-21. `kind` is the table name `api.restoreEntity` takes; `label` is what
+  ## `kind` is the table name `api.restoreEntity` takes; `label` is what
   ## the row shows, which differs per table — a note has a title, a message has
   ## only its text.
   TrashItem = tuple[kind, id, label, detail: string]
@@ -614,6 +587,9 @@ type
   ## the same three parent ids — so one set of tree helpers places all three.
   LeafItem = tuple[id, name, folderId, projectId, workspaceId: string]
 
+## Function purpose: the sidebar's four levels are read whole and held in
+## state, because `view` runs on every canvas frame and a query per frame is a
+## per-frame cost with a database behind it.
 proc listWorkspaces(): seq[NodeItem] =
   for r in db.query("SELECT id, name FROM workspaces WHERE is_deleted=0 ORDER BY name"):
     if r.len >= 2: result.add (id: r[0], parent: "", name: r[1])
@@ -648,6 +624,8 @@ proc listNotes(): seq[LeafItem] =
       result.add (id: r[0], name: r[1], folderId: r[2],
                   projectId: r[3], workspaceId: r[4])
 
+## Function purpose: file assets carry all three container ids, so the tree can
+## place one without a second lookup per row.
 proc listFiles(): seq[LeafItem] =
   for r in db.query("SELECT id, name, folderId, projectId, workspaceId " &
                     "FROM fileAssets WHERE is_deleted=0 ORDER BY name"):
@@ -656,7 +634,7 @@ proc listFiles(): seq[LeafItem] =
                   projectId: r[3], workspaceId: r[4])
 
 ## Action purpose: `isFocusNote` is read here and not left to the context builder
-## because the window has to *show* the flag to let the user change it (G-50).
+## because the window has to *show* the flag to let the user change it.
 ## The truth test is `workspace.isFocusValue` rather than a comparison written
 ## here: the same cell decides whether `workspace.contextFor` treats the note as
 ## a rule, and a second notion of "set" would make the toggle disagree with the
@@ -667,21 +645,26 @@ proc loadNote(id: string): tuple[found: bool, title, content: string, focus: boo
   (false, "", "", false)
 
 ## Function purpose: the columns a file-asset rename has to carry forward.
-## `api.writeRow` is `INSERT OR REPLACE` over **every** column, so any field the
+## `api.writeRow` is `INSERT OR REPLACE` over every column, so any field the
 ## caller omits is written empty — a rename that sent only the name blanked the
 ## content, and `fssync.syncFileAsset` then wrote a zero-byte file and trashed
-## the original (T-13). Read back as strings: `api.f` stringifies either way.
+## the original. Read back as strings: `api.f` stringifies either way.
 proc loadFileAsset(id: string): tuple[found: bool, content, size, kind, uploadDate: string] =
   for r in db.query(
       "SELECT content, size, type, uploadDate FROM fileAssets WHERE id=?", [id]):
     if r.len >= 4: return (true, r[0], r[1], r[2], r[3])
   (false, "", "", "", "")
 
+## Function purpose: named for the moment it was made, because the first
+## message renames it and until then a blank row is indistinguishable from
+## every other blank row.
 proc newConversation(): string =
   result = $genOid()
   db.exec("INSERT INTO conversations (id, name, lastModified, is_deleted) VALUES (?, ?, ?, 0)",
           [result, "Chat " & now().format("yyyy-MM-dd HH:mm"), $toUnix(getTime())])
 
+## Function purpose: what the window opens on, so a restart resumes where the
+## user left off rather than on an empty chat.
 proc latestConversation(): string =
   let rows = db.query("SELECT id FROM conversations WHERE is_deleted=0 " &
                       "ORDER BY lastModified DESC LIMIT 1")
@@ -689,7 +672,7 @@ proc latestConversation(): string =
 
 ## Action purpose: `timings` is a TEXT column, so the measurements are stored as
 ## JSON in it rather than as five new columns. The schema already had the column
-## and `jca_web` is frozen against this table (D-Z), so widening it is neither
+## and `jca_web` is frozen against this table, so widening it is neither
 ## necessary nor free. The keys are the server's own names.
 proc timingsToJson(t: Timings): string =
   if t.predictedN == 0 and t.promptN == 0: return ""
@@ -697,6 +680,8 @@ proc timingsToJson(t: Timings): string =
        "predicted_n": t.predictedN, "predicted_ms": t.predictedMs,
        "cache_n": t.cacheN})
 
+## Function purpose: a malformed value yields zeros rather than raising — the
+## statistics line is not worth failing a transcript render over.
 proc timingsFromJson(s: string): Timings =
   if s.len == 0: return
   try:
@@ -713,13 +698,13 @@ proc timingsFromJson(s: string): Timings =
 ## deleted, and re-reading the row back to find one would race the next insert.
 ##
 ## `thinking`, `model` and `timings` are columns the schema has always carried and
-## **nothing has ever written** (G-33, G-39). They are filled here rather than by a
+## nothing has ever written. They are filled here rather than by a
 ## later UPDATE so a reply is one row written once.
 proc saveMessage(convId: string, role: Role, text: string,
                  thinking = "", model = "", timings = Timings(),
                  parent = "", extra = ""): string =
-  # Action purpose: **a turn with no visible text but with reasoning is still a
-  # turn.** This refused anything with an empty `content`, which was harmless
+  # Action purpose: a turn with no visible text but with reasoning is still a
+  # turn. This refused anything with an empty `content`, which was harmless
   # while the transcript was a flat list and is not now: `umDone` read the empty
   # id back as "nothing happened", so the reply stayed on screen, stayed out of
   # the tree, and left the next message attaching to a stale parent. A reasoning
@@ -734,7 +719,7 @@ proc saveMessage(convId: string, role: Role, text: string,
   db.exec("UPDATE conversations SET lastModified=? WHERE id=?",
           [$toUnix(getTime()), convId])
 
-## **Every** message in the conversation, ordered oldest first — the tree, not
+## Every message in the conversation, ordered oldest first — the tree, not
 ## the transcript. `ORDER BY` is what makes the ordering meaningful to
 ## `api.siblingsIn` and `api.deepestFrom`, which read "newest" as "last", so it
 ## is part of the contract rather than a tidy default.
@@ -744,7 +729,7 @@ proc loadMessages(convId: string): seq[Message] =
                     "parent, extra FROM messages WHERE convId=? AND " &
                     "is_deleted=0 ORDER BY timestamp ASC, rowid ASC", convId):
     if r.len < 8: continue
-    # A-70: the lossy read. Anything that was not "user" became `rAssistant`,
+    # the lossy read. Anything that was not "user" became `rAssistant`,
     # so a stored "system" row lost its identity here and nowhere else. The
     # decision itself is `convmd.canonicalRole` so it can be asserted — this
     # file links into no test binary — and this is only the mapping onto the
@@ -765,6 +750,8 @@ proc loadLeaf(convId: string): string =
   let rows = db.query("SELECT currNode FROM conversations WHERE id=?", convId)
   if rows.len > 0 and rows[0].len > 0: rows[0][0] else: ""
 
+## Function purpose: records which branch tip the reader is on, so switching
+## away and back returns to the same version of the conversation.
 proc saveLeaf(convId, leaf: string) =
   if convId.len == 0: return
   db.exec("UPDATE conversations SET currNode=? WHERE id=?", [leaf, convId])
@@ -774,6 +761,8 @@ proc saveLeaf(convId, leaf: string) =
 proc edgesOf(all: seq[Message]): seq[api.MsgEdge] =
   for m in all: result.add (m.id, m.parent)
 
+## Function purpose: built from the flag rather than patched in place, because
+## the menu protocol revises a layout as a unit.
 proc trayMenu(lanEnabled: bool): seq[TrayItem] =
   @[
     TrayItem(kind: tiAction, id: 1, label: "Open Web UI", action: "web"),
@@ -797,7 +786,7 @@ proc trayMenu(lanEnabled: bool): seq[TrayItem] =
 ## Function purpose: the reason the backend gave for exiting, so the notice says
 ## something actionable instead of "it exited".
 ##
-## Action purpose: **the last error line, searched from the end.** The log is
+## Action purpose: the last error line, searched from the end. The log is
 ## hundreds of kilobytes and grows across runs, so only the tail is read; a
 ## failed model load puts its diagnosis in the final few lines and the
 ## interesting one is the last line marked `E`. Falls back to naming the file,
@@ -821,7 +810,7 @@ proc lastBackendError(logPath: string): string =
     # llama.cpp's own severity marker: `0.04.076.241 E llama_model_load: …`.
     # The vulkan allocator prints without one, so that prefix is matched too.
     if not (t.contains(" E ") or t.startsWith("ggml_vulkan:")): continue
-    # Action purpose: **the last error line is the least useful one.** llama.cpp
+    # Action purpose: the last error line is the least useful one. llama.cpp
     # ends a failed load with "exiting due to model loading error", which says
     # only that it failed; the line that says *why* — the allocator running out
     # of device memory, say — is a few lines above it. So the epilogue lines are
@@ -836,13 +825,15 @@ proc lastBackendError(logPath: string): string =
            "  (" & logPath & ")"
   "see " & logPath
 
+## Function purpose: the control thread's loop. Every backend action is serial
+## here, so two of them cannot fork a second copy of the same process.
 proc ctlWorker() {.thread.} =
   # Whether `/props` has been read for the backend currently up. Cleared when it
   # goes down, so a restart or a model switch re-reads it rather than reporting
-  # the previous model's context window (G-33).
+  # the previous model's context window.
   var propsRead = false
   # Whether existing history has been put into the retrieval index in this
-  # process (T-17). Not cleared on a restart: the backfill is incremental and
+  # process. Not cleared on a restart: the backfill is incremental and
   # what it already indexed stays indexed.
   var backfilled = false
   var embedConfigured = false
@@ -899,8 +890,8 @@ proc ctlWorker() {.thread.} =
     of "web":
       discard runCapture("xdg-open", ["http://127.0.0.1:" & $j.port])
     of "lan_addr":
-      # E-06. **This is three `sh -c` invocations and it used to run on the GTK
-      # thread**, straight from the LAN toggle and from the three-second poll
+      # This is three `sh -c` invocations and it used to run on the GTK
+      # thread, straight from the LAN toggle and from the three-second poll
       # that notices the flag changed underneath it. `route -n get default` is
       # usually instant and is not always: on a host whose routing lookup is
       # slow or wedged, the window froze for as long as it took, holding the
@@ -911,7 +902,7 @@ proc ctlWorker() {.thread.} =
       uiChan.send(UiMsg(kind: umLanAddr, text: lanAddress()))
     of "poll":
       let up = j.lc.healthy(beLlama, timeoutMs = 300)
-      # Action purpose: **`running`, not `pid > 0`.** `state` already resolves
+      # Action purpose: `running`, not `pid > 0`. `state` already resolves
       # liveness with `kill(pid, 0)`; this read only the pid, and a pidfile
       # outlives the process it names. So a backend that started and then
       # exited — an out-of-memory model load takes about four seconds — left
@@ -924,7 +915,7 @@ proc ctlWorker() {.thread.} =
       # Action purpose: a dead process whose pidfile survives is the *only*
       # evidence the backend was asked to run and failed — `pid > 0` with
       # `running` false cannot happen any other way, because nothing writes a
-      # pidfile without forking. Announced **once** per start, or the notice
+      # pidfile without forking. Announced once per start, or the notice
       # line would rewrite itself every three seconds.
       if not up and ps.pid > 0 and not ps.running:
         if not exitAnnounced:
@@ -946,7 +937,7 @@ proc ctlWorker() {.thread.} =
       elif not up:
         propsRead = false
       # Action purpose: put existing history into the retrieval index once, and
-      # **not until the embedding server answers** (T-17). Running it at startup
+      # not until the embedding server answers. Running it at startup
       # would index every past message during the seconds the embedder is still
       # loading, storing chunks with no vector and leaving the whole of history
       # keyword-only. The poll already runs here every three seconds, so waiting
@@ -955,7 +946,7 @@ proc ctlWorker() {.thread.} =
       if not backfilled and j.lc.healthy(beEmbed, timeoutMs = 300):
         backfilled = true
         let n = rag.backfillChats()
-        # W-06: and the notes and files, which were never indexed at all. Same
+        # and the notes and files, which were never indexed at all. Same
         # gate, same reason — both need the embedder up or they store chunks
         # with no vector and end up keyword-only for ever.
         let w = rag.backfillWorkspace()
@@ -974,9 +965,9 @@ proc ctlWorker() {.thread.} =
     else: discard
 
 ## Function purpose: hardware detection and profile apply, on a worker of their
-## own (S-1, **D-BQ**).
+## own.
 ##
-## Action purpose: **this is not on `ctlReq`, and that is the whole point.**
+## Action purpose: this is not on `ctlReq`, and that is the whole point.
 ## `hardware.detect` shells `llama-server --list-devices`, which initialises
 ## Vulkan and is unbounded. The control worker is one serial queue that also
 ## services start, stop, restart and the three-second poll, so a slow probe
@@ -1016,7 +1007,7 @@ viewable App:
   p: Paths
   cfg: Config
   lc: Lifecycle
-  ## **`messages` is the active path, `allMessages` is the tree** (G-29). A
+  ## `messages` is the active path, `allMessages` is the tree. A
   ## conversation is not a list: editing a turn or regenerating a reply adds an
   ## alternative version beside the old one, and what is on screen is one route
   ## from the root down to `leaf`. Every widget reads `messages`; every branch
@@ -1024,15 +1015,15 @@ viewable App:
   messages: seq[Message]
   allMessages: seq[Message]
   ## The (id, parent) pairs of `allMessages`, cached rather than rebuilt where
-  ## they are used. The sibling counter needs them **once per message per
-  ## redraw**, and with `timings_per_token` the transcript redraws several times
+  ## they are used. The sibling counter needs them once per message per
+  ## redraw, and with `timings_per_token` the transcript redraws several times
   ## a second — so building them there allocates a fresh sequence per message per
-  ## frame. That is defect B-17's shape with a tree walk behind it instead of a
+  ## frame. That is a per-frame cost with a tree walk behind it instead of a
   ## fork, which is the same reason `convs` and `lanAddr` are cached.
   edges: seq[api.MsgEdge]
   ## The turn at the end of the visible path, persisted as `conversations.currNode`.
   leaf: string
-  ## Step 13a. **A plain string, and that is the point.** The composer is a
+  ## Step 13a. A plain string, and that is the point. The composer is a
   ## multi-line `DraftView` now, but it reports every keystroke back through an
   ## owlkettle event exactly as the `Entry` did — so the draft stays ordinary
   ## state, `view` re-runs when it changes, and the placeholder is a state test
@@ -1060,30 +1051,30 @@ viewable App:
   ## Cached, not computed per redraw: resolving it forks `route` and `ifconfig`,
   ## and `view` runs on every token of a stream. `ui.poll_status` forking
   ## `jenova-ca status` every 3 s in the tray and every 1 s in the TUI is defect
-  ## B-17, and recomputing this in `view` would be a worse version of it.
+  ## and recomputing this in `view` would be a worse version of it.
   lanAddr: string
   convId: string
   streaming: bool
   notice: string
-  ## G-35: whether the notice currently on screen is a failure worth offering a
+  ## whether the notice currently on screen is a failure worth offering a
   ## Retry for. Set only by `umError`, and cleared by every other writer of
   ## `notice`, so a stale Retry cannot outlive the error that earned it.
   noticeRetryable: bool
-  ## G-30: does the loaded model accept images? Read once per backend lifetime
+  ## does the loaded model accept images? Read once per backend lifetime
   ## from `/props.modalities.vision`, and what decides whether an image can be
   ## attached at all.
   serverVision: bool
-  ## G-30: the attachment being previewed full-size. **The whole attachment and
-  ## not just its `data:` URL** (G-40) — the preview needs the identity key to
+  ## the attachment being previewed full-size. The whole attachment and
+  ## not just its `data:` URL — the preview needs the identity key to
   ## look its decoded pixbuf up, and carrying only the payload was what forced
   ## the old code to re-hash it on every frame.
   previewAtt: PendingAttachment
-  ## G-30. Attachments staged on the composer, not yet sent. Cleared when the
+  ## Attachments staged on the composer, not yet sent. Cleared when the
   ## turn they belong to is posted. Each is a `messages.extra` element in the
-  ## Web UI's own shape (D-Z), kept as parsed fields here only so the strip can
+  ## Web UI's own shape, kept as parsed fields here only so the strip can
   ## draw a name and a size without re-parsing on every redraw.
   pending: seq[PendingAttachment]
-  ## G-33. `ctxSize` is the context **one conversation** gets — `llama-server`'s
+  ## `ctxSize` is the context one conversation gets — `llama-server`'s
   ## per-slot figure from `/props`, not `CTX_SIZE` from the config, which is the
   ## total shared across parallel slots. Zero until the backend has been up long
   ## enough to answer, and the context readout is hidden rather than guessed
@@ -1092,7 +1083,7 @@ viewable App:
   serverModel: string
   ## Sidebar state. `convs` is cached rather than queried in `view` for the same
   ## reason `lanAddr` is: `view` runs on every token of a stream and on every
-  ## canvas frame, and a SELECT per frame would be defect B-17 with a database
+  ## canvas frame, and a SELECT per frame would be that same cost with a database
   ## behind it instead of a fork.
   convs: seq[ConvItem]
   workspaces: seq[NodeItem]
@@ -1106,7 +1097,7 @@ viewable App:
   openNote: string
   noteTitle: string
   ## Whether the open note is a FOCUS note — a rule that escapes its own level
-  ## and applies across the whole workspace tree (G-50, D-BU). Held as state
+  ## and applies across the whole workspace tree. Held as state
   ## rather than read out of the row per frame, because the toggle has to show an
   ## edit that is not saved yet, the same way the title `Entry` does.
   noteFocus: bool
@@ -1122,7 +1113,7 @@ viewable App:
   noteOrigContent: string
   noteOrigFocus: bool
   noteBuffer: TextBuffer = newTextBuffer()
-  ## The message being edited in place (G-28), by row id, or empty. A second
+  ## The message being edited in place, by row id, or empty. A second
   ## buffer rather than reusing `noteBuffer`: the note editor and the transcript
   ## can both be open, and sharing one `TextBuffer` would make each overwrite the
   ## other's text.
@@ -1145,39 +1136,39 @@ viewable App:
   ## re-forking `ifconfig`. A nil pixbuf is survivable — `Picture` renders empty
   ## — so a missing icon file costs the logo, not the window.
   logo: Pixbuf
-  ## G-31. `opts` is what is saved and what reaches the request body; `draft` is
-  ## what the open dialog is editing. **Two copies, deliberately:** the dialog has
+  ## `opts` is what is saved and what reaches the request body; `draft` is
+  ## what the open dialog is editing. Two copies, deliberately: the dialog has
   ## a Cancel, and a single copy edited in place would apply every keystroke to
   ## the next generation and have nothing to revert to.
   opts: settings.Settings
   optsDraft: settings.Settings
   settingsOpen: bool
   settingsSection: settings.SettingSection
-  ## S-1. The hardware screen is its own panel rather than a settings section,
-  ## because `settings.SettingSection` is the Web UI parity set (D-BL) and the
+  ## The hardware screen is its own panel rather than a settings section,
+  ## because `settings.SettingSection` is the Web UI parity set and the
   ## parity assertion in `hardware-selftest`'s sibling `pipeline-selftest`
   ## checks it key for key — a Jenova-only section added there would turn it red
   ## for no defect. `hwDetecting` is what the panel shows while the control
   ## worker is out; detection is never run on this thread.
   ## 8a: the model selector. `modelList` is filled when the panel opens and
   ## never from `view` — enumerating the tree on every frame is the per-frame
-  ## cost G-40 was, in a new place.
+  ## per-frame cost, in a new place.
   modelsOpen: bool
   modelList: seq[models.InstalledModel]
   modelFilter: string
 
   hardwareOpen: bool
-  ## G-21. Everything deleted is a soft delete and had no surface at all, which
+  ## Everything deleted is a soft delete and had no surface at all, which
   ## makes a delete indistinguishable from data loss — the hazard the confirm
-  ## dialog (G-36) names but cannot answer on its own. Cached in `trashItems` for
+  ## dialog names but cannot answer on its own. Cached in `trashItems` for
   ## the reason `convs` is: `view` runs on every canvas frame, and seven table
-  ## scans per frame is B-17 with a database behind it.
+  ## scans per frame is a per-frame cost with a database behind it.
   trashOpen: bool
   trashItems: seq[TrashItem]
-  ## A-18-2. The **path-addressed** half of the trash, which has no database row
+  ## The path-addressed half of the trash, which has no database row
   ## at all: files deleted through `/api/storage`. `restoreMirror` cannot see
   ## them — it looks an item up by id — so they were listed nowhere and cleared
-  ## by nothing, and until A-17 they were not even enumerated. Deliberately a
+  ## by nothing, and easily left unenumerated altogether. Deliberately a
   ## second list rather than merged into `trashItems`: one is addressed by id
   ## and the other by path, and unifying them would mean inventing an identity
   ## for rows that do not have one.
@@ -1198,17 +1189,17 @@ viewable App:
   ## which is why a field with no entry here simply shows no placeholder rather
   ## than claiming a default it has not read.
   serverDefaults: Table[string, string]
-  ## Which messages are being shown as raw text (G-31's raw-output toggle), by
+  ## Which messages are being shown as raw text, by
   ## row id. Per message and not a global mode, because the point is to compare
   ## one rendered turn against its source.
   rawMsgs: Table[string, bool]
 
   hooks:
     afterBuild:
-      # Action purpose: **resolve a "System" theme here and not in `run`.**
+      # Action purpose: resolve a "System" theme here and not in `run`.
       # `run` executes before `adw.brew`, and `brew` is what calls `adw_init` —
       # asking libadwaita for the desktop's colour scheme before that reaches
-      # `gdk_display_manager_get`, which **aborts the process**. The first
+      # `gdk_display_manager_get`, which aborts the process. The first
       # version of this setting did exactly that and every launch died in 0.09 s
       # with `Gdk-ERROR: gdk_display_manager_get() was called before gtk_init()`.
       # By here GTK is up, so the question can be asked. `run` opens on the
@@ -1234,7 +1225,7 @@ viewable App:
         let newLan = isLanEnabled(st.p)
         if newLan != st.lanEnabled:
           st.lanEnabled = newLan
-          # E-06: asked for, not computed here. The title bar shows the mode
+          # asked for, not computed here. The title bar shows the mode
           # immediately and gains the address when the worker answers.
           st.lanAddr = ""
           if newLan:
@@ -1264,7 +1255,7 @@ viewable App:
       discard addGlobalTimeout(40, proc(): bool =
         var changed = false
 
-        # G-30: files dropped on the window. The GTK drop callback is a bare C
+        # files dropped on the window. The GTK drop callback is a bare C
         # function pointer that only appends to `droppedPaths`; the work happens
         # here, on the GTK thread, with the app state in hand — the same shape
         # `pendingActions` uses, and for the same reason.
@@ -1289,7 +1280,7 @@ viewable App:
           pendingActions.delete(0)
           changed = true
           if action == "quit":
-            # **Return, do not fall through.** `closeWindow` finalises the
+            # Return, do not fall through. `closeWindow` finalises the
             # window and every widget under it; the `redraw()` at the bottom of
             # this callback would then diff a tree of freed GtkWidgets and
             # disconnect a signal from poisoned memory. That is the crash — it
@@ -1303,7 +1294,7 @@ viewable App:
             st.fullscreen = not st.fullscreen
           elif action == "toggle_lan":
             let next = not st.lanEnabled
-            # E-03: **nothing moves unless the flag was actually written.** The
+            # nothing moves unless the flag was actually written. The
             # next start binds from that file, so flipping the window, the tray
             # and the title bar over a failed write would report a change that
             # will not survive the restart the notice asks for.
@@ -1333,7 +1324,7 @@ viewable App:
               # An assistant turn that already has a row is one that was
               # *continued* — the model extended text that had already been
               # saved. Updating it is what stops the transcript gaining a second
-              # copy of the same reply every time one is resumed (G-28).
+              # copy of the same reply every time one is resumed.
               if st.messages[^1].id.len > 0:
                 discard api.patchMessage(%*{
                   "id": st.messages[^1].id,
@@ -1354,14 +1345,14 @@ viewable App:
                     t.timings = st.messages[^1].timings
                 # A continued reply is longer than the text already indexed, so
                 # the entry is rewritten from the row that was just patched
-                # (T-17). Idempotent — `indexContent` forgets the path first.
+                #. Idempotent — `indexContent` forgets the path first.
                 ctlReq.send(ControlJob(action: "index", lc: st.lc,
                                        msgId: st.messages[^1].id))
               else:
                 # The parent is the turn before it on the branch that was posted.
                 # A regenerate re-posted the conversation truncated to that turn,
                 # so the new reply lands beside the old one rather than after it —
-                # which is the whole of how a branch is made (G-29).
+                # which is the whole of how a branch is made.
                 let parent =
                   if st.messages.len > 1: st.messages[^2].id else: ""
                 let saved = saveMessage(
@@ -1377,14 +1368,14 @@ viewable App:
                   saveLeaf(st.convId, saved)
                   # Action purpose: the exchange is complete, so this is the
                   # first moment the question can be indexed without the
-                  # request that asked it retrieving itself (T-17). The worker
+                  # request that asked it retrieving itself. The worker
                   # indexes this reply and its parent — the user turn — from
                   # the two rows now committed.
                   ctlReq.send(ControlJob(action: "index", lc: st.lc,
                                          msgId: saved))
                 else:
-                  # Nothing was generated at all. **Leaving it in the path is the
-                  # ghost bubble the USER saw**: an empty card, visible until the
+                  # Nothing was generated at all. Leaving it in the path is the
+                  # ghost bubble the USER saw: an empty card, visible until the
                   # next rebuild, absent from the tree, and with `leaf` still on
                   # the previous turn — so the next message attached to a stale
                   # parent and became an unwanted sibling.
@@ -1403,7 +1394,7 @@ viewable App:
             st.notice = m.text
             st.noticeRetryable = false
           of umLanAddr:
-            # E-06. Only kept while LAN is on: a reply that arrives after the
+            # Only kept while LAN is on: a reply that arrives after the
             # user switched it back off would put an address in the title bar
             # for a mode the window is no longer in.
             if st.lanEnabled: st.lanAddr = m.text
@@ -1422,7 +1413,7 @@ viewable App:
             st.messages[^1].text.add m.text
           of umThinking:
             # Reasoning arrives before any answer token, so the assistant turn
-            # usually has to be created here rather than by `umToken` (G-39).
+            # usually has to be created here rather than by `umToken`.
             if st.messages.len == 0 or st.messages[^1].role != rAssistant:
               st.messages.add Message(role: rAssistant, text: "")
             st.messages[^1].thinking.add m.text
@@ -1479,7 +1470,7 @@ viewable App:
       )
 
 ## Function purpose: the visible transcript for a tree and a leaf, and the leaf
-## it settled on (G-29). A free function rather than a method on the window
+## it settled on. A free function rather than a method on the window
 ## because the first transcript has to be built before the window exists, and two
 ## copies of a tree walk is exactly the drift `api`'s pure helpers were extracted
 ## to avoid.
@@ -1488,12 +1479,12 @@ viewable App:
 ## `currNode` points at a turn since deleted — it falls back to the newest branch
 ## from the oldest root.
 ##
-## **That fallback is not a migration, and treating it as one is the defect that
-## shipped.** Messages written before branching have a NULL `parent`, so every one
+## That fallback is not a migration, and treating it as one is the defect that
+## shipped. Messages written before branching have a NULL `parent`, so every one
 ## of them is a root: the fallback then yields a path of exactly one message and
 ## `siblingsIn` reads the whole conversation as versions of a single turn.
 ## `db.migrateMessageParents` chains them at startup, and that is what makes
-## existing history readable — not this (**D-BG**).
+## existing history readable — not this.
 proc pathOf(all: seq[Message], leaf: string): tuple[path: seq[Message], leaf: string] =
   let edges = edgesOf(all)
   var byId = initTable[string, int]()
@@ -1519,17 +1510,17 @@ proc rebuildPath(app: AppState) =
   app.leaf = leaf
   app.edges = edgesOf(app.allMessages)
 
-## Function purpose: empty every per-message render cache (M-01).
+## Function purpose: empty every per-message render cache.
 ##
-## **Forward-declared, because the three things it empties are each declared
-## beside their first user further down** — `mdMemo` above the note editor,
+## Forward-declared, because the three things it empties are each declared
+## beside their first user further down — `mdMemo` above the note editor,
 ## `attachMemo` above the send path, `thumbCache` above the thumbnail decoder —
 ## and each of those placements carries its own reasoning that moving the
 ## declaration up here would break. The one caller that needs them all is
 ## `selectConversation`, which is above all three.
 proc clearRenderMemos()
 
-## Function purpose: forget one message id in every render cache (M-01), for the
+## Function purpose: forget one message id in every render cache, for the
 ## one thing that makes an entry dead while the conversation stays open.
 proc forgetRenderMemos(id: string)
 
@@ -1553,7 +1544,7 @@ proc appendTurn(app: AppState, m: Message) =
 ## which would otherwise write the tail of one conversation into another.
 proc selectConversation(app: AppState, id: string) =
   if app.streaming or id == app.convId: return
-  # M-01. **This is where the leak was.** `mdMemo`, `attachMemo` and
+  # This is where the leak was. `mdMemo`, `attachMemo` and
   # `thumbCache` are module-level `var`s keyed by message id, and nothing —
   # not this, not `loadConversation`, not `deleteMessage` — ever dropped an
   # entry. So every message ever rendered kept its parsed blocks, its parsed
@@ -1567,6 +1558,8 @@ proc selectConversation(app: AppState, id: string) =
   app.openNote = ""
   app.notice = ""
 
+## Function purpose: one refresh for the whole sidebar, so a write to any one
+## table cannot leave the other four showing the state before it.
 proc reloadTree(app: AppState) =
   app.convs = listConversations()
   app.workspaces = listWorkspaces()
@@ -1576,11 +1569,13 @@ proc reloadTree(app: AppState) =
   app.files = listFiles()
 
 ## `view` re-parsed every message's full text on every frame, which a long
-## conversation paid on every streamed token (G-40). Declared here rather than
+## conversation paid on every streamed token. Declared here rather than
 ## beside `attachMemo` because the note editor below is its first user: it
 ## renders through this memo and, unlike the transcript, has to invalidate it.
 var mdMemo: markdown.BlockMemo
 
+## Function purpose: reads the note through the same path a save writes it, so
+## the editor cannot open on text the database no longer holds.
 proc openNoteEditor(app: AppState, id: string) =
   if app.streaming: return
   let n = loadNote(id)
@@ -1597,7 +1592,7 @@ proc openNoteEditor(app: AppState, id: string) =
   app.noteOrigTitle = n.title
   app.noteOrigContent = n.content
   app.noteOrigFocus = n.focus
-  # A-26. The memo keys on the note id, which does not change across an edit, so
+  # The memo keys on the note id, which does not change across an edit, so
   # it must be told. This is also the external-change path: `pullNotesFromDisk`
   # re-opens the note through here after `api.pullNotes` rewrites the row.
   mdMemo.invalidate(id)
@@ -1618,7 +1613,7 @@ proc noteDirty(app: AppState): bool =
 ##
 ## Action purpose: `isFocusNote` is sent explicitly and the parent ids are still
 ## resent, even though `putEntity` now carries forward any column this node
-## omits (D-CC). The flag is not a carry-forward case — it is a value this screen
+## omits. The flag is not a carry-forward case — it is a value this screen
 ## *owns* while the note is open, so a toggle the user has just flipped has to
 ## reach the row. Written as `1`/`0` rather than a JSON boolean because the Web
 ## UI writes the column that way and both surfaces read it back.
@@ -1642,7 +1637,7 @@ proc saveNote(app: AppState) =
     app.noteOrigTitle = app.noteTitle
     app.noteOrigContent = app.noteBuffer.text()
     app.noteOrigFocus = app.noteFocus
-    # A-26. The other half: an edit that leaves the character count unchanged —
+    # The other half: an edit that leaves the character count unchanged —
     # a transposition, a word swapped for one the same length — matches the
     # memo's length stamp, so without this the view keeps rendering the text
     # that was just replaced. `cancelNoteEdit` needs no such call: it restores
@@ -1666,15 +1661,15 @@ proc cancelNoteEdit(app: AppState) =
 
 ## Function purpose: close the note editor, refusing to throw away unsaved work
 ## silently (8c-4). Everything else in this window that can lose data asks first
-## — G-36 put a dialog on every delete for exactly this reason — and Close was
+## — every delete carries a dialog for exactly this reason — and Close was
 ## the one remaining action that simply dropped the buffer.
 ##
 ## Action purpose: three answers, not two. "Discard" and "Save and close" are
 ## both things the user plainly means at that moment, and offering only one of
 ## them makes the other require cancelling the dialog and starting again.
 ## Function purpose: ask before anything that would throw the note buffer away,
-## and answer whether to go ahead (8c-4). **Shared, because Close is not the
-## only door.** Clicking a different note in the tree and creating a new one both
+## and answer whether to go ahead (8c-4). Shared, because Close is not the
+## only door. Clicking a different note in the tree and creating a new one both
 ## replace the buffer, and those are easier to hit by accident than the Close
 ## button is — one click, with no warning that anything was pending.
 proc confirmLoseNoteEdits(app: AppState): bool =
@@ -1710,6 +1705,8 @@ proc confirmLoseNoteEdits(app: AppState): bool =
   of DialogReject: true
   else: false
 
+## Function purpose: clears the editor state as one step, so a half-closed
+## note cannot leave a stale id behind for the next save to write to.
 proc closeNote(app: AppState) =
   if not app.confirmLoseNoteEdits(): return
   app.openNote = ""
@@ -1725,6 +1722,8 @@ proc openNoteGuarded(app: AppState, id: string) =
      not app.confirmLoseNoteEdits(): return
   app.openNoteEditor(id)
 
+## Function purpose: the container ids are carried in, so a chat started from
+## inside a folder belongs to it rather than to nothing.
 proc newChat(app: AppState, wsId = "", projId = "", folderId = "") =
   if app.streaming: return
   # It clears `openNote` below, so an edited note would be replaced by its
@@ -1737,7 +1736,7 @@ proc newChat(app: AppState, wsId = "", projId = "", folderId = "") =
     db.exec("UPDATE conversations SET workspaceId=?, projectId=?, folderId=? WHERE id=?",
             [wsId, projId, folderId, id])
   app.reloadTree()
-  # M-01: the other point at which a rendered conversation is replaced.
+  # the other point at which a rendered conversation is replaced.
   # `newChat` does not go through `selectConversation`, so without this the
   # memos keep every message of the conversation just left until the caps
   # eventually push them out — which is a bound, not a release.
@@ -1748,11 +1747,14 @@ proc newChat(app: AppState, wsId = "", projId = "", folderId = "") =
   app.leaf = ""
   app.openNote = ""
   app.notice = ""
-  # G-31. On by default, matching the Web UI: a new chat is usually the moment
+  # On by default, matching the Web UI: a new chat is usually the moment
   # you want the list of the old ones. Never *closes* it — the setting is
   # "auto-show", and a toggle that also hid the sidebar would fight the user.
   if app.opts.getBool("autoShowSidebarOnNewChat"): app.sidebarOpen = true
 
+## Function purpose: one proc for all four container kinds, so the mirror and
+## the tree refresh cannot be remembered for three of them and forgotten for
+## the fourth.
 proc createNode(app: AppState, entity, parentCol, parentId: string) =
   let id = $genOid()
   var node = %*{"id": id, "name": "New " & entity[0 ..< entity.len - 1]}
@@ -1770,11 +1772,11 @@ proc createNode(app: AppState, entity, parentCol, parentId: string) =
 ## a new empty note that is not on screen is indistinguishable from nothing
 ## having happened.
 ##
-## **The id must be a real UUID, not a `genOid`.** `fssync.physicalPath` refuses
+## The id must be a real UUID, not a `genOid`. `fssync.physicalPath` refuses
 ## anything else and `upsert` then deletes the row it has already written, so an
 ## OID-keyed note is created and destroyed inside one call.
 ##
-## **All three ancestor ids are written, not just the immediate parent.** The
+## All three ancestor ids are written, not just the immediate parent. The
 ## tree matches on the full triple, so a note carrying only its `folderId` is
 ## saved and then invisible.
 proc createNote(app: AppState, wsId, projId, folderId: string) =
@@ -1796,13 +1798,15 @@ proc createNote(app: AppState, wsId, projId, folderId: string) =
   else:
     app.notice = "could not create note"
 
+## Function purpose: goes through the shared delete so the cascade and the
+## filesystem mirror apply, which a direct row update here would skip.
 proc deleteNode(app: AppState, entity, id: string) =
-  # G-36. Every delete in the tree and the conversation list fired on a single
+  # Every delete in the tree and the conversation list fired on a single
   # click. The argument for having no dialog was that deletes are soft — but
-  # with no trash view (G-21) a soft delete is indistinguishable from data loss,
+  # with no trash view a soft delete is indistinguishable from data loss,
   # so the two answer each other and this is the half that lands first.
   #
-  # Action purpose: **the child count is shown**, because the cascade is the
+  # Action purpose: the child count is shown, because the cascade is the
   # part that surprises: deleting a workspace takes its projects, folders,
   # notes, assets and every conversation in them. `api.cascadeCount` derives
   # that from the same table the cascade itself runs off.
@@ -1845,6 +1849,8 @@ proc deleteNode(app: AppState, entity, id: string) =
   else:
     app.notice = "could not delete"
 
+## Function purpose: a rename moves a directory as well as a row, so it goes
+## through the same write path and rolls back together.
 proc commitRename(app: AppState, entity, id: string) =
   let name = app.renameDraft.strip
   if name.len > 0:
@@ -1856,11 +1862,11 @@ proc commitRename(app: AppState, entity, id: string) =
       # node omits used to be written empty: renaming a file asset blanked its
       # `content`, `size`, `type` and `uploadDate`, and `fssync.syncFileAsset`
       # then wrote a zero-byte file over the real one and trashed the original
-      # (T-13). **`putEntity` now merges a partial node onto the stored row
-      # (D-CC), so that trap is closed at the boundary** rather than here.
+      #. `putEntity` now merges a partial node onto the stored row
+      #, so that trap is closed at the boundary rather than here.
       #
       # The explicit resends below stay, and are not redundant: what they carry
-      # is not the *stored* value but the **open editor's** value, which the
+      # is not the *stored* value but the open editor's value, which the
       # merge cannot know — a note renamed with unsaved text in the buffer must
       # keep that text, not the row's. Same reason `isFocusNote` is sent from
       # `app.noteFocus` for the open note: an unsaved toggle travels with the
@@ -1894,7 +1900,7 @@ proc commitRename(app: AppState, entity, id: string) =
       for n in app.folders:
         if n.id == id: node["projectId"] = %n.parent
       # A container rename now moves its directory, and a move that cannot be
-      # done rolls the row back (T-14). Discarding the result would leave the
+      # done rolls the row back. Discarding the result would leave the
       # sidebar showing the old name with no explanation of why it did not take.
       if not api.putEntity(entity, node):
         app.notice = "could not rename: the folder on disk could not be moved"
@@ -1918,29 +1924,29 @@ proc visibleConvs(app: AppState): seq[ConvItem] =
 ##
 ## Split out of `send` because regenerate and continue post the same body from a
 ## different starting state — regenerate after dropping the reply being redone,
-## continue with the partial reply still in place as the tail (G-28).
+## continue with the partial reply still in place as the tail.
 ##
-## `continuing` is what makes that tail mean *extend this*. **Ending the array
-## with an assistant message is necessary and not sufficient:** `llama-server`
-## applies the chat template with `add_generation_prompt = true` unless the
-## request says otherwise, which closes the assistant turn and opens a fresh one —
-## so the model re-answers instead of carrying on. That is what shipped, and
-## `continue_final_message` is the field that fixes it (**D-BH**).
-## G-40. **One parse of a message's `extra`, shared by the two paths that need
-## it.** `view` runs on every frame and `postConversation` rebuilds the whole
-## history on every send; both used to parse every payload themselves, which is
-## what made attaching anything freeze the window. Declared here because the
-## send path is the first user of it — the transcript's is `attachmentsOf`
-## below. `pipeline.ParseMemo` is where the parsing and the assertions live.
+## `continuing` is what makes that tail mean *extend this*. Ending the array
+## with an assistant message is necessary and not sufficient: the backend applies
+## the chat template with a generation prompt unless told otherwise, which closes
+## the assistant turn and opens a fresh one, so the model re-answers instead of
+## carrying on.
+
+## One parse of a message's stored attachments, shared by the two paths that
+## need it: `view` runs on every frame and the send path rebuilds the whole
+## history, so either parsing for itself is a cost proportional to the payload.
+## Declared here because the send path is the first user of it.
 var attachMemo: pipeline.ParseMemo
 
+## Function purpose: assembles the turn and hands it to the stream thread. The
+## body itself is built below the window so a self-test can read it.
 proc postConversation(app: AppState, continuing = false) =
   app.notice = ""
   app.streaming = true
 
   var msgs = newJArray()
-  # G-31: the stored system message goes in first, as a `system` role.
-  # `pipeline.injectSystem` puts Jenova's own persona **above** an existing
+  # the stored system message goes in first, as a `system` role.
+  # `pipeline.injectSystem` puts Jenova's own persona above an existing
   # system message rather than replacing it, so this adds to the persona instead
   # of competing with it — which is why the field is described as "beneath".
   let sys = app.opts.get("systemMessage").strip
@@ -1948,12 +1954,12 @@ proc postConversation(app: AppState, continuing = false) =
     msgs.add %*{"role": "system", "content": sys}
   for m in app.messages:
     if m.role == rAssistant and m.text.len == 0: continue
-    # G-30: a turn with attachments sends an OpenAI content *array* rather than
+    # a turn with attachments sends an OpenAI content *array* rather than
     # a string. `pipeline.contentFor` builds it — below the widget layer, and in
-    # the frozen Web UI's own part order (D-Z) — and returns a plain string
+    # the frozen Web UI's own part order — and returns a plain string
     # unchanged when there is nothing attached, so every request without
     # attachments is byte-identical to what this sent before.
-    # G-40: **built from the memo, not re-parsed.** This rebuilds the whole
+    # built from the memo, not re-parsed. This rebuilds the whole
     # history on every turn, on the GTK thread, so re-parsing each message's
     # `extra` here charged the send a pass over every payload in the
     # conversation — on top of the one `view` was already charging per frame.
@@ -1962,7 +1968,7 @@ proc postConversation(app: AppState, continuing = false) =
       extraNode = attachMemo.extraNodeFor(m.id, m.extra)
     var turn = %*{"role": $m.role,
                   "content": pipeline.contentFor(m.text, extraNode)}
-    # G-31, Developer: a reasoning turn's thinking is sent back so the model can
+    # Developer: a reasoning turn's thinking is sent back so the model can
     # see its own chain of thought across turns, unless the setting strips it.
     # The field is only ever added to an assistant turn that has one, so the
     # default costs nothing on a non-reasoning model.
@@ -1975,7 +1981,7 @@ proc postConversation(app: AppState, continuing = false) =
   # nothing below the window could assert it — and the sampling parameters are
   # merged in there for the same reason.
   let port = app.cfg.getInt("PORT", 8080)
-  # G-43: the notes and files of whatever this chat belongs to. Read from
+  # the notes and files of whatever this chat belongs to. Read from
   # `app.convs`, which the sidebar already keeps current, so this costs no query
   # of its own. An unassigned chat resolves to the global scope, which is *not*
   # everything — see `workspace.contextFor`.
@@ -1989,7 +1995,7 @@ proc postConversation(app: AppState, continuing = false) =
                                                    wsCtx)))
 
 ## Function purpose: a conversation's name, taken from the message that started
-## it (G-31). The Web UI titles a chat from its first message and this window
+## it. The Web UI titles a chat from its first message and this window
 ## left every one called "New chat", which is what made the sidebar unusable
 ## once there were more than a handful.
 ##
@@ -2004,12 +2010,17 @@ proc titleFrom(text: string): string =
     line = (if cut > Limit div 2: line[0 ..< cut] else: line[0 ..< Limit]) & "…"
   line
 
+## Function purpose: a new chat takes its name from the first message, which is
+## the only point at which the placeholder name is safe to replace.
 proc retitleConversation(app: AppState, text: string) =
   let name = titleFrom(text)
   if name.len == 0 or app.convId.len == 0: return
   db.exec("UPDATE conversations SET name=? WHERE id=?", [name, app.convId])
   app.convs = listConversations()
 
+## Function purpose: the one path every attachment arrives by — picker, drop
+## and paste all reach it, so the size cap and the refusal message cannot
+## differ between them.
 proc attachFile(app: AppState, path: string) =
   let r = pipeline.readAttachment(path, app.serverDefaults.len > 0,
                                   app.serverVision)
@@ -2019,7 +2030,7 @@ proc attachFile(app: AppState, path: string) =
   else:
     app.notice = r.err
 
-## Function purpose: file a long paste as a text attachment (W-01).
+## Function purpose: file a long paste as a text attachment.
 ##
 ## Action purpose: it goes through `pipeline.Attachment` directly rather than
 ## through `readAttachment`, because there is no file to read — the bytes are
@@ -2041,6 +2052,8 @@ proc attachPastedText(app: AppState, text: string) =
   app.notice = "long paste attached as " & name &
                " — it goes to the model as a file rather than as your message"
 
+## Function purpose: the picker is one of three ways in, and hands its result
+## to the same staging call the other two use.
 proc attachDialog(app: AppState) =
   let (res, state) = app.open: gui:
     FileChooserDialog:
@@ -2058,21 +2071,21 @@ proc attachDialog(app: AppState) =
   for f in FileChooserDialogState(state).filenames:
     app.attachFile(f)
 
-## G-30, thumbnails. **A `data:` URL is decoded to a file under the cache dir and
-## the pixbuf is loaded from there**, rather than a `GdkPixbufLoader` being
+## thumbnails. A `data:` URL is decoded to a file under the cache dir and
+## the pixbuf is loaded from there, rather than a `GdkPixbufLoader` being
 ## hand-declared: `gdk_pixbuf_new_from_file_at_scale` is already in owlkettle's
 ## bindings and already wrapped as `loadPixbuf`, and rule 5 says check what
 ## exists before writing a proto. The file is named for the digest of its own
 ## bytes, so it is written once and every later redraw is a cache hit — which is
 ## what makes this safe to call from `view`, where it runs on every frame.
 var thumbCache: Table[string, Pixbuf]
-## M-01. Insertion order, so the oldest decoded thumbnails can be dropped.
+## Insertion order, so the oldest decoded thumbnails can be dropped.
 var thumbOrder: seq[string]
 
 const ThumbCacheCap = 64
-  ## M-01. How many decoded thumbnails may be held.
+  ## How many decoded thumbnails may be held.
   ##
-  ## **A `Pixbuf` is the third copy of an image this window keeps.** The bytes
+  ## A `Pixbuf` is the third copy of an image this window keeps. The bytes
   ## are already in `attachMemo` twice — once as the parsed `extra` node and
   ## once as `Attachment.payload` — and a fourth copy is on disk under
   ## `cacheDir`. This one is decoded, so it is the largest: a 4000x3000 photo
@@ -2083,12 +2096,12 @@ const ThumbCacheCap = 64
   ## the memory on a conversation switch, and this is the ceiling for a single
   ## conversation with more images than that in one branch.
 
-## G-40. **The key is the attachment's identity, never a digest of its bytes.**
+## The key is the attachment's identity, never a digest of its bytes.
 ## This proc is called from `view`, so it runs on every frame — and the previous
 ## version built its key as `sha256(dataUrl)`, one line above the cache lookup it
 ## was meant to satisfy. The decode was cached and the key was not, so a
 ## multi-megabyte hash ran on every redraw and the window stopped responding.
-## **Nothing in here may touch `payload` on the cache-hit path.**
+## Nothing in here may touch `payload` on the cache-hit path.
 proc attachmentPixbuf(app: AppState, a: PendingAttachment, size: int): Pixbuf =
   if a.payload.len == 0: return nil
   # An attachment always carries a key; the fallback is for one built before
@@ -2139,10 +2152,12 @@ proc intentHint(): string =
     if i > 0: result.add (if i == seen.len - 1: " or " else: ", ")
     result.add p
 
+## Function purpose: goes through the memo, because this is reached from the
+## render path and re-parsing a payload there is a per-frame cost.
 proc attachmentsOf(m: Message): seq[PendingAttachment] =
   attachMemo.attachmentsFor(m.id, m.extra)
 
-## M-01. The definitions of the two declared above `loadConversation`. Placed
+## The definitions of the two declared above `loadConversation`. Placed
 ## here because this is the first point at which all three memos exist.
 ##
 ## `thumbCache` holds GTK objects rather than plain values, but dropping the
@@ -2157,6 +2172,8 @@ proc clearRenderMemos() =
   thumbCache.clear()
   thumbOrder.setLen(0)
 
+## Function purpose: one call for every per-message cache, so a message edited
+## or deleted cannot stay rendered from a stale parse in one of them.
 proc forgetRenderMemos(id: string) =
   if id.len == 0: return
   mdMemo.invalidate(id)
@@ -2169,7 +2186,7 @@ proc forgetRenderMemos(id: string) =
   discard
 
 ## Function purpose: the staged attachments as the JSON text that goes into the
-## `messages.extra` column, in the Web UI's shape (D-Z).
+## `messages.extra` column, in the Web UI's shape.
 proc pendingExtra(app: AppState): string =
   if app.pending.len == 0: return ""
   var arr = newJArray()
@@ -2178,7 +2195,7 @@ proc pendingExtra(app: AppState): string =
       arr.add %*{"type": "IMAGE", "name": a.name, "base64Url": a.payload}
     elif a.kind == "PDF":
       # The Web UI's own PDF shape, so `contentFor` sends it as that surface
-      # does and an exported conversation still opens there (D-BP).
+      # does and an exported conversation still opens there.
       # `processedAsImages` is false because this reader extracts text, never
       # page images — and `contentFor` branches on exactly that flag.
       arr.add %*{"type": "PDF", "name": a.name, "content": a.payload,
@@ -2188,19 +2205,20 @@ proc pendingExtra(app: AppState): string =
   $arr
 
 ## Function purpose: file an attachment as a workspace artefact as well as an
-## inline payload (G-44, ruling D-BV). **Both, not either** — Q-34 was answered
+## inline payload. Both, not either: the question was answered
 ## "parity with the Web UI", so `messages.extra` keeps the base64 exactly as
-## D-BP stores it and a conversation still moves between this window and the
+## the stored shape carries it and a conversation still moves between this and the
 ## frozen `jca_web` unconverted. The row is written *in addition*.
 ##
-## **Why it matters beyond the tree:** `workspace.contextFor` already reads
+## Why it matters beyond the tree: `workspace.contextFor` already reads
 ## `fileAssets` and renders it, and nothing had ever written one — the reader
 ## existed and the writer did not, so a file dropped into a chat was invisible to
 ## the very workspace it was dropped into.
 ##
 ## Written through `api.putEntity` and not SQL here, because that route also
 ## mirrors the bytes to disk through `fssync.syncFileAsset` and applies the same
-## cascades the HTTP surface does. **A chat with no workspace files nothing** —
+## cascades the HTTP surface does. A chat with no workspace files nothing at
+## all —
 ## a global artefact would be visible to every unassigned chat, which is not
 ## where the USER put it.
 proc fileAttachmentsAsArtefacts(app: AppState) =
@@ -2220,7 +2238,7 @@ proc fileAttachmentsAsArtefacts(app: AppState) =
     # Web UI's own wording for exactly this case. The bytes are already in
     # `messages.extra` and go to the model as an image part.
     let isText = a.kind != "IMAGE"
-    # A-69. The id must be a real UUID for the same reason `createNote` above
+    # The id must be a real UUID for the same reason `createNote` above
     # says so: `fssync.physicalPath` refuses a 24-character `genOid`, so
     # `syncFileAsset` fails and `upsert` deletes the row it has already
     # written. Every attachment reported "could not file …" until this line.
@@ -2234,6 +2252,8 @@ proc fileAttachmentsAsArtefacts(app: AppState) =
     if not api.putEntity("fileAssets", node):
       app.notice = "Attached, but could not file " & a.name & " in the workspace"
 
+## Function purpose: the send rule itself is below the window and asserted
+## there; this is what acts on it.
 proc send(app: AppState) =
   let text = app.draft.strip
   # Step 13a: the rule itself is `composer.canSend`, below the widget layer,
@@ -2247,7 +2267,7 @@ proc send(app: AppState) =
   # The row id comes back so the message can be edited or deleted without
   # re-reading the table to find which row it became. The parent is the turn at
   # the end of the branch currently being read, which is what attaches the new
-  # message to *this* branch rather than to whichever one is newest (G-29).
+  # message to *this* branch rather than to whichever one is newest.
   let parent = if app.messages.len > 0: app.messages[^1].id else: ""
   let extra = app.pendingExtra()
   let id = saveMessage(app.convId, rUser, text, parent = parent, extra = extra)
@@ -2255,7 +2275,7 @@ proc send(app: AppState) =
                          extra: extra))
   if isFirstTurn: app.retitleConversation(text)
   app.draft = ""
-  # G-44: filed as workspace artefacts before `pending` is cleared, and after the
+  # filed as workspace artefacts before `pending` is cleared, and after the
   # message row exists — so a failure here leaves the turn intact and only the
   # filing undone, which is the recoverable half.
   app.fileAttachmentsAsArtefacts()
@@ -2265,12 +2285,12 @@ proc send(app: AppState) =
   app.pending = @[]
   app.postConversation()
 
-## Function purpose: the actions a message can carry (G-28). **Every one of them
-## is refused mid-stream** — the drain timer appends each token to
+## Function purpose: the actions a message can carry. Every one of them
+## is refused mid-stream — the drain timer appends each token to
 ## `messages[^1]`, so mutating the sequence underneath it would write the tail of
 ## a reply into the wrong turn. That is the same hazard `selectConversation`
 ## refuses for, and it is why these are guarded rather than merely greyed out.
-## Deleting a turn takes **everything under it** with it, on every branch. A
+## Deleting a turn takes everything under it with it, on every branch. A
 ## reply to a question that is no longer there is not a conversation, and leaving
 ## the descendants as orphans would make them unreachable rather than gone —
 ## invisible in the transcript and still counted by every sibling counter.
@@ -2299,7 +2319,7 @@ proc deleteMessage(app: AppState, idx: int) =
     if not api.deleteEntity("messages", victim):
       app.notice = "could not delete that message"
       return
-    # M-01: a deleted turn's parsed blocks, parsed attachments and decoded
+    # a deleted turn's parsed blocks, parsed attachments and decoded
     # thumbnail can never be drawn again. Dropped here rather than left to the
     # caps, because a deleted message is the one entry that is *certainly* dead
     # while the conversation it belonged to is still open.
@@ -2317,7 +2337,7 @@ proc deleteMessage(app: AppState, idx: int) =
   saveLeaf(app.convId, parent)
   app.rebuildPath()
 
-## Function purpose: move to another version of a turn (G-29) — what the
+## Function purpose: move to another version of a turn — what the
 ## prev/next arrows beside a "2 of 3" counter do.
 ##
 ## The reader lands on the deepest continuation of the version they chose, not on
@@ -2335,21 +2355,25 @@ proc switchSibling(app: AppState, id: string, delta: int) =
   saveLeaf(app.convId, app.leaf)
   app.rebuildPath()
 
+## Function purpose: editing is a state shape rather than a dialog, because the
+## transcript has to keep rendering around the row being edited.
 proc startEdit(app: AppState, idx: int) =
   if app.streaming or idx < 0 or idx >= app.messages.len: return
   if app.messages[idx].id.len == 0: return
   app.editingMsg = app.messages[idx].id
   app.editBuffer.text = app.messages[idx].text
 
+## Function purpose: clears both the id and the draft, so an abandoned edit
+## cannot be committed by the next one.
 proc cancelEdit(app: AppState) =
   app.editingMsg = ""
 
-## Function purpose: save an edited turn as a **new version of it** and answer
-## again (G-29).
+## Function purpose: save an edited turn as a new version of it and answer
+## again.
 ##
-## **It no longer overwrites the message, and that is the point of the tree.**
+## It no longer overwrites the message, and that is the point of the tree.
 ## Until branching existed this saved in place and did not resend, because
-## re-answering would have destroyed every turn that followed (D-BF). Now the old
+## re-answering would have destroyed every turn that followed. Now the old
 ## version and its replies stay where they are, reachable through the counter on
 ## the turn, and the edit becomes a sibling with its own continuation.
 proc saveEdit(app: AppState) =
@@ -2369,9 +2393,9 @@ proc saveEdit(app: AppState) =
     app.notice = "could not save that edit"
     return
   app.editingMsg = ""
-  # G-31: editing the turn the conversation was named after renames it to match,
+  # editing the turn the conversation was named after renames it to match,
   # and `askForTitleConfirmation` decides whether that is asked first. Only the
-  # **first** turn, because it is the only one the name was ever taken from.
+  # first turn, because it is the only one the name was ever taken from.
   let wasFirst = at == 0 and role == rUser
   app.appendTurn(Message(role: role, text: text, id: id, parent: parent))
   if wasFirst:
@@ -2395,13 +2419,13 @@ proc saveEdit(app: AppState) =
   # answer is not a turn.
   if role == rUser: app.postConversation()
 
-## Function purpose: ask again and keep the previous answer (G-29).
+## Function purpose: ask again and keep the previous answer.
 ##
-## **The old reply is not deleted.** It becomes one version of the turn and the
+## The old reply is not deleted. It becomes one version of the turn and the
 ## new one becomes another, side by side under the same question, which is what
 ## the counter on the message steps through. Until the tree existed this deleted
 ## the reply and could only be offered on the last message; both restrictions are
-## gone (D-BF).
+## gone.
 proc regenerate(app: AppState, idx: int) =
   if app.streaming or idx < 0 or idx >= app.messages.len: return
   if app.messages[idx].role != rAssistant: return
@@ -2412,8 +2436,8 @@ proc regenerate(app: AppState, idx: int) =
   app.postConversation()
 
 ## Function purpose: ask the model to carry on from a reply that stopped early.
-## The partial text stays in place as the tail of the request **and the request
-## says to continue it** (D-BH); the drain timer appends to that same message and
+## The partial text stays in place as the tail of the request and the request
+## says to continue it; the drain timer appends to that same message and
 ## `umDone` updates its row rather than inserting a second one.
 ##
 ## Refused when the turn carries reasoning, which is the Web UI's own guard
@@ -2425,6 +2449,8 @@ proc continueReply(app: AppState) =
   if app.messages[^1].thinking.len > 0: return
   app.postConversation(continuing = true)
 
+## Function purpose: filters the already-loaded list rather than querying, for
+## the reason the lists are held at all — this is reached from `view`.
 proc projectsOf(app: AppState, wsId: string): seq[NodeItem] =
   for n in app.projects:
     if n.parent == wsId: result.add n
@@ -2433,6 +2459,8 @@ proc foldersOf(app: AppState, prId: string): seq[NodeItem] =
   for n in app.folders:
     if n.parent == prId: result.add n
 
+## Function purpose: a conversation belongs to the deepest container it names,
+## so the three ids are matched together rather than in order.
 proc convsIn(app: AppState, ws, pr, fd: string): seq[ConvItem] =
   for c in app.visibleConvs():
     if c.workspaceId == ws and c.projectId == pr and c.folderId == fd:
@@ -2450,7 +2478,8 @@ proc leavesIn(app: AppState, items: seq[LeafItem],
       result.add n
 
 proc rowLabel(app: AppState, entity, id, name: string): Widget =
-  ## A tree row: its name, or an Entry while it is being renamed.
+  ## Function purpose: a tree row is its name, or an entry while it is being
+  ## renamed — one widget rather than two, so the row cannot be in both states.
   if app.renaming == id:
     gui:
       Entry:
@@ -2469,8 +2498,8 @@ proc rowLabel(app: AppState, entity, id, name: string): Widget =
 ## emits an unexported type — with the FFI in `canvas.nim`.
 ##
 ## The point of the split is the frame clock: owlkettle repaints a `DrawingArea`
-## only from its `update` hook, so animating one costs a **full widget-tree
-## diff per frame**. This widget is repainted directly by `canvas.queueFrame`.
+## only from its `update` hook, so animating one costs a full widget-tree
+## diff per frame. This widget is repainted directly by `canvas.queueFrame`.
 renderable NeuralCanvas of BaseWidget:
   hooks:
     beforeBuild:
@@ -2482,26 +2511,22 @@ renderable NvimTerminal of BaseWidget:
     beforeBuild:
       state.internalWidget = vte.newNvimTerminal()
 
-## A read-only, syntax-highlighted code block (G-7). Declared here rather than in
+## A read-only, syntax-highlighted code block. Declared here rather than in
 ## `sourceview.nim` because owlkettle's `renderable` emits an unexported type;
 ## the FFI stays in that module and this is only the widget around it.
 ##
 ## No ScrolledWindow wraps this and none should — owlkettle's never calls
 ## `set_propagate_natural_height`, which is what collapsed the plain-Label code
-## blocks to their header (G-11). The view word-wraps instead.
-# Action purpose: the transcript follows a reply as it streams (G-31's
-# `disableAutoScroll`). owlkettle's `ScrolledWindow` exposes only `child` — no
-# adjustment — so the follow has to be its own renderable, which is the same
-# reason `SourceCode` is one.
+## blocks to their header. The view word-wraps instead.
+# Action purpose: the transcript follows a reply as it streams unless the
+# setting turns that off, and owlkettle's `ScrolledWindow` exposes only `child`
+# — no adjustment — so the follow has to be its own renderable.
 #
-# Three of the four calls needed are already in owlkettle's bindings; only the
-# adjustment *getters* are missing, so only those are declared. Imported by name
-# rather than wholesale: `gui.nim` already pulls in `owlkettle`, `adw` and
-# `cairo`, and a fourth open import invites a collision for no benefit.
-# `updateChild` lives in `owlkettle/widgetutils`, which `owlkettle.nim` imports
-# but does not re-export — so a renderable declared outside the library has to
-# import it directly. `SourceCode` and `NvimTerminal` never needed it because
-# neither takes a child widget.
+# Only the adjustment getters are missing from owlkettle's bindings, so only
+# those are declared, and by name rather than as a fourth open import.
+# `updateChild` is imported but not re-exported by owlkettle, so a renderable
+# declared outside the library has to reach for it directly. The two renderables
+# above never needed it because neither takes a child widget.
 import owlkettle/widgetutils
 # `mainloop` is imported by `owlkettle.nim` but not re-exported, the same as
 # `widgetutils` above — so `--check`'s build-without-present path has to reach
@@ -2522,7 +2547,7 @@ from owlkettle/bindings/gtk import GtkAdjustment, GtkWidget, GType, GValue,
   gtk_scrolled_window_get_vadjustment, gtk_adjustment_set_value,
   gtk_frame_new, gtk_frame_set_child,
   # Step 13a's composer owns its own `GtkTextView` and buffer, so it needs the
-  # buffer surface directly. **All of it is already in owlkettle's bindings** —
+  # buffer surface directly. All of it is already in owlkettle's bindings —
   # checked before declaring anything, per rule 5. The private field that looked
   # like a blocker (`TextBufferObj.gtk`) is not needed at all: the buffer is
   # created here and attached with `set_buffer`, both exported.
@@ -2541,8 +2566,8 @@ proc gtk_adjustment_get_value(a: GtkAdjustment): cdouble {.importc, cdecl.}
 proc gtk_adjustment_get_upper(a: GtkAdjustment): cdouble {.importc, cdecl.}
 proc gtk_adjustment_get_page_size(a: GtkAdjustment): cdouble {.importc, cdecl.}
 
-# G-41. Declared rather than imported because **none of the three is in
-# owlkettle's bindings** — checked before writing them, per rule 5. They are what
+# Declared rather than imported because none of the three is in
+# owlkettle's bindings — checked before writing them, per rule 5. They are what
 # makes a `ScrolledWindow` size to its content instead of collapsing, which
 # owlkettle's own `ScrolledWindow` has no way to express: it exposes `child` and
 # nothing else.
@@ -2556,7 +2581,7 @@ proc gtk_scrolled_window_set_policy(sw: GtkWidget, h, v: cint) {.importc, cdecl.
 # else — and checked against the bindings first, per rule 5.
 proc gtk_scrolled_window_set_max_content_height(
   sw: GtkWidget, h: cint) {.importc, cdecl.}
-## G-42. Not in owlkettle's bindings — `hAlign` there is a `Box` *packing*
+## Not in owlkettle's bindings — `hAlign` there is a `Box` *packing*
 ## property set by the parent, and this has to be the widget's own, because the
 ## call site inserts every markdown block through one `insert` and a table is the
 ## only kind that must not stretch.
@@ -2573,9 +2598,9 @@ const
   AlignFillG = cint(0)
   AlignStartG = cint(1)
 
-## G-41. Whether the transcript is currently following a reply, and whether the
-## reader is sitting at the bottom. **Two separate facts and they must stay
-## separate:** `pinned` is "a generation is running and following is enabled",
+## Whether the transcript is currently following a reply, and whether the
+## reader is sitting at the bottom. Two separate facts and they must stay
+## separate: `pinned` is "a generation is running and following is enabled",
 ## `sticky` is "the reader has not scrolled away". Following happens only when
 ## both hold. Module-level for the reason `droppedPaths` is — a GTK signal
 ## handler is a bare C function pointer with no place to put state, and there is
@@ -2583,7 +2608,7 @@ const
 var scrollPinned = false
 var scrollSticky = true
 
-## Action purpose: **this is why following used to fall behind and then stop.**
+## Action purpose: this is why following used to fall behind and then stop.
 ## The old version read the adjustment inside the widget's own update hook, which
 ## runs *before* GTK has re-measured the newly appended token — so `upper` was
 ## still the pre-token height and the view was left one token short every frame.
@@ -2601,7 +2626,7 @@ proc onAdjChanged(adj: GtkAdjustment, data: pointer) {.cdecl.} =
     gtk_adjustment_set_value(adj, bottom)
 
 ## Action purpose: the reader's intent, recorded whenever the view moves —
-## **before** the next block of content changes where the bottom is. Scrolling up
+## before the next block of content changes where the bottom is. Scrolling up
 ## to re-read something mid-generation must not be yanked back on the next token,
 ## and scrolling back down must resume following without waiting for the reply to
 ## end. 64px of slack so "as good as at the bottom" counts as at the bottom.
@@ -2612,7 +2637,7 @@ proc onAdjValue(adj: GtkAdjustment, data: pointer) {.cdecl.} =
 
 ## A scrolling transcript that follows a reply while `pin` is set.
 ##
-## **It only follows when the reader is already near the bottom.** That is what
+## It only follows when the reader is already near the bottom. That is what
 ## makes it tolerable rather than infuriating. `disableAutoScroll` turns the whole
 ## thing off.
 renderable AutoScroll of BaseWidget:
@@ -2655,25 +2680,12 @@ renderable AutoScroll of BaseWidget:
     widget.hasChild = true
     widget.valChild = child
 
-## G-41. A `ScrolledWindow` that **sizes to its content's height** and scrolls
-## only sideways, for a table or any other block that must not be clipped to an
-## arbitrary height.
-##
-## **owlkettle's `ScrolledWindow` cannot express this** — it exposes `child` and
-## nothing else — and a bare one reports a near-zero minimum height, so it
-## collapses whatever is inside it to a stub. That is what made tables render at
-## a fixed small size regardless of how many rows they had, and it is the same
-## root cause as the G-11 code-block collapse.
-##
-## **Natural *height* propagates; natural *width* deliberately does not.** A wide
-## table must not widen the transcript, so the horizontal axis stays scrollable
-## while the vertical axis simply takes the room the rows need.
 ## Function purpose: apply a `ContentScroll`'s sizing, given its ceiling.
 ##
-## **It exists because a `property` hook alone is silently overwritten, and that
-## is not a theory — it is how the composer shipped with no width.** owlkettle's
+## It exists because a `property` hook alone is silently overwritten, and that
+## is not a theory — it is how the composer shipped with no width. owlkettle's
 ## generated `build` runs `beforeBuild`, then `buildState` — which is where every
-## field's `property` hook runs — and then **`afterBuild` last**
+## field's `property` hook runs — and then `afterBuild` last
 ## (`widgetdef.nim`, `genBuild`/`genBuildState`). So a `property` hook that
 ## configures the widget is undone by an `afterBuild` that configures it
 ## differently, and `genUpdateState` re-runs a property hook only when the value
@@ -2682,34 +2694,34 @@ renderable AutoScroll of BaseWidget:
 proc applyScrollSizing(w: GtkWidget, maxHeight: int) =
   gtk_scrolled_window_set_propagate_natural_height(w, cbool(1))
   if maxHeight > 0:
-    # Action purpose: a ceiling means this is an **input field**, which needs the
+    # Action purpose: a ceiling means this is an input field, which needs the
     # opposite of every rule below. An empty `TextView`'s natural width is
     # roughly zero, so hugging the content collapses the composer to a sliver at
     # the left edge with nothing to click — exactly what happened.
     #
     # Vertical scrolls past the ceiling, or the extra lines are simply cut off.
-    # Horizontal never scrolls, because the view **wraps** instead — see
+    # Horizontal never scrolls, because the view wraps instead — see
     # `DraftView`, which sets the wrap mode owlkettle has no property for.
     gtk_scrolled_window_set_max_content_height(w, maxHeight.cint)
     gtk_scrolled_window_set_propagate_natural_width(w, cbool(0))
     gtk_widget_set_halign(w, AlignFillG)
     gtk_scrolled_window_set_policy(w, PolicyNever, PolicyAutomatic)
   else:
-    # G-42, unchanged and still the default. **This was `0` and that is why a
-    # table rendered larger than its rows.** G-41 turned natural-width
+    # unchanged and still the default. This was `0` and that is why a
+    # table rendered larger than its rows. Natural-width
     # propagation off so a wide table could not widen the whole transcript,
     # which worked — and left the scroller with no width of its own, so the
     # vertical `Box` stretched it to the full column on the default
     # `GTK_ALIGN_FILL`. The collapse was fixed and nothing constrained the
     # result back down.
     #
-    # The pair below is the actual answer: **natural width is the content's
-    # width, and the widget aligns to the start instead of filling.** GTK then
+    # The pair below is the actual answer: natural width is the content's
+    # width, and the widget aligns to the start instead of filling. GTK then
     # allocates the lesser of the two — the table's own width when it fits, the
     # column's when it does not, with the horizontal scrollbar taking the
     # remainder under `PolicyAutomatic`.
     #
-    # G-41's concern does not come back, and it is worth saying why rather than
+    # that concern does not come back, and it is worth saying why rather than
     # trusting it: the enclosing `AutoScroll` never calls
     # `set_propagate_natural_width` either, so it reports its own small natural
     # width upward and absorbs whatever this one asks for. The window cannot be
@@ -2718,6 +2730,15 @@ proc applyScrollSizing(w: GtkWidget, maxHeight: int) =
     gtk_widget_set_halign(w, AlignStartG)
     gtk_scrolled_window_set_policy(w, PolicyAutomatic, PolicyNever)
 
+## A `ScrolledWindow` that sizes to its content's height and scrolls only
+## sideways, for a table or any other block that must not be clipped to an
+## arbitrary height. owlkettle's own cannot express this — it exposes `child`
+## and nothing else — and a bare one reports a near-zero minimum height, so it
+## collapses whatever is inside it to a stub.
+##
+## Natural *height* propagates and natural *width* deliberately does not: a wide
+## table must not widen the transcript, so the horizontal axis stays scrollable
+## while the vertical takes the room the rows need.
 renderable ContentScroll of BaseWidget:
   child: Widget
   ## Step 13a. A ceiling in pixels, or 0 for none — which is what every
@@ -2726,7 +2747,7 @@ renderable ContentScroll of BaseWidget:
   ## natural height makes the box grow with the draft, and without a ceiling it
   ## would grow until it had eaten the transcript.
   ##
-  ## **Not a `sizeRequest` and not CSS.** A sizing API sets a *floor*, which is
+  ## Not a `sizeRequest` and not CSS. A sizing API sets a *floor*, which is
   ## the opposite of what is wanted, and GTK4 CSS has no `max-height` at all.
   maxHeight: int = 0
 
@@ -2751,12 +2772,12 @@ renderable ContentScroll of BaseWidget:
     widget.hasChild = true
     widget.valChild = child
 
-# G-30, drag-and-drop. Four protos, declared because **none of them is in
-# owlkettle's bindings** — checked before writing them, per rule 5.
+# drag-and-drop. Four protos, declared because none of them is in
+# owlkettle's bindings — checked before writing them, per rule 5.
 # `g_signal_connect_data`, `GValue` and `G_TYPE_STRING` are already there and are
 # used rather than re-declared.
 #
-# Action purpose: **`G_TYPE_STRING`, not `GDK_TYPE_FILE_LIST`.** A file manager
+# Action purpose: `G_TYPE_STRING`, not `GDK_TYPE_FILE_LIST`. A file manager
 # offers `text/uri-list` for a file drag, and GTK converts that to a string for
 # us — so the drop arrives as newline-separated `file://` URIs and needs no
 # `GdkFileList` unboxing, which would mean three more protos and a boxed-list
@@ -2772,13 +2793,13 @@ proc g_value_get_string(v: ptr GValue): cstring {.importc, cdecl.}
 
 const GdkActionCopy = 1.cuint
 
-# G-30, paste. **Three protos, and only three** — `GdkClipboard`,
+# paste. Three protos, and only three — `GdkClipboard`,
 # `GAsyncResult`, `GAsyncReadyCallback`, `gdk_display_get_default` and
 # `gdk_display_get_clipboard` are all already in owlkettle's bindings and are
 # imported rather than re-declared (rule 5).
 #
-# Action purpose: the pasted image is **written to a PNG and then handed to the
-# same queue a dropped file uses**. That is deliberate: `gdk_texture_save_to_png`
+# Action purpose: the pasted image is written to a PNG and then handed to the
+# same queue a dropped file uses. That is deliberate: `gdk_texture_save_to_png`
 # already exists, so this needs no pixel unpacking, and the attachment then
 # takes exactly the path a picked or dropped file takes — one implementation,
 # three ways in.
@@ -2798,6 +2819,8 @@ var
   ## callback is a bare C function and cannot be given the paths object.
   pasteDir = ""
 
+## Function purpose: the clipboard callback is a bare C function and cannot
+## carry the window's state, so it writes a file and lets the timer pick it up.
 proc onPasted(obj: pointer, res: GAsyncResult, data: pointer) {.cdecl.} =
   var err = GError(nil)
   let tex = gdk_clipboard_read_texture_finish(GdkClipboard(obj), res, err.addr)
@@ -2811,6 +2834,8 @@ proc onPasted(obj: pointer, res: GAsyncResult, data: pointer) {.cdecl.} =
       droppedPaths.add file
   except CatchableError: discard
 
+## Function purpose: asks for a texture rather than text, because an image on
+## the clipboard is the case the composer's own paste cannot handle.
 proc pasteImage() =
   let display = gdk_display_get_default()
   if pointer(display).isNil: return
@@ -2821,6 +2846,8 @@ proc pasteImage() =
   if pointer(clip).isNil: return
   gdk_clipboard_read_texture_async(clip, nil, onPasted, nil)
 
+## Function purpose: the drop callback has the same constraint as the paste
+## one, and hands the path to the same staging queue.
 proc onDrop(target: GtkDropTarget, value: ptr GValue, x, y: cdouble,
             data: pointer): cbool {.cdecl.} =
   if value.isNil: return cbool(0)
@@ -2833,7 +2860,7 @@ proc onDrop(target: GtkDropTarget, value: ptr GValue, x, y: cdouble,
     if t.startsWith("file://"): droppedPaths.add pipeline.uriToPath(t)
   cbool(1)
 
-## A drop target over the chat column (G-30), which is the Web UI's
+## A drop target over the chat column, which is the Web UI's
 ## `ChatScreenDragOverlay`. A renderable for the reason `AutoScroll` is one:
 ## owlkettle exposes no way to reach a widget's `GtkWidget` from a `gui:` block,
 ## and a controller has to be attached to one.
@@ -2903,8 +2930,8 @@ proc bufferText(buffer: GtkTextBuffer): string =
   gtk_text_buffer_get_end_iter(buffer, b.addr)
   $gtk_text_buffer_get_text(buffer, a.addr, b.addr, cbool(1))
 
-## The chat composer (Step 13a). **A renderable that owns its own `GtkTextView`
-## and buffer, rather than owlkettle's `TextView`** — and that is the whole
+## The chat composer (Step 13a). A renderable that owns its own `GtkTextView`
+## and buffer, rather than owlkettle's `TextView` — and that is the whole
 ## repair, not a stylistic preference.
 ##
 ## owlkettle's `TextView` declares no events at all, so nothing re-ran `view`
@@ -2933,7 +2960,7 @@ renderable DraftView of BaseWidget:
       state.buffer = gtk_text_buffer_new(GtkTextTagTable(nil))
       state.internalWidget = gtk_text_view_new()
       gtk_text_view_set_buffer(state.internalWidget, state.buffer)
-      # Action purpose: the key controller is created **here**, not in
+      # Action purpose: the key controller is created here, not in
       # `afterBuild`, because `connectEvents` runs inside `buildState` — before
       # `afterBuild` — and needs it. GTK owns the controller from the moment it
       # is added; only the *handler* on it is re-bound per update, below.
@@ -2949,17 +2976,17 @@ renderable DraftView of BaseWidget:
       # growing number to propagate.
       gtk_scrollable_set_vscroll_policy(state.internalWidget, ScrollNatural)
     connectEvents:
-      # **Both handlers are bound here, and that is the whole point of this
-      # hook.** owlkettle replaces `state.changed` and `state.submit` with fresh
+      # Both handlers are bound here, and that is the whole point of this
+      # hook. owlkettle replaces `state.changed` and `state.submit` with fresh
       # `EventObj`s on *every* update (`genUpdateState`), and ARC frees the old
       # ones — so a handler bound once, in `afterBuild`, holds a pointer that is
-      # dead after the first redraw. **That is exactly what crashed:** `submit`
+      # dead after the first redraw. That is exactly what crashed: `submit`
       # was bound in `afterBuild`, every keystroke redrew and replaced the
       # object, and the first Enter dereferenced freed memory — SIGBUS, with
       # `keyCallback` as frame 0 of the core. `disconnectEvents` below and this
       # hook run as a pair on every update, which is what keeps them live.
       #
-      # The callbacks are declared **inside the hook**, as `Entry` does, because
+      # The callbacks are declared inside the hook, as `Entry` does, because
       # the generated state type does not exist until the renderable is
       # complete — a proc above it cannot name `DraftViewState`.
       proc changedCallback(buffer: GtkTextBuffer,
@@ -2983,7 +3010,7 @@ renderable DraftView of BaseWidget:
         # newline itself and needs no help doing it.
         of composer.caNewline, composer.caPass: cbool(0)
 
-      # Connected to the **buffer**, not the widget, because that is what emits
+      # Connected to the buffer, not the widget, because that is what emits
       # `changed` — so `state.connect`, which always uses `internalWidget`, is
       # not usable here and its two lines are reproduced instead.
       if not state.changed.isNil:
@@ -3009,8 +3036,8 @@ renderable DraftView of BaseWidget:
 
   hooks text:
     property:
-      # Action purpose: **compare before writing, and this is not defensive
-      # padding.** `gtk_text_buffer_set_text` replaces the contents and drops the
+      # Action purpose: compare before writing, and this is not defensive
+      # padding. `gtk_text_buffer_set_text` replaces the contents and drops the
       # cursor at the start, so writing on every redraw would yank the caret to
       # the beginning while the user was typing. `Entry` needs no such guard
       # because `GtkEditable` preserves the position; a buffer does not.
@@ -3039,6 +3066,8 @@ renderable SourceCode of BaseWidget:
     property:
       setSourceLanguage(state.buffer, state.language)
 
+## Function purpose: shells to the desktop's own clipboard tool, because GTK's
+## clipboard is asynchronous and this is called from a click handler.
 proc copyToClipboard(text: string) =
   try:
     let p = startProcess("wl-copy", args = [text], options = {poUsePath})
@@ -3057,21 +3086,21 @@ const
 ## Function purpose: render one markdown block as a widget. Extracted from
 ## `messageBody` (8c-3) so a note is shown through the transcript's own
 ## renderer — tables, capped code blocks, the copy button and all — instead of
-## growing a second copy beside it that drifts. **`messageBody`'s child
-## structure is unchanged**: it still contributes exactly one widget per block,
+## growing a second copy beside it that drifts. `messageBody`'s child
+## structure is unchanged: it still contributes exactly one widget per block,
 ## in the same order, so nothing about how owlkettle diffs a transcript moves.
 ##
 ## The `{.expand: false.}` annotations live at the call sites and not here,
 ## because they are the parent's adder properties rather than the widget's.
 proc mdBlock(app: AppState, b: markdown.Block): Widget =
   if b.kind == bkText:
-    # A-48's activation was attempted here as a `MarkupLabel` renderable owning
-    # its own `GtkLabel` with `activate-link` connected, and **reverted: it
-    # segfaults on the first `view` build.** Not the markup — four builds with
+    # Link activation was attempted here as a `MarkupLabel` renderable owning
+    # its own `GtkLabel` with `activate-link` connected, and reverted: it
+    # segfaults on the first `view` build. Not the markup — four builds with
     # byte-identical markup showed an empty-bodied handler is safe and one
     # touching `app` is fatal, dying at `b.text.countLines` in the *code-block*
-    # branch. **A link therefore still renders and its click is unhandled.**
-    # See `TODOS.md` A-48; the allowlist and the markup assertions are unaffected.
+    # branch. A link therefore still renders and its click is unhandled.
+    # The allowlist and the markup assertions are unaffected.
     gui:
       Label:
         text = b.text
@@ -3080,15 +3109,15 @@ proc mdBlock(app: AppState, b: markdown.Block): Widget =
         wrap = true
         style = [StyleClass("msg-body")]
   elif b.kind == bkTable:
-    # G-34. **A real `Grid`, because Pango has no table.** A model asked to
+    # A real `Grid`, because Pango has no table. A model asked to
     # compare things answers with one, and it used to render as raw pipes.
     # It scrolls horizontally inside itself: a wide table must not widen
     # the whole transcript, and a `Label` cannot be relied on to shrink.
     #
-    # G-41: **`ContentScroll`, not `ScrolledWindow`.** A bare owlkettle
+    # `ContentScroll`, not `ScrolledWindow`. A bare owlkettle
     # `ScrolledWindow` reports a near-zero minimum height, so it clipped
     # every table to a stub no matter how many rows it had — the same
-    # collapse as G-11. `ContentScroll` takes the height the rows need and
+    # collapse as a bare code block. `ContentScroll` takes the height the rows need and
     # keeps the horizontal scrolling that the width argument above wants.
     gui:
       ContentScroll:
@@ -3121,16 +3150,16 @@ proc mdBlock(app: AppState, b: markdown.Block): Widget =
               tooltip = "Copy"
               style = [ButtonFlat, StyleClass("row-btn")]
               proc clicked() = copyToClipboard(b.text)
-          # Action purpose: **the cap, and why it is a `sizeRequest` rather
-          # than CSS.** GTK4 CSS has no `max-height` — only `min-*` — so a
+          # Action purpose: the cap, and why it is a `sizeRequest` rather
+          # than CSS. GTK4 CSS has no `max-height` — only `min-*` — so a
           # long block is capped by putting it in a ScrolledWindow with an
-          # explicit height (G-31's `fullHeightCodeBlocks`).
+          # explicit height, which the `fullHeightCodeBlocks` setting turns on.
           #
-          # That is safe here for the same reason it was fatal at G-11:
+          # That is safe here for the reason it is fatal on a code block:
           # owlkettle's ScrolledWindow never calls
           # `set_propagate_natural_height`, so it reports a near-zero minimum
-          # and collapses a child to nothing — **unless it is given a height
-          # to hold**, which is exactly what a cap is. An uncapped block
+          # and collapses a child to nothing — unless it is given a height
+          # to hold, which is exactly what a cap is. An uncapped block
           # still gets no ScrolledWindow at all.
           #
           # Only long blocks are wrapped: `sizeRequest` is a *minimum*, so
@@ -3151,11 +3180,13 @@ proc mdBlock(app: AppState, b: markdown.Block): Widget =
               language = b.lang
               style = [StyleClass("code-body")]
 
+## Function purpose: one turn's blocks, drawn from the memo so the render path
+## does no parsing proportional to the message.
 proc messageBody(app: AppState, m: Message): Widget =
   ## User turns are plain text and assistant output is markdown — unless
   ## `renderUserContentAsMarkdown` is set, which is the Web UI's own option and
   ## the reason the two branches share the renderer below rather than the user
-  ## branch returning early in every case (G-31).
+  ## branch returning early in every case.
   ##
   ## The raw-output toggle short-circuits both: it exists to show the exact text
   ## the model produced, so it must bypass the renderer rather than configure it
@@ -3172,7 +3203,7 @@ proc messageBody(app: AppState, m: Message): Widget =
 
   gui:
     Box(orient = OrientY, spacing = 8):
-      # G-30: a sent turn shows what was attached to it. Read from the row's
+      # a sent turn shows what was attached to it. Read from the row's
       # `extra`, so it survives a restart and is the same list the request
       # carried — not a copy kept beside it that could disagree.
       if m.extra.len > 0:
@@ -3197,11 +3228,11 @@ proc messageBody(app: AppState, m: Message): Widget =
       for b in mdMemo.blocksFor(m.id, m.text):
         insert(app.mdBlock(b)) {.expand: false.}
 
-## Function purpose: the numbers the Web UI shows under a reply (G-33) — tokens
+## Function purpose: the numbers the Web UI shows under a reply — tokens
 ## generated and their rate, tokens read in, how much of the context window the
 ## turn used and what is left of it, and which model produced it.
 ##
-## **Built as one string rather than a row of badge widgets, deliberately.** The
+## Built as one string rather than a row of badge widgets, deliberately. The
 ## transcript rebuilds every message on every token of a stream, and
 ## `timings_per_token` means that is now several times a second with live
 ## numbers; four extra widgets per message inside that loop is the cost
@@ -3212,7 +3243,7 @@ proc messageBody(app: AppState, m: Message): Widget =
 ## before this existed shows nothing rather than a row of zeroes.
 proc statsLine(app: AppState, m: Message): string =
   let t = m.timings
-  # 12d-3. **Tested before the timings guard, not after it.** A cached reply is
+  # 12d-3. Tested before the timings guard, not after it. A cached reply is
   # replayed from stored bytes, so its `timings` are whatever the original turn
   # reported — and a hit stored before `timings_per_token` was asked for carries
   # none at all, which would return "" here and hide the badge on exactly the
@@ -3246,7 +3277,7 @@ proc statsLine(app: AppState, m: Message): string =
   # `CTX_SIZE` would overstate what is left by the slot count, and again by
   # whatever the model's training context capped it to.
   if app.ctxSize > 0:
-    # A-5. **`cacheN` is part of the prompt and was omitted.** `prompt_n` is
+    # `cacheN` is part of the prompt and was omitted. `prompt_n` is
     # only what this request had to *evaluate*; the prefix the server reused is
     # reported separately as `cache_n` and occupies the context just the same.
     # Jenova passes `--cache-prompt` on every start, so reuse is the normal
@@ -3259,7 +3290,7 @@ proc statsLine(app: AppState, m: Message): string =
               $max(0, app.ctxSize - used) & " left"
 
   let model = (if m.model.len > 0: m.model else: app.serverModel)
-  # G-31: the identifier in full when asked for. The shortened form is the
+  # the identifier in full when asked for. The shortened form is the
   # default because a model path is long and the statistics line is one row; the
   # full one is what distinguishes two quantisations of the same model.
   if model.len > 0:
@@ -3268,7 +3299,7 @@ proc statsLine(app: AppState, m: Message): string =
 
   parts.join("    ")
 
-## Function purpose: wrap `statsLine` in a widget, so it is built **once** per
+## Function purpose: wrap `statsLine` in a widget, so it is built once per
 ## message per redraw rather than once to test it and again to display it. With
 ## `timings_per_token` the transcript redraws several times a second, so that
 ## difference is the whole reason this is a proc.
@@ -3276,7 +3307,7 @@ proc statsLine(app: AppState, m: Message): string =
 ## An empty `Box` is what a message with no statistics gets: a Box with no
 ## children requests no size, which is the same reason the document panel is one.
 proc messageStats(app: AppState, idx: int, m: Message): Widget =
-  # G-31: two settings, and they are not the same one. `showMessageStats`
+  # two settings, and they are not the same one. `showMessageStats`
   # governs the footer under a finished reply. `keepStatsVisible` governs
   # whether it survives the end of generation when that footer is off — the
   # live numbers are worth watching during a generation even to someone who
@@ -3295,24 +3326,11 @@ proc messageStats(app: AppState, idx: int, m: Message): Widget =
           wrap = true
           style = [StyleClass("dim-note")]
 
-## Function purpose: the toolbar under a message (G-28). The Web UI gives every
-## message five actions; this window had none — one copy button on code blocks
-## was the whole of it, so there was no way to correct a mistake short of
-## starting the conversation again.
-##
-## **Regenerate and continue are offered on the last message only, and edit does
-## not resend.** Both restrictions are the same restriction: re-answering a turn
-## that has turns after it produces an alternative version of all of them, which
-## is a branch (`PLANS.md` Step 3). Offering it before the tree exists would
-## destroy the following turns rather than letting you choose between them.
-##
-## Copy has no id requirement — text is text. Everything else is hidden until the
-## message is a row, because there is nothing to act on until then.
 ## Function purpose: copy a conversation into a new one, up to and including one
-## message (Step 13b, and P-A6 for the `atMessageId` half).
+## message, which is what naming one at the call site is for.
 ##
-## Action purpose: **`api.forkConversation` has taken an `atMessageId` since it
-## was written and this window has only ever passed an empty one.** With no
+## Action purpose: `api.forkConversation` has taken an `atMessageId` since it
+## was written and this window has only ever passed an empty one. With no
 ## message named it forks from the conversation's own read position, which is
 ## what the sidebar's fork button means; naming a message is what the Web UI's
 ## per-message fork does, and it is the difference between "carry on from here"
@@ -3322,8 +3340,8 @@ proc messageStats(app: AppState, idx: int, m: Message): Widget =
 ## Opened rather than merely listed: a fork is made in order to carry on in it,
 ## and leaving the user on the original is the opposite of what they asked for.
 proc forkFrom(app: AppState, sourceId, atMessageId: string) =
-  # Action purpose: **the guard is here and not on the buttons, because one of
-  # the two callers had no guard at all.** The per-message fork is drawn
+  # Action purpose: the guard is here and not on the buttons, because one of
+  # the two callers had no guard at all. The per-message fork is drawn
   # `sensitive = not app.streaming`; the sidebar's fork row is not, so mid-
   # generation it reached this proc, created the fork in the database, and then
   # `selectConversation` refused to open it — leaving a conversation the user
@@ -3340,9 +3358,20 @@ proc forkFrom(app: AppState, sourceId, atMessageId: string) =
   app.selectConversation(newId)
   app.notice = (if atMessageId.len > 0: "forked from this message" else: "forked")
 
+## Function purpose: which actions a turn offers, in one place so the two rules
+## that govern it cannot drift apart.
+##
+## Action purpose: regenerate and continue are offered on the last message only,
+## and edit does not resend. Both are the same restriction: re-answering a turn
+## that has turns after it produces an alternative version of all of them, and
+## offering that without a branch to put them on destroys the following turns
+## rather than letting the user choose between them.
+##
+## Copy has no id requirement, because text is text. Everything else is hidden
+## until the message is a row, since there is nothing to act on until then.
 proc messageActions(app: AppState, idx: int, m: Message): Widget =
   let isLast = idx == app.messages.len - 1
-  # The versions of this turn (G-29). One means it was never branched, and the
+  # The versions of this turn. One means it was never branched, and the
   # control is not drawn — a "1 of 1" counter on every message is noise.
   let sibs = (if m.id.len > 0: api.siblingsIn(app.edges, m.id) else: @[])
   let at = (if sibs.len > 1: sibs.find(m.id) else: -1)
@@ -3368,14 +3397,14 @@ proc messageActions(app: AppState, idx: int, m: Message): Widget =
         icon = "edit-copy-symbolic"
         tooltip = "Copy"
         style = [ButtonFlat, StyleClass("row-btn")]
-        # W-01: `copyTextAttachmentsAsPlainText` was drawn, validated, saved and
+        # `copyTextAttachmentsAsPlainText` was drawn, validated, saved and
         # read by nothing. What it decides lives in `pipeline.copyTextFor`, below
         # the widget layer, so it is assertable without a window.
         proc clicked() =
           copyToClipboard(pipeline.copyTextFor(
             m.text, m.attachmentsOf(),
             app.opts.getBool("copyTextAttachmentsAsPlainText")))
-      # P-A6. The Web UI forks from any message; this window could only fork a
+      # The Web UI forks from any message; this window could only fork a
       # whole conversation from its sidebar row, so exploring an alternative
       # from halfway up a transcript meant forking the lot and deleting
       # forward.
@@ -3387,7 +3416,7 @@ proc messageActions(app: AppState, idx: int, m: Message): Widget =
           sensitive = not app.streaming
           style = [ButtonFlat, StyleClass("row-btn")]
           proc clicked() = app.forkFrom(app.convId, m.id)
-      # G-31, Developer: off by default and opt-in, because it is a debugging
+      # Developer: off by default and opt-in, because it is a debugging
       # control — the Web UI gates it behind the same switch for the same reason.
       if app.opts.getBool("showRawOutputSwitch") and m.id.len > 0:
         Button {.expand: false.}:
@@ -3413,15 +3442,15 @@ proc messageActions(app: AppState, idx: int, m: Message): Widget =
           proc clicked() = app.regenerate(idx)
         # Continue extends a reply in place rather than making another version of
         # it, so it stays on the last turn: there is nothing to extend in the
-        # middle of a conversation that already has an answer after it. **And it
-        # is hidden on a turn that carries reasoning**, which is the Web UI's own
-        # guard — see `continueReply` and D-BH.
+        # middle of a conversation that already has an answer after it. And it
+        # is hidden on a turn that carries reasoning, which is the Web UI's own
+        # guard — see `continueReply`.
         #
-        # **D-BH's deliberate divergence ends here.** It was shown
+        # The deliberate divergence ends here. It was shown
         # unconditionally because with no settings surface an opt-in flag would
         # have made the feature unreachable rather than optional. There is a
         # settings surface now, so it is opt-in and off by default, matching the
-        # Web UI's `enableContinueGeneration: false` (G-31).
+        # Web UI's `enableContinueGeneration: false`.
         if isLast and m.thinking.len == 0 and
            app.opts.getBool("enableContinueGeneration"):
           Button {.expand: false.}:
@@ -3439,8 +3468,8 @@ proc messageActions(app: AppState, idx: int, m: Message): Widget =
           proc clicked() = app.deleteMessage(idx)
 
 ## Function purpose: the fullscreen control, and it lives in the bottom action
-## row rather than the HeaderBar **because GTK4 hides a titlebar set through
-## `gtk_window_set_titlebar` while the window is fullscreened**. The menu item
+## row rather than the HeaderBar because GTK4 hides a titlebar set through
+## `gtk_window_set_titlebar` while the window is fullscreened. The menu item
 ## added at 19:02 went with it, so entering fullscreen removed the only way to
 ## leave — the top of the window is cut off and the control is inside the part
 ## that vanished. This button is always mapped, which is also what makes its
@@ -3466,10 +3495,12 @@ proc fullscreenButton(app: AppState): Widget =
 ## screen, and forking another row forks where that row was left.
 ## The sidebar's fork: no message named, so `api.forkConversation` forks from the
 ## conversation's own read position. One implementation with the per-message
-## fork above it (P-A6) rather than two that could drift.
+## fork above it rather than two that could drift.
 proc forkConversationRow(app: AppState, id: string) =
   app.forkFrom(id, "")
 
+## Function purpose: one sidebar row, including its rename state, so the tree
+## does not have to branch on that at every level.
 proc convRow(app: AppState, c: ConvItem): Widget =
   gui:
     Box(orient = OrientX, spacing = 2):
@@ -3527,6 +3558,8 @@ proc leafRow(app: AppState, entity: string, n: LeafItem): Widget =
         style = [ButtonFlat, StyleClass("row-btn")]
         proc clicked() = app.deleteNode(entity, n.id)
 
+## Function purpose: the per-row controls, built once for all four container
+## kinds so a new one cannot arrive with a different set.
 proc nodeTools(app: AppState, entity, id: string, ws, pr, fd: string,
                makes: seq[(string, string)]): Widget =
   ## The action strip under a container: rename it, delete it, and create the
@@ -3566,12 +3599,12 @@ proc nodeTools(app: AppState, entity, id: string, ws, pr, fd: string,
         proc clicked() = app.deleteNode(entity, id)
 
 ## Function purpose: the main area of the chat column — the Neovim page, the note
-## editor, or the transcript. Extracted from `view` so the `Paned` that G-25 adds
+## editor, or the transcript. Extracted from `view` so the `Paned` above it
 ## can take it as one child without reindenting the whole transcript, and so the
 ## editor/transcript switch has one place rather than being read out of a deeply
 ## nested tree.
 proc mainArea(app: AppState): Widget =
-  ## **The Box is not decoration and must not be removed.** `Paned` asserts that
+  ## The Box is not decoration and must not be removed. `Paned` asserts that
   ## neither of its children ever changes widget type
   ## (`owlkettle/widgets.nim:1341`, `assert newChild.isNil`), and this area is
   ## `NvimTerminal` or `ScrolledWindow` depending on the page. Returning either
@@ -3586,11 +3619,11 @@ proc mainArea(app: AppState): Widget =
         # No margin: the editor is a *page*, filling its side of the split the way
         # the transcript's ScrolledWindow does. A margin plus `.nvim-term`'s former
         # radius and drop shadow is what made it read as a floating card rather
-        # than a view you navigated to (G-24).
+        # than a view you navigated to.
         NvimTerminal {.expand: true.}:
           style = [StyleClass("nvim-term")]
       else:
-        # G-31: `AutoScroll`, not `ScrolledWindow` — the transcript follows a
+        # `AutoScroll`, not `ScrolledWindow` — the transcript follows a
         # streaming reply unless `disableAutoScroll` says otherwise. Pinned only
         # while a generation is running; a finished conversation stays where the
         # reader left it.
@@ -3616,12 +3649,12 @@ proc mainArea(app: AppState): Widget =
                     xAlign = 0.0
                     ellipsize = EllipsizeEnd
                     style = [StyleClass("brand")]
-                # G-50: the only way to mark a note FOCUS from this window. The
+                # the only way to mark a note FOCUS from this window. The
                 # flag has existed in the schema since it was written and
                 # `workspace.contextFor` has given it the escape behaviour since
-                # G-43 — a FOCUS note reaches every chat in the workspace tree
-                # rather than only its own level (D-BU) — and until now it could
-                # be set from nowhere but the Web UI, which is a D-BC defect.
+                # a FOCUS note reaches every chat in the workspace tree
+                # rather than only its own level — and until now it could
+                # be set from nowhere but another client, which is not parity.
                 # `view-pin-symbolic` is the metaphor the Web UI's own note
                 # header uses.
                 #
@@ -3658,9 +3691,9 @@ proc mainArea(app: AppState): Widget =
                     if app.noteEditing: app.cancelNoteEdit()
                     else: app.noteEditing = true
                 # 8c-5: delete over the same confirmation every other delete in
-                # this window uses (G-36), which names the cascade.
+                # this window uses, which names the cascade.
                 #
-                # **A FOCUS note is refused rather than hidden.** The Web UI
+                # A FOCUS note is refused rather than hidden. The Web UI
                 # omits the button entirely; a disabled one with the reason on
                 # it says why, and a control that vanishes reads as a bug. The
                 # protection is the same: a workspace-wide rule should not go in
@@ -3694,13 +3727,13 @@ proc mainArea(app: AppState): Widget =
                 # a note's tables, code blocks and emphasis look exactly as they
                 # do in a reply rather than nearly so.
                 #
-                # Action purpose: **the source is `noteOrigContent`, not
+                # Action purpose: the source is `noteOrigContent`, not
                 # `noteBuffer.text()`, and that is the Step 7c rule rather than a
-                # preference.** `view` runs on every frame and nothing in it may
+                # preference. `view` runs on every frame and nothing in it may
                 # do work proportional to a payload; reading a `TextBuffer`
                 # copies the whole note out of GTK each time, which is the same
                 # defect as the per-frame `sha256` that froze the window on an
-                # attachment (G-40, D-BQ). The memo behind `blocksFor` would
+                # attachment. The memo behind `blocksFor` would
                 # still have re-parsed nothing, but the copy happens before it.
                 #
                 # It is also exactly right: view mode is only ever reachable
@@ -3712,7 +3745,7 @@ proc mainArea(app: AppState): Widget =
                   for b in mdMemo.blocksFor(app.openNote, app.noteOrigContent):
                     insert(app.mdBlock(b)) {.expand: false.}
             # Every child here is `expand: false`, and the annotations are
-            # the whole point. **`Box`'s adder defaults to `expand: true`**,
+            # the whole point. `Box`'s adder defaults to `expand: true`,
             # which in a *vertical* Box sets `vexpand` — so an unannotated
             # message card stretches to take an equal share of the viewport
             # height, and two replies in a tall window each become half a
@@ -3729,12 +3762,12 @@ proc mainArea(app: AppState): Widget =
                   title = "Ask Jenova something"
                   # Read from the classifier's own table rather than restated,
                   # so a prefix cannot be added there and go unmentioned here.
-                  # Nothing on either surface has ever shown these (P-E8).
+                  # Nothing on either surface has ever shown these.
                   description = "Attach a file, or start a message with " &
                                 intentHint() & " to steer it."
             for i, m in (if app.openNote.len > 0: @[] else: app.messages):
               Frame {.expand: false.}:
-                # A-70: a system turn is neither the user's nor the model's, and
+                # a system turn is neither the user's nor the model's, and
                 # labelling it "JENOVA" is the visible half of presenting the
                 # persona as something the model said. The Web UI draws it as
                 # its own kind (`ChatMessageSystem.svelte`) and so does this.
@@ -3774,8 +3807,8 @@ proc mainArea(app: AppState): Widget =
                         style = [ButtonFlat, StyleClass("row-btn")]
                         proc clicked() = app.cancelEdit()
                   else:
-                    # G-39: the model's reasoning, above the answer and folded
-                    # away. **It defaults open only while this turn is streaming**
+                    # the model's reasoning, above the answer and folded
+                    # away. It defaults open only while this turn is streaming
                     # — a reasoning model can think for a long time before its
                     # first answer token, and a collapsed box during that silence
                     # looks like nothing is happening. Once the reply lands the
@@ -3785,12 +3818,12 @@ proc mainArea(app: AppState): Widget =
                     if m.thinking.len > 0:
                       Expander {.expand: false.}:
                         label = "Reasoning"
-                        # Open while this turn is streaming, and **open whenever
-                        # the answer is empty** — a reasoning model can put its
+                        # Open while this turn is streaming, and open whenever
+                        # the answer is empty — a reasoning model can put its
                         # entire reply in `reasoning_content`, and a collapsed box
                         # above an empty card is indistinguishable from the model
                         # having said nothing.
-                        # G-31 adds the third case: `showThoughtInProgress`
+                        # The third case is a setting: `showThoughtInProgress`
                         # makes open-while-generating the standing default
                         # rather than something the reader re-opens each turn.
                         expanded = app.expanded.getOrDefault(
@@ -3812,23 +3845,6 @@ proc mainArea(app: AppState): Widget =
                     insert(app.messageActions(i, m)) {.expand: false.}
 
 
-## Function purpose: the top bar, and **it is a body widget, not a titlebar.**
-## It was `HeaderBar {.addTitlebar.}` on a `Window`, which meant
-## `gtk_window_set_titlebar` — and **GTK4 hides that while the window is
-## fullscreened.** The USER: *"when going to fullscreen the top bar is
-## missing."* That took the sidebar toggle, the app menu (Quit included) and the
-## status line with it; G-13c had already moved the fullscreen control to the
-## bottom row for exactly this reason, one control at a time.
-##
-## The window is now an `AdwWindow` — *"a Window that does not have a title
-## bar"* — with this bar as an ordinary widget inside the content, which is the
-## pattern owlkettle's own `AdwWindow` example uses. It stays mapped in
-## fullscreen, and the whole class of titlebar-only-in-windowed-mode problems
-## goes with it.
-##
-## **It sits atop the chat column rather than spanning the window** because the
-## Web UI's sidebar is full height (`h-full glass-panel rounded-r-[24px]`,
-## `ChatSidebar.svelte:177`), so a bar above the sidebar would not be parity.
 ## Function purpose: open the settings panel on a copy of the stored values, and
 ## fill the two text buffers from it. Opening is where the copy is taken, so
 ## Cancel is simply discarding the copy and nothing has to be undone.
@@ -3869,7 +3885,7 @@ proc saveSettings(app: AppState) =
   app.notice = "settings saved"
 
 ## Function purpose: write every live row to a file the import below — and the
-## frozen Web UI's — can read back (G-32). The dump is built by `api.exportAll`,
+## frozen Web UI's — can read back. The dump is built by `api.exportAll`,
 ## which declares its columns once; this proc only chooses the file.
 proc exportConversations(app: AppState) =
   let (res, state) = app.open: gui:
@@ -3929,7 +3945,7 @@ proc importConversations(app: AppState) =
 
 ## Function purpose: write the open conversation as the Web UI's markdown
 ## document (Step 13b). The JSON pair above moves the whole database between the
-## two surfaces; this moves **one readable transcript**, which is the other
+## two surfaces; this moves one readable transcript, which is the other
 ## format `jca_web` ships and the only one a user can read, diff or paste
 ## somewhere. The format itself is `convmd.nim` and is asserted there.
 proc exportConversationMarkdown(app: AppState) =
@@ -4032,7 +4048,7 @@ proc pullNotesFromDisk(app: AppState) =
   let (updated, failed) = api.pullNotes()
   app.reloadTree()
   # An open note is re-read, or the editor would keep showing the text that was
-  # just replaced underneath it. **Only when it has no unsaved edit** — 8c-4's
+  # just replaced underneath it. Only when it has no unsaved edit — 8c-4's
   # rule is that nothing drops what the user typed without asking, and a sync
   # they triggered is not a licence to break it.
   if app.openNote.len > 0 and not app.noteDirty():
@@ -4049,6 +4065,8 @@ proc pullNotesFromDisk(app: AppState) =
 proc optionLabels(d: settings.SettingDef): seq[string] =
   for o in d.options: result.add o.split('|')[^1]
 
+## Function purpose: an unknown stored value selects the first option rather
+## than leaving the control blank, which reads as a broken setting.
 proc optionIndex(d: settings.SettingDef, value: string): int =
   for i, o in d.options:
     if o.split('|')[0] == value: return i
@@ -4058,24 +4076,24 @@ proc optionIndex(d: settings.SettingDef, value: string): int =
 ## hand-written per key — the field list lives in `settings.nim` and adding one
 ## there is the whole of adding one here.
 ##
-## Action purpose: **the placeholder is the server's own value and the "Custom"
-## badge marks a divergence from it** (G-31). Together they answer the question
+## Action purpose: the placeholder is the server's own value and the "Custom"
+## badge marks a divergence from it. Together they answer the question
 ## the Web UI added this indicator for: whether a parameter is set because you
 ## set it, or because `llama-server` chose it. An empty field is not sent at all,
 ## which is why the placeholder is the honest thing to show in it.
 proc settingsField(app: AppState, d: settings.SettingDef): Widget =
   let stored = app.optsDraft.get(d.key)
-  # Action purpose: **the server's name for this parameter, not ours.** Only
+  # Action purpose: the server's name for this parameter, not ours. Only
   # `typ_p` differs — `/props` reports it as `typical_p` — and that one mismatch
   # left its placeholder blank on the first build while every other field
   # worked, which is exactly the shape of bug that survives a demo.
   let serverDef = app.serverDefaults.getOrDefault(settings.propsNameFor(d), "")
   # Ghost text falls back to `llama-server`'s own compiled-in default, so a box
   # is never blank before the backend answers. Safe to state as fact because
-  # **Jenova passes no sampling flags on the command line**, so the server always
+  # Jenova passes no sampling flags on the command line, so the server always
   # starts from these — checked in `lifecycle.nim` and both conf files.
   let ghost = (if serverDef.len > 0: serverDef else: d.appDefault)
-  # "Custom" compares against the **server's** value and never against the static
+  # "Custom" compares against the server's value and never against the static
   # fallback: the badge means "this differs from what your server is actually
   # using", and comparing to a constant would make it lie whenever the two differ.
   let isCustom = stored.len > 0 and serverDef.len > 0 and stored != serverDef
@@ -4091,7 +4109,7 @@ proc settingsField(app: AppState, d: settings.SettingDef): Widget =
             text = "Custom"
             style = [StyleClass("settings-custom")]
         # A field whose feature has not been built yet says so, rather than
-        # presenting a control that silently does nothing (**D-BL**). The value
+        # presenting a control that silently does nothing. The value
         # is still stored, so it is live the moment the feature lands.
         if d.awaiting.len > 0:
           Label {.expand: false.}:
@@ -4133,23 +4151,12 @@ proc settingsField(app: AppState, d: settings.SettingDef): Widget =
           wrap = true
           style = [StyleClass("settings-help")]
 
-## Function purpose: the settings surface (G-31) — the sections of the Web UI's
-## `ChatSettings`, minus the two the USER excluded and the fields whose feature
-## does not exist here yet (**D-BK**, and `settings.OmittedFields` names every
-## one).
-##
-## Action purpose: **an overlay child of the window, not a second window.** It is
-## the floating panel the USER asked for, and it costs no window lifecycle: the
-## Overlay already stacks the sidebar Flap over the canvas, so a second child is
-## the shape this window is built in. A separate `Window` would need its own
-## close path, and every crash in this project's history was a widget outliving
-## the thing that owned it (G-25, and the eleven quit-path crashes).
-## Function purpose: read every soft-deleted row into `trashItems` (G-21). The
+## Function purpose: read every soft-deleted row into `trashItems`. The
 ## column list comes from `api.deletedRows`, which reuses `Entities`' own
 ## declaration — a query written here would drift from it the first time a
 ## column was added.
 ##
-## **The order is the restore order, not alphabetical.** Containers are listed
+## The order is the restore order, not alphabetical. Containers are listed
 ## before what lives in them, so a user working down the list restores a
 ## workspace before the notes inside it; restoring a child alone still works,
 ## because `api.restoreItem` revives its ancestry upward anyway.
@@ -4188,7 +4195,7 @@ proc refreshTrash(app: AppState) =
         else: "Message"
       app.trashItems.add (kind: t, id: row[0], label: label, detail: noun)
 
-  # A-18-2. The other half, and it is a different kind of thing rather than more
+  # The other half, and it is a different kind of thing rather than more
   # of the same: files deleted through `/api/storage` never had a row, so no
   # amount of walking `deletedRows` finds them. `fssync.getTrash` is the only
   # way to see them and it had exactly one caller, in the HTTP route — so from
@@ -4202,6 +4209,8 @@ proc refreshTrash(app: AppState) =
     # and implying the trash is empty.
     app.notice = "Could not read the trash directories"
 
+## Function purpose: reads both halves of the trash — the rows and the
+## path-addressed files — because the screen has to account for both.
 proc openTrash(app: AppState) =
   app.refreshTrash()
   app.notice = ""
@@ -4211,9 +4220,9 @@ proc openTrash(app: AppState) =
 ## not a direct `is_deleted=0`, because that route also revives the item's
 ## ancestry — a note inside a deleted folder would otherwise come back invisible
 ## — and re-indexes a restored message for retrieval, which nothing did until
-## 8b (D-BI left deletion forgetting with no counterpart).
+## the counterpart to a delete that forgets.
 proc restoreFromTrash(app: AppState, item: TrashItem) =
-  # A-18-1. **`restoreEntityOutcome`, not `restoreEntity`** — and this call is
+  # `restoreEntityOutcome`, not `restoreEntity` — and this call is
   # the whole feature. The tri-state existed for a while with nothing reading
   # it, which made it a mechanism and not a feature: the window went on printing
   # plain success whether or not the file came back, which is the false
@@ -4237,12 +4246,12 @@ proc restoreFromTrash(app: AppState, item: TrashItem) =
   else:
     app.notice = "Could not restore that " & item.detail.toLowerAscii
 
-## Function purpose: put back a file that never had a database row (A-18-2).
+## Function purpose: put back a file that never had a database row.
 ##
 ## Addressed by path, not by id, which is the whole reason it cannot share
 ## `restoreFromTrash`: `fssync.restoreTrash` reads the sidecar for the original
 ## location and moves the file back, and there is no row to un-delete. Its
-## containment is resolved rather than lexical since A-19 — which matters here
+## containment is resolved rather than lexical — which matters here
 ## more than anywhere, because this is the first surface that hands that
 ## primitive a path the user picked off a list.
 proc restoreTrashFile(app: AppState, entry: fssync.TrashEntry) =
@@ -4256,17 +4265,17 @@ proc restoreTrashFile(app: AppState, entry: fssync.TrashEntry) =
                  " — its original location is not recorded"
 
 ## Function purpose: empty every trash directory, behind a confirmation that
-## states what is destroyed and that it does not come back (A-18-3).
+## states what is destroyed and that it does not come back.
 ##
-## **The confirmation is not optional and it is not politeness.** Every delete
+## The confirmation is not optional and it is not politeness. Every delete
 ## in this application shows a dialog promising "It can be restored from the
 ## trash" — emptying revokes a promise the product has already made, so the
 ## dialog has to say what it takes and that the taking is final. An irreversible
 ## destructive action behind a soft confirmation is the defect, not the missing
 ## button.
 ##
-## **It deliberately says nothing reassuring beyond that.** There is no
-## authentication on any route in this program (A-55), so wording that implied
+## It deliberately says nothing reassuring beyond that. There is no
+## authentication on any route in this program, so wording that implied
 ## the trash was private would be a claim this product cannot make.
 proc emptyTrashConfirmed(app: AppState) =
   let fileCount = app.trashFiles.len
@@ -4307,7 +4316,7 @@ proc emptyTrashConfirmed(app: AppState) =
     app.notice = "Some items could not be deleted from the trash"
   app.refreshTrash()
 
-## Function purpose: the trash screen (G-21). Everything deleted in this
+## Function purpose: the trash screen. Everything deleted in this
 ## application is a soft delete and there was no way to see or undo one, which
 ## is what makes an accidental delete look like data loss.
 ##
@@ -4338,7 +4347,7 @@ proc trashPanel(app: AppState): Widget =
               tooltip = "Refresh"
               style = [ButtonFlat, StyleClass("row-btn")]
               proc clicked() = app.refreshTrash()
-            # A-18-3. `fssync.emptyTrash` existed with one caller, in the HTTP
+            # `fssync.emptyTrash` had one caller, in the HTTP
             # route, so from the window the trash trees were write-only: things
             # went in on every delete and nothing ever came out or cleared.
             Button {.expand: false.}:
@@ -4354,7 +4363,7 @@ proc trashPanel(app: AppState): Widget =
 
           ScrolledWindow {.expand: true.}:
             Box(orient = OrientY, spacing = 6, margin = 4):
-              # A-18-2: the empty state has to account for BOTH lists. Saying
+              # The empty state has to account for BOTH lists. Saying
               # "nothing has been deleted" while the file section below listed
               # entries would be the same false reassurance the trash view was
               # built to end.
@@ -4388,7 +4397,7 @@ proc trashPanel(app: AppState): Widget =
                       style = [ButtonFlat, StyleClass("row-btn")]
                       proc clicked() = app.restoreFromTrash(item)
 
-              # A-18-2. Kept as its own section rather than merged above: these
+              # Kept as its own section rather than merged above: these
               # are addressed by path and have no database row, so they cannot
               # share the row list's Restore, and presenting them as though they
               # were the same kind of thing would be a false claim about what
@@ -4439,7 +4448,7 @@ proc applyHardwareProfile(app: AppState, name: string) =
   app.hwDetecting = true
   hwReq.send(ControlJob(action: "apply_profile", lc: app.lc, profileName: name))
 
-## Function purpose: the hardware screen (S-1, D-BC) — which profile this
+## Function purpose: the hardware screen — which profile this
 ## machine matched, the score that decided it, what was detected, and a button
 ## to deploy any of them. It replaces `detect-hardware.sh`, which had not run
 ## since its `lib/` was archived.
@@ -4540,7 +4549,7 @@ proc hardwarePanel(app: AppState): Widget =
                         xAlign = 0.0
                         wrap = true
                         style = [StyleClass("settings-help")]
-                    # Why it scored what it scored. This is the half D-BC's
+                    # Why it scored what it scored. This is the half the
                     # screen exists for: a number with no reason behind it is
                     # not an explanation of which hardware was matched.
                     for w in s.why:
@@ -4552,27 +4561,25 @@ proc hardwarePanel(app: AppState): Widget =
 
 ## Function purpose: the models the search box leaves standing.
 ##
-## Extracted from the loop that drew them, because the panel now has to ask the
+## Extracted from the loop that drew them, because the panel has to ask the
 ## question twice — once to decide whether there is anything to draw at all, and
-## once to draw it — and a predicate stated twice is a predicate that drifts.
+## once to draw it — and a predicate stated twice is one that drifts.
 ## Case-insensitive substring over the file name and the folder it sits in,
-## which is what `visibleConvs` does for conversations and what the search box
-## above it already promised.
+## which is what the conversation filter does and what the search box promises.
 ##
-## It runs per redraw, and that is cheaper than what it replaces: the same test
-## was applied to every model *inside* the drawing loop on every frame, so this
-## does the same work once and hands back a list.
+## It runs per redraw, and that is cheaper than testing every model inside the
+## drawing loop on every frame: this does the work once and hands back a list.
 proc visibleModels(app: AppState): seq[models.InstalledModel] =
   if app.modelFilter.len == 0: return app.modelList
   let q = app.modelFilter.toLowerAscii
   for m in app.modelList:
     if q in m.name.toLowerAscii or q in m.role.toLowerAscii: result.add m
 
-## Function purpose: open the model selector, reading the tree once (8a, G-20).
+## Function purpose: open the model selector, reading the tree once.
 ##
-## Action purpose: the enumeration happens **here and not in `view`**. It is a
+## Action purpose: the enumeration happens here and not in `view`. It is a
 ## directory walk with a `getFileSize` per entry — cheap, but `view` runs on
-## every frame, and doing it there is the class of defect G-40 was.
+## every frame, and doing it there is a per-frame cost over the filesystem.
 proc openModels(app: AppState) =
   app.modelList = models.available(app.lc.paths.jcaHome)
   app.modelFilter = ""
@@ -4584,11 +4591,11 @@ proc switchToModel(app: AppState, path: string) =
                          modelPath: path))
   app.modelsOpen = false
 
-## Function purpose: the model selector (G-20, G-48) — the models in
+## Function purpose: the model selector — the models in
 ## `models/instruct` and `models/thinking`, which one is active, and a switch per
 ## row.
 ##
-## **This is the window's only way to switch (D-CB).** The two named items that
+## This is the window's only way to switch. The two named items that
 ## sat in the app menu are gone; the tray keeps its pair, because a D-Bus menu
 ## cannot host a searchable list.
 ##
@@ -4641,19 +4648,18 @@ proc modelsPanel(app: AppState): Widget =
                 StatusPage:
                   iconName = "drive-multidisk-symbolic"
                   title = "No models installed"
-                  # D-CB: name both folders that were actually looked in. "No
-                  # models found" over a tree the user knows has models in it is
-                  # the report that sends them looking in the wrong place.
+                  # Action purpose: name both folders that were actually looked
+                  # in. "No models found" over a tree the user knows has models
+                  # in it is the report that sends them looking in the wrong
+                  # place.
                   description = "No .gguf files in " & app.lc.paths.jcaHome &
                                 "/models/instruct or " & app.lc.paths.jcaHome &
                                 "/models/thinking."
               elif app.visibleModels().len == 0:
-                # **This state drew nothing at all.** The filter was applied
-                # inside the loop below, so a search matching no model left the
-                # panel showing the help paragraph and then blank space — the
-                # same dead end the sidebar already answers with "No matches."
-                # for conversations. A list that empties itself without saying
-                # why reads as a broken panel, not as a search result.
+                # Action purpose: a search matching no model must say so. A list
+                # that empties itself without a word reads as a broken panel
+                # rather than as a search result, and the sidebar already
+                # answers the same question for conversations.
                 StatusPage:
                   iconName = "system-search-symbolic"
                   title = "No matches"
@@ -4688,7 +4694,7 @@ proc modelsPanel(app: AppState): Widget =
                         xAlign = 0.0
                         style = [StyleClass("settings-help")]
 
-## Function purpose: the full-size attachment preview (G-30), the Web UI's
+## Function purpose: the full-size attachment preview, the Web UI's
 ## `DialogChatAttachmentPreview`. Same overlay shape as the settings and hardware
 ## panels — always in the tree, insensitive when closed so it does not swallow
 ## clicks. See the note in `settingsPanel`.
@@ -4726,6 +4732,15 @@ proc previewPanel(app: AppState): Widget =
               pixbuf = pb
               contentFit = ContentContain
 
+## Function purpose: drawn from the field declarations rather than written out,
+## so a field added below the window appears here without being added twice.
+## `settings.OmittedFields` names the ones deliberately absent.
+##
+## Action purpose: an overlay child of the window rather than a second window.
+## The overlay already stacks the sidebar over the canvas, so this is the shape
+## the window is built in; a separate window would need its own close path, and
+## a widget outliving the thing that owned it is where the quit-path crashes
+## came from.
 proc settingsPanel(app: AppState): Widget =
   gui:
     Box(orient = OrientY):
@@ -4733,8 +4748,8 @@ proc settingsPanel(app: AppState): Widget =
       # for the same reason: an Overlay child that comes and goes is a child
       # count that changes under owlkettle's positional matching.
       #
-      # Action purpose: **`sensitive` is what makes a closed panel click
-      # through.** An empty Box still takes the Overlay's whole allocation, so
+      # Action purpose: `sensitive` is what makes a closed panel click
+      # through. An empty Box still takes the Overlay's whole allocation, so
       # without this the window would be covered by an invisible widget that
       # swallowed every click. GTK4's default pick skips insensitive widgets.
       sensitive = app.settingsOpen
@@ -4747,7 +4762,7 @@ proc settingsPanel(app: AppState): Widget =
         Box(orient = OrientY, spacing = 8, margin = 24) {.hAlign: AlignCenter,
                                                           vAlign: AlignCenter.}:
           sizeRequest = (720, 560)
-          # **Not `.glass-panel`.** See the rule in `theme.nim`: this is opaque
+          # Not `.glass-panel`. See the rule in `theme.nim`: this is opaque
           # because the USER reported reading the transcript through it, GTK4
           # has no `backdrop-filter` to blur it with, and the Web UI's own
           # settings dialog is opaque over a dimmed overlay in any case.
@@ -4778,7 +4793,7 @@ proc settingsPanel(app: AppState): Widget =
           ScrolledWindow {.expand: true.}:
             Box(orient = OrientY, spacing = 14, margin = 4):
               if app.settingsSection == ssImportExport:
-                # G-32. The backend is `api.importAll` over the same
+                # The backend is `api.importAll` over the same
                 # transactional path `POST /api/db/import` uses; this is the
                 # front end the desktop application did not have.
                 Label {.expand: false.}:
@@ -4848,6 +4863,16 @@ proc settingsPanel(app: AppState): Widget =
               style = [ButtonSuggested, StyleClass("row-btn")]
               proc clicked() = app.saveSettings()
 
+## Function purpose: a body widget and not a titlebar, which is what keeps it
+## mapped in fullscreen — GTK4 hides a window's titlebar there, taking the
+## sidebar toggle, the app menu and the status line with it. The window is an
+## `AdwWindow` for the same reason.
+##
+## It sits atop the chat column rather than spanning the window, because the
+## sidebar is full height and a bar above it would not match.
+##
+## Kept apart from `view` because its child order is load-bearing for the
+## shortcut host.
 proc topBar(app: AppState): Widget =
   gui:
     # No adder annotation here — a `gui` tree's top-level widget may not carry
@@ -4886,8 +4911,8 @@ proc topBar(app: AppState): Widget =
         proc clicked() =
           app.editorOpen = not app.editorOpen
 
-      # G-21. In the bar and not the app menu for the same reason the delete
-      # confirmations exist (G-36): the two answer each other. A confirmation
+      # In the bar and not the app menu for the same reason the delete
+      # confirmations exist: the two answer each other. A confirmation
       # tells the user what a delete will take; this is where they go when they
       # did it anyway.
       Button {.addRight.}:
@@ -4896,7 +4921,7 @@ proc topBar(app: AppState): Widget =
         style = [ButtonFlat]
         proc clicked() = app.openTrash()
 
-      # G-31. In the bar rather than in the app menu because it is a surface the
+      # In the bar rather than in the app menu because it is a surface the
       # user opens repeatedly while tuning a model, not a one-off action like
       # restarting a backend.
       Button {.addRight.}:
@@ -4905,15 +4930,15 @@ proc topBar(app: AppState): Widget =
         style = [ButtonFlat]
         proc clicked() = app.openSettings()
 
-      # S-1: choosing a hardware profile was two shell scripts that no longer
-      # ran, so this was reachable from nowhere at all (D-BC).
+      # choosing a hardware profile was two shell scripts that no longer
+      # ran, so this was reachable from nowhere at all.
       Button {.addRight.}:
         icon = "computer-symbolic"
         tooltip = "Hardware profile"
         style = [ButtonFlat]
         proc clicked() = app.openHardware()
 
-      # 8a, G-20, G-48: the model list, and since D-CB the window's only way to
+      # The model list, and the window's only way to
       # change model. `models.discover` had no caller anywhere in the program, so
       # before it there was no list to draw at all.
       Button {.addRight.}:
@@ -4942,7 +4967,7 @@ proc topBar(app: AppState): Widget =
               style = [ButtonFlat]
               proc clicked() = pendingActions.add "restart"
             Separator()
-            # G-48, D-CB: **one** way to switch in the window. The two named
+            # One way to switch in the window. The two named
             # items that stood here — "Switch to instruct model" and "Switch to
             # thinking model" — are removed on the USER's instruction, which is
             # the only removal Directive 3 permits. The tray keeps its pair,
@@ -5003,6 +5028,8 @@ proc keyBindings(app: AppState): seq[shortcuts.Binding] =
               action: shortcuts.Action(proc () =
                 if app.streaming: cancelStream()))
 
+## Function purpose: the whole widget tree. It runs on every canvas frame, so
+## nothing here may do work proportional to a payload or touch the database.
 method view(app: AppState): Widget =
   result = gui:
     # `AdwWindow`, not `Window`: it has no titlebar slot, so the top bar is an
@@ -5028,7 +5055,7 @@ method view(app: AppState): Widget =
 
           Flap {.addOverlay.}:
             revealed = app.sidebarOpen
-            # G-31. `FlapFoldNever` keeps the sidebar in the layout instead of
+            # `FlapFoldNever` keeps the sidebar in the layout instead of
             # letting it fold itself away on a narrow window, which is what the Web
             # UI's "always show on desktop" does.
             foldPolicy = (if app.opts.getBool("alwaysShowSidebarOnDesktop"):
@@ -5246,17 +5273,17 @@ method view(app: AppState): Widget =
               # owlkettle's positional matching never swaps a widget out from under
               # the diff; only what is inside them changes.
               #
-              # D-BW removed the document panel, and with it the horizontal Box
+              # The document panel is gone, and with it the horizontal Box
               # that existed only to sit the panel beside this column. The
               # `Box`-not-`Paned` reasoning it carried still applies one level
               # down and lives at `mainArea`, which is the widget that actually
               # changes type between a `ScrolledWindow` and an `NvimTerminal`.
               DropZone {.expand: true.}:
-                # G-30: the drop target wraps the chat column, which is the
+                # the drop target wraps the chat column, which is the
                 # Web UI's `ChatScreenDragOverlay` position.
                 style = [StyleClass("drop-zone")]
                 insert(app.mainArea())
-              # G-30: what is staged, above the composer, each removable. The
+              # what is staged, above the composer, each removable. The
               # Web UI shows thumbnails; this shows the name, the type and the
               # size, because a GTK thumbnail means decoding the image on the
               # GTK thread and the strip has to stay cheap to redraw.
@@ -5265,7 +5292,7 @@ method view(app: AppState): Widget =
                   for idx, a in app.pending:
                     Box(orient = OrientX, spacing = 4) {.expand: false.}:
                       style = [StyleClass("attach-chip")]
-                      # G-30: a real thumbnail for an image, which is what the Web
+                      # a real thumbnail for an image, which is what the Web
                       # UI's `ChatAttachmentThumbnailImage` shows. Decoded once
                       # and cached by digest — `view` runs on every frame.
                       if a.kind == "IMAGE":
@@ -5300,7 +5327,7 @@ method view(app: AppState): Widget =
                   xAlign = 0.0
                   wrap = true
                   style = [StyleClass("dim-note")]
-                # G-35: a failure the USER can do something about offers the
+                # a failure the USER can do something about offers the
                 # action rather than describing it. Only for the kinds
                 # `pipeline.classifyError` marked retryable — a context overflow
                 # is not one of them, because retrying it fails identically.
@@ -5320,7 +5347,7 @@ method view(app: AppState): Widget =
                 # row and showed a message box and a Send button under Neovim —
                 # with no way to leave except the top-bar icon. A page gets the
                 # controls of the page it is, which is the shape the note editor
-                # already had (G-24).
+                # already had.
                 if app.editorOpen:
                   Label {.expand: true.}:
                     text = "Neovim — " & app.p.workspaces
@@ -5349,11 +5376,11 @@ method view(app: AppState): Widget =
                     proc clicked() = app.closeNote()
                   insert(app.fullscreenButton()) {.expand: false.}
                 else:
-                  # G-30: the paperclip, and it is one of three ways in rather
-                  # than the only one. **This said "a file picker only —
+                  # the paperclip, and it is one of three ways in rather
+                  # than the only one. This said "a file picker only —
                   # drag-and-drop and paste are not here yet" long after both
-                  # landed**: the paste button is eight lines below, and
-                  # `DropZone` has wrapped the whole chat column since G-30. A
+                  # landed: the paste button is eight lines below, and
+                  # `DropZone` wraps the whole chat column. A
                   # comment that under-reports what a surface can do sends the
                   # next reader to build it a second time.
                   Button {.expand: false.}:
@@ -5362,7 +5389,7 @@ method view(app: AppState): Widget =
                     style = [ButtonFlat, StyleClass("row-btn")]
                     sensitive = not app.streaming
                     proc clicked() = app.attachDialog()
-                  # G-30: paste. GTK's Entry already pastes text on Ctrl+V; what
+                  # paste. GTK's Entry already pastes text on Ctrl+V; what
                   # it cannot do is take an image off the clipboard, which is the
                   # Web UI's third route in. A button rather than a key binding,
                   # because a key binding for it would be invisible.
@@ -5372,7 +5399,7 @@ method view(app: AppState): Widget =
                     style = [ButtonFlat, StyleClass("row-btn")]
                     sensitive = not app.streaming
                     proc clicked() = pasteImage()
-                  # Step 13a. **A `TextView`, not an `Entry`** — six parity gaps
+                  # Step 13a. A `TextView`, not an `Entry` — six parity gaps
                   # were all downstream of the composer being one line bound to a
                   # string: multi-line drafts, Shift+Enter, autogrow, the height
                   # cap and the height reset. `ContentScroll` supplies the growth
@@ -5381,8 +5408,8 @@ method view(app: AppState): Widget =
                   # one thing an `Entry` gave free: Enter sends, Shift+Enter does
                   # not.
                   #
-                  # **The child count of this row is unchanged at five and
-                  # `fullscreenButton` is still last** (G-51).
+                  # The child count of this row is unchanged at five and
+                  # `fullscreenButton` is still last.
                   Overlay {.expand: true.}:
                     ContentScroll:
                       # Roughly eight lines, which is where the Web UI's own
@@ -5412,20 +5439,20 @@ method view(app: AppState): Widget =
                     # Directive 3: a `TextView` has no placeholder and the `Entry`
                     # this replaces had one, so it is drawn rather than dropped.
                     #
-                    # **A plain state test.** The first version asked the buffer
+                    # A plain state test. The first version asked the buffer
                     # (`charCount`) and nothing re-ran `view` on a keystroke, so
                     # the placeholder sat over the user's text indefinitely. With
                     # `changed` feeding `app.draft`, owlkettle redraws on every
                     # keystroke and this branch is simply correct.
                     #
-                    # Action purpose: **the alignments and `sensitive` are what
-                    # keep the box clickable, and both are required.** A first
+                    # Action purpose: the alignments and `sensitive` are what
+                    # keep the box clickable, and both are required. A first
                     # version had neither and the composer could not be clicked
                     # into at all: owlkettle's `addOverlay` adder defaults to
                     # `hAlign: AlignFill, vAlign: AlignFill` (`widgets.nim`), so
                     # the Label was stretched over the whole composer, and a
                     # GtkLabel is targetable by default — it sat on top of the
-                    # view and took every click. `xAlign`/`yAlign` do **not** do
+                    # view and took every click. `xAlign`/`yAlign` do not do
                     # this; they align the text *inside* the Label.
                     if app.draft.len == 0:
                       Label {.addOverlay, hAlign: AlignStart, vAlign: AlignStart.}:
@@ -5435,7 +5462,7 @@ method view(app: AppState): Widget =
                         # changed later.
                         sensitive = false
                         style = [StyleClass("draft-placeholder")]
-                  # G-33: the send button becomes a stop button mid-generation,
+                  # the send button becomes a stop button mid-generation,
                   # which is what the Web UI's `ChatFormActionSubmit` does. It
                   # previously just greyed out, so once a generation started there
                   # was no way to cancel it short of quitting the application.
@@ -5448,7 +5475,7 @@ method view(app: AppState): Widget =
                       else: app.send()
                   insert(app.fullscreenButton()) {.expand: false.}
 
-          # G-31. Last child of the Overlay, so it stacks above the Flap and the
+          # Last child of the Overlay, so it stacks above the Flap and the
           # chat column rather than under them — the floating panel, over the
           # whole window and the canvas behind it.
           insert(app.settingsPanel()) {.addOverlay.}
@@ -5469,12 +5496,12 @@ proc run*(withTray = true, checkOnly = false) =
   let port = c.getInt("PORT", 8080)
 
   db.initDb(p.state / "jenova.db")
-  # M-02. Every image ever attached, pasted or previewed is decoded into
+  # Every image ever attached, pasted or previewed is decoded into
   # `cacheDir` under a digest name, and until now nothing ever removed one — so
   # the directory grew for the life of the install with no way to reclaim it
   # short of `rm -rf`. Swept once, here, rather than on the decode path:
   # `sweepCache` stats a directory, and doing that where a thumbnail is decoded
-  # would put filesystem work inside `view` (G-40).
+  # would put filesystem work inside `view`.
   #
   # Deliberately silent. A cache that cannot be pruned is not a reason to refuse
   # to open the window, and there is no window yet to say it in.
@@ -5485,13 +5512,13 @@ proc run*(withTray = true, checkOnly = false) =
   # unconditionally: `nvimctl` treats an absent socket as "no document", so this
   # costs nothing on a host with no Neovim running.
   pipeline.configureEditor(nvimctl.socketPath(p))
-  # T-3: the history trim's budget. The window posts to its own :8080, so the
+  # the history trim's budget. The window posts to its own :8080, so the
   # request goes through `pipeline.prepare` exactly as the Web UI's does and one
   # trim covers both — but the budget still has to be set in each process that
   # runs a pipeline, and this one runs its own.
   pipeline.configureHistoryBudget(c.getInt("CTX_SIZE", 8192),
                                   c.getInt("NUM_SLOTS", 1))
-  # G-45: the editor is spawned with an environment that loads the in-tree
+  # the editor is spawned with an environment that loads the in-tree
   # `jvim/` configuration and tells its Jenova layer where this process is
   # listening. `127.0.0.1` and not `host`: the editor runs beside the server, and
   # `host` is `0.0.0.0` in LAN mode, which is a bind address rather than a
@@ -5505,13 +5532,13 @@ proc run*(withTray = true, checkOnly = false) =
   # and a search path appended later would be too late for the blocks already on
   # screen. Silent on failure by design — see `installScheme`.
   sourceview.installScheme(p.state / "styles")
-  # G-30: the clipboard callback is a bare C function and cannot be handed the
+  # the clipboard callback is a bare C function and cannot be handed the
   # paths object, so where a pasted image is written is set once, here.
   # The same owned subdirectory the decoder writes to, so pasted images are
   # swept too — they were accumulating with nothing removing them.
   pasteDir = p.attachCacheDir
   # Action purpose: `--check` stops short of everything that touches the
-  # machine. It still builds the **whole** widget tree under a real GTK, which
+  # machine. It still builds the whole widget tree under a real GTK, which
   # is the half a compile cannot see — see the note above `brew` below.
   if not checkOnly:
     discard lc.startAll()
@@ -5531,7 +5558,7 @@ proc run*(withTray = true, checkOnly = false) =
     hwReq.send(ControlJob(action: QuitSentinel))
     joinThread(streamThread); joinThread(ctlThread); joinThread(hwThread)
     streamReq.close(); ctlReq.close(); hwReq.close(); uiChan.close()
-    # T-5. **The embedding server, and deliberately not the agent one.** Quitting
+    # The embedding server, and deliberately not the agent one. Quitting
     # left `llama-embed` running with nothing attached to it — this `defer` sent
     # the workers their quit sentinel and stopped no backend at all. Leaving the
     # *agent* model loaded is the deliberate half: reloading gigabytes into VRAM
@@ -5543,14 +5570,14 @@ proc run*(withTray = true, checkOnly = false) =
     # restart ends up starting a server this is about to kill.
     #
     # `lifecycle.stop` already clears a pid file whose process is gone — the
-    # `not st.running` branch — so the stale-pid half of T-5 needs nothing new.
+    # `not st.running` branch — so the stale-pid case needs nothing new.
     if not checkOnly:
       discard lc.stop(beEmbed)
 
   var conv = latestConversation()
   if conv.len == 0: conv = newConversation()
   # The first transcript is a path through the tree like every later one, so it
-  # is computed the same way rather than by taking every row in order (G-29).
+  # is computed the same way rather than by taking every row in order.
   let allHistory = loadMessages(conv)
   let (history, startLeaf) = pathOf(allHistory, loadLeaf(conv))
 
@@ -5566,7 +5593,7 @@ proc run*(withTray = true, checkOnly = false) =
   # A failure here is not fatal by design — see the `logo` field.
   var logo: Pixbuf
   try:
-    # Action purpose: decoded **at** 48x48, not decoded and then asked to be
+    # Action purpose: decoded at 48x48, not decoded and then asked to be
     # small. `sizeRequest` and CSS `min-width` both set a *minimum*, so neither
     # can shrink a widget — a Picture takes its natural size from the pixbuf, and
     # `png/jenova.jpg` is a large square banner. Scaling at load is the only
@@ -5599,10 +5626,10 @@ proc run*(withTray = true, checkOnly = false) =
                        notes = listNotes(),
                        files = listFiles(),
                        logo = logo,
-                       # G-31. Read once here rather than per turn: `view` runs on
+                       # Read once here rather than per turn: `view` runs on
                        # every canvas frame and `postConversation` on every send,
                        # and re-reading a file in either is the shape of defect
-                       # B-17. A missing or malformed file is the defaults, so
+                       # A missing or malformed file is the defaults, so
                        # this cannot stop the window opening.
                        opts = startOpts,
                        optsDraft = startOpts,
@@ -5621,30 +5648,30 @@ proc run*(withTray = true, checkOnly = false) =
         true
       )
 
-  # Action purpose: the palette is a setting now (G-31), so the colour scheme is
-  # forced to **match the palette** rather than forced to dark unconditionally.
+  # Action purpose: the palette is a setting now, so the colour scheme is
+  # forced to match the palette rather than forced to dark unconditionally.
   # The reason it was pinned still holds and is why this is forced rather than
   # left at `Default`: Adwaita's own chrome — menus, tooltips, the file chooser —
   # has to agree with the sheet, and a light desktop under the dark palette gave
   # dark text on light chrome. `paletteFor` resolves "system" by asking
   # libadwaita what the desktop actually wants.
-  # **Nothing here may touch GTK.** `brew` is what calls `adw_init`, so a GTK or
+  # Nothing here may touch GTK. `brew` is what calls `adw_init`, so a GTK or
   # libadwaita call on this line runs before there is a display and aborts the
   # process. `paletteFor` is GTK-free for exactly that reason; "System" opens on
   # the static default and the window's `afterBuild` hook re-resolves it.
   let startPalette = theme.paletteFor(startOpts.get("theme"))
 
-  # Action purpose: **the smoke test that would have caught the abort.**
+  # Action purpose: the smoke test that would have caught the abort.
   # `nimble gui` exiting 0 says the widget tree compiles; it says nothing about
   # whether the program reaches its first frame, and this window shipped a
-  # 100%-reproducible SIGABRT that a clean compile could not see (D-AR).
+  # 100%-reproducible SIGABRT that a clean compile could not see.
   #
   # `--check` does what `brew` does minus the two things that make running the
-  # product intrusive: it calls `adw_init`, installs the stylesheet and **builds
-  # the entire widget tree**, including every `afterBuild` hook — then returns
-  # without `runMainloop`, so **no window is ever presented**. Combined with the
+  # product intrusive: it calls `adw_init`, installs the stylesheet and builds
+  # the entire widget tree, including every `afterBuild` hook — then returns
+  # without `runMainloop`, so no window is ever presented. Combined with the
   # skips above it starts no backend, binds no port and touches no GPU, which is
-  # what makes it usable under D-BJ where starting the application is not.
+  # what makes it usable in an environment where starting the window is not.
   if checkOnly:
     adw_init()
     discard setupApp(AppConfig(widget: widget, icons: @[], darkTheme: false,
