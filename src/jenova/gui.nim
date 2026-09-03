@@ -2602,10 +2602,13 @@ proc rowLabel(app: AppState, entity, id, name: string): Widget =
 #
 # Only the adjustment getters are missing from owlkettle's bindings, so only
 # those are declared, and by name rather than as a fourth open import.
-# `updateChild` is imported but not re-exported by owlkettle, so a renderable
-# declared outside the library has to reach for it directly. Only the ones that
-# take a child widget need it, which is why `canvas.nim`, `sourceview.nim` and
-# `vte.nim` declare theirs without importing this.
+# `owlkettle.nim` imports `widgetutils` and does not re-export it (`:23-28`), so
+# a renderable declared outside the library reaches for it directly. It carries
+# `updateChild`, which every renderable below that takes a child needs — the
+# three in `canvas.nim`, `sourceview.nim` and `vte.nim` take none and so import
+# nothing — and `connect`, `disconnect` and `redraw(EventObj)`, which are how a
+# renderable exposes a GTK signal as an owlkettle event, the way `Entry` does
+# and the first composer did not.
 import owlkettle/widgetutils
 # `mainloop` is imported by `owlkettle.nim` but not re-exported, the same as
 # `widgetutils` above — so `--check`'s build-without-present path has to reach
@@ -2652,12 +2655,6 @@ from owlkettle/bindings/gtk import GtkAdjustment, GtkWidget, GType, GValue,
   # exposes, which is the gap `MenuItem` exists to close.
   g_object_new, g_type_from_name, g_object_set_property, g_value_unset,
   g_value_new, gtk_popover_popdown
-# `connect`, `disconnect` and `redraw(EventObj)` — the machinery a renderable
-# uses to expose a GTK signal as an owlkettle event, which is what `Entry` does
-# and what the first composer did not do. `owlkettle.nim` imports this module
-# without re-exporting it, so it is imported here by name.
-import owlkettle/widgetutils
-
 proc gtk_adjustment_get_value(a: GtkAdjustment): cdouble {.importc, cdecl.}
 proc gtk_adjustment_get_upper(a: GtkAdjustment): cdouble {.importc, cdecl.}
 proc gtk_adjustment_get_page_size(a: GtkAdjustment): cdouble {.importc, cdecl.}
