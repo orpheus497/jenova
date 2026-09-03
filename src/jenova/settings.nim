@@ -105,17 +105,31 @@ const
     SettingDef(key: "pasteLongTextToFileLen",
                label: "Paste long text to file length",
                section: ssGeneral, kind: skInt, appDefault: "2500",
-               awaiting: "attachments — PLANS.md Step 7b (G-30)",
+               # W-01. **The reason this named was already false.** It read
+               # "attachments — PLANS.md Step 7b (G-30)" long after attachments
+               # shipped in full — file picker, drop zone, clipboard paste, PDF
+               # extraction, thumbnails — so the field read as deferred when it
+               # had simply been forgotten. What it actually waits on is
+               # narrower and is named here instead.
+               awaiting: "a paste handler on the composer. `DraftView` owns a " &
+                         "GtkTextView and GTK pastes text into it directly, so " &
+                         "there is no point at which this window sees the " &
+                         "pasted string and could divert a long one",
                help: "Pasting more than this many characters turns the paste " &
                      "into a text attachment instead of filling the message " &
                      "box. 0 disables it."),
     SettingDef(key: "copyTextAttachmentsAsPlainText",
                label: "Copy text attachments as plain text",
                section: ssGeneral, kind: skBool, boolDefault: false,
-               awaiting: "attachments — PLANS.md Step 7b (G-30)",
-               help: "When copying a message that has text attachments, join " &
-                     "them into one plain string rather than a format that can " &
-                     "be pasted back as attachments."),
+               # W-01: wired. `pipeline.copyTextFor` decides it and
+               # `gui.messageActions` calls it. It carried a stale `awaiting`
+               # naming a blocker that had already shipped.
+               help: "On, copying a message appends the text of anything " &
+                     "attached to it, under the same heading the model was " &
+                     "shown — so what you paste is what the model read. Off, " &
+                     "you get the message text alone. Images are never " &
+                     "copied either way: a base64 image is useless on a " &
+                     "clipboard and is the largest part of the turn."),
     SettingDef(key: "enableContinueGeneration",
                label: "Enable \"Continue\" button",
                section: ssGeneral, kind: skBool, boolDefault: false,
@@ -125,7 +139,12 @@ const
                      "offered on a reply that carries reasoning — see D-BH."),
     SettingDef(key: "pdfAsImage", label: "Parse PDF as image",
                section: ssGeneral, kind: skBool, boolDefault: false,
-               awaiting: "attachments — PLANS.md Step 7b (G-30)",
+               # W-01: the reason was stale in the same way. This one is
+               # genuinely blocked, but on rasterisation rather than on
+               # attachments.
+               awaiting: "a PDF rasteriser. `pdf.nim` extracts a page's text " &
+                         "and nothing in this program can render a page to " &
+                         "pixels, which is what sending pages as images means",
                help: "Send an attached PDF's pages as images rather than " &
                      "extracted text. Needs a vision model; falls back to text " &
                      "on one without."),
@@ -158,7 +177,13 @@ const
     SettingDef(key: "autoMicOnEmpty",
                label: "Show microphone on empty input",
                section: ssDisplay, kind: skBool, boolDefault: false,
-               awaiting: "audio capture — PLANS.md Step 7b (G-30)",
+               # Still genuinely blocked, and unlike the three above it always
+               # was: this window has no audio capture at all. The send path is
+               # ready — `pipeline.contentFor` already emits `input_audio` parts
+               # for a conversation imported from the Web UI — so what is
+               # missing is the recorder, not the wire format.
+               awaiting: "audio capture. Nothing in this window records, and " &
+                         "GTK4 has no recorder of its own",
                help: "Show a record button instead of Send while the message " &
                      "box is empty, on models that accept audio."),
     SettingDef(key: "renderUserContentAsMarkdown",

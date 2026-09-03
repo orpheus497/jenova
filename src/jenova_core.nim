@@ -19,7 +19,7 @@
 when not defined(freebsd):
   {.error: "jenova-core targets FreeBSD only — see .devdocs/PLANS.md Plan B.".}
 
-import std/[os, posix, sequtils, strformat, strutils, json]
+import std/[os, posix, sequtils, strformat, strutils, times, json]
 import jenova/[paths, config, db, dbselftest, server, serverselftest, markdown,
                rag, sha256, pipeline, prompts, lifecycle, models, nvimctl, api,
                settings, hardware, workspace, pdf, zlib, fssync, composer, convmd,
@@ -738,6 +738,35 @@ proc main() =
 
           bounded.clear()
           check("clear empties the memo", bounded.len == 0)
+
+        block copySetting:
+          # W-01. `copyTextAttachmentsAsPlainText` was drawn, validated, saved
+          # and read by **nothing** — and `settings.nim` blamed a blocker
+          # ("attachments — PLANS.md Step 7b") that had already shipped, so it
+          # read as deferred rather than forgotten.
+          let atts = pipeline.parseAttachments(
+            """[{"type":"TEXT","name":"notes.txt","content":"hello"},""" &
+            """{"type":"IMAGE","name":"p.png","base64Url":"data:image/png;base64,QQ=="}]""")
+          check("both attachments parse", atts.len == 2, $atts.len)
+
+          let off = pipeline.copyTextFor("the message", atts, false)
+          check("off, Copy is the message text and nothing else",
+                off == "the message", off)
+
+          let on = pipeline.copyTextFor("the message", atts, true)
+          check("on, a text attachment is appended",
+                on.contains("the message") and on.contains("notes.txt") and
+                on.contains("hello"), on)
+          check("and it uses the same header the model is shown",
+                on.contains("--- File: notes.txt ---"), on)
+          # An image is a base64 data URL: useless on a clipboard and the
+          # largest string in the turn.
+          check("an image is never put on the clipboard",
+                not on.contains("base64") and not on.contains("QQ=="), on)
+
+          check("a turn with no attachments copies identically either way",
+                pipeline.copyTextFor("plain", @[], true) == "plain" and
+                pipeline.copyTextFor("plain", @[], false) == "plain")
 
         # D-BQ: refused, never truncated. Asserted against a real oversized file
         # rather than against the constant — checking that the number is 25
@@ -2404,6 +2433,52 @@ proc main() =
         check("a negative pid is never alive", not lifecycle.isAlive(-1))
         check("this process is alive", lifecycle.isAlive(getCurrentProcessId()))
 
+      block cacheSweep:
+        # M-02. Every image ever attached, pasted or previewed was written to
+        # `cacheDir` and **nothing ever deleted one**. The sweep matches only
+        # files this program wrote, which is the safety property that matters:
+        # `cacheDir` comes from an environment variable, and a sweep that took
+        # whatever it found is B-07 — `scripts/cleanup.sh` deleting
+        # `/var/cache` — reintroduced.
+        let cdir = getTempDir() / "jenova-sweep-" & $getCurrentProcessId()
+        createDir(cdir)
+        defer: removeDir(cdir)
+
+        proc put(name: string, bytes: int, ageSeconds: int) =
+          let f = cdir / name
+          writeFile(f, repeat('c', bytes))
+          # Distinct mtimes, so "oldest first" is a real ordering rather than
+          # whatever order the directory happens to be walked in.
+          setLastModificationTime(f, getTime() - initDuration(seconds = ageSeconds))
+
+        put(paths.CachePrefix & "oldest", 4000, 300)
+        put(paths.CachePrefix & "middle", 4000, 200)
+        put(paths.CachePrefix & "newest", 4000, 100)
+        # Two files this program did not write. Neither may ever be touched.
+        writeFile(cdir / "notes.md", "a document that happens to live here")
+        writeFile(cdir / "jenova.db", "not ours to delete")
+
+        let under = paths.sweepCache(cdir, 1_000_000)
+        check("a cache under its cap is left entirely alone",
+              under.removed == 0 and fileExists(cdir / paths.CachePrefix & "oldest"))
+
+        let swept = paths.sweepCache(cdir, 9000)
+        check("a cache over its cap is pruned", swept.removed >= 1,
+              "removed " & $swept.removed)
+        check("and it reports what it reclaimed", swept.freed >= 4000'i64,
+              "freed " & $swept.freed)
+        check("the oldest file goes first",
+              not fileExists(cdir / paths.CachePrefix & "oldest"))
+        check("the newest file survives",
+              fileExists(cdir / paths.CachePrefix & "newest"))
+
+        # The assertion that matters most in this block.
+        check("a file this program did not write is never removed",
+              fileExists(cdir / "notes.md") and fileExists(cdir / "jenova.db"))
+
+        check("sweeping a directory that does not exist is a no-op",
+              paths.sweepCache(cdir / "absent", 1).removed == 0)
+
       block rotation:
         # M-04. The log was appended to for ever and nothing anywhere deleted
         # from `var/log`.
@@ -2992,11 +3067,36 @@ proc main() =
               thin.len == 0, "too short: " & thin.join(", "))
 
         # A field the window cannot act on yet says so; one it can, does not.
-        check("only the attachment and audio fields are marked pending",
+        check("the three fields the window cannot act on are marked pending",
               settings.defFor("pdfAsImage").awaiting.len > 0 and
               settings.defFor("autoMicOnEmpty").awaiting.len > 0 and
+              settings.defFor("pasteLongTextToFileLen").awaiting.len > 0 and
               settings.defFor("temperature").awaiting.len == 0 and
               settings.defFor("theme").awaiting.len == 0)
+
+        # W-01. **The old assertion only checked that a reason existed, and
+        # three of them were false**: all three named "attachments — PLANS.md
+        # Step 7b (G-30)" long after attachments shipped in full, so a field
+        # that had been forgotten was indistinguishable from one that was
+        # deferred. A string cannot be checked for truth, but it can be checked
+        # for having been re-examined: none of them may name the step that is
+        # done, and each must say what it is actually waiting on.
+        var stale: seq[string]
+        for d in settings.Defs:
+          if d.awaiting.len == 0: continue
+          if d.awaiting.contains("Step 7b") or d.awaiting.contains("G-30"):
+            stale.add d.key
+        check("no pending field still blames a step that has shipped",
+              stale.len == 0, "stale reasons on: " & stale.join(", "))
+
+        var vague: seq[string]
+        for d in settings.Defs:
+          if d.awaiting.len > 0 and d.awaiting.len < 40: vague.add d.key
+        check("every pending field says what it is waiting on, not just that it is",
+              vague.len == 0, "too vague: " & vague.join(", "))
+
+        check("the copy setting is no longer pending, because it is wired now",
+              settings.defFor("copyTextAttachmentsAsPlainText").awaiting.len == 0)
 
         # The select: its stored default has to be one of its own options, or
         # the dropdown opens on nothing.

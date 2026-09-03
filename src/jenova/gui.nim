@@ -20,7 +20,26 @@
 ##
 ## Control actions therefore call `lifecycle` **in-process** rather than shelling
 ## out to a supervisor binary, and model switching calls `models.switchModel`
-## rather than `bin/jenova-model-switch`. The GUI spawns no shell at all.
+## rather than `bin/jenova-model-switch`.
+##
+## **Two things do still spawn a process, and this said "the GUI spawns no shell
+## at all" while they did.** Neither is a supervisor and neither is a project
+## script, which is the property that actually matters — but the sentence was
+## wrong as written and a reader auditing it would have found it wrong:
+##
+## * `lanAddress` runs `route -n get default` and `ifconfig` through `sh -c` to
+##   read the address LAN mode will publish. There is no libc call that answers
+##   "the address on the default route" and reimplementing a routing-socket
+##   query for a status line is not a trade worth making.
+## * The "Open Web UI" action runs `xdg-open`, which is the documented way to
+##   hand a URL to the desktop and is a declared dependency.
+##
+## `lanAddress` is called on the **GTK thread**, which is a defect of its own
+## (E-06 in `.devdocs/03`): a wedged routing lookup blocks the window for as
+## long as it takes. The fix is `hwWorker`'s shape — do it on a worker and
+## deliver the result over `uiChan` — and it is deliberately not taken in the
+## same pass as this correction, because it moves state across a thread boundary
+## in the one file this project cannot type-check outside FreeBSD.
 ##
 ## ## Why chat goes over HTTP to the local server
 ##
@@ -1389,6 +1408,20 @@ proc rebuildPath(app: AppState) =
   app.leaf = leaf
   app.edges = edgesOf(app.allMessages)
 
+## Function purpose: empty every per-message render cache (M-01).
+##
+## **Forward-declared, because the three things it empties are each declared
+## beside their first user further down** — `mdMemo` above the note editor,
+## `attachMemo` above the send path, `thumbCache` above the thumbnail decoder —
+## and each of those placements carries its own reasoning that moving the
+## declaration up here would break. The one caller that needs them all is
+## `selectConversation`, which is above all three.
+proc clearRenderMemos()
+
+## Function purpose: forget one message id in every render cache (M-01), for the
+## one thing that makes an entry dead while the conversation stays open.
+proc forgetRenderMemos(id: string)
+
 ## Function purpose: load a conversation's tree and the branch last being read.
 proc loadConversation(app: AppState, convId: string) =
   app.allMessages = loadMessages(convId)
@@ -1409,6 +1442,15 @@ proc appendTurn(app: AppState, m: Message) =
 ## which would otherwise write the tail of one conversation into another.
 proc selectConversation(app: AppState, id: string) =
   if app.streaming or id == app.convId: return
+  # M-01. **This is where the leak was.** `mdMemo`, `attachMemo` and
+  # `thumbCache` are module-level `var`s keyed by message id, and nothing —
+  # not this, not `loadConversation`, not `deleteMessage` — ever dropped an
+  # entry. So every message ever rendered kept its parsed blocks, its parsed
+  # `extra` (including each image's full base64, held twice over) and its
+  # decoded pixbuf for the life of the process, for conversations closed hours
+  # ago. The transcript draws one branch of one conversation, so the moment the
+  # conversation changes every entry in all three is dead.
+  clearRenderMemos()
   app.convId = id
   app.loadConversation(id)
   app.openNote = ""
@@ -1881,6 +1923,22 @@ proc attachDialog(app: AppState) =
 ## bytes, so it is written once and every later redraw is a cache hit — which is
 ## what makes this safe to call from `view`, where it runs on every frame.
 var thumbCache: Table[string, Pixbuf]
+## M-01. Insertion order, so the oldest decoded thumbnails can be dropped.
+var thumbOrder: seq[string]
+
+const ThumbCacheCap = 64
+  ## M-01. How many decoded thumbnails may be held.
+  ##
+  ## **A `Pixbuf` is the third copy of an image this window keeps.** The bytes
+  ## are already in `attachMemo` twice — once as the parsed `extra` node and
+  ## once as `Attachment.payload` — and a fourth copy is on disk under
+  ## `cacheDir`. This one is decoded, so it is the largest: a 4000x3000 photo
+  ## scaled to 900 is still megabytes of pixels.
+  ##
+  ## 64 is far more than the transcript can show at once, so the cap never
+  ## engages while reading; `clearRenderMemos` below is what actually recovers
+  ## the memory on a conversation switch, and this is the ceiling for a single
+  ## conversation with more images than that in one branch.
 
 ## G-40. **The key is the attachment's identity, never a digest of its bytes.**
 ## This proc is called from `view`, so it runs on every frame — and the previous
@@ -1909,6 +1967,15 @@ proc attachmentPixbuf(app: AppState, a: PendingAttachment, size: int): Pixbuf =
     createDir(app.p.cacheDir)
     if not fileExists(file): writeFile(file, bytes)
     result = loadPixbuf(file, size, size, preserveAspectRatio = true)
+    if not thumbCache.hasKey(key):
+      thumbOrder.add key
+      # Batch eviction, for the reason `markdown.evict` gives: this runs from
+      # `view`, and a per-insert `delete(0)` is an O(n) shift on a path that
+      # must do no work proportional to anything.
+      if thumbOrder.len > ThumbCacheCap:
+        let drop = max(1, ThumbCacheCap div 4)
+        for i in 0 ..< drop: thumbCache.del(thumbOrder[i])
+        thumbOrder = thumbOrder[drop .. ^1]
     thumbCache[key] = result
   except CatchableError:
     # A file that is not a decodable image is not an error worth a notice — the
@@ -1917,6 +1984,32 @@ proc attachmentPixbuf(app: AppState, a: PendingAttachment, size: int): Pixbuf =
 
 proc attachmentsOf(m: Message): seq[PendingAttachment] =
   attachMemo.attachmentsFor(m.id, m.extra)
+
+## M-01. The definitions of the two declared above `loadConversation`. Placed
+## here because this is the first point at which all three memos exist.
+##
+## `thumbCache` holds GTK objects rather than plain values, but dropping the
+## entry is the whole of the release: GTK reference-counts a `GdkPixbuf`, and
+## the toolkit frees it once nothing holds a reference. The decoded file under
+## `cacheDir` deliberately survives — it is named for the digest of its own
+## bytes, so it is the thing that makes a re-open cheap, and `paths.sweepCache`
+## is what bounds it.
+proc clearRenderMemos() =
+  mdMemo.clear()
+  attachMemo.clear()
+  thumbCache.clear()
+  thumbOrder.setLen(0)
+
+proc forgetRenderMemos(id: string) =
+  if id.len == 0: return
+  mdMemo.invalidate(id)
+  attachMemo.forget(id)
+  # A thumbnail is keyed by size and attachment identity rather than by message
+  # id, so there is no single key to drop here. The entries are bounded by
+  # `ThumbCacheCap` and cleared on every conversation switch, which is the two
+  # bounds that matter; scanning the table for a message's thumbnails would be
+  # work proportional to the cache on a path that is already O(1).
+  discard
 
 ## Function purpose: the staged attachments as the JSON text that goes into the
 ## `messages.extra` column, in the Web UI's shape (D-Z).
@@ -2049,6 +2142,11 @@ proc deleteMessage(app: AppState, idx: int) =
     if not api.deleteEntity("messages", victim):
       app.notice = "could not delete that message"
       return
+    # M-01: a deleted turn's parsed blocks, parsed attachments and decoded
+    # thumbnail can never be drawn again. Dropped here rather than left to the
+    # caps, because a deleted message is the one entry that is *certainly* dead
+    # while the conversation it belonged to is still open.
+    forgetRenderMemos(victim)
   if app.editingMsg in doomed: app.editingMsg = ""
 
   # The reader lands on the deleted turn's parent, which is the nearest thing
@@ -3053,6 +3151,29 @@ proc messageStats(app: AppState, idx: int, m: Message): Widget =
 ##
 ## Copy has no id requirement — text is text. Everything else is hidden until the
 ## message is a row, because there is nothing to act on until then.
+## Function purpose: copy a conversation into a new one, up to and including one
+## message (Step 13b, and P-A6 for the `atMessageId` half).
+##
+## Action purpose: **`api.forkConversation` has taken an `atMessageId` since it
+## was written and this window has only ever passed an empty one.** With no
+## message named it forks from the conversation's own read position, which is
+## what the sidebar's fork button means; naming a message is what the Web UI's
+## per-message fork does, and it is the difference between "carry on from here"
+## and "carry on from wherever I happened to be". The parameter was already
+## there — only a caller was missing.
+##
+## Opened rather than merely listed: a fork is made in order to carry on in it,
+## and leaving the user on the original is the opposite of what they asked for.
+proc forkFrom(app: AppState, sourceId, atMessageId: string) =
+  let (ok, newId, msg) = api.forkConversation(sourceId, atMessageId, "")
+  if not ok:
+    app.notice = "fork failed: " & msg
+    return
+  app.convs = listConversations()
+  app.reloadTree()
+  app.selectConversation(newId)
+  app.notice = (if atMessageId.len > 0: "forked from this message" else: "forked")
+
 proc messageActions(app: AppState, idx: int, m: Message): Widget =
   let isLast = idx == app.messages.len - 1
   # The versions of this turn (G-29). One means it was never branched, and the
@@ -3081,7 +3202,27 @@ proc messageActions(app: AppState, idx: int, m: Message): Widget =
         icon = "edit-copy-symbolic"
         tooltip = "Copy"
         style = [ButtonFlat, StyleClass("row-btn")]
-        proc clicked() = copyToClipboard(m.text)
+        # W-01: `copyTextAttachmentsAsPlainText` was drawn, validated, saved and
+        # read by nothing. What it decides lives in `pipeline.copyTextFor`, below
+        # the widget layer, so it is assertable without a window.
+        proc clicked() =
+          copyToClipboard(pipeline.copyTextFor(
+            m.text, app.attachmentsOf(m),
+            app.opts.getBool("copyTextAttachmentsAsPlainText")))
+      # P-A6. The Web UI forks from any message; this window could only fork a
+      # whole conversation from its sidebar row, so exploring an alternative
+      # from halfway up a transcript meant forking the lot and deleting
+      # forward. Adding a conditional Button to this row is safe under G-51:
+      # the constraint is on the container holding `fullscreenButton`, and that
+      # is the action row at the bottom of the window, not this one.
+      if m.id.len > 0:
+        Button {.expand: false.}:
+          icon = "edit-cut-symbolic"
+          tooltip = "Fork from here — copy this conversation up to this " &
+                    "message into a new one"
+          sensitive = not app.streaming
+          style = [ButtonFlat, StyleClass("row-btn")]
+          proc clicked() = app.forkFrom(app.convId, m.id)
       # G-31, Developer: off by default and opt-in, because it is a debugging
       # control — the Web UI gates it behind the same switch for the same reason.
       if app.opts.getBool("showRawOutputSwitch") and m.id.len > 0:
@@ -3160,17 +3301,11 @@ proc fullscreenButton(app: AppState): Widget =
 ## The fork is taken at the conversation's own `currNode`, which is the turn that
 ## conversation is being read at — so forking the one on screen forks what is on
 ## screen, and forking another row forks where that row was left.
+## The sidebar's fork: no message named, so `api.forkConversation` forks from the
+## conversation's own read position. One implementation with the per-message
+## fork above it (P-A6) rather than two that could drift.
 proc forkConversationRow(app: AppState, id: string) =
-  let (ok, newId, msg) = api.forkConversation(id, "", "")
-  if not ok:
-    app.notice = "fork failed: " & msg
-    return
-  app.convs = listConversations()
-  app.reloadTree()
-  # Opened rather than merely listed: a fork is made in order to carry on in it,
-  # and leaving the user on the original is the opposite of what they asked for.
-  app.selectConversation(newId)
-  app.notice = "forked"
+  app.forkFrom(id, "")
 
 proc convRow(app: AppState, c: ConvItem): Widget =
   gui:
@@ -4933,8 +5068,13 @@ method view(app: AppState): Widget =
                   proc clicked() = app.closeNote()
                 insert(app.fullscreenButton()) {.expand: false.}
               else:
-                # G-30: the paperclip. A file picker only — drag-and-drop and
-                # paste are the Web UI's other two routes and are not here yet.
+                # G-30: the paperclip, and it is one of three ways in rather
+                # than the only one. **This said "a file picker only —
+                # drag-and-drop and paste are not here yet" long after both
+                # landed**: the paste button is eight lines below, and
+                # `DropZone` has wrapped the whole chat column since G-30. A
+                # comment that under-reports what a surface can do sends the
+                # next reader to build it a second time.
                 Button {.expand: false.}:
                   icon = "mail-attachment-symbolic"
                   tooltip = "Attach a file"
@@ -5035,6 +5175,16 @@ proc run*(withTray = true, checkOnly = false) =
   let port = c.getInt("PORT", 8080)
 
   db.initDb(p.state / "jenova.db")
+  # M-02. Every image ever attached, pasted or previewed is decoded into
+  # `cacheDir` under a digest name, and until now nothing ever removed one — so
+  # the directory grew for the life of the install with no way to reclaim it
+  # short of `rm -rf`. Swept once, here, rather than on the decode path:
+  # `sweepCache` stats a directory, and doing that where a thumbnail is decoded
+  # would put filesystem work inside `view` (G-40).
+  #
+  # Deliberately silent. A cache that cannot be pruned is not a reason to refuse
+  # to open the window, and there is no window yet to say it in.
+  discard paths.sweepCache(p.cacheDir)
   rag.initSchema()
   rag.configureEmbed("127.0.0.1", c.getInt("LLAMA_EMBED_PORT", 8082))
   # `Editor:` reads whatever is open in the editor listening here. Configured

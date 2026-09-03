@@ -4,7 +4,7 @@
 ## an environment variable that may be unset — the defect class that made
 ## `scripts/cleanup.sh` capable of deleting `/var/cache` (B-07).
 
-import std/[os, strutils]
+import std/[algorithm, os, strutils, times]
 
 type
   Layout* = enum
@@ -97,6 +97,74 @@ proc resolve*(root = ""): Paths =
     result.llamaServer = getEnv("LLAMA_SERVER",
                                 r / "external" / "ext_bin" / "bin" / "llama-server")
     result.llamaLibDir = r / "external" / "ext_bin" / "bin"
+
+const
+  CachePrefix* = "attach-"
+    ## The prefix `gui.attachmentPixbuf` gives every file it decodes into the
+    ## cache directory. **The sweep matches on it and nothing else**, which is
+    ## the whole safety property here: `cacheDir` is a path derived from an
+    ## environment variable, and a sweep that deleted whatever it found would be
+    ## `scripts/cleanup.sh` deleting `/var/cache` again — the defect (B-07) this
+    ## module exists to make impossible. A file this program did not write is
+    ## never a candidate.
+  MaxCacheBytes* = 256 * 1024 * 1024
+    ## M-02. The ceiling on the decoded-attachment cache.
+    ##
+    ## Every image ever attached, pasted or previewed is written here, named for
+    ## the digest of its own bytes, and **nothing ever deleted one**. `nimble
+    ## clean` removes `bin/` and `nimcache` only. So the directory accumulated a
+    ## copy of every image the user had ever put in a chat, for ever, with no
+    ## way to reclaim it short of `rm -rf`.
+    ##
+    ## Generous, because the files are what make re-opening a conversation with
+    ## images cheap: the digest name means a decode is written once and every
+    ## later view is a hit. This bounds the growth without throwing away the
+    ## working set.
+
+## Function purpose: keep the decoded-attachment cache under `maxBytes`, oldest
+## first (M-02). Returns how many files were removed and how many bytes that
+## reclaimed.
+##
+## Action purpose: **oldest by modification time, and the ordering is the
+## point.** The cache is content-addressed, so a file that is still being looked
+## at is rewritten only if it was evicted — its mtime therefore tracks when it
+## was last *created*, and dropping the oldest sheds the conversations nobody
+## has opened in longest. Deleting by size would evict exactly the large
+## photographs that are most expensive to decode again.
+##
+## It is called once at startup rather than on every write: this stats a
+## directory, and doing that on the path that decodes a thumbnail would put
+## filesystem work inside `view`, which is the rule G-40 exists to hold.
+##
+## A file that cannot be removed is skipped rather than raising. A cache is a
+## cache: failing to prune it must never stop the application starting.
+proc sweepCache*(dir: string, maxBytes: int64 = MaxCacheBytes):
+    tuple[removed: int, freed: int64] =
+  if not dirExists(dir): return (0, 0'i64)
+  var entries: seq[tuple[mtime: Time, size: int64, path: string]]
+  var total = 0'i64
+  for kind, path in walkDir(dir):
+    if kind != pcFile: continue
+    if not path.extractFilename.startsWith(CachePrefix): continue
+    var size = 0'i64
+    var mtime: Time
+    try:
+      size = getFileSize(path)
+      mtime = getLastModificationTime(path)
+    except CatchableError:
+      continue
+    entries.add (mtime, size, path)
+    total += size
+  if total <= maxBytes: return (0, 0'i64)
+
+  entries.sort(proc (a, b: tuple[mtime: Time, size: int64, path: string]): int =
+    cmp(a.mtime, b.mtime))
+  for e in entries:
+    if total <= maxBytes: break
+    if tryRemoveFile(e.path):
+      total -= e.size
+      result.removed.inc
+      result.freed += e.size
 
 ## Function purpose: render the resolved paths for the `config` subcommand and
 ## for diffing against what the shell path currently produces.

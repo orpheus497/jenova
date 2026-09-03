@@ -700,6 +700,7 @@ proc attachmentText*(label, name, content: string): string =
   ## `formatAttachmentText` in `jca_web/src/lib/utils/formatters.ts:147`.
   "\n\n--- " & label & ": " & name & " ---\n" & content
 
+
 ## Function purpose: the `content` field for one outbound turn. A turn with no
 ## attachments keeps a **plain string**, exactly as before — the array form is
 ## only used when it is needed, because switching every message to parts would
@@ -970,6 +971,35 @@ proc parseAttachments*(extra: string): seq[Attachment] =
   var node: JsonNode
   try: node = parseJson(extra) except CatchableError: return
   attachmentsOfNode(node)
+
+## Function purpose: what Copy should put on the clipboard for one turn, given
+## the `copyTextAttachmentsAsPlainText` setting (W-01).
+##
+## Action purpose: **the setting was drawn, validated, saved and read by
+## nothing.** `settings.nim` marked it `awaiting: "attachments — PLANS.md Step
+## 7b (G-30)"`, and attachments shipped in full; the blocker it named had not
+## existed for some time, so a user turning it on got no behaviour change and no
+## indication why.
+##
+## The Web UI's "off" state is a format that can be pasted back *as*
+## attachments. This window has no such format — there is nothing to paste back
+## into — so off is the plain message text, which is what Copy has always put on
+## the clipboard, and on appends each text attachment under the same header
+## `contentFor` gives the model. That keeps the two readings of the message
+## identical: what you paste is what the model was shown.
+##
+## Images are skipped in both states: a base64 data URL is not something a
+## clipboard paste can use, and it is the largest string in the turn.
+##
+## Below the widget layer so it can be asserted without a window, for the reason
+## `chatBody` and `contentFor` are.
+proc copyTextFor*(text: string, atts: seq[Attachment], plain: bool): string =
+  result = text
+  if not plain: return
+  for a in atts:
+    if a.kind == "IMAGE": continue
+    if a.payload.len == 0: continue
+    result.add attachmentText("File", a.name, a.payload)
 
 type
   ParseMemo* = object
