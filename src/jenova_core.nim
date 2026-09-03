@@ -3885,6 +3885,93 @@ proc main() =
         rag.forgetConversation(ConvA)
         rag.forgetConversation(ConvB)
 
+      block workspaceIndexing:
+        # W-06. **The index held chats and nothing else.** `indexContent` and
+        # `indexFile` were exported, correct, and called by no production code
+        # anywhere — so a note the user wrote and a document they uploaded were
+        # not searchable by keyword or by vector at all.
+        proc check(label: string, cond: bool, detail = "") =
+          if cond: echo "  ok   ", label
+          else:
+            echo "  FAIL ", label, (if detail.len > 0: "\n       " & detail else: "")
+            inc failures
+
+        proc indexedPaths(prefix: string): seq[string] =
+          for r in db.query(
+              "SELECT path FROM rag_documents WHERE path LIKE ? ORDER BY path",
+              prefix & "%"):
+            if r.len > 0: result.add r[0]
+
+        rag.forgetNote("wsidx-note")
+        rag.forgetFileAsset("wsidx-file")
+        rag.forgetFileAsset("wsidx-image")
+
+        check("a note is indexed under its own root",
+              rag.indexNote("wsidx-note", "Pooling", "connection reuse notes") and
+              rag.notePath("wsidx-note") in indexedPaths(rag.NoteRoot))
+
+        # The title is part of the body: a note called "Pooling" whose text
+        # never repeats the word would otherwise be unfindable by it.
+        let byTitle = rag.query("Pooling", topK = 5, withSnippets = false)
+        var titleHit = false
+        for h in byTitle:
+          if h.path == rag.notePath("wsidx-note"): titleHit = true
+        check("and is retrievable by its title alone", titleHit,
+              "hits: " & $byTitle.len)
+
+        check("a file asset is indexed under its own root",
+              rag.indexFileAsset("wsidx-file", "recipe.md", "flour and water") and
+              rag.fileAssetPath("wsidx-file") in indexedPaths(rag.FileRoot))
+
+        # An image's `content` column is deliberately empty — the bytes live in
+        # `messages.extra`. Indexing it would file a document whose whole body
+        # is a filename, matching every query weakly.
+        check("a binary asset with no text is not indexed",
+              not rag.indexFileAsset("wsidx-image", "photo.png", "") and
+              rag.fileAssetPath("wsidx-image") notin indexedPaths(rag.FileRoot))
+        check("an empty note is not indexed",
+              not rag.indexNote("wsidx-empty", "", "   "))
+
+        # Deleting must stop recall, for the reason deleting a message does.
+        rag.forgetNote("wsidx-note")
+        check("forgetting a note removes it from the index",
+              rag.notePath("wsidx-note") notin indexedPaths(rag.NoteRoot))
+
+        # The backfill exists so a workspace that predates this wiring becomes
+        # searchable without the user re-saving every note.
+        db.exec("DELETE FROM notes WHERE id LIKE 'wsidx-%'", [])
+        db.exec("INSERT INTO notes (id, title, content, is_deleted) " &
+                "VALUES (?, ?, ?, 0)", "wsidx-bf", "Backfilled", "older content")
+        let filled = rag.backfillWorkspace()
+        check("the backfill picks up a note that was never indexed",
+              filled >= 1 and rag.notePath("wsidx-bf") in indexedPaths(rag.NoteRoot),
+              "indexed " & $filled)
+
+        # Action purpose: **"already indexed" means "has a vector", not "has a
+        # row"**, and the distinction is the whole design. With no embedding
+        # server the chunks are written with a NULL vector, and the backfill
+        # deliberately retries them at the next start so they get their vectors
+        # once the embedder is up — otherwise a workspace indexed during the
+        # seconds the embedder was still loading would stay keyword-only for
+        # ever. `backfillChats` has the same rule for the same reason.
+        #
+        # So idempotence is asserted with a vector present, which is the state
+        # production reaches: the backfill runs only after `healthy(beEmbed)`.
+        check("without a vector it is deliberately retried",
+              rag.backfillWorkspace() >= 1)
+        for r in db.query("SELECT start_line FROM rag_chunks WHERE path=?",
+                          rag.notePath("wsidx-bf")):
+          if r.len > 0:
+            let line = try: parseInt(r[0]) except ValueError: 1
+            rag.storeChunkVector(rag.notePath("wsidx-bf"), line,
+                                 @[0.1'f32, 0.2'f32, 0.3'f32])
+        check("once it has one, the backfill does no work twice",
+              rag.backfillWorkspace() == 0)
+
+        db.exec("DELETE FROM notes WHERE id LIKE 'wsidx-%'", [])
+        rag.forgetNote("wsidx-bf")
+        rag.forgetFileAsset("wsidx-file")
+
       block pathFilterInSql:
         # This suite counts `failures` directly rather than through a `check`
         # helper; a local one keeps the assertions below readable.
@@ -4149,6 +4236,11 @@ proc main() =
               rag.configureEmbed("127.0.0.1", lcc.embedPort)
               let n = rag.backfillChats()
               if n > 0: echo "[rag] indexed ", n, " past messages for recall"
+              # W-06: notes and file assets were never indexed at all. Same
+              # gate as the chats above — both need the embedder up, or they
+              # store chunks with no vector and stay keyword-only for ever.
+              let w = rag.backfillWorkspace()
+              if w > 0: echo "[rag] indexed ", w, " notes and files for recall"
         createThread(watcher, watchLoop, lc)
         echo "  watchdog: on (30s interval, 3 failures, 60s cooldown)"
 

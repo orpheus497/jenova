@@ -882,9 +882,16 @@ proc ctlWorker() {.thread.} =
       if not backfilled and j.lc.healthy(beEmbed, timeoutMs = 300):
         backfilled = true
         let n = rag.backfillChats()
-        if n > 0:
+        # W-06: and the notes and files, which were never indexed at all. Same
+        # gate, same reason — both need the embedder up or they store chunks
+        # with no vector and end up keyword-only for ever.
+        let w = rag.backfillWorkspace()
+        if n > 0 or w > 0:
+          var parts: seq[string]
+          if n > 0: parts.add $n & " past messages"
+          if w > 0: parts.add $w & " notes and files"
           uiChan.send(UiMsg(kind: umNotice,
-                            text: "indexed " & $n & " past messages for recall"))
+                            text: "indexed " & parts.join(" and ") & " for recall"))
     of "index":
       # Blocking is the point of doing it here: embedding a turn is an HTTP
       # round trip to the embedding server, and on the GTK thread that is a

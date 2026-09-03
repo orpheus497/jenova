@@ -419,6 +419,96 @@ proc forgetConversation*(convId: string) =
     if r.len > 0: paths.add r[0]
   for p in paths: forgetFile(p)
 
+# ---------------------------------------------------------------------------
+# Workspace documents — notes and file assets (W-06)
+# ---------------------------------------------------------------------------
+#
+# **The retrieval index held chats and nothing else.** `indexContent` and
+# `indexFile` were exported, correct, and called by no production code at all;
+# the only writers were the chat path above. So the two things a user
+# deliberately puts into a workspace *to be found again* — a note they wrote and
+# a document they uploaded — were not searchable by keyword or by vector.
+#
+# They still reached the model, through `workspace.contextFor`, but that is
+# **scope**, not relevance: everything in the conversation's branch of the tree,
+# whole, ranked by nothing. Retrieval is the part that answers "which of these
+# is about what I just asked", and it could not see them.
+
+const
+  NoteRoot* = "note"
+  FileRoot* = "file"
+
+proc notePath*(id: string): string = NoteRoot & "/" & id
+proc fileAssetPath*(id: string): string = FileRoot & "/" & id
+
+## Function purpose: index one note. The title is prepended to the body because
+## it is usually the most retrievable thing about a note and is not otherwise in
+## the text — a note called "Postgres connection pooling" whose body never
+## repeats the words would be unfindable by them.
+##
+## An empty note is not a document, for `indexMessage`'s reason: there is
+## nothing to retrieve *by*, and indexing it puts an empty body in the keyword
+## index.
+proc indexNote*(id, title, content: string): bool =
+  if id.len == 0: return false
+  let body = (if title.len > 0: title & "\n\n" else: "") & content
+  if body.strip().len == 0: return false
+  indexContent(notePath(id), body)
+
+## Function purpose: index one file asset, by the same rule.
+##
+## Action purpose: **an image is skipped rather than indexed empty.** The
+## `content` column holds the text a model can be shown, and `gui`'s attachment
+## writer deliberately leaves it empty for an image — the bytes live in
+## `messages.extra`. Indexing that would file a document whose whole body is the
+## file name, which then matches every query weakly and ranks above nothing.
+proc indexFileAsset*(id, name, content: string): bool =
+  if id.len == 0: return false
+  if content.strip().len == 0: return false
+  let body = (if name.len > 0: name & "\n\n" else: "") & content
+  indexContent(fileAssetPath(id), body)
+
+proc forgetNote*(id: string) =
+  if id.len > 0: forgetFile(notePath(id))
+
+proc forgetFileAsset*(id: string) =
+  if id.len > 0: forgetFile(fileAssetPath(id))
+
+## Function purpose: index the notes and file assets that are not in the index
+## yet, so a workspace that existed before this was wired becomes searchable
+## without the user re-saving every note.
+##
+## Incremental in the same way `backfillChats` is: a path already carrying a
+## vector is skipped, so a later start does no work twice and a run interrupted
+## half way resumes rather than restarting.
+proc backfillWorkspace*(): int =
+  var indexed: HashSet[string]
+  for r in db.query(
+      "SELECT d.path FROM rag_documents d WHERE (d.path LIKE ? OR d.path LIKE ?)" &
+      " AND EXISTS (SELECT 1 FROM rag_chunks c WHERE c.path = d.path" &
+      " AND c.vec IS NOT NULL)",
+      NoteRoot & "/%", FileRoot & "/%"):
+    if r.len > 0: indexed.incl r[0]
+
+  var notes: seq[tuple[id, title, content: string]]
+  for r in db.query(
+      "SELECT id, title, content FROM notes WHERE is_deleted=0"):
+    if r.len < 3 or r[0].len == 0: continue
+    if notePath(r[0]) in indexed: continue
+    notes.add (id: r[0], title: r[1], content: r[2])
+
+  var files: seq[tuple[id, name, content: string]]
+  for r in db.query(
+      "SELECT id, name, content FROM fileAssets WHERE is_deleted=0"):
+    if r.len < 3 or r[0].len == 0: continue
+    if fileAssetPath(r[0]) in indexed: continue
+    files.add (id: r[0], name: r[1], content: r[2])
+
+  for n in notes:
+    if indexNote(n.id, n.title, n.content): inc result
+  for f in files:
+    if indexFileAsset(f.id, f.name, f.content): inc result
+
 ## Function purpose: put existing history into the index once, so recall works
 ## on the chats that already exist rather than only on ones created after this
 ## shipped (**D-BD**'s third clause).

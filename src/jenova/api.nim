@@ -265,6 +265,30 @@ proc writeRow(e: Entity, node: JsonNode) =
 ##
 ## `mirror` is false for bulk import, which is the one path in the original that
 ## writes rows without touching the filesystem (`db.import_data`).
+## Function purpose: run a retrieval-index update without letting it fail the
+## write it is attached to.
+##
+## Action purpose: **indexing is best-effort everywhere in this codebase except
+## at its own call sites, which is where it mattered.** `rag.indexContent`
+## begins by deleting the path's existing rows, and `db.exec` raises — so a
+## database without the `rag_*` tables, a locked index, or any other `DbError`
+## propagated out of `upsert` and turned a **successful note save into a 500**.
+## The row was already written and mirrored to disk by then, so the client was
+## told the save failed while it had in fact succeeded: the worst shape a
+## failure can take.
+##
+## This was not introduced by the workspace indexing below — the message path
+## (`rag.indexExchange`, three call sites) has had the same exposure since it
+## was wired. One guard covers all of them.
+##
+## Retrieval degrading is not worth a user's note. `backfillWorkspace` and
+## `backfillChats` repair a skipped index at the next start.
+template indexing(body: untyped) =
+  try:
+    body
+  except CatchableError:
+    discard
+
 proc upsert(e: Entity, node: JsonNode, mirror = true): ApiResult =
   if node.kind != JObject or not node.hasKey("id"):
     return err(400, "body must be an object with an id")
@@ -295,6 +319,40 @@ proc upsert(e: Entity, node: JsonNode, mirror = true): ApiResult =
     else:
       db.exec("DELETE FROM " & e.name & " WHERE id=?", id)
     return err(500, "filesystem sync failed for " & e.name)
+
+  # Action purpose: **W-06. The retrieval index held chats and nothing else.**
+  # `rag.indexContent` and `rag.indexFile` were exported, correct, and called by
+  # no production code anywhere; the only writers were the chat path. So a note
+  # the user wrote and a document they uploaded — the two things someone puts in
+  # a workspace *in order to find again* — were not searchable by keyword or by
+  # vector at all. They still reached the model through `workspace.contextFor`,
+  # but that is scope rather than relevance: everything in the conversation's
+  # branch, whole, ranked by nothing.
+  #
+  # **It is hooked here and not in the two surfaces' own save paths**, which is
+  # also W-03: `upsert` is the one layer the Web UI's `/api/db/*` route and the
+  # window's in-process `putEntity` both pass through, so a third client is
+  # covered by construction rather than by remembering.
+  #
+  # Only when the indexed text actually changed. Indexing costs an embedding
+  # round trip, `prior` already holds the row as it was, and a note is saved far
+  # more often than it is rewritten — re-embedding an unchanged note on every
+  # save would put that round trip on the save button.
+  if mirror:
+    case e.name
+    of "notes":
+      let title = node.f "title"
+      let content = node.f "content"
+      if not existed or prior.field("title") != title or
+         prior.field("content") != content:
+        indexing: discard rag.indexNote(id, title, content)
+    of "fileAssets":
+      let name = node.f "name"
+      let content = node.f "content"
+      if not existed or prior.field("name") != name or
+         prior.field("content") != content:
+        indexing: discard rag.indexFileAsset(id, name, content)
+    else: discard
 
   ok("""{"status":"ok"}""")
 
@@ -344,7 +402,7 @@ proc deleteConversation(id: string, withForks: bool): ApiResult =
   except CatchableError:
     db.rollback()
     return err(500, "delete failed: " & getCurrentExceptionMsg())
-  for c in affected: rag.forgetConversation(c)
+  for c in affected: indexing: rag.forgetConversation(c)
   ok("""{"status":"ok"}""")
 
 ## Action purpose: A-20. The flag and its cascade are **one transaction**, so a
@@ -426,12 +484,16 @@ proc softDelete(e: Entity, id: string, withForks = false): ApiResult =
 
   of "notes":
     dbSoftDelete(e, id)
+    # W-06: a deleted note must stop being recalled, for the reason a deleted
+    # message must (T-17). Three DELETEs, no embedding server, safe anywhere.
+    indexing: rag.forgetNote(id)
     if prior.len > 0:
       discard fssync.trashNote(id, prior.field "title", prior.field "folderId",
                                prior.field "projectId", prior.field "workspaceId")
 
   of "fileAssets":
     dbSoftDelete(e, id)
+    indexing: rag.forgetFileAsset(id)
     if prior.len > 0:
       discard fssync.trashFileAsset(id, prior.field "name",
                                     prior.field "folderId",
@@ -444,7 +506,7 @@ proc softDelete(e: Entity, id: string, withForks = false): ApiResult =
     # from both surfaces — the window's per-message delete goes through
     # `deleteEntity`, which is this proc — and safe on the GTK thread, because
     # forgetting a path is three DELETEs and never touches the embedding server.
-    if e.name == "messages": rag.forgetMessage(id)
+    if e.name == "messages": indexing: rag.forgetMessage(id)
 
   ok("""{"status":"ok"}""")
 
@@ -505,7 +567,20 @@ proc restoreItem(entityName, id: string, outcome: var fssync.RestoreOutcome,
   # reproduce it. Restoring re-indexes here, immediately, opposite
   # `rag.forgetMessage` in `softDelete` above.
   if e.name == "messages":
-    discard rag.indexExchange(id, withParent = false)
+    indexing: discard rag.indexExchange(id, withParent = false)
+  # W-06: the same for the two entities that now carry index entries. Without
+  # this a restored note comes back everywhere except in what the model recalls,
+  # and — worse — `rag.backfillWorkspace` closes the gap at the next start, so
+  # it repairs itself before anyone can reproduce it.
+  # `row` here is positional (`Row`), not the name/value table `softDelete`
+  # holds — so the columns are read back through `rowFields`, which is the one
+  # place the column order is turned into names.
+  if e.name == "notes":
+    let n = rowFields(e, id)
+    indexing: discard rag.indexNote(id, n.field "title", n.field "content")
+  if e.name == "fileAssets":
+    let fa = rowFields(e, id)
+    indexing: discard rag.indexFileAsset(id, fa.field "name", fa.field "content")
   if e.name == "conversations":
     # Faithful to db.restore_item: every message of the conversation is revived,
     # including any deleted individually beforehand. Recorded as N-21 — it is a
@@ -517,7 +592,7 @@ proc restoreItem(entityName, id: string, outcome: var fssync.RestoreOutcome,
     # exchange twice.
     for r in db.query("SELECT id FROM messages WHERE convId=? AND role=? " &
                       "AND is_deleted=0", id, "assistant"):
-      discard rag.indexExchange(r[0])
+      indexing: discard rag.indexExchange(r[0])
   ok("""{"status":"ok"}""")
 
 proc restore(e: Entity, id: string): ApiResult =
@@ -1106,7 +1181,7 @@ proc handleDb*(req: Request): ApiResult =
         return err(500, "bulk delete failed")
       # After the commit, for the reason `deleteConversation` does it after its
       # own: a rolled-back delete must not leave the index stripped (T-17).
-      for idNode in node["ids"]: rag.forgetMessage(idNode.getStr)
+      for idNode in node["ids"]: indexing: rag.forgetMessage(idNode.getStr)
       return ok("""{"status":"ok"}""")
     of "update":
       # Action purpose: an edited message whose index entry still holds the old
@@ -1120,7 +1195,7 @@ proc handleDb*(req: Request): ApiResult =
       let node = parseBodyJson(req.body)
       let r = updateMessage(node)
       if r.status == 200 and not node.isNil and node.hasKey("content"):
-        discard rag.indexExchange(node.f "id", withParent = false)
+        indexing: discard rag.indexExchange(node.f "id", withParent = false)
       return r
     else: discard
 
@@ -1158,7 +1233,7 @@ proc handleDb*(req: Request): ApiResult =
     # arrives. This is the same rule the window applies, so the two surfaces
     # cannot build different indexes.
     if r.status == 200 and head == "messages" and node.f("role") == "assistant":
-      discard rag.indexExchange(node.f "id")
+      indexing: discard rag.indexExchange(node.f "id")
     return r
 
   err(405, "method not allowed")
