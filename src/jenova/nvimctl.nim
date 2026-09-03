@@ -1,36 +1,18 @@
-## Script function and purpose: read the document the USER is editing in Neovim,
+## Script function and purpose: read the document the user is editing in Neovim,
 ## so a chat turn can be about what is on screen rather than what was last
-## written to disk (G-18, ruling D-AT).
+## written to disk.
 ##
-## ## Why this is not an RPC client
-##
-## The obvious build is a msgpack-RPC client against `nvim --listen`. **It is not
-## needed.** `nvim --server <sock> --remote-expr <vimscript>` evaluates the
-## expression in the running editor and prints the result on stdout — Neovim
-## ships it, and writing msgpack framing would be re-implementing something that
-## already exists (Directive 3). Driving an installed binary is also what the
-## program already does for `wl-copy`, `git`, `fetch` and `xdg-open`.
-##
-## So this module is **five expressions and a subprocess call**, not a general
-## binding. Anything Neovim can do beyond describing the open buffer is out of
-## scope and would be dead code.
-##
-## ## Two things measured rather than assumed
-##
-## * **The socket path must be short.** `--listen` on a 108-character path fails
-##   with `Failed to --listen: invalid argument` — FreeBSD's `sun_path` is about
-##   104 bytes. `$HOME/Jenova/state/` is well inside that. This was found by
-##   running it, and it is the kind of fault that otherwise surfaces six steps
-##   later looking like something else.
-## * **`getline(1,"$")` returns the buffer, not the file.** That is the whole
-##   point: unsaved edits are what the USER is looking at.
+## Five expressions and a subprocess call, not an RPC client: `nvim --server
+## <sock> --remote-expr` already evaluates Vimscript in the running editor and
+## prints the result, so msgpack framing would reimplement what ships. Anything
+## Neovim can do beyond describing the open buffer is out of scope here.
 
 import std/[os, osproc, posix, sets, strutils, times]
 import ./paths
 
 const
-  ## Kept short for a measured reason: FreeBSD's `sun_path` is about 104 bytes
-  ## and `--listen` fails outright above it.
+  ## Kept short because `sun_path` is about 104 bytes on FreeBSD and `--listen`
+  ## fails outright above it, with an error that names neither length nor path.
   SocketName = "nvim.sock"
   ## Long enough that a slow editor still answers, short enough that a hung one
   ## does not stall the chat turn that asked.
@@ -48,23 +30,19 @@ type
     line*: int
     modified*: bool
 
-## Function purpose: the environment the embedded editor is spawned with, so the
-## in-tree `jvim/` configuration loads and its Jenova layer can find this
-## process (G-45, D-BS). Pure and parameterised rather than reading `config`
-## itself, which is what lets `nvim-env-selftest` assert it with no terminal and
-## no window.
+## Function purpose: the environment the embedded editor is spawned with. Pure
+## and parameterised rather than reading `config` itself, so the self-test can
+## assert it with no terminal and no window.
 ##
-## **It returns the WHOLE environment, not just the additions.** VTE's
-## `envv` *replaces* the child's environment when it is non-nil rather than
-## adding to it, so returning only the `JENOVA_*` keys would spawn an editor with
-## no `PATH`, no `HOME` and no display — which fails as "nvim: not found" and
-## reads as a missing dependency rather than as this function's bug.
+## Action purpose: returns the whole environment, not just the additions. VTE's
+## `envv` *replaces* the child's environment when non-nil, so returning only the
+## `JENOVA_*` keys spawns an editor with no `PATH`, `HOME` or display — which
+## surfaces as "nvim: not found" and reads as a missing dependency.
 ##
-## `NVIM_APPNAME` alone would send Neovim to `~/.config/jvim`, i.e. to a symlink
-## the user is expected to have made by hand — which is D-BC's defect. Pointing
-## `XDG_CONFIG_HOME` at the project root instead makes `<root>/jvim` the config
-## directory with no setup step at all; both are needed, and it was verified by
-## running `stdpath('config')` under them rather than assumed.
+## `XDG_CONFIG_HOME` and `NVIM_APPNAME` are both needed: the appname alone sends
+## Neovim to `~/.config/jvim`, a symlink the user would have to create by hand,
+## whereas pointing the config home at the project root makes `<root>/jvim` the
+## config directory with no setup step.
 proc editorEnv*(p: Paths, host: string, port, llamaPort, embedPort: int,
                 lanMode: bool): seq[string] =
   var seen = initHashSet[string]()
@@ -76,10 +54,9 @@ proc editorEnv*(p: Paths, host: string, port, llamaPort, embedPort: int,
     ("JENOVA_LLAMA_PORT", $llamaPort),
     ("JENOVA_LLAMA_EMBED_PORT", $embedPort),
     ("JENOVA_LAN_MODE", if lanMode: "1" else: "0")]
-  # Only when the configuration is actually present. A missing `jvim/` must
-  # leave the editor exactly as it was rather than aiming Neovim at a directory
-  # that does not exist, which it reports as a bare start screen with no
-  # explanation.
+  # Action purpose: a missing `jvim/` must leave the editor exactly as it was.
+  # Aiming Neovim at a directory that does not exist yields a bare start screen
+  # and no explanation of why.
   if dirExists(p.root / "jvim"):
     extra.add ("XDG_CONFIG_HOME", p.root)
     extra.add ("NVIM_APPNAME", "jvim")
@@ -90,14 +67,13 @@ proc editorEnv*(p: Paths, host: string, port, llamaPort, embedPort: int,
     if k notin seen:
       result.add k & "=" & v
 
-## Function purpose: where the editor listens. Named here rather than at the call
-## sites so the spawn (G-19) and the reader agree by construction.
+## Function purpose: named here rather than at the call sites, so the spawn and
+## the reader agree by construction instead of by convention.
 proc socketPath*(p: Paths): string =
   p.state / SocketName
 
-## Function purpose: drain a child's stdout until EOF or the deadline, whichever
-## comes first. `complete` is false only on the deadline, so the caller can tell
-## a slow editor from a finished one and kill the former.
+## Function purpose: `complete` is false only on the deadline, so the caller can
+## tell a slow editor from a finished one and kill the former.
 proc readUntilDeadline(fd: FileHandle, timeoutMs: int):
     tuple[data: string, complete: bool] =
   var buf = newString(4096)
@@ -117,13 +93,12 @@ proc readUntilDeadline(fd: FileHandle, timeoutMs: int):
       return (result.data, true)           # EOF: the child is done writing
     result.data.add buf[0 ..< n]
 
-## Function purpose: evaluate one Vimscript expression in the running editor.
-## Returns `("", false)` rather than raising when there is no editor: an absent
-## socket is the normal state, not an error.
+## Function purpose: an absent editor answers `("", false)` rather than raising,
+## because having no editor open is the normal state.
 proc query*(sock, expression: string): tuple[value: string, ok: bool] =
   if sock.len == 0 or not fileExists(sock):
-    # A unix socket is not a regular file to `fileExists` on every platform, so
-    # this is a cheap reject for the obvious "never started" case only; a stale
+    # Action purpose: a unix socket is not a regular file to `fileExists`
+    # everywhere, so this rejects only the obvious never-started case; a stale
     # socket still has to fail through the call below.
     if not dirExists(sock.parentDir):
       return ("", false)
@@ -133,39 +108,35 @@ proc query*(sock, expression: string): tuple[value: string, ok: bool] =
                          options = {poUsePath})
     defer: p.close()
     # Action purpose: read against the deadline rather than reading first and
-    # timing the wait afterwards. `readAll` blocks until the child closes its
-    # stdout, so a wedged editor held the caller indefinitely and `QueryTimeoutMs`
-    # never applied — and `getline(1,"$")` on a large buffer exceeds the pipe, so
-    # simply waiting without reading would deadlock the child instead.
+    # timing the wait. `readAll` blocks until the child closes stdout, so a
+    # wedged editor would hold the caller with the timeout never applying; and a
+    # large buffer overflows the pipe, so waiting without reading deadlocks it.
     let (output, complete) = readUntilDeadline(p.outputHandle, QueryTimeoutMs)
     if not complete:
       p.terminate()
       discard p.waitForExit(200)
       return ("", false)
     if p.waitForExit(QueryTimeoutMs) != 0:
-      # `--remote-expr` prints `E247: Failed to connect` on stderr and exits
-      # non-zero when the server is gone. That is the stale-socket path.
+      # A non-zero exit here is the stale-socket path: the file is present but
+      # no editor is behind it.
       return ("", false)
     (output.strip(leading = false), true)
   except OSError, IOError:
-    # Neovim not installed, or not on PATH. Not a defect — the feature simply
-    # has nothing to read.
+    # Neovim absent or not on PATH. Not a defect: the feature has nothing to
+    # read and says so the same way an unopened editor does.
     ("", false)
 
-## Function purpose: is there an editor answering on this socket? Cheaper than
-## `activeDocument` when the caller only needs to decide whether to offer the
-## feature at all.
+## Function purpose: one expression instead of five, for callers that only need
+## to decide whether to offer the feature at all.
 proc alive*(sock: string): bool =
   query(sock, "1").ok
 
-## Function purpose: everything a turn needs to talk about the open file. One
-## call per field because `--remote-expr` evaluates one expression, and five
-## short subprocesses on an explicit user action is not a cost worth a
-## multiplexing scheme.
+## Function purpose: one subprocess per field, because `--remote-expr`
+## evaluates one expression and five short calls on an explicit user action do
+## not justify a multiplexing scheme.
 ##
-## **An unnamed buffer is not a document.** A scratch buffer has no path, and
-## sending its contents as "the file the user is editing" would be a lie the
-## model then reasons from.
+## Action purpose: a buffer with no path is not a document. Sending a scratch
+## buffer as "the file the user is editing" is a lie the model reasons from.
 proc activeDocument*(sock: string): Document =
   let (path, ok) = query(sock, "expand(\"%:p\")")
   if not ok or path.len == 0:
@@ -180,10 +151,9 @@ proc activeDocument*(sock: string): Document =
   result.modified = query(sock, "&modified").value == "1"
   result.line = try: parseInt(query(sock, "line(\".\")").value) except ValueError: 0
 
-## Function purpose: the document as a fenced block for the prompt. `&filetype`
-## is Neovim's own label and is close enough to a Markdown fence tag to use
-## directly — the same string `sourceview.resolveLanguage` already maps, so the
-## GUI highlights what the model was shown.
+## Function purpose: `&filetype` doubles as the Markdown fence tag, and is the
+## same string the source viewer maps, so the window highlights what the model
+## was shown.
 proc asPromptContext*(d: Document): string =
   if not d.found: return ""
   result = "The user is editing " & d.path

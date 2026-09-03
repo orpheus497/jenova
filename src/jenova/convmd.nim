@@ -1,28 +1,17 @@
-## Script function and purpose: a conversation as a markdown document, both ways
-## (`PLANS.md` Step 13b).
+## Script function and purpose: a conversation as a readable markdown
+## transcript, both directions. The format is the Web UI's exactly — down to the
+## `[agent]` suffix and the ornamental parameter lines — so a document written
+## here opens there and the reverse; any "tidying" of it breaks that.
 ##
-## The window could already move conversations as JSON (G-32), which is the
-## shape `api.exportAll` writes and the frozen Web UI reads. **What it could not
-## do is the other format the Web UI ships** — `MarkdownService.toMarkdown` and
-## `fromMarkdown`, a readable transcript a user can keep, diff or paste
-## somewhere. That is a `data-services` parity gap and this closes it.
-##
-## **Ported by reading `jca_web/src/lib/services/markdown.service.ts`, not a
-## summary of it** (the rule D-BU was written under). The format is therefore
-## the Web UI's exactly, down to the `[agent]` suffix and the three ornamental
-## parameter lines — a document written here opens there and the reverse.
-##
-## This module knows nothing about the database on purpose: it takes and returns
-## plain values, so `convmd-selftest` can round-trip it with no fixture and the
-## callers in `gui.nim` and `api.nim` do the row work.
+## Knows nothing about the database on purpose: plain values in and out, so the
+## self-test can round-trip it with no fixture and the callers do the row work.
 
 import std/[algorithm, json, strutils]
 
 type
-  ## One turn, in the order the document holds them. `timestamp` is carried
-  ## because the Web UI sorts on it before writing and synthesises an increasing
-  ## one when reading — dropping it would silently reorder an imported
-  ## transcript.
+  ## `timestamp` is carried because the document is sorted on it before writing
+  ## and an increasing one is synthesised when reading; dropping it silently
+  ## reorders an imported transcript.
   MdMessage* = object
     role*: string
     content*: string
@@ -33,38 +22,27 @@ type
     messages*: seq[MdMessage]
 
 const
-  ## The Web UI writes these three under every topic and reads none of them
-  ## back. They are reproduced rather than dropped because a document that omits
-  ## them is not the same document, and parity here is the whole point.
+  ## Written under every topic and read back by nobody. Reproduced rather than
+  ## dropped because a document that omits them is not the same document.
   HeaderLines = "- model: jenova\n- temperature: 0.7\n- top_p: 0.9\n---\n\n"
 
-## Function purpose: the canonical role for a role string read out of the
-## database, so the window does not have to decide it in a widget (A-70).
+## Function purpose: one place decides a stored role, rather than each widget
+## deciding for itself — a two-way `user`/`assistant` test elsewhere silently
+## coerces a `system` row into the model's own prior words.
 ##
-## **This is where the defect was**, and it is here rather than in `gui.nim`
-## because `gui.nim` links into no test binary: the read was
-## `if stored == "user": rUser else: rAssistant`, so a stored `"system"` row —
-## which `fromMarkdown` and 13b's import both produce correctly — was coerced to
-## the assistant on the way in, and every later site read that coerced value.
-## The persona then went to the model as its own prior words, and export wrote
-## `## jenova` over `<!-- system: … -->`, destroying the evidence.
-##
-## **The fallback to `assistant` is kept deliberately.** Rows predating this
-## carry roles the format never defined, and a turn of unknown provenance is
-## safer shown as the model's than as the user's or the system's — but "system"
-## is no longer part of that unknown set.
+## Action purpose: the fallback to `assistant` is deliberate. Rows can carry
+## roles this format never defined, and a turn of unknown provenance is safer
+## attributed to the model than to the user or the system.
 proc canonicalRole*(stored: string): string =
   case stored.toLowerAscii
   of "user": "user"
   of "system": "system"
   else: "assistant"
 
-## Function purpose: render a conversation as the Web UI's markdown document.
-##
-## A system turn becomes an HTML comment rather than a section, which is what
-## keeps it out of the readable transcript while surviving a round trip — and
-## its newlines are flattened to spaces because a comment that spans lines would
-## not parse back.
+## Function purpose: a system turn becomes an HTML comment rather than a
+## section, so it survives a round trip without appearing in the readable
+## transcript. Its newlines flatten to spaces because `fromMarkdown` reads a
+## comment one line at a time and a spanning one would not parse back.
 proc toMarkdown*(name: string, messages: seq[MdMessage]): string =
   result = "# topic: " & name & " [agent]\n" & HeaderLines
   var sorted = messages
@@ -74,20 +52,16 @@ proc toMarkdown*(name: string, messages: seq[MdMessage]): string =
       if m.content.strip.len > 0:
         result.add "<!-- system: " & m.content.replace("\n", " ") & " -->\n\n"
       continue
-    # `assistant` is written as `jenova` and read back as `assistant`. That is
-    # the Web UI's own naming in this format and not a rename introduced here.
+    # Action purpose: `assistant` is spelled `jenova` in this format and read
+    # back as `assistant`; the pairing with `fromMarkdown` is what matters.
     let role = if m.role == "assistant": "jenova" else: m.role
     result.add "## " & role & "\n\n"
     result.add m.content & "\n\n"
 
-## Function purpose: parse a markdown document back into a conversation.
-##
-## Deliberately forgiving in the same places the Web UI is: a `# topic:` line
-## that does not carry the `[agent]` suffix still yields the name, and anything
-## before the first `## role` heading is discarded rather than treated as a
-## turn. A document with no headings at all parses to a named conversation with
-## no messages, which is a better answer than an error for a file a user wrote
-## by hand.
+## Function purpose: forgiving on purpose, because the input may be a file a
+## user wrote by hand — a missing `[agent]` suffix still yields the name, text
+## before the first heading is discarded, and a document with no headings parses
+## to an empty named conversation rather than an error.
 proc fromMarkdown*(md: string): MdConversation =
   var
     name = ""
@@ -96,8 +70,8 @@ proc fromMarkdown*(md: string): MdConversation =
     current: seq[string]
     stamp = 0'i64
 
-  # A template rather than a closure: a nested proc that appended to `result`
-  # would capture it, which ARC rejects outright as a memory-safety violation.
+  # Action purpose: a template rather than a nested proc, because a closure
+  # capturing `result` is rejected by ARC as a memory-safety violation.
   template flush() =
     if currentRole.len > 0 and current.len > 0:
       msgs.add MdMessage(
@@ -108,8 +82,8 @@ proc fromMarkdown*(md: string): MdConversation =
 
   for line in md.splitLines:
     if line.startsWith("# topic:"):
-      # The suffix is stripped when it is there and the whole remainder taken
-      # when it is not — both branches the Web UI has.
+      # Action purpose: both branches exist because the suffix is optional in
+      # documents this has to read, not just in ones it writes.
       let rest = line[8 .. ^1].strip
       name =
         if rest.endsWith("[agent]"): rest[0 ..< rest.len - 7].strip
@@ -129,10 +103,10 @@ proc fromMarkdown*(md: string): MdConversation =
   flush()
   MdConversation(name: name, messages: msgs)
 
-## Function purpose: the same document from the JSON shape `api.exportAll` and
-## the database already speak, so a caller with rows in hand does not have to
-## build `MdMessage`s itself. Rows missing a field are taken at their defaults
-## rather than refused — an export is not the place to discover a null column.
+## Function purpose: an overload taking the JSON shape the database already
+## speaks, so a caller with rows in hand builds no `MdMessage`s. A missing field
+## takes its default rather than raising — an export is not the place to
+## discover a null column.
 proc toMarkdown*(name: string, rows: JsonNode): string =
   var msgs: seq[MdMessage]
   if rows.kind == JArray:

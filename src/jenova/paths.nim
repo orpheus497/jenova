@@ -1,16 +1,14 @@
-## Script function and purpose: Path and layout resolution for the Nim core.
-## Replaces the path-resolution half of `lib/jenova-conf.sh`. Every path Jenova
-## uses at runtime is derived here, once, so no other module re-derives one from
-## an environment variable that may be unset — the defect class that made
-## `scripts/cleanup.sh` capable of deleting `/var/cache` (B-07).
+## Script function and purpose: every path Jenova uses at runtime, derived once.
+## Nothing else may re-derive one from an environment variable: an unset
+## variable makes a path expand to a prefix of itself, which is how a cleanup
+## routine ends up walking a system directory rather than its own cache.
 
 import std/[algorithm, os, strutils, times]
 
 type
   Layout* = enum
-    ## Which tree Jenova is running from. `lib/jenova-conf.sh:25` distinguishes
-    ## these by the presence of a deployed llama-server without a source
-    ## checkout beside it; the same test is reproduced here.
+    ## Which tree Jenova is running from, which decides where llama-server and
+    ## its shared libraries are looked for.
     lyInstalled = "installed"
     lySource = "source"
 
@@ -28,12 +26,10 @@ type
 
   PathError* = object of CatchableError
 
-## Function purpose: locate the project root without trusting the caller's cwd.
-## `JENOVA_ROOT` wins when exported, because the shell launchers still set it
-## during the transition and both trees must agree. Otherwise the root is derived
-## from the running binary, matching how `jenova-ui/src/main.c` resolves it via
-## KERN_PROC_PATHNAME: the executable lives in <root>/bin, so the root is two
-## levels up.
+## Function purpose: locates the root without trusting the caller's working
+## directory. `JENOVA_ROOT` wins when exported so a launcher and the binary
+## cannot disagree; otherwise the running executable's own location answers it,
+## since it lives in `<root>/bin`.
 proc findRoot*(): string =
   let fromEnv = getEnv("JENOVA_ROOT")
   if fromEnv.len > 0:
@@ -43,8 +39,8 @@ proc findRoot*(): string =
   if result.len == 0:
     raise newException(PathError, "cannot resolve JENOVA_ROOT from " & exe)
 
-## Function purpose: distinguish a deployed install from a source checkout, which
-## decides where llama-server and its shared libraries live.
+## Function purpose: a deployed llama-server with no checkout beside it is what
+## distinguishes an install from a source tree; nothing else is reliable.
 proc detectLayout*(root: string): Layout =
   if fileExists(root / "bin" / "llama-server") and
      not dirExists(root / "external" / "llama.cpp"):
@@ -52,10 +48,9 @@ proc detectLayout*(root: string): Layout =
   else:
     lySource
 
-## Function purpose: resolve every runtime path from the root in one place.
-## Values already present in the environment are honoured, so an operator can
-## still relocate a directory, but nothing is left undefined: each field has a
-## default derived from JCA_HOME rather than from an empty string.
+## Function purpose: an environment value is honoured so an operator can
+## relocate a directory, but every field falls back to a value derived from
+## `JCA_HOME` rather than to an empty string.
 proc resolve*(root = ""): Paths =
   let r = if root.len > 0: root.normalizedPath else: findRoot()
   if not dirExists(r):
@@ -70,18 +65,16 @@ proc resolve*(root = ""): Paths =
 
   result.jcaHome = getEnv("JCA_HOME", home / "Jenova")
 
-  # Action purpose: ruling D-AC — `~/JCA` is the USER's pre-existing working
-  # deployment and nothing may write into it. The runtime home moved to
-  # `~/Jenova`, but changing the default alone is not airtight: a shell that has
-  # sourced the Jenova environment exports `JCA_HOME=~/JCA`, and an inherited
-  # value overrides a default. This refuses that case outright rather than
-  # relying on whoever runs the binary remembering — remembering is exactly what
-  # failed. The override exists so N-S6 can address the real tree deliberately.
+  # Action purpose: `~/JCA` is a pre-existing working deployment that nothing
+  # here may write into. Moving the default to `~/Jenova` is not enough on its
+  # own, because a shell that has sourced the Jenova environment exports
+  # `JCA_HOME=~/JCA` and an inherited value beats a default. Refused outright
+  # rather than left to whoever runs the binary to remember.
   if result.jcaHome.normalizedPath == (home / "JCA").normalizedPath and
      getEnv("JENOVA_ALLOW_DEPLOYED") != "1":
     raise newException(PathError,
       "refusing to operate on the legacy deployment at " & result.jcaHome &
-      " (ruling D-AC). The runtime home is now " & home / "Jenova" &
+      ". The runtime home is now " & home / "Jenova" &
       ". Set JENOVA_ALLOW_DEPLOYED=1 only if targeting the old tree is intended.")
   result.state = getEnv("JENOVA_STATE", result.jcaHome / ".system")
   result.workspaces = getEnv("JENOVA_WORKSPACES", result.jcaHome / "Workspaces")
@@ -100,66 +93,40 @@ proc resolve*(root = ""): Paths =
 
 const
   AttachCacheDir* = "attachments"
-    ## The subdirectory of `cacheDir` that Jenova writes decoded attachments and
-    ## pasted images into, and the only directory the sweep will ever delete
-    ## from.
-    ##
-    ## **The prefix allowlist below is not sufficient on its own, and this is
-    ## the fix for that.** `CACHE_DIR` is operator-configurable, so a sweep that
-    ## matched only on a filename could delete an unrelated file that happened
-    ## to be called `attach-…` in whatever directory the operator pointed it at.
-    ## A name is not ownership. A directory this program creates for itself is.
-    ##
-    ## Both are kept: the subdirectory establishes ownership, the prefixes are
-    ## defence in depth. The failure this guards against is `scripts/cleanup.sh`
-    ## deleting `/var/cache` (B-07), which is the defect this module exists to
-    ## make impossible.
+    ## The only directory the sweep will ever delete from. `CACHE_DIR` is
+    ## operator-configurable, so matching on filename alone could delete an
+    ## unrelated file that happened to be named `attach-…` in whatever directory
+    ## the operator pointed it at. A name is not ownership; a directory this
+    ## program creates for itself is. The prefixes below stay as defence in
+    ## depth.
   CachePrefixes* = ["attach-", "pasted-"]
-    ## `gui.attachmentPixbuf` writes `attach-<sha256>` for every image it
-    ## decodes; `gui.onPasted` writes `pasted-<epoch>.png` for every image taken
-    ## off the clipboard. **The second was accumulating with nothing sweeping
-    ## it** — the first sweep matched only `attach-`, so pasted images grew
-    ## without bound in the same directory the sweep was walking.
+    ## Both writers into the attachment cache: decoded images are named for
+    ## their digest, clipboard images for the epoch. A prefix missing from this
+    ## list is a file that grows without bound in a directory being swept.
   MaxCacheBytes* = 256 * 1024 * 1024
-    ## M-02. The ceiling on the decoded-attachment cache.
-    ##
-    ## Every image ever attached, pasted or previewed is written here, named for
-    ## the digest of its own bytes, and **nothing ever deleted one**. `nimble
-    ## clean` removes `bin/` and `nimcache` only. So the directory accumulated a
-    ## copy of every image the user had ever put in a chat, for ever, with no
-    ## way to reclaim it short of `rm -rf`.
-    ##
-    ## Generous, because the files are what make re-opening a conversation with
-    ## images cheap: the digest name means a decode is written once and every
-    ## later view is a hit. This bounds the growth without throwing away the
-    ## working set.
+    ## The ceiling on the decoded-attachment cache, which nothing else bounds —
+    ## every image ever attached, pasted or previewed is written here and no
+    ## build target removes them. Deliberately generous: the digest naming means
+    ## a decode is written once and every later view is a hit, so a tight cap
+    ## would throw away the working set to reclaim little.
 
-## Function purpose: the directory Jenova owns for decoded attachments and
-## pasted images. Derived here rather than in the window, so the writer and the
-## sweeper cannot disagree about where it is.
+## Function purpose: derived here rather than in the window, so the writer and
+## the sweeper cannot disagree about where the cache is.
 proc attachCacheDir*(p: Paths): string = p.cacheDir / AttachCacheDir
 
-## Function purpose: keep the decoded-attachment cache under `maxBytes`, oldest
-## first (M-02). Returns how many files were removed and how many bytes that
-## reclaimed.
+## Function purpose: `dir` must come from `attachCacheDir` and never be
+## `cacheDir` itself — the subdirectory is what establishes these files are ours
+## to delete. Called once at startup, not per write, so that statting a
+## directory never lands on the path that decodes a thumbnail.
 ##
-## **`dir` must be the directory from `attachCacheDir`, never `cacheDir`
-## itself.** See `AttachCacheDir`: the subdirectory is what establishes that
-## these files are Jenova's to delete.
+## Action purpose: eviction is oldest-mtime-first, and the ordering is the
+## point. The cache is content-addressed, so an mtime tracks when a file was
+## last created rather than last read, and dropping the oldest sheds the
+## conversations nobody has opened in longest. Evicting by size instead would
+## drop exactly the large images that cost most to decode again.
 ##
-## Action purpose: **oldest by modification time, and the ordering is the
-## point.** The cache is content-addressed, so a file that is still being looked
-## at is rewritten only if it was evicted — its mtime therefore tracks when it
-## was last *created*, and dropping the oldest sheds the conversations nobody
-## has opened in longest. Deleting by size would evict exactly the large
-## photographs that are most expensive to decode again.
-##
-## It is called once at startup rather than on every write: this stats a
-## directory, and doing that on the path that decodes a thumbnail would put
-## filesystem work inside `view`, which is the rule G-40 exists to hold.
-##
-## A file that cannot be removed is skipped rather than raising. A cache is a
-## cache: failing to prune it must never stop the application starting.
+## A file that cannot be removed is skipped rather than raising: failing to
+## prune a cache must never stop the application starting.
 proc sweepCache*(dir: string, maxBytes: int64 = MaxCacheBytes):
     tuple[removed: int, freed: int64] =
   if not dirExists(dir): return (0, 0'i64)
@@ -193,8 +160,8 @@ proc sweepCache*(dir: string, maxBytes: int64 = MaxCacheBytes):
       result.removed.inc
       result.freed += e.size
 
-## Function purpose: render the resolved paths for the `config` subcommand and
-## for diffing against what the shell path currently produces.
+## Function purpose: the `paths` subcommand's output, in `KEY=value` form so it
+## can be diffed against what a launcher's environment actually holds.
 proc render*(p: Paths): string =
   var lines: seq[string]
   lines.add "JENOVA_ROOT=" & p.root
