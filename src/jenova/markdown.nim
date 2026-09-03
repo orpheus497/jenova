@@ -149,23 +149,118 @@ proc inlineMarkup*(line: string): string =
                             "<a href=\"" & href.replace("\"", "&quot;") & "\">")
   result = result.replace("\x02", "</a>")
 
+## Function purpose: how deeply a line is indented, in columns, and how many
+## characters that took.
+##
+## Action purpose: **`lineMarkup` measured nothing and stripped everything.** It
+## opened with `line.strip(trailing = false)`, so `  - nested` and `- top` were
+## indistinguishable by the time any branch saw them and every list in every
+## reply rendered flat — a three-level outline came out as three identical
+## bullets. The depth has to be taken before the strip, which is the whole of
+## why this exists.
+##
+## A tab counts as four columns because that is what the editors writing these
+## replies emit; nothing here can know the reader's tab stop, and four is the
+## only answer that agrees with how the text was written.
+proc leadingIndent(line: string): tuple[cols, chars: int] =
+  var i = 0
+  var cols = 0
+  while i < line.len:
+    if line[i] == ' ': cols.inc
+    elif line[i] == '\t': cols += 4
+    else: break
+    i.inc
+  (cols, i)
+
+## Two columns of source indentation is one level of nesting, which is what a
+## model writing markdown emits and what CommonMark's own examples use. Capped
+## because a reply is a narrow column and a runaway indent would push the text
+## off the edge rather than communicate structure.
+const MaxListDepth = 6
+
+proc listIndent(cols: int): string =
+  repeat("  ", min(cols div 2, MaxListDepth) + 1)
+
+## Function purpose: is this line a horizontal rule — three or more `-`, `*` or
+## `_`, and nothing else but spaces?
+##
+## A table separator is *not* caught by this: `isTableSeparator` requires a
+## pipe, and the table pass runs before this one. A `---` under a paragraph is
+## a setext heading in CommonMark rather than a rule; this renderer is
+## line-based and treats it as a rule, which is the reading that degrades
+## better — a visible divider rather than a heading that silently eats the line
+## above it.
+proc isHorizontalRule(t: string): bool =
+  if t.len < 3: return false
+  let c = t[0]
+  if c notin {'-', '*', '_'}: return false
+  var n = 0
+  for ch in t:
+    if ch == c: n.inc
+    elif ch != ' ': return false
+  n >= 3
+
+## Function purpose: split an ordered-list marker off the front of a line —
+## `1. `, `2) `, `10. `. Returns the number as written and the rest, or a
+## negative number when the line is not one.
+##
+## **The author's own number is kept rather than renumbered.** CommonMark says a
+## list renumbers from its first item, but this renderer draws one line at a
+## time with no list context to renumber within, and a model that writes `1.`
+## three times meant three steps. Showing what was written is the honest
+## rendering and cannot invent an order the author did not.
+proc orderedMarker(t: string): tuple[num: int, rest: string] =
+  var i = 0
+  while i < t.len and t[i] in {'0' .. '9'}: i.inc
+  if i == 0 or i > 9: return (-1, "")
+  if i + 1 >= t.len: return (-1, "")
+  if t[i] notin {'.', ')'}: return (-1, "")
+  if t[i + 1] != ' ': return (-1, "")
+  let n = try: parseInt(t[0 ..< i]) except ValueError: return (-1, "")
+  (n, t[i + 2 .. ^1])
+
 proc lineMarkup(line: string): string =
+  let (cols, _) = leadingIndent(line)
   let t = line.strip(trailing = false)
+  let pad = listIndent(cols)
   # G-34: task lists are checked before the plain bullet, because every task
   # item is also a bullet and the bullet branch would swallow it and render the
   # raw brackets. The box is a character rather than a widget: this is one line
   # of a Pango label, and the Web UI's checkbox is not interactive either.
-  if t.startsWith("- [ ] ") or t.startsWith("* [ ] "):
-    "  ☐ " & inlineMarkup(t[6 .. ^1])
+  if t.startsWith("- [ ] ") or t.startsWith("* [ ] ") or t.startsWith("+ [ ] "):
+    pad & "☐ " & inlineMarkup(t[6 .. ^1])
   elif t.startsWith("- [x] ") or t.startsWith("* [x] ") or
-       t.startsWith("- [X] ") or t.startsWith("* [X] "):
-    "  ☑ " & inlineMarkup(t[6 .. ^1])
+       t.startsWith("+ [x] ") or
+       t.startsWith("- [X] ") or t.startsWith("* [X] ") or
+       t.startsWith("+ [X] "):
+    pad & "☑ " & inlineMarkup(t[6 .. ^1])
+  # A rule is tested before the bullet branch: `***` and `---` are both a rule
+  # and a possible list marker, and the bullet branch would render `--` as the
+  # text of a bullet.
+  elif isHorizontalRule(t):
+    # Pango has no rule, so it is drawn. A fixed run rather than a measured one:
+    # this is one line of a label inside a scrolling column whose width is not
+    # known here, and a run that guesses too wide forces a horizontal scrollbar
+    # on every reply that contains one.
+    "─".repeat(24)
+  # Headings, deepest first: `###` must be tested before `##`, or `##` matches
+  # its first two characters and the third renders as text.
+  elif t.startsWith("###### "): "<b>" & inlineMarkup(t[7 .. ^1]) & "</b>"
+  elif t.startsWith("##### "): "<b>" & inlineMarkup(t[6 .. ^1]) & "</b>"
+  elif t.startsWith("#### "): "<b>" & inlineMarkup(t[5 .. ^1]) & "</b>"
   elif t.startsWith("### "): "<b>" & inlineMarkup(t[4 .. ^1]) & "</b>"
   elif t.startsWith("## "): "<big><b>" & inlineMarkup(t[3 .. ^1]) & "</b></big>"
   elif t.startsWith("# "): "<big><b>" & inlineMarkup(t[2 .. ^1]) & "</b></big>"
-  elif t.startsWith("- ") or t.startsWith("* "): "  • " & inlineMarkup(t[2 .. ^1])
+  elif t.startsWith("- ") or t.startsWith("* ") or t.startsWith("+ "):
+    pad & "• " & inlineMarkup(t[2 .. ^1])
   elif t.startsWith("> "): "<i>" & inlineMarkup(t[2 .. ^1]) & "</i>"
-  else: inlineMarkup(line)
+  else:
+    # An ordered item. Tested last among the structural branches because the
+    # scan is the only one that is not a prefix comparison, and every line that
+    # is not a list has to fail it.
+    let (num, rest) = orderedMarker(t)
+    if num >= 0: pad & $num & ". " & inlineMarkup(rest)
+    else: inlineMarkup(line)
 
 ## Function purpose: split a `|`-delimited row into its cells, dropping the
 ## optional leading and trailing pipes so `| a | b |` and `a | b` give the same

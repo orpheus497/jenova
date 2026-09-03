@@ -40,6 +40,8 @@ import ./upstream
 import ./api
 
 import ./pipeline
+# E-05: for `inNone`, the one intent value that is not worth a header.
+import ./prompts
 import std/json
 
 type
@@ -188,6 +190,9 @@ proc handle(client: Socket, class: RouteClass, workerId: int): bool =
     # than duplicated here.
     var outbound = req
     var cacheKey = ""
+    # E-05: what `pipeline.prepare` did to this request, as response headers.
+    # Built below, once the pipeline has run; empty means the relay is untouched.
+    var diagHeaders = ""
     if req.body.len > 0:
       let prepared = pipeline.prepare(req.body)
       cacheKey = prepared.cacheKey
@@ -224,13 +229,42 @@ proc handle(client: Socket, class: RouteClass, workerId: int): bool =
       # truncates the request llama-server reads.
       outbound.body = prepared.body
 
+      # Action purpose: **E-05. `prepare` computes six diagnostics and this
+      # function read two of them.** `intent`, `ragHits`, `webHits`, `hadTools`,
+      # `editorDoc` and `trimmed` were produced on every request and discarded
+      # on every request; outside the self-tests nothing in the product read any
+      # of them.
+      #
+      # `trimmed` is why this is a defect and not a missing nicety. It is the
+      # count of oldest turns `pipeline.trimHistory` dropped to fit the context
+      # budget — **silent conversation loss, invisible on both surfaces**, with
+      # no way for a user to discover that the model was not shown the start of
+      # their own conversation. A header is the smallest thing that can carry
+      # it, it costs nothing when there is nothing to say, and it reaches every
+      # client at once rather than one UI.
+      #
+      # Emitted only when there is something to report, so an ordinary turn's
+      # response head is unchanged. Every value is an integer or a fixed enum,
+      # so no value here can carry the CRLF that would make this response
+      # splitting — see `upstream.spliceHeaders`.
+      if prepared.trimmed > 0:
+        diagHeaders.add "X-Jenova-Trimmed: " & $prepared.trimmed & "\r\n"
+      if prepared.ragHits > 0:
+        diagHeaders.add "X-Jenova-Rag-Hits: " & $prepared.ragHits & "\r\n"
+      if prepared.webHits > 0:
+        diagHeaders.add "X-Jenova-Web-Hits: " & $prepared.webHits & "\r\n"
+      if prepared.intent != prompts.inNone:
+        diagHeaders.add "X-Jenova-Intent: " & $prepared.intent & "\r\n"
+      if prepared.editorDoc:
+        diagHeaders.add "X-Jenova-Editor-Doc: 1\r\n"
+
     # Action purpose: 12d-1. The relay tees into `captured` only when there is a
     # key to file it under, so an uncacheable request pays nothing.
     var captured = ""
     var capturePtr: ptr string = nil
     if cacheKey.len > 0: capturePtr = addr captured
     let outcome = upstream.forward(client, outbound, llamaHostS.get(), llamaPort,
-                                   capturePtr)
+                                   capturePtr, diagHeaders)
     # **Only a complete relay is stored, and only if it can be replayed.**
     # `roTruncated` means the client went away mid-stream, and filing a fragment
     # to serve later as a whole answer is D-BQ's truncated attachment again.

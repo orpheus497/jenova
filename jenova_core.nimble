@@ -58,7 +58,7 @@ task gui, "Build the desktop application (bin/jenova)":
 const SelfTests = [
   "db", "sha256", "markdown", "error", "tree", "attach", "workspace",
   "nvim-env", "models", "fs", "hardware", "composer", "convmd", "lifecycle",
-  "pipeline", "rag",
+  "relay", "pipeline", "rag",
   "serve",
 ]
 

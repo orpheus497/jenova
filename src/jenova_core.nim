@@ -23,7 +23,7 @@ import std/[os, posix, sequtils, strformat, strutils, json]
 import jenova/[paths, config, db, dbselftest, server, serverselftest, markdown,
                rag, sha256, pipeline, prompts, lifecycle, models, nvimctl, api,
                settings, hardware, workspace, pdf, zlib, fssync, composer, convmd,
-               http]
+               http, upstream]
 
 const
   Version = "0.1.0"
@@ -1171,6 +1171,87 @@ proc main() =
               bounded.parses == parsesAtCap)
         bounded.clear()
         check("clear empties the block memo", bounded.len == 0)
+
+      block blockStructure:
+        # P-B3. `lineMarkup` opened with `line.strip(trailing = false)`, so
+        # every list in every reply rendered flat: a nested outline came got as
+        # a column of identical bullets. Ordered lists, `####`+ headings and
+        # horizontal rules had no branch at all and rendered as their own
+        # source text.
+        proc rendered(src: string): string =
+          let bs = markdown.parse(src)
+          if bs.len == 0: "" else: bs[0].text
+
+        block nesting:
+          let got = rendered("- top\n  - child\n    - grandchild")
+          let lines = got.splitLines()
+          check("a nested list keeps three lines", lines.len == 3,
+                "got " & $lines.len)
+          if lines.len == 3:
+            # Depth is expressed as leading spaces before the bullet, so each
+            # level must be strictly wider than the one above it. Asserted as a
+            # relation rather than against exact widths: the widths are a
+            # rendering choice, the ordering is the requirement.
+            let a = lines[0].len - lines[0].strip(trailing = false).len
+            let b = lines[1].len - lines[1].strip(trailing = false).len
+            let c = lines[2].len - lines[2].strip(trailing = false).len
+            check("each level indents further than its parent",
+                  a < b and b < c, "indents " & $a & " " & $b & " " & $c)
+          check("and every level is still a bullet",
+                got.count("\u2022") == 3)
+
+        block ordered:
+          let got = rendered("1. first\n2. second\n10) tenth")
+          check("an ordered item renders as its number",
+                got.contains("1. first") and got.contains("2. second"),
+                got)
+          check("a paren marker is an ordered item too",
+                got.contains("10. tenth"), got)
+          # The author's own numbers are kept; nothing renumbers.
+          let repeated = rendered("1. a\n1. b")
+          check("repeated numbers are not silently renumbered",
+                repeated.count("1. ") == 2, repeated)
+          # A year at the start of a line is not a list.
+          check("a bare number is not an ordered item",
+                not rendered("2026 was a year").contains("2026. "),
+                rendered("2026 was a year"))
+
+        block headings:
+          check("h1 and h2 are large and bold",
+                rendered("# one").contains("<big><b>") and
+                rendered("## two").contains("<big><b>"))
+          for level in 3 .. 6:
+            let hashes = repeat('#', level)
+            let got = rendered(hashes & " deep")
+            check("h" & $level & " renders as a heading, not as its own hashes",
+                  got.contains("<b>deep</b>") and not got.contains("#"), got)
+
+        block rules:
+          for src in ["---", "***", "___", "- - -", "*****"]:
+            let got = rendered(src)
+            check("`" & src & "` is a horizontal rule",
+                  got.contains("\u2500") and not got.contains(src[0]), got)
+          # Two dashes is not a rule, and neither is a bullet with text.
+          check("two dashes are not a rule",
+                not rendered("--").contains("\u2500"))
+          check("a bullet is not mistaken for a rule",
+                rendered("- item").contains("\u2022"))
+
+        block stillWorks:
+          # The branches that already existed must be unchanged by the ones
+          # added around them.
+          check("a plain bullet is still a bullet",
+                rendered("- item").contains("\u2022 item"))
+          check("a plus is a bullet too",
+                rendered("+ item").contains("\u2022 item"))
+          check("an unticked task box survives",
+                rendered("- [ ] todo").contains("\u2610 todo"))
+          check("a ticked task box survives",
+                rendered("- [x] done").contains("\u2611 done"))
+          check("a block quote is still italic",
+                rendered("> quoted").contains("<i>quoted</i>"))
+          check("ordinary prose is untouched",
+                rendered("just a sentence") == "just a sentence")
 
       block linksAndImages:
         # A-48. Links and images were not rendered at all — a model's citation
@@ -3282,6 +3363,88 @@ proc main() =
         quit(0)
       echo ""
       echo "pipeline-selftest: FAIL (", bad, ")"
+      quit(1)
+    of "relay-selftest":
+      # E-05. `pipeline.prepare` computes six diagnostics per request and
+      # `server.handle` read two of them; the rest — including `trimmed`, the
+      # count of oldest turns dropped to fit the context budget — were thrown
+      # away on every request. Silent conversation loss, invisible on both
+      # surfaces. They are now response headers, spliced in after the status
+      # line by `upstream.spliceHeaders`.
+      #
+      # **That splice sits on the path every generated token takes**, and this
+      # is the only thing that can assert it: there is no llama-server here and
+      # a relay that damages a response head does not fail a compile, it fails
+      # a conversation.
+      var bad = 0
+      proc check(label: string, cond: bool, detail = "") =
+        if cond: echo "  ok   ", label
+        else:
+          echo "  FAIL ", label, (if detail.len > 0: "\n       " & detail else: "")
+          inc bad
+
+      echo "relay-selftest"
+
+      const Head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n"
+
+      block insertion:
+        let got = upstream.spliceHeaders(Head, "X-Jenova-Trimmed: 3\r\n")
+        check("the status line is still first and intact",
+              got.startsWith("HTTP/1.1 200 OK\r\n"), got)
+        check("the new header is present",
+              got.contains("X-Jenova-Trimmed: 3\r\n"), got)
+        check("the upstream's own headers survive",
+              got.contains("Content-Type: text/event-stream\r\n"), got)
+        check("the head still ends with a blank line",
+              got.endsWith("\r\n\r\n"), got)
+        check("nothing but the insertion changed the length",
+              got.len == Head.len + "X-Jenova-Trimmed: 3\r\n".len)
+
+      block refusals:
+        # **The only permitted failure is "no header".** A diagnostic must
+        # never be able to damage the bytes a generation is made of.
+        check("no extra headers leaves the head byte-identical",
+              upstream.spliceHeaders(Head, "") == Head)
+        check("a head with no CRLF yet is returned untouched",
+              upstream.spliceHeaders("HTTP/1.1 200 O", "X-A: 1\r\n") ==
+                "HTTP/1.1 200 O")
+        check("an empty buffer is returned untouched",
+              upstream.spliceHeaders("", "X-A: 1\r\n") == "")
+
+      block multiple:
+        # `server.handle` appends several, so they arrive as one string.
+        let extra = "X-Jenova-Trimmed: 2\r\nX-Jenova-Rag-Hits: 5\r\n" &
+                    "X-Jenova-Intent: websearch\r\n"
+        let got = upstream.spliceHeaders(Head, extra)
+        check("several headers all land after the status line",
+              got.contains("X-Jenova-Trimmed: 2") and
+              got.contains("X-Jenova-Rag-Hits: 5") and
+              got.contains("X-Jenova-Intent: websearch"), got)
+        check("and they precede the upstream's own",
+              got.find("X-Jenova-Trimmed") < got.find("Content-Type"), got)
+
+      block splitting:
+        # Response splitting is the risk a header insertion carries. Every value
+        # `server.handle` emits is an integer or a fixed enum, so none can carry
+        # a CRLF — asserted here rather than assumed, because the day someone
+        # adds a header built from a model's own text is the day it matters.
+        var injected = 0
+        for i in prompts.Intent.low .. prompts.Intent.high:
+          if ($i).contains("\r") or ($i).contains("\n"): inc injected
+        check("no intent name can carry a CRLF into a header", injected == 0)
+
+      block bound:
+        check("the status-line probe is bounded",
+              upstream.MaxStatusLineProbe > 0 and
+              upstream.MaxStatusLineProbe <= 4096,
+              $upstream.MaxStatusLineProbe)
+
+      if bad == 0:
+        echo ""
+        echo "relay-selftest: PASS"
+        quit(0)
+      echo ""
+      echo "relay-selftest: FAIL (", bad, ")"
       quit(1)
     of "rag-selftest":
       # Proves retrieval end to end against a scratch corpus: index, keyword

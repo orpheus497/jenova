@@ -76,8 +76,42 @@ proc sendUpstreamUnavailable(client: Socket, host: string, port: int) =
     &"""{{"error":"upstream unavailable","upstream":"{host}:{port}",""" &
     &""""hint":"is llama-server running?"}}""")
 
+const MaxStatusLineProbe* = 512
+  ## How many bytes `forward` may hold back while it waits for the end of the
+  ## response's status line. A status line is well under a hundred bytes and
+  ## arrives in the upstream's first packet in every ordinary case; this exists
+  ## only so a pathological upstream cannot make the relay buffer without limit
+  ## while looking for a CRLF that is not coming.
+
+## Function purpose: put extra response headers immediately after the status
+## line of a response head (E-05).
+##
+## Action purpose: **one insertion at a known offset, never a parse of the
+## head.** This module's whole contract is that whatever `llama-server` says
+## about content type, chunking or SSE framing reaches the client unaltered, and
+## a header table that round-tripped the head would be a place for that to stop
+## being true. It is the same discipline `server.handle` already keeps where it
+## inserts `X-Cache: HIT` on a replayed cache hit.
+##
+## **Failure is "no header", never a damaged stream.** With no CRLF in `buf`
+## there is no status line to insert after, so the buffer is returned exactly as
+## it came; the caller relays it verbatim and simply loses the diagnostic. That
+## is the only direction this may fail in — a diagnostic is not worth a risk to
+## the bytes a generation is made of.
+##
+## `extra` must already be CRLF-terminated header lines and must carry no bare
+## CR or LF of its own; `server.handle` builds it from integers and a fixed
+## enum, so there is nothing in it that could inject one. Asserted rather than
+## trusted: a header value carrying a CRLF is response splitting.
+proc spliceHeaders*(buf, extra: string): string =
+  if extra.len == 0: return buf
+  let cut = buf.find("\r\n")
+  if cut < 0: return buf
+  buf[0 .. cut + 1] & extra & buf[cut + 2 .. ^1]
+
 proc forward*(client: Socket, req: Request, host: string, port: int,
-              capture: ptr string = nil): RelayOutcome =
+              capture: ptr string = nil,
+              extraHeaders = ""): RelayOutcome =
   ## `capture`, when given, receives a copy of every byte relayed to the client,
   ## response head included. **It is a tee, not a parse** (12d-1): the point of
   ## this module is that framing — chunked, SSE, content type — is whatever
@@ -112,13 +146,46 @@ proc forward*(client: Socket, req: Request, host: string, port: int,
   # client should see.
   var chunk = newString(RelayChunk)
   var relayed = 0
+  # E-05. Held-back bytes while the status line is still incomplete, and whether
+  # this relay is still looking for it. **Both are inert unless the caller asked
+  # for headers**: with `extraHeaders` empty, `splicing` is false from the first
+  # line and every byte takes the same path it always did.
+  var pending = ""
+  var splicing = extraHeaders.len > 0
   while true:
     let n = up.recv(addr chunk[0], chunk.len)
     if n <= 0:
       break
+
+    if splicing:
+      # The head may be split across packets, so the CRLF is looked for in the
+      # accumulation rather than in this packet. The probe bound is what stops
+      # an upstream that never sends one from buffering for ever.
+      pending.add chunk[0 ..< n]
+      let complete = pending.contains("\r\n")
+      if not complete and pending.len < MaxStatusLineProbe:
+        continue
+      var head = if complete: spliceHeaders(pending, extraHeaders) else: pending
+      splicing = false
+      pending = ""
+      var hs = 0
+      while hs < head.len:
+        let w = client.send(addr head[hs], head.len - hs)
+        if w <= 0:
+          return roTruncated
+        hs += w
+      relayed += head.len
+      if capture != nil:
+        capture[].add head
+      continue
+
     # Action purpose: a single send() may accept fewer bytes than offered, and a
     # relay that ignores the count silently truncates the model's output
     # mid-stream. Loop until the chunk is fully written or the client goes away.
+    #
+    # This is the steady-state path and it is byte-for-byte what it was before
+    # the splice above existed: it sends straight out of `chunk` with no copy,
+    # which is why the splice buffers rather than wrapping every packet.
     var sent = 0
     while sent < n:
       let w = client.send(addr chunk[sent], n - sent)
@@ -134,6 +201,20 @@ proc forward*(client: Socket, req: Request, host: string, port: int,
     # cached hit byte-identical to a live reply.
     if capture != nil:
       capture[].add chunk[0 ..< n]
+
+  # An upstream that closed having sent less than a status line leaves those
+  # bytes in `pending`, and dropping them would turn a short reply into no reply
+  # at all. Flushed verbatim: there was never a status line to splice into.
+  if pending.len > 0:
+    var ps = 0
+    while ps < pending.len:
+      let w = client.send(addr pending[ps], pending.len - ps)
+      if w <= 0:
+        return roTruncated
+      ps += w
+    relayed += pending.len
+    if capture != nil:
+      capture[].add pending
 
   # An upstream that accepted the connection and then closed without a byte —
   # a crash mid-load, a receive timeout — left the client with an empty reply
