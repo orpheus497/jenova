@@ -1971,6 +1971,68 @@ proc main() =
                 models.activeAgentPath(home))
           removeFile(intruder)
 
+        # Action purpose: the given path is not the only way to reach the slot.
+        # A source that is itself a link INTO models/agent passed the by-name
+        # check and the tmpReal validation both — they resolve alike while the
+        # old link still stands — and the rename then pointed the slot back
+        # through that source at itself. Reported as a success, ELOOP on disk.
+        block anIndirectSourceCannotFormACycle:
+          let
+            slot = home / "models" / "agent" / models.ActiveLink
+            indirect = home / "models" / "instruct" / "aaa.gguf"
+          createSymlink("../agent/" & models.ActiveLink, indirect)
+          discard models.switchToPath(home, indirect)
+          # Caught rather than allowed to propagate: a cycle here makes
+          # `expandFilename` raise, and an unhandled exception ends the suite
+          # with a libc message instead of naming the check that caught it.
+          let readable = try: fileExists(expandFilename(slot))
+                         except OSError: false
+          check("switching through a link to the slot leaves it readable",
+                readable)
+          check("and the slot points at the real file, not back through it",
+                expandSymlink(slot).extractFilename != "aaa.gguf",
+                expandSymlink(slot))
+          removeFile(indirect)
+          discard models.switchToPath(home, alpha)
+
+        # The other half: when the source resolves to a file that really is in
+        # the slot, there is no chain to collapse and activating it would have
+        # the clearing loop delete the file the new link points at.
+        block aSourceResolvingIntoTheSlotIsRefused:
+          let
+            planted = home / "models" / "agent" / "planted.gguf"
+            viaLink = home / "models" / "instruct" / "via.gguf"
+          writeFile(planted, "p")
+          createSymlink("../agent/planted.gguf", viaLink)
+          var refusedIndirect = false
+          try:
+            discard models.switchToPath(home, viaLink)
+          except ModelError:
+            refusedIndirect = true
+          check("a source resolving to a file inside the slot is refused",
+                refusedIndirect)
+          removeFile(viaLink)
+          removeFile(planted)
+
+        # Action purpose: switchModel rewrites the message switchToPath built,
+        # and a plain assignment dropped the cleanup warning with it — so the
+        # tray and the model menu, which both call it, reported an unqualified
+        # success over a directory the switch had failed to clear.
+        block aNamedSwitchKeepsTheCleanupWarning:
+          # `moveFile` onto a non-empty directory is the one cleanup failure
+          # this can cause portably: `.old` is tested with `fileExists` and
+          # `symlinkExists`, so a directory of that name is not seen as taken.
+          writeFile(home / "models" / "agent" / "manual.gguf", "m")
+          createDir(home / "models" / "agent" / "manual.gguf.old")
+          writeFile(home / "models" / "agent" / "manual.gguf.old" / "x", "x")
+          let named = models.switchModel(home, "thinking")
+          check("the failure is reported, not raised",
+                "manual.gguf" in named.failures, $named.failures)
+          check("and a named switch still says so in its message",
+                "could not clear" in named.message, named.message)
+          removeDir(home / "models" / "agent" / "manual.gguf.old")
+          removeFile(home / "models" / "agent" / "manual.gguf")
+
         # A slot no switch has written keeps the collation rule, because that is
         # all an install predating the fixed name has.
         block theFallbackStillReadsAHandMadeSlot:

@@ -21,6 +21,7 @@ type
     target*: string      ## the source .gguf now behind models/agent/active.gguf
     preserved*: seq[string]  ## real files renamed to .old — never symlinks
     removed*: seq[string]    ## displaced links, and entries already on the target
+    failures*: seq[string]   ## entries the cleanup could not clear, by name
     message*: string
 
 ## Function purpose: `.old` and `.old.N` backups sit in the same directory and
@@ -109,6 +110,13 @@ proc targetModel*(jcaHome, target: string): string =
   found.sort()
   found[0]
 
+## Function purpose: the one place the cleanup warning is worded, so the two
+## entry points cannot disagree about whether a switch that could not tidy up
+## says so.
+proc withCleanup*(msg: string, failures: seq[string]): string =
+  if failures.len == 0: msg
+  else: msg & " (could not clear: " & failures.join(", ") & ")"
+
 ## Function purpose: activates any model in the tree. The ordering below is what
 ## makes the operation safe rather than merely working, and each step exists for
 ## a failure the previous one does not cover:
@@ -150,12 +158,28 @@ proc switchToPath*(jcaHome, modelPath: string): SwitchResult =
   # — so activating an entry already in the slot made `linkTarget` resolve to the
   # entry itself, and the clearing loop below removed the very file being
   # activated. The result was a symlink pointing at its own name.
-  if modelPath.isRelativeTo(agentDir):
+  #
+  # **The resolved path is checked as well as the given one**, because the given
+  # one can reach the slot through an indirection the first test cannot see: a
+  # `models/instruct/aaa.gguf` that is itself a link to `models/agent/active.gguf`
+  # is not under `agentDir` by name. It passed, and the `tmpReal == targetReal`
+  # validation below passed too — both resolve to the same real model while the
+  # old link is still in place — and then the rename replaced that link with one
+  # pointing back through `aaa.gguf` to itself. The switch reported success and
+  # left an `ELOOP` where the model had been.
+  let agentReal = try: agentDir.expandFilename except OSError: agentDir
+  if modelPath.isRelativeTo(agentDir) or targetReal.isRelativeTo(agentReal):
     raise newException(ModelError,
       "model is already in the active slot: " & modelPath)
 
   createDir(agentDir)
-  let linkTarget = relativePath(modelPath, agentDir)
+  # Action purpose: the link is built from the RESOLVED source, so a chain of
+  # symlinks is collapsed to one hop at switch time. Built from `modelPath`, a
+  # source that was itself a link into the slot pointed the slot back through
+  # that source at itself — an `ELOOP` reported as a successful switch. One hop
+  # cannot form a cycle, and the slot naming the real file is what the reader of
+  # `models list` wants anyway.
+  let linkTarget = relativePath(targetReal, agentDir)
 
   # Action purpose: a name ending in `.tmp.<pid>` cannot match the `*.gguf` scan
   # below, so the clearing loop can never mistake the replacement for an entry
@@ -224,10 +248,8 @@ proc switchToPath*(jcaHome, modelPath: string): SwitchResult =
       # the caller the switch failed when the active model is correct.
       failures.add entry.extractFilename
 
-  result.message =
-    if failures.len == 0: "switched to model: " & targetName
-    else: "switched to model: " & targetName &
-          " (could not clear: " & failures.join(", ") & ")"
+  result.failures = failures
+  result.message = withCleanup("switched to model: " & targetName, failures)
 
 ## Function purpose: the two named targets the tray and the model menu offer.
 ## Kept as its own entry point rather than folded into `switchToPath`, because
@@ -237,7 +259,12 @@ proc switchModel*(jcaHome, target: string): SwitchResult =
     raise newException(ModelError,
       "target must be 'instruct' or 'thinking', got: " & target)
   result = switchToPath(jcaHome, targetModel(jcaHome, target))
-  result.message = "switched to " & target & " model: " & result.target
+  # Through `withCleanup` and not a plain assignment: this rewrites the message
+  # `switchToPath` composed, and a plain one dropped its cleanup warning — so a
+  # named switch, which is what the tray and the model menu both call, reported
+  # an unqualified success over a directory it had failed to clear.
+  result.message = withCleanup(
+    "switched to " & target & " model: " & result.target, result.failures)
 
 type
   InstalledModel* = object

@@ -809,6 +809,52 @@ Proven by running the built binary both ways: without `JCA_HOME` it creates
 scratch instead. This is the defect class `test_api_db.sh` records in its own header as having
 destroyed a real conversation database, and the fix is the one that suite already uses.
 
+### R-25 · the fixed link name made a symlink cycle reachable · session 8
+
+R-22's `active.gguf` closed one hole and opened another, which is exactly why a review pass after a
+fix is worth having.
+
+`switchToPath` refused a source under `models/agent` **by name**. A source that reaches the slot
+through an indirection is not under it by name:
+
+```
+models/agent/active.gguf   -> ../instruct/real.gguf     (a previous switch)
+models/instruct/aaa.gguf   -> ../agent/active.gguf      (the user's own link)
+```
+
+Switching to `aaa.gguf` passed the name test, and passed the `tmpReal == targetReal` validation too
+— both resolve to `real.gguf` while the old link still stands. The rename then replaced the slot
+with a link back through `aaa.gguf` to itself. Reproduced against a built binary:
+
+```
+switched to instruct model: aaa.gguf
+cat models/agent/active.gguf -> Too many levels of symbolic links
+```
+
+A reported success, and no loadable model.
+
+Fixed by building the link from the **resolved** source, so a chain is collapsed to one hop at
+switch time and a cycle cannot form; plus a second refusal for the case with no chain to collapse —
+a source resolving to a real file already inside the slot, where the clearing loop would otherwise
+delete the file the new link points at.
+
+**And a third defect found next to it.** `switchModel` rewrote the message `switchToPath` composed:
+
+```nim
+result.message = "switched to " & target & " model: " & result.target
+```
+
+dropping the `(could not clear: …)` suffix R-19 added — so a *named* switch, which is what the tray
+and the model menu both call, reported an unqualified success over entries it had failed to clear.
+The wording now has one owner, `withCleanup`, and the failures are carried on `SwitchResult` rather
+than only in a string.
+
+Five assertions, all mutation-tested. The first attempt at the cycle assertion **ended the suite
+with a libc message rather than naming the check** — `expandFilename` raises on `ELOOP` — so the
+resolution is caught and reported as a failure instead.
+
+---
+
 ### R-24 · Copy did nothing on X11, and nothing said so · session 8
 
 Found by trying to write the transcript test, not by reading the file.

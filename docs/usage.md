@@ -240,9 +240,12 @@ jenova-core models switch thinking
 It picks the alphabetically first `.gguf` in the target directory that is not a `.old` backup and
 symlinks it to `models/agent/active.gguf` **by a relative path**, so the tree survives being moved.
 The link is always that name, never the model's own — which is what lets discovery read the slot by
-lookup. Whatever was active is preserved by renaming it to `.old` (or `.old.<n>` if that name is
-taken); an entry that already resolves to the same file is removed rather than backed up, since a
-second name for one file is pointless. The replacement link is built under a temporary name and its
+lookup. **The previously active model is not backed up**: it was a link under that same fixed name,
+and the rename replaces it atomically, leaving the file it pointed at untouched in its own source
+folder. What does get preserved, as `.old` (or `.old.<n>` if that name is taken), is a real `.gguf`
+you put in `models/agent/` by hand, because that copy may be the only one. A link that already
+resolves to the target is removed rather than backed up, since a second name for one file is
+pointless. The replacement link is built under a temporary name and its
 resolved target checked before anything active is touched, and the swap itself is a rename — so a
 failure part way leaves the old model in place, and no reader ever sees `models/agent/` without
 one.
