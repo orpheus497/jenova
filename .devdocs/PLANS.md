@@ -29,8 +29,392 @@ the USER and does not exist, see **D-CE***.
 > **A-69 is built and gone from `TODOS.md`** (`PROGRESS.md` 11:38). **A-68 is unaffected: test and
 > check work is still last.**
 >
-> **Read `BRIEFING.md` §0a before opening a file in `src/`.** Four sessions were live in this
-> checkout when this was written and two held source files.
+> **Read `BRIEFING.md` §0a before opening a file in `src/`.** Five sessions were live in this
+> checkout when this was written and three held source files.
+
+---
+
+## Step 12d — the response cache (A-7, ruled **D-CD**). **THREE parts, not two.**
+
+**Written by the PLANNER 2026-09-03 12:00; every claim below re-verified against the source by the
+`.devdocs` session before it was recorded.** Builder is **CODING PEER 1**. Touches `upstream.nim`,
+`server.nim`, `pipeline.nim`, `gui.nim` and **needs the `jenova_core.nim` token**. `pipeline.nim`
+and `server.nim` carry the released 12c edits — compiled and green, so no conflict, **but read them
+before writing.**
+
+**The defect.** `pipeline.prepare` sets `cacheKey` from a SHA-256 of the rewritten body;
+`server.handle` consults `cacheLookup` on every completion and answers `200 application/json` with
+`X-Cache: HIT`. **`cacheStore`'s only caller is `pipeline-selftest`**, and `upstream.forward`
+relays verbatim, capturing nothing. **The table is empty by construction, the HIT branch is
+unreachable, and every turn pays a SHA-256 for a key that cannot hit.**
+
+**Three things A-7 does not say. All three verified here, not taken on report:**
+
+- **(a) There is a second writer, and it bypasses `cacheStore`.** `POST /api/db/cache` does its own
+  inline `INSERT OR REPLACE INTO llm_cache` (`api.nim:1030`), separate from `pipeline.nim:442`.
+  **Any policy put into `cacheStore` — a cap, a TTL, eviction — is bypassed by that route on day
+  one.** **A-7's "written by nothing" is true of `cacheStore` and false of the table.**
+- **(b) Nothing ever deletes from `llm_cache`.** No `DELETE` exists anywhere in `src/`; `timestamp`
+  is written by both writers and read by nothing but the GET route. Entries are whole model
+  replies. **Wiring the writer converts a table that is empty by construction into one that grows
+  without bound in the USER's database.** A cap and an eviction rule are **part of 12d**, not a
+  follow-up.
+- **(c) The window cannot see `X-Cache` at all** — the EXAMINER PEER's Finding 3, confirmed:
+  `server.nim:199` sends it and `gui.streamOnce` discards every header in a bare skip loop before
+  reading the body (the loop **A-32** already documents).
+
+### The decision that makes the whole thing coherent
+
+**Store the relayed bytes, not a parsed response.** The GUI posts `"stream": true` and `streamOnce`
+acts only on lines beginning `data:`, stopping at `[DONE]`. **A hit answered as
+`application/json` carries no `data:` lines, so the reader renders nothing and saves a blank
+assistant turn — D-CD's warning, exactly.**
+
+So the stored value is **the upstream response as it went down the wire, head included**, and a hit
+replays those bytes. A hit is then byte-identical to a live reply, `streamOnce` needs no change to
+consume it, and chunked and SSE framing survive because nothing parses them. **The relay stays
+verbatim: capture is a tee, not a parse.** *That is the property that keeps 12d from being the
+change that breaks every chat turn.*
+
+### The units, in build order
+
+**12d-1 — capture** (`upstream.nim`, `server.nim`). `forward` takes an optional capture buffer and
+appends each chunk **after** it is fully written to the client; `rcEmbed` passes nothing.
+`server.handle` passes a buffer on a miss and calls `cacheStore` **only on a clean completion**.
+**`forward` currently returns `relayed > 0` (`upstream.nim:106`) both when upstream closed cleanly
+and when the client went away mid-stream — it needs a third state**, because storing a truncated
+stream and replaying it later as a whole answer **is D-BQ's truncated attachment again: confident,
+and about a fragment.** Refuse to store; never store short.
+
+**12d-2 — the hit response** (`server.nim`). Replace the `application/json` send with a raw write of
+the stored bytes, inserting `X-Cache: HIT\r\n` immediately after the status line — **one insertion
+at a known offset, not a parse**, and the comment must say so. `sendResponse` is untouched for
+every other route. **12d-1 must not land without 12d-2:** a writer with the old hit response *is*
+the state D-CD warns about.
+
+**12d-3 — the window learns a hit happened** (`gui.nim`). The skip loop already reads the headers
+and throws them away; test each for `X-Cache: HIT`, carry the flag through `UiMsg` as `umModel` and
+`umTimings` are carried, and surface it in `statsLine`. The Web UI's `ChatMessageStatistics` Cache
+Hit badge is the parity target. **Without this the step is unfalsifiable** — no USER and no screen
+run can tell a hit from a miss.
+
+**12d-4 — the cap, the eviction, and the second writer.** A cap on what is stored; eviction by
+`timestamp`, **which finally gives that column a reader**; and `POST /api/db/cache` routed through
+`cacheStore` so one policy governs both writers.
+
+### What proves it worked
+
+1. **A truncated relay is not stored** — driven through `cacheStore`'s caller condition **by
+   varying the data, never by damaging code** (**D-BX**).
+2. **Round-trip is byte-identical**, `data:` lines and trailing `[DONE]` included.
+3. **A stored entry has the shape the reader requires** — at least one `data:` line and a `[DONE]`.
+   **This is the assertion that encodes D-CD's warning:** a stored JSON object fails it.
+4. **The two writers agree** — the API route and `cacheStore` produce the same row for one input.
+5. **The cap holds**, and nothing truncated is stored. 6. **Eviction holds** — N+1 stores against a
+   cap of N leave N rows, oldest gone.
+
+### Deliberately not in 12d
+
+**No change to `cacheKeyFor`** — a different algorithm orphans every existing entry, and
+`sha256.nim`'s justification for being hand-written rests on this cache. **And no tuning for hit
+rate:** the key covers the RAG context and the persona, so hits will be rare. **12d's job is to make
+the mechanism honest, not to make it hit often** — said here so a later session does not find the
+low hit rate and think something is broken.
+
+### Risk
+
+**The only unit in Step 12 that can make the product worse than it is today.** Inert now; wired
+wrong it serves a stale or truncated reply as a fresh one, or blanks a turn. **Build last, on a tree
+the other four are green on.**
+
+---
+
+## Step 12f-3 — **A-19, and it is now ahead of A-18-2/3 rather than behind them.**
+
+**Reordered 2026-09-03 12:35 because a fix that shipped this morning falsified A-19's recorded
+bound.** The row said `restoreTrash` was bounded by having only an HTTP caller. **A-16 is a second
+caller and it is behind a button** — `gui.restoreFromTrash` → `api.restoreEntity` → `restoreItem` →
+`fssync.restoreMirror` → `restoreTrash`, **with the destination read out of a JSON sidecar on disk**
+— and **A-18-2 will add a third, more direct route, with the path taken from a list the USER
+clicks.**
+
+**Scope: a port, not a design.** `restoreTrash` validates containment **lexically** (`underRoot`,
+`normalizedPath` + prefix test), which a symlink defeats; `resolveStoragePath` was hardened by
+**T-4** to resolve then compare resolved against resolved, walking to the deepest existing ancestor.
+**Port that pattern. Do not invent a second containment standard** — that instinct is what made
+A-16 right, and `fssync.nim:564-566` already carries the comment admitting the lexical check was
+only *"tolerable while `restoreTrash`'s only caller was the HTTP route."*
+
+> **The lesson, and it generalises past this row: a finding's own remedy is what makes it
+> dangerous.** A-19 was deprioritised *because* A-18 was open. Closing A-18 is what promotes it.
+> **Check the bound on every deferred finding whose bound is another open finding.**
+
+**Build order for that file: A-70 (done) → A-19 → A-18-2 + A-18-3.**
+
+---
+
+## Step 12i — **bound every subprocess.** A-44 and A-47, justified by the fix and not the symptom.
+
+**Retitled 2026-09-03 12:45, and the retitle is the point.** It was scoped as *"unbounded blocking
+on the GTK thread"* — **and that title would have misdirected the builder.** Verified here:
+`gui.nim:877-884`'s docstring states hardware work runs *"on a worker of their own… this is not on
+`ctlReq`, and that is the whole point"*. **So A-47's five unbounded `execCmdEx` probes hang a
+background worker and leave the hardware screen never updating — they do not freeze the window.**
+**Only A-44 freezes the window:** `fssync.gitRun` is `startProcess` + `waitForExit`, reached from
+`saveNote` → `putEntity` **on the GTK thread**, on every note save and every filed attachment.
+
+**A builder told "stop freezing the GTK thread" would have fixed `gitRun` and deprioritised all
+five.** Hence the title: **the unit is bounding subprocesses**, and **the bounded runner already
+exists** — `hardware.runBounded` — **applied to exactly one probe, the one that had already hung.**
+Porting it to `gitRun` and the other five is one change behind one shared helper.
+
+> **A fourth member of the stale-precondition class, and the sharpest: a fix that never
+> propagated.** That same docstring already says `hardware.detect` *"initialises Vulkan and is
+> unbounded"*. **The unboundedness was diagnosed, the mitigation chosen was to move it off the UI
+> thread rather than bound it, and the bounded runner was then written anyway — for one probe out of
+> six.** *The tree contains the diagnosis, the workaround and the fix, applied once.*
+
+---
+
+## A-56 — **a CONSTRAINT, not a unit. Attach it to rows; do not schedule it.**
+
+**"Add unicode awareness" is not scopable** — verified, **zero hits** for `std/unicode`, `Rune`,
+`runeLen` or `toRunes` anywhere in `src/`. **But it is an input to at least three rows already
+held**, and a builder who does not know that will re-introduce it:
+
+- **A-26's `text.len` stamp** — a byte length.
+- **`websearch`'s `text[0 ..< 80]` title cut** — can split a UTF-8 sequence and hand Pango invalid
+  markup, which it refuses to render.
+- **The sidebar's `toLowerAscii` filters** — non-ASCII search is case-sensitive.
+
+**Attach the constraint to each, so a builder fixing A-26's stamp does not reach for `text.len`
+again.**
+
+---
+
+## Two groupings DISSOLVED — recorded so they are not re-proposed
+
+**"D-BQ violated" was never a group; A-61 stands alone.** It had been paired with A-35. **Verified
+at `pipeline.nim:350-355`:** `prepare` sets `result.body = rawBody`, then `try: parseJson` /
+`except: return` — **so a truncated body is malformed JSON**, `prepare` returns it untouched,
+llama-server rejects it, and the USER gets a classified refusal through G-35. **The reusable
+distinction: D-BQ's hazard is a fragment that READS AS WORKING while meaning something the USER did
+not write.** *A 70%-decoded PDF is plausible text; a truncated JSON body is not plausible, it is
+broken.* **A-35 belongs to the A-4/G-35 diagnosability family**, and grouping it here would have
+sent a builder hunting a truncation to refuse where there is none.
+
+**"LAN exposure" was never a group, and the claim that A-19 reduced it was wrong — recorded
+explicitly, because that is the kind of line that defers a finding twice.** A-55 is a **posture**:
+no authentication on any route, `--lan` binding `0.0.0.0`, full `/api/db/*` and `/api/fs/*`. A-19
+was **one primitive on that surface**, and **the exposure inside the tree was already total**, so
+removing the ability to symlink *out* of it does not make full read/write on every conversation,
+note and workspace safer. **A-55's severity is UNCHANGED by A-19's fix.**
+
+---
+
+## Step 12h — **retrieval gets a health signal the window can show.** A-9, A-10 and A-45 are one unit.
+
+> **DEPENDENCY, not a merge (settled 2026-09-03 12:45).** A-57 — the logger — was going to be
+> bundled with this and with `ChatError.detail` as "observability". **Both merges were wrong.**
+> `ChatError.detail` is **not unlogged**: it is computed, carried to the channel boundary and
+> **dropped one field short of the screen** — a logger would not fix it and fixing it would log
+> nothing. **What is real is an ORDERING: build the logger first, and the retrieval failures become
+> diagnosable, and so do the ~50 silent discards.** A-57 stays **one unit on its own.**
+
+**Scoped from the `[A]` sweep, 2026-09-03 12:30. All three rows verified `[V]`.** They were filed
+as three defects and **they all end in the same sentence: semantic retrieval stops working and
+nobody is told.** So the unit is the signal, and the three rows become its justification rather than
+three separate fixes.
+
+- **A-9 is the silence itself.** `rag.embed` returns `@[]` on every failure path; `query` sets
+  `haveSemantic = false` and ranks on BM25 alone. **`rag.formatContext` emits the identical
+  `--- REPOSITORY CONTEXT ---` header either way.**
+- **A-10 is a permanent trigger.** `rag_chunks` has **no dimension column and no model stamp**;
+  `dot` returns `0.0` on a width mismatch rather than erroring; every chunk then falls below
+  `SemanticFloor` and is skipped. **Nothing re-indexes, because nothing knows the model changed.**
+- **A-45 is an intermittent trigger.** `embedHost`/`embedPort` are `{.threadvar.}` and **`server.nim`
+  contains no `configureEmbed` call at all** — verified, zero hits — so the HTTP completion workers
+  fall back to a hard-coded `127.0.0.1:8082`.
+
+**They are invisible by construction because `rag.available()` reports FTS5 and nothing about
+embeddings.**
+
+> **A-45's severity is LOWER than its row reads, and that affects scheduling.** The fallback is
+> `127.0.0.1:8082` and `etc/jenova.conf:41` ships `LLAMA_EMBED_PORT` defaulting to **8082**, so the
+> defect is **latent on a default install and bites only when the port is overridden.** Real, not
+> urgent.
+
+**A-12 stays a separate unit.** The vector side of `rag.query` has **no `LIMIT` while the BM25 side
+carries `LIMIT 200`** (verified: `rag.nim:464` against `:477`), so every stored vector is unpacked
+and dotted on every semantic query. **That is performance, not silence** — merging it here would
+blur what each proves.
+
+---
+
+## Runtime probes — claims that cannot be settled by reading
+
+**Opened 2026-09-03 12:30. A list, because there will be more.** These need code *run*, which Rule 0
+governs, so they are neither confirmed nor refuted and **must not be counted as swept.**
+
+1. **A-51 — the GtkSourceView language-id list.** `/usr/local/share/gtksourceview-5/language-specs/`
+   holds **no `.lang` files**, only `language.dtd` and two `.rng` schemas — the specs are compiled
+   into a GResource. Settling which fence labels resolve needs
+   `gtk_source_language_manager_get_language_ids()`. **The session that found this refused to upgrade
+   the marker on a guess, which is the behaviour the list exists to encourage.**
+
+---
+
+## Step 12g — `content-render`. **The largest single cause found today, and it now absorbs A-49 and A-50.**
+
+> **A-49 is DELETED and merged here** (2026-09-03 12:30). It was confirmed and then recognised as
+> **the same finding as this step arrived at from the other direction** — "block constructs beyond
+> the six handled render their own source syntax" *is* the content-render root cause. **A-49 =
+> 12g-1 + 12g-2.** Leaving both would give one file two owners, **which is the collision that costs
+> most.**
+>
+> **A-50 is confirmed and folded into 12g-1**, which is therefore three things, not two:
+> ordered lists, horizontal rules, **and `inlineSpan`'s unbounded pairing** — it does `find(delim)`
+> then `find(delim, start + delim.len)` and wraps whatever lies between **with no flanking test**,
+> so `2 * 3 and 4 * 5` renders as `2 <i> 3 and 4 </i> 5` and `foo_bar and baz_qux` italicises the
+> middle. **Record the bound with it, because it is what makes this scopable and what must not
+> regress: code spans are safe, because A-48's placeholder lift runs before the emphasis passes.**
+
+**The EXAMINER PEER's Finding 9, scoped by the PLANNER, verified here before recording.**
+
+**The cause.** `markdown.lineMarkup` opens with `let t = line.strip(trailing = false)`, **so leading
+whitespace is discarded before any branch decides anything — and indentation is the only thing
+markdown uses to encode nesting.** And the sharpening is the useful part: **the `else` branch passes
+`line` *unstripped* while every other branch uses `t`.** So indentation survives exactly for the
+lines that do not need it and is destroyed exactly for the bullets that do. **The defect is not that
+the renderer is line-oriented; it is that one strip at the top serves branches with opposite
+needs.**
+
+> **STATUS 2026-09-03 12:28: 12g-1 and 12g-2 are SCOPED, NOT APPROVED for any builder** (**D-CO**).
+> A ruling relayed from a planning session's terminal is a proposal, not a sanction — the builder's
+> own USER must approve it in the builder's own terminal. **The narrowing below is the valuable part
+> and stands on its reasoning.**
+
+**12g-1 — two defects. No architecture.** An ordered list (`1. `) falls
+through to `else` and renders as plain text; a horizontal rule (`---`) renders literally. **Each is
+one `elif` in the existing chain.** No indent, no nesting, no new `BlockKind`, **no `gui.nim`** —
+`markdown.nim` only, assertable in `markdown-selftest`. **Half of what the examiner found is this
+cheap, and the finding as written does not separate it out.**
+
+**12g-2 — indent survival. GATED, awaiting a USER ruling.** Nested lists flatten and a fenced block
+inside a list item splits the surrounding text block; both need indent to survive the entry point.
+**This is a renderer change beyond anything in the A-series, so it takes the same gate 12d-4 took**
+— *"necessary to reach parity" is an argument to put to the USER, not a licence past Directive 1.*
+**Do not start it.**
+
+**Two things recorded with it, because they are the whole reason it is buildable at all:**
+
+1. **G-40 does not block it.** Step 7c's rule is that nothing called from `view` may do work
+   proportional to a payload, which is why `parse` has been kept cheap. **But `blocksFor` memoises
+   on `id` plus `text.len`, so a heavier `parse` runs once per message, not once per frame.**
+   Without that in the record **a later session will refuse 12g-2 on G-40 grounds and be wrong.**
+2. **Nesting does not need nested `Block`s.** `gui.mdBlock` renders a text block as one Pango
+   `Label`, and **leading spaces survive in a Label** — so preserving indent depth as leading spaces
+   closes nested lists with **no new `BlockKind` and no `gui.nim` change at all.** An AST is needed
+   only for *semantic* nesting, i.e. real list widgets, which nothing here requires. **That takes
+   12g-2 down to `parse` and `lineMarkup` in one file.**
+
+**12g-3 — recorded divergence, not built.** Setext headings, multi-line blockquotes as one quoted
+block rather than N independent lines, and full CommonMark. **Named so silence is not read as
+coverage.**
+
+**It wants a D-number either way:** *the renderer gains bounded indent awareness, scoped to lists
+and fences, with CommonMark out of scope* — the PLANNER's recommendation — **or** *line-oriented
+rendering is a permanent divergence*.
+
+**Recorded from the same pass, uncounted:** the GUI escapes everything in `markdown.escape` and is
+**stricter than `rehype-sanitize`**, not merely equivalent; syntax highlighting, code-block copy and
+the height cap are built; **KaTeX is G-34's existing open half, not a new finding.**
+
+---
+
+## 13c — the counting rule. **This is where the 866 came from, and re-deriving the same way reproduces it.**
+
+**Set by the PLANNER 2026-09-03 12:00.** `data-services` collapsed **147 counted features to
+three** real gaps; the model-metadata finding collapses **eleven rows to one cause**. The verdicts
+are gone and re-deriving them is the work — **but not the same way.**
+
+1. **Root-cause first, count second.** *A cause is the unit. A component row is not.*
+2. **A producer with no consumer is one gap, at the boundary** — not one per consumer.
+3. **Different but equivalent is not a gap.** Sidebar search is **built and ahead of the Web UI**.
+4. **Continuous is not missing.** `handlePush` has no button because `fssync.syncNote` writes the
+   mirror on every save. The button would be a no-op.
+5. **Excluded by a standing decision is named, not counted** — MCP, `VFSExplorer` (**D-AW**), audio
+   (**D-BZ**), API-key and `serverUrl` (**D-BL**).
+6. **Output shape:** cause → what the USER cannot do → the one change that closes it → files.
+   **Never a row per Svelte component.**
+7. **Present but unreached is not a feature on either side.** A component, method or route that
+   exists in the frozen `jca_web` source, is complete and correctly wired internally, and is
+   **invoked by nothing anywhere in `jca_web/src`.** It shipped; no user of the Web UI could ever
+   reach it. **Record it, name it, do not count it and do not build it.** It is evidence about the
+   frozen tree's quality, not about ours. *It cannot fold into rule 5 — those are capabilities the
+   Web UI genuinely offers and we chose not to build — nor rule 3, which presumes both sides offer
+   the thing. **This is a capability nobody built for anyone**, and the failure it prevents is a
+   parity gap derived from an unreached component, which looks perfectly justified in review because
+   the component is right there in the source.*
+
+   **The test, and the three traps are the substance — a rule without them produces false members:**
+   **(i) search the symbol or component name, never an assembled path** — the base path lives in the
+   fetch wrapper, `` apiFetch = fetch(`/api/db/${path}`) ``, so a call site *cannot* contain
+   `db/cache`, and **a zero-hit grep on the URL means nothing**; this trap already cost a correct
+   claim a retraction today. **(ii) Exclude barrel files** — `index.ts` re-exports everything, and a
+   barrel hit is not a caller. **(iii) Exclude type-only references** — `app.d.ts` names types;
+   in the attachments hunt one component showed five non-barrel hits of which **two were type
+   declarations**, so a raw count was wrong in both directions.
+   **`callers = hits − its own file − index.ts − *.d.ts − type-position imports`. Only zero after
+   all four subtractions is a member.**
+
+   **A thing can be both this and rule 2 at once, with opposite consequences** — and `setCache` is.
+   **The two are separated by which tree:** a capability complete in `src/` that our window cannot
+   reach is **work**; one complete in `jca_web/` that their own UI never called is **not work**.
+
+   **MEMBERSHIP: ONE.** `DatabaseService.getCache`/`setCache` is the **sole known member**;
+   `attachments` was hunted deliberately for more and all four of its components have real callers.
+   **The count belongs in the rule** — without it the next session hunts these everywhere, hits
+   traps (ii) and (iii), and reports a column of false members. **The category is real and it is
+   rare, and the rule must say both.**
+
+**Already present — do not re-derive:** attachment preview (`app.previewAtt`), conversation rename
+(`commitRename`'s conversations branch), the fork (13b).
+
+**13c-5 — forking is capability-complete and unreachable from the window.** `api.forkConversation`
+honours `atMessageId` (`api.nim:709`) and its only caller passes `""` (`gui.forkConversationRow`),
+so **the window can only fork from the read position**; the Web UI forks from a chosen message via
+`ChatMessageActions`. **G-51 does not apply to the message action row** — that trap is confined to
+`gui.fullscreenButton` in the header row.
+
+**Examiner coverage — ALL NINE AREAS EXAMINED as of 2026-09-03 12:25. Twelve findings, every one
+`[V]`, none skipped.** `views-dialogs`, `models-server`, `sidebar-workspace`, `chat-messages`,
+`content-render` (held until A-48 landed, deliberately, so it did not catalogue gaps being closed as
+it wrote), `chat-form`, `attachments`, `settings`, `data-services`.
+
+### The negative results, recorded because they are results
+
+**A pass that finds nothing has found something, and this project has twice built against a gap
+that was not there.**
+
+- **`attachments` was expected to be add-only and was refuted on every point.** Individual removal,
+  thumbnails on **both** surfaces, the preview scrim and drag-and-drop are all built. What survives
+  from that area is **A-74** (neither strip can overflow) and **A-75** (a stale comment), and both
+  are small.
+- **`accept` filtering is not a gap in either direction.** `ChatFormFileInputInvisible` carries no
+  `accept` attribute and `gui.attachDialog` carries no `FileFilter` — **so a "the GUI lacks type
+  filtering" row would score against something the Web UI does not do either.** That is rule 3.
+- **`chat-form` is effectively closed**, 13a having taken six of its thirty. **Its examiner's own
+  caveat travels with it:** that pass examined the area's components and actions and **did not
+  enumerate the thirty verdict rows**, so "almost nothing left" is a statement about causes and
+  **must not be recorded as a row count.**
+- **HTML safety is a strength, not a gap:** the GUI escapes everything in `markdown.escape` and is
+  **stricter than `rehype-sanitize`**, not merely equivalent.
+- **KaTeX is G-34's existing open half**, not a new finding.
+
+**The `[A]` sweep is the largest remaining blockage** — 34 findings that **D-CG** bars from being
+scoped until verified, roughly a third of the audit. **Record refutations as prominently as
+confirmations:** the A-series was written in one pass and the tree has moved a long way since.
 
 > ## Step 12 — the audit's findings. This is the current work and it is ahead of the parity list.
 >

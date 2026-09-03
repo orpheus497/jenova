@@ -25,6 +25,18 @@ const
 
 type UpstreamError* = object of CatchableError
 
+type RelayOutcome* = enum
+  ## 12d-1. `forward` used to answer `bool`, and it returned **true for two
+  ## different things**: an upstream that closed cleanly after a whole response,
+  ## and a client that walked away mid-stream (`return relayed > 0`). Nothing
+  ## cared until the response cache needed a writer — and storing a truncated
+  ## stream to replay later as a complete answer is D-BQ's truncated attachment
+  ## in another costume: confident, and about a fragment. So the third state is
+  ## named rather than inferred.
+  roUnavailable   ## nothing relayed; this module has already answered 502
+  roTruncated     ## the client went away mid-stream; the head is already sent
+  roComplete      ## upstream closed after relaying a complete response
+
 ## Function purpose: rebuild the client's request for the upstream, preserving
 ## method, target and body. Hop-by-hop headers are dropped and the connection is
 ## explicitly closed at the end of the response, because this proxy does not
@@ -64,7 +76,15 @@ proc sendUpstreamUnavailable(client: Socket, host: string, port: int) =
     &"""{{"error":"upstream unavailable","upstream":"{host}:{port}",""" &
     &""""hint":"is llama-server running?"}}""")
 
-proc forward*(client: Socket, req: Request, host: string, port: int): bool =
+proc forward*(client: Socket, req: Request, host: string, port: int,
+              capture: ptr string = nil): RelayOutcome =
+  ## `capture`, when given, receives a copy of every byte relayed to the client,
+  ## response head included. **It is a tee, not a parse** (12d-1): the point of
+  ## this module is that framing — chunked, SSE, content type — is whatever
+  ## `llama-server` said it was, and a cache that stored a *parsed* response
+  ## would answer a later hit in a shape the streaming reader cannot consume.
+  ## Storing the wire bytes means a replayed hit is byte-identical to a live
+  ## reply and nothing downstream has to know the difference.
   var up: Socket
   try:
     up = newSocket(buffered = false)
@@ -73,7 +93,7 @@ proc forward*(client: Socket, req: Request, host: string, port: int): bool =
     if not up.isNil:
       try: up.close() except CatchableError: discard
     sendUpstreamUnavailable(client, host, port)
-    return false
+    return roUnavailable
 
   defer:
     try: up.close() except CatchableError: discard
@@ -103,9 +123,17 @@ proc forward*(client: Socket, req: Request, host: string, port: int): bool =
     while sent < n:
       let w = client.send(addr chunk[sent], n - sent)
       if w <= 0:
-        return relayed > 0
+        # The client is gone. Whatever reached it is a fragment, and the caller
+        # must be able to tell that from a clean finish — see `RelayOutcome`.
+        return roTruncated
       sent += w
     relayed += n
+    # The tee, and it happens **after** the client is served: relaying is this
+    # module's job and a capture buffer must never delay a token reaching the
+    # window. Appending the same bytes that were just written is what makes a
+    # cached hit byte-identical to a live reply.
+    if capture != nil:
+      capture[].add chunk[0 ..< n]
 
   # An upstream that accepted the connection and then closed without a byte —
   # a crash mid-load, a receive timeout — left the client with an empty reply
@@ -115,5 +143,5 @@ proc forward*(client: Socket, req: Request, host: string, port: int): bool =
   # already on the wire and cannot be replaced.
   if relayed == 0:
     sendUpstreamUnavailable(client, host, port)
-    return false
-  true
+    return roUnavailable
+  roComplete

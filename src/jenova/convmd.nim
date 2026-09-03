@@ -38,6 +38,27 @@ const
   ## them is not the same document, and parity here is the whole point.
   HeaderLines = "- model: jenova\n- temperature: 0.7\n- top_p: 0.9\n---\n\n"
 
+## Function purpose: the canonical role for a role string read out of the
+## database, so the window does not have to decide it in a widget (A-70).
+##
+## **This is where the defect was**, and it is here rather than in `gui.nim`
+## because `gui.nim` links into no test binary: the read was
+## `if stored == "user": rUser else: rAssistant`, so a stored `"system"` row —
+## which `fromMarkdown` and 13b's import both produce correctly — was coerced to
+## the assistant on the way in, and every later site read that coerced value.
+## The persona then went to the model as its own prior words, and export wrote
+## `## jenova` over `<!-- system: … -->`, destroying the evidence.
+##
+## **The fallback to `assistant` is kept deliberately.** Rows predating this
+## carry roles the format never defined, and a turn of unknown provenance is
+## safer shown as the model's than as the user's or the system's — but "system"
+## is no longer part of that unknown set.
+proc canonicalRole*(stored: string): string =
+  case stored.toLowerAscii
+  of "user": "user"
+  of "system": "system"
+  else: "assistant"
+
 ## Function purpose: render a conversation as the Web UI's markdown document.
 ##
 ## A system turn becomes an HTML comment rather than a section, which is what

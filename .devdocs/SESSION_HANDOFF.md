@@ -92,15 +92,99 @@ within minutes.)* Files: `BRIEFING.md` (new **§0a**, the header, §4's ordering
 banner, the deleted address ledger, A-25's address restored), `PROGRESS.md`, `SUMMARIES.md`, this
 file.
 
+### Then the five sessions organised themselves, and eight units landed in forty minutes
+
+**Once the roster, the file split and the token existed, the collision stopped being a problem and
+started being throughput.** Recorded in `PROGRESS.md`, **every one verified by a session other than
+the one that wrote it**, and every one verified here by running the binaries rather than on report:
+
+**Step 12c** (A-3 history trim, A-4 the derived cap and typed 413, A-5 the context figure) —
+**whose author never compiled a line of it**, having been instructed not to build; **12e-1** (A-26,
+the note memo); **12f-1** (A-17, the storage trash); **A-16** (restore puts the file back);
+**A-20** (cascades transactional, **recorded as unasserted on purpose** — atomicity cannot be
+asserted without damaging code, D-BX, and no non-discriminating assertion was written to make the
+row look covered); **A-24** (trash ordering); **12e-2** (A-48, markdown links behind an http/https
+allowlist); and **A-69** earlier.
+
+**Full green at the USER's checkpoint commit `b830bfca`**, run here: `nimble core` 0, `nimble gui`
+0, `bin/jenova --check` 0, fourteen self-tests each 0 — **`serve-` and `rag-selftest` deliberately
+not run and the omission recorded** rather than hidden by "all green"; a peer has since run all
+sixteen green.
+
+**Also recorded:** the **PLANNER**'s full Step 12d plan — three parts, not the two D-CD names,
+because `server.nim` already sends `X-Cache: HIT` and `gui.streamOnce` discards every header — plus
+**two new 12d findings verified here** (a second cache writer at `api.nim:1030` that bypasses
+`cacheStore`, and **no `DELETE` against `llm_cache` anywhere in `src/`**), **D-CJ** (the USER
+approving the cap and eviction as new product behaviour), **D-CK** (shared policy in the shared
+proc; a path-specific invariant on its path), 13c's **counting rule**, and **A-70** — a defect
+**13b introduced**, where a system turn survives the markdown round trip and then renders as the
+model's own words, because `gui.Role` has no `rSystem`.
+
+### And then Step 12 finished
+
+**12d landed complete — all four parts — and 12f closed with it.** `Step 12` is done: 12a, 12b,
+12c, 12d, 12e-1, 12e-2, 12f-1, 12f-2. **Fourteen units recorded today, every one verified by a
+session other than its author**, and the final sweep run with **direct exit codes**: `nimble core`
+0, `nimble gui` 0, `bin/jenova --check` 0, **all sixteen self-tests 0.**
+
+**Three verification rules came out of it, and all three are about our instruments lying to us:**
+
+- **Never read an exit code through a pipe** (rule 19). `cmd | tail; echo $?` reports **`tail`'s**
+  status — always 0. A session reported two green lines that were not evidence, **and this session
+  had the same defect in its own commands and re-ran them clean.**
+- **`--check` proves nothing unless the build before it is known green** (rule 17, amended). It runs
+  the last *successfully built* binary, so after a failed compile it exits 0 against stale code.
+  **A session can follow the old rule faithfully and be reading a stale result.**
+- **An assertion a wrong implementation could also satisfy is not an assertion** (**D-CN**, D-BX's
+  companion). The 12d-4 eviction proof — *"the oldest is gone"* — **would have passed on the defect
+  it existed to catch.** Fixed to name the oldest and require the newest to survive.
+
+**And one governance rule, refused at the boundary rather than caught by a tracker** (**D-CO**): a
+USER ruling **relayed through a peer is not an approval**. A planner wrote "12g-2 IS APPROVED"; a
+coding peer declined to act and asked its own USER. **That is the morning's contradiction — two
+orderings both filed as "the USER's ruling" — prevented one step earlier.** This session had already
+committed the same error and corrected it twice.
+
+### The `[A]` sweep, and the one result that changed a plan
+
+**16 of 34 verified, nothing refuted.** It paid for itself three times: **A-49 was deleted** —
+confirmed, then recognised as Step 12g arrived at from the other direction, and *leaving both would
+have given one file two owners*; **A-9, A-10 and A-45 collapsed into one unit** (Step 12h, a
+retrieval health signal); and **three rows had their severity restated** because a builder reading
+them would have fixed the wrong thing — **A-15 most sharply**, where someone would have fixed the
+truncation and shipped the bug, since the trigger is **two mismatched length thresholds paired by
+index.**
+
+**The escalation is the entry to read: A-19's recorded bound was falsified by a fix that shipped
+this morning.** It was low priority *because* A-18 was open — and **A-16 is now a second caller of
+`restoreTrash`, behind a button**, with the destination read from a sidecar on disk; A-18-2 will add
+a third and more direct one. `restoreTrash` still checks containment **lexically**, **the exact
+weakness T-4 closed in `resolveStoragePath` and left open here** — and the code's own comment admits
+it was *"tolerable while `restoreTrash`'s only caller was the HTTP route."* **A finding's own remedy
+is what makes it dangerous: check the bound on every deferred finding whose bound is another open
+finding.**
+
+**Retracted on request, against its own author's generalisation:** the "capability the window cannot
+reach" pattern is **four instances at the parity boundary, not a pattern these files exhibit** — one
+cluster produced zero members, A-45 was a counter-example, a nine-row batch produced none. **The
+one-command check stays as a cheap habit; the forecast is gone.**
+
 ### Next steps
 
-1. **Whoever holds `pipeline.nim` and `markdown.nim` reports a green build to this session**, and
-   only then does `PROGRESS.md` get an entry for 12c and 12e-1.
-2. **Close three of the four sessions.** This is the whole cause and nothing in a tracker fixes it.
-3. **13c's first unit is re-deriving one area's inventory from `jca_web/src`** — the 866 leads do
-   not exist (`PLANS.md` Step 13c, `TODOS.md` A-59).
-4. **A USER screen run** of the composer and, now, of an attachment actually filing as an artefact.
-5. **Test and check work stays last** (A-68).
+1. **A-19 first in `fssync.nim`**, reordered ahead of A-18-2/3 and scoped as a **port of T-4's
+   pattern, not a new design.** Then A-18-2 + A-18-3.
+2. **The ranked queue:** `A-73` (one Label) → `13c-2` (`ChatError.detail`) → `12g-1` → `13c-1`
+   (model metadata — largest fan-out, purely additive). **12g-1 and 12g-2 are scoped, NOT
+   approved** (**D-CO**).
+3. **Finish the sweep** — 18 rows left, and **A-51 is explicitly unswept**, needing a runtime probe;
+   A-55/56/57 may join that list.
+4. **A USER screen run**: the composer, an attachment filing, a rendered link, a cached turn, the
+   SYSTEM label. **Every GUI defect in this project's history was found that way, and today added
+   five more unseen widgets.**
+5. **Close sessions down to one or two.** The register works, but it exists because five sessions
+   were opened on one checkout, and none of this was free.
+6. **Test and check work stays last** (A-68). **Commits are the USER's**, after every session
+   reports complete.
 
 ---
 

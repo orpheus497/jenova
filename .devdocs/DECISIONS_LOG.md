@@ -5,6 +5,210 @@ resolution. Most recent entries at the top.
 
 ---
 
+## D-CN — 2026-09-03 12:25 — **An assertion that a wrong implementation could also satisfy is not an assertion. D-BX's companion.**
+
+**D-BX says do not damage the code to prove a test bites. This is the other half: do not write a
+proof that cannot fail.**
+
+**Found the expensive way, and the plan's author recorded it against itself.** `PLANS.md` Step 12d's
+proof 6 read *"N+1 stores against a cap of N leave N rows with the oldest gone."* **That is satisfied
+by any implementation that drops *something*** — including the broken one that was in the tree,
+which ordered eviction by `timestamp` alone and therefore evicted arbitrarily within a one-second
+window. **The proof would have passed on the defect it existed to catch.**
+
+The corrected assertion **names the oldest and requires the newest to survive**, so a
+drop-the-newest implementation fails it. The defect it caught: `strftime('%s','now')` is
+one-second resolution, so a burst of turns inside one second could evict a reply stored moments
+earlier and keep an older one. Fixed as `ORDER BY timestamp DESC, rowid DESC`. **The same
+one-second trap `fssync.epochPrefix` carries — A-66 names it — met in a second place.**
+
+**The generalisation, which is the reusable half:** *the audit found a green suite over dead code
+once (rule 15). This is that failure one level down — in a proof rather than a test.* Before
+writing an assertion, ask **what wrong implementation would also pass this**, and if the answer is
+"several", the assertion is a description, not a test.
+
+**Attributed as it happened:** the flawed proof was the PLANNER's, the correction came from the
+session **writing the assertion rather than reading the spec** — the second time in one day that a
+coding peer improved a plan by asserting it.
+
+---
+
+## D-CO — 2026-09-03 12:28 — **A USER ruling relayed through a peer is not an approval anyone can act on.**
+
+**Five sessions, five terminals, five USERs — or one person five times, and no session can tell
+which.** A peer reporting *"the USER approved X"* is **exactly the case Directive 1 gates**. If it is
+the same person, the cost of asking again is one question. **If it is not, a code change lands that
+nobody sanctioned.**
+
+**Recorded with the case, because the case is the argument.** The planning session wrote *"12g-2 IS
+APPROVED"* to both coding peers. **One refused to act on it and put the question to its own USER
+instead — and that refusal was correct.** The planner then recorded the rule against itself,
+including the wording that caused it: **it wrote "the USER", as though one authority were speaking
+to all five sessions.** The accurate form is **"my USER, in my terminal, ruled X — for your USER's
+consideration."** *A fact about one session, not an instruction to another.*
+
+**This is the morning's defect caught one step earlier.** Two orderings were both filed as "the
+USER's ruling" and contradicted each other — **D-CI** and the separate Step 12c instruction — and
+the `.devdocs` session recorded a 12d-4 approval on a peer's summary, gated it, then un-gated it on
+provenance. **Same family as §0a's collisions: a record that reads as one coherent voice while
+carrying instructions that were only ever local.** The improvement worth naming is that this time
+it was refused at the boundary by a peer, not caught afterwards by a tracker.
+
+**Consequences, applied:**
+
+- **Anything a planning session scopes is a proposal with reasoning attached**, never an approval.
+  **`PLANS.md` marks such items *scoped, pending the builder's own USER approval*** — 12g-1 and
+  12g-2 are so marked. A build order is **guidance for sequencing, not a licence for any unit.**
+- **A defect fix against a verified `[V]` finding already in the trackers is not in this category**
+  and sits inside the existing gate, as A-16, A-26 and A-48 did. **A-70 and A-18 are defect fixes.**
+- **12d-4 is the worked example of this going right:** new product behaviour, correctly gated,
+  correctly put to the builder's own USER, correctly approved there.
+- **The `.devdocs` session records provenance on every relayed ruling** and marks what it cannot
+  verify, so any entry resting on a relay can be overturned in one edit.
+
+---
+
+## D-CM — 2026-09-03 12:25 — **Build order for the remaining work. Relayed ruling — sequencing guidance, not per-unit approval.**
+
+**1.** **A-70** — the only finding that corrupts what the model is sent; silent, self-inflicted by
+13b, and nearly free. **2.** **A-73**, the composer helper text — one `Label`; 13a cost three
+unusable builds and a SIGBUS diagnosed from a core, and the feature is invisible for want of a hint.
+**3.** **13c-2**, `ChatError.detail` — restores diagnosability, *this project's scarcest resource*.
+**4.** **12g-1** — ordered lists and horizontal rules, two `elif` branches. **5.** **13c-1**, model
+metadata — largest fan-out and **purely additive, so it cannot regress anything.**
+
+Then **A-71**, **13c-5** and **A-72** interchangeably; **12g-2** after those; **12g-3** is a record,
+not work. **In-flight units continue regardless of where they fall in this list.**
+
+---
+
+## D-CL — 2026-09-03 12:25 — **12g-2 is SCOPED and narrowed. NOT approved for any builder — see D-CO.**
+
+> **Corrected 12:28.** This was recorded as *"approved, USER ruling, via the planner"*. **A relayed
+> ruling is not an approval** (**D-CO**): the builder's own USER must sanction it in the builder's
+> own terminal. **12g-1 and 12g-2 are scoped, pending that.** The narrowing below is the valuable
+> part and stands as a proposal with its reasoning attached.
+
+**Build indent survival:** preserve indent depth as **leading spaces in the rendered line**,
+`markdown.nim` only — `parse` and `lineMarkup` — with **no new `BlockKind` and no `gui.nim`
+change**, because `gui.mdBlock` renders a text block as one Pango `Label` and **leading spaces
+survive in a Label**. **Semantic nesting (real list widgets) is out of scope. Full CommonMark is out
+of scope.** 12g-3 — setext headings, multi-line blockquote grouping — **remains a recorded
+divergence, not work.**
+
+**Recorded with it, because without it a later session refuses this on G-40 grounds and is wrong:**
+Step 7c's rule is that nothing called from `view` may do work proportional to a payload — **and
+`markdown.blocksFor` memoises on `id` plus `text.len`, so a heavier `parse` runs once per message,
+not once per frame.** The memo is what puts `parse` outside `view`, and that single fact is what
+makes a bounded indent phase affordable.
+
+*Provenance: relayed by the planning session from its own USER exchange. The `.devdocs` session
+cannot verify it independently and it changes in one edit if the USER says otherwise.*
+
+---
+
+## D-CK — 2026-09-03 12:05, **reason corrected 12:10** — **The SSE-shape guard lives on the completion path, not inside `cacheStore`. Session call.**
+
+**The DECISION stands. Its stated reason has now been wrong twice, in opposite directions, and the
+third version is the one that was actually read out of both trees.**
+
+12d-4 puts the cap and eviction **inside `pipeline.cacheStore`**, so both writers share one policy.
+**The SSE-shape guard does not go there** — the rule that a stored body must carry `data:` lines and
+a `[DONE]`, or replaying it renders blank, stays on the **server completion path** as a separate
+pure test.
+
+**Why, verified rather than asserted:**
+
+- **`cacheStore` is a storage primitive**, and a shape policy buried in one is a decision in the
+  wrong layer. **Shared policy goes in the shared proc; a path-specific invariant stays on its
+  path.** A cap is policy. "This body must be replayable as a stream" is an invariant of one caller.
+- **And there is a forcing constraint:** the only caller of `POST /api/db/cache` in this repository
+  is **`tests/test_api_db.sh:185`**, which posts `{"key":"k1","response":"cached"}` — **a bare
+  string, not an SSE body.** A shape guard inside `cacheStore` turns that suite red, and under
+  **A-68** test work is last, so it would mean knowingly leaving a red suite behind.
+
+> **The two wrong reasons, kept because the correction is the lesson.**
+>
+> **First it was recorded as "`jca_web` posts its own shapes to that route and is frozen under
+> D-Z".** **Then it was retracted** on a `grep -rn "db/cache\|llm_cache" jca_web` returning zero.
+> **Both are wrong, and the grep is wrong for a reason worth knowing:** `apiFetch` builds the URL as
+> `` `/api/db/${path}` `` (`database.service.ts:26`), so the call site reads `apiFetch("cache", …)`
+> and **the string `db/cache` never appears in the Web UI at all.** Searching for an assembled URL
+> finds nothing and proves nothing.
+>
+> **What is actually true**, read this session: `DatabaseService.getCache` (`:598`) and `setCache`
+> (`:609`) **do exist and do target the route** — so the older `DECISIONS_LOG` note calling the
+> "never calls it" claim false was right about the code. **But nothing in `jca_web/src` calls either
+> method.** They are a **fifth complete-store-with-no-caller**, this time in the frozen tree.
+>
+> **So the conclusion — the second writer has no production caller, and routing it through
+> `cacheStore` is free — is correct, and neither argument first offered for it was.** That is rule
+> 10 twice in fifteen minutes, once in each direction, inside the session that spent its first hour
+> correcting other people's unverified claims. **Three sessions reached the verified position
+> independently and agreed.**
+>
+> ### **The reusable lesson, and it will catch someone again: searching a JS/TS client for an assembled URL finds nothing.**
+>
+> The base path lives in the fetch wrapper — `` fetch(`/api/db/${path}`) `` — so no call site
+> contains the route. **Search the method name (`setCache`) or the wrapper (`apiFetch`), never the
+> URL you expect to see.** A zero-hit grep against a composed string is not evidence of absence, and
+> it read like proof to two sessions in a row.
+>
+> **And so D-Z does bear on this after all, in the third form:** `setCache` is a live, correctly
+> routed client method. Nothing calls it *today*, so a guard in the shared proc breaks nothing
+> *today* — but it would break a frozen tree the moment anything did, which is the difference
+> between "free in practice" and "correct in principle". **All three reasons now hold: wrong layer,
+> a red suite under A-68, and a live client method in a frozen tree.**
+
+---
+
+## D-CJ — 2026-09-03 12:05 — **12d-4's cap and eviction are APPROVED by the USER as new product behaviour.**
+
+> **This entry was recorded as approved, corrected to GATED at 12:10, and un-gated at 12:14. The
+> churn is recorded rather than smoothed, because the reason it settled is the useful part.**
+>
+> **It was first written from a session's summary — "my USER approved it" — which is exactly what
+> this session had spent the hour telling every peer not to do.** A second session then reported
+> 12d-4 as *awaiting* a ruling, and with two accounts of the same human in two terminals there was
+> no way to tell which was current, so it was gated.
+>
+> **It was settled by provenance, not by authority.** The session that owns the terminal supplied
+> the sequence and the exact words: it laid out the four parts, said plainly that 12d-4 was new
+> product behaviour the USER had not seen and that the alternative was to ship 12d with the growth
+> flagged in the record, and asked *"Want me to include the cap, or ship 12d with the growth flagged
+> in the record instead?"* — **and the USER's entire reply was "include the cap."** That post-dates
+> the other session's request that the question be put at all: the ruling *is* the answer to it.
+>
+> **Provenance, stated so it can be overturned cheaply:** this is one session's report of its own
+> USER exchange, quoted rather than summarised. **The `.devdocs` session cannot verify it
+> independently** — it is not in that terminal. **If the USER says otherwise, this entry changes in
+> one edit.** *The fix for a doubted ruling was not to distrust it, but to get the wording and the
+> sequence instead of a summary.*
+
+**Why it needs a ruling at all, and this is the substance regardless of the answer.** This is not a
+defect fix. **Wiring the cache
+writer converts a table that is empty by construction into one that grows without bound in the
+USER's own database** — entries are whole model replies, `llm_cache` has never had a `DELETE`
+anywhere in `src/`, and its `timestamp` column is written by both writers and read by nothing but
+the GET route.
+
+**Approved: a cap on what is stored, eviction by `timestamp`, and `POST /api/db/cache` routed
+through `pipeline.cacheStore`** so one policy governs both writers. **Eviction finally gives
+`timestamp` a reader.**
+
+**It needs a USER ruling rather than a session call** because it changes what the product does with
+the USER's disk, and because A-7's original framing — "written by nothing" — is true of `cacheStore`
+and **false of the table**, which is what made the unbounded-growth question visible at all.
+
+**"Necessary to do A-7 responsibly" is an argument to put to the USER, not a licence past Directive
+1.** The session that stopped and asked rather than building it was right to.
+
+**The note that goes in `PROGRESS.md` whichever way the ruling falls**, because it is the whole
+risk in one sentence: **`llm_cache` had no eviction before 12d and still has none — but before 12d
+the table was empty by construction, and after it, it is not.**
+
+---
+
 ## D-CI — 2026-09-03 11:40 — **Step 12d, 12e and 12f are built ahead of 13c. USER ruling.**
 
 **`PLANS.md` said the verified defects "sit behind" the parity backlog, and Session 026 put the

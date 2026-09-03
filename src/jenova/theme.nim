@@ -559,13 +559,19 @@ expander-widget title:hover { color: @jenova_fg; }
 }
 .msg-user   { border-left: 2px solid @jenova_purple_head; }
 .msg-agent  { border-left: 2px solid @jenova_accent; }
+/* A-70. A system turn is neither side of the conversation, and it used to be
+   drawn as the model's own words. Muted rather than given a third accent: it is
+   context the user should be able to see and identify, not something competing
+   with the exchange for attention. */
+.msg-system { border-left: 2px solid @jenova_muted_fg; }
 
 .msg-role {
   font-size: 0.8em;
   color: @jenova_muted_fg;
 }
-.msg-role-user  { color: @jenova_purple_head; }
-.msg-role-agent { color: @jenova_accent; }
+.msg-role-user   { color: @jenova_purple_head; }
+.msg-role-agent  { color: @jenova_accent; }
+.msg-role-system { color: @jenova_muted_fg; }
 
 .msg-body { color: @jenova_fg; }
 

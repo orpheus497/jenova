@@ -32,7 +32,77 @@ re-deriving one area from `jca_web/src`, not looking a list up; and `PROGRESS.md
 
 ---
 
-## 0a. FOUR SESSIONS ARE LIVE IN THIS REPOSITORY. READ THIS BEFORE OPENING A FILE IN `src/`.
+## 0. THE USER HAS REPORTED THE DAY'S WORK INCOMPLETE. READ THIS BEFORE TRUSTING ANY "BUILT" ENTRY BELOW.
+
+> **2026-09-03, from the USER, verbatim: *"almost all the features and functions that were
+> implemented or fixed are incomplete."***
+>
+> **That outranks every green result recorded today** (rule 1: never deny what plainly was run;
+> rule 12: a "not yet run" label survives exactly until evidence contradicts it). **It is not to be
+> argued with, re-verified against the assertions, or explained away — the assertions were never
+> what was in question.**
+>
+> ### Fourteen units were recorded as BUILT on 2026-09-03. **Every one of them is now UNCONFIRMED.**
+>
+> A-69, A-70, A-48, A-26, A-17, A-16, A-20, A-24, A-19, A-18, Step 12c, Step 12d, and the rest.
+> **The `PROGRESS.md` entries stay** — they are the point-in-time record of what was changed and
+> why, and several carry reasoning worth keeping. **What was wrong is the word "built".**
+>
+> ### This was predicted, in writing, by these documents, and done anyway
+>
+> **Every unit's own entry carries the disclosure:** *"unobserved — the render branch is a widget"*;
+> *"that the row now survives is a USER screen run"*; *"nobody has seen a cache hit"*; *"A-18-2 and
+> A-18-3 are almost entirely widgets"*. **§6 says `gui.nim` has no coverage of any kind and that
+> every GUI defect in this project's history was found by the USER looking at the screen.** Rule 17
+> says `--check` builds each branch once, allocates no sizes and routes no events.
+>
+> **Fourteen units were produced in one afternoon against that standing gap and labelled done.**
+> Green assertions proved the parts. **Rule 15 — a green suite says the parts work, never that
+> anything calls them — is the exact failure, and it is in this file, numbered, above.**
+>
+> ### The shape to expect, stated as a hypothesis and NOT yet confirmed
+>
+> **Each fix was made minimal and assertable *below* the widget layer** — one enum case, one map
+> line, one render branch; a tri-state replacing a bool; a header read — **and the user-facing half
+> was left to a screen run that never happened.** That is the design this project deliberately
+> rewards (§6: "the response is correct and should continue"), and **its failure mode is mechanisms
+> that are correct and features that are incomplete.** *Do not act on this hypothesis until the
+> USER's specifics arrive; five sessions guessing produces five wrong answers.*
+>
+> ### Standing consequence
+>
+> **"Built" now requires a screen run for anything with a visible surface.** An assertion-green,
+> `--check`-green unit touching `gui.nim` is **IMPLEMENTED, UNCONFIRMED** — never "built" — and
+> `PROGRESS.md` says which. **This is the one rule today produced that cost something to learn.**
+
+---
+
+## 0a. FIVE SESSIONS ARE LIVE IN THIS REPOSITORY. READ THIS BEFORE OPENING A FILE IN `src/`.
+
+> ### Git, and completion — the USER's standing rules, 2026-09-03 12:00
+>
+> **1. The USER performs every git write action.** No session commits, branches, stages, stashes,
+> resets or pushes. **Read-only git is not only permitted, it is how a claim gets checked** —
+> `git log`, `git status`, `git show`, `git diff`. This session used exactly those to catch a branch
+> header that had been a commit stale for three sessions.
+>
+> **2. A commit is a checkpoint, never a finish line.** **Commits happen only once every session has
+> verified its own work complete**, so anything swept into a commit that is not yet asserted is
+> still open work. **`b830bfca` "Agents Review" is such a checkpoint:** it contains A-48's code,
+> which has no assertions, alongside units that are complete.
+>
+> **3. A USER ruling relayed through a peer is not an approval anyone can act on** (**D-CO**).
+> Five sessions, five terminals — or one person five times, and no session can tell which. **"My
+> USER, in my terminal, ruled X — for your USER's consideration"** is the only accurate form; *"the
+> USER approved X"* reads as one authority speaking to all five and **is exactly what Directive 1
+> gates.** A defect fix against an existing `[V]` finding sits inside the existing gate; **new
+> product behaviour needs the builder's own USER, in the builder's own terminal.**
+>
+> **Do not let a commit be mistaken for completion.** *Code in the tree is not the same as proven,
+> and that distinction is this project's entire history* — the sentence is a coding peer's, given
+> unprompted about its own unfinished work, and it belongs here. **G-44/Step 10b sat in
+> `PROGRESS.md` as built for a day and had never once worked** (A-69). That is what a commit-as-
+> completion looks like a week later.
 
 **This is not a hypothetical and it is not history — it is the state of the tree as this line is
 written.** On 2026-09-03 the USER had **four Claude sessions open on this checkout at once**, and
@@ -80,12 +150,20 @@ missing from the four it can see.
 
 | Name / role | Writes | Work |
 |---|---|---|
-| **DEVDOCS MAINTAINER** — `jenova-26 [25ad4a]` | `.devdocs/` **only**, and nothing else, ever | Sole writer of these trackers. **Holds and brokers the `src/jenova_core.nim` token.** Verifies every reported unit by running the binaries before recording it |
-| **PLANNER** — `jenova-d3 [1f330e]` | Nothing | Writes forward plans and hands them to the maintainer. No product code, no `.devdocs/` |
-| **CODING PEER 1** | `markdown.nim`, `gui.nim` | **A-26** and **A-17** built; **A-48** in flight |
-| **CODING PEER 2** | `fssync.nim`, `api.nim` | **A-69** built; **A-16** written, **A-18** next |
-| **12c AUTHOR** | `pipeline.nim`, `http.nim`, `server.nim` | **Step 12c** (A-3, A-4, A-5) built. **Never compiled it** — instructed not to build |
-| **EXAMINER** | Nothing | Web UI ↔ GUI parity. Produced 13c's first real work list (`PLANS.md` Step 13c) |
+| **DEVDOCS MAINTAINER** — `jenova-26 [25ad4a]` | `.devdocs/` **only**, and nothing else, ever | Sole writer of these trackers. **Holds and brokers the `src/jenova_core.nim` token.** **Verifies every reported unit by running the binaries before recording it** |
+| **PLANNER** — `jenova-d3 [1f330e]` | Nothing | Forward plans, handed to the maintainer. Wrote Step 12d and 13c's counting rule. No product code, no `.devdocs/` |
+| **CODING PEER 1** — `jenova-b6 [48da9d]` | `markdown.nim`, `gui.nim` note path | **A-26**, **A-17**, **A-48** built. **12d** next, held for the plan |
+| **CODING PEER 2** — `jenova-e4 [e69945]` | `fssync.nim`, `api.nim` | **A-69**, **A-16**, **A-20**, **A-24** built. **A-18** next |
+| **EXAMINER PEER** — `jenova-d0 [e0618c]`, *also the 12c author* | Nothing now; released `pipeline.nim`, `http.nim`, `server.nim` | Wrote **Step 12c** (A-3, A-4, A-5) and **never compiled a line of it** — instructed not to build, and it was verified green by two other sessions. Now parity examination: six findings, including **A-70** |
+
+**How the names were resolved, because it took an hour:** `ListAgents` shows a session its peers
+and never itself, **so each session's own name is the one missing from the four it can see.** Three
+independent listings settled all five. **One session's recollection of its own name was wrong** and
+three clean eliminations beat it.
+
+*(The roster carried these last two as separate sessions for a while. They are one. That is the
+fourth attribution error in an hour, and every one of them ran the same way: a session was inferred
+from a file rather than asked.)*
 
 **Address a session by role, not by socket and not by "the other session".** Three of the five
 could not name themselves, two disclaimed the same change, and one was not counted at all until it
@@ -112,6 +190,19 @@ trackers exist to catch and the reason Session 023 found a green suite over dead
 > **The `.devdocs/` session holds the token and passes it on.** Ask, write, build, report green,
 > and it moves to the next in queue. **Hold it while you type, not while you think.** A holder that
 > goes quiet has it reclaimed, and the reclaim is recorded here.
+>
+> **`gui.nim` is a second token** — it is the biggest file in the tree and four units wanted it at
+> once (12d-3, A-70, A-18's trash view, A-71's reset button).
+>
+> ### **The one rule that overrides the token: whoever breaks the build owns the repair, immediately, token or no token.**
+>
+> **Established 2026-09-03 12:12 by a session that broke the tree and said so unprompted.**
+> A-18-1 changed `fssync.restoreMirror` from a `bool` to a tri-state and instantly invalidated its
+> author's own nine assertions, so `nimble core` was **red from ~12:09 to 12:12**. It took
+> `jenova_core.nim` without the token to repair a break it had caused, **and that was the right
+> call**: a red tree blocks every session at once and a queue in front of the fix makes it worse.
+> **Announce it, fix it, say when it is green.** The disclosure is what makes this safe — a session
+> that built in that window needs to know its failure was not its own.
 
 **Nothing enters `PROGRESS.md` as built until a green `nimble core`, `nimble gui` and `bin/jenova
 --check` has been established against the tree as it then stands.** A build proof taken before
@@ -165,7 +256,22 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 | **14** | **Cite the symbol, then the line.** A bare line number is a claim with an expiry date. `fssync.resolveStoragePath (fssync.nim:694)` survives a refactor; `fssync.nim:628` does not. *Session 023 watched an agent cite `nvimctl.alive` at `:350` in a 196-line file — inside the audit that was hunting for exactly this.* |
 | **15** | **A green suite says the parts work, never that anything calls them.** `rag.nim` was fully asserted and completely dead for weeks. When a feature is finished, assert the *join*, not only the parts. |
 | **16** | **NEVER edit the product code to break it, for any reason (D-BX).** Not to prove an assertion bites, not with a copy to restore from. If a test passes on data that should fail it, the hole is in the assertion set; write the missing assertion and re-run it **against data**, never against a damaged file. |
-| **17** | **A compile is not evidence the application starts.** **Run `bin/jenova --check` before handing over any GUI change** — it builds the whole window under a real GTK and exits, showing no window and binding no port. **And know its limit: it builds each branch once**, so it proves the window reaches its first frame and never that it survives a *state transition*. It exited 0 on the build that aborted the moment a note was opened (G-51). |
+| **23** | **GROUP BY WHAT THE USER EXPERIENCES, THEN CHECK THAT ONE FIX ADDRESSES ALL MEMBERS.** **A group that survives the first test and fails the second is an ORDERING, not a unit.** *Recorded because it was tested rather than asserted:* of four proposed groupings, **two survived rescoped and two dissolved**; of one proposed earlier the same day, **none survived**. **The difference was the method — the survivors were grouped by observed shared consequence, the failures by a shape someone had named**, and the session that had named the shape said so about itself, unprompted, in the message correcting someone else. That test turned "observability" from a three-file bundle into **one logger plus a dependency note**, and stopped "unbounded blocking on the GTK thread" from sending a builder to fix five things that do not block the GTK thread. |
+| **22** | **A COUNT GIVEN WITHOUT ITS METHOD IS UNFALSIFIABLE — and every wrong count this project has carried was of that kind.** The self-test number was written nine ways. A-57's discard count was published as 58, corrected to 32, and **counted here as 30 with two other syntactic forms beside it**. *The correction to the count was itself wrong.* **What made it checkable in one command was that its author published the grep** — which turned out to be an OR of `except CatchableError: discard` **and** `except CatchableError:$`, so it measured *"a handler exists"* and reported *"a failure is discarded"*. **Publish the method or write a word instead of a number.** |
+| **21** | **A COMMENT STATING A PRECONDITION IS A CLAIM WITH AN EXPIRY DATE, AND NOTHING IN THIS PROJECT RE-CHECKS THEM.** **The sharpest instance found 2026-09-03:** `fssync.nim:564-566` said the lexical containment check was *"tolerable while `restoreTrash`'s only caller was the HTTP route"* — **the code wrote its own precondition down, A-16 shipped that morning and became a second caller, and the comment became false in the tree.** *A reader would have been reassured by a sentence that had stopped being true.* **This is G-38's class and there are now three instances in three files** — G-38's `Paned` that was never used, `gui.nim:4650-4652` explaining that the strip shows name/type/size *because* a thumbnail would cost a decode **with a thumbnail rendering eleven lines below it**, and this one. **Unlike the "unreachable capability" habit, which was retracted, this one is worth forecasting.** When a comment says *"safe because X"*, X is a thing to verify, not to trust. |
+| **20** | **A SEARCH THAT RETURNS NOTHING IS NOT EVIDENCE UNTIL YOU HAVE CONFIRMED THE SEARCH COULD HAVE FOUND SOMETHING.** **Two instances in one session, both nearly recorded as findings.** *(a)* `grep -rn "db/cache" jca_web` returned zero and was offered as proof the Web UI never calls that route — **but `apiFetch` builds the URL as `` `/api/db/${path}` ``, so the string cannot appear at a call site.** The route *is* there, at `database.service.ts:598`/`:609`. *(b)* `grep 'StyleClass("msg-system")'` returned zero and nearly had two live style classes reported as unapplied — **they are written inside a `case` expression as bare strings.** **The fix is a control: run the same search for something you know exists.** A-63's seven dead config keys were established that way — six other keys were run through the identical search and each returned one consumer — **and that is what makes its negative result a finding rather than a failed grep.** |
+| **19** | **NEVER READ AN EXIT CODE THROUGH A PIPE.** `nimble gui 2>&1 \| tail -1; echo $?` reports **`tail`'s** status, which is **always 0**. So does `nimble core \| tail && nimble gui \| tail`. **A session using that idiom reports a green build it has not checked, and then `--check` runs the stale binary and agrees** — *two green lines, neither of them evidence.* Use `${PIPESTATUS[0]}`, or redirect to a file and test `$?` directly. **Reported 2026-09-03 by a session against itself**, which is how it was caught; **the `.devdocs` session had the same defect in its own verification commands and re-ran them clean.** Every build claim made with the broken idiom is unverified regardless of who made it — **and this project's history is full of green results that asserted nothing, which is exactly the shape of this one.** |
+| **18b** | **When a capability lands, grep for a caller that is not a self-test.** *One command, and it has now found five.* **Rule 15 says a green suite proves the parts and never the join — this is the procedure it was missing**, and without one the rule was violated systematically. The class: a capability complete and asserted below the widget layer that **the window cannot reach**. Known instances — 13b's fork column (`forkedFromConversationId`, in the schema from the start, nothing could create one); `pipeline.cacheStore`, whose only caller was `pipeline-selftest`; `pipeline.ChatError.detail`, populated at both call sites and read at neither; `api.forkConversation`'s `atMessageId`, honoured with every caller passing `""`; and `workspace`/`rag`'s earlier cases. > **THE PREDICTION IS RETRACTED; THE PROCEDURE STAYS.** This was recorded as a pattern these files
+> exhibit. **It is not one.** It is **four instances found at the parity boundary** — and the
+> evidence against generalising is now three-fold: one seven-row sweep cluster contained **zero**
+> members, **A-45 was an outright counter-example** (a threadvar initialised on the wrong threads,
+> not a join the window cannot reach), and a nine-row batch produced **none**. **The one-command
+> check remains worth running as a cheap habit. It is not a forecast.** *Retraction requested by the
+> session that produced the generalisation, against its own work, and endorsed by the session that
+> co-signed it — which is the behaviour that makes these verdicts usable.*
+
+**A sixth variant exists and is rare: present in the frozen source and never invoked** — `DatabaseService.setCache`/`getCache` is the **sole known instance**, hunted for and not found again in `attachments`. **Named so nobody goes looking for a pattern that is not there.** |
+| **17** | **A compile is not evidence the application starts.** **Run `bin/jenova --check` before handing over any GUI change** — it builds the whole window under a real GTK and exits, showing no window and binding no port. **And know its limit: it builds each branch once**, so it proves the window reaches its first frame and never that it survives a *state transition*. It exited 0 on the build that aborted the moment a note was opened (G-51). **AMENDED 2026-09-03 12:20 — and this is the half the rule was missing. `bin/jenova --check` RUNS THE BINARY THAT IS THERE. If the build failed, that is the PREVIOUS binary, and `--check` will cheerfully exit 0 on it.** A session caught this the honest way: `nimble gui` exited **1** and `--check` exited **0** in the same run. **A session can follow this rule faithfully, in good faith, and be reading a stale result.** So the check is not "run `--check`" — it is **"the build exited 0, and *then* `--check` exited 0", in that order, or it proves nothing.** Never report `--check` green without the build's exit status beside it. |
 | **18** | **REPLACED 2026-09-03 09:02 — the suites now mean something, and test work is now LAST.** This rule said a green build proved nothing because `nimble suites` ran no self-tests and four of six passed when they could not run. **A-1 and A-2 are built** — every self-test runs and a suite that cannot run fails. **The rule that replaces it is the USER's instruction of 09:05 (`TODOS.md` A-68): test and check work is left until last.** A red suite met while doing feature work is not a work item — record nothing, say nothing, carry on, exactly as Rule 0 already directs. Do not open a session with test bookkeeping. |
 
 ---
@@ -318,11 +424,23 @@ events, which is exactly how this shipped in the first place.
 - **A-6 — the G-40 memos may still copy per frame.** `[A]`, and it needs a second read before it
   is believed. **It is the last of the original high-severity four.**
 
-**Also verified and user-visible, still open:** markdown links and images are not rendered at all
-(**A-48**, in flight as 12e-2); Copy is Wayland-only and swallows its failure (**A-27**); the trash
-is write-only from the window (**A-16**–**A-18**, in flight as 12f — A-17's code is written and its
-assertions are not); the documented `CANVAS=0` off-switch for the only continuous GPU load cannot
-be triggered by any means (**A-25**).
+**Built since, and gone from `TODOS.md`** (`PROGRESS.md`, 11:55–12:02): **A-17** (storage deletions
+were invisible and unclearable), **A-16** (restore put back the row and never the file), **A-20**
+(cascading soft-deletes now transactional — **recorded as unasserted on purpose**, because
+atomicity cannot be asserted without damaging code, D-BX), **A-24** (the trash lists newest-first as
+its docstring always claimed), and **A-48** (markdown links and images, behind an http/https
+allowlist, 24 assertions).
+
+**Still open and user-visible:** Copy is Wayland-only and swallows its failure (**A-27**); the
+documented `CANVAS=0` off-switch for the only continuous GPU load cannot be triggered by any means
+(**A-25**); **A-18** — the whole `/api/fs/trash/*` surface is reachable only over HTTP and the
+window offers none of it, **upgraded `[A]` → `[V]` 2026-09-03** and now the only open half of 12f.
+
+**New, and it is a defect this project introduced rather than inherited — `TODOS.md` A-70:**
+**exporting a conversation with a system turn and importing it back makes that turn display as the
+model's own words.** `gui.Role` has no `rSystem` and `listMessages` maps everything not `"user"` to
+`rAssistant`, while `convmd` round-trips `role: "system"` faithfully. **13b's own round trip is the
+path that reaches it.**
 
 **Still outstanding from before:** **G-47**, the editor page's Neovim truncated at the bottom on a
 resize — **not diagnosed**, two candidates recorded, and not settleable without the running widget.

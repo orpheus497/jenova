@@ -558,11 +558,72 @@ proc underRoot(path, root: string): bool =
   let r = root.normalizedPath
   path == r or path.startsWith(r & "/")
 
+## Function purpose: containment that a symlink cannot defeat — **T-4's rule,
+## ported to the trash primitive rather than reinvented beside it (A-19).**
+##
+## `underRoot` above is purely lexical, and T-4's own comment says why that is
+## not enough: it "cannot see that a component is a link pointing out of the
+## tree". That was tolerable while `restoreTrash`'s only caller was the HTTP
+## route. **A-16 gave it a second caller reachable from the window**, and A-18-2
+## is about to give it a third where the path comes from a list the user clicks
+## — so the weaker of this module's two containment standards is now the one on
+## the reachable path, which is the wrong way round.
+##
+## Resolve the root, walk up to the deepest ancestor that actually exists,
+## resolve that, and require it inside the resolved root. **The walk-up is what
+## makes this work for a destination that does not exist yet**, which is every
+## restore: the unresolved tail below that ancestor holds no symlink, because it
+## holds nothing at all. That reasoning is T-4's and is spelled out in
+## `resolveStoragePath`; this is the same shape applied to both ends of a move.
+proc resolvedUnderRoot(path, root: string): bool =
+  if path.len == 0 or root.len == 0: return false
+  let normRoot = root.normalizedPath
+  var realRoot = normRoot
+  if dirExists(normRoot):
+    try: realRoot = expandFilename(normRoot)
+    except OSError: return false
+
+  var probe = path.normalizedPath
+  if probe.len == 0: return false
+  while not (fileExists(probe) or dirExists(probe)):
+    let up = probe.parentDir
+    if up.len == 0 or up == probe: return false
+    probe = up
+
+  try:
+    let realProbe = expandFilename(probe)
+    realProbe == realRoot or realProbe.startsWith(realRoot & "/")
+  except OSError:
+    false
+
 ## Action purpose: the tables `writeTrashMetadata` is ever called with. The
 ## sidecar is a file on disk, so its `type` field is untrusted input that was
 ## being concatenated straight into an UPDATE statement; only these five names
 ## may reach the SQL.
-const RestorableTables = ["notes", "fileAssets", "workspaces", "projects", "folders"]
+## The tables `writeTrashMetadata` is ever called with — equivalently, the entity
+## kinds that have a physical form on disk. **`RestoreOutcome` is derived from
+## this list and not from a second one**, so an entity added here without a
+## mirror, or given one without being listed, cannot drift into reporting the
+## wrong outcome.
+const RestorableTables* = ["notes", "fileAssets", "workspaces", "projects", "folders"]
+
+type
+  ## A-18-1. What a restore actually did, because "false" said two very
+  ## different things and the window could not tell them apart.
+  ##
+  ## The distinction is the whole point: a conversation or a message never had a
+  ## file, so nothing is wrong and nothing should be said. A note whose `.md` is
+  ## not in the trash **is** wrong — the row is back and the content is not —
+  ## and a restore that reports success there is the same class of defect as the
+  ## delete confirmation promising a restore that never happened.
+  ## **`rmNoPhysicalForm` is first deliberately**, so it is the zero value. An
+  ## outcome that some future path forgets to assign then defaults to the silent
+  ## case rather than to `rmRestored`, which would be a claim that a restore
+  ## happened — the exact false-success this type was added to end.
+  RestoreOutcome* = enum
+    rmNoPhysicalForm    ## this kind never has a file; ordinary, say nothing
+    rmRestored          ## row and file both back
+    rmFileMissing       ## this kind does have files and this one did not return
 
 proc restoreTrash*(trashPath, originalPath: string): bool =
   if trashPath.len == 0 or originalPath.len == 0: return false
@@ -572,9 +633,14 @@ proc restoreTrash*(trashPath, originalPath: string): bool =
   # crafted request cannot move an arbitrary file. fs_sync.lua had no such check;
   # it is added here rather than reproduced, and is the one behavioural addition
   # in this module.
+  # A-19: resolved, not lexical. The source is read and then moved, so a link
+  # standing in for a trash entry would have this proc move a file it was never
+  # shown. The `/.trash/` test stays lexical on purpose — it asks *which* root
+  # this is, not whether the path is contained, and the containment beside it
+  # is now resolved.
   let normalized = trashPath.normalizedPath
-  if not (underRoot(normalized, trash) or
-          (underRoot(normalized, workspaces) and
+  if not (resolvedUnderRoot(normalized, trash) or
+          (resolvedUnderRoot(normalized, workspaces) and
            normalized.contains("/.trash/"))):
     return false
 
@@ -595,9 +661,15 @@ proc restoreTrash*(trashPath, originalPath: string): bool =
   # it comes from the same two untrusted places — the caller's `original_path`
   # and the sidecar. Without this a crafted pair moved a trashed file anywhere
   # the process could write.
+  # A-19, and this is the end that matters most: the destination does not exist
+  # yet, which is exactly the case T-4 found the lexical check blind to — it saw
+  # an existing file through a symlink and missed a *new* one written through a
+  # symlinked parent, "which is the one that matters, because that is how a file
+  # gets outside the tree in the first place". `resolvedUnderRoot` walks up to
+  # the deepest existing ancestor for precisely this.
   let normalizedTarget = target.normalizedPath
-  if not (underRoot(normalizedTarget, workspaces) or
-          underRoot(normalizedTarget, trash)):
+  if not (resolvedUnderRoot(normalizedTarget, workspaces) or
+          resolvedUnderRoot(normalizedTarget, trash)):
     return false
 
   try:
@@ -648,8 +720,13 @@ proc restoreTrash*(trashPath, originalPath: string): bool =
 ## The move itself is `restoreTrash`, so containment is enforced once, in one
 ## place. A second check here would be a third standard in a module that already
 ## has two, which is A-19's warning.
-proc restoreMirror*(table, id: string): bool =
-  if table notin RestorableTables or id.len == 0: return false
+proc restoreMirror*(table, id: string): RestoreOutcome =
+  # A-18-1. A bool conflated the two failures and that is why it was safe to
+  # discard: `rmNoPhysicalForm` is the ordinary answer for a conversation or a
+  # message and must stay silent, while `rmFileMissing` is a restore the user
+  # asked for that did not fully happen and must not.
+  if table notin RestorableTables: return rmNoPhysicalForm
+  if id.len == 0: return rmFileMissing
   let (workspaces, trash) = roots()
 
   var trashRoots = @[trash, workspaces / ".trash"]
@@ -669,9 +746,15 @@ proc restoreMirror*(table, id: string): bool =
       except CatchableError: continue
       if meta.kind != JObject: continue
       if meta{"type"}.getStr != table or meta{"id"}.getStr != id: continue
-      return restoreTrash(path[0 ..< path.len - Suffix.len],
-                          meta{"original_path"}.getStr)
-  false
+      # The sidecar was found, so from here a failure is a real one: the move
+      # itself did not happen and the user is owed that.
+      return (if restoreTrash(path[0 ..< path.len - Suffix.len],
+                              meta{"original_path"}.getStr): rmRestored
+              else: rmFileMissing)
+  # No sidecar anywhere, for a kind that has files. Deleted before the mirror
+  # existed, or the sidecar was lost — nothing to look up and nothing to say
+  # except that the row is back and the file is not.
+  rmFileMissing
 
 ## Function purpose: empty the global trash and every workspace trash.
 ## `fs_sync.lua:378` shells out to `rm -rf "$dir"/*`; this removes entries

@@ -187,16 +187,35 @@ proc handle(client: Socket, class: RouteClass, workerId: int): bool =
     # into, so `prepare` returns them untouched — the check is inside it rather
     # than duplicated here.
     var outbound = req
+    var cacheKey = ""
     if req.body.len > 0:
       let prepared = pipeline.prepare(req.body)
+      cacheKey = prepared.cacheKey
 
       # The cache is consulted on the *rewritten* body's key, which is why this
       # sits after prepare and not before it. proxy.lua:1385.
-      if prepared.cacheKey.len > 0:
-        let hit = pipeline.cacheLookup(prepared.cacheKey)
+      if cacheKey.len > 0:
+        let hit = pipeline.cacheLookup(cacheKey)
         if hit.len > 0:
-          client.sendResponse(200, "application/json", hit,
-                              extraHeaders = "X-Cache: HIT\r\n")
+          # Action purpose: 12d-2. **The stored value is the upstream response
+          # as it went down the wire, head included, so it is replayed verbatim
+          # rather than re-framed.** `sendResponse` would wrap it in a fresh
+          # `200 application/json` head, and that is precisely what made a hit
+          # unreadable: `gui.streamOnce` acts only on lines beginning `data:`,
+          # so a JSON-framed hit rendered an empty reply and saved a blank
+          # assistant turn (D-CD). Replaying the bytes makes a hit
+          # byte-identical to a live reply, so chunked and SSE framing survive
+          # and no reader has to know the difference.
+          #
+          # `X-Cache: HIT` is inserted immediately after the status line — one
+          # insertion at a known offset, **not a parse of the head**, which is
+          # the same discipline `upstream.forward` keeps.
+          let cut = hit.find("\r\n")
+          if cut >= 0:
+            client.send(hit[0 ..< cut + 2] & "X-Cache: HIT\r\n" &
+                        hit[cut + 2 .. ^1])
+          else:
+            client.send(hit)
           return false
 
       # Only the body changes. `upstream.buildRequest` recomputes Content-Length
@@ -205,7 +224,22 @@ proc handle(client: Socket, class: RouteClass, workerId: int): bool =
       # truncates the request llama-server reads.
       outbound.body = prepared.body
 
-    discard upstream.forward(client, outbound, llamaHostS.get(), llamaPort)
+    # Action purpose: 12d-1. The relay tees into `captured` only when there is a
+    # key to file it under, so an uncacheable request pays nothing.
+    var captured = ""
+    var capturePtr: ptr string = nil
+    if cacheKey.len > 0: capturePtr = addr captured
+    let outcome = upstream.forward(client, outbound, llamaHostS.get(), llamaPort,
+                                   capturePtr)
+    # **Only a complete relay is stored, and only if it can be replayed.**
+    # `roTruncated` means the client went away mid-stream, and filing a fragment
+    # to serve later as a whole answer is D-BQ's truncated attachment again.
+    # `isReplayableStream` is the other half: a body with no `data:` lines would
+    # come back as a blank turn, which is the defect D-CD warns the writer must
+    # not introduce.
+    if cacheKey.len > 0 and outcome == upstream.roComplete and
+       pipeline.isReplayableStream(captured):
+      pipeline.cacheStore(cacheKey, captured)
 
   of rcEmbed:
     discard upstream.forward(client, req, embedHostS.get(), embedPort)

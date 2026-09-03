@@ -1061,6 +1061,77 @@ proc main() =
         check("invalidating one id leaves every other id cached",
               memo.parses == parsesBefore)
 
+      block linksAndImages:
+        # A-48. Links and images were not rendered at all — a model's citation
+        # reached the Label as literal `[RFC 7231](https://…)`. Both sides of
+        # the allowlist are asserted, because a pass that linkifies everything
+        # satisfies an "it linked" test and a pass that linkifies nothing
+        # satisfies a "it refused" test.
+        let ok = markdown.inlineMarkup("see [RFC 7231](https://rfc.example/7231) now")
+        check("an http(s) link becomes an anchor",
+              ok.contains("<a href=\"https://rfc.example/7231\">RFC 7231</a>"), ok)
+        check("the surrounding text survives",
+              ok.startsWith("see ") and ok.endsWith(" now"), ok)
+
+        # **The security half.** GTK hands an activated href to the desktop URI
+        # handler, so a scheme outside the allowlist must never reach it.
+        for hostile in ["[click](file:///etc/passwd)",
+                        "[click](javascript:alert)",
+                        "[click](data:text/html;base64,PHNjcmlwdD4=)",
+                        "[click](../../etc/passwd)"]:
+          let refused = markdown.inlineMarkup(hostile)
+          check("refused scheme produces no anchor: " & hostile,
+                not refused.contains("<a href"), refused)
+          check("...and the link text survives as text: " & hostile,
+                refused.contains("click"), refused)
+
+        # An image renders as its alt text linked to the source, deliberately
+        # not fetched — the bang goes with the syntax rather than being left.
+        let img = markdown.inlineMarkup("![a cat](https://img.example/c.png)")
+        check("an image renders as its alt text, linked",
+              img == "<a href=\"https://img.example/c.png\">a cat</a>", img)
+        check("the image bang is consumed, not rendered", not img.contains("!"),
+              img)
+
+        # A link inside a code span stays literal — this is why the link pass
+        # runs after the code-span lift and not before it.
+        let inCode = markdown.inlineMarkup("`[a](https://x.example/y)`")
+        check("a link inside a code span is not linkified",
+              not inCode.contains("<a href") and inCode.contains("<tt>"), inCode)
+
+        # ...and emphasis inside link TEXT still applies, which is why only the
+        # href leaves the string.
+        let emph = markdown.inlineMarkup("[**bold**](https://x.example/y)")
+        check("emphasis inside link text is still marked up",
+              emph.contains("<b>bold</b>") and emph.contains("<a href"), emph)
+
+        # The href is a Pango attribute value. `escape` has already handled
+        # `&`, `<` and `>`; a quote is what is left that could end it early.
+        let amp = markdown.inlineMarkup("[q](https://x.example/s?a=1&b=2)")
+        check("an ampersand in a URL stays escaped in the attribute",
+              amp.contains("href=\"https://x.example/s?a=1&amp;b=2\""), amp)
+        let quoted = markdown.inlineMarkup("[q](https://x.example/\"onx)")
+        check("a quote in a URL cannot end the attribute",
+              not quoted.contains("\"onx\"") and
+              (not quoted.contains("<a href") or quoted.contains("&quot;")),
+              quoted)
+
+        # Empty link text would render an invisible anchor, so it falls back.
+        let bare = markdown.inlineMarkup("[](https://x.example/z)")
+        check("an empty link text falls back to the URL",
+              bare.contains(">https://x.example/z</a>"), bare)
+
+        # No placeholder may survive into the markup handed to Pango.
+        for s in [ok, img, inCode, emph, amp, bare]:
+          check("no placeholder control character leaks into the markup",
+                not s.contains('\x01') and not s.contains('\x02') and
+                not s.contains('\0'), s)
+
+        # Regression: text with brackets but no link is untouched.
+        let noLink = markdown.inlineMarkup("an array [0] and a stray ( paren")
+        check("brackets that are not a link are left alone",
+              noLink == "an array [0] and a stray ( paren", noLink)
+
       if bad == 0:
         echo ""
         echo "markdown-selftest: PASS"
@@ -1843,12 +1914,16 @@ proc main() =
         let backA = wsRoot / "ws" / "restored-a.md"
         plant(jcaTrash, "a.md", "notes", "restore-a", backA)
         check("a trashed note comes back out of the GLOBAL trash",
-              fssync.restoreMirror("notes", "restore-a"))
+              fssync.restoreMirror("notes", "restore-a") == fssync.rmRestored)
         check("...and the file is actually at its original path again",
               fileExists(backA) and readFile(backA) == "restored-content")
-        check("...and the sidecar is consumed, so a second restore is a no-op",
+        # A-18-1: asking twice is not a second success. The sidecar is gone, so
+        # the honest answer becomes "this kind has files and this one is not
+        # here" — which is what the window will tell the user about.
+        check("...and the sidecar is consumed, so a second restore reports the " &
+              "file missing rather than success",
               not fileExists(jcaTrash / "a.md.metadata.json") and
-              not fssync.restoreMirror("notes", "restore-a"))
+              fssync.restoreMirror("notes", "restore-a") == fssync.rmFileMissing)
 
         # 2. The storage trash — `<workspaces>/.trash`, which nothing looked in
         # until A-17. This is the case that fails if `restoreMirror` inherits
@@ -1856,29 +1931,99 @@ proc main() =
         let backB = wsRoot / "ws" / "restored-b.md"
         plant(wsRoot / ".trash", "b.md", "fileAssets", "restore-b", backB)
         check("a trashed asset comes back out of the STORAGE trash (A-17's root)",
-              fssync.restoreMirror("fileAssets", "restore-b") and
-              fileExists(backB))
+              fssync.restoreMirror("fileAssets", "restore-b") ==
+                fssync.rmRestored and fileExists(backB))
 
         # 3. A workspace's own trash.
         let backC = wsRoot / "ws" / "restored-c.md"
         plant(wsRoot / "ws" / ".trash", "c.md", "notes", "restore-c", backC)
         check("a trashed note comes back out of a WORKSPACE trash",
-              fssync.restoreMirror("notes", "restore-c") and fileExists(backC))
+              fssync.restoreMirror("notes", "restore-c") == fssync.rmRestored and
+              fileExists(backC))
 
         # The other side, and it is the half that stops an always-true
         # implementation passing: the same planted entry, asked for wrongly.
         let backD = wsRoot / "ws" / "restored-d.md"
         plant(jcaTrash, "d.md", "notes", "restore-d", backD)
-        check("an id that matches nothing restores nothing",
-              not fssync.restoreMirror("notes", "no-such-id"))
+        check("an id that matches nothing reports the file missing",
+              fssync.restoreMirror("notes", "no-such-id") ==
+                fssync.rmFileMissing)
         check("...and the entry it did not match is still in the trash",
               fileExists(jcaTrash / "d.md") and not fileExists(backD))
-        # Same id, same sidecar, different table — the transition that proves
-        # the table is read rather than ignored.
-        check("the same id under a table that has no files restores nothing",
-              not fssync.restoreMirror("conversations", "restore-d"))
-        check("...and only the matching table moves it",
-              fssync.restoreMirror("notes", "restore-d") and fileExists(backD))
+
+        # A-18-1, and this pair is the whole basis of the signal: the SAME id
+        # and the SAME planted sidecar, asked for under two kinds, must give two
+        # different answers. A kind with no physical form is silent; a kind that
+        # has files and cannot find this one is not.
+        check("a kind that never has files reports no physical form, not a failure",
+              fssync.restoreMirror("conversations", "restore-d") ==
+                fssync.rmNoPhysicalForm)
+        check("...while the same id under a kind that does have files restores it",
+              fssync.restoreMirror("notes", "restore-d") == fssync.rmRestored and
+              fileExists(backD))
+
+        # The mapping itself, asserted directly rather than inferred from the
+        # cases above: every entity kind the database has is classified, so a
+        # kind added later without a mirror — or given one without being listed
+        # in `RestorableTables` — fails here rather than silently rejoining the
+        # conflation this outcome exists to end.
+        for t in ["notes", "fileAssets", "workspaces", "projects", "folders"]:
+          check("`" & t & "` is classified as having a physical form",
+                fssync.restoreMirror(t, "no-such-id") == fssync.rmFileMissing)
+        for t in ["conversations", "messages"]:
+          check("`" & t & "` is classified as having none",
+                fssync.restoreMirror(t, "no-such-id") ==
+                  fssync.rmNoPhysicalForm)
+
+      # Action purpose: A-19. `restoreTrash` guarded containment **lexically**,
+      # which is precisely the weakness T-4 closed in `resolveStoragePath` and
+      # left open here. It was filed as bounded because the only caller was the
+      # HTTP route — **and A-16 gave it a second caller reachable from the
+      # window**, so the weaker of this module's two standards became the one on
+      # the reachable path. A-18-2 is about to add a third, where the path comes
+      # from a list the user clicks.
+      #
+      # The fixture above is exactly right for this and already exists: `escape`
+      # is a symlink inside the tree pointing out of it, and the workspaces root
+      # is itself a symlink — the two holes T-4 named. Varied by DATA: the same
+      # restore is attempted through a real directory and through the link.
+      block restoreContainmentSurvivesASymlink:
+        let wsRoot = getEnv("JENOVA_WORKSPACES")
+        let jcaTrash = base / "home" / ".trash"
+        createDir(jcaTrash)
+
+        proc plantAt(name, original: string): string =
+          result = jcaTrash / name
+          writeFile(result, "payload")
+          writeFile(result & ".metadata.json",
+                    $(%*{"type": "notes", "id": "a19-" & name,
+                         "original_path": original}))
+
+        # The legitimate case must still work, or a containment fix that simply
+        # refuses everything would pass the negative assertion below.
+        let good = plantAt("ok.md", wsRoot / "ws" / "a19-ok.md")
+        check("a restore into a real directory still succeeds",
+              fssync.restoreTrash(good, wsRoot / "ws" / "a19-ok.md") and
+              fileExists(wsRoot / "ws" / "a19-ok.md"))
+
+        # The same operation, differing only in that the destination's parent is
+        # a symlink pointing out of the tree. `outside` is a real directory, so
+        # a lexical check passes this: the path is spelled inside the workspaces
+        # root and only resolves outside it.
+        let evil = plantAt("evil.md", wsRoot / "ws" / "escape" / "stolen.md")
+        check("a restore through a symlinked parent is REFUSED",
+              not fssync.restoreTrash(evil, wsRoot / "ws" / "escape" / "stolen.md"))
+        check("...and nothing was written outside the tree",
+              not fileExists(outside / "stolen.md"))
+        check("...and the entry is still in the trash, not half-moved",
+              fileExists(evil))
+
+        # And through `restoreMirror`, which is the window's route — the caller
+        # A-16 added and the reason this bound had to be re-derived at all.
+        check("the same escape is refused through the window's own path",
+              fssync.restoreMirror("notes", "a19-evil.md") ==
+                fssync.rmFileMissing and
+              not fileExists(outside / "stolen.md"))
 
       removeDir(base)
       delEnv("JENOVA_WORKSPACES")
@@ -2129,6 +2274,52 @@ proc main() =
       check("text before the first heading is discarded, not made a turn",
             convmd.fromMarkdown("stray\n# topic: x [agent]\nmore stray\n").
               messages.len == 0)
+
+      # Action purpose: A-70. **The window read every non-"user" row as the
+      # assistant**, so a stored system turn — which the import below produces
+      # correctly — lost its identity on the way in. Everything downstream reads
+      # that value, so the persona was sent to the model as its own prior words
+      # and export wrote `## jenova` over `<!-- system: … -->`, destroying the
+      # evidence of the bug in the file itself.
+      #
+      # The decision lives here rather than in `gui.nim` because `gui.nim` links
+      # into no test binary. **Asserted as the property, not the presence:**
+      # that the three roles are told apart, and that the coercion which caused
+      # the defect no longer happens.
+      block systemRoleSurvivesTheRead:
+        check("a stored system row stays a system turn",
+              convmd.canonicalRole("system") == "system")
+        # The transition that is the whole defect: before A-70 these two were
+        # the same answer.
+        check("...and is not the assistant",
+              convmd.canonicalRole("system") != convmd.canonicalRole("assistant"))
+        check("the user is still the user", convmd.canonicalRole("user") == "user")
+        check("the assistant is still the assistant",
+              convmd.canonicalRole("assistant") == "assistant")
+        # The fallback is deliberate and must stay, so it is asserted rather
+        # than left to be "fixed" later by someone reading it as an oversight.
+        check("an unknown role still falls back to the assistant",
+              convmd.canonicalRole("tool") == "assistant" and
+              convmd.canonicalRole("") == "assistant")
+        check("the role is matched case-insensitively",
+              convmd.canonicalRole("System") == "system")
+
+        # And the round trip end to end, which is what a user actually does:
+        # export a conversation carrying a system turn, import it back, and the
+        # system turn must still be one. This passed before A-70 too — convmd
+        # was always correct — and it is asserted here so that a future change
+        # to the *format* cannot break the half that the window now depends on.
+        let doc = convmd.toMarkdown("t", @[
+          convmd.MdMessage(role: "system", content: "PERSONA", timestamp: 1),
+          convmd.MdMessage(role: "user", content: "hi", timestamp: 2),
+          convmd.MdMessage(role: "assistant", content: "hello", timestamp: 3)])
+        check("a system turn is not exported as a readable heading",
+              "## jenova" notin doc.split("PERSONA")[0] and
+              "<!-- system: PERSONA -->" in doc)
+        let back = convmd.fromMarkdown(doc)
+        check("...and it comes back as a system turn, not an assistant one",
+              back.messages.len == 3 and back.messages[0].role == "system" and
+              convmd.canonicalRole(back.messages[0].role) == "system")
 
       if bad == 0:
         echo ""
@@ -2810,6 +3001,78 @@ proc main() =
         let rows = db.query("SELECT 42 AS n")
         check("queries still work after a flush",
               rows.len == 1 and rows[0].len == 1 and rows[0][0] == "42")
+
+      block responseCache:
+        # 12d. The cache was read on every turn and written by nothing, so
+        # `X-Cache: HIT` was structurally unreachable (A-7, ruled D-CD). Wiring
+        # the writer is only safe alongside two other things, and both are
+        # asserted here rather than trusted.
+        db.exec("DELETE FROM llm_cache")
+
+        # An SSE body is what the completion path produces and the only thing
+        # the window can replay. A JSON object is what the OLD hit response
+        # sent, and it is exactly what must never be stored: `gui.streamOnce`
+        # acts only on lines beginning `data:`, so replaying an object renders
+        # an empty reply and saves a blank assistant turn. Both sides asserted.
+        const sse = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n" &
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n" &
+                    "data: [DONE]\n\n"
+        check("an SSE response is replayable",
+              pipeline.isReplayableStream(sse))
+        check("a plain JSON object is NOT replayable — D-CD's blank turn",
+              not pipeline.isReplayableStream(
+                """{"choices":[{"message":{"content":"hi"}}]}"""))
+        check("an empty body is not replayable",
+              not pipeline.isReplayableStream(""))
+
+        # Round trip: what comes back must be byte-identical to what went in,
+        # head and framing included, or a replayed hit is not a live reply.
+        pipeline.cacheStore("k-sse", sse)
+        check("a stored stream round-trips byte-identically",
+              pipeline.cacheLookup("k-sse") == sse)
+        check("...including the terminating [DONE]",
+              pipeline.cacheLookup("k-sse").contains("data: [DONE]"))
+
+        # The cap. Over-size is not stored at all rather than stored truncated —
+        # a truncated entry replayed later is a confident answer about a
+        # fragment, which is D-BQ's rule.
+        let huge = "data: " & repeat('x', pipeline.MaxCacheEntryBytes) & "\n"
+        pipeline.cacheStore("k-huge", huge)
+        check("an over-cap entry is not stored",
+              pipeline.cacheLookup("k-huge").len == 0)
+        check("...and nothing truncated was stored under its key",
+              pipeline.cacheCount() == 1)
+
+        # Eviction. One more than the cap leaves exactly the cap, and the entry
+        # evicted is the OLDEST — asserted by naming it, not by counting, since
+        # a count alone passes on an implementation that drops the newest.
+        db.exec("DELETE FROM llm_cache")
+        pipeline.cacheStore("oldest", sse)
+        for i in 0 ..< pipeline.MaxCacheEntries:
+          pipeline.cacheStore("k" & $i, sse)
+        check("the cache is bounded at the cap",
+              pipeline.cacheCount() == pipeline.MaxCacheEntries,
+              "holding " & $pipeline.cacheCount())
+        check("the OLDEST entry is the one evicted",
+              pipeline.cacheLookup("oldest").len == 0)
+        check("the newest entry survived",
+              pipeline.cacheLookup("k" & $(pipeline.MaxCacheEntries - 1)) == sse)
+
+        # `POST /api/db/cache` is a second writer (12d-4). Routed through
+        # `cacheStore`, it must produce the row the GET route reads — the same
+        # shape, from the same proc, so the cap cannot be bypassed by using the
+        # HTTP surface instead. **`cacheStore` stays shape-agnostic**: that
+        # route stores plain values and `tests/test_api_db.sh` round-trips a
+        # bare string through it, so the SSE guard lives on the completion path
+        # and not in here (D-CK).
+        db.exec("DELETE FROM llm_cache")
+        pipeline.cacheStore("k-plain", "cached")
+        let row = db.query(
+          "SELECT response, timestamp FROM llm_cache WHERE cache_key=?", "k-plain")
+        check("a plain value stores fine — the API route's shape",
+              row.len == 1 and row[0][0] == "cached")
+        check("the timestamp column is written, which eviction now reads",
+              row.len == 1 and row[0][1].len > 0 and row[0][1] != "0")
 
       if bad == 0:
         echo ""

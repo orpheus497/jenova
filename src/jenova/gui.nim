@@ -66,9 +66,21 @@ import ./composer
 import ./convmd
 
 type
+  ## A-70. **`rSystem` is not decoration — its absence corrupted conversations.**
+  ## System rows reach `messages`: `convmd.fromMarkdown` reads `<!-- system: … -->`
+  ## back as a system turn and 13b's import writes that role through faithfully.
+  ## With only two cases, `listMessages` coerced it to `rAssistant` on the way
+  ## in, and because every other site reads *this enum* rather than the row, the
+  ## damage spread from there: the outbound body sent the persona to the model as
+  ## the assistant's own prior words on every later turn, and export wrote
+  ## `## jenova` over `<!-- system: … -->`, **destroying the evidence in the file
+  ## itself.** The string values are what `$` produces, so adding the case
+  ## repairs the send, the export and the render together, and every row already
+  ## stored keeps its correct `"system"` and heals at the next read.
   Role* = enum
     rUser = "user"
     rAssistant = "assistant"
+    rSystem = "system"
 
   ## What `llama-server` reported about one turn. **These are its numbers, not
   ## ours** — the server measures prompt and generation separately and this
@@ -102,6 +114,11 @@ type
     ## than per conversation because switching models mid-chat is a menu item.
     model*: string
     timings*: Timings
+    ## 12d-3: this reply came from the response cache rather than the model.
+    ## **Deliberately not persisted.** It is a property of how *this* generation
+    ## was answered, not of the turn — reloading the conversation tomorrow and
+    ## seeing "cached" would be a claim about a request nobody made.
+    cacheHit*: bool
     ## The turn this one follows (G-29). Empty for the first turn of a
     ## conversation. **Two messages sharing a parent are alternative versions of
     ## the same turn** — that is the whole of branching, and it is why editing or
@@ -163,7 +180,10 @@ type
     ## S-1: the detected hardware and the profile ranking. Detection shells out
     ## to `sysctl` and `llama-server --list-devices`, so it runs on the control
     ## worker and arrives here.
-    umHardware
+    umHardware,
+    ## 12d-3: this turn was answered from the response cache. Sent once, on the
+    ## response head, before any token.
+    umCacheHit
 
   UiMsg = object
     kind: UiMsgKind
@@ -294,9 +314,22 @@ proc streamOnce(job: StreamJob) =
                         retryable: ce.retryable))
       return
 
+    # Action purpose: 12d-3. **The headers were skipped, not read**, and that is
+    # why a cache hit has always been invisible here. `server.handle` has sent
+    # `X-Cache: HIT` on the hit path since the route was written, and this loop
+    # discarded it along with everything else — so a cached turn was
+    # indistinguishable from a live one and no screen run could tell the
+    # mechanism worked at all. The Web UI's `ChatMessageStatistics` shows a
+    # Cache Hit badge from this same header; this is the parity gap behind it.
+    #
+    # Only this one header is inspected. A general header table would cross the
+    # channel per turn for no other reader.
     while true:
       let line = sock.recvLine(timeout = 120_000)
       if line.len == 0 or line == "\r\n": break
+      if line.toLowerAscii.startsWith("x-cache:") and
+         line.toLowerAscii.contains("hit"):
+        uiChan.send(UiMsg(kind: umCacheHit))
 
     while true:
       # Checked before the read as well as relied on after it: if the stop lands
@@ -630,7 +663,15 @@ proc loadMessages(convId: string): seq[Message] =
                     "parent, extra FROM messages WHERE convId=? AND " &
                     "is_deleted=0 ORDER BY timestamp ASC, rowid ASC", convId):
     if r.len < 8: continue
-    result.add Message(role: (if r[0] == "user": rUser else: rAssistant),
+    # A-70: the lossy read. Anything that was not "user" became `rAssistant`,
+    # so a stored "system" row lost its identity here and nowhere else. The
+    # decision itself is `convmd.canonicalRole` so it can be asserted — this
+    # file links into no test binary — and this is only the mapping onto the
+    # enum, which cannot be got wrong without failing to compile.
+    result.add Message(role: (case convmd.canonicalRole(r[0])
+                              of "user": rUser
+                              of "system": rSystem
+                              else: rAssistant),
                        text: r[1], id: r[2], thinking: r[3], model: r[4],
                        timings: timingsFromJson(r[5]), parent: r[6],
                        extra: r[7])
@@ -1020,6 +1061,14 @@ viewable App:
   ## scans per frame is B-17 with a database behind it.
   trashOpen: bool
   trashItems: seq[TrashItem]
+  ## A-18-2. The **path-addressed** half of the trash, which has no database row
+  ## at all: files deleted through `/api/storage`. `restoreMirror` cannot see
+  ## them — it looks an item up by id — so they were listed nowhere and cleared
+  ## by nothing, and until A-17 they were not even enumerated. Deliberately a
+  ## second list rather than merged into `trashItems`: one is addressed by id
+  ## and the other by path, and unifying them would mean inventing an identity
+  ## for rows that do not have one.
+  trashFiles: seq[fssync.TrashEntry]
   hwDetecting: bool
   hw: hardware.Hardware
   hwScores: seq[hardware.Score]
@@ -1247,6 +1296,12 @@ viewable App:
             if st.messages.len == 0 or st.messages[^1].role != rAssistant:
               st.messages.add Message(role: rAssistant, text: "")
             st.messages[^1].thinking.add m.text
+          of umCacheHit:
+            # Arrives on the response head, before any token, so the assistant
+            # turn usually does not exist yet — same ordering as `umThinking`.
+            if st.messages.len == 0 or st.messages[^1].role != rAssistant:
+              st.messages.add Message(role: rAssistant, text: "")
+            st.messages[^1].cacheHit = true
           of umModel:
             if st.messages.len > 0 and st.messages[^1].role == rAssistant:
               st.messages[^1].model = m.text
@@ -2895,8 +2950,15 @@ proc messageBody(app: AppState, m: Message): Widget =
 ## before this existed shows nothing rather than a row of zeroes.
 proc statsLine(app: AppState, m: Message): string =
   let t = m.timings
+  # 12d-3. **Tested before the timings guard, not after it.** A cached reply is
+  # replayed from stored bytes, so its `timings` are whatever the original turn
+  # reported — and a hit stored before `timings_per_token` was asked for carries
+  # none at all, which would return "" here and hide the badge on exactly the
+  # turns it exists to explain.
+  if m.cacheHit and t.predictedN <= 0 and t.promptN <= 0: return "cached"
   if t.predictedN <= 0 and t.promptN <= 0: return ""
   var parts: seq[string]
+  if m.cacheHit: parts.add "cached"
 
   if t.predictedN > 0:
     var s = $t.predictedN & " out"
@@ -3361,14 +3423,26 @@ proc mainArea(app: AppState): Widget =
               style = [StyleClass("dim-note")]
             for i, m in (if app.openNote.len > 0: @[] else: app.messages):
               Frame {.expand: false.}:
+                # A-70: a system turn is neither the user's nor the model's, and
+                # labelling it "JENOVA" is the visible half of presenting the
+                # persona as something the model said. The Web UI draws it as
+                # its own kind (`ChatMessageSystem.svelte`) and so does this.
                 style = [StyleClass("msg-card"),
-                         StyleClass(if m.role == rUser: "msg-user" else: "msg-agent")]
+                         StyleClass(case m.role
+                                    of rUser: "msg-user"
+                                    of rSystem: "msg-system"
+                                    else: "msg-agent")]
                 Box(orient = OrientY, spacing = 4, margin = 10):
                   Label {.expand: false.}:
-                    text = (if m.role == rUser: "YOU" else: "JENOVA")
+                    text = (case m.role
+                            of rUser: "YOU"
+                            of rSystem: "SYSTEM"
+                            else: "JENOVA")
                     xAlign = 0.0
                     style = [StyleClass("msg-role"),
-                             StyleClass(if m.role == rUser: "msg-role-user"
+                             StyleClass(case m.role
+                                        of rUser: "msg-role-user"
+                                        of rSystem: "msg-role-system"
                                         else: "msg-role-agent")]
                   # Editing varies what is *inside* the card, never the card's
                   # own type — the swap happens among a `Box`'s children, which
@@ -3803,6 +3877,20 @@ proc refreshTrash(app: AppState) =
         else: "Message"
       app.trashItems.add (kind: t, id: row[0], label: label, detail: noun)
 
+  # A-18-2. The other half, and it is a different kind of thing rather than more
+  # of the same: files deleted through `/api/storage` never had a row, so no
+  # amount of walking `deletedRows` finds them. `fssync.getTrash` is the only
+  # way to see them and it had exactly one caller, in the HTTP route — so from
+  # the window these accumulated for ever, invisible and unclearable.
+  app.trashFiles = @[]
+  try:
+    app.trashFiles = fssync.getTrash()
+  except CatchableError:
+    # Reading the trash tree is filesystem work and can fail; an empty list is
+    # the honest answer here, and the panel says so rather than showing nothing
+    # and implying the trash is empty.
+    app.notice = "Could not read the trash directories"
+
 proc openTrash(app: AppState) =
   app.refreshTrash()
   app.notice = ""
@@ -3822,6 +3910,76 @@ proc restoreFromTrash(app: AppState, item: TrashItem) =
     app.reloadTree()
   else:
     app.notice = "Could not restore that " & item.detail.toLowerAscii
+
+## Function purpose: put back a file that never had a database row (A-18-2).
+##
+## Addressed by path, not by id, which is the whole reason it cannot share
+## `restoreFromTrash`: `fssync.restoreTrash` reads the sidecar for the original
+## location and moves the file back, and there is no row to un-delete. Its
+## containment is resolved rather than lexical since A-19 — which matters here
+## more than anywhere, because this is the first surface that hands that
+## primitive a path the user picked off a list.
+proc restoreTrashFile(app: AppState, entry: fssync.TrashEntry) =
+  if fssync.restoreTrash(entry.path, ""):
+    app.notice = "Restored " & entry.name
+    app.refreshTrash()
+  else:
+    # The sidecar carries the destination; without it there is nowhere to put
+    # the file back to, and refusing is better than guessing at a location.
+    app.notice = "Could not restore " & entry.name &
+                 " — its original location is not recorded"
+
+## Function purpose: empty every trash directory, behind a confirmation that
+## states what is destroyed and that it does not come back (A-18-3).
+##
+## **The confirmation is not optional and it is not politeness.** Every delete
+## in this application shows a dialog promising "It can be restored from the
+## trash" — emptying revokes a promise the product has already made, so the
+## dialog has to say what it takes and that the taking is final. An irreversible
+## destructive action behind a soft confirmation is the defect, not the missing
+## button.
+##
+## **It deliberately says nothing reassuring beyond that.** There is no
+## authentication on any route in this program (A-55), so wording that implied
+## the trash was private would be a claim this product cannot make.
+proc emptyTrashConfirmed(app: AppState) =
+  let fileCount = app.trashFiles.len
+  let rowCount = app.trashItems.len
+  if fileCount == 0 and rowCount == 0:
+    app.notice = "The trash is already empty"
+    return
+
+  let (res, _) = app.open: gui:
+    MessageDialog:
+      title = "Empty the trash?"
+      message = "This deletes " & $fileCount &
+                (if fileCount == 1: " file" else: " files") &
+                " from the trash directories on disk.\n\n" &
+                "It cannot be undone. Nothing emptied here can be restored.\n\n" &
+                (if rowCount > 0:
+                   "The " & $rowCount &
+                   (if rowCount == 1: " deleted item" else: " deleted items") &
+                   " listed above keep their database rows and stay " &
+                   "restorable, but any file belonging to them is destroyed " &
+                   "with the rest."
+                 else: "")
+      DialogButton {.addButton.}:
+        text = "Cancel"
+        res = DialogCancel
+      DialogButton {.addButton.}:
+        text = "Empty Trash"
+        res = DialogAccept
+        style = [ButtonDestructive]
+  if res.kind != DialogAccept: return
+
+  # `emptyTrash` reports a partial failure as `false`, and that distinction is
+  # kept: a "done" over a trash that is still half full is the same class of
+  # lie as a restore that reports success without moving anything.
+  if fssync.emptyTrash():
+    app.notice = "Trash emptied"
+  else:
+    app.notice = "Some items could not be deleted from the trash"
+  app.refreshTrash()
 
 ## Function purpose: the trash screen (G-21). Everything deleted in this
 ## application is a soft delete and there was no way to see or undo one, which
@@ -3854,6 +4012,14 @@ proc trashPanel(app: AppState): Widget =
               tooltip = "Refresh"
               style = [ButtonFlat, StyleClass("row-btn")]
               proc clicked() = app.refreshTrash()
+            # A-18-3. `fssync.emptyTrash` existed with one caller, in the HTTP
+            # route, so from the window the trash trees were write-only: things
+            # went in on every delete and nothing ever came out or cleared.
+            Button {.expand: false.}:
+              text = "Empty Trash"
+              tooltip = "Delete every file in the trash directories, permanently"
+              style = [ButtonFlat, StyleClass("row-btn")]
+              proc clicked() = app.emptyTrashConfirmed()
             Button {.expand: false.}:
               icon = "window-close-symbolic"
               tooltip = "Close"
@@ -3862,12 +4028,16 @@ proc trashPanel(app: AppState): Widget =
 
           ScrolledWindow {.expand: true.}:
             Box(orient = OrientY, spacing = 6, margin = 4):
-              if app.trashItems.len == 0:
+              # A-18-2: the empty state has to account for BOTH lists. Saying
+              # "nothing has been deleted" while the file section below listed
+              # entries would be the same false reassurance the trash view was
+              # built to end.
+              if app.trashItems.len == 0 and app.trashFiles.len == 0:
                 Label {.expand: false.}:
                   text = "Nothing has been deleted."
                   xAlign = 0.0
                   style = [StyleClass("settings-help")]
-              else:
+              if app.trashItems.len > 0:
                 Label {.expand: false.}:
                   text = "Restoring a container brings back what was inside " &
                          "it. Restoring something inside a deleted container " &
@@ -3890,6 +4060,40 @@ proc trashPanel(app: AppState): Widget =
                       text = "Restore"
                       style = [ButtonFlat, StyleClass("row-btn")]
                       proc clicked() = app.restoreFromTrash(item)
+
+              # A-18-2. Kept as its own section rather than merged above: these
+              # are addressed by path and have no database row, so they cannot
+              # share the row list's Restore, and presenting them as though they
+              # were the same kind of thing would be a false claim about what
+              # restoring one does.
+              if app.trashFiles.len > 0:
+                Label {.expand: false.}:
+                  text = "Deleted files"
+                  xAlign = 0.0
+                  style = [StyleClass("settings-label")]
+                Label {.expand: false.}:
+                  text = "Files deleted from the workspace tree itself. These " &
+                         "have no database entry — restoring one puts the file " &
+                         "back where it was recorded as having come from."
+                  xAlign = 0.0
+                  wrap = true
+                  style = [StyleClass("settings-help")]
+                for entry in app.trashFiles:
+                  Box(orient = OrientX, spacing = 8) {.expand: false.}:
+                    Label {.expand: false.}:
+                      text = (if entry.workspace.len > 0: entry.workspace
+                              else: "File")
+                      xAlign = 0.0
+                      sizeRequest = (110, -1)
+                      style = [StyleClass("settings-label")]
+                    Label {.expand: true.}:
+                      text = entry.name
+                      xAlign = 0.0
+                      ellipsize = EllipsizeEnd
+                    Button {.expand: false.}:
+                      text = "Restore"
+                      style = [ButtonFlat, StyleClass("row-btn")]
+                      proc clicked() = app.restoreTrashFile(entry)
 
 ## Function purpose: open the hardware screen and ask the control worker for a
 ## detection. Opening always re-detects rather than showing a cached result —

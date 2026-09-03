@@ -19,6 +19,9 @@ import ./db
 import ./http
 import ./fssync
 import ./rag
+# 12d-4: for `cacheStore`, so this file's cache route cannot bypass the cap.
+# No cycle — nothing in `pipeline`'s transitive imports reaches back here.
+import ./pipeline
 
 type
   Column = object
@@ -451,7 +454,12 @@ proc softDelete(e: Entity, id: string, withForks = false): ApiResult =
 ## original restores the ancestry first. The depth guard exists because this
 ## walks parent links read from data, and a cycle there would otherwise recurse
 ## without end.
-proc restoreItem(entityName, id: string, depth = 0): ApiResult =
+## A-18-1. `outcome` reports what happened to **this** item's file, not to its
+## ancestors' — the recursion restores parents on the way in and their results
+## are deliberately dropped, because the user asked about the thing they clicked
+## and a folder that was already on disk is not news.
+proc restoreItem(entityName, id: string, outcome: var fssync.RestoreOutcome,
+                 depth = 0): ApiResult =
   if depth > 8 or not Entities.hasKey(entityName):
     return ok("""{"status":"ok"}""")
   let e = Entities[entityName]
@@ -464,10 +472,12 @@ proc restoreItem(entityName, id: string, depth = 0): ApiResult =
     if idx >= row.len: break
     let v = row[idx]
     if v.len == 0 or v == "null": continue
+    # An ancestor's own outcome goes nowhere on purpose — see the note above.
+    var ancestor: fssync.RestoreOutcome
     case col.name
-    of "folderId": discard restoreItem("folders", v, depth + 1)
-    of "projectId": discard restoreItem("projects", v, depth + 1)
-    of "workspaceId": discard restoreItem("workspaces", v, depth + 1)
+    of "folderId": discard restoreItem("folders", v, ancestor, depth + 1)
+    of "projectId": discard restoreItem("projects", v, ancestor, depth + 1)
+    of "workspaceId": discard restoreItem("workspaces", v, ancestor, depth + 1)
     else: discard
 
   db.exec("UPDATE " & e.name & " SET is_deleted=0 WHERE id=?", id)
@@ -481,12 +491,13 @@ proc restoreItem(entityName, id: string, depth = 0): ApiResult =
   # The ancestors above are restored first by the recursion, so a directory is
   # back before anything is moved into it.
   #
-  # **A false answer is the ordinary case, not a failure**, and that is why it
-  # is discarded rather than reported: the four entity kinds with no physical
-  # form never had a sidecar, and neither did anything deleted before the
-  # mirror existed. There is nothing the caller could do differently, and the
-  # row restore is correct either way.
-  discard fssync.restoreMirror(e.name, id)
+  # **A-18-1: the answer is now carried out rather than discarded.** It was a
+  # bool, and a bool said two different things — "this kind never had a file",
+  # which is ordinary and must stay silent, and "this kind has files and this
+  # one did not come back", which is a restore the user asked for that only
+  # half happened. `RestoreOutcome` separates them so the window can tell the
+  # user about the second without crying wolf over the first.
+  outcome = fssync.restoreMirror(e.name, id)
   # Action purpose: deletion forgets (D-BI) and nothing undid it, so a restored
   # turn came back everywhere except in what the model recalls. It looked
   # repaired because `rag.backfillChats` picks it up at the *next* start — which
@@ -509,7 +520,12 @@ proc restoreItem(entityName, id: string, depth = 0): ApiResult =
       discard rag.indexExchange(r[0])
   ok("""{"status":"ok"}""")
 
-proc restore(e: Entity, id: string): ApiResult = restoreItem(e.name, id)
+proc restore(e: Entity, id: string): ApiResult =
+  # The HTTP route has nowhere to put the outcome — its response shape is the
+  # frozen client's (D-Z) — so it is dropped here and carried only to the
+  # window, which is the surface A-18 is about.
+  var outcome: fssync.RestoreOutcome
+  restoreItem(e.name, id, outcome)
 
 proc parseBodyJson(body: string): JsonNode =
   try: parseJson(body) except CatchableError: nil
@@ -793,7 +809,24 @@ proc deleteEntity*(entity, id: string): bool =
 ## the upward cascade and the retrieval re-index apply whichever surface the user
 ## restored from. A window that wrote `is_deleted=0` itself would skip both.
 proc restoreEntity*(entity, id: string): bool =
-  entity in Entities and restoreItem(entity, id).status == 200
+  var outcome: fssync.RestoreOutcome
+  entity in Entities and restoreItem(entity, id, outcome).status == 200
+
+## Function purpose: restore, and say what actually happened to the file — the
+## signal the Trash view needs to stop claiming a restore it did not perform
+## (A-18-1).
+##
+## Separate from `restoreEntity` rather than replacing it: the HTTP route and
+## the tests want the plain answer, and a caller that cannot act on the outcome
+## should not be made to handle one. **`rmNoPhysicalForm` is not a failure** —
+## a conversation or a message never had a file, and a window that reported
+## something there would cry wolf on the commonest restore of all.
+proc restoreEntityOutcome*(entity, id: string):
+    tuple[ok: bool, outcome: fssync.RestoreOutcome] =
+  if entity notin Entities: return (false, fssync.rmNoPhysicalForm)
+  var outcome: fssync.RestoreOutcome
+  let r = restoreItem(entity, id, outcome)
+  (r.status == 200, outcome)
 
 ## Function purpose: reconcile every live note against its file on disk — the
 ## `pull` half of the Web UI's `SyncService` (`PLANS.md` Step 13b).
@@ -1027,9 +1060,19 @@ proc handleDb*(req: Request): ApiResult =
     let node = parseBodyJson(req.body)
     if node.isNil or not node.hasKey("key") or not node.hasKey("response"):
       return err(400, "key and response required")
-    db.exec("INSERT OR REPLACE INTO llm_cache (cache_key, response, timestamp) " &
-            "VALUES (?, ?, strftime('%s','now'))",
-            node["key"].getStr, node["response"].getStr)
+    # Action purpose: 12d-4. **This route was a second writer into `llm_cache`
+    # that bypassed `pipeline.cacheStore` entirely**, so the cap and eviction
+    # 12d adds to that proc could be walked straight past on day one. It goes
+    # through the same door as the completion path now, and there is exactly one
+    # place where a cache entry is written.
+    #
+    # **The SSE-shape guard is deliberately NOT here and not in `cacheStore`.**
+    # That a stored body must carry `data:` lines and a `[DONE]` is a property
+    # of what the completion path produces, not of the store; it lives on that
+    # path. `tests/test_api_db.sh:185` posts a bare string through this route,
+    # so a shape test in the shared proc would turn that suite red, and test
+    # work is last (A-68).
+    pipeline.cacheStore(node["key"].getStr, node["response"].getStr)
     return ok("""{"status":"ok"}""")
 
   # ---- import ------------------------------------------------------------

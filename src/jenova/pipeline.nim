@@ -436,13 +436,73 @@ proc cacheLookup*(key: string): string =
   except CatchableError:
     ""
 
+const
+  MaxCacheEntries* = 256
+    ## 12d-4, and it is **new product behaviour the USER approved explicitly**
+    ## (D-CJ) rather than part of the defect fix. Before 12d the writer had no
+    ## caller, so `llm_cache` was empty by construction and its total absence of
+    ## any `DELETE` anywhere in `src/` cost nothing. Wiring the writer turns it
+    ## into a table that grows without bound inside the USER's own database, and
+    ## the rows are whole model replies rather than short values.
+  MaxCacheEntryBytes* = 1024 * 1024
+    ## One reply. Past this the entry is simply not cached: a cache exists to
+    ## save a round trip, not to become the largest table in the database.
+
+## Function purpose: is this body one the streaming reader can actually replay?
+##
+## **This is D-CD's warning as a testable predicate.** `pipeline.prepare` posts
+## `"stream": true` and `gui.streamOnce` acts only on lines beginning `data:`,
+## stopping at `[DONE]`. So a cache hit answered as a plain JSON object carries
+## no `data:` lines at all: the reader renders nothing and saves a blank
+## assistant turn. Storing only what can be replayed is what stops a cache hit
+## being worse than a cache miss.
+##
+## It is **not** enforced inside `cacheStore`, deliberately (D-CK): the cap is
+## shared policy and belongs on the storage primitive, while "must be replayable
+## as a stream" is an invariant of the completion path alone. The only other
+## writer, `POST /api/db/cache`, stores plain values — `tests/test_api_db.sh`
+## round-trips a bare string through it — and a shape rule buried in the shared
+## proc would turn that suite red for a policy decision in the wrong layer.
+proc isReplayableStream*(body: string): bool =
+  body.contains("\ndata:") or body.startsWith("data:")
+
 proc cacheStore*(key, response: string) =
   if key.len == 0 or response.len == 0: return
+  if response.len > MaxCacheEntryBytes: return
   try:
     db.exec("INSERT OR REPLACE INTO llm_cache (cache_key, response, timestamp) " &
             "VALUES (?, ?, strftime('%s','now'))", key, response)
+    # Action purpose: evict oldest-first, which is what finally gives the
+    # `timestamp` column a reader — it has been written by both writers since
+    # the schema was created and read by nothing but the GET route. The delete
+    # is by rowid out of a subselect rather than by a bare LIMIT, because
+    # SQLite is not built with `SQLITE_ENABLE_UPDATE_DELETE_LIMIT` by default
+    # and `DELETE … ORDER BY … LIMIT` would raise a syntax error at runtime,
+    # inside a `try` that discards it — a silent no-op eviction.
+    #
+    # `rowid` is the tiebreak and it is load-bearing, not decoration:
+    # `timestamp` is `strftime('%s','now')`, i.e. **one-second resolution**, and
+    # a burst of turns inside one second would otherwise evict in an arbitrary
+    # order — dropping a reply that had just been stored while keeping an older
+    # one. SQLite gives this table an implicit rowid (it is not `WITHOUT
+    # ROWID`), and `INSERT OR REPLACE` assigns a fresh one, so a refreshed entry
+    # correctly counts as the newest. That is the same one-second-resolution
+    # trap `fssync.epochPrefix` carries, met in a second place.
+    db.exec("DELETE FROM llm_cache WHERE cache_key IN (" &
+            "  SELECT cache_key FROM llm_cache" &
+            "  ORDER BY timestamp DESC, rowid DESC" &
+            "  LIMIT -1 OFFSET ?)", $MaxCacheEntries)
   except CatchableError:
     discard
+
+## Function purpose: how many entries the cache is holding. Exported for the
+## assertion and nothing else, the same way `db.cachedStatements` is.
+proc cacheCount*(): int =
+  try:
+    let rows = db.query("SELECT COUNT(*) FROM llm_cache")
+    if rows.len > 0 and rows[0].len > 0: parseInt(rows[0][0]) else: 0
+  except CatchableError:
+    0
 
 ## Function purpose: the request body the desktop window posts for one chat turn.
 ##
