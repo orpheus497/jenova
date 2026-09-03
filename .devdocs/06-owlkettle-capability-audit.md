@@ -128,8 +128,8 @@ the right widget, not a bigger lid.
 | Empty states | `StatusPage` | ~~A dim `Label`~~ — done for the empty transcript, the two model-list states and the trash, session 7 |
 | Inline messages | `Banner` | ~~—~~ — done for backend-down and the LAN flag/socket disagreement, session 7 |
 | Header/content/footer | `ToolbarView` | ~~A `Box` of three sections~~ — the chat column is a `ToolbarView` |
-| Adaptive sidebar | `OverlaySplitView` | `Flap` |
-| Menus | `PopoverMenu`, `ModelButton`, `ContextMenu` | 1 `Popover`, 1 `MenuButton` |
+| Adaptive sidebar | `OverlaySplitView` | ~~`Flap`~~ — swapped, with `AdwBreakpoint` hand-bound to drive `collapsed`, since owlkettle has no breakpoint at all |
+| Menus | `PopoverMenu`, `ContextMenu`, `MenuItem` | ~~1 `Popover`, 1 `MenuButton`~~ — every sidebar row has a `⋯` menu and a right-click menu. `ModelButton` is wrapped as `MenuItem` so choosing an item closes the menu, which owlkettle's does not |
 | Split primary action | `SplitButton` | Two buttons |
 | Reading-width column | `Clamp` | ~~Margins~~ — the transcript is clamped to 760, the Web UI's own `max-w-3xl` |
 | Identity | `Avatar` | ~~Text labels~~ — an icon avatar beside the name on every message card |
@@ -199,7 +199,8 @@ needs the server's own detail rather than one line. Errors keep the inline row.
 
 **One item genuinely is missing, and it gates a planned one:**
 
-* `AdwBreakpoint` — not needed until `OverlaySplitView` replaces `Flap`, and then it is. `Flap`
+* `AdwBreakpoint` — **bound by hand in session 7**, because `OverlaySplitView` did replace `Flap`
+  and this is what makes that lossless rather than a downgrade. `Flap`
   folds itself on a narrow window through `FlapFoldAuto`, which is what
   `alwaysShowSidebarOnDesktop` switches off; `OverlaySplitView.collapsed` is a plain `bool` that
   something must drive, and the something libadwaita intends is a breakpoint on the window.
