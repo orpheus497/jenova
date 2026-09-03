@@ -17,7 +17,7 @@
 ## starts that way rather than acquiring an OS branch later. Mirrors the #error
 ## guard in jenova-ui/src/main.c (stage S-5).
 when not defined(freebsd):
-  {.error: "jenova-core targets FreeBSD only — see .devdocs/PLANS.md Plan B.".}
+  {.error: "jenova-core targets FreeBSD only — see docs/install.md.".}
 
 import std/[os, posix, sequtils, strformat, strutils, times, json]
 import jenova/[paths, config, db, dbselftest, server, serverselftest, markdown,

@@ -142,18 +142,26 @@ is not a decodable image, `src/jenova/gui.nim:1914-1916`). Others swallow real f
 reason) and *"a fault a user could act on"* (route to `app.notice` or a log line). No
 handler should be silent without a comment saying why.
 
-### E-04 — The error-body reader stops at the first blank line · severity: low
+### E-04 — WITHDRAWN. The error-body reader is correct · severity: none
 
-`src/jenova/gui.nim:302-310`. After a non-200 status the header loop breaks on
-`h.len == 0`, then the body loop reads with `if chunk.len == 0: break`. `recvLine` strips
-CRLF, so an **empty line inside a body** ends the read. Also, lines are joined with
-`body.add chunk` — **no newline is reinserted** — so a pretty-printed multi-line JSON error
-becomes one concatenated line before `parseJson`. Both work today because llama-server
-sends compact single-line JSON errors; both break silently if it ever does not, and the
-failure mode is `classifyError` falling through to a generic message.
+The original finding claimed two defects. **Both were wrong, and a fix was written and then
+reverted rather than shipped.**
 
-**Fix:** honour `Content-Length` from the headers already being read, or accumulate with
-`body.add chunk & "\n"` and read until the socket closes.
+1. *"An empty line inside the body ends the read."* No. Nim's `net.recvLine` is documented at
+   `lib/pure/net.nim:1628-1634`: *"if solely `\r\L` is read then the result will be set to it …
+   If the socket is disconnected, the result will be set to `""`."* A blank line comes back as a
+   two-character string and a disconnect as an empty one, so `if chunk.len == 0: break` detects
+   exactly the disconnect it was written to detect.
+2. *"Lines are joined with no separator, so a pretty-printed JSON body is concatenated away."*
+   The joining is real; the consequence is not. JSON tokens do not span lines — a JSON string
+   cannot contain a raw newline — so concatenating lines without a separator yields the same
+   parse. The only content affected is a non-JSON body, which reaches `ChatError.detail`, and
+   `detail` is displayed nowhere in the window.
+
+Reading the standard library's own documented contract, rather than assuming the common
+convention, is what settles this. Recorded rather than deleted: the next reader will have the same
+suspicion.
+
 
 ### E-05 — The pipeline's own diagnostics are computed and thrown away · severity: medium (wiring)
 
@@ -358,21 +366,53 @@ rows over current ones.
 
 ## Tracker
 
-| ID | Finding | Class | Severity | Fix size | State |
-|---|---|---|---|---|---|
-| E-01 | Zombie backends → fake restarts, stuck "starting", failed `stopAll` | error | **high** | S | open |
-| E-02 | Non-async-signal-safe work between `fork` and `exec` | error | medium | S | open |
-| E-03 | 32 silent exception handlers, 3 of them user-visible faults | error | medium | M | open |
-| E-04 | Error-body reader stops at a blank line, drops newlines | error | low | XS | open |
-| E-05 | Pipeline diagnostics discarded; silent history trimming | wiring | medium | S | open |
-| E-06 | `lanAddress` spawns 3 shells on the GTK thread; header claim false | error | medium | S | open |
-| M-01 | Three unbounded GUI caches, never cleared | memory | **high** | M | open |
-| M-02 | Attachment disk cache never swept | memory | medium | S | open |
-| M-03 | RAG vector search full-scans every chunk per query | memory/perf | **high** | M | open |
-| M-04 | Backend logs never rotated | memory/disk | medium | S | open |
-| M-05 | Deliberate bounded leaks — **do not "fix"** | memory | none | — | recorded |
-| W-01 | Three settings wired to nothing | wiring | high | S | open |
-| W-02 | Three endpoints called but not served | wiring | medium | S | open |
-| W-03 | Retrieval indexing coverage is accidental | wiring | low | M | open |
-| W-04 | `toolCalls` written by one surface, read by neither | wiring | low | — | blocked on P-A1 |
-| W-05 | Push/Pull database round trip | wiring | medium | S | needs decision |
+| ID | Finding | Class | Severity | State after session 2 |
+|---|---|---|---|---|
+| E-01 | Zombie backends → fake restarts, stuck "starting", failed `stopAll` | error | **high** | **fixed.** `isAlive` reaps with `waitpid(WNOHANG)` first. A targeted reap rather than `SIGCHLD`/`SIG_IGN`, which would break every `osproc.waitForExit` in the program. New `lifecycle-selftest` forks a child, lets it die and asserts `isAlive` goes false — **verified red before the fix, green after** |
+| E-02 | Non-async-signal-safe work between `fork` and `exec` | error | medium | **fixed.** The environment is materialised as an explicit `envp` in the parent and handed to `execve`; the child now calls only `setsid`, `open`, `dup2`, `close`, `execve` |
+| E-03 | 32 silent exception handlers, 3 of them user-visible faults | error | medium | **open.** Needs a per-site judgement pass, not a sweep |
+| E-04 | Error-body reader | — | none | **withdrawn — the finding was wrong** (see above). A fix was written and reverted |
+| E-05 | Pipeline diagnostics discarded; silent history trimming | wiring | medium | **fixed.** Intent, RAG hits, web hits, editor-document and trimmed-turn count travel as response headers; documented in `docs/usage.md`. The splice is built to fail only by omitting the header, never by damaging the stream, and was driven end-to-end against a fake upstream |
+| E-06 | `lanAddress` spawns 3 shells on the GTK thread; header claim false | error | medium | **half fixed.** The false claim in the module header is corrected and now says exactly what the GUI spawns and why. **The thread move is deliberately not taken**: it moves state across a thread boundary in the one file this project cannot type-check off FreeBSD. Do it in a session that can compile the GUI, using `hwWorker`'s shape |
+| M-01 | Three unbounded GUI caches, never cleared | memory | **high** | **fixed.** `BlockMemo` and `ParseMemo` gain caps with oldest-first batch eviction and a `clear`; `thumbCache` gains a cap; all three are emptied on a conversation switch and the two keyed ones forgotten on a delete. Asserted by overrunning the caps, not by reading the constants |
+| M-02 | Attachment disk cache never swept | memory | medium | **fixed.** `paths.sweepCache` prunes oldest-first at startup and **matches only `attach-*`** — asserted, because `cacheDir` comes from an environment variable and this is exactly how B-07 happened |
+| M-03 | RAG vector search full-scans every chunk per query | memory/perf | **high** | **fixed.** A generous newest-first scan ceiling, a hash index replacing the O(rows × documents) dedupe, and scoring straight off the packed blob instead of allocating a seq per row. Asserted that packed and unpacked scoring agree, including at 768 dimensions and on a mismatched width |
+| M-04 | Backend logs never rotated | memory/disk | medium | **fixed.** Size-capped rotation at start, one previous generation kept. Rotation is at start and not mid-run because that is the only moment no descriptor is open on the file |
+| M-05 | Deliberate bounded leaks — **do not "fix"** | memory | none | recorded, untouched |
+| W-01 | Three settings wired to nothing | wiring | high | **1 of 3 fixed**, and all four reasons corrected. `copyTextAttachmentsAsPlainText` is wired through `pipeline.copyTextFor`. `pasteLongTextToFileLen` needs a paste handler on the composer; `pdfAsImage` needs a rasteriser; `autoMicOnEmpty` needs a recorder. A new assertion refuses any pending reason that blames the finished attachments step again |
+| W-02 | Three endpoints called but not served | wiring | medium | **won't fix — `jca_web` is frozen** (ruling). Recorded in report 02, P-C2 |
+| W-03 | Retrieval indexing coverage is accidental | wiring | low | **open.** The coverage is complete; consolidating it at the shared `putEntity`/`patchMessage` layer is the remaining work. Now documented in `docs/context-and-retrieval.md` §1 |
+| W-04 | `toolCalls` written by one surface, read by neither | wiring | low | **parked** — downstream of MCP, which is deferred |
+| W-05 | Push/Pull database round trip | wiring | medium | **parked** — ruling: out of scope for the GUI, and `jca_web` is frozen |
+| D-12 | `db-selftest`'s 25% overlap floor is a wall-clock assertion that fails under load | test | low | **open**, newly found. Documented in `docs/usage.md` so a failure is not mistaken for a database defect; the threshold should be re-shaped against a baseline measured in the same run |
+
+---
+
+## How session 2's changes were verified
+
+Neither binary can be built on the audit host: the project targets Nim 2.2.10 on FreeBSD with
+GTK4/libadwaita and owlkettle, and the environment has Nim 1.6.14 on Linux with no GTK and no
+network to fetch either. So the verification is **partial, and its limits are stated rather than
+implied**:
+
+* **30 of 35 modules type-check**, including `jenova_core.nim` (3,657 lines), against a scratch
+  copy with the two `when not defined(freebsd)` guards disabled. Not checkable: `gui.nim`,
+  `theme.nim`, `canvas.nim`, `sourceview.nim`, `vte.nim` — everything that imports owlkettle.
+* **`jenova-core` builds and all seventeen self-tests execute and pass**, including the two added
+  this session. This is real execution, not a compile.
+* **The `lifecycle-selftest` was proven to fail without its fix** by reverting `isAlive` in the
+  scratch tree and re-running.
+* **`upstream.forward` was driven end-to-end** against a fake upstream that feeds a response head
+  in seven-byte packets, confirming that headers splice correctly, that the no-header path stays
+  byte-identical, that a 200 KB body relays whole, that a reply shorter than a status line is not
+  dropped, and that the response-cache tee matches the client's bytes exactly in every case.
+* **`gui.nim` was differentially checked** against empty owlkettle stubs at HEAD and in the working
+  tree. Every owlkettle symbol is missing in both runs, so the ~940 error signatures are identical
+  noise; a *new* signature would mean a real error. There were none, and the file parses to end of
+  file, which is what catches a syntax mistake.
+
+**What this does not cover:** anything owlkettle-typed in `gui.nim` — a wrong widget property, a
+wrong callback signature, an owlkettle API misuse. The GUI edits were kept minimal for that reason
+and none of them changes the child count of a container holding a shortcut-carrying button, which
+is the documented hazard (`gui.nim`, G-51). **The first FreeBSD build of this branch is the real
+test of the GUI changes.**

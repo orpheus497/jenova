@@ -1,6 +1,10 @@
 # Report 02 — GUI ↔ Web UI Parity Audit
 
 **Status:** open tracker
+**Rulings in force** (session 2): `jca_web` is **frozen** — no Web-side change may be proposed as a
+fix. Push/Pull is **out of scope for the GUI** and is not to be built there. **MCP and TTS are
+deferred** to future planning, so P-A1, P-A2, P-A4 and W-04 are parked rather than open.
+**Last worked:** session 2
 **Goal being tracked:** the GTK4 desktop window (`bin/jenova`) reaches **1:1 parity** with
 the SvelteKit Web UI (`jca_web`), then exceeds it, and becomes the primary surface.
 **Method:** the Web UI's feature surface was enumerated from its stores, services, route
@@ -58,7 +62,7 @@ Legend: **=** parity · **~** partial · **✗** absent in GUI · **+** GUI ahea
 
 | Feature | Web | GUI | State | Evidence |
 |---|---|---|---|---|
-| GFM markdown | ✔ | ~ | **P-B3** | GUI parser has three block kinds only: `bkText, bkCode, bkTable` (`src/jenova/markdown.nim:8`) |
+| GFM markdown | ✔ | ~ | **P-B3** | See the correction below — much closer than first reported, and now closer still |
 | Syntax highlighting | ✔ highlight.js | ✔ GtkSourceView | = | `src/jenova/sourceview.nim` |
 | **KaTeX / LaTeX math** | ✔ | ✗ | **P-A5** | `jca_web/src/styles/katex-custom.scss`, `utils/latex-protection.ts` — **no math handling anywhere in `src/`** |
 | Code-block copy / preview | ✔ | ~ | **P-B4** | `ActionIconsCodeBlock.svelte`, `DialogCodePreview.svelte` vs GUI copy only |
@@ -215,7 +219,7 @@ window that wrote them. The Web UI has a full explorer for the same rows.
 |---|---|---|---|---|
 | P-B1 | Error surface: dialog with the server's own detail, vs a single truncated notice line | `DialogChatError.svelte` | `src/jenova/gui.nim:4874-4900` | S |
 | P-B2 | Processing-state detail while generating | `ChatScreenProcessingInfo.svelte` | status subtitle only | S |
-| P-B3 | Markdown coverage: lists, block quotes, headings, links, images, task lists, footnotes | remark→rehype | `bkText/bkCode/bkTable` (`src/jenova/markdown.nim:8`) | **L** |
+| P-B3 | Markdown coverage — **restated, see the correction below** | remark→rehype | most of it, and more since session 2 | S (remaining) |
 | P-B4 | Per-code-block copy button and a preview dialog | `ActionIconsCodeBlock`, `DialogCodePreview` | message-level copy only | S |
 | P-B5 | Attachment "view all" surface | `ChatAttachmentsViewAll.svelte` | inline chip strip | S |
 | P-B6 | Dedicated Files/Trash pages vs overlay panels | `src/routes/files/**` | overlay panels | M |
@@ -226,9 +230,29 @@ window that wrote them. The Web UI has a full explorer for the same rows.
 | P-B11 | Selective export (choose conversations) | `DialogConversationSelection` | `api.exportAll()` only (`src/jenova/gui.nim:3587`) | S |
 | P-B12 | Keyboard shortcuts | several, documented in-app | **exactly one: `F11`** (`src/jenova/gui.nim:3151`) | M |
 
-**P-B3 is the highest-value item in this class.** Three block kinds means every ordered
-list, bullet list, heading, block quote and inline link in a model's reply renders as raw
-text. It affects every message on screen.
+### Correction — P-B3 as first written was wrong
+
+**The original text said "three block kinds means every ordered list, bullet list, heading, block
+quote and inline link renders as raw text". That is false**, and it was reached by reading the
+`BlockKind` enum without reading `lineMarkup` beneath it. `markdown.nim` already handled headings
+h1–h3, bullets, task lists with rendered check boxes, block quotes, and links and images behind a
+scheme allowlist — all as Pango markup inside a `bkText` block, which is why the enum has three
+cases and not eight.
+
+What was **actually** missing, verified line by line:
+
+| Gap | Status |
+|---|---|
+| Ordered lists (`1. `, `2) `) — rendered as their own source text | **fixed**, session 2 |
+| Nested list indentation — `lineMarkup` stripped the indent before measuring it, so every outline rendered flat | **fixed**, session 2 |
+| Headings h4–h6 — fell through and rendered their own hashes | **fixed**, session 2 |
+| Horizontal rules (`---`, `***`, `___`) | **fixed**, session 2 |
+| `+ ` bullets | **fixed**, session 2 |
+| Math / KaTeX | still absent — that is P-A5, and it is the real remaining gap |
+
+Twenty-five assertions cover the new behaviour in `markdown-selftest`, including that the branches
+which already worked still do. The change is parser-only: no widget-tree change, which is where
+this project has had its crashes.
 
 **P-B12 carries a structural hazard.** `owlkettle`'s `Button.shortcut` has no update path —
 it builds a `GtkShortcutController` once and its update hook asserts the value never
@@ -289,7 +313,18 @@ and `serveStatic` answers `404 text/plain` (`src/jenova/server.nim:160-163`).
   the shipped Web UI**, silently. The comment at `stores/mcp.svelte.ts:110` names an
   upstream flag (`--webui-mcp-proxy`) that this server has never had.
 
-### P-C3 — Sidebar "Push" / "Pull" are vestigial and can move data backwards · severity: medium
+### P-C3 — Sidebar "Push" / "Pull" are vestigial and can move data backwards · **PARKED**
+
+> **Ruling, session 2:** `jca_web` is frozen, so the Web UI's buttons stay as they are, and
+> Push/Pull is explicitly **not** to be built into the GUI — it is unnecessary there, because the
+> window *is* the server and has no separate store to synchronise. The analysis below is kept as
+> the record of why, not as work to do.
+>
+> The window's "Sync notes from disk" (`gui.pullNotesFromDisk` → `api.pullNotes`) already covers
+> the one case that is real on a single-process surface: a note edited outside the window, in the
+> embedded Neovim or another editor, coming back into the database.
+
+
 
 `ChatSidebarActions.svelte:33-59` renders two prominent sidebar buttons (visible in both
 README screenshots). Their implementation:
@@ -315,19 +350,21 @@ count.
 **Decide:** remove Push/Pull from the Web UI, or re-specify them as an explicit
 backup/restore with a confirmation naming what will be overwritten.
 
-### P-C4 — The Models panel silently shows nothing for a valid installation · severity: medium
+### P-C4 — WITHDRAWN. The Models panel already explains itself · severity: none
 
-`models.available` (`src/jenova/models.nim:268-288`) walks only
-`SourceRoles = ["instruct", "thinking"]`. `models.discover`, which chooses the model that
-actually runs, also searches `models/agent/`, `models/draft/`, `models/embed/` and the flat
-`models/` root — and `README.md:114` tells users to put `.gguf` files in `~/Jenova/models/`.
+The original finding claimed an "empty Models panel with no explanation". It is wrong.
+`gui.modelsPanel` (`src/jenova/gui.nim`) already carries an empty state naming **both** directories
+it searched:
 
-A user who follows the README sees an **empty Models panel with no explanation**, while
-inference works. The restriction is deliberate (ruling D-CB, `src/jenova/models.nim:251-253`)
-but is invisible at the point of failure.
+> *No .gguf files in `<JCA_HOME>`/models/instruct or `<JCA_HOME>`/models/thinking.*
 
-**Fix:** empty-state text in the panel naming the two directories it reads, plus the
-documentation change in report 01, D-09.
+with the comment above it making exactly the argument the finding was about to make: *"name both
+folders that were actually looked in. 'No models found' over a tree the user knows has models in
+it is the report that sends them looking in the wrong place."*
+
+The **documentation** half of this was real and is fixed — README and `docs/usage.md` now state
+that discovery and the switcher read different directory sets (report 01, D-09). No code change
+was needed or made.
 
 ### P-C5 — Stale comment claims drop and paste are unimplemented · severity: low
 
@@ -381,22 +418,22 @@ is a channel message and a panel, and no other surface can show it.
 
 ## Tracker
 
-| ID | Gap | Class | Size | Depends on | State |
-|---|---|---|---|---|---|
-| P-A1 | MCP client | absent | XL | ruling revisit | **blocked (settled fact)** |
-| P-A2 | Agentic tool loop | absent | L | P-A1 | blocked |
-| P-A3 | Audio capture | absent | M | — | open |
-| P-A4 | Speech synthesis | absent | S | ruling on process spawn | **needs decision** |
-| P-A5 | Math rendering | absent | M | — | open |
-| P-A6 | Fork from message + options | absent | S | — | open |
-| P-A7 | PDF viewing | absent | M | — | open |
-| P-A8 | File-asset open/preview/export | absent | M | — | open |
-| P-B1…P-B11 | Partial implementations | partial | S–M | — | open |
-| P-B3 | Markdown block coverage | partial | **L** | — | open |
-| P-B12 | Keyboard shortcuts | partial | M | shortcut-controller rework | open |
-| P-C1 | Three unwired settings | false impl | S | — | open |
-| P-C2 | Three unserved endpoints called by the Web UI | dead surface | S | — | open |
-| P-C3 | Push/Pull vestigial | dead surface | S | **needs decision** | open |
-| P-C4 | Models panel empty-state | false impl | S | — | open |
-| P-C5 | Stale composer comment | stale | XS | — | open |
-| P-E1…P-E8 | Beyond-parity proposals | new | — | approval | proposed |
+| ID | Gap | Class | Size | State after session 2 |
+|---|---|---|---|---|
+| P-A1 | MCP client | absent | XL | **parked** — deferred to future planning (ruling) |
+| P-A2 | Agentic tool loop | absent | L | **parked** — downstream of P-A1 |
+| P-A3 | Audio capture | absent | M | open. `pipeline.contentFor` already emits `input_audio` parts, so the wire format is done and only the recorder is missing |
+| P-A4 | Speech synthesis | absent | S | **parked** — deferred to future planning (ruling) |
+| P-A5 | Math rendering | absent | M | **open — now the largest rendering gap**, and the only one left in the markdown path |
+| P-A6 | Fork from a message | absent | S | **done** — `api.forkConversation` already took an `atMessageId`; the window had never passed one |
+| P-A7 | PDF viewing | absent | M | open |
+| P-A8 | File-asset open/preview/export | absent | M | open. The window writes `fileAssets` rows it cannot then read |
+| P-B1, P-B2, P-B4…P-B11 | Partial implementations | partial | S–M | open |
+| P-B3 | Markdown block coverage | partial | S remaining | **mostly done** — see the correction above. What is left is P-A5 |
+| P-B12 | Keyboard shortcuts | partial | M | open, and **gated**: the `Button.shortcut` mechanism must be replaced with a window-level `GtkShortcutController` first. Two crashes have already come from adding to a container that holds the one shortcut-carrying button |
+| P-C1 | Three unwired settings | false impl | S | **1 of 3 done.** `copyTextAttachmentsAsPlainText` is wired; the other two now name real blockers instead of a finished one — see report 03, W-01 |
+| P-C2 | Three unserved endpoints called by the Web UI | dead surface | S | **won't fix — `jca_web` is frozen.** `/models/load` and `/models/unload` are unreachable in practice (they need ROUTER mode, which this server never reports). `/cors-proxy` fails gracefully but does silently disable remote MCP servers — which is moot while MCP is parked, and is the argument for a **server-side** MCP client when it is revisited |
+| P-C3 | Push/Pull vestigial | dead surface | S | **parked** — ruling: out of scope for the GUI, and `jca_web` is frozen |
+| P-C4 | Models panel empty-state | — | — | **withdrawn — the finding was wrong**, see above |
+| P-C5 | Stale composer comment | stale | XS | **done** |
+| P-E1…P-E8 | Beyond-parity proposals | new | — | proposed. **P-E5 is now half-built**: the pipeline diagnostics it needed are no longer discarded (report 03, E-05) and travel as response headers — what remains is a panel to show them |

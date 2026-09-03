@@ -48,6 +48,30 @@ the Web UI; and switch the active model between `instruct` and `thinking`.
 
 The `jenova.desktop` entry launches `jenova`.
 
+`F11` toggles fullscreen. It is the window's only keyboard shortcut.
+
+## Intent prefixes
+
+Beginning a message with one of these changes how the pipeline builds the request. The prefix is
+**stripped before the model sees it** — it is addressed to Jenova, not to the model. They work
+from any client: the window, the Web UI, or `curl`.
+
+| Prefix | Effect |
+|---|---|
+| `Web Search:` | Runs a DuckDuckGo search and injects the results. Retrieval is skipped — the context comes from the web. Tools are stripped |
+| `Visual Rewrite:` | Minimal retrieval, tools stripped |
+| `Open File Chat:` / `Chatbot:` | More retrieval, and for a large payload carrying a `Path:` marker the query is rewritten to the file's basename plus your prose, so the search is on your question rather than on the pasted file |
+| `Editor:` | Reads whatever document Neovim currently has open and attaches it. **Only this prefix does** — it is the largest block the pipeline can inject, so it is never attached to a turn that did not ask for it |
+
+With no prefix you get the ordinary persona plus retrieval.
+
+## Attachments
+
+A file over roughly 23 MB is **refused, not shortened**: a truncated document would be answered as
+though it were the whole thing. Whether a file is text is decided by reading it — a NUL byte in
+the first 8 KiB makes it binary — so a `.log`, a `.conf` or a file with no extension is
+attachable. PDFs have their text extracted; PDF pages are not sent as images.
+
 ## Maintenance
 
 ```sh
@@ -60,6 +84,35 @@ jenova-core hardware apply --best    # deploy the matched profile
 ```
 
 The desktop application has the same thing under the Hardware button.
+
+### Disk that Jenova manages itself
+
+Both are bounded, and neither was before — see `.devdocs/03-error-memory-wiring.md`.
+
+| Path | Holds | Bound |
+|---|---|---|
+| `~/Jenova/var/log/llama-server.log`, `llama-embed.log` | Each backend's stdout and stderr | Rotated to `.log.1` when it passes 8 MB, at the next backend start. One previous generation is kept |
+| `~/Jenova/var/cache/attach-*` | Images decoded for thumbnails and previews, named for the digest of their own bytes | Swept oldest-first to 256 MB when the desktop application starts. **Only files named `attach-*` are ever removed** |
+
+Neither is rotated or swept while running: a log is rotated only at a start, because that is the
+one moment no descriptor is open on it, and the cache is swept only at startup, because statting a
+directory on the path that decodes a thumbnail would put filesystem work inside a redraw.
+
+### Self-tests
+
+```sh
+nimble suites            # both binaries, every self-test, every shell suite
+jenova-core db-selftest  # or any one of them alone
+```
+
+The self-tests are this project's assertion base. Each exits 0 on PASS and 1 on FAIL, and the list
+`nimble suites` runs is declared in `jenova_core.nimble` — a self-test that is not in that list is
+one nothing runs.
+
+> `db-selftest` measures how much of a reader's run overlapped a concurrent writer and fails below
+> 25%. That is a wall-clock measurement, so it can fail on a heavily loaded or single-core machine
+> without anything being wrong with the database layer. Re-run it before treating a failure there
+> as real.
 
 ---
 
@@ -106,6 +159,26 @@ empty string. A `.gguf.old` backup left by a model switch is not discovered, bec
 ends in `.gguf`.
 
 `jenova-core models list` prints what discovery resolved.
+
+### Discovery is not the same set the switcher offers
+
+**These are two different questions and they read two different sets of directories.** Discovery,
+above, answers "which model runs" and searches `models/agent/`, `models/draft/`, `models/embed/`
+and the flat `models/` root. The switcher — `jenova-core models switch`, and the desktop
+application's Models panel — answers "which model may I switch *to*", and reads only:
+
+```
+~/Jenova/models/instruct/
+~/Jenova/models/thinking/
+```
+
+So a `.gguf` placed in `~/Jenova/models/` or `~/Jenova/models/agent/` **is used for inference and
+does not appear in the Models panel.** That is deliberate: those two directories are yours to
+organise and the switcher reads them without managing them, while `models/agent/` is the link the
+switcher itself maintains. The panel says which two directories it looked in when it finds
+nothing.
+
+To make a model switchable, put it in `instruct/` or `thinking/`.
 
 ### Overrides
 
@@ -175,21 +248,52 @@ Everything is on `:8080`. Nothing else is client-facing.
 | `GET /health`, `GET /v1/health` | Liveness |
 | `GET /api/storage/` | List workspace files |
 | `GET`/`POST`/`DELETE` `/api/storage/<path>` | Read, write, delete a workspace file |
-| `GET /api/workspaces` | List workspaces |
 | `/api/fs/...` | Filesystem operations, including `POST /api/fs/trash/restore` and `DELETE /api/fs/trash/empty` |
 | `/api/db/...` | The SQLite workspace database — `conversations`, `messages`, `workspaces`, `projects`, `folders`, `notes`, `fileAssets`, plus `import` and `cache` |
 | `GET /<path>` | Static Web UI assets from `public/`; `/` serves `index.html` |
 
+Workspaces are listed through `GET /api/db/workspaces`, like every other entity. Anything else
+under `/api/` answers `404` with a JSON body.
+
 ### Augmented, then forwarded
 
-`POST /v1/chat/completions` and `POST /infill` are intercepted so retrieval context and tool
-results can be injected, then forwarded to `llama-server` on `:8081`.
+`POST /v1/chat/completions` is intercepted by `src/jenova/pipeline.nim`, which detects and strips
+an intent prefix, retrieves context, runs a web search for the web-search intent, reads the live
+editor document for the editor intent, injects a persona, **strips** tools for the two intents
+that gain nothing from them, and trims the oldest turns if the conversation no longer fits the
+context budget. The rewritten body is then forwarded to `llama-server` on `:8081`.
 
-### Forwarded unchanged
+`POST /infill` and `POST /completion` carry a raw prompt rather than a `messages` array, so there
+is nothing to inject into: `pipeline.prepare` returns them untouched and they are forwarded
+verbatim.
 
-Any request that matches nothing above — and any `GET` for a path with no matching file in
-`public/` — is relayed verbatim to `llama-server`. The rest of its OpenAI-compatible surface, including
-`GET /v1/models`, `POST /v1/completions` and `GET /props`, is therefore reachable through `:8080`.
+#### Response headers the pipeline adds
+
+Emitted only when there is something to report, so an ordinary turn's response head is unchanged.
+
+| Header | Meaning |
+|---|---|
+| `X-Cache: HIT` | Answered from the response cache rather than the model |
+| `X-Jenova-Trimmed: N` | N oldest turns were dropped to fit the context budget. **The model was not shown the start of this conversation** |
+| `X-Jenova-Rag-Hits: N` | N documents were retrieved and injected |
+| `X-Jenova-Web-Hits: N` | N web-search results were injected |
+| `X-Jenova-Intent: <name>` | An intent prefix was detected and stripped |
+| `X-Jenova-Editor-Doc: 1` | A live document was read from Neovim and attached |
+
+### Forwarded to `llama-server` unchanged
+
+**Only these prefixes are forwarded.** There is no catch-all relay: `src/jenova/routes.nim`
+classifies a request from its path alone, and anything matching none of the prefixes below is
+served from `public/` or answered `404`.
+
+| Prefix | Goes to |
+|---|---|
+| `/v1/` (other than `/v1/health`), `/completion`, `/infill`, `/chat`, `/props`, `/slots` | inference, `:8081` |
+| `/embed`, `/embeddings` | embeddings, `:8082` |
+
+So `GET /v1/models`, `POST /v1/completions` and `GET /props` are reachable through `:8080` because
+they match `/v1/` and `/props` — not because unmatched requests fall through. A llama.cpp endpoint
+outside these prefixes is **not** reachable.
 
 ### Example
 

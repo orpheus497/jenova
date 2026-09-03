@@ -86,6 +86,24 @@ compression, and no caching headers. The surface is documented in [usage.md](usa
 `jenova-core serve-selftest` measures both properties: that an established stream holds its cadence
 under blocking database load, and that saturating one class leaves health and static responsive.
 
+### The response cache
+
+A completion whose rewritten body hashes to a stored key is answered from `llm_cache` in the
+workspace database rather than from the model, and the stored bytes are replayed **verbatim** —
+head included — so a hit is byte-identical to a live reply and SSE framing survives. A hit carries
+`X-Cache: HIT`.
+
+Bounded at 256 entries and 1 MiB per entry, evicted oldest-first. A reply over the cap is simply
+not stored, and only a complete relay that actually contains `data:` lines is stored at all: a
+fragment filed to serve later as a whole answer, or a body the streaming reader cannot replay,
+would each be worse than a cache miss.
+
+### Diagnostics
+
+`/debug/slow-query`, `/debug/stream` and `/debug/hold` exist to demonstrate that saturating one
+route class does not starve another. They are **off unless explicitly enabled** and answer `404`
+otherwise; `serve-selftest` is what turns them on.
+
 ## Inference server (`:8081`)
 
 - **Offload** — `DEVICES` selects Vulkan or CUDA devices (`Vulkan0`, `Vulkan0,Vulkan1`, `CUDA0`,

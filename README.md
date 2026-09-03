@@ -1,6 +1,11 @@
 # Jenova Cognitive Architecture
 
-<img src="png/splash_top.png" width="100%" alt="Jenova Cognitive Architecture banner">
+<img src="png/splash_top.png" width="100%" alt="The Jenova Web UI: an empty chat, the composer, and the neural canvas behind it">
+
+<sub><b>Above: the Web UI</b> — the browser and LAN client, served at <code>:8080</code>. The
+desktop application is a native GTK4 window and looks different; it is described under
+<a href="#desktop-application">Desktop application</a> below. Screenshots of it are still to
+come — see <code>.devdocs/01-documentation-audit.md</code>.</sub>
 
 Jenova is a personal AI system that runs entirely on your own FreeBSD machine. No cloud account,
 no subscription, no telemetry. Inference, retrieval, and your workspace all live on your hardware.
@@ -26,7 +31,10 @@ nimble gui       # build bin/jenova, the desktop application
 Then open <http://localhost:8080>, or just use the window.
 
 The build system is **nimble**; the tasks are declared in `jenova_core.nimble`. There is no
-Makefile, and no build or runtime step shells out to a project script.
+Makefile, and **nothing in the running product shells out to a project script** — control actions
+call `lifecycle` in-process, and model switching calls `models.switchModel`. (The Web UI build is
+the one exception on the *build* side: `nimble web` runs `npm run build`, which runs two scripts
+under `jca_web/scripts/`.)
 
 Individual tasks: `nimble core` (the headless binary), `nimble gui`, `nimble llama`, `nimble web`,
 `nimble suites` (build both binaries and run the test suites).
@@ -57,6 +65,8 @@ markdown, KaTeX math, syntax highlighting, in-browser PDF viewing, and MCP clien
 Workspaces, projects, folders, conversations, messages and notes are stored in SQLite at
 `~/Jenova/.system/jenova.db`, managed by the server. Notes and chats are additionally mirrored to
 `~/Jenova/Workspaces` as plain Markdown, readable and editable with any text editor.
+
+<a id="desktop-application"></a>
 
 ### Desktop application
 
@@ -115,6 +125,13 @@ matching profile that sets GPU offload, context size, batch sizes and thread cou
 in `~/Jenova/models/` — `models.discover`, called from `config.load`, fills only the model paths the
 configuration left empty. Point `JENOVA_MODEL`, `JENOVA_DRAFT_MODEL` or `JENOVA_EMBED_MODEL` at
 anything else you like; an explicit path always wins over discovery.
+
+**Discovery and the model switcher read different directories.** Discovery decides which model
+*runs* and searches `models/agent/`, `models/draft/`, `models/embed/` and the flat `models/` root.
+The switcher — `jenova-core models switch`, and the window's Models panel — decides which model you
+may switch *to*, and reads only `models/instruct/` and `models/thinking/`. A `.gguf` in the flat
+root will be used for inference and will not appear in the Models panel. Put a model in
+`instruct/` or `thinking/` to make it switchable; see [docs/usage.md](docs/usage.md#models).
 
 Rough VRAM guide: about **0.75 GB per 1B parameters** at Q4_K_M.
 
@@ -199,4 +216,7 @@ Built on [llama.cpp](https://github.com/ggml-org/llama.cpp). Licensed under AGPL
 
 ---
 
-<img src="png/splash_bottom.png" width="100%" alt="Jenova Cognitive Architecture footer">
+<img src="png/splash_bottom.png" width="100%" alt="The Jenova Web UI with the workspace sidebar open, showing workspaces, projects, folders, chats and notes">
+
+<sub><b>Above: the Web UI's workspace sidebar.</b> The desktop application has the same tree, drawn
+natively.</sub>

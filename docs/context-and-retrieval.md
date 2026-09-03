@@ -1,27 +1,34 @@
 # Context and Retrieval
 
-How content reaches the model. Verified against the source tree on 2026-08-31.
+How content reaches the model.
 
 This document was written against the Lua proxy and its `lib/search.lua` retriever. Both are gone —
 the retrieval path is `src/jenova/rag.nim` and the injection path is `src/jenova/pipeline.nim`.
-Every claim below has been re-checked against those two files. Where a mechanism is implemented but
-not reached in normal operation, it says so rather than describing intent as behaviour.
+Where a mechanism is implemented but not reached in normal operation, it says so rather than
+describing intent as behaviour.
+
+> **Three states in this document were wrong and are corrected below.** It reported the retrieval
+> index as never populated, workspace context and per-message attachments as existing only in the
+> Web UI, and conversation history as never trimmed. All four claims had been overtaken by the
+> code. Recorded here rather than quietly edited, because a document that told a reader a working
+> feature did not work is the failure this note exists to make visible.
 
 ## What supplies context
 
 | # | Mechanism | Owner | State |
 |---|---|---|---|
-| 1 | Server-side retrieval (BM25 + vectors) | `src/jenova/rag.nim` | **Query path live, index never populated** — see §1 |
+| 1 | Server-side retrieval (BM25 + vectors) | `src/jenova/rag.nim` | **Live, and populated** — see §1 |
 | 2 | Persona and context injection | `src/jenova/pipeline.nim` | Live on every chat completion |
 | 3 | Editor context | `src/jenova/nvimctl.nim` | Live, and **only** for the `Editor:` intent |
 | 4 | Web search | `src/jenova/websearch.nim` | Live, and only for the `Web Search:` intent |
-| 5 | Client-side workspace context | `jca_web` | Live in the Web UI only |
-| 6 | Per-message attachments | `jca_web` | Live in the Web UI only |
+| 5 | Workspace context | `src/jenova/workspace.nim` + `jca_web` | Live on **both** surfaces |
+| 6 | Per-message attachments | `src/jenova/pipeline.nim` + `jca_web` | Live on **both** surfaces |
 | 7 | MCP tools | `jca_web` | Web UI only, off by default |
-| 8 | Conversation history | client | Sent whole, never trimmed |
+| 8 | Conversation history | `src/jenova/pipeline.nim` | **Trimmed oldest-first** to fit the context budget |
 
-Mechanisms 1–4 are server-side and apply to **every** client — the desktop window, the Web UI and
-any OpenAI-compatible client pointed at `:8080`. Mechanisms 5–7 exist only in the Web UI.
+Mechanisms 1–4 and 8 are server-side and apply to **every** client — the desktop window, the Web
+UI and any OpenAI-compatible client pointed at `:8080`. Mechanism 5 exists on both surfaces but by
+two different routes; 6 likewise. Only mechanism 7 is still Web UI only.
 
 ---
 
@@ -82,21 +89,32 @@ against the chunks and each remaining chunk was stored with a different chunk's 
 5. **Snippets.** The chunk at the hit's start line, truncated at 1000 characters; the file's first
    chunk if that lookup finds nothing.
 
-### Why it returns nothing today
+### What fills the index
 
-**`rag.query` short-circuits on an empty index** — `if documentCount() == 0: return @[]` — and
-nothing in the running product ever fills it. `indexContent` and `indexFile` are exported and
-correct, and their only callers repo-wide are `jenova-core rag-selftest`.
+**This section previously said the index was never populated. That has not been true for some
+time** — the writers below all exist, and the `--- REPOSITORY CONTEXT ---` block does appear in
+real requests.
 
-This is the same defect the Lua retriever had, carried across the rewrite: a complete query path
-with no indexer wired to it. The consequence is that the `--- REPOSITORY CONTEXT ---` block never
-appears in a real request, and `Prepared.ragHits` is always 0.
+| Writer | When |
+|---|---|
+| `api.handleDb` → `rag.indexExchange` | Every message the Web UI creates or edits, on the `/api/db/messages` route |
+| `api.restoreEntity` → `rag.indexExchange` | A conversation restored from the trash is re-indexed |
+| `gui.ctlWorker` → `rag.indexExchange` | Each completed exchange in the desktop window, on a worker thread so the embedding round trip never touches the GTK loop |
+| `rag.backfillChats` | Once at every `jenova-core serve` start, and once in the window as soon as the embedding server answers — **not before**, or history would be indexed while the embedder is still loading and stored keyword-only |
 
-What is *not* the same is the reason. In Lua three independent breaks each caused it — a deleted
-`index_dir` call, an embedder that was never handed to the search module, and a dead-store ignition
-hook. Here there is one: no caller. `jenova-core rag-selftest` indexes a scratch corpus and proves
-keyword ranking, the path filter, snippet survival, the float32 BLOB round-trip and the similarity
-maths, so the machinery is verified — only its trigger is missing.
+`backfillChats` is incremental, so a later start does no work twice, and `indexExchange` indexes a
+reply together with the user turn that prompted it — never at the moment the question is asked,
+which would let a request retrieve itself.
+
+Indexing is **best-effort**: a chunk with no vector is still keyword-searchable, and a failure
+degrades retrieval rather than failing the turn.
+
+### What one query costs
+
+The keyword half is capped at 200 documents by FTS5. The semantic half scores chunk vectors in
+SQLite, newest first, up to `rag.MaxVectorScan` (50,000 chunks) — a ceiling rather than a working
+size, since a chunk is 300 words and an ordinary install never reaches it. Past that ceiling a
+document is still findable by its words; only its vector is out of scope.
 
 ---
 
@@ -191,10 +209,19 @@ outbound network path in the system — see [privacy.md](privacy.md).
 
 ---
 
-## 5. Client-side workspace context — the Web UI only
+## 5. Workspace context — both surfaces
 
-`WorkspaceService.getWorkspaceContext` in `jca_web` gathers every note and file asset over
-`/api/db/*` and filters them **by scope**, not by relevance:
+**This section previously said "the Web UI only".** The desktop window has had its own
+server-side path since `src/jenova/workspace.nim` was written: `gui.postConversation` calls
+`workspace.contextFor(folderId, projectId, workspaceId)` for the active conversation and passes
+the result into `pipeline.chatBody`. The two routes differ — the Web UI gathers over `/api/db/*`
+from the browser, the window reads the database in-process — but the scoping rules and the output
+format are the same, which is what makes a conversation read identically on either surface.
+
+What follows describes `WorkspaceService.getWorkspaceContext` in `jca_web`; `workspace.contextFor`
+applies the same table.
+
+Every note and file asset is gathered and filtered **by scope**, not by relevance:
 
 | Conversation scope | Regular notes and files | FOCUS notes |
 |---|---|---|
@@ -214,16 +241,28 @@ The result is three plain-text sections — `--- FOCUS / RULES ---`, `--- NOTES 
 budget**. It is attached only when a `conversationId` is supplied, so client paths that omit one
 send no workspace context at all.
 
-The desktop application has its own workspace tree and does not use this path.
+The desktop application reaches the same result through `workspace.contextFor` rather than over
+HTTP, so an unassigned chat resolves to the global scope on both surfaces — which is *not*
+everything.
 
 ---
 
-## 6. Per-message attachments — the Web UI only
+## 6. Per-message attachments — both surfaces
 
-Files attached to an individual message are expanded into multimodal content parts: images, text
-files, pasted context, audio, PDFs as text or page images, and MCP prompts and resources. **These
-land in the user message, not the system message.** Images are stripped when the model has no
-vision support.
+**This section previously said "the Web UI only".** The desktop window has a full attachment path:
+a file picker, drag-and-drop, clipboard image paste, PDF text extraction, thumbnails and an image
+preview. It writes `messages.extra` in the Web UI's own array shape, so a conversation moves
+between the two surfaces without conversion, and it additionally files the attachment as a
+workspace `fileAssets` row — which the Web UI does not do.
+
+Files attached to an individual message are expanded into multimodal content parts by
+`pipeline.contentFor`: images, text files, pasted context, audio, PDFs, and (in the Web UI) MCP
+prompts and resources. **These land in the user message, not the system message.** Images are
+stripped when the model has no vision support.
+
+Two differences remain between the surfaces. The Web UI can send a PDF's pages as images and can
+record audio; the window extracts PDF text and has no recorder. Both are tracked in
+`.devdocs/02-gui-webui-parity.md`.
 
 ---
 
@@ -237,13 +276,23 @@ no MCP endpoint. The default is off, with no servers configured.
 
 ## 8. Conversation history
 
-**No summarisation, no truncation, no retrieval over history.** The whole active branch is sent
-every turn. Branching selects which *path* through the message tree is active but drops nothing
-from it.
+**This section previously said "sent whole, never trimmed". It is trimmed.**
+`pipeline.trimHistory` drops the **oldest turns first** until the branch fits a byte budget derived
+from `CTX_SIZE` and `NUM_SLOTS`, and `pipeline.prepare` calls it on every chat completion. There
+is still no summarisation and no retrieval over history — what does not fit is dropped, not
+condensed.
 
-Context overflow therefore surfaces as a backend error rather than being prevented. `llama.cpp`
-divides `CTX_SIZE` between `NUM_SLOTS`, so each slot gets a fraction of the configured context —
-which is why the profiles that want a wide single conversation set `NUM_SLOTS=1`.
+`llama.cpp` divides `CTX_SIZE` between `NUM_SLOTS`, so each slot gets a fraction of the configured
+context — which is why the profiles that want a wide single conversation set `NUM_SLOTS=1`. Both
+binaries set the budget in their own process (`configureHistoryBudget`), because each runs its own
+pipeline.
+
+**Trimming used to be silent, and that was the real defect.** A user had no way to discover that
+the model was never shown the start of their own conversation. A trimmed request now carries
+`X-Jenova-Trimmed: N` on the response — see [usage.md](usage.md#http-api).
+
+Branching selects which *path* through the message tree is active; that is independent of
+trimming and drops nothing of its own.
 
 ---
 
@@ -251,14 +300,15 @@ which is why the profiles that want a wide single conversation set `NUM_SLOTS=1`
 
 | # | Mechanism | Live | Trigger | Injects into |
 |---|---|---|---|---|
-| 1 | Server-side retrieval | ❌ query path complete, index never populated | — | — |
+| 1 | Server-side retrieval | ✅ both surfaces | every non-empty chat request without a context block | System message |
 | 2 | Persona | ✅ | every non-empty chat request | System message |
 | 3 | Editor context | ✅ | typing `Editor:` | System message |
-| 4 | Web search | ✅ code works, no UI | typing `Web Search:` | System message |
-| 5 | Workspace context | ✅ Web UI only | any send with a `conversationId` | System message |
-| 6 | FOCUS / RULES notes | ✅ Web UI only | same, tree-wide | System message, first |
-| 7 | Per-message attachments | ✅ Web UI only | user attaches a file | **User** message |
-| 8 | MCP tools | ⚠️ off by default | user configures a server | Conversation tail |
-| 9 | History summarisation | ❌ not implemented | — | — |
+| 4 | Web search | ✅ | typing `Web Search:` | System message |
+| 5 | Workspace context | ✅ both surfaces | any send within a workspace scope | System message |
+| 6 | FOCUS / RULES notes | ✅ both surfaces | same, tree-wide | System message, first |
+| 7 | Per-message attachments | ✅ both surfaces | user attaches a file | **User** message |
+| 8 | MCP tools | ⚠️ Web UI only, off by default | user configures a server | Conversation tail |
+| 9 | History trimming | ✅ oldest-first, reported as `X-Jenova-Trimmed` | the branch exceeds the budget | — |
+| 10 | History summarisation | ❌ not implemented | — | — |
 
-The one open item here is #1: wiring an indexer to `rag.indexContent`, and deciding what it walks.
+The open items are #8, which is a deferred product decision rather than a gap, and #10.

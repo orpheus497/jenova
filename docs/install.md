@@ -15,8 +15,12 @@ nimble web       # the Web UI, into public/
 nimble gui       # bin/jenova, the desktop application
 
 # 3. Detect hardware and deploy the matching profile
-jenova-core hardware apply --best
+./bin/jenova-core hardware apply --best
 ```
+
+The binaries land in `bin/` and are not installed onto your `PATH`. Every `jenova-core` invocation
+below is written bare for readability — run it as `./bin/jenova-core` from the repository root, or
+put `bin/` on your `PATH`.
 
 Both binaries land in `bin/`. Run `./bin/jenova` for the desktop application, or
 `./bin/jenova-core serve` for the headless server.
@@ -92,7 +96,7 @@ These ship with FreeBSD and are never packages. Anything telling you to install 
 |---|---|
 | **GNU make** (`gmake`) and base `make(1)` | There is no Makefile. `nimble` is the build system |
 | **GNU coreutils** | Only ever wanted for `realpath(1)`, which FreeBSD has in base |
-| **bash** | Every script in this repository is POSIX `/bin/sh` |
+| **bash** | Every script the product builds or runs is POSIX `/bin/sh` — the six suites under `tests/` and `jca_web/scripts/post-build.sh`. Two Web UI *developer* scripts are `#!/bin/bash` (`jca_web/scripts/dev.sh`, `install-git-hooks.sh`); neither is needed to build or run Jenova |
 
 The first and third are GPL, which this project's dependency policy excludes.
 

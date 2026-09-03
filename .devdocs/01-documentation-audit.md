@@ -1,6 +1,7 @@
 # Report 01 — Documentation and Presentation Audit
 
-**Status:** open tracker
+**Status:** Part A open (needs a FreeBSD host); Parts B, C and D **closed**
+**Last worked:** session 2 — every factual defect below is fixed in `docs/` and `README.md`
 **Scope:** `README.md`, `docs/*.md`, `jca_web/README.md`, `hardware-profiles/README.md`, `png/`
 **Method:** every factual claim in the user-facing documentation was read against the
 source that implements it. Each finding below cites the documentation line and the
@@ -275,23 +276,67 @@ claims are re-checked; the current one is a false assurance.
 
 ## Tracker
 
-| ID | Finding | Severity | File to change | State |
-|---|---|---|---|---|
-| A-1 | README banners are Web UI screenshots | high | `README.md`, `png/` | open |
-| A-2 | No GUI screenshot exists | high | `png/` | open |
-| A-3 | Adopt surface-labelled presentation model | high | `README.md`, `docs/usage.md` | open |
-| D-01 | `GET /api/workspaces` does not exist | high | `docs/usage.md:178` | open |
-| D-02 | "forwarded unchanged" fallback does not exist | high | `docs/usage.md:188-192` | open |
-| D-03 | `/infill` is not augmented; tools are stripped not injected | medium | `docs/usage.md:185-186` | open |
-| D-04 | Build does shell out to project scripts | medium | `README.md:29` | open |
-| D-05 | Two `#!/bin/bash` scripts exist | low | `docs/install.md:95` or the scripts | open |
-| D-06 | Retrieval index *is* populated | high | `docs/context-and-retrieval.md:14,254` | open |
-| D-07 | Workspace context and attachments are not Web-UI-only | high | `docs/context-and-retrieval.md:18-19,194,221` | open |
-| D-08 | History *is* trimmed | medium | `docs/context-and-retrieval.md:21` | open |
-| D-09 | Model discovery vs. Models-panel sources | medium | `README.md:114`, `docs/usage.md:95-108` | open |
-| D-10 | Bare `jenova-core` before `PATH` is set | low | `docs/install.md` | open |
-| S-01 | Stale `awaiting` reasons | low | `src/jenova/settings.nim` | open |
-| S-02 | Stale composer comment | low | `src/jenova/gui.nim:4956` | open |
-| S-03 | Stale IndexedDB comment in `sync.service.ts` | low | `jca_web/src/lib/services/sync.service.ts:100` | open |
-| S-04 | False verification date | low | `docs/context-and-retrieval.md:3` | open |
-| G-01…G-07 | Undocumented behaviour | medium | `docs/usage.md` | open |
+| ID | Finding | Severity | State |
+|---|---|---|---|
+| A-1 | README banners are Web UI screenshots | high | **partly done** — both are now captioned as the Web UI, with alt text describing what they show and a pointer to the desktop section. The remaining half is A-2 |
+| A-2 | No GUI screenshot exists | high | **open — blocked.** Capturing one needs a FreeBSD host with GTK4 and the GUI built; neither exists in the audit environment |
+| A-3 | Adopt surface-labelled presentation model | high | **partly done** — captions and an anchor to `#desktop-application` are in. Reordering so the window leads waits on A-2 |
+| D-01 | `GET /api/workspaces` does not exist | high | **fixed** — row removed; `docs/usage.md` now says workspaces are listed through `/api/db/workspaces` and that anything else under `/api/` is a 404 |
+| D-02 | "forwarded unchanged" fallback does not exist | high | **fixed** — replaced with the explicit prefix table from `routes.classify`, and a note that there is no catch-all relay |
+| D-03 | `/infill` is not augmented; tools are stripped not injected | medium | **fixed** — the augmented list is now `/v1/chat/completions` alone, with `/infill` and `/completion` documented as forwarded verbatim, and "tool results injected" corrected to "tools stripped" |
+| D-04 | Build does shell out to project scripts | medium | **fixed** — the claim is narrowed to the running product, with the Web UI build named as the exception |
+| D-05 | Two `#!/bin/bash` scripts exist | low | **fixed as documentation.** The scripts are in `jca_web`, which is frozen, so the claim was narrowed to "every script the product builds or runs" and both bash scripts are named |
+| D-06 | Retrieval index *is* populated | high | **fixed** — §1 now lists all four writers and what a query costs |
+| D-07 | Workspace context and attachments are not Web-UI-only | high | **fixed** — §5 and §6 retitled "both surfaces" and rewritten; §7 (MCP) correctly stays Web UI only |
+| D-08 | History *is* trimmed | medium | **fixed** — §8 rewritten, and the silence itself fixed in code: a trimmed request now carries `X-Jenova-Trimmed` |
+| D-09 | Model discovery vs. Models-panel sources | medium | **fixed** — both README and `usage.md` now state that discovery and the switcher read different directories, and why |
+| D-10 | Bare `jenova-core` before `PATH` is set | low | **fixed** — the install step uses `./bin/`, with a note that the rest is written bare for readability |
+| S-01 | Stale `awaiting` reasons | low | **fixed** — see report 03, W-01. One is now wired; the other three name what they actually wait on, and a self-test refuses any reason that blames the finished step again |
+| S-02 | Stale composer comment | low | **fixed** |
+| S-03 | Stale IndexedDB comment in `sync.service.ts` | low | **won't fix — `jca_web` is frozen** (ruling, session 2) |
+| S-04 | False verification date | low | **fixed** — the date is removed rather than moved; a date is only worth printing if something re-checks it |
+| G-01…G-07 | Undocumented behaviour | medium | **fixed** — see below |
+
+### Undocumented behaviour, now documented
+
+| # | Behaviour | Where it went |
+|---|---|---|
+| G-01 | Response cache: 256 entries, 1 MiB each, oldest-first, `X-Cache: HIT` | `docs/architecture.md` § The response cache |
+| G-02 | The five intent prefixes | `docs/usage.md` § Intent prefixes |
+| G-03 | FOCUS notes escaping to the whole workspace tree | already in `docs/context-and-retrieval.md` §5; now correctly marked as applying to both surfaces |
+| G-04 | `/debug/*` endpoints, off unless enabled | `docs/architecture.md` § Diagnostics |
+| G-05 | Attachment size ceiling and the refusal | `docs/usage.md` § Attachments |
+| G-06 | Backend logs and the attachment cache | `docs/usage.md` § Disk that Jenova manages itself — **and both are now actually bounded**, see report 03 M-02 and M-04 |
+| G-07 | `F11` is the only keyboard shortcut | `docs/usage.md` § The desktop application |
+
+Also added: the response headers the pipeline emits (`docs/usage.md`), and how to run the
+self-tests including the one whose assertion is timing-sensitive (`docs/usage.md`).
+
+---
+
+## Findings added in session 2
+
+### D-11 — `PLANS.md` is referenced from ten places and does not exist · severity: low
+
+`src/jenova_core.nim:20` named `.devdocs/PLANS.md` in the FreeBSD guard's **user-facing error
+message**; that one is fixed to point at `docs/install.md`. Nine further references remain in code
+comments as provenance markers (`settings.nim:2`, `convmd.nim:2`, `composer.nim:6`,
+`pipeline.nim`, `gui.nim:280`, `gui.nim:3149`, `api.nim:688`, `api.nim:832`, `fssync.nim:378`).
+
+The file is not in the repository — `.gitignore:61` says `.devdocs/` is deliberately tracked, so
+it was removed rather than ignored. The comments are historical rather than instructional, so they
+were left alone rather than mass-edited; but a reader following one finds nothing.
+
+**Decide:** restore `PLANS.md` to `.devdocs/`, or strip the references in a single pass.
+
+### D-12 — `db-selftest` carries a wall-clock assertion that fails under load · severity: low
+
+`db-selftest` measures what fraction of a reader's run overlapped a concurrent writer and fails
+below a 25% floor. Observed failing at 23.3% and 23.6% on a loaded container, passing on re-runs of
+the same binary, with `src/jenova/db.nim` untouched.
+
+The property it tests is real and worth testing. The **threshold** is not robust: it is a
+wall-clock ratio on a machine whose scheduling the test does not control, so it will fail on a
+single-core or busy host with nothing wrong. Documented in `docs/usage.md` so a failure there is
+not mistaken for a database defect; the assertion itself should be re-shaped (compare against a
+serialized baseline measured in the same run, rather than against a fixed percentage).
