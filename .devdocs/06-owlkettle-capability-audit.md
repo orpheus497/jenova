@@ -103,7 +103,7 @@ the right widget, not a bigger lid.
 | Idiom | Widgets | What `gui.nim` does instead |
 |---|---|---|
 | Settings screens | `PreferencesPage`, `PreferencesGroup`, `ActionRow`, `ComboRow`, `ExpanderRow`, `SwitchRow`, `EntryRow` | Boxes of `Label` + `Button` + `Switch` |
-| Transient notification | `ToastOverlay` — **absent from owlkettle, see below** | A one-line notice label |
+| Transient notification | `ToastOverlay` — **absent from owlkettle**, bound in `src/jenova/toast.nim`, session 7 | ~~A one-line notice label~~ — confirmations toast; errors keep the row, which is now only errors |
 | Empty states | `StatusPage` | ~~A dim `Label`~~ — done for the empty transcript, the two model-list states and the trash, session 7 |
 | Inline messages | `Banner` | ~~—~~ — done for backend-down and the LAN flag/socket disagreement, session 7 |
 | Adaptive sidebar | `OverlaySplitView` | `Flap` |
@@ -142,12 +142,18 @@ What owlkettle genuinely does not expose (verified absent from `owlkettle/` enti
   there. Its job (header / content / footer with adaptive styling) is what `gui.nim`'s chat
   column does with a `Box`, so nothing is broken — but "switch to `ToolbarView`" is a binding
   job, not a substitution.
-* `ToastOverlay` — report 05's Phase 3 assigns **P-B1** (the error surface) to it. There is no
-  `adw_toast_*` symbol anywhere in owlkettle's bindings, so this is ~50 lines of `renderable`
-  plus five `importc`s, and it has one design problem to solve first that the other widgets do
-  not: **a toast is an event, and a `renderable` property is a state.** Firing one on every
-  redraw whose `notice` is non-empty would raise a toast per frame; firing only on change loses
-  the second of two identical messages. Whatever carries it needs a serial, not just a string.
+* `ToastOverlay` — **done, session 7**, in `src/jenova/toast.nim`: five `importc`s and one
+  `renderable`, by this hatch. The design problem was real and is solved by a `serial` the window
+  bumps per message, which the widget compares against the last one it raised — because **a toast
+  is an event and a `renderable` property is a state**, so firing on a non-empty `notice` raises
+  one per frame and firing on a changed *string* swallows the second of two identical messages.
+  Verified by saving settings twice: the same text raises a second toast.
+
+  It carries **no button and no event**, deliberately. `AdwToast` can have one and Retry is the
+  obvious candidate, but a toast outlives several redraws while owlkettle replaces a state's
+  `EventObj` on every update and ARC frees the old one — a handler bound to a live toast is the
+  `DraftView.submit` SIGBUS again. So **P-B1 is not closed by this**: errors keep the inline row,
+  where the widget and its handler have the same lifetime, and that row is now errors only.
 * `AdwBreakpoint` — not needed until `OverlaySplitView` replaces `Flap`, and then it is. `Flap`
   folds itself on a narrow window through `FlapFoldAuto`, which is what
   `alwaysShowSidebarOnDesktop` switches off; `OverlaySplitView.collapsed` is a plain `bool` that
