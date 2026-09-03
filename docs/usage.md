@@ -48,7 +48,16 @@ the Web UI; and switch the active model between `instruct` and `thinking`.
 
 The `jenova.desktop` entry launches `jenova`.
 
-`F11` toggles fullscreen. It is the window's only keyboard shortcut.
+Keyboard shortcuts, declared in one place (`gui.keyBindings`) and installed on a
+`GtkShortcutController` at managed scope, so they answer anywhere in the window:
+
+| Key | Effect |
+|---|---|
+| `F11` | Toggle fullscreen |
+| `Ctrl+N` | New conversation |
+| `Ctrl+B` | Show or hide the sidebar |
+| `Ctrl+,` | Open or close Settings |
+| `Ctrl+Escape` | Stop the generation in progress. Plain `Escape` is left to GTK for popovers and dialogs |
 
 ## Intent prefixes
 

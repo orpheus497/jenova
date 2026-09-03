@@ -47,13 +47,23 @@ const
 ## Function purpose: the theme holds colours as `#rrggbb` and VTE wants floats.
 ## A malformed value yields transparent black rather than raising, because a
 ## wrong colour must not stop the terminal appearing.
+##
+## Action purpose: the length test alone did not deliver that promise.
+## `parseHexInt` raises `ValueError` on a non-hex digit, so a six-character
+## value that is not hex — a name someone put in a theme, a truncated CSS
+## function — propagated out of `buildTerminal`, and the editor pane failed to
+## build over a colour. Length and content are both checked now, and the
+## conversion is inside the guard rather than beside it.
 proc parseHex(c: string, a = 1.0): GdkRGBA =
   let h = c.strip(chars = {'#'})
   if h.len != 6: return GdkRGBA(alpha: cfloat(a))
-  GdkRGBA(red: cfloat(parseHexInt(h[0..1]).float / 255.0),
-          green: cfloat(parseHexInt(h[2..3]).float / 255.0),
-          blue: cfloat(parseHexInt(h[4..5]).float / 255.0),
-          alpha: cfloat(a))
+  try:
+    GdkRGBA(red: cfloat(parseHexInt(h[0..1]).float / 255.0),
+            green: cfloat(parseHexInt(h[2..3]).float / 255.0),
+            blue: cfloat(parseHexInt(h[4..5]).float / 255.0),
+            alpha: cfloat(a))
+  except ValueError:
+    GdkRGBA(alpha: cfloat(a))
 
 ## The chat column is transparent so the canvas shows through and the terminal
 ## has to match, or it reads as a rectangle pasted on. Not fully transparent:

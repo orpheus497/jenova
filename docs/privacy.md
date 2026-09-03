@@ -21,7 +21,7 @@ Four things can reach the network, all deliberate and none of them on by itself.
 
 | What | Where it goes | When |
 |---|---|---|
-| **Web search** | `api.duckduckgo.com`, `html.duckduckgo.com`, and wherever either redirects | Only when a model invokes the web-search tool. Your query text is sent |
+| **Web search** | `api.duckduckgo.com`, `html.duckduckgo.com`, and wherever either redirects | Only when a client message begins with `Web Search:`. Your query text is sent. No model and no button can trigger it |
 | **MCP servers** | whichever servers you configure | Web UI only, off by default, and only once you add one. See below |
 | **Model downloads** | `huggingface.co` | Only when you fetch a model yourself |
 | **Package and source updates** | FreeBSD `pkg` mirrors, `github.com`, the `nimble` registry | Only during `pkg install`, `git clone` and `nimble` builds |

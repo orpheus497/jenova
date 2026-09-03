@@ -94,6 +94,14 @@ proc run*(dbPath: string): int =
   var totalOps = w.done
   var anyFailed = w.failed
   var worstOverlapPct = 100.0
+  ## How many readers actually had a window to be scored against. `possible`
+  ## can be zero, and `worstOverlapPct` starts at 100 — so with every reader too
+  ## short to judge, nothing ever lowered it and the run printed
+  ## "readers overlapped the writer" having measured no overlap at all. That is
+  ## the one wrong answer this file must not give: it exists to rule out a
+  ## serialized layer, and a serialized layer is exactly what a degenerate
+  ## timing would be mistaken for.
+  var judged = 0
 
   echo &"  writer   ops={w.done:<5} conn=0x{toHex(w.connAddr.int64, 12)}"
   for i in 1 ..< total:
@@ -110,7 +118,9 @@ proc run*(dbPath: string): int =
     # Action purpose: a worker that took no measurable time has no window to
     # have overlapped, so it is reported rather than scored — otherwise a
     # degenerate timing reads as a serialized layer.
-    if possible > 0 and pct < worstOverlapPct: worstOverlapPct = pct
+    if possible > 0:
+      inc judged
+      if pct < worstOverlapPct: worstOverlapPct = pct
     echo &"  reader {i} ops={r.done:<5} conn=0x{toHex(r.connAddr.int64, 12)}" &
          &"  ran {span:6.1f} ms, overlapped the writer for {ov:5.1f} ms" &
          (if possible > 0: &" ({pct:5.1f}% of the {possible:.1f} ms possible)"
@@ -126,10 +136,22 @@ proc run*(dbPath: string): int =
   if not distinct_ok:
     echo "  FAIL: threads shared a connection handle — the layer is not per-thread"
     result = 1
-  if worstOverlapPct < MinOverlapPct:
+  if judged == 0:
+    # Not "pass with a caveat": the overlap is the whole assertion, so a run
+    # that scored none of it has proved nothing and must not read as evidence.
+    # Reaching this means the timings are degenerate — 400 SQLite operations
+    # measuring no elapsed time at all — which is a broken measurement rather
+    # than a fast machine, and worth failing on so it is fixed rather than
+    # trusted.
+    echo &"  FAIL: none of the {total - 1} readers had a window that could be " &
+         "judged against the writer's, so no overlap was measured — this run " &
+         "is not evidence either way"
+    result = 1
+  elif worstOverlapPct < MinOverlapPct:
     echo &"  FAIL: a reader overlapped the writer for only {worstOverlapPct:.1f}% " &
          &"of the time the two could have overlapped, below the " &
          &"{MinOverlapPct:.1f}% floor — the layer serialized"
     result = 1
   if result == 0:
-    echo "  PASS: distinct handles per thread, readers overlapped the writer"
+    echo &"  PASS: distinct handles per thread, {judged} of {total - 1} readers " &
+         "judged and every one overlapped the writer"

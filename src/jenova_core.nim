@@ -897,6 +897,36 @@ proc main() =
         check("zlib round-trips a payload byte-exact",
               round.ok and round.data == Page)
 
+        # Action purpose: the opening buffer guess is four times the input, and
+        # it was compared against `MaxInflatedBytes` rather than clamped to it —
+        # so a stream over a quarter of the cap produced a first `cap` past it,
+        # the loop was never entered, and `uncompress` was not called even once.
+        # A large but perfectly legal PDF content stream came back as a refusal
+        # indistinguishable from a decompression bomb.
+        #
+        # The fixture has to be genuinely incompressible or `deflate` shrinks it
+        # below the threshold and tests nothing, so it is filled from a cheap
+        # deterministic PRNG rather than from `random` — repeatable, and no
+        # dependence on a seed the suite does not control. Sized just past a
+        # quarter of the cap: enough to cross the boundary, and no larger,
+        # because this is the heaviest fixture in the suite.
+        block anInputPastAQuarterOfTheCapIsStillTried:
+          let want = zlib.MaxInflatedBytes div 4 + 1024 * 1024
+          var big = newString(want)
+          var x = 0x2545F491'u32
+          for i in 0 ..< want:
+            x = x xor (x shl 13); x = x xor (x shr 17); x = x xor (x shl 5)
+            big[i] = chr(int(x and 0xFF'u32))
+          let packed = zlib.deflate(big)
+          check("the fixture compresses to more than a quarter of the cap",
+                packed.ok and packed.data.len * 4 > zlib.MaxInflatedBytes,
+                $packed.data.len & " bytes vs a cap of " &
+                $zlib.MaxInflatedBytes)
+          let back = zlib.inflate(packed.data)
+          check("and it still inflates rather than being refused unattempted",
+                back.ok, "inflate refused " & $packed.data.len & " bytes")
+          check("byte-exact at that size too", back.ok and back.data == big)
+
         # TJ splits a word across kerning entries. Flushing per string would
         # put a space inside it, so this asserts the join and not the parts.
         let kerned = pdf.textFrom(onePagePdf(
@@ -2215,6 +2245,54 @@ proc main() =
                 symlinkExists(slot) and
                 expandSymlink(slot).extractFilename == "alpha.gguf",
                 (if symlinkExists(slot): expandSymlink(slot) else: "not a link"))
+
+        # Action purpose: the preserve above is the one cleanup step whose
+        # failure must ABORT. Everything else the loop does is untidiness beside
+        # a correct slot, so it is collected and reported — but here the entry
+        # that cannot be moved aside IS the slot, and the rename replaces it
+        # silently. Carrying on destroyed the user's only copy of a real
+        # `active.gguf` and reported the switch a success, which is the exact
+        # loss the preserve exists to prevent.
+        #
+        # `moveFile` onto a non-empty directory is the one portable way to make
+        # that step fail: `.old` is tested with `fileExists` and `symlinkExists`,
+        # so a directory of that name is not seen as taken and the move is
+        # attempted against it.
+        block aPreserveThatCannotHappenAbortsTheSwitch:
+          let
+            slot = home / "models" / "agent" / models.ActiveLink
+            blocker = slot & ".old"
+          removeFile(slot)
+          writeFile(slot, "irreplaceable")
+          # `.old` is a plain file here, left by the block above — and a file at
+          # that name is what `fileExists(dest)` looks for, so the preserve would
+          # simply pick `.old.1` and succeed. It has to be a DIRECTORY: neither
+          # `fileExists` nor `symlinkExists` sees one, so `dest` stays `.old` and
+          # the move is attempted against it.
+          removeFile(blocker)
+          removeDir(blocker)
+          createDir(blocker)
+          writeFile(blocker / "occupied", "x")
+          var refused = false
+          try:
+            discard models.switchToPath(home, beta)
+          except ModelError:
+            refused = true
+          check("a switch that cannot preserve the slot is refused", refused)
+          # The whole point: the file is still there, and still its own bytes.
+          check("the real active model is left exactly where it was",
+                fileExists(slot) and not symlinkExists(slot) and
+                readFile(slot) == "irreplaceable",
+                (if fileExists(slot): readFile(slot) else: "gone"))
+          # And the abort does not litter: nothing downstream will ever move the
+          # temporary link into place, so it must not survive the refusal.
+          var strays: seq[string]
+          for kind, path in walkDir(home / "models" / "agent"):
+            if ".tmp." in path.extractFilename: strays.add path.extractFilename
+          check("and no temporary link is left behind", strays.len == 0, $strays)
+          removeDir(blocker)
+          removeFile(slot)
+          discard models.switchToPath(home, alpha)
 
       block refusals:
         # Containment. `switchToPath` is exported, so a path outside the model

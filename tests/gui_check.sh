@@ -69,11 +69,26 @@ else
 fi
 
 cd "$SRC"
-out=$("$NIM" check "$@" --path:src src/jenova_gui.nim 2>&1) || true
+# The status is captured, not discarded. `|| true` threw it away and the verdict
+# rested entirely on finding the string `Error:` in the output — so a check that
+# died without printing one (killed, out of memory, a compiler crash, a future
+# Nim wording its diagnostics differently) was reported as a PASS. The status is
+# the compiler's own answer to the question this script asks; the grep stays as
+# a second gate, not the only one.
+rc=0
+out=$("$NIM" check "$@" --path:src src/jenova_gui.nim 2>&1) || rc=$?
+if [ "$rc" -ne 0 ]; then
+  echo "$out"
+  echo
+  echo "gui_check: nim check exited $rc"
+  echo "gui_check: FAIL"
+  exit 1
+fi
 echo "$out" | grep -vE "^Hint|UnusedImport" || true
 
 if echo "$out" | grep -q "Error:"; then
   echo
+  echo "gui_check: nim check exited 0 but reported an error — treating it as one."
   echo "gui_check: FAIL"
   exit 1
 fi
