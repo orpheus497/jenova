@@ -14,7 +14,7 @@
 ## Deletes are soft throughout: rows are flagged, never removed, which is what
 ## makes the trash view and restore possible.
 
-import std/[algorithm, json, strutils, tables, os]
+import std/[algorithm, json, strutils, tables, os, oids, times]
 import ./db
 import ./http
 import ./fssync
@@ -610,6 +610,109 @@ proc importData(node: JsonNode): ApiResult =
     return err(500, "import failed: " & getCurrentExceptionMsg())
   ok("""{"status":"ok"}""")
 
+## Function purpose: the `children` column of a copied turn, remapped and
+## filtered to the copied path.
+##
+## Nothing in this program reads `children` — the tree is built from `parent`
+## (`MsgEdge`) — but the column is the frozen Web UI's and a fork that carried
+## the *source's* ids would hand that surface a turn claiming children in another
+## conversation. It is stored as a JSON array there, so it is re-emitted as one;
+## a comma-separated value is accepted too, because the column is TEXT and this
+## has no way to insist.
+proc remapChildren(raw: string, idMap: Table[string, string]): string =
+  var ids: seq[string]
+  try:
+    let parsed = parseJson(if raw.len == 0: "[]" else: raw)
+    if parsed.kind == JArray:
+      for k in parsed:
+        if k.kind == JString: ids.add k.getStr
+  except CatchableError:
+    for k in raw.split(','): ids.add k.strip
+  var kept = newJArray()
+  for k in ids:
+    if idMap.hasKey(k): kept.add %idMap[k]
+  $kept
+
+## Function purpose: copy one branch of a conversation into a new conversation
+## (`PLANS.md` Step 13b) — the Web UI's `DatabaseService.forkConversation`.
+##
+## **The column and its delete cascade already existed and nothing ever wrote
+## one.** `conversations.forkedFromConversationId` is in the schema,
+## `deleteConversation` walks the fork tree through it and `softDelete`
+## re-points orphans at their grandparent — a whole maintenance path for a
+## relationship no surface could create. This is the writer that was missing.
+##
+## **The copy is the path to `atMessageId`, not the whole tree**: a fork means
+## "continue from here, down this line", so the branches beside it are
+## deliberately left behind. Ids are remapped through one table, so a copied
+## parent points at the copy and never back at the original — a `parent` that
+## escaped the remap would attach the new conversation's history to the old
+## one's rows and each would then edit the other.
+##
+## Written through `importData` rather than row by row, so the whole fork is one
+## transaction and a failure part way leaves nothing behind (rule 5: the
+## guarantee already existed).
+proc forkConversation*(sourceId, atMessageId, newName: string):
+    tuple[ok: bool, id, msg: string] =
+  let convs = Entities["conversations"]
+  let src = rowFields(convs, sourceId)
+  if src.len == 0: return (false, "", "no such conversation")
+
+  let msgs = Entities["messages"]
+  let rows = db.query("SELECT " & msgs.colList &
+                      " FROM messages WHERE convId=? AND is_deleted=0" &
+                      " ORDER BY timestamp", sourceId)
+  var edges: seq[MsgEdge]
+  var byId = initTable[string, seq[string]]()
+  for r in rows:
+    if r.len < msgs.cols.len: continue
+    edges.add (id: r[0], parent: r[5])
+    byId[r[0]] = r
+
+  # An empty `atMessageId` forks from the conversation's own read position,
+  # which is what "fork this conversation" means with no message selected.
+  let leaf = if atMessageId.len > 0: atMessageId else: src.field("currNode")
+  let path = pathTo(edges, leaf)
+  if path.len == 0:
+    return (false, "", "could not resolve the message path to " & leaf)
+
+  var idMap = initTable[string, string]()
+  for id in path: idMap[id] = $genOid()
+  let newId = $genOid()
+
+  var outMsgs = newJArray()
+  for id in path:
+    let r = byId[id]
+    var node = rowToJson(msgs, r)
+    node["id"] = %idMap[id]
+    node["convId"] = %newId
+    # A parent outside the copied path becomes empty rather than dangling: the
+    # first turn of a fork is a root, exactly as the source's own root is.
+    node["parent"] = %idMap.getOrDefault(r[5], "")
+    node["children"] = %remapChildren(r[6], idMap)
+    outMsgs.add node
+
+  var conv = newJObject()
+  for col in convs.cols:
+    conv[col.name] = %src.field(col.name)
+  conv["id"] = %newId
+  conv["name"] = %(if newName.len > 0: newName
+                   else: src.field("name") & " (fork)")
+  conv["currNode"] = %idMap[path[^1]]
+  conv["forkedFromConversationId"] = %sourceId
+  # Milliseconds, which is what `lastModified` holds everywhere else — the Web
+  # UI writes `Date.now()` and the column is sorted on.
+  conv["lastModified"] = %(epochTime() * 1000).int64
+
+  var convArr = newJArray()
+  convArr.add conv
+  var payload = newJObject()
+  payload["conversations"] = convArr
+  payload["messages"] = outMsgs
+  let r = importData(payload)
+  if r.status != 200: return (false, "", r.body)
+  (true, newId, "")
+
 ## Function purpose: route one `/api/fs/*` request — the last surface `lib/proxy.lua`
 ## still served (N-20). Four routes, reproduced from `proxy.lua:647-672`.
 ## Entity writes for in-process callers (the GUI sidebar). Goes through the same
@@ -660,6 +763,41 @@ proc restoreEntity*(entity, id: string): bool =
 ## Function purpose: the soft-deleted rows of one table, newest first where the
 ## table has anything to order by. The trash view's source, and deliberately not
 ## a new query shape — it is `Entities`' own column list with the flag inverted.
+## Function purpose: reconcile every live note against its file on disk — the
+## `pull` half of the Web UI's `SyncService` (`PLANS.md` Step 13b).
+##
+## **The mirror was one-way.** `fssync.syncNote` writes a note's `.md` on every
+## save and nothing ever read one back, so an edit made in the embedded Neovim,
+## in another editor, or over `/api/storage` lived on disk while the database
+## kept the old text — and the next save in the window overwrote it without a
+## word. This is what makes those edits return.
+##
+## **Disk wins, and only when the file differs.** A file that matches the row is
+## skipped so nothing is rewritten and no git commit is made for a no-op; a file
+## that is missing is left alone rather than treated as a deletion, because an
+## absent mirror means the note was never saved since the tree was made, not
+## that the user removed it. Deleting a note is `softDelete`'s job and is not
+## inferred from the filesystem.
+##
+## Written through `putEntity`, so the merge D-CC put at that boundary applies
+## and a column this does not mention — `isFocusNote` above all — is carried
+## forward rather than blanked. That is the G-49 class, and going through the
+## boundary is what keeps it fixed rather than re-fixing it here.
+proc pullNotes*(): tuple[updated: int, failed: int] =
+  let e = Entities["notes"]
+  for r in db.query("SELECT " & e.colList & " FROM notes WHERE is_deleted=0"):
+    if r.len < e.cols.len: continue
+    let (id, folderId, projectId, workspaceId, title, content) =
+      (r[0], r[1], r[2], r[3], r[4], r[5])
+    let (found, onDisk) = fssync.readNoteMirror(id, title, folderId, projectId,
+                                                workspaceId)
+    if not found or onDisk == content: continue
+    if putEntity("notes", %*{"id": id, "content": onDisk,
+                             "updatedAt": (epochTime() * 1000).int64}):
+      inc result.updated
+    else:
+      inc result.failed
+
 proc deletedRows*(entity: string): seq[seq[string]] =
   if entity notin Entities: return
   let e = Entities[entity]

@@ -60,6 +60,100 @@ the USER and does not exist, see **D-CE***.
 > one up by verifying it first and upgrading the marker. Scoping unverified findings into a plan is
 > how a session builds the wrong thing.
 
+> ## Step 13 — the parity backlog (`TODOS.md` **A-59**). **This is the current work**, chosen by the USER 2026-09-03 09:10 and scoped 09:48.
+>
+> **What it is.** 1,095 Web UI features enumerated against the window. It is the largest body of
+> work in the project and it is what "the GUI is missing Web UI features" actually means.
+>
+> **How it is worked, and this is the whole method.** The 866 verdicts produced by the audit were
+> made by one agent each with no adversarial re-check, so **they are leads, not facts** (**D-CG**).
+> A row is picked up by verifying it against the source first and upgrading its marker. **Nothing
+> below was taken from a verdict** — every item is a root cause read out of the source directly.
+>
+> **"Missing" is not a feature count.** The granularity is deliberately fine and rows collapse:
+> six chat-form gaps are one widget, and the 147-feature `data-services` area resolves to three
+> real gaps. Work the root cause, not the row count.
+>
+> **13a — BUILT 2026-09-03, then repaired twice from the USER's screen and finally REBUILT at
+> 11:14 as `DraftView`.** The six gaps downstream of the one-line `Entry` are closed together.
+>
+> **The rebuild is the part worth reading, because three separate defects had one cause.** The
+> first version used owlkettle's `TextView`, **which declares no events at all** — so nothing
+> re-ran `view` when the user typed. Everything followed from that: the placeholder never cleared,
+> the widget could only be configured by walking the tree to find it, and the draft had to live in
+> a `TextBuffer` where no change could be observed. **`Entry` worked because it fed state back on
+> every keystroke; dropping that is what cost three runs.**
+>
+> **The rule, and it is general:** a widget this program needs to *observe* must be a renderable it
+> owns, exposing its GTK signals as owlkettle events the way `Entry` does. Reaching around the
+> toolkit — walking to a child, or configuring one from a `property` hook — fails silently.
+>
+> **Five traps found on the way, all worth keeping.** owlkettle's **`addOverlay` defaults to
+> `AlignFill`** on both axes, so an overlay child covers its parent and a targetable one swallows
+> every click; `xAlign`/`yAlign` align text *inside* a Label and do not size it. **A `property`
+> hook is overwritten by `afterBuild`**, which runs last (`genBuild`) and is not re-run on update
+> unless the value changes. **`ContentScroll` must not be reused for an input field** — its
+> `halign = START` and natural-width propagation are deliberate for tables and collapse an empty
+> view to nothing. **GTK4 CSS has no `max-height`**. And the one that crashed the program:
+> **a raw pointer into an owlkettle `EventObj` may only be held for one update cycle** —
+> `genUpdateState` replaces every event object on every update and ARC frees the old one, so a
+> handler bound in `afterBuild` rather than `connectEvents` is dereferencing freed memory by the
+> second frame.
+>
+> **And a process rule, because it cost the most time here: on a SIGBUS, read the core first.**
+> `gdb -batch -ex "bt 40" bin/jenova /var/coredumps/<core>` named the faulting frame in one
+> command and disproved a theory several paragraphs long. Cores land in `/var/coredumps`. The send-or-newline rule is
+> `composer.nim`, below the widget layer, asserted by `composer-selftest`. **Three things worth
+> carrying forward:** owlkettle's `TextView` has **no key hook at all**, so the controller is a
+> `GtkEventControllerKey` on a wrapper renderable in the **capture** phase — a bubble-phase
+> controller sees Enter only after the newline has been inserted. **GTK4 CSS has no `max-height`**;
+> the cap is `gtk_scrolled_window_set_max_content_height`, and it was `bin/jenova --check` that
+> caught the CSS version. And the placeholder is kept (Directive 3) as an overlay gated on
+> `charCount`, which is O(1) where reading the text would copy the draft on every canvas frame.
+> **A long line wraps** — `GTK_WRAP_WORD_CHAR`, set by walking to the view through the real child
+> accessors, because owlkettle exposes no wrap property and `TextBufferObj.gtk` is private.
+>
+> **`--check` cannot see any of this, and that is the lesson of the 10:41 repair.** It builds the
+> tree and exits: it allocates no sizes and routes no events, so a widget of zero width under a
+> click-swallowing overlay passes it cleanly. **A widget is a USER run** (**D-AR**), and this is the
+> sharpest instance the project has: the assertions were green, `--check` was green, and the feature
+> was completely unusable.
+>
+> **13b — BUILT 2026-09-03 10:21.** All three gaps, each asserted rather than screenshotted:
+> markdown export/import (`convmd.nim`, `convmd-selftest`), the conversation fork
+> (`api.forkConversation`, 15 assertions in `pipeline-selftest`), and the mirror's `pull` half
+> (`fssync.readNoteMirror` + `api.pullNotes`, 10 assertions in `workspace-selftest` over real
+> files). **One limit stated plainly:** `pullNotes` reconciles notes that **already have rows**. A
+> brand-new `.md` appearing on disk does not become a note, because `fssync.physicalPath` requires
+> a UUID in the filename and a hand-made file has none — closing that would mean minting an id and
+> renaming the user's file, which is a different decision and was not taken.
+>
+> **The area, as checked first-hand 2026-09-03 09:48** — all fourteen service modules against
+> `src/`:
+>
+> | Gap | What is missing | Verified against |
+> |---|---|---|
+> | **Markdown export/import of a conversation** | `MarkdownService.toMarkdown` / `fromMarkdown` have **no counterpart in `src/`**. `gui.exportConversations` writes `pretty(api.exportAll())` — JSON only. G-32 built the JSON pair and nothing else | `gui.nim:3207-3224`; zero hits for `toMarkdown`/`fromMarkdown` |
+> | **Forking a conversation** | `DatabaseService.forkConversation` copies a branch into a new conversation. **The column exists and delete maintains the fork tree — nothing ever creates a fork** | `api.nim:46`, `:303`, `:335-337`; `db.nim:325` |
+> | **The `pull` half of sync** | `SyncService.pull` walks `.md` off disk and writes notes and conversations back. **Every `fssync.sync*` proc is one-way, DB → disk.** The only `readFile`s are the trash sidecar and `storageGet`, and neither writes a row. **So an external edit — including one made in the embedded Neovim — never returns to the database** | `fssync.nim:339-412`, `:552`, `:771` |
+>
+> **The rest of the area is present or ruled out**, and is recorded so it is not re-derived:
+> `PropsService` and `ParameterSyncService` are built (`gui.nim:420`, `:3290-3309`);
+> `WorkspaceService` was ported as `workspace.nim` (D-BU); `ChatService` and `DatabaseService` are
+> otherwise covered by `pipeline.chatBody` and `api.nim`'s `Entities`; `FilesystemService` and
+> `StorageService` exist over HTTP and are unreachable from the window, **which is already A-18 and
+> is Step 12f, not new work**; `MCPService` is deferred by the USER and `AudioService` is D-BZ.
+>
+> **13c — the remaining eight areas, and this is what is left of Step 13.** 866 leads. Not scoped
+> here, deliberately: each is verified on pickup per D-CG. **`TODOS.md` A-59 carries the inventory
+> table**; check a scope claim against it (rule 11) and never against a summary of it.
+>
+> **Where to start, from what 13a and 13b showed.** Both turned out to be one root cause each
+> behind a column of "Missing" rows, and the largest remaining counts are `views-dialogs` (65),
+> `models-server` (61) and `sidebar-workspace` (47). **Read those three for their root causes
+> before scoping any of them as features** — the rows are fine-grained on purpose and the fan-out
+> is the point.
+
 **Write plans in plain English, then cite the ID** (**D-BA**). A step that reads
 "resolve G-23" tells the reader nothing. Say what the thing is first.
 

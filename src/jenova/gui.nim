@@ -62,6 +62,8 @@ import ./workspace
 import ./settings
 import ./sha256
 import ./hardware
+import ./composer
+import ./convmd
 
 type
   Role* = enum
@@ -889,6 +891,14 @@ viewable App:
   edges: seq[api.MsgEdge]
   ## The turn at the end of the visible path, persisted as `conversations.currNode`.
   leaf: string
+  ## Step 13a. **A plain string, and that is the point.** The composer is a
+  ## multi-line `DraftView` now, but it reports every keystroke back through an
+  ## owlkettle event exactly as the `Entry` did — so the draft stays ordinary
+  ## state, `view` re-runs when it changes, and the placeholder is a state test
+  ## rather than a question asked of GTK.
+  ##
+  ## The first version held it in a `TextBuffer` instead. Nothing then re-ran
+  ## `view` on a keystroke, and the placeholder never went away.
   draft: string
   status: BackendStatus
   lanEnabled: bool
@@ -1904,9 +1914,9 @@ proc fileAttachmentsAsArtefacts(app: AppState) =
 
 proc send(app: AppState) =
   let text = app.draft.strip
-  # G-30: **attachments alone are a turn.** "Look at this" with a picture and no
-  # words is a normal thing to send, and requiring text would refuse it.
-  if (text.len == 0 and app.pending.len == 0) or app.streaming:
+  # Step 13a: the rule itself is `composer.canSend`, below the widget layer,
+  # so it is asserted here at its own call site rather than in a copy of it.
+  if not composer.canSend(text, app.pending.len, app.streaming):
     return
   # The first turn names the conversation. Checked before the message is
   # appended, because after it the path is never empty.
@@ -2179,10 +2189,26 @@ proc adw_init() {.importc: "adw_init", cdecl.}
 from owlkettle/bindings/gtk import GtkAdjustment, GtkWidget, GType, GValue,
   cbool, GConnectFlags, GdkClipboard, GAsyncResult, GAsyncReadyCallback,
   GError, gdk_display_get_default, gdk_display_get_clipboard,
-  G_TYPE_STRING, g_signal_connect_data,
+  G_TYPE_STRING, g_signal_connect_data, g_signal_connect,
+  g_signal_handler_disconnect,
   gtk_scrolled_window_new, gtk_scrolled_window_set_child,
   gtk_scrolled_window_get_vadjustment, gtk_adjustment_set_value,
-  gtk_frame_new, gtk_frame_set_child
+  gtk_frame_new, gtk_frame_set_child,
+  # Step 13a's composer owns its own `GtkTextView` and buffer, so it needs the
+  # buffer surface directly. **All of it is already in owlkettle's bindings** —
+  # checked before declaring anything, per rule 5. The private field that looked
+  # like a blocker (`TextBufferObj.gtk`) is not needed at all: the buffer is
+  # created here and attached with `set_buffer`, both exported.
+  GtkTextBuffer, GtkTextIter, GtkTextTagTable, OwnedGtkString, `$`,
+  gtk_text_view_new, gtk_text_view_set_buffer, gtk_text_view_set_editable,
+  gtk_text_buffer_new, gtk_text_buffer_set_text, gtk_text_buffer_get_text,
+  gtk_text_buffer_get_char_count,
+  gtk_text_buffer_get_start_iter, gtk_text_buffer_get_end_iter
+# `connect`, `disconnect` and `redraw(EventObj)` — the machinery a renderable
+# uses to expose a GTK signal as an owlkettle event, which is what `Entry` does
+# and what the first composer did not do. `owlkettle.nim` imports this module
+# without re-exporting it, so it is imported here by name.
+import owlkettle/widgetutils
 
 proc gtk_adjustment_get_value(a: GtkAdjustment): cdouble {.importc, cdecl.}
 proc gtk_adjustment_get_upper(a: GtkAdjustment): cdouble {.importc, cdecl.}
@@ -2198,6 +2224,11 @@ proc gtk_scrolled_window_set_propagate_natural_height(
 proc gtk_scrolled_window_set_propagate_natural_width(
   sw: GtkWidget, p: cbool) {.importc, cdecl.}
 proc gtk_scrolled_window_set_policy(sw: GtkWidget, h, v: cint) {.importc, cdecl.}
+# Step 13a. The composer's height ceiling. Declared here with the other three
+# for the same reason — owlkettle's `ScrolledWindow` exposes `child` and nothing
+# else — and checked against the bindings first, per rule 5.
+proc gtk_scrolled_window_set_max_content_height(
+  sw: GtkWidget, h: cint) {.importc, cdecl.}
 ## G-42. Not in owlkettle's bindings — `hAlign` there is a `Box` *packing*
 ## property set by the parent, and this has to be the widget's own, because the
 ## call site inserts every markdown block through one `insert` and a table is the
@@ -2209,7 +2240,10 @@ const
   ## `set_policy(w, 1, 2)` at the call site says nothing about what it does.
   PolicyAutomatic = cint(1)
   PolicyNever = cint(2)
-  ## `GtkAlign`. `FILL` is the default and is what made a table stretch.
+  ## `GtkAlign`. `FILL` is the default and is what made a table stretch — which
+  ## is why `ContentScroll` overrides it to `START`. The composer needs it back:
+  ## an input field that hugs its content is a field with nothing to click.
+  AlignFillG = cint(0)
   AlignStartG = cint(1)
 
 ## G-41. Whether the transcript is currently following a reply, and whether the
@@ -2307,39 +2341,78 @@ renderable AutoScroll of BaseWidget:
 ## **Natural *height* propagates; natural *width* deliberately does not.** A wide
 ## table must not widen the transcript, so the horizontal axis stays scrollable
 ## while the vertical axis simply takes the room the rows need.
+## Function purpose: apply a `ContentScroll`'s sizing, given its ceiling.
+##
+## **It exists because a `property` hook alone is silently overwritten, and that
+## is not a theory — it is how the composer shipped with no width.** owlkettle's
+## generated `build` runs `beforeBuild`, then `buildState` — which is where every
+## field's `property` hook runs — and then **`afterBuild` last**
+## (`widgetdef.nim`, `genBuild`/`genBuildState`). So a `property` hook that
+## configures the widget is undone by an `afterBuild` that configures it
+## differently, and `genUpdateState` re-runs a property hook only when the value
+## *changes*, which a literal never does. Both hooks therefore call this, and the
+## two paths cannot drift.
+proc applyScrollSizing(w: GtkWidget, maxHeight: int) =
+  gtk_scrolled_window_set_propagate_natural_height(w, cbool(1))
+  if maxHeight > 0:
+    # Action purpose: a ceiling means this is an **input field**, which needs the
+    # opposite of every rule below. An empty `TextView`'s natural width is
+    # roughly zero, so hugging the content collapses the composer to a sliver at
+    # the left edge with nothing to click — exactly what happened.
+    #
+    # Vertical scrolls past the ceiling, or the extra lines are simply cut off.
+    # Horizontal never scrolls, because the view **wraps** instead — see
+    # `DraftView`, which sets the wrap mode owlkettle has no property for.
+    gtk_scrolled_window_set_max_content_height(w, maxHeight.cint)
+    gtk_scrolled_window_set_propagate_natural_width(w, cbool(0))
+    gtk_widget_set_halign(w, AlignFillG)
+    gtk_scrolled_window_set_policy(w, PolicyNever, PolicyAutomatic)
+  else:
+    # G-42, unchanged and still the default. **This was `0` and that is why a
+    # table rendered larger than its rows.** G-41 turned natural-width
+    # propagation off so a wide table could not widen the whole transcript,
+    # which worked — and left the scroller with no width of its own, so the
+    # vertical `Box` stretched it to the full column on the default
+    # `GTK_ALIGN_FILL`. The collapse was fixed and nothing constrained the
+    # result back down.
+    #
+    # The pair below is the actual answer: **natural width is the content's
+    # width, and the widget aligns to the start instead of filling.** GTK then
+    # allocates the lesser of the two — the table's own width when it fits, the
+    # column's when it does not, with the horizontal scrollbar taking the
+    # remainder under `PolicyAutomatic`.
+    #
+    # G-41's concern does not come back, and it is worth saying why rather than
+    # trusting it: the enclosing `AutoScroll` never calls
+    # `set_propagate_natural_width` either, so it reports its own small natural
+    # width upward and absorbs whatever this one asks for. The window cannot be
+    # widened by a table.
+    gtk_scrolled_window_set_propagate_natural_width(w, cbool(1))
+    gtk_widget_set_halign(w, AlignStartG)
+    gtk_scrolled_window_set_policy(w, PolicyAutomatic, PolicyNever)
+
 renderable ContentScroll of BaseWidget:
   child: Widget
+  ## Step 13a. A ceiling in pixels, or 0 for none — which is what every
+  ## transcript block passes and is why the default keeps their behaviour
+  ## exactly as it was. The composer is the one caller that sets it: propagating
+  ## natural height makes the box grow with the draft, and without a ceiling it
+  ## would grow until it had eaten the transcript.
+  ##
+  ## **Not a `sizeRequest` and not CSS.** A sizing API sets a *floor*, which is
+  ## the opposite of what is wanted, and GTK4 CSS has no `max-height` at all.
+  maxHeight: int = 0
 
   hooks:
     beforeBuild:
       state.internalWidget = gtk_scrolled_window_new(
         GtkAdjustment(nil), GtkAdjustment(nil))
     afterBuild:
-      gtk_scrolled_window_set_propagate_natural_height(
-        state.internalWidget, cbool(1))
-      # G-42. **This was `0` and that is why a table rendered larger than its
-      # rows.** G-41 turned natural-width propagation off so a wide table could
-      # not widen the whole transcript, which worked — and left the scroller with
-      # no width of its own, so the vertical `Box` stretched it to the full
-      # column on the default `GTK_ALIGN_FILL`. The collapse was fixed and
-      # nothing constrained the result back down.
-      #
-      # The pair below is the actual answer: **natural width is the content's
-      # width, and the widget aligns to the start instead of filling.** GTK then
-      # allocates the lesser of the two — the table's own width when it fits,
-      # the column's when it does not, with the horizontal scrollbar taking the
-      # remainder under `PolicyAutomatic`.
-      #
-      # G-41's concern does not come back, and it is worth saying why rather
-      # than trusting it: the enclosing `AutoScroll` never calls
-      # `set_propagate_natural_width` either, so it reports its own small
-      # natural width upward and absorbs whatever this one asks for. The window
-      # cannot be widened by a table.
-      gtk_scrolled_window_set_propagate_natural_width(
-        state.internalWidget, cbool(1))
-      gtk_widget_set_halign(state.internalWidget, AlignStartG)
-      gtk_scrolled_window_set_policy(state.internalWidget,
-                                     PolicyAutomatic, PolicyNever)
+      applyScrollSizing(state.internalWidget, state.maxHeight)
+
+  hooks maxHeight:
+    property:
+      applyScrollSizing(state.internalWidget, state.maxHeight)
 
   hooks child:
     (build, update):
@@ -2463,6 +2536,162 @@ renderable DropZone of BaseWidget:
       raise newException(ValueError, "DropZone takes one child; use a Box.")
     widget.hasChild = true
     widget.valChild = child
+
+# Step 13a. The composer's own widget. Four protos: the key controller's three,
+# and the wrap mode. Everything else it needs — `gtk_text_view_new`, the buffer
+# surface, `g_signal_connect` — is already in owlkettle's bindings and is
+# imported rather than re-declared (rule 5).
+type GtkEventController = distinct pointer
+
+proc gtk_event_controller_key_new(): GtkEventController {.importc, cdecl.}
+proc gtk_event_controller_set_propagation_phase(c: GtkEventController,
+                                                phase: cint) {.importc, cdecl.}
+proc gtk_widget_add_controller(w: GtkWidget, c: GtkEventController)
+  {.importc, cdecl.}
+# owlkettle's `TextView` has no wrap property — checked in `widgets.nim`, per
+# rule 5 — and a GtkTextView defaults to `GTK_WRAP_NONE`, so a long draft
+# scrolls sideways instead of wrapping. This view is built here, so it is set
+# directly on the widget rather than found by walking a tree.
+proc gtk_text_view_set_wrap_mode(v: GtkWidget, mode: cint) {.importc, cdecl.}
+# `GtkScrollable`'s vertical policy. It defaults to `GTK_SCROLL_MINIMUM`
+# (`gtkenums.h`, value 0), under which a scrolled window negotiates against the
+# child's *minimum* height — so `propagate-natural-height` has nothing to grow
+# and the box scrolls instead of expanding. That is one of the two candidates
+# for the composer not resizing, and setting it costs one call.
+proc gtk_scrollable_set_vscroll_policy(s: GtkWidget, policy: cint)
+  {.importc, cdecl.}
+
+const
+  PhaseCapture = 1.cint
+  ## `GTK_WRAP_WORD_CHAR` — break on a word, and inside a word when one word is
+  ## wider than the box. The same value `sourceview.nim` uses for a code block.
+  WrapWordChar = 3.cint
+  ## `GTK_SCROLL_NATURAL`.
+  ScrollNatural = 1.cint
+
+## Function purpose: the composer's `GtkTextBuffer` text, as a Nim string.
+proc bufferText(buffer: GtkTextBuffer): string =
+  var a, b: GtkTextIter
+  gtk_text_buffer_get_start_iter(buffer, a.addr)
+  gtk_text_buffer_get_end_iter(buffer, b.addr)
+  $gtk_text_buffer_get_text(buffer, a.addr, b.addr, cbool(1))
+
+## The chat composer (Step 13a). **A renderable that owns its own `GtkTextView`
+## and buffer, rather than owlkettle's `TextView`** — and that is the whole
+## repair, not a stylistic preference.
+##
+## owlkettle's `TextView` declares no events at all, so nothing re-ran `view`
+## when the user typed: the placeholder never cleared, and the widget could only
+## be configured by walking the tree to find it. This exposes the buffer's
+## `changed` signal as an owlkettle event exactly the way `Entry` does
+## (`widgets.nim`, `Entry`'s `connectEvents`), which puts the draft back into
+## ordinary state and makes every one of those problems disappear rather than be
+## worked around.
+renderable DraftView of BaseWidget:
+  text: string
+  buffer {.private, onlyState.}: GtkTextBuffer
+  ## The key controller. Held in state because it is created once and GTK owns
+  ## it, while the handler bound to it is re-bound on every update — see
+  ## `connectEvents`.
+  keyCtl {.private, onlyState.}: GtkEventController
+
+  proc changed(text: string) ## Every keystroke, so the draft stays in state.
+  proc submit()              ## Enter, per `composer.actionFor`.
+
+  hooks:
+    beforeBuild:
+      # The buffer is made here and attached, rather than taken from owlkettle's
+      # `TextBuffer` — whose `gtk` field is private. Two exported calls replace
+      # the field that looked like a blocker.
+      state.buffer = gtk_text_buffer_new(GtkTextTagTable(nil))
+      state.internalWidget = gtk_text_view_new()
+      gtk_text_view_set_buffer(state.internalWidget, state.buffer)
+      # Action purpose: the key controller is created **here**, not in
+      # `afterBuild`, because `connectEvents` runs inside `buildState` — before
+      # `afterBuild` — and needs it. GTK owns the controller from the moment it
+      # is added; only the *handler* on it is re-bound per update, below.
+      #
+      # CAPTURE phase so Enter is seen *before* the view inserts a newline; in
+      # the bubble phase the newline is already in the buffer by then.
+      state.keyCtl = gtk_event_controller_key_new()
+      gtk_event_controller_set_propagation_phase(state.keyCtl, PhaseCapture)
+      gtk_widget_add_controller(state.internalWidget, state.keyCtl)
+    afterBuild:
+      gtk_text_view_set_wrap_mode(state.internalWidget, WrapWordChar)
+      # So the enclosing `ContentScroll`'s natural-height propagation has a
+      # growing number to propagate.
+      gtk_scrollable_set_vscroll_policy(state.internalWidget, ScrollNatural)
+    connectEvents:
+      # **Both handlers are bound here, and that is the whole point of this
+      # hook.** owlkettle replaces `state.changed` and `state.submit` with fresh
+      # `EventObj`s on *every* update (`genUpdateState`), and ARC frees the old
+      # ones — so a handler bound once, in `afterBuild`, holds a pointer that is
+      # dead after the first redraw. **That is exactly what crashed:** `submit`
+      # was bound in `afterBuild`, every keystroke redrew and replaced the
+      # object, and the first Enter dereferenced freed memory — SIGBUS, with
+      # `keyCallback` as frame 0 of the core. `disconnectEvents` below and this
+      # hook run as a pair on every update, which is what keeps them live.
+      #
+      # The callbacks are declared **inside the hook**, as `Entry` does, because
+      # the generated state type does not exist until the renderable is
+      # complete — a proc above it cannot name `DraftViewState`.
+      proc changedCallback(buffer: GtkTextBuffer,
+                           data: ptr EventObj[proc (text: string)]) {.cdecl.} =
+        let text = bufferText(buffer)
+        DraftViewState(data[].widget).text = text
+        data[].callback(text)
+        data[].redraw()
+
+      proc keyCallback(c: GtkEventController, keyval, keycode: cuint,
+                       modifiers: cuint,
+                       data: ptr EventObj[proc ()]): cbool {.cdecl.} =
+        case composer.actionFor(keyval.uint32, modifiers.uint32)
+        of composer.caSend:
+          if data.isNil or data[].callback.isNil: return cbool(0)
+          data[].callback()
+          data[].redraw()
+          # TRUE: handled here, so the newline is never inserted as well.
+          cbool(1)
+        # Shift+Enter and everything else are GTK's: the view inserts the
+        # newline itself and needs no help doing it.
+        of composer.caNewline, composer.caPass: cbool(0)
+
+      # Connected to the **buffer**, not the widget, because that is what emits
+      # `changed` — so `state.connect`, which always uses `internalWidget`, is
+      # not usable here and its two lines are reproduced instead.
+      if not state.changed.isNil:
+        state.changed.widget = state
+        state.changed.handler = g_signal_connect(
+          pointer(state.buffer), "changed", cast[pointer](changedCallback),
+          state.changed[].addr)
+      # And to the controller, for the same reason and with the same lifetime.
+      if not state.submit.isNil:
+        state.submit.widget = state
+        state.submit.handler = g_signal_connect(
+          pointer(state.keyCtl), "key-pressed", cast[pointer](keyCallback),
+          state.submit[].addr)
+    disconnectEvents:
+      if not state.changed.isNil and state.changed.handler > 0:
+        g_signal_handler_disconnect(pointer(state.buffer),
+                                    state.changed.handler)
+        state.changed.handler = 0
+      if not state.submit.isNil and state.submit.handler > 0:
+        g_signal_handler_disconnect(pointer(state.keyCtl),
+                                    state.submit.handler)
+        state.submit.handler = 0
+
+  hooks text:
+    property:
+      # Action purpose: **compare before writing, and this is not defensive
+      # padding.** `gtk_text_buffer_set_text` replaces the contents and drops the
+      # cursor at the start, so writing on every redraw would yank the caret to
+      # the beginning while the user was typing. `Entry` needs no such guard
+      # because `GtkEditable` preserves the position; a buffer does not.
+      if bufferText(state.buffer) != state.text:
+        gtk_text_buffer_set_text(state.buffer, state.text.cstring,
+                                 state.text.len.cint)
+    read:
+      state.text = bufferText(state.buffer)
 
 renderable SourceCode of BaseWidget:
   code: string
@@ -2829,6 +3058,26 @@ proc fullscreenButton(app: AppState): Widget =
       style = [ButtonFlat, StyleClass("row-btn")]
       proc clicked() = app.fullscreen = not app.fullscreen
 
+## Function purpose: copy a conversation's current branch into a new one
+## (Step 13b). The work is `api.forkConversation`; this is the surface it never
+## had — `forkedFromConversationId` and its whole delete cascade already existed
+## and nothing in the program could create the relationship.
+##
+## The fork is taken at the conversation's own `currNode`, which is the turn that
+## conversation is being read at — so forking the one on screen forks what is on
+## screen, and forking another row forks where that row was left.
+proc forkConversationRow(app: AppState, id: string) =
+  let (ok, newId, msg) = api.forkConversation(id, "", "")
+  if not ok:
+    app.notice = "fork failed: " & msg
+    return
+  app.convs = listConversations()
+  app.reloadTree()
+  # Opened rather than merely listed: a fork is made in order to carry on in it,
+  # and leaving the user on the original is the opposite of what they asked for.
+  app.selectConversation(newId)
+  app.notice = "forked"
+
 proc convRow(app: AppState, c: ConvItem): Widget =
   gui:
     Box(orient = OrientX, spacing = 2):
@@ -2846,6 +3095,14 @@ proc convRow(app: AppState, c: ConvItem): Widget =
         proc clicked() =
           app.renaming = c.id
           app.renameDraft = c.name
+      # Step 13b. No `fullscreenButton` in this row, so G-51's positional trap
+      # does not apply to it — the constraint is that nothing may be inserted
+      # before that one widget, and it is not here.
+      Button {.expand: false.}:
+        icon = "edit-copy-symbolic"
+        tooltip = "Fork — copy this conversation's current branch into a new one"
+        style = [ButtonFlat, StyleClass("row-btn")]
+        proc clicked() = app.forkConversationRow(c.id)
       Button {.expand: false.}:
         icon = "user-trash-symbolic"
         tooltip = "Delete"
@@ -3259,6 +3516,121 @@ proc importConversations(app: AppState) =
   app.convs = listConversations()
   app.reloadTree()
   app.notice = "imported from " & names[0]
+
+## Function purpose: write the open conversation as the Web UI's markdown
+## document (Step 13b). The JSON pair above moves the whole database between the
+## two surfaces; this moves **one readable transcript**, which is the other
+## format `jca_web` ships and the only one a user can read, diff or paste
+## somewhere. The format itself is `convmd.nim` and is asserted there.
+proc exportConversationMarkdown(app: AppState) =
+  if app.convId.len == 0:
+    app.notice = "no conversation open to export"
+    return
+  var name = "conversation"
+  for c in app.convs:
+    if c.id == app.convId: name = c.name
+  let (res, state) = app.open: gui:
+    FileChooserDialog:
+      title = "Export this conversation as markdown"
+      action = FileChooserSave
+      initialPath = app.p.state
+      DialogButton {.addButton.}:
+        text = "Cancel"
+        res = DialogCancel
+      DialogButton {.addButton.}:
+        text = "Export"
+        res = DialogAccept
+        style = [ButtonSuggested]
+  if res.kind != DialogAccept: return
+  let names = FileChooserDialogState(state).filenames
+  if names.len == 0: return
+  # Built from the visible path rather than every row, so what is written is the
+  # branch being read — the same rule the transcript and `forkConversation`
+  # follow. Exporting every branch flattened would produce a document with the
+  # alternatives interleaved and no way to tell them apart.
+  var msgs: seq[convmd.MdMessage]
+  for i, m in app.messages:
+    msgs.add convmd.MdMessage(role: $m.role, content: m.text,
+                              timestamp: i.int64)
+  try:
+    writeFile(names[0], convmd.toMarkdown(name, msgs))
+    app.notice = "exported to " & names[0]
+  except CatchableError as e:
+    app.notice = "export failed: " & e.msg
+
+## Function purpose: read one of those documents back as a new conversation.
+## Written through `api.importAll`, so it takes the same transactional path the
+## JSON import and the HTTP route take rather than inserting rows itself.
+proc importConversationMarkdown(app: AppState) =
+  let (res, state) = app.open: gui:
+    FileChooserDialog:
+      title = "Import a markdown conversation"
+      action = FileChooserOpen
+      initialPath = app.p.state
+      DialogButton {.addButton.}:
+        text = "Cancel"
+        res = DialogCancel
+      DialogButton {.addButton.}:
+        text = "Import"
+        res = DialogAccept
+        style = [ButtonSuggested]
+  if res.kind != DialogAccept: return
+  let names = FileChooserDialogState(state).filenames
+  if names.len == 0: return
+  var doc: convmd.MdConversation
+  try:
+    doc = convmd.fromMarkdown(readFile(names[0]))
+  except CatchableError as e:
+    app.notice = "import failed: " & e.msg
+    return
+  if doc.messages.len == 0:
+    app.notice = "import failed: no turns found in " & names[0]
+    return
+
+  let convId = $genOid()
+  var msgs = newJArray()
+  var parent = ""
+  for m in doc.messages:
+    let id = $genOid()
+    msgs.add %*{"id": id, "convId": convId, "type": "message", "role": m.role,
+                "timestamp": m.timestamp, "parent": parent, "children": "[]",
+                "content": m.content}
+    parent = id
+  let conv = %*{"id": convId,
+                "name": (if doc.name.len > 0: doc.name else: "Imported"),
+                "lastModified": (epochTime() * 1000).int64,
+                "currNode": parent}
+  var payload = newJObject()
+  var convArr = newJArray()
+  convArr.add conv
+  payload["conversations"] = convArr
+  payload["messages"] = msgs
+  let (ok, msg) = api.importAll(payload)
+  if not ok:
+    app.notice = "import failed: " & msg
+    return
+  app.convs = listConversations()
+  app.reloadTree()
+  app.notice = "imported " & $doc.messages.len & " turns from " & names[0]
+
+## Function purpose: bring edits made outside the window back into the database
+## (Step 13b) — a note changed in the embedded Neovim, in another editor, or
+## over `/api/storage`. The reconcile is `api.pullNotes`; this reports what it
+## did, because a sync that says nothing is indistinguishable from one that did
+## not run.
+proc pullNotesFromDisk(app: AppState) =
+  let (updated, failed) = api.pullNotes()
+  app.reloadTree()
+  # An open note is re-read, or the editor would keep showing the text that was
+  # just replaced underneath it. **Only when it has no unsaved edit** — 8c-4's
+  # rule is that nothing drops what the user typed without asking, and a sync
+  # they triggered is not a licence to break it.
+  if app.openNote.len > 0 and not app.noteDirty():
+    app.openNoteEditor(app.openNote)
+  app.notice =
+    if failed > 0: $updated & " notes updated from disk, " & $failed & " failed"
+    elif updated == 0: "no notes on disk differ from the database"
+    else: $updated & " notes updated from disk"
 
 ## Function purpose: the visible half of a `value|label` option list, and the
 ## index of the stored value in it. Two small procs rather than expressions
@@ -3838,6 +4210,38 @@ proc settingsPanel(app: AppState): Widget =
                     text = "Import…"
                     style = [ButtonFlat, StyleClass("row-btn")]
                     proc clicked() = app.importConversations()
+                # Step 13b. The Web UI ships two formats and the window had one.
+                Label {.expand: false.}:
+                  text = "Or move a single conversation as readable markdown " &
+                         "— the same document the Web UI writes."
+                  xAlign = 0.0
+                  wrap = true
+                  style = [StyleClass("settings-help")]
+                Box(orient = OrientX, spacing = 8) {.expand: false.}:
+                  Button {.expand: false.}:
+                    text = "Export this chat…"
+                    style = [ButtonFlat, StyleClass("row-btn")]
+                    sensitive = app.convId.len > 0
+                    proc clicked() = app.exportConversationMarkdown()
+                  Button {.expand: false.}:
+                    text = "Import markdown…"
+                    style = [ButtonFlat, StyleClass("row-btn")]
+                    proc clicked() = app.importConversationMarkdown()
+                # Step 13b. The mirror was write-only: `fssync` wrote a note's
+                # `.md` on every save and nothing read one back, so an edit made
+                # in the embedded Neovim never returned to the database.
+                Label {.expand: false.}:
+                  text = "Notes are mirrored to disk as markdown. If one was " &
+                         "edited outside this window — in the Neovim page, or " &
+                         "another editor — this brings the change back in."
+                  xAlign = 0.0
+                  wrap = true
+                  style = [StyleClass("settings-help")]
+                Box(orient = OrientX, spacing = 8) {.expand: false.}:
+                  Button {.expand: false.}:
+                    text = "Sync notes from disk"
+                    style = [ButtonFlat, StyleClass("row-btn")]
+                    proc clicked() = app.pullNotesFromDisk()
               else:
                 for d in settings.fieldsIn(app.settingsSection):
                   insert(app.settingsField(d)) {.expand: false.}
@@ -4296,14 +4700,56 @@ method view(app: AppState): Widget =
                   style = [ButtonFlat, StyleClass("row-btn")]
                   sensitive = not app.streaming
                   proc clicked() = pasteImage()
-                Entry {.expand: true.}:
-                  text = app.draft
-                  placeholder = "Message Jenova…"
-                  sensitive = not app.streaming
-                  proc changed(text: string) =
-                    app.draft = text
-                  proc activate() =
-                    app.send()
+                # Step 13a. **A `TextView`, not an `Entry`** — six parity gaps
+                # were all downstream of the composer being one line bound to a
+                # string: multi-line drafts, Shift+Enter, autogrow, the height
+                # cap and the height reset. `ContentScroll` supplies the growth
+                # and the ceiling — natural-height propagation up to
+                # `maxHeight` — and `DraftView` supplies the rest, including the
+                # one thing an `Entry` gave free: Enter sends, Shift+Enter does
+                # not.
+                #
+                # **The child count of this row is unchanged at five and
+                # `fullscreenButton` is still last** (G-51).
+                Overlay {.expand: true.}:
+                  ContentScroll:
+                    # Roughly eight lines, which is where the Web UI's own
+                    # textarea stops growing.
+                    maxHeight = 168
+                    DraftView:
+                      text = app.draft
+                      style = [StyleClass("draft-view")]
+                      # The two events that put the draft back into ordinary
+                      # state — which is what the `Entry` did and what the first
+                      # version of this composer dropped.
+                      proc changed(text: string) = app.draft = text
+                      proc submit() = app.send()
+                  # Directive 3: a `TextView` has no placeholder and the `Entry`
+                  # this replaces had one, so it is drawn rather than dropped.
+                  #
+                  # **A plain state test.** The first version asked the buffer
+                  # (`charCount`) and nothing re-ran `view` on a keystroke, so
+                  # the placeholder sat over the user's text indefinitely. With
+                  # `changed` feeding `app.draft`, owlkettle redraws on every
+                  # keystroke and this branch is simply correct.
+                  #
+                  # Action purpose: **the alignments and `sensitive` are what
+                  # keep the box clickable, and both are required.** A first
+                  # version had neither and the composer could not be clicked
+                  # into at all: owlkettle's `addOverlay` adder defaults to
+                  # `hAlign: AlignFill, vAlign: AlignFill` (`widgets.nim`), so
+                  # the Label was stretched over the whole composer, and a
+                  # GtkLabel is targetable by default — it sat on top of the
+                  # view and took every click. `xAlign`/`yAlign` do **not** do
+                  # this; they align the text *inside* the Label.
+                  if app.draft.len == 0:
+                    Label {.addOverlay, hAlign: AlignStart, vAlign: AlignStart.}:
+                      text = "Message Jenova…"
+                      # GTK4 skips insensitive widgets when it picks a target,
+                      # so this cannot intercept a click even if an alignment is
+                      # changed later.
+                      sensitive = false
+                      style = [StyleClass("draft-placeholder")]
                 # G-33: the send button becomes a stop button mid-generation,
                 # which is what the Web UI's `ChatFormActionSubmit` does. It
                 # previously just greyed out, so once a generation started there

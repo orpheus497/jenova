@@ -1,11 +1,14 @@
 # BRIEFING
 
-**Last updated:** 2026-09-03 09:10 (Session 024)
-**Branch:** `bsd`, at **`94b0c49e`** ("Devdocs Cleanup") — the USER committed Session 023's
-`.devdocs/` work. *(This said `b9ed3703` and was one commit stale.)* **Session 024 changed
-`jenova_core.nimble` and the six `tests/*.sh`** — Step 12a and 12b — and `nimble suites` was run
-twice, at the USER's explicit request. **No `src/` file was touched.** `jvim/` is tracked on
-purpose and `.gitignore` carries a block saying so.
+**Last updated:** 2026-09-03 11:24 (Session 025)
+**Branch:** `bsd`, at **`9fc9ecc7`** ("Docupdates") **with Session 025's work uncommitted.**
+**Step 13a and 13b are built.** **13a's composer was rebuilt at 11:14 as `DraftView`** after two
+failed repairs from the USER's screen, and **a SIGBUS on Enter was fixed at 11:24** — an event
+handler bound in `afterBuild` held a pointer freed on the first redraw. All of it is in
+`PROGRESS.md`, with the five toolkit traps collected in `PLANS.md` Step 13a. Two new modules
+(`composer.nim`, `convmd.nim`), and `gui.nim`, `api.nim`, `fssync.nim`, `theme.nim`,
+`jenova_core.nim` and `jenova_core.nimble` changed. **All sixteen self-tests pass, both binaries
+build, `bin/jenova --check` exits 0.** `jvim/` is tracked on purpose and `.gitignore` says so.
 
 ---
 
@@ -65,7 +68,7 @@ Every rule below exists because it was broken, repeatedly, and cost the USER a d
 | **Build** | `nimble`. Tasks in `jenova_core.nimble`: `core`, `gui`, `suites`, `llama`, `web`, `clean` |
 | **Architecture** | `BLUEPRINT.md` |
 | **Runtime home** | `$HOME/Jenova`. `~/JCA` is permanently off limits |
-| **Tests** | `nimble suites` runs the **self-test subcommands** (from the `SelfTests` const in `jenova_core.nimble` — **read the names out of `src/jenova_core.nim`, never from a number written here**) and then the six shell suites under `tests/`. A failing assertion fails the run, and a suite that cannot run fails rather than skipping. **Nothing tests the GUI — see §6.** |
+| **Tests** | `nimble suites` runs the **self-test subcommands** (from the `SelfTests` const in `jenova_core.nimble` — **read the names out of `src/jenova_core.nim`, never from a number written here**) and then the six shell suites under `tests/`. A failing assertion fails the run, and a suite that cannot run fails rather than skipping — **with one sanctioned exception: `test_nvimctl.sh` still skips when `nvim` is absent**, the USER's overrule, because `nvim` is not a build dependency of either binary. **Nothing tests the GUI — see §6.** |
 
 ## 2. State
 
@@ -93,8 +96,9 @@ against the six-item scope list that had been carried since Session 010.
 **A three-part audit, commissioned by the USER. No code was changed and nothing was run.**
 
 1. **Web UI ↔ GUI parity.** 1,095 features enumerated from `jca_web/src`; 866 parity verdicts
-   produced across eight of nine areas. **`data-services` (147 features) was not reached.**
-   31 GUI capabilities beyond the Web UI catalogued.
+   produced across eight of nine areas. *(`data-services` was not reached then; it was read
+   first-hand 2026-09-03 09:48 and resolves to three gaps — §4.)* 31 GUI capabilities beyond the
+   Web UI catalogued.
 2. **Every `.devdocs/` claim against the source.** 388 claims checked across all ten trackers.
    **212 TRUE, 87 STALE, 53 MISLEADING, 35 FALSE.** Corrected in this pass.
 3. **Mechanism analysis.** Seven subsystems read end to end — GUI wiring and threading, memory,
@@ -124,17 +128,21 @@ re-deriving it here.**
 **The list is `TODOS.md`.** The ordered plan is `PLANS.md`. The parity inventory is `TODOS.md`
 A-59, and it supersedes every scope list this project has written.
 
-> ### THE NEXT WORK IS THE PARITY BACKLOG — `TODOS.md` **A-59**. Chosen by the USER 2026-09-03 09:10.
+> ### THE CURRENT WORK IS THE PARITY BACKLOG — `TODOS.md` **A-59**, scoped as `PLANS.md` **Step 13**.
 >
-> **1,095 Web UI features enumerated, 866 verdicts across eight of nine areas.** It is the largest
-> body of work in the project and it is what "the GUI is missing Web UI features" actually means.
+> Chosen by the USER 2026-09-03 09:10. **1,095 Web UI features enumerated.** It is the largest body
+> of work in the project and it is what "the GUI is missing Web UI features" actually means.
 >
-> **Three things to know before picking it up.** **`data-services` (147 features) was never checked
-> at all** — that area has no verdicts, only a feature count. The verdicts that exist were produced
-> by one agent each **with no adversarial re-check**, so they are leads, not facts (**D-CG**).
-> And **"Missing" is not a feature count** — the granularity is deliberately fine and many rows
-> collapse to one root cause: six of the chat-form gaps are all downstream of the composer being a
-> one-line `Entry` bound to a string rather than a `TextView` with a buffer.
+> **13a and 13b are BUILT (2026-09-03 10:21, `PROGRESS.md`).** The composer is a `TextView`, so the
+> six chat-form gaps behind the one-line `Entry` are closed together; and `data-services` — the
+> area that had no verdicts at all until it was read first-hand — is closed: markdown conversation
+> export/import, forking a conversation, and the mirror's `pull` half, so an edit made in the
+> embedded Neovim now comes back into the database.
+>
+> **What is left is 13c: the other eight areas' 866 verdicts, and they are leads, not facts**
+> (**D-CG**) — one agent each, no adversarial re-check. Verify a row against the source before
+> scoping it. **And remember "Missing" is not a feature count:** both items built today turned out
+> to be a single root cause behind a column of rows, which is the shape to expect from the rest.
 >
 > **Step 12c…12f are not cancelled** — they are the verified defects and they sit behind this.
 
@@ -144,13 +152,22 @@ is mostly in the window.
 ## 5. Known broken
 
 **A-1 and A-2 were the two that outranked every feature gap. Both were built 2026-09-03 09:02**
-(`PROGRESS.md`); `nimble suites` runs all fourteen self-tests and a suite that cannot run fails.
+(`PROGRESS.md`); `nimble suites` runs all fourteen self-tests and a suite that cannot run fails,
+**except `test_nvimctl.sh`, which the USER ruled must keep skipping on a missing `nvim`.**
 **T-12 went with them.** That pass also found `test_models.sh` asserting **pre-D-CB** behaviour —
 red since 2026-09-02 10:43, invisible because Rule 0 stopped anyone running the suites. The
 product was correct; the assertion was stale, and it is corrected.
 
 **All remaining test and check work is deferred to last** — the USER's instruction, `TODOS.md`
 **A-68**. The live work is `PLANS.md` Step 12c onward, below.
+
+**One more, found 2026-09-03 while building Step 13b and verified by reading both halves —
+`TODOS.md` A-69:** **attaching a file has never filed it as a workspace artefact.**
+`gui.fileAttachmentsAsArtefacts` mints the `fileAssets` id with `$genOid()`, `fssync.physicalPath`
+refuses any id that is not a UUID, and `api.upsert`'s mirror-failure branch then deletes the row it
+just wrote — so the user sees "could not file … in the workspace" on every attachment and G-44 /
+Step 10b has never worked. **The fix is one call** (`fssync.newUuid()`), and the same trap is
+already documented in a comment eleven lines above it.
 
 **Four high-severity code defects, all verified by reading the source — and all re-verified
 2026-09-03 09:00 against the current tree:**
@@ -180,7 +197,7 @@ Two cosmetic Backlog items (G-37, G-38) and the G-51 widget constraint.
 ## 6. The coverage gap — now one gap, not two
 
 **Half of this section is closed.** Every suite and every self-test exercises `jenova-core`, and
-**`nimble suites` now executes all fourteen self-tests** with a suite that cannot run reporting
+**`nimble suites` now executes all fourteen self-tests**, with a suite that cannot run reporting
 failure. So "it is asserted in `X-selftest`" is a coverage claim again.
 
 **What remains, and it is the durable half:**
@@ -221,6 +238,14 @@ USER's own and deliberate (**D-CE**); the response cache is a defect to fix rath
 
 **A screen run is the USER's, when it suits them, and not something a session initiates or asks
 after** (Rule 0). What remains unobserved rather than suspected:
+
+0. **Step 13a's composer, after the 11:14 rebuild.** Three defects have been fixed across three
+   runs — unclickable, a placeholder that never cleared, no autogrow — and **none of them was
+   visible to any check this project can run.** What is unseen: clicking in, typing, Shift+Enter,
+   wrapping, the growth and the 168px cap. The four new buttons — Fork on a conversation row, and
+   the three in settings — are unseen with it. **`--check` cannot substitute for this:** it builds
+   the tree and exits, allocating no sizes and routing no events, which is exactly how it passed a
+   composer nobody could click, twice.
 
 1. The note-header pin toggle and a FOCUS note written from the window turning up in a chat scoped
    to a different folder.

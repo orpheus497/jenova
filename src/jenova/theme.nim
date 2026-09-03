@@ -309,6 +309,36 @@ list > row:selected {
   border: none;
   background: transparent;
 }
+/* Step 13a, the composer. `min-height` is a **floor**, which is the one thing a
+   sizing API is good for and exactly what is wanted here — the ceiling is
+   `ContentScroll.maxHeight`, a different mechanism that does not conflict with
+   it (168 > 34). It guarantees a clickable target before a line of text exists,
+   rather than depending on an empty TextView's natural height.
+
+   The height cap is deliberately NOT here: GTK4 CSS has no `max-height`. A
+   first version of this rule used one and `bin/jenova --check` reported it as
+   an unknown property, which is the whole reason that check is run.
+
+   *(`.draft-zone` stood here for the `DraftZone` wrapper. That widget is gone —
+   `DraftView` owns its own `GtkTextView` — and the rule went with it rather
+   than being left behind, which is G-37's exact defect.)* */
+.draft-view {
+  background: transparent;
+  padding: 6px 8px;
+  min-height: 34px;
+}
+/* Sits over the empty view. It is deliberately **insensitive** so GTK's picking
+   skips it and the click reaches the TextView underneath — the first version was
+   sensitive and filled the overlay, and the composer could not be clicked into
+   at all. `:disabled` is stated explicitly because that is the state it is
+   always in: without it GTK dims the label on top of this colour and the
+   placeholder fades to near-invisible against the panel. */
+.draft-placeholder,
+.draft-placeholder:disabled {
+  color: @jenova_muted_fg;
+  opacity: 1;
+  padding: 6px 10px;
+}
 .attach-thumb {
   padding: 0;
   min-width: 0;

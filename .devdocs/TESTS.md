@@ -14,9 +14,11 @@ Mandated from the outset; absent for Sessions 001–003. See `DECISIONS_LOG.md` 
 > failing assertion fails the run. **Add a new self-test to that const or nothing will run it** —
 > there is no reflection to enumerate them.
 >
-> **A suite that cannot run now reports failure.** Every `SKIP … exit 0` guard is `FAIL … exit 1`,
-> including `test_nvimctl.sh`'s missing-`nvim` skip — which makes `nvim` a prerequisite of a green
-> run, a deliberate change of contract recorded in `PROGRESS.md`.
+> **A suite that cannot run now reports failure.** Every `SKIP … exit 0` guard is `FAIL … exit 1`
+> — **with one sanctioned exception, ruled by the USER: `test_nvimctl.sh` still skips when `nvim`
+> is absent** (`tests/test_nvimctl.sh:38-40`, and the reasoning is beside the `SelfTests` const in
+> `jenova_core.nimble`). `nvim` is not a build dependency of either binary, so requiring it would
+> make a green run impossible on a host that can legitimately build and ship Jenova.
 >
 > **Proven by running it, not by reading it:** `nimble suites` exited 1 on a genuinely failing
 > assertion and 0 once that was corrected, and each prerequisite guard was fired under a scratch
@@ -24,6 +26,15 @@ Mandated from the outset; absent for Sessions 001–003. See `DECISIONS_LOG.md` 
 > Making a *self-test* fail would mean damaging code, which D-BX forbids — the two go through the
 > identical `exec` call, so the propagation is the same mechanism, but that last step is reasoning
 > rather than observation.
+>
+> **Two self-tests were added 2026-09-03 10:21 and the count is now sixteen** — read the names out
+> of `src/jenova_core.nim` and add any new one to the `SelfTests` const in `jenova_core.nimble`, or
+> nothing will run it. **`composer-selftest`** (14) asserts the send-or-newline rule from both
+> sides of every case, and **`convmd-selftest`** (15) round-trips a conversation through the Web
+> UI's markdown format. `workspace-selftest` gained **10** for the mirror's `pull` half, over real
+> files rather than a mock, and `pipeline-selftest` gained **15** for the conversation fork —
+> including that the branch *not* forked is left behind, which is the assertion a naive "copy every
+> message" implementation fails while still passing a count.
 >
 > **What this changes for the claims below.** "Asserted in `X-selftest`" is now a coverage claim
 > again, not merely a statement that assertions exist. **What it does not change:** `gui.nim` still

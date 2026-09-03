@@ -24,6 +24,167 @@ moved 2026-09-03 09:10 under the `AGENTS.md` archival policy — this file was 2
 
 ---
 
+## Session 025 — 2026-09-03 11:24 — **The parity backlog opened: Step 13a and 13b built; `data-services` checked at last; the composer shipped broken three times and was rebuilt; a defect found that has always been broken**
+
+**Instruction:** read AGENTS.md and the devdocs, cross-reference every claim against the codebase,
+present the phase. Then: the parity backlog is the work; defer the test scripts; apply the claim
+corrections; keep the devdocs from bloating.
+
+### What was cross-referenced first
+
+**24 claims re-derived against the source. Twenty held**, several to the line —
+`pipeline.nim:269`/`:247`, `http.nim:23`, `gui.nim:2679`/`:1074`/`:4299`, `api.nim:347`/`:435`,
+`db.nim:255`, `markdown.nim:231-232`, `config.nim:33-54`, `settings.nim:365`, and zero `href` hits
+across `src/`. **Four did not:** `BRIEFING.md`'s branch header was a commit stale again; **four
+documents claimed `test_nvimctl.sh` now fails on a missing `nvim` when the USER had overruled that
+and the code still skips**; A-52's "seven `make` references" is two, Session 024 having fixed the
+five in `tests/`; and A-17's address had moved. All four corrected in place, not appended to.
+
+### Built — Step 13a, the composer
+
+`Entry` → `TextView`. **Six parity gaps were one widget.** Three things worth carrying:
+owlkettle's `TextView` has **no key hook at all**, so Enter-to-send is a `GtkEventControllerKey` on
+a wrapper renderable in the **capture** phase — bubble phase sees Enter after the newline is
+already in. **GTK4 CSS has no `max-height`**, and `bin/jenova --check` is what caught the version
+that used one; the cap is `gtk_scrolled_window_set_max_content_height`. And the placeholder is kept
+(Directive 3) as an overlay gated on `charCount`, O(1), rather than copying the draft per frame.
+
+### Built — Step 13b, the three `data-services` gaps
+
+The area had **147 features and no verdicts at all**. Read first-hand, all fourteen modules: it
+resolves to **three** real gaps, and all three are now built and asserted — markdown conversation
+export/import (`convmd.nim`, ported by reading `markdown.service.ts`), the conversation fork
+(`api.forkConversation`), and the mirror's **`pull`** half (`fssync.readNoteMirror`,
+`api.pullNotes`), so an edit made in the embedded Neovim finally returns to the database.
+
+**The fork is the fourth complete-store-with-no-writer this project has found.**
+`forkedFromConversationId` and its whole delete cascade were in the schema from the beginning and
+nothing could ever create the relationship.
+
+### Found while building, and it matters more than what was built
+
+**`TODOS.md` A-69: attaching a file has never been filed as a workspace artefact.**
+`fileAttachmentsAsArtefacts` mints the id with `$genOid()`; `fssync.physicalPath` refuses a
+non-UUID; `upsert`'s mirror-failure branch **deletes the row it just wrote**. So every attachment
+shows "could not file … in the workspace" and **G-44 / Step 10b has never worked**, while
+`PROGRESS.md` records it as built. **The trap is documented eleven lines above the defect** — the
+note path already carries a comment saying the id must be `fssync.newUuid()`. **Not fixed: it was
+outside the approved scope**, and the fix is one call.
+
+### Proof
+
+**Sixteen self-tests pass** — two new (`composer-selftest` 14, `convmd-selftest` 15) and 25
+assertions added to two existing ones, the pull over real files and the fork over a shape whose
+unforked branch must be left behind. Both binaries build ELF 64-bit FreeBSD; `bin/jenova --check`
+exits 0. **Nothing was run beyond the assertion binaries and `--check`** (Rule 0). **No product
+code was damaged to test anything** (D-BX) — every rule is asserted from both sides by varying the
+data.
+
+### Stated plainly
+
+**The composer is unseen.** `--check` builds each branch once, so it proves the window reaches its
+first frame and nothing about typing in it. Shift+Enter, the growth, the cap, the placeholder and
+the four new buttons are a USER run. **And `pullNotes` reconciles notes that already have rows** —
+a brand-new `.md` on disk does not become a note, because the filename must carry a UUID; closing
+that would mean renaming the user's file, which is a different decision and was not taken.
+
+### The composer shipped broken, and the USER found it in minutes
+
+**The 10:21 build could not be clicked into, typed in, or sent from.** Two causes, both in the
+toolkit and both confirmed by reading owlkettle rather than guessed at:
+
+1. **`addOverlay` defaults to `AlignFill` on both axes** (`widgets.nim`), so the placeholder Label
+   covered the whole composer — and a GtkLabel is targetable by default, so it took every click.
+   **`xAlign`/`yAlign`, which I did set, align the text inside the Label and leave the widget full
+   size.** That misreading is the whole of it. Fixed with start alignments **and** `sensitive =
+   false`, two independent fixes because this is the half that made the program unusable.
+2. **`ContentScroll` must not be reused for an input field.** Its `halign = START` plus
+   natural-width propagation is deliberate — G-42, so a table hugs its rows — and an empty
+   `TextView`'s natural width is ~0, so the composer collapsed to a sliver. The `maxHeight` hook now
+   reverses all four settings for a capped scroller; transcript blocks pass no `maxHeight` and are
+   untouched.
+
+**The first repair did not work.** A `property` hook is **overwritten by `afterBuild`**: `genBuild`
+runs `beforeBuild` → `buildState` → `afterBuild`, and every field's `property` hook runs inside
+`buildState` (`genBuildState`). So `ContentScroll.maxHeight`'s settings were applied and then
+`afterBuild` put `halign = START` and natural-width propagation straight back. `genUpdateState`
+re-runs a property hook only when the value *changes*, and a literal never does. Fixed by
+extracting `applyScrollSizing` and calling it from both hooks.
+
+**The second repair did not work either**, and the USER's third report — no autogrow, and a
+placeholder that never cleared, *"like there are two different layers"* — is what finally exposed
+the real cause.
+
+### The rebuild — one root cause under all three defects
+
+**The composer used owlkettle's `TextView`, which declares no events at all.** So nothing re-ran
+`view` when the user typed. Everything followed from that single fact: the placeholder's condition
+was never re-evaluated (the "two layers" — a real Label still sitting on top), the widget could
+only be configured by *walking the tree* to find it, and the draft had to live in a `TextBuffer`
+where no state change could be observed. **`Entry` worked because it fed state back on every
+keystroke, and that is exactly what I dropped.**
+
+**Rebuilt as `DraftView`**, following `Entry`'s own idiom: a renderable owning its `GtkTextView`
+and buffer, exposing the buffer's `changed` signal and the key controller as owlkettle events, and
+setting wrap and `vscroll-policy = GTK_SCROLL_NATURAL` **directly on the widget it owns**.
+**`TextBufferObj.gtk` being private was never the blocker it appeared to be** —
+`gtk_text_buffer_new` and `gtk_text_view_set_buffer` are both exported, so the buffer is simply
+created here. `app.draft` is a plain `string` again, so the placeholder is a state test and
+owlkettle redraws by itself. Deleted with it: `DraftZone`, three child accessors, the tree walk,
+the `composerOwner` global, and the `.draft-zone` class — a style class with no widget is G-37's
+exact defect and was not left behind.
+
+**The rule this establishes, and it generalises:** a widget this program must *observe* has to be
+a renderable it owns, exposing its GTK signals as owlkettle events. **Reaching around the toolkit
+— walking to a child, or configuring one from a `property` hook — fails silently.**
+
+### And then it crashed on Enter — SIGBUS, diagnosed from the core
+
+**The rebuild typed and wrapped correctly and then died the moment Enter was pressed.** The USER
+reported a core dump. **`gdb -batch -ex "bt 40" bin/jenova /var/coredumps/<core>` put `keyCallback`
+at frame 0**, called straight from `g_signal_emit` — which disproved the re-entrant-redraw theory
+in one command, after several paragraphs had been spent reasoning toward it.
+
+**`genUpdateState` reassigns `state.<event> = widget.<event>` on every update, and ARC frees the
+old `EventObj`.** That is exactly why `disconnectEvents`/`connectEvents` run as a pair on each
+update. `changed` was bound in `connectEvents` and was correct; **`submit` was bound in
+`afterBuild`, which runs once** — so GTK held a pointer to an object freed on the first redraw.
+And because `changed` now fires per keystroke, every character replaced it, so the first Enter
+after typing dereferenced long-dead memory.
+
+**Fixed** by binding both handlers in `connectEvents` and releasing both in `disconnectEvents`,
+with the controller created in `beforeBuild` — it has to exist before `connectEvents`, which runs
+inside `buildState`.
+
+**Two rules out of this, both recorded in `PLANS.md` Step 13a:** a raw pointer into an owlkettle
+`EventObj` may be held for **one update cycle only**; and **on a SIGBUS, read the core first** —
+cores land in `/var/coredumps`.
+
+**The lesson, stated rather than smoothed over:** sixteen self-tests were green and `--check` was
+green on **all three** unusable builds. `--check` builds the tree and exits — **no sizes are
+allocated and no events are routed** — so a zero-width widget under a click-swallowing overlay
+passes it cleanly. This is the standing `gui.nim` coverage gap doing exactly what §6 says it does,
+and the only instrument that found any of it was the USER's screen. **Three runs was the cost.**
+
+### Files touched
+
+`src/jenova/composer.nim` (new), `src/jenova/convmd.nim` (new), `gui.nim`, `api.nim`, `fssync.nim`,
+`theme.nim`, `src/jenova_core.nim`, `jenova_core.nimble`. Trackers: `BRIEFING.md`, `TODOS.md`,
+`PLANS.md`, `PROGRESS.md`, `TESTS.md`, `ARCHITECTURE_MAPPING.md`, `SESSION_HANDOFF.md`,
+`SUMMARIES.md`.
+
+### Next steps
+
+1. **A USER screen run of the composer**, whenever it suits — it is the one thing no assertion here
+   can reach.
+2. **A-69**, one call, if the USER approves it.
+3. **13c — the remaining 866 parity verdicts.** Start with `views-dialogs` (65), `models-server`
+   (61) and `sidebar-workspace` (47), and **read them for root causes first**: both items built
+   today collapsed to one cause behind a column of rows.
+4. **Test and check work stays last** (A-68).
+
+---
+
 ## Session 024 — 2026-09-03 09:10 — **Step 12a/12b built and proven; the trackers made congruent; both logs archived**
 
 **Instruction:** read AGENTS.md and the devdocs, cross-reference every claim against the codebase,

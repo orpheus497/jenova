@@ -22,7 +22,7 @@ when not defined(freebsd):
 import std/[os, sequtils, strformat, strutils, json]
 import jenova/[paths, config, db, dbselftest, server, serverselftest, markdown,
                rag, sha256, pipeline, prompts, lifecycle, models, nvimctl, api,
-               settings, hardware, workspace, pdf, zlib, fssync]
+               settings, hardware, workspace, pdf, zlib, fssync, composer, convmd]
 
 const
   Version = "0.1.0"
@@ -56,7 +56,8 @@ proc usage() =
   echo "              pipeline-selftest, sha256-selftest, tree-selftest,"
   echo "              hardware-selftest, markdown-selftest, error-selftest,"
   echo "              attach-selftest, workspace-selftest, nvim-env-selftest,"
-  echo "              models-selftest, fs-selftest"
+  echo "              models-selftest, fs-selftest, composer-selftest,"
+  echo "              convmd-selftest"
   echo ""
   echo "Precedence: builtin default < etc/jenova.conf < etc/jenova.local.conf < environment"
   echo "JENOVA_NO_BACKENDS=1  serve without starting llama-server (used by the tests)"
@@ -1215,6 +1216,49 @@ proc main() =
         check("a one IS FOCUS", workspace.isFocusValue("1"))
         check("a JSON true IS FOCUS", workspace.isFocusValue("true"))
 
+      # Action purpose: Step 13b, the `pull` half of the mirror. The mirror was
+      # write-only — `fssync.syncNote` wrote a note's `.md` on every save and
+      # nothing read one back, so an edit made in the embedded Neovim was
+      # overwritten by the next save in the window without a word.
+      #
+      # **Asserted as a transition, over real files, and never by breaking the
+      # code (D-BX):** the note is saved, the *file* is edited underneath it —
+      # which is exactly what an outside editor does — and the row is then
+      # required to have changed. The unchanged case is asserted in the same
+      # block, because a `pullNotes` that simply rewrote every row from disk
+      # would pass a one-sided check and commit a git revision per note per run.
+      block theMirrorReadsBack:
+        # A real UUID, not a `wst-` label: `fssync.physicalPath` refuses any note
+        # id that is not one, so a fixture with a readable id would be given no
+        # mirror file at all and this block would assert nothing. That is the
+        # same trap `gui.newNote` carries a comment about.
+        let nid = fssync.newUuid()
+        check("a note is written to disk when it is saved",
+              api.putEntity("notes", %*{"id": nid, "workspaceId": "wst-ws",
+                                        "title": "Pulled",
+                                        "content": "from the window"}))
+        let onDisk = wsScratch / "WS" / "Pulled_" & nid & ".md"
+        check("...and the mirror file is really there", fileExists(onDisk),
+              "expected " & onDisk)
+
+        # Nothing differs yet, so nothing may be touched.
+        check("an unchanged note is not pulled", api.pullNotes().updated == 0)
+
+        writeFile(onDisk, "edited outside the window")
+        let pulled = api.pullNotes()
+        check("an edit made outside the window is pulled back",
+              pulled.updated == 1 and pulled.failed == 0,
+              "updated=" & $pulled.updated & " failed=" & $pulled.failed)
+        check("...and the row now holds what the file holds",
+              workspace.allNotes().anyIt(
+                it.title == "Pulled" and
+                it.content == "edited outside the window"))
+        # The second run must be quiet: the row and the file agree again.
+        check("pulling twice does not rewrite an already-reconciled note",
+              api.pullNotes().updated == 0)
+
+        db.exec("DELETE FROM notes WHERE id=?", [nid])
+
       for t in ["notes", "fileAssets", "folders", "projects", "workspaces"]:
         db.exec("DELETE FROM " & t & " WHERE id LIKE 'wst-%'", [])
       removeDir(wsScratch)
@@ -1747,6 +1791,167 @@ proc main() =
       echo ""
       echo "sha256-selftest: FAIL (", bad, ")"
       quit(1)
+    of "convmd-selftest":
+      # Step 13b. The window could move conversations as JSON and could not move
+      # the other format the Web UI ships. A format is exactly the thing a
+      # screenshot cannot check, so it is asserted as a **round trip** — write a
+      # conversation out, read it back, and require the turns to survive.
+      var bad = 0
+      proc check(label: string, cond: bool, detail = "") =
+        if cond: echo "  ok   ", label
+        else:
+          echo "  FAIL ", label, (if detail.len > 0: "\n       " & detail else: "")
+          inc bad
+
+      let msgs = @[
+        convmd.MdMessage(role: "system", content: "be brief", timestamp: 1),
+        convmd.MdMessage(role: "user", content: "hello", timestamp: 2),
+        convmd.MdMessage(role: "assistant", content: "hi there", timestamp: 3)]
+      let doc = convmd.toMarkdown("My chat", msgs)
+
+      # The header is the Web UI's, verbatim — a document that omits it is not
+      # the same document and will not open there.
+      check("the topic line carries the [agent] suffix",
+            doc.contains("# topic: My chat [agent]"))
+      check("the three ornamental parameter lines are reproduced",
+            doc.contains("- model: jenova") and
+            doc.contains("- temperature: 0.7") and doc.contains("- top_p: 0.9"))
+      check("an assistant turn is written as `jenova`",
+            doc.contains("## jenova"))
+      check("a system turn becomes a comment, not a section",
+            doc.contains("<!-- system: be brief -->") and
+            not doc.contains("## system"))
+
+      let back = convmd.fromMarkdown(doc)
+      check("the name survives the round trip", back.name == "My chat")
+      check("every turn survives the round trip", back.messages.len == 3,
+            "got " & $back.messages.len)
+      # The roles are asserted individually rather than by count: a parser that
+      # returned three turns all labelled `user` would pass a count check.
+      check("the system turn comes back as system",
+            back.messages.len == 3 and back.messages[0].role == "system" and
+            back.messages[0].content == "be brief")
+      check("the user turn comes back intact",
+            back.messages.len == 3 and back.messages[1].role == "user" and
+            back.messages[1].content == "hello")
+      check("`jenova` is read back as `assistant`, not left as written",
+            back.messages.len == 3 and back.messages[2].role == "assistant" and
+            back.messages[2].content == "hi there")
+
+      # Ordering is a transition, not a state: the same turns given out of order
+      # must come back in timestamp order, which a serialiser that ignored the
+      # stamp would fail while still round-tripping content.
+      let shuffled = @[
+        convmd.MdMessage(role: "assistant", content: "second", timestamp: 9),
+        convmd.MdMessage(role: "user", content: "first", timestamp: 4)]
+      let ordered = convmd.fromMarkdown(convmd.toMarkdown("x", shuffled))
+      check("turns are written in timestamp order, not the order given",
+            ordered.messages.len == 2 and ordered.messages[0].content == "first")
+
+      # A multi-line answer is the ordinary case and the one a line-based parser
+      # gets wrong; asserted with a blank line in it, which is the separator.
+      let multi = @[convmd.MdMessage(role: "assistant",
+                                     content: "line one\n\nline three",
+                                     timestamp: 1)]
+      let mBack = convmd.fromMarkdown(convmd.toMarkdown("m", multi))
+      check("a multi-line answer keeps its internal blank line",
+            mBack.messages.len == 1 and
+            mBack.messages[0].content == "line one\n\nline three",
+            "got " & (if mBack.messages.len == 1: mBack.messages[0].content
+                      else: "<no turn>"))
+
+      # A system message containing a newline must not break the comment it is
+      # written into — the flatten is the reason it does not.
+      let nl = @[convmd.MdMessage(role: "system", content: "a\nb", timestamp: 1)]
+      let nlBack = convmd.fromMarkdown(convmd.toMarkdown("n", nl))
+      check("a system message with a newline survives as one line",
+            nlBack.messages.len == 1 and nlBack.messages[0].content == "a b")
+
+      # Forgiving where the Web UI is forgiving, asserted rather than assumed.
+      check("a topic line without the suffix still yields the name",
+            convmd.fromMarkdown("# topic: Plain\n\n## user\n\nhi").name == "Plain")
+      check("an empty system comment is not turned into a turn",
+            convmd.fromMarkdown("# topic: x [agent]\n").messages.len == 0)
+      check("text before the first heading is discarded, not made a turn",
+            convmd.fromMarkdown("stray\n# topic: x [agent]\nmore stray\n").
+              messages.len == 0)
+
+      if bad == 0:
+        echo ""
+        echo "convmd-selftest: PASS"
+        quit(0)
+      echo ""
+      echo "convmd-selftest: FAIL (", bad, ")"
+      quit(1)
+    of "composer-selftest":
+      # Step 13a. The composer became a `TextView`, and a `TextView` has no
+      # `activate` — so "does this keystroke send, or type a newline" stopped
+      # being GTK's decision and became this program's. `gui.nim` links into no
+      # test binary, which is why the rule lives in `composer.nim` and is
+      # asserted here rather than being read off the screen.
+      var bad = 0
+      proc check(label: string, cond: bool, detail = "") =
+        if cond: echo "  ok   ", label
+        else:
+          echo "  FAIL ", label, (if detail.len > 0: "\n       " & detail else: "")
+          inc bad
+
+      # Both sides of the one fixture, which is the transition that matters:
+      # the *same* key with and without Shift must give different answers. An
+      # assertion that only checked Enter-sends would stay green against a
+      # function that ignored the modifier entirely.
+      check("plain Enter sends",
+            composer.actionFor(composer.KeyReturn, 0) == composer.caSend)
+      check("Shift+Enter types a newline instead",
+            composer.actionFor(composer.KeyReturn, composer.ShiftMask) ==
+              composer.caNewline)
+      # The keypad and ISO variants are the same key to a user and arrive as
+      # different keyvals; asserting only the main Return would leave a keyboard
+      # on which Enter silently does nothing.
+      check("the keypad's Enter sends too",
+            composer.actionFor(composer.KeyKpEnter, 0) == composer.caSend)
+      check("ISO_Enter sends too",
+            composer.actionFor(composer.KeyIsoEnter, 0) == composer.caSend)
+      check("Shift+keypad Enter is also a newline",
+            composer.actionFor(composer.KeyKpEnter, composer.ShiftMask) ==
+              composer.caNewline)
+      # A lock or pointer bit set alongside Shift must not change the answer:
+      # the modifier is a mask and CapsLock is bit 1.
+      check("Shift still wins with other modifier bits set",
+            composer.actionFor(composer.KeyReturn,
+                               composer.ShiftMask or 0x2'u32) ==
+              composer.caNewline)
+      check("Ctrl+Enter sends — Shift is the only modifier that diverts it",
+            composer.actionFor(composer.KeyReturn, 0x4'u32) == composer.caSend)
+      # Every other key must fall through untouched, or the composer would
+      # swallow ordinary typing.
+      check("an ordinary letter is not the composer's business",
+            composer.actionFor(0x61'u32, 0) == composer.caPass)
+      check("Escape is not the composer's business",
+            composer.actionFor(0xff1b'u32, 0) == composer.caPass)
+
+      # `canSend` is the rule `gui.send` itself calls, asserted here at the same
+      # boundary rather than in a copy of it.
+      check("text alone can be sent", composer.canSend("hello", 0, false))
+      check("an attachment with no words is still a turn (G-30)",
+            composer.canSend("", 1, false))
+      check("an empty draft with nothing attached cannot be sent",
+            not composer.canSend("", 0, false))
+      # The transition that matters: the same sendable draft must be refused
+      # while a reply is streaming.
+      check("a sendable draft is refused mid-stream",
+            composer.canSend("hello", 0, false) and
+            not composer.canSend("hello", 0, true))
+      check("an attachment is refused mid-stream too",
+            not composer.canSend("", 1, true))
+
+      if bad == 0:
+        echo ""
+        echo "composer-selftest: PASS"
+        quit(0)
+      echo ""
+      echo "composer-selftest: FAIL (", bad, ")"
+      quit(1)
     of "pipeline-selftest":
       # Proves the seven behaviours of N-30 against a scratch database. Web
       # search is exercised only for its formatting, not by making a request.
@@ -2139,6 +2344,92 @@ proc main() =
 
         rag.forgetConversation("pipetest-conv")
         db.exec("DELETE FROM messages WHERE id LIKE 'pipetest-%'", [])
+
+      # Action purpose: Step 13b. `conversations.forkedFromConversationId` and
+      # its whole delete cascade have been in the schema since it was written and
+      # **no surface could ever create the relationship** — the fourth
+      # complete-store-with-no-writer in this project.
+      #
+      # The shape is deliberately a *fork in the tree*: root → a → b, with a
+      # second child `c` hanging off `a`. Forking at `b` must copy the b-line and
+      # leave `c` behind, which is the one thing a naive "copy every message"
+      # implementation gets wrong while still passing a count check.
+      block forkingAConversation:
+        db.exec("DELETE FROM messages WHERE id LIKE 'forktest-%'", [])
+        db.exec("DELETE FROM conversations WHERE id LIKE 'forktest-%'", [])
+        db.exec("INSERT OR REPLACE INTO conversations (id, name, currNode, " &
+                "is_deleted) VALUES ('forktest-conv', 'Source', " &
+                "'forktest-b', 0)", [])
+        proc msg(id, parent, role, content: string, ts: int) =
+          db.exec("INSERT OR REPLACE INTO messages (id, convId, type, role, " &
+                  "timestamp, parent, content, is_deleted) " &
+                  "VALUES (?, 'forktest-conv', 'message', ?, ?, ?, ?, 0)",
+                  [id, role, $ts, parent, content])
+        msg("forktest-root", "", "user", "the question", 1)
+        msg("forktest-a", "forktest-root", "assistant", "first answer", 2)
+        msg("forktest-b", "forktest-a", "user", "follow up", 3)
+        msg("forktest-c", "forktest-a", "user", "the other branch", 4)
+
+        let f = api.forkConversation("forktest-conv", "forktest-b", "Forked")
+        check("a conversation can be forked at a turn", f.ok, f.msg)
+        check("...into a conversation that is not the source",
+              f.id.len > 0 and f.id != "forktest-conv")
+
+        let copied = db.query("SELECT id, parent, content FROM messages " &
+                              "WHERE convId=? AND is_deleted=0 " &
+                              "ORDER BY timestamp", f.id)
+        check("the branch is copied — three turns, not four",
+              copied.len == 3, "got " & $copied.len)
+        check("...and the turn on the branch NOT forked is left behind",
+              not copied.anyIt(it.len > 2 and it[2] == "the other branch"))
+        # The remap is the half that silently corrupts: a `parent` still pointing
+        # at the source would make the two conversations edit each other.
+        check("no copied turn keeps a source id as its parent",
+              not copied.anyIt(it.len > 1 and it[1].startsWith("forktest-")))
+        check("the first copied turn is a root, not a dangling child",
+              copied.len == 3 and copied[0][1].len == 0)
+        check("...and the rest form a chain within the copy",
+              copied.len == 3 and copied[1][1] == copied[0][0] and
+              copied[2][1] == copied[1][0])
+        check("the content survives the copy",
+              copied.len == 3 and copied[0][2] == "the question" and
+              copied[2][2] == "follow up")
+
+        let fc = db.query("SELECT name, forkedFromConversationId, currNode " &
+                          "FROM conversations WHERE id=?", f.id)
+        check("the fork records what it was forked from — the column that " &
+              "nothing could write until now",
+              fc.len == 1 and fc[0][1] == "forktest-conv")
+        check("the given name is used", fc.len == 1 and fc[0][0] == "Forked")
+        check("...and it opens at the turn it was forked at, remapped",
+              fc.len == 1 and fc[0][2] == copied[2][0])
+
+        # The source must be untouched: a fork that moved rows instead of
+        # copying them would pass every assertion above.
+        check("the source conversation still has all four of its turns",
+              db.query("SELECT id FROM messages WHERE convId='forktest-conv' " &
+                       "AND is_deleted=0").len == 4)
+
+        # Both sides of the failure case, so the refusal is real rather than a
+        # branch nothing reaches.
+        check("forking a conversation that does not exist is refused",
+              not api.forkConversation("forktest-nope", "", "").ok)
+        check("forking at a turn that is not in the conversation is refused",
+              not api.forkConversation("forktest-conv", "forktest-nope", "").ok)
+
+        # An unnamed fork falls back to the source's name, and takes the
+        # conversation's own read position when no turn is named.
+        let f2 = api.forkConversation("forktest-conv", "", "")
+        check("an unnamed fork is named after its source", f2.ok and
+              db.query("SELECT name FROM conversations WHERE id=?",
+                       f2.id)[0][0] == "Source (fork)")
+
+        db.exec("DELETE FROM messages WHERE convId=?", [f.id])
+        db.exec("DELETE FROM messages WHERE convId=?", [f2.id])
+        db.exec("DELETE FROM conversations WHERE id=?", [f.id])
+        db.exec("DELETE FROM conversations WHERE id=?", [f2.id])
+        db.exec("DELETE FROM messages WHERE id LIKE 'forktest-%'", [])
+        db.exec("DELETE FROM conversations WHERE id LIKE 'forktest-%'", [])
 
       # Action purpose: T-3. The whole conversation was resent every turn with no
       # trim anywhere, so a long chat eventually exceeded the context window and

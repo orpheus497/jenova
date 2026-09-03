@@ -374,6 +374,27 @@ proc syncNote*(id, title, content, folderId, projectId, workspaceId: string): bo
   gitAdd(workspaces / ws, path)
   true
 
+## Function purpose: read a note's mirror file back off disk — the half of this
+## module that did not exist (`PLANS.md` Step 13b).
+##
+## **Every `sync*` proc above writes one way, database to disk.** Nothing read a
+## `.md` back, so an edit made outside the note editor — in the embedded Neovim,
+## in another editor, over `/api/storage` — was written to a file the database
+## then ignored for ever, and the next save silently overwrote it. That is the
+## `SyncService.pull` gap.
+##
+## The path is `notePath`'s, not a second construction of it: a reader that
+## built the path itself would drift from the writer the first time `sanitize`
+## changed, and then quietly reconcile nothing.
+proc readNoteMirror*(id, title, folderId, projectId, workspaceId: string):
+    tuple[found: bool, content: string] =
+  let (path, _) = notePath(id, title, folderId, projectId, workspaceId)
+  if path.len == 0 or not fileExists(path): return (false, "")
+  try:
+    (true, readFile(path))
+  except IOError, OSError:
+    (false, "")
+
 ## Function purpose: file assets arrive from the Web UI as `data:` URIs, so the
 ## base64 payload is decoded back to bytes before writing — otherwise every
 ## uploaded image is stored as its own text encoding. Reproduces

@@ -77,6 +77,19 @@ on the next commit and re-deriving the drift is what consumed whole sessions (se
 
 **Added 2026-08-31 (G-7, G-18, G-19):** `sourceview.nim`, `nvimctl.nim`, `vte.nim`.
 
+**Added 2026-09-03 (Step 13a, 13b):** `composer.nim` — the chat composer's send-or-newline and
+send-eligibility rules, split out of the widget so `composer-selftest` can reach them, which
+`gui.nim` cannot be. `convmd.nim` — a conversation as the Web UI's markdown document, both
+directions. **Both are here for the same reason the rest of the split exists:** `gui.nim` links
+into no test binary, so behaviour that can live below the widget layer does.
+
+**The composer's widget is `DraftView` in `gui.nim`**, a renderable owning its own `GtkTextView`
+and `GtkTextBuffer`. **It is a renderable rather than owlkettle's `TextView` for a reason that
+generalises:** owlkettle's `TextView` declares no events, so a program cannot observe typing
+through it — and a widget this program must observe has to be one it owns, exposing its GTK
+signals as owlkettle events the way `Entry` does. That joins `NeuralCanvas`, `NvimTerminal`,
+`SourceCode`, `DropZone`, `AutoScroll` and `ContentScroll` under **D-BR**.
+
 **Added 2026-09-01 (G-31, rulings D-BK and D-BL):** `settings.nim` — the desktop application's
 settings: the field declarations, the file store under `p.state`, the validator, and
 `applyTo`, which merges the sampling and penalty parameters into the outbound request

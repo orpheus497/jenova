@@ -6,6 +6,40 @@ deleted by the USER, see **D-CE***.
 
 ---
 
+## Session 025 — 2026-09-03 11:24
+
+**24 tracker claims re-checked against the source, then the parity backlog opened and Step 13a and
+13b built.** Twenty claims held to the line; four did not and were corrected in place — a stale
+branch header, **four documents claiming `test_nvimctl.sh` fails on a missing `nvim` when the USER
+had overruled that and the code still skips**, A-52's `make` count, and a moved address. The
+composer became a `TextView`, closing six chat-form gaps behind one widget — with owlkettle
+exposing no key hook, GTK4 having no `max-height`, and the placeholder kept via an O(1)
+`charCount`. **`data-services`, 147 features and no verdicts since the audit, was read first-hand
+and resolves to three gaps**, all three now built: markdown conversation export/import, the
+conversation fork — the fourth complete-store-with-no-writer in this project — and the mirror's
+`pull` half, so an edit made in the embedded Neovim finally returns to the database. Sixteen
+self-tests pass (two new, 25 assertions added to two existing), both binaries build and `--check`
+exits 0. **The find that matters most was incidental: attaching a file has never been filed as a
+workspace artefact** — a `genOid` id that `physicalPath` refuses, so `upsert` deletes the row it
+just wrote and Step 10b has never worked; recorded as A-69, not fixed, being outside the approved
+scope. **The composer then shipped broken three times**, each found by the USER in minutes, and was
+finally **rebuilt as `DraftView`** — a renderable owning its own `GtkTextView` and buffer. One root
+cause underlay all three: owlkettle's `TextView` **declares no events**, so nothing re-ran `view`
+when the user typed, which is why the placeholder never cleared, why the widget could only be
+configured by walking the tree to find it, and why the draft could not live in state. `Entry`
+worked because it fed state back on every keystroke; dropping that cost three runs. Two toolkit
+traps found on the way and kept: `addOverlay` defaults to `AlignFill`, and **a `property` hook is
+overwritten by `afterBuild`**. **The rebuild then died with a SIGBUS on Enter**, diagnosed from the
+core rather than by reasoning — `gdb` put `keyCallback` at frame 0 and disproved the theory in one
+command: owlkettle replaces every `EventObj` on every update and ARC frees the old one, so the
+`submit` handler bound in `afterBuild` held dead memory by the second frame. Both handlers now bind
+in `connectEvents`. **Sixteen green self-tests and a green `--check` passed on every one of the
+broken builds**, because `--check` allocates no sizes, routes no events and never performs an
+update — the standing `gui.nim` gap, exactly as §6 describes it, at a cost of four runs.
+Detail: `SESSION_HANDOFF.md`.
+
+---
+
 ## Session 024 — 2026-09-03 09:10
 
 **29 tracker claims re-derived against the source, then Step 12a and 12b built and proven, then the

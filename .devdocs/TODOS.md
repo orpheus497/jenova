@@ -162,6 +162,13 @@ forbids. **It is a USER run either way** — the same standing gap as G-41.
 
 ## Active — the GUI is missing most of the Web UI's features
 
+> **THE ACTIVE ITEM IS A-59, the parity backlog** — chosen by the USER 2026-09-03 09:10, scoped
+> 09:48 as **`PLANS.md` Step 13**. **13a and 13b were built 2026-09-03 10:21** and their record is
+> `PROGRESS.md`: the composer is a `TextView`, and the three `data-services` gaps — markdown
+> export/import, the conversation fork, and the mirror's `pull` half — are closed and asserted.
+> **What is left of A-59 is 13c**, the 866 single-agent verdicts across the other eight areas, each
+> verified against the source on pickup per **D-CG**.
+
 **This is the real outstanding work and it is much larger than this file previously
 said.** Sessions 010-012 triaged "GUI parity" into six items (a file browser, an
 editor, file awareness, Neovim, a model selector, a trash view). **That list was wrong
@@ -291,6 +298,7 @@ PASS while asserting nothing.
 | **G-51** | **The constraint is bounded and it is exactly one widget — surveyed 2026-09-02 11:43.** `Button.shortcut` is the **only** property in owlkettle whose update hook can abort the process from a child-count change. The other assert-only hooks are `Paned`'s `resize`/`shrink`/child-type, and **`Paned` is used nowhere in `gui.nim`** (zero hits — it is also G-37's and G-38's subject). Every other assertion in owlkettle is an internal invariant, not a positional-diff trap. **So the rule is: `gui.fullscreenButton` must be the last child of its row and nothing may be inserted before it — no more than that.** Adding a child in a container that also holds a keyboard-shortcut button crashes the application on the next redraw. Found 2026-09-02 11:30 by causing it: putting a fourth button in the note editor's header row aborted the process on opening a note, with `widgets.nim(920) state.shortcut == widget.valShortcut [AssertionDefect]`. **The mechanism, verified in owlkettle's source and not inferred:** owlkettle diffs a `Box`'s children **by index** and reuses a child's state whenever the type matches (`widgetdef.nim`, the type-id compare in the generated `update`), and **`Button.shortcut` has no update path at all** — its `build` hook installs a `GtkShortcutController` and its `update` hook only asserts the value never changed, with owlkettle's own `# TODO` on the assertion. So a shortcut-carrying `Button` that lands on the index of a `Button` built without one aborts. **`gui.fullscreenButton` (`shortcut = "F11"`) is the only such widget in this program**, and it is the last child of all three branches of the chat/note/editor header row, whose counts are 3, 3 and 5. **This is a live trap, not an open defect** — the code is correct as it stands and a comment at the note pane records it. The durable fix, if the constraint ever becomes inconvenient, is to move F11 off the button and onto the window as a real shortcut controller; that is not scheduled. **`bin/jenova --check` cannot catch this class:** it builds each branch once and the assertion only fires on an *update*, which needs a branch to change. |
 | **G-37** | *(Re-verified 2026-09-02 08:01. **Both findings hold. The claim written beside them did not.** The previous revision said "`theme.nim` has not been touched since" — Step 11 deleted `.doc-panel` and `.doc-panel-closed` from it that same evening, so the separator rule moved: it is **`theme.nim:417`** with `:hover` at **421**, not 428/432. `.glow-text` is still **`theme.nim:253`** and a grep for it across `gui.nim` still returns **zero**. **Search the selectors; the numbers here are a hint and have now rotted three times.**)* **Two style rules in `theme.nim` are dead.** `paned > separator` styles a widget that is not in the tree — a leftover from G-25, which shipped as a `Box` after a `Paned` crashed the app. And `.glow-text` is defined and carried by no widget: the glow effect works, but as a `text-shadow` duplicated inside `.brand` and `.conv-active`. **The second half is G-8's exact defect — a class defined and applied to nothing — recurring in the same file.** Both were found and reported on 2026-09-01 and neither was filed as work; that is why they are here. Re-verified 2026-09-01 14:19: `.glow-text` is `theme.nim:253` and **no widget in `gui.nim` carries the class** (a grep for it in `gui.nim` returns zero hits); `paned > separator` is `theme.nim:428-432`. *Re-verified 2026-09-01 17:27: the `.glow-text` address held, the separator address did not — it was written as 416-420 against a file where it is 428. Earlier revisions named 162 and 251-255, and before that named them in the opposite order.* |
 | **G-38** | **A code comment in `gui.nim` describes a widget that was never used.** The main-area comment still explains itself as feeding "the `Paned` that G-25 adds". G-25 shipped as a `Box`, and the comment above the `Box` itself records why. A reader following the first comment looks for a `Paned` that does not exist. Prose only, no behaviour. **The doc comment directly above `gui.mainArea`** — *verified 2026-09-01 18:07; the address written here (2637) was wrong, as was 2560 before it, which is why no third number is being recorded.* |
+| **A-69** | `[V]` **Filing an attachment as a workspace artefact fails every time, and always has — G-44 / Step 10b does not work.** `gui.fileAttachmentsAsArtefacts` mints the `fileAssets` id with `$genOid()`, and **`fssync.physicalPath` refuses any id that is not a 36-character UUID** — so `syncFileAsset` returns false, `api.upsert` takes its mirror-failure branch and **`DELETE`s the row it just wrote**, and the user gets "Attached, but could not file … in the workspace" on every single attachment. The row never survives and no asset file is ever written. **The trap is already documented eleven lines above the defect:** `gui.newNote` carries a comment saying the id must be `fssync.newUuid()` and not a `genOid` for exactly this reason, and the note path uses it. Found 2026-09-03 10:21 while building Step 13b, by reading `physicalPath`'s UUID guard; confirmed by following `upsert`'s failure path to the `DELETE`. **The fix is one call** — `fssync.newUuid()` in place of `$genOid()` — but it is a code change and was not in the approved scope, so it is recorded rather than made. It also means `PROGRESS.md`'s 2026-09-02 07:51 entry claims a feature that has never worked. |
 | **A-68** | **The test scripts and checks are left until last.** Given by the USER 2026-09-03 09:05. They come up every session while the main work is unfinished, and they are likely to keep failing until it is done. Raw and unscoped — no `PLANS.md` entry, and none is to be written without the USER asking for one. |
 
 ---
@@ -344,7 +352,7 @@ self-tests, and every `SKIP … exit 0` guard is `FAIL … exit 1`. **T-12 was f
 | ID | V | What it is |
 |---|---|---|
 | **A-16** | `[V]` | **Restoring from the window's Trash restores the database row and never the file.** `api.restoreItem` (`src/jenova/api.nim:435`) flips `is_deleted=0`, walks parents and re-indexes for RAG — **it contains no `fssync` call at all** — and `gui.restoreFromTrash` calls only `api.restoreEntity`. Deletion *is* mirrored with care, into a `.trash` tree beside a `.metadata.json` sidecar that exists so a restore can put it back. Restore never reads it. A restored note's `.md` sits in the trash until the note happens to be saved again; **a restored fileAsset's file never comes back**, having no re-save path; a restored workspace, project or folder leaves its whole directory in the trash permanently. The delete confirmation the user is shown says "It can be restored from the trash." |
-| **A-17** | `[V]` | **Files deleted through `/api/storage` go to a trash directory nothing lists and nothing empties.** `fssync.storageTrash` writes to `workspaces / ".trash" / <epoch> / <relative>` (`src/jenova/fssync.nim:810`), but `fssync.getTrash` walks only `<jcaHome>/.trash` and, per workspace *subdirectory*, `<ws>/.trash` (`:505-513`) — it sees `<workspaces>/.trash` as a directory entry and then looks inside it for `.trash/.trash`, which never exists. `emptyTrash` clears the same two roots. **Storage deletions accumulate for ever and are recoverable only by hand.** |
+| **A-17** | `[V]` | **Files deleted through `/api/storage` go to a trash directory nothing lists and nothing empties.** `fssync.storageTrash` writes to `workspaces / ".trash" / <epoch> / <relative>` (`src/jenova/fssync.nim:803`), but `fssync.getTrash` walks only `<jcaHome>/.trash` and, per workspace *subdirectory*, `<ws>/.trash` (`:505-513`) — it sees `<workspaces>/.trash` as a directory entry and then looks inside it for `.trash/.trash`, which never exists. `emptyTrash` clears the same two roots. **Storage deletions accumulate for ever and are recoverable only by hand.** |
 | **A-18** | `[A]` | **The whole `/api/fs/trash/*` and `/api/storage/*` surface is reachable only over HTTP, i.e. only from the frozen Web UI.** `fssync.getTrash`, `restoreTrash` and `emptyTrash` have exactly one caller each, in `api.handleFs` (`src/jenova/api.nim:708-733`). The window offers none of them. With A-16 and A-17 the consequence is that **the `.trash` trees are write-only from the desktop application's point of view** — things go in on every delete, nothing comes out, nothing can clear them. That is an L5/D-BC defect of the same shape D-BC was written about. |
 | **A-19** | `[A]` | **`restoreTrash` guards containment lexically — the exact weakness T-4 hardened `resolveStoragePath` against.** `fssync.underRoot` is `normalizedPath` plus a string prefix test (`src/jenova/fssync.nim:522-527`), with no `expandFilename`, and it guards both the source and destination of a `moveDir`/`moveFile` (`:545-549`, `:563-566`). T-4's own comment says lexical normalisation "cannot see that a component is a link pointing out of the tree". **The module now enforces two different containment standards and the weaker one is on the LAN-reachable route.** Nothing writes a symlink into the trash today, so this is a guard weakness rather than a live hole. |
 | **A-20** | `[V]` | **Cascading soft-deletes are not transactional.** `api.dbSoftDelete` (`src/jenova/api.nim:347`) flags the row and then issues each `Cascades` statement in turn — up to five for a workspace — with no `db.begin()`/`db.commit()`. If one throws, the earlier statements stand and the later ones never run: a workspace flagged deleted whose conversations are still live. **The project applies the transaction idiom exactly where the reasoning was written down** — `deleteConversation`, `importData` and the messages bulk-delete all wrap — and the three container entities were left out. |
@@ -421,9 +429,10 @@ confirmed by search.
   `markdown.BlockMemo` (both retaining parsed JSON and full base64 payloads across conversation
   switches and past deletion). `BlockMemo` has no eviction proc at all.
 - **Two diagnostics tell the user to run `make llama`** and there is no Makefile — and L4 forbids
-  adding one. `src/jenova_core.nim:114` and `:2656`. **The count is seven, not two:** five more are
-  in `tests/*.sh` as "run: make core". `docs/install.md` and `README.md` both state flatly that
-  there is no Makefile.
+  adding one. `src/jenova_core.nim:114` and `:2656`. *(Re-checked 2026-09-03 09:48: the count is
+  **two**. This row said seven, counting five `run: make core` lines in `tests/*.sh`; Session 024's
+  test pass changed all five to `run: nimble core`.)* `docs/install.md` and `README.md` both state
+  flatly that there is no Makefile.
 - **Stale comments describing deleted code** — `server.nim:83-85` describes an in-process
   model-loading fallback deleted under D-AF, attached to the acceptor's shutdown flag;
   `vte.buildTerminal`'s `file` parameter is a dead branch left by D-BW's removal of the second
@@ -571,7 +580,7 @@ two consequences that *are* real are A-62 and the note in **D-CF**.
 (`CANVAS=0`), A-39 … A-46 came from the seven mechanism analyses; A-31 and A-60 were found by this
 session directly; A-59 is the parity inventory.
 
-### A-59 — the Web UI ↔ GUI parity inventory
+### A-59 — the Web UI ↔ GUI parity inventory. **ACTIVE — it is `PLANS.md` Step 13.**
 
 **The authoritative inventory this project has never had.** 1,095 Web UI features were enumerated
 from `jca_web/src` — component sources and barrel files both — against the six-item scope list
@@ -588,14 +597,23 @@ this inventory. Full per-feature verdicts are in the session record; the shape i
 | content-render | 89 | 42 | 15 | 20 | 10 |
 | settings | 134 | 42 | 15 | 60 | 6 |
 | chat-form | 98 | 30 | 18 | 13 | 3 |
-| **data-services** | **147** | **not checked** | — | — | — |
+| **data-services** | **147** | **3 root causes** | — | — | — |
 
 **Do not read "Missing" as a feature count.** The granularity is deliberately fine and the verdicts
 were produced by one agent each with no adversarial re-check, so they are leads. Many collapse to a
 single root cause — **six of the chat-form gaps are all downstream of one fact: the composer is a
-one-line `Entry` bound to a string, not a `TextView` with a buffer** (`src/jenova/gui.nim:4299`),
-which is what blocks multi-line drafts, Shift+Enter, autogrow, the height cap and the height reset
-together. **`data-services` (147 features) was never checked at all.**
+one-line `Entry` bound to a string, not a `TextView` with a buffer** (`gui.nim`, the chat form's
+`Entry` bound to `app.draft`), which is what blocks multi-line drafts, Shift+Enter, autogrow, the
+height cap and the height reset together.
+
+**`data-services` was checked first-hand 2026-09-03 09:48** `[V]` — all fourteen service modules
+read against `src/` — and **its three gaps were built the same day** (`PROGRESS.md` 10:21). They
+were: conversation markdown export/import, forking a conversation, and the `pull` half of the
+mirror. Everything else in the area was already built, is **A-18**, or is ruled out by **D-BZ** /
+the MCP deferral. The breakdown is `PLANS.md` Step 13b, so it is not re-derived here.
+
+**The composer is a `TextView` as of 10:21**, so the six chat-form rows behind it are closed too.
+**What remains of this inventory is the other eight areas' 866 verdicts** — leads, not facts.
 
 ### A-60 — **CLOSED 2026-09-03 09:10.** The archival half is done; one half deliberately remains.
 
@@ -686,9 +704,9 @@ files left anywhere outside `external/` and `jvim/pack/` *(corrected 2026-09-03:
 `.devdocs/ARCHIVE/`, deleted by the USER — **D-CE** — and omitted `jvim/`'s 24 vendored
 third-party plugin scripts, which are configuration and exempt under D-BS)*.
 
-*(This said the six harnesses `exit 0` when they cannot run, so being "the only shell left" said
-nothing about whether they assert anything on a given host. **A-2 is closed** — 2026-09-03 09:02,
-`PROGRESS.md` — and every one of them now fails rather than skipping.)*
+*(**A-2 is closed** — 2026-09-03 09:02, `PROGRESS.md`. Five of the six now fail rather than skip
+when a prerequisite is missing; **`test_nvimctl.sh` still skips on a missing `nvim`, ruled by the
+USER**, because `nvim` is not a build dependency of either binary.)*
 
 **Kernel tuning was deliberately not ported (D-BN)** — Jenova never applies a `sysctl`
 and never writes `/etc/sysctl.conf`. Nothing replaces those scripts, and that is the
