@@ -1364,6 +1364,16 @@ viewable App:
               setNotice(state, "attached " & r.att.name)
             else:
               setNotice(state, r.err)
+          else:
+            # Action purpose: the entry is drained above whatever happens, so
+            # without this the file was dropped, silently discarded, and the
+            # window looked exactly as it had — no attachment, no message, and
+            # nothing to distinguish a refusal from a drop GTK never delivered.
+            # The refusal names the file, because several can arrive at once and
+            # a bare "not now" does not say which went nowhere.
+            setNotice(state, "cannot attach " & path.extractFilename &
+                             " while a reply is streaming — wait for it to " &
+                             "finish, then drop it again")
 
         while pendingActions.len > 0:
           let action = pendingActions[0]

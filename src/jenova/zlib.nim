@@ -30,10 +30,20 @@ const
 ## Action purpose: `uncompress` must be told how much room it has, so the buffer
 ## starts at four times the input and quadruples on `Z_BUF_ERROR` up to the cap.
 ## Retrying is cheap and bounded; guessing once would truncate the document.
+##
+## **Every size is clamped to the cap rather than compared against it.** The
+## opening guess is four times the input, so a stream over 16 MiB compressed
+## produced a first `cap` past `MaxInflatedBytes` and the loop was never entered
+## — `uncompress` was not called even once, and a large but perfectly legal PDF
+## stream was refused as though it were a bomb. Quadrupling had the same edge at
+## the other end: from 20 MiB the next step is 80 MiB, so the attempt at the cap
+## itself never happened. Clamping both makes the last attempt exactly
+## `MaxInflatedBytes`, which is what the cap is supposed to mean, and the
+## `cap >= MaxInflatedBytes` exit is what stops that becoming a loop.
 proc inflate*(src: string): tuple[ok: bool, data: string] =
   if src.len == 0: return (false, "")
-  var cap = max(src.len * 4, 4096)
-  while cap <= MaxInflatedBytes:
+  var cap = min(max(src.len * 4, 4096), MaxInflatedBytes)
+  while true:
     var buf = newString(cap)
     var outLen = culong(cap)
     let rc = uncompress(cast[ptr uint8](buf[0].addr), outLen.addr,
@@ -43,8 +53,9 @@ proc inflate*(src: string): tuple[ok: bool, data: string] =
       return (true, buf)
     if rc != ZBufError:
       return (false, "")
-    cap = cap * 4
-  (false, "")
+    if cap >= MaxInflatedBytes:
+      return (false, "")
+    cap = min(cap * 4, MaxInflatedBytes)
 
 ## Function purpose: nothing in Jenova compresses anything — this exists so the
 ## self-test can prove the codec by round trip, rather than by asserting against

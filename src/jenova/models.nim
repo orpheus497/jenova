@@ -199,12 +199,20 @@ proc switchToPath*(jcaHome, modelPath: string): SwitchResult =
   # old link is still in place — and then the rename replaced that link with one
   # pointing back through `aaa.gguf` to itself. The switch reported success and
   # left an `ELOOP` where the model had been.
+  #
+  # `createDir` comes BEFORE the resolution and not after it. `expandFilename`
+  # raises on a path that does not exist, and on a first switch `models/agent`
+  # does not — so the guard fell back to the unresolved name and then compared a
+  # resolved target against it, which cannot match on precisely the installs
+  # where resolution matters: the ones whose `models/` is a link. The directory
+  # is created here either way a few lines later, so this only moves it earlier;
+  # it is idempotent, and a refusal below leaves an empty directory this module
+  # owns and would have made anyway.
+  createDir(agentDir)
   let agentReal = try: agentDir.expandFilename except OSError: agentDir
   if modelPath.isRelativeTo(agentDir) or targetReal.isRelativeTo(agentReal):
     raise newException(ModelError,
       "model is already in the active slot: " & modelPath)
-
-  createDir(agentDir)
   # Action purpose: the link is built from the RESOLVED source, so a chain of
   # symlinks is collapsed to one hop at switch time. Built from `modelPath`, a
   # source that was itself a link into the slot pointed the slot back through
@@ -227,11 +235,6 @@ proc switchToPath*(jcaHome, modelPath: string): SwitchResult =
     raise newException(ModelError,
       "failed to validate replacement symlink for " & targetName &
       " (resolved to '" & tmpReal & "', expected '" & targetReal & "')")
-
-  # Declared before the swap because preserving a real file already in the slot
-  # can fail, and that is reported through the same list as every other entry
-  # the cleanup could not clear rather than through a second channel.
-  var failuresPreActive: seq[string]
 
   var existing: seq[string]
   for kind, path in walkDir(agentDir):
@@ -273,14 +276,29 @@ proc switchToPath*(jcaHome, modelPath: string): SwitchResult =
       moveFile(active, dest)
       result.preserved.add dest
     except OSError, IOError:
-      # Reported like any other entry the cleanup could not clear. Raising here
-      # would abort a switch whose replacement is already validated and ready,
-      # and the rename below still leaves the slot correct.
-      failuresPreActive.add active.extractFilename
+      # Action purpose: this one aborts, and it is the only cleanup failure that
+      # does. Every other is untidiness beside a correct slot, so it is collected
+      # and reported. Here the entry that could not be moved aside IS the slot,
+      # and the rename below replaces it silently — so carrying on destroyed the
+      # user's only copy of a real `active.gguf`, which is the exact loss the
+      # block above exists to prevent, while reporting the switch a success.
+      # Refusing leaves that file where it is and the old model still running.
+      #
+      # The temporary link is removed first, on the same reasoning as the
+      # validation failure above: nothing downstream will ever move it into
+      # place, so leaving it behind litters `models/agent` with a dotfile per
+      # attempt. Its own removal cannot be allowed to mask the real error.
+      let why = getCurrentExceptionMsg()
+      try: removeFile(tmpLink)
+      except OSError, IOError: discard
+      raise newException(ModelError,
+        "refusing to switch: " & active.extractFilename & " is a real file " &
+        "and could not be preserved as " & dest.extractFilename &
+        " (" & why & "). The active model is unchanged.")
   moveFile(tmpLink, active)
   result.target = targetName
 
-  var failures = failuresPreActive
+  var failures: seq[string]
   for entry in existing:
     # The entry just moved into place is the answer, not a leftover.
     if entry == active: continue
