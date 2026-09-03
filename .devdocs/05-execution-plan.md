@@ -96,6 +96,18 @@ for right-click on messages and tree rows · `SplitButton` for send-with-options
 
 **Exit:** the window reads as a GNOME application. Two Class B gaps close as a side effect.
 
+> **Session 7 — two of these are done, and two of them are not the substitutions this line
+> assumes.** Corrected against owlkettle's source; see report 06 §2 and §5.
+>
+> | Item | State |
+> |---|---|
+> | `StatusPage` | **done.** Empty transcript (session 6), plus the models panel's not-installed state, its new no-matches state, and the trash's |
+> | `Banner` | **done.** Backend-down with a Start button, and the LAN flag/socket disagreement — which the header subtitle had been reporting backwards |
+> | `ToolbarView` | **does not exist in owlkettle 3.0.0.** Not gated by `AdwVersion`; simply absent. This is a binding job, not a swap, and nothing is broken without it |
+> | `ToastOverlay` | **does not exist either**, and there is no `adw_toast_*` in the bindings. A binding job of ~50 lines, with one design question first: a toast is an *event* and a `renderable` property is a *state*, so whatever drives it needs a serial rather than a string, or the same notice twice raises one toast |
+> | `OverlaySplitView` | available, but **larger than it looks**: `Flap` folds itself through `FlapFoldAuto` and `OverlaySplitView.collapsed` is a plain `bool` something must drive. libadwaita's answer is `AdwBreakpoint`, which owlkettle does not bind either — so plan the pair, or the swap trades a deprecated widget for a sidebar that stops adapting |
+> | `PopoverMenu` + `ContextMenu`, `SplitButton` | available and untouched |
+
 ---
 
 ## Phase 4 — Keyboard and the command palette (1 session)
