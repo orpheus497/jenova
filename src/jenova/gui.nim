@@ -4357,10 +4357,11 @@ proc trashPanel(app: AppState): Widget =
               # entries would be the same false reassurance the trash view was
               # built to end.
               if app.trashItems.len == 0 and app.trashFiles.len == 0:
-                Label {.expand: false.}:
-                  text = "Nothing has been deleted."
-                  xAlign = 0.0
-                  style = [StyleClass("settings-help")]
+                StatusPage:
+                  iconName = "user-trash-symbolic"
+                  title = "Nothing has been deleted"
+                  description = "Deleted chats, notes, files and folders are " &
+                                "kept here until the trash is emptied."
               if app.trashItems.len > 0:
                 Label {.expand: false.}:
                   text = "Restoring a container brings back what was inside " &
@@ -4547,6 +4548,24 @@ proc hardwarePanel(app: AppState): Widget =
                         wrap = true
                         style = [StyleClass("settings-help")]
 
+## Function purpose: the models the search box leaves standing.
+##
+## Extracted from the loop that drew them, because the panel now has to ask the
+## question twice — once to decide whether there is anything to draw at all, and
+## once to draw it — and a predicate stated twice is a predicate that drifts.
+## Case-insensitive substring over the file name and the folder it sits in,
+## which is what `visibleConvs` does for conversations and what the search box
+## above it already promised.
+##
+## It runs per redraw, and that is cheaper than what it replaces: the same test
+## was applied to every model *inside* the drawing loop on every frame, so this
+## does the same work once and hands back a list.
+proc visibleModels(app: AppState): seq[models.InstalledModel] =
+  if app.modelFilter.len == 0: return app.modelList
+  let q = app.modelFilter.toLowerAscii
+  for m in app.modelList:
+    if q in m.name.toLowerAscii or q in m.role.toLowerAscii: result.add m
+
 ## Function purpose: open the model selector, reading the tree once (8a, G-20).
 ##
 ## Action purpose: the enumeration happens **here and not in `view`**. It is a
@@ -4611,17 +4630,33 @@ proc modelsPanel(app: AppState): Widget =
 
           ScrolledWindow {.expand: true.}:
             Box(orient = OrientY, spacing = 14, margin = 4):
+              # Phase 3, report 05: `StatusPage` rather than a dim `Label`. It
+              # is what libadwaita draws an empty view with, and the icon plus
+              # the title/description split is what makes "there are none" and
+              # "none of them match" read as different answers instead of two
+              # sentences in the same grey.
               if app.modelList.len == 0:
-                # D-CB: name both folders that were actually looked in. "No
-                # models found" over a tree the user knows has models in it is
-                # the report that sends them looking in the wrong place.
-                Label {.expand: false.}:
-                  text = "No .gguf files in " & app.lc.paths.jcaHome &
-                         "/models/instruct or " & app.lc.paths.jcaHome &
-                         "/models/thinking."
-                  xAlign = 0.0
-                  wrap = true
-                  style = [StyleClass("settings-help")]
+                StatusPage:
+                  iconName = "drive-multidisk-symbolic"
+                  title = "No models installed"
+                  # D-CB: name both folders that were actually looked in. "No
+                  # models found" over a tree the user knows has models in it is
+                  # the report that sends them looking in the wrong place.
+                  description = "No .gguf files in " & app.lc.paths.jcaHome &
+                                "/models/instruct or " & app.lc.paths.jcaHome &
+                                "/models/thinking."
+              elif app.visibleModels().len == 0:
+                # **This state drew nothing at all.** The filter was applied
+                # inside the loop below, so a search matching no model left the
+                # panel showing the help paragraph and then blank space — the
+                # same dead end the sidebar already answers with "No matches."
+                # for conversations. A list that empties itself without saying
+                # why reads as a broken panel, not as a search result.
+                StatusPage:
+                  iconName = "system-search-symbolic"
+                  title = "No matches"
+                  description = "No installed model's file name or folder " &
+                                "contains \u201C" & app.modelFilter & "\u201D."
               else:
                 Label {.expand: false.}:
                   text = "Switching relinks models/agent. The model it " &
@@ -4632,10 +4667,7 @@ proc modelsPanel(app: AppState): Widget =
                   wrap = true
                   style = [StyleClass("settings-help")]
 
-                for m in app.modelList:
-                  if app.modelFilter.len == 0 or
-                     app.modelFilter.toLowerAscii in m.name.toLowerAscii or
-                     app.modelFilter.toLowerAscii in m.role.toLowerAscii:
+                for m in app.visibleModels():
                     Box(orient = OrientY, spacing = 2) {.expand: false.}:
                       Box(orient = OrientX, spacing = 8) {.expand: false.}:
                         Label {.expand: true.}:
