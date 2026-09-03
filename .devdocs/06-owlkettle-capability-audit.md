@@ -17,7 +17,7 @@ native widgets exist.
 |---|---|---|
 | `owlkettle/widgets.nim` renderables | **62** | — |
 | `owlkettle/adw.nim` renderables | **23** | — |
-| **Total** | **85** | **18 distinct types** |
+| **Total** | **85** | ~~**18 distinct types**~~ → **38 after session 7** |
 
 > **Session 7 first "corrected" these to 21 and 83, and that was wrong.** The
 > recount was taken against the **`v3.0.0` tag**; this report states its revision in
@@ -34,6 +34,18 @@ Of ~160 widget instances in `gui.nim`, **130 are `Button` (72) or `Label` (58)**
 That ratio is the finding. A native toolkit offering 85 widgets is being used as though it
 offered two, with structure expressed through nested `Box`es and CSS classes. It is a web
 document tree rendered by GTK.
+
+> **Session 7 closed §4 and §3.** The window now uses **38** distinct owlkettle renderables,
+> having added `ActionRow`, `Avatar`, `Banner`, `Clamp`, `ColumnView`, `ComboRow`, `ContextMenu`,
+> `ListView`, `MenuButton`, `OverlaySplitView`, `PopoverMenu`, `PreferencesGroup`, `SplitButton`,
+> `StatusPage`, `SwitchRow`, `ToastOverlay` and `ToolbarView` — plus two hand-bound widgets for
+> things owlkettle does not have at all: `MenuItem` (a `GtkModelButton` that closes the menu it
+> is in) and `BreakpointHost` (`AdwBreakpoint`, which nothing in owlkettle binds).
+>
+> `Button` and `Label` counts barely moved (72→67, 58→55), and that is expected: the
+> substitutions replaced *structure* — a Box of a Label and a Switch became a `SwitchRow`, a Box
+> of message cards became a `ListView` — while buttons and labels remain what a button and a
+> label are. The ratio was a symptom of the structure, not of the leaf widgets.
 
 ---
 
@@ -115,7 +127,20 @@ the right widget, not a bigger lid.
 > rendered*, bounded only by session 2's caps. Reducing them to viewport scale is the other half
 > of this finding and has not been done.
 
-`ColumnView` (`widgets.nim`) is the same mechanism with columns, for the file and trash lists.
+`ColumnView` (`widgets.nim`) is the same mechanism with columns.
+
+> **Done for the models list, session 7 — and *not* for the trash, deliberately.** The models
+> panel was the right fit and was drawn as prose: a name on one line and "instruct · 4387 MB" in
+> grey underneath, so comparing two models by size meant reading down a ragged column that did
+> not line up. Model, folder and size are columns now.
+>
+> The trash is a poor fit and forcing it there would be worse than leaving it. It holds **two
+> lists of different kinds** — rows addressed by id, which can be restored, and files addressed
+> by path, which cannot — and the comment in `trashPanel` already records that presenting them
+> as one thing would be a false claim about what restoring one does. A `ColumnView` must be the
+> `ScrolledWindow`'s own child to be a list, so accommodating both would mean either merging
+> them or giving a 720x560 panel two scrollers. Neither is an improvement on a short list that
+> fits on screen.
 
 ---
 
@@ -128,9 +153,9 @@ the right widget, not a bigger lid.
 | Empty states | `StatusPage` | ~~A dim `Label`~~ — done for the empty transcript, the two model-list states and the trash, session 7 |
 | Inline messages | `Banner` | ~~—~~ — done for backend-down and the LAN flag/socket disagreement, session 7 |
 | Header/content/footer | `ToolbarView` | ~~A `Box` of three sections~~ — the chat column is a `ToolbarView` |
-| Adaptive sidebar | `OverlaySplitView` | `Flap` |
-| Menus | `PopoverMenu`, `ModelButton`, `ContextMenu` | 1 `Popover`, 1 `MenuButton` |
-| Split primary action | `SplitButton` | Two buttons |
+| Adaptive sidebar | `OverlaySplitView` | ~~`Flap`~~ — swapped, with `AdwBreakpoint` hand-bound to drive `collapsed`, since owlkettle has no breakpoint at all |
+| Menus | `PopoverMenu`, `ContextMenu`, `MenuItem` | ~~1 `Popover`, 1 `MenuButton`~~ — every sidebar row has a `⋯` menu and a right-click menu. `ModelButton` is wrapped as `MenuItem` so choosing an item closes the menu, which owlkettle's does not |
+| Split primary action | `SplitButton` | ~~Two buttons~~ — Send carries the intent-prefix menu (P-E8). It reverts to a plain `Button` while streaming, because Stop has no secondary action |
 | Reading-width column | `Clamp` | ~~Margins~~ — the transcript is clamped to 760, the Web UI's own `max-w-3xl` |
 | Identity | `Avatar` | ~~Text labels~~ — an icon avatar beside the name on every message card |
 
@@ -199,7 +224,8 @@ needs the server's own detail rather than one line. Errors keep the inline row.
 
 **One item genuinely is missing, and it gates a planned one:**
 
-* `AdwBreakpoint` — not needed until `OverlaySplitView` replaces `Flap`, and then it is. `Flap`
+* `AdwBreakpoint` — **bound by hand in session 7**, because `OverlaySplitView` did replace `Flap`
+  and this is what makes that lossless rather than a downgrade. `Flap`
   folds itself on a narrow window through `FlapFoldAuto`, which is what
   `alwaysShowSidebarOnDesktop` switches off; `OverlaySplitView.collapsed` is a plain `bool` that
   something must drive, and the something libadwaita intends is a breakpoint on the window.

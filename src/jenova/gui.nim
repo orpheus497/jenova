@@ -218,6 +218,16 @@ var
   # `pendingActions`, and for the same reason — a GTK callback must not reach
   # into the widget tree.
   droppedPaths: seq[string] = @[]
+  ## Whether the window is currently under the sidebar breakpoint's width.
+  ## Written by `AdwBreakpoint`'s `apply`/`unapply` callbacks and read by the
+  ## 40 ms drain, both on the GTK thread — so it needs no atomic, unlike the
+  ## stream fd. Declared here rather than beside `BreakpointHost` because the
+  ## drain lives inside the `viewable`'s own hooks, above that point in the file.
+  windowNarrow = false
+  ## The breakpoint is added to the window once. `realize` fires again after an
+  ## unrealize, and a second breakpoint on the same condition would double every
+  ## `apply`.
+  breakpointAdded = false
   # Set the moment "quit" is drained. `closeWindow` destroys the window and with
   # it every GtkWidget in the tree, so anything that touches a widget afterwards
   # is touching freed memory — which is the SIGBUS in all ten cores of
@@ -1179,6 +1189,11 @@ viewable App:
   renameDraft: string
   search: string
   sidebarOpen: bool = true
+  ## Whether the window is under the sidebar breakpoint's width, mirrored from
+  ## `windowNarrow` by the 40 ms drain. It is state rather than a question asked
+  ## in `view` because the answer arrives from GTK on a signal, and `view` runs
+  ## on every canvas frame — polling a widget there is the shape of defect B-17.
+  narrow: bool
   editorOpen: bool
   ## Bound to the Window's `fullscreened`, which the application had never set —
   ## so nothing in the program could leave fullscreen once the compositor put it
@@ -1311,6 +1326,15 @@ viewable App:
 
       discard addGlobalTimeout(40, proc(): bool =
         var changed = false
+
+        # The sidebar breakpoint. `windowNarrow` is written by the `apply` and
+        # `unapply` callbacks on `AdwBreakpoint` — bare C functions that cannot
+        # reach the widget tree — and this is where it becomes application
+        # state, on the GTK thread with `st` in hand. Same shape as
+        # `droppedPaths` below, and for the same reason.
+        if windowNarrow != st.narrow:
+          st.narrow = windowNarrow
+          changed = true
 
         # files dropped on the window. The GTK drop callback is a bare C
         # function pointer that only appends to `droppedPaths`; the work happens
@@ -3174,6 +3198,87 @@ renderable MenuItem of BaseWidget:
       g_object_set_property(state.internalWidget.pointer, "text", value.addr)
       g_value_unset(value.addr)
 
+## `AdwBreakpoint`, which owlkettle does not bind at all — and without it
+## `OverlaySplitView` is a downgrade rather than a replacement for `Flap`.
+##
+## `Flap` folds itself on a narrow window through `FlapFoldAuto`, which is what
+## the `alwaysShowSidebarOnDesktop` setting switches off.
+## `AdwOverlaySplitView.collapsed` is a plain `bool` that something has to
+## drive, and libadwaita's answer is a breakpoint on the window: a condition,
+## and `apply`/`unapply` when the window crosses it. Swapping the two without
+## this would trade a deprecated widget for a sidebar that stops adapting.
+##
+## **The install happens on `realize`, not in `afterBuild`.** owlkettle builds a
+## widget before its parent inserts it, so at `afterBuild` there is no root to
+## reach — `gtk_widget_get_root` returns nil. By `realize` the widget is in a
+## mapped tree and the root is the `AdwWindow` the breakpoint belongs to.
+##
+## Four protos. `adw_breakpoint_new` takes ownership of the condition and
+## `adw_window_add_breakpoint` takes ownership of the breakpoint, so nothing
+## here is freed by hand.
+type
+  AdwBreakpoint = distinct pointer
+  AdwBreakpointCondition = distinct pointer
+
+proc adw_breakpoint_condition_parse(s: cstring): AdwBreakpointCondition
+  {.importc, cdecl.}
+proc adw_breakpoint_new(c: AdwBreakpointCondition): AdwBreakpoint
+  {.importc, cdecl.}
+proc adw_window_add_breakpoint(w: GtkWidget, b: AdwBreakpoint) {.importc, cdecl.}
+proc gtk_widget_get_root(w: GtkWidget): GtkWidget {.importc, cdecl.}
+
+proc onBreakpointApply(bp: pointer, data: pointer) {.cdecl.} =
+  windowNarrow = true
+proc onBreakpointUnapply(bp: pointer, data: pointer) {.cdecl.} =
+  windowNarrow = false
+
+proc onHostRealize(w: GtkWidget, data: pointer) {.cdecl.} =
+  if breakpointAdded: return
+  let root = gtk_widget_get_root(w)
+  if pointer(root).isNil: return
+  # 700px: below this the sidebar and a readable transcript do not both fit at
+  # the sidebar's fixed 260. It is the width at which `FlapFoldAuto` was
+  # already folding, so the window behaves as it did rather than at a number
+  # chosen for its own sake.
+  let cond = adw_breakpoint_condition_parse("max-width: 700px")
+  if pointer(cond).isNil: return
+  let bp = adw_breakpoint_new(cond)
+  if pointer(bp).isNil: return
+  discard g_signal_connect_data(pointer(bp), "apply",
+                                cast[pointer](onBreakpointApply), nil, nil,
+                                GConnectFlags(0))
+  discard g_signal_connect_data(pointer(bp), "unapply",
+                                cast[pointer](onBreakpointUnapply), nil, nil,
+                                GConnectFlags(0))
+  adw_window_add_breakpoint(root, bp)
+  breakpointAdded = true
+
+## Carries the breakpoint, and nothing else. A `Frame` for the reason `DropZone`
+## is one — `updateChild` needs a real setter, and a frame gives its child the
+## whole allocation, so unlike a `Box` it needs no expand flags set on the
+## child. `.drop-zone` takes its border off; the class is shared because the
+## rule is "a frame that must not look like one" and there is exactly one.
+renderable BreakpointHost of BaseWidget:
+  child: Widget
+
+  hooks:
+    beforeBuild:
+      state.internalWidget = gtk_frame_new(nil)
+    afterBuild:
+      discard g_signal_connect_data(pointer(state.internalWidget), "realize",
+                                    cast[pointer](onHostRealize), nil, nil,
+                                    GConnectFlags(0))
+
+  hooks child:
+    (build, update):
+      state.updateChild(state.child, widget.valChild, gtk_frame_set_child)
+
+  adder add:
+    if widget.hasChild:
+      raise newException(ValueError, "BreakpointHost takes one child.")
+    widget.hasChild = true
+    widget.valChild = child
+
 renderable SourceCode of BaseWidget:
   code: string
   language: string
@@ -3779,6 +3884,35 @@ proc rowMenuItems(app: AppState, entity, id, name: string): Widget =
       MenuItem:
         text = "Delete"
         proc clicked() = app.deleteNode(entity, id)
+
+## The intent prefixes, as menu items that prepend themselves to the draft.
+##
+## **P-E8: the five prefixes existed and nothing on either surface offered
+## them.** They were discoverable only by reading the empty transcript's hint —
+## which vanishes the moment there is one message — or the documentation. This
+## puts them where the message is written.
+##
+## Prepending rather than replacing: a prefix steers a message the user has
+## already started typing, and the draft is the message. Switching prefix
+## replaces the old one rather than stacking a second, because two prefixes
+## would be classified as whichever `pipeline.classify` matched first and the
+## user would have chosen the other.
+proc intentMenuItems(app: AppState): Widget =
+  var seen: seq[string]
+  for (prefix, _) in pipeline.IntentPrefixes:
+    if prefix notin seen: seen.add prefix
+  gui:
+    Box(orient = OrientY):
+      for p in seen:
+        MenuItem:
+          text = p
+          proc clicked() =
+            var body = app.draft
+            for (old, _) in pipeline.IntentPrefixes:
+              if body.startsWith(old):
+                body = body[old.len .. ^1].strip(trailing = false)
+                break
+            app.draft = p & " " & body
 
 proc convRow(app: AppState, c: ConvItem): Widget =
   gui:
@@ -4953,62 +5087,100 @@ proc modelsPanel(app: AppState): Widget =
             placeholderText = "Search models"
             proc changed(t: string) = app.modelFilter = t
 
-          ScrolledWindow {.expand: true.}:
-            Box(orient = OrientY, spacing = 14, margin = 4):
-              # Phase 3, report 05: `StatusPage` rather than a dim `Label`. It
-              # is what libadwaita draws an empty view with, and the icon plus
-              # the title/description split is what makes "there are none" and
-              # "none of them match" read as different answers instead of two
-              # sentences in the same grey.
-              if app.modelList.len == 0:
-                StatusPage:
-                  iconName = "drive-multidisk-symbolic"
-                  title = "No models installed"
-                  # Action purpose: name both folders that were actually looked
-                  # in. "No models found" over a tree the user knows has models
-                  # in it is the report that sends them looking in the wrong
-                  # place.
-                  description = "No .gguf files in " & app.lc.paths.jcaHome &
-                                "/models/instruct or " & app.lc.paths.jcaHome &
-                                "/models/thinking."
-              elif app.visibleModels().len == 0:
-                # Action purpose: a search matching no model must say so. A list
-                # that empties itself without a word reads as a broken panel
-                # rather than as a search result, and the sidebar already
-                # answers the same question for conversations.
-                StatusPage:
-                  iconName = "system-search-symbolic"
-                  title = "No matches"
-                  description = "No installed model's file name or folder " &
-                                "contains \u201C" & app.modelFilter & "\u201D."
-              else:
-                Label {.expand: false.}:
-                  text = "Switching relinks models/agent. The model it " &
-                         "replaces stays where it is, in its own folder. It " &
-                         "does not reload the backend — llama-server holds " &
-                         "the old weights until it is restarted."
-                  xAlign = 0.0
-                  wrap = true
-                  style = [StyleClass("settings-help")]
+          # **Above the scroller, not inside it.** The `ColumnView` below has to
+          # be the `ScrolledWindow`'s own child to behave as a list — the same
+          # constraint the transcript's `ListView` carries and for the same
+          # reason — so the fixed help text cannot sit beside it any more. It is
+          # fixed text; it does not need to scroll.
+          if app.modelList.len > 0 and app.visibleModels().len > 0:
+            Label {.expand: false.}:
+              text = "Switching relinks models/agent. The model it replaces " &
+                     "stays where it is, in its own folder. It does not " &
+                     "reload the backend — llama-server holds the old weights " &
+                     "until it is restarted."
+              xAlign = 0.0
+              wrap = true
+              style = [StyleClass("settings-help")]
 
-                for m in app.visibleModels():
-                    Box(orient = OrientY, spacing = 2) {.expand: false.}:
-                      Box(orient = OrientX, spacing = 8) {.expand: false.}:
-                        Label {.expand: true.}:
-                          text = m.name & (if m.active: "  — active" else: "")
-                          xAlign = 0.0
-                          wrap = true
-                        Button {.expand: false.}:
-                          text = "Switch"
-                          style = [ButtonFlat, StyleClass("row-btn")]
-                          sensitive = not m.active
-                          proc clicked() = app.switchToModel(m.path)
-                      Label {.expand: false.}:
-                        text = (if m.role.len > 0: m.role else: "models") &
-                               " · " & $((m.bytes + 1024 * 1024 - 1) div
-                                         (1024 * 1024)) & " MB"
+          ScrolledWindow {.expand: true.}:
+            # `StatusPage` rather than a dim `Label`. It is what libadwaita
+            # draws an empty view with, and the icon plus the title/description
+            # split is what makes "there are none" and "none of them match" read
+            # as different answers instead of two sentences in the same grey.
+            if app.modelList.len == 0:
+              StatusPage:
+                iconName = "drive-multidisk-symbolic"
+                title = "No models installed"
+                # Action purpose: name both folders that were actually looked
+                # in. "No models found" over a tree the user knows has models
+                # in it is the report that sends them looking in the wrong
+                # place.
+                description = "No .gguf files in " & app.lc.paths.jcaHome &
+                              "/models/instruct or " & app.lc.paths.jcaHome &
+                              "/models/thinking."
+            elif app.visibleModels().len == 0:
+              # Action purpose: a search matching no model must say so. A list
+              # that empties itself without a word reads as a broken panel
+              # rather than as a search result, and the sidebar already
+              # answers the same question for conversations.
+              StatusPage:
+                iconName = "system-search-symbolic"
+                title = "No matches"
+                description = "No installed model's file name or folder " &
+                              "contains \u201C" & app.modelFilter & "\u201D."
+            else:
+              # **`ColumnView`, because this list is a table and was drawn as
+              # prose** (report 06 §3). Each model was a name on one line and
+              # "instruct · 4096 MB" in grey underneath, so comparing two models
+              # by size meant reading down a ragged column that did not line up.
+              # Folder and size are now columns that do.
+              ColumnView:
+                rows = app.visibleModels().len
+                columns = @[
+                  initColumnViewColumn("Model", expand = true),
+                  initColumnViewColumn("Folder", fixedWidth = 100),
+                  initColumnViewColumn("Size", fixedWidth = 100),
+                  initColumnViewColumn("", fixedWidth = 100)]
+                showRowSeparators = true
+                # The bounds check is the one `viewItem` on the transcript
+                # carries, for the same reason: owlkettle re-runs this for rows
+                # bound before the current redraw, so a model list that shrank
+                # under a filter asks for a row that is gone — inside a `cdecl`
+                # callback, where an `IndexDefect` has nowhere to go.
+                proc viewItem(row, column: int): Widget =
+                  let shown = app.visibleModels()
+                  if row < 0 or row >= shown.len: return gui: Box()
+                  let m = shown[row]
+                  case column
+                  of 0:
+                    gui:
+                      Label:
+                        text = m.name & (if m.active: "  — active" else: "")
+                        xAlign = 0.0
+                        ellipsize = EllipsizeMiddle
+                        tooltip = m.path
+                  of 1:
+                    gui:
+                      Label:
+                        text = (if m.role.len > 0: m.role else: "models")
                         xAlign = 0.0
                         style = [StyleClass("settings-help")]
+                  of 2:
+                    gui:
+                      Label:
+                        # Rounded up, so a model under a megabyte does not
+                        # report as 0 MB.
+                        text = $((m.bytes + 1024 * 1024 - 1) div
+                                 (1024 * 1024)) & " MB"
+                        xAlign = 1.0
+                        style = [StyleClass("settings-help")]
+                  else:
+                    gui:
+                      Button:
+                        text = "Switch"
+                        style = [ButtonFlat, StyleClass("row-btn")]
+                        sensitive = not m.active
+                        proc clicked() = app.switchToModel(m.path)
 
 ## Function purpose: the full-size attachment preview, the Web UI's
 ## `DialogChatAttachmentPreview`. Same overlay shape as the settings and hardware
@@ -5397,481 +5569,521 @@ method view(app: AppState): Widget =
         ToastOverlay:
           toastQueue = app.toasts
 
-          # The canvas is the Overlay's main child, so it fills the window and every
-          # widget below is stacked over it — the GTK equivalent of the Web UI's
-          # `inset-0 z-0` canvas under a `z-10` content layer (`+layout.svelte`).
-          # `theme.css()` makes those content widgets transparent; an opaque one
-          # would hide the field entirely rather than tint it.
-          Overlay:
-            NeuralCanvas()
+          # Carries the sidebar's width breakpoint. It has to be *in* the tree
+          # to find the window on `realize`, and it wraps rather than sitting
+          # beside because a widget that is never mapped is never realized.
+          BreakpointHost:
+            style = [StyleClass("drop-zone")]
 
-            Flap {.addOverlay.}:
-              revealed = app.sidebarOpen
-              # `FlapFoldNever` keeps the sidebar in the layout instead of
-              # letting it fold itself away on a narrow window, which is what the Web
-              # UI's "always show on desktop" does.
-              foldPolicy = (if app.opts.getBool("alwaysShowSidebarOnDesktop"):
-                              FlapFoldNever else: FlapFoldAuto)
-              transitionType = FlapTransitionOver
-              proc changed(revealed: bool) =
-                # The Flap folds itself on a narrow window and can be swiped shut, so
-                # `sidebarOpen` has to follow the widget rather than lead it —
-                # otherwise the toggle button reports a state the panel is not in.
-                app.sidebarOpen = revealed
+            # The canvas is the Overlay's main child, so it fills the window and every
+            # widget below is stacked over it — the GTK equivalent of the Web UI's
+            # `inset-0 z-0` canvas under a `z-10` content layer (`+layout.svelte`).
+            # `theme.css()` makes those content widgets transparent; an opaque one
+            # would hide the field entirely rather than tint it.
+            Overlay:
+              NeuralCanvas()
 
-              # Box's adder defaults to expand: true, so every child is marked.
-              Box(orient = OrientY, spacing = 6, margin = 10) {.addFlap, width: 260.}:
-                sizeRequest = (260, -1)
-                # `.glass-panel` is the class the Web UI's sidebar root carries;
-                # `.jenova-sidebar` overrides the parts specific to this edge.
-                style = [StyleClass("glass-panel"), StyleClass("jenova-sidebar")]
+              # **`OverlaySplitView`, not the deprecated `Flap`** (report 05,
+              # Phase 3). libadwaita deprecated `AdwFlap` at 1.4 in favour of this,
+              # and it was compiled out of the binary until `-d:adwminor=4`.
+              #
+              # The swap is only lossless because of `BreakpointHost` above.
+              # `Flap`'s `FlapFoldAuto` folded the sidebar itself on a narrow
+              # window; `collapsed` here is a plain `bool` that something must
+              # drive, and libadwaita's answer — `AdwBreakpoint` — is not bound by
+              # owlkettle. Without it this would have traded a deprecated widget
+              # for a sidebar that stops adapting.
+              #
+              # `alwaysShowSidebarOnDesktop` keeps its meaning exactly:
+              # `FlapFoldNever` becomes "never collapse", so the breakpoint is
+              # ignored and the sidebar stays in the layout at any width.
+              OverlaySplitView {.addOverlay.}:
+                showSidebar = app.sidebarOpen
+                collapsed = app.narrow and
+                            not app.opts.getBool("alwaysShowSidebarOnDesktop")
+                # Both bounds at the sidebar's own fixed width, so the split view
+                # cannot negotiate it to something the row layout was not built
+                # for — `convRow`'s 204px floor is derived from this 260.
+                minSidebarWidth = 260.0
+                maxSidebarWidth = 260.0
+                widthUnit = LengthPixel
+                proc toggle(shown: bool) =
+                  # The split view collapses itself on a narrow window and can be
+                  # swiped shut, so `sidebarOpen` has to follow the widget rather
+                  # than lead it — otherwise the toggle button reports a state the
+                  # panel is not in. Same reason `Flap.changed` was wired this way.
+                  app.sidebarOpen = shown
 
-                Box(orient = OrientX, spacing = 10) {.expand: false.}:
-                  Picture {.expand: false, hAlign: AlignCenter, vAlign: AlignCenter.}:
-                    # The pixbuf is already 48x48 (see `run`), so the natural size is
-                    # small and nothing here has to fight it. `AlignCenter` stops the
-                    # Box stretching it to fill the row's height.
-                    pixbuf = app.logo
-                    contentFit = ContentScaleDown
-                    style = [StyleClass("sidebar-logo")]
-                  # Three stacked lines, one colour each. A Box of Labels rather than
-                  # one markup Label so each line keeps a style class and the palette
-                  # stays in `theme.nim` instead of becoming an inline span.
-                  Box(orient = OrientY) {.expand: false, hAlign: AlignFill.}:
-                    Label {.expand: false.}:
-                      text = "JENOVA"
-                      xAlign = 0.0
-                      style = [StyleClass("brand"), StyleClass("brand-purple")]
-                    Label {.expand: false.}:
-                      text = "COGNITIVE"
-                      xAlign = 0.0
-                      style = [StyleClass("brand"), StyleClass("brand-crimson")]
-                    Label {.expand: false.}:
-                      text = "ARCHITECTURE"
-                      xAlign = 0.0
-                      style = [StyleClass("brand"), StyleClass("brand-gold")]
+                # Box's adder defaults to expand: true, so every child is marked.
+                Box(orient = OrientY, spacing = 6, margin = 10) {.addSidebar.}:
+                  sizeRequest = (260, -1)
+                  # `.glass-panel` is the class the Web UI's sidebar root carries;
+                  # `.jenova-sidebar` overrides the parts specific to this edge.
+                  style = [StyleClass("glass-panel"), StyleClass("jenova-sidebar")]
 
-                Button {.expand: false.}:
-                  sensitive = not app.streaming
-                  style = [ButtonFlat, StyleClass("row-btn")]
-                  proc clicked() = app.newChat()
-                  # A Label child rather than `text`, because GTK centres a Button's
-                  # own label and no CSS property moves it — `text-align` does not
-                  # apply. This is the only way to get a left-aligned list row.
-                  Label:
-                    text = "＋   New Chat"
-                    xAlign = 0.0
+                  Box(orient = OrientX, spacing = 10) {.expand: false.}:
+                    Picture {.expand: false, hAlign: AlignCenter, vAlign: AlignCenter.}:
+                      # The pixbuf is already 48x48 (see `run`), so the natural size is
+                      # small and nothing here has to fight it. `AlignCenter` stops the
+                      # Box stretching it to fill the row's height.
+                      pixbuf = app.logo
+                      contentFit = ContentScaleDown
+                      style = [StyleClass("sidebar-logo")]
+                    # Three stacked lines, one colour each. A Box of Labels rather than
+                    # one markup Label so each line keeps a style class and the palette
+                    # stays in `theme.nim` instead of becoming an inline span.
+                    Box(orient = OrientY) {.expand: false, hAlign: AlignFill.}:
+                      Label {.expand: false.}:
+                        text = "JENOVA"
+                        xAlign = 0.0
+                        style = [StyleClass("brand"), StyleClass("brand-purple")]
+                      Label {.expand: false.}:
+                        text = "COGNITIVE"
+                        xAlign = 0.0
+                        style = [StyleClass("brand"), StyleClass("brand-crimson")]
+                      Label {.expand: false.}:
+                        text = "ARCHITECTURE"
+                        xAlign = 0.0
+                        style = [StyleClass("brand"), StyleClass("brand-gold")]
 
-                SearchEntry {.expand: false.}:
-                  text = app.search
-                  # 8c-6: it said "Search chats" and has never only searched chats —
-                  # `leavesIn` filters notes and files by the same string, so a
-                  # note-title search was built, working and undiscoverable because
-                  # the box denied doing it.
-                  placeholderText = "Search chats, notes and files"
-                  proc changed(text: string) =
-                    app.search = text
-
-                Box(orient = OrientX) {.expand: false.}:
-                  Label {.expand: false, hAlign: AlignFill.}:
-                    text = "WORKSPACES"
-                    xAlign = 0.0
-                    style = [StyleClass("section-label")]
                   Button {.expand: false.}:
-                    icon = "folder-new-symbolic"
-                    tooltip = "New workspace"
+                    sensitive = not app.streaming
                     style = [ButtonFlat, StyleClass("row-btn")]
-                    proc clicked() = app.createNode("workspaces", "", "")
+                    proc clicked() = app.newChat()
+                    # A Label child rather than `text`, because GTK centres a Button's
+                    # own label and no CSS property moves it — `text-align` does not
+                    # apply. This is the only way to get a left-aligned list row.
+                    Label:
+                      text = "＋   New Chat"
+                      xAlign = 0.0
 
-                ScrolledWindow {.expand: true.}:
-                  Box(orient = OrientY, spacing = 1):
+                  SearchEntry {.expand: false.}:
+                    text = app.search
+                    # 8c-6: it said "Search chats" and has never only searched chats —
+                    # `leavesIn` filters notes and files by the same string, so a
+                    # note-title search was built, working and undiscoverable because
+                    # the box denied doing it.
+                    placeholderText = "Search chats, notes and files"
+                    proc changed(text: string) =
+                      app.search = text
 
-                    for ws in app.workspaces:
-                      Expander {.expand: false.}:
-                        label = ws.name
-                        style = [StyleClass("tree-node")]
-                        expanded = app.expanded.getOrDefault(ws.id, false)
-                        proc activate(on: bool) = app.expanded[ws.id] = on
-
-                        Box(orient = OrientY, spacing = 1, margin = 4):
-                          insert(app.nodeTools("workspaces", ws.id, ws.id, "", "",
-                                 @[("projects", "workspaceId"), ("note", "workspaceId"),
-                                   ("chat", "")])) {.expand: false.}
-
-                          for pr in app.projectsOf(ws.id):
-                            Expander {.expand: false.}:
-                              label = pr.name
-                              style = [StyleClass("tree-node")]
-                              expanded = app.expanded.getOrDefault(pr.id, false)
-                              proc activate(on: bool) = app.expanded[pr.id] = on
-
-                              Box(orient = OrientY, spacing = 1, margin = 4):
-                                insert(app.nodeTools("projects", pr.id, ws.id, pr.id, "",
-                                       @[("folders", "projectId"), ("note", "projectId"),
-                                         ("chat", "")])) {.expand: false.}
-
-                                for fd in app.foldersOf(pr.id):
-                                  Expander {.expand: false.}:
-                                    label = fd.name
-                                    style = [StyleClass("tree-node")]
-                                    expanded = app.expanded.getOrDefault(fd.id, false)
-                                    proc activate(on: bool) = app.expanded[fd.id] = on
-
-                                    Box(orient = OrientY, spacing = 1, margin = 4):
-                                      insert(app.nodeTools("folders", fd.id, ws.id, pr.id, fd.id,
-                                             @[("note", "folderId"), ("chat", "")])) {.expand: false.}
-                                      for n in app.leavesIn(app.notes, ws.id, pr.id, fd.id):
-                                        insert(app.leafRow("notes", n)) {.expand: false.}
-                                      for f in app.leavesIn(app.files, ws.id, pr.id, fd.id):
-                                        insert(app.leafRow("fileAssets", f)) {.expand: false.}
-                                      for c in app.convsIn(ws.id, pr.id, fd.id):
-                                        insert(app.convRow(c)) {.expand: false.}
-
-                                for n in app.leavesIn(app.notes, ws.id, pr.id, ""):
-                                  insert(app.leafRow("notes", n)) {.expand: false.}
-                                for f in app.leavesIn(app.files, ws.id, pr.id, ""):
-                                  insert(app.leafRow("fileAssets", f)) {.expand: false.}
-                                for c in app.convsIn(ws.id, pr.id, ""):
-                                  insert(app.convRow(c)) {.expand: false.}
-
-                          for n in app.leavesIn(app.notes, ws.id, "", ""):
-                            insert(app.leafRow("notes", n)) {.expand: false.}
-                          for f in app.leavesIn(app.files, ws.id, "", ""):
-                            insert(app.leafRow("fileAssets", f)) {.expand: false.}
-                          for c in app.convsIn(ws.id, "", ""):
-                            insert(app.convRow(c)) {.expand: false.}
-
-                    Label {.expand: false.}:
-                      text = "CHATS"
+                  Box(orient = OrientX) {.expand: false.}:
+                    Label {.expand: false, hAlign: AlignFill.}:
+                      text = "WORKSPACES"
                       xAlign = 0.0
                       style = [StyleClass("section-label")]
-                    # Always present so the list's container never changes shape;
-                    # only its text varies. The rows themselves are the one place
-                    # children legitimately come and go.
-                    Label {.expand: false.}:
-                      text = (if app.visibleConvs().len == 0:
-                                (if app.search.len > 0: "No matches." else: "No chats yet.")
-                              else: "")
-                      xAlign = 0.0
-                      style = [StyleClass("dim-note")]
-                    for c in app.convsIn("", "", ""):
-                      insert(app.convRow(c)) {.expand: false.}
+                    Button {.expand: false.}:
+                      icon = "folder-new-symbolic"
+                      tooltip = "New workspace"
+                      style = [ButtonFlat, StyleClass("row-btn")]
+                      proc clicked() = app.createNode("workspaces", "", "")
 
-              # ── Chat column ───────────────────────────────────────────────────
-              # **`ToolbarView`, not a plain `Box`** (report 05, Phase 3). The
-              # chat column is a header, a scrolling body and a stack of bars at
-              # the bottom, which is precisely the layout libadwaita has a
-              # widget for — and it was compiled out of the binary until
-              # `-d:adwminor=4`, so the column was a Box because its replacement
-              # was not built (report 06 §2).
-              #
-              # What the widget adds over the Box is the part a Box cannot do:
-              # it knows which of its children are *bars* and which is *content*,
-              # so the top bar takes its shadow from whether the transcript is
-              # scrolled under it, and the bottom bars keep their own backdrop
-              # instead of inheriting the column's.
-              #
-              # Both styles are `ToolbarFlat` because the window's own palette
-              # is doing this job already: `.chat-col` is transparent so the
-              # canvas shows through, and a raised toolbar would paint over it.
-              ToolbarView:
-                topBarStyle = ToolbarFlat
-                bottomBarStyle = ToolbarFlat
-                style = [StyleClass("chat-col")]
+                  ScrolledWindow {.expand: true.}:
+                    Box(orient = OrientY, spacing = 1):
 
-                # The top bar lives here, not in a titlebar slot — GTK4 hides a
-                # `gtk_window_set_titlebar` titlebar in fullscreen, which is what
-                # made it vanish. Atop the chat column rather than spanning the
-                # window because the Web UI's sidebar is full height.
-                insert(app.topBar()) {.addTop.}
+                      for ws in app.workspaces:
+                        Expander {.expand: false.}:
+                          label = ws.name
+                          style = [StyleClass("tree-node")]
+                          expanded = app.expanded.getOrDefault(ws.id, false)
+                          proc activate(on: bool) = app.expanded[ws.id] = on
 
-                # Phase 3, report 05. `Banner` is libadwaita's widget for exactly
-                # this — a strip under the header naming a condition the window is
-                # in — and it was compiled out of the binary until `-d:adwminor=4`
-                # (report 06 §2). Both of these were previously either a word in
-                # the header subtitle or a transient line in the notice label.
+                          Box(orient = OrientY, spacing = 1, margin = 4):
+                            insert(app.nodeTools("workspaces", ws.id, ws.id, "", "",
+                                   @[("projects", "workspaceId"), ("note", "workspaceId"),
+                                     ("chat", "")])) {.expand: false.}
+
+                            for pr in app.projectsOf(ws.id):
+                              Expander {.expand: false.}:
+                                label = pr.name
+                                style = [StyleClass("tree-node")]
+                                expanded = app.expanded.getOrDefault(pr.id, false)
+                                proc activate(on: bool) = app.expanded[pr.id] = on
+
+                                Box(orient = OrientY, spacing = 1, margin = 4):
+                                  insert(app.nodeTools("projects", pr.id, ws.id, pr.id, "",
+                                         @[("folders", "projectId"), ("note", "projectId"),
+                                           ("chat", "")])) {.expand: false.}
+
+                                  for fd in app.foldersOf(pr.id):
+                                    Expander {.expand: false.}:
+                                      label = fd.name
+                                      style = [StyleClass("tree-node")]
+                                      expanded = app.expanded.getOrDefault(fd.id, false)
+                                      proc activate(on: bool) = app.expanded[fd.id] = on
+
+                                      Box(orient = OrientY, spacing = 1, margin = 4):
+                                        insert(app.nodeTools("folders", fd.id, ws.id, pr.id, fd.id,
+                                               @[("note", "folderId"), ("chat", "")])) {.expand: false.}
+                                        for n in app.leavesIn(app.notes, ws.id, pr.id, fd.id):
+                                          insert(app.leafRow("notes", n)) {.expand: false.}
+                                        for f in app.leavesIn(app.files, ws.id, pr.id, fd.id):
+                                          insert(app.leafRow("fileAssets", f)) {.expand: false.}
+                                        for c in app.convsIn(ws.id, pr.id, fd.id):
+                                          insert(app.convRow(c)) {.expand: false.}
+
+                                  for n in app.leavesIn(app.notes, ws.id, pr.id, ""):
+                                    insert(app.leafRow("notes", n)) {.expand: false.}
+                                  for f in app.leavesIn(app.files, ws.id, pr.id, ""):
+                                    insert(app.leafRow("fileAssets", f)) {.expand: false.}
+                                  for c in app.convsIn(ws.id, pr.id, ""):
+                                    insert(app.convRow(c)) {.expand: false.}
+
+                            for n in app.leavesIn(app.notes, ws.id, "", ""):
+                              insert(app.leafRow("notes", n)) {.expand: false.}
+                            for f in app.leavesIn(app.files, ws.id, "", ""):
+                              insert(app.leafRow("fileAssets", f)) {.expand: false.}
+                            for c in app.convsIn(ws.id, "", ""):
+                              insert(app.convRow(c)) {.expand: false.}
+
+                      Label {.expand: false.}:
+                        text = "CHATS"
+                        xAlign = 0.0
+                        style = [StyleClass("section-label")]
+                      # Always present so the list's container never changes shape;
+                      # only its text varies. The rows themselves are the one place
+                      # children legitimately come and go.
+                      Label {.expand: false.}:
+                        text = (if app.visibleConvs().len == 0:
+                                  (if app.search.len > 0: "No matches." else: "No chats yet.")
+                                else: "")
+                        xAlign = 0.0
+                        style = [StyleClass("dim-note")]
+                      for c in app.convsIn("", "", ""):
+                        insert(app.convRow(c)) {.expand: false.}
+
+                # ── Chat column ───────────────────────────────────────────────────
+                # **`ToolbarView`, not a plain `Box`** (report 05, Phase 3). The
+                # chat column is a header, a scrolling body and a stack of bars at
+                # the bottom, which is precisely the layout libadwaita has a
+                # widget for — and it was compiled out of the binary until
+                # `-d:adwminor=4`, so the column was a Box because its replacement
+                # was not built (report 06 §2).
                 #
-                # **Unconditional widgets with `revealed` toggled, not `if`
-                # branches.** That is what `revealed` is for: it animates the
-                # strip in and out while the child count of this Box stays fixed,
-                # so owlkettle's positional diff never matches a Banner's state
-                # against a different widget.
+                # What the widget adds over the Box is the part a Box cannot do:
+                # it knows which of its children are *bars* and which is *content*,
+                # so the top bar takes its shadow from whether the transcript is
+                # scrolled under it, and the bottom bars keep their own backdrop
+                # instead of inheriting the column's.
                 #
-                # `useMarkup = false` on both: the titles are plain sentences and
-                # one of them interpolates an address, so leaving Pango markup on
-                # would make a stray `&` in a hostname a rendering error.
-                Banner {.addTop.}:
-                  # `bsDown` only. `bsStarting` is deliberately not banner-worthy:
-                  # it resolves on its own within seconds and the header subtitle
-                  # already says "starting — loading model", so a strip that
-                  # appears and disappears on every launch is noise.
-                  revealed = app.status == bsDown and not app.editorOpen
-                  title = "The model backend is not running. A message sent now " &
-                          "will fail."
-                  useMarkup = false
-                  buttonLabel = "Start"
-                  # The same queue the app menu's "Start backend" uses, so there
-                  # is one implementation reachable three ways — here, the menu
-                  # and the tray.
-                  proc clicked() = pendingActions.add "start"
+                # Both styles are `ToolbarFlat` because the window's own palette
+                # is doing this job already: `.chat-col` is transparent so the
+                # canvas shows through, and a raised toolbar would paint over it.
+                ToolbarView:
+                  topBarStyle = ToolbarFlat
+                  bottomBarStyle = ToolbarFlat
+                  style = [StyleClass("chat-col")]
 
-                Banner {.addTop.}:
-                  # The flag and the socket disagree. See `lanBound`: the listener
-                  # is in this process and its address was fixed before the window
-                  # opened, so the toggle cannot move it and never claimed to —
-                  # it just said so in a line that the next notice overwrote.
-                  revealed = app.lanEnabled != app.lanBound and not app.editorOpen
-                  title = (if app.lanEnabled:
-                             "LAN access is switched on, but this window's " &
-                             "server is still bound to 127.0.0.1. Quit and start " &
-                             "Jenova again to serve on the network."
-                           else:
-                             "LAN access is switched off, but this window's " &
-                             "server is still bound to 0.0.0.0 and can be " &
-                             "reached from the network. Quit and start Jenova " &
-                             "again to stop that.")
-                  useMarkup = false
-                  # No button, and that is the honest shape: the listener is this
-                  # process's own, so nothing short of restarting the application
-                  # changes it, and a button that could not do what it named
-                  # would be worse than none.
+                  # The top bar lives here, not in a titlebar slot — GTK4 hides a
+                  # `gtk_window_set_titlebar` titlebar in fullscreen, which is what
+                  # made it vanish. Atop the chat column rather than spanning the
+                  # window because the Web UI's sidebar is full height.
+                  insert(app.topBar()) {.addTop.}
 
-                # The transcript takes all the free height; the notice and the action
-                # row take only what they need — the child annotation on the Box, not
-                # a property of the child. The three children keep the same types in
-                # the same order whether a note or the transcript is open, so
-                # owlkettle's positional matching never swaps a widget out from under
-                # the diff; only what is inside them changes.
-                #
-                # The document panel is gone, and with it the horizontal Box
-                # that existed only to sit the panel beside this column. The
-                # `Box`-not-`Paned` reasoning it carried still applies one level
-                # down and lives at `mainArea`, which is the widget that actually
-                # changes type between a `ScrolledWindow` and an `NvimTerminal`.
-                DropZone:
-                  # the drop target wraps the chat column, which is the
-                  # Web UI's `ChatScreenDragOverlay` position.
-                  style = [StyleClass("drop-zone")]
-                  insert(app.mainArea())
-                # what is staged, above the composer, each removable. The
-                # Web UI shows thumbnails; this shows the name, the type and the
-                # size, because a GTK thumbnail means decoding the image on the
-                # GTK thread and the strip has to stay cheap to redraw.
-                if app.pending.len > 0 and not app.editorOpen:
-                  Box(orient = OrientX, spacing = 6, margin = 8) {.addBottom.}:
-                    for idx, a in app.pending:
-                      Box(orient = OrientX, spacing = 4) {.expand: false.}:
-                        style = [StyleClass("attach-chip")]
-                        # a real thumbnail for an image, which is what the Web
-                        # UI's `ChatAttachmentThumbnailImage` shows. Decoded once
-                        # and cached by digest — `view` runs on every frame.
-                        if a.kind == "IMAGE":
-                          let pb = app.attachmentPixbuf(a, 40)
-                          if not pb.isNil:
-                            Button {.expand: false.}:
-                              tooltip = "Preview " & a.name
-                              style = [ButtonFlat, StyleClass("attach-thumb")]
-                              proc clicked() =
-                                app.previewAtt = a
-                              Picture:
-                                pixbuf = pb
-                                contentFit = ContentContain
-                        Label {.expand: false.}:
-                          text = (if a.kind == "IMAGE": "🖼 " else: "📄 ") &
-                                 a.name & "  (" & $(a.bytes div 1024) & " KiB)"
-                          style = [StyleClass("settings-help")]
-                        Button {.expand: false.}:
-                          icon = "window-close-symbolic"
-                          tooltip = "Remove"
-                          style = [ButtonFlat, StyleClass("row-btn")]
-                          proc clicked() =
-                            if idx < app.pending.len: app.pending.delete(idx)
-
-                Box(orient = OrientX, spacing = 8) {.addBottom.}:
-                  # **This row is now the error surface and nothing else.**
-                  # Every confirmation — "note saved", "attached X", "settings
-                  # saved" — goes to `ToastOverlay`, appears over the transcript
-                  # and times out, which is what a confirmation is for. What was
-                  # wrong with putting them here is that they never left: "note
-                  # saved" sat under the composer until the next unrelated action
-                  # replaced it, and by then it described something the user did
-                  # minutes ago.
+                  # Phase 3, report 05. `Banner` is libadwaita's widget for exactly
+                  # this — a strip under the header naming a condition the window is
+                  # in — and it was compiled out of the binary until `-d:adwminor=4`
+                  # (report 06 §2). Both of these were previously either a word in
+                  # the header subtitle or a transient line in the notice label.
                   #
-                  # An error stays, and stays *here*, because it is the thing
-                  # you may have to act on and a message that times out is a
-                  # message you can miss. **Not** because a toast could not
-                  # carry the button: owlkettle's `Toast` takes a
-                  # `clickedHandler`, and its `connectSignal` puts that handler
-                  # in an `allocSharedCell` and disconnects it after one fire,
-                  # so it outlives the update cycle that frees an ordinary
-                  # `EventObj`. The reason is the timeout, not the lifetime.
-                  margin = (if app.noticeIsError and app.notice.len > 0 and
-                               not app.editorOpen: 8 else: 0)
-                  Label {.expand: true.}:
-                    # The notice is chat feedback — "backend restarted", "note
-                    # saved". It has nothing to say about the editor page and a
-                    # stale line under a full-screen editor reads as an error in it.
-                    text = (if app.editorOpen or not app.noticeIsError: ""
-                            else: app.notice)
-                    xAlign = 0.0
-                    wrap = true
-                    style = [StyleClass("dim-note")]
-                  # a failure the USER can do something about offers the
-                  # action rather than describing it. Only for the kinds
-                  # `pipeline.classifyError` marked retryable — a context overflow
-                  # is not one of them, because retrying it fails identically.
-                  if app.noticeRetryable and not app.editorOpen and
-                     not app.streaming:
-                    Button {.expand: false.}:
-                      text = "Retry"
-                      style = [ButtonFlat, StyleClass("row-btn")]
-                      proc clicked() =
-                        app.notice = ""
-                        app.noticeRetryable = false
-                        app.postConversation()
+                  # **Unconditional widgets with `revealed` toggled, not `if`
+                  # branches.** That is what `revealed` is for: it animates the
+                  # strip in and out while the child count of this Box stays fixed,
+                  # so owlkettle's positional diff never matches a Banner's state
+                  # against a different widget.
+                  #
+                  # `useMarkup = false` on both: the titles are plain sentences and
+                  # one of them interpolates an address, so leaving Pango markup on
+                  # would make a stray `&` in a hostname a rendering error.
+                  Banner {.addTop.}:
+                    # `bsDown` only. `bsStarting` is deliberately not banner-worthy:
+                    # it resolves on its own within seconds and the header subtitle
+                    # already says "starting — loading model", so a strip that
+                    # appears and disappears on every launch is noise.
+                    revealed = app.status == bsDown and not app.editorOpen
+                    title = "The model backend is not running. A message sent now " &
+                            "will fail."
+                    useMarkup = false
+                    buttonLabel = "Start"
+                    # The same queue the app menu's "Start backend" uses, so there
+                    # is one implementation reachable three ways — here, the menu
+                    # and the tray.
+                    proc clicked() = pendingActions.add "start"
 
-                Box(orient = OrientX, spacing = 8, margin = 12) {.addBottom.}:
-                  # Action purpose: three branches, not two. This tested only
-                  # `app.openNote`, so the editor page fell through to the *chat*
-                  # row and showed a message box and a Send button under Neovim —
-                  # with no way to leave except the top-bar icon. A page gets the
-                  # controls of the page it is, which is the shape the note editor
-                  # already had.
-                  if app.editorOpen:
-                    Label {.expand: true.}:
-                      text = "Neovim — " & app.p.workspaces
-                      xAlign = 0.0
-                      ellipsize = EllipsizeStart
-                      style = [StyleClass("dim-note")]
-                    Button {.expand: false.}:
-                      text = "Close"
-                      style = [ButtonFlat]
-                      proc clicked() = app.editorOpen = false
-                    insert(app.fullscreenButton()) {.expand: false.}
-                  elif app.openNote.len > 0:
-                    # `sensitive` rather than a conditional widget: a stable
-                    # child count is still the cheaper thing to reason about when
-                    # owlkettle matches states positionally.
-                    Button {.expand: false.}:
-                      text = "Save note"
-                      style = [ButtonSuggested]
-                      sensitive = app.noteEditing
-                      tooltip = (if app.noteEditing: "Save this note"
-                                 else: "Click Edit to change this note")
-                      proc clicked() = app.saveNote()
-                    Button {.expand: false.}:
-                      text = "Close"
-                      style = [ButtonFlat]
-                      proc clicked() = app.closeNote()
-                    insert(app.fullscreenButton()) {.expand: false.}
-                  else:
-                    # the paperclip, and it is one of three ways in rather
-                    # than the only one. This said "a file picker only —
-                    # drag-and-drop and paste are not here yet" long after both
-                    # landed: the paste button is eight lines below, and
-                    # `DropZone` wraps the whole chat column. A
-                    # comment that under-reports what a surface can do sends the
-                    # next reader to build it a second time.
-                    Button {.expand: false.}:
-                      icon = "mail-attachment-symbolic"
-                      tooltip = "Attach a file"
-                      style = [ButtonFlat, StyleClass("row-btn")]
-                      sensitive = not app.streaming
-                      proc clicked() = app.attachDialog()
-                    # paste. GTK's Entry already pastes text on Ctrl+V; what
-                    # it cannot do is take an image off the clipboard, which is the
-                    # Web UI's third route in. A button rather than a key binding,
-                    # because a key binding for it would be invisible.
-                    Button {.expand: false.}:
-                      icon = "edit-paste-symbolic"
-                      tooltip = "Attach an image from the clipboard"
-                      style = [ButtonFlat, StyleClass("row-btn")]
-                      sensitive = not app.streaming
-                      proc clicked() = pasteImage()
-                    # Step 13a. A `TextView`, not an `Entry` — six parity gaps
-                    # were all downstream of the composer being one line bound to a
-                    # string: multi-line drafts, Shift+Enter, autogrow, the height
-                    # cap and the height reset. `ContentScroll` supplies the growth
-                    # and the ceiling — natural-height propagation up to
-                    # `maxHeight` — and `DraftView` supplies the rest, including the
-                    # one thing an `Entry` gave free: Enter sends, Shift+Enter does
-                    # not.
+                  Banner {.addTop.}:
+                    # The flag and the socket disagree. See `lanBound`: the listener
+                    # is in this process and its address was fixed before the window
+                    # opened, so the toggle cannot move it and never claimed to —
+                    # it just said so in a line that the next notice overwrote.
+                    revealed = app.lanEnabled != app.lanBound and not app.editorOpen
+                    title = (if app.lanEnabled:
+                               "LAN access is switched on, but this window's " &
+                               "server is still bound to 127.0.0.1. Quit and start " &
+                               "Jenova again to serve on the network."
+                             else:
+                               "LAN access is switched off, but this window's " &
+                               "server is still bound to 0.0.0.0 and can be " &
+                               "reached from the network. Quit and start Jenova " &
+                               "again to stop that.")
+                    useMarkup = false
+                    # No button, and that is the honest shape: the listener is this
+                    # process's own, so nothing short of restarting the application
+                    # changes it, and a button that could not do what it named
+                    # would be worse than none.
+
+                  # The transcript takes all the free height; the notice and the action
+                  # row take only what they need — the child annotation on the Box, not
+                  # a property of the child. The three children keep the same types in
+                  # the same order whether a note or the transcript is open, so
+                  # owlkettle's positional matching never swaps a widget out from under
+                  # the diff; only what is inside them changes.
+                  #
+                  # The document panel is gone, and with it the horizontal Box
+                  # that existed only to sit the panel beside this column. The
+                  # `Box`-not-`Paned` reasoning it carried still applies one level
+                  # down and lives at `mainArea`, which is the widget that actually
+                  # changes type between a `ScrolledWindow` and an `NvimTerminal`.
+                  DropZone:
+                    # the drop target wraps the chat column, which is the
+                    # Web UI's `ChatScreenDragOverlay` position.
+                    style = [StyleClass("drop-zone")]
+                    insert(app.mainArea())
+                  # what is staged, above the composer, each removable. The
+                  # Web UI shows thumbnails; this shows the name, the type and the
+                  # size, because a GTK thumbnail means decoding the image on the
+                  # GTK thread and the strip has to stay cheap to redraw.
+                  if app.pending.len > 0 and not app.editorOpen:
+                    Box(orient = OrientX, spacing = 6, margin = 8) {.addBottom.}:
+                      for idx, a in app.pending:
+                        Box(orient = OrientX, spacing = 4) {.expand: false.}:
+                          style = [StyleClass("attach-chip")]
+                          # a real thumbnail for an image, which is what the Web
+                          # UI's `ChatAttachmentThumbnailImage` shows. Decoded once
+                          # and cached by digest — `view` runs on every frame.
+                          if a.kind == "IMAGE":
+                            let pb = app.attachmentPixbuf(a, 40)
+                            if not pb.isNil:
+                              Button {.expand: false.}:
+                                tooltip = "Preview " & a.name
+                                style = [ButtonFlat, StyleClass("attach-thumb")]
+                                proc clicked() =
+                                  app.previewAtt = a
+                                Picture:
+                                  pixbuf = pb
+                                  contentFit = ContentContain
+                          Label {.expand: false.}:
+                            text = (if a.kind == "IMAGE": "🖼 " else: "📄 ") &
+                                   a.name & "  (" & $(a.bytes div 1024) & " KiB)"
+                            style = [StyleClass("settings-help")]
+                          Button {.expand: false.}:
+                            icon = "window-close-symbolic"
+                            tooltip = "Remove"
+                            style = [ButtonFlat, StyleClass("row-btn")]
+                            proc clicked() =
+                              if idx < app.pending.len: app.pending.delete(idx)
+
+                  Box(orient = OrientX, spacing = 8) {.addBottom.}:
+                    # **This row is now the error surface and nothing else.**
+                    # Every confirmation — "note saved", "attached X", "settings
+                    # saved" — goes to `ToastOverlay`, appears over the transcript
+                    # and times out, which is what a confirmation is for. What was
+                    # wrong with putting them here is that they never left: "note
+                    # saved" sat under the composer until the next unrelated action
+                    # replaced it, and by then it described something the user did
+                    # minutes ago.
                     #
-                    # The child count of this row is unchanged at five and
-                    # `fullscreenButton` is still last.
-                    Overlay {.expand: true.}:
-                      ContentScroll:
-                        # Roughly eight lines, which is where the Web UI's own
-                        # textarea stops growing.
-                        maxHeight = 168
-                        DraftView:
-                          text = app.draft
-                          style = [StyleClass("draft-view")]
-                          # GTK pastes into the `GtkTextView` directly, so there is
-                          # no paste signal to intercept — a paste reaches this
-                          # window only as a large single insertion in a `changed`,
-                          # which `composer.classifyInsertion` recovers by diff.
-                          #
-                          # Writing the shortened draft back is sound because
-                          # `DraftView`'s `text` property hook compares against the
-                          # buffer and rewrites it only when they differ.
-                          proc changed(text: string) =
-                            let ins = composer.classifyInsertion(
-                              app.draft, text,
-                              app.opts.appInt("pasteLongTextToFileLen"))
-                            if ins.divert:
-                              app.attachPastedText(ins.inserted)
-                              app.draft = ins.remaining
-                            else:
-                              app.draft = text
-                          proc submit() = app.send()
-                      # Directive 3: a `TextView` has no placeholder and the `Entry`
-                      # this replaces had one, so it is drawn rather than dropped.
-                      #
-                      # A plain state test. The first version asked the buffer
-                      # (`charCount`) and nothing re-ran `view` on a keystroke, so
-                      # the placeholder sat over the user's text indefinitely. With
-                      # `changed` feeding `app.draft`, owlkettle redraws on every
-                      # keystroke and this branch is simply correct.
-                      #
-                      # Action purpose: the alignments and `sensitive` are what
-                      # keep the box clickable, and both are required. A first
-                      # version had neither and the composer could not be clicked
-                      # into at all: owlkettle's `addOverlay` adder defaults to
-                      # `hAlign: AlignFill, vAlign: AlignFill` (`widgets.nim`), so
-                      # the Label was stretched over the whole composer, and a
-                      # GtkLabel is targetable by default — it sat on top of the
-                      # view and took every click. `xAlign`/`yAlign` do not do
-                      # this; they align the text *inside* the Label.
-                      if app.draft.len == 0:
-                        Label {.addOverlay, hAlign: AlignStart, vAlign: AlignStart.}:
-                          text = "Message Jenova…"
-                          # GTK4 skips insensitive widgets when it picks a target,
-                          # so this cannot intercept a click even if an alignment is
-                          # changed later.
-                          sensitive = false
-                          style = [StyleClass("draft-placeholder")]
-                    # the send button becomes a stop button mid-generation,
-                    # which is what the Web UI's `ChatFormActionSubmit` does. It
-                    # previously just greyed out, so once a generation started there
-                    # was no way to cancel it short of quitting the application.
-                    Button:
-                      text = (if app.streaming: "Stop" else: "Send")
-                      style = [if app.streaming: ButtonDestructive
-                               else: ButtonSuggested]
-                      proc clicked() =
-                        if app.streaming: cancelStream()
-                        else: app.send()
-                    insert(app.fullscreenButton()) {.expand: false.}
+                    # An error stays, and stays *here*, because it is the thing
+                    # you may have to act on and a message that times out is a
+                    # message you can miss. **Not** because a toast could not
+                    # carry the button: owlkettle's `Toast` takes a
+                    # `clickedHandler`, and its `connectSignal` puts that handler
+                    # in an `allocSharedCell` and disconnects it after one fire,
+                    # so it outlives the update cycle that frees an ordinary
+                    # `EventObj`. The reason is the timeout, not the lifetime.
+                    margin = (if app.noticeIsError and app.notice.len > 0 and
+                                 not app.editorOpen: 8 else: 0)
+                    Label {.expand: true.}:
+                      # The notice is chat feedback — "backend restarted", "note
+                      # saved". It has nothing to say about the editor page and a
+                      # stale line under a full-screen editor reads as an error in it.
+                      text = (if app.editorOpen or not app.noticeIsError: ""
+                              else: app.notice)
+                      xAlign = 0.0
+                      wrap = true
+                      style = [StyleClass("dim-note")]
+                    # a failure the USER can do something about offers the
+                    # action rather than describing it. Only for the kinds
+                    # `pipeline.classifyError` marked retryable — a context overflow
+                    # is not one of them, because retrying it fails identically.
+                    if app.noticeRetryable and not app.editorOpen and
+                       not app.streaming:
+                      Button {.expand: false.}:
+                        text = "Retry"
+                        style = [ButtonFlat, StyleClass("row-btn")]
+                        proc clicked() =
+                          app.notice = ""
+                          app.noticeRetryable = false
+                          app.postConversation()
 
-            # Last child of the Overlay, so it stacks above the Flap and the
-            # chat column rather than under them — the floating panel, over the
-            # whole window and the canvas behind it.
-            insert(app.settingsPanel()) {.addOverlay.}
-            insert(app.hardwarePanel()) {.addOverlay.}
-            insert(app.modelsPanel()) {.addOverlay.}
-            insert(app.trashPanel()) {.addOverlay.}
-            insert(app.previewPanel()) {.addOverlay.}
+                  Box(orient = OrientX, spacing = 8, margin = 12) {.addBottom.}:
+                    # Action purpose: three branches, not two. This tested only
+                    # `app.openNote`, so the editor page fell through to the *chat*
+                    # row and showed a message box and a Send button under Neovim —
+                    # with no way to leave except the top-bar icon. A page gets the
+                    # controls of the page it is, which is the shape the note editor
+                    # already had.
+                    if app.editorOpen:
+                      Label {.expand: true.}:
+                        text = "Neovim — " & app.p.workspaces
+                        xAlign = 0.0
+                        ellipsize = EllipsizeStart
+                        style = [StyleClass("dim-note")]
+                      Button {.expand: false.}:
+                        text = "Close"
+                        style = [ButtonFlat]
+                        proc clicked() = app.editorOpen = false
+                      insert(app.fullscreenButton()) {.expand: false.}
+                    elif app.openNote.len > 0:
+                      # `sensitive` rather than a conditional widget: a stable
+                      # child count is still the cheaper thing to reason about when
+                      # owlkettle matches states positionally.
+                      Button {.expand: false.}:
+                        text = "Save note"
+                        style = [ButtonSuggested]
+                        sensitive = app.noteEditing
+                        tooltip = (if app.noteEditing: "Save this note"
+                                   else: "Click Edit to change this note")
+                        proc clicked() = app.saveNote()
+                      Button {.expand: false.}:
+                        text = "Close"
+                        style = [ButtonFlat]
+                        proc clicked() = app.closeNote()
+                      insert(app.fullscreenButton()) {.expand: false.}
+                    else:
+                      # the paperclip, and it is one of three ways in rather
+                      # than the only one. This said "a file picker only —
+                      # drag-and-drop and paste are not here yet" long after both
+                      # landed: the paste button is eight lines below, and
+                      # `DropZone` wraps the whole chat column. A
+                      # comment that under-reports what a surface can do sends the
+                      # next reader to build it a second time.
+                      Button {.expand: false.}:
+                        icon = "mail-attachment-symbolic"
+                        tooltip = "Attach a file"
+                        style = [ButtonFlat, StyleClass("row-btn")]
+                        sensitive = not app.streaming
+                        proc clicked() = app.attachDialog()
+                      # paste. GTK's Entry already pastes text on Ctrl+V; what
+                      # it cannot do is take an image off the clipboard, which is the
+                      # Web UI's third route in. A button rather than a key binding,
+                      # because a key binding for it would be invisible.
+                      Button {.expand: false.}:
+                        icon = "edit-paste-symbolic"
+                        tooltip = "Attach an image from the clipboard"
+                        style = [ButtonFlat, StyleClass("row-btn")]
+                        sensitive = not app.streaming
+                        proc clicked() = pasteImage()
+                      # Step 13a. A `TextView`, not an `Entry` — six parity gaps
+                      # were all downstream of the composer being one line bound to a
+                      # string: multi-line drafts, Shift+Enter, autogrow, the height
+                      # cap and the height reset. `ContentScroll` supplies the growth
+                      # and the ceiling — natural-height propagation up to
+                      # `maxHeight` — and `DraftView` supplies the rest, including the
+                      # one thing an `Entry` gave free: Enter sends, Shift+Enter does
+                      # not.
+                      #
+                      # The child count of this row is unchanged at five and
+                      # `fullscreenButton` is still last.
+                      Overlay {.expand: true.}:
+                        ContentScroll:
+                          # Roughly eight lines, which is where the Web UI's own
+                          # textarea stops growing.
+                          maxHeight = 168
+                          DraftView:
+                            text = app.draft
+                            style = [StyleClass("draft-view")]
+                            # GTK pastes into the `GtkTextView` directly, so there is
+                            # no paste signal to intercept — a paste reaches this
+                            # window only as a large single insertion in a `changed`,
+                            # which `composer.classifyInsertion` recovers by diff.
+                            #
+                            # Writing the shortened draft back is sound because
+                            # `DraftView`'s `text` property hook compares against the
+                            # buffer and rewrites it only when they differ.
+                            proc changed(text: string) =
+                              let ins = composer.classifyInsertion(
+                                app.draft, text,
+                                app.opts.appInt("pasteLongTextToFileLen"))
+                              if ins.divert:
+                                app.attachPastedText(ins.inserted)
+                                app.draft = ins.remaining
+                              else:
+                                app.draft = text
+                            proc submit() = app.send()
+                        # Directive 3: a `TextView` has no placeholder and the `Entry`
+                        # this replaces had one, so it is drawn rather than dropped.
+                        #
+                        # A plain state test. The first version asked the buffer
+                        # (`charCount`) and nothing re-ran `view` on a keystroke, so
+                        # the placeholder sat over the user's text indefinitely. With
+                        # `changed` feeding `app.draft`, owlkettle redraws on every
+                        # keystroke and this branch is simply correct.
+                        #
+                        # Action purpose: the alignments and `sensitive` are what
+                        # keep the box clickable, and both are required. A first
+                        # version had neither and the composer could not be clicked
+                        # into at all: owlkettle's `addOverlay` adder defaults to
+                        # `hAlign: AlignFill, vAlign: AlignFill` (`widgets.nim`), so
+                        # the Label was stretched over the whole composer, and a
+                        # GtkLabel is targetable by default — it sat on top of the
+                        # view and took every click. `xAlign`/`yAlign` do not do
+                        # this; they align the text *inside* the Label.
+                        if app.draft.len == 0:
+                          Label {.addOverlay, hAlign: AlignStart, vAlign: AlignStart.}:
+                            text = "Message Jenova…"
+                            # GTK4 skips insensitive widgets when it picks a target,
+                            # so this cannot intercept a click even if an alignment is
+                            # changed later.
+                            sensitive = false
+                            style = [StyleClass("draft-placeholder")]
+                      # the send button becomes a stop button mid-generation,
+                      # which is what the Web UI's `ChatFormActionSubmit` does. It
+                      # previously just greyed out, so once a generation started there
+                      # was no way to cancel it short of quitting the application.
+                      # the send button becomes a stop button mid-generation.
+                      # **A `SplitButton` while idle and a plain `Button` while
+                      # streaming**, which is not a cosmetic split: `Stop` has no
+                      # secondary action, and a dropdown arrow beside it would
+                      # offer a menu of ways to start a message that cannot be
+                      # started. The two are different widget types in the same
+                      # slot, which a `Box` handles — that is what this Box is
+                      # for, and the note at `mainArea` is the same argument.
+                      if app.streaming:
+                        Button:
+                          text = "Stop"
+                          style = [ButtonDestructive]
+                          proc clicked() = cancelStream()
+                      else:
+                        SplitButton:
+                          text = "Send"
+                          style = [ButtonSuggested]
+                          proc clicked() = app.send()
+                          # P-E8. The secondary half lists the intent prefixes,
+                          # which is the one thing this composer has that is
+                          # genuinely a "send it this other way".
+                          PopoverMenu:
+                            hasArrow = false
+                            insert(app.intentMenuItems())
+                      insert(app.fullscreenButton()) {.expand: false.}
+
+              # Last child of the Overlay, so it stacks above the Flap and the
+              # chat column rather than under them — the floating panel, over the
+              # whole window and the canvas behind it.
+              insert(app.settingsPanel()) {.addOverlay.}
+              insert(app.hardwarePanel()) {.addOverlay.}
+              insert(app.modelsPanel()) {.addOverlay.}
+              insert(app.trashPanel()) {.addOverlay.}
+              insert(app.previewPanel()) {.addOverlay.}
 
 ## Function purpose: entry point for `bin/jenova`. Resolution happens here,
 ## before the window exists, so a configuration error is reported on the terminal
