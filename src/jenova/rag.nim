@@ -481,24 +481,30 @@ proc backfillWorkspace*(): int =
       NoteRoot & "/%", FileRoot & "/%"):
     if r.len > 0: indexed.incl r[0]
 
-  var notes: seq[tuple[id, title, content: string]]
-  for r in db.query(
-      "SELECT id, title, content FROM notes WHERE is_deleted=0"):
-    if r.len < 3 or r[0].len == 0: continue
+  # Ids and titles first, bodies one at a time — `backfillChats` below states
+  # the reason. Selecting `content` with the id list holds every note and every
+  # uploaded file in memory at once, for a pass that indexes them singly anyway,
+  # and a file asset's content is a whole document rather than a message.
+  var notes: seq[tuple[id, title: string]]
+  for r in db.query("SELECT id, title FROM notes WHERE is_deleted=0"):
+    if r.len < 2 or r[0].len == 0: continue
     if notePath(r[0]) in indexed: continue
-    notes.add (id: r[0], title: r[1], content: r[2])
+    notes.add (id: r[0], title: r[1])
 
-  var files: seq[tuple[id, name, content: string]]
-  for r in db.query(
-      "SELECT id, name, content FROM fileAssets WHERE is_deleted=0"):
-    if r.len < 3 or r[0].len == 0: continue
+  var files: seq[tuple[id, name: string]]
+  for r in db.query("SELECT id, name FROM fileAssets WHERE is_deleted=0"):
+    if r.len < 2 or r[0].len == 0: continue
     if fileAssetPath(r[0]) in indexed: continue
-    files.add (id: r[0], name: r[1], content: r[2])
+    files.add (id: r[0], name: r[1])
 
   for n in notes:
-    if indexNote(n.id, n.title, n.content): inc result
+    let rows = db.query("SELECT content FROM notes WHERE id=?", n.id)
+    if rows.len == 0 or rows[0].len == 0: continue
+    if indexNote(n.id, n.title, rows[0][0]): inc result
   for f in files:
-    if indexFileAsset(f.id, f.name, f.content): inc result
+    let rows = db.query("SELECT content FROM fileAssets WHERE id=?", f.id)
+    if rows.len == 0 or rows[0].len == 0: continue
+    if indexFileAsset(f.id, f.name, rows[0][0]): inc result
 
 ## Function purpose: put existing history into the index once, so recall works
 ## on the chats that already exist rather than only on ones created after this

@@ -4092,6 +4092,25 @@ proc main() =
                 not rag.indexFileAsset("wsidx-clr", "notes.md", "") and
                 rag.fileAssetPath("wsidx-clr") notin indexedPaths(rag.FileRoot))
 
+        # A note keeping its title but losing its body is re-filed, not unfiled:
+        # the title is still text the user can see and search for. What must not
+        # survive is the body, and `indexContent` clears the old rows before
+        # writing the new ones, so nothing here depends on the empty-body path.
+        block titleSurvivesBodyClearing:
+          discard rag.indexNote("wsidx-keep", "Postgres pooling",
+                                "the api token is xyzzy")
+          check("a note that keeps its title stays indexed",
+                rag.indexNote("wsidx-keep", "Postgres pooling", "") and
+                rag.notePath("wsidx-keep") in indexedPaths(rag.NoteRoot))
+          var bodyHit, titleHit = false
+          for h in rag.query("xyzzy", topK = 5, withSnippets = false):
+            if h.path == rag.notePath("wsidx-keep"): bodyHit = true
+          for h in rag.query("Postgres pooling", topK = 5, withSnippets = false):
+            if h.path == rag.notePath("wsidx-keep"): titleHit = true
+          check("the cleared body is gone from the index", not bodyHit)
+          check("and the note is still findable by its title", titleHit)
+          rag.forgetNote("wsidx-keep")
+
         # Deleting must stop recall, for the reason deleting a message does.
         rag.forgetNote("wsidx-note")
         check("forgetting a note removes it from the index",
@@ -4106,6 +4125,13 @@ proc main() =
         check("the backfill picks up a note that was never indexed",
               filled >= 1 and rag.notePath("wsidx-bf") in indexedPaths(rag.NoteRoot),
               "indexed " & $filled)
+        # The body, not just the row: the id list and the content come from
+        # separate queries, so a document filed with an empty body would still
+        # satisfy the check above.
+        var bfBody = false
+        for h in rag.query("older content", topK = 5, withSnippets = false):
+          if h.path == rag.notePath("wsidx-bf"): bfBody = true
+        check("and files its body, not just its identity", bfBody)
 
         # Action purpose: **"already indexed" means "has a vector", not "has a
         # row"**, and the distinction is the whole design. With no embedding
@@ -4117,6 +4143,13 @@ proc main() =
         #
         # So idempotence is asserted with a vector present, which is the state
         # production reaches: the backfill runs only after `healthy(beEmbed)`.
+        #
+        # The NULL is written rather than assumed. With an embedding server
+        # reachable the backfill above would have stored a vector already, and
+        # this assertion would then be testing the opposite case — a test whose
+        # meaning depends on what is running beside it.
+        db.exec("UPDATE rag_chunks SET vec=NULL WHERE path=?",
+                rag.notePath("wsidx-bf"))
         check("without a vector it is deliberately retried",
               rag.backfillWorkspace() >= 1)
         for r in db.query("SELECT start_line FROM rag_chunks WHERE path=?",

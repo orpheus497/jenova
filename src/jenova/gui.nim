@@ -531,12 +531,26 @@ proc setLanState(p: Paths, enabled: bool): bool =
 ## `route(8)`, `ifconfig(8)` and `xdg-open(1)` are invoked with an argument
 ## vector, never a shell string. `ui.lua` built shell commands and needed a
 ## `shell_quote` helper to stay safe; passing argv removes the question.
-proc runCapture(cmd: string, args: openArray[string]): string =
+## `ctlWorker` is serial and also carries backend start and stop, so a child
+## that never exits would wedge backend control, not just the LAN readout.
+##
+## The wait comes before the read for that reason: `readAll` blocks until the
+## pipe reaches EOF, which a hung child never gives. Waiting first bounds it,
+## and reading after the child is gone cannot block.
+##
+## That ordering is only safe while the output stays under one pipe buffer —
+## `osproc.waitForExit` warns that a child without `poParentStreams` can fill
+## its output buffer and deadlock. Both callers here produce a single short
+## line, so the child always completes its write and exits without a reader.
+proc runCapture(cmd: string, args: openArray[string],
+                timeoutMs = 5000): string =
   try:
     let p = startProcess(cmd, args = args, options = {poUsePath, poStdErrToStdOut})
     defer: p.close()
+    if p.waitForExit(timeoutMs) < 0:
+      p.kill()
+      discard p.waitForExit()
     let outp = p.outputStream.readAll()
-    discard p.waitForExit()
     for line in outp.splitLines():
       if line.strip.len > 0:
         return line.strip

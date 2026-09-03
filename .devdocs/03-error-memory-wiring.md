@@ -607,6 +607,30 @@ that a pid file is left naming a process that never ran and that the second call
 dead pid as running. `F_SETFD`, `FD_CLOEXEC`, `F_LOCK` and `F_ULOCK` are imported from their headers
 rather than written as numbers, since `std/posix` binds the calls but not the flags.
 
+### A fourth pass: three valid, one declined
+
+| # | Finding | Verdict |
+|---|---|---|
+| R-12 | `runCapture` read the child's output before waiting for it | **Valid.** `readAll` blocks until the pipe reaches EOF, which a child that never exits never gives — and `ctlWorker` is serial and also carries backend start and stop, so one wedged `route` call would block backend control, not just the LAN readout |
+| R-13 | `backfillWorkspace` held every note and file body in memory | **Valid, and self-inflicted.** `backfillChats`, forty lines below, documents the exact rule this broke: selecting the content alongside the id list holds the whole table at once for a pass that indexes singly anyway. A file asset's content is a whole uploaded document |
+| R-14 | The backfill retry assertion depended on no embedder being present | **Valid.** With an embedding server reachable, the first `backfillWorkspace` stores a vector and the retry correctly returns 0, so the assertion tests the opposite case. This is the second time this one assertion has been wrong about its own precondition |
+| R-15 | A note keeping its title but losing its body stays indexed | **Declined — the proposed change is a regression.** Nothing stale survives: `indexContent` calls `forgetFile` before writing, so the cleared body's chunks are removed and the re-filed document contains only the title. The title is text the user can still see in the workspace, and unfiling on empty content would make every title-only note unfindable by the one thing it has |
+
+R-12 is fixed by waiting before reading, with a 5 s bound and a kill on expiry. The ordering is only
+sound because both callers emit a single short line: `osproc.waitForExit` warns that a child without
+`poParentStreams` can fill its output buffer and deadlock, so the bound and the small output are one
+argument, not two. `timeout(1)` was considered and rejected — it could not be verified against
+FreeBSD's own documentation from this host, and its absence would make the LAN address read empty
+rather than fail loudly.
+
+R-13 is fixed by fetching ids and titles first and each body singly, matching `backfillChats`.
+R-14 is fixed by writing the NULL rather than assuming it.
+
+Five assertions were added. Two were proven to fail without their fix: filing the backfilled note
+with an empty body fails "and files its body, not just its identity", which is what the R-13 refactor
+could plausibly have broken. R-15's own assertions state the declined position as a test — the
+cleared body is gone from the index, and the note is still findable by its title.
+
 ---
 
 ## How session 2's changes were verified
