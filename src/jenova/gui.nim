@@ -3885,6 +3885,35 @@ proc rowMenuItems(app: AppState, entity, id, name: string): Widget =
         text = "Delete"
         proc clicked() = app.deleteNode(entity, id)
 
+## The intent prefixes, as menu items that prepend themselves to the draft.
+##
+## **P-E8: the five prefixes existed and nothing on either surface offered
+## them.** They were discoverable only by reading the empty transcript's hint —
+## which vanishes the moment there is one message — or the documentation. This
+## puts them where the message is written.
+##
+## Prepending rather than replacing: a prefix steers a message the user has
+## already started typing, and the draft is the message. Switching prefix
+## replaces the old one rather than stacking a second, because two prefixes
+## would be classified as whichever `pipeline.classify` matched first and the
+## user would have chosen the other.
+proc intentMenuItems(app: AppState): Widget =
+  var seen: seq[string]
+  for (prefix, _) in pipeline.IntentPrefixes:
+    if prefix notin seen: seen.add prefix
+  gui:
+    Box(orient = OrientY):
+      for p in seen:
+        MenuItem:
+          text = p
+          proc clicked() =
+            var body = app.draft
+            for (old, _) in pipeline.IntentPrefixes:
+              if body.startsWith(old):
+                body = body[old.len .. ^1].strip(trailing = false)
+                break
+            app.draft = p & " " & body
+
 proc convRow(app: AppState, c: ConvItem): Widget =
   gui:
     # **Three icon buttons became one `⋯` and a right-click menu** (report 05,
@@ -5983,13 +6012,30 @@ method view(app: AppState): Widget =
                       # which is what the Web UI's `ChatFormActionSubmit` does. It
                       # previously just greyed out, so once a generation started there
                       # was no way to cancel it short of quitting the application.
-                      Button:
-                        text = (if app.streaming: "Stop" else: "Send")
-                        style = [if app.streaming: ButtonDestructive
-                                 else: ButtonSuggested]
-                        proc clicked() =
-                          if app.streaming: cancelStream()
-                          else: app.send()
+                      # the send button becomes a stop button mid-generation.
+                      # **A `SplitButton` while idle and a plain `Button` while
+                      # streaming**, which is not a cosmetic split: `Stop` has no
+                      # secondary action, and a dropdown arrow beside it would
+                      # offer a menu of ways to start a message that cannot be
+                      # started. The two are different widget types in the same
+                      # slot, which a `Box` handles — that is what this Box is
+                      # for, and the note at `mainArea` is the same argument.
+                      if app.streaming:
+                        Button:
+                          text = "Stop"
+                          style = [ButtonDestructive]
+                          proc clicked() = cancelStream()
+                      else:
+                        SplitButton:
+                          text = "Send"
+                          style = [ButtonSuggested]
+                          proc clicked() = app.send()
+                          # P-E8. The secondary half lists the intent prefixes,
+                          # which is the one thing this composer has that is
+                          # genuinely a "send it this other way".
+                          PopoverMenu:
+                            hasArrow = false
+                            insert(app.intentMenuItems())
                       insert(app.fullscreenButton()) {.expand: false.}
 
               # Last child of the Overlay, so it stacks above the Flap and the

@@ -130,7 +130,7 @@ the right widget, not a bigger lid.
 | Header/content/footer | `ToolbarView` | ~~A `Box` of three sections~~ — the chat column is a `ToolbarView` |
 | Adaptive sidebar | `OverlaySplitView` | ~~`Flap`~~ — swapped, with `AdwBreakpoint` hand-bound to drive `collapsed`, since owlkettle has no breakpoint at all |
 | Menus | `PopoverMenu`, `ContextMenu`, `MenuItem` | ~~1 `Popover`, 1 `MenuButton`~~ — every sidebar row has a `⋯` menu and a right-click menu. `ModelButton` is wrapped as `MenuItem` so choosing an item closes the menu, which owlkettle's does not |
-| Split primary action | `SplitButton` | Two buttons |
+| Split primary action | `SplitButton` | ~~Two buttons~~ — Send carries the intent-prefix menu (P-E8). It reverts to a plain `Button` while streaming, because Stop has no secondary action |
 | Reading-width column | `Clamp` | ~~Margins~~ — the transcript is clamped to 760, the Web UI's own `max-w-3xl` |
 | Identity | `Avatar` | ~~Text labels~~ — an icon avatar beside the name on every message card |
 
