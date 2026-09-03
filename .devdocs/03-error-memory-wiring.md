@@ -370,21 +370,128 @@ rows over current ones.
 |---|---|---|---|---|
 | E-01 | Zombie backends → fake restarts, stuck "starting", failed `stopAll` | error | **high** | **fixed.** `isAlive` reaps with `waitpid(WNOHANG)` first. A targeted reap rather than `SIGCHLD`/`SIG_IGN`, which would break every `osproc.waitForExit` in the program. New `lifecycle-selftest` forks a child, lets it die and asserts `isAlive` goes false — **verified red before the fix, green after** |
 | E-02 | Non-async-signal-safe work between `fork` and `exec` | error | medium | **fixed.** The environment is materialised as an explicit `envp` in the parent and handed to `execve`; the child now calls only `setsid`, `open`, `dup2`, `close`, `execve` |
-| E-03 | 32 silent exception handlers, 3 of them user-visible faults | error | medium | **open.** Needs a per-site judgement pass, not a sweep |
+| E-03 | 32 silent exception handlers | error | medium | **closed.** All 32 read: thirty are correct and now say why where it was not obvious; `gui.setLanState` was the one hiding a fault a user could act on — a failed write left the LAN toggle claiming a state the next start would not have — and now reports it |
 | E-04 | Error-body reader | — | none | **withdrawn — the finding was wrong** (see above). A fix was written and reverted |
 | E-05 | Pipeline diagnostics discarded; silent history trimming | wiring | medium | **fixed.** Intent, RAG hits, web hits, editor-document and trimmed-turn count travel as response headers; documented in `docs/usage.md`. The splice is built to fail only by omitting the header, never by damaging the stream, and was driven end-to-end against a fake upstream |
-| E-06 | `lanAddress` spawns 3 shells on the GTK thread; header claim false | error | medium | **half fixed.** The false claim in the module header is corrected and now says exactly what the GUI spawns and why. **The thread move is deliberately not taken**: it moves state across a thread boundary in the one file this project cannot type-check off FreeBSD. Do it in a session that can compile the GUI, using `hwWorker`'s shape |
+| E-06 | `lanAddress` spawns 3 shells on the GTK thread; header claim false | error | medium | **fixed.** Now a `lan_addr` job on the control worker answering with `umLanAddr` — `hwWorker`'s shape. The one remaining synchronous call is at startup, before the window exists, where there is no frame to block |
 | M-01 | Three unbounded GUI caches, never cleared | memory | **high** | **fixed.** `BlockMemo` and `ParseMemo` gain caps with oldest-first batch eviction and a `clear`; `thumbCache` gains a cap; all three are emptied on a conversation switch and the two keyed ones forgotten on a delete. Asserted by overrunning the caps, not by reading the constants |
 | M-02 | Attachment disk cache never swept | memory | medium | **fixed.** `paths.sweepCache` prunes oldest-first at startup and **matches only `attach-*`** — asserted, because `cacheDir` comes from an environment variable and this is exactly how B-07 happened |
 | M-03 | RAG vector search full-scans every chunk per query | memory/perf | **high** | **fixed.** A generous newest-first scan ceiling, a hash index replacing the O(rows × documents) dedupe, and scoring straight off the packed blob instead of allocating a seq per row. Asserted that packed and unpacked scoring agree, including at 768 dimensions and on a mismatched width |
 | M-04 | Backend logs never rotated | memory/disk | medium | **fixed.** Size-capped rotation at start, one previous generation kept. Rotation is at start and not mid-run because that is the only moment no descriptor is open on the file |
 | M-05 | Deliberate bounded leaks — **do not "fix"** | memory | none | recorded, untouched |
-| W-01 | Three settings wired to nothing | wiring | high | **1 of 3 fixed**, and all four reasons corrected. `copyTextAttachmentsAsPlainText` is wired through `pipeline.copyTextFor`. `pasteLongTextToFileLen` needs a paste handler on the composer; `pdfAsImage` needs a rasteriser; `autoMicOnEmpty` needs a recorder. A new assertion refuses any pending reason that blames the finished attachments step again |
+| W-01 | Three settings wired to nothing | wiring | high | **2 of 3 fixed.** `copyTextAttachmentsAsPlainText` through `pipeline.copyTextFor`; `pasteLongTextToFileLen` through `composer.classifyInsertion`, which recovers a paste by diffing the buffer because GTK gives the window no paste signal to intercept. `pdfAsImage` needs a rasteriser and `autoMicOnEmpty` a recorder — both genuinely blocked, both saying so |
 | W-02 | Three endpoints called but not served | wiring | medium | **won't fix — `jca_web` is frozen** (ruling). Recorded in report 02, P-C2 |
-| W-03 | Retrieval indexing coverage is accidental | wiring | low | **open.** The coverage is complete; consolidating it at the shared `putEntity`/`patchMessage` layer is the remaining work. Now documented in `docs/context-and-retrieval.md` §1 |
+| W-03 | Retrieval indexing coverage is accidental | wiring | low | **closed by W-06**, which put the workspace indexing at `api.upsert` — the layer both surfaces share |
 | W-04 | `toolCalls` written by one surface, read by neither | wiring | low | **parked** — downstream of MCP, which is deferred |
 | W-05 | Push/Pull database round trip | wiring | medium | **parked** — ruling: out of scope for the GUI, and `jca_web` is frozen |
-| D-12 | `db-selftest`'s 25% overlap floor is a wall-clock assertion that fails under load | test | low | **open**, newly found. Documented in `docs/usage.md` so a failure is not mistaken for a database defect; the threshold should be re-shaped against a baseline measured in the same run |
+| W-06 | Notes and file assets were never indexed for retrieval | wiring | **high** | **fixed** (session 3, found by the wiring sweep) |
+| W-07 | An indexing failure could turn a successful save into a 500 | error | **high** | **fixed** (session 3, found while testing W-06; predates it) |
+| D-12 | `db-selftest`'s overlap floor failed under load | test | low | **fixed.** The metric was wrong, not the threshold: overlap was a fraction of the *reader's* span, so a reader was penalised for outliving the writer. Two intervals overlap by at most the shorter of the two, so that is the denominator now. Eight consecutive runs pass and every reader reads 100.0% — the concurrency was always there |
+
+---
+
+## Session 3 — a wiring sweep, and what it found
+
+The trackers above were built by reading the code against the documentation. This pass asked a
+different question — **is every part of this program actually connected to every other part it
+claims to be** — by enumerating every exported proc and checking it has a caller, every setting and
+checking it has a consumer, and every client call and checking it has a server route. Two of the
+findings below came out of that sweep rather than out of the earlier reading.
+
+### W-06 — the retrieval index held chats and nothing else · severity: **high** · **fixed**
+
+`rag.indexContent` and `rag.indexFile` were exported, correct, and **called by no production code
+anywhere**. Every writer into the index was the chat path. So a note the user wrote and a document
+they uploaded — the two things somebody puts in a workspace *in order to find again* — were not
+searchable by keyword or by vector at all.
+
+They did reach the model, through `workspace.contextFor`. But that is **scope, not relevance**:
+everything in the conversation's branch of the tree, whole, ranked by nothing. Retrieval is the
+part that answers "which of these is about what I just asked", and it could not see them.
+
+Fixed at `api.upsert` — the one layer the Web UI's `/api/db/*` route and the window's in-process
+`putEntity` both pass through, so a third client is covered by construction. **That also closes
+W-03**, which asked for exactly this consolidation. Forget on delete, re-index on restore, and a
+backfill so a workspace that predates the wiring becomes searchable without re-saving every note.
+
+### W-07 — an indexing failure could fail the write it was attached to · severity: **high** · **fixed**
+
+Found while writing W-06's test, and **older than W-06**. `rag.indexContent` opens by deleting the
+path's existing rows, and `db.exec` raises — so a `DbError` propagated out of `api.upsert` and
+turned a **successful** note save into a 500, *after* the row had been written and mirrored to
+disk. The client was told the save failed while it had in fact succeeded, which is the worst shape
+a failure can take.
+
+Never specific to the new code: the message path (`rag.indexExchange`) has had the same exposure at
+three call sites since it was wired. All thirteen `rag` call sites in `api.nim` now go through one
+guard. Retrieval degrading is not worth a user's note, and the backfills repair a skipped index at
+the next start.
+
+### E-03 — the 32 silent handlers, triaged · **closed**
+
+Reading all 32 rather than counting them: **thirty are correct** and are the classes the report
+predicted — a socket close during teardown, a child process being cleaned up after a probe, an
+optional numeric field that has a documented fallback, a thumbnail that is not a decodable image.
+Two needed work:
+
+* **`gui.setLanState` was the only one hiding a fault a user could act on, and it made a control
+  lie.** It writes the LAN flag to the file the *next* start binds from; nothing in the running
+  process re-reads it. A failed write — read-only state directory, full disk — left the window
+  showing "LAN enabled", the tray item flipped and the address in the title bar, with the flag on
+  disk still off. The user is told the thing they asked for happened, and finds out at the restart
+  the notice itself told them to perform. It now returns a bool and nothing moves unless the write
+  stuck.
+* **`pipeline.cacheStore` and `api.cascadeCount`** are correct to be silent and now say why.
+  `cacheStore` runs after the reply has already reached the client, so there is no request left to
+  fail; a cache that stopped storing is a diagnosis problem, not a correctness one, since every
+  miss is answered by the model exactly as it would be with no cache. `cascadeCount`'s `parseInt`
+  guards a branch `COUNT(*)` cannot reach.
+
+### Dead code — six procs removed
+
+Found by the sweep. Each was verified unreferenced across `src/` and `tests/` before removal, and
+all seventeen self-tests pass without them.
+
+| Removed | Why it was dead |
+|---|---|
+| `models.countDevices` | **A duplicate of `lifecycle.deviceCount`**, and its own comment named `lifecycle.nim` as the caller it did not have |
+| `fssync.scopeDir` | Written for the GUI's document panel (G-25). **D-BW removed that panel**; the helper outlived it |
+| `rag.indexFile` | Superseded by `indexContent`, which every writer now uses |
+| `db.columnNames`, `tray.isRegistered`, `dbus.appendVariantInt32` | No caller, no consumer |
+
+The three `importc` declarations in `dbus.nim` with no caller were **kept**: an FFI binding surface
+is not dead logic, and removing a declaration buys nothing at runtime.
+
+### D-11 — the code's entire explanatory apparatus cites deleted documents · severity: medium · **open, needs your decision**
+
+The finding as first written was too small. It said nine comments reference a missing `PLANS.md`.
+The real scope:
+
+| Dangling | Count |
+|---|---|
+| Explicit filename references (`PLANS.md`, `TODOS.md`, `TESTS.md`, `BRIEFING`) in `src/`, `tests/`, `docs/` | **28** |
+| Bare decision and defect labels (`D-BQ`, `A-48`, `G-30`, `B-12`, `N-30`, `T-17`, `S-1` …) in `src/` | **600 references, 122 distinct labels** |
+
+Commit `c5111ce` — the most recent on `main` — deliberately deleted **the entire `.devdocs/`
+process record**: `PLANS.md`, `TODOS.md`, `DECISIONS_LOG.md`, `BLUEPRINT.md`, `BRIEFING.md`,
+`PROGRESS.md`, `TESTS.md`, `SESSION_HANDOFF.md` and four more — twelve files, 17,635 lines, with
+`AGENTS.md`.
+
+Every one of those 600 labels is now unresolvable for a reader. The comments remain the best
+documentation in this codebase and they constantly cite a corpus that is gone.
+
+**Three options, and this is the user's call, not a defect to fix unilaterally:**
+
+1. **Restore the decision record.** The blobs are still reachable — `git show
+   a6eccaf5883a99dcf5fd95b7b754b3d5a13b39ec > .devdocs/PLANS.md`, and `git show c5111ce^:<path>`
+   for the rest. This undoes the most recent commit on `main`, which is why it was not done here.
+2. **Accept the labels as opaque tags.** They still distinguish one ruling from another *within*
+   the comments, which is most of their working value. Cost: a new reader can never look one up.
+3. **Strip them.** 600 edits across every module, for no functional gain and real churn risk.
+
+Nothing was changed for this finding except the one case that was user-facing: the FreeBSD guard's
+error message in `jenova_core.nim` pointed at `.devdocs/PLANS.md` and now points at
+`docs/install.md`.
 
 ---
 

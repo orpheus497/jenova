@@ -410,5 +410,3 @@ proc setItems*(items: seq[TrayItem]) =
   appendInt32(addr iter, 0)
   send(theTray.conn, sig)
 
-proc isRegistered*(): bool =
-  not theTray.isNil and theTray.registered

@@ -3950,9 +3950,9 @@ proc main() =
         rag.forgetConversation(ConvB)
 
       block workspaceIndexing:
-        # W-06. **The index held chats and nothing else.** `indexContent` and
-        # `indexFile` were exported, correct, and called by no production code
-        # anywhere — so a note the user wrote and a document they uploaded were
+        # W-06. **The index held chats and nothing else.** `indexContent` was
+        # exported, correct, and called by no production code anywhere — so a
+        # note the user wrote and a document they uploaded were
         # not searchable by keyword or by vector at all.
         proc check(label: string, cond: bool, detail = "") =
           if cond: echo "  ok   ", label

@@ -313,11 +313,6 @@ proc query*(sql: string, params: varargs[string]): seq[Row] =
                          " [" & sql & "]")
   discard sqlite3_reset(s)
 
-proc columnNames*(sql: string): seq[string] =
-  let s = conn().prepared(sql)
-  for i in 0 ..< sqlite3_column_count(s):
-    result.add $sqlite3_column_name(s, i.cint)
-
 const Schema* = """
 CREATE TABLE IF NOT EXISTS conversations (
     id TEXT PRIMARY KEY, name TEXT, lastModified INTEGER, currNode TEXT,

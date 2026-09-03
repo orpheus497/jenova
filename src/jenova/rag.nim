@@ -306,14 +306,6 @@ proc indexContent*(path, content: string, mtime = 0): bool =
       [path, $c.startLine, c.text], vec)
   true
 
-proc indexFile*(path: string): bool =
-  if not fileExists(path): return false
-  try:
-    let mtime = int(getLastModificationTime(path).toUnix)
-    indexContent(path, readFile(path), mtime)
-  except IOError, OSError:
-    false
-
 proc documentCount*(): int =
   let rows = db.query("SELECT COUNT(*) FROM rag_documents")
   if rows.len > 0 and rows[0].len > 0:
@@ -423,9 +415,10 @@ proc forgetConversation*(convId: string) =
 # Workspace documents — notes and file assets (W-06)
 # ---------------------------------------------------------------------------
 #
-# **The retrieval index held chats and nothing else.** `indexContent` and
-# `indexFile` were exported, correct, and called by no production code at all;
-# the only writers were the chat path above. So the two things a user
+# **The retrieval index held chats and nothing else.** `indexContent` was
+# exported, correct, and called by no production code at all — as was an
+# `indexFile` beside it, since removed for want of a caller. The only writers
+# were the chat path above. So the two things a user
 # deliberately puts into a workspace *to be found again* — a note they wrote and
 # a document they uploaded — were not searchable by keyword or by vector.
 #

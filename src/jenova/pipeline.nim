@@ -493,6 +493,13 @@ proc cacheStore*(key, response: string) =
             "  ORDER BY timestamp DESC, rowid DESC" &
             "  LIMIT -1 OFFSET ?)", $MaxCacheEntries)
   except CatchableError:
+    # E-03: silent **by design, and this is the reason** rather than an
+    # oversight. This runs after the reply has already reached the client, so
+    # there is no request left to fail and nothing a user could do about it. A
+    # cache that has stopped storing is indistinguishable from one with no hits
+    # — which is a diagnosis problem, not a correctness one: every miss is
+    # answered by the model exactly as it would be with no cache at all.
+    # `cacheCount` is what an assertion reads to tell the two apart.
     discard
 
 ## Function purpose: how many entries the cache is holding. Exported for the

@@ -503,11 +503,26 @@ proc isLanEnabled(p: Paths): bool =
   try: readFile(lanStateFile(p)).strip == "1"
   except CatchableError: false
 
-proc setLanState(p: Paths, enabled: bool) =
+## Function purpose: persist the LAN flag, and **say whether it stuck** (E-03).
+##
+## Action purpose: this discarded the failure, and the toggle then lied. The
+## state file is what the *next* start binds from — nothing in this process
+## re-reads it to decide a bind — so a write that failed on a read-only state
+## directory or a full disk left the window showing "LAN enabled", the tray
+## item flipped, the address in the title bar, and the flag on disk still off.
+## The user is told the thing they asked for happened; it did not, and they find
+## out at the restart the notice told them to perform.
+##
+## A `bool` rather than a raise: the caller is a menu action on the GTK thread
+## and has a notice line to put this in, which is a better answer than an
+## exception crossing the timeout callback.
+proc setLanState(p: Paths, enabled: bool): bool =
   try:
     createDir(p.state)
     writeFile(lanStateFile(p), if enabled: "1" else: "0")
-  except CatchableError: discard
+    true
+  except CatchableError:
+    false
 
 ## Function purpose: run a base-system command and return its first non-empty
 ## line. Used for the LAN address and for handing a URL to the browser — the two
@@ -1232,13 +1247,20 @@ viewable App:
             st.fullscreen = not st.fullscreen
           elif action == "toggle_lan":
             let next = not st.lanEnabled
-            setLanState(st.p, next)
-            st.lanEnabled = next
-            st.lanAddr = ""
-            if next: ctlReq.send(ControlJob(action: "lan_addr", lc: st.lc))
-            tray.setItems(trayMenu(next))
-            st.notice = if next: "LAN enabled - restart to bind 0.0.0.0"
-                        else: "LAN disabled - restart to bind 127.0.0.1"
+            # E-03: **nothing moves unless the flag was actually written.** The
+            # next start binds from that file, so flipping the window, the tray
+            # and the title bar over a failed write would report a change that
+            # will not survive the restart the notice asks for.
+            if not setLanState(st.p, next):
+              st.notice = "could not write the LAN setting to " &
+                          st.p.state & " — it is unchanged"
+            else:
+              st.lanEnabled = next
+              st.lanAddr = ""
+              if next: ctlReq.send(ControlJob(action: "lan_addr", lc: st.lc))
+              tray.setItems(trayMenu(next))
+              st.notice = if next: "LAN enabled - restart to bind 0.0.0.0"
+                          else: "LAN disabled - restart to bind 127.0.0.1"
           else:
             ctlReq.send(ControlJob(action: action, lc: st.lc,
                                    jcaHome: st.p.jcaHome,

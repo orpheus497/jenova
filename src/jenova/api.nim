@@ -106,6 +106,12 @@ proc cascadeCount*(entity, id: string): int =
     for row in db.query("SELECT COUNT(*) FROM " & table & " WHERE " & pred &
                         " AND is_deleted=0", id):
       if row.len > 0:
+        # E-03: the header above says an under-reported count is worse than no
+        # confirmation, so the silence here needs its reason stated. `COUNT(*)`
+        # is guaranteed by SQLite to yield an integer, and this driver renders
+        # every value as text — so the only way to reach this branch is a driver
+        # returning something `COUNT(*)` cannot produce. It is a total-function
+        # guard on an unreachable case, not a swallowed failure.
         try: result += parseInt(row[0]) except ValueError: discard
 
 type ApiResult* = object
@@ -321,8 +327,8 @@ proc upsert(e: Entity, node: JsonNode, mirror = true): ApiResult =
     return err(500, "filesystem sync failed for " & e.name)
 
   # Action purpose: **W-06. The retrieval index held chats and nothing else.**
-  # `rag.indexContent` and `rag.indexFile` were exported, correct, and called by
-  # no production code anywhere; the only writers were the chat path. So a note
+  # `rag.indexContent` was exported, correct, and called by no production code
+  # anywhere; the only writers were the chat path. So a note
   # the user wrote and a document they uploaded — the two things someone puts in
   # a workspace *in order to find again* — were not searchable by keyword or by
   # vector at all. They still reached the model through `workspace.contextFor`,

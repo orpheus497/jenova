@@ -94,15 +94,6 @@ proc discover*(jcaHome: string, kind: ModelKind): string =
     if result.len == 0:
       result = findModel(modelsDir / "embed")
 
-## Function purpose: count comma-separated devices, replacing `count_devices()`
-## in `jenova-model.sh:59-65`. `lifecycle.nim` needs it to decide whether `-ts`
-## is meaningful, since a tensor split across one device is not.
-proc countDevices*(devices: string): int =
-  let trimmed = devices.strip
-  if trimmed.len == 0:
-    return 0
-  trimmed.split(',').len
-
 ## Function purpose: pick the model a switch target offers — the first non-backup
 ## `*.gguf` in `models/<target>`, reproducing the glob at
 ## `bin/jenova-model-switch:42-47`.

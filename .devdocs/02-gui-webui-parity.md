@@ -431,7 +431,7 @@ is a channel message and a panel, and no other surface can show it.
 | P-B1, P-B2, P-B4…P-B11 | Partial implementations | partial | S–M | open |
 | P-B3 | Markdown block coverage | partial | S remaining | **mostly done** — see the correction above. What is left is P-A5 |
 | P-B12 | Keyboard shortcuts | partial | M | open, and **gated**: the `Button.shortcut` mechanism must be replaced with a window-level `GtkShortcutController` first. Two crashes have already come from adding to a container that holds the one shortcut-carrying button |
-| P-C1 | Three unwired settings | false impl | S | **1 of 3 done.** `copyTextAttachmentsAsPlainText` is wired; the other two now name real blockers instead of a finished one — see report 03, W-01 |
+| P-C1 | Three unwired settings | false impl | S | **2 of 3 done.** `copyTextAttachmentsAsPlainText` and `pasteLongTextToFileLen` are wired; `pdfAsImage` needs a rasteriser and is honestly blocked — see report 03, W-01 |
 | P-C2 | Three unserved endpoints called by the Web UI | dead surface | S | **won't fix — `jca_web` is frozen.** `/models/load` and `/models/unload` are unreachable in practice (they need ROUTER mode, which this server never reports). `/cors-proxy` fails gracefully but does silently disable remote MCP servers — which is moot while MCP is parked, and is the argument for a **server-side** MCP client when it is revisited |
 | P-C3 | Push/Pull vestigial | dead surface | S | **parked** — ruling: out of scope for the GUI, and `jca_web` is frozen |
 | P-C4 | Models panel empty-state | — | — | **withdrawn — the finding was wrong**, see above |
