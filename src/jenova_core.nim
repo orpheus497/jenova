@@ -1,21 +1,16 @@
-## Script function and purpose: Entry point for jenova-core, the native FreeBSD
-## binary that replaces the Lua proxy, the shell orchestrators and the GTK3 tray
-## (`.devdocs/PLANS.md` Plan B, ruling D-L). It resolves paths and configuration,
-## serves HTTP with per-class thread pools, owns the database and the filesystem
-## mirror, and **proxies inference to `llama-server`** (ruling D-AF: this is the
-## harness; llama.cpp's own server is the engine).
+## Script function and purpose: entry point for the headless binary. It resolves
+## paths and configuration, serves HTTP with per-class thread pools, owns the
+## database and the filesystem mirror, and proxies inference to `llama-server` —
+## this is the harness and that is the engine.
 ##
-## The in-process `libllama` path was **deleted** on 2026-08-31: `llama.nim` and
-## `inference.nim` duplicated what `llama-server` already does, and duplicating
-## the engine is the opposite of being a harness for it.
+## It is also where every self-test lives. Each runs against a scratch database
+## and asserts a property of a module below it, so anything checkable without a
+## window is checked here rather than left to the first build on a real machine.
 ##
-## The desktop application is a separate binary, `bin/jenova`. The CLI does not
-## exist yet, and this does not pretend otherwise.
+## The desktop application is a separate binary.
 
-## Action purpose: refuse to compile anywhere but FreeBSD. Plan A spent seven
-## stages removing the pretence that this project is portable; the Nim core
-## starts that way rather than acquiring an OS branch later. Mirrors the #error
-## guard in jenova-ui/src/main.c (stage S-5).
+## Action purpose: refuses to compile anywhere but FreeBSD, rather than
+## acquiring an OS branch later. The desktop binary carries the same guard.
 when not defined(freebsd):
   {.error: "jenova-core targets FreeBSD only — see docs/install.md.".}
 
@@ -23,12 +18,14 @@ import std/[os, posix, sequtils, strformat, strutils, tables, times, json]
 import jenova/[paths, config, db, dbselftest, server, serverselftest, markdown,
                rag, sha256, pipeline, prompts, lifecycle, models, nvimctl, api,
                settings, hardware, workspace, pdf, zlib, fssync, composer, convmd,
-               http, upstream]
+               http, upstream, websearch]
 
 const
   Version = "0.1.0"
-  Stage = "N-S6 — harness with lifecycle; llama-server is the engine (D-AF)"
+  Stage = "harness with lifecycle; llama-server is the engine"
 
+## Function purpose: printed on `--help` and on an unknown subcommand, so a
+## mistyped verb shows the whole surface rather than only that it was wrong.
 proc usage() =
   echo &"jenova-core {Version} ({Stage})"
   echo ""
@@ -45,7 +42,7 @@ proc usage() =
   echo "                  start | stop | restart | status | health | args"
   echo "                  status = pids · health = does the port answer"
   echo ""
-  echo "  hardware <sub>  Detect hardware and select a profile (S-1)"
+  echo "  hardware <sub>  Detect hardware and select a profile"
   echo "                  detect | list | apply <name|--best>"
   echo ""
   echo "  paths | config        Resolve and print paths / configuration"
@@ -66,6 +63,8 @@ proc usage() =
   echo "No GUI or CLI subsystem is implemented yet."
   echo "See .devdocs/PLANS.md Plan B for the stage order."
 
+## Function purpose: one dispatch over every subcommand, so a verb cannot exist
+## without appearing in the usage text above it.
 proc main() =
   let args = commandLineParams()
   if args.len == 0:
@@ -94,9 +93,9 @@ proc main() =
       quit(dbselftest.run(p.state / "jenova-selftest.db"))
     of "backends":
       # Action purpose: `start`/`stop`/`status` for the inference backends,
-      # replacing `bin/jenova-ca`'s verbs. Under D-AF the harness owns
-      # llama-server's lifecycle, so this is not a convenience wrapper — it is
-      # how the engine gets started at all.
+      # Action purpose: this harness owns the backends' lifecycle, so these are
+      # not convenience wrappers around something else — they are how the engine
+      # gets started at all.
       let p = paths.resolve()
       let c = config.load(p)
       let lc = lifecycle.init(p, c)
@@ -128,8 +127,9 @@ proc main() =
           echo "embed-server started (pid ", embedPid, ")"
         else:
           # Not an error: retrieval degrades to keyword-only without it, which
-          # is a supported state. Saying so beats a silent absence — B-14 was
-          # exactly the case of an embed server reported healthy while dead.
+          # is a supported state. Said out loud rather than left silent: an
+          # embed server reported healthy while dead is the exact failure this
+          # verb exists to catch.
           echo "embed-server not started (no MODEL_EMBED configured or found)"
           echo "  retrieval will be keyword-only, which is supported"
         quit(0)
@@ -179,9 +179,8 @@ proc main() =
     of "models":
       # Action purpose: model discovery and switching, replacing
       # `lib/jenova-model.sh` and `bin/jenova-model-switch` — the last two shell
-      # scripts the running product relied on (D-AI's total-conversion gate).
-      # The GUI calls `models.switchModel` directly; this subcommand exists so
-      # the same operation is available without a desktop session.
+      # The window calls the switch directly; this verb exists so the same
+      # operation is available without a desktop session.
       let p = paths.resolve()
       let sub = if args.len > 1: args[1] else: "list"
       case sub
@@ -209,9 +208,8 @@ proc main() =
         quit(2)
     of "hardware":
       # Action purpose: hardware detection and profile selection, replacing
-      # `hardware-profiles/detect-hardware.sh` (S-1, D-BC). The GUI calls
-      # `hardware.*` directly; this exists so a headless host can do the same,
-      # which is the one case a window cannot serve.
+      # The window does this directly; this verb exists so a headless host can
+      # too, which is the one case a window cannot serve.
       let p = paths.resolve()
       let sub = if args.len > 1: args[1] else: "detect"
       let profiles = hardware.listProfiles(p.root)
@@ -271,8 +269,8 @@ proc main() =
         quit(2)
     of "db-capabilities":
       # Reports what the linked libsqlite3 can actually do, rather than what the
-      # design assumes. Q-24 puts the keyword index in FTS5 and that is
-      # contingent on this answer (D-AB: check, do not infer).
+      # design assumes: the keyword index needs FTS5, which is an optional
+      # extension and is therefore checked rather than inferred.
       let p = paths.resolve()
       db.initDb(p.state / "jenova.db")
       echo "sqlite3_threadsafe: ", db.threadsafeMode()
@@ -280,7 +278,7 @@ proc main() =
       echo "fts5:               ", (if db.hasFts5(): "available" else: "ABSENT")
       quit(0)
     of "tree-selftest":
-      # Action purpose: conversation branching (G-29) is a tree walk, and a wrong
+      # Action purpose: conversation branching is a tree walk, and a wrong
       # tree walk does not fail loudly — it draws a plausible transcript with the
       # wrong turns in it, or a "2 of 3" counter that is off by one. Neither is
       # visible without knowing what the right answer was. So the walk lives in
@@ -350,8 +348,8 @@ proc main() =
       check("a cycle in the child links terminates",
             api.deepestFrom(cyclic, "x").len > 0)
 
-      # Action purpose: **the shape that shipped broken, asserted so it cannot
-      # ship again.** Every message written before branching existed has no
+      # Action purpose: the shape that shipped broken, asserted so it cannot
+      # ship again. Every message written before branching existed has no
       # parent, so a whole conversation arrives as a flat set of roots. The
       # assertions above only covered the shape branching *creates*; these cover
       # the shape it *inherits*, which is the one every existing user met first.
@@ -429,8 +427,8 @@ proc main() =
         db.closeConn()
         removeFile(scratch)
 
-      # Action purpose: G-36's confirmation tells the USER how many items a
-      # delete will take with it, and **an under-count is worse than no dialog**
+      # Action purpose: the delete confirmation tells the user how many items a
+      # delete will take with it, and an under-count is worse than no dialog
       # — a confirmation is trusted. `api.cascadeCount` derives its counts by
       # rewriting the same `Cascades` statements the delete runs, so this
       # asserts the derivation actually finds the rows.
@@ -468,7 +466,7 @@ proc main() =
         check("a leaf entity cascades to nothing",
               api.cascadeCount("notes", "n1") == 0)
 
-        # **Already-deleted rows are not counted**, or the dialog would promise
+        # Already-deleted rows are not counted, or the dialog would promise
         # to delete things that are already gone.
         db.exec("UPDATE messages SET is_deleted=1 WHERE id='m2'")
         check("a soft-deleted row is not counted again",
@@ -486,7 +484,7 @@ proc main() =
       echo "tree-selftest: FAIL (", bad, ")"
       quit(1)
     of "attach-selftest":
-      # Action purpose: G-30. What an attachment becomes on the wire is the
+      # Action purpose: what an attachment becomes on the wire is the
       # whole feature — a picture that reaches the model as the wrong part type
       # is silently ignored by it, which looks like a model that cannot see.
       # `pipeline.contentFor` is pure, so the shape is asserted here instead of
@@ -501,7 +499,7 @@ proc main() =
       echo "attach-selftest"
 
       block noAttachments:
-        # Action purpose: **the plain-string form must survive untouched.** Every
+        # Action purpose: the plain-string form must survive untouched. Every
         # request this program has ever sent uses it, and switching all of them
         # to content arrays to support a feature most turns do not use would be
         # a change to every single generation.
@@ -585,7 +583,7 @@ proc main() =
         # What a drag-and-drop actually delivers.
         check("a file URI becomes a path",
               pipeline.uriToPath("file:///home/x/a.png") == "/home/x/a.png")
-        # Action purpose: **the percent-decode is the whole point.** Most
+        # Action purpose: the percent-decode is the whole point. Most
         # screenshots have a space in the name, and without this every one of
         # them would fail to open.
         check("percent-encoding is undone",
@@ -603,7 +601,7 @@ proc main() =
 
         writeFile(dir / "notes.conf", "KEY=value\n")
         let t = pipeline.readAttachment(dir / "notes.conf", true, true)
-        # Action purpose: text is decided by **reading** the file, not by a list
+        # Action purpose: text is decided by reading the file, not by a list
         # of known suffixes — a `.conf`, a `.log` or a file with no extension at
         # all is attachable, and an allowlist would refuse all three.
         check("an unknown extension is attached as text if it reads as text",
@@ -625,7 +623,7 @@ proc main() =
 
         let noVis = pipeline.readAttachment(dir / "pic.png", true, false)
         check("an image on a text-only model is refused", not noVis.ok)
-        # Action purpose: **an unanswered `/props` must not refuse.** Refusing on
+        # Action purpose: an unanswered `/props` must not refuse. Refusing on
         # an unknown is the same defect as accepting one the model cannot read,
         # in the other direction.
         let unknown = pipeline.readAttachment(dir / "pic.png", false, false)
@@ -636,12 +634,12 @@ proc main() =
               not missing.ok and missing.err.len > 0)
         removeDir(dir)
 
-      # Action purpose: G-40. **These are the assertions that catch the defect
-      # that froze the window**, and they are the only ones in this program that
+      # Action purpose: these are the assertions that catch a per-frame cost,
+      # and they are the only ones in this program that
       # can. A per-frame cost is invisible to everything else — it compiles, it
       # renders correctly, every other assertion passes, and it is discovered
       # when the GUI stops responding. What is asserted is therefore not the
-      # output but the **number of parses**, which is the thing that went wrong.
+      # output but the number of parses, which is the thing that went wrong.
       block perFrameCost:
         let p = paths.resolve()
         let dir = p.state / "attachcost"
@@ -665,8 +663,8 @@ proc main() =
         var memo: pipeline.ParseMemo
         for _ in 0 ..< 100:
           discard memo.attachmentsFor("msg-1", extra)
-        # **This is the fix, stated as an assertion.** Before G-40 this number
-        # was one per frame, forever.
+        # The property stated as an assertion: without the memo this number is
+        # one per frame, for ever.
         check("a hundred lookups of one message parse it exactly once",
               memo.parses == 1, "parses = " & $memo.parses)
         check("and the lookup still returns the attachment",
@@ -689,7 +687,7 @@ proc main() =
         check("a message whose payload changed is re-parsed",
               grown.parses == 2, "parses = " & $grown.parses)
 
-        # The request path must keep the **original** node: the renderable form
+        # The request path must keep the original node: the renderable form
         # drops AUDIO and flattens PDF, and building the outbound body from it
         # would silently stop sending both.
         let rich = """[{"type":"AUDIO","name":"a.wav","base64Data":"QQ==","mimeType":"audio/wav"}]"""
@@ -705,7 +703,7 @@ proc main() =
         check("so an imported audio attachment is still sent",
               audio.kind == JArray and ($audio).contains("input_audio"), $audio)
 
-        # M-01. **The memo was unbounded and nothing ever cleared it.** It is a
+        # An unbounded memo that nothing clears is a leak. It is a
         # module-level `var` in `gui.nim` keyed by message id, and no
         # conversation switch, no message delete and no reload dropped an
         # entry — so every message ever rendered kept its parsed `extra` for
@@ -740,8 +738,8 @@ proc main() =
           check("clear empties the memo", bounded.len == 0)
 
         block copySetting:
-          # W-01. `copyTextAttachmentsAsPlainText` was drawn, validated, saved
-          # and read by **nothing** — and `settings.nim` blamed a blocker
+          # The copy setting is drawn, validated, saved
+          # and read by nothing — and `settings.nim` blamed a blocker
           # ("attachments — PLANS.md Step 7b") that had already shipped, so it
           # read as deferred rather than forgotten.
           let atts = pipeline.parseAttachments(
@@ -768,7 +766,7 @@ proc main() =
                 pipeline.copyTextFor("plain", @[], true) == "plain" and
                 pipeline.copyTextFor("plain", @[], false) == "plain")
 
-        # D-BQ: refused, never truncated. Asserted against a real oversized file
+        # Refused, never truncated. Asserted against a real oversized file
         # rather than against the constant — checking that the number is 25
         # would pass even if nothing ever compared anything to it.
         const Mib = 1024 * 1024
@@ -776,7 +774,7 @@ proc main() =
         writeFile(big, repeat('x', pipeline.MaxAttachmentBytes + 1024))
         let over = pipeline.readAttachment(big, true, true)
         check("a file over the cap is refused", not over.ok)
-        # A-4: the two numbers are *derived* from the cap rather than written
+        # The two numbers are *derived* from the cap rather than written
         # here. They were "25 MB" and "26" against a constant that is now a
         # division of the body cap, so the literals asserted a number the
         # product no longer holds — a stale assertion of exactly the kind the
@@ -789,12 +787,13 @@ proc main() =
               over.att.payload.len == 0 and over.att.kind.len == 0)
         removeFile(big)
 
-        # Action purpose: A-4. **The two caps are one invariant and this is it.**
+        # Action purpose: the two caps are one invariant and this states it.
         # An attachment is measured on the file as read; the body cap is
         # measured on the base64 that carries it, which is 4/3 the size. They
         # were independent constants — 25 MiB against 32 MiB — so they crossed
         # at 24 MiB and a 24.5 MiB image passed here and was refused as a
-        # request, producing the untyped 500 that G-35 exists to prevent. The
+        # request, producing exactly the untyped 500 the error classifier
+        # exists to prevent. The
         # assertion is on the relation, not on either number, so re-tuning
         # either one can never re-open the gap silently.
         check("anything that passes the attachment cap fits a request body",
@@ -808,7 +807,7 @@ proc main() =
         check("a file under the cap is still accepted", under.ok, under.err)
         removeDir(dir)
 
-      # Action purpose: G-40, the same holding for markdown. `view` re-parsed
+      # Action purpose: the same per-frame holding for markdown. `view` re-parsed
       # every message's full text on every frame too.
       block markdownPerFrame:
         var mm: markdown.BlockMemo
@@ -832,7 +831,7 @@ proc main() =
       # Step 7b, closed 2026-09-02 — PDF text extraction, unblocked by the
       # USER's approval of libz. Every assertion here varies the *data*: the
       # same page is built compressed and uncompressed, and the negative cases
-      # are a PDF with no text and a file that is not one (D-BX).
+      # are a PDF with no text and a file that is not one.
       block pdfText:
         proc onePagePdf(streamBody: string, flate: bool): string =
           let body = if flate: zlib.deflate(streamBody).data else: streamBody
@@ -882,17 +881,13 @@ proc main() =
         check("a file that is not a PDF yields nothing",
               pdf.textFrom("just some text").len == 0)
 
-        # Action purpose: A-61, and the gap it sat in is worth naming. **Every
-        # assertion above this is an end case** — all readable, or nothing
-        # readable at all — and the defect lived in the middle, where some
-        # streams decode and others do not. `textFrom` appended whatever
-        # succeeded and returned it, while its own docstring, `readAttachment`'s
-        # refusal message and four `.devdocs/` files all promised
-        # all-or-nothing. **A 70%-decoded document was attached as the
-        # document.** The USER ruled all-or-nothing on 2026-09-03, over
-        # declaring the partiality.
+        # Action purpose: the gap this sits in is worth naming. Every assertion
+        # above is an end case — all readable or nothing readable — and the
+        # hazard is in the middle, where some streams decode and others do not.
+        # A partly-decoded document attached as the document is confidently
+        # wrong about a fragment.
         #
-        # Varied by DATA, never by damaging code (D-BX): the same two-stream
+        # Varied by data, never by damaging the code: the same two-stream
         # document, once whole and once with one stream corrupted.
         proc twoStreamPdf(first, second: string, breakSecond: bool): string =
           proc obj(n: int, payload: string, flate: bool): string =
@@ -920,7 +915,8 @@ proc main() =
               bothOk.contains("First page text") and
               bothOk.contains("Second page text"), bothOk)
 
-        # The defect itself. Before A-61 this returned "First page text".
+        # The property itself: a partly-undecodable document answers nothing
+        # rather than the fraction that inflated.
         let halfBroken = pdf.textFrom(twoStreamPdf(PageA, PageB, breakSecond = true))
         check("a document with one undecodable stream is refused WHOLE, " &
               "not attached as the readable part",
@@ -967,7 +963,7 @@ proc main() =
       echo "attach-selftest: FAIL (", bad, ")"
       quit(1)
     of "error-selftest":
-      # Action purpose: G-35. Every generation failure used to land in one grey
+      # Action purpose: without this every generation failure lands in one grey
       # line — "the server answered 500" was the whole diagnosis a USER got.
       # The classifier is pure, so the distinctions it draws are asserted here
       # rather than discovered by hitting them on screen.
@@ -994,7 +990,7 @@ proc main() =
         check("both numbers reach the message",
               e.message.contains("9412") and e.message.contains("8192"),
               e.message)
-        # Action purpose: **an overflow must not offer a Retry.** Retrying sends
+        # Action purpose: an overflow must not offer a Retry. Retrying sends
         # the identical oversized prompt and fails identically, so the button
         # would be a lie.
         check("an overflow is NOT retryable", not e.retryable)
@@ -1031,8 +1027,8 @@ proc main() =
               e.message)
 
       block bodyTooLarge:
-        # Action purpose: A-4. An oversized request used to reach the caller as
-        # a bare 500 with no body, which lands in the one grey line G-35 was
+        # Action purpose: an oversized request reaching the caller as a bare 500
+        # with no body lands in the one grey line the classifier was
         # built to eliminate. `server.classWorker` now answers 413 in
         # llama-server's own error envelope, and this is the reading of it.
         let body = """{"error":{"type":"request_too_large",
@@ -1040,7 +1036,7 @@ proc main() =
         let e = pipeline.classifyError(413, body)
         check("an oversized body is a refusal, not a server fault",
               e.kind == pipeline.cekBadRequest, $e.kind)
-        # **Not retryable, and this is the half that matters.** The identical
+        # Not retryable, and this is the half that matters. The identical
         # body would be sent again and refused identically, so a Retry button
         # here is a lie — the same rule the overflow case above is held to.
         check("and it is NOT retryable", not e.retryable)
@@ -1049,7 +1045,7 @@ proc main() =
               e.message)
         check("and it says what to do about it",
               e.message.contains("attachment"), e.message)
-        # The transition that proves the case is wired at all: before A-4 a 413
+        # The transition that proves the case is wired at all: an unhandled 413
         # fell through to the `else` branch and came back retryable, with "the
         # server answered 413" as the whole diagnosis.
         check("a 413 no longer reads as a generic server failure",
@@ -1065,7 +1061,7 @@ proc main() =
     of "markdown-selftest":
       # Action purpose: `markdown.nim` renders every assistant reply, and it was
       # only ever reachable from `gui.nim` — so nothing could assert it and a
-      # model answering with a table rendered as raw pipes (G-34). The module
+      # model answering with a table rendered as raw pipes. The module
       # imports `std/strutils` and nothing else, so it links here and the whole
       # of it is checkable with no window.
       var bad = 0
@@ -1135,12 +1131,12 @@ proc main() =
               markdown.inlineMarkup("<b>") == "&lt;b&gt;")
 
       block memoInvalidation:
-        # A-26. `blocksFor` stamps on `text.len`. That is sound for a message —
+        # `blocksFor` stamps on `text.len`. That is sound for a message —
         # an edit is saved as a *new row with a new id*, and Continue only ever
         # appends — and unsound for a note, whose id survives every edit, so an
         # equal-length correction rendered as the pre-edit text indefinitely.
         #
-        # Written as a transition over ONE memo, varying only the DATA (D-BX):
+        # Written as a transition over ONE memo, varying only the data:
         # no single wrong behaviour passes the set. A memo that never caches
         # fails "does not re-parse"; one that always re-parses fails it too; one
         # where `invalidate` does nothing fails the equal-length pickup; one
@@ -1166,7 +1162,7 @@ proc main() =
         check("an equal-length edit is invisible to the length stamp",
               stale[0].text.contains("fox") and memo.parses == 1)
 
-        # A length change still re-parses: the message path, unchanged by A-26.
+        # A length change still re-parses, which is the message path unchanged.
         let longer = memo.blocksFor("note-1", b & " indeed")
         check("a length change does re-parse",
               longer[0].text.contains("box") and memo.parses == 2)
@@ -1184,7 +1180,7 @@ proc main() =
         check("invalidating one id leaves every other id cached",
               memo.parses == parsesBefore)
 
-        # M-01. Same defect, same shape: unbounded, never cleared, keyed by
+        # Same shape as the memo above: unbounded, never cleared, keyed by
         # message id in a module-level `var`.
         var bounded: markdown.BlockMemo
         for i in 0 .. markdown.BlockMemoCap * 2:
@@ -1202,7 +1198,7 @@ proc main() =
         check("clear empties the block memo", bounded.len == 0)
 
       block blockStructure:
-        # P-B3. `lineMarkup` opened with `line.strip(trailing = false)`, so
+        # A line renderer that strips before measuring cannot see depth, so
         # every list in every reply rendered flat: a nested outline came got as
         # a column of identical bullets. Ordered lists, `####`+ headings and
         # horizontal rules had no branch at all and rendered as their own
@@ -1283,7 +1279,7 @@ proc main() =
                 rendered("just a sentence") == "just a sentence")
 
       block linksAndImages:
-        # A-48. Links and images were not rendered at all — a model's citation
+        # Without this a model's citation
         # reached the Label as literal `[RFC 7231](https://…)`. Both sides of
         # the allowlist are asserted, because a pass that linkifies everything
         # satisfies an "it linked" test and a pass that linkifies nothing
@@ -1294,7 +1290,7 @@ proc main() =
         check("the surrounding text survives",
               ok.startsWith("see ") and ok.endsWith(" now"), ok)
 
-        # **The security half.** GTK hands an activated href to the desktop URI
+        # The security half. GTK hands an activated href to the desktop URI
         # handler, so a scheme outside the allowlist must never reach it.
         for hostile in ["[click](file:///etc/passwd)",
                         "[click](javascript:alert)",
@@ -1361,12 +1357,12 @@ proc main() =
       echo "markdown-selftest: FAIL (", bad, ")"
       quit(1)
     of "workspace-selftest":
-      # Action purpose: G-43. The `notes` and `fileAssets` tables, `isFocusNote`
+      # Action purpose: the `notes` and `fileAssets` tables, `isFocusNote`
       # and the scope columns on `conversations` have existed since the schema
-      # was written and **nothing ever read them** — a user could fill a
+      # was written and nothing ever read them — a user could fill a
       # workspace with notes and the model never saw one. That is the third time
       # this project has shipped a complete store with no reader, so the last
-      # block here asserts the **join** and not only the formatter: rule 15.
+      # block here asserts the join and not only the formatter: rule 15.
       var bad = 0
       proc check(label: string, cond: bool, detail = "") =
         if cond: echo "  ok   ", label
@@ -1498,7 +1494,7 @@ proc main() =
         db.exec("UPDATE notes SET is_deleted=0 WHERE id='wst-n1'", [])
 
       block theJoin:
-        # THE ONE THAT MATTERS, and the one T-17 proves a project can go weeks
+        # THE ONE THAT MATTERS, and the one a project can go weeks
         # without. Every assertion above would stay green if nothing ever called
         # `contextFor` — which is exactly how `rag.nim` was finished, asserted
         # and completely dead. This asserts the context reaches the body that is
@@ -1538,9 +1534,9 @@ proc main() =
         check("no second system message is inserted",
               parsed["messages"].len == 2)
 
-      # Action purpose: G-49 and G-50. Every block above supplies its own rows
-      # with raw SQL, so not one of them could see that saving a note **through
-      # the window's own write path** blanked `isFocusNote` and silently demoted
+      # Action purpose: every block above supplies its own rows
+      # with raw SQL, so not one of them could see that saving a note through
+      # the window's own write path blanked `isFocusNote` and silently demoted
       # a FOCUS note to an ordinary one. That is rule 15 for the fourth time in
       # this project, and it is why this block goes through `api.putEntity` — the
       # exact call the Save button makes — rather than through an INSERT.
@@ -1561,8 +1557,8 @@ proc main() =
         check("...and it escapes its level to reach a folder chat",
               rule in workspace.contextFor("wst-fA1", "", ""))
 
-        # THE ONE G-49 IS, and it varies the DATA — the node — never the code
-        # (D-BX). This node is exactly what `gui.saveNote` used to build: a
+        # THE ONE THAT MATTERS, and it varies the data — the node — never the
+        # code. This node is exactly what a note save builds: a
         # title, a content, and no `isFocusNote` at all.
         check("a partial save is accepted",
               api.putEntity("notes", %*{
@@ -1571,14 +1567,15 @@ proc main() =
         check("...and the note is STILL a FOCUS note afterwards",
               rule in workspace.contextFor("wst-fA1", "", ""))
 
-        # The class and not the instance (D-CC): any column the window omits is
-        # carried forward, which is the general form of T-13 and of G-49.
+        # The class and not the instance: any column the window omits is
+        # carried forward, which covers every field rather than the two known
+        # to have been blanked.
         check("a node omitting the content is accepted",
               api.putEntity("notes", %*{"id": fixture, "title": "Rules II"}))
         check("...and the content it never mentioned survives",
               rule in workspace.contextFor("wst-fA1", "", ""))
 
-        # A transition, not a state (D-BX): set → carried → cleared → set again.
+        # A transition, not a state: set → carried → cleared → set again.
         # Neither half passes alone — always-true would fail the clear, and
         # always-false would fail every line above.
         check("clearing the flag through the same path is honoured",
@@ -1595,7 +1592,7 @@ proc main() =
         db.exec("DELETE FROM notes WHERE id=?", [fixture])
 
       # Action purpose: the window reads this same cell to draw the toggle
-      # (G-50), so the test that decides "set" is one proc rather than two
+      # so the test that decides "set" is one proc rather than two
       # comparisons that drift. Asserted from both sides, because a version
       # that always answered yes — or always no — would pass a one-sided set.
       block theFocusTestItself:
@@ -1611,8 +1608,8 @@ proc main() =
       # nothing read one back, so an edit made in the embedded Neovim was
       # overwritten by the next save in the window without a word.
       #
-      # **Asserted as a transition, over real files, and never by breaking the
-      # code (D-BX):** the note is saved, the *file* is edited underneath it —
+      # Asserted as a transition, over real files, and never by breaking the
+      # code: the note is saved, the *file* is edited underneath it —
       # which is exactly what an outside editor does — and the row is then
       # required to have changed. The unchanged case is asserted in the same
       # block, because a `pullNotes` that simply rewrote every row from disk
@@ -1649,7 +1646,7 @@ proc main() =
 
         db.exec("DELETE FROM notes WHERE id=?", [nid])
 
-      # Action purpose: A-24. `deletedRows` is the trash view's source and its
+      # Action purpose: `deletedRows` is the trash view's source and its
       # docstring promised "newest first"; the SQL carried no `ORDER BY`, so a
       # long trash showed the OLDEST deletion at the top — the opposite of the
       # contract, and exactly the wrong end for a user hunting what they just
@@ -1695,7 +1692,8 @@ proc main() =
       echo "workspace-selftest: FAIL (", bad, ")"
       quit(1)
     of "nvim-env-selftest":
-      # Action purpose: the editor's environment is the whole of G-45, and it is
+      # Action purpose: the editor's environment is the whole of the feature,
+      # and it is
       # the one part of it that can be checked without a terminal. It matters
       # more than it looks: VTE *replaces* the child environment rather than
       # adding to it, so a partial result spawns an editor with no `PATH` — which
@@ -1753,7 +1751,7 @@ proc main() =
         # that carries only the JENOVA_* keys is a broken editor, not a partial
         # feature.
         # Exact, not "more than a few". `env.len > 8` was written here first and
-        # **stayed green** under the corruption that dropped the inherited
+        # stayed green under the corruption that dropped the inherited
         # environment entirely, because the JENOVA_* keys alone are nine — the
         # assertion looked like it covered the failure and did not (rule 16).
         var ourKeys = @["JENOVA_ROOT", "JENOVA_CONNECT_HOST", "JENOVA_HOST",
@@ -1786,7 +1784,7 @@ proc main() =
               env.allIt(it.find('=') > 0))
 
       block overrideAnInheritedValue:
-        # The collision is **created here** rather than hoped for. Written first
+        # The collision is created here rather than hoped for. Written first
         # as "assert no key appears twice" against the ambient environment, which
         # passed under the corruption that appends instead of overriding —
         # because nothing in this shell happens to export a `JENOVA_*` name, so
@@ -1810,7 +1808,7 @@ proc main() =
 
       block jvimConfig:
         # `NVIM_APPNAME` alone sends Neovim to `~/.config/jvim` — a symlink the
-        # user would have to make by hand, which is D-BC's defect. Pointing
+        # user would have to make by hand. Pointing
         # XDG_CONFIG_HOME at the root makes `<root>/jvim` the config dir with no
         # setup step. Verified by running `stdpath('config')` under it.
         if dirExists(p.root / "jvim"):
@@ -1859,7 +1857,7 @@ proc main() =
       # A backup of a previous switch. It sits beside a live model and must never
       # be offered as one — selecting it would activate a superseded file.
       writeFile(home / "models" / "instruct" / "gamma.gguf.old", "ccc")
-      # Action purpose: G-48/D-CB. The three places a model may sit that are NOT
+      # Action purpose: the three places a model may sit that are NOT
       # a switch source. Both sides of one tree, so narrowing the scan cannot
       # pass by simply listing nothing — `alpha` and `beta` must still appear.
       createDir(home / "models" / "embed")
@@ -1892,12 +1890,12 @@ proc main() =
 
       block switching:
         # Function purpose: what `models/agent` actually holds, which is the only
-        # way to assert that repeated switches do not fill it (D-CB).
+        # way to assert that repeated switches do not fill it.
         proc agentEntries(): seq[string] =
           for kind, path in walkDir(home / "models" / "agent"):
             result.add path.extractFilename
 
-        # The transition is the assertion (D-BX): nothing is active, then alpha
+        # The transition is the assertion: nothing is active, then alpha
         # is and beta is not, then beta is and alpha is not.
         check("nothing is active before a switch",
               models.available(home).allIt(not it.active))
@@ -1921,7 +1919,7 @@ proc main() =
               rows.filterIt(it.name == "beta.gguf")[0].active and
               rows.filterIt(it.name == "alpha.gguf")[0].active == false)
 
-        # Action purpose: G-48/D-CB, and the reason it is asserted as a round
+        # Action purpose: the reason this is asserted as a round
         # trip rather than a state. One switch leaving no `.old` proves nothing —
         # the chain the USER saw only appears once a model is displaced twice, so
         # the assertion has to come back to where it started.
@@ -1932,6 +1930,24 @@ proc main() =
               agentEntries() == @["alpha.gguf"], $agentEntries())
         check("the round trip put the active flag back",
               models.available(home).filterIt(it.name == "alpha.gguf")[0].active)
+
+        # The slot cannot be its own source. `isRelativeTo(modelsDir)` admits
+        # anything under `models/`, and `models/agent` is under `models/` — so
+        # this path once made the link resolve to the entry being activated and
+        # the clearing loop removed it, leaving a symlink pointing at its own
+        # name.
+        block activeSlotIsNotASource:
+          var refused = false
+          try:
+            discard models.switchToPath(home, home / "models" / "agent" / "alpha.gguf")
+          except ModelError:
+            refused = true
+          check("a model already in the active slot is refused", refused)
+          check("and the switch that was there is untouched",
+                agentEntries() == @["alpha.gguf"], $agentEntries())
+          check("and it still resolves to a real file",
+                fileExists(expandFilename(home / "models" / "agent" / "alpha.gguf")))
+
 
         # The other side of the same rule: a real `.gguf` the user dropped into
         # models/agent by hand is their only copy, so it IS preserved. Asserted
@@ -1983,10 +1999,10 @@ proc main() =
       echo "models-selftest: FAIL (", bad, ")"
       quit(1)
     of "fs-selftest":
-      # Action purpose: T-4. `fssync.resolveStoragePath` is the containment
+      # Action purpose: `fssync.resolveStoragePath` is the containment
       # check on `/api/storage/*` — the one thing standing between a path a
       # client supplies and the rest of the filesystem — and it had a hole at
-      # each end. Both are asserted here, **both sides of each**, because a
+      # each end. Both are asserted here, both sides of each, because a
       # check that refuses everything passes a refusal test and a check that
       # accepts everything passes an acceptance test.
       #
@@ -2011,7 +2027,7 @@ proc main() =
       createDir(real / "ws")
       createDir(outside)
       writeFile(outside / "secret.txt", "not yours")
-      # **The workspaces root is itself a symlink**, which is the second hole:
+      # The workspaces root is itself a symlink, which is the second hole:
       # the base was compared lexically, so `expandFilename` returned the real
       # location and the prefix test then failed for every legitimate path.
       createSymlink(real, link)
@@ -2019,7 +2035,7 @@ proc main() =
       createSymlink(outside, real / "ws" / "escape")
 
       putEnv("JENOVA_WORKSPACES", link)
-      # A-17's assertions reach `getTrash`/`emptyTrash`, and the GLOBAL trash
+      # The assertions below reach `getTrash`/`emptyTrash`, and the GLOBAL trash
       # root is `jcaHome / ".trash"` — which without this is the USER's real
       # `$HOME/Jenova/.trash`. `emptyTrash` would then delete their actual trash.
       # Set beside the line above, i.e. before anything calls `fssync.roots`,
@@ -2042,7 +2058,7 @@ proc main() =
         # The existing-file case, which the old check did catch.
         check("an existing file reached through an escaping symlink is refused",
               fssync.resolveStoragePath("ws/escape/secret.txt").len == 0)
-        # **The one T-4 is about.** The old check ran only on paths that already
+        # The one that matters. A check that runs only on paths that already
         # existed, so a create through the same symlink walked straight out.
         check("a NEW file written through an escaping symlink is refused",
               fssync.resolveStoragePath("ws/escape/planted.txt").len == 0)
@@ -2058,7 +2074,7 @@ proc main() =
         check("a newline is refused", fssync.resolveStoragePath("ws/a\nb").len == 0)
 
       block theStorageTrashIsListedAndEmptied:
-        # A-17. `storageTrash` files a deleted `/api/storage` path under
+        # `storageTrash` files a deleted `/api/storage` path under
         # `<workspaces>/.trash/<epoch>/<relative>`. `getTrash` walked the global
         # trash and each `<ws>/.trash`, enumerating `<workspaces>` as a list of
         # workspaces — so it met `.trash` among them and went looking for
@@ -2077,7 +2093,7 @@ proc main() =
         writeFile(base / "home" / ".trash" / "global.md", "g")
 
         let listed = fssync.getTrash()
-        check("the storage trash is listed at all — the A-17 fix",
+        check("the storage trash is listed at all",
               listed.anyIt(it.name == "storage.md"),
               "names=" & $listed.mapIt(it.name))
         check("the global trash is still listed",
@@ -2092,7 +2108,7 @@ proc main() =
         check("`.trash` is not reported as a workspace",
               not listed.anyIt(it.workspace == ".trash"))
         # It belongs to no one workspace, so it is global — which is also what
-        # keeps `toJson`'s shape identical for the frozen Web UI (D-Z).
+        # keeps the emitted shape identical for the frozen client.
         check("a storage-trash entry is global, not workspace-scoped",
               listed.filterIt(it.name == "storage.md").allIt(
                 it.kind == fssync.tkGlobal))
@@ -2105,25 +2121,21 @@ proc main() =
         check("...and clears the global and workspace trash with it",
               not after.anyIt(it.name == "global.md" or it.name == "inws.md"))
 
-      # Action purpose: A-16. **Restoring from the window restored the database
-      # row and never the file.** Deletion mirrors into a trash tree and writes
-      # a `{type, id, original_path}` sidecar for the express purpose of undoing
-      # it; nothing on the desktop path ever read that sidecar back, so a
-      # restored note's `.md` stayed in the trash, a restored asset's bytes
-      # never returned at all, and a restored container left its whole directory
-      # behind — under a confirmation that says it can be restored from there.
+      # Action purpose: without a read of the sidecar, restoring puts the row
+      # back and never the file — a note's markdown stays in the trash, an
+      # asset's bytes never return at all, and a container leaves its whole
+      # directory behind, under a confirmation saying it can be restored.
       #
-      # Asserted by varying the DATA (D-BX): the same trash entry is asked for
-      # under a matching id, a non-matching id and a non-restorable table, and
-      # the three must not agree. No product code is damaged to make any of it
-      # bite.
+      # Asserted by varying the data: the same trash entry is asked for under a
+      # matching id, a non-matching id and a non-restorable table, and the three
+      # must not agree. No product code is damaged to make any of it bite.
       block restoringTheMirroredFile:
         let (wsRoot, _) = (getEnv("JENOVA_WORKSPACES"), "")
         let jcaTrash = base / "home" / ".trash"
 
         # A sidecar is written the way `writeTrashMetadata` writes one, and the
         # entry is planted in each of the THREE trash roots in turn — the third
-        # being the one A-17 was about. A walk that covers only two would pass
+        # being the easiest to miss. A walk that covers only two would pass
         # the first case here and fail the storage one.
         proc plant(root, name, table, id, original: string) =
           createDir(root)
@@ -2138,7 +2150,7 @@ proc main() =
               fssync.restoreMirror("notes", "restore-a") == fssync.rmRestored)
         check("...and the file is actually at its original path again",
               fileExists(backA) and readFile(backA) == "restored-content")
-        # A-18-1: asking twice is not a second success. The sidecar is gone, so
+        # Asking twice is not a second success. The sidecar is gone, so
         # the honest answer becomes "this kind has files and this one is not
         # here" — which is what the window will tell the user about.
         check("...and the sidecar is consumed, so a second restore reports the " &
@@ -2147,11 +2159,11 @@ proc main() =
               fssync.restoreMirror("notes", "restore-a") == fssync.rmFileMissing)
 
         # 2. The storage trash — `<workspaces>/.trash`, which nothing looked in
-        # until A-17. This is the case that fails if `restoreMirror` inherits
+        # This is the case that fails if `restoreMirror` inherits
         # the old two-root walk.
         let backB = wsRoot / "ws" / "restored-b.md"
         plant(wsRoot / ".trash", "b.md", "fileAssets", "restore-b", backB)
-        check("a trashed asset comes back out of the STORAGE trash (A-17's root)",
+        check("a trashed asset comes back out of the STORAGE trash",
               fssync.restoreMirror("fileAssets", "restore-b") ==
                 fssync.rmRestored and fileExists(backB))
 
@@ -2172,7 +2184,7 @@ proc main() =
         check("...and the entry it did not match is still in the trash",
               fileExists(jcaTrash / "d.md") and not fileExists(backD))
 
-        # A-18-1, and this pair is the whole basis of the signal: the SAME id
+        # This pair is the whole basis of the signal: the SAME id
         # and the SAME planted sidecar, asked for under two kinds, must give two
         # different answers. A kind with no physical form is silent; a kind that
         # has files and cannot find this one is not.
@@ -2196,18 +2208,15 @@ proc main() =
                 fssync.restoreMirror(t, "no-such-id") ==
                   fssync.rmNoPhysicalForm)
 
-      # Action purpose: A-19. `restoreTrash` guarded containment **lexically**,
-      # which is precisely the weakness T-4 closed in `resolveStoragePath` and
-      # left open here. It was filed as bounded because the only caller was the
-      # HTTP route — **and A-16 gave it a second caller reachable from the
-      # window**, so the weaker of this module's two standards became the one on
-      # the reachable path. A-18-2 is about to add a third, where the path comes
-      # from a list the user clicks.
+      # Action purpose: containment guarded lexically is the weakness the
+      # storage resolver closes and the trash primitive must not leave open —
+      # it is reachable from more than one caller, so the weaker of this
+      # module's two standards would otherwise sit on the reachable path.
       #
-      # The fixture above is exactly right for this and already exists: `escape`
-      # is a symlink inside the tree pointing out of it, and the workspaces root
-      # is itself a symlink — the two holes T-4 named. Varied by DATA: the same
-      # restore is attempted through a real directory and through the link.
+      # The fixture above already has what this needs: a symlink inside the tree
+      # pointing out of it, and a workspaces root that is itself a symlink.
+      # Varied by data: the same restore through a real directory and through
+      # the link.
       block restoreContainmentSurvivesASymlink:
         let wsRoot = getEnv("JENOVA_WORKSPACES")
         let jcaTrash = base / "home" / ".trash"
@@ -2240,7 +2249,7 @@ proc main() =
               fileExists(evil))
 
         # And through `restoreMirror`, which is the window's route — the caller
-        # A-16 added and the reason this bound had to be re-derived at all.
+        # the window's own restore added, and the reason this bound exists.
         check("the same escape is refused through the window's own path",
               fssync.restoreMirror("notes", "a19-evil.md") ==
                 fssync.rmFileMissing and
@@ -2262,7 +2271,7 @@ proc main() =
       # under, and a wrong score does not fail loudly — it silently runs on the
       # wrong profile, which looks like working software that is merely slow.
       # So the ladder is asserted here against hand-written hardware
-      # descriptions, with no sysctl call and no window (S-1).
+      # descriptions, with no sysctl call and no window.
       var bad = 0
       proc check(label: string, cond: bool, detail = "") =
         if cond: echo "  ok   ", label
@@ -2383,18 +2392,15 @@ proc main() =
       echo "hardware-selftest: FAIL (", bad, ")"
       quit(1)
     of "lifecycle-selftest":
-      # Action purpose: **this asserts defect E-01, which no other check could
-      # see.** Nothing in this program ever waited on the backends `start`
-      # forks, so an exited `llama-server` stayed a zombie — and `kill(pid, 0)`
-      # succeeds for a zombie, so `isAlive` answered `true` for a dead backend
-      # for ever. Downstream: `stop` burned its whole grace period and returned
-      # false, `start` returned the corpse's pid without starting anything, and
-      # `watchOnce` logged `"restarted (pid N)"` on every tick while the port
-      # stayed dead.
+      # Action purpose: the reaping rule, which no other check can see. Without
+      # a wait on the forked backend an exited one stays a zombie, and
+      # `kill(pid, 0)` succeeds for a zombie — so every liveness answer is true
+      # for a dead backend for ever, `stop` burns its grace period, `start`
+      # returns the corpse's pid, and the watchdog logs restarts it never
+      # performed.
       #
-      # It compiles, it passes every other suite, and it renders correctly. The
-      # only thing that can catch it is waiting for a real child to exit and
-      # asking. That is what this does.
+      # It compiles, it passes every other suite and it renders correctly. Only
+      # waiting for a real child to exit and then asking can catch it.
       var bad = 0
       proc check(label: string, cond: bool, detail = "") =
         if cond: echo "  ok   ", label
@@ -2420,7 +2426,7 @@ proc main() =
           check("a child that has exited does not read as alive",
                 not lifecycle.isAlive(pid.int),
                 "isAlive said true for an exited child — it is a zombie and " &
-                "nothing reaped it (E-01)")
+                "nothing reaped it")
           # Idempotent: the second call has nothing left to reap and must still
           # answer false rather than raising or blocking.
           check("asking twice is stable", not lifecycle.isAlive(pid.int))
@@ -2497,11 +2503,11 @@ proc main() =
               fileExists(lp.state / "llama-server.pid.lock"))
 
       block cacheSweep:
-        # M-02. Every image ever attached, pasted or previewed was written to
-        # `cacheDir` and **nothing ever deleted one**. The sweep matches only
+        # Every image ever attached, pasted or previewed is written to
+        # `cacheDir` and nothing ever deleted one. The sweep matches only
         # files this program wrote, which is the safety property that matters:
         # `cacheDir` comes from an environment variable, and a sweep that took
-        # whatever it found is B-07 — `scripts/cleanup.sh` deleting
+        # whatever it found is the failure this guards against —
         # `/var/cache` — reintroduced.
         let root = getTempDir() / "jenova-sweep-" & $getCurrentProcessId()
         let cdir = root / paths.AttachCacheDir
@@ -2557,7 +2563,7 @@ proc main() =
               paths.sweepCache(root / "absent", 1).removed == 0)
 
       block rotation:
-        # M-04. The log was appended to for ever and nothing anywhere deleted
+        # An unrotated log is appended to for ever and nothing anywhere deletes
         # from `var/log`.
         let dir = getTempDir() / "jenova-rot-" & $getCurrentProcessId()
         createDir(dir)
@@ -2628,7 +2634,7 @@ proc main() =
     of "convmd-selftest":
       # Step 13b. The window could move conversations as JSON and could not move
       # the other format the Web UI ships. A format is exactly the thing a
-      # screenshot cannot check, so it is asserted as a **round trip** — write a
+      # screenshot cannot check, so it is asserted as a round trip — write a
       # conversation out, read it back, and require the turns to survive.
       var bad = 0
       proc check(label: string, cond: bool, detail = "") =
@@ -2710,21 +2716,21 @@ proc main() =
             convmd.fromMarkdown("stray\n# topic: x [agent]\nmore stray\n").
               messages.len == 0)
 
-      # Action purpose: A-70. **The window read every non-"user" row as the
-      # assistant**, so a stored system turn — which the import below produces
+      # Action purpose: a two-way test reads every non-"user" row as the
+      # assistant, so a stored system turn — which the import below produces
       # correctly — lost its identity on the way in. Everything downstream reads
       # that value, so the persona was sent to the model as its own prior words
       # and export wrote `## jenova` over `<!-- system: … -->`, destroying the
       # evidence of the bug in the file itself.
       #
       # The decision lives here rather than in `gui.nim` because `gui.nim` links
-      # into no test binary. **Asserted as the property, not the presence:**
+      # into no test binary. Asserted as the property, not the presence:
       # that the three roles are told apart, and that the coercion which caused
       # the defect no longer happens.
       block systemRoleSurvivesTheRead:
         check("a stored system row stays a system turn",
               convmd.canonicalRole("system") == "system")
-        # The transition that is the whole defect: before A-70 these two were
+        # The transition that is the whole point: without this these two are
         # the same answer.
         check("...and is not the assistant",
               convmd.canonicalRole("system") != convmd.canonicalRole("assistant"))
@@ -2741,7 +2747,7 @@ proc main() =
 
         # And the round trip end to end, which is what a user actually does:
         # export a conversation carrying a system turn, import it back, and the
-        # system turn must still be one. This passed before A-70 too — convmd
+        # system turn must still be one. This holds either way — the markdown
         # was always correct — and it is asserted here so that a future change
         # to the *format* cannot break the half that the window now depends on.
         let doc = convmd.toMarkdown("t", @[
@@ -2813,7 +2819,7 @@ proc main() =
       # `canSend` is the rule `gui.send` itself calls, asserted here at the same
       # boundary rather than in a copy of it.
       check("text alone can be sent", composer.canSend("hello", 0, false))
-      check("an attachment with no words is still a turn (G-30)",
+      check("an attachment with no words is still a turn",
             composer.canSend("", 1, false))
       check("an empty draft with nothing attached cannot be sent",
             not composer.canSend("", 0, false))
@@ -2928,7 +2934,7 @@ proc main() =
       echo "composer-selftest: FAIL (", bad, ")"
       quit(1)
     of "pipeline-selftest":
-      # Proves the seven behaviours of N-30 against a scratch database. Web
+      # Proves the pipeline's seven behaviours against a scratch database. Web
       # search is exercised only for its formatting, not by making a request.
       let p = paths.resolve()
       db.initDb(p.state / "jenova-pipetest.db")
@@ -2941,6 +2947,36 @@ proc main() =
           inc bad
 
       echo "pipeline-selftest"
+
+      block webSearchPairing:
+        # A result is a title and a snippet at the same position. Filtering the
+        # two lists separately and pairing them afterwards moved every snippet
+        # after a rejected one up onto the previous title, so the first weak
+        # result mislabelled all the rest.
+        let titles = @["First", "Second", "Third"]
+        let good = @["a snippet long enough", "another good snippet",
+                     "a third good snippet"]
+        let paired = websearch.pairResults(titles, good)
+        check("every complete result is kept", paired.len == 3, $paired.len)
+        check("and each title keeps its own snippet",
+              paired[1].contains("Second") and
+              paired[1].contains("another good snippet"), paired[1])
+
+        # The defect: "Second" has no usable snippet.
+        let holed = @["a snippet long enough", "short", "a third good snippet"]
+        let after = websearch.pairResults(titles, holed)
+        check("a result with no usable snippet is dropped whole",
+              after.len == 2, $after.len)
+        check("and the survivors keep their own snippets",
+              after[0].contains("First") and
+              after[0].contains("a snippet long enough") and
+              after[1].contains("Third") and
+              after[1].contains("a third good snippet"),
+              after.join(" | "))
+        check("the numbering counts what is shown, not what was scanned",
+              after[1].startsWith("[2]"), after[1])
+        check("a title with no snippet at all is dropped",
+              websearch.pairResults(@["Only"], @[]).len == 0)
 
       block intents:
         let r = pipeline.prepare(
@@ -3015,7 +3051,7 @@ proc main() =
         # Action purpose: the desktop window asks for its generation statistics
         # and its reasoning split by putting `timings_per_token` and
         # `reasoning_format` in the request body, and `llama-server` sends
-        # neither unless asked (G-33, G-39). Nothing else guards that: the
+        # neither unless asked. Nothing else guards that: the
         # pipeline rewrites the body it is handed, and if it dropped keys it did
         # not recognise, both features would go quietly dead with every other
         # test still green. That is the failure this asserts against.
@@ -3029,7 +3065,7 @@ proc main() =
         check("a second unknown key survives with its value intact",
               body{"reasoning_format"}.getStr == "auto")
         # Without this reaching the server, Continue makes the model restart its
-        # answer instead of extending it — which is exactly what shipped (D-BH).
+        # answer instead of extending it, which is the failure this catches.
         check("the continuation flag survives the pipeline",
               body{"continue_final_message"}.getStr == "content")
         # Sampling parameters travel the same path, and Step 5 depends on it.
@@ -3037,8 +3073,8 @@ proc main() =
               body{"temperature"}.getFloat(0.0) == 0.7)
 
       block outboundBody:
-        # Action purpose: **this is the assertion whose absence let Continue ship
-        # broken twice.** The window's request body used to be built inside
+        # Action purpose: this is the assertion whose absence let Continue ship
+        # broken twice. The window's request body used to be built inside
         # `gui.nim`, where no self-test could reach it, so a body that the server
         # refuses outright looked identical to a correct one from every angle
         # except running the program. `pipeline.chatBody` exists to be checked
@@ -3068,13 +3104,13 @@ proc main() =
         check("a continuation still ends on the assistant turn being extended",
               cont{"messages"}[^1]{"role"}.getStr == "assistant")
 
-      # Action purpose: **the proof `PLANS.md` Step 5 asked for, and the six
-      # around it that the same defect class needs** (G-31). The sampling
+      # Action purpose: the proof `PLANS.md` Step 5 asked for, and the six
+      # around it that the same class needs. The sampling
       # parameters are only ever a JSON field on the outbound body, so the whole
       # feature is assertable here — no window, no generation, no backend.
       #
       # The first check is the one that matters most and is the least obvious:
-      # **an unset parameter must be absent, not zero.** Sending a defaulted 0.0
+      # an unset parameter must be absent, not zero. Sending a defaulted 0.0
       # for every field the user never touched would silently override the
       # server's own preset on every request, and would look exactly like a
       # working settings screen.
@@ -3124,8 +3160,8 @@ proc main() =
         check("custom JSON is merged last and overrides a named field",
               merged{"temperature"}.getFloat(0.0) == 0.1)
 
-        # Action purpose: **and it must reach past the named fields to the ones
-        # the body sets for itself**, or it is only an escape hatch for the
+        # Action purpose: and it must reach past the named fields to the ones
+        # the body sets for itself, or it is only an escape hatch for the
         # parameters this build already knows about — which is the opposite of
         # what an escape hatch is for. *This assertion exists because it was
         # missing:* moving the merge above the fixed fields broke exactly this
@@ -3137,7 +3173,7 @@ proc main() =
               over{"reasoning_format"}.getStr == "none" and
               over{"stream"}.getBool(true) == false)
 
-        # The settings merge must not undo D-BH. Continue shipped broken twice;
+        # The settings merge must not undo the continuation fields;
         # a later feature quietly clobbering its two fields would be the third.
         let both = parseJson(pipeline.chatBody(turn, continuing = true, opts = s))
         check("settings do not clobber the continuation flags",
@@ -3161,7 +3197,7 @@ proc main() =
               settings.loadFrom(sf).get("temperature") == "0.35")
         removeFile(sf)
 
-      # Action purpose: **the parity claim itself, asserted rather than stated.**
+      # Action purpose: the parity claim itself, asserted rather than stated.
       # "1:1 with the Web UI" is the kind of thing that is true on the day it is
       # written and quietly false a month later. The list below is
       # `jca_web`'s `ChatSettings.svelte` `settingSections`, in its order, minus
@@ -3245,7 +3281,7 @@ proc main() =
               settings.defFor("temperature").awaiting.len == 0 and
               settings.defFor("theme").awaiting.len == 0)
 
-        # W-01. Both of the settings wired in this branch must stop claiming to
+        # Both of the settings wired in this branch must stop claiming to
         # be pending, or the honesty check above degrades into decoration: a
         # field that works while saying it does not is the same defect as one
         # that says it works and does not, pointed the other way.
@@ -3253,9 +3289,9 @@ proc main() =
           check(wired & " is no longer pending, because it is wired now",
                 settings.defFor(wired).awaiting.len == 0)
 
-        # W-01. **The old assertion only checked that a reason existed, and
-        # three of them were false**: all three named "attachments — PLANS.md
-        # Step 7b (G-30)" long after attachments shipped in full, so a field
+        # An assertion that only checks a reason exists, and
+        # three of them were false: all three named "attachments — PLANS.md
+        # a blocker that has already shipped, leaves a field
         # that had been forgotten was indistinguishable from one that was
         # deferred. A string cannot be checked for truth, but it can be checked
         # for having been re-examined: none of them may name the step that is
@@ -3291,7 +3327,7 @@ proc main() =
       # in the index — and every test still passed. This asserts the join: a
       # chat message that has been indexed comes back through `prepare` and is
       # in the body that goes to the model. The same class of gap as `serve`
-      # once failing to call `initSchema` with every suite green (T-17).
+      # once failing to call `initSchema` with every suite still green.
       block chatRecallReachesTheModel:
         db.exec("DELETE FROM messages WHERE id LIKE 'pipetest-%'", [])
         db.exec("INSERT OR REPLACE INTO messages (id, convId, type, role, " &
@@ -3314,11 +3350,12 @@ proc main() =
         check("the recalled turn is attributed to the chat it came from",
               sys.contains(rag.chatScope("pipetest-conv")))
 
-      # Action purpose: G-21/8b. Deleting forgets (D-BI) and nothing undid it,
+      # Action purpose: deleting forgets, and without a matching re-index
       # so a restored turn came back everywhere except in what the model
-      # recalls. **The reason it needs an assertion rather than a look:**
+      # recalls. The reason it needs an assertion rather than a look:
       # `rag.backfillChats` repairs it at the next start, so the defect heals
-      # itself before anyone can reproduce it — the same shape as T-17, where
+      # itself before anyone can reproduce it — the same shape as an index
+      # nothing feeds, where
       # every test passed while the feature did not exist.
       block restoringPutsATurnBackInTheIndex:
         db.exec("DELETE FROM messages WHERE id LIKE 'restoretest-%'", [])
@@ -3352,7 +3389,7 @@ proc main() =
 
       # Action purpose: Step 13b. `conversations.forkedFromConversationId` and
       # its whole delete cascade have been in the schema since it was written and
-      # **no surface could ever create the relationship** — the fourth
+      # no surface could ever create the relationship — the fourth
       # complete-store-with-no-writer in this project.
       #
       # The shape is deliberately a *fork in the tree*: root → a → b, with a
@@ -3436,10 +3473,10 @@ proc main() =
         db.exec("DELETE FROM messages WHERE id LIKE 'forktest-%'", [])
         db.exec("DELETE FROM conversations WHERE id LIKE 'forktest-%'", [])
 
-      # Action purpose: T-3. The whole conversation was resent every turn with no
+      # Action purpose: without a trim the whole conversation is resent with no
       # trim anywhere, so a long chat eventually exceeded the context window and
-      # then every request failed. **Asserted at a small budget against a hand
-      # built array**, not against a live generation — the plan's own proof, and
+      # then every request failed. Asserted at a small budget against a hand
+      # built array, not against a live generation — the plan's own proof, and
       # the only one that can bite here.
       block trimmingHistory:
         proc convo(n: int): JsonNode =
@@ -3472,7 +3509,7 @@ proc main() =
               "turn 0" notin $tight and "turn 5" in $tight, $tight)
 
         # A budget nothing can satisfy must still leave a sendable request
-        # rather than an empty one — content is never shortened (D-BQ's rule).
+        # rather than an empty one, because content is never shortened.
         let squeezed = convo(6)
         discard pipeline.trimHistory(squeezed, 1)
         check("an impossible budget still leaves the system and the question",
@@ -3487,14 +3524,14 @@ proc main() =
         check("a zero budget trims nothing",
               pipeline.trimHistory(untouched, 0) == 0 and untouched.len == 8)
 
-        # Action purpose: A-3. **Attaching an image silently deleted the whole
-        # earlier conversation from what the model was sent.** The weight was
+        # Action purpose: without this, attaching an image deletes the whole
+        # earlier conversation from what the model was sent. The weight was
         # `($m).len`, so a screenshot's base64 — megabytes — was measured
         # against a budget of a few kilobytes, and the trim loop dropped every
         # droppable turn trying to meet a figure the final turn alone could
         # never meet.
         #
-        # **Asserted by varying the DATA (D-BX), never by damaging the code:**
+        # Asserted by varying the data, never by damaging the code:
         # the same conversation is trimmed twice at the same budget, once with a
         # short text question and once with the identical question carrying a
         # 4 MB image, and the two must agree.
@@ -3538,10 +3575,10 @@ proc main() =
               pipeline.messageWeight(%*{"role": "user",
                                         "content": "the question"}))
 
-      # Action purpose: T-2. The prepared-statement cache never evicted and one
+      # Action purpose: an unevicted prepared-statement cache means one
       # API route builds a different SQL text per field combination, so a
-      # long-running `serve` grew a statement per shape for ever. **Asserted by
-      # issuing more distinct statements than the cap**, which is the only thing
+      # long-running `serve` grew a statement per shape for ever. Asserted by
+      # issuing more distinct statements than the cap, which is the only thing
       # that distinguishes a bound from a comment claiming one.
       block cappingTheStatementCache:
         let before = db.cachedStatements()
@@ -3579,7 +3616,7 @@ proc main() =
                     "data: [DONE]\n\n"
         check("an SSE response is replayable",
               pipeline.isReplayableStream(sse))
-        check("a plain JSON object is NOT replayable — D-CD's blank turn",
+        check("a plain JSON object is NOT replayable — it renders a blank turn",
               not pipeline.isReplayableStream(
                 """{"choices":[{"message":{"content":"hi"}}]}"""))
         check("an empty body is not replayable",
@@ -3595,7 +3632,7 @@ proc main() =
 
         # The cap. Over-size is not stored at all rather than stored truncated —
         # a truncated entry replayed later is a confident answer about a
-        # fragment, which is D-BQ's rule.
+        # fragment, which is the rule everywhere else here.
         let huge = "data: " & repeat('x', pipeline.MaxCacheEntryBytes) & "\n"
         pipeline.cacheStore("k-huge", huge)
         check("an over-cap entry is not stored",
@@ -3621,10 +3658,10 @@ proc main() =
         # `POST /api/db/cache` is a second writer (12d-4). Routed through
         # `cacheStore`, it must produce the row the GET route reads — the same
         # shape, from the same proc, so the cap cannot be bypassed by using the
-        # HTTP surface instead. **`cacheStore` stays shape-agnostic**: that
+        # HTTP surface instead. `cacheStore` stays shape-agnostic: that
         # route stores plain values and `tests/test_api_db.sh` round-trips a
         # bare string through it, so the SSE guard lives on the completion path
-        # and not in here (D-CK).
+        # and not in the shared store.
         db.exec("DELETE FROM llm_cache")
         pipeline.cacheStore("k-plain", "cached")
         let row = db.query(
@@ -3642,14 +3679,14 @@ proc main() =
       echo "pipeline-selftest: FAIL (", bad, ")"
       quit(1)
     of "relay-selftest":
-      # E-05. `pipeline.prepare` computes six diagnostics per request and
+      # The pipeline computes six diagnostics per request and
       # `server.handle` read two of them; the rest — including `trimmed`, the
       # count of oldest turns dropped to fit the context budget — were thrown
       # away on every request. Silent conversation loss, invisible on both
       # surfaces. They are now response headers, spliced in after the status
       # line by `upstream.spliceHeaders`.
       #
-      # **That splice sits on the path every generated token takes**, and this
+      # That splice sits on the path every generated token takes, and this
       # is the only thing that can assert it: there is no llama-server here and
       # a relay that damages a response head does not fail a compile, it fails
       # a conversation.
@@ -3678,7 +3715,7 @@ proc main() =
               got.len == Head.len + "X-Jenova-Trimmed: 3\r\n".len)
 
       block refusals:
-        # **The only permitted failure is "no header".** A diagnostic must
+        # The only permitted failure is "no header". A diagnostic must
         # never be able to damage the bytes a generation is made of.
         check("no extra headers leaves the head byte-identical",
               upstream.spliceHeaders(Head, "") == Head)
@@ -3818,8 +3855,8 @@ proc main() =
           # Assert on THIS row, not on the global count. The first version
           # checked `chunkCount() == 1`, which held only when no embedding
           # server was running — with a live embedder every chunk already has a
-          # vector, so a correct system failed the check. **The assertion was
-          # written for the degraded case and mistook it for the only case.**
+          # vector, so a correct system failed the check. The assertion was
+          # written for the degraded case and mistook it for the only case.
           rag.storeChunkVector("src/net/socket.nim", line, v)
           let stored = db.queryBlob(
             "SELECT path, vec FROM rag_chunks WHERE path=? AND start_line=?",
@@ -3840,7 +3877,7 @@ proc main() =
         echo "  note embedding server unreachable on :8082 —"
         echo "       keyword-only retrieval, which is a supported degraded mode"
 
-      # ---- chat indexing (T-17, D-BD) --------------------------------------
+      # ---- chat indexing ---------------------------------------------------
       #
       # Everything above proved the engine. This proves it is *fed*, which is
       # the half that never existed: `indexContent` had no caller outside this
@@ -3992,11 +4029,11 @@ proc main() =
             inc failures
 
         # 7. The backfill is incremental: it skips a message that is already
-        #    indexed **and** carrying a vector, and retries one that is not —
+        #    indexed and carrying a vector, and retries one that is not —
         #    which is what makes it self-healing after a start with the embedding
         #    server down.
         #
-        #    Both halves are proven **without an embedding server**, by storing
+        #    Both halves are proven without an embedding server, by storing
         #    vectors against the chat chunks the same way the vector block above
         #    tests the BLOB path. The rule under test is the skip, not the
         #    embedder — and gating this on a live server is how it would end up
@@ -4049,7 +4086,8 @@ proc main() =
         rag.forgetConversation(ConvB)
 
       block workspaceIndexing:
-        # W-06. **The index held chats and nothing else.** `indexContent` was
+        # Without these writers the index holds chats and nothing else.
+        # `indexContent` was
         # exported, correct, and called by no production code anywhere — so a
         # note the user wrote and a document they uploaded were
         # not searchable by keyword or by vector at all.
@@ -4166,21 +4204,14 @@ proc main() =
           if h.path == rag.notePath("wsidx-bf"): bfBody = true
         check("and files its body, not just its identity", bfBody)
 
-        # Action purpose: **"already indexed" means "has a vector", not "has a
-        # row"**, and the distinction is the whole design. With no embedding
-        # server the chunks are written with a NULL vector, and the backfill
-        # deliberately retries them at the next start so they get their vectors
-        # once the embedder is up — otherwise a workspace indexed during the
-        # seconds the embedder was still loading would stay keyword-only for
-        # ever. `backfillChats` has the same rule for the same reason.
+        # Action purpose: "already indexed" means "has a vector" and not "has a
+        # row", which is what makes the backfill self-healing — chunks written
+        # while the embedder was down are retried at the next start rather than
+        # staying keyword-only for ever.
         #
         # So idempotence is asserted with a vector present, which is the state
-        # production reaches: the backfill runs only after `healthy(beEmbed)`.
-        #
-        # The NULL is written rather than assumed. With an embedding server
-        # reachable the backfill above would have stored a vector already, and
-        # this assertion would then be testing the opposite case — a test whose
-        # meaning depends on what is running beside it.
+        # production reaches, and the NULL is written rather than assumed: with
+        # an embedder reachable this would silently test the opposite case.
         db.exec("UPDATE rag_chunks SET vec=NULL WHERE path=?",
                 rag.notePath("wsidx-bf"))
         check("without a vector it is deliberately retried",
@@ -4207,7 +4238,7 @@ proc main() =
             echo "  FAIL ", label, (if detail.len > 0: "\n       " & detail else: "")
             inc failures
 
-        # The scoped-search predicate now runs **in SQL, before** the
+        # The scoped-search predicate now runs in SQL, before the
         # `MaxVectorScan` ceiling. With it applied only in Nim afterwards, the
         # LIMIT took the newest rows globally and the filter then discarded
         # them — so a scoped search whose documents were older than the ceiling
@@ -4262,9 +4293,9 @@ proc main() =
           rag.forgetFile(path)
 
       block packedDotProduct:
-        # M-03. `query` scored every candidate as `dot(qv, unpackVec(blob))`,
+        # Scoring every candidate through an unpack allocates,
         # allocating a fresh seq per row; it now reads the packed bytes in
-        # place. **A disagreement here would not fail anything** — it would
+        # place. A disagreement here would not fail anything — it would
         # quietly re-rank retrieval, which is only ever noticed as "the answers
         # got worse", so the two are asserted equal rather than assumed.
         proc same(label: string, q, v: seq[float32]) =
@@ -4322,9 +4353,9 @@ proc main() =
       # reproducing `bin/jenova-ca:336-365`. Flags override config, which is the
       # precedence the shell used and the only order that makes a flag useful.
       #
-      # **`--lan` moves ONLY the client-facing port.** `llama-server` and the
+      # `--lan` moves ONLY the client-facing port. `llama-server` and the
       # embedding server bind loopback unconditionally, including under `--lan` —
-      # `jenova-ca:568-575` is explicit about why, and it is the S-0 ruling:
+      # The rule is stated once and asserted here:
       # publishing them would put two unauthenticated inference endpoints on the
       # network. That is a security property, not a default.
       var host = c.get("HOST", "127.0.0.1")
@@ -4372,34 +4403,26 @@ proc main() =
       rag.initSchema()
       rag.configureEmbed("127.0.0.1", c.getInt("LLAMA_EMBED_PORT", 8082))
       pipeline.configureEditor(nvimctl.socketPath(p))
-      # T-3: the history trim's budget, derived from this deployment's own
+      # The history trim's budget, derived from this deployment's own
       # context size and slot count. Set here rather than read inside `prepare`,
       # which is handed a body and knows nothing about the configuration.
       pipeline.configureHistoryBudget(c.getInt("CTX_SIZE", 8192),
                                       c.getInt("NUM_SLOTS", 1))
 
-      # Action purpose: bring the inference backends up as part of starting.
-      # There is no separate "start the server" and "start the backends" step,
-      # and there should never have been one.
+      # Action purpose: the backends come up as part of starting, with no
+      # separate step. A split between "start the server" and "start the
+      # backends" only makes sense when a different process owns the client
+      # port, and here nothing does.
       #
-      # The two-command split this replaces was not a design choice — it was
-      # `bin/jenova-ca`'s shape reproduced without asking why that shape existed.
-      # In the shell, the client-facing proxy was spawned by the *tray*, not by
-      # `jenova-ca`, which is the whole of defect B-13: `--daemon` started no
-      # `:8080` because a different process owned it. **In one binary that split
-      # has no reason to exist.**
+      # Both calls fork and return immediately — the model load happens inside
+      # the backend — so start-up stays instant, and until one finishes loading
+      # the relay answers 502 naming the unreachable upstream.
       #
-      # Both calls fork and return immediately; the model load happens inside
-      # `llama-server`, so startup here stays instant. Until a backend finishes
-      # loading, `upstream.forward` answers 502 naming the unreachable upstream,
-      # which is the honest response and already tested.
-      #
-      # Already-running backends are left alone — `lifecycle.start` returns the
-      # existing pid rather than starting a second copy — so restarting the
-      # harness does not reload a multi-gigabyte model into VRAM.
+      # An already-running backend is left alone rather than started twice, so
+      # restarting the harness does not reload a multi-gigabyte model.
       # `JENOVA_NO_BACKENDS=1` serves without them. The test suites set it: they
       # exercise routing and the pipeline, and must never load a model onto the
-      # GPU as a side effect of running (D-AG). Relying on a scratch home having
+      # GPU as a side effect of running. Relying on a scratch home having
       # no models would be luck, not isolation.
       if getEnv("JENOVA_NO_BACKENDS") == "1":
         echo "  backends: not started (JENOVA_NO_BACKENDS=1)"
@@ -4433,14 +4456,14 @@ proc main() =
         # watchdog as a separate shell loop; here it is a thread in the process
         # that owns the backends, so there is no second component whose view of
         # "running" can diverge from the server's — which is the class of
-        # disagreement B-13 was.
+        # disagreement this arrangement exists to make impossible.
         var watcher: Thread[Lifecycle]
         proc watchLoop(lcc: Lifecycle) {.thread.} =
           let wc = lifecycle.defaultWatch()
           var llamaFails, embedFails = 0
           var llamaLast, embedLast = 0.0
           # Whether existing history has been put into the retrieval index in
-          # this process (T-17).
+          # this process.
           var backfilled = false
           while true:
             sleep(wc.intervalMs)
@@ -4451,7 +4474,7 @@ proc main() =
             # Action purpose: index the chats that already exist, once, and not
             # until the embedding server answers — indexing while it is still
             # loading its model stores chunks with no vector and leaves all of
-            # history keyword-only (T-17, D-BD). This thread is used because it
+            # history keyword-only. This thread is used because it
             # is already awake on an interval and is not serving requests; the
             # embedding address is a threadvar and so must be set on it.
             # `JENOVA_NO_BACKENDS=1` skips this whole block, which is why the
@@ -4462,7 +4485,7 @@ proc main() =
               rag.configureEmbed("127.0.0.1", lcc.embedPort)
               let n = rag.backfillChats()
               if n > 0: echo "[rag] indexed ", n, " past messages for recall"
-              # W-06: notes and file assets were never indexed at all. Same
+              # Notes and file assets need the same backfill. Same
               # gate as the chats above — both need the embedder up, or they
               # store chunks with no vector and stay keyword-only for ever.
               let w = rag.backfillWorkspace()
@@ -4476,7 +4499,7 @@ proc main() =
         embedHost = "127.0.0.1", embedPortArg = c.getInt("LLAMA_EMBED_PORT", 8082),
         )
       echo &"jenova-core serving on {host}:{port}"
-      echo "  inference: proxied to llama-server (D-AF)"
+      echo "  inference: proxied to llama-server"
       echo "  ", server.describe()
       echo "  upstreams: llama 127.0.0.1:", c.getInt("LLAMA_PORT", 8081),
            "  embed 127.0.0.1:", c.getInt("LLAMA_EMBED_PORT", 8082)

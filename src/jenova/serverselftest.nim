@@ -59,8 +59,9 @@ proc httpGet(path: string): string =
     data.add chunk[0 ..< n]
   data
 
-## Function purpose: measures the gap between server-sent events, which is the
-## quantity that distinguishes a stalled stream from a slow one.
+## Function purpose: measures the spacing of server-sent events, which is the
+## quantity that distinguishes a stalled stream from a slow one. Resolved to
+## `recv` granularity — see the note at the batch below for what that costs.
 proc streamClient(arg: ClientArg) {.thread.} =
   var r = ClientResult()
   try:
@@ -85,15 +86,32 @@ proc streamClient(arg: ClientArg) {.thread.} =
         buf = buf[i + 4 .. ^1]
         sawHead = true
         last = t
+      # One `recv` can carry several records, and a timestamp taken per `recv`
+      # cannot say when each of them arrived. Charging the whole elapsed time to
+      # the first and nothing to the rest is what this replaces: a client that
+      # coalesced three events at a 50 ms interval produced gaps of 150, 0 and 0,
+      # and the 150 failed a 125 ms budget the server had not exceeded.
+      #
+      # The elapsed time is shared across the records the read delivered, which
+      # is the most the measurement supports. Recv granularity is the floor on
+      # what this can resolve, and it is a client-side floor.
+      var batch = 0
       while true:
         let i = buf.find("\r\n\r\n")
         if i < 0: break
         let rec = buf[0 ..< i]
         buf = buf[i + 4 .. ^1]
         if rec.startsWith("data:"):
-          if r.events > 0: gaps.add(t - last)
-          last = t
+          inc batch
           r.events.inc
+      if batch > 0:
+        let share = (t - last) / batch.float
+        for k in 0 ..< batch:
+          # The very first record of the stream has no predecessor to be spaced
+          # from; `last` was set to the head's arrival.
+          if r.events == batch and k == 0: continue
+          gaps.add share
+        last = t
     for g in gaps:
       r.avgGapMs += g
       if g > r.maxGapMs: r.maxGapMs = g

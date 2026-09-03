@@ -700,6 +700,32 @@ is the build, and running the window is the test.**
 
 ---
 
+## Pre-existing defects the review surfaced · session 6
+
+Four findings in code this branch did not write, raised because the comment-standard batches pulled
+those files into the diff. All four were valid; one of them was valid for a different reason than
+the one given.
+
+| # | Finding | Verdict |
+|---|---|---|
+| R-18 | `websearch.ddgHtmlSearch` paired titles and snippets by index after filtering them separately | **Valid.** Titles were kept at `len > 0` and snippets at `len > 10`, in two passes. A result whose snippet was too short vanished from `snippets` alone, and every later snippet moved up one title — the first weak result silently mislabelled all the rest |
+| R-19 | `models.switchToPath` could empty the active slot, and accepted its own slot as a source | **Valid, twice.** `isRelativeTo(modelsDir)` admits `models/agent/…`, which made `linkTarget` resolve to the entry being activated and the clearing loop remove it — a symlink pointing at its own name. Separately, the header promised that a half-failed switch "leaves the old model in place rather than an empty `models/agent`", and the order of operations did not keep that promise: entries were removed one at a time and the rename into place came last |
+| R-20 | `serverselftest` timestamps once per `recv` and reuses it for every record in the buffer | **Valid, but not for the stated reason.** The claim was that coalescing keeps `maxGapMs` below its threshold and hides a stall. It cannot: a maximum is not lowered by adding zeroes. The real effect is the opposite — the whole batch's elapsed time is charged to one record, so three events coalesced at a 50 ms interval produce a 150 ms gap against a 125 ms budget and **fail a server that was never late** |
+| R-21 | `convmd` drops an empty system message, so it does not round-trip | **Valid as a documentation defect.** The format writes a system message as an HTML comment, and an empty one would be `<!-- system:  -->` — a line that says nothing and that `fromMarkdown` would restore as a message no reader sees. Dropping it is the right behaviour; the module header claiming an unqualified round trip was the error |
+
+R-18 is fixed by validating the pair rather than the halves: `pairResults` walks both lists at the
+same index and discards a whole result when either side fails, so nothing shifts. R-19 moves the
+atomic rename **before** the clearing loop, so the slot holds a working model from the first
+mutation onward and a later failure is untidiness rather than an unusable installation — reported
+in the result message rather than raised, because raising would tell the caller a switch failed
+that had already succeeded. R-20 shares the elapsed time across the records a read delivered, which
+is as fine as `recv` granularity allows, and says so. R-21 narrows the claim.
+
+Ten assertions added. **Both code fixes were proven to fail without them**: restoring the
+independent filters fails "the survivors keep their own snippets", and removing the slot check
+fails "a model already in the active slot is refused".
+---
+
 ## The GUI became buildable and runnable · session 7
 
 The section above was right that a type check is not a build, and it named the gap correctly. The

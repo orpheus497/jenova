@@ -96,15 +96,16 @@ proc targetModel*(jcaHome, target: string): string =
 ## makes the operation safe rather than merely working, and each step exists for
 ## a failure the previous one does not cover:
 ##
-## 1. The replacement is built and validated under a temporary name before
-##    anything active is touched, so a switch that fails half way leaves the old
-##    model in place rather than an empty `models/agent`.
+## 1. The replacement is built and validated under a temporary name, then moved
+##    into place before any old entry is touched — so the slot holds a working
+##    model from the first mutation onward, and a later failure is untidiness
+##    rather than an empty `models/agent`.
 ## 2. The link target is relative, so the tree survives being moved.
 ## 3. A displaced entry is preserved only when it is the user's only copy. A
 ##    symlink is removed, because the file it points at is still in its source
 ##    folder; a real file dropped in by hand is renamed to `.old`.
 ## 4. The swap is a rename, which is atomic, so no reader sees the directory
-##    without an active model.
+##    without an active model, and the source may not itself be in the slot.
 proc switchToPath*(jcaHome, modelPath: string): SwitchResult =
   if not modelPath.endsWith(".gguf"):
     raise newException(ModelError, "not a .gguf: " & modelPath)
@@ -123,6 +124,15 @@ proc switchToPath*(jcaHome, modelPath: string): SwitchResult =
     agentDir = modelsDir / "agent"
     targetName = modelPath.extractFilename
     targetReal = try: modelPath.expandFilename except OSError: modelPath
+
+  # Action purpose: the active slot cannot be its own source. `isRelativeTo`
+  # above admits anything under `models/`, and `models/agent` is under `models/`
+  # — so activating an entry already in the slot made `linkTarget` resolve to the
+  # entry itself, and the clearing loop below removed the very file being
+  # activated. The result was a symlink pointing at its own name.
+  if modelPath.isRelativeTo(agentDir):
+    raise newException(ModelError,
+      "model is already in the active slot: " & modelPath)
 
   createDir(agentDir)
   let linkTarget = relativePath(modelPath, agentDir)
@@ -150,33 +160,54 @@ proc switchToPath*(jcaHome, modelPath: string): SwitchResult =
     existing.add path
   existing.sort()
 
-  for entry in existing:
-    let entryReal = try: entry.expandFilename except OSError: ""
-    if entryReal.len > 0 and entryReal == targetReal:
-      removeFile(entry)
-      result.removed.add entry
-    elif symlinkExists(entry):
-      # Action purpose: every entry this proc writes is a symlink into a source
-      # folder, so renaming one to `.old` only adds a second name for a file that
-      # has not moved. `symlinkExists` is an lstat, which is what distinguishes
-      # the link from a real `.gguf` dropped in by hand.
-      removeFile(entry)
-      result.removed.add entry
-    else:
-      var dest = entry & ".old"
-      if fileExists(dest) or symlinkExists(dest):
-        var counter = 1
-        while fileExists(entry & ".old." & $counter) or
-              symlinkExists(entry & ".old." & $counter):
-          counter += 1
-        dest = entry & ".old." & $counter
-      moveFile(entry, dest)
-      result.preserved.add dest
-
-  moveFile(tmpLink, agentDir / targetName)
-
+  # Action purpose: **the swap happens before the clearing, not after it.** The
+  # header's promise — that a switch failing half way leaves the old model in
+  # place rather than an empty `models/agent` — was not kept by the old order:
+  # the loop below removed and renamed entries one at a time and the rename into
+  # place came last, so an `OSError` in the middle left the directory with no
+  # active model at all.
+  #
+  # `moveFile` is a rename, which replaces any existing entry of that name
+  # atomically. Doing it first means the slot holds the right model from this
+  # point on, and anything that fails afterwards is untidiness rather than an
+  # unusable installation.
+  let active = agentDir / targetName
+  moveFile(tmpLink, active)
   result.target = targetName
-  result.message = "switched to model: " & targetName
+
+  var failures: seq[string]
+  for entry in existing:
+    # The entry just moved into place is the answer, not a leftover.
+    if entry == active: continue
+    try:
+      let entryReal = try: entry.expandFilename except OSError: ""
+      if (entryReal.len > 0 and entryReal == targetReal) or symlinkExists(entry):
+        # Action purpose: every entry this proc writes is a symlink into a source
+        # folder, so removing one drops a second name for a file that has not
+        # moved. `symlinkExists` is an lstat, which is what distinguishes the
+        # link from a real `.gguf` dropped in by hand.
+        removeFile(entry)
+        result.removed.add entry
+      else:
+        var dest = entry & ".old"
+        if fileExists(dest) or symlinkExists(dest):
+          var counter = 1
+          while fileExists(entry & ".old." & $counter) or
+                symlinkExists(entry & ".old." & $counter):
+            counter += 1
+          dest = entry & ".old." & $counter
+        moveFile(entry, dest)
+        result.preserved.add dest
+    except OSError, IOError:
+      # One entry that could not be cleared does not undo a switch that already
+      # happened. Reported rather than raised, because raising here would tell
+      # the caller the switch failed when the active model is correct.
+      failures.add entry.extractFilename
+
+  result.message =
+    if failures.len == 0: "switched to model: " & targetName
+    else: "switched to model: " & targetName &
+          " (could not clear: " & failures.join(", ") & ")"
 
 ## Function purpose: the two named targets the tray and the model menu offer.
 ## Kept as its own entry point rather than folded into `switchToPath`, because

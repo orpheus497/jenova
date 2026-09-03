@@ -70,6 +70,20 @@ proc extractAll(html, marker, closing: string): seq[string] =
 
 ## Function purpose: the preferred path — titles and snippets are paired by
 ## position, so a result missing either half is dropped rather than mismatched.
+## Function purpose: one result is a title and a snippet at the same position,
+## so the two are validated together and a bad half discards the whole pair.
+##
+## Filtering the two lists separately and pairing them afterwards is what this
+## replaces: a result whose snippet was too short vanished from `snippets` alone,
+## and every later snippet then moved up one title. The first weak result silently
+## mislabelled all the rest.
+proc pairResults*(titles, snippets: seq[string]): seq[string] =
+  for i in 0 ..< min(titles.len, snippets.len):
+    if result.len >= MaxResults: break
+    # A snippet of ten characters or fewer is DuckDuckGo's empty cell, not text.
+    if titles[i].len == 0 or snippets[i].len <= 10: continue
+    result.add &"[{result.len + 1}] {titles[i]}\n    {snippets[i]}"
+
 proc ddgHtmlSearch(query: string): seq[string] =
   let url = "https://html.duckduckgo.com/html/?q=" & encodeUrl(query)
   let html = fetchUrl(url, HtmlTimeout)
@@ -77,15 +91,10 @@ proc ddgHtmlSearch(query: string): seq[string] =
 
   var titles, snippets: seq[string]
   for raw in extractAll(html, "class=\"result__a\"", "</a>"):
-    let clean = stripHtml(raw)
-    if clean.len > 0: titles.add clean
+    titles.add stripHtml(raw)
   for raw in extractAll(html, "class=\"result__snippet\"", "</a>"):
-    let clean = stripHtml(raw)
-    if clean.len > 10: snippets.add clean
-
-  let count = min(min(titles.len, snippets.len), MaxResults)
-  for i in 0 ..< count:
-    result.add &"[{i + 1}] {titles[i]}\n    {snippets[i]}"
+    snippets.add stripHtml(raw)
+  pairResults(titles, snippets)
 
 ## Function purpose: the fallback, used when the HTML endpoint yields nothing.
 proc ddgInstantAnswer(query: string): seq[string] =

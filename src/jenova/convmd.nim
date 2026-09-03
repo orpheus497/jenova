@@ -5,6 +5,13 @@
 ##
 ## Knows nothing about the database on purpose: plain values in and out, so the
 ## self-test can round-trip it with no fixture and the callers do the row work.
+##
+## **One thing does not survive the round trip, deliberately.** A system message
+## whose content is empty is not written, because the format carries a system
+## message as an HTML comment and an empty one would be `<!-- system:  -->` —
+## a line that says nothing and that `fromMarkdown` would restore as a message
+## the reader never sees. Every message with content round-trips; an empty
+## system message is dropped rather than preserved.
 
 import std/[algorithm, json, strutils]
 
