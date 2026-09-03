@@ -388,6 +388,31 @@ rows over current ones.
 
 ---
 
+## Review findings on PR #117 — all six were real
+
+CodeRabbit reviewed the branch and raised six findings. **Every one was valid**, which is worth
+recording as plainly as the fixes: the first of them is a defect introduced by this session's own
+E-02 fix, in the same function, on the failure path.
+
+| # | Finding | Why it was right |
+|---|---|---|
+| R-1 | `quit(127)` after a failed `execve` in the forked child | E-02 hoisted every allocation out of the child and then left the one call that undoes the point of it. `quit` runs `addExitProc` handlers and flushes C streams against state inherited mid-mutation from threads that do not exist in the child. Now `posix.exitnow(127)` — which the new `lifecycle-selftest` was already using two files away |
+| R-2 | The sidebar fork ignored `app.streaming` | The per-message button is drawn `sensitive = not app.streaming`; the sidebar row is not. Mid-generation it created a fork and `selectConversation` then refused to open it. The guard now sits in `forkFrom`, the one place both callers pass through — two `sensitive` expressions can drift, one early return cannot |
+| R-3 | The cache sweep trusted a filename | Correct, and it is the same argument M-02 makes about `cacheDir` coming from an environment variable — applied one level further than the fix went. A name is not ownership. Attachments and pasted images now live in an `attachments/` subdirectory this program creates for itself |
+| R-4 | The retrieval path filter ran after the scan ceiling | `passesFilter` sees only rows the query returned, so `LIMIT` took the newest chunks globally and the filter discarded them: a scoped search whose documents were older than the ceiling found nothing while its vectors sat in the table. Pushed into SQL with `substr`, not `LIKE` — `%` and `_` are ordinary characters in a path |
+| R-5 | `newChat` did not clear the render memos | The other point at which a rendered conversation is replaced, and it does not go through `selectConversation`. The caps were bounding it; nothing was releasing it |
+| R-6 | `usage()` did not list the two new self-tests | Registered in `jenova_core.nimble` but undiscoverable from the binary |
+
+**R-3 also caught a leak the original fix missed.** `gui.onPasted` writes `pasted-<epoch>.png`
+into the same directory, which matched no prefix — so clipboard images had been accumulating in
+the very directory the sweep was walking. Both prefixes are now swept.
+
+Six assertions were added for R-4 (exact match, subtree match, the `proj` / `projector` boundary,
+and a path containing a LIKE wildcard) and two for R-3 (an owned name outside the owned directory
+survives; pasted images are in scope).
+
+---
+
 ## How session 2's changes were verified
 
 Neither binary can be built on the audit host: the project targets Nim 2.2.10 on FreeBSD with
