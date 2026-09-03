@@ -809,6 +809,40 @@ Proven by running the built binary both ways: without `JCA_HOME` it creates
 scratch instead. This is the defect class `test_api_db.sh` records in its own header as having
 destroyed a real conversation database, and the fix is the one that suite already uses.
 
+### R-26 · the shortcut probe became marginal when the transcript got heavier · session 8
+
+Not a defect in the window — a defect in the measurement, found because the transcript became a
+`ListView` over a `Clamp` and the probe started failing every other run.
+
+`composer_reachable` pressed `<Ctrl>n`, slept two seconds, and photographed once. Against the
+lighter widget tree that was ample: the change measured ~0.058 against an ~0.0089 threshold, a
+6.5× margin. Against the heavier one the software renderer under Xvfb had not finished the frame
+at two seconds, so the shot caught the window mid-redraw: 0.0123 on one run, a clean failure on
+the next.
+
+The bar was never the problem and raising the sleep only moves the same guess. It now takes the
+largest change **across several frames** and stops as soon as it is clearly past the bar. Waiting
+for the window to go still is not an option — the composer's caret blinks, which is the idle noise
+the same function measures.
+
+This is a maximum over *time* of a mean over *pixels*, and the distinction from the defect this
+file already records matters: that one was a maximum over *pixels*, where a single blinking caret
+reaches the top of the range. A caret cannot reach a maximum over time, because it moves the same
+handful of pixels in every frame.
+
+Restored to ~0.06 against ~0.0022 idle, a 26× margin, on three consecutive runs; and still fails,
+with the right diagnosis, when the `<Ctrl>n` binding is taken out.
+
+**Two wrong diagnoses on the way, both mine.** The failure first read as a dead shortcut
+controller, then as a frozen UI — a `gdb` backtrace showed the main thread inside
+`gsk_renderer_render` waiting on llvmpipe. Both were artifacts of my own leftover `Xvfb` and
+`jenova` processes competing for displays. With a clean process table `<Ctrl>n` created the
+conversation and the view updated, on both the GL and cairo renderers. **The database was what
+settled it**: the conversation count went 1 → 2, so the shortcut had fired all along and only the
+photograph was wrong.
+
+---
+
 ### R-25 · the fixed link name made a symlink cycle reachable · session 8
 
 R-22's `active.gguf` closed one hole and opened another, which is exactly why a review pass after a

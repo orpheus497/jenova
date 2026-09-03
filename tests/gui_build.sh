@@ -397,18 +397,40 @@ composer_reachable() {
           -format "%[fx:mean]" info: 2>/dev/null)
 
   xdotool key ctrl+n
-  sleep 2
-  import -window root "$OUT/newchat.png"
-  convert "$OUT/newchat.png" -crop "$crop" +repage "$OUT/newchat-band.png"
-  n=$(convert "$OUT/idle-band.png" "$OUT/newchat-band.png" \
-      -compose difference -composite -colorspace Gray \
-      -format "%[fx:mean]" info: 2>/dev/null)
+  # **Sampled over time, not photographed once after a fixed sleep.** A single
+  # `sleep 2` was enough while the transcript was a plain list of widgets and
+  # became marginal when it became a `ListView` over a `Clamp` — the software
+  # renderer under Xvfb had not finished the frame, so the shot caught the
+  # window mid-redraw and the change measured 0.0123 against a 0.0089 threshold
+  # on one run and failed outright on another. Waiting for the window to go
+  # perfectly still is not available either: the composer's caret blinks, which
+  # is the idle noise measured just above.
+  #
+  # So the largest change **across several frames** is taken. This is still a
+  # mean over pixels — the defect this file warns about is a peak over *pixels*,
+  # where one blinking caret reaches the maximum. A maximum over *time* of that
+  # mean cannot be reached by a caret: it moves the same handful of pixels in
+  # every frame.
+  n=0
+  i=0
+  while [ "$i" -lt 8 ]; do
+    sleep 1
+    import -window root "$OUT/newchat.png"
+    convert "$OUT/newchat.png" -crop "$crop" +repage "$OUT/newchat-band.png"
+    d=$(convert "$OUT/idle-band.png" "$OUT/newchat-band.png" \
+        -compose difference -composite -colorspace Gray \
+        -format "%[fx:mean]" info: 2>/dev/null)
+    [ -n "$d" ] || break
+    n=$(awk -v a="$n" -v b="$d" 'BEGIN { print (b > a ? b : a) }')
+    # Once it is clearly past the bar there is nothing to gain by watching
+    # longer, and the run is eight seconds shorter.
+    awk -v v="$n" -v b="$noise" 'BEGIN { exit !(v > 0.0004 && v > b * 4) }' && break
+    i=$((i + 1))
+  done
   [ -n "$n" ] && [ -n "$noise" ] || return 1
   echo "gui_build: composer mean change — idle $noise, after <Ctrl>n $n"
-  # Mean, not peak: clearing a line of text moves hundreds of pixels and a caret
-  # moves a handful, which only a mean can tell apart. Four times the measured
-  # idle noise, and above a floor so a perfectly still window cannot divide by
-  # nothing.
+  # Four times the measured idle noise, and above a floor so a perfectly still
+  # window cannot divide by nothing.
   awk -v v="$n" -v b="$noise" 'BEGIN { exit !(v > 0.0004 && v > b * 4) }' || {
     PROBE_FAILED=shortcut
     return 1
