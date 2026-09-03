@@ -357,7 +357,14 @@ window.background {
 scrolledwindow,
 scrolledwindow > viewport,
 expander,
-frame {
+frame,
+/* The transcript is a `ListView` now, and GtkListView paints its own list
+   background over the neural canvas. Its rows do too, so both nodes are
+   named — `listview > row` and not a descendant selector, because the row is
+   a direct child and an element-path selector broke silently the last time
+   this tree changed shape. */
+listview,
+listview > row {
   background-color: transparent;
 }
 
