@@ -58,7 +58,14 @@ NIM=${NIM:-nim}
 # configuration proves nothing about the shipped configuration.
 FLAGS="-d:release -d:gtkminor=10 -d:adwminor=4 --hints:off"
 
-case $("$NIM" --version | head -1) in
+# `sed -n 1p` and not `head -1`: head closes the pipe as soon as it has its
+# line, `nim` takes SIGPIPE mid-write, and Nim's `syncio` turns that into
+# `Error: unhandled exception: errno: 32 'Broken pipe'` printed above this
+# script's own first line. It is a race on how fast the compiler writes, so it
+# appears on some runs and not others — and a gate that prints an unhandled
+# exception on a passing run teaches its reader to skim the one line that will
+# eventually matter. `sed` consumes its input to the end.
+case $("$NIM" --version | sed -n 1p) in
   *"Version 2."*) ;;
   *) echo "gui_build: needs Nim 2 (owlkettle's =destroy signatures)"; exit 1 ;;
 esac
@@ -113,17 +120,33 @@ fi
 OUT=$(mktemp -d)
 trap 'rm -rf $SCRATCH "$OUT"' EXIT
 
+# Action purpose: a cache inside this run's own temp directory, thrown away
+# with it. Nim's default cache is keyed on the *project name*, not the project
+# path, so `~/.cache/nim/jenova_core_r` is shared by every copy of this tree on
+# the machine — and the copy above is a fresh `mktemp -d` on every run. A cache
+# holding objects from a different copy of these sources links with ~20
+# `undefined reference to` errors for generic instantiations
+# (`hasKey__jenovaZmarkdown_u2147` and its like), ending in `final link failed:
+# bad value`. That reads as a defect in `markdown.nim`, names a file nothing is
+# wrong with, and is why this gate cannot share a cache with anything.
+NIMCACHE="$OUT/nimcache"
+
 echo "gui_build: compiling jenova-core"
 cd "$SRC"
-"$NIM" c $FLAGS --path:src --out:"$OUT/jenova-core" src/jenova_core.nim
+"$NIM" c $FLAGS --nimcache:"$NIMCACHE/core" --path:src \
+  --out:"$OUT/jenova-core" src/jenova_core.nim
 
 # `--mm:arc` on the GUI only, exactly as `jenova_core.nimble` does it, and for
 # the reason recorded there: owlkettle's `EventObj.widget` is a strong reference
 # back to the state that owns the event, so ORC's cycle collector can free a
 # widget state GTK still holds. Building this with a different memory
 # management than the shipped binary would test a program that is not shipped.
+#
+# Its own cache directory beside the first: these are two separate programs
+# built with different memory management, and one directory cannot hold both.
 echo "gui_build: compiling jenova"
-"$NIM" c $FLAGS --mm:arc --path:src --out:"$OUT/jenova" src/jenova_gui.nim
+"$NIM" c $FLAGS --mm:arc --nimcache:"$NIMCACHE/gui" --path:src \
+  --out:"$OUT/jenova" src/jenova_gui.nim
 
 # Two roots, because `paths.resolve` reads two variables and they mean
 # different things. `JENOVA_ROOT` is the install tree — `etc/` because
@@ -271,7 +294,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 window_geometry() {
   xwininfo -root -children 2>/dev/null |
     sed -n 's/.*  \([0-9][0-9]*\)x\([0-9][0-9]*\)+\([0-9-][0-9]*\)+\([0-9-][0-9]*\)  .*/\1 \2 \3 \4/p' |
-    sort -k1 -n -r | head -1
+    sort -k1 -n -r | sed -n 1p
 }
 
 ## Prove the transcript rendered the seeded conversation.

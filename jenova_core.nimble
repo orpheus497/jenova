@@ -46,8 +46,21 @@ requires "https://github.com/can-lehmann/owlkettle#ac61ecf"
 const NimFlags = "-d:release -d:gtkminor=10 -d:adwminor=4 " &
                  "--hints:off --path:src"
 
+# Action purpose: a cache under the working tree, one directory per task, rather
+# than Nim's default. That default is keyed on the project *name*, so every
+# checkout of Jenova on the machine shares `~/.cache/nim/jenova_core_r` — and a
+# cache holding objects built from a different copy of these sources links with
+# a wall of `undefined reference to` errors for generic instantiations, naming
+# modules that are not wrong. Incremental rebuilds are kept, because each task
+# still has one stable directory of its own; what is given up is sharing a cache
+# between trees, which is the thing that breaks. It also makes `clean` true:
+# `nimcache/` is what this project actually writes.
+const CoreCache = " --nimcache:nimcache/core"
+const GuiCache = " --nimcache:nimcache/gui"
+
 task core, "Build the headless server (bin/jenova-core)":
-  exec "nim c " & NimFlags & " --out:bin/jenova-core src/jenova_core.nim"
+  exec "nim c " & NimFlags & CoreCache &
+       " --out:bin/jenova-core src/jenova_core.nim"
 
 # `--mm:arc`, and only here. owlkettle's `EventObj[T].widget` is a strong ref back
 # to the state that owns the event (`widgetdef.nim:44-50`), so every widget with a
@@ -67,7 +80,7 @@ task core, "Build the headless server (bin/jenova-core)":
 const GuiFlags = NimFlags & " --mm:arc"
 
 task gui, "Build the desktop application (bin/jenova)":
-  exec "nim c " & GuiFlags & " --out:bin/jenova src/jenova_gui.nim"
+  exec "nim c " & GuiFlags & GuiCache & " --out:bin/jenova src/jenova_gui.nim"
 
 # Every `X-selftest` subcommand `jenova-core` dispatches. Read this list against
 # the `of "…-selftest"` cases in `src/jenova_core.nim` when one is added — there
