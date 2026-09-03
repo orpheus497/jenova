@@ -3316,7 +3316,7 @@ proc messageActions(app: AppState, idx: int, m: Message): Widget =
         # the widget layer, so it is assertable without a window.
         proc clicked() =
           copyToClipboard(pipeline.copyTextFor(
-            m.text, app.attachmentsOf(m),
+            m.text, m.attachmentsOf(),
             app.opts.getBool("copyTextAttachmentsAsPlainText")))
       # P-A6. The Web UI forks from any message; this window could only fork a
       # whole conversation from its sidebar row, so exploring an alternative

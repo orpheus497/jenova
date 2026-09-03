@@ -21,7 +21,15 @@ requires "owlkettle >= 3.0.0"
 # gates the *widget* on `GtkMinor >= 8` but its *binding* on `defined(gtk48)`
 # (`bindings/gtk.nim:836`), so raising only `gtkminor` fails to compile with an
 # undeclared `gtk_picture_set_content_fit`. Both switches, or neither.
-const NimFlags = "-d:release -d:gtkminor=10 -d:gtk48 --hints:off --path:src"
+#
+# `-d:adwminor` gates libadwaita the same way, and owlkettle defaults it to 0
+# (`bindings/adw.nim:29`) — which compiled `OverlaySplitView`, `ToolbarView`,
+# `SwitchRow`, `EntryRow`, `PasswordEntryRow`, `Banner` and `AboutWindow` out of
+# the binary entirely, along with 13 widget properties. The window used the
+# deprecated `Flap` because its replacement was not built. 4 is the level the
+# planned widgets need; the host's libadwaita must be at least 1.4.
+const NimFlags = "-d:release -d:gtkminor=10 -d:gtk48 -d:adwminor=4 " &
+                 "--hints:off --path:src"
 
 task core, "Build the headless server (bin/jenova-core)":
   exec "nim c " & NimFlags & " --out:bin/jenova-core src/jenova_core.nim"

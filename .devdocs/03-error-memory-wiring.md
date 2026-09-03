@@ -654,6 +654,41 @@ one passing, which is the finding demonstrated rather than conceded.
 
 ---
 
+## The GUI became type-checkable · session 6
+
+**`gui.nim` had never been type-checked in this environment, and the reason was wrong.** The
+belief was that checking it required GTK4, libadwaita and FreeBSD. It requires none of them:
+`nim check` performs semantic analysis and never invokes a C compiler, so `importc` declarations
+carrying `header:` do not need the header present. The two real requirements are owlkettle's
+source and **Nim 2** — Nim 1.6, which is what this host had, rejects owlkettle's `=destroy`
+signatures, and that single error class was mistaken for "owlkettle needs GTK".
+
+With Nim 2.2.11 and owlkettle 3.0.0 on the path, all 5,486 lines check clean.
+
+**It found a compile error on the first run, in this branch's own work:**
+
+```
+gui.nim(3319, 24) Error: type mismatch
+Expression: attachmentsOf(app, m)
+Expected one of: proc attachmentsOf(m: Message): seq[PendingAttachment]
+```
+
+`app.attachmentsOf(m)` resolves under UFCS to `attachmentsOf(app, m)`, and the proc takes one
+argument. It came from the W-01 `copyTextAttachmentsAsPlainText` wiring. **The branch would not
+have built on FreeBSD.** The differential harness could not see it: every owlkettle symbol was
+undefined in both the HEAD run and the working-tree run, so a genuine error inside a `gui:` block
+was indistinguishable from the ~940 lines of stub noise around it.
+
+`tests/gui_check.sh` now does this properly, on FreeBSD directly and elsewhere against a scratch
+copy with the guards neutralised. The differential harness is retired: it was the best available
+before, and it is strictly worse than a type check.
+
+**What this still does not cover:** owlkettle's runtime invariants — the `Button.shortcut` update
+assert, `Paned` refusing a child that changes type, `--mm:arc` and the ORC cycle hazard. Those are
+asserts and crashes, not type errors. The first FreeBSD *build and run* remains the real test.
+
+---
+
 ## How session 2's changes were verified
 
 Neither binary can be built on the audit host: the project targets Nim 2.2.10 on FreeBSD with
