@@ -434,30 +434,28 @@ const
 proc notePath*(id: string): string = NoteRoot & "/" & id
 proc fileAssetPath*(id: string): string = FileRoot & "/" & id
 
-## Function purpose: index one note. The title is prepended to the body because
-## it is usually the most retrievable thing about a note and is not otherwise in
-## the text — a note called "Postgres connection pooling" whose body never
-## repeats the words would be unfindable by them.
+## The title leads the body because it is usually the most retrievable thing
+## about a note and is not otherwise in the text.
 ##
-## An empty note is not a document, for `indexMessage`'s reason: there is
-## nothing to retrieve *by*, and indexing it puts an empty body in the keyword
-## index.
+## An empty note is not a document — there is nothing to retrieve *by* — but it
+## may have had a body before, so the emptying still has to unfile it.
 proc indexNote*(id, title, content: string): bool =
   if id.len == 0: return false
   let body = (if title.len > 0: title & "\n\n" else: "") & content
-  if body.strip().len == 0: return false
+  if body.strip().len == 0:
+    forgetFile(notePath(id))
+    return false
   indexContent(notePath(id), body)
 
-## Function purpose: index one file asset, by the same rule.
-##
-## Action purpose: **an image is skipped rather than indexed empty.** The
-## `content` column holds the text a model can be shown, and `gui`'s attachment
-## writer deliberately leaves it empty for an image — the bytes live in
-## `messages.extra`. Indexing that would file a document whose whole body is the
-## file name, which then matches every query weakly and ranks above nothing.
+## By the same rule, and an image is skipped rather than indexed empty: the
+## `content` column holds the text a model can be shown, and the attachment
+## writer leaves it empty for an image. Indexing that would file a document
+## whose whole body is the file name, matching every query weakly.
 proc indexFileAsset*(id, name, content: string): bool =
   if id.len == 0: return false
-  if content.strip().len == 0: return false
+  if content.strip().len == 0:
+    forgetFile(fileAssetPath(id))
+    return false
   let body = (if name.len > 0: name & "\n\n" else: "") & content
   indexContent(fileAssetPath(id), body)
 

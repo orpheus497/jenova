@@ -105,14 +105,6 @@ const
     SettingDef(key: "pasteLongTextToFileLen",
                label: "Paste long text to file length",
                section: ssGeneral, kind: skInt, appDefault: "2500",
-               # W-01: wired. `composer.classifyInsertion` decides it and the
-               # composer's `changed` callback acts on it. The blocker this
-               # field named for two revisions — first a finished attachments
-               # step, then a paste handler that cannot exist — was real only in
-               # its second form, and the way past it was to stop looking for a
-               # paste signal: GTK pastes into the `GtkTextView` directly, so
-               # the window sees one large insertion in a buffer `changed`, and
-               # a prefix/suffix diff recovers the pasted run exactly.
                help: "Pasting more than this many characters attaches the " &
                      "pasted text as a file instead of filling the message " &
                      "box, so a long paste goes to the model as a document and " &
@@ -435,11 +427,21 @@ proc getInt*(s: Settings, key: string, def = 0): int =
 proc `[]=`*(s: var Settings, key, value: string) =
   s.values[key] = value
 
-## Function purpose: the definition for a key, so the window can ask about one
-## field without walking `Defs` itself.
+## The definition for a key, so the window can ask about one field without
+## walking `Defs` itself.
 proc defFor*(key: string): SettingDef =
   for d in Defs:
     if d.key == key: return d
+
+## A window-only setting has no server value behind it, so an unset field means
+## the declared `appDefault` — the same number the field shows as ghost text —
+## and not zero. Reading one with plain `getInt` gives a fresh install a
+## silently disabled feature that the Settings screen claims is on.
+proc appInt*(s: Settings, key: string): int =
+  var def = 0
+  try: def = parseInt(defFor(key).appDefault.strip)
+  except ValueError: discard
+  s.getInt(key, def)
 
 ## Function purpose: the name `llama-server` reports this parameter under in
 ## `/props`. **`typ_p` is the only one that differs** — the server calls it

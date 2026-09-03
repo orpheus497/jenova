@@ -5205,26 +5205,18 @@ method view(app: AppState): Widget =
                     DraftView:
                       text = app.draft
                       style = [StyleClass("draft-view")]
-                      # The two events that put the draft back into ordinary
-                      # state — which is what the `Entry` did and what the first
-                      # version of this composer dropped.
-                      #
-                      # W-01: and the one place `pasteLongTextToFileLen` can be
-                      # honoured. GTK pastes into the `GtkTextView` directly, so
-                      # there is no paste signal to intercept — a paste reaches
-                      # this window only as a large single insertion in a
-                      # `changed`. `composer.classifyInsertion` recovers it by
-                      # diff; the rule lives there so it can be asserted without
-                      # a window.
+                      # GTK pastes into the `GtkTextView` directly, so there is
+                      # no paste signal to intercept — a paste reaches this
+                      # window only as a large single insertion in a `changed`,
+                      # which `composer.classifyInsertion` recovers by diff.
                       #
                       # Writing the shortened draft back is sound because
                       # `DraftView`'s `text` property hook compares against the
-                      # buffer and rewrites it when they differ — the same
-                      # mechanism that keeps the caret still while typing.
+                      # buffer and rewrites it only when they differ.
                       proc changed(text: string) =
                         let ins = composer.classifyInsertion(
                           app.draft, text,
-                          app.opts.getInt("pasteLongTextToFileLen"))
+                          app.opts.appInt("pasteLongTextToFileLen"))
                         if ins.divert:
                           app.attachPastedText(ins.inserted)
                           app.draft = ins.remaining

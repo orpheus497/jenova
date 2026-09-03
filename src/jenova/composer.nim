@@ -71,26 +71,16 @@ type
     remaining*: string  ## what the draft should be left holding
 
 ## Function purpose: decide whether a change to the composer was a paste big
-## enough to become an attachment, and split it if so (W-01,
-## `pasteLongTextToFileLen`).
+## enough to become an attachment, and split it if so.
 ##
-## **The setting was drawn, validated, saved and read by nothing.** Its stated
-## blocker — "attachments, PLANS.md Step 7b" — had shipped in full long before;
-## what it actually waited on was somewhere to put the decision, because
-## `DraftView` owns a `GtkTextView` and GTK pastes into it directly, so the
-## window never sees a "paste" event at all. It sees a `changed` on the buffer.
+## A paste is a single contiguous insertion, so `next` is `prev` with one run
+## spliced in — recoverable from the longest common prefix and suffix around it,
+## in O(n) on the draft, with no GTK paste signal (there is none for a
+## `GtkTextView`).
 ##
-## Action purpose: **so the paste is recovered by diffing, not by intercepting.**
-## A paste is a single contiguous insertion, which means `next` is `prev` with
-## one run spliced in — recoverable exactly from the longest common prefix and
-## the longest common suffix around it. That is O(n) on the draft, which is a
-## message box rather than a document, and it needs no GTK signal that does not
-## exist.
-##
-## Everything that is not a big single insertion is left alone, and each guard
-## below is one way that can happen: typing (too short), deleting or replacing a
-## selection (`next` no longer than `prev`), and the setting switched off (`0`,
-## which is the Web UI's own way of disabling it).
+## The guards below are the ways an insertion can be something else: typing (too
+## short), deleting or replacing a selection (`next` no longer than `prev`), and
+## the setting switched off (`0`, as in the Web UI).
 proc classifyInsertion*(prev, next: string, threshold: int): Insertion =
   result.remaining = next
   if threshold <= 0: return
@@ -104,12 +94,9 @@ proc classifyInsertion*(prev, next: string, threshold: int): Insertion =
         prev[prev.len - 1 - sfx] == next[next.len - 1 - sfx]: inc sfx
 
   let inserted = next[p ..< next.len - sfx]
-  # The run is measured again rather than inferred from the totals. It cannot
-  # currently fail — with `prev = P + D + S` and `next = P + I + S`, the growth
-  # is `I.len - D.len`, so `I.len` is always at least the growth already
-  # tested — but the divert below promises "the run is at least `threshold`
-  # long", and a promise is worth stating where it is relied on rather than
-  # deriving it from two lines above. It is one integer compare.
+  # Invariant, not a reachable case: with `prev = P + D + S` and
+  # `next = P + I + S` the growth is `I.len - D.len`, so `I.len` already
+  # exceeds the threshold tested above. Stated because the divert promises it.
   if inserted.len < threshold: return
 
   result.divert = true

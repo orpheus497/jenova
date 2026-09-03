@@ -563,6 +563,24 @@ Six assertions were added for R-4 (exact match, subtree match, the `proj` / `pro
 and a path containing a LIKE wildcard) and two for R-3 (an owned name outside the owned directory
 survives; pasted images are in scope).
 
+### A second pass raised two more, both against this session's own work
+
+| # | Finding | Why it was right |
+|---|---|---|
+| R-7 | `pasteLongTextToFileLen` read as `0` on every fresh install | `initSettings` stores each numeric field as empty, `settings.getInt`'s own fallback is `0`, and `classifyInsertion` reads `0` as "off". So the feature W-01 wired was disabled for every new user, while the Settings screen showed `2500` as the number in force. The `appDefault` was being used for ghost text and for nothing else |
+| R-8 | Emptying a note or a file asset left its old text searchable | `indexNote` and `indexFileAsset` return early on an empty body, and the call that clears the previous rows (`forgetFile`, at the top of `indexContent`) is on the other side of that return. A user who wiped a note's contents kept a retrievable copy in `rag_chunks`, `rag_fts` and `rag_documents` indefinitely |
+
+R-7 is fixed with `settings.appInt`, which resolves an unset field to the `appDefault` the field
+already declares, so the number lives in one place rather than being restated at the call site.
+An explicit `0` still disables the rule, which is the Web UI's own convention. R-8 is fixed by
+unfiling before the early return in both procedures.
+
+Nine assertions were added. R-8's were **proven to fail without the fix** by reverting the two
+`forgetFile` calls and re-running `rag-selftest`: three failures, including "the emptied text is
+no longer retrievable". R-7's call site is in `gui.nim` and cannot be type-checked here, so
+`appInt` was verified to resolve by renaming it at that call site and confirming the differential
+harness reports `attempting to call undeclared routine` — and reports nothing under the real name.
+
 ---
 
 ## How session 2's changes were verified

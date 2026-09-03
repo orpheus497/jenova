@@ -2763,12 +2763,6 @@ proc main() =
             not composer.canSend("", 1, true))
 
       block longPaste:
-        # W-01. `pasteLongTextToFileLen` was drawn, validated, saved and read by
-        # **nothing**, and the reason it named — "attachments, PLANS.md Step 7b"
-        # — had shipped long before. What it actually waited on was somewhere to
-        # put the decision: GTK pastes into the composer's `GtkTextView`
-        # directly, so the window never sees a paste, only a large single
-        # insertion in a `changed` on the buffer.
         const T = 100
         let long = repeat('x', 250)
 
@@ -2825,6 +2819,27 @@ proc main() =
           let b = composer.pastedFileName(2)
           check("two pastes cannot collide on a name", a != b)
           check("and the name says it is text", a.endsWith(".txt"))
+
+        block freshInstallThreshold:
+          # A fresh install stores every numeric field as empty, and `getInt`'s
+          # own fallback is 0 — which `classifyInsertion` reads as "off". The
+          # feature would then be disabled on every new install while the
+          # Settings screen showed 2500 as the value in force.
+          let fresh = settings.initSettings()
+          check("an unset numeric field reads as zero without a default",
+                fresh.getInt("pasteLongTextToFileLen") == 0)
+          check("but resolves to the number the field advertises",
+                fresh.appInt("pasteLongTextToFileLen") == 2500,
+                $fresh.appInt("pasteLongTextToFileLen"))
+          check("so a long paste diverts on a fresh install",
+                composer.classifyInsertion(
+                  "", repeat('x', 3000),
+                  fresh.appInt("pasteLongTextToFileLen")).divert)
+
+          var chosen = settings.initSettings()
+          chosen["pasteLongTextToFileLen"] = "0"
+          check("and an explicit 0 still switches it off",
+                chosen.appInt("pasteLongTextToFileLen") == 0)
 
       if bad == 0:
         echo ""
@@ -4000,6 +4015,29 @@ proc main() =
               rag.fileAssetPath("wsidx-image") notin indexedPaths(rag.FileRoot))
         check("an empty note is not indexed",
               not rag.indexNote("wsidx-empty", "", "   "))
+
+        # Emptying is a deletion of content, not a no-op: the early return for
+        # an empty body skips `indexContent`, which is what normally clears the
+        # previous rows, so it has to clear them itself or the old text stays
+        # retrievable after the user wiped the note.
+        block emptyingUnfiles:
+          check("a note is filed before it is emptied",
+                rag.indexNote("wsidx-clear", "Secret", "the api token is abc") and
+                rag.notePath("wsidx-clear") in indexedPaths(rag.NoteRoot))
+          check("emptying its body unfiles it",
+                not rag.indexNote("wsidx-clear", "", "") and
+                rag.notePath("wsidx-clear") notin indexedPaths(rag.NoteRoot))
+          var stillHit = false
+          for h in rag.query("api token abc", topK = 5, withSnippets = false):
+            if h.path == rag.notePath("wsidx-clear"): stillHit = true
+          check("and the emptied text is no longer retrievable", not stillHit)
+
+          check("a file asset is filed before its content is cleared",
+                rag.indexFileAsset("wsidx-clr", "notes.md", "moon landing") and
+                rag.fileAssetPath("wsidx-clr") in indexedPaths(rag.FileRoot))
+          check("clearing its content unfiles it",
+                not rag.indexFileAsset("wsidx-clr", "notes.md", "") and
+                rag.fileAssetPath("wsidx-clr") notin indexedPaths(rag.FileRoot))
 
         # Deleting must stop recall, for the reason deleting a message does.
         rag.forgetNote("wsidx-note")
