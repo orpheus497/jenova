@@ -4333,59 +4333,96 @@ proc settingsField(app: AppState, d: settings.SettingDef): Widget =
   # fallback: the badge means "this differs from what your server is actually
   # using", and comparing to a constant would make it lie whenever the two differ.
   let isCustom = stored.len > 0 and serverDef.len > 0 and stored != serverDef
+  # The two badges, built once and used as a row suffix by all three kinds
+  # below. A field whose feature has not been built yet says so rather than
+  # presenting a control that silently does nothing; the value is still stored,
+  # so it goes live the moment the feature lands.
+  let badge = (if isCustom: "Custom"
+               elif d.awaiting.len > 0: "not yet in effect"
+               else: "")
+  let badgeTip = (if d.awaiting.len > 0 and not isCustom:
+                    "Takes effect with " & d.awaiting
+                  else: "")
   gui:
-    Box(orient = OrientY, spacing = 2):
-      Box(orient = OrientX, spacing = 6) {.expand: false.}:
-        Label {.expand: true.}:
-          text = d.label
-          xAlign = 0.0
-          style = [StyleClass("settings-label")]
-        if isCustom:
-          Label {.expand: false.}:
-            text = "Custom"
-            style = [StyleClass("settings-custom")]
-        # A field whose feature has not been built yet says so, rather than
-        # presenting a control that silently does nothing. The value
-        # is still stored, so it is live the moment the feature lands.
-        if d.awaiting.len > 0:
-          Label {.expand: false.}:
-            text = "not yet in effect"
-            tooltip = "Takes effect with " & d.awaiting
-            style = [StyleClass("settings-awaiting")]
-        if d.kind == skBool:
-          Switch {.expand: false, vAlign: AlignCenter.}:
-            state = app.optsDraft.getBool(d.key)
-            proc changed(on: bool) =
-              app.optsDraft[d.key] = (if on: "1" else: "0")
-
-      # `if`/`elif` and not a `case`: owlkettle's `gui` DSL parses a child block
-      # as a two-element node and a `case` arm is not one — it fails the
-      # `child.len == 2` assertion in `guidsl.nim:150` at compile time.
-      if d.kind == skText:
-        # Driven from a buffer for the reason the note editor is: a TextView owns
-        # its text and cannot be bound to state per redraw the way an Entry is.
-        TextView {.expand: false.}:
+    # **Preference rows, not a Box of Label plus control** (report 05, Phase 5.1;
+    # report 06 §4). Each kind maps to the libadwaita row libadwaita has for it,
+    # so the panel inherits the platform's spacing, focus order, keyboard
+    # behaviour and touch targets instead of reproducing them by hand — and
+    # `SwitchRow` and `ComboRow` carry the help as a `subtitle`, which is what
+    # the trailing wrapped `Label` under every field used to be.
+    #
+    # `if`/`elif` and not a `case`: owlkettle's `gui` DSL parses a child block
+    # as a two-element node and a `case` arm is not one — it fails the
+    # `child.len == 2` assertion in `guidsl.nim:150` at compile time.
+    if d.kind == skBool:
+      SwitchRow:
+        title = d.label
+        subtitle = d.help
+        active = app.optsDraft.getBool(d.key)
+        proc activated(on: bool) =
+          app.optsDraft[d.key] = (if on: "1" else: "0")
+        if badge.len > 0:
+          Label {.addSuffix.}:
+            text = badge
+            tooltip = badgeTip
+            style = [StyleClass(if isCustom: "settings-custom"
+                                else: "settings-awaiting")]
+    elif d.kind == skSelect:
+      ComboRow:
+        title = d.label
+        subtitle = d.help
+        items = optionLabels(d)
+        selected = optionIndex(d, stored)
+        proc select(i: int) =
+          if i >= 0 and i < d.options.len:
+            app.optsDraft[d.key] = d.options[i].split('|')[0]
+        if badge.len > 0:
+          Label {.addSuffix.}:
+            text = badge
+            tooltip = badgeTip
+            style = [StyleClass(if isCustom: "settings-custom"
+                                else: "settings-awaiting")]
+    elif d.kind == skText:
+      # The two multi-line fields keep a `TextView`, driven from a buffer for
+      # the reason the note editor is: a `TextView` owns its text and cannot be
+      # bound to state per redraw the way an `Entry` is. A `PreferencesGroup`
+      # around it carries the label and the help, which is where GNOME puts an
+      # explanation that is longer than a subtitle.
+      PreferencesGroup:
+        title = d.label
+        description = d.help
+        TextView:
           buffer = (if d.key == "custom": app.customBuffer else: app.sysBuffer)
-      elif d.kind == skSelect:
-        DropDown {.expand: false.}:
-          items = optionLabels(d)
-          selected = optionIndex(d, stored)
-          proc select(i: int) =
-            if i >= 0 and i < d.options.len:
-              app.optsDraft[d.key] = d.options[i].split('|')[0]
-      elif d.kind != skBool:
-        Entry {.expand: false.}:
+    else:
+      # **`ActionRow` with an `Entry` suffix, and not `EntryRow`.** `AdwEntryRow`
+      # derives from `AdwPreferencesRow`, not `AdwActionRow`, so it has no
+      # `subtitle` — and in this panel the explanation is the point: these are
+      # sampling parameters whose help is the only thing that says what they do.
+      # A row that showed `top_k` and a number and nothing else would be worse
+      # than the Box it replaced, so the row that keeps the subtitle wins over
+      # the one that looks more like an entry.
+      ActionRow:
+        title = d.label
+        subtitle = d.help
+        Entry {.addSuffix.}:
+          # **A fixed width, because a suffix takes what the subtitle leaves.**
+          # An `AdwActionRow` gives its title and subtitle the space first, and
+          # those wrap to a different number of lines per setting — so the entry
+          # came out a different width on every row, and on the two with the
+          # longest help it was narrow enough to truncate its own placeholder to
+          # "Def…". 140 fits the longest of them ("Default: 0.95") with room to
+          # type over it.
+          sizeRequest = (140, -1)
           text = stored
           placeholder = (if ghost.len > 0: "Default: " & ghost else: "")
           proc changed(t: string) =
             app.optsDraft[d.key] = t
-
-      if d.help.len > 0:
-        Label {.expand: false.}:
-          text = d.help
-          xAlign = 0.0
-          wrap = true
-          style = [StyleClass("settings-help")]
+        if badge.len > 0:
+          Label {.addSuffix.}:
+            text = badge
+            tooltip = badgeTip
+            style = [StyleClass(if isCustom: "settings-custom"
+                                else: "settings-awaiting")]
 
 ## Function purpose: read every soft-deleted row into `trashItems`. The
 ## column list comes from `api.deletedRows`, which reuses `Entities`' own
@@ -5081,8 +5118,21 @@ proc settingsPanel(app: AppState): Widget =
                     style = [ButtonFlat, StyleClass("row-btn")]
                     proc clicked() = app.pullNotesFromDisk()
               else:
+                # One `PreferencesGroup` per section, holding that section's
+                # rows. The group is what draws the rounded card and the
+                # separators between rows — the thing the old Box drew with a
+                # style class and 12px of margin.
+                #
+                # `skText` fields return a group of their own (they hold a
+                # `TextView`, which is not a row), so they are inserted beside
+                # this one rather than into it.
+                PreferencesGroup {.expand: false.}:
+                  for d in settings.fieldsIn(app.settingsSection):
+                    if d.kind != skText:
+                      insert(app.settingsField(d))
                 for d in settings.fieldsIn(app.settingsSection):
-                  insert(app.settingsField(d)) {.expand: false.}
+                  if d.kind == skText:
+                    insert(app.settingsField(d)) {.expand: false.}
 
           Box(orient = OrientX, spacing = 8) {.expand: false.}:
             Label {.expand: true.}:

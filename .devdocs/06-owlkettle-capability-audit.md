@@ -113,7 +113,7 @@ the right widget, not a bigger lid.
 
 | Idiom | Widgets | What `gui.nim` does instead |
 |---|---|---|
-| Settings screens | `PreferencesPage`, `PreferencesGroup`, `ActionRow`, `ComboRow`, `ExpanderRow`, `SwitchRow`, `EntryRow` | Boxes of `Label` + `Button` + `Switch` |
+| Settings screens | `PreferencesGroup`, `ActionRow`, `ComboRow`, `SwitchRow` | ~~Boxes of `Label` + `Button` + `Switch`~~ — preference rows in a group per section. `EntryRow` is **not** used and the reason is in `settingsField`: it derives from `AdwPreferencesRow`, so it has no `subtitle`, and in this panel the help text is the point |
 | Transient notification | `ToastOverlay` (`adw.nim:1374` on the pinned revision, ungated) | ~~A one-line notice label~~ — upstream's widget: confirmations toast, and the row is now errors only |
 | Empty states | `StatusPage` | ~~A dim `Label`~~ — done for the empty transcript, the two model-list states and the trash, session 7 |
 | Inline messages | `Banner` | ~~—~~ — done for backend-down and the LAN flag/socket disagreement, session 7 |
