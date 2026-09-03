@@ -60,8 +60,7 @@ proc usage() =
   echo "Precedence: builtin default < etc/jenova.conf < etc/jenova.local.conf < environment"
   echo "JENOVA_NO_BACKENDS=1  serve without starting llama-server (used by the tests)"
   echo ""
-  echo "No GUI or CLI subsystem is implemented yet."
-  echo "See .devdocs/PLANS.md Plan B for the stage order."
+  echo "The desktop application is a separate binary: bin/jenova"
 
 ## Function purpose: one dispatch over every subcommand, so a verb cannot exist
 ## without appearing in the usage text above it.
@@ -738,10 +737,9 @@ proc main() =
           check("clear empties the memo", bounded.len == 0)
 
         block copySetting:
-          # The copy setting is drawn, validated, saved
-          # and read by nothing — and `settings.nim` blamed a blocker
-          # ("attachments — PLANS.md Step 7b") that had already shipped, so it
-          # read as deferred rather than forgotten.
+          # A setting drawn, validated, saved and read by nothing, while
+          # blaming a blocker that has already shipped, reads as deferred rather
+          # than as forgotten.
           let atts = pipeline.parseAttachments(
             """[{"type":"TEXT","name":"notes.txt","content":"hello"},""" &
             """{"type":"IMAGE","name":"p.png","base64Url":"data:image/png;base64,QQ=="}]""")
@@ -3104,10 +3102,9 @@ proc main() =
         check("a continuation still ends on the assistant turn being extended",
               cont{"messages"}[^1]{"role"}.getStr == "assistant")
 
-      # Action purpose: the proof `PLANS.md` Step 5 asked for, and the six
-      # around it that the same class needs. The sampling
-      # parameters are only ever a JSON field on the outbound body, so the whole
-      # feature is assertable here — no window, no generation, no backend.
+      # Action purpose: the sampling parameters are only ever a JSON field on
+      # the outbound body, so the whole feature is assertable here — no window,
+      # no generation, no backend.
       #
       # The first check is the one that matters most and is the least obvious:
       # an unset parameter must be absent, not zero. Sending a defaulted 0.0
@@ -3289,13 +3286,11 @@ proc main() =
           check(wired & " is no longer pending, because it is wired now",
                 settings.defFor(wired).awaiting.len == 0)
 
-        # An assertion that only checks a reason exists, and
-        # three of them were false: all three named "attachments — PLANS.md
-        # a blocker that has already shipped, leaves a field
-        # that had been forgotten was indistinguishable from one that was
-        # deferred. A string cannot be checked for truth, but it can be checked
-        # for having been re-examined: none of them may name the step that is
-        # done, and each must say what it is actually waiting on.
+        # An assertion that only checks a reason exists cannot tell a field
+        # that was forgotten from one that is genuinely deferred. A string
+        # cannot be checked for truth, but it can be checked for having been
+        # re-examined: none may name a step that is done, and each must say
+        # what it is actually waiting on.
         var stale: seq[string]
         for d in settings.Defs:
           if d.awaiting.len == 0: continue

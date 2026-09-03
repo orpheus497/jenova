@@ -84,6 +84,8 @@ proc pairResults*(titles, snippets: seq[string]): seq[string] =
     if titles[i].len == 0 or snippets[i].len <= 10: continue
     result.add &"[{result.len + 1}] {titles[i]}\n    {snippets[i]}"
 
+## Function purpose: the preferred path — titles and snippets are paired by
+## position, so a result missing either half is dropped rather than mismatched.
 proc ddgHtmlSearch(query: string): seq[string] =
   let url = "https://html.duckduckgo.com/html/?q=" & encodeUrl(query)
   let html = fetchUrl(url, HtmlTimeout)

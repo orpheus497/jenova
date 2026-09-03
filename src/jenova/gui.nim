@@ -255,12 +255,11 @@ streamFd.store(-1)
 ## Function purpose: stop the generation in flight. Safe to call when nothing is
 ## streaming — the fd is -1 and this does nothing.
 ##
-## Action purpose: this runs on the GTK thread, directly from the button,
-## rather than being posted to the control worker. `PLANS.md` 7a proposed the
-## worker because a stop must never queue behind a generation — but an atomic
-## store and one `shutdown` syscall neither block nor allocate, so doing it
-## inline satisfies that requirement more completely than a queue does: there is
-## no queue to be behind.
+## Action purpose: this runs on the GTK thread, directly from the button, rather
+## than being posted to the control worker. A stop must never queue behind a
+## generation, and an atomic store plus one `shutdown` syscall neither block nor
+## allocate — so inline satisfies that more completely than a queue does, since
+## there is no queue to be behind.
 proc cancelStream() =
   streamCancel.store(true)
   let fd = streamFd.load()

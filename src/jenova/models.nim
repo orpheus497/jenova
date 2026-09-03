@@ -160,7 +160,7 @@ proc switchToPath*(jcaHome, modelPath: string): SwitchResult =
     existing.add path
   existing.sort()
 
-  # Action purpose: **the swap happens before the clearing, not after it.** The
+  # Action purpose: the swap happens before the clearing, not after it. The
   # header's promise — that a switch failing half way leaves the old model in
   # place rather than an empty `models/agent` — was not kept by the old order:
   # the loop below removed and renamed entries one at a time and the rename into
