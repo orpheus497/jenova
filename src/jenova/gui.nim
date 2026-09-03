@@ -3594,6 +3594,90 @@ proc messageActions(app: AppState, idx: int, m: Message): Widget =
           style = [ButtonFlat, StyleClass("row-btn")]
           proc clicked() = app.deleteMessage(idx)
 
+
+## Function purpose: one message, as its own widget rather than a block inside
+## the transcript loop. Extracted so the loop can become a `ListView`, whose
+## `viewItem` hands back exactly this for one index.
+proc messageCard(app: AppState, i: int, m: Message): Widget =
+  gui:
+    Frame:
+      # a system turn is neither the user's nor the model's, and
+      # labelling it "JENOVA" is the visible half of presenting the
+      # persona as something the model said. The Web UI draws it as
+      # its own kind (`ChatMessageSystem.svelte`) and so does this.
+      style = [StyleClass("msg-card"),
+               StyleClass(case m.role
+                          of rUser: "msg-user"
+                          of rSystem: "msg-system"
+                          else: "msg-agent")]
+      Box(orient = OrientY, spacing = 4, margin = 10):
+        Label {.expand: false.}:
+          text = (case m.role
+                  of rUser: "YOU"
+                  of rSystem: "SYSTEM"
+                  else: "JENOVA")
+          xAlign = 0.0
+          style = [StyleClass("msg-role"),
+                   StyleClass(case m.role
+                              of rUser: "msg-role-user"
+                              of rSystem: "msg-role-system"
+                              else: "msg-role-agent")]
+        # Editing varies what is *inside* the card, never the card's
+        # own type — the swap happens among a `Box`'s children, which
+        # is the one place owlkettle handles a child changing type.
+        if app.editingMsg.len > 0 and app.editingMsg == m.id:
+          # A TextView owns a TextBuffer rather than a string, so the
+          # edit is driven from `app.editBuffer` and read back on save,
+          # exactly as the note editor is and for the same reason.
+          TextView {.expand: false.}:
+            buffer = app.editBuffer
+          Box(orient = OrientX, spacing = 4) {.expand: false.}:
+            Button {.expand: false.}:
+              text = "Save"
+              style = [ButtonSuggested, StyleClass("row-btn")]
+              proc clicked() = app.saveEdit()
+            Button {.expand: false.}:
+              text = "Cancel"
+              style = [ButtonFlat, StyleClass("row-btn")]
+              proc clicked() = app.cancelEdit()
+        else:
+          # the model's reasoning, above the answer and folded
+          # away. It defaults open only while this turn is streaming
+          # — a reasoning model can think for a long time before its
+          # first answer token, and a collapsed box during that silence
+          # looks like nothing is happening. Once the reply lands the
+          # default flips back to closed, so a finished transcript is
+          # answers rather than working-out, unless the reader said
+          # otherwise by clicking.
+          if m.thinking.len > 0:
+            Expander {.expand: false.}:
+              label = "Reasoning"
+              # Open while this turn is streaming, and open whenever
+              # the answer is empty — a reasoning model can put its
+              # entire reply in `reasoning_content`, and a collapsed box
+              # above an empty card is indistinguishable from the model
+              # having said nothing.
+              # The third case is a setting: `showThoughtInProgress`
+              # makes open-while-generating the standing default
+              # rather than something the reader re-opens each turn.
+              expanded = app.expanded.getOrDefault(
+                "think:" & (if m.id.len > 0: m.id else: "live"),
+                m.text.len == 0 or
+                app.opts.getBool("showThoughtInProgress") or
+                (app.streaming and i == app.messages.len - 1))
+              proc activate(on: bool) =
+                app.expanded["think:" & (if m.id.len > 0: m.id
+                                         else: "live")] = on
+              Label:
+                text = m.thinking
+                xAlign = 0.0
+                wrap = true
+                margin = 6
+                style = [StyleClass("dim-note")]
+          insert(app.messageBody(m)) {.expand: false.}
+          insert(app.messageStats(i, m)) {.expand: false.}
+          insert(app.messageActions(i, m)) {.expand: false.}
+
 ## Function purpose: the fullscreen control, and it lives in the bottom action
 ## row rather than the HeaderBar because GTK4 hides a titlebar set through
 ## `gtk_window_set_titlebar` while the window is fullscreened. The menu item
@@ -3965,83 +4049,7 @@ proc mainArea(app: AppState): Widget =
                   description = "Attach a file, or start a message with " &
                                 intentHint() & " to steer it."
             for i, m in (if app.openNote.len > 0: @[] else: app.messages):
-              Frame {.expand: false.}:
-                # a system turn is neither the user's nor the model's, and
-                # labelling it "JENOVA" is the visible half of presenting the
-                # persona as something the model said. The Web UI draws it as
-                # its own kind (`ChatMessageSystem.svelte`) and so does this.
-                style = [StyleClass("msg-card"),
-                         StyleClass(case m.role
-                                    of rUser: "msg-user"
-                                    of rSystem: "msg-system"
-                                    else: "msg-agent")]
-                Box(orient = OrientY, spacing = 4, margin = 10):
-                  Label {.expand: false.}:
-                    text = (case m.role
-                            of rUser: "YOU"
-                            of rSystem: "SYSTEM"
-                            else: "JENOVA")
-                    xAlign = 0.0
-                    style = [StyleClass("msg-role"),
-                             StyleClass(case m.role
-                                        of rUser: "msg-role-user"
-                                        of rSystem: "msg-role-system"
-                                        else: "msg-role-agent")]
-                  # Editing varies what is *inside* the card, never the card's
-                  # own type — the swap happens among a `Box`'s children, which
-                  # is the one place owlkettle handles a child changing type.
-                  if app.editingMsg.len > 0 and app.editingMsg == m.id:
-                    # A TextView owns a TextBuffer rather than a string, so the
-                    # edit is driven from `app.editBuffer` and read back on save,
-                    # exactly as the note editor is and for the same reason.
-                    TextView {.expand: false.}:
-                      buffer = app.editBuffer
-                    Box(orient = OrientX, spacing = 4) {.expand: false.}:
-                      Button {.expand: false.}:
-                        text = "Save"
-                        style = [ButtonSuggested, StyleClass("row-btn")]
-                        proc clicked() = app.saveEdit()
-                      Button {.expand: false.}:
-                        text = "Cancel"
-                        style = [ButtonFlat, StyleClass("row-btn")]
-                        proc clicked() = app.cancelEdit()
-                  else:
-                    # the model's reasoning, above the answer and folded
-                    # away. It defaults open only while this turn is streaming
-                    # — a reasoning model can think for a long time before its
-                    # first answer token, and a collapsed box during that silence
-                    # looks like nothing is happening. Once the reply lands the
-                    # default flips back to closed, so a finished transcript is
-                    # answers rather than working-out, unless the reader said
-                    # otherwise by clicking.
-                    if m.thinking.len > 0:
-                      Expander {.expand: false.}:
-                        label = "Reasoning"
-                        # Open while this turn is streaming, and open whenever
-                        # the answer is empty — a reasoning model can put its
-                        # entire reply in `reasoning_content`, and a collapsed box
-                        # above an empty card is indistinguishable from the model
-                        # having said nothing.
-                        # The third case is a setting: `showThoughtInProgress`
-                        # makes open-while-generating the standing default
-                        # rather than something the reader re-opens each turn.
-                        expanded = app.expanded.getOrDefault(
-                          "think:" & (if m.id.len > 0: m.id else: "live"),
-                          m.text.len == 0 or
-                          app.opts.getBool("showThoughtInProgress") or
-                          (app.streaming and i == app.messages.len - 1))
-                        proc activate(on: bool) =
-                          app.expanded["think:" & (if m.id.len > 0: m.id
-                                                   else: "live")] = on
-                        Label:
-                          text = m.thinking
-                          xAlign = 0.0
-                          wrap = true
-                          margin = 6
-                          style = [StyleClass("dim-note")]
-                    insert(app.messageBody(m)) {.expand: false.}
-                    insert(app.messageStats(i, m)) {.expand: false.}
-                    insert(app.messageActions(i, m)) {.expand: false.}
+              insert(app.messageCard(i, m)) {.expand: false.}
 
 
 ## Function purpose: open the settings panel on a copy of the stored values, and
