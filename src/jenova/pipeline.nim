@@ -51,13 +51,16 @@ type
     trimmed*: int          ## T-3: oldest turns dropped to fit the context budget
 
 const
-  IntentPrefixes = {
-    "Visual Rewrite:": inVisual,
-    "Open File Chat:": inFileChat,
-    "Chatbot:": inFileChat,
-    "Web Search:": inWebSearch,
-    "Editor:": inEditor,
-  }.toTable
+  ## An array rather than a table so the order is the declared one: the window
+  ## shows these to the user (`gui.nim`'s empty transcript), and a Table
+  ## iterates in whatever order hashing gives.
+  IntentPrefixes* = [
+    ("Visual Rewrite:", inVisual),
+    ("Open File Chat:", inFileChat),
+    ("Chatbot:", inFileChat),
+    ("Web Search:", inWebSearch),
+    ("Editor:", inEditor),
+  ]
 
   ## `proxy.lua:1255` — a message already carrying repository context is not
   ## re-retrieved for, which is what stops a follow-up turn stacking the same
@@ -105,9 +108,9 @@ proc lastUserIndex(messages: JsonNode): int =
 ## Function purpose: detect and strip an intent prefix. The prefix is removed
 ## from the message because it is addressed to Jenova, not to the model — the
 ## original does the same at `proxy.lua:1247`.
-proc detectIntent(text: string): tuple[intent: Intent, stripped: string] =
+proc detectIntent*(text: string): tuple[intent: Intent, stripped: string] =
   let trimmed = text.strip(trailing = false)
-  for prefix, intent in IntentPrefixes:
+  for (prefix, intent) in IntentPrefixes:
     if trimmed.startsWith(prefix):
       return (intent, trimmed[prefix.len .. ^1].strip(trailing = false))
   (inNone, text)

@@ -2825,6 +2825,22 @@ proc main() =
       check("an attachment is refused mid-stream too",
             not composer.canSend("", 1, true))
 
+      block intentPrefixes:
+        # The window names these in its empty transcript, reading this array
+        # rather than restating it. A Table here would have made the order the
+        # user sees depend on hashing.
+        check("the classifier declares its prefixes in order",
+              pipeline.IntentPrefixes.len == 5)
+        check("and every one ends in a colon, which is what is matched",
+              pipeline.IntentPrefixes.allIt(it[0].endsWith(":")))
+        for (prefix, intent) in pipeline.IntentPrefixes:
+          let got = pipeline.detectIntent("  " & prefix & " do the thing")
+          check(prefix & " is detected and stripped",
+                got.intent == intent and got.stripped == "do the thing",
+                "intent=" & $got.intent & " stripped=[" & got.stripped & "]")
+        check("an unprefixed message has no intent",
+              pipeline.detectIntent("do the thing").intent == prompts.inNone)
+
       block longPaste:
         const T = 100
         let long = repeat('x', 250)
