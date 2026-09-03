@@ -13,6 +13,14 @@
 # scratch directory and neutralises the two `when not defined(freebsd)` guards,
 # because those are the only thing that stops the module set from resolving.
 #
+# **This is not a build, and the difference has already cost one.** No C
+# compiler runs, so nothing here sees a conflict between an `importc` carrying a
+# `header:` and owlkettle's own header-less prototypes for the same function —
+# which is a hard build failure that passes this check silently. It also sees no
+# owlkettle runtime invariant: the `Button.shortcut` update assert, `Paned`
+# refusing a child that changes type, or a container that hands its child the
+# wrong size. `nimble gui` on FreeBSD remains the only thing that proves those.
+#
 # Usage: sh tests/gui_check.sh
 #   NIM       — compiler to use (default: nim; must be 2.x)
 #   OWLKETTLE — path to an owlkettle checkout, if it is not on the nimble path

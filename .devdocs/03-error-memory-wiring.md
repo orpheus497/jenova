@@ -683,9 +683,20 @@ was indistinguishable from the ~940 lines of stub noise around it.
 copy with the guards neutralised. The differential harness is retired: it was the best available
 before, and it is strictly worse than a type check.
 
-**What this still does not cover:** owlkettle's runtime invariants — the `Button.shortcut` update
-assert, `Paned` refusing a child that changes type, `--mm:arc` and the ORC cycle hazard. Those are
-asserts and crashes, not type errors. The first FreeBSD *build and run* remains the real test.
+**What this still does not cover, corrected after it cost a build:** `nim check` runs no C
+compiler, so a `header:` pragma on an `importc` can conflict with owlkettle's own header-less
+prototype for the same function and this check will not notice. `shortcuts.nim` declared
+`gtk_callback_action_new` with `header: "gtk/gtk.h"`, which made Nim `#include` it beside
+owlkettle's bare `void*` prototypes for `gtk_box_new`, `gtk_box_append` and `gtk_box_remove`;
+`bin/jenova` did not build, and this check said PASS. `sourceview.nim` and `vte.nim` carry headers
+safely only because neither uses a GTK function owlkettle also binds — a distinction that has to be
+checked per module, not assumed from the pattern.
+
+It also sees no owlkettle runtime invariant: the `Button.shortcut` update assert, `Paned` refusing a
+child that changes type, `--mm:arc` and the ORC cycle hazard, or a container handing its child the
+wrong size — `ShortcutHost` wrapped the window in a `GtkBox` and collapsed it to natural height on
+every page until `hexpand`/`vexpand` were set. **The check is a type check. `nimble gui` on FreeBSD
+is the build, and running the window is the test.**
 
 ---
 
