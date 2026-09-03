@@ -55,15 +55,16 @@ code that no longer needs to exist.
   (`src/jenova_core.nim`, `src/jenova_gui.nim`) are neutralised in a scratch copy; the repository
   is not modified. `grep -rn freebsd src/jenova/*.nim` returns nothing, so the copy differs from
   the real tree in exactly two lines.
-* **GTK 4.14.5, not the target's 4.20.4** (D-AK); **libadwaita 1.5.0**, against a
-  `-d:adwminor=4` floor whose satisfaction on the target is still unverified.
+* **GTK 4.14.5, not the target's 4.20.4** (D-AK); **libadwaita 1.5.0**, not the target's
+  1.8.5.1. Both floors are satisfied on both hosts — see §1, where the version question is
+  settled rather than left open.
 * Report 05's Phase 1 list stands unchanged: the `sysctl` probe, the `fork`/`setsid`/`execv`
   backend path, the D-Bus tray (no `StatusNotifierWatcher` runs under Xvfb), and the embedded
   Neovim page are FreeBSD-only and untested here.
 
 ---
 
-## 1. Two decisions confirmed by measurement, not by reading
+## 1. Three decisions confirmed by measurement, not by reading
 
 Recorded because they were taken on a read of owlkettle's source and are now backed by a
 reproduction. Neither needs work.
@@ -121,6 +122,49 @@ the comment above that line says the forced value exists to prevent. `ac61ecf` f
 and, in the same commit (`fcf019d`), puts `{.size: sizeof(cint).}` on **every** C enum in both
 binding files: a Nim enum without it is sized to its own range, so a two-case enum is one byte
 where the C ABI expects four.
+
+### Both version floors are already at their maximum useful value — and that is now provable
+
+`-d:gtkminor=10 -d:adwminor=4` were each set as *floors*, deliberately below the toolkit present
+(`jenova_core.nimble`: *"10 is a deliberate floor rather than a match"*). The open question was
+whether they were leaving capability on the table, and whether the target satisfies them at all.
+Both halves are now answered.
+
+**The target's versions**, reported by the user from the FreeBSD host:
+
+```
+libadwaita-1.8.5.1             Building blocks for modern adaptive GNOME applications
+```
+
+with GTK 4.20.4 (D-AK). Both floors are cleared with room to spare, on the target and on the
+audit host (1.5.0 / 4.14.5) — so nothing in the build requires a version either machine lacks.
+
+**And raising either buys nothing at `ac61ecf`.** Every version gate in the pinned revision,
+enumerated exhaustively:
+
+```
+$ grep -rhoE 'AdwVersion >= \([0-9]+, [0-9]+\)' owlkettle/ | sort -u
+AdwVersion >= (1, 2)
+AdwVersion >= (1, 3)
+AdwVersion >= (1, 4)
+
+$ grep -rhoE 'GtkMinor >= [0-9]+' owlkettle/ | sort -u
+GtkMinor >= 10
+GtkMinor >= 12
+GtkMinor >= 4
+GtkMinor >= 8
+```
+
+* **`adwminor=4` is the ceiling, not merely a satisfied floor.** owlkettle gates nothing above
+  libadwaita 1.4. Raising it would raise the runtime requirement for zero capability.
+* **`gtkminor=12` would buy exactly one boolean.** The only thing gated above 10 is
+  `CenterBox.shrinkCenterLast` (`owlkettle/widgets.nim:360`, GTK 4.12) and its binding
+  (`bindings/gtk.nim:774-775`). **`CenterBox` is used nowhere in `src/`** — verified — so 10 is
+  the ceiling too, until something uses that widget.
+
+Both numbers are therefore correct *and* maximal for this dependency. **This is a fact about
+`ac61ecf`, not a standing property**: raising the pin means re-running the two greps above, since
+a newer owlkettle may gate on a version these floors exclude. That check belongs beside the pin.
 
 ---
 
