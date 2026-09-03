@@ -120,8 +120,8 @@ the right widget, not a bigger lid.
 | Adaptive sidebar | `OverlaySplitView` | `Flap` |
 | Menus | `PopoverMenu`, `ModelButton`, `ContextMenu` | 1 `Popover`, 1 `MenuButton` |
 | Split primary action | `SplitButton` | Two buttons |
-| Reading-width column | `Clamp` | Margins |
-| Identity | `Avatar` | Text labels ("YOU" / "JENOVA") |
+| Reading-width column | `Clamp` | ~~Margins~~ — the transcript is clamped to 760, the Web UI's own `max-w-3xl` |
+| Identity | `Avatar` | ~~Text labels~~ — an icon avatar beside the name on every message card |
 
 None of these is exotic. They are the widgets a GNOME application is *made of*.
 

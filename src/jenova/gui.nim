@@ -3611,17 +3611,34 @@ proc messageCard(app: AppState, i: int, m: Message): Widget =
                           of rSystem: "msg-system"
                           else: "msg-agent")]
       Box(orient = OrientY, spacing = 4, margin = 10):
-        Label {.expand: false.}:
-          text = (case m.role
-                  of rUser: "YOU"
-                  of rSystem: "SYSTEM"
-                  else: "JENOVA")
-          xAlign = 0.0
-          style = [StyleClass("msg-role"),
-                   StyleClass(case m.role
-                              of rUser: "msg-role-user"
-                              of rSystem: "msg-role-system"
-                              else: "msg-role-agent")]
+        # `Avatar` beside the name, which is the GNOME idiom for "who said
+        # this" and what report 06 §4 lists this row as doing without. It is
+        # `iconName`-driven rather than `showInitials`: initials of "JENOVA"
+        # and "YOU" would be a J and a Y, which say less than a face and a
+        # spark do, and a system turn is neither a person nor the model.
+        #
+        # The name stays. An avatar alone identifies a speaker only to someone
+        # who has already learnt the three icons, and the roles here are not
+        # people whose faces one knows.
+        Box(orient = OrientX, spacing = 8) {.expand: false.}:
+          Avatar {.expand: false, vAlign: AlignCenter.}:
+            size = 20
+            showInitials = false
+            iconName = (case m.role
+                        of rUser: "avatar-default-symbolic"
+                        of rSystem: "emblem-system-symbolic"
+                        else: "starred-symbolic")
+          Label {.expand: true.}:
+            text = (case m.role
+                    of rUser: "YOU"
+                    of rSystem: "SYSTEM"
+                    else: "JENOVA")
+            xAlign = 0.0
+            style = [StyleClass("msg-role"),
+                     StyleClass(case m.role
+                                of rUser: "msg-role-user"
+                                of rSystem: "msg-role-system"
+                                else: "msg-role-agent")]
         # Editing varies what is *inside* the card, never the card's
         # own type — the swap happens among a `Box`'s children, which
         # is the one place owlkettle handles a child changing type.
@@ -3912,144 +3929,156 @@ proc mainArea(app: AppState): Widget =
         # reader left it.
         AutoScroll {.expand: true.}:
           pin = app.streaming and not app.opts.getBool("disableAutoScroll")
-          Box(orient = OrientY, spacing = 12, margin = 16):
-            if app.openNote.len > 0:
-              Box(orient = OrientX, spacing = 8) {.expand: false.}:
-                # 8c-3: the title is a heading while reading and a field while
-                # editing, which is the Web UI's own split. The two are
-                # different widget types, so owlkettle rebuilds rather than
-                # reusing state — the safe direction, and the reason the mode
-                # switch cannot carry a half-updated `Entry` into a `Label`.
+          # `Clamp` is libadwaita's reading-width column, and the transcript is
+          # what it is for: on a maximised window a message card stretched the
+          # full width and a reply became one line of eight hundred pixels,
+          # which is the width nothing is comfortable to read at. It caps the
+          # content and centres it, leaving the *scroller* full width so the
+          # scrollbar stays on the window edge where it belongs.
+          #
+          # 760 is the Web UI's own measure — `max-w-3xl` on its message list
+          # (`ChatMessages.svelte`), which is 48rem at its 16px root. Below that
+          # width the clamp is inert and the column behaves exactly as it did.
+          Clamp:
+            maximumSize = 760
+            Box(orient = OrientY, spacing = 12, margin = 16):
+              if app.openNote.len > 0:
+                Box(orient = OrientX, spacing = 8) {.expand: false.}:
+                  # 8c-3: the title is a heading while reading and a field while
+                  # editing, which is the Web UI's own split. The two are
+                  # different widget types, so owlkettle rebuilds rather than
+                  # reusing state — the safe direction, and the reason the mode
+                  # switch cannot carry a half-updated `Entry` into a `Label`.
+                  if app.noteEditing:
+                    Entry {.expand: true.}:
+                      text = app.noteTitle
+                      placeholder = "Note title"
+                      proc changed(text: string) = app.noteTitle = text
+                  else:
+                    Label {.expand: true.}:
+                      text = (if app.noteTitle.len > 0: app.noteTitle
+                              else: "Untitled note")
+                      xAlign = 0.0
+                      ellipsize = EllipsizeEnd
+                      style = [StyleClass("brand")]
+                  # the only way to mark a note FOCUS from this window. The
+                  # flag has existed in the schema since it was written and
+                  # `workspace.contextFor` has given it the escape behaviour since
+                  # a FOCUS note reaches every chat in the workspace tree
+                  # rather than only its own level — and until now it could
+                  # be set from nowhere but another client, which is not parity.
+                  # `view-pin-symbolic` is the metaphor the Web UI's own note
+                  # header uses.
+                  #
+                  # It is here and not in the button row below. That was once
+                  # load-bearing: the row held the program's only
+                  # shortcut-carrying button, and owlkettle's `Button.shortcut`
+                  # asserts its value never changes, so a fourth child shifted the
+                  # shortcut onto another button's state and aborted the
+                  # process on opening a note. No button carries a shortcut any
+                  # more — they all live on the window's own controller — so the
+                  # placement is now only a layout choice.
+                  ToggleButton {.expand: false.}:
+                    icon = "view-pin-symbolic"
+                    state = app.noteFocus
+                    tooltip = (if app.noteFocus:
+                                 "FOCUS note: applies across the whole workspace. " &
+                                 "Click to make it a normal note, then Save"
+                               else:
+                                 "Make this a FOCUS note — a rule the model sees " &
+                                 "in every chat in this workspace. Save to apply")
+                    style = [ButtonFlat]
+                    proc changed(state: bool) = app.noteFocus = state
+                  # 8c-3: one button, two labels — the mode switch. A second
+                  # conditional widget here would be free (nothing in this Box
+                  # carries a shortcut), but one button that says what it does is
+                  # clearer than two that swap places.
+                  Button {.expand: false.}:
+                    text = (if app.noteEditing: "Cancel" else: "Edit")
+                    style = [ButtonFlat]
+                    tooltip = (if app.noteEditing:
+                                 "Discard these changes and go back to reading"
+                               else: "Edit this note")
+                    proc clicked() =
+                      if app.noteEditing: app.cancelNoteEdit()
+                      else: app.noteEditing = true
+                  # 8c-5: delete over the same confirmation every other delete in
+                  # this window uses, which names the cascade.
+                  #
+                  # A FOCUS note is refused rather than hidden. The Web UI
+                  # omits the button entirely; a disabled one with the reason on
+                  # it says why, and a control that vanishes reads as a bug. The
+                  # protection is the same: a workspace-wide rule should not go in
+                  # one click from the note it happens to be written in.
+                  Button {.expand: false.}:
+                    icon = "user-trash-symbolic"
+                    style = [ButtonFlat, StyleClass("row-btn")]
+                    sensitive = not app.noteFocus
+                    tooltip = (if app.noteFocus:
+                                 "Un-pin this note before deleting it — it is a " &
+                                 "FOCUS rule for the whole workspace"
+                               else: "Delete this note")
+                    proc clicked() =
+                      let id = app.openNote
+                      app.deleteNode("notes", id)
                 if app.noteEditing:
-                  Entry {.expand: true.}:
-                    text = app.noteTitle
-                    placeholder = "Note title"
-                    proc changed(text: string) = app.noteTitle = text
-                else:
-                  Label {.expand: true.}:
-                    text = (if app.noteTitle.len > 0: app.noteTitle
-                            else: "Untitled note")
+                  # A TextView owns a TextBuffer rather than a string, so it is
+                  # driven from `app.noteBuffer` and read back on save — it
+                  # cannot be bound to state per redraw the way an Entry is.
+                  TextView:
+                    buffer = app.noteBuffer
+                elif app.noteOrigContent.len == 0:
+                  # 8c-6: an empty note says so. A blank pane is indistinguishable
+                  # from a note that failed to load.
+                  Label {.expand: false.}:
+                    text = "This note is empty. Click Edit to write in it."
                     xAlign = 0.0
-                    ellipsize = EllipsizeEnd
-                    style = [StyleClass("brand")]
-                # the only way to mark a note FOCUS from this window. The
-                # flag has existed in the schema since it was written and
-                # `workspace.contextFor` has given it the escape behaviour since
-                # a FOCUS note reaches every chat in the workspace tree
-                # rather than only its own level — and until now it could
-                # be set from nowhere but another client, which is not parity.
-                # `view-pin-symbolic` is the metaphor the Web UI's own note
-                # header uses.
-                #
-                # It is here and not in the button row below. That was once
-                # load-bearing: the row held the program's only
-                # shortcut-carrying button, and owlkettle's `Button.shortcut`
-                # asserts its value never changes, so a fourth child shifted the
-                # shortcut onto another button's state and aborted the
-                # process on opening a note. No button carries a shortcut any
-                # more — they all live on the window's own controller — so the
-                # placement is now only a layout choice.
-                ToggleButton {.expand: false.}:
-                  icon = "view-pin-symbolic"
-                  state = app.noteFocus
-                  tooltip = (if app.noteFocus:
-                               "FOCUS note: applies across the whole workspace. " &
-                               "Click to make it a normal note, then Save"
-                             else:
-                               "Make this a FOCUS note — a rule the model sees " &
-                               "in every chat in this workspace. Save to apply")
-                  style = [ButtonFlat]
-                  proc changed(state: bool) = app.noteFocus = state
-                # 8c-3: one button, two labels — the mode switch. A second
-                # conditional widget here would be free (nothing in this Box
-                # carries a shortcut), but one button that says what it does is
-                # clearer than two that swap places.
-                Button {.expand: false.}:
-                  text = (if app.noteEditing: "Cancel" else: "Edit")
-                  style = [ButtonFlat]
-                  tooltip = (if app.noteEditing:
-                               "Discard these changes and go back to reading"
-                             else: "Edit this note")
-                  proc clicked() =
-                    if app.noteEditing: app.cancelNoteEdit()
-                    else: app.noteEditing = true
-                # 8c-5: delete over the same confirmation every other delete in
-                # this window uses, which names the cascade.
-                #
-                # A FOCUS note is refused rather than hidden. The Web UI
-                # omits the button entirely; a disabled one with the reason on
-                # it says why, and a control that vanishes reads as a bug. The
-                # protection is the same: a workspace-wide rule should not go in
-                # one click from the note it happens to be written in.
-                Button {.expand: false.}:
-                  icon = "user-trash-symbolic"
-                  style = [ButtonFlat, StyleClass("row-btn")]
-                  sensitive = not app.noteFocus
-                  tooltip = (if app.noteFocus:
-                               "Un-pin this note before deleting it — it is a " &
-                               "FOCUS rule for the whole workspace"
-                             else: "Delete this note")
-                  proc clicked() =
-                    let id = app.openNote
-                    app.deleteNode("notes", id)
-              if app.noteEditing:
-                # A TextView owns a TextBuffer rather than a string, so it is
-                # driven from `app.noteBuffer` and read back on save — it
-                # cannot be bound to state per redraw the way an Entry is.
-                TextView:
-                  buffer = app.noteBuffer
-              elif app.noteOrigContent.len == 0:
-                # 8c-6: an empty note says so. A blank pane is indistinguishable
-                # from a note that failed to load.
-                Label {.expand: false.}:
-                  text = "This note is empty. Click Edit to write in it."
-                  xAlign = 0.0
-                  style = [StyleClass("dim-note")]
-              else:
-                # 8c-3: rendered through the transcript's own block renderer, so
-                # a note's tables, code blocks and emphasis look exactly as they
-                # do in a reply rather than nearly so.
-                #
-                # Action purpose: the source is `noteOrigContent`, not
-                # `noteBuffer.text()`, and that is the Step 7c rule rather than a
-                # preference. `view` runs on every frame and nothing in it may
-                # do work proportional to a payload; reading a `TextBuffer`
-                # copies the whole note out of GTK each time, which is the same
-                # defect as the per-frame `sha256` that froze the window on an
-                # attachment. The memo behind `blocksFor` would
-                # still have re-parsed nothing, but the copy happens before it.
-                #
-                # It is also exactly right: view mode is only ever reachable
-                # with the buffer equal to the stored text. Edit mode's only
-                # exits are Cancel, which restores, and Save, which writes and
-                # then re-baselines — so there is no state in which the rendered
-                # note and the buffer disagree.
-                Box(orient = OrientY, spacing = 8) {.expand: false.}:
-                  for b in mdMemo.blocksFor(app.openNote, app.noteOrigContent):
-                    insert(app.mdBlock(b)) {.expand: false.}
-            # Every child here is `expand: false`, and the annotations are
-            # the whole point. `Box`'s adder defaults to `expand: true`,
-            # which in a *vertical* Box sets `vexpand` — so an unannotated
-            # message card stretches to take an equal share of the viewport
-            # height, and two replies in a tall window each become half a
-            # screen. That is the "weirdly huge" bubbles. A transcript sizes
-            # to its content and scrolls; it never divides the space up.
-            # A Box with one varying child rather than a conditional widget in
-            # the transcript's own child list: owlkettle matches states
-            # positionally, and the message loop below shifts by one for every
-            # turn. The Box keeps this slot constant whatever is inside it.
-            Box(orient = OrientY) {.expand: false.}:
-              if app.openNote.len == 0 and app.messages.len == 0:
-                StatusPage:
-                  iconName = "user-available-symbolic"
-                  title = "Ask Jenova something"
-                  # Read from the classifier's own table rather than restated,
-                  # so a prefix cannot be added there and go unmentioned here.
-                  # Nothing on either surface has ever shown these.
-                  description = "Attach a file, or start a message with " &
-                                intentHint() & " to steer it."
-            for i, m in (if app.openNote.len > 0: @[] else: app.messages):
-              insert(app.messageCard(i, m)) {.expand: false.}
+                    style = [StyleClass("dim-note")]
+                else:
+                  # 8c-3: rendered through the transcript's own block renderer, so
+                  # a note's tables, code blocks and emphasis look exactly as they
+                  # do in a reply rather than nearly so.
+                  #
+                  # Action purpose: the source is `noteOrigContent`, not
+                  # `noteBuffer.text()`, and that is the Step 7c rule rather than a
+                  # preference. `view` runs on every frame and nothing in it may
+                  # do work proportional to a payload; reading a `TextBuffer`
+                  # copies the whole note out of GTK each time, which is the same
+                  # defect as the per-frame `sha256` that froze the window on an
+                  # attachment. The memo behind `blocksFor` would
+                  # still have re-parsed nothing, but the copy happens before it.
+                  #
+                  # It is also exactly right: view mode is only ever reachable
+                  # with the buffer equal to the stored text. Edit mode's only
+                  # exits are Cancel, which restores, and Save, which writes and
+                  # then re-baselines — so there is no state in which the rendered
+                  # note and the buffer disagree.
+                  Box(orient = OrientY, spacing = 8) {.expand: false.}:
+                    for b in mdMemo.blocksFor(app.openNote, app.noteOrigContent):
+                      insert(app.mdBlock(b)) {.expand: false.}
+              # Every child here is `expand: false`, and the annotations are
+              # the whole point. `Box`'s adder defaults to `expand: true`,
+              # which in a *vertical* Box sets `vexpand` — so an unannotated
+              # message card stretches to take an equal share of the viewport
+              # height, and two replies in a tall window each become half a
+              # screen. That is the "weirdly huge" bubbles. A transcript sizes
+              # to its content and scrolls; it never divides the space up.
+              # A Box with one varying child rather than a conditional widget in
+              # the transcript's own child list: owlkettle matches states
+              # positionally, and the message loop below shifts by one for every
+              # turn. The Box keeps this slot constant whatever is inside it.
+              Box(orient = OrientY) {.expand: false.}:
+                if app.openNote.len == 0 and app.messages.len == 0:
+                  StatusPage:
+                    iconName = "user-available-symbolic"
+                    title = "Ask Jenova something"
+                    # Read from the classifier's own table rather than restated,
+                    # so a prefix cannot be added there and go unmentioned here.
+                    # Nothing on either surface has ever shown these.
+                    description = "Attach a file, or start a message with " &
+                                  intentHint() & " to steer it."
+              for i, m in (if app.openNote.len > 0: @[] else: app.messages):
+                insert(app.messageCard(i, m)) {.expand: false.}
 
 
 ## Function purpose: open the settings panel on a copy of the stored values, and
