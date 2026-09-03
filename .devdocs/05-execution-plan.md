@@ -96,17 +96,22 @@ for right-click on messages and tree rows · `SplitButton` for send-with-options
 
 **Exit:** the window reads as a GNOME application. Two Class B gaps close as a side effect.
 
-> **Session 7 — two of these are done, and two of them are not the substitutions this line
-> assumes.** Corrected against owlkettle's source; see report 06 §2 and §5.
+> **Session 7 — three of these are done, and one is larger than the line assumes.**
 >
 > | Item | State |
 > |---|---|
 > | `StatusPage` | **done.** Empty transcript (session 6), plus the models panel's not-installed state, its new no-matches state, and the trash's |
-> | `Banner` | **done.** Backend-down with a Start button, and the LAN flag/socket disagreement — which the header subtitle had been reporting backwards |
-> | `ToolbarView` | **does not exist in owlkettle 3.0.0.** Not gated by `AdwVersion`; simply absent. This is a binding job, not a swap, and nothing is broken without it |
-> | `ToastOverlay` | **does not exist either** — and is now bound, in `src/jenova/toast.nim`. Confirmations toast and time out; errors keep the inline row with Retry. **P-B1 stays open**: a toast cannot carry the Retry button (owlkettle frees the `EventObj` under a live toast), and a one-line message that times out is not the dialog with the server's own detail that P-B1 asks for |
-> | `OverlaySplitView` | available, but **larger than it looks**: `Flap` folds itself through `FlapFoldAuto` and `OverlaySplitView.collapsed` is a plain `bool` something must drive. libadwaita's answer is `AdwBreakpoint`, which owlkettle does not bind either — so plan the pair, or the swap trades a deprecated widget for a sidebar that stops adapting |
+> | `Banner` | **done.** Backend-down with a Start button, and the LAN flag/socket disagreement — which the header subtitle had been reporting backwards, and now does not |
+> | `ToastOverlay` | **done**, using owlkettle's own. Confirmations toast and time out; errors keep the inline row, where the Retry button's handler has the widget's lifetime. **P-B1 stays open** — a one-line message that times out is not the dialog with the server's own detail that P-B1 asks for |
+> | `ToolbarView` | available and untouched. Present at `adw.nim:1010` on the pinned revision, gated `{.since: AdwVersion >= (1, 4).}`, so `-d:adwminor=4` compiles it in |
+> | `OverlaySplitView` | available, but **larger than it looks**: `Flap` folds itself through `FlapFoldAuto` and `OverlaySplitView.collapsed` is a plain `bool` something must drive. libadwaita's answer is `AdwBreakpoint`, which owlkettle does *not* have — and binding it also needs the split view's own `GtkWidget`, which owlkettle does not expose from a `gui:` block. Plan the three together, or the swap trades a deprecated widget for a sidebar that stops adapting |
 > | `PopoverMenu` + `ContextMenu`, `SplitButton` | available and untouched |
+>
+> **A dependency correction came out of this.** `requires "owlkettle >= 3.0.0"` was satisfied by
+> both the `v3.0.0` tag and by `main`, which still calls itself 3.0.0 — and they differ:
+> `ToastOverlay` and `ToolbarView` exist only after the tag. Which one a machine happened to have
+> decided whether this window compiled. `jenova_core.nimble` now pins `ac61ecf`, the revision
+> report 06 audited.
 
 ---
 

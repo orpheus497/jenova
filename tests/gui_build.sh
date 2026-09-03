@@ -33,7 +33,12 @@
 #
 # Usage: sh tests/gui_build.sh
 #   NIM       — compiler to use (default: nim; must be 2.x)
-#   OWLKETTLE — path to an owlkettle checkout, if it is not on the nimble path
+#   OWLKETTLE — path to an owlkettle checkout, if it is not on the nimble path.
+#               It must be the revision `jenova_core.nimble` pins: the `v3.0.0`
+#               tag and `main` both call themselves 3.0.0 and differ in what
+#               they offer, and `gui.nim` uses `ToastOverlay`, which is only on
+#               the latter. The guard below says so rather than letting it
+#               surface as an undeclared identifier.
 #   JENOVA_GUI_NO_RUN=1 — build and `--check` only, skipping the mapped-window
 #                         step. For a host with the toolkit but no X server.
 #
@@ -56,7 +61,19 @@ case $("$NIM" --version | head -1) in
   *) echo "gui_build: needs Nim 2 (owlkettle's =destroy signatures)"; exit 1 ;;
 esac
 
-[ -n "${OWLKETTLE:-}" ] && FLAGS="$FLAGS --path:$OWLKETTLE"
+if [ -n "${OWLKETTLE:-}" ]; then
+  FLAGS="$FLAGS --path:$OWLKETTLE"
+  # One grep, and it names the symptom. Without it a checkout of the tag fails
+  # with `undeclared identifier: 'ToastOverlay'` from inside a `gui:` block,
+  # which reads as a defect in this repository rather than in the dependency.
+  if ! grep -q "renderable ToastOverlay" "$OWLKETTLE/owlkettle/adw.nim" 2>/dev/null
+  then
+    echo "gui_build: $OWLKETTLE has no ToastOverlay — that is the v3.0.0 tag."
+    echo "gui_build: jenova_core.nimble pins a later commit; check out that one."
+    echo "gui_build: FAIL"
+    exit 1
+  fi
+fi
 
 # Every pkg-config module the two binaries link. Named individually so a missing
 # one is reported by name — "gtk4 not found" sends the reader to the right
